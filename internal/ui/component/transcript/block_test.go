@@ -1,6 +1,8 @@
 package transcript
 
 import (
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"strings"
 	"testing"
 
@@ -196,5 +198,72 @@ func TestIsEmpty(t *testing.T) {
 		if b.isEmpty() {
 			t.Errorf("%+v should not be empty", b)
 		}
+	}
+}
+
+// TestUserLinesDrawAContentWidthBubble pins the user-message framing:
+// on colour tiers every row - blank padding rows above and below
+// included - carries the RoleBGSelection background, padded to the
+// widest wrapped line, and the accent marker stays on the first row.
+// The bubble is content-width, not full-width: the old CLI walked a
+// full-width bar back because short messages painted heavy bands
+// (internal/cli/msgcard.go documents it).
+func TestUserLinesDrawAContentWidthBubble(t *testing.T) {
+	th := loadTheme(t)
+	rows := userLines(th, theme.TierTrueColor, 80, "short message")
+	if len(rows) != 3 {
+		t.Fatalf("got %d rows, want 3 (pad, text, pad): %q", len(rows), rows)
+	}
+	for i, r := range rows {
+		if !strings.Contains(r, "48;2;42;42;48") {
+			t.Errorf("row %d carries no selection background: %q", i, r)
+		}
+	}
+	if w := lipgloss.Width(rows[0]); w > len("short message")+3 {
+		t.Errorf("bubble is %d wide for a %d-char message; it must be content-width, not full-width",
+			w, len("short message"))
+	}
+	if plain := ansi.Strip(rows[1]); !strings.HasPrefix(plain, "> ") || !strings.Contains(plain, "short message") {
+		t.Errorf("first text row lost its marker or text: %q", plain)
+	}
+}
+
+// TestUserLinesFillCoversWrappedLines: a multi-line message fills every
+// wrapped row, all padded to one bubble width.
+func TestUserLinesFillCoversWrappedLines(t *testing.T) {
+	th := loadTheme(t)
+	long := strings.Repeat("word ", 60)
+	rows := userLines(th, theme.TierTrueColor, 40, long)
+	if len(rows) < 5 {
+		t.Fatalf("got %d rows, want several wrapped rows plus padding: %d", len(rows), len(rows))
+	}
+	widths := map[int]bool{}
+	for i, r := range rows {
+		if !strings.Contains(r, "48;2;42;42;48") {
+			t.Errorf("row %d carries no fill", i)
+		}
+		widths[lipgloss.Width(r)] = true
+	}
+	if len(widths) != 1 {
+		t.Errorf("bubble rows have differing widths %v; every row must pad to one width", widths)
+	}
+	if w := lipgloss.Width(rows[1]); w > 40 {
+		t.Errorf("bubble width %d exceeds the 40-column terminal", w)
+	}
+}
+
+// TestUserLinesDegradeToPlainMarker: at ASCII the fill and the padding
+// rows drop out; the marker-only lines stand exactly as before.
+func TestUserLinesDegradeToPlainMarker(t *testing.T) {
+	th := loadTheme(t)
+	rows := userLines(th, theme.TierASCII, 80, "hi")
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want the single marker line with no fill or padding", len(rows))
+	}
+	if got := ansi.Strip(rows[0]); got != "> hi" {
+		t.Errorf("ASCII row = %q, want \"> hi\"", got)
+	}
+	if strings.Contains(rows[0], "\x1b[4") {
+		t.Errorf("ASCII row carries a background escape: %q", rows[0])
 	}
 }
