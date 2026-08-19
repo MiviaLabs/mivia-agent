@@ -141,3 +141,8 @@ topics:
     path: docs/design/
     owner: architecture
     description: Phase 0 terminal UI design - research, ASCII wireframes, theme roles, and the disposable HTML mock
+
+  ui-theme-system:
+    path: docs/development/ui-theme-system.md
+    owner: quality
+    description: New terminal UI theme package - role reference, contrast/CVD gates, degradation ladder, how to add a theme

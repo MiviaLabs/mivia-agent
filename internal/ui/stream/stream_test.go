@@ -2,6 +2,7 @@ package stream
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -58,6 +59,46 @@ func TestRenderUnknownBodyErrors(t *testing.T) {
 	err := Render(&buf, []uievent.Event{{Kind: "bogus", Body: nil}})
 	if err == nil {
 		t.Fatal("expected error for unhandled body type")
+	}
+}
+
+// errAtWriter fails on its Nth Write call and succeeds on every other.
+// Sweeping failAt across the full range of Write calls a render makes
+// exercises every "write, then propagate the error" branch in the
+// renderer in one parametrized test, instead of one contrived test per
+// call site.
+type errAtWriter struct {
+	failAt int
+	calls  int
+}
+
+var errBoom = errors.New("boom")
+
+func (w *errAtWriter) Write(p []byte) (int, error) {
+	w.calls++
+	if w.calls == w.failAt {
+		return 0, errBoom
+	}
+	return len(p), nil
+}
+
+func TestRenderPropagatesWriteErrors(t *testing.T) {
+	events := loadFixture(t)
+
+	counter := &errAtWriter{failAt: -1}
+	if err := Render(counter, events); err != nil {
+		t.Fatalf("baseline render failed: %v", err)
+	}
+	total := counter.calls
+	if total == 0 {
+		t.Fatal("baseline render made no Write calls")
+	}
+
+	for n := 1; n <= total; n++ {
+		w := &errAtWriter{failAt: n}
+		if err := Render(w, events); err == nil {
+			t.Errorf("expected Render to fail when write #%d of %d fails", n, total)
+		}
 	}
 }
 

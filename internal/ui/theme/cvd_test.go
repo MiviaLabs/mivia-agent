@@ -3,8 +3,7 @@ package theme
 import "testing"
 
 // TestFirstPartySeparationPasses is the hard-fail CVD gate: every embedded
-// first-party theme must meet its own documented CVDBudget over the pairs
-// this package's simulator is fit to arbitrate (known_gaps.go).
+// first-party theme must meet its own documented CVDBudget.
 func TestFirstPartySeparationPasses(t *testing.T) {
 	themes, err := Embedded()
 	if err != nil {
@@ -49,5 +48,61 @@ func TestWorstCaseSeparationMissingRole(t *testing.T) {
 	_, _, err := WorstCaseSeparation(map[Role]string{RoleSuccess: "#4edc4e"}, StatusRoles())
 	if err == nil {
 		t.Fatal("expected error for missing role colour")
+	}
+}
+
+func TestWorstCaseSeparationInvalidHex(t *testing.T) {
+	colors := map[Role]string{
+		RoleSuccess: "not-a-colour",
+		RoleWarning: "#f3f34e",
+		RoleDanger:  "#dc4e4e",
+		RoleInfo:    "#5b8cff",
+	}
+	if _, _, err := WorstCaseSeparation(colors, StatusRoles()); err == nil {
+		t.Fatal("expected error for invalid hex colour")
+	}
+}
+
+func TestDichromatMatUnknownDichromacy(t *testing.T) {
+	if _, err := dichromatMat(Dichromacy(99)); err == nil {
+		t.Fatal("expected error for unknown dichromacy")
+	}
+}
+
+func TestSimulateDichromatInvalidHex(t *testing.T) {
+	if _, err := simulateDichromat("bad", Protanopia); err == nil {
+		t.Fatal("expected error for invalid hex")
+	}
+	if _, _, _, err := simulateDichromatLinear("bad", Protanopia); err == nil {
+		t.Fatal("expected error for invalid hex")
+	}
+}
+
+func TestDE76InvalidHex(t *testing.T) {
+	if _, err := dE76("bad", "#000000", Protanopia, true); err == nil {
+		t.Fatal("expected error for invalid hexA under normal vision")
+	}
+	if _, err := dE76("#000000", "bad", Protanopia, true); err == nil {
+		t.Fatal("expected error for invalid hexB under normal vision")
+	}
+	if _, err := dE76("bad", "#000000", Protanopia, false); err == nil {
+		t.Fatal("expected error for invalid hexA under simulation")
+	}
+}
+
+func TestMat3InverseSingular(t *testing.T) {
+	singular := mat3{
+		{1, 2, 3},
+		{2, 4, 6}, // linearly dependent on row 0
+		{0, 0, 1},
+	}
+	if _, err := singular.inverse(); err == nil {
+		t.Fatal("expected error for singular matrix")
+	}
+}
+
+func TestLabFromHexInvalid(t *testing.T) {
+	if _, _, _, err := labFromHex("bad"); err == nil {
+		t.Fatal("expected error for invalid hex")
 	}
 }

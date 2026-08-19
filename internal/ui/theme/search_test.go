@@ -73,3 +73,13 @@ func TestSearchStatusPaletteRejectsBadInput(t *testing.T) {
 		t.Fatal("expected error for invalid bg")
 	}
 }
+
+func TestSearchStatusPaletteNoCandidateFound(t *testing.T) {
+	// An unreachable contrast floor (WCAG's ratio maxes out at 21:1) means
+	// no random sample can ever qualify, forcing the "found no candidate"
+	// error path.
+	_, err := SearchStatusPalette("#0a0a0b", SearchOptions{MinContrast: 100, Iterations: 5, Seed: 1})
+	if err == nil {
+		t.Fatal("expected error when no candidate can meet an unreachable contrast floor")
+	}
+}

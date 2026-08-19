@@ -8,6 +8,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/jsonout"
@@ -22,35 +23,46 @@ func main() {
 // binary's behaviour as an in-process command without calling os.Exit
 // from inside a test.
 func run() int {
-	if len(os.Args) < 2 {
-		usage()
+	return dispatch(os.Stdout, os.Stderr, os.Args[1:], os.Environ())
+}
+
+// dispatch is the actual subcommand router, factored out of run() so it
+// can be exercised by direct in-process unit tests (a bytes.Buffer in,
+// exit code and output out) in addition to the black-box testscript
+// coverage in testdata/script - testscript execs a subprocess, which
+// standard `go test -coverprofile` cannot see, so this split is what
+// keeps the routing and error-formatting logic itself under normal
+// coverage.
+func dispatch(stdout, stderr io.Writer, args []string, env []string) int {
+	if len(args) < 1 {
+		usage(stderr)
 		return 2
 	}
 
 	var err error
-	switch os.Args[1] {
+	switch args[0] {
 	case "stream":
-		err = runStream(os.Stdout)
+		err = runStream(stdout)
 	case "json":
-		err = runJSON(os.Stdout)
+		err = runJSON(stdout)
 	case "themes":
-		err = runThemes(os.Stdout, os.Args[2:], os.Environ())
+		err = runThemes(stdout, args[1:], env)
 	default:
-		usage()
+		usage(stderr)
 		return 2
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "mivia-ui-demo:", err)
+		fmt.Fprintln(stderr, "mivia-ui-demo:", err)
 		return 1
 	}
 	return 0
 }
 
-func usage() {
-	fmt.Fprintln(os.Stderr, "usage: mivia-ui-demo <stream|json|themes> [flags]")
+func usage(w io.Writer) {
+	fmt.Fprintln(w, "usage: mivia-ui-demo <stream|json|themes> [flags]")
 }
 
-func runStream(w *os.File) error {
+func runStream(w io.Writer) error {
 	events, err := stream.DefaultFixture()
 	if err != nil {
 		return err
@@ -58,7 +70,7 @@ func runStream(w *os.File) error {
 	return stream.Render(w, events)
 }
 
-func runJSON(w *os.File) error {
+func runJSON(w io.Writer) error {
 	events, err := stream.DefaultFixture()
 	if err != nil {
 		return err

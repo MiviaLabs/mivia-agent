@@ -2,6 +2,7 @@ package uievent
 
 import (
 	"encoding/json"
+	"math"
 	"testing"
 	"time"
 )
@@ -11,6 +12,18 @@ func TestEventJSONRoundTrip(t *testing.T) {
 	cases := []Event{
 		{Kind: KindTurnStart, TurnID: "t1", Seq: 1, At: at, Body: TurnStartBody{Input: "hello"}},
 		{Kind: KindTextDelta, TurnID: "t1", Seq: 2, At: at, Body: TextDeltaBody{Text: "chunk"}},
+		{Kind: KindTextEnd, TurnID: "t1", Seq: 2, At: at, Body: TextEndBody{Text: "full text"}},
+		{Kind: KindReasoning, TurnID: "t1", Seq: 2, At: at, Body: ReasoningDeltaBody{Text: "thinking", WordCount: 12}},
+		{Kind: KindToolPending, TurnID: "t1", Seq: 2, At: at, Body: ToolPendingBody{
+			ToolCallID: "c0", Name: "edit", Args: map[string]any{"path": "a.go"},
+		}},
+		{Kind: KindToolStart, TurnID: "t1", Seq: 2, At: at, Body: ToolStartBody{
+			ToolCallID: "c1", Name: "read_file", Args: map[string]any{"path": "a.go"},
+		}},
+		{Kind: KindError, TurnID: "t1", Seq: 2, At: at, Body: ErrorBody{Text: "boom", Fatal: true}},
+		{Kind: KindUsage, TurnID: "t1", Seq: 2, At: at, Body: UsageBody{
+			InputTokens: 1, OutputTokens: 2, CachedTokens: 3, CostUSD: 0.1, ElapsedSeconds: 1.5,
+		}},
 		{Kind: KindToolOutput, TurnID: "t1", Seq: 3, At: at, Body: ToolOutputBody{
 			ToolCallID: "c1",
 			Progress:   &Progress{Step: 2, TotalSteps: 3, ElapsedSeconds: 18, Status: "running", Log: []string{"+ did a thing"}},
@@ -60,5 +73,48 @@ func TestEventUnmarshalUnknownKind(t *testing.T) {
 	err := json.Unmarshal([]byte(`{"kind":"bogus","turn_id":"t1","seq":1,"at":"2026-08-19T12:00:00Z","body":{}}`), &e)
 	if err == nil {
 		t.Fatal("expected error for unknown kind")
+	}
+}
+
+func TestEventUnmarshalMalformedEnvelope(t *testing.T) {
+	var e Event
+	if err := json.Unmarshal([]byte(`not json`), &e); err == nil {
+		t.Fatal("expected error for malformed envelope")
+	}
+}
+
+func TestEventUnmarshalMalformedBody(t *testing.T) {
+	// A valid Kind whose body doesn't decode into that Kind's struct
+	// shape (a number instead of an object) must surface the per-kind
+	// unmarshal error, not silently zero-value the body.
+	var e Event
+	raw := `{"kind":"turn.start","turn_id":"t1","seq":1,"at":"2026-08-19T12:00:00Z","body":123}`
+	if err := json.Unmarshal([]byte(raw), &e); err == nil {
+		t.Fatal("expected error for malformed body")
+	}
+}
+
+func TestEventMarshalBodyFailure(t *testing.T) {
+	// encoding/json refuses NaN/Inf floats; this is the simplest real Body
+	// value that fails to marshal, exercising MarshalJSON's error path
+	// without a contrived non-Body type.
+	e := Event{Kind: KindUsage, Body: UsageBody{CostUSD: math.NaN()}}
+	if _, err := json.Marshal(e); err == nil {
+		t.Fatal("expected error marshalling a NaN field")
+	}
+}
+
+// otherBody is a Body implementation outside the switch in derefBody,
+// used only to exercise its default passthrough branch: unmarshalBody's
+// own switch always constructs a listed *XxxBody, so that branch is dead
+// in production but is still worth pinning directly.
+type otherBody struct{}
+
+func (otherBody) isBody() {}
+
+func TestDerefBodyPassthroughForUnknownType(t *testing.T) {
+	var b Body = otherBody{}
+	if got := derefBody(b); got != b {
+		t.Errorf("derefBody(otherBody{}) = %#v, want unchanged %#v", got, b)
 	}
 }

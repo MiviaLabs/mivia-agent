@@ -3,6 +3,7 @@ package jsonout
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/stream"
@@ -74,5 +75,43 @@ func TestRenderEmpty(t *testing.T) {
 	}
 	if buf.Len() != 0 {
 		t.Errorf("expected no output for empty event slice, got %q", buf.String())
+	}
+}
+
+// errAtWriter fails on its Nth Write call. Sweeping failAt proves Render
+// aborts and propagates on a write failure at any point in the stream,
+// not only the first.
+type errAtWriter struct {
+	failAt int
+	calls  int
+}
+
+var errBoom = errors.New("boom")
+
+func (w *errAtWriter) Write(p []byte) (int, error) {
+	w.calls++
+	if w.calls == w.failAt {
+		return 0, errBoom
+	}
+	return len(p), nil
+}
+
+func TestRenderPropagatesWriteErrors(t *testing.T) {
+	events := loadFixture(t)
+
+	counter := &errAtWriter{failAt: -1}
+	if err := Render(counter, events); err != nil {
+		t.Fatalf("baseline render failed: %v", err)
+	}
+	total := counter.calls
+	if total == 0 {
+		t.Fatal("baseline render made no Write calls")
+	}
+
+	for n := 1; n <= total; n++ {
+		w := &errAtWriter{failAt: n}
+		if err := Render(w, events); err == nil {
+			t.Errorf("expected Render to fail when write #%d of %d fails", n, total)
+		}
 	}
 }
