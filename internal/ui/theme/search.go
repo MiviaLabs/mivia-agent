@@ -102,10 +102,11 @@ func SearchStatusPalette(bg string, opts SearchOptions) (SearchResult, error) {
 		if !ok {
 			continue
 		}
-		worst, detail, err := WorstCaseSeparation(candidate, roles)
-		if err != nil {
-			return SearchResult{}, err
-		}
+		// WorstCaseSeparation cannot fail here, so its error is dropped:
+		// candidate holds a well-formed hex for every role in roles
+		// (sampleOne produces only those), and those are its only two
+		// error modes - a missing role colour or a malformed hex.
+		worst, detail, _ := WorstCaseSeparation(candidate, roles)
 		if !bestSet || worst > best.WorstDE {
 			best = SearchResult{Colors: candidate, WorstDE: worst, Detail: detail}
 			bestSet = true

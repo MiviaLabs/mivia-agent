@@ -1,6 +1,9 @@
 package theme
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestFirstPartySeparationPasses is the hard-fail CVD gate: every embedded
 // first-party theme must meet its own documented CVDBudget.
@@ -136,5 +139,23 @@ func TestMat3InverseSingular(t *testing.T) {
 func TestLabFromHexInvalid(t *testing.T) {
 	if _, _, _, err := labFromHex("bad"); err == nil {
 		t.Fatal("expected error for invalid hex")
+	}
+}
+
+// TestHardFailSeparationErrorsOnAMissingStatusColour covers the error
+// arm: a theme whose colour map lacks a status role cannot be judged
+// against its CVD budget, and the gate must say so rather than pass or
+// fail on partial data.
+func TestHardFailSeparationErrorsOnAMissingStatusColour(t *testing.T) {
+	colors := map[Role]string{
+		RoleSuccess: "#00ff00", RoleWarning: "#ffff00", RoleInfo: "#00ffff",
+		// RoleDanger deliberately absent.
+	}
+	worst, _, ok, err := HardFailSeparation(Theme{Name: "gap", Colors: colors, CVDBudget: 20})
+	if err == nil {
+		t.Fatalf("got err=nil worst=%v ok=%v, want the missing-role error", worst, ok)
+	}
+	if !strings.Contains(err.Error(), "missing colour") {
+		t.Errorf("error %q does not name the missing-colour cause", err)
 	}
 }
