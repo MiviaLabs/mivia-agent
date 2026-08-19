@@ -98,7 +98,7 @@ func (s Screen) openThemePicker() (app.Screen, tea.Cmd) {
 	return s, func() tea.Msg { return app.PushScreenMsg{Screen: next} }
 }
 
-// openHelp draws the keymap overlay in place. Shared by "?" (keys.go's
+// openHelp draws the keymap as a centered dialog. Shared by "?" (keys.go's
 // composerAction) and /help.
 func (s Screen) openHelp() Screen {
 	help := render.Help(s.Theme, s.Tier, s.keys.Help())
@@ -106,7 +106,7 @@ func (s Screen) openHelp() Screen {
 		help += "\n\nmouse captured - hold " + s.mouseHint +
 			" to select with the terminal (--no-mouse releases it)"
 	}
-	s.overlay = help
+	s.overlay = render.Dialog(s.Theme, s.Tier, s.width, s.height, "keys", help, "any key closes this")
 	return s
 }
 
@@ -149,10 +149,9 @@ func (s Screen) handleModelPickerKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) 
 	return s, nil
 }
 
-// renderModelPicker draws the /model picker full-surface, mirroring
-// themepicker.Screen's own layout.
-func renderModelPicker(t theme.Theme, tier theme.Tier, p picker.Model) string {
-	title := render.Role(t, tier, theme.RoleFG).Bold(true).Render("select a model")
-	hint := render.Role(t, tier, theme.RoleFGSubtle).Render("[enter] select  [esc] cancel  type to filter")
-	return title + "\n\n" + p.View() + "\n\n" + hint
+// renderModelPicker draws the /model picker as a centered dialog, the
+// same primitive themepicker.Screen uses.
+func renderModelPicker(t theme.Theme, tier theme.Tier, width, height int, p picker.Model) string {
+	return render.Dialog(t, tier, width, height, "select a model", p.View(),
+		"[enter] select  [esc] cancel  type to filter")
 }

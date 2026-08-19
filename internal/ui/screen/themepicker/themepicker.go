@@ -54,6 +54,11 @@ type Screen struct {
 	// look up the highlighted row's actual theme.Theme (colours, not
 	// just its name) as the cursor moves - before Enter ever applies it.
 	themes []theme.Theme
+
+	// width and height are the live terminal size, for centering the
+	// dialog frame. 0 renders uncentered (tests pin exact strings).
+	width  int
+	height int
 }
 
 // New builds a picker over the given themes, rendered with the current
@@ -89,6 +94,10 @@ func (s Screen) Init() tea.Cmd { return nil }
 func (s Screen) ViewFlags() app.ViewFlags { return app.ViewFlags{AltScreen: true} }
 
 func (s Screen) Update(msg tea.Msg) (app.Screen, tea.Cmd) {
+	if size, ok := msg.(tea.WindowSizeMsg); ok {
+		s.width, s.height = size.Width, size.Height
+		return s, nil
+	}
 	if changed, ok := msg.(app.ThemeChangedMsg); ok {
 		s.Theme, s.Tier = changed.Theme, changed.Tier
 		s.picker.Theme, s.picker.Tier = changed.Theme, changed.Tier
@@ -115,9 +124,9 @@ func (s Screen) Update(msg tea.Msg) (app.Screen, tea.Cmd) {
 }
 
 func (s Screen) View() string {
-	title := render.Role(s.Theme, s.Tier, theme.RoleFG).Bold(true).Render("select a theme")
-	hint := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle).Render("[enter] select  [esc] cancel  type to filter")
-	return title + "\n\n" + s.picker.View() + "\n\n" + s.previewView() + "\n\n" + hint
+	hint := "[enter] select  [esc] cancel  type to filter"
+	body := s.picker.View() + "\n\n" + s.previewView()
+	return render.Dialog(s.Theme, s.Tier, s.width, s.height, "select a theme", body, hint)
 }
 
 // previewView renders a prompt line, a syntax-highlighted code read,

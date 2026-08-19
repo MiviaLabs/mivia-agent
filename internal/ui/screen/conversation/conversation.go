@@ -303,7 +303,7 @@ func (s Screen) View() string {
 	lines = append(lines, s.topbar.View())
 	switch {
 	case s.modelPicker != nil:
-		content := renderModelPicker(s.Theme, s.Tier, *s.modelPicker)
+		content := renderModelPicker(s.Theme, s.Tier, s.width, s.height, *s.modelPicker)
 		lines = append(lines, overlayRows(content, s.height-s.reservedRows())...)
 	case s.overlay != "":
 		lines = append(lines, overlayRows(s.overlay, s.height-s.reservedRows())...)

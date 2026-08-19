@@ -382,7 +382,7 @@ func TestViewRendersModelPickerWhenActive(t *testing.T) {
 	runner := &fakeRunner{outcome: ports.CommandOutcome{ModelChoices: []string{"fast", "deep"}}}
 	s := newScreen(t, replay.New(nil, 0), nil, nil)
 	s.SetCommandRunner(runner)
-	s.width, s.height = 40, 10
+	s.width, s.height = 40, 24 // a 10-row cockpit leaves the transcript area too few rows for any dialog
 	s, _ = sendLine(t, s, "/model")
 
 	view := s.View()
