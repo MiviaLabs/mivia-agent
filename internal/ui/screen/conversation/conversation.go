@@ -11,6 +11,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/charmbracelet/x/ansi"
 
@@ -444,13 +445,20 @@ func (s Screen) gutter(lines []string) string {
 	}
 	out := make([]string, len(lines))
 	inner := contentWidth(s.width)
+	bgStyle := render.WithBg(lipgloss.NewStyle(), s.Theme, s.Tier, theme.RoleBG)
+	bgSpace := bgStyle.Render(" ")
+
 	for i, ln := range lines {
 		pad := inner - ansi.StringWidth(ln)
 		if pad < 0 {
 			ln = ansi.Truncate(ln, inner, "")
 			pad = 0
 		}
-		out[i] = " " + ln + strings.Repeat(" ", pad) + " "
+		if ln == "" {
+			out[i] = bgStyle.Render(strings.Repeat(" ", s.width))
+		} else {
+			out[i] = bgSpace + ln + bgStyle.Render(strings.Repeat(" ", pad)) + bgSpace
+		}
 	}
 	return strings.Join(out, "\n")
 }
