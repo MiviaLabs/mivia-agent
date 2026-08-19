@@ -186,10 +186,54 @@ func (s Screen) Update(msg tea.Msg) (app.Screen, tea.Cmd) {
 			s.notice = "could not write the transcript to scrollback: " + msg.err.Error()
 		}
 		return s, nil
+	case uievent.EventMsg:
+		return s.handleEvent(msg.Event)
+	case conv.FlushMsg:
+		var cmd tea.Cmd
+		s.conv, cmd = s.conv.Update(msg)
+		return s, cmd
 	case tea.KeyPressMsg:
 		return s.key(msg)
 	}
 	return s, nil
+}
+
+// handleEvent applies one event to the conversation model and updates the view.
+func (s Screen) handleEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
+	oldBlocks := s.conv.Blocks()
+	oldDropped := s.dropped
+	nextConv, cmd := s.conv.HandleEvent(ev)
+	s.conv = nextConv
+	newDropped := s.conv.Dropped()
+	if dropped := newDropped - oldDropped; dropped > 0 {
+		droppedRows := 0
+		for i := 0; i < dropped && i < len(oldBlocks); i++ {
+			b := oldBlocks[i]
+			b.Collapsed = false
+			b.Focused = false
+			part := ansi.Strip(b.Render(s.Theme, s.Tier, s.width))
+			droppedRows += strings.Count(part, "\n") + 1
+		}
+		shift := droppedRows
+		if oldDropped == 0 && newDropped > 0 {
+			shift--
+		}
+		s.offset -= shift
+		if s.offset < 0 {
+			s.offset = 0
+		}
+		if s.search.restore > 0 {
+			s.search.restore -= shift
+			if s.search.restore < 0 {
+				s.search.restore = 0
+			}
+		}
+	}
+	s.rebuild()
+	if s.search.query != "" {
+		s.search.find(s.rows)
+	}
+	return s, cmd
 }
 
 // key routes one key press: handover mode takes any key back to the

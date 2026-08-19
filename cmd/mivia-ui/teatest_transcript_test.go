@@ -151,3 +151,72 @@ func TestTranscriptModeSearchAndScrollbackHandover(t *testing.T) {
 		t.Error("the handover hint line never rendered in the inline window")
 	}
 }
+
+func streamingFixture() []uievent.Event {
+	return []uievent.Event{
+		{Kind: uievent.KindTurnStart, Body: uievent.TurnStartBody{Input: "start live streaming turn"}},
+		{Kind: uievent.KindNotice, Body: uievent.NoticeBody{Text: "initial-live-marker-1"}},
+		{Kind: uievent.KindNotice, Body: uievent.NoticeBody{Text: "delayed-live-marker-2"}},
+		{Kind: uievent.KindTextEnd, Body: uievent.TextEndBody{Text: "final-live-marker-3 completed successfully"}},
+		{Kind: uievent.KindTurnEnd, Body: uievent.TurnEndBody{Reason: "completed"}},
+	}
+}
+
+func newStreamingTranscriptRoot(t *testing.T, pace time.Duration) app.Model {
+	t.Helper()
+	themes, err := theme.Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	th, err := resolveTheme(themes, config{themeName: "mivia-dark", themeExplicit: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conv := replay.New(streamingFixture(), pace)
+	screen := conversation.New(th, theme.TierASCII, themes, conv, replay.NewApprover(), 80, nil)
+	return app.New(screen, th, theme.TierASCII, themes)
+}
+
+// TestTranscriptModeLiveStreaming proves that blocks arriving while the pager
+// is open render in the pager view without reopening the pager.
+func TestTranscriptModeLiveStreaming(t *testing.T) {
+	tm := teatest.NewTestModel(t, newStreamingTranscriptRoot(t, 80*time.Millisecond), teatest.WithInitialTermSize(80, 24))
+	shadow := &shadowStream{src: tm.Output()}
+	waitShadow := func(cond func([]byte) bool) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			shadow.drain()
+			if cond(shadow.buf.Bytes()) {
+				return
+			}
+		}
+		t.Fatalf("condition not met in the shadow stream; captured so far:\n%s", shadow.buf.String())
+	}
+
+	tm.Type("start")
+	tm.Send(enterKey())
+	waitShadow(func(b []byte) bool { return bytes.Contains(b, []byte("initial-live-marker-1")) })
+
+	// Open the pager while streaming is still active.
+	tm.Send(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+	waitShadow(func(b []byte) bool { return bytes.Contains(b, []byte("/:search")) })
+
+	// The delayed events must arrive and appear in the pager frame without reopening it.
+	waitShadow(func(b []byte) bool {
+		return bytes.Contains(b, []byte("delayed-live-marker-2")) && bytes.Contains(b, []byte("final-live-marker-3"))
+	})
+
+	// Quit the pager and app.
+	tm.Send(quitKey())
+	tm.WaitFinished(t, teatest.WithFinalTimeout(3*time.Second))
+	shadow.drain()
+
+	out := shadow.buf.Bytes()
+	if !bytes.Contains(out, []byte("delayed-live-marker-2")) {
+		t.Error("stream output missing delayed-live-marker-2")
+	}
+	if !bytes.Contains(out, []byte("final-live-marker-3")) {
+		t.Error("stream output missing final-live-marker-3")
+	}
+}

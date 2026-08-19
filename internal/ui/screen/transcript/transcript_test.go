@@ -518,3 +518,139 @@ func TestItoaNegativeRows(t *testing.T) {
 		}
 	}
 }
+
+// TestPagerLiveEventAppendsBlocks verifies that EventMsg appends new blocks,
+// updates rows and status line, and keeps the reader offset in place.
+func TestPagerLiveEventAppendsBlocks(t *testing.T) {
+	s := sizedPager(t, 80, 10) // content height 9, rows 24+, maxOffset >= 15
+	initialRows := len(s.rows)
+	s.offset = 5
+
+	ev := uievent.Event{
+		Kind: uievent.KindNotice,
+		Body: uievent.NoticeBody{Text: "fresh live notice arriving now"},
+	}
+	next, _ := s.Update(uievent.EventMsg{Event: ev})
+	scr := next.(Screen)
+
+	if len(scr.rows) <= initialRows {
+		t.Fatalf("rows count = %d, want > %d after live event", len(scr.rows), initialRows)
+	}
+	if !strings.Contains(strings.Join(scr.rows, "\n"), "fresh live notice arriving now") {
+		t.Error("pager rows do not contain the live notice text")
+	}
+	if scr.offset != 5 {
+		t.Errorf("offset = %d, want 5 (offset must not move on append)", scr.offset)
+	}
+	if !strings.Contains(scr.statusLine(), itoa(len(scr.rows))) {
+		t.Errorf("status line %q does not state total rows %d", scr.statusLine(), len(scr.rows))
+	}
+}
+
+// TestPagerLiveEventTrimShiftsOffset verifies that when trim() drops blocks
+// from the start, the pager offset shifts so the reader stays at the same line.
+func TestPagerLiveEventTrimShiftsOffset(t *testing.T) {
+	m := conv.New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 24)
+	for i := 0; i < uikitMaxTranscriptLines(); i++ {
+		m, _ = m.HandleEvent(uievent.Event{
+			Kind: uievent.KindNotice,
+			Body: uievent.NoticeBody{Text: "initial block " + itoa(i)},
+		})
+	}
+	s := NewPager(loadTheme(t), theme.TierASCII, m)
+	s.width, s.height = 80, 24
+	s.rebuild()
+
+	s.offset = 50
+	targetLine := s.rows[s.offset]
+
+	// Push 5 new blocks to trigger trim() of 5 blocks from the start
+	for i := 0; i < 5; i++ {
+		ev := uievent.Event{
+			Kind: uievent.KindNotice,
+			Body: uievent.NoticeBody{Text: "live streamed block " + itoa(i)},
+		}
+		next, _ := s.Update(uievent.EventMsg{Event: ev})
+		s = next.(Screen)
+	}
+
+	if s.dropped != 5 {
+		t.Errorf("dropped = %d, want 5", s.dropped)
+	}
+	if s.rows[s.offset] != targetLine {
+		t.Errorf("line at offset %d is %q, want original line %q", s.offset, s.rows[s.offset], targetLine)
+	}
+}
+
+// TestPagerLiveEventSearchUpdates verifies that live search matches and highlights
+// update when new matching blocks arrive.
+func TestPagerLiveEventSearchUpdates(t *testing.T) {
+	s := sizedPager(t, 80, 24)
+
+	// Search for a term not in the initial snapshot
+	s = drive(s, tea.KeyPressMsg{Code: '/'})
+	for _, r := range "dynamo" {
+		s = drive(s, tea.KeyPressMsg{Text: string(r), Code: r})
+	}
+	s = drive(s, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	if s.search.count() != 0 {
+		t.Fatalf("expected 0 matches for dynamo initially, got %d", s.search.count())
+	}
+
+	// Send a live event containing "dynamo"
+	ev := uievent.Event{
+		Kind: uievent.KindNotice,
+		Body: uievent.NoticeBody{Text: "dynamo engine active"},
+	}
+	next, _ := s.Update(uievent.EventMsg{Event: ev})
+	s = next.(Screen)
+
+	if s.search.count() != 1 {
+		t.Errorf("expected 1 match for dynamo after live event, got %d", s.search.count())
+	}
+	if !strings.Contains(s.statusLine(), "1 matches") {
+		t.Errorf("status line does not report matches: %q", s.statusLine())
+	}
+
+	// Also test while search bar is actively open
+	s = drive(s, tea.KeyPressMsg{Code: '/'})
+	for _, r := range "turbo" {
+		s = drive(s, tea.KeyPressMsg{Text: string(r), Code: r})
+	}
+	if s.search.count() != 0 {
+		t.Fatalf("expected 0 matches for turbo, got %d", s.search.count())
+	}
+
+	ev2 := uievent.Event{
+		Kind: uievent.KindNotice,
+		Body: uievent.NoticeBody{Text: "turbo stream activated"},
+	}
+	next2, _ := s.Update(uievent.EventMsg{Event: ev2})
+	s = next2.(Screen)
+
+	if s.search.count() != 1 {
+		t.Errorf("expected 1 match for turbo while bar active, got %d", s.search.count())
+	}
+	if !strings.Contains(s.statusLine(), "1 of 1") {
+		t.Errorf("status line does not report 1 of 1: %q", s.statusLine())
+	}
+}
+
+// TestPagerFlushMsgForwarded verifies that conv.FlushMsg updates conv.
+func TestPagerFlushMsgForwarded(t *testing.T) {
+	s := sizedPager(t, 80, 24)
+	ev := uievent.Event{
+		Kind: uievent.KindTextDelta,
+		Body: uievent.TextDeltaBody{Text: "stream chunk"},
+	}
+	next, cmd := s.Update(uievent.EventMsg{Event: ev})
+	s = next.(Screen)
+	if cmd == nil {
+		t.Error("expected flush cmd from text delta")
+	}
+
+	next2, _ := s.Update(conv.FlushMsg{})
+	_ = next2.(Screen)
+}

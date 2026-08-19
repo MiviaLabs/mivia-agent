@@ -142,7 +142,7 @@ func TestTurnEventUpdatesTranscriptAndReschedulesRead(t *testing.T) {
 	s := newScreen(t, replay.New(nil, 0), nil, nil)
 	s.active = fakeHandle{id: "t1"}
 
-	next, cmd := s.Update(turnEventMsg{ev: uievent.Event{Kind: uievent.KindTextEnd, Body: uievent.TextEndBody{Text: "hello"}}})
+	next, cmd := s.Update(uievent.EventMsg{Event: uievent.Event{Kind: uievent.KindTextEnd, Body: uievent.TextEndBody{Text: "hello"}}})
 	got := next.(Screen)
 	if n := len(got.transcript.Blocks()); n != 1 {
 		t.Errorf("got %d blocks, want the finished span added to the transcript", n)
@@ -173,7 +173,7 @@ func TestTurnEventUpdatesTranscriptAndReschedulesRead(t *testing.T) {
 func TestTurnEventArmsApprovalOnToolPending(t *testing.T) {
 	s := newScreen(t, replay.New(nil, 0), nil, nil)
 	s.active = fakeHandle{id: "t1"}
-	next, _ := s.Update(turnEventMsg{ev: uievent.Event{
+	next, _ := s.Update(uievent.EventMsg{Event: uievent.Event{
 		Kind: uievent.KindToolPending,
 		Body: uievent.ToolPendingBody{ToolCallID: "c1", Name: "run_command"},
 	}})
@@ -381,9 +381,9 @@ func TestWaitForEventReadsOneEventThenSignalsClose(t *testing.T) {
 	cmd := waitForEvent(ch)
 
 	msg := cmd()
-	got, ok := msg.(turnEventMsg)
-	if !ok || got.ev.Kind != uievent.KindNotice {
-		t.Fatalf("got %+v, want turnEventMsg carrying the queued event", msg)
+	got, ok := msg.(uievent.EventMsg)
+	if !ok || got.Event.Kind != uievent.KindNotice {
+		t.Fatalf("got %+v, want uievent.EventMsg carrying the queued event", msg)
 	}
 
 	close(ch)
@@ -423,7 +423,8 @@ func TestViewOmitsInactiveStatuslineAndApproval(t *testing.T) {
 // fakeHandle is a minimal ports.TurnHandle standing in for "some turn is
 // active" in tests that only need Update's `s.active != nil` branch,
 // not a real event stream (TestTurnEventUpdatesTranscriptAndReschedulesRead
-// and its neighbours exercise turnEventMsg directly; they don't read
+// and its neighbours exercise uievent.EventMsg directly; they don't read
+
 // through Events() themselves). Events() returns an already-closed
 // channel, not nil: handleTurnEvent's batched readCmd is safe to
 // actually execute in a test this way (immediate turnEndedMsg, no
@@ -528,7 +529,7 @@ func TestViewNeverExceedsTerminalHeight(t *testing.T) {
 
 	// Fill the transcript first, so any budget slack is used up.
 	for i := 0; i < 40; i++ {
-		n, _ := scr.Update(turnEventMsg{ev: uievent.Event{
+		n, _ := scr.Update(uievent.EventMsg{Event: uievent.Event{
 			Kind: uievent.KindNotice,
 			Body: uievent.NoticeBody{Text: fmt.Sprintf("notice %d", i)},
 		}})
@@ -546,7 +547,7 @@ func TestViewNeverExceedsTerminalHeight(t *testing.T) {
 	}
 	assertFits(t, scr, "status line armed")
 
-	n, _ = scr.Update(turnEventMsg{ev: uievent.Event{
+	n, _ = scr.Update(uievent.EventMsg{Event: uievent.Event{
 		Kind: uievent.KindToolPending,
 		Body: uievent.ToolPendingBody{ToolCallID: "c1", Name: "run_command"},
 	}})
@@ -582,7 +583,7 @@ func TestShrinkKeepsEveryBlock(t *testing.T) {
 	scr := next.(Screen)
 
 	for i := 0; i < 10; i++ {
-		n, _ := scr.Update(turnEventMsg{ev: uievent.Event{
+		n, _ := scr.Update(uievent.EventMsg{Event: uievent.Event{
 			Kind: uievent.KindNotice,
 			Body: uievent.NoticeBody{Text: fmt.Sprintf("notice %d", i)},
 		}})
@@ -607,7 +608,7 @@ func TestShrinkKeepsEveryBlock(t *testing.T) {
 func TestTurnEventClearsApprovalOnToolStartOrTurnEnd(t *testing.T) {
 	s := newScreen(t, replay.New(nil, 0), nil, nil)
 	// Arm approval
-	next, _ := s.Update(turnEventMsg{ev: uievent.Event{
+	next, _ := s.Update(uievent.EventMsg{Event: uievent.Event{
 		Kind: uievent.KindToolPending,
 		Body: uievent.ToolPendingBody{ToolCallID: "c1", Name: "run_command"},
 	}})
@@ -617,7 +618,7 @@ func TestTurnEventClearsApprovalOnToolStartOrTurnEnd(t *testing.T) {
 	}
 
 	// ToolStart clears approval
-	next, _ = scr.Update(turnEventMsg{ev: uievent.Event{
+	next, _ = scr.Update(uievent.EventMsg{Event: uievent.Event{
 		Kind: uievent.KindToolStart,
 		Body: uievent.ToolStartBody{ToolCallID: "c1", Name: "run_command"},
 	}})
@@ -627,7 +628,7 @@ func TestTurnEventClearsApprovalOnToolStartOrTurnEnd(t *testing.T) {
 	}
 
 	// Arm approval again, then TurnEnd clears approval
-	next, _ = scr.Update(turnEventMsg{ev: uievent.Event{
+	next, _ = scr.Update(uievent.EventMsg{Event: uievent.Event{
 		Kind: uievent.KindToolPending,
 		Body: uievent.ToolPendingBody{ToolCallID: "c2", Name: "run_command"},
 	}})
@@ -635,7 +636,7 @@ func TestTurnEventClearsApprovalOnToolStartOrTurnEnd(t *testing.T) {
 	if !scr.approval.Active() {
 		t.Fatal("expected approval active after ToolPending")
 	}
-	next, _ = scr.Update(turnEventMsg{ev: uievent.Event{
+	next, _ = scr.Update(uievent.EventMsg{Event: uievent.Event{
 		Kind: uievent.KindTurnEnd,
 		Body: uievent.TurnEndBody{Reason: "completed"},
 	}})

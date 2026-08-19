@@ -30,7 +30,7 @@ func sized(t *testing.T, blocks int) Screen {
 	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
 	scr := next.(Screen)
 	for i := 0; i < blocks; i++ {
-		n, _ := scr.Update(turnEventMsg{ev: uievent.Event{
+		n, _ := scr.Update(uievent.EventMsg{Event: uievent.Event{
 			Kind: uievent.KindNotice,
 			Body: uievent.NoticeBody{Text: "notice-" + string(rune('a'+i))},
 		}})
@@ -119,7 +119,7 @@ func TestSpaceTogglesOnlyAFocusedBlock(t *testing.T) {
 	s := newScreen(t, replay.New(nil, 0), nil, nil)
 	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
 	scr := next.(Screen)
-	n, _ := scr.Update(turnEventMsg{ev: uievent.Event{
+	n, _ := scr.Update(uievent.EventMsg{Event: uievent.Event{
 		Kind: uievent.KindToolEnd,
 		Body: uievent.ToolEndBody{ToolCallID: "c1", Name: "run_command", OK: true, Result: "x\ny\nz"},
 	}})
@@ -141,7 +141,7 @@ func TestCollapseAllAndExpandAll(t *testing.T) {
 	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
 	scr := next.(Screen)
 	for i := 0; i < 3; i++ {
-		n, _ := scr.Update(turnEventMsg{ev: uievent.Event{
+		n, _ := scr.Update(uievent.EventMsg{Event: uievent.Event{
 			Kind: uievent.KindToolEnd,
 			Body: uievent.ToolEndBody{ToolCallID: string(rune('a' + i)), Name: "edit", OK: true, Result: "1\n2"},
 		}})
@@ -369,7 +369,7 @@ func TestMenuArrowsMoveTheHighlight(t *testing.T) {
 // TestApprovalClaimsEveryKey pins the top of the precedence ladder.
 func TestApprovalClaimsEveryKey(t *testing.T) {
 	s := sized(t, 2)
-	n, _ := s.Update(turnEventMsg{ev: uievent.Event{
+	n, _ := s.Update(uievent.EventMsg{Event: uievent.Event{
 		Kind: uievent.KindToolPending,
 		Body: uievent.ToolPendingBody{ToolCallID: "c1", Name: "run_command"},
 	}})
@@ -554,7 +554,7 @@ func TestScrollKeysMoveTheViewport(t *testing.T) {
 	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 10})
 	scr := next.(Screen)
 	for i := 0; i < 40; i++ {
-		n, _ := scr.Update(turnEventMsg{ev: uievent.Event{
+		n, _ := scr.Update(uievent.EventMsg{Event: uievent.Event{
 			Kind: uievent.KindNotice, Body: uievent.NoticeBody{Text: fmt.Sprintf("notice %d", i)},
 		}})
 		scr = n.(Screen)
@@ -595,7 +595,7 @@ func TestWheelScrollsTheTranscript(t *testing.T) {
 	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 10})
 	scr := next.(Screen)
 	for i := 0; i < 40; i++ {
-		n, _ := scr.Update(turnEventMsg{ev: uievent.Event{
+		n, _ := scr.Update(uievent.EventMsg{Event: uievent.Event{
 			Kind: uievent.KindNotice, Body: uievent.NoticeBody{Text: fmt.Sprintf("notice %d", i)},
 		}})
 		scr = n.(Screen)
@@ -622,7 +622,7 @@ func TestStatusRowStatesWhenScrolledAway(t *testing.T) {
 	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 10})
 	scr := next.(Screen)
 	for i := 0; i < 40; i++ {
-		n, _ := scr.Update(turnEventMsg{ev: uievent.Event{
+		n, _ := scr.Update(uievent.EventMsg{Event: uievent.Event{
 			Kind: uievent.KindNotice, Body: uievent.NoticeBody{Text: fmt.Sprintf("notice %d", i)},
 		}})
 		scr = n.(Screen)
@@ -646,7 +646,7 @@ func TestStatusRowStatesTruncation(t *testing.T) {
 	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 10})
 	scr := next.(Screen)
 	for i := 0; i < uikitconfig.MaxTranscriptLines+3; i++ {
-		n, _ := scr.Update(turnEventMsg{ev: uievent.Event{
+		n, _ := scr.Update(uievent.EventMsg{Event: uievent.Event{
 			Kind: uievent.KindNotice, Body: uievent.NoticeBody{Text: fmt.Sprintf("notice %d", i)},
 		}})
 		scr = n.(Screen)

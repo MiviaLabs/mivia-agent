@@ -11,6 +11,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/conversation"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/replay"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
 
 // routerFixture bundles the dark/light themes a router integration test
@@ -132,5 +133,56 @@ func TestSelectingThemeChangesRenderedColourAndPreservesState(t *testing.T) {
 	darkAccent := render.Role(f.dark, theme.TierTrueColor, theme.RoleAccent).Render("> ")
 	if darkAccent != wantAccent && strings.Contains(view.Content, darkAccent) {
 		t.Errorf("expected the original mivia-dark accent colour gone after switching to %s, got:\n%q", f.light.Name, view.Content)
+	}
+}
+
+// TestTranscriptPagerAndBaseScreenReceiveBroadcastEvents verifies that while the
+// transcript pager is open, broadcast event messages update both the pager on top
+// and the underlying conversation screen.
+func TestTranscriptPagerAndBaseScreenReceiveBroadcastEvents(t *testing.T) {
+	f := newRouterFixture(t)
+	base := conversation.New(f.dark, theme.TierTrueColor, f.themes, replay.New(nil, 0), nil, 80, nil)
+	m := app.New(base, f.dark, theme.TierTrueColor, f.themes)
+
+	// Measure router
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = next.(app.Model)
+
+	// Open transcript pager with ctrl+o
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+	m = next.(app.Model)
+	if cmd == nil {
+		t.Fatal("expected PushScreenMsg from ctrl+o")
+	}
+	next, _ = m.Update(cmd())
+	m = next.(app.Model)
+
+	// Broadcast an event while pager is open
+	ev := uievent.Event{
+		Kind: uievent.KindNotice,
+		Body: uievent.NoticeBody{Text: "live router broadcast notice"},
+	}
+	next, _ = m.Update(uievent.EventMsg{Event: ev})
+	m = next.(app.Model)
+
+	// Pager on top should show the notice
+	pagerView := m.View().Content
+	if !strings.Contains(pagerView, "live router broadcast notice") {
+		t.Errorf("pager view does not contain live notice:\n%s", pagerView)
+	}
+
+	// Pop the pager with ctrl+o (or leave key)
+	next, popCmd := m.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+	m = next.(app.Model)
+	if popCmd == nil {
+		t.Fatal("expected PopScreenMsg from pager leave key")
+	}
+	next, _ = m.Update(popCmd())
+	m = next.(app.Model)
+
+	// Base conversation screen underneath should also show the notice
+	baseView := m.View().Content
+	if !strings.Contains(baseView, "live router broadcast notice") {
+		t.Errorf("base conversation view does not contain live notice after pop:\n%s", baseView)
 	}
 }

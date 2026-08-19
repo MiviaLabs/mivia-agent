@@ -78,7 +78,8 @@ a half page, `q` or `Esc` to leave.
 Implementation: the pager at `internal/ui/screen/transcript`, pushed onto
 the router stack by Ctrl-O; the `ContextPager` table in
 `internal/uikit/keymap`; the integration test at
-`cmd/mivia-ui/teatest_transcript_test.go`. Search is case-insensitive
+`cmd/mivia-ui/teatest_transcript_test.go`. The pager is live under streaming:
+blocks arriving while it is open appear without reopening. Search is case-insensitive
 substring, reports the match count, highlights every visible match, and
 Esc from the bar restores the scroll position the search started from.
 The pager also binds `{` and `}` to jump between user prompts, and the

@@ -47,6 +47,7 @@ func (st *searchState) find(rows []string) {
 		st.current = -1
 		return
 	}
+	savedCurrent := st.current
 	for i, row := range rows {
 		lower := strings.ToLower(row)
 		start := 0
@@ -62,6 +63,8 @@ func (st *searchState) find(rows []string) {
 	}
 	if len(st.matches) == 0 {
 		st.current = -1
+	} else if savedCurrent >= 0 && savedCurrent < len(st.matches) {
+		st.current = savedCurrent
 	} else {
 		st.current = 0
 	}

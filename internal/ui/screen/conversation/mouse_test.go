@@ -16,7 +16,7 @@ import (
 func toolScreen(t *testing.T) Screen {
 	t.Helper()
 	s := sized(t, 0)
-	next, _ := s.Update(turnEventMsg{ev: uievent.Event{
+	next, _ := s.Update(uievent.EventMsg{Event: uievent.Event{
 		Kind: uievent.KindToolOutput,
 		Body: uievent.ToolOutputBody{
 			ToolCallID: "call-1",
@@ -156,7 +156,7 @@ func TestStatusRowStatesNewBlockCount(t *testing.T) {
 		t.Fatal("precondition: ctrl+home pauses follow")
 	}
 	for i := 0; i < 3; i++ {
-		n, _ := s.Update(turnEventMsg{ev: uievent.Event{
+		n, _ := s.Update(uievent.EventMsg{Event: uievent.Event{
 			Kind: uievent.KindNotice, Body: uievent.NoticeBody{Text: "streamed"},
 		}})
 		s = n.(Screen)

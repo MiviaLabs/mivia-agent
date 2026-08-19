@@ -98,9 +98,6 @@ func (s Screen) Init() tea.Cmd { return nil }
 // ViewFlags holds the alternate screen: the conversation is the cockpit.
 func (s Screen) ViewFlags() app.ViewFlags { return app.ViewFlags{AltScreen: true} }
 
-// turnEventMsg carries one event read off the active TurnHandle.
-type turnEventMsg struct{ ev uievent.Event }
-
 // turnEndedMsg signals the active TurnHandle's Events() channel closed.
 type turnEndedMsg struct{}
 
@@ -114,7 +111,7 @@ func waitForEvent(events <-chan uievent.Event) tea.Cmd {
 		if !ok {
 			return turnEndedMsg{}
 		}
-		return turnEventMsg{ev: ev}
+		return uievent.EventMsg{Event: ev}
 	}
 }
 
@@ -146,8 +143,8 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		return s.handleKey(msg)
-	case turnEventMsg:
-		return s.handleTurnEvent(msg.ev)
+	case uievent.EventMsg:
+		return s.handleTurnEvent(msg.Event)
 	case turnEndedMsg:
 		s.statusline.Stop()
 		s.approval.Clear()
