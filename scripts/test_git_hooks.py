@@ -783,50 +783,25 @@ def test_semgrep_engine_failure_detector() -> None:
             assert proc.returncode == expected, (log.name, proc.returncode, proc.stdout)
 
 
-def extract_symlink_filter() -> str:
-    source = (ROOT / "scripts" / "git-hooks" / "pre-commit").read_text(encoding="utf-8")
-    start = source.index("# BEGIN symlink filter")
-    end = source.index("# END symlink filter", start) + len("# END symlink filter")
-    return source[start:end]
-
-
-def test_pre_commit_symlink_filter_excludes_symlinks_from_semgrep_scan() -> None:
-    """semgrep refuses to scan a staged symlink path directly (it errors
-    with "Semgrep skips symbolic links... pass the target it points to
-    directly" instead of producing findings), so a staged symlink - e.g. a
-    skill alias under .claude/skills or .agents/skills pointing back into
-    .mivia/skills - failed the whole pre-commit semgrep gate before this
-    fix, not just that one file. This pins the extracted filter fragment in
-    isolation: given a STAGED_FILES array holding a real file and a symlink,
-    it must leave only the real file in STAGED_FILES."""
-    if os.name == "nt":
-        return
-    filter_fragment = extract_symlink_filter()
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp_path = Path(tmp)
-        real_file = tmp_path / "real.go"
-        real_file.write_text("package main\n", encoding="utf-8")
-        link = tmp_path / "link.go"
-        link.symlink_to(real_file)
-
-        script = tmp_path / "run.sh"
-        script.write_text(
-            f'STAGED_FILES=("{real_file}" "{link}")\n'
-            f"{filter_fragment}\n"
-            'printf \'%s\\n\' "${STAGED_FILES[@]}"\n',
-            encoding="utf-8",
-        )
-        proc = run(["bash", str(script)], ROOT, check=True)
-        remaining = proc.stdout.splitlines()
-        assert str(real_file) in remaining, remaining
-        assert str(link) not in remaining, remaining
-        assert len(remaining) == 1, remaining
+def test_pre_commit_semgrep_scans_staged_tree_directory_not_a_symlink_file_list() -> None:
+    """pre-commit now scans the isolated staged-tree directory ($STAGED_ROOT)
+    as a single target, not an explicit STAGED_FILES list built from `git
+    diff --cached`. semgrep refuses to scan a symlink path passed directly
+    (it errors with "Semgrep skips symbolic links... pass the target it
+    points to directly" instead of producing findings), which used to fail
+    the whole gate on a staged symlink (e.g. a skill alias under
+    .claude/skills or .agents/skills pointing back into .mivia/skills) - a
+    directory scan sidesteps that because semgrep's own walk skips symlinks
+    on its own. Pin that the script scans STAGED_ROOT as a directory."""
+    pre = (ROOT / "scripts" / "git-hooks" / "pre-commit").read_text(encoding="utf-8")
+    assert '"$STAGED_ROOT" >"$SEMGREP_LOG"' in pre, "semgrep must scan the STAGED_ROOT directory"
+    assert "STAGED_FILES" not in pre, "the staged-file-list + symlink-filter approach should be gone"
 
 
 def test_pre_commit_semgrep_engine_resilience() -> None:
     pre = (ROOT / "scripts" / "git-hooks" / "pre-commit").read_text(encoding="utf-8")
     assert "semgrep_engine_failure() {" in pre
-    assert "--validate --config semgrep/agent-standards.yml -j 1" in pre
+    assert '--validate --config "$STAGED_ROOT/semgrep/agent-standards.yml" -j 1' in pre
     assert "engine unavailable" in pre
     assert "semgrep scan failed (findings or error)" in pre
 
@@ -865,6 +840,7 @@ def main() -> None:
     test_pre_commit_has_invariant_gate()
     test_pre_push_without_a_base_scans_all_tracked_files()
     test_semgrep_engine_failure_detector()
+    test_pre_commit_semgrep_scans_staged_tree_directory_not_a_symlink_file_list()
     test_pre_commit_semgrep_engine_resilience()
     test_pre_push_semgrep_engine_resilience()
     with tempfile.TemporaryDirectory() as tmp:
