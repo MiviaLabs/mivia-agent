@@ -587,6 +587,9 @@ func (s Screen) centerRows() []string {
 	case s.agentPicker != nil:
 		dw, dh := s.dialogSize()
 		return overlayRows(renderPickerDialog(s.Theme, s.Tier, dw, dh, "select an agent", *s.agentPicker), s.transcriptHeight())
+	case s.sessionPicker != nil:
+		dw, dh := s.dialogSize()
+		return overlayRows(renderSessionPickerDialog(s.Theme, s.Tier, dw, dh, *s.sessionPicker, s.now()), s.transcriptHeight())
 	case s.overlay != "":
 		return overlayRows(s.overlay, s.transcriptHeight())
 	default:

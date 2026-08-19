@@ -34,8 +34,8 @@ func TestLoadScenarioFullTourCoversEveryTurnShape(t *testing.T) {
 		t.Fatal(err)
 	}
 	scripts := loaded.Scripts
-	if len(scripts) != 10 {
-		t.Fatalf("got %d scripts, want 10 (one per required turn shape)", len(scripts))
+	if len(scripts) != 11 {
+		t.Fatalf("got %d scripts, want 11 (one per required turn shape)", len(scripts))
 	}
 	for i, s := range scripts {
 		if len(s.Before) == 0 {

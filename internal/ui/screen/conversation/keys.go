@@ -145,6 +145,10 @@ func (s Screen) handleOpenPickerKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, b
 		next, cmd := s.handleAgentPickerKey(msg)
 		return next, cmd, true
 	}
+	if s.sessionPicker != nil {
+		next, cmd := s.handleSessionPickerKey(msg)
+		return next, cmd, true
+	}
 	return s, nil, false
 }
 
@@ -353,7 +357,7 @@ func (s Screen) handleClick(msg tea.MouseClickMsg) (app.Screen, tea.Cmd) {
 // panel's content dialog. Clicks that hit the area while something else
 // draws there must not act on the transcript hidden behind it.
 func (s Screen) transcriptShown() bool {
-	return s.modelPicker == nil && s.agentPicker == nil && s.overlay == "" && !s.panel.dialog
+	return s.modelPicker == nil && s.agentPicker == nil && s.sessionPicker == nil && s.overlay == "" && !s.panel.dialog
 }
 
 func (s Screen) completionAction(id keymap.ID) (app.Screen, tea.Cmd) {

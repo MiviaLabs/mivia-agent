@@ -2,12 +2,13 @@ package conversation
 
 import (
 	"context"
-	"github.com/charmbracelet/x/ansi"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/picker"
@@ -70,6 +71,11 @@ func (f *fakeRunner) SelectAgent(_ context.Context, name string) ports.CommandOu
 
 func (f *fakeRunner) SelectModel(_ context.Context, name string) ports.CommandOutcome {
 	f.selectCalls = append(f.selectCalls, name)
+	return f.selectOutcome
+}
+
+func (f *fakeRunner) SelectSession(_ context.Context, id string) ports.CommandOutcome {
+	f.selectCalls = append(f.selectCalls, "session:"+id)
 	return f.selectOutcome
 }
 
@@ -486,6 +492,69 @@ func TestAgentPickerEscapeCancelsWithoutSelecting(t *testing.T) {
 
 	if s.agentPicker != nil {
 		t.Error("escape left the agent picker open")
+	}
+	if len(runner.selectCalls) != 0 {
+		t.Errorf("escape selected: %v", runner.selectCalls)
+	}
+}
+
+func TestResumeCommandOpensSessionPicker(t *testing.T) {
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	runner := &fakeRunner{
+		outcome: ports.CommandOutcome{SessionChoices: sampleSessions(now)},
+	}
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	s.SetCommandRunner(runner)
+	s.width, s.height = 60, 24
+	s, _ = sendLine(t, s, "/resume")
+
+	if s.sessionPicker == nil {
+		t.Fatal("/resume did not open the session picker")
+	}
+	view := ansi.Strip(s.View())
+	for _, want := range []string{"resume session", "Refactor Storage Engine", "Fix Memory Leak"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("session picker view missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestSessionPickerSelectionAppliesThroughTheRunner(t *testing.T) {
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	runner := &fakeRunner{
+		outcome:       ports.CommandOutcome{SessionChoices: sampleSessions(now)},
+		selectOutcome: ports.CommandOutcome{Notice: "resumed session: Refactor Storage Engine"},
+	}
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	s.SetCommandRunner(runner)
+	s.width, s.height = 60, 24
+	s, _ = sendLine(t, s, "/resume")
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	s = next.(Screen)
+
+	if s.sessionPicker != nil {
+		t.Error("enter left the session picker open")
+	}
+	if len(runner.selectCalls) != 1 || runner.selectCalls[0] != "session:s-1" {
+		t.Errorf("SelectSession calls = %v, want [session:s-1] (first choice highlighted)", runner.selectCalls)
+	}
+	if got := lastErrorDetail(t, s); !strings.Contains(got, "resumed session: Refactor Storage Engine") {
+		t.Errorf("notice detail %q, want the SelectSession outcome's Notice", got)
+	}
+}
+
+func TestSessionPickerEscapeCancelsWithoutSelecting(t *testing.T) {
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	runner := &fakeRunner{outcome: ports.CommandOutcome{SessionChoices: sampleSessions(now)}}
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	s.SetCommandRunner(runner)
+	s.width, s.height = 60, 24
+	s, _ = sendLine(t, s, "/resume")
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	s = next.(Screen)
+
+	if s.sessionPicker != nil {
+		t.Error("escape left the session picker open")
 	}
 	if len(runner.selectCalls) != 0 {
 		t.Errorf("escape selected: %v", runner.selectCalls)

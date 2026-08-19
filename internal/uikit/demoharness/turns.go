@@ -64,7 +64,7 @@ var scenarios = map[string]scenarioDef{
 		Files: []string{
 			"smalltalk.json", "tool_call.json", "diff.json", "tool_fail.json",
 			"plan.json", "reasoning.json", "usage.json", "approval.json",
-			"approval_diff.json", "delete.json",
+			"approval_diff.json", "delete.json", "subagent.json",
 		},
 	},
 	"smalltalk": {

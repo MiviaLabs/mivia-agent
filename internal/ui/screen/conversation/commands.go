@@ -67,6 +67,10 @@ func (s Screen) applyCommandOutcome(o ports.CommandOutcome) (app.Screen, tea.Cmd
 		ap := picker.New(s.Theme, s.Tier, o.AgentChoices)
 		s.agentPicker = &ap
 		return s, tea.ClearScreen
+	case len(o.SessionChoices) > 0:
+		sp := newSessionPicker(s.Theme, s.Tier, o.SessionChoices)
+		s.sessionPicker = &sp
+		return s, tea.ClearScreen
 	case o.Notice != "":
 		return s.withNotice(o.Notice), nil
 	}
@@ -143,7 +147,7 @@ func (s Screen) handlePickerKey(msg tea.KeyPressMsg, which *picker.Model, cmdNam
 	// press).
 	if msg.String() == "ctrl+c" {
 		*which = picker.Model{}
-		s.modelPicker, s.agentPicker = nil, nil
+		s.modelPicker, s.agentPicker, s.sessionPicker = nil, nil, nil
 		next, cmd, _ := s.quit()
 		return next, tea.Batch(cmd, tea.ClearScreen)
 	}
@@ -156,7 +160,7 @@ func (s Screen) handlePickerKey(msg tea.KeyPressMsg, which *picker.Model, cmdNam
 	// (SelectMsg) or "esc" (CancelMsg) - see internal/ui/component/picker.
 	switch m := cmd().(type) {
 	case picker.SelectMsg:
-		s.modelPicker, s.agentPicker = nil, nil
+		s.modelPicker, s.agentPicker, s.sessionPicker = nil, nil, nil
 		if s.runner == nil {
 			return s.withError("no command runner configured for /" + cmdName), tea.ClearScreen
 		}
@@ -164,7 +168,7 @@ func (s Screen) handlePickerKey(msg tea.KeyPressMsg, which *picker.Model, cmdNam
 		next, outcomeCmd := s.applyCommandOutcome(out)
 		return next, tea.Batch(outcomeCmd, tea.ClearScreen)
 	case picker.CancelMsg:
-		s.modelPicker, s.agentPicker = nil, nil
+		s.modelPicker, s.agentPicker, s.sessionPicker = nil, nil, nil
 		return s, tea.ClearScreen
 	}
 	return s, nil
@@ -182,6 +186,36 @@ func (s Screen) handleAgentPickerKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) 
 	return s.handlePickerKey(msg, s.agentPicker, "agents", func(name string) ports.CommandOutcome {
 		return s.runner.SelectAgent(context.Background(), name)
 	})
+}
+
+func (s Screen) handleSessionPickerKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
+	if msg.String() == "ctrl+c" {
+		s.sessionPicker = nil
+		next, cmd, _ := s.quit()
+		return next, tea.Batch(cmd, tea.ClearScreen)
+	}
+	next, cmd := s.sessionPicker.Update(msg)
+	s.sessionPicker = &next
+	if cmd == nil {
+		return s, nil
+	}
+	switch m := cmd().(type) {
+	case picker.SelectMsg:
+		s.sessionPicker = nil
+		if s.runner == nil {
+			return s.withError("no command runner configured for /resume"), tea.ClearScreen
+		}
+		out := s.runner.SelectSession(context.Background(), m.Item)
+		if title := s.conv.Title(); title != "" {
+			s.topbar.SetBreadcrumb([]string{title})
+		}
+		next, outcomeCmd := s.applyCommandOutcome(out)
+		return next, tea.Batch(outcomeCmd, tea.ClearScreen)
+	case picker.CancelMsg:
+		s.sessionPicker = nil
+		return s, tea.ClearScreen
+	}
+	return s, nil
 }
 
 // renderPickerDialog draws the /model and /agents pickers as centered

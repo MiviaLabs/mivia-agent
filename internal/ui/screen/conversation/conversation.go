@@ -41,11 +41,12 @@ type Screen struct {
 	Tier   theme.Tier
 	themes []theme.Theme
 
-	conv        ports.Conversation
-	approver    ports.Approver      // nil is valid: no approval wiring
-	runner      ports.CommandRunner // nil is valid: every "/x" then shows an error, never sends
-	modelPicker *picker.Model       // non-nil while the /model picker is open
-	agentPicker *picker.Model       // non-nil while the /agents picker is open
+	conv          ports.Conversation
+	approver      ports.Approver      // nil is valid: no approval wiring
+	runner        ports.CommandRunner // nil is valid: every "/x" then shows an error, never sends
+	modelPicker   *picker.Model       // non-nil while the /model picker is open
+	agentPicker   *picker.Model       // non-nil while the /agents picker is open
+	sessionPicker *sessionPicker      // non-nil while the /resume picker is open
 
 	// threads resolves a dispatched subagent's conversation for the
 	// panel's thread dialog; nil is valid (every entry then falls back
@@ -416,7 +417,7 @@ func (s Screen) View() string {
 		return s.gutter(lines)
 	}
 	switch {
-	case s.modelPicker != nil || s.agentPicker != nil || s.overlay != "":
+	case s.modelPicker != nil || s.agentPicker != nil || s.sessionPicker != nil || s.overlay != "":
 		lines = append(lines, s.centerRows()...)
 	case !s.embedded && s.panel.open:
 		lines = append(lines, s.narrowPanelRows()...)
@@ -483,6 +484,11 @@ func (s *Screen) SetCommandRunner(r ports.CommandRunner) { s.runner = r }
 // zero-value default) makes every subagent entry fall back to the
 // read-only step-log view.
 func (s *Screen) SetSubagentThreads(t ports.SubagentThreads) { s.threads = t }
+
+// ObserveAgent records a subagent progress update in the activity panel.
+func (s *Screen) ObserveAgent(id string, pr *uievent.Progress) {
+	s.panel.observeAgent(id, pr)
+}
 
 // SetMouseOverrideHint records the terminal's mouse-override key
 // (rule 6.5), shown in the help overlay. Empty clears it.

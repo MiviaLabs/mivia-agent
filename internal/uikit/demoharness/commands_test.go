@@ -84,6 +84,31 @@ func TestSelectAgentSwitchesAndRejectsUnknown(t *testing.T) {
 	}
 }
 
+func TestRunResumeOffersSessions(t *testing.T) {
+	h := newHarness(t)
+	got := h.Run(context.Background(), "resume", "")
+	if got.Notice != "" || got.Err != "" {
+		t.Errorf("got %q/%q, want a pure picker outcome", got.Notice, got.Err)
+	}
+	if len(got.SessionChoices) != len(demoSessions) {
+		t.Fatalf("got %d choices, want %d", len(got.SessionChoices), len(demoSessions))
+	}
+}
+
+func TestSelectSessionSwitchesAndRejectsUnknown(t *testing.T) {
+	h := newHarness(t)
+	got := h.SelectSession(context.Background(), "sess-1")
+	if got.Err != "" || !strings.Contains(got.Notice, "Cockpit Feature Tour") {
+		t.Errorf("select session: got %q/%q", got.Err, got.Notice)
+	}
+	if h.Title() != "Cockpit Feature Tour" {
+		t.Errorf("title not updated: got %q", h.Title())
+	}
+	if got := h.SelectSession(context.Background(), "nope"); got.Err == "" {
+		t.Errorf("unknown session selected silently: %+v", got)
+	}
+}
+
 func TestRunClearEmptiesHistoryAndAsksToClearTranscript(t *testing.T) {
 	h := newHarness(t)
 	h.mu.Lock()

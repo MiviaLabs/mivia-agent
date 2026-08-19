@@ -102,6 +102,15 @@ type Approver interface {
 	Resolve(id string, decision Decision)
 }
 
+// SessionSummary describes one existing session for listing and resuming.
+type SessionSummary struct {
+	ID        string
+	Title     string
+	UpdatedAt time.Time
+	Active    bool
+	State     string // e.g. "idle", "thinking", "running", "streaming", "done"
+}
+
 // SessionMeta describes a saved session for listing/loading.
 type SessionMeta struct {
 	Name      string

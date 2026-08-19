@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
@@ -58,6 +59,8 @@ func (h *Harness) Run(_ context.Context, name, args string) ports.CommandOutcome
 			names = append(names, a.Name)
 		}
 		return ports.CommandOutcome{AgentChoices: names}
+	case "resume":
+		return ports.CommandOutcome{SessionChoices: append([]ports.SessionSummary(nil), demoSessions...)}
 	case "clear":
 		h.mu.Lock()
 		h.history = nil
@@ -74,6 +77,51 @@ func (h *Harness) Run(_ context.Context, name, args string) ports.CommandOutcome
 		}
 		return ports.CommandOutcome{Err: "unknown command " + label}
 	}
+}
+
+// demoSessions is the fake session list /resume offers.
+var demoSessions = []ports.SessionSummary{
+	{
+		ID:        "sess-1",
+		Title:     "Cockpit Feature Tour",
+		UpdatedAt: time.Now().Add(-2 * time.Minute),
+		Active:    true,
+		State:     "running",
+	},
+	{
+		ID:        "sess-2",
+		Title:     "Refactor Config Constant",
+		UpdatedAt: time.Now().Add(-25 * time.Minute),
+		Active:    false,
+		State:     "done",
+	},
+	{
+		ID:        "sess-3",
+		Title:     "Delete Cache Directory",
+		UpdatedAt: time.Now().Add(-2 * time.Hour),
+		Active:    false,
+		State:     "done",
+	},
+	{
+		ID:        "sess-4",
+		Title:     "Morning Check-in",
+		UpdatedAt: time.Now().Add(-24 * time.Hour),
+		Active:    false,
+		State:     "done",
+	},
+}
+
+// SelectSession applies a /resume choice.
+func (h *Harness) SelectSession(_ context.Context, id string) ports.CommandOutcome {
+	for _, s := range demoSessions {
+		if s.ID == id {
+			h.mu.Lock()
+			h.title = s.Title
+			h.mu.Unlock()
+			return ports.CommandOutcome{Notice: "resumed session: " + s.Title}
+		}
+	}
+	return ports.CommandOutcome{Err: "unknown session " + id}
 }
 
 // SelectModel applies a /model choice. An unlisted name is an error:

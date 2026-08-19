@@ -38,6 +38,11 @@ type CommandOutcome struct {
 	// does not enforce it, the harness's roster does.
 	AgentChoices []string
 
+	// SessionChoices, when non-empty, asks the UI to open a session picker
+	// over these session summaries. The chosen session ID comes back through
+	// CommandRunner.SelectSession.
+	SessionChoices []SessionSummary
+
 	// Notice, when non-empty, is appended to the transcript as an
 	// informational block.
 	Notice string
@@ -63,6 +68,10 @@ type CommandRunner interface {
 	// picker: switch the session's active agent and report the outcome,
 	// typically a confirmation Notice.
 	SelectAgent(ctx context.Context, name string) CommandOutcome
+
+	// SelectSession applies a session choice returned by a SessionChoices
+	// picker: switch/resume the selected session and report the outcome.
+	SelectSession(ctx context.Context, id string) CommandOutcome
 }
 
 // DefaultAgentName is the session's default agent: Mivia, the general
