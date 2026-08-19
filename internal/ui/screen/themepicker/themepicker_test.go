@@ -79,6 +79,71 @@ func TestPreviewFollowsTheHighlightedThemeNotTheAppliedOne(t *testing.T) {
 	}
 }
 
+// TestPreviewShowsADiffInTheHighlightedTheme pins the mock
+// (docs/design/mivia-ui-mock.html section 7): the preview is not just
+// prose, it shows a diff hunk so an add/del-heavy theme choice (the
+// pair most likely to fail contrast or CVD checks) is judged on the
+// content that actually stresses those roles, not on a sentence that
+// never exercises them.
+func TestPreviewShowsADiffInTheHighlightedTheme(t *testing.T) {
+	themes := loadThemes(t)
+	s := New(themes[0], theme.TierTrueColor, themes)
+
+	got := s.View()
+	wantAdd := render.WithBg(
+		render.Role(themes[0], theme.TierTrueColor, theme.RoleDiffAddFG),
+		themes[0], theme.TierTrueColor, theme.RoleDiffAddBG,
+	).Render("+ " + previewDiffAddLine)
+	if !strings.Contains(got, wantAdd) {
+		t.Errorf("preview missing a diff add line styled with %q's diff-add roles:\n%s", themes[0].Name, got)
+	}
+	wantDel := render.WithBg(
+		render.Role(themes[0], theme.TierTrueColor, theme.RoleDiffDelFG),
+		themes[0], theme.TierTrueColor, theme.RoleDiffDelBG,
+	).Render("- " + previewDiffDelLine)
+	if !strings.Contains(got, wantDel) {
+		t.Errorf("preview missing a diff del line styled with %q's diff-del roles:\n%s", themes[0].Name, got)
+	}
+
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	s = next.(Screen)
+	after := s.View()
+	wantAddAfter := render.WithBg(
+		render.Role(themes[1], theme.TierTrueColor, theme.RoleDiffAddFG),
+		themes[1], theme.TierTrueColor, theme.RoleDiffAddBG,
+	).Render("+ " + previewDiffAddLine)
+	if !strings.Contains(after, wantAddAfter) {
+		t.Errorf("diff add line did not follow the cursor to theme %q:\n%s", themes[1].Name, after)
+	}
+	if strings.Contains(after, wantAdd) {
+		t.Errorf("diff add line still shows theme %q's colours after moving down:\n%s", themes[0].Name, after)
+	}
+}
+
+// TestPreviewShowsACodeReadWithSyntaxRoles pins the other half of the
+// mock: a function-with-params read, syntax-highlighted with the
+// theme's own keyword/function/type roles - the picker's syntax roles
+// (RoleKeyword, RoleFunction, RoleType) had no renderer anywhere in
+// this codebase before this, only contrast-checker test data.
+func TestPreviewShowsACodeReadWithSyntaxRoles(t *testing.T) {
+	themes := loadThemes(t)
+	s := New(themes[0], theme.TierTrueColor, themes)
+
+	got := s.View()
+	wantKeyword := render.Role(themes[0], theme.TierTrueColor, theme.RoleKeyword).Render("func")
+	if !strings.Contains(got, wantKeyword) {
+		t.Errorf("preview missing the code read's %q keyword styled with RoleKeyword:\n%s", "func", got)
+	}
+	wantFunc := render.Role(themes[0], theme.TierTrueColor, theme.RoleFunction).Render(previewFuncName)
+	if !strings.Contains(got, wantFunc) {
+		t.Errorf("preview missing the function name %q styled with RoleFunction:\n%s", previewFuncName, got)
+	}
+	wantType := render.Role(themes[0], theme.TierTrueColor, theme.RoleType).Render(previewParamType)
+	if !strings.Contains(got, wantType) {
+		t.Errorf("preview missing the param type %q styled with RoleType:\n%s", previewParamType, got)
+	}
+}
+
 func TestThemeChangedMsgUpdatesScreenAndPicker(t *testing.T) {
 	themes := loadThemes(t)
 	s := New(themes[0], theme.TierASCII, themes)

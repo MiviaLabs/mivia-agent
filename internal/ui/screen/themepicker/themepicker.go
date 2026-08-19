@@ -9,6 +9,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/picker"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
 
 var _ app.Screen = Screen{}
@@ -19,11 +20,27 @@ var _ app.Screen = Screen{}
 // arbitrary swatch.
 const previewAccentGlyph = "> "
 
-// previewSample is the fixed sentence the preview renders. It exists to
-// show how a theme colours real content (a prompt line, plain prose),
-// not to demonstrate every role: the picker is a quick before/after
-// check while browsing, not a full palette reference.
+// previewSample is the fixed sentence the preview's prompt line
+// renders.
 const previewSample = "Add retry with backoff to the uploader."
+
+// The code-read and diff samples below exist because a prompt line
+// alone never exercises RoleKeyword/RoleFunction/RoleType/RoleVariable
+// or the diff add/del roles - exactly the roles most likely to fail a
+// contrast or CVD check (theme/contrast.go checks them, but a human
+// browsing themes could not see them before this). docs/design/
+// mivia-ui-mock.html section 7 shows the same two additions.
+//
+// previewFuncName and previewParamType are pulled out because the
+// tests reference them directly, so the sample and its assertions
+// cannot drift apart silently.
+const (
+	previewFuncName  = "put"
+	previewParamType = "context.Context"
+
+	previewDiffDelLine = "return u.raw.Put(ctx, k, b)"
+	previewDiffAddLine = "return retry.Do(ctx, u.policy, put)"
+)
 
 // Screen wraps picker.Model over a theme name list. Selecting an item
 // emits app.ThemeSelectedMsg; cancelling emits app.PopScreenMsg. Neither
@@ -103,11 +120,49 @@ func (s Screen) View() string {
 	return title + "\n\n" + s.picker.View() + "\n\n" + s.previewView() + "\n\n" + hint
 }
 
-// previewView renders previewSample styled with the highlighted row's
-// theme - live, as the cursor moves, not only once Enter applies it.
+// previewView renders a prompt line, a syntax-highlighted code read,
+// and a diff hunk, all styled with the highlighted row's theme - live,
+// as the cursor moves, not only once Enter applies it.
 func (s Screen) previewView() string {
 	pt := s.previewTheme()
 	prompt := render.Role(pt, s.Tier, theme.RoleAccent).Render(previewAccentGlyph)
 	body := render.Role(pt, s.Tier, theme.RoleFG).Render(previewSample)
-	return prompt + body
+	return prompt + body + "\n\n" + s.previewCode(pt) + "\n\n" + render.Diff(pt, s.Tier, previewDiff())
+}
+
+// previewCode is a small, real-shaped Go function read, hand-tokenized
+// rather than run through a general syntax highlighter: none exists
+// elsewhere in this codebase (theme/role.go's syntax roles had no
+// renderer at all before this), and building one is out of scope for a
+// picker preview.
+func (s Screen) previewCode(pt theme.Theme) string {
+	role := func(r theme.Role, text string) string { return render.Role(pt, s.Tier, r).Render(text) }
+	plain := func(text string) string { return role(theme.RoleFG, text) }
+
+	sig := role(theme.RoleKeyword, "func") + plain(" (u *") + role(theme.RoleType, "Uploader") + plain(") ") +
+		role(theme.RoleFunction, previewFuncName) + plain("(") +
+		role(theme.RoleVariable, "ctx") + plain(" ") + role(theme.RoleType, previewParamType) + plain(", ") +
+		role(theme.RoleVariable, "k") + plain(" ") + role(theme.RoleType, "string") + plain(") ") +
+		role(theme.RoleType, "error") + plain(" {")
+	body := plain("    ") + role(theme.RoleKeyword, "return") + plain(" ") +
+		role(theme.RoleVariable, "u") + plain(".raw.") + role(theme.RoleFunction, "Put") +
+		plain("(") + role(theme.RoleVariable, "ctx") + plain(", ") +
+		role(theme.RoleVariable, "k") + plain(", ") + role(theme.RoleVariable, "b") + plain(")")
+	return sig + "\n" + body + "\n" + plain("}")
+}
+
+// previewDiff is a fixed one-hunk diff: the same shape a real edit_file
+// tool call renders, so the picker's diff roles are judged on realistic
+// content, not a swatch invented for this modal alone.
+func previewDiff() uievent.Diff {
+	return uievent.Diff{
+		Path: "internal/storage/s3_uploader.go",
+		Hunks: []uievent.DiffHunk{{
+			Header: "@@ -14,3 +14,4 @@ func (u *Uploader) put(",
+			Lines: []uievent.DiffLine{
+				{Kind: uievent.DiffLineDel, Text: previewDiffDelLine},
+				{Kind: uievent.DiffLineAdd, Text: previewDiffAddLine},
+			},
+		}},
+	}
 }
