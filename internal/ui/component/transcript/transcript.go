@@ -38,21 +38,23 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
 
-// Model holds the live window, the retained ring, and the in-flight
-// streaming tail. Text and reasoning deltas accumulate in a buffer
-// instead of committing a block per token (build spec section 4.5: "one
-// Msg per token is one render per token even with the cell renderer");
-// HandleEvent returns a tea.Cmd that starts a repaint clock while a span
-// is streaming.
+// Model holds the whole conversation, the viewport over it, and the
+// in-flight streaming tail. Text and reasoning deltas accumulate in a
+// buffer instead of committing a block per token (build spec section
+// 4.5: "one Msg per token is one render per token even with the cell
+// renderer"); HandleEvent returns a tea.Cmd that starts a repaint clock
+// while a span is streaming.
 type Model struct {
 	Theme theme.Theme
 	Tier  theme.Tier
 
-	blocks []Block // live window, oldest first
-	ring   []Block // retained after eviction, oldest first
-	focus  int     // index into blocks; -1 when the composer has focus
+	blocks  []Block // the conversation, oldest first
+	dropped int     // blocks the bound discarded, stated in the view
+	focus   int     // index into blocks; -1 when the composer has focus
 
-	width, height, reserved int
+	width, height int
+	offset        int  // first visible row of the conversation
+	follow        bool // new output pulls the view to the bottom
 
 	nextID int
 	// pending is a plain string, not a strings.Builder. Model is copied
@@ -68,20 +70,10 @@ type Model struct {
 	hideReasoning bool
 }
 
-// New returns an empty Model with no block focused.
+// New returns an empty Model with no block focused, following the tail.
 func New(t theme.Theme, tier theme.Tier) Model {
-	return Model{Theme: t, Tier: tier, focus: -1}
+	return Model{Theme: t, Tier: tier, focus: -1, follow: true}
 }
-
-// CommitMsg carries evicted content, already ordered and joined, for the
-// caller to print above the managed frame. transcript.Model does not call
-// tea.Println itself: Println's Msg type is unexported, which would leave
-// this package's own tests unable to assert on committed content.
-//
-// One message carries every block evicted by a single event, joined by
-// newlines, because tea.Batch documents "no ordering guarantees" - one
-// print Cmd per block would scramble scrollback.
-type CommitMsg struct{ Text string }
 
 // FlushMsg ticks the repaint clock while a text/reasoning span streams.
 type FlushMsg struct{}
@@ -190,40 +182,24 @@ const shortResultCols = 16
 // endTurnUnfinished flushes any partial stream as prose, then records
 // why the turn stopped.
 func (m Model) endTurnUnfinished(reason string) (Model, tea.Cmd) {
-	var out []string
 	if partial := m.pending; partial != "" {
-		var cmd tea.Cmd
-		m, cmd = m.pushBlock(Block{
+		m, _ = m.pushBlock(Block{
 			Kind:  uievent.KindTextEnd,
 			Prose: true,
 			Body:  strings.Split(partial, "\n"),
 		})
-		if cmd != nil {
-			if msg, ok := cmd().(CommitMsg); ok {
-				out = append(out, msg.Text)
-			}
-		}
 	}
 	m.clearPending()
 
 	// Label only. TurnEndBody carries just the reason, so inventing a
 	// detail or a duration here would be fabrication; section 13's
 	// richer line lands when the contract carries those fields.
-	next, cmd := m.pushBlock(Block{
+	return m.pushBlock(Block{
 		Kind:   uievent.KindTurnEnd,
 		Header: Header{Label: reason, Role: theme.RoleWarning},
 	})
-	if cmd != nil {
-		if msg, ok := cmd().(CommitMsg); ok {
-			out = append(out, msg.Text)
-		}
-	}
-	return next, commit(strings.Join(out, "\n"))
 }
 
-// handleToolEvent owns the four kinds that describe one tool call.
-// Split out of HandleEvent to keep that function within the repo's
-// per-function line budget; the routing is unchanged.
 func (m Model) handleToolEvent(body uievent.Body) (Model, tea.Cmd) {
 	switch b := body.(type) {
 	case uievent.ToolPendingBody:
@@ -249,14 +225,14 @@ func (m Model) handleToolPending(b uievent.ToolPendingBody) (Model, tea.Cmd) {
 }
 
 func (m Model) handleToolStart(b uievent.ToolStartBody) (Model, tea.Cmd) {
-	if out, ok := m.updateLive(b.ToolCallID, func(blk *Block) {
+	if ok := m.updateLive(b.ToolCallID, func(blk *Block) {
 		blk.Kind = uievent.KindToolStart
 		blk.Header.State, blk.Header.Role = "running", theme.RoleInfo
 		if d := render.FormatArgs(b.Args); d != "" {
 			blk.Header.Detail = d
 		}
 	}); ok {
-		return m, commit(out)
+		return m, nil
 	}
 	return m.pushBlock(Block{
 		Kind: uievent.KindToolStart, CallID: b.ToolCallID,
@@ -272,7 +248,7 @@ func (m Model) handleToolOutput(b uievent.ToolOutputBody) (Model, tea.Cmd) {
 	if len(lines) == 0 {
 		return m.pushBlock(toolOutputBlock(m.Theme, m.Tier, b))
 	}
-	if out, ok := m.updateLive(b.ToolCallID, func(blk *Block) {
+	if ok := m.updateLive(b.ToolCallID, func(blk *Block) {
 		if p := b.Progress; p != nil {
 			blk.Header.Meta = fmt.Sprintf("%d of %d", p.Step, p.TotalSteps)
 			if p.Status != "" {
@@ -286,14 +262,14 @@ func (m Model) handleToolOutput(b uievent.ToolOutputBody) (Model, tea.Cmd) {
 		}
 		blk.Body = append(blk.Body, lines...)
 	}); ok {
-		return m, commit(out)
+		return m, nil
 	}
 	return m.pushBlock(toolOutputBlock(m.Theme, m.Tier, b))
 }
 
 func (m Model) handleToolEnd(b uievent.ToolEndBody) (Model, tea.Cmd) {
 	end := toolEndBlockValue(m.Theme, m.Tier, b)
-	if out, ok := m.updateLive(b.ToolCallID, func(blk *Block) {
+	if ok := m.updateLive(b.ToolCallID, func(blk *Block) {
 		blk.Kind = uievent.KindToolEnd
 		detail := blk.Header.Detail
 		result := end.Header.Detail
@@ -312,7 +288,7 @@ func (m Model) handleToolEnd(b uievent.ToolEndBody) (Model, tea.Cmd) {
 			blk.Body = append(blk.Body, end.Body...)
 		}
 	}); ok {
-		return m, commit(out)
+		return m, nil
 	}
 	return m.pushBlock(end)
 }
@@ -327,7 +303,8 @@ func (m Model) pushBlock(b Block) (Model, tea.Cmd) {
 	}
 	m.nextID++
 	b.ID = strconv.Itoa(m.nextID)
-	return m, commit(m.push(b))
+	m.push(b)
+	return m, nil
 }
 
 func (m *Model) clearPending() {
@@ -345,29 +322,24 @@ func (m *Model) appendPending(kind uievent.Kind, text string) tea.Cmd {
 	return flushCmd()
 }
 
-// commit returns the Cmd that delivers block as a CommitMsg, or nil for
-// an empty block (a Kind that produced no visible content).
-func commit(block string) tea.Cmd {
-	if block == "" {
+// tailRows is the still-streaming span, drawn below the last finished
+// block. It is separate from the blocks because it is not addressable:
+// it has no header, cannot take focus, and is replaced wholesale when
+// the span ends.
+func (m Model) tailRows() []string {
+	if m.pending == "" {
 		return nil
 	}
-	return func() tea.Msg { return CommitMsg{Text: block} }
-}
-
-// View renders the live window and then the still-streaming tail. It is
-// bounded by the eviction budget by construction, which is what keeps it
-// compatible with Bubble Tea's inline redraw.
-func (m Model) View() string {
-	rows := make([]string, 0, len(m.blocks)+1)
-	for _, b := range m.blocks {
-		rows = append(rows, b.Render(m.Theme, m.Tier, m.width))
+	style := render.Role(m.Theme, m.Tier, theme.RoleFG)
+	if m.pendingKind == uievent.KindReasoning {
+		style = render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
 	}
-	if m.pending != "" {
-		style := render.Role(m.Theme, m.Tier, theme.RoleFG)
-		if m.pendingKind == uievent.KindReasoning {
-			style = render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
+	measure := render.ProseMeasure(m.width)
+	var out []string
+	for _, line := range strings.Split(m.pending, "\n") {
+		for _, row := range render.Wrap(line, measure) {
+			out = append(out, style.Render(row))
 		}
-		rows = append(rows, style.Render(m.pending))
 	}
-	return strings.Join(rows, "\n")
+	return out
 }

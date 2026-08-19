@@ -6,6 +6,8 @@ package conversation
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -15,7 +17,9 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/composer"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/statusline"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/transcript"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
+	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/keymap"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
@@ -51,6 +55,11 @@ type Screen struct {
 	// other key clears it, so the session is never left one keystroke
 	// from exiting because of a stray press.
 	quitArmed bool
+
+	// overlay replaces the transcript while it is set. The cockpit has no
+	// scrollback to print into, so content that used to be printed - the
+	// generated keymap - is drawn in place instead. Any key clears it.
+	overlay string
 
 	// width and height are the live terminal size, from WindowSizeMsg.
 	// Nothing here may assume a size: the layout work that consumes
@@ -101,15 +110,14 @@ func waitForEvent(events <-chan uievent.Event) tea.Cmd {
 	}
 }
 
-// Update delegates to update, then re-budgets the transcript whenever the
+// Update delegates to update, then re-sizes the transcript whenever the
 // chrome's row claim changed.
 //
-// The re-budget cannot live at the individual call sites. Arming an
-// approval prompt, starting the status line, and resolving a decision all
-// change reservedRows, and each one that forgot to re-budget would let
-// View draw more rows than the terminal has - the exact failure the live
-// window exists to prevent. Comparing before and after cannot be
-// forgotten by a later change.
+// The re-size cannot live at the individual call sites. Arming an
+// approval prompt, starting the status line, and opening the completion
+// menu all change reservedRows, and each site that forgot would leave the
+// transcript drawing into rows the chrome now owns. Comparing before and
+// after cannot be forgotten by a later change.
 func (s Screen) Update(msg tea.Msg) (app.Screen, tea.Cmd) {
 	before := s.reservedRows()
 	next, cmd := s.update(msg)
@@ -117,21 +125,13 @@ func (s Screen) Update(msg tea.Msg) (app.Screen, tea.Cmd) {
 	if !ok || scr.reservedRows() == before {
 		return next, cmd
 	}
-	commit := scr.resize()
-	if commit == nil {
-		return scr, cmd
-	}
-	return scr, tea.Batch(cmd, commit)
+	scr.resize()
+	return scr, cmd
 }
 
-// resize re-budgets the transcript from the current size and chrome, and
-// returns the Cmd that commits whatever the new budget evicted.
-func (s *Screen) resize() tea.Cmd {
-	text := s.transcript.SetSize(s.width, s.height, s.reservedRows())
-	if text == "" {
-		return nil
-	}
-	return func() tea.Msg { return app.PrintMsg{Text: text} }
+// resize gives the transcript the rows the chrome does not claim.
+func (s *Screen) resize() {
+	s.transcript.SetSize(s.width, s.height-s.reservedRows())
 }
 
 func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
@@ -158,18 +158,22 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 		next, cmd := s.transcript.Update(msg)
 		s.transcript = next
 		return s, cmd
-	case transcript.CommitMsg:
-		// Evicted content leaves the managed frame for native scrollback.
-		// It is NOT printed here: tea.Println is a documented no-op while
-		// the altscreen is active, so printing directly would silently
-		// destroy transcript lines whenever a modal happened to be open.
-		// app.Model owns the decision because only the router knows the
-		// stack depth.
-		return s, func() tea.Msg { return app.PrintMsg{Text: msg.Text} }
+	case tea.MouseWheelMsg:
+		// Wheel events scroll the conversation. CockpitScrollLines is the
+		// multiplier: terminals disagree on how many events one physical
+		// notch produces, and some amplify while others send exactly one
+		// (docs/design/cockpit-research.md rule 6.6).
+		step := uikitconfig.CockpitScrollLines
+		if msg.Button == tea.MouseWheelUp {
+			step = -step
+		}
+		s.transcript = s.transcript.ScrollBy(step)
+		return s, nil
 	case tea.WindowSizeMsg:
 		s.width, s.height = msg.Width, msg.Height
 		s.composer.SetWidth(msg.Width)
-		return s, s.resize()
+		s.resize()
+		return s, nil
 	case app.ThemeChangedMsg:
 		s.Theme, s.Tier = msg.Theme, msg.Tier
 		s.transcript.Theme, s.transcript.Tier = msg.Theme, msg.Tier
@@ -219,45 +223,81 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 	return s, tea.Batch(flushCmd, readCmd)
 }
 
-// reservedRows is how many rows the non-transcript chrome claims. The
-// transcript's eviction budget is the remaining height, so this must
-// account for every row View can draw below the transcript, plus one
-// spare so the frame never exactly fills the terminal.
+// reservedRows is how many rows the chrome below the transcript claims.
+//
+// The status row is PERMANENT in the cockpit. The inline design had no
+// persistent status bar because every row it drew pushed the transcript
+// up; a cockpit owns a fixed surface, so a reserved row costs nothing
+// that moves. A row that is always there also never reflows the
+// transcript when it changes (docs/design/ux-rules.md rule 2.7).
 func (s Screen) reservedRows() int {
-	rows := s.composer.Height() + 1 // the composer and its menu, plus the reserve
+	rows := s.composer.Height() + 1 // the composer and its menu, plus the status row
 	if s.approval.Active() {
 		rows += 2 // title and hint
-	}
-	if s.statusline.Active() {
-		rows++
 	}
 	return rows
 }
 
+// View draws the cockpit: the transcript fills the surface, the approval
+// prompt and the status row sit above the composer, and the composer is
+// the last row.
+//
+// The transcript always returns exactly its own height, padded, so
+// nothing below it moves as output streams in (ux-rules.md rule 2.8).
 func (s Screen) View() string {
 	var lines []string
-	// transcript.View() is usually "": finalized content already left
-	// via CommitMsg (see internal/ui/component/transcript's doc
-	// comment). Only a live streaming tail shows up here.
-	if v := s.transcript.View(); v != "" {
-		lines = append(lines, v)
+	if v := s.overlay; v != "" {
+		lines = append(lines, overlayRows(v, s.height-s.reservedRows())...)
+	} else {
+		lines = append(lines, s.transcript.Rows()...)
 	}
 	if v := s.approval.View(); v != "" {
-		lines = append(lines, v)
+		lines = append(lines, strings.Split(v, "\n")...)
 	}
-	if v := s.statusline.View(s.now()); v != "" {
-		lines = append(lines, v)
-	}
-	lines = append(lines, s.composer.View())
+	lines = append(lines, s.statusRow())
+	lines = append(lines, strings.Split(s.composer.View(), "\n")...)
+	return strings.Join(lines, "\n")
+}
 
-	out := lines[0]
-	for _, l := range lines[1:] {
-		out += "\n" + l
+// overlayRows pads or clips an overlay to the transcript's own height, so
+// the chrome below it never moves.
+func overlayRows(text string, height int) []string {
+	rows := strings.Split(text, "\n")
+	if height <= 0 {
+		return rows
 	}
-	return out
+	if len(rows) > height {
+		return rows[:height]
+	}
+	for len(rows) < height {
+		rows = append(rows, "")
+	}
+	return rows
 }
 
 // SetCommands supplies the slash-completion candidates. The command set
 // belongs to the harness, so the screen takes it rather than inventing
 // one.
 func (s *Screen) SetCommands(cmds []composer.Command) { s.composer.SetCommands(cmds) }
+
+// statusRow is the permanent bottom status line.
+//
+// It is always drawn, even when there is nothing to say, because a row
+// that appears and disappears reflows every wrapped line above it
+// (docs/design/ux-rules.md rule 2.7). When the transcript is scrolled
+// away from the tail it says so and offers the way back, which is the
+// affordance auto-follow needs (cockpit-research.md rule 6.7).
+func (s Screen) statusRow() string {
+	if v := s.statusline.View(s.now()); v != "" {
+		return v
+	}
+	if !s.transcript.Following() {
+		return render.Role(s.Theme, s.Tier, theme.RoleWarning).
+			Render("scrolled up - ctrl+end to follow again")
+	}
+	if n := s.transcript.Dropped(); n > 0 {
+		return render.Role(s.Theme, s.Tier, theme.RoleFGSubtle).
+			Render(fmt.Sprintf("%d earlier blocks dropped from this transcript", n))
+	}
+	return ""
+}

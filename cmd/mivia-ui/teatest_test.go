@@ -2,14 +2,11 @@
 // tea.Program - the production terminal-input/output loop, not a direct
 // Update() call.
 //
-// These originally surfaced a real gap: internal/ui/component/transcript
-// rendered its entire history as one growing View() string, which does
-// not compose with Bubble Tea's inline redraw (relative cursor movement
-// plus erase) - content taller than the terminal got erased on every
-// repaint. Fixed by having transcript emit each finalized block once via
-// CommitMsg -> tea.Println (native terminal scrollback), so Model.View()
-// only ever renders the live streaming tail. A normal 80x24 terminal
-// below now genuinely proves the fix, not a workaround around it.
+// The cockpit draws to the alternate screen, so the terminal has no
+// scrollback of its own here. That makes these tests the only place that
+// proves the transcript keeps what scrolls off: the assertions below
+// check the tail is drawn AND that jumping to the top brings back
+// content that left the screen long before.
 package main
 
 import (
@@ -30,6 +27,9 @@ import (
 
 func enterKey() tea.KeyPressMsg { return tea.KeyPressMsg{Code: tea.KeyEnter} }
 func quitKey() tea.KeyPressMsg  { return tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl} }
+func topKey() tea.KeyPressMsg {
+	return tea.KeyPressMsg{Code: tea.KeyHome, Mod: tea.ModCtrl}
+}
 
 func readAll(tm *teatest.TestModel) ([]byte, error) {
 	return io.ReadAll(tm.Output())
@@ -63,15 +63,23 @@ func newDemoRoot(t *testing.T) app.Model {
 // Update() call. It types a message, presses enter, and waits for the
 // replayed reply to actually appear in the rendered output.
 func TestInteractiveSendAndReceive(t *testing.T) {
-	// A normal terminal size: the fixture's rendered history is ~35
-	// lines, well past 24 rows, so this genuinely exercises the
-	// CommitMsg/tea.Println scrollback fix (see the package doc comment)
-	// rather than working around a short terminal.
+	// A normal terminal size. The fixture renders to about 35 rows, well
+	// past 24, so the start of the conversation genuinely leaves the
+	// screen and the cockpit has to hold it.
 	tm := teatest.NewTestModel(t, newDemoRoot(t), teatest.WithInitialTermSize(80, 24))
 
 	tm.Type("hello")
 	tm.Send(enterKey())
 
+	// The tail is what a following viewport shows.
+	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+		return bytes.Contains(out, []byte("1284 in"))
+	}, teatest.WithDuration(5*time.Second))
+
+	// And the start is still reachable. "bounded retry" is in the first
+	// assistant reply, far above the fold by now: if the transcript had
+	// dropped what scrolled off, this could never come back.
+	tm.Send(topKey())
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("bounded retry"))
 	}, teatest.WithDuration(5*time.Second))

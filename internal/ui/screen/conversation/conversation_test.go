@@ -130,16 +130,12 @@ func TestSendErrorAppendsErrorBlockNotActive(t *testing.T) {
 	if got.active != nil {
 		t.Error("expected no active turn when Send fails")
 	}
-	if cmd == nil {
-		t.Fatal("expected a commit Cmd carrying the Send error")
+	// The failure is reported in the transcript, where the user is
+	// already looking, not swallowed.
+	if !strings.Contains(ansi.Strip(got.transcript.Dump()), context.DeadlineExceeded.Error()) {
+		t.Errorf("the transcript does not carry the Send error:\n%s", got.transcript.Dump())
 	}
-	msg, ok := cmd().(transcript.CommitMsg)
-	if !ok {
-		t.Fatalf("got %T, want transcript.CommitMsg", cmd())
-	}
-	if !strings.Contains(msg.Text, context.DeadlineExceeded.Error()) {
-		t.Errorf("got commit text %q, want it to contain the Send error", msg.Text)
-	}
+	_ = cmd
 }
 
 func TestTurnEventUpdatesTranscriptAndReschedulesRead(t *testing.T) {
@@ -148,23 +144,21 @@ func TestTurnEventUpdatesTranscriptAndReschedulesRead(t *testing.T) {
 
 	next, cmd := s.Update(turnEventMsg{ev: uievent.Event{Kind: uievent.KindTextEnd, Body: uievent.TextEndBody{Text: "hello"}}})
 	got := next.(Screen)
-	if got.transcript.View() != "" {
-		t.Errorf("got live tail %q, want empty: TextEnd commits and clears pending", got.transcript.View())
+	if n := len(got.transcript.Blocks()); n != 1 {
+		t.Errorf("got %d blocks, want the finished span added to the transcript", n)
+	}
+	if !strings.Contains(ansi.Strip(got.transcript.Dump()), "hello") {
+		t.Errorf("the transcript does not carry the text:\n%s", got.transcript.Dump())
 	}
 	if cmd == nil {
-		t.Fatal("expected a Cmd batch: the commit plus a re-issued event read")
+		t.Fatal("expected a re-issued event read")
 	}
 
 	msgs := batchMsgs(t, cmd)
-	var sawCommit, sawRead bool
+	sawCommit := true // the transcript now owns the content; nothing is emitted
+	var sawRead bool
 	for _, msg := range msgs {
-		switch m := msg.(type) {
-		case transcript.CommitMsg:
-			sawCommit = true
-			if !strings.Contains(m.Text, "hello") {
-				t.Errorf("got commit text %q, want it to contain %q", m.Text, "hello")
-			}
-		case turnEndedMsg:
+		if _, ok := msg.(turnEndedMsg); ok {
 			sawRead = true // fakeHandle's closed channel: the re-issued read observes it immediately
 		}
 	}
@@ -350,26 +344,6 @@ func TestThemeChangedMsgUpdatesScreenAndAllComponents(t *testing.T) {
 	}
 }
 
-// TestCommitMsgBecomesPrintMsg pins the exact payload, not a substring
-// of its formatting. The screen must hand the router an app.PrintMsg:
-// only the router knows the stack depth, and tea.Println is a no-op
-// under the altscreen.
-func TestCommitMsgBecomesPrintMsg(t *testing.T) {
-	s := newScreen(t, replay.New(nil, 0), nil, nil)
-	_, cmd := s.Update(transcript.CommitMsg{Text: "committed line"})
-	if cmd == nil {
-		t.Fatal("expected a Cmd translating CommitMsg into app.PrintMsg")
-	}
-	msg := cmd()
-	got, ok := msg.(app.PrintMsg)
-	if !ok {
-		t.Fatalf("got %T, want app.PrintMsg", msg)
-	}
-	if got.Text != "committed line" {
-		t.Errorf("got Text %q, want %q", got.Text, "committed line")
-	}
-}
-
 func TestFlushMsgForwardsToTranscript(t *testing.T) {
 	s := newScreen(t, replay.New(nil, 0), nil, nil)
 	s.transcript, _ = s.transcript.HandleEvent(uievent.Event{Kind: uievent.KindTextDelta, Body: uievent.TextDeltaBody{Text: "a"}})
@@ -421,6 +395,8 @@ func TestWaitForEventReadsOneEventThenSignalsClose(t *testing.T) {
 
 func TestViewComposesTranscriptStatuslineAndComposer(t *testing.T) {
 	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	s = next.(Screen)
 	// A still-streaming delta, not a committed block: only the live tail
 	// shows up in View() (see transcript's package doc comment) -
 	// finalized content leaves via CommitMsg, tested separately.
@@ -487,24 +463,38 @@ func batchMsgs(t *testing.T, cmd tea.Cmd) []tea.Msg {
 	return out
 }
 
-// TestReservedRowsGrowsWithChrome pins that the transcript's eviction
-// budget shrinks as chrome appears. If it did not, an approval prompt or
-// the status line would push the frame past the terminal height, which
-// is the erase bug the live window exists to prevent.
-func TestReservedRowsGrowsWithChrome(t *testing.T) {
+// TestStatusRowIsPermanent pins the cockpit's layout anchor. The status
+// row is reserved whether or not it has anything to say, so it never
+// appears or disappears and never reflows the transcript above it
+// (docs/design/ux-rules.md rule 2.7).
+func TestStatusRowIsPermanent(t *testing.T) {
 	s := newScreen(t, replay.New(nil, 0), nil, nil)
 	bare := s.reservedRows()
 
 	s.statusline.Start("thinking", fixedNow())
-	withStatus := s.reservedRows()
-	if withStatus <= bare {
-		t.Errorf("got %d, want more than %d once the status line is active", withStatus, bare)
+	if got := s.reservedRows(); got != bare {
+		t.Errorf("got %d reserved rows with a turn running, want %d: the row is always reserved", got, bare)
 	}
 
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	scr := next.(Screen)
+	quiet := len(strings.Split(scr.View(), "\n"))
+	scr.statusline.Start("thinking", fixedNow())
+	busy := len(strings.Split(scr.View(), "\n"))
+	if quiet != busy {
+		t.Errorf("the view is %d rows idle and %d rows busy; the status row must not move the layout", quiet, busy)
+	}
+}
+
+// TestReservedRowsGrowsWithTheApprovalPrompt pins the chrome that DOES
+// claim extra rows.
+func TestReservedRowsGrowsWithTheApprovalPrompt(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	bare := s.reservedRows()
+
 	s.approval.SetRequest(uievent.ToolPendingBody{ToolCallID: "c1", Name: "run_command"})
-	withBoth := s.reservedRows()
-	if withBoth <= withStatus {
-		t.Errorf("got %d, want more than %d once the approval prompt is armed", withBoth, withStatus)
+	if got := s.reservedRows(); got <= bare {
+		t.Errorf("got %d, want more than %d once the approval prompt is armed", got, bare)
 	}
 }
 
@@ -582,10 +572,11 @@ func TestResizeWithNothingToEvictCommitsNothing(t *testing.T) {
 	}
 }
 
-// TestShrinkCommitsEvictedTranscript pins the other half of resize: a
-// shrink that evicts must hand the router the evicted text. Dropping it
-// would lose transcript that never reached scrollback.
-func TestShrinkCommitsEvictedTranscript(t *testing.T) {
+// TestShrinkKeepsEveryBlock pins the cockpit's replacement for
+// eviction. The inline renderer committed blocks to scrollback when the
+// terminal shrank. The cockpit has no scrollback, so a shrink must keep
+// every block and simply show fewer of them.
+func TestShrinkKeepsEveryBlock(t *testing.T) {
 	s := newScreen(t, replay.New(nil, 0), nil, nil)
 	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
 	scr := next.(Screen)
@@ -597,17 +588,19 @@ func TestShrinkCommitsEvictedTranscript(t *testing.T) {
 		}})
 		scr = n.(Screen)
 	}
+	before := len(scr.transcript.Blocks())
 
-	_, cmd := scr.Update(tea.WindowSizeMsg{Width: 80, Height: 6})
-	if cmd == nil {
-		t.Fatal("the shrink evicted blocks but committed nothing")
+	next, _ = scr.Update(tea.WindowSizeMsg{Width: 80, Height: 6})
+	scr = next.(Screen)
+	if got := len(scr.transcript.Blocks()); got != before {
+		t.Errorf("got %d blocks after the shrink, want all %d kept", got, before)
 	}
-	got, ok := cmd().(app.PrintMsg)
-	if !ok {
-		t.Fatalf("got %T, want app.PrintMsg", cmd())
+	if !strings.Contains(ansi.Strip(scr.transcript.Dump()), "notice 0") {
+		t.Error("the oldest block was lost on a shrink")
 	}
-	if !strings.Contains(ansi.Strip(got.Text), "notice 0") {
-		t.Errorf("got %q, want the oldest evicted notice", got.Text)
+	// And the view fits the smaller terminal.
+	if rows := len(strings.Split(scr.View(), "\n")); rows > 6 {
+		t.Errorf("view is %d rows in a 6-row terminal", rows)
 	}
 }
 

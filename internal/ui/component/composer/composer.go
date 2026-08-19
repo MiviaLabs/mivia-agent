@@ -7,6 +7,7 @@ import (
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
@@ -23,6 +24,13 @@ type Model struct {
 	Tier  theme.Tier
 	input textinput.Model
 	menu  menu
+
+	// width is the full column count, including the prompt. View clamps
+	// to it: bubbles/textinput reserves a cell for the cursor beyond the
+	// width it was given, so the drawn line is one column wider than
+	// asked. In the cockpit that one column wraps the bottom row and
+	// pushes the whole layout up by a row.
+	width int
 }
 
 // promptWidth is the display width of the accent prompt View renders
@@ -97,6 +105,7 @@ func (m Model) AcceptCommonPrefix() (Model, bool) {
 // outside textinput's own width, so the caller passes the full column
 // count and this subtracts the prompt.
 func (m *Model) SetWidth(width int) {
+	m.width = width
 	w := width - promptWidth
 	if w < 1 {
 		w = 1
@@ -142,6 +151,9 @@ func (m Model) Height() int {
 func (m Model) View() string {
 	prompt := render.Role(m.Theme, m.Tier, theme.RoleAccent).Render("> ")
 	line := prompt + m.input.View()
+	if m.width > 0 && ansi.StringWidth(line) > m.width {
+		line = ansi.Truncate(line, m.width, "")
+	}
 	if v := m.menu.view(m.Theme, m.Tier); v != "" {
 		return v + "\n" + line
 	}

@@ -56,8 +56,17 @@ mitigation ships a regression.
 | Native click-and-drag selection | In-app selection that copies on release, plus a modifier-key escape hatch | 6.5 |
 | Native wheel scrolling | In-app scrolling with a speed multiplier | 6.6 |
 
-**Rule 6.1.** The cockpit is the default renderer. The inline renderer stays
-as `--tui inline`, and it stays supported.
+**Rule 6.1. AMENDED on 2026-08-19.** The cockpit is the ONLY interactive
+renderer. The inline renderer is removed, not kept behind a flag.
+
+The original rule kept inline as `--tui inline`. The product owner decided
+against a second interactive renderer: two renderers double the surface that
+every later feature must satisfy, and the non-interactive paths already cover
+the cases inline was for. `--output json` gives NDJSON, and a non-TTY stdout
+gives the plain stream. Both are unaffected by this change.
+
+This removes rule 3.2 of `ux-rules.md`, which required shipping both
+renderers behind one command.
 
 **Rule 6.2.** Ship transcript mode before the cockpit becomes the default.
 It is the replacement for terminal find, so shipping the cockpit first
@@ -157,8 +166,9 @@ unanswerable rather than as a list of features to build. Rules 6.2 and 6.3
 turn them into work.
 
 **What changes.** Rule 3.1 is replaced by rule 6.1. Rule 3.1a, that a
-bottom-anchored composer does not need the alternate screen, remains true
-and remains the reason the inline renderer stays usable.
+bottom-anchored composer does not need the alternate screen, remains TRUE as
+a statement about terminals. It is no longer load-bearing here, because the
+inline renderer is gone.
 
 ---
 
@@ -171,13 +181,14 @@ blocks to scrollback when they are evicted.
 The cockpit inverts this. It owns the whole surface, so nothing is ever
 handed to the terminal, and the transcript must hold every block itself.
 
-| Concern | Inline today | Cockpit |
+| Concern | Inline, removed | Cockpit, shipped |
 |---|---|---|
 | Where finished blocks live | Terminal scrollback | The transcript model |
-| What bounds memory | The terminal | A virtualized viewport that renders the visible rows only |
-| `MaxTranscriptLines` | A secondary ring for the pager | The primary store |
+| What bounds memory | The terminal | A viewport that styles only the visible rows |
+| `MaxTranscriptLines` | A secondary ring for the pager | The primary store, and it states what it dropped |
 | Eviction | Commits to scrollback | Does not exist |
 | Scrolling | The terminal | The application |
+| The status row | No permanent bar | Permanent, and it never reflows the transcript |
 
 Two consequences follow.
 
@@ -195,11 +206,14 @@ switch.
 
 These need a decision before implementation, not during it.
 
-1. Does the retained ring stay bounded by `MaxTranscriptLines` in the
-   cockpit? Claude Code keeps every message across compaction. A bound is
-   the honest choice only if the transcript says what it dropped.
-2. Is in-app selection worth the cost in the first cockpit slice, or does
-   rule 6.3's write-to-scrollback key cover the need? Writing to scrollback
-   is far cheaper to build and gives the terminal's own selection back.
-3. Where does the status line live once there is a permanent surface? The
-   inline design deliberately has no permanent status bar.
+1. **Answered.** The store stays bounded by `MaxTranscriptLines`, and the
+   transcript COUNTS what it dropped. The status row states the count and
+   `Dump` writes it at the head, so truncation is never silent.
+2. **Deferred, not refused.** In-app selection is not in the first slice.
+   Rule 6.3's write-to-scrollback key gives the terminal's own selection
+   back for far less code, and it is the honest first answer.
+3. **Answered.** The status row is permanent and always reserved.
+4. **Open.** Transcript mode (rule 6.2) is not built yet. Until it is, the
+   cockpit has no in-app search, and rule 6.2 says plainly that shipping the
+   cockpit first removes a capability with nothing in its place. `Dump`
+   exists and is tested, so the remaining work is the mode and its keys.

@@ -97,3 +97,11 @@ const (
 	ApprovalDefaultInline = "once"
 	ApprovalDefaultDialog = "deny"
 )
+
+// CockpitScrollLines is how many rows one mouse-wheel notch scrolls.
+//
+// Terminals disagree: some send one event per physical notch and some
+// amplify already. A value of 3 matches vim and similar applications,
+// which is the convention users expect (docs/design/cockpit-research.md
+// rule 6.6).
+const CockpitScrollLines = 3

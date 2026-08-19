@@ -112,9 +112,12 @@ func TestSelectingThemeChangesRenderedColourAndPreservesState(t *testing.T) {
 	if m.Theme.Name != f.light.Name {
 		t.Errorf("got theme %q, want the router to have adopted %q", m.Theme.Name, f.light.Name)
 	}
+	// The picker is gone, so its own chrome is gone with it. AltScreen
+	// cannot tell us this any more: the cockpit renders every screen on
+	// the alternate buffer, so the content is the only evidence.
 	view := m.View()
-	if view.AltScreen {
-		t.Error("expected the picker popped back to the inline base screen")
+	if strings.Contains(view.Content, "select a theme") {
+		t.Error("expected the picker popped off the stack")
 	}
 	if !strings.Contains(view.Content, "h") {
 		t.Error("expected the composer's typed text to survive the picker round trip")

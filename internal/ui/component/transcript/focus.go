@@ -42,10 +42,10 @@ func (m Model) FocusNext() Model {
 	}
 	if m.focus >= len(m.blocks)-1 {
 		m.focus = -1 // past the newest block is the composer
-		return m.syncFocus()
+		return m.syncFocus().ScrollToBottom()
 	}
 	m.focus++
-	return m.syncFocus()
+	return m.syncFocus().ScrollToFocus()
 }
 
 // FocusPrev moves the focus one block UP, towards the oldest. From the
@@ -58,12 +58,12 @@ func (m Model) FocusPrev() Model {
 	}
 	if m.focus < 0 {
 		m.focus = len(m.blocks) - 1
-		return m.syncFocus()
+		return m.syncFocus().ScrollToFocus()
 	}
 	if m.focus > 0 {
 		m.focus--
 	}
-	return m.syncFocus()
+	return m.syncFocus().ScrollToFocus()
 }
 
 // ClearFocus returns the focus to the composer.
@@ -92,35 +92,33 @@ func (m Model) syncFocus() Model {
 }
 
 // ToggleFocused collapses or expands the focused block. It reports
-// false when nothing is focused, or when the focused block has no body
-// to hide, so the caller can pass the key on instead of swallowing it.
+// false when nothing is focused, or when the focused block cannot
+// collapse, so the caller can pass the key on instead of swallowing it.
 //
-// A toggle can change the block's height, so the window re-evicts. The
-// evicted text is returned for the caller to commit, exactly as a push
-// does: expanding a block near the top of a full window pushes older
-// blocks into scrollback.
-func (m Model) ToggleFocused() (Model, string, bool) {
+// A toggle changes the block's height, so the viewport is re-anchored on
+// the focused block rather than on a row number. Without that, expanding
+// a block scrolls the thing the user just acted on off the screen.
+func (m Model) ToggleFocused() (Model, bool) {
 	if !m.Focused() {
-		return m, "", false
+		return m, false
 	}
 	if !m.blocks[m.focus].Collapsible {
-		return m, "", false
+		return m, false
 	}
 	blocks := make([]Block, len(m.blocks))
 	copy(blocks, m.blocks)
 	blocks[m.focus].Collapsed = !blocks[m.focus].Collapsed
 	m.blocks = blocks
-	return m, m.evict(), true
+	return m.ScrollToFocus(), true
 }
 
-// SetAllCollapsed collapses or expands every collapsible live block.
+// SetAllCollapsed collapses or expands every collapsible block.
 //
-// Expanding is the dangerous direction. Every block grows at once, so
-// the total can far exceed the budget, and eviction then commits the
-// oldest blocks to scrollback. That is correct - the content is not lost
-// - but it is why this returns the evicted text rather than discarding
-// it.
-func (m Model) SetAllCollapsed(collapsed bool) (Model, string) {
+// The conversation's total height changes by a large factor, so the
+// viewport re-anchors on the focused block when there is one. Expanding
+// everything and then leaving the reader at the same row number would
+// put them somewhere they did not ask to be.
+func (m Model) SetAllCollapsed(collapsed bool) Model {
 	blocks := make([]Block, len(m.blocks))
 	copy(blocks, m.blocks)
 	for i := range blocks {
@@ -129,14 +127,58 @@ func (m Model) SetAllCollapsed(collapsed bool) (Model, string) {
 		}
 	}
 	m.blocks = blocks
-	if !collapsed {
-		// fitBlock re-collapses anything that cannot fit on its own, so
-		// "expand all" never produces a block taller than the window.
-		for i := range m.blocks {
-			m.fitBlock(i)
+	if m.Focused() {
+		return m.ScrollToFocus()
+	}
+	m.clampOffset()
+	return m
+}
+
+// ScrollToFocus brings the focused block fully into view, scrolling as
+// little as possible. A block taller than the viewport is aligned to its
+// top, because its header carries the identity.
+func (m Model) ScrollToFocus() Model {
+	if !m.Focused() || m.height <= 0 {
+		m.clampOffset()
+		return m
+	}
+	top := 0
+	for i := 0; i < m.focus; i++ {
+		top += m.blocks[i].Height(m.width)
+	}
+	bottom := top + m.blocks[m.focus].Height(m.width)
+
+	switch {
+	case top < m.offset:
+		m.offset = top
+	case bottom > m.offset+m.height:
+		m.offset = bottom - m.height
+		if m.offset > top {
+			m.offset = top // taller than the screen: show its head
 		}
 	}
-	return m, m.evict()
+	m.follow = m.offset >= m.maxOffset()
+	m.clampOffset()
+	return m
+}
+
+// reindexFocus keeps focus on a surviving block after n blocks were
+// dropped from the start. Focus never silently disappears: it moves to
+// the oldest survivor, or back to the composer when nothing is left.
+func (m *Model) reindexFocus(n int) {
+	if m.focus < 0 {
+		return
+	}
+	m.focus -= n
+	if m.focus < 0 {
+		m.focus = 0
+	}
+	if m.focus >= len(m.blocks) {
+		m.focus = len(m.blocks) - 1
+	}
+	for i := range m.blocks {
+		m.blocks[i].Focused = i == m.focus
+	}
 }
 
 // FocusedText is the focused block's plain text, for the clipboard. It

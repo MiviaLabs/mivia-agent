@@ -1,8 +1,6 @@
 package app
 
 import (
-	"fmt"
-	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -49,18 +47,6 @@ func TestViewRendersTopOfStack(t *testing.T) {
 	m := New(stubScreen{name: "base"}, loadTheme(t), theme.TierASCII, nil)
 	if got := m.View(); got.Content != "base" {
 		t.Errorf("got %q, want the base screen's View()", got.Content)
-	}
-}
-
-func TestViewAltScreenOnlyForModal(t *testing.T) {
-	m := New(stubScreen{name: "base"}, loadTheme(t), theme.TierASCII, nil)
-	if got := m.View(); got.AltScreen {
-		t.Error("expected the base screen to render inline (AltScreen false)")
-	}
-	next, _ := m.Update(PushScreenMsg{Screen: stubScreen{name: "modal"}})
-	m = next.(Model)
-	if got := m.View(); !got.AltScreen {
-		t.Error("expected a pushed modal to render full alt-screen")
 	}
 }
 
@@ -270,124 +256,6 @@ func TestWindowSizeMsgStoredAndBroadcastToEveryScreen(t *testing.T) {
 	}
 }
 
-// wantPrintType is the concrete Msg type tea.Println produces. The type
-// is unexported by bubbletea, so it is pinned by name against
-// charm.land/bubbletea/v2 v2.0.8 rather than by a type assertion.
-//
-// Pinning it is the point. Without it, replacing both tea.Println calls
-// with a bespoke Msg - so that NOTHING ever reaches scrollback and the
-// queued transcript is destroyed - passes every other test in this
-// package. That is the exact defect the queue exists to prevent.
-const wantPrintType = "tea.printLineMessage"
-
-// printText runs a Cmd, asserts it really is a tea.Println, and returns
-// the text it carries.
-func printText(t *testing.T, cmd tea.Cmd) string {
-	t.Helper()
-	if cmd == nil {
-		return ""
-	}
-	msg := cmd()
-	if got := fmt.Sprintf("%T", msg); got != wantPrintType {
-		t.Fatalf("got Msg type %s, want %s: queued content must reach scrollback", got, wantPrintType)
-	}
-	return fmt.Sprintf("%+v", msg)
-}
-
-// TestPrintMsgIsQueuedWhileAModalIsOpen pins the highest-risk defect in
-// the live-window design. tea.Println is a documented no-op under the
-// altscreen, and the altscreen is active exactly while a modal sits on
-// the stack. Printing directly would silently destroy transcript lines
-// whenever a dialog happened to be open mid-stream.
-func TestPrintMsgIsQueuedWhileAModalIsOpen(t *testing.T) {
-	m := New(stubScreen{name: "base"}, loadTheme(t), theme.TierASCII, nil)
-
-	// Depth 1: printed straight through.
-	next, cmd := m.Update(PrintMsg{Text: "before"})
-	m = next.(Model)
-	if got := printText(t, cmd); !strings.Contains(got, "before") {
-		t.Errorf("got %q, want an immediate print at depth 1", got)
-	}
-
-	next, _ = m.Update(PushScreenMsg{Screen: stubScreen{name: "modal"}})
-	m = next.(Model)
-
-	// Depth 2: queued, never printed.
-	for _, text := range []string{"queued one", "queued two"} {
-		next, cmd = m.Update(PrintMsg{Text: text})
-		m = next.(Model)
-		if cmd != nil {
-			t.Errorf("text %q printed while a modal was open; it must be queued", text)
-		}
-	}
-	if len(m.pendingPrints) != 2 {
-		t.Fatalf("got %d queued prints, want 2", len(m.pendingPrints))
-	}
-
-	// Popping back to depth 1 flushes, in order, as one print.
-	next, cmd = m.Update(PopScreenMsg{})
-	m = next.(Model)
-	got := printText(t, cmd)
-	i1, i2 := strings.Index(got, "queued one"), strings.Index(got, "queued two")
-	if i1 < 0 || i2 < 0 {
-		t.Fatalf("got %q, want both queued entries flushed", got)
-	}
-	if i1 > i2 {
-		t.Error("queued prints were flushed out of order")
-	}
-	if len(m.pendingPrints) != 0 {
-		t.Error("expected the queue drained after the flush")
-	}
-}
-
-func TestPrintMsgFlushesOnEscPop(t *testing.T) {
-	m := New(stubScreen{name: "base"}, loadTheme(t), theme.TierASCII, nil)
-	next, _ := m.Update(PushScreenMsg{Screen: stubScreen{name: "modal"}})
-	m = next.(Model)
-	next, _ = m.Update(PrintMsg{Text: "while open"})
-	m = next.(Model)
-
-	next, cmd := m.Update(keyMsg("esc"))
-	m = next.(Model)
-	if got := printText(t, cmd); !strings.Contains(got, "while open") {
-		t.Errorf("got %q, want the queue flushed when Esc pops the modal", got)
-	}
-}
-
-func TestPrintMsgFlushesAfterThemeSelection(t *testing.T) {
-	themes, err := theme.Embedded()
-	if err != nil {
-		t.Fatal(err)
-	}
-	m := New(stubScreen{name: "base"}, loadTheme(t), theme.TierASCII, themes)
-	next, _ := m.Update(PushScreenMsg{Screen: stubScreen{name: "picker"}})
-	m = next.(Model)
-	next, _ = m.Update(PrintMsg{Text: "during pick"})
-	m = next.(Model)
-
-	// Selecting a theme also pops, so it must flush too.
-	next, cmd := m.Update(ThemeSelectedMsg{Name: themes[0].Name})
-	m = next.(Model)
-	if len(m.pendingPrints) != 0 {
-		t.Error("expected the queue drained when the picker closed on selection")
-	}
-	if cmd == nil {
-		t.Fatal("expected a Cmd batch containing the flush")
-	}
-}
-
-func TestPrintMsgEmptyTextIsIgnored(t *testing.T) {
-	m := New(stubScreen{name: "base"}, loadTheme(t), theme.TierASCII, nil)
-	if _, cmd := m.Update(PrintMsg{Text: ""}); cmd != nil {
-		t.Error("expected empty text to produce no print")
-	}
-}
-
-// unknownMsg is a Msg type Update has no case for, so it can only reach
-// a screen through the fallthrough. tea.WindowSizeMsg cannot test this:
-// Update handles it in its own case, so the fallthrough is never taken.
-type unknownMsg struct{ n int }
-
 func TestUnrecognisedMsgForwardsToTopScreen(t *testing.T) {
 	m := New(stubScreen{name: "base"}, loadTheme(t), theme.TierASCII, nil)
 	next, _ := m.Update(unknownMsg{n: 7})
@@ -436,5 +304,34 @@ func TestInitDelegatesToTopScreen(t *testing.T) {
 	cmd()
 	if !called {
 		t.Error("expected the base screen's Init Cmd to be returned")
+	}
+}
+
+// unknownMsg is a Msg type Update has no case for, so it can only reach
+// a screen through the fallthrough.
+type unknownMsg struct{ n int }
+
+// TestViewIsAlwaysAltScreen pins the cockpit decision. The alternate
+// screen is not a mode the base screen opts into; it is the only
+// interactive renderer, so the frame declares it unconditionally.
+func TestViewIsAlwaysAltScreen(t *testing.T) {
+	m := New(stubScreen{name: "base"}, loadTheme(t), theme.TierASCII, nil)
+	if !m.View().AltScreen {
+		t.Error("the base screen must render on the alternate screen")
+	}
+
+	next, _ := m.Update(PushScreenMsg{Screen: stubScreen{name: "modal"}})
+	if !next.(Model).View().AltScreen {
+		t.Error("a pushed modal must stay on the alternate screen")
+	}
+}
+
+// TestViewRequestsCellMotionMouse pins the mode. Cell motion carries
+// clicks, drags and the wheel, which is everything the transcript needs.
+// All-motion adds an event for every cursor movement and buys nothing.
+func TestViewRequestsCellMotionMouse(t *testing.T) {
+	m := New(stubScreen{name: "base"}, loadTheme(t), theme.TierASCII, nil)
+	if got := m.View().MouseMode; got != tea.MouseModeCellMotion {
+		t.Errorf("got mouse mode %v, want tea.MouseModeCellMotion", got)
 	}
 }

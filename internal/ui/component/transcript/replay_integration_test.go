@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/transcript"
@@ -50,16 +49,15 @@ func TestReplayDrivesTranscript(t *testing.T) {
 	}
 
 	m := transcript.New(th, theme.TierTrueColor)
-	m.SetSize(80, 24, 4)
-	var printed []string
+	m.SetSize(80, 24)
 	deadline := time.After(5 * time.Second)
 	for {
 		select {
 		case ev, ok := <-handle.Events():
 			if !ok {
-				got := strings.Join(printed, "\n") + "\n" + m.View()
+				got := m.Dump()
 				if strings.TrimSpace(got) == "" {
-					t.Fatal("expected a non-empty printed transcript after a full replay")
+					t.Fatal("expected a non-empty transcript after a full replay")
 				}
 				// Non-empty proves construction. These prove the events
 				// crossed the boundary and were rendered as themselves:
@@ -88,14 +86,7 @@ func TestReplayDrivesTranscript(t *testing.T) {
 				}
 				return
 			}
-			var cmd tea.Cmd
-			m, cmd = m.HandleEvent(ev)
-			if cmd == nil {
-				continue
-			}
-			if msg, ok := cmd().(transcript.CommitMsg); ok {
-				printed = append(printed, msg.Text)
-			}
+			m, _ = m.HandleEvent(ev)
 		case <-deadline:
 			t.Fatal("replay did not close its event channel within 5s")
 		}

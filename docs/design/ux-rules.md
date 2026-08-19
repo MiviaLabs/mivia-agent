@@ -163,8 +163,10 @@ shape as a named mode, `split-footer`, with `externalOutputMode:
 alt-screen.
 Source: [OpenTUI renderer](https://opentui.com/docs/core-concepts/renderer/).
 
-**Rule 3.2.** Ship both renderers behind one command. Switching must keep the
-live session. Refuse to switch and state why when session state cannot carry.
+**Rule 3.2. REMOVED on 2026-08-19.** It required shipping both renderers
+behind one command. There is only one interactive renderer now, so there is
+nothing to switch between. See rule 6.1 of
+[cockpit-research.md](cockpit-research.md).
 Source: [Claude Code fullscreen](https://code.claude.com/docs/en/fullscreen).
 
 **Rule 3.3.** A cockpit owes the user a one-key path that writes the whole

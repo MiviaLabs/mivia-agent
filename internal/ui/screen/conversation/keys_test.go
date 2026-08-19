@@ -1,6 +1,7 @@
 package conversation
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -8,8 +9,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/composer"
+	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/keymap"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/replay"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
@@ -59,12 +60,12 @@ func TestFocusIsVertical(t *testing.T) {
 	}
 
 	s, _ = press(t, s, shiftTabKey)
-	if got, want := s.transcript.FocusIndex(), len(s.transcript.Live())-1; got != want {
+	if got, want := s.transcript.FocusIndex(), len(s.transcript.Blocks())-1; got != want {
 		t.Fatalf("got focus %d, want the newest block %d directly above the composer", got, want)
 	}
 
 	s, _ = press(t, s, shiftTabKey)
-	if got, want := s.transcript.FocusIndex(), len(s.transcript.Live())-2; got != want {
+	if got, want := s.transcript.FocusIndex(), len(s.transcript.Blocks())-2; got != want {
 		t.Errorf("got focus %d, want one block further up (%d)", got, want)
 	}
 
@@ -123,9 +124,9 @@ func TestSpaceTogglesOnlyAFocusedBlock(t *testing.T) {
 	scr = n.(Screen)
 
 	scr, _ = press(t, scr, shiftTabKey)
-	before := scr.transcript.Live()[0].Collapsed
+	before := scr.transcript.Blocks()[0].Collapsed
 	scr, _ = press(t, scr, key(" "))
-	if scr.transcript.Live()[0].Collapsed == before {
+	if scr.transcript.Blocks()[0].Collapsed == before {
 		t.Error("space did not toggle the focused block")
 	}
 	if got := scr.composer.Value(); got != "" {
@@ -147,13 +148,13 @@ func TestCollapseAllAndExpandAll(t *testing.T) {
 	scr, _ = press(t, scr, shiftTabKey)
 
 	scr, _ = press(t, scr, ctrl('g'))
-	for i, b := range scr.transcript.Live() {
+	for i, b := range scr.transcript.Blocks() {
 		if b.Collapsible && !b.Collapsed {
 			t.Errorf("block %d stayed open after collapse-all", i)
 		}
 	}
 	scr, _ = press(t, scr, ctrl('e'))
-	for i, b := range scr.transcript.Live() {
+	for i, b := range scr.transcript.Blocks() {
 		if b.Collapsible && b.Collapsed {
 			t.Errorf("block %d stayed closed after expand-all", i)
 		}
@@ -276,18 +277,23 @@ func TestCtrlRTogglesReasoning(t *testing.T) {
 // question, so swallowing it mid-sentence would be worse than no key.
 func TestHelpOnlyFiresOnAnEmptyComposer(t *testing.T) {
 	s := newScreen(t, replay.New(nil, 0), nil, nil)
-	s, cmd := press(t, s, key("?"))
-	if cmd == nil {
-		t.Fatal("expected help on an empty composer")
-	}
-	got, ok := cmd().(app.PrintMsg)
-	if !ok {
-		t.Fatalf("got %T, want app.PrintMsg", cmd())
+	s, _ = press(t, s, key("?"))
+	if s.overlay == "" {
+		t.Fatal("expected the help overlay on an empty composer")
 	}
 	for _, want := range []string{"send", "theme", "newline"} {
-		if !strings.Contains(ansi.Strip(got.Text), want) {
-			t.Errorf("generated help is missing %q:\n%s", want, ansi.Strip(got.Text))
+		if !strings.Contains(ansi.Strip(s.overlay), want) {
+			t.Errorf("generated help is missing %q:\n%s", want, ansi.Strip(s.overlay))
 		}
+	}
+	// The overlay covers the transcript, so the next key dismisses it and
+	// does nothing else.
+	s, _ = press(t, s, key("x"))
+	if s.overlay != "" {
+		t.Error("the overlay survived a keystroke")
+	}
+	if got := s.composer.Value(); got != "" {
+		t.Errorf("the dismissing key reached the composer as %q", got)
 	}
 
 	s = typeText(t, s, "why")
@@ -506,5 +512,154 @@ func TestMenuUpArrowMovesTheHighlight(t *testing.T) {
 	s, _ = press(t, s, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if got := s.composer.Value(); got != "/modes" {
 		t.Errorf("got %q, want Up to wrap to the last row", got)
+	}
+}
+
+// TestScrollKeysMoveTheViewport pins the cockpit's replacement for
+// native terminal scrolling. The alternate screen has none, so these
+// keys are the only way to read what left the screen.
+func TestScrollKeysMoveTheViewport(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 10})
+	scr := next.(Screen)
+	for i := 0; i < 40; i++ {
+		n, _ := scr.Update(turnEventMsg{ev: uievent.Event{
+			Kind: uievent.KindNotice, Body: uievent.NoticeBody{Text: fmt.Sprintf("notice %d", i)},
+		}})
+		scr = n.(Screen)
+	}
+	if !scr.transcript.Following() {
+		t.Fatal("a fresh transcript follows the tail")
+	}
+
+	scr, _ = press(t, scr, tea.KeyPressMsg{Code: tea.KeyPgUp})
+	if scr.transcript.Following() {
+		t.Error("page up did not pause auto-follow")
+	}
+	up := scr.transcript.Offset()
+
+	scr, _ = press(t, scr, tea.KeyPressMsg{Code: tea.KeyPgDown})
+	if scr.transcript.Offset() <= up {
+		t.Error("page down did not move back towards the tail")
+	}
+
+	scr, _ = press(t, scr, tea.KeyPressMsg{Code: tea.KeyHome, Mod: tea.ModCtrl})
+	if scr.transcript.Offset() != 0 {
+		t.Errorf("got offset %d, want the start of the conversation", scr.transcript.Offset())
+	}
+	if !strings.Contains(ansi.Strip(scr.View()), "notice 0") {
+		t.Error("the oldest block is not on screen at the top")
+	}
+
+	scr, _ = press(t, scr, tea.KeyPressMsg{Code: tea.KeyEnd, Mod: tea.ModCtrl})
+	if !scr.transcript.Following() {
+		t.Error("ctrl+end did not resume auto-follow")
+	}
+}
+
+// TestWheelScrollsTheTranscript pins the mouse path. The wheel is the
+// gesture most users reach for first, and the cockpit captures it.
+func TestWheelScrollsTheTranscript(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 10})
+	scr := next.(Screen)
+	for i := 0; i < 40; i++ {
+		n, _ := scr.Update(turnEventMsg{ev: uievent.Event{
+			Kind: uievent.KindNotice, Body: uievent.NoticeBody{Text: fmt.Sprintf("notice %d", i)},
+		}})
+		scr = n.(Screen)
+	}
+	bottom := scr.transcript.Offset()
+
+	n, _ := scr.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+	scr = n.(Screen)
+	if got, want := scr.transcript.Offset(), bottom-uikitconfig.CockpitScrollLines; got != want {
+		t.Errorf("got offset %d after one notch up, want %d", got, want)
+	}
+
+	n, _ = scr.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	scr = n.(Screen)
+	if got := scr.transcript.Offset(); got != bottom {
+		t.Errorf("got offset %d after one notch back down, want %d", got, bottom)
+	}
+}
+
+// TestStatusRowStatesWhenScrolledAway pins the affordance: a reader who
+// scrolled up must be told how to get back.
+func TestStatusRowStatesWhenScrolledAway(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 10})
+	scr := next.(Screen)
+	for i := 0; i < 40; i++ {
+		n, _ := scr.Update(turnEventMsg{ev: uievent.Event{
+			Kind: uievent.KindNotice, Body: uievent.NoticeBody{Text: fmt.Sprintf("notice %d", i)},
+		}})
+		scr = n.(Screen)
+	}
+	if got := ansi.Strip(scr.statusRow()); got != "" {
+		t.Errorf("got %q, want a quiet status row while following", got)
+	}
+
+	scr, _ = press(t, scr, tea.KeyPressMsg{Code: tea.KeyPgUp})
+	got := ansi.Strip(scr.statusRow())
+	if !strings.Contains(got, "scrolled up") || !strings.Contains(got, "ctrl+end") {
+		t.Errorf("got %q, want the scrolled-away state and the way back", got)
+	}
+}
+
+// TestStatusRowStatesTruncation: the transcript is bounded, so it must
+// say when it dropped the start rather than pretend the session began
+// where it now begins.
+func TestStatusRowStatesTruncation(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 10})
+	scr := next.(Screen)
+	for i := 0; i < uikitconfig.MaxTranscriptLines+3; i++ {
+		n, _ := scr.Update(turnEventMsg{ev: uievent.Event{
+			Kind: uievent.KindNotice, Body: uievent.NoticeBody{Text: fmt.Sprintf("notice %d", i)},
+		}})
+		scr = n.(Screen)
+	}
+	if got := ansi.Strip(scr.statusRow()); !strings.Contains(got, "dropped") {
+		t.Errorf("got %q, want the status row to state the truncation", got)
+	}
+}
+
+// TestOverlayFillsTheTranscriptRows: an overlay must claim exactly the
+// transcript's rows, or the chrome below it moves when it opens.
+func TestOverlayFillsTheTranscriptRows(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+	scr := next.(Screen)
+	before := len(strings.Split(scr.View(), "\n"))
+
+	scr, _ = press(t, scr, key("?"))
+	if scr.overlay == "" {
+		t.Fatal("expected the help overlay")
+	}
+	if got := len(strings.Split(scr.View(), "\n")); got != before {
+		t.Errorf("the view is %d rows with the overlay open and %d without", got, before)
+	}
+}
+
+// TestOverlayTallerThanTheScreenIsClipped: a long keymap must not push
+// the composer off the bottom.
+func TestOverlayTallerThanTheScreenIsClipped(t *testing.T) {
+	rows := overlayRows(strings.Repeat("row\n", 100), 5)
+	if len(rows) != 5 {
+		t.Errorf("got %d rows, want the overlay clipped to 5", len(rows))
+	}
+	if got := overlayRows("one", 0); len(got) != 1 {
+		t.Errorf("got %d rows at an unknown height, want the text unchanged", len(got))
+	}
+}
+
+func TestOverlayShorterThanTheScreenIsPadded(t *testing.T) {
+	rows := overlayRows("one\ntwo", 6)
+	if len(rows) != 6 {
+		t.Errorf("got %d rows, want the overlay padded to 6", len(rows))
+	}
+	if rows[0] != "one" || rows[1] != "two" {
+		t.Errorf("got %q, want the content kept at the top", rows[:2])
 	}
 }

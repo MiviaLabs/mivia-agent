@@ -54,6 +54,10 @@ const (
 	IDExpandAll     ID = "expand-all"
 	IDCollapseAll   ID = "collapse-all"
 	IDCopyBlock     ID = "copy-block"
+	IDScrollUp      ID = "scroll-up"
+	IDScrollDown    ID = "scroll-down"
+	IDScrollTop     ID = "scroll-top"
+	IDScrollBottom  ID = "scroll-bottom"
 	IDOpenPager     ID = "open-pager"
 	IDToggleReason  ID = "toggle-reasoning"
 	IDApproveOnce   ID = "approve-once"
@@ -101,6 +105,14 @@ func Default() []Binding {
 		{ID: IDThemeDialog, Context: ContextGlobal, Keys: []string{"ctrl+t"}, Help: "theme"},
 		{ID: IDOpenPager, Context: ContextGlobal, Keys: []string{"ctrl+o"}, Help: "open the pager"},
 		{ID: IDToggleReason, Context: ContextGlobal, Keys: []string{"ctrl+r"}, Help: "show or hide reasoning"},
+
+		// Scrolling. The cockpit owns the surface, so the application
+		// scrolls: the terminal has no scrollback of its own to offer
+		// (docs/design/cockpit-research.md section 3).
+		{ID: IDScrollUp, Context: ContextGlobal, Keys: []string{"pgup"}, Help: "scroll up half a screen"},
+		{ID: IDScrollDown, Context: ContextGlobal, Keys: []string{"pgdown"}, Help: "scroll down half a screen"},
+		{ID: IDScrollTop, Context: ContextGlobal, Keys: []string{"ctrl+home"}, Help: "jump to the start"},
+		{ID: IDScrollBottom, Context: ContextGlobal, Keys: []string{"ctrl+end"}, Help: "jump to the newest output"},
 
 		// Composer.
 		{ID: IDSend, Context: ContextComposer, Keys: []string{"enter"}, Help: "send"},

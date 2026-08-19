@@ -30,93 +30,49 @@ func loadTheme(t *testing.T) theme.Theme {
 	return theme.Theme{}
 }
 
-// commitText executes a Cmd and returns the text it carries, failing the
-// test if it's not (or doesn't yield) a CommitMsg.
-func commitText(t *testing.T, cmd tea.Cmd) string {
-	t.Helper()
-	if cmd == nil {
-		t.Fatal("expected a commit Cmd, got nil")
-	}
-	msg, ok := cmd().(CommitMsg)
-	if !ok {
-		t.Fatalf("got %T, want CommitMsg", cmd())
-	}
-	return msg.Text
-}
-
-// handleAndCollectCommits drives every event through m, in order,
-// collecting the text of every CommitMsg produced (delta/flush Cmds are
-// ignored - deltas never commit on their own).
-func handleAndCollectCommits(t *testing.T, m Model, events []uievent.Event) []string {
-	t.Helper()
-	var commits []string
-	for _, ev := range events {
-		var cmd tea.Cmd
-		m, cmd = m.HandleEvent(ev)
-		if cmd == nil {
-			continue
-		}
-		if msg, ok := cmd().(CommitMsg); ok {
-			commits = append(commits, msg.Text)
-		}
-	}
-	return commits
-}
-
-// TestRenderGolden pins the styled commit stream for the same
+// TestRenderGolden pins the cockpit's two renderings of the same
 // recorded-conversation fixture internal/ui/stream proves its plain
-// renderer against: the ordered sequence of CommitMsg text a caller
-// would tea.Println, joined by newlines.
-// It runs at two sizes on purpose. The unmeasured model is the state
-// before the first WindowSizeMsg, where the budget is zero and every
-// block commits on push. The 80x24 model is the one a user actually
-// sees, and it is the ONLY one that exercises right-aligned columns,
-// detail clipping, the live window and in-place updates. A golden taken
-// only at the unmeasured size passes while all four are broken.
+// renderer against.
+//
+// The viewport golden is what the user sees: exactly the visible rows at
+// a known size. The dump golden is the whole conversation expanded,
+// which is what the write-to-scrollback key hands back to the terminal
+// (docs/design/cockpit-research.md rule 6.3). Both matter, and neither
+// substitutes for the other: the viewport can be right while the dump
+// drops content, and the dump can be right while the viewport draws the
+// wrong slice.
 func TestRenderGolden(t *testing.T) {
-	cases := []struct {
-		name          string
-		width, height int
-		golden        string
-	}{
-		{"unmeasured", 0, 0, "conversation.txt"},
-		{"80x24", 80, 24, "conversation-80x24.txt"},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			events, err := stream.DefaultFixture()
-			if err != nil {
-				t.Fatal(err)
-			}
-			m := New(loadTheme(t), theme.TierTrueColor)
-			if c.width > 0 {
-				m.SetSize(c.width, c.height, 4)
-			}
-			commits := handleAndCollectCommits(t, m, events)
-			got := strings.Join(commits, "\n")
-			if live := m.View(); live != "" {
-				got += "\n--- live window ---\n" + live
-			}
-			compareGolden(t, filepath.Join("testdata", "golden", c.golden), got)
+	const width, height = 80, 20
 
-			if c.width == 0 {
-				return
-			}
-			// Properties, independent of the bytes. A regenerated golden
-			// records whatever the code does; these state what it MUST do,
-			// so a wrong regeneration still fails.
-			for _, line := range strings.Split(got, "\n") {
-				if strings.HasPrefix(line, "---") {
-					continue
-				}
-				if w := ansi.StringWidth(line); w > c.width {
-					t.Errorf("row is %d columns, wider than the %d-column terminal: %q", w, c.width, line)
-				}
-			}
-			if rows := len(strings.Split(m.View(), "\n")); rows > c.height-4 {
-				t.Errorf("live window is %d rows, over the %d-row budget", rows, c.height-4)
-			}
-		})
+	events, err := stream.DefaultFixture()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := New(loadTheme(t), theme.TierTrueColor)
+	m.SetSize(width, height)
+	for _, ev := range events {
+		m, _ = m.HandleEvent(ev)
+	}
+
+	view := m.View()
+	compareGolden(t, filepath.Join("testdata", "golden", "cockpit-80x20.txt"), view)
+	compareGolden(t, filepath.Join("testdata", "golden", "transcript-dump.txt"), m.Dump())
+
+	// Properties, independent of the bytes. A regenerated golden records
+	// whatever the code does; these state what it MUST do, so a wrong
+	// regeneration still fails.
+	rows := strings.Split(view, "\n")
+	if len(rows) != height {
+		t.Errorf("viewport drew %d rows, want exactly %d", len(rows), height)
+	}
+	for _, line := range rows {
+		if w := ansi.StringWidth(line); w > width {
+			t.Errorf("row is %d columns, wider than the %d-column terminal: %q", w, width, line)
+		}
+	}
+	// Following the tail means the last block is on screen.
+	if !m.Following() {
+		t.Error("the transcript stopped following the tail with no user scroll")
 	}
 }
 
@@ -159,15 +115,18 @@ func TestHandleEventEveryKind(t *testing.T) {
 		{Kind: uievent.KindUsage, Body: uievent.UsageBody{InputTokens: 10, OutputTokens: 5}},
 		{Kind: uievent.KindTurnEnd, Body: uievent.TurnEndBody{Reason: "completed"}},
 	}
-	got := strings.Join(handleAndCollectCommits(t, m, events), "\n")
+	m.SetSize(80, 200)
+	m = drain(t, m, events)
+	got := ansi.Strip(m.Dump())
 	for _, want := range []string{"hi", "full reply", "3 words", "hidden", "run_command", "output line", "1 of 2", "done", "boom", "step 1", "step 2", "context 80% full", "failed", "10 in"} {
 		if !strings.Contains(got, want) {
-			t.Errorf("commits missing %q:\n%s", want, got)
+			t.Errorf("the transcript is missing %q:\n%s", want, got)
 		}
 	}
-	// TurnEnd commits no block of its own.
+	// A completed turn adds no block of its own: turn state belongs to
+	// the status row.
 	if strings.Contains(got, "completed") {
-		t.Errorf("expected turn.end to commit no block, got:\n%s", got)
+		t.Errorf("expected turn.end to add no block, got:\n%s", got)
 	}
 }
 
@@ -184,6 +143,7 @@ func TestToolOutputEmptyChunkCommitsNothing(t *testing.T) {
 
 func TestReasoningLiveTailUsesSubtleStyle(t *testing.T) {
 	m := New(loadTheme(t), theme.TierTrueColor)
+	m.SetSize(80, 24)
 	m, cmd := m.HandleEvent(uievent.Event{Kind: uievent.KindReasoning, Body: uievent.ReasoningDeltaBody{Text: "thinking..."}})
 	if cmd == nil {
 		t.Fatal("expected the first reasoning delta to schedule a flush Cmd")
@@ -193,7 +153,7 @@ func TestReasoningLiveTailUsesSubtleStyle(t *testing.T) {
 		t.Fatalf("got %q, want the live reasoning tail present before the final word-count chunk", got)
 	}
 	wantStyle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Render("thinking...")
-	if got != wantStyle {
+	if !strings.Contains(got, wantStyle) {
 		t.Errorf("got %q, want the reasoning tail styled with RoleFGSubtle: %q", got, wantStyle)
 	}
 }
@@ -211,6 +171,7 @@ func TestFlushCmdYieldsFlushMsg(t *testing.T) {
 
 func TestTextDeltaBatchesAndSchedulesOneFlush(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 24)
 	m, cmd1 := m.HandleEvent(uievent.Event{Kind: uievent.KindTextDelta, Body: uievent.TextDeltaBody{Text: "a"}})
 	if cmd1 == nil {
 		t.Fatal("expected the first delta to schedule a flush Cmd")
@@ -263,24 +224,36 @@ func TestTextEndWithEmptyTextCommitsNothing(t *testing.T) {
 	}
 }
 
-func TestViewClearsOnceCommitted(t *testing.T) {
+// TestStreamingTailBecomesABlock pins the handover: while a span streams
+// it is an unaddressable tail, and when it ends it becomes a block that
+// can take focus and collapse.
+func TestStreamingTailBecomesABlock(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII)
-	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindTextDelta, Body: uievent.TextDeltaBody{Text: "a"}})
-	if m.View() == "" {
-		t.Fatal("expected a live tail while streaming")
+	m.SetSize(80, 24)
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindTextDelta, Body: uievent.TextDeltaBody{Text: "partial"}})
+	if len(m.Blocks()) != 0 {
+		t.Fatal("a streaming span must not be a block yet")
 	}
-	m, cmd := m.HandleEvent(uievent.Event{Kind: uievent.KindTextEnd, Body: uievent.TextEndBody{Text: "a"}})
-	if commitText(t, cmd) == "" {
-		t.Error("expected TextEnd to commit the final text")
+	if !strings.Contains(ansi.Strip(m.View()), "partial") {
+		t.Fatal("expected the streaming tail on screen")
 	}
-	if got := m.View(); got != "" {
-		t.Errorf("got %q, want an empty View() once the span is committed (it now lives in scrollback, not the model)", got)
+
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindTextEnd, Body: uievent.TextEndBody{Text: "final"}})
+	if got := len(m.Blocks()); got != 1 {
+		t.Fatalf("got %d blocks, want the finished span as one block", got)
+	}
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "final") {
+		t.Errorf("got %q, want the finished text on screen", view)
+	}
+	if strings.Contains(view, "partial") {
+		t.Errorf("got %q, want the tail replaced by the final text, not appended", view)
 	}
 }
 
 func TestToolOutputProgressUpdatesProgressBarInPlace(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII)
-	m.SetSize(80, 24, 4)
+	m.SetSize(80, 24)
 
 	m, _ = m.HandleEvent(uievent.Event{
 		Kind: uievent.KindToolStart,
@@ -309,7 +282,7 @@ func TestToolOutputProgressUpdatesProgressBarInPlace(t *testing.T) {
 		},
 	})
 
-	live := m.Live()
+	live := m.Blocks()
 	if len(live) != 1 {
 		t.Fatalf("got %d live blocks, want 1", len(live))
 	}

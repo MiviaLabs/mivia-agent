@@ -12,7 +12,7 @@ import (
 func focused(t *testing.T, n int) Model {
 	t.Helper()
 	m := New(loadTheme(t), theme.TierASCII)
-	m.SetSize(80, 40, 4)
+	m.SetSize(80, 40)
 	for i := 0; i < n; i++ {
 		m, _ = m.HandleEvent(noticeEvent("n" + string(rune('a'+i))))
 	}
@@ -73,7 +73,7 @@ func TestFocusOnAnEmptyWindowIsANoOp(t *testing.T) {
 func TestOnlyOneBlockIsEverFocused(t *testing.T) {
 	m := focused(t, 4).FocusPrev().FocusPrev()
 	count := 0
-	for i, b := range m.Live() {
+	for i, b := range m.Blocks() {
 		if b.Focused {
 			count++
 			if i != m.FocusIndex() {
@@ -84,42 +84,42 @@ func TestOnlyOneBlockIsEverFocused(t *testing.T) {
 	if count != 1 {
 		t.Errorf("got %d focused blocks, want exactly 1", count)
 	}
-	if m.ClearFocus().Live()[m.FocusIndex()].Focused {
+	if m.ClearFocus().Blocks()[m.FocusIndex()].Focused {
 		t.Error("ClearFocus left a block flagged")
 	}
 }
 
 func TestToggleFocusedFlipsTheBlock(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII)
-	m.SetSize(80, 40, 4)
+	m.SetSize(80, 40)
 	m, _ = m.HandleEvent(uievent.Event{
 		Kind: uievent.KindToolEnd,
 		Body: uievent.ToolEndBody{ToolCallID: "c1", Name: "edit", OK: true, Result: "a\nb"},
 	})
 	m = m.FocusPrev()
 
-	before := m.Live()[0].Collapsed
-	next, _, ok := m.ToggleFocused()
+	before := m.Blocks()[0].Collapsed
+	next, ok := m.ToggleFocused()
 	if !ok {
 		t.Fatal("expected the toggle to apply to a collapsible block")
 	}
-	if next.Live()[0].Collapsed == before {
+	if next.Blocks()[0].Collapsed == before {
 		t.Error("the block did not change state")
 	}
 }
 
 func TestToggleFocusedRefusesWhenNothingApplies(t *testing.T) {
 	m := focused(t, 2)
-	if _, _, ok := m.ToggleFocused(); ok {
+	if _, ok := m.ToggleFocused(); ok {
 		t.Error("expected a refusal with the composer focused")
 	}
 
 	// Prose has no header to collapse into.
 	p := New(loadTheme(t), theme.TierASCII)
-	p.SetSize(80, 40, 4)
+	p.SetSize(80, 40)
 	p, _ = p.HandleEvent(uievent.Event{Kind: uievent.KindTextEnd, Body: uievent.TextEndBody{Text: "hello"}})
 	p = p.FocusPrev()
-	if _, _, ok := p.ToggleFocused(); ok {
+	if _, ok := p.ToggleFocused(); ok {
 		t.Error("expected a refusal on a prose block")
 	}
 }
@@ -132,7 +132,7 @@ func TestExpandingCanEvict(t *testing.T) {
 	// while collapsed so the three header rows still fit. Expanding is
 	// then the only thing that can overflow the budget.
 	m := New(loadTheme(t), theme.TierASCII)
-	m.SetSize(80, 40, 4)
+	m.SetSize(80, 40)
 	for i := 0; i < 3; i++ {
 		id := string(rune('a' + i))
 		m, _ = m.HandleEvent(uievent.Event{
@@ -144,42 +144,38 @@ func TestExpandingCanEvict(t *testing.T) {
 			Body: uievent.ToolOutputBody{ToolCallID: id, Chunk: "one\ntwo\nthree"},
 		})
 	}
-	m, _ = m.SetAllCollapsed(true)
-	m.SetSize(80, 10, 4) // budget 6; three collapsed headers fit
-	if got := len(m.Live()); got != 3 {
+	m = m.SetAllCollapsed(true)
+	m.SetSize(80, 10) // budget 6; three collapsed headers fit
+	if got := len(m.Blocks()); got != 3 {
 		t.Fatalf("got %d live blocks collapsed, want all 3 to fit the budget", got)
 	}
 
-	next, committed := m.SetAllCollapsed(false)
-	if committed == "" {
-		t.Fatal("expanding past the budget evicted nothing; the oldest must reach scrollback")
+	next := m.SetAllCollapsed(false)
+
+	// Nothing is lost when everything expands: the viewport scrolls
+	// instead of dropping content.
+	if got, want := len(next.Blocks()), len(m.Blocks()); got != want {
+		t.Errorf("got %d blocks after expand-all, want %d: expanding must not drop content", got, want)
 	}
-	if got := len(next.Live()); got >= 3 {
-		t.Errorf("got %d live blocks after expanding, want the oldest evicted", got)
-	}
-	// Whatever survives must still fit.
-	rows := 0
-	for _, b := range next.Live() {
-		rows += b.Height(80)
-	}
-	if rows > next.budget() {
-		t.Errorf("live window is %d rows after expand-all, budget is %d", rows, next.budget())
+	if next.TotalRows() <= m.TotalRows() {
+		t.Errorf("expand-all did not grow the conversation: %d rows before, %d after",
+			m.TotalRows(), next.TotalRows())
 	}
 }
 
 func TestCollapseAllLeavesProseAlone(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII)
-	m.SetSize(80, 40, 4)
+	m.SetSize(80, 40)
 	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindTextEnd, Body: uievent.TextEndBody{Text: "a\nb"}})
-	next, _ := m.SetAllCollapsed(true)
-	if next.Live()[0].Collapsed {
+	next := m.SetAllCollapsed(true)
+	if next.Blocks()[0].Collapsed {
 		t.Error("prose has no header to collapse into and must be left alone")
 	}
 }
 
 func TestFocusedText(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII)
-	m.SetSize(80, 40, 4)
+	m.SetSize(80, 40)
 	m, _ = m.HandleEvent(uievent.Event{
 		Kind: uievent.KindToolEnd,
 		Body: uievent.ToolEndBody{ToolCallID: "c1", Name: "run_command", OK: true, Result: "line-1\nline-2"},
@@ -207,14 +203,14 @@ func TestFocusedText(t *testing.T) {
 // content, and collapse is a view state, not part of what they meant.
 func TestFocusedTextIgnoresCollapseState(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII)
-	m.SetSize(80, 40, 4)
+	m.SetSize(80, 40)
 	m, _ = m.HandleEvent(uievent.Event{
 		Kind: uievent.KindToolEnd,
 		Body: uievent.ToolEndBody{ToolCallID: "c1", Name: "edit", OK: true, Result: "body-line"},
 	})
 	m = m.FocusPrev()
 	open, _ := m.FocusedText()
-	closed, _, _ := m.ToggleFocused()
+	closed, _ := m.ToggleFocused()
 	shut, _ := closed.FocusedText()
 	if open != shut {
 		t.Errorf("copied text changed with the collapse state:\nopen:   %q\nclosed: %q", open, shut)
@@ -223,7 +219,7 @@ func TestFocusedTextIgnoresCollapseState(t *testing.T) {
 
 func TestToggleReasoning(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII)
-	m.SetSize(80, 40, 4)
+	m.SetSize(80, 40)
 	m, _ = m.HandleEvent(uievent.Event{
 		Kind: uievent.KindReasoning,
 		Body: uievent.ReasoningDeltaBody{WordCount: 12},
@@ -237,7 +233,7 @@ func TestToggleReasoning(t *testing.T) {
 	if !m.ReasoningHidden() {
 		t.Fatal("the toggle did not record the hidden state")
 	}
-	for _, b := range m.Live() {
+	for _, b := range m.Blocks() {
 		if b.Kind == uievent.KindReasoning && !b.Collapsed {
 			t.Error("a reasoning block stayed open")
 		}
@@ -262,7 +258,7 @@ func TestSyncFocusClampsAStrayIndex(t *testing.T) {
 	}
 
 	m.focus = 99
-	if got := m.syncFocus().FocusIndex(); got != len(m.Live())-1 {
+	if got := m.syncFocus().FocusIndex(); got != len(m.Blocks())-1 {
 		t.Errorf("got %d, want a clamp to the newest block", got)
 	}
 }

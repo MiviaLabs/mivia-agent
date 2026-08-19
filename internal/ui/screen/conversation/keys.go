@@ -31,6 +31,14 @@ func (s Screen) handleKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
 		return s, cmd
 	}
 
+	// Any key dismisses an overlay, and does nothing else. An overlay
+	// covers the transcript, so acting on the key underneath it would act
+	// on something the user cannot see.
+	if s.overlay != "" {
+		s.overlay = ""
+		return s, nil
+	}
+
 	key := msg.String()
 	// Any key other than a second ctrl+c ends the quit-armed state, so a
 	// stray keystroke cannot leave the session one press from exiting.
@@ -96,19 +104,11 @@ func (s Screen) transcriptAction(id keymap.ID) (app.Screen, tea.Cmd) {
 	case keymap.IDCancel:
 		s.transcript = s.transcript.ClearFocus()
 	case keymap.IDToggleBlock:
-		next, committed, ok := s.transcript.ToggleFocused()
-		s.transcript = next
-		if ok {
-			return s, printCmd(committed)
-		}
+		s.transcript, _ = s.transcript.ToggleFocused()
 	case keymap.IDExpandAll:
-		next, committed := s.transcript.SetAllCollapsed(false)
-		s.transcript = next
-		return s, printCmd(committed)
+		s.transcript = s.transcript.SetAllCollapsed(false)
 	case keymap.IDCollapseAll:
-		next, committed := s.transcript.SetAllCollapsed(true)
-		s.transcript = next
-		return s, printCmd(committed)
+		s.transcript = s.transcript.SetAllCollapsed(true)
 	case keymap.IDCopyBlock:
 		if text, ok := s.transcript.FocusedText(); ok {
 			// tea.SetClipboard writes OSC 52. It fails silently on VTE
@@ -134,6 +134,18 @@ func (s Screen) globalAction(id keymap.ID) (app.Screen, tea.Cmd, bool) {
 		return s, func() tea.Msg { return app.PushScreenMsg{Screen: next} }, true
 	case keymap.IDToggleReason:
 		s.transcript = s.transcript.ToggleReasoning()
+		return s, nil, true
+	case keymap.IDScrollUp:
+		s.transcript = s.transcript.PageBy(-1, 2)
+		return s, nil, true
+	case keymap.IDScrollDown:
+		s.transcript = s.transcript.PageBy(1, 2)
+		return s, nil, true
+	case keymap.IDScrollTop:
+		s.transcript = s.transcript.ScrollToTop()
+		return s, nil, true
+	case keymap.IDScrollBottom:
+		s.transcript = s.transcript.ScrollToBottom()
 		return s, nil, true
 	case keymap.IDOpenPager:
 		return s, nil, true
@@ -162,7 +174,10 @@ func (s Screen) composerAction(id keymap.ID) (app.Screen, tea.Cmd, bool) {
 		if s.composer.Value() != "" {
 			return s, nil, false
 		}
-		return s, printCmd(render.Help(s.Theme, s.Tier, s.keys.Help())), true
+		// Drawn in place, not printed: the alternate screen has no
+		// scrollback to print into.
+		s.overlay = render.Help(s.Theme, s.Tier, s.keys.Help())
+		return s, nil, true
 	}
 	return s, nil, false
 }
@@ -201,12 +216,4 @@ func (s Screen) quit() (app.Screen, tea.Cmd, bool) {
 		return s, nil, true
 	}
 	return s, tea.Quit, true
-}
-
-// printCmd sends already-ordered text to the router for scrollback.
-func printCmd(text string) tea.Cmd {
-	if text == "" {
-		return nil
-	}
-	return func() tea.Msg { return app.PrintMsg{Text: text} }
 }
