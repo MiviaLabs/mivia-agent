@@ -1,6 +1,7 @@
 package render
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
@@ -31,6 +32,56 @@ func Diff(t theme.Theme, tier theme.Tier, d uievent.Diff) string {
 		}
 	}
 	return b.String()
+}
+
+// DiffPreview renders at most maxLines diff lines (hunk headers count)
+// followed by a subtle "N more lines" note when the diff is longer. It
+// is Diff with a cap, for surfaces that cannot grow with the diff -
+// the approval prompt, which owns a fixed slice of the cockpit.
+func DiffPreview(t theme.Theme, tier theme.Tier, d uievent.Diff, maxLines int) string {
+	if maxLines <= 0 || len(d.Hunks) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	shown := 0
+	more := diffLineCount(d) - maxLines
+	if more < 0 {
+		more = 0
+	}
+outer:
+	for i, hunk := range d.Hunks {
+		if i > 0 && shown < maxLines {
+			b.WriteByte('\n')
+		}
+		if shown < maxLines {
+			b.WriteString(Role(t, tier, theme.RoleDiffHunk).Render(hunk.Header))
+			shown++
+		}
+		for _, line := range hunk.Lines {
+			if shown >= maxLines {
+				break outer
+			}
+			b.WriteByte('\n')
+			b.WriteString(diffLine(t, tier, line))
+			shown++
+		}
+	}
+	if more > 0 {
+		b.WriteByte('\n')
+		b.WriteString(Role(t, tier, theme.RoleFGSubtle).
+			Render(fmt.Sprintf("%d more lines", more)))
+	}
+	return b.String()
+}
+
+// diffLineCount is every line Diff would render: one per hunk header
+// plus one per diff line.
+func diffLineCount(d uievent.Diff) int {
+	n := len(d.Hunks)
+	for _, hunk := range d.Hunks {
+		n += len(hunk.Lines)
+	}
+	return n
 }
 
 func diffLine(t theme.Theme, tier theme.Tier, l uievent.DiffLine) string {

@@ -1,6 +1,8 @@
 package render
 
 import (
+	"github.com/charmbracelet/x/ansi"
+
 	"strings"
 	"testing"
 
@@ -58,5 +60,37 @@ func TestDiffSeparatesMultipleHunks(t *testing.T) {
 	}
 	if !strings.Contains(rows[0], "@@ -1,1") || !strings.Contains(rows[2], "@@ -9,1") {
 		t.Errorf("hunks not separated correctly:\n%s", got)
+	}
+}
+
+// TestDiffPreviewCapsAndCounts pins the preview: it shows the first
+// maxLines rendered lines (hunk headers count), appends a "N more lines"
+// note only when the cap cut something, and renders nothing for a diff
+// with no hunks.
+func TestDiffPreviewCapsAndCounts(t *testing.T) {
+	d := uievent.Diff{
+		Path: "a.go",
+		Hunks: []uievent.DiffHunk{
+			{Header: "@@ -1,3 +1,3 @@", Lines: []uievent.DiffLine{
+				{Kind: uievent.DiffLineDel, Text: "old"},
+				{Kind: uievent.DiffLineAdd, Text: "new"},
+				{Kind: uievent.DiffLineContext, Text: "same"},
+			}},
+			{Header: "@@ -9,2 +9,2 @@", Lines: []uievent.DiffLine{
+				{Kind: uievent.DiffLineAdd, Text: "later"},
+			}},
+		},
+	}
+	got := DiffPreview(loadTheme(t), theme.TierASCII, d, 4)
+	plain := strings.ReplaceAll(ansi.Strip(got), "\n", "|")
+	want := "@@ -1,3 +1,3 @@|- old|+ new|  same|2 more lines"
+	if plain != want {
+		t.Errorf("DiffPreview = %q, want %q", plain, want)
+	}
+	if got := DiffPreview(loadTheme(t), theme.TierASCII, d, 10); strings.Contains(got, "more lines") {
+		t.Errorf("uncapped preview carries a more-lines note:\n%s", got)
+	}
+	if got := DiffPreview(loadTheme(t), theme.TierASCII, uievent.Diff{Path: "a.go"}, 4); got != "" {
+		t.Errorf("empty diff rendered %q, want empty", got)
 	}
 }

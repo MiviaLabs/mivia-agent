@@ -17,6 +17,10 @@ func TestEventJSONRoundTrip(t *testing.T) {
 		{Kind: KindReasoning, TurnID: "t1", Seq: 2, At: at, Body: ReasoningDeltaBody{Text: "thinking", WordCount: 12}},
 		{Kind: KindToolPending, TurnID: "t1", Seq: 2, At: at, Body: ToolPendingBody{
 			ToolCallID: "c0", Name: "edit", Args: map[string]any{"path": "a.go"},
+			Diff: &Diff{
+				Path: "a.go", Added: 1,
+				Hunks: []DiffHunk{{Header: "@@ -1 +1 @@", Lines: []DiffLine{{Kind: DiffLineAdd, Text: "x"}}}},
+			},
 		}},
 		{Kind: KindToolStart, TurnID: "t1", Seq: 2, At: at, Body: ToolStartBody{
 			ToolCallID: "c1", Name: "read_file", Args: map[string]any{"path": "a.go"},

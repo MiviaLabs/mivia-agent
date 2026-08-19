@@ -1,6 +1,7 @@
 package approval
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -238,5 +239,57 @@ func TestViewDrawsABorderAtEveryTier(t *testing.T) {
 	}
 	if !strings.Contains(plainView, "╭") {
 		t.Errorf("ASCII view lost the border:\n%s", plainView)
+	}
+}
+
+// previewDiff builds a diff of hunkLines lines in one hunk.
+func previewDiff(t *testing.T, hunkLines int) *uievent.Diff {
+	t.Helper()
+	lines := make([]uievent.DiffLine, hunkLines)
+	for i := range lines {
+		lines[i] = uievent.DiffLine{Kind: uievent.DiffLineAdd, Text: fmt.Sprintf("line %d", i)}
+	}
+	return &uievent.Diff{
+		Path: "internal/ui/component/approval/approval.go", Added: hunkLines,
+		Hunks: []uievent.DiffHunk{{Header: "@@ -1,1 +1,2 @@", Lines: lines}},
+	}
+}
+
+// TestViewShowsDiffPreview pins the wiring: a pending file-edit with a
+// diff renders the diff inside the border, above the hint, and the hint
+// line stays complete.
+func TestViewShowsDiffPreview(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetRequest(uievent.ToolPendingBody{
+		ToolCallID: "c1", Name: "edit_file",
+		Args: map[string]any{"path": "a.go"}, Diff: previewDiff(t, 3),
+	})
+	got := m.View()
+	for _, want := range []string{"approve edit_file", "@@ -1,1 +1,2 @@", "+ line 0", "+ line 2", "o once    a always    d deny    D deny always"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("approval view missing %q:\n%s", want, got)
+		}
+	}
+	if i, j := strings.Index(got, "line 2"), strings.Index(got, "o once"); i > j || j < 0 {
+		t.Errorf("hint must come after the diff preview:\n%s", got)
+	}
+}
+
+// TestViewCapsLongDiffs pins the cap: a diff beyond
+// ApprovalDiffPreviewLines is cut with a "N more lines" note, and
+// Height() agrees with the rows View() actually claims.
+func TestViewCapsLongDiffs(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	d := previewDiff(t, 30) // 31 rendered lines, cap 10
+	m.SetRequest(uievent.ToolPendingBody{ToolCallID: "c1", Name: "edit_file", Diff: d})
+	got := m.View()
+	if !strings.Contains(got, "21 more lines") {
+		t.Errorf("capped view missing the more-lines note:\n%s", got)
+	}
+	if strings.Contains(got, "+ line 10") {
+		t.Errorf("capped view shows a line beyond the cap:\n%s", got)
+	}
+	if want := m.Height(); want != len(strings.Split(got, "\n")) {
+		t.Errorf("Height() = %d, want %d (View's row count)", want, len(strings.Split(got, "\n")))
 	}
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
+	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
@@ -84,12 +85,54 @@ func (m Model) View() string {
 	title := render.Role(m.Theme, m.Tier, theme.RoleWarning).Bold(true).Render(
 		"approve " + m.active.Name + " " + render.FormatArgs(m.active.Args))
 	// The hint states the complete truth for this state: every key listed
-	// works, and no key that works is omitted. "v view diff" from the
-	// design is deliberately absent until a diff view exists to open.
+	// works, and no key that works is omitted. "v view diff" stays absent:
+	// the diff is already on screen, capped, so there is nothing left to
+	// open.
 	hint := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Render(
 		"o once    a always    d deny    D deny always")
+	body := title
+	if m.active.Diff != nil {
+		if preview := render.DiffPreview(m.Theme, m.Tier, *m.active.Diff, uikitconfig.ApprovalDiffPreviewLines); preview != "" {
+			body += "\n" + preview
+		}
+	}
+	body += "\n" + hint
 	// RoleBorderFocus, not RoleBorder: the prompt carries state (a tool is
 	// blocked on this answer), so its border must meet the 3:1 contrast
 	// the plain decorative border is exempt from.
-	return render.Bordered(m.Theme, m.Tier, theme.RoleBorderFocus, title+"\n"+hint)
+	return render.Bordered(m.Theme, m.Tier, theme.RoleBorderFocus, body)
+}
+
+// Height is the number of terminal rows View() claims, border included,
+// so the enclosing screen can reserve them without re-rendering. It is
+// 0 when nothing is pending.
+func (m Model) Height() int {
+	if m.active == nil {
+		return 0
+	}
+	body := 2 // title and hint
+	if m.active.Diff != nil {
+		if n := diffPreviewHeight(*m.active.Diff, uikitconfig.ApprovalDiffPreviewLines); n > 0 {
+			body += n
+		}
+	}
+	return body + 2 // the border's top and bottom rows
+}
+
+// diffPreviewHeight is the row count of render.DiffPreview's output:
+// shown diff lines, plus one for the "N more lines" note when the cap
+// cut anything.
+func diffPreviewHeight(d uievent.Diff, maxLines int) int {
+	if maxLines <= 0 || len(d.Hunks) == 0 {
+		return 0
+	}
+	total := len(d.Hunks)
+	for _, hunk := range d.Hunks {
+		total += len(hunk.Lines)
+	}
+	shown := min(total, maxLines)
+	if total > maxLines {
+		shown++
+	}
+	return shown
 }

@@ -98,6 +98,12 @@ const (
 	ApprovalDefaultDialog = "deny"
 )
 
+// ApprovalDiffPreviewLines caps the inline diff preview in the approval
+// prompt. The prompt owns a fixed slice of the cockpit; an uncapped diff
+// would push the composer off the screen for the very edits that most
+// need reading before approval.
+const ApprovalDiffPreviewLines = 10
+
 // DemoScenarioPace is the delay between streamed events the demo
 // harness (internal/uikit/demoharness) sends for one turn. It exists so
 // `mivia-ui --demo` shows a readable stream instead of an instant dump,

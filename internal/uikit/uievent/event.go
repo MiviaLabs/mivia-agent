@@ -80,11 +80,14 @@ type ReasoningDeltaBody struct {
 func (ReasoningDeltaBody) isBody() {}
 
 // ToolPendingBody is the Body for KindToolPending: a tool call awaiting
-// approval.
+// approval. Diff carries the proposed edit for file-edit tools, so the
+// approval prompt can show what the call would change before it runs;
+// nil for tools with no diff to preview.
 type ToolPendingBody struct {
 	ToolCallID string         `json:"tool_call_id"`
 	Name       string         `json:"name"`
 	Args       map[string]any `json:"args,omitempty"`
+	Diff       *Diff          `json:"diff,omitempty"`
 }
 
 func (ToolPendingBody) isBody() {}

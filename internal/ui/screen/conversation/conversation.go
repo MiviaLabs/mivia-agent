@@ -257,7 +257,7 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 func (s Screen) reservedRows() int {
 	rows := s.composer.Height() + 1 // the composer and its menu, plus the status row
 	if s.approval.Active() {
-		rows += 4 // bordered box: title and hint, plus the border's top and bottom rows
+		rows += s.approval.Height() // bordered box: title, optional diff preview, hint, and the border rows
 	}
 	return rows
 }
