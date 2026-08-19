@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
 
 // The cockpit owns the whole drawing surface, so the transcript owns the
@@ -23,11 +24,25 @@ import (
 // SetSize records the drawing surface. height is the row count the
 // transcript itself may draw, with the composer and status row already
 // subtracted by the caller.
+//
+// A width change also rebuilds every user-turn block: its rows are
+// width-styled (selection background to the edge, marker, indent), so
+// rows built at the old width either overflow the new one or stop
+// short of it - a broken fill, not a reflow. Plain prose needs nothing
+// here; it wraps at render time.
 func (m *Model) SetSize(width, height int) {
 	if width == m.width && height == m.height {
 		return
 	}
+	widthChanged := width != m.width
 	m.width, m.height = width, height
+	if widthChanged {
+		for i := range m.blocks {
+			if m.blocks[i].Kind == uievent.KindTurnStart {
+				m.blocks[i].Body = userLines(m.Theme, m.Tier, width, m.blocks[i].Input)
+			}
+		}
+	}
 	m.clampOffset()
 }
 

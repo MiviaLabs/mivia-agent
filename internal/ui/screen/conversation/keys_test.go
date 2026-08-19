@@ -916,3 +916,52 @@ func TestCtrlNWhilePanelFocusedIsHandledByThePanel(t *testing.T) {
 		t.Errorf("composer value %q after defocus, want \"h\"", got)
 	}
 }
+
+func TestTabSwitchesFocusBetweenPanelAndComposer(t *testing.T) {
+	s := sized(t, 1)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: uikitconfig.BreakpointWide, Height: 24})
+	scr := next.(Screen)
+	scr, _ = press(t, scr, ctrl('n')) // open + focus
+	if !scr.panel.open || !scr.panel.focused {
+		t.Fatalf("precondition: panel open and focused")
+	}
+
+	// Tab while panel focused switches focus to composer
+	scr, _ = press(t, scr, key("tab"))
+	if !scr.panel.open || scr.panel.focused {
+		t.Errorf("tab while panel focused: open=%v focused=%v, want open with composer focus", scr.panel.open, scr.panel.focused)
+	}
+
+	// Tab while composer focused switches focus back to panel
+	scr, _ = press(t, scr, key("tab"))
+	if !scr.panel.open || !scr.panel.focused {
+		t.Errorf("tab while composer focused: open=%v focused=%v, want open with panel focus", scr.panel.open, scr.panel.focused)
+	}
+}
+
+func TestTabWithSlashCommandHasCompletionPriority(t *testing.T) {
+	s := sized(t, 1)
+	s.SetCommands([]composer.Command{{Name: "help", Desc: "show help"}, {Name: "history", Desc: "show history"}})
+	next, _ := s.Update(tea.WindowSizeMsg{Width: uikitconfig.BreakpointWide, Height: 24})
+	scr := next.(Screen)
+	scr, _ = press(t, scr, ctrl('n'))  // open + focus
+	scr, _ = press(t, scr, key("tab")) // switch focus to composer
+	if !scr.panel.open || scr.panel.focused {
+		t.Fatalf("precondition: open with composer focus")
+	}
+
+	// Type "/" to open completion menu
+	scr, _ = press(t, scr, key("/"))
+	if !scr.composer.MenuActive() {
+		t.Fatalf("menu not active after typing /")
+	}
+
+	// Tab should complete common prefix /h, not switch to panel
+	scr, _ = press(t, scr, key("tab"))
+	if scr.panel.focused {
+		t.Errorf("tab in completion menu stole focus to panel")
+	}
+	if got := scr.composer.Value(); got != "/h" {
+		t.Errorf("tab did not accept common prefix: got %q, want \"/h\"", got)
+	}
+}

@@ -127,8 +127,8 @@ Usage:
   %s version [--json]
   %s help
 
-Defaults: provider deepseek, model deepseek-v4-flash, tools ON (coding agent)
-Advanced DeepSeek model: deepseek-v4-pro (via --model, config, or /model in chat)
+Defaults: provider openrouter, model openai/gpt-5.6-luna, tools ON (coding agent)
+Switch providers or models via --provider, --model, config, or /model in chat
 
 Agent tools: read_file list_dir grep glob write_file search_replace multi_edit run_command
   --agent selects a named agent definition from ~/.mivia/agents/ or <workspace>/.mivia/agents/.

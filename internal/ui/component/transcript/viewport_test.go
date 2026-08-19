@@ -662,3 +662,47 @@ func TestExpandBlockAtScreenRow(t *testing.T) {
 		t.Error("a negative row must be refused")
 	}
 }
+
+// TestSetSizeRebuildsUserBlocksAtTheNewWidth pins the sidebar/reflow
+// contract: a user turn's rows are width-styled (marker, indent, and a
+// selection background that must reach the edge), so shrinking the
+// surface cannot leave rows built at the old width - they would
+// hard-wrap into a broken fill - and widening must extend the fill
+// again rather than stop short.
+func TestSetSizeRebuildsUserBlocksAtTheNewWidth(t *testing.T) {
+	m := New(loadTheme(t), theme.TierTrueColor)
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindTurnStart, Body: uievent.TurnStartBody{
+		Input: "shrink me please shrink me please shrink me",
+	}})
+
+	m.SetSize(118, 30)
+	wide := m.Rows()
+	for _, r := range wide {
+		if w := ansi.StringWidth(r); w > 118 {
+			t.Fatalf("row wider than the surface after sizing: %d %q", w, ansi.Strip(r))
+		}
+	}
+
+	m.SetSize(60, 30)
+	narrow := m.Rows()
+	if len(narrow) <= len(wide)-2 {
+		t.Fatalf("narrowing did not re-wrap the user block: %d rows vs %d", len(narrow), len(wide))
+	}
+	for _, r := range narrow {
+		if w := ansi.StringWidth(r); w > 60 {
+			t.Fatalf("a row built at the old width survived the shrink: %d %q", w, ansi.Strip(r))
+		}
+	}
+
+	// Round-trip: widening rebuilds the fill to the full surface again.
+	m.SetSize(118, 30)
+	again := m.Rows()
+	for _, r := range again {
+		if w := ansi.StringWidth(r); w > 118 {
+			t.Fatalf("row exceeds the surface after re-widening: %d", w)
+		}
+	}
+	if len(again) != len(wide) {
+		t.Errorf("round-trip changed the row count: %d vs %d", len(again), len(wide))
+	}
+}

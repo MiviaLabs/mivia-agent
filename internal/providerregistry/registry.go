@@ -28,7 +28,7 @@ var descriptors = map[string]Descriptor{
 		DefaultURL: "https://ollama.com/v1", DefaultAPIKeyEnv: "OLLAMA_API_KEY",
 	},
 	"openrouter": {
-		Name: "openrouter", DefaultModel: "openai/gpt-4o-mini",
+		Name: "openrouter", DefaultModel: "openai/gpt-5.6-luna",
 		DefaultURL: "https://openrouter.ai/api/v1", DefaultAPIKeyEnv: "OPENROUTER_API_KEY",
 	},
 	"zai": {

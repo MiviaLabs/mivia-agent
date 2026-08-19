@@ -51,6 +51,13 @@ type Block struct {
 	// only content that reads as conversation rather than as tooling
 	// (wireframes-panes.md section 2, last paragraph).
 	Prose bool
+
+	// Input is the raw user text of a turn-start block. User rows are
+	// width-styled (selection background, marker, indent), so they are
+	// BUILT at a width and must be rebuilt when that width changes -
+	// unlike plain prose, which wraps at render time. Empty on every
+	// other kind.
+	Input string
 }
 
 // isEmpty reports a block with nothing to render.
@@ -74,6 +81,14 @@ func (b Block) isEmpty() bool {
 // distinct entries. It applies uniformly, collapsed or not, so spacing
 // never depends on collapse state.
 func (b Block) Height(width int) int {
+	if b.Kind == uievent.KindTurnStart && b.Input != "" {
+		wrapped := render.Wrap(b.Input, render.ProseMeasure(width)-2)
+		bodyLen := len(wrapped)
+		if len(b.Body) > len(wrapped) {
+			bodyLen = len(wrapped) + 2 // with top/bottom padding rows
+		}
+		return bodyLen + 1
+	}
 	if b.Prose {
 		return len(b.bodyRows(width)) + 1
 	}
@@ -92,7 +107,7 @@ func (b Block) Height(width int) int {
 // Already-styled prose hard-wraps too, because the escape sequences in
 // it belong to code that should not reflow.
 func (b Block) bodyRows(width int) []string {
-	if width <= 0 {
+	if width <= 0 || b.Kind == uievent.KindTurnStart {
 		return b.Body
 	}
 	if b.Prose {
@@ -129,6 +144,9 @@ func defaultCollapsed(body []string) bool {
 // The last row is always the blank separator Height accounts for; see
 // its doc comment.
 func (b Block) Render(t theme.Theme, tier theme.Tier, width int) string {
+	if b.Kind == uievent.KindTurnStart && b.Input != "" {
+		return strings.Join(userLines(t, tier, width, b.Input), "\n") + "\n"
+	}
 	if b.Prose {
 		return strings.Join(b.bodyRows(width), "\n") + "\n"
 	}

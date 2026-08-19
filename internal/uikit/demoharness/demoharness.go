@@ -35,14 +35,15 @@ var (
 type Harness struct {
 	pace time.Duration
 
-	mu       sync.Mutex
-	title    string
-	scenario []turnScript
-	turnIdx  int
-	model    ports.ModelInfo
-	agent    string
-	usage    ports.Usage
-	history  []ports.Message
+	mu        sync.Mutex
+	title     string
+	scenario  []turnScript
+	subagents map[string]subagentFixture
+	turnIdx   int
+	model     ports.ModelInfo
+	agent     string
+	usage     ports.Usage
+	history   []ports.Message
 
 	pendingCh chan ports.ApprovalRequest
 	waiting   map[string]chan ports.Decision
@@ -58,11 +59,12 @@ func New(scenarioName string, pace time.Duration) (*Harness, error) {
 		return nil, err
 	}
 	return &Harness{
-		pace:     pace,
-		title:    loaded.Title,
-		scenario: loaded.Scripts,
-		model:    ports.ModelInfo{Name: demoModels[0], Provider: "demo", ContextWindow: demoContextWindow},
-		agent:    ports.DefaultAgentName,
+		pace:      pace,
+		title:     loaded.Title,
+		scenario:  loaded.Scripts,
+		subagents: loaded.Subagents,
+		model:     ports.ModelInfo{Name: demoModels[0], Provider: "demo", ContextWindow: demoContextWindow},
+		agent:     ports.DefaultAgentName,
 		usage: ports.Usage{
 			InputTokens: 1200, OutputTokens: 400, CachedTokens: 300, CostUSD: 0.03,
 		},

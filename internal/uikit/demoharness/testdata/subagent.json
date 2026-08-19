@@ -1,0 +1,25 @@
+{
+  "title": "Dispatch a Scout",
+  "before": [
+    {"kind":"turn.start","turn_id":"t","seq":1,"at":"2026-08-20T09:09:00Z","body":{"input":"scout the config constants"}},
+    {"kind":"text.delta","turn_id":"t","seq":2,"at":"2026-08-20T09:09:00.1Z","body":{"text":"Dispatching a scout subagent to read the config package."}},
+    {"kind":"text.end","turn_id":"t","seq":3,"at":"2026-08-20T09:09:00.2Z","body":{"text":"Dispatching a scout subagent to read the config package."}},
+    {"kind":"tool.start","turn_id":"t","seq":4,"at":"2026-08-20T09:09:00.3Z","body":{"tool_call_id":"sa-1","name":"spawn_agent","args":{"agent":"scout"}}},
+    {"kind":"tool.output","turn_id":"t","seq":5,"at":"2026-08-20T09:09:00.4Z","body":{"tool_call_id":"sa-1","progress":{"step":1,"total_steps":3,"elapsed_seconds":0.5,"status":"running","log":["read internal/uikit/config/defaults.go"]}}},
+    {"kind":"tool.output","turn_id":"t","seq":6,"at":"2026-08-20T09:09:01.4Z","body":{"tool_call_id":"sa-1","progress":{"step":2,"total_steps":3,"elapsed_seconds":1.5,"status":"running","log":["listed 14 exported constants"]}}},
+    {"kind":"tool.output","turn_id":"t","seq":7,"at":"2026-08-20T09:09:02.4Z","body":{"tool_call_id":"sa-1","progress":{"step":3,"total_steps":3,"elapsed_seconds":2.5,"status":"done","log":["wrote the summary"]}}},
+    {"kind":"tool.end","turn_id":"t","seq":8,"at":"2026-08-20T09:09:02.5Z","body":{"tool_call_id":"sa-1","name":"spawn_agent","ok":true,"result":"scouted 14 constants","duration_ms":2200}},
+    {"kind":"text.end","turn_id":"t","seq":9,"at":"2026-08-20T09:09:02.6Z","body":{"text":"The scout finished: fourteen constants, all timing and layout thresholds."}},
+    {"kind":"turn.end","turn_id":"t","seq":10,"at":"2026-08-20T09:09:02.7Z","body":{"reason":"completed"}}
+  ],
+  "subagents": [
+    {
+      "call_id": "sa-1",
+      "history": [
+        {"role": "user", "text": "scout the config constants"},
+        {"role": "assistant", "text": "I read internal/uikit/config/defaults.go end to end. It centralizes every timing, limit, and layout threshold the new UI uses - pacing, breakpoints, dialog geometry, contrast floors."}
+      ],
+      "reply": "All fourteen constants are thresholds, not behaviour: DemoScenarioPace paces the demo stream, BreakpointWide gates the two-pane layout, and the WCAG ratios gate the shipped themes. Changing any one of them is a layout review, not a logic change."
+    }
+  ]
+}

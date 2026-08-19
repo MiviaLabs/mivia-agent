@@ -47,6 +47,24 @@ type Screen struct {
 	modelPicker *picker.Model       // non-nil while the /model picker is open
 	agentPicker *picker.Model       // non-nil while the /agents picker is open
 
+	// threads resolves a dispatched subagent's conversation for the
+	// panel's thread dialog; nil is valid (every entry then falls back
+	// to the step-log view). Set via SetSubagentThreads, the same seam
+	// SetCommandRunner uses.
+	threads ports.SubagentThreads
+
+	// embedded marks the subagent-thread construction of this same
+	// Screen type: no top bar, no activity panel, wrapped event Msgs -
+	// everything else is the identical main-chat machinery. See
+	// thread.go.
+	embedded bool
+
+	// thread is the open subagent thread's embedded Screen (cached per
+	// callID so reopening continues the same transcript); threadID is
+	// the call it belongs to. See thread.go.
+	thread   *Screen
+	threadID string
+
 	topbar     topbar.Model
 	transcript transcript.Model
 	composer   composer.Model
@@ -188,6 +206,23 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 		return s.handleKey(msg)
 	case uievent.EventMsg:
 		return s.handleTurnEvent(msg.Event)
+	case threadEventMsg:
+		// A subagent thread's streamed event. Marked Msgs reaching the
+		// MAIN screen are forwarded to the cached thread; the same Msg
+		// reaching an EMBEDDED screen is its own turn's event. See
+		// thread.go.
+		if s.embedded {
+			return s.handleTurnEvent(msg.event)
+		}
+		return s.forwardThreadMsg(msg)
+	case threadEndedMsg:
+		if s.embedded {
+			s.statusline.Stop()
+			s.approval.Clear()
+			s.active = nil
+			return s, nil
+		}
+		return s.forwardThreadMsg(msg)
 	case turnEndedMsg:
 		s.statusline.Stop()
 		s.approval.Clear()
@@ -207,36 +242,17 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 	case statusline.TickMsg:
 		next, cmd := s.statusline.Update(msg)
 		s.statusline = next
+		// Ticks are idempotent repaint clocks: the embedded thread (if
+		// one is cached) gets its own copy.
+		s.forwardSharedMsg(msg)
 		return s, cmd
 	case transcript.FlushMsg:
 		next, cmd := s.transcript.Update(msg)
 		s.transcript = next
+		s.forwardSharedMsg(msg)
 		return s, cmd
 	case tea.MouseWheelMsg:
-		// Wheel events scroll the conversation. CockpitScrollLines is the
-		// multiplier: terminals disagree on how many events one physical
-		// notch produces, and some amplify while others send exactly one
-		// (docs/design/cockpit-research.md rule 6.6).
-		step := uikitconfig.CockpitScrollLines
-		if msg.Button == tea.MouseWheelUp {
-			step = -step
-		}
-		if s.approval.Active() {
-			// The approval prompt is modal for keys; the wheel follows it,
-			// scrolling the diff preview instead of the transcript behind
-			// it.
-			s.approval = s.approval.ScrollBy(step)
-			return s, nil
-		}
-		// The content dialog covers the chat column; scrolling a
-		// transcript the user cannot see acts on something invisible
-		// (the same rule that dismisses overlays on any key). The dialog
-		// scrolls by keyboard only.
-		if s.panel.dialog {
-			return s, nil
-		}
-		s.transcript = s.transcript.ScrollBy(step)
-		return s, nil
+		return s.handleWheel(msg)
 	case tea.MouseClickMsg:
 		return s.handleClick(msg)
 	case tea.MouseReleaseMsg:
@@ -252,7 +268,7 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 		return s, nil
 	case app.ThemeChangedMsg:
 		s.Theme, s.Tier = msg.Theme, msg.Tier
-		s.transcript.Theme, s.transcript.Tier = msg.Theme, msg.Tier
+		s.transcript.SetTheme(msg.Theme, msg.Tier)
 		s.composer.Theme, s.composer.Tier = msg.Theme, msg.Tier
 		s.statusline.SetTheme(msg.Theme, msg.Tier)
 		s.approval.Theme, s.approval.Tier = msg.Theme, msg.Tier
@@ -260,6 +276,34 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 		s.panel.list.Theme, s.panel.list.Tier = msg.Theme, msg.Tier
 		return s, nil
 	}
+	return s, nil
+}
+
+// handleWheel applies one mouse-wheel notch. Wheel events scroll the
+// conversation; CockpitScrollLines is the multiplier: terminals
+// disagree on how many events one physical notch produces, and some
+// amplify while others send exactly one
+// (docs/design/cockpit-research.md rule 6.6).
+func (s Screen) handleWheel(msg tea.MouseWheelMsg) (app.Screen, tea.Cmd) {
+	step := uikitconfig.CockpitScrollLines
+	if msg.Button == tea.MouseWheelUp {
+		step = -step
+	}
+	if s.approval.Active() {
+		// The approval prompt is modal for keys; the wheel follows it,
+		// scrolling the diff preview instead of the transcript behind
+		// it.
+		s.approval = s.approval.ScrollBy(step)
+		return s, nil
+	}
+	// The content dialog covers the chat column; scrolling a transcript
+	// the user cannot see acts on something invisible (the same rule
+	// that dismisses overlays on any key). The dialog scrolls by
+	// keyboard only.
+	if s.panel.dialog {
+		return s, nil
+	}
+	s.transcript = s.transcript.ScrollBy(step)
 	return s, nil
 }
 
@@ -280,7 +324,7 @@ func (s Screen) send() (app.Screen, tea.Cmd) {
 	s.composer.Clear()
 	s.active = handle
 	cmd := s.statusline.Start("thinking", s.now())
-	return s, tea.Batch(cmd, waitForEvent(handle.Events()))
+	return s, tea.Batch(cmd, s.awaitEvent(handle.Events()))
 }
 
 func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
@@ -294,7 +338,7 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 		// The approval prompt claims the chat column and every key; a
 		// content dialog open over that column would hide the prompt it
 		// pre-empts, so it closes.
-		s.panel.dialog = false
+		s.panel.dialog, s.panel.dialogAgent = false, ""
 	case uievent.ToolStartBody:
 		s.approval.Clear()
 		s.statusline.SetLabel("running")
@@ -321,7 +365,7 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 
 	var readCmd tea.Cmd
 	if s.active != nil {
-		readCmd = waitForEvent(s.active.Events())
+		readCmd = s.awaitEvent(s.active.Events())
 	}
 	return s, tea.Batch(flushCmd, readCmd)
 }
@@ -335,8 +379,13 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 // transcript when it changes (docs/design/ux-rules.md rule 2.7).
 func (s Screen) reservedRows() int {
 	// the top bar, a one-row margin under it so content never touches its
-	// edge, the composer and its menu, and the status row
-	rows := s.topbar.Height() + 1 + s.composer.Height() + 1
+	// edge, the composer and its menu, and the status row. The embedded
+	// subagent-thread construction has no top bar: the dialog frame it
+	// renders inside is the chrome above it.
+	rows := s.composer.Height() + 1
+	if !s.embedded {
+		rows += s.topbar.Height() + 1
+	}
 	if s.approval.Active() {
 		rows += s.approval.Height() // bordered box: title, optional diff preview, hint, and the border rows
 	}
@@ -349,19 +398,27 @@ func (s Screen) reservedRows() int {
 // wide, that whole assembly moves into the split's left reading pane
 // with the file list in the right nav pane (panelFrameRows); narrow, the
 // list replaces the transcript area and the chrome keeps its place.
+// The embedded subagent-thread construction draws the same assembly
+// minus the top bar, sized to the dialog body it renders inside.
 //
 // The transcript always returns exactly its own height, padded, so
 // nothing below it moves as output streams in (ux-rules.md rule 2.8).
 func (s Screen) View() string {
-	lines := append(strings.Split(s.topbar.View(), "\n"), "")
-	if s.panelIsSplit() {
+	var lines []string
+	if !s.embedded {
+		// The top bar may draw a second breadcrumb row (topbar.Height
+		// accounts for it); its rows land as frame rows, then the margin.
+		lines = append(lines, strings.Split(s.topbar.View(), "\n")...)
+		lines = append(lines, "")
+	}
+	if !s.embedded && s.panelIsSplit() {
 		lines = append(lines, s.panelFrameRows()...)
 		return s.gutter(lines)
 	}
 	switch {
 	case s.modelPicker != nil || s.agentPicker != nil || s.overlay != "":
 		lines = append(lines, s.centerRows()...)
-	case s.panel.open:
+	case !s.embedded && s.panel.open:
 		lines = append(lines, s.narrowPanelRows()...)
 	default:
 		lines = append(lines, s.transcript.Rows()...)
@@ -419,6 +476,13 @@ func (s *Screen) SetCommands(cmds []composer.Command) { s.composer.SetCommands(c
 // makes every "/x" line report an error instead of falling through to
 // Send.
 func (s *Screen) SetCommandRunner(r ports.CommandRunner) { s.runner = r }
+
+// SetSubagentThreads supplies the seam the activity panel's thread
+// dialog resolves a subagent's conversation through (see thread.go).
+// The same integration-knob shape SetCommandRunner uses: nil (the
+// zero-value default) makes every subagent entry fall back to the
+// read-only step-log view.
+func (s *Screen) SetSubagentThreads(t ports.SubagentThreads) { s.threads = t }
 
 // SetMouseOverrideHint records the terminal's mouse-override key
 // (rule 6.5), shown in the help overlay. Empty clears it.

@@ -136,6 +136,7 @@ func (m Model) HandleEvent(ev uievent.Event) (Model, tea.Cmd) {
 		return m.pushBlock(Block{
 			Kind:  uievent.KindTurnStart,
 			Prose: true,
+			Input: b.Input,
 			Body:  userLines(m.Theme, m.Tier, m.width, b.Input),
 		})
 	case uievent.ToolPendingBody, uievent.ToolStartBody, uievent.ToolOutputBody, uievent.ToolEndBody:
@@ -380,4 +381,14 @@ func (m Model) tailRows() []string {
 		}
 	}
 	return out
+}
+
+// SetTheme records a theme change, re-resolving theme colors and user turn blocks.
+func (m *Model) SetTheme(t theme.Theme, tier theme.Tier) {
+	m.Theme, m.Tier = t, tier
+	for i := range m.blocks {
+		if m.blocks[i].Kind == uievent.KindTurnStart {
+			m.blocks[i].Body = userLines(m.Theme, m.Tier, m.width, m.blocks[i].Input)
+		}
+	}
 }

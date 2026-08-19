@@ -15,13 +15,13 @@ import (
 )
 
 // setupDefaultConfig is the minimal config written when no config exists and
-// the provider is the shipped default (deepseek). Other providers need their
-// own [providers.<name>] block; setup writes only the API key for them.
+// the provider is the shipped default (openrouter). Other providers need
+// their own [providers.<name>] block; setup writes only the API key for them.
 const setupDefaultConfig = `[provider]
-name = "deepseek"
+name = "openrouter"
 
-[providers.deepseek]
-models = [{ name = "deepseek-v4-flash", context_window_tokens = 128000 }]
+[providers.openrouter]
+models = [{ name = "openai/gpt-5.6-luna", context_window_tokens = 400000 }]
 `
 
 // setupOptions holds the parsed `mivia setup` flags.

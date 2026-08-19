@@ -714,3 +714,48 @@ func TestPanelFilterIndicatorSurvivesWindowing(t *testing.T) {
 		t.Errorf("filter indicator clipped by the windowing:\n%s", s.View())
 	}
 }
+
+func TestPanelUserMessageRendering(t *testing.T) {
+	embedded, _ := theme.Embedded()
+	var dark theme.Theme
+	for _, c := range embedded {
+		if c.Name == "mivia-dark" {
+			dark = c
+			break
+		}
+	}
+	s := New(dark, theme.TierTrueColor, embedded, errConversation{}, nil, uikitconfig.BreakpointWide, fixedNow)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: uikitconfig.BreakpointWide, Height: 30})
+	s = next.(Screen)
+	n, _ := s.Update(uievent.EventMsg{Event: uievent.Event{
+		Kind: uievent.KindTurnStart,
+		Body: uievent.TurnStartBody{Input: "Add retry with exponential backoff to the S3 uploader, and cover it with a comprehensive end-to-end test suite for edge cases."},
+	}})
+	s = n.(Screen)
+
+	// Panel closed (full width)
+	viewClosed := s.View()
+	assertExactFrame(t, viewClosed, uikitconfig.BreakpointWide, 30)
+	readingW, _ := render.SplitWidths(contentWidth(uikitconfig.BreakpointWide))
+
+	// Panel open (split width)
+	s = openPanel(t, s)
+	viewOpen := s.View()
+	assertExactFrame(t, viewOpen, uikitconfig.BreakpointWide, 30)
+
+	// Check transcript rows rendered at the reading width
+	rows := s.transcript.Rows()
+	for i, r := range rows[:4] {
+		if w := ansi.StringWidth(r); w != readingW {
+			t.Errorf("row %d width = %d, want reading width %d", i, w, readingW)
+		}
+	}
+
+	// Panel closed again
+	next, _ = s.Update(ctrl('n'))
+	s = next.(Screen)
+	next, _ = s.Update(ctrl('n'))
+	s = next.(Screen)
+	viewClosedAgain := s.View()
+	assertExactFrame(t, viewClosedAgain, uikitconfig.BreakpointWide, 30)
+}

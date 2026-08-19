@@ -89,6 +89,7 @@ type subagentRow struct {
 	Status string
 	Step   int
 	Total  int
+	Log    []string
 }
 
 func (a subagentRow) rowLabel() string {
@@ -99,14 +100,17 @@ func (a subagentRow) rowLabel() string {
 	return label
 }
 
-// panel is the touched-files pane. open says it is drawn, focused says
-// its list takes the keyboard (the composer keeps it otherwise, so the
-// user can type and send with the panel on screen the whole time), and
-// dialog says the selected file's content is open as a dialog.
+// panel is the activity pane. open says it is drawn, focused says its
+// list takes the keyboard (the composer keeps it otherwise, so the user
+// can type and send with the panel on screen the whole time), and
+// dialog says the selected entry's content is open as a dialog.
+// dialogAgent names the subagent whose thread (or step-log fallback)
+// that dialog shows; empty means a file's diff or source.
 type panel struct {
-	entries []fileEntry
-	agents  []subagentRow
-	list    picker.Model
+	entries     []fileEntry
+	agents      []subagentRow
+	list        picker.Model
+	dialogAgent string
 
 	// sourceView flips the content dialog between the diff (default)
 	// and the full post-edit source.
@@ -129,66 +133,121 @@ func newPanel(t theme.Theme, tier theme.Tier) panel {
 // appendLive folds one more observed diff into the entries, latest per
 // path: the panel answers "what is the state of this file", not "what
 // is the history". While the panel is open the list follows
-// immediately, holding the cursor on the selected path - a live update
+// immediately, holding the cursor on the selected row - a live update
 // must not move the user's cursor or wipe an in-progress filter.
 // Closed, only the data folds; the list is rebuilt on the next open.
 func (p *panel) appendLive(d uievent.Diff) {
-	selPath := ""
-	if p.open {
-		if e, ok := p.selected(); ok {
-			selPath = e.Path
-		}
-	}
 	for i, e := range p.entries {
 		if e.Path == d.Path {
 			p.entries[i] = newEntry(d)
-			p.rebindIfOpen(selPath)
+			p.rebindIfOpen()
 			return
 		}
 	}
 	p.entries = append(p.entries, newEntry(d))
-	p.rebindIfOpen(selPath)
+	p.rebindIfOpen()
 }
 
-func (p *panel) rebindIfOpen(keepPath string) {
+// rowLabels is the selectable list in render order: files, then
+// subagents. The picker's cursor indexes this list; panelRows draws the
+// same order, so the marked row is always the row the next key acts on.
+func (p panel) rowLabels() []string {
+	names := make([]string, 0, len(p.entries)+len(p.agents))
+	for _, e := range p.entries {
+		names = append(names, e.rowLabel())
+	}
+	for _, a := range p.agents {
+		names = append(names, a.rowLabel())
+	}
+	return names
+}
+
+// selectionKey names the selected row by what it IS (a file's path, a
+// subagent's id) rather than by its render label, which changes as
+// statuses tick - so a rebind can hold the same row across a label
+// change.
+func (p panel) selectionKey() string {
+	label, ok := p.list.Selected()
+	if !ok {
+		return ""
+	}
+	for _, e := range p.entries {
+		if e.rowLabel() == label {
+			return "f:" + e.Path
+		}
+	}
+	for _, a := range p.agents {
+		if a.rowLabel() == label {
+			return "a:" + a.ID
+		}
+	}
+	return ""
+}
+
+func (p *panel) rebindIfOpen() {
 	if !p.open {
 		return
 	}
-	names := make([]string, len(p.entries))
-	for i, e := range p.entries {
-		names[i] = e.rowLabel()
-	}
-	p.list.Rebind(names)
-	// A filter may exclude the held row; Rebind has already clamped the
-	// cursor to the filtered list, which is the best hold available.
-	if p.list.Filter() != "" || keepPath == "" {
+	keep := p.selectionKey()
+	p.list.Rebind(p.rowLabels())
+	if keep == "" || p.list.Filter() != "" {
+		// A filter may exclude the held row; Rebind has already clamped
+		// the cursor to the filtered list, which is the best hold
+		// available.
 		return
 	}
 	for i, e := range p.entries {
-		if e.Path == keepPath {
+		if keep == "f:"+e.Path {
 			p.list.MoveTo(i)
 			return
 		}
 	}
-}
-
-// observeAgent folds one subagent-progress update into the agents
-// section, latest per subagent - the same fold files use.
-func (p *panel) observeAgent(id string, pr *uievent.Progress) {
 	for i, a := range p.agents {
-		if a.ID == id {
-			p.agents[i] = subagentRow{ID: id, Status: pr.Status, Step: pr.Step, Total: pr.TotalSteps}
+		if keep == "a:"+a.ID {
+			p.list.MoveTo(len(p.entries) + i)
 			return
 		}
 	}
-	p.agents = append(p.agents, subagentRow{ID: id, Status: pr.Status, Step: pr.Step, Total: pr.TotalSteps})
+}
+
+// selectedAgent returns the subagent the list highlights, if any: the
+// cursor walks files and subagents alike.
+func (p panel) selectedAgent() (subagentRow, bool) {
+	label, ok := p.list.Selected()
+	if !ok {
+		return subagentRow{}, false
+	}
+	for _, a := range p.agents {
+		if a.rowLabel() == label {
+			return a, true
+		}
+	}
+	return subagentRow{}, false
+}
+
+// observeAgent folds one subagent-progress update into the agents
+// section, latest per subagent - the same fold files use. The step log
+// rides along: it is the fallback content when no thread Conversation
+// exists for the call.
+func (p *panel) observeAgent(id string, pr *uievent.Progress) {
+	row := subagentRow{ID: id, Status: pr.Status, Step: pr.Step, Total: pr.TotalSteps, Log: pr.Log}
+	for i, a := range p.agents {
+		if a.ID == id {
+			row.Log = append(row.Log, a.Log...)
+			p.agents[i] = row
+			p.rebindIfOpen()
+			return
+		}
+	}
+	p.agents = append(p.agents, row)
+	p.rebindIfOpen()
 }
 
 // openPanel shows the panel with focus in its list, refreshing the list
 // over everything observed while it was closed.
 func (p *panel) openPanel() {
-	p.open, p.focused, p.dialog = true, true, false
-	p.rebindIfOpen("")
+	p.open, p.focused, p.dialog, p.dialogAgent = true, true, false, ""
+	p.rebindIfOpen()
 }
 
 // selected returns the entry the list highlights.
@@ -381,7 +440,11 @@ func (s Screen) panelRows(inner, maxRows int) []string {
 		return row
 	}
 	agentRow := func(a subagentRow) string {
-		row := subtle.Render("  · ") + fg.Render(a.ID) + subtle.Render("  "+a.Status)
+		prefix := "  · "
+		if marked && a.rowLabel() == selLabel {
+			prefix = "> · "
+		}
+		row := subtle.Render(prefix) + fg.Render(a.ID) + subtle.Render("  "+a.Status)
 		if a.Total > 0 {
 			row += subtle.Render("  " + strconv.Itoa(a.Step) + "/" + strconv.Itoa(a.Total))
 		}
@@ -409,8 +472,35 @@ func (s Screen) panelRows(inner, maxRows int) []string {
 	return clipRowsToWidth(rows, inner)
 }
 
-// dialogParts is the content dialog's title, windowed body, and hint.
+// dialogParts is the content dialog's title, body, and hint. A
+// subagent entry with a live thread renders the embedded conversation
+// Screen, sized to the exact body area Dialog gives it; one without
+// falls back to the step log the progress events carried. File entries
+// show their windowed diff or source as before.
 func (s Screen) dialogParts() (title, body, hint string) {
+	if s.panel.dialogAgent != "" {
+		if s.thread != nil && s.threadID == s.panel.dialogAgent {
+			// Size the embedded screen to the EXACT body area the
+			// Dialog frame gives this body: any wider and the clip
+			// cuts the composer's edge, any taller and it drops rows
+			// off the bottom. panelBodyRows IS DialogBodyRows for the
+			// dialog height the current mode draws.
+			frameW := contentWidth(s.width)
+			if s.panelIsSplit() {
+				frameW, _ = render.SplitWidths(frameW)
+			}
+			s.thread.setSurface(render.DialogBodyWidth(frameW), s.panelBodyRows())
+			return s.panel.dialogAgent, s.thread.View(), "esc close"
+		}
+		for _, a := range s.panel.agents {
+			if a.ID != s.panel.dialogAgent {
+				continue
+			}
+			rows := append([]string{a.ID + "  " + a.Status}, a.Log...)
+			return a.ID, strings.Join(rows, "\n"), "any key closes"
+		}
+		return s.panel.dialogAgent, "", "any key closes"
+	}
 	title = "files"
 	if e, ok := s.panel.selected(); ok {
 		title = e.Path

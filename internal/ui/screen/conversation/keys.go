@@ -74,6 +74,11 @@ func (s Screen) handleKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
 			return s.completionAction(id)
 		}
 	}
+	if s.panel.open && !s.panel.focused && key == "tab" {
+		s.panelFocus(true)
+		s.transcript = s.transcript.ClearFocus()
+		return s, nil
+	}
 	if s.transcript.Focused() {
 		if id, ok := s.keys.Match(keymap.ContextTranscript, key); ok {
 			return s.transcriptAction(id)
@@ -160,6 +165,10 @@ func (s Screen) handlePanelKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bool) 
 		next, cmd, _ := s.quit()
 		return next, cmd, true
 	}
+	if msg.String() == "tab" && !s.panel.dialog {
+		s.panelFocus(false)
+		return s, nil, true
+	}
 	if id, ok := s.keys.Match(keymap.ContextGlobal, msg.String()); ok {
 		switch id {
 		case keymap.IDPanelToggle:
@@ -174,8 +183,19 @@ func (s Screen) handlePanelKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bool) 
 		}
 	}
 	if s.panel.dialog {
+		// A live subagent thread routes its keys to the embedded
+		// screen's own Update (its composer, its transcript); file and
+		// step-log dialogs keep the any-key-closes rule.
+		if s.panel.dialogAgent != "" && s.thread != nil && s.threadID == s.panel.dialogAgent {
+			next, cmd := s.threadDialogKey(msg)
+			return next, cmd, true
+		}
 		return s.panelDialogKey(msg), nil, true
 	}
+	return s.handlePanelListKey(msg)
+}
+
+func (s Screen) handlePanelListKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bool) {
 	if id, ok := s.keys.Match(keymap.ContextFiles, msg.String()); ok {
 		switch id {
 		case keymap.IDCancel:
@@ -209,6 +229,16 @@ func (s Screen) handlePanelKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bool) 
 	s.panel.offset = 0 // a moved selection restarts the content at its top
 	if cmd != nil {
 		if _, ok := cmd().(picker.SelectMsg); ok && s.panelDialogFits() {
+			// Enter on a subagent row opens its thread when one
+			// resolves (openThread builds or reuses the embedded
+			// screen); either way the dialog is named for the agent.
+			// A file row keeps the diff/source dialog.
+			if a, isAgent := s.panel.selectedAgent(); isAgent {
+				s.panel.dialogAgent = a.ID
+				s.openThread(a.ID)
+			} else {
+				s.panel.dialogAgent = ""
+			}
 			s.panel.dialog, s.panel.offset = true, 0
 		}
 	}
@@ -239,7 +269,7 @@ func (s Screen) panelDialogKey(msg tea.KeyPressMsg) app.Screen {
 			return s
 		}
 	}
-	s.panel.dialog, s.panel.offset = false, 0
+	s.panel.dialog, s.panel.dialogAgent, s.panel.offset = false, "", 0
 	return s
 }
 
@@ -252,7 +282,7 @@ func (s *Screen) panelFocus(focused bool) {
 	if focused {
 		s.transcript = s.transcript.ClearFocus()
 	} else {
-		s.panel.dialog = false
+		s.panel.dialog, s.panel.dialogAgent = false, ""
 	}
 }
 
@@ -379,6 +409,17 @@ func (s Screen) transcriptAction(id keymap.ID) (app.Screen, tea.Cmd) {
 // a later context, so one binding can be global without swallowing the
 // composer's own use of it.
 func (s Screen) globalAction(id keymap.ID) (app.Screen, tea.Cmd, bool) {
+	// The embedded subagent-thread construction owns no terminal
+	// surface of its own: the screen-stack globals (theme picker, pager,
+	// activity panel) belong to the MAIN screen alone. Swallowing them
+	// here keeps every other key path - composer, completion,
+	// transcript - identical between the two constructions.
+	if s.embedded {
+		switch id {
+		case keymap.IDThemeDialog, keymap.IDOpenPager, keymap.IDPanelToggle:
+			return s, nil, true
+		}
+	}
 	switch id {
 	case keymap.IDThemeDialog:
 		if len(s.themes) == 0 {
@@ -410,8 +451,9 @@ func (s Screen) globalAction(id keymap.ID) (app.Screen, tea.Cmd, bool) {
 		// list focused - claims ctrl+n earlier, in handlePanelKey, to
 		// hand focus back without closing.
 		if s.panel.open {
-			s.panel.open, s.panel.focused, s.panel.dialog = false, false, false
+			s.panel.open, s.panel.focused, s.panel.dialog, s.panel.dialogAgent = false, false, false, ""
 			s.panel.list.ClearFilter()
+			s.closeThread() // the Conversation keeps the history; a reopen rebuilds
 		} else {
 			s.panel.openPanel()
 			s.transcript = s.transcript.ClearFocus()

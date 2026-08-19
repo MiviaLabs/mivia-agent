@@ -267,7 +267,7 @@ func RequestedTimeoutSec(configured int, explicit int, taskOverrides ...int) int
 
 // Built-in provider defaults.
 const (
-	DefaultProvider  = "deepseek"
+	DefaultProvider  = "openrouter"
 	DeepSeekProModel = "deepseek-v4-pro"
 )
 

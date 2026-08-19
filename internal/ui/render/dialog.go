@@ -39,6 +39,18 @@ func DialogBodyRows(height int) int {
 	return body
 }
 
+// DialogBodyWidth is the inner width a Dialog framed to width gives its
+// body rows, after the same margin shrinking the clip applies. A caller
+// that renders its own surface INTO the body (an embedded chat, not a
+// plain string) sizes it to this so the clip never has to cut it.
+func DialogBodyWidth(width int) int {
+	marginX := dialogMarginX
+	for marginX > 0 && width-2*marginX-2-4 < 12 {
+		marginX--
+	}
+	return width - 2*marginX - 2 - 4
+}
+
 // Dialog renders title, body, and hint inside a bordered, inset-filled
 // box centered on a width x height terminal. It is the one centered
 // dialog primitive: this renderer has no compositing layer, so the

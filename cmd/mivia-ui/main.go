@@ -199,6 +199,7 @@ func runCockpit(cfg config, th theme.Theme, tier theme.Tier, themes []theme.Them
 	screen := conversation.New(th, tier, themes, harness, harness, initialComposerWidth, nil)
 	screen.SetCommands(mockCommands())
 	screen.SetCommandRunner(harness)
+	screen.SetSubagentThreads(harness)
 	for _, w := range probe.Warnings {
 		screen.Notice(w)
 	}

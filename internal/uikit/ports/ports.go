@@ -67,6 +67,16 @@ type TurnHandle interface {
 	Cancel()
 }
 
+// SubagentThreads resolves the conversation thread of one dispatched
+// subagent, keyed by the tool call that dispatched it. A thread is an
+// ordinary Conversation - the same Send/History surface the main chat
+// drives - so the UI renders it with the same screen, not a parallel
+// one. ok is false when no thread exists for the call; the caller then
+// falls back to whatever summary it has.
+type SubagentThreads interface {
+	Thread(callID string) (Conversation, bool)
+}
+
 // Decision is the user's answer to an ApprovalRequest.
 type Decision int
 

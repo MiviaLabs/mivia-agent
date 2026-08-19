@@ -72,6 +72,7 @@ func workflowApprovalTestBlockedStoreConfig(t *testing.T) string {
 	// non-empty" and this test would exercise the config-error return
 	// instead of openWorkflowStore's.
 	content := "[subagents]\nstore_backend = \"sqlite\"\nstore_path = " + strconv.Quote(storePath) + "\n" +
+		"\n[provider]\nname = \"deepseek\"\n" +
 		"\n[providers.deepseek]\nmodels = [{ name = \"deepseek-v4-pro\", context_window_tokens = 128000 }]\ndefault_model = \"deepseek-v4-pro\"\n"
 	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
@@ -97,7 +98,8 @@ func workflowApprovalTestBlockedStoreConfig(t *testing.T) string {
 func workflowApprovalTestIsolatedConfigPath(t *testing.T) string {
 	t.Helper()
 	configPath := filepath.Join(t.TempDir(), "isolated.toml")
-	content := "[providers.deepseek]\nmodels = [{ name = \"deepseek-v4-pro\", context_window_tokens = 128000 }]\ndefault_model = \"deepseek-v4-pro\"\n"
+	content := "[provider]\nname = \"deepseek\"\n" +
+		"\n[providers.deepseek]\nmodels = [{ name = \"deepseek-v4-pro\", context_window_tokens = 128000 }]\ndefault_model = \"deepseek-v4-pro\"\n"
 	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
