@@ -81,7 +81,13 @@ func SearchStatusPalette(bg string, opts SearchOptions) (SearchResult, error) {
 		return "", false
 	}
 
+	// bestSet tracks whether any candidate has been accepted yet, the same
+	// way WorstCaseSeparation uses a -1 sentinel: comparing against a
+	// zero-valued best.WorstDE would silently discard a genuinely-found
+	// first candidate whose worst-case separation happened to be exactly
+	// 0.0, since a strict > against 0 never fires.
 	var best SearchResult
+	bestSet := false
 	for i := 0; i < opts.Iterations; i++ {
 		candidate := make(map[Role]string, 4)
 		ok := true
@@ -100,11 +106,12 @@ func SearchStatusPalette(bg string, opts SearchOptions) (SearchResult, error) {
 		if err != nil {
 			return SearchResult{}, err
 		}
-		if worst > best.WorstDE {
+		if !bestSet || worst > best.WorstDE {
 			best = SearchResult{Colors: candidate, WorstDE: worst, Detail: detail}
+			bestSet = true
 		}
 	}
-	if best.Colors == nil {
+	if !bestSet {
 		return SearchResult{}, fmt.Errorf("theme: search found no candidate meeting contrast %.1f against %s in %d iterations", opts.MinContrast, bg, opts.Iterations)
 	}
 	return best, nil

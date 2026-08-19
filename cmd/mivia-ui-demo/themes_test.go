@@ -133,3 +133,25 @@ func TestRunThemesAllThemesNoError(t *testing.T) {
 		}
 	}
 }
+
+func TestRunThemesUnparseableFlag(t *testing.T) {
+	var out bytes.Buffer
+	if err := runThemes(&out, []string{"--not-a-real-flag"}, nil); err == nil {
+		t.Fatal("expected error for an unparseable flag")
+	}
+}
+
+// TestRunThemesUnknownThemeNameIsSilentlyEmpty pins the current
+// behaviour of an unmatched --theme filter: no error, no output. This is
+// deliberate (a filter, not a lookup), but the test-review found nothing
+// pinned it - a future change to the filter condition could silently
+// alter this without any test noticing.
+func TestRunThemesUnknownThemeNameIsSilentlyEmpty(t *testing.T) {
+	var out bytes.Buffer
+	if err := runThemes(&out, []string{"--theme", "does-not-exist"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if out.Len() != 0 {
+		t.Errorf("expected empty output for an unmatched --theme filter, got %q", out.String())
+	}
+}
