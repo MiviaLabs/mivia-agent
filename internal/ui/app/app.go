@@ -159,7 +159,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			sc = next
 		}
 		m.stack = append(m.stack, sc)
-		return m, tea.Batch(sc.Init(), resizeCmd)
+		return m, tea.Batch(sc.Init(), resizeCmd, tea.ClearScreen)
 	case PopScreenMsg:
 		if len(m.stack) > 1 {
 			return m.pop()
@@ -246,10 +246,15 @@ func (m Model) applyTheme(msg ThemeSelectedMsg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-// pop removes the top screen.
+// pop removes the top screen and clears the terminal: the screen
+// beneath drew content the popped screen never touched, and a diffing
+// renderer that fails to blank a row neither frame wrote to leaves the
+// popped screen's content bleeding through (the same hazard the
+// full-repaint resize path guards against, but unconditional here - a
+// screen swap is rare, not per-keystroke, so the cost is negligible).
 func (m Model) pop() (tea.Model, tea.Cmd) {
 	m.stack = m.stack[:len(m.stack)-1]
-	return m, nil
+	return m, tea.ClearScreen
 }
 
 // View renders the top of the stack.

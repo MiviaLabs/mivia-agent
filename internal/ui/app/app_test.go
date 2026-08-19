@@ -64,7 +64,11 @@ func TestPushScreenMsgPushesAndInits(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected the pushed screen's Init Cmd")
 	}
-	cmd()
+	// The push also batches tea.ClearScreen now (TestPushScreenMsgClearsScreen),
+	// so Init is one leaf among several rather than the whole Cmd.
+	for _, c := range batchCmds(t, cmd) {
+		c()
+	}
 	if !initCalled {
 		t.Error("expected the pushed screen's Init to have been returned and callable")
 	}
@@ -458,6 +462,50 @@ func TestNoFullRepaintMeansNoClearScreen(t *testing.T) {
 		if reflect.DeepEqual(c(), want) {
 			t.Error("ClearScreen must not run without the full-repaint mode")
 		}
+	}
+}
+
+// TestPushScreenMsgClearsScreen pins the same hazard TestFullRepaintClearsScreenOnResize
+// closes for a resize: a pushed screen (theme picker, pager, model
+// picker) draws content the screen underneath never did, so a diffing
+// renderer that fails to blank a row the new screen doesn't touch
+// leaves the old screen's content bleeding through. A screen swap is a
+// full-content change, at least as large as a resize, and it is rare
+// (a user opening a picker, not every keystroke), so it clears
+// unconditionally rather than gating behind --full-repaint the way the
+// much higher-frequency resize path does.
+func TestPushScreenMsgClearsScreen(t *testing.T) {
+	m := New(stubScreen{name: "base", flags: ViewFlags{AltScreen: true}}, loadTheme(t), theme.TierASCII, nil)
+	_, cmd := m.Update(PushScreenMsg{Screen: stubScreen{name: "modal", flags: ViewFlags{AltScreen: true}}})
+	want := tea.ClearScreen()
+	found := false
+	for _, c := range batchCmds(t, cmd) {
+		if reflect.DeepEqual(c(), want) {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected tea.ClearScreen in the push Cmd batch")
+	}
+}
+
+// TestPopScreenMsgClearsScreen is the other half: closing a modal
+// reveals the screen underneath, which the modal never redrew either.
+func TestPopScreenMsgClearsScreen(t *testing.T) {
+	m := New(stubScreen{name: "base", flags: ViewFlags{AltScreen: true}}, loadTheme(t), theme.TierASCII, nil)
+	next, _ := m.Update(PushScreenMsg{Screen: stubScreen{name: "modal", flags: ViewFlags{AltScreen: true}}})
+	m = next.(Model)
+
+	_, cmd := m.Update(PopScreenMsg{})
+	want := tea.ClearScreen()
+	found := false
+	for _, c := range batchCmds(t, cmd) {
+		if reflect.DeepEqual(c(), want) {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected tea.ClearScreen in the pop Cmd batch")
 	}
 }
 
