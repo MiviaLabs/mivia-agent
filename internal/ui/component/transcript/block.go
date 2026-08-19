@@ -52,12 +52,14 @@ type Block struct {
 	// (wireframes-panes.md section 2, last paragraph).
 	Prose bool
 
-	// Input is the raw user text of a turn-start block. User rows are
-	// width-styled (selection background, marker, indent), so they are
-	// BUILT at a width and must be rebuilt when that width changes -
-	// unlike plain prose, which wraps at render time. Empty on every
-	// other kind.
+	// Input is the raw text of a turn-start (user prompt) or text-end
+	// (assistant markdown response) block, preserved so changing theme
+	// or terminal width can re-render the block with accurate styles.
 	Input string
+
+	// Diff and Plan preserve raw tool payloads for dynamic theme re-rendering.
+	Diff *uievent.Diff
+	Plan *uievent.PlanBody
 }
 
 // isEmpty reports a block with nothing to render.

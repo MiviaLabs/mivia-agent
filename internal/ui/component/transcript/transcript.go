@@ -132,6 +132,7 @@ func (m Model) HandleEvent(ev uievent.Event) (Model, tea.Cmd) {
 		return m.pushBlock(Block{
 			Kind:  uievent.KindTextEnd,
 			Prose: true,
+			Input: b.Text,
 			Body:  proseLines(render.Text(m.Theme, m.Tier, b.Text)),
 		})
 	case uievent.TurnStartBody:
@@ -386,12 +387,25 @@ func (m Model) tailRows() []string {
 	return out
 }
 
-// SetTheme records a theme change, re-resolving theme colors and user turn blocks.
+// SetTheme records a theme change, re-resolving theme colors across all blocks.
 func (m *Model) SetTheme(t theme.Theme, tier theme.Tier) {
 	m.Theme, m.Tier = t, tier
 	for i := range m.blocks {
-		if m.blocks[i].Kind == uievent.KindTurnStart {
+		switch m.blocks[i].Kind {
+		case uievent.KindTurnStart:
 			m.blocks[i].Body = userLines(m.Theme, m.Tier, m.width, m.blocks[i].Input)
+		case uievent.KindTextEnd:
+			if m.blocks[i].Input != "" {
+				m.blocks[i].Body = proseLines(render.Text(m.Theme, m.Tier, m.blocks[i].Input))
+			}
+		case uievent.KindPlan:
+			if m.blocks[i].Plan != nil {
+				m.blocks[i] = planBlockValue(m.Theme, m.Tier, *m.blocks[i].Plan)
+			}
+		case uievent.KindToolEnd:
+			if m.blocks[i].Diff != nil {
+				m.blocks[i].Body = strings.Split(render.Diff(m.Theme, m.Tier, *m.blocks[i].Diff), "\n")
+			}
 		}
 	}
 }

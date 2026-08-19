@@ -130,6 +130,7 @@ func toolEndBlockValue(t theme.Theme, tier theme.Tier, b uievent.ToolEndBody) Bl
 		Body: body,
 	}
 	if b.Diff != nil {
+		blk.Diff = b.Diff
 		blk.Header.Detail = b.Diff.Path
 		blk.Header.Meta = fmt.Sprintf("+%d -%d  %dms", b.Diff.Added, b.Diff.Removed, b.DurationMS)
 		blk.Body = strings.Split(render.Diff(t, tier, *b.Diff), "\n")
@@ -146,8 +147,10 @@ func planBlockValue(t theme.Theme, tier theme.Tier, b uievent.PlanBody) Block {
 		}
 		body = append(body, style.Render(mark+" "+item.Text))
 	}
+	planCopy := b
 	return Block{
 		Kind:   uievent.KindPlan,
+		Plan:   &planCopy,
 		Header: Header{Label: "plan", Meta: fmt.Sprintf("%d of %d", b.Done, b.Total)},
 		Body:   body,
 	}

@@ -124,9 +124,11 @@ func (s Screen) Update(msg tea.Msg) (app.Screen, tea.Cmd) {
 }
 
 func (s Screen) View() string {
+	pt := s.previewTheme()
+	s.picker.Theme, s.picker.Tier = pt, s.Tier
 	hint := "[enter] select  [esc] cancel  type to filter"
 	body := s.picker.View() + "\n\n" + s.previewView()
-	return render.Dialog(s.Theme, s.Tier, s.width, s.height, "select a theme", body, hint)
+	return render.Dialog(pt, s.Tier, s.width, s.height, "select a theme", body, hint)
 }
 
 // previewView renders a prompt line, a syntax-highlighted code read,

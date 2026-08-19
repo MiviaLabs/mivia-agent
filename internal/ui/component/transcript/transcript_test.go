@@ -294,3 +294,31 @@ func TestToolOutputProgressUpdatesProgressBarInPlace(t *testing.T) {
 		t.Errorf("expected 66%% progress bar once, got body: %q", body)
 	}
 }
+
+func TestSetThemeReRendersBlocks(t *testing.T) {
+	th := loadTheme(t)
+	m := New(th, theme.TierTrueColor)
+	m.SetSize(80, 24)
+
+	m, _ = m.HandleEvent(uievent.Event{
+		Kind: uievent.KindTextEnd,
+		Body: uievent.TextEndBody{Text: "```go\nfunc hello() {}\n```"},
+	})
+
+	origBody := m.Blocks()[0].Body[0]
+
+	// Create a different theme
+	lightTheme := th
+	lightTheme.Colors = make(map[theme.Role]string)
+	for k, v := range th.Colors {
+		lightTheme.Colors[k] = v
+	}
+	lightTheme.Colors[theme.RoleBGInset] = "#fafafa"
+
+	m.SetTheme(lightTheme, theme.TierTrueColor)
+
+	newBody := m.Blocks()[0].Body[0]
+	if newBody == origBody {
+		t.Error("SetTheme failed to re-render code block with new theme colors")
+	}
+}
