@@ -12,6 +12,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/approval"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/composer"
@@ -333,11 +335,28 @@ func (s *Screen) Notice(text string) {
 //
 // It is always drawn, even when there is nothing to say, because a row
 // that appears and disappears reflows every wrapped line above it
-// (docs/design/ux-rules.md rule 2.7). When the transcript is scrolled
-// away from the tail it says so, states how many blocks arrived while
-// the reader was paused, and offers the way back - the affordance
-// auto-follow needs (cockpit-research.md rule 6.7).
+// (docs/design/ux-rules.md rule 2.7). Its right side carries the compact
+// key hint, generated from the keymap table so it cannot drift from the
+// help screen; transient state (turn status, scroll affordances) takes
+// the left. The whole row is one line, truncated to the terminal width.
 func (s Screen) statusRow() string {
+	line := s.statusText()
+	hint := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle).
+		Render(s.keys.Hint(keymap.IDHelp, keymap.IDOpenPager, keymap.IDQuit))
+	if line == "" {
+		line = hint
+	} else {
+		line += "  " + hint
+	}
+	if s.width > 0 {
+		line = ansi.Truncate(line, s.width, "")
+	}
+	return line
+}
+
+// statusText is the transient left side of the status row: the turn's
+// status line, or the scroll and truncation affordances.
+func (s Screen) statusText() string {
 	if v := s.statusline.View(s.now()); v != "" {
 		return v
 	}

@@ -8,7 +8,10 @@
 // bubbletea's Key.String() produces; the view layer does the conversion.
 package keymap
 
-import "sort"
+import (
+	"sort"
+	"strings"
+)
 
 // Context is the surface a binding applies to. A key may mean different
 // things in different contexts, and the same key may appear once per
@@ -101,6 +104,9 @@ type Binding struct {
 	Context Context
 	Keys    []string
 	Help    string
+	// Short is the one-word label the compact footer hint uses. A binding
+	// without one never appears in a hint; the full Help text is unchanged.
+	Short string
 	// Hidden keeps a binding out of the generated help without removing
 	// it from dispatch. Use it for alternate spellings of a key, never
 	// to hide a binding a user must know about.
@@ -119,9 +125,9 @@ func Default() []Binding {
 	return []Binding{
 		// Global.
 		{ID: IDCancel, Context: ContextGlobal, Keys: []string{"esc"}, Help: "cancel the turn, keep the text"},
-		{ID: IDQuit, Context: ContextGlobal, Keys: []string{"ctrl+c"}, Help: "cancel; press twice to quit"},
+		{ID: IDQuit, Context: ContextGlobal, Keys: []string{"ctrl+c"}, Help: "cancel; press twice to quit", Short: "quit"},
 		{ID: IDThemeDialog, Context: ContextGlobal, Keys: []string{"ctrl+t"}, Help: "theme"},
-		{ID: IDOpenPager, Context: ContextGlobal, Keys: []string{"ctrl+o"}, Help: "open the pager"},
+		{ID: IDOpenPager, Context: ContextGlobal, Keys: []string{"ctrl+o"}, Help: "open the pager", Short: "transcript"},
 		{ID: IDToggleReason, Context: ContextGlobal, Keys: []string{"ctrl+r"}, Help: "show or hide reasoning"},
 
 		// Scrolling. The cockpit owns the surface, so the application
@@ -136,7 +142,7 @@ func Default() []Binding {
 		{ID: IDSend, Context: ContextComposer, Keys: []string{"enter"}, Help: "send"},
 		{ID: IDNewline, Context: ContextComposer, Keys: []string{"ctrl+j"}, Help: "newline"},
 		{ID: IDClearLine, Context: ContextComposer, Keys: []string{"ctrl+u"}, Help: "clear the line"},
-		{ID: IDHelp, Context: ContextComposer, Keys: []string{"?"}, Help: "show this keymap (empty composer)"},
+		{ID: IDHelp, Context: ContextComposer, Keys: []string{"?"}, Help: "show this keymap (empty composer)", Short: "help"},
 		{ID: IDFocusPrev, Context: ContextComposer, Keys: []string{"shift+tab"}, Help: "focus the newest block"},
 
 		// Completion menu. It claims these before the composer.
@@ -176,7 +182,7 @@ func Default() []Binding {
 		// readline owns the line editor, and a pager is not one. less
 		// itself binds ctrl+d as half a page down. ctrl+s stays unbound -
 		// it is XOFF in any context (ux-rules.md rule 1.2).
-		{ID: IDSearchStart, Context: ContextPager, Keys: []string{"/"}, Help: "search the conversation"},
+		{ID: IDSearchStart, Context: ContextPager, Keys: []string{"/"}, Help: "search the conversation", Short: "search"},
 		{ID: IDSearchNext, Context: ContextPager, Keys: []string{"n"}, Help: "next match"},
 		{ID: IDSearchPrev, Context: ContextPager, Keys: []string{"N"}, Help: "previous match"},
 		{ID: IDPagerRowUp, Context: ContextPager, Keys: []string{"k", "up"}, Help: "one row up"},
@@ -189,9 +195,9 @@ func Default() []Binding {
 		{ID: IDPagerHalfDown, Context: ContextPager, Keys: []string{"ctrl+d"}, Help: "half page down"},
 		{ID: IDPagerFullUp, Context: ContextPager, Keys: []string{"ctrl+b", "b"}, Help: "full page up"},
 		{ID: IDPagerFullDown, Context: ContextPager, Keys: []string{"ctrl+f", "space"}, Help: "full page down"},
-		{ID: IDLeavePager, Context: ContextPager, Keys: []string{"ctrl+o", "esc", "q"}, Help: "return to the composer"},
-		{ID: IDDumpScrollback, Context: ContextPager, Keys: []string{"["}, Help: "write the transcript to terminal scrollback"},
-		{ID: IDEditTranscript, Context: ContextPager, Keys: []string{"v"}, Help: "open the transcript in $VISUAL or $EDITOR"},
+		{ID: IDLeavePager, Context: ContextPager, Keys: []string{"ctrl+o", "esc", "q"}, Help: "return to the composer", Short: "back"},
+		{ID: IDDumpScrollback, Context: ContextPager, Keys: []string{"["}, Help: "write the transcript to terminal scrollback", Short: "scrollback"},
+		{ID: IDEditTranscript, Context: ContextPager, Keys: []string{"v"}, Help: "open the transcript in $VISUAL or $EDITOR", Short: "editor"},
 	}
 }
 
@@ -266,6 +272,25 @@ func (m *Map) Help() []HelpRow {
 		}
 	}
 	return rows
+}
+
+// Hint renders a compact one-line key hint ("? help  ctrl+o transcript")
+// from the same table that feeds Help, so the persistent footer hint and
+// the help screen cannot drift. Each named ID uses its first key and its
+// Short label; an ID with no Short label is skipped, and an unknown ID is
+// skipped rather than reported: hints are chrome, not dispatch.
+func (m *Map) Hint(ids ...ID) string {
+	var parts []string
+	for _, want := range ids {
+		for _, b := range m.bindings {
+			if b.ID != want || b.Hidden || b.Short == "" {
+				continue
+			}
+			parts = append(parts, b.Keys[0]+":"+b.Short)
+			break
+		}
+	}
+	return strings.Join(parts, "  ")
 }
 
 func joinKeys(keys []string) string {

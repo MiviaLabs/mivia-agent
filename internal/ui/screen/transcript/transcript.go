@@ -361,7 +361,7 @@ func (s Screen) statusLine() string {
 		return render.Role(s.Theme, s.Tier, theme.RoleWarning).Render(s.notice)
 	}
 	hint := "row " + itoa(min(s.offset+1, len(s.rows))) + " of " + itoa(len(s.rows)) +
-		"  /:search  [:scrollback  v:editor  ctrl+o:back"
+		"  " + s.keys.Hint(keymap.IDSearchStart, keymap.IDDumpScrollback, keymap.IDEditTranscript, keymap.IDLeavePager)
 	if n := s.search.count(); n > 0 {
 		hint = itoa(n) + " matches  n/N:next  " + hint
 	}

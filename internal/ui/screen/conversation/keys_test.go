@@ -636,8 +636,8 @@ func TestStatusRowStatesWhenScrolledAway(t *testing.T) {
 		}})
 		scr = n.(Screen)
 	}
-	if got := ansi.Strip(scr.statusRow()); got != "" {
-		t.Errorf("got %q, want a quiet status row while following", got)
+	if got := ansi.Strip(scr.statusRow()); got != "?:help  ctrl+o:transcript  ctrl+c:quit" {
+		t.Errorf("got %q, want only the persistent key hint while following", got)
 	}
 
 	scr, _ = press(t, scr, tea.KeyPressMsg{Code: tea.KeyPgUp})
@@ -724,5 +724,27 @@ func TestNoticeRecordsAStartupWarning(t *testing.T) {
 	s.Notice("old tmux has no synchronized output")
 	if !strings.Contains(s.View(), "old tmux has no synchronized output") {
 		t.Error("the notice must render in the transcript")
+	}
+}
+
+// TestStatusRowAlwaysShowsTheHint pins the persistent footer: the key
+// hint is on the status row even when no turn is in flight, stays one
+// line, and truncates to the terminal width on narrow screens.
+func TestStatusRowAlwaysShowsTheHint(t *testing.T) {
+	s := sized(t, 1)
+	got := ansi.Strip(s.statusRow())
+	for _, want := range []string{"?:help", "ctrl+o:transcript", "ctrl+c:quit"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("status row %q does not show %q", got, want)
+		}
+	}
+	if n := len(strings.Split(s.View(), "\n")); n == 0 {
+		t.Error("status row broke the view")
+	}
+
+	narrow, _ := newScreen(t, replay.New(nil, 0), nil, nil).Update(tea.WindowSizeMsg{Width: 20, Height: 10})
+	row := ansi.Strip(narrow.(Screen).statusRow())
+	if w := ansi.StringWidth(row); w > 20 {
+		t.Errorf("status row width %d exceeds 20: %q", w, row)
 	}
 }

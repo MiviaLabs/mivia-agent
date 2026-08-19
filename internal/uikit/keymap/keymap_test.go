@@ -256,3 +256,20 @@ func TestComposerAndTranscriptShareTabWithoutCollision(t *testing.T) {
 		t.Error("tab must be unbound in the bare composer context")
 	}
 }
+
+// TestHintIsGeneratedFromTheTable pins the compact footer hint: it must
+// come from the same table as the help screen, use each binding's first
+// key, and skip IDs that have no Short label rather than print junk.
+func TestHintIsGeneratedFromTheTable(t *testing.T) {
+	m := New(Default())
+	got := m.Hint(IDHelp, IDOpenPager, IDQuit)
+	if want := "?:help  ctrl+o:transcript  ctrl+c:quit"; got != want {
+		t.Errorf("Hint = %q, want %q", got, want)
+	}
+	if got := m.Hint(IDCancel); got != "" {
+		t.Errorf("Hint(cancel) = %q, want empty: no Short label", got)
+	}
+	if got := m.Hint(ID("no-such-id")); got != "" {
+		t.Errorf("Hint(unknown) = %q, want empty", got)
+	}
+}
