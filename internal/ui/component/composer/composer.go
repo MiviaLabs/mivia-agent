@@ -65,6 +65,13 @@ func (m *Model) SetCommands(cmds []Command) {
 	m.menu.refresh(m.input.Value())
 }
 
+// Commands returns the active slash-command candidate list.
+func (m Model) Commands() []Command {
+	out := make([]Command, len(m.menu.all))
+	copy(out, m.menu.all)
+	return out
+}
+
 // MenuActive reports whether the completion menu is showing. The caller
 // routes keys by this: the menu claims Enter, Tab, Up, Down and Esc
 // before the composer sees them (docs/design/ux-rules.md rule 5.3).

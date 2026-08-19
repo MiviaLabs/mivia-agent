@@ -468,7 +468,12 @@ func overlayRows(text string, height int) []string {
 // SetCommands supplies the slash-completion candidates. The command set
 // belongs to the harness, so the screen takes it rather than inventing
 // one.
-func (s *Screen) SetCommands(cmds []composer.Command) { s.composer.SetCommands(cmds) }
+func (s *Screen) SetCommands(cmds []composer.Command) {
+	s.composer.SetCommands(cmds)
+	if s.thread != nil {
+		s.thread.SetCommands(cmds)
+	}
+}
 
 // SetCommandRunner supplies the seam a slash command acts through (see
 // commands.go). It is the integration knob docs/design/ui-isolation.md
@@ -476,7 +481,12 @@ func (s *Screen) SetCommands(cmds []composer.Command) { s.composer.SetCommands(c
 // directly, only this interface. A nil runner (the zero-value default)
 // makes every "/x" line report an error instead of falling through to
 // Send.
-func (s *Screen) SetCommandRunner(r ports.CommandRunner) { s.runner = r }
+func (s *Screen) SetCommandRunner(r ports.CommandRunner) {
+	s.runner = r
+	if s.thread != nil {
+		s.thread.SetCommandRunner(r)
+	}
+}
 
 // SetSubagentThreads supplies the seam the activity panel's thread
 // dialog resolves a subagent's conversation through (see thread.go).

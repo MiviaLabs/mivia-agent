@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/MiviaLabs/mivia-agent/internal/ui/component/composer"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
@@ -296,5 +297,38 @@ func TestSubagentThreadCtrlCClosesDialogWithoutQuitting(t *testing.T) {
 		if _, ok := cmd().(tea.QuitMsg); ok {
 			t.Fatal("ctrl+c inside thread dialog issued tea.Quit")
 		}
+	}
+}
+
+func TestSubagentThreadSlashCommandExecution(t *testing.T) {
+	runner := &fakeRunner{outcome: ports.CommandOutcome{Notice: "thread command ran"}}
+	s := threadScreen(t, stubThreads{"sa-1": &scriptedThread{events: make(chan uievent.Event, 4)}}, false)
+	s.SetCommands([]composer.Command{{Name: "help", Desc: "show help"}})
+	s.SetCommandRunner(runner)
+
+	// Enter opens the thread dialog
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	s = next.(Screen)
+	if s.thread == nil {
+		t.Fatal("thread is nil after opening dialog")
+	}
+
+	// Type /help into thread composer
+	for _, ch := range "/help" {
+		next, _ = s.Update(tea.KeyPressMsg{Text: string(ch)})
+		s = next.(Screen)
+	}
+	// First Enter accepts completion, second Enter runs the slash command
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	s = next.(Screen)
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	s = next.(Screen)
+
+	if len(runner.calls) != 1 || runner.calls[0] != "help|" {
+		t.Errorf("runner calls = %v, want [\"help|\"]", runner.calls)
+	}
+	dialogView := ansi.Strip(s.View())
+	if !strings.Contains(dialogView, "thread command ran") {
+		t.Errorf("dialog view missing command outcome notice:\n%s", dialogView)
 	}
 }

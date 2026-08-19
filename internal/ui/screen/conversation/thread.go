@@ -105,6 +105,9 @@ func (s *Screen) openThread(callID string) bool {
 		return false
 	}
 	thread := NewThread(s.Theme, s.Tier, conv, render.DialogBodyWidth(contentWidth(s.width)), s.now)
+	thread.themes = s.themes
+	thread.SetCommands(s.composer.Commands())
+	thread.SetCommandRunner(s.runner)
 	thread.LoadHistory(conv.History())
 	s.thread, s.threadID = &thread, callID
 	return true
