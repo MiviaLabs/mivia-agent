@@ -1,10 +1,10 @@
 package transcript
 
 import (
-	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/x/ansi"
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
@@ -202,55 +202,44 @@ func TestIsEmpty(t *testing.T) {
 }
 
 // TestUserLinesDrawAFullWidthFill pins the user-message framing: on
-// colour tiers every row - blank padding rows above and below included,
-// and the message text itself - carries the RoleBGSelection background
-// across the full terminal width, and the accent marker stays on the
-// first row.
-func TestUserLinesDrawAFullWidthFill(t *testing.T) {
+// TestUserLinesRendersAccentMarker: the user prompt starts with the accent marker
+// on the first row and wraps neatly.
+func TestUserLinesRendersAccentMarker(t *testing.T) {
 	th := loadTheme(t)
 	rows := userLines(th, theme.TierTrueColor, 80, "short message")
-	if len(rows) != 3 {
-		t.Fatalf("got %d rows, want 3 (pad, text, pad): %q", len(rows), rows)
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1: %q", len(rows), rows)
 	}
-	for i, r := range rows {
-		if !strings.Contains(r, "48;2;42;42;48") {
-			t.Errorf("row %d carries no selection background: %q", i, r)
-		}
-		if w := lipgloss.Width(r); w != 80 {
-			t.Errorf("row %d is %d wide, want the full 80-column terminal width", i, w)
-		}
-	}
-	if plain := ansi.Strip(rows[1]); !strings.HasPrefix(plain, "> ") || !strings.Contains(plain, "short message") {
-		t.Errorf("first text row lost its marker or text: %q", plain)
+	if plain := ansi.Strip(rows[0]); !strings.HasPrefix(plain, "> ") || !strings.Contains(plain, "short message") {
+		t.Errorf("text row lost its marker or text: %q", plain)
 	}
 }
 
-// TestUserLinesFillCoversWrappedLines: a multi-line message fills every
-// wrapped row, all padded to the full terminal width.
-func TestUserLinesFillCoversWrappedLines(t *testing.T) {
+// TestUserLinesWrapsLongMessages: a multi-line message wraps neatly with
+// 2-space indentation on continuation rows.
+func TestUserLinesWrapsLongMessages(t *testing.T) {
 	th := loadTheme(t)
 	long := strings.Repeat("word ", 60)
 	rows := userLines(th, theme.TierTrueColor, 40, long)
-	if len(rows) < 5 {
-		t.Fatalf("got %d rows, want several wrapped rows plus padding: %d", len(rows), len(rows))
+	if len(rows) < 3 {
+		t.Fatalf("got %d rows, want several wrapped rows: %d", len(rows), len(rows))
 	}
-	for i, r := range rows {
-		if !strings.Contains(r, "48;2;42;42;48") {
-			t.Errorf("row %d carries no fill", i)
-		}
-		if w := lipgloss.Width(r); w != 40 {
-			t.Errorf("row %d is %d wide, want the full 40-column terminal width", i, w)
+	if plain := ansi.Strip(rows[0]); !strings.HasPrefix(plain, "> ") {
+		t.Errorf("first row lost marker: %q", plain)
+	}
+	for i := 1; i < len(rows); i++ {
+		if plain := ansi.Strip(rows[i]); !strings.HasPrefix(plain, "  ") {
+			t.Errorf("continuation row %d lost indent: %q", i, plain)
 		}
 	}
 }
 
-// TestUserLinesDegradeToPlainMarker: at ASCII the fill and the padding
-// rows drop out; the marker-only lines stand exactly as before.
+// TestUserLinesDegradeToPlainMarker: at ASCII the marker-only lines stand cleanly.
 func TestUserLinesDegradeToPlainMarker(t *testing.T) {
 	th := loadTheme(t)
 	rows := userLines(th, theme.TierASCII, 80, "hi")
 	if len(rows) != 1 {
-		t.Fatalf("got %d rows, want the single marker line with no fill or padding", len(rows))
+		t.Fatalf("got %d rows, want the single marker line: %q", len(rows), rows)
 	}
 	if got := ansi.Strip(rows[0]); got != "> hi" {
 		t.Errorf("ASCII row = %q, want \"> hi\"", got)

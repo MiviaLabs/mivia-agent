@@ -743,11 +743,11 @@ func TestPanelUserMessageRendering(t *testing.T) {
 	viewOpen := s.View()
 	assertExactFrame(t, viewOpen, uikitconfig.BreakpointWide, 30)
 
-	// Check transcript rows rendered at the reading width
+	// Check transcript rows rendered within the reading width
 	rows := s.transcript.Rows()
-	for i, r := range rows[:4] {
-		if w := ansi.StringWidth(r); w != readingW {
-			t.Errorf("row %d width = %d, want reading width %d", i, w, readingW)
+	for i, r := range rows {
+		if w := ansi.StringWidth(r); w > readingW {
+			t.Errorf("row %d width = %d, exceeds reading width %d", i, w, readingW)
 		}
 	}
 

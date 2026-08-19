@@ -83,11 +83,7 @@ func (b Block) isEmpty() bool {
 func (b Block) Height(width int) int {
 	if b.Kind == uievent.KindTurnStart && b.Input != "" {
 		wrapped := render.Wrap(b.Input, render.ProseMeasure(width)-2)
-		bodyLen := len(wrapped)
-		if len(b.Body) > len(wrapped) {
-			bodyLen = len(wrapped) + 2 // with top/bottom padding rows
-		}
-		return bodyLen + 1
+		return len(wrapped) + 1
 	}
 	if b.Prose {
 		return len(b.bodyRows(width)) + 1
