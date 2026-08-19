@@ -1,0 +1,512 @@
+<meta charset="utf-8">
+<title>Mivia UI - Phase 0 mock</title>
+<!--
+  DISPOSABLE. Delete this file once the real UI ships.
+  Source of truth for layout is wireframes.md. This file is for colour and density.
+  No build step, no network, no CDN. Inline CSS and JS only.
+  Every colour at every call site is a CSS custom property named after a semantic role.
+-->
+<style>
+  /* ---- scaffolding chrome. Deliberately NOT terminal-like, so it reads as a tool. ---- */
+  body { margin: 0; background: #6b6b6b; color: #fff;
+         font: 13px/1.4 -apple-system, system-ui, sans-serif; }
+  header { padding: 10px 14px; background: #3a3a3a; border-bottom: 2px dashed #999;
+           display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
+  header b { font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+             font-size: 11px; }
+  header label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+  select, button { font: inherit; font-size: 12px; padding: 3px 6px; }
+  button.on { outline: 3px solid #ffd400; }
+  main { padding: 14px; }
+  .cols { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; }
+  .col { flex: 1 1 560px; min-width: 0; }
+  .col > h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+              margin: 0 0 6px; padding: 4px 6px; background: #3a3a3a; }
+  .viewname { font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+              margin: 14px 0 4px; color: #ffd400; }
+  .keys { font-size: 11px; margin: 4px 0 0; color: #e8e8e8; }
+  .note { font-size: 11px; color: #f0f0f0; max-width: 78ch; margin: 0 0 10px; }
+
+  /* ---- the mock surface. A terminal is a grid of cells. Nothing else. ---- */
+  pre.term {
+    margin: 0; padding: 10px 12px;
+    font-family: "DejaVu Sans Mono", "Menlo", "Consolas", monospace;
+    font-size: 13px; line-height: 1.32; tab-size: 4;
+    white-space: pre; overflow-x: auto;
+    background: var(--bg); color: var(--fg);
+    border: 0; border-radius: 0; box-shadow: none;
+  }
+  /* one class per semantic role. zero literal colours below this line. */
+  .r-fg          { color: var(--fg); }
+  .r-fg-muted    { color: var(--fg-muted); }
+  .r-fg-subtle   { color: var(--fg-subtle); }
+  .r-accent      { color: var(--accent); }
+  .r-accent-inv  { color: var(--accent-fg); background: var(--accent); }
+  .r-success     { color: var(--success); }
+  .r-warning     { color: var(--warning); }
+  .r-danger      { color: var(--danger); }
+  .r-info        { color: var(--info); }
+  .r-border      { color: var(--border); }
+  .r-border-focus{ color: var(--border-focus); }
+  .r-bg-subtle   { background: var(--bg-subtle); }
+  .r-bg-inset    { background: var(--bg-inset); }
+  .r-keyword     { color: var(--keyword); }
+  .r-string      { color: var(--string); }
+  .r-number      { color: var(--number); }
+  .r-comment     { color: var(--comment); }
+  .r-function    { color: var(--function); }
+  .r-type        { color: var(--type); }
+  .r-variable    { color: var(--variable); }
+  .r-add         { color: var(--diff-add-fg); background: var(--diff-add-bg);
+                   display: inline-block; min-width: 100%; }
+  .r-del         { color: var(--diff-del-fg); background: var(--diff-del-bg);
+                   display: inline-block; min-width: 100%; }
+  .r-hunk        { color: var(--diff-hunk); }
+  .r-code        { background: var(--bg-inset); display: inline-block; min-width: 100%; }
+  .r-sel         { color: var(--accent-fg); background: var(--accent); }
+  .b             { font-weight: 700; }
+</style>
+
+<header>
+  <b>Mivia UI - Phase 0 mock</b>
+  <label>variant
+    <select id="variant">
+      <option value="ALL">all three, side by side</option>
+      <option value="A">A - Ledger</option>
+      <option value="B">B - Blocks</option>
+      <option value="C">C - Console</option>
+    </select>
+  </label>
+  <label>theme
+    <select id="theme"></select>
+  </label>
+  <label>mode
+    <button id="dark" class="on">dark</button><button id="light">light</button>
+  </label>
+  <label>colour depth
+    <select id="depth">
+      <option value="true">truecolor (24-bit)</option>
+      <option value="256">256</option>
+      <option value="16">16</option>
+      <option value="none">no colour / ASCII</option>
+    </select>
+  </label>
+  <span style="font-size:11px">layout truth is wireframes.md - this file judges colour</span>
+</header>
+
+<main>
+  <p class="note">
+    All three variants render the identical fixture conversation under the identical
+    theme. Every glyph here is also in the ASCII set, so "no colour / ASCII" changes
+    colour only - that is the intended result, not a bug in the mock.
+  </p>
+  <div class="cols" id="out"></div>
+</main>
+
+<script>
+/* ------------------------------------------------------------------ palettes
+   Fetched 2026-08-19. Sources and licences are recorded in research.md.
+   mivia-dark and mivia-light are original and are the default. */
+const THEMES = {
+"mivia":      { label:"Mivia (default, original)",
+  dark:{bg:"#10151a","bg-subtle":"#171e25","bg-inset":"#0b0f13",fg:"#dbe3ea","fg-muted":"#9aa8b4","fg-subtle":"#6b7885",border:"#5d6b77","border-focus":"#f0a860",accent:"#f0a860","accent-fg":"#10151a",success:"#63d29a",warning:"#e8c05a",danger:"#f4808a",info:"#7cc0e8",keyword:"#7cc0e8",string:"#63d29a",number:"#f0a860",comment:"#6b7885",function:"#e8c05a",type:"#6fd0c8",variable:"#dbe3ea","diff-add-fg":"#63d29a","diff-add-bg":"#10261b","diff-del-fg":"#f4808a","diff-del-bg":"#2b1418","diff-hunk":"#7cc0e8"},
+  light:{bg:"#fcfbf8","bg-subtle":"#f2efe8","bg-inset":"#eae6dc",fg:"#1b2228","fg-muted":"#4f5a64","fg-subtle":"#6e7982",border:"#8a8377","border-focus":"#9a5310",accent:"#9a5310","accent-fg":"#fcfbf8",success:"#16704a",warning:"#7a5600",danger:"#b02a20",info:"#10557f",keyword:"#10557f",string:"#16704a",number:"#9a5310",comment:"#6e7982",function:"#7a5600",type:"#0f6a63",variable:"#1b2228","diff-add-fg":"#16704a","diff-add-bg":"#e3f0e6","diff-del-fg":"#b02a20","diff-del-bg":"#f7e4e2","diff-hunk":"#10557f"}},
+"catppuccin": { label:"Catppuccin (Mocha / Latte) - MIT",
+  dark:{bg:"#1e1e2e","bg-subtle":"#313244","bg-inset":"#181825",fg:"#cdd6f4","fg-muted":"#a6adc8","fg-subtle":"#6c7086",border:"#45475a","border-focus":"#cba6f7",accent:"#cba6f7","accent-fg":"#1e1e2e",success:"#a6e3a1",warning:"#f9e2af",danger:"#f38ba8",info:"#89b4fa",keyword:"#cba6f7",string:"#a6e3a1",number:"#fab387",comment:"#6c7086",function:"#89b4fa",type:"#f9e2af",variable:"#cdd6f4","diff-add-fg":"#a6e3a1","diff-add-bg":"#1e2b26","diff-del-fg":"#f38ba8","diff-del-bg":"#2e1f27","diff-hunk":"#89b4fa"},
+  light:{bg:"#eff1f5","bg-subtle":"#ccd0da","bg-inset":"#e6e9ef",fg:"#4c4f69","fg-muted":"#5c5f77","fg-subtle":"#6c6f85",border:"#bcc0cc","border-focus":"#8839ef",accent:"#8839ef","accent-fg":"#eff1f5",success:"#40a02b",warning:"#df8e1d",danger:"#d20f39",info:"#1e66f5",keyword:"#8839ef",string:"#40a02b",number:"#fe640b",comment:"#6c6f85",function:"#1e66f5",type:"#df8e1d",variable:"#4c4f69","diff-add-fg":"#40a02b","diff-add-bg":"#e0eddc","diff-del-fg":"#d20f39","diff-del-bg":"#f7dfe3","diff-hunk":"#1e66f5"}},
+"tokyonight": { label:"Tokyo Night (Night / Day) - Apache-2.0",
+  dark:{bg:"#1a1b26","bg-subtle":"#292e42","bg-inset":"#16161e",fg:"#c0caf5","fg-muted":"#565f89","fg-subtle":"#394b70",border:"#3b4261","border-focus":"#7aa2f7",accent:"#7aa2f7","accent-fg":"#1a1b26",success:"#9ece6a",warning:"#e0af68",danger:"#f7768e",info:"#7dcfff",keyword:"#bb9af7",string:"#9ece6a",number:"#ff9e64",comment:"#565f89",function:"#7aa2f7",type:"#2ac3de",variable:"#c0caf5","diff-add-fg":"#9ece6a","diff-add-bg":"#20291f","diff-del-fg":"#f7768e","diff-del-bg":"#2b1d24","diff-hunk":"#7dcfff"},
+  light:{bg:"#e1e2e7","bg-subtle":"#d0d5e3","bg-inset":"#c4c8da",fg:"#3760bf","fg-muted":"#6172b0","fg-subtle":"#848cb5",border:"#b4b5b9","border-focus":"#9854f1",accent:"#9854f1","accent-fg":"#e1e2e7",success:"#387068",warning:"#8c6c3e",danger:"#c64343",info:"#07879d",keyword:"#9854f1",string:"#587539",number:"#8c6c3e",comment:"#848cb5",function:"#2e7de9",type:"#118c74",variable:"#3760bf","diff-add-fg":"#387068","diff-add-bg":"#b7ced5","diff-del-fg":"#c64343","diff-del-bg":"#dababe","diff-hunk":"#07879d"}},
+"rose-pine":  { label:"Rose Pine (main / Dawn) - MIT",
+  dark:{bg:"#191724","bg-subtle":"#1f1d2e","bg-inset":"#26233a",fg:"#e0def4","fg-muted":"#908caa","fg-subtle":"#6e6a86",border:"#403d52","border-focus":"#c4a7e7",accent:"#c4a7e7","accent-fg":"#191724",success:"#95b1ac",warning:"#f6c177",danger:"#eb6f92",info:"#9ccfd8",keyword:"#31748f",string:"#f6c177",number:"#ebbcba",comment:"#6e6a86",function:"#ebbcba",type:"#9ccfd8",variable:"#e0def4","diff-add-fg":"#95b1ac","diff-add-bg":"#21202e","diff-del-fg":"#eb6f92","diff-del-bg":"#21202e","diff-hunk":"#9ccfd8"},
+  light:{bg:"#faf4ed","bg-subtle":"#fffaf3","bg-inset":"#f2e9e1",fg:"#464261","fg-muted":"#797593","fg-subtle":"#9893a5",border:"#dfdad9","border-focus":"#907aa9",accent:"#907aa9","accent-fg":"#faf4ed",success:"#6d8f89",warning:"#ea9d34",danger:"#b4637a",info:"#56949f",keyword:"#286983",string:"#ea9d34",number:"#d7827e",comment:"#9893a5",function:"#d7827e",type:"#56949f",variable:"#464261","diff-add-fg":"#6d8f89","diff-add-bg":"#f4ede8","diff-del-fg":"#b4637a","diff-del-bg":"#f4ede8","diff-hunk":"#56949f"}},
+"gruvbox":    { label:"Gruvbox (dark / light) - licence unresolved",
+  dark:{bg:"#282828","bg-subtle":"#3c3836","bg-inset":"#1d2021",fg:"#ebdbb2","fg-muted":"#d5c4a1","fg-subtle":"#7c6f64",border:"#504945","border-focus":"#fe8019",accent:"#fe8019","accent-fg":"#282828",success:"#b8bb26",warning:"#fabd2f",danger:"#fb4934",info:"#83a598",keyword:"#fb4934",string:"#b8bb26",number:"#d3869b",comment:"#7c6f64",function:"#b8bb26",type:"#fabd2f",variable:"#83a598","diff-add-fg":"#b8bb26","diff-add-bg":"#2a2f1c","diff-del-fg":"#fb4934","diff-del-bg":"#3a2020","diff-hunk":"#8ec07c"},
+  light:{bg:"#fbf1c7","bg-subtle":"#ebdbb2","bg-inset":"#d5c4a1",fg:"#3c3836","fg-muted":"#504945","fg-subtle":"#665c54",border:"#d5c4a1","border-focus":"#af3a03",accent:"#af3a03","accent-fg":"#fbf1c7",success:"#79740e",warning:"#b57614",danger:"#9d0006",info:"#076678",keyword:"#9d0006",string:"#79740e",number:"#8f3f71",comment:"#665c54",function:"#79740e",type:"#b57614",variable:"#076678","diff-add-fg":"#79740e","diff-add-bg":"#e3ecc8","diff-del-fg":"#9d0006","diff-del-bg":"#f5dcd8","diff-hunk":"#427b58"}},
+"nord":       { label:"Nord (dark only) - MIT",
+  dark:{bg:"#2e3440","bg-subtle":"#3b4252","bg-inset":"#292e39",fg:"#eceff4","fg-muted":"#d8dee9","fg-subtle":"#4c566a",border:"#434c5e","border-focus":"#88c0d0",accent:"#88c0d0","accent-fg":"#2e3440",success:"#a3be8c",warning:"#ebcb8b",danger:"#bf616a",info:"#81a1c1",keyword:"#81a1c1",string:"#a3be8c",number:"#b48ead",comment:"#4c566a",function:"#88c0d0",type:"#8fbcbb",variable:"#d8dee9","diff-add-fg":"#a3be8c","diff-add-bg":"#333c36","diff-del-fg":"#bf616a","diff-del-bg":"#3b3238","diff-hunk":"#88c0d0"},
+  light:null}
+};
+
+/* ------------------------------------------------- colour depth downsampling
+   truecolor: the palette as authored.
+   256: quantise to the xterm 6x6x6 cube plus the 24-step grey ramp.
+   16:  snap to the nearest of the 16 ANSI colours.
+   none: every role collapses to fg or bg. This is the NO_COLOR path. */
+const CUBE = [0,95,135,175,215,255];
+const ANSI16 = ["#000000","#800000","#008000","#808000","#000080","#800080","#008080",
+  "#c0c0c0","#808080","#ff0000","#00ff00","#ffff00","#0000ff","#ff00ff","#00ffff","#ffffff"];
+function rgb(h){h=h.slice(1);return [0,2,4].map(i=>parseInt(h.slice(i,i+2),16));}
+function hex(c){return "#"+c.map(v=>v.toString(16).padStart(2,"0")).join("");}
+function to256(h){
+  const c=rgb(h);
+  const cube=c.map(v=>CUBE.reduce((a,b)=>Math.abs(b-v)<Math.abs(a-v)?b:a));
+  const g=Math.round((c[0]+c[1]+c[2])/3);
+  const gv=Math.max(8,Math.min(238,Math.round((g-8)/10)*10+8));
+  const dc=c.reduce((s,v,i)=>s+(v-cube[i])**2,0);
+  const dg=c.reduce((s,v)=>s+(v-gv)**2,0);
+  return dg<dc?hex([gv,gv,gv]):hex(cube);
+}
+function to16(h){
+  const c=rgb(h);let best=ANSI16[0],bd=1e9;
+  for(const a of ANSI16){const d=rgb(a).reduce((s,v,i)=>s+(v-c[i])**2,0);
+    if(d<bd){bd=d;best=a;}}
+  return best;
+}
+const FG_ROLES=["fg","fg-muted","fg-subtle","accent","success","warning","danger","info",
+  "keyword","string","number","comment","function","type","variable","border",
+  "border-focus","diff-add-fg","diff-del-fg","diff-hunk"];
+function derive(pal,depth){
+  const out={};
+  for(const k in pal){
+    let v=pal[k];
+    if(depth==="256") v=to256(v);
+    else if(depth==="16") v=to16(v);
+    else if(depth==="none") v = FG_ROLES.includes(k) ? pal.fg
+        : (k==="accent-fg" ? pal.bg : pal.bg);
+    out[k]=v;
+  }
+  return out;
+}
+
+/* ---------------------------------------------------------------- fixtures
+   Markup is {role|text}. Everything outside a brace pair uses --fg.
+   Identical content across all three variants, by design. */
+const V = {};
+
+V.A = { name:"A - Ledger (transcript-first)", views:[
+{t:"1. Transcript, every block type", k:"Up/Down native scrollback  Ctrl-C cancel  Ctrl-O pager  Ctrl-T theme  ? keymap", b:
+`{accent|>} Add retry with exponential backoff to the S3 uploader, and cover it
+  with a test.
+
+{fg-subtle|. Reasoning  the uploader wraps a single PutObject call; the retry belongs}
+{fg-subtle|  in the transport, not the caller.}
+
+I will add a bounded retry to the uploader transport. Three attempts, full
+jitter, and a cap of {number|5s}.
+
+{code|    {keyword|func} ({variable|u} *{type|Uploader}) {function|put}({variable|ctx} {type|context}.{type|Context}, {variable|k} {type|string}) {type|error} \\{}
+{code|        {keyword|return} {type|retry}.{function|Do}({variable|ctx}, {type|retry}.{type|Policy}\\{{variable|Max}: {number|3}, {variable|Cap}: {number|5} * {type|time}.{type|Second}\\},}
+{code|            {keyword|func}() {type|error} \\{ {keyword|return} {variable|u}.{variable|raw}.{function|Put}({variable|ctx}, {variable|k}, {variable|b}) \\})}
+{code|    \\}}
+
+  {fg-muted|read_file}  {fg-muted|internal/storage/s3_uploader.go}                       {success|ok}  {fg-subtle|12ms}
+    {fg-subtle|1..48 of 210 lines}
+    {fg-subtle|package storage}
+    {fg-subtle|...}
+
+  {fg-muted|edit}  {fg-muted|internal/storage/s3_uploader.go}                            {success|ok}  {fg-subtle|31ms}
+    {hunk|@@ -14,7 +14,11 @@ func (u *Uploader) put(}
+{del|    -    return u.raw.Put(ctx, k, b)}
+{add|    +    return retry.Do(ctx, retry.Policy\\{}
+{add|    +        Max: 3,}
+{add|    +        Cap: 5 * time.Second,}
+{add|    +    \\}, func() error \\{ return u.raw.Put(ctx, k, b) \\})}
+
+  {fg-muted|subagent test-writer}  {info|running}        {accent|-}  {fg-subtle|2 of 3 steps        18s}
+    {success|+} {fg-muted|read existing table tests}
+    {success|+} {fg-muted|draft TestPutRetriesOnTransient}
+    {fg-subtle|- run the package test}
+
+  {fg-muted|run_command}  {fg-muted|go test ./internal/storage/...}                  {danger|failed}  {fg-subtle|4.1s}
+    {danger|x  s3_uploader_test.go:88: want 3 attempts, got 1}
+    {fg-subtle|   exit status 1}
+
+  {b|Plan}
+    {success|[x]} {fg-muted|add retry policy to the transport}
+    {success|[x]} {fg-muted|wire the uploader through it}
+    {fg-subtle|[ ] fix the fake transport to count attempts}
+    {fg-subtle|[ ] run the package test again}
+
+  {warning|Notice}  {fg-muted|context is at 62% (78k of 125k). /compact frees about 30k.}
+
+  {fg-subtle|1,284 in  2,940 out  340 cached      $0.041      claude-opus-5      21.4s}
+
+{accent|>} {fg-subtle|_}`},
+{t:"2. Streaming, mid-token", k:"Esc cancel and keep partial  Ctrl-C cancel and discard  Ctrl-S toggle reasoning", b:
+`I will add a bounded retry to the uploader transport. Three attempts, ful{accent|_}
+
+  {accent|-} {fg-muted|thinking}   {fg-subtle|4.2s}   {fg-subtle|esc to cancel}`},
+{t:"3. Tool approval", k:"o once  a always  d deny  D deny always  v view diff  Enter=once  Esc=deny", b:
+`  {warning|? edit}  {fg-muted|internal/storage/s3_uploader.go}
+    {fg-subtle|+4 -1 lines, 1 hunk}
+
+    {accent|[o]} {fg|once}   {accent|[a]} {fg|always for edit}   {accent|[d]} {fg|deny}   {accent|[D]} {fg|deny always}   {accent|[v]} {fg|view diff}`},
+{t:"4. Transient status line", k:"Esc cancel. The line is deleted at turn end and is never part of scrollback.", b:
+`  {accent|-} {fg-muted|running}  {fg-muted|go test ./internal/storage/...}   {fg-subtle|12s}   {fg-subtle|62% ctx}   {fg-subtle|esc to cancel}`},
+{t:"5. Composer with slash completion", k:"Tab common prefix  Up/Down select  Enter accept  Esc dismiss  Ctrl-U clear", b:
+`{accent|>} /comp{accent|_}
+  {sel|/compact    } {fg-muted| summarise the transcript and free context}
+  {fg-muted|/completion  print the shell completion script}`},
+{t:"6. Unified diff", k:"Ctrl-O full screen  n next hunk  N previous hunk", b:
+`  {fg-muted|edit}  {fg-muted|internal/storage/s3_uploader.go}                           {success|+4} {danger|-1}
+
+  {hunk|@@ -14,7 +14,11 @@ func (u *Uploader) put(ctx, k, b) error \\{}
+    {fg-subtle|  14}      ctx, cancel := context.WithTimeout(ctx, u.timeout)
+    {fg-subtle|  15}      defer cancel()
+    {fg-subtle|  16}
+{del|      17  -   return u.raw.Put(ctx, k, b)}
+{add|          +   return retry.Do(ctx, retry.Policy\\{}
+{add|          +       Max: 3,}
+{add|          +       Cap: 5 * time.Second,}
+{add|          +   \\}, func() error \\{ return u.raw.Put(ctx, k, b) \\})}
+    {fg-subtle|  18}  \\}`},
+{t:"7. Alternate screen - theme picker", k:"Up/Down select and preview  Enter apply  l toggle light/dark  / filter  Esc cancel", b:
+`  {b|Theme}                                            {fg-subtle|preview}
+
+  {sel|mivia dark          }  {accent|<}                     {accent|>} {fg-muted|Add retry with backoff}
+  {fg-muted|mivia light}                                        {fg-muted|to the uploader.}
+  {fg-muted|catppuccin mocha}
+  {fg-muted|catppuccin latte}                                   {fg|I will add a bounded}
+  {fg-muted|tokyonight night}                                   {fg|retry to the transport.}
+  {fg-muted|tokyonight day}
+  {fg-muted|rose-pine}                                        {code|  {keyword|func} {function|put}() {type|error} \\{      }
+  {fg-muted|rose-pine dawn}                                   {code|      {keyword|return} {type|retry}.{function|Do}( }
+  {fg-muted|gruvbox dark}                                     {code|  \\}                    }
+  {fg-muted|gruvbox light}
+  {fg-muted|nord}                                               {add|+ added line       }
+                                                     {del|- removed line     }
+
+  {fg-subtle|up/down select   enter apply   l toggle light/dark   esc cancel}`}
+]};
+
+V.B = { name:"B - Blocks (structured, collapsible)", views:[
+{t:"1. Transcript, every block type", k:"Tab/Shift-Tab move block  Space toggle  Ctrl-E expand all  Ctrl-W collapse all  y copy block", b:
+`{accent|you}                                                            {fg-subtle|14:22:07}
+{border||} Add retry with exponential backoff to the S3 uploader, and cover it
+{border||} with a test.
+
+{accent|opus-5}                                                         {fg-subtle|14:22:08}
+{border||} {fg-subtle|v reasoning}
+{border||}   {fg-subtle|the uploader wraps a single PutObject call; the retry belongs in the}
+{border||}   {fg-subtle|transport, not the caller.}
+{border||}
+{border||} I will add a bounded retry to the uploader transport. Three attempts,
+{border||} full jitter, and a cap of {number|5s}.
+{border||}
+{border||}{code|     {keyword|func} ({variable|u} *{type|Uploader}) {function|put}({variable|ctx} {type|context}.{type|Context}, {variable|k} {type|string}) {type|error} \\{   }
+{border||}{code|         {keyword|return} {type|retry}.{function|Do}({variable|ctx}, {type|retry}.{type|Policy}\\{{variable|Max}: {number|3}\\})          }
+{border||}{code|     \\}                                                     }
+{border||}
+{border||} {fg-subtle|>} {fg-muted|read_file}  {fg-muted|internal/storage/s3_uploader.go}        {success|ok}    {fg-subtle|12ms   48 lines}
+{border||} {fg-subtle|v} {fg-muted|edit}       {fg-muted|internal/storage/s3_uploader.go}        {success|ok}    {fg-subtle|31ms}   {success|+4} {danger|-1}
+{border||}   {hunk|@@ -14,7 +14,11 @@}
+{border||}{del|   -   return u.raw.Put(ctx, k, b)}
+{border||}{add|   +   return retry.Do(ctx, retry.Policy\\{}
+{border||}{add|   +       Max: 3, Cap: 5 * time.Second,}
+{border||}{add|   +   \\}, func() error \\{ return u.raw.Put(ctx, k, b) \\})}
+{border||}
+{border||} {fg-subtle|v} {fg-muted|subagent test-writer}                          {info|running}   {fg-subtle|18s   2 of 3}
+{border||}   {accent|[######################}{fg-subtle|........}{accent|]}  {fg-muted|67%}
+{border||}   {success|+} {fg-muted|read existing table tests}
+{border||}   {success|+} {fg-muted|draft TestPutRetriesOnTransient}
+{border||}   {fg-subtle|- run the package test}
+{border||}
+{border||} {fg-subtle|>} {fg-muted|run_command}  {fg-muted|go test ./internal/storage/...}  {danger|failed}   {fg-subtle|4.1s   1 failure}
+{border||}   {danger|x s3_uploader_test.go:88: want 3 attempts, got 1}
+{border||}
+{border||} {fg-subtle|v} {b|plan}                                                          {fg-subtle|2 of 4}
+{border||}   {success|[x]} {fg-muted|add retry policy to the transport}
+{border||}   {success|[x]} {fg-muted|wire the uploader through it}
+{border||}   {fg-subtle|[ ] fix the fake transport to count attempts}
+{border||}   {fg-subtle|[ ] run the package test again}
+{border||}
+{border||} {warning|notice}  {fg-muted|context 62% (78k of 125k). /compact frees about 30k.}
+
+{fg-subtle|usage    1,284 in   2,940 out   340 cached   $0.041   21.4s}
+
+{accent|>} {fg-subtle|_}`},
+{t:"2. Streaming, mid-token", k:"Esc cancel  Ctrl-C discard. Header is drawn once; only the body tail repaints.", b:
+`{accent|opus-5}                                                         {fg-subtle|14:22:08}
+{border||} I will add a bounded retry to the uploader transport. Three attempts,
+{border||} full jitter, and a ca{accent|_}
+
+  {accent|-} {fg-muted|streaming}   {fg-subtle|4.2s}   {fg-subtle|1,284 in}   {fg-subtle|esc to cancel}`},
+{t:"3. Tool approval", k:"o once  a always  d deny  D deny always  v view diff  Tab to the inline preview", b:
+`{border||} {warning|? edit}       {fg-muted|internal/storage/s3_uploader.go}                    {success|+4} {danger|-1}
+{border||}   {fg-subtle|scope: workspace   path is inside the project root}
+{border||}
+{border||}   {accent|[o]} {fg|once}   {accent|[a]} {fg|always}   {accent|[d]} {fg|deny}   {accent|[D]} {fg|deny always}   {accent|[v]} {fg|view diff}`},
+{t:"4. Transient status line", k:"Esc cancel. The gutter stops here: the status line is not transcript.", b:
+`  {accent|-} {fg-muted|running}  {fg-muted|go test ./internal/storage/...}   {fg-subtle|12s}   {fg-subtle|62% ctx}   {fg-subtle|esc to cancel}`},
+{t:"5. Composer with slash completion", k:"Tab common prefix  Up/Down select  Enter accept  Esc dismiss", b:
+`{accent|>}  /comp{accent|_}
+   {sel|/compact    } {fg-muted| summarise the transcript and free context}
+   {fg-muted|/completion  print the shell completion script}`},
+{t:"6. Unified diff (the gutter costs two columns)", k:"Space collapse  Ctrl-O full screen  n / N hunks", b:
+`{border||} {fg-subtle|v} {fg-muted|edit}  {fg-muted|internal/storage/s3_uploader.go}                {success|ok}  {fg-subtle|31ms}  {success|+4} {danger|-1}
+{border||}   {hunk|@@ -14,7 +14,11 @@ func (u *Uploader) put(ctx, k, b) error \\{}
+{border||}    {fg-subtle|14}      ctx, cancel := context.WithTimeout(ctx, u.timeout)
+{border||}    {fg-subtle|15}      defer cancel()
+{border||}{del|    17  -   return u.raw.Put(ctx, k, b)}
+{border||}{add|        +   return retry.Do(ctx, retry.Policy\\{}
+{border||}{add|        +       Max: 3,}
+{border||}{add|        +       Cap: 5 * time.Second,}
+{border||}{add|        +   \\}, func() error \\{ return u.raw.Put(ctx, k, b) \\})}
+{border||}    {fg-subtle|18}  \\}`},
+{t:"7. Alternate screen - theme picker (shared by all variants)", k:"Up/Down select  Enter apply  l light/dark  / filter  Esc cancel", b:
+`  {b|Theme}                                            {fg-subtle|preview}
+
+  {sel|mivia dark          }  {accent|<}                     {accent|>} {fg-muted|Add retry with backoff}
+  {fg-muted|catppuccin mocha}                                   {fg|I will add a bounded}
+  {fg-muted|tokyonight night}                                   {fg|retry to the transport.}
+  {fg-muted|rose-pine}                                            {add|+ added line       }
+  {fg-muted|gruvbox dark}                                         {del|- removed line     }
+  {fg-muted|nord}
+
+  {fg-subtle|up/down select   enter apply   l toggle light/dark   esc cancel}`}
+]};
+
+V.C = { name:"C - Console (modal workspace)", views:[
+{t:"1. Transcript, every block type (references, not content)", k:"Ctrl-K palette  Ctrl-O last reference  d1 open diff 1  Ctrl-T theme  Ctrl-C cancel", b:
+`{accent|>} Add retry with exponential backoff to the S3 uploader, and cover it
+  with a test.
+
+I will add a bounded retry to the uploader transport. Three attempts, full
+jitter, and a cap of {number|5s}.
+
+{code|    {keyword|func} ({variable|u} *{type|Uploader}) {function|put}({variable|ctx} {type|context}.{type|Context}, {variable|k} {type|string}) {type|error} \\{}
+{code|        {keyword|return} {type|retry}.{function|Do}({variable|ctx}, {type|retry}.{type|Policy}\\{{variable|Max}: {number|3}, {variable|Cap}: {number|5} * {type|time}.{type|Second}\\},}
+{code|            {keyword|func}() {type|error} \\{ {keyword|return} {variable|u}.{variable|raw}.{function|Put}({variable|ctx}, {variable|k}, {variable|b}) \\})}
+{code|    \\}}
+
+  {fg-muted|reasoning}   {fg-subtle|84 words}                                        {accent|ctrl-k r}
+  {fg-muted|read_file}   {fg-muted|internal/storage/s3_uploader.go}       {success|ok}   {fg-subtle|12ms  48 lines}
+  {fg-muted|edit}        {fg-muted|internal/storage/s3_uploader.go}       {success|ok}   {fg-subtle|31ms}  {success|+4} {danger|-1}  {accent|d1}
+  {fg-muted|subagent}    {fg-muted|test-writer}                      {info|running}   {fg-subtle|18s   2 of 3}
+  {fg-muted|run_command} {fg-muted|go test ./internal/storage/...}    {danger|failed}   {fg-subtle|4.1s  1 failure}
+  {fg-muted|plan}        {fg-subtle|4 items}                                    {fg-subtle|2 done}  {accent|ctrl-k p}
+  {warning|notice}      {fg-muted|context 62% (78k of 125k)}
+
+  {fg-subtle|1,284 in  2,940 out  340 cached      $0.041      claude-opus-5      21.4s}
+
+{accent|>} {fg-subtle|_}`},
+{t:"2. Streaming, mid-token", k:"Esc cancel  Ctrl-K palette stays reachable during the turn", b:
+`I will add a bounded retry to the uploader transport. Three attempts, ful{accent|_}
+
+  {accent|-} {fg-muted|opus-5}  {fg-subtle|4.2s}  {fg-subtle|62% ctx}  {fg-subtle|esc cancel}  {accent|ctrl-k} {fg-subtle|palette}`},
+{t:"3. Tool approval (the one place C spends space)", k:"o once  a always  d deny  D deny always  v view diff  Enter default  Esc deny", b:
+`  {warning|? edit}  {fg-muted|internal/storage/s3_uploader.go}   {success|+4} {danger|-1}   {fg-subtle|scope workspace}
+
+    {accent|o}  {fg|once}            {fg-muted|run this call only}
+    {accent|a}  {fg|always}          {fg-muted|auto-approve edit inside this workspace}
+    {accent|d}  {fg|deny}            {fg-muted|refuse and tell the model why}
+    {accent|D}  {fg|deny always}     {fg-muted|refuse every edit for this session}
+    {accent|v}  {fg|view diff}       {fg-muted|open the diff full-screen first}
+
+    {sel|[o]}`},
+{t:"4. Transient status line", k:"Esc cancel  Ctrl-K palette", b:
+`  {accent|-} {fg-muted|running}  {fg-muted|go test}   {fg-subtle|12s}   {fg-subtle|62% ctx}   {fg-subtle|esc cancel}   {accent|ctrl-k} {fg-subtle|palette}`},
+{t:"5. Composer, then the Ctrl-K palette (alternate screen)", k:"Tab prefix  Enter accept  Esc dismiss  Ctrl-K opens the palette", b:
+`{accent|>} /comp{accent|_}
+  {sel|/compact    } {fg-muted| summarise the transcript and free context}
+  {fg-muted|/completion  print the shell completion script}
+
+{fg-subtle|- - - - - - - - - alternate screen, on ctrl-k - - - - - - - - -}
+
+  {accent|>} comp{accent|_}
+
+    {sel|compact          summarise the transcript and free context      /compact}
+    {fg-muted|completion       print the shell completion script}
+    {fg-muted|model            switch model and effort                        }{fg-subtle|ctrl-m}
+    {fg-muted|theme            switch theme                                   }{fg-subtle|ctrl-t}
+
+  {fg-subtle|up/down select   enter run   esc close}`},
+{t:"6. Unified diff - inline is one row, full screen on d1", k:"d1 or Ctrl-O open  n next hunk  N previous  s side-by-side (120 cols)  q close", b:
+`  {fg-muted|edit}  {fg-muted|internal/storage/s3_uploader.go}       {success|ok}   {fg-subtle|31ms}  {success|+4} {danger|-1}  {accent|d1}
+
+{fg-subtle|- - - - - - - - - alternate screen, on d1 - - - - - - - - -}
+
+  {fg-muted|internal/storage/s3_uploader.go}                         {success|+4} {danger|-1}   {fg-subtle|1 hunk}
+
+  {hunk|@@ -14,7 +14,11 @@ func (u *Uploader) put(ctx, k, b) error \\{}
+    {fg-subtle|  14}      ctx, cancel := context.WithTimeout(ctx, u.timeout)
+    {fg-subtle|  15}      defer cancel()
+{del|      17  -   return u.raw.Put(ctx, k, b)}
+{add|          +   return retry.Do(ctx, retry.Policy\\{}
+{add|          +       Max: 3,}
+{add|          +       Cap: 5 * time.Second,}
+{add|          +   \\}, func() error \\{ return u.raw.Put(ctx, k, b) \\})}
+    {fg-subtle|  18}  \\}
+
+  {fg-subtle|n next hunk   N prev hunk   s side-by-side   q close}`},
+{t:"7. Alternate screen - theme picker", k:"Ctrl-T or the palette  Up/Down preview  Enter apply  l light/dark  Esc cancel", b:
+`  {b|Theme}                                            {fg-subtle|preview}
+
+  {sel|mivia dark          }  {accent|<}                     {accent|>} {fg-muted|Add retry with backoff}
+  {fg-muted|catppuccin mocha}                                   {fg|I will add a bounded}
+  {fg-muted|tokyonight night}                                   {fg|retry to the transport.}
+  {fg-muted|rose-pine}                                            {add|+ added line       }
+  {fg-muted|gruvbox dark}                                         {del|- removed line     }
+  {fg-muted|nord}
+
+  {fg-subtle|up/down select   enter apply   l toggle light/dark   esc cancel}`}
+]};
+
+/* ------------------------------------------------------------------ render */
+const CLS = {add:"r-add", del:"r-del", hunk:"r-hunk", code:"r-code", sel:"r-sel",
+             b:"b", "bg-subtle":"r-bg-subtle", "bg-inset":"r-bg-inset"};
+function cls(role){ return CLS[role] || ("r-"+role); }
+function esc(s){ return s.replace(/&/g,"&amp;").replace(/</g,"&lt;"); }
+
+/* Parse {role|text} with one level of nesting, and \{ \} as literal braces. */
+function markup(src){
+  let out="", i=0;
+  while(i<src.length){
+    const c=src[i];
+    if(c==="\\" && (src[i+1]==="{"||src[i+1]==="}")){ out+=esc(src[i+1]); i+=2; continue; }
+    if(c==="{"){
+      const bar=src.indexOf("|", i);
+      if(bar<0){ out+=esc(c); i++; continue; }
+      // find the matching close brace, skipping escaped and nested ones
+      let depth=1, j=bar+1;
+      while(j<src.length && depth>0){
+        if(src[j]==="\\"){ j+=2; continue; }
+        if(src[j]==="{") depth++;
+        else if(src[j]==="}") depth--;
+        if(depth>0) j++;
+      }
+      const role=src.slice(i+1,bar), body=src.slice(bar+1,j);
+      out += '<span class="'+cls(role)+'">'+markup(body)+"</span>";
+      i=j+1; continue;
+    }
+    out+=esc(c); i++;
+  }
+  return out;
+}
+
+const out=document.getElementById("out");
+const selTheme=document.getElementById("theme");
+const selVariant=document.getElementById("variant");
+const selDepth=document.getElementById("depth");
+const btnDark=document.getElementById("dark"), btnLight=document.getElementById("light");
+let mode="dark";
+
+for(const k in THEMES){
+  const o=document.createElement("option"); o.value=k; o.textContent=THEMES[k].label;
+  selTheme.appendChild(o);
+}
+
+function paint(){
+  const th=THEMES[selTheme.value];
+  let pal=th[mode];
+  if(!pal){ pal=th.dark; mode="dark"; btnDark.classList.add("on"); btnLight.classList.remove("on"); }
+  const eff=derive(pal, selDepth.value);
+  const style=document.documentElement.style;
+  for(const k in eff) style.setProperty("--"+k, eff[k]);
+
+  const want = selVariant.value==="ALL" ? ["A","B","C"] : [selVariant.value];
+  out.innerHTML = want.map(id=>{
+    const v=V[id];
+    const body=v.views.map(w=>
+      '<div class="viewname">'+esc(w.t)+'</div>'+
+      '<pre class="term">'+markup(w.b)+'</pre>'+
+      '<p class="keys"><b>keys</b> '+esc(w.k)+'</p>').join("");
+    return '<div class="col"><h2>'+esc(v.name)+'</h2>'+body+'</div>';
+  }).join("");
+}
+selTheme.onchange=selVariant.onchange=selDepth.onchange=paint;
+btnDark.onclick=()=>{mode="dark";btnDark.classList.add("on");btnLight.classList.remove("on");paint();};
+btnLight.onclick=()=>{mode="light";btnLight.classList.add("on");btnDark.classList.remove("on");paint();};
+paint();
+</script>

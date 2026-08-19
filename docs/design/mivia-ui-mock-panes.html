@@ -1,0 +1,1253 @@
+<meta charset="utf-8">
+<title>Mivia UI - Phase 0 mock, variant D</title>
+<!--
+  DISPOSABLE. Delete once the real UI ships. research-panes.md and wireframes-panes.md stay.
+  Variant D "Panes": collapsible blocks and dialogs, no vertical gutter rule.
+  Layout truth is wireframes-panes.md. This file judges colour and density.
+  No build step, no network, no CDN. Every colour at every call site is a CSS
+  custom property named after a semantic role. Theme values are injected verbatim
+  from the verified table in research-panes.md.
+-->
+<style>
+  /* ---- scaffolding. Deliberately not terminal-like, so it reads as a tool. ---- */
+  body{margin:0;background:#6b6b6b;color:#fff;font:13px/1.45 system-ui,sans-serif}
+  header{padding:9px 13px;background:#333;border-bottom:2px dashed #999;
+    display:flex;flex-wrap:wrap;gap:13px;align-items:center;position:sticky;top:0;z-index:9}
+  header b{font-size:11px;letter-spacing:.07em;text-transform:uppercase}
+  label{font-size:11px;text-transform:uppercase;letter-spacing:.06em}
+  select,button{font:inherit;font-size:12px;padding:3px 6px}
+  button.on{outline:3px solid #ffd400}
+  main{padding:13px;max-width:1180px}
+  .viewname{font-size:11px;text-transform:uppercase;letter-spacing:.08em;
+    margin:16px 0 4px;color:#ffd400}
+  .keys{font-size:11px;margin:4px 0 0;color:#eee}
+  .note{font-size:12px;color:#f4f4f4;max-width:80ch}
+  .warn{background:#4a3a00;border-left:4px solid #ffd400;padding:7px 10px;
+    font-size:12px;max-width:80ch}
+
+
+  /* ---- the theme grid. Each cell previews its own palette. ---- */
+  .gridwrap{background:#2b2b2b;padding:11px;margin:8px 0 4px}
+  .gridhead{font-size:11px;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(196px,1fr));gap:9px}
+  .cell{cursor:pointer;padding:0;border:3px solid transparent;background:var(--c-bg)}
+  .cell.sel{border-color:#ffd400}
+  .cell pre{margin:0;padding:8px 9px;font-family:"DejaVu Sans Mono",monospace;
+    font-size:11px;line-height:1.3;white-space:pre;background:var(--c-bg);color:var(--c-fg)}
+
+  /* ---- terminal surface. zero literal colours below this line. ---- */
+  pre.term{margin:0;padding:10px 12px;font-family:"DejaVu Sans Mono",Menlo,Consolas,monospace;
+    font-size:13px;line-height:1.34;white-space:pre;overflow-x:auto;
+    background:var(--bg);color:var(--fg);border:0;border-radius:0;box-shadow:none}
+  .r-fg{color:var(--fg)} .r-fg-muted{color:var(--fg-muted)}
+  .r-fg-subtle{color:var(--fg-subtle)} .r-accent{color:var(--accent)}
+  .r-success{color:var(--success)} .r-warning{color:var(--warning)}
+  .r-danger{color:var(--danger)} .r-info{color:var(--info)}
+  .r-border{color:var(--border)} .r-border-focus{color:var(--border-focus)}
+  .r-keyword{color:var(--keyword)} .r-string{color:var(--string)}
+  .r-number{color:var(--number)} .r-comment{color:var(--comment)}
+  .r-function{color:var(--function)} .r-type{color:var(--type)}
+  .r-variable{color:var(--variable)} .r-hunk{color:var(--diff-hunk)}
+  .r-add{color:var(--diff-add-fg);background:var(--diff-add-bg);display:inline-block;min-width:100%}
+  .r-del{color:var(--diff-del-fg);background:var(--diff-del-bg);display:inline-block;min-width:100%}
+  .r-code{background:var(--bg-inset);display:inline-block;min-width:100%}
+  .r-sel{color:var(--accent-fg);background:var(--accent)}
+  .r-focus{background:var(--bg-subtle);display:inline-block;min-width:100%}
+  .r-panel{background:var(--bg-subtle);display:inline-block;min-width:100%}
+  .r-panelhead{background:var(--accent);color:var(--accent-fg);font-weight:700;
+    display:inline-block;min-width:100%}
+  .r-panelsel{background:var(--border-focus);color:var(--accent-fg);
+    display:inline-block;min-width:100%}
+  .r-panelfoot{background:var(--bg-inset);color:var(--fg-subtle);
+    display:inline-block;min-width:100%}
+  .b{font-weight:700}
+
+</style>
+
+<header>
+  <b>Mivia mock - variant D "Panes"</b>
+  <label>vision
+    <select id="cvd">
+      <option value="normal">normal</option>
+      <option value="protan">protanopia</option>
+      <option value="deutan">deuteranopia</option>
+      <option value="tritan">tritanopia</option>
+    </select>
+  </label>
+  <label>colour depth
+    <select id="depth">
+      <option value="true">truecolor</option><option value="256">256</option>
+      <option value="16">16</option><option value="none">no colour / ASCII</option>
+    </select>
+  </label>
+  <label>grid
+    <button id="fall" class="on">all</button><button id="fdark">dark</button><button id="flight">light</button>
+  </label>
+  <span id="cur" style="font-size:11px"></span>
+</header>
+
+<main>
+  <p class="note">
+    One variant, twelve views, twenty palettes. Structure comes from the block header
+    and indentation only - there is no vertical rule beside message text. Borders exist
+    in dialogs alone. Layout truth is <b>wireframes-panes.md</b>.
+  </p>
+  <p class="warn">
+    <b>Vision simulation</b> uses the Vienot, Brettel &amp; Mollon (1999) dichromat
+    model, the same maths as the measurement in research-panes.md section 3. Switch it on
+    and watch the status colours in view 1: in most third-party themes
+    <i>ok</i> and <i>failed</i> stop differing. They stay readable here only because
+    every state also carries a word.
+  </p>
+
+  <div class="gridwrap">
+    <div class="gridhead">Palette <span id="count"></span></div>
+    <div class="grid" id="grid"></div>
+  </div>
+
+  <div id="out"></div>
+</main>
+
+<script>
+const THEMES = {
+"mivia-dark": {
+"pal": {
+"bg": "#0a0a0b",
+"bg-subtle": "#17171a",
+"bg-inset": "#050506",
+"fg": "#fafafa",
+"fg-muted": "#a1a1aa",
+"fg-subtle": "#71717a",
+"border": "#52525b",
+"border-focus": "#fafafa",
+"accent": "#fafafa",
+"accent-fg": "#0a0a0b",
+"success": "#4edc4e",
+"warning": "#f3f34e",
+"danger": "#dc4e4e",
+"info": "#5b8cff",
+"keyword": "#5b8cff",
+"string": "#4edc4e",
+"number": "#d18fd1",
+"comment": "#71717a",
+"function": "#d3ce85",
+"type": "#74c9cc",
+"variable": "#e4e4e7",
+"diff-add-fg": "#4edc4e",
+"diff-add-bg": "#0d2410",
+"diff-del-fg": "#dc4e4e",
+"diff-del-bg": "#240c0d",
+"diff-hunk": "#5b8cff"
+},
+"mode": "dark",
+"label": "Mivia Dark"
+},
+"mivia-light": {
+"pal": {
+"bg": "#fcfcfc",
+"bg-subtle": "#f4f4f5",
+"bg-inset": "#e9e9eb",
+"fg": "#18181b",
+"fg-muted": "#52525b",
+"fg-subtle": "#71717a",
+"border": "#a1a1aa",
+"border-focus": "#18181b",
+"accent": "#18181b",
+"accent-fg": "#fcfcfc",
+"success": "#1d6b53",
+"warning": "#7d5a08",
+"danger": "#5e0808",
+"info": "#142671",
+"keyword": "#3f3f46",
+"string": "#1d6b53",
+"number": "#7d5a08",
+"comment": "#71717a",
+"function": "#18181b",
+"type": "#0f5f66",
+"variable": "#27272a",
+"diff-add-fg": "#1d6b53",
+"diff-add-bg": "#eaf5ee",
+"diff-del-fg": "#5e0808",
+"diff-del-bg": "#faeaea",
+"diff-hunk": "#52525b"
+},
+"mode": "light",
+"label": "Mivia Light"
+},
+"mivia-high-contrast": {
+"pal": {
+"bg": "#000000",
+"bg-subtle": "#141414",
+"bg-inset": "#000000",
+"fg": "#ffffff",
+"fg-muted": "#d0d0d0",
+"fg-subtle": "#a0a0a0",
+"border": "#a0a0a0",
+"border-focus": "#ffffff",
+"accent": "#ffffff",
+"accent-fg": "#000000",
+"success": "#19e6a8",
+"warning": "#e6b319",
+"danger": "#ef6c6c",
+"info": "#8595d6",
+"keyword": "#8595d6",
+"string": "#19e6a8",
+"number": "#ffffff",
+"comment": "#a0a0a0",
+"function": "#e6b319",
+"type": "#19e6a8",
+"variable": "#ffffff",
+"diff-add-fg": "#19e6a8",
+"diff-add-bg": "#00220f",
+"diff-del-fg": "#ef6c6c",
+"diff-del-bg": "#2a0000",
+"diff-hunk": "#8595d6"
+},
+"mode": "dark",
+"label": "Mivia High Contrast"
+},
+"catppuccin-mocha": {
+"pal": {
+"bg": "#1e1e2e",
+"bg-subtle": "#313244",
+"bg-inset": "#181825",
+"fg": "#cdd6f4",
+"fg-muted": "#a6adc8",
+"fg-subtle": "#6c7086",
+"border": "#45475a",
+"border-focus": "#cba6f7",
+"accent": "#cba6f7",
+"accent-fg": "#1e1e2e",
+"success": "#a6e3a1",
+"warning": "#f9e2af",
+"danger": "#f38ba8",
+"info": "#89b4fa",
+"keyword": "#cba6f7",
+"string": "#a6e3a1",
+"number": "#fab387",
+"comment": "#6c7086",
+"function": "#89b4fa",
+"type": "#f9e2af",
+"variable": "#cdd6f4",
+"diff-add-fg": "#a6e3a1",
+"diff-add-bg": "#1e2b26",
+"diff-del-fg": "#f38ba8",
+"diff-del-bg": "#2e1f27",
+"diff-hunk": "#89b4fa"
+},
+"mode": "dark",
+"label": "Catppuccin Mocha"
+},
+"catppuccin-latte": {
+"pal": {
+"bg": "#eff1f5",
+"bg-subtle": "#ccd0da",
+"bg-inset": "#e6e9ef",
+"fg": "#4c4f69",
+"fg-muted": "#5c5f77",
+"fg-subtle": "#6c6f85",
+"border": "#bcc0cc",
+"border-focus": "#8839ef",
+"accent": "#8839ef",
+"accent-fg": "#eff1f5",
+"success": "#40a02b",
+"warning": "#df8e1d",
+"danger": "#d20f39",
+"info": "#1e66f5",
+"keyword": "#8839ef",
+"string": "#40a02b",
+"number": "#fe640b",
+"comment": "#6c6f85",
+"function": "#1e66f5",
+"type": "#df8e1d",
+"variable": "#4c4f69",
+"diff-add-fg": "#40a02b",
+"diff-add-bg": "#e0eddc",
+"diff-del-fg": "#d20f39",
+"diff-del-bg": "#f7dfe3",
+"diff-hunk": "#1e66f5"
+},
+"mode": "light",
+"label": "Catppuccin Latte"
+},
+"tokyonight-night": {
+"pal": {
+"bg": "#1a1b26",
+"bg-subtle": "#292e42",
+"bg-inset": "#16161e",
+"fg": "#c0caf5",
+"fg-muted": "#565f89",
+"fg-subtle": "#394b70",
+"border": "#3b4261",
+"border-focus": "#7aa2f7",
+"accent": "#7aa2f7",
+"accent-fg": "#1a1b26",
+"success": "#9ece6a",
+"warning": "#e0af68",
+"danger": "#f7768e",
+"info": "#7dcfff",
+"keyword": "#bb9af7",
+"string": "#9ece6a",
+"number": "#ff9e64",
+"comment": "#565f89",
+"function": "#7aa2f7",
+"type": "#2ac3de",
+"variable": "#c0caf5",
+"diff-add-fg": "#9ece6a",
+"diff-add-bg": "#20291f",
+"diff-del-fg": "#f7768e",
+"diff-del-bg": "#2b1d24",
+"diff-hunk": "#7dcfff"
+},
+"mode": "dark",
+"label": "Tokyo Night"
+},
+"tokyonight-day": {
+"pal": {
+"bg": "#e1e2e7",
+"bg-subtle": "#d0d5e3",
+"bg-inset": "#c4c8da",
+"fg": "#3760bf",
+"fg-muted": "#6172b0",
+"fg-subtle": "#848cb5",
+"border": "#b4b5b9",
+"border-focus": "#9854f1",
+"accent": "#9854f1",
+"accent-fg": "#e1e2e7",
+"success": "#387068",
+"warning": "#8c6c3e",
+"danger": "#c64343",
+"info": "#07879d",
+"keyword": "#9854f1",
+"string": "#587539",
+"number": "#8c6c3e",
+"comment": "#848cb5",
+"function": "#2e7de9",
+"type": "#118c74",
+"variable": "#3760bf",
+"diff-add-fg": "#387068",
+"diff-add-bg": "#b7ced5",
+"diff-del-fg": "#c64343",
+"diff-del-bg": "#dababe",
+"diff-hunk": "#07879d"
+},
+"mode": "light",
+"label": "Tokyo Night Day"
+},
+"rose-pine": {
+"pal": {
+"bg": "#191724",
+"bg-subtle": "#1f1d2e",
+"bg-inset": "#26233a",
+"fg": "#e0def4",
+"fg-muted": "#908caa",
+"fg-subtle": "#6e6a86",
+"border": "#403d52",
+"border-focus": "#c4a7e7",
+"accent": "#c4a7e7",
+"accent-fg": "#191724",
+"success": "#95b1ac",
+"warning": "#f6c177",
+"danger": "#eb6f92",
+"info": "#9ccfd8",
+"keyword": "#31748f",
+"string": "#f6c177",
+"number": "#ebbcba",
+"comment": "#6e6a86",
+"function": "#ebbcba",
+"type": "#9ccfd8",
+"variable": "#e0def4",
+"diff-add-fg": "#95b1ac",
+"diff-add-bg": "#21202e",
+"diff-del-fg": "#eb6f92",
+"diff-del-bg": "#21202e",
+"diff-hunk": "#9ccfd8"
+},
+"mode": "dark",
+"label": "Rose Pine"
+},
+"rose-pine-dawn": {
+"pal": {
+"bg": "#faf4ed",
+"bg-subtle": "#fffaf3",
+"bg-inset": "#f2e9e1",
+"fg": "#464261",
+"fg-muted": "#797593",
+"fg-subtle": "#9893a5",
+"border": "#dfdad9",
+"border-focus": "#907aa9",
+"accent": "#907aa9",
+"accent-fg": "#faf4ed",
+"success": "#6d8f89",
+"warning": "#ea9d34",
+"danger": "#b4637a",
+"info": "#56949f",
+"keyword": "#286983",
+"string": "#ea9d34",
+"number": "#d7827e",
+"comment": "#9893a5",
+"function": "#d7827e",
+"type": "#56949f",
+"variable": "#464261",
+"diff-add-fg": "#6d8f89",
+"diff-add-bg": "#f4ede8",
+"diff-del-fg": "#b4637a",
+"diff-del-bg": "#f4ede8",
+"diff-hunk": "#56949f"
+},
+"mode": "light",
+"label": "Rose Pine Dawn"
+},
+"gruvbox-dark": {
+"pal": {
+"bg": "#282828",
+"bg-subtle": "#3c3836",
+"bg-inset": "#1d2021",
+"fg": "#ebdbb2",
+"fg-muted": "#d5c4a1",
+"fg-subtle": "#7c6f64",
+"border": "#504945",
+"border-focus": "#fe8019",
+"accent": "#fe8019",
+"accent-fg": "#282828",
+"success": "#b8bb26",
+"warning": "#fabd2f",
+"danger": "#fb4934",
+"info": "#83a598",
+"keyword": "#fb4934",
+"string": "#b8bb26",
+"number": "#d3869b",
+"comment": "#7c6f64",
+"function": "#b8bb26",
+"type": "#fabd2f",
+"variable": "#83a598",
+"diff-add-fg": "#b8bb26",
+"diff-add-bg": "#2a2f1c",
+"diff-del-fg": "#fb4934",
+"diff-del-bg": "#3a2020",
+"diff-hunk": "#8ec07c"
+},
+"mode": "dark",
+"label": "Gruvbox Dark"
+},
+"gruvbox-light": {
+"pal": {
+"bg": "#fbf1c7",
+"bg-subtle": "#ebdbb2",
+"bg-inset": "#d5c4a1",
+"fg": "#3c3836",
+"fg-muted": "#504945",
+"fg-subtle": "#665c54",
+"border": "#d5c4a1",
+"border-focus": "#af3a03",
+"accent": "#af3a03",
+"accent-fg": "#fbf1c7",
+"success": "#79740e",
+"warning": "#b57614",
+"danger": "#9d0006",
+"info": "#076678",
+"keyword": "#9d0006",
+"string": "#79740e",
+"number": "#8f3f71",
+"comment": "#665c54",
+"function": "#79740e",
+"type": "#b57614",
+"variable": "#076678",
+"diff-add-fg": "#79740e",
+"diff-add-bg": "#e3ecc8",
+"diff-del-fg": "#9d0006",
+"diff-del-bg": "#f5dcd8",
+"diff-hunk": "#427b58"
+},
+"mode": "light",
+"label": "Gruvbox Light"
+},
+"nord": {
+"pal": {
+"bg": "#2e3440",
+"bg-subtle": "#3b4252",
+"bg-inset": "#292e39",
+"fg": "#eceff4",
+"fg-muted": "#d8dee9",
+"fg-subtle": "#4c566a",
+"border": "#434c5e",
+"border-focus": "#88c0d0",
+"accent": "#88c0d0",
+"accent-fg": "#2e3440",
+"success": "#a3be8c",
+"warning": "#ebcb8b",
+"danger": "#bf616a",
+"info": "#81a1c1",
+"keyword": "#81a1c1",
+"string": "#a3be8c",
+"number": "#b48ead",
+"comment": "#4c566a",
+"function": "#88c0d0",
+"type": "#8fbcbb",
+"variable": "#d8dee9",
+"diff-add-fg": "#a3be8c",
+"diff-add-bg": "#333c36",
+"diff-del-fg": "#bf616a",
+"diff-del-bg": "#3b3238",
+"diff-hunk": "#88c0d0"
+},
+"mode": "dark",
+"label": "Nord"
+},
+"dracula": {
+"pal": {
+"bg": "#282a36",
+"bg-subtle": "#44475a",
+"bg-inset": "#21222c",
+"fg": "#f8f8f2",
+"fg-muted": "#bfc7d5",
+"fg-subtle": "#6272a4",
+"border": "#6272a4",
+"border-focus": "#bd93f9",
+"accent": "#bd93f9",
+"accent-fg": "#282a36",
+"success": "#50fa7b",
+"warning": "#f1fa8c",
+"danger": "#ff5555",
+"info": "#8be9fd",
+"keyword": "#ff79c6",
+"string": "#f1fa8c",
+"number": "#bd93f9",
+"comment": "#6272a4",
+"function": "#50fa7b",
+"type": "#8be9fd",
+"variable": "#f8f8f2",
+"diff-add-fg": "#50fa7b",
+"diff-add-bg": "#1f2d24",
+"diff-del-fg": "#ff5555",
+"diff-del-bg": "#2f2029",
+"diff-hunk": "#8be9fd"
+},
+"mode": "dark",
+"label": "Dracula"
+},
+"campbell": {
+"pal": {
+"bg": "#0c0c0c",
+"bg-subtle": "#1f1f1f",
+"bg-inset": "#000000",
+"fg": "#cccccc",
+"fg-muted": "#b0b0b0",
+"fg-subtle": "#767676",
+"border": "#767676",
+"border-focus": "#3b78ff",
+"accent": "#3b78ff",
+"accent-fg": "#0c0c0c",
+"success": "#16c60c",
+"warning": "#f9f1a5",
+"danger": "#e74856",
+"info": "#61d6d6",
+"keyword": "#3b78ff",
+"string": "#16c60c",
+"number": "#c19c00",
+"comment": "#767676",
+"function": "#f9f1a5",
+"type": "#61d6d6",
+"variable": "#cccccc",
+"diff-add-fg": "#16c60c",
+"diff-add-bg": "#0d1f0d",
+"diff-del-fg": "#e74856",
+"diff-del-bg": "#26100f",
+"diff-hunk": "#61d6d6"
+},
+"mode": "dark",
+"label": "Campbell"
+},
+"tango-dark": {
+"pal": {
+"bg": "#2e3436",
+"bg-subtle": "#555753",
+"bg-inset": "#1e2224",
+"fg": "#d3d7cf",
+"fg-muted": "#babdb6",
+"fg-subtle": "#888a85",
+"border": "#888a85",
+"border-focus": "#729fcf",
+"accent": "#729fcf",
+"accent-fg": "#2e3436",
+"success": "#8ae234",
+"warning": "#fce94f",
+"danger": "#ef2929",
+"info": "#34e2e2",
+"keyword": "#729fcf",
+"string": "#8ae234",
+"number": "#ad7fa8",
+"comment": "#888a85",
+"function": "#fce94f",
+"type": "#34e2e2",
+"variable": "#d3d7cf",
+"diff-add-fg": "#8ae234",
+"diff-add-bg": "#1f2a18",
+"diff-del-fg": "#ef2929",
+"diff-del-bg": "#2e1a1a",
+"diff-hunk": "#34e2e2"
+},
+"mode": "dark",
+"label": "Tango Dark"
+},
+"tango-light": {
+"pal": {
+"bg": "#eeeeec",
+"bg-subtle": "#d3d7cf",
+"bg-inset": "#babdb6",
+"fg": "#2e3436",
+"fg-muted": "#555753",
+"fg-subtle": "#888a85",
+"border": "#888a85",
+"border-focus": "#204a87",
+"accent": "#204a87",
+"accent-fg": "#eeeeec",
+"success": "#4e9a06",
+"warning": "#c4a000",
+"danger": "#a40000",
+"info": "#204a87",
+"keyword": "#204a87",
+"string": "#4e9a06",
+"number": "#5c3566",
+"comment": "#888a85",
+"function": "#ce5c00",
+"type": "#204a87",
+"variable": "#2e3436",
+"diff-add-fg": "#4e9a06",
+"diff-add-bg": "#e0ecd4",
+"diff-del-fg": "#a40000",
+"diff-del-bg": "#f2dede",
+"diff-hunk": "#204a87"
+},
+"mode": "light",
+"label": "Tango Light"
+},
+"linux-vga": {
+"pal": {
+"bg": "#000000",
+"bg-subtle": "#4e4e4e",
+"bg-inset": "#000000",
+"fg": "#c4c4c4",
+"fg-muted": "#b0b0b0",
+"fg-subtle": "#8a8a8a",
+"border": "#8a8a8a",
+"border-focus": "#4e4edc",
+"accent": "#4e4edc",
+"accent-fg": "#ffffff",
+"success": "#4edc4e",
+"warning": "#f3f34e",
+"danger": "#dc4e4e",
+"info": "#4ef3f3",
+"keyword": "#4e4edc",
+"string": "#4edc4e",
+"number": "#f34ef3",
+"comment": "#8a8a8a",
+"function": "#f3f34e",
+"type": "#4ef3f3",
+"variable": "#c4c4c4",
+"diff-add-fg": "#4edc4e",
+"diff-add-bg": "#0d1f0d",
+"diff-del-fg": "#dc4e4e",
+"diff-del-bg": "#240f0f",
+"diff-hunk": "#4ef3f3"
+},
+"mode": "dark",
+"label": "Linux (VGA)"
+},
+"xterm": {
+"pal": {
+"bg": "#000000",
+"bg-subtle": "#3f3f3f",
+"bg-inset": "#000000",
+"fg": "#e5e5e5",
+"fg-muted": "#c9c9c9",
+"fg-subtle": "#9a9a9a",
+"border": "#9a9a9a",
+"border-focus": "#5c5cff",
+"accent": "#5c5cff",
+"accent-fg": "#ffffff",
+"success": "#00fc00",
+"warning": "#ffff00",
+"danger": "#ff0000",
+"info": "#00ffff",
+"keyword": "#5c5cff",
+"string": "#00fc00",
+"number": "#ff00ff",
+"comment": "#9a9a9a",
+"function": "#ffff00",
+"type": "#00ffff",
+"variable": "#e5e5e5",
+"diff-add-fg": "#00fc00",
+"diff-add-bg": "#0d1f0d",
+"diff-del-fg": "#ff0000",
+"diff-del-bg": "#240f0f",
+"diff-hunk": "#00ffff"
+},
+"mode": "dark",
+"label": "XTerm"
+},
+"solarized-dark": {
+"pal": {
+"bg": "#002b36",
+"bg-subtle": "#073642",
+"bg-inset": "#00212b",
+"fg": "#839496",
+"fg-muted": "#93a1a1",
+"fg-subtle": "#586e75",
+"border": "#586e75",
+"border-focus": "#268bd2",
+"accent": "#268bd2",
+"accent-fg": "#002b36",
+"success": "#859900",
+"warning": "#b58900",
+"danger": "#dc322f",
+"info": "#2aa198",
+"keyword": "#859900",
+"string": "#2aa198",
+"number": "#d33682",
+"comment": "#586e75",
+"function": "#268bd2",
+"type": "#b58900",
+"variable": "#839496",
+"diff-add-fg": "#859900",
+"diff-add-bg": "#0b2b18",
+"diff-del-fg": "#dc322f",
+"diff-del-bg": "#33161c",
+"diff-hunk": "#2aa198"
+},
+"mode": "dark",
+"label": "Solarized Dark"
+},
+"solarized-light": {
+"pal": {
+"bg": "#fdf6e3",
+"bg-subtle": "#eee8d5",
+"bg-inset": "#e4ddc8",
+"fg": "#657b83",
+"fg-muted": "#586e75",
+"fg-subtle": "#93a1a1",
+"border": "#93a1a1",
+"border-focus": "#268bd2",
+"accent": "#268bd2",
+"accent-fg": "#fdf6e3",
+"success": "#859900",
+"warning": "#b58900",
+"danger": "#dc322f",
+"info": "#2aa198",
+"keyword": "#859900",
+"string": "#2aa198",
+"number": "#d33682",
+"comment": "#93a1a1",
+"function": "#268bd2",
+"type": "#b58900",
+"variable": "#657b83",
+"diff-add-fg": "#859900",
+"diff-add-bg": "#eaeccd",
+"diff-del-fg": "#dc322f",
+"diff-del-bg": "#f7e0d8",
+"diff-hunk": "#2aa198"
+},
+"mode": "light",
+"label": "Solarized Light"
+}
+};
+
+/* ---------------- colour maths: depth downsampling + dichromat simulation ------- */
+const CUBE=[0,95,135,175,215,255];
+const ANSI16=["#000000","#800000","#008000","#808000","#000080","#800080","#008080",
+"#c0c0c0","#808080","#ff0000","#00ff00","#ffff00","#0000ff","#ff00ff","#00ffff","#ffffff"];
+const rgb=h=>[0,2,4].map(i=>parseInt(h.slice(1).slice(i,i+2),16)/255);
+const hex=c=>"#"+c.map(v=>Math.max(0,Math.min(255,Math.round(v*255))).toString(16).padStart(2,"0")).join("");
+const lin=c=>c.map(x=>x<=0.04045?x/12.92:Math.pow((x+0.055)/1.055,2.4));
+const unlin=c=>c.map(x=>x<=0.0031308?12.92*x:1.055*Math.pow(Math.max(x,0),1/2.4)-0.055);
+const mul=(M,v)=>[0,1,2].map(i=>M[i][0]*v[0]+M[i][1]*v[1]+M[i][2]*v[2]);
+const RGB2LMS=[[0.31399022,0.63951294,0.04649755],[0.15537241,0.75789446,0.08670142],
+  [0.01775239,0.10944209,0.87256922]];
+const LMS2RGB=[[5.47221206,-4.6419601,0.16963708],[-1.1252419,2.29317094,-0.1678952],
+  [0.02980165,-0.19318073,1.16364789]];
+const SIM={protan:[[0,1.05118294,-0.05116099],[0,1,0],[0,0,1]],
+           deutan:[[1,0,0],[0.9513092,0,0.04866992],[0,0,1]],
+           tritan:[[1,0,0],[0,1,0],[-0.86744736,1.86727089,0]]};
+function dichromat(h,M){return hex(unlin(mul(LMS2RGB,mul(M,mul(RGB2LMS,lin(rgb(h)))))));}
+function to256(h){const c=rgb(h).map(v=>v*255);
+  const cube=c.map(v=>CUBE.reduce((a,b)=>Math.abs(b-v)<Math.abs(a-v)?b:a));
+  const g=(c[0]+c[1]+c[2])/3, gv=Math.max(8,Math.min(238,Math.round((g-8)/10)*10+8));
+  const dc=c.reduce((s,v,i)=>s+Math.pow(v-cube[i],2),0);
+  const dg=c.reduce((s,v)=>s+Math.pow(v-gv,2),0);
+  return dg<dc?hex([gv/255,gv/255,gv/255]):hex(cube.map(v=>v/255));}
+function to16(h){const c=rgb(h).map(v=>v*255);let best=ANSI16[0],bd=1e9;
+  for(const a of ANSI16){const q=rgb(a).map(v=>v*255);
+    const d=q.reduce((s,v,i)=>s+Math.pow(v-c[i],2),0); if(d<bd){bd=d;best=a;}}
+  return best;}
+const FG=["fg","fg-muted","fg-subtle","accent","success","warning","danger","info",
+"keyword","string","number","comment","function","type","variable","border",
+"border-focus","diff-add-fg","diff-del-fg","diff-hunk"];
+function derive(pal,depth,cvd){
+  const o={};
+  for(const k in pal){
+    let v=pal[k];
+    if(depth==="none") v = FG.includes(k)?pal.fg:(k==="accent-fg"?pal.bg:pal.bg);
+    else if(depth==="256") v=to256(v);
+    else if(depth==="16") v=to16(v);
+    if(cvd!=="normal") v=dichromat(v,SIM[cvd]);
+    o[k]=v;
+  }
+  return o;
+}
+
+
+/* ---- dialog panels are COMPUTED, never hand-drawn. A row is a list of
+   [role, text] segments; the builder pads every row to the same visible width,
+   so a panel edge cannot go ragged no matter how the content is edited.
+   There are no border glyphs: the panel is a background wash. ---- */
+const PW = 62;                        // panel width in cells, inset from 80
+const PAD = "        ";               // left inset
+function seg(list){                   // -> {vis, markup}
+  let vis=0, out="";
+  for(const [role,text] of list){ vis+=text.length;
+    out += role ? "{"+role+"|"+text+"}" : text; }
+  return {vis,out};
+}
+function prow(list, band){
+  let {vis,out}=seg(list);
+  if(vis>PW){                          // hard guard: clip, never overflow
+    let budget=PW-1, clipped="";
+    for(const [role,text] of list){
+      if(budget<=0) break;
+      const t=text.slice(0,budget); budget-=t.length;
+      clipped += role ? "{"+role+"|"+t+"}" : t;
+    }
+    out=clipped+"~"; vis=PW;
+  }
+  const fill=" ".repeat(Math.max(0,PW-vis));
+  return PAD+"{"+band+"|"+out+fill+"}";
+}
+function panel(title, right, rows, footer){
+  const out=[prow([[null,"  "],[null,title],
+                   [null," ".repeat(Math.max(1,PW-4-title.length-right.length))],
+                   [null,right],[null,"  "]],"panelhead")];
+  out.push(prow([[null,""]],"panel"));
+  for(const r of rows) out.push(prow(r.segs, r.band||"panel"));
+  out.push(prow([[null,""]],"panel"));
+  for(const f of footer) out.push(prow([[null,"  "],[null,f]],"panelfoot"));
+  return out.join("\n");
+}
+const D_APPROVE = panel("Approve tool call","run_command",[
+  {segs:[[null,"  "],["fg-muted","the model wants to run"]]},
+  {segs:[[null,"    "],["danger","rm -rf /var/tmp/mivia-cache"]]},
+  {segs:[[null,""]]},
+  {segs:[[null,"  "],["fg-subtle","scope   "],["warning","outside the workspace"]]},
+  {segs:[[null,"  "],["fg-subtle","risk    "],["danger","deletes files, cannot be undone"]]},
+  {segs:[[null,""]]},
+  {segs:[[null,"    o  once           run this call only"]]},
+  {segs:[[null,"    a  always         auto-approve run_command here"]]},
+  {segs:[[null,"    d  deny           refuse and tell the model why"]],band:"panelsel"},
+  {segs:[[null,"    D  deny always    refuse for this whole session"]]},
+],["enter = deny    esc = deny    default is the safe one"]);
+
+const D_THEME = panel("Theme","20 available",[
+  {segs:[[null,"  "],["accent","Mivia Dark"],[null,"           "],
+         ["fg-muted","the quick brown fox   "],["success","ok "],["warning","warn "],
+         ["danger","fail "],["info","info"]],band:"panelsel"},
+  {segs:[[null,"  "],["fg","Mivia Light"],[null,"          "],
+         ["fg-muted","the quick brown fox   "],["success","ok "],["warning","warn "],
+         ["danger","fail "],["info","info"]]},
+  {segs:[[null,"  "],["fg","Catppuccin Mocha"],[null,"     "],
+         ["fg-muted","the quick brown fox   "],["success","ok "],["warning","warn "],
+         ["danger","fail "],["info","info"]]},
+  {segs:[[null,"  "],["fg","Tokyo Night"],[null,"          "],
+         ["fg-muted","the quick brown fox   "],["success","ok "],["warning","warn "],
+         ["danger","fail "],["info","info"]]},
+  {segs:[[null,"  "],["fg","Gruvbox Dark"],[null,"         "],
+         ["fg-muted","the quick brown fox   "],["success","ok "],["warning","warn "],
+         ["danger","fail "],["info","info"]]},
+],["up/down preview   enter apply   l light/dark   esc"]);
+
+const D_SESSION = panel("Session","/ to filter",[
+  {segs:[[null,"  s3-retry-backoff        14 turns   2h ago    41k ctx"]],band:"panelsel"},
+  {segs:[[null,"  workflow-repair         31 turns   1d ago    88k ctx"]]},
+  {segs:[[null,"  theme-contrast-audit     6 turns   3d ago    12k ctx"]]},
+],["enter load   n new   d delete   esc cancel"]);
+
+const D_MODEL = panel("Model and effort","",[
+  {segs:[[null,"  claude-opus-5        low  med  "],[null,"HIGH"],[null,"  max"]],band:"panelsel"},
+  {segs:[[null,"  claude-sonnet-5      low  "],[null,"MED"],[null,"   high  max"]]},
+  {segs:[[null,"  claude-haiku-4-5     "],[null,"LOW"],[null,"  med"]]},
+],["up/down model   left/right effort   enter apply   esc"]);
+
+/* ------------------------------------ fixture, variant D. markup is {role|text} */
+const VIEWS=[
+{t:"1. Transcript, every block type",
+ k:"Tab/Shift-Tab focus block   Space toggle   Ctrl-E expand all   Ctrl-W collapse all   y copy   Ctrl-O pager   Ctrl-C cancel",
+ b:`{accent|>} Add retry with exponential backoff to the S3 uploader, and cover it
+  with a test.
+
+I will add a bounded retry to the uploader transport. Three attempts, full
+jitter, and a cap of {number|5s}.
+
+{code|    {keyword|func} ({variable|u} *{type|Uploader}) {function|put}({variable|ctx} {type|context}.{type|Context}, {variable|k} {type|string}) {type|error} \\{}
+{code|        {keyword|return} {type|retry}.{function|Do}({variable|ctx}, {type|retry}.{type|Policy}\\{{variable|Max}: {number|3}, {variable|Cap}: {number|5} * {type|time}.{type|Second}\\},}
+{code|            {keyword|func}() {type|error} \\{ {keyword|return} {variable|u}.{variable|raw}.{function|Put}({variable|ctx}, {variable|k}, {variable|b}) \\})}
+{code|    \\}}
+
+{fg-subtle|>} {fg-muted|reasoning}                                              {fg-subtle|84 words   hidden}
+
+{fg-subtle|v} {fg-muted|read_file}   {fg-muted|internal/storage/s3_uploader.go}        {fg-subtle|48 lines   12ms}   {success|ok}
+    {fg-subtle|package storage}
+    {fg-subtle|import ("context"; "time")}
+    {fg-subtle|...}
+
+{fg-subtle|v} {fg-muted|edit}        {fg-muted|internal/storage/s3_uploader.go}           {success|+4} {danger|-1}   {fg-subtle|31ms}   {success|ok}
+    {hunk|@@ -14,7 +14,11 @@ func (u *Uploader) put(}
+{del|    -   return u.raw.Put(ctx, k, b)}
+{add|    +   return retry.Do(ctx, retry.Policy\\{}
+{add|    +       Max: 3,}
+{add|    +       Cap: 5 * time.Second,}
+{add|    +   \\}, func() error \\{ return u.raw.Put(ctx, k, b) \\})}
+
+{fg-subtle|v} {fg-muted|subagent}    {fg-muted|test-writer}                             {fg-subtle|2 of 3    18s}    {info|running}
+    {accent|[######################}{fg-subtle|........}{accent|]}  {fg-muted|67%}
+    {success|+} {fg-muted|read existing table tests}
+    {success|+} {fg-muted|draft TestPutRetriesOnTransient}
+    {fg-subtle|- run the package test}
+
+{fg-subtle|>} {fg-muted|run_command} {fg-muted|go test ./internal/storage/...}        {fg-subtle|1 failure   4.1s}   {danger|failed}
+    {danger|x s3_uploader_test.go:88: want 3 attempts, got 1}
+
+{fg-subtle|v} {b|plan}                                                 {fg-subtle|2 of 4          open}
+    {success|[x]} {fg-muted|add retry policy to the transport}
+    {success|[x]} {fg-muted|wire the uploader through it}
+    {fg-subtle|[ ] fix the fake transport to count attempts}
+    {fg-subtle|[ ] run the package test again}
+
+  {danger|error}       {fg-muted|transport refused after 3 attempts}                      {danger|fatal}
+    {fg-subtle|dial tcp 10.0.0.4:443: i/o timeout}
+
+  {warning|notice}      {fg-muted|context 62% (78k of 125k). /compact frees about 30k.}
+
+  {fg-subtle|usage       1,284 in  2,940 out  340 cached      $0.041      21.4s}
+
+{accent|>} {fg-subtle|_}`},
+
+{t:"2. Streaming, mid-token",
+ k:"Esc cancel keeping text   Ctrl-C cancel discarding   Ctrl-S hide/show reasoning",
+ b:`I will add a bounded retry to the uploader transport. Three attempts, ful{accent|_}
+
+  {accent|-} {fg-muted|thinking}   {fg-subtle|4.2s}   {fg-subtle|62% ctx}   {fg-subtle|esc to cancel}`},
+
+{t:"3. Collapsed against expanded (header row is identical in both)",
+ k:"Space or Enter toggles the focused block. Collapse is decided at print time above 12 body lines.",
+ b:`{fg-subtle|>} {fg-muted|read_file}   {fg-muted|internal/storage/s3_uploader.go}        {fg-subtle|48 lines   12ms}   {success|ok}
+{fg-subtle|>} {fg-muted|edit}        {fg-muted|internal/storage/s3_uploader.go}           {success|+4} {danger|-1}   {fg-subtle|31ms}   {success|ok}
+
+{fg-subtle|v} {fg-muted|read_file}   {fg-muted|internal/storage/s3_uploader.go}        {fg-subtle|48 lines   12ms}   {success|ok}
+    {fg-subtle|package storage}
+    {fg-subtle|import ("context"; "time")}
+    {fg-subtle|...}
+{focus|{fg-subtle|v} {fg-muted|edit}        {fg-muted|internal/storage/s3_uploader.go}           {success|+4} {danger|-1}   {fg-subtle|31ms}   {success|ok}}
+    {hunk|@@ -14,7 +14,11 @@}
+{del|    -   return u.raw.Put(ctx, k, b)}
+{add|    +   return retry.Do(ctx, retry.Policy\\{Max: 3\\})}
+
+{fg-subtle|the shaded row is the Tab focus. focus is background, never a border.}`},
+
+{t:"4. Tool approval, inline (the default)",
+ k:"o once   a always   d deny   D deny always   v view diff   Enter=once   Esc=deny",
+ b:`{warning|?} {fg-muted|edit}        {fg-muted|internal/storage/s3_uploader.go}           {success|+4} {danger|-1}          {warning|pending}
+    {fg-subtle|scope workspace, path is inside the project root}
+
+    {accent|o} {fg|once}    {accent|a} {fg|always}    {accent|d} {fg|deny}    {accent|D} {fg|deny always}    {accent|v} {fg|view diff}`},
+
+{t:"5. Tool approval, dialog - computed panel, no border glyphs, default DENY",
+ k:"o once   a always   d deny   D deny always   Enter=deny   Esc=deny",
+ b:D_APPROVE},
+
+{t:"6. Transient status line (last row, deleted at turn end)",
+ k:"Esc cancel. Truncates from the right: context use, then elapsed, then activity.",
+ b:`  {accent|-} {fg-muted|running}  {fg-muted|go test ./internal/storage/...}   {fg-subtle|12s}   {fg-subtle|62% ctx}   {fg-subtle|esc to cancel}`},
+
+{t:"7. Composer with slash completion",
+ k:"Tab common prefix   Up/Down select   Enter accept   Esc dismiss   Ctrl-U clear",
+ b:`{accent|>} /comp{accent|_}
+    {sel|/compact     summarise the transcript and free context}
+    {fg-muted|/completion  print the shell completion script}`},
+
+{t:"8. Unified diff - no gutter, body at the standard indent",
+ k:"Ctrl-O full screen   n next hunk   N previous hunk   s side-by-side at 120 columns",
+ b:`{fg-subtle|v} {fg-muted|edit}        {fg-muted|internal/storage/s3_uploader.go}           {success|+4} {danger|-1}   {fg-subtle|31ms}   {success|ok}
+    {hunk|@@ -14,7 +14,11 @@ func (u *Uploader) put(ctx, k, b) error \\{}
+      {fg-subtle|14}      ctx, cancel := context.WithTimeout(ctx, u.timeout)
+      {fg-subtle|15}      defer cancel()
+      {fg-subtle|16}
+{del|      17  -   return u.raw.Put(ctx, k, b)}
+{add|          +   return retry.Do(ctx, retry.Policy\\{}
+{add|          +       Max: 3,}
+{add|          +       Cap: 5 * time.Second,}
+{add|          +   \\}, func() error \\{ return u.raw.Put(ctx, k, b) \\})}
+      {fg-subtle|18}  \\}`},
+
+{t:"9. Theme dialog - live preview, every row is one palette",
+ k:"up/down preview live   Enter apply   l light/dark   / filter   Esc cancel",
+ b:D_THEME},
+
+{t:"10. Session dialog",
+ k:"Enter load   n new   d delete   / filter   Esc cancel   (Ctrl-L opens it)",
+ b:D_SESSION},
+
+{t:"11. Model and effort dialog",
+ k:"Up/Down model   Left/Right effort   Enter apply   Esc cancel   (Ctrl-M opens it)",
+ b:D_MODEL},
+
+{t:"12. Error and cancellation - blocks, never dialogs",
+ k:"/retry reruns the turn   /model switches provider   Ctrl-C mid-stream cancels",
+ b:`  {danger|error}       {fg-muted|transport refused after 3 attempts}                      {danger|fatal}
+    {fg-subtle|dial tcp 10.0.0.4:443: i/o timeout}
+    {fg-subtle|retry with /retry, or /model to switch provider}
+
+I will add a bounded retry to the uploader transport. Three attempts, ful
+
+  {warning|cancelled}   {fg-muted|by user at 4.2s}   {fg-subtle|1,284 in  0 out   $0.004}`},
+
+{t:"13. Markdown - the full element set, rendered by glamour at 80 columns",
+ k:"Ctrl-O open in the pager   y copy the raw source, not the rendered text",
+ b:`{accent|Retry policy}
+{accent|============}
+
+The uploader now retries {type|transient} failures only. Permanent failures
+still fail fast, because retrying a {danger|403} cannot succeed.
+
+{accent|How the backoff is computed}
+{accent|---------------------------}
+
+  {accent|1.} base delay is {number|100ms}
+  {accent|2.} each attempt multiplies by {number|2}
+  {accent|3.} full jitter is applied, then the result is capped
+
+{fg-subtle||} {fg-muted|Full jitter beats equal jitter under contention. See the AWS}
+{fg-subtle||} {fg-muted|architecture blog for the measurements.}
+
+  {success|[x]} retry policy added
+  {success|[x]} uploader wired through it
+  {fg-subtle|[ ]} fake transport counts attempts
+
+  {fg-muted|attempt}   {fg-muted|delay}    {fg-muted|cumulative}
+  {fg-subtle|-------}   {fg-subtle|-----}    {fg-subtle|----------}
+  1         {number|100ms}    {number|100ms}
+  2         {number|200ms}    {number|300ms}
+  3         {number|400ms}    {number|700ms}
+
+Inline code reads as {code| retry.Policy\{Max: 3\} } and a link looks like
+{info|full jitter}{fg-subtle| (aws.amazon.com/builders-library/timeouts-retries)}.
+
+{code|    {keyword|if} {function|isTransient}({variable|err}) \{                              }
+{code|        {keyword|continue}                                  }
+{code|    \}                                             }
+
+{fg-subtle|------------------------------------------------------------------}
+
+{fg-muted|Bold is }{b|weight}{fg-muted|, emphasis is }{fg-muted|dim plus italic}{fg-muted|, and both survive NO_COLOR.}`},
+
+{t:"14. Mermaid flowchart - rendered by mermaid-ascii",
+ k:"Ctrl-O opens the diagram full screen   y copies the mermaid source",
+ b:`{fg-subtle|v} {fg-muted|diagram}     {fg-muted|flowchart LR}                                  {fg-subtle|7 nodes}   {success|ok}
+
+    {info|+-----------+}     {info|+------------+}     {info|+-----------+}
+    {info||} {fg|upload}    {info||}{accent|---->}{info||} {fg|retry.Do}   {info||}{accent|---->}{info||} {fg|raw.Put}   {info||}
+    {info|+-----------+}     {info|+-----+------+}     {info|+-----+-----+}
+                             {accent||}                  {accent||}
+                             {accent||}   {info|+--------+}   {accent||}
+                             {accent|+--->}{info||} {fg|backoff}{info||}{accent|<--+}
+                                 {info|+--------+}
+
+    {fg-subtle|classDef transient fill:#f9f  ->  node colour maps to a theme role,}
+    {fg-subtle|never to the literal hex in the diagram source.}`},
+
+{t:"15. Mermaid sequence diagram",
+ k:"n / N step through messages   s toggle the note column   q close",
+ b:`{fg-subtle|v} {fg-muted|diagram}     {fg-muted|sequenceDiagram}                            {fg-subtle|3 participants}   {success|ok}
+
+    {info|+-------+}        {info|+----------+}      {info|+--------+}
+    {info||} {fg|agent}{info||}        {info||} {fg|uploader}{info||}      {info||}  {fg|s3}{info||}  {info||}
+    {info|+---+---+}        {info|+----+-----+}      {info|+---+----+}
+        {info||}                 {info||}                {info||}
+        {info||} {fg-muted|put(key, blob)}  {info||}                {info||}
+        {accent|+---------------->}{info||}                {info||}
+        {info||}                 {info||} {fg-muted|PutObject}      {info||}
+        {info||}                 {accent|+--------------->}{info||}
+        {info||}                 {info||} {danger|503 slow down}   {info||}
+        {info||}                 {danger|<- - - - - - - - +}
+        {info||}                 {info||}                {info||}
+        {info||}  {warning|loop 3 attempts, full jitter}  {info||}
+        {info||}                 {accent|+--------------->}{info||}
+        {info||}                 {info||} {success|200 ok}          {info||}
+        {info||}                 {success|<- - - - - - - - +}
+        {success|<----------------+}                {info||}`},
+
+{t:"16. Mermaid entity relationship diagram",
+ k:"same block keys. Wide diagrams scroll horizontally rather than wrap.",
+ b:`{fg-subtle|v} {fg-muted|diagram}     {fg-muted|erDiagram}                                   {fg-subtle|2 entities}   {success|ok}
+
+    {info|+---------------+}              {info|+------------------+}
+    {info||} {b|{fg|UPLOAD}}        {info||}              {info||} {b|{fg|ATTEMPT}}          {info||}
+    {info|+---------------+}              {info|+------------------+}
+    {info||} {type|string}  {fg|key}  {accent|PK} {info||}{accent|---o\{}         {info||} {type|int}     {fg|n}         {info||}
+    {info||} {type|int}     {fg|bytes}   {info||}   {fg-subtle|makes}      {info||} {type|int}     {fg|status}    {info||}
+    {info||} {type|time}    {fg|at}      {info||}              {info||} {type|dur}     {fg|delay}     {info||}
+    {info|+---------------+}              {info|+------------------+}`},
+
+{t:"17. Fallbacks - unsupported diagram, and the no-colour tier",
+ k:"A diagram that cannot be laid out is never dropped: the source is shown instead.",
+ b:`{fg-subtle|>} {fg-muted|diagram}     {fg-muted|classDiagram}                          {warning|not supported}   {warning|source}
+
+    {fg-subtle|mermaid-ascii lays out flowchart, sequence and ER only. Anything}
+    {fg-subtle|else falls back to the fenced block, verbatim and syntax highlighted:}
+
+{code|    {keyword|classDiagram}                                                 }
+{code|        {type|Uploader} <|-- {type|RetryingUploader}                            }
+{code|        {type|Uploader} : +{function|put}(ctx, key, blob) error                 }
+
+    {fg-subtle|The same diagram with colour removed. Structure survives, because}
+    {fg-subtle|the box glyphs and the arrows carry it, not the colour:}
+
+    +-----------+     +------------+     +-----------+
+    | upload    |---->| retry.Do   |---->| raw.Put   |
+    +-----------+     +-----+------+     +-----+-----+
+                            |                  |
+                            +--->+--------+<---+
+                                 | backoff|
+                                 +--------+`}
+
+,
+{t:"18. The mark - one cell, above the composer, animating with the current action",
+ k:"No key acts on it. It is output, not a control. --screen-reader replaces it with words.",
+ b:`{fg-muted|The Mivia logo is a Unicode character: U+2B16 DIAMOND WITH LEFT HALF}
+{fg-muted|BLACK. U+2B16..2B19 move the black half left, top, right, bottom - so}
+{fg-muted|the logo rotates without ever becoming a different object.}
+
+  {midle|X} {fg-subtle|idle}          {fg-subtle|ready for input}
+  {mwait|X} {fg-subtle|waiting}       {fg-muted|request sent, no bytes yet}          {fg-subtle|slow blink}
+  {mthink|X} {fg|thinking}      {fg-muted|model is reasoning}                 {fg-subtle|rotating}
+  {mstream|X} {fg|writing}       {fg-muted|tokens are arriving}                {fg-subtle|filling}
+  {mtool|X} {info|running}       {fg-muted|go test ./internal/storage/...}     {fg-subtle|rotating}
+  {mpend|X} {warning|pending}       {fg-muted|edit needs approval}                {fg-subtle|static}
+  {merr|X} {danger|failed}        {fg-muted|transport refused after 3 attempts}  {fg-subtle|static}
+  {mdone|X} {success|done}          {fg-muted|21.4s   $0.041}                     {fg-subtle|static}
+
+{fg-muted|Four states animate, four do not. A static mark means the agent is not}
+{fg-muted|working - so motion always means "something is happening", and its}
+{fg-muted|absence is information too.}
+
+{fg-subtle|Speed carries meaning: waiting blinks at a quarter of the thinking rate,}
+{fg-subtle|because a slow mark reads as "blocked on someone else".}`},
+
+{t:"19. The mark in place - the transient line above the composer",
+ k:"Esc cancel. The mark occupies the cell the spinner used to. No new surface.",
+ b:`I will add a bounded retry to the uploader transport. Three attempts, ful{accent|_}
+
+  {mthink|X} {fg-muted|thinking}   {fg-subtle|4.2s}   {fg-subtle|62% ctx}   {fg-subtle|esc to cancel}
+
+{accent|>} {fg-subtle|_}
+
+{fg-subtle|- - - - - - - - - - the same line, other states - - - - - - - - - -}
+
+  {mtool|X} {fg-muted|running}  {fg-muted|go test ./internal/storage/...}   {fg-subtle|12s}   {fg-subtle|esc to cancel}
+  {mwait|X} {fg-muted|waiting}  {fg-muted|api.anthropic.com}                {fg-subtle|1.1s}  {fg-subtle|esc to cancel}
+  {mpend|X} {warning|pending}  {fg-muted|edit internal/storage/s3_uploader.go}   {fg-subtle|o/a/d/D}
+  {midle|X} {fg-subtle|ready}    {fg-subtle|claude-opus-5   62% ctx}
+
+{fg-subtle|--screen-reader drops the glyph and the animation, and prints the state}
+{fg-subtle|word alone: "thinking, 4.2 seconds, escape to cancel". Sourced: screen}
+{fg-subtle|readers announce spinner frames one character at a time.}`}
+
+];
+
+/* ----------------------------------------------------------------- rendering */
+const ANIM={mthink:"r-accent",mstream:"r-fg",mtool:"r-info",mwait:"r-fg-subtle",
+  midle:"r-fg-subtle",mpend:"r-warning",merr:"r-danger",mdone:"r-success"};
+const CLS={add:"r-add",del:"r-del",hunk:"r-hunk",code:"r-code",sel:"r-sel",
+  focus:"r-focus",b:"b",panel:"r-panel",panelhead:"r-panelhead",
+  panelsel:"r-panelsel",panelfoot:"r-panelfoot"};
+const cls=r=>ANIM[r]?(ANIM[r]+" anim-"+r):(CLS[r]||("r-"+r));
+const esc=s=>s.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+function markup(src){
+  let out="",i=0;
+  while(i<src.length){
+    const c=src[i];
+    if(c==="\\"&&(src[i+1]==="{"||src[i+1]==="}")){out+=esc(src[i+1]);i+=2;continue;}
+    if(c==="{"){
+      const bar=src.indexOf("|",i);
+      if(bar<0){out+=esc(c);i++;continue;}
+      let depth=1,j=bar+1;
+      while(j<src.length&&depth>0){
+        if(src[j]==="\\"){j+=2;continue;}
+        if(src[j]==="{")depth++; else if(src[j]==="}")depth--;
+        if(depth>0)j++;
+      }
+      out+='<span class="'+cls(src.slice(i+1,bar))+'">'+markup(src.slice(bar+1,j))+"</span>";
+      i=j+1;continue;
+    }
+    out+=esc(c);i++;
+  }
+  return out;
+}
+
+let current="mivia-dark", filter="all";
+const $=id=>document.getElementById(id);
+
+function paintGrid(){
+  const depth=$("depth").value, cvd=$("cvd").value;
+  const keys=Object.keys(THEMES).filter(k=>filter==="all"||THEMES[k].mode===filter);
+  $("count").textContent="- "+keys.length+" shown, click to apply";
+  $("grid").innerHTML=keys.map(k=>{
+    const e=derive(THEMES[k].pal,depth,cvd);
+    const st=`--c-bg:${e.bg};--c-fg:${e.fg}`;
+    return `<div class="cell${k===current?" sel":""}" data-k="${k}" style="${st}">
+<pre style="${st}"><span style="color:${e.accent}">${THEMES[k].label}</span>
+<span style="color:${e["fg-muted"]}">the quick brown fox</span>
+<span style="background:${e["diff-add-bg"]};color:${e["diff-add-fg"]}">+ added  </span><span style="background:${e["diff-del-bg"]};color:${e["diff-del-fg"]}">- removed</span>
+<span style="color:${e.success}">ok</span> <span style="color:${e.warning}">warn</span> <span style="color:${e.danger}">fail</span> <span style="color:${e.info}">info</span></pre></div>`;
+  }).join("");
+  for(const el of document.querySelectorAll(".cell"))
+    el.onclick=()=>{current=el.dataset.k;paint();};
+}
+
+function paint(){
+  const depth=$("depth").value, cvd=$("cvd").value;
+  const e=derive(THEMES[current].pal,depth,cvd);
+  for(const k in e) document.documentElement.style.setProperty("--"+k,e[k]);
+  $("cur").textContent=THEMES[current].label+"  -  "+depth+"  -  "+cvd;
+  $("out").innerHTML=VIEWS.map(v=>
+    '<div class="viewname">'+esc(v.t)+'</div><pre class="term">'+markup(v.b)+
+    '</pre><p class="keys"><b>keys</b> '+esc(v.k)+'</p>').join("");
+  paintGrid();
+}
+$("depth").onchange=$("cvd").onchange=paint;
+for(const [id,f] of [["fall","all"],["fdark","dark"],["flight","light"]])
+  $(id).onclick=()=>{filter=f;
+    for(const x of ["fall","fdark","flight"]) $(x).classList.toggle("on",x===id);
+    paintGrid();};
+
+/* ---- the mark. One cell, redrawn on a tick, exactly as a terminal would.
+   U+2B16..U+2B19 rotate the black half left/top/right/bottom, so the Mivia
+   logo IS the spinner. ASCII falls back to a rotating point. ---- */
+const UNI={mthink:["\u2B16","\u2B18","\u2B17","\u2B19"],
+           mtool: ["\u2B16","\u2B18","\u2B17","\u2B19"],
+           mstream:["\u25C7","\u25C8","\u25C6","\u25C8"],
+           mwait: ["\u2B16","\u25C7"], midle:["\u2B16"],
+           mpend: ["\u25C8"], merr:["\u25C6"], mdone:["\u2B16"]};
+const ASC={mthink:["<","^",">","v"], mtool:["<","^",">","v"],
+           mstream:[".","o","0","o"], mwait:["<"," "], midle:["<"],
+           mpend:["?"], merr:["X"], mdone:["<"]};
+let tick=0;
+setInterval(()=>{
+  tick++;
+  const set = document.getElementById("depth").value==="none" ? ASC : UNI;
+  for(const k in set){
+    const f=set[k];
+    // wait blinks at a quarter of the rotation rate: slow means "not my turn yet"
+    const idx = (k==="mwait") ? Math.floor(tick/4)%f.length : tick%f.length;
+    for(const el of document.querySelectorAll(".anim-"+k)) el.textContent=f[idx];
+  }
+},130);
+paint();
+</script>

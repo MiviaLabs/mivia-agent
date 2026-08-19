@@ -136,3 +136,8 @@ topics:
     path: docs/development/debug-cut.md
     owner: quality
     description: Fast debug path cut - disabled panel/integration review gates, disabled contract tests registry, restore procedure
+
+  ui-design-phase0:
+    path: docs/design/
+    owner: architecture
+    description: Phase 0 terminal UI design - research, ASCII wireframes, theme roles, and the disposable HTML mock
