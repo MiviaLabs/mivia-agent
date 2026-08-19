@@ -31,6 +31,9 @@ func TestWelcomeBannerFullRendering(t *testing.T) {
 	if !strings.Contains(view, "M I V I A   A G E N T") {
 		t.Errorf("missing Mivia Agent title in view:\n%s", view)
 	}
+	if !strings.Contains(view, "⬖") {
+		t.Errorf("missing diamond logo mark in view:\n%s", view)
+	}
 	if !strings.Contains(view, "Mac Lisowski") {
 		t.Errorf("missing author credit in view:\n%s", view)
 	}
@@ -46,13 +49,12 @@ func TestWelcomeCompactRendering(t *testing.T) {
 	th := loadTheme(t)
 	m := New(th, theme.TierTrueColor)
 
-	// Small height triggers compact layout
-	rows := m.Rows(80, 8)
-	if len(rows) != 8 {
-		t.Fatalf("compact Rows count = %d, want 8", len(rows))
+	rows := m.Rows(80, 6)
+	if len(rows) != 6 {
+		t.Fatalf("compact Rows count = %d, want 6", len(rows))
 	}
 
-	view := ansi.Strip(m.View(80, 8))
+	view := ansi.Strip(m.View(80, 6))
 	if !strings.Contains(view, "Mivia Agent") {
 		t.Errorf("compact view missing title:\n%s", view)
 	}
@@ -66,7 +68,7 @@ func TestWelcomeASCIITierRendering(t *testing.T) {
 	m := New(th, theme.TierASCII)
 
 	view := ansi.Strip(m.View(80, 20))
-	if !strings.Contains(view, `/ /\ \`) {
+	if !strings.Contains(view, "<>") {
 		t.Errorf("ASCII tier missing ASCII diamond logo:\n%s", view)
 	}
 	if !strings.Contains(view, "Mac Lisowski") {

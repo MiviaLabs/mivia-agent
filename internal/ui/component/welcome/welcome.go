@@ -33,34 +33,14 @@ func (m Model) UpdateFrame() Model {
 	return m
 }
 
-func (m Model) logoLines() []string {
-	if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
-		return []string{
-			`   /\   `,
-			`  /  \  `,
-			` / /\ \ `,
-			` \ \/ / `,
-			`  \  /  `,
-			`   \/   `,
-		}
-	}
-	return []string{
-		"   ▲   ",
-		" ◢███◣ ",
-		"◥█████◤",
-		" ◥███◤ ",
-		"   ▼   ",
-	}
-}
-
 func (m Model) renderLegend() string {
 	if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
 		return render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Render("states: < idle   ^ thinking   > running   . writing")
 	}
 	idle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Render("⬖ idle")
-	thinking := render.Role(m.Theme, m.Tier, theme.RoleAccent).Render("⬘ thinking")
+	thinking := render.Role(m.Theme, m.Tier, theme.RoleWarning).Render("⬘ thinking")
 	running := render.Role(m.Theme, m.Tier, theme.RoleInfo).Render("◈ running")
-	streaming := render.Role(m.Theme, m.Tier, theme.RoleFG).Render("◇ streaming")
+	streaming := render.Role(m.Theme, m.Tier, theme.RoleSuccess).Render("◇ writing")
 	sep := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Render("   ")
 	return idle + sep + thinking + sep + running + sep + streaming
 }
@@ -71,9 +51,12 @@ func (m Model) bannerLines() []string {
 	fg := render.Role(m.Theme, m.Tier, theme.RoleFG)
 	subtle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
 
-	for _, l := range m.logoLines() {
-		lines = append(lines, accent.Render(l))
+	logoMark := "⬖"
+	if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
+		logoMark = "<>"
 	}
+
+	lines = append(lines, accent.Render(logoMark))
 	lines = append(lines, "")
 	lines = append(lines, accent.Render("M I V I A   A G E N T"))
 	lines = append(lines, fg.Render("Autonomous Coding Assistant"))
@@ -106,7 +89,7 @@ func (m Model) Rows(width, height int) []string {
 	}
 
 	var content []string
-	if height < 12 || width < 45 {
+	if height < 10 || width < 45 {
 		content = m.compactLines()
 	} else {
 		content = m.bannerLines()

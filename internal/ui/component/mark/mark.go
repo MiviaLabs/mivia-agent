@@ -99,8 +99,8 @@ var ascFrames = map[State][]rune{
 
 // roles maps each state to its theme role, from the mock's ANIM table.
 var roles = map[State]theme.Role{
-	Thinking:  theme.RoleAccent,
-	Streaming: theme.RoleFG,
+	Thinking:  theme.RoleWarning,
+	Streaming: theme.RoleSuccess,
 	Running:   theme.RoleInfo,
 	Waiting:   theme.RoleFGSubtle,
 	Idle:      theme.RoleFGSubtle,
