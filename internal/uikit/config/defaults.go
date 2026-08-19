@@ -104,4 +104,8 @@ const (
 // amplify already. A value of 3 matches vim and similar applications,
 // which is the convention users expect (docs/design/cockpit-research.md
 // rule 6.6).
-const CockpitScrollLines = 3
+//
+// It is a var, not a const, because rule 6.6 makes the speed settable:
+// --scroll-lines writes it once at startup, before the Program starts,
+// and nothing writes it afterwards.
+var CockpitScrollLines = 3

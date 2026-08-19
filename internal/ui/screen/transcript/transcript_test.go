@@ -382,3 +382,139 @@ func TestKeymapCoversEveryPagerAction(t *testing.T) {
 		}
 	}
 }
+
+// TestSearchNoMatchAndEmptyQueryBranches covers the bar states a search
+// passes through: opened but empty, no matches found, and backspaced
+// back to empty.
+func TestSearchNoMatchAndEmptyQueryBranches(t *testing.T) {
+	s := sizedPager(t, 80, 24)
+
+	s = drive(s, tea.KeyPressMsg{Code: '/'})
+	if !strings.Contains(s.View(), "type to search") {
+		t.Errorf("a freshly opened bar must invite typing, got:\n%s", s.View())
+	}
+
+	for _, r := range "qqq-xyz" {
+		s = drive(s, tea.KeyPressMsg{Text: string(r), Code: r})
+	}
+	if s.search.count() != 0 {
+		t.Fatalf("query with no hits matched %d rows", s.search.count())
+	}
+	if !strings.Contains(s.View(), "no matches") {
+		t.Errorf("the bar must report no matches, got:\n%s", s.View())
+	}
+
+	// n and N are inert with no matches; the view must not crash.
+	s = drive(s, key("n"))
+	s = drive(s, key("N"))
+	if s.search.count() != 0 {
+		t.Error("n/N must not invent matches")
+	}
+
+	// Backspace past empty keeps the bar alive and empty.
+	for i := 0; i < 12; i++ {
+		s = drive(s, tea.KeyPressMsg{Code: tea.KeyBackspace})
+	}
+	if !s.search.active || s.search.query != "" {
+		t.Errorf("backspace past empty broke the bar: active=%v query=%q", s.search.active, s.search.query)
+	}
+
+	// Control keys and bare modifiers are not search text.
+	s = drive(s, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
+	s = drive(s, tea.KeyPressMsg{Code: tea.KeyLeft})
+	if s.search.query != "" {
+		t.Errorf("control keys must not enter the query, got %q", s.search.query)
+	}
+}
+
+// TestSearchWrapStepAndCurrentMatchFalse covers step's zero-match guard
+// and currentMatch's out-of-range branch directly.
+func TestSearchWrapStepAndCurrentMatchFalse(t *testing.T) {
+	var st searchState
+	st.step(1) // no matches: no panic, no move
+	if _, ok := st.currentMatch(); ok {
+		t.Error("currentMatch with no matches must report false")
+	}
+
+	rows := []string{"alpha zebra", "beta", "gamma zebra"}
+	st.begin(0)
+	st.query = "zebra"
+	st.find(rows)
+	st.step(1)
+	m, ok := st.currentMatch()
+	if !ok || m.row != 2 {
+		t.Errorf("after step got (%v,%v), want row 2", m, ok)
+	}
+}
+
+// TestUnboundKeyClearsNoticeAndUnknownMsgIgnored covers the dispatch
+// fallbacks: an unbound key clears a notice without acting, and an
+// unrecognised Msg is dropped.
+func TestUnboundKeyClearsNoticeAndUnknownMsgIgnored(t *testing.T) {
+	s := sizedPager(t, 80, 24)
+	s.notice = "stale notice"
+
+	s = drive(s, key("z")) // z is not bound in the pager
+	if s.notice != "" {
+		t.Error("an unbound key must clear the notice line")
+	}
+
+	next, cmd := s.Update(tea.FocusMsg{})
+	if cmd != nil {
+		t.Error("an unrecognised Msg must not produce a Cmd")
+	}
+	_ = next
+}
+
+// TestPromptJumpsAtTheWalls: { at the very top and } at the very bottom
+// are no-ops, not errors.
+func TestPromptJumpsAtTheWalls(t *testing.T) {
+	s := sizedPager(t, 80, 10)
+	s.offset = 0
+	s = drive(s, tea.KeyPressMsg{Code: '{'})
+	if s.offset != 0 {
+		t.Errorf("{ above the oldest prompt moved to %d, want 0", s.offset)
+	}
+
+	s.offset = s.maxOffset()
+	s = drive(s, tea.KeyPressMsg{Code: '}'})
+	if s.offset != s.maxOffset() {
+		t.Errorf("} below the newest prompt moved to %d, want %d", s.offset, s.maxOffset())
+	}
+}
+
+// TestViewPadsPastTheEndOfAShortConversation: rows beyond the
+// conversation are blank, not missing, so the status line stays put.
+func TestViewPadsPastTheEndOfAShortConversation(t *testing.T) {
+	s := NewPager(loadTheme(t), theme.TierASCII, conv.Model{})
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 10})
+	s = next.(Screen)
+	if got := strings.Count(s.View(), "\n") + 1; got != 10 {
+		t.Errorf("view is %d rows, want exactly 10 (content plus status)", got)
+	}
+}
+
+// TestInitAndDroppedZeroPager: Init is inert, and the status line hides
+// the match count when no search ran.
+func TestInitAndDroppedZeroPager(t *testing.T) {
+	s := NewPager(loadTheme(t), theme.TierASCII, snapshot(t))
+	if cmd := s.Init(); cmd != nil {
+		t.Error("Init must return no Cmd")
+	}
+	s.width, s.height = 80, 24
+	s.rebuild()
+	if strings.Contains(s.statusLine(), "matches") {
+		t.Errorf("no search ran; status must not claim matches: %q", s.statusLine())
+	}
+}
+
+// TestItoaNegativeRows keeps the tiny formatter honest for negative
+// offsets, which clamp guards against but formatting may still see.
+func TestItoaNegativeRows(t *testing.T) {
+	cases := map[int]string{0: "0", 5: "5", 12: "12", -7: "-7"}
+	for in, want := range cases {
+		if got := itoa(in); got != want {
+			t.Errorf("itoa(%d) = %q, want %q", in, got, want)
+		}
+	}
+}

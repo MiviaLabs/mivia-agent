@@ -61,6 +61,11 @@ type Screen struct {
 	// generated keymap - is drawn in place instead. Any key clears it.
 	overlay string
 
+	// mouseHint names the terminal's mouse-override key (rule 6.5). It
+	// is appended to the help overlay so the escape hatch is on screen,
+	// not buried in documentation. Empty when the hint was never set.
+	mouseHint string
+
 	// width and height are the live terminal size, from WindowSizeMsg.
 	// Nothing here may assume a size: the layout work that consumes
 	// height lands with the cockpit architecture, but the size must be
@@ -289,6 +294,21 @@ func overlayRows(text string, height int) []string {
 // belongs to the harness, so the screen takes it rather than inventing
 // one.
 func (s *Screen) SetCommands(cmds []composer.Command) { s.composer.SetCommands(cmds) }
+
+// SetMouseOverrideHint records the terminal's mouse-override key
+// (rule 6.5), shown in the help overlay. Empty clears it.
+func (s *Screen) SetMouseOverrideHint(hint string) { s.mouseHint = hint }
+
+// Notice pushes one permanent notice block into the transcript. Startup
+// hazard warnings land here: they are part of the conversation record,
+// not transient chrome, and they must appear exactly once.
+func (s *Screen) Notice(text string) {
+	next, _ := s.transcript.HandleEvent(uievent.Event{
+		Kind: uievent.KindNotice,
+		Body: uievent.NoticeBody{Text: text},
+	})
+	s.transcript = next
+}
 
 // statusRow is the permanent bottom status line.
 //

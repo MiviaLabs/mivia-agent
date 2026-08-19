@@ -287,6 +287,17 @@ func TestUnrecognisedMsgForwardsToTopScreen(t *testing.T) {
 // TestEmptyStackDefensiveBranches proves top()/Init()/View()/Update() are
 // safe on a zero-value stack. New always seeds one screen, so this can
 // only happen via direct construction - defensive, but a real path.
+func TestBroadcastOnEmptyStackIsSafe(t *testing.T) {
+	var m Model
+	next, cmd := m.Update(unknownMsg{n: 1})
+	if cmd != nil {
+		t.Error("expected no Cmd from a broadcast on an empty stack")
+	}
+	if got := next.(Model).View(); got.Content != "" {
+		t.Errorf("got %q, want the empty view", got.Content)
+	}
+}
+
 func TestEmptyStackDefensiveBranches(t *testing.T) {
 	var m Model
 	if cmd := m.Init(); cmd != nil {

@@ -3,6 +3,7 @@ package transcript
 import (
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"strings"
@@ -54,15 +55,18 @@ func (w *scrollbackWriter) Run() error {
 	return err
 }
 
+// handoverDone is the ExecCallback for the scrollback write. A named
+// function, not a closure, so its behavior is directly testable.
+func handoverDone(err error) tea.Msg {
+	return handedOverMsg{err: err}
+}
+
 // dumpScrollback enters handover mode and returns the Exec Cmd that
 // writes the whole conversation, tool output expanded (Dump), into
 // native scrollback.
 func (s Screen) dumpScrollback() (Screen, tea.Cmd) {
-	dump := s.conv.Dump()
-	w := &scrollbackWriter{text: dump}
-	return s.withMode(modeHandover), tea.Exec(w, func(err error) tea.Msg {
-		return handedOverMsg{err: err}
-	})
+	w := &scrollbackWriter{text: s.conv.Dump()}
+	return s.withMode(modeHandover), tea.Exec(w, handoverDone)
 }
 
 // editorDoneMsg reports that the editor opened by `v` exited.
@@ -84,12 +88,14 @@ var errNoEditor = errors.New("no editor: set $VISUAL or $EDITOR")
 
 // editorCommand resolves the editor, writes the dump to a temp file,
 // and builds the command to run on it. dir is the temp directory (tests
-// pass a private one); "" means the system default.
+// pass a private one); "" means the system default. getenv and
+// writeFile are injected the same way: they are the environment and the
+// filesystem, and both failure paths are contract, not luck.
 //
-// os.CreateTemp already creates files with mode 0600; the chmod below
-// is a guard, not the mechanism, and exists so the invariant is checked
-// rather than assumed.
-func editorCommand(getenv func(string) string, dump, dir string) (*exec.Cmd, string, error) {
+// os.CreateTemp creates the file with mode 0600, which is the privacy
+// contract: a transcript is conversation data and is never
+// world-readable.
+func editorCommand(getenv func(string) string, writeFile func(string, []byte, fs.FileMode) error, dump, dir string) (*exec.Cmd, string, error) {
 	editor := strings.TrimSpace(getenv("VISUAL"))
 	if editor == "" {
 		editor = strings.TrimSpace(getenv("EDITOR"))
@@ -102,17 +108,8 @@ func editorCommand(getenv func(string) string, dump, dir string) (*exec.Cmd, str
 		return nil, "", err
 	}
 	path := f.Name()
-	if err := f.Chmod(0o600); err != nil {
-		f.Close()
-		os.Remove(path)
-		return nil, "", err
-	}
-	if _, err := io.WriteString(f, dump); err != nil {
-		f.Close()
-		os.Remove(path)
-		return nil, "", err
-	}
-	if err := f.Close(); err != nil {
+	f.Close()
+	if err := writeFile(path, []byte(dump), 0o600); err != nil {
 		os.Remove(path)
 		return nil, "", err
 	}
@@ -127,15 +124,22 @@ func editorCommand(getenv func(string) string, dump, dir string) (*exec.Cmd, str
 // $VISUAL or $EDITOR. With no editor configured it says so on the
 // status line instead of failing silently.
 func (s Screen) openEditor() (Screen, tea.Cmd) {
-	cmd, path, err := editorCommand(os.Getenv, s.conv.Dump(), "")
+	cmd, path, err := editorCommand(os.Getenv, os.WriteFile, s.conv.Dump(), "")
 	if err != nil {
 		next := s.withMode(modePager)
 		next.notice = editorNotice(editorDoneMsg{err: err, path: path})
 		return next, nil
 	}
-	return s, tea.ExecProcess(cmd, func(err error) tea.Msg {
+	return s, tea.ExecProcess(cmd, editorCallback(path))
+}
+
+// editorCallback is the ExecCallback for `v`. It is a constructor, not
+// an inline closure, so a test can call the callback itself and pin
+// what the screen receives when the editor exits.
+func editorCallback(path string) tea.ExecCallback {
+	return func(err error) tea.Msg {
 		return editorDoneMsg{err: err, path: path}
-	})
+	}
 }
 
 // withMode returns the screen with the mode field set. Screen is a

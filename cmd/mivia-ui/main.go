@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -20,7 +21,10 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/conversation"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/stream"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
+	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/replay"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/termprobe"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 	"golang.org/x/term"
 )
 
@@ -67,6 +71,9 @@ type config struct {
 	dark          bool
 	noColor       bool
 	outputJSON    bool
+	noMouse       bool
+	scrollLines   int
+	fullRepaint   bool
 }
 
 func parseFlags(args []string, stderr io.Writer) (config, error) {
@@ -78,9 +85,17 @@ func parseFlags(args []string, stderr io.Writer) (config, error) {
 	fs.BoolVar(&cfg.light, "light", false, "default to a light theme instead of --theme's default")
 	fs.BoolVar(&cfg.dark, "dark", false, "default to a dark theme instead of --theme's default")
 	fs.BoolVar(&cfg.noColor, "no-color", false, "force the no-colour/ASCII degradation tier")
+	fs.BoolVar(&cfg.noMouse, "no-mouse", false, "keep the cockpit but release mouse capture (rule 6.5)")
+	fs.IntVar(&cfg.scrollLines, "scroll-lines", uikitconfig.CockpitScrollLines,
+		"rows one mouse-wheel notch scrolls (rule 6.6)")
+	fs.BoolVar(&cfg.fullRepaint, "full-repaint", false,
+		"force a full redraw on resize (Windows Terminal / ConPTY hazard)")
 	outputFlag := fs.String("output", "", "\"json\" for NDJSON instead of the interactive TUI")
 	if err := fs.Parse(args); err != nil {
 		return config{}, err
+	}
+	if cfg.scrollLines < 1 {
+		return config{}, fmt.Errorf("--scroll-lines must be 1 or more, got %d", cfg.scrollLines)
 	}
 	fs.Visit(func(f *flag.Flag) {
 		if f.Name == "theme" {
@@ -96,6 +111,11 @@ func run(args []string, stdout io.Writer, stderr io.Writer, env []string) int {
 	if err != nil {
 		return 2
 	}
+
+	// Rule 6.6: the wheel speed is settable because terminals disagree
+	// on how many events one notch produces. Applied once, before any
+	// renderer path can read it; nothing writes it again.
+	uikitconfig.CockpitScrollLines = cfg.scrollLines
 
 	themes, err := theme.Embedded()
 	if err != nil {
@@ -123,14 +143,15 @@ func run(args []string, stdout io.Writer, stderr io.Writer, env []string) int {
 	}
 
 	f, isFile := stdout.(*os.File)
-	if !isFile || !term.IsTerminal(int(f.Fd())) {
-		// Non-interactive: no alt-screen, no input loop to drive. Same
-		// fallback shape as the classic REPL's non-TTY path.
-		if err := stream.Render(stdout, events); err != nil {
-			fmt.Fprintln(stderr, "mivia-ui:", err)
-			return 1
-		}
-		return 0
+	isTTY := isFile && term.IsTerminal(int(f.Fd()))
+
+	// Rule 6.4 and the section 4 hazard table: some environments must
+	// never enter the cockpit. Each refusal names itself on one line
+	// and falls back to the plain stream renderer, so the session still
+	// works instead of silently showing something unusable.
+	refuse := plainStreamReason(env, termprobe.Probe(env, tmuxVersion(env)))
+	if refuse != "" || !isTTY {
+		return renderPlain(stdout, stderr, events, refuse)
 	}
 
 	tier := theme.TierTrueColor
@@ -139,13 +160,43 @@ func run(args []string, stdout io.Writer, stderr io.Writer, env []string) int {
 	} else {
 		tier = theme.Detect(f, env)
 	}
+	return runCockpit(cfg, th, tier, themes, events, env, stdout, stderr)
+}
 
+// renderPlain writes the optional refusal line plus the plain stream.
+func renderPlain(stdout, stderr io.Writer, events []uievent.Event, reason string) int {
+	if reason != "" {
+		fmt.Fprintln(stdout, "mivia-ui:", reason)
+	}
+	if err := stream.Render(stdout, events); err != nil {
+		fmt.Fprintln(stderr, "mivia-ui:", err)
+		return 1
+	}
+	return 0
+}
+
+// runCockpit starts the interactive cockpit on a terminal that passed
+// every probe. Startup warnings become permanent transcript notices,
+// shown once.
+func runCockpit(cfg config, th theme.Theme, tier theme.Tier, themes []theme.Theme,
+	events []uievent.Event, env []string, stdout, stderr io.Writer) int {
+	probe := termprobe.Probe(env, tmuxVersion(env))
 	conv := replay.New(events, replayPace)
 	// initialComposerWidth only holds until Bubble Tea delivers the first
 	// WindowSizeMsg, which it does at startup before the first render.
 	screen := conversation.New(th, tier, themes, conv, replay.NewApprover(), initialComposerWidth, nil)
 	screen.SetCommands(mockCommands())
-	root := app.New(screen, th, tier, themes)
+	for _, w := range probe.Warnings {
+		screen.Notice(w)
+	}
+	if !cfg.noMouse {
+		screen.SetMouseOverrideHint(probe.MouseHint)
+	}
+	root := app.New(screen, th, tier, themes).
+		WithOptions(app.Options{
+			Mouse:       !cfg.noMouse,
+			FullRepaint: cfg.fullRepaint || probe.FullRepaint,
+		})
 
 	p := tea.NewProgram(root, tea.WithOutput(stdout))
 	if _, err := p.Run(); err != nil {
@@ -153,6 +204,32 @@ func run(args []string, stdout io.Writer, stderr io.Writer, env []string) int {
 		return 1
 	}
 	return 0
+}
+
+// plainStreamReason names the one reason the cockpit must not start, or
+// "" when it may.
+func plainStreamReason(env []string, probe termprobe.Report) string {
+	switch {
+	case termprobe.ScreenReader(env):
+		return "screen-reader mode: the cockpit viewport is unreadable to a screen reader; rendering the plain transcript instead"
+	case termprobe.DumbTerminal(env):
+		return "TERM=dumb: a dumb terminal has no cursor addressing; rendering the plain transcript instead"
+	case probe.RefuseReason != "":
+		return probe.RefuseReason
+	}
+	return ""
+}
+
+// tmuxVersion reports the local tmux version when inside tmux, for the
+// synchronized-output probe. Errors and absence mean unknown, which
+// warns nothing.
+func tmuxVersion(env []string) string {
+	if !termprobe.InTmux(env) {
+		return ""
+	}
+	return termprobe.LookupTmuxVersion(func() ([]byte, error) {
+		return exec.Command("tmux", "-V").Output()
+	})
 }
 
 // resolveTheme picks a theme by exact --theme name; --light/--dark only

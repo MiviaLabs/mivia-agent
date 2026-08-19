@@ -201,3 +201,65 @@ func TestComposerLongTextStaysWithinWidth(t *testing.T) {
 		}
 	}
 }
+
+// TestClickToColumnPlacesTheCursor maps display columns to rune
+// positions: the prompt, each character, and both walls.
+func TestClickToColumnPlacesTheCursor(t *testing.T) {
+	for _, c := range []struct {
+		col  int
+		want string // value after typing X at the clicked position
+	}{
+		{col: 0, want: "Xhello"},  // at or before the prompt: start
+		{col: 2, want: "Xhello"},  // prompt edge
+		{col: 3, want: "hXello"},  // between h and e
+		{col: 5, want: "helXlo"},  // middle
+		{col: 99, want: "helloX"}, // past the end: append
+	} {
+		// A fresh composer per case: textinput shares internal storage
+		// across struct copies, so updating one sibling copy corrupts
+		// another. Production code always follows one lineage
+		// (next, _ := Update), and so does this test.
+		m := sizedComposer(t, 40, "hello")
+		m.ClickToColumn(c.col)
+		next, _ := m.Update(tea.KeyPressMsg{Text: "X", Code: 'X'})
+		if got := next.Value(); got != c.want {
+			t.Errorf("click column %d then type: got %q, want %q", c.col, got, c.want)
+		}
+	}
+}
+
+// TestMenuClickRowAcceptsTheClickedRow covers the menu's own click
+// mapping: rendered rows accept, out-of-window rows and closed menus
+// refuse.
+func TestMenuClickRowAcceptsTheClickedRow(t *testing.T) {
+	m := sizedComposer(t, 40, "")
+	m.SetCommands([]Command{
+		{Name: "agent", Desc: "pick"},
+		{Name: "agents", Desc: "list"},
+		{Name: "clear", Desc: "wipe"},
+	})
+	m.SetValue("/a")
+
+	next := m
+	next.MenuClickRow(1)
+	if got := next.Value(); got != "/agents" {
+		t.Errorf("clicking row 1 accepted %q, want /agents", got)
+	}
+	if next.MenuActive() {
+		t.Error("a click must close the menu")
+	}
+
+	again := sizedComposer(t, 40, "")
+	again.SetCommands([]Command{{Name: "agent"}})
+	again.SetValue("/a")
+	if again.MenuClickRow(5) {
+		t.Error("a row outside the rendered window must be refused")
+	}
+	if again.Value() != "/a" {
+		t.Errorf("a refused click changed the value to %q", again.Value())
+	}
+	empty := sizedComposer(t, 40, "")
+	if empty.MenuClickRow(0) {
+		t.Error("a click with the menu closed must be refused")
+	}
+}

@@ -68,38 +68,79 @@ gives the plain stream. Both are unaffected by this change.
 This removes rule 3.2 of `ux-rules.md`, which required shipping both
 renderers behind one command.
 
-**Rule 6.2.** Ship transcript mode before the cockpit becomes the default.
-It is the replacement for terminal find, so shipping the cockpit first
-removes a capability with nothing in its place. Bind it to `Ctrl-O`, which
-is already reserved for the pager in `keymap.go`. Keys follow `less`: `/`
-search, `n` and `N` for matches, `g` and `G` for the ends, `j` and `k` for
-one row, `Ctrl-U` and `Ctrl-D` for a half page, `q` or `Esc` to leave.
+**Rule 6.2. IMPLEMENTED 2026-08-19.** Ship transcript mode before the
+cockpit becomes the default. It is the replacement for terminal find, so
+shipping the cockpit first removes a capability with nothing in its
+place. Bind it to `Ctrl-O`, which is already reserved for the pager in
+`keymap.go`. Keys follow `less`: `/` search, `n` and `N` for matches, `g`
+and `G` for the ends, `j` and `k` for one row, `Ctrl-U` and `Ctrl-D` for
+a half page, `q` or `Esc` to leave.
+Implementation: the pager at `internal/ui/screen/transcript`, pushed onto
+the router stack by Ctrl-O; the `ContextPager` table in
+`internal/uikit/keymap`; the integration test at
+`cmd/mivia-ui/teatest_transcript_test.go`. Search is case-insensitive
+substring, reports the match count, highlights every visible match, and
+Esc from the bar restores the scroll position the search started from.
+The pager also binds `{` and `}` to jump between user prompts, and the
+wheel scrolls it.
 
-**Rule 6.3.** Transcript mode must offer a key that writes the whole
-conversation into the terminal's native scrollback, tool output expanded.
-This is the single most important mitigation. It hands the session back to
-`grep`, `tmux` copy-mode, and the terminal's own find, so the cockpit
-borrows the surface rather than taking it. Claude Code binds `[` for this
-and `v` to open the transcript in `$EDITOR`. Take both.
+**Rule 6.3. IMPLEMENTED 2026-08-19.** Transcript mode must offer a key
+that writes the whole conversation into the terminal's native scrollback,
+tool output expanded. This is the single most important mitigation. It
+hands the session back to `grep`, `tmux` copy-mode, and the terminal's
+own find, so the cockpit borrows the surface rather than taking it.
+Claude Code binds `[` for this and `v` to open the transcript in
+`$EDITOR`. Take both.
+Implementation: `[` returns `tea.Exec` with an in-process `ExecCommand`
+writer. Bubble Tea handles `execMsg` synchronously: it releases the
+terminal - flushing the renderer, which writes the alternate-screen exit
+- before the command runs, so the dump always lands in the primary
+screen's scrollback. `tea.Println` cannot give this ordering: its
+`insertAbove` bypasses the render queue, and it is a documented no-op
+while the alternate screen is active. The integration test proves the
+byte ordering: the dump appears inside the inline window between the
+alternate-screen exit and the re-entry. The handover lasts until any key
+returns the user to the cockpit. `v` writes the dump to a file created
+by `os.CreateTemp` (mode 0600) and opens `$VISUAL` or `$EDITOR` through
+`tea.ExecProcess`.
 
-**Rule 6.4.** Never enter the cockpit in screen-reader mode. An alternate
-screen with a virtualized viewport is unreadable to a screen reader, and
-rule 9.1 of `ux-rules.md` already forbids it.
+**Rule 6.4. IMPLEMENTED 2026-08-19.** Never enter the cockpit in
+screen-reader mode. An alternate screen with a virtualized viewport is
+unreadable to a screen reader, and rule 9.1 of `ux-rules.md` already
+forbids it.
+Implementation: `termprobe.ScreenReader` in `internal/uikit/termprobe`
+detects `MIVIA_SCREEN_READER`; `cmd/mivia-ui` prints one line that says
+why and renders the plain stream from `internal/ui/stream` instead.
+`TERM=dumb` takes the same path (ux-rules rule 9.6).
 
-**Rule 6.5.** Mouse capture is opt-out, not mandatory. Provide a flag that
-keeps the cockpit and releases the mouse, because mouse capture is the most
-common friction point over SSH and inside tmux. State the terminal's own
-override key on screen: `Fn` on Terminal.app, `Option` on iTerm2, `Shift`
-almost everywhere else.
+**Rule 6.5. IMPLEMENTED 2026-08-19.** Mouse capture is opt-out, not
+mandatory. Provide a flag that keeps the cockpit and releases the mouse,
+because mouse capture is the most common friction point over SSH and
+inside tmux. State the terminal's own override key on screen: `Fn` on
+Terminal.app, `Option` on iTerm2, `Shift` almost everywhere else.
+Implementation: `--no-mouse` unsets `View.MouseMode` through
+`app.Options`. The help overlay states the override key from
+`termprobe.MouseOverrideHint` (`Option` on iTerm2, `Fn` on Terminal.app,
+`Shift` elsewhere, all three named over SSH where the terminal cannot be
+identified). Mouse capture is also released while a `[` handover holds
+no alternate screen, so the terminal's own selection can reach the
+transcript in scrollback.
 
-**Rule 6.6.** Wheel speed is not portable. Some terminals send one event per
-notch and some amplify. Ship a multiplier in `config/defaults.go` and a way
-to change it. A value of 3 matches `vim`.
+**Rule 6.6. IMPLEMENTED 2026-08-19.** Wheel speed is not portable. Some
+terminals send one event per notch and some amplify. Ship a multiplier in
+`config/defaults.go` and a way to change it. A value of 3 matches `vim`.
+Implementation: `CockpitScrollLines` is a settable var (default 3,
+documented in `internal/uikit/config/defaults.go`); `--scroll-lines`
+writes it once at startup.
 
-**Rule 6.7.** Scrolling up pauses auto-follow. Show a jump-to-bottom
-affordance with a count of what arrived while the user was reading.
-Returning to the bottom resumes following. Without this the view fights the
-user every time a token streams in.
+**Rule 6.7. IMPLEMENTED 2026-08-19.** Scrolling up pauses auto-follow.
+Show a jump-to-bottom affordance with a count of what arrived while the
+user was reading. Returning to the bottom resumes following. Without this
+the view fights the user every time a token streams in.
+Implementation: `transcript.Model.NewWhilePaused` counts finished blocks
+that arrive while follow is paused and clears when following resumes.
+The status row states the count: "N new blocks while you read - ctrl+end
+to follow again".
 
 ---
 
@@ -110,11 +151,11 @@ documented refusal.
 
 | Hazard | Effect | Response |
 |---|---|---|
-| `tmux -CC` (iTerm2 integration) | The alternate screen and mouse tracking are broken. Double-click can corrupt the terminal | Detect and refuse the cockpit |
-| tmux at 3.6 or older | No synchronized output, so redraws flicker | Probe for the capability and warn |
-| Windows Terminal, ConPTY | Positioned writes coalesce wrongly and leave stale cells | A full-repaint mode |
-| iTerm2 default profile | Mouse reporting is off, so the wheel and clicks do nothing | Detect and print a one-time hint |
-| tmux without `mouse on` | Wheel events go to tmux | Detect and print a one-time hint |
+| `tmux -CC` (iTerm2 integration) | The alternate screen and mouse tracking are broken. Double-click can corrupt the terminal | Detect and refuse the cockpit. IMPLEMENTED: `termprobe.InTmuxControlMode`; `cmd/mivia-ui` prints one line and renders the plain stream |
+| tmux at 3.6 or older | No synchronized output, so redraws flicker | Probe for the capability and warn. IMPLEMENTED: `termprobe.OldTmuxWarning` parses `tmux -V`; the warning lands once as a transcript notice |
+| Windows Terminal, ConPTY | Positioned writes coalesce wrongly and leave stale cells | A full-repaint mode. IMPLEMENTED: `termprobe.IsConPTY` auto-enables it; `--full-repaint` forces it; the app issues `tea.ClearScreen` on every resize while it is on. The effect on a real terminal is not testable here - the decision and the Cmd are tested |
+| iTerm2 default profile | Mouse reporting is off, so the wheel and clicks do nothing | Detect and print a one-time hint. IMPLEMENTED: `termprobe.Probe` warns once as a transcript notice |
+| tmux without `mouse on` | Wheel events go to tmux | Detect and print a one-time hint. IMPLEMENTED: inside tmux the probe states the `set -g mouse on` fix once. tmux's own option cannot be read without running tmux, so the hint is worded as a condition, not a claim |
 
 Source: [Claude Code fullscreen rendering](https://code.claude.com/docs/en/fullscreen).
 

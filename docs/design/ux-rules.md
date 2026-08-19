@@ -41,9 +41,19 @@ them. The consequence column states what breaks.
 Reservation applies to the context that the owner claims. `Ctrl-U`, `Ctrl-E`,
 `Ctrl-K` and `Ctrl-R` belong to readline, which owns the line editor. Bind them
 outside the composer, or bind them to the same action readline gives them. Do
-not bind `Ctrl-S`, `Ctrl-Q`, `Ctrl-C`, `Ctrl-D`, `Ctrl-Z`, `Ctrl-\`, `Ctrl-V`
+not bind `Ctrl-S`, `Ctrl-Q`, `Ctrl-C`, `Ctrl-Z`, `Ctrl-\`, `Ctrl-V`
 or `Ctrl-M` in any context. The tty or the terminal owns those, and no context
 escapes them. `internal/uikit/keymap` enforces the second list mechanically.
+
+**Amended 2026-08-19, with transcript mode.** `Ctrl-D` moved from the
+never-bind list to the readline-owned class above: readline uses it as EOF on
+an empty line, so it is reserved inside the composer and free outside the line
+editor. The pager binds it as half a page down, which is what `less` itself
+does, and a pager has no EOF gesture to break. `Ctrl-B` (the GNU screen
+prefix) is bound in the pager the same way: screen intercepts it before the
+app sees it, which makes the binding inert for screen users, not harmful, and
+the pager keeps modifier-free alternates (`b`, `space`). `Ctrl-S` stays
+unbound everywhere (rule 1.2).
 
 Sources: [stty(1)](https://man7.org/linux/man-pages/man1/stty.1.html),
 [GNU Readline](https://tiswww.case.edu/php/chet/readline/readline.html),
@@ -467,6 +477,7 @@ Read the keymap package for the current bindings, never this table.
 | 12 | No mention affordance | `@` at token start | Section 5 |
 | 3 | Mouse unstated | Off by default | Rule 7.1 |
 | 3 | Inline is the default | Cockpit is the default | Rule 6.1 of [cockpit-research.md](cockpit-research.md) |
+| 1 | `Ctrl-D` never bound | Readline-owned, pager binds it | less binds ctrl+d as half a page; a pager is not a line editor (amended 2026-08-19, transcript mode) |
 
 `research-panes.md` stays as the record of the colour and contrast work. Its
 sections 7.1 and 7.2, on markdown and diagram rendering, are unverified against

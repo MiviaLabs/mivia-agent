@@ -2,6 +2,7 @@ package transcript
 
 import (
 	"bytes"
+	"io/fs"
 	"os"
 	"strings"
 	"testing"
@@ -119,7 +120,7 @@ func TestEditorCommandCreatesPrivateFileWithDump(t *testing.T) {
 		}
 		return ""
 	}
-	cmd, path, err := editorCommand(getenv, dump, dir)
+	cmd, path, err := editorCommand(getenv, os.WriteFile, dump, dir)
 	if err != nil {
 		t.Fatalf("editorCommand: %v", err)
 	}
@@ -154,7 +155,7 @@ func TestEditorCommandCreatesPrivateFileWithDump(t *testing.T) {
 func TestEditorCommandPrefersVISUALThenEDITOR(t *testing.T) {
 	dir := t.TempDir()
 
-	cmd, _, err := editorCommand(func(string) string { return "" }, "x", dir)
+	cmd, _, err := editorCommand(func(string) string { return "" }, os.WriteFile, "x", dir)
 	if err == nil || !strings.Contains(err.Error(), "no editor") {
 		t.Errorf("no editor: got %v, want the no-editor error", err)
 	}
@@ -167,7 +168,7 @@ func TestEditorCommandPrefersVISUALThenEDITOR(t *testing.T) {
 			return "vi"
 		}
 		return ""
-	}, "x", dir)
+	}, os.WriteFile, "x", dir)
 	if err != nil {
 		t.Fatalf("EDITOR fallback: %v", err)
 	}
@@ -247,3 +248,111 @@ func TestKeyEscapesNoticeAfterNextKey(t *testing.T) {
 var _ app.Screen = Screen{}
 
 var _ = theme.TierTrueColor // keep the theme import for fixtures
+
+// TestEditorCommandFailsWhenTempAreaUnwritable covers both filesystem
+// failure paths: a temp directory that cannot be created in, and a file
+// that cannot be written.
+func TestEditorCommandFailsWhenTempAreaUnwritable(t *testing.T) {
+	getenv := func(k string) string {
+		if k == "VISUAL" {
+			return "vi"
+		}
+		return ""
+	}
+
+	if _, _, err := editorCommand(getenv, os.WriteFile, "x", "/nonexistent-dir-for-mivia"); err == nil {
+		t.Error("expected an error when the temp directory does not exist")
+	}
+
+	// CreateTemp succeeds, then WriteFile must fail: the directory is
+	// read-only for the write step. Root ignores directory permissions,
+	// so skip under root.
+	if os.Geteuid() != 0 {
+		dir := t.TempDir()
+		f, err := os.CreateTemp(dir, "probe-*")
+		if err != nil {
+			t.Fatal(err)
+		}
+		probe := f.Name()
+		f.Close()
+		os.Remove(probe)
+		if err := os.Chmod(dir, 0o500); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { os.Chmod(dir, 0o700) })
+		_, _, err = editorCommand(getenv, os.WriteFile, "x", dir)
+		if err == nil {
+			t.Error("expected an error when the temp directory is read-only for writes")
+		}
+	}
+}
+
+// TestExecCommandNoopSetters: the writer accepts the full ExecCommand
+// interface without using stdin or stderr.
+func TestExecCommandNoopSetters(t *testing.T) {
+	w := &scrollbackWriter{text: "x"}
+	w.SetStdin(nil)
+	w.SetStderr(nil)
+	w.SetStdout(&bytes.Buffer{})
+	if err := w.Run(); err != nil {
+		t.Errorf("Run with all setters called: %v", err)
+	}
+}
+
+// TestEditorCommandWriteFailure keeps the temp file from lingering
+// when the dump cannot be written.
+func TestEditorCommandWriteFailure(t *testing.T) {
+	dir := t.TempDir()
+	var seen string
+	fail := func(path string, _ []byte, _ fs.FileMode) error {
+		seen = path
+		return errString("disk full")
+	}
+	cmd, _, err := editorCommand(func(k string) string {
+		if k == "VISUAL" {
+			return "vi"
+		}
+		return ""
+	}, fail, "the dump", dir)
+	if err == nil || !strings.Contains(err.Error(), "disk full") {
+		t.Fatalf("got %v, want the write error", err)
+	}
+	if cmd != nil {
+		t.Error("a failed write must build no editor command")
+	}
+	if _, statErr := os.Stat(seen); !os.IsNotExist(statErr) {
+		t.Errorf("the temp file %q must be removed after a failed write", seen)
+	}
+}
+
+// TestExecCallbacksDirectly pins what the screen receives when each
+// handover command finishes. The callbacks are named constructors, not
+// inline closures, exactly so this is testable.
+func TestExecCallbacksDirectly(t *testing.T) {
+	if m, ok := handoverDone(nil).(handedOverMsg); !ok || m.err != nil {
+		t.Errorf("handoverDone(nil) = %#v, want a clean handedOverMsg", m)
+	}
+	want := errString("boom")
+	if m, ok := handoverDone(want).(handedOverMsg); !ok || m.err != want {
+		t.Errorf("handoverDone(err) = %#v, want the error carried through", m)
+	}
+	cb := editorCallback("/tmp/t.md")
+	if m, ok := cb(nil).(editorDoneMsg); !ok || m.path != "/tmp/t.md" || m.err != nil {
+		t.Errorf("editorCallback(nil) = %#v, want a clean editorDoneMsg with the path", m)
+	}
+	if m, ok := cb(want).(editorDoneMsg); !ok || m.err != want {
+		t.Errorf("editorCallback(err) = %#v, want the error carried through", m)
+	}
+}
+
+// TestVKeyOpensTheEditor drives the keymap path, not the method.
+func TestVKeyOpensTheEditor(t *testing.T) {
+	t.Setenv("VISUAL", "true")
+	t.Setenv("EDITOR", "")
+	s := sizedPager(t, 80, 24)
+	next, cmd := s.Update(tea.KeyPressMsg{Code: 'v'})
+	if cmd == nil {
+		t.Fatal("v must return the ExecProcess Cmd through the keymap")
+	}
+	_ = next
+}

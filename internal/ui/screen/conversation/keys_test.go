@@ -694,3 +694,26 @@ func TestOverlayShorterThanTheScreenIsPadded(t *testing.T) {
 		t.Errorf("got %q, want the content kept at the top", rows[:2])
 	}
 }
+
+// TestHelpOverlayStatesTheMouseOverrideKey pins rule 6.5: the terminal's
+// own override key is on screen, because mouse capture is the most
+// common friction point over SSH and inside tmux.
+func TestHelpOverlayStatesTheMouseOverrideKey(t *testing.T) {
+	s := sized(t, 0)
+	s.SetMouseOverrideHint("Option")
+	next, _ := s.Update(tea.KeyPressMsg{Code: '?', Text: "?"})
+	s = next.(Screen)
+	if !strings.Contains(s.overlay, "Option") {
+		t.Errorf("help overlay must state the override key, got:\n%s", s.overlay)
+	}
+}
+
+// TestNoticeRecordsAStartupWarning: hazard warnings are permanent
+// transcript blocks, drawn once, not transient chrome.
+func TestNoticeRecordsAStartupWarning(t *testing.T) {
+	s := sized(t, 0)
+	s.Notice("old tmux has no synchronized output")
+	if !strings.Contains(s.View(), "old tmux has no synchronized output") {
+		t.Error("the notice must render in the transcript")
+	}
+}

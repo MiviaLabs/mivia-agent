@@ -214,7 +214,15 @@ func (s Screen) composerAction(id keymap.ID) (app.Screen, tea.Cmd, bool) {
 		}
 		// Drawn in place, not printed: the alternate screen has no
 		// scrollback to print into.
-		s.overlay = render.Help(s.Theme, s.Tier, s.keys.Help())
+		help := render.Help(s.Theme, s.Tier, s.keys.Help())
+		if s.mouseHint != "" {
+			// Rule 6.5: state the terminal's own override key on
+			// screen, because mouse capture is the most common
+			// friction point over SSH and inside tmux.
+			help += "\n\nmouse captured - hold " + s.mouseHint +
+				" to select with the terminal (--no-mouse releases it)"
+		}
+		s.overlay = help
 		return s, nil, true
 	}
 	return s, nil, false

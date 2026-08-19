@@ -106,3 +106,13 @@ func TestNavigationKeyProducesNoCmd(t *testing.T) {
 		t.Errorf("expected the cursor move reflected in the view: %q", got)
 	}
 }
+
+// TestViewFlagsHoldsAltScreen pins the modal's surface contract with the
+// router: a theme preview is a cockpit modal.
+func TestViewFlagsHoldsAltScreen(t *testing.T) {
+	themes := loadThemes(t)
+	s := New(themes[0], theme.TierASCII, themes)
+	if !s.ViewFlags().AltScreen {
+		t.Error("the theme picker must hold the alternate screen")
+	}
+}

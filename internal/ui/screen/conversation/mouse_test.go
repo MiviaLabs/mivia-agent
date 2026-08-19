@@ -177,3 +177,29 @@ func TestStatusRowStatesNewBlockCount(t *testing.T) {
 		t.Errorf("status row %q must not show a count while following", row)
 	}
 }
+
+// TestClickClearsTheOverlay: a click is not a key, but it must still
+// dismiss the help overlay - acting through an overlay acts on
+// something the user cannot see.
+func TestClickClearsTheOverlay(t *testing.T) {
+	s := sized(t, 0)
+	next, _ := s.Update(tea.KeyPressMsg{Code: '?', Text: "?"})
+	s = next.(Screen)
+	if s.overlay == "" {
+		t.Fatal("precondition: the help overlay is open")
+	}
+	next, _ = s.Update(leftClick(3, 3))
+	s = next.(Screen)
+	if s.overlay != "" {
+		t.Error("a click must clear the overlay")
+	}
+}
+
+// TestConversationViewFlagsHoldAltScreen pins the base screen's surface
+// contract with the router.
+func TestConversationViewFlagsHoldAltScreen(t *testing.T) {
+	s := sized(t, 0)
+	if !s.ViewFlags().AltScreen {
+		t.Error("the conversation screen must hold the alternate screen")
+	}
+}
