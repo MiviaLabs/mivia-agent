@@ -9,7 +9,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/composer"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/transcript"
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/keymap"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/replay"
@@ -408,19 +410,48 @@ func TestEscWithNothingToCancelFallsThrough(t *testing.T) {
 	}
 }
 
-// TestPagerKeyIsAcceptedButInert records the seam the pager screen fills
-// in the next wave. It must not fall through to the composer as text.
-func TestPagerKeyIsAcceptedButInert(t *testing.T) {
+// TestCtrlOOpensTranscriptMode pins rule 6.2's entry point: ctrl+o
+// pushes the transcript pager, and the pager it builds sees the same
+// conversation the cockpit holds. The key must never fall through to
+// the composer as text.
+func TestCtrlOOpensTranscriptMode(t *testing.T) {
 	s := sized(t, 2)
-	s, _ = press(t, s, ctrl('o'))
+	s, cmd := press(t, s, ctrl('o'))
 	if got := s.composer.Value(); got != "" {
 		t.Errorf("ctrl+o reached the composer as %q", got)
 	}
+	if cmd == nil {
+		t.Fatal("ctrl+o must emit the PushScreenMsg Cmd")
+	}
+	pushed, ok := cmd().(app.PushScreenMsg)
+	if !ok {
+		t.Fatalf("ctrl+o emitted %T, want app.PushScreenMsg", cmd())
+	}
+	pager, ok := pushed.Screen.(transcript.Screen)
+	if !ok {
+		t.Fatalf("ctrl+o pushed %T, want the transcript pager", pushed.Screen)
+	}
+	// The router resizes a pushed screen before its first view; do the
+	// same here so the pager is measured.
+	next, _ := pager.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	pager = next.(transcript.Screen)
+	joined := pager.View()
+	if !strings.Contains(joined, "notice-a") || !strings.Contains(joined, "notice-b") {
+		t.Errorf("the pager must see the conversation's blocks; got:\n%s", joined)
+	}
+}
 
+// TestCtrlOWithABlockFocusedStillOpensThePager: the pager key is global
+// in every focus state.
+func TestCtrlOWithABlockFocusedStillOpensThePager(t *testing.T) {
+	s := sized(t, 2)
 	s, _ = press(t, s, shiftTabKey)
-	s, _ = press(t, s, ctrl('o'))
-	if got := s.composer.Value(); got != "" {
-		t.Errorf("ctrl+o reached the composer as %q with a block focused", got)
+	s, cmd := press(t, s, ctrl('o'))
+	if cmd == nil {
+		t.Fatal("ctrl+o must emit the PushScreenMsg Cmd with a block focused")
+	}
+	if _, ok := cmd().(app.PushScreenMsg); !ok {
+		t.Fatalf("ctrl+o emitted %T, want app.PushScreenMsg", cmd())
 	}
 }
 

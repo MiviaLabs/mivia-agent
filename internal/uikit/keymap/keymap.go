@@ -73,8 +73,26 @@ const (
 	IDDialogDown    ID = "dialog-down"
 	IDDialogAccept  ID = "dialog-accept"
 	IDDialogCancel  ID = "dialog-cancel"
-	IDNextHunk      ID = "next-hunk"
-	IDPrevHunk      ID = "prev-hunk"
+
+	// Transcript mode (the pager). One ID per less-compatible action, so
+	// the help screen names every key the pager answers to
+	// (docs/design/cockpit-research.md rule 6.2).
+	IDSearchStart    ID = "search-start"
+	IDSearchNext     ID = "search-next"
+	IDSearchPrev     ID = "search-prev"
+	IDPagerRowUp     ID = "pager-row-up"
+	IDPagerRowDown   ID = "pager-row-down"
+	IDPagerTop       ID = "pager-top"
+	IDPagerBottom    ID = "pager-bottom"
+	IDPagerPromptUp  ID = "pager-prompt-up"
+	IDPagerPromptDn  ID = "pager-prompt-down"
+	IDPagerHalfUp    ID = "pager-half-up"
+	IDPagerHalfDown  ID = "pager-half-down"
+	IDPagerFullUp    ID = "pager-full-up"
+	IDPagerFullDown  ID = "pager-full-down"
+	IDLeavePager     ID = "leave-pager"
+	IDDumpScrollback ID = "dump-scrollback"
+	IDEditTranscript ID = "edit-transcript"
 )
 
 // Binding is one row of the table.
@@ -152,10 +170,28 @@ func Default() []Binding {
 		{ID: IDDialogAccept, Context: ContextDialog, Keys: []string{"enter"}, Help: "apply"},
 		{ID: IDDialogCancel, Context: ContextDialog, Keys: []string{"esc"}, Help: "cancel"},
 
-		// Pager.
-		{ID: IDNextHunk, Context: ContextPager, Keys: []string{"n"}, Help: "next hunk"},
-		{ID: IDPrevHunk, Context: ContextPager, Keys: []string{"N"}, Help: "previous hunk"},
-		{ID: IDDialogCancel, Context: ContextPager, Keys: []string{"esc"}, Help: "close"},
+		// Pager (transcript mode). Keys follow less, because less is the
+		// muscle memory every terminal user already has (cockpit-
+		// research.md rule 6.2). ctrl+u and ctrl+d are readline keys:
+		// readline owns the line editor, and a pager is not one. less
+		// itself binds ctrl+d as half a page down. ctrl+s stays unbound -
+		// it is XOFF in any context (ux-rules.md rule 1.2).
+		{ID: IDSearchStart, Context: ContextPager, Keys: []string{"/"}, Help: "search the conversation"},
+		{ID: IDSearchNext, Context: ContextPager, Keys: []string{"n"}, Help: "next match"},
+		{ID: IDSearchPrev, Context: ContextPager, Keys: []string{"N"}, Help: "previous match"},
+		{ID: IDPagerRowUp, Context: ContextPager, Keys: []string{"k", "up"}, Help: "one row up"},
+		{ID: IDPagerRowDown, Context: ContextPager, Keys: []string{"j", "down"}, Help: "one row down"},
+		{ID: IDPagerTop, Context: ContextPager, Keys: []string{"g", "home"}, Help: "jump to the start"},
+		{ID: IDPagerBottom, Context: ContextPager, Keys: []string{"G", "end"}, Help: "jump to the newest output"},
+		{ID: IDPagerPromptUp, Context: ContextPager, Keys: []string{"{"}, Help: "previous user prompt"},
+		{ID: IDPagerPromptDn, Context: ContextPager, Keys: []string{"}"}, Help: "next user prompt"},
+		{ID: IDPagerHalfUp, Context: ContextPager, Keys: []string{"ctrl+u"}, Help: "half page up"},
+		{ID: IDPagerHalfDown, Context: ContextPager, Keys: []string{"ctrl+d"}, Help: "half page down"},
+		{ID: IDPagerFullUp, Context: ContextPager, Keys: []string{"ctrl+b", "b"}, Help: "full page up"},
+		{ID: IDPagerFullDown, Context: ContextPager, Keys: []string{"ctrl+f", "space"}, Help: "full page down"},
+		{ID: IDLeavePager, Context: ContextPager, Keys: []string{"ctrl+o", "esc", "q"}, Help: "return to the composer"},
+		{ID: IDDumpScrollback, Context: ContextPager, Keys: []string{"["}, Help: "write the transcript to terminal scrollback"},
+		{ID: IDEditTranscript, Context: ContextPager, Keys: []string{"v"}, Help: "open the transcript in $VISUAL or $EDITOR"},
 	}
 }
 

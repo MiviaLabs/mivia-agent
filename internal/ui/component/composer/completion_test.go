@@ -85,7 +85,7 @@ func TestRenderedRowsAreCapped(t *testing.T) {
 		t.Fatalf("fixture has %d matches; it must exceed the row cap %d to test it",
 			len(m.menu.matches), uikitconfig.MaxCompletionRows)
 	}
-	view := m.menu.view(m.Theme, m.Tier)
+	view := m.menu.view(m.Theme, m.Tier, m.width)
 	rows := strings.Split(view, "\n")
 	// MaxCompletionRows candidate rows, plus the "n of m" count row.
 	if len(rows) != uikitconfig.MaxCompletionRows+1 {
@@ -108,7 +108,7 @@ func TestScrollingKeepsTheCursorVisible(t *testing.T) {
 			m.menu.cursor, m.menu.offset, m.menu.offset+uikitconfig.MaxCompletionRows)
 	}
 	want := m.menu.matches[m.menu.cursor].Name
-	if !strings.Contains(ansi.Strip(m.menu.view(m.Theme, m.Tier)), want) {
+	if !strings.Contains(ansi.Strip(m.menu.view(m.Theme, m.Tier, m.width)), want) {
 		t.Errorf("the highlighted match %q is not among the rendered rows", want)
 	}
 }
@@ -284,7 +284,7 @@ func TestViewIsEmptyWhenNothingMatches(t *testing.T) {
 	if m.MenuActive() {
 		t.Error("expected no menu when nothing matches")
 	}
-	if got := m.menu.view(m.Theme, m.Tier); got != "" {
+	if got := m.menu.view(m.Theme, m.Tier, m.width); got != "" {
 		t.Errorf("got %q, want no menu rows", got)
 	}
 }

@@ -90,6 +90,9 @@ func New(th theme.Theme, tier theme.Tier, themes []theme.Theme, conv ports.Conve
 
 func (s Screen) Init() tea.Cmd { return nil }
 
+// ViewFlags holds the alternate screen: the conversation is the cockpit.
+func (s Screen) ViewFlags() app.ViewFlags { return app.ViewFlags{AltScreen: true} }
+
 // turnEventMsg carries one event read off the active TurnHandle.
 type turnEventMsg struct{ ev uievent.Event }
 
@@ -168,6 +171,13 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 			step = -step
 		}
 		s.transcript = s.transcript.ScrollBy(step)
+		return s, nil
+	case tea.MouseClickMsg:
+		return s.handleClick(msg)
+	case tea.MouseReleaseMsg:
+		// Actions fire on the click, not the release: there is no
+		// drag selection to complete (deferred behind rule 6.3's
+		// cheaper scrollback handover), so release carries nothing.
 		return s, nil
 	case tea.WindowSizeMsg:
 		s.width, s.height = msg.Width, msg.Height
@@ -285,13 +295,18 @@ func (s *Screen) SetCommands(cmds []composer.Command) { s.composer.SetCommands(c
 // It is always drawn, even when there is nothing to say, because a row
 // that appears and disappears reflows every wrapped line above it
 // (docs/design/ux-rules.md rule 2.7). When the transcript is scrolled
-// away from the tail it says so and offers the way back, which is the
-// affordance auto-follow needs (cockpit-research.md rule 6.7).
+// away from the tail it says so, states how many blocks arrived while
+// the reader was paused, and offers the way back - the affordance
+// auto-follow needs (cockpit-research.md rule 6.7).
 func (s Screen) statusRow() string {
 	if v := s.statusline.View(s.now()); v != "" {
 		return v
 	}
 	if !s.transcript.Following() {
+		if n := s.transcript.NewWhilePaused(); n > 0 {
+			return render.Role(s.Theme, s.Tier, theme.RoleWarning).
+				Render(fmt.Sprintf("%d new blocks while you read - ctrl+end to follow again", n))
+		}
 		return render.Role(s.Theme, s.Tier, theme.RoleWarning).
 			Render("scrolled up - ctrl+end to follow again")
 	}

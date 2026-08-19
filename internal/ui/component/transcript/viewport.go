@@ -82,13 +82,24 @@ func (m *Model) clampOffset() {
 }
 
 // push appends a finished block and keeps the conversation bounded.
+//
+// A block that arrives while the reader paused auto-follow COUNTS: the
+// jump-to-bottom affordance must state what the reader missed, or the
+// newest output looks like silence (rule 6.7).
 func (m *Model) push(b Block) {
+	if !m.follow {
+		m.missed++
+	}
 	b.Collapsible = !b.Prose
 	b.Collapsed = b.Collapsible && defaultCollapsed(b.Body)
 	m.blocks = append(m.blocks, b)
 	m.trim()
 	m.clampOffset()
 }
+
+// NewWhilePaused is how many finished blocks arrived since auto-follow
+// was paused. It is 0 while following.
+func (m Model) NewWhilePaused() int { return m.missed }
 
 // trim bounds the conversation at MaxTranscriptLines blocks and COUNTS
 // what it dropped.
@@ -167,6 +178,41 @@ func (m Model) Rows() []string {
 // View is the visible rows joined, which is what the screen draws.
 func (m Model) View() string { return strings.Join(m.Rows(), "\n") }
 
+// ExpandBlockAtScreenRow expands the collapsed block that draws on the
+// given viewport row, if any. y is relative to the transcript's own
+// top row, the way a mouse event reports it. It reports false when the
+// row holds no collapsed block header, so a click can fall through.
+//
+// Only the header row of a block is clickable: the body of a collapsed
+// block is not on screen, and clicking expanded content must not
+// collapse it by surprise - the keyboard toggle stays the only way
+// back.
+func (m Model) ExpandBlockAtScreenRow(y int) (Model, bool) {
+	if y < 0 || !m.FocusedRowVisible(y) {
+		return m, false
+	}
+	row := m.offset + y
+	top := 0
+	for i := range m.blocks {
+		h := m.blocks[i].Height(m.width)
+		if row == top && m.blocks[i].Collapsible && m.blocks[i].Collapsed {
+			blocks := make([]Block, len(m.blocks))
+			copy(blocks, m.blocks)
+			blocks[i].Collapsed = false
+			m.blocks = blocks
+			m.clampOffset()
+			return m, true
+		}
+		top += h
+	}
+	return m, false
+}
+
+// FocusedRowVisible reports whether y is inside the viewport.
+func (m Model) FocusedRowVisible(y int) bool {
+	return m.height > 0 && y < m.height
+}
+
 // Following reports whether new output pulls the view to the bottom.
 func (m Model) Following() bool { return m.follow }
 
@@ -175,7 +221,8 @@ func (m Model) Offset() int { return m.offset }
 
 // ScrollBy moves the viewport by delta rows. Scrolling up pauses
 // auto-follow, so streaming output does not drag the reader away from
-// what they stopped to read. Reaching the bottom resumes it.
+// what they stopped to read. Reaching the bottom resumes it and clears
+// the missed count: the reader is caught up.
 func (m Model) ScrollBy(delta int) Model {
 	if delta == 0 {
 		return m
@@ -188,6 +235,7 @@ func (m Model) ScrollBy(delta int) Model {
 	if m.offset >= m.maxOffset() {
 		m.offset = m.maxOffset()
 		m.follow = true // back at the bottom: follow again
+		m.missed = 0
 	}
 	return m
 }
@@ -202,6 +250,7 @@ func (m Model) ScrollToTop() Model {
 // ScrollToBottom jumps to the newest output and resumes auto-follow.
 func (m Model) ScrollToBottom() Model {
 	m.follow = true
+	m.missed = 0
 	m.offset = m.maxOffset()
 	return m
 }

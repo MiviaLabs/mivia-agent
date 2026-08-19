@@ -11,6 +11,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
+	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
 )
 
 // Model wraps bubbles/v2 textinput for the input line itself, and owns
@@ -36,6 +37,16 @@ type Model struct {
 // promptWidth is the display width of the accent prompt View renders
 // ahead of the input ("> ").
 const promptWidth = 2
+
+// cursorReserve is the cell bubbles/v2 textinput draws beyond the width
+// it is given. Measured on this tree against bubbles v2.1.1: with the
+// cursor at the end of the value, View renders the value plus a cursor
+// cell plus Width()-valWidth padding (Width()+1 columns); with the
+// cursor inside the value, the cursor replaces one value cell and the
+// padding grows by one to compensate (still Width()+1). Passing width-
+// promptWidth-cursorReserve to SetWidth therefore draws exactly `width`
+// columns. This is a measured library behavior, not an off-by-one.
+const cursorReserve = 1
 
 // New returns a focused, empty composer sized to width, where width is
 // the full column count including the prompt.
@@ -101,14 +112,15 @@ func (m Model) AcceptCommonPrefix() (Model, bool) {
 	return m, true
 }
 
-// SetWidth resizes the input line. The prompt this package renders sits
-// outside textinput's own width, so the caller passes the full column
-// count and this subtracts the prompt.
+// SetWidth resizes the input line. The caller passes the full column
+// count; the prompt this package renders and the cursor cell textinput
+// reserves are subtracted, so the drawn line is exactly the width given
+// for every width that can hold prompt, cursor and one text cell.
 func (m *Model) SetWidth(width int) {
 	m.width = width
-	w := width - promptWidth
-	if w < 1 {
-		w = 1
+	w := width - promptWidth - cursorReserve
+	if w < 0 {
+		w = 0
 	}
 	m.input.SetWidth(w)
 }
@@ -130,6 +142,42 @@ func (m *Model) SetValue(s string) {
 	m.menu.refresh(s)
 }
 
+// ClickToColumn places the cursor under a click at display column x of
+// the composer's row (the row that starts with the prompt). x is the
+// column the mouse reported, not offset by the prompt.
+func (m *Model) ClickToColumn(x int) {
+	if x <= promptWidth {
+		m.input.SetCursor(0)
+		return
+	}
+	want := x - promptWidth
+	pos, width := 0, 0
+	for _, r := range m.input.Value() {
+		if width >= want {
+			break
+		}
+		width += ansi.StringWidth(string(r))
+		pos++
+	}
+	m.input.SetCursor(pos)
+}
+
+// MenuClickRow accepts the completion row at rendered index row (0 is
+// the top visible row). It reports false when the menu is closed or the
+// row is outside the rendered window, so the click can fall through.
+func (m *Model) MenuClickRow(row int) bool {
+	if !m.MenuActive() || row < 0 {
+		return false
+	}
+	end := min(m.menu.offset+uikitconfig.MaxCompletionRows, len(m.menu.matches))
+	if idx := m.menu.offset + row; idx < end {
+		m.menu.cursor = idx
+		*m = m.AcceptSelected()
+		return true
+	}
+	return false
+}
+
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
@@ -139,22 +187,38 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 // Height is the row count View draws, so the screen can reserve it.
 func (m Model) Height() int {
-	if v := m.menu.view(m.Theme, m.Tier); v != "" {
+	if v := m.menu.view(m.Theme, m.Tier, m.width); v != "" {
 		return 1 + strings.Count(v, "\n") + 1
 	}
 	return 1
 }
 
+// inputLine is the composer's bottom row before the width clamp: the
+// theme-styled prompt plus textinput's own View. It is separate so a
+// test can measure the line BEFORE the clamp and prove the clamp is a
+// backstop, not the sizing mechanism.
+func (m Model) inputLine() string {
+	prompt := render.Role(m.Theme, m.Tier, theme.RoleAccent).Render("> ")
+	return prompt + m.input.View()
+}
+
 // View renders the completion menu ABOVE the input line. The input stays
 // on the last row, so it never moves as the menu grows or shrinks
 // (docs/design/ux-rules.md rule 2.8).
+//
+// The clamp is a backstop, not the fix: SetWidth already sizes the line
+// to exactly m.width. It fires only when the width cannot hold the
+// prompt, the cursor cell and one text cell (width under 4), or if a
+// future textinput change draws wider than documented. In the cockpit
+// one overflowing column wraps the bottom row and pushes the whole
+// layout up by one, which is why the backstop stays even though the
+// normal path never reaches it.
 func (m Model) View() string {
-	prompt := render.Role(m.Theme, m.Tier, theme.RoleAccent).Render("> ")
-	line := prompt + m.input.View()
+	line := m.inputLine()
 	if m.width > 0 && ansi.StringWidth(line) > m.width {
 		line = ansi.Truncate(line, m.width, "")
 	}
-	if v := m.menu.view(m.Theme, m.Tier); v != "" {
+	if v := m.menu.view(m.Theme, m.Tier, m.width); v != "" {
 		return v + "\n" + line
 	}
 	return line

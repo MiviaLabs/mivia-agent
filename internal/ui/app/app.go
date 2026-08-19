@@ -12,13 +12,28 @@ import (
 )
 
 // Screen is one pushable unit of the UI: a full base screen (the
-// conversation) or a modal (the theme picker). Init/Update/View mirror
-// tea.Model; Screen is not tea.Model itself so a Screen can be
-// constructed and tested without a running Program.
+// conversation) or a modal (the theme picker, the transcript pager). Its
+// Init/Update/View mirror tea.Model; Screen is not tea.Model itself so a
+// Screen can be constructed and tested without a running Program.
 type Screen interface {
 	Init() tea.Cmd
 	Update(tea.Msg) (Screen, tea.Cmd)
 	View() string
+	// ViewFlags reports the terminal modes this screen needs on the ONE
+	// tea.View the router assembles. A Screen cannot return a tea.View,
+	// so the modes it depends on - today, whether the alternate screen
+	// is held - travel through this method instead.
+	ViewFlags() ViewFlags
+}
+
+// ViewFlags are the per-screen terminal mode requests the router honors.
+type ViewFlags struct {
+	// AltScreen reports whether the screen holds the terminal's whole
+	// drawing surface. The transcript pager clears it while the
+	// conversation is handed back to native scrollback
+	// (cockpit-research.md rule 6.3): one key writes the transcript into
+	// the scrollback and the terminal must be able to show it.
+	AltScreen bool
 }
 
 // PushScreenMsg asks the router to push a new modal screen onto the
@@ -47,14 +62,32 @@ type ThemeChangedMsg struct {
 	Tier  theme.Tier
 }
 
+// Options are the app-wide terminal modes. They come from flags and
+// startup probes, not from any Screen, so they live on the router and
+// apply to every frame.
+type Options struct {
+	// Mouse reports whether the cockpit captures the mouse. Rule 6.5
+	// makes capture opt-out: mouse capture is the most common friction
+	// point over SSH and inside tmux, because it kills copy-on-select.
+	Mouse bool
+
+	// FullRepaint forces a complete redraw on resize. Windows Terminal
+	// and ConPTY coalesce positioned writes wrongly and leave stale
+	// cells (cockpit-research.md section 4), and a full redraw is the
+	// recovery. The effect on a real terminal cannot be tested here;
+	// the decision function and the ClearScreen Cmd are.
+	FullRepaint bool
+}
+
 var _ tea.Model = Model{}
 
-// Model is the root tea.Model: current theme/tier, terminal size, and the
-// screen stack.
+// Model is the root tea.Model: current theme/tier, terminal size, the
+// screen stack, and the app-wide Options.
 type Model struct {
 	Theme  theme.Theme
 	Tier   theme.Tier
 	themes []theme.Theme
+	Opts   Options
 
 	// Width and Height are the live terminal size. Bubble Tea sends a
 	// WindowSizeMsg on startup and on every resize, so these are the one
@@ -69,7 +102,17 @@ type Model struct {
 // themes is the full candidate set ThemeSelectedMsg resolves against;
 // pass nil if nothing in this Program ever offers a theme picker.
 func New(base Screen, th theme.Theme, tier theme.Tier, themes []theme.Theme) Model {
-	return Model{Theme: th, Tier: tier, themes: themes, stack: []Screen{base}}
+	return Model{
+		Theme: th, Tier: tier, themes: themes,
+		Opts:  Options{Mouse: true},
+		stack: []Screen{base},
+	}
+}
+
+// WithOptions sets the app-wide terminal modes and returns the router.
+func (m Model) WithOptions(o Options) Model {
+	m.Opts = o
+	return m
 }
 
 func (m Model) top() (Screen, bool) {
@@ -87,38 +130,26 @@ func (m Model) Init() tea.Cmd {
 	return top.Init()
 }
 
+// isInputMsg reports whether msg is direct user input.
+//
+// Input belongs to the top of the stack alone: a modal must be able to
+// claim a key without the screen below acting on it too. Everything
+// else - window resizes, Cmd results, stream events - is broadcast, so
+// the base screen keeps running while a modal is open. Before this
+// split, a pushed screen silently killed the conversation's event read
+// loop: the read-continuation Msg went to the top screen, which ignored
+// it, so no further event was ever requested.
+func isInputMsg(msg tea.Msg) bool {
+	switch msg.(type) {
+	case tea.KeyPressMsg, tea.KeyReleaseMsg, tea.MouseMsg,
+		tea.PasteMsg, tea.FocusMsg, tea.BlurMsg:
+		return true
+	}
+	return false
+}
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		// Broadcast to every screen, not just the top one: a modal that
-		// pops after a resize must reveal a correctly-sized base screen
-		// underneath, not one still laid out for the old width.
-		m.Width, m.Height = msg.Width, msg.Height
-		var cmds []tea.Cmd
-		for i, sc := range m.stack {
-			var cmd tea.Cmd
-			m.stack[i], cmd = sc.Update(msg)
-			cmds = append(cmds, cmd)
-		}
-		return m, tea.Batch(cmds...)
-	case tea.KeyPressMsg:
-		switch msg.String() {
-		case "ctrl+c":
-			// Modals quit immediately; the base screen manages its own turn
-			// cancellation and double-press quit guard (UX Rule 1.3).
-			if len(m.stack) > 1 {
-				return m, tea.Quit
-			}
-		case "esc":
-			// A modal on top of the base screen: the router owns Esc as
-			// "dismiss the modal" globally, so it never reaches the
-			// modal's own Update (picker.Model separately handles "esc"
-			// for standalone use outside a Screen, but here the router
-			// is the single owner).
-			if len(m.stack) > 1 {
-				return m.pop()
-			}
-		}
 	case PushScreenMsg:
 		sc := msg.Screen
 		var resizeCmd tea.Cmd
@@ -135,26 +166,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case ThemeSelectedMsg:
-		var cmds []tea.Cmd
-		if th, ok := m.themeByName(msg.Name); ok {
-			m.Theme = th
-			// Broadcast to every screen on the stack, not just the top
-			// (the picker itself): the base screen underneath is the one
-			// that actually needs to repaint with the new theme.
-			for i, sc := range m.stack {
-				var cmd tea.Cmd
-				m.stack[i], cmd = sc.Update(ThemeChangedMsg{Theme: th, Tier: m.Tier})
-				cmds = append(cmds, cmd)
+		return m.applyTheme(msg)
+	case tea.KeyPressMsg:
+		if msg.String() == "ctrl+c" {
+			// Modals quit immediately; the base screen manages its own turn
+			// cancellation and double-press quit guard (UX Rule 1.3).
+			if len(m.stack) > 1 {
+				return m, tea.Quit
 			}
 		}
-		if len(m.stack) > 1 {
-			next, popCmd := m.pop()
-			m = next.(Model)
-			cmds = append(cmds, popCmd)
-		}
-		return m, tea.Batch(cmds...)
+		// Esc is NOT intercepted here. A screen must be able to give Esc a
+		// first meaning - the transcript pager cancels an open search with
+		// it - and still ask to close itself by returning PopScreenMsg.
+	case tea.WindowSizeMsg:
+		m.Width, m.Height = msg.Width, msg.Height
 	}
 
+	if isInputMsg(msg) {
+		return m.deliverTop(msg)
+	}
+	return m.broadcast(msg)
+}
+
+// deliverTop hands a Msg to the top screen only.
+func (m Model) deliverTop(msg tea.Msg) (tea.Model, tea.Cmd) {
 	top, ok := m.top()
 	if !ok {
 		return m, nil
@@ -164,30 +199,85 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// broadcast hands a Msg to every screen on the stack and batches the
+// Cmds they return.
+func (m Model) broadcast(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if len(m.stack) == 0 {
+		return m, nil
+	}
+	cmds := make([]tea.Cmd, 0, len(m.stack))
+	for i, sc := range m.stack {
+		var cmd tea.Cmd
+		m.stack[i], cmd = sc.Update(msg)
+		cmds = append(cmds, cmd)
+	}
+	if m.Opts.FullRepaint {
+		if _, ok := msg.(tea.WindowSizeMsg); ok {
+			// A resize under full-repaint redraws every cell, so stale
+			// cells a coalescing terminal left behind cannot survive.
+			cmds = append(cmds, tea.ClearScreen)
+		}
+	}
+	return m, tea.Batch(cmds...)
+}
+
+// applyTheme adopts the named theme, broadcasts the change, and pops
+// the screen that offered the choice. The pop happens even when the
+// name does not resolve: a picker that offered a bad name is dismissed,
+// not left blocking the app.
+func (m Model) applyTheme(msg ThemeSelectedMsg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+	if th, ok := m.themeByName(msg.Name); ok {
+		m.Theme = th
+		// Broadcast to every screen on the stack, not just the top (the
+		// picker itself): the base screen underneath is the one that
+		// actually needs to repaint with the new theme.
+		for i, sc := range m.stack {
+			var cmd tea.Cmd
+			m.stack[i], cmd = sc.Update(ThemeChangedMsg{Theme: th, Tier: m.Tier})
+			cmds = append(cmds, cmd)
+		}
+	}
+	if len(m.stack) > 1 {
+		next, popCmd := m.pop()
+		m = next.(Model)
+		cmds = append(cmds, popCmd)
+	}
+	return m, tea.Batch(cmds...)
+}
+
 // pop removes the top screen.
 func (m Model) pop() (tea.Model, tea.Cmd) {
 	m.stack = m.stack[:len(m.stack)-1]
 	return m, nil
 }
 
-// View renders the top of the stack on the alternate screen, always.
+// View renders the top of the stack.
 //
-// The cockpit is the only interactive renderer. v2 declares this on the
-// View rather than as a Program option, so the mode is part of the frame
-// and cannot drift from what was drawn.
+// The cockpit holds the alternate screen, which is the only interactive
+// renderer. v2 declares this on the View rather than as a Program
+// option, so the mode is part of the frame and cannot drift from what
+// was drawn. The top screen can hand the surface back (rule 6.3) by
+// reporting ViewFlags.AltScreen = false.
 //
 // MouseModeCellMotion, not AllMotion: cell motion reports clicks, drags
-// and the wheel, which is everything the transcript needs. AllMotion adds
-// an event for every cursor movement over the surface, and that traffic
-// buys nothing here.
+// and the wheel, which is everything the transcript needs. AllMotion
+// adds an event for every cursor movement over the surface, and that
+// traffic buys nothing here. Capture is off entirely while the surface
+// is handed back - the terminal's own selection must reach the
+// transcript in the scrollback - and when Options.Mouse is off (rule
+// 6.5, --no-mouse).
 func (m Model) View() tea.View {
 	top, ok := m.top()
 	if !ok {
 		return tea.NewView("")
 	}
 	v := tea.NewView(top.View())
-	v.AltScreen = true
-	v.MouseMode = tea.MouseModeCellMotion
+	flags := top.ViewFlags()
+	v.AltScreen = flags.AltScreen
+	if flags.AltScreen && m.Opts.Mouse {
+		v.MouseMode = tea.MouseModeCellMotion
+	}
 	return v
 }
 

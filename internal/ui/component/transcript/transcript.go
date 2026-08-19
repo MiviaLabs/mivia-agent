@@ -55,6 +55,7 @@ type Model struct {
 	width, height int
 	offset        int  // first visible row of the conversation
 	follow        bool // new output pulls the view to the bottom
+	missed        int  // finished blocks that arrived while paused (rule 6.7)
 
 	nextID int
 	// pending is a plain string, not a strings.Builder. Model is copied

@@ -34,6 +34,10 @@ func New(th theme.Theme, tier theme.Tier, themes []theme.Theme) Screen {
 
 func (s Screen) Init() tea.Cmd { return nil }
 
+// ViewFlags holds the alternate screen: a theme preview is a cockpit
+// modal, and the router re-enters the cockpit when it pops.
+func (s Screen) ViewFlags() app.ViewFlags { return app.ViewFlags{AltScreen: true} }
+
 func (s Screen) Update(msg tea.Msg) (app.Screen, tea.Cmd) {
 	if changed, ok := msg.(app.ThemeChangedMsg); ok {
 		s.Theme, s.Tier = changed.Theme, changed.Tier

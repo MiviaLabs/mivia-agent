@@ -1,6 +1,7 @@
 package app
 
 import (
+	"reflect"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -15,15 +16,15 @@ type stubScreen struct {
 	received []tea.Msg
 	cmd      tea.Cmd
 	initCmd  tea.Cmd
+	flags    ViewFlags
 }
 
-func (s stubScreen) Init() tea.Cmd { return s.initCmd }
-
+func (s stubScreen) Init() tea.Cmd        { return s.initCmd }
+func (s stubScreen) ViewFlags() ViewFlags { return s.flags }
 func (s stubScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 	s.received = append(s.received, msg)
 	return s, s.cmd
 }
-
 func (s stubScreen) View() string { return s.name }
 
 func loadTheme(t *testing.T) theme.Theme {
@@ -70,7 +71,12 @@ func TestPushScreenMsgPushesAndInits(t *testing.T) {
 }
 
 func TestEscPopsModalNotBase(t *testing.T) {
-	m := New(stubScreen{name: "base"}, loadTheme(t), theme.TierASCII, nil)
+	// Esc is delivered to the top screen; the router pops only when the
+	// screen asks. A modal that wants Esc to dismiss returns PopScreenMsg
+	// (the theme picker and the transcript pager both do), because a
+	// screen must be free to give Esc a first meaning of its own.
+	popOnEsc := func() tea.Cmd { return func() tea.Msg { return PopScreenMsg{} } }
+	m := New(stubScreen{name: "base", flags: ViewFlags{AltScreen: true}}, loadTheme(t), theme.TierASCII, nil)
 
 	// Esc on the base screen alone must not pop (nothing to pop) and
 	// must reach the base screen's own Update instead.
@@ -81,13 +87,18 @@ func TestEscPopsModalNotBase(t *testing.T) {
 		t.Fatalf("expected esc forwarded to the lone base screen, got %d received msgs", len(base.received))
 	}
 
-	next, _ = m.Update(PushScreenMsg{Screen: stubScreen{name: "modal"}})
+	next, _ = m.Update(PushScreenMsg{Screen: stubScreen{name: "modal", flags: ViewFlags{AltScreen: true}, cmd: popOnEsc()}})
 	m = next.(Model)
 	if got := m.View(); got.Content != "modal" {
 		t.Fatalf("got %q, want modal pushed", got.Content)
 	}
 
-	next, _ = m.Update(keyMsg("esc"))
+	next, cmd := m.Update(keyMsg("esc"))
+	m = next.(Model)
+	if _, ok := cmd().(PopScreenMsg); !ok {
+		t.Fatalf("got %T, want the modal's PopScreenMsg Cmd", cmd())
+	}
+	next, _ = m.Update(PopScreenMsg{})
 	m = next.(Model)
 	if got := m.View(); got.Content != "base" {
 		t.Errorf("got %q, want esc to pop the modal back to base", got.Content)
@@ -311,18 +322,25 @@ func TestInitDelegatesToTopScreen(t *testing.T) {
 // a screen through the fallthrough.
 type unknownMsg struct{ n int }
 
-// TestViewIsAlwaysAltScreen pins the cockpit decision. The alternate
-// screen is not a mode the base screen opts into; it is the only
-// interactive renderer, so the frame declares it unconditionally.
-func TestViewIsAlwaysAltScreen(t *testing.T) {
-	m := New(stubScreen{name: "base"}, loadTheme(t), theme.TierASCII, nil)
+// TestViewFollowsTopScreenFlags pins the handover contract of rule 6.3:
+// every cockpit screen holds the alternate screen, but a screen that
+// reports ViewFlags.AltScreen=false releases it, because the terminal
+// must be able to show the transcript written into native scrollback.
+func TestViewFollowsTopScreenFlags(t *testing.T) {
+	m := New(stubScreen{name: "base", flags: ViewFlags{AltScreen: true}}, loadTheme(t), theme.TierASCII, nil)
 	if !m.View().AltScreen {
-		t.Error("the base screen must render on the alternate screen")
+		t.Error("a screen that asks for the alternate screen must get it")
 	}
 
-	next, _ := m.Update(PushScreenMsg{Screen: stubScreen{name: "modal"}})
+	next, _ := m.Update(PushScreenMsg{Screen: stubScreen{name: "handover", flags: ViewFlags{AltScreen: false}}})
+	m = next.(Model)
+	if m.View().AltScreen {
+		t.Error("a screen that reports AltScreen=false must hand the surface back")
+	}
+
+	next, _ = m.Update(PopScreenMsg{})
 	if !next.(Model).View().AltScreen {
-		t.Error("a pushed modal must stay on the alternate screen")
+		t.Error("popping back to a holding screen must re-enter the alternate screen")
 	}
 }
 
@@ -330,8 +348,123 @@ func TestViewIsAlwaysAltScreen(t *testing.T) {
 // clicks, drags and the wheel, which is everything the transcript needs.
 // All-motion adds an event for every cursor movement and buys nothing.
 func TestViewRequestsCellMotionMouse(t *testing.T) {
-	m := New(stubScreen{name: "base"}, loadTheme(t), theme.TierASCII, nil)
+	m := New(stubScreen{name: "base", flags: ViewFlags{AltScreen: true}}, loadTheme(t), theme.TierASCII, nil)
 	if got := m.View().MouseMode; got != tea.MouseModeCellMotion {
 		t.Errorf("got mouse mode %v, want tea.MouseModeCellMotion", got)
 	}
+}
+
+// TestNoMouseOptionReleasesCapture pins rule 6.5: --no-mouse keeps the
+// cockpit and drops mouse capture, so the terminal's own
+// copy-on-select works over SSH and inside tmux.
+func TestNoMouseOptionReleasesCapture(t *testing.T) {
+	m := New(stubScreen{name: "base", flags: ViewFlags{AltScreen: true}}, loadTheme(t), theme.TierASCII, nil).
+		WithOptions(Options{Mouse: false})
+	if got := m.View().MouseMode; got != tea.MouseModeNone {
+		t.Errorf("got mouse mode %v, want none under --no-mouse", got)
+	}
+}
+
+// TestMouseReleasedWhileHandedOver pins the second half of the capture
+// rule: while a screen holds no alternate screen, the mouse must not be
+// captured either, or the terminal could not select the transcript that
+// was just written into the scrollback.
+func TestMouseReleasedWhileHandedOver(t *testing.T) {
+	m := New(stubScreen{name: "base", flags: ViewFlags{AltScreen: true}}, loadTheme(t), theme.TierASCII, nil)
+	next, _ := m.Update(PushScreenMsg{Screen: stubScreen{name: "handover", flags: ViewFlags{AltScreen: false}}})
+	if got := next.(Model).View().MouseMode; got != tea.MouseModeNone {
+		t.Errorf("got mouse mode %v, want none while the surface is handed back", got)
+	}
+}
+
+// TestNonInputMsgsReachTheBaseScreenUnderAModal pins the router rule
+// that keeps the conversation alive under a pushed screen: Cmd results
+// and stream events are broadcast. Input is not - see
+// TestInputGoesToTheTopScreenOnly.
+func TestNonInputMsgsReachTheBaseScreenUnderAModal(t *testing.T) {
+	m := New(stubScreen{name: "base", flags: ViewFlags{AltScreen: true}}, loadTheme(t), theme.TierASCII, nil)
+	next, _ := m.Update(PushScreenMsg{Screen: stubScreen{name: "modal"}})
+	m = next.(Model)
+
+	next, _ = m.Update(unknownMsg{n: 3})
+	m = next.(Model)
+	for i, name := range []string{"base", "modal"} {
+		sc := m.stack[i].(stubScreen)
+		if len(sc.received) != 1 || sc.received[0].(unknownMsg).n != 3 {
+			t.Errorf("%s screen got %v, want the broadcast unknownMsg", name, sc.received)
+		}
+	}
+}
+
+// TestInputGoesToTheTopScreenOnly pins modal key isolation: a keypress
+// while a modal is open must never also act on the screen below it.
+func TestInputGoesToTheTopScreenOnly(t *testing.T) {
+	m := New(stubScreen{name: "base", flags: ViewFlags{AltScreen: true}}, loadTheme(t), theme.TierASCII, nil)
+	next, _ := m.Update(PushScreenMsg{Screen: stubScreen{name: "modal"}})
+	m = next.(Model)
+
+	next, _ = m.Update(keyMsg("x"))
+	m = next.(Model)
+	if base := m.stack[0].(stubScreen); len(base.received) != 0 {
+		t.Errorf("base screen got %v, want no input while a modal is open", base.received)
+	}
+	if modal := m.stack[1].(stubScreen); len(modal.received) != 1 {
+		t.Errorf("modal screen got %v, want the one keypress", modal.received)
+	}
+}
+
+// TestFullRepaintClearsScreenOnResize pins the Windows Terminal/ConPTY
+// hazard response: in full-repaint mode a resize forces a complete
+// redraw, so stale cells cannot survive it.
+func TestFullRepaintClearsScreenOnResize(t *testing.T) {
+	m := New(stubScreen{name: "base", flags: ViewFlags{AltScreen: true}}, loadTheme(t), theme.TierASCII, nil).
+		WithOptions(Options{FullRepaint: true, Mouse: true})
+	_, cmd := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	if cmd == nil {
+		t.Fatal("expected a Cmd on resize under full repaint")
+	}
+	// The batch contains the stub's own nil Cmds plus ClearScreen; run
+	// the batch and confirm a clearScreenMsg is among the results.
+	want := tea.ClearScreen()
+	found := false
+	for _, c := range batchCmds(t, cmd) {
+		if reflect.DeepEqual(c(), want) {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected tea.ClearScreen in the resize Cmd batch")
+	}
+}
+
+// TestNoFullRepaintMeansNoClearScreen pins the default: a resize must
+// not force a full redraw when the mode is off.
+func TestNoFullRepaintMeansNoClearScreen(t *testing.T) {
+	m := New(stubScreen{name: "base", flags: ViewFlags{AltScreen: true}}, loadTheme(t), theme.TierASCII, nil)
+	_, cmd := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	want := tea.ClearScreen()
+	for _, c := range batchCmds(t, cmd) {
+		if reflect.DeepEqual(c(), want) {
+			t.Error("ClearScreen must not run without the full-repaint mode")
+		}
+	}
+}
+
+// batchCmds runs a (possibly batched) Cmd and returns the leaf Cmds it
+// contained. tea.Batch runs its leaves concurrently, so the leaves are
+// collected from the returned BatchMsg instead of the Cmd itself.
+func batchCmds(t *testing.T, cmd tea.Cmd) []tea.Cmd {
+	t.Helper()
+	if cmd == nil {
+		return nil
+	}
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		out := make([]tea.Cmd, 0, len(batch))
+		for _, c := range batch {
+			out = append(out, c)
+		}
+		return out
+	}
+	return []tea.Cmd{cmd}
 }

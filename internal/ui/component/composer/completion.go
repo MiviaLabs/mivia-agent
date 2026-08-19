@@ -4,6 +4,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
@@ -160,8 +162,10 @@ func (m menu) commonPrefix() string {
 
 // view renders at most MaxCompletionRows rows, with a count when the
 // match set is longer. The count is what tells the user that scrolling
-// reaches more, rather than leaving the cap silent.
-func (m menu) view(t theme.Theme, tier theme.Tier) string {
+// reaches more, rather than leaving the cap silent. Each row is clamped
+// to width: the menu shares the composer's column budget, and a wider
+// row would wrap the bottom block of the layout.
+func (m menu) view(t theme.Theme, tier theme.Tier, width int) string {
 	if !m.active || len(m.matches) == 0 {
 		return ""
 	}
@@ -178,6 +182,9 @@ func (m menu) view(t theme.Theme, tier theme.Tier) string {
 		row := marker + "/" + c.Name
 		if c.Desc != "" {
 			row += "  " + c.Desc
+		}
+		if width > 0 {
+			row = ansi.Truncate(row, width, "")
 		}
 		rows = append(rows, style.Render(row))
 	}

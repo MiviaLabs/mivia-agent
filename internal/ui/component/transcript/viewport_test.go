@@ -547,3 +547,95 @@ func TestTallFocusedBlockShowsItsHeadNotItsTail(t *testing.T) {
 		t.Errorf("got offset %d, want %d: the block's own top row", got, want)
 	}
 }
+
+// TestNewWhilePausedCountsAndResets pins rule 6.7's count: blocks that
+// arrive while the reader paused auto-follow are counted, the count is
+// zero while following, and returning to the bottom clears it.
+func TestNewWhilePausedCountsAndResets(t *testing.T) {
+	// Enough blocks to overflow the viewport, or scrolling up cannot
+	// pause follow at all (a short conversation has nothing to scroll).
+	m := sizedModel(t, 80, 4, 20)
+	if got := m.NewWhilePaused(); got != 0 {
+		t.Fatalf("a following transcript counts %d, want 0", got)
+	}
+
+	m = m.ScrollBy(-1) // pause by scrolling up
+	if m.Following() {
+		t.Fatal("scrolling up must pause auto-follow")
+	}
+	for i := 0; i < 3; i++ {
+		m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindNotice, Body: uievent.NoticeBody{Text: "late"}})
+	}
+	if got := m.NewWhilePaused(); got != 3 {
+		t.Errorf("counted %d new blocks while paused, want 3", got)
+	}
+
+	m = m.ScrollToBottom()
+	if got := m.NewWhilePaused(); got != 0 {
+		t.Errorf("after jumping to the bottom the count is %d, want 0", got)
+	}
+}
+
+// TestScrollByToTheBottomResetsCount: reaching the bottom by scrolling
+// (not the jump key) also clears the count.
+func TestScrollByToTheBottomResetsCount(t *testing.T) {
+	m := sizedModel(t, 80, 4, 20).ScrollBy(-1)
+	for i := 0; i < 2; i++ {
+		m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindNotice, Body: uievent.NoticeBody{Text: "late"}})
+	}
+	if m.NewWhilePaused() != 2 {
+		t.Fatalf("count = %d, want 2", m.NewWhilePaused())
+	}
+	m = m.ScrollBy(500) // past the bottom
+	if !m.Following() || m.NewWhilePaused() != 0 {
+		t.Errorf("scrolling to the bottom: following=%v count=%d, want true/0", m.Following(), m.NewWhilePaused())
+	}
+}
+
+// TestExpandBlockAtScreenRow pins the click contract: the header row of
+// a collapsed block expands it; other rows and off-screen rows do not.
+func TestExpandBlockAtScreenRow(t *testing.T) {
+	// Two notice blocks; force every block collapsed so the click has a
+	// deterministic target, then measure at a height that shows them.
+	m := sizedModel(t, 80, 10, 2).SetAllCollapsed(true)
+	m.SetSize(80, 10)
+	if len(m.Blocks()) == 0 {
+		t.Fatal("precondition: a block exists")
+	}
+
+	// The tool block is the last one; scroll so its header is the first
+	// visible row. Its header is at maxOffset.
+	m = m.ScrollToBottom()
+	target := len(m.Blocks()) - 1
+	// Walk heights to the tool block's first row, then click the row
+	// relative to the viewport.
+	first := 0
+	for i := range m.Blocks()[:target] {
+		first += m.Blocks()[i].Height(80)
+	}
+	for m.Offset() > first {
+		m = m.ScrollBy(-1)
+	}
+	click := first - m.Offset()
+
+	next, ok := m.ExpandBlockAtScreenRow(click)
+	if !ok {
+		t.Fatal("click on the tool block header must expand it")
+	}
+	if next.Blocks()[target].Collapsed {
+		t.Error("the clicked block must be expanded")
+	}
+
+	// A body row of the now-expanded block must not report anything.
+	if _, ok := next.ExpandBlockAtScreenRow(click + 1); ok {
+		t.Error("a body row must not report an expansion")
+	}
+
+	// Off-screen rows are refused.
+	if _, ok := next.ExpandBlockAtScreenRow(99); ok {
+		t.Error("a row outside the viewport must be refused")
+	}
+	if _, ok := next.ExpandBlockAtScreenRow(-1); ok {
+		t.Error("a negative row must be refused")
+	}
+}

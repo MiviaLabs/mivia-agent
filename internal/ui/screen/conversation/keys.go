@@ -6,6 +6,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/themepicker"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/transcript"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/keymap"
 )
 
@@ -70,6 +71,39 @@ func (s Screen) handleKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
 	next, cmd := s.composer.Update(msg)
 	s.composer = next
 	return s, cmd
+}
+
+// handleClick routes one mouse click. The row layout mirrors View:
+// transcript rows, then the approval prompt, then the status row, then
+// the completion menu, then the input line as the last row.
+//
+// Left button only. A click on a collapsed block header expands it; a
+// click on a completion row accepts it; a click on the input line
+// places the cursor.
+func (s Screen) handleClick(msg tea.MouseClickMsg) (app.Screen, tea.Cmd) {
+	if msg.Button != tea.MouseLeft {
+		return s, nil
+	}
+	if s.overlay != "" {
+		s.overlay = ""
+		return s, nil
+	}
+	transcriptRows := s.height - s.reservedRows()
+	inputRow := s.height - 1
+	menuRows := s.composer.Height() - 1
+
+	switch {
+	case msg.Y < transcriptRows:
+		next, expanded := s.transcript.ExpandBlockAtScreenRow(msg.Y)
+		if expanded {
+			s.transcript = next
+		}
+	case msg.Y == inputRow:
+		s.composer.ClickToColumn(msg.X)
+	case s.composer.MenuActive() && msg.Y >= inputRow-menuRows && msg.Y < inputRow:
+		s.composer.MenuClickRow(msg.Y - (inputRow - menuRows))
+	}
+	return s, nil
 }
 
 func (s Screen) completionAction(id keymap.ID) (app.Screen, tea.Cmd) {
@@ -148,7 +182,11 @@ func (s Screen) globalAction(id keymap.ID) (app.Screen, tea.Cmd, bool) {
 		s.transcript = s.transcript.ScrollToBottom()
 		return s, nil, true
 	case keymap.IDOpenPager:
-		return s, nil, true
+		// Rule 6.2: transcript mode replaces terminal find. The pager
+		// takes a VALUE snapshot of the conversation; blocks re-render
+		// at any width, so the copy is cheap and stays coherent.
+		pager := transcript.NewPager(s.Theme, s.Tier, s.transcript)
+		return s, func() tea.Msg { return app.PushScreenMsg{Screen: pager} }, true
 	case keymap.IDCancel:
 		return s.cancelTurn()
 	case keymap.IDQuit:

@@ -11,23 +11,28 @@ import (
 // section 1: the terminal or the tty line discipline owns each one, and no
 // context escapes it.
 //
-// The readline keys in that same section - ctrl+u, ctrl+e, ctrl+k, ctrl+r -
-// are deliberately absent here. Readline owns the LINE EDITOR, so those are
-// reserved inside the composer and free outside it, or free anywhere they
-// keep readline's own meaning. ctrl+u is bound to clear-the-line, which is
-// exactly what readline does with it.
+// The readline and multiplexer keys in that same section - ctrl+u, ctrl+e,
+// ctrl+k, ctrl+r, ctrl+d, ctrl+b - are deliberately absent here. Readline
+// owns the LINE EDITOR, so those are reserved inside the composer and free
+// outside it, or free anywhere they keep readline's own meaning. ctrl+u is
+// bound to clear-the-line in the composer, which is exactly what readline
+// does with it. In the pager (transcript mode) ctrl+u, ctrl+d, ctrl+b and
+// ctrl+f follow less: less itself binds them as half/full page motion, and
+// a pager is not a line editor, so no readline gesture is lost. GNU screen
+// intercepts ctrl+b before the app sees it, which makes the binding inert
+// for screen users, not harmful - and the pager keeps modifier-free
+// alternates (b, space) for the same actions. Amended 2026-08-19 with the
+// transcript-mode keymap; see ux-rules.md section 10.
 var reservedKeys = map[string]string{
 	"ctrl+s":  "XOFF: output freezes and the session looks hung",
 	"ctrl+q":  "XON: the user's only recovery from ctrl+s",
 	"ctrl+z":  "VSUSP: job control",
 	"ctrl+\\": "VQUIT: the last-resort kill",
 	"ctrl+v":  "VLNEXT: literal-next",
-	"ctrl+d":  "EOF",
 	"ctrl+w":  "readline word-rubout; close-tab in many emulators",
 	"ctrl+a":  "readline beginning-of-line; the tmux prefix",
 	"ctrl+k":  "readline kill-line",
 	"ctrl+m":  "byte-identical to Enter",
-	"ctrl+b":  "the GNU screen prefix",
 }
 
 func TestDefaultBindsNoReservedKey(t *testing.T) {
@@ -182,6 +187,56 @@ func TestSpaceIsBoundByItsReportedName(t *testing.T) {
 	}
 	if !found {
 		t.Error("the generated help does not spell the space key")
+	}
+}
+
+// TestPagerKeysMatchRealKeyEvents pins every punctuation binding in the
+// pager against the strings real KeyPressMsg values report. {, }, [ and /
+// are printable glyphs, and a binding spelled by guesswork - shift+[,
+// leftbracket - would silently never match.
+func TestPagerKeysMatchRealKeyEvents(t *testing.T) {
+	m := New(Default())
+	cases := []struct {
+		msg  tea.KeyPressMsg
+		want ID
+	}{
+		{tea.KeyPressMsg{Code: '{'}, IDPagerPromptUp},
+		{tea.KeyPressMsg{Code: '}'}, IDPagerPromptDn},
+		{tea.KeyPressMsg{Code: '['}, IDDumpScrollback},
+		{tea.KeyPressMsg{Code: 'v'}, IDEditTranscript},
+		{tea.KeyPressMsg{Code: '/'}, IDSearchStart},
+		{tea.KeyPressMsg{Code: 'n'}, IDSearchNext},
+		{tea.KeyPressMsg{Code: 'N'}, IDSearchPrev},
+		{tea.KeyPressMsg{Code: 'g'}, IDPagerTop},
+		{tea.KeyPressMsg{Code: 'G'}, IDPagerBottom},
+		{tea.KeyPressMsg{Code: 'q'}, IDLeavePager},
+		{tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl}, IDPagerHalfUp},
+		{tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl}, IDPagerHalfDown},
+		{tea.KeyPressMsg{Code: 'b', Mod: tea.ModCtrl}, IDPagerFullUp},
+		{tea.KeyPressMsg{Code: 'f', Mod: tea.ModCtrl}, IDPagerFullDown},
+		{tea.KeyPressMsg{Code: tea.KeySpace, Text: " "}, IDPagerFullDown},
+		{tea.KeyPressMsg{Code: tea.KeyEscape}, IDLeavePager},
+		{tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl}, IDLeavePager},
+	}
+	for _, c := range cases {
+		if id, ok := m.Match(ContextPager, c.msg.String()); !ok || id != c.want {
+			t.Errorf("Match(pager, %q) = (%q,%v), want %q", c.msg.String(), id, ok, c.want)
+		}
+	}
+}
+
+// TestPagerHelpIsGeneratedFromTheTable proves the transcript-mode keys land
+// in the help with no second edit: rule 6.2's whole table is visible.
+func TestPagerHelpIsGeneratedFromTheTable(t *testing.T) {
+	rows := New(Default()).Help()
+	pager := 0
+	for _, r := range rows {
+		if r.Context == ContextPager {
+			pager++
+		}
+	}
+	if pager != 16 {
+		t.Errorf("pager help has %d rows, want 16 (one per visible pager binding)", pager)
 	}
 }
 
