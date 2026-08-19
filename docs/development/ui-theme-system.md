@@ -35,9 +35,12 @@ Two rules that are easy to get wrong:
 
 `ValidateContrast` (`contrast.go`) checks every pair in `AllContrastChecks()`
 against WCAG 2.1: 4.5:1 for body text, 3:1 for large text and UI components.
+It is theme-agnostic; the first-party-only enforcement is a test-suite
+convention, not something the function itself does.
 `TestFirstPartyContrastPasses` hard-fails the build if any embedded
-first-party theme regresses. Third-party themes are not gated the same way
-(see below).
+first-party theme regresses, by filtering to `Theme.FirstParty` before
+asserting. A third-party theme's `ValidateContrast` result is available but
+not asserted on.
 
 ## Colour-vision gate
 
@@ -45,7 +48,8 @@ first-party theme regresses. Third-party themes are not gated the same way
 tritanopia with the Vienot/Brettel LMS model, and measures CIE76 `dE`
 between every pair of `{success, warning, danger, info}` under each
 dichromacy and under normal vision. `HardFailSeparation` compares the worst
-case against the theme's own `CVDBudget` field.
+case against the theme's own `CVDBudget` field; it is theme-agnostic too,
+the same way `ValidateContrast` is above.
 
 The budget is per-theme, not a single global constant, because
 `mivia-dark`'s shipped status colours trade some separation for vividness

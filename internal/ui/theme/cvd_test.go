@@ -69,6 +69,38 @@ func TestDichromatMatUnknownDichromacy(t *testing.T) {
 	}
 }
 
+// TestDichromatMatMapping pins which named matrix backs which Dichromacy
+// case. WorstCaseSeparation takes the minimum dE across all three
+// dichromacies, and that minimum is order-independent: a case-label swap
+// (e.g. Protanopia returning deuteranopiaMat) leaves every aggregate gate
+// test passing unchanged, since it only permutes which unlabelled matrix
+// backs which name, not the set of results. This test compares the
+// matrices directly instead of through the aggregate.
+func TestDichromatMatMapping(t *testing.T) {
+	cases := []struct {
+		d    Dichromacy
+		want mat3
+	}{
+		{Protanopia, protanopiaMat},
+		{Deuteranopia, deuteranopiaMat},
+		{Tritanopia, tritanopiaMat},
+	}
+	for _, c := range cases {
+		got, err := dichromatMat(c.d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != c.want {
+			t.Errorf("dichromatMat(%v) = %v, want %v", c.d, got, c.want)
+		}
+	}
+	// The three matrices must also be distinct from each other, or the
+	// equality checks above could pass by coincidence.
+	if protanopiaMat == deuteranopiaMat || protanopiaMat == tritanopiaMat || deuteranopiaMat == tritanopiaMat {
+		t.Fatal("the three dichromacy matrices must be pairwise distinct")
+	}
+}
+
 func TestSimulateDichromatInvalidHex(t *testing.T) {
 	if _, err := simulateDichromat("bad", Protanopia); err == nil {
 		t.Fatal("expected error for invalid hex")

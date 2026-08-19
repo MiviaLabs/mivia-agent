@@ -3,12 +3,11 @@ package uievent
 import "testing"
 
 // TestAllBodyTypesSatisfyBody exercises isBody() on every concrete Body
-// implementation. isBody has no logic (it is a sealing marker), so this
-// is not asserting behaviour beyond "every listed type is a Body" - which
-// the switch in unmarshalBody already depends on at compile time - but it
-// pins the complete set of sealed types in one place: a new Body impl
-// that forgets to appear here is a signal the Kind enum grew without a
-// matching entry in this list.
+// implementation. It does not assert exhaustiveness against the Kind
+// enum: a second hand-maintained list in this file could drift from
+// event.go's real Kind consts without either list catching the other.
+// TestEventJSONRoundTrip's 13-case coverage is what pins exhaustiveness,
+// since it round-trips through unmarshalBody's real production switch.
 func TestAllBodyTypesSatisfyBody(t *testing.T) {
 	bodies := []Body{
 		TurnStartBody{},
@@ -27,17 +26,5 @@ func TestAllBodyTypesSatisfyBody(t *testing.T) {
 	}
 	for _, b := range bodies {
 		b.isBody() // must not panic; the assertion is that this compiles and runs
-	}
-	if len(bodies) != len(allKindsForTest()) {
-		t.Fatalf("got %d Body types, want one per Kind (%d)", len(bodies), len(allKindsForTest()))
-	}
-}
-
-// allKindsForTest lists every Kind, for the count check above.
-func allKindsForTest() []Kind {
-	return []Kind{
-		KindTurnStart, KindTextDelta, KindTextEnd, KindReasoning,
-		KindToolPending, KindToolStart, KindToolOutput, KindToolEnd,
-		KindPlan, KindNotice, KindUsage, KindError, KindTurnEnd,
 	}
 }
