@@ -201,14 +201,12 @@ func TestIsEmpty(t *testing.T) {
 	}
 }
 
-// TestUserLinesDrawAContentWidthBubble pins the user-message framing:
-// on colour tiers every row - blank padding rows above and below
-// included - carries the RoleBGSelection background, padded to the
-// widest wrapped line, and the accent marker stays on the first row.
-// The bubble is content-width, not full-width: the old CLI walked a
-// full-width bar back because short messages painted heavy bands
-// (internal/cli/msgcard.go documents it).
-func TestUserLinesDrawAContentWidthBubble(t *testing.T) {
+// TestUserLinesDrawAFullWidthFill pins the user-message framing: on
+// colour tiers every row - blank padding rows above and below included,
+// and the message text itself - carries the RoleBGSelection background
+// across the full terminal width, and the accent marker stays on the
+// first row.
+func TestUserLinesDrawAFullWidthFill(t *testing.T) {
 	th := loadTheme(t)
 	rows := userLines(th, theme.TierTrueColor, 80, "short message")
 	if len(rows) != 3 {
@@ -218,10 +216,9 @@ func TestUserLinesDrawAContentWidthBubble(t *testing.T) {
 		if !strings.Contains(r, "48;2;42;42;48") {
 			t.Errorf("row %d carries no selection background: %q", i, r)
 		}
-	}
-	if w := lipgloss.Width(rows[0]); w > len("short message")+3 {
-		t.Errorf("bubble is %d wide for a %d-char message; it must be content-width, not full-width",
-			w, len("short message"))
+		if w := lipgloss.Width(r); w != 80 {
+			t.Errorf("row %d is %d wide, want the full 80-column terminal width", i, w)
+		}
 	}
 	if plain := ansi.Strip(rows[1]); !strings.HasPrefix(plain, "> ") || !strings.Contains(plain, "short message") {
 		t.Errorf("first text row lost its marker or text: %q", plain)
@@ -229,7 +226,7 @@ func TestUserLinesDrawAContentWidthBubble(t *testing.T) {
 }
 
 // TestUserLinesFillCoversWrappedLines: a multi-line message fills every
-// wrapped row, all padded to one bubble width.
+// wrapped row, all padded to the full terminal width.
 func TestUserLinesFillCoversWrappedLines(t *testing.T) {
 	th := loadTheme(t)
 	long := strings.Repeat("word ", 60)
@@ -237,18 +234,13 @@ func TestUserLinesFillCoversWrappedLines(t *testing.T) {
 	if len(rows) < 5 {
 		t.Fatalf("got %d rows, want several wrapped rows plus padding: %d", len(rows), len(rows))
 	}
-	widths := map[int]bool{}
 	for i, r := range rows {
 		if !strings.Contains(r, "48;2;42;42;48") {
 			t.Errorf("row %d carries no fill", i)
 		}
-		widths[lipgloss.Width(r)] = true
-	}
-	if len(widths) != 1 {
-		t.Errorf("bubble rows have differing widths %v; every row must pad to one width", widths)
-	}
-	if w := lipgloss.Width(rows[1]); w > 40 {
-		t.Errorf("bubble width %d exceeds the 40-column terminal", w)
+		if w := lipgloss.Width(r); w != 40 {
+			t.Errorf("row %d is %d wide, want the full 40-column terminal width", i, w)
+		}
 	}
 }
 

@@ -29,14 +29,14 @@ func proseLines(text string) []string {
 // continuation rows indented two columns under it (wireframes-panes.md
 // section 4).
 //
-// On colour tiers the rows are a content-width bubble: every row (a
-// blank padding row above and below included) carries the
-// RoleBGSelection background, padded to the widest wrapped line - CSS
-// padding, not a coloured line of text. Content width, not full width,
-// is deliberate: the old CLI tried a full-width bar first and walked it
-// back, because a nine-character message painting a band across the
-// whole terminal read as heavy (internal/cli/msgcard.go documents the
-// reversal). RoleBGSelection rather than RoleBGInset: the inset
+// On colour tiers every row - a blank padding row above and below
+// included - carries the RoleBGSelection background across the FULL
+// terminal width, including under the message text itself: CSS padding
+// plus a full-bleed fill, not a content-width bubble. (The old CLI's
+// full-width bar, internal/cli/msgcard.go, was walked back for a
+// different reason - it burned a whole row on a timestamp alone; this
+// fill carries the message text itself on every row, so that tradeoff
+// does not apply here.) RoleBGSelection rather than RoleBGInset: the inset
 // background already marks the approval prompt and the dialogs, and a
 // user message is a quotation, not a raised surface - the selection
 // background is this theme set's other validated low-lift fill, and no
@@ -75,7 +75,6 @@ func userLines(t theme.Theme, tier theme.Tier, width int, input string) []string
 		st = st.Background(lipgloss.Color(strconv.Itoa(bg.ANSI16)))
 	}
 	rows := make([]string, 0, len(wrapped)+2)
-	bubble := 0
 	for i, line := range wrapped {
 		text := line
 		if i == 0 {
@@ -83,21 +82,18 @@ func userLines(t theme.Theme, tier theme.Tier, width int, input string) []string
 		} else {
 			text = "  " + line
 		}
-		if w := lipgloss.Width(text); w > bubble {
-			bubble = w
-		}
 		rows = append(rows, text)
 	}
-	// One trailing pad column, so the fill does not end flush against
-	// the last glyph.
-	bubble = min(bubble+1, width)
+	// Full terminal width: the fill runs edge to edge, under the message
+	// text and the padding rows alike.
+	full := width
 	pad := func(row string) string {
-		if gap := bubble - lipgloss.Width(row); gap > 0 {
+		if gap := full - lipgloss.Width(row); gap > 0 {
 			row += strings.Repeat(" ", gap)
 		}
 		return st.Render(row)
 	}
-	blank := st.Render(strings.Repeat(" ", bubble))
+	blank := st.Render(strings.Repeat(" ", full))
 	out := make([]string, 0, len(rows)+2)
 	out = append(out, blank)
 	for _, row := range rows {
