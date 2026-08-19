@@ -421,15 +421,22 @@ func TestCtrlCIsTheEmergencyExitUnderModelPicker(t *testing.T) {
 	scr := next.(Screen)
 	pm := picker.New(scr.Theme, scr.Tier, []string{"only"})
 	scr.modelPicker = &pm
-	// The idle screen (no turn, empty composer) quits on one press, and
-	// the picker must not change that.
-	scr2, cmd := scr.Update(ctrl('c'))
+	// ctrl+c closes the picker modal and arms quit on first press
+	scr2, _ := scr.Update(ctrl('c'))
 	out := scr2.(Screen)
 	if out.modelPicker != nil {
 		t.Error("ctrl+c left the picker open")
 	}
+	if !out.quitArmed {
+		t.Error("expected quit to be armed on first ctrl+c")
+	}
+	// second ctrl+c quits
+	_, cmd := out.Update(ctrl('c'))
 	if cmd == nil {
-		t.Error("ctrl+c did not quit under the picker modal")
+		t.Fatal("expected quit on second press")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Errorf("got %T, want tea.QuitMsg", cmd())
 	}
 }
 

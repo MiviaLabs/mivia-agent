@@ -108,7 +108,7 @@ func TestDemoHarnessMultiTurnScenario(t *testing.T) {
 	tm.Send(enterKey())
 	wait(contains("six packages"))
 
-	tm.Send(quitKey())
+	quit(tm)
 	tm.WaitFinished(t, teatest.WithFinalTimeout(3*time.Second))
 }
 
@@ -125,7 +125,7 @@ func TestDemoHarnessApprovalApproved(t *testing.T) {
 	tm.Send(tea.KeyPressMsg{Code: 'o'})
 	wait(contains("Removed the stale cache directory"))
 
-	tm.Send(quitKey())
+	quit(tm)
 	tm.WaitFinished(t, teatest.WithFinalTimeout(3*time.Second))
 }
 
@@ -142,7 +142,7 @@ func TestDemoHarnessApprovalDenied(t *testing.T) {
 	tm.Send(tea.KeyPressMsg{Code: 'd'})
 	wait(contains("left the cache directory in place"))
 
-	tm.Send(quitKey())
+	quit(tm)
 	tm.WaitFinished(t, teatest.WithFinalTimeout(3*time.Second))
 	shadow.drain()
 
@@ -169,7 +169,7 @@ func TestDemoHarnessCancelMidStreamKeepsPartialText(t *testing.T) {
 	tm.Send(tea.KeyPressMsg{Code: tea.KeyEscape})
 	wait(contains("cancelled"))
 
-	tm.Send(quitKey())
+	quit(tm)
 	tm.WaitFinished(t, teatest.WithFinalTimeout(3*time.Second))
 	shadow.drain()
 
@@ -191,7 +191,7 @@ func TestDemoHarnessThemeCommandOpensPicker(t *testing.T) {
 	typeAndRun(tm, "/theme")
 	wait(contains("select a theme"))
 
-	tm.Send(quitKey()) // ctrl+c quits a modal immediately (app.Model.Update)
+	quit(tm)
 	tm.WaitFinished(t, teatest.WithFinalTimeout(3*time.Second))
 	shadow.drain()
 
@@ -212,7 +212,7 @@ func TestDemoHarnessModelCommandOpensPickerAndSelects(t *testing.T) {
 	tm.Send(enterKey()) // accept the first (highlighted) model
 	wait(contains("model set to"))
 
-	tm.Send(quitKey())
+	quit(tm)
 	tm.WaitFinished(t, teatest.WithFinalTimeout(3*time.Second))
 	shadow.drain()
 
@@ -230,7 +230,7 @@ func TestDemoHarnessContextCommandShowsNotice(t *testing.T) {
 	typeAndRun(tm, "/context")
 	wait(contains("Context usage"))
 
-	tm.Send(quitKey())
+	quit(tm)
 	tm.WaitFinished(t, teatest.WithFinalTimeout(3*time.Second))
 	shadow.drain()
 
@@ -264,7 +264,7 @@ func TestDemoHarnessClearCommandEmptiesTranscript(t *testing.T) {
 	tm.Send(tea.WindowSizeMsg{Width: 80, Height: 24})
 	wait(func(b []byte) bool { return len(b) > markerLen })
 
-	tm.Send(quitKey())
+	quit(tm)
 	tm.WaitFinished(t, teatest.WithFinalTimeout(3*time.Second))
 	shadow.drain()
 
@@ -285,7 +285,7 @@ func TestDemoHarnessUnknownCommandNeverSendsAsChat(t *testing.T) {
 	tm.Send(enterKey())
 	wait(contains("unknown command /bogus"))
 
-	tm.Send(quitKey())
+	quit(tm)
 	tm.WaitFinished(t, teatest.WithFinalTimeout(3*time.Second))
 	shadow.drain()
 

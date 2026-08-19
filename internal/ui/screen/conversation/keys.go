@@ -537,17 +537,14 @@ func (s Screen) cancelTurn() (app.Screen, tea.Cmd, bool) {
 // double-press window. One ctrl+c must never discard a running turn AND
 // the session at once (docs/design/ux-rules.md rule 1.3).
 func (s Screen) quit() (app.Screen, tea.Cmd, bool) {
-	if s.active != nil && !s.quitArmed {
-		s.approval.Clear()
-		s.active.Cancel()
-		s.statusline.Stop()
+	if !s.quitArmed {
 		s.quitArmed = true
-		s.statusline.Notice("cancelled. press ctrl+c again to quit")
-		return s, nil, true
-	}
-	if !s.quitArmed && s.composer.Value() != "" {
-		s.quitArmed = true
-		s.statusline.Notice("press ctrl+c again to quit")
+		if s.active != nil {
+			s.approval.Clear()
+			s.active.Cancel()
+			s.statusline.Stop()
+			s.statusline.Notice("cancelled")
+		}
 		return s, nil, true
 	}
 	return s, tea.Quit, true

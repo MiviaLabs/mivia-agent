@@ -118,7 +118,7 @@ func TestTranscriptModeSearchAndScrollbackHandover(t *testing.T) {
 
 	// A key returns to the pager, then quit the modal.
 	tm.Send(tea.KeyPressMsg{Code: 'x'})
-	tm.Send(quitKey())
+	quit(tm)
 	tm.WaitFinished(t, teatest.WithFinalTimeout(3*time.Second))
 	shadow.drain()
 
@@ -208,7 +208,7 @@ func TestTranscriptModeLiveStreaming(t *testing.T) {
 	})
 
 	// Quit the pager and app.
-	tm.Send(quitKey())
+	quit(tm)
 	tm.WaitFinished(t, teatest.WithFinalTimeout(3*time.Second))
 	shadow.drain()
 

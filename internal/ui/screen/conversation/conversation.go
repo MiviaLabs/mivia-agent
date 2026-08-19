@@ -529,6 +529,14 @@ func (s Screen) statusRow() string {
 	var hint string
 	if s.embedded {
 		hint = render.Role(s.Theme, s.Tier, theme.RoleFGSubtle).Render("esc:close dialog")
+	} else if s.quitArmed {
+		prefix := s.keys.Hint(keymap.IDHelp, keymap.IDOpenPager, keymap.IDPanelToggle)
+		warn := render.Role(s.Theme, s.Tier, theme.RoleWarning).Render("ctrl+c:press again to quit")
+		if prefix != "" {
+			hint = render.Role(s.Theme, s.Tier, theme.RoleFGSubtle).Render(prefix) + "  " + warn
+		} else {
+			hint = warn
+		}
 	} else {
 		hint = render.Role(s.Theme, s.Tier, theme.RoleFGSubtle).
 			Render(s.keys.Hint(keymap.IDHelp, keymap.IDOpenPager, keymap.IDPanelToggle, keymap.IDQuit))

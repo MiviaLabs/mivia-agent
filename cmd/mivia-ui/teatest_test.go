@@ -27,6 +27,10 @@ import (
 
 func enterKey() tea.KeyPressMsg { return tea.KeyPressMsg{Code: tea.KeyEnter} }
 func quitKey() tea.KeyPressMsg  { return tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl} }
+func quit(tm *teatest.TestModel) {
+	tm.Send(quitKey())
+	tm.Send(quitKey())
+}
 func topKey() tea.KeyPressMsg {
 	return tea.KeyPressMsg{Code: tea.KeyHome, Mod: tea.ModCtrl}
 }
@@ -52,39 +56,27 @@ func newDemoRoot(t *testing.T) app.Model {
 	if err != nil {
 		t.Fatal(err)
 	}
-	conv := replay.New(events, 0) // no pace: the test doesn't want to wait out real replayPace
+	conv := replay.New(events, 0)
 	screen := conversation.New(th, theme.TierASCII, themes, conv, replay.NewApprover(), 80, nil)
 	return app.New(screen, th, theme.TierASCII, themes)
 }
 
-// TestInteractiveSendAndReceive drives the real app.Model through a real
-// tea.Program (teatest), the first fully end-to-end test in this repo
-// for the new UI: a real terminal-input/output loop, not a direct
-// Update() call. It types a message, presses enter, and waits for the
-// replayed reply to actually appear in the rendered output.
 func TestInteractiveSendAndReceive(t *testing.T) {
-	// A normal terminal size. The fixture renders to about 35 rows, well
-	// past 24, so the start of the conversation genuinely leaves the
-	// screen and the cockpit has to hold it.
 	tm := teatest.NewTestModel(t, newDemoRoot(t), teatest.WithInitialTermSize(80, 24))
 
 	tm.Type("hello")
 	tm.Send(enterKey())
 
-	// The tail is what a following viewport shows.
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("1284 in"))
 	}, teatest.WithDuration(5*time.Second))
 
-	// And the start is still reachable. "bounded retry" is in the first
-	// assistant reply, far above the fold by now: if the transcript had
-	// dropped what scrolled off, this could never come back.
 	tm.Send(topKey())
 	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
 		return bytes.Contains(out, []byte("bounded retry"))
 	}, teatest.WithDuration(5*time.Second))
 
-	tm.Send(quitKey())
+	quit(tm)
 	tm.WaitFinished(t, teatest.WithFinalTimeout(3*time.Second))
 }
 
@@ -99,7 +91,7 @@ func TestInteractiveEmptyEnterIsNoOp(t *testing.T) {
 		return bytes.Contains(out, []byte(">"))
 	}, teatest.WithDuration(2*time.Second))
 
-	tm.Send(quitKey())
+	quit(tm)
 	tm.WaitFinished(t, teatest.WithFinalTimeout(3*time.Second))
 
 	out, err := readAll(tm)

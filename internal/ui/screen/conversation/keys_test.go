@@ -219,7 +219,7 @@ func TestCtrlCCancelsThenQuits(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("the first ctrl+c produced %+v, want a cancel and no quit", cmd())
 	}
-	if !strings.Contains(ansi.Strip(scr.statusline.View(fixedNow())), "again to quit") {
+	if !strings.Contains(ansi.Strip(scr.statusRow()), "again to quit") {
 		t.Error("the first ctrl+c did not say a second press quits")
 	}
 
@@ -247,13 +247,41 @@ func TestAnyOtherKeyDisarmsTheQuit(t *testing.T) {
 	}
 }
 
-// TestCtrlCOnAnIdleEmptyComposerQuitsAtOnce: with no turn and no text
-// there is nothing to cancel, so a confirmation step would be noise.
-func TestCtrlCOnAnIdleEmptyComposerQuitsAtOnce(t *testing.T) {
+// TestCtrlCOnAnIdleEmptyComposerArmsQuitFirst: on the first ctrl+c, quit is armed,
+// the status hint changes to warn "ctrl+c:press again to quit". Any other key disarms it;
+// a second ctrl+c quits.
+func TestCtrlCOnAnIdleEmptyComposerArmsQuitFirst(t *testing.T) {
 	s := newScreen(t, replay.New(nil, 0), nil, nil)
-	_, cmd := press(t, s, ctrl('c'))
+	s, cmd := press(t, s, ctrl('c'))
+	if cmd != nil {
+		t.Fatal("expected no immediate quit on first press")
+	}
+	if !s.quitArmed {
+		t.Fatal("expected quit to be armed on first press")
+	}
+	if !strings.Contains(s.statusRow(), "press again to quit") {
+		t.Errorf("statusRow missing warning hint:\n%s", s.statusRow())
+	}
+
+	// Any other key disarms quit
+	s, _ = press(t, s, key("x"))
+	if s.quitArmed {
+		t.Fatal("key 'x' did not disarm quit")
+	}
+	if strings.Contains(s.statusRow(), "press again to quit") {
+		t.Errorf("statusRow should restore normal hint after disarm:\n%s", s.statusRow())
+	}
+
+	// First press arms again
+	s, _ = press(t, s, ctrl('c'))
+	if !s.quitArmed {
+		t.Fatal("expected quit to be armed again")
+	}
+
+	// Second press quits
+	_, cmd = press(t, s, ctrl('c'))
 	if cmd == nil {
-		t.Fatal("expected an immediate quit")
+		t.Fatal("expected quit on second press")
 	}
 	if _, ok := cmd().(tea.QuitMsg); !ok {
 		t.Errorf("got %T, want tea.QuitMsg", cmd())
