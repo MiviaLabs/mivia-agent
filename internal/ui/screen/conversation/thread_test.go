@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/composer"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
@@ -330,5 +331,47 @@ func TestSubagentThreadSlashCommandExecution(t *testing.T) {
 	dialogView := ansi.Strip(s.View())
 	if !strings.Contains(dialogView, "thread command ran") {
 		t.Errorf("dialog view missing command outcome notice:\n%s", dialogView)
+	}
+}
+
+// TestThemeChangeReachesTheCachedThreadScreen: openThread reuses the
+// cached embedded Screen for the same call ID, so a thread opened
+// before a theme switch and reopened after it must come back in the new
+// theme, not the one it was built with.
+func TestThemeChangeReachesTheCachedThreadScreen(t *testing.T) {
+	_, light, _ := themePair(t)
+	thread := &scriptedThread{history: []ports.Message{{Role: "user", Text: "scout"}}}
+	s := threadScreen(t, stubThreads{"sa-1": thread}, false)
+
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	s = next.(Screen)
+	if s.thread == nil {
+		t.Fatal("the thread dialog did not build an embedded Screen")
+	}
+
+	next, _ = s.Update(app.ThemeChangedMsg{Theme: light, Tier: theme.TierTrueColor})
+	s = next.(Screen)
+
+	if s.thread == nil {
+		t.Fatal("the theme change dropped the cached thread")
+	}
+	if got := s.thread.Theme.Name; got != light.Name {
+		t.Errorf("cached thread screen kept theme %q, want %q", got, light.Name)
+	}
+	for name, th := range map[string]theme.Theme{
+		"composer":   s.thread.composer.Theme,
+		"transcript": s.thread.transcript.Theme,
+		"statusline": s.thread.statusline.Theme,
+		"approval":   s.thread.approval.Theme,
+		"topbar":     s.thread.topbar.Theme,
+		"welcome":    s.thread.welcome.Theme,
+		"panel.list": s.thread.panel.list.Theme,
+	} {
+		if th.Name != light.Name {
+			t.Errorf("cached thread's %s kept theme %q, want %q", name, th.Name, light.Name)
+		}
+	}
+	if s.thread.Tier != theme.TierTrueColor {
+		t.Errorf("cached thread screen kept tier %v, want TierTrueColor", s.thread.Tier)
 	}
 }

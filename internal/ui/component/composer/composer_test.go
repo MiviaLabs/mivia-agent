@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 )
 
@@ -169,5 +170,72 @@ func TestComposerClampNeverFiresUnderNormalSizing(t *testing.T) {
 					width, text, natural, want)
 			}
 		}
+	}
+}
+
+// lightTheme is the second colour scheme these tests switch to: a theme
+// change must reach the embedded textinput, not only this package's own
+// prompt and border.
+func lightTheme(t *testing.T) theme.Theme {
+	t.Helper()
+	themes, err := theme.Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, th := range themes {
+		if th.Name == "mivia-light" {
+			return th
+		}
+	}
+	t.Fatal("mivia-light theme not found")
+	return theme.Theme{}
+}
+
+// TestInputTextCarriesTheThemeForeground is the regression behind
+// "selecting a theme does nothing": bubbles/textinput ships its own
+// hard-coded default styles, so the one thing the user looks at while
+// typing kept rendering in the library's colour no matter which theme
+// was active - white text on a light theme's light surface.
+func TestInputTextCarriesTheThemeForeground(t *testing.T) {
+	th := loadTheme(t)
+	m := New(th, theme.TierTrueColor, 40)
+	next, _ := m.Update(tea.KeyPressMsg{Text: "h", Code: 'h'})
+
+	want := render.Role(th, theme.TierTrueColor, theme.RoleFG).Render("h")
+	if !strings.Contains(next.View(), want) {
+		t.Errorf("typed text is not styled with the theme's fg role, got:\n%q", next.View())
+	}
+}
+
+// TestSetThemeRestylesTheInput proves the switch reaches the embedded
+// textinput: the old theme's foreground must be gone from the drawn
+// line, not merely joined by the new one.
+func TestSetThemeRestylesTheInput(t *testing.T) {
+	dark, light := loadTheme(t), lightTheme(t)
+	m := New(dark, theme.TierTrueColor, 40)
+	next, _ := m.Update(tea.KeyPressMsg{Text: "h", Code: 'h'})
+	next.SetTheme(light, theme.TierTrueColor)
+
+	wantLight := render.Role(light, theme.TierTrueColor, theme.RoleFG).Render("h")
+	if !strings.Contains(next.View(), wantLight) {
+		t.Errorf("typed text not restyled to the new theme, got:\n%q", next.View())
+	}
+	if got, want := next.Theme.Name, light.Name; got != want {
+		t.Errorf("got theme %q, want %q", got, want)
+	}
+	wasDark := render.Role(dark, theme.TierTrueColor, theme.RoleFG).Render("h")
+	if wasDark != wantLight && strings.Contains(next.View(), wasDark) {
+		t.Errorf("old theme's foreground survived the switch, got:\n%q", next.View())
+	}
+}
+
+// TestSetThemeAtNoColourTierAddsNoColour holds the degradation ladder:
+// styling the input from theme roles must not smuggle colour into a
+// tier that has none.
+func TestSetThemeAtNoColourTierAddsNoColour(t *testing.T) {
+	m := New(loadTheme(t), theme.TierNoTTY, 40)
+	next, _ := m.Update(tea.KeyPressMsg{Text: "h", Code: 'h'})
+	if got := next.View(); strings.Contains(got, "\x1b[38;2;") || strings.Contains(got, "\x1b[48;2;") {
+		t.Errorf("no-TTY tier drew colour, got:\n%q", got)
 	}
 }

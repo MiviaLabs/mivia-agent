@@ -271,17 +271,33 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 		s.reflow()
 		return s, nil
 	case app.ThemeChangedMsg:
-		s.Theme, s.Tier = msg.Theme, msg.Tier
-		s.transcript.SetTheme(msg.Theme, msg.Tier)
-		s.composer.Theme, s.composer.Tier = msg.Theme, msg.Tier
-		s.statusline.SetTheme(msg.Theme, msg.Tier)
-		s.approval.Theme, s.approval.Tier = msg.Theme, msg.Tier
-		s.topbar.SetTheme(msg.Theme, msg.Tier)
-		s.panel.list.Theme, s.panel.list.Tier = msg.Theme, msg.Tier
-		s.welcome.SetTheme(msg.Theme, msg.Tier)
-		return s, nil
+		return s.applyTheme(msg), nil
 	}
 	return s, nil
+}
+
+// applyTheme adopts a new theme across every component this screen
+// owns. Theme and Tier are plain value fields all the way down - there
+// is no shared pointer - so a component this misses keeps rendering in
+// the old theme until it is rebuilt.
+//
+// The cached subagent-thread Screen is included: openThread reuses it
+// for the same call ID, so a thread opened before the switch and
+// reopened after it would otherwise come back in the previous theme.
+func (s Screen) applyTheme(msg app.ThemeChangedMsg) Screen {
+	s.Theme, s.Tier = msg.Theme, msg.Tier
+	s.transcript.SetTheme(msg.Theme, msg.Tier)
+	s.composer.SetTheme(msg.Theme, msg.Tier)
+	s.statusline.SetTheme(msg.Theme, msg.Tier)
+	s.approval.Theme, s.approval.Tier = msg.Theme, msg.Tier
+	s.topbar.SetTheme(msg.Theme, msg.Tier)
+	s.panel.list.Theme, s.panel.list.Tier = msg.Theme, msg.Tier
+	s.welcome.SetTheme(msg.Theme, msg.Tier)
+	if s.thread != nil {
+		next := s.thread.applyTheme(msg)
+		s.thread = &next
+	}
+	return s
 }
 
 // handleWheel applies one mouse-wheel notch. Wheel events scroll the
@@ -452,7 +468,13 @@ func (s Screen) gutter(lines []string) string {
 		}
 		out[i] = " " + ln + strings.Repeat(" ", pad) + " "
 	}
-	return strings.Join(out, "\n")
+	// Paint the theme's own surface under every cell, including the cells
+	// between styled runs. The screen is the last thing that can do this:
+	// without it the terminal's background shows through and a theme
+	// change looks like it did nothing, because the largest coloured area
+	// on screen never changes. FillBG is a no-op at a tier without
+	// colour, so NO_COLOR output is unaffected.
+	return render.FillBG(s.Theme, s.Tier, theme.RoleBG, strings.Join(out, "\n"))
 }
 
 // overlayRows pads or clips an overlay to the transcript's own height, so

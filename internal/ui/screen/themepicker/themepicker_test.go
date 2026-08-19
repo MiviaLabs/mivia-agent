@@ -1,9 +1,11 @@
 package themepicker
 
 import (
-	"github.com/charmbracelet/x/ansi"
 	"strings"
 	"testing"
+	"unicode/utf8"
+
+	"github.com/charmbracelet/x/ansi"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -237,5 +239,179 @@ func TestResizeRecentersTheDialog(t *testing.T) {
 		if !found {
 			t.Errorf("no dialog frame in the sized view:\n%s", scr.View())
 		}
+	}
+}
+
+// TestPreviewDrawsOnTheDialogSurface is the "dark rectangles" regression.
+// The preview's prompt line, code read, and diff are each a chain of
+// styled runs, and every run ends in an SGR reset. Before the fix only
+// the first run of a row carried the dialog's inset background, so every
+// later run drew a box of the terminal's own colour behind its text -
+// black rectangles inside a white mivia-light dialog.
+func TestPreviewDrawsOnTheDialogSurface(t *testing.T) {
+	themes := loadThemes(t)
+	var light theme.Theme
+	for _, th := range themes {
+		if th.Name == "mivia-light" {
+			light = th
+		}
+	}
+	if light.Name == "" {
+		t.Fatal("need mivia-light embedded")
+	}
+
+	s := New(light, theme.TierTrueColor, themes)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	view := next.View()
+
+	// Every sample the preview draws must land on the dialog's surface.
+	for _, sample := range []string{previewSample, previewFuncName, previewDiffAddLine} {
+		row, ok := rowWith(view, sample)
+		if !ok {
+			t.Fatalf("preview row for %q not rendered:\n%s", sample, view)
+		}
+		if n := unpaintedCells(dialogInterior(row)); n > 0 {
+			t.Errorf("%q draws %d cell(s) on the terminal's own background: %q", sample, n, row)
+		}
+	}
+}
+
+// rowWith finds the rendered row whose visible text contains want.
+func rowWith(view, want string) (string, bool) {
+	for _, row := range strings.Split(view, "\n") {
+		if strings.Contains(ansi.Strip(row), want) {
+			return row, true
+		}
+	}
+	return "", false
+}
+
+// dialogInterior is the part of a dialog row between its border glyphs -
+// the region the inset background covers. A row with no border (the
+// whitespace around the box) has no interior and contributes nothing.
+func dialogInterior(row string) string {
+	first := strings.Index(row, "│")
+	last := strings.LastIndex(row, "│")
+	if first < 0 || last <= first {
+		return ""
+	}
+	return row[first+len("│") : last]
+}
+
+// unpaintedCells counts the printable cells drawn while no background is
+// set, so the terminal's own colour shows through. It replays the row's
+// SGR state instead of pattern-matching escapes, so a reset that only
+// precedes more escapes (or ends the row) correctly counts for nothing.
+func unpaintedCells(s string) int {
+	n, painted := 0, false
+	for i := 0; i < len(s); {
+		if seq, ok := sgrAt(s, i); ok {
+			painted = sgrSetsBackground(seq, painted)
+			i += len(seq)
+			continue
+		}
+		_, size := utf8.DecodeRuneInString(s[i:])
+		if !painted {
+			n++
+		}
+		i += size
+	}
+	return n
+}
+
+func sgrAt(s string, i int) (string, bool) {
+	if !strings.HasPrefix(s[i:], "\x1b[") {
+		return "", false
+	}
+	end := strings.IndexByte(s[i:], 'm')
+	if end < 0 {
+		return "", false
+	}
+	return s[i : i+end+1], true
+}
+
+func sgrSetsBackground(seq string, painted bool) bool {
+	params := strings.Split(strings.TrimSuffix(strings.TrimPrefix(seq, "\x1b["), "m"), ";")
+	for i := 0; i < len(params); i++ {
+		switch p := params[i]; {
+		case p == "" || p == "0":
+			painted = false
+		case p == "48":
+			return true // the rest of this sequence is the colour's arguments
+		case p == "49":
+			painted = false
+		case len(p) == 2 && p[0] == '4' && p[1] >= '0' && p[1] <= '7':
+			painted = true
+		case len(p) == 3 && p[0] == '1' && p[1] == '0' && p[2] >= '0' && p[2] <= '7':
+			painted = true
+		}
+	}
+	return painted
+}
+
+// TestNewHighlightsTheActiveTheme: the picker opens on the theme that is
+// already in use, not on whichever name sorts first. Opening it is a
+// request to change from HERE, so the current choice must be the one
+// under the cursor - and because the modal renders in the highlighted
+// row's theme, a cursor parked elsewhere also opens the whole dialog in
+// a theme the user did not choose.
+func TestNewHighlightsTheActiveTheme(t *testing.T) {
+	themes := loadThemes(t)
+	for _, want := range themes {
+		s := New(want, theme.TierTrueColor, themes)
+		got, ok := s.picker.Selected()
+		if !ok {
+			t.Fatalf("theme %q: picker highlights nothing", want.Name)
+		}
+		if got != want.Name {
+			t.Errorf("opened on %q, want the active theme %q", got, want.Name)
+		}
+	}
+}
+
+// TestViewOpensInTheActiveTheme is the same fact seen from the frame the
+// user gets: the dialog's own chrome must be the active theme's on the
+// very first render.
+func TestViewOpensInTheActiveTheme(t *testing.T) {
+	themes := loadThemes(t)
+	var active, other theme.Theme
+	for _, th := range themes {
+		switch th.Name {
+		case "mivia-light":
+			active = th
+		case "mivia-dark":
+			other = th
+		}
+	}
+	if active.Name == "" || other.Name == "" {
+		t.Fatal("need both mivia-light and mivia-dark embedded")
+	}
+
+	s := New(active, theme.TierTrueColor, themes)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	view := next.View()
+
+	want := render.Role(active, theme.TierTrueColor, theme.RoleAccent).Render(previewAccentGlyph)
+	if !strings.Contains(view, want) {
+		t.Errorf("the picker did not open in the active theme %q:\n%s", active.Name, view)
+	}
+	stale := render.Role(other, theme.TierTrueColor, theme.RoleAccent).Render(previewAccentGlyph)
+	if stale != want && strings.Contains(view, stale) {
+		t.Errorf("the picker opened showing %q's chrome:\n%s", other.Name, view)
+	}
+}
+
+// TestNewWithAnUnlistedThemeHighlightsTheFirstRow: a theme that is not
+// among the candidates (a name the list no longer carries) leaves the
+// cursor on the first row rather than nowhere.
+func TestNewWithAnUnlistedThemeHighlightsTheFirstRow(t *testing.T) {
+	themes := loadThemes(t)
+	s := New(theme.Theme{Name: "not-embedded"}, theme.TierTrueColor, themes)
+	got, ok := s.picker.Selected()
+	if !ok {
+		t.Fatal("picker highlights nothing")
+	}
+	if got != themes[0].Name {
+		t.Errorf("got %q, want the first row %q", got, themes[0].Name)
 	}
 }

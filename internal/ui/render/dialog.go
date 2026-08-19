@@ -104,7 +104,12 @@ func Dialog(t theme.Theme, tier theme.Tier, width, height int, title, body, hint
 	} else if s.ANSI16 >= 0 {
 		box = box.Background(lipgloss.Color(strconv.Itoa(s.ANSI16)))
 	}
-	framed := box.Render(strings.Join(rows, "\n"))
+	// The box background alone covers only up to the first reset inside a
+	// row, and body rows are chains of styled runs (the theme preview's
+	// code read, a diff, the help table). Without this the runs after the
+	// first drew on the terminal's own background: dark rectangles behind
+	// the text of a light dialog.
+	framed := box.Render(FillBG(t, tier, theme.RoleBGInset, strings.Join(rows, "\n")))
 
 	if width <= 0 || height <= 0 {
 		return framed

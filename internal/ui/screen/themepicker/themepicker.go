@@ -68,7 +68,20 @@ func New(th theme.Theme, tier theme.Tier, themes []theme.Theme) Screen {
 	for i, t := range themes {
 		names[i] = t.Name
 	}
-	return Screen{Theme: th, Tier: tier, picker: picker.New(th, tier, names), themes: themes}
+	p := picker.New(th, tier, names)
+	// Open on the theme already in use. Opening the picker is a request
+	// to change from HERE, so the current choice is the row to start on;
+	// and because the modal previews the HIGHLIGHTED row (not the applied
+	// one), a cursor left on row 0 also paints the whole dialog in a
+	// theme the user never picked. An unlisted name leaves the cursor on
+	// the first row, which is where picker.New puts it.
+	for i, name := range names {
+		if name == th.Name {
+			p.MoveTo(i)
+			break
+		}
+	}
+	return Screen{Theme: th, Tier: tier, picker: p, themes: themes}
 }
 
 // previewTheme resolves the picker's currently highlighted row to its

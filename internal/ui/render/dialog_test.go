@@ -3,7 +3,9 @@ package render
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
@@ -200,6 +202,122 @@ func TestDialogBodyRowsStaysInsideWhatDialogShows(t *testing.T) {
 		}
 		if DialogBodyRows(h+10) <= fit {
 			t.Errorf("DialogBodyRows(%d) not smaller than DialogBodyRows(%d); more height must show more body", h+10, h)
+		}
+	}
+}
+
+// dialogInterior returns the part of a dialog row between its left and
+// right border glyphs, and whether the row has an interior at all. Only
+// that region is filled with the inset background; the border glyph and
+// the centering whitespace around the box carry other roles.
+func dialogInterior(row string) (string, bool) {
+	first := strings.Index(row, "\u2502")
+	last := strings.LastIndex(row, "\u2502")
+	if first < 0 || last <= first {
+		return "", false
+	}
+	return row[first+len("\u2502") : last], true
+}
+
+// unpaintedCells counts the printable cells in a dialog row's interior
+// that are drawn while no background is set, so the terminal's own
+// colour shows through. Every such run is a rectangle of the wrong
+// colour behind the text - the black boxes a light theme's preview
+// showed. It replays the row's SGR state rather than pattern-matching
+// escape sequences, so a reset that only precedes more escapes (or ends
+// the row) correctly counts for nothing.
+func unpaintedCells(interior string) int {
+	n, painted := 0, false
+	for i := 0; i < len(interior); {
+		if seq, ok := sgrAt(interior, i); ok {
+			painted = sgrSetsBackground(seq, painted)
+			i += len(seq)
+			continue
+		}
+		_, size := utf8.DecodeRuneInString(interior[i:])
+		if !painted {
+			n++
+		}
+		i += size
+	}
+	return n
+}
+
+// sgrAt returns the SGR sequence starting at i, if there is one.
+func sgrAt(s string, i int) (string, bool) {
+	if !strings.HasPrefix(s[i:], "\x1b[") {
+		return "", false
+	}
+	end := strings.IndexByte(s[i:], 'm')
+	if end < 0 {
+		return "", false
+	}
+	return s[i : i+end+1], true
+}
+
+// sgrSetsBackground replays one SGR sequence over the current
+// background state: a reset clears it, a 48/4x/10x parameter sets it,
+// anything else leaves it alone.
+func sgrSetsBackground(seq string, painted bool) bool {
+	params := strings.Split(strings.TrimSuffix(strings.TrimPrefix(seq, "\x1b["), "m"), ";")
+	for i := 0; i < len(params); i++ {
+		switch p := params[i]; {
+		case p == "" || p == "0":
+			painted = false
+		case p == "48":
+			painted = true
+			i = len(params) // the rest of the sequence is this colour's arguments
+		case p == "49":
+			painted = false
+		case len(p) == 2 && p[0] == '4' && p[1] >= '0' && p[1] <= '7':
+			painted = true // 40-47, the 8 basic backgrounds
+		case len(p) == 3 && p[0] == '1' && p[1] == '0' && p[2] >= '0' && p[2] <= '7':
+			painted = true // 100-107, the bright backgrounds
+		}
+	}
+	return painted
+}
+
+// TestDialogHoldsItsInsetBackgroundAcrossSegments is the regression for
+// the dark rectangles inside a light dialog: body text built from more
+// than one styled run ends each run with a reset, and lipgloss re-opens
+// the box background only for the first run. Every later run therefore
+// drew on the terminal's own background.
+func TestDialogHoldsItsInsetBackgroundAcrossSegments(t *testing.T) {
+	th := dialogTheme(t)
+	tier := theme.TierTrueColor
+	body := Role(th, tier, theme.RoleKeyword).Render("func") +
+		Role(th, tier, theme.RoleFG).Render(" (u *") +
+		Role(th, tier, theme.RoleType).Render("Uploader") +
+		Role(th, tier, theme.RoleFG).Render(") error {")
+
+	// Unsized: the output is the box alone, with no centering whitespace
+	// around it, so every reset in it belongs to the box's interior.
+	got := Dialog(th, tier, 0, 0, "title", body, "hint")
+	bg := ansi.NewStyle().BackgroundColor(lipgloss.Color(th.Colors[theme.RoleBGInset])).String()
+	if bg == "" {
+		t.Fatal("mivia-dark defines no bg-inset colour; this test needs one")
+	}
+	for i, row := range strings.Split(got, "\n") {
+		interior, ok := dialogInterior(row)
+		if !ok {
+			continue
+		}
+		if n := unpaintedCells(interior); n > 0 {
+			t.Errorf("row %d draws %d cell(s) on the terminal background: %q", i, n, row)
+		}
+	}
+}
+
+// TestDialogAddsNoBackgroundWithoutColour holds the degradation ladder:
+// the background continuation must contribute nothing at a tier that
+// has no colour to contribute.
+func TestDialogAddsNoBackgroundWithoutColour(t *testing.T) {
+	th := dialogTheme(t)
+	for _, tier := range []theme.Tier{theme.TierASCII, theme.TierNoTTY} {
+		got := Dialog(th, tier, 60, 20, "title", "body line", "hint")
+		if strings.Contains(got, "\x1b[4") {
+			t.Errorf("tier %v drew a background: %q", tier, got)
 		}
 	}
 }

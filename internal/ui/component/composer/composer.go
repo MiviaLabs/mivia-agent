@@ -3,10 +3,12 @@
 package composer
 
 import (
+	"strconv"
 	"strings"
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
@@ -55,9 +57,43 @@ func New(t theme.Theme, tier theme.Tier, width int) Model {
 	ti.Prompt = "" // the theme-styled accent prompt is rendered by this package's View, not textinput's own
 	ti.Placeholder = "Ask a question, describe a change, or type / for commands..."
 	ti.Focus()
-	m := Model{Theme: t, Tier: tier, input: ti}
+	m := Model{input: ti}
+	m.SetTheme(t, tier)
 	m.SetWidth(width)
 	return m
+}
+
+// SetTheme adopts a new theme and restyles the embedded textinput with
+// it.
+//
+// bubbles/textinput ships its own hard-coded default styles, so without
+// this the one thing the user watches while typing - the text itself,
+// and the placeholder before it - kept the library's colour whatever
+// theme was active. On a light theme that is white text on a light
+// surface, which reads as "selecting a theme did nothing".
+//
+// It is a method rather than an assignment to Theme/Tier because the
+// restyle must not be forgotten: every other themed component here
+// (transcript, topbar, statusline, welcome) already carries the same
+// SetTheme shape.
+func (m *Model) SetTheme(t theme.Theme, tier theme.Tier) {
+	m.Theme, m.Tier = t, tier
+	st := textinput.DefaultStyles(t.Dark)
+	st.Focused.Text = render.Role(t, tier, theme.RoleFG)
+	st.Focused.Placeholder = render.Role(t, tier, theme.RoleFGSubtle)
+	st.Focused.Suggestion = render.Role(t, tier, theme.RoleFGSubtle)
+	st.Blurred.Text = render.Role(t, tier, theme.RoleFGMuted)
+	st.Blurred.Placeholder = render.Role(t, tier, theme.RoleFGSubtle)
+	st.Blurred.Suggestion = render.Role(t, tier, theme.RoleFGSubtle)
+	if s := t.Resolve(theme.RoleAccent, tier); s.Hex != "" {
+		st.Cursor.Color = lipgloss.Color(s.Hex)
+	} else if s.ANSI16 >= 0 {
+		st.Cursor.Color = lipgloss.Color(strconv.Itoa(s.ANSI16))
+	} else {
+		// No colour at this tier: the cursor must not smuggle one in.
+		st.Cursor.Color = nil
+	}
+	m.input.SetStyles(st)
 }
 
 // SetCommands sets the slash-completion candidate list.

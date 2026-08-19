@@ -1,10 +1,13 @@
 package app_test
 
 import (
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
@@ -184,5 +187,157 @@ func TestTranscriptPagerAndBaseScreenReceiveBroadcastEvents(t *testing.T) {
 	baseView := m.View().Content
 	if !strings.Contains(baseView, "live router broadcast notice") {
 		t.Errorf("base conversation view does not contain live notice after pop:\n%s", baseView)
+	}
+}
+
+// TestSelectingThemeRepaintsTheScreenSurface is the end-to-end shape of
+// the reported bug: Enter on a theme row must change what the base
+// screen actually paints, background included. Foreground roles alone
+// are not enough - the largest coloured area on screen is the surface
+// under everything, and a theme switch that leaves it on the terminal's
+// own colour reads as "nothing happened".
+func TestSelectingThemeRepaintsTheScreenSurface(t *testing.T) {
+	f := newRouterFixture(t)
+	m := openThemePicker(t, f)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = next.(app.Model)
+	m = selectTheme(t, m, "light")
+
+	got := m.View().Content
+	want := bgSeq(f.light)
+	old := bgSeq(f.dark)
+	if want == old {
+		t.Fatal("the two themes share a bg colour; this test needs them to differ")
+	}
+	if !strings.Contains(got, want) {
+		t.Errorf("the base screen is not painted with %s's surface:\n%q", f.light.Name, got)
+	}
+	if strings.Contains(got, old) {
+		t.Errorf("mivia-dark's surface survived the switch:\n%q", got)
+	}
+
+	// The typed text must be legible on that surface: the composer's
+	// embedded textinput ships library-default styles and kept them
+	// before this, so a light theme drew white text on a light surface.
+	wantFG := render.Role(f.light, theme.TierTrueColor, theme.RoleFG).Render("h")
+	if !strings.Contains(got, wantFG) {
+		t.Errorf("the composer's text is not styled with %s's fg role:\n%q", f.light.Name, got)
+	}
+}
+
+// bgSeq is the escape sequence that paints th's surface: what FillBG
+// emits around empty content.
+func bgSeq(th theme.Theme) string {
+	return strings.TrimSuffix(render.FillBG(th, theme.TierTrueColor, theme.RoleBG, ""), "\x1b[m")
+}
+
+// TestSelectingThemeLeavesNoValueOnTheOldTheme is the exhaustive form of
+// the switch: Theme and Tier are plain value fields on the router, every
+// Screen, and every component they own - there is no shared pointer - so
+// a single missed assignment leaves part of the tree rendering in the
+// previous theme. Rather than list the components (a list goes stale the
+// moment one is added), this walks the whole live router and asserts
+// every theme.Theme and theme.Tier value reachable from it is the one
+// just selected.
+func TestSelectingThemeLeavesNoValueOnTheOldTheme(t *testing.T) {
+	f := newRouterFixture(t)
+	m := openThemePicker(t, f)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = next.(app.Model)
+	m = selectTheme(t, m, "light")
+
+	for _, bad := range staleThemes(reflect.ValueOf(m), "app.Model", f.light.Name, theme.TierTrueColor, map[uintptr]bool{}) {
+		t.Error(bad)
+	}
+}
+
+// themeType and tierType are the two value types the walk looks for.
+var (
+	themeType = reflect.TypeOf(theme.Theme{})
+	tierType  = reflect.TypeOf(theme.TierTrueColor)
+)
+
+// staleThemes reports every theme.Theme or theme.Tier reachable from v
+// that is not wantName/wantTier.
+//
+// A []theme.Theme is the candidate set a picker offers, not a value in
+// use, so element themes are skipped - but the slice is still walked for
+// nothing else, and its own fields are not values in use either.
+// Unexported fields are read, never called: reflect allows reading a
+// read-only Value's contents, which is all this needs.
+func staleThemes(v reflect.Value, path, wantName string, wantTier theme.Tier, seen map[uintptr]bool) []string {
+	var bad []string
+	switch v.Kind() {
+	case reflect.Struct:
+		if v.Type() == themeType {
+			if got := v.FieldByName("Name").String(); got != wantName {
+				bad = append(bad, path+".Name = "+got+", want "+wantName)
+			}
+			return bad
+		}
+		for i := 0; i < v.NumField(); i++ {
+			bad = append(bad, staleThemes(v.Field(i), path+"."+v.Type().Field(i).Name, wantName, wantTier, seen)...)
+		}
+	case reflect.Pointer, reflect.Interface:
+		if v.IsNil() {
+			return nil
+		}
+		if v.Kind() == reflect.Pointer {
+			if seen[v.Pointer()] {
+				return nil
+			}
+			seen[v.Pointer()] = true
+		}
+		bad = append(bad, staleThemes(v.Elem(), path, wantName, wantTier, seen)...)
+	case reflect.Slice, reflect.Array:
+		if v.Type().Elem() == themeType {
+			return nil // the picker's candidate set, not a theme in use
+		}
+		for i := 0; i < v.Len(); i++ {
+			bad = append(bad, staleThemes(v.Index(i), path+"[]", wantName, wantTier, seen)...)
+		}
+	case reflect.Map:
+		for _, k := range v.MapKeys() {
+			bad = append(bad, staleThemes(v.MapIndex(k), path+"[k]", wantName, wantTier, seen)...)
+		}
+	default:
+		if v.Type() != tierType {
+			return nil
+		}
+		got := theme.Tier(v.Uint())
+		if got != wantTier {
+			bad = append(bad, path+" tier = "+strconv.Itoa(int(got))+", want "+strconv.Itoa(int(wantTier)))
+		}
+	}
+	return bad
+}
+
+// TestReopeningThePickerOpensOnTheAppliedTheme is the round trip: after
+// a switch, opening the picker again must start on the theme now in use
+// and render in it. The picker is built fresh from the base screen's
+// theme each time, so this proves that screen really adopted the change
+// - and that the modal no longer opens in whichever name sorts first.
+func TestReopeningThePickerOpensOnTheAppliedTheme(t *testing.T) {
+	f := newRouterFixture(t)
+	m := openThemePicker(t, f)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = next.(app.Model)
+	m = selectTheme(t, m, "light")
+
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
+	m = next.(app.Model)
+	if cmd == nil {
+		t.Fatal("expected a PushScreenMsg Cmd from the second ctrl+t")
+	}
+	next, _ = m.Update(cmd())
+	m = next.(app.Model)
+
+	view := m.View().Content
+	if !strings.Contains(ansi.Strip(view), "> "+f.light.Name) {
+		t.Errorf("the reopened picker does not highlight %q:\n%s", f.light.Name, ansi.Strip(view))
+	}
+	want := render.Role(f.light, theme.TierTrueColor, theme.RoleAccent).Render("> ")
+	if !strings.Contains(view, want) {
+		t.Errorf("the reopened picker is not drawn in %q:\n%q", f.light.Name, view)
 	}
 }

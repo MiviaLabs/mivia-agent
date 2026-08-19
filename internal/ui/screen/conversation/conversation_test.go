@@ -14,6 +14,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/approval"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/statusline"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/transcript"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/themepicker"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
@@ -740,5 +741,85 @@ func TestWelcomeBannerRendersOnEmptyTranscript(t *testing.T) {
 	}
 	if !strings.Contains(turnView, "hello agent") {
 		t.Errorf("active conversation view missing user input:\n%s", turnView)
+	}
+}
+
+// themePair loads the two embedded themes these background tests switch
+// between.
+func themePair(t *testing.T) (dark, light theme.Theme, all []theme.Theme) {
+	t.Helper()
+	all, err := theme.Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, th := range all {
+		switch th.Name {
+		case "mivia-dark":
+			dark = th
+		case "mivia-light":
+			light = th
+		}
+	}
+	if dark.Name == "" || light.Name == "" {
+		t.Fatal("need both mivia-dark and mivia-light embedded")
+	}
+	return dark, light, all
+}
+
+// bgOf is the SGR sequence a row must open with for the theme's own
+// surface to be under it: what FillBG emits around empty content.
+func bgOf(th theme.Theme, tier theme.Tier) string {
+	return strings.TrimSuffix(render.FillBG(th, tier, theme.RoleBG, ""), "\x1b[m")
+}
+
+// TestViewPaintsTheThemeBackground: the screen must draw the theme's own
+// surface under every cell. Without it the terminal's background shows
+// through, a light theme is unreadable on a dark terminal, and the
+// largest coloured area on screen never changes when the theme does.
+func TestViewPaintsTheThemeBackground(t *testing.T) {
+	dark, _, themes := themePair(t)
+	s := New(dark, theme.TierTrueColor, themes, replay.New(nil, 0), nil, 40, fixedNow)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 60, Height: 20})
+
+	bg := bgOf(dark, theme.TierTrueColor)
+	for i, row := range strings.Split(next.View(), "\n") {
+		if !strings.HasPrefix(row, bg) {
+			t.Errorf("row %d is not painted with the theme background: %q", i, row)
+		}
+	}
+}
+
+// TestThemeChangedRepaintsTheBackground is the "enter did nothing"
+// regression: the new theme's surface must replace the old one, not
+// merely join it.
+func TestThemeChangedRepaintsTheBackground(t *testing.T) {
+	dark, light, themes := themePair(t)
+	s := New(dark, theme.TierTrueColor, themes, replay.New(nil, 0), nil, 40, fixedNow)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 60, Height: 20})
+	next, _ = next.Update(app.ThemeChangedMsg{Theme: light, Tier: theme.TierTrueColor})
+
+	got := next.View()
+	wantBG, oldBG := bgOf(light, theme.TierTrueColor), bgOf(dark, theme.TierTrueColor)
+	if wantBG == oldBG {
+		t.Fatal("the two themes share a bg colour; this test needs them to differ")
+	}
+	if !strings.Contains(got, wantBG) {
+		t.Errorf("screen is not painted with the new theme's background:\n%q", got)
+	}
+	if strings.Contains(got, oldBG) {
+		t.Errorf("the old theme's background survived the switch:\n%q", got)
+	}
+}
+
+// TestBackgroundPaintDegradesWithTheTier holds the degradation ladder:
+// a tier with no colour must produce the same bytes it always did.
+func TestBackgroundPaintDegradesWithTheTier(t *testing.T) {
+	dark, _, themes := themePair(t)
+	for _, tier := range []theme.Tier{theme.TierASCII, theme.TierNoTTY} {
+		s := New(dark, tier, themes, replay.New(nil, 0), nil, 40, fixedNow)
+		next, _ := s.Update(tea.WindowSizeMsg{Width: 60, Height: 20})
+		if got := next.View(); strings.Contains(got, "\x1b[48;") {
+			t.Errorf("tier %v painted a background: %q", tier, got)
+		}
 	}
 }
