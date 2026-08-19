@@ -135,15 +135,22 @@ Sources: [xterm ctlseqs](https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
 [tmux scrollback](https://www.freecodecamp.org/news/tmux-in-practice-scrollback-buffer-47d5ffa71c93/),
 [claude-code #67289](https://github.com/anthropics/claude-code/issues/67289).
 
-**Rule 3.1.** Inline is the default. The cockpit is opt-in. Inline is portable,
-accessible, and already correct.
+**Rule 3.1. SUPERSEDED on 2026-08-19 by rule 6.1 of
+[cockpit-research.md](cockpit-research.md).** The cockpit is the default and
+inline is the opt-out. Read that file, not this rule.
+
+The original rule said the opposite: "Inline is the default. The cockpit is
+opt-in." Two pieces of its evidence below are wrong, and section 6 of the
+cockpit research states why. The lost capabilities it names are real, and
+they became the mitigation list rather than a reason to refuse.
 
 Two further pieces of evidence support this ordering.
 
-Claude Code walked its own default back. Version 2.1.89 made fullscreen the
-default and removed scrollback. Version 2.1.132 then added
-`CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1`.
-Source: [claude-code #42670](https://github.com/anthropics/claude-code/issues/42670).
+**This paragraph was wrong.** It said Claude Code "walked its own default
+back". Version 2.1.132 added an opt-out environment variable, which is not a
+reversal. The default then moved forward: fullscreen renders by default for
+every user who started on or after 2026-05-06.
+Source: [Claude Code fullscreen rendering](https://code.claude.com/docs/en/fullscreen).
 
 Charm states that Bubble Tea "supports inline mode as a first-class use case".
 Source: [Bubble Tea v2 release](https://charm.land/blog/v2/).
@@ -457,6 +464,7 @@ Read the keymap package for the current bindings, never this table.
 | 10 | `Tab` accepts common prefix | Accepts selection | The menu keeps a highlighted row (rule 6.1) |
 | 12 | No mention affordance | `@` at token start | Section 5 |
 | 3 | Mouse unstated | Off by default | Rule 7.1 |
+| 3 | Inline is the default | Cockpit is the default | Rule 6.1 of [cockpit-research.md](cockpit-research.md) |
 
 `research-panes.md` stays as the record of the colour and contrast work. Its
 sections 7.1 and 7.2, on markdown and diagram rendering, are unverified against

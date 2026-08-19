@@ -66,6 +66,7 @@ The new terminal UI. Owner: `architecture`.
 | Doc | Covers |
 |-----|--------|
 | [UX rules](design/ux-rules.md) | Binding interaction rules: reserved keys, repaint, inline against cockpit, composer, focus, mouse, clipboard, accessibility |
+| [Cockpit research](design/cockpit-research.md) | Evidence for the full-screen renderer: what the alternate screen removes, the mitigation for each, terminal hazards, and the correction to UX rules section 3 |
 | [Wireframes, variant D](design/wireframes-panes.md) | The chosen visual specification: block anatomy, every block type, dialogs, keymap |
 | [Research, variant D](design/research-panes.md) | Colour, contrast and colour-vision evidence behind the shipped themes |
 | [Wireframes, variants A-C](design/wireframes.md) | Record of the three rejected directions |
