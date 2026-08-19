@@ -29,6 +29,13 @@ CONFIG = ROOT / "semgrep" / "agent-standards.yml"
 # rule's `paths.include` globs (checked against the actual YAML below).
 PROBES = [
     (
+        "mivia.go.ui-no-harness-imports",
+        "internal/ui/probe-isolation/viol.go",
+        "package probe\n\nimport _ \"github.com/MiviaLabs/mivia-agent/internal/cli\"\n",
+        "internal/ui/probe-isolation/clean.go",
+        "package probe\n\nimport _ \"github.com/MiviaLabs/mivia-agent/internal/uikit/ports\"\n",
+    ),
+    (
         "mivia.generic.no-wildcard-bash-allow",
         ".claude/probe-wildcard-bash/viol.json",
         '{\n  "allow": [\n    "Bash(git *)"\n  ]\n}\n',

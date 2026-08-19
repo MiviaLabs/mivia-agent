@@ -380,6 +380,19 @@ rules:
         - /internal/uikit/**/*.go
     pattern-regex: '"(charm\.land/(bubbletea|lipgloss)(/v2)?|github\.com/charmbracelet/(bubbletea|lipgloss)(/v2)?)"'
 
+  - id: mivia.go.ui-no-harness-imports
+    languages:
+      - go
+    severity: ERROR
+    message: mivia-ui is self-contained on mocks and must not import the CLI or the real harness. See docs/design/ui-isolation.md.
+    paths:
+      include:
+        - /cmd/mivia-ui/**/*.go
+        - /cmd/mivia-ui-demo/**/*.go
+        - /internal/ui/**/*.go
+        - /internal/uikit/**/*.go
+    pattern-regex: '"github\.com/MiviaLabs/mivia-agent/internal/(cli|chat|agent|coordinator|hub)"'
+
   - id: mivia.go.ui-no-raw-print
     languages:
       - go
