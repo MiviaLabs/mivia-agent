@@ -127,6 +127,9 @@ func (b Block) bodyRows(width int) []string {
 	for _, line := range b.Body {
 		out = append(out, render.HardWrap(line, inner)...)
 	}
+	if b.Kind == uievent.KindReasoning && len(out) > 3 {
+		out = out[len(out)-3:]
+	}
 	return out
 }
 
@@ -158,6 +161,9 @@ func (b Block) Render(t theme.Theme, tier theme.Tier, width int) string {
 		return sb.String()
 	}
 	indent := strings.Repeat(" ", uikitconfig.BodyIndent)
+	if tier == theme.TierTrueColor || tier == theme.Tier256 {
+		indent = render.Role(t, tier, theme.RoleBorder).Render("│ ") + "  "
+	}
 	for _, line := range b.bodyRows(width) {
 		sb.WriteByte('\n')
 		sb.WriteString(indent)

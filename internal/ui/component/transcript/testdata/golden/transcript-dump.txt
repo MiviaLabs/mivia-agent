@@ -15,37 +15,37 @@ jitter, and a cap of 5s.
 [2;38;2;161;161;170;48;2;5;5;6m    }[m
 
 [2;38;2;161;161;170mv read_file[m [38;2;250;250;250mpath=internal/storage/s3_uploader.go[m              [2;38;2;113;113;122m48 lines  12ms[m  [38;2;78;220;78mok[m
-    package storage
-    import ("context"; "time")
-    ...
+[38;2;82;82;91m│ [m  package storage
+[38;2;82;82;91m│ [m  import ("context"; "time")
+[38;2;82;82;91m│ [m  ...
 
 [2;38;2;161;161;170mv edit[m [38;2;250;250;250minternal/storage/s3_uploader.go[m                           [2;38;2;113;113;122m+4 -1  31ms[m  [38;2;78;220;78mok[m
-    [38;2;91;140;255m@@ -14,7 +14,11 @@ func (u *Uploader) put([m
-    [38;2;220;78;78;48;2;36;12;13m- return u.raw.Put(ctx, k, b)[m
-    [38;2;78;220;78;48;2;13;36;16m+ return retry.Do(ctx, retry.Policy{[m
-    [38;2;78;220;78;48;2;13;36;16m+ Max: 3,[m
-    [38;2;78;220;78;48;2;13;36;16m+ Cap: 5 * time.Second,[m
-    [38;2;78;220;78;48;2;13;36;16m+ }, func() error { return u.raw.Put(ctx, k, b) })[m
+[38;2;82;82;91m│ [m  [38;2;91;140;255m@@ -14,7 +14,11 @@ func (u *Uploader) put([m
+[38;2;82;82;91m│ [m  [38;2;220;78;78;48;2;36;12;13m- return u.raw.Put(ctx, k, b)[m
+[38;2;82;82;91m│ [m  [38;2;78;220;78;48;2;13;36;16m+ return retry.Do(ctx, retry.Policy{[m
+[38;2;82;82;91m│ [m  [38;2;78;220;78;48;2;13;36;16m+ Max: 3,[m
+[38;2;82;82;91m│ [m  [38;2;78;220;78;48;2;13;36;16m+ Cap: 5 * time.Second,[m
+[38;2;82;82;91m│ [m  [38;2;78;220;78;48;2;13;36;16m+ }, func() error { return u.raw.Put(ctx, k, b) })[m
 
 [2;38;2;161;161;170mv subagent[m [38;2;250;250;250m18s[m                                                       [2;38;2;113;113;122m23500ms[m  [38;2;78;220;78mok[m
-    3 of 3 steps complete
-    [####################..........]  66%
-    + read existing table tests
-    + draft TestPutRetriesOnTransient
-    - run the package test
+[38;2;82;82;91m│ [m  3 of 3 steps complete
+[38;2;82;82;91m│ [m  [####################..........]  66%
+[38;2;82;82;91m│ [m  + read existing table tests
+[38;2;82;82;91m│ [m  + draft TestPutRetriesOnTransient
+[38;2;82;82;91m│ [m  - run the package test
 
 [2;38;2;161;161;170mv run_command[m [38;2;250;250;250mcommand=go test ./internal/storage/...[m              [2;38;2;113;113;122m4100ms[m  [38;2;220;78;78mfailed[m
-    s3_uploader_test.go:88: want 3 attempts, got 1
-    --- FAIL: TestPutRetriesOnTransient
+[38;2;82;82;91m│ [m  s3_uploader_test.go:88: want 3 attempts, got 1
+[38;2;82;82;91m│ [m  --- FAIL: TestPutRetriesOnTransient
 
 [2;38;2;161;161;170mv plan[m                                                                    [2;38;2;113;113;122m2 of 4[m
-    [2;38;2;113;113;122m[x] add retry policy to the transport[m
-    [2;38;2;113;113;122m[x] wire the uploader through it[m
-    [38;2;250;250;250m[ ] fix the fake transport to count attempts[m
-    [38;2;250;250;250m[ ] run the package test again[m
+[38;2;82;82;91m│ [m  [2;38;2;113;113;122m[x] add retry policy to the transport[m
+[38;2;82;82;91m│ [m  [2;38;2;113;113;122m[x] wire the uploader through it[m
+[38;2;82;82;91m│ [m  [38;2;250;250;250m[ ] fix the fake transport to count attempts[m
+[38;2;82;82;91m│ [m  [38;2;250;250;250m[ ] run the package test again[m
 
 [2;38;2;161;161;170mv error[m [38;2;250;250;250mtransport refused after 3 attempts[m                                 [38;2;220;78;78mfatal[m
-    dial tcp 10.0.0.4:443: i/o timeout
+[38;2;82;82;91m│ [m  dial tcp 10.0.0.4:443: i/o timeout
 
 [2;38;2;161;161;170mv notice[m [38;2;250;250;250mcontext 62% (78k of 125k). /compact frees about 30k.[m
 
