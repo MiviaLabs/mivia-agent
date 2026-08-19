@@ -264,6 +264,28 @@ rules:
       - pattern: log.Fatalf(...)
       - pattern: os.Exit(...)
 
+  - id: mivia.go.no-value-builder-field-in-ui
+    languages:
+      - go
+    severity: ERROR
+    message: >-
+      Do not hold a strings.Builder by value in a UI model struct. These
+      models are copied on every Update and HandleEvent, and a non-zero
+      Builder panics when it is written after a copy (its own copyCheck).
+      Use a plain string field, or a *strings.Builder.
+    paths:
+      include:
+        - /internal/ui/**/*.go
+        - /internal/uikit/**/*.go
+      exclude:
+        - /**/*_test.go
+    pattern: |
+      type $T struct {
+        ...
+        $F strings.Builder
+        ...
+      }
+
   - id: mivia.go.no-shell-exec
     languages:
       - go

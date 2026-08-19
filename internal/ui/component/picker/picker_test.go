@@ -93,6 +93,31 @@ func TestBackspaceNarrowsFilterBack(t *testing.T) {
 	}
 }
 
+func TestBackspaceHandlesMultiByteRune(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII, []string{"café", "coffee", "漢字"})
+	// Type multi-byte runes into the filter
+	m, _ = m.Update(tea.KeyPressMsg{Text: "漢", Code: '漢'})
+	m, _ = m.Update(tea.KeyPressMsg{Text: "字", Code: '字'})
+	if m.filter != "漢字" {
+		t.Fatalf("got filter %q, want \"漢字\"", m.filter)
+	}
+	if got, ok := m.Selected(); !ok || got != "漢字" {
+		t.Fatalf("got %q ok=%v, want \"漢字\"", got, ok)
+	}
+
+	// Backspace once: removes '字', keeps '漢' intact without corrupting UTF-8
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
+	if m.filter != "漢" {
+		t.Fatalf("got filter %q, want \"漢\" after one backspace", m.filter)
+	}
+
+	// Backspace again: removes '漢', empty filter
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
+	if m.filter != "" {
+		t.Fatalf("got filter %q, want empty filter after second backspace", m.filter)
+	}
+}
+
 func TestEnterEmitsSelectMsg(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII, []string{"a", "b"})
 	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})

@@ -98,6 +98,11 @@ func TestUpdateDecisions(t *testing.T) {
 		{"a", ports.DecisionAlways},
 		{"d", ports.DecisionDeny},
 		{"D", ports.DecisionDenyAlways},
+		// Enter and Esc were unbound by any test. Enter silently meaning
+		// deny-always is the same class of defect as "d" once was, and it
+		// would have shipped unnoticed.
+		{"enter", ports.DecisionOnce},
+		{"esc", ports.DecisionDeny},
 	}
 	for _, c := range cases {
 		t.Run(c.key, func(t *testing.T) {
@@ -119,6 +124,60 @@ func TestUpdateDecisions(t *testing.T) {
 				t.Error("expected the request to be cleared after a decision")
 			}
 		})
+	}
+}
+
+// TestEnterAndEscAreNotStandingDenials states the dangerous mistake
+// directly. A standing session-wide denial the user never asked for is
+// the failure this file exists to prevent.
+func TestEnterAndEscAreNotStandingDenials(t *testing.T) {
+	for _, k := range []string{"enter", "esc"} {
+		m := New(loadTheme(t), theme.TierASCII)
+		m.SetRequest(uievent.ToolPendingBody{ToolCallID: "c1"})
+		_, cmd := m.Update(keyMsg(k))
+		if cmd == nil {
+			t.Fatalf("%q produced no decision", k)
+		}
+		if got := cmd().(DecisionMsg).Decision; got == ports.DecisionDenyAlways {
+			t.Errorf("%q resolved to a standing denial", k)
+		}
+	}
+}
+
+// TestStructuralEnterAndEscape covers the other spelling a terminal may
+// send: a key event carrying a Code rather than Text.
+func TestStructuralEnterAndEscape(t *testing.T) {
+	cases := []struct {
+		msg  tea.KeyPressMsg
+		want ports.Decision
+	}{
+		{tea.KeyPressMsg{Code: tea.KeyEnter}, ports.DecisionOnce},
+		{tea.KeyPressMsg{Code: tea.KeyEscape}, ports.DecisionDeny},
+	}
+	for _, c := range cases {
+		m := New(loadTheme(t), theme.TierASCII)
+		m.SetRequest(uievent.ToolPendingBody{ToolCallID: "c1"})
+		_, cmd := m.Update(c.msg)
+		if cmd == nil {
+			t.Fatalf("%v produced no decision", c.msg)
+		}
+		if got := cmd().(DecisionMsg).Decision; got != c.want {
+			t.Errorf("%v resolved %v, want %v", c.msg, got, c.want)
+		}
+	}
+}
+
+// TestUpdateIgnoresNonKeyMsgWithARequestArmed covers the guard's other
+// arm: a request IS armed, but the Msg is not a key press.
+func TestUpdateIgnoresNonKeyMsgWithARequestArmed(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetRequest(uievent.ToolPendingBody{ToolCallID: "c1"})
+	next, cmd := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	if cmd != nil {
+		t.Error("a resize resolved an approval")
+	}
+	if !next.Active() {
+		t.Error("a resize cleared the pending request")
 	}
 }
 

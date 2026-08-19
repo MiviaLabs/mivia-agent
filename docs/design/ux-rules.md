@@ -38,6 +38,13 @@ them. The consequence column states what breaks.
 | `Ctrl-R` | readline `reverse-search-history` | Same |
 | `Ctrl-B` | `screen` prefix | Invisible to `screen` users |
 
+Reservation applies to the context that the owner claims. `Ctrl-U`, `Ctrl-E`,
+`Ctrl-K` and `Ctrl-R` belong to readline, which owns the line editor. Bind them
+outside the composer, or bind them to the same action readline gives them. Do
+not bind `Ctrl-S`, `Ctrl-Q`, `Ctrl-C`, `Ctrl-D`, `Ctrl-Z`, `Ctrl-\`, `Ctrl-V`
+or `Ctrl-M` in any context. The tty or the terminal owns those, and no context
+escapes them. `internal/uikit/keymap` enforces the second list mechanically.
+
 Sources: [stty(1)](https://man7.org/linux/man-pages/man1/stty.1.html),
 [GNU Readline](https://tiswww.case.edu/php/chet/readline/readline.html),
 [GNU screen flow control](https://www.gnu.org/software/screen/manual/html_node/Flow-Control-Summary.html),
@@ -227,9 +234,10 @@ Source: [claude-code #56923](https://github.com/anthropics/claude-code/issues/56
 append a trailing space after one. `/stats` plus `Enter` ran `/stats session`.
 Source: [gemini-cli PR #20136](https://github.com/google-gemini/gemini-cli/pull/20136).
 
-**Rule 5.7.** Score every candidate. Cap only the rendered rows. Render 8-10
-rows with a scrolling window. opencode capped candidates before rendering and
-made later matches unreachable.
+**Rule 5.7.** Score every candidate. Cap only the rendered rows. Render at
+least 6 rows with a scrolling window. opencode capped candidates before
+rendering and made later matches unreachable. The row cap is
+`config.MaxCompletionRows`, which `wireframes-panes.md` section 10 sets to 6.
 Source: [opencode #17027](https://github.com/anomalyco/opencode/issues/17027).
 
 **Rule 5.8.** Use fzf-style scored fuzzy matching with word-boundary,
@@ -431,15 +439,20 @@ Source: [clig.dev](https://clig.dev/).
 
 That file stays the visual specification. These interaction points change.
 
+The keymap rebinds are **applied**: `wireframes-panes.md` section 15 and
+`internal/uikit/keymap` now agree, and the table below records only why.
+Read the keymap package for the current bindings, never this table.
+
 | Section | Was | Now | Why |
 |---|---|---|---|
-| 15 | `Ctrl-S` toggles reasoning | Rebind | `Ctrl-S` is XOFF (rule 1.2) |
-| 15 | `Ctrl-W` collapses all | Rebind | readline word-rubout; emulator close-tab (section 1) |
-| 15 | `Ctrl-E` expands all | Rebind | readline `end-of-line` (section 1) |
+| 15 | `Ctrl-S` toggles reasoning | `Ctrl-R`, global | `Ctrl-S` is XOFF (rule 1.2) |
+| 15 | `Ctrl-W` collapses all | `Ctrl-G` | readline word-rubout; emulator close-tab (section 1) |
+| 15 | `Ctrl-E` expands all | Kept, live window only | The composer never holds focus when it acts |
+| 15 | `Ctrl-M` opens the model dialog | `Ctrl-P` | `Ctrl-M` is byte-identical to `Enter` |
 | 15 | `Tab` focuses blocks | Conditional | Conflicts with completion (rule 6.1) |
 | 15 | Bare `y`, `s`, `n`, `N` act | Needs a focus model | Composer holds focus (rule 6.2) |
 | 15 | No newline key | `Ctrl-J`, then `\`+`Enter` | Composer is single-line today (section 4) |
-| 5 | Blocks freeze in scrollback | Open | The user waived this constraint on 2026-08-19 |
+| 5 | Blocks freeze in scrollback | Resolved | Blocks freeze on eviction, not on finalize |
 | 10 | Slash trigger unstated | Start-anchored | Prevents the `src/foo` trigger (rule 5.1) |
 | 10 | `Tab` accepts common prefix | Accepts selection | The menu keeps a highlighted row (rule 6.1) |
 | 12 | No mention affordance | `@` at token start | Section 5 |

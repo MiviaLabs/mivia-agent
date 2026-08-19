@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/approval"
@@ -349,16 +350,23 @@ func TestThemeChangedMsgUpdatesScreenAndAllComponents(t *testing.T) {
 	}
 }
 
-func TestCommitMsgBecomesTeaPrintln(t *testing.T) {
+// TestCommitMsgBecomesPrintMsg pins the exact payload, not a substring
+// of its formatting. The screen must hand the router an app.PrintMsg:
+// only the router knows the stack depth, and tea.Println is a no-op
+// under the altscreen.
+func TestCommitMsgBecomesPrintMsg(t *testing.T) {
 	s := newScreen(t, replay.New(nil, 0), nil, nil)
 	_, cmd := s.Update(transcript.CommitMsg{Text: "committed line"})
 	if cmd == nil {
-		t.Fatal("expected a Cmd translating CommitMsg into tea.Println")
+		t.Fatal("expected a Cmd translating CommitMsg into app.PrintMsg")
 	}
 	msg := cmd()
-	printMsg := fmt.Sprintf("%+v", msg) // printLineMessage is unexported; inspect via %+v
-	if !strings.Contains(printMsg, "committed line") {
-		t.Errorf("got %s, want a printLineMessage carrying %q", printMsg, "committed line")
+	got, ok := msg.(app.PrintMsg)
+	if !ok {
+		t.Fatalf("got %T, want app.PrintMsg", msg)
+	}
+	if got.Text != "committed line" {
+		t.Errorf("got Text %q, want %q", got.Text, "committed line")
 	}
 }
 
@@ -497,5 +505,108 @@ func TestReservedRowsGrowsWithChrome(t *testing.T) {
 	withBoth := s.reservedRows()
 	if withBoth <= withStatus {
 		t.Errorf("got %d, want more than %d once the approval prompt is armed", withBoth, withStatus)
+	}
+}
+
+// TestViewNeverExceedsTerminalHeight is the invariant the arithmetic in
+// reservedRows only serves. Asserting that reservedRows returns a bigger
+// number proves nothing on its own: the number has to reach the
+// transcript. It used to be delivered only inside the WindowSizeMsg
+// case, so arming the status line or an approval prompt claimed rows the
+// transcript was still budgeting for, and View drew more rows than the
+// terminal had.
+func TestViewNeverExceedsTerminalHeight(t *testing.T) {
+	const width, height = 80, 10
+
+	// A long pace keeps the turn open, so the status line stays armed.
+	s := newScreen(t, replay.New([]uievent.Event{
+		{Kind: uievent.KindTurnStart, Body: uievent.TurnStartBody{Input: "hi"}},
+	}, time.Hour), nil, nil)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: width, Height: height})
+	scr := next.(Screen)
+
+	assertFits := func(t *testing.T, s Screen, stage string) {
+		t.Helper()
+		rows := 0
+		for _, line := range strings.Split(s.View(), "\n") {
+			rows += max(1, (ansi.StringWidth(line)+width-1)/width)
+		}
+		if rows > height {
+			t.Fatalf("%s: view is %d rows in a %d-row terminal:\n%s", stage, rows, height, s.View())
+		}
+	}
+
+	// Fill the transcript first, so any budget slack is used up.
+	for i := 0; i < 40; i++ {
+		n, _ := scr.Update(turnEventMsg{ev: uievent.Event{
+			Kind: uievent.KindNotice,
+			Body: uievent.NoticeBody{Text: fmt.Sprintf("notice %d", i)},
+		}})
+		scr = n.(Screen)
+	}
+	assertFits(t, scr, "transcript full")
+
+	// Now claim rows with chrome, through the real paths: sending arms
+	// the status line, and a pending tool call arms the approval prompt.
+	scr = typeText(t, scr, "hi")
+	n, _ := scr.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	scr = n.(Screen)
+	if !scr.statusline.Active() {
+		t.Fatal("expected the status line armed after sending")
+	}
+	assertFits(t, scr, "status line armed")
+
+	n, _ = scr.Update(turnEventMsg{ev: uievent.Event{
+		Kind: uievent.KindToolPending,
+		Body: uievent.ToolPendingBody{ToolCallID: "c1", Name: "run_command"},
+	}})
+	scr = n.(Screen)
+	if !scr.approval.Active() {
+		t.Fatal("expected the approval prompt armed")
+	}
+	assertFits(t, scr, "approval armed")
+}
+
+// TestResizeWithNothingToEvictCommitsNothing covers resize's quiet path.
+// A resize that evicts nothing must produce no Cmd, or the router would
+// queue an empty print and the pop-flush would emit a blank line.
+func TestResizeWithNothingToEvictCommitsNothing(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	next, cmd := s.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
+	if cmd != nil {
+		t.Errorf("an empty transcript resized and produced %+v, want no Cmd", cmd())
+	}
+	// Growing further still evicts nothing.
+	if _, cmd := next.Update(tea.WindowSizeMsg{Width: 100, Height: 60}); cmd != nil {
+		t.Errorf("a grow produced %+v, want no Cmd", cmd())
+	}
+}
+
+// TestShrinkCommitsEvictedTranscript pins the other half of resize: a
+// shrink that evicts must hand the router the evicted text. Dropping it
+// would lose transcript that never reached scrollback.
+func TestShrinkCommitsEvictedTranscript(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
+	scr := next.(Screen)
+
+	for i := 0; i < 10; i++ {
+		n, _ := scr.Update(turnEventMsg{ev: uievent.Event{
+			Kind: uievent.KindNotice,
+			Body: uievent.NoticeBody{Text: fmt.Sprintf("notice %d", i)},
+		}})
+		scr = n.(Screen)
+	}
+
+	_, cmd := scr.Update(tea.WindowSizeMsg{Width: 80, Height: 6})
+	if cmd == nil {
+		t.Fatal("the shrink evicted blocks but committed nothing")
+	}
+	got, ok := cmd().(app.PrintMsg)
+	if !ok {
+		t.Fatalf("got %T, want app.PrintMsg", cmd())
+	}
+	if !strings.Contains(ansi.Strip(got.Text), "notice 0") {
+		t.Errorf("got %q, want the oldest evicted notice", got.Text)
 	}
 }

@@ -1,9 +1,12 @@
 package transcript
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
@@ -40,16 +43,41 @@ func TestLiveWindowNeverExceedsBudget(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII)
 	m.SetSize(80, height, reserved)
 
+	// Heights vary so the resize path is exercised too, not only the
+	// push path. SetSize used to record the new size without evicting,
+	// so the window stayed over budget until the next event arrived.
+	heights := []int{24, 6, 40, 5, 12, 24}
+	h := height
 	for i := 0; i < 200; i++ {
 		next, _ := m.HandleEvent(noticeEvent("n" + strconv.Itoa(i)))
 		m = next
-		rows := len(strings.Split(m.View(), "\n"))
-		if m.View() == "" {
-			rows = 0
+		assertWithinBudget(t, m, i, h, reserved)
+
+		if i%7 == 0 {
+			h = heights[(i/7)%len(heights)]
+			m.SetSize(80, h, reserved)
+			assertWithinBudget(t, m, i, h, reserved)
 		}
-		if rows > height-reserved {
-			t.Fatalf("after %d blocks the view is %d rows, budget is %d", i+1, rows, height-reserved)
-		}
+	}
+}
+
+// assertWithinBudget measures TERMINAL rows, not logical lines. A body
+// line wider than the terminal draws on two rows, and counting newlines
+// cannot see it.
+func assertWithinBudget(t *testing.T, m Model, step, height, reserved int) {
+	t.Helper()
+	view := m.View()
+	if view == "" {
+		return
+	}
+	rows := 0
+	for _, line := range strings.Split(view, "\n") {
+		w := ansi.StringWidth(line)
+		rows += max(1, (w+m.width-1)/m.width)
+	}
+	if rows > height-reserved {
+		t.Fatalf("at step %d the view is %d terminal rows, budget is %d:\n%q",
+			step, rows, height-reserved, view)
 	}
 }
 
@@ -60,22 +88,29 @@ func TestNoBlockIsLostOrDuplicated(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII)
 	m.SetSize(80, 24, 4)
 
+	// Tokens are zero-padded and delimited so that no token is a prefix
+	// of another. Plain "n5" is a substring of "n50", which let a lost
+	// block pass as present.
 	const n = 200
+	token := func(i int) string { return fmt.Sprintf("n%03d|", i) }
 	evs := make([]uievent.Event, 0, n)
 	for i := 0; i < n; i++ {
-		evs = append(evs, noticeEvent("n"+strconv.Itoa(i)))
+		evs = append(evs, noticeEvent(token(i)))
 	}
 	m, committed := drain(t, m, evs)
 
-	seen := strings.Join(committed, "\n") + "\n" + m.View()
+	seen := ansi.Strip(strings.Join(committed, "\n") + "\n" + m.View())
 	for i := 0; i < n; i++ {
-		want := "n" + strconv.Itoa(i)
-		if got := strings.Count(seen, want+" ") + strings.Count(seen, want+"\n") + strings.Count(seen, want+"\x1b"); got == 0 {
-			// Fall back to a plain containment check for the last block,
-			// which may end the string with no trailing delimiter.
-			if !strings.Contains(seen, want) {
-				t.Fatalf("block %q appears nowhere in scrollback or the live window", want)
-			}
+		// Exactly once: zero means the block was lost, two or more means
+		// it was printed to scrollback twice.
+		if got := strings.Count(seen, token(i)); got != 1 {
+			t.Fatalf("block %q appears %d times, want exactly 1", token(i), got)
+		}
+	}
+	// And in order.
+	for i := 1; i < n; i++ {
+		if strings.Index(seen, token(i-1)) > strings.Index(seen, token(i)) {
+			t.Fatalf("block %q appears after %q", token(i-1), token(i))
 		}
 	}
 }
@@ -126,12 +161,22 @@ func TestShrinkEvictsAndGrowDoesNotUnevict(t *testing.T) {
 		t.Fatal("expected a populated live window")
 	}
 
-	m.SetSize(80, 6, 4) // budget 2
+	// The shrink ITSELF must evict and return what it evicted. An
+	// earlier version only recorded the new size, so the window stayed
+	// over budget - and drew more rows than the terminal had - until the
+	// next event happened to arrive.
+	committed := m.SetSize(80, 6, 4) // budget 2
+	if got := len(m.Live()); got > 2 {
+		t.Errorf("got %d live blocks after the shrink, want at most 2", got)
+	}
+	if committed == "" {
+		t.Error("the shrink evicted blocks but returned no text to commit")
+	}
+	if !strings.Contains(ansi.Strip(committed), "n0") {
+		t.Errorf("expected the oldest block in the shrink commit, got %q", committed)
+	}
 	next, _ := m.HandleEvent(noticeEvent("shrink"))
 	m = next
-	if got := len(m.Live()); got > 2 {
-		t.Errorf("got %d live blocks after shrink, want <= 2", got)
-	}
 
 	m.SetSize(80, 40, 4)
 	shrunk := len(m.Live())
@@ -204,7 +249,7 @@ func TestRetainedRingIsBounded(t *testing.T) {
 	}
 	// The newest survive, the oldest are dropped.
 	retained := m.Retained()
-	if len(retained) > 0 && strings.Contains(retained[0].Header.Detail, "n0 ") {
+	if len(retained) > 0 && retained[0].Header.Detail == "n0" {
 		t.Error("expected the oldest blocks dropped from the ring first")
 	}
 }
@@ -229,7 +274,13 @@ func TestFocusFollowsEviction(t *testing.T) {
 		t.Fatal("focus was dropped entirely")
 	}
 	if m.focus >= len(m.Live()) {
-		t.Errorf("focus %d is out of range for %d live blocks", m.focus, len(m.Live()))
+		t.Fatalf("focus %d is out of range for %d live blocks", m.focus, len(m.Live()))
+	}
+	// "Follows" means the OLDEST SURVIVOR, not merely some valid index.
+	// An unconditional focus = 0 also satisfies a range check, and it is
+	// wrong the moment focus was not on the oldest block.
+	if got := m.Live()[m.focus].Header.Detail; got != m.Live()[0].Header.Detail {
+		t.Errorf("focus landed on %q, want the oldest survivor %q", got, m.Live()[0].Header.Detail)
 	}
 }
 
@@ -286,8 +337,8 @@ func TestTallBlockCollapsesByDefault(t *testing.T) {
 	if !live[0].Collapsed {
 		t.Error("a block at or above the collapse threshold must start collapsed")
 	}
-	if live[0].Height() != 1 {
-		t.Errorf("got height %d, want 1 for a collapsed block", live[0].Height())
+	if live[0].Height(80) != 1 {
+		t.Errorf("got height %d, want 1 for a collapsed block", live[0].Height(80))
 	}
 }
 

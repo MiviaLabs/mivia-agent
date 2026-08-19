@@ -140,7 +140,7 @@ topics:
   ui-design-phase0:
     path: docs/design/
     owner: architecture
-    description: Phase 0 terminal UI design - research, ASCII wireframes, theme roles, and the disposable HTML mock
+    description: Phase 0 terminal UI design - UX rules, research, ASCII wireframes, theme roles, and the disposable HTML mock
 
   ui-theme-system:
     path: docs/development/ui-theme-system.md

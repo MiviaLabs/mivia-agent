@@ -21,7 +21,7 @@ func TestBlockHeightCountsHeaderAndBody(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := c.b.Height(); got != c.want {
+			if got := c.b.Height(80); got != c.want {
 				t.Errorf("got %d, want %d", got, c.want)
 			}
 		})
@@ -89,7 +89,15 @@ func TestRenderIndentsBodyByBodyIndent(t *testing.T) {
 	if len(rows) != 2 {
 		t.Fatalf("got %d rows, want 2", len(rows))
 	}
-	want := strings.Repeat(" ", uikitconfig.BodyIndent) + "line"
+	// Hardcoded, not built from the constant: a test that echoes the
+	// value the code reads cannot fail when that value changes. The
+	// tripwire below states the coupling instead of hiding it.
+	if uikitconfig.BodyIndent != 4 {
+		t.Fatalf("BodyIndent is %d; wireframes-panes.md section 2 says 4. "+
+			"Change the drawn wireframes and this literal together, or not at all.",
+			uikitconfig.BodyIndent)
+	}
+	want := "    line"
 	if rows[1] != want {
 		t.Errorf("got %q, want %q", rows[1], want)
 	}

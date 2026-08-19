@@ -229,15 +229,28 @@ func TestWindowSizeMsgStoredAndBroadcastToEveryScreen(t *testing.T) {
 	}
 }
 
-// printText runs a Cmd and returns the text of the tea.Println it
-// produced. printLineMessage is unexported, so this inspects it via %+v
-// rather than a type assertion.
+// wantPrintType is the concrete Msg type tea.Println produces. The type
+// is unexported by bubbletea, so it is pinned by name against
+// charm.land/bubbletea/v2 v2.0.8 rather than by a type assertion.
+//
+// Pinning it is the point. Without it, replacing both tea.Println calls
+// with a bespoke Msg - so that NOTHING ever reaches scrollback and the
+// queued transcript is destroyed - passes every other test in this
+// package. That is the exact defect the queue exists to prevent.
+const wantPrintType = "tea.printLineMessage"
+
+// printText runs a Cmd, asserts it really is a tea.Println, and returns
+// the text it carries.
 func printText(t *testing.T, cmd tea.Cmd) string {
 	t.Helper()
 	if cmd == nil {
 		return ""
 	}
-	return fmt.Sprintf("%+v", cmd())
+	msg := cmd()
+	if got := fmt.Sprintf("%T", msg); got != wantPrintType {
+		t.Fatalf("got Msg type %s, want %s: queued content must reach scrollback", got, wantPrintType)
+	}
+	return fmt.Sprintf("%+v", msg)
 }
 
 // TestPrintMsgIsQueuedWhileAModalIsOpen pins the highest-risk defect in
@@ -329,16 +342,25 @@ func TestPrintMsgEmptyTextIsIgnored(t *testing.T) {
 	}
 }
 
+// unknownMsg is a Msg type Update has no case for, so it can only reach
+// a screen through the fallthrough. tea.WindowSizeMsg cannot test this:
+// Update handles it in its own case, so the fallthrough is never taken.
+type unknownMsg struct{ n int }
+
 func TestUnrecognisedMsgForwardsToTopScreen(t *testing.T) {
 	m := New(stubScreen{name: "base"}, loadTheme(t), theme.TierASCII, nil)
-	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	next, _ := m.Update(unknownMsg{n: 7})
 	m = next.(Model)
 	base := m.stack[0].(stubScreen)
 	if len(base.received) != 1 {
 		t.Fatalf("expected the Msg forwarded to the top screen, got %d received", len(base.received))
 	}
-	if _, ok := base.received[0].(tea.WindowSizeMsg); !ok {
-		t.Errorf("got %T, want tea.WindowSizeMsg forwarded verbatim", base.received[0])
+	got, ok := base.received[0].(unknownMsg)
+	if !ok {
+		t.Fatalf("got %T, want unknownMsg forwarded verbatim", base.received[0])
+	}
+	if got.n != 7 {
+		t.Errorf("got %+v, want the Msg forwarded unchanged", got)
 	}
 }
 

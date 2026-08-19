@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/transcript"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/stream"
@@ -49,17 +50,42 @@ func TestReplayDrivesTranscript(t *testing.T) {
 	}
 
 	m := transcript.New(th, theme.TierTrueColor)
+	m.SetSize(80, 24, 4)
 	var printed []string
 	deadline := time.After(5 * time.Second)
 	for {
 		select {
 		case ev, ok := <-handle.Events():
 			if !ok {
-				got := strings.Join(printed, "\n")
-				if got == "" {
+				got := strings.Join(printed, "\n") + "\n" + m.View()
+				if strings.TrimSpace(got) == "" {
 					t.Fatal("expected a non-empty printed transcript after a full replay")
 				}
-				t.Logf("printed transcript:\n%s", got)
+				// Non-empty proves construction. These prove the events
+				// crossed the boundary and were rendered as themselves:
+				// one landmark per event family in the fixture.
+				plain := ansi.Strip(got)
+				for _, want := range []string{
+					"Add retry with exponential backoff", // turn.start, the user input
+					"reasoning",                          // reasoning summary
+					"read_file",                          // tool lifecycle
+					"edit",
+					"s3_uploader",       // a tool detail
+					"plan",              // plan block
+					"context 62%",       // notice
+					"transport refused", // error
+					"1284 in",           // usage
+				} {
+					if !strings.Contains(plain, want) {
+						t.Errorf("replayed transcript is missing %q:\n%s", want, plain)
+					}
+				}
+				// And it stayed inside the terminal it was given.
+				for _, line := range strings.Split(got, "\n") {
+					if w := ansi.StringWidth(line); w > 80 {
+						t.Errorf("row is %d columns, wider than the 80-column terminal: %q", w, line)
+					}
+				}
 				return
 			}
 			var cmd tea.Cmd

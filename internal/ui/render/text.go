@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/x/ansi"
+
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
 )
 
@@ -29,10 +31,12 @@ func ProseMeasure(width int) int {
 // one long line does.
 //
 // Pure: input in, string slice out.
+// Every width here is a DISPLAY width, not a byte count. A byte count
+// wraps accented prose at half the measure and CJK at a third of it.
 func Wrap(text string, measure int) []string {
 	var out []string
 	for _, para := range strings.Split(text, "\n") {
-		if measure <= 0 || len(para) <= measure {
+		if measure <= 0 || ansi.StringWidth(para) <= measure {
 			out = append(out, para)
 			continue
 		}
@@ -43,8 +47,8 @@ func Wrap(text string, measure int) []string {
 
 func wrapLine(line string, measure int) []string {
 	// Keep the leading indent: an indented code line stays indented on
-	// every continuation row.
-	indent := line[:len(line)-len(strings.TrimLeft(line, " "))]
+	// every continuation row. Tabs indent as often as spaces do.
+	indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
 	words := strings.Fields(line)
 	if len(words) == 0 {
 		return []string{line}
@@ -53,17 +57,35 @@ func wrapLine(line string, measure int) []string {
 	var out []string
 	cur := indent
 	for _, w := range words {
+		// The candidate row is measured WHOLE, not as the sum of its
+		// parts. Invalid UTF-8 - which tool output does contain - can
+		// combine across a join, so width(a)+width(b) is not always
+		// width(a+b), and summing produced rows over the measure.
+		next := cur + " " + w
 		switch {
 		case cur == indent:
 			cur += w
-		case len(cur)+1+len(w) <= measure:
-			cur += " " + w
+		case ansi.StringWidth(next) <= measure:
+			cur = next
 		default:
 			out = append(out, cur)
 			cur = indent + w
 		}
 	}
 	return append(out, cur)
+}
+
+// HardWrap breaks one logical line into the terminal rows it occupies at
+// width, cutting mid-token. Tool output and code are not prose: a break
+// on a word boundary would misrepresent the bytes the tool produced.
+//
+// It is ANSI-aware, so a styled line keeps its escapes and they cost no
+// display columns.
+func HardWrap(line string, width int) []string {
+	if width <= 0 || ansi.StringWidth(line) <= width {
+		return []string{line}
+	}
+	return strings.Split(ansi.Hardwrap(line, width, false), "\n")
 }
 
 // ProgressBar draws the subagent progress bar from the section 3 glyph

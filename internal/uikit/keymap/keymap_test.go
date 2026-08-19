@@ -5,8 +5,15 @@ import (
 	"testing"
 )
 
-// reservedKeys must never be bound. docs/design/ux-rules.md section 1.
-// The terminal, the tty line discipline, or readline owns each one.
+// reservedKeys must never be bound IN ANY CONTEXT. docs/design/ux-rules.md
+// section 1: the terminal or the tty line discipline owns each one, and no
+// context escapes it.
+//
+// The readline keys in that same section - ctrl+u, ctrl+e, ctrl+k, ctrl+r -
+// are deliberately absent here. Readline owns the LINE EDITOR, so those are
+// reserved inside the composer and free outside it, or free anywhere they
+// keep readline's own meaning. ctrl+u is bound to clear-the-line, which is
+// exactly what readline does with it.
 var reservedKeys = map[string]string{
 	"ctrl+s":  "XOFF: output freezes and the session looks hung",
 	"ctrl+q":  "XON: the user's only recovery from ctrl+s",
@@ -110,6 +117,36 @@ func TestHelpIsGeneratedFromTheTable(t *testing.T) {
 	})).Help()
 	if len(extended) != len(base)+1 {
 		t.Errorf("got %d rows, want %d: help must come from the table", len(extended), len(base)+1)
+	}
+}
+
+// TestHelpCoversEveryBindingAndContext pins the completeness of Help
+// against its hardcoded context order. Dropping a context from that
+// order removes a whole section from the help, and a row-count check on
+// one context cannot see it.
+func TestHelpCoversEveryBindingAndContext(t *testing.T) {
+	rows := New(Default()).Help()
+
+	wantRows, wantCtx := 0, map[Context]bool{}
+	for _, b := range Default() {
+		if b.Hidden {
+			continue
+		}
+		wantRows++
+		wantCtx[b.Context] = true
+	}
+	if len(rows) != wantRows {
+		t.Errorf("help has %d rows, want one per visible binding (%d)", len(rows), wantRows)
+	}
+
+	gotCtx := map[Context]bool{}
+	for _, r := range rows {
+		gotCtx[r.Context] = true
+	}
+	for ctx := range wantCtx {
+		if !gotCtx[ctx] {
+			t.Errorf("context %q has bindings but no help rows", ctx)
+		}
 	}
 }
 

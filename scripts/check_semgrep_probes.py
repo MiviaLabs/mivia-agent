@@ -134,6 +134,13 @@ PROBES = [
         'package probe\n\nimport "log"\n\nfunc f() {\n\tlog.Print("ok")\n}\n',
     ),
     (
+        "mivia.go.no-value-builder-field-in-ui",
+        "internal/ui/probe/builder.go",
+        'package probe\n\nimport "strings"\n\ntype Model struct {\n\tName    string\n\tpending strings.Builder\n}\n',
+        "internal/ui/probe/builder_clean.go",
+        'package probe\n\ntype CleanModel struct {\n\tName    string\n\tpending string\n}\n',
+    ),
+    (
         "mivia.go.no-shell-exec",
         "internal/probe/shell.go",
         'package probe\n\nimport "os/exec"\n\nfunc f() {\n\texec.Command("bash", "-c", "echo hi")\n}\n',
@@ -272,9 +279,32 @@ def group_findings(data: dict, tmp: Path) -> dict[str, set[str]]:
     return hits
 
 
+def declared_rule_ids() -> set[str]:
+    """Every rule id in the config, read without a YAML dependency."""
+    ids = set()
+    for line in CONFIG.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("- id:"):
+            ids.add(stripped.split(":", 1)[1].strip())
+    return ids
+
+
 def main() -> int:
     if not CONFIG.exists():
         fail(f"missing config: {CONFIG}")
+        return 1
+
+    # Completeness first, because it needs no Semgrep and it is the check
+    # that catches a NEW rule. A rule with no probe is an unverified rule:
+    # it can silently stop matching, and every assertion below would still
+    # pass because none of them ever mentions it.
+    declared = declared_rule_ids()
+    probed = {rid for rid, *_ in PROBES}
+    if missing := sorted(declared - probed):
+        fail("rules declared in the config with no probe: " + ", ".join(missing))
+        return 1
+    if stale := sorted(probed - declared):
+        fail("probes for rules no longer in the config: " + ", ".join(stale))
         return 1
 
     if not semgrep_available():

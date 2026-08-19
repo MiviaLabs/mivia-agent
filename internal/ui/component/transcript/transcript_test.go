@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/stream"
@@ -66,29 +67,75 @@ func handleAndCollectCommits(t *testing.T, m Model, events []uievent.Event) []st
 // recorded-conversation fixture internal/ui/stream proves its plain
 // renderer against: the ordered sequence of CommitMsg text a caller
 // would tea.Println, joined by newlines.
+// It runs at two sizes on purpose. The unmeasured model is the state
+// before the first WindowSizeMsg, where the budget is zero and every
+// block commits on push. The 80x24 model is the one a user actually
+// sees, and it is the ONLY one that exercises right-aligned columns,
+// detail clipping, the live window and in-place updates. A golden taken
+// only at the unmeasured size passes while all four are broken.
 func TestRenderGolden(t *testing.T) {
-	events, err := stream.DefaultFixture()
-	if err != nil {
-		t.Fatal(err)
+	cases := []struct {
+		name          string
+		width, height int
+		golden        string
+	}{
+		{"unmeasured", 0, 0, "conversation.txt"},
+		{"80x24", 80, 24, "conversation-80x24.txt"},
 	}
-	m := New(loadTheme(t), theme.TierTrueColor)
-	got := strings.Join(handleAndCollectCommits(t, m, events), "\n")
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			events, err := stream.DefaultFixture()
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := New(loadTheme(t), theme.TierTrueColor)
+			if c.width > 0 {
+				m.SetSize(c.width, c.height, 4)
+			}
+			commits := handleAndCollectCommits(t, m, events)
+			got := strings.Join(commits, "\n")
+			if live := m.View(); live != "" {
+				got += "\n--- live window ---\n" + live
+			}
+			compareGolden(t, filepath.Join("testdata", "golden", c.golden), got)
 
-	goldenPath := filepath.Join("testdata", "golden", "conversation.txt")
+			if c.width == 0 {
+				return
+			}
+			// Properties, independent of the bytes. A regenerated golden
+			// records whatever the code does; these state what it MUST do,
+			// so a wrong regeneration still fails.
+			for _, line := range strings.Split(got, "\n") {
+				if strings.HasPrefix(line, "---") {
+					continue
+				}
+				if w := ansi.StringWidth(line); w > c.width {
+					t.Errorf("row is %d columns, wider than the %d-column terminal: %q", w, c.width, line)
+				}
+			}
+			if rows := len(strings.Split(m.View(), "\n")); rows > c.height-4 {
+				t.Errorf("live window is %d rows, over the %d-row budget", rows, c.height-4)
+			}
+		})
+	}
+}
+
+func compareGolden(t *testing.T, path, got string) {
+	t.Helper()
 	if os.Getenv("UPDATE_GOLDEN") == "1" {
-		if err := os.MkdirAll(filepath.Dir(goldenPath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(goldenPath, []byte(got), 0o644); err != nil {
+		if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	want, err := os.ReadFile(goldenPath)
+	want, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got != string(want) {
-		t.Errorf("output does not match golden %s\n--- got ---\n%s\n--- want ---\n%s", goldenPath, got, want)
+		t.Errorf("output does not match golden %s\n--- got ---\n%s\n--- want ---\n%s", path, got, want)
 	}
 }
 

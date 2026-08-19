@@ -92,7 +92,43 @@ func waitForEvent(events <-chan uievent.Event) tea.Cmd {
 	}
 }
 
+// Update delegates to update, then re-budgets the transcript whenever the
+// chrome's row claim changed.
+//
+// The re-budget cannot live at the individual call sites. Arming an
+// approval prompt, starting the status line, and resolving a decision all
+// change reservedRows, and each one that forgot to re-budget would let
+// View draw more rows than the terminal has - the exact failure the live
+// window exists to prevent. Comparing before and after cannot be
+// forgotten by a later change.
 func (s Screen) Update(msg tea.Msg) (app.Screen, tea.Cmd) {
+	before := s.reservedRows()
+	next, cmd := s.update(msg)
+	scr, ok := next.(Screen)
+	if !ok || scr.reservedRows() == before {
+		return next, cmd
+	}
+	commit := scr.resize()
+	if commit == nil {
+		return scr, cmd
+	}
+	// Sequence, not Batch: tea.Batch documents "no ordering guarantees",
+	// and cmd may itself carry content evicted earlier in this same
+	// update. Scrollback order is the transcript's whole contract.
+	return scr, tea.Sequence(cmd, commit)
+}
+
+// resize re-budgets the transcript from the current size and chrome, and
+// returns the Cmd that commits whatever the new budget evicted.
+func (s *Screen) resize() tea.Cmd {
+	text := s.transcript.SetSize(s.width, s.height, s.reservedRows())
+	if text == "" {
+		return nil
+	}
+	return func() tea.Msg { return app.PrintMsg{Text: text} }
+}
+
+func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		return s.handleKey(msg)
@@ -126,8 +162,7 @@ func (s Screen) Update(msg tea.Msg) (app.Screen, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		s.width, s.height = msg.Width, msg.Height
 		s.composer.SetWidth(msg.Width)
-		s.transcript.SetSize(msg.Width, msg.Height, s.reservedRows())
-		return s, nil
+		return s, s.resize()
 	case app.ThemeChangedMsg:
 		s.Theme, s.Tier = msg.Theme, msg.Tier
 		s.transcript.Theme, s.transcript.Tier = msg.Theme, msg.Tier

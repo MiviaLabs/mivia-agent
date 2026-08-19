@@ -126,7 +126,11 @@ Start every `feature-delivery` run with `scripts/run-delivery-workflow.sh <label
 
 ```text
 cmd/mivia/           CLI entrypoint -> binary mivia
+cmd/mivia-ui/        New terminal UI entrypoint, not yet the shipped binary
+cmd/mivia-ui-demo/   Theme and render demo, development only
 internal/            Go packages
+internal/ui/         New terminal UI: app, screens, components, render, theme
+internal/uikit/      UI data with no bubbletea import: config, keymap, ports
 .agents/             Canonical agent control surface (rules, doctrines, skills, quality, templates)
 .mivia/              Product runtime config/state: mivia.toml, workflows/, hooks/, agents/*.toml, policy/*
 .mivia/hooks/        This repo's own mivia lifecycle hook scripts (project-scoped)

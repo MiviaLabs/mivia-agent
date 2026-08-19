@@ -6,6 +6,7 @@ package picker
 
 import (
 	"strings"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -80,7 +81,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, func() tea.Msg { return CancelMsg{} }
 	case "backspace":
 		if m.filter != "" {
-			m.filter = m.filter[:len(m.filter)-1]
+			_, size := utf8.DecodeLastRuneInString(m.filter)
+			m.filter = m.filter[:len(m.filter)-size]
 			m.cursor = 0
 		}
 	default:

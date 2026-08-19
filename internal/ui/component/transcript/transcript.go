@@ -54,8 +54,12 @@ type Model struct {
 
 	width, height, reserved int
 
-	nextID      int
-	pending     strings.Builder
+	nextID int
+	// pending is a plain string, not a strings.Builder. Model is copied
+	// on every HandleEvent, and a non-zero Builder panics when it is
+	// written after a copy. The spans here are short-lived and tiny, so
+	// the Builder bought nothing and risked a crash.
+	pending     string
 	pendingKind uievent.Kind // uievent.KindTextDelta or KindReasoning while streaming; "" when idle
 	flushWait   bool
 }
@@ -90,7 +94,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 	}
 	m.flushWait = false
-	if m.pending.Len() > 0 {
+	if m.pending != "" {
 		// Still streaming (or awaiting the terminal chunk): keep the
 		// repaint clock alive. One extra harmless tick lands right after
 		// the span ends, since flushWait was already true when it did.
@@ -108,10 +112,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 func (m Model) HandleEvent(ev uievent.Event) (Model, tea.Cmd) {
 	switch b := ev.Body.(type) {
 	case uievent.TextDeltaBody:
-		return m, m.appendPending(uievent.KindTextDelta, b.Text)
+		cmd := m.appendPending(uievent.KindTextDelta, b.Text)
+		return m, cmd
 	case uievent.ReasoningDeltaBody:
 		if b.WordCount == 0 {
-			return m, m.appendPending(uievent.KindReasoning, b.Text)
+			cmd := m.appendPending(uievent.KindReasoning, b.Text)
+			return m, cmd
 		}
 		m.clearPending()
 		return m.pushBlock(Block{
@@ -126,7 +132,7 @@ func (m Model) HandleEvent(ev uievent.Event) (Model, tea.Cmd) {
 		return m.pushBlock(Block{
 			Kind:  uievent.KindTextEnd,
 			Prose: true,
-			Body:  m.proseLines(render.Text(m.Theme, m.Tier, b.Text)),
+			Body:  proseLines(render.Text(m.Theme, m.Tier, b.Text)),
 		})
 	case uievent.TurnStartBody:
 		return m.pushBlock(Block{
@@ -185,7 +191,7 @@ const shortResultCols = 16
 // why the turn stopped.
 func (m Model) endTurnUnfinished(reason string) (Model, tea.Cmd) {
 	var out []string
-	if partial := m.pending.String(); partial != "" {
+	if partial := m.pending; partial != "" {
 		var cmd tea.Cmd
 		m, cmd = m.pushBlock(Block{
 			Kind:  uievent.KindTextEnd,
@@ -308,25 +314,17 @@ func (m Model) pushBlock(b Block) (Model, tea.Cmd) {
 }
 
 func (m *Model) clearPending() {
-	m.pending.Reset()
+	m.pending = ""
 	m.pendingKind = ""
 }
 
-// proseLines wraps assistant prose to the reading measure. Already
-// styled text (a tinted code block) is passed through unwrapped: it
-// carries escape sequences that a width-counting wrap would mismeasure,
-// and code should not be reflowed anyway.
-func (m Model) proseLines(text string) []string {
-	measure := render.ProseMeasure(m.width)
-	var out []string
-	for _, line := range strings.Split(text, "\n") {
-		if strings.Contains(line, "\x1b") {
-			out = append(out, line)
-			continue
-		}
-		out = append(out, render.Wrap(line, measure)...)
-	}
-	return out
+// proseLines splits assistant prose into LOGICAL lines. It deliberately
+// does not wrap: Block.bodyRows wraps at render time, so prose reflows
+// when the terminal is resized. Wrapping here would freeze the measure
+// taken at push time, and a later shrink would leave rows wider than the
+// terminal that Height could not account for.
+func proseLines(text string) []string {
+	return strings.Split(text, "\n")
 }
 
 // userLines renders the user's turn: the accent marker on the first row,
@@ -349,7 +347,7 @@ func userLines(t theme.Theme, tier theme.Tier, width int, input string) []string
 }
 
 func (m *Model) appendPending(kind uievent.Kind, text string) tea.Cmd {
-	m.pending.WriteString(text)
+	m.pending += text
 	m.pendingKind = kind
 	if m.flushWait {
 		return nil
@@ -375,12 +373,12 @@ func (m Model) View() string {
 	for _, b := range m.blocks {
 		rows = append(rows, b.Render(m.Theme, m.Tier, m.width))
 	}
-	if m.pending.Len() > 0 {
+	if m.pending != "" {
 		style := render.Role(m.Theme, m.Tier, theme.RoleFG)
 		if m.pendingKind == uievent.KindReasoning {
 			style = render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
 		}
-		rows = append(rows, style.Render(m.pending.String()))
+		rows = append(rows, style.Render(m.pending))
 	}
 	return strings.Join(rows, "\n")
 }

@@ -3,6 +3,8 @@ package transcript
 import (
 	"strings"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
@@ -57,15 +59,53 @@ func (b Block) isEmpty() bool {
 		b.Header.Meta == "" && b.Header.State == "" && len(b.Body) == 0
 }
 
-// Height is the rendered row count, which the eviction budget consumes.
-func (b Block) Height() int {
+// Height is the TERMINAL row count at width, which the eviction budget
+// consumes. It is not the count of logical body lines: a line wider than
+// the terminal draws on two rows or more, and counting it as one would
+// make the budget nominal instead of real.
+//
+// Height and Render both derive their rows from bodyRows, so they cannot
+// disagree.
+func (b Block) Height(width int) int {
 	if b.Prose {
-		return len(b.Body)
+		return len(b.bodyRows(width))
 	}
 	if b.Collapsed {
 		return 1
 	}
-	return 1 + len(b.Body)
+	// render.Header guarantees exactly one row at a known width.
+	return 1 + len(b.bodyRows(width))
+}
+
+// bodyRows is the body as terminal rows at width, already wrapped.
+//
+// Prose wraps to a reading measure on word boundaries. Tool output and
+// code hard-wrap at the terminal edge: they are not prose, and a break
+// on a word boundary would misrepresent the bytes the tool produced.
+// Already-styled prose hard-wraps too, because the escape sequences in
+// it belong to code that should not reflow.
+func (b Block) bodyRows(width int) []string {
+	if width <= 0 {
+		return b.Body
+	}
+	if b.Prose {
+		measure := render.ProseMeasure(width)
+		out := make([]string, 0, len(b.Body))
+		for _, line := range b.Body {
+			if strings.Contains(line, "\x1b") {
+				out = append(out, render.HardWrap(line, width)...)
+				continue
+			}
+			out = append(out, render.Wrap(line, measure)...)
+		}
+		return out
+	}
+	inner := width - uikitconfig.BodyIndent
+	out := make([]string, 0, len(b.Body))
+	for _, line := range b.Body {
+		out = append(out, render.HardWrap(line, inner)...)
+	}
+	return out
 }
 
 // defaultCollapsed reports the state a block first renders in.
@@ -80,7 +120,7 @@ func defaultCollapsed(body []string) bool {
 // toggling never moves any other row (wireframes-panes.md section 5).
 func (b Block) Render(t theme.Theme, tier theme.Tier, width int) string {
 	if b.Prose {
-		return strings.Join(b.Body, "\n")
+		return strings.Join(b.bodyRows(width), "\n")
 	}
 
 	var sb strings.Builder
@@ -89,7 +129,7 @@ func (b Block) Render(t theme.Theme, tier theme.Tier, width int) string {
 		return sb.String()
 	}
 	indent := strings.Repeat(" ", uikitconfig.BodyIndent)
-	for _, line := range b.Body {
+	for _, line := range b.bodyRows(width) {
 		sb.WriteByte('\n')
 		sb.WriteString(indent)
 		sb.WriteString(line)
@@ -117,8 +157,13 @@ func (b Block) renderHeader(t theme.Theme, tier theme.Tier, width int) string {
 	// styles. The collapse marker remains, so focus is signalled by
 	// shape as well as by colour (docs/design/ux-rules.md rules 6.3-6.4).
 	if b.Focused {
-		return render.Role(t, tier, theme.RoleFG).Reverse(true).
-			Render(b.headerPlain())
+		// Truncated to width for the same reason the unfocused header is:
+		// a header that overflows draws two rows, and Height budgets one.
+		plain := b.headerPlain()
+		if width > 0 {
+			plain = ansi.Truncate(plain, width, "")
+		}
+		return render.Role(t, tier, theme.RoleFG).Reverse(true).Render(plain)
 	}
 
 	return render.Header(t, tier, width, render.HeaderSpec{

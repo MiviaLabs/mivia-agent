@@ -47,12 +47,14 @@ label  detail                                              meta   state
   body line
 ```
 
-- `label` is the block kind, at column 1. Dim, never bold.
+- column 1 holds the collapse marker: `v` (open), `>` (closed), or a space.
+- `label` is the block kind, at column 3. Dim, never bold. A block that cannot
+  collapse still starts at column 3, so every header aligns.
 - `detail` is the subject: a path, a command, a subagent name.
 - `meta` and `state` are right-aligned. State is always a word, never only a colour.
-- the body is indented 2 columns. Nothing is drawn in columns 1 and 2 of a body line.
-- collapsible blocks carry `v` (open) or `>` (closed) at column 1, replacing nothing:
-  the label shifts to column 3.
+- the body is indented 4 columns. Nothing is drawn in columns 1 to 4 of a body line.
+  Section 11 and every drawn wireframe use 4. An earlier revision of this section
+  said 2, which was wrong.
 
 Assistant prose is not a block. It has no header and no indent. It is the only content
 at column 1, which is what makes it read as the conversation rather than as tooling.
@@ -166,11 +168,12 @@ v edit        internal/storage/s3_uploader.go           +4 -1   31ms   ok
     +   return retry.Do(ctx, retry.Policy{Max: 3})
 ```
 
-**Inline constraint.** A block can only collapse while it is still inside the repaint
-window - that is, while it has not scrolled out of the frame. Once a block is in
-scrollback it is frozen. The renderer therefore decides the default state **when the
-block is first printed**, from a size threshold, and the user's toggle only applies
-while the block is still live. Default: open under 12 body lines, closed at or above.
+**Live-window constraint.** A block stays interactive while it is in the live window.
+The window holds the blocks that fit in the terminal height minus the reserved chrome.
+The renderer sets the default state when the block finalizes, from a size threshold.
+Eviction prints the block to scrollback once and freezes it. Finalization does not
+freeze a block, because a finalized block is usually still on screen.
+Default: open under 12 body lines, closed at or above.
 
 ---
 
@@ -377,10 +380,11 @@ I will add a bounded retry to the uploader transport. Three attempts, ful
 | theme grid | 2 columns | 3 columns |
 | diff | unified | side-by-side available on `s` |
 | status line | drops fields right to left | every field plus the model name |
-| dialogs | 58 columns wide | 72 columns wide, never full width |
+| dialogs | 62 columns wide | 72 columns wide, never full width |
 
-Below 80: the status line sheds fields, then block headers drop `meta`, then the path
-elides from the left. Below 40 columns the renderer prints the plain stream format.
+Below 80: the status line sheds fields, then the header clips the detail. The header
+keeps the meta and the state, because the state carries meaning. A clipped detail ends
+with `~`. Below 40 columns the renderer prints the plain stream format.
 
 ---
 
@@ -388,17 +392,17 @@ elides from the left. Below 40 columns the renderer prints the plain stream form
 
 | Key | Acts on | Does |
 |---|---|---|
-| `Tab` / `Shift-Tab` | transcript | focus next / previous block |
+| `Tab` / `Shift-Tab` | live window | focus next / previous block |
 | `Space` / `Enter` | focused block | toggle collapsed |
-| `Ctrl-E` / `Ctrl-W` | transcript | expand all / collapse all |
+| `Ctrl-E` / `Ctrl-G` | live window | expand all / collapse all |
 | `y` | focused block | copy to clipboard (OSC 52) |
 | `Ctrl-O` | focused block | open in the pager |
 | `Esc` | turn, dialog | cancel turn keeping text; close dialog |
 | `Ctrl-C` | turn | cancel discarding; twice quits |
-| `Ctrl-S` | active turn | hide or show reasoning |
-| `o` `a` `d` `D` `v` | approval | once, always, deny, deny always, view |
+| `Ctrl-R` | global | hide or show reasoning |
+| `o` `a` `d` `D` | approval | once, always, deny, deny always |
 | `Ctrl-T` | global | theme dialog |
-| `Ctrl-M` | global | model and effort dialog |
+| `Ctrl-P` | global | model and effort dialog |
 | `Ctrl-L` | global | session dialog |
 | `n` / `N` | pager | next / previous hunk |
 | `s` | pager | side-by-side, 120 columns or wider |
