@@ -63,6 +63,10 @@ func (s Screen) applyCommandOutcome(o ports.CommandOutcome) (app.Screen, tea.Cmd
 		pm := picker.New(s.Theme, s.Tier, o.ModelChoices)
 		s.modelPicker = &pm
 		return s, tea.ClearScreen
+	case len(o.AgentChoices) > 0:
+		ap := picker.New(s.Theme, s.Tier, o.AgentChoices)
+		s.agentPicker = &ap
+		return s, tea.ClearScreen
 	case o.Notice != "":
 		return s.withNotice(o.Notice), nil
 	}
@@ -125,24 +129,25 @@ func (s Screen) dialogSize() (int, int) {
 	return contentWidth(s.width), s.height - s.reservedRows()
 }
 
-// handleModelPickerKey routes one key press to the open /model picker.
-// A selection asks the runner to apply it and shows the resulting
-// outcome (typically a confirmation notice); Esc cancels with no
-// notice. Both close the picker, so both clear the screen (the same
+// handlePickerKey routes one key press to an open picker modal (/model
+// or /agents). A selection asks the runner to apply it and shows the
+// resulting outcome (typically a confirmation notice); Esc cancels with
+// no notice. Both close the picker, so both clear the screen (the same
 // reasoning as opening it: the picker drew content the transcript and
 // composer underneath never redrew, and closing it exposes them again).
-func (s Screen) handleModelPickerKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
+func (s Screen) handlePickerKey(msg tea.KeyPressMsg, which *picker.Model, cmdName string, apply func(string) ports.CommandOutcome) (app.Screen, tea.Cmd) {
 	// ctrl+c is the emergency exit and must not be swallowed by the
 	// modal, the same rule as the approval prompt: close the picker,
 	// then run the ordinary quit flow (cancel the turn, arm the second
 	// press).
 	if msg.String() == "ctrl+c" {
-		s.modelPicker = nil
+		*which = picker.Model{}
+		s.modelPicker, s.agentPicker = nil, nil
 		next, cmd, _ := s.quit()
 		return next, tea.Batch(cmd, tea.ClearScreen)
 	}
-	next, cmd := s.modelPicker.Update(msg)
-	s.modelPicker = &next
+	next, cmd := which.Update(msg)
+	*which = next
 	if cmd == nil {
 		return s, nil
 	}
@@ -150,23 +155,37 @@ func (s Screen) handleModelPickerKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) 
 	// (SelectMsg) or "esc" (CancelMsg) - see internal/ui/component/picker.
 	switch m := cmd().(type) {
 	case picker.SelectMsg:
-		s.modelPicker = nil
+		s.modelPicker, s.agentPicker = nil, nil
 		if s.runner == nil {
-			return s.withError("no command runner configured for /model"), tea.ClearScreen
+			return s.withError("no command runner configured for /" + cmdName), tea.ClearScreen
 		}
-		outcome := s.runner.SelectModel(context.Background(), m.Item)
-		next, outcomeCmd := s.applyCommandOutcome(outcome)
+		out := apply(m.Item)
+		next, outcomeCmd := s.applyCommandOutcome(out)
 		return next, tea.Batch(outcomeCmd, tea.ClearScreen)
 	case picker.CancelMsg:
-		s.modelPicker = nil
+		s.modelPicker, s.agentPicker = nil, nil
 		return s, tea.ClearScreen
 	}
 	return s, nil
 }
 
-// renderModelPicker draws the /model picker as a centered dialog, the
-// same primitive themepicker.Screen uses.
-func renderModelPicker(t theme.Theme, tier theme.Tier, width, height int, p picker.Model) string {
-	return render.Dialog(t, tier, width, height, "select a model", p.View(),
+// handleModelPickerKey and handleAgentPickerKey adapt handlePickerKey
+// to the two pickers, so call sites stay one line.
+func (s Screen) handleModelPickerKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
+	return s.handlePickerKey(msg, s.modelPicker, "model", func(name string) ports.CommandOutcome {
+		return s.runner.SelectModel(context.Background(), name)
+	})
+}
+
+func (s Screen) handleAgentPickerKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
+	return s.handlePickerKey(msg, s.agentPicker, "agents", func(name string) ports.CommandOutcome {
+		return s.runner.SelectAgent(context.Background(), name)
+	})
+}
+
+// renderPickerDialog draws the /model and /agents pickers as centered
+// dialogs, the same primitive themepicker.Screen uses.
+func renderPickerDialog(t theme.Theme, tier theme.Tier, width, height int, title string, p picker.Model) string {
+	return render.Dialog(t, tier, width, height, title, p.View(),
 		"[enter] select  [esc] cancel  type to filter")
 }

@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"context"
+	"github.com/charmbracelet/x/ansi"
 	"reflect"
 	"strings"
 	"testing"
@@ -60,6 +61,11 @@ type fakeRunner struct {
 func (f *fakeRunner) Run(_ context.Context, name, args string) ports.CommandOutcome {
 	f.calls = append(f.calls, name+"|"+args)
 	return f.outcome
+}
+
+func (f *fakeRunner) SelectAgent(_ context.Context, name string) ports.CommandOutcome {
+	f.selectCalls = append(f.selectCalls, "agent:"+name)
+	return f.selectOutcome
 }
 
 func (f *fakeRunner) SelectModel(_ context.Context, name string) ports.CommandOutcome {
@@ -418,5 +424,70 @@ func TestCtrlCIsTheEmergencyExitUnderModelPicker(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Error("ctrl+c did not quit under the picker modal")
+	}
+}
+
+// TestRunSlashCommandAgentsOpensThePickerDialog: /agents routes through
+// the AgentChoices outcome into the same centered-dialog picker /model
+// uses, Mivia first.
+func TestRunSlashCommandAgentsOpensThePickerDialog(t *testing.T) {
+	runner := &fakeRunner{outcome: ports.CommandOutcome{AgentChoices: []string{"Mivia", "reviewer"}}}
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	s.SetCommandRunner(runner)
+	s.width, s.height = 60, 24
+	s, _ = sendLine(t, s, "/agents")
+
+	if s.agentPicker == nil {
+		t.Fatal("/agents did not open the agent picker")
+	}
+	view := ansi.Strip(s.View())
+	for _, want := range []string{"select an agent", "Mivia", "reviewer"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("agent picker view missing %q:\n%s", want, view)
+		}
+	}
+}
+
+// TestAgentPickerSelectionAppliesThroughTheRunner: Enter resolves the
+// highlighted agent via SelectAgent, closes the picker, and shows the
+// runner's notice.
+func TestAgentPickerSelectionAppliesThroughTheRunner(t *testing.T) {
+	runner := &fakeRunner{
+		outcome:       ports.CommandOutcome{AgentChoices: []string{"Mivia", "reviewer"}},
+		selectOutcome: ports.CommandOutcome{Notice: "agent set to Mivia"},
+	}
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	s.SetCommandRunner(runner)
+	s.width, s.height = 60, 24
+	s, _ = sendLine(t, s, "/agents")
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	s = next.(Screen)
+
+	if s.agentPicker != nil {
+		t.Error("enter left the agent picker open")
+	}
+	if len(runner.selectCalls) != 1 || runner.selectCalls[0] != "agent:Mivia" {
+		t.Errorf("SelectAgent calls = %v, want [agent:Mivia] (first choice highlighted)", runner.selectCalls)
+	}
+	if got := lastErrorDetail(t, s); !strings.Contains(got, "agent set to Mivia") {
+		t.Errorf("notice detail %q, want the SelectAgent outcome's Notice", got)
+	}
+}
+
+// TestAgentPickerEscapeCancelsWithoutSelecting.
+func TestAgentPickerEscapeCancelsWithoutSelecting(t *testing.T) {
+	runner := &fakeRunner{outcome: ports.CommandOutcome{AgentChoices: []string{"Mivia"}}}
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	s.SetCommandRunner(runner)
+	s.width, s.height = 60, 24
+	s, _ = sendLine(t, s, "/agents")
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	s = next.(Screen)
+
+	if s.agentPicker != nil {
+		t.Error("escape left the agent picker open")
+	}
+	if len(runner.selectCalls) != 0 {
+		t.Errorf("escape selected: %v", runner.selectCalls)
 	}
 }

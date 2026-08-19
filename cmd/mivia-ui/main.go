@@ -54,7 +54,7 @@ const initialComposerWidth = 80
 // supplies it.
 func mockCommands() []composer.Command {
 	return []composer.Command{
-		{Name: "agents", Desc: "list the available agents"},
+		{Name: "agents", Desc: "pick the agent (Mivia is the default orchestrator)"},
 		{Name: "clear", Desc: "clear the transcript"},
 		{Name: "compact", Desc: "compact the context"},
 		{Name: "context", Desc: "show context usage"},

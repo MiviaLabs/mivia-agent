@@ -57,13 +57,30 @@ func TestRunCost(t *testing.T) {
 	}
 }
 
-func TestRunAgentsListsRoster(t *testing.T) {
+func TestRunAgentsOffersTheRosterAsChoices(t *testing.T) {
 	h := newHarness(t)
 	got := h.Run(context.Background(), "agents", "")
-	for _, a := range demoAgents {
-		if !strings.Contains(got.Notice, a.Name) {
-			t.Errorf("got notice %q, want it to list agent %q", got.Notice, a.Name)
-		}
+	if got.Notice != "" || got.Err != "" {
+		t.Errorf("got %q/%q, want a pure picker outcome", got.Notice, got.Err)
+	}
+	if len(got.AgentChoices) != len(demoAgents) {
+		t.Fatalf("got %d choices, want %d (one per roster entry)", len(got.AgentChoices), len(demoAgents))
+	}
+	if got.AgentChoices[0] != ports.DefaultAgentName {
+		t.Errorf("first choice is %q, want the default orchestrator %q", got.AgentChoices[0], ports.DefaultAgentName)
+	}
+}
+
+// TestSelectAgentSwitchesAndRejectsUnknown: a roster name switches the
+// session agent; an unknown name is an error, never a silent no-op.
+func TestSelectAgentSwitchesAndRejectsUnknown(t *testing.T) {
+	h := newHarness(t)
+	got := h.SelectAgent(context.Background(), ports.DefaultAgentName)
+	if got.Err != "" || !strings.Contains(got.Notice, ports.DefaultAgentName) {
+		t.Errorf("select default: got %q/%q", got.Err, got.Notice)
+	}
+	if got := h.SelectAgent(context.Background(), "nope"); got.Err == "" {
+		t.Errorf("unknown agent selected silently: %+v", got)
 	}
 }
 

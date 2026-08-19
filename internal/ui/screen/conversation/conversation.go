@@ -45,6 +45,7 @@ type Screen struct {
 	approver    ports.Approver      // nil is valid: no approval wiring
 	runner      ports.CommandRunner // nil is valid: every "/x" then shows an error, never sends
 	modelPicker *picker.Model       // non-nil while the /model picker is open
+	agentPicker *picker.Model       // non-nil while the /agents picker is open
 
 	topbar     topbar.Model
 	transcript transcript.Model
@@ -304,7 +305,11 @@ func (s Screen) View() string {
 	switch {
 	case s.modelPicker != nil:
 		dw, dh := s.dialogSize()
-		content := renderModelPicker(s.Theme, s.Tier, dw, dh, *s.modelPicker)
+		content := renderPickerDialog(s.Theme, s.Tier, dw, dh, "select a model", *s.modelPicker)
+		lines = append(lines, overlayRows(content, s.height-s.reservedRows())...)
+	case s.agentPicker != nil:
+		dw, dh := s.dialogSize()
+		content := renderPickerDialog(s.Theme, s.Tier, dw, dh, "select an agent", *s.agentPicker)
 		lines = append(lines, overlayRows(content, s.height-s.reservedRows())...)
 	case s.overlay != "":
 		lines = append(lines, overlayRows(s.overlay, s.height-s.reservedRows())...)

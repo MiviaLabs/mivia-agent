@@ -25,6 +25,7 @@ type demoAgent struct {
 }
 
 var demoAgents = []demoAgent{
+	{Name: ports.DefaultAgentName, Role: "general purpose orchestrator (default)"},
 	{Name: "go-engineer", Role: "implements Go changes"},
 	{Name: "reviewer", Role: "reviews structure and architecture"},
 	{Name: "auditor", Role: "hunts bugs in changed code"},
@@ -52,7 +53,11 @@ func (h *Harness) Run(_ context.Context, name, args string) ports.CommandOutcome
 	case "cost":
 		return ports.CommandOutcome{Notice: formatCost(h.ContextUsage())}
 	case "agents":
-		return ports.CommandOutcome{Notice: formatAgents(demoAgents)}
+		names := make([]string, 0, len(demoAgents))
+		for _, a := range demoAgents {
+			names = append(names, a.Name)
+		}
+		return ports.CommandOutcome{AgentChoices: names}
 	case "clear":
 		h.mu.Lock()
 		h.history = nil
@@ -79,12 +84,27 @@ func (h *Harness) SelectModel(_ context.Context, name string) ports.CommandOutco
 	for _, m := range demoModels {
 		if m == name {
 			h.mu.Lock()
-			h.model = ports.ModelInfo{Name: name, Provider: "demo"}
+			h.model = ports.ModelInfo{Name: name, Provider: "demo", ContextWindow: demoContextWindow}
 			h.mu.Unlock()
 			return ports.CommandOutcome{Notice: "model set to " + name}
 		}
 	}
 	return ports.CommandOutcome{Err: "unknown model " + name}
+}
+
+// SelectAgent applies a /agents choice. The switch is session state the
+// demo records but nothing else reads yet - the same shape /model had
+// before the top bar started showing it.
+func (h *Harness) SelectAgent(_ context.Context, name string) ports.CommandOutcome {
+	for _, a := range demoAgents {
+		if a.Name == name {
+			h.mu.Lock()
+			h.agent = name
+			h.mu.Unlock()
+			return ports.CommandOutcome{Notice: "agent set to " + name}
+		}
+	}
+	return ports.CommandOutcome{Err: "unknown agent " + name}
 }
 
 // compact halves - by compactRatio - the recorded token counts and

@@ -39,6 +39,7 @@ type Harness struct {
 	scenario []turnScript
 	turnIdx  int
 	model    ports.ModelInfo
+	agent    string
 	usage    ports.Usage
 	history  []ports.Message
 
@@ -59,6 +60,7 @@ func New(scenarioName string, pace time.Duration) (*Harness, error) {
 		pace:     pace,
 		scenario: scenario,
 		model:    ports.ModelInfo{Name: demoModels[0], Provider: "demo", ContextWindow: demoContextWindow},
+		agent:    ports.DefaultAgentName,
 		usage: ports.Usage{
 			InputTokens: 1200, OutputTokens: 400, CachedTokens: 300, CostUSD: 0.03,
 		},

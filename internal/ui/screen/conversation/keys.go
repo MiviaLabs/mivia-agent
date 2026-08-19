@@ -53,11 +53,8 @@ func (s Screen) handleKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
 		return s, cmd
 	}
 
-	// An open /model picker claims every key, exactly like the approval
-	// prompt above: it is a modal, and the transcript/composer beneath
-	// it must not react to a key the user aimed at the picker.
-	if s.modelPicker != nil {
-		return s.handleModelPickerKey(msg)
+	if next, cmd, handled := s.handleOpenPickerKey(msg); handled {
+		return next, cmd
 	}
 
 	// Any key dismisses an overlay, and does nothing else. An overlay
@@ -102,6 +99,22 @@ func (s Screen) handleKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
 	next, cmd := s.composer.Update(msg)
 	s.composer = next
 	return s, cmd
+}
+
+// handleOpenPickerKey routes a key to an open /model or /agents
+// picker: it is a modal, exactly like the approval prompt, and the
+// transcript/composer beneath it must not react to a key the user
+// aimed at the picker. handled is false when no picker is open.
+func (s Screen) handleOpenPickerKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bool) {
+	if s.modelPicker != nil {
+		next, cmd := s.handleModelPickerKey(msg)
+		return next, cmd, true
+	}
+	if s.agentPicker != nil {
+		next, cmd := s.handleAgentPickerKey(msg)
+		return next, cmd, true
+	}
+	return s, nil, false
 }
 
 // handleClick routes one mouse click. The row layout mirrors View:
