@@ -1,5 +1,6 @@
 [1;38;2;250;250;250m> [mAdd retry with exponential backoff to the S3 uploader, and cover it
 with a test.
+[2;38;2;113;113;122mreasoning: 84 words hidden[m
 I will add a bounded retry to the uploader transport. Three attempts, full
 jitter, and a cap of 5s.
 

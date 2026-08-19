@@ -2,14 +2,14 @@
 // tea.Program - the production terminal-input/output loop, not a direct
 // Update() call.
 //
-// Known gap this surfaced: internal/ui/component/transcript renders its
-// entire history as one string with no viewport/scroll clipping. On a
-// short terminal, Bubble Tea's inline redraw (relative cursor movement
-// plus erase) repaints only what it thinks is the current frame, so
-// content taller than the terminal gets erased from the live output
-// during redraws before a test (or a real user) can see it. Tests below
-// use a generous terminal height to avoid tripping over this; a real
-// viewport component is future work, not Step 7's screens/router scope.
+// These originally surfaced a real gap: internal/ui/component/transcript
+// rendered its entire history as one growing View() string, which does
+// not compose with Bubble Tea's inline redraw (relative cursor movement
+// plus erase) - content taller than the terminal got erased on every
+// repaint. Fixed by having transcript emit each finalized block once via
+// CommitMsg -> tea.Println (native terminal scrollback), so Model.View()
+// only ever renders the live streaming tail. A normal 80x24 terminal
+// below now genuinely proves the fix, not a workaround around it.
 package main
 
 import (
@@ -63,12 +63,11 @@ func newDemoRoot(t *testing.T) app.Model {
 // Update() call. It types a message, presses enter, and waits for the
 // replayed reply to actually appear in the rendered output.
 func TestInteractiveSendAndReceive(t *testing.T) {
-	// A generous height: the components render the full transcript as
-	// one string with no viewport/scroll clipping yet (a real gap this
-	// test surfaced - see the package doc comment), so a short terminal
-	// erases earlier content on each inline redraw before this test can
-	// observe it. 200 rows comfortably exceeds the fixture's ~35 lines.
-	tm := teatest.NewTestModel(t, newDemoRoot(t), teatest.WithInitialTermSize(80, 200))
+	// A normal terminal size: the fixture's rendered history is ~35
+	// lines, well past 24 rows, so this genuinely exercises the
+	// CommitMsg/tea.Println scrollback fix (see the package doc comment)
+	// rather than working around a short terminal.
+	tm := teatest.NewTestModel(t, newDemoRoot(t), teatest.WithInitialTermSize(80, 24))
 
 	tm.Type("hello")
 	tm.Send(enterKey())

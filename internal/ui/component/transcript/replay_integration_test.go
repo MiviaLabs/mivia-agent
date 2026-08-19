@@ -2,8 +2,11 @@ package transcript_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
+
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/transcript"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/stream"
@@ -19,6 +22,10 @@ import (
 // TurnHandle.Events() returns - exactly the shape a future Screen's
 // tea.Cmd will read from. External test package (transcript_test) so it
 // only sees transcript's public API, same as any real caller would.
+//
+// Committed content leaves the model via CommitMsg (see the package doc
+// comment), so this collects every CommitMsg a real caller would print,
+// rather than reading them back off View().
 func TestReplayDrivesTranscript(t *testing.T) {
 	events, err := stream.DefaultFixture()
 	if err != nil {
@@ -42,19 +49,27 @@ func TestReplayDrivesTranscript(t *testing.T) {
 	}
 
 	m := transcript.New(th, theme.TierTrueColor)
+	var printed []string
 	deadline := time.After(5 * time.Second)
 	for {
 		select {
 		case ev, ok := <-handle.Events():
 			if !ok {
-				got := m.View()
+				got := strings.Join(printed, "\n")
 				if got == "" {
-					t.Fatal("expected a non-empty rendered transcript after a full replay")
+					t.Fatal("expected a non-empty printed transcript after a full replay")
 				}
-				t.Logf("rendered transcript:\n%s", got)
+				t.Logf("printed transcript:\n%s", got)
 				return
 			}
-			m, _ = m.HandleEvent(ev)
+			var cmd tea.Cmd
+			m, cmd = m.HandleEvent(ev)
+			if cmd == nil {
+				continue
+			}
+			if msg, ok := cmd().(transcript.CommitMsg); ok {
+				printed = append(printed, msg.Text)
+			}
 		case <-deadline:
 			t.Fatal("replay did not close its event channel within 5s")
 		}

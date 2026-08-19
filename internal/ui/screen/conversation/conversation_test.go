@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -125,14 +126,18 @@ func TestSendErrorAppendsErrorBlockNotActive(t *testing.T) {
 	s = typeText(t, s, "hi")
 	next, cmd := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	got := next.(Screen)
-	if cmd != nil {
-		t.Error("expected no Cmd when Send fails")
-	}
 	if got.active != nil {
 		t.Error("expected no active turn when Send fails")
 	}
-	if !strings.Contains(got.transcript.View(), context.DeadlineExceeded.Error()) {
-		t.Errorf("expected the Send error surfaced in the transcript, got:\n%s", got.transcript.View())
+	if cmd == nil {
+		t.Fatal("expected a commit Cmd carrying the Send error")
+	}
+	msg, ok := cmd().(transcript.CommitMsg)
+	if !ok {
+		t.Fatalf("got %T, want transcript.CommitMsg", cmd())
+	}
+	if !strings.Contains(msg.Text, context.DeadlineExceeded.Error()) {
+		t.Errorf("got commit text %q, want it to contain the Send error", msg.Text)
 	}
 }
 
@@ -142,11 +147,31 @@ func TestTurnEventUpdatesTranscriptAndReschedulesRead(t *testing.T) {
 
 	next, cmd := s.Update(turnEventMsg{ev: uievent.Event{Kind: uievent.KindTextEnd, Body: uievent.TextEndBody{Text: "hello"}}})
 	got := next.(Screen)
-	if !strings.Contains(got.transcript.View(), "hello") {
-		t.Errorf("expected the event applied to the transcript, got:\n%s", got.transcript.View())
+	if got.transcript.View() != "" {
+		t.Errorf("got live tail %q, want empty: TextEnd commits and clears pending", got.transcript.View())
 	}
 	if cmd == nil {
-		t.Fatal("expected a Cmd that re-issues the event read while a turn is active")
+		t.Fatal("expected a Cmd batch: the commit plus a re-issued event read")
+	}
+
+	msgs := batchMsgs(t, cmd)
+	var sawCommit, sawRead bool
+	for _, msg := range msgs {
+		switch m := msg.(type) {
+		case transcript.CommitMsg:
+			sawCommit = true
+			if !strings.Contains(m.Text, "hello") {
+				t.Errorf("got commit text %q, want it to contain %q", m.Text, "hello")
+			}
+		case turnEndedMsg:
+			sawRead = true // fakeHandle's closed channel: the re-issued read observes it immediately
+		}
+	}
+	if !sawCommit {
+		t.Errorf("expected a CommitMsg among %v", msgs)
+	}
+	if !sawRead {
+		t.Errorf("expected the re-issued read Cmd among %v", msgs)
 	}
 }
 
@@ -259,6 +284,19 @@ func TestStatuslineTickMsgForwardsToStatusline(t *testing.T) {
 	}
 }
 
+func TestCommitMsgBecomesTeaPrintln(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	_, cmd := s.Update(transcript.CommitMsg{Text: "committed line"})
+	if cmd == nil {
+		t.Fatal("expected a Cmd translating CommitMsg into tea.Println")
+	}
+	msg := cmd()
+	printMsg := fmt.Sprintf("%+v", msg) // printLineMessage is unexported; inspect via %+v
+	if !strings.Contains(printMsg, "committed line") {
+		t.Errorf("got %s, want a printLineMessage carrying %q", printMsg, "committed line")
+	}
+}
+
 func TestFlushMsgForwardsToTranscript(t *testing.T) {
 	s := newScreen(t, replay.New(nil, 0), nil, nil)
 	s.transcript, _ = s.transcript.HandleEvent(uievent.Event{Kind: uievent.KindTextDelta, Body: uievent.TextDeltaBody{Text: "a"}})
@@ -306,12 +344,15 @@ func TestWaitForEventReadsOneEventThenSignalsClose(t *testing.T) {
 
 func TestViewComposesTranscriptStatuslineAndComposer(t *testing.T) {
 	s := newScreen(t, replay.New(nil, 0), nil, nil)
-	s.transcript, _ = s.transcript.HandleEvent(uievent.Event{Kind: uievent.KindNotice, Body: uievent.NoticeBody{Text: "notice text"}})
+	// A still-streaming delta, not a committed block: only the live tail
+	// shows up in View() (see transcript's package doc comment) -
+	// finalized content leaves via CommitMsg, tested separately.
+	s.transcript, _ = s.transcript.HandleEvent(uievent.Event{Kind: uievent.KindTextDelta, Body: uievent.TextDeltaBody{Text: "live text"}})
 	s.statusline.Start("thinking", fixedNow())
 	s.approval.SetRequest(uievent.ToolPendingBody{ToolCallID: "c1", Name: "run_command"})
 
 	got := s.View()
-	for _, want := range []string{"notice text", "thinking", "run_command"} {
+	for _, want := range []string{"live text", "thinking", "run_command"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("view missing %q:\n%s", want, got)
 		}
@@ -330,9 +371,41 @@ func TestViewOmitsInactiveStatuslineAndApproval(t *testing.T) {
 // active" in tests that only need Update's `s.active != nil` branch,
 // not a real event stream (TestTurnEventUpdatesTranscriptAndReschedulesRead
 // and its neighbours exercise turnEventMsg directly; they don't read
-// through Events() themselves).
+// through Events() themselves). Events() returns an already-closed
+// channel, not nil: handleTurnEvent's batched readCmd is safe to
+// actually execute in a test this way (immediate turnEndedMsg, no
+// block), instead of hanging on a nil-channel read.
 type fakeHandle struct{ id string }
 
-func (h fakeHandle) ID() string                   { return h.id }
-func (h fakeHandle) Events() <-chan uievent.Event { return nil }
-func (h fakeHandle) Cancel()                      {}
+func (h fakeHandle) ID() string { return h.id }
+func (h fakeHandle) Events() <-chan uievent.Event {
+	ch := make(chan uievent.Event)
+	close(ch)
+	return ch
+}
+func (h fakeHandle) Cancel() {}
+
+// batchMsgs runs cmd, expands it if it's a tea.BatchMsg, and executes
+// every sub-Cmd, returning the resulting Msgs. Safe here because every
+// Cmd handleTurnEvent/send can batch is either a pure literal-return
+// closure (commit, flush) or fakeHandle's own immediate-close read -
+// none of them block.
+func batchMsgs(t *testing.T, cmd tea.Cmd) []tea.Msg {
+	t.Helper()
+	if cmd == nil {
+		return nil
+	}
+	msg := cmd()
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		return []tea.Msg{msg}
+	}
+	var out []tea.Msg
+	for _, c := range batch {
+		if c == nil {
+			continue
+		}
+		out = append(out, c())
+	}
+	return out
+}

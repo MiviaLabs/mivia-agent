@@ -3,7 +3,6 @@ package transcript
 import (
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -30,22 +29,50 @@ func loadTheme(t *testing.T) theme.Theme {
 	return theme.Theme{}
 }
 
-// TestRenderGolden pins the styled transcript output for the same
+// commitText executes a Cmd and returns the text it carries, failing the
+// test if it's not (or doesn't yield) a CommitMsg.
+func commitText(t *testing.T, cmd tea.Cmd) string {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("expected a commit Cmd, got nil")
+	}
+	msg, ok := cmd().(CommitMsg)
+	if !ok {
+		t.Fatalf("got %T, want CommitMsg", cmd())
+	}
+	return msg.Text
+}
+
+// handleAndCollectCommits drives every event through m, in order,
+// collecting the text of every CommitMsg produced (delta/flush Cmds are
+// ignored - deltas never commit on their own).
+func handleAndCollectCommits(t *testing.T, m Model, events []uievent.Event) []string {
+	t.Helper()
+	var commits []string
+	for _, ev := range events {
+		var cmd tea.Cmd
+		m, cmd = m.HandleEvent(ev)
+		if cmd == nil {
+			continue
+		}
+		if msg, ok := cmd().(CommitMsg); ok {
+			commits = append(commits, msg.Text)
+		}
+	}
+	return commits
+}
+
+// TestRenderGolden pins the styled commit stream for the same
 // recorded-conversation fixture internal/ui/stream proves its plain
-// renderer against, so the two can be compared block-for-block.
+// renderer against: the ordered sequence of CommitMsg text a caller
+// would tea.Println, joined by newlines.
 func TestRenderGolden(t *testing.T) {
 	events, err := stream.DefaultFixture()
 	if err != nil {
 		t.Fatal(err)
 	}
 	m := New(loadTheme(t), theme.TierTrueColor)
-	for _, ev := range events {
-		if ev.Kind == uievent.KindTextDelta || ev.Kind == uievent.KindReasoning {
-			continue // batched; only the terminal TextEnd/final-chunk event commits a block
-		}
-		m, _ = m.HandleEvent(ev)
-	}
-	got := m.View()
+	got := strings.Join(handleAndCollectCommits(t, m, events), "\n")
 
 	goldenPath := filepath.Join("testdata", "golden", "conversation.txt")
 	if os.Getenv("UPDATE_GOLDEN") == "1" {
@@ -85,13 +112,10 @@ func TestHandleEventEveryKind(t *testing.T) {
 		{Kind: uievent.KindUsage, Body: uievent.UsageBody{InputTokens: 10, OutputTokens: 5}},
 		{Kind: uievent.KindTurnEnd, Body: uievent.TurnEndBody{Reason: "completed"}},
 	}
-	for _, ev := range events {
-		m, _ = m.HandleEvent(ev)
-	}
-	got := m.View()
+	got := strings.Join(handleAndCollectCommits(t, m, events), "\n")
 	for _, want := range []string{"hi", "full reply", "3 words hidden", "run_command", "output line", "1/2", "done", "boom", "step 1", "step 2", "context 80% full", "failed", "10 in"} {
 		if !strings.Contains(got, want) {
-			t.Errorf("transcript view missing %q:\n%s", want, got)
+			t.Errorf("commits missing %q:\n%s", want, got)
 		}
 	}
 	// TurnEnd commits no block of its own.
@@ -100,20 +124,23 @@ func TestHandleEventEveryKind(t *testing.T) {
 	}
 }
 
-func TestToolOutputEmptyChunkCommitsNoBlock(t *testing.T) {
+func TestToolOutputEmptyChunkCommitsNothing(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII)
-	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolOutput, Body: uievent.ToolOutputBody{}})
-	if got := m.View(); got != "" {
-		t.Errorf("got %q, want no block committed for an empty, progress-less tool.output", got)
+	m, cmd := m.HandleEvent(uievent.Event{Kind: uievent.KindToolOutput, Body: uievent.ToolOutputBody{}})
+	if cmd != nil {
+		t.Errorf("expected no commit Cmd for an empty, progress-less tool.output, got one yielding %v", cmd())
 	}
-	if len(m.blocks) != 0 {
-		t.Errorf("got %d blocks, want 0", len(m.blocks))
+	if got := m.View(); got != "" {
+		t.Errorf("got %q, want no live tail either", got)
 	}
 }
 
 func TestReasoningLiveTailUsesSubtleStyle(t *testing.T) {
 	m := New(loadTheme(t), theme.TierTrueColor)
-	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindReasoning, Body: uievent.ReasoningDeltaBody{Text: "thinking..."}})
+	m, cmd := m.HandleEvent(uievent.Event{Kind: uievent.KindReasoning, Body: uievent.ReasoningDeltaBody{Text: "thinking..."}})
+	if cmd == nil {
+		t.Fatal("expected the first reasoning delta to schedule a flush Cmd")
+	}
 	got := m.View()
 	if !strings.Contains(got, "thinking...") {
 		t.Fatalf("got %q, want the live reasoning tail present before the final word-count chunk", got)
@@ -177,16 +204,29 @@ func TestUpdateFlushStopsAfterTextEnd(t *testing.T) {
 	}
 }
 
-func TestCommitBoundsToMaxBlocks(t *testing.T) {
+func TestTextEndWithEmptyTextCommitsNothing(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII)
-	m.maxBlocks = 2
-	for i := 0; i < 5; i++ {
-		m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindNotice, Body: uievent.NoticeBody{Text: "n" + strconv.Itoa(i)}})
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindTextDelta, Body: uievent.TextDeltaBody{Text: "a"}})
+	m, cmd := m.HandleEvent(uievent.Event{Kind: uievent.KindTextEnd, Body: uievent.TextEndBody{Text: ""}})
+	if cmd != nil {
+		t.Errorf("expected no commit Cmd for an empty TextEnd, got one yielding %v", cmd())
 	}
-	if len(m.blocks) != 2 {
-		t.Fatalf("got %d blocks, want 2 (bounded)", len(m.blocks))
+	if got := m.View(); got != "" {
+		t.Errorf("got %q, want the pending buffer cleared even with no text to commit", got)
 	}
-	if !strings.Contains(m.blocks[0], "n3") || !strings.Contains(m.blocks[1], "n4") {
-		t.Errorf("expected the newest 2 blocks to survive, got %v", m.blocks)
+}
+
+func TestViewClearsOnceCommitted(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindTextDelta, Body: uievent.TextDeltaBody{Text: "a"}})
+	if m.View() == "" {
+		t.Fatal("expected a live tail while streaming")
+	}
+	m, cmd := m.HandleEvent(uievent.Event{Kind: uievent.KindTextEnd, Body: uievent.TextEndBody{Text: "a"}})
+	if commitText(t, cmd) == "" {
+		t.Error("expected TextEnd to commit the final text")
+	}
+	if got := m.View(); got != "" {
+		t.Errorf("got %q, want an empty View() once the span is committed (it now lives in scrollback, not the model)", got)
 	}
 }

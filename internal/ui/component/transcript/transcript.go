@@ -1,8 +1,17 @@
 // Package transcript renders the conversation history for the inline-first
-// UI: a bounded window of committed blocks plus, while a message is
-// streaming, a live uncommitted tail. It handles every uievent.Kind
-// exhaustively, mirroring internal/ui/stream's plain-text renderer but
-// styled through internal/ui/theme.
+// UI. It handles every uievent.Kind exhaustively, mirroring internal/ui/
+// stream's plain-text renderer but styled through internal/ui/theme.
+//
+// A finalized block is never re-rendered: HandleEvent emits it once as a
+// CommitMsg for the caller to print permanently above the managed frame
+// (e.g. via tea.Println), matching the inline-first design (build spec
+// section 3.1: native terminal scrollback, not an app-managed history
+// buffer). Model.View() renders only the live, still-streaming tail -
+// the one thing that legitimately needs repainting in place. Rendering
+// the full history as one growing View() string does not compose with
+// Bubble Tea's inline redraw (relative cursor movement plus erase):
+// content taller than the terminal gets erased from the live output on
+// the next repaint before a user - or a test - can see it.
 package transcript
 
 import (
@@ -18,28 +27,34 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
 
-// Model renders a bounded window of the conversation as styled text. Text
-// and reasoning deltas accumulate in a live buffer instead of committing
-// a block per token (build spec section 4.5: "one Msg per token is one
-// render per token even with the cell renderer"); HandleEvent returns a
-// tea.Cmd that starts a repaint clock while a span is streaming.
+// Model tracks only the in-flight streaming tail. Finalized content is
+// not retained: it is committed once via CommitMsg and belongs to the
+// terminal's own scrollback from that point on. Text and reasoning
+// deltas accumulate in a live buffer instead of committing a block per
+// token (build spec section 4.5: "one Msg per token is one render per
+// token even with the cell renderer"); HandleEvent returns a tea.Cmd
+// that starts a repaint clock while a span is streaming.
 type Model struct {
 	Theme theme.Theme
 	Tier  theme.Tier
-
-	blocks    []string
-	maxBlocks int
 
 	pending     strings.Builder
 	pendingKind uievent.Kind // uievent.KindTextDelta or KindReasoning while streaming; "" when idle
 	flushWait   bool
 }
 
-// New returns an empty Model bounded to uikit/config.MaxTranscriptLines
-// committed blocks.
+// New returns an empty Model.
 func New(t theme.Theme, tier theme.Tier) Model {
-	return Model{Theme: t, Tier: tier, maxBlocks: uikitconfig.MaxTranscriptLines}
+	return Model{Theme: t, Tier: tier}
 }
+
+// CommitMsg carries one finalized, fully-styled block of transcript
+// content. transcript.Model does not call tea.Println itself - Println's
+// Msg type is unexported, which would make this package's own tests
+// unable to assert on committed content - so the caller (the screen
+// wiring this component into a real Program) translates CommitMsg into
+// tea.Println(msg.Text) when it arrives.
+type CommitMsg struct{ Text string }
 
 // FlushMsg ticks the repaint clock while a text/reasoning span streams.
 type FlushMsg struct{}
@@ -74,44 +89,42 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 func (m Model) HandleEvent(ev uievent.Event) (Model, tea.Cmd) {
 	switch b := ev.Body.(type) {
 	case uievent.TurnStartBody:
-		m.commit(render.Role(m.Theme, m.Tier, theme.RoleAccent).Render("> ") + b.Input)
+		return m, commit(render.Role(m.Theme, m.Tier, theme.RoleAccent).Render("> ") + b.Input)
 	case uievent.TextDeltaBody:
-		cmd := m.appendPending(uievent.KindTextDelta, b.Text)
-		return m, cmd
+		return m, m.appendPending(uievent.KindTextDelta, b.Text)
 	case uievent.TextEndBody:
 		m.pending.Reset()
 		m.pendingKind = ""
-		if b.Text != "" {
-			m.commit(render.Text(m.Theme, m.Tier, b.Text))
+		if b.Text == "" {
+			return m, nil
 		}
+		return m, commit(render.Text(m.Theme, m.Tier, b.Text))
 	case uievent.ReasoningDeltaBody:
 		if b.WordCount > 0 {
 			m.pending.Reset()
 			m.pendingKind = ""
-			m.commit(render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Render(
+			return m, commit(render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Render(
 				fmt.Sprintf("reasoning: %d words hidden", b.WordCount)))
-			return m, nil
 		}
-		cmd := m.appendPending(uievent.KindReasoning, b.Text)
-		return m, cmd
+		return m, m.appendPending(uievent.KindReasoning, b.Text)
 	case uievent.ToolPendingBody:
-		m.commit(render.Role(m.Theme, m.Tier, theme.RoleWarning).Render(
+		return m, commit(render.Role(m.Theme, m.Tier, theme.RoleWarning).Render(
 			fmt.Sprintf("? approve %s %s", b.Name, render.FormatArgs(b.Args))))
 	case uievent.ToolStartBody:
-		m.commit(render.Role(m.Theme, m.Tier, theme.RoleInfo).Render(
+		return m, commit(render.Role(m.Theme, m.Tier, theme.RoleInfo).Render(
 			fmt.Sprintf("v %s %s", b.Name, render.FormatArgs(b.Args))))
 	case uievent.ToolOutputBody:
-		m.commit(toolOutputLine(m.Theme, m.Tier, b))
+		return m, commit(toolOutputLine(m.Theme, m.Tier, b))
 	case uievent.ToolEndBody:
-		m.commit(toolEndBlock(m.Theme, m.Tier, b))
+		return m, commit(toolEndBlock(m.Theme, m.Tier, b))
 	case uievent.PlanBody:
-		m.commit(planBlock(m.Theme, m.Tier, b))
+		return m, commit(planBlock(m.Theme, m.Tier, b))
 	case uievent.NoticeBody:
-		m.commit(render.Role(m.Theme, m.Tier, theme.RoleInfo).Render(b.Text))
+		return m, commit(render.Role(m.Theme, m.Tier, theme.RoleInfo).Render(b.Text))
 	case uievent.ErrorBody:
-		m.commit(render.Role(m.Theme, m.Tier, theme.RoleDanger).Render(b.Text))
+		return m, commit(render.Role(m.Theme, m.Tier, theme.RoleDanger).Render(b.Text))
 	case uievent.UsageBody:
-		m.commit(render.Role(m.Theme, m.Tier, theme.RoleFGMuted).Render(
+		return m, commit(render.Role(m.Theme, m.Tier, theme.RoleFGMuted).Render(
 			fmt.Sprintf("%d in / %d out / %d cached / $%.3f", b.InputTokens, b.OutputTokens, b.CachedTokens, b.CostUSD)))
 	case uievent.TurnEndBody:
 		// No block: turn-state belongs to the statusline component, not
@@ -130,29 +143,26 @@ func (m *Model) appendPending(kind uievent.Kind, text string) tea.Cmd {
 	return flushCmd()
 }
 
-func (m *Model) commit(block string) {
+// commit returns the Cmd that delivers block as a CommitMsg, or nil for
+// an empty block (a Kind that produced no visible content).
+func commit(block string) tea.Cmd {
 	if block == "" {
-		return
+		return nil
 	}
-	m.blocks = append(m.blocks, block)
-	if len(m.blocks) > m.maxBlocks {
-		m.blocks = m.blocks[len(m.blocks)-m.maxBlocks:]
-	}
+	return func() tea.Msg { return CommitMsg{Text: block} }
 }
 
-// View renders every committed block plus, if a span is streaming, its
-// live uncommitted tail.
+// View renders only the live, still-streaming tail. Finalized content
+// has already left the model via CommitMsg (see the package doc).
 func (m Model) View() string {
-	lines := make([]string, 0, len(m.blocks)+1)
-	lines = append(lines, m.blocks...)
-	if m.pending.Len() > 0 {
-		style := render.Role(m.Theme, m.Tier, theme.RoleFG)
-		if m.pendingKind == uievent.KindReasoning {
-			style = render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
-		}
-		lines = append(lines, style.Render(m.pending.String()))
+	if m.pending.Len() == 0 {
+		return ""
 	}
-	return strings.Join(lines, "\n")
+	style := render.Role(m.Theme, m.Tier, theme.RoleFG)
+	if m.pendingKind == uievent.KindReasoning {
+		style = render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
+	}
+	return style.Render(m.pending.String())
 }
 
 func toolOutputLine(t theme.Theme, tier theme.Tier, b uievent.ToolOutputBody) string {

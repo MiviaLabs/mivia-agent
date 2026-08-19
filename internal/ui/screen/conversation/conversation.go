@@ -108,6 +108,12 @@ func (s Screen) Update(msg tea.Msg) (app.Screen, tea.Cmd) {
 		next, cmd := s.transcript.Update(msg)
 		s.transcript = next
 		return s, cmd
+	case transcript.CommitMsg:
+		// The one place transcript's own CommitMsg becomes a real
+		// tea.Println: finalized content leaves the managed frame and
+		// joins native terminal scrollback, which is what makes the
+		// inline transcript survive content taller than the terminal.
+		return s, tea.Println(msg.Text)
 	}
 	return s, nil
 }
@@ -140,11 +146,12 @@ func (s Screen) send() (app.Screen, tea.Cmd) {
 	}
 	handle, err := s.conv.Send(context.Background(), intent.Send{Text: text})
 	if err != nil {
-		s.transcript, _ = s.transcript.HandleEvent(uievent.Event{
+		var cmd tea.Cmd
+		s.transcript, cmd = s.transcript.HandleEvent(uievent.Event{
 			Kind: uievent.KindError,
 			Body: uievent.ErrorBody{Text: err.Error(), Fatal: false},
 		})
-		return s, nil
+		return s, cmd
 	}
 	s.composer.Clear()
 	s.active = handle
@@ -168,7 +175,13 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 }
 
 func (s Screen) View() string {
-	lines := []string{s.transcript.View()}
+	var lines []string
+	// transcript.View() is usually "": finalized content already left
+	// via CommitMsg (see internal/ui/component/transcript's doc
+	// comment). Only a live streaming tail shows up here.
+	if v := s.transcript.View(); v != "" {
+		lines = append(lines, v)
+	}
 	if v := s.approval.View(); v != "" {
 		lines = append(lines, v)
 	}
