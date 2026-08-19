@@ -52,8 +52,16 @@ func WithBg(st lipgloss.Style, t theme.Theme, tier theme.Tier, r theme.Role) lip
 // border role resolved at the tier. Like WithBg, a tier with no colour
 // for the role (the no-colour/ASCII tiers) still draws the border, just
 // uncoloured: the box is structure, and structure survives NO_COLOR.
-func Bordered(t theme.Theme, tier theme.Tier, r theme.Role, content string) string {
+//
+// width is the INNER width in cells; width <= 0 sizes the box to the
+// content (lipgloss default). A caller whose content windows or scrolls
+// must pass a fixed width, or the border breathes with every content
+// change - the box must not move while the user reads it.
+func Bordered(t theme.Theme, tier theme.Tier, r theme.Role, width int, content string) string {
 	st := lipgloss.NewStyle().Border(lipgloss.RoundedBorder())
+	if width > 0 {
+		st = st.Width(width)
+	}
 	s := t.Resolve(r, tier)
 	switch {
 	case s.Hex != "":

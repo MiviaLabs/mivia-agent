@@ -86,7 +86,7 @@ func New(th theme.Theme, tier theme.Tier, themes []theme.Theme, conv ports.Conve
 	if now == nil {
 		now = time.Now
 	}
-	return Screen{
+	s := Screen{
 		Theme: th, Tier: tier, themes: themes,
 		conv: conv, approver: approver,
 		transcript: transcript.New(th, tier),
@@ -96,6 +96,8 @@ func New(th theme.Theme, tier theme.Tier, themes []theme.Theme, conv ports.Conve
 		keys:       keymap.New(keymap.Default()),
 		now:        now,
 	}
+	s.approval.SetWidth(width)
+	return s
 }
 
 func (s Screen) Init() tea.Cmd { return nil }
@@ -196,6 +198,7 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		s.width, s.height = msg.Width, msg.Height
 		s.composer.SetWidth(msg.Width)
+		s.approval.SetWidth(msg.Width)
 		s.resize()
 		return s, nil
 	case app.ThemeChangedMsg:

@@ -8,6 +8,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
@@ -30,7 +32,18 @@ type Model struct {
 	// It is only meaningful while active carries a diff, and it never
 	// changes the prompt's height (see View).
 	offset int
+
+	// width is the terminal width. The bordered box is padded to it and
+	// every diff line is clipped to it, so the border keeps one fixed
+	// size while the window scrolls instead of breathing with whichever
+	// line is widest (ux-rules.md rule 2.7: moving chrome reflows the
+	// reading). 0 means unsized, for tests and non-terminal renders.
+	width int
 }
+
+// SetWidth records the terminal width so the box renders at a fixed
+// size. Call it on WindowSizeMsg, like the composer.
+func (m *Model) SetWidth(w int) { m.width = w }
 
 // DecisionMsg is emitted when the user resolves the active request.
 type DecisionMsg struct {
@@ -125,8 +138,14 @@ func (m Model) View() string {
 	body += "\n" + hint
 	// RoleBorderFocus, not RoleBorder: the prompt carries state (a tool is
 	// blocked on this answer), so its border must meet the 3:1 contrast
-	// the plain decorative border is exempt from.
-	return render.Bordered(m.Theme, m.Tier, theme.RoleBorderFocus, body)
+	// the plain decorative border is exempt from. Inner width: the
+	// terminal minus the two border cells; unsized callers get an
+	// auto-fit box.
+	inner := 0
+	if m.width > 2 {
+		inner = m.width - 2
+	}
+	return render.Bordered(m.Theme, m.Tier, theme.RoleBorderFocus, inner, body)
 }
 
 // ScrollBy moves the diff preview window by n lines and returns the
@@ -159,7 +178,9 @@ func (m Model) scrollable() bool {
 	return m.diffTotal() > uikitconfig.ApprovalDiffPreviewLines
 }
 
-// diffWindow is the styled diff lines currently visible.
+// diffWindow is the styled diff lines currently visible, each clipped to
+// the box's inner width: an over-long line would widen (or wrap inside)
+// the border and move it while the user scrolls.
 func (m Model) diffWindow() []string {
 	if m.active == nil || m.active.Diff == nil {
 		return nil
@@ -172,7 +193,20 @@ func (m Model) diffWindow() []string {
 	if m.offset > end {
 		m.offset = end
 	}
-	return lines[m.offset:end]
+	window := lines[m.offset:end]
+	// Clip to the box's effective wrap width, not the inner width:
+	// lipgloss counts the border cells inside Width(), and a line it
+	// wraps would add a row Height() does not claim - the box would push
+	// into the composer.
+	if m.width > 4 {
+		wrap := m.width - 4
+		for i, ln := range window {
+			if ansi.StringWidth(ln) > wrap {
+				window[i] = ansi.Truncate(ln, wrap, "")
+			}
+		}
+	}
+	return window
 }
 
 // Height is the number of terminal rows View() claims, border included,

@@ -110,13 +110,13 @@ func TestBorderedDegradesByTier(t *testing.T) {
 			th = c
 		}
 	}
-	if b := Bordered(th, theme.TierTrueColor, theme.RoleBorderFocus, "x"); !strings.Contains(b, "\x1b[") {
+	if b := Bordered(th, theme.TierTrueColor, theme.RoleBorderFocus, 0, "x"); !strings.Contains(b, "\x1b[") {
 		t.Errorf("true-color border is uncoloured: %q", b)
 	}
-	if b := Bordered(th, theme.TierASCII, theme.RoleBorderFocus, "x"); strings.Contains(b, "\x1b[") {
+	if b := Bordered(th, theme.TierASCII, theme.RoleBorderFocus, 0, "x"); strings.Contains(b, "\x1b[") {
 		t.Errorf("ASCII border carries colour: %q", b)
 	}
-	if b := Bordered(th, theme.TierNoTTY, theme.RoleBorderFocus, "x"); !strings.Contains(b, "╭") {
+	if b := Bordered(th, theme.TierNoTTY, theme.RoleBorderFocus, 0, "x"); !strings.Contains(b, "╭") {
 		t.Errorf("no-tty border lost its frame: %q", b)
 	}
 }

@@ -2,6 +2,8 @@ package approval
 
 import (
 	"fmt"
+
+	"github.com/charmbracelet/x/ansi"
 	"strings"
 	"testing"
 
@@ -355,5 +357,63 @@ func TestScrollDoesNotEatDecisionKeys(t *testing.T) {
 	}
 	if next.Active() {
 		t.Error("approve did not clear the request")
+	}
+}
+
+// TestBorderKeepsAFixedSizeWhileScrolling pins the defect a scrolling
+// box invites: lipgloss sizes a border to its widest line, so the box
+// breathed with every scroll step. With a width set, every rendered row
+// must be the same width at every offset.
+func TestBorderKeepsAFixedSizeWhileScrolling(t *testing.T) {
+	long := make([]uievent.DiffLine, 30)
+	for i := range long {
+		long[i] = uievent.DiffLine{Kind: uievent.DiffLineAdd,
+			Text: strings.Repeat("x", 20+i) + fmt.Sprintf(" %d", i)}
+	}
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetWidth(40)
+	m.SetRequest(uievent.ToolPendingBody{
+		ToolCallID: "c1", Name: "edit_file",
+		Diff: &uievent.Diff{Path: "a.go", Hunks: []uievent.DiffHunk{{Header: "@@ -1 +1 @@", Lines: long}}},
+	})
+
+	rowWidths := func(v string) []int {
+		var ws []int
+		for _, ln := range strings.Split(v, "\n") {
+			ws = append(ws, ansi.StringWidth(ln))
+		}
+		return ws
+	}
+	want := rowWidths(m.View())
+	for i := 0; i < 35; i++ {
+		m = m.ScrollBy(1)
+		got := rowWidths(m.View())
+		if len(got) != len(want) {
+			t.Fatalf("offset %d: %d rows, want %d", m.offset, len(got), len(want))
+		}
+		for r := range got {
+			if got[r] != want[r] {
+				t.Fatalf("offset %d row %d: width %d, want %d (border moved)", m.offset, r, got[r], want[r])
+			}
+		}
+	}
+}
+
+// TestWideDiffLinesAreClippedToTheBox: a diff line wider than the
+// terminal must be clipped, not allowed to widen or wrap the box.
+func TestWideDiffLinesAreClippedToTheBox(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetWidth(30)
+	m.SetRequest(uievent.ToolPendingBody{
+		ToolCallID: "c1", Name: "edit_file",
+		Diff: &uievent.Diff{Path: "a.go", Hunks: []uievent.DiffHunk{{
+			Header: "@@ -1 +1 @@",
+			Lines:  []uievent.DiffLine{{Kind: uievent.DiffLineAdd, Text: strings.Repeat("y", 200)}},
+		}}},
+	})
+	for _, ln := range strings.Split(m.View(), "\n") {
+		if w := ansi.StringWidth(ln); w > 30 {
+			t.Errorf("row width %d exceeds the 30-cell terminal: %q", w, ln)
+		}
 	}
 }
