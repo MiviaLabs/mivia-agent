@@ -90,6 +90,12 @@ func TestDialogCapsLongContent(t *testing.T) {
 	if len(rows) != 12 {
 		t.Fatalf("%d rows, want 12: the dialog must fill, not overflow, its frame", len(rows))
 	}
+	// The overflow must not swallow the hint: it is the one row the
+	// clip guarantees, because it carries the keys and the mouse
+	// override a caller must keep on screen.
+	if !strings.Contains(ansi.Strip(got), "h") {
+		t.Errorf("overflowing dialog lost its hint:\n%s", got)
+	}
 	for i, r := range rows {
 		if w := ansi.StringWidth(r); w > 40 {
 			t.Errorf("row %d width %d exceeds 40", i, w)
@@ -118,5 +124,51 @@ func TestDialogShrinksMarginsBeforeContent(t *testing.T) {
 	}
 	if len(strings.Split(got, "\n")) != 10 {
 		t.Errorf("small dialog does not fill its 10-row frame")
+	}
+}
+
+// TestDialogAt16ColorsColoursTheBorder covers the ANSI16 arm: the
+// border must carry the theme's authored 16-colour index (bright white
+// renders as a 9x foreground), not skip colour entirely.
+func TestDialogAt16ColorsColoursTheBorder(t *testing.T) {
+	got := Dialog(dialogTheme(t), theme.Tier16, 50, 16, "t", "b", "h")
+	if !strings.Contains(got, "38;5") && !strings.Contains(got, "\x1b[9") && !strings.Contains(got, "\x1b[3") {
+		t.Errorf("16-colour dialog has no border colour:\n%s", got)
+	}
+}
+
+// TestDialogNarrowWidthShrinksTheSideMargin covers the marginX arm: a
+// terminal too narrow for the comfortable margin keeps the content
+// rather than the floating look.
+func TestDialogNarrowWidthShrinksTheSideMargin(t *testing.T) {
+	got := Dialog(dialogTheme(t), theme.TierASCII, 20, 14, "t", "body text", "h")
+	plain := ansi.Strip(got)
+	for _, want := range []string{"t", "body text", "h"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("narrow dialog lost %q:\n%s", want, plain)
+		}
+	}
+	for i, r := range strings.Split(got, "\n") {
+		if w := ansi.StringWidth(r); w > 20 {
+			t.Errorf("row %d width %d exceeds 20", i, w)
+		}
+	}
+}
+
+// TestDialogOnADegenerateTerminal: heights too small for any content
+// still render a full frame without panicking, and the clip's
+// one-row-floor keeps exactly one row.
+func TestDialogOnADegenerateTerminal(t *testing.T) {
+	for _, h := range []int{1, 3, 4, 6} {
+		got := Dialog(dialogTheme(t), theme.TierASCII, 40, h, "t", "one\ntwo\nthree", "h")
+		rows := strings.Split(got, "\n")
+		if len(rows) != h {
+			t.Errorf("height %d: %d rows, want %d", h, len(rows), h)
+		}
+		for i, r := range rows {
+			if w := ansi.StringWidth(r); w > 40 {
+				t.Errorf("height %d row %d width %d exceeds 40", h, i, w)
+			}
+		}
 	}
 }

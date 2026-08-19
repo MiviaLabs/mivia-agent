@@ -1,6 +1,7 @@
 package themepicker
 
 import (
+	"github.com/charmbracelet/x/ansi"
 	"strings"
 	"testing"
 
@@ -211,5 +212,30 @@ func TestViewFlagsHoldsAltScreen(t *testing.T) {
 	s := New(themes[0], theme.TierASCII, themes)
 	if !s.ViewFlags().AltScreen {
 		t.Error("the theme picker must hold the alternate screen")
+	}
+}
+
+// TestResizeRecentersTheDialog covers the sizing path: a WindowSizeMsg
+// must reach the screen, and the dialog must fill exactly that frame.
+func TestResizeRecentersTheDialog(t *testing.T) {
+	s := New(loadThemes(t)[0], theme.TierASCII, loadThemes(t))
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 60, Height: 20})
+	scr := next.(Screen)
+	rows := strings.Split(scr.View(), "\n")
+	if len(rows) != 20 {
+		t.Fatalf("view is %d rows, want 20", len(rows))
+	}
+	if !strings.Contains(ansi.Strip(rows[0]), "╭") && !strings.Contains(ansi.Strip(rows[2]), "╭") {
+		// The box is centered, so its top border sits near the middle,
+		// not necessarily row 0; assert it exists somewhere.
+		found := false
+		for _, r := range rows {
+			if strings.Contains(ansi.Strip(r), "╭") {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("no dialog frame in the sized view:\n%s", scr.View())
+		}
 	}
 }

@@ -86,7 +86,14 @@ func Dialog(t theme.Theme, tier theme.Tier, width, height int, title, body, hint
 	} else {
 		opts = append(opts, lipgloss.WithWhitespaceStyle(ws))
 	}
-	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, framed, opts...)
+	// Place pads but never clips: a frame too short for even the box's
+	// border and padding would overflow it, so the row count is enforced
+	// here - the dialog fills its frame, never exceeds it.
+	out := lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, framed, opts...)
+	if rows := strings.Split(out, "\n"); len(rows) > height {
+		out = strings.Join(rows[:height], "\n")
+	}
+	return out
 }
 
 // dialogContent stacks the three parts with breathing room between
@@ -121,8 +128,13 @@ func dialogClip(rows []string, inner, maxRows int) []string {
 	if len(out) <= maxRows {
 		return out
 	}
-	// Overflow drops rows off the bottom, hint included: the body is
-	// the dialog, and a caller whose hint must survive sizes the box
-	// for it. No truncation marker - the box is capped, not a pager.
-	return out[:maxRows]
+	// Overflow drops body rows off the bottom, but the LAST row
+	// survives: it is the hint (the keys, the mouse override a caller
+	// must keep on screen), and a dialog that swallows its own hint to
+	// show one more body row has the wrong priority. No truncation
+	// marker - the box is capped, not a pager.
+	if maxRows < 2 {
+		return out[:maxRows]
+	}
+	return append(out[:maxRows-1:maxRows-1], out[len(out)-1])
 }

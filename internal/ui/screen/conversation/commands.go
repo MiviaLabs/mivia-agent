@@ -102,12 +102,27 @@ func (s Screen) openThemePicker() (app.Screen, tea.Cmd) {
 // composerAction) and /help.
 func (s Screen) openHelp() Screen {
 	help := render.Help(s.Theme, s.Tier, s.keys.Help())
+	// Rule 6.5: the terminal's own mouse-override key rides in the
+	// hint, the dialog's last row - the one row the clip guarantees,
+	// because mouse capture is the most common friction point over SSH
+	// and inside tmux and must never scroll off the help.
+	hint := "any key closes this"
 	if s.mouseHint != "" {
-		help += "\n\nmouse captured - hold " + s.mouseHint +
+		hint = "any key closes this  -  hold " + s.mouseHint +
 			" to select with the terminal (--no-mouse releases it)"
 	}
-	s.overlay = render.Dialog(s.Theme, s.Tier, s.width, s.height, "keys", help, "any key closes this")
+	w, h := s.dialogSize()
+	s.overlay = render.Dialog(s.Theme, s.Tier, w, h, "keys", help, hint)
 	return s
+}
+
+// dialogSize is the area an inline dialog actually occupies: the
+// terminal minus the gutter columns and the chrome rows (top bar,
+// status row, composer) that stay pinned around it. Sizing the dialog
+// to the full terminal instead recenters it against rows it never
+// gets, and its bottom border and hint land below the cut.
+func (s Screen) dialogSize() (int, int) {
+	return contentWidth(s.width), s.height - s.reservedRows()
 }
 
 // handleModelPickerKey routes one key press to the open /model picker.

@@ -4,7 +4,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
-	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/themepicker"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/transcript"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/keymap"
@@ -259,18 +258,10 @@ func (s Screen) composerAction(id keymap.ID) (app.Screen, tea.Cmd, bool) {
 		if s.composer.Value() != "" {
 			return s, nil, false
 		}
-		// Drawn in place, not printed: the alternate screen has no
-		// scrollback to print into.
-		help := render.Help(s.Theme, s.Tier, s.keys.Help())
-		if s.mouseHint != "" {
-			// Rule 6.5: state the terminal's own override key on
-			// screen, because mouse capture is the most common
-			// friction point over SSH and inside tmux.
-			help += "\n\nmouse captured - hold " + s.mouseHint +
-				" to select with the terminal (--no-mouse releases it)"
-		}
-		s.overlay = help
-		return s, tea.ClearScreen, true
+		// openHelp is the one help renderer (dialog frame, mouse hint
+		// included); this was a second hand-built copy until the
+		// dialog wiring made the drift visible.
+		return s.openHelp(), tea.ClearScreen, true
 	}
 	return s, nil, false
 }
