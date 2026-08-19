@@ -96,3 +96,27 @@ func TestFormatArgsEmpty(t *testing.T) {
 		t.Errorf("got %q, want empty string for nil args", got)
 	}
 }
+
+// TestBorderedDegradesByTier pins the ladder: the border exists at every
+// tier, but only tiers with a colour for the role colour it.
+func TestBorderedDegradesByTier(t *testing.T) {
+	themes, err := theme.Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var th theme.Theme
+	for _, c := range themes {
+		if c.Name == "mivia-dark" {
+			th = c
+		}
+	}
+	if b := Bordered(th, theme.TierTrueColor, theme.RoleBorderFocus, "x"); !strings.Contains(b, "\x1b[") {
+		t.Errorf("true-color border is uncoloured: %q", b)
+	}
+	if b := Bordered(th, theme.TierASCII, theme.RoleBorderFocus, "x"); strings.Contains(b, "\x1b[") {
+		t.Errorf("ASCII border carries colour: %q", b)
+	}
+	if b := Bordered(th, theme.TierNoTTY, theme.RoleBorderFocus, "x"); !strings.Contains(b, "╭") {
+		t.Errorf("no-tty border lost its frame: %q", b)
+	}
+}

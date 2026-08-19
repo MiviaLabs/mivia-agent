@@ -48,6 +48,22 @@ func WithBg(st lipgloss.Style, t theme.Theme, tier theme.Tier, r theme.Role) lip
 	return st
 }
 
+// Bordered wraps content in a rounded border whose colour is the given
+// border role resolved at the tier. Like WithBg, a tier with no colour
+// for the role (the no-colour/ASCII tiers) still draws the border, just
+// uncoloured: the box is structure, and structure survives NO_COLOR.
+func Bordered(t theme.Theme, tier theme.Tier, r theme.Role, content string) string {
+	st := lipgloss.NewStyle().Border(lipgloss.RoundedBorder())
+	s := t.Resolve(r, tier)
+	switch {
+	case s.Hex != "":
+		st = st.BorderForeground(lipgloss.Color(s.Hex))
+	case s.ANSI16 >= 0:
+		st = st.BorderForeground(lipgloss.Color(strconv.Itoa(s.ANSI16)))
+	}
+	return st.Render(content)
+}
+
 // FormatArgs renders a tool-call argument map as a stable, sorted
 // "k=v k2=v2" string. Shared by every component that displays a tool
 // call (transcript, approval).

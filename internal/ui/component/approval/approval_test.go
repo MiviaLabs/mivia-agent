@@ -207,3 +207,36 @@ func TestUpdateIgnoresUnknownKey(t *testing.T) {
 		t.Error("expected the request to remain pending after an unrecognised key")
 	}
 }
+
+// TestViewDrawsABorderAtEveryTier pins the box: the prompt is framed by
+// a RoleBorderFocus border at every colour tier, and the frame degrades
+// to plain glyphs (no escape sequences) when the tier carries no colour.
+func TestViewDrawsABorderAtEveryTier(t *testing.T) {
+	th := loadTheme(t)
+	m := New(th, theme.TierTrueColor)
+	m.SetRequest(uievent.ToolPendingBody{ToolCallID: "c1", Name: "run_command"})
+
+	colored := m.View()
+	for _, glyph := range []string{"╭", "╰", "│"} {
+		if !strings.Contains(colored, glyph) {
+			t.Errorf("true-color view missing border glyph %q:\n%s", glyph, colored)
+		}
+	}
+	if !strings.Contains(colored, "\x1b[") {
+		t.Error("true-color view has no colour escape; the border role must colour it")
+	}
+
+	plain := New(th, theme.TierASCII)
+	plain.SetRequest(uievent.ToolPendingBody{ToolCallID: "c1", Name: "run_command"})
+	// Structural emphasis (the bold title) survives NO_COLOR by design, so
+	// the assertion targets colour escapes, not all escapes.
+	plainView := plain.View()
+	for _, colour := range []string{"38;2", "38;5", "\x1b[3"} {
+		if strings.Contains(plainView, colour) {
+			t.Errorf("ASCII view carries colour %q:\n%s", colour, plainView)
+		}
+	}
+	if !strings.Contains(plainView, "╭") {
+		t.Errorf("ASCII view lost the border:\n%s", plainView)
+	}
+}

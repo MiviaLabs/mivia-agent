@@ -88,5 +88,8 @@ func (m Model) View() string {
 	// design is deliberately absent until a diff view exists to open.
 	hint := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Render(
 		"o once    a always    d deny    D deny always")
-	return title + "\n" + hint
+	// RoleBorderFocus, not RoleBorder: the prompt carries state (a tool is
+	// blocked on this answer), so its border must meet the 3:1 contrast
+	// the plain decorative border is exempt from.
+	return render.Bordered(m.Theme, m.Tier, theme.RoleBorderFocus, title+"\n"+hint)
 }
