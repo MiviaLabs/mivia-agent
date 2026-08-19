@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
@@ -46,49 +47,49 @@ func proseLines(text string) []string {
 // At ASCII/NoTTY a background fill is meaningless, so the fill and the
 // padding rows drop out and the marker-only lines stand as before.
 func userLines(t theme.Theme, tier theme.Tier, width int, input string) []string {
-	// The marker occupies two columns, so the text measure is that much
-	// narrower and continuations align under the first character.
-	wrapped := render.Wrap(input, render.ProseMeasure(width)-2)
+	badgeLeadWidth := 10 // width of "> [ YOU ] "
+	wrapped := render.Wrap(input, render.ProseMeasure(width)-badgeLeadWidth)
 
 	bg := t.Resolve(theme.RoleBGSelection, tier)
 	if bg.Hex == "" && bg.ANSI16 < 0 {
 		marker := render.Role(t, tier, theme.RoleAccent).Render("> ")
+		badge := render.Role(t, tier, theme.RoleBorder).Render("[") +
+			render.Role(t, tier, theme.RoleAccent).Bold(true).Render(" YOU ") +
+			render.Role(t, tier, theme.RoleBorder).Render("] ")
+		lead := marker + badge
+		indent := strings.Repeat(" ", ansi.StringWidth(lead))
 		out := make([]string, 0, len(wrapped))
 		for i, line := range wrapped {
 			if i == 0 {
-				out = append(out, marker+line)
+				out = append(out, lead+line)
 				continue
 			}
-			out = append(out, "  "+line)
+			out = append(out, indent+line)
 		}
 		return out
 	}
 
-	// Every fragment below carries the background in its OWN style call,
-	// rather than pre-rendering the marker and wrapping the joined string
-	// in one outer background style: a pre-rendered fragment embeds its
-	// own trailing reset, and that reset fires mid-row and wipes the
-	// outer background for everything after it - the bug this replaced,
-	// where the fill only ever reached the marker, never the message
-	// text. Each style call re-establishes the background itself, so an
-	// embedded reset from the fragment before it cannot erase it.
 	bgColor := lipgloss.Color(bg.Hex)
 	if bg.Hex == "" {
 		bgColor = lipgloss.Color(strconv.Itoa(bg.ANSI16))
 	}
 	fill := lipgloss.NewStyle().Background(bgColor)
 	markerStyle := render.Role(t, tier, theme.RoleAccent).Background(bgColor)
+	borderStyle := render.Role(t, tier, theme.RoleBorder).Background(bgColor)
+	accentStyle := render.Role(t, tier, theme.RoleAccent).Bold(true).Background(bgColor)
+
+	badge := borderStyle.Render("[") + accentStyle.Render(" YOU ") + borderStyle.Render("] ")
+	lead := markerStyle.Render("> ") + badge
+	indent := fill.Render(strings.Repeat(" ", ansi.StringWidth(lead)))
 
 	rows := make([]string, 0, len(wrapped)+2)
 	for i, line := range wrapped {
 		if i == 0 {
-			rows = append(rows, markerStyle.Render("> ")+fill.Render(line))
+			rows = append(rows, lead+fill.Render(line))
 			continue
 		}
-		rows = append(rows, fill.Render("  "+line))
+		rows = append(rows, indent+fill.Render(line))
 	}
-	// Full terminal width: the fill runs edge to edge, under the message
-	// text and the padding rows alike.
 	pad := func(row string) string {
 		if gap := width - lipgloss.Width(row); gap > 0 {
 			row += fill.Render(strings.Repeat(" ", gap))

@@ -252,8 +252,8 @@ func TestUserLinesDegradeToPlainMarker(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("got %d rows, want the single marker line with no fill or padding", len(rows))
 	}
-	if got := ansi.Strip(rows[0]); got != "> hi" {
-		t.Errorf("ASCII row = %q, want \"> hi\"", got)
+	if got := ansi.Strip(rows[0]); got != "> [ YOU ] hi" {
+		t.Errorf("ASCII row = %q, want \"> [ YOU ] hi\"", got)
 	}
 	if strings.Contains(rows[0], "\x1b[4") {
 		t.Errorf("ASCII row carries a background escape: %q", rows[0])
