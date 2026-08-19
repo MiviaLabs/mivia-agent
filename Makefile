@@ -20,8 +20,8 @@ VERSION_LDFLAGS := -X $(VERSION_PKG).Commit=$(COMMIT) -X $(VERSION_PKG).Dirty=$(
 .PHONY: help install-hooks hooks verify verify-agent pre-commit pre-push \
 	secret-scan docs-check semgrep semgrep-validate semgrep-test \
 	hook-test agent-hook-test structure-check commit-check go-check verify-go test test-changed race vet build tidy fmt fmt-check \
-	validate-invariants invariants mutation-coverage diff-coverage verifier-integration smoke release release-test \
-	ui-demo ui-demo-json ui-themes
+	validate-invariants invariants mutation diff-coverage verifier-integration smoke release release-test \
+	prose-check ui-demo ui-demo-json ui-themes
 
 help:
 	@printf '%s\n' \
@@ -45,7 +45,8 @@ help:
 		'  make verify-go         go-check + diff-coverage over ONE instrumented suite run' \
 		'  make test              go test ./...' \
 		'  make invariants        Run invariant tests (TUI, agent, security)' \
-		'  make mutation-coverage Explore mutation test readiness for core packages' \
+		'  make mutation           Run a real mutation sweep (PKG=internal/... required)' \
+		'  make prose-check        Scan for leaked audit labels, banned names, and prose gates (informational)' \
 		'  make diff-coverage    Self-test the gate, then fail if changed Go lines are untested' \
 		'  make race              go test -race ./...' \
 		'  make vet               go vet ./...' \
@@ -75,6 +76,7 @@ install-hooks hooks:
 verify: verify-agent docs-check release-test secret-scan structure-check \
 	semgrep-validate semgrep-test hook-test agent-hook-test \
 	validate-invariants semgrep verify-go
+	@python3 scripts/check_mutation.py --probe
 
 verify-agent:
 	@python3 scripts/verify_agent_config.py
@@ -116,6 +118,7 @@ semgrep-validate:
 
 semgrep-test:
 	@python3 scripts/test_semgrep_rules.py
+	@python3 scripts/check_semgrep_probes.py
 
 # Bound worker domains because default per-CPU workers can fail with
 # io_uring_queue_init (ENOMEM) under a low RLIMIT_MEMLOCK.
@@ -140,6 +143,10 @@ agent-hook-test:
 	@python3 scripts/test_docs_ownership.py
 	@python3 scripts/test_check_provider_docs.py
 	@python3 scripts/test_secret_scan.py
+	@python3 scripts/test_check_mutation.py
+	@python3 scripts/test_check_labels.py
+	@python3 scripts/test_check_names.py
+	@python3 scripts/test_check_prose.py
 
 pre-commit:
 	@.githooks/pre-commit
@@ -204,8 +211,25 @@ invariants:
 	@echo ""
 	@python3 scripts/invariant_coverage.py
 
-mutation-coverage:
-	@python3 scripts/mutation_coverage.py
+# Real mutation sweep against one package (slow: builds+tests a mutant per
+# site). PKG is required, e.g. `make mutation PKG=internal/agent`. Exploratory
+# by default (no floor); `--all-core` sweeps the default CORE_PACKAGES set.
+# The fast self-test (planted fixtures, no real sweep) runs in `make verify`
+# via `check_mutation.py --probe`.
+mutation:
+	@python3 scripts/check_mutation.py --pkg $(PKG)
+
+# Informational, not part of `make verify`: check_labels.py and check_prose.py
+# currently flag pre-existing content (this repo's docs legitimately embed
+# durable correction/decision-reference IDs like C1/S3/INV-AG-12, and several
+# docs exceed the 25-word sentence cap), and check_names.py flags legitimate
+# domain vocabulary (PanelPhase, Backup(), versioned schema files) alongside
+# real hits. Run standalone to see current findings; wiring into verify is
+# blocked on a cleanup pass and tighter false-positive scoping.
+prose-check:
+	@python3 scripts/check_labels.py
+	@python3 scripts/check_names.py
+	@python3 scripts/check_prose.py
 
 # DIFF_COVERAGE_PROFILE lets a caller that already ran the instrumented suite
 # (verify-go) hand its profile over instead of paying for a second full run.
