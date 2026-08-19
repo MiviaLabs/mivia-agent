@@ -36,11 +36,11 @@ audits it. That someone is the operator of this skill.
 
 ## Step 1: Enumerate the inventory
 
-1. Read `.mivia/memory.jsonl`. It is a deterministic export of every entry.
+1. Run `mivia memory dump --workspace .` to get a deterministic JSONL export
+   of every entry in the live store. There is no committed export to read
+   instead - always dump fresh. If the command is unavailable, note that in
+   your report and fall back to `memory_search` with broad queries.
 2. Record each entry: id, title, summary, tags, and created date.
-3. The export can lag the live store. When it looks stale, run
-   `mivia memory dump` to refresh it. If the command is unavailable, note the
-   export date in your report.
 
 ## Step 2: Classify every entry
 
@@ -145,8 +145,8 @@ Create an entry when a durable fact has no home:
 2. Deleted topics must no longer surface.
 3. New entries must surface with their expected terms.
 4. Check that near-duplicate queries return one clear entry, not several.
-5. Expect a `.mivia/memory.db` diff. The pre-commit hook regenerates
-   `.mivia/memory.jsonl` at the next commit. State this in your report.
+5. Expect a `.mivia/memory.db` diff; stage it. There is no export to
+   regenerate - `.mivia/memory.jsonl` is not tracked.
 
 ## Step 7: Report
 

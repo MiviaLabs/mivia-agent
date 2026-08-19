@@ -113,9 +113,9 @@ func runMemoryPromote(args []string, stdout io.Writer) error {
 const memoryDumpWarnBytes = 400 * 1024
 
 // runMemoryDump is the harness-generic export path (D5): deterministic
-// JSONL to stdout, so scripts/git-hooks/pre-commit (Wave 7) can redirect it
-// straight to .mivia/memory.jsonl. Opens the store read-only - dump never
-// writes the database.
+// JSONL to stdout, for a manual reviewable export of the memory store (e.g.
+// `mivia memory dump --workspace . > .mivia/memory.jsonl`). Opens the store
+// read-only - dump never writes the database.
 func runMemoryDump(args []string, stdout, stderr io.Writer) error {
 	workspaceRoot, cfgPath, err := parseMemoryDumpArgs(args)
 	if err != nil {
