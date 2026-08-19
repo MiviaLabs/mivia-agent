@@ -59,6 +59,22 @@ How mivia is built. Owner: `architecture`.
 Architecture decisions live in these canonical docs, not in separate ADR
 files. ADRs are not used in this repository.
 
+## Design
+
+The new terminal UI. Owner: `architecture`.
+
+| Doc | Covers |
+|-----|--------|
+| [UX rules](design/ux-rules.md) | Binding interaction rules: reserved keys, repaint, inline against cockpit, composer, focus, mouse, clipboard, accessibility |
+| [Wireframes, variant D](design/wireframes-panes.md) | The chosen visual specification: block anatomy, every block type, dialogs, keymap |
+| [Research, variant D](design/research-panes.md) | Colour, contrast and colour-vision evidence behind the shipped themes |
+| [Wireframes, variants A-C](design/wireframes.md) | Record of the three rejected directions |
+| [Research, iteration 1](design/research.md) | Record of the first research pass |
+
+[UX rules](design/ux-rules.md) wins on interaction and mechanics.
+[Wireframes, variant D](design/wireframes-panes.md) wins on layout and visual
+form. Section 10 of the rules lists the points it overturns.
+
 ## Development
 
 How to work in this repository. Owner: `quality`.
