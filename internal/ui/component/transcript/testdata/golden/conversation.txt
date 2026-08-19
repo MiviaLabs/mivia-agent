@@ -4,10 +4,10 @@ with a test.
 I will add a bounded retry to the uploader transport. Three attempts, full
 jitter, and a cap of 5s.
 
-    func (u *Uploader) put(ctx context.Context, k string, b []byte) error {
-        return retry.Do(ctx, retry.Policy{Max: 3, Cap: 5 * time.Second},
-            func() error { return u.raw.Put(ctx, k, b) })
-    }
+[2;38;2;161;161;170;48;2;5;5;6m    func (u *Uploader) put(ctx context.Context, k string, b []byte) error {[m
+[2;38;2;161;161;170;48;2;5;5;6m        return retry.Do(ctx, retry.Policy{Max: 3, Cap: 5 * time.Second},[m
+[2;38;2;161;161;170;48;2;5;5;6m            func() error { return u.raw.Put(ctx, k, b) })[m
+[2;38;2;161;161;170;48;2;5;5;6m    }[m
 [38;2;91;140;255mv read_file path=internal/storage/s3_uploader.go[m
 [2;38;2;161;161;170m  package storage[m
 [38;2;78;220;78mread_file    ok         12ms  48 lines[m

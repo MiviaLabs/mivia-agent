@@ -37,6 +37,16 @@ type PopScreenMsg struct{}
 // not a direct field mutation - is how a screen changes it.
 type ThemeSelectedMsg struct{ Name string }
 
+// ThemeChangedMsg is sent by the router to every Screen on the stack
+// after it adopts a new theme, so each Screen (and the components it
+// owns) can update its own copy. Theme/Tier are plain value fields on
+// Model, Screen, and every component - there is no shared pointer - so
+// nothing re-renders with the new theme without this broadcast.
+type ThemeChangedMsg struct {
+	Theme theme.Theme
+	Tier  theme.Tier
+}
+
 var _ tea.Model = Model{}
 
 // Model is the root tea.Model: current theme/tier plus the screen stack.
@@ -96,13 +106,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case ThemeSelectedMsg:
+		var cmds []tea.Cmd
 		if th, ok := m.themeByName(msg.Name); ok {
 			m.Theme = th
+			// Broadcast to every screen on the stack, not just the top
+			// (the picker itself): the base screen underneath is the one
+			// that actually needs to repaint with the new theme.
+			for i, sc := range m.stack {
+				var cmd tea.Cmd
+				m.stack[i], cmd = sc.Update(ThemeChangedMsg{Theme: th, Tier: m.Tier})
+				cmds = append(cmds, cmd)
+			}
 		}
 		if len(m.stack) > 1 {
 			m.stack = m.stack[:len(m.stack)-1]
 		}
-		return m, nil
+		return m, tea.Batch(cmds...)
 	}
 
 	top, ok := m.top()

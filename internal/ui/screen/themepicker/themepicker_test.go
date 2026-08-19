@@ -47,6 +47,22 @@ func TestViewListsThemeNames(t *testing.T) {
 	}
 }
 
+func TestThemeChangedMsgUpdatesScreenAndPicker(t *testing.T) {
+	themes := loadThemes(t)
+	s := New(themes[0], theme.TierASCII, themes)
+	next, cmd := s.Update(app.ThemeChangedMsg{Theme: themes[1], Tier: theme.TierTrueColor})
+	if cmd != nil {
+		t.Error("expected no Cmd from a theme change")
+	}
+	got := next.(Screen)
+	if got.Theme.Name != themes[1].Name || got.Tier != theme.TierTrueColor {
+		t.Errorf("got Theme=%q Tier=%v, want Theme=%q Tier=TierTrueColor", got.Theme.Name, got.Tier, themes[1].Name)
+	}
+	if got.picker.Theme.Name != themes[1].Name {
+		t.Errorf("got picker.Theme=%q, want %q", got.picker.Theme.Name, themes[1].Name)
+	}
+}
+
 func TestEnterEmitsThemeSelectedMsg(t *testing.T) {
 	themes := loadThemes(t)
 	s := New(themes[0], theme.TierASCII, themes)

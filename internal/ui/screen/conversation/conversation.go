@@ -114,6 +114,13 @@ func (s Screen) Update(msg tea.Msg) (app.Screen, tea.Cmd) {
 		// joins native terminal scrollback, which is what makes the
 		// inline transcript survive content taller than the terminal.
 		return s, tea.Println(msg.Text)
+	case app.ThemeChangedMsg:
+		s.Theme, s.Tier = msg.Theme, msg.Tier
+		s.transcript.Theme, s.transcript.Tier = msg.Theme, msg.Tier
+		s.composer.Theme, s.composer.Tier = msg.Theme, msg.Tier
+		s.statusline.Theme, s.statusline.Tier = msg.Theme, msg.Tier
+		s.approval.Theme, s.approval.Tier = msg.Theme, msg.Tier
+		return s, nil
 	}
 	return s, nil
 }

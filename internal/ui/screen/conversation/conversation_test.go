@@ -284,6 +284,47 @@ func TestStatuslineTickMsgForwardsToStatusline(t *testing.T) {
 	}
 }
 
+func TestThemeChangedMsgUpdatesScreenAndAllComponents(t *testing.T) {
+	themes, err := theme.Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dark, light theme.Theme
+	for _, th := range themes {
+		switch th.Name {
+		case "mivia-dark":
+			dark = th
+		case "mivia-light":
+			light = th
+		}
+	}
+	if dark.Name == "" || light.Name == "" {
+		t.Fatal("need both mivia-dark and mivia-light embedded")
+	}
+
+	s := New(dark, theme.TierASCII, themes, replay.New(nil, 0), nil, 40, nil)
+	next, cmd := s.Update(app.ThemeChangedMsg{Theme: light, Tier: theme.TierTrueColor})
+	if cmd != nil {
+		t.Error("expected no Cmd from a theme change")
+	}
+	got := next.(Screen)
+
+	for name, th := range map[string]theme.Theme{
+		"Screen":     got.Theme,
+		"transcript": got.transcript.Theme,
+		"composer":   got.composer.Theme,
+		"statusline": got.statusline.Theme,
+		"approval":   got.approval.Theme,
+	} {
+		if th.Name != light.Name {
+			t.Errorf("%s.Theme = %q, want %q", name, th.Name, light.Name)
+		}
+	}
+	if got.Tier != theme.TierTrueColor {
+		t.Errorf("got Tier %v, want TierTrueColor", got.Tier)
+	}
+}
+
 func TestCommitMsgBecomesTeaPrintln(t *testing.T) {
 	s := newScreen(t, replay.New(nil, 0), nil, nil)
 	_, cmd := s.Update(transcript.CommitMsg{Text: "committed line"})

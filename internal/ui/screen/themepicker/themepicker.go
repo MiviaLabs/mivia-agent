@@ -35,6 +35,11 @@ func New(th theme.Theme, tier theme.Tier, themes []theme.Theme) Screen {
 func (s Screen) Init() tea.Cmd { return nil }
 
 func (s Screen) Update(msg tea.Msg) (app.Screen, tea.Cmd) {
+	if changed, ok := msg.(app.ThemeChangedMsg); ok {
+		s.Theme, s.Tier = changed.Theme, changed.Tier
+		s.picker.Theme, s.picker.Tier = changed.Theme, changed.Tier
+		return s, nil
+	}
 	next, cmd := s.picker.Update(msg)
 	s.picker = next
 	if cmd == nil {

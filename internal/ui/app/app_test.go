@@ -158,7 +158,7 @@ func TestThemeSelectedMsgAdoptsThemeAndPops(t *testing.T) {
 	next, _ := m.Update(PushScreenMsg{Screen: stubScreen{name: "picker"}})
 	m = next.(Model)
 
-	next, _ = m.Update(ThemeSelectedMsg{Name: light.Name})
+	next, cmd := m.Update(ThemeSelectedMsg{Name: light.Name})
 	m = next.(Model)
 
 	if m.Theme.Name != light.Name {
@@ -166,6 +166,30 @@ func TestThemeSelectedMsgAdoptsThemeAndPops(t *testing.T) {
 	}
 	if got := m.View(); got.Content != "base" {
 		t.Errorf("got %q, want the picker popped after selection", got.Content)
+	}
+	_ = cmd // stubScreen returns a nil Cmd, so tea.Batch collapses to nil here; that's correct, not what's under test
+	// Both the base screen (still on the stack) and the picker (about to
+	// be popped) must have received the broadcast - not just the top.
+	base := m.stack[0].(stubScreen)
+	if len(base.received) != 1 {
+		t.Fatalf("expected the base screen to receive ThemeChangedMsg, got %d received msgs", len(base.received))
+	}
+	got, ok := base.received[0].(ThemeChangedMsg)
+	if !ok || got.Theme.Name != light.Name {
+		t.Errorf("got %+v, want ThemeChangedMsg{Theme: %s}", base.received[0], light.Name)
+	}
+}
+
+func TestThemeSelectedMsgUnknownNameDoesNotBroadcast(t *testing.T) {
+	m := New(stubScreen{name: "base"}, loadTheme(t), theme.TierASCII, []theme.Theme{loadTheme(t)})
+	next, cmd := m.Update(ThemeSelectedMsg{Name: "does-not-exist"})
+	m = next.(Model)
+	if cmd != nil {
+		t.Error("expected no Cmd when the theme name does not resolve")
+	}
+	base := m.stack[0].(stubScreen)
+	if len(base.received) != 0 {
+		t.Errorf("expected no broadcast for an unresolved theme name, got %d received msgs", len(base.received))
 	}
 }
 
