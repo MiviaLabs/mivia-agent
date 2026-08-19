@@ -132,23 +132,29 @@ func (m Model) HandleEvent(ev uievent.Event) (Model, tea.Cmd) {
 			Body:  proseLines(render.Text(m.Theme, m.Tier, b.Text)),
 		})
 	case uievent.TurnStartBody:
+		m = m.flushPending()
 		return m.pushBlock(Block{
 			Kind:  uievent.KindTurnStart,
 			Prose: true,
 			Body:  userLines(m.Theme, m.Tier, m.width, b.Input),
 		})
 	case uievent.ToolPendingBody, uievent.ToolStartBody, uievent.ToolOutputBody, uievent.ToolEndBody:
+		m = m.flushPending()
 		return m.handleToolEvent(ev.Body)
 	case uievent.PlanBody:
+		m = m.flushPending()
 		return m.pushBlock(planBlockValue(m.Theme, m.Tier, b))
 	case uievent.NoticeBody:
+		m = m.flushPending()
 		return m.pushBlock(Block{
 			Kind:   uievent.KindNotice,
 			Header: Header{Label: "notice", Detail: b.Text, Role: theme.RoleInfo},
 		})
 	case uievent.ErrorBody:
+		m = m.flushPending()
 		return m.pushBlock(errorBlockValue(b))
 	case uievent.UsageBody:
+		m = m.flushPending()
 		return m.pushBlock(Block{
 			Kind: uievent.KindUsage,
 			Header: Header{
@@ -199,15 +205,29 @@ const shortResultCols = 16
 
 // endTurnUnfinished flushes any partial stream as prose, then records
 // why the turn stopped.
-func (m Model) endTurnUnfinished(reason string) (Model, tea.Cmd) {
-	if partial := m.pending; partial != "" {
-		m, _ = m.pushBlock(Block{
-			Kind:  uievent.KindTextEnd,
-			Prose: true,
-			Body:  strings.Split(partial, "\n"),
-		})
+// flushPending commits any in-flight text or reasoning span as a
+// finished prose block. Every event that starts a new top-level block
+// must call this first unless it already carries its own final text
+// (text.end, and the terminal reasoning.delta both replace pending
+// rather than continue it - see their own case bodies). Skipping the
+// flush silently drops the partial span, and the next block's own first
+// row can then visually collide with the abandoned streaming tail.
+func (m Model) flushPending() Model {
+	partial := m.pending
+	if partial == "" {
+		return m
 	}
 	m.clearPending()
+	m, _ = m.pushBlock(Block{
+		Kind:  uievent.KindTextEnd,
+		Prose: true,
+		Body:  strings.Split(partial, "\n"),
+	})
+	return m
+}
+
+func (m Model) endTurnUnfinished(reason string) (Model, tea.Cmd) {
+	m = m.flushPending()
 
 	// Label only. TurnEndBody carries just the reason, so inventing a
 	// detail or a duration here would be fabrication; section 13's

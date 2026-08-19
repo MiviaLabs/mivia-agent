@@ -14,10 +14,13 @@ func TestBlockHeightCountsHeaderAndBody(t *testing.T) {
 		b    Block
 		want int
 	}{
-		{"header only", Block{Header: Header{Label: "x"}}, 1},
-		{"header plus body", Block{Header: Header{Label: "x"}, Body: []string{"a", "b"}}, 3},
-		{"collapsed hides the body", Block{Header: Header{Label: "x"}, Body: []string{"a", "b"}, Collapsible: true, Collapsed: true}, 1},
-		{"prose has no header row", Block{Prose: true, Body: []string{"a", "b"}}, 2},
+		// +1 on every case is the trailing blank separator row every
+		// block gets (docs/design/wireframes.md variant A): the count
+		// this test pins is header/body rows PLUS that separator.
+		{"header only", Block{Header: Header{Label: "x"}}, 2},
+		{"header plus body", Block{Header: Header{Label: "x"}, Body: []string{"a", "b"}}, 4},
+		{"collapsed hides the body", Block{Header: Header{Label: "x"}, Body: []string{"a", "b"}, Collapsible: true, Collapsed: true}, 2},
+		{"prose has no header row", Block{Prose: true, Body: []string{"a", "b"}}, 3},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -62,7 +65,7 @@ func TestHeaderRowIdenticalCollapsedAndExpanded(t *testing.T) {
 	closed.Collapsed = true
 
 	openHeader := strings.SplitN(open.Render(th, theme.TierASCII, 80), "\n", 2)[0]
-	closedHeader := closed.Render(th, theme.TierASCII, 80)
+	closedHeader := strings.SplitN(closed.Render(th, theme.TierASCII, 80), "\n", 2)[0]
 
 	// The two must differ in exactly one byte: the marker glyph. Any
 	// other difference means a row moved when the block collapsed, which
@@ -86,8 +89,9 @@ func TestRenderIndentsBodyByBodyIndent(t *testing.T) {
 	th := loadTheme(t)
 	b := Block{Header: Header{Label: "x"}, Body: []string{"line"}}
 	rows := strings.Split(b.Render(th, theme.TierASCII, 80), "\n")
-	if len(rows) != 2 {
-		t.Fatalf("got %d rows, want 2", len(rows))
+	// header, body line, trailing blank separator.
+	if len(rows) != 3 {
+		t.Fatalf("got %d rows, want 3", len(rows))
 	}
 	// Hardcoded, not built from the constant: a test that echoes the
 	// value the code reads cannot fail when that value changes. The
@@ -106,7 +110,9 @@ func TestRenderIndentsBodyByBodyIndent(t *testing.T) {
 func TestRenderProseHasNoHeaderAndNoIndent(t *testing.T) {
 	th := loadTheme(t)
 	b := Block{Prose: true, Body: []string{"one", "two"}}
-	if got := b.Render(th, theme.TierASCII, 80); got != "one\ntwo" {
+	// Verbatim at column 1, plus the trailing blank separator row every
+	// block carries.
+	if got := b.Render(th, theme.TierASCII, 80); got != "one\ntwo\n" {
 		t.Errorf("got %q, want the prose verbatim at column 1", got)
 	}
 }
@@ -167,9 +173,12 @@ func TestFocusedHeaderSanitizesControlCharacters(t *testing.T) {
 		Collapsible: true,
 		Focused:     true,
 	}
-	got := b.Render(th, theme.TierASCII, 80)
-	if strings.ContainsAny(got, "\n\r\t") {
-		t.Errorf("focused header contains control characters or newlines: %q", got)
+	// Isolate the header row: Render's own trailing blank separator row
+	// is a structural newline, not a content leak, so it must not trip
+	// this check the way an embedded \n or \t from Detail would.
+	header := strings.SplitN(b.Render(th, theme.TierASCII, 80), "\n", 2)[0]
+	if strings.ContainsAny(header, "\n\r\t") {
+		t.Errorf("focused header contains control characters or newlines: %q", header)
 	}
 }
 

@@ -96,6 +96,35 @@ func TestOneToolCallIsOneBlock(t *testing.T) {
 	}
 }
 
+// TestPendingTextFlushesBeforeAToolBlockStarts pins the sibling case to
+// TestCancelledTurnKeepsPartialTextAndSaysWhy: a tool call that starts
+// before the model's running text.delta reaches its text.end must not
+// discard that partial prose. Losing it is what corrupted the row when a
+// tool block's own first output line drew into the same slot.
+func TestPendingTextFlushesBeforeAToolBlockStarts(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 24)
+	m, _ = m.HandleEvent(uievent.Event{
+		Kind: uievent.KindTextDelta,
+		Body: uievent.TextDeltaBody{Text: "Checking the directory now."},
+	})
+	m, _ = m.HandleEvent(uievent.Event{
+		Kind: uievent.KindToolStart,
+		Body: uievent.ToolStartBody{ToolCallID: "c1", Name: "list_dir"},
+	})
+
+	got := ansi.Strip(m.Dump())
+	if !strings.Contains(got, "Checking the directory now.") {
+		t.Errorf("the pending text was dropped when the tool block started:\n%s", got)
+	}
+	if len(m.Blocks()) != 2 {
+		t.Fatalf("got %d blocks, want 2: the flushed prose, then the tool block", len(m.Blocks()))
+	}
+	if m.Blocks()[0].Header.Label == "list_dir" {
+		t.Error("the prose block must come before the tool block, not after")
+	}
+}
+
 func TestToolEventsWithoutAStartPushAFreshBlock(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII)
 	m.SetSize(80, 24)
@@ -145,8 +174,9 @@ func TestTallBlockCollapsesByDefault(t *testing.T) {
 	if !m.Blocks()[0].Collapsed {
 		t.Error("a block at or above the collapse threshold must start collapsed")
 	}
-	if got := m.Blocks()[0].Height(80); got != 1 {
-		t.Errorf("got height %d, want 1 for a collapsed block", got)
+	// 1 header row, plus the trailing blank separator every block gets.
+	if got := m.Blocks()[0].Height(80); got != 2 {
+		t.Errorf("got height %d, want 2 for a collapsed block", got)
 	}
 }
 

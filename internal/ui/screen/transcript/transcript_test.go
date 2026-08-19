@@ -283,9 +283,11 @@ func TestSearchNextPrevAfterBarClosed(t *testing.T) {
 // screen is marked, not only the selected one: two reversed-video runs
 // on one view, one per match row.
 func TestSearchHighlightsEveryVisibleMatch(t *testing.T) {
-	// Height 25 shows all 24 fixture rows at once, so BOTH matches are
-	// on screen at the same time - the condition the rule states.
-	s := sizedPager(t, 80, 25)
+	// Height 29 shows all 28 fixture rows at once (24 content rows plus
+	// one blank separator after each of the snapshot's 4 blocks), so
+	// BOTH matches are on screen at the same time - the condition the
+	// rule states.
+	s := sizedPager(t, 80, 29)
 	s = drive(s, tea.KeyPressMsg{Code: '/'})
 	for _, r := range "zebra" {
 		s = drive(s, tea.KeyPressMsg{Text: string(r), Code: r})
@@ -757,9 +759,12 @@ func TestPagerLiveEventTrimWithExistingDroppedAndSearchActive(t *testing.T) {
 	next, _ := s.Update(uievent.EventMsg{Event: ev})
 	s = next.(Screen)
 
-	// Cancel search with Esc - should restore shifted offset (50 - 1 = 49)
+	// Cancel search with Esc - should restore the shifted offset. Each
+	// notice block is 2 rows now (its header plus the trailing blank
+	// separator every block carries), so trimming 1 block shifts by 2:
+	// 50 - 2 = 48.
 	s = drive(s, tea.KeyPressMsg{Code: tea.KeyEscape})
-	if s.offset != 49 {
-		t.Errorf("offset after cancel = %d, want 49", s.offset)
+	if s.offset != 48 {
+		t.Errorf("offset after cancel = %d, want 48", s.offset)
 	}
 }

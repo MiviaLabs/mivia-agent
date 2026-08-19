@@ -24,6 +24,27 @@ func TestViewIsAlwaysExactlyTheViewportHeight(t *testing.T) {
 	}
 }
 
+// TestOneBlankRowSeparatesAdjacentBlocks pins docs/design/wireframes.md
+// variant A (and mivia-ui-mock.html): every top-level block is followed
+// by one blank row before the next one starts, so the transcript reads
+// as distinct entries instead of one dense, cramped run of text.
+func TestOneBlankRowSeparatesAdjacentBlocks(t *testing.T) {
+	m := sizedModel(t, 80, 10, 2)
+	rows := m.Rows()
+	// sizedModel's blocks are one row each (header only): row 0 is the
+	// first block's header, row 1 must be the blank separator, row 2 the
+	// second block's header.
+	if len(rows) < 3 {
+		t.Fatalf("got %d rows, want at least 3 to hold two blocks and their separator", len(rows))
+	}
+	if rows[1] != "" {
+		t.Errorf("got row 1 = %q, want a blank separator row between the two blocks", rows[1])
+	}
+	if rows[0] == "" || rows[2] == "" {
+		t.Errorf("got blank block rows, want content: row0=%q row2=%q", rows[0], rows[2])
+	}
+}
+
 func TestUnmeasuredViewportDrawsNothing(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII)
 	if got := m.Rows(); got != nil {
@@ -543,7 +564,9 @@ func TestTallFocusedBlockShowsItsHeadNotItsTail(t *testing.T) {
 	if !strings.Contains(view, "tall_call") {
 		t.Errorf("the tall block's header is off screen:\n%s", view)
 	}
-	if got, want := m.Offset(), 1; got != want {
+	// Block 0 ("above") is a 1-row notice plus its trailing blank
+	// separator, so block 1's own top row starts at offset 2.
+	if got, want := m.Offset(), 2; got != want {
 		t.Errorf("got offset %d, want %d: the block's own top row", got, want)
 	}
 }

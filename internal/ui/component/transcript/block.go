@@ -66,15 +66,22 @@ func (b Block) isEmpty() bool {
 //
 // Height and Render both derive their rows from bodyRows, so they cannot
 // disagree.
+//
+// The trailing +1 is the blank separator row after the block
+// (docs/design/wireframes.md variant A, mivia-ui-mock.html): every
+// top-level block in the transcript is followed by one blank row, or
+// adjacent blocks read as one dense, cramped run of text instead of
+// distinct entries. It applies uniformly, collapsed or not, so spacing
+// never depends on collapse state.
 func (b Block) Height(width int) int {
 	if b.Prose {
-		return len(b.bodyRows(width))
+		return len(b.bodyRows(width)) + 1
 	}
 	if b.Collapsed {
-		return 1
+		return 1 + 1
 	}
 	// render.Header guarantees exactly one row at a known width.
-	return 1 + len(b.bodyRows(width))
+	return 1 + len(b.bodyRows(width)) + 1
 }
 
 // bodyRows is the body as terminal rows at width, already wrapped.
@@ -118,14 +125,18 @@ func defaultCollapsed(body []string) bool {
 // Render draws the block. The header row is byte-identical whether the
 // block is collapsed or expanded, apart from the collapse marker, so
 // toggling never moves any other row (wireframes-panes.md section 5).
+//
+// The last row is always the blank separator Height accounts for; see
+// its doc comment.
 func (b Block) Render(t theme.Theme, tier theme.Tier, width int) string {
 	if b.Prose {
-		return strings.Join(b.bodyRows(width), "\n")
+		return strings.Join(b.bodyRows(width), "\n") + "\n"
 	}
 
 	var sb strings.Builder
 	sb.WriteString(b.renderHeader(t, tier, width))
 	if b.Collapsed {
+		sb.WriteByte('\n')
 		return sb.String()
 	}
 	indent := strings.Repeat(" ", uikitconfig.BodyIndent)
@@ -134,6 +145,7 @@ func (b Block) Render(t theme.Theme, tier theme.Tier, width int) string {
 		sb.WriteString(indent)
 		sb.WriteString(line)
 	}
+	sb.WriteByte('\n')
 	return sb.String()
 }
 
