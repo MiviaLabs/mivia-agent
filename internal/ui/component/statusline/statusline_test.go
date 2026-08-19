@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 )
 
@@ -91,6 +92,50 @@ func TestSetLabelDoesNotResetElapsed(t *testing.T) {
 	got := m.View(start.Add(5 * time.Second))
 	if !strings.Contains(got, "running tool") || !strings.Contains(got, "5s") {
 		t.Errorf("got %q, want label updated and elapsed clock preserved", got)
+	}
+}
+
+// TestLabelCarriesItsStateRole pins wireframes-panes.md's activity-mark
+// table: running is `info`, pending is `warning`, failed is `danger`,
+// done is `success`. Only the label word carries the colour - the
+// spinner and elapsed time stay in the line's own subtle style, the
+// same split block headers already use between a subtle label and a
+// coloured state word.
+func TestLabelCarriesItsStateRole(t *testing.T) {
+	th := loadTheme(t)
+	cases := []struct {
+		label string
+		role  theme.Role
+	}{
+		{"running", theme.RoleInfo},
+		{"pending", theme.RoleWarning},
+		{"failed", theme.RoleDanger},
+		{"done", theme.RoleSuccess},
+	}
+	for _, c := range cases {
+		t.Run(c.label, func(t *testing.T) {
+			m := New(th, theme.TierTrueColor)
+			m.Start(c.label, time.Now())
+			got := m.View(time.Now())
+			want := render.Role(th, theme.TierTrueColor, c.role).Render(c.label)
+			if !strings.Contains(got, want) {
+				t.Errorf("got %q, want the label styled with %s: %q", got, c.role, want)
+			}
+		})
+	}
+}
+
+// TestThinkingLabelHasNoStateRole: "thinking" has no colour in the
+// wireframes table (only motion), so it must render in the line's own
+// subtle style rather than picking up a state colour by accident.
+func TestThinkingLabelHasNoStateRole(t *testing.T) {
+	th := loadTheme(t)
+	m := New(th, theme.TierTrueColor)
+	m.Start("thinking", time.Now())
+	got := m.View(time.Now())
+	want := render.Role(th, theme.TierTrueColor, theme.RoleFGSubtle).Render("thinking")
+	if !strings.Contains(got, want) {
+		t.Errorf("got %q, want thinking in the line's own subtle style: %q", got, want)
 	}
 }
 

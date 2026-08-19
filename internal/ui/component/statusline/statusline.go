@@ -88,6 +88,18 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	return m, tickCmd()
 }
 
+// labelRoles is wireframes-panes.md's activity-mark table: only these
+// four states carry an explicit colour (running -> info, pending ->
+// warning, failed -> danger, done -> success). Every other label,
+// including "thinking", has no table entry and stays in the line's own
+// subtle style - motion carries its meaning, not colour.
+var labelRoles = map[string]theme.Role{
+	"running": theme.RoleInfo,
+	"pending": theme.RoleWarning,
+	"failed":  theme.RoleDanger,
+	"done":    theme.RoleSuccess,
+}
+
 // View renders the line as of now. now is a parameter rather than
 // time.Now() so the render stays deterministic for golden tests.
 func (m Model) View(now time.Time) string {
@@ -98,6 +110,11 @@ func (m Model) View(now time.Time) string {
 		return ""
 	}
 	elapsed := now.Sub(m.started).Round(time.Second)
-	style := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
-	return style.Render(fmt.Sprintf("%s %s  %s", spinnerFrames[m.frame], m.label, elapsed))
+	subtle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
+	label := subtle.Render(m.label)
+	if role, ok := labelRoles[m.label]; ok {
+		label = render.Role(m.Theme, m.Tier, role).Render(m.label)
+	}
+	return subtle.Render(spinnerFrames[m.frame]) + subtle.Render(" ") + label +
+		subtle.Render(fmt.Sprintf("  %s", elapsed))
 }
