@@ -34,6 +34,9 @@ func TestViewEmptyWhenInactive(t *testing.T) {
 	if got := m.View(); got != "" {
 		t.Errorf("got %q, want empty view with no pending request", got)
 	}
+	if m.Height() != 0 {
+		t.Errorf("Height() = %d with no pending request, want 0", m.Height())
+	}
 }
 
 func TestViewShowsPendingRequest(t *testing.T) {

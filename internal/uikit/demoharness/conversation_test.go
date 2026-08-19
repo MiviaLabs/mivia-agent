@@ -2,6 +2,7 @@ package demoharness
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -606,4 +607,77 @@ func TestCancelBeforeAnyReadRespectsFlushTimeout(t *testing.T) {
 	}
 	handle.Cancel()
 	time.Sleep(uikitconfig.DemoCancelFlushTimeout + 200*time.Millisecond)
+}
+
+// TestCancelWhileApprovalPublishBlocks covers awaitDecision's first
+// cancel arm: the pending buffer is full and nobody drains Pending(),
+// so the turn blocks PUBLISHING its approval request; Cancel must take
+// the cancelCh arm of the publish select and end the turn cancelled
+// instead of deadlocking the goroutine. The buffer is filled directly
+// (internal test) and events are read up to tool.pending BEFORE the
+// cancel, so the playback goroutine is parked inside the blocked
+// publish when the close fires - cancelling earlier would let the
+// closed channel win the send select and end the turn before the
+// approval arm is ever reached.
+func TestCancelWhileApprovalPublishBlocks(t *testing.T) {
+	h, err := New("approval", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < uikitconfig.DemoPendingApprovalBuffer; i++ {
+		h.pendingCh <- ports.ApprovalRequest{ID: fmt.Sprintf("filler-%d", i)}
+	}
+
+	victim, err := h.Send(context.Background(), intent.Send{Text: "go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for ev := range victim.Events() {
+		if ev.Kind == uievent.KindToolPending {
+			break // the goroutine is now blocked publishing into a full buffer
+		}
+	}
+	victim.Cancel()
+	for ev := range victim.Events() {
+		if ev.Kind == uievent.KindTurnEnd {
+			if b, ok := ev.Body.(uievent.TurnEndBody); ok && b.Reason != "cancelled" {
+				t.Errorf("victim ended with reason %q, want cancelled", b.Reason)
+			}
+			return
+		}
+	}
+	t.Fatal("victim turn never ended after cancel")
+}
+
+// TestResolveSkipsAFullWaitSlot covers Resolve's default arm: a wait
+// whose single buffered slot is already occupied (a cancel raced an
+// earlier delivery) must be dropped silently, not block the resolver.
+// Arranged through the internal waiting map because the public flow
+// deletes the entry on its first Resolve.
+func TestResolveSkipsAFullWaitSlot(t *testing.T) {
+	h, err := New("approval", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch := make(chan ports.Decision, 1)
+	ch <- ports.DecisionOnce // slot already full
+	h.mu.Lock()
+	h.waiting["stale"] = ch
+	h.mu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		h.Resolve("stale", ports.DecisionDeny)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Resolve blocked on a full wait slot")
+	}
+	// The stale entry is gone either way: a later Resolve is a no-op.
+	h.Resolve("stale", ports.DecisionDeny)
+	if got := <-ch; got != ports.DecisionOnce {
+		t.Errorf("stale slot holds %v, want the original DecisionOnce", got)
+	}
 }

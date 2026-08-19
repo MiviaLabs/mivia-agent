@@ -2,6 +2,7 @@ package demoharness
 
 import (
 	"sort"
+	"strings"
 	"testing"
 
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
@@ -99,5 +100,26 @@ func TestApprovalDiffScriptCarriesAProposedDiff(t *testing.T) {
 	}
 	if n <= uikitconfig.ApprovalDiffPreviewLines {
 		t.Errorf("script has %d diff lines, want more than the %d-line cap", n, uikitconfig.ApprovalDiffPreviewLines)
+	}
+}
+
+// TestLoadScenarioReportsFileAndDecodeErrors covers both failure arms:
+// a mapped file that does not exist, and one that is not valid JSON.
+// The scenario map is edited in-test and restored, because loadScenario
+// only reads files the map names.
+func TestLoadScenarioReportsFileAndDecodeErrors(t *testing.T) {
+	orig := scenarios["approval-diff"]
+	defer func() { scenarios["approval-diff"] = orig }()
+
+	scenarios["approval-diff"] = []string{"does-not-exist.json"}
+	_, err := loadScenario("approval-diff")
+	if err == nil || !strings.Contains(err.Error(), "read does-not-exist.json") {
+		t.Errorf("missing file: got %v, want a read error naming the file", err)
+	}
+
+	scenarios["approval-diff"] = []string{"bad.json"}
+	_, err = loadScenario("approval-diff")
+	if err == nil || !strings.Contains(err.Error(), "decode bad.json") {
+		t.Errorf("bad JSON: got %v, want a decode error naming the file", err)
 	}
 }
