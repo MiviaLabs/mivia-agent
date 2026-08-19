@@ -3,6 +3,9 @@ package demoharness
 import (
 	"sort"
 	"testing"
+
+	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
 
 func TestScenariosSortedAndNonEmpty(t *testing.T) {
@@ -29,24 +32,29 @@ func TestLoadScenarioFullTourCoversEveryTurnShape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(scripts) != 8 {
-		t.Fatalf("got %d scripts, want 8 (one per required turn shape)", len(scripts))
+	if len(scripts) != 9 {
+		t.Fatalf("got %d scripts, want 9 (one per required turn shape)", len(scripts))
 	}
 	for i, s := range scripts {
 		if len(s.Before) == 0 {
 			t.Errorf("script %d has an empty Before", i)
 		}
 	}
-	// The last script (approval.json) is the only one with a decision
-	// fork: its Before ends on tool.pending and it carries both
-	// continuations.
-	last := scripts[len(scripts)-1]
-	if len(last.OnApprove) == 0 || len(last.OnDeny) == 0 {
-		t.Error("expected the approval script to carry both on_approve and on_deny continuations")
+	// The last two scripts (approval.json, approval_diff.json) are the
+	// only ones with a decision fork: each Before ends on tool.pending and
+	// carries both continuations.
+	for _, name := range []string{"approval.json", "approval_diff.json"} {
+		idx := len(scripts) - 1
+		if name == "approval.json" {
+			idx = len(scripts) - 2
+		}
+		if len(scripts[idx].OnApprove) == 0 || len(scripts[idx].OnDeny) == 0 {
+			t.Errorf("expected %s to carry both on_approve and on_deny continuations", name)
+		}
 	}
-	for i, s := range scripts[:len(scripts)-1] {
+	for i, s := range scripts[:len(scripts)-2] {
 		if len(s.OnApprove) != 0 || len(s.OnDeny) != 0 {
-			t.Errorf("script %d is not the approval turn but carries a decision continuation", i)
+			t.Errorf("script %d is not an approval turn but carries a decision continuation", i)
 		}
 	}
 }
@@ -63,5 +71,33 @@ func TestLoadScenarioSmalltalkAndApproval(t *testing.T) {
 	}
 	if _, err := loadScenario("approval"); err != nil {
 		t.Errorf("approval scenario: %v", err)
+	}
+}
+
+// TestApprovalDiffScriptCarriesAProposedDiff pins the wiring the inline
+// diff preview depends on: the approval-diff scenario's tool.pending
+// event decodes with a Diff, so the approval prompt has something to
+// show before the tool runs.
+func TestApprovalDiffScriptCarriesAProposedDiff(t *testing.T) {
+	scripts, err := loadScenario("approval-diff")
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := scripts[0].Before[len(scripts[0].Before)-1]
+	pend, ok := last.Body.(uievent.ToolPendingBody)
+	if !ok {
+		t.Fatalf("last before-event body is %T, want ToolPendingBody", last.Body)
+	}
+	if pend.Diff == nil || len(pend.Diff.Hunks) == 0 {
+		t.Fatal("approval-diff tool.pending carries no diff; the preview cannot render")
+	}
+	// The preview caps at uikitconfig.ApprovalDiffPreviewLines; this
+	// script deliberately exceeds it so the cap note is exercised too.
+	n := len(pend.Diff.Hunks)
+	for _, h := range pend.Diff.Hunks {
+		n += len(h.Lines)
+	}
+	if n <= uikitconfig.ApprovalDiffPreviewLines {
+		t.Errorf("script has %d diff lines, want more than the %d-line cap", n, uikitconfig.ApprovalDiffPreviewLines)
 	}
 }

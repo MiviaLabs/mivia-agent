@@ -27,14 +27,17 @@ type turnScript struct {
 // scenarios maps a --scenario name to its ordered turn-script files.
 // DefaultScenario is the one scenario that visits every turn shape the
 // demo harness supports: small talk, a tool call, a diff, a failing
-// tool, a plan, reasoning, a usage summary, and an approval.
+// tool, a plan, reasoning, a usage summary, an approval, and a
+// diff-previewing approval.
 var scenarios = map[string][]string{
 	"full-tour": {
 		"smalltalk.json", "tool_call.json", "diff.json", "tool_fail.json",
 		"plan.json", "reasoning.json", "usage.json", "approval.json",
+		"approval_diff.json",
 	},
-	"smalltalk": {"smalltalk.json"},
-	"approval":  {"approval.json"},
+	"smalltalk":     {"smalltalk.json"},
+	"approval":      {"approval.json"},
+	"approval-diff": {"approval_diff.json"},
 }
 
 // DefaultScenario names the scenario New uses when no --scenario flag
