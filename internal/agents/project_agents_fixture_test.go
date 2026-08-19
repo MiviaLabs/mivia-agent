@@ -209,7 +209,7 @@ func assertAgentPromptsArePortable(t *testing.T, inputs []ResolveInput) {
 }
 
 // TestCommittedSkillsDeclareValidTools pins plan 43 phase 1: every checked-in
-// skill under .mivia/skills must declare explicit, minimal static tool
+// skill under .agents/skills must declare explicit, minimal static tool
 // requirements, and every declared name must be in the declared-tool catalogue
 // (which excludes the activation-only read_skill_resource). This is what makes
 // the agent/skill tools-superset contract non-vacuous. The committed catalogue
@@ -229,12 +229,13 @@ func TestCommittedSkillsDeclareValidTools(t *testing.T) {
 	}
 	wantNames := []string{
 		"architecture-review", "bug-audit", "concurrency-review",
-		"docs-update", "fast-bug-audit", "feature-delivery",
+		"docs-maintenance", "docs-update", "fast-bug-audit", "feature-delivery",
+		"logic-review",
 		"memory-housekeeping", "panel-architecture-review",
 		"panel-bug-audit", "panel-secure-change", "performance-review",
 		"review-synthesis",
 		"secure-change", "simplification-review",
-		"session-analysis",
+		"session-analysis", "test-review",
 		"verify-change", "verify-code-change", "workflow-feature-delivery",
 		"workflow-runs-analysis",
 	}
@@ -271,7 +272,10 @@ func TestCommittedSkillsDeclareValidTools(t *testing.T) {
 }
 
 // committedSkillsDir locates the repo's .mivia/skills directory from the test
-// working directory, mirroring TestProjectAgentDefinitionsResolve.
+// working directory, mirroring TestProjectAgentDefinitionsResolve. .mivia/skills
+// holds the real (non-symlink) directories; .agents/skills mirrors most of them
+// via symlinks that the os.Root-sandboxed loader cannot follow, so the loader
+// must read from the real tree.
 func committedSkillsDir(t *testing.T) string {
 	t.Helper()
 	cwd, _ := os.Getwd()

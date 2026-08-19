@@ -31,7 +31,7 @@ commits, pushes, and publishes. The workflow agent does none of these actions.
 - Workspace instructions and the approved workflow plan.
 - The approved test plan before implementation.
 - Relevant source, tests, interfaces, configuration, and security boundaries.
-- `.mivia/quality/defect-taxonomy.md` when the slice touches run state, ownership, delivery, or persistence.
+- `.agents/quality/defect-taxonomy.md` when the slice touches run state, ownership, delivery, or persistence.
 
 ## Method
 

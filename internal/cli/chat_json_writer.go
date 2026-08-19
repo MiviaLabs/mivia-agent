@@ -419,7 +419,7 @@ func splitTrailingIncompleteRune(b []byte) (complete, incomplete []byte) {
 // jsonTurnErrorMessage returns a redaction-safe, plain-text description of a
 // failed --json turn for the wire ("error" event's message field). Provider
 // and tool error text can carry request content verbatim (DC-14: external
-// error text may carry request content; see .mivia/quality/defect-taxonomy.md),
+// error text may carry request content; see .agents/quality/defect-taxonomy.md),
 // so err.Error() is never put on the wire as-is. Only a couple of recognized
 // internal sentinel failures get a slightly more specific, still content-free
 // message; everything else collapses to one generic message, with the real

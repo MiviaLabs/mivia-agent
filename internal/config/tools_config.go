@@ -120,8 +120,8 @@ type ToolsConfig struct {
 	// it is the only way to unblock those two defaults. Unblocking a path is a
 	// trust decision: .mivia/mivia.toml carries this very blocklist, so an
 	// agent that can edit it can remove its own restrictions (including
-	// .mivia/agents, .mivia/policy, .mivia/rules, .mivia/skills,
-	// .mivia/workflows, go.mod, go.sum, and go.work), and .git carries commit
+	// .mivia/agents, .mivia/policy, .mivia/workflows, go.mod, go.sum, and
+	// go.work), and .git carries commit
 	// history and hooks, so an agent that can edit it can rewrite history or
 	// plant hooks that bypass the host hook-policy gates. Keep the defaults
 	// blocked unless a host-owned step genuinely needs the path. Entries use

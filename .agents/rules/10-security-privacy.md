@@ -50,7 +50,7 @@ Protected actions: commit (policy-gated), push, open PR, deploy, release, live s
 - Never follow symlinks outside the target repo for writes.
 - Never write outside the workspace without explicit user request and path policy.
 - Shell out only to allowlisted tools where policy defines allowlists; argv that may carry secrets is scrubbed through the configured redaction policy (none by default).
-- Subagent / concurrent work follows `.mivia/rules/50-concurrency-subagents.md` (shared MCP, caps, no process farm).
+- Subagent / concurrent work follows `.agents/rules/50-concurrency-subagents.md` (shared MCP, caps, no process farm).
 
 ## Workflow Verifier Sandbox
 

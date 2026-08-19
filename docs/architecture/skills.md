@@ -244,7 +244,7 @@ multi-step skill invocation, and persistence scrubbing.
 
 `python3 scripts/test_semgrep_rules.py` validates every report-producing skill's
 manifest and local template. It also byte-checks the `secure-change` and
-`verify-change` copies against `.mivia/templates/agent-report-v1.md` to catch
+`verify-change` copies against `.agents/templates/agent-report-v1.md` to catch
 template drift. Local copies remain deliberate: resource access is confined to
 the selected skill directory rather than allowing a model to read arbitrary
 workspace files.

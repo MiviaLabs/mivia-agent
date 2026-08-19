@@ -519,7 +519,7 @@ func TestShortenModel(t *testing.T) {
 // cell boundaries. The banner used to be clipped with a BYTE slice
 // (warningText[:w]); when byte w landed inside a multi-byte rune the banner
 // emitted invalid UTF-8, which terminals render as U+FFFD. This is defect
-// class DC-6 in .mivia/quality/defect-taxonomy.md ("A truncation cuts a
+// class DC-6 in .agents/quality/defect-taxonomy.md ("A truncation cuts a
 // multi-byte character"). Every case asserts (1) every raw view line is valid
 // UTF-8, (2) the trimmed warning line fits the terminal width, and (3) the
 // warning content survives. The multibyte cut cases (and the exact-boundary

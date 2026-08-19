@@ -23,7 +23,7 @@ func redactToolInput(raw string) string {
 	}
 	// Default: operator-visible args, bounded and passed through the workspace
 	// redaction policy. With no policy configured that policy redacts nothing -
-	// see .mivia/rules/10-security-privacy.md. RedactToolArgs opts into the
+	// see .agents/rules/10-security-privacy.md. RedactToolArgs opts into the
 	// stricter whole-field elision below; it is a separate control from the
 	// patterns and stays meaningful when no policy is set.
 	if !tools.RedactToolArgs() {

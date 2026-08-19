@@ -17,7 +17,7 @@ contracts:
       - .github/**
       - semgrep/agent-standards.yml
     verifiers:
-      - test -f .mivia/templates/agent-report-v1.md
+      - test -f .agents/templates/agent-report-v1.md
       - test -f semgrep/agent-standards.yml
       - test -f docs/OWNERS.yaml
     mutation_proof:
@@ -28,10 +28,10 @@ contracts:
     required: true
     paths:
       - .mivia/skills/**/SKILL.md
-      - .mivia/templates/agent-report-v1.md
+      - .agents/templates/agent-report-v1.md
     verifiers:
       - python3 scripts/test_semgrep_rules.py
-      - rg -Fx 'ReportFormat: mivia-report/v1' .mivia/templates/agent-report-v1.md
+      - rg -Fx 'ReportFormat: mivia-report/v1' .agents/templates/agent-report-v1.md
       - bash -c '! rg -n "^## Output\\s*$" .mivia/skills/*/SKILL.md'
     mutation_proof:
       - add free-form Output H2 heading to a skill and expect semgrep no-skill-freeform-output-heading to fail
@@ -83,14 +83,14 @@ contracts:
   - name: concurrency-architecture
     required: true
     paths:
-      - .mivia/rules/**
+      - .agents/rules/**
       - .mivia/skills/concurrency-review/**
       - docs/**
     verifiers:
-      - bash -c '! rg -n -i "use (one )?process per (sub-)?agent|prefer process-per-(sub-)?agent|defaults? to process-per" .mivia/rules docs 2>/dev/null'
-      - bash -c '! rg -n -i "recommend.{0,40}os/exec per agent" .mivia/rules docs 2>/dev/null'
+      - bash -c '! rg -n -i "use (one )?process per (sub-)?agent|prefer process-per-(sub-)?agent|defaults? to process-per" .agents/rules docs 2>/dev/null'
+      - bash -c '! rg -n -i "recommend.{0,40}os/exec per agent" .agents/rules docs 2>/dev/null'
     mutation_proof:
-      - recommend one OS process per concurrent agent task as the default in .mivia/rules and expect no-process-per-subagent-default to fail
+      - recommend one OS process per concurrent agent task as the default in .agents/rules and expect no-process-per-subagent-default to fail
 
   - name: docs-ownership
     required: true
@@ -98,7 +98,7 @@ contracts:
       - docs/OWNERS.yaml
       - docs/**
       - .mivia/skills/docs-update/**
-      - .mivia/rules/40-docs-ownership.md
+      - .agents/rules/40-docs-ownership.md
     verifiers:
       - test -f docs/OWNERS.yaml
       - rg -n 'docs/OWNERS.yaml' .mivia/skills/docs-update/SKILL.md

@@ -13,7 +13,7 @@ import (
 )
 
 // runsDir returns the workspace path the harness uses for durable run traces
-// (.mivia/runs is gitignored; see .mivia/INDEX.md). The directory is created
+// (.mivia/runs is gitignored; see .agents/INDEX.md). The directory is created
 // on demand, so a fresh checkout or a workspace without the directory still
 // gets a visible local record of every workflow run. The namespace name is
 // single-sourced in internal/workspace (namespace.go).

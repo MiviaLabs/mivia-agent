@@ -296,8 +296,9 @@ env_allow_keyword_blocklist = ["SECRET", "TOKEN", "PASSWORD", "API_KEY"]
 write_path_blocklist = [
     ".mivia/agents",    # agent definitions
     ".mivia/policy",    # hook-policy gates
-    ".mivia/rules",     # durable rules
-    ".mivia/skills",    # skill definitions
+    ".mivia/skills",    # skill definitions (mivia binary's own load path)
+    ".agents/rules",    # durable rules
+    ".agents/skills",   # skill definitions (shared cross-tool mirror)
     ".mivia/workflows", # workflow definitions and templates
     "go.mod",
     "go.sum",
@@ -613,7 +614,7 @@ redaction_placeholder = "[redacted]"
 # sandbox: an isolated filesystem and network namespace, so a command a
 # workflow or repair agent runs cannot touch the real host filesystem,
 # network, or credentials. This is a security boundary, not a convenience --
-# see .mivia/rules/10-security-privacy.md before turning it off.
+# see .agents/rules/10-security-privacy.md before turning it off.
 #
 # bwrap requires unprivileged user namespaces, which some hosts do not have
 # enabled (kernel/AppArmor restrictions, or bwrap not installed). Setting

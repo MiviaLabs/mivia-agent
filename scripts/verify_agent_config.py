@@ -2,7 +2,7 @@
 """Verify the mivia agent control surface (lean, fail closed).
 
 Required:
-  AGENTS.md, .mivia/INDEX.md, rules, policies, hooks, semgrep, docs/OWNERS.yaml,
+  AGENTS.md, .agents/INDEX.md, rules, policies, hooks, semgrep, docs/OWNERS.yaml,
   Makefile targets referenced by AGENTS.md / install flow.
 """
 
@@ -309,7 +309,7 @@ def main() -> None:
     else:
         for rel in [
             "AGENTS.md",
-            ".mivia/INDEX.md",
+            ".agents/INDEX.md",
             ".mivia/policy/commit-message.json",
             ".mivia/policy/agent-hook-bypass.json",
             "docs/OWNERS.yaml",
@@ -336,9 +336,9 @@ def main() -> None:
             require_file(rel)
 
     # Rules surface
-    rules = list((ROOT / ".mivia" / "rules").glob("*.md")) if (ROOT / ".mivia" / "rules").is_dir() else []
+    rules = list((ROOT / ".agents" / "rules").glob("*.md")) if (ROOT / ".agents" / "rules").is_dir() else []
     if not rules:
-        fail(".mivia/rules: expected at least one *.md rule file")
+        fail(".agents/rules: expected at least one *.md rule file")
 
     # Executable hooks
     for rel in [
@@ -375,11 +375,11 @@ def main() -> None:
         fail("AGENTS.md must not set product binary to mivia-agent")
 
     # INDEX.md hooks/surface pointers
-    if (ROOT / ".mivia" / "INDEX.md").is_file():
-        index = text(".mivia/INDEX.md")
+    if (ROOT / ".agents" / "INDEX.md").is_file():
+        index = text(".agents/INDEX.md")
         for needle in [".githooks", "semgrep", "docs/OWNERS.yaml", "scripts/"]:
             if needle not in index:
-                fail(f".mivia/INDEX.md: missing {needle}")
+                fail(f".agents/INDEX.md: missing {needle}")
 
     # Policies
     commit = json.loads(text(".mivia/policy/commit-message.json"))
@@ -588,9 +588,12 @@ def main() -> None:
             if rule_id not in sg:
                 fail(f"semgrep/agent-standards.yml: missing {rule_id}")
 
-    # Skill frontmatter when skills exist
-    skills_dir = ROOT / ".mivia" / "skills"
-    if skills_dir.is_dir():
+    # Skill frontmatter when skills exist. .agents/skills is the shared
+    # cross-tool mirror; .mivia/skills is the copy the compiled mivia binary
+    # itself loads at runtime (internal/workspace.SkillsDir). Both are checked
+    # so the two mirrors cannot silently diverge.
+    skill_dirs = [d for d in (ROOT / ".agents" / "skills", ROOT / ".mivia" / "skills") if d.is_dir()]
+    for skills_dir in skill_dirs:
         for skill_path in sorted(skills_dir.glob("*/SKILL.md")):
             body = skill_path.read_text(encoding="utf-8")
             name = skill_path.parent.name

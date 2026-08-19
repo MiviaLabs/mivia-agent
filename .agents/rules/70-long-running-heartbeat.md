@@ -94,7 +94,7 @@ human-gate park) and `internal/workflows/controller/linear_human.go`
 
 ## See Also
 
-- `.mivia/rules/50-concurrency-subagents.md` - concurrency caps and worker pool rules
+- `.agents/rules/50-concurrency-subagents.md` - concurrency caps and worker pool rules
 - `internal/runtime/dispatcher.go` - event sink and handler dispatch
 - `internal/agent/loop.go` - agent loop with step/tool events
 - `internal/events/event.go` - implemented event kinds (`subagent_*`, `workflow_step_*`, `invocation_*`)

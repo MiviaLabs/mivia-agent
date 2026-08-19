@@ -238,7 +238,7 @@ While a workflow step runs, three clocks keep it observable:
 Evidence gates and human gates are not on the heartbeat clock: they emit
 `gate_started` (evidence gates) or `approval_requested` (human gates) at start
 and `step_completed` at completion, never `step_heartbeat`. The full protocol
-is documented in `.mivia/rules/70-long-running-heartbeat.md`.
+is documented in `.agents/rules/70-long-running-heartbeat.md`.
 
 ## The shipped workflow: feature-delivery
 
@@ -738,7 +738,7 @@ invocation.
 
 A reviewer must return schema-valid structured evidence. Prose is never a routing signal. See [Workflows](workflows.md#trust-what-a-workflow-file-can-and-cannot-do) for the full model.
 
-Workflow agent steps run inside an isolated worktree with a restricted tool surface. Their write tools honor the project write-path blocklist (`[tools].write_path_blocklist` in the config that started the run). Two paths are blocked by default: `.git` and `.mivia/mivia.toml`. The blocklist key adds more; `[tools].write_path_blocklist_remove` removes entries, including the two defaults, which is a trust decision (an agent that can edit the config or Git metadata can remove its own restrictions or bypass hook gates). A project that omits the key leaves `.mivia/agents`, `.mivia/policy`, `.mivia/rules`, `.mivia/skills`, `.mivia/workflows`, and Go module files writable by workflow agents, including the workflow definition itself. The interactive session is not bound by the blocklist. See [Configuration](config.md#write-path-blocklist).
+Workflow agent steps run inside an isolated worktree with a restricted tool surface. Their write tools honor the project write-path blocklist (`[tools].write_path_blocklist` in the config that started the run). Two paths are blocked by default: `.git` and `.mivia/mivia.toml`. The blocklist key adds more; `[tools].write_path_blocklist_remove` removes entries, including the two defaults, which is a trust decision (an agent that can edit the config or Git metadata can remove its own restrictions or bypass hook gates). A project that omits the key leaves `.mivia/agents`, `.mivia/policy`, `.mivia/skills`, `.agents/rules`, `.agents/skills`, `.mivia/workflows`, and Go module files writable by workflow agents, including the workflow definition itself. The interactive session is not bound by the blocklist. See [Configuration](config.md#write-path-blocklist).
 
 ### Blocked writes are a host problem, never a review failure
 

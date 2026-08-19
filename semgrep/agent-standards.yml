@@ -59,8 +59,8 @@ rules:
         - /.agents/**
         - /.github/**
       exclude:
-        - /.mivia/quality/**
-        - /.mivia/templates/**
+        - /.agents/quality/**
+        - /.agents/templates/**
     pattern-regex: '(?i)\bnosemgrep\b'
 
   - id: mivia.generic.no-unresolved-drift-markers
@@ -102,7 +102,7 @@ rules:
         - /.agents/**
         - /.github/**
       exclude:
-        - /.mivia/quality/**
+        - /.agents/quality/**
     pattern-regex: '\bMivia Labs\b'
 
   - id: mivia.generic.product-binary-is-mivia
@@ -122,7 +122,7 @@ rules:
         - /.agents/**
         - /.github/**
       exclude:
-        - /.mivia/quality/**
+        - /.agents/quality/**
         # memory.jsonl (plan 76, D5) is a generated, deterministic export of
         # recorded project-memory text, not authored guidance - like the
         # quality-docs exclusion above, its free-form content can contain an
@@ -149,7 +149,7 @@ rules:
         - /.codex/**
         - /.github/**
       exclude:
-        - /.mivia/quality/**
+        - /.agents/quality/**
         - /.mivia/policy/**
     # Affirmative bypass instructions only; ban lists may name the flags.
     pattern-regex: '(?i)(\b(use|using|pass|passing|add|adding|run|running|enable|enabling|commit|push)\b[^\n]{0,60}(--no-verify|\bHUSKY\s*=\s*0\b|\bHUSKY_SKIP_HOOKS\b|\bSKIP_GIT_HOOKS\b|\bLEFTHOOK\s*=\s*0\b)|(--no-verify|\bHUSKY\s*=\s*0\b|\bHUSKY_SKIP_HOOKS\b)[^\n]{0,40}\b(to skip|to bypass|skips?\s+hooks?)\b)'
@@ -159,12 +159,12 @@ rules:
     languages:
       - generic
     severity: ERROR
-    message: Skills must use mivia-report/v1 from .mivia/templates/agent-report-v1.md instead of free-form Output sections.
+    message: Skills must use mivia-report/v1 from .agents/templates/agent-report-v1.md instead of free-form Output sections.
     paths:
       include:
+        - /.agents/skills/**/SKILL.md
         - /.mivia/skills/**/SKILL.md
         - /.claude/skills/**/SKILL.md
-        - /.agents/skills/**/SKILL.md
     pattern-regex: '^## Output\s*$'
 
   - id: mivia.generic.skills-require-mivia-report-v1
@@ -174,9 +174,9 @@ rules:
     message: Skill reports must name ReportFormat mivia-report/v1 (not free-form or legacy report ids).
     paths:
       include:
+        - /.agents/skills/**/SKILL.md
         - /.mivia/skills/**/SKILL.md
         - /.claude/skills/**/SKILL.md
-        - /.agents/skills/**/SKILL.md
     pattern-regex: '(?i)ReportFormat:\s*(?!mivia-report/v1\b)\S+'
 
   - id: mivia.generic.architecture-review-must-stay-portable
@@ -186,6 +186,8 @@ rules:
     message: The architecture-review skills must stay project- and language-agnostic; discover workspace-native instructions, evidence, and checks.
     paths:
       include:
+        - /.agents/skills/architecture-review/**
+        - /.agents/skills/panel-architecture-review/**
         - /.mivia/skills/architecture-review/**
         - /.mivia/skills/panel-architecture-review/**
     pattern-regex: '(?im)(\bmivia\b|mivia-report/v1|\.mivia/|AGENTS\.md|\bADLC\b|\bStep\s+0\b|\bchallenge\s+panel\b|\b(bug-audit|secure-change|verify-change)\b|engineering:architecture|docs/OWNERS\.yaml|docs/architecture/|\breviewing\s+(?-i:HEAD)\b|\b(at|against)\s+(?-i:HEAD)\b|(?-i:\bGo\b)\s+rejects?\s+cycles?\b|\bgo[- ]idiomatic\b|context\.Context|cmd/mivia|\bmake\s+(verify|invariants)\b|INV-(AG|SEC|TUI)-|scripts/check_go_structure\.py|\binternal/|^(?![^\n]*\b(if|when)\b[^\n]*\bdocs/[^\n]*\bexists?\b)[^\n]*\bdocs/|^(?![^\n]*\b(if|when)\b[^\n]*(\.github/|\.gitlab/|\.circleci/)[^\n]*\bexists?\b)[^\n]*(\.github/|\.gitlab/|\.circleci/)|^(?![^\n]*\b(if|when)\b[^\n]*(workspace|project)[^\n]*(uses?|declares?|discovers?|supplies?)[^\n]*\bGit\b)[^\n]*\bgit\s+(head|diff|show|log|status|grep|rev-parse|merge-base|ls-files)\b|^[^\n]*\b(use|prefer)\s+(the\s+)?(Golang|Python|TypeScript|JavaScript|Rust|Java|Kotlin|Swift|Ruby|PHP)\b[^\n]*\b(use|prefer)\s+(the\s+)?(Golang|Python|TypeScript|JavaScript|Rust|Java|Kotlin|Swift|Ruby|PHP)\b|^(?=[^\n]*\b(use|prefer)\s+(the\s+)?(?P<portable_lang>Golang|Python|TypeScript|JavaScript|Rust|Java|Kotlin|Swift|Ruby|PHP)\b)(?![^\n]*\b(if|when)\b[^\n]*(workspace|project)[^\n]*(uses?|declares?|discovers?|supplies?)[^\n]*\b(?P=portable_lang)\b)(?![^\n]*\b(?P=portable_lang)\b[^\n]*\b(if|when)\b[^\n]*(discover(ed|y|s|ing)?|supplied)\b)(?![^\n]*\b(?P=portable_lang)\b[^\n]*\b(if|when)\b[^\n]*(workspace|project)[^\n]*(uses?|declares?|discovers?|supplies?)[^\n]*\b(?P=portable_lang)\b)[^\n]*\b(use|prefer)\s+(the\s+)?(?P=portable_lang)\b|^(?![^\n]*\b(if|when)\b[^\n]*go\.mod[^\n]*\bexists?\b)[^\n]*\bgo\s+(build|test|list|vet)\b|^(?![^\n]*\b(if|when)\b[^\n]*Cargo\.toml[^\n]*\bexists?\b)[^\n]*\b(run|execute)\s+cargo\s+test\b|^(?![^\n]*\b(if|when)\b[^\n]*(package\.json|npm)[^\n]*\b(exists?|supplied|declared|available)\b)[^\n]*\b(run|execute)\s+npm\s+test\b|^(?![^\n]*\b(if|when)\b[^\n]*(pytest|pyproject)[^\n]*\b(exists?|supplied|declared|available)\b)[^\n]*\b(run|execute)\s+pytest\b)'
@@ -199,13 +201,14 @@ rules:
     paths:
       include:
         - /docs/**
-        - /.mivia/rules/**
+        - /.agents/rules/**
+        - /.agents/skills/**/SKILL.md
         - /.mivia/skills/**/SKILL.md
         - /AGENTS.md
         - /CLAUDE.md
         - /README.md
       exclude:
-        - /.mivia/quality/**
+        - /.agents/quality/**
     # Affirmative recommendation only (not forbid/reject tables).
     pattern-regex: '(?i)\b(use|using|prefer|preferred|defaults?\s+to|recommend(?:ed|s)?|spawn|spawning)\b(?![^\n]{0,80}\b(reject|forbid|forbidden|not|never|avoid)\b)[^\n]{0,80}\b(one\s+process\s+per\s+(sub-?)?agent|process-per-(sub-?)?agent|os/exec\s+per\s+(sub-?)?agent)\b'
 
@@ -213,10 +216,10 @@ rules:
     languages:
       - generic
     severity: ERROR
-    message: .mivia/rules must not recommend os/exec-per-agent as the default concurrency architecture.
+    message: .agents/rules must not recommend os/exec-per-agent as the default concurrency architecture.
     paths:
       include:
-        - /.mivia/rules/**
+        - /.agents/rules/**
     pattern-regex: '(?i)\b(use|using|prefer|preferred|defaults?\s+to|recommend(?:ed|s)?)\b[^\n]{0,80}\b(os/exec|exec\.Command)\b[^\n]{0,40}\b(per|for\s+each)\s+(agent|subagent)\b'
 
   # --- Go product code ---

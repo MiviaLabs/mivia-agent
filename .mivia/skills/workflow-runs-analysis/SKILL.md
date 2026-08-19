@@ -47,7 +47,7 @@ scope.
 
 ## Read First
 
-- `AGENTS.md` and `.mivia/rules/` (operating doctrine, evidence-before-claims,
+- `AGENTS.md` and `.agents/rules/` (operating doctrine, evidence-before-claims,
   STE100 writing standard, security and privacy)
 - `.mivia/skills/workflow-runs-analysis/report-template.md` (report grammar)
 - `.mivia/workflows/*.toml` (read-only: declared limits, repair steps, delivery
@@ -203,7 +203,7 @@ and the validator. Never claim subagent validation that did not happen.
 ## Report
 
 Use the canonical `mivia-report/v1` structure from
-`.mivia/templates/agent-report-v1.md`, extended by the grammar in
+`.agents/templates/agent-report-v1.md`, extended by the grammar in
 `report-template.md`. `Result` is one of `PASS`, `PARTIAL`, `NOT_RUN`:
 
 - `PASS` - analysis complete; every finding validated; `ResidualRisk: none`.

@@ -16,7 +16,7 @@ the fast path, not the habitual slow one:
 - Interactive/direct skill invocation: `fast-bug-audit`
   (`.mivia/skills/fast-bug-audit/SKILL.md`), not `bug-audit`.
 - Feature-delivery task text: the template at
-  `.mivia/templates/bug-hunt-task-fast.md` (scope placeholder at the end,
+  `.agents/templates/bug-hunt-task-fast.md` (scope placeholder at the end,
   fill in and paste as the `task` input).
 
 **Why:** `bug-audit` (and the plain `bug-fix` workflow) is deliberately slow

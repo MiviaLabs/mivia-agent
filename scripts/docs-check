@@ -12,12 +12,12 @@ fail() {
 
 [[ -f AGENTS.md ]] || fail "AGENTS.md missing"
 [[ -f CLAUDE.md ]] || fail "CLAUDE.md missing"
-[[ -f .mivia/INDEX.md ]] || fail ".mivia/INDEX.md missing"
+[[ -f .agents/INDEX.md ]] || fail ".agents/INDEX.md missing"
 [[ -f .github/copilot-instructions.md ]] || fail ".github/copilot-instructions.md missing"
 [[ -f docs/OWNERS.yaml ]] || fail "docs/OWNERS.yaml missing"
 
 grep -q 'AGENTS.md' CLAUDE.md || fail "CLAUDE.md must point to AGENTS.md"
-grep -q '\.mivia/' CLAUDE.md || fail "CLAUDE.md must point to .mivia/"
+grep -q '\.agents/' CLAUDE.md || fail "CLAUDE.md must point to .agents/"
 grep -q 'AGENTS.md' .github/copilot-instructions.md || fail "copilot-instructions must point to AGENTS.md"
 grep -Eqi 'binary.*`mivia`|`mivia`.*binary|Binary: `mivia`' AGENTS.md || fail "AGENTS.md must identify binary mivia"
 grep -q 'make verify' AGENTS.md || fail "AGENTS.md must mention make verify"

@@ -1,43 +1,43 @@
-# .mivia Control Surface
+# .agents Control Surface
 
 Product: **mivia** (MiviaLabs)
 Binary: `mivia` (`cmd/mivia/`)
-`.mivia/` is the canonical project-level control surface for agentic development in this repo. Root `AGENTS.md` is the canonical instruction file; `.mivia/` holds durable rules, skills, policy, and quality contracts that tool adapters reference.
+`.agents/` is the canonical project-level control surface for agentic development in this repo: durable rules, doctrines, skills, quality docs, and templates that tool adapters reference. Root `AGENTS.md` is the canonical instruction file. `.mivia/` is scoped to the product's own runtime config and state (`mivia.toml`, `workflows/`, `hooks/`, `agents/*.toml`, `policy/*.json` consumed by compiled Go code, `skills/` mirrored for the `mivia` binary's own loader) - not agent instructions.
 
 ## Read Order
 
 1. `AGENTS.md`
-2. `.mivia/INDEX.md` (this file)
-3. **`.mivia/rules/05-adlc-agentic-development-lifecycle.md` - MANDATORY process. Read this before any work.**
-4. Relevant other `.mivia/rules/*.md` in numeric order when multiple apply
-5. Relevant `.mivia/doctrines/*.md`
-6. Relevant `.mivia/skills/*/SKILL.md`
+2. `.agents/INDEX.md` (this file)
+3. **`.agents/rules/05-adlc-agentic-development-lifecycle.md` - MANDATORY process. Read this before any work.**
+4. Relevant other `.agents/rules/*.md` in numeric order when multiple apply
+5. Relevant `.agents/doctrines/*.md`
+6. Relevant `.agents/skills/*/SKILL.md`
 7. Relevant `.mivia/policy/*.json` when hooks, commits, or docs ownership are in play
-8. Tool adapter files only when running that tool: `CLAUDE.md`, `.agents/`, `.claude/`, `.codex/`, `.github/copilot-instructions.md`
+8. Tool adapter files only when running that tool: `CLAUDE.md`, `.claude/`, `.codex/`, `.github/copilot-instructions.md`
 
-If an adapter conflicts with `AGENTS.md` or `.mivia/`, follow `AGENTS.md` / `.mivia/` and fix the adapter.
+If an adapter conflicts with `AGENTS.md` or `.agents/`, follow `AGENTS.md` / `.agents/` and fix the adapter.
 
 ## Rules
 
 ### ⚠️ MANDATORY - read and follow before any work
 
-`.mivia/rules/05-adlc-agentic-development-lifecycle.md` - **ADLC protocol: 7-step engineering cycle for all work. Do not skip.**
+`.agents/rules/05-adlc-agentic-development-lifecycle.md` - **ADLC protocol: 7-step engineering cycle for all work. Do not skip.**
 See also "Mandatory process" in `AGENTS.md`.
 
 ### Reference rules (read when relevant)
 
 | File | Purpose |
 |------|---------|
-| `.mivia/rules/00-operating-doctrine.md` | Scope control, docs-first work, idempotency, verification contracts |
-| `.mivia/rules/01-output-budget.md` | Terse status, final-answer shape, task slicing |
-| `.mivia/rules/10-security-privacy.md` | Secrets, network, hooks, PII, fail-closed protected actions |
-| `.mivia/rules/20-agent-quality.md` | Tests, mutation proofs, review gates, contract coverage |
-| `.mivia/rules/30-go-standards.md` | Go layout for `cmd/mivia` + `internal/`, errors, naming, embed |
-| `.mivia/rules/40-docs-ownership.md` | Single source of truth per topic; no parallel docs; `docs/OWNERS.yaml` |
-| `.mivia/rules/50-concurrency-subagents.md` | Subagents as tasks/goroutines; shared MCP; caps; no process farm |
-| `.mivia/rules/60-tools-project-language-generic.md` | Generic model-facing tools, default prompts, and portable review skill |
-| `.mivia/rules/70-long-running-heartbeat.md` | Heartbeat protocol for long-running tasks |
-| `.mivia/rules/80-commit-message.md` | Conventional commit format |
+| `.agents/rules/00-operating-doctrine.md` | Scope control, docs-first work, idempotency, verification contracts |
+| `.agents/rules/01-output-budget.md` | Terse status, final-answer shape, task slicing |
+| `.agents/rules/10-security-privacy.md` | Secrets, network, hooks, PII, fail-closed protected actions |
+| `.agents/rules/20-agent-quality.md` | Tests, mutation proofs, review gates, contract coverage |
+| `.agents/rules/30-go-standards.md` | Go layout for `cmd/mivia` + `internal/`, errors, naming, embed |
+| `.agents/rules/40-docs-ownership.md` | Single source of truth per topic; no parallel docs; `docs/OWNERS.yaml` |
+| `.agents/rules/50-concurrency-subagents.md` | Subagents as tasks/goroutines; shared MCP; caps; no process farm |
+| `.agents/rules/60-tools-project-language-generic.md` | Generic model-facing tools, default prompts, and portable review skill |
+| `.agents/rules/70-long-running-heartbeat.md` | Heartbeat protocol for long-running tasks |
+| `.agents/rules/80-commit-message.md` | Conventional commit format |
 
 ## Plans
 
@@ -52,13 +52,13 @@ or in the code.
 
 ## Doctrines
 
-- `.mivia/doctrines/engineering-working-contract.md` - standing engineering contract
-- `.mivia/doctrines/evidence-before-claims.md` - from mivia-agent-skills
-- `.mivia/doctrines/verification-is-part-of-delivery.md` - from mivia-agent-skills
+- `.agents/doctrines/engineering-working-contract.md` - standing engineering contract
+- `.agents/doctrines/evidence-before-claims.md` - from mivia-agent-skills
+- `.agents/doctrines/verification-is-part-of-delivery.md` - from mivia-agent-skills
 
 ## Skills
 
-Canonical project skills (under `.mivia/skills/` only; do not fork into tool adapters):
+Canonical project skills live under `.mivia/skills/` as real directories - the path the compiled `mivia` binary's own loader reads via `internal/workspace.SkillsDir`, and the only tree the loader's `os.Root` sandbox can actually traverse (it does not follow symlinks). `.agents/skills/` and `.claude/skills/` symlink each skill back to `.mivia/skills/<name>` for the respective tool. Edit skills under `.mivia/skills/`; add a matching symlink in both mirrors for any new skill.
 
 Ported from **mivia-agent-skills** (higher reliability than agentkit MVP copies):
 
@@ -100,8 +100,8 @@ Machine-readable hook and agent policy:
 
 ## Quality
 
-- `.mivia/quality/contracts/` - project contract matrices for doctor/audit/runtime gates (populate as product surfaces land).
-- `.mivia/quality/defect-taxonomy.md` - the recurring defect classes (`DC-1`..`DC-14`) derived from this repository's `fix` commit history, with a probe list per class and the chain-control sweep. Read the matching classes at ADLC Step 0 and Step 5. `verify-change` gates on it; `secure-change` cites `DC-10` and `DC-13`.
+- `.agents/quality/contracts/` - project contract matrices for doctor/audit/runtime gates (populate as product surfaces land).
+- `.agents/quality/defect-taxonomy.md` - the recurring defect classes (`DC-1`..`DC-14`) derived from this repository's `fix` commit history, with a probe list per class and the chain-control sweep. Read the matching classes at ADLC Step 0 and Step 5. `verify-change` gates on it; `secure-change` cites `DC-10` and `DC-13`.
 
 ## Runtime Artifacts
 
@@ -111,7 +111,7 @@ Machine-readable hook and agent policy:
 ## Documentation Ownership
 
 - Topic ownership and canonical paths are declared in `docs/OWNERS.yaml`.
-- Agents update the existing canonical document for a topic; they do not create parallel or duplicate docs (see `.mivia/rules/40-docs-ownership.md` and `.mivia/policy/docs-ownership.json`).
+- Agents update the existing canonical document for a topic; they do not create parallel or duplicate docs (see `.agents/rules/40-docs-ownership.md` and `.mivia/policy/docs-ownership.json`).
 
 ## Hooks
 
@@ -129,7 +129,7 @@ Machine-readable hook and agent policy:
 
 ## Verification After Control-Surface Edits
 
-After changing `AGENTS.md`, `.mivia/`, adapter configs, hooks, or Semgrep agent standards:
+After changing `AGENTS.md`, `.agents/`, `.mivia/`, adapter configs, hooks, or Semgrep agent standards:
 
 1. Re-read this INDEX and the touched rule/policy.
 2. Run `make verify` (or the narrowest contract test for the change).

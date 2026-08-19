@@ -62,7 +62,7 @@ Mechanical policy: `.mivia/policy/go-structure.json`, enforced by `scripts/check
 ## Concurrency
 
 - Prefer `context.Context` for cancellation and deadlines on all blocking/outbound work.
-- No unbounded goroutine spawns; every fan-out has a documented cap (see `.mivia/rules/50-concurrency-subagents.md`).
+- No unbounded goroutine spawns; every fan-out has a documented cap (see `.agents/rules/50-concurrency-subagents.md`).
 - Document lock ordering where multiple mutexes are held.
 - Race-prone packages must be testable with `-race` in CI.
 

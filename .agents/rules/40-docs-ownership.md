@@ -8,7 +8,7 @@
 |---------|-----------|
 | Which path owns a topic | `docs/OWNERS.yaml` |
 | Machine enforcement rules | `.mivia/policy/docs-ownership.json` |
-| Human procedure (this file) | `.mivia/rules/40-docs-ownership.md` |
+| Human procedure (this file) | `.agents/rules/40-docs-ownership.md` |
 
 `docs/OWNERS.yaml` is the **sole registry** of topic → canonical path → owner. If a topic is missing, add or update an entry in `docs/OWNERS.yaml` first; do not create an orphan doc.
 

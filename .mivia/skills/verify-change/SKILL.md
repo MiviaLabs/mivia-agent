@@ -31,16 +31,16 @@ provides.
 ## Read First
 
 - `AGENTS.md`
-- `.mivia/templates/agent-report-v1.md`
-- `.mivia/quality/contracts/project-runtime.yaml` (the contract whose `paths` match the scope)
+- `.agents/templates/agent-report-v1.md`
+- `.agents/quality/contracts/project-runtime.yaml` (the contract whose `paths` match the scope)
 - `.mivia/invariants.md` (when scope touches a listed invariant area)
-- `.mivia/quality/defect-taxonomy.md` (the recurring defect classes; read the classes the diff touches)
+- `.agents/quality/defect-taxonomy.md` (the recurring defect classes; read the classes the diff touches)
 - Diff scope named by the user
 
 ## Method
 
 1. Confirm exact scope (packages/files) and baseline (branch/commit/diff). You need the baseline to separate a change-caused failure from a pre-existing one (step 7).
-2. Map scope to the matching contract in `.mivia/quality/contracts/project-runtime.yaml`. Only the contract whose `paths` overlap the scope is required; do not invent gates for paths the change does not touch.
+2. Map scope to the matching contract in `.agents/quality/contracts/project-runtime.yaml`. Only the contract whose `paths` overlap the scope is required; do not invent gates for paths the change does not touch.
 3. Run the narrowest real gates first, expanding only as the scope demands:
    - package tests for touched packages: `go test ./<affected>/...`
    - `go vet ./<affected>/...` (or `make vet` for the whole module)
@@ -48,7 +48,7 @@ provides.
    - structure gate when the change adds or grows code: `make structure-check` (LOC/function/file-size limits)
 4. When scope touches concurrency (goroutines, channels, locks, the agent loop, subagent pools, the event bus, the ledger, cancellation), run the race detector: `make race` (`go test -race ./...`) or `go test -race ./<affected>/...`. A single green run is not proof for order/timing-sensitive paths; re-run a bounded number of times and treat pass-once-fail-on-retry as a failure to investigate, not a pass.
 5. When scope touches a `.mivia/invariants.md` area (TUI, agent loop, security/privacy), run `make validate-invariants` (every referenced test must exist) and `make invariants` (runs the invariant tests via a hardcoded `-run` selector in the Makefile). If you add or rename an invariant test, add it to that selector or `make invariants` silently skips it and `make validate-invariants` then fails. When scope touches model-facing tool text (`tool.Description()`, parameter schema descriptions) or compiled default prompts, the generic-surface tests in `internal/tools/generic_surface_test.go` and `internal/cli/prompt_generic_test.go` (run by `make invariants`) must pass: they enforce rule 60 that the tool surface stays project/language-generic.
-6. Match the diff to the classes in `.mivia/quality/defect-taxonomy.md`. For each matched class, run its probes against the diff and record the class identifier with a one-line result. This step is a gate: an unaddressed probe for a matched class blocks `PASS`. The classes that recur most in this repository are `DC-1` terminal state with no return edge, `DC-2` claim and fence, `DC-4` crash and resume, `DC-6` bounds and truncation, `DC-9` silent failure, and `DC-12` retention across interrupt. When the diff fixes a defect, also run the chain-control sweep from that document and record which other sites of the class you found.
+6. Match the diff to the classes in `.agents/quality/defect-taxonomy.md`. For each matched class, run its probes against the diff and record the class identifier with a one-line result. This step is a gate: an unaddressed probe for a matched class blocks `PASS`. The classes that recur most in this repository are `DC-1` terminal state with no return edge, `DC-2` claim and fence, `DC-4` crash and resume, `DC-6` bounds and truncation, `DC-9` silent failure, and `DC-12` retention across interrupt. When the diff fixes a defect, also run the chain-control sweep from that document and record which other sites of the class you found.
 7. When a check fails, reproduce it against the baseline in the same environment before concluding the change is at fault. Baseline-fails-too means environmental or pre-existing; baseline-passes means caused by the change. Continue all remaining safe checks either way, and record which kind it was.
 8. Run the matching contract verifier lines from `project-runtime.yaml` for the affected contract.
 9. For full pre-merge, run `make verify` - the complete offline gate (agent config, docs, secrets, structure, semgrep, contract tests, invariants, go-check).
@@ -67,7 +67,7 @@ provides.
 
 When a resource catalogue and its scoped reader are available, load
 `report-template` before producing the report. Without that capability, use the
-canonical inline fallback from `.mivia/templates/agent-report-v1.md`.
+canonical inline fallback from `.agents/templates/agent-report-v1.md`.
 Always emit the compact `mivia-report/v1` structure.
 
 Inline fallback:

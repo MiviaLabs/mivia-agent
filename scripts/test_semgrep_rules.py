@@ -18,7 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RULES = ROOT / "semgrep" / "agent-standards.yml"
 PORTABLE_ARCHITECTURE_RULE = "mivia.generic.architecture-review-must-stay-portable"
-ARCHITECTURE_SKILL_DIR = ROOT / ".mivia" / "skills" / "architecture-review"
+ARCHITECTURE_SKILL_DIR = ROOT / ".agents" / "skills" / "architecture-review"
 REPORT_SKILLS = [
     "architecture-review",
     "bug-audit",
@@ -29,7 +29,7 @@ REPORT_SKILLS = [
     "verify-change",
     "verify-code-change",
 ]
-GLOBAL_REPORT_TEMPLATE = ROOT / ".mivia" / "templates" / "agent-report-v1.md"
+GLOBAL_REPORT_TEMPLATE = ROOT / ".agents" / "templates" / "agent-report-v1.md"
 
 REQUIRED_IDS = [
     "mivia.generic.no-wildcard-bash-allow",
@@ -52,7 +52,7 @@ RULE_PATTERN_HINTS = {
 PORTABILITY_VIOLATIONS = [
     "Review this mivia design.",
     "Always emit mivia-report/v1.",
-    "Read .mivia/rules/05-adlc.md.",
+    "Read .agents/rules/05-adlc.md.",
     "Read AGENTS.md first.",
     "Run this at ADLC Step 0.",
     "Run this review at Step 0.",
@@ -131,7 +131,7 @@ def rule_block(text: str, rule_id: str) -> str:
 def portability_pattern(text: str) -> re.Pattern[str]:
     """Pin the portability rule's scope and observable regex behaviour."""
     block = rule_block(text, PORTABLE_ARCHITECTURE_RULE)
-    assert "/.mivia/skills/architecture-review/**" in block
+    assert "/.agents/skills/architecture-review/**" in block
     match = re.search(r"(?m)^\s+pattern-regex:\s+'(.+)'\s*$", block)
     assert match, f"{PORTABLE_ARCHITECTURE_RULE} missing single-line pattern-regex"
     return re.compile(match.group(1))
@@ -168,7 +168,7 @@ def assert_declared_architecture_resources_are_portable(text: str) -> None:
 def assert_report_skill_resources() -> None:
     """Every report-producing skill must declare its local report template."""
     for skill_name in REPORT_SKILLS:
-        skill_dir = ROOT / ".mivia" / "skills" / skill_name
+        skill_dir = ROOT / ".agents" / "skills" / skill_name
         manifest_path = skill_dir / "resources.toml"
         manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
         assert manifest.get("format") == 1, f"{skill_name} resource manifest format"

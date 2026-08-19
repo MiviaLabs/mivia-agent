@@ -1,6 +1,13 @@
 ---
 name: docs-maintenance
-description: Maintain the mivia-agent documentation. Trigger when the user asks to update, tidy, add to, or restructure the docs; when a code change needs its docs updated; when prose must be made concise; or when docs are out of date, wordy, fluff-heavy, or inconsistent. Covers docs/README.md, docs/architecture/, docs/OWNERS.yaml, and the AGENTS.md/CLAUDE.md/.mivia/INDEX.md set.
+description: Maintain the mivia-agent documentation. Trigger when the user asks to update, tidy, or restructure docs, when a code change needs docs updated, or when docs are out of date, wordy, or inconsistent.
+tools:
+  - read_file
+  - list_dir
+  - grep
+  - glob
+  - write_file
+  - search_replace
 ---
 
 # Docs maintenance
@@ -27,7 +34,7 @@ disagreeing with itself. Your job is to stop that drift.
 ## The writing standard
 
 ASD-STE100-style Simplified Technical English, per AGENTS.md and
-`.mivia/rules/90-writing-standard-ste100.md`.
+`.agents/rules/90-writing-standard-ste100.md`.
 
 - One idea per sentence. Instructional sentences stay at or below 20 words;
   descriptive sentences at or below 25.
@@ -75,7 +82,7 @@ Then update the commit hash and date recorded in `api/openapi/README.md`.
 ## Watch the gates
 
 - `make docs-check` runs `scripts/docs-check`, which confirms AGENTS.md,
-  CLAUDE.md, `.mivia/INDEX.md`, and the Copilot instructions file exist and
+  CLAUDE.md, `.agents/INDEX.md`, and the Copilot instructions file exist and
   cross-link, then runs `scripts/check_docs_ownership.py` (every
   `docs/**/*.md` has an owner in `docs/OWNERS.yaml`, every owned path
   exists, no duplicate H1 titles, no parallel doc for an owned topic) and

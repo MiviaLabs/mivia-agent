@@ -24,7 +24,7 @@ missing trailer, and rejects a label with no value.
 | Trailer | Value | Why it is a gate |
 |---------|-------|------------------|
 | `Regression:` | `Test<Name>`, or `none (<reason>)` | The test that fails before the fix and passes after it. |
-| `Class:` | `DC-n` from `.mivia/quality/defect-taxonomy.md`, or `none (<reason>)` | Names the recurring defect class. A fix that matches no class must say so, and the class belongs in that document. |
+| `Class:` | `DC-n` from `.agents/quality/defect-taxonomy.md`, or `none (<reason>)` | Names the recurring defect class. A fix that matches no class must say so, and the class belongs in that document. |
 | `Sweep:` | `searched <what>, found <n> further sites`, or `none (<reason>)` | The same-class sweep. This is the gate that stops one class producing a chain of repeat fixes; the history holds chains of 35, 45, and 26 fixes for one class. |
 
 Example body for a fix:

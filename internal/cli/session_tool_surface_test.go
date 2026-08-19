@@ -19,7 +19,7 @@ import (
 // NewSessionDispatcher and are NOT covered by the default-registry tests
 // in internal/tools/generic_surface_test.go. These tests fill that gap.
 //
-// Rule: .mivia/rules/60-tools-project-language-generic.md
+// Rule: .agents/rules/60-tools-project-language-generic.md
 
 // languageBiasPatterns mirrors the patterns from generic_surface_test.go.
 var sessionBiasPatterns = []struct {
@@ -149,7 +149,7 @@ func TestSessionToolSurfaceIsProjectAndLanguageGeneric(t *testing.T) {
 		}
 	}
 	if len(failures) > 0 {
-		t.Fatalf("session tool surface must be project/language-generic (see .mivia/rules/60-tools-project-language-generic.md):\n  %s",
+		t.Fatalf("session tool surface must be project/language-generic (see .agents/rules/60-tools-project-language-generic.md):\n  %s",
 			strings.Join(failures, "\n  "))
 	}
 }

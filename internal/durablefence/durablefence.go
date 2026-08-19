@@ -11,7 +11,7 @@
 // The harness is storage-agnostic. A caller describes its own ownership model
 // through Scenario and the checks drive the interleavings.
 //
-// See `.mivia/quality/defect-taxonomy.md` classes DC-2, DC-3, and DC-4, and
+// See `.agents/quality/defect-taxonomy.md` classes DC-2, DC-3, and DC-4, and
 // invariant INV-DUR-2.
 package durablefence
 

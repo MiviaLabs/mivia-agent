@@ -53,8 +53,8 @@ security/privacy), run `make invariants` to execute the relevant test suite(s).
 - Before merge-ready claims, run adversarial review of changed behavior and tests (skill: `bug-audit` / `secure-change` / `verify-code-change` as applicable).
 - Mentally remove each implementation guard and verify at least one test would fail.
 - Residual risk must name the missing test, fixture, or external behavior still unproven.
-- **Run `bug-audit` in repository mode in this repo.** The skill defaults to snippet mode when the mode is ambiguous, and snippet mode forbids expanding past the shown code. Every recurring class in `.mivia/quality/defect-taxonomy.md` lives across call sites, states, or processes, so snippet mode cannot reach any of them. Supply the diff plus the callers, the state machine, and the persistence path, and say "repository mode" in the invocation.
-- Read the classes in `.mivia/quality/defect-taxonomy.md` that the change touches, and run their probes. Record the class identifier in the finding or the report.
+- **Run `bug-audit` in repository mode in this repo.** The skill defaults to snippet mode when the mode is ambiguous, and snippet mode forbids expanding past the shown code. Every recurring class in `.agents/quality/defect-taxonomy.md` lives across call sites, states, or processes, so snippet mode cannot reach any of them. Supply the diff plus the callers, the state machine, and the persistence path, and say "repository mode" in the invocation.
+- Read the classes in `.agents/quality/defect-taxonomy.md` that the change touches, and run their probes. Record the class identifier in the finding or the report.
 
 ## Critical Drift Guard
 

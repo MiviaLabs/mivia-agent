@@ -8,7 +8,7 @@
 // [privacy] in mivia.toml, recommended values ship in mivia.toml.example, and a
 // workspace that configures nothing redacts nothing.
 //
-// That fails open by design. See .mivia/rules/10-security-privacy.md.
+// That fails open by design. See .agents/rules/10-security-privacy.md.
 package redact
 
 import (

@@ -14,7 +14,7 @@ import (
 // operator-visible preview text.
 //
 // It compiles nothing and knows no credential patterns: what counts as a secret
-// is configuration, not code (see .mivia/rules/10-security-privacy.md). A
+// is configuration, not code (see .agents/rules/10-security-privacy.md). A
 // workspace that configures no policy gets its preview text through unchanged.
 func redactPreview(s string) string { return redact.Text(s) }
 

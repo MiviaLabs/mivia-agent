@@ -1,7 +1,7 @@
 # ADLC - Agentic Development Lifecycle
 
 **⚠️ THIS IS THE MANDATORY PROCESS FOR ALL WORK IN THIS REPO.**
-Read this file before starting any task. See also `AGENTS.md` ("Mandatory process" section) and `.mivia/INDEX.md` ("MANDATORY" section).
+Read this file before starting any task. See also `AGENTS.md` ("Mandatory process" section) and `.agents/INDEX.md` ("MANDATORY" section).
 
 **Scope**: All feature work, bug fixes, refactors, and cross-package changes.
 **Override**: This rule governs *how* work is sequenced and verified.

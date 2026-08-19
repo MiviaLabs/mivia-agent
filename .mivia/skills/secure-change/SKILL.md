@@ -19,7 +19,7 @@ tools:
 # Secure Change
 
 Security and privacy review for a change to the `mivia` agent CLI. It is
-project-bound: it references real mivia artifacts (`.mivia/rules/10-security-privacy.md`,
+project-bound: it references real mivia artifacts (`.agents/rules/10-security-privacy.md`,
 `internal/redact`, the SSRF guard in `internal/tools/fetch_url.go`, the
 permission scoping invariants). It is not the portable skill family. For a
 generic, language-agnostic risk/blast-radius review use `verify-code-change`;
@@ -28,10 +28,10 @@ this skill is the dedicated security pass.
 ## Read First
 
 - `AGENTS.md`
-- `.mivia/rules/10-security-privacy.md` (the authoritative security rules)
+- `.agents/rules/10-security-privacy.md` (the authoritative security rules)
 - `.mivia/invariants.md` (rows INV-AG-7, INV-AG-25/26/27, INV-SEC-1 are security-relevant)
-- `.mivia/quality/defect-taxonomy.md` (classes `DC-10` path and isolation escape, `DC-13` authority and scope)
-- `.mivia/templates/agent-report-v1.md`
+- `.agents/quality/defect-taxonomy.md` (classes `DC-10` path and isolation escape, `DC-13` authority and scope)
+- `.agents/templates/agent-report-v1.md`
 - Diff scope named by the user
 - `docs/security/` owned paths when present
 
@@ -117,7 +117,7 @@ Work from the trust boundaries the product actually has, not a generic checklist
    state when no deterministic target is practical.
 10. Check the containment boundary of any path, worktree, or child process the
     change touches. This class has produced repeat defects here; see
-    `.mivia/quality/defect-taxonomy.md` class `DC-10`.
+    `.agents/quality/defect-taxonomy.md` class `DC-10`.
     - Resolve symlinks first, then check containment. A check that runs before
       the resolve is bypassable, including on lock files and marker files that
       look like internal state.
@@ -182,7 +182,7 @@ under the stated contract. In particular:
 
 When a resource catalogue and its scoped reader are available, load
 `report-template` before producing the report. Without that capability, use the
-canonical inline fallback from `.mivia/templates/agent-report-v1.md`.
+canonical inline fallback from `.agents/templates/agent-report-v1.md`.
 Always emit the compact `mivia-report/v1` structure.
 
 Inline fallback:

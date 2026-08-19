@@ -5,13 +5,13 @@ How coding agents must work in this repository.
 ## Read first
 
 1. `AGENTS.md`
-2. `.mivia/INDEX.md`
-3. `.mivia/doctrines/*`
+2. `.agents/INDEX.md`
+3. `.agents/doctrines/*`
 4. Relevant rules and skills
 
 ## Standing doctrine
 
-Always apply `.mivia/doctrines/engineering-working-contract.md`.
+Always apply `.agents/doctrines/engineering-working-contract.md`.
 
 ## Task skills
 
@@ -152,7 +152,7 @@ never run `--provider real` without the user asking for it in that session.
 
 ## Completion shape
 
-Use the report shape in `.mivia/rules/01-output-budget.md`.
+Use the report shape in `.agents/rules/01-output-budget.md`.
 
 ## Skill frontmatter
 

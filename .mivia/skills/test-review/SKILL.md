@@ -1,13 +1,12 @@
 ---
 name: test-review
-description: >-
-  Audit the tests of a Go package in this repo for truth and coverage
-  quality. Trigger whenever the user asks to review tests, check test
-  coverage, add integration/fuzz/perf tests, or asks whether tests are
-  "testing what they should", or mentions mocks, fakes, edge cases,
-  coverage gaps, vacuous assertions, or cross-package integration
-  tests. Use it to check that tests exercise the real code and the real
-  package composition, not a substitute.
+description: Audit the tests of a Go package for truth and coverage quality. Trigger for test review, coverage checks, mocks, fakes, edge cases, vacuous assertions, or cross-package integration test gaps.
+tools:
+  - read_file
+  - list_dir
+  - grep
+  - glob
+  - find_references
 ---
 
 # Test review

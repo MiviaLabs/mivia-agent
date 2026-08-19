@@ -151,7 +151,7 @@ test(s) and confirm they pass.
 ## Durable execution invariants
 
 These two rows pin the classes with the worst repeat-fix chains in this repository:
-`DC-1` and `DC-2` in `.mivia/quality/defect-taxonomy.md`. Both are invisible to the
+`DC-1` and `DC-2` in `.agents/quality/defect-taxonomy.md`. Both are invisible to the
 race detector, because the interleaving happens between transactions and the writers
 may be separate processes or hosts.
 

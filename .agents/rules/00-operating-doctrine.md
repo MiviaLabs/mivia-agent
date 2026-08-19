@@ -21,7 +21,7 @@ If an adapter conflicts with `AGENTS.md` or `.mivia/`, follow `AGENTS.md` / `.mi
 
 ## Documentation-First Work
 
-- Code changes that alter behavior, flags, config, security posture, or public API must update the **canonical** doc for that topic (see `.mivia/rules/40-docs-ownership.md`).
+- Code changes that alter behavior, flags, config, security posture, or public API must update the **canonical** doc for that topic (see `.agents/rules/40-docs-ownership.md`).
 - If implementation reveals a task split, update the plan/task file before writing the second production unit.
 - Completion reports name changed files, verification run, and residual risk. Do not claim “done” without verification status.
 
@@ -33,7 +33,7 @@ If an adapter conflicts with `AGENTS.md` or `.mivia/`, follow `AGENTS.md` / `.mi
 
 ## Verification Contract
 
-Every implementation response follows the report shape in `.mivia/rules/01-output-budget.md`. Unverified claims are forbidden. State assumptions and evidence gaps explicitly.
+Every implementation response follows the report shape in `.agents/rules/01-output-budget.md`. Unverified claims are forbidden. State assumptions and evidence gaps explicitly.
 
 ## Product Naming
 
@@ -44,7 +44,7 @@ Every implementation response follows the report shape in `.mivia/rules/01-outpu
 ## Host vs model-facing surface
 
 - **Host** (this codebase) is Go. **Model-facing tools and compiled default prompts** are project- and language-generic for any user workspace.
-- Full rule: `.mivia/rules/60-tools-project-language-generic.md`.
+- Full rule: `.agents/rules/60-tools-project-language-generic.md`.
 
 ## Fail Closed
 
@@ -57,4 +57,4 @@ Every implementation response follows the report shape in `.mivia/rules/01-outpu
 - Mivia supports **hours-long orchestration**. Default timeouts are advisory, not hard ceilings.
 - The orchestrator agent receives **heartbeat/progress events** from running subagents and can react (cancel stalled, extend deadlines, redirect).
 - Zero timeout means **no timeout** - the task runs until completion, cancellation, or budget exhaustion.
-- See `.mivia/rules/70-long-running-heartbeat.md`.
+- See `.agents/rules/70-long-running-heartbeat.md`.

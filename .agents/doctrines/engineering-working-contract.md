@@ -35,7 +35,7 @@ instructions and task-specific skills should extend it, not duplicate it.
 
 ## mivia host vs tool surface
 
-This product is an agent CLI for agents. The **host** is Go; **model-facing tools and compiled default prompts must stay project- and language-generic** for any user workspace. Do not bake `go test`, `*.go`, or `cmd/mivia` into tool `Description()` or `defaultAgentPrompt`. Rule: `.mivia/rules/60-tools-project-language-generic.md`. Mechanical tests: `internal/tools/generic_surface_test.go`, `internal/cli/prompt_generic_test.go`.
+This product is an agent CLI for agents. The **host** is Go; **model-facing tools and compiled default prompts must stay project- and language-generic** for any user workspace. Do not bake `go test`, `*.go`, or `cmd/mivia` into tool `Description()` or `defaultAgentPrompt`. Rule: `.agents/rules/60-tools-project-language-generic.md`. Mechanical tests: `internal/tools/generic_surface_test.go`, `internal/cli/prompt_generic_test.go`.
 
 ## Engineering
 
@@ -106,4 +106,4 @@ Ground findings in a concrete file, symbol, execution path, diff, or reproducibl
 
 ## Final response
 
-Use the report shape in `.mivia/rules/01-output-budget.md`. Omit empty sections. Keep the response proportionate to the task. Do not claim completion when required verification is blocked.
+Use the report shape in `.agents/rules/01-output-budget.md`. Omit empty sections. Keep the response proportionate to the task. Do not claim completion when required verification is blocked.

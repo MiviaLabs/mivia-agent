@@ -1,6 +1,6 @@
 # mivia-report/v1 - workflow-runs-analysis grammar
 
-Use the canonical mivia-report/v1 envelope (`.mivia/templates/agent-report-v1.md`).
+Use the canonical mivia-report/v1 envelope (`.agents/templates/agent-report-v1.md`).
 The Findings grammar below is extended for validated process-quality analysis.
 Keep each field to one line or short bullet; do not add narrative sections.
 
