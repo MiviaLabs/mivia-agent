@@ -227,7 +227,14 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 	switch b := ev.Body.(type) {
 	case uievent.ToolPendingBody:
 		s.approval.SetRequest(b)
-	case uievent.ToolStartBody, uievent.ToolEndBody, uievent.TurnEndBody:
+		s.statusline.SetLabel("pending")
+	case uievent.ToolStartBody:
+		s.approval.Clear()
+		s.statusline.SetLabel("running")
+	case uievent.ToolEndBody:
+		s.approval.Clear()
+		s.statusline.SetLabel("thinking")
+	case uievent.TurnEndBody:
 		s.approval.Clear()
 	}
 

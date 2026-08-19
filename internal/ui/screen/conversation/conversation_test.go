@@ -183,6 +183,46 @@ func TestTurnEventArmsApprovalOnToolPending(t *testing.T) {
 	}
 }
 
+// TestStatuslineLabelTracksTurnActivity pins wireframes-panes.md's state
+// word vocabulary (section on the activity indicator) and ux-rules.md
+// rule 9.10: "show the active tool or step, not only a spinner." Before
+// this, Start("thinking", ...) was the only place that ever set the
+// label, so the line kept saying "thinking" through a running tool call
+// and while blocked on an approval - a still-correct spinner next to a
+// stale, misleading word.
+func TestStatuslineLabelTracksTurnActivity(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	s.active = fakeHandle{id: "t1"}
+	s.statusline.Start("thinking", fixedNow())
+
+	next, _ := s.Update(uievent.EventMsg{Event: uievent.Event{
+		Kind: uievent.KindToolStart,
+		Body: uievent.ToolStartBody{ToolCallID: "c1", Name: "run_command"},
+	}})
+	got := next.(Screen)
+	if view := got.statusline.View(fixedNow()); !strings.Contains(view, "running") {
+		t.Errorf("got %q, want the label to say running once a tool starts", view)
+	}
+
+	next, _ = got.Update(uievent.EventMsg{Event: uievent.Event{
+		Kind: uievent.KindToolPending,
+		Body: uievent.ToolPendingBody{ToolCallID: "c2", Name: "edit"},
+	}})
+	got = next.(Screen)
+	if view := got.statusline.View(fixedNow()); !strings.Contains(view, "pending") {
+		t.Errorf("got %q, want the label to say pending while an approval is awaited", view)
+	}
+
+	next, _ = got.Update(uievent.EventMsg{Event: uievent.Event{
+		Kind: uievent.KindToolEnd,
+		Body: uievent.ToolEndBody{ToolCallID: "c2", Name: "edit", OK: true},
+	}})
+	got = next.(Screen)
+	if view := got.statusline.View(fixedNow()); !strings.Contains(view, "thinking") {
+		t.Errorf("got %q, want the label back to thinking once the tool call ends", view)
+	}
+}
+
 func TestTurnEndedStopsStatuslineAndClearsActive(t *testing.T) {
 	s := newScreen(t, replay.New(nil, 0), nil, nil)
 	s.active = fakeHandle{id: "t1"}
