@@ -119,6 +119,13 @@ func (m Model) AcceptCommonPrefix() (Model, bool) {
 func (m *Model) SetWidth(width int) {
 	m.width = width
 	w := width - promptWidth - cursorReserve
+	if width >= minFramedWidth {
+		// The frame's border cells plus the two lipgloss counts inside
+		// Width() (measured on the approval prompt): the input must be
+		// SIZED into the frame, never wrapped by it, or the bottom row
+		// count changes under Height().
+		w -= frameInset
+	}
 	if w < 0 {
 		w = 0
 	}
@@ -186,9 +193,47 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 }
 
 // Height is the row count View draws, so the screen can reserve it.
+// The framed input is three rows (top border, input, bottom border);
+// the completion menu adds its rows above the frame.
 func (m Model) Height() int {
+	rows := 3
+	if m.width < minFramedWidth {
+		rows = 1
+	}
 	if v := m.menu.view(m.Theme, m.Tier, m.width); v != "" {
-		return 1 + strings.Count(v, "\n") + 1
+		return rows + strings.Count(v, "\n") + 1
+	}
+	return rows
+}
+
+// minFramedWidth is the narrowest terminal that still frames the input:
+// the frame removes frameInset columns, and the remaining inner width
+// must hold the prompt, the cursor cell and one text cell (8 = 4 + 4).
+// Below it View degrades to the bare line rather than let the border
+// widen past the terminal.
+const minFramedWidth = 8
+
+// frameInset is the column count the border removes from the input:
+// both border cells and the two cells lipgloss counts inside Width().
+const frameInset = 4
+
+// InputRowFromBottom is how many rows above the screen's last row the
+// input line sits: the bottom border is below it when framed, nothing
+// when degraded. Mouse routing uses this instead of assuming the input
+// is the last row.
+func (m Model) InputRowFromBottom() int {
+	if m.width < minFramedWidth {
+		return 0
+	}
+	return 1
+}
+
+// InputColumnOffset is how many display columns the border puts before
+// the prompt. Mouse clicks subtract it to land on the input's own
+// column space.
+func (m Model) InputColumnOffset() int {
+	if m.width < minFramedWidth {
+		return 0
 	}
 	return 1
 }
@@ -215,7 +260,22 @@ func (m Model) inputLine() string {
 // normal path never reaches it.
 func (m Model) View() string {
 	line := m.inputLine()
-	if m.width > 0 && ansi.StringWidth(line) > m.width {
+	if m.width >= minFramedWidth && ansi.StringWidth(line) > m.width-frameInset {
+		// Text longer than the frame clips to the inner width, exactly
+		// like the approval prompt: a line lipgloss wraps would add a
+		// row Height() does not claim.
+		line = ansi.Truncate(line, m.width-frameInset, "")
+	}
+	if m.width >= minFramedWidth {
+		// The input is always the focused control, so it takes the
+		// focus-role border. Clip to the wrap width like the approval
+		// prompt: a line lipgloss wraps would add a row Height() does
+		// not claim. The menu stays above the frame, attached to the
+		// input it completes (rule 2.8: the input stays pinned last).
+		// Single-line content: lipgloss's Width() is the box total, border
+		// included, so the frame is exactly the terminal wide.
+		line = render.Bordered(m.Theme, m.Tier, theme.RoleBorderFocus, m.width, line)
+	} else if m.width > 0 && ansi.StringWidth(line) > m.width {
 		line = ansi.Truncate(line, m.width, "")
 	}
 	if v := m.menu.view(m.Theme, m.Tier, m.width); v != "" {

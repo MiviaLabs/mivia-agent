@@ -95,13 +95,12 @@ func TestSetLabelDoesNotResetElapsed(t *testing.T) {
 	}
 }
 
-// TestLabelCarriesItsStateRole pins wireframes-panes.md's activity-mark
-// table: running is `info`, pending is `warning`, failed is `danger`,
-// done is `success`. Only the label word carries the colour - the
-// spinner and elapsed time stay in the line's own subtle style, the
-// same split block headers already use between a subtle label and a
-// coloured state word.
-func TestLabelCarriesItsStateRole(t *testing.T) {
+// TestMarkCarriesItsStateRole pins the mock's ANIM table: the BRAND
+// MARK carries the state colour (running info, pending warning, failed
+// danger, done success); the label word and elapsed time stay subtle.
+// Motion and the mark's colour carry the activity, not the label - the
+// split the mock's view 18 draws.
+func TestMarkCarriesItsStateRole(t *testing.T) {
 	th := loadTheme(t)
 	cases := []struct {
 		label string
@@ -117,9 +116,12 @@ func TestLabelCarriesItsStateRole(t *testing.T) {
 			m := New(th, theme.TierTrueColor)
 			m.Start(c.label, time.Now())
 			got := m.View(time.Now())
-			want := render.Role(th, theme.TierTrueColor, c.role).Render(c.label)
-			if !strings.Contains(got, want) {
-				t.Errorf("got %q, want the label styled with %s: %q", got, c.role, want)
+			want := render.Role(th, theme.TierTrueColor, c.role)
+			if !strings.Contains(got, want.Render("⬖")) && !strings.Contains(got, want.Render("◈")) && !strings.Contains(got, want.Render("◆")) {
+				t.Errorf("got %q, want the mark styled with %s", got, c.role)
+			}
+			if subtle := render.Role(th, theme.TierTrueColor, theme.RoleFGSubtle).Render(c.label); !strings.Contains(got, subtle) {
+				t.Errorf("got %q, want the label to stay subtle", got)
 			}
 		})
 	}

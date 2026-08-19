@@ -151,9 +151,11 @@ func (m Model) View() string {
 	// the plain decorative border is exempt from. Inner width: the
 	// terminal minus the two border cells; unsized callers get an
 	// auto-fit box.
+	// Same rule as the composer's frame: the box spans the full
+	// terminal width, one fixed size.
 	inner := 0
-	if m.width > 2 {
-		inner = m.width - 2
+	if m.width > 0 {
+		inner = m.width
 	}
 	return render.Bordered(m.Theme, m.Tier, theme.RoleBorderFocus, inner, body)
 }

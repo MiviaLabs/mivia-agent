@@ -254,9 +254,13 @@ dialog was not.
 
 ---
 
-## 9. Transient status line
+## 9. Status line and top bar
 
-One line, always the last row, deleted at turn end.
+The status line is permanent: always the row above the composer, idle or busy.
+A fixed top bar carries the brand mark, the `mivia` wordmark, the bound model,
+and the context share; it changes at turn boundaries only, never per token.
+Every rendered row is framed by a one-column gutter, so no text touches the
+screen edge.
 
 ```
   - running  go test ./internal/storage/...   12s   62% ctx   esc to cancel
@@ -560,8 +564,10 @@ U+2B17 right, U+2B18 top, U+2B19 bottom. Cycling U+2B16, U+2B18, U+2B17, U+2B19 
 the diamond, so **the logo and the activity indicator are the same object.** The brand
 mark never turns into a generic spinner.
 
-It sits in the first cell of the transient line above the composer - the cell the
-spinner already occupied. It is not a new surface.
+It sits in the first cell of the status line above the composer - the cell the
+spinner used to occupy - and a static idle instance sits in the top bar next to
+the wordmark. The animated instance is the status line's; the top bar's stays
+idle, because the bar is session identity, not turn state.
 
 | State | Unicode | ASCII | Motion | Meaning |
 |---|---|---|---|---|

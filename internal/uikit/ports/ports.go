@@ -31,9 +31,13 @@ type Message struct {
 }
 
 // ModelInfo names the model and provider currently bound to a session.
+// ContextWindow is the model's context-window size in tokens; 0 means
+// unknown, and callers must show no context percentage rather than
+// divide by it.
 type ModelInfo struct {
-	Name     string
-	Provider string
+	Name          string
+	Provider      string
+	ContextWindow int64
 }
 
 // Usage is cumulative token and cost accounting for a session.

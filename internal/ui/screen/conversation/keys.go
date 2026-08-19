@@ -121,8 +121,15 @@ func (s Screen) handleClick(msg tea.MouseClickMsg) (app.Screen, tea.Cmd) {
 		return s, tea.ClearScreen
 	}
 	transcriptRows := s.height - s.reservedRows()
-	inputRow := s.height - 1
-	menuRows := s.composer.Height() - 1
+	// The composer's frame puts the input above the bottom border, so
+	// the input row and its first column both shift; the composer owns
+	// the exact numbers (InputRowFromBottom, InputColumnOffset).
+	inputRow := s.height - 1 - s.composer.InputRowFromBottom()
+	colOffset := s.composer.InputColumnOffset()
+	menuRows := s.composer.Height() - 3
+	if menuRows < 0 {
+		menuRows = 0
+	}
 
 	switch {
 	case msg.Y < transcriptRows:
@@ -131,9 +138,13 @@ func (s Screen) handleClick(msg tea.MouseClickMsg) (app.Screen, tea.Cmd) {
 			s.transcript = next
 		}
 	case msg.Y == inputRow:
-		s.composer.ClickToColumn(msg.X)
-	case s.composer.MenuActive() && msg.Y >= inputRow-menuRows && msg.Y < inputRow:
-		s.composer.MenuClickRow(msg.Y - (inputRow - menuRows))
+		// One column in for the gutter, then the composer's own border
+		// offset: the click lands on the input's column space.
+		s.composer.ClickToColumn(msg.X - 1 - colOffset)
+	// The menu sits above the frame's top border, which sits above the
+	// input row: menu rows run from inputRow-1-menuRows to inputRow-2.
+	case s.composer.MenuActive() && msg.Y >= inputRow-1-menuRows && msg.Y < inputRow-1:
+		s.composer.MenuClickRow(msg.Y - (inputRow - 1 - menuRows))
 	}
 	return s, nil
 }

@@ -115,7 +115,11 @@ Sources: [Bubble Tea v2 release](https://charm.land/blog/v2/),
 
 **Rule 2.7.** Reserve fixed height for transient chrome. A warning that appears
 and disappears must occupy its row when hidden. A one-line change reflows every
-wrapped line above it and destroys both reading position and any selection.
+wrapped line above it and destroys both reading position and any selection. The
+cockpit's fixed chrome - the top bar, the status row, the framed composer, the
+one-column gutter each side - is exactly this rule applied: every row is claimed
+whether or not it has content, and scrolling a surface (the approval diff) never
+changes the rows it claims.
 Source: [gemini-cli PR #22584](https://github.com/google-gemini/gemini-cli/pull/22584).
 
 **Rule 2.8.** Never move the composer while output streams.

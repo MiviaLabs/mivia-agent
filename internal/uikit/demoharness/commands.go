@@ -12,6 +12,12 @@ import (
 // the model a new Harness starts on.
 var demoModels = []string{"mivia-fast", "mivia-standard", "mivia-deep"}
 
+// demoContextWindow is the token capacity the demo model reports, so
+// the cockpit's persistent context percentage has a denominator to
+// divide by. 125k matches the wireframes' "62% (78k of 125k)" example
+// scale.
+const demoContextWindow int64 = 125_000
+
 // demoAgent is one row of the fake agent roster /agents lists.
 type demoAgent struct {
 	Name string

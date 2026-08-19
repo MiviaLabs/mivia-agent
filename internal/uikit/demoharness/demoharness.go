@@ -58,7 +58,7 @@ func New(scenarioName string, pace time.Duration) (*Harness, error) {
 	return &Harness{
 		pace:     pace,
 		scenario: scenario,
-		model:    ports.ModelInfo{Name: demoModels[0], Provider: "demo"},
+		model:    ports.ModelInfo{Name: demoModels[0], Provider: "demo", ContextWindow: demoContextWindow},
 		usage: ports.Usage{
 			InputTokens: 1200, OutputTokens: 400, CachedTokens: 300, CostUSD: 0.03,
 		},

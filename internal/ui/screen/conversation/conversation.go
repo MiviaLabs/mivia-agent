@@ -19,6 +19,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/composer"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/picker"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/statusline"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/component/topbar"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/transcript"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
@@ -45,6 +46,7 @@ type Screen struct {
 	runner      ports.CommandRunner // nil is valid: every "/x" then shows an error, never sends
 	modelPicker *picker.Model       // non-nil while the /model picker is open
 
+	topbar     topbar.Model
 	transcript transcript.Model
 	composer   composer.Model
 	statusline statusline.Model
@@ -96,7 +98,8 @@ func New(th theme.Theme, tier theme.Tier, themes []theme.Theme, conv ports.Conve
 		keys:       keymap.New(keymap.Default()),
 		now:        now,
 	}
-	s.approval.SetWidth(width)
+	s.approval.SetWidth(contentWidth(width))
+	s.topbar = topbar.New(th, tier, conv.Model(), conv.ContextUsage(), contentWidth(width))
 	return s
 }
 
@@ -141,9 +144,20 @@ func (s Screen) Update(msg tea.Msg) (app.Screen, tea.Cmd) {
 	return scr, cmd
 }
 
+// contentWidth is the usable column count: the terminal minus the
+// one-column gutter each side, so no component or message touches the
+// screen edge. Below 3 columns the gutter gives way - there is nothing
+// to frame.
+func contentWidth(width int) int {
+	if width < 3 {
+		return width
+	}
+	return width - 2
+}
+
 // resize gives the transcript the rows the chrome does not claim.
 func (s *Screen) resize() {
-	s.transcript.SetSize(s.width, s.height-s.reservedRows())
+	s.transcript.SetSize(contentWidth(s.width), s.height-s.reservedRows())
 }
 
 func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
@@ -156,6 +170,9 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 		s.statusline.Stop()
 		s.approval.Clear()
 		s.active = nil
+		// Session values move at turn boundaries: refresh the top bar's
+		// model and context share now, not per token.
+		s.topbar.SetSession(s.conv.Model(), s.conv.ContextUsage())
 		return s, nil
 	case approval.DecisionMsg:
 		if s.approver != nil {
@@ -197,16 +214,18 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 		return s, nil
 	case tea.WindowSizeMsg:
 		s.width, s.height = msg.Width, msg.Height
-		s.composer.SetWidth(msg.Width)
-		s.approval.SetWidth(msg.Width)
+		s.composer.SetWidth(contentWidth(msg.Width))
+		s.approval.SetWidth(contentWidth(msg.Width))
+		s.topbar.SetWidth(contentWidth(msg.Width))
 		s.resize()
 		return s, nil
 	case app.ThemeChangedMsg:
 		s.Theme, s.Tier = msg.Theme, msg.Tier
 		s.transcript.Theme, s.transcript.Tier = msg.Theme, msg.Tier
 		s.composer.Theme, s.composer.Tier = msg.Theme, msg.Tier
-		s.statusline.Theme, s.statusline.Tier = msg.Theme, msg.Tier
+		s.statusline.SetTheme(msg.Theme, msg.Tier)
 		s.approval.Theme, s.approval.Tier = msg.Theme, msg.Tier
+		s.topbar.SetTheme(msg.Theme, msg.Tier)
 		return s, nil
 	}
 	return s, nil
@@ -265,7 +284,8 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 // that moves. A row that is always there also never reflows the
 // transcript when it changes (docs/design/ux-rules.md rule 2.7).
 func (s Screen) reservedRows() int {
-	rows := s.composer.Height() + 1 // the composer and its menu, plus the status row
+	// the top bar, the composer and its menu, and the status row
+	rows := s.topbar.Height() + s.composer.Height() + 1
 	if s.approval.Active() {
 		rows += s.approval.Height() // bordered box: title, optional diff preview, hint, and the border rows
 	}
@@ -280,6 +300,7 @@ func (s Screen) reservedRows() int {
 // nothing below it moves as output streams in (ux-rules.md rule 2.8).
 func (s Screen) View() string {
 	var lines []string
+	lines = append(lines, s.topbar.View())
 	switch {
 	case s.modelPicker != nil:
 		content := renderModelPicker(s.Theme, s.Tier, *s.modelPicker)
@@ -294,7 +315,28 @@ func (s Screen) View() string {
 	}
 	lines = append(lines, s.statusRow())
 	lines = append(lines, strings.Split(s.composer.View(), "\n")...)
-	return strings.Join(lines, "\n")
+	return s.gutter(lines)
+}
+
+// gutter frames every rendered row with one blank column each side: no
+// text touches the screen edge. Rows are padded to the full width so
+// background styles (the diff colours, the approval border) reach the
+// edge cleanly while their glyphs stay off it.
+func (s Screen) gutter(lines []string) string {
+	if s.width < 3 {
+		return strings.Join(lines, "\n")
+	}
+	out := make([]string, len(lines))
+	inner := contentWidth(s.width)
+	for i, ln := range lines {
+		pad := inner - ansi.StringWidth(ln)
+		if pad < 0 {
+			ln = ansi.Truncate(ln, inner, "")
+			pad = 0
+		}
+		out[i] = " " + ln + strings.Repeat(" ", pad) + " "
+	}
+	return strings.Join(out, "\n")
 }
 
 // overlayRows pads or clips an overlay to the transcript's own height, so
@@ -358,8 +400,8 @@ func (s Screen) statusRow() string {
 	} else {
 		line += "  " + hint
 	}
-	if s.width > 0 {
-		line = ansi.Truncate(line, s.width, "")
+	if s.width > 2 {
+		line = ansi.Truncate(line, contentWidth(s.width), "")
 	}
 	return line
 }

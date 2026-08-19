@@ -859,3 +859,36 @@ func TestApprovalStillSwallowsUnrelatedKeys(t *testing.T) {
 		t.Error("an unrelated key reached the composer through the modal")
 	}
 }
+
+// TestViewHasAOneColumnGutter pins the framing rule: no row starts or
+// ends at the screen edge - every row is blank in column 0 and the last
+// column, and every row is exactly the terminal width.
+func TestViewHasAOneColumnGutter(t *testing.T) {
+	s := pendingDiffScreen(t) // exercise top bar, transcript, approval, status, composer
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 60, Height: 30})
+	scr := next.(Screen)
+	rows := strings.Split(scr.View(), "\n")
+	if len(rows) != 30 {
+		t.Fatalf("view is %d rows in a 30-row terminal", len(rows))
+	}
+	for i, row := range rows {
+		if w := ansi.StringWidth(row); w != 60 {
+			t.Errorf("row %d width %d, want 60", i, w)
+		}
+		plain := ansi.Strip(row)
+		if plain[0] != ' ' {
+			t.Errorf("row %d touches the left edge: %q", i, plain[:min(20, len(plain))])
+		}
+		if plain[len(plain)-1] != ' ' {
+			t.Errorf("row %d touches the right edge", i)
+		}
+	}
+	// The persistent pieces are present: brand mark + wordmark top row,
+	// framed composer at the bottom.
+	if !strings.Contains(ansi.Strip(rows[0]), "mivia") {
+		t.Errorf("top row is not the brand bar: %q", rows[0])
+	}
+	if !strings.Contains(ansi.Strip(rows[len(rows)-2]), "> ") {
+		t.Errorf("input row not where expected: %q", rows[len(rows)-2])
+	}
+}
