@@ -117,6 +117,15 @@ func (s Screen) openHelp() Screen {
 // reasoning as opening it: the picker drew content the transcript and
 // composer underneath never redrew, and closing it exposes them again).
 func (s Screen) handleModelPickerKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
+	// ctrl+c is the emergency exit and must not be swallowed by the
+	// modal, the same rule as the approval prompt: close the picker,
+	// then run the ordinary quit flow (cancel the turn, arm the second
+	// press).
+	if msg.String() == "ctrl+c" {
+		s.modelPicker = nil
+		next, cmd, _ := s.quit()
+		return next, tea.Batch(cmd, tea.ClearScreen)
+	}
 	next, cmd := s.modelPicker.Update(msg)
 	s.modelPicker = &next
 	if cmd == nil {

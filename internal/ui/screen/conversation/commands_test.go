@@ -399,3 +399,24 @@ func containsAll(s string, subs ...string) bool {
 	}
 	return true
 }
+
+// TestCtrlCIsTheEmergencyExitUnderModelPicker: the same rule as the
+// approval prompt - the picker modal must not swallow ctrl+c. The first
+// press closes the picker and arms the quit state; the second quits.
+func TestCtrlCIsTheEmergencyExitUnderModelPicker(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	scr := next.(Screen)
+	pm := picker.New(scr.Theme, scr.Tier, []string{"only"})
+	scr.modelPicker = &pm
+	// The idle screen (no turn, empty composer) quits on one press, and
+	// the picker must not change that.
+	scr2, cmd := scr.Update(ctrl('c'))
+	out := scr2.(Screen)
+	if out.modelPicker != nil {
+		t.Error("ctrl+c left the picker open")
+	}
+	if cmd == nil {
+		t.Error("ctrl+c did not quit under the picker modal")
+	}
+}

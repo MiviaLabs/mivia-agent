@@ -41,6 +41,14 @@ func (s Screen) handleKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
 				return s, nil
 			}
 		}
+		// ctrl+c stays the emergency exit even under the modal: quit()
+		// clears the approval and cancels the turn itself. Everything
+		// else the prompt does not answer is swallowed - a pending tool
+		// call blocks the rest of the screen.
+		if id, ok := s.keys.Match(keymap.ContextGlobal, msg.String()); ok && id == keymap.IDQuit {
+			next, cmd, _ := s.quit()
+			return next, cmd
+		}
 		next, cmd := s.approval.Update(msg)
 		s.approval = next
 		return s, cmd

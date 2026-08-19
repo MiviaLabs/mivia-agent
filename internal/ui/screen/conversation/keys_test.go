@@ -818,3 +818,41 @@ func TestApprovalWheelScrollsThePreviewNotTheTranscript(t *testing.T) {
 		t.Errorf("wheel moved the transcript (%d -> %d) behind a modal approval", before, got)
 	}
 }
+
+// TestCtrlCIsTheEmergencyExitUnderApproval pins the one global key that
+// must not be swallowed by the modal: during a pending approval, the
+// first ctrl+c cancels the turn and clears the prompt, and the second
+// quits. Before this, ctrl+c was silently eaten and esc-deny was the
+// only way out.
+func TestCtrlCIsTheEmergencyExitUnderApproval(t *testing.T) {
+	scr := pendingDiffScreen(t)
+	scr.active = fakeHandle{id: "t1"}
+	next, _ := scr.Update(ctrl('c'))
+	scr = next.(Screen)
+	if scr.approval.Active() {
+		t.Error("first ctrl+c left the approval pending")
+	}
+	if !scr.quitArmed {
+		t.Error("first ctrl+c did not arm the quit state")
+	}
+	next, cmd := scr.Update(ctrl('c'))
+	scr = next.(Screen)
+	if cmd == nil {
+		t.Error("second ctrl+c did not quit")
+	}
+}
+
+// TestApprovalStillSwallowsUnrelatedKeys: the modal must keep blocking
+// the screen behind it - only scroll and ctrl+c pass around the
+// decision keys.
+func TestApprovalStillSwallowsUnrelatedKeys(t *testing.T) {
+	scr := pendingDiffScreen(t)
+	next, _ := scr.Update(tea.KeyPressMsg{Code: 'x'})
+	scr = next.(Screen)
+	if !scr.approval.Active() {
+		t.Error("an unrelated key escaped the approval modal")
+	}
+	if scr.composer.Value() != "" {
+		t.Error("an unrelated key reached the composer through the modal")
+	}
+}
