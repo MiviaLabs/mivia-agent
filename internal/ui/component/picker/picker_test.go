@@ -184,3 +184,22 @@ func TestEscEmitsCancelMsg(t *testing.T) {
 
 func downKey() tea.KeyPressMsg { return tea.KeyPressMsg{Code: tea.KeyDown} }
 func upKey() tea.KeyPressMsg   { return tea.KeyPressMsg{Code: tea.KeyUp} }
+
+// TestClearFilterDropsItAndResetsTheCursor: dismissing surfaces that
+// own a picker clear the filter so it cannot resurface later as an
+// unexplained short list.
+func TestClearFilterDropsItAndResetsTheCursor(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII, []string{"apple", "banana", "avocado"})
+	m, _ = m.Update(keyMsg("a"))
+	m, _ = m.Update(downKey())
+	if m.Filter() != "a" {
+		t.Fatalf("precondition: filter %q, want \"a\"", m.Filter())
+	}
+	m.ClearFilter()
+	if m.Filter() != "" {
+		t.Errorf("filter survived ClearFilter: %q", m.Filter())
+	}
+	if got, _ := m.Selected(); got != "apple" {
+		t.Errorf("cursor not reset, selected %q", got)
+	}
+}

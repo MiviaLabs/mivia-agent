@@ -1,20 +1,29 @@
-// filespanel is the cockpit's touched-files panel: a persistent,
-// focusable pane over the files this session touched, fed live by the
-// same event stream that drives the transcript. It is not a modal - the
-// conversation stays on screen beside it (wide) or below it (narrow) -
-// and not a snapshot: a file edited while the panel is open appears in
-// it immediately.
+// filespanel is the cockpit's activity sidebar: a persistent,
+// focusable pane over what the session is DOING - the files it changed
+// and the subagents it dispatched - fed live by the same event stream
+// that drives the transcript. It is not a modal - the conversation
+// stays on screen beside it (wide) or below it (narrow) - and not a
+// snapshot: activity while the panel is open appears in it immediately.
+//
+// The sections are categories of thing, not statuses: "files changed"
+// holds every touched file (its kind - + created, ~ edited, -
+// deleted - is a per-row glyph), "subagents" holds dispatched agents
+// with their status. Empty sections keep their headers, so the shape of
+// the session's work stays visible.
 //
 // Wide layout (at and above uikitconfig.BreakpointWide): the chat
-// column shrinks into the split's left reading pane, the list takes the
-// right nav pane, and selecting a file opens its diff or source as a
-// dialog over the LEFT pane only - the list stays visible beside it.
+// column shrinks to the split's reading width, the list takes the nav
+// sidebar on the right, and ONE vertical rule on the sidebar's left
+// edge is the only frame the split draws (the rule carries the
+// focus-border colour). Selecting a file opens its diff or source as a
+// dialog over the chat column only - the list stays visible beside it.
 // Narrow layout: the list replaces the transcript area at full width,
 // and the content dialog is full-width too, since there is no column to
 // preserve.
 package conversation
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
@@ -56,8 +65,38 @@ func newEntry(d uievent.Diff) fileEntry {
 	return fileEntry{Path: d.Path, Kind: k, Diff: d}
 }
 
+// splitPath divides a slash path into its base name and the directory
+// above it, for the panel row's name + dimmed-directory form.
+func splitPath(p string) (name, dir string) {
+	if i := strings.LastIndex(p, "/"); i >= 0 {
+		return p[i+1:], p[:i]
+	}
+	return p, ""
+}
+
 func (e fileEntry) rowLabel() string {
-	return e.Path + "  " + string(e.Kind)
+	name, dir := splitPath(e.Path)
+	if dir == "" {
+		return name
+	}
+	return name + "  " + dir
+}
+
+// subagentRow is one dispatched subagent the session is tracking, fed
+// by the subagent-progress events (ToolOutputBody.Progress).
+type subagentRow struct {
+	ID     string
+	Status string
+	Step   int
+	Total  int
+}
+
+func (a subagentRow) rowLabel() string {
+	label := a.ID + "  " + a.Status
+	if a.Total > 0 {
+		label += " " + strconv.Itoa(a.Step) + "/" + strconv.Itoa(a.Total)
+	}
+	return label
 }
 
 // panel is the touched-files pane. open says it is drawn, focused says
@@ -66,6 +105,7 @@ func (e fileEntry) rowLabel() string {
 // dialog says the selected file's content is open as a dialog.
 type panel struct {
 	entries []fileEntry
+	agents  []subagentRow
 	list    picker.Model
 
 	// sourceView flips the content dialog between the diff (default)
@@ -95,8 +135,8 @@ func newPanel(t theme.Theme, tier theme.Tier) panel {
 func (p *panel) appendLive(d uievent.Diff) {
 	selPath := ""
 	if p.open {
-		if sel, ok := p.list.Selected(); ok {
-			selPath = strings.Split(sel, "  ")[0]
+		if e, ok := p.selected(); ok {
+			selPath = e.Path
 		}
 	}
 	for i, e := range p.entries {
@@ -130,6 +170,18 @@ func (p *panel) rebindIfOpen(keepPath string) {
 			return
 		}
 	}
+}
+
+// observeAgent folds one subagent-progress update into the agents
+// section, latest per subagent - the same fold files use.
+func (p *panel) observeAgent(id string, pr *uievent.Progress) {
+	for i, a := range p.agents {
+		if a.ID == id {
+			p.agents[i] = subagentRow{ID: id, Status: pr.Status, Step: pr.Step, Total: pr.TotalSteps}
+			return
+		}
+	}
+	p.agents = append(p.agents, subagentRow{ID: id, Status: pr.Status, Step: pr.Step, Total: pr.TotalSteps})
 }
 
 // openPanel shows the panel with focus in its list, refreshing the list
@@ -183,24 +235,21 @@ func (s Screen) panelIsSplit() bool {
 }
 
 // chatWidth is the width the chat column (transcript, approval, status
-// row, composer) renders at: the reading pane's inner width while the
-// panel splits the screen, the full content width otherwise.
+// row, composer) renders at: the reading pane's width while the panel
+// splits the screen, the full content width otherwise.
 func (s Screen) chatWidth() int {
 	if !s.panelIsSplit() {
 		return contentWidth(s.width)
 	}
 	reading, _ := render.SplitWidths(contentWidth(s.width))
-	return reading - 2
+	return reading
 }
 
 // transcriptHeight is the rows the transcript area holds after the
-// chrome's claim - and the split pane borders' claim, when the panel is
-// open wide.
+// chrome's claim. The split draws no horizontal frame, so the claim is
+// the same with the panel open as without it.
 func (s Screen) transcriptHeight() int {
 	h := s.height - s.reservedRows()
-	if s.panelIsSplit() {
-		h -= 2
-	}
 	if h < 0 {
 		return 0
 	}
@@ -218,7 +267,8 @@ func (s Screen) panelBodyRows() int {
 }
 
 // scrollPanel moves the dialog's body window by half a page, clamped to
-// the content: the tail must stay reachable.
+// the content: the tail must stay reachable and the offset must never
+// go negative (a negative window reads as dead scroll keys).
 func (s *Screen) scrollPanel(dir int) {
 	s.panel.offset += dir * max(1, s.panelBodyRows()/2)
 	rows := len(s.panel.contentRows(s.Theme, s.Tier))
@@ -227,43 +277,136 @@ func (s *Screen) scrollPanel(dir int) {
 	} else {
 		s.panel.offset = 0
 	}
+	if s.panel.offset < 0 {
+		s.panel.offset = 0
+	}
 }
 
-// panelRows is the nav pane's content: the list, each row clipped to
-// the pane's inner width and windowed to maxRows around the highlighted
-// row. Clipping happens here because the pane WRAPS wide rows - it does
-// not truncate them - and wrapping would add rows the frame's height
-// contract cannot absorb; windowing here keeps the cursor on screen
-// while preserving the picker's trailing filter indicator.
-func (s Screen) panelRows(inner, maxRows int) []string {
-	if len(s.panel.entries) == 0 {
-		return []string{"no files touched yet"}
+// panelDialogFits reports whether the content dialog has room to draw
+// at the current size. Enter is gated on it: a dialog flag set with no
+// dialog drawn would swallow keys and clicks aimed at what IS drawn.
+func (s Screen) panelDialogFits() bool {
+	if s.panelIsSplit() {
+		return s.height-(s.topbar.Height()+1) >= 6
 	}
-	rows := strings.Split(s.panel.list.View(), "\n")
+	return s.transcriptHeight() >= 6
+}
+
+// panelRows is the sidebar's content: sections by CATEGORY of thing -
+// the files the session changed, the subagents it dispatched - each
+// headed by its name and count (an empty section keeps its header, so
+// the shape of the session's work stays visible). File rows name the
+// file with its directory dimmed behind it and a kind glyph in front
+// (+ created, ~ edited, - deleted); subagent rows state id, status, and
+// step. The selected file row carries the picker's selection highlight;
+// rows are clipped to inner columns and windowed to maxRows around that
+// row.
+// panelFilterEntries applies the picker's substring filter to the panel's
+// file and subagent rows. The picker's visible set is this same filter, and
+// its cursor indexes that set, so the rendered rows must agree with both.
+func (s Screen) panelFilterEntries(needle string) ([]fileEntry, []subagentRow) {
+	visible := make([]fileEntry, 0, len(s.panel.entries))
+	for _, e := range s.panel.entries {
+		if needle == "" || strings.Contains(strings.ToLower(e.rowLabel()), needle) {
+			visible = append(visible, e)
+		}
+	}
+	agents := make([]subagentRow, 0, len(s.panel.agents))
+	for _, a := range s.panel.agents {
+		if needle == "" || strings.Contains(strings.ToLower(a.rowLabel()), needle) {
+			agents = append(agents, a)
+		}
+	}
+	return visible, agents
+}
+
+// panelWindowRows clips rows to a window around the selection, reserving a
+// row for the filter indicator when one will be appended: the indicator is
+// the only on-screen explanation of a shortened list, so it must never be
+// the row the windowing clips.
+func panelWindowRows(rows []string, selRow, maxRows int, filterActive bool) []string {
+	limit := maxRows
+	if filterActive && limit > 1 {
+		limit--
+	}
+	if limit > 0 && len(rows) > limit {
+		start := 0
+		if selRow >= limit {
+			start = selRow - limit + 1
+		}
+		if start > len(rows)-limit {
+			start = len(rows) - limit
+		}
+		rows = rows[start : start+limit]
+	}
+	return rows
+}
+
+// clipRowsToWidth clips styled rows by display width: the sidebar's blocks
+// pad and clip, they never re-wrap, so a wide path is cut here.
+func clipRowsToWidth(rows []string, inner int) []string {
 	for i, r := range rows {
 		if ansi.StringWidth(r) > inner {
 			rows[i] = ansi.Truncate(r, inner, "")
 		}
 	}
-	filterRow := -1
-	if f := s.panel.list.Filter(); f != "" && len(rows) > 0 {
-		filterRow = len(rows) - 1
-	}
-	items := rows
-	if filterRow >= 0 {
-		items = rows[:filterRow]
-	}
-	if maxRows > 0 && len(items) > maxRows {
-		start := 0
-		if cur := s.panel.list.CursorRow(); cur >= maxRows {
-			start = cur - maxRows + 1
+	return rows
+}
+
+func (s Screen) panelRows(inner, maxRows int) []string {
+	needle := strings.ToLower(s.panel.list.Filter())
+	visible, agents := s.panelFilterEntries(needle)
+
+	selLabel, _ := s.panel.list.Selected()
+	subtle := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle)
+	fg := render.Role(s.Theme, s.Tier, theme.RoleFG)
+	// The "> " marker is the cursor: it shows only while the list holds
+	// focus, so the row the NEXT keystroke acts on is always the marked
+	// one. Narrow mode has no focus-coloured rule, so this marker is its
+	// only focus signal. Unmarked file rows keep their kind glyph in the
+	// marker's place, so the column never twitches on focus moves.
+	marked := s.panel.focused
+	fileRow := func(e fileEntry) string {
+		name, dir := splitPath(e.Path)
+		glyph := map[fileKind]string{fileCreated: "+", fileEdited: "~", fileDeleted: "-"}[e.Kind]
+		prefix, style := "  ", fg
+		if marked && e.rowLabel() == selLabel {
+			prefix = "> "
+			style = render.WithBg(fg, s.Theme, s.Tier, theme.RoleBGSelection)
 		}
-		items = items[start : start+maxRows]
+		row := style.Render(prefix + glyph + " " + name)
+		if dir != "" {
+			row += subtle.Render("  " + dir)
+		}
+		return row
 	}
-	if filterRow >= 0 {
-		items = append(items, rows[filterRow])
+	agentRow := func(a subagentRow) string {
+		row := subtle.Render("  · ") + fg.Render(a.ID) + subtle.Render("  "+a.Status)
+		if a.Total > 0 {
+			row += subtle.Render("  " + strconv.Itoa(a.Step) + "/" + strconv.Itoa(a.Total))
+		}
+		return row
 	}
-	return items
+
+	var rows []string
+	selRow := -1
+	rows = append(rows, subtle.Render("files changed ("+strconv.Itoa(len(visible))+")"))
+	for _, e := range visible {
+		if e.rowLabel() == selLabel {
+			selRow = len(rows)
+		}
+		rows = append(rows, fileRow(e))
+	}
+	rows = append(rows, subtle.Render("subagents ("+strconv.Itoa(len(agents))+")"))
+	for _, a := range agents {
+		rows = append(rows, agentRow(a))
+	}
+
+	rows = panelWindowRows(rows, selRow, maxRows, needle != "")
+	if needle != "" {
+		rows = append(rows, subtle.Render("/"+s.panel.list.Filter()))
+	}
+	return clipRowsToWidth(rows, inner)
 }
 
 // dialogParts is the content dialog's title, windowed body, and hint.
@@ -290,21 +433,23 @@ func (s Screen) panelFrameRows() []string {
 
 	var frame string
 	switch {
-	case s.panel.dialog && paneH >= 6:
+	case s.panel.dialog && s.panelDialogFits():
 		title, body, hint := s.dialogParts()
-		frame = render.SplitDialog(s.Theme, s.Tier, w, paneH, title, body, hint,
-			strings.Join(s.panelRows(navW-2, paneH-2), "\n"))
+		// The list keeps keyboard focus under its dialog ("any key
+		// closes"), so the rule keeps the focused colour.
+		frame = render.SplitDialog(s.Theme, s.Tier, w, paneH, s.panel.focused, title, body, hint,
+			strings.Join(s.panelRows(navW-1, paneH), "\n"))
 	default:
 		focus := render.Left
 		if s.panel.focused {
 			focus = render.Right
 		}
 		chat := append(s.centerRows(), s.chatTailRows()...)
-		if len(chat) > paneH-2 {
-			chat = chat[:paneH-2]
+		if len(chat) > paneH {
+			chat = chat[:paneH]
 		}
 		frame = render.Split(s.Theme, s.Tier, w, paneH, focus,
-			strings.Join(chat, "\n"), strings.Join(s.panelRows(navW-2, paneH-2), "\n"))
+			strings.Join(chat, "\n"), strings.Join(s.panelRows(navW-1, paneH), "\n"))
 	}
 	rows := strings.Split(frame, "\n")
 	if len(rows) > paneH {
@@ -323,11 +468,11 @@ func (s Screen) panelFrameRows() []string {
 func (s Screen) narrowPanelRows() []string {
 	h := s.transcriptHeight()
 	w := contentWidth(s.width)
-	if s.panel.dialog && h >= 6 {
+	if s.panel.dialog && s.panelDialogFits() {
 		title, body, hint := s.dialogParts()
 		return overlayRows(render.Dialog(s.Theme, s.Tier, w, h, title, body, hint), h)
 	}
-	return overlayRows(strings.Join(s.panelRows(w-2, h), "\n"), h)
+	return overlayRows(strings.Join(s.panelRows(w, h), "\n"), h)
 }
 
 // chatTailRows is the chat column below the transcript area: the

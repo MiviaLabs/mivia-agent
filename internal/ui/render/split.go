@@ -1,10 +1,11 @@
 package render
 
 import (
-	"strconv"
 	"strings"
 
 	"charm.land/lipgloss/v2"
+
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 )
@@ -21,7 +22,7 @@ const SplitNavShare = 30
 // extra.
 const SplitNavMax = 60
 
-// Side names the focused pane of a split.
+// Side names the pane of a split that holds keyboard focus.
 type Side int
 
 // Left and Right are the two panes of a split.
@@ -31,11 +32,11 @@ const (
 )
 
 // SplitWidths is the pane geometry Split assigns: nav is the right
-// pane's total width (border included) at SplitNavShare of width capped
-// at SplitNavMax, reading is the left pane's. Exported so a caller that
-// renders content INTO a pane sizes that content to the same numbers
-// the frame draws around it - the pane wraps content wider than
-// width-minus-borders, it does not truncate it.
+// pane's width including its divider column, at SplitNavShare of width
+// capped at SplitNavMax; reading is the left pane's. Exported so a
+// caller that renders content INTO a pane sizes that content to the
+// same numbers the frame draws around it - blocks pad and clip, they
+// never re-wrap, so wide rows are the caller's to cut.
 func SplitWidths(width int) (reading, nav int) {
 	nav = width * SplitNavShare / 100
 	if nav > SplitNavMax {
@@ -51,61 +52,74 @@ func SplitWidths(width int) (reading, nav int) {
 	return reading, nav
 }
 
-// Split composes two bordered panes side by side: the right navigation
-// pane at SplitNavShare of width, the left reading pane at the rest. The
-// focused pane takes RoleBorderFocus, the unfocused RoleBorder - the
-// same convention as the approval prompt. Both boxes draw exactly height
-// rows: content shorter than the pane is padded, and a pane with more
-// content than height must be windowed by its caller first (Split never
-// scrolls - scrolling belongs to the pane's owner, so there stays one
-// implementation of it).
+// Split composes the reading column and the nav sidebar side by side,
+// separated by ONE vertical rule on the sidebar's left edge - the only
+// frame the split draws. The reading column keeps the cockpit's open
+// look (a full box around the conversation reads as a second terminal
+// inside the terminal), and the rule is what says "pane boundary".
+//
+// The focused pane names the rule's colour, carrying the same
+// RoleBorderFocus/RoleBorder convention the approval prompt uses. Both
+// columns draw exactly height rows: content is padded, and surplus rows
+// clip from the bottom (Split never scrolls - windowing belongs to the
+// pane's owner, so there stays one implementation of it).
 //
 // This is the codebase's only side-by-side composition; it exists so
-// the ratio, the height contract, and the focus-border convention live
+// the ratio, the height contract, and the focus-colour convention live
 // in one place when more panes arrive.
 func Split(t theme.Theme, tier theme.Tier, width, height int, focus Side, left, right string) string {
-	leftW, rightW := SplitWidths(width)
-	return lipgloss.JoinHorizontal(lipgloss.Top,
-		paneBox(t, tier, focus == Left, leftW, height, left),
-		paneBox(t, tier, focus == Right, rightW, height, right),
-	)
+	reading, nav := SplitWidths(width)
+	return joinWithRule(t, tier, focus == Right, height,
+		clipBlock(left, reading, height), clipBlock(right, nav-1, height))
 }
 
-// SplitDialog is the split with its reading pane replaced by a centered
-// dialog: the dialog is sized to the reading pane's whole area, so the
-// two blocks compose with no gap, and the navigation pane stays visible
-// and legible beside it instead of hiding behind a full-surface dialog.
-// The dialog is the focus surface here, so the nav pane draws the
-// unfocused border.
-func SplitDialog(t theme.Theme, tier theme.Tier, width, height int, title, body, hint, nav string) string {
-	leftW, rightW := SplitWidths(width)
-	dlg := Dialog(t, tier, leftW, height, title, body, hint)
-	return lipgloss.JoinHorizontal(lipgloss.Top,
-		dlg,
-		paneBox(t, tier, false, rightW, height, nav),
-	)
+// SplitDialog is the split with its reading column replaced by a
+// centered dialog: the dialog is sized to the reading column's whole
+// area, so the blocks compose with no gap, and the nav pane stays
+// visible and legible beside it instead of hiding behind a
+// full-surface dialog. navFocused names the rule's colour, so a caller
+// whose list keeps keyboard focus under the dialog can keep saying so.
+func SplitDialog(t theme.Theme, tier theme.Tier, width, height int, navFocused bool, title, body, hint, nav string) string {
+	reading, navW := SplitWidths(width)
+	dlg := Dialog(t, tier, reading, height, title, body, hint)
+	return joinWithRule(t, tier, navFocused, height, dlg, clipBlock(nav, navW-1, height))
 }
 
-// paneBox frames one pane. Content rows beyond height are dropped, not
-// scrolled: the caller windows long content. A content row wider than
-// the pane's inner width wraps, so callers clip wide rows themselves.
-func paneBox(t theme.Theme, tier theme.Tier, focused bool, inner, height int, content string) string {
+// joinWithRule stacks block, one rule column, block.
+func joinWithRule(t theme.Theme, tier theme.Tier, focus bool, height int, reading, nav string) string {
+	return lipgloss.JoinHorizontal(lipgloss.Top, reading, verticalRule(t, tier, focus, height), nav)
+}
+
+// verticalRule is the sidebar's left edge: one column of rule glyphs,
+// focus-coloured. It is the split's only frame.
+func verticalRule(t theme.Theme, tier theme.Tier, focus bool, height int) string {
 	role := theme.RoleBorder
-	if focused {
+	if focus {
 		role = theme.RoleBorderFocus
 	}
-	st := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		Width(inner).
-		Height(height)
-	if s := t.Resolve(role, tier); s.Hex != "" {
-		st = st.BorderForeground(lipgloss.Color(s.Hex))
-	} else if s.ANSI16 >= 0 {
-		st = st.BorderForeground(lipgloss.Color(strconv.Itoa(s.ANSI16)))
-	}
+	glyph := strings.Repeat("│\n", height)
+	return Role(t, tier, role).Render(strings.TrimSuffix(glyph, "\n"))
+}
+
+// clipBlock normalizes content into an exact width x height block:
+// every row clipped (never wrapped) to width, surplus rows dropped, and
+// short blocks padded with blank rows.
+func clipBlock(content string, width, height int) string {
 	rows := strings.Split(content, "\n")
 	if len(rows) > height {
-		content = strings.Join(rows[:height], "\n")
+		rows = rows[:height]
 	}
-	return st.Render(content)
+	for i, r := range rows {
+		if w := ansi.StringWidth(r); w > width {
+			rows[i] = ansi.Truncate(r, width, "")
+		}
+	}
+	for len(rows) < height {
+		rows = append(rows, "")
+	}
+	st := lipgloss.NewStyle().Width(width)
+	for i, r := range rows {
+		rows[i] = st.Render(r)
+	}
+	return strings.Join(rows, "\n")
 }

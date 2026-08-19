@@ -102,6 +102,7 @@ const (
 	// Files panel (the touched-files pane beside the conversation).
 	IDPanelToggle    ID = "panel-toggle"
 	IDFileToggleView ID = "file-toggle-view"
+	IDFileOpen       ID = "file-open"
 )
 
 // Binding is one row of the table.
@@ -225,16 +226,19 @@ func pagerBindings() []Binding {
 // beside the conversation, not a tab takeover: arrows and the less
 // spellings move the LIST selection while the panel holds focus, d
 // flips the content dialog between diff and source, ctrl+d/ctrl+u
-// scroll that content by half pages, and esc hands focus back to the
-// composer without closing the panel.
+// scroll that content by half pages, and esc peels a filter away
+// before it hands focus back to the composer. Enter and plain typing
+// are the picker's own handling (select, filter), documented here so
+// the generated help states them.
 func filesBindings() []Binding {
 	return []Binding{
 		{ID: IDPagerRowUp, Context: ContextFiles, Keys: []string{"up", "k"}, Help: "previous file"},
 		{ID: IDPagerRowDown, Context: ContextFiles, Keys: []string{"down", "j"}, Help: "next file"},
+		{ID: IDFileOpen, Context: ContextFiles, Keys: []string{"enter"}, Help: "open the diff (typing filters the list)"},
 		{ID: IDPagerHalfDown, Context: ContextFiles, Keys: []string{"ctrl+d"}, Help: "scroll the content half a page down"},
 		{ID: IDPagerHalfUp, Context: ContextFiles, Keys: []string{"ctrl+u"}, Help: "scroll the content half a page up"},
-		{ID: IDFileToggleView, Context: ContextFiles, Keys: []string{"d"}, Help: "diff or source", Short: "diff"},
-		{ID: IDCancel, Context: ContextFiles, Keys: []string{"esc"}, Help: "return to the composer, panel stays open"},
+		{ID: IDFileToggleView, Context: ContextFiles, Keys: []string{"d"}, Help: "diff or source (in the dialog)", Short: "diff"},
+		{ID: IDCancel, Context: ContextFiles, Keys: []string{"esc"}, Help: "clear the filter, then return to the composer"},
 	}
 }
 

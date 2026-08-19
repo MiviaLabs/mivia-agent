@@ -11,7 +11,7 @@ import (
 )
 
 // colAt is the display column of needle in row (strings.Index counts
-// bytes, and the pane borders are multi-byte runes).
+// bytes, and the rule and borders are multi-byte runes).
 func colAt(row, needle string) int {
 	i := strings.Index(row, needle)
 	if i < 0 {
@@ -20,23 +20,27 @@ func colAt(row, needle string) int {
 	return ansi.StringWidth(row[:i])
 }
 
-func TestSplitFramesTwoPanesAtTheNamedRatio(t *testing.T) {
+func TestSplitSeparatesWithOneRuleAndNoBoxes(t *testing.T) {
 	got := Split(loadTheme(t), theme.TierASCII, 100, 10, Left, "reading", "nav")
 	rows := strings.Split(got, "\n")
 	if len(rows) != 10 {
 		t.Fatalf("%d rows, want 10 (exact height contract)", len(rows))
-	}
-	if strings.Count(got, "╭") != 2 {
-		t.Errorf("framed %d panes, want 2", strings.Count(got, "╭"))
 	}
 	for i, r := range rows {
 		if w := lipgloss.Width(r); w != 100 {
 			t.Errorf("row %d width %d, want 100 (exact width contract)", i, w)
 		}
 	}
-	// The nav pane is SplitNavShare of the width, on the RIGHT: on the
-	// content row, "reading" sits in the first 70 columns and "nav"
-	// beyond them.
+	// The split's only frame is the vertical rule on the sidebar's left
+	// edge: one rule glyph per row, and no box corners anywhere.
+	if n := strings.Count(got, "│"); n != 10 {
+		t.Errorf("drew %d rule glyphs, want one per row (10)", n)
+	}
+	if strings.Contains(got, "╭") || strings.Contains(got, "╰") {
+		t.Errorf("the split frames a pane with a box; only the rule may draw:\n%s", got)
+	}
+	// The reading column sits left of the rule, the nav content right of
+	// it.
 	var contentRow string
 	for _, r := range rows {
 		if strings.Contains(r, "reading") {
@@ -47,11 +51,15 @@ func TestSplitFramesTwoPanesAtTheNamedRatio(t *testing.T) {
 	if contentRow == "" {
 		t.Fatalf("no row shows the panes' content:\n%s", got)
 	}
+	reading, _ := SplitWidths(100)
 	if i := colAt(contentRow, "reading"); i > 2 {
-		t.Errorf("reading content at column %d, want inside the left pane: %q", i, contentRow)
+		t.Errorf("reading content at column %d, want inside the left column: %q", i, contentRow)
 	}
-	if i := colAt(contentRow, "nav"); i < 60 {
-		t.Errorf("nav content at column %d, want inside the right pane's 30%% share: %q", i, contentRow)
+	if i := colAt(contentRow, "│"); i != reading {
+		t.Errorf("rule at column %d, want %d (the sidebar's left edge): %q", i, reading, contentRow)
+	}
+	if i := colAt(contentRow, "nav"); i < reading {
+		t.Errorf("nav content at column %d, want right of the rule at %d: %q", i, reading, contentRow)
 	}
 }
 
@@ -108,12 +116,12 @@ func TestSplitWidthsMatchesWhatSplitDraws(t *testing.T) {
 	}
 }
 
-// TestSplitDialogReplacesTheReadingPaneKeepsTheNavPane: the dialog
-// composes into the left pane's area at the split's exact frame size,
-// and the nav pane's content stays visible beside it rather than
+// TestSplitDialogReplacesTheReadingColumnKeepsTheNavPane: the dialog
+// composes into the reading column's area at the split's exact frame
+// size, and the nav pane's content stays visible beside it rather than
 // hiding behind the dialog.
-func TestSplitDialogReplacesTheReadingPaneKeepsTheNavPane(t *testing.T) {
-	got := SplitDialog(loadTheme(t), theme.TierASCII, 120, 20, "a.go", "+ added line", "any key closes", "navrow")
+func TestSplitDialogReplacesTheReadingColumnKeepsTheNavPane(t *testing.T) {
+	got := SplitDialog(loadTheme(t), theme.TierASCII, 120, 20, true, "a.go", "+ added line", "any key closes", "navrow")
 	rows := strings.Split(got, "\n")
 	if len(rows) != 20 {
 		t.Fatalf("%d rows, want 20 (exact height contract)", len(rows))
@@ -140,7 +148,9 @@ func TestSplitDialogReplacesTheReadingPaneKeepsTheNavPane(t *testing.T) {
 	if !strings.Contains(got, "+ added line") || !strings.Contains(got, "any key closes") {
 		t.Errorf("dialog content missing from the composed frame:\n%s", got)
 	}
-	if strings.Count(got, "╭") != 2 {
-		t.Errorf("framed %d boxes, want 2 (the dialog and the nav pane)", strings.Count(got, "╭"))
+	// The dialog is the one box; the split itself contributes only the
+	// rule.
+	if n := strings.Count(got, "╭"); n != 1 {
+		t.Errorf("framed %d boxes, want 1 (the dialog)", n)
 	}
 }

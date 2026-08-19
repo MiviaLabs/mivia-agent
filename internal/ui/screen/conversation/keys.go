@@ -45,8 +45,10 @@ func (s Screen) handleKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
 
 	// Any key other than a second ctrl+c ends the quit-armed state, so a
 	// stray keystroke cannot leave the session one press from exiting.
-	// This runs before the branches that return early for their keys
-	// (the panel's list, the overlay) for the same reason.
+	// The two modal surfaces above (approval, the pickers) return before
+	// this point and manage the arm themselves through their ctrl+c
+	// flows; every other key path - the panel's list, the overlay, the
+	// composer - runs through this clear.
 	if msg.String() != "ctrl+c" {
 		s.quitArmed = false
 	}
@@ -177,33 +179,36 @@ func (s Screen) handlePanelKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bool) 
 	if id, ok := s.keys.Match(keymap.ContextFiles, msg.String()); ok {
 		switch id {
 		case keymap.IDCancel:
+			// Esc peels one layer at a time: a filter first (the
+			// shortened list is explained by "/filter", and the way to
+			// see every file again is this press), then focus.
+			if s.panel.list.Filter() != "" {
+				s.panel.list.ClearFilter()
+				return s, nil, true
+			}
 			s.panelFocus(false)
-			return s, nil, true
-		case keymap.IDFileToggleView:
-			s.panel.sourceView = !s.panel.sourceView
-			s.panel.offset = 0
-			return s, nil, true
-		case keymap.IDPagerHalfUp:
-			s.scrollPanel(-1)
-			return s, nil, true
-		case keymap.IDPagerHalfDown:
-			s.scrollPanel(1)
 			return s, nil, true
 		case keymap.IDPagerRowUp:
 			msg = tea.KeyPressMsg{Code: tea.KeyUp}
 		case keymap.IDPagerRowDown:
 			msg = tea.KeyPressMsg{Code: tea.KeyDown}
 		}
+		// The view toggle and half-page scrolls act on CONTENT, and the
+		// only content surface is the dialog (panelDialogKey above);
+		// with the dialog closed those keys fall through to the filter,
+		// where 'd' is a letter the user must be able to type.
 	}
 	// Everything else feeds the list: arrows move the selection, typing
 	// filters, and Enter selects. The SelectMsg is consumed here, not
 	// returned as a Cmd - the dialog is this screen's own state, not a
-	// routed message.
+	// routed message. Enter opens the dialog only where it fits to draw;
+	// a too-small terminal leaves the list usable instead of setting a
+	// flag that swallows keys for a dialog nothing renders.
 	next, cmd := s.panel.list.Update(msg)
 	s.panel.list = next
 	s.panel.offset = 0 // a moved selection restarts the content at its top
 	if cmd != nil {
-		if _, ok := cmd().(picker.SelectMsg); ok {
+		if _, ok := cmd().(picker.SelectMsg); ok && s.panelDialogFits() {
 			s.panel.dialog, s.panel.offset = true, 0
 		}
 	}
@@ -257,10 +262,10 @@ func (s *Screen) panelFocus(focused bool) {
 //
 // Left button only. A click on a collapsed block header expands it; a
 // click on a completion row accepts it; a click on the input line
-// places the cursor. With the panel open wide, all of that lives inside
-// the left reading pane, so clicks shift past the pane's borders and
-// the nav pane ignores clicks; narrow, the list covers the transcript
-// area and answers nothing.
+// places the cursor. With the panel open wide the chat column keeps
+// its normal geometry (the split draws no frame around it), and the
+// nav pane and its rule carry no click actions; narrow, the list
+// covers the transcript area and answers nothing.
 func (s Screen) handleClick(msg tea.MouseClickMsg) (app.Screen, tea.Cmd) {
 	if msg.Button != tea.MouseLeft {
 		return s, nil
@@ -272,16 +277,13 @@ func (s Screen) handleClick(msg tea.MouseClickMsg) (app.Screen, tea.Cmd) {
 	x, y := msg.X, msg.Y
 	transcriptTop := 2 // top bar, then its margin row
 	if s.panelIsSplit() {
+		// Column 0 is the gutter; the reading column runs to the rule.
+		// Clicks on the rule or the nav pane are not panel actions, so
+		// they stop here.
 		reading, _ := render.SplitWidths(contentWidth(s.width))
-		// Column 0 is the gutter; the reading pane runs to the nav
-		// pane's left edge. Clicks on the nav pane are not panel
-		// actions, so they stop here.
 		if x > reading {
 			return s, nil
 		}
-		x-- // the pane's left border
-		y-- // the pane's top border
-		transcriptTop = 3
 	} else if s.panel.open {
 		if y-transcriptTop < s.transcriptHeight() {
 			return s, nil // the list covers the transcript area
@@ -290,13 +292,8 @@ func (s Screen) handleClick(msg tea.MouseClickMsg) (app.Screen, tea.Cmd) {
 	transcriptRows := s.transcriptHeight()
 	// The composer's frame puts the input above the bottom border, so
 	// the input row and its first column both shift; the composer owns
-	// the exact numbers (InputRowFromBottom, InputColumnOffset). Under
-	// the split, the pane's bottom border takes the screen's last row.
-	bottom := s.height - 1
-	if s.panelIsSplit() {
-		bottom--
-	}
-	inputRow := bottom - s.composer.InputRowFromBottom()
+	// the exact numbers (InputRowFromBottom, InputColumnOffset).
+	inputRow := s.height - 1 - s.composer.InputRowFromBottom()
 	colOffset := s.composer.InputColumnOffset()
 	menuRows := s.composer.Height() - 3
 	if menuRows < 0 {
@@ -407,17 +404,26 @@ func (s Screen) globalAction(id keymap.ID) (app.Screen, tea.Cmd, bool) {
 	case keymap.IDPanelToggle:
 		// ctrl+n drives the panel's three states. This site handles the
 		// two the global context can see: closed opens the panel focused
-		// in its list, and open-with-the-composer-focused closes it. The
-		// middle state - the list focused - claims ctrl+n earlier, in
-		// handlePanelKey, to hand focus back without closing.
+		// in its list, and open-with-the-composer-focused closes it (a
+		// close also drops the filter - a hidden list must not resurface
+		// later as an unexplained short list). The middle state - the
+		// list focused - claims ctrl+n earlier, in handlePanelKey, to
+		// hand focus back without closing.
 		if s.panel.open {
 			s.panel.open, s.panel.focused, s.panel.dialog = false, false, false
+			s.panel.list.ClearFilter()
 		} else {
 			s.panel.openPanel()
 			s.transcript = s.transcript.ClearFocus()
 		}
 		s.reflow()
-		return s, nil, true
+		// The toggle rewraps every chat row and changes the surface's
+		// shape. Terminals that coalesce positioned writes (the
+		// full-repaint hazard class) leave the old column bleeding
+		// through a diff update, so the toggle clears and redraws - the
+		// same rule the overlay dismiss and the screen pop follow. A
+		// toggle is rare, not per-keystroke; the cost is nothing.
+		return s, tea.ClearScreen, true
 	case keymap.IDOpenPager:
 		// Rule 6.2: transcript mode replaces terminal find. The pager
 		// takes a VALUE snapshot of the conversation; blocks re-render

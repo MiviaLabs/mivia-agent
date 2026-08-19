@@ -173,12 +173,15 @@ func TestPanelFilterSurvivesLiveUpdates(t *testing.T) {
 	}
 }
 
-// TestPanelEmptyStateNamesItself: no touched files is a stated empty
-// state, not a blank pane.
-func TestPanelEmptyStateNamesItself(t *testing.T) {
+// TestPanelEmptyStateNamesItsSections: no activity is still a stated
+// shape - the section headers with zero counts, not a blank pane.
+func TestPanelEmptyStateNamesItsSections(t *testing.T) {
 	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 24))
-	if !strings.Contains(s.View(), "no files touched yet") {
-		t.Errorf("empty state missing:\n%s", s.View())
+	plain := ansi.Strip(s.View())
+	for _, want := range []string{"files changed (0)", "subagents (0)"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("empty state missing %q:\n%s", want, plain)
+		}
 	}
 }
 
@@ -207,10 +210,77 @@ func TestPanelToggleCycle(t *testing.T) {
 	if s.panel.open || s.panel.focused {
 		t.Fatalf("third ctrl+n: open=%v focused=%v, want closed", s.panel.open, s.panel.focused)
 	}
-	// The transcript renders the diffs too, so the list's row-label form
-	// ("path  kind") is the panel-shaped string to test for.
-	if strings.Contains(s.View(), "a.go  edited") {
-		t.Error("closed panel still draws the list")
+	// The transcript renders the diffs too, so the panel's section
+	// header form is the panel-shaped string to test for.
+	if strings.Contains(s.View(), "files changed (") {
+		t.Error("closed panel still draws the sidebar")
+	}
+}
+
+// TestPanelSectionsGroupByCategory: the sidebar's sections are
+// categories of thing (files changed, subagents), each headed with a
+// live count, empty sections keep their header, file rows carry their
+// kind as a glyph (+ created, ~ edited), and the selection is marked.
+func TestPanelSectionsGroupByCategory(t *testing.T) {
+	diffs := []uievent.EventMsg{
+		diffEvent("c1", "internal/ui/a.go", 3, 1, "package a"),
+		diffEvent("c2", "cmd/b.go", 2, 0, "package b"),
+		diffEvent("c3", "internal/ui/a.go", 9, 2, "package a", "// second edit"),
+	}
+	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 30, diffs...))
+	view := s.View()
+	plain := ansi.Strip(view)
+	for _, want := range []string{"files changed (2)", "subagents (0)"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("section header %q missing:\n%s", want, plain)
+		}
+	}
+	// Rows split name from dimmed directory, with the kind glyph in
+	// front and the selection marker on the selected row.
+	if !strings.Contains(plain, "~ a.go  internal/ui") {
+		t.Errorf("edited row does not show glyph + name + directory:\n%s", plain)
+	}
+	if !strings.Contains(plain, "+ b.go") {
+		t.Errorf("created row does not show its glyph:\n%s", plain)
+	}
+	if !strings.Contains(plain, "> ~ a.go") {
+		t.Errorf("the selected row is not marked:\n%s", plain)
+	}
+
+	// A live re-edit keeps the file in place but flips its glyph.
+	next, _ := s.Update(diffEvent("c4", "cmd/b.go", 5, 5, "package b2"))
+	s = next.(Screen)
+	plain = ansi.Strip(s.View())
+	if !strings.Contains(plain, "~ b.go") || strings.Contains(plain, "+ b.go") {
+		t.Errorf("live re-edit did not flip the kind glyph:\n%s", plain)
+	}
+
+	// A subagent progress update fills the subagents section live, with
+	// id, status, and step - and the composer can hold focus while it
+	// lands.
+	next, _ = s.Update(uievent.EventMsg{Event: uievent.Event{
+		Kind: uievent.KindToolOutput,
+		Body: uievent.ToolOutputBody{ToolCallID: "sa-1",
+			Progress: &uievent.Progress{Step: 2, TotalSteps: 5, Status: "running"}},
+	}})
+	s = next.(Screen)
+	plain = ansi.Strip(s.View())
+	if !strings.Contains(plain, "subagents (1)") || !strings.Contains(plain, "sa-1") ||
+		!strings.Contains(plain, "running") || !strings.Contains(plain, "2/5") {
+		t.Errorf("subagent progress did not reach the section live:\n%s", plain)
+	}
+	// A later update folds in place rather than appending a row. (The
+	// transcript keeps its own historical "running" block - only the
+	// sidebar row must flip to the latest status.)
+	next, _ = s.Update(uievent.EventMsg{Event: uievent.Event{
+		Kind: uievent.KindToolOutput,
+		Body: uievent.ToolOutputBody{ToolCallID: "sa-1",
+			Progress: &uievent.Progress{Step: 5, TotalSteps: 5, Status: "done"}},
+	}})
+	s = next.(Screen)
+	plain = ansi.Strip(s.View())
+	if !strings.Contains(plain, "subagents (1)") || !strings.Contains(plain, "sa-1  done") {
+		t.Errorf("subagent update did not fold in place:\n%s", plain)
 	}
 }
 
@@ -233,22 +303,32 @@ func TestPanelEscReturnsFocusToComposerPanelStaysOpen(t *testing.T) {
 }
 
 // TestPanelWideSplitFrameContract: at and above the wide breakpoint the
-// cockpit is a split - the chat column left, the file list right, both
-// framed - and the whole frame keeps its exact size and gutter.
+// cockpit splits - the chat column left, the file list right, separated
+// by ONE vertical rule on the sidebar's edge and nothing else framed
+// but the composer's own box - and the whole frame keeps its exact
+// size and gutter.
 func TestPanelWideSplitFrameContract(t *testing.T) {
 	for _, w := range []int{uikitconfig.BreakpointWide, 200} {
 		s := openPanel(t, panelScreen(t, w, 30, sampleDiffs()...))
 		view := s.View()
 		assertExactFrame(t, view, w, 30)
 		plain := ansi.Strip(view)
-		for _, want := range []string{"notice-a", "notice-b", "a.go", "b.go", "edited", "created"} {
+		for _, want := range []string{"notice-a", "notice-b", "a.go", "b.go", "files changed", "subagents"} {
 			if !strings.Contains(plain, want) {
 				t.Errorf("width %d: split view missing %q:\n%s", w, want, plain)
 			}
 		}
-		// Two split panes plus the composer's own frame box.
-		if got := strings.Count(view, "╭"); got != 3 {
-			t.Errorf("width %d: framed %d boxes, want 3 (two panes + the composer frame)", w, got)
+		// The split frames nothing: the composer's own box is the only
+		// one on screen.
+		if got := strings.Count(view, "╭"); got != 1 {
+			t.Errorf("width %d: framed %d boxes, want 1 (the composer frame alone)", w, got)
+		}
+		// The rule stands at the sidebar's left edge on every content
+		// row: check the first transcript row's column.
+		reading, _ := render.SplitWidths(w - 2)
+		first := ansi.Strip(strings.Split(view, "\n")[3])
+		if i := strings.Index(first, "│"); i < 0 || ansi.StringWidth(first[:i]) != 1+reading {
+			t.Errorf("width %d: no rule at column %d (gutter + reading width): %q", w, 1+reading, first)
 		}
 		// The top bar names the product, not a tab strip that no longer
 		// exists.
@@ -516,3 +596,121 @@ type scriptedHandle struct{ ch chan uievent.Event }
 func (h scriptedHandle) ID() string                   { return "scripted" }
 func (h scriptedHandle) Events() <-chan uievent.Event { return h.ch }
 func (h scriptedHandle) Cancel()                      {}
+
+// TestPanelDTypesIntoTheFilterWhileNoDialogShows: the view toggle acts
+// on content, and the only content surface is the dialog - with the
+// dialog closed, 'd' must reach the filter (it is a letter users must
+// be able to type) and must not flip invisible view state.
+func TestPanelDTypesIntoTheFilterWhileNoDialogShows(t *testing.T) {
+	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 24, sampleDiffs()...))
+	next, _ := s.Update(key("d"))
+	s = next.(Screen)
+	if got := s.panel.list.Filter(); got != "d" {
+		t.Errorf("d did not reach the filter (got %q): untypeable letter or swallowed state flip", got)
+	}
+	if s.panel.sourceView {
+		t.Error("d flipped sourceView with no dialog on screen to show it")
+	}
+	// Enter still opens the diff view, not a silently-armed source view.
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEscape}) // clear the filter first
+	s = next.(Screen)
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	s = next.(Screen)
+	if !s.panel.dialog || !strings.Contains(s.View(), "@@") {
+		t.Errorf("enter after d-in-filter did not open the diff dialog:\n%s", s.View())
+	}
+}
+
+// TestPanelEscPeelsTheFilterBeforeTheFocus: esc clears an active filter
+// while keeping the list focused; the second esc hands focus to the
+// composer.
+func TestPanelEscPeelsTheFilterBeforeTheFocus(t *testing.T) {
+	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 24, sampleDiffs()...))
+	next, _ := s.Update(key("b"))
+	s = next.(Screen)
+	if s.panel.list.Filter() != "b" {
+		t.Fatal("precondition: filter armed")
+	}
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	s = next.(Screen)
+	if s.panel.list.Filter() != "" {
+		t.Error("the first esc must clear the filter")
+	}
+	if !s.panel.focused {
+		t.Error("the first esc must keep the list focused")
+	}
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	s = next.(Screen)
+	if s.panel.focused {
+		t.Error("the second esc must hand focus to the composer")
+	}
+}
+
+// TestPanelCloseDropsTheFilter: a closed panel must not resurface as an
+// unexplained short list.
+func TestPanelCloseDropsTheFilter(t *testing.T) {
+	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 24, sampleDiffs()...))
+	next, _ := s.Update(key("b"))
+	s = next.(Screen)
+	next, _ = s.Update(ctrl('n')) // defocus
+	s = next.(Screen)
+	next, _ = s.Update(ctrl('n')) // close
+	s = next.(Screen)
+	s = openPanel(t, s) // reopen
+	if got := s.panel.list.Filter(); got != "" {
+		t.Errorf("reopened panel kept the filter %q", got)
+	}
+}
+
+// TestPanelCursorMarkerIsTheFocusSignal: the "> " marker shows only
+// while the list holds focus, so the row the next keystroke acts on is
+// always the marked one - and narrow mode (which has no rule to carry
+// the focus colour) still gets a signal.
+func TestPanelCursorMarkerIsTheFocusSignal(t *testing.T) {
+	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 24, sampleDiffs()...))
+	if !strings.Contains(s.View(), "> ~ a.go") {
+		t.Errorf("focused list does not mark the selected row:\n%s", s.View())
+	}
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	s = next.(Screen)
+	view := s.View()
+	if strings.Contains(view, "> ~") {
+		t.Errorf("defocused list still shows the cursor marker:\n%s", view)
+	}
+	if !strings.Contains(view, "~ a.go") {
+		t.Errorf("defocused list dropped its rows entirely:\n%s", view)
+	}
+}
+
+// TestPanelEnterGatedOnDialogFit: at a height too small to draw the
+// dialog, Enter leaves the list usable instead of arming a dialog flag
+// that swallows keys for a surface nothing renders.
+func TestPanelEnterGatedOnDialogFit(t *testing.T) {
+	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 7, sampleDiffs()...))
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	s = next.(Screen)
+	if s.panel.dialog {
+		t.Error("enter opened a dialog the frame cannot draw")
+	}
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	s = next.(Screen)
+	if sel, _ := s.panel.list.Selected(); !strings.Contains(sel, "b.go") {
+		t.Errorf("list navigation died under the too-small frame (selected %q)", sel)
+	}
+}
+
+// TestPanelFilterIndicatorSurvivesWindowing: the "/filter" row is the
+// only explanation of a shortened list, so a list longer than its
+// window must still show it.
+func TestPanelFilterIndicatorSurvivesWindowing(t *testing.T) {
+	var diffs []uievent.EventMsg
+	for i := 0; i < 25; i++ {
+		diffs = append(diffs, diffEvent("c", "dir/f"+string(rune('a'+i))+".go", 1, 0, "x"))
+	}
+	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 16, diffs...))
+	next, _ := s.Update(key("f"))
+	s = next.(Screen)
+	if !strings.Contains(s.View(), "/f") {
+		t.Errorf("filter indicator clipped by the windowing:\n%s", s.View())
+	}
+}

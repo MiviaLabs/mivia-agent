@@ -45,6 +45,15 @@ func (m *Model) Rebind(items []string) {
 // cursor by row index needs to know whether that row is even visible.
 func (m Model) Filter() string { return m.filter }
 
+// ClearFilter drops the active filter and resets the cursor to the
+// first row. Owners that dismiss the list (or hand focus away from it)
+// use it so a stale filter cannot resurface as an unexplained short
+// list.
+func (m *Model) ClearFilter() {
+	m.filter = ""
+	m.cursor = 0
+}
+
 // CursorRow is the cursor's row within the visible list, so a caller
 // that windows the list into a pane can keep the highlighted row on
 // screen.

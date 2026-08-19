@@ -298,6 +298,13 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 	case uievent.ToolStartBody:
 		s.approval.Clear()
 		s.statusline.SetLabel("running")
+	case uievent.ToolOutputBody:
+		// A progress-bearing output is a subagent status update (see
+		// uievent.ToolOutputBody): the panel's subagents section feeds
+		// from the same stream the transcript renders.
+		if b.Progress != nil {
+			s.panel.observeAgent(b.ToolCallID, b.Progress)
+		}
 	case uievent.ToolEndBody:
 		s.approval.Clear()
 		s.statusline.SetLabel("thinking")

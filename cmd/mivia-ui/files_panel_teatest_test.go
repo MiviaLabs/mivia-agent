@@ -97,8 +97,8 @@ func driveFilesPanel(t *testing.T, width int, openDialog bool, cond func(string)
 func TestFilesPanelVisualWideDialog(t *testing.T) {
 	out := driveFilesPanel(t, 140, true, func(s string) bool {
 		// The dialog's body and the list pane's row, one frame: two
-		// framed boxes: the dialog and the still-visible nav pane.
-		return strings.Contains(s, "defaults.go") && strings.Contains(s, "@@") && strings.Count(s, "╭") >= 2
+		// framed box: the dialog (the split itself draws only its rule).
+		return strings.Contains(s, "defaults.go") && strings.Contains(s, "@@") && strings.Count(s, "╭") >= 1
 	})
 	if !strings.Contains(out, "any key closes") {
 		t.Errorf("the content dialog's dismissal rule is not on screen:\n%s", out)
@@ -110,7 +110,7 @@ func TestFilesPanelVisualWideDialog(t *testing.T) {
 // no side-by-side panes, no dialog.
 func TestFilesPanelVisualNarrowList(t *testing.T) {
 	out := driveFilesPanel(t, 60, false, func(s string) bool {
-		return strings.Contains(s, "defaults.go") && strings.Contains(s, "edited")
+		return strings.Contains(s, "defaults.go") && strings.Contains(s, "files changed")
 	})
 	if strings.Count(out, "╭") > 1 {
 		t.Errorf("narrow panel drew side-by-side panes:\n%s", out)
