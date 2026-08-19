@@ -230,10 +230,10 @@ func TestApprovalActiveRoutesKeysToApprovalNotComposer(t *testing.T) {
 	s := newScreen(t, replay.New(nil, 0), replay.NewApprover(), nil)
 	s.approval.SetRequest(uievent.ToolPendingBody{ToolCallID: "c1", Name: "run_command"})
 
-	next, cmd := s.Update(keyMsg("y"))
+	next, cmd := s.Update(keyMsg("o"))
 	got := next.(Screen)
 	if cmd == nil {
-		t.Fatal("expected the approval component to emit a DecisionMsg Cmd for \"y\"")
+		t.Fatal("expected the approval component to emit a DecisionMsg Cmd for \"o\"")
 	}
 	if got.composer.Value() != "" {
 		t.Errorf("got composer value %q, want the keypress consumed by approval, not typed", got.composer.Value())

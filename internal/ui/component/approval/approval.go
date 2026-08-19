@@ -46,15 +46,24 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	if !ok || m.active == nil {
 		return m, nil
 	}
+	// Key set is wireframes-panes.md section 7, exactly: o once, a always,
+	// d deny, D deny always. Enter takes once, Esc is deny.
+	//
+	// "d" is deny-ONCE. An earlier version of this file mapped "d" to
+	// DecisionDenyAlways, so a user pressing d granted a standing
+	// session-wide denial they did not ask for. Keep d and D distinct.
 	var decision ports.Decision
 	switch key.String() {
-	case "y", "enter":
+	case "o", "enter":
 		decision = ports.DecisionOnce
 	case "a":
 		decision = ports.DecisionAlways
-	case "n", "esc":
+	case "d", "esc":
 		decision = ports.DecisionDeny
-	case "d":
+	case "D", "shift+d":
+		// Both spellings: a terminal sending Text="D" reports "D", but a
+		// key event carrying only Code='d' plus ModShift reports
+		// "shift+d". Verified against charm.land/bubbletea/v2 Key.String.
 		decision = ports.DecisionDenyAlways
 	default:
 		return m, nil
@@ -71,7 +80,10 @@ func (m Model) View() string {
 	}
 	title := render.Role(m.Theme, m.Tier, theme.RoleWarning).Bold(true).Render(
 		"approve " + m.active.Name + " " + render.FormatArgs(m.active.Args))
+	// The hint states the complete truth for this state: every key listed
+	// works, and no key that works is omitted. "v view diff" from the
+	// design is deliberately absent until a diff view exists to open.
 	hint := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Render(
-		"[y] once  [a] always  [n] deny  [d] deny always")
+		"o once    a always    d deny    D deny always")
 	return title + "\n" + hint
 }

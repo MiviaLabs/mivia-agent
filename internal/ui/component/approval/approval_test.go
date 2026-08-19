@@ -40,7 +40,7 @@ func TestViewShowsPendingRequest(t *testing.T) {
 		t.Fatal("expected Active() after SetRequest")
 	}
 	got := m.View()
-	for _, want := range []string{"run_command", "cmd=ls", "[y] once", "[d] deny always"} {
+	for _, want := range []string{"run_command", "cmd=ls", "o once", "D deny always"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("approval view missing %q:\n%s", want, got)
 		}
@@ -53,9 +53,39 @@ func keyMsg(s string) tea.KeyPressMsg {
 
 func TestUpdateIgnoresKeysWithNoRequest(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII)
-	_, cmd := m.Update(keyMsg("y"))
+	_, cmd := m.Update(keyMsg("o"))
 	if cmd != nil {
 		t.Error("expected no Cmd when nothing is pending")
+	}
+}
+
+// TestDenyOnceIsDistinctFromDenyAlways pins the highest-severity defect
+// this component has had: "d" once meant DecisionDenyAlways, so a user
+// pressing d - the documented deny-ONCE key - silently granted a
+// session-wide standing denial. d and D must never collapse together.
+func TestDenyOnceIsDistinctFromDenyAlways(t *testing.T) {
+	resolve := func(t *testing.T, key tea.KeyPressMsg) ports.Decision {
+		t.Helper()
+		m := New(loadTheme(t), theme.TierASCII)
+		m.SetRequest(uievent.ToolPendingBody{ToolCallID: "c1"})
+		_, cmd := m.Update(key)
+		if cmd == nil {
+			t.Fatalf("key %q produced no decision", key.String())
+		}
+		return cmd().(DecisionMsg).Decision
+	}
+
+	if got := resolve(t, keyMsg("d")); got != ports.DecisionDeny {
+		t.Errorf("d resolved %v, want DecisionDeny (deny once)", got)
+	}
+	// Both spellings a terminal may produce for shift+d.
+	for _, k := range []tea.KeyPressMsg{
+		{Text: "D", Code: 'D'},
+		{Code: 'd', Mod: tea.ModShift},
+	} {
+		if got := resolve(t, k); got != ports.DecisionDenyAlways {
+			t.Errorf("%q resolved %v, want DecisionDenyAlways", k.String(), got)
+		}
 	}
 }
 
@@ -64,10 +94,10 @@ func TestUpdateDecisions(t *testing.T) {
 		key  string
 		want ports.Decision
 	}{
-		{"y", ports.DecisionOnce},
+		{"o", ports.DecisionOnce},
 		{"a", ports.DecisionAlways},
-		{"n", ports.DecisionDeny},
-		{"d", ports.DecisionDenyAlways},
+		{"d", ports.DecisionDeny},
+		{"D", ports.DecisionDenyAlways},
 	}
 	for _, c := range cases {
 		t.Run(c.key, func(t *testing.T) {
