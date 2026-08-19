@@ -33,6 +33,12 @@ func main() {
 // use it: they render the whole fixture at once.
 const replayPace = 30 * time.Millisecond
 
+// initialComposerWidth is a placeholder only: Bubble Tea sends a
+// WindowSizeMsg at startup before the first render, and the real width
+// takes over there. It exists so the composer is constructible before
+// the terminal size is known, not as an assumption about it.
+const initialComposerWidth = 80
+
 type config struct {
 	demo          bool
 	themeName     string
@@ -115,7 +121,9 @@ func run(args []string, stdout io.Writer, stderr io.Writer, env []string) int {
 	}
 
 	conv := replay.New(events, replayPace)
-	screen := conversation.New(th, tier, themes, conv, replay.NewApprover(), 80, nil)
+	// initialComposerWidth only holds until Bubble Tea delivers the first
+	// WindowSizeMsg, which it does at startup before the first render.
+	screen := conversation.New(th, tier, themes, conv, replay.NewApprover(), initialComposerWidth, nil)
 	root := app.New(screen, th, tier, themes)
 
 	p := tea.NewProgram(root, tea.WithOutput(stdout))

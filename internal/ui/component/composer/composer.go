@@ -21,17 +21,34 @@ type Model struct {
 	input textinput.Model
 }
 
-// New returns a focused, empty composer sized to width.
+// promptWidth is the display width of the accent prompt View renders
+// ahead of the input ("> ").
+const promptWidth = 2
+
+// New returns a focused, empty composer sized to width, where width is
+// the full column count including the prompt.
 func New(t theme.Theme, tier theme.Tier, width int) Model {
 	ti := textinput.New()
 	ti.Prompt = "" // the theme-styled accent prompt is rendered by this package's View, not textinput's own
-	ti.SetWidth(width)
 	ti.Focus()
-	return Model{Theme: t, Tier: tier, input: ti}
+	m := Model{Theme: t, Tier: tier, input: ti}
+	m.SetWidth(width)
+	return m
 }
 
 // SetSuggestions sets the slash-completion candidate list.
 func (m *Model) SetSuggestions(cmds []string) { m.input.SetSuggestions(cmds) }
+
+// SetWidth resizes the input line. The prompt this package renders sits
+// outside textinput's own width, so the caller passes the full column
+// count and this subtracts the prompt.
+func (m *Model) SetWidth(width int) {
+	w := width - promptWidth
+	if w < 1 {
+		w = 1
+	}
+	m.input.SetWidth(w)
+}
 
 // Value returns the current input text.
 func (m Model) Value() string { return m.input.Value() }

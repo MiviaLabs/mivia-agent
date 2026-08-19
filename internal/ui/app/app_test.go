@@ -203,6 +203,30 @@ func TestThemeSelectedMsgUnknownNameLeavesThemeUnchanged(t *testing.T) {
 	}
 }
 
+func TestWindowSizeMsgStoredAndBroadcastToEveryScreen(t *testing.T) {
+	m := New(stubScreen{name: "base"}, loadTheme(t), theme.TierASCII, nil)
+	next, _ := m.Update(PushScreenMsg{Screen: stubScreen{name: "modal"}})
+	m = next.(Model)
+
+	next, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = next.(Model)
+
+	if m.Width != 120 || m.Height != 40 {
+		t.Errorf("got %dx%d, want the terminal size stored on the router", m.Width, m.Height)
+	}
+	// Both screens must see it: a modal popping after a resize has to
+	// reveal a correctly-sized base screen, not a stale one.
+	for i, name := range []string{"base", "modal"} {
+		sc := m.stack[i].(stubScreen)
+		if len(sc.received) != 1 {
+			t.Fatalf("%s screen received %d msgs, want 1", name, len(sc.received))
+		}
+		if _, ok := sc.received[0].(tea.WindowSizeMsg); !ok {
+			t.Errorf("%s screen got %T, want tea.WindowSizeMsg", name, sc.received[0])
+		}
+	}
+}
+
 func TestUnrecognisedMsgForwardsToTopScreen(t *testing.T) {
 	m := New(stubScreen{name: "base"}, loadTheme(t), theme.TierASCII, nil)
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})

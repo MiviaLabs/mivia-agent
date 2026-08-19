@@ -65,6 +65,18 @@ func TestViewShowsPromptAndText(t *testing.T) {
 	}
 }
 
+func TestSetWidthClampsBelowPrompt(t *testing.T) {
+	// A terminal narrower than the prompt itself must not produce a
+	// zero or negative input width (bubbles' textinput would render
+	// nothing, or panic on some paths).
+	m := New(loadTheme(t), theme.TierASCII, 40)
+	m.SetWidth(1)
+	next, _ := m.Update(tea.KeyPressMsg{Text: "h", Code: 'h'})
+	if got := next.Value(); got != "h" {
+		t.Errorf("got %q, want the composer still usable at a clamped width", got)
+	}
+}
+
 func TestSetSuggestionsDoesNotPanic(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII, 40)
 	m.SetSuggestions([]string{"/help", "/agent"})

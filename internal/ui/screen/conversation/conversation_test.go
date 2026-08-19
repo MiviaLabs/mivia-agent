@@ -284,6 +284,30 @@ func TestStatuslineTickMsgForwardsToStatusline(t *testing.T) {
 	}
 }
 
+func TestWindowSizeMsgResizesScreenAndComposer(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	next, cmd := s.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	if cmd != nil {
+		t.Error("expected no Cmd from a resize")
+	}
+	got := next.(Screen)
+	if got.width != 120 || got.height != 40 {
+		t.Errorf("got %dx%d, want 120x40 tracked on the screen", got.width, got.height)
+	}
+
+	// The composer must actually widen: typing past the old 40-column
+	// width has to stay on one line rather than being clipped to it.
+	long := strings.Repeat("x", 90)
+	got.composer.SetWidth(120)
+	for _, r := range long {
+		nextC, _ := got.composer.Update(tea.KeyPressMsg{Text: string(r), Code: r})
+		got.composer = nextC
+	}
+	if v := got.composer.Value(); len(v) != 90 {
+		t.Errorf("got %d chars in the composer, want 90 (input truncated by a stale width?)", len(v))
+	}
+}
+
 func TestThemeChangedMsgUpdatesScreenAndAllComponents(t *testing.T) {
 	themes, err := theme.Embedded()
 	if err != nil {
@@ -354,9 +378,13 @@ func TestInitIsNil(t *testing.T) {
 	}
 }
 
+// unknownMsg is a Msg type this screen has no case for, so it exercises
+// Update's fallthrough. (Not WindowSizeMsg - that is handled now.)
+type unknownMsg struct{}
+
 func TestUpdateIgnoresUnrecognisedMsg(t *testing.T) {
 	s := newScreen(t, replay.New(nil, 0), nil, nil)
-	next, cmd := s.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	next, cmd := s.Update(unknownMsg{})
 	if cmd != nil {
 		t.Error("expected no Cmd for an unrecognised Msg")
 	}

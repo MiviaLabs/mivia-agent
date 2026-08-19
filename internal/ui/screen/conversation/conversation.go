@@ -43,6 +43,13 @@ type Screen struct {
 
 	active ports.TurnHandle
 	now    func() time.Time
+
+	// width and height are the live terminal size, from WindowSizeMsg.
+	// Nothing here may assume a size: the layout work that consumes
+	// height lands with the cockpit architecture, but the size must be
+	// tracked from the start or resize is silently a no-op.
+	width  int
+	height int
 }
 
 // New builds a Screen. themes is the candidate set offered by ctrl+t;
@@ -114,6 +121,10 @@ func (s Screen) Update(msg tea.Msg) (app.Screen, tea.Cmd) {
 		// joins native terminal scrollback, which is what makes the
 		// inline transcript survive content taller than the terminal.
 		return s, tea.Println(msg.Text)
+	case tea.WindowSizeMsg:
+		s.width, s.height = msg.Width, msg.Height
+		s.composer.SetWidth(msg.Width)
+		return s, nil
 	case app.ThemeChangedMsg:
 		s.Theme, s.Tier = msg.Theme, msg.Tier
 		s.transcript.Theme, s.transcript.Tier = msg.Theme, msg.Tier

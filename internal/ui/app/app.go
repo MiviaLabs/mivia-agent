@@ -49,11 +49,18 @@ type ThemeChangedMsg struct {
 
 var _ tea.Model = Model{}
 
-// Model is the root tea.Model: current theme/tier plus the screen stack.
+// Model is the root tea.Model: current theme/tier, terminal size, and the
+// screen stack.
 type Model struct {
 	Theme  theme.Theme
 	Tier   theme.Tier
 	themes []theme.Theme
+
+	// Width and Height are the live terminal size. Bubble Tea sends a
+	// WindowSizeMsg on startup and on every resize, so these are the one
+	// source of truth for layout; nothing in the tree may assume 80x24.
+	Width  int
+	Height int
 
 	stack []Screen
 }
@@ -82,6 +89,18 @@ func (m Model) Init() tea.Cmd {
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		// Broadcast to every screen, not just the top one: a modal that
+		// pops after a resize must reveal a correctly-sized base screen
+		// underneath, not one still laid out for the old width.
+		m.Width, m.Height = msg.Width, msg.Height
+		var cmds []tea.Cmd
+		for i, sc := range m.stack {
+			var cmd tea.Cmd
+			m.stack[i], cmd = sc.Update(msg)
+			cmds = append(cmds, cmd)
+		}
+		return m, tea.Batch(cmds...)
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "ctrl+c":
