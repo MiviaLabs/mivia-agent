@@ -1,0 +1,120 @@
+package picker
+
+import (
+	"strings"
+	"testing"
+
+	tea "charm.land/bubbletea/v2"
+
+	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
+)
+
+func loadTheme(t *testing.T) theme.Theme {
+	t.Helper()
+	themes, err := theme.Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, th := range themes {
+		if th.Name == "mivia-dark" {
+			return th
+		}
+	}
+	t.Fatal("mivia-dark theme not found")
+	return theme.Theme{}
+}
+
+func keyMsg(s string) tea.KeyPressMsg { return tea.KeyPressMsg{Text: s, Code: rune(s[0])} }
+
+func TestUpdateIgnoresNonKeyMsg(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII, []string{"a", "b"})
+	next, cmd := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	if cmd != nil {
+		t.Error("expected no Cmd for a non-key Msg")
+	}
+	if got, _ := next.Selected(); got != "a" {
+		t.Errorf("got %q, want the cursor unchanged by a non-key Msg", got)
+	}
+}
+
+func TestSelectedOnEmptyList(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII, nil)
+	if _, ok := m.Selected(); ok {
+		t.Error("expected no selection on an empty list")
+	}
+}
+
+func TestCursorMovement(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII, []string{"a", "b", "c"})
+	m, _ = m.Update(downKey())
+	if got, _ := m.Selected(); got != "b" {
+		t.Fatalf("got %q, want \"b\" after one down", got)
+	}
+	m, _ = m.Update(downKey())
+	if got, _ := m.Selected(); got != "c" {
+		t.Fatalf("got %q, want \"c\" after two downs", got)
+	}
+	m, _ = m.Update(downKey()) // at bottom: must not go out of bounds
+	if got, _ := m.Selected(); got != "c" {
+		t.Fatalf("got %q, want to stay at \"c\" past the end", got)
+	}
+	m, _ = m.Update(upKey())
+	if got, _ := m.Selected(); got != "b" {
+		t.Fatalf("got %q, want \"b\" after one up", got)
+	}
+}
+
+func TestFilterNarrowsAndResetsCursor(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII, []string{"apple", "banana", "avocado"})
+	m, _ = m.Update(downKey()) // cursor -> banana
+	m, _ = m.Update(keyMsg("a"))
+	m, _ = m.Update(keyMsg("p")) // filter "ap": only "apple" matches (not "banana" or "avocado")
+	if got, ok := m.Selected(); !ok || got != "apple" {
+		t.Fatalf("got %q ok=%v, want cursor reset to the sole match \"apple\"", got, ok)
+	}
+	got := m.View()
+	if strings.Contains(got, "banana") || strings.Contains(got, "avocado") {
+		t.Errorf("expected only \"apple\" to survive the \"ap\" filter: %q", got)
+	}
+	if !strings.Contains(got, "/ap") {
+		t.Errorf("expected the active filter shown, got %q", got)
+	}
+}
+
+func TestBackspaceNarrowsFilterBack(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII, []string{"apple", "banana"})
+	m, _ = m.Update(keyMsg("b"))
+	if _, ok := m.Selected(); !ok {
+		t.Fatal("expected a match for filter \"b\"")
+	}
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
+	if got, _ := m.Selected(); got != "apple" {
+		t.Fatalf("got %q, want the filter cleared back to showing all items", got)
+	}
+}
+
+func TestEnterEmitsSelectMsg(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII, []string{"a", "b"})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected a SelectMsg Cmd on enter")
+	}
+	msg, ok := cmd().(SelectMsg)
+	if !ok || msg.Item != "a" {
+		t.Errorf("got %+v ok=%v, want SelectMsg{Item: \"a\"}", msg, ok)
+	}
+}
+
+func TestEscEmitsCancelMsg(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII, []string{"a"})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if cmd == nil {
+		t.Fatal("expected a CancelMsg Cmd on esc")
+	}
+	if _, ok := cmd().(CancelMsg); !ok {
+		t.Errorf("got %T, want CancelMsg", cmd())
+	}
+}
+
+func downKey() tea.KeyPressMsg { return tea.KeyPressMsg{Code: tea.KeyDown} }
+func upKey() tea.KeyPressMsg   { return tea.KeyPressMsg{Code: tea.KeyUp} }
