@@ -654,3 +654,112 @@ func TestPagerFlushMsgForwarded(t *testing.T) {
 	next2, _ := s.Update(conv.FlushMsg{})
 	_ = next2.(Screen)
 }
+
+// TestPagerLiveEventTrimClampsOffsetToZero verifies that when shift exceeds
+// offset, offset is clamped to zero.
+func TestPagerLiveEventTrimClampsOffsetToZero(t *testing.T) {
+	m := conv.New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 24)
+	for i := 0; i < uikitMaxTranscriptLines(); i++ {
+		m, _ = m.HandleEvent(uievent.Event{
+			Kind: uievent.KindNotice,
+			Body: uievent.NoticeBody{Text: "initial " + itoa(i)},
+		})
+	}
+	s := NewPager(loadTheme(t), theme.TierASCII, m)
+	s.width, s.height = 80, 24
+	s.rebuild()
+	s.offset = 1 // very small offset
+
+	for i := 0; i < 5; i++ {
+		ev := uievent.Event{
+			Kind: uievent.KindNotice,
+			Body: uievent.NoticeBody{Text: "streamed " + itoa(i)},
+		}
+		next, _ := s.Update(uievent.EventMsg{Event: ev})
+		s = next.(Screen)
+	}
+	if s.offset != 0 {
+		t.Errorf("offset = %d, want 0", s.offset)
+	}
+}
+
+// TestPagerLiveEventTrimWithSearchActive verifies that trim shifts search.restore
+// offset while search bar is open.
+func TestPagerLiveEventTrimWithSearchActive(t *testing.T) {
+	m := conv.New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 24)
+	for i := 0; i < uikitMaxTranscriptLines(); i++ {
+		m, _ = m.HandleEvent(uievent.Event{
+			Kind: uievent.KindNotice,
+			Body: uievent.NoticeBody{Text: "initial " + itoa(i)},
+		})
+	}
+	s := NewPager(loadTheme(t), theme.TierASCII, m)
+	s.width, s.height = 80, 24
+	s.rebuild()
+	s.offset = 2
+
+	// Open search bar
+	s = drive(s, tea.KeyPressMsg{Code: '/'})
+	for _, r := range "initial" {
+		s = drive(s, tea.KeyPressMsg{Text: string(r), Code: r})
+	}
+
+	// Trigger trim of 5 blocks (shift = 4 > restore = 2)
+	for i := 0; i < 5; i++ {
+		ev := uievent.Event{
+			Kind: uievent.KindNotice,
+			Body: uievent.NoticeBody{Text: "streamed " + itoa(i)},
+		}
+		next, _ := s.Update(uievent.EventMsg{Event: ev})
+		s = next.(Screen)
+	}
+
+	// Cancel search with Esc - should restore clamped offset 0
+	s = drive(s, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if s.offset != 0 {
+		t.Errorf("offset after cancel = %d, want 0", s.offset)
+	}
+}
+
+// TestPagerLiveEventTrimWithExistingDroppedAndSearchActive verifies that trim
+// shifts search.restore correctly when oldDropped is already non-zero and
+// restore > shift.
+func TestPagerLiveEventTrimWithExistingDroppedAndSearchActive(t *testing.T) {
+	m := conv.New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 24)
+	for i := 0; i < uikitMaxTranscriptLines()+2; i++ {
+		m, _ = m.HandleEvent(uievent.Event{
+			Kind: uievent.KindNotice,
+			Body: uievent.NoticeBody{Text: "initial " + itoa(i)},
+		})
+	}
+	s := NewPager(loadTheme(t), theme.TierASCII, m)
+	s.width, s.height = 80, 24
+	s.rebuild()
+	if s.dropped != 2 {
+		t.Fatalf("dropped = %d, want 2", s.dropped)
+	}
+
+	s.offset = 50
+	// Open search bar
+	s = drive(s, tea.KeyPressMsg{Code: '/'})
+	for _, r := range "initial 40" {
+		s = drive(s, tea.KeyPressMsg{Text: string(r), Code: r})
+	}
+
+	// Trigger trim of 1 block while oldDropped > 0
+	ev := uievent.Event{
+		Kind: uievent.KindNotice,
+		Body: uievent.NoticeBody{Text: "streamed"},
+	}
+	next, _ := s.Update(uievent.EventMsg{Event: ev})
+	s = next.(Screen)
+
+	// Cancel search with Esc - should restore shifted offset (50 - 1 = 49)
+	s = drive(s, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if s.offset != 49 {
+		t.Errorf("offset after cancel = %d, want 49", s.offset)
+	}
+}
