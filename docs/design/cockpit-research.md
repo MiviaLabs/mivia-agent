@@ -254,7 +254,7 @@ These need a decision before implementation, not during it.
    Rule 6.3's write-to-scrollback key gives the terminal's own selection
    back for far less code, and it is the honest first answer.
 3. **Answered.** The status row is permanent and always reserved.
-4. **Open.** Transcript mode (rule 6.2) is not built yet. Until it is, the
-   cockpit has no in-app search, and rule 6.2 says plainly that shipping the
-   cockpit first removes a capability with nothing in its place. `Dump`
-   exists and is tested, so the remaining work is the mode and its keys.
+4. **Answered 2026-08-19.** Transcript mode is built: `internal/ui/screen/transcript`
+   gives `less`-style search and paging under `ContextPager`, and rule 6.3's
+   `[` and `v` keys write the conversation to native scrollback or `$EDITOR`.
+   The cockpit has in-app search now, so this question is closed.
