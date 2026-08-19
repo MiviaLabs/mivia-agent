@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 )
 
@@ -44,6 +45,37 @@ func TestViewListsThemeNames(t *testing.T) {
 	}
 	if !strings.Contains(got, "select a theme") || !strings.Contains(got, "[esc] cancel") {
 		t.Errorf("picker view missing title/hint: %q", got)
+	}
+}
+
+// TestPreviewFollowsTheHighlightedThemeNotTheAppliedOne pins the
+// package doc comment's own promise ("live-previews and selects an
+// app-wide theme"): moving the cursor must change the preview's
+// colours to the highlighted theme's, before Enter ever applies
+// anything. s.Theme (the still-active app theme) must not change.
+func TestPreviewFollowsTheHighlightedThemeNotTheAppliedOne(t *testing.T) {
+	themes := loadThemes(t)
+	s := New(themes[0], theme.TierTrueColor, themes)
+
+	before := s.View()
+	wantBefore := render.Role(themes[0], theme.TierTrueColor, theme.RoleAccent).Render(previewAccentGlyph)
+	if !strings.Contains(before, wantBefore) {
+		t.Fatalf("preview does not start styled with the first (highlighted) theme's accent colour:\n%s", before)
+	}
+
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	s = next.(Screen)
+	after := s.View()
+
+	if s.Theme.Name != themes[0].Name {
+		t.Errorf("got applied theme %q, want it unchanged until Enter confirms", s.Theme.Name)
+	}
+	wantAfter := render.Role(themes[1], theme.TierTrueColor, theme.RoleAccent).Render(previewAccentGlyph)
+	if !strings.Contains(after, wantAfter) {
+		t.Errorf("preview did not follow the cursor to theme %q:\n%s", themes[1].Name, after)
+	}
+	if strings.Contains(after, wantBefore) {
+		t.Errorf("preview still shows the previous theme %q's accent colour after moving down:\n%s", themes[0].Name, after)
 	}
 }
 

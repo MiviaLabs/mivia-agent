@@ -13,6 +13,18 @@ import (
 
 var _ app.Screen = Screen{}
 
+// previewAccentGlyph is the preview's prompt marker, styled with
+// RoleAccent - the same convention the composer's own "> " prompt uses,
+// so the preview reads as a small sample of real chrome rather than an
+// arbitrary swatch.
+const previewAccentGlyph = "> "
+
+// previewSample is the fixed sentence the preview renders. It exists to
+// show how a theme colours real content (a prompt line, plain prose),
+// not to demonstrate every role: the picker is a quick before/after
+// check while browsing, not a full palette reference.
+const previewSample = "Add retry with backoff to the uploader."
+
 // Screen wraps picker.Model over a theme name list. Selecting an item
 // emits app.ThemeSelectedMsg; cancelling emits app.PopScreenMsg. Neither
 // mutates app-level state directly - only the router does that.
@@ -20,6 +32,11 @@ type Screen struct {
 	Theme  theme.Theme
 	Tier   theme.Tier
 	picker picker.Model
+
+	// themes is the full list New() was given, kept so the preview can
+	// look up the highlighted row's actual theme.Theme (colours, not
+	// just its name) as the cursor moves - before Enter ever applies it.
+	themes []theme.Theme
 }
 
 // New builds a picker over the given themes, rendered with the current
@@ -29,7 +46,23 @@ func New(th theme.Theme, tier theme.Tier, themes []theme.Theme) Screen {
 	for i, t := range themes {
 		names[i] = t.Name
 	}
-	return Screen{Theme: th, Tier: tier, picker: picker.New(th, tier, names)}
+	return Screen{Theme: th, Tier: tier, picker: picker.New(th, tier, names), themes: themes}
+}
+
+// previewTheme resolves the picker's currently highlighted row to its
+// theme.Theme. It falls back to the screen's own (still-active) theme
+// when nothing is highlighted, which only happens with an empty list.
+func (s Screen) previewTheme() theme.Theme {
+	name, ok := s.picker.Selected()
+	if !ok {
+		return s.Theme
+	}
+	for _, t := range s.themes {
+		if t.Name == name {
+			return t
+		}
+	}
+	return s.Theme
 }
 
 func (s Screen) Init() tea.Cmd { return nil }
@@ -67,5 +100,14 @@ func (s Screen) Update(msg tea.Msg) (app.Screen, tea.Cmd) {
 func (s Screen) View() string {
 	title := render.Role(s.Theme, s.Tier, theme.RoleFG).Bold(true).Render("select a theme")
 	hint := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle).Render("[enter] select  [esc] cancel  type to filter")
-	return title + "\n\n" + s.picker.View() + "\n\n" + hint
+	return title + "\n\n" + s.picker.View() + "\n\n" + s.previewView() + "\n\n" + hint
+}
+
+// previewView renders previewSample styled with the highlighted row's
+// theme - live, as the cursor moves, not only once Enter applies it.
+func (s Screen) previewView() string {
+	pt := s.previewTheme()
+	prompt := render.Role(pt, s.Tier, theme.RoleAccent).Render(previewAccentGlyph)
+	body := render.Role(pt, s.Tier, theme.RoleFG).Render(previewSample)
+	return prompt + body
 }
