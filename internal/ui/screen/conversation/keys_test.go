@@ -279,7 +279,7 @@ func TestCtrlRTogglesReasoning(t *testing.T) {
 // question, so swallowing it mid-sentence would be worse than no key.
 func TestHelpOnlyFiresOnAnEmptyComposer(t *testing.T) {
 	s := newScreen(t, replay.New(nil, 0), nil, nil)
-	s, _ = press(t, s, key("?"))
+	s, cmd := press(t, s, key("?"))
 	if s.overlay == "" {
 		t.Fatal("expected the help overlay on an empty composer")
 	}
@@ -288,14 +288,23 @@ func TestHelpOnlyFiresOnAnEmptyComposer(t *testing.T) {
 			t.Errorf("generated help is missing %q:\n%s", want, ansi.Strip(s.overlay))
 		}
 	}
+	// The overlay draws over whatever the composer/transcript last drew
+	// there; without a clear, that content can bleed through underneath
+	// it (see hasClearScreen's doc comment).
+	if !hasClearScreen(cmd) {
+		t.Error("expected opening the help overlay to clear the screen")
+	}
 	// The overlay covers the transcript, so the next key dismisses it and
 	// does nothing else.
-	s, _ = press(t, s, key("x"))
+	s, cmd = press(t, s, key("x"))
 	if s.overlay != "" {
 		t.Error("the overlay survived a keystroke")
 	}
 	if got := s.composer.Value(); got != "" {
 		t.Errorf("the dismissing key reached the composer as %q", got)
+	}
+	if !hasClearScreen(cmd) {
+		t.Error("expected dismissing the help overlay to clear the screen")
 	}
 
 	s = typeText(t, s, "why")

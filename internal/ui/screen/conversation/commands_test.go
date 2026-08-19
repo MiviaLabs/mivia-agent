@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -14,6 +15,36 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/replay"
 )
+
+// hasClearScreen reports whether cmd (a possibly-batched Cmd) yields
+// tea.ClearScreen among its leaves. The model picker and help overlay
+// are drawn in place rather than pushed onto app.Model's screen stack
+// (avoiding the async-pop race a pushed screen would need extra
+// synchronization for), so they need their own tea.ClearScreen on every
+// open/close - app.go's pop() only covers the stack path.
+func hasClearScreen(cmd tea.Cmd) bool {
+	if cmd == nil {
+		return false
+	}
+	msg := cmd()
+	want := tea.ClearScreen()
+	if reflect.DeepEqual(msg, want) {
+		return true
+	}
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		return false
+	}
+	for _, c := range batch {
+		if c == nil {
+			continue
+		}
+		if reflect.DeepEqual(c(), want) {
+			return true
+		}
+	}
+	return false
+}
 
 // fakeRunner is a hand-written ports.CommandRunner: Run and SelectModel
 // each return a fixed outcome and record every call, so a test can
@@ -165,9 +196,16 @@ func TestRunSlashCommandOpenHelp(t *testing.T) {
 	s := newScreen(t, replay.New(nil, 0), nil, nil)
 	s.SetCommandRunner(runner)
 
-	s, _ = sendLine(t, s, "/help")
+	s, cmd := sendLine(t, s, "/help")
 	if s.overlay == "" {
 		t.Error("expected /help to set the overlay")
+	}
+	// The overlay draws over whatever the transcript/composer last
+	// drew there; without a clear, that content can bleed through
+	// underneath it (the same hazard app.go's pop() closes for a
+	// pushed screen - see hasClearScreen's doc comment).
+	if !hasClearScreen(cmd) {
+		t.Error("expected /help to clear the screen so nothing bleeds through under the overlay")
 	}
 }
 
@@ -236,11 +274,11 @@ func TestRunSlashCommandModelChoicesOpensPicker(t *testing.T) {
 	s.SetCommandRunner(runner)
 
 	s, cmd := sendLine(t, s, "/model")
-	if cmd != nil {
-		t.Errorf("got cmd %v, want nil (the picker opens in place)", cmd)
-	}
 	if s.modelPicker == nil {
 		t.Fatal("expected /model to open the model picker")
+	}
+	if !hasClearScreen(cmd) {
+		t.Error("expected /model to clear the screen so the completion menu underneath does not bleed through")
 	}
 }
 
@@ -256,7 +294,7 @@ func TestHandleModelPickerKeySelectAppliesOutcome(t *testing.T) {
 		t.Fatal("expected the model picker to be open")
 	}
 
-	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter}) // accept the highlighted ("fast") choice
+	next, cmd := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter}) // accept the highlighted ("fast") choice
 	s = next.(Screen)
 
 	if s.modelPicker != nil {
@@ -268,6 +306,9 @@ func TestHandleModelPickerKeySelectAppliesOutcome(t *testing.T) {
 	if got := lastErrorDetail(t, s); got != "model set to fast" {
 		t.Errorf("got notice detail %q, want the SelectModel outcome's Notice", got)
 	}
+	if !hasClearScreen(cmd) {
+		t.Error("expected closing the picker on selection to clear the screen")
+	}
 }
 
 func TestHandleModelPickerKeyCancelClosesWithoutNotice(t *testing.T) {
@@ -277,7 +318,7 @@ func TestHandleModelPickerKeyCancelClosesWithoutNotice(t *testing.T) {
 	s, _ = sendLine(t, s, "/model")
 	before := len(s.transcript.Blocks())
 
-	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	next, cmd := s.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	s = next.(Screen)
 
 	if s.modelPicker != nil {
@@ -288,6 +329,9 @@ func TestHandleModelPickerKeyCancelClosesWithoutNotice(t *testing.T) {
 	}
 	if len(runner.selectCalls) != 0 {
 		t.Errorf("got selectCalls %v, want none after a cancel", runner.selectCalls)
+	}
+	if !hasClearScreen(cmd) {
+		t.Error("expected closing the picker on cancel to clear the screen")
 	}
 }
 

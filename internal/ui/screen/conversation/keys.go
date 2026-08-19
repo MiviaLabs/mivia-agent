@@ -41,10 +41,13 @@ func (s Screen) handleKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
 
 	// Any key dismisses an overlay, and does nothing else. An overlay
 	// covers the transcript, so acting on the key underneath it would act
-	// on something the user cannot see.
+	// on something the user cannot see. Clearing the screen on dismissal
+	// matters too: the overlay drew over content the transcript/composer
+	// never redrew, and a diffing renderer that fails to blank a row
+	// neither frame wrote to leaves the overlay bleeding through.
 	if s.overlay != "" {
 		s.overlay = ""
-		return s, nil
+		return s, tea.ClearScreen
 	}
 
 	key := msg.String()
@@ -93,7 +96,7 @@ func (s Screen) handleClick(msg tea.MouseClickMsg) (app.Screen, tea.Cmd) {
 	}
 	if s.overlay != "" {
 		s.overlay = ""
-		return s, nil
+		return s, tea.ClearScreen
 	}
 	transcriptRows := s.height - s.reservedRows()
 	inputRow := s.height - 1
@@ -234,7 +237,7 @@ func (s Screen) composerAction(id keymap.ID) (app.Screen, tea.Cmd, bool) {
 				" to select with the terminal (--no-mouse releases it)"
 		}
 		s.overlay = help
-		return s, nil, true
+		return s, tea.ClearScreen, true
 	}
 	return s, nil, false
 }

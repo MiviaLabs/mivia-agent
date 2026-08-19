@@ -188,10 +188,16 @@ func TestClickClearsTheOverlay(t *testing.T) {
 	if s.overlay == "" {
 		t.Fatal("precondition: the help overlay is open")
 	}
-	next, _ = s.Update(leftClick(3, 3))
+	next, cmd := s.Update(leftClick(3, 3))
 	s = next.(Screen)
 	if s.overlay != "" {
 		t.Error("a click must clear the overlay")
+	}
+	// The dismissed overlay drew over content the transcript/composer
+	// underneath never redrew; without a terminal clear that content
+	// can bleed through (see hasClearScreen's doc comment).
+	if !hasClearScreen(cmd) {
+		t.Error("expected dismissing the overlay by click to clear the screen")
 	}
 }
 

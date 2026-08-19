@@ -55,14 +55,14 @@ func (s Screen) applyCommandOutcome(o ports.CommandOutcome) (app.Screen, tea.Cmd
 	case o.OpenTheme:
 		return s.openThemePicker()
 	case o.OpenHelp:
-		return s.openHelp(), nil
+		return s.openHelp(), tea.ClearScreen
 	case o.ClearTranscript:
 		s.transcript = s.transcript.Clear()
 		return s, nil
 	case len(o.ModelChoices) > 0:
 		pm := picker.New(s.Theme, s.Tier, o.ModelChoices)
 		s.modelPicker = &pm
-		return s, nil
+		return s, tea.ClearScreen
 	case o.Notice != "":
 		return s.withNotice(o.Notice), nil
 	}
@@ -113,7 +113,9 @@ func (s Screen) openHelp() Screen {
 // handleModelPickerKey routes one key press to the open /model picker.
 // A selection asks the runner to apply it and shows the resulting
 // outcome (typically a confirmation notice); Esc cancels with no
-// notice.
+// notice. Both close the picker, so both clear the screen (the same
+// reasoning as opening it: the picker drew content the transcript and
+// composer underneath never redrew, and closing it exposes them again).
 func (s Screen) handleModelPickerKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
 	next, cmd := s.modelPicker.Update(msg)
 	s.modelPicker = &next
@@ -126,13 +128,14 @@ func (s Screen) handleModelPickerKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) 
 	case picker.SelectMsg:
 		s.modelPicker = nil
 		if s.runner == nil {
-			return s.withError("no command runner configured for /model"), nil
+			return s.withError("no command runner configured for /model"), tea.ClearScreen
 		}
 		outcome := s.runner.SelectModel(context.Background(), m.Item)
-		return s.applyCommandOutcome(outcome)
+		next, outcomeCmd := s.applyCommandOutcome(outcome)
+		return next, tea.Batch(outcomeCmd, tea.ClearScreen)
 	case picker.CancelMsg:
 		s.modelPicker = nil
-		return s, nil
+		return s, tea.ClearScreen
 	}
 	return s, nil
 }
