@@ -1,0 +1,9 @@
+{
+  "before": [
+    {"kind":"turn.start","turn_id":"t","seq":1,"at":"2026-08-20T09:00:00Z","body":{"input":"good morning"}},
+    {"kind":"text.delta","turn_id":"t","seq":2,"at":"2026-08-20T09:00:00.1Z","body":{"text":"Good morning. "}},
+    {"kind":"text.delta","turn_id":"t","seq":3,"at":"2026-08-20T09:00:00.2Z","body":{"text":"How can I help today?"}},
+    {"kind":"text.end","turn_id":"t","seq":4,"at":"2026-08-20T09:00:00.3Z","body":{"text":"Good morning. How can I help today?"}},
+    {"kind":"turn.end","turn_id":"t","seq":5,"at":"2026-08-20T09:00:00.4Z","body":{"reason":"completed"}}
+  ]
+}

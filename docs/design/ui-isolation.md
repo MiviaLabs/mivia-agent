@@ -42,6 +42,35 @@ not a thousand call sites.
   narrows or retires, and one adapter under the UI (not a refactor of
   it) connects the ports to the real harness.
 
+## The demo harness (internal/uikit/demoharness)
+
+`internal/uikit/demoharness` is the fake `cmd/mivia-ui --demo` runs
+against today. It replaced `internal/uikit/replay` as the demo driver.
+One `Harness` type implements the whole ports surface -
+`ports.Conversation`, `ports.Approver`, and `ports.CommandRunner` - over
+shared state, so a `/model` pick or an approval decision changes what
+later turns and later commands see. `internal/uikit/replay` still
+exists: some existing tests build a `conversation.Screen` against it
+directly, and it stays a valid minimal fake for that use. It is no
+longer what the demo binary runs.
+
+The scripted conversation is DATA, not code: `internal/uikit/demoharness/testdata`
+holds one JSON turn-script file per turn shape (small talk, a tool
+call, a diff, a failing tool, a plan, reasoning, a usage summary, and a
+mid-turn approval), in the wire shape `uievent.LoadFixture` already
+reads. A `--scenario` flag on `cmd/mivia-ui` picks which named,
+ordered list of those files to play; `New` errors on an unknown name.
+
+## The command-dispatch seam (ports.CommandRunner)
+
+Slash commands are the other integration knob this phase adds.
+`internal/uikit/ports.CommandRunner` (`Run`, `SelectModel`) is what a
+`conversation.Screen` calls when Enter submits a `/command` line; it
+never inspects harness state directly, only this interface
+(`internal/ui/screen/conversation/commands.go`). `demoharness.Harness`
+implements it today. A future real-harness adapter implements the same
+interface; the screen does not change.
+
 ## Source
 
 Product owner decision, 2026-08-19: at this point there is no

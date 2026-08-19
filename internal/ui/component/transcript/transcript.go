@@ -172,6 +172,23 @@ func (m Model) HandleEvent(ev uievent.Event) (Model, tea.Cmd) {
 	return m, nil
 }
 
+// Clear empties the transcript: every block, the drop count, the
+// focused block, and the in-flight streaming tail. Auto-follow resumes
+// at the empty state, so new output appears immediately. The /clear
+// command uses this.
+func (m Model) Clear() Model {
+	m.blocks = nil
+	m.dropped = 0
+	m.focus = -1
+	m.offset = 0
+	m.follow = true
+	m.missed = 0
+	m.pending = ""
+	m.pendingKind = ""
+	m.flushWait = false
+	return m
+}
+
 // turnReasonCompleted is the one reason that commits no block.
 const turnReasonCompleted = "completed"
 

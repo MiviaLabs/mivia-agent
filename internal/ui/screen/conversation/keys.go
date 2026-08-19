@@ -32,6 +32,13 @@ func (s Screen) handleKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
 		return s, cmd
 	}
 
+	// An open /model picker claims every key, exactly like the approval
+	// prompt above: it is a modal, and the transcript/composer beneath
+	// it must not react to a key the user aimed at the picker.
+	if s.modelPicker != nil {
+		return s.handleModelPickerKey(msg)
+	}
+
 	// Any key dismisses an overlay, and does nothing else. An overlay
 	// covers the transcript, so acting on the key underneath it would act
 	// on something the user cannot see.
@@ -198,6 +205,10 @@ func (s Screen) globalAction(id keymap.ID) (app.Screen, tea.Cmd, bool) {
 func (s Screen) composerAction(id keymap.ID) (app.Screen, tea.Cmd, bool) {
 	switch id {
 	case keymap.IDSend:
+		if text := s.composer.Value(); text != "" && isSlashCommand(text) {
+			next, cmd := s.runSlashCommand(text)
+			return next, cmd, true
+		}
 		next, cmd := s.send()
 		return next, cmd, true
 	case keymap.IDFocusPrev:

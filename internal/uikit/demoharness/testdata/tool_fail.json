@@ -1,0 +1,9 @@
+{
+  "before": [
+    {"kind":"turn.start","turn_id":"t","seq":1,"at":"2026-08-20T09:03:00Z","body":{"input":"run the linter"}},
+    {"kind":"tool.start","turn_id":"t","seq":2,"at":"2026-08-20T09:03:00.1Z","body":{"tool_call_id":"tc3","name":"run_command","args":{"cmd":"golangci-lint run"}}},
+    {"kind":"tool.end","turn_id":"t","seq":3,"at":"2026-08-20T09:03:00.2Z","body":{"tool_call_id":"tc3","name":"run_command","ok":false,"err":"golangci-lint: command not found","duration_ms":5}},
+    {"kind":"text.end","turn_id":"t","seq":4,"at":"2026-08-20T09:03:00.3Z","body":{"text":"The linter is not installed here. Install it and try again."}},
+    {"kind":"turn.end","turn_id":"t","seq":5,"at":"2026-08-20T09:03:00.4Z","body":{"reason":"completed"}}
+  ]
+}

@@ -15,6 +15,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/approval"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/composer"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/component/picker"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/statusline"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/transcript"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
@@ -37,8 +38,10 @@ type Screen struct {
 	Tier   theme.Tier
 	themes []theme.Theme
 
-	conv     ports.Conversation
-	approver ports.Approver // nil is valid: no approval wiring
+	conv        ports.Conversation
+	approver    ports.Approver      // nil is valid: no approval wiring
+	runner      ports.CommandRunner // nil is valid: every "/x" then shows an error, never sends
+	modelPicker *picker.Model       // non-nil while the /model picker is open
 
 	transcript transcript.Model
 	composer   composer.Model
@@ -258,9 +261,13 @@ func (s Screen) reservedRows() int {
 // nothing below it moves as output streams in (ux-rules.md rule 2.8).
 func (s Screen) View() string {
 	var lines []string
-	if v := s.overlay; v != "" {
-		lines = append(lines, overlayRows(v, s.height-s.reservedRows())...)
-	} else {
+	switch {
+	case s.modelPicker != nil:
+		content := renderModelPicker(s.Theme, s.Tier, *s.modelPicker)
+		lines = append(lines, overlayRows(content, s.height-s.reservedRows())...)
+	case s.overlay != "":
+		lines = append(lines, overlayRows(s.overlay, s.height-s.reservedRows())...)
+	default:
 		lines = append(lines, s.transcript.Rows()...)
 	}
 	if v := s.approval.View(); v != "" {
@@ -291,6 +298,14 @@ func overlayRows(text string, height int) []string {
 // belongs to the harness, so the screen takes it rather than inventing
 // one.
 func (s *Screen) SetCommands(cmds []composer.Command) { s.composer.SetCommands(cmds) }
+
+// SetCommandRunner supplies the seam a slash command acts through (see
+// commands.go). It is the integration knob docs/design/ui-isolation.md
+// names for slash commands: the screen never inspects harness state
+// directly, only this interface. A nil runner (the zero-value default)
+// makes every "/x" line report an error instead of falling through to
+// Send.
+func (s *Screen) SetCommandRunner(r ports.CommandRunner) { s.runner = r }
 
 // SetMouseOverrideHint records the terminal's mouse-override key
 // (rule 6.5), shown in the help overlay. Empty clears it.

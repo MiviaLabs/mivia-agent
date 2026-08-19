@@ -1,8 +1,9 @@
 // Command mivia-ui is the new terminal UI (build spec step 7/first
-// deliverable). It runs entirely against the replay fake today: real
-// internal/chat harness wiring is deferred (build spec steps 2, 3, 8).
-// A --demo flag exists for interface compatibility with that future
-// state; there is currently no other mode to select.
+// deliverable). It runs entirely against the demo harness
+// (internal/uikit/demoharness) today: real internal/chat harness wiring
+// is deferred (build spec steps 2, 3, 8). --demo is on by default;
+// there is currently no other mode to select. --scenario picks which
+// scripted, multi-turn conversation the demo harness plays.
 package main
 
 import (
@@ -11,7 +12,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"time"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -22,7 +23,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ui/stream"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/replay"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/demoharness"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/termprobe"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 	"golang.org/x/term"
@@ -32,11 +33,11 @@ func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, os.Environ()))
 }
 
-// replayPace is how far apart replayed fixture events land in the
-// interactive TUI, so a human watching --demo sees a stream rather than
-// an instant dump. Non-interactive paths (--output json, non-TTY) don't
-// use it: they render the whole fixture at once.
-const replayPace = 30 * time.Millisecond
+// The interactive cockpit paces its streamed events with
+// uikitconfig.DemoScenarioPace (internal/uikit/demoharness), so a human
+// watching --demo sees a stream rather than an instant dump. The
+// non-interactive renderers below (--output json, non-TTY plain
+// stream) render the whole fixture at once and use no pacing at all.
 
 // initialComposerWidth is a placeholder only: Bubble Tea sends a
 // WindowSizeMsg at startup before the first render, and the real width
@@ -44,20 +45,22 @@ const replayPace = 30 * time.Millisecond
 // the terminal size is known, not as an assumption about it.
 const initialComposerWidth = 80
 
-// mockCommands is the slash-command set for the replay build. The real
-// list comes from the harness, which is not wired yet (build spec steps
-// 2, 3, 8). It is defined here rather than inside the composer so the
-// component stays free of any assumption about who supplies it.
+// mockCommands is the slash-command completion set for the demo build.
+// Every name here is a command demoharness.Harness.Run actually
+// implements (cmd/mivia-ui/main.go wires SetCommandRunner to it); the
+// real list comes from the harness once the CLI refactor lands
+// (docs/design/ui-isolation.md). It is defined here rather than inside
+// the composer so the component stays free of any assumption about who
+// supplies it.
 func mockCommands() []composer.Command {
 	return []composer.Command{
-		{Name: "agent", Desc: "pick the agent for this turn"},
 		{Name: "agents", Desc: "list the available agents"},
 		{Name: "clear", Desc: "clear the transcript"},
 		{Name: "compact", Desc: "compact the context"},
 		{Name: "context", Desc: "show context usage"},
 		{Name: "cost", Desc: "show the session spend"},
 		{Name: "help", Desc: "show the keymap"},
-		{Name: "model", Desc: "pick the model and effort"},
+		{Name: "model", Desc: "pick the model"},
 		{Name: "quit", Desc: "exit mivia-ui"},
 		{Name: "theme", Desc: "pick a theme"},
 	}
@@ -65,6 +68,7 @@ func mockCommands() []composer.Command {
 
 type config struct {
 	demo          bool
+	scenario      string
 	themeName     string
 	themeExplicit bool
 	light         bool
@@ -80,7 +84,11 @@ func parseFlags(args []string, stderr io.Writer) (config, error) {
 	fs := flag.NewFlagSet("mivia-ui", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	var cfg config
-	fs.BoolVar(&cfg.demo, "demo", true, "run against the replayed fixture (currently the only mode)")
+	fs.BoolVar(&cfg.demo, "demo", true,
+		"run the interactive cockpit against the demo harness's scripted, multi-turn "+
+			"conversation instead of a real harness (currently the only mode)")
+	fs.StringVar(&cfg.scenario, "scenario", demoharness.DefaultScenario,
+		"which scripted conversation --demo plays: "+strings.Join(demoharness.Scenarios(), ", "))
 	fs.StringVar(&cfg.themeName, "theme", "mivia-dark", "theme name (see --output json for available themes)")
 	fs.BoolVar(&cfg.light, "light", false, "default to a light theme instead of --theme's default")
 	fs.BoolVar(&cfg.dark, "dark", false, "default to a dark theme instead of --theme's default")
@@ -160,7 +168,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer, env []string) int {
 	} else {
 		tier = theme.Detect(f, env)
 	}
-	return runCockpit(cfg, th, tier, themes, events, env, stdout, stderr)
+	return runCockpit(cfg, th, tier, themes, env, stdout, stderr)
 }
 
 // renderPlain writes the optional refusal line plus the plain stream.
@@ -176,16 +184,21 @@ func renderPlain(stdout, stderr io.Writer, events []uievent.Event, reason string
 }
 
 // runCockpit starts the interactive cockpit on a terminal that passed
-// every probe. Startup warnings become permanent transcript notices,
-// shown once.
+// every probe, against the named demo scenario. Startup warnings become
+// permanent transcript notices, shown once.
 func runCockpit(cfg config, th theme.Theme, tier theme.Tier, themes []theme.Theme,
-	events []uievent.Event, env []string, stdout, stderr io.Writer) int {
+	env []string, stdout, stderr io.Writer) int {
+	harness, err := demoharness.New(cfg.scenario, uikitconfig.DemoScenarioPace)
+	if err != nil {
+		fmt.Fprintln(stderr, "mivia-ui:", err)
+		return 1
+	}
 	probe := termprobe.Probe(env, tmuxVersion(env))
-	conv := replay.New(events, replayPace)
 	// initialComposerWidth only holds until Bubble Tea delivers the first
 	// WindowSizeMsg, which it does at startup before the first render.
-	screen := conversation.New(th, tier, themes, conv, replay.NewApprover(), initialComposerWidth, nil)
+	screen := conversation.New(th, tier, themes, harness, harness, initialComposerWidth, nil)
 	screen.SetCommands(mockCommands())
+	screen.SetCommandRunner(harness)
 	for _, w := range probe.Warnings {
 		screen.Notice(w)
 	}
