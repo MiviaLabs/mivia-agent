@@ -46,13 +46,13 @@ func proseLines(text string) []string {
 // At ASCII/NoTTY a background fill is meaningless, so the fill and the
 // padding rows drop out and the marker-only lines stand as before.
 func userLines(t theme.Theme, tier theme.Tier, width int, input string) []string {
-	marker := render.Role(t, tier, theme.RoleAccent).Render("> ")
 	// The marker occupies two columns, so the text measure is that much
 	// narrower and continuations align under the first character.
 	wrapped := render.Wrap(input, render.ProseMeasure(width)-2)
 
 	bg := t.Resolve(theme.RoleBGSelection, tier)
 	if bg.Hex == "" && bg.ANSI16 < 0 {
+		marker := render.Role(t, tier, theme.RoleAccent).Render("> ")
 		out := make([]string, 0, len(wrapped))
 		for i, line := range wrapped {
 			if i == 0 {
@@ -64,36 +64,38 @@ func userLines(t theme.Theme, tier theme.Tier, width int, input string) []string
 		return out
 	}
 
-	// The fill is one lipgloss style with the background set, applied to
-	// each row PADDED to the bubble width: the padding spaces carry the
-	// background, which is what makes the row a block and not coloured
-	// text.
-	st := lipgloss.NewStyle()
-	if bg.Hex != "" {
-		st = st.Background(lipgloss.Color(bg.Hex))
-	} else {
-		st = st.Background(lipgloss.Color(strconv.Itoa(bg.ANSI16)))
+	// Every fragment below carries the background in its OWN style call,
+	// rather than pre-rendering the marker and wrapping the joined string
+	// in one outer background style: a pre-rendered fragment embeds its
+	// own trailing reset, and that reset fires mid-row and wipes the
+	// outer background for everything after it - the bug this replaced,
+	// where the fill only ever reached the marker, never the message
+	// text. Each style call re-establishes the background itself, so an
+	// embedded reset from the fragment before it cannot erase it.
+	bgColor := lipgloss.Color(bg.Hex)
+	if bg.Hex == "" {
+		bgColor = lipgloss.Color(strconv.Itoa(bg.ANSI16))
 	}
+	fill := lipgloss.NewStyle().Background(bgColor)
+	markerStyle := render.Role(t, tier, theme.RoleAccent).Background(bgColor)
+
 	rows := make([]string, 0, len(wrapped)+2)
 	for i, line := range wrapped {
-		text := line
 		if i == 0 {
-			text = marker + line
-		} else {
-			text = "  " + line
+			rows = append(rows, markerStyle.Render("> ")+fill.Render(line))
+			continue
 		}
-		rows = append(rows, text)
+		rows = append(rows, fill.Render("  "+line))
 	}
 	// Full terminal width: the fill runs edge to edge, under the message
 	// text and the padding rows alike.
-	full := width
 	pad := func(row string) string {
-		if gap := full - lipgloss.Width(row); gap > 0 {
-			row += strings.Repeat(" ", gap)
+		if gap := width - lipgloss.Width(row); gap > 0 {
+			row += fill.Render(strings.Repeat(" ", gap))
 		}
-		return st.Render(row)
+		return row
 	}
-	blank := st.Render(strings.Repeat(" ", full))
+	blank := fill.Render(strings.Repeat(" ", width))
 	out := make([]string, 0, len(rows)+2)
 	out = append(out, blank)
 	for _, row := range rows {
