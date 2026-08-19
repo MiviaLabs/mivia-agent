@@ -288,3 +288,54 @@ func TestViewIsEmptyWhenNothingMatches(t *testing.T) {
 		t.Errorf("got %q, want no menu rows", got)
 	}
 }
+
+func TestSubsequenceOnlyMatchStillRanks(t *testing.T) {
+	// "abt" is not a prefix and not a substring of "abstract", but its
+	// letters appear in order, so the command stays reachable.
+	got := rank([]Command{{Name: "abstract"}}, "abt")
+	if len(got) != 1 {
+		t.Fatalf("got %d matches, want the subsequence match kept", len(got))
+	}
+}
+
+func TestCommonPrefixDegenerateCases(t *testing.T) {
+	cases := []struct {
+		name  string
+		in    []Command
+		want  string
+		notes string
+	}{
+		{"no matches", nil, "", "nothing to share"},
+		{"one match", []Command{{Name: "model"}}, "model", "the whole name"},
+		{"shared prefix", []Command{{Name: "model"}, {Name: "modes"}}, "mode", "shrinks to the shared run"},
+		{"nothing shared", []Command{{Name: "model"}, {Name: "quit"}}, "", "no common first character"},
+		{"one is a prefix of the other", []Command{{Name: "agent"}, {Name: "agents"}}, "agent", "the shorter name wins"},
+	}
+	for _, c := range cases {
+		m := menu{matches: c.in}
+		if got := m.commonPrefix(); got != c.want {
+			t.Errorf("%s: got %q, want %q (%s)", c.name, got, c.want, c.notes)
+		}
+	}
+}
+
+func TestItoa(t *testing.T) {
+	for _, c := range []struct {
+		in   int
+		want string
+	}{{0, "0"}, {1, "1"}, {9, "9"}, {10, "10"}, {12345, "12345"}} {
+		if got := itoa(c.in); got != c.want {
+			t.Errorf("itoa(%d) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestOffsetNeverGoesNegative covers the clamp: a shrinking match set
+// must not leave the render window pointing before the first row.
+func TestOffsetNeverGoesNegative(t *testing.T) {
+	m := menu{matches: make([]Command, 3), cursor: 0, offset: -5}
+	m.clampOffset()
+	if m.offset < 0 {
+		t.Errorf("got offset %d, want it clamped to 0", m.offset)
+	}
+}

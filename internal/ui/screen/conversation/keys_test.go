@@ -10,6 +10,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/composer"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/keymap"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/replay"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
@@ -375,5 +376,135 @@ func TestApprovalClaimsEveryKey(t *testing.T) {
 	}
 	if scr.composer.Value() != before {
 		t.Error("a key reached the composer while an approval was pending")
+	}
+}
+
+// TestThemeKeyWithNoThemesIsInert: the picker would open on an empty
+// list, so the key does nothing rather than showing a dead dialog.
+func TestThemeKeyWithNoThemesIsInert(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil) // no themes
+	_, cmd := press(t, s, ctrl('t'))
+	if cmd != nil {
+		t.Errorf("got %+v, want no dialog with no themes to pick", cmd())
+	}
+}
+
+// TestEscWithNothingToCancelFallsThrough: Esc is a global binding, but
+// with no turn and no focus it must not swallow the key.
+func TestEscWithNothingToCancelFallsThrough(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	s, cmd := press(t, s, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if cmd != nil {
+		t.Errorf("got %+v, want nothing to cancel", cmd())
+	}
+	if s.transcript.Focused() {
+		t.Error("esc changed the focus with nothing focused")
+	}
+}
+
+// TestPagerKeyIsAcceptedButInert records the seam the pager screen fills
+// in the next wave. It must not fall through to the composer as text.
+func TestPagerKeyIsAcceptedButInert(t *testing.T) {
+	s := sized(t, 2)
+	s, _ = press(t, s, ctrl('o'))
+	if got := s.composer.Value(); got != "" {
+		t.Errorf("ctrl+o reached the composer as %q", got)
+	}
+
+	s, _ = press(t, s, shiftTabKey)
+	s, _ = press(t, s, ctrl('o'))
+	if got := s.composer.Value(); got != "" {
+		t.Errorf("ctrl+o reached the composer as %q with a block focused", got)
+	}
+}
+
+// TestMenuDismissThenEscCancels pins the ladder's second rung: once the
+// menu is gone, Esc reaches the turn.
+func TestMenuDismissThenEscReachesTheTurn(t *testing.T) {
+	events := []uievent.Event{{Kind: uievent.KindTurnStart, Body: uievent.TurnStartBody{Input: "hi"}}}
+	s := newScreen(t, replay.New(events, time.Hour), nil, nil)
+	s.SetCommands([]composer.Command{{Name: "model"}})
+	s = typeText(t, s, "hi")
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	scr := next.(Screen)
+	scr = typeText(t, scr, "/mo")
+
+	scr, _ = press(t, scr, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if scr.composer.MenuActive() {
+		t.Fatal("the first esc must dismiss the menu")
+	}
+	if !scr.statusline.Active() {
+		t.Fatal("expected the turn still running after the menu closed")
+	}
+
+	scr, _ = press(t, scr, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if scr.statusline.Active() {
+		t.Error("the second esc did not cancel the turn")
+	}
+}
+
+// TestTabWithOneMatchAcceptsIt: the common prefix is the whole name, so
+// the prefix step adds nothing and Tab must still complete.
+func TestTabWithOneMatchAcceptsIt(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	s.SetCommands([]composer.Command{{Name: "quit"}})
+	s = typeText(t, s, "/quit")
+	if !s.composer.MenuActive() {
+		t.Fatal("expected the menu open on an exact single match")
+	}
+	s, _ = press(t, s, tabKey)
+	if s.composer.MenuActive() {
+		t.Error("Tab did nothing visible; it must accept when the prefix cannot grow")
+	}
+	if got := s.composer.Value(); got != "/quit" {
+		t.Errorf("got %q, want the command accepted", got)
+	}
+}
+
+// TestComposerOnlyBindingsFallThroughToTheInput covers the composer
+// context's fallthrough. ctrl+u and ctrl+j are bound in the table so
+// they appear in the generated help, but the text input implements them,
+// so the screen must pass them on rather than swallow them.
+func TestComposerOnlyBindingsFallThroughToTheInput(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	s = typeText(t, s, "hello")
+	s, _ = press(t, s, ctrl('u'))
+	if got := s.composer.Value(); got != "" {
+		t.Errorf("got %q, want ctrl+u handled by the input as clear-line", got)
+	}
+}
+
+// TestGlobalFallthroughForAnUnhandledID pins the defensive arm: a
+// binding added to the global context with no case here must fall
+// through to the composer, never be silently swallowed.
+func TestGlobalFallthroughForAnUnhandledID(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	_, cmd, handled := s.globalAction(keymap.ID("not-a-real-action"))
+	if handled {
+		t.Error("an unknown global action reported itself handled")
+	}
+	if cmd != nil {
+		t.Errorf("got %+v, want no Cmd for an unknown action", cmd())
+	}
+}
+
+// TestComposerFallthroughForAnUnhandledID is the same guard one context
+// down.
+func TestComposerFallthroughForAnUnhandledID(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	if _, _, handled := s.composerAction(keymap.ID("not-a-real-action")); handled {
+		t.Error("an unknown composer action reported itself handled")
+	}
+}
+
+func TestMenuUpArrowMovesTheHighlight(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	s.SetCommands([]composer.Command{{Name: "model"}, {Name: "modes"}})
+	s = typeText(t, s, "/mo")
+	// Up from the first row wraps to the last.
+	s, _ = press(t, s, tea.KeyPressMsg{Code: tea.KeyUp})
+	s, _ = press(t, s, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if got := s.composer.Value(); got != "/modes" {
+		t.Errorf("got %q, want Up to wrap to the last row", got)
 	}
 }

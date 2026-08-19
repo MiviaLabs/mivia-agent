@@ -249,3 +249,20 @@ func TestToggleReasoning(t *testing.T) {
 		t.Error("the second press did not show reasoning again")
 	}
 }
+
+// TestSyncFocusClampsAStrayIndex covers the guards. Focus is set from
+// outside eviction in a later wave, so both ends are defended here
+// rather than trusted.
+func TestSyncFocusClampsAStrayIndex(t *testing.T) {
+	m := focused(t, 2)
+
+	m.focus = -9
+	if got := m.syncFocus().FocusIndex(); got != -1 {
+		t.Errorf("got %d, want any negative index folded to the composer", got)
+	}
+
+	m.focus = 99
+	if got := m.syncFocus().FocusIndex(); got != len(m.Live())-1 {
+		t.Errorf("got %d, want a clamp to the newest block", got)
+	}
+}

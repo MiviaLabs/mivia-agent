@@ -117,8 +117,6 @@ func (s Screen) transcriptAction(id keymap.ID) (app.Screen, tea.Cmd) {
 			s.statusline.Notice("copied the block")
 			return s, tea.SetClipboard(text)
 		}
-	case keymap.IDOpenPager:
-		return s, nil // the pager screen lands in the next wave
 	}
 	return s, nil
 }
@@ -171,11 +169,11 @@ func (s Screen) composerAction(id keymap.ID) (app.Screen, tea.Cmd, bool) {
 
 // cancelTurn stops the active turn and KEEPS the composer text. Losing
 // what the user typed on a cancel is the reported defect this avoids.
+//
+// It never has to unfocus a block. handleKey offers Esc to the
+// transcript context first, and that context claims it while a block
+// holds the focus, so this is only reached with the composer focused.
 func (s Screen) cancelTurn() (app.Screen, tea.Cmd, bool) {
-	if s.transcript.Focused() {
-		s.transcript = s.transcript.ClearFocus()
-		return s, nil, true
-	}
 	if s.active == nil {
 		return s, nil, false
 	}
