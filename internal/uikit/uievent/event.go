@@ -147,11 +147,14 @@ type DiffHunk struct {
 // Diff is a structured unified diff for a file edit. After, when
 // present, is the file's full post-edit content: the Files tab's
 // source view reads it, and anything that only needs the change (the
-// transcript, the approval preview) ignores it.
+// transcript, the approval preview) ignores it. Deleted marks a whole-
+// file removal: hunks still describe what was lost, and After is
+// absent by definition.
 type Diff struct {
 	Path    string     `json:"path"`
 	Added   int        `json:"added"`
 	Removed int        `json:"removed"`
+	Deleted bool       `json:"deleted,omitempty"`
 	Hunks   []DiffHunk `json:"hunks"`
 	After   []string   `json:"after,omitempty"`
 }

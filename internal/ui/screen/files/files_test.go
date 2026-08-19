@@ -155,3 +155,54 @@ func TestTabNextPopsBackToChat(t *testing.T) {
 		t.Errorf("ctrl+n yielded %T, want PopScreenMsg", msg)
 	}
 }
+
+// TestDeletedDiffClaimsTheDeletedKind: a whole-file removal states
+// itself, rather than reading as an edit that happens to only remove.
+func TestDeletedDiffClaimsTheDeletedKind(t *testing.T) {
+	e := NewEntry(uievent.Diff{Path: "gone.go", Removed: 12, Deleted: true})
+	if e.Kind != KindDeleted {
+		t.Errorf("kind %q, want deleted", e.Kind)
+	}
+}
+
+// TestLiveEventsAppendAndHoldTheSelection: while the tab is open, a
+// streamed tool-end diff appears in the list immediately, and the
+// cursor stays on the path the user selected - a live update must not
+// move the selection.
+func TestLiveEventsAppendAndHoldTheSelection(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII, entries())
+	next, _ := m.Update(tea.WindowSizeMsg{Width: uikitconfig.BreakpointWide, Height: 24})
+	m = next.(Model)
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown}) // select b.go
+	m = next.(Model)
+	if sel, _ := m.list.Selected(); !strings.Contains(sel, "b.go") {
+		t.Fatalf("precondition: selection is %q, want b.go", sel)
+	}
+
+	next, _ = m.Update(uievent.EventMsg{Event: uievent.Event{
+		Kind: uievent.KindToolEnd,
+		Body: uievent.ToolEndBody{ToolCallID: "c9", OK: true,
+			Diff: &uievent.Diff{Path: "c.go", Added: 1, Removed: 0}},
+	}})
+	m = next.(Model)
+	if len(m.entries) != 3 || m.entries[2].Path != "c.go" {
+		t.Fatalf("live diff did not append: %+v", m.entries)
+	}
+	if sel, _ := m.list.Selected(); !strings.Contains(sel, "b.go") {
+		t.Errorf("live append moved the selection to %q, want b.go held", sel)
+	}
+
+	// A second edit to an existing path folds in place, latest wins.
+	next, _ = m.Update(uievent.EventMsg{Event: uievent.Event{
+		Kind: uievent.KindToolEnd,
+		Body: uievent.ToolEndBody{ToolCallID: "c10", OK: true,
+			Diff: &uievent.Diff{Path: "c.go", Added: 4, Removed: 4}},
+	}})
+	m = next.(Model)
+	if len(m.entries) != 3 || m.entries[2].Kind != KindEdited {
+		t.Errorf("re-edit did not fold in place: %+v", m.entries)
+	}
+	if sel, _ := m.list.Selected(); !strings.Contains(sel, "b.go") {
+		t.Errorf("fold moved the selection to %q", sel)
+	}
+}

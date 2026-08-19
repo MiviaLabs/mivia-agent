@@ -15,6 +15,12 @@ import (
 // the same shape).
 const SplitLeftShare = 30
 
+// SplitLeftMax caps the navigation pane's absolute width: a share of a
+// very wide terminal is still too much list (30% of 300 columns is 90
+// columns of paths). Past the cap the content pane takes everything
+// extra.
+const SplitLeftMax = 60
+
 // Side names the focused pane of a split.
 type Side int
 
@@ -38,6 +44,9 @@ const (
 // in one place when more panes arrive.
 func Split(t theme.Theme, tier theme.Tier, width, height int, focus Side, left, right string) string {
 	leftW := width * SplitLeftShare / 100
+	if leftW > SplitLeftMax {
+		leftW = SplitLeftMax
+	}
 	rightW := width - leftW
 	if leftW < 8 || rightW < 8 {
 		// Too narrow to frame two panes: callers collapse to one pane

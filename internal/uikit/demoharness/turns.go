@@ -33,7 +33,7 @@ var scenarios = map[string][]string{
 	"full-tour": {
 		"smalltalk.json", "tool_call.json", "diff.json", "tool_fail.json",
 		"plan.json", "reasoning.json", "usage.json", "approval.json",
-		"approval_diff.json",
+		"approval_diff.json", "delete.json",
 	},
 	"smalltalk":     {"smalltalk.json"},
 	"approval":      {"approval.json"},

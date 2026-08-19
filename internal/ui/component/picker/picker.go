@@ -29,6 +29,19 @@ func New(t theme.Theme, tier theme.Tier, items []string) Model {
 	return Model{Theme: t, Tier: tier, items: items}
 }
 
+// MoveTo places the cursor on the item at index, clamped to the list.
+// Callers that rebuild a picker (a live-updating list) use it to hold
+// the selection steady across the rebuild.
+func (m *Model) MoveTo(index int) {
+	if index < 0 {
+		index = 0
+	}
+	if index >= len(m.items) {
+		index = len(m.items) - 1
+	}
+	m.cursor = index
+}
+
 // Selected returns the currently highlighted item and whether the
 // (filtered) list is non-empty.
 func (m Model) Selected() (string, bool) {

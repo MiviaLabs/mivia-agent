@@ -33,30 +33,35 @@ func TestLoadScenarioFullTourCoversEveryTurnShape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(scripts) != 9 {
-		t.Fatalf("got %d scripts, want 9 (one per required turn shape)", len(scripts))
+	if len(scripts) != 10 {
+		t.Fatalf("got %d scripts, want 10 (one per required turn shape)", len(scripts))
 	}
 	for i, s := range scripts {
 		if len(s.Before) == 0 {
 			t.Errorf("script %d has an empty Before", i)
 		}
 	}
-	// The last two scripts (approval.json, approval_diff.json) are the
-	// only ones with a decision fork: each Before ends on tool.pending and
-	// carries both continuations.
-	for _, name := range []string{"approval.json", "approval_diff.json"} {
-		idx := len(scripts) - 1
-		if name == "approval.json" {
-			idx = len(scripts) - 2
+	// Exactly the approval turns carry a decision fork: their Before
+	// ends on tool.pending and carries both continuations. Found by
+	// shape, not position, so appending turn shapes to the tour cannot
+	// silently shift the assertion onto the wrong script.
+	forks := 0
+	for i, s := range scripts {
+		pends := false
+		for _, ev := range s.Before {
+			if _, ok := ev.Body.(uievent.ToolPendingBody); ok {
+				pends = true
+			}
 		}
-		if len(scripts[idx].OnApprove) == 0 || len(scripts[idx].OnDeny) == 0 {
-			t.Errorf("expected %s to carry both on_approve and on_deny continuations", name)
+		if pends || len(s.OnApprove) > 0 || len(s.OnDeny) > 0 {
+			forks++
+			if !pends || len(s.OnApprove) == 0 || len(s.OnDeny) == 0 {
+				t.Errorf("script %d has an incomplete decision fork (pending=%v)", i, pends)
+			}
 		}
 	}
-	for i, s := range scripts[:len(scripts)-2] {
-		if len(s.OnApprove) != 0 || len(s.OnDeny) != 0 {
-			t.Errorf("script %d is not an approval turn but carries a decision continuation", i)
-		}
+	if forks != 2 {
+		t.Errorf("found %d decision forks, want 2 (approval.json, approval_diff.json)", forks)
 	}
 }
 

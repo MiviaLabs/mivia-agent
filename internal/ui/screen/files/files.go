@@ -31,6 +31,7 @@ type Kind string
 const (
 	KindEdited  Kind = "edited"
 	KindCreated Kind = "created"
+	KindDeleted Kind = "deleted"
 )
 
 // Entry is one file the session touched.
@@ -40,13 +41,15 @@ type Entry struct {
 	Diff uievent.Diff
 }
 
-// NewEntry derives an Entry from a tool-end diff. A diff with no
-// removals is a creation: hunks that only add carry no previous
-// content. Deletions have no diff representation in the event
-// vocabulary yet, so no entry kind claims them (phase 1).
+// NewEntry derives an Entry from a tool-end diff. Deleted is stated by
+// the diff itself; a diff with no removals is a creation (hunks that
+// only add carry no previous content); everything else is an edit.
 func NewEntry(d uievent.Diff) Entry {
 	k := KindEdited
-	if d.Removed == 0 {
+	switch {
+	case d.Deleted:
+		k = KindDeleted
+	case d.Removed == 0:
 		k = KindCreated
 	}
 	return Entry{Path: d.Path, Kind: k, Diff: d}
@@ -104,6 +107,43 @@ func New(t theme.Theme, tier theme.Tier, entries []Entry) Model {
 	}
 }
 
+// appendLive folds one more observed diff into the list, rebuilding the
+// picker over the collapsed entries while holding the selection on the
+// same path: a live update must not move the user's cursor.
+func (m *Model) appendLive(d uievent.Diff) {
+	sel, _ := m.list.Selected()
+	selPath := strings.Split(sel, "  ")[0]
+	for i, e := range m.entries {
+		if e.Path == d.Path {
+			m.entries[i] = NewEntry(d)
+			m.refreshList(selPath)
+			return
+		}
+	}
+	m.entries = append(m.entries, NewEntry(d))
+	m.refreshList(selPath)
+}
+
+// refreshList rebuilds the picker over the entries, keeping the cursor
+// on the path that was selected (or the first row when it vanished).
+func (m *Model) refreshList(keepPath string) {
+	names := make([]string, len(m.entries))
+	for i, e := range m.entries {
+		names[i] = e.rowLabel()
+	}
+	theme, tier := m.list.Theme, m.list.Tier
+	m.list = picker.New(theme, tier, names)
+	if keepPath == "" {
+		return
+	}
+	for i, e := range m.entries {
+		if e.Path == keepPath {
+			m.list.MoveTo(i)
+			return
+		}
+	}
+}
+
 // Entries exposes the collapsed file list for tests and callers that
 // need the derived data without rendering.
 func (m Model) Entries() []Entry { return m.entries }
@@ -128,6 +168,14 @@ func (m Model) ViewFlags() app.ViewFlags { return app.ViewFlags{AltScreen: true}
 
 func (m Model) Update(msg tea.Msg) (app.Screen, tea.Cmd) {
 	switch msg := msg.(type) {
+	case uievent.EventMsg:
+		// The router broadcasts stream events to every screen on the
+		// stack, so the tab observes edits LIVE while it is open - not
+		// only the snapshot it was pushed with.
+		if end, ok := msg.Event.Body.(uievent.ToolEndBody); ok && end.Diff != nil {
+			m.appendLive(*end.Diff)
+		}
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.offset = 0
@@ -165,17 +213,24 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
 			m.sourceView = !m.sourceView
 			m.offset = 0
 			return m, nil
-		case keymap.IDPagerRowUp:
-			m.offset -= 1
-		case keymap.IDPagerRowDown:
-			m.offset += 1
 		case keymap.IDPagerHalfUp:
 			m.offset -= m.contentHeight() / 2
+			m.clampOffset()
+			return m, nil
 		case keymap.IDPagerHalfDown:
 			m.offset += m.contentHeight() / 2
+			m.clampOffset()
+			return m, nil
 		}
-		m.clampOffset()
-		return m, nil
+		// up/down/k/j move the LIST selection; the right pane follows
+		// because View derives from it. The picker answers the arrows
+		// itself; the less spellings it does not know, so translate.
+		switch id {
+		case keymap.IDPagerRowUp:
+			msg = tea.KeyPressMsg{Code: tea.KeyUp}
+		case keymap.IDPagerRowDown:
+			msg = tea.KeyPressMsg{Code: tea.KeyDown}
+		}
 	}
 	// Everything else feeds the list: arrows move the selection, typing
 	// filters, and the right pane follows because View derives from the

@@ -220,15 +220,17 @@ func pagerBindings() []Binding {
 	}
 }
 
-// filesBindings is the Files tab's section: arrows and the less
-// spellings scroll the focused pane, d flips diff/source, ctrl+n is
-// global and pops back to chat.
+// filesBindings is the Files tab's section. Arrows and the less
+// spellings move the LIST selection - the list is the tab's primary
+// control, and the right pane follows it. The content pane scrolls by
+// half pages on the readline-free ctrl+d/ctrl+u, d flips diff/source,
+// and ctrl+n is global and pops back to chat.
 func filesBindings() []Binding {
 	return []Binding{
-		{ID: IDPagerRowUp, Context: ContextFiles, Keys: []string{"up", "k"}, Help: "one row up"},
-		{ID: IDPagerRowDown, Context: ContextFiles, Keys: []string{"down", "j"}, Help: "one row down"},
-		{ID: IDPagerHalfDown, Context: ContextFiles, Keys: []string{"ctrl+d"}, Help: "half page down"},
-		{ID: IDPagerHalfUp, Context: ContextFiles, Keys: []string{"ctrl+u"}, Help: "half page up"},
+		{ID: IDPagerRowUp, Context: ContextFiles, Keys: []string{"up", "k"}, Help: "previous file"},
+		{ID: IDPagerRowDown, Context: ContextFiles, Keys: []string{"down", "j"}, Help: "next file"},
+		{ID: IDPagerHalfDown, Context: ContextFiles, Keys: []string{"ctrl+d"}, Help: "scroll the content half a page down"},
+		{ID: IDPagerHalfUp, Context: ContextFiles, Keys: []string{"ctrl+u"}, Help: "scroll the content half a page up"},
 		{ID: IDFileToggleView, Context: ContextFiles, Keys: []string{"d"}, Help: "diff or source", Short: "diff"},
 	}
 }

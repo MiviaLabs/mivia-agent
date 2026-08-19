@@ -43,6 +43,28 @@ func TestSplitFramesTwoPanesAtTheNamedRatio(t *testing.T) {
 	}
 }
 
+// TestSplitCapsTheLeftPaneOnWideTerminals: past SplitLeftMax the
+// navigation pane stops growing and the content pane takes the rest.
+func TestSplitCapsTheLeftPaneOnWideTerminals(t *testing.T) {
+	got := Split(loadTheme(t), theme.TierASCII, 300, 10, Left, "left", "right")
+	var contentRow string
+	for _, r := range strings.Split(got, "\n") {
+		if strings.Contains(r, "left") {
+			contentRow = r
+			break
+		}
+	}
+	if contentRow == "" {
+		t.Fatalf("no content row:\n%s", got)
+	}
+	if i := strings.Index(contentRow, "left"); i > SplitLeftMax+2 {
+		t.Errorf("left content at column %d, want inside the %d-column cap: %q", i, SplitLeftMax, contentRow)
+	}
+	if i := strings.Index(contentRow, "right"); i < SplitLeftMax {
+		t.Errorf("right content at column %d, want the space beyond the cap: %q", i, contentRow)
+	}
+}
+
 // TestSplitDropsSurplusRowsNotScrolls: content taller than the pane is
 // clipped by Split; windowing is the caller's job.
 func TestSplitDropsSurplusRowsNotScrolls(t *testing.T) {
