@@ -33,6 +33,18 @@ type Model struct {
 	info  ports.ModelInfo
 	usage ports.Usage
 	width int
+
+	// tabs is the cockpit's ordered tab strip; active is the index of
+	// the tab this bar belongs to. Named entries, not a boolean, so a
+	// third tab is a one-line change at the call sites.
+	tabs   []string
+	active int
+}
+
+// SetTabs names the tab strip and marks this bar's own tab active.
+func (m *Model) SetTabs(names []string, active int) {
+	m.tabs = names
+	m.active = active
 }
 
 // New returns a top bar showing the given session values. width is the
@@ -83,6 +95,19 @@ func (m Model) View() string {
 	fg := render.Role(m.Theme, m.Tier, theme.RoleFG)
 
 	left := m.mark.View() + subtle.Render("  ") + fg.Render(Wordmark)
+	if len(m.tabs) > 0 {
+		// The strip sits after the wordmark: the active tab in the
+		// foreground, the rest subtle.
+		cells := make([]string, 0, len(m.tabs))
+		for i, tab := range m.tabs {
+			if i == m.active {
+				cells = append(cells, fg.Render(tab))
+				continue
+			}
+			cells = append(cells, subtle.Render(tab))
+		}
+		left += subtle.Render("   ") + strings.Join(cells, subtle.Render("  "))
+	}
 	right := subtle.Render(m.info.Provider+"/") + fg.Render(m.info.Name)
 	if pct, ok := m.contextPercent(); ok {
 		right += subtle.Render(fmt.Sprintf("  %d%% ctx", pct))

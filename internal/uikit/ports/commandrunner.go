@@ -31,6 +31,13 @@ type CommandOutcome struct {
 	// CommandRunner.SelectModel.
 	ModelChoices []string
 
+	// AgentChoices, when non-empty, asks the UI to open a picker over
+	// these agent names, first entry highlighted. The chosen name comes
+	// back through CommandRunner.SelectAgent. The default orchestrator
+	// (DefaultAgentName) is always a member of a real roster; the UI
+	// does not enforce it, the harness's roster does.
+	AgentChoices []string
+
 	// Notice, when non-empty, is appended to the transcript as an
 	// informational block.
 	Notice string
@@ -51,4 +58,14 @@ type CommandRunner interface {
 	// picker and reports a CommandOutcome, typically a confirmation
 	// Notice.
 	SelectModel(ctx context.Context, name string) CommandOutcome
+
+	// SelectAgent applies an agent choice returned by an AgentChoices
+	// picker: switch the session's active agent and report the outcome,
+	// typically a confirmation Notice.
+	SelectAgent(ctx context.Context, name string) CommandOutcome
 }
+
+// DefaultAgentName is the session's default agent: Mivia, the general
+// purpose orchestrator. A roster always carries it; /agents offers it
+// so switching back needs no recall of the name.
+const DefaultAgentName = "Mivia"

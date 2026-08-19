@@ -1,9 +1,94 @@
 {
   "before": [
-    {"kind":"turn.start","turn_id":"t","seq":1,"at":"2026-08-20T09:02:00Z","body":{"input":"add a doc comment to the New function"}},
-    {"kind":"tool.start","turn_id":"t","seq":2,"at":"2026-08-20T09:02:00.1Z","body":{"tool_call_id":"tc2","name":"edit_file","args":{"path":"internal/uikit/demoharness/demoharness.go"}}},
-    {"kind":"tool.end","turn_id":"t","seq":3,"at":"2026-08-20T09:02:00.2Z","body":{"tool_call_id":"tc2","name":"edit_file","ok":true,"result":"1 hunk","duration_ms":9,"diff":{"path":"internal/uikit/demoharness/demoharness.go","added":2,"removed":0,"hunks":[{"header":"@@ -10,2 +10,4 @@ func New(","lines":[{"kind":"context","text":"func New(name string) (*Harness, error) {"},{"kind":"add","text":"// New builds a Harness for the named scenario."},{"kind":"add","text":""},{"kind":"context","text":"    scenario, err := loadScenario(name)"}]}]}}},
-    {"kind":"text.end","turn_id":"t","seq":4,"at":"2026-08-20T09:02:00.3Z","body":{"text":"Added the doc comment."}},
-    {"kind":"turn.end","turn_id":"t","seq":5,"at":"2026-08-20T09:02:00.4Z","body":{"reason":"completed"}}
+    {
+      "kind": "turn.start",
+      "turn_id": "t",
+      "seq": 1,
+      "at": "2026-08-20T09:02:00Z",
+      "body": {
+        "input": "add a doc comment to the New function"
+      }
+    },
+    {
+      "kind": "tool.start",
+      "turn_id": "t",
+      "seq": 2,
+      "at": "2026-08-20T09:02:00.1Z",
+      "body": {
+        "tool_call_id": "tc2",
+        "name": "edit_file",
+        "args": {
+          "path": "internal/uikit/demoharness/demoharness.go"
+        }
+      }
+    },
+    {
+      "kind": "tool.end",
+      "turn_id": "t",
+      "seq": 3,
+      "at": "2026-08-20T09:02:00.2Z",
+      "body": {
+        "tool_call_id": "tc2",
+        "name": "edit_file",
+        "ok": true,
+        "result": "1 hunk",
+        "duration_ms": 9,
+        "diff": {
+          "path": "internal/uikit/demoharness/demoharness.go",
+          "added": 2,
+          "removed": 0,
+          "hunks": [
+            {
+              "header": "@@ -10,2 +10,4 @@ func New(",
+              "lines": [
+                {
+                  "kind": "context",
+                  "text": "func New(name string) (*Harness, error) {"
+                },
+                {
+                  "kind": "add",
+                  "text": "// New builds a Harness for the named scenario."
+                },
+                {
+                  "kind": "add",
+                  "text": ""
+                },
+                {
+                  "kind": "context",
+                  "text": "    scenario, err := loadScenario(name)"
+                }
+              ]
+            }
+          ],
+          "after": [
+            "package config",
+            "",
+            "// DemoScenarioPace is the delay between streamed events.",
+            "const DemoScenarioPace = 45 * time.Millisecond",
+            "",
+            "// DemoCancelFlushTimeout bounds the final-event wait after Cancel.",
+            "const DemoCancelFlushTimeout = 1 * time.Second"
+          ]
+        }
+      }
+    },
+    {
+      "kind": "text.end",
+      "turn_id": "t",
+      "seq": 4,
+      "at": "2026-08-20T09:02:00.3Z",
+      "body": {
+        "text": "Added the doc comment."
+      }
+    },
+    {
+      "kind": "turn.end",
+      "turn_id": "t",
+      "seq": 5,
+      "at": "2026-08-20T09:02:00.4Z",
+      "body": {
+        "reason": "completed"
+      }
+    }
   ]
 }

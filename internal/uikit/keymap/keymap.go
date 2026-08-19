@@ -36,6 +36,8 @@ const (
 	ContextDialog Context = "dialog"
 	// ContextPager applies inside the full-screen pager.
 	ContextPager Context = "pager"
+	// ContextFiles applies inside the Files tab's panes.
+	ContextFiles Context = "files"
 )
 
 // ID names an action. The view layer switches on ID, never on a key
@@ -96,6 +98,10 @@ const (
 	IDLeavePager     ID = "leave-pager"
 	IDDumpScrollback ID = "dump-scrollback"
 	IDEditTranscript ID = "edit-transcript"
+
+	// Files tab (phase 1 of the file browser).
+	IDTabNext        ID = "tab-next"
+	IDFileToggleView ID = "file-toggle-view"
 )
 
 // Binding is one row of the table.
@@ -122,13 +128,17 @@ type Binding struct {
 // word-rubout and is "close tab" in many emulators, so collapse-all
 // moved off it too.
 func Default() []Binding {
-	return append([]Binding{
+	return append(append([]Binding{
 		// Global.
 		{ID: IDCancel, Context: ContextGlobal, Keys: []string{"esc"}, Help: "cancel the turn, keep the text"},
 		{ID: IDQuit, Context: ContextGlobal, Keys: []string{"ctrl+c"}, Help: "cancel; press twice to quit", Short: "quit"},
 		{ID: IDThemeDialog, Context: ContextGlobal, Keys: []string{"ctrl+t"}, Help: "theme"},
 		{ID: IDOpenPager, Context: ContextGlobal, Keys: []string{"ctrl+o"}, Help: "open the pager", Short: "transcript"},
 		{ID: IDToggleReason, Context: ContextGlobal, Keys: []string{"ctrl+r"}, Help: "show or hide reasoning"},
+		// ctrl+n cycles the cockpit's tabs (chat, files). No context
+		// claims it anywhere else; n alone is transcript copy-block's
+		// neighbour, but ctrl-modified it is free.
+		{ID: IDTabNext, Context: ContextGlobal, Keys: []string{"ctrl+n"}, Help: "switch tab", Short: "tabs"},
 
 		// Scrolling. The cockpit owns the surface, so the application
 		// scrolls: the terminal has no scrollback of its own to offer
@@ -179,7 +189,7 @@ func Default() []Binding {
 		{ID: IDDialogDown, Context: ContextDialog, Keys: []string{"down"}, Help: "next"},
 		{ID: IDDialogAccept, Context: ContextDialog, Keys: []string{"enter"}, Help: "apply"},
 		{ID: IDDialogCancel, Context: ContextDialog, Keys: []string{"esc"}, Help: "cancel"},
-	}, pagerBindings()...)
+	}, pagerBindings()...), filesBindings()...)
 }
 
 // pagerBindings is the pager (transcript mode) section of Default,
@@ -207,6 +217,19 @@ func pagerBindings() []Binding {
 		{ID: IDLeavePager, Context: ContextPager, Keys: []string{"ctrl+o", "esc", "q"}, Help: "return to the composer", Short: "back"},
 		{ID: IDDumpScrollback, Context: ContextPager, Keys: []string{"["}, Help: "write the transcript to terminal scrollback", Short: "scrollback"},
 		{ID: IDEditTranscript, Context: ContextPager, Keys: []string{"v"}, Help: "open the transcript in $VISUAL or $EDITOR", Short: "editor"},
+	}
+}
+
+// filesBindings is the Files tab's section: arrows and the less
+// spellings scroll the focused pane, d flips diff/source, ctrl+n is
+// global and pops back to chat.
+func filesBindings() []Binding {
+	return []Binding{
+		{ID: IDPagerRowUp, Context: ContextFiles, Keys: []string{"up", "k"}, Help: "one row up"},
+		{ID: IDPagerRowDown, Context: ContextFiles, Keys: []string{"down", "j"}, Help: "one row down"},
+		{ID: IDPagerHalfDown, Context: ContextFiles, Keys: []string{"ctrl+d"}, Help: "half page down"},
+		{ID: IDPagerHalfUp, Context: ContextFiles, Keys: []string{"ctrl+u"}, Help: "half page up"},
+		{ID: IDFileToggleView, Context: ContextFiles, Keys: []string{"d"}, Help: "diff or source", Short: "diff"},
 	}
 }
 
@@ -270,6 +293,7 @@ func (m *Map) Help() []HelpRow {
 	order := []Context{
 		ContextGlobal, ContextComposer, ContextCompletion,
 		ContextTranscript, ContextApproval, ContextDialog, ContextPager,
+		ContextFiles,
 	}
 	var rows []HelpRow
 	for _, ctx := range order {

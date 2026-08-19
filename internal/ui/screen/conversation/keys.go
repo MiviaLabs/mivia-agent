@@ -4,6 +4,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/files"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/themepicker"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/transcript"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/keymap"
@@ -236,6 +237,12 @@ func (s Screen) globalAction(id keymap.ID) (app.Screen, tea.Cmd, bool) {
 	case keymap.IDScrollBottom:
 		s.transcript = s.transcript.ScrollToBottom()
 		return s, nil, true
+	case keymap.IDTabNext:
+		// ctrl+n cycles the cockpit's tabs. The Files tab takes a value
+		// snapshot of the session's touched files, the same pattern the
+		// pager uses for the conversation.
+		tab := files.New(s.Theme, s.Tier, s.files)
+		return s, func() tea.Msg { return app.PushScreenMsg{Screen: tab} }, true
 	case keymap.IDOpenPager:
 		// Rule 6.2: transcript mode replaces terminal find. The pager
 		// takes a VALUE snapshot of the conversation; blocks re-render

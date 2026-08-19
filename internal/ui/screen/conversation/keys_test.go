@@ -11,6 +11,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/composer"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/files"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/transcript"
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/keymap"
@@ -890,5 +891,41 @@ func TestViewHasAOneColumnGutter(t *testing.T) {
 	}
 	if !strings.Contains(ansi.Strip(rows[len(rows)-2]), "> ") {
 		t.Errorf("input row not where expected: %q", rows[len(rows)-2])
+	}
+}
+
+// TestTabNextPushesTheFilesTabWithSessionFiles: ctrl+n from chat pushes
+// the Files tab, and the tab carries every diff the session observed.
+func TestTabNextPushesTheFilesTabWithSessionFiles(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
+	scr := next.(Screen)
+	for _, ev := range []uievent.Event{
+		{Kind: uievent.KindToolEnd, Body: uievent.ToolEndBody{
+			ToolCallID: "c1", OK: true,
+			Diff: &uievent.Diff{Path: "x.go", Added: 1, Hunks: []uievent.DiffHunk{{
+				Header: "@@ -1 +1 @@", Lines: []uievent.DiffLine{{Kind: uievent.DiffLineAdd, Text: "n"}},
+			}}},
+		}},
+	} {
+		n, _ := scr.Update(uievent.EventMsg{Event: ev})
+		scr = n.(Screen)
+	}
+	next, cmd := scr.Update(ctrl('n'))
+	scr = next.(Screen)
+	if cmd == nil {
+		t.Fatal("ctrl+n produced no command")
+	}
+	msg := cmd()
+	push, ok := msg.(app.PushScreenMsg)
+	if !ok {
+		t.Fatalf("ctrl+n yielded %T, want PushScreenMsg", msg)
+	}
+	tab, ok := push.Screen.(files.Model)
+	if !ok {
+		t.Fatalf("pushed %T, want the files tab", push.Screen)
+	}
+	if len(tab.Entries()) != 1 || tab.Entries()[0].Path != "x.go" {
+		t.Errorf("files tab carries %v, want the session's x.go edit", tab.Entries())
 	}
 }

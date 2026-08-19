@@ -22,6 +22,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/topbar"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/transcript"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/files"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
@@ -69,6 +70,12 @@ type Screen struct {
 	// generated keymap - is drawn in place instead. Any key clears it.
 	overlay string
 
+	// files is the session's touched-file list for the Files tab: a
+	// derived view over the tool-end diffs the transcript already
+	// renders. It accumulates here because this screen sees every
+	// event; the Files tab takes a snapshot on entry.
+	files []files.Entry
+
 	// mouseHint names the terminal's mouse-override key (rule 6.5). It
 	// is appended to the help overlay so the escape hatch is on screen,
 	// not buried in documentation. Empty when the hint was never set.
@@ -101,6 +108,7 @@ func New(th theme.Theme, tier theme.Tier, themes []theme.Theme, conv ports.Conve
 	}
 	s.approval.SetWidth(contentWidth(width))
 	s.topbar = topbar.New(th, tier, conv.Model(), conv.ContextUsage(), contentWidth(width))
+	s.topbar.SetTabs([]string{"chat", "files"}, 0)
 	return s
 }
 
@@ -266,6 +274,12 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 	case uievent.ToolEndBody:
 		s.approval.Clear()
 		s.statusline.SetLabel("thinking")
+		if b.Diff != nil {
+			// The Files tab's data: every completed edit accumulates as
+			// a touched file. Deletions carry no diff in the event
+			// vocabulary, so only edits and creations record here.
+			s.files = append(s.files, files.NewEntry(*b.Diff))
+		}
 	case uievent.TurnEndBody:
 		s.approval.Clear()
 	}

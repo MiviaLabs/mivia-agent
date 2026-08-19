@@ -104,6 +104,15 @@
                 }
               ]
             }
+          ],
+          "after": [
+            "package config",
+            "",
+            "// DemoScenarioPace is the delay between streamed events.",
+            "const DemoScenarioPace = 45 * time.Millisecond",
+            "",
+            "// DemoCancelFlushTimeout bounds the final-event wait after Cancel.",
+            "const DemoCancelFlushTimeout = 1 * time.Second"
           ]
         }
       }
@@ -209,6 +218,15 @@
                 }
               ]
             }
+          ],
+          "after": [
+            "package config",
+            "",
+            "// DemoScenarioPace is the delay between streamed events.",
+            "const DemoScenarioPace = 45 * time.Millisecond",
+            "",
+            "// DemoCancelFlushTimeout bounds the final-event wait after Cancel.",
+            "const DemoCancelFlushTimeout = 1 * time.Second"
           ]
         }
       }
