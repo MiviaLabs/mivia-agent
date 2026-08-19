@@ -1,0 +1,43 @@
+> Add retry with exponential backoff to the S3 uploader, and cover it
+  with a test.
+> reasoning 84 words hidden
+
+I will add a bounded retry to the uploader transport. Three attempts, full
+jitter, and a cap of 5s.
+
+    func (u *Uploader) put(ctx context.Context, k string, b []byte) error {
+        return retry.Do(ctx, retry.Policy{Max: 3, Cap: 5 * time.Second},
+            func() error { return u.raw.Put(ctx, k, b) })
+    }
+v read_file    path=internal/storage/s3_uploader.go
+    package storage
+  read_file   48 lines                                     12ms  ok
+v edit         path=internal/storage/s3_uploader.go
+  edit                                                     31ms  ok
+    internal/storage/s3_uploader.go  +4 -1
+    @@ -14,7 +14,11 @@ func (u *Uploader) put(
+    -return u.raw.Put(ctx, k, b)
+    +return retry.Do(ctx, retry.Policy{
+    +Max: 3,
+    +Cap: 5 * time.Second,
+    +}, func() error { return u.raw.Put(ctx, k, b) })
+v subagent     agent=test-writer
+    [2 of 3] running 18s
+    + read existing table tests
+    + draft TestPutRetriesOnTransient
+    - run the package test
+  subagent    3 of 3 steps complete                     23500ms  ok
+v run_command  command=go test ./internal/storage/...
+    --- FAIL: TestPutRetriesOnTransient
+  run_command s3_uploader_test.go:88: want 3 attempts, got 1   4100ms  failed
+  plan    2 of 4
+    [x] add retry policy to the transport
+    [x] wire the uploader through it
+    [ ] fix the fake transport to count attempts
+    [ ] run the package test again
+  error   transport refused after 3 attempts                       fatal
+          dial tcp 10.0.0.4:443: i/o timeout
+  notice  context 62% (78k of 125k). /compact frees about 30k.
+  usage   1284 in  2940 out  340 cached  $0.041  21.4s
+
+> (turn completed)

@@ -1,0 +1,15 @@
+# Theme printer at every explicit tier; NO_COLOR must produce zero ANSI
+# colour escapes while keeping bold/dim decoration.
+
+exec mivia-ui-demo themes --theme mivia-dark --tier truecolor
+stdout '38;2;250;250;250'
+
+exec mivia-ui-demo themes --theme mivia-dark --tier 16
+stdout '\x1b\[1;97m'
+
+env NO_COLOR=1
+exec mivia-ui-demo themes --theme mivia-dark --tier ascii
+stdout 'accent'
+! stdout '38;2;'
+! stdout '\[3[0-7]m'
+! stdout '\[9[0-7]m'

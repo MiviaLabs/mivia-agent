@@ -1,5 +1,6 @@
 # Binaries
 /mivia
+/mivia-ui-demo
 *.exe
 *.test
 *.out

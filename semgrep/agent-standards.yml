@@ -346,3 +346,70 @@ rules:
       exclude:
         - /**/*_test.go
     pattern: $REG.Execute(...)
+
+  # --- New terminal UI: internal/uikit and internal/ui boundary rules ---
+  # docs/design/wireframes-panes.md and the mivia-ui build spec require
+  # these mechanically, not just by convention.
+
+  - id: mivia.go.uikit-no-bubbletea-lipgloss
+    languages:
+      - go
+    severity: ERROR
+    message: internal/uikit/** is UI-agnostic and must not import bubbletea or lipgloss.
+    paths:
+      include:
+        - /internal/uikit/**/*.go
+    pattern-regex: '"(charm\.land/(bubbletea|lipgloss)(/v2)?|github\.com/charmbracelet/(bubbletea|lipgloss)(/v2)?)"'
+
+  - id: mivia.go.ui-no-raw-print
+    languages:
+      - go
+    severity: ERROR
+    message: internal/ui/** must not call fmt.Print*; one stray print corrupts the frame. Write to the given io.Writer, or log to a file.
+    paths:
+      include:
+        - /internal/ui/**/*.go
+      exclude:
+        - /**/*_test.go
+    pattern-either:
+      - pattern: fmt.Print(...)
+      - pattern: fmt.Println(...)
+      - pattern: fmt.Printf(...)
+
+  - id: mivia.go.uikit-ui-no-init
+    languages:
+      - go
+    severity: ERROR
+    message: internal/uikit/** and internal/ui/** must not use init(); wire dependencies explicitly.
+    paths:
+      include:
+        - /internal/uikit/**/*.go
+        - /internal/ui/**/*.go
+      exclude:
+        - /**/*_test.go
+    pattern: func init() { ... }
+
+  - id: mivia.go.uikit-ui-no-package-level-sync-state
+    languages:
+      - go
+    severity: ERROR
+    message: >-
+      internal/uikit/** and internal/ui/** must not hold package-level mutable
+      singleton state (sync.Mutex/RWMutex/Map, atomic.*). This is the exact
+      god-object pattern (subagent_progress.go's globalBusState,
+      orchestration_state.go's coordinators sync.Map) the new UI tree exists to
+      avoid; immutable lookup tables built once at package init (const-like
+      var maps/slices, go:embed FS vars) are not the target and are not
+      flagged by this rule.
+    paths:
+      include:
+        - /internal/uikit/**/*.go
+        - /internal/ui/**/*.go
+      exclude:
+        - /**/*_test.go
+    pattern-either:
+      - pattern: var $X sync.Mutex
+      - pattern: var $X sync.RWMutex
+      - pattern: var $X sync.Map
+      - pattern: var $X sync.WaitGroup
+      - pattern: var $X atomic.$T
