@@ -118,21 +118,15 @@ func (s *Screen) closeThread() {
 }
 
 // threadDialogKey routes a key into the open subagent-thread dialog.
-// Esc and ctrl+n close the dialog back to the list (the thread keeps
-// streaming in the background and reopens with its state); ctrl+c
-// closes it and runs the ordinary quit flow, so the second-press
-// warning lands on the visible main status row. Everything else goes
-// to the embedded screen's OWN Update - its composer, its completion
-// menu, its transcript - never the main chat's.
+// Esc, ctrl+n, and ctrl+c close the dialog back to the list (the thread
+// keeps streaming in the background and reopens with its state).
+// Everything else goes to the embedded screen's OWN Update - its composer,
+// its completion menu, its transcript - never the main chat's.
 func (s Screen) threadDialogKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
 	switch msg.String() {
-	case "esc", "ctrl+n":
+	case "esc", "ctrl+n", "ctrl+c":
 		s.panel.dialog, s.panel.dialogAgent = false, ""
 		return s, tea.ClearScreen
-	case "ctrl+c":
-		s.panel.dialog, s.panel.dialogAgent = false, ""
-		next, cmd, _ := s.quit()
-		return next, tea.Batch(cmd, tea.ClearScreen)
 	}
 	if s.thread == nil {
 		return s, nil

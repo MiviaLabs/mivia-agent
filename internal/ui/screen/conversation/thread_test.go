@@ -264,4 +264,37 @@ func TestEmbeddedScreenViewShape(t *testing.T) {
 	if !strings.Contains(plain, "> ") {
 		t.Errorf("the embedded view lost the composer:\n%s", plain)
 	}
+	if !strings.Contains(plain, "esc:close dialog") {
+		t.Errorf("embedded view status row missing \"esc:close dialog\":\n%s", plain)
+	}
+	if strings.Contains(plain, "ctrl+c:quit") {
+		t.Errorf("embedded view status row must NOT show \"ctrl+c:quit\":\n%s", plain)
+	}
+}
+
+func TestSubagentThreadCtrlCClosesDialogWithoutQuitting(t *testing.T) {
+	s := threadScreen(t, stubThreads{"sa-1": &scriptedThread{events: make(chan uievent.Event, 4)}}, false)
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	s = next.(Screen)
+	if !s.panel.dialog || s.panel.dialogAgent != "sa-1" {
+		t.Fatal("enter did not open the thread dialog")
+	}
+
+	// Press ctrl+c inside the open thread dialog
+	next, cmd := s.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	s = next.(Screen)
+
+	// Dialog must be closed
+	if s.panel.dialog || s.panel.dialogAgent != "" {
+		t.Fatal("ctrl+c did not close the thread dialog")
+	}
+	// Program quit must NOT be triggered
+	if s.quitArmed {
+		t.Fatal("ctrl+c inside thread dialog armed quit, want dialog closed only")
+	}
+	if cmd != nil {
+		if _, ok := cmd().(tea.QuitMsg); ok {
+			t.Fatal("ctrl+c inside thread dialog issued tea.Quit")
+		}
+	}
 }

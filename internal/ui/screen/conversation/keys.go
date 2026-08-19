@@ -165,11 +165,25 @@ func (s Screen) handlePanelKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bool) 
 	if !s.panel.open || !s.panel.focused {
 		return s, nil, false
 	}
+	if s.panel.dialog {
+		// A live subagent thread routes its keys to the embedded
+		// screen's own Update (its composer, its transcript); file and
+		// step-log dialogs keep the any-key-closes rule.
+		if s.panel.dialogAgent != "" && s.thread != nil && s.threadID == s.panel.dialogAgent {
+			next, cmd := s.threadDialogKey(msg)
+			return next, cmd, true
+		}
+		if msg.String() == "ctrl+c" {
+			s.panel.dialog, s.panel.dialogAgent = false, ""
+			return s, tea.ClearScreen, true
+		}
+		return s.panelDialogKey(msg), nil, true
+	}
 	if msg.String() == "ctrl+c" {
 		next, cmd, _ := s.quit()
 		return next, cmd, true
 	}
-	if msg.String() == "tab" && !s.panel.dialog {
+	if msg.String() == "tab" {
 		s.panelFocus(false)
 		return s, nil, true
 	}
@@ -185,16 +199,6 @@ func (s Screen) handlePanelKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bool) 
 			// panel, so its global surfaces stay one key away.
 			return s, nil, false
 		}
-	}
-	if s.panel.dialog {
-		// A live subagent thread routes its keys to the embedded
-		// screen's own Update (its composer, its transcript); file and
-		// step-log dialogs keep the any-key-closes rule.
-		if s.panel.dialogAgent != "" && s.thread != nil && s.threadID == s.panel.dialogAgent {
-			next, cmd := s.threadDialogKey(msg)
-			return next, cmd, true
-		}
-		return s.panelDialogKey(msg), nil, true
 	}
 	return s.handlePanelListKey(msg)
 }

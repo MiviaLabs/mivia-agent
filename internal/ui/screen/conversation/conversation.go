@@ -516,8 +516,13 @@ func (s *Screen) Notice(text string) {
 // width - inside the split's left pane it must not exceed the pane.
 func (s Screen) statusRow() string {
 	line := s.statusText()
-	hint := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle).
-		Render(s.keys.Hint(keymap.IDHelp, keymap.IDOpenPager, keymap.IDPanelToggle, keymap.IDQuit))
+	var hint string
+	if s.embedded {
+		hint = render.Role(s.Theme, s.Tier, theme.RoleFGSubtle).Render("esc:close dialog")
+	} else {
+		hint = render.Role(s.Theme, s.Tier, theme.RoleFGSubtle).
+			Render(s.keys.Hint(keymap.IDHelp, keymap.IDOpenPager, keymap.IDPanelToggle, keymap.IDQuit))
+	}
 	if line == "" {
 		line = hint
 	} else {
