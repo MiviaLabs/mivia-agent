@@ -177,6 +177,32 @@ func formatRelativeTime(updatedAt, now time.Time) string {
 	}
 }
 
+func (sp sessionPicker) statusBadge(s ports.SessionSummary) string {
+	border := render.Role(sp.Theme, sp.Tier, theme.RoleBorder)
+	if s.Active {
+		stateStyle := render.Role(sp.Theme, sp.Tier, theme.RoleSuccess)
+		label := "● LIVE"
+		if sp.Tier == theme.TierASCII || sp.Tier == theme.TierNoTTY {
+			label = "* LIVE"
+		}
+		return border.Render("[") + stateStyle.Render(label) + border.Render("]")
+	}
+	if s.State == "failed" {
+		stateStyle := render.Role(sp.Theme, sp.Tier, theme.RoleDanger)
+		label := "✖ ERR"
+		if sp.Tier == theme.TierASCII || sp.Tier == theme.TierNoTTY {
+			label = "x ERR"
+		}
+		return border.Render("[") + stateStyle.Render(label) + border.Render("]")
+	}
+	stateStyle := render.Role(sp.Theme, sp.Tier, theme.RoleFGSubtle)
+	label := "○ IDLE"
+	if sp.Tier == theme.TierASCII || sp.Tier == theme.TierNoTTY {
+		label = "- IDLE"
+	}
+	return border.Render("[") + stateStyle.Render(label) + border.Render("]")
+}
+
 func (sp sessionPicker) sessionMark(s ports.SessionSummary) string {
 	if s.Active {
 		state := mark.Thinking
@@ -216,8 +242,9 @@ func (sp sessionPicker) View(t theme.Theme, tier theme.Tier, innerWidth int, now
 
 		timeStr := formatRelativeTime(s.UpdatedAt, now)
 		markGlyph := sp.sessionMark(s)
+		badge := sp.statusBadge(s)
 
-		fixedWidth := 2 + 1 + 1 + 2 + len(timeStr)
+		fixedWidth := 2 + 1 + ansi.StringWidth(markGlyph) + 1 + ansi.StringWidth(badge) + 2 + len(timeStr)
 		titleMax := max(10, innerWidth-fixedWidth)
 		title := s.Title
 		if title == "" {
@@ -227,18 +254,18 @@ func (sp sessionPicker) View(t theme.Theme, tier theme.Tier, innerWidth int, now
 			title = ansi.Truncate(title, titleMax, "…")
 		}
 
-		gap := max(1, innerWidth-2-1-1-ansi.StringWidth(title)-len(timeStr))
+		gap := max(1, innerWidth-2-1-ansi.StringWidth(markGlyph)-1-ansi.StringWidth(title)-1-ansi.StringWidth(badge)-len(timeStr))
 		spaces := strings.Repeat(" ", gap)
 
-		row := prefix + markGlyph + " " + title + spaces + timeStr
+		row := prefix + markGlyph + " " + title + " " + badge + spaces + timeStr
 		if selected {
 			style := render.Role(t, tier, theme.RoleFG)
 			style = render.WithBg(style, t, tier, theme.RoleBGSelection)
 			b.WriteString(style.Render(row))
 		} else {
-			fg := render.Role(t, tier, theme.RoleFG).Render(prefix + markGlyph + " " + title)
+			fg := render.Role(t, tier, theme.RoleFG).Render(prefix + markGlyph + " " + title + " ")
 			subtle := render.Role(t, tier, theme.RoleFGSubtle).Render(spaces + timeStr)
-			b.WriteString(fg + subtle)
+			b.WriteString(fg + badge + subtle)
 		}
 	}
 

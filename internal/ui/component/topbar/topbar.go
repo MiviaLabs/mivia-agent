@@ -153,6 +153,41 @@ func (m Model) breadcrumbRow() string {
 	return row
 }
 
+func (m Model) contextBadge(pct int) string {
+	border := render.Role(m.Theme, m.Tier, theme.RoleBorder)
+	role := theme.RoleFGSubtle
+	if pct >= 90 {
+		role = theme.RoleDanger
+	} else if pct >= 70 {
+		role = theme.RoleWarning
+	}
+	style := render.Role(m.Theme, m.Tier, role)
+
+	if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY || m.width < 70 {
+		return border.Render("[ ") + style.Render(fmt.Sprintf("%d%%", pct)) + border.Render(" ]")
+	}
+
+	totalBlocks := 4
+	filled := min(totalBlocks, max(0, (pct*totalBlocks+50)/100))
+	bar := strings.Repeat("▰", filled) + strings.Repeat("▱", totalBlocks-filled)
+
+	return border.Render("[ ") + style.Render(fmt.Sprintf("%d%% ", pct)+bar) + border.Render(" ]")
+}
+
+func (m Model) modelCapsule() string {
+	border := render.Role(m.Theme, m.Tier, theme.RoleBorder)
+	subtle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
+	fg := render.Role(m.Theme, m.Tier, theme.RoleFG)
+
+	var label string
+	if m.info.Provider != "" {
+		label = subtle.Render(m.info.Provider+"/") + fg.Render(m.info.Name)
+	} else {
+		label = fg.Render(m.info.Name)
+	}
+	return border.Render("[ ") + label + border.Render(" ]")
+}
+
 // View renders the top bar. The first row states the mark/wordmark on the
 // left, and model/provider/context share on the right. When breadcrumbs
 // are present, a second row renders the trail.
@@ -161,9 +196,9 @@ func (m Model) View() string {
 	fg := render.Role(m.Theme, m.Tier, theme.RoleFG)
 
 	left := m.mark.View() + subtle.Render("  ") + fg.Render(Wordmark)
-	right := subtle.Render(m.info.Provider+"/") + fg.Render(m.info.Name)
+	right := m.modelCapsule()
 	if pct, ok := m.contextPercent(); ok {
-		right += subtle.Render(fmt.Sprintf("  %d%% ctx", pct))
+		right += " " + m.contextBadge(pct)
 	}
 	var line string
 	if m.width > 0 {

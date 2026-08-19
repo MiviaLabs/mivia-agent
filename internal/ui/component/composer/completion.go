@@ -171,6 +171,7 @@ func (m menu) view(t theme.Theme, tier theme.Tier, width int) string {
 	}
 	end := min(m.offset+uikitconfig.MaxCompletionRows, len(m.matches))
 	rows := make([]string, 0, end-m.offset+1)
+	subtle := render.Role(t, tier, theme.RoleFGSubtle)
 	for i := m.offset; i < end; i++ {
 		c := m.matches[i]
 		marker := "  "
@@ -179,18 +180,18 @@ func (m menu) view(t theme.Theme, tier theme.Tier, width int) string {
 			marker = "> "
 			style = render.Role(t, tier, theme.RoleAccent)
 		}
-		row := marker + "/" + c.Name
+		cmdName := marker + "/" + c.Name
+		row := style.Render(cmdName)
 		if c.Desc != "" {
-			row += "  " + c.Desc
+			row += "  " + subtle.Render(c.Desc)
 		}
-		if width > 0 {
+		if width > 0 && ansi.StringWidth(row) > width {
 			row = ansi.Truncate(row, width, "")
 		}
-		rows = append(rows, style.Render(row))
+		rows = append(rows, row)
 	}
 	if len(m.matches) > uikitconfig.MaxCompletionRows {
-		rows = append(rows, render.Role(t, tier, theme.RoleFGSubtle).
-			Render(countLabel(m.cursor+1, len(m.matches))))
+		rows = append(rows, subtle.Render(countLabel(m.cursor+1, len(m.matches))))
 	}
 	return strings.Join(rows, "\n")
 }

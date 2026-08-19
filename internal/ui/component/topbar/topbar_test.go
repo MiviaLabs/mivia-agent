@@ -30,7 +30,7 @@ func TestViewShowsBrandModelAndContext(t *testing.T) {
 		Name: "mivia-fast", Provider: "demo", ContextWindow: 125_000,
 	}, ports.Usage{InputTokens: 50_000, OutputTokens: 25_000}, 80)
 	got := ansi.Strip(m.View())
-	for _, want := range []string{"⬖", "mivia", "demo/mivia-fast", "60% ctx"} {
+	for _, want := range []string{"⬖", "mivia", "demo/mivia-fast", "60%"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("top bar %q missing %q", got, want)
 		}

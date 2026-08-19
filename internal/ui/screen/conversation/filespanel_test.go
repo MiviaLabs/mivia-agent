@@ -237,7 +237,7 @@ func TestPanelSectionsGroupByCategory(t *testing.T) {
 	}
 	// Rows split name from dimmed directory, with the kind glyph in
 	// front and the selection marker on the selected row.
-	if !strings.Contains(plain, "~ a.go  internal/ui") {
+	if !strings.Contains(plain, "~ a.go") || !strings.Contains(plain, "internal/ui") {
 		t.Errorf("edited row does not show glyph + name + directory:\n%s", plain)
 	}
 	if !strings.Contains(plain, "+ b.go") {
@@ -279,7 +279,7 @@ func TestPanelSectionsGroupByCategory(t *testing.T) {
 	}})
 	s = next.(Screen)
 	plain = ansi.Strip(s.View())
-	if !strings.Contains(plain, "subagents (1)") || !strings.Contains(plain, "sa-1  done") {
+	if !strings.Contains(plain, "subagents (1)") || !strings.Contains(plain, "sa-1") || !strings.Contains(plain, "done") {
 		t.Errorf("subagent update did not fold in place:\n%s", plain)
 	}
 }

@@ -412,44 +412,72 @@ func clipRowsToWidth(rows []string, inner int) []string {
 	return rows
 }
 
+func (s Screen) panelFileRow(e fileEntry, selLabel string, marked bool) string {
+	name, dir := splitPath(e.Path)
+	glyph := map[fileKind]string{fileCreated: "+", fileEdited: "~", fileDeleted: "-"}[e.Kind]
+	prefix, style := "  ", render.Role(s.Theme, s.Tier, theme.RoleFG)
+	if marked && e.rowLabel() == selLabel {
+		prefix = "> "
+		style = render.WithBg(style, s.Theme, s.Tier, theme.RoleBGSelection)
+	}
+	row := style.Render(prefix + glyph + " " + name)
+	if e.Diff.Added > 0 || e.Diff.Removed > 0 {
+		border := render.Role(s.Theme, s.Tier, theme.RoleBorder)
+		var stat string
+		if e.Diff.Added > 0 && e.Diff.Removed > 0 {
+			add := render.Role(s.Theme, s.Tier, theme.RoleDiffAddFG).Render("+" + strconv.Itoa(e.Diff.Added))
+			del := render.Role(s.Theme, s.Tier, theme.RoleDiffDelFG).Render("-" + strconv.Itoa(e.Diff.Removed))
+			stat = " " + border.Render("[") + add + border.Render("|") + del + border.Render("]")
+		} else if e.Diff.Added > 0 {
+			add := render.Role(s.Theme, s.Tier, theme.RoleDiffAddFG).Render("+" + strconv.Itoa(e.Diff.Added))
+			stat = " " + border.Render("[") + add + border.Render("]")
+		} else {
+			del := render.Role(s.Theme, s.Tier, theme.RoleDiffDelFG).Render("-" + strconv.Itoa(e.Diff.Removed))
+			stat = " " + border.Render("[") + del + border.Render("]")
+		}
+		row += stat
+	}
+	if dir != "" {
+		row += render.Role(s.Theme, s.Tier, theme.RoleFGSubtle).Render("  " + dir)
+	}
+	return row
+}
+
+func (s Screen) panelAgentRow(a subagentRow, selLabel string, marked bool) string {
+	prefix := "  · "
+	if marked && a.rowLabel() == selLabel {
+		prefix = "> · "
+	}
+	subtle := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle)
+	fg := render.Role(s.Theme, s.Tier, theme.RoleFG)
+	border := render.Role(s.Theme, s.Tier, theme.RoleBorder)
+	var statusBadge string
+	if a.Status != "" {
+		role := theme.RoleInfo
+		if a.Status == "completed" || a.Status == "done" {
+			role = theme.RoleSuccess
+		} else if a.Status == "failed" || a.Status == "error" {
+			role = theme.RoleDanger
+		} else if a.Status == "thinking" {
+			role = theme.RoleWarning
+		}
+		statusStyle := render.Role(s.Theme, s.Tier, role)
+		statusBadge = " " + border.Render("[") + statusStyle.Render(a.Status) + border.Render("]")
+	}
+	var stepBadge string
+	if a.Total > 0 {
+		stepBadge = " " + border.Render("[") + subtle.Render(strconv.Itoa(a.Step)+"/"+strconv.Itoa(a.Total)) + border.Render("]")
+	}
+	return subtle.Render(prefix) + fg.Render(a.ID) + statusBadge + stepBadge
+}
+
 func (s Screen) panelRows(inner, maxRows int) []string {
 	needle := strings.ToLower(s.panel.list.Filter())
 	visible, agents := s.panelFilterEntries(needle)
 
 	selLabel, _ := s.panel.list.Selected()
 	subtle := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle)
-	fg := render.Role(s.Theme, s.Tier, theme.RoleFG)
-	// The "> " marker is the cursor: it shows only while the list holds
-	// focus, so the row the NEXT keystroke acts on is always the marked
-	// one. Narrow mode has no focus-coloured rule, so this marker is its
-	// only focus signal. Unmarked file rows keep their kind glyph in the
-	// marker's place, so the column never twitches on focus moves.
 	marked := s.panel.focused
-	fileRow := func(e fileEntry) string {
-		name, dir := splitPath(e.Path)
-		glyph := map[fileKind]string{fileCreated: "+", fileEdited: "~", fileDeleted: "-"}[e.Kind]
-		prefix, style := "  ", fg
-		if marked && e.rowLabel() == selLabel {
-			prefix = "> "
-			style = render.WithBg(fg, s.Theme, s.Tier, theme.RoleBGSelection)
-		}
-		row := style.Render(prefix + glyph + " " + name)
-		if dir != "" {
-			row += subtle.Render("  " + dir)
-		}
-		return row
-	}
-	agentRow := func(a subagentRow) string {
-		prefix := "  · "
-		if marked && a.rowLabel() == selLabel {
-			prefix = "> · "
-		}
-		row := subtle.Render(prefix) + fg.Render(a.ID) + subtle.Render("  "+a.Status)
-		if a.Total > 0 {
-			row += subtle.Render("  " + strconv.Itoa(a.Step) + "/" + strconv.Itoa(a.Total))
-		}
-		return row
-	}
 
 	var rows []string
 	selRow := -1
@@ -458,11 +486,11 @@ func (s Screen) panelRows(inner, maxRows int) []string {
 		if e.rowLabel() == selLabel {
 			selRow = len(rows)
 		}
-		rows = append(rows, fileRow(e))
+		rows = append(rows, s.panelFileRow(e, selLabel, marked))
 	}
 	rows = append(rows, subtle.Render("subagents ("+strconv.Itoa(len(agents))+")"))
 	for _, a := range agents {
-		rows = append(rows, agentRow(a))
+		rows = append(rows, s.panelAgentRow(a, selLabel, marked))
 	}
 
 	rows = panelWindowRows(rows, selRow, maxRows, needle != "")
