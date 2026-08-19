@@ -417,3 +417,64 @@ func TestWideDiffLinesAreClippedToTheBox(t *testing.T) {
 		}
 	}
 }
+
+// TestLongTitleDoesNotWidenOrWrapTheBox is the regression for the
+// review finding: the title, hint, and position rows were never
+// clipped, so a long tool-call title word-wrapped inside the border and
+// the box claimed fewer rows than it rendered, pushing it into the
+// composer. Every row must fit the width and Height must equal the
+// rendered rows.
+func TestLongTitleDoesNotWidenOrWrapTheBox(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetWidth(40)
+	m.SetRequest(uievent.ToolPendingBody{
+		ToolCallID: "c1", Name: "run_command",
+		Args: map[string]any{"cmd": strings.Repeat("rm -rf ", 20)},
+		Diff: previewDiff(t, 3),
+	})
+	view := m.View()
+	rows := strings.Split(view, "\n")
+	for i, ln := range rows {
+		if w := ansi.StringWidth(ln); w > 40 {
+			t.Errorf("row %d width %d exceeds the 40-cell terminal", i, w)
+		}
+	}
+	if m.Height() != len(rows) {
+		t.Errorf("Height() = %d, want %d rendered rows", m.Height(), len(rows))
+	}
+
+	// Narrow terminal: the fixed hint (44 cells) must clip, not wrap.
+	m.SetWidth(24)
+	rows = strings.Split(m.View(), "\n")
+	for i, ln := range rows {
+		if w := ansi.StringWidth(ln); w > 24 {
+			t.Errorf("narrow row %d width %d exceeds 24", i, w)
+		}
+	}
+	if m.Height() != len(rows) {
+		t.Errorf("narrow Height() = %d, want %d rendered rows", m.Height(), len(rows))
+	}
+}
+
+// TestHunklessDiffClaimsNoPreviewRows: a Diff with no hunks renders no
+// preview and no position row, and Height must agree - the zero-window
+// branch.
+func TestHunklessDiffClaimsNoPreviewRows(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetWidth(80)
+	m.SetRequest(uievent.ToolPendingBody{
+		ToolCallID: "c1", Name: "edit_file",
+		Diff: &uievent.Diff{Path: "a.go"},
+	})
+	view := m.View()
+	if strings.Contains(view, "lines ") {
+		t.Errorf("hunkless diff drew a position row:\n%s", view)
+	}
+	if rows := len(strings.Split(view, "\n")); m.Height() != rows {
+		t.Errorf("Height() = %d, want %d rows", m.Height(), rows)
+	}
+	m = m.ScrollBy(5) // must stay a no-op
+	if !strings.Contains(m.View(), "o once") {
+		t.Error("scroll on a hunkless diff broke the prompt")
+	}
+}

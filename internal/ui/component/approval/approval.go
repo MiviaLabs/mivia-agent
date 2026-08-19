@@ -118,21 +118,31 @@ func (m Model) View() string {
 	if m.active == nil {
 		return ""
 	}
-	title := render.Role(m.Theme, m.Tier, theme.RoleWarning).Bold(true).Render(
-		"approve " + m.active.Name + " " + render.FormatArgs(m.active.Args))
+	// Every chrome row is clipped to the wrap width before it enters the
+	// box: lipgloss wraps a row that does not fit, and a wrapped row is a
+	// row Height() does not claim - the box would push into the composer.
+	// The title is the realistic breaker (a long command's arguments).
+	clip := func(s string) string {
+		if m.width > 4 {
+			return ansi.Truncate(s, m.width-4, "")
+		}
+		return s
+	}
+	title := clip(render.Role(m.Theme, m.Tier, theme.RoleWarning).Bold(true).Render(
+		"approve " + m.active.Name + " " + render.FormatArgs(m.active.Args)))
 	// The hint states the complete truth for this state: every key listed
 	// works, and no key that works is omitted. The scroll keys live in the
 	// keymap's approval context; they are absent here because this line
 	// names decision keys only - scrolling has its own position row.
-	hint := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Render(
-		"o once    a always    d deny    D deny always")
+	hint := clip(render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Render(
+		"o once    a always    d deny    D deny always"))
 	body := title
 	if diff := m.diffWindow(); len(diff) > 0 {
 		body += "\n" + strings.Join(diff, "\n")
 		if m.scrollable() {
-			body += "\n" + render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Render(
+			body += "\n" + clip(render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Render(
 				fmt.Sprintf("lines %d-%d of %d  up/down:scroll",
-					m.offset+1, m.offset+len(diff), m.diffTotal()))
+					m.offset+1, m.offset+len(diff), m.diffTotal())))
 		}
 	}
 	body += "\n" + hint
@@ -189,9 +199,6 @@ func (m Model) diffWindow() []string {
 	end := m.offset + m.windowHeight()
 	if end > len(lines) {
 		end = len(lines)
-	}
-	if m.offset > end {
-		m.offset = end
 	}
 	window := lines[m.offset:end]
 	// Clip to the box's effective wrap width, not the inner width:

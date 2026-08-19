@@ -811,8 +811,11 @@ func TestApprovalWheelScrollsThePreviewNotTheTranscript(t *testing.T) {
 	before := scr.transcript.Offset()
 	next, _ := scr.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
 	scr = next.(Screen)
-	if !strings.Contains(ansi.Strip(scr.View()), "lines") {
-		t.Error("wheel did not reach the approval preview")
+	// One wheel notch is CockpitScrollLines: the window must have moved
+	// by exactly that much, not merely shown a position row.
+	want := fmt.Sprintf("lines %d-%d of 31", 1+uikitconfig.CockpitScrollLines, uikitconfig.CockpitScrollLines+10)
+	if !strings.Contains(ansi.Strip(scr.View()), want) {
+		t.Errorf("wheel did not move the preview window to %q:\n%s", want, scr.View())
 	}
 	if got := scr.transcript.Offset(); got != before {
 		t.Errorf("wheel moved the transcript (%d -> %d) behind a modal approval", before, got)
