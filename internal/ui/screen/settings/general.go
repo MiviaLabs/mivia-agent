@@ -14,7 +14,7 @@ import (
 )
 
 // generalRow pairs one rendered field with the edit its current value
-// produces. All seven General settings are KindChoice - even scroll
+// produces. Every General setting is KindChoice - even scroll
 // lines, as a short preset list - so the section needs no separate
 // edit/commit mode: space (or enter) cycles the highlighted row AND
 // applies it in the same key press, matching the plan's "space:
@@ -84,9 +84,12 @@ func (s *generalSection) rebuild() {
 	v := s.store.General()
 	mk := func(label string) field.Model { return field.New(s.theme, s.tier, label, field.KindChoice, s.width) }
 
-	themeF := mk("theme")
-	themeF.SetChoices([]string{"mivia-dark", "mivia-light", "mivia-high-contrast"}, v.Theme)
-
+	// No theme row here: Ctrl-T already opens the dedicated theme
+	// picker dialog (screen/themepicker), which live-previews every
+	// theme as the cursor moves - a strictly better picking experience
+	// than a KindChoice cycler, so General does not duplicate it.
+	// ports.SetTheme/GeneralView.Theme stay - the port itself is not
+	// removed, only this UI's use of it.
 	mouseF := mk("mouse capture")
 	mouseF.SetChoices([]string{"on", "off"}, boolChoice(v.Mouse))
 
@@ -106,7 +109,6 @@ func (s *generalSection) rebuild() {
 	rmF.SetChoices([]string{"on", "off"}, boolChoice(v.ReducedMotion))
 
 	s.rows = []generalRow{
-		{themeF, func(val string) ports.GeneralEdit { return ports.SetTheme{Name: val} }},
 		{mouseF, func(val string) ports.GeneralEdit { return ports.SetMouse{On: val == "on"} }},
 		{reasonF, func(val string) ports.GeneralEdit { return ports.SetShowReasoning{On: val == "on"} }},
 		{scrollF, func(val string) ports.GeneralEdit {
