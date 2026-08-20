@@ -195,12 +195,22 @@ func (b Block) renderHeader(t theme.Theme, tier theme.Tier, width int) string {
 	// styles. The collapse marker remains, so focus is signalled by
 	// shape as well as by colour (docs/design/ux-rules.md rules 6.3-6.4).
 	if b.Focused {
-		// Truncated to width for the same reason the unfocused header is:
-		// a header that overflows draws two rows, and Height budgets one.
-		plain := b.headerPlain()
-		if width > 0 {
-			plain = ansi.Truncate(plain, width, "")
+		// Reuse render.Header's own column geometry (marker/label at the
+		// left, meta/state right-aligned) and strip its colour, so focus
+		// changes ONLY the reverse-video treatment and never moves a
+		// column - wireframes-panes.md section 5: "the header row is
+		// identical in both states." headerPlain is not reused here
+		// because it joins columns left-to-right for the clipboard text
+		// FocusedText produces (focus.go), which is a different contract.
+		spec := render.HeaderSpec{
+			Marker:    b.collapseMarker(),
+			Label:     b.Header.Label,
+			Detail:    b.Header.Detail,
+			Meta:      b.Header.Meta,
+			State:     b.Header.State,
+			StateRole: b.Header.Role,
 		}
+		plain := ansi.Strip(render.Header(t, tier, width, spec))
 		return render.Role(t, tier, theme.RoleFG).Reverse(true).Render(plain)
 	}
 
