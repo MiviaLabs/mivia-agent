@@ -587,15 +587,36 @@ func (s Screen) statusRow() string {
 		line += "  " + hint
 	}
 	if s.width > 2 {
-		line = ansi.Truncate(line, s.chatWidth(), "")
+		line = ansi.Truncate(line, s.chatWidth(), uikitconfig.ClipMarker)
 	}
 	return line
+}
+
+// turnTail is the trailing fields wireframes-panes.md section 9 adds
+// to an active turn's status line, after the mark/label/elapsed
+// statusline.Model already draws: the context share (when the window
+// size is known - an unknown window is left out rather than printing
+// a fabricated percentage) and the cancel hint, which states real
+// behavior (keymap.IDCancel binds esc to "cancel the turn, keep the
+// text" in ContextGlobal - ux-rules.md rule 1.4 forbids a hint that
+// promises something the current state cannot do).
+func (s Screen) turnTail() string {
+	subtle := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle)
+	var tail string
+	if pct, ok := s.topbar.ContextPercent(); ok {
+		tail += subtle.Render(fmt.Sprintf("  %d%% ctx", pct))
+	}
+	tail += subtle.Render("  esc to cancel")
+	return tail
 }
 
 // statusText is the transient left side of the status row: the turn's
 // status line, or the scroll and truncation affordances.
 func (s Screen) statusText() string {
 	if v := s.statusline.View(s.now()); v != "" {
+		if s.active != nil {
+			v += s.turnTail()
+		}
 		return v
 	}
 	// Narrow panel open: the transcript is hidden behind the list, so

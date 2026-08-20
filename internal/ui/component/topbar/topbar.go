@@ -77,10 +77,13 @@ func (m Model) Height() int {
 	return 1
 }
 
-// contextPercent is the share of the context window in use, from the
+// ContextPercent is the share of the context window in use, from the
 // cumulative in+out token counts. ok is false when the window size is
-// unknown: dividing by an unstated window would print a made-up number.
-func (m Model) contextPercent() (int, bool) {
+// unknown: dividing by an unstated window would print a made-up
+// number. Exported so the status line (a different component) can
+// show the same share the top bar already computes, rather than
+// re-deriving it from a second copy of ModelInfo/Usage.
+func (m Model) ContextPercent() (int, bool) {
 	if m.info.ContextWindow <= 0 {
 		return 0, false
 	}
@@ -197,7 +200,7 @@ func (m Model) View() string {
 
 	left := m.mark.View() + subtle.Render("  ") + fg.Render(Wordmark)
 	right := m.modelCapsule()
-	if pct, ok := m.contextPercent(); ok {
+	if pct, ok := m.ContextPercent(); ok {
 		right += " " + m.contextBadge(pct)
 	}
 	var line string
