@@ -17,6 +17,7 @@ type stubScreen struct {
 	cmd      tea.Cmd
 	initCmd  tea.Cmd
 	flags    ViewFlags
+	ownsQuit bool
 }
 
 func (s stubScreen) Init() tea.Cmd        { return s.initCmd }
@@ -26,6 +27,15 @@ func (s stubScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 	return s, s.cmd
 }
 func (s stubScreen) View() string { return s.name }
+
+// OwnsQuit satisfies the OwnsQuit interface unconditionally, reporting
+// the ownsQuit field (false by default). stubScreen therefore always
+// implements the interface, unlike a real screen that simply lacks the
+// method - the router's type assertion still exercises both outcomes
+// through the field: TestCtrlCQuitsFromModal never sets it (false, the
+// router's default quit-immediately path), TestCtrlCDelegatesToOwnsQuitModal
+// does (true, the opt-out path).
+func (s stubScreen) OwnsQuit() bool { return s.ownsQuit }
 
 func loadTheme(t *testing.T) theme.Theme {
 	t.Helper()
@@ -156,6 +166,56 @@ func TestCtrlCQuitsFromModal(t *testing.T) {
 	msg := cmd()
 	if _, ok := msg.(tea.QuitMsg); !ok {
 		t.Errorf("got %T, want tea.QuitMsg", msg)
+	}
+}
+
+func TestCtrlCDelegatesToOwnsQuitModal(t *testing.T) {
+	// A pushed screen that opts in via OwnsQuit()==true must receive
+	// ctrl+c itself, exactly like the base screen does, instead of the
+	// router quitting on the first press.
+	m := New(stubScreen{name: "base"}, loadTheme(t), theme.TierASCII, nil)
+	modal := stubScreen{name: "modal", ownsQuit: true}
+	next, _ := m.Update(PushScreenMsg{Screen: modal})
+	m = next.(Model)
+
+	next, cmd := m.Update(keyMsg("ctrl+c"))
+	m = next.(Model)
+	if cmd != nil {
+		if _, ok := cmd().(tea.QuitMsg); ok {
+			t.Fatal("expected ctrl+c NOT to quit immediately for an OwnsQuit modal")
+		}
+	}
+	got := m.stack[len(m.stack)-1].(stubScreen)
+	if len(got.received) != 1 {
+		t.Fatalf("expected ctrl+c forwarded to the OwnsQuit modal, got %d received msgs", len(got.received))
+	}
+	if k, ok := got.received[0].(tea.KeyPressMsg); !ok || k.String() != "ctrl+c" {
+		t.Errorf("got %+v, want ctrl+c KeyPressMsg", got.received[0])
+	}
+}
+
+// bareScreen implements only app.Screen, with no OwnsQuit method at
+// all - the shape a real theme/session-picker screen has today, and
+// the other branch (the type assertion's ok==false case) the router's
+// OwnsQuit check must also handle correctly, distinct from stubScreen's
+// OwnsQuit()==false (an implementation present that says no).
+type bareScreen struct{ name string }
+
+func (s bareScreen) Init() tea.Cmd                        { return nil }
+func (s bareScreen) ViewFlags() ViewFlags                 { return ViewFlags{} }
+func (s bareScreen) Update(msg tea.Msg) (Screen, tea.Cmd) { return s, nil }
+func (s bareScreen) View() string                         { return s.name }
+
+func TestCtrlCStillQuitsFromModalWithoutOwnsQuit(t *testing.T) {
+	m := New(stubScreen{name: "base"}, loadTheme(t), theme.TierASCII, nil)
+	next, _ := m.Update(PushScreenMsg{Screen: bareScreen{name: "modal"}})
+	m = next.(Model)
+	_, cmd := m.Update(keyMsg("ctrl+c"))
+	if cmd == nil {
+		t.Fatal("expected a Cmd for ctrl+c from a modal with no OwnsQuit method")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Errorf("got %T, want tea.QuitMsg", cmd())
 	}
 }
 

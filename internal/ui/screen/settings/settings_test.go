@@ -201,3 +201,94 @@ func TestNewClampsAnOutOfRangeInitialNav(t *testing.T) {
 		t.Errorf("nav = %d, want clamped to 0", s.nav)
 	}
 }
+
+func keySettingsMsg(s string) tea.KeyPressMsg { return tea.KeyPressMsg{Text: s, Code: rune(s[0])} }
+
+// TestSettingsOwnsQuit pins app.OwnsQuit's contract: the router forwards
+// ctrl+c to this screen instead of quitting on the first press.
+func TestSettingsOwnsQuit(t *testing.T) {
+	s := newScreen(t, 100, 30)
+	if !s.OwnsQuit() {
+		t.Error("settings.Screen must report OwnsQuit() == true")
+	}
+}
+
+// TestCtrlCArmsQuitAndShowsWarningInStatusRow mirrors
+// conversation.Screen's own double-press quit guard (UX Rule 1.3): the
+// first ctrl+c must not quit, and must show the warning in this
+// screen's own bottom status row - not silently exit like a modal.
+func TestCtrlCArmsQuitAndShowsWarningInStatusRow(t *testing.T) {
+	s := newScreen(t, 100, 30)
+	next, cmd := s.Update(keySettingsMsg("ctrl+c"))
+	s = next.(Screen)
+	if cmd != nil {
+		if _, ok := cmd().(tea.QuitMsg); ok {
+			t.Fatal("the first ctrl+c must not quit")
+		}
+	}
+	if !s.quitArmed {
+		t.Fatal("expected quitArmed after the first ctrl+c")
+	}
+	if got := ansi.Strip(s.View()); !strings.Contains(got, "ctrl+c:press again to quit") {
+		t.Errorf("expected the quit warning in the status row, got:\n%s", got)
+	}
+}
+
+// TestSecondCtrlCQuits pins the second half of the guard: a second
+// ctrl+c while armed actually quits.
+func TestSecondCtrlCQuits(t *testing.T) {
+	s := newScreen(t, 100, 30)
+	next, _ := s.Update(keySettingsMsg("ctrl+c"))
+	s = next.(Screen)
+	_, cmd := s.Update(keySettingsMsg("ctrl+c"))
+	if cmd == nil {
+		t.Fatal("expected a Cmd from the second ctrl+c")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Errorf("got %T, want tea.QuitMsg", cmd())
+	}
+}
+
+// TestAnyOtherKeyDisarmsQuit pins the same "any key other than a second
+// ctrl+c clears the arm" rule conversation.Screen's handleKey applies,
+// so a stray keystroke cannot leave the screen one press from quitting.
+func TestAnyOtherKeyDisarmsQuit(t *testing.T) {
+	s := newScreen(t, 100, 30)
+	next, _ := s.Update(keySettingsMsg("ctrl+c"))
+	s = next.(Screen)
+	if !s.quitArmed {
+		t.Fatal("setup: expected quitArmed after the first ctrl+c")
+	}
+	next, _ = s.Update(keySettingsMsg("down"))
+	s = next.(Screen)
+	if s.quitArmed {
+		t.Error("expected an unrelated key to disarm quit")
+	}
+}
+
+// TestCtrlCDismissesOverlayInsteadOfArmingQuit pins the help overlay's
+// "any key dismisses it" contract (matching conversation.Screen's own
+// handleKey ordering): ctrl+c while the overlay is open must close the
+// overlay, not arm or trigger quit.
+func TestCtrlCDismissesOverlayInsteadOfArmingQuit(t *testing.T) {
+	s := newScreen(t, 100, 30)
+	next, _ := s.Update(keySettingsMsg("?"))
+	s = next.(Screen)
+	if s.overlay == "" {
+		t.Fatal("setup: expected '?' to open the help overlay")
+	}
+
+	next, cmd := s.Update(keySettingsMsg("ctrl+c"))
+	s = next.(Screen)
+	if cmd != nil {
+		if _, ok := cmd().(tea.QuitMsg); ok {
+			t.Fatal("ctrl+c over the overlay must not quit")
+		}
+	}
+	if s.overlay != "" {
+		t.Error("expected ctrl+c to dismiss the overlay")
+	}
+	if s.quitArmed {
+		t.Error("expected ctrl+c over the overlay to leave quit unarmed")
+	}
+}

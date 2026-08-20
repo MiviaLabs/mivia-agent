@@ -45,8 +45,24 @@ type Screen struct {
 	overlay string // the generated help screen, drawn in place of the body
 	notice  string
 
+	// quitArmed is true between the first ctrl+c and the second, the
+	// same double-press quit guard conversation.Screen's own quitArmed
+	// implements (UX Rule 1.3). This screen has nothing analogous to an
+	// in-flight turn to cancel on the first press, so the first press
+	// only arms the guard and warns; the second press quits the app.
+	quitArmed bool
+
 	width, height int
 }
+
+// OwnsQuit reports true so the app router (app.OwnsQuit) forwards
+// ctrl+c to this screen's own Update instead of quitting on the first
+// press - the settings modal holds real in-flight state (cursor
+// position, filters, a save in flight), unlike a quick pick-one-and-go
+// dialog, so a stray ctrl+c must not discard it with no warning.
+func (s Screen) OwnsQuit() bool { return true }
+
+var _ app.OwnsQuit = Screen{}
 
 // sectionNames is the deep-link vocabulary "/settings <name>" resolves
 // against, in nav order. Lowercase, matching SectionIndex's own
@@ -203,12 +219,33 @@ func (s Screen) Update(msg tea.Msg) (app.Screen, tea.Cmd) {
 
 // handleKey dispatches within ContextSettings only - this screen does
 // not cascade to ContextGlobal, the same self-contained shape the pager
-// uses (keymap.go's ContextSettings doc comment).
+// uses (keymap.go's ContextSettings doc comment). ctrl+c is the one
+// exception: it is a ContextGlobal binding everywhere else, and this
+// screen only reaches it at all because app.OwnsQuit routes it here
+// instead of the router quitting immediately (see OwnsQuit's doc
+// comment), so it is matched explicitly rather than through
+// ContextSettings.
 func (s Screen) handleKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
+	// The overlay's "any key dismisses it" contract is absolute - it
+	// must run before ctrl+c is special-cased below, or ctrl+c becomes
+	// the one key that arms/triggers quit instead of closing the help
+	// screen, contradicting the overlay's own promise and diverging from
+	// conversation.Screen's handleKey, where the identical overlay check
+	// also precedes any ContextGlobal key match including IDQuit.
 	if s.overlay != "" {
 		s.overlay = ""
+		s.quitArmed = false
 		return s, tea.ClearScreen
 	}
+	if msg.String() == "ctrl+c" {
+		return s.quit()
+	}
+	// Any key other than ctrl+c clears the armed guard, so a stray
+	// keystroke after the first press cannot leave the screen one press
+	// from quitting - the same rule conversation.Screen's handleKey
+	// applies to its own quitArmed.
+	s.quitArmed = false
+
 	id, ok := s.keys.Match(keymap.ContextSettings, msg.String())
 	if !ok {
 		return s, nil
@@ -247,6 +284,21 @@ func (s Screen) handleKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
 		return s, cmd
 	}
 	return s, nil
+}
+
+// quit is the ctrl+c double-press guard (UX Rule 1.3): the first press
+// arms it and warns in the status row, the second press inside the
+// armed state quits the whole app. Unlike conversation.Screen.quit,
+// there is no in-flight turn to cancel on the first press - the
+// settings modal's async saves are section-local and complete on their
+// own; there is nothing this screen owns that the first press should
+// interrupt.
+func (s Screen) quit() (app.Screen, tea.Cmd) {
+	if !s.quitArmed {
+		s.quitArmed = true
+		return s, nil
+	}
+	return s, tea.Quit
 }
 
 // moveNav shifts the highlighted nav row by delta, clamped (not
@@ -307,8 +359,14 @@ func (s Screen) navView() string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-// statusRow is the hint line, or a transient notice in its place.
+// statusRow is the hint line, or a transient notice in its place. The
+// quit-armed warning takes priority over a section's own notice: it
+// names an action one more keystroke away, which outranks a save
+// result the user can still read after dismissing the warning.
 func (s Screen) statusRow() string {
+	if s.quitArmed {
+		return render.Role(s.Theme, s.Tier, theme.RoleWarning).Render("ctrl+c:press again to quit")
+	}
 	if s.notice != "" {
 		return render.Role(s.Theme, s.Tier, theme.RoleWarning).Render(s.notice)
 	}

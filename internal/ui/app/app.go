@@ -26,6 +26,19 @@ type Screen interface {
 	ViewFlags() ViewFlags
 }
 
+// OwnsQuit is implemented by a pushed screen that manages its own
+// ctrl+c double-press quit guard (UX Rule 1.3) instead of the router's
+// default "a pushed screen quits on the first ctrl+c" behavior. The
+// default fits a quick pick-one-and-go dialog (the theme picker, the
+// session picker), where there is nothing to lose. A screen with real
+// in-flight state - the settings modal's cursor position, filters, and
+// pending saves - should implement this and show its own "press again
+// to quit" warning, the same way the base screen's statusRow does, so a
+// stray ctrl+c cannot discard that state with no warning.
+type OwnsQuit interface {
+	OwnsQuit() bool
+}
+
 // ViewFlags are the per-screen terminal mode requests the router honors.
 type ViewFlags struct {
 	// AltScreen reports whether the screen holds the terminal's whole
@@ -169,10 +182,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyTheme(msg)
 	case tea.KeyPressMsg:
 		if msg.String() == "ctrl+c" {
-			// Modals quit immediately; the base screen manages its own turn
-			// cancellation and double-press quit guard (UX Rule 1.3).
+			// Most modals quit immediately; the base screen and any pushed
+			// screen that implements OwnsQuit manage their own turn
+			// cancellation and double-press quit guard instead (UX Rule 1.3).
 			if len(m.stack) > 1 {
-				return m, tea.Quit
+				top, _ := m.top()
+				owner, ok := top.(OwnsQuit)
+				if !ok || !owner.OwnsQuit() {
+					return m, tea.Quit
+				}
 			}
 		}
 		// Esc is NOT intercepted here. A screen must be able to give Esc a
