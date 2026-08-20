@@ -1,6 +1,7 @@
 package themepicker
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -413,5 +414,53 @@ func TestNewWithAnUnlistedThemeHighlightsTheFirstRow(t *testing.T) {
 	}
 	if got != themes[0].Name {
 		t.Errorf("got %q, want the first row %q", got, themes[0].Name)
+	}
+}
+
+// TestViewShowsRightAlignedThemeCount pins wireframes-panes.md section
+// 12.1's title band: "Theme    20 available". Before this test, the
+// dialog title was the bare "select a theme" string with no count
+// anywhere, so a user had no way to tell how many themes were even
+// available without scrolling the whole list.
+func TestViewShowsRightAlignedThemeCount(t *testing.T) {
+	themes := loadThemes(t)
+	s := New(themes[0], theme.TierASCII, themes)
+	got := s.View()
+	want := fmt.Sprintf("%d available", len(themes))
+	if !strings.Contains(got, want) {
+		t.Errorf("picker view missing theme count %q:\n%s", want, got)
+	}
+}
+
+// TestViewRightAlignsTheCountAgainstDialogWidth pins the RIGHT-aligned
+// half of section 12.1's band: at a known width, the count must sit
+// against the dialog's own inner edge, not just anywhere after the
+// title.
+func TestViewRightAlignsTheCountAgainstDialogWidth(t *testing.T) {
+	themes := loadThemes(t)
+	s := New(themes[0], theme.TierASCII, themes)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 30})
+	s = next.(Screen)
+
+	got := s.View()
+	count := fmt.Sprintf("%d available", len(themes))
+	inner := render.DialogBodyWidth(80)
+	titleRow := ""
+	for _, line := range strings.Split(ansi.Strip(got), "\n") {
+		if strings.Contains(line, count) {
+			titleRow = line
+			break
+		}
+	}
+	if titleRow == "" {
+		t.Fatalf("no title row found containing %q:\n%s", count, got)
+	}
+	// The count should land near the dialog's own inner width, not
+	// immediately after the title with no padding. (The row itself ends
+	// with the dialog's own border/padding chars, not the count, so this
+	// column check - not a string suffix check - is the real assertion.)
+	idx := strings.Index(titleRow, count)
+	if idx < inner-utf8.RuneCountInString(count)-4 {
+		t.Errorf("count at column %d is not right-aligned against inner width %d:\n%q", idx, inner, titleRow)
 	}
 }

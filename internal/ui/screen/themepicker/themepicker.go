@@ -3,7 +3,11 @@
 package themepicker
 
 import (
+	"fmt"
+	"strings"
+
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/picker"
@@ -141,7 +145,29 @@ func (s Screen) View() string {
 	s.picker.Theme, s.picker.Tier = pt, s.Tier
 	hint := "[enter] select  [esc] cancel  type to filter"
 	body := s.picker.View() + "\n\n" + s.previewView()
-	return render.Dialog(pt, s.Tier, s.width, s.height, "select a theme", body, hint)
+	return render.Dialog(pt, s.Tier, s.width, s.height, s.title(), body, hint)
+}
+
+// title is "select a theme" plus a right-aligned count, matching
+// wireframes-panes.md section 12.1 ("Theme    20 available") without
+// changing the lowercase phrasing every other dialog title in the tree
+// uses (render.Dialog callers: "select a theme", "keys", "resume
+// session") - only the missing count is added, not a restyle. render.
+// Dialog renders whatever this returns as one bold run, so unsized
+// callers (width <= 0, e.g. exact-string tests) get a plain two-space
+// gap instead of a padding computation that has no width to work from.
+func (s Screen) title() string {
+	base := "select a theme"
+	count := fmt.Sprintf("%d available", len(s.themes))
+	if s.width <= 0 {
+		return base + "  " + count
+	}
+	inner := render.DialogBodyWidth(s.width)
+	pad := inner - ansi.StringWidth(base) - ansi.StringWidth(count)
+	if pad < 2 {
+		return base + "  " + count
+	}
+	return base + strings.Repeat(" ", pad) + count
 }
 
 // previewView renders a prompt line, a syntax-highlighted code read,
