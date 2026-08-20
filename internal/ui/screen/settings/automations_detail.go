@@ -8,9 +8,15 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
 
-// renderRow draws one automation's list line: name, enabled/disabled,
-// trigger kind, and last run's state if any.
-func (s *automationsSection) renderRow(a ports.Automation) string {
+// renderCells draws one automation's list row as separately-aligned
+// cells: name, enabled/disabled, trigger kind, and last run's state if
+// any. render.Columns pads each cell to its column's widest value
+// across every row, so the enabled/trigger/state columns line up
+// instead of drifting with each automation's own name length. The last
+// cell is present only when LastRun is set, which render.Columns
+// handles as a ragged row: a row missing it simply ends one cell
+// early, with no dangling gap.
+func (s *automationsSection) renderCells(a ports.Automation) []string {
 	fg := render.Role(s.theme, s.tier, theme.RoleFG)
 	name := fg.Bold(true).Render(a.Name)
 
@@ -20,11 +26,11 @@ func (s *automationsSection) renderRow(a ports.Automation) string {
 	}
 	trig := render.Role(s.theme, s.tier, theme.RoleFGSubtle).Render(triggerLabel(a.Trigger))
 
-	last := ""
+	cells := []string{name, enabled, trig}
 	if a.LastRun != nil {
-		last = "  " + render.Role(s.theme, s.tier, runStateRole(a.LastRun.State)).Render(runStateLabel(a.LastRun.State))
+		cells = append(cells, render.Role(s.theme, s.tier, runStateRole(a.LastRun.State)).Render(runStateLabel(a.LastRun.State)))
 	}
-	return name + "  " + enabled + "  " + trig + last
+	return cells
 }
 
 // renderDetail draws the highlighted automation's expanded panel:

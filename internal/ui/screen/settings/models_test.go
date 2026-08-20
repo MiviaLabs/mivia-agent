@@ -161,3 +161,30 @@ func TestUnavailableModelsSectionSaysSo(t *testing.T) {
 		t.Errorf("expected the nil-store Models section to say unavailable, got %q", got)
 	}
 }
+
+// TestModelsProviderRowsAlignColumns pins settings-screen.md section 1's
+// aligned layout for the provider group: every provider row's
+// model-count column must start at the same screen position regardless
+// of its own provider name length. Provider and model rows align in
+// separate groups (they carry different columns), so this checks only
+// the provider-kind rows.
+func TestModelsProviderRowsAlignColumns(t *testing.T) {
+	s, _ := newHarnessScreen(t, 100, 30)
+	rows := strings.Split(ansi.Strip(modelsSectionOf(s).View()), "\n")
+	var withCount []string
+	for _, r := range rows {
+		if strings.Contains(r, " models") {
+			withCount = append(withCount, r)
+		}
+	}
+	if len(withCount) < 2 {
+		t.Fatalf("fixture has fewer than 2 provider rows: %v", withCount)
+	}
+	first := strings.Index(withCount[0], " models")
+	for i, r := range withCount[1:] {
+		if got := strings.Index(r, " models"); got != first {
+			t.Errorf("row %d: model-count column at %d, want %d (same as row 0):\n%q\n%q",
+				i+1, got, first, withCount[0], r)
+		}
+	}
+}

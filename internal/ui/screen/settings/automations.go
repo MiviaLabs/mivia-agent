@@ -229,13 +229,19 @@ func (s *automationsSection) View() string {
 	if s.store == nil {
 		return render.Role(s.theme, s.tier, theme.RoleFGSubtle).Render("Automations is unavailable.")
 	}
-	var b []byte
+	cells := make([][]string, len(s.rows))
 	for i, row := range s.rows {
+		cells[i] = s.renderCells(row)
+	}
+	aligned := render.Columns(rowGap, cells)
+
+	var b []byte
+	for i, line := range aligned {
 		marker := "  "
 		if i == s.cursor {
 			marker = "> "
 		}
-		b = append(b, (marker + s.renderRow(row))...)
+		b = append(b, (marker + line)...)
 		b = append(b, '\n')
 	}
 	if len(s.rows) > 0 {

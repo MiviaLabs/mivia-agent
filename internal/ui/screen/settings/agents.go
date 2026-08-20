@@ -115,17 +115,28 @@ func (s *agentsSection) remove() (section, tea.Cmd) {
 	return s, awaitAgentsSave(handle)
 }
 
+// rowGap is the space between columns in an aligned settings list,
+// matching the two-space rhythm render.Header already uses between its
+// own meta and state columns.
+const rowGap = 2
+
 func (s *agentsSection) View() string {
 	if s.store == nil {
 		return render.Role(s.theme, s.tier, theme.RoleFGSubtle).Render("Agents is unavailable.")
 	}
-	var b []byte
+	cells := make([][]string, len(s.rows))
 	for i, row := range s.rows {
+		cells[i] = s.renderCells(row)
+	}
+	aligned := render.Columns(rowGap, cells)
+
+	var b []byte
+	for i, line := range aligned {
 		marker := "  "
 		if i == s.cursor {
 			marker = "> "
 		}
-		b = append(b, (marker + s.renderRow(row))...)
+		b = append(b, (marker + line)...)
 		b = append(b, '\n')
 	}
 	if s.notice != "" {
@@ -134,18 +145,21 @@ func (s *agentsSection) View() string {
 	return string(b)
 }
 
-// renderRow draws one agent: name, description, model binding, tool
-// count, and the prompt's LENGTH only - SystemPromptChars, never the
-// text (settings-screen.md §5, the same "(set, N chars)" shape
-// internal/cli/config_cmd.go already uses).
-func (s *agentsSection) renderRow(row ports.AgentView) string {
+// renderCells draws one agent's row as separately-aligned cells: name,
+// description, model binding, tool count, and the prompt's LENGTH only
+// - SystemPromptChars, never the text (settings-screen.md §5, the same
+// "(set, N chars)" shape internal/cli/config_cmd.go already uses).
+// render.Columns pads each cell to its column's widest value across
+// every row, replacing the fixed "  " join that left ragged columns
+// whenever names or descriptions varied in width.
+func (s *agentsSection) renderCells(row ports.AgentView) []string {
 	fg := render.Role(s.theme, s.tier, theme.RoleFG)
 	name := fg.Bold(true).Render(row.Name)
 	desc := render.Role(s.theme, s.tier, theme.RoleFGSubtle).Render(row.Description)
 	model := render.Role(s.theme, s.tier, theme.RoleFGSubtle).Render(strings.TrimSpace(row.Provider + "/" + row.Model))
 	tools := render.Role(s.theme, s.tier, theme.RoleFGSubtle).Render(fmt.Sprintf("%d tools", len(row.Tools)))
 	prompt := render.Role(s.theme, s.tier, theme.RoleFGSubtle).Render(fmt.Sprintf("prompt %d chars", row.SystemPromptChars))
-	return name + "  " + desc + "  " + model + "  " + tools + "  " + prompt
+	return []string{name, desc, model, tools, prompt}
 }
 
 func (s *agentsSection) Hints() []keymap.ID {

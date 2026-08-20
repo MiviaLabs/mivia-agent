@@ -171,13 +171,15 @@ func (s *modelsSection) View() string {
 	if s.store == nil {
 		return render.Role(s.theme, s.tier, theme.RoleFGSubtle).Render("Models is unavailable.")
 	}
+	lines := s.alignedRows()
+
 	var b []byte
-	for i, row := range s.rows {
+	for i, line := range lines {
 		marker := "  "
 		if i == s.cursor {
 			marker = "> "
 		}
-		b = append(b, (marker + s.renderRow(row))...)
+		b = append(b, (marker + line)...)
 		b = append(b, '\n')
 	}
 	if s.notice != "" {
@@ -186,11 +188,36 @@ func (s *modelsSection) View() string {
 	return string(b)
 }
 
-func (s *modelsSection) renderRow(row modelsRow) string {
-	if row.isProvider {
-		return s.renderProviderRow(row.provider)
+// alignedRows renders every row's cells and column-aligns providers and
+// models SEPARATELY, each in its own original order: the two kinds
+// carry different columns (a provider's key status vs a model's
+// context window), so aligning them as one table would line up
+// unrelated fields under one column.
+func (s *modelsSection) alignedRows() []string {
+	providerCells := make([][]string, 0, len(s.rows))
+	modelCells := make([][]string, 0, len(s.rows))
+	for _, row := range s.rows {
+		if row.isProvider {
+			providerCells = append(providerCells, s.renderProviderCells(row.provider))
+		} else {
+			modelCells = append(modelCells, s.renderModelCells(row.provider, row.model))
+		}
 	}
-	return s.renderModelRow(row.provider, row.model)
+	alignedProviders := render.Columns(rowGap, providerCells)
+	alignedModels := render.Columns(rowGap, modelCells)
+
+	lines := make([]string, len(s.rows))
+	pi, mi := 0, 0
+	for i, row := range s.rows {
+		if row.isProvider {
+			lines[i] = alignedProviders[pi]
+			pi++
+		} else {
+			lines[i] = alignedModels[mi]
+			mi++
+		}
+	}
+	return lines
 }
 
 func (s *modelsSection) Hints() []keymap.ID {

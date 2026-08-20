@@ -177,3 +177,33 @@ func TestUnavailableAutomationsSectionSaysSo(t *testing.T) {
 		t.Errorf("expected the nil-store Automations section to say unavailable, got %q", got)
 	}
 }
+
+// TestAutomationsRowsAlignColumns pins settings-screen.md section 1's
+// aligned layout: every automation row's enabled/disabled column must
+// start at the same screen position regardless of its own name length.
+func TestAutomationsRowsAlignColumns(t *testing.T) {
+	s, _ := newHarnessScreen(t, 100, 30)
+	rows := strings.Split(ansi.Strip(automationsSectionOf(s).View()), "\n")
+	var withStatus []string
+	for _, r := range rows {
+		if strings.Contains(r, "enabled") || strings.Contains(r, "disabled") {
+			withStatus = append(withStatus, r)
+		}
+	}
+	if len(withStatus) < 2 {
+		t.Fatalf("fixture has fewer than 2 automation rows: %v", withStatus)
+	}
+	col := func(r string) int {
+		if i := strings.Index(r, "disabled"); i >= 0 {
+			return i
+		}
+		return strings.Index(r, "enabled")
+	}
+	first := col(withStatus[0])
+	for i, r := range withStatus[1:] {
+		if got := col(r); got != first {
+			t.Errorf("row %d: status column at %d, want %d (same as row 0):\n%q\n%q",
+				i+1, got, first, withStatus[0], r)
+		}
+	}
+}

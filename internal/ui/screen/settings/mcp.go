@@ -152,13 +152,19 @@ func (s *mcpSection) View() string {
 	if s.store == nil {
 		return render.Role(s.theme, s.tier, theme.RoleFGSubtle).Render("MCP is unavailable.")
 	}
-	var b []byte
+	cells := make([][]string, len(s.rows))
 	for i, row := range s.rows {
+		cells[i] = s.renderCells(row)
+	}
+	aligned := render.Columns(rowGap, cells)
+
+	var b []byte
+	for i, line := range aligned {
 		marker := "  "
 		if i == s.cursor {
 			marker = "> "
 		}
-		b = append(b, (marker + s.renderRow(row))...)
+		b = append(b, (marker + line)...)
 		b = append(b, '\n')
 	}
 	if s.notice != "" {
@@ -167,9 +173,12 @@ func (s *mcpSection) View() string {
 	return string(b)
 }
 
-// renderRow draws one server: id, transport target (endpoint or
-// command, masked), state, enabled flag, tool count.
-func (s *mcpSection) renderRow(row ports.MCPServerView) string {
+// renderCells draws one server's row as separately-aligned cells: id,
+// transport target (endpoint or command, masked), state, enabled flag,
+// tool count. render.Columns pads each cell to its column's widest
+// value across every row, so id/state/count line up instead of
+// drifting with each server's own id or target length.
+func (s *mcpSection) renderCells(row ports.MCPServerView) []string {
 	fg := render.Role(s.theme, s.tier, theme.RoleFG)
 	name := fg.Bold(true).Render(row.ID)
 
@@ -191,7 +200,7 @@ func (s *mcpSection) renderRow(row ports.MCPServerView) string {
 	}
 	tools := render.Role(s.theme, s.tier, theme.RoleFGSubtle).Render(fmt.Sprintf("%d tools", row.ToolCount))
 
-	return name + "  " + targetStr + "  " + enabled + "  " + state + "  " + tools
+	return []string{name, targetStr, enabled, state, tools}
 }
 
 func (s *mcpSection) stateLabel(row ports.MCPServerView) string {

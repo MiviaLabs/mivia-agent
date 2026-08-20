@@ -97,6 +97,33 @@ func TestRemovingTheDefaultAgentFailsAndKeepsIt(t *testing.T) {
 	}
 }
 
+// TestAgentsRowsAlignColumns pins settings-screen.md section 1's aligned
+// layout: two rows whose names differ in width must still start their
+// tool-count column at the same screen position. Before render.Columns,
+// rows were joined with a fixed "  " gap, so a longer agent name pushed
+// its own columns right without moving its neighbours', producing a
+// ragged list.
+func TestAgentsRowsAlignColumns(t *testing.T) {
+	s, _ := newHarnessScreen(t, 100, 30)
+	rows := strings.Split(ansi.Strip(agentsSectionOf(s).View()), "\n")
+	var withTools []string
+	for _, r := range rows {
+		if strings.Contains(r, "tools") {
+			withTools = append(withTools, r)
+		}
+	}
+	if len(withTools) < 2 {
+		t.Fatalf("fixture has fewer than 2 agent rows: %v", withTools)
+	}
+	first := strings.Index(withTools[0], " tools")
+	for i, r := range withTools[1:] {
+		if got := strings.Index(r, " tools"); got != first {
+			t.Errorf("row %d: tool-count column at %d, want %d (same as row 0):\n%q\n%q",
+				i+1, got, first, withTools[0], r)
+		}
+	}
+}
+
 func TestUnavailableAgentsSectionSaysSo(t *testing.T) {
 	th := loadTheme(t)
 	tb := topbar.New(th, theme.TierTrueColor, ports.ModelInfo{}, ports.Usage{}, 80)

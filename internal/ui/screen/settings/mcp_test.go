@@ -114,3 +114,27 @@ func TestUnavailableMCPSectionSaysSo(t *testing.T) {
 		t.Errorf("expected the nil-store MCP section to say unavailable, got %q", got)
 	}
 }
+
+// TestMCPRowsAlignColumns pins settings-screen.md section 1's aligned
+// layout: every server row's tool-count column must start at the same
+// screen position regardless of how long its own id or target is.
+func TestMCPRowsAlignColumns(t *testing.T) {
+	s, _ := newHarnessScreen(t, 120, 30)
+	rows := strings.Split(ansi.Strip(mcpSectionOf(s).View()), "\n")
+	var withTools []string
+	for _, r := range rows {
+		if strings.Contains(r, "tools") {
+			withTools = append(withTools, r)
+		}
+	}
+	if len(withTools) < 2 {
+		t.Fatalf("fixture has fewer than 2 MCP server rows: %v", withTools)
+	}
+	first := strings.Index(withTools[0], " tools")
+	for i, r := range withTools[1:] {
+		if got := strings.Index(r, " tools"); got != first {
+			t.Errorf("row %d: tool-count column at %d, want %d (same as row 0):\n%q\n%q",
+				i+1, got, first, withTools[0], r)
+		}
+	}
+}
