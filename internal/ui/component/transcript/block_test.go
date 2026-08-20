@@ -103,7 +103,10 @@ func TestRenderIndentsBodyByBodyIndent(t *testing.T) {
 			"Change the drawn wireframes and this literal together, or not at all.",
 			uikitconfig.BodyIndent)
 	}
-	want := "    line"
+	// The rail glyph occupies column 1 at every tier (including ASCII -
+	// see TestVerticalRailRendersAtEveryTier); the 4-column indent
+	// budget is unchanged, only its first cell is no longer blank.
+	want := "│   line"
 	if rows[1] != want {
 		t.Errorf("got %q, want %q", rows[1], want)
 	}
@@ -278,5 +281,40 @@ func TestUserLinesDegradeToPlainMarker(t *testing.T) {
 	}
 	if strings.Contains(rows[0], "\x1b[4") {
 		t.Errorf("ASCII row carries a background escape: %q", rows[0])
+	}
+}
+
+// TestVerticalRailRendersAtEveryTier pins the same "structure survives
+// every tier, only colour differs" rule wireframes-panes.md section 3
+// states and the dialog frame's own TestDialogDegradesByTier already
+// tests for box-drawing glyphs. Before this test, the rail was drawn
+// only at TierTrueColor/Tier256 and silently dropped to a plain indent
+// at Tier16/ASCII/NoTTY - a STRUCTURAL difference between tiers, not a
+// colour one.
+func TestVerticalRailRendersAtEveryTier(t *testing.T) {
+	th := loadTheme(t)
+	b := Block{Header: Header{Label: "x"}, Body: []string{"line"}}
+	for _, tier := range []theme.Tier{theme.TierTrueColor, theme.Tier256, theme.Tier16, theme.TierASCII, theme.TierNoTTY} {
+		rows := strings.Split(b.Render(th, tier, 80), "\n")
+		if len(rows) < 2 {
+			t.Fatalf("tier %v: got %d rows, want at least 2", tier, len(rows))
+		}
+		if !strings.Contains(rows[1], "│") {
+			t.Errorf("tier %v: got %q, want the vertical rail glyph present at every tier", tier, rows[1])
+		}
+	}
+}
+
+// TestVerticalRailCarriesNoColourAtASCIIOrNoTTY: the rail's colour must
+// degrade to nothing at the colourless tiers, the same contract every
+// other coloured glyph in the tree already keeps.
+func TestVerticalRailCarriesNoColourAtASCIIOrNoTTY(t *testing.T) {
+	th := loadTheme(t)
+	b := Block{Header: Header{Label: "x"}, Body: []string{"line"}}
+	for _, tier := range []theme.Tier{theme.TierASCII, theme.TierNoTTY} {
+		rows := strings.Split(b.Render(th, tier, 80), "\n")
+		if strings.Contains(rows[1], "\x1b[") {
+			t.Errorf("tier %v: got %q, want no colour escape at a colourless tier", tier, rows[1])
+		}
 	}
 }

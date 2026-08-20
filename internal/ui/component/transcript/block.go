@@ -162,10 +162,13 @@ func (b Block) Render(t theme.Theme, tier theme.Tier, width int) string {
 		sb.WriteByte('\n')
 		return sb.String()
 	}
-	indent := strings.Repeat(" ", uikitconfig.BodyIndent)
-	if tier == theme.TierTrueColor || tier == theme.Tier256 {
-		indent = render.Role(t, tier, theme.RoleBorder).Render("│ ") + "  "
-	}
+	// The rail renders at every tier - wireframes-panes.md section 3's
+	// rule that a glyph's shape never depends on colour tier, only its
+	// colour does (the box-drawing frame in render.Dialog keeps the
+	// same rule: TestDialogDegradesByTier pins "╭" surviving TierASCII).
+	// render.Role's own degradation ladder already drops the colour
+	// escape at TierASCII/TierNoTTY with no code branch needed here.
+	indent := render.Role(t, tier, theme.RoleBorder).Render("│ ") + "  "
 	for _, line := range b.bodyRows(width) {
 		sb.WriteByte('\n')
 		sb.WriteString(indent)
