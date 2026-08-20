@@ -993,3 +993,19 @@ func TestTabWithSlashCommandHasCompletionPriority(t *testing.T) {
 		t.Errorf("tab did not accept common prefix: got %q, want \"/h\"", got)
 	}
 }
+
+// TestGutterClipsAnOverflowingRowWithTheClipMarker pins
+// wireframes-panes.md section 8/14's shared clip glyph: gutter is the
+// screen-edge fallback clip for any row wider than the frame, and it
+// must mark the cut the same way every other clipped row in the tree
+// does (render.split.go's clipBlock, render.dialog.go's dialogClip,
+// the session picker) rather than truncating silently.
+func TestGutterClipsAnOverflowingRowWithTheClipMarker(t *testing.T) {
+	s := pendingDiffScreen(t)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 40, Height: 20})
+	scr := next.(Screen)
+	got := scr.gutter([]string{strings.Repeat("x", 200)})
+	if !strings.Contains(got, uikitconfig.ClipMarker) {
+		t.Errorf("got %q, want the clip marker %q on the overflowing row", got, uikitconfig.ClipMarker)
+	}
+}

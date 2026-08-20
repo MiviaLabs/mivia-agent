@@ -390,7 +390,7 @@ func (s Screen) gutter(lines []string) string {
 	for i, ln := range lines {
 		pad := inner - ansi.StringWidth(ln)
 		if pad < 0 {
-			ln = ansi.Truncate(ln, inner, "")
+			ln = ansi.Truncate(ln, inner, uikitconfig.ClipMarker)
 			pad = 0
 		}
 		out[i] = " " + ln + strings.Repeat(" ", pad) + " "

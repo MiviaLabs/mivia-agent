@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
 	conv "github.com/MiviaLabs/mivia-agent/internal/ui/component/transcript"
@@ -766,5 +767,45 @@ func TestPagerLiveEventTrimWithExistingDroppedAndSearchActive(t *testing.T) {
 	s = drive(s, tea.KeyPressMsg{Code: tea.KeyEscape})
 	if s.offset != 48 {
 		t.Errorf("offset after cancel = %d, want 48", s.offset)
+	}
+}
+
+// TestViewHasAOneColumnGutter pins wireframes-panes.md section 9: "Every
+// rendered row is framed by a one-column gutter, so no text touches the
+// screen edge." The pager previously drew rows and the status line
+// flush to both edges, unlike every other screen (conversation,
+// settings) which frames every row this way.
+func TestViewHasAOneColumnGutter(t *testing.T) {
+	s := sizedPager(t, 40, 10)
+	rows := strings.Split(s.View(), "\n")
+	if len(rows) != 10 {
+		t.Fatalf("view is %d rows in a 10-row terminal", len(rows))
+	}
+	for i, row := range rows {
+		if plain := row; len(plain) > 0 {
+			if plain[0] != ' ' {
+				t.Errorf("row %d touches the left edge: %q", i, row)
+			}
+			if plain[len(plain)-1] != ' ' {
+				t.Errorf("row %d touches the right edge: %q", i, row)
+			}
+		}
+	}
+}
+
+// TestStatusLineIsClippedToWidth pins the fixed-height/width contract
+// every other screen's status row already keeps: a long notice or key
+// hint must never wrap past the terminal width and push a content row
+// off (ux-rules.md rule 2.7).
+func TestStatusLineIsClippedToWidth(t *testing.T) {
+	s := sizedPager(t, 30, 10)
+	s.notice = strings.Repeat("a very long notice that would wrap ", 5)
+	rows := strings.Split(s.View(), "\n")
+	if len(rows) != 10 {
+		t.Fatalf("a long status line pushed the view to %d rows, want 10", len(rows))
+	}
+	last := rows[len(rows)-1]
+	if w := ansi.StringWidth(last); w > 30 {
+		t.Errorf("status row is %d columns wide, want at most 30: %q", w, last)
 	}
 }

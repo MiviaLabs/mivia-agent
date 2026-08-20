@@ -89,6 +89,17 @@ func droppedLine(n int) string {
 	return "[" + itoa(n) + " earlier blocks dropped from this transcript]"
 }
 
+// contentWidth is the usable column count: the terminal minus the
+// one-column gutter each side, matching conversation.Screen's and
+// settings.Screen's own contentWidth (duplicated, not exported - the
+// pager depends on neither package and neither depends on it).
+func contentWidth(width int) int {
+	if width < 3 {
+		return width
+	}
+	return width - 2
+}
+
 // rebuild derives the pager's plain-text rows from the snapshot at the
 // current width. Every block is expanded: a collapse is a cockpit view
 // state, and search must reach text a collapse hides.
@@ -106,7 +117,7 @@ func (s *Screen) rebuild() {
 		}
 		b.Collapsed = false
 		b.Focused = false
-		part := ansi.Strip(b.Render(s.Theme, s.Tier, s.width))
+		part := ansi.Strip(b.Render(s.Theme, s.Tier, contentWidth(s.width)))
 		row += strings.Count(part, "\n") + 1
 		parts = append(parts, part)
 	}
@@ -211,7 +222,7 @@ func (s Screen) handleEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 			b := oldBlocks[i]
 			b.Collapsed = false
 			b.Focused = false
-			part := ansi.Strip(b.Render(s.Theme, s.Tier, s.width))
+			part := ansi.Strip(b.Render(s.Theme, s.Tier, contentWidth(s.width)))
 			droppedRows += strings.Count(part, "\n") + 1
 		}
 		shift := droppedRows
@@ -347,7 +358,32 @@ func (s Screen) View() string {
 		out = append(out, s.renderRow(row))
 	}
 	out = append(out, s.statusLine())
-	return strings.Join(out, "\n")
+	return s.gutter(out)
+}
+
+// gutter frames every rendered row with one blank column each side,
+// matching conversation.Screen's and settings.Screen's own gutter
+// (wireframes-panes.md section 9: "Every rendered row is framed by a
+// one-column gutter, so no text touches the screen edge"). Duplicated
+// rather than exported, the same convention contentWidth already
+// follows. Its own truncate is also what keeps the status line inside
+// the terminal width - a long notice or key hint clips here rather
+// than needing a second clamp in statusLine itself.
+func (s Screen) gutter(lines []string) string {
+	if s.width < 3 {
+		return strings.Join(lines, "\n")
+	}
+	inner := contentWidth(s.width)
+	out := make([]string, len(lines))
+	for i, ln := range lines {
+		pad := inner - ansi.StringWidth(ln)
+		if pad < 0 {
+			ln = ansi.Truncate(ln, inner, uikitconfig.ClipMarker)
+			pad = 0
+		}
+		out[i] = " " + ln + strings.Repeat(" ", pad) + " "
+	}
+	return render.FillBG(s.Theme, s.Tier, theme.RoleBG, strings.Join(out, "\n"))
 }
 
 // statusLine is the bottom row: the search bar while typing, a notice

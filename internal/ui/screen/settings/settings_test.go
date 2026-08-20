@@ -11,6 +11,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/topbar"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
+	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
 
@@ -290,5 +291,17 @@ func TestCtrlCDismissesOverlayInsteadOfArmingQuit(t *testing.T) {
 	}
 	if s.quitArmed {
 		t.Error("expected ctrl+c over the overlay to leave quit unarmed")
+	}
+}
+
+// TestGutterClipsAnOverflowingRowWithTheClipMarker mirrors
+// conversation.Screen's own gutter contract: the screen-edge fallback
+// clip must mark a cut row with the shared marker, not truncate it
+// silently (wireframes-panes.md section 8/14).
+func TestGutterClipsAnOverflowingRowWithTheClipMarker(t *testing.T) {
+	s := newScreen(t, 40, 20)
+	got := s.gutter([]string{strings.Repeat("x", 200)})
+	if !strings.Contains(got, uikitconfig.ClipMarker) {
+		t.Errorf("got %q, want the clip marker %q on the overflowing row", got, uikitconfig.ClipMarker)
 	}
 }
