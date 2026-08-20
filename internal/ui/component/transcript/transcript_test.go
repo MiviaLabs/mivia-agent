@@ -3,6 +3,7 @@ package transcript
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -454,4 +455,52 @@ func sampleDiff() *uievent.Diff {
 			{Kind: uievent.DiffLineAdd, Text: "return retry.Do(ctx, put)"},
 		},
 	}}}
+}
+
+// TestProgressBarIsStyledOnBothPaths: a progress event either merges
+// into the live block of a running tool call or pushes a block of its
+// own, and the two produced different bodies - the merge wrote a bare
+// bar, the push wrote a styled one. The same event must draw the same
+// row whichever path it takes, and only the styled one can be rebuilt
+// when the theme changes.
+func TestProgressBarIsStyledOnBothPaths(t *testing.T) {
+	p := &uievent.Progress{Step: 2, TotalSteps: 3, Status: "running", Log: []string{"read defaults.go"}}
+	progress := uievent.Event{Kind: uievent.KindToolOutput,
+		Body: uievent.ToolOutputBody{ToolCallID: "c1", Progress: p}}
+
+	pushed := New(loadTheme(t), theme.TierTrueColor)
+	pushed.SetSize(80, 24)
+	pushed, _ = pushed.HandleEvent(progress)
+
+	merged := New(loadTheme(t), theme.TierTrueColor)
+	merged.SetSize(80, 24)
+	merged, _ = merged.HandleEvent(uievent.Event{Kind: uievent.KindToolStart,
+		Body: uievent.ToolStartBody{ToolCallID: "c1", Name: "subagent"}})
+	merged, _ = merged.HandleEvent(progress)
+
+	if got, want := merged.Blocks()[0].Body, pushed.Blocks()[0].Body; !reflect.DeepEqual(got, want) {
+		t.Errorf("the merged path drew a different body:\ngot  %q\nwant %q", got, want)
+	}
+}
+
+// TestSetThemeReRendersAMergedProgressBar: the merged path must keep the
+// payload too, or the bar it now styles is the one thing on screen that
+// cannot follow a theme change.
+func TestSetThemeReRendersAMergedProgressBar(t *testing.T) {
+	dark, contrast := loadTheme(t), namedTheme(t, "mivia-high-contrast")
+	m := New(dark, theme.TierTrueColor)
+	m.SetSize(80, 24)
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolStart,
+		Body: uievent.ToolStartBody{ToolCallID: "c1", Name: "subagent"}})
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolOutput,
+		Body: uievent.ToolOutputBody{ToolCallID: "c1",
+			Progress: &uievent.Progress{Step: 2, TotalSteps: 3, Status: "running", Log: []string{"read defaults.go"}}}})
+
+	bar := ansi.Strip(m.Blocks()[0].Body[0])
+	m.SetTheme(contrast, theme.TierTrueColor)
+
+	want := render.Role(contrast, theme.TierTrueColor, theme.RoleFGSubtle).Render(bar)
+	if got := m.Blocks()[0].Body[0]; got != want {
+		t.Errorf("the merged progress bar kept the previous theme:\ngot  %q\nwant %q", got, want)
+	}
 }

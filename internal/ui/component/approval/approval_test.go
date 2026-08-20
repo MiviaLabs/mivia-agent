@@ -9,6 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
@@ -479,5 +480,129 @@ func TestHunklessDiffClaimsNoPreviewRows(t *testing.T) {
 	m = m.ScrollBy(5) // must stay a no-op
 	if !strings.Contains(m.View(), "o once") {
 		t.Error("scroll on a hunkless diff broke the prompt")
+	}
+}
+
+// pending arms m with one request and returns its rendered rows.
+func pendingRows(t *testing.T, m Model, width int, b uievent.ToolPendingBody) (Model, []string) {
+	t.Helper()
+	m.SetWidth(width)
+	m.SetRequest(b)
+	return m, strings.Split(m.View(), "\n")
+}
+
+// TestBorderIsTheCalmDecorativeRole: the prompt's frame must read like
+// the composer's, not shout. The state it carries is said by the border
+// LABEL now, which is text and keeps its own contrast; the frame itself
+// is decoration and uses the decorative role.
+func TestBorderIsTheCalmDecorativeRole(t *testing.T) {
+	th := loadTheme(t)
+	m, rows := pendingRows(t, New(th, theme.TierTrueColor), 80,
+		uievent.ToolPendingBody{ToolCallID: "c1", Name: "edit_file"})
+	_ = m
+
+	// The whole border run is drawn in one style, so the assertion is on
+	// the colour the run opens with, not on a styled glyph substring.
+	calm := colourOf(th, theme.RoleBorder)
+	loud := colourOf(th, theme.RoleBorderFocus)
+	bottom := rows[len(rows)-1]
+	if !strings.Contains(bottom, calm) {
+		t.Errorf("the frame is not drawn in the decorative border role %s: %q", calm, bottom)
+	}
+	if calm != loud && strings.Contains(bottom, loud) {
+		t.Errorf("the frame is still drawn in the focus border role: %q", bottom)
+	}
+}
+
+// colourOf is a role's truecolor SGR parameters, as they appear in
+// rendered output.
+func colourOf(th theme.Theme, r theme.Role) string {
+	styled := render.Role(th, theme.TierTrueColor, r).Render("x")
+	i := strings.Index(styled, "38;2;")
+	if i < 0 {
+		return ""
+	}
+	return styled[i : i+strings.IndexByte(styled[i:], 'm')]
+}
+
+// TestActionRidesInTheBorderLabel: what is being approved belongs beside
+// "Approval Required" in the top border row, not on a full-width line of
+// its own inside the box.
+func TestActionRidesInTheBorderLabel(t *testing.T) {
+	m, rows := pendingRows(t, New(loadTheme(t), theme.TierTrueColor), 80,
+		uievent.ToolPendingBody{ToolCallID: "c1", Name: "edit_file",
+			Args: map[string]any{"path": "/asdasd"}})
+
+	top := ansi.Strip(rows[0])
+	for _, want := range []string{"Approval Required", "edit_file", "path=/asdasd"} {
+		if !strings.Contains(top, want) {
+			t.Errorf("the top border is missing %q: %q", want, top)
+		}
+	}
+	// The body must not repeat it.
+	body := ansi.Strip(strings.Join(rows[1:], "\n"))
+	if strings.Contains(body, "edit_file") {
+		t.Errorf("the action is still drawn inside the box as well:\n%s", body)
+	}
+	if got, want := len(rows), m.Height(); got != want {
+		t.Errorf("View drew %d rows, Height claims %d", got, want)
+	}
+}
+
+// TestActionStaysInTheBodyWhenItCannotFitTheBorder: the border row is a
+// fixed budget, so a long action cannot always ride there. It must then
+// stay in the body - dropping it would hide what is being approved, and
+// truncating it into the border would name the wrong command.
+func TestActionStaysInTheBodyWhenItCannotFitTheBorder(t *testing.T) {
+	long := uievent.ToolPendingBody{ToolCallID: "c1", Name: "run_command",
+		Args: map[string]any{"cmd": strings.Repeat("very-long-argument ", 12)}}
+
+	for _, width := range []int{40, 60, 100} {
+		m, rows := pendingRows(t, New(loadTheme(t), theme.TierTrueColor), width, long)
+		plain := ansi.Strip(strings.Join(rows, "\n"))
+		if !strings.Contains(plain, "run_command") {
+			t.Errorf("width %d: the action is nowhere on screen:\n%s", width, plain)
+		}
+		if strings.Contains(ansi.Strip(rows[0]), "run_command") {
+			t.Errorf("width %d: a long action was forced into the border row: %q", width, rows[0])
+		}
+		if got, want := len(rows), m.Height(); got != want {
+			t.Errorf("width %d: View drew %d rows, Height claims %d", width, got, want)
+		}
+	}
+}
+
+// TestNarrowTerminalKeepsTheBoxIntact: at widths too small for either
+// placement the prompt must still be a well-formed box whose row count
+// Height predicts, and must not overflow the terminal.
+func TestNarrowTerminalKeepsTheBoxIntact(t *testing.T) {
+	req := uievent.ToolPendingBody{ToolCallID: "c1", Name: "run_command",
+		Args: map[string]any{"cmd": "ls -la"}}
+	for _, width := range []int{8, 12, 20, 39} {
+		m, rows := pendingRows(t, New(loadTheme(t), theme.TierTrueColor), width, req)
+		if got, want := len(rows), m.Height(); got != want {
+			t.Errorf("width %d: View drew %d rows, Height claims %d", width, got, want)
+		}
+		for i, r := range rows {
+			if w := ansi.StringWidth(r); w > width {
+				t.Errorf("width %d: row %d is %d columns", width, i, w)
+			}
+		}
+	}
+}
+
+// TestBorderLabelDegradesToASCII: the warning glyph is not ASCII, so the
+// no-colour tiers must still name the state.
+func TestBorderLabelDegradesToASCII(t *testing.T) {
+	for _, tier := range []theme.Tier{theme.TierASCII, theme.TierNoTTY} {
+		_, rows := pendingRows(t, New(loadTheme(t), tier), 80,
+			uievent.ToolPendingBody{ToolCallID: "c1", Name: "edit_file"})
+		top := ansi.Strip(rows[0])
+		if !strings.Contains(top, "Approval Required") || !strings.Contains(top, "edit_file") {
+			t.Errorf("tier %v top border: %q", tier, top)
+		}
+		if strings.Contains(top, "⚠") {
+			t.Errorf("tier %v drew a non-ASCII glyph: %q", tier, top)
+		}
 	}
 }

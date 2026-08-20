@@ -321,7 +321,7 @@ func (m Model) View() string {
 				hint = "[ Enter: Send  •  Esc Cancel ]"
 			}
 		}
-		line = render.BorderedWithHint(m.Theme, m.Tier, theme.RoleBorder, m.width, line, hint)
+		line = render.BorderedWithHint(m.Theme, m.Tier, theme.RoleBorder, theme.RoleFGSubtle, m.width, line, hint)
 	} else if m.width > 0 && ansi.StringWidth(line) > m.width {
 		line = ansi.Truncate(line, m.width, "")
 	}

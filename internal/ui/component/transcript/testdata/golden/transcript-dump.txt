@@ -26,7 +26,7 @@ jitter, and a cap of 5s.
 
 [2;38;2;161;161;170mv subagent[m [38;2;250;250;250m18s[m                                                       [2;38;2;113;113;122m23500ms[m  [38;2;78;220;78mok[m
 [38;2;82;82;91m│ [m  3 of 3 steps complete
-[38;2;82;82;91m│ [m  [####################..........]  66%
+[38;2;82;82;91m│ [m  [2;38;2;113;113;122m[####################..........]  66%[m
 [38;2;82;82;91m│ [m  + read existing table tests
 [38;2;82;82;91m│ [m  + draft TestPutRetriesOnTransient
 [38;2;82;82;91m│ [m  - run the package test

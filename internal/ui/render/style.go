@@ -73,10 +73,32 @@ func Bordered(t theme.Theme, tier theme.Tier, r theme.Role, width int, content s
 	return st.Render(content)
 }
 
-// BorderedWithHint wraps content in a rounded border with an optional right-aligned hint in the top border row.
-func BorderedWithHint(t theme.Theme, tier theme.Tier, r theme.Role, width int, content, hint string) string {
-	box := Bordered(t, tier, r, width, content)
+// HintFits reports whether BorderedWithHint can place hint in the top
+// border row of a box of the given width.
+//
+// It is exported because the hint is not always decoration: the approval
+// prompt puts WHAT is being approved there, and a caller that would lose
+// content when the hint is dropped has to ask before deciding where to
+// put it. The rule lives here, beside the renderer that applies it, so
+// the two cannot disagree.
+func HintFits(width int, hint string) bool {
 	if hint == "" || width < 40 {
+		return false
+	}
+	// The hint is drawn with one space each side, and the border needs at
+	// least two cells of bar on the left and one on the right plus its two
+	// corners.
+	return ansi.StringWidth(hint)+2+4 < width
+}
+
+// BorderedWithHint wraps content in a rounded border with an optional
+// right-aligned hint in the top border row, drawn in hintRole. The role
+// is a parameter because the hint is not always the same kind of thing:
+// the composer's is a key reminder (subtle), the approval prompt's names
+// a state the reader must not miss (warning).
+func BorderedWithHint(t theme.Theme, tier theme.Tier, r, hintRole theme.Role, width int, content, hint string) string {
+	box := Bordered(t, tier, r, width, content)
+	if !HintFits(width, hint) {
 		return box
 	}
 	lines := strings.Split(box, "\n")
@@ -87,13 +109,10 @@ func BorderedWithHint(t theme.Theme, tier theme.Tier, r theme.Role, width int, c
 	tl, tr, horiz := "╭", "╮", "─"
 
 	borderStyle := Role(t, tier, r)
-	hintStyle := Role(t, tier, theme.RoleFGSubtle)
+	hintStyle := Role(t, tier, hintRole)
 
 	formattedHint := " " + hintStyle.Render(hint) + " "
 	hintW := ansi.StringWidth(formattedHint)
-	if hintW+4 >= width {
-		return box
-	}
 
 	leftBarLen := max(2, width-2-hintW-2)
 	rightBarLen := max(1, width-2-leftBarLen-hintW)

@@ -120,7 +120,7 @@ func TestDemoHarnessApprovalApproved(t *testing.T) {
 
 	tm.Type("delete it")
 	tm.Send(enterKey())
-	wait(contains("approve run_command"))
+	wait(contains("Approval Required - run_command"))
 
 	tm.Send(tea.KeyPressMsg{Code: 'o'})
 	wait(contains("Removed the stale cache directory"))
@@ -137,7 +137,7 @@ func TestDemoHarnessApprovalDenied(t *testing.T) {
 
 	tm.Type("delete it")
 	tm.Send(enterKey())
-	wait(contains("approve run_command"))
+	wait(contains("Approval Required - run_command"))
 
 	tm.Send(tea.KeyPressMsg{Code: 'd'})
 	wait(contains("left the cache directory in place"))

@@ -128,40 +128,73 @@ func (m Model) View() string {
 		}
 		return s
 	}
-	title := clip(render.Role(m.Theme, m.Tier, theme.RoleWarning).Bold(true).Render(
-		"approve " + m.active.Name + " " + render.FormatArgs(m.active.Args)))
+	label, folded := m.borderLabel()
 	// The hint states the complete truth for this state: every key listed
 	// works, and no key that works is omitted. The scroll keys live in the
 	// keymap's approval context; they are absent here because this line
 	// names decision keys only - scrolling has its own position row.
 	hint := clip(render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Render(
 		"o once    a always    d deny    D deny always"))
-	body := title
+	var body string
+	if !folded {
+		// The action did not fit the border row, so it stays where it has
+		// always been. Dropping it would hide WHAT is being approved.
+		body = clip(render.Role(m.Theme, m.Tier, theme.RoleWarning).Bold(true).
+			Render("approve "+m.action())) + "\n"
+	}
 	if diff := m.diffWindow(); len(diff) > 0 {
-		body += "\n" + strings.Join(diff, "\n")
+		body += strings.Join(diff, "\n") + "\n"
 		if m.scrollable() {
-			body += "\n" + clip(render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Render(
+			body += clip(render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Render(
 				fmt.Sprintf("lines %d-%d of %d  up/down:scroll",
-					m.offset+1, m.offset+len(diff), m.diffTotal())))
+					m.offset+1, m.offset+len(diff), m.diffTotal()))) + "\n"
 		}
 	}
-	body += "\n" + hint
-	// RoleBorderFocus, not RoleBorder: the prompt carries state (a tool is
-	// blocked on this answer), so its border must meet the 3:1 contrast
-	// the plain decorative border is exempt from. Inner width: the
-	// terminal minus the two border cells; unsized callers get an
-	// auto-fit box.
-	// Same rule as the composer's frame: the box spans the full
+	body += hint
+	// RoleBorder, the decorative role, not RoleBorderFocus: the state this
+	// prompt carries is now said by the border LABEL, which is text in the
+	// warning role and carries its own contrast, so the frame is back to
+	// being frame. Same rule as the composer's: the box spans the full
 	// terminal width, one fixed size.
 	inner := 0
 	if m.width > 0 {
 		inner = m.width
 	}
-	topHint := "[ ⚠ Approval Required ]"
-	if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
-		topHint = "[ ! Approval Required ]"
+	return render.BorderedWithHint(m.Theme, m.Tier, theme.RoleBorder, theme.RoleWarning, inner, body, label)
+}
+
+// action names what this request would do: the tool and its arguments.
+func (m Model) action() string {
+	if m.active == nil {
+		return ""
 	}
-	return render.BorderedWithHint(m.Theme, m.Tier, theme.RoleBorderFocus, inner, body, topHint)
+	return strings.TrimSpace(m.active.Name + " " + render.FormatArgs(m.active.Args))
+}
+
+// borderLabel is the text of the top border row, and whether the action
+// went into it.
+//
+// The state badge always rides there. The action joins it when the row
+// can carry the pair whole - a truncated action would name the wrong
+// path or the wrong command, which is worse than putting it back in the
+// body. The second return is what View and Height agree on, so the row
+// count never depends on two separate readings of the same rule.
+func (m Model) borderLabel() (string, bool) {
+	badge := "⚠ Approval Required"
+	if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
+		badge = "! Approval Required"
+	}
+	// Bracketed like the composer's own top-border hint: the two frames
+	// sit one above the other, and matching chrome is what makes the
+	// prompt read as part of the same surface rather than an alarm.
+	action := m.action()
+	if action == "" {
+		return "[ " + badge + " ]", true
+	}
+	if full := "[ " + badge + " - " + action + " ]"; render.HintFits(m.width, full) {
+		return full, true
+	}
+	return "[ " + badge + " ]", false
 }
 
 // ScrollBy moves the diff preview window by n lines and returns the
@@ -230,7 +263,10 @@ func (m Model) Height() int {
 	if m.active == nil {
 		return 0
 	}
-	rows := 2 // title and hint
+	rows := 1 // the decision-key hint
+	if _, folded := m.borderLabel(); !folded {
+		rows++ // the action, back in the body
+	}
 	if n := m.windowHeight(); n > 0 {
 		rows += n
 		if m.scrollable() {

@@ -300,7 +300,15 @@ func (m Model) handleToolOutput(b uievent.ToolOutputBody) (Model, tea.Cmd) {
 			if p.ElapsedSeconds > 0 {
 				blk.Header.Detail = fmt.Sprintf("%.0fs", p.ElapsedSeconds)
 			}
-			blk.Body = lines
+			// The SAME body the push path builds, and the same preserved
+			// payload. A progress event either merges here or pushes a
+			// block of its own depending on whether the call already
+			// started; drawing a bare bar on one path and a styled one on
+			// the other made the row depend on that accident, and the bare
+			// one could not follow a theme change.
+			progressCopy := *p
+			blk.Progress = &progressCopy
+			blk.Body = progressBody(m.Theme, m.Tier, *p)
 			return
 		}
 		blk.Body = append(blk.Body, lines...)
