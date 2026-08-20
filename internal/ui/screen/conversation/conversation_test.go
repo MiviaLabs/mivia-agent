@@ -1060,3 +1060,41 @@ func TestStatusRowClipsWithTheSharedClipMarker(t *testing.T) {
 		t.Errorf("got %q, want the clip marker %q on the clipped status row", got, uikitconfig.ClipMarker)
 	}
 }
+
+func TestFilesPanelSliceImmutability(t *testing.T) {
+	p := newPanel(loadTheme(t), theme.TierASCII)
+	diff := uievent.Diff{Path: "a.go", After: []string{"new"}}
+	p.appendLive(diff)
+	oldPanel := p
+
+	// Mutate diff input
+	diff.After[0] = "MUTATED"
+	if oldPanel.entries[0].Diff.After[0] == "MUTATED" {
+		t.Error("appendLive did not clone Diff.After; external mutation corrupted entry")
+	}
+
+	// Update live entry on new copy
+	diff2 := uievent.Diff{Path: "a.go", After: []string{"v2"}}
+	p.appendLive(diff2)
+
+	if oldPanel.entries[0].Diff.After[0] == "v2" {
+		t.Error("appendLive mutated previous panel entries in place")
+	}
+
+	// Observe agent immutability
+	log1 := []string{"step1"}
+	pr1 := &uievent.Progress{Status: "run", Log: log1}
+	p.observeAgent("agent-1", pr1)
+	oldPanelWithAgent := p
+
+	log2 := []string{"step2"}
+	pr2 := &uievent.Progress{Status: "run", Log: log2}
+	p.observeAgent("agent-1", pr2)
+
+	if len(pr2.Log) != 1 || pr2.Log[0] != "step2" {
+		t.Errorf("observeAgent mutated incoming pr2.Log in place: %v", pr2.Log)
+	}
+	if len(oldPanelWithAgent.agents[0].Log) != 1 {
+		t.Errorf("observeAgent mutated previous agent log in place: len=%d", len(oldPanelWithAgent.agents[0].Log))
+	}
+}

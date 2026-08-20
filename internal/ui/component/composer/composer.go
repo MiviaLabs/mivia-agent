@@ -3,6 +3,7 @@
 package composer
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 
@@ -98,7 +99,7 @@ func (m *Model) SetTheme(t theme.Theme, tier theme.Tier) {
 
 // SetCommands sets the slash-completion candidate list.
 func (m *Model) SetCommands(cmds []Command) {
-	m.menu.all = cmds
+	m.menu.all = slices.Clone(cmds)
 	m.menu.refresh(m.input.Value())
 }
 

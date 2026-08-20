@@ -23,6 +23,7 @@
 package conversation
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 
@@ -62,6 +63,8 @@ func newEntry(d uievent.Diff) fileEntry {
 	case d.Removed == 0:
 		k = fileCreated
 	}
+	d.Hunks = slices.Clone(d.Hunks)
+	d.After = slices.Clone(d.After)
 	return fileEntry{Path: d.Path, Kind: k, Diff: d}
 }
 
@@ -137,14 +140,16 @@ func newPanel(t theme.Theme, tier theme.Tier) panel {
 // must not move the user's cursor or wipe an in-progress filter.
 // Closed, only the data folds; the list is rebuilt on the next open.
 func (p *panel) appendLive(d uievent.Diff) {
+	entry := newEntry(d)
+	p.entries = slices.Clone(p.entries)
 	for i, e := range p.entries {
 		if e.Path == d.Path {
-			p.entries[i] = newEntry(d)
+			p.entries[i] = entry
 			p.rebindIfOpen()
 			return
 		}
 	}
-	p.entries = append(p.entries, newEntry(d))
+	p.entries = append(p.entries, entry)
 	p.rebindIfOpen()
 }
 
@@ -230,10 +235,15 @@ func (p panel) selectedAgent() (subagentRow, bool) {
 // rides along: it is the fallback content when no thread Conversation
 // exists for the call.
 func (p *panel) observeAgent(id string, pr *uievent.Progress) {
-	row := subagentRow{ID: id, Status: pr.Status, Step: pr.Step, Total: pr.TotalSteps, Log: pr.Log}
+	log := slices.Clone(pr.Log)
+	row := subagentRow{ID: id, Status: pr.Status, Step: pr.Step, Total: pr.TotalSteps, Log: log}
+	p.agents = slices.Clone(p.agents)
 	for i, a := range p.agents {
 		if a.ID == id {
-			row.Log = append(row.Log, a.Log...)
+			combinedLog := make([]string, 0, len(pr.Log)+len(a.Log))
+			combinedLog = append(combinedLog, pr.Log...)
+			combinedLog = append(combinedLog, a.Log...)
+			row.Log = combinedLog
 			p.agents[i] = row
 			p.rebindIfOpen()
 			return
@@ -414,7 +424,15 @@ func clipRowsToWidth(rows []string, inner int) []string {
 
 func (s Screen) panelFileRow(e fileEntry, selLabel string, marked bool) string {
 	name, dir := splitPath(e.Path)
-	glyph := map[fileKind]string{fileCreated: "+", fileEdited: "~", fileDeleted: "-"}[e.Kind]
+	var glyph string
+	switch e.Kind {
+	case fileCreated:
+		glyph = "+"
+	case fileDeleted:
+		glyph = "-"
+	default:
+		glyph = "~"
+	}
 	prefix, style := "  ", render.Role(s.Theme, s.Tier, theme.RoleFG)
 	if marked && e.rowLabel() == selLabel {
 		prefix = "> "

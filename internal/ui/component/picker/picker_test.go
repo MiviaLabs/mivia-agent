@@ -203,3 +203,28 @@ func TestClearFilterDropsItAndResetsTheCursor(t *testing.T) {
 		t.Errorf("cursor not reset, selected %q", got)
 	}
 }
+
+func TestPickerSliceImmutability(t *testing.T) {
+	items := []string{"a", "b"}
+	m := New(loadTheme(t), theme.TierASCII, items)
+	items[0] = "MUTATED"
+	if got, _ := m.Selected(); got == "MUTATED" {
+		t.Error("New did not clone items slice; external mutation corrupted picker")
+	}
+
+	rebindItems := []string{"x", "y"}
+	m.Rebind(rebindItems)
+	rebindItems[0] = "MUTATED_REBIND"
+	if got, _ := m.Selected(); got == "MUTATED_REBIND" {
+		t.Error("Rebind did not clone items slice; external mutation corrupted picker")
+	}
+}
+
+func TestMoveToClampsToVisibleListWhenFilterIsActive(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII, []string{"apple", "avocado", "banana", "blueberry", "cherry"})
+	m, _ = m.Update(keyMsg("b")) // Filter "b" -> visible: ["banana", "blueberry"] (len 2)
+	m.MoveTo(4)                  // 4 is valid for items (5 items), but > len(visible) (2 items)
+	if got, ok := m.Selected(); !ok || got != "blueberry" {
+		t.Errorf("MoveTo(4) with filter \"b\" selected %q (ok=%v), want \"blueberry\"", got, ok)
+	}
+}

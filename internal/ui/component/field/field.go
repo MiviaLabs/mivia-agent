@@ -8,6 +8,7 @@
 package field
 
 import (
+	"slices"
 	"strconv"
 
 	"charm.land/bubbles/v2/textinput"
@@ -93,8 +94,8 @@ func (m *Model) SetValidate(f func(string) error) { m.validate = f }
 // SetChoices sets a KindChoice field's closed value set and starts the
 // cursor on active (or the first choice if active matches none).
 func (m *Model) SetChoices(choices []string, active string) {
-	m.choices = choices
-	for i, c := range choices {
+	m.choices = slices.Clone(choices)
+	for i, c := range m.choices {
 		if c == active {
 			m.choiceAt = i
 			return

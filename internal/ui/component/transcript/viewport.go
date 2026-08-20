@@ -2,6 +2,7 @@ package transcript
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
@@ -37,6 +38,7 @@ func (m *Model) SetSize(width, height int) {
 	widthChanged := width != m.width
 	m.width, m.height = width, height
 	if widthChanged {
+		m.blocks = slices.Clone(m.blocks)
 		for i := range m.blocks {
 			if m.blocks[i].Kind == uievent.KindTurnStart {
 				m.blocks[i].Body = userLines(m.Theme, m.Tier, width, m.blocks[i].Input)
@@ -107,7 +109,7 @@ func (m *Model) push(b Block) {
 	}
 	b.Collapsible = !b.Prose
 	b.Collapsed = b.Collapsible && defaultCollapsed(b.Body)
-	m.blocks = append(m.blocks, b)
+	m.blocks = append(slices.Clone(m.blocks), b)
 	m.trim()
 	m.clampOffset()
 }
@@ -302,10 +304,13 @@ func (m *Model) updateLive(callID string, fn func(*Block)) bool {
 	if i < 0 {
 		return false
 	}
-	fn(&m.blocks[i])
-	if m.blocks[i].Collapsible && defaultCollapsed(m.blocks[i].Body) {
-		m.blocks[i].Collapsed = true
+	m.blocks = slices.Clone(m.blocks)
+	blk := m.blocks[i]
+	fn(&blk)
+	if blk.Collapsible && defaultCollapsed(blk.Body) {
+		blk.Collapsed = true
 	}
+	m.blocks[i] = blk
 	m.clampOffset()
 	return true
 }

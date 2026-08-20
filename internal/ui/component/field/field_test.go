@@ -161,3 +161,13 @@ func TestKindTextAtNoColourTierAddsNoColour(t *testing.T) {
 		t.Errorf("no-TTY tier drew colour, got:\n%q", got)
 	}
 }
+
+func TestSetChoicesImmutability(t *testing.T) {
+	choices := []string{"a", "b"}
+	m := New(loadTheme(t), theme.TierTrueColor, "test", KindChoice, 20)
+	m.SetChoices(choices, "a")
+	choices[0] = "MUTATED"
+	if got := m.Value(); got == "MUTATED" {
+		t.Error("SetChoices did not clone choices slice; external mutation corrupted field")
+	}
+}

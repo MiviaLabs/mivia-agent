@@ -504,3 +504,48 @@ func TestSetThemeReRendersAMergedProgressBar(t *testing.T) {
 		t.Errorf("the merged progress bar kept the previous theme:\ngot  %q\nwant %q", got, want)
 	}
 }
+
+func TestTranscriptSliceImmutability(t *testing.T) {
+	th := loadTheme(t)
+	m := New(th, theme.TierTrueColor)
+	m.SetSize(80, 24)
+
+	m1, _ := m.HandleEvent(uievent.Event{
+		Kind: uievent.KindTurnStart,
+		Body: uievent.TurnStartBody{Input: "hello world"},
+	})
+	oldModel1 := m1
+
+	// Push another block
+	m2, _ := m1.HandleEvent(uievent.Event{
+		Kind: uievent.KindTextEnd,
+		Body: uievent.TextEndBody{Text: "response"},
+	})
+	_ = m2
+
+	if len(oldModel1.blocks) != 1 {
+		t.Errorf("HandleEvent mutated previous transcript blocks slice len: got %d, want 1", len(oldModel1.blocks))
+	}
+
+	// SetSize with width change on m1
+	m1Copy := oldModel1
+	m1Copy.SetSize(40, 24)
+	if &oldModel1.blocks[0].Body[0] == &m1Copy.blocks[0].Body[0] {
+		t.Error("SetSize mutated userLines body on shared blocks slice")
+	}
+
+	// updateLive tool output
+	mStart, _ := m.HandleEvent(uievent.Event{
+		Kind: uievent.KindToolStart,
+		Body: uievent.ToolStartBody{ToolCallID: "c1", Name: "bash"},
+	})
+	oldStart := mStart
+	mOut, _ := mStart.HandleEvent(uievent.Event{
+		Kind: uievent.KindToolOutput,
+		Body: uievent.ToolOutputBody{ToolCallID: "c1", Chunk: "out1\n"},
+	})
+	_ = mOut
+	if len(oldStart.blocks[0].Body) != 0 {
+		t.Errorf("updateLive mutated previous model block body: got len %d", len(oldStart.blocks[0].Body))
+	}
+}

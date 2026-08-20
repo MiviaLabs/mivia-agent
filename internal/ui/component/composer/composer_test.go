@@ -239,3 +239,13 @@ func TestSetThemeAtNoColourTierAddsNoColour(t *testing.T) {
 		t.Errorf("no-TTY tier drew colour, got:\n%q", got)
 	}
 }
+
+func TestSetCommandsImmutability(t *testing.T) {
+	cmds := []Command{{Name: "test", Desc: "desc"}}
+	m := New(loadTheme(t), theme.TierTrueColor, 40)
+	m.SetCommands(cmds)
+	cmds[0].Name = "MUTATED"
+	if got := m.Commands()[0].Name; got == "MUTATED" {
+		t.Error("SetCommands did not clone cmds slice; external mutation corrupted composer")
+	}
+}

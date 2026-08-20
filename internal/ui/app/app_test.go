@@ -587,3 +587,38 @@ func batchCmds(t *testing.T, cmd tea.Cmd) []tea.Cmd {
 	}
 	return []tea.Cmd{cmd}
 }
+
+func TestAppModelStackImmutability(t *testing.T) {
+	th := loadTheme(t)
+	themes := []theme.Theme{th}
+	base := stubScreen{name: "base"}
+	m := New(base, th, theme.TierASCII, themes)
+
+	// Test 1: New clones themes
+	themes[0].Name = "MUTATED"
+	if m.themes[0].Name == "MUTATED" {
+		t.Error("New did not clone themes slice")
+	}
+
+	// Test 2: PushScreenMsg then PopScreenMsg then PushScreenMsg preserves old Model stack
+	m1, _ := m.Update(PushScreenMsg{Screen: stubScreen{name: "modal1"}})
+	model1 := m1.(Model)
+
+	m2, _ := model1.Update(PopScreenMsg{})
+	model2 := m2.(Model)
+
+	m3, _ := model2.Update(PushScreenMsg{Screen: stubScreen{name: "modal2"}})
+	_ = m3.(Model)
+
+	// Check model1's stack still has modal1 at index 1
+	if len(model1.stack) != 2 || model1.stack[1].View() != "modal1" {
+		t.Errorf("Push after Pop corrupted previous model stack: got len=%d view=%v", len(model1.stack), model1.stack[1].View())
+	}
+
+	// Test 3: deliverTop does not mutate previous stack in place
+	m4, _ := model1.Update(keyMsg("a"))
+	_ = m4.(Model)
+	if baseScreen := model1.stack[1].(stubScreen); len(baseScreen.received) != 0 {
+		t.Errorf("deliverTop mutated previous model stack element in place: received=%d", len(baseScreen.received))
+	}
+}

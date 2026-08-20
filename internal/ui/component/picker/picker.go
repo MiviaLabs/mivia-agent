@@ -5,6 +5,7 @@
 package picker
 
 import (
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -26,7 +27,7 @@ type Model struct {
 
 // New returns a Model over items with the cursor on the first row.
 func New(t theme.Theme, tier theme.Tier, items []string) Model {
-	return Model{Theme: t, Tier: tier, items: items}
+	return Model{Theme: t, Tier: tier, items: slices.Clone(items)}
 }
 
 // Rebind swaps the item set, keeping the filter and clamping the cursor
@@ -34,7 +35,7 @@ func New(t theme.Theme, tier theme.Tier, items []string) Model {
 // refreshes its rows through this, so an in-progress filter survives a
 // rebuild that picker.New would reset.
 func (m *Model) Rebind(items []string) {
-	m.items = items
+	m.items = slices.Clone(items)
 	m.cursor = min(m.cursor, len(m.visible())-1)
 	if m.cursor < 0 {
 		m.cursor = 0
@@ -63,11 +64,12 @@ func (m Model) CursorRow() int { return m.cursor }
 // Callers that rebuild a picker (a live-updating list) use it to hold
 // the selection steady across the rebuild.
 func (m *Model) MoveTo(index int) {
+	vLen := len(m.visible())
+	if index >= vLen {
+		index = vLen - 1
+	}
 	if index < 0 {
 		index = 0
-	}
-	if index >= len(m.items) {
-		index = len(m.items) - 1
 	}
 	m.cursor = index
 }

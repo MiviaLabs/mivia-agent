@@ -6,6 +6,8 @@
 package app
 
 import (
+	"slices"
+
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
@@ -116,7 +118,7 @@ type Model struct {
 // pass nil if nothing in this Program ever offers a theme picker.
 func New(base Screen, th theme.Theme, tier theme.Tier, themes []theme.Theme) Model {
 	return Model{
-		Theme: th, Tier: tier, themes: themes,
+		Theme: th, Tier: tier, themes: slices.Clone(themes),
 		Opts:  Options{Mouse: true},
 		stack: []Screen{base},
 	}
@@ -171,7 +173,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			next, resizeCmd = sc.Update(tea.WindowSizeMsg{Width: m.Width, Height: m.Height})
 			sc = next
 		}
-		m.stack = append(m.stack, sc)
+		m.stack = append(slices.Clone(m.stack), sc)
 		return m, tea.Batch(sc.Init(), resizeCmd, tea.ClearScreen)
 	case PopScreenMsg:
 		if len(m.stack) > 1 {
@@ -213,6 +215,7 @@ func (m Model) deliverTop(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	next, cmd := top.Update(msg)
+	m.stack = slices.Clone(m.stack)
 	m.stack[len(m.stack)-1] = next
 	return m, cmd
 }
@@ -223,6 +226,7 @@ func (m Model) broadcast(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if len(m.stack) == 0 {
 		return m, nil
 	}
+	m.stack = slices.Clone(m.stack)
 	cmds := make([]tea.Cmd, 0, len(m.stack))
 	for i, sc := range m.stack {
 		var cmd tea.Cmd
@@ -247,6 +251,7 @@ func (m Model) applyTheme(msg ThemeSelectedMsg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	if th, ok := m.themeByName(msg.Name); ok {
 		m.Theme = th
+		m.stack = slices.Clone(m.stack)
 		// Broadcast to every screen on the stack, not just the top (the
 		// picker itself): the base screen underneath is the one that
 		// actually needs to repaint with the new theme.
@@ -271,7 +276,7 @@ func (m Model) applyTheme(msg ThemeSelectedMsg) (tea.Model, tea.Cmd) {
 // full-repaint resize path guards against, but unconditional here - a
 // screen swap is rare, not per-keystroke, so the cost is negligible).
 func (m Model) pop() (tea.Model, tea.Cmd) {
-	m.stack = m.stack[:len(m.stack)-1]
+	m.stack = slices.Clone(m.stack[:len(m.stack)-1])
 	return m, tea.ClearScreen
 }
 

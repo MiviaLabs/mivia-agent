@@ -26,6 +26,7 @@ package transcript
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -311,7 +312,7 @@ func (m Model) handleToolOutput(b uievent.ToolOutputBody) (Model, tea.Cmd) {
 			blk.Body = progressBody(m.Theme, m.Tier, *p)
 			return
 		}
-		blk.Body = append(blk.Body, lines...)
+		blk.Body = append(slices.Clone(blk.Body), lines...)
 	}); ok {
 		return m, nil
 	}
@@ -341,7 +342,7 @@ func (m Model) handleToolEnd(b uievent.ToolEndBody) (Model, tea.Cmd) {
 			}
 		}
 		if len(end.Body) > 0 {
-			blk.Body = append(blk.Body, end.Body...)
+			blk.Body = append(slices.Clone(blk.Body), end.Body...)
 		}
 	}); ok {
 		return m, nil
@@ -405,6 +406,7 @@ func (m Model) tailRows() []string {
 // previous theme's colours on screen until a new event replaces it.
 func (m *Model) SetTheme(t theme.Theme, tier theme.Tier) {
 	m.Theme, m.Tier = t, tier
+	m.blocks = slices.Clone(m.blocks)
 	for i := range m.blocks {
 		m.blocks[i] = m.restyle(m.blocks[i])
 	}
