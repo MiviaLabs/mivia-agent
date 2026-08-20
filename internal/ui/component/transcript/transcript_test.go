@@ -322,3 +322,136 @@ func TestSetThemeReRendersBlocks(t *testing.T) {
 		t.Error("SetTheme failed to re-render code block with new theme colors")
 	}
 }
+
+// TestSetThemeReRendersADiffMergedIntoALiveBlock is the reported bug at
+// its own level. A tool call normally arrives as start-then-end, so the
+// end merges into the live block instead of pushing a new one. That
+// merge kept the rendered diff lines but dropped the raw diff, leaving
+// SetTheme nothing to rebuild - the diff stayed in the previous theme's
+// add/del colours while the rest of the screen changed.
+func TestSetThemeReRendersADiffMergedIntoALiveBlock(t *testing.T) {
+	dark, light := loadTheme(t), otherTheme(t)
+	m := New(dark, theme.TierTrueColor)
+	m.SetSize(80, 24)
+
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolStart,
+		Body: uievent.ToolStartBody{ToolCallID: "c1", Name: "edit_file"}})
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolEnd,
+		Body: uievent.ToolEndBody{ToolCallID: "c1", Name: "edit_file", OK: true, Diff: sampleDiff()}})
+
+	before := strings.Join(m.Blocks()[0].Body, "\n")
+	m.SetTheme(light, theme.TierTrueColor)
+	after := strings.Join(m.Blocks()[0].Body, "\n")
+
+	want := render.Diff(light, theme.TierTrueColor, *sampleDiff())
+	if !strings.Contains(after, want) {
+		t.Errorf("the diff was not re-rendered in the new theme:\ngot  %q\nwant %q", after, want)
+	}
+	if after == before {
+		t.Error("SetTheme left the merged diff on the previous theme's colours")
+	}
+}
+
+// TestSetThemeKeepsToolOutputAboveTheDiff: a call that printed output
+// before its diff keeps that output. Re-rendering must replace the diff
+// at the end of the body, not the whole body.
+func TestSetThemeKeepsToolOutputAboveTheDiff(t *testing.T) {
+	dark, light := loadTheme(t), otherTheme(t)
+	m := New(dark, theme.TierTrueColor)
+	m.SetSize(80, 24)
+
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolStart,
+		Body: uievent.ToolStartBody{ToolCallID: "c1", Name: "edit_file"}})
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolOutput,
+		Body: uievent.ToolOutputBody{ToolCallID: "c1", Chunk: "scanning up.go\n"}})
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolEnd,
+		Body: uievent.ToolEndBody{ToolCallID: "c1", Name: "edit_file", OK: true, Diff: sampleDiff()}})
+
+	rowsBefore := len(m.Blocks()[0].Body)
+	m.SetTheme(light, theme.TierTrueColor)
+	body := m.Blocks()[0].Body
+
+	if len(body) != rowsBefore {
+		t.Errorf("body is %d rows after the switch, was %d", len(body), rowsBefore)
+	}
+	if !strings.Contains(strings.Join(body, "\n"), "scanning up.go") {
+		t.Errorf("the tool output above the diff was dropped: %q", body)
+	}
+}
+
+// TestSetThemeReRendersAProgressBar: the subagent bar is styled when its
+// block is pushed, so it needs the same rebuild. It switches to
+// mivia-high-contrast because that is the embedded theme whose subtle
+// foreground actually differs - mivia-dark and mivia-light share theirs,
+// and a pair that agrees on a colour cannot prove anything about it.
+func TestSetThemeReRendersAProgressBar(t *testing.T) {
+	dark, contrast := loadTheme(t), namedTheme(t, "mivia-high-contrast")
+	m := New(dark, theme.TierTrueColor)
+	m.SetSize(80, 24)
+
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolOutput,
+		Body: uievent.ToolOutputBody{ToolCallID: "sa-1",
+			Progress: &uievent.Progress{Step: 2, TotalSteps: 3, Status: "running", Log: []string{"read defaults.go"}}}})
+
+	bar := ansi.Strip(m.Blocks()[0].Body[0])
+	m.SetTheme(contrast, theme.TierTrueColor)
+	after := m.Blocks()[0].Body[0]
+
+	want := render.Role(contrast, theme.TierTrueColor, theme.RoleFGSubtle).Render(bar)
+	if after != want {
+		t.Errorf("the progress bar kept the previous theme's colour:\ngot  %q\nwant %q", after, want)
+	}
+}
+
+// TestSetThemeKeepsAPlansCollapseState: rebuilding a plan's body must
+// not reset what the reader did with the block.
+func TestSetThemeKeepsAPlansCollapseState(t *testing.T) {
+	dark, light := loadTheme(t), otherTheme(t)
+	m := New(dark, theme.TierTrueColor)
+	m.SetSize(80, 24)
+
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindPlan, Body: uievent.PlanBody{
+		Total: 2, Done: 1,
+		Items: []uievent.PlanItem{{Text: "read", Done: true}, {Text: "write"}},
+	}})
+	id := m.Blocks()[0].ID
+	m.blocks[0].Collapsed = true
+
+	m.SetTheme(light, theme.TierTrueColor)
+
+	if got := m.Blocks()[0].ID; got != id {
+		t.Errorf("the plan block lost its identity: %q, want %q", got, id)
+	}
+	if !m.Blocks()[0].Collapsed {
+		t.Error("the plan block was expanded by a theme change")
+	}
+}
+
+// otherTheme is a second embedded theme, for switching away from the one
+// loadTheme returns.
+func otherTheme(t *testing.T) theme.Theme { return namedTheme(t, "mivia-light") }
+
+func namedTheme(t *testing.T, name string) theme.Theme {
+	t.Helper()
+	themes, err := theme.Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, th := range themes {
+		if th.Name == name {
+			return th
+		}
+	}
+	t.Fatalf("theme %q not embedded", name)
+	return theme.Theme{}
+}
+
+func sampleDiff() *uievent.Diff {
+	return &uievent.Diff{Path: "up.go", Added: 1, Removed: 1, Hunks: []uievent.DiffHunk{{
+		Header: "@@ -1,2 +1,2 @@",
+		Lines: []uievent.DiffLine{
+			{Kind: uievent.DiffLineDel, Text: "return u.raw.Put(ctx)"},
+			{Kind: uievent.DiffLineAdd, Text: "return retry.Do(ctx, put)"},
+		},
+	}}}
+}

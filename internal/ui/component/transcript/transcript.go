@@ -314,6 +314,11 @@ func (m Model) handleToolEnd(b uievent.ToolEndBody) (Model, tea.Cmd) {
 	end := toolEndBlockValue(m.Theme, m.Tier, b)
 	if ok := m.updateLive(b.ToolCallID, func(blk *Block) {
 		blk.Kind = uievent.KindToolEnd
+		// Carry the raw diff onto the live block, not just its rendered
+		// lines: a merged block that keeps only the rendering cannot be
+		// re-rendered when the theme changes, which is the whole point of
+		// preserving the payload.
+		blk.Diff = end.Diff
 		detail := blk.Header.Detail
 		result := end.Header.Detail
 		blk.Header = end.Header
@@ -387,25 +392,51 @@ func (m Model) tailRows() []string {
 	return out
 }
 
-// SetTheme records a theme change, re-resolving theme colors across all blocks.
+// SetTheme records a theme change and rebuilds every block body that was
+// styled when it was pushed. A body that is not rebuilt here keeps the
+// previous theme's colours on screen until a new event replaces it.
 func (m *Model) SetTheme(t theme.Theme, tier theme.Tier) {
 	m.Theme, m.Tier = t, tier
 	for i := range m.blocks {
-		switch m.blocks[i].Kind {
-		case uievent.KindTurnStart:
-			m.blocks[i].Body = userLines(m.Theme, m.Tier, m.width, m.blocks[i].Input)
-		case uievent.KindTextEnd:
-			if m.blocks[i].Input != "" {
-				m.blocks[i].Body = proseLines(render.Text(m.Theme, m.Tier, m.blocks[i].Input))
-			}
-		case uievent.KindPlan:
-			if m.blocks[i].Plan != nil {
-				m.blocks[i] = planBlockValue(m.Theme, m.Tier, *m.blocks[i].Plan)
-			}
-		case uievent.KindToolEnd:
-			if m.blocks[i].Diff != nil {
-				m.blocks[i].Body = strings.Split(render.Diff(m.Theme, m.Tier, *m.blocks[i].Diff), "\n")
-			}
-		}
+		m.blocks[i] = m.restyle(m.blocks[i])
 	}
+}
+
+// restyle rebuilds one block from the raw payload it preserved.
+//
+// It keys off the payload, not the Kind, for the tool arms: one tool
+// call's block advances pending -> start -> end as it runs, and a Kind
+// switch stops re-rendering the moment a block carries a payload under
+// a Kind the switch does not list.
+func (m Model) restyle(b Block) Block {
+	switch {
+	case b.Kind == uievent.KindTurnStart && b.Input != "":
+		b.Body = userLines(m.Theme, m.Tier, m.width, b.Input)
+	case b.Kind == uievent.KindTextEnd && b.Input != "":
+		b.Body = proseLines(render.Text(m.Theme, m.Tier, b.Input))
+	case b.Plan != nil:
+		// Rebuild the body, not the whole block: the block's identity and
+		// its collapse/focus state are the reader's, not the payload's.
+		next := planBlockValue(m.Theme, m.Tier, *b.Plan)
+		b.Header, b.Body = next.Header, next.Body
+	case b.Diff != nil:
+		b.Body = replaceDiffTail(b.Body, render.DiffLines(m.Theme, m.Tier, *b.Diff))
+	case b.Progress != nil:
+		b.Body = progressBody(m.Theme, m.Tier, *b.Progress)
+	}
+	return b
+}
+
+// replaceDiffTail swaps the rendered diff at the END of a body for a
+// freshly rendered one. A tool call that produced output before its diff
+// keeps that output above it (handleToolEnd appends the diff), and the
+// rendered line count is theme-independent, so the tail is exactly the
+// diff.
+func replaceDiffTail(body, diff []string) []string {
+	if len(body) < len(diff) {
+		return diff
+	}
+	out := make([]string, 0, len(body))
+	out = append(out, body[:len(body)-len(diff)]...)
+	return append(out, diff...)
 }

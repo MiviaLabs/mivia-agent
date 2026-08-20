@@ -77,13 +77,11 @@ func toolOutputBlock(t theme.Theme, tier theme.Tier, b uievent.ToolOutputBody) B
 		p := b.Progress
 		// The bar leads the body, above the step log
 		// (wireframes-panes.md section 4).
-		body := make([]string, 0, len(p.Log)+1)
-		if bar := render.ProgressBar(progressBarWidth, p.Step, p.TotalSteps); bar != "" {
-			body = append(body, render.Role(t, tier, theme.RoleFGSubtle).Render(bar))
-		}
-		body = append(body, p.Log...)
+		body := progressBody(t, tier, *p)
+		progressCopy := *p
 		return Block{
-			Kind: uievent.KindToolOutput,
+			Kind:     uievent.KindToolOutput,
+			Progress: &progressCopy,
 			Header: Header{
 				Label:  "subagent",
 				Meta:   fmt.Sprintf("%d of %d", p.Step, p.TotalSteps),
@@ -104,6 +102,17 @@ func toolOutputBlock(t theme.Theme, tier theme.Tier, b uievent.ToolOutputBody) B
 		Header: Header{Label: "output"},
 		Body:   strings.Split(strings.TrimRight(b.Chunk, "\n"), "\n"),
 	}
+}
+
+// progressBody is the styled body of a subagent progress block: the bar
+// above its step log (wireframes-panes.md section 4). It is shared by
+// the push path and the theme re-render so the two cannot diverge.
+func progressBody(t theme.Theme, tier theme.Tier, p uievent.Progress) []string {
+	body := make([]string, 0, len(p.Log)+1)
+	if bar := render.ProgressBar(progressBarWidth, p.Step, p.TotalSteps); bar != "" {
+		body = append(body, render.Role(t, tier, theme.RoleFGSubtle).Render(bar))
+	}
+	return append(body, p.Log...)
 }
 
 func toolEndBlockValue(t theme.Theme, tier theme.Tier, b uievent.ToolEndBody) Block {

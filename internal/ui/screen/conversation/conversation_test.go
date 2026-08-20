@@ -10,6 +10,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/lucasb-eyer/go-colorful"
+
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/approval"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/statusline"
@@ -821,5 +823,117 @@ func TestBackgroundPaintDegradesWithTheTier(t *testing.T) {
 		if got := next.View(); strings.Contains(got, "\x1b[48;") {
 			t.Errorf("tier %v painted a background: %q", tier, got)
 		}
+	}
+}
+
+// richTranscript feeds one of every block-producing event, so a theme
+// test covers the styled bodies the transcript builds at push time
+// (prose, a user turn, a plan, a progress bar, a diff) and not only the
+// chrome that is restyled on every frame.
+func richTranscript(t *testing.T, s Screen) Screen {
+	t.Helper()
+	events := []uievent.Event{
+		{Kind: uievent.KindTurnStart, Body: uievent.TurnStartBody{Input: "add retry to the uploader"}},
+		{Kind: uievent.KindTextEnd, Body: uievent.TextEndBody{Text: "Here is the plan.\n\n```go\nfunc put() error { return nil }\n```"}},
+		{Kind: uievent.KindPlan, Body: uievent.PlanBody{Total: 2, Done: 1, Items: []uievent.PlanItem{
+			{Text: "read the uploader", Done: true}, {Text: "add the retry", Done: false},
+		}}},
+		{Kind: uievent.KindToolStart, Body: uievent.ToolStartBody{ToolCallID: "c1", Name: "edit_file"}},
+		{Kind: uievent.KindToolOutput, Body: uievent.ToolOutputBody{ToolCallID: "sa-1",
+			Progress: &uievent.Progress{Step: 2, TotalSteps: 3, Status: "running", Log: []string{"read defaults.go"}}}},
+		{Kind: uievent.KindToolEnd, Body: uievent.ToolEndBody{ToolCallID: "c1", Name: "edit_file", OK: true, DurationMS: 12,
+			Diff: &uievent.Diff{Path: "up.go", Added: 1, Removed: 1, Hunks: []uievent.DiffHunk{{
+				Header: "@@ -1,2 +1,2 @@",
+				Lines: []uievent.DiffLine{
+					{Kind: uievent.DiffLineDel, Text: "return u.raw.Put(ctx)"},
+					{Kind: uievent.DiffLineAdd, Text: "return retry.Do(ctx, put)"},
+				},
+			}}}}},
+		{Kind: uievent.KindNotice, Body: uievent.NoticeBody{Text: "context 42% used"}},
+		{Kind: uievent.KindError, Body: uievent.ErrorBody{Text: "one call failed"}},
+	}
+	for _, ev := range events {
+		next, _ := s.Update(uievent.EventMsg{Event: ev})
+		s = next.(Screen)
+	}
+	return s
+}
+
+// paletteOf is every truecolor value a theme can draw, as the SGR
+// parameter text that appears in rendered output.
+func paletteOf(th theme.Theme) map[string]bool {
+	out := map[string]bool{}
+	for _, hex := range th.Colors {
+		c, _ := colorful.Hex(hex)
+		r, g, b := c.RGB255()
+		out[fmt.Sprintf("2;%d;%d;%d", r, g, b)] = true
+	}
+	return out
+}
+
+// truecolorParams extracts every "2;r;g;b" argument drawn in s.
+func truecolorParams(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, "\x1b[") {
+		end := strings.IndexByte(part, 'm')
+		if end < 0 {
+			continue
+		}
+		for _, p := range strings.Split(part[:end], ";") {
+			_ = p
+		}
+		fields := strings.Split(part[:end], ";")
+		for i := 0; i+4 <= len(fields); i++ {
+			if (fields[i] == "38" || fields[i] == "48") && fields[i+1] == "2" {
+				out = append(out, strings.Join(fields[i+1:i+5], ";"))
+			}
+		}
+	}
+	return out
+}
+
+// TestThemeChangeLeavesNoColourFromTheOldPalette is the exhaustive form
+// of the switch as the user sees it: after changing theme, every colour
+// drawn on screen must come from the new theme. A body the transcript
+// styled once at push time and never rebuilt (a diff, a plan, a
+// progress bar, a code block) keeps the old palette and shows up here.
+//
+// It runs every ordered pair of embedded themes, because two themes can
+// share a role's colour and hide a stale body that a third would expose.
+func TestThemeChangeLeavesNoColourFromTheOldPalette(t *testing.T) {
+	_, _, themes := themePair(t)
+	for _, from := range themes {
+		for _, to := range themes {
+			if from.Name == to.Name {
+				continue
+			}
+			t.Run(from.Name+"->"+to.Name, func(t *testing.T) {
+				assertNoStaleColour(t, themes, from, to)
+			})
+		}
+	}
+}
+
+func assertNoStaleColour(t *testing.T, themes []theme.Theme, from, to theme.Theme) {
+	t.Helper()
+	s := New(from, theme.TierTrueColor, themes, replay.New(nil, 0), nil, 40, fixedNow)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 90, Height: 30})
+	scr := richTranscript(t, next.(Screen))
+
+	next, _ = scr.Update(app.ThemeChangedMsg{Theme: to, Tier: theme.TierTrueColor})
+	got := next.View()
+
+	want, stale := paletteOf(to), paletteOf(from)
+	seen := map[string]bool{}
+	for _, p := range truecolorParams(got) {
+		if want[p] || seen[p] {
+			continue
+		}
+		seen[p] = true
+		if stale[p] {
+			t.Errorf("colour %q is still %s's, not %s's", p, from.Name, to.Name)
+			continue
+		}
+		t.Errorf("colour %q belongs to neither palette", p)
 	}
 }
