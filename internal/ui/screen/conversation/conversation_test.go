@@ -17,6 +17,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/statusline"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/transcript"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
+	settingsscreen "github.com/MiviaLabs/mivia-agent/internal/ui/screen/settings"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/themepicker"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
@@ -935,5 +936,20 @@ func assertNoStaleColour(t *testing.T, themes []theme.Theme, from, to theme.Them
 			continue
 		}
 		t.Errorf("colour %q belongs to neither palette", p)
+	}
+}
+
+func TestF2PushesSettingsScreen(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	_, cmd := s.Update(tea.KeyPressMsg{Code: tea.KeyF2})
+	if cmd == nil {
+		t.Fatal("expected f2 to emit a PushScreenMsg Cmd")
+	}
+	msg, ok := cmd().(app.PushScreenMsg)
+	if !ok {
+		t.Fatalf("got %T, want app.PushScreenMsg", cmd())
+	}
+	if _, ok := msg.Screen.(settingsscreen.Screen); !ok {
+		t.Errorf("got %T, want a settingsscreen.Screen", msg.Screen)
 	}
 }

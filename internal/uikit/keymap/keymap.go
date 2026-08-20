@@ -38,6 +38,11 @@ const (
 	ContextPager Context = "pager"
 	// ContextFiles applies while the files panel's list holds focus.
 	ContextFiles Context = "files"
+	// ContextSettings applies inside the full-screen settings modal. It
+	// does not cascade from ContextGlobal - like ContextPager, the
+	// settings screen is a self-contained modal that consults only its
+	// own context (docs/design/settings-screen.md §6).
+	ContextSettings Context = "settings"
 )
 
 // ID names an action. The view layer switches on ID, never on a key
@@ -103,6 +108,24 @@ const (
 	IDPanelToggle    ID = "panel-toggle"
 	IDFileToggleView ID = "file-toggle-view"
 	IDFileOpen       ID = "file-open"
+
+	// Settings screen. IDSettingsDialog is the global key that opens it
+	// (f2 - see docs/design/settings-screen.md §6 for why not ctrl+g);
+	// the rest are ContextSettings-scoped.
+	IDSettingsDialog    ID = "settings-dialog"
+	IDSettingsUp        ID = "settings-up"
+	IDSettingsDown      ID = "settings-down"
+	IDSettingsPaneLeft  ID = "settings-pane-left"
+	IDSettingsPaneRight ID = "settings-pane-right"
+	IDSettingsSelect    ID = "settings-select"
+	IDSettingsNew       ID = "settings-new"
+	IDSettingsDelete    ID = "settings-delete"
+	IDSettingsToggle    ID = "settings-toggle"
+	IDSettingsTrigger   ID = "settings-trigger"
+	IDSettingsFilter    ID = "settings-filter"
+	IDSettingsReveal    ID = "settings-reveal"
+	IDSettingsBack      ID = "settings-back"
+	IDSettingsHelp      ID = "settings-help"
 )
 
 // Binding is one row of the table.
@@ -141,6 +164,11 @@ func Default() []Binding {
 		// else; n alone is transcript copy-block's neighbour, but
 		// ctrl-modified it is free.
 		{ID: IDPanelToggle, Context: ContextGlobal, Keys: []string{"ctrl+n"}, Help: "open, focus, or close the sidebar", Short: "sidebar"},
+		// f2, not ctrl+g: ctrl+g is already IDCollapseAll in
+		// ContextTranscript and would only be PARTIALLY free (rule
+		// 1.4 forbids a hint that is not true in every state); f2 is
+		// unbound everywhere and rule 1.1 permits function keys.
+		{ID: IDSettingsDialog, Context: ContextGlobal, Keys: []string{"f2"}, Help: "settings", Short: "settings"},
 
 		// Scrolling. The cockpit owns the surface, so the application
 		// scrolls: the terminal has no scrollback of its own to offer
@@ -191,7 +219,32 @@ func Default() []Binding {
 		{ID: IDDialogDown, Context: ContextDialog, Keys: []string{"down"}, Help: "next"},
 		{ID: IDDialogAccept, Context: ContextDialog, Keys: []string{"enter"}, Help: "apply"},
 		{ID: IDDialogCancel, Context: ContextDialog, Keys: []string{"esc"}, Help: "cancel"},
-	}, pagerBindings()...), filesBindings()...)
+	}, pagerBindings()...), append(filesBindings(), settingsBindings()...)...)
+}
+
+// settingsBindings is the full-screen settings modal's section. It does
+// not cascade to ContextGlobal (see ContextSettings's doc comment), so
+// every key the screen answers to - including "back" - is bound here,
+// the same self-contained shape ContextPager already uses.
+func settingsBindings() []Binding {
+	return []Binding{
+		{ID: IDSettingsUp, Context: ContextSettings, Keys: []string{"up", "k"}, Help: "previous"},
+		{ID: IDSettingsDown, Context: ContextSettings, Keys: []string{"down", "j"}, Help: "next"},
+		{ID: IDSettingsPaneLeft, Context: ContextSettings, Keys: []string{"left", "h"}, Help: "focus the section list"},
+		{ID: IDSettingsPaneRight, Context: ContextSettings, Keys: []string{"right", "l"}, Help: "focus the detail pane"},
+		{ID: IDSettingsSelect, Context: ContextSettings, Keys: []string{"enter"}, Help: "open or edit", Short: "edit"},
+		{ID: IDSettingsNew, Context: ContextSettings, Keys: []string{"n"}, Help: "new", Short: "new"},
+		{ID: IDSettingsDelete, Context: ContextSettings, Keys: []string{"x"}, Help: "delete", Short: "delete"},
+		{ID: IDSettingsToggle, Context: ContextSettings, Keys: []string{"space"}, Help: "toggle enabled"},
+		// Automations-only today: fires a manual run and opens a live
+		// watch on it. Harmless no-op on any other section (their
+		// handleKey switches do not have a "t" case).
+		{ID: IDSettingsTrigger, Context: ContextSettings, Keys: []string{"t"}, Help: "trigger a manual run", Short: "trigger"},
+		{ID: IDSettingsFilter, Context: ContextSettings, Keys: []string{"/"}, Help: "filter", Short: "filter"},
+		{ID: IDSettingsReveal, Context: ContextSettings, Keys: []string{"ctrl+r"}, Help: "reveal the focused secret value"},
+		{ID: IDSettingsBack, Context: ContextSettings, Keys: []string{"esc"}, Help: "back", Short: "back"},
+		{ID: IDSettingsHelp, Context: ContextSettings, Keys: []string{"?"}, Help: "show this keymap", Short: "help"},
+	}
 }
 
 // pagerBindings is the pager (transcript mode) section of Default,
@@ -302,7 +355,7 @@ func (m *Map) Help() []HelpRow {
 	order := []Context{
 		ContextGlobal, ContextComposer, ContextCompletion,
 		ContextTranscript, ContextApproval, ContextDialog, ContextPager,
-		ContextFiles,
+		ContextFiles, ContextSettings,
 	}
 	var rows []HelpRow
 	for _, ctx := range order {

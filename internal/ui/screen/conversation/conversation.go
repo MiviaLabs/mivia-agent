@@ -55,6 +55,12 @@ type Screen struct {
 	// SetCommandRunner uses.
 	threads ports.SubagentThreads
 
+	// settings is the /settings screen's dependency knob: any field of
+	// it may itself be nil, and the zero value (every field nil) is
+	// valid - /settings still opens, every section reads "unavailable".
+	// Set via SetSettings, the same seam SetCommandRunner uses.
+	settings ports.Settings
+
 	// embedded marks the subagent-thread construction of this same
 	// Screen type: no top bar, no activity panel, wrapped event Msgs -
 	// everything else is the identical main-chat machinery. See
@@ -522,6 +528,12 @@ func (s *Screen) SetCommandRunner(r ports.CommandRunner) {
 // zero-value default) makes every subagent entry fall back to the
 // read-only step-log view.
 func (s *Screen) SetSubagentThreads(t ports.SubagentThreads) { s.threads = t }
+
+// SetSettings supplies the /settings screen's dependency knob. Every
+// field of store may itself be nil (settings-screen.md §4); the zero
+// value (the default before this is ever called) still opens the
+// screen with every section reading "unavailable".
+func (s *Screen) SetSettings(store ports.Settings) { s.settings = store }
 
 // ObserveAgent records a subagent progress update in the activity panel.
 func (s *Screen) ObserveAgent(id string, pr *uievent.Progress) {

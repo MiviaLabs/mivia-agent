@@ -12,6 +12,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/picker"
+	settingsscreen "github.com/MiviaLabs/mivia-agent/internal/ui/screen/settings"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/themepicker"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
@@ -565,5 +566,56 @@ func TestSessionPickerEscapeCancelsWithoutSelecting(t *testing.T) {
 	}
 	if len(runner.selectCalls) != 0 {
 		t.Errorf("escape selected: %v", runner.selectCalls)
+	}
+}
+
+func TestRunSlashCommandOpenSettings(t *testing.T) {
+	runner := &fakeRunner{outcome: ports.CommandOutcome{OpenSettings: true}}
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	s.SetCommandRunner(runner)
+
+	_, cmd := sendLine(t, s, "/settings")
+	if cmd == nil {
+		t.Fatal("expected a non-nil Cmd for OpenSettings")
+	}
+	msg, ok := cmd().(app.PushScreenMsg)
+	if !ok {
+		t.Fatalf("got %T, want app.PushScreenMsg", cmd())
+	}
+	if _, ok := msg.Screen.(settingsscreen.Screen); !ok {
+		t.Errorf("got screen %T, want settingsscreen.Screen", msg.Screen)
+	}
+}
+
+func TestRunSlashCommandOpenSettingsWithSection(t *testing.T) {
+	runner := &fakeRunner{outcome: ports.CommandOutcome{OpenSettings: true, SettingsSection: "models"}}
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	s.SetCommandRunner(runner)
+
+	_, cmd := sendLine(t, s, "/settings models")
+	if cmd == nil {
+		t.Fatal("expected a non-nil Cmd for OpenSettings")
+	}
+	if _, ok := cmd().(app.PushScreenMsg); !ok {
+		t.Fatalf("got %T, want app.PushScreenMsg", cmd())
+	}
+}
+
+// TestRunSlashCommandOpenSettingsUnknownSectionIsAnError pins
+// settings-screen.md §6: an unresolved deep-link section name must be
+// a transcript error, never a silent fall-back to the first section.
+func TestRunSlashCommandOpenSettingsUnknownSectionIsAnError(t *testing.T) {
+	runner := &fakeRunner{outcome: ports.CommandOutcome{OpenSettings: true, SettingsSection: "nope"}}
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	s.SetCommandRunner(runner)
+
+	next, cmd := sendLine(t, s, "/settings nope")
+	if cmd != nil {
+		if _, ok := cmd().(app.PushScreenMsg); ok {
+			t.Fatal("expected an unknown section to NOT push the settings screen")
+		}
+	}
+	if got := lastErrorDetail(t, next); !strings.Contains(got, "unknown settings section") {
+		t.Errorf("got error detail %q, want it to name the unknown section", got)
 	}
 }

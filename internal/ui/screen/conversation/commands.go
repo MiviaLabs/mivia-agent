@@ -9,6 +9,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/picker"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
+	settingsscreen "github.com/MiviaLabs/mivia-agent/internal/ui/screen/settings"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/themepicker"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
@@ -54,6 +55,8 @@ func (s Screen) applyCommandOutcome(o ports.CommandOutcome) (app.Screen, tea.Cmd
 		return s, tea.Quit
 	case o.OpenTheme:
 		return s.openThemePicker()
+	case o.OpenSettings:
+		return s.openSettingsScreen(o.SettingsSection)
 	case o.OpenHelp:
 		return s.openHelp(), tea.ClearScreen
 	case o.ClearTranscript:
@@ -103,6 +106,20 @@ func (s Screen) openThemePicker() (app.Screen, tea.Cmd) {
 		return s, nil
 	}
 	next := themepicker.New(s.Theme, s.Tier, s.themes)
+	return s, func() tea.Msg { return app.PushScreenMsg{Screen: next} }
+}
+
+// openSettingsScreen pushes the full-screen settings modal, optionally
+// deep-linked to one section. Shared by f2 (keys.go's globalAction) and
+// /settings, so both paths open the exact same screen. An unresolved
+// section name is a transcript error, not a silent fall-back to
+// General - settings-screen.md §6.
+func (s Screen) openSettingsScreen(section string) (app.Screen, tea.Cmd) {
+	idx, ok := settingsscreen.SectionIndex(section)
+	if !ok {
+		return s.withError("unknown settings section " + section), nil
+	}
+	next := settingsscreen.New(s.Theme, s.Tier, s.topbar, s.settings, idx)
 	return s, func() tea.Msg { return app.PushScreenMsg{Screen: next} }
 }
 

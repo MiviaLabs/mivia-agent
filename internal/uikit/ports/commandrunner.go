@@ -20,6 +20,14 @@ type CommandOutcome struct {
 	// OpenTheme asks the UI to open the existing theme picker.
 	OpenTheme bool
 
+	// OpenSettings asks the UI to push the full-screen settings modal.
+	// SettingsSection, if non-empty, deep-links to one section
+	// ("general" | "models" | "mcp" | "agents" | "automations",
+	// case-insensitive); an unresolved name is the runner's to reject
+	// with Err, not the UI's to silently fall back from.
+	OpenSettings    bool
+	SettingsSection string
+
 	// OpenHelp asks the UI to open the existing keymap overlay.
 	OpenHelp bool
 

@@ -63,6 +63,7 @@ func mockCommands() []composer.Command {
 		{Name: "model", Desc: "pick the model"},
 		{Name: "quit", Desc: "exit mivia-ui"},
 		{Name: "resume", Desc: "resume a previous session"},
+		{Name: "settings", Desc: "open the settings screen"},
 		{Name: "theme", Desc: "pick a theme"},
 	}
 }
@@ -201,6 +202,7 @@ func runCockpit(cfg config, th theme.Theme, tier theme.Tier, themes []theme.Them
 	screen.SetCommands(mockCommands())
 	screen.SetCommandRunner(harness)
 	screen.SetSubagentThreads(harness)
+	screen.SetSettings(harness.SettingsAdapters())
 	screen.ObserveAgent("sa-1", &uievent.Progress{
 		Status:     "running",
 		Step:       2,

@@ -375,3 +375,18 @@ func TestThemeChangeReachesTheCachedThreadScreen(t *testing.T) {
 		t.Errorf("cached thread screen kept tier %v, want TierTrueColor", s.thread.Tier)
 	}
 }
+
+// TestEmbeddedThreadSwallowsF2 pins the screen-stack-globals swallow
+// list: an embedded subagent-thread construction owns no terminal
+// surface of its own, so f2 (which opens settings on the MAIN screen)
+// must be swallowed rather than pushing a second settings screen from
+// inside the thread dialog.
+func TestEmbeddedThreadSwallowsF2(t *testing.T) {
+	conv := &scriptedThread{events: make(chan uievent.Event, 4)}
+	s := NewThread(loadTheme(t), theme.TierASCII, conv, 60, fixedNow)
+	s.setSurface(60, 12)
+	_, cmd := s.Update(tea.KeyPressMsg{Code: tea.KeyF2})
+	if cmd != nil {
+		t.Error("expected f2 to be swallowed inside an embedded thread")
+	}
+}

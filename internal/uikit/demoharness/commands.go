@@ -68,6 +68,8 @@ func (h *Harness) Run(_ context.Context, name, args string) ports.CommandOutcome
 		return ports.CommandOutcome{ClearTranscript: true}
 	case "compact":
 		return ports.CommandOutcome{Notice: h.compact()}
+	case "settings":
+		return ports.CommandOutcome{OpenSettings: true, SettingsSection: args}
 	case "quit":
 		return ports.CommandOutcome{Quit: true}
 	default:

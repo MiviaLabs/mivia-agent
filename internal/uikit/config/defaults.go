@@ -62,6 +62,16 @@ const (
 // has no drawn edge, so the marker is the only clip signal.
 const ClipMarker = "~"
 
+// SettingsNavMin and SettingsNavMax cap the settings screen's left nav
+// sidebar. render.SplitNavMax (60) is a FILE-LIST cap and far too wide
+// for a nav of five words ("Automations" plus padding needs about 14);
+// this screen's own share-of-width policy is separate from the split
+// primitive's geometry, so it lives here, not in internal/ui/render.
+const (
+	SettingsNavMin = 14
+	SettingsNavMax = 24
+)
+
 // MaxCompletionRows bounds the slash-completion list height.
 // wireframes-panes.md section 10. This caps RENDERED ROWS only: every
 // candidate is still scored and reachable by scrolling. Capping the

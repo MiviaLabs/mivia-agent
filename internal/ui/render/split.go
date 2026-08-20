@@ -68,9 +68,22 @@ func SplitWidths(width int) (reading, nav int) {
 // the ratio, the height contract, and the focus-colour convention live
 // in one place when more panes arrive.
 func Split(t theme.Theme, tier theme.Tier, width, height int, focus Side, left, right string) string {
-	reading, nav := SplitWidths(width)
+	reading, _ := SplitWidths(width)
+	return SplitAt(t, tier, width, height, reading, focus, left, right)
+}
+
+// SplitAt is Split with the left pane's content width given directly
+// instead of derived from SplitWidths. Split's 30%-capped-at-60 share is
+// one policy for one caller (a file list beside a diff); a settings
+// screen's five-word nav sidebar needs a different share and a different
+// cap, and neither belongs in this package (uikitconfig owns literals -
+// see internal/uikit/config's package doc). SplitAt is the geometry both
+// policies share: left is drawn at exactly leftWidth, the rule sits at
+// column leftWidth, and right takes what remains after the rule column.
+func SplitAt(t theme.Theme, tier theme.Tier, width, height, leftWidth int, focus Side, left, right string) string {
+	rightWidth := width - leftWidth - 1
 	return joinWithRule(t, tier, focus == Right, height,
-		clipBlock(left, reading, height), clipBlock(right, nav-1, height))
+		clipBlock(left, leftWidth, height), clipBlock(right, rightWidth, height))
 }
 
 // SplitDialog is the split with its reading column replaced by a
@@ -80,9 +93,18 @@ func Split(t theme.Theme, tier theme.Tier, width, height int, focus Side, left, 
 // full-surface dialog. navFocused names the rule's colour, so a caller
 // whose list keeps keyboard focus under the dialog can keep saying so.
 func SplitDialog(t theme.Theme, tier theme.Tier, width, height int, navFocused bool, title, body, hint, nav string) string {
-	reading, navW := SplitWidths(width)
-	dlg := Dialog(t, tier, reading, height, title, body, hint)
-	return joinWithRule(t, tier, navFocused, height, dlg, clipBlock(nav, navW-1, height))
+	reading, _ := SplitWidths(width)
+	return SplitAtDialog(t, tier, width, height, reading, navFocused, title, body, hint, nav)
+}
+
+// SplitAtDialog is SplitDialog with the dialog's (left pane's) content
+// width given directly, the SplitDialog counterpart to SplitAt: a caller
+// whose nav sidebar is not Split's 30%-capped-at-60 share still wants its
+// editor to open as a dialog beside that sidebar rather than full-width.
+func SplitAtDialog(t theme.Theme, tier theme.Tier, width, height, leftWidth int, navFocused bool, title, body, hint, nav string) string {
+	dlg := Dialog(t, tier, leftWidth, height, title, body, hint)
+	rightWidth := width - leftWidth - 1
+	return joinWithRule(t, tier, navFocused, height, dlg, clipBlock(nav, rightWidth, height))
 }
 
 // joinWithRule stacks block, one rule column, block.

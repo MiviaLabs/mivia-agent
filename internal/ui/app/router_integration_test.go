@@ -10,9 +10,13 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/component/topbar"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/conversation"
+	settingsscreen "github.com/MiviaLabs/mivia-agent/internal/ui/screen/settings"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/themepicker"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/replay"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
@@ -339,5 +343,40 @@ func TestReopeningThePickerOpensOnTheAppliedTheme(t *testing.T) {
 	want := render.Role(f.light, theme.TierTrueColor, theme.RoleAccent).Render("> ")
 	if !strings.Contains(view, want) {
 		t.Errorf("the reopened picker is not drawn in %q:\n%q", f.light.Name, view)
+	}
+}
+
+// TestSelectingThemeLeavesNoValueOnTheOldThemeWithSettingsPushed is
+// TestSelectingThemeLeavesNoValueOnTheOldTheme's fixture, extended to
+// cover the settings screen: the reflective walk only reaches values
+// live on the router, so a settings screen with a themed value the
+// walk never visited would pass silently.
+//
+// The stack is built as base -> settings -> picker via two direct
+// PushScreenMsg sends (app.Model.Update handles that message itself,
+// never delegating to the current top screen, so this does not need
+// settings to forward ctrl+t - it doesn't, by design: ContextSettings
+// does not cascade to ContextGlobal). This matches applyTheme's real
+// shape: the broadcast reaches every stack entry before the pop
+// removes only the top one (the picker), so settings survives into the
+// final stack the walk inspects, updated in place.
+func TestSelectingThemeLeavesNoValueOnTheOldThemeWithSettingsPushed(t *testing.T) {
+	f := newRouterFixture(t)
+	base := conversation.New(f.dark, theme.TierTrueColor, f.themes, replay.New(nil, 0), nil, 40, nil)
+	m := app.New(base, f.dark, theme.TierTrueColor, f.themes)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(app.Model)
+
+	tb := topbar.New(f.dark, theme.TierTrueColor, ports.ModelInfo{}, ports.Usage{}, 100)
+	settingsScr := settingsscreen.New(f.dark, theme.TierTrueColor, tb, ports.Settings{}, 0)
+	next, _ = m.Update(app.PushScreenMsg{Screen: settingsScr})
+	m = next.(app.Model)
+
+	next, _ = m.Update(app.PushScreenMsg{Screen: themepicker.New(f.dark, theme.TierTrueColor, f.themes)})
+	m = next.(app.Model)
+	m = selectTheme(t, m, "light")
+
+	for _, bad := range staleThemes(reflect.ValueOf(m), "app.Model", f.light.Name, theme.TierTrueColor, map[uintptr]bool{}) {
+		t.Error(bad)
 	}
 }

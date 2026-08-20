@@ -47,6 +47,19 @@ type Harness struct {
 
 	pendingCh chan ports.ApprovalRequest
 	waiting   map[string]chan ports.Decision
+
+	// Settings state: seeded once in New from settings_seed.go's
+	// templates, mutated only under mu thereafter. saveSeq mints
+	// SaveHandle/Run ids; watchers fans out TriggerAutomation/scheduled
+	// runs to any open Watch call for that automation.
+	settingsGeneral     ports.GeneralView
+	settingsProviders   []ports.ProviderView
+	settingsMCP         []ports.MCPServerView
+	settingsAgents      []ports.AgentView
+	settingsAutomations []ports.Automation
+	settingsRuns        map[string][]ports.Run
+	saveSeq             int
+	watchers            map[string][]chan ports.Run
 }
 
 // New returns a Harness that replays the named scenario, pacing
@@ -77,6 +90,14 @@ func New(scenarioName string, pace time.Duration) (*Harness, error) {
 		// without a reader ever needing to be present.
 		pendingCh: make(chan ports.ApprovalRequest, uikitconfig.DemoPendingApprovalBuffer),
 		waiting:   make(map[string]chan ports.Decision),
+
+		settingsGeneral:     seedGeneral(),
+		settingsProviders:   seedProviders(),
+		settingsMCP:         seedMCPServers(),
+		settingsAgents:      seedAgents(),
+		settingsAutomations: seedAutomations(),
+		settingsRuns:        make(map[string][]ports.Run),
+		watchers:            make(map[string][]chan ports.Run),
 	}, nil
 }
 
