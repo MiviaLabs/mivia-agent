@@ -187,3 +187,36 @@ func TestNoticeTakesTheRowWhileSet(t *testing.T) {
 		t.Errorf("got %q, want the turn line back", got)
 	}
 }
+
+// TestSetDetailShowsBesideTheLabel pins wireframes-panes.md section 9's
+// active-turn line shape: "- running  <detail>   12s". Before SetDetail
+// existed, the line had no way to show WHICH tool/command was running,
+// only the generic "running" word.
+func TestSetDetailShowsBesideTheLabel(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	m.Start("thinking", start)
+	m.SetLabel("running")
+	m.SetDetail("run_command command=go test ./...")
+	got := m.View(start.Add(3 * time.Second))
+	if !strings.Contains(got, "run_command command=go test ./...") {
+		t.Errorf("got %q, want the detail shown beside the label", got)
+	}
+}
+
+// TestSetLabelClearsThePreviousDetail: a label change without a new
+// detail (e.g. back to "thinking" once a tool call ends) must not keep
+// showing the PREVIOUS tool's detail - that would misreport what is
+// happening now.
+func TestSetLabelClearsThePreviousDetail(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	m.Start("thinking", start)
+	m.SetLabel("running")
+	m.SetDetail("run_command command=go test ./...")
+	m.SetLabel("thinking")
+	got := m.View(start.Add(1 * time.Second))
+	if strings.Contains(got, "run_command") {
+		t.Errorf("got %q, want the stale detail cleared on label change", got)
+	}
+}

@@ -362,6 +362,7 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 	case uievent.ToolPendingBody:
 		s.approval.SetRequest(b)
 		s.statusline.SetLabel("pending")
+		s.statusline.SetDetail(toolDetail(b.Name, b.Args))
 		// The approval prompt claims the chat column and every key; a
 		// content dialog open over that column would hide the prompt it
 		// pre-empts, so it closes.
@@ -369,6 +370,7 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 	case uievent.ToolStartBody:
 		s.approval.Clear()
 		s.statusline.SetLabel("running")
+		s.statusline.SetDetail(toolDetail(b.Name, b.Args))
 	case uievent.ToolOutputBody:
 		// A progress-bearing output is a subagent status update (see
 		// uievent.ToolOutputBody): the panel's subagents section feeds
@@ -590,6 +592,21 @@ func (s Screen) statusRow() string {
 		line = ansi.Truncate(line, s.chatWidth(), uikitconfig.ClipMarker)
 	}
 	return line
+}
+
+// toolDetail is the status line's "<detail>" field for a pending or
+// running tool call - the wireframe's "go test
+// ./internal/storage/..." - built the same way the transcript block's
+// own header already does (component/transcript/transcript.go's
+// handleToolPending/handleToolStart: "Label: b.Name, Detail:
+// render.FormatArgs(b.Args)"), just flattened into one string since
+// the status line has no separate label/detail columns.
+func toolDetail(name string, args map[string]any) string {
+	detail := name
+	if a := render.FormatArgs(args); a != "" {
+		detail += " " + a
+	}
+	return detail
 }
 
 // turnTail is the trailing fields wireframes-panes.md section 9 adds

@@ -38,6 +38,7 @@ type Model struct {
 
 	active  bool
 	label   string
+	detail  string
 	started time.Time
 	frame   int
 	mark    mark.Model
@@ -76,6 +77,7 @@ func (m *Model) Start(label string, now time.Time) tea.Cmd {
 	m.notice = ""
 	m.active = true
 	m.label = label
+	m.detail = ""
 	m.started = now
 	m.frame = 0
 	m.mark = mark.New(m.Theme, m.Tier, stateFor(label))
@@ -96,8 +98,17 @@ func stateFor(label string) mark.State {
 // cycle, because a new activity is a new animation even mid-turn.
 func (m *Model) SetLabel(label string) {
 	m.label = label
+	m.detail = ""
 	m.mark.SetState(stateFor(label))
 }
+
+// SetDetail sets the specific activity detail shown beside the label -
+// wireframes-panes.md section 9's "- running  <detail>   12s" shape,
+// e.g. a tool's name and arguments. Call it after SetLabel: SetLabel
+// itself clears detail, so a label change with no new detail (back to
+// "thinking" once a tool call ends) never keeps showing the PREVIOUS
+// tool's detail.
+func (m *Model) SetDetail(detail string) { m.detail = detail }
 
 // Stop clears the status line (turn ended or was cancelled).
 func (m *Model) Stop() { m.active = false }
@@ -143,6 +154,9 @@ func (m Model) View(now time.Time) string {
 	}
 	elapsed := now.Sub(m.started).Round(time.Second)
 	subtle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
-	return m.mark.View() + subtle.Render(" ") + subtle.Render(m.label) +
-		subtle.Render(fmt.Sprintf("  %s", elapsed))
+	line := m.mark.View() + subtle.Render(" ") + subtle.Render(m.label)
+	if m.detail != "" {
+		line += subtle.Render("  " + m.detail)
+	}
+	return line + subtle.Render(fmt.Sprintf("  %s", elapsed))
 }

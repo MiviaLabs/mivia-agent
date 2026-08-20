@@ -209,6 +209,11 @@ func TestStatuslineLabelTracksTurnActivity(t *testing.T) {
 	if view := got.statusline.View(fixedNow()); !strings.Contains(view, "running") {
 		t.Errorf("got %q, want the label to say running once a tool starts", view)
 	}
+	// wireframes-panes.md section 9's "<detail>" field: the tool's own
+	// name, so "running" says WHICH tool, not just that one is running.
+	if view := got.statusline.View(fixedNow()); !strings.Contains(view, "run_command") {
+		t.Errorf("got %q, want the tool name in the status line detail", view)
+	}
 
 	next, _ = got.Update(uievent.EventMsg{Event: uievent.Event{
 		Kind: uievent.KindToolPending,
@@ -218,6 +223,9 @@ func TestStatuslineLabelTracksTurnActivity(t *testing.T) {
 	if view := got.statusline.View(fixedNow()); !strings.Contains(view, "pending") {
 		t.Errorf("got %q, want the label to say pending while an approval is awaited", view)
 	}
+	if view := got.statusline.View(fixedNow()); !strings.Contains(view, "edit") {
+		t.Errorf("got %q, want the pending tool's name in the status line detail", view)
+	}
 
 	next, _ = got.Update(uievent.EventMsg{Event: uievent.Event{
 		Kind: uievent.KindToolEnd,
@@ -226,6 +234,32 @@ func TestStatuslineLabelTracksTurnActivity(t *testing.T) {
 	got = next.(Screen)
 	if view := got.statusline.View(fixedNow()); !strings.Contains(view, "thinking") {
 		t.Errorf("got %q, want the label back to thinking once the tool call ends", view)
+	}
+	// The previous tool's detail must not survive the label change back
+	// to thinking - it would misreport what is happening now.
+	if view := got.statusline.View(fixedNow()); strings.Contains(view, "edit") {
+		t.Errorf("got %q, want the stale tool detail cleared once thinking resumes", view)
+	}
+}
+
+// TestToolDetailIncludesFormattedArgs pins the rest of
+// wireframes-panes.md section 9's "<detail>" field: a tool call with
+// arguments shows them, the same render.FormatArgs shape the
+// transcript block header already uses for the same data
+// (component/transcript/transcript.go's handleToolStart).
+func TestToolDetailIncludesFormattedArgs(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	s.active = fakeHandle{id: "t1"}
+	s.statusline.Start("thinking", fixedNow())
+
+	next, _ := s.Update(uievent.EventMsg{Event: uievent.Event{
+		Kind: uievent.KindToolStart,
+		Body: uievent.ToolStartBody{ToolCallID: "c1", Name: "run_command", Args: map[string]any{"command": "go test ./..."}},
+	}})
+	got := next.(Screen)
+	view := got.statusline.View(fixedNow())
+	if !strings.Contains(view, "run_command") || !strings.Contains(view, "command=go test ./...") {
+		t.Errorf("got %q, want the tool name and its formatted args", view)
 	}
 }
 
