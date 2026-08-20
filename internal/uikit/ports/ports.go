@@ -110,6 +110,16 @@ type SessionSummary struct {
 	Active    bool
 	State     string   // e.g. "idle", "thinking", "running", "streaming", "done"
 	Lines     []string // recent transcript or activity lines for preview
+
+	// Turns is the number of completed conversation turns in the
+	// session, and ContextTokens is its context usage in raw tokens
+	// (rendered as "Nk ctx", the same convention ModelView's context
+	// window already uses). Both are zero-value-safe: a session whose
+	// adapter cannot report them renders with no turns/ctx column
+	// rather than a fabricated number - see sessionPicker.View's own
+	// zero check (wireframes-panes.md section 12.2).
+	Turns         int
+	ContextTokens int
 }
 
 // SessionMeta describes a saved session for listing/loading.

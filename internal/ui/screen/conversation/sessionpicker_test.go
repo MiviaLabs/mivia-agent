@@ -258,3 +258,53 @@ func TestSessionPickerClipsALongTitleWithTheSharedClipMarker(t *testing.T) {
 		t.Errorf("got %q, want no ad hoc ellipsis left over", plain)
 	}
 }
+
+// TestSessionPickerShowsTurnCountAndContextSize pins
+// wireframes-panes.md section 12.2's row shape: "s3-retry-backoff
+// 14 turns   2h ago    41k ctx". Before this test, ports.SessionSummary
+// carried no turn count or context size at all, so neither could ever
+// appear in the row regardless of what an adapter might report.
+func TestSessionPickerShowsTurnCountAndContextSize(t *testing.T) {
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	th := loadTheme(t)
+	sessions := []ports.SessionSummary{{
+		ID:            "s-1",
+		Title:         "Retry Backoff",
+		UpdatedAt:     now.Add(-2 * time.Hour),
+		State:         "idle",
+		Turns:         14,
+		ContextTokens: 41_000,
+	}}
+	sp := newSessionPicker(th, theme.TierASCII, sessions)
+
+	view := sp.View(th, theme.TierASCII, 100, now)
+	plain := ansi.Strip(view)
+	if !strings.Contains(plain, "14 turns") {
+		t.Errorf("missing turn count in view:\n%s", plain)
+	}
+	if !strings.Contains(plain, "41k ctx") {
+		t.Errorf("missing context size in view:\n%s", plain)
+	}
+}
+
+// TestSessionPickerOmitsTurnAndContextColumnsWhenZero pins the
+// zero-value-safe contract SessionSummary's own doc comment states: a
+// session an adapter cannot report turns/context for must not render a
+// fabricated "0 turns" / "0k ctx".
+func TestSessionPickerOmitsTurnAndContextColumnsWhenZero(t *testing.T) {
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	th := loadTheme(t)
+	sessions := []ports.SessionSummary{{
+		ID:        "s-1",
+		Title:     "No Metadata",
+		UpdatedAt: now.Add(-2 * time.Hour),
+		State:     "idle",
+	}}
+	sp := newSessionPicker(th, theme.TierASCII, sessions)
+
+	view := sp.View(th, theme.TierASCII, 100, now)
+	plain := ansi.Strip(view)
+	if strings.Contains(plain, "turns") || strings.Contains(plain, "ctx") {
+		t.Errorf("expected no turns/ctx column for a zero-value session:\n%s", plain)
+	}
+}

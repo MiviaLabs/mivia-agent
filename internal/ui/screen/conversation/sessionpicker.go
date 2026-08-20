@@ -178,6 +178,34 @@ func formatRelativeTime(updatedAt, now time.Time) string {
 	}
 }
 
+// sessionMeta is the turn-count/context-size segment of a session row
+// (wireframes-panes.md section 12.2: "14 turns   2h ago   41k ctx"),
+// e.g. "14 turns  41k ctx". Either half is omitted when its value is
+// zero, and the whole segment is "" when both are - a session an
+// adapter cannot report either for renders with no fabricated "0
+// turns" or "0k ctx" (SessionSummary's own doc comment).
+func sessionMeta(s ports.SessionSummary) string {
+	var parts []string
+	if s.Turns > 0 {
+		parts = append(parts, fmt.Sprintf("%d turns", s.Turns))
+	}
+	if s.ContextTokens > 0 {
+		parts = append(parts, fmt.Sprintf("%dk ctx", s.ContextTokens/1000))
+	}
+	return strings.Join(parts, "  ")
+}
+
+// metaSuffix prefixes meta with its own leading two-space gap, or
+// returns "" untouched when there is no meta segment to show - the gap
+// belongs to the segment, not to whatever comes before it, so an empty
+// meta contributes no stray spaces to the row.
+func metaSuffix(meta string) string {
+	if meta == "" {
+		return ""
+	}
+	return "  " + meta
+}
+
 func (sp sessionPicker) statusBadge(s ports.SessionSummary) string {
 	border := render.Role(sp.Theme, sp.Tier, theme.RoleBorder)
 	if s.Active {
@@ -244,8 +272,13 @@ func (sp sessionPicker) View(t theme.Theme, tier theme.Tier, innerWidth int, now
 		timeStr := formatRelativeTime(s.UpdatedAt, now)
 		markGlyph := sp.sessionMark(s)
 		badge := sp.statusBadge(s)
+		meta := sessionMeta(s)
+		metaW := 0
+		if meta != "" {
+			metaW = ansi.StringWidth(meta) + 2 // its own leading two-space gap
+		}
 
-		fixedWidth := 2 + 1 + ansi.StringWidth(markGlyph) + 1 + ansi.StringWidth(badge) + 2 + len(timeStr)
+		fixedWidth := 2 + 1 + ansi.StringWidth(markGlyph) + 1 + ansi.StringWidth(badge) + metaW + 2 + len(timeStr)
 		titleMax := max(10, innerWidth-fixedWidth)
 		title := s.Title
 		if title == "" {
@@ -255,17 +288,17 @@ func (sp sessionPicker) View(t theme.Theme, tier theme.Tier, innerWidth int, now
 			title = ansi.Truncate(title, titleMax, uikitconfig.ClipMarker)
 		}
 
-		gap := max(1, innerWidth-2-1-ansi.StringWidth(markGlyph)-1-ansi.StringWidth(title)-1-ansi.StringWidth(badge)-len(timeStr))
+		gap := max(1, innerWidth-2-1-ansi.StringWidth(markGlyph)-1-ansi.StringWidth(title)-1-ansi.StringWidth(badge)-metaW-len(timeStr))
 		spaces := strings.Repeat(" ", gap)
 
-		row := prefix + markGlyph + " " + title + " " + badge + spaces + timeStr
+		row := prefix + markGlyph + " " + title + " " + badge + metaSuffix(meta) + spaces + timeStr
 		if selected {
 			style := render.Role(t, tier, theme.RoleFG)
 			style = render.WithBg(style, t, tier, theme.RoleBGSelection)
 			b.WriteString(style.Render(row))
 		} else {
 			fg := render.Role(t, tier, theme.RoleFG).Render(prefix + markGlyph + " " + title + " ")
-			subtle := render.Role(t, tier, theme.RoleFGSubtle).Render(spaces + timeStr)
+			subtle := render.Role(t, tier, theme.RoleFGSubtle).Render(metaSuffix(meta) + spaces + timeStr)
 			b.WriteString(fg + badge + subtle)
 		}
 	}
