@@ -95,7 +95,15 @@ func Dialog(t theme.Theme, tier theme.Tier, width, height int, title, body, hint
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		Padding(1, 2)
-	if s := t.Resolve(theme.RoleBorderFocus, tier); s.Hex != "" {
+	// RoleBorder, the decorative role, not RoleBorderFocus: the same
+	// choice component/approval/approval.go's own frame already makes,
+	// and for the same reason - a dialog's state (which row is
+	// selected, what it is about) is signaled elsewhere, not by border
+	// colour. Using the brighter, state-carrying RoleBorderFocus here
+	// made every dialog frame read as a different, heavier weight than
+	// the approval prompt's frame, instead of one consistent "thin dim
+	// border" across the whole UI.
+	if s := t.Resolve(theme.RoleBorder, tier); s.Hex != "" {
 		box = box.BorderForeground(lipgloss.Color(s.Hex))
 	} else if s.ANSI16 >= 0 {
 		box = box.BorderForeground(lipgloss.Color(strconv.Itoa(s.ANSI16)))

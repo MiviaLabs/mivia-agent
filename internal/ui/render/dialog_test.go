@@ -335,3 +335,37 @@ func TestDialogClipsAWideBodyRowWithTheClipMarker(t *testing.T) {
 		t.Errorf("got %q, want the clip marker %q on the truncated body row", got, uikitconfig.ClipMarker)
 	}
 }
+
+// TestDialogBorderUsesTheDecorativeRoleNotFocus pins the "thin dim
+// border" the dialog frame and the approval prompt's own frame both
+// use: RoleBorder, the decorative role (wireframes-panes.md section 18:
+// #52525b on mivia-dark), not RoleBorderFocus, the brighter
+// state-carrying role (#fafafa) - approval.go's own BorderedWithHint
+// call already makes this choice explicitly ("RoleBorder, the
+// decorative role, not RoleBorderFocus"); Dialog previously used
+// RoleBorderFocus, so the two bordered surfaces read as two different
+// weights instead of one consistent frame.
+func TestDialogBorderUsesTheDecorativeRoleNotFocus(t *testing.T) {
+	th := dialogTheme(t)
+	got := Dialog(th, theme.TierTrueColor, 50, 16, "t", "b", "h")
+
+	// ansiFGPrefix is the SGR escape lipgloss emits for a truecolor
+	// foreground of hex, up to (not including) the styled content - the
+	// same prefix Border(...).BorderForeground(lipgloss.Color(hex))
+	// would produce for the border glyphs.
+	ansiFGPrefix := func(hex string) string {
+		styled := lipgloss.NewStyle().Foreground(lipgloss.Color(hex)).Render("X")
+		return strings.SplitN(styled, "X", 2)[0]
+	}
+	borderSeq := ansiFGPrefix(th.Resolve(theme.RoleBorder, theme.TierTrueColor).Hex)
+	focusSeq := ansiFGPrefix(th.Resolve(theme.RoleBorderFocus, theme.TierTrueColor).Hex)
+	if borderSeq == focusSeq {
+		t.Fatal("test setup: RoleBorder and RoleBorderFocus resolve to the same escape on mivia-dark, cannot distinguish")
+	}
+	if !strings.Contains(got, borderSeq) {
+		t.Errorf("dialog border does not use RoleBorder's colour %q:\n%s", borderSeq, got)
+	}
+	if strings.Contains(got, focusSeq) {
+		t.Errorf("dialog border still uses RoleBorderFocus's colour %q:\n%s", focusSeq, got)
+	}
+}
