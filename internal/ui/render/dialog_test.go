@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
+	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
 )
 
 func dialogTheme(t *testing.T) theme.Theme {
@@ -319,5 +320,18 @@ func TestDialogAddsNoBackgroundWithoutColour(t *testing.T) {
 		if strings.Contains(got, "\x1b[4") {
 			t.Errorf("tier %v drew a background: %q", tier, got)
 		}
+	}
+}
+
+// TestDialogClipsAWideBodyRowWithTheClipMarker pins wireframes-panes.md
+// section 8: "the renderer must clip a row wider than the panel...
+// with a `~` marking the clip." dialogClip previously truncated with
+// no marker, so a cut row was visually indistinguishable from one that
+// just happened to end there.
+func TestDialogClipsAWideBodyRowWithTheClipMarker(t *testing.T) {
+	wide := strings.Repeat("x", 60)
+	got := Dialog(dialogTheme(t), theme.TierASCII, 30, 14, "t", wide, "h")
+	if !strings.Contains(got, uikitconfig.ClipMarker) {
+		t.Errorf("got %q, want the clip marker %q on the truncated body row", got, uikitconfig.ClipMarker)
 	}
 }

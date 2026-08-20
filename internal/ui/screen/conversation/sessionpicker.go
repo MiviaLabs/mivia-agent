@@ -13,6 +13,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/picker"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
+	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
 
@@ -251,7 +252,7 @@ func (sp sessionPicker) View(t theme.Theme, tier theme.Tier, innerWidth int, now
 			title = s.ID
 		}
 		if ansi.StringWidth(title) > titleMax {
-			title = ansi.Truncate(title, titleMax, "…")
+			title = ansi.Truncate(title, titleMax, uikitconfig.ClipMarker)
 		}
 
 		gap := max(1, innerWidth-2-1-ansi.StringWidth(markGlyph)-1-ansi.StringWidth(title)-1-ansi.StringWidth(badge)-len(timeStr))
@@ -292,7 +293,7 @@ func (sp sessionPicker) PreviewView(t theme.Theme, tier theme.Tier, innerWidth, 
 	}
 
 	hdr := fmt.Sprintf("%s %s  (%s • %s)", markGlyph, sel.Title, state, timeStr)
-	b.WriteString(render.Role(t, tier, theme.RoleFG).Render(ansi.Truncate(hdr, innerWidth, "…")))
+	b.WriteString(render.Role(t, tier, theme.RoleFG).Render(ansi.Truncate(hdr, innerWidth, uikitconfig.ClipMarker)))
 	b.WriteByte('\n')
 	b.WriteString(render.Role(t, tier, theme.RoleFGSubtle).Render(strings.Repeat("─", min(innerWidth, 36))))
 	b.WriteByte('\n')
@@ -313,7 +314,7 @@ func (sp sessionPicker) PreviewView(t theme.Theme, tier theme.Tier, innerWidth, 
 			b.WriteByte('\n')
 		}
 		if ansi.StringWidth(line) > innerWidth {
-			line = ansi.Truncate(line, innerWidth, "…")
+			line = ansi.Truncate(line, innerWidth, uikitconfig.ClipMarker)
 		}
 		switch {
 		case strings.HasPrefix(line, "> "):

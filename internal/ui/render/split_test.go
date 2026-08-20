@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
+	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
 )
 
 // colAt is the display column of needle in row (strings.Index counts
@@ -152,5 +153,18 @@ func TestSplitDialogReplacesTheReadingColumnKeepsTheNavPane(t *testing.T) {
 	// rule.
 	if n := strings.Count(got, "╭"); n != 1 {
 		t.Errorf("framed %d boxes, want 1 (the dialog)", n)
+	}
+}
+
+// TestSplitClipsAWideRowWithTheClipMarker pins wireframes-panes.md
+// section 8/14: "the renderer must clip a row wider than the panel...
+// with a `~` marking the clip." clipBlock (behind Split/SplitDialog)
+// previously truncated with no marker at all, so a cut row looked
+// identical to a row that just happened to end there.
+func TestSplitClipsAWideRowWithTheClipMarker(t *testing.T) {
+	wide := strings.Repeat("x", 100)
+	got := Split(loadTheme(t), theme.TierASCII, 30, 3, Left, wide, "nav")
+	if !strings.Contains(got, uikitconfig.ClipMarker) {
+		t.Errorf("got %q, want the clip marker %q on the truncated row", got, uikitconfig.ClipMarker)
 	}
 }

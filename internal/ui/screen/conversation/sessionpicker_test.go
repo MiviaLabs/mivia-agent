@@ -10,6 +10,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/picker"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
+	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
 
@@ -230,5 +231,30 @@ func TestSessionPickerPreviewRendering(t *testing.T) {
 	}
 	if !strings.Contains(dialog, "[←/→] list") {
 		t.Errorf("dialog in preview mode missing list navigation hint:\n%s", dialog)
+	}
+}
+
+// TestSessionPickerClipsALongTitleWithTheSharedClipMarker pins
+// wireframes-panes.md section 8/14's shared clip glyph: every clipped
+// row in the UI ends with uikitconfig.ClipMarker ("~"), not an ad hoc
+// ellipsis, so a cut row reads the same way everywhere.
+func TestSessionPickerClipsALongTitleWithTheSharedClipMarker(t *testing.T) {
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	th := loadTheme(t)
+	sessions := []ports.SessionSummary{{
+		ID:        "s-long",
+		Title:     strings.Repeat("a very long session title ", 6),
+		UpdatedAt: now.Add(-5 * time.Minute),
+		State:     "idle",
+	}}
+	sp := newSessionPicker(th, theme.TierASCII, sessions)
+
+	view := sp.View(th, theme.TierASCII, 40, now)
+	plain := ansi.Strip(view)
+	if !strings.Contains(plain, uikitconfig.ClipMarker) {
+		t.Errorf("got %q, want the shared clip marker %q on the truncated title", plain, uikitconfig.ClipMarker)
+	}
+	if strings.Contains(plain, "…") {
+		t.Errorf("got %q, want no ad hoc ellipsis left over", plain)
 	}
 }

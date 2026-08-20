@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
+	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
 )
 
 // SplitNavShare is the width share the navigation pane (a list the user
@@ -133,7 +134,7 @@ func clipBlock(content string, width, height int) string {
 	}
 	for i, r := range rows {
 		if w := ansi.StringWidth(r); w > width {
-			rows[i] = ansi.Truncate(r, width, "")
+			rows[i] = ansi.Truncate(r, width, uikitconfig.ClipMarker)
 		}
 	}
 	for len(rows) < height {

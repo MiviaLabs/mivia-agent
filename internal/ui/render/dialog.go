@@ -9,6 +9,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
+	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
 )
 
 // Dialog margins: the box never runs closer than this to the terminal
@@ -158,7 +159,7 @@ func dialogClip(rows []string, inner, maxRows int) []string {
 	out := make([]string, 0, len(rows))
 	for _, r := range rows {
 		if ansi.StringWidth(r) > inner {
-			r = ansi.Truncate(r, inner, "")
+			r = ansi.Truncate(r, inner, uikitconfig.ClipMarker)
 		}
 		out = append(out, r)
 	}
