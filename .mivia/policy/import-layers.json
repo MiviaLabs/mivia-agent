@@ -116,12 +116,18 @@
       "internal/workspace"
     ],
     "internal/composition": [
+      "internal/chat",
       "internal/config",
+      "internal/contextmgr",
+      "internal/contextstate",
+      "internal/events",
       "internal/hooks",
       "internal/mcp",
       "internal/memory",
+      "internal/provider",
       "internal/redact",
       "internal/runtime",
+      "internal/storage",
       "internal/tools",
       "internal/workspace"
     ],
