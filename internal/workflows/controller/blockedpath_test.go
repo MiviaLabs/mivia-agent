@@ -1,4 +1,4 @@
-package blockedpath
+package controller
 
 import (
 	"reflect"

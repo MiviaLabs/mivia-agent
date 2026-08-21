@@ -11,7 +11,7 @@
 // directory with .mivia/workflows"): that describes a throwaway fixture's
 // layout, not a demand to edit the host's path. A read-only mention (no
 // demand verb) is not.
-package blockedpath
+package controller
 
 import (
 	"path"

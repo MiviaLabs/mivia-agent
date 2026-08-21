@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/blockedpath"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 )
 
@@ -56,7 +55,7 @@ func (c *LinearController) blockedPathsFromOutput(ctx context.Context, output ma
 			// (or hallucinates a refusal that never happened) can force any
 			// run into a terminal, non-repairable failure over a path the
 			// host never actually blocked.
-			if len(c.WritePathBlocklist) == 0 || blockedpath.IsBlockedPath(s, c.WritePathBlocklist) {
+			if len(c.WritePathBlocklist) == 0 || IsBlockedPath(s, c.WritePathBlocklist) {
 				add(s)
 			}
 		}
@@ -64,13 +63,13 @@ func (c *LinearController) blockedPathsFromOutput(ctx context.Context, output ma
 	if len(c.WritePathBlocklist) > 0 {
 		if raw, ok := output["files_changed"].([]any); ok {
 			for _, item := range raw {
-				if s, ok := item.(string); ok && blockedpath.IsBlockedPath(s, c.WritePathBlocklist) {
+				if s, ok := item.(string); ok && IsBlockedPath(s, c.WritePathBlocklist) {
 					add(s)
 				}
 			}
 		}
 		for _, s := range c.actualTouchedFiles(ctx) {
-			if blockedpath.IsBlockedPath(s, c.WritePathBlocklist) {
+			if IsBlockedPath(s, c.WritePathBlocklist) {
 				add(s)
 			}
 		}
@@ -87,12 +86,12 @@ func (c *LinearController) blockedPathsFromOutput(ctx context.Context, output ma
 					// "correct the plan" would be misread as a demand to
 					// write the blocked path.
 					if required, ok := f["required"].(string); ok && strings.TrimSpace(required) != "" {
-						for _, p := range blockedpath.PathsDemandedInText(required, c.WritePathBlocklist) {
+						for _, p := range PathsDemandedInText(required, c.WritePathBlocklist) {
 							add(p)
 						}
 					}
 				case string:
-					for _, p := range blockedpath.PathsDemandedInText(f, c.WritePathBlocklist) {
+					for _, p := range PathsDemandedInText(f, c.WritePathBlocklist) {
 						add(p)
 					}
 				}
@@ -131,7 +130,7 @@ func (c *LinearController) blockedPathsFromGateFailures(result definition.Result
 		}
 		for _, line := range check.Failures {
 			for _, token := range gateFailurePathRe.FindAllString(line, -1) {
-				if !blockedpath.IsBlockedPath(token, c.WritePathBlocklist) || seen[token] {
+				if !IsBlockedPath(token, c.WritePathBlocklist) || seen[token] {
 					continue
 				}
 				seen[token] = true

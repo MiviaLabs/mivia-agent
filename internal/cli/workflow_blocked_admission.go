@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/blockedpath"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 )
 
 // workflowBlockedInputAdmission is the fail-fast admission guard for fresh
@@ -27,7 +27,7 @@ func workflowBlockedInputAdmission(denylist []string, workflowName string, input
 		if !ok || strings.TrimSpace(text) == "" {
 			continue
 		}
-		for _, demanded := range blockedpath.PathsDemandedInText(text, denylist) {
+		for _, demanded := range controller.PathsDemandedInText(text, denylist) {
 			return fmt.Errorf("workflow %q input %q instructs a write to %q, which is write-blocklisted for workflow agents (host policy); route this change through the root session or a host-owned process", workflowName, name, demanded)
 		}
 	}

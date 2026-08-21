@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/blockedpath"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
@@ -224,7 +223,7 @@ func (c *LinearController) panelFindingDemandsSiblingChunkOnly(text string, decl
 // demand); dir and file count the sibling tokens by shape (a last segment
 // without an extension reads as a directory, the missing-package shape).
 func (c *LinearController) siblingDemandBreakdown(text string, declared, siblings map[string]bool) (dir, file int, only bool) {
-	if len(c.WritePathBlocklist) > 0 && len(blockedpath.PathsDemandedInText(text, c.WritePathBlocklist)) > 0 {
+	if len(c.WritePathBlocklist) > 0 && len(PathsDemandedInText(text, c.WritePathBlocklist)) > 0 {
 		return 0, 0, false
 	}
 	// A declared file named in prose - by full path or by bare base name -
