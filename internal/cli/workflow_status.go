@@ -33,11 +33,11 @@ func executeWorkflowStatus(runID, root, configPath string, stdout, stderr io.Wri
 		return err
 	}
 	fmt.Fprintf(stdout, "run_id: %s\n", run.RunID)
-	fmt.Fprintf(stdout, "workflow: %s (digest %s)\n", run.WorkflowName, shortDigest(run.WorkflowDigest))
+	fmt.Fprintf(stdout, "workflow: %s (digest %s)\n", run.WorkflowName, ShortDigest(run.WorkflowDigest))
 	fmt.Fprintf(stdout, "status: %s\n", run.Status)
 	fmt.Fprintf(stdout, "active_step: %s\n", run.ActiveStepID)
 	if run.BaseRef != "" {
-		fmt.Fprintf(stdout, "base: %s @ %s\n", run.BaseRef, shortDigest(run.BaseCommit))
+		fmt.Fprintf(stdout, "base: %s @ %s\n", run.BaseRef, ShortDigest(run.BaseCommit))
 	}
 	if run.WorktreeName != "" {
 		fmt.Fprintf(stdout, "worktree: %s\n", run.WorktreeName)
@@ -209,7 +209,7 @@ func printWorkflowDeliveries(ctx context.Context, stdout io.Writer, repo workflo
 		for _, d := range deliveries {
 			line := fmt.Sprintf("  %s %s (mode %s, base %s)", d.IdempotencyKey, d.Status, d.Mode, d.BaseRef)
 			if d.CommitSHA != "" {
-				line += " commit " + shortDigest(d.CommitSHA)
+				line += " commit " + ShortDigest(d.CommitSHA)
 			}
 			if d.URL != "" {
 				line += " url " + d.URL
@@ -255,8 +255,8 @@ func printStackUndrivenNotice(ctx context.Context, stdout io.Writer, root string
 	fmt.Fprintf(stdout, "stack: UNDRIVEN - plan run of a %d-chunk stack parked at delivery_pending with the stack never driven; `mivia workflow deliver` refuses this run. Finish it with `mivia stack drive <workflow> --stack %s`; once the stack completes, `mivia workflow deliver %s` settles the plan run\n", chunks, runID, runID)
 }
 
-// shortDigest renders a digest prefix for operator output.
-func shortDigest(digest string) string {
+// ShortDigest renders a digest prefix for operator output.
+func ShortDigest(digest string) string {
 	if digest == "" {
 		return "-"
 	}
@@ -266,9 +266,9 @@ func shortDigest(digest string) string {
 	return digest
 }
 
-// openWorkflowReportContext opens the workspace, config, and workflow store
+// OpenWorkflowReportContext opens the workspace, config, and workflow store
 // for the read-only workflow commands (status, events).
-func openWorkflowReportContext(root, configPath string) (workflowledger.Repository, func(), error) {
+func OpenWorkflowReportContext(root, configPath string) (workflowledger.Repository, func(), error) {
 	repo, _, _, closeFn, err := openWorkflowReportContextWithStore(root, configPath)
 	if err != nil {
 		return nil, nil, err
@@ -276,11 +276,11 @@ func openWorkflowReportContext(root, configPath string) (workflowledger.Reposito
 	return repo, closeFn, nil
 }
 
-// openWorkflowReportContextWithStore is openWorkflowReportContext's full
+// openWorkflowReportContextWithStore is OpenWorkflowReportContext's full
 // form: it also returns the underlying task-ledger store and the resolved
 // (absolute) workspace root, both needed by report paths that inspect
 // stacking state (e.g. printStackUndrivenNotice's completion check), which
-// openWorkflowReportContext's repo-only callers do not need.
+// OpenWorkflowReportContext's repo-only callers do not need.
 func openWorkflowReportContextWithStore(root, configPath string) (workflowledger.Repository, *storage.SQLite, string, func(), error) {
 	if strings.TrimSpace(root) == "" {
 		root = "."

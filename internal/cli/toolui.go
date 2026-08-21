@@ -381,10 +381,13 @@ func clipPreviewLine(l string, width int) string {
 	if cut > len(l) {
 		cut = len(l)
 	}
-	return truncatePreviewUTF8(l, cut) + "..."
+	return TruncatePreviewUTF8(l, cut) + "..."
 }
 
-func truncatePreviewUTF8(s string, maxBytes int) string {
+// TruncatePreviewUTF8 cuts s to at most maxBytes bytes, backing off until the
+// cut point lands on a valid UTF-8 boundary. Shared by TUI preview text and
+// tool-error name formatting.
+func TruncatePreviewUTF8(s string, maxBytes int) string {
 	if maxBytes >= len(s) {
 		return s
 	}

@@ -6,22 +6,21 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 )
 
-// errUnmanagedWorktree marks a worktree that has no valid lifecycle binding:
+// ErrUnmanagedWorktree marks a worktree that has no valid lifecycle binding:
 // its marker is unreadable or its instance is not active in storage. The
 // caller removes the physical worktree directly and cleans storage rows by
 // name, so HDD space is freed even when the storage layer has no entry.
-var errUnmanagedWorktree = errors.New("worktree has no managed lifecycle binding")
+var ErrUnmanagedWorktree = errors.New("worktree has no managed lifecycle binding")
 
-// removeUnmanagedWorktree removes a worktree that has no valid lifecycle
+// RemoveUnmanagedWorktree removes a worktree that has no valid lifecycle
 // binding. It removes the physical worktree first so HDD space is always
 // freed, then prunes stale Git metadata and cleans storage rows for the name.
-func removeUnmanagedWorktree(root string, wt *vcs.WorktreeInfo, branchPrefix string, lease *os.File) error {
+func RemoveUnmanagedWorktree(root string, wt *vcs.WorktreeInfo, branchPrefix string, lease *os.File) error {
 	if wt == nil {
 		return fmt.Errorf("worktree route requires a worktree")
 	}
@@ -124,13 +123,6 @@ func finishManagedWorktreeRemoval(root string, instance contextstate.WorktreeIns
 	return finishManagedWorktreeRemovalInStore(nil, root, instance)
 }
 
-func finishManagedWorktreeRemovalForSession(sess *chat.Session, root string, instance contextstate.WorktreeInstance) error {
-	if store, ok := sess.ContextStore().(*storage.SQLite); ok && store != nil {
-		return finishManagedWorktreeRemovalInStore(store, root, instance)
-	}
-	return finishManagedWorktreeRemoval(root, instance)
-}
-
 func finishManagedWorktreeRemovalInStore(store *storage.SQLite, root string, instance contextstate.WorktreeInstance) error {
 	ownedStore := false
 	if store == nil {
@@ -186,10 +178,10 @@ func removeWorktreeLocked(root, name, branchPrefix string, lease *os.File) (bool
 		return false, fmt.Errorf("cannot remove the current worktree")
 	}
 	instance, err := beginManagedWorktreeRemoval(root, worktree)
-	if errors.Is(err, errUnmanagedWorktree) {
+	if errors.Is(err, ErrUnmanagedWorktree) {
 		// The worktree has no valid lifecycle binding (missing marker or no
 		// storage entry). Remove it directly so its HDD space is freed.
-		if err := removeUnmanagedWorktree(root, worktree, branchPrefix, lease); err != nil {
+		if err := RemoveUnmanagedWorktree(root, worktree, branchPrefix, lease); err != nil {
 			return false, err
 		}
 		return true, nil

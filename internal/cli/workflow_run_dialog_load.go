@@ -52,7 +52,7 @@ type workflowRunDialogData struct {
 // workflowledger.ErrNotFound so the dialog can keep stale content with a
 // notice.
 func workflowRunDialogLoad(root, configPath, runID string) (workflowRunDialogData, error) {
-	repo, closeFn, err := openWorkflowReportContext(root, configPath)
+	repo, closeFn, err := OpenWorkflowReportContext(root, configPath)
 	if err != nil {
 		return workflowRunDialogData{}, err
 	}
@@ -138,7 +138,7 @@ func (m *tuiModel) refreshWorkflowRunDialog() tea.Cmd {
 	}
 	dlg.lastRefresh = now
 	root := m.resolveRepoRoot()
-	configPath := sessionEngineConfigPath(root, m.config)
+	configPath := SessionEngineConfigPath(root, m.config)
 	runID := dlg.runID
 	return func() tea.Msg {
 		data, err := workflowRunDialogLoad(root, configPath, runID)
@@ -169,7 +169,7 @@ func (m *tuiModel) openWorkflowRunDialog(row workflowRunRow) tea.Cmd {
 	dlg := &workflowRunDialog{
 		runID:      row.run.RunID,
 		root:       root,
-		configPath: sessionEngineConfigPath(root, m.config),
+		configPath: SessionEngineConfigPath(root, m.config),
 	}
 	if svc := m.workflowDialogService(); svc != nil {
 		dlg.engine = svc.Engine()
@@ -209,6 +209,6 @@ func (m *tuiModel) workflowDialogService() *workflowledger.Service {
 	if root == "" {
 		return nil
 	}
-	m.workflowSvc = workflowToolServiceWithBus(root, m.config, func() *events.Bus { return m.eventBus }, false)
+	m.workflowSvc = WorkflowToolServiceWithBus(root, m.config, func() *events.Bus { return m.eventBus }, false)
 	return m.workflowSvc
 }

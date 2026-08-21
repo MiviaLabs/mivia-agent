@@ -22,7 +22,7 @@ import (
 // ledger for runs to recover while the session is up, so a run whose claim
 // expires mid-session (a hard kill, a transient failure) resumes on its own
 // without a restart. A package var so tests can shorten it. Atomic because
-// the periodic re-scan goroutine (started by workflowToolServiceWithBus on a
+// the periodic re-scan goroutine (started by WorkflowToolServiceWithBus on a
 // background context) can outlive the test that armed the sweep, so a later
 // test shortening the interval must not race the goroutine's ticker creation.
 var workflowReconcileInterval atomic.Int64

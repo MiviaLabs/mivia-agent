@@ -120,7 +120,7 @@ func (e *sessionWorkflowEngine) settleSessionCancel(ctx context.Context, active 
 // falls through to the lock-protected read, which surfaces the same failure
 // as the command's own error.
 func (e *sessionWorkflowEngine) readRunStatusForCancel(ctx context.Context, runID string) (workflowledger.RunStatus, bool) {
-	repo, closeFn, err := openWorkflowReportContext(e.root, e.configPath)
+	repo, closeFn, err := OpenWorkflowReportContext(e.root, e.configPath)
 	if err != nil {
 		return "", false
 	}
@@ -226,7 +226,7 @@ func (e *sessionWorkflowEngine) Deliver(ctx context.Context, runID string, allow
 	// Read the run status BEFORE delivery: an idempotent re-deliver of an
 	// already-succeeded run must not re-publish the terminal event.
 	preStatus := workflowledger.RunStatus("")
-	if preRepo, preClose, preErr := openWorkflowReportContext(e.root, e.configPath); preErr == nil {
+	if preRepo, preClose, preErr := OpenWorkflowReportContext(e.root, e.configPath); preErr == nil {
 		if pre, getErr := preRepo.GetRun(ctx, runID); getErr == nil {
 			preStatus = pre.Status
 		}
@@ -256,7 +256,7 @@ func (e *sessionWorkflowEngine) Deliver(ctx context.Context, runID string, allow
 		}
 		return workflowledger.DeliverResult{}, err
 	}
-	repo, closeFn, err := openWorkflowReportContext(e.root, e.configPath)
+	repo, closeFn, err := OpenWorkflowReportContext(e.root, e.configPath)
 	if err != nil {
 		return workflowledger.DeliverResult{RunID: runID, Status: "unknown"}, nil
 	}
@@ -285,7 +285,7 @@ func (e *sessionWorkflowEngine) Deliver(ctx context.Context, runID string, allow
 // structured result when the ledger still opens and shows the run settled
 // delivery_failed (a host refusal is a settled outcome, not a tool error).
 func sessionDeliverResultFromLedger(ctx context.Context, root, configPath, runID string, deliverErr error) (workflowledger.DeliverResult, bool) {
-	repo, closeFn, err := openWorkflowReportContext(root, configPath)
+	repo, closeFn, err := OpenWorkflowReportContext(root, configPath)
 	if err != nil {
 		return workflowledger.DeliverResult{}, false
 	}

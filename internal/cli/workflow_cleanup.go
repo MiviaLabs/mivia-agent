@@ -80,6 +80,14 @@ func executeWorkflowCleanup(runID, root, configPath string, stdout, stderr io.Wr
 	return nil
 }
 
+// cleanupWorkflowRunForDialog runs executeWorkflowCleanup for the workflow-run
+// detail modal, which has nowhere to show the operator-output stream and only
+// needs the error.
+func cleanupWorkflowRunForDialog(runID, root, configPath string) error {
+	var out, errOut strings.Builder
+	return executeWorkflowCleanup(runID, root, configPath, &out, &errOut)
+}
+
 func rootOrDefault(root string) string {
 	if strings.TrimSpace(root) == "" {
 		return "."

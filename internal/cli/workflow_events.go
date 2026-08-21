@@ -15,7 +15,7 @@ import (
 // executeWorkflowEvents prints the run's durable audit trail (wf_* events)
 // in sequence order, paged. limit/offset of 0 mean defaults in the ledger.
 func executeWorkflowEvents(runID, root, configPath string, limit, offset int, stdout, stderr io.Writer) error {
-	repo, closeFn, err := openWorkflowReportContext(root, configPath)
+	repo, closeFn, err := OpenWorkflowReportContext(root, configPath)
 	if err != nil {
 		return err
 	}

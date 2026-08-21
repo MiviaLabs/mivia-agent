@@ -26,9 +26,9 @@ var workflowRunStatuses = map[string]workflowledger.RunStatus{
 	string(workflowledger.RunStatusDeliveryFailed):  workflowledger.RunStatusDeliveryFailed,
 }
 
-// workflowRunsList is the ledger read seam, overridden in tests to exercise
+// WorkflowRunsList is the ledger read seam, overridden in tests to exercise
 // the store-failure path.
-var workflowRunsList = func(ctx context.Context, repo workflowledger.Repository, filter ...workflowledger.RunStatus) ([]workflowledger.RunSnapshot, error) {
+var WorkflowRunsList = func(ctx context.Context, repo workflowledger.Repository, filter ...workflowledger.RunStatus) ([]workflowledger.RunSnapshot, error) {
 	return repo.ListRuns(ctx, filter...)
 }
 
@@ -93,12 +93,12 @@ func watchSnapshot(root, configPath, statusFilter string, limit int) ([]workflow
 		}
 		filter = append(filter, status)
 	}
-	repo, closeFn, err := openWorkflowReportContext(root, configPath)
+	repo, closeFn, err := OpenWorkflowReportContext(root, configPath)
 	if err != nil {
 		return nil, err
 	}
 	defer closeFn()
-	runs, err := workflowRunsList(context.Background(), repo, filter...)
+	runs, err := WorkflowRunsList(context.Background(), repo, filter...)
 	if err != nil {
 		return nil, err
 	}
@@ -118,12 +118,12 @@ func executeWorkflowRuns(root, configPath, statusFilter string, limit int, stdou
 		}
 		filter = append(filter, status)
 	}
-	repo, closeFn, err := openWorkflowReportContext(root, configPath)
+	repo, closeFn, err := OpenWorkflowReportContext(root, configPath)
 	if err != nil {
 		return err
 	}
 	defer closeFn()
-	runs, err := workflowRunsList(context.Background(), repo, filter...)
+	runs, err := WorkflowRunsList(context.Background(), repo, filter...)
 	if err != nil {
 		return err
 	}

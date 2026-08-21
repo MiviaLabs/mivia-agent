@@ -9,8 +9,10 @@ import (
 	"os"
 	"strings"
 
+	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -283,6 +285,13 @@ func (m *tuiModel) applyWorktreeConfirm() {
 	d.confirm = wtConfirmNone
 }
 
+func finishManagedWorktreeRemovalForSession(sess *chat.Session, root string, instance contextstate.WorktreeInstance) error {
+	if store, ok := sess.ContextStore().(*storage.SQLite); ok && store != nil {
+		return finishManagedWorktreeRemovalInStore(store, root, instance)
+	}
+	return finishManagedWorktreeRemoval(root, instance)
+}
+
 // applyWorktreeDeleteConfirm deletes the selected worktree row. The caller
 // clears the confirm state after it returns.
 func (m *tuiModel) applyWorktreeDeleteConfirm(d *worktreeDialog) {
@@ -329,10 +338,10 @@ func (m *tuiModel) applyWorktreeDeleteConfirm(d *worktreeDialog) {
 	}
 	requireExpected := hasBinding && !expected.Instance.IsZero()
 	instance, err := beginManagedWorktreeRemovalForSessionExpected(m.session, wtDir, &wt, expected.Instance, requireExpected)
-	if errors.Is(err, errUnmanagedWorktree) {
+	if errors.Is(err, ErrUnmanagedWorktree) {
 		// The worktree has no valid lifecycle binding (missing marker or no
 		// storage entry). Remove it directly so its HDD space is freed.
-		if err := removeUnmanagedWorktree(wtDir, &wt, worktreeConfig.BranchPrefix, lock.File()); err != nil {
+		if err := RemoveUnmanagedWorktree(wtDir, &wt, worktreeConfig.BranchPrefix, lock.File()); err != nil {
 			d.setNotice("delete failed: "+err.Error(), true)
 		} else {
 			name := wt.Name
@@ -366,6 +375,15 @@ func (m *tuiModel) applyWorktreeDeleteConfirm(d *worktreeDialog) {
 
 // handleWorktreeDeleteRecovery resolves a recovery row during delete confirm.
 // It returns true when it handled the row and the caller must stop.
+func recoverManagedWorktreeRemovalInfoInStore(store *storage.SQLite, root string, info contextstate.WorktreeInstanceInfo, branchPrefix string) error {
+	lock, err := lockWorktreeLifecycle(root, info.Instance.Worktree)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	return recoverManagedWorktreeRemovalInfoInStoreLocked(store, root, info, branchPrefix, lock.File())
+}
+
 func (m *tuiModel) handleWorktreeDeleteRecovery(wtDir string, wt vcs.WorktreeInfo, branchPrefix string) bool {
 	recovery, found := m.worktreeDlg.selectedRecovery()
 	if !found {
@@ -453,6 +471,20 @@ type worktreeCreatedMsg struct {
 	instance contextstate.WorktreeInstance
 	err      error
 	dlg      *worktreeDialog
+}
+
+func beginManagedWorktreeRemovalForSessionExpected(sess *chat.Session, root string, wt *vcs.WorktreeInfo, expected contextstate.WorktreeInstance, requireExpected bool) (contextstate.WorktreeInstance, error) {
+	if store, ok := sess.ContextStore().(*storage.SQLite); ok && store != nil {
+		return beginManagedWorktreeRemovalInStoreExpected(store, root, wt, expected, requireExpected)
+	}
+	return beginManagedWorktreeRemovalInStoreExpected(nil, root, wt, expected, requireExpected)
+}
+
+func reactivateManagedWorktreeForSession(sess *chat.Session, root string, instance contextstate.WorktreeInstance) error {
+	if store, ok := sess.ContextStore().(*storage.SQLite); ok && store != nil {
+		return reactivateManagedWorktreeInStore(store, root, instance)
+	}
+	return reactivateManagedWorktree(root, instance)
 }
 
 func (m *tuiModel) createWorktreeFromDialog() tea.Cmd {

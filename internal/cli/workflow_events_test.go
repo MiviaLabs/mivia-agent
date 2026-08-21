@@ -120,7 +120,7 @@ func TestWorkflowEventsOffsetBeyondStream(t *testing.T) {
 }
 
 // openEventsFixtureWithRun builds a workspace config + sqlite store + a fresh run
-// with the given runID, mirroring how openWorkflowReportContext resolves them,
+// with the given runID, mirroring how OpenWorkflowReportContext resolves them,
 // and returns the store handles so the caller can seed events.
 func openEventsFixtureWithRun(t *testing.T, runID string) (root string, store *storage.SQLite, repo *workflowledger.StorageRepository, closeFn func(), ctx context.Context, run string) {
 	t.Helper()
@@ -173,7 +173,7 @@ store_backend = "sqlite"
 }
 
 // openEventsFixture builds a workspace config + sqlite store + a fresh run,
-// mirroring how openWorkflowReportContext resolves them, and returns the store
+// mirroring how OpenWorkflowReportContext resolves them, and returns the store
 // handles so the caller can seed events.
 func openEventsFixture(t *testing.T) (root string, store *storage.SQLite, repo *workflowledger.StorageRepository, closeFn func(), ctx context.Context, run string) {
 	t.Helper()

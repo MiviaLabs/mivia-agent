@@ -123,6 +123,10 @@ type copyResultMsg struct {
 	err error
 }
 
+// envClipboardTTY is the environment variable overriding the terminal device
+// clipboardTTY writes OSC 52 to.
+const envClipboardTTY = "MIVIA_CLIPBOARD_TTY"
+
 // clipboardTTY returns the terminal device OSC 52 is written to. Overridable
 // for tests; never a real device there.
 func clipboardTTY() string {

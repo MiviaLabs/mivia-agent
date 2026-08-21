@@ -11,6 +11,12 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 )
 
+// subagentTracker aggregates attributed subagent events into per-agent rows.
+// It is the data spine for the fleet box and the per-agent turn ledger: a
+// pure state machine - feed it with Apply, read it with Rows. It renders
+// nothing and holds no locks; the TUI update loop owns it. All methods are
+// nil-receiver safe so models built without a tracker stay inert.
+
 // subagentRun is the aggregated view of one subagent's activity.
 type subagentRun struct {
 	TaskID     string

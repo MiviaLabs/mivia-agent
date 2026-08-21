@@ -138,7 +138,7 @@ func buildWorkflowRunView(run workflowledger.RunSnapshot, compiled *definition.C
 				line += " · " + rec.URL
 			}
 			if rec.CommitSHA != "" {
-				line += " · commit " + shortDigest(rec.CommitSHA)
+				line += " · commit " + ShortDigest(rec.CommitSHA)
 			}
 			v.header = append(v.header, line)
 		}

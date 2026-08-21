@@ -272,10 +272,10 @@ func TestWorkflowSidebarLoadSortsActiveFirst(t *testing.T) {
 func TestWorkflowSidebarLoadLedgerFailure(t *testing.T) {
 	root, _, _, closeFn, _, _ := openEventsFixtureWithRun(t, "wfr-LOADFAIL1")
 	defer closeFn()
-	original := workflowRunsList
-	t.Cleanup(func() { workflowRunsList = original })
+	original := WorkflowRunsList
+	t.Cleanup(func() { WorkflowRunsList = original })
 	sentinel := errors.New("injected list failure")
-	workflowRunsList = func(ctx context.Context, repo workflowledger.Repository, filter ...workflowledger.RunStatus) ([]workflowledger.RunSnapshot, error) {
+	WorkflowRunsList = func(ctx context.Context, repo workflowledger.Repository, filter ...workflowledger.RunStatus) ([]workflowledger.RunSnapshot, error) {
 		return nil, sentinel
 	}
 	if _, err := workflowSidebarLoad(root, ""); err == nil {

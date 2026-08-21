@@ -140,9 +140,9 @@ func TestSessionEngineConfigPathUsesResolvedConfigPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	res := &config.Resolved{ConfigPath: explicit}
-	got := sessionEngineConfigPath(root, res)
+	got := SessionEngineConfigPath(root, res)
 	if got != explicit {
-		t.Fatalf("sessionEngineConfigPath = %q, want %q", got, explicit)
+		t.Fatalf("SessionEngineConfigPath = %q, want %q", got, explicit)
 	}
 	// Wire must pass the same path into the engine.
 	if err := os.MkdirAll(filepath.Join(root, ".mivia", "workflows"), 0o700); err != nil {
@@ -160,9 +160,9 @@ func TestSessionEngineConfigPathUsesResolvedConfigPath(t *testing.T) {
 		t.Fatal("expected workflow tools")
 	}
 	// Extract engine config path via a deliver call that reloads config —
-	// openWorkflowReportContext uses e.configPath. Missing run fails after load.
-	// Direct check: sessionEngineConfigPath is the single identity helper.
-	if sessionEngineConfigPath(ws.Abs, res) != explicit {
+	// OpenWorkflowReportContext uses e.configPath. Missing run fails after load.
+	// Direct check: SessionEngineConfigPath is the single identity helper.
+	if SessionEngineConfigPath(ws.Abs, res) != explicit {
 		t.Fatal("wire identity helper diverged")
 	}
 }

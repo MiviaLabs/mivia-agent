@@ -4,7 +4,6 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -190,12 +189,6 @@ func activeOrchestrationForSession(sessionID string) bool {
 	return active
 }
 
-// errOrchestrationSwitchActive is the guard's refusal as a value, because
-// /effort rewrites it for a surface where "model switching" names a command the
-// user did not type. Matching that rewrite on the text would go quiet the first
-// time someone copy-edits this sentence, and the notice would silently revert.
-var errOrchestrationSwitchActive = errors.New("model switching is unavailable while orchestration is active")
-
 func orchestrationSwitchGuard(sessionID string) func() error {
 	return func() error {
 		if activeOrchestrationForSession(sessionID) {
@@ -291,6 +284,23 @@ func poolLimitsFromConfig(cfg config.SubagentConfig) (maxDepth, maxFanout int) {
 		maxFanout = subagents.Unlimited
 	}
 	return maxDepth, maxFanout
+}
+
+// activeCoordinator returns the first Coordinator registered in the
+// package-level coordinators map, if any. Used to find a running dispatch's
+// Coordinator from a caller that does not hold the *runtime.Dispatcher key.
+func activeCoordinator() (coordinator.Coordinator, bool) {
+	var found coordinator.Coordinator
+	var ok bool
+	coordinators.Range(func(_, value any) bool {
+		c, isCoordinator := value.(coordinator.Coordinator)
+		if !isCoordinator {
+			return true // continue
+		}
+		found, ok = c, true
+		return false // stop after first
+	})
+	return found, ok
 }
 
 // initCoordinator lazily creates the Coordinator singleton with an in-memory

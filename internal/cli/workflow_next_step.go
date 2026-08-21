@@ -45,14 +45,14 @@ var workflowNextStep = func(root string, run workflowledger.RunSnapshot) string 
 	if err != nil {
 		return ""
 	}
-	return nextStepAfterActive(compiled, run.ActiveStepID)
+	return NextStepAfterActive(compiled, run.ActiveStepID)
 }
 
-// nextStepAfterActive returns the step declared immediately after activeID in
+// NextStepAfterActive returns the step declared immediately after activeID in
 // the compiled step order, or "" when activeID is not declared or is the last
 // step. The reserved terminals "success" and "failure" are never declared
 // steps, so they cannot be found here.
-func nextStepAfterActive(cw *definition.CompiledWorkflow, activeID string) string {
+func NextStepAfterActive(cw *definition.CompiledWorkflow, activeID string) string {
 	if cw == nil {
 		return ""
 	}

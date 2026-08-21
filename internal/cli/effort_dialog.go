@@ -254,6 +254,13 @@ const effortBusyNotice = "finish current work first"
 // take - and overflows the 52 columns the dialog footer has at 80 columns.
 const effortOrchestrationNotice = "effort is locked while orchestration runs"
 
+// errOrchestrationSwitchActive is orchestrationSwitchGuard's refusal as a
+// value, because /effort rewrites it for a surface where "model switching"
+// names a command the user did not type. Matching that rewrite on the text
+// would go quiet the first time someone copy-edits this sentence, and the
+// notice would silently revert.
+var errOrchestrationSwitchActive = errors.New("model switching is unavailable while orchestration is active")
+
 // sessionEffortBusyRefusal is chat.Session's wording for an in-flight turn.
 // It lives in another package with no sentinel to match, so this surface owns
 // a copy of the sentence and TestEffortBusyRefusalMatchesThePickerWording is

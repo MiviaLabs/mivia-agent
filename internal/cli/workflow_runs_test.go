@@ -390,10 +390,10 @@ func TestRunWorkflowWithIONoSubcommand(t *testing.T) {
 func TestExecuteWorkflowRunsListFailure(t *testing.T) {
 	root, _, _, closeFn, _, _ := openEventsFixtureWithRun(t, "wfr-IIII9999")
 	defer closeFn()
-	original := workflowRunsList
-	t.Cleanup(func() { workflowRunsList = original })
+	original := WorkflowRunsList
+	t.Cleanup(func() { WorkflowRunsList = original })
 	sentinel := errors.New("injected list failure")
-	workflowRunsList = func(context.Context, workflowledger.Repository, ...workflowledger.RunStatus) ([]workflowledger.RunSnapshot, error) {
+	WorkflowRunsList = func(context.Context, workflowledger.Repository, ...workflowledger.RunStatus) ([]workflowledger.RunSnapshot, error) {
 		return nil, sentinel
 	}
 	err := executeWorkflowRuns(root, filepath.Join(root, "config.toml"), "", 20, io.Discard, io.Discard)
@@ -545,10 +545,10 @@ func TestWatchSnapshotFailures(t *testing.T) {
 	t.Run("ledger read failure", func(t *testing.T) {
 		root, _, _, closeFn, _, _ := openEventsFixtureWithRun(t, "wfr-SNAPFAIL1")
 		defer closeFn()
-		original := workflowRunsList
-		t.Cleanup(func() { workflowRunsList = original })
+		original := WorkflowRunsList
+		t.Cleanup(func() { WorkflowRunsList = original })
 		sentinel := errors.New("injected snapshot failure")
-		workflowRunsList = func(context.Context, workflowledger.Repository, ...workflowledger.RunStatus) ([]workflowledger.RunSnapshot, error) {
+		WorkflowRunsList = func(context.Context, workflowledger.Repository, ...workflowledger.RunStatus) ([]workflowledger.RunSnapshot, error) {
 			return nil, sentinel
 		}
 		if _, err := watchSnapshot(root, filepath.Join(root, "config.toml"), "", 20); !errors.Is(err, sentinel) {

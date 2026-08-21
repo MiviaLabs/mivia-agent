@@ -156,28 +156,6 @@ func applySelectedAgentPrompt(sess *chat.Session, res *config.Resolved, selected
 	}
 }
 
-// agentListRows builds ordered rows from a registry. Pure; unit-tested without TUI.
-func agentListRows(reg *agents.AgentRegistry, current string) []agentListRow {
-	if reg == nil {
-		return nil
-	}
-	current = strings.TrimSpace(current)
-	names := reg.Names()
-	out := make([]agentListRow, 0, len(names))
-	for _, name := range names {
-		a, ok := reg.Get(name)
-		if !ok {
-			continue
-		}
-		out = append(out, agentListRow{
-			Name:        a.Name,
-			Description: a.Description,
-			Current:     a.Name == current,
-		})
-	}
-	return out
-}
-
 func currentAgentName(state *agentSessionState) string {
 	if state == nil {
 		return ""

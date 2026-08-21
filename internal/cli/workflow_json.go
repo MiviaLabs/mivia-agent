@@ -19,7 +19,7 @@ import (
 // process) uses, never to drive them. The returned close func must be
 // deferred by the caller.
 func readOnlyWorkflowService(root, configPath string) (*workflowledger.Service, func(), error) {
-	repo, closeFn, err := openWorkflowReportContext(root, configPath)
+	repo, closeFn, err := OpenWorkflowReportContext(root, configPath)
 	if err != nil {
 		return nil, nil, err
 	}

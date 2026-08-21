@@ -228,10 +228,10 @@ func TestIntegrationWorkflowsSidebarLedgerFailureKeepsStaleRows(t *testing.T) {
 	m, _, _, closeFn := integrationWorkflowModel(t)
 	defer closeFn()
 	m.handleSlash("/workflows")
-	original := workflowRunsList
-	t.Cleanup(func() { workflowRunsList = original })
+	original := WorkflowRunsList
+	t.Cleanup(func() { WorkflowRunsList = original })
 	sentinel := errors.New("injected list failure")
-	workflowRunsList = func(ctx context.Context, repo workflowledger.Repository, filter ...workflowledger.RunStatus) ([]workflowledger.RunSnapshot, error) {
+	WorkflowRunsList = func(ctx context.Context, repo workflowledger.Repository, filter ...workflowledger.RunStatus) ([]workflowledger.RunSnapshot, error) {
 		return nil, sentinel
 	}
 	m.workflowsSidebar.rows = []workflowRunRow{{run: workflowledger.RunSnapshot{RunID: "wfr-STALE1", WorkflowName: "test-wf"}}}

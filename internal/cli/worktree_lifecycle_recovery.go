@@ -133,15 +133,6 @@ func recoverManagedWorktreeRemovalInStoreLocked(store *storage.SQLite, root, san
 	return false, nil
 }
 
-func recoverManagedWorktreeRemovalInfoInStore(store *storage.SQLite, root string, info contextstate.WorktreeInstanceInfo, branchPrefix string) error {
-	lock, err := lockWorktreeLifecycle(root, info.Instance.Worktree)
-	if err != nil {
-		return err
-	}
-	defer lock.Close()
-	return recoverManagedWorktreeRemovalInfoInStoreLocked(store, root, info, branchPrefix, lock.File())
-}
-
 func recoverManagedWorktreeRemovalInfoInStoreLocked(store *storage.SQLite, root string, info contextstate.WorktreeInstanceInfo, branchPrefix string, lease *os.File) error {
 	if info.State != contextstate.WorktreeDeleting {
 		return contextstate.ErrWorktreeDeleted

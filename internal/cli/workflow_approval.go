@@ -274,3 +274,30 @@ func buildResolutionController(ctx context.Context, repo workflowledger.Reposito
 	}
 	return controller.NewResolutionController(repo, compiled, runID, raw, inputs)
 }
+
+// resolveWorkflowDialogApproval resolves one pending gate approval through the
+// same bounded-lock controller path as the workflow_approval CLI surface. The
+// actor is fixed to workflowApprovalDefaultActor so operator scripts and tests
+// see deterministic approval records.
+func resolveWorkflowDialogApproval(runID, approvalID, root, configPath, actor string, reject bool) error {
+	releaseExecution, repo, _, closeFn, err := openWorkflowResolutionContextBounded(context.Background(), root, configPath, runID, workflowResolutionLockWait)
+	if err != nil {
+		return err
+	}
+	defer closeFn()
+	defer releaseExecution()
+	ctx := context.Background()
+	ctrl, err := buildResolutionController(ctx, repo, runID)
+	if err != nil {
+		return err
+	}
+	if err := claimWorkflowOperator(ctx, repo, runID, ctrl.Holder); err != nil {
+		return err
+	}
+	defer func() { _ = repo.ReleaseRun(context.Background(), runID, ctrl.Holder) }()
+	ctx = workflowledger.ContextWithClaimHolder(ctx, ctrl.Holder)
+	if reject {
+		return ctrl.Reject(ctx, approvalID, actor, "")
+	}
+	return ctrl.Approve(ctx, approvalID, actor)
+}

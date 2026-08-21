@@ -350,20 +350,16 @@ func shortRunID(id string) string {
 // Safe to call repeatedly - the underlying sync.Once ensures one subscription.
 func (d *runDashboard) trySubscribe() {
 	d.subscribeOnce.Do(func() {
-		// Iterate the package-level coordinators map to find an active Coordinator.
-		coordinators.Range(func(_, value any) bool {
-			c, ok := value.(coordinator.Coordinator)
-			if !ok {
-				return true // continue
-			}
-			// Subscribe to lifecycle events.
-			c.SubscribeLifecycle(func(evt ledger.LifecycleEvent) {
-				d.handleEvent(evt)
-			})
-			// Backfill existing runs from the coordinator.
-			d.backfillFromCoordinator(c)
-			return false // stop after first
+		c, ok := activeCoordinator()
+		if !ok {
+			return
+		}
+		// Subscribe to lifecycle events.
+		c.SubscribeLifecycle(func(evt ledger.LifecycleEvent) {
+			d.handleEvent(evt)
 		})
+		// Backfill existing runs from the coordinator.
+		d.backfillFromCoordinator(c)
 	})
 }
 

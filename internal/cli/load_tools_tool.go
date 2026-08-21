@@ -184,7 +184,7 @@ func boundedNameList(names []string) string {
 			b.WriteString(", ")
 		}
 		if len(name) > maxLoadToolsErrorNameLen {
-			name = truncatePreviewUTF8(name, maxLoadToolsErrorNameLen) + "..."
+			name = TruncatePreviewUTF8(name, maxLoadToolsErrorNameLen) + "..."
 		}
 		fmt.Fprintf(&b, "%q", name)
 	}
