@@ -10,7 +10,6 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
@@ -26,7 +25,7 @@ func TestWorkflowAuthorityHelpers(t *testing.T) {
 		t.Fatalf("workflowDefaultRegistry() error = %v", err)
 	}
 	registry := agents.NewRegistry()
-	wf := &compiler.CompiledWorkflow{Steps: []definition.Step{{ID: "one", Kind: "agent", Agent: "missing"}}}
+	wf := &definition.CompiledWorkflow{Steps: []definition.Step{{ID: "one", Kind: "agent", Agent: "missing"}}}
 	if _, err := workflowWriteAuthority(wf, registry, authority, nil); err == nil {
 		t.Fatal("workflowWriteAuthority() error = nil for an unknown agent")
 	}
@@ -141,7 +140,7 @@ output = { ok = "true" }
 	if err != nil {
 		t.Fatal(err)
 	}
-	compiled, err := compiler.CompileForResume(&wf)
+	compiled, err := definition.CompileForResume(&wf)
 	if err != nil {
 		t.Fatalf("CompileForResume: %v", err)
 	}
@@ -170,7 +169,7 @@ func TestValidateWorkflowResumeSnapshotAcceptsPreviouslyAdmittedUnboundedLoop(t 
 }
 
 func TestValidateWorkflowSnapshotReferences(t *testing.T) {
-	wf := &compiler.CompiledWorkflow{Steps: []definition.Step{{ID: "one", Agent: "agent", Template: "prompt.txt"}}}
+	wf := &definition.CompiledWorkflow{Steps: []definition.Step{{ID: "one", Agent: "agent", Template: "prompt.txt"}}}
 	snapshot := workflowledger.Snapshot{Schemas: map[string]workflowledger.RefSnapshot{
 		"bad.json": {Digest: "bad", Bytes: []byte("{}")},
 	}}
@@ -339,7 +338,7 @@ func TestLoadWorkflowReferencesRejectsInvalidFiles(t *testing.T) {
 }
 
 func TestWorkflowRuntimeAndWorkspaceErrors(t *testing.T) {
-	wf := &compiler.CompiledWorkflow{Steps: []definition.Step{{ID: "gate", Kind: "unsupported"}}}
+	wf := &definition.CompiledWorkflow{Steps: []definition.Step{{ID: "gate", Kind: "unsupported"}}}
 	if _, _, err := loadWorkflowRuntimes(t.TempDir(), "", wf, agents.NewRegistry(), nil); err == nil {
 		t.Fatal("loadWorkflowRuntimes() accepted an unsupported step")
 	}
@@ -387,7 +386,7 @@ func TestLoadWorkflowRuntimesAcceptsAgentAndHostSteps(t *testing.T) {
 	if err := registry.Publish(agents.ResolvedAgent{Name: "worker", EffectiveTools: []string{"read_file"}}); err != nil {
 		t.Fatal(err)
 	}
-	wf := &compiler.CompiledWorkflow{
+	wf := &definition.CompiledWorkflow{
 		Digest: "digest",
 		Steps: []definition.Step{
 			{ID: "agent", Kind: "agent", Agent: "worker", Template: "templates/agent.md", OutputSchema: "schemas/result.json"},

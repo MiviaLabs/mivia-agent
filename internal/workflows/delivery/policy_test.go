@@ -9,13 +9,12 @@ import (
 	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 )
 
 // newCompiledPRWorkflow builds a minimal admitted workflow with a
 // pull_request delivery section, mirroring the compiler test fixtures.
-func newCompiledPRWorkflow(t *testing.T, mode string) *compiler.CompiledWorkflow {
+func newCompiledPRWorkflow(t *testing.T, mode string) *definition.CompiledWorkflow {
 	t.Helper()
 	wf := &definition.WorkflowFile{
 		Name:        "delivery-policy-test",
@@ -37,7 +36,7 @@ func newCompiledPRWorkflow(t *testing.T, mode string) *compiler.CompiledWorkflow
 			CommitMessageTemplate: "feat: {{ inputs.task }}\n\nBody.",
 		},
 	}
-	cw, err := compiler.Compile(wf)
+	cw, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatalf("compiling fixture workflow: %v", err)
 	}
@@ -46,10 +45,10 @@ func newCompiledPRWorkflow(t *testing.T, mode string) *compiler.CompiledWorkflow
 
 func TestFromCompiled(t *testing.T) {
 	testFromCompiledRejects(t, "nil workflow", nil)
-	testFromCompiledRejects(t, "nil delivery", &compiler.CompiledWorkflow{Delivery: nil})
-	testFromCompiledRejects(t, "empty kind", &compiler.CompiledWorkflow{Delivery: &definition.Delivery{Kind: "", Mode: "draft"}})
-	testFromCompiledRejects(t, "mode none", &compiler.CompiledWorkflow{Delivery: &definition.Delivery{Kind: "pull_request", Mode: "none"}})
-	testFromCompiledRejects(t, "empty mode", &compiler.CompiledWorkflow{Delivery: &definition.Delivery{Kind: "pull_request", Mode: ""}})
+	testFromCompiledRejects(t, "nil delivery", &definition.CompiledWorkflow{Delivery: nil})
+	testFromCompiledRejects(t, "empty kind", &definition.CompiledWorkflow{Delivery: &definition.Delivery{Kind: "", Mode: "draft"}})
+	testFromCompiledRejects(t, "mode none", &definition.CompiledWorkflow{Delivery: &definition.Delivery{Kind: "pull_request", Mode: "none"}})
+	testFromCompiledRejects(t, "empty mode", &definition.CompiledWorkflow{Delivery: &definition.Delivery{Kind: "pull_request", Mode: ""}})
 
 	t.Run("mode draft snapshots policy", func(t *testing.T) {
 		cw := newCompiledPRWorkflow(t, "draft")
@@ -144,7 +143,7 @@ func TestFromCompiledMaxRepairs(t *testing.T) {
 
 // testFromCompiledRejects is a table-driven helper that verifies FromCompiled
 // returns ok=false for degenerate workflow inputs.
-func testFromCompiledRejects(t *testing.T, name string, wf *compiler.CompiledWorkflow) {
+func testFromCompiledRejects(t *testing.T, name string, wf *definition.CompiledWorkflow) {
 	t.Helper()
 	t.Run(name, func(t *testing.T) {
 		if _, ok := FromCompiled(wf); ok {
@@ -153,7 +152,7 @@ func testFromCompiledRejects(t *testing.T, name string, wf *compiler.CompiledWor
 	})
 }
 
-func newCompiledWithLimits(t *testing.T, maxTitle, maxMsg int) *compiler.CompiledWorkflow {
+func newCompiledWithLimits(t *testing.T, maxTitle, maxMsg int) *definition.CompiledWorkflow {
 	t.Helper()
 	wf := &definition.WorkflowFile{
 		Name: "custom-limits", Version: 1, InitialStep: "plan",
@@ -168,7 +167,7 @@ func newCompiledWithLimits(t *testing.T, maxTitle, maxMsg int) *compiler.Compile
 			MaxTitleBytes: maxTitle, MaxCommitMessageBytes: maxMsg,
 		},
 	}
-	cw, err := compiler.Compile(wf)
+	cw, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatalf("compiling: %v", err)
 	}

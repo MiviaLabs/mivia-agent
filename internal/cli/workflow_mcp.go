@@ -2,10 +2,10 @@ package cli
 
 import (
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 )
 
-func workflowMCPServers(wf *compiler.CompiledWorkflow, registry *agents.AgentRegistry) []string {
+func workflowMCPServers(wf *definition.CompiledWorkflow, registry *agents.AgentRegistry) []string {
 	if wf == nil || registry == nil {
 		return nil
 	}

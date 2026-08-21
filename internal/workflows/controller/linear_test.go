@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
@@ -394,7 +393,7 @@ func (r *linearRunner) RunStep(_ context.Context, req AgentStepRequest) (AgentSt
 	return AgentStepResult{CoordinatorRunID: "coord-" + req.StepID, TaskID: req.TaskID, Output: r.outputs[req.StepID], EvidenceJSON: []byte(`[]`)}, nil
 }
 
-func linearWorkflow(t *testing.T) *compiler.CompiledWorkflow {
+func linearWorkflow(t *testing.T) *definition.CompiledWorkflow {
 	t.Helper()
 	wf := &definition.WorkflowFile{
 		Version: 1, Name: "linear", InitialStep: "first",
@@ -408,7 +407,7 @@ func linearWorkflow(t *testing.T) *compiler.CompiledWorkflow {
 			{From: "second", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -466,7 +465,7 @@ func TestLinearControllerAcceptsLoopTransitions(t *testing.T) {
 			{From: "review", To: "implement", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"verdict": "changes_requested"}}, Loop: "review_repair", MaxIterations: -1},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}

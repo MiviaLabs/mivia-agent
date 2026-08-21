@@ -8,7 +8,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
@@ -154,7 +154,7 @@ func workflowDefaultRegistry(root string, res *config.Resolved) (*tools.Registry
 	}), nil
 }
 
-func workflowWriteAuthority(wf *compiler.CompiledWorkflow, registry *agents.AgentRegistry, authority *tools.Registry, extraDenylist []string) (bool, error) {
+func workflowWriteAuthority(wf *definition.CompiledWorkflow, registry *agents.AgentRegistry, authority *tools.Registry, extraDenylist []string) (bool, error) {
 	writeCapable := false
 	seen := make(map[string]bool)
 	for _, step := range wf.Steps {

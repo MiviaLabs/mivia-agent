@@ -7,14 +7,13 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
 // deliveryWorkflow compiles a one-agent-step workflow ending in the reserved
 // success route, optionally declaring a pull_request delivery policy.
-func deliveryWorkflow(t *testing.T, withDelivery bool) *compiler.CompiledWorkflow {
+func deliveryWorkflow(t *testing.T, withDelivery bool) *definition.CompiledWorkflow {
 	t.Helper()
 	wf := &definition.WorkflowFile{
 		Version: 1, Name: "delivery", InitialStep: "one",
@@ -27,7 +26,7 @@ func deliveryWorkflow(t *testing.T, withDelivery bool) *compiler.CompiledWorkflo
 	if withDelivery {
 		wf.Delivery = &definition.Delivery{Kind: "pull_request", Mode: "draft", Provider: "github", Base: "main"}
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +35,7 @@ func deliveryWorkflow(t *testing.T, withDelivery bool) *compiler.CompiledWorkflo
 
 // humanDeliveryWorkflow compiles a human_gate workflow ending in the reserved
 // success route, optionally declaring a pull_request delivery policy.
-func humanDeliveryWorkflow(t *testing.T, withDelivery bool) *compiler.CompiledWorkflow {
+func humanDeliveryWorkflow(t *testing.T, withDelivery bool) *definition.CompiledWorkflow {
 	t.Helper()
 	wf := &definition.WorkflowFile{
 		Version: 1, Name: "human-delivery", InitialStep: "approve_me",
@@ -50,7 +49,7 @@ func humanDeliveryWorkflow(t *testing.T, withDelivery bool) *compiler.CompiledWo
 	if withDelivery {
 		wf.Delivery = &definition.Delivery{Kind: "pull_request", Mode: "draft", Provider: "github", Base: "main"}
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}

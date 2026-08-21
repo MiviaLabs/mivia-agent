@@ -7,7 +7,6 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 )
 
@@ -16,7 +15,7 @@ import (
 // the policy for a stacking-enabled run. hard is the resolved HardLines value.
 func stackedPolicy(t *testing.T, hard int) Policy {
 	t.Helper()
-	cw := &compiler.CompiledWorkflow{
+	cw := &definition.CompiledWorkflow{
 		Delivery: &definition.Delivery{
 			Kind:                  "pull_request",
 			Mode:                  "draft",

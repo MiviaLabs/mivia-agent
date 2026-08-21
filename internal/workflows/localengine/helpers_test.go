@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
@@ -89,7 +88,7 @@ func TestBuildStepRuntimesPopulatesOutputSchema(t *testing.T) {
 			{From: "validate", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +132,7 @@ func TestLoadPanelSnapshotAssetsPinsMemberWork(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(base, "report.json"), []byte(`{"type":"object"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	wf := &compiler.CompiledWorkflow{Steps: []definition.Step{{
+	wf := &definition.CompiledWorkflow{Steps: []definition.Step{{
 		ID: "review", Kind: "agent_panel", Panel: &definition.AgentPanel{Members: []definition.PanelMember{
 			{ID: "security", Agent: "panel-reviewer", Provider: "deepseek", Model: "deepseek-v4", Skill: "secure-change", Template: "security.md", OutputSchema: "report.json"},
 			{ID: "correctness", Agent: "panel-reviewer", Provider: "zai", Model: "glm-5", Skill: "bug-audit", Template: "correctness.md", OutputSchema: "report.json"},
@@ -172,7 +171,7 @@ func TestLoadPanelSnapshotAssetsRejectsSymlinkTemplate(t *testing.T) {
 	if err := os.Symlink("/etc/hostname", filepath.Join(base, "template.md")); err != nil {
 		t.Fatal(err)
 	}
-	wf := &compiler.CompiledWorkflow{Steps: []definition.Step{{ID: "review", Kind: "agent_panel", Panel: &definition.AgentPanel{Members: []definition.PanelMember{{ID: "member", Agent: "reviewer", Provider: "deepseek", Model: "deepseek-v4", Skill: "bug-audit", Template: "template.md", OutputSchema: "report.json"}}}}}}
+	wf := &definition.CompiledWorkflow{Steps: []definition.Step{{ID: "review", Kind: "agent_panel", Panel: &definition.AgentPanel{Members: []definition.PanelMember{{ID: "member", Agent: "reviewer", Provider: "deepseek", Model: "deepseek-v4", Skill: "bug-audit", Template: "template.md", OutputSchema: "report.json"}}}}}}
 	schemas, err := loadOutputSchemas(base, wf)
 	if err != nil {
 		t.Fatal(err)
@@ -208,7 +207,7 @@ func TestBuildStepRuntimesRejectsMissingSchema(t *testing.T) {
 			{From: "plan", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +241,7 @@ func TestBuildStepRuntimesPopulatesTemplate(t *testing.T) {
 			{From: "plan", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +260,7 @@ func TestBuildStepRuntimesPopulatesTemplate(t *testing.T) {
 // before template pinning; the whole-snapshot digest proves the absence is
 // admission truth).
 func TestBuildStepRuntimesFromSnapshotTemplatePins(t *testing.T) {
-	wf := &compiler.CompiledWorkflow{Steps: []definition.Step{
+	wf := &definition.CompiledWorkflow{Steps: []definition.Step{
 		{ID: "plan", Kind: "agent", Agent: "planner", Template: "templates/plan.md"},
 	}}
 	content := []byte("Plan {{inputs.task}}.")
@@ -305,7 +304,7 @@ func TestBuildStepRuntimesFromSnapshotTemplatePins(t *testing.T) {
 // of the synthetic digest; an incomplete pin fails closed; nil pins keep the
 // legacy synthetic digest.
 func TestBuildStepRuntimesFromSnapshotAgentPins(t *testing.T) {
-	wf := &compiler.CompiledWorkflow{Steps: []definition.Step{
+	wf := &definition.CompiledWorkflow{Steps: []definition.Step{
 		{ID: "plan", Kind: "agent", Agent: "planner"},
 	}}
 	pins := map[string]workflowledger.AgentSnapshot{
@@ -341,7 +340,7 @@ func TestResolveStepAgentsPinsDefinition(t *testing.T) {
 	if err := registry.Publish(agents.ResolvedAgent{Name: "planner", Provider: "deepseek", Model: "deepseek-v4"}); err != nil {
 		t.Fatal(err)
 	}
-	wf := &compiler.CompiledWorkflow{Steps: []definition.Step{
+	wf := &definition.CompiledWorkflow{Steps: []definition.Step{
 		{ID: "plan", Kind: "agent", Agent: "planner"},
 	}}
 	pins, err := resolveStepAgents(wf, registry)
@@ -359,7 +358,7 @@ func TestResolveStepAgentsPinsDefinition(t *testing.T) {
 	// A half-pair must not be pinned: the engine has no session provider to
 	// resolve a model-only declaration, and a provider-only declaration is
 	// equally incomplete.
-	halfCompiled := &compiler.CompiledWorkflow{Steps: []definition.Step{
+	halfCompiled := &definition.CompiledWorkflow{Steps: []definition.Step{
 		{ID: "provider-only", Kind: "agent", Agent: "provider-only"},
 		{ID: "model-only", Kind: "agent", Agent: "model-only"},
 	}}
@@ -390,7 +389,7 @@ func TestResolveStepAgentsPinsDefinition(t *testing.T) {
 // TestVerifyStepAgentsFailsClosedOnDrift pins that resume re-resolves pinned
 // agents and refuses a definition whose digest no longer matches admission.
 func TestVerifyStepAgentsFailsClosedOnDrift(t *testing.T) {
-	wf := &compiler.CompiledWorkflow{Steps: []definition.Step{
+	wf := &definition.CompiledWorkflow{Steps: []definition.Step{
 		{ID: "plan", Kind: "agent", Agent: "planner"},
 	}}
 	registry := agents.NewRegistry()

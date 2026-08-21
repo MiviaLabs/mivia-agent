@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowspace "github.com/MiviaLabs/mivia-agent/internal/workflows/workspace"
 )
@@ -36,7 +36,7 @@ const workflowBranchPrefix = "wf/"
 // StartNew fails AFTER admission succeeded, so the pre-created worktree is not
 // leaked. The cleanup closure is nil on the local-identity fallback, which
 // fabricates no on-disk worktree.
-func (e *Engine) pinNewRunIdentity(ctx context.Context, ctrl *controller.LinearController, compiled *compiler.CompiledWorkflow, admission *controller.Admission, runID string, inputSnapshot map[string]string) (cleanup func(), err error) {
+func (e *Engine) pinNewRunIdentity(ctx context.Context, ctrl *controller.LinearController, compiled *definition.CompiledWorkflow, admission *controller.Admission, runID string, inputSnapshot map[string]string) (cleanup func(), err error) {
 	// Create (or validate) the run's git worktree and record the identity on
 	// the engine so workflow_deliver resolves the run's real git directory.
 	if identity, ok := e.ensureRunWorktree(ctx, runID, nil); ok {

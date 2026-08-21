@@ -3,7 +3,6 @@ package cli
 import (
 	"strings"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
@@ -42,7 +41,7 @@ var workflowNextStep = func(root string, run workflowledger.RunSnapshot) string 
 	if err != nil {
 		return ""
 	}
-	compiled, err := compiler.Compile(&wf)
+	compiled, err := definition.Compile(&wf)
 	if err != nil {
 		return ""
 	}
@@ -53,7 +52,7 @@ var workflowNextStep = func(root string, run workflowledger.RunSnapshot) string 
 // the compiled step order, or "" when activeID is not declared or is the last
 // step. The reserved terminals "success" and "failure" are never declared
 // steps, so they cannot be found here.
-func nextStepAfterActive(cw *compiler.CompiledWorkflow, activeID string) string {
+func nextStepAfterActive(cw *definition.CompiledWorkflow, activeID string) string {
 	if cw == nil {
 		return ""
 	}

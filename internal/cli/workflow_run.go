@@ -16,7 +16,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -274,7 +273,7 @@ func maybeDriveSettledStack(ctx context.Context, prepared *preparedWorkflowRun, 
 // policy publishes the plan-mode run's own PR (delivery.deliver_plan_run).
 // The default is false: a stacking plan run's diff is not published; the plan
 // and its artifacts stay recorded in the ledger.
-func compiledDeliverPlanRun(compiled *compiler.CompiledWorkflow) bool {
+func compiledDeliverPlanRun(compiled *definition.CompiledWorkflow) bool {
 	return compiled != nil && compiled.Delivery != nil && compiled.Delivery.DeliverPlanRun
 }
 
@@ -311,7 +310,7 @@ type preparedWorkflowRun struct {
 	store         *storage.SQLite
 	repo          workflowledger.Repository
 	closeFn       func()
-	compiled      *compiler.CompiledWorkflow
+	compiled      *definition.CompiledWorkflow
 	inputs        map[string]any
 	inputSnapshot map[string]string
 	refBase       string
@@ -360,7 +359,7 @@ func prepareWorkflowRun(name, root, configPath string, rawInputs []string) (*pre
 		closeFn()
 		return nil, err
 	}
-	compiled, err := compiler.Compile(&wf)
+	compiled, err := definition.Compile(&wf)
 	if err != nil {
 		closeFn()
 		return nil, err
@@ -369,7 +368,7 @@ func prepareWorkflowRun(name, root, configPath string, rawInputs []string) (*pre
 	// chunk, ...) at admission too, so the operator override the controller
 	// supports (e.g. --input stack_mode=single) validates against the same
 	// input contract as resume. A no-op for non-stacking workflows.
-	compiler.MergeStackingInputs(compiled)
+	definition.MergeStackingInputs(compiled)
 	inputs, inputSnapshot, err := parseWorkflowInputs(rawInputs, compiled.Inputs)
 	if err != nil {
 		closeFn()

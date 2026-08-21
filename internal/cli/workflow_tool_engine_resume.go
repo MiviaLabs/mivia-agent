@@ -9,8 +9,8 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
@@ -25,7 +25,7 @@ type resumePrepared struct {
 	repo          workflowledger.Repository
 	store         *storage.SQLite
 	res           *config.Resolved
-	compiled      *compiler.CompiledWorkflow
+	compiled      *definition.CompiledWorkflow
 	inputs        map[string]any
 	inputSnapshot map[string]string
 	raw           []byte
@@ -100,7 +100,7 @@ func workForResume(e *sessionWorkflowEngine, req agenttools.StartRequest) string
 // admitted snapshot, returning the resolved config, store, repo, run row,
 // snapshot, its raw admission bytes, the compiled workflow and inputs, and the
 // store close function.
-func (e *sessionWorkflowEngine) openResumeTarget(ctx context.Context, req agenttools.StartRequest) (*config.Resolved, *storage.SQLite, workflowledger.Repository, workflowledger.RunSnapshot, workflowledger.Snapshot, []byte, *compiler.CompiledWorkflow, map[string]any, func(), error) {
+func (e *sessionWorkflowEngine) openResumeTarget(ctx context.Context, req agenttools.StartRequest) (*config.Resolved, *storage.SQLite, workflowledger.Repository, workflowledger.RunSnapshot, workflowledger.Snapshot, []byte, *definition.CompiledWorkflow, map[string]any, func(), error) {
 	root := workForResume(e, req)
 	work, err := workspace.Open(root)
 	if err != nil {
@@ -117,7 +117,7 @@ func (e *sessionWorkflowEngine) openResumeTarget(ctx context.Context, req agentt
 	if err != nil {
 		return nil, nil, nil, workflowledger.RunSnapshot{}, workflowledger.Snapshot{}, nil, nil, nil, nil, err
 	}
-	fail := func(err error) (*config.Resolved, *storage.SQLite, workflowledger.Repository, workflowledger.RunSnapshot, workflowledger.Snapshot, []byte, *compiler.CompiledWorkflow, map[string]any, func(), error) {
+	fail := func(err error) (*config.Resolved, *storage.SQLite, workflowledger.Repository, workflowledger.RunSnapshot, workflowledger.Snapshot, []byte, *definition.CompiledWorkflow, map[string]any, func(), error) {
 		closeFn()
 		return nil, nil, nil, workflowledger.RunSnapshot{}, workflowledger.Snapshot{}, nil, nil, nil, nil, err
 	}

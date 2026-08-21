@@ -3,7 +3,7 @@ package delivery
 import (
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 )
 
 // TestEffectiveBase pins the single source of truth for the delivery base a
@@ -17,7 +17,7 @@ func TestEffectiveBase(t *testing.T) {
 	declared := newCompiledPRWorkflow(t, "draft") // Delivery.Base "main"
 	cases := []struct {
 		name     string
-		wf       *compiler.CompiledWorkflow
+		wf       *definition.CompiledWorkflow
 		snapshot map[string]string
 		want     string
 	}{
@@ -29,7 +29,7 @@ func TestEffectiveBase(t *testing.T) {
 		{"pr_base with traversal uses the declared base", declared, map[string]string{InputPRBase: "a..b"}, "main"},
 		{"nil snapshot uses the declared base", declared, nil, "main"},
 		{"nil workflow yields empty", nil, nil, ""},
-		{"workflow without delivery yields empty", &compiler.CompiledWorkflow{Delivery: nil}, nil, ""},
+		{"workflow without delivery yields empty", &definition.CompiledWorkflow{Delivery: nil}, nil, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

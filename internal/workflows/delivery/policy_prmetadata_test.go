@@ -3,13 +3,12 @@ package delivery
 import (
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 )
 
 // newCompiledPRMetadataWorkflow builds a compiled workflow whose delivery
 // section carries the PR-metadata policy fields.
-func newCompiledPRMetadataWorkflow(t *testing.T, prTitlePolicy, onFailure, onPRMetadataFailure string) *compiler.CompiledWorkflow {
+func newCompiledPRMetadataWorkflow(t *testing.T, prTitlePolicy, onFailure, onPRMetadataFailure string) *definition.CompiledWorkflow {
 	t.Helper()
 	wf := &definition.WorkflowFile{
 		Name: "pr-metadata-fields", Version: 1, InitialStep: "plan",
@@ -40,7 +39,7 @@ func newCompiledPRMetadataWorkflow(t *testing.T, prTitlePolicy, onFailure, onPRM
 			OnPRMetadataFailure:   onPRMetadataFailure,
 		},
 	}
-	cw, err := compiler.Compile(wf)
+	cw, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatalf("compiling fixture workflow: %v", err)
 	}

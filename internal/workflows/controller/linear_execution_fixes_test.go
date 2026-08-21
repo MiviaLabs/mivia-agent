@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
@@ -190,7 +189,7 @@ func (r *ctxAwareLoopRepository) GetLoopCounters(ctx context.Context, runID stri
 // is recorded Failed on the on_failure route, and the run settles failed
 // instead of timed_out, discarding the completed child's success.
 func TestSettleAgentAttemptRoutesBackEdgeWithExpiredRunDeadline(t *testing.T) {
-	wf, err := compiler.Compile(&definition.WorkflowFile{
+	wf, err := definition.Compile(&definition.WorkflowFile{
 		Version: 1, Name: "deadline-loop", InitialStep: "work",
 		Steps: []definition.Step{{ID: "work", Kind: "agent", Agent: "worker"}},
 		Transitions: []definition.Transition{

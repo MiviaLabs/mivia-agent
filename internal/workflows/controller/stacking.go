@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 )
 
@@ -80,7 +79,7 @@ func validateStackingReservedInputs(inputs map[string]any, cfg *definition.Stack
 // legal and resolve absent at runtime (contextForStep's chunk-mode grace),
 // because the plan phase ran in the parent run. Non-stacking workflows are
 // returned unchanged.
-func admitStackingRun(wf *compiler.CompiledWorkflow, steps map[string]StepRuntime, inputs map[string]any) (*compiler.CompiledWorkflow, map[string]StepRuntime, error) {
+func admitStackingRun(wf *definition.CompiledWorkflow, steps map[string]StepRuntime, inputs map[string]any) (*definition.CompiledWorkflow, map[string]StepRuntime, error) {
 	if wf == nil || wf.Stacking == nil {
 		return wf, steps, nil
 	}
@@ -88,11 +87,11 @@ func admitStackingRun(wf *compiler.CompiledWorkflow, steps map[string]StepRuntim
 	if err != nil {
 		return nil, nil, err
 	}
-	// Synthesis is idempotent (compiler.SynthesizeStacking returns an already
+	// Synthesis is idempotent (definition.SynthesizeStacking returns an already
 	// synthesized graph unchanged), so this is safe whether the runtime build
 	// synthesized the graph before building step runtimes or the controller is
 	// constructed directly over the compiled workflow.
-	synth, err := compiler.SynthesizeStacking(wf)
+	synth, err := definition.SynthesizeStacking(wf)
 	if err != nil {
 		return nil, nil, fmt.Errorf("synthesize stacking run graph: %w", err)
 	}
@@ -121,7 +120,7 @@ func admitStackingRun(wf *compiler.CompiledWorkflow, steps map[string]StepRuntim
 // a digest would hand the runner a null routing snapshot, and the agent handler
 // would refuse every dispatch attempt ("agent task routing snapshot mismatch"),
 // so the run is refused at admission instead.
-func requireSynthesizedStepRuntimes(synth *compiler.CompiledWorkflow, steps map[string]StepRuntime) error {
+func requireSynthesizedStepRuntimes(synth *definition.CompiledWorkflow, steps map[string]StepRuntime) error {
 	for _, step := range synth.Steps {
 		if step.ID != synthesizedDecomposeStepID && step.ID != synthesizedChunkPlanValidateStepID {
 			continue
@@ -143,7 +142,7 @@ func requireSynthesizedStepRuntimes(synth *compiler.CompiledWorkflow, steps map[
 // preImplementSteps returns the set of steps whose outputs cannot exist when a
 // chunk-mode run starts at the implement step (all declared steps except the
 // implement step itself, which the engine keeps for chunk runs).
-func preImplementSteps(synth *compiler.CompiledWorkflow) map[string]bool {
+func preImplementSteps(synth *definition.CompiledWorkflow) map[string]bool {
 	implementID := ""
 	if synth.Stacking != nil {
 		implementID = synth.Stacking.ImplementStep
@@ -164,7 +163,7 @@ func preImplementSteps(synth *compiler.CompiledWorkflow) map[string]bool {
 // payload are bound; an absent chunk_plan is never required. Existing author
 // bindings with the same target are left untouched. Returns a shallow copy of
 // the compiled workflow with the extended step contexts.
-func injectChunkModeInputBindings(synth *compiler.CompiledWorkflow, inputs map[string]any) *compiler.CompiledWorkflow {
+func injectChunkModeInputBindings(synth *definition.CompiledWorkflow, inputs map[string]any) *definition.CompiledWorkflow {
 	preImplement := preImplementSteps(synth)
 	var injected []string
 	for _, key := range reservedStackingInputs() {

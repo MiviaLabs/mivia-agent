@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
@@ -18,7 +17,7 @@ import (
 // does not exist yet, so the optional binding must resolve to an empty value
 // instead of failing. On repair iterations the binding must deliver the
 // reviewer findings so the agent can address them.
-func feedbackWorkflow(t *testing.T) *compiler.CompiledWorkflow {
+func feedbackWorkflow(t *testing.T) *definition.CompiledWorkflow {
 	t.Helper()
 	wf := &definition.WorkflowFile{
 		Version: 1, Name: "feedback", InitialStep: "implement",
@@ -38,7 +37,7 @@ func feedbackWorkflow(t *testing.T) *compiler.CompiledWorkflow {
 			{From: "review", To: "implement", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"verdict": "changes_requested"}}, Loop: "review_repair", MaxIterations: -1},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +121,7 @@ func TestOptionalContextBindingFailsClosedWhenNotOptional(t *testing.T) {
 			{From: "review", To: "success", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"verdict": "approved"}}},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}

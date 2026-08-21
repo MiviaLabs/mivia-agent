@@ -12,12 +12,9 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/secretpath"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/presentation"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/template"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/verifier"
 )
 
 // runWorkflows handles the workflow CLI commands.
@@ -71,7 +68,7 @@ func runWorkflowsList(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("workflows list: %w", err)
 	}
-	fmt.Fprint(stdout, presentation.FormatWorkflowList(workflows))
+	fmt.Fprint(stdout, definition.FormatWorkflowList(workflows))
 	return nil
 }
 
@@ -106,12 +103,12 @@ func runWorkflowsShow(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("workflows show: %w", err)
 	}
 
-	compiled, err := compiler.Compile(&wf)
+	compiled, err := definition.Compile(&wf)
 	if err != nil {
 		return fmt.Errorf("workflows show: %w", err)
 	}
 
-	fmt.Fprint(stdout, presentation.FormatWorkflowShow(compiled))
+	fmt.Fprint(stdout, definition.FormatWorkflowShow(compiled))
 	return nil
 }
 
@@ -139,15 +136,15 @@ func runWorkflowsValidate(args []string, stdout, stderr io.Writer) error {
 		}
 		parsed, _, err := definition.ParseWorkflowTOML(wf.Raw, wf.Name+".toml")
 		if err != nil {
-			fmt.Fprint(stdout, presentation.FormatWorkflowValidate(wf.Name, nil, err))
+			fmt.Fprint(stdout, definition.FormatWorkflowValidate(wf.Name, nil, err))
 			hasError = true
 			continue
 		}
-		compiled, err := compiler.Compile(&parsed)
+		compiled, err := definition.Compile(&parsed)
 		if err == nil {
 			err = validateWorkflowReferences(workspaceRoot, filepath.Dir(wf.Path), compiled)
 		}
-		fmt.Fprint(stdout, presentation.FormatWorkflowValidate(wf.Name, compiled, err))
+		fmt.Fprint(stdout, definition.FormatWorkflowValidate(wf.Name, compiled, err))
 		if err != nil {
 			hasError = true
 		}
@@ -165,7 +162,7 @@ func runWorkflowsValidate(args []string, stdout, stderr io.Writer) error {
 
 // validateWorkflowReferences checks every external dependency that a workflow
 // needs at admission. It never creates a run, worktree, provider, or command.
-func validateWorkflowReferences(root, base string, wf *compiler.CompiledWorkflow) error {
+func validateWorkflowReferences(root, base string, wf *definition.CompiledWorkflow) error {
 	skillRegistry, err := loadChatSkills(root)
 	if err != nil {
 		return fmt.Errorf("load workflow skills: %w", err)
@@ -174,7 +171,7 @@ func validateWorkflowReferences(root, base string, wf *compiler.CompiledWorkflow
 	if err != nil {
 		return fmt.Errorf("load workflow agents: %w", err)
 	}
-	if err := sliceErrors("workflow", compiler.ValidateAgentSkillReferences(wf, loaded.Registry, skillRegistry)); err != nil {
+	if err := sliceErrors("workflow", definition.ValidateAgentSkillReferences(wf, loaded.Registry, skillRegistry)); err != nil {
 		return err
 	}
 	if err := validateWorkflowSkillTools(wf, loaded.Registry, skillRegistry); err != nil {
@@ -194,7 +191,7 @@ func validateWorkflowReferences(root, base string, wf *compiler.CompiledWorkflow
 	return nil
 }
 
-func validateWorkflowSkillTools(wf *compiler.CompiledWorkflow, registry *agents.AgentRegistry, skillRegistry *skills.Registry) error {
+func validateWorkflowSkillTools(wf *definition.CompiledWorkflow, registry *agents.AgentRegistry, skillRegistry *skills.Registry) error {
 	for _, step := range wf.Steps {
 		if step.Skill == "" {
 			// Panel members carry independent skill bindings below.
@@ -219,7 +216,7 @@ func validateWorkflowSkillTools(wf *compiler.CompiledWorkflow, registry *agents.
 	return nil
 }
 
-func validateWorkflowFiles(base string, wf *compiler.CompiledWorkflow) error {
+func validateWorkflowFiles(base string, wf *definition.CompiledWorkflow) error {
 	schemas := make(map[string][]byte)
 	for _, step := range wf.Steps {
 		if err := validateWorkflowFileReferences(base, wf, step, "", step.Template, step.OutputSchema, schemas); err != nil {
@@ -234,10 +231,10 @@ func validateWorkflowFiles(base string, wf *compiler.CompiledWorkflow) error {
 			}
 		}
 	}
-	return sliceErrors("workflow", compiler.ValidateSchemaReferenceBytes(&definition.WorkflowFile{Steps: wf.Steps}, schemas))
+	return sliceErrors("workflow", definition.ValidateSchemaReferenceBytes(&definition.WorkflowFile{Steps: wf.Steps}, schemas))
 }
 
-func validateWorkflowFileReferences(base string, wf *compiler.CompiledWorkflow, step definition.Step, memberID, templateRef, schemaRef string, schemas map[string][]byte) error {
+func validateWorkflowFileReferences(base string, wf *definition.CompiledWorkflow, step definition.Step, memberID, templateRef, schemaRef string, schemas map[string][]byte) error {
 	prefix := fmt.Sprintf("step %q", step.ID)
 	if memberID != "" {
 		prefix += fmt.Sprintf(": panel member %q", memberID)
@@ -252,7 +249,7 @@ func validateWorkflowFileReferences(base string, wf *compiler.CompiledWorkflow, 
 		}
 	}
 	if schemaRef != "" {
-		data, err := readWorkflowRef(base, schemaRef, compiler.MaxSchemaBytes)
+		data, err := readWorkflowRef(base, schemaRef, definition.MaxSchemaBytes)
 		if err != nil {
 			return fmt.Errorf("%s: output_schema %q: %w", prefix, schemaRef, err)
 		}
@@ -274,7 +271,7 @@ func validateWorkflowFileReferences(base string, wf *compiler.CompiledWorkflow, 
 // from a declared context binding (see roundInputForStep). Omitting it here
 // reported a workflow that runs correctly as invalid, because a review
 // template that mints per-round finding ids must read it.
-func validateWorkflowTemplateBindings(wf *compiler.CompiledWorkflow, step definition.Step, source string) error {
+func validateWorkflowTemplateBindings(wf *definition.CompiledWorkflow, step definition.Step, source string) error {
 	inputs := make(map[string]any)
 	evidence := make(map[string]any)
 	if stepIsLoopBound(wf, step) {
@@ -302,7 +299,7 @@ func validateWorkflowTemplateBindings(wf *compiler.CompiledWorkflow, step defini
 
 // stepIsLoopBound reports whether the step owns a loop back-edge, which is
 // exactly the condition under which the controller supplies inputs.round.
-func stepIsLoopBound(wf *compiler.CompiledWorkflow, step definition.Step) bool {
+func stepIsLoopBound(wf *definition.CompiledWorkflow, step definition.Step) bool {
 	if wf == nil {
 		return false
 	}
@@ -323,7 +320,7 @@ func stepIsLoopBound(wf *compiler.CompiledWorkflow, step definition.Step) bool {
 // [verifiers] tables (config.LoadWorkspaceVerifiers), never from the invoking
 // user's ~/.mivia config: validation of a foreign workspace must give the
 // same verdict on every machine.
-func validateWorkflowVerifiers(root string, wf *compiler.CompiledWorkflow) error {
+func validateWorkflowVerifiers(root string, wf *definition.CompiledWorkflow) error {
 	profiles, err := config.LoadWorkspaceVerifiers(root)
 	if err != nil {
 		return err
@@ -337,7 +334,7 @@ func validateWorkflowVerifiers(root string, wf *compiler.CompiledWorkflow) error
 			continue
 		}
 		if step.Command != nil {
-			if _, err := verifier.NewCommandProfile(step.Command.Check, step.Command.Program, step.Command.Args); err != nil {
+			if _, err := definition.NewCommandProfile(step.Command.Check, step.Command.Program, step.Command.Args); err != nil {
 				return fmt.Errorf("step %q: %w", step.ID, err)
 			}
 			continue
@@ -380,7 +377,7 @@ func runWorkflowsExplain(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("workflows explain: %w", err)
 	}
 
-	compiled, err := compiler.Compile(&wf)
+	compiled, err := definition.Compile(&wf)
 	if err != nil {
 		return fmt.Errorf("workflows explain: %w", err)
 	}
@@ -389,14 +386,14 @@ func runWorkflowsExplain(args []string, stdout, stderr io.Writer) error {
 	baseDir := filepath.Dir(found.Path)
 	cw := buildExplainView(compiled, baseDir)
 
-	fmt.Fprint(stdout, presentation.FormatWorkflowExplain(cw))
+	fmt.Fprint(stdout, definition.FormatWorkflowExplain(cw))
 	return nil
 }
 
 // buildExplainView converts a CompiledWorkflow into a CompiledWorkflowExplain
 // for the presentation layer.
-func buildExplainView(c *compiler.CompiledWorkflow, baseDir string) *presentation.CompiledWorkflowExplain {
-	cw := &presentation.CompiledWorkflowExplain{
+func buildExplainView(c *definition.CompiledWorkflow, baseDir string) *definition.CompiledWorkflowExplain {
+	cw := &definition.CompiledWorkflowExplain{
 		Name:                    c.Name,
 		Description:             c.Description,
 		Version:                 c.Version,
@@ -452,7 +449,7 @@ func buildExplainView(c *compiler.CompiledWorkflow, baseDir string) *presentatio
 	return cw
 }
 
-func addWorkflowExplainReference(cw *presentation.CompiledWorkflowExplain, seen map[string]bool, kind, reference string) {
+func addWorkflowExplainReference(cw *definition.CompiledWorkflowExplain, seen map[string]bool, kind, reference string) {
 	if reference == "" {
 		return
 	}

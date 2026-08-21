@@ -7,19 +7,18 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
 // stackingFixture compiles a stacking workflow whose config resolves, mirroring
 // the compiler's s2 synthesis contract (plan + implement + plan binding).
-func stackingFixture(t *testing.T) *compiler.CompiledWorkflow {
+func stackingFixture(t *testing.T) *definition.CompiledWorkflow {
 	t.Helper()
 	return stackingFixtureWith(t, nil)
 }
 
-func stackingFixtureWith(t *testing.T, implementContext []definition.ContextBinding) *compiler.CompiledWorkflow {
+func stackingFixtureWith(t *testing.T, implementContext []definition.ContextBinding) *definition.CompiledWorkflow {
 	t.Helper()
 	enabled := true
 	wf := &definition.WorkflowFile{
@@ -46,7 +45,7 @@ func stackingFixtureWith(t *testing.T, implementContext []definition.ContextBind
 			{From: "verify", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +79,7 @@ func chunkInputs() map[string]any {
 	}
 }
 
-func newStackingController(t *testing.T, runner AgentStepRunner, wf *compiler.CompiledWorkflow, inputs map[string]any) (*LinearController, error) {
+func newStackingController(t *testing.T, runner AgentStepRunner, wf *definition.CompiledWorkflow, inputs map[string]any) (*LinearController, error) {
 	t.Helper()
 	repo := workflowledger.NewMemoryRepository()
 	return NewLinearController(repo, runner, wf, stackingRuntimes(), inputs, "wfr-stacking", []byte("snap"))

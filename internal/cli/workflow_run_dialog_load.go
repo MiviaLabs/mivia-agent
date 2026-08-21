@@ -12,7 +12,6 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	tea "github.com/charmbracelet/bubbletea"
@@ -35,7 +34,7 @@ type workflowRunDialogRefreshMsg struct {
 // dialog over a claim probe).
 type workflowRunDialogData struct {
 	run        workflowledger.RunSnapshot
-	compiled   *compiler.CompiledWorkflow
+	compiled   *definition.CompiledWorkflow
 	attempts   []workflowledger.StepAttempt
 	approvals  []workflowledger.ApprovalRecord
 	deliveries []workflowledger.DeliveryRecord
@@ -106,7 +105,7 @@ func workflowRunDialogLoad(root, configPath, runID string) (workflowRunDialogDat
 // errors the dialog. CompileForResume skips the unbounded-cycle admission
 // check: the definition was already admitted, and the dialog is a read
 // surface, not an admission gate.
-func compileWorkflowRunSnapshot(raw []byte, workflowName string) *compiler.CompiledWorkflow {
+func compileWorkflowRunSnapshot(raw []byte, workflowName string) *definition.CompiledWorkflow {
 	snapshot, err := workflowledger.UnmarshalSnapshot(raw)
 	if err != nil {
 		return nil
@@ -115,7 +114,7 @@ func compileWorkflowRunSnapshot(raw []byte, workflowName string) *compiler.Compi
 	if err != nil {
 		return nil
 	}
-	compiled, err := compiler.CompileForResume(&wf)
+	compiled, err := definition.CompileForResume(&wf)
 	if err != nil {
 		return nil
 	}

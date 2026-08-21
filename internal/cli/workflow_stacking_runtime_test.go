@@ -8,7 +8,6 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
@@ -18,7 +17,7 @@ import (
 // step runs on agent "plan-agent". With no stacking.agent set, the
 // engine-synthesized steps (decompose, chunk_plan_validate) run on the plan
 // step's agent, exactly like the product workflows.
-func stackingRuntimeFixture(t *testing.T) (workflowBase string, wf *compiler.CompiledWorkflow, registry *agents.AgentRegistry) {
+func stackingRuntimeFixture(t *testing.T) (workflowBase string, wf *definition.CompiledWorkflow, registry *agents.AgentRegistry) {
 	t.Helper()
 	root := t.TempDir()
 	workflowBase = filepath.Join(root, "workflows")
@@ -66,7 +65,7 @@ func stackingRuntimeFixture(t *testing.T) (workflowBase string, wf *compiler.Com
 		},
 	}
 	var err error
-	wf, err = compiler.Compile(wfFile)
+	wf, err = definition.Compile(wfFile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +220,7 @@ func TestBuildWorkflowControllerSynthesizesStackingRuntimesBeforeAdmission(t *te
 			{From: "verify", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}},
 		},
 	}
-	compiled, err := compiler.Compile(wfFile)
+	compiled, err := definition.Compile(wfFile)
 	if err != nil {
 		t.Fatal(err)
 	}

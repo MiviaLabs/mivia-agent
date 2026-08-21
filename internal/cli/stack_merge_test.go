@@ -19,7 +19,6 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -361,7 +360,7 @@ func TestWaitIntegrationRunSettledAutoPolicyDeliversWithoutAllowPublish(t *testi
 	root, _ := scratchStackRepo(t)
 	gitRun(t, root, "checkout", "-b", "wf/wt-integration")
 	gitRun(t, root, "push", "origin", "wf/wt-integration")
-	prepared := &preparedWorkflowRun{repo: repo, root: root, compiled: &compiler.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}}}
+	prepared := &preparedWorkflowRun{repo: repo, root: root, compiled: &definition.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}}}
 
 	if err := waitIntegrationRunSettled(context.Background(), prepared, ledger, checker, stackID, "auto", false, &stdout, io.Discard); err != nil {
 		t.Fatalf("waitIntegrationRunSettled() error = %v; stdout = %q", err, stdout.String())
@@ -427,7 +426,7 @@ func TestWaitIntegrationRunSettledAutoPolicyMergesExternallyDeliveredRun(t *test
 	root, _ := scratchStackRepo(t)
 	gitRun(t, root, "checkout", "-b", "wf/wt-integration")
 	gitRun(t, root, "push", "origin", "wf/wt-integration")
-	prepared := &preparedWorkflowRun{repo: repo, root: root, compiled: &compiler.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}}}
+	prepared := &preparedWorkflowRun{repo: repo, root: root, compiled: &definition.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}}}
 
 	if err := waitIntegrationRunSettled(context.Background(), prepared, ledger, checker, stackID, "auto", false, &stdout, io.Discard); err != nil {
 		t.Fatalf("waitIntegrationRunSettled() error = %v; stdout = %q", err, stdout.String())
@@ -613,7 +612,7 @@ func TestAutoMergeOnePermanentErrorHaltPoll(t *testing.T) {
 	root, _ := scratchStackRepo(t)
 	gitRun(t, root, "checkout", "-b", "wf/wt-perm-fail")
 	gitRun(t, root, "push", "origin", "wf/wt-perm-fail")
-	prepared := &preparedWorkflowRun{repo: repo, root: root, compiled: &compiler.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}}}
+	prepared := &preparedWorkflowRun{repo: repo, root: root, compiled: &definition.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}}}
 	var stdout bytes.Buffer
 	err = autoMergeOne(context.Background(), prepared, repo, stackID, "c1", &stdout, io.Discard)
 	if err == nil {
@@ -669,7 +668,7 @@ func TestAutoMergeOneRetriableErrorKeepsPolling(t *testing.T) {
 	root, _ := scratchStackRepo(t)
 	gitRun(t, root, "checkout", "-b", "wf/wt-retry")
 	gitRun(t, root, "push", "origin", "wf/wt-retry")
-	prepared := &preparedWorkflowRun{repo: repo, root: root, compiled: &compiler.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}}}
+	prepared := &preparedWorkflowRun{repo: repo, root: root, compiled: &definition.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}}}
 	var stdout bytes.Buffer
 	err = autoMergeOne(context.Background(), prepared, repo, stackID, "c1", &stdout, io.Discard)
 	if err != nil {
@@ -726,7 +725,7 @@ func TestAutoMergeOneOverlapProbeFailureSkipsMerge(t *testing.T) {
 	t.Cleanup(func() { workflowDeliverGit = prevGit })
 	workflowDeliverGit = errorGitRunner{err: errors.New("test: fetch failed")}
 
-	prepared := &preparedWorkflowRun{repo: repo, root: t.TempDir(), compiled: &compiler.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}}}
+	prepared := &preparedWorkflowRun{repo: repo, root: t.TempDir(), compiled: &definition.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}}}
 	var stdout bytes.Buffer
 	if err := autoMergeOne(context.Background(), prepared, repo, stackID, "c1", &stdout, io.Discard); err != nil {
 		t.Fatalf("autoMergeOne errored on an overlap probe failure: %v; want keep-polling nil", err)

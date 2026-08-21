@@ -7,12 +7,11 @@ package cli
 import (
 	"fmt"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
-func validateWorkflowResumeSnapshot(run workflowledger.RunSnapshot, raw []byte) (workflowledger.Snapshot, *compiler.CompiledWorkflow, map[string]any, error) {
+func validateWorkflowResumeSnapshot(run workflowledger.RunSnapshot, raw []byte) (workflowledger.Snapshot, *definition.CompiledWorkflow, map[string]any, error) {
 	if run.SnapshotDigest == "" || run.SnapshotDigest != workflowledger.SnapshotDigest(raw) {
 		return workflowledger.Snapshot{}, nil, nil, fmt.Errorf("workflow snapshot digest does not match the admitted snapshot")
 	}
@@ -32,13 +31,13 @@ func validateWorkflowResumeSnapshot(run workflowledger.RunSnapshot, raw []byte) 
 	}
 	// Resume is recovery, not admission: the definition was already admitted,
 	// so the unbounded-cycle admission check must not strand an in-flight run.
-	compiled, err := compiler.CompileForResume(&wf)
+	compiled, err := definition.CompileForResume(&wf)
 	if err != nil {
 		return workflowledger.Snapshot{}, nil, nil, err
 	}
 	// The engine-reserved stacking inputs (D3) were merged into the admitted
 	// contract, so resume accepts them too (a no-op for non-stacking runs).
-	compiler.MergeStackingInputs(compiled)
+	definition.MergeStackingInputs(compiled)
 	// The two RECORDED digests must agree: the run row and its snapshot must
 	// describe one admission, not two.
 	// They are deliberately NOT compared against compiled.Digest. That digest
@@ -82,7 +81,7 @@ func validateWorkflowResumeSnapshot(run workflowledger.RunSnapshot, raw []byte) 
 	return snapshot, compiled, inputs, nil
 }
 
-func validateWorkflowSnapshotReferences(wf *compiler.CompiledWorkflow, snapshot workflowledger.Snapshot) error {
+func validateWorkflowSnapshotReferences(wf *definition.CompiledWorkflow, snapshot workflowledger.Snapshot) error {
 	schemas := make(map[string][]byte, len(snapshot.Schemas))
 	for name, ref := range snapshot.Schemas {
 		if ref.Digest == "" || digestBytes(ref.Bytes) != ref.Digest {
@@ -107,5 +106,5 @@ func validateWorkflowSnapshotReferences(wf *compiler.CompiledWorkflow, snapshot 
 			}
 		}
 	}
-	return sliceErrors("workflow", compiler.ValidateSchemaReferenceBytes(&definition.WorkflowFile{Steps: wf.Steps}, schemas))
+	return sliceErrors("workflow", definition.ValidateSchemaReferenceBytes(&definition.WorkflowFile{Steps: wf.Steps}, schemas))
 }

@@ -8,9 +8,8 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/verifier"
 )
 
 // verifyWorkflowSkillSnapshot checks all workflow-referenced skills against
@@ -18,7 +17,7 @@ import (
 // resume build path calls verifyWorkflowSkillSnapshotScoped with the
 // PlanResume-derived remaining steps so drift on a step that can never run
 // again does not block the resume (R3).
-func verifyWorkflowSkillSnapshot(wf *compiler.CompiledWorkflow, registry *skills.Registry, prior *workflowledger.Snapshot) error {
+func verifyWorkflowSkillSnapshot(wf *definition.CompiledWorkflow, registry *skills.Registry, prior *workflowledger.Snapshot) error {
 	return verifyWorkflowSkillSnapshotScoped(wf, registry, prior, nil)
 }
 
@@ -28,7 +27,7 @@ func verifyWorkflowSkillSnapshot(wf *compiler.CompiledWorkflow, registry *skills
 // remaining is an empty map, no steps are checked (all completed). When a
 // skill drift is detected the error names the skill, the remaining steps that
 // reference it, and the operator's recovery options (R3+R4).
-func verifyWorkflowSkillSnapshotScoped(wf *compiler.CompiledWorkflow, registry *skills.Registry, prior *workflowledger.Snapshot, remaining map[string]bool) error {
+func verifyWorkflowSkillSnapshotScoped(wf *definition.CompiledWorkflow, registry *skills.Registry, prior *workflowledger.Snapshot, remaining map[string]bool) error {
 	if wf == nil || registry == nil {
 		return fmt.Errorf("workflow skill registry is incomplete")
 	}
@@ -68,7 +67,7 @@ func verifyWorkflowSkillSnapshotScoped(wf *compiler.CompiledWorkflow, registry *
 // acceptWorkflowSkillChanges re-pins drifted skills in the in-memory prior
 // snapshot so verification passes. The durable admission record is never touched:
 // acceptance is per-invocation, mirroring acceptWorkflowVerifierChanges.
-func acceptWorkflowSkillChanges(prior *workflowledger.Snapshot, wf *compiler.CompiledWorkflow, registry *skills.Registry) ([]string, error) {
+func acceptWorkflowSkillChanges(prior *workflowledger.Snapshot, wf *definition.CompiledWorkflow, registry *skills.Registry) ([]string, error) {
 	if prior == nil {
 		return nil, nil
 	}
@@ -112,7 +111,7 @@ func acceptWorkflowSkillChanges(prior *workflowledger.Snapshot, wf *compiler.Com
 
 // applyAcceptedSkillChanges runs the acceptance rewrite for a resume that
 // passed --accept-skill-change and reports each accepted skill to stderr.
-func applyAcceptedSkillChanges(prior *workflowledger.Snapshot, wf *compiler.CompiledWorkflow, registry *skills.Registry, stderr io.Writer) error {
+func applyAcceptedSkillChanges(prior *workflowledger.Snapshot, wf *definition.CompiledWorkflow, registry *skills.Registry, stderr io.Writer) error {
 	drifted, err := acceptWorkflowSkillChanges(prior, wf, registry)
 	if err != nil {
 		return err
@@ -133,7 +132,7 @@ func applyAcceptedSkillChanges(prior *workflowledger.Snapshot, wf *compiler.Comp
 // affect the resumed run (R3). When the active step is unknown to the
 // (synthesized) run graph the result is nil: the guard then checks all steps,
 // the fail-closed default.
-func workflowRemainingSteps(ctx context.Context, repo workflowledger.Repository, runID string, wf *compiler.CompiledWorkflow) (map[string]bool, error) {
+func workflowRemainingSteps(ctx context.Context, repo workflowledger.Repository, runID string, wf *definition.CompiledWorkflow) (map[string]bool, error) {
 	plan, err := workflowledger.PlanResume(ctx, repo, runID)
 	if err != nil {
 		return nil, err
@@ -175,7 +174,7 @@ func workflowRemainingSteps(ctx context.Context, repo workflowledger.Repository,
 // <step>/<member> binding key: the remaining-step set the error message is
 // filtered against holds step IDs, so a composite key would filter the panel
 // step out and print "(none)" for a skill a remaining step uses.
-func workflowSkillStepMap(wf *compiler.CompiledWorkflow) map[string][]string {
+func workflowSkillStepMap(wf *definition.CompiledWorkflow) map[string][]string {
 	m := make(map[string][]string)
 	if wf == nil {
 		return m
@@ -228,7 +227,7 @@ func formatStepList(ids []string) string {
 	return s
 }
 
-func pinWorkflowSkills(raw []byte, wf *compiler.CompiledWorkflow, registry *skills.Registry) ([]byte, error) {
+func pinWorkflowSkills(raw []byte, wf *definition.CompiledWorkflow, registry *skills.Registry) ([]byte, error) {
 	snapshot, err := workflowledger.UnmarshalSnapshot(raw)
 	if err != nil {
 		return nil, err
@@ -265,7 +264,7 @@ type workflowSkillReference struct {
 	panelKey string
 }
 
-func workflowSkillReferences(wf *compiler.CompiledWorkflow) []workflowSkillReference {
+func workflowSkillReferences(wf *definition.CompiledWorkflow) []workflowSkillReference {
 	if wf == nil {
 		return nil
 	}
@@ -452,12 +451,12 @@ const (
 // Go module baseline. needBaseline comes from workflowNeedsGoBaseline: the
 // declared go_module_baseline flag on a fresh run, the PINNED definitions on
 // resume.
-func workflowModuleBaseline(needBaseline bool, root string, prior *workflowledger.Snapshot) (*verifier.GoModuleBaseline, error) {
+func workflowModuleBaseline(needBaseline bool, root string, prior *workflowledger.Snapshot) (*definition.GoModuleBaseline, error) {
 	if !needBaseline {
 		return nil, nil
 	}
 	if prior == nil {
-		return verifier.CaptureGoModuleBaseline(root)
+		return definition.CaptureGoModuleBaseline(root)
 	}
 	goMod, ok := prior.Verifiers[workflowGoModBaselineRef]
 	if !ok || digestBytes(goMod.Bytes) != goMod.Digest {
@@ -467,10 +466,10 @@ func workflowModuleBaseline(needBaseline bool, root string, prior *workflowledge
 	if !ok || digestBytes(goSum.Bytes) != goSum.Digest {
 		return nil, fmt.Errorf("workflow module checksum baseline is invalid")
 	}
-	return &verifier.GoModuleBaseline{GoMod: append([]byte(nil), goMod.Bytes...), GoSum: append([]byte(nil), goSum.Bytes...)}, nil
+	return &definition.GoModuleBaseline{GoMod: append([]byte(nil), goMod.Bytes...), GoSum: append([]byte(nil), goSum.Bytes...)}, nil
 }
 
-func pinWorkflowModuleBaseline(raw []byte, baseline *verifier.GoModuleBaseline) ([]byte, error) {
+func pinWorkflowModuleBaseline(raw []byte, baseline *definition.GoModuleBaseline) ([]byte, error) {
 	snapshot, err := workflowledger.UnmarshalSnapshot(raw)
 	if err != nil {
 		return nil, err

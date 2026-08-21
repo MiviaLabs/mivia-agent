@@ -29,7 +29,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/contentref"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
@@ -182,9 +181,9 @@ func runMiniStackCLI(t *testing.T, toml string, allowPublish bool) (string, stri
 	var runID string
 	originalBuild := workflowRunBuild
 	t.Cleanup(func() { workflowRunBuild = originalBuild })
-	workflowRunBuild = func(_ string, _ *config.Resolved, _ *storage.SQLite, repo workflowledger.Repository, _ *compiler.CompiledWorkflow, _ string, _ map[string]any, _ map[string]string, _ []byte, id string, _ *workflowledger.Snapshot, _ []byte, _ *workflowledger.RunSnapshot, _ map[string]bool, _ *skills.Registry) (workflowControllerBuild, error) {
+	workflowRunBuild = func(_ string, _ *config.Resolved, _ *storage.SQLite, repo workflowledger.Repository, _ *definition.CompiledWorkflow, _ string, _ map[string]any, _ map[string]string, _ []byte, id string, _ *workflowledger.Snapshot, _ []byte, _ *workflowledger.RunSnapshot, _ map[string]bool, _ *skills.Registry) (workflowControllerBuild, error) {
 		runID = id
-		synth, err := compiler.SynthesizeStacking(compiled)
+		synth, err := definition.SynthesizeStacking(compiled)
 		if err != nil {
 			return workflowControllerBuild{}, err
 		}
@@ -552,7 +551,7 @@ func TestMaybeDriveSettledStackReconstructsAdmittedContinuationWave(t *testing.T
 }
 
 // compileWorkflowFile parses and compiles a workflow TOML file.
-func compileWorkflowFile(t *testing.T, path string) *compiler.CompiledWorkflow {
+func compileWorkflowFile(t *testing.T, path string) *definition.CompiledWorkflow {
 	t.Helper()
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -562,7 +561,7 @@ func compileWorkflowFile(t *testing.T, path string) *compiler.CompiledWorkflow {
 	if err != nil {
 		t.Fatal(err)
 	}
-	compiled, err := compiler.Compile(&wf)
+	compiled, err := definition.Compile(&wf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -571,7 +570,7 @@ func compileWorkflowFile(t *testing.T, path string) *compiler.CompiledWorkflow {
 
 // compileFeatureDeliveryWorkflow compiles the SHIPPED feature-delivery
 // workflow (stacking enabled + delivery policy active) from the repo root.
-func compileFeatureDeliveryWorkflow(t *testing.T) *compiler.CompiledWorkflow {
+func compileFeatureDeliveryWorkflow(t *testing.T) *definition.CompiledWorkflow {
 	t.Helper()
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -587,7 +586,7 @@ func compileFeatureDeliveryWorkflow(t *testing.T) *compiler.CompiledWorkflow {
 
 // miniStackSnapshot builds a valid ledger snapshot for the mini-stack
 // workflow: the definition plus the fixture agents one/two.
-func miniStackSnapshot(t *testing.T, root string, compiled *compiler.CompiledWorkflow, rawDefinition []byte) workflowledger.Snapshot {
+func miniStackSnapshot(t *testing.T, root string, compiled *definition.CompiledWorkflow, rawDefinition []byte) workflowledger.Snapshot {
 	t.Helper()
 	skills, err := loadChatSkills(root)
 	if err != nil {
@@ -623,7 +622,7 @@ func miniStackSnapshot(t *testing.T, root string, compiled *compiler.CompiledWor
 // decompose and chunk-plan gate carry their real template content so the
 // controller's prompt renderer can render them, and every step names a
 // fixture agent with a digest (the synthesized steps reuse the plan agent).
-func scriptedMiniStackRuntimes(t *testing.T, synth *compiler.CompiledWorkflow) map[string]controller.StepRuntime {
+func scriptedMiniStackRuntimes(t *testing.T, synth *definition.CompiledWorkflow) map[string]controller.StepRuntime {
 	t.Helper()
 	cwd, err := os.Getwd()
 	if err != nil {

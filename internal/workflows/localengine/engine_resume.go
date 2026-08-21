@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -120,7 +119,7 @@ func (e *Engine) buildResumeController(ctx context.Context, req agenttools.Start
 // resumeCompileAndValidate proves the durable snapshot is the admitted one
 // (blob digest, internal Validate, definition digest, input digest, delivery
 // policy) and recompiles it, mirroring the CLI's validateWorkflowResumeSnapshot.
-func (e *Engine) resumeCompileAndValidate(snapshot workflowledger.Snapshot, run workflowledger.RunSnapshot, raw []byte) (*compiler.CompiledWorkflow, map[string]any, error) {
+func (e *Engine) resumeCompileAndValidate(snapshot workflowledger.Snapshot, run workflowledger.RunSnapshot, raw []byte) (*definition.CompiledWorkflow, map[string]any, error) {
 	if run.SnapshotDigest == "" || run.SnapshotDigest != workflowledger.SnapshotDigest(raw) {
 		return nil, nil, fmt.Errorf("workflow snapshot digest does not match the admitted snapshot")
 	}
@@ -134,18 +133,18 @@ func (e *Engine) resumeCompileAndValidate(snapshot workflowledger.Snapshot, run 
 	if err != nil {
 		return nil, nil, err
 	}
-	compiled, err := compiler.CompileForResume(&wf)
+	compiled, err := definition.CompileForResume(&wf)
 	if err != nil {
 		return nil, nil, err
 	}
 	// The engine-reserved stacking inputs (D3) were merged into the admitted
 	// contract, so resume accepts them too (a no-op for non-stacking runs).
-	compiler.MergeStackingInputs(compiled)
+	definition.MergeStackingInputs(compiled)
 	// A stacking run EXECUTES the synthesized graph; rebuild it here so the
 	// resumed runtimes carry the engine-synthesized steps (decompose,
 	// chunk_plan_validate) and admission re-validates them with their pinned
 	// routing snapshots instead of refusing a digest-less step.
-	compiled, err = compiler.SynthesizeStacking(compiled)
+	compiled, err = definition.SynthesizeStacking(compiled)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -185,7 +184,7 @@ func (e *Engine) resumeCompileAndValidate(snapshot workflowledger.Snapshot, run 
 // newResumeController clears the abandon fence, rebuilds the pinned step
 // runtimes, and wires a fresh controller against them with the run's
 // admission pins re-applied.
-func (e *Engine) newResumeController(req agenttools.StartRequest, run workflowledger.RunSnapshot, raw []byte, snapshot workflowledger.Snapshot, compiled *compiler.CompiledWorkflow, inputs map[string]any) (*controller.LinearController, error) {
+func (e *Engine) newResumeController(req agenttools.StartRequest, run workflowledger.RunSnapshot, raw []byte, snapshot workflowledger.Snapshot, compiled *definition.CompiledWorkflow, inputs map[string]any) (*controller.LinearController, error) {
 	// Clear abandon fence so a fresh controller may write again after Interrupt.
 	// Must use clearAbandon (holds fence.mu); bare delete races with isAbandoned.
 	_ = e.ctrlRepo()
@@ -238,7 +237,7 @@ func (e *Engine) newResumeController(req agenttools.StartRequest, run workflowle
 // rebuilds step runtimes from the admitted snapshot. A run admitted before
 // agent pinning carries no pins and resumes in the legacy synthetic-digest
 // mode it was admitted with (CLI parity with workflowAgent's prior check).
-func (e *Engine) buildResumeStepRuntimes(compiled *compiler.CompiledWorkflow, snapshot workflowledger.Snapshot, runID string) (map[string]controller.StepRuntime, error) {
+func (e *Engine) buildResumeStepRuntimes(compiled *definition.CompiledWorkflow, snapshot workflowledger.Snapshot, runID string) (map[string]controller.StepRuntime, error) {
 	var agentPins map[string]workflowledger.AgentSnapshot
 	if len(snapshot.Agents) > 0 {
 		if e.AgentRegistry == nil {

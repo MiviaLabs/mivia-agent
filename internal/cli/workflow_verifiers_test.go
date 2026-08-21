@@ -6,7 +6,6 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/secretpath"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
@@ -36,8 +35,8 @@ func testVerifierProfiles() map[string]config.VerifierProfile {
 	}
 }
 
-func gateWorkflow(names ...string) *compiler.CompiledWorkflow {
-	wf := &compiler.CompiledWorkflow{}
+func gateWorkflow(names ...string) *definition.CompiledWorkflow {
+	wf := &definition.CompiledWorkflow{}
 	for i, name := range names {
 		wf.Steps = append(wf.Steps, definition.Step{ID: "g" + string(rune('a'+i)), Kind: "evidence_gate", Verifier: name})
 	}
@@ -83,7 +82,7 @@ func TestVerifierDefinitionBytesNormalizesArgs(t *testing.T) {
 	}
 }
 
-func pinnedSnapshot(t *testing.T, wf *compiler.CompiledWorkflow, profiles map[string]config.VerifierProfile) *workflowledger.Snapshot {
+func pinnedSnapshot(t *testing.T, wf *definition.CompiledWorkflow, profiles map[string]config.VerifierProfile) *workflowledger.Snapshot {
 	t.Helper()
 	raw, err := workflowledger.MarshalSnapshot(workflowledger.Snapshot{})
 	if err != nil {

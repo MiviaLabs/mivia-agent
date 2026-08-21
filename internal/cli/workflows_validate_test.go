@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 )
 
@@ -15,7 +14,7 @@ import (
 // correctly as invalid.
 func TestValidateTemplateBindingsAllowsSyntheticRound(t *testing.T) {
 	step := definition.Step{ID: "review", Kind: "agent_gate"}
-	wf := &compiler.CompiledWorkflow{
+	wf := &definition.CompiledWorkflow{
 		Steps:       []definition.Step{step},
 		Transitions: []definition.Transition{{From: "review", To: "implement", Loop: "review_repair"}},
 	}
@@ -25,7 +24,7 @@ func TestValidateTemplateBindingsAllowsSyntheticRound(t *testing.T) {
 
 	// A step with no loop back-edge never receives round, so reading it must
 	// still be reported rather than silently allowed.
-	lone := &compiler.CompiledWorkflow{
+	lone := &definition.CompiledWorkflow{
 		Steps:       []definition.Step{step},
 		Transitions: []definition.Transition{{From: "review", To: "next"}},
 	}
@@ -45,7 +44,7 @@ func TestValidateTemplateBindingsAcceptsDeliveryFailure(t *testing.T) {
 	step := definition.Step{ID: "repair", Kind: "agent", Context: []definition.ContextBinding{
 		{From: "delivery.failure", As: "delivery_hint", MaxBytes: 4096, Optional: true},
 	}}
-	wf := &compiler.CompiledWorkflow{Steps: []definition.Step{step}}
+	wf := &definition.CompiledWorkflow{Steps: []definition.Step{step}}
 	if err := validateWorkflowTemplateBindings(wf, step, "hint={{ evidence.delivery_hint }}"); err != nil {
 		t.Fatalf("delivery.failure binding rejected at admission: %v", err)
 	}
@@ -56,7 +55,7 @@ func TestStepIsLoopBound(t *testing.T) {
 	if stepIsLoopBound(nil, step) {
 		t.Error("nil workflow must not report a loop")
 	}
-	wf := &compiler.CompiledWorkflow{Transitions: []definition.Transition{
+	wf := &definition.CompiledWorkflow{Transitions: []definition.Transition{
 		{From: "other", To: "x", Loop: "other_repair"},
 		{From: "review", To: "implement"},
 	}}
@@ -74,7 +73,7 @@ func TestStepIsLoopBound(t *testing.T) {
 // every evidence_gate, so a gate declared with the command form, which is how
 // a repository supplies its own project-specific gate, was always invalid.
 func TestValidateWorkflowVerifiersAcceptsCommandForm(t *testing.T) {
-	wf := &compiler.CompiledWorkflow{Steps: []definition.Step{{
+	wf := &definition.CompiledWorkflow{Steps: []definition.Step{{
 		ID:      "preflight",
 		Kind:    "evidence_gate",
 		Command: &definition.StepCommand{Check: "invariants", Program: "python3", Args: []string{"scripts/x.py"}},
@@ -86,7 +85,7 @@ func TestValidateWorkflowVerifiersAcceptsCommandForm(t *testing.T) {
 
 func TestValidateWorkflowVerifiersRejectsBadCommandAndName(t *testing.T) {
 	t.Run("non-bare program", func(t *testing.T) {
-		wf := &compiler.CompiledWorkflow{Steps: []definition.Step{{
+		wf := &definition.CompiledWorkflow{Steps: []definition.Step{{
 			ID:      "preflight",
 			Kind:    "evidence_gate",
 			Command: &definition.StepCommand{Check: "c", Program: "/usr/bin/python3"},
@@ -97,7 +96,7 @@ func TestValidateWorkflowVerifiersRejectsBadCommandAndName(t *testing.T) {
 	})
 
 	t.Run("unknown catalogue name", func(t *testing.T) {
-		wf := &compiler.CompiledWorkflow{Steps: []definition.Step{{
+		wf := &definition.CompiledWorkflow{Steps: []definition.Step{{
 			ID: "gate", Kind: "evidence_gate", Verifier: "no-such-verifier",
 		}}}
 		if err := validateWorkflowVerifiers(t.TempDir(), wf); err == nil {
@@ -106,7 +105,7 @@ func TestValidateWorkflowVerifiersRejectsBadCommandAndName(t *testing.T) {
 	})
 
 	t.Run("non-gate steps are skipped", func(t *testing.T) {
-		wf := &compiler.CompiledWorkflow{Steps: []definition.Step{{ID: "plan", Kind: "agent"}}}
+		wf := &definition.CompiledWorkflow{Steps: []definition.Step{{ID: "plan", Kind: "agent"}}}
 		if err := validateWorkflowVerifiers(t.TempDir(), wf); err != nil {
 			t.Fatalf("an agent step must not need a verifier: %v", err)
 		}

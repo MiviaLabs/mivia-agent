@@ -5,13 +5,13 @@ package localengine
 
 import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 )
 
 // loadAndValidateWorkflow loads and compiles the workflow, extends the input
 // contract with the engine-reserved stacking inputs when the workflow is
 // stacking, and validates the run's inputs against the effective contract.
-func (e *Engine) loadAndValidateWorkflow(req agenttools.StartRequest) (*compiler.CompiledWorkflow, []byte, string, map[string]any, map[string]string, error) {
+func (e *Engine) loadAndValidateWorkflow(req agenttools.StartRequest) (*definition.CompiledWorkflow, []byte, string, map[string]any, map[string]string, error) {
 	compiled, raw, baseDir, err := e.loadWorkflow(req.Workflow)
 	if err != nil {
 		return nil, nil, "", nil, nil, err
@@ -32,6 +32,6 @@ func (e *Engine) loadAndValidateWorkflow(req agenttools.StartRequest) (*compiler
 // before admission ever saw them. Merging the definitions keeps the contract
 // additive and leaves the compile-time digest untouched: the reserved defs are
 // added post-compile, exactly as SynthesizeStacking does for the run graph.
-func applyStackingInputs(compiled *compiler.CompiledWorkflow) {
-	compiler.MergeStackingInputs(compiled)
+func applyStackingInputs(compiled *definition.CompiledWorkflow) {
+	definition.MergeStackingInputs(compiled)
 }

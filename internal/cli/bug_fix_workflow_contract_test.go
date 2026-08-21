@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 )
 
@@ -34,7 +33,7 @@ func TestBugFixWorkflowInputCapsContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse committed bug-fix workflow: %v", err)
 	}
-	compiled, err := compiler.Compile(&workflow)
+	compiled, err := definition.Compile(&workflow)
 	if err != nil {
 		t.Fatalf("compile committed bug-fix workflow: %v", err)
 	}

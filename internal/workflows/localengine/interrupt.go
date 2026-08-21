@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -148,7 +147,7 @@ func (e *Engine) newRunID() string {
 	return "wfr-" + randomToken(10)
 }
 
-func (e *Engine) loadWorkflow(name string) (*compiler.CompiledWorkflow, []byte, string, error) {
+func (e *Engine) loadWorkflow(name string) (*definition.CompiledWorkflow, []byte, string, error) {
 	if strings.TrimSpace(name) == "" {
 		return nil, nil, "", fmt.Errorf("workflow name is required")
 	}
@@ -174,7 +173,7 @@ func (e *Engine) loadWorkflow(name string) (*compiler.CompiledWorkflow, []byte, 
 	if err != nil {
 		return nil, nil, "", err
 	}
-	compiled, err := compiler.Compile(&wf)
+	compiled, err := definition.Compile(&wf)
 	if err != nil {
 		return nil, nil, "", err
 	}

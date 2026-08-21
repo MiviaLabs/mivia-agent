@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -44,11 +43,11 @@ func TestChunkAdmissionFeatureDeliveryWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	compiled, err := compiler.Compile(&workflow)
+	compiled, err := definition.Compile(&workflow)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
-	synth, err := compiler.SynthesizeStacking(compiled)
+	synth, err := definition.SynthesizeStacking(compiled)
 	if err != nil {
 		t.Fatalf("synthesize: %v", err)
 	}
@@ -80,7 +79,7 @@ func TestChunkAdmissionFeatureDeliveryWorkflow(t *testing.T) {
 	}
 }
 
-func findWorkflowStep(t *testing.T, wf *compiler.CompiledWorkflow, id string) definition.Step {
+func findWorkflowStep(t *testing.T, wf *definition.CompiledWorkflow, id string) definition.Step {
 	t.Helper()
 	for _, s := range wf.Steps {
 		if s.ID == id {

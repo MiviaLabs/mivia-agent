@@ -5,15 +5,15 @@ import (
 	"errors"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
 // loadWorkflowResumeState reads and validates everything a resume needs from
 // the ledger before any hook or controller is built: the run row, its
 // digest-checked admission snapshot, and the recompiled definition.
-func loadWorkflowResumeState(ctx context.Context, repo workflowledger.Repository, runID string, res *config.Resolved) (workflowledger.RunSnapshot, workflowledger.Snapshot, []byte, *compiler.CompiledWorkflow, map[string]any, error) {
-	fail := func(err error) (workflowledger.RunSnapshot, workflowledger.Snapshot, []byte, *compiler.CompiledWorkflow, map[string]any, error) {
+func loadWorkflowResumeState(ctx context.Context, repo workflowledger.Repository, runID string, res *config.Resolved) (workflowledger.RunSnapshot, workflowledger.Snapshot, []byte, *definition.CompiledWorkflow, map[string]any, error) {
+	fail := func(err error) (workflowledger.RunSnapshot, workflowledger.Snapshot, []byte, *definition.CompiledWorkflow, map[string]any, error) {
 		return workflowledger.RunSnapshot{}, workflowledger.Snapshot{}, nil, nil, nil, err
 	}
 	run, err := repo.GetRun(ctx, runID)

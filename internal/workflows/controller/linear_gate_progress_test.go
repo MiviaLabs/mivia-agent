@@ -7,15 +7,13 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/verifier"
 )
 
 // humanGateProgressWorkflow compiles a single human_gate workflow whose
 // approval routes to the success terminal.
-func humanGateProgressWorkflow(t *testing.T) *compiler.CompiledWorkflow {
+func humanGateProgressWorkflow(t *testing.T) *definition.CompiledWorkflow {
 	t.Helper()
 	wf := &definition.WorkflowFile{
 		Version: 1, Name: "human-progress", InitialStep: "approve_me",
@@ -28,7 +26,7 @@ func humanGateProgressWorkflow(t *testing.T) *compiler.CompiledWorkflow {
 			{From: "approve_me", To: "success", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"decision": "approved"}}},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,11 +127,11 @@ func TestEvidenceGateSuccessEmitsExactlyOneStepCompleted(t *testing.T) {
 			{From: "verify", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cat := verifier.NewCatalogue()
+	cat := definition.NewCatalogue()
 	if err := cat.Register(trailProfile{name: "go-check", trail: &progressTrail{}}); err != nil {
 		t.Fatal(err)
 	}
@@ -185,14 +183,14 @@ func TestEvidenceGateFailureEmitsExactlyOneStepCompletedFailed(t *testing.T) {
 			{From: "repair", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cat := verifier.NewCatalogue()
-	if err := cat.Register(fixedVerifierProfile{name: "lint-check", result: verifier.Result{
+	cat := definition.NewCatalogue()
+	if err := cat.Register(fixedVerifierProfile{name: "lint-check", result: definition.Result{
 		Status: "failed",
-		Checks: []verifier.Check{{Name: "lint", Status: "failed", Class: "lint", Detail: "lint errors"}},
+		Checks: []definition.Check{{Name: "lint", Status: "failed", Class: "lint", Detail: "lint errors"}},
 	}}); err != nil {
 		t.Fatal(err)
 	}
@@ -244,14 +242,14 @@ func TestEvidenceGateHostFailureEmitsExactlyOneStepCompletedFailed(t *testing.T)
 			{From: "verify", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cat := verifier.NewCatalogue()
-	if err := cat.Register(fixedVerifierProfile{name: "host-check", result: verifier.Result{
+	cat := definition.NewCatalogue()
+	if err := cat.Register(fixedVerifierProfile{name: "host-check", result: definition.Result{
 		Status: "failed",
-		Checks: []verifier.Check{{Name: "sandbox", Status: "failed", Class: "host", Detail: "sandbox unavailable"}},
+		Checks: []definition.Check{{Name: "sandbox", Status: "failed", Class: "host", Detail: "sandbox unavailable"}},
 	}}); err != nil {
 		t.Fatal(err)
 	}
@@ -311,11 +309,11 @@ type trailProfile struct {
 func (p trailProfile) Name() string { return p.name }
 
 // Verify records that verification ran, after the gate event.
-func (p trailProfile) Verify(context.Context, verifier.Request) (verifier.Result, error) {
+func (p trailProfile) Verify(context.Context, definition.Request) (definition.Result, error) {
 	p.trail.mu.Lock()
 	defer p.trail.mu.Unlock()
 	p.trail.items = append(p.trail.items, "verify-ran")
-	return verifier.Result{Status: "succeeded"}, nil
+	return definition.Result{Status: "succeeded"}, nil
 }
 
 // TestEvidenceGateEmitsGateStartedBeforeVerify: an evidence gate must emit
@@ -330,11 +328,11 @@ func TestEvidenceGateEmitsGateStartedBeforeVerify(t *testing.T) {
 			{From: "verify", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cat := verifier.NewCatalogue()
+	cat := definition.NewCatalogue()
 	trail := &progressTrail{}
 	if err := cat.Register(trailProfile{name: "go-check", trail: trail}); err != nil {
 		t.Fatal(err)

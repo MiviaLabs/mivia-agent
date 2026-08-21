@@ -12,7 +12,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -23,7 +22,7 @@ type preparedWorkflowRuntime struct {
 	Snapshot []byte
 }
 
-func prepareWorkflowRuntime(root, refBase string, wf *compiler.CompiledWorkflow, registry *agents.AgentRegistry, prior *workflowledger.Snapshot, priorRaw []byte, definitionTOML []byte, inputSnapshot map[string]string, dispatcherOpts SessionDispatcherOpts) (preparedWorkflowRuntime, error) {
+func prepareWorkflowRuntime(root, refBase string, wf *definition.CompiledWorkflow, registry *agents.AgentRegistry, prior *workflowledger.Snapshot, priorRaw []byte, definitionTOML []byte, inputSnapshot map[string]string, dispatcherOpts SessionDispatcherOpts) (preparedWorkflowRuntime, error) {
 	steps, snapshot, err := loadWorkflowRuntimes(root, refBase, wf, registry, prior)
 	if err != nil {
 		return preparedWorkflowRuntime{}, err
@@ -38,7 +37,7 @@ func prepareWorkflowRuntime(root, refBase string, wf *compiler.CompiledWorkflow,
 	for name, ref := range snapshot.Schemas {
 		schemaBytes[name] = ref.Bytes
 	}
-	if err := sliceErrors("workflow", compiler.ValidateSchemaReferenceBytes(&definition.WorkflowFile{Steps: wf.Steps}, schemaBytes)); err != nil {
+	if err := sliceErrors("workflow", definition.ValidateSchemaReferenceBytes(&definition.WorkflowFile{Steps: wf.Steps}, schemaBytes)); err != nil {
 		return preparedWorkflowRuntime{}, err
 	}
 	for stepID, runtime := range steps {
@@ -80,7 +79,7 @@ func prepareWorkflowRuntime(root, refBase string, wf *compiler.CompiledWorkflow,
 	return preparedWorkflowRuntime{Steps: steps, Snapshot: data}, nil
 }
 
-func authorizeWorkflowPanelBindings(wf *compiler.CompiledWorkflow, registry *agents.AgentRegistry, snapshot workflowledger.Snapshot, resume bool, opts SessionDispatcherOpts) error {
+func authorizeWorkflowPanelBindings(wf *definition.CompiledWorkflow, registry *agents.AgentRegistry, snapshot workflowledger.Snapshot, resume bool, opts SessionDispatcherOpts) error {
 	if wf == nil {
 		return nil
 	}
@@ -151,7 +150,7 @@ func authorizeWorkflowPanelBindings(wf *compiler.CompiledWorkflow, registry *age
 // in Snapshot.PanelBindings. A real member ID can never equal "synthesis"
 // (panel_types.go's validateInitial rejects it), so this key cannot collide
 // with a declared member binding.
-func resolveWorkflowPanelSynthesisBindings(wf *compiler.CompiledWorkflow, registry *agents.AgentRegistry, prior *workflowledger.Snapshot, snapshot workflowledger.Snapshot, opts SessionDispatcherOpts) error {
+func resolveWorkflowPanelSynthesisBindings(wf *definition.CompiledWorkflow, registry *agents.AgentRegistry, prior *workflowledger.Snapshot, snapshot workflowledger.Snapshot, opts SessionDispatcherOpts) error {
 	for _, step := range wf.Steps {
 		if step.Kind != "agent_panel" || step.Panel == nil {
 			continue

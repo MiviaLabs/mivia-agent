@@ -24,7 +24,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
@@ -352,7 +352,7 @@ func PlanInputs(ctx context.Context, repo workflowledger.Repository, stackID str
 
 // PRBase returns the delivery base branch the chunk PRs branch from: the
 // workflow's delivery policy base (delivery honors pr_base, S4).
-func PRBase(wf *compiler.CompiledWorkflow) (string, error) {
+func PRBase(wf *definition.CompiledWorkflow) (string, error) {
 	if wf == nil || wf.Delivery == nil {
 		return "", fmt.Errorf("workflow has no delivery policy")
 	}

@@ -10,7 +10,6 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
@@ -114,7 +113,7 @@ func (e *Engine) deliverPendingWithStackGate(ctx context.Context, run workflowle
 	if err != nil {
 		return agenttools.DeliverResult{}, err
 	}
-	compiled, err := compiler.CompileForResume(&wf)
+	compiled, err := definition.CompileForResume(&wf)
 	if err != nil {
 		return agenttools.DeliverResult{}, err
 	}

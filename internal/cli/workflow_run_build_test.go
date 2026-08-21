@@ -16,7 +16,6 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -89,7 +88,7 @@ func (g *admissionCaptureGitRunner) fetchRefspecs() []string {
 // admission network calls, and the failure must surface as a context deadline
 // so the run is refused with a bounded, explainable error.
 func TestWorkflowDeliveryAdmissionBoundedContext(t *testing.T) {
-	wf := &compiler.CompiledWorkflow{
+	wf := &definition.CompiledWorkflow{
 		Name: "wf-bounded",
 		Delivery: &definition.Delivery{
 			Kind: "pull_request", Mode: "draft", Provider: "github", Base: "main",
@@ -125,7 +124,7 @@ func TestWorkflowDeliveryAdmissionBoundedContext(t *testing.T) {
 
 // newAdmissionBaseFixture builds a delivery-active two-step fixture whose
 // declared delivery base is the given branch, with a real git origin.
-func newAdmissionBaseFixture(t *testing.T, base string) (root string, res *config.Resolved, wf *compiler.CompiledWorkflow) {
+func newAdmissionBaseFixture(t *testing.T, base string) (root string, res *config.Resolved, wf *definition.CompiledWorkflow) {
 	t.Helper()
 	root = t.TempDir()
 	storePath := filepath.Join(root, "workflow.db")
@@ -165,7 +164,7 @@ func appendDeliveryPolicyBase(t *testing.T, root, base string) {
 // empty value, or an invalid value falls back to the declared base, never an
 // error.
 func TestEffectiveDeliveryBaseResolvesPRBaseInput(t *testing.T) {
-	wf := &compiler.CompiledWorkflow{
+	wf := &definition.CompiledWorkflow{
 		Name: "wf-base",
 		Delivery: &definition.Delivery{
 			Kind: "pull_request", Mode: "draft", Provider: "github", Base: "dev",
@@ -195,7 +194,7 @@ func TestEffectiveDeliveryBaseResolvesPRBaseInput(t *testing.T) {
 // declared delivery base is the given branch, with a real git origin and an
 // open store, ready for buildWorkflowController. It reuses the admission
 // fixture and adds the store/repo the controller build path requires.
-func newAdmissionBuildFixture(t *testing.T, base string) (root string, res *config.Resolved, store *storage.SQLite, repo workflowledger.Repository, wf *compiler.CompiledWorkflow) {
+func newAdmissionBuildFixture(t *testing.T, base string) (root string, res *config.Resolved, store *storage.SQLite, repo workflowledger.Repository, wf *definition.CompiledWorkflow) {
 	t.Helper()
 	root, res, wf = newAdmissionBaseFixture(t, base)
 	store, repo, closeFn, err := openWorkflowStore(root, res.Subagents)
@@ -322,7 +321,7 @@ func TestWorkflowBuildRemoteURLSkipsFetchWhenRecorded(t *testing.T) {
 	workflowDeliveryProbe = func(string) error { return nil }
 	workflowDeliverGit = captured
 
-	wf := &compiler.CompiledWorkflow{
+	wf := &definition.CompiledWorkflow{
 		Name: "wf-recorded",
 		Delivery: &definition.Delivery{
 			Kind: "pull_request", Mode: "draft", Provider: "github", Base: "dev",

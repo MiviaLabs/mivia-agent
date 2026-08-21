@@ -8,10 +8,8 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/verifier"
 )
 
 // A verifier that could not RUN is a missing verdict, not a verdict of fail.
@@ -162,14 +160,14 @@ func newHostFailureFixture(t *testing.T, onFailure string, maxAttempts int) (*Li
 			{From: "repair", To: "verify", Match: definition.MatchCriteria{Status: "succeeded"}},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cat := verifier.NewCatalogue()
-	if err := cat.Register(fixedVerifierProfile{name: "host-failure", result: verifier.Result{
+	cat := definition.NewCatalogue()
+	if err := cat.Register(fixedVerifierProfile{name: "host-failure", result: definition.Result{
 		Status: "failed",
-		Checks: []verifier.Check{{Name: "sandbox", Status: "failed", Class: "host", Detail: "sandbox unavailable"}},
+		Checks: []definition.Check{{Name: "sandbox", Status: "failed", Class: "host", Detail: "sandbox unavailable"}},
 	}}); err != nil {
 		t.Fatal(err)
 	}
@@ -216,13 +214,13 @@ func TestJoinInFlightEvidenceGateAttemptLeavesItForAdvance(t *testing.T) {
 			{From: "verify", To: "failure", Match: definition.MatchCriteria{Status: "failed"}},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cat := verifier.NewCatalogue()
-	if err := cat.Register(fixedVerifierProfile{name: "always-passes", result: verifier.Result{
-		Status: "passed", Checks: []verifier.Check{{Name: "check", Status: "passed"}},
+	cat := definition.NewCatalogue()
+	if err := cat.Register(fixedVerifierProfile{name: "always-passes", result: definition.Result{
+		Status: "passed", Checks: []definition.Check{{Name: "check", Status: "passed"}},
 	}}); err != nil {
 		t.Fatal(err)
 	}
@@ -317,13 +315,13 @@ func newDetachedRouteFixture(t *testing.T) (*LinearController, *ctxSensitiveRepo
 			{From: "repair", To: "verify", Match: definition.MatchCriteria{Status: "succeeded"}},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cat := verifier.NewCatalogue()
-	if err := cat.Register(fixedVerifierProfile{name: "failing-check", result: verifier.Result{
-		Status: "failed", Checks: []verifier.Check{{Name: "go test ./...", Status: "failed"}},
+	cat := definition.NewCatalogue()
+	if err := cat.Register(fixedVerifierProfile{name: "failing-check", result: definition.Result{
+		Status: "failed", Checks: []definition.Check{{Name: "go test ./...", Status: "failed"}},
 	}}); err != nil {
 		t.Fatal(err)
 	}
@@ -366,7 +364,7 @@ func TestEvidenceGateFailureRouteUsesDetachedContext(t *testing.T) {
 	// The caller ctx is already expired, exactly as at a run deadline.
 	expiredCtx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 	defer cancel()
-	result := verifier.Result{Status: "failed", Checks: []verifier.Check{{Name: "go test ./...", Status: "failed"}}}
+	result := definition.Result{Status: "failed", Checks: []definition.Check{{Name: "go test ./...", Status: "failed"}}}
 	output, err := json.Marshal(result)
 	if err != nil {
 		t.Fatal(err)

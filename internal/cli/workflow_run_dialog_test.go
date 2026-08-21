@@ -10,7 +10,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
@@ -52,13 +51,13 @@ to = "success"
 match = { status = "succeeded" }
 `
 
-func dialogTestCompiled(t *testing.T) *compiler.CompiledWorkflow {
+func dialogTestCompiled(t *testing.T) *definition.CompiledWorkflow {
 	t.Helper()
 	wf, _, err := definition.ParseWorkflowTOML([]byte(dialogTestWorkflowDefinition), "dialog-wf.toml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	compiled, err := compiler.Compile(&wf)
+	compiled, err := definition.Compile(&wf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -514,7 +513,7 @@ func TestWorkflowRunDialogOpenShowsLoadingPlaceholder(t *testing.T) {
 // TestWorkflowRunDialogPagerScroll pins j/k paging when the content overflows
 // the canvas: scrolling clamps at the top and bottom and shows later rows.
 func TestWorkflowRunDialogPagerScroll(t *testing.T) {
-	compiled := &compiler.CompiledWorkflow{Name: "big", Steps: make([]definition.Step, 40)}
+	compiled := &definition.CompiledWorkflow{Name: "big", Steps: make([]definition.Step, 40)}
 	for i := range compiled.Steps {
 		compiled.Steps[i] = definition.Step{ID: fmt.Sprintf("step-%02d", i), Kind: "agent", Agent: "test-agent"}
 	}
@@ -557,7 +556,7 @@ func TestWorkflowRunDialogPagerScroll(t *testing.T) {
 // (mirroring the effort dialog tests): no panic, valid UTF-8, and every
 // rendered line within the canvas width.
 func TestWorkflowRunDialogGeometry(t *testing.T) {
-	compiled := &compiler.CompiledWorkflow{Name: "big", Steps: make([]definition.Step, 40)}
+	compiled := &definition.CompiledWorkflow{Name: "big", Steps: make([]definition.Step, 40)}
 	for i := range compiled.Steps {
 		compiled.Steps[i] = definition.Step{ID: fmt.Sprintf("step-%02d", i), Kind: "agent", Agent: strings.Repeat("\U0001F642", 6)}
 	}

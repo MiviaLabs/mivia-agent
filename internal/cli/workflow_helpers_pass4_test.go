@@ -16,7 +16,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -67,7 +66,7 @@ func TestExecuteWorkflowResumeInjectedFailures(t *testing.T) {
 			return nil, selected, func() {}, nil
 		}
 		workflowResumeInstallHooks = func(string, bool, bool) (func(), error) { return func() {}, nil }
-		workflowResumeBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *compiler.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, []byte, *workflowledger.RunSnapshot, map[string]bool, *skills.Registry) (workflowControllerBuild, error) {
+		workflowResumeBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *definition.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, []byte, *workflowledger.RunSnapshot, map[string]bool, *skills.Registry) (workflowControllerBuild, error) {
 			return workflowControllerBuild{
 				Controller: &controller.LinearController{Holder: "resume-test"},
 				Dispatcher: workflowTestDispatcher{},
@@ -123,7 +122,7 @@ func runResumeExecutionFailureTests(t *testing.T, root, configPath string, repo 
 	})
 	t.Run("build", func(t *testing.T) {
 		reset(repo)
-		workflowResumeBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *compiler.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, []byte, *workflowledger.RunSnapshot, map[string]bool, *skills.Registry) (workflowControllerBuild, error) {
+		workflowResumeBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *definition.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, []byte, *workflowledger.RunSnapshot, map[string]bool, *skills.Registry) (workflowControllerBuild, error) {
 			return workflowControllerBuild{}, sentinel
 		}
 		if err := executeWorkflowResume(run.RunID, root, configPath, true, false, false, false, io.Discard, io.Discard); !errors.Is(err, sentinel) {
@@ -184,7 +183,7 @@ func newResumeFailureFixture(t *testing.T) (string, string, *workflowledger.Stor
 	if err != nil {
 		t.Fatal(err)
 	}
-	compiled, err := compiler.Compile(&wf)
+	compiled, err := definition.Compile(&wf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +257,7 @@ func TestValidateWorkflowResumeSnapshotRemainingErrors(t *testing.T) {
 				if parseErr != nil {
 					t.Fatal(parseErr)
 				}
-				compiled, compileErr := compiler.Compile(&wf)
+				compiled, compileErr := definition.Compile(&wf)
 				if compileErr != nil {
 					t.Fatal(compileErr)
 				}
@@ -393,7 +392,7 @@ func TestExecuteWorkflowRunCleansFailedAdmission(t *testing.T) {
 	originalBuild := workflowRunBuild
 	originalAdmission := workflowRunSetAdmission
 	cleaned := false
-	workflowRunBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *compiler.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, []byte, *workflowledger.RunSnapshot, map[string]bool, *skills.Registry) (workflowControllerBuild, error) {
+	workflowRunBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *definition.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, []byte, *workflowledger.RunSnapshot, map[string]bool, *skills.Registry) (workflowControllerBuild, error) {
 		return workflowControllerBuild{Dispatcher: workflowTestDispatcher{}, Cleanup: func() { cleaned = true }}, nil
 	}
 	workflowRunSetAdmission = func(workflowControllerBuild) error { return sentinel }
@@ -541,14 +540,14 @@ func runLateWorkflowBuildFailureTests(t *testing.T, sentinel error, reset func()
 	})
 	t.Run("controller", func(t *testing.T) {
 		reset()
-		workflowBuildController = func(workflowledger.Repository, controller.AgentStepRunner, *compiler.CompiledWorkflow, map[string]controller.StepRuntime, map[string]any, string, []byte) (*controller.LinearController, error) {
+		workflowBuildController = func(workflowledger.Repository, controller.AgentStepRunner, *definition.CompiledWorkflow, map[string]controller.StepRuntime, map[string]any, string, []byte) (*controller.LinearController, error) {
 			return nil, sentinel
 		}
 		check(t)
 	})
 }
 
-func newWorkflowBuildFixture(t *testing.T) (string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *compiler.CompiledWorkflow) {
+func newWorkflowBuildFixture(t *testing.T) (string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *definition.CompiledWorkflow) {
 	t.Helper()
 	root := t.TempDir()
 	storePath := filepath.Join(root, "workflow.db")
@@ -570,7 +569,7 @@ func newWorkflowBuildFixture(t *testing.T) (string, *config.Resolved, *storage.S
 	if err != nil {
 		t.Fatal(err)
 	}
-	wf, err := compiler.Compile(&definitionFile)
+	wf, err := definition.Compile(&definitionFile)
 	if err != nil {
 		t.Fatal(err)
 	}

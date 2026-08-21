@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 )
 
@@ -27,7 +27,7 @@ import (
 func TestFeatureDeliveryCommitMessageTemplateCarriesFixTrailers(t *testing.T) {
 	root := committedWorkflowRoot(t)
 	workflow, _ := loadCommittedFeatureDeliveryWorkflow(t, root)
-	compiled, err := compiler.Compile(&workflow)
+	compiled, err := definition.Compile(&workflow)
 	if err != nil {
 		t.Fatalf("compile committed feature-delivery workflow: %v", err)
 	}

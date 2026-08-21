@@ -17,8 +17,8 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
@@ -49,9 +49,9 @@ func TestWorkflowRunFailSettlesPlanRunFailed(t *testing.T) {
 	var runID string
 	originalBuild := workflowRunBuild
 	t.Cleanup(func() { workflowRunBuild = originalBuild })
-	workflowRunBuild = func(_ string, _ *config.Resolved, _ *storage.SQLite, repo workflowledger.Repository, _ *compiler.CompiledWorkflow, _ string, _ map[string]any, _ map[string]string, _ []byte, id string, _ *workflowledger.Snapshot, _ []byte, _ *workflowledger.RunSnapshot, _ map[string]bool, _ *skills.Registry) (workflowControllerBuild, error) {
+	workflowRunBuild = func(_ string, _ *config.Resolved, _ *storage.SQLite, repo workflowledger.Repository, _ *definition.CompiledWorkflow, _ string, _ map[string]any, _ map[string]string, _ []byte, id string, _ *workflowledger.Snapshot, _ []byte, _ *workflowledger.RunSnapshot, _ map[string]bool, _ *skills.Registry) (workflowControllerBuild, error) {
 		runID = id
-		synth, err := compiler.SynthesizeStacking(compiled)
+		synth, err := definition.SynthesizeStacking(compiled)
 		if err != nil {
 			return workflowControllerBuild{}, err
 		}
@@ -123,8 +123,8 @@ func TestWorkflowRunSettleFailurePropagates(t *testing.T) {
 
 	originalBuild := workflowRunBuild
 	t.Cleanup(func() { workflowRunBuild = originalBuild })
-	workflowRunBuild = func(_ string, _ *config.Resolved, _ *storage.SQLite, repo workflowledger.Repository, _ *compiler.CompiledWorkflow, _ string, _ map[string]any, _ map[string]string, _ []byte, id string, _ *workflowledger.Snapshot, _ []byte, _ *workflowledger.RunSnapshot, _ map[string]bool, _ *skills.Registry) (workflowControllerBuild, error) {
-		synth, err := compiler.SynthesizeStacking(compiled)
+	workflowRunBuild = func(_ string, _ *config.Resolved, _ *storage.SQLite, repo workflowledger.Repository, _ *definition.CompiledWorkflow, _ string, _ map[string]any, _ map[string]string, _ []byte, id string, _ *workflowledger.Snapshot, _ []byte, _ *workflowledger.RunSnapshot, _ map[string]bool, _ *skills.Registry) (workflowControllerBuild, error) {
+		synth, err := definition.SynthesizeStacking(compiled)
 		if err != nil {
 			return workflowControllerBuild{}, err
 		}

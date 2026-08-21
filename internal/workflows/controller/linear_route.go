@@ -10,7 +10,6 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/matcher"
 )
 
 // selectRoute chooses the next step from closed structural match criteria.
@@ -21,7 +20,7 @@ func (c *LinearController) selectRoute(ctx context.Context, step definition.Step
 	if status != workflowledger.AttemptStatusSucceeded {
 		return failureRoute(step), nil
 	}
-	decision, err := matcher.Match(step.ID, "succeeded", output, c.Workflow.Transitions)
+	decision, err := definition.Match(step.ID, "succeeded", output, c.Workflow.Transitions)
 	if err != nil {
 		route := RouteDecision{
 			ToStepID:        failureTarget(step),
@@ -52,7 +51,7 @@ func (c *LinearController) selectRoute(ctx context.Context, step definition.Step
 // error. That result is repairable only when the workflow declares one exact
 // failed transition. Missing or ambiguous transitions fail closed.
 func (c *LinearController) selectEvidenceFailureRoute(ctx context.Context, step definition.Step, output map[string]any) (RouteDecision, error) {
-	decision, err := matcher.Match(step.ID, "failed", output, c.Workflow.Transitions)
+	decision, err := definition.Match(step.ID, "failed", output, c.Workflow.Transitions)
 	if err != nil {
 		route := RouteDecision{
 			ToStepID:        failureTarget(step),
@@ -88,7 +87,7 @@ func failureRoute(step definition.Step) RouteDecision {
 // bound as evidence, and the exhausted attempt is persisted with that route.
 // Without a partial_target (or without salvage) the route is the terminal
 // failureTarget and the error carries the salvage hint.
-func (c *LinearController) loopExhaustionRoute(ctx context.Context, step definition.Step, decision matcher.Decision, exhausted error) (RouteDecision, error) {
+func (c *LinearController) loopExhaustionRoute(ctx context.Context, step definition.Step, decision definition.Decision, exhausted error) (RouteDecision, error) {
 	route := RouteDecision{
 		ToStepID:        failureTarget(step),
 		TransitionIndex: decision.TransitionIndex,

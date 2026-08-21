@@ -14,9 +14,8 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/secretpath"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/verifier"
 )
 
 // workflowVerifierDefPrefix namespaces pinned verifier definitions inside
@@ -69,8 +68,8 @@ func verifierDefinitionBytes(name string, profile config.VerifierProfile) ([]byt
 // workflowVerifierCatalogue builds the run's verifier catalogue from the
 // workspace-declared profiles. An empty declaration set yields an empty
 // catalogue: unknown names still fail closed at Lookup.
-func workflowVerifierCatalogue(profiles map[string]config.VerifierProfile, policy secretpath.Policy) (*verifier.Catalogue, error) {
-	catalogue := verifier.NewCatalogue()
+func workflowVerifierCatalogue(profiles map[string]config.VerifierProfile, policy secretpath.Policy) (*definition.Catalogue, error) {
+	catalogue := definition.NewCatalogue()
 	for name, profile := range profiles {
 		declared, err := declaredVerifierProfile(name, profile, policy)
 		if err != nil {
@@ -83,18 +82,18 @@ func workflowVerifierCatalogue(profiles map[string]config.VerifierProfile, polic
 	return catalogue, nil
 }
 
-func declaredVerifierProfile(name string, profile config.VerifierProfile, policy secretpath.Policy) (verifier.Profile, error) {
-	commands := make([]verifier.DeclaredCommand, 0, len(profile.Commands))
+func declaredVerifierProfile(name string, profile config.VerifierProfile, policy secretpath.Policy) (definition.Profile, error) {
+	commands := make([]definition.DeclaredCommand, 0, len(profile.Commands))
 	for _, command := range profile.Commands {
-		commands = append(commands, verifier.DeclaredCommand{Check: command.Check, Program: command.Program, Args: command.Args})
+		commands = append(commands, definition.DeclaredCommand{Check: command.Check, Program: command.Program, Args: command.Args})
 	}
-	return verifier.NewDeclaredProfile(name, commands, policy)
+	return definition.NewDeclaredProfile(name, commands, policy)
 }
 
 // workflowReferencedVerifiers returns the unique catalogue names the
 // workflow's evidence_gate steps reference, sorted. Steps with an inline
 // command reference no catalogue name.
-func workflowReferencedVerifiers(wf *compiler.CompiledWorkflow) []string {
+func workflowReferencedVerifiers(wf *definition.CompiledWorkflow) []string {
 	if wf == nil {
 		return nil
 	}
@@ -115,7 +114,7 @@ func workflowReferencedVerifiers(wf *compiler.CompiledWorkflow) []string {
 // validateWorkflowVerifierReferences fails admission early - before any agent
 // step burns tokens - when a referenced profile is not declared, naming the
 // missing table so the fix is obvious.
-func validateWorkflowVerifierReferences(wf *compiler.CompiledWorkflow, profiles map[string]config.VerifierProfile) error {
+func validateWorkflowVerifierReferences(wf *definition.CompiledWorkflow, profiles map[string]config.VerifierProfile) error {
 	for _, name := range workflowReferencedVerifiers(wf) {
 		if _, ok := profiles[name]; !ok {
 			return fmt.Errorf("workflow references verifier %q but the workspace config declares no [verifiers.%s] table", name, name)
@@ -127,7 +126,7 @@ func validateWorkflowVerifierReferences(wf *compiler.CompiledWorkflow, profiles 
 // pinWorkflowVerifierDefinitions writes each referenced profile's canonical
 // definition into the fresh run's snapshot, so a resumed run's gate executes
 // exactly what admission saw regardless of later config or binary changes.
-func pinWorkflowVerifierDefinitions(raw []byte, wf *compiler.CompiledWorkflow, profiles map[string]config.VerifierProfile) ([]byte, error) {
+func pinWorkflowVerifierDefinitions(raw []byte, wf *definition.CompiledWorkflow, profiles map[string]config.VerifierProfile) ([]byte, error) {
 	snapshot, err := workflowledger.UnmarshalSnapshot(raw)
 	if err != nil {
 		return nil, err
@@ -178,7 +177,7 @@ func snapshotHasVerifierDefinitions(prior *workflowledger.Snapshot) bool {
 // verifyWorkflowVerifierSnapshot re-resolves every referenced profile from
 // the current config and fails closed when one is missing or drifted from
 // its admission-time pin. Mirrors verifyWorkflowSkillSnapshot.
-func verifyWorkflowVerifierSnapshot(wf *compiler.CompiledWorkflow, profiles map[string]config.VerifierProfile, prior *workflowledger.Snapshot) error {
+func verifyWorkflowVerifierSnapshot(wf *definition.CompiledWorkflow, profiles map[string]config.VerifierProfile, prior *workflowledger.Snapshot) error {
 	if prior == nil || !snapshotHasVerifierDefinitions(prior) {
 		return nil
 	}
@@ -217,7 +216,7 @@ func verifyWorkflowVerifierSnapshot(wf *compiler.CompiledWorkflow, profiles map[
 // profile whose run pinned no module baseline at admission. There is no
 // admitted baseline to enforce, and capturing one mid-run would pin whatever
 // the workflow already wrote.
-func acceptWorkflowVerifierChanges(prior *workflowledger.Snapshot, wf *compiler.CompiledWorkflow, profiles map[string]config.VerifierProfile) ([]string, error) {
+func acceptWorkflowVerifierChanges(prior *workflowledger.Snapshot, wf *definition.CompiledWorkflow, profiles map[string]config.VerifierProfile) ([]string, error) {
 	if prior == nil || !snapshotHasVerifierDefinitions(prior) {
 		return nil, nil
 	}
@@ -259,7 +258,7 @@ func acceptWorkflowVerifierChanges(prior *workflowledger.Snapshot, wf *compiler.
 // applyAcceptedVerifierChanges runs the acceptance rewrite for a resume that
 // passed --accept-verifier-change and reports each accepted profile to the
 // operator.
-func applyAcceptedVerifierChanges(prior *workflowledger.Snapshot, wf *compiler.CompiledWorkflow, profiles map[string]config.VerifierProfile, stderr io.Writer) error {
+func applyAcceptedVerifierChanges(prior *workflowledger.Snapshot, wf *definition.CompiledWorkflow, profiles map[string]config.VerifierProfile, stderr io.Writer) error {
 	drifted, err := acceptWorkflowVerifierChanges(prior, wf, profiles)
 	if err != nil {
 		return err
@@ -278,7 +277,7 @@ func applyAcceptedVerifierChanges(prior *workflowledger.Snapshot, wf *compiler.C
 // read the PINNED definitions - never live config - so flipping
 // go_module_baseline mid-run can neither drop the pin silently nor brick the
 // resume. Pre-pinning snapshots fall back to the legacy built-in names.
-func workflowNeedsGoBaseline(wf *compiler.CompiledWorkflow, profiles map[string]config.VerifierProfile, prior *workflowledger.Snapshot) (bool, error) {
+func workflowNeedsGoBaseline(wf *definition.CompiledWorkflow, profiles map[string]config.VerifierProfile, prior *workflowledger.Snapshot) (bool, error) {
 	names := workflowReferencedVerifiers(wf)
 	if prior == nil {
 		for _, name := range names {

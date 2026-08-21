@@ -12,7 +12,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/stacking"
@@ -99,7 +99,7 @@ func stackPlanInputs(repo workflowledger.Repository, stackID string) (map[string
 // stackPRBase returns the delivery base branch the chunk PRs branch from:
 // the workflow's delivery policy base (delivery honors pr_base, S4); see
 // stacking.PRBase.
-func stackPRBase(wf *compiler.CompiledWorkflow) (string, error) {
+func stackPRBase(wf *definition.CompiledWorkflow) (string, error) {
 	return stacking.PRBase(wf)
 }
 

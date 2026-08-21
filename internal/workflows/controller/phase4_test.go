@@ -11,10 +11,8 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/verifier"
 )
 
 // scriptedRunner returns pre-scripted outputs per step call order.
@@ -60,7 +58,7 @@ func (r *scriptedRunner) RunStep(_ context.Context, req AgentStepRequest) (Agent
 	}, nil
 }
 
-func repairWorkflow(t *testing.T, maxLoop int, maxAttempts int) *compiler.CompiledWorkflow {
+func repairWorkflow(t *testing.T, maxLoop int, maxAttempts int) *definition.CompiledWorkflow {
 	t.Helper()
 	wf := &definition.WorkflowFile{
 		Version: 1, Name: "repair", InitialStep: "implement",
@@ -77,7 +75,7 @@ func repairWorkflow(t *testing.T, maxLoop int, maxAttempts int) *compiler.Compil
 			{From: "review", To: "implement", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"verdict": "changes_requested"}}, Loop: "review_repair", MaxIterations: maxLoop},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,13 +128,13 @@ func TestEvidenceGateGoDefaultAndUnknownFailsClosed(t *testing.T) {
 			{From: "verify", To: "success", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"status": "passed"}}},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
 	repo := workflowledger.NewMemoryRepository()
-	cat := verifier.NewCatalogue()
-	if err := cat.Register(stubVerifierProfile{name: "go-default", checks: []verifier.Check{{Name: "workspace-dir", Status: "passed"}, {Name: "go-module", Status: "passed"}}}); err != nil {
+	cat := definition.NewCatalogue()
+	if err := cat.Register(stubVerifierProfile{name: "go-default", checks: []definition.Check{{Name: "workspace-dir", Status: "passed"}, {Name: "go-module", Status: "passed"}}}); err != nil {
 		t.Fatal(err)
 	}
 	ctrl, err := NewLinearController(repo, &linearRunner{}, compiled, nil, map[string]any{"task": "x"}, "wfr-evidence", []byte("snap"))
@@ -169,7 +167,7 @@ func TestEvidenceGateGoDefaultAndUnknownFailsClosed(t *testing.T) {
 	// Unknown verifier fails closed without dispatch.
 	wf2 := *wf
 	wf2.Steps = []definition.Step{{ID: "verify", Kind: "evidence_gate", Verifier: "not-registered", OnFailure: "failure"}}
-	compiled2, err := compiler.Compile(&wf2)
+	compiled2, err := definition.Compile(&wf2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,19 +190,19 @@ func TestEvidenceGateGoDefaultAndUnknownFailsClosed(t *testing.T) {
 
 type fixedVerifierProfile struct {
 	name   string
-	result verifier.Result
+	result definition.Result
 	err    error
 }
 
 func (p fixedVerifierProfile) Name() string { return p.name }
 
-func (p fixedVerifierProfile) Verify(context.Context, verifier.Request) (verifier.Result, error) {
+func (p fixedVerifierProfile) Verify(context.Context, definition.Request) (definition.Result, error) {
 	return p.result, p.err
 }
 
 func TestEvidenceGateReadmitsFailedAttemptAfterRepairRoute(t *testing.T) {
 	repo := workflowledger.NewMemoryRepository()
-	ctrl := &LinearController{Repo: repo, RunID: "wfr-readmit", Workflow: &compiler.CompiledWorkflow{}}
+	ctrl := &LinearController{Repo: repo, RunID: "wfr-readmit", Workflow: &definition.CompiledWorkflow{}}
 	if err := repo.CreateRun(context.Background(), workflowledger.RunSnapshot{RunID: ctrl.RunID, WorkflowName: "test", WorkflowDigest: "digest", ActiveStepID: "verify", Status: workflowledger.RunStatusPending}, []byte("snapshot")); err != nil {
 		t.Fatal(err)
 	}
@@ -232,14 +230,14 @@ func TestEvidenceGateFailureRoutesToRepairWithPersistedResult(t *testing.T) {
 			{From: "repair", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cat := verifier.NewCatalogue()
+	cat := definition.NewCatalogue()
 	if err := cat.Register(fixedVerifierProfile{
 		name:   "failing-check",
-		result: verifier.Result{Status: "failed", Checks: []verifier.Check{{Name: "go test ./...", Status: "failed"}}},
+		result: definition.Result{Status: "failed", Checks: []definition.Check{{Name: "go test ./...", Status: "failed"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -303,12 +301,12 @@ func TestEvidenceGateStructureFailureRoutesToRepairWithFailedDetail(t *testing.T
 			{From: "review", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cat := verifier.NewCatalogue()
-	if err := cat.Register(fixedVerifierProfile{name: "failing-structure", result: verifier.Result{Status: "failed", Checks: []verifier.Check{{Name: "go-structure", Status: "failed", Class: "source", Detail: "HARD function LOC: internal/ledger/close_run_atomicity_test.go L3-L125 (123 lines, hard max 120). Extract helpers."}}}}); err != nil {
+	cat := definition.NewCatalogue()
+	if err := cat.Register(fixedVerifierProfile{name: "failing-structure", result: definition.Result{Status: "failed", Checks: []definition.Check{{Name: "go-structure", Status: "failed", Class: "source", Detail: "HARD function LOC: internal/ledger/close_run_atomicity_test.go L3-L125 (123 lines, hard max 120). Extract helpers."}}}}); err != nil {
 		t.Fatal(err)
 	}
 	runner := &scriptedRunner{outputsByStepCall: map[string]json.RawMessage{
@@ -367,12 +365,12 @@ func TestEvidenceGateHostFailureDoesNotRouteToRepair(t *testing.T) {
 			{From: "repair", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cat := verifier.NewCatalogue()
-	if err := cat.Register(fixedVerifierProfile{name: "host-failure", result: verifier.Result{Status: "failed", Checks: []verifier.Check{{Name: "sandbox", Status: "failed", Class: "host", Detail: "sandbox unavailable"}}}}); err != nil {
+	cat := definition.NewCatalogue()
+	if err := cat.Register(fixedVerifierProfile{name: "host-failure", result: definition.Result{Status: "failed", Checks: []definition.Check{{Name: "sandbox", Status: "failed", Class: "host", Detail: "sandbox unavailable"}}}}); err != nil {
 		t.Fatal(err)
 	}
 	runner := &scriptedRunner{outputsByStepCall: map[string]json.RawMessage{"repair#1": json.RawMessage(`{"summary":"must not run"}`)}}
@@ -401,12 +399,12 @@ func TestEvidenceGateFailureWithoutTransitionFailsClosed(t *testing.T) {
 		Steps:       []definition.Step{{ID: "verify", Kind: "evidence_gate", Verifier: "failing-check", OnFailure: "failure"}},
 		Transitions: []definition.Transition{{From: "verify", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}}},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cat := verifier.NewCatalogue()
-	if err := cat.Register(fixedVerifierProfile{name: "failing-check", result: verifier.Result{Status: "failed", Checks: []verifier.Check{{Name: "go test ./...", Status: "failed"}}}}); err != nil {
+	cat := definition.NewCatalogue()
+	if err := cat.Register(fixedVerifierProfile{name: "failing-check", result: definition.Result{Status: "failed", Checks: []definition.Check{{Name: "go test ./...", Status: "failed"}}}}); err != nil {
 		t.Fatal(err)
 	}
 	repo := workflowledger.NewMemoryRepository()
@@ -443,7 +441,7 @@ func TestHumanGateWaitingApprovalAndApproveReject(t *testing.T) {
 			{From: "approve_me", To: "success", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"decision": "approved"}}},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -682,7 +680,7 @@ func TestUnlimitedAttemptsAndUnlimitedLoopConverges(t *testing.T) {
 			{From: "review", To: "implement", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"verdict": "changes_requested"}}, Loop: "review_repair", MaxIterations: -1},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -744,7 +742,7 @@ func TestUnlimitedAttemptsUnlimitedLoopStoppedByDeadline(t *testing.T) {
 			{From: "review", To: "implement", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"verdict": "changes_requested"}}, Loop: "review_repair", MaxIterations: -1},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}

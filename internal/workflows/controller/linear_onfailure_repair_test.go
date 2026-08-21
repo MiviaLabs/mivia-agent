@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
@@ -25,7 +24,7 @@ import (
 // failureRoute, never the matcher); it exists only because the compiler's
 // reachability check requires every step to be reachable through transitions,
 // while the repair step is actually reached via on_failure.
-func onFailureRepairWorkflow(t *testing.T) *compiler.CompiledWorkflow {
+func onFailureRepairWorkflow(t *testing.T) *definition.CompiledWorkflow {
 	t.Helper()
 	return compileOnFailureWorkflow(t, false)
 }
@@ -33,12 +32,12 @@ func onFailureRepairWorkflow(t *testing.T) *compiler.CompiledWorkflow {
 // onFailureRepairLoopWorkflow returns the same workflow with a repair ->
 // implement back-edge, so a permanently failing implement keeps re-entering
 // the repair step until the on_failure re-entry budget is spent.
-func onFailureRepairLoopWorkflow(t *testing.T) *compiler.CompiledWorkflow {
+func onFailureRepairLoopWorkflow(t *testing.T) *definition.CompiledWorkflow {
 	t.Helper()
 	return compileOnFailureWorkflow(t, true)
 }
 
-func compileOnFailureWorkflow(t *testing.T, loopBack bool) *compiler.CompiledWorkflow {
+func compileOnFailureWorkflow(t *testing.T, loopBack bool) *definition.CompiledWorkflow {
 	t.Helper()
 	transitions := []definition.Transition{
 		{From: "implement", To: "repair", Match: definition.MatchCriteria{Status: "failed"}},
@@ -60,14 +59,14 @@ func compileOnFailureWorkflow(t *testing.T, loopBack bool) *compiler.CompiledWor
 		},
 		Transitions: transitions,
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return compiled
 }
 
-func newOnFailureRepairController(t *testing.T, runner AgentStepRunner, wf *compiler.CompiledWorkflow, runID string) (*LinearController, workflowledger.Repository) {
+func newOnFailureRepairController(t *testing.T, runner AgentStepRunner, wf *definition.CompiledWorkflow, runID string) (*LinearController, workflowledger.Repository) {
 	t.Helper()
 	repo := workflowledger.NewMemoryRepository()
 	ctrl, err := NewLinearController(repo, runner, wf, map[string]StepRuntime{
@@ -209,7 +208,7 @@ func TestReviewZeroProgressNonTerminalOnFailureStillFailsRun(t *testing.T) {
 			{From: "review", To: "repair", Match: definition.MatchCriteria{Status: "failed"}},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}

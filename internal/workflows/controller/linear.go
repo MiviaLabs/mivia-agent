@@ -13,11 +13,9 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/secretpath"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/verifier"
 )
 
 // StepRuntime contains snapshotted data required to execute one agent step.
@@ -62,15 +60,15 @@ type Admission struct {
 type LinearController struct {
 	Repo           workflowledger.Repository
 	Runner         AgentStepRunner
-	Workflow       *compiler.CompiledWorkflow
+	Workflow       *definition.CompiledWorkflow
 	Steps          map[string]StepRuntime
 	Inputs         map[string]any
 	RunID          string
 	Snapshot       []byte
 	Holder         string
-	Verifiers      *verifier.Catalogue
+	Verifiers      *definition.Catalogue
 	WorkDir        string
-	ModuleBaseline *verifier.GoModuleBaseline
+	ModuleBaseline *definition.GoModuleBaseline
 	SecretPolicy   secretpath.Policy
 	// gitRunner/gitCtx pin the worktree git context for the diff-size gate.
 	gitRunner delivery.GitRunner
@@ -93,7 +91,7 @@ type LinearController struct {
 }
 
 // NewLinearController creates a controller for an admitted workflow run.
-func NewLinearController(repo workflowledger.Repository, runner AgentStepRunner, wf *compiler.CompiledWorkflow, steps map[string]StepRuntime, inputs map[string]any, runID string, snapshot []byte) (*LinearController, error) {
+func NewLinearController(repo workflowledger.Repository, runner AgentStepRunner, wf *definition.CompiledWorkflow, steps map[string]StepRuntime, inputs map[string]any, runID string, snapshot []byte) (*LinearController, error) {
 	if repo == nil || runner == nil || wf == nil {
 		return nil, fmt.Errorf("linear controller dependencies are incomplete")
 	}
@@ -125,7 +123,7 @@ func (c *LinearController) SetProgressSink(sink ProgressSink) error {
 }
 
 // SetVerifiers sets the host verifier catalogue before Start.
-func (c *LinearController) SetVerifiers(cat *verifier.Catalogue) error {
+func (c *LinearController) SetVerifiers(cat *definition.Catalogue) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.started {
@@ -182,7 +180,7 @@ func (c *LinearController) SetWorkDir(dir string) error {
 }
 
 // SetModuleBaseline sets immutable Go module inputs before Start.
-func (c *LinearController) SetModuleBaseline(baseline *verifier.GoModuleBaseline) error {
+func (c *LinearController) SetModuleBaseline(baseline *definition.GoModuleBaseline) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.started {
@@ -191,7 +189,7 @@ func (c *LinearController) SetModuleBaseline(baseline *verifier.GoModuleBaseline
 	if baseline == nil || len(baseline.GoMod) == 0 {
 		return fmt.Errorf("workflow verifier module baseline is empty")
 	}
-	c.ModuleBaseline = &verifier.GoModuleBaseline{GoMod: append([]byte(nil), baseline.GoMod...), GoSum: append([]byte(nil), baseline.GoSum...)}
+	c.ModuleBaseline = &definition.GoModuleBaseline{GoMod: append([]byte(nil), baseline.GoMod...), GoSum: append([]byte(nil), baseline.GoSum...)}
 	return nil
 }
 

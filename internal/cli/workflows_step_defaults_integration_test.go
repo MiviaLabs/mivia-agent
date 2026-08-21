@@ -12,7 +12,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 )
 
@@ -147,7 +146,7 @@ func TestStepDefaultsDigestEqualsExpanded(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parse: %v", err)
 		}
-		compiled, err := compiler.Compile(&wf)
+		compiled, err := definition.Compile(&wf)
 		if err != nil {
 			t.Fatalf("compile: %v", err)
 		}
@@ -174,7 +173,7 @@ func TestStepDefaultsDigestSafeForExistingFiles(t *testing.T) {
 		if perr != nil {
 			t.Fatalf("parse shipped bug-fix.toml: %v", perr)
 		}
-		compiled, cerr := compiler.Compile(&wf)
+		compiled, cerr := definition.Compile(&wf)
 		if cerr != nil {
 			t.Fatalf("compile shipped bug-fix.toml: %v", cerr)
 		}
@@ -340,7 +339,7 @@ func TestStepDefaultsPanelDigestEqualsExpanded(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parse: %v", err)
 		}
-		compiled, err := compiler.Compile(&wf)
+		compiled, err := definition.Compile(&wf)
 		if err != nil {
 			t.Fatalf("compile: %v", err)
 		}

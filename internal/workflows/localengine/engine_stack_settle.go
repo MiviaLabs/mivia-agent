@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/stacking"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
@@ -27,7 +27,7 @@ import (
 // publishing (the chunk PRs carry the reviewable work); deliver_plan_run=true
 // leaves it delivery_pending for an explicit workflow_deliver (mirrors the
 // CLI's settleStackPlanRunIfComplete).
-func (e *Engine) finishStack(ctx context.Context, planRun workflowledger.RunSnapshot, compiled *compiler.CompiledWorkflow, ledger *tasks.Store, stackID string, planInputs map[string]string, prBase string) {
+func (e *Engine) finishStack(ctx context.Context, planRun workflowledger.RunSnapshot, compiled *definition.CompiledWorkflow, ledger *tasks.Store, stackID string, planInputs map[string]string, prBase string) {
 	autoPublish := compiled.Stacking.MergePolicy == "auto"
 	inputs, _ := stacking.IntegrationRunInputs(planInputs, prBase)
 	key, err := stacking.AdmissionKey(stackID, stacking.IntegrationChunkID)
@@ -71,7 +71,7 @@ func (e *Engine) finishStack(ctx context.Context, planRun workflowledger.RunSnap
 // burn one attempt every poll tick (STACK-2, 2026-08-16): 2s -> 4s -> 8s ->
 // ... -> stackDriveMaxBackoff, reset to the base interval by any progressing
 // pass.
-func (e *Engine) waitForIntegrationSettle(ctx context.Context, run workflowledger.RunSnapshot, compiled *compiler.CompiledWorkflow, stackID string) {
+func (e *Engine) waitForIntegrationSettle(ctx context.Context, run workflowledger.RunSnapshot, compiled *definition.CompiledWorkflow, stackID string) {
 	autoPublish := compiled.Stacking.MergePolicy == "auto"
 	backoff := stackDrivePollInterval
 	for {
@@ -160,7 +160,7 @@ func (e *Engine) waitForPRMerged(ctx context.Context, run workflowledger.RunSnap
 // (mirroring settlePlanRunSkippedDelivery) so the run does not park forever;
 // with deliver_plan_run=true it stays delivery_pending for an explicit
 // workflow_deliver (the chunk PRs already carry the reviewable work).
-func (e *Engine) settlePlanRun(ctx context.Context, compiled *compiler.CompiledWorkflow, runID string) {
+func (e *Engine) settlePlanRun(ctx context.Context, compiled *definition.CompiledWorkflow, runID string) {
 	if compiled.Delivery != nil && compiled.Delivery.DeliverPlanRun {
 		return // left for an explicit deliver
 	}
@@ -264,7 +264,7 @@ func (e *Engine) stackRunByKey(ctx context.Context, stackID, chunkID string) (wo
 // the CLI's classifyStackPlanRunDelivery + stackDriveCompleted. An empty
 // result means the run is not a multi-chunk plan run, or the stack drove to
 // completion, and delivery may proceed.
-func (e *Engine) undrivenPlanRunReason(ctx context.Context, repo workflowledger.Repository, runID string, compiled *compiler.CompiledWorkflow) string {
+func (e *Engine) undrivenPlanRunReason(ctx context.Context, repo workflowledger.Repository, runID string, compiled *definition.CompiledWorkflow) string {
 	if compiled == nil || compiled.Stacking == nil || !compiled.Stacking.Enabled {
 		return ""
 	}
@@ -284,7 +284,7 @@ func (e *Engine) undrivenPlanRunReason(ctx context.Context, repo workflowledger.
 // the grant merge policy - it awaits the publish grant; under auto the drive
 // still merges it). Mirrors the CLI's stackDriveCompleted; without the task
 // ledger (e.Store) the drive cannot be verified, so the gate refuses.
-func (e *Engine) stackDriveCompleted(ctx context.Context, repo workflowledger.Repository, runID string, compiled *compiler.CompiledWorkflow) bool {
+func (e *Engine) stackDriveCompleted(ctx context.Context, repo workflowledger.Repository, runID string, compiled *definition.CompiledWorkflow) bool {
 	planOutput, err := stacking.LoadStackPlanOutput(ctx, repo, runID)
 	if err != nil {
 		return false

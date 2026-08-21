@@ -16,7 +16,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
@@ -70,7 +69,7 @@ func newForcedResumeFixture(t *testing.T) (string, workflowledger.RunSnapshot) {
 	return root, run
 }
 
-func compileResumeWorkflowFixture(t *testing.T, root string) (*compiler.CompiledWorkflow, []byte) {
+func compileResumeWorkflowFixture(t *testing.T, root string) (*definition.CompiledWorkflow, []byte) {
 	t.Helper()
 	rawDefinition, err := os.ReadFile(filepath.Join(root, ".mivia", "workflows", "two-step.toml"))
 	if err != nil {
@@ -80,14 +79,14 @@ func compileResumeWorkflowFixture(t *testing.T, root string) (*compiler.Compiled
 	if err != nil {
 		t.Fatal(err)
 	}
-	compiled, err := compiler.Compile(&wf)
+	compiled, err := definition.Compile(&wf)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return compiled, rawDefinition
 }
 
-func newForcedResumeSnapshot(t *testing.T, root string, compiled *compiler.CompiledWorkflow, rawDefinition []byte) workflowledger.Snapshot {
+func newForcedResumeSnapshot(t *testing.T, root string, compiled *definition.CompiledWorkflow, rawDefinition []byte) workflowledger.Snapshot {
 	t.Helper()
 	skills, err := loadChatSkills(root)
 	if err != nil {
@@ -120,7 +119,7 @@ func newForcedResumeSnapshot(t *testing.T, root string, compiled *compiler.Compi
 	return snapshot
 }
 
-func addForcedResumeReferences(t *testing.T, root string, compiled *compiler.CompiledWorkflow, snapshot *workflowledger.Snapshot) {
+func addForcedResumeReferences(t *testing.T, root string, compiled *definition.CompiledWorkflow, snapshot *workflowledger.Snapshot) {
 	t.Helper()
 	for _, step := range compiled.Steps {
 		if step.Template != "" {
@@ -293,7 +292,7 @@ func TestWorkflowRuntimeSuccessAndPriorChecks(t *testing.T) {
 	if err := registry.Publish(agent); err != nil {
 		t.Fatal(err)
 	}
-	wf := &compiler.CompiledWorkflow{
+	wf := &definition.CompiledWorkflow{
 		Name: "test", Digest: "workflow-digest",
 		Steps: []definition.Step{{ID: "one", Kind: "agent", Agent: "worker"}},
 	}
@@ -379,7 +378,7 @@ func TestPrepareWorkflowRuntimeResumeKeepsStoredBytes(t *testing.T) {
 	if err := registry.Publish(agents.ResolvedAgent{Name: "worker"}); err != nil {
 		t.Fatal(err)
 	}
-	wf := &compiler.CompiledWorkflow{
+	wf := &definition.CompiledWorkflow{
 		Name: "test", Digest: "workflow-digest",
 		Steps: []definition.Step{{ID: "one", Kind: "agent", Agent: "worker"}},
 	}

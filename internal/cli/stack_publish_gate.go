@@ -16,7 +16,7 @@ import (
 	"log"
 	"strings"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
@@ -94,7 +94,7 @@ func isStackRunInputs(inputs map[string]string) bool {
 // failure instead of collapsing straight to a policy string - the caller
 // needs to distinguish "not a stacking plan run at all" from "is one, but
 // merge_policy isn't auto".
-func stackPlanCompiledWorkflow(ctx context.Context, repo workflowledger.Repository, runID string) (*compiler.CompiledWorkflow, bool) {
+func stackPlanCompiledWorkflow(ctx context.Context, repo workflowledger.Repository, runID string) (*definition.CompiledWorkflow, bool) {
 	run, err := repo.GetRun(ctx, runID)
 	if err != nil {
 		return nil, false

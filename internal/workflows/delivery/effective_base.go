@@ -1,6 +1,6 @@
 package delivery
 
-import "github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
+import "github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 
 // EffectiveBase returns the delivery base a fresh admission must guard: a
 // valid pr_base input overrides the workflow's declared delivery base (the
@@ -9,7 +9,7 @@ import "github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 // actually deliver to. An absent, empty, or invalid pr_base never fails
 // admission — the declared base is used instead. inputSnapshot may be nil;
 // a nil or non-delivery workflow yields the declared base or "".
-func EffectiveBase(wf *compiler.CompiledWorkflow, inputSnapshot map[string]string) string {
+func EffectiveBase(wf *definition.CompiledWorkflow, inputSnapshot map[string]string) string {
 	base := ""
 	if policy, ok := FromCompiled(wf); ok {
 		base = policy.Base

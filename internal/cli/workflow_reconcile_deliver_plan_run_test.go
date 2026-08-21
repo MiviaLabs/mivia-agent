@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -77,7 +76,7 @@ func seedParkedStackingPlanRunDeliverPlanRunTOML(t *testing.T, root, storePath s
 	if err != nil {
 		t.Fatal(err)
 	}
-	compiled, err := compiler.Compile(&wf)
+	compiled, err := definition.Compile(&wf)
 	if err != nil {
 		t.Fatal(err)
 	}

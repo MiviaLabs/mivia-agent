@@ -12,14 +12,13 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	workflowtemplate "github.com/MiviaLabs/mivia-agent/internal/workflows/template"
 )
 
-func buildStepRuntimes(wf *compiler.CompiledWorkflow, base string) (map[string]controller.StepRuntime, error) {
+func buildStepRuntimes(wf *definition.CompiledWorkflow, base string) (map[string]controller.StepRuntime, error) {
 	schemas, err := loadOutputSchemas(base, wf)
 	if err != nil {
 		return nil, err
@@ -42,7 +41,7 @@ func buildStepRuntimes(wf *compiler.CompiledWorkflow, base string) (map[string]c
 // admission truth, not tampering, so a missing template pin degrades to the
 // admitted (template-less) dispatch and nil agentPins keep the legacy
 // synthetic digest the run was admitted with.
-func buildStepRuntimesFromSnapshot(wf *compiler.CompiledWorkflow, schemas, templates map[string]workflowledger.RefSnapshot, agentPins map[string]workflowledger.AgentSnapshot) (map[string]controller.StepRuntime, error) {
+func buildStepRuntimesFromSnapshot(wf *definition.CompiledWorkflow, schemas, templates map[string]workflowledger.RefSnapshot, agentPins map[string]workflowledger.AgentSnapshot) (map[string]controller.StepRuntime, error) {
 	steps := make(map[string]controller.StepRuntime, len(wf.Steps))
 	for _, step := range wf.Steps {
 		if step.Kind != "agent" && step.Kind != "agent_gate" {
@@ -104,7 +103,7 @@ func buildStepRuntimesFromSnapshot(wf *compiler.CompiledWorkflow, schemas, templ
 // into the run snapshot. This is the admission read: startNew MUST read from
 // the workspace here (that IS admission), and resume must never call it.
 // Guards mirror loadOutputSchemaBytes (path traversal + size cap).
-func loadOutputSchemas(base string, wf *compiler.CompiledWorkflow) (map[string]workflowledger.RefSnapshot, error) {
+func loadOutputSchemas(base string, wf *definition.CompiledWorkflow) (map[string]workflowledger.RefSnapshot, error) {
 	schemas := make(map[string]workflowledger.RefSnapshot)
 	for _, step := range wf.Steps {
 		refs := []string{step.OutputSchema}
@@ -135,7 +134,7 @@ func loadOutputSchemas(base string, wf *compiler.CompiledWorkflow) (map[string]w
 // into the run snapshot (CLI parity with loadWorkflowRuntimes). This is an
 // admission read: startNew MUST read from the workspace here, and resume must
 // never call it. Guards mirror loadOutputSchemas (path traversal + size cap).
-func loadStepTemplates(base string, wf *compiler.CompiledWorkflow) (map[string]workflowledger.RefSnapshot, error) {
+func loadStepTemplates(base string, wf *definition.CompiledWorkflow) (map[string]workflowledger.RefSnapshot, error) {
 	templates := make(map[string]workflowledger.RefSnapshot)
 	for _, step := range wf.Steps {
 		if step.Kind != "agent" && step.Kind != "agent_gate" {
@@ -161,7 +160,7 @@ func loadStepTemplates(base string, wf *compiler.CompiledWorkflow) (map[string]w
 // definition-declared provider/model binding) into the run snapshot, so
 // dispatch and resume verify against the admitted definition instead of a
 // synthetic digest (CLI parity with workflowAgent).
-func resolveStepAgents(wf *compiler.CompiledWorkflow, registry *agents.AgentRegistry) (map[string]workflowledger.AgentSnapshot, error) {
+func resolveStepAgents(wf *definition.CompiledWorkflow, registry *agents.AgentRegistry) (map[string]workflowledger.AgentSnapshot, error) {
 	pins := make(map[string]workflowledger.AgentSnapshot)
 	for _, step := range wf.Steps {
 		if step.Kind != "agent" && step.Kind != "agent_gate" {
@@ -195,7 +194,7 @@ func resolveStepAgents(wf *compiler.CompiledWorkflow, registry *agents.AgentRegi
 // when the live definition digest no longer matches the admitted pin (CLI
 // parity with workflowAgent's prior check). Provider/model stay pinned: they
 // are admission data, not live policy.
-func verifyStepAgents(wf *compiler.CompiledWorkflow, registry *agents.AgentRegistry, pinned map[string]workflowledger.AgentSnapshot) error {
+func verifyStepAgents(wf *definition.CompiledWorkflow, registry *agents.AgentRegistry, pinned map[string]workflowledger.AgentSnapshot) error {
 	for _, step := range wf.Steps {
 		if step.Kind != "agent" && step.Kind != "agent_gate" {
 			continue
@@ -219,7 +218,7 @@ func verifyStepAgents(wf *compiler.CompiledWorkflow, registry *agents.AgentRegis
 	return nil
 }
 
-func loadPanelSnapshotAssets(base string, wf *compiler.CompiledWorkflow, schemas map[string]workflowledger.RefSnapshot, registry *agents.AgentRegistry) (map[string]workflowledger.RefSnapshot, map[string]workflowledger.PanelBindingSnapshot, error) {
+func loadPanelSnapshotAssets(base string, wf *definition.CompiledWorkflow, schemas map[string]workflowledger.RefSnapshot, registry *agents.AgentRegistry) (map[string]workflowledger.RefSnapshot, map[string]workflowledger.PanelBindingSnapshot, error) {
 	templates := make(map[string]workflowledger.RefSnapshot)
 	bindings := make(map[string]workflowledger.PanelBindingSnapshot)
 	for _, step := range wf.Steps {

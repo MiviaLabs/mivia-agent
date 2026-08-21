@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -64,7 +63,7 @@ func TestWaitForIntegrationMergeRetriesAutoMergeEachTick(t *testing.T) {
 	root, _ := scratchStackRepo(t)
 	gitRun(t, root, "checkout", "-b", "wf/wt-integration")
 	gitRun(t, root, "push", "origin", "wf/wt-integration")
-	prepared := &preparedWorkflowRun{repo: repo, root: root, compiled: &compiler.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}}}
+	prepared := &preparedWorkflowRun{repo: repo, root: root, compiled: &definition.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}}}
 
 	merges := &retryThenSuccessMergePR{t: t}
 	prevMerge := workflowStackMergePR
@@ -110,7 +109,7 @@ func TestWaitForIntegrationMergePermanentMergeErrorHalts(t *testing.T) {
 	root, _ := scratchStackRepo(t)
 	gitRun(t, root, "checkout", "-b", "wf/wt-integration")
 	gitRun(t, root, "push", "origin", "wf/wt-integration")
-	prepared := &preparedWorkflowRun{repo: repo, root: root, compiled: &compiler.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}}}
+	prepared := &preparedWorkflowRun{repo: repo, root: root, compiled: &definition.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}}}
 
 	merges := &recordingStackMergePR{err: errors.New("merge PR 123: pull request is closed")}
 	prevMerge := workflowStackMergePR

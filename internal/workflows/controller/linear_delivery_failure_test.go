@@ -7,7 +7,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -130,7 +129,7 @@ func TestDeliveryFailureBindingTruncatesRuneSafe(t *testing.T) {
 func staleDeliveryZombieFixture(t *testing.T, wf *definition.WorkflowFile) (workflowledger.Repository, string, workflowledger.StepAttempt, *LinearController) {
 	t.Helper()
 	ctx := context.Background()
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
@@ -54,7 +54,7 @@ func newTestPanelWorkSpecController(t *testing.T, repo workflowledger.Repository
 	if err != nil {
 		return nil, err
 	}
-	return NewLinearController(repo, &linearRunner{}, &compiler.CompiledWorkflow{}, nil, nil, "wfr-panel-work-spec", snapshot)
+	return NewLinearController(repo, &linearRunner{}, &definition.CompiledWorkflow{}, nil, nil, "wfr-panel-work-spec", snapshot)
 }
 
 func fortyByteHexPad(s string) string {

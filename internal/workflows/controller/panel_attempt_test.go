@@ -12,7 +12,6 @@ import (
 	coordledger "github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
@@ -50,7 +49,7 @@ func TestBuildPanelAttemptAdmitsAllowPartial(t *testing.T) {
 		t.Fatal(err)
 	}
 	repo := workflowledger.NewMemoryRepository()
-	ctrl, err := NewLinearController(repo, &linearRunner{}, &compiler.CompiledWorkflow{Steps: []definition.Step{step}}, nil, map[string]any{"task": "change"}, "wfr-panel-allow-partial", snapshot)
+	ctrl, err := NewLinearController(repo, &linearRunner{}, &definition.CompiledWorkflow{Steps: []definition.Step{step}}, nil, map[string]any{"task": "change"}, "wfr-panel-allow-partial", snapshot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +92,7 @@ func TestBuildPanelAttemptPinsEachMemberBindingAndDeadline(t *testing.T) {
 		t.Fatal(err)
 	}
 	repo := workflowledger.NewMemoryRepository()
-	ctrl, err := NewLinearController(repo, &linearRunner{}, &compiler.CompiledWorkflow{Steps: []definition.Step{step}}, nil, map[string]any{"task": "change"}, "wfr-panel-pins", snapshot)
+	ctrl, err := NewLinearController(repo, &linearRunner{}, &definition.CompiledWorkflow{Steps: []definition.Step{step}}, nil, map[string]any{"task": "change"}, "wfr-panel-pins", snapshot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +153,7 @@ func TestPanelMemberWorkLimitsHonorStepMaxTurns(t *testing.T) {
 				t.Fatal(err)
 			}
 			repo := workflowledger.NewMemoryRepository()
-			ctrl, err := NewLinearController(repo, &linearRunner{}, &compiler.CompiledWorkflow{Steps: []definition.Step{step}}, nil, map[string]any{"task": "change"}, fmt.Sprintf("wfr-panel-turns-%d", i), snapshot)
+			ctrl, err := NewLinearController(repo, &linearRunner{}, &definition.CompiledWorkflow{Steps: []definition.Step{step}}, nil, map[string]any{"task": "change"}, fmt.Sprintf("wfr-panel-turns-%d", i), snapshot)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -206,7 +205,7 @@ func panelStepFixture(t *testing.T, runID string) (*LinearController, workflowle
 	coordLedger := coordledger.NewMemoryLedgerRepository()
 	coord := coordinator.New(coordLedger, subagents.New(dispatcher, subagents.Policy{Workers: 2}))
 	repo := workflowledger.NewMemoryRepository()
-	wf := &compiler.CompiledWorkflow{Name: "panel", InitialStep: step.ID, Steps: []definition.Step{step}}
+	wf := &definition.CompiledWorkflow{Name: "panel", InitialStep: step.ID, Steps: []definition.Step{step}}
 	ctrl, err := NewLinearController(repo, NewCoordinatorRunner(coord), wf, nil, map[string]any{"task": "change"}, runID, snapshot)
 	if err != nil {
 		t.Fatal(err)
@@ -237,7 +236,7 @@ func TestBuildPanelAttemptFailsClosedOnMissingTemplate(t *testing.T) {
 		t.Fatal(err)
 	}
 	repo := workflowledger.NewMemoryRepository()
-	ctrl, err := NewLinearController(repo, &linearRunner{}, &compiler.CompiledWorkflow{Steps: []definition.Step{step}}, nil, map[string]any{"task": "change"}, "wfr-panel-missing-template", snapshot)
+	ctrl, err := NewLinearController(repo, &linearRunner{}, &definition.CompiledWorkflow{Steps: []definition.Step{step}}, nil, map[string]any{"task": "change"}, "wfr-panel-missing-template", snapshot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +273,7 @@ func TestBuildPanelAttemptFailsClosedOnMissingSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	repo := workflowledger.NewMemoryRepository()
-	ctrl, err := NewLinearController(repo, &linearRunner{}, &compiler.CompiledWorkflow{Steps: []definition.Step{step}}, nil, map[string]any{"task": "change"}, "wfr-panel-missing-schema", snapshot)
+	ctrl, err := NewLinearController(repo, &linearRunner{}, &definition.CompiledWorkflow{Steps: []definition.Step{step}}, nil, map[string]any{"task": "change"}, "wfr-panel-missing-schema", snapshot)
 	if err != nil {
 		t.Fatal(err)
 	}

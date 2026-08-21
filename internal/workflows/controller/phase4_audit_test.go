@@ -8,12 +8,11 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
-func humanOnlyWorkflow(t *testing.T) *compiler.CompiledWorkflow {
+func humanOnlyWorkflow(t *testing.T) *definition.CompiledWorkflow {
 	t.Helper()
 	wf := &definition.WorkflowFile{
 		Version: 1, Name: "human-only", InitialStep: "approve_me",
@@ -26,7 +25,7 @@ func humanOnlyWorkflow(t *testing.T) *compiler.CompiledWorkflow {
 			{From: "approve_me", To: "success", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"decision": "approved"}}},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +43,7 @@ func TestHumanGateApproveZeroMatchPersistsDecisionJSON(t *testing.T) {
 			{From: "approve_me", To: "success", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"decision": "other"}}},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +230,7 @@ func TestHumanGateReentryAfterPriorSuccessMintsNewAttemptAndApproval(t *testing.
 			{From: "work", To: "success", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"round": "2"}}},
 		},
 	}
-	compiled, err := compiler.Compile(wfLoop)
+	compiled, err := definition.Compile(wfLoop)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,7 +293,7 @@ func TestHumanGateStaleApprovalIDDoesNotCompleteNewerAttempt(t *testing.T) {
 			{From: "work", To: "success", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"round": "2"}}},
 		},
 	}
-	compiled, err := compiler.Compile(wfLoop)
+	compiled, err := definition.Compile(wfLoop)
 	if err != nil {
 		t.Fatal(err)
 	}

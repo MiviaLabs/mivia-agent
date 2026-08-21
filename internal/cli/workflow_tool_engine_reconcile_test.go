@@ -13,7 +13,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
@@ -166,7 +165,7 @@ func seedParkedStackingPlanRunTOML(t *testing.T, root, storePath string, repo wo
 	if err != nil {
 		t.Fatal(err)
 	}
-	compiled, err := compiler.Compile(&wf)
+	compiled, err := definition.Compile(&wf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -611,7 +610,7 @@ func wireParkedResumeStubs(t *testing.T, repo workflowledger.Repository, advance
 		return nil, repo, func() {}, nil
 	}
 	workflowResumeInstallHooks = func(string, bool, bool) (func(), error) { return func() {}, nil }
-	workflowResumeBuild = func(_ string, _ *config.Resolved, _ *storage.SQLite, _ workflowledger.Repository, _ *compiler.CompiledWorkflow, _ string, _ map[string]any, _ map[string]string, _ []byte, _ string, _ *workflowledger.Snapshot, _ []byte, recorded *workflowledger.RunSnapshot, _ map[string]bool, _ *skills.Registry) (workflowControllerBuild, error) {
+	workflowResumeBuild = func(_ string, _ *config.Resolved, _ *storage.SQLite, _ workflowledger.Repository, _ *definition.CompiledWorkflow, _ string, _ map[string]any, _ map[string]string, _ []byte, _ string, _ *workflowledger.Snapshot, _ []byte, recorded *workflowledger.RunSnapshot, _ map[string]bool, _ *skills.Registry) (workflowControllerBuild, error) {
 		ctrl := &controller.LinearController{Holder: parkedSweepHolder}
 		if recorded != nil {
 			ctrl.RunID = recorded.RunID

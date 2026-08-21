@@ -12,13 +12,12 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
 func TestWorkflowSkillSnapshotRejectsChangedSkillOnResume(t *testing.T) {
-	wf := &compiler.CompiledWorkflow{Steps: []definition.Step{{Skill: "workflow-safe"}}}
+	wf := &definition.CompiledWorkflow{Steps: []definition.Step{{Skill: "workflow-safe"}}}
 	initial := skills.NewRegistry()
 	if err := initial.Register(skills.Definition{Name: "workflow-safe", Instructions: "admitted instruction", Tools: []string{"read_file"}}); err != nil {
 		t.Fatal(err)
@@ -67,7 +66,7 @@ func TestWorkflowSkillBytesWrapsResourceSnapshotError(t *testing.T) {
 }
 
 func TestWorkflowSkillSnapshotRejectsChangedPanelMemberSkillOnResume(t *testing.T) {
-	wf := &compiler.CompiledWorkflow{Steps: []definition.Step{{
+	wf := &definition.CompiledWorkflow{Steps: []definition.Step{{
 		ID: "review", Kind: "agent_panel", Panel: &definition.AgentPanel{Members: []definition.PanelMember{{ID: "security", Skill: "review"}}},
 	}}}
 	initial := skills.NewRegistry()
@@ -116,7 +115,7 @@ func TestWorkflowSkillSnapshotRejectsChangedResourceOnResume(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	wf := &compiler.CompiledWorkflow{Steps: []definition.Step{{Skill: "workflow-safe"}}}
+	wf := &definition.CompiledWorkflow{Steps: []definition.Step{{Skill: "workflow-safe"}}}
 	initial := loadWorkflowSnapshotSkills(t, root)
 	raw, err := workflowledger.MarshalSnapshot(workflowledger.Snapshot{SchemaVersion: workflowledger.SnapshotSchemaVersion, DefinitionTOML: []byte("workflow"), DefinitionDigest: "digest"})
 	if err != nil {
@@ -152,7 +151,7 @@ func TestWorkflowSkillSnapshotRejectsChangedResourceOnResume(t *testing.T) {
 func TestWorkflowSkillDispatchServesPinnedBytes(t *testing.T) {
 	root := t.TempDir()
 	skillReg := resourceSkillRegistryAt(t, root)
-	wf := &compiler.CompiledWorkflow{Steps: []definition.Step{{Skill: "review"}}}
+	wf := &definition.CompiledWorkflow{Steps: []definition.Step{{Skill: "review"}}}
 	raw, err := workflowledger.MarshalSnapshot(workflowledger.Snapshot{SchemaVersion: workflowledger.SnapshotSchemaVersion, DefinitionTOML: []byte("workflow"), DefinitionDigest: "digest"})
 	if err != nil {
 		t.Fatal(err)
@@ -300,7 +299,7 @@ func TestAcceptSkillChangeReachesDispatch(t *testing.T) {
 // step stays in scope.
 func TestWorkflowRemainingSteps(t *testing.T) {
 	ctx := context.Background()
-	wf := &compiler.CompiledWorkflow{
+	wf := &definition.CompiledWorkflow{
 		Steps: []definition.Step{
 			{ID: "s1", Skill: "audit"},
 			{ID: "s2", Skill: "audit"},
@@ -390,7 +389,7 @@ func skillTestRegistry(defs map[string]string) *skills.Registry {
 	return reg
 }
 
-func skillTestWorkflow(stepSkills map[string]string) *compiler.CompiledWorkflow {
+func skillTestWorkflow(stepSkills map[string]string) *definition.CompiledWorkflow {
 	ids := make([]string, 0, len(stepSkills))
 	for id := range stepSkills {
 		ids = append(ids, id)
@@ -399,10 +398,10 @@ func skillTestWorkflow(stepSkills map[string]string) *compiler.CompiledWorkflow 
 	for _, id := range ids {
 		steps = append(steps, definition.Step{ID: id, Kind: "agent", Skill: stepSkills[id], Agent: "test"})
 	}
-	return &compiler.CompiledWorkflow{Steps: steps}
+	return &definition.CompiledWorkflow{Steps: steps}
 }
 
-func skillPinnedSnapshot(t *testing.T, wf *compiler.CompiledWorkflow, reg *skills.Registry) *workflowledger.Snapshot {
+func skillPinnedSnapshot(t *testing.T, wf *definition.CompiledWorkflow, reg *skills.Registry) *workflowledger.Snapshot {
 	t.Helper()
 	raw, err := workflowledger.MarshalSnapshot(workflowledger.Snapshot{SchemaVersion: workflowledger.SnapshotSchemaVersion, DefinitionTOML: []byte("workflow"), DefinitionDigest: "digest"})
 	if err != nil {
@@ -617,7 +616,7 @@ func TestSkillSnapshotScopedMultiSkillOnlyNamesDrifted(t *testing.T) {
 // F8: acceptWorkflowSkillChanges must fail closed when a panel skill binding
 // was stripped from the snapshot, instead of fabricating a zero-value binding.
 func TestAcceptWorkflowSkillChangesRejectsMissingPanelBinding(t *testing.T) {
-	wf := &compiler.CompiledWorkflow{Steps: []definition.Step{{
+	wf := &definition.CompiledWorkflow{Steps: []definition.Step{{
 		ID: "review", Kind: "agent_panel", Panel: &definition.AgentPanel{Members: []definition.PanelMember{{ID: "security", Skill: "review"}}},
 	}}}
 	reg := skillTestRegistry(map[string]string{"review": "original instructions"})

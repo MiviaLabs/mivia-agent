@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/charmbracelet/lipgloss"
@@ -80,14 +79,14 @@ type workflowRunView struct {
 // records and the compiled definition. Step states come from typed
 // StepAttempt/ApprovalRecord rows and run.ActiveStepID; the definition was
 // already parsed and compiled by the existing definition.ParseWorkflowTOML +
-// compiler.Compile path (workflowCompiledByName), never re-parsed here. A
+// definition.Compile path (workflowCompiledByName), never re-parsed here. A
 // missing definition degrades to header facts plus a notice, never an error;
 // an empty run id is the only error (the run vanished before open). The
 // variadic deliveries carry the run's durable delivery records; existing
 // call sites that render no delivery records need no change. claim carries
 // the run's execution claim read for delivery_pending liveness (fresh claim =
 // delivery in flight, stale = crashed delivery, none = waiting).
-func buildWorkflowRunView(run workflowledger.RunSnapshot, compiled *compiler.CompiledWorkflow, attempts []workflowledger.StepAttempt, approvals []workflowledger.ApprovalRecord, now time.Time, claim workflowRunDeliveryClaim, deliveries ...[]workflowledger.DeliveryRecord) (*workflowRunView, error) {
+func buildWorkflowRunView(run workflowledger.RunSnapshot, compiled *definition.CompiledWorkflow, attempts []workflowledger.StepAttempt, approvals []workflowledger.ApprovalRecord, now time.Time, claim workflowRunDeliveryClaim, deliveries ...[]workflowledger.DeliveryRecord) (*workflowRunView, error) {
 	if run.RunID == "" {
 		return nil, errors.New("workflow run not found")
 	}
@@ -264,7 +263,7 @@ func workflowDeliveryClaimLine(claim workflowRunDeliveryClaim, now time.Time) st
 // live state. The latest attempt per step wins; a gate step with a pending
 // approval reads waiting; run.ActiveStepID marks the "here" position when no
 // attempt row exists yet.
-func buildWorkflowRunSteps(compiled *compiler.CompiledWorkflow, run workflowledger.RunSnapshot, attempts []workflowledger.StepAttempt, approvals []workflowledger.ApprovalRecord) []workflowStepRow {
+func buildWorkflowRunSteps(compiled *definition.CompiledWorkflow, run workflowledger.RunSnapshot, attempts []workflowledger.StepAttempt, approvals []workflowledger.ApprovalRecord) []workflowStepRow {
 	latest := make(map[string]workflowledger.StepAttempt, len(attempts))
 	for i := range attempts {
 		a := attempts[i]

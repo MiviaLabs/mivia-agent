@@ -14,7 +14,6 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/textutil"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/template"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
@@ -97,7 +96,7 @@ func clampMax(v, def int) int {
 
 // FromCompiled returns the delivery policy of a compiled workflow and whether
 // publication is required (kind=pull_request and mode in draft|ready).
-func FromCompiled(wf *compiler.CompiledWorkflow) (Policy, bool) {
+func FromCompiled(wf *definition.CompiledWorkflow) (Policy, bool) {
 	if wf == nil || !wf.DeliveryActive() {
 		return Policy{}, false
 	}

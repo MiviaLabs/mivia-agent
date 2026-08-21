@@ -13,7 +13,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	workflowspace "github.com/MiviaLabs/mivia-agent/internal/workflows/workspace"
@@ -608,7 +607,7 @@ func TestWorkflowDeliveryProbeSeamRefusesUnusableTool(t *testing.T) {
 // declares delivery must be refused at admission when the provider's PR tool
 // is unusable, instead of spending the whole run and dying at publication.
 func TestWorkflowDeliveryAdmissionProbesPRTool(t *testing.T) {
-	wf := &compiler.CompiledWorkflow{
+	wf := &definition.CompiledWorkflow{
 		Name: "wf-probe",
 		Delivery: &definition.Delivery{
 			Kind: "pull_request", Mode: "draft", Provider: "github", Base: "master",

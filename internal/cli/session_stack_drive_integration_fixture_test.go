@@ -40,8 +40,8 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
@@ -343,7 +343,7 @@ type stackDriveIT struct {
 	res        *config.Resolved
 	repo       workflowledger.Repository
 	rawDef     []byte
-	compiled   *compiler.CompiledWorkflow
+	compiled   *definition.CompiledWorkflow
 }
 
 func newStackDriveIT(t *testing.T, mergePolicy, planOutput string) *stackDriveIT {
@@ -438,12 +438,12 @@ func (it *stackDriveIT) installDriveSeams() {
 // runtimes the production build path would, in the run's per-run worktree
 // (the isolation selectWorkflowWorkspace provides), so the controller sees a
 // faithful build result without invoking real tool runs.
-func (it *stackDriveIT) buildStub(buildRoot string, _ *config.Resolved, _ *storage.SQLite, repo workflowledger.Repository, compiled *compiler.CompiledWorkflow, _ string, _ map[string]any, inputSnapshot map[string]string, _ []byte, id string, _ *workflowledger.Snapshot, _ []byte, _ *workflowledger.RunSnapshot, _ map[string]bool, _ *skills.Registry) (workflowControllerBuild, error) {
+func (it *stackDriveIT) buildStub(buildRoot string, _ *config.Resolved, _ *storage.SQLite, repo workflowledger.Repository, compiled *definition.CompiledWorkflow, _ string, _ map[string]any, inputSnapshot map[string]string, _ []byte, id string, _ *workflowledger.Snapshot, _ []byte, _ *workflowledger.RunSnapshot, _ map[string]bool, _ *skills.Registry) (workflowControllerBuild, error) {
 	identity, cleanup, err := selectWorkflowWorkspace(context.Background(), buildRoot, id, true, nil)
 	if err != nil {
 		return workflowControllerBuild{}, err
 	}
-	synth, err := compiler.SynthesizeStacking(compiled)
+	synth, err := definition.SynthesizeStacking(compiled)
 	if err != nil {
 		cleanup()
 		return workflowControllerBuild{}, err

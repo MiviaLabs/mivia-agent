@@ -15,7 +15,7 @@ import (
 	"io"
 	"sort"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
@@ -37,7 +37,7 @@ var errStackAwaitsGrant = errors.New("stack awaits a human publish grant or merg
 // merge_policy=approve never pauses and the checkpoint is dead); the
 // per-chunk `mivia workflow deliver --allow-publish` grant is the only
 // channel that advances an approve stack.
-func stackingDriveAllowPublish(compiled *compiler.CompiledWorkflow) bool {
+func stackingDriveAllowPublish(compiled *definition.CompiledWorkflow) bool {
 	return compiled != nil && compiled.Stacking != nil && compiled.Stacking.MergePolicy == "auto"
 }
 

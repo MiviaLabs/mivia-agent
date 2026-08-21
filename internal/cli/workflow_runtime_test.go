@@ -12,7 +12,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
@@ -183,7 +182,7 @@ func TestLoadWorkflowRuntimesPinsPanelMemberBindings(t *testing.T) {
 	if err := registry.Publish(synthesizer); err != nil {
 		t.Fatal(err)
 	}
-	wf := &compiler.CompiledWorkflow{Digest: "workflow", Steps: []definition.Step{{
+	wf := &definition.CompiledWorkflow{Digest: "workflow", Steps: []definition.Step{{
 		ID: "review", Kind: "agent_panel", Agent: "review-synthesizer", Panel: &definition.AgentPanel{Members: []definition.PanelMember{{
 			ID: "security", Agent: "panel-reviewer", Provider: "deepseek", Model: "deepseek-v4-flash", Skill: "bug-audit", Template: "member.md", OutputSchema: "member.json",
 		}}},
@@ -376,7 +375,7 @@ func TestResolveWorkflowPanelSynthesisBindingsRejectsDeclaredOrMisnamedSynthesiz
 }
 
 type panelAuthorizationFixture struct {
-	workflow *compiler.CompiledWorkflow
+	workflow *definition.CompiledWorkflow
 	agents   *agents.AgentRegistry
 	snapshot workflowledger.Snapshot
 	opts     SessionDispatcherOpts
@@ -406,7 +405,7 @@ func newPanelAuthorizationFixture(t *testing.T) *panelAuthorizationFixture {
 	if err := registry.Publish(agents.ResolvedAgent{Name: "review-synthesizer", EffectiveTools: []string{}, AllowEmptyTools: true, DisallowedTools: []string{toolPostMessage}}); err != nil {
 		t.Fatal(err)
 	}
-	workflow := &compiler.CompiledWorkflow{Steps: []definition.Step{{
+	workflow := &definition.CompiledWorkflow{Steps: []definition.Step{{
 		ID: "review", Kind: "agent_panel", Agent: "review-synthesizer", Skill: "synth", Panel: &definition.AgentPanel{Members: []definition.PanelMember{
 			{ID: "security", Agent: "panel-reviewer", Provider: "deepseek", Model: "flash", Skill: "review"},
 			{ID: "correctness", Agent: "panel-reviewer", Provider: "zai", Model: "fast", Skill: "review"},

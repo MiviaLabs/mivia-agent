@@ -14,7 +14,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/jschema"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 )
 
@@ -25,14 +24,14 @@ func TestFeatureDeliveryWorkflowContract(t *testing.T) {
 	root := committedWorkflowRoot(t)
 	workflow, base := loadCommittedFeatureDeliveryWorkflow(t, root)
 
-	compiled, err := compiler.Compile(&workflow)
+	compiled, err := definition.Compile(&workflow)
 	if err != nil {
 		t.Fatalf("compile committed feature-delivery workflow: %v", err)
 	}
-	if err := sliceErrors("workflow", compiler.ValidateAgentReferences(&workflow, root)); err != nil {
+	if err := sliceErrors("workflow", definition.ValidateAgentReferences(&workflow, root)); err != nil {
 		t.Fatalf("validate committed workflow agents: %v", err)
 	}
-	if err := sliceErrors("workflow", compiler.ValidateSchemaReferences(&workflow, base)); err != nil {
+	if err := sliceErrors("workflow", definition.ValidateSchemaReferences(&workflow, base)); err != nil {
 		t.Fatalf("validate committed workflow schemas: %v", err)
 	}
 	for _, step := range workflow.Steps {
@@ -55,7 +54,7 @@ func TestFeatureDeliveryWorkflowContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load committed workflow agents: %v", err)
 	}
-	if err := sliceErrors("workflow", compiler.ValidateAgentSkillReferences(compiled, loaded.Registry, skillRegistry)); err != nil {
+	if err := sliceErrors("workflow", definition.ValidateAgentSkillReferences(compiled, loaded.Registry, skillRegistry)); err != nil {
 		t.Fatalf("validate committed workflow agent skills: %v", err)
 	}
 

@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -122,7 +121,7 @@ func (e *Engine) stackDriveAfterPark(ctx context.Context, runID string) {
 }
 
 // compileStackPlanRun compiles a run's recorded definition TOML for resume.
-func compileStackPlanRun(ctx context.Context, repo workflowledger.Repository, run workflowledger.RunSnapshot) (*compiler.CompiledWorkflow, error) {
+func compileStackPlanRun(ctx context.Context, repo workflowledger.Repository, run workflowledger.RunSnapshot) (*definition.CompiledWorkflow, error) {
 	raw, err := repo.GetRunSnapshot(ctx, run.RunID)
 	if err != nil {
 		return nil, err
@@ -135,12 +134,12 @@ func compileStackPlanRun(ctx context.Context, repo workflowledger.Repository, ru
 	if err != nil {
 		return nil, err
 	}
-	return compiler.CompileForResume(&wf)
+	return definition.CompileForResume(&wf)
 }
 
 // driveStackLoop advances the stack until it is complete or nothing can
 // progress, polling durable state between passes.
-func (e *Engine) driveStackLoop(ctx context.Context, planRun workflowledger.RunSnapshot, compiled *compiler.CompiledWorkflow, ledger *tasks.Store, stackID string, chunks []stacking.ChunkPlan, order []string, planInputs map[string]string, prBase string) {
+func (e *Engine) driveStackLoop(ctx context.Context, planRun workflowledger.RunSnapshot, compiled *definition.CompiledWorkflow, ledger *tasks.Store, stackID string, chunks []stacking.ChunkPlan, order []string, planInputs map[string]string, prBase string) {
 	autoPublish := compiled.Stacking.MergePolicy == "auto"
 	chunkPlans := make(map[string]*stacking.ChunkPlan, len(chunks))
 	for i := range chunks {

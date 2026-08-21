@@ -6,7 +6,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -24,7 +23,7 @@ func (wireProgressNoopRunner) RunStep(context.Context, controller.AgentStepReque
 // compileWireProgressWorkflow builds the smallest compiled workflow a
 // LinearController can admit, enough to exercise the controller wiring paths
 // without dispatching any agent step.
-func compileWireProgressWorkflow(t *testing.T) *compiler.CompiledWorkflow {
+func compileWireProgressWorkflow(t *testing.T) *definition.CompiledWorkflow {
 	t.Helper()
 	wf := &definition.WorkflowFile{
 		Version: 1, Name: "wire-progress", InitialStep: "one",
@@ -36,7 +35,7 @@ func compileWireProgressWorkflow(t *testing.T) *compiler.CompiledWorkflow {
 			{From: "one", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}

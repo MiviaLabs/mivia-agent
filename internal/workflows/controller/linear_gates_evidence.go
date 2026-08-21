@@ -8,7 +8,6 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/verifier"
 )
 
 // The evidence-gate drive: admit an attempt, run the host verifier, and settle
@@ -116,13 +115,13 @@ func (c *LinearController) settleEvidenceGateTimeout(ctx context.Context, run wo
 // dispatches no coordinator child: the ticker is stopped on every return path
 // (defer) and exits when the step context is canceled, and its writes are
 // throttled + best-effort, so a ledger write error can never fail the gate.
-func (c *LinearController) runGateVerify(ctx context.Context, step definition.Step, attempt workflowledger.StepAttempt, gateDetail string, profile verifier.Profile) (verifier.Result, error) {
+func (c *LinearController) runGateVerify(ctx context.Context, step definition.Step, attempt workflowledger.StepAttempt, gateDetail string, profile definition.Profile) (definition.Result, error) {
 	c.emitProgress(ProgressEvent{
 		Kind: ProgressGateStarted, StepID: step.ID, AttemptNo: attempt.AttemptNo, Detail: gateDetail,
 	})
 	stopGateHeartbeats := c.startDurableHeartbeatTicker(ctx, attempt.AttemptID)
 	defer stopGateHeartbeats()
-	return profile.Verify(ctx, verifier.Request{
+	return profile.Verify(ctx, definition.Request{
 		WorkDir:        c.WorkDir,
 		StepID:         step.ID,
 		RunID:          c.RunID,
@@ -132,9 +131,9 @@ func (c *LinearController) runGateVerify(ctx context.Context, step definition.St
 
 // verifierProfile resolves the evidence gate's verifier: a named catalogue
 // profile, or a sandboxed command profile built from the step declaration.
-func (c *LinearController) verifierProfile(step definition.Step) (verifier.Profile, error) {
+func (c *LinearController) verifierProfile(step definition.Step) (definition.Profile, error) {
 	if step.Command != nil {
-		return verifier.NewCommandProfile(step.Command.Check, step.Command.Program, step.Command.Args, c.SecretPolicy)
+		return definition.NewCommandProfile(step.Command.Check, step.Command.Program, step.Command.Args, c.SecretPolicy)
 	}
 	if c.Verifiers == nil {
 		return nil, fmt.Errorf("step %q requires a verifier catalogue", step.ID)
@@ -142,7 +141,7 @@ func (c *LinearController) verifierProfile(step definition.Step) (verifier.Profi
 	return c.Verifiers.Lookup(step.Verifier)
 }
 
-func (c *LinearController) routeEvidenceFailure(ctx context.Context, run workflowledger.RunSnapshot, attempt workflowledger.StepAttempt, step definition.Step, result verifier.Result, output []byte, outputMap map[string]any) (workflowledger.RunSnapshot, bool, error) {
+func (c *LinearController) routeEvidenceFailure(ctx context.Context, run workflowledger.RunSnapshot, attempt workflowledger.StepAttempt, step definition.Step, result definition.Result, output []byte, outputMap map[string]any) (workflowledger.RunSnapshot, bool, error) {
 	writeCtx, cancel := stepPersistenceContext(ctx)
 	defer cancel()
 	// A gate failure that names a write-blocklisted path is never a
@@ -192,7 +191,7 @@ func (c *LinearController) routeEvidenceFailure(ctx context.Context, run workflo
 	return settleAfterRoute(ctx, c, run, route)
 }
 
-func checksAsAny(checks []verifier.Check) []any {
+func checksAsAny(checks []definition.Check) []any {
 	out := make([]any, len(checks))
 	for i, c := range checks {
 		item := map[string]any{"name": c.Name, "status": c.Status}

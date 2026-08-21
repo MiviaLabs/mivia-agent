@@ -9,10 +9,8 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/verifier"
 )
 
 // countHeartbeatEvents returns how many wf_attempt_heartbeat events the run's
@@ -205,18 +203,18 @@ type blockingVerifierProfile struct {
 	name    string
 	started chan struct{}
 	release chan struct{}
-	result  verifier.Result
+	result  definition.Result
 }
 
 func (p *blockingVerifierProfile) Name() string { return p.name }
 
-func (p *blockingVerifierProfile) Verify(ctx context.Context, _ verifier.Request) (verifier.Result, error) {
+func (p *blockingVerifierProfile) Verify(ctx context.Context, _ definition.Request) (definition.Result, error) {
 	close(p.started)
 	select {
 	case <-p.release:
 		return p.result, nil
 	case <-ctx.Done():
-		return verifier.Result{}, ctx.Err()
+		return definition.Result{}, ctx.Err()
 	}
 }
 
@@ -238,15 +236,15 @@ func TestEvidenceGateDurableHeartbeatWhileRunning(t *testing.T) {
 			{From: "verify", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
 	gate := &blockingVerifierProfile{
 		name: "slow-check", started: make(chan struct{}), release: make(chan struct{}),
-		result: verifier.Result{Status: "passed"},
+		result: definition.Result{Status: "passed"},
 	}
-	cat := verifier.NewCatalogue()
+	cat := definition.NewCatalogue()
 	if err := cat.Register(gate); err != nil {
 		t.Fatal(err)
 	}

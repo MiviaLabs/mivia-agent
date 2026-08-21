@@ -11,7 +11,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
@@ -113,7 +113,7 @@ func executeWorkflowResume(runID, root, configPath string, force, allowPublish, 
 // prepareWorkflowResumeAdmission loads the skill registry once (R5) so the
 // acceptance rewrite and the build verify against the same bytes, applies
 // --accept-skill-change, and derives the set of steps still to run (R3).
-func prepareWorkflowResumeAdmission(ctx context.Context, repo workflowledger.Repository, root string, compiled *compiler.CompiledWorkflow, runID string, acceptSkillChange bool, snapshot *workflowledger.Snapshot, stderr io.Writer) (map[string]bool, *skills.Registry, error) {
+func prepareWorkflowResumeAdmission(ctx context.Context, repo workflowledger.Repository, root string, compiled *definition.CompiledWorkflow, runID string, acceptSkillChange bool, snapshot *workflowledger.Snapshot, stderr io.Writer) (map[string]bool, *skills.Registry, error) {
 	registry, err := workflowBuildLoadSkills(root)
 	if err != nil {
 		return nil, nil, fmt.Errorf("load skills: %w", err)
@@ -145,7 +145,7 @@ func prepareWorkflowResumeAdmission(ctx context.Context, repo workflowledger.Rep
 // settleCLIRunFailure (DC-9), and a delivery_pending settlement routes to
 // finishWorkflowResumeSettled (drive-before-delivery, mirroring executeWorkflowRun). executeWorkflowResume's deferred
 // releaseWorkflowResumeHandoff stays as the safety net for the pre-Run path.
-func runWorkflowResumeAndSettle(ctx context.Context, built workflowControllerBuild, repo workflowledger.Repository, runID, workRoot, configPath string, res *config.Resolved, store *storage.SQLite, workflowName string, compiled *compiler.CompiledWorkflow, allowPublish bool, release func(), stdout, stderr io.Writer) error {
+func runWorkflowResumeAndSettle(ctx context.Context, built workflowControllerBuild, repo workflowledger.Repository, runID, workRoot, configPath string, res *config.Resolved, store *storage.SQLite, workflowName string, compiled *definition.CompiledWorkflow, allowPublish bool, release func(), stdout, stderr io.Writer) error {
 	snap, err := workflowResumeRun(ctx, built)
 	// Release the preflight handoff claim BEFORE settling: settle claims the
 	// run with its own holder, so a still-held handoff (the controller stopped
@@ -170,7 +170,7 @@ func runWorkflowResumeAndSettle(ctx context.Context, built workflowControllerBui
 // finishWorkflowResumeTerminal completes a run reconcileWorkflowTerminal
 // already settled, when that settlement landed on delivery_pending; the
 // settled stack drives before delivery exactly as the normal resume path.
-func finishWorkflowResumeTerminal(ctx context.Context, workRoot, configPath string, res *config.Resolved, store *storage.SQLite, repo workflowledger.Repository, runID, workflowName string, compiled *compiler.CompiledWorkflow, allowPublish bool, release func(), stdout, stderr io.Writer) error {
+func finishWorkflowResumeTerminal(ctx context.Context, workRoot, configPath string, res *config.Resolved, store *storage.SQLite, repo workflowledger.Repository, runID, workflowName string, compiled *definition.CompiledWorkflow, allowPublish bool, release func(), stdout, stderr io.Writer) error {
 	settled, err := repo.GetRun(ctx, runID)
 	if err != nil {
 		return err
@@ -188,7 +188,7 @@ func finishWorkflowResumeTerminal(ctx context.Context, workRoot, configPath stri
 // (delivery.deliver_plan_run=false) settles succeeded with the 'plan PR not
 // created' notice instead of delivering. The preparedWorkflowRun is rebuilt
 // from the run snapshot: both resume settle points reach here without it.
-func finishWorkflowResumeSettled(ctx context.Context, root, configPath string, res *config.Resolved, store *storage.SQLite, repo workflowledger.Repository, runID, workflowName string, compiled *compiler.CompiledWorkflow, allowPublish bool, release func(), stdout, stderr io.Writer) error {
+func finishWorkflowResumeSettled(ctx context.Context, root, configPath string, res *config.Resolved, store *storage.SQLite, repo workflowledger.Repository, runID, workflowName string, compiled *definition.CompiledWorkflow, allowPublish bool, release func(), stdout, stderr io.Writer) error {
 	raw, err := repo.GetRunSnapshot(ctx, runID)
 	if err != nil {
 		return err
@@ -228,7 +228,7 @@ func finishWorkflowResumeSettled(ctx context.Context, root, configPath string, r
 // executeWorkflowRun uses; extracted here because executeWorkflowResume needs
 // it at both the crash-recovery settle point and the normal resume-settle
 // point.
-func workflowResumeDeliveryMode(compiled *compiler.CompiledWorkflow) string {
+func workflowResumeDeliveryMode(compiled *definition.CompiledWorkflow) string {
 	if compiled != nil && compiled.Delivery != nil {
 		return compiled.Delivery.Mode
 	}

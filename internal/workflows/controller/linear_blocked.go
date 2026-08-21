@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/blockedpath"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/verifier"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 )
 
 // blockedPathsFromOutput returns the write-blocklisted paths that a SUCCEEDED
@@ -119,7 +119,7 @@ var gateFailurePathRe = regexp.MustCompile(`[A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+
 // never enters the repair loop at all - it fails immediately with the file
 // list, instead of burning a repair attempt that was never going to be
 // admitted.
-func (c *LinearController) blockedPathsFromGateFailures(result verifier.Result) []string {
+func (c *LinearController) blockedPathsFromGateFailures(result definition.Result) []string {
 	if len(c.WritePathBlocklist) == 0 {
 		return nil
 	}

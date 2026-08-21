@@ -30,7 +30,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -139,7 +138,7 @@ func wireExecuteResumeStackStubs(t *testing.T, storePath string, repo workflowle
 		return store, repo, func() { _ = store.Close() }, nil
 	}
 	workflowResumeInstallHooks = func(string, bool, bool) (func(), error) { return func() {}, nil }
-	workflowResumeBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *compiler.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, []byte, *workflowledger.RunSnapshot, map[string]bool, *skills.Registry) (workflowControllerBuild, error) {
+	workflowResumeBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *definition.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, []byte, *workflowledger.RunSnapshot, map[string]bool, *skills.Registry) (workflowControllerBuild, error) {
 		return workflowControllerBuild{Dispatcher: workflowTestDispatcher{}}, nil
 	}
 	workflowResumeSetAdmission = func(workflowControllerBuild) error { return nil }
@@ -362,7 +361,7 @@ func stackingResumeSnapshot(t *testing.T, toml string, inputs map[string]string)
 	if err != nil {
 		t.Fatal(err)
 	}
-	compiled, err := compiler.Compile(&wf)
+	compiled, err := definition.Compile(&wf)
 	if err != nil {
 		t.Fatalf("Compile failed: %v", err)
 	}
@@ -448,7 +447,7 @@ status = "succeeded"
 	if err != nil {
 		t.Fatal(err)
 	}
-	compiled, err := compiler.Compile(&wf)
+	compiled, err := definition.Compile(&wf)
 	if err != nil {
 		t.Fatalf("Compile failed: %v", err)
 	}

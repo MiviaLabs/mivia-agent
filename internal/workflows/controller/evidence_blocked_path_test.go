@@ -7,10 +7,8 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/verifier"
 )
 
 // A gate failure whose Check.Failures line names a write-blocklisted path
@@ -35,14 +33,14 @@ func TestBlockedGateFailureNeverReachesRepair(t *testing.T) {
 			{From: "repair", To: "preflight_structure", Match: definition.MatchCriteria{Status: "succeeded"}},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cat := verifier.NewCatalogue()
-	if err := cat.Register(fixedVerifierProfile{name: "go-structure", result: verifier.Result{
+	cat := definition.NewCatalogue()
+	if err := cat.Register(fixedVerifierProfile{name: "go-structure", result: definition.Result{
 		Status: "failed",
-		Checks: []verifier.Check{{
+		Checks: []definition.Check{{
 			Name: "go-structure", Status: "failed", Class: "source",
 			Failures: []string{
 				"NOTE comment block: internal/workflows/definition/step_defaults.go L5-30 (26 lines, soft 25) - consider docs/ for long rationale.",
@@ -116,14 +114,14 @@ func TestBlockedGateFailureCatchesHardLineNamingBlockedPath(t *testing.T) {
 			{From: "repair", To: "preflight_structure", Match: definition.MatchCriteria{Status: "succeeded"}},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cat := verifier.NewCatalogue()
-	if err := cat.Register(fixedVerifierProfile{name: "go-structure", result: verifier.Result{
+	cat := definition.NewCatalogue()
+	if err := cat.Register(fixedVerifierProfile{name: "go-structure", result: definition.Result{
 		Status: "failed",
-		Checks: []verifier.Check{{
+		Checks: []definition.Check{{
 			Name: "go-structure", Status: "failed", Class: "source",
 			// Exactly the format extractFailures now guarantees survives:
 			// a HARD line, matched by the ^HARD marker regardless of how
@@ -182,14 +180,14 @@ func TestUnblockedGateFailureStillReachesRepair(t *testing.T) {
 			{From: "repair", To: "preflight_structure", Match: definition.MatchCriteria{Status: "succeeded"}},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cat := verifier.NewCatalogue()
-	if err := cat.Register(fixedVerifierProfile{name: "go-structure", result: verifier.Result{
+	cat := definition.NewCatalogue()
+	if err := cat.Register(fixedVerifierProfile{name: "go-structure", result: definition.Result{
 		Status: "failed",
-		Checks: []verifier.Check{{
+		Checks: []definition.Check{{
 			Name: "go-structure", Status: "failed", Class: "source",
 			Failures: []string{
 				"NOTE comment block: internal/cli/context_usage_events_integration_test.go L114-139 (26 lines, soft 25) - consider docs/ for long rationale.",
@@ -226,9 +224,9 @@ func TestUnblockedGateFailureStillReachesRepair(t *testing.T) {
 // from a check that PASSED (only "failed" checks are scanned).
 func TestBlockedPathsFromGateFailuresDedupesAcrossChecksAndLines(t *testing.T) {
 	ctrl := &LinearController{WritePathBlocklist: []string{"internal/mcp", "scripts"}}
-	result := verifier.Result{
+	result := definition.Result{
 		Status: "failed",
-		Checks: []verifier.Check{
+		Checks: []definition.Check{
 			{
 				Name: "go-structure", Status: "failed",
 				Failures: []string{
@@ -260,9 +258,9 @@ func TestBlockedPathsFromGateFailuresDedupesAcrossChecksAndLines(t *testing.T) {
 // slice that a caller might mistake for "checked and found none blocked".
 func TestBlockedPathsFromGateFailuresReturnsNilWhenNoneBlocked(t *testing.T) {
 	ctrl := &LinearController{WritePathBlocklist: []string{"internal/mcp"}}
-	result := verifier.Result{
+	result := definition.Result{
 		Status: "failed",
-		Checks: []verifier.Check{
+		Checks: []definition.Check{
 			{Name: "go-structure", Status: "failed", Failures: []string{
 				"NOTE comment block: internal/cli/foo.go L1-30 (30 lines, soft 25) - consider docs/ for long rationale.",
 			}},

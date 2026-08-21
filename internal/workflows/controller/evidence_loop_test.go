@@ -8,10 +8,8 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/verifier"
 )
 
 // TestEvidenceGateRepairLoopRespectsMaxIterations verifies that an
@@ -117,14 +115,14 @@ func newEvidenceLoopController(t *testing.T, name, runID, onFailure string) (*wo
 			{From: "verify", To: "implement", Match: definition.MatchCriteria{Status: "failed"}, Loop: "repair", MaxIterations: 2},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cat := verifier.NewCatalogue()
+	cat := definition.NewCatalogue()
 	if err := cat.Register(fixedVerifierProfile{
 		name:   "always-fails",
-		result: verifier.Result{Status: "failed", Checks: []verifier.Check{{Name: "test", Status: "failed", Class: "source"}}},
+		result: definition.Result{Status: "failed", Checks: []definition.Check{{Name: "test", Status: "failed", Class: "source"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -266,14 +264,14 @@ func newEvidenceLoopPartialController(t *testing.T) (*workflowledger.StorageRepo
 			{From: "deliver", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cat := verifier.NewCatalogue()
+	cat := definition.NewCatalogue()
 	if err := cat.Register(fixedVerifierProfile{
 		name:   "always-fails",
-		result: verifier.Result{Status: "failed", Checks: []verifier.Check{{Name: "test", Status: "failed", Class: "source"}}},
+		result: definition.Result{Status: "failed", Checks: []definition.Check{{Name: "test", Status: "failed", Class: "source"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}

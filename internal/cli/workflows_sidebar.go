@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	tea "github.com/charmbracelet/bubbletea"
@@ -431,8 +430,8 @@ func workflowSidebarActiveHeartbeat(ctx context.Context, repo workflowledger.Rep
 // workflowCompiledByName discovers and compiles every workflow definition in
 // the workspace once per refresh. A broken definition is skipped; the sidebar
 // then renders its rows without description and next step.
-func workflowCompiledByName(root string) map[string]*compiler.CompiledWorkflow {
-	out := map[string]*compiler.CompiledWorkflow{}
+func workflowCompiledByName(root string) map[string]*definition.CompiledWorkflow {
+	out := map[string]*definition.CompiledWorkflow{}
 	workflows, err := definition.DiscoverWorkflows(root)
 	if err != nil {
 		return out
@@ -442,7 +441,7 @@ func workflowCompiledByName(root string) map[string]*compiler.CompiledWorkflow {
 		if err != nil {
 			continue
 		}
-		compiled, err := compiler.Compile(&wf)
+		compiled, err := definition.Compile(&wf)
 		if err != nil {
 			continue
 		}

@@ -6,12 +6,11 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 )
 
 func TestValidateWorkflowFiles_AgentPanel(t *testing.T) {
-	wf := &compiler.CompiledWorkflow{
+	wf := &definition.CompiledWorkflow{
 		Steps: []definition.Step{{
 			ID:   "review",
 			Kind: "agent_panel",
@@ -37,7 +36,7 @@ func TestValidateWorkflowSkillTools_AgentPanelMember(t *testing.T) {
 	if err := skillRegistry.Register(skills.Definition{Name: "review", Tools: []string{"read_file"}}); err != nil {
 		t.Fatal(err)
 	}
-	wf := &compiler.CompiledWorkflow{Steps: []definition.Step{{
+	wf := &definition.CompiledWorkflow{Steps: []definition.Step{{
 		ID:    "review",
 		Kind:  "agent_panel",
 		Panel: &definition.AgentPanel{Members: []definition.PanelMember{{ID: "security", Agent: "panel-reviewer", Skill: "review"}}},

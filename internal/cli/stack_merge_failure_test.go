@@ -13,7 +13,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -79,7 +78,7 @@ func TestChunkFailureHaltsBeforeAutoMerge(t *testing.T) {
 	gitRun(t, root, "push", "origin", "wf/wt-fail-c1")
 	prepared := &preparedWorkflowRun{
 		repo: repo, root: root,
-		compiled: &compiler.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}},
+		compiled: &definition.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}},
 	}
 
 	var stdout bytes.Buffer
@@ -120,7 +119,7 @@ func TestChunkFailureCancelsDependents(t *testing.T) {
 
 	prepared := &preparedWorkflowRun{
 		repo:     repo,
-		compiled: &compiler.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}},
+		compiled: &definition.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}},
 	}
 
 	_, err := chunkMergePollPass(context.Background(), prepared, ledger, neverMergedChecker{}, stackID, []ChunkPlan{{ID: "c1"}, {ID: "c2"}}, "approve", io.Discard, io.Discard)
@@ -176,7 +175,7 @@ func TestChunkMergePollPassFreshFailureHaltsBeforeAutoMerge(t *testing.T) {
 	workflowStackDeliverRun = delivers.Deliver
 
 	prepared := &preparedWorkflowRun{
-		repo: repo, compiled: &compiler.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}},
+		repo: repo, compiled: &definition.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}},
 	}
 
 	_, err := chunkMergePollPass(context.Background(), prepared, ledger, neverMergedChecker{}, stackID, []ChunkPlan{{ID: "c1"}}, "auto", io.Discard, io.Discard)
@@ -310,7 +309,7 @@ func TestChunkMergePollPassPropagatesAutoMergeError(t *testing.T) {
 	gitRun(t, root, "push", "origin", "wf/wt-auto-merge-err")
 	prepared := &preparedWorkflowRun{
 		repo: repo, root: root,
-		compiled: &compiler.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}},
+		compiled: &definition.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}},
 	}
 
 	_, err = chunkMergePollPass(context.Background(), prepared, ledger, neverMergedChecker{}, stackID, []ChunkPlan{{ID: "c1"}}, "auto", io.Discard, io.Discard)

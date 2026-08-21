@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 )
 
@@ -27,7 +26,7 @@ func TestWorkflowMCPServersOrderFollowsRegistryOrder(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	wf := &compiler.CompiledWorkflow{Steps: []definition.Step{
+	wf := &definition.CompiledWorkflow{Steps: []definition.Step{
 		{ID: "s1", Agent: "mule"},
 		{ID: "s2", Agent: "zebra"},
 		{ID: "s3", Agent: "alpha"},

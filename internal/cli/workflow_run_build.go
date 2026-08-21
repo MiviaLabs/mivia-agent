@@ -20,11 +20,10 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/verifier"
 	workflowspace "github.com/MiviaLabs/mivia-agent/internal/workflows/workspace"
 )
 
@@ -35,7 +34,7 @@ type workflowControllerBuild struct {
 	Cleanup    func()
 }
 
-func buildWorkflowController(root string, res *config.Resolved, store *storage.SQLite, repo workflowledger.Repository, wf *compiler.CompiledWorkflow, refBase string, inputs map[string]any, inputSnapshot map[string]string, definitionTOML []byte, runID string, prior *workflowledger.Snapshot, priorRaw []byte, recorded *workflowledger.RunSnapshot, remaining map[string]bool, preloadedSkills *skills.Registry) (workflowControllerBuild, error) {
+func buildWorkflowController(root string, res *config.Resolved, store *storage.SQLite, repo workflowledger.Repository, wf *definition.CompiledWorkflow, refBase string, inputs map[string]any, inputSnapshot map[string]string, definitionTOML []byte, runID string, prior *workflowledger.Snapshot, priorRaw []byte, recorded *workflowledger.RunSnapshot, remaining map[string]bool, preloadedSkills *skills.Registry) (workflowControllerBuild, error) {
 	// A stacking run EXECUTES the synthesized graph: decompose and
 	// chunk_plan_validate are real steps whose agents must be resolved, whose
 	// templates and schemas must be pinned, and whose routing digests must be
@@ -81,11 +80,11 @@ func buildWorkflowController(root string, res *config.Resolved, store *storage.S
 // admitted without a routing digest could never dispatch (the agent handler
 // refuses null routing snapshots) and could never resume, so synthesis belongs
 // here, next to the registry, and never inside the controller.
-func workflowSynthesizeRunGraph(wf *compiler.CompiledWorkflow) (*compiler.CompiledWorkflow, error) {
+func workflowSynthesizeRunGraph(wf *definition.CompiledWorkflow) (*definition.CompiledWorkflow, error) {
 	if wf == nil || wf.Stacking == nil {
 		return wf, nil
 	}
-	synth, err := compiler.SynthesizeStacking(wf)
+	synth, err := definition.SynthesizeStacking(wf)
 	if err != nil {
 		return nil, fmt.Errorf("synthesize stacking run graph: %w", err)
 	}
@@ -106,7 +105,7 @@ type workflowBuildSetup struct {
 	originBaseCommit string
 }
 
-func prepareWorkflowBuild(root string, res *config.Resolved, wf *compiler.CompiledWorkflow, runID string, recorded *workflowledger.RunSnapshot, effectiveBase string, preloadedSkills *skills.Registry) (workflowBuildSetup, error) {
+func prepareWorkflowBuild(root string, res *config.Resolved, wf *definition.CompiledWorkflow, runID string, recorded *workflowledger.RunSnapshot, effectiveBase string, preloadedSkills *skills.Registry) (workflowBuildSetup, error) {
 	// A resume passes the registry it already loaded for acceptance so the
 	// whole invocation observes one load (R5); every other caller passes nil
 	// and loads here.
@@ -122,7 +121,7 @@ func prepareWorkflowBuild(root string, res *config.Resolved, wf *compiler.Compil
 	if err != nil {
 		return workflowBuildSetup{}, err
 	}
-	if err := sliceErrors("workflow", compiler.ValidateAgentSkillReferences(wf, loaded.Registry, skillReg)); err != nil {
+	if err := sliceErrors("workflow", definition.ValidateAgentSkillReferences(wf, loaded.Registry, skillReg)); err != nil {
 		return workflowBuildSetup{}, err
 	}
 	authority, err := workflowBuildRegistry(root, res)
@@ -160,7 +159,7 @@ func prepareWorkflowBuild(root string, res *config.Resolved, wf *compiler.Compil
 	return workflowBuildSetup{skills: skillReg, loaded: loaded, authority: authority, identity: identity, cleanup: cleanup, remoteURL: remoteURL, originBaseCommit: originBaseCommit}, nil
 }
 
-func workflowBuildRemoteURL(wf *compiler.CompiledWorkflow, identity workflowspace.Identity, writeCapable bool, recorded *workflowledger.RunSnapshot, effectiveBase string) (originURL, originBaseCommit string, err error) {
+func workflowBuildRemoteURL(wf *definition.CompiledWorkflow, identity workflowspace.Identity, writeCapable bool, recorded *workflowledger.RunSnapshot, effectiveBase string) (originURL, originBaseCommit string, err error) {
 	if recorded != nil || !deliveryRequiresPublication(wf) {
 		return "", "", nil
 	}
@@ -181,7 +180,7 @@ func newWorkflowDispatcher(res *config.Resolved, store *storage.SQLite, setup wo
 	return dispatcher, opts, legacy, nil
 }
 
-func prepareWorkflowBuildRuntime(root, refBase string, res *config.Resolved, wf *compiler.CompiledWorkflow, inputs map[string]string, definition []byte, prior *workflowledger.Snapshot, priorRaw []byte, setup workflowBuildSetup, opts SessionDispatcherOpts, remaining map[string]bool) (preparedWorkflowRuntime, *verifier.GoModuleBaseline, error) {
+func prepareWorkflowBuildRuntime(root, refBase string, res *config.Resolved, wf *definition.CompiledWorkflow, inputs map[string]string, definition []byte, prior *workflowledger.Snapshot, priorRaw []byte, setup workflowBuildSetup, opts SessionDispatcherOpts, remaining map[string]bool) (preparedWorkflowRuntime, *definition.GoModuleBaseline, error) {
 	runtime, err := prepareWorkflowRuntime(root, refBase, wf, setup.loaded.Registry, prior, priorRaw, definition, inputs, opts)
 	if err != nil {
 		return preparedWorkflowRuntime{}, nil, err
@@ -240,7 +239,7 @@ func prepareWorkflowBuildRuntime(root, refBase string, res *config.Resolved, wf 
 	return runtime, baseline, nil
 }
 
-func newWorkflowController(repo workflowledger.Repository, dispatcher *runtime.Dispatcher, legacy ledger.LedgerRepository, res *config.Resolved, wf *compiler.CompiledWorkflow, inputs map[string]any, runID string, runtime preparedWorkflowRuntime, identity workflowspace.Identity, baseline *verifier.GoModuleBaseline) (*controller.LinearController, error) {
+func newWorkflowController(repo workflowledger.Repository, dispatcher *runtime.Dispatcher, legacy ledger.LedgerRepository, res *config.Resolved, wf *definition.CompiledWorkflow, inputs map[string]any, runID string, runtime preparedWorkflowRuntime, identity workflowspace.Identity, baseline *definition.GoModuleBaseline) (*controller.LinearController, error) {
 	applyHarnessSandboxSetting(res.Harness)
 	coord := initCoordinator(dispatcher, res.Subagents, legacy)
 	runner := controller.NewCoordinatorRunner(coord)
@@ -308,7 +307,7 @@ var warnSandboxDisabledOnce sync.Once
 // declared it.
 func applyHarnessSandboxSetting(hc config.HarnessConfig) {
 	enabled := hc.SandboxEnabled()
-	verifier.SetSandboxEnabled(enabled)
+	definition.SetSandboxEnabled(enabled)
 	if !enabled {
 		warnSandboxDisabledOnce.Do(func() {
 			fmt.Fprintln(os.Stderr, "warning: [harness] sandbox = false — evidence-gate commands run directly on the host with no filesystem, network, or environment isolation")
@@ -354,7 +353,7 @@ var workflowDeliveryProbe = delivery.ProbePRTool
 // honors the same override at publish time. An empty effectiveBase resolves to
 // the declared base. The fetch is bounded by workflowDeliveryTimeout so an
 // offline or hung origin cannot block run creation forever.
-func workflowDeliveryAdmission(wf *compiler.CompiledWorkflow, identity workflowspace.Identity, writeCapable bool, effectiveBase string) (originURL, originBaseCommit string, err error) {
+func workflowDeliveryAdmission(wf *definition.CompiledWorkflow, identity workflowspace.Identity, writeCapable bool, effectiveBase string) (originURL, originBaseCommit string, err error) {
 	if !writeCapable {
 		return "", "", fmt.Errorf("workflow %s declares delivery but its agents cannot write files; delivery requires a run worktree", wf.Name)
 	}
@@ -379,6 +378,6 @@ func workflowDeliveryAdmission(wf *compiler.CompiledWorkflow, identity workflows
 
 // deliveryRequiresPublication reports whether the workflow's delivery policy
 // must publish a pull request when the run settles at its success terminal.
-func deliveryRequiresPublication(wf *compiler.CompiledWorkflow) bool {
+func deliveryRequiresPublication(wf *definition.CompiledWorkflow) bool {
 	return wf.DeliveryActive()
 }
