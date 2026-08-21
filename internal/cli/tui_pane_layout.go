@@ -98,8 +98,3 @@ func paneSpacer(width, height int) string {
 	line := strings.Repeat(" ", width)
 	return strings.Repeat(line+"\n", height-1) + line
 }
-
-// chatPaneWidth returns the width shared by chat layout and transcript rendering.
-func (m *tuiModel) chatPaneWidth() int {
-	return newChatPaneLayout(m.width, m.sessionsSidebar != nil, m.workflowsSidebar != nil).chatWidth
-}
