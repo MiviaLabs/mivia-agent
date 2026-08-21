@@ -15,11 +15,11 @@ import (
 )
 
 func TestChatWorktreeCoverageRestartValidationErrors(t *testing.T) {
-	if err := validateWorkspaceRestart(WorkspaceRestart{Dir: t.TempDir()}, chatInvocation{}); err != nil {
+	if err := validateWorkspaceRestart(stubWorkspaceRestart{dir: t.TempDir()}, chatInvocation{}); err != nil {
 		t.Fatal(err)
 	}
 	expected := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
-	if err := validateWorkspaceRestart(WorkspaceRestart{Dir: t.TempDir(), WorktreeInstance: expected}, chatInvocation{}); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+	if err := validateWorkspaceRestart(stubWorkspaceRestart{dir: t.TempDir(), wt: expected}, chatInvocation{}); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
 		t.Fatalf("non-repository restart error = %v", err)
 	}
 	repo := newWorktreeCommandRepo(t)
@@ -27,7 +27,7 @@ func TestChatWorktreeCoverageRestartValidationErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := validateWorkspaceRestart(WorkspaceRestart{Dir: worktree.Path, WorktreeInstance: instance}, chatInvocation{repositorySessionStorePath: t.TempDir()}); err == nil {
+	if err := validateWorkspaceRestart(stubWorkspaceRestart{dir: worktree.Path, wt: instance}, chatInvocation{repositorySessionStorePath: t.TempDir()}); err == nil {
 		t.Fatal("restart opened a directory as a store")
 	}
 }

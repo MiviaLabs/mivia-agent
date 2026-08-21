@@ -27,6 +27,27 @@ func (e *WorkspaceRestart) Error() string {
 	return "restart chat in workspace " + e.Dir
 }
 
+// WorkspaceRestartInfo unpacks the restart request. Lets callers outside a
+// hypothetical future internal/legacytui detect and read a restart via
+// errors.As against workspaceRestartError without importing the concrete type.
+func (e *WorkspaceRestart) WorkspaceRestartInfo() (dir, resumeSessionName string, wt contextstate.WorktreeInstance) {
+	return e.Dir, e.ResumeSessionName, e.WorktreeInstance
+}
+
+// tuiLauncher runs the interactive TUI program. Wired by cmd/mivia's process
+// startup to legacytui.RunTUI once that package exists; nil means unwired.
+var tuiLauncher func(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *AgentSessionState, resumeSessionName string) error
+
+// SetTUILauncher wires the TUI backend. Called once during process startup,
+// before any command that might launch the TUI runs.
+func SetTUILauncher(fn func(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *AgentSessionState, resumeSessionName string) error) {
+	tuiLauncher = fn
+}
+
+func init() {
+	tuiLauncher = RunTUI
+}
+
 // tuiInputOption is a test seam. When set, runTUI passes the option it
 // returns to the tea program, so a test can supply a deterministic input
 // (a pty on Unix, a pipe on Windows). Without it, bubbletea falls back to

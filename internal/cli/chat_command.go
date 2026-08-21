@@ -183,17 +183,18 @@ func runConfiguredChat(invocation chatInvocation, res *config.Resolved) error {
 		runInvocation := invocation
 		invocation.resumeSessionName = ""
 		err := runConfiguredChatOnceImpl(runInvocation, res)
-		var restart *WorkspaceRestart
+		var restart workspaceRestartError
 		if !errors.As(err, &restart) {
 			return err
 		}
-		if err := validateWorkspaceRestart(*restart, invocation); err != nil {
+		if err := validateWorkspaceRestart(restart, invocation); err != nil {
 			return fmt.Errorf("validate workspace restart: %w", err)
 		}
-		invocation.workspacePath = restart.Dir
-		invocation.resumeSessionName = restart.ResumeSessionName
-		invocation.expectedWorktreeInstance = restart.WorktreeInstance
-		if err := os.Chdir(restart.Dir); err != nil {
+		dir, resumeSessionName, worktreeInstance := restart.WorkspaceRestartInfo()
+		invocation.workspacePath = dir
+		invocation.resumeSessionName = resumeSessionName
+		invocation.expectedWorktreeInstance = worktreeInstance
+		if err := os.Chdir(dir); err != nil {
 			return fmt.Errorf("enter restarted workspace: %w", err)
 		}
 		reloaded, err := loadConfigForRestart(config.LoadOptions{
@@ -210,11 +211,21 @@ func runConfiguredChat(invocation chatInvocation, res *config.Resolved) error {
 	}
 }
 
-func validateWorkspaceRestart(restart WorkspaceRestart, invocation chatInvocation) error {
-	if restart.WorktreeInstance.IsZero() {
+// workspaceRestartError is satisfied by *WorkspaceRestart today, and will be
+// satisfied by *legacytui.WorkspaceRestart once that type moves out of this
+// package. Lets internal/cli detect a restart via errors.As without needing
+// a same-package concrete type.
+type workspaceRestartError interface {
+	error
+	WorkspaceRestartInfo() (dir, resumeSessionName string, wt contextstate.WorktreeInstance)
+}
+
+func validateWorkspaceRestart(restart workspaceRestartError, invocation chatInvocation) error {
+	dir, _, worktreeInstance := restart.WorkspaceRestartInfo()
+	if worktreeInstance.IsZero() {
 		return nil
 	}
-	root, err := chatRepositoryRoot(restart.Dir)
+	root, err := chatRepositoryRoot(dir)
 	if err != nil {
 		return contextstate.ErrWorktreeDeleted
 	}
@@ -230,7 +241,7 @@ func validateWorkspaceRestart(restart WorkspaceRestart, invocation chatInvocatio
 		return err
 	}
 	defer store.Close()
-	return validateExpectedWorktreeInstanceInStore(store, root, restart.Dir, restart.WorktreeInstance)
+	return validateExpectedWorktreeInstanceInStore(store, root, dir, worktreeInstance)
 }
 
 // prepareChatStartup runs the pre-session startup policy: the API key gate,
@@ -350,7 +361,10 @@ func dispatchChatSurface(invocation chatInvocation, sess *chat.Session, res *con
 	if invocation.plainUI || !term.IsTerminal(int(os.Stdin.Fd())) || strings.EqualFold(os.Getenv("TERM"), "dumb") {
 		return repl(sess, res, useTools, agentState, invocation.jsonMode, invocation.quiet)
 	}
-	return RunTUI(sess, res, useTools, agentState, invocation.resumeSessionName)
+	if tuiLauncher == nil {
+		return fmt.Errorf("chat: TUI backend is unwired")
+	}
+	return tuiLauncher(sess, res, useTools, agentState, invocation.resumeSessionName)
 }
 
 // validateJSONModeInvocation fails closed on --json combined with any path
