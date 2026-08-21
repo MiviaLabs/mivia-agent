@@ -381,6 +381,198 @@ after a restart returns the same run — no duplicate runs, no lost tasks.
 The reconciliation is derived from durable state only (task ledger, run
 ledger, git merge state).
 
+## Convergence separability: `localengine` and `controller`
+
+The sibling SDK's convergence program asked whether `internal/workflows/localengine`'s
+admission, lease, and resume logic can be rewritten against an abstracted
+step-runner interface, so that logic could move to the SDK's generic `flow`
+engine while `controller`'s prompt/gate/evidence/stacking logic stays in this
+repo behind that interface. This section records the design spike's answer.
+
+### Decision: not separable as designed; a named restructuring would close the seam
+
+`LinearController.Advance` (`internal/workflows/controller/linear.go`) is the
+one method that both owns the generic run-level machinery and dispatches
+step-kind execution. Per call it: claims the run and starts a claim
+heartbeat, loads the run row, transitions `pending` to `running`,
+reconciles a terminal route, checks the deadline, then switches on
+`step.Kind` (`agent`/`agent_gate` to `advanceAgentStep`, `agent_panel` to
+`advancePanelStep`, `evidence_gate` to `advanceEvidenceGate`, `human_gate`
+to `advanceHumanGate`). The claim/heartbeat/deadline/terminal-reconciliation
+half is generic run-engine work; the switch's four branches are direct
+methods on `LinearController` itself, not calls through
+`controller.AgentStepRunner`. Only the `agent`/`agent_gate` branch reaches
+`AgentStepRunner.RunStep`; the other three read and write `LinearController`'s
+own fields directly — `Verifiers`, `WorkDir`, `SecretPolicy`, and
+`ModuleBaseline` for `evidence_gate` (`linear_gates_evidence.go`),
+`PanelLimiter` and the panel/synthesis machinery for `agent_panel`
+(`panel_step.go`, `panel_synthesis.go`), and the ledger-recorded approval
+records for `human_gate` (`linear_gates.go`, `linear_human.go`). The
+`agent_panel` branch is also coupled to `c.Runner`, and more tightly than
+the interface implies: `advancePanelStep` and `reconcilePanelCancelPending`
+(`panel_step.go:107`, `:191`) both do `runner, ok := c.Runner.(*CoordinatorRunner)`
+to reach `runner.Coordinator` directly, a concrete-type assertion, not a call
+through `AgentStepRunner`. These four branches, plus their shared struct and
+shared `c.mu`, are exactly the "controller-shaped" concern the SDK's
+convergence plan flagged: absorbing the run loop as written means absorbing
+gate, panel, and evidence logic along with it, not admission/lease/resume in
+isolation.
+
+`localengine`'s side of the seam confirms this. `engine.go` holds
+`ctrl *controller.LinearController` as a struct field and calls
+`controller.RunWithCancelReconciliationRetry(runCtx, ctrl.Run)` directly;
+`engine_resume.go` constructs a fresh `*controller.LinearController` through
+`controller.NewLinearController`, `controller.Admission`, and
+`controller.StepRuntime` on every resume. `controller.StepRuntime`
+(`linear.go`) carries `Agent agents.ResolvedAgent`, `Template string`, and
+`Schema map[string]any` — product-specific prompt/agent data — so even
+`localengine`'s resume path, which the SDK's plan treats as the clean half,
+cannot reconstruct a runnable controller without reconstructing
+product-specific step data. Genuinely generic pieces already exist
+alongside this: `controller.Admission` (`BaseRef`, `BaseCommit`,
+`OriginBaseCommit`, `WorktreeName`, `InputDigest`, `DeadlineAt`, `RemoteURL`,
+`InvocationKey`, `WorkflowDigest`) carries only run-identity fields, and `localengine`'s own
+`abandonFence` (`fence.go`) already wraps `workflowledger.Repository`
+generically with no `controller` dependency. The blocker is not the
+admission data shape; it is that `Advance`'s step dispatch and the run-level
+claim/lease loop are one method on one struct.
+
+The step-kind switch is not the only place product-specific logic lives in
+`Advance`. Before the switch, `Advance` calls `c.reconcileWaitingApproval(ctx,
+run)` (`linear.go:372-375`) whenever `run.Status ==
+RunStatusWaitingApproval`. Part of that method is generic: when the active
+step is already a terminal step ID, it CASes the status back to `running`
+and reconciles the terminal route, work that only reads run status, never
+step kind. But the rest of `reconcileWaitingApproval` (`linear_gates.go:98-173`)
+is step-kind-aware: it looks up the active step, checks `step.Kind !=
+"human_gate"` to decide whether the pause still applies, and on the
+human_gate path calls `c.advanceHumanGate` and, further down, when the
+approval is already resolved, `c.finishHumanResolutionForAttempt`
+(`linear_human.go`) — both reading the same `ListApprovals`/
+`humanGateApprovalID` approval-record machinery already attributed to the
+`human_gate` switch branch, plus fail-closed handling for an
+interrupted-then-re-admitted attempt (`AttemptStatusInterrupted`) and for a
+pending approval left inconsistent with a terminal attempt. A
+`RunStepExecutor` that is only invoked from the per-step dispatch position,
+as sketched below, has no way to run this status-based reconciliation before
+dispatch without the generic run engine becoming human-gate-aware itself.
+
+The CAS-back-to-running fragment is not unique to `reconcileWaitingApproval`
+either. `reconcileTerminalRoute` (`linear_deadline.go:20-59`), which the
+restructuring below assigns to the generic run engine with no caveat, has
+its own `run.Status == RunStatusWaitingApproval` branch
+(`linear_deadline.go:42-54`) that does the identical CAS-then-reload before
+it will set a terminal status. Unlike `reconcileWaitingApproval`'s
+human_gate path, this branch inspects only `run.Status` — no step kind, no
+approval records, no call into gate-specific methods — so mechanically it
+is exactly the kind of pure ledger-state-transition code the generic run
+engine should own. But a grep of every `RunStatusWaitingApproval` writer
+across `internal/workflows/controller/linear*.go` turns up exactly one
+site that ever sets it, `pauseHumanGate` (`linear_gates.go:63-64`, called
+from `admitHumanGate`, `advanceHumanGate`, and `reconcileWaitingApproval`).
+`internal/workflows/ledger/types.go` declares the status itself as generic
+lifecycle vocabulary, and code outside `controller` — the CLI's workflow
+display and resume paths, `agenttools`, `localengine` — reads it the same
+way, as one run-status value among several, with no human-gate-specific
+handling. So today this "generic" status value is read generically but
+written from exactly one product-specific origin: nothing else in the
+workflow contract ever puts a run into this wait state in the first place.
+That makes the split's cleanliness claim narrower than "two owners, cleanly
+divided" — the run engine's dispatch precheck and `reconcileTerminalRoute`
+are mechanism-generic but status-coupled to a value only human_gate ever
+sets. The restructuring must state this plainly rather than assign
+`reconcileTerminalRoute` to the generic side without qualification, and it
+must remove the duplicate CAS-through-running logic rather than carry two
+copies of it forward. The fix folds both occurrences — the terminal-step-ID
+branch inside today's `reconcileWaitingApproval` and `reconcileTerminalRoute`'s
+own branch — into one shared helper the generic run engine owns and calls
+from both places; a second, narrower hook alongside `ExecuteStep` still
+carries the step-kind-aware remainder of `reconcileWaitingApproval` (the
+`advanceHumanGate`/`finishHumanResolutionForAttempt` path). See
+`ReconcileWaitingRun` in the sketch below, and read the residual coupling
+above as a named, accepted gap: the run engine is generic in mechanism,
+not yet generic in the status vocabulary it must recognize.
+
+**Named restructuring.** Split `LinearController.Advance` into two owners:
+
+1. A generic run engine — the candidate for SDK `flow` — that owns `Repo`,
+   `RunID`, `Holder`, the claim/heartbeat/deadline loop, `StartNew`/`Start`/
+   `Run`, one shared CAS-through-running-before-terminal helper (replacing
+   the duplicate copies in `reconcileWaitingApproval` and
+   `reconcileTerminalRoute`), and terminal-route reconciliation. Its
+   per-step call becomes two interface methods instead of an inline
+   `switch` plus an inline pre-dispatch reconciliation call:
+
+   ```go
+   // RunStepExecutor executes one active step and reports the updated
+   // snapshot and whether the run is now terminal — the contract
+   // LinearController.Advance's step-kind switch implements inline today.
+   type RunStepExecutor interface {
+       ExecuteStep(ctx context.Context, run workflowledger.RunSnapshot, step definition.Step) (workflowledger.RunSnapshot, bool, error)
+
+       // ReconcileWaitingRun runs in place of ExecuteStep, for that Advance
+       // call only, whenever the run is in a non-running wait status (today
+       // only RunStatusWaitingApproval after the generic CAS-through-running
+       // helper has run). It reports the same (snapshot, terminal, error)
+       // shape as ExecuteStep. Like reconcileWaitingApproval today, it does
+       // not fall through to ExecuteStep in the same call even when the
+       // wait no longer applies to the active step (for example a partial
+       // resume that already moved past the human_gate step): the run
+       // engine's own Advance-equivalent call ends here either way, and
+       // ExecuteStep dispatches normally on the NEXT call once the status
+       // read at that call's start is no longer the wait status — the same
+       // next-call boundary LinearController.reconcileWaitingApproval
+       // implements inline today. This is a pure mechanical move: it
+       // changes no observable timing.
+       ReconcileWaitingRun(ctx context.Context, run workflowledger.RunSnapshot) (workflowledger.RunSnapshot, bool, error)
+   }
+   ```
+
+2. A product-owned executor, staying in this repo's `controller` package,
+   that implements `RunStepExecutor` and keeps `Verifiers`, `WorkDir`,
+   `SecretPolicy`, `ModuleBaseline`, `WritePathBlocklist`, `PanelLimiter`,
+   `Runner`, and the `StepRuntime` map as its own fields — everything the
+   current `evidence_gate`/`agent_panel`/`human_gate`/`agent` branches and
+   `reconcileWaitingApproval`'s human_gate path already need. `AgentStepRunner`
+   keeps its existing narrower role, called from inside this executor's
+   `agent`/`agent_gate` handling; the `agent_panel` branch's direct
+   `Runner.(*CoordinatorRunner)` assertion moves into the executor unchanged,
+   since narrowing it to the `AgentStepRunner` interface is a separate,
+   unscoped piece of work this decision does not resolve.
+
+This is not implemented; no code changed for this decision. It is scoped
+enough to name: extract the claim/heartbeat/deadline body of `Advance`,
+`Run`, and `StartNew` into the new run engine; deduplicate the
+CAS-through-running fragment out of `reconcileWaitingApproval`'s
+terminal-step-ID branch and `reconcileTerminalRoute`'s own
+`RunStatusWaitingApproval` branch into the one shared helper the run engine
+calls from both its terminal-route reconciliation and its wait-status
+precheck; replace the inline step-kind `switch` with a call to
+`RunStepExecutor.ExecuteStep`, and the step-kind-aware remainder of
+`reconcileWaitingApproval` (the `advanceHumanGate`/
+`finishHumanResolutionForAttempt` path) with a call to `ReconcileWaitingRun`;
+keep `controller.NewLinearController`'s current constructor shape as the
+executor's constructor. `localengine` then holds the run engine and a
+`RunStepExecutor` built by `controller`, instead of a concrete
+`*controller.LinearController`. The run engine still hardcodes
+`RunStatusWaitingApproval` as the one wait status it recognizes — the
+named gap above — so it is not yet generic over an arbitrary set of
+product-defined wait states; widening that is unscoped future work, not
+part of this restructuring.
+
+**Sequencing against the 16-subpackage collapse.** `internal/workflows`
+also needs its subpackage count collapsed from sixteen to eight or fewer
+(a separate, not-yet-planned piece of work). That collapse changes package
+boundaries and file placement; it does not change which methods read which
+struct fields, so it does not by itself close the `Advance` seam. Doing the
+collapse first risks moving `Advance`'s claim/dispatch code across package
+boundaries before the RunStepExecutor split exists, then moving it again
+once the split lands. The `Advance` restructuring above should be sequenced
+first (or done independently of the collapse), because it is scoped and
+mechanical; the collapse should follow and can use the new
+`RunStepExecutor` boundary as one of the seams it collapses around, instead
+of guessing where a future seam will land.
+
 ## See also
 
 - [Workflow user guide](../product/workflows-guide.md)
