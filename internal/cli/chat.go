@@ -29,7 +29,7 @@ func oneShotContext(ctx context.Context, sess *chat.Session, prompt string, tool
 		mode = "agent"
 	}
 	if !quiet {
-		fmt.Fprintf(os.Stderr, "%smivia%s %s  provider=%s model=%s\n", ansiCyan, ansiReset, mode, res.ProviderName, sess.CurrentModel())
+		fmt.Fprintf(os.Stderr, "%smivia%s %s  provider=%s model=%s\n", AnsiCyan, AnsiReset, mode, res.ProviderName, sess.CurrentModel())
 	}
 	start := time.Now()
 
@@ -68,7 +68,7 @@ func oneShotContext(ctx context.Context, sess *chat.Session, prompt string, tool
 		}
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "%s  ─ done · %s ─%s\n", ansiDim, formatDuration(time.Since(start)), ansiDimEnd)
+	fmt.Fprintf(os.Stderr, "%s  ─ done · %s ─%s\n", AnsiDim, FormatDuration(time.Since(start)), AnsiDimEnd)
 	return nil
 }
 

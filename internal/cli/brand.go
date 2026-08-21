@@ -221,7 +221,7 @@ func renderWorkChrome(
 
 	core := []string{
 		" " + lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true).Render(brandLabel(phase)),
-		tuiDimStyle.Render(" · " + formatDuration(elapsed)),
+		TUIDimStyle.Render(" · " + FormatDuration(elapsed)),
 	}
 	var tail []string
 	switch phase {
@@ -232,7 +232,7 @@ func renderWorkChrome(
 		}
 		tail = append(tail, " ", lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorTools)).Render(prog))
 	case phaseStreaming:
-		tail = append(tail, tuiDimStyle.Render(" · tokens"))
+		tail = append(tail, TUIDimStyle.Render(" · tokens"))
 	}
 	if queueLen > 0 {
 		tail = append(tail, " ", lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorQueue)).Render(
@@ -254,7 +254,7 @@ func renderWorkChrome(
 	}
 	rightParts := core
 	if detail != "" {
-		rightParts = append(rightParts, " ", tuiDimStyle.Render(detail))
+		rightParts = append(rightParts, " ", TUIDimStyle.Render(detail))
 	}
 	rightParts = append(rightParts, tail...)
 	right := strings.Join(rightParts, "") + " "
@@ -265,7 +265,7 @@ func renderWorkChrome(
 		if gitWorktree != "" {
 			branch = "⊞ " + gitWorktree + " · " + branch
 		}
-		right = right + tuiDimStyle.Render(" · "+branch)
+		right = right + TUIDimStyle.Render(" · "+branch)
 	}
 
 	return fillStatusLine(left, right, width, true)
@@ -318,7 +318,7 @@ func renderStatusBar(
 		return renderWorkChrome(frame, phase, elapsed, openTools, doneTools, totalTools, queueLen, width, stepDetail, gitBranch, gitWorktree)
 	}
 	left := simpleStateDiamond(phase) + " " + brandNameStyled() + " "
-	right := tuiDimStyle.Render(fmt.Sprintf(" %d msgs · /help ", msgCount))
+	right := TUIDimStyle.Render(fmt.Sprintf(" %d msgs · /help ", msgCount))
 	if queueLen > 0 {
 		right = lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorQueue)).Render(
 			fmt.Sprintf(" ▣ %d ", queueLen),
@@ -330,7 +330,7 @@ func renderStatusBar(
 	// finishes, the one time a user most wants to check it before deciding
 	// whether to /compact.
 	if detail := sanitizeStatusDetail(stepDetail); detail != "" {
-		right = right + tuiDimStyle.Render(" · "+detail)
+		right = right + TUIDimStyle.Render(" · "+detail)
 	}
 	// Show git branch context.
 	if gitBranch != "" {
@@ -338,7 +338,7 @@ func renderStatusBar(
 		if gitWorktree != "" {
 			branch = "⊞ " + gitWorktree + " · " + branch
 		}
-		right = right + tuiDimStyle.Render(" · "+branch)
+		right = right + TUIDimStyle.Render(" · "+branch)
 	}
 	return fillStatusLine(left, right, width, true)
 }

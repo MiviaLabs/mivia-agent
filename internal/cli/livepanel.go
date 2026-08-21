@@ -132,9 +132,9 @@ func (m *tuiModel) livePanelHeight() int {
 // over: the top of the chat pane, one row below the status header, spanning
 // the chat pane width. pane.chatX keeps the sessions sidebar clear, so the
 // overlay never covers it.
-func (m *tuiModel) livePanelOverlayRect() rect {
+func (m *tuiModel) livePanelOverlayRect() Rect {
 	pane := newChatPaneLayout(max(1, m.width), m.sessionsSidebar != nil, m.workflowsSidebar != nil)
-	return rect{x: pane.chatX, y: 1, w: pane.chatWidth, h: m.livePanelHeight()}
+	return Rect{X: pane.chatX, Y: 1, W: pane.chatWidth, H: m.livePanelHeight()}
 }
 
 // renderLivePanel draws the paint-only live overlay. Line count always equals
@@ -172,7 +172,7 @@ func (m *tuiModel) renderLivePanel(width int, now time.Time) string {
 				rows = append(rows, style.Render(truncateToWidth("    "+line, inner)))
 			}
 		} else if plan := m.livePlanningLine(); plan != "" {
-			rows = append(rows, tuiDimStyle.Render(truncateToWidth(plan, inner)))
+			rows = append(rows, TUIDimStyle.Render(truncateToWidth(plan, inner)))
 		}
 	}
 	if streamN > 0 {
@@ -181,7 +181,7 @@ func (m *tuiModel) renderLivePanel(width int, now time.Time) string {
 		for i, ln := range tail {
 			prefix := "  "
 			if i == len(tail)-1 {
-				prefix = tuiDimStyle.Render("▌ ")
+				prefix = TUIDimStyle.Render("▌ ")
 			}
 			rows = append(rows, truncateToWidth(prefix+ln, inner))
 		}
@@ -196,7 +196,7 @@ func (m *tuiModel) renderLivePanel(width int, now time.Time) string {
 
 	head := " now "
 	if m.waiting {
-		head = fmt.Sprintf(" now · %s ", formatDuration(time.Since(m.turnStart)))
+		head = fmt.Sprintf(" now · %s ", FormatDuration(time.Since(m.turnStart)))
 	}
 	var b strings.Builder
 	b.WriteString(border.Render("┌─" + head + strings.Repeat("─", max(0, width-3-lipgloss.Width(head))) + "┐"))
@@ -223,7 +223,7 @@ func (m *tuiModel) liveFleetRows(n, inner int, now time.Time) []string {
 		rows = append(rows, fleetRowLine(fleetRows[i], inner, now))
 	}
 	if n > 0 && len(fleetRows) > n {
-		rows = append(rows, tuiDimStyle.Render(fmt.Sprintf("  … %d more agents · ctrl+g", len(fleetRows)-n)))
+		rows = append(rows, TUIDimStyle.Render(fmt.Sprintf("  … %d more agents · ctrl+g", len(fleetRows)-n)))
 	}
 	return rows
 }
@@ -236,19 +236,19 @@ func (m *tuiModel) liveToolRows(n, inner int, now time.Time) []string {
 		r := m.toolRows[ordered[i]]
 		icon := toolRunStyle.Render(r.icon(now))
 		if r.Done {
-			icon = toolOkStyle.Render(glyphCheck)
+			icon = ToolOkStyle.Render(glyphCheck)
 			if r.Failed {
-				icon = toolErrStyle.Render(glyphCross)
+				icon = ToolErrStyle.Render(glyphCross)
 			}
 		}
-		item := newToolRenderItem(r.Name, r.Detail, r.Result, r.Done, r.Failed)
-		line := icon + " " + toolIconForName(r.Name) + " " + toolNameStyle.Render(r.Name) + " " +
-			tuiDimStyle.Render(item.summary(max(10, inner-28))) + " " +
-			toolTimeStyle.Render(formatDuration(r.elapsed(now)))
+		item := NewToolRenderItem(r.Name, r.Detail, r.Result, r.Done, r.Failed)
+		line := icon + " " + ToolIconForName(r.Name) + " " + ToolNameStyle.Render(r.Name) + " " +
+			TUIDimStyle.Render(item.summary(max(10, inner-28))) + " " +
+			ToolTimeStyle.Render(FormatDuration(r.elapsed(now)))
 		rows = append(rows, truncateToWidth(line, inner))
 	}
 	if n > 0 && len(m.toolRows) > n {
-		rows = append(rows, tuiDimStyle.Render(fmt.Sprintf("  … %d more tools", len(m.toolRows)-n)))
+		rows = append(rows, TUIDimStyle.Render(fmt.Sprintf("  … %d more tools", len(m.toolRows)-n)))
 	}
 	return rows
 }
@@ -266,12 +266,12 @@ func (m *tuiModel) livePlanningLine() string {
 		if elapsed <= 300*time.Millisecond {
 			return ""
 		}
-		return fmt.Sprintf("%s … planning · %s", glyph, formatDuration(elapsed))
+		return fmt.Sprintf("%s … planning · %s", glyph, FormatDuration(elapsed))
 	}
 	if elapsed <= 2*time.Second {
 		return ""
 	}
-	return fmt.Sprintf("%s thinking · %s", glyph, formatDuration(elapsed))
+	return fmt.Sprintf("%s thinking · %s", glyph, FormatDuration(elapsed))
 }
 
 // lastNonEmptyLine returns the final non-blank line of s (for one-line

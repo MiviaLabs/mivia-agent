@@ -302,8 +302,8 @@ func TestWorktreeDialogViewAtRendersTitle(t *testing.T) {
 		{Name: "a"}, {Name: "b"},
 	})
 	view, layout := d.ViewAt(80, 24)
-	if layout.innerW <= 0 || layout.pageH <= 0 {
-		t.Fatalf("layout should be positive: innerW=%d pageH=%d", layout.innerW, layout.pageH)
+	if layout.InnerW <= 0 || layout.PageH <= 0 {
+		t.Fatalf("layout should be positive: innerW=%d pageH=%d", layout.InnerW, layout.PageH)
 	}
 	clean := stripANSI(view)
 	if !strings.Contains(clean, "worktrees") {

@@ -10,9 +10,9 @@ import (
 
 func TestHelpReflowsAfterResize(t *testing.T) {
 	d := newHelpDialog(20)
-	narrow := d.displayRows(d.layout(50, 20).innerW)
+	narrow := d.displayRows(d.layout(50, 20).InnerW)
 	wideLayout := d.layout(120, 30)
-	wide := d.displayRows(wideLayout.innerW)
+	wide := d.displayRows(wideLayout.InnerW)
 	if len(wide) >= len(narrow) {
 		t.Fatalf("help did not reflow to wider content area: narrow=%d wide=%d", len(narrow), len(wide))
 	}
@@ -28,7 +28,7 @@ func TestStatusDialogOverflowPolicy(t *testing.T) {
 	})
 	d.kind = "status"
 	l := d.layout(40, 12)
-	rows := d.rowsForLayout(l.innerW, 4)
+	rows := d.rowsForLayout(l.InnerW, 4)
 	plain := stripANSI(strings.Join(rows, "\n"))
 	if strings.Contains(plain, "◆ alpha") || strings.Contains(plain, "◆ beta") {
 		t.Fatalf("status overflow retained detailed agent rows: %q", plain)
@@ -36,7 +36,7 @@ func TestStatusDialogOverflowPolicy(t *testing.T) {
 	if !strings.Contains(plain, "agents: 2") {
 		t.Fatalf("status overflow omitted compact agent count: %q", plain)
 	}
-	rows = d.rowsForLayout(l.innerW, 4)
+	rows = d.rowsForLayout(l.InnerW, 4)
 	plain = stripANSI(strings.Join(rows, "\n"))
 	for _, fact := range []string{"model", "workspace", "messages", "turns", "agents: 2"} {
 		if !strings.Contains(plain, fact) {
@@ -91,7 +91,7 @@ func TestDialogProducerPrefs(t *testing.T) {
 	}
 	for _, tc := range cases {
 		p := dialogPrefsForTitle(tc.title)
-		if p.preferredW != tc.wantW || p.minW != tc.wantMin || p.pager != tc.pager {
+		if p.PreferredW != tc.wantW || p.MinW != tc.wantMin || p.Pager != tc.pager {
 			t.Fatalf("prefs(%q)=%+v", tc.title, p)
 		}
 	}
@@ -101,7 +101,7 @@ func TestBlockOverlayPreservesLongLines(t *testing.T) {
 	block := ChatBlock{Kind: ChatBlockTool, ToolName: "output", Text: strings.Repeat("界🙂", 80)}
 	o := newBlockOverlay(block)
 	view, layout := o.ViewAt(50, 12)
-	if len(o.displayRows(layout.innerW)) < 2 || view == "" {
+	if len(o.displayRows(layout.InnerW)) < 2 || view == "" {
 		t.Fatal("long content was not wrapped into reachable display rows")
 	}
 	o.yOffset = 1 << 30

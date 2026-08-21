@@ -128,7 +128,7 @@ func firstLineOnly(s string) string {
 
 func clipOneLine(s string, max int) string {
 	s = strings.ReplaceAll(strings.TrimSpace(s), "\n", " ")
-	return boundedToolText(s, max)
+	return BoundedToolText(s, max)
 }
 
 func expandSectionLabel(name string, input bool) string {

@@ -20,7 +20,7 @@ func queueManagerRenderModel() *tuiModel {
 func TestRenderQueuePanelShowsQueue(t *testing.T) {
 	m := queueManagerRenderModel()
 	panel, size := m.renderQueuePanel(80, 24)
-	if panel == "" || size.w == 0 || size.h == 0 {
+	if panel == "" || size.W == 0 || size.H == 0 {
 		t.Fatalf("renderQueuePanel = %q size %+v, want a drawn panel", panel, size)
 	}
 	for _, want := range []string{"queue (3)", "first message", "second message", "/skill label", "enter send now", "esc close"} {
@@ -70,7 +70,7 @@ func TestRenderQueuePanelNarrowTerminalFallback(t *testing.T) {
 	// maxH 2 is below the framed-popup floor (4 with a footer): the engine
 	// falls back to a single selected row.
 	panel, size := m.renderQueuePanel(80, 2)
-	if panel == "" || size.h != 1 {
+	if panel == "" || size.H != 1 {
 		t.Fatalf("narrow fallback = %q size %+v, want a single-row panel", panel, size)
 	}
 	if !strings.Contains(panel, "second message") || !strings.Contains(panel, "+2") {
@@ -98,11 +98,11 @@ func TestOverlayWindowWidthArgWidens(t *testing.T) {
 	rows := []string{"a very long queued message that needs more than seventy two columns to breathe"}
 	_, defaultSize := renderOverlayWindow(rows, 0, 8, 120, 24, "t", "f")
 	_, wideSize := renderOverlayWindow(rows, 0, 8, 120, 24, "t", "f", 90)
-	if defaultSize.w > 72 {
-		t.Fatalf("default width = %d, want the 72-col cap", defaultSize.w)
+	if defaultSize.W > 72 {
+		t.Fatalf("default width = %d, want the 72-col cap", defaultSize.W)
 	}
-	if wideSize.w <= defaultSize.w {
-		t.Fatalf("explicit width = %d, want wider than default %d", wideSize.w, defaultSize.w)
+	if wideSize.W <= defaultSize.W {
+		t.Fatalf("explicit width = %d, want wider than default %d", wideSize.W, defaultSize.W)
 	}
 }
 
@@ -111,7 +111,7 @@ func TestOverlayWindowWidthArgWidens(t *testing.T) {
 // fallback on a short terminal.
 func TestOverlayWindowSingleRowFallbackClampsSelected(t *testing.T) {
 	panel, size := renderOverlayWindow([]string{"a"}, 5, 8, 80, 2, "t", "f")
-	if panel == "" || size.h != 1 {
+	if panel == "" || size.H != 1 {
 		t.Fatalf("fallback with stale selection = %q size %+v, want a single row", panel, size)
 	}
 }

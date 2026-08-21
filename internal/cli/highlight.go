@@ -36,13 +36,13 @@ func highlightLine(line string, lang string, inMulti bool) (string, bool) {
 		return highlightDiffLine(line), inMulti
 	}
 	if lang == "" || lang == "text" || lang == "plain" {
-		return fmt.Sprintf("  %s%s%s%s", ansiBgDark, ansiYellow, line, ansiReset), false
+		return fmt.Sprintf("  %s%s%s%s", AnsiBgDark, AnsiYellow, line, AnsiReset), false
 	}
 
 	def, ok := langDefs[lang]
 	if !ok {
 		// Unknown language: try generic fallback
-		return fmt.Sprintf("  %s%s%s%s", ansiBgDark, ansiYellow, line, ansiReset), false
+		return fmt.Sprintf("  %s%s%s%s", AnsiBgDark, AnsiYellow, line, AnsiReset), false
 	}
 
 	// Check for multi-line comment open/close.
@@ -56,9 +56,9 @@ func highlightLine(line string, lang string, inMulti bool) (string, bool) {
 				comment := line[:endIdx]
 				rest, nextMulti := highlightLine(line[endIdx:], lang, false)
 				rest = strings.TrimPrefix(rest, "  ")
-				return fmt.Sprintf("  %s%s%s%s%s%s%s", ansiBgDark, ansiDim, ansiItalic, comment, ansiReset, rest, ansiReset), nextMulti
+				return fmt.Sprintf("  %s%s%s%s%s%s%s", AnsiBgDark, AnsiDim, AnsiItalic, comment, AnsiReset, rest, AnsiReset), nextMulti
 			}
-			return fmt.Sprintf("  %s%s%s%s%s", ansiBgDark, ansiDim, ansiItalic, line, ansiReset), true
+			return fmt.Sprintf("  %s%s%s%s%s", AnsiBgDark, AnsiDim, AnsiItalic, line, AnsiReset), true
 		}
 		// Check for open.
 		idx := strings.Index(line, def.multiLineL)
@@ -71,34 +71,34 @@ func highlightLine(line string, lang string, inMulti bool) (string, bool) {
 				comment := line[idx:endIdx]
 				after := line[endIdx:]
 				b, _ := highlightLineNoComment(before, def)
-				c := fmt.Sprintf("%s%s%s", ansiDim, ansiItalic, comment)
+				c := fmt.Sprintf("%s%s%s", AnsiDim, AnsiItalic, comment)
 				a, _ := highlightLineNoComment(after, def)
-				return fmt.Sprintf("  %s%s%s%s%s%s", ansiBgDark, ansiBgSafe(b), ansiReset, c, ansiBgSafe(a), ansiReset), false
+				return fmt.Sprintf("  %s%s%s%s%s%s", AnsiBgDark, ansiBgSafe(b), AnsiReset, c, ansiBgSafe(a), AnsiReset), false
 			}
 			// Multi-line comment spans to next line.
 			before := line[:idx]
 			comment := line[idx:]
 			b, _ := highlightLineNoComment(before, def)
-			return fmt.Sprintf("  %s%s%s%s%s%s", ansiBgDark, ansiBgSafe(b), ansiReset, ansiDim, ansiItalic, comment), true
+			return fmt.Sprintf("  %s%s%s%s%s%s", AnsiBgDark, ansiBgSafe(b), AnsiReset, AnsiDim, AnsiItalic, comment), true
 		}
 	}
 
 	return highlightLineNoCommentFull(line, def)
 }
 
-// ansiBgSafe replaces all ansiReset in s with ansiReset+ansiBgDark so that
+// ansiBgSafe replaces all AnsiReset in s with AnsiReset+AnsiBgDark so that
 // dark code-block background is preserved across colored spans.
 func ansiBgSafe(s string) string {
-	return strings.ReplaceAll(s, ansiReset, ansiReset+ansiBgDark)
+	return strings.ReplaceAll(s, AnsiReset, AnsiReset+AnsiBgDark)
 }
 
 func highlightLineNoCommentFull(line string, def langDef) (string, bool) {
 	out, _ := highlightLineNoComment(line, def)
-	// Replace ansiReset inside token output with ansiReset+ansiBgDark so the
-	// background is re-asserted after each colored span.  The final ansiReset
+	// Replace AnsiReset inside token output with AnsiReset+AnsiBgDark so the
+	// background is re-asserted after each colored span.  The final AnsiReset
 	// terminates the whole line normally.
-	safe := strings.ReplaceAll(out, ansiReset, ansiReset+ansiBgDark)
-	return fmt.Sprintf("  %s%s%s", ansiBgDark, safe, ansiReset), false
+	safe := strings.ReplaceAll(out, AnsiReset, AnsiReset+AnsiBgDark)
+	return fmt.Sprintf("  %s%s%s", AnsiBgDark, safe, AnsiReset), false
 }
 
 // highlightLineNoComment applies highlighting to a line assuming no comment
@@ -115,7 +115,7 @@ func highlightLineNoComment(line string, def langDef) (string, bool) {
 			code := line[:idx]
 			comment := line[idx:]
 			c := highlightTokens(code, def)
-			return fmt.Sprintf("%s%s%s%s", c, ansiDim, ansiItalic, comment), false
+			return fmt.Sprintf("%s%s%s%s", c, AnsiDim, AnsiItalic, comment), false
 		}
 	}
 
@@ -136,9 +136,9 @@ func highlightTokens(line string, def langDef) string {
 	i := 0
 	for i < len(line) {
 		if end, ok := stringRegionStartingAt(strRegions, i); ok {
-			out.WriteString(ansiGreen)
+			out.WriteString(AnsiGreen)
 			out.WriteString(line[i:end])
-			out.WriteString(ansiReset)
+			out.WriteString(AnsiReset)
 			i = end
 			continue
 		}
@@ -166,7 +166,7 @@ func highlightTokens(line string, def langDef) string {
 		if i+1 < len(line) && isDigit(line[i]) {
 			num := matchNumber(line, i)
 			if num != "" {
-				out.WriteString(ansiMagenta + num + ansiReset)
+				out.WriteString(AnsiMagenta + num + AnsiReset)
 				i += len(num)
 				continue
 			}
@@ -194,13 +194,13 @@ func matchKeywordToken(line string, i int, def langDef, out *strings.Builder) in
 	lower := strings.ToLower(word)
 	switch {
 	case contains(def.keywords, lower):
-		out.WriteString(ansiCyan + word + ansiReset)
+		out.WriteString(AnsiCyan + word + AnsiReset)
 		return len(word)
 	case contains(def.types, lower):
-		out.WriteString(ansiBlue + word + ansiReset)
+		out.WriteString(AnsiBlue + word + AnsiReset)
 		return len(word)
 	case contains(def.builtins, lower):
-		out.WriteString(ansiYellow + word + ansiReset)
+		out.WriteString(AnsiYellow + word + AnsiReset)
 		return len(word)
 	case !containsDigit(word):
 		out.WriteString(word)
@@ -227,7 +227,7 @@ func extraPatternMatch(line string, i int, rules []patternRule, regions []strReg
 		if regionsOverlap(regions, start, end) {
 			continue
 		}
-		out.WriteString(rule.ansi + line[start:end] + ansiReset)
+		out.WriteString(rule.ansi + line[start:end] + AnsiReset)
 		return true, end
 	}
 	return false, i
@@ -367,10 +367,10 @@ func highlightCodeBlock(lang, code string) string {
 			inMulti = nextMulti
 		} else if lang != "" && lang != "text" && lang != "plain" {
 			// Unknown but specified - use generic.
-			out.WriteString(fmt.Sprintf("  %s%s%s%s", ansiBgDark, ansiYellow, line, ansiReset))
+			out.WriteString(fmt.Sprintf("  %s%s%s%s", AnsiBgDark, AnsiYellow, line, AnsiReset))
 		} else {
 			// No language specified - plain yellow.
-			out.WriteString(fmt.Sprintf("  %s%s%s%s", ansiBgDark, ansiYellow, line, ansiReset))
+			out.WriteString(fmt.Sprintf("  %s%s%s%s", AnsiBgDark, AnsiYellow, line, AnsiReset))
 		}
 	}
 	return out.String()

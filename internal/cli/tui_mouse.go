@@ -226,10 +226,10 @@ func (m *tuiModel) handleModalMouse(msg tea.MouseMsg) bool {
 		return false
 	}
 	delta, wheel := mouseWheelDelta(msg)
-	if m.overlay != nil && m.overlay.prefs.pager && wheel {
+	if m.overlay != nil && m.overlay.prefs.Pager && wheel {
 		layout := m.overlay.layout(max(1, m.width), max(1, m.height))
-		m.overlay.renderedRows = m.overlay.rowsForLayout(max(1, layout.innerW), layout.pageH)
-		m.overlay.scroll(delta*max(1, m.viewport.MouseWheelDelta), max(1, layout.pageH))
+		m.overlay.renderedRows = m.overlay.rowsForLayout(max(1, layout.InnerW), layout.PageH)
+		m.overlay.scroll(delta*max(1, m.viewport.MouseWheelDelta), max(1, layout.PageH))
 	}
 	if m.modelDlg != nil {
 		if wheel {

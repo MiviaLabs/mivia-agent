@@ -4,9 +4,9 @@ import (
 	"fmt"
 )
 
-func renderSuggestPanel(state suggestState, termW, maxH int) (string, rect) {
+func renderSuggestPanel(state suggestState, termW, maxH int) (string, Rect) {
 	if !state.open || len(state.commands) == 0 || termW <= 0 || maxH < 1 {
-		return "", rect{}
+		return "", Rect{}
 	}
 	items := make([]string, 0, len(state.commands))
 	for _, command := range state.commands {
@@ -30,16 +30,16 @@ func renderSuggestPanel(state suggestState, termW, maxH int) (string, rect) {
 	return renderOverlayWindow(items, state.selected, suggestWindowRows, termW, maxH, " commands "+fmt.Sprintf("(%d)", len(state.commands)), "")
 }
 
-func suggestOverlayRect(m *tuiModel, panel string, panelSize rect) rect {
+func suggestOverlayRect(m *tuiModel, panel string, panelSize Rect) Rect {
 	termW, termH := max(1, m.width), max(8, m.height)
-	if panel == "" || panelSize.w <= 0 || panelSize.h <= 0 {
-		return rect{}
+	if panel == "" || panelSize.W <= 0 || panelSize.H <= 0 {
+		return Rect{}
 	}
 	pane := newChatPaneLayout(termW, m.sessionsSidebar != nil, m.workflowsSidebar != nil)
 	composerTop := m.suggestComposerTop()
-	y := max(1, composerTop-panelSize.h)
-	x := pane.chatX + max(0, min(2, pane.chatWidth-panelSize.w))
-	return rect{x: x, y: y, w: panelSize.w, h: min(panelSize.h, termH-y)}
+	y := max(1, composerTop-panelSize.H)
+	x := pane.chatX + max(0, min(2, pane.chatWidth-panelSize.W))
+	return Rect{X: x, Y: y, W: panelSize.W, H: min(panelSize.H, termH-y)}
 }
 
 func (m *tuiModel) suggestComposerTop() int {

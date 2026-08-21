@@ -49,7 +49,7 @@ func (d *workflowRunDialog) setNotice(msg string, isErr bool) {
 func (d *workflowRunDialog) contentLines() []string {
 	v := d.view
 	if v == nil {
-		return []string{tuiDimStyle.Render("loading run details…")}
+		return []string{TUIDimStyle.Render("loading run details…")}
 	}
 	lines := append([]string(nil), v.header...)
 	if v.notice != "" {
@@ -61,18 +61,18 @@ func (d *workflowRunDialog) contentLines() []string {
 			lines = append(lines, renderWorkflowStepRow(s))
 		}
 	} else if v.notice == "" {
-		lines = append(lines, tuiDimStyle.Render("no steps"))
+		lines = append(lines, TUIDimStyle.Render("no steps"))
 	}
 	return lines
 }
 
-func workflowRunDialogPrefs() dialogPrefs {
-	return dialogPrefs{preferredWPct: 78, preferredHPct: 78, minW: 40, minH: 8, frameCols: 4, frameRows: 3, pager: true}
+func workflowRunDialogPrefs() DialogPrefs {
+	return DialogPrefs{PreferredWPct: 78, PreferredHPct: 78, MinW: 40, MinH: 8, FrameCols: 4, FrameRows: 3, Pager: true}
 }
 
-func (d *workflowRunDialog) layout(w, h int) dialogLayout {
-	return makeDialogLayout(w, h, workflowRunDialogPrefs(), func(innerW int) (int, int) {
-		rows := wrapDisplayRows(d.contentLines(), innerW)
+func (d *workflowRunDialog) layout(w, h int) DialogLayout {
+	return MakeDialogLayout(w, h, workflowRunDialogPrefs(), func(innerW int) (int, int) {
+		rows := WrapDisplayRows(d.contentLines(), innerW)
 		maxW := 0
 		for _, row := range rows {
 			maxW = max(maxW, ansi.StringWidth(row))
@@ -85,8 +85,8 @@ func (d *workflowRunDialog) layout(w, h int) dialogLayout {
 // canvas at the given terminal size.
 func (d *workflowRunDialog) maxScroll(w, h int) int {
 	l := d.layout(max(1, w), max(1, h))
-	rows := wrapDisplayRows(d.contentLines(), max(1, l.innerW))
-	return max(0, len(rows)-max(1, l.pageH))
+	rows := WrapDisplayRows(d.contentLines(), max(1, l.InnerW))
+	return max(0, len(rows)-max(1, l.PageH))
 }
 
 func (d *workflowRunDialog) move(delta, w, h int) {
@@ -98,12 +98,12 @@ func (d *workflowRunDialog) clampScroll(w, h int) {
 }
 
 // ViewAt renders the dialog frame over the paged content rows.
-func (d *workflowRunDialog) ViewAt(w, h int) (string, dialogLayout) {
+func (d *workflowRunDialog) ViewAt(w, h int) (string, DialogLayout) {
 	l := d.layout(max(1, w), max(1, h))
-	rows := wrapDisplayRows(d.contentLines(), max(1, l.innerW))
+	rows := WrapDisplayRows(d.contentLines(), max(1, l.InnerW))
 	d.clampScroll(max(1, w), max(1, h))
 	start := min(d.scroll, len(rows))
-	end := min(len(rows), start+max(1, l.pageH))
+	end := min(len(rows), start+max(1, l.PageH))
 	return renderDialogFrame("◆ workflow run "+d.runID, rows[start:end], d.footer(), l), l
 }
 
@@ -137,21 +137,21 @@ func (d *workflowRunDialog) actionForKey(key string) (workflowDialogAction, bool
 // valid action hints plus scroll/close keys.
 func (d *workflowRunDialog) footer() string {
 	if d.confirm != workflowConfirmNone {
-		return tuiErrorStyle.Render(workflowConfirmPrompt(d.confirm, d.runID)) + tuiDimStyle.Render("  y confirm · n/esc cancel")
+		return tuiErrorStyle.Render(workflowConfirmPrompt(d.confirm, d.runID)) + TUIDimStyle.Render("  y confirm · n/esc cancel")
 	}
 	if d.notice != "" {
 		style := tuiInfoStyle
 		if d.noticeErr {
 			style = tuiErrorStyle
 		}
-		return tuiDimStyle.Render("j/k scroll · esc/q close · ") + style.Render(oneLineNotice(d.notice))
+		return TUIDimStyle.Render("j/k scroll · esc/q close · ") + style.Render(oneLineNotice(d.notice))
 	}
 	hints := make([]string, 0, 9)
 	for _, a := range d.availableActions() {
 		hints = append(hints, a.key+" "+a.label)
 	}
 	hints = append(hints, "j/k scroll", "esc/q close")
-	return tuiDimStyle.Render(strings.Join(hints, " · "))
+	return TUIDimStyle.Render(strings.Join(hints, " · "))
 }
 
 func workflowConfirmPrompt(action workflowConfirmAction, runID string) string {

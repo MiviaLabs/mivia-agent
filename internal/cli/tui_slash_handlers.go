@@ -17,7 +17,7 @@ var handleSlashImpl = func(m *tuiModel, cmd string) bool {
 		return false
 	}
 	if isLocalSlash(fields[0]) {
-		m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiDimStyle.Render("  ⚙ " + strings.TrimSpace(cmd)), Rendered: tuiDimStyle.Render("  ⚙ " + strings.TrimSpace(cmd))})
+		m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: TUIDimStyle.Render("  ⚙ " + strings.TrimSpace(cmd)), Rendered: TUIDimStyle.Render("  ⚙ " + strings.TrimSpace(cmd))})
 	}
 	switch strings.ToLower(fields[0]) {
 	case "/help", "/h", "/?", "/status", "/tools", "/agents":
@@ -358,7 +358,7 @@ func (m *tuiModel) handleTuiSessionStoreSlash(cmd string, fields []string) bool 
 				if si.SessionID != "" {
 					line += " · " + si.Reference()
 				}
-				m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiDimStyle.Render(line), Rendered: tuiDimStyle.Render(line)})
+				m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: TUIDimStyle.Render(line), Rendered: TUIDimStyle.Render(line)})
 			}
 		}
 		return true

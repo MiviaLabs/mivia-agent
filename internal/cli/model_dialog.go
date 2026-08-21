@@ -65,8 +65,8 @@ func newModelDialog(groups []config.ProviderModelGroup, selection chat.Selection
 	return d
 }
 
-func modelDialogPrefs() dialogPrefs {
-	return dialogPrefs{preferredWPct: 80, preferredHPct: 75, minW: 32, minH: 8, frameCols: 4, frameRows: 3, pager: true}
+func modelDialogPrefs() DialogPrefs {
+	return DialogPrefs{PreferredWPct: 80, PreferredHPct: 75, MinW: 32, MinH: 8, FrameCols: 4, FrameRows: 3, Pager: true}
 }
 
 func (d *modelDialog) nextModel(from, direction int) int {
@@ -107,8 +107,8 @@ func (d *modelDialog) clampScroll(page int) {
 	d.scroll = max(0, min(d.scroll, max(0, len(d.rows)-page)))
 }
 
-func (d *modelDialog) layout(w, h int) dialogLayout {
-	return makeDialogLayout(w, h, modelDialogPrefs(), func(innerW int) (int, int) {
+func (d *modelDialog) layout(w, h int) DialogLayout {
+	return MakeDialogLayout(w, h, modelDialogPrefs(), func(innerW int) (int, int) {
 		// Measurement must not clamp the live scroll position. This layout is
 		// also used by mouse hit-testing, so mutating scroll here can make a
 		// click resolve against a different page than the one rendered.
@@ -130,7 +130,7 @@ func (d *modelDialog) rowLines(inner, visible int) []string {
 func (d *modelDialog) rowLinesAt(inner, visible, scroll int) []string {
 	visible = max(1, visible)
 	if len(d.rows) == 0 {
-		return []string{tuiDimStyle.Render("no configured models")}
+		return []string{TUIDimStyle.Render("no configured models")}
 	}
 	scroll = max(0, min(scroll, max(0, len(d.rows)-visible)))
 	end := min(len(d.rows), scroll+visible)
@@ -158,19 +158,19 @@ func (d *modelDialog) rowLinesAt(inner, visible, scroll int) []string {
 		// time. A model that offers nothing shows nothing rather than a column
 		// of "none" on catalogs that use no reasoning at all.
 		if row.effort != "" {
-			text += tuiDimStyle.Render("  effort: " + row.effort)
+			text += TUIDimStyle.Render("  effort: " + row.effort)
 		}
 		if !row.selectable {
-			text = tuiDimStyle.Render(text)
+			text = TUIDimStyle.Render(text)
 		}
 		lines = append(lines, ansi.Truncate(text, max(1, inner), "…"))
 	}
 	return lines
 }
 
-func (d *modelDialog) ViewAt(w, h int) (string, dialogLayout) {
+func (d *modelDialog) ViewAt(w, h int) (string, DialogLayout) {
 	l := d.layout(w, h)
-	rows := d.rowLines(l.innerW, l.pageH)
+	rows := d.rowLines(l.InnerW, l.PageH)
 	return renderDialogFrame("◇ models", rows, d.footer(), l), l
 }
 
@@ -179,15 +179,15 @@ func (d *modelDialog) footer() string {
 		return tuiErrorStyle.Render(d.notice)
 	}
 	if d.busy {
-		return tuiDimStyle.Render("finish current work first · esc close")
+		return TUIDimStyle.Render("finish current work first · esc close")
 	}
-	return tuiDimStyle.Render("↑↓/j/k move · home/end · pgup/pgdn · enter select · esc/q close")
+	return TUIDimStyle.Render("↑↓/j/k move · home/end · pgup/pgdn · enter select · esc/q close")
 }
 
 func (d *modelDialog) rowAtY(y int, w, h int) (modelDialogRow, bool) {
 	l := d.layout(w, h)
-	local := y - l.rect.y - 1
-	if local < 0 || local >= l.pageH {
+	local := y - l.Rect.Y - 1
+	if local < 0 || local >= l.PageH {
 		return modelDialogRow{}, false
 	}
 	index := d.scroll + local
@@ -271,11 +271,11 @@ func (m *tuiModel) handleModelDialogKey(key string) (bool, bool, []tea.Cmd) {
 		d.scroll = 0
 	case "end", "G":
 		d.cursor = d.nextModel(len(d.rows)-1, -1)
-		d.clampScroll(layout.pageH)
+		d.clampScroll(layout.PageH)
 	case "pgup", "b":
-		d.move(-max(1, layout.pageH))
+		d.move(-max(1, layout.PageH))
 	case "pgdown", "f", " ":
-		d.move(max(1, layout.pageH))
+		d.move(max(1, layout.PageH))
 	case "enter":
 		if row, ok := d.selected(); ok {
 			m.selectModelDialogRow(row)

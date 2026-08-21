@@ -2,6 +2,10 @@ package cli
 
 import "strings"
 
+// chromeAwait is the live-running-pulse rail color (relocated from
+// bubble_leftrail.go: its only caller is this file).
+const chromeAwait = brandColorThinking // "44" vivid cyan - live running pulse
+
 // Hierarchical left-rail roles + semantic color palette.
 //
 // Challenged design (why not yellow/red per tool name):
@@ -148,8 +152,63 @@ func resolveRailState(block ChatBlock, role RailRole, view railView) RailState {
 	return RailStateNeutral
 }
 
+// blockToolFailed is strict - no false red when body mentions "error"
+// mid-text (relocated from bubble_leftrail.go: its only caller is this
+// file).
+//
+// True when any of:
+//   - ChatBlock.Failed (production toolRow.Failed)
+//   - body/rendered has exit=1|error|timeout|canceled as a token (not exit=10)
+//   - first non-empty text line is error:/failed: / exact "failed"/"error"
+func blockToolFailed(b ChatBlock) bool {
+	if b.Kind != ChatBlockTool {
+		return false
+	}
+	if b.Failed {
+		return true
+	}
+	if hasExitFailureToken(b.Text) || hasExitFailureToken(b.Rendered) {
+		return true
+	}
+	first := strings.ToLower(firstNonEmptyLine(b.Text))
+	if first == "error" || first == "failed" ||
+		strings.HasPrefix(first, "error:") ||
+		strings.HasPrefix(first, "failed:") {
+		return true
+	}
+	return false
+}
+
+// hasExitFailureToken finds exit=<code> without matching exit=10 as exit=1.
+func hasExitFailureToken(s string) bool {
+	low := strings.ToLower(s)
+	const prefix = "exit="
+	for idx := 0; idx < len(low); {
+		i := strings.Index(low[idx:], prefix)
+		if i < 0 {
+			return false
+		}
+		i += idx
+		rest := low[i+len(prefix):]
+		switch {
+		case strings.HasPrefix(rest, "error"),
+			strings.HasPrefix(rest, "timeout"),
+			strings.HasPrefix(rest, "canceled"),
+			strings.HasPrefix(rest, "cancelled"):
+			return true
+		case strings.HasPrefix(rest, "1"):
+			// exit=1 only - not exit=10, exit=12, …
+			if len(rest) == 1 || rest[1] < '0' || rest[1] > '9' {
+				return true
+			}
+		}
+		idx = i + len(prefix)
+	}
+	return false
+}
+
 // railFromRole: structure = glyph/weight; color = state only.
-func railFromRole(role RailRole, state RailState, opts railOpts, view railView) LeftRail {
+func railFromRole(role RailRole, state RailState, opts RailOpts, view railView) LeftRail {
 	if role == RailRoleNone {
 		return LeftRail{Width: 0, Mode: RailModeOff}
 	}
@@ -159,7 +218,7 @@ func railFromRole(role RailRole, state RailState, opts railOpts, view railView) 
 		Plain: !opts.Color,
 		Mode:  RailModeHeader,
 		Frame: view.Frame,
-		Color: chromeNeutral,
+		Color: ChromeNeutral,
 		Bold:  false,
 	}
 
@@ -201,7 +260,7 @@ func railFromRole(role RailRole, state RailState, opts railOpts, view railView) 
 
 	switch state {
 	case RailStateFailed:
-		r.Color = chromeError
+		r.Color = ChromeError
 		r.Glyph, r.Char = "!", "!"
 		r.Bold = true
 		r.Animate = false
@@ -213,7 +272,7 @@ func railFromRole(role RailRole, state RailState, opts railOpts, view railView) 
 		r.Animate = view.Live
 		r.Bold = true
 	default:
-		r.Color = chromeNeutral
+		r.Color = ChromeNeutral
 		r.Animate = false
 	}
 
@@ -228,7 +287,7 @@ func railFromRole(role RailRole, state RailState, opts railOpts, view railView) 
 	return r
 }
 
-func resolveBlockRail(block ChatBlock, mem groupMember, opts railOpts, view railView) LeftRail {
+func resolveBlockRail(block ChatBlock, mem groupMember, opts RailOpts, view railView) LeftRail {
 	if block.Kind == ChatBlockDivider {
 		return railForDividerText(block.Text, opts)
 	}
@@ -237,6 +296,22 @@ func resolveBlockRail(block ChatBlock, mem groupMember, opts railOpts, view rail
 		return LeftRail{Width: 0, Mode: RailModeOff}
 	}
 	return railFromRole(role, resolveRailState(block, role, view), opts, view)
+}
+
+// railForDividerText enables error chrome when divider text looks like an
+// error (relocated from bubble_leftrail.go: its only caller is this file).
+func railForDividerText(text string, opts RailOpts) LeftRail {
+	low := strings.ToLower(strings.TrimSpace(text))
+	if strings.HasPrefix(low, "error") || strings.Contains(low, "error:") {
+		r := LeftRail{Width: 1, Color: ChromeError, ASCII: opts.ASCII, Plain: !opts.Color, Bold: true}
+		r.Glyph = "!"
+		if opts.ASCII {
+			r.Glyph = "!"
+		}
+		r.Char = r.Glyph
+		return r
+	}
+	return LeftRail{Width: 0}
 }
 
 func firstNonEmptyLine(s string) string {

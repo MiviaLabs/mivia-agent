@@ -3,6 +3,16 @@ package cli
 import (
 	"fmt"
 	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+)
+
+// Diff stat colors (foreground only - the ± counts on edit rows). Relocated
+// from toolui.go: this file was their sole caller.
+var (
+	toolDiffAdd = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorDiffAdd))
+	toolDiffDel = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorDiffDel))
+	toolDiffCtx = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorDim)) // dim context
 )
 
 func renderDiffBody(body string, width, maxLines int) []string {
@@ -23,15 +33,15 @@ func renderDiffBody(body string, width, maxLines int) []string {
 	for _, line := range lines {
 		switch {
 		case strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---") || strings.HasPrefix(line, "@@"):
-			out = append(out, clipPreviewLine(colorDiffLine(line), width))
+			out = append(out, ClipPreviewLine(ColorDiffLine(line), width))
 		case strings.HasPrefix(line, "+") || strings.HasPrefix(line, "-"):
-			out = append(out, clipPreviewLine(colorDiffLine(line), width))
+			out = append(out, ClipPreviewLine(ColorDiffLine(line), width))
 		case strings.HasPrefix(line, " "):
-			out = append(out, clipPreviewLine(toolDiffCtx.Render("  "+line), width))
+			out = append(out, ClipPreviewLine(toolDiffCtx.Render("  "+line), width))
 		case strings.HasPrefix(line, "… "):
-			out = append(out, toolDimStyle.Render("    "+line))
+			out = append(out, ToolDimStyle.Render("    "+line))
 		default:
-			out = append(out, clipPreviewLine(toolDiffCtx.Render("  "+line), width))
+			out = append(out, ClipPreviewLine(toolDiffCtx.Render("  "+line), width))
 		}
 	}
 	return out
@@ -144,28 +154,28 @@ func reserveContentBudget(start, maxLines, total int) (leading bool, content int
 // The full diff is one keypress away in the detail overlay.
 func renderCollapsedEditBlock(block ChatBlock, text, agentPart string, width int) []string {
 	const peekLines = 6
-	path := parseToolPath("", text)
+	path := ParseToolPath("", text)
 	if path == "" {
-		path = parseToolPath(block.Text, "")
+		path = ParseToolPath(block.Text, "")
 	}
 	added, removed := diffStat(text)
 
-	head := "  ▸ " + toolIconForName(block.ToolName) + " " + agentPart +
-		toolNameStyle.Render(block.ToolName)
+	head := "  ▸ " + ToolIconForName(block.ToolName) + " " + agentPart +
+		ToolNameStyle.Render(block.ToolName)
 	if path != "" {
-		head += " " + toolPathStyle.Render(" "+path+" ")
+		head += " " + ToolPathStyle.Render(" "+path+" ")
 	}
 	if added > 0 || removed > 0 {
 		head += " " + toolDiffAdd.Render(fmt.Sprintf("+%d", added)) +
 			" " + toolDiffDel.Render(fmt.Sprintf("−%d", removed))
 	}
 	if block.Elapsed > 0 {
-		head += " " + toolTimeStyle.Render(formatDuration(block.Elapsed))
+		head += " " + ToolTimeStyle.Render(FormatDuration(block.Elapsed))
 	}
 	if block.Failed {
-		head += " " + toolErrStyle.Render(glyphCross)
+		head += " " + ToolErrStyle.Render(glyphCross)
 	} else if block.Elapsed > 0 {
-		head += " " + toolOkStyle.Render(glyphCheck)
+		head += " " + ToolOkStyle.Render(glyphCheck)
 	}
 
 	out := []string{head}

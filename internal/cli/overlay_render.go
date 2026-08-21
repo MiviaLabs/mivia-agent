@@ -11,9 +11,9 @@ import (
 // the slash-command suggest panel, the composer history picker, and the queue
 // manager. An optional width argument (width[0] > 0) widens the window beyond
 // the default 72-col cap; callers that pass nothing keep today's behaviour.
-func renderOverlayWindow(rows []string, selected, windowRows, termW, maxH int, title, footer string, width ...int) (string, rect) {
+func renderOverlayWindow(rows []string, selected, windowRows, termW, maxH int, title, footer string, width ...int) (string, Rect) {
 	if len(rows) == 0 || termW <= 0 || maxH < 1 {
-		return "", rect{}
+		return "", Rect{}
 	}
 	w := min(termW, max(24, min(72, termW-4)))
 	if len(width) > 0 && width[0] > 0 {
@@ -29,7 +29,7 @@ func renderOverlayWindow(rows []string, selected, windowRows, termW, maxH int, t
 		if len(rows) > 1 {
 			row += fmt.Sprintf("  +%d", len(rows)-1)
 		}
-		return fitDialogRow(row, w), rect{w: w, h: 1}
+		return fitDialogRow(row, w), Rect{W: w, H: 1}
 	}
 	frameRows := 2
 	if footer != "" {
@@ -37,7 +37,7 @@ func renderOverlayWindow(rows []string, selected, windowRows, termW, maxH int, t
 	}
 	h := min(maxH, visible+frameRows)
 	if h < frameRows+1 {
-		return "", rect{}
+		return "", Rect{}
 	}
 	pageRows := max(0, h-frameRows)
 	start := 0
@@ -59,16 +59,16 @@ func renderOverlayWindow(rows []string, selected, windowRows, termW, maxH int, t
 		}
 		footer += fmt.Sprintf("+%d more", remaining)
 	}
-	l := dialogLayout{rect: rect{w: w, h: h}, innerW: max(0, w-4), pageH: pageRows, frameCols: 4, frameRows: frameRows}
+	l := DialogLayout{Rect: Rect{W: w, H: h}, InnerW: max(0, w-4), PageH: pageRows, FrameCols: 4, FrameRows: frameRows}
 	panel := renderDialogFrame(title, out, footer, l)
-	return panel, rect{w: lipgloss.Width(panel), h: lipgloss.Height(panel)}
+	return panel, Rect{W: lipgloss.Width(panel), H: lipgloss.Height(panel)}
 }
 
 // renderComposerPopup renders the open composer popup (queue manager, slash
 // suggestions, or the sent-message history picker) sized for the chat pane. It
 // returns an empty panel when no popup is open. The queue manager is checked
 // first: it is a modal, so suggest/history cannot be open at the same time.
-func (m *tuiModel) renderComposerPopup() (string, rect) {
+func (m *tuiModel) renderComposerPopup() (string, Rect) {
 	pane := newChatPaneLayout(m.width, m.sessionsSidebar != nil, m.workflowsSidebar != nil)
 	termW := max(1, pane.chatWidth)
 	maxH := max(0, m.suggestComposerTop()-1)
@@ -81,5 +81,5 @@ func (m *tuiModel) renderComposerPopup() (string, rect) {
 	if m.history.open {
 		return renderHistoryPanel(m.history, m.historyEntries(), termW, maxH)
 	}
-	return "", rect{}
+	return "", Rect{}
 }

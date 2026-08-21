@@ -6,77 +6,95 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// rect is a terminal-cell rectangle. Coordinates are always relative to the
-// raw terminal canvas; logical minimums never enlarge the canvas.
-type rect struct {
-	x, y int
-	w, h int
+// Rect is a terminal-cell rectangle. Coordinates are always relative to the
+// raw terminal canvas; logical minimums never enlarge the canvas. Shared
+// with the classic-mode overlay/panel renderers in internal/clichat.
+type Rect struct {
+	X, Y int
+	W, H int
 }
 
-type dialogPrefs struct {
-	preferredW, preferredH       int
-	preferredWPct, preferredHPct int
-	minW, minH                   int
-	maxWPct, maxHPct             int
-	frameCols, frameRows         int
-	borderless                   bool
-	pager                        bool
+// DialogPrefs configures dialog sizing (preferred/min/max dimensions, frame
+// padding, pager footer). Shared with dialog construction in
+// internal/clichat.
+type DialogPrefs struct {
+	// PreferredW is the preferred width in cells (0 = unset).
+	PreferredW, preferredH int
+	// PreferredWPct is the preferred width as a percentage of the terminal.
+	// PreferredHPct is the preferred height as a percentage of the terminal.
+	PreferredWPct, PreferredHPct int
+	// MinW / MinH are the minimum width/height in cells.
+	MinW, MinH       int
+	maxWPct, maxHPct int
+	// FrameCols / FrameRows are the frame's column/row padding.
+	FrameCols, FrameRows int
+	borderless           bool
+	// Pager shows a page-position footer when true.
+	Pager bool
 }
 
-type dialogLayout struct {
-	rect                 rect
-	innerW, pageH        int
-	frameCols, frameRows int
+// DialogLayout is the resolved geometry a dialog renders into: outer Rect,
+// inner content dimensions, and frame padding. Shared with dialog
+// construction and rendering in internal/clichat.
+type DialogLayout struct {
+	Rect Rect
+	// InnerW / PageH are the inner content width/height, after frame padding.
+	InnerW, PageH int
+	// FrameCols / FrameRows are the frame's column/row padding.
+	FrameCols, FrameRows int
 	borderless           bool
 }
 
-func dialogRect(termW, termH int, p dialogPrefs, contentW, contentH int) rect {
+func dialogRect(termW, termH int, p DialogPrefs, contentW, contentH int) Rect {
 	if termW <= 0 || termH <= 0 {
-		return rect{}
+		return Rect{}
 	}
-	w := preferredDimension(termW, p.preferredW, p.preferredWPct, contentW)
-	h := preferredDimension(termH, p.preferredH, p.preferredHPct, contentH)
+	w := preferredDimension(termW, p.PreferredW, p.PreferredWPct, contentW)
+	h := preferredDimension(termH, p.preferredH, p.PreferredHPct, contentH)
 	if p.maxWPct > 0 {
 		w = min(w, percentOf(termW, p.maxWPct))
 	}
 	if p.maxHPct > 0 {
 		h = min(h, percentOf(termH, p.maxHPct))
 	}
-	w = max(w, p.minW)
-	h = max(h, p.minH)
+	w = max(w, p.MinW)
+	h = max(h, p.MinH)
 	w = min(termW, max(0, w))
 	h = min(termH, max(0, h))
-	return rect{x: (termW - w) / 2, y: (termH - h) / 2, w: w, h: h}
+	return Rect{X: (termW - w) / 2, Y: (termH - h) / 2, W: w, H: h}
 }
 
-func makeDialogLayout(termW, termH int, p dialogPrefs, measure func(innerW int) (contentW, contentH int)) dialogLayout {
+// MakeDialogLayout resolves a dialog's geometry from terminal size and
+// preferences, measuring content via measure. Shared with dialog
+// construction in internal/clichat.
+func MakeDialogLayout(termW, termH int, p DialogPrefs, measure func(innerW int) (contentW, contentH int)) DialogLayout {
 	if termW <= 0 || termH <= 0 {
-		return dialogLayout{}
+		return DialogLayout{}
 	}
-	if p.frameCols == 0 && p.frameRows == 0 && !p.borderless {
-		p.frameCols, p.frameRows = 4, 2
+	if p.FrameCols == 0 && p.FrameRows == 0 && !p.borderless {
+		p.FrameCols, p.FrameRows = 4, 2
 	}
 	if measure == nil {
 		measure = func(int) (int, int) { return 0, 0 }
 	}
-	measureW := max(1, termW-p.frameCols)
-	if p.preferredW > 0 || p.preferredWPct > 0 || p.minW > 0 {
+	measureW := max(1, termW-p.FrameCols)
+	if p.PreferredW > 0 || p.PreferredWPct > 0 || p.MinW > 0 {
 		probe := dialogRect(termW, termH, p, 0, 1)
-		measureW = max(1, probe.w-p.frameCols)
+		measureW = max(1, probe.W-p.FrameCols)
 	}
 	contentW, contentH := measure(measureW)
-	r := dialogRect(termW, termH, p, contentW+p.frameCols, contentH+p.frameRows)
-	if r.w < p.frameCols+8 || r.h < p.frameRows+2 || p.borderless {
+	r := dialogRect(termW, termH, p, contentW+p.FrameCols, contentH+p.FrameRows)
+	if r.W < p.FrameCols+8 || r.H < p.FrameRows+2 || p.borderless {
 		p.borderless = true
-		r = rect{w: termW, h: termH}
+		r = Rect{W: termW, H: termH}
 	}
-	frameCols, frameRows := p.frameCols, p.frameRows
+	frameCols, frameRows := p.FrameCols, p.FrameRows
 	if p.borderless {
 		frameCols, frameRows = 0, 0
 	}
-	return dialogLayout{
-		rect: r, innerW: max(0, r.w-frameCols), pageH: max(0, r.h-frameRows),
-		frameCols: frameCols, frameRows: frameRows, borderless: p.borderless,
+	return DialogLayout{
+		Rect: r, InnerW: max(0, r.W-frameCols), PageH: max(0, r.H-frameRows),
+		FrameCols: frameCols, FrameRows: frameRows, borderless: p.borderless,
 	}
 }
 
@@ -98,14 +116,19 @@ func percentOf(n, pct int) int {
 	return n * pct / 100
 }
 
-// wrapDisplayRows converts semantic lines into the exact rows a pager renders.
-// ansi.Cut is grapheme-aware and keeps ANSI sequences intact.
-func wrapDisplayRows(lines []string, innerW int) []string {
-	rows, _ := wrapDisplayRowsWithSources(lines, innerW)
+// WrapDisplayRows converts semantic lines into the exact rows a pager renders.
+// ansi.Cut is grapheme-aware and keeps ANSI sequences intact. Shared with
+// dialog rendering in internal/clichat.
+func WrapDisplayRows(lines []string, innerW int) []string {
+	rows, _ := WrapDisplayRowsWithSources(lines, innerW)
 	return rows
 }
 
-func wrapDisplayRowsWithSources(lines []string, innerW int) ([]string, []int) {
+// WrapDisplayRowsWithSources is WrapDisplayRows, also returning each output
+// row's source line index. WrapDisplayRows is the sole in-package caller;
+// exported (rather than relocated to its one external caller) so both stay
+// colocated with the wrapping logic they share.
+func WrapDisplayRowsWithSources(lines []string, innerW int) ([]string, []int) {
 	if innerW <= 0 {
 		return nil, nil
 	}

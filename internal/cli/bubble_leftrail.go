@@ -9,14 +9,17 @@ import (
 // Chrome color tokens - semantic status only (not tool names).
 // Tools/steps default to neutral gray; yellow is for status-bar tools phase only.
 const (
-	chromeNeutral   = brandColorCancel   // "8" dim gray - structure default
-	chromeUser      = brandColorStream   // "33" vivid blue - user label (not rail)
-	chromeAssistant = brandColorCancel   // "8" quiet speech
-	chromeThinking  = brandColorMulti    // "170" vivid magenta - rare multi
-	chromeTools     = brandColorTools    // "178" vivid gold - brand bar phase only
-	chromeOK        = brandColorQueue    // "40" vivid green - rare; not default tool OK
-	chromeError     = brandColorError    // "160" vivid red - strict failures only
-	chromeAwait     = brandColorThinking // "44" vivid cyan - live running pulse
+	// ChromeNeutral is the default structural rail color. Shared with the
+	// hierarchical rail-role palette in internal/clichat.
+	ChromeNeutral   = brandColorCancel // "8" dim gray - structure default
+	chromeUser      = brandColorStream // "33" vivid blue - user label (not rail)
+	chromeAssistant = brandColorCancel // "8" quiet speech
+	chromeThinking  = brandColorMulti  // "170" vivid magenta - rare multi
+	chromeTools     = brandColorTools  // "178" vivid gold - brand bar phase only
+	chromeOK        = brandColorQueue  // "40" vivid green - rare; not default tool OK
+	// ChromeError is the strict-failure rail color. Shared with the
+	// hierarchical rail-role palette in internal/clichat.
+	ChromeError = brandColorError // "160" vivid red - strict failures only
 )
 
 // LeftRail is a left-edge indicator. Prefer header-only thin gray.
@@ -34,21 +37,23 @@ type LeftRail struct {
 	Plain   bool
 }
 
-// railOpts controls environment-sensitive chrome.
-type railOpts struct {
+// RailOpts controls environment-sensitive chrome. Shared with the
+// hierarchical rail-role resolver in internal/clichat.
+type RailOpts struct {
 	ASCII bool
 	Color bool
 }
 
-// chromeRenderOpts mirrors tool render env (NO_COLOR, TERM=dumb).
-func chromeRenderOpts() railOpts {
+// ChromeRenderOpts mirrors tool render env (NO_COLOR, TERM=dumb). Shared
+// with the classic-mode block renderer in internal/clichat.
+func ChromeRenderOpts() RailOpts {
 	o := terminalToolRenderOptions()
-	return railOpts{ASCII: o.ASCII, Color: o.Color}
+	return RailOpts{ASCII: o.ASCII, Color: o.Color}
 }
 
 // railForBlock is a kind-level convenience (no group membership / no live view).
 // Prefer resolveBlockRail for production.
-func railForBlock(kind ChatBlockKind, toolFailed bool, opts railOpts) LeftRail {
+func railForBlock(kind ChatBlockKind, toolFailed bool, opts RailOpts) LeftRail {
 	b := ChatBlock{Kind: kind}
 	if toolFailed {
 		b.Text = "error: failed"
@@ -57,23 +62,8 @@ func railForBlock(kind ChatBlockKind, toolFailed bool, opts railOpts) LeftRail {
 }
 
 // railForChatBlock selects chrome without group context.
-func railForChatBlock(block ChatBlock, opts railOpts) LeftRail {
+func railForChatBlock(block ChatBlock, opts RailOpts) LeftRail {
 	return resolveBlockRail(block, groupMember{}, opts, railView{})
-}
-
-// railForDividerText enables error chrome when divider text looks like an error.
-func railForDividerText(text string, opts railOpts) LeftRail {
-	low := strings.ToLower(strings.TrimSpace(text))
-	if strings.HasPrefix(low, "error") || strings.Contains(low, "error:") {
-		r := LeftRail{Width: 1, Color: chromeError, ASCII: opts.ASCII, Plain: !opts.Color, Bold: true}
-		r.Glyph = "!"
-		if opts.ASCII {
-			r.Glyph = "!"
-		}
-		r.Char = r.Glyph
-		return r
-	}
-	return LeftRail{Width: 0}
 }
 
 // paintRailCell returns the display cell (bold + colored when enabled).
@@ -112,13 +102,16 @@ func leftPadWithRail(padLeft int, rail LeftRail) string {
 	return cell + strings.Repeat(" ", rest)
 }
 
-// applyLeftRail paints the accent by rail.Mode.
+// ApplyLeftRail paints the accent by rail.Mode.
 // Blank / pad-only lines never get a glyph - empty rail column keeps alignment.
 //
 //   - Header: first non-blank line only
 //   - Tree: first non-blank Glyph, later non-blank Char
 //   - Full: every non-blank line Glyph (assistant speech)
-func applyLeftRail(lines []string, rail LeftRail) []string {
+//
+// Shared with the classic-mode block renderer and work-group grouping in
+// internal/clichat.
+func ApplyLeftRail(lines []string, rail LeftRail) []string {
 	if rail.Width == 0 || len(lines) == 0 {
 		return lines
 	}
@@ -218,15 +211,18 @@ func applyLeftRailInject(lines []string, cell string) []string {
 // applyLeftRailHeader forces header-only mode.
 func applyLeftRailHeader(lines []string, rail LeftRail) []string {
 	rail.Mode = RailModeHeader
-	return applyLeftRail(lines, rail)
+	return ApplyLeftRail(lines, rail)
 }
 
 // applyBlockChrome applies hierarchical state-aware rail chrome.
-func applyBlockChrome(lines []string, block ChatBlock, text string, opts railOpts) []string {
-	return applyBlockChromeWith(lines, block, text, opts, groupMember{}, railView{})
+func applyBlockChrome(lines []string, block ChatBlock, text string, opts RailOpts) []string {
+	return ApplyBlockChromeWith(lines, block, text, opts, groupMember{}, railView{})
 }
 
-func applyBlockChromeWith(lines []string, block ChatBlock, text string, opts railOpts, mem groupMember, view railView) []string {
+// ApplyBlockChromeWith applies hierarchical state-aware rail chrome for a
+// block inside a work group. Shared with the classic-mode block renderer in
+// internal/clichat.
+func ApplyBlockChromeWith(lines []string, block ChatBlock, text string, opts RailOpts, mem groupMember, view railView) []string {
 	if len(lines) == 0 {
 		return lines
 	}
@@ -235,7 +231,7 @@ func applyBlockChromeWith(lines []string, block ChatBlock, text string, opts rai
 		!block.Collapsed {
 		return lines
 	}
-	return applyLeftRail(lines, resolveBlockRail(block, mem, opts, view))
+	return ApplyLeftRail(lines, resolveBlockRail(block, mem, opts, view))
 }
 
 // injectRailOnLine places the rail in the first display column without growing
@@ -342,78 +338,25 @@ func injectRailANSI(line, cell string) string {
 	return cell + b.String()
 }
 
-// blockToolFailed is strict - no false red when body mentions "error" mid-text.
-//
-// True when any of:
-//   - ChatBlock.Failed (production toolRow.Failed)
-//   - body/rendered has exit=1|error|timeout|canceled as a token (not exit=10)
-//   - first non-empty text line is error:/failed: / exact "failed"/"error"
-func blockToolFailed(b ChatBlock) bool {
-	if b.Kind != ChatBlockTool {
-		return false
-	}
-	if b.Failed {
-		return true
-	}
-	if hasExitFailureToken(b.Text) || hasExitFailureToken(b.Rendered) {
-		return true
-	}
-	first := strings.ToLower(firstNonEmptyLine(b.Text))
-	if first == "error" || first == "failed" ||
-		strings.HasPrefix(first, "error:") ||
-		strings.HasPrefix(first, "failed:") {
-		return true
-	}
-	return false
-}
-
-// hasExitFailureToken finds exit=<code> without matching exit=10 as exit=1.
-func hasExitFailureToken(s string) bool {
-	low := strings.ToLower(s)
-	const prefix = "exit="
-	for idx := 0; idx < len(low); {
-		i := strings.Index(low[idx:], prefix)
-		if i < 0 {
-			return false
-		}
-		i += idx
-		rest := low[i+len(prefix):]
-		switch {
-		case strings.HasPrefix(rest, "error"),
-			strings.HasPrefix(rest, "timeout"),
-			strings.HasPrefix(rest, "canceled"),
-			strings.HasPrefix(rest, "cancelled"):
-			return true
-		case strings.HasPrefix(rest, "1"):
-			// exit=1 only - not exit=10, exit=12, …
-			if len(rest) == 1 || rest[1] < '0' || rest[1] > '9' {
-				return true
-			}
-		}
-		idx = i + len(prefix)
-	}
-	return false
-}
-
 // Presets - neutral default; semantic only on error/running.
 func RailUser() LeftRail {
 	return LeftRail{Width: 0, Mode: RailModeOff}
 }
 
 func RailAssistant() LeftRail {
-	return LeftRail{Width: 1, Glyph: "│", Char: "│", Color: chromeNeutral, Mode: RailModeFull, Bold: false}
+	return LeftRail{Width: 1, Glyph: "│", Char: "│", Color: ChromeNeutral, Mode: RailModeFull, Bold: false}
 }
 
 func RailThinking() LeftRail {
-	return LeftRail{Width: 1, Glyph: "┊", Char: "┊", Color: chromeNeutral, Mode: RailModeHeader}
+	return LeftRail{Width: 1, Glyph: "┊", Char: "┊", Color: ChromeNeutral, Mode: RailModeHeader}
 }
 
 func RailTools() LeftRail {
-	return LeftRail{Width: 1, Glyph: "│", Char: "│", Color: chromeNeutral, Mode: RailModeHeader}
+	return LeftRail{Width: 1, Glyph: "│", Char: "│", Color: ChromeNeutral, Mode: RailModeHeader}
 }
 
 func RailError() LeftRail {
-	return LeftRail{Width: 1, Glyph: "!", Char: "!", Color: chromeError, Bold: true, Mode: RailModeHeader}
+	return LeftRail{Width: 1, Glyph: "!", Char: "!", Color: ChromeError, Bold: true, Mode: RailModeHeader}
 }
 
 // stripANSI removes ANSI escape sequences from a string.

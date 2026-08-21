@@ -99,7 +99,7 @@ func (m *tuiModel) refreshLiveToolWaveStatus() {
 			b.WriteString(line)
 		}
 		m.blocks[i].Text = b.String()
-		m.blocks[i].Rendered = tuiDimStyle.Render("  → " + summary)
+		m.blocks[i].Rendered = TUIDimStyle.Render("  → " + summary)
 		// Keep Collapsed as-is (multi-tool starts collapsed).
 		if m.waiting {
 			m.renderVP()

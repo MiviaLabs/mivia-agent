@@ -134,11 +134,11 @@ func isBannerTool(name string) bool {
 // toolObjectFromDetail extracts a short object phrase from tool args JSON/text.
 func toolObjectFromDetail(name, detail string) string {
 	detail = strings.TrimSpace(detail)
-	if detail == "" || isLifecycleStatus(detail) {
+	if detail == "" || IsLifecycleStatus(detail) {
 		return ""
 	}
 	// Prefer known path/pattern fields via existing parsers.
-	if p := parseToolPath(detail, ""); p != "" {
+	if p := ParseToolPath(detail, ""); p != "" {
 		return shortenPath(p, 40)
 	}
 	if s := jsonStringField(detail, "pattern"); s != "" {
@@ -282,7 +282,7 @@ func shouldCommitInterim(s string) bool {
 	if s == "" {
 		return false
 	}
-	if isLifecycleStatus(s) {
+	if IsLifecycleStatus(s) {
 		return false
 	}
 	if utf8.RuneCountInString(s) < minInterimRunes {

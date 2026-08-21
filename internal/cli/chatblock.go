@@ -60,7 +60,7 @@ func (m *tuiModel) buildViewportContent() string {
 	if m.trimmedBlocks > 0 {
 		// Chrome, not history: says what the transcript is no longer showing.
 		note := fmt.Sprintf("  ─ %d older messages trimmed ─", m.trimmedBlocks)
-		return strings.Join(append([]string{tuiDimStyle.Render(note)}, lines...), "\n")
+		return strings.Join(append([]string{TUIDimStyle.Render(note)}, lines...), "\n")
 	}
 	return strings.Join(lines, "\n")
 }

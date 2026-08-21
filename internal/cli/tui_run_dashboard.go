@@ -237,10 +237,10 @@ func (d *runDashboard) renderPanel(width int) string {
 	}
 	b.WriteString(dashHeaderStyle.Render(" ⚡ Orchestration Runs"))
 	b.WriteString("  ")
-	b.WriteString(tuiDimStyle.Render(fmt.Sprintf("[%d tracked, %d active]", len(runs), d.activeCount())))
+	b.WriteString(TUIDimStyle.Render(fmt.Sprintf("[%d tracked, %d active]", len(runs), d.activeCount())))
 	if len(runs) > 0 {
 		b.WriteString("  ")
-		b.WriteString(tuiDimStyle.Render("[↑↓ select, /resume <id> to resume, ctrl+r close]"))
+		b.WriteString(TUIDimStyle.Render("[↑↓ select, /resume <id> to resume, ctrl+r close]"))
 	}
 	b.WriteString("\n")
 	for i, r := range runs {
@@ -278,12 +278,12 @@ func (d *runDashboard) renderRunLine(r *dashRunInfo, width int) string {
 	b.WriteString("  ")
 	// Show held-by-another status right after the run ID.
 	if r.HeldByAnotherExecutor {
-		b.WriteString(tuiDimStyle.Render("[held by another process]"))
+		b.WriteString(TUIDimStyle.Render("[held by another process]"))
 		b.WriteString(" ")
 	}
 	// Task status summary.
 	taskSummary := d.taskSummary(r.TaskStates)
-	b.WriteString(tuiDimStyle.Render(taskSummary))
+	b.WriteString(TUIDimStyle.Render(taskSummary))
 	b.WriteString("\n")
 	return b.String()
 }

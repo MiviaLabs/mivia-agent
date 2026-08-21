@@ -18,44 +18,44 @@ func TestRenderDiffLine(t *testing.T) {
 		{
 			name:        "file header +++",
 			line:        "+++ b/x.go",
-			wantTokens:  []string{ansiBgDark, ansiBold, ansiCyan, "+++ b/x.go"},
+			wantTokens:  []string{AnsiBgDark, AnsiBold, AnsiCyan, "+++ b/x.go"},
 			banTokens:   []string{ansiBgDiffAdd},
 			stripPrefix: "+++",
 		},
 		{
 			name:        "file header ---",
 			line:        "--- a/x.go",
-			wantTokens:  []string{ansiBgDark, ansiBold, ansiCyan, "--- a/x.go"},
+			wantTokens:  []string{AnsiBgDark, AnsiBold, AnsiCyan, "--- a/x.go"},
 			banTokens:   []string{ansiBgDiffDel},
 			stripPrefix: "---",
 		},
 		{
 			name:        "hunk header @@",
 			line:        "@@ -1,3 +1,4 @@",
-			wantTokens:  []string{ansiMagenta, "@@ -1,3 +1,4 @@"},
+			wantTokens:  []string{AnsiMagenta, "@@ -1,3 +1,4 @@"},
 			stripPrefix: "@@",
 		},
 		{
 			name:        "added line",
 			line:        "+added",
-			wantTokens:  []string{ansiBgDiffAdd, ansiGreen, "+added"},
+			wantTokens:  []string{ansiBgDiffAdd, AnsiGreen, "+added"},
 			stripPrefix: "+",
 		},
 		{
 			name:        "removed line",
 			line:        "-removed",
-			wantTokens:  []string{ansiBgDiffDel, ansiRed, "-removed"},
+			wantTokens:  []string{ansiBgDiffDel, AnsiRed, "-removed"},
 			stripPrefix: "-",
 		},
 		{
 			name:       "context line",
 			line:       " context",
-			wantTokens: []string{ansiBgDark, ansiDim, " context"},
+			wantTokens: []string{AnsiBgDark, AnsiDim, " context"},
 		},
 		{
 			name:       "empty line",
 			line:       "",
-			wantTokens: []string{ansiBgDark, ansiDim},
+			wantTokens: []string{AnsiBgDark, AnsiDim},
 		},
 	}
 
@@ -104,16 +104,16 @@ func assertRenderDiffLineCase(t *testing.T, line string, wantTokens, banTokens [
 func TestRenderDiffLineHunkIsMagenta(t *testing.T) {
 	hunk := renderDiffLine("@@ -1 +1 @@")
 	ctx := renderDiffLine(" context")
-	if !strings.Contains(hunk, ansiMagenta) {
+	if !strings.Contains(hunk, AnsiMagenta) {
 		t.Fatalf("@@ must carry magenta/hunk token, got %q", hunk)
 	}
-	if strings.Contains(hunk, ansiDim) {
+	if strings.Contains(hunk, AnsiDim) {
 		t.Fatalf("@@ must not use dim/context styling, got %q", hunk)
 	}
 	if hunk == ctx {
 		t.Fatalf("@@ rendered equal to context path; hunk must be distinct")
 	}
-	if !strings.Contains(ctx, ansiDim) {
+	if !strings.Contains(ctx, AnsiDim) {
 		t.Fatalf("context fixture must use dim token, got %q", ctx)
 	}
 }
@@ -125,7 +125,7 @@ func TestRenderDiffLineHeaderPrecedence(t *testing.T) {
 	if strings.Contains(header, ansiBgDiffAdd) {
 		t.Fatalf("+++ classified as add: %q", header)
 	}
-	if !strings.Contains(header, ansiCyan) || !strings.Contains(header, ansiBold) {
+	if !strings.Contains(header, AnsiCyan) || !strings.Contains(header, AnsiBold) {
 		t.Fatalf("+++ must be bold cyan header: %q", header)
 	}
 	if !strings.Contains(add, ansiBgDiffAdd) {

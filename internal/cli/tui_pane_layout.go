@@ -86,7 +86,7 @@ func sidebarDivider(width, height int) string {
 	if width <= 0 || height <= 0 {
 		return ""
 	}
-	line := tuiDimStyle.Render(strings.Repeat("│", width))
+	line := TUIDimStyle.Render(strings.Repeat("│", width))
 	return strings.Repeat(line+"\n", height-1) + line
 }
 

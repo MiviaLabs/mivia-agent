@@ -186,7 +186,7 @@ func TestPrintDim(t *testing.T) {
 	r := NewChatRenderer(mt, "m")
 	r.PrintDim("hello %s", "world")
 	output := mt.String()
-	if !strings.Contains(output, ansiDim) {
+	if !strings.Contains(output, AnsiDim) {
 		t.Fatalf("expected dim style, got %q", output)
 	}
 	stripped := stripANSI(output)
@@ -233,7 +233,7 @@ func TestRenderHistoryWithMarkdown(t *testing.T) {
 	}
 	r.RenderHistory(msgs)
 	output := mt.String()
-	if !strings.Contains(output, ansiYellow) {
+	if !strings.Contains(output, AnsiYellow) {
 		t.Fatalf("expected code highlighting in markdown-rendered history, got %q", output)
 	}
 	stripped := stripANSI(output)

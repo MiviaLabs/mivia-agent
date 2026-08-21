@@ -159,7 +159,7 @@ func TestApplyToolEventsRunningStatusUpdatesSameRow(t *testing.T) {
 		t.Fatal("must still be open while running")
 	}
 	// Collapsed summary must still show the task intent.
-	sum := newToolRenderItem(m.toolRows[0].Name, m.toolRows[0].Detail, m.toolRows[0].Result, false, false).summary(80)
+	sum := NewToolRenderItem(m.toolRows[0].Name, m.toolRows[0].Detail, m.toolRows[0].Result, false, false).summary(80)
 	if !strings.Contains(sum, "analyze auth") {
 		t.Fatalf("operator summary=%q", sum)
 	}

@@ -50,8 +50,8 @@ func newAgentDialog(rows []agentListRow, busy bool) *agentDialog {
 	return d
 }
 
-func agentDialogPrefs() dialogPrefs {
-	return dialogPrefs{preferredWPct: 70, preferredHPct: 60, minW: 28, minH: 8, frameCols: 4, frameRows: 3, pager: true}
+func agentDialogPrefs() DialogPrefs {
+	return DialogPrefs{PreferredWPct: 70, PreferredHPct: 60, MinW: 28, MinH: 8, FrameCols: 4, FrameRows: 3, Pager: true}
 }
 
 func (d *agentDialog) move(delta int) {
@@ -79,8 +79,8 @@ func (d *agentDialog) clampScroll(page int) {
 	d.scroll = max(0, min(d.scroll, max(0, len(d.rows)-page)))
 }
 
-func (d *agentDialog) layout(w, h int) dialogLayout {
-	return makeDialogLayout(w, h, agentDialogPrefs(), func(innerW int) (int, int) {
+func (d *agentDialog) layout(w, h int) DialogLayout {
+	return MakeDialogLayout(w, h, agentDialogPrefs(), func(innerW int) (int, int) {
 		rows := d.rowLinesAt(innerW, len(d.rows), 0)
 		maxW := 0
 		for _, row := range rows {
@@ -99,7 +99,7 @@ func (d *agentDialog) rowLines(inner, visible int) []string {
 func (d *agentDialog) rowLinesAt(inner, visible, scroll int) []string {
 	visible = max(1, visible)
 	if len(d.rows) == 0 {
-		return []string{tuiDimStyle.Render("no agents loaded")}
+		return []string{TUIDimStyle.Render("no agents loaded")}
 	}
 	scroll = max(0, min(scroll, max(0, len(d.rows)-visible)))
 	end := min(len(d.rows), scroll+visible)
@@ -116,16 +116,16 @@ func (d *agentDialog) rowLinesAt(inner, visible, scroll int) []string {
 		}
 		text := marker + selected + row.Name
 		if row.Description != "" {
-			text += tuiDimStyle.Render(" - " + row.Description)
+			text += TUIDimStyle.Render(" - " + row.Description)
 		}
 		lines = append(lines, ansi.Truncate(text, max(1, inner), "…"))
 	}
 	return lines
 }
 
-func (d *agentDialog) ViewAt(w, h int) (string, dialogLayout) {
+func (d *agentDialog) ViewAt(w, h int) (string, DialogLayout) {
 	l := d.layout(w, h)
-	rows := d.rowLines(l.innerW, l.pageH)
+	rows := d.rowLines(l.InnerW, l.PageH)
 	return renderDialogFrame("◇ agents", rows, d.footer(), l), l
 }
 
@@ -134,9 +134,9 @@ func (d *agentDialog) footer() string {
 		return tuiErrorStyle.Render(d.notice)
 	}
 	if d.busy {
-		return tuiDimStyle.Render("finish current work first · esc close")
+		return TUIDimStyle.Render("finish current work first · esc close")
 	}
-	return tuiDimStyle.Render("↑↓/j/k move · enter select · esc/q close")
+	return TUIDimStyle.Render("↑↓/j/k move · enter select · esc/q close")
 }
 
 func (d *agentDialog) selected() (agentListRow, bool) {
@@ -148,8 +148,8 @@ func (d *agentDialog) selected() (agentListRow, bool) {
 
 func (d *agentDialog) rowAtY(y int, w, h int) (agentListRow, bool) {
 	l := d.layout(w, h)
-	local := y - l.rect.y - 1
-	if local < 0 || local >= l.pageH {
+	local := y - l.Rect.Y - 1
+	if local < 0 || local >= l.PageH {
 		return agentListRow{}, false
 	}
 	index := d.scroll + local
@@ -205,11 +205,11 @@ func (m *tuiModel) handleAgentDialogKey(key string) (bool, bool, []tea.Cmd) {
 		if len(d.rows) > 0 {
 			d.cursor = len(d.rows) - 1
 		}
-		d.clampScroll(layout.pageH)
+		d.clampScroll(layout.PageH)
 	case "pgup", "b":
-		d.move(-max(1, layout.pageH))
+		d.move(-max(1, layout.PageH))
 	case "pgdown", "f", " ":
-		d.move(max(1, layout.pageH))
+		d.move(max(1, layout.PageH))
 	case "enter":
 		if row, ok := d.selected(); ok {
 			m.selectAgentDialogRow(row)

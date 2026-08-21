@@ -194,7 +194,7 @@ func writeToolPanelHeader(
 	// Phase F MVP: Work · N tools · elapsed (scan-friendly long turns).
 	work := fmt.Sprintf("Work · %d tools", total)
 	if elapsed > 0 {
-		work += " · " + formatDuration(elapsed)
+		work += " · " + FormatDuration(elapsed)
 	}
 	b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(hdrColor)).Render(
 		fmt.Sprintf("  %s %s · %d/%d done · %d active%s", hdrMark, work, done, total, open, more),
@@ -205,7 +205,7 @@ func writeToolPanelHeader(
 		// Only claim keys that are actually bound: nothing moves toolPanel.Selected
 		// on an arrow key, so advertising "↑↓ select" sent users looking for a
 		// handler that does not exist.
-		b.WriteString(toolDimStyle.Render("  tab select · enter/space expand · wheel when hover"))
+		b.WriteString(ToolDimStyle.Render("  tab select · enter/space expand · wheel when hover"))
 		b.WriteByte('\n')
 		n++
 	}
@@ -223,10 +223,10 @@ func writeToolPanelRow(
 ) int {
 	if opts := terminalToolRenderOptions(); !opts.Color {
 		// Include lifecycle status in monochrome summary when present.
-		item := newToolRenderItem(r.Name, r.Detail, r.Result, r.Done, r.Failed)
+		item := NewToolRenderItem(r.Name, r.Detail, r.Result, r.Done, r.Failed)
 		line := formatToolLine(item, width, opts)
 		if r.Agent != "" {
-			line = "  " + glyphDiamond + " " + boundedToolText(r.Agent, 24) + " " + strings.TrimSpace(line)
+			line = "  " + glyphDiamond + " " + BoundedToolText(r.Agent, 24) + " " + strings.TrimSpace(line)
 		}
 		if st := strings.TrimSpace(r.Status); st != "" && !r.Done {
 			// "  * + delegate summary" → inject status after name
@@ -245,9 +245,9 @@ func writeToolPanelRow(
 	case !r.Done:
 		iconStyled = brandGlyph(logoFrame+ti, brandColorTools)
 	case r.Failed:
-		iconStyled = toolErrStyle.Render(glyphCross)
+		iconStyled = ToolErrStyle.Render(glyphCross)
 	default:
-		iconStyled = toolOkStyle.Render(glyphCheck)
+		iconStyled = ToolOkStyle.Render(glyphCheck)
 	}
 	b.WriteString(formatToolPanelLine(r, iconStyled, width, now, selected))
 	b.WriteByte('\n')
@@ -269,7 +269,7 @@ func injectStatusAfterName(line, name, status string) string {
 
 func writeToolPanelExpand(b *strings.Builder, r toolRow, width int) int {
 	maxPreviewLines := 6
-	if isEditTool(r.Name) {
+	if IsEditTool(r.Name) {
 		maxPreviewLines = 10
 	}
 	n := 0
@@ -278,7 +278,7 @@ func writeToolPanelExpand(b *strings.Builder, r toolRow, width int) int {
 		n += writePreviewSection(b, "    ╭─ "+label, r.Detail, width, maxPreviewLines, false)
 	}
 	if r.Result != "" {
-		colorDiff := isEditTool(r.Name) || resultLooksLikeDiff(r.Result)
+		colorDiff := IsEditTool(r.Name) || ResultLooksLikeDiff(r.Result)
 		label := expandSectionLabel(r.Name, false)
 		n += writePreviewSection(b, "    ╰─ "+label, r.Result, width, maxPreviewLines, colorDiff)
 	}
@@ -301,14 +301,14 @@ func writePreviewSection(b *strings.Builder, header, body string, width, maxLine
 	lines := all
 	if len(lines) > maxLines {
 		lines = lines[len(lines)-maxLines:]
-		b.WriteString(toolDimStyle.Render(fmt.Sprintf("    │ … (%d more)", len(all)-maxLines)))
+		b.WriteString(ToolDimStyle.Render(fmt.Sprintf("    │ … (%d more)", len(all)-maxLines)))
 		b.WriteByte('\n')
 		n++
 	}
 	for _, l := range lines {
-		l = clipPreviewLine(l, width)
+		l = ClipPreviewLine(l, width)
 		if colorDiff {
-			b.WriteString("  " + colorDiffLine(l))
+			b.WriteString("  " + ColorDiffLine(l))
 		} else {
 			b.WriteString(fmt.Sprintf("    │ %s", l))
 		}

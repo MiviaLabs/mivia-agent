@@ -103,16 +103,16 @@ func isRenderedTableRow(line string) bool {
 }
 
 // hardTruncateANSI truncates a line to maxWidth visible columns, appends … if
-// cut, and always ends with ansiReset so colors do not bleed.
+// cut, and always ends with AnsiReset so colors do not bleed.
 func hardTruncateANSI(line string, maxWidth int) string {
 	if maxWidth < 1 {
-		return ansiReset
+		return AnsiReset
 	}
 	if visibleWidth(line) <= maxWidth {
-		if strings.HasSuffix(line, ansiReset) {
+		if strings.HasSuffix(line, AnsiReset) {
 			return line
 		}
-		return line + ansiReset
+		return line + AnsiReset
 	}
 	budget := maxWidth
 	if budget > 1 {
@@ -149,7 +149,7 @@ func hardTruncateANSI(line string, maxWidth int) string {
 	if maxWidth > 1 {
 		b.WriteString("…")
 	}
-	b.WriteString(ansiReset)
+	b.WriteString(AnsiReset)
 	return b.String()
 }
 

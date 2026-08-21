@@ -176,7 +176,7 @@ func TestEffortDialogSurfacesASessionRefusal(t *testing.T) {
 }
 
 // The dialog renders inside the chat view and survives a resize clamp, which
-// is where a modal that forgot to register would blow past its rect.
+// is where a modal that forgot to register would blow past its Rect.
 func TestEffortDialogRendersInTheChatViewAndClamps(t *testing.T) {
 	m := effortTUI(t, effortThinker)
 	m.width, m.height = 80, 20
@@ -187,7 +187,7 @@ func TestEffortDialogRendersInTheChatViewAndClamps(t *testing.T) {
 	m.width, m.height = 30, 8
 	m.clampModalState()
 	view, layout := m.effortDlg.ViewAt(m.width, m.height)
-	if layout.rect.x+layout.rect.w > m.width || layout.rect.y+layout.rect.h > m.height {
+	if layout.Rect.X+layout.Rect.W > m.width || layout.Rect.Y+layout.Rect.H > m.height {
 		t.Fatalf("clamped layout escapes the canvas: %+v", layout)
 	}
 	if view == "" {

@@ -75,7 +75,7 @@ func TestIntegration_FullHeightRail_ToolExpanded(t *testing.T) {
 func TestIntegration_FullHeightRail_ToolRenderedProduction(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
 	t.Setenv("TERM", "dumb")
-	item := newToolRenderItem("grep", `{"pattern":"x"}`, "match\nmatch2", true, false)
+	item := NewToolRenderItem("grep", `{"pattern":"x"}`, "match\nmatch2", true, false)
 	rendered := formatToolLine(item, 80, terminalToolRenderOptions())
 	blocks := []ChatBlock{{
 		ID: "t1", Kind: ChatBlockTool, ToolName: "grep",

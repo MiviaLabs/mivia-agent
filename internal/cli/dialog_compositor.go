@@ -152,25 +152,25 @@ func normalizeCanvas(s string, termW, termH int) []string {
 	return rows
 }
 
-func overlayAt(base, panel string, panelRect rect, termW, termH int) string {
+func overlayAt(base, panel string, panelRect Rect, termW, termH int) string {
 	baseRows := normalizeCanvas(base, termW, termH)
 	if termW <= 0 || termH <= 0 {
 		return ""
 	}
-	panelRows := normalizeCanvas(panel, max(0, panelRect.w), max(0, panelRect.h))
-	for y := max(0, panelRect.y); y < min(termH, panelRect.y+panelRect.h); y++ {
-		localY := y - panelRect.y
+	panelRows := normalizeCanvas(panel, max(0, panelRect.W), max(0, panelRect.H))
+	for y := max(0, panelRect.Y); y < min(termH, panelRect.Y+panelRect.H); y++ {
+		localY := y - panelRect.Y
 		if localY < 0 || localY >= len(panelRows) {
 			continue
 		}
-		x0, x1 := max(0, panelRect.x), min(termW, panelRect.x+panelRect.w)
+		x0, x1 := max(0, panelRect.X), min(termW, panelRect.X+panelRect.W)
 		if x1 <= x0 {
 			continue
 		}
-		localX0 := x0 - panelRect.x
+		localX0 := x0 - panelRect.X
 		localX1 := localX0 + (x1 - x0)
 		row := baseRows[y]
-		baseRows[y] = sliceANSI(row, 0, x0) + sliceANSI(panelRows[localY], localX0, localX1) + sliceANSI(row, panelRect.x+panelRect.w, termW)
+		baseRows[y] = sliceANSI(row, 0, x0) + sliceANSI(panelRows[localY], localX0, localX1) + sliceANSI(row, panelRect.X+panelRect.W, termW)
 		baseRows[y] = normalizeCanvas(baseRows[y], termW, 1)[0]
 	}
 	return strings.Join(baseRows, "\n")
@@ -197,8 +197,8 @@ func fitDialogRow(row string, width int) string {
 // renderDialogFrame owns the shared exact-width frame for block and sessions
 // dialogs. frameRows=2 means title/page/footer-bottom; frameRows=3 adds an
 // explicit footer row before the bottom border for sessions.
-func renderDialogFrame(title string, rows []string, footer string, layout dialogLayout) string {
-	w, h := layout.rect.w, layout.rect.h
+func renderDialogFrame(title string, rows []string, footer string, layout DialogLayout) string {
+	w, h := layout.Rect.W, layout.Rect.H
 	if w <= 0 || h <= 0 {
 		return ""
 	}
@@ -213,11 +213,11 @@ func renderDialogFrame(title string, rows []string, footer string, layout dialog
 		}
 		return strings.Join(out, "\n")
 	}
-	inner := max(0, w-layout.frameCols)
+	inner := max(0, w-layout.FrameCols)
 	top := "┌─" + fitDialogRow(title, inner) + "─┐"
 	var out []string
 	out = append(out, top)
-	pageRows := max(0, h-layout.frameRows)
+	pageRows := max(0, h-layout.FrameRows)
 	for i := 0; i < pageRows; i++ {
 		row := ""
 		if i < len(rows) {
@@ -225,11 +225,11 @@ func renderDialogFrame(title string, rows []string, footer string, layout dialog
 		}
 		out = append(out, "│ "+fitDialogRow(row, inner)+" │")
 	}
-	if layout.frameRows >= 3 {
+	if layout.FrameRows >= 3 {
 		out = append(out, "│ "+fitDialogRow(footer, inner)+" │")
 	}
 	bottom := footer
-	if layout.frameRows >= 3 {
+	if layout.FrameRows >= 3 {
 		bottom = ""
 	}
 	out = append(out, "└─"+fitDialogRow(bottom, inner)+"─┘")

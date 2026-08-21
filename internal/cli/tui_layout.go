@@ -212,17 +212,17 @@ func (m *tuiModel) appendTurnFooter(err error, total time.Duration) {
 		return
 	}
 	if err == context.Canceled {
-		text := fmt.Sprintf("(cancelled · %s)", formatDuration(total))
+		text := fmt.Sprintf("(cancelled · %s)", FormatDuration(total))
 		m.appendBlock(ChatBlock{
 			Kind:     ChatBlockDivider,
 			Text:     text,
-			Rendered: tuiDimStyle.Render(text),
+			Rendered: TUIDimStyle.Render(text),
 		})
 		return
 	}
 	// Turn footer carries what the turn cost: duration plus the typed action
 	// tally, so scrolling history reads as a record instead of a rule.
-	text := fmt.Sprintf("  ─ turn %d · %s", m.session.UserTurns(), formatDuration(total))
+	text := fmt.Sprintf("  ─ turn %d · %s", m.session.UserTurns(), FormatDuration(total))
 	tools, agents, failed := m.turnActionTally()
 	if tools > 0 {
 		text += fmt.Sprintf(" · %d ⚙", tools)
@@ -237,7 +237,7 @@ func (m *tuiModel) appendTurnFooter(err error, total time.Duration) {
 	m.appendBlock(ChatBlock{
 		Kind:     ChatBlockDivider,
 		Text:     text,
-		Rendered: tuiDimStyle.Render(text),
+		Rendered: TUIDimStyle.Render(text),
 	})
 }
 

@@ -41,7 +41,10 @@ func terminalToolRenderOptions() toolRenderOptions {
 	return toolRenderOptions{ASCII: term == "dumb", Color: !plain}
 }
 
-func newToolRenderItem(name, detail, result string, done, failed bool) toolRenderItem {
+// NewToolRenderItem builds a bounded, presentation-neutral tool render item.
+// Shared by the live status panel and the classic-mode renderer in
+// internal/clichat.
+func NewToolRenderItem(name, detail, result string, done, failed bool) toolRenderItem {
 	return toolRenderItem{Name: name, Detail: detail, Result: result, Done: done, Failed: failed}
 }
 
@@ -66,13 +69,16 @@ func (t toolRenderItem) statusIcon(ascii bool) string {
 
 func (t toolRenderItem) summary(max int) string {
 	s := summarizeToolDetail(t.Name, t.Detail, t.Result)
-	if p := parseToolPath(t.Detail, t.Result); p != "" && s == p {
+	if p := ParseToolPath(t.Detail, t.Result); p != "" && s == p {
 		s = ""
 	}
-	return boundedToolText(s, max)
+	return BoundedToolText(s, max)
 }
 
-func boundedToolText(s string, max int) string {
+// BoundedToolText sanitizes and bounds model-influenced tool text (names,
+// arguments, error bodies) to max runes. Shared by the live status panel and
+// the classic-mode renderer in internal/clichat.
+func BoundedToolText(s string, max int) string {
 	if max < 1 {
 		max = 1
 	}
@@ -101,25 +107,25 @@ func formatToolLine(t toolRenderItem, width int, opts toolRenderOptions) string 
 		return fmt.Sprintf("  %s %s %s %s", status, kind, t.Name, summary)
 	}
 	if t.Failed {
-		status = toolErrStyle.Render(status)
+		status = ToolErrStyle.Render(status)
 	} else if t.Done {
-		status = toolOkStyle.Render(status)
+		status = ToolOkStyle.Render(status)
 	}
-	return fmt.Sprintf("  %s %s %s %s", status, kind, toolNameStyle.Render(t.Name), toolDimStyle.Render(summary))
+	return fmt.Sprintf("  %s %s %s %s", status, kind, ToolNameStyle.Render(t.Name), ToolDimStyle.Render(summary))
 }
 
 // formatToolPanelLine is the colored panel row: icon kind name [status] summary elapsed.
 func formatToolPanelLine(r toolRow, iconStyled string, width int, now time.Time, selected bool) string {
-	path := parseToolPath(r.Detail, r.Result)
+	path := ParseToolPath(r.Detail, r.Result)
 	pathPart := ""
 	if path != "" {
 		chip := path
 		if len(chip) > max(12, width/3) {
 			chip = "…" + chip[len(chip)-max(11, width/3-1):]
 		}
-		pathPart = " " + toolPathStyle.Render(" "+chip+" ")
+		pathPart = " " + ToolPathStyle.Render(" "+chip+" ")
 	}
-	item := newToolRenderItem(r.Name, r.Detail, r.Result, r.Done, r.Failed)
+	item := NewToolRenderItem(r.Name, r.Detail, r.Result, r.Done, r.Failed)
 	budget := max(12, width-48-len(path))
 	summary := item.summary(budget)
 	if path != "" && summary == path {
@@ -127,7 +133,7 @@ func formatToolPanelLine(r toolRow, iconStyled string, width int, now time.Time,
 	}
 	statusPart := ""
 	if st := strings.TrimSpace(r.Status); st != "" && !r.Done {
-		statusPart = " " + toolDimStyle.Render(st)
+		statusPart = " " + ToolDimStyle.Render(st)
 	}
 	marker := "  "
 	if selected {
@@ -137,11 +143,11 @@ func formatToolPanelLine(r toolRow, iconStyled string, width int, now time.Time,
 	// distinguishable from the session's own calls.
 	agentPart := ""
 	if r.Agent != "" {
-		agentPart = agentBadgeStyle.Render(glyphDiamond+" "+r.Agent) + " "
+		agentPart = AgentBadgeStyle.Render(glyphDiamond+" "+r.Agent) + " "
 	}
 	line := fmt.Sprintf("%s%s %s %s%s%s %s %s",
-		marker, iconStyled, toolKindIcon(r.Name, false), agentPart+toolNameStyle.Render(r.Name),
-		statusPart, pathPart, toolDimStyle.Render(summary), toolTimeStyle.Render(formatDuration(r.elapsed(now))),
+		marker, iconStyled, toolKindIcon(r.Name, false), agentPart+ToolNameStyle.Render(r.Name),
+		statusPart, pathPart, ToolDimStyle.Render(summary), ToolTimeStyle.Render(FormatDuration(r.elapsed(now))),
 	)
 	if selected {
 		line = toolSelStyle.Render(line)
@@ -153,7 +159,7 @@ func formatToolPanelLine(r toolRow, iconStyled string, width int, now time.Time,
 // single-byte stand-in so dumb TERM / NO_COLOR still show tool kind.
 func toolKindIcon(name string, ascii bool) string {
 	if !ascii {
-		return toolIconForName(name)
+		return ToolIconForName(name)
 	}
 	switch name {
 	case "read_file":
@@ -201,7 +207,9 @@ func (r toolRow) icon(now time.Time) string {
 	return spinnerFrames[idx]
 }
 
-func formatDuration(d time.Duration) string {
+// FormatDuration renders a duration as tool-elapsed text (ms/s/m:ss). Shared
+// by the live status panel and the classic-mode renderer in internal/clichat.
+func FormatDuration(d time.Duration) string {
 	if d < time.Second {
 		return fmt.Sprintf("%dms", d.Milliseconds())
 	}
@@ -214,31 +222,36 @@ func formatDuration(d time.Duration) string {
 }
 
 var (
-	toolRunStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorInfo))
-	toolOkStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorDiffAdd))
-	toolNameStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorUser)).Bold(true)
-	toolTimeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorTime))
+	toolRunStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorInfo))
+	// ToolOkStyle renders a completed, non-failed tool status icon. Shared by
+	// the classic-mode renderer in internal/clichat.
+	ToolOkStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorDiffAdd))
+	// ToolNameStyle renders a tool's name. Shared by the classic-mode
+	// renderer in internal/clichat.
+	ToolNameStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorUser)).Bold(true)
+	// ToolTimeStyle renders a tool's elapsed-time text. Shared by the
+	// classic-mode renderer in internal/clichat.
+	ToolTimeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorTime))
 	toolSelStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorBright)).Background(lipgloss.Color(themeColorSelBg))
 	toolSection   = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorInfo)).Faint(true)
-	toolPathStyle = lipgloss.NewStyle().Reverse(true).Faint(true)
-	// Diff stat colors (foreground only - the ± counts on edit rows).
-	toolDiffAdd = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorDiffAdd))
-	toolDiffDel = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorDiffDel))
-	// agentBadgeStyle marks nested tool rows with their producing subagent
-	// (◆ = the brand's agent glyph, magenta = the multi/parallel phase color).
-	agentBadgeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorMulti))
+	// ToolPathStyle renders the workspace-path chip on a tool row. Shared by
+	// the classic-mode renderer in internal/clichat.
+	ToolPathStyle = lipgloss.NewStyle().Reverse(true).Faint(true)
+	// AgentBadgeStyle marks nested tool rows with their producing subagent
+	// (◆ = the brand's agent glyph, magenta = the multi/parallel phase
+	// color). Shared by the classic-mode renderer in internal/clichat.
+	AgentBadgeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorMulti))
 	// GitHub-style diff colors (full-width backgrounds).
 	toolDiffAddBg  = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorDiffAdd)).Background(lipgloss.Color(themeColorDiffAddBg)) // green on dark green
 	toolDiffDelBg  = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorDiffDel)).Background(lipgloss.Color(themeColorDiffDelBg)) // red on dark red
 	toolDiffHeader = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorInfo))                                                    // cyan header
-	toolDiffCtx    = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorDim))                                                     // dim context
 	toolDiffOld    = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorDiffDel)).Faint(true)                                     // red (kept for legacy)
 	toolDiffNew    = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorDiffAdd))                                                 // green (kept for legacy)
 )
 
-// parseToolPath extracts a workspace path from tool Detail/Result text.
+// ParseToolPath extracts a workspace path from tool Detail/Result text.
 // Prefers JSON "path":"..." then "wrote X" / "updated X" prefixes.
-func parseToolPath(detail, result string) string {
+func ParseToolPath(detail, result string) string {
 	for _, s := range []string{detail, result} {
 		if p := pathFromJSONField(s); p != "" {
 			return p
@@ -317,7 +330,7 @@ func summarizeToolDetail(name, detail, result string) string {
 	}
 	s = strings.TrimSpace(s)
 	// Lifecycle tokens alone are not useful as the only summary.
-	if isLifecycleStatus(s) {
+	if IsLifecycleStatus(s) {
 		return ""
 	}
 	if p := pathFromWroteOrUpdated(s); p != "" {
@@ -338,7 +351,11 @@ func summarizeToolDetail(name, detail, result string) string {
 	return s
 }
 
-func isLifecycleStatus(s string) bool {
+// IsLifecycleStatus reports whether s is a bare lifecycle token
+// (queued/running/completed/failed, with truncated/duplicate variants) and
+// not a useful summary on its own. Shared by the classic-mode renderer in
+// internal/clichat.
+func IsLifecycleStatus(s string) bool {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "queued", "running", "completed", "failed", "completed (truncated)", "failed (truncated)", "completed (duplicate)", "failed (duplicate)":
 		return true
@@ -351,20 +368,23 @@ func lifecycleStatusFailed(s string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(s)), "failed")
 }
 
-func isEditTool(name string) bool {
+// IsEditTool reports whether name is a file-editing tool (write_file,
+// search_replace, multi_edit). Shared by the classic-mode renderer in
+// internal/clichat.
+func IsEditTool(name string) bool {
 	return name == "write_file" || name == "search_replace" || name == "multi_edit"
 }
 
-// colorDiffLine is a thin alias of renderDiffLine for call-site compatibility
+// ColorDiffLine is a thin alias of renderDiffLine for call-site compatibility
 // (tool preview / renderDiffBody). @@ hunks use magenta (unified with markdown
 // and highlight surfaces), not dim.
-func colorDiffLine(l string) string {
+func ColorDiffLine(l string) string {
 	return renderDiffLine(l)
 }
 
-// clipPreviewLine truncates a preview line for the terminal width without panicking
+// ClipPreviewLine truncates a preview line for the terminal width without panicking
 // when width is 0 or very small (pre-WindowSizeMsg / narrow panes).
-func clipPreviewLine(l string, width int) string {
+func ClipPreviewLine(l string, width int) string {
 	// Budget for "    │ " prefix (~6) and ellipsis.
 	maxBody := width - 10
 	if maxBody < 8 {
@@ -418,15 +438,17 @@ func renderToolPanel(rows []toolRow, width int, now time.Time, selectedIdx int, 
 	return out, n
 }
 
-func resultLooksLikeDiff(result string) bool {
+// ResultLooksLikeDiff reports whether result carries unified-diff markers
+// (---/+++ headers). Shared by the classic-mode renderer in internal/clichat.
+func ResultLooksLikeDiff(result string) bool {
 	return strings.Contains(result, "\n--- ") || strings.Contains(result, "\n+++ ") ||
 		strings.HasPrefix(result, "--- ") || strings.HasPrefix(result, "+++ ") ||
 		strings.Contains(result, "\n--- a/") || strings.Contains(result, "\n+++ b/") ||
 		strings.HasPrefix(result, "--- a/") || strings.HasPrefix(result, "+++ b/")
 }
 
-// toolIconForName picks the typed action glyph for a tool: ⚙ tool, ◆ agent.
+// ToolIconForName picks the typed action glyph for a tool: ⚙ tool, ◆ agent.
 // Single-width text only - emoji misalign columns (see action.go).
-func toolIconForName(name string) string {
+func ToolIconForName(name string) string {
 	return actionIconForTool(name)
 }

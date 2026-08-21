@@ -120,7 +120,7 @@ func sidebarStaleDot(colored bool) string {
 	if !colored {
 		return "!"
 	}
-	return tuiDimStyle.Render("!")
+	return TUIDimStyle.Render("!")
 }
 
 // renderRunDot returns the row's status dot. A running run with a fresh
@@ -261,10 +261,10 @@ func (s *workflowsSidebar) view(width, height int, focused bool) string {
 	title := fmt.Sprintf(" Workflows · %d runs", len(rows))
 	lines := []string{
 		TUIHeaderStyle.Render(sidebarPad(title, width)),
-		tuiDimStyle.Render(strings.Repeat("─", width)),
+		TUIDimStyle.Render(strings.Repeat("─", width)),
 	}
 	if len(rows) == 0 {
-		lines = append(lines, tuiDimStyle.Render(sidebarPad(" no workflow runs", width)))
+		lines = append(lines, TUIDimStyle.Render(sidebarPad(" no workflow runs", width)))
 	} else {
 		tops := s.rowTops(rows)
 		for i := range rows {
@@ -277,7 +277,7 @@ func (s *workflowsSidebar) view(width, height int, focused bool) string {
 		}
 	}
 	for _, line := range footer {
-		lines = append(lines, tuiDimStyle.Render(sidebarPad(line, width)))
+		lines = append(lines, TUIDimStyle.Render(sidebarPad(line, width)))
 	}
 	return lipgloss.NewStyle().Width(width).Height(height).Render(strings.Join(lines, "\n"))
 }
@@ -312,13 +312,13 @@ func (s *workflowsSidebar) renderRunRow(row workflowRunRow, selected bool, width
 		step = "-"
 	}
 	metadata := "   step " + truncateToWidth(step, max(1, width-8))
-	lines := []string{line, tuiDimStyle.Render(sidebarPad(metadata, width))}
+	lines := []string{line, TUIDimStyle.Render(sidebarPad(metadata, width))}
 	if selected {
 		if row.description != "" {
-			lines = append(lines, tuiDimStyle.Render(sidebarPad("   "+truncateToWidth(row.description, max(1, width-4)), width)))
+			lines = append(lines, TUIDimStyle.Render(sidebarPad("   "+truncateToWidth(row.description, max(1, width-4)), width)))
 		}
 		if row.nextStep != "" {
-			lines = append(lines, tuiDimStyle.Render(sidebarPad("   next: "+truncateToWidth(row.nextStep, max(1, width-10)), width)))
+			lines = append(lines, TUIDimStyle.Render(sidebarPad("   next: "+truncateToWidth(row.nextStep, max(1, width-10)), width)))
 		}
 	}
 	return lines

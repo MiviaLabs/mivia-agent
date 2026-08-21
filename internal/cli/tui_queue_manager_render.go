@@ -9,9 +9,9 @@ import (
 // selection popup of the queued items in send order, headed by the item that
 // will auto-send next. It is a modal surface with popup placement (above the
 // composer, like suggest/history), so the live turn stays visible.
-func (m *tuiModel) renderQueuePanel(termW, maxH int) (string, rect) {
+func (m *tuiModel) renderQueuePanel(termW, maxH int) (string, Rect) {
 	if !m.queueMgr.open || m.queueCount() == 0 || termW <= 0 || maxH < 1 {
-		return "", rect{}
+		return "", Rect{}
 	}
 	rows := make([]string, 0, m.queueCount())
 	for i := 0; i < m.queueCount(); i++ {
@@ -29,7 +29,7 @@ func (m *tuiModel) renderQueuePanel(termW, maxH int) (string, rect) {
 		row := glyph + " " + text
 		if i == 0 {
 			// The head item is what empty-enter / turn-end auto-drain sends.
-			row = tuiDimStyle.Render("next ") + row
+			row = TUIDimStyle.Render("next ") + row
 		}
 		rows = append(rows, row)
 	}

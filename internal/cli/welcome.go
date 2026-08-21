@@ -121,10 +121,10 @@ func renderSessionPicker(
 ) (block string, hits []sessionRowHit, newScroll int) {
 	width, maxRows = normalizePickerSize(width, maxRows)
 	title := tuiAccentStyle.Render("  Sessions")
-	hint := tuiDimStyle.Render("  ↑↓ select · enter open · click · type + enter new chat")
+	hint := TUIDimStyle.Render("  ↑↓ select · enter open · click · type + enter new chat")
 
 	if len(sessions) == 0 {
-		empty := tuiDimStyle.Render("  No saved sessions yet - type a message and press Enter")
+		empty := TUIDimStyle.Render("  No saved sessions yet - type a message and press Enter")
 		return strings.Join([]string{title, "", empty, "", hint}, "\n"), nil, 0
 	}
 
@@ -166,7 +166,7 @@ func renderSessionRows(sessions []chat.SessionInfo, selected, scroll, width, max
 		if chat.IsAutoSaveName(si.Name) {
 			meta += " · auto"
 		}
-		style, prefix := tuiDimStyle, "  "
+		style, prefix := TUIDimStyle, "  "
 		if i == selected {
 			prefix = "◆ "
 			style = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorBright)).Background(lipgloss.Color(themeColorCardBg)).Bold(true)
@@ -180,9 +180,9 @@ func renderSessionRows(sessions []chat.SessionInfo, selected, scroll, width, max
 		hits = append(hits, sessionRowHit{y0: yBase + 2 + i - scroll, y1: yBase + 2 + i - scroll, idx: i})
 	}
 	if scroll > 0 || end < len(sessions) {
-		lines = append(lines, tuiDimStyle.Render(fmt.Sprintf("  (%d–%d of %d)", scroll+1, end, len(sessions))))
+		lines = append(lines, TUIDimStyle.Render(fmt.Sprintf("  (%d–%d of %d)", scroll+1, end, len(sessions))))
 	}
-	return append(lines, "", tuiDimStyle.Render("  ↑↓ select · enter open · click · type + enter new chat")), hits, end
+	return append(lines, "", TUIDimStyle.Render("  ↑↓ select · enter open · click · type + enter new chat")), hits, end
 }
 
 // hydrateHistory loads the last ~100 conversational messages into the viewport.
@@ -207,7 +207,7 @@ func (m *tuiModel) hydrateHistory() {
 	}
 	m.msgOffset = start
 	if start > 0 {
-		m.appendMsg(tuiDimStyle.Render(fmt.Sprintf("  (showing last %d messages, scroll up for more)", count)))
+		m.appendMsg(TUIDimStyle.Render(fmt.Sprintf("  (showing last %d messages, scroll up for more)", count)))
 	}
 	for _, block := range HydrateChatBlocksForView(msgs[start:]) {
 		m.appendBlock(block)

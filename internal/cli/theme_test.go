@@ -93,17 +93,17 @@ func TestThemeAliasEquality(t *testing.T) {
 		target lipgloss.Style
 	}
 	pairs := []pair{
-		{"tuiDimStyle", tuiDimStyle, dimStyle},
-		{"toolDimStyle", toolDimStyle, dimStyle},
+		{"TUIDimStyle", TUIDimStyle, dimStyle},
+		{"ToolDimStyle", ToolDimStyle, dimStyle},
 		{"tuiErrorStyle", tuiErrorStyle, errStyle},
-		{"toolErrStyle", toolErrStyle, errStyle},
+		{"ToolErrStyle", ToolErrStyle, errStyle},
 		{"tuiInfoStyle", tuiInfoStyle, infoStyle},
 		{"tuiAccentStyle", tuiAccentStyle, accentStyle},
 		{"tuiWaitingStyle", tuiWaitingStyle, waitStyle},
 		{"tuiUserLabel", tuiUserLabel, userLabel},
 		{"tuiUserStyle", tuiUserStyle, userStyle},
-		{"userLabelStyle", userLabelStyle, userLabel},
-		{"userRailStyle", userRailStyle, userLabel},
+		{"UserLabelStyle", UserLabelStyle, userLabel},
+		{"UserRailStyle", UserRailStyle, userLabel},
 	}
 	withANSI256(t)
 	for _, p := range pairs {
@@ -148,11 +148,11 @@ func TestThemeConsolidatedStyleColors(t *testing.T) {
 
 func TestThemeANSIVocab(t *testing.T) {
 	// Single SGR vocabulary lives in theme; highlight must use these names.
-	if ansiCyan != "\033[36m" || ansiGreen != "\033[32m" || ansiReset != "\033[0m" {
+	if AnsiCyan != "\033[36m" || AnsiGreen != "\033[32m" || AnsiReset != "\033[0m" {
 		t.Fatal("ansi* SGR constants have unexpected values")
 	}
-	if ansiBgDark != "\033[48;5;236m" {
-		t.Fatalf("ansiBgDark = %q", ansiBgDark)
+	if AnsiBgDark != "\033[48;5;236m" {
+		t.Fatalf("AnsiBgDark = %q", AnsiBgDark)
 	}
 	// Diff SGR indices match theme color tokens.
 	if !strings.Contains(ansiBgDiffAdd, themeColorDiffAddBg) {
@@ -174,21 +174,21 @@ func TestThemeByteStabilityMarkdown(t *testing.T) {
 	got := buf.String()
 
 	// Pin SGR tokens from the single ansi* vocabulary (not a second hl* copy).
-	for _, tok := range []string{ansiBold, ansiCyan, ansiItalic, ansiYellow, ansiDim, ansiReset, ansiBgDark} {
+	for _, tok := range []string{AnsiBold, AnsiCyan, AnsiItalic, AnsiYellow, AnsiDim, AnsiReset, AnsiBgDark} {
 		if !strings.Contains(got, tok) {
 			t.Fatalf("markdown output missing %q\nfull=%q", tok, got)
 		}
 	}
 	// Exact fixture snapshot - byte-stable across the theme refactor.
-	want := "\n" + ansiBold + ansiCyan + "Title" + ansiReset + "\n" +
-		"this is " + ansiBold + "bold" + ansiBoldEnd + " and " + ansiItalic + "italic" + ansiReset +
-		" and " + ansiDim + ansiYellow + "code" + ansiReset + "\n" +
-		"  " + ansiCyan + "•" + ansiReset + " item\n"
+	want := "\n" + AnsiBold + AnsiCyan + "Title" + AnsiReset + "\n" +
+		"this is " + AnsiBold + "bold" + AnsiBoldEnd + " and " + AnsiItalic + "italic" + AnsiReset +
+		" and " + AnsiDim + AnsiYellow + "code" + AnsiReset + "\n" +
+		"  " + AnsiCyan + "•" + AnsiReset + " item\n"
 	if !strings.HasPrefix(got, want) {
 		t.Fatalf("markdown prefix drift\ngot  %q\nwant %q", got[:min(len(got), len(want)+20)], want)
 	}
 	// Code fence path uses highlight (same ansi* vocab after Wave 3).
-	if !strings.Contains(got, ansiBgDark+ansiCyan+"func"+ansiReset) {
+	if !strings.Contains(got, AnsiBgDark+AnsiCyan+"func"+AnsiReset) {
 		t.Fatalf("expected highlighted go keyword in markdown code block, got %q", got)
 	}
 }
@@ -198,11 +198,11 @@ func TestThemeByteStabilityHighlight(t *testing.T) {
 	goCode := "func main() {\n\tvar x int = 42\n}\n"
 	got := highlightCodeBlock("go", goCode)
 	// Exact multi-line snapshot from pre-refactor baseline.
-	wantGo := "  " + ansiBgDark + ansiCyan + "func" + ansiReset + ansiBgDark + " main() {" + ansiReset + "\n" +
-		"  " + ansiBgDark + "\t" + ansiCyan + "var" + ansiReset + ansiBgDark + " x " + ansiBlue + "int" + ansiReset + ansiBgDark +
-		" = " + ansiMagenta + "42" + ansiReset + ansiBgDark + ansiReset + "\n" +
-		"  " + ansiBgDark + "}" + ansiReset + "\n" +
-		"  " + ansiBgDark + ansiReset
+	wantGo := "  " + AnsiBgDark + AnsiCyan + "func" + AnsiReset + AnsiBgDark + " main() {" + AnsiReset + "\n" +
+		"  " + AnsiBgDark + "\t" + AnsiCyan + "var" + AnsiReset + AnsiBgDark + " x " + AnsiBlue + "int" + AnsiReset + AnsiBgDark +
+		" = " + AnsiMagenta + "42" + AnsiReset + AnsiBgDark + AnsiReset + "\n" +
+		"  " + AnsiBgDark + "}" + AnsiReset + "\n" +
+		"  " + AnsiBgDark + AnsiReset
 	if got != wantGo {
 		t.Fatalf("highlight go drift\ngot  %q\nwant %q", got, wantGo)
 	}
@@ -210,16 +210,16 @@ func TestThemeByteStabilityHighlight(t *testing.T) {
 	diff := "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-old\n+new\n context\n"
 	gotDiff := highlightCodeBlock("diff", diff)
 	// Diff uses shared ansi* + theme-owned diff bg codes.
-	if !strings.Contains(gotDiff, ansiBgDark+ansiBold+ansiCyan+"--- a/x") {
+	if !strings.Contains(gotDiff, AnsiBgDark+AnsiBold+AnsiCyan+"--- a/x") {
 		t.Fatalf("diff header missing shared ansi tokens: %q", gotDiff)
 	}
-	if !strings.Contains(gotDiff, ansiBgDiffDel+ansiRed+"-old") {
+	if !strings.Contains(gotDiff, ansiBgDiffDel+AnsiRed+"-old") {
 		t.Fatalf("diff del missing tokens: %q", gotDiff)
 	}
-	if !strings.Contains(gotDiff, ansiBgDiffAdd+ansiGreen+"+new") {
+	if !strings.Contains(gotDiff, ansiBgDiffAdd+AnsiGreen+"+new") {
 		t.Fatalf("diff add missing tokens: %q", gotDiff)
 	}
-	if !strings.Contains(gotDiff, ansiBgDark+ansiDim+" context") {
+	if !strings.Contains(gotDiff, AnsiBgDark+AnsiDim+" context") {
 		t.Fatalf("diff context missing tokens: %q", gotDiff)
 	}
 }
@@ -229,20 +229,20 @@ func TestThemeByteStabilityToolAndUserStyles(t *testing.T) {
 	withANSI256(t)
 
 	// Inline error glyph path (tool row / chatblock).
-	errGlyph := toolErrStyle.Render("✗")
+	errGlyph := ToolErrStyle.Render("✗")
 	if errGlyph != errStyle.Render("✗") {
-		t.Fatalf("toolErrStyle must equal errStyle: %q vs %q", errGlyph, errStyle.Render("✗"))
+		t.Fatalf("ToolErrStyle must equal errStyle: %q vs %q", errGlyph, errStyle.Render("✗"))
 	}
 	// Color 9 under ANSI256 → bright red SGR.
 	if !strings.Contains(errGlyph, "✗") || errGlyph == "✗" {
 		// With profile set, must emit SGR (not plain text).
 		if !strings.Contains(errGlyph, "\x1b[") {
-			t.Fatalf("toolErrStyle.Render expected ANSI SGR, got %q", errGlyph)
+			t.Fatalf("ToolErrStyle.Render expected ANSI SGR, got %q", errGlyph)
 		}
 	}
 
-	dim := tuiDimStyle.Render("preview")
-	if dim != toolDimStyle.Render("preview") || dim != dimStyle.Render("preview") {
+	dim := TUIDimStyle.Render("preview")
+	if dim != ToolDimStyle.Render("preview") || dim != dimStyle.Render("preview") {
 		t.Fatal("dim aliases diverged")
 	}
 
@@ -253,8 +253,8 @@ func TestThemeByteStabilityToolAndUserStyles(t *testing.T) {
 	}
 
 	// User rail + label (msgcard path).
-	rail := userRailStyle.Render("▌")
-	label := userLabelStyle.Render("you")
+	rail := UserRailStyle.Render("▌")
+	label := UserLabelStyle.Render("you")
 	if rail != userLabel.Render("▌") || label != userLabel.Render("you") {
 		t.Fatal("user label/rail aliases diverged from userLabel")
 	}

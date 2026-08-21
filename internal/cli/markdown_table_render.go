@@ -140,7 +140,7 @@ func wrapCellANSI(s string, width int) []string {
 		}
 		line := cur.String()
 		if len(active) > 0 {
-			line += ansiReset
+			line += AnsiReset
 		}
 		lines = append(lines, line)
 		cur.Reset()
@@ -175,7 +175,7 @@ func wrapCellANSI(s string, width int) []string {
 	if cur.Len() > 0 || len(lines) == 0 {
 		line := cur.String()
 		if len(active) > 0 {
-			line += ansiReset
+			line += AnsiReset
 		}
 		lines = append(lines, line)
 	}
@@ -238,7 +238,7 @@ func trackStyles(active []string, chunk string) []string {
 			i++
 		}
 		code := chunk[start:i]
-		if code == ansiReset {
+		if code == AnsiReset {
 			active = active[:0]
 			continue
 		}
@@ -287,7 +287,7 @@ func truncateANSIHard(s string, max int) string {
 func tableBorderRow(widths []int, left, mid, right string) string {
 	var b strings.Builder
 	b.WriteString("  ")
-	b.WriteString(ansiDim)
+	b.WriteString(AnsiDim)
 	b.WriteString(left)
 	for i, w := range widths {
 		if i > 0 {
@@ -296,7 +296,7 @@ func tableBorderRow(widths []int, left, mid, right string) string {
 		b.WriteString(strings.Repeat("─", w+tablePadCols))
 	}
 	b.WriteString(right)
-	b.WriteString(ansiReset)
+	b.WriteString(AnsiReset)
 	return b.String()
 }
 
@@ -306,9 +306,9 @@ func tableBorderRow(widths []int, left, mid, right string) string {
 func formatAlignedTableRow(cells []string, widths []int, aligns []tableAlign, header bool) string {
 	var b strings.Builder
 	b.WriteString("  ")
-	b.WriteString(ansiDim)
+	b.WriteString(AnsiDim)
 	b.WriteString("│")
-	b.WriteString(ansiReset)
+	b.WriteString(AnsiReset)
 	for i := 0; i < len(widths); i++ {
 		cell := ""
 		if i < len(cells) {
@@ -318,14 +318,14 @@ func formatAlignedTableRow(cells []string, widths []int, aligns []tableAlign, he
 			cell = truncateANSI(cell, widths[i])
 		}
 		if header && cell != "" {
-			cell = ansiBold + cell + ansiReset
+			cell = AnsiBold + cell + AnsiReset
 		}
 		b.WriteString(" ")
 		b.WriteString(padVisible(cell, widths[i], aligns[i]))
 		b.WriteString(" ")
-		b.WriteString(ansiDim)
+		b.WriteString(AnsiDim)
 		b.WriteString("│")
-		b.WriteString(ansiReset)
+		b.WriteString(AnsiReset)
 	}
 	return b.String()
 }
@@ -378,7 +378,7 @@ func truncateANSI(s string, max int) string {
 		if w+rw > max-1 {
 			b.WriteString("…")
 			if styled {
-				b.WriteString(ansiReset)
+				b.WriteString(AnsiReset)
 			}
 			return b.String()
 		}
@@ -387,7 +387,7 @@ func truncateANSI(s string, max int) string {
 		i += size
 	}
 	if styled {
-		b.WriteString(ansiReset)
+		b.WriteString(AnsiReset)
 	}
 	return b.String()
 }

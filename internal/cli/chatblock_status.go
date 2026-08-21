@@ -181,7 +181,7 @@ func statusBlockForTools(names, details []string, firstID string) ChatBlock {
 		ID:        id,
 		Kind:      ChatBlockSystem,
 		Text:      text,
-		Rendered:  tuiDimStyle.Render("  → " + summary),
+		Rendered:  TUIDimStyle.Render("  → " + summary),
 		Collapsed: collapsed,
 	}
 }

@@ -15,7 +15,7 @@ func TestTableFullPipeline(t *testing.T) {
 	t.Logf("RenderMarkdown output:\n%s", rendered)
 
 	// Verify ANSI codes are present (dim borders)
-	if !strings.Contains(rendered, ansiDim) {
+	if !strings.Contains(rendered, AnsiDim) {
 		t.Fatal("expected dim ANSI codes in rendered table")
 	}
 	if !strings.Contains(rendered, "│") {
@@ -35,7 +35,7 @@ func TestTableFullPipeline(t *testing.T) {
 	wrapped := wrapANSIv2(rendered, 40)
 	t.Logf("wrapANSIv2 output (width=40):\n%s", wrapped)
 
-	if !strings.Contains(wrapped, ansiDim) {
+	if !strings.Contains(wrapped, AnsiDim) {
 		t.Fatal("wrapANSIv2 dropped dim ANSI codes")
 	}
 	if !strings.Contains(wrapped, "│") {
@@ -62,7 +62,7 @@ func TestTableHistoryRoundTrip(t *testing.T) {
 	rendered := RenderMarkdown(content, 78)
 	t.Logf("RenderMarkdown:\n%s", rendered)
 
-	if !strings.Contains(rendered, ansiDim) {
+	if !strings.Contains(rendered, AnsiDim) {
 		t.Fatal("RenderMarkdown should produce dim ANSI for table borders")
 	}
 	if !strings.Contains(rendered, "│") {
@@ -79,7 +79,7 @@ func TestTableHistoryRoundTrip(t *testing.T) {
 	wrapped := wrapANSIv2(rendered, 60)
 	t.Logf("Wrapped at 60:\n%s", wrapped)
 
-	if !strings.Contains(wrapped, ansiDim) {
+	if !strings.Contains(wrapped, AnsiDim) {
 		t.Fatal("ANSI codes preserved after wrapping")
 	}
 	if !strings.Contains(wrapped, "│") {

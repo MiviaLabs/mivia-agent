@@ -26,7 +26,7 @@ func TestActionKindForTool(t *testing.T) {
 
 func TestActionIconsSingleWidth(t *testing.T) {
 	for _, name := range []string{"read_file", "grep", "delegate", "spawn_agent", "whatever"} {
-		icon := toolIconForName(name)
+		icon := ToolIconForName(name)
 		if len([]rune(icon)) != 1 {
 			t.Fatalf("%s icon %q is not a single rune", name, icon)
 		}
@@ -36,8 +36,8 @@ func TestActionIconsSingleWidth(t *testing.T) {
 			}
 		}
 	}
-	if toolIconForName("delegate") != "◆" {
-		t.Fatalf("agent tools must use the brand diamond, got %q", toolIconForName("delegate"))
+	if ToolIconForName("delegate") != "◆" {
+		t.Fatalf("agent tools must use the brand diamond, got %q", ToolIconForName("delegate"))
 	}
 }
 

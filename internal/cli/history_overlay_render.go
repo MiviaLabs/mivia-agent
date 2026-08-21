@@ -7,9 +7,9 @@ import (
 
 // renderHistoryPanel renders the composer message-history picker: a 3-row
 // windowed popup of the user's sent messages, newest first.
-func renderHistoryPanel(state historyState, entries []string, termW, maxH int) (string, rect) {
+func renderHistoryPanel(state historyState, entries []string, termW, maxH int) (string, Rect) {
 	if !state.open || len(entries) == 0 || termW <= 0 || maxH < 1 {
-		return "", rect{}
+		return "", Rect{}
 	}
 	rows := make([]string, 0, len(entries))
 	for _, entry := range entries {

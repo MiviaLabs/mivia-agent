@@ -133,9 +133,9 @@ var langDefs = map[string]langDef{
 		multiLineR:  "",
 		stringChars: []string{"\""},
 		extraPattern: []patternRule{
-			{regexp.MustCompile(`"[^"]*"\s*:`), ansiCyan},           // keys
-			{regexp.MustCompile(`\b(true|false|null)\b`), ansiBlue}, // literals
-			{regexp.MustCompile(`\b-?\d+\.?\d*\b`), ansiMagenta},    // numbers
+			{regexp.MustCompile(`"[^"]*"\s*:`), AnsiCyan},           // keys
+			{regexp.MustCompile(`\b(true|false|null)\b`), AnsiBlue}, // literals
+			{regexp.MustCompile(`\b-?\d+\.?\d*\b`), AnsiMagenta},    // numbers
 		},
 	},
 	"yaml": {
@@ -147,9 +147,9 @@ var langDefs = map[string]langDef{
 		multiLineR:  "",
 		stringChars: []string{"\"", "'"},
 		extraPattern: []patternRule{
-			{regexp.MustCompile(`^\s*-?\s*`), ansiYellow}, // list markers
-			{regexp.MustCompile(`[\w_/-]+:`), ansiCyan},   // keys
-			{regexp.MustCompile(`\|[ \t]*$`), ansiBlue},   // block scalar
+			{regexp.MustCompile(`^\s*-?\s*`), AnsiYellow}, // list markers
+			{regexp.MustCompile(`[\w_/-]+:`), AnsiCyan},   // keys
+			{regexp.MustCompile(`\|[ \t]*$`), AnsiBlue},   // block scalar
 		},
 	},
 	"shell": {
@@ -235,13 +235,13 @@ func highlightCodeBlockInMarkdown(markdown string) string {
 
 		// Rebuild fence: open + lang, then highlighted content, then close.
 		barOpen := strings.Repeat("─", fenceBarWidth)
-		out.WriteString(fmt.Sprintf("%s ╭%s╮ %s %s%s\n", ansiDim, barOpen, getCodeIcon(lang), lang, ansiReset))
+		out.WriteString(fmt.Sprintf("%s ╭%s╮ %s %s%s\n", AnsiDim, barOpen, getCodeIcon(lang), lang, AnsiReset))
 		out.WriteString(highlighted)
 		if highlighted != "" && !strings.HasSuffix(highlighted, "\n") {
 			out.WriteByte('\n')
 		}
 		barClose := strings.Repeat("─", fenceBarWidth)
-		out.WriteString(fmt.Sprintf("%s ╰%s╯%s%s\n", ansiDim, barClose, ansiReset, ""))
+		out.WriteString(fmt.Sprintf("%s ╰%s╯%s%s\n", AnsiDim, barClose, AnsiReset, ""))
 	}
 
 	if out.Len() > 0 {

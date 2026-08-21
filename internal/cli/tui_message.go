@@ -307,19 +307,19 @@ func (m *tuiModel) clampModalState() {
 	}
 	if m.modelDlg != nil {
 		layout := m.modelDlg.layout(max(1, m.width), max(1, m.height))
-		m.modelDlg.clampScroll(layout.pageH)
+		m.modelDlg.clampScroll(layout.PageH)
 	}
 	if m.agentDlg != nil {
 		layout := m.agentDlg.layout(max(1, m.width), max(1, m.height))
-		m.agentDlg.clampScroll(layout.pageH)
+		m.agentDlg.clampScroll(layout.PageH)
 	}
 	if m.effortDlg != nil {
 		layout := m.effortDlg.layout(max(1, m.width), max(1, m.height))
-		m.effortDlg.clampScroll(layout.pageH)
+		m.effortDlg.clampScroll(layout.PageH)
 	}
 	if m.worktreeDlg != nil {
 		layout := m.worktreeDlg.layout(max(1, m.width), max(1, m.height))
-		m.worktreeDlg.clampScroll(layout.pageH)
+		m.worktreeDlg.clampScroll(layout.PageH)
 	}
 	if m.workflowRunDlg != nil {
 		m.workflowRunDlg.clampScroll(max(1, m.width), max(1, m.height))

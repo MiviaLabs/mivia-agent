@@ -22,14 +22,14 @@ func newDialog(title string, lines []string) *blockOverlay {
 	return &blockOverlay{title: title, lines: append([]string(nil), lines...), prefs: dialogPrefsForTitle(title)}
 }
 
-func dialogPrefsForTitle(title string) dialogPrefs {
+func dialogPrefsForTitle(title string) DialogPrefs {
 	switch title {
 	case "? help":
-		return dialogPrefs{preferredW: 76, preferredHPct: 70, minW: 40, minH: 8, frameCols: 4, frameRows: 2, pager: true}
+		return DialogPrefs{PreferredW: 76, PreferredHPct: 70, MinW: 40, MinH: 8, FrameCols: 4, FrameRows: 2, Pager: true}
 	case "◇ status", "◇ status · captured at open":
-		return dialogPrefs{preferredW: 60, minW: 32, minH: 8, frameCols: 4, frameRows: 2}
+		return DialogPrefs{PreferredW: 60, MinW: 32, MinH: 8, FrameCols: 4, FrameRows: 2}
 	case "⚙ tools":
-		return dialogPrefs{preferredW: 50, preferredHPct: 60, minW: 28, minH: 8, frameCols: 4, frameRows: 2, pager: true}
+		return DialogPrefs{PreferredW: 50, PreferredHPct: 60, MinW: 28, MinH: 8, FrameCols: 4, FrameRows: 2, Pager: true}
 	default:
 		return detailDialogPrefs()
 	}
@@ -55,7 +55,7 @@ func newHelpDialogFor(registry *skills.Registry, _ ...int) *blockOverlay {
 			if pad < 1 {
 				pad = 1
 			}
-			lines = append(lines, "  "+item.key+strings.Repeat(" ", pad)+tuiDimStyle.Render(item.desc))
+			lines = append(lines, "  "+item.key+strings.Repeat(" ", pad)+TUIDimStyle.Render(item.desc))
 		}
 	}
 	return newDialog("? help", lines)
@@ -68,7 +68,7 @@ func (m *tuiModel) newStatusDialog() *blockOverlay {
 		if pad < 1 {
 			pad = 1
 		}
-		return "  " + tuiDimStyle.Render(k) + strings.Repeat(" ", pad) + v
+		return "  " + TUIDimStyle.Render(k) + strings.Repeat(" ", pad) + v
 	}
 	lines := []string{
 		lipgloss.NewStyle().Bold(true).Render("Session"),
@@ -88,15 +88,15 @@ func (m *tuiModel) newStatusDialog() *blockOverlay {
 		lines = append(lines,
 			"",
 			lipgloss.NewStyle().Bold(true).Render("Current turn"),
-			row("elapsed", formatDuration(time.Since(m.turnStart))),
+			row("elapsed", FormatDuration(time.Since(m.turnStart))),
 			row("tools open", fmt.Sprintf("%d", len(m.toolRows))),
 		)
 		if rows := m.subagents.Rows(); len(rows) > 0 {
 			lines = append(lines, row("agents", fmt.Sprintf("%d", len(rows))))
 			for _, r := range rows {
 				name := safeDialogText(r.Name)
-				lines = append(lines, "    "+agentBadgeStyle.Render("◆ "+name)+
-					tuiDimStyle.Render(fmt.Sprintf("  %d done, %d open", r.ToolsDone, r.ToolsOpen)))
+				lines = append(lines, "    "+AgentBadgeStyle.Render("◆ "+name)+
+					TUIDimStyle.Render(fmt.Sprintf("  %d done, %d open", r.ToolsDone, r.ToolsOpen)))
 			}
 		}
 	}
@@ -110,16 +110,16 @@ func (m *tuiModel) newStatusDialog() *blockOverlay {
 
 // newToolsDialog lists the tools available to the model this session.
 func (m *tuiModel) newToolsDialog(names []string) *blockOverlay {
-	lines := []string{tuiDimStyle.Render(fmt.Sprintf("%d tools available", len(names)))}
+	lines := []string{TUIDimStyle.Render(fmt.Sprintf("%d tools available", len(names)))}
 	// The advertised schema mass is the operator-facing justification for the
 	// deferred tier, so the default surface reports it alongside the list.
 	if mass := m.agentState.schemaMassSnapshot(); mass.Advertised > 0 {
-		lines = append(lines, tuiDimStyle.Render(safeDialogText(mass.String())))
+		lines = append(lines, TUIDimStyle.Render(safeDialogText(mass.String())))
 	}
 	lines = append(lines, "")
 	for _, n := range names {
 		name := safeDialogText(n)
-		lines = append(lines, "  "+toolIconForName(name)+" "+name)
+		lines = append(lines, "  "+ToolIconForName(name)+" "+name)
 	}
 	return newDialog("⚙ tools", lines)
 }

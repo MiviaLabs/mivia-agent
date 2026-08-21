@@ -12,12 +12,12 @@ func TestToolRenderItem_StatusParityAndCaps(t *testing.T) {
 	}{
 		{false, false, "◐"}, {true, false, "✓"}, {true, true, "✗"},
 	} {
-		item := newToolRenderItem("read_file", "", "result", tc.done, tc.failed)
+		item := NewToolRenderItem("read_file", "", "result", tc.done, tc.failed)
 		if got := item.statusIcon(false); got != tc.want {
 			t.Fatalf("status=%q want %q", got, tc.want)
 		}
 	}
-	item := newToolRenderItem("read_file", "", strings.Repeat("x", 100), true, false)
+	item := NewToolRenderItem("read_file", "", strings.Repeat("x", 100), true, false)
 	if got := item.summary(12); len(got) > 12 {
 		t.Fatalf("summary exceeded cap: %d", len(got))
 	}
@@ -25,7 +25,7 @@ func TestToolRenderItem_StatusParityAndCaps(t *testing.T) {
 
 func TestToolRenderItem_RedactionAndASCIIWithoutColor(t *testing.T) {
 	installTestRedactionPolicy(t)
-	item := newToolRenderItem("run_command", `token=secret-value`, `Authorization: Bearer abc.def`, true, false)
+	item := NewToolRenderItem("run_command", `token=secret-value`, `Authorization: Bearer abc.def`, true, false)
 	got := formatToolLine(item, 80, toolRenderOptions{ASCII: true, Color: false})
 	if strings.Contains(got, "secret-value") || strings.Contains(got, "abc.def") {
 		t.Fatalf("leaked secret: %q", got)

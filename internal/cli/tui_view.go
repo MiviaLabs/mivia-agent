@@ -11,7 +11,7 @@ import (
 
 func (m *tuiModel) View() string {
 	if !m.ready {
-		return brandNameStyled() + tuiDimStyle.Render(" starting…")
+		return brandNameStyled() + TUIDimStyle.Render(" starting…")
 	}
 	if m.mode == modeWelcome {
 		return m.viewWelcome()
@@ -31,29 +31,29 @@ func (m *tuiModel) renderChatView() string {
 	if m.modelDlg != nil {
 		m.modelDlg.busy = m.waiting
 		panel, layout := m.modelDlg.ViewAt(max(1, m.width), max(1, m.height))
-		return overlayAt(base, panel, layout.rect, max(1, m.width), max(1, m.height))
+		return overlayAt(base, panel, layout.Rect, max(1, m.width), max(1, m.height))
 	}
 	if m.agentDlg != nil {
 		m.agentDlg.busy = m.waiting
 		panel, layout := m.agentDlg.ViewAt(max(1, m.width), max(1, m.height))
-		return overlayAt(base, panel, layout.rect, max(1, m.width), max(1, m.height))
+		return overlayAt(base, panel, layout.Rect, max(1, m.width), max(1, m.height))
 	}
 	if m.effortDlg != nil {
 		m.effortDlg.busy = m.waiting
 		panel, layout := m.effortDlg.ViewAt(max(1, m.width), max(1, m.height))
-		return overlayAt(base, panel, layout.rect, max(1, m.width), max(1, m.height))
+		return overlayAt(base, panel, layout.Rect, max(1, m.width), max(1, m.height))
 	}
 	if m.worktreeDlg != nil {
 		panel, layout := m.worktreeDlg.ViewAt(max(1, m.width), max(1, m.height))
-		return overlayAt(base, panel, layout.rect, max(1, m.width), max(1, m.height))
+		return overlayAt(base, panel, layout.Rect, max(1, m.width), max(1, m.height))
 	}
 	if m.workflowRunDlg != nil {
 		panel, layout := m.workflowRunDlg.ViewAt(max(1, m.width), max(1, m.height))
-		return overlayAt(base, panel, layout.rect, max(1, m.width), max(1, m.height))
+		return overlayAt(base, panel, layout.Rect, max(1, m.width), max(1, m.height))
 	}
 	if m.overlay != nil {
 		panel, layout := m.overlay.ViewAt(max(1, m.width), max(1, m.height))
-		return overlayAt(base, panel, layout.rect, max(1, m.width), max(1, m.height))
+		return overlayAt(base, panel, layout.Rect, max(1, m.width), max(1, m.height))
 	}
 	if panel, size := m.renderComposerPopup(); panel != "" {
 		return overlayAt(base, panel, suggestOverlayRect(m, panel, size), max(1, m.width), max(8, m.height))
@@ -253,7 +253,7 @@ func (m *tuiModel) chatViewLayout(header string, phase brandPhase) chatViewLayou
 		// Mouse capture is released: the terminal owns selection again. Say so
 		// loudly - a mode you cannot see is a mode you cannot leave.
 		hintParts = []string{tuiAccentStyle.Render(" select mode ") +
-			tuiDimStyle.Render(" drag to select, then copy as usual · F2 back ")}
+			TUIDimStyle.Render(" drag to select, then copy as usual · F2 back ")}
 	}
 	// Copy/paste acknowledgements are shown here while idle, because the
 	// status bar shows stepDetail only during a turn - when nobody copies.
@@ -273,7 +273,7 @@ func (m *tuiModel) chatViewLayout(header string, phase brandPhase) chatViewLayou
 			hintParts = append(hintParts, fmt.Sprintf("· %s ", s))
 		}
 	}
-	hint := tuiDimStyle.Render(strings.Join(hintParts, ""))
+	hint := TUIDimStyle.Render(strings.Join(hintParts, ""))
 	if m.stalledWarning {
 		hint = tuiErrorStyle.Render(" ⚠ stalled ") + hint
 	}
@@ -290,10 +290,10 @@ func renderScrollIndicator(scrolledUp bool, width int, waiting ...bool) string {
 	}
 	live := len(waiting) > 0 && waiting[0]
 	if live {
-		return tuiDimStyle.Render(" ↓ latest ")
+		return TUIDimStyle.Render(" ↓ latest ")
 	}
 	// Compact visual indicator - unobtrusive arrow shown when scrolled up.
-	return tuiDimStyle.Render(" ↓ ")
+	return TUIDimStyle.Render(" ↓ ")
 }
 
 func (m *tuiModel) viewWelcome() string {
@@ -308,7 +308,7 @@ func (m *tuiModel) viewWelcome() string {
 
 	// Status
 	left := brandNameStyled()
-	right := tuiDimStyle.Render(" welcome ")
+	right := TUIDimStyle.Render(" welcome ")
 	lw, rw := lipgloss.Width(left), lipgloss.Width(right)
 	spacerN := w - lw - rw
 	if spacerN < 1 {
@@ -336,8 +336,8 @@ func (m *tuiModel) viewWelcome() string {
 	if panel == "" {
 		return base
 	}
-	y := max(1, composerTop-size.h)
-	return overlayAt(base, panel, rect{x: max(0, min(2, w-size.w)), y: y, w: size.w, h: size.h}, w, h)
+	y := max(1, composerTop-size.H)
+	return overlayAt(base, panel, Rect{X: max(0, min(2, w-size.W)), Y: y, W: size.W, H: size.H}, w, h)
 }
 
 const heroSlogan = "autonomous agents · your workspace · your rules"
@@ -373,10 +373,10 @@ func renderHeroBraille(frame, w int, modelName, workspace string) (block string,
 		case 2:
 			b.WriteString(gap + brandNameStyled())
 		case 3:
-			b.WriteString(gap + tuiDimStyle.Render(slogan))
+			b.WriteString(gap + TUIDimStyle.Render(slogan))
 		case 5:
 			if facts != "" {
-				b.WriteString(gap + tuiDimStyle.Render(facts))
+				b.WriteString(gap + TUIDimStyle.Render(facts))
 			}
 		}
 	}
@@ -387,7 +387,7 @@ func renderHeroBraille(frame, w int, modelName, workspace string) (block string,
 func renderHeroText(w int) (block string, lines int) {
 	const margin = "  "
 	word := margin + brandNameStyled()
-	slogan := margin + tuiDimStyle.Render(truncateToWidth(heroSlogan, w-len(margin)))
+	slogan := margin + TUIDimStyle.Render(truncateToWidth(heroSlogan, w-len(margin)))
 	return word + "\n" + slogan, 2
 }
 
@@ -400,7 +400,7 @@ func (m *tuiModel) renderWelcomeBody(w, h int, status, heroBlock string, heroLin
 	inputLines := lipgloss.Height(input)
 	// Single instruction line, primary action first. The old centered tag
 	// under the hero repeated this and cost the picker a row.
-	hint := tuiDimStyle.Render(" type to start · ↑↓ sessions · enter open · ctrl+c quit ")
+	hint := TUIDimStyle.Render(" type to start · ↑↓ sessions · enter open · ctrl+c quit ")
 
 	// Keep enough room for the status, body chrome, and composer before the
 	// picker consumes session rows.

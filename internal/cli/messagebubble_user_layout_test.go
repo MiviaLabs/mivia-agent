@@ -61,7 +61,7 @@ func TestUserLayout_NoLeftRail(t *testing.T) {
 		}
 	}
 	// railForBlock user must be off
-	rail := railForBlock(ChatBlockUser, false, chromeRenderOpts())
+	rail := railForBlock(ChatBlockUser, false, ChromeRenderOpts())
 	if rail.Width != 0 {
 		t.Fatalf("user rail width=%d want 0", rail.Width)
 	}

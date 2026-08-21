@@ -10,7 +10,7 @@ import (
 func TestRailForBlock_MatrixUnicode(t *testing.T) {
 	t.Setenv("NO_COLOR", "")
 	t.Setenv("TERM", "xterm-256color")
-	opts := railOpts{ASCII: false, Color: true}
+	opts := RailOpts{ASCII: false, Color: true}
 
 	cases := []struct {
 		kind   ChatBlockKind
@@ -22,9 +22,9 @@ func TestRailForBlock_MatrixUnicode(t *testing.T) {
 	}{
 		{ChatBlockUser, false, "", "", 0, false},
 		{ChatBlockAssistant, false, "", "", 0, false}, // default voice: no rail
-		{ChatBlockThinking, false, "┊", chromeNeutral, 1, false},
-		{ChatBlockTool, false, "│", chromeNeutral, 1, false}, // thin gray - not yellow
-		{ChatBlockTool, true, "!", chromeError, 1, true},     // strict fail only
+		{ChatBlockThinking, false, "┊", ChromeNeutral, 1, false},
+		{ChatBlockTool, false, "│", ChromeNeutral, 1, false}, // thin gray - not yellow
+		{ChatBlockTool, true, "!", ChromeError, 1, true},     // strict fail only
 		{ChatBlockSystem, false, "", "", 0, false},
 		{ChatBlockDivider, false, "", "", 0, false},
 	}
@@ -46,13 +46,13 @@ func TestRailForBlock_MatrixUnicode(t *testing.T) {
 }
 
 func TestRailForBlock_MatrixASCII(t *testing.T) {
-	opts := railOpts{ASCII: true, Color: false}
+	opts := RailOpts{ASCII: true, Color: false}
 	r := railForBlock(ChatBlockUser, false, opts)
 	if r.Width != 0 {
 		t.Fatalf("ASCII user rail should be off, got %+v", r)
 	}
 	r = railForBlock(ChatBlockTool, true, opts)
-	if r.Glyph != "!" || r.Color != chromeError {
+	if r.Glyph != "!" || r.Color != ChromeError {
 		t.Fatalf("ASCII failed tool=%+v", r)
 	}
 	r = railForBlock(ChatBlockAssistant, false, opts)
@@ -60,15 +60,15 @@ func TestRailForBlock_MatrixASCII(t *testing.T) {
 		t.Fatalf("ASCII assistant should have no rail, got %+v", r)
 	}
 	r = railForBlock(ChatBlockTool, false, opts)
-	if r.Glyph != "|" || r.Color != chromeNeutral {
+	if r.Glyph != "|" || r.Color != ChromeNeutral {
 		t.Fatalf("ASCII tool OK should be thin gray |, got %+v", r)
 	}
 }
 
 func TestRailForDividerText_Error(t *testing.T) {
-	opts := railOpts{ASCII: false, Color: true}
+	opts := RailOpts{ASCII: false, Color: true}
 	r := railForDividerText("error: boom", opts)
-	if r.Width != 1 || r.Glyph != "!" || r.Color != chromeError {
+	if r.Width != 1 || r.Glyph != "!" || r.Color != ChromeError {
 		t.Fatalf("error divider rail=%+v", r)
 	}
 	r = railForDividerText("  ─ done · 1s ─", opts)
@@ -80,7 +80,7 @@ func TestRailForDividerText_Error(t *testing.T) {
 func TestApplyLeftRail_FullHeightAllLines(t *testing.T) {
 	rail := LeftRail{Width: 1, Glyph: "#", Color: chromeTools, Plain: true}
 	lines := []string{"  ", "  read_file foo", "    body"}
-	out := applyLeftRail(lines, rail)
+	out := ApplyLeftRail(lines, rail)
 	// Blank pad line: no glyph; text lines: glyph
 	if strings.HasPrefix(stripANSI(out[0]), "#") {
 		t.Fatalf("blank pad must not get rail: %q", out[0])
@@ -98,7 +98,7 @@ func TestApplyLeftRail_JoinHorizontalFullHeight(t *testing.T) {
 	// Blank lines skip glyph; text lines get rail.
 	rail := LeftRail{Width: 1, Glyph: "#", Plain: true}
 	lines := []string{"", "  hello", "  world", ""}
-	out := applyLeftRail(lines, rail)
+	out := ApplyLeftRail(lines, rail)
 	if len(out) != len(lines) {
 		t.Fatalf("line count %d want %d", len(out), len(lines))
 	}
@@ -114,9 +114,9 @@ func TestApplyLeftRail_JoinHorizontalFullHeight(t *testing.T) {
 }
 
 func TestRailForChatBlock_Unified(t *testing.T) {
-	opts := railOpts{ASCII: true, Color: false}
+	opts := RailOpts{ASCII: true, Color: false}
 	r := railForChatBlock(ChatBlock{Kind: ChatBlockTool, Text: "error: x"}, opts)
-	if r.Width != 1 || r.Color != chromeError || r.Glyph != "!" {
+	if r.Width != 1 || r.Color != ChromeError || r.Glyph != "!" {
 		t.Fatalf("failed tool chrome=%+v", r)
 	}
 	r = railForChatBlock(ChatBlock{Kind: ChatBlockDivider, Text: "error: boom"}, opts)
@@ -170,13 +170,13 @@ func TestPaintRailCell_Colored(t *testing.T) {
 func TestChromeRenderOpts_NO_COLOR(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
 	t.Setenv("TERM", "xterm-256color")
-	o := chromeRenderOpts()
+	o := ChromeRenderOpts()
 	if o.Color {
 		t.Fatal("NO_COLOR must disable Color")
 	}
 	t.Setenv("NO_COLOR", "")
 	t.Setenv("TERM", "dumb")
-	o = chromeRenderOpts()
+	o = ChromeRenderOpts()
 	if !o.ASCII || o.Color {
 		t.Fatalf("dumb TERM opts=%+v", o)
 	}
@@ -238,7 +238,7 @@ func TestRenderChatBlocks_NO_COLOR_ASCII(t *testing.T) {
 			t.Fatalf("user content must not have left rail: %q", p)
 		}
 	}
-	rail := railForBlock(ChatBlockTool, false, chromeRenderOpts())
+	rail := railForBlock(ChatBlockTool, false, ChromeRenderOpts())
 	if !rail.Plain {
 		t.Fatal("rail must be Plain under NO_COLOR")
 	}
@@ -294,7 +294,7 @@ func TestBlockToolFailed(t *testing.T) {
 func TestRenderChatBlocks_ToolWithRenderedGetsRail(t *testing.T) {
 	t.Setenv("NO_COLOR", "")
 	t.Setenv("TERM", "xterm-256color")
-	item := newToolRenderItem("read_file", `{"path":"a.go"}`, "ok", true, false)
+	item := NewToolRenderItem("read_file", `{"path":"a.go"}`, "ok", true, false)
 	line := formatToolLine(item, 80, terminalToolRenderOptions())
 	blocks := []ChatBlock{{
 		ID: "t1", Kind: ChatBlockTool, ToolName: "read_file",

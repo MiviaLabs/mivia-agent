@@ -13,15 +13,15 @@ type blockOverlay struct {
 	title           string
 	lines           []string
 	yOffset         int
-	prefs           dialogPrefs
+	prefs           DialogPrefs
 	lastInnerW      int
 	renderedRows    []string
 	renderedSources []int
 	kind            string
 }
 
-func detailDialogPrefs() dialogPrefs {
-	return dialogPrefs{preferredWPct: 90, preferredHPct: 85, minW: 40, minH: 8, frameCols: 4, frameRows: 2, pager: true}
+func detailDialogPrefs() DialogPrefs {
+	return DialogPrefs{PreferredWPct: 90, PreferredHPct: 85, MinW: 40, MinH: 8, FrameCols: 4, FrameRows: 2, Pager: true}
 }
 
 func safeDialogText(text string) string {
@@ -33,7 +33,7 @@ func safeDialogText(text string) string {
 // render-time operation because the terminal width can change while open.
 func newBlockOverlay(block ChatBlock) *blockOverlay {
 	toolName := safeDialogText(block.ToolName)
-	title := toolIconForName(toolName) + " " + toolName
+	title := ToolIconForName(toolName) + " " + toolName
 	if block.Kind == ChatBlockThinking {
 		title = "▾ thinking"
 	}
@@ -41,7 +41,7 @@ func newBlockOverlay(block ChatBlock) *blockOverlay {
 		title += "  ◆ " + safeDialogText(block.AgentName)
 	}
 	if block.Elapsed > 0 {
-		title += "  · " + formatDuration(block.Elapsed)
+		title += "  · " + FormatDuration(block.Elapsed)
 	}
 	switch {
 	case block.Failed:
@@ -53,9 +53,9 @@ func newBlockOverlay(block ChatBlock) *blockOverlay {
 	return &blockOverlay{title: title, lines: strings.Split(content, "\n"), prefs: detailDialogPrefs(), kind: "detail"}
 }
 
-func (o *blockOverlay) layout(w, h int) dialogLayout {
-	layout := makeDialogLayout(w, h, o.prefs, func(innerW int) (int, int) {
-		rows := wrapDisplayRows(o.lines, innerW)
+func (o *blockOverlay) layout(w, h int) DialogLayout {
+	layout := MakeDialogLayout(w, h, o.prefs, func(innerW int) (int, int) {
+		rows := WrapDisplayRows(o.lines, innerW)
 		maxW := 0
 		for _, row := range rows {
 			maxW = max(maxW, ansi.StringWidth(row))
@@ -66,7 +66,7 @@ func (o *blockOverlay) layout(w, h int) dialogLayout {
 }
 
 func (o *blockOverlay) displayRows(innerW int) []string {
-	rows := wrapDisplayRows(o.lines, innerW)
+	rows := WrapDisplayRows(o.lines, innerW)
 	if len(rows) == 0 {
 		return []string{""}
 	}
@@ -97,7 +97,7 @@ func (o *blockOverlay) rowsForLayout(innerW, pageH int) []string {
 	if agents > 0 {
 		compact = append(compact, fmt.Sprintf("  agents: %d (open fleet for details)", agents))
 	}
-	rows := wrapDisplayRows(compact, innerW)
+	rows := WrapDisplayRows(compact, innerW)
 	if len(rows) > pageH {
 		// Keep the core facts in the non-paging fallback. A narrow terminal
 		// may not have enough rows for the normal compact layout, but replacing
@@ -274,15 +274,15 @@ func (o *blockOverlay) scroll(delta, pageH int) {
 	}
 }
 
-func (o *blockOverlay) ViewAt(w, h int) (string, dialogLayout) {
+func (o *blockOverlay) ViewAt(w, h int) (string, DialogLayout) {
 	layout := o.layout(w, h)
 	previousSource := -1
-	if o.lastInnerW > 0 && o.lastInnerW != layout.innerW && o.yOffset < len(o.renderedSources) {
+	if o.lastInnerW > 0 && o.lastInnerW != layout.InnerW && o.yOffset < len(o.renderedSources) {
 		previousSource = o.renderedSources[o.yOffset]
 	}
-	rows := o.rowsForLayout(max(1, layout.innerW), layout.pageH)
+	rows := o.rowsForLayout(max(1, layout.InnerW), layout.PageH)
 	o.renderedRows = rows
-	_, o.renderedSources = wrapDisplayRowsWithSources(o.lines, max(1, layout.innerW))
+	_, o.renderedSources = WrapDisplayRowsWithSources(o.lines, max(1, layout.InnerW))
 	if previousSource >= 0 {
 		for i, source := range o.renderedSources {
 			if source == previousSource {
@@ -291,17 +291,17 @@ func (o *blockOverlay) ViewAt(w, h int) (string, dialogLayout) {
 			}
 		}
 	}
-	o.lastInnerW = max(1, layout.innerW)
-	o.clamp(layout.pageH)
+	o.lastInnerW = max(1, layout.InnerW)
+	o.clamp(layout.PageH)
 	start := min(o.yOffset, len(rows))
-	end := min(len(rows), start+layout.pageH)
+	end := min(len(rows), start+layout.PageH)
 	visible := rows[start:end]
 	pos := "all"
-	if len(rows) > layout.pageH {
-		pct := 100 * (o.yOffset + layout.pageH) / len(rows)
+	if len(rows) > layout.PageH {
+		pct := 100 * (o.yOffset + layout.PageH) / len(rows)
 		pos = fmt.Sprintf("%d%%", min(100, pct))
 	}
-	return renderDialogFrame(o.title, visible, dialogFooter(pos, len(rows), o.prefs.pager), layout), layout
+	return renderDialogFrame(o.title, visible, dialogFooter(pos, len(rows), o.prefs.Pager), layout), layout
 }
 
 func (o *blockOverlay) View(w, h int) string {
@@ -355,12 +355,12 @@ func (m *tuiModel) closeModal() {
 
 func (m *tuiModel) handleOverlayKey(key string) (bool, bool, []tea.Cmd) {
 	layout := m.overlay.layout(max(1, m.width), max(1, m.height))
-	pageH := max(1, layout.pageH)
+	pageH := max(1, layout.PageH)
 	switch key {
 	case "esc", "q":
 		m.setOverlay(nil)
 	case "j", "down", "k", "up", "pgdown", " ", "f", "pgup", "b", "home", "g", "end", "G":
-		if !m.overlay.prefs.pager {
+		if !m.overlay.prefs.Pager {
 			return true, true, nil
 		}
 		switch key {

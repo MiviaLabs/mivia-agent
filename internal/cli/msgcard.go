@@ -28,10 +28,10 @@ func formatUserMessageCard(text string, width int, sentAt time.Time) []string {
 	if body == "" {
 		body = " "
 	}
-	rail := userRailStyle.Render("▌")
-	label := userLabelStyle.Render("you")
+	rail := UserRailStyle.Render("▌")
+	label := UserLabelStyle.Render("you")
 	if !sentAt.IsZero() {
-		label += tuiDimStyle.Render("  " + sentAt.In(time.Local).Format("3:04PM"))
+		label += TUIDimStyle.Render("  " + sentAt.In(time.Local).Format("3:04PM"))
 	}
 	out := []string{"  " + rail + " " + label}
 	for _, line := range strings.Split(wrapLineV2(body, max(20, width-6)), "\n") {
@@ -40,4 +40,4 @@ func formatUserMessageCard(text string, width int, sentAt time.Time) []string {
 	return out
 }
 
-// userRailStyle / userLabelStyle aliases live in theme.go.
+// UserRailStyle / UserLabelStyle aliases live in theme.go.

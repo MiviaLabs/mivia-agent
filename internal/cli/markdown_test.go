@@ -27,7 +27,7 @@ func TestMarkdownWriterHeading1(t *testing.T) {
 	mw := NewMarkdownWriter(&buf)
 	mw.Write([]byte("# Hello\n"))
 	got := buf.String()
-	if !strings.Contains(got, ansiBold) {
+	if !strings.Contains(got, AnsiBold) {
 		t.Fatalf("expected bold ANSI for H1, got %q", got)
 	}
 	if !strings.Contains(stripANSI(got), "Hello") {
@@ -40,7 +40,7 @@ func TestMarkdownWriterHeading2(t *testing.T) {
 	mw := NewMarkdownWriter(&buf)
 	mw.Write([]byte("## Section\n"))
 	got := buf.String()
-	if !strings.Contains(got, ansiBold) {
+	if !strings.Contains(got, AnsiBold) {
 		t.Fatalf("expected bold for H2, got %q", got)
 	}
 	if !strings.Contains(stripANSI(got), "Section") {
@@ -53,7 +53,7 @@ func TestMarkdownWriterBold(t *testing.T) {
 	mw := NewMarkdownWriter(&buf)
 	mw.Write([]byte("this is **bold** text\n"))
 	got := buf.String()
-	if !strings.Contains(got, ansiBold) {
+	if !strings.Contains(got, AnsiBold) {
 		t.Fatalf("expected bold ANSI, got %q", got)
 	}
 	stripped := stripANSI(got)
@@ -67,7 +67,7 @@ func TestMarkdownWriterItalic(t *testing.T) {
 	mw := NewMarkdownWriter(&buf)
 	mw.Write([]byte("this is *italic* text\n"))
 	got := buf.String()
-	if !strings.Contains(got, ansiItalic) {
+	if !strings.Contains(got, AnsiItalic) {
 		t.Fatalf("expected italic ANSI, got %q", got)
 	}
 	stripped := stripANSI(got)
@@ -81,7 +81,7 @@ func TestMarkdownWriterCodeSpan(t *testing.T) {
 	mw := NewMarkdownWriter(&buf)
 	mw.Write([]byte("use `code` inline\n"))
 	got := buf.String()
-	if !strings.Contains(got, ansiYellow) {
+	if !strings.Contains(got, AnsiYellow) {
 		t.Fatalf("expected yellow for code, got %q", got)
 	}
 	stripped := stripANSI(got)
@@ -98,7 +98,7 @@ func TestMarkdownWriterCodeBlock(t *testing.T) {
 	mw.Write([]byte("```\n"))
 	got := buf.String()
 	// Code blocks now have syntax highlighting - keywords in cyan, not plain yellow.
-	if !strings.Contains(got, ansiCyan) {
+	if !strings.Contains(got, AnsiCyan) {
 		t.Fatalf("expected cyan for syntax highlighting, got %q", got)
 	}
 	stripped := stripANSI(got)
@@ -137,7 +137,7 @@ func TestMarkdownWriterBlockquote(t *testing.T) {
 	mw := NewMarkdownWriter(&buf)
 	mw.Write([]byte("> quoted text\n"))
 	got := buf.String()
-	if !strings.Contains(got, ansiGreen) {
+	if !strings.Contains(got, AnsiGreen) {
 		t.Fatalf("expected green for blockquote, got %q", got)
 	}
 	stripped := stripANSI(got)
@@ -151,7 +151,7 @@ func TestMarkdownWriterHorizontalRule(t *testing.T) {
 	mw := NewMarkdownWriter(&buf)
 	mw.Write([]byte("---\n"))
 	got := buf.String()
-	if !strings.Contains(got, ansiDim) {
+	if !strings.Contains(got, AnsiDim) {
 		t.Fatalf("expected dim for HR, got %q", got)
 	}
 }
@@ -273,10 +273,10 @@ func TestMarkdownWriterInlineBoldAndCode(t *testing.T) {
 	mw := NewMarkdownWriter(&buf)
 	mw.Write([]byte("install `go build` with **make**\n"))
 	got := buf.String()
-	if !strings.Contains(got, ansiBold) {
+	if !strings.Contains(got, AnsiBold) {
 		t.Fatalf("expected bold, got %q", got)
 	}
-	if !strings.Contains(got, ansiYellow) {
+	if !strings.Contains(got, AnsiYellow) {
 		t.Fatalf("expected yellow for code, got %q", got)
 	}
 }
@@ -301,7 +301,7 @@ func TestMarkdownWriterNestedBoldInList(t *testing.T) {
 	mw := NewMarkdownWriter(&buf)
 	mw.Write([]byte("- **important** item\n"))
 	got := buf.String()
-	if !strings.Contains(got, ansiBold) {
+	if !strings.Contains(got, AnsiBold) {
 		t.Fatalf("expected bold in list, got %q", got)
 	}
 	if !strings.Contains(stripANSI(got), "important") {
@@ -329,10 +329,10 @@ func TestMarkdownWriterInlineCodeInHeading(t *testing.T) {
 	mw := NewMarkdownWriter(&buf)
 	mw.Write([]byte("## `code` in heading\n"))
 	got := buf.String()
-	if !strings.Contains(got, ansiBold) {
+	if !strings.Contains(got, AnsiBold) {
 		t.Fatalf("expected bold for heading, got %q", got)
 	}
-	if !strings.Contains(got, ansiYellow) {
+	if !strings.Contains(got, AnsiYellow) {
 		t.Fatalf("expected yellow for inline code, got %q", got)
 	}
 }
@@ -340,10 +340,10 @@ func TestMarkdownWriterInlineCodeInHeading(t *testing.T) {
 func TestRenderMarkdownDiffBlock(t *testing.T) {
 	src := "```diff\n--- a\n+++ b\n@@ -1 +1 @@\n-old\n+new\n```\n"
 	got := RenderMarkdown(src, 80)
-	if !strings.Contains(got, ansiGreen) {
+	if !strings.Contains(got, AnsiGreen) {
 		t.Fatalf("expected green for +, got %q", got)
 	}
-	if !strings.Contains(got, ansiRed) {
+	if !strings.Contains(got, AnsiRed) {
 		t.Fatalf("expected red for -, got %q", got)
 	}
 	plain := stripANSI(got)
@@ -356,7 +356,7 @@ func TestRenderMarkdownCodeAndList(t *testing.T) {
 	src := "# Title\n\n- item\n\n`code` and **bold**\n\n```go\nfunc main() {}\n```\n"
 	got := RenderMarkdown(src, 80)
 	// Inline `code` still uses yellow; code blocks use syntax highlighting (cyan).
-	if !strings.Contains(got, ansiYellow) {
+	if !strings.Contains(got, AnsiYellow) {
 		t.Fatalf("expected code yellow for inline code, got %q", got)
 	}
 	if !strings.Contains(stripANSI(got), "Title") {
@@ -371,7 +371,7 @@ func TestMarkdownTableRow(t *testing.T) {
 	mw.Write([]byte(input))
 	mw.Flush()
 	got := buf.String()
-	if !strings.Contains(got, ansiDim) {
+	if !strings.Contains(got, AnsiDim) {
 		t.Fatalf("expected dim borders in table, got %q", got)
 	}
 	stripped := stripANSI(got)

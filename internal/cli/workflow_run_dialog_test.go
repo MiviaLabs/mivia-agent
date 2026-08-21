@@ -278,11 +278,11 @@ func TestBuildWorkflowRunViewElapsedUsesFinishedAt(t *testing.T) {
 		t.Fatal(err)
 	}
 	header := strings.Join(view.header, "\n")
-	want := "elapsed " + formatDuration(5*time.Minute)
+	want := "elapsed " + FormatDuration(5*time.Minute)
 	if !strings.Contains(header, want) {
 		t.Fatalf("finished-run header missing the frozen elapsed %q:\n%s", want, header)
 	}
-	if strings.Contains(header, "elapsed "+formatDuration(2*time.Hour)) {
+	if strings.Contains(header, "elapsed "+FormatDuration(2*time.Hour)) {
 		t.Fatalf("finished-run elapsed must not grow with the wall clock:\n%s", header)
 	}
 }
@@ -301,7 +301,7 @@ func TestBuildWorkflowRunViewElapsedRunningUsesNow(t *testing.T) {
 		t.Fatal(err)
 	}
 	header := strings.Join(view.header, "\n")
-	if !strings.Contains(header, "elapsed "+formatDuration(2*time.Minute)) {
+	if !strings.Contains(header, "elapsed "+FormatDuration(2*time.Minute)) {
 		t.Fatalf("running-run header missing the live elapsed:\n%s", header)
 	}
 }
@@ -330,10 +330,10 @@ func TestBuildWorkflowRunViewElapsedDeliverySettledUsesLastAttempt(t *testing.T)
 				t.Fatal(err)
 			}
 			header := strings.Join(view.header, "\n")
-			if !strings.Contains(header, "elapsed "+formatDuration(2*time.Hour)) {
+			if !strings.Contains(header, "elapsed "+FormatDuration(2*time.Hour)) {
 				t.Fatalf("settled-run header missing the frozen elapsed:\n%s", header)
 			}
-			if strings.Contains(header, "elapsed "+formatDuration(59*time.Hour)) {
+			if strings.Contains(header, "elapsed "+FormatDuration(59*time.Hour)) {
 				t.Fatalf("settled-run elapsed must not count the delivery wait:\n%s", header)
 			}
 		})
@@ -576,8 +576,8 @@ func TestWorkflowRunDialogGeometry(t *testing.T) {
 				t.Fatalf("%dx%d: line width %d exceeds canvas: %q", w, h, runeWidth(line), line)
 			}
 		}
-		if layout.rect.w > w || layout.rect.h > h {
-			t.Fatalf("%dx%d: dialog rect %dx%d exceeds the canvas", w, h, layout.rect.w, layout.rect.h)
+		if layout.Rect.W > w || layout.Rect.H > h {
+			t.Fatalf("%dx%d: dialog Rect %dx%d exceeds the canvas", w, h, layout.Rect.W, layout.Rect.H)
 		}
 	}
 }
@@ -636,7 +636,7 @@ func TestBuildWorkflowRunViewShowsHeartbeatLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	freshLine := "last heartbeat: " + formatDuration(12*time.Second) + " ago"
+	freshLine := "last heartbeat: " + FormatDuration(12*time.Second) + " ago"
 	header := strings.Join(fresh.header, "\n")
 	if !strings.Contains(header, freshLine) {
 		t.Fatalf("header missing %q:\n%s", freshLine, header)
@@ -653,7 +653,7 @@ func TestBuildWorkflowRunViewShowsHeartbeatLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	staleLine := "last heartbeat: " + formatDuration(3*time.Minute) + " ago · stale"
+	staleLine := "last heartbeat: " + FormatDuration(3*time.Minute) + " ago · stale"
 	header = strings.Join(stale.header, "\n")
 	if !strings.Contains(header, staleLine) {
 		t.Fatalf("header missing %q:\n%s", staleLine, header)

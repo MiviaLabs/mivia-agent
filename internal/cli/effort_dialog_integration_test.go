@@ -328,14 +328,14 @@ func TestIntegrationEffortDialogStaysWithinTinyCanvases(t *testing.T) {
 		m.handleSlash("/effort")
 		for _, size := range []struct{ width, height int }{{1, 1}, {2, 8}, {24, 2}, {90, 24}} {
 			view, layout := m.effortDlg.ViewAt(size.width, size.height)
-			if layout.rect.x < 0 || layout.rect.y < 0 ||
-				layout.rect.x+layout.rect.w > size.width || layout.rect.y+layout.rect.h > size.height {
+			if layout.Rect.X < 0 || layout.Rect.Y < 0 ||
+				layout.Rect.X+layout.Rect.W > size.width || layout.Rect.Y+layout.Rect.H > size.height {
 				t.Fatalf("%s %dx%d out-of-bounds: %+v", model, size.width, size.height, layout)
 			}
 			for _, line := range strings.Split(view, "\n") {
-				if ansi.StringWidth(line) > layout.rect.w {
-					t.Fatalf("%s %dx%d line width=%d rect=%d: %q",
-						model, size.width, size.height, ansi.StringWidth(line), layout.rect.w, stripANSI(line))
+				if ansi.StringWidth(line) > layout.Rect.W {
+					t.Fatalf("%s %dx%d line width=%d Rect=%d: %q",
+						model, size.width, size.height, ansi.StringWidth(line), layout.Rect.W, stripANSI(line))
 				}
 			}
 		}

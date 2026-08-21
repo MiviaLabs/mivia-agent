@@ -151,7 +151,7 @@ func TestIntegrationModelDialogCommitsEnabledCrossProviderSelection(t *testing.T
 		t.Fatal("cross-provider row missing")
 	}
 	layout := m.modelDlg.layout(m.width, m.height)
-	if !m.handleModalMouse(tea.MouseMsg{Y: layout.rect.y + 1 + rowIndex - m.modelDlg.scroll, Type: tea.MouseLeft}) {
+	if !m.handleModalMouse(tea.MouseMsg{Y: layout.Rect.Y + 1 + rowIndex - m.modelDlg.scroll, Type: tea.MouseLeft}) {
 		t.Fatal("model dialog did not consume row click")
 	}
 	if m.modelDlg.cursor != rowIndex {
@@ -249,12 +249,12 @@ func TestIntegrationModelDialogStaysWithinTinyCanvases(t *testing.T) {
 	d := newModelDialog(res.ModelCatalog(), chat.Selection{ProviderName: res.ProviderName, Model: res.Model}, "", false)
 	for _, size := range []struct{ width, height int }{{1, 1}, {2, 8}, {24, 2}, {90, 24}} {
 		view, layout := d.ViewAt(size.width, size.height)
-		if layout.rect.x < 0 || layout.rect.y < 0 || layout.rect.x+layout.rect.w > size.width || layout.rect.y+layout.rect.h > size.height {
+		if layout.Rect.X < 0 || layout.Rect.Y < 0 || layout.Rect.X+layout.Rect.W > size.width || layout.Rect.Y+layout.Rect.H > size.height {
 			t.Fatalf("size %dx%d out-of-bounds layout: %+v", size.width, size.height, layout)
 		}
 		for _, line := range strings.Split(view, "\n") {
-			if ansi.StringWidth(line) > layout.rect.w {
-				t.Fatalf("size %dx%d line width=%d rect=%d: %q", size.width, size.height, ansi.StringWidth(line), layout.rect.w, stripANSI(line))
+			if ansi.StringWidth(line) > layout.Rect.W {
+				t.Fatalf("size %dx%d line width=%d Rect=%d: %q", size.width, size.height, ansi.StringWidth(line), layout.Rect.W, stripANSI(line))
 			}
 		}
 	}

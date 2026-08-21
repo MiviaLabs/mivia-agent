@@ -73,8 +73,8 @@ func TestOverlayWindowShortTerminalFallback(t *testing.T) {
 	if strings.Contains(panel, "\n") {
 		t.Fatalf("renderOverlayWindow: short-terminal fallback must be a single row, got:\n%s", panel)
 	}
-	if r.h != 1 {
-		t.Fatalf("renderOverlayWindow: expected rect h == 1 on a 1-row terminal, got %+v", r)
+	if r.H != 1 {
+		t.Fatalf("renderOverlayWindow: expected Rect h == 1 on a 1-row terminal, got %+v", r)
 	}
 	if !strings.Contains(stripANSI(panel), "item-00") {
 		t.Fatalf("renderOverlayWindow: fallback must show the selected row, panel:\n%s", stripANSI(panel))
@@ -87,8 +87,8 @@ func TestOverlayWindowEmpty(t *testing.T) {
 	if panel != "" {
 		t.Fatalf("renderOverlayWindow: expected an empty panel for nil rows, got %q", panel)
 	}
-	if r != (rect{}) {
-		t.Fatalf("renderOverlayWindow: expected a zero rect for nil rows, got %+v", r)
+	if r != (Rect{}) {
+		t.Fatalf("renderOverlayWindow: expected a zero Rect for nil rows, got %+v", r)
 	}
 }
 
@@ -168,8 +168,8 @@ func TestHistoryOverlayRenderEmpty(t *testing.T) {
 	if panel != "" {
 		t.Fatalf("renderHistoryPanel: expected an empty panel for nil entries, got %q", panel)
 	}
-	if r != (rect{}) {
-		t.Fatalf("renderHistoryPanel: expected a zero rect for nil entries, got %+v", r)
+	if r != (Rect{}) {
+		t.Fatalf("renderHistoryPanel: expected a zero Rect for nil entries, got %+v", r)
 	}
 }
 

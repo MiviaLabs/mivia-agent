@@ -52,7 +52,7 @@ func renderOneChatBlock(block ChatBlock, model string, width int, thinkingExpand
 }
 
 func renderOneChatBlockMem(block ChatBlock, model string, width int, thinkingExpandDefault bool, mem groupMember, view railView) []string {
-	opts := chromeRenderOpts()
+	opts := ChromeRenderOpts()
 	text := SafeChatBlockText(block.Text, 0)
 	rail := resolveBlockRail(block, mem, opts, view)
 
@@ -60,7 +60,7 @@ func renderOneChatBlockMem(block ChatBlock, model string, width int, thinkingExp
 		return early
 	}
 	lines := renderBlockBody(block, text, model, width, thinkingExpandDefault)
-	return applyBlockChromeWith(lines, block, text, opts, mem, view)
+	return ApplyBlockChromeWith(lines, block, text, opts, mem, view)
 }
 
 // renderPreformattedBlock handles block.Rendered early exits.
@@ -72,10 +72,10 @@ func renderPreformattedBlock(block ChatBlock, rail LeftRail) ([]string, bool) {
 	lines := []string{line}
 	switch block.Kind {
 	case ChatBlockDivider:
-		return applyLeftRail(lines, rail), true
+		return ApplyLeftRail(lines, rail), true
 	case ChatBlockTool:
 		if block.Collapsed {
-			return applyLeftRail(lines, rail), true
+			return ApplyLeftRail(lines, rail), true
 		}
 		return nil, false
 	case ChatBlockSystem:
@@ -87,7 +87,7 @@ func renderPreformattedBlock(block ChatBlock, rail LeftRail) ([]string, bool) {
 		}
 		return lines, true
 	default:
-		return applyLeftRail(lines, rail), true
+		return ApplyLeftRail(lines, rail), true
 	}
 }
 
@@ -131,12 +131,12 @@ func renderBlockBody(block ChatBlock, text, model string, width int, thinkingExp
 			return collapsePreview("system", text, 48)
 		}
 		if strings.HasPrefix(strings.TrimSpace(text), "→") {
-			return []string{tuiDimStyle.Render("  " + text)}
+			return []string{TUIDimStyle.Render("  " + text)}
 		}
-		return []string{tuiDimStyle.Render("  ⚙ " + text)}
+		return []string{TUIDimStyle.Render("  ⚙ " + text)}
 	case ChatBlockDivider:
 		if text != "" {
-			return []string{tuiDimStyle.Render(text)}
+			return []string{TUIDimStyle.Render(text)}
 		}
 		// A bare turn rule carried no information and ate a row; the blank
 		// lane between blocks already separates turns. Footers with text
@@ -163,7 +163,7 @@ func renderWorkStatusBlock(text string, collapsed bool) []string {
 	if !collapsed {
 		for _, line := range parts[1:] {
 			if strings.TrimSpace(line) != "" {
-				out = append(out, tuiDimStyle.Render("    "+line))
+				out = append(out, TUIDimStyle.Render("    "+line))
 			}
 		}
 	}
@@ -178,13 +178,13 @@ func renderToolBlock(block ChatBlock, text string, model string, width int) []st
 	// Nested tools keep their ◆ producing-agent badge in history.
 	agentPart := ""
 	if block.AgentName != "" {
-		agentPart = agentBadgeStyle.Render(glyphDiamond+" "+block.AgentName) + " "
+		agentPart = AgentBadgeStyle.Render(glyphDiamond+" "+block.AgentName) + " "
 	}
 	if block.Collapsed {
 		// File edits are the agent's most consequential output: the collapsed
 		// row shows a peek of the change (a few diff lines) rather than only a
 		// one-line summary, so scrolling history shows what actually changed.
-		if isEditTool(block.ToolName) || resultLooksLikeDiff(text) {
+		if IsEditTool(block.ToolName) || ResultLooksLikeDiff(text) {
 			return renderCollapsedEditBlock(block, text, agentPart, width)
 		}
 		// Use pre-rendered line (formatToolLine output) if available, else truncate raw text.
@@ -195,21 +195,21 @@ func renderToolBlock(block ChatBlock, text string, model string, width int) []st
 		// Ledger-row chrome: status glyph + duration when known.
 		status := ""
 		if block.Failed {
-			status = " " + toolErrStyle.Render(glyphCross)
+			status = " " + ToolErrStyle.Render(glyphCross)
 		} else if block.Elapsed > 0 {
-			status = " " + toolOkStyle.Render(glyphCheck)
+			status = " " + ToolOkStyle.Render(glyphCheck)
 		}
 		dur := ""
 		if block.Elapsed > 0 {
-			dur = " " + toolTimeStyle.Render(formatDuration(block.Elapsed))
+			dur = " " + ToolTimeStyle.Render(FormatDuration(block.Elapsed))
 		}
 		// ▸ collapse affordance matches other block kinds.
 		line := fmt.Sprintf("  %s %s %s%s %s%s%s",
 			glyphTriR,
-			toolIconForName(block.ToolName),
+			ToolIconForName(block.ToolName),
 			agentPart,
-			toolNameStyle.Render(block.ToolName),
-			tuiDimStyle.Render(preview),
+			ToolNameStyle.Render(block.ToolName),
+			TUIDimStyle.Render(preview),
 			dur,
 			status,
 		)
@@ -218,17 +218,17 @@ func renderToolBlock(block ChatBlock, text string, model string, width int) []st
 
 	// Expanded: show full tool content with dim style + ▾ expand affordance.
 	if strings.TrimSpace(text) == "" {
-		return []string{fmt.Sprintf("  %s %s %s (no output)", glyphTriD, toolIconForName(block.ToolName), toolNameStyle.Render(block.ToolName))}
+		return []string{fmt.Sprintf("  %s %s %s (no output)", glyphTriD, ToolIconForName(block.ToolName), ToolNameStyle.Render(block.ToolName))}
 	}
 	header := fmt.Sprintf("  %s %s %s",
 		glyphTriD,
-		toolIconForName(block.ToolName),
-		toolNameStyle.Render(block.ToolName),
+		ToolIconForName(block.ToolName),
+		ToolNameStyle.Render(block.ToolName),
 	)
 	lines := []string{header}
 	// Apply redaction + line cap to expanded tool content for privacy.
 	redacted := redactPreview(text)
-	if isEditTool(block.ToolName) || resultLooksLikeDiff(redacted) {
+	if IsEditTool(block.ToolName) || ResultLooksLikeDiff(redacted) {
 		for _, line := range renderDiffBody(redacted, width, 50) {
 			lines = append(lines, line)
 		}
@@ -239,10 +239,10 @@ func renderToolBlock(block ChatBlock, text string, model string, width int) []st
 	if len(contentLines) > maxExpandedLines {
 		extra := len(contentLines) - maxExpandedLines
 		contentLines = contentLines[:maxExpandedLines]
-		contentLines = append(contentLines, tuiDimStyle.Render(fmt.Sprintf("    … (%d more lines truncated)", extra)))
+		contentLines = append(contentLines, TUIDimStyle.Render(fmt.Sprintf("    … (%d more lines truncated)", extra)))
 	}
 	for _, line := range contentLines {
-		lines = append(lines, tuiDimStyle.Render("    "+line))
+		lines = append(lines, TUIDimStyle.Render("    "+line))
 	}
 	return lines
 }

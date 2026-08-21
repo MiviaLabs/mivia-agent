@@ -242,10 +242,10 @@ func (s *sessionsSidebar) viewWithActive(rows []chat.SessionInfo, width, height 
 	lines := []string{
 		TUIHeaderStyle.Render(sidebarPad(title, width)),
 		s.renderNewSession(rows, width, focused),
-		tuiDimStyle.Render(strings.Repeat("─", width)),
+		TUIDimStyle.Render(strings.Repeat("─", width)),
 	}
 	if len(rows) == 0 && layout.rowCapacity > 0 {
-		lines = append(lines, tuiDimStyle.Render(sidebarPad(" no saved sessions", width)))
+		lines = append(lines, TUIDimStyle.Render(sidebarPad(" no saved sessions", width)))
 	} else {
 		latestAuto := latestAutoSaveName(rows)
 		for i := s.scroll; i < end; i++ {
@@ -254,7 +254,7 @@ func (s *sessionsSidebar) viewWithActive(rows []chat.SessionInfo, width, height 
 		}
 	}
 	if layout.showCue {
-		lines = append(lines, tuiDimStyle.Render(sidebarPad(fmt.Sprintf(" %d–%d / %d", s.scroll+1, end, len(rows)), width)))
+		lines = append(lines, TUIDimStyle.Render(sidebarPad(fmt.Sprintf(" %d–%d / %d", s.scroll+1, end, len(rows)), width)))
 	}
 	footer := sidebarPad(s.footer(rows), width)
 	switch {
@@ -263,7 +263,7 @@ func (s *sessionsSidebar) viewWithActive(rows []chat.SessionInfo, width, height 
 	case s.notice != "":
 		lines = append(lines, tuiInfoStyle.Render(footer))
 	default:
-		lines = append(lines, tuiDimStyle.Render(footer))
+		lines = append(lines, TUIDimStyle.Render(footer))
 	}
 	return lipgloss.NewStyle().Width(width).Height(height).Render(strings.Join(lines, "\n"))
 }
@@ -310,7 +310,7 @@ func (s *sessionsSidebar) renderSessionRow(row chat.SessionInfo, selected bool, 
 		if age := formatSessionAge(row.UpdatedAt); age != "" {
 			metadata += " · " + age
 		}
-		lines = append(lines, tuiDimStyle.Render(sidebarPad(metadata, width)))
+		lines = append(lines, TUIDimStyle.Render(sidebarPad(metadata, width)))
 	}
 	return lines
 }

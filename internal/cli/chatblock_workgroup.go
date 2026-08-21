@@ -139,7 +139,7 @@ func RenderChatBlocksWithWorkGroupsWindow(blocks []ChatBlock, model string, widt
 				total := g.End - g.Start
 				off := clampWorkGroupScroll(scroll[g.Key], total)
 				if off > 0 {
-					out.Lines = append(out.Lines, tuiDimStyle.Render(
+					out.Lines = append(out.Lines, TUIDimStyle.Render(
 						fmt.Sprintf("    ↑ %d earlier", off)))
 				}
 				end := min(g.Start+off+workGroupWindowRows, g.End)
@@ -151,7 +151,7 @@ func RenderChatBlocksWithWorkGroupsWindow(blocks []ChatBlock, model string, widt
 					appendRenderedBlockMem(&out, blocks[j], model, width, thinkingExpandDefault, mem, view)
 				}
 				if remaining := g.End - end; remaining > 0 {
-					out.Lines = append(out.Lines, tuiDimStyle.Render(
+					out.Lines = append(out.Lines, TUIDimStyle.Render(
 						fmt.Sprintf("    ↓ %d more · j/k scroll · o open all", remaining)))
 				}
 			}
@@ -184,17 +184,17 @@ func formatWorkGroupHeader(g workGroup, collapsed bool, view railView) string {
 	if g.AgentCount > 0 {
 		text += fmt.Sprintf(" · %d ◆", g.AgentCount)
 	}
-	line := tuiDimStyle.Render(text)
+	line := TUIDimStyle.Render(text)
 	if g.FailCount > 0 {
-		line += tuiDimStyle.Render(" · ") + tuiErrorStyle.Render(fmt.Sprintf("%d ✗", g.FailCount))
+		line += TUIDimStyle.Render(" · ") + tuiErrorStyle.Render(fmt.Sprintf("%d ✗", g.FailCount))
 	}
-	opts := chromeRenderOpts()
+	opts := ChromeRenderOpts()
 	state := RailStateNeutral
 	if view.Live && g.ToolCount >= 2 {
 		state = RailStateParallelLive
 	}
 	rail := railFromRole(RailRoleGroupHeader, state, opts, view)
-	return applyLeftRail([]string{line}, rail)[0]
+	return ApplyLeftRail([]string{line}, rail)[0]
 }
 
 func appendRenderedBlock(out *ChatBlockRender, block ChatBlock, model string, width int, thinkingExpandDefault bool) {

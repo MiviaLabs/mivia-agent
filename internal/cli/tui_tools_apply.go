@@ -32,7 +32,7 @@ func (m *tuiModel) applyToolEventsOpts(evts []bridgeToolEvt, emptySpeechStatus b
 				openBefore = 1
 			}
 			m.applyToolStartEvent(e)
-			if e.Name != "" && !isLifecycleStatus(e.Detail) {
+			if e.Name != "" && !IsLifecycleStatus(e.Detail) {
 				m.stepDetail = toolStatusLine(e.Name, e.Detail)
 				m.stepDetailAt = time.Now()
 			} else if e.Name != "" && m.stepDetail == "" {
@@ -93,7 +93,7 @@ func (m *tuiModel) appendEmptySpeechToolStatus(evts []bridgeToolEvt) {
 	m.appendBlock(ChatBlock{
 		Kind:      ChatBlockSystem,
 		Text:      "→ " + detail,
-		Rendered:  tuiDimStyle.Render("  → " + summary),
+		Rendered:  TUIDimStyle.Render("  → " + summary),
 		Collapsed: collapsed,
 	})
 	m.clearAwaitingFirstActivity()
@@ -109,7 +109,7 @@ func (m *tuiModel) applyToolStartEvent(e bridgeToolEvt) {
 			if e.Name != "" {
 				m.toolRows[i].Name = e.Name
 			}
-			if isLifecycleStatus(e.Detail) {
+			if IsLifecycleStatus(e.Detail) {
 				m.toolRows[i].Status = e.Detail
 			} else if e.Detail != "" {
 				m.toolRows[i].Detail = e.Detail
@@ -118,7 +118,7 @@ func (m *tuiModel) applyToolStartEvent(e bridgeToolEvt) {
 		}
 	}
 	status, detail := "queued", e.Detail
-	if isLifecycleStatus(e.Detail) {
+	if IsLifecycleStatus(e.Detail) {
 		status, detail = e.Detail, ""
 	}
 	m.toolRows = append(m.toolRows, toolRow{
@@ -143,7 +143,7 @@ func (m *tuiModel) applyToolEndEvent(e bridgeToolEvt) int {
 		body := e.Detail
 		failed := toolResultFailed(body) ||
 			body == "failed" || strings.HasPrefix(body, "failed")
-		if isLifecycleStatus(body) {
+		if IsLifecycleStatus(body) {
 			// Lifecycle-only end (should be rare): keep status, do not wipe Result.
 			m.toolRows[i].Status = body
 			m.toolRows[i].Failed = lifecycleStatusFailed(body)
@@ -250,13 +250,13 @@ func (m *tuiModel) forceCommitRemainingToolsStatus(openStatus string) {
 }
 
 func (m *tuiModel) appendOneToolBlock(r toolRow) {
-	item := newToolRenderItem(r.Name, r.Detail, r.Result, r.Done, r.Failed)
+	item := NewToolRenderItem(r.Name, r.Detail, r.Result, r.Done, r.Failed)
 	line := formatToolLine(item, m.width, terminalToolRenderOptions())
 	if r.Agent != "" {
-		line = agentBadgeStyle.Render("◆ "+r.Agent) + " " + line
+		line = AgentBadgeStyle.Render("◆ "+r.Agent) + " " + line
 	}
 	if !r.Start.IsZero() {
-		line += " " + toolTimeStyle.Render("· "+formatDuration(r.elapsed(time.Now())))
+		line += " " + ToolTimeStyle.Render("· "+FormatDuration(r.elapsed(time.Now())))
 	}
 	rawContent := r.Detail
 	if r.Result != "" {

@@ -122,7 +122,7 @@ func buildWorkflowRunView(run workflowledger.RunSnapshot, compiled *definition.C
 			}
 		}
 		if d := end.Sub(run.StartedAt); d >= 0 {
-			elapsed = " · elapsed " + formatDuration(d)
+			elapsed = " · elapsed " + FormatDuration(d)
 		}
 		v.header = append(v.header, "started: "+started+elapsed)
 	}
@@ -226,13 +226,13 @@ func workflowRunHeartbeatHeaderLine(run workflowledger.RunSnapshot, attempts []w
 	}
 	hb := workflowActiveAttemptHeartbeat(run, attempts)
 	if hb.IsZero() {
-		return tuiDimStyle.Render("last heartbeat: none")
+		return TUIDimStyle.Render("last heartbeat: none")
 	}
 	ago := now.Sub(hb)
 	if ago < 0 {
 		ago = 0
 	}
-	line := "last heartbeat: " + formatDuration(ago) + " ago"
+	line := "last heartbeat: " + FormatDuration(ago) + " ago"
 	if workflowHeartbeatFresh(hb, now, workflowHeartbeatFreshWindow) {
 		return tuiInfoStyle.Render(line)
 	}
@@ -246,13 +246,13 @@ func workflowRunHeartbeatHeaderLine(run workflowledger.RunSnapshot, attempts []w
 // crashed delivery. A zero claim reads as waiting for a delivery.
 func workflowDeliveryClaimLine(claim workflowRunDeliveryClaim, now time.Time) string {
 	if !claim.ok {
-		return tuiDimStyle.Render("delivery: waiting")
+		return TUIDimStyle.Render("delivery: waiting")
 	}
 	ago := now.Sub(claim.at)
 	if ago < 0 {
 		ago = 0
 	}
-	line := "delivery: in flight · claim " + formatDuration(ago) + " ago"
+	line := "delivery: in flight · claim " + FormatDuration(ago) + " ago"
 	if workflowHeartbeatFresh(claim.at, now, workflowledger.DefaultClaimLease) {
 		return tuiInfoStyle.Render(line)
 	}
@@ -416,7 +416,7 @@ func renderWorkflowStepRow(s workflowStepRow) string {
 	if s.actor != "" {
 		detail += ": " + s.actor
 	}
-	return line + tuiDimStyle.Render(" · "+detail)
+	return line + TUIDimStyle.Render(" · "+detail)
 }
 
 func workflowStepStateStyle(state workflowStepState) lipgloss.Style {
@@ -428,7 +428,7 @@ func workflowStepStateStyle(state workflowStepState) lipgloss.Style {
 	case workflowStepWaiting:
 		return tuiInfoStyle
 	default:
-		return tuiDimStyle
+		return TUIDimStyle
 	}
 }
 

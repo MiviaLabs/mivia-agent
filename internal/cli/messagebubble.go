@@ -126,13 +126,13 @@ var (
 	// Dark gray bar (256-color 236) - distinct from terminal default without a left rail.
 	_userBgStyle = lipgloss.NewStyle().Background(lipgloss.Color(themeColorCardBg))
 	// Time meta is dim (not bold blue) so body stays primary.
-	_userLabelStyle = tuiDimStyle
+	_userLabelStyle = TUIDimStyle
 	_showTimeTrue   = true
 	_showTimeFalse  = false
 	// Thin assistant accent (│ not half-block ▌). Painted only on text lines.
 	_assistantRail = LeftRail{
-		Width: 1, Glyph: "│", Char: "│", Color: chromeNeutral,
-		Bold: false, Mode: RailModeFull, // Full = every non-blank line (see applyLeftRail)
+		Width: 1, Glyph: "│", Char: "│", Color: ChromeNeutral,
+		Bold: false, Mode: RailModeFull, // Full = every non-blank line (see ApplyLeftRail)
 	}
 
 	// UserBubble: full-width dark-gray background, time then body.
@@ -335,7 +335,7 @@ func (b *MessageBubble) renderTimeMetaLine(label string, width int) []string {
 	if plainPad < 0 {
 		plainPad = 0
 	}
-	dimLabel := tuiDimStyle.Render(label)
+	dimLabel := TUIDimStyle.Render(label)
 	if b.Style.HasLabelStyle() {
 		dimLabel = b.Style.LabelStyle.Render(label)
 	}
@@ -347,7 +347,7 @@ func (b *MessageBubble) renderTimeMetaLine(label string, width int) []string {
 }
 
 // leftPadString builds plain left padding spaces.
-// Full-height LeftRail is applied by renderOneChatBlock → applyLeftRail after Render.
+// Full-height LeftRail is applied by renderOneChatBlock → ApplyLeftRail after Render.
 func (b *MessageBubble) leftPadString() string {
 	return strings.Repeat(" ", b.Style.Padding.Left)
 }

@@ -17,7 +17,7 @@ func TestDialogCompositorExactCanvas(t *testing.T) {
 			t.Fatalf("base row %d width=%d, want 8: %q", i, got, row)
 		}
 	}
-	got := strings.Split(overlayAt("one\ntwo", "X\nY", rect{x: 2, y: 1, w: 2, h: 2}, 8, 4), "\n")
+	got := strings.Split(overlayAt("one\ntwo", "X\nY", Rect{X: 2, Y: 1, W: 2, H: 2}, 8, 4), "\n")
 	if len(got) != 4 {
 		t.Fatalf("composited rows=%d, want 4", len(got))
 	}
@@ -38,7 +38,7 @@ func TestDialogANSISeamsPreserveStyles(t *testing.T) {
 		t.Fatalf("slice did not carry/reset active SGR: %q", part)
 	}
 	panel := "P\x1b[39mQ"
-	view := overlayAt(line, panel, rect{x: 4, y: 0, w: 2, h: 1}, 12, 1)
+	view := overlayAt(line, panel, Rect{X: 4, Y: 0, W: 2, H: 1}, 12, 1)
 	if got := ansi.StringWidth(view); got != 12 {
 		t.Fatalf("seamed row width=%d, want 12: %q", got, view)
 	}
@@ -57,7 +57,7 @@ func TestDialogANSISeamsPreserveStyles(t *testing.T) {
 // carried style inside its own canvas row.
 func TestDialogCompositorUnterminatedSGRCrossesSeam(t *testing.T) {
 	base := "abcd\x1b[31mEFGH"
-	view := overlayAt(base, "XX", rect{x: 5, y: 0, w: 2, h: 1}, 8, 1)
+	view := overlayAt(base, "XX", Rect{X: 5, Y: 0, W: 2, H: 1}, 8, 1)
 	if got := stripANSI(view); got != "abcdEXXH" {
 		t.Fatalf("visible splice = %q, want %q", got, "abcdEXXH")
 	}
@@ -70,7 +70,7 @@ func TestDialogCompositorUnterminatedSGRCrossesSeam(t *testing.T) {
 }
 
 func TestDialogCompositorPreservesCJKCellsAtSeam(t *testing.T) {
-	view := overlayAt("甲乙丙丁", "中", rect{x: 2, y: 0, w: 2, h: 1}, 8, 1)
+	view := overlayAt("甲乙丙丁", "中", Rect{X: 2, Y: 0, W: 2, H: 1}, 8, 1)
 	if got := stripANSI(view); got != "甲中丙丁" {
 		t.Fatalf("visible CJK splice = %q, want %q", got, "甲中丙丁")
 	}
@@ -80,7 +80,7 @@ func TestDialogCompositorPreservesCJKCellsAtSeam(t *testing.T) {
 }
 
 func TestDialogCompositorReplacesFullWidthTranscriptRow(t *testing.T) {
-	view := overlayAt("abcdefgh", "甲乙丙丁", rect{x: 0, y: 0, w: 8, h: 1}, 8, 1)
+	view := overlayAt("abcdefgh", "甲乙丙丁", Rect{X: 0, Y: 0, W: 8, H: 1}, 8, 1)
 	if got := stripANSI(view); got != "甲乙丙丁" {
 		t.Fatalf("full-width replacement = %q, want %q", got, "甲乙丙丁")
 	}
@@ -91,7 +91,7 @@ func TestDialogCompositorReplacesFullWidthTranscriptRow(t *testing.T) {
 
 func TestDialogViewsStayWithinTerminalBoundsCompositor(t *testing.T) {
 	for _, size := range []struct{ w, h int }{{1, 1}, {10, 4}, {20, 6}, {39, 10}} {
-		view := overlayAt("base", "panel", rect{x: 0, y: 0, w: size.w, h: size.h}, size.w, size.h)
+		view := overlayAt("base", "panel", Rect{X: 0, Y: 0, W: size.w, H: size.h}, size.w, size.h)
 		rows := strings.Split(view, "\n")
 		if len(rows) != size.h {
 			t.Fatalf("%dx%d rows=%d", size.w, size.h, len(rows))

@@ -67,11 +67,11 @@ func newEffortDialog(model string, choices []reasoning.Level, current, fallback 
 // Enter, and the footer - so it is a predicate rather than a repeated len().
 func (d *effortDialog) offersNothing() bool { return len(d.choices) == 0 }
 
-func effortDialogPrefs() dialogPrefs {
+func effortDialogPrefs() DialogPrefs {
 	// Wider than the row content needs, because the EMPTY state is one long
 	// sentence naming the model and it is the only thing that dialog has to
 	// say. Truncating it would defeat the reason the dialog opens at all.
-	return dialogPrefs{preferredWPct: 70, preferredHPct: 50, minW: 28, minH: 6, frameCols: 4, frameRows: 3, pager: true}
+	return DialogPrefs{PreferredWPct: 70, PreferredHPct: 50, MinW: 28, MinH: 6, FrameCols: 4, FrameRows: 3, Pager: true}
 }
 
 func (d *effortDialog) move(delta int) {
@@ -93,8 +93,8 @@ func (d *effortDialog) clampScroll(page int) {
 	d.scroll = max(0, min(d.scroll, max(0, len(d.choices)-page)))
 }
 
-func (d *effortDialog) layout(w, h int) dialogLayout {
-	return makeDialogLayout(w, h, effortDialogPrefs(), func(innerW int) (int, int) {
+func (d *effortDialog) layout(w, h int) DialogLayout {
+	return MakeDialogLayout(w, h, effortDialogPrefs(), func(innerW int) (int, int) {
 		rows := d.rowLinesAt(innerW, max(1, len(d.choices)), 0)
 		maxW := 0
 		for _, row := range rows {
@@ -118,7 +118,7 @@ func (d *effortDialog) rowLinesAt(inner, visible, scroll int) []string {
 		// terminal truncates away.
 		return []string{
 			ansi.Truncate(d.model, max(1, inner), "…"),
-			ansi.Truncate(tuiDimStyle.Render("no reasoning effort configured"), max(1, inner), "…"),
+			ansi.Truncate(TUIDimStyle.Render("no reasoning effort configured"), max(1, inner), "…"),
 		}
 	}
 	scroll = max(0, min(scroll, max(0, len(d.choices)-visible)))
@@ -136,21 +136,21 @@ func (d *effortDialog) rowLinesAt(inner, visible, scroll int) []string {
 		}
 		text := marker + selected + effortRowName(choice)
 		if choice == d.fallback {
-			text += tuiDimStyle.Render(" (default)")
+			text += TUIDimStyle.Render(" (default)")
 		}
 		if !choice.Active() {
 			// Spelled out because the neighbouring row may be off, and the two
 			// are different requests: this one carries no reasoning field.
-			text += tuiDimStyle.Render(" · sends no reasoning field")
+			text += TUIDimStyle.Render(" · sends no reasoning field")
 		}
 		lines = append(lines, ansi.Truncate(text, max(1, inner), "…"))
 	}
 	return lines
 }
 
-func (d *effortDialog) ViewAt(w, h int) (string, dialogLayout) {
+func (d *effortDialog) ViewAt(w, h int) (string, DialogLayout) {
 	l := d.layout(w, h)
-	rows := d.rowLines(l.innerW, l.pageH)
+	rows := d.rowLines(l.InnerW, l.PageH)
 	return renderDialogFrame("◇ reasoning effort", rows, d.footer(), l), l
 }
 
@@ -159,12 +159,12 @@ func (d *effortDialog) footer() string {
 		return tuiErrorStyle.Render(d.notice)
 	}
 	if d.offersNothing() {
-		return tuiDimStyle.Render("declare reasoning_efforts in mivia.toml · esc close")
+		return TUIDimStyle.Render("declare reasoning_efforts in mivia.toml · esc close")
 	}
 	if d.busy {
-		return tuiDimStyle.Render(effortBusyNotice + " · esc close")
+		return TUIDimStyle.Render(effortBusyNotice + " · esc close")
 	}
-	return tuiDimStyle.Render("↑↓/j/k move · enter select · esc/q close")
+	return TUIDimStyle.Render("↑↓/j/k move · enter select · esc/q close")
 }
 
 func (d *effortDialog) selected() (reasoning.Level, bool) {
@@ -227,11 +227,11 @@ func (m *tuiModel) handleEffortDialogKey(key string) (bool, bool, []tea.Cmd) {
 		if !d.offersNothing() {
 			d.cursor = len(d.choices) - 1
 		}
-		d.clampScroll(layout.pageH)
+		d.clampScroll(layout.PageH)
 	case "pgup", "b":
-		d.move(-max(1, layout.pageH))
+		d.move(-max(1, layout.PageH))
 	case "pgdown", "f", " ":
-		d.move(max(1, layout.pageH))
+		d.move(max(1, layout.PageH))
 	case "enter":
 		// Enter on the empty state is inert on purpose: there is nothing to
 		// choose, and closing would hide the explanation the user opened this

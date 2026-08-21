@@ -6,14 +6,14 @@ import (
 )
 
 func TestRailPalette_ToolsAreNeutralNotYellow(t *testing.T) {
-	opts := railOpts{ASCII: false, Color: true}
+	opts := RailOpts{ASCII: false, Color: true}
 	for _, name := range []string{"read_file", "run_command", "delegate", "kill"} {
 		b := ChatBlock{Kind: ChatBlockTool, ToolName: name, Text: "ok content", Collapsed: true}
 		r := resolveBlockRail(b, groupMember{}, opts, railView{})
-		if r.Color != chromeNeutral {
-			t.Fatalf("%s rail color=%q want neutral %q (not yellow)", name, r.Color, chromeNeutral)
+		if r.Color != ChromeNeutral {
+			t.Fatalf("%s rail color=%q want neutral %q (not yellow)", name, r.Color, ChromeNeutral)
 		}
-		if r.Color == chromeTools || r.Color == chromeError {
+		if r.Color == chromeTools || r.Color == ChromeError {
 			t.Fatalf("%s must not use tools-yellow or error red when OK", name)
 		}
 		if r.Mode != RailModeHeader {
@@ -31,8 +31,8 @@ func TestRailPalette_FalseErrorNotRed(t *testing.T) {
 	if blockToolFailed(b) {
 		t.Fatal("body containing 'error' must not mark tool failed")
 	}
-	r := resolveBlockRail(b, groupMember{}, railOpts{Color: true}, railView{})
-	if r.Color == chromeError || r.Glyph == "!" {
+	r := resolveBlockRail(b, groupMember{}, RailOpts{Color: true}, railView{})
+	if r.Color == ChromeError || r.Glyph == "!" {
 		t.Fatalf("false positive failure rail: %+v", r)
 	}
 }
@@ -47,15 +47,15 @@ func TestRailPalette_StrictFailureIsRed(t *testing.T) {
 		if !blockToolFailed(b) {
 			t.Fatalf("expected failed: text=%q rendered=%q", b.Text, b.Rendered)
 		}
-		r := resolveBlockRail(b, groupMember{}, railOpts{Color: true}, railView{})
-		if r.Color != chromeError || r.Glyph != "!" {
+		r := resolveBlockRail(b, groupMember{}, RailOpts{Color: true}, railView{})
+		if r.Color != ChromeError || r.Glyph != "!" {
 			t.Fatalf("failed rail=%+v", r)
 		}
 	}
 }
 
 func TestRailPalette_GroupHeaderHeavierThanStep(t *testing.T) {
-	opts := railOpts{ASCII: false, Color: true}
+	opts := RailOpts{ASCII: false, Color: true}
 	hdr := railFromRole(RailRoleGroupHeader, RailStateNeutral, opts, railView{})
 	step := railFromRole(RailRoleStep, RailStateNeutral, opts, railView{})
 	if !hdr.Bold {
@@ -70,7 +70,7 @@ func TestRailPalette_GroupHeaderHeavierThanStep(t *testing.T) {
 }
 
 func TestRailPalette_LiveThinkingAnimatesCyan(t *testing.T) {
-	opts := railOpts{ASCII: false, Color: true}
+	opts := RailOpts{ASCII: false, Color: true}
 	b := ChatBlock{Kind: ChatBlockThinking, Text: "plan", Collapsed: false}
 	r0 := resolveBlockRail(b, groupMember{}, opts, railView{Frame: 0, Live: true})
 	r1 := resolveBlockRail(b, groupMember{}, opts, railView{Frame: 1, Live: true})
@@ -87,13 +87,13 @@ func TestRailPalette_LiveThinkingAnimatesCyan(t *testing.T) {
 	}
 	// History frozen
 	hist := resolveBlockRail(b, groupMember{}, opts, railView{Frame: 3, Live: false})
-	if hist.Animate || hist.Color != chromeNeutral {
+	if hist.Animate || hist.Color != ChromeNeutral {
 		t.Fatalf("history thinking should be neutral static: %+v", hist)
 	}
 }
 
 func TestRailPalette_SameColorReadFileAndRunCommand(t *testing.T) {
-	opts := railOpts{ASCII: true, Color: false}
+	opts := RailOpts{ASCII: true, Color: false}
 	a := resolveBlockRail(ChatBlock{Kind: ChatBlockTool, ToolName: "read_file", Text: "x"}, groupMember{}, opts, railView{})
 	b := resolveBlockRail(ChatBlock{Kind: ChatBlockTool, ToolName: "run_command", Text: "x"}, groupMember{}, opts, railView{})
 	if a.Glyph != b.Glyph || a.Color != b.Color {
@@ -118,9 +118,9 @@ func TestBuildGroupMembers_FirstStepIndex(t *testing.T) {
 }
 
 func TestApplyLeftRail_HeaderOnlyNotFullWall(t *testing.T) {
-	rail := LeftRail{Width: 1, Glyph: "|", Char: "|", Color: chromeNeutral, Plain: true, Mode: RailModeHeader}
+	rail := LeftRail{Width: 1, Glyph: "|", Char: "|", Color: ChromeNeutral, Plain: true, Mode: RailModeHeader}
 	lines := []string{"  head", "  body", "  tail"}
-	out := applyLeftRail(lines, rail)
+	out := ApplyLeftRail(lines, rail)
 	if !strings.HasPrefix(stripANSI(out[0]), "|") {
 		t.Fatalf("header missing rail: %q", out[0])
 	}
@@ -136,7 +136,7 @@ func TestApplyLeftRail_HeaderOnlyNotFullWall(t *testing.T) {
 func TestApplyLeftRail_SkipsBlankPadLines(t *testing.T) {
 	rail := LeftRail{Width: 1, Glyph: "|", Char: "|", Plain: true, Mode: RailModeFull}
 	lines := []string{"", "  text here", "   ", "  more"}
-	out := applyLeftRail(lines, rail)
+	out := ApplyLeftRail(lines, rail)
 	if strings.HasPrefix(stripANSI(out[0]), "|") {
 		t.Fatalf("blank pad must not get rail glyph: %q", out[0])
 	}
@@ -162,8 +162,8 @@ func TestBlockToolFailed_ProductionRunCommandShape(t *testing.T) {
 	if !blockToolFailed(b) {
 		t.Fatal("exit=1 in body must mark failed")
 	}
-	r := resolveBlockRail(b, groupMember{}, railOpts{Color: true}, railView{})
-	if r.Color != chromeError || r.Glyph != "!" {
+	r := resolveBlockRail(b, groupMember{}, RailOpts{Color: true}, railView{})
+	if r.Color != ChromeError || r.Glyph != "!" {
 		t.Fatalf("production fail rail=%+v", r)
 	}
 	// exit=10 must not match exit=1 token
@@ -179,10 +179,10 @@ func TestBlockToolFailed_ProductionRunCommandShape(t *testing.T) {
 
 func TestRailState_HistoryNeverPulsesWhileWaiting(t *testing.T) {
 	// Committed history always Live=false (renderBlocksForView).
-	opts := railOpts{Color: true}
+	opts := RailOpts{Color: true}
 	th := ChatBlock{Kind: ChatBlockThinking, Text: "old plan", Collapsed: false}
 	r := resolveBlockRail(th, groupMember{}, opts, railView{Frame: 3, Live: false})
-	if r.Animate || r.Color != chromeNeutral {
+	if r.Animate || r.Color != ChromeNeutral {
 		t.Fatalf("history thinking must stay neutral static: %+v", r)
 	}
 	// Live overlay only
@@ -192,7 +192,7 @@ func TestRailState_HistoryNeverPulsesWhileWaiting(t *testing.T) {
 	}
 	// Group header in history must not go parallel-cyan
 	hdr := railFromRole(RailRoleGroupHeader, resolveRailState(ChatBlock{}, RailRoleGroupHeader, railView{Live: false}), opts, railView{Live: false})
-	if hdr.Color != chromeNeutral || hdr.Animate {
+	if hdr.Color != ChromeNeutral || hdr.Animate {
 		t.Fatalf("history group header must be neutral: %+v", hdr)
 	}
 }
