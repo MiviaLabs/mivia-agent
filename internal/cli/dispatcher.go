@@ -6,8 +6,10 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/composition"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	"github.com/MiviaLabs/mivia-agent/internal/hooks"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
@@ -219,16 +221,18 @@ func newSessionDispatcherCore(opts SessionDispatcherOpts, repo ledger.LedgerRepo
 	if opts.Registry == nil || opts.Completer == nil {
 		return nil, fmt.Errorf("nil session dispatcher dependency")
 	}
-	preHook, postHook := hookPolicyFuncs(opts.WorkspaceRoot)
-	d, err := runtime.NewToolDispatcher(opts.Registry, runtime.Policy{
-		MaxDepth:  opts.Config.MaxDepth,
-		MaxBudget: opts.Config.DefaultBudget,
-		// On Policy, not on the Dispatcher: Policy is copied to derived
-		// dispatchers, so a scoped subagent inherits the gate. A PreToolUse
-		// gate a subagent escapes is not a gate.
-		PreInvokeHook:  preHook,
-		PostInvokeHook: postHook,
-		Sink:           opts.Sink,
+	// Hook wiring lives on Policy, not on the Dispatcher: Policy is copied to
+	// derived dispatchers, so a scoped subagent inherits the gate. A
+	// PreToolUse gate a subagent escapes is not a gate.
+	d, err := composition.BuildDispatcher(composition.DispatcherInput{
+		Registry:         opts.Registry,
+		MaxDepth:         opts.Config.MaxDepth,
+		MaxBudget:        opts.Config.DefaultBudget,
+		Sink:             opts.Sink,
+		WorkspaceRoot:    opts.WorkspaceRoot,
+		HooksConfigured:  hookSessionConfigured(),
+		HookGroups:       func() []hooks.Group { return currentHookSession().runnable() },
+		NoteHookWarnings: func(w []string) { currentHookSession().noteRunWarnings(w) },
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create tool dispatcher: %w", err)
