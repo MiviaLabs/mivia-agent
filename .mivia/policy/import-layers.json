@@ -11,6 +11,7 @@
   "allow": {
     "cmd/mivia": [
       "internal/cli",
+      "internal/legacytui",
       "internal/version"
     ],
     "cmd/mivia-ui": [
