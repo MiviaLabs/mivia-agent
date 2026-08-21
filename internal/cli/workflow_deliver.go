@@ -17,7 +17,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	workflowspace "github.com/MiviaLabs/mivia-agent/internal/workflows/workspace"
+	workflowspace "github.com/MiviaLabs/mivia-agent/internal/workflows/localengine"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 

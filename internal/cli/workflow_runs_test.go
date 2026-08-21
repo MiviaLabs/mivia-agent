@@ -15,7 +15,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	workflowspace "github.com/MiviaLabs/mivia-agent/internal/workflows/workspace"
+	workflowspace "github.com/MiviaLabs/mivia-agent/internal/workflows/localengine"
 )
 
 // TestExecuteWorkflowRunsListsRuns covers the gap that made an in-flight run

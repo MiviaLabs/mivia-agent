@@ -14,7 +14,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	workflowspace "github.com/MiviaLabs/mivia-agent/internal/workflows/workspace"
+	workflowspace "github.com/MiviaLabs/mivia-agent/internal/workflows/localengine"
 )
 
 // seedTwoParkedRunningRuns builds one store with two interrupted (running,

@@ -17,8 +17,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/processservices"
-	workflowspace "github.com/MiviaLabs/mivia-agent/internal/workflows/workspace"
 )
 
 // Engine runs workflows in-process against a shared ledger repository.
@@ -63,7 +61,7 @@ type Engine struct {
 	// MainRoot + admission pins), so delivery can pin GitCtx to the run's real
 	// git directory instead of the caller checkout. Recorded at start and
 	// resume; delivery falls back to resolving from the durable run record.
-	worktrees map[string]workflowspace.Identity
+	worktrees map[string]Identity
 	// delivering tracks in-process deliveries per run so two concurrent
 	// workflow_deliver tool calls on the same run cannot both publish to the
 	// shared git workspace (a live claim must never be force-cleared by a
@@ -96,7 +94,7 @@ func (e *Engine) panelLimiter() *controller.PanelActorLimiter {
 	if e.PanelLimiter != nil {
 		return e.PanelLimiter
 	}
-	return processservices.PanelLimiter()
+	return PanelLimiter()
 }
 
 // Start implements workflowledger.Engine.

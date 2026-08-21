@@ -1,4 +1,4 @@
-package workspace
+package localengine
 
 import (
 	"context"
@@ -81,7 +81,7 @@ func TestWorktreeAdmissionReportsRepositoryAndContextErrors(t *testing.T) {
 
 func TestWorkflowIdentitySurfacesGitStateErrors(t *testing.T) {
 	root := initRepo(t)
-	runGit(t, root, "branch", "wf/workflow-run-retained-error", "HEAD")
+	wsRunGit(t, root, "branch", "wf/workflow-run-retained-error", "HEAD")
 	retained := Identity{MainRoot: root, BaseCommit: "missing-base", WorktreeName: "workflow-run-retained-error", Branch: "wf/workflow-run-retained-error"}
 	if err := validateRetainedBranch(context.Background(), retained); err == nil {
 		t.Fatal("retained branch accepts a missing base")
@@ -183,10 +183,10 @@ func TestEnsureWorktreeRejectsMissingBaseCommit(t *testing.T) {
 
 func TestEnsureCreatesWorktreeFromExactCallerCommit(t *testing.T) {
 	root := initRepo(t)
-	runGit(t, root, "switch", "-c", "feature/caller")
+	wsRunGit(t, root, "switch", "-c", "feature/caller")
 	writeFile(t, root, "feature.txt", "feature")
-	runGit(t, root, "add", "feature.txt")
-	runGit(t, root, "commit", "-m", "feature")
+	wsRunGit(t, root, "add", "feature.txt")
+	wsRunGit(t, root, "commit", "-m", "feature")
 	wantCommit, err := vcs.CurrentCommit(context.Background(), root)
 	if err != nil {
 		t.Fatal(err)
@@ -213,10 +213,10 @@ func TestEnsureCreatesWorktreeFromExactCallerCommit(t *testing.T) {
 
 func TestEnsureRejectsIncompatibleRetainedBranchBeforeAttach(t *testing.T) {
 	root := initRepo(t)
-	runGit(t, root, "branch", "wf/workflow-run-old", "HEAD")
+	wsRunGit(t, root, "branch", "wf/workflow-run-old", "HEAD")
 	writeFile(t, root, "next.txt", "next")
-	runGit(t, root, "add", "next.txt")
-	runGit(t, root, "commit", "-m", "next")
+	wsRunGit(t, root, "add", "next.txt")
+	wsRunGit(t, root, "commit", "-m", "next")
 
 	if _, err := Ensure(context.Background(), root, "run-old", IsolationWorktree); err == nil {
 		t.Fatal("Ensure accepts a retained branch that does not contain BaseCommit")
@@ -232,7 +232,7 @@ func TestEnsureRejectsIncompatibleRetainedBranchBeforeAttach(t *testing.T) {
 
 func TestEnsureAttachesCompatibleRetainedBranch(t *testing.T) {
 	root := initRepo(t)
-	runGit(t, root, "branch", "wf/workflow-run-retained", "HEAD")
+	wsRunGit(t, root, "branch", "wf/workflow-run-retained", "HEAD")
 	got, err := Ensure(context.Background(), root, "run-retained", IsolationWorktree)
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
@@ -273,7 +273,7 @@ func TestResolveChecksExactBranchAndBaseAncestry(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		runGit(t, identity.Root, "switch", "-c", "other/branch")
+		wsRunGit(t, identity.Root, "switch", "-c", "other/branch")
 		if _, err := Resolve(context.Background(), root, identity); err == nil {
 			t.Fatal("Resolve accepts a different branch")
 		}
@@ -282,13 +282,13 @@ func TestResolveChecksExactBranchAndBaseAncestry(t *testing.T) {
 	t.Run("ancestry", func(t *testing.T) {
 		root := initRepo(t)
 		writeFile(t, root, "next.txt", "next")
-		runGit(t, root, "add", "next.txt")
-		runGit(t, root, "commit", "-m", "next")
+		wsRunGit(t, root, "add", "next.txt")
+		wsRunGit(t, root, "commit", "-m", "next")
 		identity, err := Ensure(context.Background(), root, "run-ancestry", IsolationWorktree)
 		if err != nil {
 			t.Fatal(err)
 		}
-		runGit(t, identity.Root, "reset", "--hard", "HEAD^")
+		wsRunGit(t, identity.Root, "reset", "--hard", "HEAD^")
 		if _, err := Resolve(context.Background(), root, identity); err == nil {
 			t.Fatal("Resolve accepts a commit before BaseCommit")
 		}
@@ -382,13 +382,13 @@ func TestAdmissionRecordsOriginBaseCommit(t *testing.T) {
 	// BaseCommit AND the origin tracking ref as OriginBaseCommit, so delivery
 	// can later verify against the remote base instead of the local branch.
 	bare := t.TempDir()
-	runGit(t, bare, "init", "--bare")
+	wsRunGit(t, bare, "init", "--bare")
 
 	root := initRepo(t) // master at commit A
-	runGit(t, root, "branch", "-m", "master")
-	runGit(t, root, "remote", "add", "origin", bare)
-	runGit(t, root, "push", "-u", "origin", "master")
-	runGit(t, root, "fetch", "origin") // guarantee refs/remotes/origin/master exists
+	wsRunGit(t, root, "branch", "-m", "master")
+	wsRunGit(t, root, "remote", "add", "origin", bare)
+	wsRunGit(t, root, "push", "-u", "origin", "master")
+	wsRunGit(t, root, "fetch", "origin") // guarantee refs/remotes/origin/master exists
 
 	originCommit, err := vcs.ResolveCommit(context.Background(), root, "refs/remotes/origin/master")
 	if err != nil {
@@ -396,8 +396,8 @@ func TestAdmissionRecordsOriginBaseCommit(t *testing.T) {
 	}
 
 	writeFile(t, root, "next.txt", "next")
-	runGit(t, root, "add", "next.txt")
-	runGit(t, root, "commit", "-m", "next")
+	wsRunGit(t, root, "add", "next.txt")
+	wsRunGit(t, root, "commit", "-m", "next")
 	localCommit, err := vcs.CurrentCommit(context.Background(), root)
 	if err != nil {
 		t.Fatal(err)
@@ -431,26 +431,26 @@ func TestAdmissionOriginBaseCommitEmptyWithoutRemoteRef(t *testing.T) {
 
 func TestAdmissionDetachedHEADRecordsEmptyOriginBaseCommit(t *testing.T) {
 	bare := t.TempDir()
-	runGit(t, bare, "init", "--bare")
+	wsRunGit(t, bare, "init", "--bare")
 
 	root := initRepo(t)
-	runGit(t, root, "branch", "-m", "master", "main")
-	runGit(t, root, "remote", "add", "origin", bare)
-	runGit(t, root, "push", "-u", "origin", "main")
+	wsRunGit(t, root, "branch", "-m", "master", "main")
+	wsRunGit(t, root, "remote", "add", "origin", bare)
+	wsRunGit(t, root, "push", "-u", "origin", "main")
 
 	// Create a develop branch on the remote and make origin/HEAD point to it.
 	// This mirrors a clone where the remote default branch is develop,
 	// while the workflow base branch is main.
-	runGit(t, root, "checkout", "-b", "develop")
+	wsRunGit(t, root, "checkout", "-b", "develop")
 	writeFile(t, root, "develop.txt", "develop")
-	runGit(t, root, "add", "develop.txt")
-	runGit(t, root, "commit", "-m", "develop")
-	runGit(t, root, "push", "-u", "origin", "develop")
-	runGit(t, root, "fetch", "origin")
-	runGit(t, root, "remote", "set-head", "origin", "develop")
+	wsRunGit(t, root, "add", "develop.txt")
+	wsRunGit(t, root, "commit", "-m", "develop")
+	wsRunGit(t, root, "push", "-u", "origin", "develop")
+	wsRunGit(t, root, "fetch", "origin")
+	wsRunGit(t, root, "remote", "set-head", "origin", "develop")
 
 	// Detach at the main tip.
-	runGit(t, root, "checkout", "--detach", "main")
+	wsRunGit(t, root, "checkout", "--detach", "main")
 	detachedCommit, err := vcs.CurrentCommit(context.Background(), root)
 	if err != nil {
 		t.Fatal(err)
@@ -518,16 +518,16 @@ func TestValidateRetainedBranchHonorsCanceledContext(t *testing.T) {
 func initRepo(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
-	runGit(t, root, "init")
-	runGit(t, root, "config", "user.email", "test@example.com")
-	runGit(t, root, "config", "user.name", "Test")
+	wsRunGit(t, root, "init")
+	wsRunGit(t, root, "config", "user.email", "test@example.com")
+	wsRunGit(t, root, "config", "user.name", "Test")
 	writeFile(t, root, "README.md", "test")
-	runGit(t, root, "add", "README.md")
-	runGit(t, root, "commit", "-m", "init")
+	wsRunGit(t, root, "add", "README.md")
+	wsRunGit(t, root, "commit", "-m", "init")
 	return root
 }
 
-func runGit(t *testing.T, dir string, args ...string) {
+func wsRunGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir

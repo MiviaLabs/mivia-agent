@@ -406,7 +406,7 @@ func newRealDeliveryRepo(t *testing.T) (repoRoot, originURL string) {
 // newSeededDeliveryFixture builds the delivery-package-style real-git fixture
 // for one delivery_pending run: main repo + origin, a run worktree at
 // <main>/.mivia/worktrees/wt-test on branch wf/wt-test (the CLI layout that
-// workflowspace.Resolve accepts), an uncommitted change, and a ledger run in
+// Resolve accepts), an uncommitted change, and a ledger run in
 // delivery_pending state.
 func newSeededDeliveryFixture(t *testing.T) (repoRoot, originURL string, run workflowledger.RunSnapshot, repo workflowledger.Repository) {
 	t.Helper()

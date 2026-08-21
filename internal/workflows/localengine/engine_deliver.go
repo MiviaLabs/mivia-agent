@@ -13,7 +13,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	workflowspace "github.com/MiviaLabs/mivia-agent/internal/workflows/workspace"
 )
 
 // Deliver implements workflowledger.Engine.
@@ -341,7 +340,7 @@ func routeDeliveryRepair(ctx context.Context, repo workflowledger.Repository, ru
 }
 
 // deliveryGitCtx resolves the run's delivery workspace and verifies its real
-// git directory, mirroring the CLI's workflow deliver path (workflowspace.
+// git directory, mirroring the CLI's workflow deliver path (
 // Resolve + delivery.VerifyGitDir). The engine records the worktree identity
 // at start/resume; runs admitted by another engine (or before the identity was
 // recorded) are resolved from the durable run record. A run without a recorded
@@ -353,7 +352,7 @@ func (e *Engine) deliveryGitCtx(ctx context.Context, run workflowledger.RunSnaps
 	identity, ok := e.worktreeIdentity(run.RunID)
 	if !ok || identity.Root == "" || identity.MainRoot == "" {
 		var err error
-		identity, err = workflowspace.Resolve(ctx, e.WorkspaceRoot, workflowspace.Identity{
+		identity, err = Resolve(ctx, e.WorkspaceRoot, Identity{
 			BaseRef: run.BaseRef, BaseCommit: run.BaseCommit,
 			WorktreeName: run.WorktreeName, Branch: "wf/" + run.WorktreeName,
 		})

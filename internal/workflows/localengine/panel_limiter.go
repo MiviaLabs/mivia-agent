@@ -1,5 +1,4 @@
-// Package processservices owns workflow resources shared in one process.
-package processservices
+package localengine
 
 import (
 	"sync"

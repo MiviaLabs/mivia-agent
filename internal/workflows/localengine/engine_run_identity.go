@@ -14,7 +14,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
-	workflowspace "github.com/MiviaLabs/mivia-agent/internal/workflows/workspace"
 )
 
 // workflowBranchPrefix is the branch prefix for a run's git worktree branch.
@@ -102,6 +101,6 @@ func (e *Engine) admissionFetchTimeout() time.Duration {
 // must still run when the admission context was already canceled. pinNewRunIdentity
 // is only ever reached from the fresh-start path, so removing here can never
 // touch a resumed run's worktree.
-func (e *Engine) removeFreshWorktree(identity workflowspace.Identity) {
+func (e *Engine) removeFreshWorktree(identity Identity) {
 	_ = vcs.RemoveWithPrefix(context.Background(), identity.MainRoot, identity.WorktreeName, workflowBranchPrefix)
 }

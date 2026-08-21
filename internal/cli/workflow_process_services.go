@@ -2,7 +2,7 @@ package cli
 
 import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/processservices"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/localengine"
 )
 
 // workflowProcessServices owns process-local workflow resources.
@@ -11,5 +11,5 @@ type workflowProcessServices struct {
 }
 
 func processWorkflowServices() workflowProcessServices {
-	return workflowProcessServices{panelLimiter: processservices.PanelLimiter()}
+	return workflowProcessServices{panelLimiter: localengine.PanelLimiter()}
 }

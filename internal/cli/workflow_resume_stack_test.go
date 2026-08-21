@@ -33,7 +33,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	workflowspace "github.com/MiviaLabs/mivia-agent/internal/workflows/workspace"
+	workflowspace "github.com/MiviaLabs/mivia-agent/internal/workflows/localengine"
 )
 
 // newExecuteResumeStackFixture builds a real stacking-enabled delivery

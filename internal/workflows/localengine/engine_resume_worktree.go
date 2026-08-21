@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	workflowspace "github.com/MiviaLabs/mivia-agent/internal/workflows/workspace"
 )
 
 // prepareResumeWorktree preserves unfinished edits by requiring a recorded
@@ -15,11 +14,11 @@ func (e *Engine) prepareResumeWorktree(ctx context.Context, run workflowledger.R
 	if run.WorktreeName == "" {
 		return nil
 	}
-	recorded := workflowspace.Identity{
+	recorded := Identity{
 		BaseRef: run.BaseRef, BaseCommit: run.BaseCommit,
 		WorktreeName: run.WorktreeName, Branch: "wf/" + run.WorktreeName,
 	}
-	identity, err := workflowspace.Resolve(ctx, e.WorkspaceRoot, recorded)
+	identity, err := Resolve(ctx, e.WorkspaceRoot, recorded)
 	if err == nil {
 		e.recordWorktree(run.RunID, identity)
 		return nil

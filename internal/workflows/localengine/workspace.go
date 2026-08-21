@@ -1,5 +1,4 @@
-// Package workspace manages the Git workspace for a workflow run.
-package workspace
+package localengine
 
 import (
 	"context"
@@ -10,8 +9,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 	baseworkspace "github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
-
-const workflowBranchPrefix = "wf/"
 
 var ensureMu sync.Mutex
 

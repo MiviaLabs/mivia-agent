@@ -8,7 +8,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	workflowspace "github.com/MiviaLabs/mivia-agent/internal/workflows/workspace"
+	workflowspace "github.com/MiviaLabs/mivia-agent/internal/workflows/localengine"
 )
 
 const workflowBranchPrefix = "wf/"
