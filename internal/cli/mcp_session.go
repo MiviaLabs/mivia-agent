@@ -1,14 +1,13 @@
 package cli
 
 import (
-	"context"
-	"fmt"
-	"log"
 	"sync"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/composition"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/mcp"
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -20,99 +19,33 @@ func sessionMCPConfig(res *config.Resolved) config.MCPConfig {
 }
 
 func setupSessionMCPTools(registry *tools.Registry, cfg *config.Resolved, selected *agents.ResolvedAgent) (*mcp.Manager, func(), error) {
-	manager, err := newMCPManager(cfg)
-	if err != nil {
-		return nil, nil, err
-	}
+	var serverIDs []string
 	if selected != nil {
-		err = registerMCPTools(registry, manager, selected.EffectiveMCPServers)
+		serverIDs = selected.EffectiveMCPServers
 	}
-	if err != nil {
-		if manager != nil {
-			_ = manager.Close()
-		}
-		return nil, nil, err
-	}
-	return manager, func() {
-		if manager != nil {
-			_ = manager.Close()
-		}
-	}, nil
-}
-
-func addRootMCPTools(registry *tools.Registry, cfg *config.Resolved, selected *agents.ResolvedAgent) (func(), error) {
-	manager, err := newMCPManager(cfg)
-	if err != nil || manager == nil {
-		return func() {}, err
-	}
-	if selected != nil {
-		err = registerMCPTools(registry, manager, selected.EffectiveMCPServers)
-	}
-	if err != nil {
-		_ = manager.Close()
-		return nil, err
-	}
-	return func() { _ = manager.Close() }, nil
-}
-
-func newMCPManager(cfg *config.Resolved) (*mcp.Manager, error) {
-	if cfg == nil || !cfg.MCP.Enabled {
-		return nil, nil
-	}
-	return mcp.NewManager(cfg.MCP, mcp.ManagerOptions{RedactionPolicy: cfg.RedactionPolicy})
+	return composition.AttachMCPServers(registry, sessionMCPConfig(cfg), redactionPolicyOf(cfg), serverIDs)
 }
 
 func addMCPTools(registry *tools.Registry, cfg *config.Resolved, serverIDs []string) (func(), error) {
-	manager, err := newMCPManager(cfg)
+	_, cleanup, err := composition.AttachMCPServers(registry, sessionMCPConfig(cfg), redactionPolicyOf(cfg), serverIDs)
 	if err != nil {
 		return nil, err
 	}
-	if manager == nil {
-		return func() {}, nil
-	}
-	if err := registerMCPTools(registry, manager, serverIDs); err != nil {
-		_ = manager.Close()
-		return nil, err
-	}
-	return func() { _ = manager.Close() }, nil
+	return cleanup, nil
 }
 
-func registerMCPTools(registry *tools.Registry, manager *mcp.Manager, serverIDs []string) error {
-	if registry == nil || manager == nil || len(serverIDs) == 0 {
+func redactionPolicyOf(cfg *config.Resolved) *redact.Policy {
+	if cfg == nil {
 		return nil
 	}
-	wrappers, err := manager.EnsureServers(context.Background(), serverIDs)
-	if err != nil {
-		return err
-	}
-	// A contained server outage never fails the session; surface it so the
-	// operator knows which tools are absent. The log line carries only the
-	// server ID - external error text can include request content (DC-14).
-	for id := range manager.Failures() {
-		log.Printf("mcp: server %q is unavailable; its tools are not registered", id)
-	}
-	for _, wrapper := range wrappers {
-		if _, exists := registry.Get(wrapper.Name()); exists {
-			if manager.OwnsTool(wrapper.Name()) {
-				continue
-			}
-			return fmt.Errorf("MCP tool %q collides with registry", wrapper.Name())
-		}
-	}
-	for _, wrapper := range wrappers {
-		if _, exists := registry.Get(wrapper.Name()); exists {
-			continue
-		}
-		registry.Register(wrapper)
-	}
-	return nil
+	return cfg.RedactionPolicy
 }
 
 func ensureSelectedMCPTools(state *agentSessionState, selected agents.ResolvedAgent) error {
 	if state == nil {
 		return nil
 	}
-	return registerMCPTools(state.ToolBase, state.MCPManager, selected.EffectiveMCPServers)
+	return composition.MergeMCPTools(state.ToolBase, state.MCPManager, selected.EffectiveMCPServers)
 }
 
 func ensureMCPServerTools(registry *tools.Registry, manager *mcp.Manager) func([]string) error {
@@ -120,6 +53,6 @@ func ensureMCPServerTools(registry *tools.Registry, manager *mcp.Manager) func([
 	return func(ids []string) error {
 		mu.Lock()
 		defer mu.Unlock()
-		return registerMCPTools(registry, manager, ids)
+		return composition.MergeMCPTools(registry, manager, ids)
 	}
 }

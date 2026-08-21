@@ -116,8 +116,11 @@
       "internal/workspace"
     ],
     "internal/composition": [
+      "internal/config",
       "internal/hooks",
+      "internal/mcp",
       "internal/memory",
+      "internal/redact",
       "internal/runtime",
       "internal/tools",
       "internal/workspace"
