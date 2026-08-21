@@ -130,7 +130,7 @@ func TestEnsureSelectedMCPToolsRegistersServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer cleanup()
-	state := &agentSessionState{ToolBase: registry, MCPManager: manager}
+	state := &AgentSessionState{ToolBase: registry, MCPManager: manager}
 	selected := agents.ResolvedAgent{EffectiveMCPServers: []string{"repo"}}
 	if err := ensureSelectedMCPTools(state, selected); err != nil {
 		t.Fatalf("ensureSelectedMCPTools() error = %v", err)

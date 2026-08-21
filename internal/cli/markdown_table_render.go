@@ -151,7 +151,7 @@ func wrapCellANSI(s string, width int) []string {
 	}
 
 	for _, word := range splitWordsANSI(s) {
-		ww := visibleWidth(word.text)
+		ww := VisibleWidth(word.text)
 		if curW > 0 && curW+1+ww > width {
 			flush()
 		} else if curW > 0 {
@@ -166,7 +166,7 @@ func wrapCellANSI(s string, width int) []string {
 			active = trackStyles(active, head)
 			flush()
 			word.text = strings.TrimPrefix(word.text, head)
-			ww = visibleWidth(word.text)
+			ww = VisibleWidth(word.text)
 		}
 		cur.WriteString(word.text)
 		active = trackStyles(active, word.text)
@@ -314,7 +314,7 @@ func formatAlignedTableRow(cells []string, widths []int, aligns []tableAlign, he
 		if i < len(cells) {
 			cell = cells[i]
 		}
-		if visibleWidth(cell) > widths[i] {
+		if VisibleWidth(cell) > widths[i] {
 			cell = truncateANSI(cell, widths[i])
 		}
 		if header && cell != "" {
@@ -332,7 +332,7 @@ func formatAlignedTableRow(cells []string, widths []int, aligns []tableAlign, he
 
 // padVisible pads a possibly-styled string to a visible width.
 func padVisible(s string, width int, align tableAlign) string {
-	pad := width - visibleWidth(s)
+	pad := width - VisibleWidth(s)
 	if pad <= 0 {
 		return s
 	}

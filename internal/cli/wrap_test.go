@@ -11,9 +11,9 @@ import (
 
 func TestWrapANSIPlainText(t *testing.T) {
 	input := "hello world foo bar"
-	got := wrapANSIv2(input, 10)
+	got := WrapANSIv2(input, 10)
 	for _, line := range strings.Split(got, "\n") {
-		vis := visibleWidth(line)
+		vis := VisibleWidth(line)
 		if vis > 10 {
 			t.Fatalf("line %q has visible width %d > 10", line, vis)
 		}
@@ -25,7 +25,7 @@ func TestWrapANSIPlainText(t *testing.T) {
 
 func TestWrapANSIShortLine(t *testing.T) {
 	input := "short"
-	got := wrapANSIv2(input, 80)
+	got := WrapANSIv2(input, 80)
 	if got != "short" {
 		t.Fatalf("expected 'short', got %q", got)
 	}
@@ -34,9 +34,9 @@ func TestWrapANSIShortLine(t *testing.T) {
 func TestWrapANSIWithANSICodes(t *testing.T) {
 	// Bold "hello world" with ANSI wrapping
 	input := "\033[1mhello world foo bar\033[0m"
-	got := wrapANSIv2(input, 10)
+	got := WrapANSIv2(input, 10)
 	for _, line := range strings.Split(got, "\n") {
-		vis := visibleWidth(line)
+		vis := VisibleWidth(line)
 		if vis > 10 {
 			t.Fatalf("line %q has visible width %d > 10", line, vis)
 		}
@@ -51,9 +51,9 @@ func TestWrapANSIWithMultibyteChars(t *testing.T) {
 	// CJK wide runes (width 2) with spaces: wrap at word boundaries within maxWidth.
 	// (Rendered table rows with │ are hard-truncated elsewhere; this covers normal wrap.)
 	input := "你好 世界 测试 宽度 对齐"
-	got := wrapANSIv2(input, 8)
+	got := WrapANSIv2(input, 8)
 	for _, line := range strings.Split(got, "\n") {
-		vis := visibleWidth(line)
+		vis := VisibleWidth(line)
 		if vis > 8 {
 			t.Fatalf("line %q has visible width %d > 8", line, vis)
 		}
@@ -65,9 +65,9 @@ func TestWrapANSIWithMultibyteChars(t *testing.T) {
 
 func TestWrapANSIWithTableSeparators(t *testing.T) {
 	input := "│ Key │ Behavior │ Notes │"
-	got := wrapANSIv2(input, 10)
+	got := WrapANSIv2(input, 10)
 	for _, line := range strings.Split(got, "\n") {
-		vis := visibleWidth(line)
+		vis := VisibleWidth(line)
 		if vis > 10 {
 			t.Fatalf("line %q has visible width %d > 10", line, vis)
 		}
@@ -77,9 +77,9 @@ func TestWrapANSIWithTableSeparators(t *testing.T) {
 func TestWrapANSIColorReset(t *testing.T) {
 	// Each cell has a color, reset at end
 	input := "\033[32m✓\033[0m read_file 123ms \033[31m✗\033[0m failed 456ms"
-	got := wrapANSIv2(input, 20)
+	got := WrapANSIv2(input, 20)
 	for _, line := range strings.Split(got, "\n") {
-		vis := visibleWidth(line)
+		vis := VisibleWidth(line)
 		if vis > 20 {
 			t.Fatalf("line %q has visible width %d > 20", line, vis)
 		}
@@ -92,7 +92,7 @@ func TestWrapANSIColorReset(t *testing.T) {
 func TestWrapANSINoSpaceLongWord(t *testing.T) {
 	// A single word longer than maxWidth should still be output (hard-wrap)
 	input := "superlongwordthatdoesnotfit"
-	got := wrapANSIv2(input, 10)
+	got := WrapANSIv2(input, 10)
 	if !strings.Contains(got, "superlongwordthatdoesnotfit") {
 		t.Fatalf("expected long word preserved, got %q", got)
 	}
@@ -101,7 +101,7 @@ func TestWrapANSINoSpaceLongWord(t *testing.T) {
 func TestWrapANSIDoubleWidthCharacters(t *testing.T) {
 	// CJK characters are double-width - no space to break, so output as-is
 	input := "你好世界test"
-	got := wrapANSIv2(input, 8)
+	got := WrapANSIv2(input, 8)
 	// No space = no break point, so it should be unchanged
 	if got != input {
 		t.Fatalf("expected no wrapping without spaces, got %q", got)
@@ -110,12 +110,12 @@ func TestWrapANSIDoubleWidthCharacters(t *testing.T) {
 
 func TestWrapANSICJKWithSpaces(t *testing.T) {
 	input := "你好 世界 test"
-	got := wrapANSIv2(input, 8)
+	got := WrapANSIv2(input, 8)
 	if got == input {
 		t.Fatalf("expected wrapping with spaces, got %q", got)
 	}
 	for _, line := range strings.Split(got, "\n") {
-		vis := visibleWidth(line)
+		vis := VisibleWidth(line)
 		if vis > 8 {
 			t.Fatalf("line %q has visible width %d > 8", line, vis)
 		}
@@ -124,9 +124,9 @@ func TestWrapANSICJKWithSpaces(t *testing.T) {
 
 func TestWrapANSICodeBlockWithAnsi(t *testing.T) {
 	input := "\033[33m  func main() {\n    fmt.Println(\"hello\")\n  }\033[0m"
-	got := wrapANSIv2(input, 30)
+	got := WrapANSIv2(input, 30)
 	for _, line := range strings.Split(got, "\n") {
-		vis := visibleWidth(line)
+		vis := VisibleWidth(line)
 		if vis > 30 {
 			t.Fatalf("line %q has visible width %d > 30", line, vis)
 		}
@@ -138,7 +138,7 @@ func TestWrapANSICodeBlockWithAnsi(t *testing.T) {
 
 func TestWrapANSIRendersAllContent(t *testing.T) {
 	input := "one two three four five six seven eight nine ten"
-	got := wrapANSIv2(input, 10)
+	got := WrapANSIv2(input, 10)
 	plain := stripAnsiOut(got)
 	plain = strings.ReplaceAll(plain, "\n", " ")
 	plain = strings.Join(strings.Fields(plain), " ")
@@ -148,7 +148,7 @@ func TestWrapANSIRendersAllContent(t *testing.T) {
 }
 
 func TestWrapANSIEmpty(t *testing.T) {
-	got := wrapANSIv2("", 80)
+	got := WrapANSIv2("", 80)
 	if got != "" {
 		t.Fatalf("expected empty, got %q", got)
 	}
@@ -156,7 +156,7 @@ func TestWrapANSIEmpty(t *testing.T) {
 
 func TestWrapANSINoWrapNeeded(t *testing.T) {
 	input := "short line"
-	got := wrapANSIv2(input, 80)
+	got := WrapANSIv2(input, 80)
 	if got != "short line" {
 		t.Fatalf("expected 'short line', got %q", got)
 	}
@@ -164,7 +164,7 @@ func TestWrapANSINoWrapNeeded(t *testing.T) {
 
 func TestWrapANSIMultipleNewlines(t *testing.T) {
 	input := "line one\nline two\nline three"
-	got := wrapANSIv2(input, 80)
+	got := WrapANSIv2(input, 80)
 	lines := strings.Split(got, "\n")
 	if len(lines) != 3 {
 		t.Fatalf("expected 3 lines, got %d: %q", len(lines), got)
@@ -173,9 +173,9 @@ func TestWrapANSIMultipleNewlines(t *testing.T) {
 
 func TestWrapANSIMixedContent(t *testing.T) {
 	input := "\033[1mBold text\033[0m and \033[32mgreen\033[0m and more text here for wrapping"
-	got := wrapANSIv2(input, 20)
+	got := WrapANSIv2(input, 20)
 	for _, line := range strings.Split(got, "\n") {
-		vis := visibleWidth(line)
+		vis := VisibleWidth(line)
 		if vis > 20 {
 			t.Fatalf("line %q has visible width %d > 20", line, vis)
 		}
@@ -185,31 +185,31 @@ func TestWrapANSIMixedContent(t *testing.T) {
 // --- visibleWidth tests ---
 
 func TestVisibleWidthPlain(t *testing.T) {
-	if w := visibleWidth("hello"); w != 5 {
+	if w := VisibleWidth("hello"); w != 5 {
 		t.Fatalf("expected 5, got %d", w)
 	}
 }
 
 func TestVisibleWidthANSI(t *testing.T) {
-	if w := visibleWidth("\033[1mhello\033[0m"); w != 5 {
+	if w := VisibleWidth("\033[1mhello\033[0m"); w != 5 {
 		t.Fatalf("expected 5, got %d", w)
 	}
 }
 
 func TestVisibleWidthCJK(t *testing.T) {
-	if w := visibleWidth("你好"); w != 4 {
+	if w := VisibleWidth("你好"); w != 4 {
 		t.Fatalf("expected 4, got %d", w)
 	}
 }
 
 func TestVisibleWidthTableChars(t *testing.T) {
-	if w := visibleWidth("│ a │"); w != 5 {
+	if w := VisibleWidth("│ a │"); w != 5 {
 		t.Fatalf("expected 5, got %d", w)
 	}
 }
 
 func TestVisibleWidthEmpty(t *testing.T) {
-	if w := visibleWidth(""); w != 0 {
+	if w := VisibleWidth(""); w != 0 {
 		t.Fatalf("expected 0, got %d", w)
 	}
 }
@@ -255,7 +255,7 @@ func TestWrapANSIv2LongLineWithinBudget(t *testing.T) {
 	input := run + " " + words
 
 	start := time.Now()
-	got := wrapANSIv2(input, maxWidth)
+	got := WrapANSIv2(input, maxWidth)
 	if elapsed := time.Since(start); elapsed > 3*time.Second {
 		t.Fatalf("wrapANSIv2 took %v on a 200 KiB line; wrapping must be O(n)", elapsed)
 	}
@@ -267,8 +267,8 @@ func TestWrapANSIv2LongLineWithinBudget(t *testing.T) {
 	}
 	// Every wrapped (breakable) line stays within maxWidth.
 	for i := 1; i < len(lines); i++ {
-		if visibleWidth(lines[i]) > maxWidth {
-			t.Fatalf("wrapped line %d has visible width %d > %d", i, visibleWidth(lines[i]), maxWidth)
+		if VisibleWidth(lines[i]) > maxWidth {
+			t.Fatalf("wrapped line %d has visible width %d > %d", i, VisibleWidth(lines[i]), maxWidth)
 		}
 	}
 	// All input tokens survive in order.
@@ -317,13 +317,13 @@ func TestWrapANSIv2ExactOutputMixed(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := wrapANSIv2(c.input, c.maxWidth)
+			got := WrapANSIv2(c.input, c.maxWidth)
 			if got != c.want {
 				t.Fatalf("wrapANSIv2(%q, %d) = %q, want %q", c.input, c.maxWidth, got, c.want)
 			}
 			for _, line := range strings.Split(got, "\n") {
-				if visibleWidth(line) > c.maxWidth {
-					t.Fatalf("line %q has visible width %d > %d", line, visibleWidth(line), c.maxWidth)
+				if VisibleWidth(line) > c.maxWidth {
+					t.Fatalf("line %q has visible width %d > %d", line, VisibleWidth(line), c.maxWidth)
 				}
 			}
 		})
@@ -350,7 +350,7 @@ func TestWrapANSIv2WideRuneAtWrapBoundary(t *testing.T) {
 		{"\033[32m你 好\033[0m world", 6, "\033[32m你 好\033[0m\nworld"},
 	}
 	for _, c := range cases {
-		got := wrapANSIv2(c.input, c.maxWidth)
+		got := WrapANSIv2(c.input, c.maxWidth)
 		if got != c.want {
 			t.Fatalf("input %q: wrapANSIv2(_, %d) = %q, want %q", c.input, c.maxWidth, got, c.want)
 		}
@@ -359,8 +359,8 @@ func TestWrapANSIv2WideRuneAtWrapBoundary(t *testing.T) {
 			if !utf8.ValidString(line) {
 				t.Fatalf("input %q: line %q is not valid UTF-8 (a wide rune was split)", c.input, line)
 			}
-			if visibleWidth(line) > c.maxWidth {
-				t.Fatalf("input %q: line %q has visible width %d > %d", c.input, line, visibleWidth(line), c.maxWidth)
+			if VisibleWidth(line) > c.maxWidth {
+				t.Fatalf("input %q: line %q has visible width %d > %d", c.input, line, VisibleWidth(line), c.maxWidth)
 			}
 		}
 		var gotTokens []string

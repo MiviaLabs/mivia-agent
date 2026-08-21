@@ -2,10 +2,13 @@ package cli
 
 import tea "github.com/charmbracelet/bubbletea"
 
-// historyState is the open/selection state of the composer message-history picker.
-type historyState struct {
-	open     bool
-	selected int
+// HistoryState is the open/selection state of the composer message-history picker.
+type HistoryState struct {
+	// Open reports whether the history picker is currently shown.
+	Open bool
+	// Selected is the index of the highlighted entry. Shared with
+	// internal/clichat's history overlay renderer.
+	Selected int
 }
 
 func (m *tuiModel) appendSentHistory(s string) {
@@ -31,12 +34,12 @@ func (m *tuiModel) historyEntries() []string {
 }
 
 func (m *tuiModel) openHistory() {
-	m.history.open = true
-	m.history.selected = 0
+	m.history.Open = true
+	m.history.Selected = 0
 }
 
 func (m *tuiModel) closeHistory() {
-	m.history = historyState{}
+	m.history = HistoryState{}
 }
 
 // handleComposerPopupKey routes composer keys through the slash-suggestion
@@ -50,25 +53,25 @@ func (m *tuiModel) handleComposerPopupKey(key string) (bool, bool, []tea.Cmd) {
 }
 
 func (m *tuiModel) handleHistoryKey(key string) (bool, bool, []tea.Cmd) {
-	if m.history.open {
+	if m.history.Open {
 		switch key {
 		case "up", "ctrl+p":
 			entries := m.historyEntries()
-			if len(entries) > 0 && m.history.selected < len(entries)-1 {
-				m.history.selected++
+			if len(entries) > 0 && m.history.Selected < len(entries)-1 {
+				m.history.Selected++
 			}
 			return true, true, nil
 		case "down", "ctrl+n":
-			if m.history.selected == 0 {
+			if m.history.Selected == 0 {
 				m.closeHistory()
 			} else {
-				m.history.selected--
+				m.history.Selected--
 			}
 			return true, true, nil
 		case "enter", "tab":
 			entries := m.historyEntries()
-			if m.history.selected < len(entries) {
-				m.textarea.SetValue(entries[m.history.selected])
+			if m.history.Selected < len(entries) {
+				m.textarea.SetValue(entries[m.history.Selected])
 				m.textarea.CursorEnd()
 			}
 			m.closeHistory()

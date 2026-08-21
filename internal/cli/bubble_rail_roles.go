@@ -63,14 +63,14 @@ const (
 	RailStateParallelLive
 )
 
-// railView is per-frame view context (piggybacks logoFrame).
-type railView struct {
+// RailView is per-frame view context (piggybacks logoFrame).
+type RailView struct {
 	Frame int
 	Live  bool
 }
 
-// groupMember describes a block's place inside a multi-tool work group.
-type groupMember struct {
+// GroupMember describes a block's place inside a multi-tool work group.
+type GroupMember struct {
 	InGroup   bool
 	ToolIndex int // 0-based among tools; -1 if not a tool
 	ToolCount int
@@ -78,12 +78,12 @@ type groupMember struct {
 	IsHeader  bool
 }
 
-func buildGroupMembers(blocks []ChatBlock) []groupMember {
-	out := make([]groupMember, len(blocks))
+func buildGroupMembers(blocks []ChatBlock) []GroupMember {
+	out := make([]GroupMember, len(blocks))
 	for _, g := range findWorkGroups(blocks) {
 		toolI := 0
 		for i := g.Start; i < g.End && i < len(blocks); i++ {
-			m := groupMember{
+			m := GroupMember{
 				InGroup:   true,
 				ToolIndex: -1,
 				ToolCount: g.ToolCount,
@@ -99,8 +99,8 @@ func buildGroupMembers(blocks []ChatBlock) []groupMember {
 	return out
 }
 
-func headerGroupMember(toolCount int, key string) groupMember {
-	return groupMember{
+func headerGroupMember(toolCount int, key string) GroupMember {
+	return GroupMember{
 		InGroup:   true,
 		ToolIndex: -1,
 		ToolCount: toolCount,
@@ -109,7 +109,7 @@ func headerGroupMember(toolCount int, key string) groupMember {
 	}
 }
 
-func resolveRailRole(block ChatBlock, mem groupMember) RailRole {
+func resolveRailRole(block ChatBlock, mem GroupMember) RailRole {
 	if mem.IsHeader {
 		if mem.ToolCount >= 2 {
 			return RailRoleGroupHeader
@@ -138,7 +138,7 @@ func resolveRailRole(block ChatBlock, mem groupMember) RailRole {
 	}
 }
 
-func resolveRailState(block ChatBlock, role RailRole, view railView) RailState {
+func resolveRailState(block ChatBlock, role RailRole, view RailView) RailState {
 	if blockToolFailed(block) {
 		return RailStateFailed
 	}
@@ -208,7 +208,7 @@ func hasExitFailureToken(s string) bool {
 }
 
 // railFromRole: structure = glyph/weight; color = state only.
-func railFromRole(role RailRole, state RailState, opts RailOpts, view railView) LeftRail {
+func railFromRole(role RailRole, state RailState, opts RailOpts, view RailView) LeftRail {
 	if role == RailRoleNone {
 		return LeftRail{Width: 0, Mode: RailModeOff}
 	}
@@ -280,14 +280,16 @@ func railFromRole(role RailRole, state RailState, opts RailOpts, view railView) 
 		if opts.ASCII {
 			frames := []string{"*", "+", "x", "o"}
 			r.Glyph = frames[view.Frame%len(frames)]
-		} else if len(brandWorkFrames) > 0 {
-			r.Glyph = brandWorkFrames[view.Frame%len(brandWorkFrames)]
+		} else if len(BrandWorkFrames) > 0 {
+			r.Glyph = BrandWorkFrames[view.Frame%len(BrandWorkFrames)]
 		}
 	}
 	return r
 }
 
-func resolveBlockRail(block ChatBlock, mem groupMember, opts RailOpts, view railView) LeftRail {
+// ResolveBlockRail resolves the left-rail glyph and mode for a chat block.
+// Shared with internal/legacytui's bubble-mode transcript layout.
+func ResolveBlockRail(block ChatBlock, mem GroupMember, opts RailOpts, view RailView) LeftRail {
 	if block.Kind == ChatBlockDivider {
 		return railForDividerText(block.Text, opts)
 	}

@@ -48,7 +48,7 @@ func FuzzWrapANSIv2(f *testing.F) {
 			effective = 5
 		}
 
-		out := wrapANSIv2(input, maxWidth) // must not panic
+		out := WrapANSIv2(input, maxWidth) // must not panic
 
 		for _, line := range strings.Split(out, "\n") {
 			if line == "" {
@@ -64,9 +64,9 @@ func FuzzWrapANSIv2(f *testing.F) {
 			// Breakable lines (contain a space/tab, or are rendered table
 			// rows) must fit within the effective width. Unbreakable words
 			// pass through whole by contract and may exceed it.
-			if (strings.ContainsAny(line, " \t") || isRenderedTableRow(line)) && visibleWidth(line) > effective {
+			if (strings.ContainsAny(line, " \t") || isRenderedTableRow(line)) && VisibleWidth(line) > effective {
 				t.Fatalf("breakable line %q has visible width %d > %d (input %q, maxWidth %d)",
-					line, visibleWidth(line), effective, input, maxWidth)
+					line, VisibleWidth(line), effective, input, maxWidth)
 			}
 		}
 

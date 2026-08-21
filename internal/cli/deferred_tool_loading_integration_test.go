@@ -121,7 +121,7 @@ func namedCall(id, name, args string) provider.ToolCall {
 // everything except read_file.
 type deferredFixture struct {
 	sess      *chat.Session
-	state     *agentSessionState
+	state     *AgentSessionState
 	res       *config.Resolved
 	completer *scriptedCompleter
 	dir       string
@@ -169,7 +169,7 @@ func newDeferredFixtureWith(t *testing.T, dir string, res *config.Resolved, comp
 	sess.Tools = full
 	sess.UseTools = true
 	sess.SetAgentSettings("ROOT PROMPT", 4, "")
-	state := &agentSessionState{
+	state := &AgentSessionState{
 		Registry: reg, Selected: selected, WorkspaceRoot: dir, AllowProjectSkills: true,
 		BaselinePrompt: "ROOT PROMPT", BaselineMaxSteps: 4, BaselineCaptured: true,
 	}
@@ -621,7 +621,7 @@ func TestAgentSwitchResetsAdmissions(t *testing.T) {
 	if err := fixture.state.Registry.Publish(writer); err != nil {
 		t.Fatal(err)
 	}
-	if err := applySessionAgent(fixture.sess, fixture.res, fixture.state, "writer", false); err != nil {
+	if err := ApplySessionAgent(fixture.sess, fixture.res, fixture.state, "writer", false); err != nil {
 		t.Fatalf("switch: %v", err)
 	}
 	if got := fixture.sess.AdmittedTools(); len(got) != 0 {
@@ -643,7 +643,7 @@ func TestStagedAdmissionDiesWhenTheBindingIsReplaced(t *testing.T) {
 	if err := fixture.state.Registry.Publish(writer); err != nil {
 		t.Fatal(err)
 	}
-	if err := applySessionAgent(fixture.sess, fixture.res, fixture.state, "writer", false); err != nil {
+	if err := ApplySessionAgent(fixture.sess, fixture.res, fixture.state, "writer", false); err != nil {
 		t.Fatalf("switch: %v", err)
 	}
 	fixture.sess.PublishPendingAdmission()

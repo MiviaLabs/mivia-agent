@@ -14,9 +14,9 @@ func TestTUIHitMapSyntheticZonesAndTypedRanges(t *testing.T) {
 		kind tuiHitZoneKind
 		id   string
 	}{
-		{"transcript", 9, hitTranscript, ""},
-		{"typed transcript block", 2, hitTranscript, "turn-1-block-2"},
-		{"composer", 17, hitComposer, ""},
+		{"transcript", 9, HitTranscript, ""},
+		{"typed transcript block", 2, HitTranscript, "turn-1-block-2"},
+		{"composer", 17, HitComposer, ""},
 		{"no tools zone - falls through", 12, 0, ""}, // should be no hit (0 = zero value)
 	}
 	for _, tc := range cases {
@@ -25,7 +25,7 @@ func TestTUIHitMapSyntheticZonesAndTypedRanges(t *testing.T) {
 			if tc.kind == 0 && ok {
 				t.Fatalf("hit(%d) = %#v, %v; expected no hit", tc.y, z, ok)
 			}
-			if tc.kind != 0 && (!ok || z.kind != tc.kind || z.blockID != tc.id) {
+			if tc.kind != 0 && (!ok || z.Kind != tc.kind || z.BlockID != tc.id) {
 				t.Fatalf("hit(%d) = %#v, %v; want kind=%d id=%q", tc.y, z, ok, tc.kind, tc.id)
 			}
 		})
@@ -59,7 +59,7 @@ func TestTUIHitMapVersionChangesAfterViewportMutation(t *testing.T) {
 	if h.version != version+1 {
 		t.Fatalf("version=%d, want %d", h.version, version+1)
 	}
-	if zone, ok := h.hit(0); !ok || zone.blockID != "block" {
+	if zone, ok := h.hit(0); !ok || zone.BlockID != "block" {
 		t.Fatalf("rebuild did not expose current block hit: %#v, %v", zone, ok)
 	}
 }

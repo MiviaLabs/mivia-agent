@@ -144,7 +144,7 @@ func TestSlashCompactTerminalLegIgnoresAnActiveJSONSink(t *testing.T) {
 
 	var sink bytes.Buffer
 	previousSink := activeJSONSlashSink
-	activeJSONSlashSink = &jsonSlashSink{w: &sink}
+	activeJSONSlashSink = &JSONSlashSink{w: &sink}
 	defer func() { activeJSONSlashSink = previousSink }()
 
 	var pane bytes.Buffer

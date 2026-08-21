@@ -72,13 +72,13 @@ func TestWorkspaceRestartRevalidatesSelectedInstance(t *testing.T) {
 	if _, err := createManagedWorktree(repoRoot, old.Name, "HEAD", "mivia/"); err != nil {
 		t.Fatal(err)
 	}
-	restart := workspaceRestart{dir: m.restartWorkspace, worktreeInstance: m.restartWorktreeInstance}
+	restart := WorkspaceRestart{Dir: m.restartWorkspace, WorktreeInstance: m.restartWorktreeInstance}
 	err = validateWorkspaceRestart(restart, chatInvocation{workspacePath: repoRoot})
 	if !errors.Is(err, contextstate.ErrWorktreeDeleted) {
 		t.Fatalf("restart revalidation = %v, want ErrWorktreeDeleted", err)
 	}
 	m2 := newReadyChatModel(30, 90)
-	err = bindManagedWorktreeSessionExpected(m2.session, repoRoot, restart.dir, "", oldInstance)
+	err = bindManagedWorktreeSessionExpected(m2.session, repoRoot, restart.Dir, "", oldInstance)
 	if !errors.Is(err, contextstate.ErrWorktreeDeleted) {
 		t.Fatalf("setup revalidation = %v, want ErrWorktreeDeleted", err)
 	}

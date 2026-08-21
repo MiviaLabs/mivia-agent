@@ -215,12 +215,12 @@ func (ib *InputBuffer) VisibleLine() string {
 // CursorCol returns the 0-based column where the cursor should be
 // within the visible line, accounting for wide characters.
 func (ib *InputBuffer) CursorCol() int {
-	return runeWidth(ib.prompt) + runeWidth(string(ib.buf[:ib.pos]))
+	return RuneWidth(ib.prompt) + RuneWidth(string(ib.buf[:ib.pos]))
 }
 
 // ContentWidth returns the total visual column width of the visible line.
 func (ib *InputBuffer) ContentWidth() int {
-	return runeWidth(ib.VisibleLine())
+	return RuneWidth(ib.VisibleLine())
 }
 
 // Render produces ANSI escape sequences to render the input line
@@ -318,8 +318,8 @@ func (ib *InputBuffer) RenderInPlace(t *Terminal) {
 	t.WriteString(ib.Render(w))
 }
 
-// runeWidth returns the visible column width of a string.
-func runeWidth(s string) int {
+// RuneWidth returns the visible column width of a string.
+func RuneWidth(s string) int {
 	return uniseg.StringWidth(s)
 }
 

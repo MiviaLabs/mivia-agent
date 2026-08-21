@@ -16,7 +16,7 @@ import (
 
 func replLineMode(sess *chat.Session, res *config.Resolved, toolsOn bool, jsonMode bool) error {
 	if jsonMode {
-		activeJSONSlashSink = &jsonSlashSink{w: os.Stdout}
+		activeJSONSlashSink = &JSONSlashSink{w: os.Stdout}
 		defer func() { activeJSONSlashSink = nil }()
 	}
 	defer startLineModeHub(sess, jsonMode)()

@@ -88,7 +88,7 @@ func (r *plainTextRenderer) RenderText(text string, width int) []string {
 	if body == "" {
 		return []string{" "}
 	}
-	wrapped := wrapANSIv2(body, width)
+	wrapped := WrapANSIv2(body, width)
 	if wrapped == "" {
 		return []string{" "}
 	}
@@ -107,7 +107,7 @@ func (r *markdownRenderer) RenderText(text string, width int) []string {
 	if md == "" {
 		return nil
 	}
-	return strings.Split(wrapANSIv2(md, width), "\n")
+	return strings.Split(WrapANSIv2(md, width), "\n")
 }
 
 // MessageBubble is a shared, reusable, customizable component for rendering
@@ -255,7 +255,7 @@ func (b *MessageBubble) blankLines(n, width int) []string {
 // background styling.
 func (b *MessageBubble) paddedLine(content, leftPadStr, rightPadFill string, totalWidth int) string {
 	row := leftPadStr + content + rightPadFill
-	vis := visibleWidth(row)
+	vis := VisibleWidth(row)
 	if vis < totalWidth {
 		row += strings.Repeat(" ", totalWidth-vis)
 	}
@@ -331,7 +331,7 @@ func (b *MessageBubble) renderTimeMetaLine(label string, width int) []string {
 	if label == "" {
 		return nil
 	}
-	plainPad := width - visibleWidth(label)
+	plainPad := width - VisibleWidth(label)
 	if plainPad < 0 {
 		plainPad = 0
 	}
@@ -361,7 +361,7 @@ func (b *MessageBubble) renderPlain(text string, contentW int, leftPad string) [
 	for i, line := range lines {
 		row := leftPad + line
 		if b.Style.Padding.Right > 0 {
-			vis := visibleWidth(row)
+			vis := VisibleWidth(row)
 			target := b.Style.Padding.Left + contentW + b.Style.Padding.Right
 			if vis < target {
 				row += strings.Repeat(" ", target-vis)

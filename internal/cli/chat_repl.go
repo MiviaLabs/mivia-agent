@@ -52,7 +52,7 @@ func sessionSkillRegistry(root string, ctx agentSessionContext, skillReg *skills
 	return filterSkillRegistryForGate(skillReg, ctx.AllowProjectSkills)
 }
 
-func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.SubagentConfig, state *agentSessionState, skillReg *skills.Registry, routing sessionRouting) (func(), error) {
+func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.SubagentConfig, state *AgentSessionState, skillReg *skills.Registry, routing sessionRouting) (func(), error) {
 	if sess == nil {
 		return func() {}, nil
 	}
@@ -131,7 +131,7 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 // returns the cleanup closure. The remainder spool is the same instance the
 // registered read_output tool holds, so a truncation notice minted by the
 // root loop resolves for this session.
-func attachBuiltSessionDispatcher(sess *chat.Session, state *agentSessionState, dispatcher *runtime.Dispatcher, mcpManager *mcp.Manager, plan toolTierPlan, ctx agentSessionContext, routing sessionRouting, closeMCP func()) func() {
+func attachBuiltSessionDispatcher(sess *chat.Session, state *AgentSessionState, dispatcher *runtime.Dispatcher, mcpManager *mcp.Manager, plan toolTierPlan, ctx agentSessionContext, routing sessionRouting, closeMCP func()) func() {
 	sess.SetDispatcher(dispatcher)
 	if state != nil {
 		state.MCPManager = mcpManager
@@ -153,7 +153,7 @@ func attachBuiltSessionDispatcher(sess *chat.Session, state *agentSessionState, 
 // Opening it once here, and passing the same repo to every rebuild, keeps the
 // spool's store alive for the session. A shared context store makes this moot:
 // the ledger adapter borrows it and owns nothing.
-func adoptSessionLedgerRepo(sess *chat.Session, cfg config.SubagentConfig, state *agentSessionState, routing sessionRouting) {
+func adoptSessionLedgerRepo(sess *chat.Session, cfg config.SubagentConfig, state *AgentSessionState, routing sessionRouting) {
 	if state == nil || routing.Context.sharedSQLite != nil {
 		return
 	}
@@ -168,7 +168,7 @@ func adoptSessionLedgerRepo(sess *chat.Session, cfg config.SubagentConfig, state
 // opened. It exists for the failure path: ownership is taken before the
 // dispatcher is built, and a failed build returns no cleanup function, so
 // nothing else would ever close the store.
-func releaseSessionLedgerRepo(state *agentSessionState) {
+func releaseSessionLedgerRepo(state *AgentSessionState) {
 	if state == nil {
 		return
 	}
@@ -182,7 +182,7 @@ func releaseSessionLedgerRepo(state *agentSessionState) {
 // attach-time one: /agent, /model and every tool admission replace it. The
 // session-owned ledger store closes after the dispatcher, whose teardown still
 // reads through the repo.
-func sessionSurfaceCleanup(sess *chat.Session, state *agentSessionState) func() {
+func sessionSurfaceCleanup(sess *chat.Session, state *AgentSessionState) func() {
 	return func() {
 		sess.CloseDispatcher()
 		if state != nil && state.ownedLedgerStore != nil {
@@ -193,7 +193,7 @@ func sessionSurfaceCleanup(sess *chat.Session, state *agentSessionState) func() 
 
 // ledgerRepoOf is the session-owned ledger repository, or nil when there is no
 // agent state to hold one (tools-off and hand-built callers).
-func ledgerRepoOf(state *agentSessionState) ledger.LedgerRepository {
+func ledgerRepoOf(state *AgentSessionState) ledger.LedgerRepository {
 	if state == nil {
 		return nil
 	}
@@ -215,7 +215,7 @@ type attachedToolSurface struct {
 // Scope is applied BEFORE the dispatcher is built so the dispatcher captures a
 // scoped registry: a tool absent from sess.Tools is also absent from the
 // dispatcher's executable registry (INV-AG-29 execution denial).
-func scopeAttachedToolSurface(sess *chat.Session, ctx agentSessionContext, state *agentSessionState, skillReg *skills.Registry, routing sessionRouting) attachedToolSurface {
+func scopeAttachedToolSurface(sess *chat.Session, ctx agentSessionContext, state *AgentSessionState, skillReg *skills.Registry, routing sessionRouting) attachedToolSurface {
 	// Snapshot the full post-registration registry BEFORE root agent scope.
 	// This is the base for mid-session /agent re-scope; it must include all
 	// tools so switching to a wider agent can regain them.
@@ -255,7 +255,7 @@ func scopeAttachedToolSurface(sess *chat.Session, ctx agentSessionContext, state
 	return attachedToolSurface{plan: plan, authority: authority, skillScope: liveScope}
 }
 
-func repl(sess *chat.Session, res *config.Resolved, toolsOn bool, _ *agentSessionState, jsonMode, quiet bool) error {
+func repl(sess *chat.Session, res *config.Resolved, toolsOn bool, _ *AgentSessionState, jsonMode, quiet bool) error {
 	printReplBanner(sess, toolsOn, quiet)
 	defer autoSaveREPL(sess)
 	term, err := NewTerminal()
@@ -290,5 +290,5 @@ func autoSaveREPL(sess *chat.Session) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "⚠ auto-save failed: %v\n", err)
 	}
-	writeAutosaveStatus(sess.SessionDir, err)
+	WriteAutosaveStatus(sess.SessionDir, err)
 }

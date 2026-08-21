@@ -7,39 +7,17 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 )
 
-func formatSessionAgentStatus(state *agentSessionState, sess *chat.Session) string {
-	identity := sessionIdentity(sess, state, sess.CurrentModelGeneration())
+func formatSessionAgentStatus(state *AgentSessionState, sess *chat.Session) string {
+	identity := SessionIdentity(sess, state, sess.CurrentModelGeneration())
 	if identity == nil {
 		return ""
 	}
 	return fmt.Sprintf(" agent=%s source=%s generation=%d", identity.DefinitionName, identity.DefinitionSource, identity.ModelGeneration)
 }
 
-func currentAgentDisplayName(state *agentSessionState) string {
-	if state == nil {
-		return "root fallback"
-	}
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	if state.Selected == nil {
-		return "root fallback"
-	}
-	return state.Selected.Name
-}
-
-func currentAgentDisplaySource(state *agentSessionState) string {
-	if state == nil {
-		return "compiled"
-	}
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	if state.Selected == nil {
-		return "compiled"
-	}
-	return string(state.Selected.Provenance.Source)
-}
-
-func sessionIdentity(sess *chat.Session, state *agentSessionState, generation uint64) *events.Identity {
+// SessionIdentity resolves the current agent identity (name and source) for
+// a session generation. Shared with internal/legacytui's TUI event handling.
+func SessionIdentity(sess *chat.Session, state *AgentSessionState, generation uint64) *events.Identity {
 	if sess == nil || generation == 0 {
 		return nil
 	}
@@ -59,12 +37,12 @@ func sessionIdentity(sess *chat.Session, state *agentSessionState, generation ui
 	return &identity
 }
 
-func installSessionIdentity(sess *chat.Session, state *agentSessionState) {
+func installSessionIdentity(sess *chat.Session, state *AgentSessionState) {
 	if sess == nil {
 		return
 	}
 	sess.SetEventIdentityFactory(func(generation uint64) *events.Identity {
-		return sessionIdentity(sess, state, generation)
+		return SessionIdentity(sess, state, generation)
 	})
 }
 

@@ -10,13 +10,13 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 )
 
-// redactPreview applies the workspace's configured redaction policy to
+// RedactPreview applies the workspace's configured redaction policy to
 // operator-visible preview text.
 //
 // It compiles nothing and knows no credential patterns: what counts as a secret
 // is configuration, not code (see .agents/rules/10-security-privacy.md). A
 // workspace that configures no policy gets its preview text through unchanged.
-func redactPreview(s string) string { return redact.Text(s) }
+func RedactPreview(s string) string { return redact.Text(s) }
 
 // Tool panel UX constants.
 const (
@@ -70,7 +70,7 @@ func clampToolScroll(scroll, selected int, ordered []int, maxVis int) int {
 	if maxVis < 1 {
 		maxVis = toolMaxVisibleRows
 	}
-	maxScroll := max(0, n-maxVis)
+	maxScroll := Max(0, n-maxVis)
 	if scroll < 0 {
 		scroll = 0
 	}
@@ -133,8 +133,8 @@ func renderToolPanelWindow(
 		st.rowY = nil
 		return "", 0, st
 	}
-	if width < minCardWidth {
-		width = minCardWidth
+	if width < MinCardWidth {
+		width = MinCardWidth
 	}
 	if maxVis <= 0 {
 		maxVis = toolMaxVisibleRows
@@ -226,7 +226,7 @@ func writeToolPanelRow(
 		item := NewToolRenderItem(r.Name, r.Detail, r.Result, r.Done, r.Failed)
 		line := formatToolLine(item, width, opts)
 		if r.Agent != "" {
-			line = "  " + glyphDiamond + " " + BoundedToolText(r.Agent, 24) + " " + strings.TrimSpace(line)
+			line = "  " + GlyphDiamond + " " + BoundedToolText(r.Agent, 24) + " " + strings.TrimSpace(line)
 		}
 		if st := strings.TrimSpace(r.Status); st != "" && !r.Done {
 			// "  * + delegate summary" → inject status after name
@@ -245,9 +245,9 @@ func writeToolPanelRow(
 	case !r.Done:
 		iconStyled = brandGlyph(logoFrame+ti, brandColorTools)
 	case r.Failed:
-		iconStyled = ToolErrStyle.Render(glyphCross)
+		iconStyled = ToolErrStyle.Render(GlyphCross)
 	default:
-		iconStyled = ToolOkStyle.Render(glyphCheck)
+		iconStyled = ToolOkStyle.Render(GlyphCheck)
 	}
 	b.WriteString(formatToolPanelLine(r, iconStyled, width, now, selected))
 	b.WriteByte('\n')
@@ -290,14 +290,14 @@ func writePreviewSection(b *strings.Builder, header, body string, width, maxLine
 	b.WriteByte('\n')
 	n := 1
 	if colorDiff {
-		lines := renderDiffBody(body, width, maxLines)
+		lines := RenderDiffBody(body, width, maxLines)
 		for _, line := range lines {
 			b.WriteString(line)
 			b.WriteByte('\n')
 		}
 		return 1 + len(lines)
 	}
-	all := strings.Split(redactPreview(body), "\n")
+	all := strings.Split(RedactPreview(body), "\n")
 	lines := all
 	if len(lines) > maxLines {
 		lines = lines[len(lines)-maxLines:]
@@ -382,4 +382,20 @@ func (st *toolPanelState) scrollWindow(delta, maxVis int) {
 		return
 	}
 	st.Scroll = clampToolScroll(st.Scroll+delta, st.Selected, st.ordered, maxVis)
+}
+
+// expandSectionLabel names the input/output section of an expanded tool row.
+// Relocated from toolui_agent.go: this file is its sole caller.
+func expandSectionLabel(name string, input bool) string {
+	if !input {
+		return "output"
+	}
+	switch name {
+	case HandlerDelegate:
+		return "task"
+	case ToolDispatchTasks:
+		return "tasks"
+	default:
+		return "input"
+	}
 }

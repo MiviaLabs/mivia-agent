@@ -39,12 +39,12 @@ func (t *dispatchTasksTool) Capability(args json.RawMessage) tools.Capability {
 	// killed early; EffectiveTimeoutSec still keeps a finite safety ceiling.
 	return tools.Capability{
 		Class:       tools.ExecutionExternal,
-		ResourceKey: toolDispatchTasks,
+		ResourceKey: ToolDispatchTasks,
 		Timeout:     time.Duration(dispatchOrchestrationSec(t.cfg.DefaultTimeout, args)) * time.Second,
 	}
 }
 
-func (t *dispatchTasksTool) Name() string { return toolDispatchTasks }
+func (t *dispatchTasksTool) Name() string { return ToolDispatchTasks }
 func (t *dispatchTasksTool) Privileged()  {}
 func (t *dispatchTasksTool) Description() string {
 	desc := "Execute multiple sub-tasks in PARALLEL. Use this for ALL research, code reviews, " +

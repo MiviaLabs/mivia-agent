@@ -51,9 +51,9 @@ func (m *tuiModel) renderFleetBox(width int, now time.Time) string {
 	running := m.subagents.Active()
 
 	head := fmt.Sprintf(" agents · %d running · ctrl+g detail ", running)
-	head = truncateToWidth(head, width-4)
+	head = TruncateToWidth(head, width-4)
 	var b strings.Builder
-	b.WriteString(border.Render("┌─" + head + strings.Repeat("─", max(0, width-3-lipgloss.Width(head))) + "┐"))
+	b.WriteString(border.Render("┌─" + head + strings.Repeat("─", Max(0, width-3-lipgloss.Width(head))) + "┐"))
 	b.WriteByte('\n')
 
 	shown := rows
@@ -77,19 +77,19 @@ func (m *tuiModel) renderFleetBox(width int, now time.Time) string {
 		}
 		b.WriteString(border.Render(" │") + "\n")
 	}
-	b.WriteString(border.Render("└" + strings.Repeat("─", max(0, width-2)) + "┘"))
+	b.WriteString(border.Render("└" + strings.Repeat("─", Max(0, width-2)) + "┘"))
 	return b.String()
 }
 
 // fleetRowLine renders one agent row: diamond, name, activity, counts, time.
 func fleetRowLine(r subagentRun, inner int, now time.Time) string {
-	diamond := AgentBadgeStyle.Render(glyphDiamond)
+	diamond := AgentBadgeStyle.Render(GlyphDiamond)
 	status := ""
 	// ✓ marks a finished run only. It used to be inferred from "no open
 	// tools", which flagged every agent thinking between two tool calls as
 	// done - the same inference that kept finished agents pinned in the panel.
 	if r.Done {
-		diamond = ToolOkStyle.Render(glyphDiamond)
+		diamond = ToolOkStyle.Render(GlyphDiamond)
 		status = ToolOkStyle.Render(" ✓")
 	}
 	activity := safeDialogText(r.LastDetail)
@@ -109,7 +109,7 @@ func fleetRowLine(r subagentRun, inner int, now time.Time) string {
 	}
 	right := TUIDimStyle.Render(counts+" ⚙ · "+elapsed) + status
 	left := diamond + " " + lipgloss.NewStyle().Bold(true).Render(safeDialogText(r.Name)) + " " +
-		TUIDimStyle.Render(truncateToWidth(activity, max(8, inner-lipgloss.Width(right)-14)))
+		TUIDimStyle.Render(TruncateToWidth(activity, Max(8, inner-lipgloss.Width(right)-14)))
 	gap := inner - lipgloss.Width(left) - lipgloss.Width(right)
 	if gap < 1 {
 		return lipgloss.NewStyle().MaxWidth(inner).Render(left + " " + right)
@@ -137,10 +137,10 @@ func (m *tuiModel) openFleetOverlay() bool {
 		}
 		fmt.Fprintf(&b, "◆ %s  ·  %s  ·  %d tools done, %d open", safeDialogText(r.Name), state, r.ToolsDone, r.ToolsOpen)
 		if r.LastTool != "" {
-			fmt.Fprintf(&b, "\n  last tool: %s", redactPreview(SafeChatBlockText(r.LastTool, 0)))
+			fmt.Fprintf(&b, "\n  last tool: %s", RedactPreview(SafeChatBlockText(r.LastTool, 0)))
 		}
 		if r.LastDetail != "" {
-			fmt.Fprintf(&b, "\n  %s", redactPreview(SafeChatBlockText(r.LastDetail, 0)))
+			fmt.Fprintf(&b, "\n  %s", RedactPreview(SafeChatBlockText(r.LastDetail, 0)))
 		}
 		if !r.Started.IsZero() {
 			fmt.Fprintf(&b, "\n  started %s ago", FormatDuration(time.Since(r.Started)))

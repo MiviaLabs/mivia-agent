@@ -157,7 +157,7 @@ func (t *readOutputTool) Execute(ctx context.Context, args json.RawMessage) (str
 	}
 	limit := t.pageLimit()
 	if params.HasLimit {
-		limit = min(limit, params.Limit)
+		limit = Min(limit, params.Limit)
 	}
 	// Always report the effective (possibly clamped) limit honestly.
 	return t.pageResponse(params.Ref, len(data), params.Offset, limit, content)

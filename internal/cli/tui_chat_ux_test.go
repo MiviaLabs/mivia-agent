@@ -18,7 +18,7 @@ func TestEmptyContentToolsGetStatusLine(t *testing.T) {
 	m.turnStart = time.Now()
 	m.appendBlock(ChatBlock{Kind: ChatBlockUser, Text: "list files"})
 
-	m.updateFromDrain(bridgeDrain{
+	m.updateFromDrain(BridgeDrain{
 		Tools: []bridgeToolEvt{
 			{Start: true, ToolCallID: "t1", Name: "list_dir", Detail: `{"path":"."}`, At: time.Now()},
 			{Start: false, ToolCallID: "t1", Name: "list_dir", Detail: "cmd/ internal/", At: time.Now()},
@@ -77,7 +77,7 @@ func TestShortInterimRejectedUsesStatus(t *testing.T) {
 	m.turnStart = time.Now()
 	m.appendBlock(ChatBlock{Kind: ChatBlockUser, Text: "go"})
 
-	m.updateFromDrain(bridgeDrain{
+	m.updateFromDrain(BridgeDrain{
 		Interim: "OK.",
 		Tools: []bridgeToolEvt{
 			{Start: true, ToolCallID: "c1", Name: "grep", Detail: `{"pattern":"auth"}`, At: time.Now()},
@@ -104,7 +104,7 @@ func TestInterimAcceptedSkipsStatus(t *testing.T) {
 	m.turnStart = time.Now()
 	m.appendBlock(ChatBlock{Kind: ChatBlockUser, Text: "find"})
 
-	m.updateFromDrain(bridgeDrain{
+	m.updateFromDrain(BridgeDrain{
 		Interim: "I'll search the codebase first.",
 		Tools: []bridgeToolEvt{
 			{Start: true, ToolCallID: "c1", Name: "grep", Detail: `{"pattern":"bug"}`, At: time.Now()},
@@ -140,7 +140,7 @@ func TestAwaitingFirstActivityPlanning(t *testing.T) {
 	}
 
 	// Tool event clears awaiting.
-	m.updateFromDrain(bridgeDrain{
+	m.updateFromDrain(BridgeDrain{
 		Tools: []bridgeToolEvt{
 			{Start: true, ToolCallID: "x", Name: "read_file", Detail: `{"path":"a.go"}`, At: time.Now()},
 		},
@@ -163,7 +163,7 @@ func TestCancelKeepsInterimAndToolsInHistory(t *testing.T) {
 	m.waiting = true
 	m.turnStart = time.Now()
 	m.appendBlock(ChatBlock{Kind: ChatBlockUser, Text: "explore"})
-	m.updateFromDrain(bridgeDrain{
+	m.updateFromDrain(BridgeDrain{
 		Interim: "I'll inspect the project layout first.",
 		Tools: []bridgeToolEvt{
 			{Start: true, ToolCallID: "t1", Name: "list_dir", Detail: `{"path":"."}`, At: time.Now()},
@@ -253,7 +253,7 @@ func TestWorkHeaderInLivePanel(t *testing.T) {
 // TestPushInterimGatesGhosts - bridge-level Phase B.
 func TestPushInterimGatesGhosts(t *testing.T) {
 	t.Parallel()
-	b := newStreamBridge()
+	b := NewStreamBridge()
 	b.PushInterim("OK.")
 	b.PushInterim("I'll actually look into this carefully.")
 	d := b.Drain()
@@ -293,7 +293,7 @@ func TestCancelThenTurnEndDoesNotDuplicateFooter(t *testing.T) {
 	m.turnStart = time.Now()
 	m.activeTurnID = "turn-1"
 	m.appendBlock(ChatBlock{Kind: ChatBlockUser, Text: "go"})
-	m.updateFromDrain(bridgeDrain{
+	m.updateFromDrain(BridgeDrain{
 		Interim: "I'll inspect the project layout first.",
 		Tools: []bridgeToolEvt{
 			{Start: true, ToolCallID: "t1", Name: "list_dir", Detail: `{"path":"."}`, At: time.Now()},

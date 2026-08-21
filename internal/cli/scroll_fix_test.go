@@ -54,7 +54,7 @@ func TestLoadMoreMessages_PreservesOffsetWhenContentFits(t *testing.T) {
 	seedUIFromOffset(m, 25)
 	if m.viewport.TotalLineCount() > m.viewport.Height {
 		// Deterministic setup: force fit by shrinking content, not Skip.
-		m.messages = m.messages[:min(4, len(m.messages))]
+		m.messages = m.messages[:Min(4, len(m.messages))]
 		m.viewport.SetContent(m.buildViewportContent())
 	}
 	if m.viewport.TotalLineCount() > m.viewport.Height {
@@ -130,7 +130,7 @@ func TestLoadMoreMessages_IncreasesContentAndKeepsNearTop(t *testing.T) {
 	if m.msgOffset >= oldMsgOff {
 		t.Fatalf("msgOffset should decrease: was %d now %d", oldMsgOff, m.msgOffset)
 	}
-	if m.msgOffset != max(0, oldMsgOff-50) {
+	if m.msgOffset != Max(0, oldMsgOff-50) {
 		// batchSize is 50; from 40 we load all remaining older → 0
 		if oldMsgOff <= 50 && m.msgOffset != 0 {
 			t.Fatalf("msgOffset want 0 (loaded all older), got %d", m.msgOffset)

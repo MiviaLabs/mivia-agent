@@ -12,7 +12,7 @@ import (
 // the turn goroutine, not the UI goroutine, so a slow hook delays only the
 // goroutine's exit - and only until its 5s default, since a canceled turn
 // short-circuits.
-func (m *tuiModel) pushStopHookOutput(ctx context.Context, bridge *streamBridge, turnID string) {
+func (m *tuiModel) pushStopHookOutput(ctx context.Context, bridge *StreamBridge, turnID string) {
 	if m == nil || bridge == nil {
 		return
 	}

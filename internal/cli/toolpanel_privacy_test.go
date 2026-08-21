@@ -41,7 +41,7 @@ func TestRedactPreviewWithoutPolicyPassesThrough(t *testing.T) {
 		"Authorization: Bearer abc.def",
 		fakePEMBlock(),
 	} {
-		if got := redactPreview(in); got != in {
+		if got := RedactPreview(in); got != in {
 			t.Fatalf("unconfigured workspace redacted %q -> %q", in, got)
 		}
 	}
@@ -49,7 +49,7 @@ func TestRedactPreviewWithoutPolicyPassesThrough(t *testing.T) {
 
 func TestRedactPreviewRedactsWithConfiguredPolicy(t *testing.T) {
 	installTestRedactionPolicy(t)
-	got := redactPreview(fakePEMBlock())
+	got := RedactPreview(fakePEMBlock())
 	if strings.Contains(got, "MIIBOgIB") || strings.Contains(got, "BEGIN RSA PRIVATE KEY") {
 		t.Fatalf("private key block leaked: %q", got)
 	}

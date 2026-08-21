@@ -9,7 +9,7 @@ import (
 // the session prompt. It runs once per binding: every later admission
 // republishes this exact prompt, which is what keeps the cached system-prompt
 // prefix intact while the tool array grows.
-func applyDeferredToolPrompt(sess *chat.Session, res *config.Resolved, plan toolTierPlan, state *agentSessionState) {
+func applyDeferredToolPrompt(sess *chat.Session, res *config.Resolved, plan toolTierPlan, state *AgentSessionState) {
 	if sess == nil || !plan.Deferred() {
 		return
 	}
@@ -30,7 +30,7 @@ func applyDeferredToolPrompt(sess *chat.Session, res *config.Resolved, plan tool
 // precondition still holds, checked atomically with the swap inside
 // TryPublishAgentSurface. A refused publication closes the candidate
 // dispatcher it never installed and leaves the stage pending.
-func newSurfaceWidener(sess *chat.Session, res *config.Resolved, state *agentSessionState) chat.SurfaceWidener {
+func newSurfaceWidener(sess *chat.Session, res *config.Resolved, state *AgentSessionState) chat.SurfaceWidener {
 	return func(admitted []string, req chat.AgentSurfacePublication) (bool, error) {
 		state.mu.Lock()
 		defer state.mu.Unlock()

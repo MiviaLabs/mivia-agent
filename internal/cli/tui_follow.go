@@ -7,7 +7,7 @@ func (m *tuiModel) applyFollowScroll(wasAtBottom bool, savedOffset int) {
 		m.viewport.GotoBottom()
 		return
 	}
-	m.viewport.YOffset = min(savedOffset, m.viewport.TotalLineCount()-m.viewport.Height)
+	m.viewport.YOffset = Min(savedOffset, m.viewport.TotalLineCount()-m.viewport.Height)
 	if m.viewport.YOffset < 0 {
 		m.viewport.YOffset = 0
 	}

@@ -52,9 +52,9 @@ func newReadyChatModel(height, width int) *tuiModel {
 	m.ready = true
 	m.width = width
 	m.height = height
-	m.viewport = viewport.New(width, max(2, height/2))
+	m.viewport = viewport.New(width, Max(2, height/2))
 	m.viewport.SetContent("hello from viewport\nsecond line")
-	m.textarea.SetWidth(max(20, width-4))
+	m.textarea.SetWidth(Max(20, width-4))
 	m.textarea.SetHeight(3)
 	m.turnStart = time.Now()
 	return m
@@ -508,7 +508,7 @@ func TestShortenModel(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := shortenModel(tc.in); got != tc.want {
+			if got := ShortenModel(tc.in); got != tc.want {
 				t.Fatalf("shortenModel(%q) = %q, want %q", tc.in, got, tc.want)
 			}
 		})

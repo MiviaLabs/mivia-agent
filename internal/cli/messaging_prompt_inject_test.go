@@ -160,7 +160,7 @@ func TestOneshotDelegateDoNotIncludeProtocol(t *testing.T) {
 	}
 	defer d.Close()
 
-	for _, name := range []string{handlerOneshot, handlerDelegate} {
+	for _, name := range []string{handlerOneshot, HandlerDelegate} {
 		result := d.Invoke(context.Background(), runtime.Request{
 			ID: "oneshot-" + name, Kind: runtime.Subagent, Name: name,
 			Input: json.RawMessage(`"do the work"`), SessionID: "test",

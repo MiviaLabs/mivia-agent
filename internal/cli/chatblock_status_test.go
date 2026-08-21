@@ -24,7 +24,7 @@ func TestReconstructStatus_EmptyContentTools(t *testing.T) {
 	}
 	found := false
 	for _, b := range blocks {
-		if isWorkStatusBlock(b) {
+		if IsWorkStatusBlock(b) {
 			found = true
 			if !strings.Contains(b.Text, "→") {
 				t.Fatalf("status missing →: %q", b.Text)
@@ -77,7 +77,7 @@ func TestReconstructStatus_RealInterimSkipsStatus(t *testing.T) {
 	}
 	blocks := HydrateChatBlocksForView(msgs)
 	for _, b := range blocks {
-		if isWorkStatusBlock(b) {
+		if IsWorkStatusBlock(b) {
 			t.Fatalf("status must not accompany real interim: %q", b.Text)
 		}
 	}
@@ -106,7 +106,7 @@ func TestReconstructStatus_DoesNotMutateMessages(t *testing.T) {
 	// Pure hydrate still has no status system line.
 	pure := HydrateChatBlocks(msgs)
 	for _, b := range pure {
-		if isWorkStatusBlock(b) {
+		if IsWorkStatusBlock(b) {
 			t.Fatal("pure HydrateChatBlocks must not insert status")
 		}
 	}

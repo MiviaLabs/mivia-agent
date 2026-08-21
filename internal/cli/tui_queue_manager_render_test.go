@@ -96,8 +96,8 @@ func TestRenderQueuePanelSanitizesEscapeSequences(t *testing.T) {
 
 func TestOverlayWindowWidthArgWidens(t *testing.T) {
 	rows := []string{"a very long queued message that needs more than seventy two columns to breathe"}
-	_, defaultSize := renderOverlayWindow(rows, 0, 8, 120, 24, "t", "f")
-	_, wideSize := renderOverlayWindow(rows, 0, 8, 120, 24, "t", "f", 90)
+	_, defaultSize := RenderOverlayWindow(rows, 0, 8, 120, 24, "t", "f")
+	_, wideSize := RenderOverlayWindow(rows, 0, 8, 120, 24, "t", "f", 90)
 	if defaultSize.W > 72 {
 		t.Fatalf("default width = %d, want the 72-col cap", defaultSize.W)
 	}
@@ -110,7 +110,7 @@ func TestOverlayWindowWidthArgWidens(t *testing.T) {
 // stale selection (queue drained after delete) must not panic the single-row
 // fallback on a short terminal.
 func TestOverlayWindowSingleRowFallbackClampsSelected(t *testing.T) {
-	panel, size := renderOverlayWindow([]string{"a"}, 5, 8, 80, 2, "t", "f")
+	panel, size := RenderOverlayWindow([]string{"a"}, 5, 8, 80, 2, "t", "f")
 	if panel == "" || size.H != 1 {
 		t.Fatalf("fallback with stale selection = %q size %+v, want a single row", panel, size)
 	}

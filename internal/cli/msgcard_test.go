@@ -42,8 +42,8 @@ func TestFormatUserMessageCard_WrapsLongContent(t *testing.T) {
 		t.Fatalf("expected multi-line card for long content, got %d lines: %v", len(lines), lines)
 	}
 	for _, line := range lines {
-		if visibleWidth(line) > 24 {
-			t.Fatalf("line exceeds width 24: vis=%d %q", visibleWidth(line), stripANSI(line))
+		if VisibleWidth(line) > 24 {
+			t.Fatalf("line exceeds width 24: vis=%d %q", VisibleWidth(line), stripANSI(line))
 		}
 	}
 	plain := stripANSI(strings.Join(lines, "\n"))

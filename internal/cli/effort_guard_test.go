@@ -79,7 +79,7 @@ func TestIntegrationEffortRefusedWhileOrchestrationIsActive(t *testing.T) {
 	res := effortCatalogConfig()
 	sess := chat.NewSession(res, welcomeStubCompleter{})
 	cleanup, err := attachSessionDispatcher(sess, t.TempDir(), effortThinker, config.DefaultSubagentConfig,
-		&agentSessionState{AllowProjectSkills: true}, nil, sessionRouting{})
+		&AgentSessionState{AllowProjectSkills: true}, nil, sessionRouting{})
 	if err != nil {
 		t.Fatal(err)
 	}

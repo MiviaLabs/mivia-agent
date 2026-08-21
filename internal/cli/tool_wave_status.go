@@ -75,7 +75,7 @@ func (m *tuiModel) refreshLiveToolWaveStatus() {
 
 	// Rewrite the latest live work-status block summary (keep detail lines).
 	for i := len(m.blocks) - 1; i >= 0; i-- {
-		if !isWorkStatusBlock(m.blocks[i]) {
+		if !IsWorkStatusBlock(m.blocks[i]) {
 			continue
 		}
 		body := strings.TrimSpace(m.blocks[i].Text)

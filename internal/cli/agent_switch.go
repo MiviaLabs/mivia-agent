@@ -19,11 +19,11 @@ import (
 
 // classicAgentState is the root agent context for the classic REPL/one-shot
 // chat path. The TUI stores the same pointer on tuiModel.agentState.
-var classicAgentState *agentSessionState
+var classicAgentState *AgentSessionState
 
-// agentSessionState is the mid-session mutable agent context. Startup and
+// AgentSessionState is the mid-session mutable agent context. Startup and
 // /agent switch share this so model-switch rebuilds keep the selected agent.
-type agentSessionState struct {
+type AgentSessionState struct {
 	mu                 sync.Mutex
 	Global             config.AgentsGlobal
 	Selected           *agents.ResolvedAgent
@@ -80,7 +80,7 @@ type agentSessionState struct {
 	MemoryConfig config.MemoryConfig
 }
 
-func (s *agentSessionState) context() agentSessionContext {
+func (s *AgentSessionState) context() agentSessionContext {
 	if s == nil {
 		return agentSessionContext{}
 	}
@@ -96,7 +96,7 @@ func (s *agentSessionState) context() agentSessionContext {
 
 // ledgerRepo is the session-owned ledger repository for callers that do NOT
 // hold s.mu. Surface builds read the field directly under the lock.
-func (s *agentSessionState) ledgerRepo() ledger.LedgerRepository {
+func (s *AgentSessionState) ledgerRepo() ledger.LedgerRepository {
 	if s == nil {
 		return nil
 	}
@@ -107,7 +107,7 @@ func (s *agentSessionState) ledgerRepo() ledger.LedgerRepository {
 
 // memoryStore and memoryConfig mirror ledgerRepo for callers that do NOT
 // hold s.mu (plan 77, E1/E2).
-func (s *agentSessionState) memoryStore() memory.Store {
+func (s *AgentSessionState) memoryStore() memory.Store {
 	if s == nil {
 		return nil
 	}
@@ -116,7 +116,7 @@ func (s *agentSessionState) memoryStore() memory.Store {
 	return s.Memory
 }
 
-func (s *agentSessionState) memoryConfig() config.MemoryConfig {
+func (s *AgentSessionState) memoryConfig() config.MemoryConfig {
 	if s == nil {
 		return config.MemoryConfig{}
 	}
@@ -127,7 +127,7 @@ func (s *agentSessionState) memoryConfig() config.MemoryConfig {
 
 // setSkillScope stores the selected root agent's skill policy. Writers that
 // already hold s.mu (applySessionAgent) assign the field directly.
-func (s *agentSessionState) setSkillScope(scope agentSkillScope) {
+func (s *AgentSessionState) setSkillScope(scope agentSkillScope) {
 	if s == nil {
 		return
 	}
@@ -138,7 +138,7 @@ func (s *agentSessionState) setSkillScope(scope agentSkillScope) {
 
 // skillScopeSnapshot returns a copy of the current root skill policy for the
 // TUI slash path. A nil state or unset scope yields the open zero value.
-func (s *agentSessionState) skillScopeSnapshot() agentSkillScope {
+func (s *AgentSessionState) skillScopeSnapshot() agentSkillScope {
 	if s == nil {
 		return agentSkillScope{}
 	}
@@ -147,17 +147,17 @@ func (s *agentSessionState) skillScopeSnapshot() agentSkillScope {
 	return s.SkillScope
 }
 
-// agentListRow is one selectable entry for the /agent dialog and listings.
-type agentListRow struct {
+// AgentListRow is one selectable entry for the /agent dialog and listings.
+type AgentListRow struct {
 	Name        string
 	Description string
 	Current     bool
 }
 
-// applySessionAgent switches the root agent for the idle session. busy is the
+// ApplySessionAgent switches the root agent for the idle session. busy is the
 // TUI waiting flag; active turns and switch guards are checked on sess.
 // It reuses ToolBase for re-scope and rebuilds the dispatcher like model switch.
-func applySessionAgent(sess *chat.Session, res *config.Resolved, state *agentSessionState, name string, busy bool) error {
+func ApplySessionAgent(sess *chat.Session, res *config.Resolved, state *AgentSessionState, name string, busy bool) error {
 	if sess == nil || state == nil {
 		return fmt.Errorf("agent switch requires a session and agent state")
 	}
@@ -231,7 +231,7 @@ func applySessionAgent(sess *chat.Session, res *config.Resolved, state *agentSes
 // candidate and wires its admission state. A new binding starts from its own
 // core tier: admissions never carry across an /agent switch (plan tools/05
 // D4).
-func commitAgentSwitchSurface(sess *chat.Session, res *config.Resolved, state *agentSessionState, candidate *agentSurface, agentName, prompt string, maxSteps int) {
+func commitAgentSwitchSurface(sess *chat.Session, res *config.Resolved, state *AgentSessionState, candidate *agentSurface, agentName, prompt string, maxSteps int) {
 	sess.ResetAdmissions()
 	sess.PublishAgentSurface(prompt, maxSteps, candidate.registry, candidate.dispatcher, candidate.skillReg, coreMemoryBlockForState(state), candidate.advertised)
 	sess.SetRemainderSpool(RemainderSpoolFromRegistry(candidate.registry))
@@ -245,7 +245,7 @@ func commitAgentSwitchSurface(sess *chat.Session, res *config.Resolved, state *a
 	}
 }
 
-func selectedAgentSettings(selected *agents.ResolvedAgent, state *agentSessionState) (string, int) {
+func selectedAgentSettings(selected *agents.ResolvedAgent, state *AgentSessionState) (string, int) {
 	if selected != nil && strings.TrimSpace(selected.SystemPrompt) != "" {
 		return selected.SystemPrompt, selectedMaxTurns(selected, state.BaselineMaxSteps)
 	}
@@ -286,7 +286,7 @@ type agentSurface struct {
 
 // commitTo installs a successfully built surface's derived state. Callers hold
 // state.mu.
-func (s *agentSurface) commitTo(state *agentSessionState) {
+func (s *agentSurface) commitTo(state *AgentSessionState) {
 	state.TierPlan = s.plan
 	state.SkillRegFull = s.skillRegFull
 	state.SkillScope = s.skillScope
@@ -295,7 +295,7 @@ func (s *agentSurface) commitTo(state *agentSessionState) {
 // buildAgentScopedSurface builds a fresh agent binding's surface: it loads
 // skills from disk, freezes this binding's core/deferred tool split, and admits
 // nothing. Every admission after this point reuses the frozen plan.
-func buildAgentScopedSurface(sess *chat.Session, res *config.Resolved, state *agentSessionState, selected *agents.ResolvedAgent) (*agentSurface, error) {
+func buildAgentScopedSurface(sess *chat.Session, res *config.Resolved, state *AgentSessionState, selected *agents.ResolvedAgent) (*agentSurface, error) {
 	root := state.WorkspaceRoot
 	if root == "" {
 		root = "."
@@ -317,7 +317,7 @@ func buildAgentScopedSurface(sess *chat.Session, res *config.Resolved, state *ag
 // a tail (plan tools/05 D7). It reuses the frozen tier plan and the already
 // loaded skill registry, so it performs no disk I/O and cannot change the
 // prompt index, the core block, or the skill policy.
-func buildWidenedWith(sess *chat.Session, res *config.Resolved, state *agentSessionState, admitted []string) (*agentSurface, error) {
+func buildWidenedWith(sess *chat.Session, res *config.Resolved, state *AgentSessionState, admitted []string) (*agentSurface, error) {
 	if state.SkillRegFull == nil {
 		return nil, fmt.Errorf("tool admission: no skill registry captured for this binding")
 	}
@@ -353,7 +353,7 @@ type surfaceBuildRequest struct {
 	skipAdvertised bool
 }
 
-func buildSurfaceFromBase(sess *chat.Session, res *config.Resolved, state *agentSessionState, req surfaceBuildRequest) (*agentSurface, error) {
+func buildSurfaceFromBase(sess *chat.Session, res *config.Resolved, state *AgentSessionState, req surfaceBuildRequest) (*agentSurface, error) {
 	selected, base, skillReg, plan, admitted := req.selected, req.base, req.skillReg, req.plan, req.admitted
 	binding := sess.CurrentBinding()
 	if req.binding != nil {
@@ -410,7 +410,7 @@ func buildSurfaceFromBase(sess *chat.Session, res *config.Resolved, state *agent
 // build. The session owns the ledger store, so no rebuilt dispatcher opens one
 // it would then close on publication - under the spool this surface carries.
 // Callers hold state.mu, so the repository field is read directly.
-func dispatcherOptsForSurface(sess *chat.Session, res *config.Resolved, state *agentSessionState, binding chat.ModelBinding, registry, authority *tools.Registry, skillReg *skills.Registry, skillScope agentSkillScope, plan toolTierPlan, root string) SessionDispatcherOpts {
+func dispatcherOptsForSurface(sess *chat.Session, res *config.Resolved, state *AgentSessionState, binding chat.ModelBinding, registry, authority *tools.Registry, skillReg *skills.Registry, skillScope agentSkillScope, plan toolTierPlan, root string) SessionDispatcherOpts {
 	cfg := config.SubagentConfig{}
 	var modelCatalog []config.ProviderModelGroup
 	if res != nil {

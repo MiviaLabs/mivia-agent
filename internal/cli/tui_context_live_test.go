@@ -17,7 +17,7 @@ import (
 // them (the gap that left the status bar frozen at its turn-start percentage
 // until the whole turn finished).
 func TestTokenUsageEventReachesBridgeAsCtxTokens(t *testing.T) {
-	b := newStreamBridge()
+	b := NewStreamBridge()
 	cb := agentEventBridgeCallback(b)
 	typed, err := events.NewTokenUsageEvent("deepseek", "deepseek-chat", 500, 40, 480, 1.0)
 	if err != nil {
@@ -93,7 +93,7 @@ func TestLiveContextUsagePerStepBeatsStaleSessionMessages(t *testing.T) {
 	// Simulate a step's EventTokenUsage arriving through the bridge: the
 	// provider reported 500 input tokens for that step's own request, well
 	// above what the stale session history would estimate.
-	m.updateFromDrain(bridgeDrain{CtxTokens: 500, CtxTokensSet: true})
+	m.updateFromDrain(BridgeDrain{CtxTokens: 500, CtxTokensSet: true})
 
 	if got := m.liveCtxPercent(); got != 50 {
 		t.Fatalf("liveCtxPercent() = %d, want 50 (500/1000 budget) from the live per-step sample", got)
@@ -123,7 +123,7 @@ func TestLiveContextUsageSurvivesQuietStretchBetweenSteps(t *testing.T) {
 	}
 	m.waiting = true
 
-	m.updateFromDrain(bridgeDrain{CtxTokens: 500, CtxTokensSet: true})
+	m.updateFromDrain(BridgeDrain{CtxTokens: 500, CtxTokensSet: true})
 	if got := m.liveCtxPercent(); got != 50 {
 		t.Fatalf("liveCtxPercent() right after the push = %d, want 50", got)
 	}

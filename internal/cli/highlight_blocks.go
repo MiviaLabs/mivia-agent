@@ -255,7 +255,7 @@ func getCodeIcon(lang string) string {
 	case "diff", "patch", "udiff":
 		return "±"
 	case "go":
-		return glyphDiamond
+		return GlyphDiamond
 	case "python":
 		return "▶"
 	case "javascript", "typescript":
@@ -269,6 +269,6 @@ func getCodeIcon(lang string) string {
 	case "shell", "bash", "sh":
 		return "$"
 	default:
-		return glyphDiamond
+		return GlyphDiamond
 	}
 }

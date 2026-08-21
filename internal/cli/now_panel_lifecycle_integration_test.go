@@ -177,7 +177,7 @@ func TestIntegrationNowPanelDropsFinishedTool(t *testing.T) {
 	m.turnStart = time.Now()
 	now := time.Now()
 
-	m.updateFromDrain(bridgeDrain{Tools: []bridgeToolEvt{
+	m.updateFromDrain(BridgeDrain{Tools: []bridgeToolEvt{
 		{Start: true, ToolCallID: "c1", Name: "grep", Detail: `{"q":"x"}`, At: now},
 		{Start: true, ToolCallID: "c2", Name: "read_file", Detail: `{"path":"a"}`, At: now},
 	}})
@@ -185,7 +185,7 @@ func TestIntegrationNowPanelDropsFinishedTool(t *testing.T) {
 		t.Fatalf("both open tools must show in now:\n%s", got)
 	}
 
-	m.updateFromDrain(bridgeDrain{Tools: []bridgeToolEvt{
+	m.updateFromDrain(BridgeDrain{Tools: []bridgeToolEvt{
 		{ToolCallID: "c1", Name: "grep", Detail: "3 matches", At: now},
 	}})
 

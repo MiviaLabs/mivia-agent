@@ -35,7 +35,7 @@ func compactionTestEvent(t *testing.T) events.CompactionEvent {
 // kept the suite green.
 func TestCompactionEventReachesBridgeAsBanner(t *testing.T) {
 	typed := compactionTestEvent(t)
-	bridge := newStreamBridge()
+	bridge := NewStreamBridge()
 	agentEventBridgeCallback(bridge)(agent.Event{Kind: agent.EventCompaction, Compaction: &typed})
 
 	drain := bridge.Drain()
@@ -59,7 +59,7 @@ func TestCompactionEventReachesBridgeAsBanner(t *testing.T) {
 // TestCompactionEventWithoutPayloadPushesNoBanner pins the nil guard: a
 // compaction event that carries no typed record must not open a row.
 func TestCompactionEventWithoutPayloadPushesNoBanner(t *testing.T) {
-	bridge := newStreamBridge()
+	bridge := NewStreamBridge()
 	agentEventBridgeCallback(bridge)(agent.Event{Kind: agent.EventCompaction, Detail: "context compacted"})
 	if drain := bridge.Drain(); len(drain.Tools) != 0 {
 		t.Fatalf("payload-less compaction pushed %d tool rows, want 0", len(drain.Tools))

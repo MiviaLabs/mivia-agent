@@ -169,7 +169,7 @@ func TestIntegrationModelDialogCommitsEnabledCrossProviderSelection(t *testing.T
 func TestIntegrationModelDialogDirectCommandUsesCurrentProvider(t *testing.T) {
 	res := loadPickerConfigWithEnv(t, "DEEPSEEK_API_KEY=picker-key\nOPENROUTER_API_KEY=router-key\n")
 	sess := chat.NewSession(res, welcomeStubCompleter{})
-	if _, err := switchModelCommand(sess, res, "openrouter", "openai/gpt-4o-mini"); err != nil {
+	if _, err := SwitchModelCommand(sess, res, "openrouter", "openai/gpt-4o-mini"); err != nil {
 		t.Fatal(err)
 	}
 	termOutput := new(strings.Builder)

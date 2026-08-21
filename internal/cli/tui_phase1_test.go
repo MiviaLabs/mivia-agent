@@ -211,8 +211,8 @@ func TestBridgeDrainNotDoubleProcessed(t *testing.T) {
 // TestTuiTickMsgIgnoresStaleBridge verifies that a tick from a stale bridge
 // is NOT drained but pollCmd IS still re-queued (chain stays alive).
 func TestTuiTickMsgIgnoresStaleBridge(t *testing.T) {
-	oldBridge := newStreamBridge()
-	currentBridge := newStreamBridge()
+	oldBridge := NewStreamBridge()
+	currentBridge := NewStreamBridge()
 	m := &tuiModel{
 		bridge:    currentBridge,
 		waiting:   true,

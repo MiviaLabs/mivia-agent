@@ -338,7 +338,7 @@ func TestDispatcherAgreesWithSessionRegistryAfterAttach(t *testing.T) {
 	reg := agents.NewRegistry()
 	_ = reg.Publish(*selected)
 
-	state := &agentSessionState{
+	state := &AgentSessionState{
 		Registry:           reg,
 		Selected:           selected,
 		Global:             config.AgentsGlobal{},
@@ -414,7 +414,7 @@ func TestDispatcherAgreesAfterAgentSwitch(t *testing.T) {
 	sess.SetDispatcher(seedDispatcher)
 
 	// Switch to read-only agent.
-	if err := applySessionAgent(sess, res, state, "reader", false); err != nil {
+	if err := ApplySessionAgent(sess, res, state, "reader", false); err != nil {
 		t.Fatalf("switch to reader: %v", err)
 	}
 	if _, ok := sess.Tools.Get("write_file"); ok {
@@ -460,7 +460,7 @@ func TestGuardrailDeniedToolExcludedAtRoot(t *testing.T) {
 	reg := agents.NewRegistry()
 	_ = reg.Publish(*selected)
 
-	state := &agentSessionState{
+	state := &AgentSessionState{
 		Registry:           reg,
 		Selected:           selected,
 		Global:             config.AgentsGlobal{MandatoryToolDenylistAdditions: []string{"run_command"}},

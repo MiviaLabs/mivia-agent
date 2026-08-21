@@ -5,14 +5,18 @@ import (
 	"unicode/utf8"
 )
 
-func min(a, b int) int {
+// Min returns the smaller of a and b. Shared with internal/legacytui's
+// layout math.
+func Min(a, b int) int {
 	if a < b {
 		return a
 	}
 	return b
 }
 
-func max(a, b int) int {
+// Max returns the larger of a and b. Shared with internal/legacytui's
+// layout math.
+func Max(a, b int) int {
 	if a > b {
 		return a
 	}
@@ -27,10 +31,10 @@ func truncateStr(s string, n int) string {
 	return s[:n] + "..."
 }
 
-// visibleWidth returns the visible (display) width of a string, ignoring
+// VisibleWidth returns the visible (display) width of a string, ignoring
 // ANSI escape sequences (which are zero-width). Multi-byte CJK chars count
 // as 2, everything else as 1.
-func visibleWidth(s string) int {
+func VisibleWidth(s string) int {
 	w := 0
 	i := 0
 	for i < len(s) {
@@ -73,11 +77,11 @@ func stripAnsiOut(s string) string {
 	return out.String()
 }
 
-// wrapANSIv2 wraps a string containing ANSI escape sequences to a maximum
+// WrapANSIv2 wraps a string containing ANSI escape sequences to a maximum
 // visible width. ANSI sequences are zero-width and preserved in the output.
 // It breaks lines at word boundaries (spaces). If no space is found within
 // maxWidth, the line is output as-is (no hard break of words).
-func wrapANSIv2(s string, maxWidth int) string {
+func WrapANSIv2(s string, maxWidth int) string {
 	if maxWidth < 5 {
 		maxWidth = 5
 	}
@@ -108,7 +112,7 @@ func hardTruncateANSI(line string, maxWidth int) string {
 	if maxWidth < 1 {
 		return AnsiReset
 	}
-	if visibleWidth(line) <= maxWidth {
+	if VisibleWidth(line) <= maxWidth {
 		if strings.HasSuffix(line, AnsiReset) {
 			return line
 		}
@@ -162,7 +166,7 @@ func wrapLineV2(line string, maxWidth int) string {
 		return ""
 	}
 	// Quick check: if visible width is within limit, return as-is.
-	if visibleWidth(line) <= maxWidth {
+	if VisibleWidth(line) <= maxWidth {
 		return line
 	}
 
@@ -251,7 +255,7 @@ func wrapLineChunks(line string, maxWidth int) string {
 
 // wrapANSI is the public wrapper. It uses wrapANSIv2 internally.
 func wrapANSI(s string, maxWidth int) string {
-	return wrapANSIv2(s, maxWidth)
+	return WrapANSIv2(s, maxWidth)
 }
 
 // Markdown help content for /help in TUI.

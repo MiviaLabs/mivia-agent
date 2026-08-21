@@ -74,13 +74,13 @@ func TestHistoryOverlayOpenClose(t *testing.T) {
 	m := newReadyChatModel(24, 80)
 
 	m.openHistory()
-	if !m.history.open || m.history.selected != 0 {
-		t.Fatalf("openHistory: expected open==true && selected==0, got open=%v selected=%d", m.history.open, m.history.selected)
+	if !m.history.Open || m.history.Selected != 0 {
+		t.Fatalf("openHistory: expected open==true && selected==0, got open=%v selected=%d", m.history.Open, m.history.Selected)
 	}
 
 	m.closeHistory()
-	if m.history.open || m.history.selected != 0 {
-		t.Fatalf("closeHistory: expected open==false && selected==0, got open=%v selected=%d", m.history.open, m.history.selected)
+	if m.history.Open || m.history.Selected != 0 {
+		t.Fatalf("closeHistory: expected open==false && selected==0, got open=%v selected=%d", m.history.Open, m.history.Selected)
 	}
 }
 
@@ -118,8 +118,8 @@ func TestHistoryOverlayKeyOpenOnUpAtOriginNotConsumed(t *testing.T) {
 	if handled != false || skipView != false {
 		t.Fatalf("open trigger: expected (false, false, nil), got (handled=%v skipView=%v)", handled, skipView)
 	}
-	if !m.history.open || m.history.selected != 0 {
-		t.Fatalf("open trigger: expected history open with selected==0, got open=%v selected=%d", m.history.open, m.history.selected)
+	if !m.history.Open || m.history.Selected != 0 {
+		t.Fatalf("open trigger: expected history open with selected==0, got open=%v selected=%d", m.history.Open, m.history.Selected)
 	}
 }
 
@@ -133,7 +133,7 @@ func TestHistoryOverlayKeyNoOpenOnEmptyHistory(t *testing.T) {
 	if handled != false || skipView != false {
 		t.Fatalf("empty history: expected (false, false, nil), got (handled=%v skipView=%v)", handled, skipView)
 	}
-	if m.history.open {
+	if m.history.Open {
 		t.Fatal("empty history: popup must not open")
 	}
 }
@@ -155,7 +155,7 @@ func TestHistoryOverlayKeyNoOpenOnMidLine(t *testing.T) {
 	if handled != false || skipView != false {
 		t.Fatalf("mid-line: expected (false, false, nil), got (handled=%v skipView=%v)", handled, skipView)
 	}
-	if m.history.open {
+	if m.history.Open {
 		t.Fatal("mid-line: popup must not open")
 	}
 }
@@ -179,7 +179,7 @@ func TestHistoryOverlayKeyNoOpenOnLineTwo(t *testing.T) {
 	if handled != false || skipView != false {
 		t.Fatalf("line two: expected (false, false, nil), got (handled=%v skipView=%v)", handled, skipView)
 	}
-	if m.history.open {
+	if m.history.Open {
 		t.Fatal("line two: popup must not open")
 	}
 }
@@ -196,7 +196,7 @@ func TestHistoryOverlayKeyNoOpenWhenSuggestOpen(t *testing.T) {
 	if handled != false || skipView != false {
 		t.Fatalf("suggest open: expected (false, false, nil), got (handled=%v skipView=%v)", handled, skipView)
 	}
-	if m.history.open {
+	if m.history.Open {
 		t.Fatal("suggest open: popup must not open")
 	}
 }
@@ -212,7 +212,7 @@ func TestHistoryOverlayKeyNoOpenInWelcomeMode(t *testing.T) {
 	if handled != false || skipView != false {
 		t.Fatalf("welcome mode: expected (false, false, nil), got (handled=%v skipView=%v)", handled, skipView)
 	}
-	if m.history.open {
+	if m.history.Open {
 		t.Fatal("welcome mode: popup must not open")
 	}
 }
@@ -228,7 +228,7 @@ func TestHistoryOverlayKeyDownDoesNotOpen(t *testing.T) {
 	if handled != false || skipView != false {
 		t.Fatalf("down with popup closed: expected (false, false, nil), got (handled=%v skipView=%v)", handled, skipView)
 	}
-	if m.history.open {
+	if m.history.Open {
 		t.Fatal("down with popup closed: popup must not open")
 	}
 }
@@ -246,8 +246,8 @@ func TestHistoryOverlayKeyNavigateStopAtOldest(t *testing.T) {
 		if handled != true || skipView != true {
 			t.Fatalf("up #%d: expected consumed (true, true, nil), got (handled=%v skipView=%v)", want, handled, skipView)
 		}
-		if m.history.selected != want {
-			t.Fatalf("up #%d: expected selected==%d, got %d", want, want, m.history.selected)
+		if m.history.Selected != want {
+			t.Fatalf("up #%d: expected selected==%d, got %d", want, want, m.history.Selected)
 		}
 	}
 
@@ -256,10 +256,10 @@ func TestHistoryOverlayKeyNavigateStopAtOldest(t *testing.T) {
 	if handled != true || skipView != true {
 		t.Fatalf("up at oldest: expected consumed (true, true, nil), got (handled=%v skipView=%v)", handled, skipView)
 	}
-	if m.history.selected != 2 {
-		t.Fatalf("up at oldest: expected selected to stop at 2, got %d", m.history.selected)
+	if m.history.Selected != 2 {
+		t.Fatalf("up at oldest: expected selected to stop at 2, got %d", m.history.Selected)
 	}
-	if !m.history.open {
+	if !m.history.Open {
 		t.Fatal("up at oldest: popup must stay open")
 	}
 }
@@ -271,15 +271,15 @@ func TestHistoryOverlayKeyDownAtNewestDismisses(t *testing.T) {
 	m.setFocus(focusComposer)
 	m.sentHistory = []string{"older", "newer"} // entries: newer, older
 	m.openHistory()
-	if !m.history.open || m.history.selected != 0 {
-		t.Fatalf("precondition: popup must be open at newest, got open=%v selected=%d", m.history.open, m.history.selected)
+	if !m.history.Open || m.history.Selected != 0 {
+		t.Fatalf("precondition: popup must be open at newest, got open=%v selected=%d", m.history.Open, m.history.Selected)
 	}
 
 	handled, skipView, _ := m.handleHistoryKey("down")
 	if handled != true || skipView != true {
 		t.Fatalf("down at newest: expected consumed (true, true, nil), got (handled=%v skipView=%v)", handled, skipView)
 	}
-	if m.history.open {
+	if m.history.Open {
 		t.Fatal("down at newest: popup must close")
 	}
 }
@@ -293,18 +293,18 @@ func TestHistoryOverlayKeyDownMovesTowardNewest(t *testing.T) {
 	m.openHistory()
 	m.handleHistoryKey("up")
 	m.handleHistoryKey("up")
-	if m.history.selected != 2 {
-		t.Fatalf("precondition: expected selected==2 after two ups, got %d", m.history.selected)
+	if m.history.Selected != 2 {
+		t.Fatalf("precondition: expected selected==2 after two ups, got %d", m.history.Selected)
 	}
 
 	handled, skipView, _ := m.handleHistoryKey("down")
 	if handled != true || skipView != true {
 		t.Fatalf("down from oldest: expected consumed (true, true, nil), got (handled=%v skipView=%v)", handled, skipView)
 	}
-	if m.history.selected != 1 {
-		t.Fatalf("down from oldest: expected selected==1, got %d", m.history.selected)
+	if m.history.Selected != 1 {
+		t.Fatalf("down from oldest: expected selected==1, got %d", m.history.Selected)
 	}
-	if !m.history.open {
+	if !m.history.Open {
 		t.Fatal("down from oldest: popup must stay open")
 	}
 }
@@ -317,15 +317,15 @@ func TestHistoryOverlayKeyEnterRecallsAndReplacesDraft(t *testing.T) {
 	m.sentHistory = []string{"old", "recent"} // entries: recent, old
 	m.textarea.SetValue("draft")
 	m.openHistory()
-	if !m.history.open || m.history.selected != 0 {
-		t.Fatalf("precondition: popup must be open at newest, got open=%v selected=%d", m.history.open, m.history.selected)
+	if !m.history.Open || m.history.Selected != 0 {
+		t.Fatalf("precondition: popup must be open at newest, got open=%v selected=%d", m.history.Open, m.history.Selected)
 	}
 
 	handled, skipView, _ := m.handleHistoryKey("enter")
 	if handled != true || skipView != true {
 		t.Fatalf("enter: expected consumed (true, true, nil), got (handled=%v skipView=%v)", handled, skipView)
 	}
-	if m.history.open {
+	if m.history.Open {
 		t.Fatal("enter: popup must close")
 	}
 	if got := m.textarea.Value(); got != "recent" {
@@ -346,7 +346,7 @@ func TestHistoryOverlayKeyEscDismissesKeepsDraft(t *testing.T) {
 	if handled != true || skipView != true {
 		t.Fatalf("esc: expected consumed (true, true, nil), got (handled=%v skipView=%v)", handled, skipView)
 	}
-	if m.history.open {
+	if m.history.Open {
 		t.Fatal("esc: popup must close")
 	}
 	if got := m.textarea.Value(); got != "draft" {
@@ -361,7 +361,7 @@ func TestHistoryOverlayKeyOtherKeyClosesAndPassesThrough(t *testing.T) {
 	m.setFocus(focusComposer)
 	m.sentHistory = []string{"one"}
 	m.openHistory()
-	if !m.history.open {
+	if !m.history.Open {
 		t.Fatal("precondition: popup must be open")
 	}
 
@@ -369,7 +369,7 @@ func TestHistoryOverlayKeyOtherKeyClosesAndPassesThrough(t *testing.T) {
 	if handled != false || skipView != false {
 		t.Fatalf("other key: expected pass-through (false, false, nil), got (handled=%v skipView=%v)", handled, skipView)
 	}
-	if m.history.open {
+	if m.history.Open {
 		t.Fatal("other key: popup must close")
 	}
 }
@@ -453,9 +453,9 @@ func TestHistoryOverlayRegisteredKeysReallyBound(t *testing.T) {
 			// Open the picker via the real trigger: 'up' at the composer
 			// origin (the trigger itself is not consumed).
 			m.handleHistoryKey("up")
-			if !m.history.open || m.history.selected != 0 {
+			if !m.history.Open || m.history.Selected != 0 {
 				t.Fatalf("%s: precondition: picker must be open at the newest entry, got open=%v selected=%d",
-					key, m.history.open, m.history.selected)
+					key, m.history.Open, m.history.Selected)
 			}
 
 			handled, _, _ := m.handleHistoryKey(key)
@@ -466,16 +466,16 @@ func TestHistoryOverlayRegisteredKeysReallyBound(t *testing.T) {
 				if !handled {
 					t.Errorf("%s: navigate key must be consumed while the picker is open", key)
 				}
-				if !m.history.open || m.history.selected != 1 {
+				if !m.history.Open || m.history.Selected != 1 {
 					t.Errorf("%s: expected selection to move to index 1 and stay open, got open=%v selected=%d",
-						key, m.history.open, m.history.selected)
+						key, m.history.Open, m.history.Selected)
 				}
 			case "down", "ctrl+n":
 				// At the newest entry (selected==0) it dismisses, consumed.
 				if !handled {
 					t.Errorf("%s: dismiss-at-newest key must be consumed while the picker is open", key)
 				}
-				if m.history.open {
+				if m.history.Open {
 					t.Errorf("%s: expected the picker to close on %s at the newest entry", key, key)
 				}
 			case "enter", "tab":
@@ -483,16 +483,16 @@ func TestHistoryOverlayRegisteredKeysReallyBound(t *testing.T) {
 				if !handled {
 					t.Errorf("%s: recall key must be consumed while the picker is open", key)
 				}
-				if m.history.open || m.textarea.Value() != "two" {
+				if m.history.Open || m.textarea.Value() != "two" {
 					t.Errorf("%s: expected recall to close the picker and restore %q, got open=%v draft=%q",
-						key, "two", m.history.open, m.textarea.Value())
+						key, "two", m.history.Open, m.textarea.Value())
 				}
 			case "esc", "shift+tab":
 				// Dismisses, consumed.
 				if !handled {
 					t.Errorf("%s: dismiss key must be consumed while the picker is open", key)
 				}
-				if m.history.open {
+				if m.history.Open {
 					t.Errorf("%s: expected the picker to close on %s", key, key)
 				}
 			default:
@@ -574,7 +574,7 @@ func TestHistoryOverlayLifecycleDedupeOnSend(t *testing.T) {
 func TestHistoryOverlayLifecycleClearResets(t *testing.T) {
 	m := newReadyChatModel(24, 80)
 	m.sentHistory = []string{"a"}
-	m.history.open = true
+	m.history.Open = true
 
 	if !m.handleSlash("/clear") {
 		t.Fatal("/clear must be handled")
@@ -583,7 +583,7 @@ func TestHistoryOverlayLifecycleClearResets(t *testing.T) {
 	if len(m.sentHistory) != 0 {
 		t.Fatalf("/clear must reset sentHistory, got %v", m.sentHistory)
 	}
-	if m.history.open {
+	if m.history.Open {
 		t.Fatal("/clear must close the history popup")
 	}
 }
@@ -611,13 +611,13 @@ func TestHistoryOverlayLifecycleFocusChangeCloses(t *testing.T) {
 	m.textarea.SetCursor(0)
 
 	m.handleHistoryKey("up")
-	if !m.history.open {
+	if !m.history.Open {
 		t.Fatal("precondition: popup must be open at the composer origin")
 	}
 
 	m.setFocus(focusScrollback)
 
-	if m.history.open {
+	if m.history.Open {
 		t.Fatal("focus change away from the composer must close the history popup")
 	}
 }
@@ -632,13 +632,13 @@ func TestHistoryOverlayLifecyclePasteCloses(t *testing.T) {
 	m.textarea.SetCursor(0)
 
 	m.handleHistoryKey("up")
-	if !m.history.open {
+	if !m.history.Open {
 		t.Fatal("precondition: popup must be open at the composer origin")
 	}
 
 	_, _ = m.Update(pasteMsg("pasted text"))
 
-	if m.history.open {
+	if m.history.Open {
 		t.Fatal("bracketed paste must close the history popup")
 	}
 	if got := m.textarea.Value(); got != "pasted text" {
@@ -653,12 +653,12 @@ func TestHistoryOverlayLifecycleLoadSlashResets(t *testing.T) {
 	m := newSmokeModel(t)
 	m.session.SessionDir = t.TempDir()
 	m.sentHistory = []string{"alpha"}
-	m.history.open = true
+	m.history.Open = true
 
 	if !m.handleTuiSessionStoreSlash("/load", []string{"/load", "never-saved"}) {
 		t.Fatal("/load was not handled")
 	}
-	if len(m.sentHistory) != 1 || !m.history.open {
+	if len(m.sentHistory) != 1 || !m.history.Open {
 		t.Fatal("a failed /load must not reset the previous session's history")
 	}
 
@@ -668,7 +668,7 @@ func TestHistoryOverlayLifecycleLoadSlashResets(t *testing.T) {
 	if !m.handleTuiSessionStoreSlash("/load", []string{"/load", "sess-b"}) {
 		t.Fatal("/load was not handled")
 	}
-	if len(m.sentHistory) != 0 || m.history.open {
-		t.Fatalf("a successful /load must reset sentHistory and close the popup, got %v open=%v", m.sentHistory, m.history.open)
+	if len(m.sentHistory) != 0 || m.history.Open {
+		t.Fatalf("a successful /load must reset sentHistory and close the popup, got %v open=%v", m.sentHistory, m.history.Open)
 	}
 }

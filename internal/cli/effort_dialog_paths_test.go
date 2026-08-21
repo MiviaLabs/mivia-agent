@@ -485,7 +485,7 @@ func TestFormatEffortStatusNamesEachState(t *testing.T) {
 	}
 	for label, tc := range cases {
 		t.Run(label, func(t *testing.T) {
-			got := formatEffortStatus(tc.setting, tc.offers)
+			got := FormatEffortStatus(tc.setting, tc.offers)
 			for _, want := range tc.want {
 				if !strings.Contains(got, want) {
 					t.Fatalf("status = %q, want it to mention %q", got, want)
@@ -502,7 +502,7 @@ func TestFormatEffortStatusNamesEachState(t *testing.T) {
 // inventing a shape. Configuration refuses that pairing, so this is the
 // formatter refusing to guess rather than a state a session can reach.
 func TestFormatEffortStatusPrintsBareWhenNoDialectResolves(t *testing.T) {
-	got := formatEffortStatus(reasoning.Setting{Level: reasoning.High}, true)
+	got := FormatEffortStatus(reasoning.Setting{Level: reasoning.High}, true)
 	if got != "high" {
 		t.Fatalf("status = %q, want a bare level with no invented dialect", got)
 	}

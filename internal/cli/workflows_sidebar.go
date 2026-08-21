@@ -211,7 +211,7 @@ func (s *workflowsSidebar) clampScroll(rows []workflowRunRow, space int) {
 		s.scroll = 0
 		return
 	}
-	space = max(1, space)
+	space = Max(1, space)
 	tops := s.rowTops(rows)
 	selTop := tops[s.cursor]
 	selBottom := selTop + workflowRunRowLines(rows[s.cursor], true)
@@ -222,14 +222,14 @@ func (s *workflowsSidebar) clampScroll(rows []workflowRunRow, space int) {
 		s.scroll = selBottom - space
 	}
 	last := tops[len(tops)-1] + workflowRunRowLines(rows[len(rows)-1], len(rows)-1 == s.cursor)
-	s.scroll = min(max(0, s.scroll), max(0, last-space))
+	s.scroll = Min(Max(0, s.scroll), Max(0, last-space))
 }
 
 // cursorAt returns the sidebar cursor for a terminal row y, or ok=false when
 // the row is not part of the list.
 func (s *workflowsSidebar) cursorAt(rows []workflowRunRow, width, height, y int) (int, bool) {
 	_ = width
-	if y < 0 || y >= max(1, height) {
+	if y < 0 || y >= Max(1, height) {
 		return 0, false
 	}
 	if y < workflowsRowsY {
@@ -248,13 +248,13 @@ func (s *workflowsSidebar) cursorAt(rows []workflowRunRow, width, height, y int)
 
 // view renders the workflow-run sidebar.
 func (s *workflowsSidebar) view(width, height int, focused bool) string {
-	width = max(1, width)
-	height = max(1, height)
+	width = Max(1, width)
+	height = Max(1, height)
 	rows := s.rows
 	s.move(rows, 0)
 	footer := s.footerLines(width)
 	chrome := workflowsChromeRows + len(footer) - 1
-	space := max(1, height-chrome)
+	space := Max(1, height-chrome)
 	if len(rows) > 0 {
 		s.clampScroll(rows, space)
 	}
@@ -289,14 +289,14 @@ func (s *workflowsSidebar) renderRunRow(row workflowRunRow, selected bool, width
 	if selected {
 		marker = "▸ "
 	}
-	budget := max(1, width-runeWidth(marker))
+	budget := Max(1, width-RuneWidth(marker))
 	// One cell is reserved for the status dot so the name truncation happens
 	// before the dot enters the width math (mirrors the sessions sidebar).
-	budget = max(1, budget-1)
-	name := truncateToWidth(row.run.WorkflowName, budget)
+	budget = Max(1, budget-1)
+	name := TruncateToWidth(row.run.WorkflowName, budget)
 	dot := s.renderRunDot(row, width >= sidebarStatusColorMinWidth)
 	line := marker + dot + name
-	line = line + strings.Repeat(" ", max(0, width-lipgloss.Width(line)))
+	line = line + strings.Repeat(" ", Max(0, width-lipgloss.Width(line)))
 	if selected {
 		line = sidebarSelectedStyle(width, focused).Render(line)
 	}
@@ -311,14 +311,14 @@ func (s *workflowsSidebar) renderRunRow(row workflowRunRow, selected bool, width
 	if step == "" {
 		step = "-"
 	}
-	metadata := "   step " + truncateToWidth(step, max(1, width-8))
+	metadata := "   step " + TruncateToWidth(step, Max(1, width-8))
 	lines := []string{line, TUIDimStyle.Render(sidebarPad(metadata, width))}
 	if selected {
 		if row.description != "" {
-			lines = append(lines, TUIDimStyle.Render(sidebarPad("   "+truncateToWidth(row.description, max(1, width-4)), width)))
+			lines = append(lines, TUIDimStyle.Render(sidebarPad("   "+TruncateToWidth(row.description, Max(1, width-4)), width)))
 		}
 		if row.nextStep != "" {
-			lines = append(lines, TUIDimStyle.Render(sidebarPad("   next: "+truncateToWidth(row.nextStep, max(1, width-10)), width)))
+			lines = append(lines, TUIDimStyle.Render(sidebarPad("   next: "+TruncateToWidth(row.nextStep, Max(1, width-10)), width)))
 		}
 	}
 	return lines
@@ -353,7 +353,7 @@ func (s *workflowsSidebar) footer() string {
 // sidebar width (20 columns at the minimum).
 func (s *workflowsSidebar) footerLines(width int) []string {
 	text := s.footer()
-	if runeWidth(text) <= width {
+	if RuneWidth(text) <= width {
 		return []string{text}
 	}
 	if len(s.rows) == 0 {

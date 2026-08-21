@@ -117,7 +117,7 @@ func itoa(n int) string {
 // captures every tool event from concurrent goroutines and the TUI model
 // applies them without deadlock or panic.
 func TestStreamBridgeConcurrentDispatchCompleteness(t *testing.T) {
-	b := newStreamBridge()
+	b := NewStreamBridge()
 	const numWorkers = 8
 	const eventsPerWorker = 30
 	// Each worker produces a Start+End pair per event = 2 events per iteration
@@ -217,7 +217,7 @@ func TestStreamBridgeConcurrentDispatchAndTUIApply(t *testing.T) {
 // Write+Drain from separate goroutines (simulates agent-producer +
 // TUI-consumer). Must not deadlock or produce inconsistent state.
 func TestBridgeConcurrentWriteAndDrainRace(t *testing.T) {
-	b := newStreamBridge()
+	b := NewStreamBridge()
 	const iterations = 200
 
 	var wg sync.WaitGroup
@@ -262,7 +262,7 @@ func TestBridgeConcurrentWriteAndDrainRace(t *testing.T) {
 // concurrent goroutines does not deadlock (simulates agent loop finishing
 // a turn while TUI is draining).
 func TestBridgeConcurrentFinishAndDrainRace(t *testing.T) {
-	b := newStreamBridge()
+	b := NewStreamBridge()
 	finished := make(chan struct{}, 1)
 
 	var wg sync.WaitGroup
@@ -320,7 +320,7 @@ func TestBridgeConcurrentFinishAndDrainRace(t *testing.T) {
 // counting logic under concurrent Start/End pairs with mixed ID'd and
 // anonymous tools. Must not deadlock or produce negative activeTools.
 func TestStreamBridgeConcurrentActiveToolsNoDeadlock(t *testing.T) {
-	b := newStreamBridge()
+	b := NewStreamBridge()
 	const workers = 16
 	const eventsPerWorker = 100
 

@@ -95,7 +95,7 @@ func TestDiffWindowOmissionCountsReconcile(t *testing.T) {
 		t.Fatalf("fixture drifted: got %d lines, want 15", len(bodyLines))
 	}
 	const maxLines = 6
-	out := renderDiffBody(concreteDiffBody, 80, maxLines)
+	out := RenderDiffBody(concreteDiffBody, 80, maxLines)
 	plain := strings.Split(stripANSI(strings.Join(out, "\n")), "\n")
 	if len(plain) > maxLines {
 		t.Fatalf("window exceeds maxLines=%d: got %d lines\n%s", maxLines, len(plain), strings.Join(plain, "\n"))
@@ -202,7 +202,7 @@ func TestDiffBodyStartZeroTrailingUnchanged(t *testing.T) {
 	for i := 0; i < 200; i++ {
 		fmt.Fprintf(&b, "+added line %d\n", i)
 	}
-	out := renderDiffBody(b.String(), 80, 20)
+	out := RenderDiffBody(b.String(), 80, 20)
 	if len(out) > 20 {
 		t.Fatalf("window exceeds 20 lines: %d", len(out))
 	}

@@ -156,7 +156,7 @@ func (m *tuiModel) applySidebarSessionsConfirm() {
 	}
 	sidebar.confirm = confirmNone
 	if m.sessionSel >= len(m.sessions) {
-		m.sessionSel = max(0, len(m.sessions)-1)
+		m.sessionSel = Max(0, len(m.sessions)-1)
 	}
 }
 

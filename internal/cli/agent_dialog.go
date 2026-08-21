@@ -10,19 +10,19 @@ import (
 )
 
 // agentListRows builds ordered rows from a registry. Pure; unit-tested without TUI.
-func agentListRows(reg *agents.AgentRegistry, current string) []agentListRow {
+func agentListRows(reg *agents.AgentRegistry, current string) []AgentListRow {
 	if reg == nil {
 		return nil
 	}
 	current = strings.TrimSpace(current)
 	names := reg.Names()
-	out := make([]agentListRow, 0, len(names))
+	out := make([]AgentListRow, 0, len(names))
 	for _, name := range names {
 		a, ok := reg.Get(name)
 		if !ok {
 			continue
 		}
-		out = append(out, agentListRow{
+		out = append(out, AgentListRow{
 			Name:        a.Name,
 			Description: a.Description,
 			Current:     a.Name == current,
@@ -32,14 +32,14 @@ func agentListRows(reg *agents.AgentRegistry, current string) []agentListRow {
 }
 
 type agentDialog struct {
-	rows   []agentListRow
+	rows   []AgentListRow
 	cursor int
 	scroll int
 	notice string
 	busy   bool
 }
 
-func newAgentDialog(rows []agentListRow, busy bool) *agentDialog {
+func newAgentDialog(rows []AgentListRow, busy bool) *agentDialog {
 	d := &agentDialog{rows: rows, busy: busy}
 	for i, row := range rows {
 		if row.Current {
@@ -69,14 +69,14 @@ func (d *agentDialog) move(delta int) {
 }
 
 func (d *agentDialog) clampScroll(page int) {
-	page = max(1, page)
+	page = Max(1, page)
 	if d.cursor < d.scroll {
 		d.scroll = d.cursor
 	}
 	if d.cursor >= d.scroll+page {
 		d.scroll = d.cursor - page + 1
 	}
-	d.scroll = max(0, min(d.scroll, max(0, len(d.rows)-page)))
+	d.scroll = Max(0, Min(d.scroll, Max(0, len(d.rows)-page)))
 }
 
 func (d *agentDialog) layout(w, h int) DialogLayout {
@@ -84,25 +84,25 @@ func (d *agentDialog) layout(w, h int) DialogLayout {
 		rows := d.rowLinesAt(innerW, len(d.rows), 0)
 		maxW := 0
 		for _, row := range rows {
-			maxW = max(maxW, ansi.StringWidth(row))
+			maxW = Max(maxW, ansi.StringWidth(row))
 		}
 		return maxW, len(rows)
 	})
 }
 
 func (d *agentDialog) rowLines(inner, visible int) []string {
-	visible = max(1, visible)
+	visible = Max(1, visible)
 	d.clampScroll(visible)
 	return d.rowLinesAt(inner, visible, d.scroll)
 }
 
 func (d *agentDialog) rowLinesAt(inner, visible, scroll int) []string {
-	visible = max(1, visible)
+	visible = Max(1, visible)
 	if len(d.rows) == 0 {
 		return []string{TUIDimStyle.Render("no agents loaded")}
 	}
-	scroll = max(0, min(scroll, max(0, len(d.rows)-visible)))
-	end := min(len(d.rows), scroll+visible)
+	scroll = Max(0, Min(scroll, Max(0, len(d.rows)-visible)))
+	end := Min(len(d.rows), scroll+visible)
 	lines := make([]string, 0, end-scroll)
 	for i := scroll; i < end; i++ {
 		row := d.rows[i]
@@ -118,7 +118,7 @@ func (d *agentDialog) rowLinesAt(inner, visible, scroll int) []string {
 		if row.Description != "" {
 			text += TUIDimStyle.Render(" - " + row.Description)
 		}
-		lines = append(lines, ansi.Truncate(text, max(1, inner), "…"))
+		lines = append(lines, ansi.Truncate(text, Max(1, inner), "…"))
 	}
 	return lines
 }
@@ -126,7 +126,7 @@ func (d *agentDialog) rowLinesAt(inner, visible, scroll int) []string {
 func (d *agentDialog) ViewAt(w, h int) (string, DialogLayout) {
 	l := d.layout(w, h)
 	rows := d.rowLines(l.InnerW, l.PageH)
-	return renderDialogFrame("◇ agents", rows, d.footer(), l), l
+	return RenderDialogFrame("◇ agents", rows, d.footer(), l), l
 }
 
 func (d *agentDialog) footer() string {
@@ -139,22 +139,22 @@ func (d *agentDialog) footer() string {
 	return TUIDimStyle.Render("↑↓/j/k move · enter select · esc/q close")
 }
 
-func (d *agentDialog) selected() (agentListRow, bool) {
+func (d *agentDialog) selected() (AgentListRow, bool) {
 	if d.cursor < 0 || d.cursor >= len(d.rows) {
-		return agentListRow{}, false
+		return AgentListRow{}, false
 	}
 	return d.rows[d.cursor], true
 }
 
-func (d *agentDialog) rowAtY(y int, w, h int) (agentListRow, bool) {
+func (d *agentDialog) rowAtY(y int, w, h int) (AgentListRow, bool) {
 	l := d.layout(w, h)
 	local := y - l.Rect.Y - 1
 	if local < 0 || local >= l.PageH {
-		return agentListRow{}, false
+		return AgentListRow{}, false
 	}
 	index := d.scroll + local
 	if index < 0 || index >= len(d.rows) {
-		return agentListRow{}, false
+		return AgentListRow{}, false
 	}
 	return d.rows[index], true
 }
@@ -162,7 +162,7 @@ func (d *agentDialog) rowAtY(y int, w, h int) (agentListRow, bool) {
 func (m *tuiModel) openAgentDialog() {
 	m.closeSuggest()
 	m.closeHistory()
-	var rows []agentListRow
+	var rows []AgentListRow
 	if m.agentState != nil {
 		rows = agentListRows(m.agentState.Registry, currentAgentName(m.agentState))
 	}
@@ -170,7 +170,7 @@ func (m *tuiModel) openAgentDialog() {
 	m.hitMap.invalidate()
 }
 
-func (m *tuiModel) selectAgentDialogRow(row agentListRow) {
+func (m *tuiModel) selectAgentDialogRow(row AgentListRow) {
 	if m.waiting {
 		m.agentDlg.notice = "finish current work first"
 		return
@@ -189,7 +189,7 @@ func (m *tuiModel) handleAgentDialogKey(key string) (bool, bool, []tea.Cmd) {
 	if d == nil {
 		return true, true, nil
 	}
-	layout := d.layout(max(1, m.width), max(1, m.height))
+	layout := d.layout(Max(1, m.width), Max(1, m.height))
 	switch key {
 	case "esc", "q":
 		m.agentDlg = nil
@@ -207,9 +207,9 @@ func (m *tuiModel) handleAgentDialogKey(key string) (bool, bool, []tea.Cmd) {
 		}
 		d.clampScroll(layout.PageH)
 	case "pgup", "b":
-		d.move(-max(1, layout.PageH))
+		d.move(-Max(1, layout.PageH))
 	case "pgdown", "f", " ":
-		d.move(max(1, layout.PageH))
+		d.move(Max(1, layout.PageH))
 	case "enter":
 		if row, ok := d.selected(); ok {
 			m.selectAgentDialogRow(row)
@@ -219,7 +219,7 @@ func (m *tuiModel) handleAgentDialogKey(key string) (bool, bool, []tea.Cmd) {
 }
 
 func (m *tuiModel) switchAgent(name string) error {
-	return applySessionAgent(m.session, m.config, m.agentState, name, m.waiting)
+	return ApplySessionAgent(m.session, m.config, m.agentState, name, m.waiting)
 }
 
 func safeAgentError(err error) string {
@@ -239,7 +239,9 @@ func safeAgentError(err error) string {
 	}
 }
 
-func formatAgentUnavailable(err error) string {
+// FormatAgentUnavailable renders an agent-switch error for display. Shared
+// with internal/clichat's slash-command handlers.
+func FormatAgentUnavailable(err error) string {
 	if err == nil {
 		return "agent switch failed"
 	}

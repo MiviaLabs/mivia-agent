@@ -8,10 +8,12 @@ import "github.com/MiviaLabs/mivia-agent/internal/skills"
 // exactly how /help came to advertise the classic REPL's bindings in a UI
 // that implements none of them. The REPL keeps its own replHelpContent.
 func tuiHelpContent() []helpSection {
-	return tuiHelpContentFor(nil)
+	return TUIHelpContentFor(nil)
 }
 
-func tuiHelpContentFor(registry *skills.Registry) []helpSection {
+// TUIHelpContentFor builds the /help dialog content for a skills registry.
+// Shared with internal/legacytui's dialog TUI.
+func TUIHelpContentFor(registry *skills.Registry) []helpSection {
 	sections := append(tuiHelpCommandsFor(registry), keyHelpSections(keyRegistry)...)
 	return append(sections, tuiHelpNotes()...)
 }
@@ -35,12 +37,12 @@ func tuiHelpCommandsFor(registry *skills.Registry) []helpSection {
 		if command.ArgsHint != "" {
 			key += " " + command.ArgsHint
 		}
-		items = append(items, helpItem{key: key, desc: command.Description})
+		items = append(items, helpItem{Key: key, Desc: command.Description})
 	}
 	return []helpSection{
 		{
-			title: "Commands",
-			items: items,
+			Title: "Commands",
+			Items: items,
 		},
 	}
 }
@@ -50,13 +52,13 @@ func tuiHelpCommandsFor(registry *skills.Registry) []helpSection {
 func tuiHelpNotes() []helpSection {
 	return []helpSection{
 		{
-			title: "Good to know",
-			items: []helpItem{
-				{key: "Type while busy", desc: "Queues the message; empty Enter force-sends it"},
-				{key: "Shift+drag", desc: "Selects text without leaving mouse capture (Option on iTerm2)"},
-				{key: "Mouse", desc: "Wheel scrolls, click selects, right-click copies (MIVIA_MOUSE=0/1)"},
-				{key: "Copy delivery", desc: "wl-copy/xclip/xsel/pbcopy/clip, else OSC 52 (tmux: set-clipboard on)"},
-				{key: "Ctrl+O (welcome)", desc: "Continue the last session"},
+			Title: "Good to know",
+			Items: []helpItem{
+				{Key: "Type while busy", Desc: "Queues the message; empty Enter force-sends it"},
+				{Key: "Shift+drag", Desc: "Selects text without leaving mouse capture (Option on iTerm2)"},
+				{Key: "Mouse", Desc: "Wheel scrolls, click selects, right-click copies (MIVIA_MOUSE=0/1)"},
+				{Key: "Copy delivery", Desc: "wl-copy/xclip/xsel/pbcopy/clip, else OSC 52 (tmux: set-clipboard on)"},
+				{Key: "Ctrl+O (welcome)", Desc: "Continue the last session"},
 			},
 		},
 	}

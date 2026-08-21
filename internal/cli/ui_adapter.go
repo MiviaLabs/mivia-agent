@@ -33,7 +33,7 @@ type UIAdapter struct {
 // NewUIAdapter creates a UIAdapter, subscribes it to agent and system event
 // kinds handled by the bus path, and returns it. The bridge parameter is
 // reserved for Phase 3 backward compat (may be nil).
-func NewUIAdapter(bus *events.Bus, bridge *streamBridge) *UIAdapter {
+func NewUIAdapter(bus *events.Bus, bridge *StreamBridge) *UIAdapter {
 	a := &UIAdapter{
 		bus:     bus,
 		evChan:  make(chan events.Event, 512),

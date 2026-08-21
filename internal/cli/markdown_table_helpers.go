@@ -51,7 +51,7 @@ func tableColumnWidths(rows [][]string, maxCols int) []int {
 	widths := make([]int, maxCols)
 	for _, row := range rows {
 		for i, cell := range row {
-			if width := visibleWidth(cell); width > widths[i] {
+			if width := VisibleWidth(cell); width > widths[i] {
 				widths[i] = width
 			}
 		}

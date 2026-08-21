@@ -222,11 +222,11 @@ func TestOpenQueueManagerClosesComposerPopups(t *testing.T) {
 	m.pendingQueue = []string{"x"}
 	m.pendingQueueLabels = []string{"x"}
 	m.pendingSkillTurns = []*skillSlashSpec{nil}
-	m.history.open = true
+	m.history.Open = true
 	if !m.openQueueManager() {
 		t.Fatalf("open must succeed")
 	}
-	if m.history.open {
+	if m.history.Open {
 		t.Fatalf("open must close the history picker")
 	}
 }

@@ -266,7 +266,7 @@ func TestWorkflowStatusAttemptErrorTruncates(t *testing.T) {
 	}
 	out := stdout.String()
 	if !strings.Contains(out, "truncated") {
-		t.Errorf("oversized error was not marked truncated:\n%s", out[:min(len(out), 400)])
+		t.Errorf("oversized error was not marked truncated:\n%s", out[:Min(len(out), 400)])
 	}
 	if strings.Count(out, "x") > maxAttemptErrorBytes+10 {
 		t.Error("truncation did not bound the printed error")
@@ -292,7 +292,7 @@ func TestWorkflowStatusAttemptErrorTruncatesRuneSafe(t *testing.T) {
 		t.Errorf("status output is not valid UTF-8:\n%s", out)
 	}
 	if !strings.Contains(out, "truncated") {
-		t.Errorf("oversized error was not marked truncated:\n%s", out[:min(len(out), 400)])
+		t.Errorf("oversized error was not marked truncated:\n%s", out[:Min(len(out), 400)])
 	}
 }
 

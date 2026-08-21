@@ -29,7 +29,7 @@ import (
 // be nil (a caller that doesn't participate in prompt-level core-memory
 // injection); that's a safe no-op, not an error -
 // coreMemoryBlockForState(nil) returns "".
-func stashMemoryOnState(state *agentSessionState, store memory.Store, res *config.Resolved) {
+func stashMemoryOnState(state *AgentSessionState, store memory.Store, res *config.Resolved) {
 	if state == nil {
 		return
 	}
@@ -91,7 +91,7 @@ func buildWorkflowToolOpts(root string, fullDisk bool, res *config.Resolved) (*t
 	return opts, nil
 }
 
-func configureChatWorkspace(sess *chat.Session, root string, useTools bool, res *config.Resolved, state *agentSessionState, quiet bool, fullDisk bool, runRecoverySweep bool) (func(), error) {
+func configureChatWorkspace(sess *chat.Session, root string, useTools bool, res *config.Resolved, state *AgentSessionState, quiet bool, fullDisk bool, runRecoverySweep bool) (func(), error) {
 	if !useTools {
 		return func() {}, nil
 	}

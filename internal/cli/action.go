@@ -9,29 +9,31 @@ type actionKind int
 
 const (
 	actionTool actionKind = iota
-	actionAgent
+	// ActionAgent marks a delegation/orchestration tool call. Shared with
+	// internal/clichat's transcript renderer.
+	ActionAgent
 	actionSkill
 )
 
 // agentControlTools are the delegation/orchestration surfaces: calling one
 // launches or controls another agent, so the transcript marks it ◆.
 var agentControlTools = map[string]bool{
-	handlerDelegate:   true,
+	HandlerDelegate:   true,
 	handlerOneshot:    true,
 	handlerMultiStep:  true,
-	toolDispatchTasks: true,
+	ToolDispatchTasks: true,
 	toolSpawnAgent:    true,
 	toolJoinRun:       true,
 	toolInspectAgents: true,
 	toolCancelRun:     true,
 }
 
-// actionKindForTool classifies a tool name. Workspace skills are dispatched
+// ActionKindForTool classifies a tool name. Workspace skills are dispatched
 // under their own names; classifying them as actionSkill needs the skills
 // registry plumbed into the render layer - until then they read as tools.
-func actionKindForTool(name string) actionKind {
+func ActionKindForTool(name string) actionKind {
 	if agentControlTools[name] {
-		return actionAgent
+		return ActionAgent
 	}
 	return actionTool
 }
@@ -39,8 +41,8 @@ func actionKindForTool(name string) actionKind {
 // actionIcon returns the single-width glyph for a kind.
 func actionIcon(kind actionKind) string {
 	switch kind {
-	case actionAgent:
-		return glyphDiamond
+	case ActionAgent:
+		return GlyphDiamond
 	case actionSkill:
 		return "§"
 	default:
@@ -48,7 +50,8 @@ func actionIcon(kind actionKind) string {
 	}
 }
 
-// actionIconForTool is the glyph for a tool name.
-func actionIconForTool(name string) string {
-	return actionIcon(actionKindForTool(name))
+// ActionIconForTool is the glyph for a tool name. Shared with
+// internal/legacytui's tool status renderer.
+func ActionIconForTool(name string) string {
+	return actionIcon(ActionKindForTool(name))
 }

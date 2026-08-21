@@ -58,12 +58,12 @@ func railForBlock(kind ChatBlockKind, toolFailed bool, opts RailOpts) LeftRail {
 	if toolFailed {
 		b.Text = "error: failed"
 	}
-	return resolveBlockRail(b, groupMember{}, opts, railView{})
+	return ResolveBlockRail(b, GroupMember{}, opts, RailView{})
 }
 
 // railForChatBlock selects chrome without group context.
 func railForChatBlock(block ChatBlock, opts RailOpts) LeftRail {
-	return resolveBlockRail(block, groupMember{}, opts, railView{})
+	return ResolveBlockRail(block, GroupMember{}, opts, RailView{})
 }
 
 // paintRailCell returns the display cell (bold + colored when enabled).
@@ -216,13 +216,13 @@ func applyLeftRailHeader(lines []string, rail LeftRail) []string {
 
 // applyBlockChrome applies hierarchical state-aware rail chrome.
 func applyBlockChrome(lines []string, block ChatBlock, text string, opts RailOpts) []string {
-	return ApplyBlockChromeWith(lines, block, text, opts, groupMember{}, railView{})
+	return ApplyBlockChromeWith(lines, block, text, opts, GroupMember{}, RailView{})
 }
 
 // ApplyBlockChromeWith applies hierarchical state-aware rail chrome for a
 // block inside a work group. Shared with the classic-mode block renderer in
 // internal/clichat.
-func ApplyBlockChromeWith(lines []string, block ChatBlock, text string, opts RailOpts, mem groupMember, view railView) []string {
+func ApplyBlockChromeWith(lines []string, block ChatBlock, text string, opts RailOpts, mem GroupMember, view RailView) []string {
 	if len(lines) == 0 {
 		return lines
 	}
@@ -231,7 +231,7 @@ func ApplyBlockChromeWith(lines []string, block ChatBlock, text string, opts Rai
 		!block.Collapsed {
 		return lines
 	}
-	return ApplyLeftRail(lines, resolveBlockRail(block, mem, opts, view))
+	return ApplyLeftRail(lines, ResolveBlockRail(block, mem, opts, view))
 }
 
 // injectRailOnLine places the rail in the first display column without growing

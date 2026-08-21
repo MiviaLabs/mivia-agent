@@ -136,26 +136,26 @@ func renderSessionPicker(
 }
 
 func normalizePickerSize(width, maxRows int) (int, int) {
-	return max(20, width), max(1, maxRows)
+	return Max(20, width), Max(1, maxRows)
 }
 
 func normalizePickerSelection(selected, scroll, maxRows, sessionCount int) (int, int) {
-	selected = min(max(selected, 0), sessionCount-1)
-	scroll = max(0, scroll)
+	selected = Min(Max(selected, 0), sessionCount-1)
+	scroll = Max(0, scroll)
 	if selected < scroll {
 		scroll = selected
 	}
 	if selected >= scroll+maxRows {
 		scroll = selected - maxRows + 1
 	}
-	return selected, min(scroll, max(0, sessionCount-maxRows))
+	return selected, Min(scroll, Max(0, sessionCount-maxRows))
 }
 
 func renderSessionRows(sessions []chat.SessionInfo, selected, scroll, width, maxRows, yBase int) ([]string, []sessionRowHit, int) {
 	lines := []string{tuiAccentStyle.Render("  Sessions"), ""}
 	hits := make([]sessionRowHit, 0, maxRows)
 	latestAuto := latestAutoSaveName(sessions)
-	end := min(len(sessions), scroll+maxRows)
+	end := Min(len(sessions), scroll+maxRows)
 	for i := scroll; i < end; i++ {
 		si := sessions[i]
 		name := displaySessionName(si, latestAuto)
@@ -171,12 +171,12 @@ func renderSessionRows(sessions []chat.SessionInfo, selected, scroll, width, max
 			prefix = "◆ "
 			style = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorBright)).Background(lipgloss.Color(themeColorCardBg)).Bold(true)
 		}
-		nameWidth := max(1, width-runeWidth(prefix)-runeWidth(meta)-2)
-		if runeWidth(name) > nameWidth {
-			name = truncateToWidth(name, max(1, nameWidth-1)) + "…"
+		nameWidth := Max(1, width-RuneWidth(prefix)-RuneWidth(meta)-2)
+		if RuneWidth(name) > nameWidth {
+			name = TruncateToWidth(name, Max(1, nameWidth-1)) + "…"
 		}
-		line := prefix + name + strings.Repeat(" ", max(0, nameWidth-runeWidth(name))) + "  " + meta
-		lines = append(lines, style.Render(truncateToWidth(line, width)))
+		line := prefix + name + strings.Repeat(" ", Max(0, nameWidth-RuneWidth(name))) + "  " + meta
+		lines = append(lines, style.Render(TruncateToWidth(line, width)))
 		hits = append(hits, sessionRowHit{y0: yBase + 2 + i - scroll, y1: yBase + 2 + i - scroll, idx: i})
 	}
 	if scroll > 0 || end < len(sessions) {
@@ -400,7 +400,7 @@ func (m *tuiModel) openSessionInfo(si chat.SessionInfo) error {
 	m.closeHistory()
 	active := si
 	m.activeSession = &active
-	m.modelName = shortenModel(m.session.CurrentModel())
+	m.modelName = ShortenModel(m.session.CurrentModel())
 	m.enterChatMode()
 	m.hydrateHistory()
 	m.appendInfo(fmt.Sprintf("session %q loaded", displaySessionName(si, latestAutoSaveName(m.sessions))))
@@ -440,9 +440,9 @@ func (m *tuiModel) restoreSessionDir(dir string) {
 		m.appendInfo("switch failed: " + err.Error())
 		return
 	}
-	m.workspaceDir = shortenWorkspacePath()
+	m.workspaceDir = ShortenWorkspacePath()
 	m.refreshGitContext()
-	m.appendInfo(fmt.Sprintf("switched to %s", shortenWorkspacePath()))
+	m.appendInfo(fmt.Sprintf("switched to %s", ShortenWorkspacePath()))
 }
 
 // sessionIndexAtY returns the session index under absolute mouse Y, or -1.

@@ -56,7 +56,7 @@ func TestSessionToolCeilingsAreFloorDerived(t *testing.T) {
 			defer d.Close()
 
 			global := d.Policy().MaxOutputBytes
-			want := min(floorDerivedCeiling, global)
+			want := Min(floorDerivedCeiling, global)
 			found := 0
 			for _, tool := range reg.List() {
 				toolName := tool.Name()

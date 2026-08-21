@@ -137,7 +137,7 @@ func filterSkillRegistryForGate(skillReg *skills.Registry, allowProject bool) *s
 // store opens and is hardcoded to no injection, so this call, right after
 // configureChatWorkspace, is the only site that recomposes the root
 // session's prompt with the real memory block for a no-agent session).
-func applySelectedAgentPrompt(sess *chat.Session, res *config.Resolved, selected *agents.ResolvedAgent, state *agentSessionState) {
+func applySelectedAgentPrompt(sess *chat.Session, res *config.Resolved, selected *agents.ResolvedAgent, state *AgentSessionState) {
 	if sess == nil {
 		return
 	}
@@ -156,7 +156,7 @@ func applySelectedAgentPrompt(sess *chat.Session, res *config.Resolved, selected
 	}
 }
 
-func currentAgentName(state *agentSessionState) string {
+func currentAgentName(state *AgentSessionState) string {
 	if state == nil {
 		return ""
 	}

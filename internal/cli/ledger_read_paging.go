@@ -106,7 +106,7 @@ func normalizeLedgerContent(data []byte) string {
 
 func ledgerPageEnd(content string, offset, limit int) int {
 	remaining := len(content) - offset
-	end := offset + min(limit, remaining)
+	end := offset + Min(limit, remaining)
 	for end > offset && end < len(content) && !utf8.RuneStart(content[end]) {
 		end--
 	}

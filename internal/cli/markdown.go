@@ -143,7 +143,7 @@ func (mw *MarkdownWriter) processLine(line string) string {
 
 // Alignment: left (default), right, center.
 func padCell(plain, formatted string, width int, align tableAlign) string {
-	w := visibleWidth(plain)
+	w := VisibleWidth(plain)
 	if w >= width {
 		return formatted
 	}
@@ -165,7 +165,7 @@ func truncateVisible(s string, max int) string {
 	if max <= 0 {
 		return ""
 	}
-	if visibleWidth(s) <= max {
+	if VisibleWidth(s) <= max {
 		return s
 	}
 	if max == 1 {
@@ -208,7 +208,7 @@ func (mw *MarkdownWriter) formatCodeFence(trimmed string) string {
 		lang := mw.cbLang
 		mw.cbLang = ""
 		mw.diffMode = false
-		bar := strings.Repeat("─", min(mw.width-4, fenceBarWidth))
+		bar := strings.Repeat("─", Min(mw.width-4, fenceBarWidth))
 		return fmt.Sprintf("%s ╰%s╯ %s%s", AnsiDim, bar, lang, AnsiReset)
 	}
 	mw.inCodeBlock = true
@@ -218,11 +218,11 @@ func (mw *MarkdownWriter) formatCodeFence(trimmed string) string {
 	if lang == "" {
 		lang = "code"
 	}
-	icon := glyphDiamond
+	icon := GlyphDiamond
 	if mw.diffMode {
 		icon = "±"
 	}
-	bar := strings.Repeat("─", min(mw.width-4, fenceBarWidth))
+	bar := strings.Repeat("─", Min(mw.width-4, fenceBarWidth))
 	return fmt.Sprintf("%s ╭%s╮ %s %s%s", AnsiDim, bar, icon, lang, AnsiReset)
 }
 
@@ -265,7 +265,7 @@ func (mw *MarkdownWriter) formatNonCodeLine(line, trimmed string) string {
 	}
 
 	if isHorizontalRule(trimmed) {
-		n := min(mw.width-2, ruleWidth)
+		n := Min(mw.width-2, ruleWidth)
 		if n < 8 {
 			n = 8
 		}
@@ -309,7 +309,7 @@ func (mw *MarkdownWriter) formatCodeLine(line string) string {
 	// Routes through the package-shared theme-token renderer (diff_style.go).
 	trim := line
 	if len(trim) > 0 && (mw.diffMode || looksLikeDiffLine(trim)) {
-		return renderDiffLine(trim)
+		return RenderDiffLine(trim)
 	}
 	return fmt.Sprintf("  %s%s%s%s", AnsiBgDark, AnsiYellow, line, AnsiReset)
 }

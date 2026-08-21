@@ -107,7 +107,7 @@ func publishSchemaMass(sess *chat.Session, mass schemaMass) {
 // admitted is passed in rather than read back off the session: the admission
 // path records this measurement before it commits the new admitted set, so
 // asking the session would price the surface it just replaced.
-func recordSchemaMass(sess *chat.Session, state *agentSessionState, plan toolTierPlan, admitted []string, agentName, publication string) {
+func recordSchemaMass(sess *chat.Session, state *AgentSessionState, plan toolTierPlan, admitted []string, agentName, publication string) {
 	if state == nil {
 		publishSchemaMass(sess, measureSchemaMass(sess.AdvertisedToolSpecs(), nil, plan, admitted, agentName, publication))
 		return
@@ -117,14 +117,14 @@ func recordSchemaMass(sess *chat.Session, state *agentSessionState, plan toolTie
 	recordSchemaMassLocked(sess, state, plan, admitted, agentName, publication)
 }
 
-func recordSchemaMassLocked(sess *chat.Session, state *agentSessionState, plan toolTierPlan, admitted []string, agentName, publication string) {
+func recordSchemaMassLocked(sess *chat.Session, state *AgentSessionState, plan toolTierPlan, admitted []string, agentName, publication string) {
 	mass := measureSchemaMass(sess.AdvertisedToolSpecs(), state.ToolBase, plan, admitted, agentName, publication)
 	state.LastSchemaMass = mass
 	publishSchemaMass(sess, mass)
 }
 
 // schemaMassSnapshot returns the last recorded measurement for display.
-func (s *agentSessionState) schemaMassSnapshot() schemaMass {
+func (s *AgentSessionState) schemaMassSnapshot() schemaMass {
 	if s == nil {
 		return schemaMass{}
 	}

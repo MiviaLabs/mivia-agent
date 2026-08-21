@@ -99,7 +99,7 @@ func (m *tuiModel) handleSuggestKey(key string) (bool, bool, []tea.Cmd) {
 
 func suggestHasNoArguments(value string, commandEnd int) bool {
 	runes := []rune(value)
-	commandEnd = min(max(0, commandEnd), len(runes))
+	commandEnd = Min(Max(0, commandEnd), len(runes))
 	return strings.TrimSpace(string(runes[commandEnd:])) == ""
 }
 
@@ -233,8 +233,8 @@ func hasAliasPrefix(query string, aliases []string) bool {
 
 func applyTokenReplace(ta *textarea.Model, from, to int, insert string) {
 	full := []rune(ta.Value())
-	from = min(max(0, from), len(full))
-	to = min(max(from, to), len(full))
+	from = Min(Max(0, from), len(full))
+	to = Min(Max(from, to), len(full))
 	next := string(full[:from]) + insert + string(full[to:])
 	ta.SetValue(next)
 	ta.SetCursor(from + len([]rune(insert)))

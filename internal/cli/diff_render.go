@@ -15,11 +15,13 @@ var (
 	toolDiffCtx = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorDim)) // dim context
 )
 
-func renderDiffBody(body string, width, maxLines int) []string {
+// RenderDiffBody renders a redacted, width-clamped diff body as display
+// lines. Shared with internal/legacytui's tool panel.
+func RenderDiffBody(body string, width, maxLines int) []string {
 	if maxLines < 1 {
 		return nil
 	}
-	lines := strings.Split(redactPreview(body), "\n")
+	lines := strings.Split(RedactPreview(body), "\n")
 	// The body's final line terminator leaves a trailing empty split element
 	// that is not a real diff line; drop it so truncation counts are honest
 	// (a genuinely empty diff line always carries a +, -, or space prefix).
@@ -81,7 +83,7 @@ func changeCentricWindow(lines []string, maxLines int) []string {
 		// leading context; content lines fall as low as 0 the closer start
 		// gets to first (see reserveContentBudget), so first is always
 		// covered by the time start reaches it.
-		for s := max(0, first-maxLines+1); s <= first; s++ {
+		for s := Max(0, first-maxLines+1); s <= first; s++ {
 			l, c := reserveContentBudget(s, maxLines, len(lines))
 			if c > 0 && first < s+c {
 				start, leading, content = s, l, c
@@ -173,16 +175,16 @@ func renderCollapsedEditBlock(block ChatBlock, text, agentPart string, width int
 		head += " " + ToolTimeStyle.Render(FormatDuration(block.Elapsed))
 	}
 	if block.Failed {
-		head += " " + ToolErrStyle.Render(glyphCross)
+		head += " " + ToolErrStyle.Render(GlyphCross)
 	} else if block.Elapsed > 0 {
-		head += " " + ToolOkStyle.Render(glyphCheck)
+		head += " " + ToolOkStyle.Render(GlyphCheck)
 	}
 
 	out := []string{head}
 	// The peek budget goes to the change itself: the summary line and the
 	// ---/+++ file headers already appear in the row above, and spending
 	// rows on them used to push every real +/- line out of view.
-	for _, line := range renderDiffBody(stripDiffPreamble(text), max(20, width-4), peekLines) {
+	for _, line := range RenderDiffBody(stripDiffPreamble(text), Max(20, width-4), peekLines) {
 		out = append(out, "  "+line)
 	}
 	return out

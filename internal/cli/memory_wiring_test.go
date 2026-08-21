@@ -166,7 +166,7 @@ func TestConfigureChatWorkspaceStashesStoreOnState(t *testing.T) {
 	root := t.TempDir()
 	res := memoryTestResolved(true)
 	sess := chat.NewSession(res, nil)
-	state := &agentSessionState{}
+	state := &AgentSessionState{}
 	memClose, err := configureChatWorkspace(sess, root, true, res, state, false, false, false)
 	if err != nil {
 		t.Fatalf("configureChatWorkspace: %v", err)

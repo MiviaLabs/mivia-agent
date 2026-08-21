@@ -43,7 +43,7 @@ const (
 	brandColorCancel   = "8"   // dim
 )
 
-// brandWorkFrames is an 8-frame single-rune braille diamond pulse.
+// BrandWorkFrames is an 8-frame single-rune braille diamond pulse.
 // Each frame is a complete small mark in one cell (2×4 dots), not the tip
 // of a multi-line raster diamond.
 //
@@ -56,7 +56,7 @@ const (
 //
 // Geometry: filled L1 diamond in the cell, expanding/contracting.
 // Rune values are fixed literals so the glyph set is reviewable.
-var brandWorkFrames = []string{
+var BrandWorkFrames = []string{
 	"⠶", // U+2836 dots 2,3,5,6     - inner diamond
 	"⠛", // U+281B dots 1,2,4,5     - upper weight
 	"⠿", // U+283F dots 1–6         - mid expand
@@ -124,7 +124,7 @@ func brandGlyph(frame int, color string) string {
 	if frame < 0 {
 		frame = 0
 	}
-	ch := brandWorkFrames[frame%len(brandWorkFrames)]
+	ch := BrandWorkFrames[frame%len(BrandWorkFrames)]
 	return lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(ch)
 }
 
@@ -141,13 +141,13 @@ func brandNameStyled() string {
 
 // simpleStateDiamond is the one-cell state mark for the status bar.
 func simpleStateDiamond(phase brandPhase) string {
-	glyph := glyphDiamond
+	glyph := GlyphDiamond
 	switch phase {
 	case phaseIdle, phaseWelcome, phaseCancel:
-		glyph = glyphLozenge
+		glyph = GlyphLozenge
 	}
 	st := lipgloss.NewStyle().Foreground(lipgloss.Color(brandColor(phase)))
-	if glyph == glyphDiamond {
+	if glyph == GlyphDiamond {
 		st = st.Bold(true)
 	}
 	return st.Render(glyph)
@@ -249,7 +249,7 @@ func renderWorkChrome(
 		if available < 1 {
 			detail = ""
 		} else {
-			detail = truncateToWidth(detail, available)
+			detail = TruncateToWidth(detail, available)
 		}
 	}
 	rightParts := core

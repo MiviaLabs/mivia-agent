@@ -68,7 +68,7 @@ func TestRenderDiffLine(t *testing.T) {
 
 func assertRenderDiffLineCase(t *testing.T, line string, wantTokens, banTokens []string, stripPrefix string) {
 	t.Helper()
-	got := renderDiffLine(line)
+	got := RenderDiffLine(line)
 	if got == "" {
 		t.Fatal("renderDiffLine returned empty")
 	}
@@ -102,8 +102,8 @@ func assertRenderDiffLineCase(t *testing.T, line string, wantTokens, banTokens [
 
 // TestRenderDiffLineHunkIsMagenta pins §3: @@ uses hunk/magenta, not context/dim.
 func TestRenderDiffLineHunkIsMagenta(t *testing.T) {
-	hunk := renderDiffLine("@@ -1 +1 @@")
-	ctx := renderDiffLine(" context")
+	hunk := RenderDiffLine("@@ -1 +1 @@")
+	ctx := RenderDiffLine(" context")
 	if !strings.Contains(hunk, AnsiMagenta) {
 		t.Fatalf("@@ must carry magenta/hunk token, got %q", hunk)
 	}
@@ -120,8 +120,8 @@ func TestRenderDiffLineHunkIsMagenta(t *testing.T) {
 
 // TestRenderDiffLineHeaderPrecedence: +++ is header (bold cyan), not bare +.
 func TestRenderDiffLineHeaderPrecedence(t *testing.T) {
-	header := renderDiffLine("+++ b/x.go")
-	add := renderDiffLine("+only")
+	header := RenderDiffLine("+++ b/x.go")
+	add := RenderDiffLine("+only")
 	if strings.Contains(header, ansiBgDiffAdd) {
 		t.Fatalf("+++ classified as add: %q", header)
 	}

@@ -37,7 +37,7 @@ func TestAttachSessionDispatcherReportsConstructionFailure(t *testing.T) {
 	sess.Tools.Register(unregisterableTool{})
 
 	cleanup, err := attachSessionDispatcher(sess, root, "test-model",
-		config.DefaultSubagentConfig, &agentSessionState{}, nil, sessionRouting{})
+		config.DefaultSubagentConfig, &AgentSessionState{}, nil, sessionRouting{})
 	if err == nil {
 		if cleanup != nil {
 			cleanup()

@@ -304,7 +304,7 @@ func TestChatTimelineProgressiveBlocks(t *testing.T) {
 	m.appendBlock(ChatBlock{Kind: ChatBlockUser, Text: "what next", SentAt: time.Now()})
 
 	// Intermediate speech + tools (content-then-tools path).
-	m.updateFromDrain(bridgeDrain{
+	m.updateFromDrain(BridgeDrain{
 		ResetStream: true,
 		Interim:     "I'll inspect the project layout first.",
 		Tools: []bridgeToolEvt{
@@ -330,7 +330,7 @@ func TestChatTimelineProgressiveBlocks(t *testing.T) {
 	}
 
 	// Second batch speech bubble between tool rounds.
-	m.updateFromDrain(bridgeDrain{
+	m.updateFromDrain(BridgeDrain{
 		Interim: "Next I'll read the entrypoint.",
 		Tools: []bridgeToolEvt{
 			{Start: true, ToolCallID: "t2", Name: "read_file", Detail: `{"path":"main.go"}`, At: time.Now()},
@@ -453,7 +453,7 @@ func stringsJoinLines(n int, prefix string) string {
 
 func TestCacheUsageEventPushesStepDetail(t *testing.T) {
 	t.Parallel()
-	b := newStreamBridge()
+	b := NewStreamBridge()
 	cb := agentEventBridgeCallback(b)
 	cb(agent.Event{Kind: agent.EventCacheUsage, Detail: "prompt cache: 80/100 tokens cached (80%)"})
 	d := b.Drain()

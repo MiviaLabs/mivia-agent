@@ -36,7 +36,7 @@ func (t *delegateTool) Capability(args json.RawMessage) tools.Capability {
 	sec := config.RequestedTimeoutSec(t.cfg.DefaultTimeout, delegateTimeoutOverride(args))
 	return tools.Capability{
 		Class:       tools.ExecutionExternal,
-		ResourceKey: handlerDelegate,
+		ResourceKey: HandlerDelegate,
 		Timeout:     time.Duration(sec+dispatchOrchestrationSlackSec) * time.Second,
 	}
 }
@@ -48,7 +48,7 @@ func delegateTimeoutOverride(args json.RawMessage) int {
 	_ = json.Unmarshal(args, &params)
 	return params.TimeoutSeconds
 }
-func (t *delegateTool) Name() string { return handlerDelegate }
+func (t *delegateTool) Name() string { return HandlerDelegate }
 func (t *delegateTool) Privileged()  {}
 func (t *delegateTool) Description() string {
 	return "Delegate a SINGLE focused subtask to a sub-agent. Use delegate for isolated fixes or " +
@@ -97,7 +97,7 @@ func (t *delegateTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		return "", fmt.Errorf("delegate: task is required")
 	}
 
-	handlerName := handlerDelegate
+	handlerName := HandlerDelegate
 	if params.MultiStep {
 		handlerName = handlerMultiStep
 	}

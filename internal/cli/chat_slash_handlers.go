@@ -12,7 +12,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
 
-func handleSlashAgent(fields []string, sess *chat.Session, res *config.Resolved, term *Terminal, state *agentSessionState) (bool, bool, error) {
+func handleSlashAgent(fields []string, sess *chat.Session, res *config.Resolved, term *Terminal, state *AgentSessionState) (bool, bool, error) {
 	sink := terminalSlashSink{t: term}
 	if state == nil || state.Registry == nil || state.Registry.Len() == 0 {
 		sink.Info("no agents loaded (add .mivia/agents/<name>.toml)")
@@ -23,8 +23,8 @@ func handleSlashAgent(fields []string, sess *chat.Session, res *config.Resolved,
 		return true, false, nil
 	}
 	name := fields[1]
-	if err := applySessionAgent(sess, res, state, name, false); err != nil {
-		sink.Info(formatAgentUnavailable(err))
+	if err := ApplySessionAgent(sess, res, state, name, false); err != nil {
+		sink.Info(FormatAgentUnavailable(err))
 		return true, false, nil
 	}
 	sink.Info(formatAgentSet(name))
@@ -73,17 +73,17 @@ func handleSlashCompactJSON(sess *chat.Session, res *config.Resolved, focus stri
 		return true, false, nil
 	}
 	if reason := summaryDisabledReason(sess, res); reason != "" {
-		activeJSONSlashSink.Info(compactStructuralOnlyNotice(reason))
+		activeJSONSlashSink.Info(CompactStructuralOnlyNotice(reason))
 	}
 	writeContextUsageLine(w, sess)
 	return true, false, nil
 }
 
-// compactStructuralOnlyNotice explains an instant, LLM-free compaction. A
+// CompactStructuralOnlyNotice explains an instant, LLM-free compaction. A
 // structural-only compact returns at once and makes no provider call, which is
 // correct but reads as a broken summarizer; naming the unmet condition is the
 // difference between "it did nothing" and "it is not configured to do that".
-func compactStructuralOnlyNotice(reason string) string {
+func CompactStructuralOnlyNotice(reason string) string {
 	return "compaction was structural only (no LLM summary): " + reason
 }
 
@@ -92,7 +92,7 @@ func compactStructuralOnlyNotice(reason string) string {
 func compactResultMessage(sess *chat.Session, res *config.Resolved, usage chat.ContextUsage) string {
 	message := fmt.Sprintf("context compacted (%d%% used, %s/%s prompt)", usage.Percent, chat.FormatTokenK(usage.UsedTokens), chat.FormatTokenK(usage.BudgetTokens))
 	if reason := summaryDisabledReason(sess, res); reason != "" {
-		message += "\n  " + compactStructuralOnlyNotice(reason)
+		message += "\n  " + CompactStructuralOnlyNotice(reason)
 	}
 	return message
 }
@@ -107,7 +107,7 @@ func reportCompactFailure(term *Terminal, err error) {
 }
 
 func handleSlashInfo(cmd string, fields []string, sess *chat.Session, res *config.Resolved, toolsOn bool, term *Terminal) (bool, bool, error) {
-	sink := slashSinkFor(term)
+	sink := SlashSinkFor(term)
 	switch cmd {
 	case "/agents":
 		term.WriteString("\n" + formatAgentCurrent(currentAgentName(classicAgentState), registryForState(classicAgentState)))
@@ -117,7 +117,7 @@ func handleSlashInfo(cmd string, fields []string, sess *chat.Session, res *confi
 		messages := sess.MessagesCopy()
 		usage := sess.ContextUsage()
 		term.WriteString(fmt.Sprintf("\nprovider=%s model=%s tools=%v turns=%d messages=%d context=%d tokens (est.)", binding.Completer.Name(), binding.Model, toolsOn && sess.UseTools, sess.UserTurns(), len(messages), usage.UsedTokens))
-		term.WriteString("\neffort=" + formatEffortStatus(sess.ReasoningSetting(), len(sess.ReasoningChoices()) > 0))
+		term.WriteString("\neffort=" + FormatEffortStatus(sess.ReasoningSetting(), len(sess.ReasoningChoices()) > 0))
 		if usage.BudgetTokens > 0 {
 			term.WriteString(fmt.Sprintf("\ncontext=%s (output=%s, prompt budget=%s, %d%% used)", chat.FormatTokenK(usage.ContextWindowTokens), chat.FormatTokenK(usage.OutputReserveTokens), chat.FormatTokenK(usage.BudgetTokens), usage.Percent))
 		}
@@ -135,13 +135,13 @@ func handleSlashInfo(cmd string, fields []string, sess *chat.Session, res *confi
 			sink.Info(formatModelCurrent(sess.CurrentModel(), choices))
 			return true, false, nil
 		}
-		discarded, err := switchModelCommand(sess, res, providerName, modelName)
+		discarded, err := SwitchModelCommand(sess, res, providerName, modelName)
 		if err != nil {
 			sink.Error(formatModelUnavailable(providerName, choices))
 			return true, false, nil
 		}
 		sink.Info(formatModelSet(sess.CurrentSelection().ProviderName, sess.CurrentModel(), discarded))
-		if jsink, ok := sink.(*jsonSlashSink); ok {
+		if jsink, ok := sink.(*JSONSlashSink); ok {
 			jsink.ModelChanged(sess.CurrentSelection().ProviderName, sess.CurrentModel(), discarded)
 		}
 	case "/provider":
@@ -169,7 +169,7 @@ func handleSlashInfo(cmd string, fields []string, sess *chat.Session, res *confi
 	return true, false, nil
 }
 
-func registryForState(state *agentSessionState) *agents.AgentRegistry {
+func registryForState(state *AgentSessionState) *agents.AgentRegistry {
 	if state == nil {
 		return nil
 	}

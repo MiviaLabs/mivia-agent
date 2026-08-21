@@ -11,8 +11,8 @@ func renderThinkingBlockView(id, text string, collapsed bool, scrollOffset int, 
 	rendered := RenderChatBlocksView(
 		[]ChatBlock{{ID: id, Kind: ChatBlockThinking, Text: text, Collapsed: collapsed, ScrollOffset: scrollOffset}},
 		model,
-		max(40, width-2),
-		railView{Frame: liveFrame, Live: live},
+		Max(40, width-2),
+		RailView{Frame: liveFrame, Live: live},
 		thinkingExpandDefault,
 	)
 	return strings.Join(rendered.Lines, "\n")

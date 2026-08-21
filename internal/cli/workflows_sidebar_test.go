@@ -138,8 +138,8 @@ func TestWorkflowsSidebarTruncationRuneSafe(t *testing.T) {
 		t.Fatalf("sidebar output is not valid UTF-8")
 	}
 	for _, line := range strings.Split(stripANSI(view), "\n") {
-		if runeWidth(line) > 24 {
-			t.Fatalf("line width %d exceeds 24: %q", runeWidth(line), line)
+		if RuneWidth(line) > 24 {
+			t.Fatalf("line width %d exceeds 24: %q", RuneWidth(line), line)
 		}
 	}
 }

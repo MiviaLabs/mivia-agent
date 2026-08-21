@@ -69,7 +69,7 @@ func (d *worktreeDialog) removeAt(i int) {
 	delete(d.bindings, d.worktrees[i].Name)
 	d.worktrees = append(d.worktrees[:i], d.worktrees[i+1:]...)
 	if d.cursor >= len(d.worktrees) {
-		d.cursor = max(0, len(d.worktrees)-1)
+		d.cursor = Max(0, len(d.worktrees)-1)
 	}
 	if len(d.worktrees) == 0 {
 		d.cursor = 0
@@ -81,7 +81,7 @@ func (d *worktreeDialog) move(delta int) {
 	if len(d.worktrees) == 0 {
 		return
 	}
-	d.cursor = min(len(d.worktrees)-1, max(0, d.cursor+delta))
+	d.cursor = Min(len(d.worktrees)-1, Max(0, d.cursor+delta))
 	d.clampScroll()
 }
 
@@ -94,7 +94,7 @@ func (d *worktreeDialog) clampScroll(visible ...int) {
 }
 
 func (d *worktreeDialog) clampScrollTo(visible int) {
-	visible = max(1, visible)
+	visible = Max(1, visible)
 	if d.cursor < d.scroll {
 		d.scroll = d.cursor
 	}
@@ -119,7 +119,7 @@ func (d *worktreeDialog) layout(w, h int) DialogLayout {
 
 func (d *worktreeDialog) visibleRows(w, h int) int {
 	l := d.layout(w, h)
-	return max(1, l.PageH)
+	return Max(1, l.PageH)
 }
 
 func (d *worktreeDialog) selected() (vcs.WorktreeInfo, bool) {
@@ -133,7 +133,7 @@ func (d *worktreeDialog) ViewAt(w, h int) (string, DialogLayout) {
 	l := d.layout(w, h)
 	d.clampScrollTo(d.cursorRows(l.PageH))
 	rows := d.rowLines(l.InnerW, l.PageH)
-	return renderDialogFrame(fmt.Sprintf("◇ worktrees · %d", len(d.worktrees)), rows, d.footer(), l), l
+	return RenderDialogFrame(fmt.Sprintf("◇ worktrees · %d", len(d.worktrees)), rows, d.footer(), l), l
 }
 
 func (d *worktreeDialog) cursorRows(visible int) int {
@@ -146,13 +146,13 @@ func (d *worktreeDialog) cursorRows(visible int) int {
 func maxWorktreeRowWidth(rows []string) int {
 	width := 0
 	for _, row := range rows {
-		width = max(width, ansi.StringWidth(row))
+		width = Max(width, ansi.StringWidth(row))
 	}
 	return width
 }
 
 func (d *worktreeDialog) rowLines(inner, visible int) []string {
-	visible = max(1, visible)
+	visible = Max(1, visible)
 	if d.creating {
 		return []string{TUIDimStyle.Render("creating worktree…")}
 	}
@@ -164,7 +164,7 @@ func (d *worktreeDialog) rowLines(inner, visible int) []string {
 	if d.scroll+rowLimit < len(d.worktrees) && rowLimit > 1 {
 		rowLimit--
 	}
-	end := min(len(d.worktrees), d.scroll+rowLimit)
+	end := Min(len(d.worktrees), d.scroll+rowLimit)
 	for i := d.scroll; i < end; i++ {
 		wt := d.worktrees[i]
 		marker := "  "
@@ -181,8 +181,8 @@ func (d *worktreeDialog) rowLines(inner, visible int) []string {
 		line := marker + name
 		gap := inner - lipgloss.Width(line) - lipgloss.Width(meta)
 		if gap < 1 {
-			line = truncateToWidth(line, max(8, inner-lipgloss.Width(meta)-1))
-			gap = max(1, inner-lipgloss.Width(line)-lipgloss.Width(meta))
+			line = TruncateToWidth(line, Max(8, inner-lipgloss.Width(meta)-1))
+			gap = Max(1, inner-lipgloss.Width(line)-lipgloss.Width(meta))
 		}
 		rows = append(rows, line+strings.Repeat(" ", gap)+meta)
 	}
@@ -209,7 +209,7 @@ func (d *worktreeDialog) footer() string {
 
 func (m *tuiModel) handleWorktreeDialogKey(key string) (bool, bool, []tea.Cmd) {
 	d := m.worktreeDlg
-	visible := d.cursorRows(d.visibleRows(max(1, m.width), max(1, m.height)))
+	visible := d.cursorRows(d.visibleRows(Max(1, m.width), Max(1, m.height)))
 	if d.creating {
 		return true, true, nil
 	}

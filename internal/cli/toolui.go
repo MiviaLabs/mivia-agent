@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -59,12 +60,12 @@ func (t toolRenderItem) statusIcon(ascii bool) string {
 		if ascii {
 			return "!"
 		}
-		return glyphCross
+		return GlyphCross
 	}
 	if ascii {
 		return "*"
 	}
-	return glyphCheck
+	return GlyphCheck
 }
 
 func (t toolRenderItem) summary(max int) string {
@@ -87,7 +88,7 @@ func BoundedToolText(s string, max int) string {
 	// so this is the chokepoint that has to strip ANSI and NUL. The TUI path
 	// already sanitized via SafeChatBlockText; the classic path did not, and a
 	// tool error carrying ESC[2J reached the terminal raw.
-	s = strings.ReplaceAll(redactPreview(SafeChatBlockText(strings.TrimSpace(s), 0)), "\n", " ")
+	s = strings.ReplaceAll(RedactPreview(SafeChatBlockText(strings.TrimSpace(s), 0)), "\n", " ")
 	// Bound by runes, not bytes: a byte slice can split a multibyte rune.
 	runes := []rune(s)
 	if len(runes) <= max {
@@ -101,7 +102,7 @@ func BoundedToolText(s string, max int) string {
 
 func formatToolLine(t toolRenderItem, width int, opts toolRenderOptions) string {
 	// Leave room for optional lifecycle badge (running/queued).
-	status, summary := t.statusIcon(opts.ASCII), t.summary(max(12, width-32))
+	status, summary := t.statusIcon(opts.ASCII), t.summary(Max(12, width-32))
 	kind := toolKindIcon(t.Name, opts.ASCII)
 	if !opts.Color {
 		return fmt.Sprintf("  %s %s %s %s", status, kind, t.Name, summary)
@@ -120,13 +121,13 @@ func formatToolPanelLine(r toolRow, iconStyled string, width int, now time.Time,
 	pathPart := ""
 	if path != "" {
 		chip := path
-		if len(chip) > max(12, width/3) {
-			chip = "…" + chip[len(chip)-max(11, width/3-1):]
+		if len(chip) > Max(12, width/3) {
+			chip = "…" + chip[len(chip)-Max(11, width/3-1):]
 		}
 		pathPart = " " + ToolPathStyle.Render(" "+chip+" ")
 	}
 	item := NewToolRenderItem(r.Name, r.Detail, r.Result, r.Done, r.Failed)
-	budget := max(12, width-48-len(path))
+	budget := Max(12, width-48-len(path))
 	summary := item.summary(budget)
 	if path != "" && summary == path {
 		summary = ""
@@ -137,13 +138,13 @@ func formatToolPanelLine(r toolRow, iconStyled string, width int, now time.Time,
 	}
 	marker := "  "
 	if selected {
-		marker = glyphTriR + " "
+		marker = GlyphTriR + " "
 	}
 	// Nested tools carry a ◆ agent badge so parallel subagents stay
 	// distinguishable from the session's own calls.
 	agentPart := ""
 	if r.Agent != "" {
-		agentPart = AgentBadgeStyle.Render(glyphDiamond+" "+r.Agent) + " "
+		agentPart = AgentBadgeStyle.Render(GlyphDiamond+" "+r.Agent) + " "
 	}
 	line := fmt.Sprintf("%s%s %s %s%s%s %s %s",
 		marker, iconStyled, toolKindIcon(r.Name, false), agentPart+ToolNameStyle.Render(r.Name),
@@ -174,7 +175,7 @@ func toolKindIcon(name string, ascii bool) string {
 		return ">"
 	case "search":
 		return "w"
-	case handlerDelegate, toolDispatchTasks:
+	case HandlerDelegate, ToolDispatchTasks:
 		return "+"
 	default:
 		return "-"
@@ -199,9 +200,9 @@ var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "�
 func (r toolRow) icon(now time.Time) string {
 	if r.Done {
 		if r.Failed {
-			return glyphCross
+			return GlyphCross
 		}
-		return glyphCheck
+		return GlyphCheck
 	}
 	idx := int(now.UnixMilli()/80) % len(spinnerFrames)
 	return spinnerFrames[idx]
@@ -379,7 +380,7 @@ func IsEditTool(name string) bool {
 // (tool preview / renderDiffBody). @@ hunks use magenta (unified with markdown
 // and highlight surfaces), not dim.
 func ColorDiffLine(l string) string {
-	return renderDiffLine(l)
+	return RenderDiffLine(l)
 }
 
 // ClipPreviewLine truncates a preview line for the terminal width without panicking
@@ -450,5 +451,131 @@ func ResultLooksLikeDiff(result string) bool {
 // ToolIconForName picks the typed action glyph for a tool: ⚙ tool, ◆ agent.
 // Single-width text only - emoji misalign columns (see action.go).
 func ToolIconForName(name string) string {
-	return actionIconForTool(name)
+	return ActionIconForTool(name)
+}
+
+// summarizeAgentTool builds operator-facing one-liners for delegation tools.
+// Relocated from toolui_agent.go: this file is its sole caller.
+func summarizeAgentTool(name, detail, result string) string {
+	switch name {
+	case HandlerDelegate:
+		return summarizeDelegate(detail, result)
+	case ToolDispatchTasks:
+		return summarizeDispatchTasks(detail, result)
+	default:
+		return ""
+	}
+}
+
+func summarizeDelegate(detail, result string) string {
+	task, multi := extractDelegateArgs(detail)
+	if task == "" && strings.TrimSpace(result) != "" {
+		// Prefer short status/output from completed body.
+		if st, out := extractJSONStatusOutput(result); st != "" || out != "" {
+			if out != "" {
+				return clipOneLine(out, 80)
+			}
+			return st
+		}
+		return clipOneLine(firstLineOnly(result), 80)
+	}
+	mode := handlerOneshot
+	if multi {
+		mode = handlerMultiStep
+	}
+	if task == "" {
+		return mode
+	}
+	return mode + ": " + clipOneLine(task, 72)
+}
+
+func summarizeDispatchTasks(detail, result string) string {
+	n, preview := extractDispatchTasksArgs(detail)
+	if n == 0 && strings.TrimSpace(result) != "" {
+		if st, out := extractJSONStatusOutput(result); out != "" {
+			return clipOneLine(out, 80)
+		} else if st != "" {
+			return st
+		}
+		// Array of task results
+		if c := countJSONArray(result); c > 0 {
+			return fmt.Sprintf("%d task results", c)
+		}
+		return clipOneLine(firstLineOnly(result), 80)
+	}
+	if n <= 0 {
+		return "batch"
+	}
+	if preview != "" {
+		return fmt.Sprintf("%d tasks · %s", n, clipOneLine(preview, 60))
+	}
+	return fmt.Sprintf("%d tasks", n)
+}
+
+func extractDelegateArgs(detail string) (task string, multi bool) {
+	var in struct {
+		Task      string `json:"task"`
+		MultiStep bool   `json:"multi_step"`
+	}
+	if json.Unmarshal([]byte(detail), &in) != nil {
+		return "", false
+	}
+	return strings.TrimSpace(in.Task), in.MultiStep
+}
+
+func extractDispatchTasksArgs(detail string) (n int, firstPrompt string) {
+	var in struct {
+		Tasks []struct {
+			ID     string `json:"id"`
+			Prompt string `json:"prompt"`
+		} `json:"tasks"`
+	}
+	if json.Unmarshal([]byte(detail), &in) != nil {
+		return 0, ""
+	}
+	n = len(in.Tasks)
+	if n > 0 {
+		firstPrompt = strings.TrimSpace(in.Tasks[0].Prompt)
+		if firstPrompt == "" {
+			firstPrompt = strings.TrimSpace(in.Tasks[0].ID)
+		}
+	}
+	return n, firstPrompt
+}
+
+func extractJSONStatusOutput(s string) (status, output string) {
+	var m map[string]any
+	if json.Unmarshal([]byte(s), &m) != nil {
+		return "", ""
+	}
+	if v, ok := m["status"].(string); ok {
+		status = v
+	}
+	if v, ok := m["output"].(string); ok {
+		output = v
+	}
+	if v, ok := m["error"].(string); ok && output == "" {
+		output = v
+	}
+	return status, output
+}
+
+func countJSONArray(s string) int {
+	var a []any
+	if json.Unmarshal([]byte(s), &a) != nil {
+		return 0
+	}
+	return len(a)
+}
+
+func firstLineOnly(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	return strings.TrimSpace(s)
+}
+
+func clipOneLine(s string, max int) string {
+	s = strings.ReplaceAll(strings.TrimSpace(s), "\n", " ")
+	return BoundedToolText(s, max)
 }

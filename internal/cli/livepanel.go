@@ -47,21 +47,21 @@ func (m *tuiModel) livePanelSections(termH int) (fleet, tools, thinking, stream 
 		return 0, 0, 0, 0
 	}
 	if n := len(m.subagents.ActiveRows()); n > 0 {
-		fleet = min(n, liveMaxFleetRows)
+		fleet = Min(n, liveMaxFleetRows)
 	}
 	if n := len(m.toolRows); n > 0 {
-		tools = min(n, liveMaxToolRows)
+		tools = Min(n, liveMaxToolRows)
 	}
 	if m.thinkingBuf.Len() > 0 {
 		// One label row + the rolling tail beneath it.
-		thinking = 1 + min(liveMaxThinkingRows, len(thinkingTailLines(m.thinkingBuf.String(), liveMaxThinkingRows)))
+		thinking = 1 + Min(liveMaxThinkingRows, len(thinkingTailLines(m.thinkingBuf.String(), liveMaxThinkingRows)))
 	} else if m.livePlanningLine() != "" {
 		// Quiet turn: the planning/thinking affordance takes the thinking slot
 		// so a working agent is never a blank panel.
 		thinking = 1
 	}
 	if m.streamBuf.Len() > 0 {
-		stream = min(liveMaxStreamRows, len(strings.Split(strings.TrimRight(m.streamBuf.String(), "\n"), "\n")))
+		stream = Min(liveMaxStreamRows, len(strings.Split(strings.TrimRight(m.streamBuf.String(), "\n"), "\n")))
 	}
 	if fleet+tools+thinking+stream == 0 {
 		return 0, 0, 0, 0
@@ -71,7 +71,7 @@ func (m *tuiModel) livePanelSections(termH int) (fleet, tools, thinking, stream 
 	// the panel fits that budget and leaves the transcript at least a few
 	// rows on short terminals. The budget accounts for the "… n more"
 	// indicator rows a truncated section adds.
-	budget := m.livePanelBand(max(8, termH)) - 2
+	budget := m.livePanelBand(Max(8, termH)) - 2
 	if budget < 2 {
 		// The band cannot hold a section with borders. Render it empty
 		// rather than let a section spill over it.
@@ -118,14 +118,14 @@ func (m *tuiModel) livePanelBand(termH int) int {
 	if !m.waiting {
 		return 0
 	}
-	return min(livePanelMaxHeight, max(1, termH/3))
+	return Min(livePanelMaxHeight, Max(1, termH/3))
 }
 
 // livePanelHeight is the exact painted height (0 when hidden). It is the
 // fixed overlay height for the whole turn. renderLivePanel pads to it, so the
 // overlay is always a stable rectangle of this many rows.
 func (m *tuiModel) livePanelHeight() int {
-	return m.livePanelBand(max(8, m.height))
+	return m.livePanelBand(Max(8, m.height))
 }
 
 // livePanelOverlayRect is the terminal-cell rectangle the live panel paints
@@ -133,14 +133,14 @@ func (m *tuiModel) livePanelHeight() int {
 // the chat pane width. pane.chatX keeps the sessions sidebar clear, so the
 // overlay never covers it.
 func (m *tuiModel) livePanelOverlayRect() Rect {
-	pane := newChatPaneLayout(max(1, m.width), m.sessionsSidebar != nil, m.workflowsSidebar != nil)
+	pane := newChatPaneLayout(Max(1, m.width), m.sessionsSidebar != nil, m.workflowsSidebar != nil)
 	return Rect{X: pane.chatX, Y: 1, W: pane.chatWidth, H: m.livePanelHeight()}
 }
 
 // renderLivePanel draws the paint-only live overlay. Line count always equals
 // livePanelHeight - the overlay is a stable rectangle of that many rows.
 func (m *tuiModel) renderLivePanel(width int, now time.Time) string {
-	band := m.livePanelBand(max(8, m.height))
+	band := m.livePanelBand(Max(8, m.height))
 	if band == 0 {
 		return ""
 	}
@@ -152,7 +152,7 @@ func (m *tuiModel) renderLivePanel(width int, now time.Time) string {
 	contentRows := band - 2
 	var rows []string
 
-	fleetN, toolN, thinkingN, streamN := m.livePanelSections(max(8, m.height))
+	fleetN, toolN, thinkingN, streamN := m.livePanelSections(Max(8, m.height))
 
 	rows = append(rows, m.liveFleetRows(fleetN, inner, now)...)
 	rows = append(rows, m.liveToolRows(toolN, inner, now)...)
@@ -169,21 +169,21 @@ func (m *tuiModel) renderLivePanel(width int, now time.Time) string {
 				if i == len(tail)-1 {
 					style = thinkingLiveStyle
 				}
-				rows = append(rows, style.Render(truncateToWidth("    "+line, inner)))
+				rows = append(rows, style.Render(TruncateToWidth("    "+line, inner)))
 			}
 		} else if plan := m.livePlanningLine(); plan != "" {
-			rows = append(rows, TUIDimStyle.Render(truncateToWidth(plan, inner)))
+			rows = append(rows, TUIDimStyle.Render(TruncateToWidth(plan, inner)))
 		}
 	}
 	if streamN > 0 {
 		lines := strings.Split(strings.TrimRight(m.streamBuf.String(), "\n"), "\n")
-		tail := lines[max(0, len(lines)-streamN):]
+		tail := lines[Max(0, len(lines)-streamN):]
 		for i, ln := range tail {
 			prefix := "  "
 			if i == len(tail)-1 {
 				prefix = TUIDimStyle.Render("▌ ")
 			}
-			rows = append(rows, truncateToWidth(prefix+ln, inner))
+			rows = append(rows, TruncateToWidth(prefix+ln, inner))
 		}
 	}
 
@@ -199,7 +199,7 @@ func (m *tuiModel) renderLivePanel(width int, now time.Time) string {
 		head = fmt.Sprintf(" now · %s ", FormatDuration(time.Since(m.turnStart)))
 	}
 	var b strings.Builder
-	b.WriteString(border.Render("┌─" + head + strings.Repeat("─", max(0, width-3-lipgloss.Width(head))) + "┐"))
+	b.WriteString(border.Render("┌─" + head + strings.Repeat("─", Max(0, width-3-lipgloss.Width(head))) + "┐"))
 	for _, r := range rows {
 		b.WriteByte('\n')
 		b.WriteString(border.Render("│ ") + r)
@@ -209,7 +209,7 @@ func (m *tuiModel) renderLivePanel(width int, now time.Time) string {
 		b.WriteString(border.Render(" │"))
 	}
 	b.WriteByte('\n')
-	b.WriteString(border.Render("└" + strings.Repeat("─", max(0, width-2)) + "┘"))
+	b.WriteString(border.Render("└" + strings.Repeat("─", Max(0, width-2)) + "┘"))
 	return b.String()
 }
 
@@ -236,16 +236,16 @@ func (m *tuiModel) liveToolRows(n, inner int, now time.Time) []string {
 		r := m.toolRows[ordered[i]]
 		icon := toolRunStyle.Render(r.icon(now))
 		if r.Done {
-			icon = ToolOkStyle.Render(glyphCheck)
+			icon = ToolOkStyle.Render(GlyphCheck)
 			if r.Failed {
-				icon = ToolErrStyle.Render(glyphCross)
+				icon = ToolErrStyle.Render(GlyphCross)
 			}
 		}
 		item := NewToolRenderItem(r.Name, r.Detail, r.Result, r.Done, r.Failed)
 		line := icon + " " + ToolIconForName(r.Name) + " " + ToolNameStyle.Render(r.Name) + " " +
-			TUIDimStyle.Render(item.summary(max(10, inner-28))) + " " +
+			TUIDimStyle.Render(item.summary(Max(10, inner-28))) + " " +
 			ToolTimeStyle.Render(FormatDuration(r.elapsed(now)))
-		rows = append(rows, truncateToWidth(line, inner))
+		rows = append(rows, TruncateToWidth(line, inner))
 	}
 	if n > 0 && len(m.toolRows) > n {
 		rows = append(rows, TUIDimStyle.Render(fmt.Sprintf("  … %d more tools", len(m.toolRows)-n)))

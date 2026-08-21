@@ -97,14 +97,14 @@ func (d *modelDialog) move(delta int) {
 }
 
 func (d *modelDialog) clampScroll(page int) {
-	page = max(1, page)
+	page = Max(1, page)
 	if d.cursor < d.scroll {
 		d.scroll = d.cursor
 	}
 	if d.cursor >= d.scroll+page {
 		d.scroll = d.cursor - page + 1
 	}
-	d.scroll = max(0, min(d.scroll, max(0, len(d.rows)-page)))
+	d.scroll = Max(0, Min(d.scroll, Max(0, len(d.rows)-page)))
 }
 
 func (d *modelDialog) layout(w, h int) DialogLayout {
@@ -115,25 +115,25 @@ func (d *modelDialog) layout(w, h int) DialogLayout {
 		rows := d.rowLinesAt(innerW, len(d.rows), 0)
 		maxW := 0
 		for _, row := range rows {
-			maxW = max(maxW, ansi.StringWidth(row))
+			maxW = Max(maxW, ansi.StringWidth(row))
 		}
 		return maxW, len(rows)
 	})
 }
 
 func (d *modelDialog) rowLines(inner, visible int) []string {
-	visible = max(1, visible)
+	visible = Max(1, visible)
 	d.clampScroll(visible)
 	return d.rowLinesAt(inner, visible, d.scroll)
 }
 
 func (d *modelDialog) rowLinesAt(inner, visible, scroll int) []string {
-	visible = max(1, visible)
+	visible = Max(1, visible)
 	if len(d.rows) == 0 {
 		return []string{TUIDimStyle.Render("no configured models")}
 	}
-	scroll = max(0, min(scroll, max(0, len(d.rows)-visible)))
-	end := min(len(d.rows), scroll+visible)
+	scroll = Max(0, Min(scroll, Max(0, len(d.rows)-visible)))
+	end := Min(len(d.rows), scroll+visible)
 	lines := make([]string, 0, end-scroll)
 	for i := scroll; i < end; i++ {
 		row := d.rows[i]
@@ -163,7 +163,7 @@ func (d *modelDialog) rowLinesAt(inner, visible, scroll int) []string {
 		if !row.selectable {
 			text = TUIDimStyle.Render(text)
 		}
-		lines = append(lines, ansi.Truncate(text, max(1, inner), "…"))
+		lines = append(lines, ansi.Truncate(text, Max(1, inner), "…"))
 	}
 	return lines
 }
@@ -171,7 +171,7 @@ func (d *modelDialog) rowLinesAt(inner, visible, scroll int) []string {
 func (d *modelDialog) ViewAt(w, h int) (string, DialogLayout) {
 	l := d.layout(w, h)
 	rows := d.rowLines(l.InnerW, l.PageH)
-	return renderDialogFrame("◇ models", rows, d.footer(), l), l
+	return RenderDialogFrame("◇ models", rows, d.footer(), l), l
 }
 
 func (d *modelDialog) footer() string {
@@ -248,8 +248,8 @@ func (m *tuiModel) selectModelDialogRow(row modelDialogRow) {
 	}
 	m.modelDlg = nil
 	m.hitMap.invalidate()
-	m.modelName = shortenModel(m.session.CurrentModel())
-	m.appendInfo(fmt.Sprintf("model set to %s/%s", row.provider, row.model) + effortDiscardedSuffix(discarded))
+	m.modelName = ShortenModel(m.session.CurrentModel())
+	m.appendInfo(fmt.Sprintf("model set to %s/%s", row.provider, row.model) + EffortDiscardedSuffix(discarded))
 }
 
 func (m *tuiModel) handleModelDialogKey(key string) (bool, bool, []tea.Cmd) {
@@ -257,7 +257,7 @@ func (m *tuiModel) handleModelDialogKey(key string) (bool, bool, []tea.Cmd) {
 	if d == nil {
 		return true, true, nil
 	}
-	layout := d.layout(max(1, m.width), max(1, m.height))
+	layout := d.layout(Max(1, m.width), Max(1, m.height))
 	switch key {
 	case "esc", "q":
 		m.modelDlg = nil
@@ -273,9 +273,9 @@ func (m *tuiModel) handleModelDialogKey(key string) (bool, bool, []tea.Cmd) {
 		d.cursor = d.nextModel(len(d.rows)-1, -1)
 		d.clampScroll(layout.PageH)
 	case "pgup", "b":
-		d.move(-max(1, layout.PageH))
+		d.move(-Max(1, layout.PageH))
 	case "pgdown", "f", " ":
-		d.move(max(1, layout.PageH))
+		d.move(Max(1, layout.PageH))
 	case "enter":
 		if row, ok := d.selected(); ok {
 			m.selectModelDialogRow(row)
@@ -304,7 +304,7 @@ func safeModelError(err error) string {
 func (m *tuiModel) switchModel(providerName, model string) (reasoning.Level, error) {
 	// m.config is set at TUI construction (newTUIModel); switchModelCommand
 	// already rejects a nil config via buildModelBinding when needed.
-	return switchModelCommand(m.session, m.config, providerName, model)
+	return SwitchModelCommand(m.session, m.config, providerName, model)
 }
 
 // modelDefaultEffort renders a catalog entry's default reasoning level for the

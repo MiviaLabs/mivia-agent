@@ -94,7 +94,7 @@ func TestRenderWorkChrome_BoundsAndSanitizesProgressDetail(t *testing.T) {
 			t.Fatalf("status bar contains control character U+%04X: %q", r, out)
 		}
 	}
-	if got := visibleWidth(out); got > 20 {
+	if got := VisibleWidth(out); got > 20 {
 		t.Fatalf("status bar width = %d, want <= 20: %q", got, out)
 	}
 }
@@ -150,11 +150,11 @@ func TestRenderStatusBarSimpleDiamond(t *testing.T) {
 
 func TestBrandWorkFramesCompleteCells(t *testing.T) {
 	// Pulse must be dense enough for a full 1-cell mark, not a raster tip slice.
-	if len(brandWorkFrames) < 8 {
-		t.Fatalf("want >= 8 frames, got %d", len(brandWorkFrames))
+	if len(BrandWorkFrames) < 8 {
+		t.Fatalf("want >= 8 frames, got %d", len(BrandWorkFrames))
 	}
 	seen := map[string]bool{}
-	for i, f := range brandWorkFrames {
+	for i, f := range BrandWorkFrames {
 		plain := stripANSI(f)
 		if utf8.RuneCountInString(plain) != 1 {
 			t.Fatalf("frame %d must be one rune after ANSI strip, got %q (runes=%d)", i, plain, utf8.RuneCountInString(plain))

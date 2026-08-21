@@ -95,7 +95,7 @@ func journeyModel(t *testing.T) *tuiModel {
 		viewport:              viewport.New(80, 20),
 		textarea:              ti,
 		messages:              []string{},
-		bridge:                newStreamBridge(),
+		bridge:                NewStreamBridge(),
 		toolPanel:             toolPanelState{Selected: -1},
 		pendingQueue:          []string{},
 		mode:                  modeWelcome,
@@ -291,7 +291,7 @@ func TestStartAI_TurnFenceCloseIsolates(t *testing.T) {
 	// "Start turn 2": close old bridge and create new one.
 	oldBridge := m.bridge
 	oldBridge.Close()
-	m.bridge = newStreamBridge()
+	m.bridge = NewStreamBridge()
 
 	// Try to push stale events through old bridge (simulating late goroutine).
 	_, _ = oldBridge.Write([]byte("stale-stream"))

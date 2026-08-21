@@ -52,15 +52,15 @@ func dialogRect(termW, termH int, p DialogPrefs, contentW, contentH int) Rect {
 	w := preferredDimension(termW, p.PreferredW, p.PreferredWPct, contentW)
 	h := preferredDimension(termH, p.preferredH, p.PreferredHPct, contentH)
 	if p.maxWPct > 0 {
-		w = min(w, percentOf(termW, p.maxWPct))
+		w = Min(w, percentOf(termW, p.maxWPct))
 	}
 	if p.maxHPct > 0 {
-		h = min(h, percentOf(termH, p.maxHPct))
+		h = Min(h, percentOf(termH, p.maxHPct))
 	}
-	w = max(w, p.MinW)
-	h = max(h, p.MinH)
-	w = min(termW, max(0, w))
-	h = min(termH, max(0, h))
+	w = Max(w, p.MinW)
+	h = Max(h, p.MinH)
+	w = Min(termW, Max(0, w))
+	h = Min(termH, Max(0, h))
 	return Rect{X: (termW - w) / 2, Y: (termH - h) / 2, W: w, H: h}
 }
 
@@ -77,10 +77,10 @@ func MakeDialogLayout(termW, termH int, p DialogPrefs, measure func(innerW int) 
 	if measure == nil {
 		measure = func(int) (int, int) { return 0, 0 }
 	}
-	measureW := max(1, termW-p.FrameCols)
+	measureW := Max(1, termW-p.FrameCols)
 	if p.PreferredW > 0 || p.PreferredWPct > 0 || p.MinW > 0 {
 		probe := dialogRect(termW, termH, p, 0, 1)
-		measureW = max(1, probe.W-p.FrameCols)
+		measureW = Max(1, probe.W-p.FrameCols)
 	}
 	contentW, contentH := measure(measureW)
 	r := dialogRect(termW, termH, p, contentW+p.FrameCols, contentH+p.FrameRows)
@@ -93,7 +93,7 @@ func MakeDialogLayout(termW, termH int, p DialogPrefs, measure func(innerW int) 
 		frameCols, frameRows = 0, 0
 	}
 	return DialogLayout{
-		Rect: r, InnerW: max(0, r.W-frameCols), PageH: max(0, r.H-frameRows),
+		Rect: r, InnerW: Max(0, r.W-frameCols), PageH: Max(0, r.H-frameRows),
 		FrameCols: frameCols, FrameRows: frameRows, borderless: p.borderless,
 	}
 }
@@ -105,7 +105,7 @@ func preferredDimension(term, preferred, pct, content int) int {
 	case pct > 0:
 		return percentOf(term, pct)
 	default:
-		return max(0, content)
+		return Max(0, content)
 	}
 }
 

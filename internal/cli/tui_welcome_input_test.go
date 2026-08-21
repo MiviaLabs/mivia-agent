@@ -46,7 +46,7 @@ func welcomeModel(t *testing.T) *tuiModel {
 		textarea:  ti,
 		messages:  []string{},
 		blocks:    []ChatBlock{},
-		bridge:    newStreamBridge(),
+		bridge:    NewStreamBridge(),
 		toolPanel: toolPanelState{Selected: -1},
 		focus:     focusComposer,
 		mode:      modeWelcome,

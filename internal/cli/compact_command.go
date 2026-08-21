@@ -40,7 +40,7 @@ func runCompactWithIO(args []string, stdout io.Writer) error {
 	}
 	// runRecoverySweep=false (F14): a standalone compaction is not a session
 	// start and must not push branches, publish PRs, or drive stacks.
-	cleanup, err := configureChatWorkspace(sess, root, true, res, &agentSessionState{}, true, false, false)
+	cleanup, err := configureChatWorkspace(sess, root, true, res, &AgentSessionState{}, true, false, false)
 	defer cleanup()
 	if err != nil {
 		return fmt.Errorf("compact: %w", err)

@@ -183,17 +183,17 @@ func runConfiguredChat(invocation chatInvocation, res *config.Resolved) error {
 		runInvocation := invocation
 		invocation.resumeSessionName = ""
 		err := runConfiguredChatOnceImpl(runInvocation, res)
-		var restart *workspaceRestart
+		var restart *WorkspaceRestart
 		if !errors.As(err, &restart) {
 			return err
 		}
 		if err := validateWorkspaceRestart(*restart, invocation); err != nil {
 			return fmt.Errorf("validate workspace restart: %w", err)
 		}
-		invocation.workspacePath = restart.dir
-		invocation.resumeSessionName = restart.resumeSessionName
-		invocation.expectedWorktreeInstance = restart.worktreeInstance
-		if err := os.Chdir(restart.dir); err != nil {
+		invocation.workspacePath = restart.Dir
+		invocation.resumeSessionName = restart.ResumeSessionName
+		invocation.expectedWorktreeInstance = restart.WorktreeInstance
+		if err := os.Chdir(restart.Dir); err != nil {
 			return fmt.Errorf("enter restarted workspace: %w", err)
 		}
 		reloaded, err := loadConfigForRestart(config.LoadOptions{
@@ -210,11 +210,11 @@ func runConfiguredChat(invocation chatInvocation, res *config.Resolved) error {
 	}
 }
 
-func validateWorkspaceRestart(restart workspaceRestart, invocation chatInvocation) error {
-	if restart.worktreeInstance.IsZero() {
+func validateWorkspaceRestart(restart WorkspaceRestart, invocation chatInvocation) error {
+	if restart.WorktreeInstance.IsZero() {
 		return nil
 	}
-	root, err := chatRepositoryRoot(restart.dir)
+	root, err := chatRepositoryRoot(restart.Dir)
 	if err != nil {
 		return contextstate.ErrWorktreeDeleted
 	}
@@ -230,7 +230,7 @@ func validateWorkspaceRestart(restart workspaceRestart, invocation chatInvocatio
 		return err
 	}
 	defer store.Close()
-	return validateExpectedWorktreeInstanceInStore(store, root, restart.dir, restart.worktreeInstance)
+	return validateExpectedWorktreeInstanceInStore(store, root, restart.Dir, restart.WorktreeInstance)
 }
 
 // prepareChatStartup runs the pre-session startup policy: the API key gate,
@@ -335,7 +335,7 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 // TUI) a fully-built session dispatches to. Split out of
 // runConfiguredChatOnce to keep that setup function under the repo's per-
 // function line budget.
-func dispatchChatSurface(invocation chatInvocation, sess *chat.Session, res *config.Resolved, useTools bool, agentState *agentSessionState) error {
+func dispatchChatSurface(invocation chatInvocation, sess *chat.Session, res *config.Resolved, useTools bool, agentState *AgentSessionState) error {
 	if invocation.jsonMode {
 		if err := validateJSONModeInvocation(invocation); err != nil {
 			return err
@@ -350,7 +350,7 @@ func dispatchChatSurface(invocation chatInvocation, sess *chat.Session, res *con
 	if invocation.plainUI || !term.IsTerminal(int(os.Stdin.Fd())) || strings.EqualFold(os.Getenv("TERM"), "dumb") {
 		return repl(sess, res, useTools, agentState, invocation.jsonMode, invocation.quiet)
 	}
-	return runTUI(sess, res, useTools, agentState, invocation.resumeSessionName)
+	return RunTUI(sess, res, useTools, agentState, invocation.resumeSessionName)
 }
 
 // validateJSONModeInvocation fails closed on --json combined with any path
@@ -412,13 +412,13 @@ func loadChatSkills(wsRoot string) (*skills.Registry, error) {
 }
 
 // prepareAgentSession loads and optionally selects a named agent definition.
-func prepareAgentSession(wsRoot, agentFlag string, skillReg *skills.Registry) (*agentSessionState, error) {
+func prepareAgentSession(wsRoot, agentFlag string, skillReg *skills.Registry) (*AgentSessionState, error) {
 	loaded, err := loadAgentDefinitions(wsRoot, agentFlag, skillReg)
 	if err != nil {
 		return nil, err
 	}
 	warnAgentLoad(loaded.Warnings)
-	return &agentSessionState{
+	return &AgentSessionState{
 		Global:             loaded.Global,
 		Selected:           loaded.Selected,
 		AllowProjectSkills: loaded.Global.LoadWorkspaceConfig,

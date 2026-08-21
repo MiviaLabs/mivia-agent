@@ -307,11 +307,11 @@ func keyHelpSections(rs []binding) []helpSection {
 		if _, ok := byGroup[b.group]; !ok {
 			order = append(order, b.group)
 		}
-		byGroup[b.group] = append(byGroup[b.group], helpItem{key: keyLabel(b), desc: b.help})
+		byGroup[b.group] = append(byGroup[b.group], helpItem{Key: keyLabel(b), Desc: b.help})
 	}
 	sections := make([]helpSection, 0, len(order))
 	for _, g := range order {
-		sections = append(sections, helpSection{title: g, items: byGroup[g]})
+		sections = append(sections, helpSection{Title: g, Items: byGroup[g]})
 	}
 	return sections
 }

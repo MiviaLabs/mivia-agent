@@ -317,8 +317,8 @@ func TestApplyLeftRailHeader_WidthNeutralOnDoubleSpace(t *testing.T) {
 	in := "  read_file args"
 	out := injectRailOnLine(in, "◆")
 	// Same visible width: replaced "  " with "◆ ".
-	if visibleWidth(out) != visibleWidth(in) {
-		t.Fatalf("width %d → %d for %q", visibleWidth(in), visibleWidth(out), out)
+	if VisibleWidth(out) != VisibleWidth(in) {
+		t.Fatalf("width %d → %d for %q", VisibleWidth(in), VisibleWidth(out), out)
 	}
 }
 
@@ -333,8 +333,8 @@ func TestRenderChatBlocks_NarrowWidthBudget(t *testing.T) {
 	r := RenderChatBlocks(blocks, "m", w, true)
 	for i, ln := range r.Lines {
 		// Allow small slack for emoji tool icons on non-dumb; dumb is ASCII.
-		if visibleWidth(ln) > w+2 {
-			t.Fatalf("line %d exceeds budget: vis=%d w=%d %q", i, visibleWidth(ln), w, stripANSI(ln))
+		if VisibleWidth(ln) > w+2 {
+			t.Fatalf("line %d exceeds budget: vis=%d w=%d %q", i, VisibleWidth(ln), w, stripANSI(ln))
 		}
 	}
 }

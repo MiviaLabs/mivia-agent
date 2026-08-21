@@ -12,7 +12,7 @@ import (
 func (m *tuiModel) layout() {
 	const statusH, hintH = 1, 1
 	const borderChrome = 2 // top + bottom border
-	inputHeight := min(composerMaxHeight(m.height), max(1, m.textarea.LineCount()))
+	inputHeight := Min(composerMaxHeight(m.height), Max(1, m.textarea.LineCount()))
 	composerH := inputHeight + borderChrome + composerPadRows
 	// The live "now" panel is a paint-only overlay over the transcript top
 	// (renderChatView). It holds no layout band, so the viewport spans the
@@ -24,18 +24,18 @@ func (m *tuiModel) layout() {
 		avail = 5
 	}
 
-	vpHeight := max(3, avail)
+	vpHeight := Max(3, avail)
 
 	chatWidth := m.chatPaneWidth()
 	if !m.ready {
 		// Must go through the constructor: a bare viewport.New here would
 		// silently reinstate the default keymap's ctrl+u/ctrl+d scroll
 		// aliases that newTranscriptViewport strips.
-		m.viewport = newTranscriptViewport(max(1, chatWidth), vpHeight)
+		m.viewport = newTranscriptViewport(Max(1, chatWidth), vpHeight)
 		m.textarea.SetWidth(composerInnerWidth(chatWidth))
 		m.ready = true
 	} else {
-		m.viewport.Width = max(1, chatWidth)
+		m.viewport.Width = Max(1, chatWidth)
 		m.viewport.Height = vpHeight
 		m.textarea.SetWidth(composerInnerWidth(chatWidth))
 	}
@@ -43,7 +43,7 @@ func (m *tuiModel) layout() {
 
 // updateFromDrain consumes bridge drain data into model state.
 // Chat timeline order within a drain: interim speech → tools → stream → thinking.
-func (m *tuiModel) updateFromDrain(d bridgeDrain) {
+func (m *tuiModel) updateFromDrain(d BridgeDrain) {
 	// Heartbeat stepDetail is fallback when no open-tool verb status is set.
 	if d.StepDetail != "" {
 		m.stepDetail = d.StepDetail
@@ -80,7 +80,7 @@ func (m *tuiModel) updateFromDrain(d bridgeDrain) {
 	}
 	// Intermediate assistant bubbles - gate noise/ghosts (Phase B).
 	committedInterim := false
-	if interim := strings.TrimSpace(d.Interim); shouldCommitInterim(interim) {
+	if interim := strings.TrimSpace(d.Interim); ShouldCommitInterim(interim) {
 		m.appendBlock(ChatBlock{Kind: ChatBlockAssistant, Text: interim})
 		committedInterim = true
 		m.clearAwaitingFirstActivity()
@@ -291,7 +291,7 @@ func (m *tuiModel) turnActionTally() (tools, agents, failed int) {
 		if b.Kind != ChatBlockTool {
 			continue
 		}
-		if actionKindForTool(b.ToolName) == actionAgent {
+		if ActionKindForTool(b.ToolName) == ActionAgent {
 			agents++
 		} else {
 			tools++

@@ -25,7 +25,7 @@ func TestRuntimeCoverageRestartRejectsInvalidRepositoryConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	expected := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
-	err := validateWorkspaceRestart(workspaceRestart{dir: repo, worktreeInstance: expected}, chatInvocation{configPath: configPath})
+	err := validateWorkspaceRestart(WorkspaceRestart{Dir: repo, WorktreeInstance: expected}, chatInvocation{configPath: configPath})
 	if err == nil {
 		t.Fatal("restart with invalid repository config succeeded")
 	}

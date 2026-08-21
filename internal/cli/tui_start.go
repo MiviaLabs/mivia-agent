@@ -172,7 +172,7 @@ func (m *tuiModel) startAIWithPrepared(sent, display string, prepare func() (str
 	}
 	oldBridge := m.bridge
 	oldBridge.Close()
-	m.bridge = newStreamBridge()
+	m.bridge = NewStreamBridge()
 	bridge := m.bridge
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
@@ -202,7 +202,7 @@ func (m *tuiModel) startAIWithPrepared(sent, display string, prepare func() (str
 		// workspace can be shared by several unrelated sessions at once),
 		// so an omitted SessionID here would make this session's own
 		// turn-start invisible to a legitimately-relaying observer.
-		m.eventBus.Publish(events.Event{Kind: events.KindTurnStart, Timestamp: time.Now(), SessionID: m.session.SessionID, TurnID: turnID, Detail: display, Identity: sessionIdentity(m.session, m.agentState, m.session.CurrentModelGeneration())})
+		m.eventBus.Publish(events.Event{Kind: events.KindTurnStart, Timestamp: time.Now(), SessionID: m.session.SessionID, TurnID: turnID, Detail: display, Identity: SessionIdentity(m.session, m.agentState, m.session.CurrentModelGeneration())})
 	}
 	go func() {
 		defer m.workerWG.Done()

@@ -121,7 +121,7 @@ func coreMemoryBlock(ctx context.Context, store memory.Store, scope memory.Scope
 // rebuild with no request-scoped context threaded through this call chain,
 // and CoreEntries is a single indexed, 24-row-capped query - not worth
 // plumbing a context through half a dozen signatures for.
-func coreMemoryBlockForState(state *agentSessionState) string {
+func coreMemoryBlockForState(state *AgentSessionState) string {
 	if state == nil {
 		return ""
 	}
@@ -139,14 +139,14 @@ func coreMemoryBlockForOpts(opts SessionDispatcherOpts) string {
 // memoryOf and memoryConfigOf mirror chat_repl.go's ledgerRepoOf for the
 // memory store (plan 77, E2), for callers building SessionDispatcherOpts
 // that don't already hold state.mu.
-func memoryOf(state *agentSessionState) memory.Store {
+func memoryOf(state *AgentSessionState) memory.Store {
 	if state == nil {
 		return nil
 	}
 	return state.Memory
 }
 
-func memoryConfigOf(state *agentSessionState) config.MemoryConfig {
+func memoryConfigOf(state *AgentSessionState) config.MemoryConfig {
 	if state == nil {
 		return config.MemoryConfig{}
 	}

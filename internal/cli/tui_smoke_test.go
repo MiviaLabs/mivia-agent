@@ -215,7 +215,7 @@ func TestTUISmoke_StreamDrainEvents(t *testing.T) {
 	assertSmokeView(t, m)
 }
 
-func seedBridgeToolsAndStream(b *streamBridge) {
+func seedBridgeToolsAndStream(b *StreamBridge) {
 	b.PushTool(true, "read_file", `{"path":"."}`)
 	b.PushTool(true, "grep", `{"pattern":"test"}`)
 	_, _ = b.Write([]byte("Here are the files I found:\n\n- README.md\n- main.go\n"))
@@ -223,7 +223,7 @@ func seedBridgeToolsAndStream(b *streamBridge) {
 	b.PushTool(false, "grep", "test_file.go:10")
 }
 
-func drainAndAssertLive(t *testing.T, b *streamBridge) (stream string, tools []bridgeToolEvt) {
+func drainAndAssertLive(t *testing.T, b *StreamBridge) (stream string, tools []bridgeToolEvt) {
 	t.Helper()
 	d := b.Drain()
 	if d.Stream == "" {
@@ -285,7 +285,7 @@ func newSmokeModel(t *testing.T) *tuiModel {
 		viewport:              newTranscriptViewport(80, 20),
 		textarea:              ti,
 		messages:              []string{},
-		bridge:                newStreamBridge(),
+		bridge:                NewStreamBridge(),
 		toolPanel:             toolPanelState{Selected: -1},
 		pendingQueue:          []string{},
 		mode:                  modeWelcome,

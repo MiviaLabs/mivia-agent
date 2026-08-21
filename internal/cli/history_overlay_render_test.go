@@ -30,7 +30,7 @@ func overlayWindowRows(n int) []string {
 
 // TestOverlayWindowThreeVisible: 20 rows, selection at the top, 3-row window.
 func TestOverlayWindowThreeVisible(t *testing.T) {
-	panel, _ := renderOverlayWindow(overlayWindowRows(20), 0, 3, 80, 10, " x (20) ", "")
+	panel, _ := RenderOverlayWindow(overlayWindowRows(20), 0, 3, 80, 10, " x (20) ", "")
 	if panel == "" {
 		t.Fatalf("renderOverlayWindow: expected a non-empty panel, got %q", panel)
 	}
@@ -50,7 +50,7 @@ func TestOverlayWindowThreeVisible(t *testing.T) {
 // scroll the window to the end, so the selected row is visible and there is
 // no "+N more" remainder.
 func TestOverlayWindowScrollsSelectionIntoView(t *testing.T) {
-	panel, _ := renderOverlayWindow(overlayWindowRows(20), 19, 3, 80, 10, " x (20) ", "")
+	panel, _ := RenderOverlayWindow(overlayWindowRows(20), 19, 3, 80, 10, " x (20) ", "")
 	if panel == "" {
 		t.Fatalf("renderOverlayWindow: expected a non-empty panel, got %q", panel)
 	}
@@ -66,7 +66,7 @@ func TestOverlayWindowScrollsSelectionIntoView(t *testing.T) {
 // TestOverlayWindowShortTerminalFallback: a 1-row terminal cannot hold a
 // frame; the renderer must fall back to a single row showing the selection.
 func TestOverlayWindowShortTerminalFallback(t *testing.T) {
-	panel, r := renderOverlayWindow(overlayWindowRows(5), 0, 3, 80, 1, " x (5) ", "")
+	panel, r := RenderOverlayWindow(overlayWindowRows(5), 0, 3, 80, 1, " x (5) ", "")
 	if panel == "" {
 		t.Fatalf("renderOverlayWindow: expected a fallback row even on a 1-row terminal, got %q", panel)
 	}
@@ -83,7 +83,7 @@ func TestOverlayWindowShortTerminalFallback(t *testing.T) {
 
 // TestOverlayWindowEmpty: nil rows render nothing.
 func TestOverlayWindowEmpty(t *testing.T) {
-	panel, r := renderOverlayWindow(nil, 0, 3, 80, 10, " x (0) ", "")
+	panel, r := RenderOverlayWindow(nil, 0, 3, 80, 10, " x (0) ", "")
 	if panel != "" {
 		t.Fatalf("renderOverlayWindow: expected an empty panel for nil rows, got %q", panel)
 	}
@@ -108,7 +108,7 @@ func TestOverlayWindowEmpty(t *testing.T) {
 // TestHistoryOverlayRenderPanelThreeRows: 10 entries, newest selected.
 func TestHistoryOverlayRenderPanelThreeRows(t *testing.T) {
 	entries := overlayWindowRows(10) // item-00 … item-09, newest first
-	panel, _ := renderHistoryPanel(historyState{open: true, selected: 0}, entries, 80, 10)
+	panel, _ := renderHistoryPanel(HistoryState{Open: true, Selected: 0}, entries, 80, 10)
 	if panel == "" {
 		t.Fatalf("renderHistoryPanel: expected a non-empty panel, got %q", panel)
 	}
@@ -132,7 +132,7 @@ func TestHistoryOverlayRenderPanelThreeRows(t *testing.T) {
 // panel is what a non-sanitizing renderer must fail on.
 func TestHistoryOverlayRenderSanitizes(t *testing.T) {
 	entries := []string{"hi\x1b[2Jclear", "a\nb\nc"}
-	panel, _ := renderHistoryPanel(historyState{open: true, selected: 0}, entries, 80, 10)
+	panel, _ := renderHistoryPanel(HistoryState{Open: true, Selected: 0}, entries, 80, 10)
 	if panel == "" {
 		t.Fatalf("renderHistoryPanel: expected a non-empty panel, got %q", panel)
 	}
@@ -153,7 +153,7 @@ func TestHistoryOverlayRenderSanitizes(t *testing.T) {
 
 // TestHistoryOverlayRenderFooterHint: the picker advertises the recall action.
 func TestHistoryOverlayRenderFooterHint(t *testing.T) {
-	panel, _ := renderHistoryPanel(historyState{open: true, selected: 0}, []string{"one", "two"}, 80, 10)
+	panel, _ := renderHistoryPanel(HistoryState{Open: true, Selected: 0}, []string{"one", "two"}, 80, 10)
 	if panel == "" {
 		t.Fatalf("renderHistoryPanel: expected a non-empty panel, got %q", panel)
 	}
@@ -164,7 +164,7 @@ func TestHistoryOverlayRenderFooterHint(t *testing.T) {
 
 // TestHistoryOverlayRenderEmpty: nil entries render nothing.
 func TestHistoryOverlayRenderEmpty(t *testing.T) {
-	panel, r := renderHistoryPanel(historyState{open: true, selected: 0}, nil, 80, 10)
+	panel, r := renderHistoryPanel(HistoryState{Open: true, Selected: 0}, nil, 80, 10)
 	if panel != "" {
 		t.Fatalf("renderHistoryPanel: expected an empty panel for nil entries, got %q", panel)
 	}
@@ -177,7 +177,7 @@ func TestHistoryOverlayRenderEmpty(t *testing.T) {
 // state.selected and keeps the selected (here: last) entry visible.
 func TestHistoryOverlayRenderSelectedFollowsState(t *testing.T) {
 	entries := overlayWindowRows(10)
-	panel, _ := renderHistoryPanel(historyState{open: true, selected: 9}, entries, 80, 10)
+	panel, _ := renderHistoryPanel(HistoryState{Open: true, Selected: 9}, entries, 80, 10)
 	if panel == "" {
 		t.Fatalf("renderHistoryPanel: expected a non-empty panel, got %q", panel)
 	}

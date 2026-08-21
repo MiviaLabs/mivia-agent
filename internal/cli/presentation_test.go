@@ -63,8 +63,8 @@ func TestTableNeverExceedsWidth(t *testing.T) {
 	for _, w := range []int{40, 60, 100} {
 		out := stripANSI(RenderMarkdown(src, w))
 		for _, line := range strings.Split(out, "\n") {
-			if visibleWidth(line) > w {
-				t.Fatalf("width=%d: line %d wide: %q", w, visibleWidth(line), line)
+			if VisibleWidth(line) > w {
+				t.Fatalf("width=%d: line %d wide: %q", w, VisibleWidth(line), line)
 			}
 		}
 	}
@@ -95,7 +95,7 @@ func TestDiffBodyGuttersAndTruncationIsExplicit(t *testing.T) {
 	for i := 0; i < 200; i++ {
 		fmt.Fprintf(&b, "+added line %d\n", i)
 	}
-	lines := renderDiffBody(b.String(), 80, 20)
+	lines := RenderDiffBody(b.String(), 80, 20)
 	if len(lines) > 22 {
 		t.Fatalf("diff body ignored its cap: %d lines", len(lines))
 	}
@@ -132,7 +132,7 @@ func TestExpandedWorkGroupIsBoundedWindow(t *testing.T) {
 	}
 	key := groups[0].Key
 	out := RenderChatBlocksWithWorkGroupsWindow(blocks, "m", 90, false,
-		map[string]bool{key: false}, map[string]int{}, railView{})
+		map[string]bool{key: false}, map[string]int{}, RailView{})
 	plain := stripANSI(strings.Join(out.Lines, "\n"))
 	if got := strings.Count(plain, "read_file"); got > workGroupWindowRows {
 		t.Fatalf("window shows %d rows, cap is %d", got, workGroupWindowRows)
@@ -150,7 +150,7 @@ func TestWorkGroupWindowScrolls(t *testing.T) {
 	key := findWorkGroups(blocks)[0].Key
 	scroll := map[string]int{key: 40}
 	out := RenderChatBlocksWithWorkGroupsWindow(blocks, "m", 90, false,
-		map[string]bool{key: false}, scroll, railView{})
+		map[string]bool{key: false}, scroll, RailView{})
 	plain := stripANSI(strings.Join(out.Lines, "\n"))
 	if strings.Contains(plain, "file-000.go") {
 		t.Fatalf("scrolled window still shows the first row:\n%s", plain)
@@ -225,7 +225,7 @@ func TestTableCellsWrapInsteadOfTruncating(t *testing.T) {
 		t.Fatalf("row height did not grow (%d lines):\n%s", n, out)
 	}
 	for _, line := range strings.Split(out, "\n") {
-		if visibleWidth(line) > 50 {
+		if VisibleWidth(line) > 50 {
 			t.Fatalf("wrapped table exceeded width: %q", line)
 		}
 	}
@@ -237,10 +237,10 @@ func TestTableWrapKeepsStyledCellsAligned(t *testing.T) {
 	var w int
 	for _, line := range strings.Split(stripANSI(out), "\n") {
 		if w == 0 {
-			w = visibleWidth(line)
+			w = VisibleWidth(line)
 		}
-		if visibleWidth(line) != w {
-			t.Fatalf("ragged table edges (%d vs %d):\n%s", visibleWidth(line), w, stripANSI(out))
+		if VisibleWidth(line) != w {
+			t.Fatalf("ragged table edges (%d vs %d):\n%s", VisibleWidth(line), w, stripANSI(out))
 		}
 	}
 }

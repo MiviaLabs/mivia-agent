@@ -383,7 +383,7 @@ func TestSkillScopeOriginCheckSkipsUnboundSkills(t *testing.T) {
 func TestSlashSkillUnmetToolRequirementDoesNotActivate(t *testing.T) {
 	allowed := []string{"review"}
 	agent := skillScopeAgent("dev", &allowed, "read_file") // write_file missing
-	state := &agentSessionState{SkillScope: skillScopeFromAgent(agent)}
+	state := &AgentSessionState{SkillScope: skillScopeFromAgent(agent)}
 	session := chat.NewSession(&config.Resolved{Model: "model"}, nullCompleter{})
 	session.UseTools = true
 	session.Tools = tools.NewRegistry()
@@ -407,7 +407,7 @@ func TestSlashSkillUnmetToolRequirementDoesNotActivate(t *testing.T) {
 func TestSlashSkillAllowedStillActivates(t *testing.T) {
 	allowed := []string{"review"}
 	agent := skillScopeAgent("dev", &allowed, "read_file")
-	state := &agentSessionState{SkillScope: skillScopeFromAgent(agent)}
+	state := &AgentSessionState{SkillScope: skillScopeFromAgent(agent)}
 	session := chat.NewSession(&config.Resolved{Model: "model"}, nullCompleter{})
 	session.UseTools = true
 	session.Tools = tools.NewRegistry()
@@ -454,7 +454,7 @@ func TestSlashResourceSkillUnmetToolDoesNotInjectReader(t *testing.T) {
 	}
 	allowed := []string{"review"}
 	agent := skillScopeAgent("dev", &allowed, "read_file") // write_file missing
-	state := &agentSessionState{SkillScope: skillScopeFromAgent(agent)}
+	state := &AgentSessionState{SkillScope: skillScopeFromAgent(agent)}
 	session := chat.NewSession(&config.Resolved{Model: "model"}, nullCompleter{})
 	session.UseTools = true
 	session.Tools = tools.NewRegistry()

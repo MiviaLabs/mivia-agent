@@ -369,7 +369,7 @@ func TestCompactionChannelsStructuralOnlyNamesTheMissingCondition(t *testing.T) 
 
 	var buf strings.Builder
 	previous := activeJSONSlashSink
-	activeJSONSlashSink = &jsonSlashSink{w: &buf}
+	activeJSONSlashSink = &JSONSlashSink{w: &buf}
 	defer func() { activeJSONSlashSink = previous }()
 	handled, exit, err := handleSlashCompact("/compact", sess, res, nil)
 	if err != nil {

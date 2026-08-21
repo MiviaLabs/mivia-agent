@@ -12,9 +12,9 @@ import (
 // reads this to warn the user if persistence failed.
 const autosaveStatusFile = ".autosave_last_status"
 
-// writeAutosaveStatus writes the result of the final SaveLast to a status file
+// WriteAutosaveStatus writes the result of the final SaveLast to a status file
 // so the next session can report failures to the user.
-func writeAutosaveStatus(sessionDir string, saveErr error) {
+func WriteAutosaveStatus(sessionDir string, saveErr error) {
 	if sessionDir == "" {
 		return
 	}
@@ -26,10 +26,10 @@ func writeAutosaveStatus(sessionDir string, saveErr error) {
 	_ = os.WriteFile(statusPath, []byte(content), 0o644)
 }
 
-// readAutosaveStatus returns a non-empty warning string if the previous
+// ReadAutosaveStatus returns a non-empty warning string if the previous
 // session's auto-save on exit failed, or "" if it succeeded or there is
 // no status file yet.
-func readAutosaveStatus(sessionDir string) string {
+func ReadAutosaveStatus(sessionDir string) string {
 	if sessionDir == "" {
 		return ""
 	}

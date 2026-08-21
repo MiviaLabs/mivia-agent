@@ -119,7 +119,7 @@ func TestToolBatchStatusDetailListsTools(t *testing.T) {
 func TestInterimRejectedWhenTooShort(t *testing.T) {
 	t.Parallel()
 	for _, s := range []string{"", "  ", "OK.", "…", "a", "queued", "running", "!!!"} {
-		if shouldCommitInterim(s) {
+		if ShouldCommitInterim(s) {
 			t.Errorf("should reject %q", s)
 		}
 	}
@@ -132,7 +132,7 @@ func TestInterimAcceptedWhenRealProse(t *testing.T) {
 		"Next I'll read the entrypoint.",
 		"Looking into auth next.",
 	} {
-		if !shouldCommitInterim(s) {
+		if !ShouldCommitInterim(s) {
 			t.Errorf("should accept %q", s)
 		}
 	}

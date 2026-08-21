@@ -99,7 +99,7 @@ func TestNoteUserScrolledUpThenPollDoesNotYank(t *testing.T) {
 	}
 	saved := m.viewport.YOffset
 
-	m.updateFromDrain(bridgeDrain{
+	m.updateFromDrain(BridgeDrain{
 		Tools: []bridgeToolEvt{
 			{Start: true, ToolCallID: "c1", Name: "list_dir", Detail: `{"path":"."}`, At: time.Now()},
 		},

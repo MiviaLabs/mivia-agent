@@ -141,7 +141,7 @@ func (ui *classicAgentUI) onAssistant(e agent.Event) {
 	if e.Detail != "interim" {
 		return
 	}
-	if !shouldCommitInterim(e.Content) {
+	if !ShouldCommitInterim(e.Content) {
 		return
 	}
 	ui.mu.Lock()
@@ -166,16 +166,16 @@ func (ui *classicAgentUI) onToolStart(e agent.Event) {
 	ui.mu.Unlock()
 
 	if needStatus {
-		line := toolStatusLine(e.Name, eventPreview(e.Input, e.Detail))
+		line := toolStatusLine(e.Name, EventPreview(e.Input, e.Detail))
 		if line != "" {
 			ui.r.PrintStatusLine(line)
 		}
 	}
-	ui.r.PrintToolStart(e.Name, eventPreview(e.Input, e.Detail))
+	ui.r.PrintToolStart(e.Name, EventPreview(e.Input, e.Detail))
 }
 
 func (ui *classicAgentUI) onToolEnd(e agent.Event) {
-	ui.r.PrintToolEnd(e.Name, eventPreview(e.Output, e.Detail))
+	ui.r.PrintToolEnd(e.Name, EventPreview(e.Output, e.Detail))
 	ui.mu.Lock()
 	if ui.openTools > 0 {
 		ui.openTools--

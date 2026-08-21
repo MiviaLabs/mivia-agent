@@ -206,8 +206,8 @@ func TestStoreGetter(t *testing.T) {
 func TestNewInHelpSurfaces(t *testing.T) {
 	// TUI help content.
 	for _, sec := range tuiHelpCommands() {
-		for _, it := range sec.items {
-			if strings.Contains(it.key, "/new") {
+		for _, it := range sec.Items {
+			if strings.Contains(it.Key, "/new") {
 				goto classic
 			}
 		}
@@ -217,8 +217,8 @@ classic:
 	// Classic REPL help content (catalog-driven sections).
 	found := false
 	for _, sec := range replHelpContent() {
-		for _, it := range sec.items {
-			if strings.Contains(it.key, "/new") {
+		for _, it := range sec.Items {
+			if strings.Contains(it.Key, "/new") {
 				found = true
 			}
 		}

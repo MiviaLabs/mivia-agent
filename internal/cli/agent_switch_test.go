@@ -40,7 +40,7 @@ func TestApplySessionAgentUnknownListsAvailable(t *testing.T) {
 		"mivia": "prompt-mivia",
 	})
 	sess := chat.NewSession(&config.Resolved{Model: "m", ProviderName: "p"}, stubAgentCompleter{})
-	err := applySessionAgent(sess, nil, state, "nope", false)
+	err := ApplySessionAgent(sess, nil, state, "nope", false)
 	if err == nil || !strings.Contains(err.Error(), "unknown agent") {
 		t.Fatalf("err=%v", err)
 	}
@@ -52,7 +52,7 @@ func TestApplySessionAgentUnknownListsAvailable(t *testing.T) {
 func TestApplySessionAgentBusyRefused(t *testing.T) {
 	state := fixtureAgentState(t, map[string]string{"mivia": "p"})
 	sess := chat.NewSession(&config.Resolved{Model: "m", ProviderName: "p"}, stubAgentCompleter{})
-	err := applySessionAgent(sess, nil, state, "mivia", true)
+	err := ApplySessionAgent(sess, nil, state, "mivia", true)
 	if err == nil || !strings.Contains(err.Error(), "finish current work") {
 		t.Fatalf("err=%v", err)
 	}
@@ -77,7 +77,7 @@ func TestApplySessionAgentSwitchesPromptAndSteps(t *testing.T) {
 	sess.Tools = full.Clone()
 	sess.UseTools = true
 
-	if err := applySessionAgent(sess, res, state, "reader", false); err != nil {
+	if err := ApplySessionAgent(sess, res, state, "reader", false); err != nil {
 		t.Fatal(err)
 	}
 	if sess.SystemPrompt != "READER-PROMPT" {
@@ -93,7 +93,7 @@ func TestApplySessionAgentSwitchesPromptAndSteps(t *testing.T) {
 		t.Fatal("reader must keep read_file")
 	}
 
-	if err := applySessionAgent(sess, res, state, "writer", false); err != nil {
+	if err := ApplySessionAgent(sess, res, state, "writer", false); err != nil {
 		t.Fatal(err)
 	}
 	if sess.SystemPrompt != "WRITER-PROMPT" {
@@ -199,7 +199,7 @@ type agentFixture struct {
 
 func intPtr(n int) *int { return &n }
 
-func fixtureAgentState(t *testing.T, prompts map[string]string) *agentSessionState {
+func fixtureAgentState(t *testing.T, prompts map[string]string) *AgentSessionState {
 	t.Helper()
 	fx := make(map[string]agentFixture, len(prompts))
 	for name, p := range prompts {
@@ -208,7 +208,7 @@ func fixtureAgentState(t *testing.T, prompts map[string]string) *agentSessionSta
 	return fixtureAgentStateWithTools(t, fx)
 }
 
-func fixtureAgentStateWithTools(t *testing.T, fx map[string]agentFixture) *agentSessionState {
+func fixtureAgentStateWithTools(t *testing.T, fx map[string]agentFixture) *AgentSessionState {
 	t.Helper()
 	reg := agents.NewRegistry()
 	for name, f := range fx {
@@ -223,7 +223,7 @@ func fixtureAgentStateWithTools(t *testing.T, fx map[string]agentFixture) *agent
 			t.Fatal(err)
 		}
 	}
-	return &agentSessionState{
+	return &AgentSessionState{
 		Registry:           reg,
 		AllowProjectSkills: true,
 		WorkspaceRoot:      t.TempDir(),

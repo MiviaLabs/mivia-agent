@@ -43,7 +43,7 @@ var (
 // ---------------------------------------------------------------------------
 // Messages
 // ---------------------------------------------------------------------------
-type tuiTickMsg struct{ bridge *streamBridge }
+type tuiTickMsg struct{ bridge *StreamBridge }
 
 // ---------------------------------------------------------------------------
 // tuiModel
@@ -61,7 +61,7 @@ type tuiModel struct {
 	spinner         spinner.Model
 	messages        []string
 	blocks          []ChatBlock
-	bridge          *streamBridge
+	bridge          *StreamBridge
 	streamBuf       strings.Builder
 	waiting         bool
 	turnStart       time.Time
@@ -78,7 +78,7 @@ type tuiModel struct {
 	// newest appended last. It feeds the Up-arrow history picker.
 	sentHistory []string
 	// history is the composer message-history picker overlay state.
-	history historyState
+	history HistoryState
 	// queueMgr is the pending-message queue manager popup state.
 	queueMgr queueMgrState
 	// editingQueued is set while the user is editing a queued message in the
@@ -121,7 +121,7 @@ type tuiModel struct {
 	// worktreeDlg is the /worktrees manager (nil = closed).
 	worktreeDlg *worktreeDialog
 	// agentState is the mid-session agent registry/selection (may be nil).
-	agentState *agentSessionState
+	agentState *AgentSessionState
 	// trimmedBlocks counts history blocks dropped by the transcript cap, so
 	// the top of the view can say what it is no longer showing.
 	trimmedBlocks int
@@ -304,14 +304,14 @@ func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiMod
 		session:               sess,
 		config:                res,
 		toolsOn:               toolsOn,
-		modelName:             shortenModel(sess.CurrentModel()),
-		workspaceDir:          shortenWorkspacePath(),
+		modelName:             ShortenModel(sess.CurrentModel()),
+		workspaceDir:          ShortenWorkspacePath(),
 		gitBranch:             vcs.DetectBranch(),
 		gitWorktreeName:       vcs.DetectWorktreeName(),
 		viewport:              newTranscriptViewport(80, 20),
 		textarea:              ti,
 		spinner:               s,
-		bridge:                newStreamBridge(),
+		bridge:                NewStreamBridge(),
 		messages:              []string{},
 		blocks:                []ChatBlock{},
 		toolPanel:             toolPanelState{Selected: -1},
@@ -339,7 +339,7 @@ func newTUIModel(sess *chat.Session, res *config.Resolved, toolsOn bool) *tuiMod
 	}
 	m.setFocus(focusComposer)
 	m.refreshSessionList()
-	m.prevAutoSaveWarn = readAutosaveStatus(m.session.SessionDir)
+	m.prevAutoSaveWarn = ReadAutosaveStatus(m.session.SessionDir)
 	ti.Placeholder = "Type to start a new chat…  or select a session ↑↓"
 	return m
 }
@@ -389,7 +389,7 @@ func (m *tuiModel) pollCmd() tea.Cmd {
 			return nil
 		}
 		select {
-		case <-bridge.notify:
+		case <-bridge.Notify:
 			return tuiTickMsg{bridge: bridge}
 		case <-time.After(80 * time.Millisecond):
 			return tuiTickMsg{bridge: bridge}
@@ -441,7 +441,7 @@ func (m *tuiModel) toggleSelectedBlock() bool {
 		m.blocks[i].Collapsed = !m.blocks[i].Collapsed
 		// Expanding a live multi-tool status also opens the tool strip so the
 		// user can enter/space into per-tool I/O (status alone used to no-op).
-		if isWorkStatusBlock(m.blocks[i]) && !m.blocks[i].Collapsed {
+		if IsWorkStatusBlock(m.blocks[i]) && !m.blocks[i].Collapsed {
 			m.focusLiveToolPanelFromStatus()
 		}
 		m.renderVP()
@@ -501,10 +501,10 @@ func (m *tuiModel) adjustThinkingScroll(blockID string, dir int) bool {
 			return false
 		}
 		n := len(strings.Split(text, "\n"))
-		if n <= maxThinkingLines {
+		if n <= MaxThinkingLines {
 			return false
 		}
-		maxOffset := n - maxThinkingLines
+		maxOffset := n - MaxThinkingLines
 		old := m.liveThinkingScroll
 		m.liveThinkingScroll += dir
 		if m.liveThinkingScroll < 0 {
@@ -526,10 +526,10 @@ func (m *tuiModel) adjustThinkingScroll(blockID string, dir int) bool {
 		return false
 	}
 	n := len(strings.Split(block.Text, "\n"))
-	if n <= maxThinkingLines {
+	if n <= MaxThinkingLines {
 		return false
 	}
-	maxOffset := n - maxThinkingLines
+	maxOffset := n - MaxThinkingLines
 	old := block.ScrollOffset
 	block.ScrollOffset += dir
 	if block.ScrollOffset < 0 {

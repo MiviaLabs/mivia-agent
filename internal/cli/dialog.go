@@ -31,9 +31,9 @@ func replHelpCommands() []helpSection {
 		if command.ArgsHint != "" {
 			key += " " + command.ArgsHint
 		}
-		items = append(items, helpItem{key: key, desc: command.Description})
+		items = append(items, helpItem{Key: key, Desc: command.Description})
 	}
-	return []helpSection{{title: "Commands", items: items}}
+	return []helpSection{{Title: "Commands", Items: items}}
 }
 
 // replHelpKeySections documents classic REPL line-editor bindings only
@@ -41,37 +41,42 @@ func replHelpCommands() []helpSection {
 func replHelpKeySections() []helpSection {
 	return []helpSection{
 		{
-			title: "Session Keys",
-			items: []helpItem{
-				{key: "Ctrl-C at prompt", desc: "Exit session"},
-				{key: "Ctrl-C while busy", desc: "Cancel current turn"},
-				{key: "Ctrl-D", desc: "Exit session"},
+			Title: "Session Keys",
+			Items: []helpItem{
+				{Key: "Ctrl-C at prompt", Desc: "Exit session"},
+				{Key: "Ctrl-C while busy", Desc: "Cancel current turn"},
+				{Key: "Ctrl-D", Desc: "Exit session"},
 			},
 		},
 		{
-			title: "Editing Keys",
-			items: []helpItem{
-				{key: "↑ ↓", desc: "History navigation"},
-				{key: "← →", desc: "Move cursor"},
-				{key: "Home / End", desc: "Move to start/end of line"},
-				{key: "Backspace / Delete", desc: "Delete character"},
-				{key: "Ctrl+U", desc: "Kill entire line"},
-				{key: "Ctrl+W", desc: "Kill word before cursor"},
-				{key: "Esc / q", desc: "Close this dialog"},
-				{key: "Tab", desc: "Command completion"},
+			Title: "Editing Keys",
+			Items: []helpItem{
+				{Key: "↑ ↓", Desc: "History navigation"},
+				{Key: "← →", Desc: "Move cursor"},
+				{Key: "Home / End", Desc: "Move to start/end of line"},
+				{Key: "Backspace / Delete", Desc: "Delete character"},
+				{Key: "Ctrl+U", Desc: "Kill entire line"},
+				{Key: "Ctrl+W", Desc: "Kill word before cursor"},
+				{Key: "Esc / q", Desc: "Close this dialog"},
+				{Key: "Tab", Desc: "Command completion"},
 			},
 		},
 	}
 }
 
 type helpSection struct {
-	title string
-	items []helpItem
+	// Title is the section heading shown in the help dialog.
+	Title string
+	// Items lists the key/description rows under this section. Shared with
+	// internal/legacytui's help dialog renderer.
+	Items []helpItem
 }
 
 type helpItem struct {
-	key  string
-	desc string
+	// Key is the keybinding or command text shown in the left column.
+	Key string
+	// Desc is the one-line explanation shown in the right column.
+	Desc string
 }
 
 // ShowHelpDialog draws a bordered help dialog and waits for Esc or 'q'.
@@ -94,10 +99,10 @@ func ShowHelpDialog(t *Terminal) error {
 
 func helpDialogLayout(w, h int) ([]string, int, int, int, int) {
 	maxH := h - 4
-	boxW := min(72, max(40, w-4))
+	boxW := Min(72, Max(40, w-4))
 	lines := renderHelpLines(boxW - 2)
-	contentH := min(len(lines), maxH)
-	return lines[:contentH], boxW, contentH, max(1, (h-contentH-2)/2), max(1, (w-boxW)/2)
+	contentH := Min(len(lines), maxH)
+	return lines[:contentH], boxW, contentH, Max(1, (h-contentH-2)/2), Max(1, (w-boxW)/2)
 }
 
 func drawHelpDialog(t *Terminal, lines []string, boxW, contentH, topRow, leftCol int) {
@@ -105,14 +110,14 @@ func drawHelpDialog(t *Terminal, lines []string, boxW, contentH, topRow, leftCol
 	t.WriteString("┌" + strings.Repeat("─", boxW-2) + "┐")
 	for i, line := range lines {
 		t.MoveTo(topRow+1+i, leftCol)
-		padding := max(0, boxW-2-runeWidth(line))
+		padding := Max(0, boxW-2-RuneWidth(line))
 		t.WriteString("│" + line + strings.Repeat(" ", padding) + "│")
 	}
 	t.MoveTo(topRow+1+contentH, leftCol)
 	t.WriteString("└" + strings.Repeat("─", boxW-2) + "┘")
 	footerLine := dim("Esc / q - close")
 	t.MoveTo(topRow+contentH+2, leftCol)
-	pad := max(0, boxW-2-runeWidth(footerLine))
+	pad := Max(0, boxW-2-RuneWidth(footerLine))
 	t.WriteString(" " + footerLine + strings.Repeat(" ", pad) + " ")
 }
 
@@ -134,25 +139,25 @@ func waitHelpDialog(t *Terminal) error {
 func renderHelpLines(maxW int) []string {
 	var out []string
 	for _, section := range replHelpContent() {
-		out = append(out, bold(section.title))
-		for _, item := range section.items {
-			keyW := runeWidth(item.key)
+		out = append(out, bold(section.Title))
+		for _, item := range section.Items {
+			keyW := RuneWidth(item.Key)
 			padding := 26 - keyW
 			if padding < 1 {
 				padding = 1
 			}
-			descW := runeWidth(item.desc)
+			descW := RuneWidth(item.Desc)
 			maxDesc := maxW - keyW - padding
 			if maxDesc < 5 {
 				maxDesc = 5
 			}
-			desc := item.desc
+			desc := item.Desc
 			if descW > maxDesc {
-				desc = truncateToWidth(desc, maxDesc-3) + "..."
+				desc = TruncateToWidth(desc, maxDesc-3) + "..."
 			}
-			line := "  " + item.key + strings.Repeat(" ", padding) + dim(desc)
-			if runeWidth(line) > maxW {
-				line = truncateToWidth(line, maxW-3) + "..."
+			line := "  " + item.Key + strings.Repeat(" ", padding) + dim(desc)
+			if RuneWidth(line) > maxW {
+				line = TruncateToWidth(line, maxW-3) + "..."
 			}
 			out = append(out, line)
 		}
@@ -167,18 +172,18 @@ func renderHelpLines(maxW int) []string {
 func renderReplHelpInline() string {
 	var b strings.Builder
 	for _, section := range replHelpContent() {
-		b.WriteString(section.title)
+		b.WriteString(section.Title)
 		b.WriteByte('\n')
-		for _, item := range section.items {
-			keyW := runeWidth(item.key)
+		for _, item := range section.Items {
+			keyW := RuneWidth(item.Key)
 			padding := 26 - keyW
 			if padding < 1 {
 				padding = 1
 			}
 			b.WriteString("  ")
-			b.WriteString(item.key)
+			b.WriteString(item.Key)
 			b.WriteString(strings.Repeat(" ", padding))
-			b.WriteString(item.desc)
+			b.WriteString(item.Desc)
 			b.WriteByte('\n')
 		}
 		b.WriteByte('\n')
@@ -212,7 +217,9 @@ func dim(s string) string {
 	return "\033[2m" + s + "\033[22m"
 }
 
-func truncateToWidth(s string, maxW int) string {
+// TruncateToWidth truncates s to at most maxW display columns, grapheme
+// aware. Shared with internal/legacytui's chrome and dialog renderers.
+func TruncateToWidth(s string, maxW int) string {
 	var out strings.Builder
 	w := 0
 	for g := uniseg.NewGraphemes(s); g.Next(); {

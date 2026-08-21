@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 
@@ -89,9 +88,9 @@ func applySGR(state *sgrState, params string) {
 				if code == 48 {
 					key = "bg"
 				}
-				end := min(len(parts), i+3)
+				end := Min(len(parts), i+3)
 				if parts[i+1] == "2" {
-					end = min(len(parts), i+5)
+					end = Min(len(parts), i+5)
 				}
 				state.set(key, strings.Join(parts[i:end], ";"))
 				i = end - 1
@@ -124,7 +123,7 @@ func sliceANSI(line string, left, right int) string {
 	if right <= left || right <= 0 {
 		return ""
 	}
-	left = max(0, left)
+	left = Max(0, left)
 	prefix := ansi.Cut(line, 0, left)
 	part := ansi.Cut(line, left, right)
 	if part == "" && ansi.StringWidth(line) > left {
@@ -147,23 +146,25 @@ func normalizeCanvas(s string, termW, termH int) []string {
 		if i < len(raw) {
 			line = raw[i]
 		}
-		rows[i] = fitDialogRow(line, termW)
+		rows[i] = FitDialogRow(line, termW)
 	}
 	return rows
 }
 
-func overlayAt(base, panel string, panelRect Rect, termW, termH int) string {
+// OverlayAt composites panel onto base at panelRect, clamped to the terminal
+// bounds. Shared with internal/legacytui's view compositor.
+func OverlayAt(base, panel string, panelRect Rect, termW, termH int) string {
 	baseRows := normalizeCanvas(base, termW, termH)
 	if termW <= 0 || termH <= 0 {
 		return ""
 	}
-	panelRows := normalizeCanvas(panel, max(0, panelRect.W), max(0, panelRect.H))
-	for y := max(0, panelRect.Y); y < min(termH, panelRect.Y+panelRect.H); y++ {
+	panelRows := normalizeCanvas(panel, Max(0, panelRect.W), Max(0, panelRect.H))
+	for y := Max(0, panelRect.Y); y < Min(termH, panelRect.Y+panelRect.H); y++ {
 		localY := y - panelRect.Y
 		if localY < 0 || localY >= len(panelRows) {
 			continue
 		}
-		x0, x1 := max(0, panelRect.X), min(termW, panelRect.X+panelRect.W)
+		x0, x1 := Max(0, panelRect.X), Min(termW, panelRect.X+panelRect.W)
 		if x1 <= x0 {
 			continue
 		}
@@ -176,7 +177,9 @@ func overlayAt(base, panel string, panelRect Rect, termW, termH int) string {
 	return strings.Join(baseRows, "\n")
 }
 
-func fitDialogRow(row string, width int) string {
+// FitDialogRow pads or truncates row to exactly width display columns.
+// Shared with internal/legacytui's dialog frame renderer.
+func FitDialogRow(row string, width int) string {
 	if width <= 0 {
 		return ""
 	}
@@ -194,10 +197,10 @@ func fitDialogRow(row string, width int) string {
 	return row
 }
 
-// renderDialogFrame owns the shared exact-width frame for block and sessions
+// RenderDialogFrame owns the shared exact-width frame for block and sessions
 // dialogs. frameRows=2 means title/page/footer-bottom; frameRows=3 adds an
 // explicit footer row before the bottom border for sessions.
-func renderDialogFrame(title string, rows []string, footer string, layout DialogLayout) string {
+func RenderDialogFrame(title string, rows []string, footer string, layout DialogLayout) string {
 	w, h := layout.Rect.W, layout.Rect.H
 	if w <= 0 || h <= 0 {
 		return ""
@@ -206,33 +209,33 @@ func renderDialogFrame(title string, rows []string, footer string, layout Dialog
 		out := make([]string, h)
 		for i := range out {
 			if i < len(rows) {
-				out[i] = fitDialogRow(rows[i], w)
+				out[i] = FitDialogRow(rows[i], w)
 			} else {
 				out[i] = strings.Repeat(" ", w)
 			}
 		}
 		return strings.Join(out, "\n")
 	}
-	inner := max(0, w-layout.FrameCols)
-	top := "┌─" + fitDialogRow(title, inner) + "─┐"
+	inner := Max(0, w-layout.FrameCols)
+	top := "┌─" + FitDialogRow(title, inner) + "─┐"
 	var out []string
 	out = append(out, top)
-	pageRows := max(0, h-layout.FrameRows)
+	pageRows := Max(0, h-layout.FrameRows)
 	for i := 0; i < pageRows; i++ {
 		row := ""
 		if i < len(rows) {
 			row = rows[i]
 		}
-		out = append(out, "│ "+fitDialogRow(row, inner)+" │")
+		out = append(out, "│ "+FitDialogRow(row, inner)+" │")
 	}
 	if layout.FrameRows >= 3 {
-		out = append(out, "│ "+fitDialogRow(footer, inner)+" │")
+		out = append(out, "│ "+FitDialogRow(footer, inner)+" │")
 	}
 	bottom := footer
 	if layout.FrameRows >= 3 {
 		bottom = ""
 	}
-	out = append(out, "└─"+fitDialogRow(bottom, inner)+"─┘")
+	out = append(out, "└─"+FitDialogRow(bottom, inner)+"─┘")
 	for len(out) < h {
 		out = append(out, strings.Repeat(" ", w))
 	}
@@ -241,15 +244,8 @@ func renderDialogFrame(title string, rows []string, footer string, layout Dialog
 	}
 	for i := range out {
 		if ansi.StringWidth(out[i]) != w {
-			out[i] = fitDialogRow(out[i], w)
+			out[i] = FitDialogRow(out[i], w)
 		}
 	}
 	return strings.Join(out, "\n")
-}
-
-func dialogFooter(pos string, total int, pager bool) string {
-	if !pager {
-		return " esc close "
-	}
-	return fmt.Sprintf(" %s · %d lines · j/k scroll · pgup/pgdn · esc close ", pos, total)
 }

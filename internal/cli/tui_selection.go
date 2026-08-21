@@ -173,7 +173,7 @@ func (m *tuiModel) ensureSelectedVisible() {
 		return
 	}
 	if r[1] > bottom {
-		m.viewport.YOffset = max(0, r[1]-h)
+		m.viewport.YOffset = Max(0, r[1]-h)
 	}
 }
 
@@ -207,13 +207,13 @@ func applySelectionChrome(lines []string, ranges map[string][2]int, selectedID s
 			continue
 		}
 		// Preserve width: pad plain to original visible width then paint bg.
-		vis := visibleWidth(out[i])
+		vis := VisibleWidth(out[i])
 		if vis < 1 {
 			vis = len([]rune(plain))
 		}
 		row := plain
-		if visibleWidth(row) < vis {
-			row += strings.Repeat(" ", vis-visibleWidth(row))
+		if VisibleWidth(row) < vis {
+			row += strings.Repeat(" ", vis-VisibleWidth(row))
 		}
 		out[i] = sel.Render(row)
 	}

@@ -134,7 +134,7 @@ func TestDialogResizeClampsScrollThroughWindowSize(t *testing.T) {
 	_, layout := m.overlay.ViewAt(20, 8)
 	_ = layout
 	rows := m.overlay.displayRows(layout.InnerW)
-	if m.overlay.yOffset > max(0, len(rows)-layout.PageH) {
+	if m.overlay.yOffset > Max(0, len(rows)-layout.PageH) {
 		t.Fatalf("resize left offset beyond final page: offset=%d rows=%d page=%d", m.overlay.yOffset, len(rows), layout.PageH)
 	}
 }

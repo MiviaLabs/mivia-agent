@@ -270,7 +270,7 @@ func newAskE2EDispatchTool(t *testing.T, cfg config.SubagentConfig) (*dispatchTa
 	if err != nil {
 		t.Fatalf("NewSessionDispatcher: %v", err)
 	}
-	raw, ok := reg.Get(toolDispatchTasks)
+	raw, ok := reg.Get(ToolDispatchTasks)
 	if !ok {
 		d.Close()
 		t.Fatal("dispatch_tasks not registered")

@@ -32,7 +32,7 @@ func TestTableFullPipeline(t *testing.T) {
 	}
 
 	// Step 2: wrapANSIv2 should preserve ANSI codes and wrap long lines
-	wrapped := wrapANSIv2(rendered, 40)
+	wrapped := WrapANSIv2(rendered, 40)
 	t.Logf("wrapANSIv2 output (width=40):\n%s", wrapped)
 
 	if !strings.Contains(wrapped, AnsiDim) {
@@ -44,7 +44,7 @@ func TestTableFullPipeline(t *testing.T) {
 	// Each line should be within width
 	for _, line := range strings.Split(wrapped, "\n") {
 		if len(line) > 0 {
-			vis := visibleWidth(line)
+			vis := VisibleWidth(line)
 			if vis > 40 {
 				t.Errorf("line %q has visible width %d > 40", line, vis)
 			}
@@ -76,7 +76,7 @@ func TestTableHistoryRoundTrip(t *testing.T) {
 	}
 
 	// Step 2: Simulate wrapping at viewport width
-	wrapped := wrapANSIv2(rendered, 60)
+	wrapped := WrapANSIv2(rendered, 60)
 	t.Logf("Wrapped at 60:\n%s", wrapped)
 
 	if !strings.Contains(wrapped, AnsiDim) {
@@ -128,7 +128,7 @@ func TestTableNoDataLoss(t *testing.T) {
 	input := "| Package | Description |\n|---------|------------|\n| cli     | TUI handler |\n| agent   | Agent loop  |\n| tools   | File tools  |\n"
 
 	rendered := RenderMarkdown(input, 78)
-	wrapped := wrapANSIv2(rendered, 60)
+	wrapped := WrapANSIv2(rendered, 60)
 
 	// Strip all ANSI and line breaks to check content preservation
 	plain := stripAnsiOut(wrapped)
@@ -205,9 +205,9 @@ func TestTableColumnsAlign(t *testing.T) {
 		}
 		if len(line) != len(tableLines[0]) {
 			// Same structure: equal total visible width preferred.
-			if visibleWidth(line) != visibleWidth(tableLines[0]) {
+			if VisibleWidth(line) != VisibleWidth(tableLines[0]) {
 				t.Errorf("row visible width %d != header %d\n  %q\n  %q",
-					visibleWidth(line), visibleWidth(tableLines[0]), tableLines[0], line)
+					VisibleWidth(line), VisibleWidth(tableLines[0]), tableLines[0], line)
 			}
 		}
 	}
@@ -272,7 +272,7 @@ func TestTableNarrowWrapNoSplit(t *testing.T) {
 		}
 	}
 
-	wrapped := wrapANSIv2(rendered, 30)
+	wrapped := WrapANSIv2(rendered, 30)
 	t.Logf("wrapped@30:\n%s", wrapped)
 
 	dataAfter := 0
@@ -280,8 +280,8 @@ func TestTableNarrowWrapNoSplit(t *testing.T) {
 		plain := stripAnsiOut(line)
 		if strings.Contains(plain, "│") {
 			dataAfter++
-			if visibleWidth(line) > 30 {
-				t.Errorf("table line exceeds 30: vis=%d %q", visibleWidth(line), plain)
+			if VisibleWidth(line) > 30 {
+				t.Errorf("table line exceeds 30: vis=%d %q", VisibleWidth(line), plain)
 			}
 			// Soft-wrap would leave a continuation without leading │ - each
 			// original table row must remain a single physical line.

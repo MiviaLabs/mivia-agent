@@ -12,16 +12,16 @@ import (
 
 // Terminal and card floor dimensions shared across the TUI surface.
 const (
-	defaultTermWidth    = 80
-	defaultTermHeight   = 24
-	minCardWidth        = 20
+	// MinCardWidth is the floor width for a rendered chat card. Shared with
+	// internal/clichat's chat-block renderer.
+	MinCardWidth        = 20
 	minPaneContentWidth = 8 // the return 8 pane-content floor
 )
 
 // composerOuterWidth floors the outer card width for layout.
 func composerOuterWidth(width int) int {
-	if width < minCardWidth {
-		return minCardWidth
+	if width < MinCardWidth {
+		return MinCardWidth
 	}
 	return width
 }
@@ -39,7 +39,7 @@ func composerInnerWidth(width int) int {
 // composerMaxHeight returns textarea line capacity for the terminal height.
 // The composer starts at one line and grows with the draft, capped at 5.
 func composerMaxHeight(termH int) int {
-	return min(5, max(1, termH/6))
+	return Min(5, Max(1, termH/6))
 }
 
 // renderComposer wraps textarea.View() in a lipgloss card.
@@ -82,7 +82,7 @@ func renderComposer(taView string, width int, modelLabel string) string {
 
 // composerTopBorder renders the square top border line: ┌────┐
 func composerTopBorder(width int, border lipgloss.Style) string {
-	return border.Render("┌" + strings.Repeat("─", max(1, width-2)) + "┐")
+	return border.Render("┌" + strings.Repeat("─", Max(1, width-2)) + "┐")
 }
 
 // composerBottomBorder renders the square bottom border line with the
@@ -92,7 +92,7 @@ func composerBottomBorder(width int, border lipgloss.Style, modelLabel string) s
 	labW := lipgloss.Width(modelLabel)
 	// "└" + dashes + " " + label + " ┘" must total width cells.
 	if labW+4 > width {
-		return border.Render("└" + strings.Repeat("─", max(1, width-2)) + "┘")
+		return border.Render("└" + strings.Repeat("─", Max(1, width-2)) + "┘")
 	}
 	dashN := width - labW - 4
 	return border.Render("└"+strings.Repeat("─", dashN)) +

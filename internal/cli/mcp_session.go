@@ -41,7 +41,7 @@ func redactionPolicyOf(cfg *config.Resolved) *redact.Policy {
 	return cfg.RedactionPolicy
 }
 
-func ensureSelectedMCPTools(state *agentSessionState, selected agents.ResolvedAgent) error {
+func ensureSelectedMCPTools(state *AgentSessionState, selected agents.ResolvedAgent) error {
 	if state == nil {
 		return nil
 	}

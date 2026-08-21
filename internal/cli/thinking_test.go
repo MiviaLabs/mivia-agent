@@ -29,7 +29,7 @@ func TestRenderThinkingBlockWrapsLongLinesToWidth(t *testing.T) {
 }
 
 func TestThinkingEventReachesBridge(t *testing.T) {
-	b := newStreamBridge()
+	b := NewStreamBridge()
 	cb := agentEventBridgeCallback(b)
 	cb(agent.Event{Kind: agent.EventThinking, Content: "weighing the budget change"})
 	d := b.Drain()

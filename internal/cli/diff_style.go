@@ -12,14 +12,14 @@ const (
 	ansiBgDiffAdd = "\033[48;5;22m" // dark green background for additions
 )
 
-// renderDiffLine renders a single unified-diff line using theme tokens.
+// RenderDiffLine renders a single unified-diff line using theme tokens.
 // Classification by leading marker (+++/---/@@/+/-/context) is centralized here;
 // every diff surface in the package must route through this function.
 //
 // The + and - prefixes are preserved verbatim in the output (existing gutter tests
 // assert their presence). Leading indentation ("  ") matches the highlight/markdown
 // surfaces. @@ hunk headers use the magenta/hunk token (not dim/context).
-func renderDiffLine(line string) string {
+func RenderDiffLine(line string) string {
 	switch {
 	case strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---"):
 		// File header: bold cyan on dark background.

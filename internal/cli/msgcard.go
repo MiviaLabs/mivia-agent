@@ -34,7 +34,7 @@ func formatUserMessageCard(text string, width int, sentAt time.Time) []string {
 		label += TUIDimStyle.Render("  " + sentAt.In(time.Local).Format("3:04PM"))
 	}
 	out := []string{"  " + rail + " " + label}
-	for _, line := range strings.Split(wrapLineV2(body, max(20, width-6)), "\n") {
+	for _, line := range strings.Split(wrapLineV2(body, Max(20, width-6)), "\n") {
 		out = append(out, "  "+rail+" "+line)
 	}
 	return out

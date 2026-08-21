@@ -70,36 +70,36 @@ func (m *tuiModel) handleWelcomeMouse(msg tea.MouseMsg) bool {
 // Returns false because nothing below the hit map should consume the event.
 func (m *tuiModel) handleHitMapMouse(msg tea.MouseMsg, skipViewport *bool) bool {
 	zone, hit := m.hitMap.hit(msg.Y)
-	if hit && zone.blockID != "" && (msg.Type == tea.MouseWheelUp || msg.Type == tea.MouseWheelDown) {
+	if hit && zone.BlockID != "" && (msg.Type == tea.MouseWheelUp || msg.Type == tea.MouseWheelDown) {
 		dir := 1
 		if msg.Type == tea.MouseWheelUp {
 			dir = -1
 		}
-		if m.adjustThinkingScroll(zone.blockID, dir) {
+		if m.adjustThinkingScroll(zone.BlockID, dir) {
 			m.renderVP()
 			*skipViewport = true
 			m.noteUserScrolledUp()
 			return false
 		}
 	}
-	if hit && zone.kind == hitTranscript && msg.Type == tea.MouseWheelUp {
+	if hit && zone.Kind == HitTranscript && msg.Type == tea.MouseWheelUp {
 		m.viewport.ScrollUp(m.viewport.MouseWheelDelta)
 		m.noteUserScrolledUp()
 		*skipViewport = true
 	}
-	if hit && zone.kind == hitTranscript && msg.Type == tea.MouseWheelDown {
+	if hit && zone.Kind == HitTranscript && msg.Type == tea.MouseWheelDown {
 		m.viewport.ScrollDown(m.viewport.MouseWheelDelta)
 		if m.viewport.AtBottom() {
 			m.followOutput = true
 		}
 		*skipViewport = true
 	}
-	if hit && zone.kind == hitTranscript && msg.Type == tea.MouseLeft {
-		if zone.blockID != "" {
-			m.handleTranscriptBlockClick(zone.blockID)
+	if hit && zone.Kind == HitTranscript && msg.Type == tea.MouseLeft {
+		if zone.BlockID != "" {
+			m.handleTranscriptBlockClick(zone.BlockID)
 		}
 	}
-	if hit && zone.kind == hitComposer && msg.Type == tea.MouseLeft {
+	if hit && zone.Kind == HitComposer && msg.Type == tea.MouseLeft {
 		m.selectedBlockID = ""
 		m.lastClickBlockID = ""
 		m.setFocus(focusComposer)
@@ -227,16 +227,16 @@ func (m *tuiModel) handleModalMouse(msg tea.MouseMsg) bool {
 	}
 	delta, wheel := mouseWheelDelta(msg)
 	if m.overlay != nil && m.overlay.prefs.Pager && wheel {
-		layout := m.overlay.layout(max(1, m.width), max(1, m.height))
-		m.overlay.renderedRows = m.overlay.rowsForLayout(max(1, layout.InnerW), layout.PageH)
-		m.overlay.scroll(delta*max(1, m.viewport.MouseWheelDelta), max(1, layout.PageH))
+		layout := m.overlay.layout(Max(1, m.width), Max(1, m.height))
+		m.overlay.renderedRows = m.overlay.rowsForLayout(Max(1, layout.InnerW), layout.PageH)
+		m.overlay.scroll(delta*Max(1, m.viewport.MouseWheelDelta), Max(1, layout.PageH))
 	}
 	if m.modelDlg != nil {
 		if wheel {
-			m.modelDlg.move(delta * max(1, m.viewport.MouseWheelDelta))
+			m.modelDlg.move(delta * Max(1, m.viewport.MouseWheelDelta))
 		}
 		if msg.Type == tea.MouseLeft || msg.Button == tea.MouseButtonLeft {
-			if row, ok := m.modelDlg.rowAtY(msg.Y, max(1, m.width), max(1, m.height)); ok {
+			if row, ok := m.modelDlg.rowAtY(msg.Y, Max(1, m.width), Max(1, m.height)); ok {
 				for i, candidate := range m.modelDlg.rows {
 					if candidate == row && !candidate.header {
 						m.modelDlg.cursor = i
@@ -247,12 +247,12 @@ func (m *tuiModel) handleModalMouse(msg tea.MouseMsg) bool {
 		}
 	}
 	if m.worktreeDlg != nil && wheel {
-		visible := m.worktreeDlg.visibleRows(max(1, m.width), max(1, m.height))
-		m.worktreeDlg.move(delta * max(1, m.viewport.MouseWheelDelta))
+		visible := m.worktreeDlg.visibleRows(Max(1, m.width), Max(1, m.height))
+		m.worktreeDlg.move(delta * Max(1, m.viewport.MouseWheelDelta))
 		m.worktreeDlg.clampScrollTo(visible)
 	}
 	if m.workflowRunDlg != nil && wheel {
-		m.workflowRunDlg.move(delta*max(1, m.viewport.MouseWheelDelta), max(1, m.width), max(1, m.height))
+		m.workflowRunDlg.move(delta*Max(1, m.viewport.MouseWheelDelta), Max(1, m.width), Max(1, m.height))
 	}
 	return true
 }

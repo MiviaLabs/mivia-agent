@@ -8,7 +8,7 @@ import (
 )
 
 func TestStreamBridgePendingReportsUndrainedWithoutConsuming(t *testing.T) {
-	b := newStreamBridge()
+	b := NewStreamBridge()
 	if b.Pending() {
 		t.Fatal("empty bridge must count as drained")
 	}
@@ -41,14 +41,14 @@ func TestStreamBridgePendingReportsUndrainedWithoutConsuming(t *testing.T) {
 	if b.Pending() {
 		t.Fatal("fully drained bridge (Done consumed) must not report pending")
 	}
-	var nilBridge *streamBridge
+	var nilBridge *StreamBridge
 	if nilBridge.Pending() {
 		t.Fatal("nil bridge must count as drained")
 	}
 }
 
 func TestStreamBridgeRevokeStreamClearsPendingAndFlagsReset(t *testing.T) {
-	b := newStreamBridge()
+	b := NewStreamBridge()
 	if _, err := b.Write([]byte("partial answer before tools")); err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestUpdateFromDrainResetStreamClearsStreamBuf(t *testing.T) {
 	m.mode = modeChat
 	m.waiting = true
 	m.streamBuf.WriteString("optimistic")
-	m.updateFromDrain(bridgeDrain{ResetStream: true})
+	m.updateFromDrain(BridgeDrain{ResetStream: true})
 	if m.streamBuf.Len() != 0 {
 		t.Fatalf("streamBuf should clear on resetStream, got %q", m.streamBuf.String())
 	}
@@ -131,7 +131,7 @@ func TestInterimAssistantBecomesChatBubble(t *testing.T) {
 }
 
 func TestStreamBridgeQueuedRunningDoesNotDoubleCountActiveTools(t *testing.T) {
-	b := newStreamBridge()
+	b := NewStreamBridge()
 	// Simulate agent loop: Start queued, then Start running, then End.
 	b.PushToolWithID(true, "call-1", "read_file", `{"path":"a"}`)
 	b.PushToolWithID(true, "call-1", "read_file", "running")
@@ -153,7 +153,7 @@ func TestStreamBridgeQueuedRunningDoesNotDoubleCountActiveTools(t *testing.T) {
 }
 
 func TestStreamBridgeCoalesceAndFinish(t *testing.T) {
-	b := newStreamBridge()
+	b := NewStreamBridge()
 	if _, err := b.Write([]byte("hel")); err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func TestStreamBridgeCoalesceAndFinish(t *testing.T) {
 	}
 	b.PushTool(true, "write_file", `{"path":"a"}`)
 	select {
-	case <-b.notify:
+	case <-b.Notify:
 	case <-time.After(time.Second):
 		t.Fatal("expected notify")
 	}
@@ -190,7 +190,7 @@ func TestStreamBridgeCoalesceAndFinish(t *testing.T) {
 }
 
 func TestStreamBridgeConcurrentProducersAreBounded(t *testing.T) {
-	b := newStreamBridge()
+	b := NewStreamBridge()
 	var wg sync.WaitGroup
 	for i := 0; i < 32; i++ {
 		wg.Add(1)
@@ -216,7 +216,7 @@ func TestStreamBridgeConcurrentProducersAreBounded(t *testing.T) {
 }
 
 func TestStreamBridgeCloseDropsStaleEventsAndIsIdempotent(t *testing.T) {
-	b := newStreamBridge()
+	b := NewStreamBridge()
 	b.Close()
 	b.Close()
 	_, _ = b.Write([]byte("stale"))
@@ -237,7 +237,7 @@ func TestStreamBridgeCloseDropsStaleEventsAndIsIdempotent(t *testing.T) {
 }
 
 func TestStreamBridgeNoHangOnBurst(t *testing.T) {
-	b := newStreamBridge()
+	b := NewStreamBridge()
 	done := make(chan struct{})
 	go func() {
 		for i := 0; i < 10_000; i++ {
@@ -255,7 +255,7 @@ func TestStreamBridgeNoHangOnBurst(t *testing.T) {
 			}
 			// Use channel wait via notify when possible
 			select {
-			case <-b.notify:
+			case <-b.Notify:
 			case <-time.After(time.Millisecond):
 			}
 		}
@@ -268,8 +268,8 @@ func TestStreamBridgeNoHangOnBurst(t *testing.T) {
 }
 
 func TestTUIIgnoresStaleBridgeTick(t *testing.T) {
-	oldBridge := newStreamBridge()
-	currentBridge := newStreamBridge()
+	oldBridge := NewStreamBridge()
+	currentBridge := NewStreamBridge()
 	m := &tuiModel{bridge: currentBridge, waiting: true}
 	_, _ = oldBridge.Write([]byte("stale"))
 
@@ -286,7 +286,7 @@ func TestTUIIgnoresStaleBridgeTick(t *testing.T) {
 }
 
 func TestStreamBridgeStaleEventFence(t *testing.T) {
-	b := newStreamBridge()
+	b := NewStreamBridge()
 
 	// Fence for turn 1 - clears done and sets turnID.
 	b.FenceTurn(1)

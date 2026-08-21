@@ -29,7 +29,7 @@ func registerOneShotHandlers(d *runtime.Dispatcher, comp provider.Completer, mod
 		MaxContextTokens: maxContextTokens, MaxTokens: maxTokens,
 		MaxContextTokensFunc: budget,
 	}
-	if err := d.Register(runtime.Subagent, handlerDelegate, handler); err != nil {
+	if err := d.Register(runtime.Subagent, HandlerDelegate, handler); err != nil {
 		return fmt.Errorf("register delegate handler: %w", err)
 	}
 	if err := d.Register(runtime.Subagent, handlerOneshot, handler); err != nil {

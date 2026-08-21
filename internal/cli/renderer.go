@@ -55,7 +55,7 @@ func (r *ChatRenderer) DimHeader(label string) {
 		w = 80
 	}
 	prefix := fmt.Sprintf("── %s ──", label)
-	padding := w - runeWidth(prefix) - 1
+	padding := w - RuneWidth(prefix) - 1
 	if padding < 1 {
 		padding = 1
 	}
@@ -208,7 +208,7 @@ const maxToolResultPreview = 200
 //	assistant without ToolCalls → rendered_markdown (no model border)
 //	tool   → ["icon name truncated_result"]
 func RenderMessageForHistory(msg provider.Message, modelName string, width int) []string {
-	w := max(20, width)
+	w := Max(20, width)
 	switch msg.Role {
 	case provider.RoleSystem:
 		return nil
@@ -232,9 +232,9 @@ func RenderMessageForHistory(msg provider.Message, modelName string, width int) 
 		}
 		// If there is textual content, render as markdown.
 		if msg.Content != "" {
-			md := RenderMarkdown(msg.Content, max(20, w-2))
+			md := RenderMarkdown(msg.Content, Max(20, w-2))
 			if md != "" {
-				lines = append(lines, wrapANSIv2(md, max(20, w-2)))
+				lines = append(lines, WrapANSIv2(md, Max(20, w-2)))
 			}
 		}
 		if len(lines) == 0 {
@@ -290,7 +290,7 @@ func RenderTurn(msgs []provider.Message, modelName string, width int) []string {
 	}
 
 	var result []string
-	w := max(20, width)
+	w := Max(20, width)
 
 	// User card (first user message in the group) - no border, keep bg.
 	userMsg := msgs[startIdx]
@@ -308,9 +308,9 @@ func RenderTurn(msgs []provider.Message, modelName string, width int) []string {
 	result = append(result, toolResultLines...)
 
 	if finalAnswer != "" {
-		md := RenderMarkdown(finalAnswer, max(20, w-2))
+		md := RenderMarkdown(finalAnswer, Max(20, w-2))
 		if md != "" {
-			result = append(result, wrapANSIv2(md, max(20, w-2)))
+			result = append(result, WrapANSIv2(md, Max(20, w-2)))
 		}
 	}
 

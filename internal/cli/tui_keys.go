@@ -40,9 +40,9 @@ func (m *tuiModel) handleWelcomeKey(key string) bool {
 				m.sessionSel++
 			}
 		case "pgup":
-			m.sessionSel = max(0, m.sessionSel-10)
+			m.sessionSel = Max(0, m.sessionSel-10)
 		case "pgdown":
-			m.sessionSel = min(len(m.sessions)-1, m.sessionSel+10)
+			m.sessionSel = Min(len(m.sessions)-1, m.sessionSel+10)
 			if m.sessionSel < 0 {
 				m.sessionSel = 0
 			}

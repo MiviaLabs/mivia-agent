@@ -336,7 +336,7 @@ func runSessionsUsage(args []string, stdout io.Writer) error {
 	// notices into the JSON stream. runRecoverySweep=false (F14): a usage
 	// query is read-only and must not push branches, publish PRs, or drive
 	// stacks as a side effect.
-	cleanup, err := configureChatWorkspace(sess, root, true, res, &agentSessionState{}, true, false, false)
+	cleanup, err := configureChatWorkspace(sess, root, true, res, &AgentSessionState{}, true, false, false)
 	defer cleanup()
 	if err != nil {
 		return fmt.Errorf("sessions usage: %w", err)

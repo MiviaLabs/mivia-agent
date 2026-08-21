@@ -230,7 +230,7 @@ func TestTuiBridgeReceivesAutomaticCompactionBanner(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	bridge := newStreamBridge()
+	bridge := NewStreamBridge()
 	onEvent := agentEventBridgeCallback(bridge)
 
 	if _, err := session.SendUserWithEvent(context.Background(), "first "+strings.Repeat("x", 2000), io.Discard, onEvent); err != nil {

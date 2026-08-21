@@ -6,15 +6,21 @@ package cli
 type tuiHitZoneKind uint8
 
 const (
-	hitTranscript tuiHitZoneKind = iota + 1
+	// HitTranscript marks a hit zone over the transcript pane. Shared with
+	// internal/legacytui's mouse and message hit-testing.
+	HitTranscript tuiHitZoneKind = iota + 1
 	hitTools
-	hitComposer
+	// HitComposer marks a hit zone over the composer pane. Shared with
+	// internal/legacytui's mouse hit-testing.
+	HitComposer
 )
 
 type tuiHitZone struct {
-	kind    tuiHitZoneKind
-	y0, y1  int // inclusive screen coordinates
-	blockID string
+	// Kind identifies which pane the zone belongs to.
+	Kind   tuiHitZoneKind
+	y0, y1 int // inclusive screen coordinates
+	// BlockID is the chat block this zone hit-tests against.
+	BlockID string
 }
 
 type tuiHitMap struct {
@@ -35,19 +41,19 @@ func (h *tuiHitMap) rebuild(width, height, headerY, transcriptLines, toolY0, too
 	h.width, h.height = width, height
 	h.zones = h.zones[:0]
 	if transcriptLines > 0 {
-		h.zones = append(h.zones, tuiHitZone{kind: hitTranscript, y0: headerY, y1: headerY + transcriptLines - 1})
+		h.zones = append(h.zones, tuiHitZone{Kind: HitTranscript, y0: headerY, y1: headerY + transcriptLines - 1})
 		for id, r := range blockRanges {
 			start, end := r[0]+headerY-viewportOffset, r[1]+headerY-viewportOffset
 			if end > start {
-				h.zones = append(h.zones, tuiHitZone{kind: hitTranscript, y0: start, y1: end - 1, blockID: id})
+				h.zones = append(h.zones, tuiHitZone{Kind: HitTranscript, y0: start, y1: end - 1, BlockID: id})
 			}
 		}
 	}
 	if toolY1 >= toolY0 {
-		h.zones = append(h.zones, tuiHitZone{kind: hitTools, y0: toolY0, y1: toolY1})
+		h.zones = append(h.zones, tuiHitZone{Kind: hitTools, y0: toolY0, y1: toolY1})
 	}
 	if composerY1 >= composerY0 {
-		h.zones = append(h.zones, tuiHitZone{kind: hitComposer, y0: composerY0, y1: composerY1})
+		h.zones = append(h.zones, tuiHitZone{Kind: HitComposer, y0: composerY0, y1: composerY1})
 	}
 }
 

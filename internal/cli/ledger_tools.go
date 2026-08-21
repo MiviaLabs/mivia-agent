@@ -137,7 +137,7 @@ func (t *ledgerReadTool) Execute(ctx context.Context, args json.RawMessage) (str
 	}
 	limit := t.pageLimit()
 	if params.HasLimit {
-		limit = min(limit, params.Limit)
+		limit = Min(limit, params.Limit)
 	}
 	return t.pageResponse(params.Ref, kind, len(data), params.Offset, limit, content)
 }

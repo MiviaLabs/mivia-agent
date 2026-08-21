@@ -45,20 +45,48 @@ func newHelpDialog(_ ...int) *blockOverlay {
 
 func newHelpDialogFor(registry *skills.Registry, _ ...int) *blockOverlay {
 	var lines []string
-	for i, section := range tuiHelpContentFor(registry) {
+	for i, section := range TUIHelpContentFor(registry) {
 		if i > 0 {
 			lines = append(lines, "")
 		}
-		lines = append(lines, lipgloss.NewStyle().Bold(true).Render(section.title))
-		for _, item := range section.items {
-			pad := 26 - lipgloss.Width(item.key)
+		lines = append(lines, lipgloss.NewStyle().Bold(true).Render(section.Title))
+		for _, item := range section.Items {
+			pad := 26 - lipgloss.Width(item.Key)
 			if pad < 1 {
 				pad = 1
 			}
-			lines = append(lines, "  "+item.key+strings.Repeat(" ", pad)+TUIDimStyle.Render(item.desc))
+			lines = append(lines, "  "+item.Key+strings.Repeat(" ", pad)+TUIDimStyle.Render(item.Desc))
 		}
 	}
 	return newDialog("? help", lines)
+}
+
+// currentAgentDisplayName is the status dialog's "agent" row. Relocated from
+// identity.go: this file is its sole caller.
+func currentAgentDisplayName(state *AgentSessionState) string {
+	if state == nil {
+		return "root fallback"
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.Selected == nil {
+		return "root fallback"
+	}
+	return state.Selected.Name
+}
+
+// currentAgentDisplaySource is the status dialog's "source" row. Relocated
+// from identity.go: this file is its sole caller.
+func currentAgentDisplaySource(state *AgentSessionState) string {
+	if state == nil {
+		return "compiled"
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.Selected == nil {
+		return "compiled"
+	}
+	return string(state.Selected.Provenance.Source)
 }
 
 // newStatusDialog reports the live session state the operator asks about.
@@ -73,7 +101,7 @@ func (m *tuiModel) newStatusDialog() *blockOverlay {
 	lines := []string{
 		lipgloss.NewStyle().Bold(true).Render("Session"),
 		row("model", safeDialogText(m.modelName)),
-		row("effort", safeDialogText(formatEffortStatus(m.session.ReasoningSetting(), len(m.session.ReasoningChoices()) > 0))),
+		row("effort", safeDialogText(FormatEffortStatus(m.session.ReasoningSetting(), len(m.session.ReasoningChoices()) > 0))),
 		row("agent", safeDialogText(currentAgentDisplayName(m.agentState))),
 		row("source", safeDialogText(currentAgentDisplaySource(m.agentState))),
 		row("generation", fmt.Sprintf("%d", m.session.CurrentModelGeneration())),

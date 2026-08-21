@@ -75,7 +75,7 @@ func (d *workflowRunDialog) layout(w, h int) DialogLayout {
 		rows := WrapDisplayRows(d.contentLines(), innerW)
 		maxW := 0
 		for _, row := range rows {
-			maxW = max(maxW, ansi.StringWidth(row))
+			maxW = Max(maxW, ansi.StringWidth(row))
 		}
 		return maxW, len(rows)
 	})
@@ -84,27 +84,27 @@ func (d *workflowRunDialog) layout(w, h int) DialogLayout {
 // maxScroll is the largest scroll offset that keeps the pager inside the
 // canvas at the given terminal size.
 func (d *workflowRunDialog) maxScroll(w, h int) int {
-	l := d.layout(max(1, w), max(1, h))
-	rows := WrapDisplayRows(d.contentLines(), max(1, l.InnerW))
-	return max(0, len(rows)-max(1, l.PageH))
+	l := d.layout(Max(1, w), Max(1, h))
+	rows := WrapDisplayRows(d.contentLines(), Max(1, l.InnerW))
+	return Max(0, len(rows)-Max(1, l.PageH))
 }
 
 func (d *workflowRunDialog) move(delta, w, h int) {
-	d.scroll = min(max(0, d.scroll+delta), d.maxScroll(w, h))
+	d.scroll = Min(Max(0, d.scroll+delta), d.maxScroll(w, h))
 }
 
 func (d *workflowRunDialog) clampScroll(w, h int) {
-	d.scroll = min(max(0, d.scroll), d.maxScroll(w, h))
+	d.scroll = Min(Max(0, d.scroll), d.maxScroll(w, h))
 }
 
 // ViewAt renders the dialog frame over the paged content rows.
 func (d *workflowRunDialog) ViewAt(w, h int) (string, DialogLayout) {
-	l := d.layout(max(1, w), max(1, h))
-	rows := WrapDisplayRows(d.contentLines(), max(1, l.InnerW))
-	d.clampScroll(max(1, w), max(1, h))
-	start := min(d.scroll, len(rows))
-	end := min(len(rows), start+max(1, l.PageH))
-	return renderDialogFrame("◆ workflow run "+d.runID, rows[start:end], d.footer(), l), l
+	l := d.layout(Max(1, w), Max(1, h))
+	rows := WrapDisplayRows(d.contentLines(), Max(1, l.InnerW))
+	d.clampScroll(Max(1, w), Max(1, h))
+	start := Min(d.scroll, len(rows))
+	end := Min(len(rows), start+Max(1, l.PageH))
+	return RenderDialogFrame("◆ workflow run "+d.runID, rows[start:end], d.footer(), l), l
 }
 
 // availableActions returns the status-valid actions the dialog can actually
@@ -188,7 +188,7 @@ func (m *tuiModel) handleWorkflowRunDialogKey(key string) (bool, bool, []tea.Cmd
 	// fresh look (mirrors the effort dialog).
 	d.notice = ""
 	d.noticeErr = false
-	w, h := max(1, m.width), max(1, m.height)
+	w, h := Max(1, m.width), Max(1, m.height)
 	if d.confirm != workflowConfirmNone {
 		switch key {
 		case "y":

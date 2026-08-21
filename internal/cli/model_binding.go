@@ -24,7 +24,7 @@ import (
 // split and skill registry exist only there. Passing a context snapshot is what
 // made a /model switch silently narrow this session's authority. In-flight
 // turns keep their captured binding generation.
-func buildModelBinding(sess *chat.Session, res *config.Resolved, root, providerName, model string, state *agentSessionState) (chat.ModelBinding, error) {
+func buildModelBinding(sess *chat.Session, res *config.Resolved, root, providerName, model string, state *AgentSessionState) (chat.ModelBinding, error) {
 	if sess == nil || res == nil {
 		return chat.ModelBinding{}, fmt.Errorf("model binding requires a session and config")
 	}
@@ -150,7 +150,7 @@ func unscopedModelSurface(sess *chat.Session, res *config.Resolved, root string,
 // from - tools-off sessions and callers with no agent state - which is exactly
 // the case where nothing is deferred and a plain generation clone is already
 // the correct answer.
-func modelSwitchSurface(sess *chat.Session, res *config.Resolved, state *agentSessionState, binding chat.ModelBinding, skillReg *skills.Registry) (*agentSurface, error) {
+func modelSwitchSurface(sess *chat.Session, res *config.Resolved, state *AgentSessionState, binding chat.ModelBinding, skillReg *skills.Registry) (*agentSurface, error) {
 	if state == nil {
 		return nil, nil
 	}
@@ -235,7 +235,7 @@ func loadSessionSkills(root string, allowProject bool) (*skills.Registry, []stri
 
 func reservedSkillNames() map[string]struct{} {
 	return map[string]struct{}{
-		handlerDelegate: {}, handlerOneshot: {}, handlerMultiStep: {},
+		HandlerDelegate: {}, handlerOneshot: {}, handlerMultiStep: {},
 	}
 }
 
@@ -275,7 +275,7 @@ func configuredProfile(res *config.Resolved, providerName, model string) (config
 	return config.ModelSpec{}, false
 }
 
-// switchModelCommand publishes a model generation and reports the /effort
+// SwitchModelCommand publishes a model generation and reports the /effort
 // choice the switch took away, if any. Three surfaces run this switch and each
 // words its own confirmation; deciding here what was lost is what stops them
 // from disagreeing about whether anything was.
@@ -290,7 +290,7 @@ func configuredProfile(res *config.Resolved, providerName, model string) (config
 // knows whether the new generation kept the override, and it is also what keeps
 // a dropped choice the incoming model happens to default to quiet - nothing the
 // user can observe changed there.
-func switchModelCommand(sess *chat.Session, res *config.Resolved, providerName, model string) (reasoning.Level, error) {
+func SwitchModelCommand(sess *chat.Session, res *config.Resolved, providerName, model string) (reasoning.Level, error) {
 	held, chosen := sess.ReasoningOverride()
 	if err := publishModelSwitch(sess, res, providerName, model); err != nil {
 		return "", err
@@ -365,7 +365,7 @@ func publishModelSwitchBinding(sess *chat.Session, res *config.Resolved, provide
 	}
 	// Model switch without a captured agent context uses gate-default (no
 	// project skills stripped only when the session already filtered tools).
-	binding, err := buildModelBinding(sess, res, ".", providerName, model, &agentSessionState{
+	binding, err := buildModelBinding(sess, res, ".", providerName, model, &AgentSessionState{
 		AllowProjectSkills: true,
 	})
 	if err != nil {
@@ -379,7 +379,7 @@ func publishModelSwitchBinding(sess *chat.Session, res *config.Resolved, provide
 // load whose saved session names a different provider or model. It closes over
 // the live agentSessionState so each rebuild sees the current agent, tier plan
 // and admitted set rather than a snapshot taken at startup.
-func chatBindingFactory(sess *chat.Session, res *config.Resolved, root string, state *agentSessionState) func(string, string) (chat.ModelBinding, error) {
+func chatBindingFactory(sess *chat.Session, res *config.Resolved, root string, state *AgentSessionState) func(string, string) (chat.ModelBinding, error) {
 	return func(providerName, model string) (chat.ModelBinding, error) {
 		return buildModelBinding(sess, res, root, providerName, model, state)
 	}

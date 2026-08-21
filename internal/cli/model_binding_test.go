@@ -40,7 +40,7 @@ func TestSwitchModelInPlaceDoesNotPublishTheEffortOverride(t *testing.T) {
 	if err := sess.SetReasoningEffort(reasoning.Low); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := switchModelCommand(sess, res, "zai", inPlaceThinker); err != nil {
+	if _, err := SwitchModelCommand(sess, res, "zai", inPlaceThinker); err != nil {
 		t.Fatal(err)
 	}
 	if got := sess.ReasoningDefault(); got != reasoning.High {
@@ -75,7 +75,7 @@ func TestSwitchModelInPlaceDropsTheReasoningSurfaceOnRename(t *testing.T) {
 	if err := sess.SetReasoningEffort(reasoning.Low); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := switchModelCommand(sess, res, "zai", inPlacePlain); err != nil {
+	if _, err := SwitchModelCommand(sess, res, "zai", inPlacePlain); err != nil {
 		t.Fatal(err)
 	}
 	if got := sess.ReasoningDefault(); got.Active() {
@@ -96,7 +96,7 @@ func TestSwitchModelInPlaceReportsAChoiceThatMatchedTheDefault(t *testing.T) {
 	if err := sess.SetReasoningEffort(reasoning.High); err != nil {
 		t.Fatal(err)
 	}
-	discarded, err := switchModelCommand(sess, res, "zai", inPlacePlain)
+	discarded, err := SwitchModelCommand(sess, res, "zai", inPlacePlain)
 	if err != nil {
 		t.Fatal(err)
 	}

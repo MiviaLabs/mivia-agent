@@ -25,38 +25,38 @@ func (m *tuiModel) renderChatView() string {
 	// transcript: it holds no layout band, so the viewport keeps its full
 	// height while the agent works and the transcript never reflows. It is
 	// applied before dialogs and the suggest popup, which paint above it.
-	if live := m.renderLivePanel(max(1, m.chatPaneWidth()), time.Now()); live != "" {
-		base = overlayAt(base, live, m.livePanelOverlayRect(), max(1, m.width), max(8, m.height))
+	if live := m.renderLivePanel(Max(1, m.chatPaneWidth()), time.Now()); live != "" {
+		base = OverlayAt(base, live, m.livePanelOverlayRect(), Max(1, m.width), Max(8, m.height))
 	}
 	if m.modelDlg != nil {
 		m.modelDlg.busy = m.waiting
-		panel, layout := m.modelDlg.ViewAt(max(1, m.width), max(1, m.height))
-		return overlayAt(base, panel, layout.Rect, max(1, m.width), max(1, m.height))
+		panel, layout := m.modelDlg.ViewAt(Max(1, m.width), Max(1, m.height))
+		return OverlayAt(base, panel, layout.Rect, Max(1, m.width), Max(1, m.height))
 	}
 	if m.agentDlg != nil {
 		m.agentDlg.busy = m.waiting
-		panel, layout := m.agentDlg.ViewAt(max(1, m.width), max(1, m.height))
-		return overlayAt(base, panel, layout.Rect, max(1, m.width), max(1, m.height))
+		panel, layout := m.agentDlg.ViewAt(Max(1, m.width), Max(1, m.height))
+		return OverlayAt(base, panel, layout.Rect, Max(1, m.width), Max(1, m.height))
 	}
 	if m.effortDlg != nil {
 		m.effortDlg.busy = m.waiting
-		panel, layout := m.effortDlg.ViewAt(max(1, m.width), max(1, m.height))
-		return overlayAt(base, panel, layout.Rect, max(1, m.width), max(1, m.height))
+		panel, layout := m.effortDlg.ViewAt(Max(1, m.width), Max(1, m.height))
+		return OverlayAt(base, panel, layout.Rect, Max(1, m.width), Max(1, m.height))
 	}
 	if m.worktreeDlg != nil {
-		panel, layout := m.worktreeDlg.ViewAt(max(1, m.width), max(1, m.height))
-		return overlayAt(base, panel, layout.Rect, max(1, m.width), max(1, m.height))
+		panel, layout := m.worktreeDlg.ViewAt(Max(1, m.width), Max(1, m.height))
+		return OverlayAt(base, panel, layout.Rect, Max(1, m.width), Max(1, m.height))
 	}
 	if m.workflowRunDlg != nil {
-		panel, layout := m.workflowRunDlg.ViewAt(max(1, m.width), max(1, m.height))
-		return overlayAt(base, panel, layout.Rect, max(1, m.width), max(1, m.height))
+		panel, layout := m.workflowRunDlg.ViewAt(Max(1, m.width), Max(1, m.height))
+		return OverlayAt(base, panel, layout.Rect, Max(1, m.width), Max(1, m.height))
 	}
 	if m.overlay != nil {
-		panel, layout := m.overlay.ViewAt(max(1, m.width), max(1, m.height))
-		return overlayAt(base, panel, layout.Rect, max(1, m.width), max(1, m.height))
+		panel, layout := m.overlay.ViewAt(Max(1, m.width), Max(1, m.height))
+		return OverlayAt(base, panel, layout.Rect, Max(1, m.width), Max(1, m.height))
 	}
 	if panel, size := m.renderComposerPopup(); panel != "" {
-		return overlayAt(base, panel, suggestOverlayRect(m, panel, size), max(1, m.width), max(8, m.height))
+		return OverlayAt(base, panel, suggestOverlayRect(m, panel, size), Max(1, m.width), Max(8, m.height))
 	}
 	return base
 }
@@ -69,7 +69,7 @@ func (m *tuiModel) composerModelLabel() string {
 		return m.modelName
 	}
 	sel := m.session.CurrentSelection()
-	model := shortenModel(sel.Model)
+	model := ShortenModel(sel.Model)
 	if strings.TrimSpace(sel.ProviderName) == "" {
 		return model
 	}
@@ -104,12 +104,12 @@ func (m *tuiModel) renderBaseChatView() string {
 	m.width = pane.chatWidth
 	chat := m.renderChatPane()
 	m.width = width
-	padding := paneSpacer(pane.dividerPadding, max(1, m.height))
-	divider := sidebarDivider(pane.dividerWidth, max(1, m.height))
+	padding := paneSpacer(pane.dividerPadding, Max(1, m.height))
+	divider := sidebarDivider(pane.dividerWidth, Max(1, m.height))
 	var parts []string
 	if pane.sidebarVisible {
 		parts = append(parts,
-			m.sessionsSidebar.viewWithActive(m.sessions, pane.sidebarWidth, max(1, m.height), m.focus == focusSidebar, m.activeSession, m.sidebarLiveStatus()),
+			m.sessionsSidebar.viewWithActive(m.sessions, pane.sidebarWidth, Max(1, m.height), m.focus == focusSidebar, m.activeSession, m.sidebarLiveStatus()),
 			padding, divider, padding,
 		)
 	}
@@ -117,7 +117,7 @@ func (m *tuiModel) renderBaseChatView() string {
 	if pane.rightSidebarVisible && m.workflowsSidebar != nil {
 		parts = append(parts,
 			padding, divider, padding,
-			m.workflowsSidebar.view(pane.rightSidebarWidth, max(1, m.height), m.focus == focusWorkflowsSidebar),
+			m.workflowsSidebar.view(pane.rightSidebarWidth, Max(1, m.height), m.focus == focusWorkflowsSidebar),
 		)
 	}
 	return lipgloss.JoinHorizontal(lipgloss.Top, parts...)
@@ -139,7 +139,7 @@ func (m *tuiModel) renderChatPane() string {
 	layout := m.chatViewLayout(header, phase)
 	termH, input, hint := layout.termH, layout.input, layout.hint
 	vpH := layout.viewportHeight
-	m.viewport.Width = max(1, m.width)
+	m.viewport.Width = Max(1, m.width)
 	m.viewport.Height = vpH
 	if !m.ready {
 		m.ready = true
@@ -188,7 +188,7 @@ func (m *tuiModel) renderChatPane() string {
 	if m.sessionsSidebar != nil || m.workflowsSidebar != nil {
 		for i := range outLines {
 			if lipgloss.Width(outLines[i]) > m.width {
-				outLines[i] = lipgloss.NewStyle().MaxWidth(max(1, m.width)).Render(outLines[i])
+				outLines[i] = lipgloss.NewStyle().MaxWidth(Max(1, m.width)).Render(outLines[i])
 			}
 		}
 	}
@@ -214,9 +214,9 @@ const composerPadRows = 2
 func (m *tuiModel) chatViewLayout(header string, phase brandPhase) chatViewLayout {
 	const minVp = 2
 	const padRows = composerPadRows
-	termH := max(8, m.height)
-	composerW := max(18, m.width-2) // leave 1 col left + right for padding
-	inputH := min(composerMaxHeight(termH), max(1, m.textarea.LineCount()))
+	termH := Max(8, m.height)
+	composerW := Max(18, m.width-2) // leave 1 col left + right for padding
+	inputH := Min(composerMaxHeight(termH), Max(1, m.textarea.LineCount()))
 	for inputH > 1 {
 		m.textarea.SetHeight(inputH)
 		m.textarea.SetWidth(composerInnerWidth(composerW))
@@ -236,7 +236,7 @@ func (m *tuiModel) chatViewLayout(header string, phase brandPhase) chatViewLayou
 	if m.suggest.open {
 		hintParts[0] = " ↑↓ select · tab insert · enter run eligible command · esc dismiss "
 	}
-	if m.history.open {
+	if m.history.Open {
 		hintParts[0] = " ↑↓ select · enter recall · esc dismiss "
 	}
 	if m.waiting {
@@ -277,7 +277,7 @@ func (m *tuiModel) chatViewLayout(header string, phase brandPhase) chatViewLayou
 	if m.stalledWarning {
 		hint = tuiErrorStyle.Render(" ⚠ stalled ") + hint
 	}
-	remain := max(minVp, termH-lipgloss.Height(header)-lipgloss.Height(input)-lipgloss.Height(hint)-padRows)
+	remain := Max(minVp, termH-lipgloss.Height(header)-lipgloss.Height(input)-lipgloss.Height(hint)-padRows)
 	return chatViewLayout{termH: termH, viewportHeight: remain, input: input, hint: hint}
 }
 
@@ -331,13 +331,13 @@ func (m *tuiModel) viewWelcome() string {
 		return base
 	}
 	input := renderComposer(m.textarea.View(), w, m.composerModelLabel())
-	composerTop := max(1, lipgloss.Height(base)-1-lipgloss.Height(input))
-	panel, size := renderSuggestPanel(m.suggest, w, max(0, composerTop-1))
+	composerTop := Max(1, lipgloss.Height(base)-1-lipgloss.Height(input))
+	panel, size := renderSuggestPanel(m.suggest, w, Max(0, composerTop-1))
 	if panel == "" {
 		return base
 	}
-	y := max(1, composerTop-size.H)
-	return overlayAt(base, panel, Rect{X: max(0, min(2, w-size.W)), Y: y, W: size.W, H: size.H}, w, h)
+	y := Max(1, composerTop-size.H)
+	return OverlayAt(base, panel, Rect{X: Max(0, Min(2, w-size.W)), Y: y, W: size.W, H: size.H}, w, h)
 }
 
 const heroSlogan = "autonomous agents · your workspace · your rules"
@@ -359,8 +359,8 @@ func renderHeroBraille(frame, w int, modelName, workspace string) (block string,
 		}
 		facts += workspace
 	}
-	facts = truncateToWidth(facts, budget)
-	slogan := truncateToWidth(heroSlogan, budget)
+	facts = TruncateToWidth(facts, budget)
+	slogan := TruncateToWidth(heroSlogan, budget)
 
 	var b strings.Builder
 	for i, r := range rows {
@@ -387,13 +387,13 @@ func renderHeroBraille(frame, w int, modelName, workspace string) (block string,
 func renderHeroText(w int) (block string, lines int) {
 	const margin = "  "
 	word := margin + brandNameStyled()
-	slogan := margin + TUIDimStyle.Render(truncateToWidth(heroSlogan, w-len(margin)))
+	slogan := margin + TUIDimStyle.Render(TruncateToWidth(heroSlogan, w-len(margin)))
 	return word + "\n" + slogan, 2
 }
 
 func (m *tuiModel) renderWelcomeBody(w, h int, status, heroBlock string, heroLines int) string {
 	// Composer card (border chrome outside textarea height).
-	inputH := min(composerMaxHeight(h), max(1, m.textarea.LineCount()))
+	inputH := Min(composerMaxHeight(h), Max(1, m.textarea.LineCount()))
 	m.textarea.SetWidth(composerInnerWidth(w))
 	m.textarea.SetHeight(inputH)
 	input := renderComposer(m.textarea.View(), w, m.composerModelLabel())
@@ -424,7 +424,7 @@ func (m *tuiModel) renderWelcomeBody(w, h int, status, heroBlock string, heroLin
 		// Truncate if wider than terminal. Cell/grapheme-safe: a byte slice
 		// (warningText[:w]) could cut a multi-byte rune and emit invalid
 		// UTF-8 (DC-6 in .agents/quality/defect-taxonomy.md).
-		warningText = truncateToWidth(warningText, max(1, w))
+		warningText = TruncateToWidth(warningText, Max(1, w))
 		warnBlock = tuiErrorStyle.Render(warningText)
 	}
 
@@ -434,7 +434,7 @@ func (m *tuiModel) renderWelcomeBody(w, h int, status, heroBlock string, heroLin
 	}
 	// A truncated picker adds a "more" line in addition to its four fixed
 	// chrome lines, so reserve five before allocating session rows.
-	maxRows := min(12, max(1, pickerBudget-5))
+	maxRows := Min(12, Max(1, pickerBudget-5))
 
 	// Absolute Y of picker: after status, blank, hero, blank, warn
 	yBase := 1 + 1 + heroLines + 1

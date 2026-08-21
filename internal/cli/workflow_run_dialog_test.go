@@ -572,8 +572,8 @@ func TestWorkflowRunDialogGeometry(t *testing.T) {
 			t.Fatalf("%dx%d: dialog output is not valid UTF-8", w, h)
 		}
 		for _, line := range strings.Split(stripANSI(panel), "\n") {
-			if runeWidth(line) > w {
-				t.Fatalf("%dx%d: line width %d exceeds canvas: %q", w, h, runeWidth(line), line)
+			if RuneWidth(line) > w {
+				t.Fatalf("%dx%d: line width %d exceeds canvas: %q", w, h, RuneWidth(line), line)
 			}
 		}
 		if layout.Rect.W > w || layout.Rect.H > h {

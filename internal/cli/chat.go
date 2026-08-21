@@ -86,6 +86,13 @@ func shouldReportChatCancellation(ctx context.Context, err error) bool {
 
 var classicTurnContext = context.WithCancel
 
+// Terminal floor dimensions for the stderr fallback terminal. Relocated from
+// composer.go: this file is their sole caller.
+const (
+	defaultTermWidth  = 80
+	defaultTermHeight = 24
+)
+
 // stderrTerm adapts stderr for ChatRenderer in one-shot mode.
 type stderrTerm struct{}
 
@@ -218,16 +225,18 @@ func commonPrefix(strs []string) string {
 	return prefix
 }
 
-func shortenModel(m string) string {
+// ShortenModel truncates a model name for narrow display. Shared with
+// internal/legacytui's dialog and welcome views.
+func ShortenModel(m string) string {
 	if len(m) > 24 {
 		return m[:21] + "..."
 	}
 	return m
 }
 
-// shortenWorkspacePath returns the current directory with the home prefix
+// ShortenWorkspacePath returns the current directory with the home prefix
 // collapsed to ~, or "" when unavailable.
-func shortenWorkspacePath() string {
+func ShortenWorkspacePath() string {
 	wd, err := os.Getwd()
 	if err != nil || wd == "" {
 		return ""

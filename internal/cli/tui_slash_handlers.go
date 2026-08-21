@@ -160,7 +160,7 @@ func (m *tuiModel) handleTuiModelSlash(cmd string, fields []string) bool {
 		m.appendInfo(formatModelUnavailable(providerName, choices))
 		return true
 	}
-	m.modelName = shortenModel(m.session.CurrentModel())
+	m.modelName = ShortenModel(m.session.CurrentModel())
 	m.appendInfo(formatModelSet(m.session.CurrentSelection().ProviderName, m.session.CurrentModel(), discarded))
 	return true
 }
@@ -174,7 +174,7 @@ func (m *tuiModel) handleTuiAgentSlash(cmd string, fields []string) bool {
 	}
 	name := fields[1]
 	if err := m.switchAgent(name); err != nil {
-		m.appendInfo(formatAgentUnavailable(err))
+		m.appendInfo(FormatAgentUnavailable(err))
 		return true
 	}
 	m.appendInfo(formatAgentSet(name))
@@ -423,7 +423,7 @@ func (m *tuiModel) runLoadSlash(fields []string) {
 			}
 		}
 	}
-	m.modelName = shortenModel(m.session.CurrentModel())
+	m.modelName = ShortenModel(m.session.CurrentModel())
 	m.messages = nil
 	m.blocks = nil
 	if m.session.LoadedContextSession() {

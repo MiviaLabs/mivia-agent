@@ -42,7 +42,7 @@ func findWorkGroups(blocks []ChatBlock) []workGroup {
 		for i < len(blocks) && isWorkMember(blocks[i]) {
 			if blocks[i].Kind == ChatBlockTool {
 				tools++
-				if actionKindForTool(blocks[i].ToolName) == actionAgent {
+				if ActionKindForTool(blocks[i].ToolName) == ActionAgent {
 					agents++
 				}
 				if blocks[i].Failed {
@@ -84,7 +84,7 @@ func isWorkMember(b ChatBlock) bool {
 	case ChatBlockThinking, ChatBlockTool:
 		return true
 	case ChatBlockSystem:
-		return isWorkStatusBlock(b)
+		return IsWorkStatusBlock(b)
 	default:
 		return false
 	}
@@ -102,20 +102,20 @@ func workGroupCollapsedDefault(g workGroup, overrides map[string]bool) bool {
 
 // RenderChatBlocksWithWorkGroups renders blocks with optional collapsible work groups.
 func RenderChatBlocksWithWorkGroups(blocks []ChatBlock, model string, width int, thinkingExpandDefault bool, collapsed map[string]bool) ChatBlockRender {
-	return RenderChatBlocksWithWorkGroupsView(blocks, model, width, thinkingExpandDefault, collapsed, railView{})
+	return RenderChatBlocksWithWorkGroupsView(blocks, model, width, thinkingExpandDefault, collapsed, RailView{})
 }
 
 // RenderChatBlocksWithWorkGroupsView renders with per-group scroll at zero
 // offset (compatibility entry point).
-func RenderChatBlocksWithWorkGroupsView(blocks []ChatBlock, model string, width int, thinkingExpandDefault bool, collapsed map[string]bool, view railView) ChatBlockRender {
+func RenderChatBlocksWithWorkGroupsView(blocks []ChatBlock, model string, width int, thinkingExpandDefault bool, collapsed map[string]bool, view RailView) ChatBlockRender {
 	return RenderChatBlocksWithWorkGroupsWindow(blocks, model, width, thinkingExpandDefault, collapsed, nil, view)
 }
 
 // RenderChatBlocksWithWorkGroupsWindow renders expanded groups as bounded
 // scrollable windows. scroll maps a group key to its first visible member.
-func RenderChatBlocksWithWorkGroupsWindow(blocks []ChatBlock, model string, width int, thinkingExpandDefault bool, collapsed map[string]bool, scroll map[string]int, view railView) ChatBlockRender {
-	if width < minCardWidth {
-		width = minCardWidth
+func RenderChatBlocksWithWorkGroupsWindow(blocks []ChatBlock, model string, width int, thinkingExpandDefault bool, collapsed map[string]bool, scroll map[string]int, view RailView) ChatBlockRender {
+	if width < MinCardWidth {
+		width = MinCardWidth
 	}
 	groups := findWorkGroups(blocks)
 	groupByStart := make(map[int]workGroup, len(groups))
@@ -142,9 +142,9 @@ func RenderChatBlocksWithWorkGroupsWindow(blocks []ChatBlock, model string, widt
 					out.Lines = append(out.Lines, TUIDimStyle.Render(
 						fmt.Sprintf("    ↑ %d earlier", off)))
 				}
-				end := min(g.Start+off+workGroupWindowRows, g.End)
+				end := Min(g.Start+off+workGroupWindowRows, g.End)
 				for j := g.Start + off; j < end; j++ {
-					mem := groupMember{}
+					mem := GroupMember{}
 					if j < len(members) {
 						mem = members[j]
 					}
@@ -163,7 +163,7 @@ func RenderChatBlocksWithWorkGroupsWindow(blocks []ChatBlock, model string, widt
 			i = g.End
 			continue
 		}
-		mem := groupMember{}
+		mem := GroupMember{}
 		if i < len(members) {
 			mem = members[i]
 		}
@@ -173,10 +173,10 @@ func RenderChatBlocksWithWorkGroupsWindow(blocks []ChatBlock, model string, widt
 	return out
 }
 
-func formatWorkGroupHeader(g workGroup, collapsed bool, view railView) string {
+func formatWorkGroupHeader(g workGroup, collapsed bool, view RailView) string {
 	marker := glyphTriD
 	if collapsed {
-		marker = glyphTriR
+		marker = GlyphTriR
 	}
 	// Base segment stays stable ("Work · N tools"); typed counts extend it
 	// so a collapsed group still tells the operator what ran and what broke.
@@ -198,10 +198,10 @@ func formatWorkGroupHeader(g workGroup, collapsed bool, view railView) string {
 }
 
 func appendRenderedBlock(out *ChatBlockRender, block ChatBlock, model string, width int, thinkingExpandDefault bool) {
-	appendRenderedBlockMem(out, block, model, width, thinkingExpandDefault, groupMember{}, railView{})
+	appendRenderedBlockMem(out, block, model, width, thinkingExpandDefault, GroupMember{}, RailView{})
 }
 
-func appendRenderedBlockMem(out *ChatBlockRender, block ChatBlock, model string, width int, thinkingExpandDefault bool, mem groupMember, view railView) {
+func appendRenderedBlockMem(out *ChatBlockRender, block ChatBlock, model string, width int, thinkingExpandDefault bool, mem GroupMember, view RailView) {
 	lines := renderOneChatBlockMem(block, model, width, thinkingExpandDefault, mem, view)
 	if len(lines) == 0 {
 		return
@@ -223,7 +223,7 @@ func appendRenderedBlockMem(out *ChatBlockRender, block ChatBlock, model string,
 
 // wantsBottomLane: free empty row after user/assistant speech for readability.
 // Tools, thinking, work-group members, system status: no bottom margin.
-func wantsBottomLane(block ChatBlock, mem groupMember) bool {
+func wantsBottomLane(block ChatBlock, mem GroupMember) bool {
 	if mem.InGroup || mem.IsHeader {
 		return false
 	}

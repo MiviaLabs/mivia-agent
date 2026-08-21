@@ -245,8 +245,8 @@ var updateMessageImpl = func(m *tuiModel, msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if msg.Type == tea.MouseRight {
-			if zone, hit := m.hitMap.hit(msg.Y); hit && zone.kind == hitTranscript && zone.blockID != "" {
-				if cmd, ok := m.copyBlockByID(zone.blockID); ok {
+			if zone, hit := m.hitMap.hit(msg.Y); hit && zone.Kind == HitTranscript && zone.BlockID != "" {
+				if cmd, ok := m.copyBlockByID(zone.BlockID); ok {
 					if cmd != nil {
 						cmds = append(cmds, cmd)
 					}
@@ -303,26 +303,26 @@ func (m *tuiModel) modalOpen() bool {
 
 func (m *tuiModel) clampModalState() {
 	if m.overlay != nil {
-		_, _ = m.overlay.ViewAt(max(1, m.width), max(1, m.height))
+		_, _ = m.overlay.ViewAt(Max(1, m.width), Max(1, m.height))
 	}
 	if m.modelDlg != nil {
-		layout := m.modelDlg.layout(max(1, m.width), max(1, m.height))
+		layout := m.modelDlg.layout(Max(1, m.width), Max(1, m.height))
 		m.modelDlg.clampScroll(layout.PageH)
 	}
 	if m.agentDlg != nil {
-		layout := m.agentDlg.layout(max(1, m.width), max(1, m.height))
+		layout := m.agentDlg.layout(Max(1, m.width), Max(1, m.height))
 		m.agentDlg.clampScroll(layout.PageH)
 	}
 	if m.effortDlg != nil {
-		layout := m.effortDlg.layout(max(1, m.width), max(1, m.height))
+		layout := m.effortDlg.layout(Max(1, m.width), Max(1, m.height))
 		m.effortDlg.clampScroll(layout.PageH)
 	}
 	if m.worktreeDlg != nil {
-		layout := m.worktreeDlg.layout(max(1, m.width), max(1, m.height))
+		layout := m.worktreeDlg.layout(Max(1, m.width), Max(1, m.height))
 		m.worktreeDlg.clampScroll(layout.PageH)
 	}
 	if m.workflowRunDlg != nil {
-		m.workflowRunDlg.clampScroll(max(1, m.width), max(1, m.height))
+		m.workflowRunDlg.clampScroll(Max(1, m.width), Max(1, m.height))
 	}
 	m.clampQueueManager()
 }

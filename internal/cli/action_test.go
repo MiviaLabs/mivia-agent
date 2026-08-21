@@ -13,12 +13,12 @@ import (
 
 func TestActionKindForTool(t *testing.T) {
 	for _, name := range []string{"delegate", "dispatch_tasks", "spawn_agent", "multi_step", "oneshot", "join_run", "inspect_agents", "cancel_run"} {
-		if actionKindForTool(name) != actionAgent {
+		if ActionKindForTool(name) != ActionAgent {
 			t.Fatalf("%s must classify as agent", name)
 		}
 	}
 	for _, name := range []string{"read_file", "grep", "run_command", "unknown_tool"} {
-		if actionKindForTool(name) != actionTool {
+		if ActionKindForTool(name) != actionTool {
 			t.Fatalf("%s must classify as tool", name)
 		}
 	}

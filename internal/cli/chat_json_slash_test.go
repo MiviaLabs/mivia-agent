@@ -12,7 +12,7 @@ import (
 // slash command that has no typed event above.
 func TestJSONSlashSinkInfoAndError(t *testing.T) {
 	var buf bytes.Buffer
-	sink := &jsonSlashSink{w: &buf}
+	sink := &JSONSlashSink{w: &buf}
 	sink.Info("current model=foo")
 	sink.Error("boom")
 
@@ -41,7 +41,7 @@ func TestJSONSlashSinkInfoAndError(t *testing.T) {
 // an active reasoning effort.
 func TestJSONSlashSinkModelChanged(t *testing.T) {
 	var buf bytes.Buffer
-	sink := &jsonSlashSink{w: &buf}
+	sink := &JSONSlashSink{w: &buf}
 	sink.ModelChanged("openai", "gpt-4o-mini", reasoning.Level("high"))
 
 	var ev ndjsonEvent
@@ -66,7 +66,7 @@ func TestJSONSlashSinkModelChanged(t *testing.T) {
 // TestJSONSlashSinkEffortChanged pins the effort_changed wire shape.
 func TestJSONSlashSinkEffortChanged(t *testing.T) {
 	var buf bytes.Buffer
-	sink := &jsonSlashSink{w: &buf}
+	sink := &JSONSlashSink{w: &buf}
 	sink.EffortChanged("gpt-4o-mini", reasoning.Level("medium"))
 
 	var ev ndjsonEvent
@@ -87,7 +87,7 @@ func TestSlashSinkForFallsBackToTerminalSinkOutsideJSONMode(t *testing.T) {
 	activeJSONSlashSink = nil
 	defer func() { activeJSONSlashSink = prev }()
 
-	sink := slashSinkFor(nil)
+	sink := SlashSinkFor(nil)
 	if _, ok := sink.(terminalSlashSink); !ok {
 		t.Fatalf("slashSinkFor(nil) with activeJSONSlashSink=nil = %T, want terminalSlashSink", sink)
 	}
@@ -98,11 +98,11 @@ func TestSlashSinkForFallsBackToTerminalSinkOutsideJSONMode(t *testing.T) {
 // return it regardless of the *Terminal argument.
 func TestSlashSinkForUsesActiveJSONSink(t *testing.T) {
 	prev := activeJSONSlashSink
-	want := &jsonSlashSink{w: &bytes.Buffer{}}
+	want := &JSONSlashSink{w: &bytes.Buffer{}}
 	activeJSONSlashSink = want
 	defer func() { activeJSONSlashSink = prev }()
 
-	got := slashSinkFor(nil)
+	got := SlashSinkFor(nil)
 	if got != slashSink(want) {
 		t.Fatalf("slashSinkFor did not return the active JSON sink: got %T", got)
 	}

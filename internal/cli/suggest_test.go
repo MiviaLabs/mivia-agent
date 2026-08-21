@@ -179,7 +179,7 @@ func TestSuggestPopupStaysInsideChatPaneWithSessionsSidebar(t *testing.T) {
 	m.syncSuggest()
 
 	pane := newChatPaneLayout(m.width, true, false)
-	panel, size := renderSuggestPanel(m.suggest, pane.chatWidth, max(0, m.suggestComposerTop()-1))
+	panel, size := renderSuggestPanel(m.suggest, pane.chatWidth, Max(0, m.suggestComposerTop()-1))
 	got := suggestOverlayRect(m, panel, size)
 	if got.X < pane.chatX || got.X+got.W > pane.chatX+pane.chatWidth {
 		t.Fatalf("suggestion Rect %#v is outside chat pane %#v", got, pane)

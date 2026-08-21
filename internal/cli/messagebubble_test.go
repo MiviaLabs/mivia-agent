@@ -93,7 +93,7 @@ func TestMessageBubble_DefaultPaddingHasBreathingRoom(t *testing.T) {
 	if !strings.Contains(contentPlain, "hello world") {
 		t.Fatalf("content line missing body: %q", contentPlain)
 	}
-	if vis := visibleWidth(lines[0]); vis != width {
+	if vis := VisibleWidth(lines[0]); vis != width {
 		t.Fatalf("content line width=%d want %d (right pad fills bar)", vis, width)
 	}
 }
@@ -160,7 +160,7 @@ func TestMessageBubble_WrapsLongContent(t *testing.T) {
 		t.Fatalf("expected multi-line output for long content, got %d lines", len(lines))
 	}
 	for _, line := range lines {
-		vis := visibleWidth(line)
+		vis := VisibleWidth(line)
 		if vis > 24 {
 			t.Fatalf("line exceeds width 24: vis=%d %q", vis, stripANSI(line))
 		}
@@ -429,7 +429,7 @@ func TestMessageBubble_RightPaddingFillsToWidth(t *testing.T) {
 	}
 	// Each line must be exactly 30 visible cells (left pad + content + right pad).
 	for i, line := range lines {
-		vis := visibleWidth(line)
+		vis := VisibleWidth(line)
 		if vis != 30 {
 			t.Fatalf("line %d visible width=%d want 30: %q", i, vis, stripANSI(line))
 		}
@@ -455,7 +455,7 @@ func TestMessageBubble_PaddingBackgroundFillsBlankLines(t *testing.T) {
 		t.Fatalf("expected 2 lines (padding + content), got %d: %v", len(lines), lines)
 	}
 	// Top padding line should be blank (spaces) at full width.
-	if vis := visibleWidth(lines[0]); vis != 20 {
+	if vis := VisibleWidth(lines[0]); vis != 20 {
 		t.Fatalf("padding line width=%d want 20: %q", vis, stripANSI(lines[0]))
 	}
 	// Content line should contain "x".

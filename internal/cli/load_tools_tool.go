@@ -192,7 +192,7 @@ func boundedNameList(names []string) string {
 }
 
 func (t *loadToolsTool) candidateNames() []string {
-	out := make([]string, 0, min(len(t.candidates), maxLoadToolsErrorCandidates))
+	out := make([]string, 0, Min(len(t.candidates), maxLoadToolsErrorCandidates))
 	for _, candidate := range t.candidates {
 		if len(out) == maxLoadToolsErrorCandidates {
 			out = append(out, "...")

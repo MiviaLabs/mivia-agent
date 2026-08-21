@@ -576,7 +576,7 @@ func TestRuneWidth(t *testing.T) {
 		{"A　B", 4},
 	}
 	for _, tt := range tests {
-		got := runeWidth(tt.input)
+		got := RuneWidth(tt.input)
 		if got != tt.want {
 			t.Errorf("runeWidth(%q) = %d, want %d", tt.input, got, tt.want)
 		}
@@ -584,13 +584,13 @@ func TestRuneWidth(t *testing.T) {
 }
 
 func TestTruncateToWidthUsesTerminalWidth(t *testing.T) {
-	if got := truncateToWidth("😀a", 1); got != "" {
+	if got := TruncateToWidth("😀a", 1); got != "" {
 		t.Fatalf("truncateToWidth emoji = %q, want empty", got)
 	}
-	if got := truncateToWidth("Ａa", 2); got != "Ａ" {
+	if got := TruncateToWidth("Ａa", 2); got != "Ａ" {
 		t.Fatalf("truncateToWidth fullwidth = %q", got)
 	}
-	if got := truncateToWidth("1️⃣a", 1); got != "1️⃣" {
+	if got := TruncateToWidth("1️⃣a", 1); got != "1️⃣" {
 		t.Fatalf("truncateToWidth keycap = %q", got)
 	}
 }

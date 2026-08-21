@@ -23,7 +23,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
-// joinHub is the one call every live chat surface (TUI, classic REPL,
+// JoinHub is the one call every live chat surface (TUI, classic REPL,
 // line-mode) makes once its own EventBus (if any - the TUI manages its own,
 // see tui_run.go) is finalized. storeDir is derived from the session's
 // already-open context store rather than recomputed from workspace-routing
@@ -33,7 +33,7 @@ import (
 // no-op Handle) if the session has no SQLite-backed context store to key
 // off, which should not happen for a live chat session but is not this
 // package's invariant to enforce.
-func joinHub(sess *chat.Session, sink hub.Sink) *hub.Handle {
+func JoinHub(sess *chat.Session, sink hub.Sink) *hub.Handle {
 	if sess.EventBus == nil {
 		sess.EventBus = events.New()
 	}
@@ -49,11 +49,11 @@ func joinHub(sess *chat.Session, sink hub.Sink) *hub.Handle {
 // (which has its own LOC budget) from re-spelling joinHub's two-line
 // call+defer pattern at each of its two surfaces.
 func startClassicReplHub(sess *chat.Session) func() {
-	return joinHub(sess, nil).Leave
+	return JoinHub(sess, nil).Leave
 }
 
 func startLineModeHub(sess *chat.Session, jsonMode bool) func() {
-	return joinHub(sess, chatHubSink(sess, jsonMode)).Leave
+	return JoinHub(sess, chatHubSink(sess, jsonMode)).Leave
 }
 
 // publishTurnStartForHub tells this process's hub participants that a new

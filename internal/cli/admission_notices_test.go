@@ -60,7 +60,7 @@ func TestSlashLoadPrintsAdmissionNotes(t *testing.T) {
 func TestSlashToolsReportsSchemaMassClassic(t *testing.T) {
 	previous := classicAgentState
 	t.Cleanup(func() { classicAgentState = previous })
-	classicAgentState = &agentSessionState{LastSchemaMass: schemaMass{Advertised: 4, Tokens: 321, Locked: 2, LockedTokens: 210}}
+	classicAgentState = &AgentSessionState{LastSchemaMass: schemaMass{Advertised: 4, Tokens: 321, Locked: 2, LockedTokens: 210}}
 	res := &config.Resolved{ProviderName: "p", Model: "m"}
 	sess := chat.NewSession(res, stubAgentCompleter{})
 	sess.Tools = tierRegistry("read_file")
@@ -80,7 +80,7 @@ func TestSlashToolsReportsSchemaMassClassic(t *testing.T) {
 func TestTuiToolsDialogReportsSchemaMass(t *testing.T) {
 	m := newSmokeModel(t)
 	m.session.Tools = tierRegistry("read_file")
-	m.agentState = &agentSessionState{LastSchemaMass: schemaMass{Advertised: 4, Tokens: 321, Locked: 2, LockedTokens: 210}}
+	m.agentState = &AgentSessionState{LastSchemaMass: schemaMass{Advertised: 4, Tokens: 321, Locked: 2, LockedTokens: 210}}
 	if !m.handleTuiInfoSlash("/tools", []string{"/tools"}) {
 		t.Fatal("/tools was not handled")
 	}

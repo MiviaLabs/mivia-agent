@@ -19,7 +19,7 @@ func TestLivePanelBandFormula(t *testing.T) {
 	// the same budget the sections use. Idle is zero. The rendered line count
 	// always equals the declared height, even when the overlay is empty.
 	for _, h := range []int{8, 11, 12, 20, 24, 30, 34, 40, 44, 60} {
-		band := min(livePanelMaxHeight, max(1, max(8, h)/3))
+		band := Min(livePanelMaxHeight, Max(1, Max(8, h)/3))
 
 		// Busy content while waiting: every section populated.
 		m := newReadyChatModel(h, 90)
@@ -79,7 +79,7 @@ func TestLivePanelHeightConstantDuringTurn(t *testing.T) {
 	m := newReadyChatModel(34, 90)
 	m.waiting = true
 	m.turnStart = time.Now()
-	band := min(livePanelMaxHeight, max(1, max(8, m.height)/3))
+	band := Min(livePanelMaxHeight, Max(1, Max(8, m.height)/3))
 	if got := m.livePanelHeight(); got != band {
 		t.Fatalf("band=%d, want %d", got, band)
 	}
@@ -305,7 +305,7 @@ func TestViewFitsTerminalWithLivePanel(t *testing.T) {
 		m.messages = msgs
 		m.renderVP()
 		view := stripANSI(m.View())
-		if got := strings.Count(view, "\n") + 1; got > max(8, h) {
+		if got := strings.Count(view, "\n") + 1; got > Max(8, h) {
 			t.Fatalf("height=%d: view is %d lines\n%s", h, got, view)
 		}
 	}

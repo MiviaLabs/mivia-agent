@@ -59,12 +59,12 @@ func TestRunTUIReturnsRequestedWorkspaceRestart(t *testing.T) {
 		}
 	})
 	session := chat.NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, nullCompleter{})
-	err = runTUI(session, &config.Resolved{}, false, nil, "")
-	var restart *workspaceRestart
+	err = RunTUI(session, &config.Resolved{}, false, nil, "")
+	var restart *WorkspaceRestart
 	if !errors.As(err, &restart) {
 		t.Fatalf("runTUI error = %v, want workspace restart", err)
 	}
-	if restart.resumeSessionName != "resume" || restart.worktreeInstance != expected {
+	if restart.ResumeSessionName != "resume" || restart.WorktreeInstance != expected {
 		t.Fatalf("workspace restart = %+v", restart)
 	}
 }

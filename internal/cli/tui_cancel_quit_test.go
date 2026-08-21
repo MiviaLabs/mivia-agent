@@ -19,11 +19,11 @@ func TestIntegration_QuitAfterCancel_DoesNotStrand(t *testing.T) {
 	m.mode = modeChat
 	m.waiting = true
 	m.turnStart = time.Now()
-	m.bridge = newStreamBridge()
+	m.bridge = NewStreamBridge()
 	m.workerWG.Add(1)
 
 	m.appendBlock(ChatBlock{Kind: ChatBlockUser, Text: "run tools"})
-	m.updateFromDrain(bridgeDrain{
+	m.updateFromDrain(BridgeDrain{
 		Tools: []bridgeToolEvt{
 			{Start: true, ToolCallID: "c1", Name: "list_dir", Detail: `{"path":"."}`, At: time.Now()},
 			{Start: true, ToolCallID: "c2", Name: "grep", Detail: `{"pattern":"x"}`, At: time.Now()},
@@ -73,7 +73,7 @@ func TestIntegration_QuitAfterCancel_DrainSendsQuit(t *testing.T) {
 	m := newSmokeModel(t)
 	m.mode = modeChat
 	m.waiting = true
-	m.bridge = newStreamBridge()
+	m.bridge = NewStreamBridge()
 	m.workerWG.Add(1)
 
 	skip, _, _ := m.handleChatCancel()
@@ -115,7 +115,7 @@ func TestIntegration_QuitAfterCancel_ForceThirdCtrlC(t *testing.T) {
 	m := newSmokeModel(t)
 	m.mode = modeChat
 	m.waiting = true
-	m.bridge = newStreamBridge()
+	m.bridge = NewStreamBridge()
 	// Worker never finishes (hung tool simulation).
 	m.workerWG.Add(1)
 	defer m.workerWG.Done()

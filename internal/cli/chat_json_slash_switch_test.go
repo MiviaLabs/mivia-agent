@@ -13,11 +13,11 @@ import (
 // test, mirroring what replLineMode does for a real `mivia chat --json`
 // process, and restores whatever was active before (nil in every current
 // caller, but this stays correct if that ever changes).
-func withActiveJSONSlashSink(t *testing.T) (*bytes.Buffer, *jsonSlashSink) {
+func withActiveJSONSlashSink(t *testing.T) (*bytes.Buffer, *JSONSlashSink) {
 	t.Helper()
 	prev := activeJSONSlashSink
 	var buf bytes.Buffer
-	sink := &jsonSlashSink{w: &buf}
+	sink := &JSONSlashSink{w: &buf}
 	activeJSONSlashSink = sink
 	t.Cleanup(func() { activeJSONSlashSink = prev })
 	return &buf, sink

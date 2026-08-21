@@ -28,7 +28,7 @@ func replPromptGlyph(modelShort string) string { return " " + modelShort + " > "
 func newREPLRuntime(sess *chat.Session, res *config.Resolved, toolsOn bool, term *Terminal) *replRuntime {
 	r := &replRuntime{
 		sess: sess, config: res, toolsOn: toolsOn, term: term,
-		modelShort: shortenModel(sess.CurrentModel()),
+		modelShort: ShortenModel(sess.CurrentModel()),
 		signal:     make(chan os.Signal, 1),
 	}
 	r.input = NewInputBuffer(replPromptGlyph(r.modelShort))
@@ -76,7 +76,7 @@ func (r *replRuntime) restore() {
 	for _, note := range r.sess.TakeAdmissionNotes() {
 		r.renderer.PrintDim("%s", note)
 	}
-	r.modelShort = shortenModel(r.sess.CurrentModel())
+	r.modelShort = ShortenModel(r.sess.CurrentModel())
 	r.input.SetPrompt(replPromptGlyph(r.modelShort))
 	r.renderer = NewChatRenderer(r.term, r.sess.CurrentModel())
 	r.renderer.RenderHistory(r.sess.Messages)
@@ -234,7 +234,7 @@ func (r *replRuntime) submit() (bool, error) {
 	if line == "exit" || line == "quit" {
 		return true, nil
 	}
-	r.modelShort = shortenModel(r.sess.CurrentModel())
+	r.modelShort = ShortenModel(r.sess.CurrentModel())
 	r.input.SetPrompt(replPromptGlyph(r.modelShort))
 	r.renderer = NewChatRenderer(r.term, r.sess.CurrentModel())
 	return false, nil

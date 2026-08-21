@@ -209,7 +209,7 @@ func TestRecordSchemaMassWithoutAgentState(t *testing.T) {
 	sess := chat.NewSession(&config.Resolved{Model: "m", ProviderName: "p"}, stubAgentCompleter{})
 	sess.Tools = tierRegistry("read_file")
 	recordSchemaMass(sess, nil, toolTierPlan{}, nil, "", "attach")
-	if (*agentSessionState)(nil).schemaMassSnapshot() != (schemaMass{}) {
+	if (*AgentSessionState)(nil).schemaMassSnapshot() != (schemaMass{}) {
 		t.Fatal("a nil state must report the zero measurement")
 	}
 }
@@ -303,7 +303,7 @@ func TestLoadToolsErrorListsBoundedCandidates(t *testing.T) {
 }
 
 func TestBuildWidenedWithRefusesAnIncompleteBinding(t *testing.T) {
-	state := &agentSessionState{WorkspaceRoot: t.TempDir()}
+	state := &AgentSessionState{WorkspaceRoot: t.TempDir()}
 	sess := chat.NewSession(&config.Resolved{Model: "m", ProviderName: "p"}, stubAgentCompleter{})
 	if _, err := buildWidenedWith(sess, nil, state, []string{"grep"}); err == nil ||
 		!strings.Contains(err.Error(), "skill registry") {
@@ -422,7 +422,7 @@ func TestAgentSwitchInstallsTheWidenerForTheNewBinding(t *testing.T) {
 	if err := fixture.state.Registry.Publish(deferring); err != nil {
 		t.Fatal(err)
 	}
-	if err := applySessionAgent(fixture.sess, fixture.res, fixture.state, "narrow", false); err != nil {
+	if err := ApplySessionAgent(fixture.sess, fixture.res, fixture.state, "narrow", false); err != nil {
 		t.Fatalf("switch: %v", err)
 	}
 	if _, ok := fixture.sess.Tools.Get(tools.LoadToolsToolName); !ok {
@@ -453,7 +453,7 @@ func TestAgentSwitchToAnInertAgentDisarmsTheWidener(t *testing.T) {
 	if err := fixture.state.Registry.Publish(wide); err != nil {
 		t.Fatal(err)
 	}
-	if err := applySessionAgent(fixture.sess, fixture.res, fixture.state, "wide", false); err != nil {
+	if err := ApplySessionAgent(fixture.sess, fixture.res, fixture.state, "wide", false); err != nil {
 		t.Fatalf("switch: %v", err)
 	}
 	if _, ok := fixture.sess.Tools.Get(tools.LoadToolsToolName); ok {
@@ -593,7 +593,7 @@ func TestSessionSurfaceCleanupWithoutAgentState(t *testing.T) {
 // with nothing to own.
 func TestAdoptSessionLedgerRepoSkipsASharedStore(t *testing.T) {
 	sess := chat.NewSession(&config.Resolved{Model: "m", ProviderName: "p"}, stubAgentCompleter{})
-	state := &agentSessionState{}
+	state := &AgentSessionState{}
 	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "shared.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -616,7 +616,7 @@ func TestAdoptSessionLedgerRepoSkipsASharedStore(t *testing.T) {
 	}
 	cfg := config.DefaultSubagentConfig
 	cfg.StoreBackend = "sqlite"
-	unwired := &agentSessionState{}
+	unwired := &AgentSessionState{}
 	adoptSessionLedgerRepo(contextual, cfg, unwired, sessionRouting{})
 	if unwired.LedgerRepo != nil || unwired.ownedLedgerStore != nil {
 		t.Fatal("the session's own context store must not be shadowed either")
@@ -639,7 +639,7 @@ func sqliteLedgerConfig(t *testing.T) config.SubagentConfig {
 // Recover, so wrapping silently turns interrupted-run recovery off.
 func TestSessionOwnedLedgerRepoStaysRecoverable(t *testing.T) {
 	sess := chat.NewSession(&config.Resolved{Model: "m", ProviderName: "p"}, stubAgentCompleter{})
-	state := &agentSessionState{}
+	state := &AgentSessionState{}
 	adoptSessionLedgerRepo(sess, sqliteLedgerConfig(t), state, sessionRouting{})
 	t.Cleanup(func() { releaseSessionLedgerRepo(state) })
 	if state.LedgerRepo == nil {
@@ -687,7 +687,7 @@ func TestAttachFailureReleasesTheSessionOwnedLedgerStore(t *testing.T) {
 	// read_output is a ledger tool the dispatcher registers itself; a collision
 	// fails the build after the store has been adopted.
 	sess.Tools = tierRegistry("read_output")
-	state := &agentSessionState{}
+	state := &AgentSessionState{}
 	cleanup, err := attachSessionDispatcher(sess, dir, "m", sqliteLedgerConfig(t), state, skills.NewRegistry(), sessionRouting{})
 	if err == nil {
 		t.Fatal("expected the dispatcher build to fail")
@@ -704,7 +704,7 @@ func TestAttachFailureReleasesTheSessionOwnedLedgerStore(t *testing.T) {
 // store is really closed, not merely forgotten.
 func TestReleaseSessionLedgerRepoClosesTheStore(t *testing.T) {
 	sess := chat.NewSession(&config.Resolved{Model: "m", ProviderName: "p"}, stubAgentCompleter{})
-	state := &agentSessionState{}
+	state := &AgentSessionState{}
 	adoptSessionLedgerRepo(sess, sqliteLedgerConfig(t), state, sessionRouting{})
 	store := state.ownedLedgerStore
 	if store == nil {
@@ -758,5 +758,5 @@ func TestReleaseSessionLedgerRepoWithoutState(t *testing.T) {
 	// The failure path can run before any agent state exists; releasing must
 	// be a no-op rather than a nil dereference.
 	releaseSessionLedgerRepo(nil)
-	releaseSessionLedgerRepo(&agentSessionState{})
+	releaseSessionLedgerRepo(&AgentSessionState{})
 }

@@ -24,7 +24,7 @@ func TestRoutedIdentityUsesOpaqueInstanceID(t *testing.T) {
 func TestSessionAgentStatusIncludesDefinitionSourceAndGeneration(t *testing.T) {
 	res := &config.Resolved{ProviderName: "test", Model: "model", BaseURL: "https://example.test", APIKeyEnv: "TEST_KEY"}
 	sess := chat.NewSession(res, nil)
-	state := &agentSessionState{Selected: &agents.ResolvedAgent{Name: "worker", Provenance: agents.Provenance{Source: config.AgentSourceUser}}}
+	state := &AgentSessionState{Selected: &agents.ResolvedAgent{Name: "worker", Provenance: agents.Provenance{Source: config.AgentSourceUser}}}
 	text := formatSessionAgentStatus(state, sess)
 	for _, want := range []string{"agent=worker", "source=user", "generation=1"} {
 		if !strings.Contains(text, want) {

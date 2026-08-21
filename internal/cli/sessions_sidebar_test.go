@@ -347,7 +347,7 @@ func TestSessionsSidebarNarrowWidthKeepsIdentityDropsStatusColor(t *testing.T) {
 		t.Fatalf("narrow row kept the status color: %q", line)
 	}
 	plain := stripANSI(line)
-	if strings.Count(plain, "\n") > 0 || runeWidth(plain) > 20 {
+	if strings.Count(plain, "\n") > 0 || RuneWidth(plain) > 20 {
 		t.Fatalf("narrow row overflows or wraps: %q", plain)
 	}
 }

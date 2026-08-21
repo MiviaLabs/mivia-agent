@@ -30,7 +30,7 @@ func TestDialogViewsStayWithinTerminalBounds(t *testing.T) {
 		layout := MakeDialogLayout(size.w, size.h, DialogPrefs{PreferredW: 76, PreferredHPct: 70, MinW: 40, MinH: 8, FrameRows: 2}, func(innerW int) (int, int) {
 			return innerW, 100
 		})
-		if layout.Rect.X < 0 || layout.Rect.Y < 0 || layout.Rect.X+layout.Rect.W > max(0, size.w) || layout.Rect.Y+layout.Rect.H > max(0, size.h) {
+		if layout.Rect.X < 0 || layout.Rect.Y < 0 || layout.Rect.X+layout.Rect.W > Max(0, size.w) || layout.Rect.Y+layout.Rect.H > Max(0, size.h) {
 			t.Fatalf("size %dx%d produced out-of-bounds layout: %+v", size.w, size.h, layout)
 		}
 		if layout.Rect.W < 0 || layout.Rect.H < 0 || layout.InnerW < 0 || layout.PageH < 0 {

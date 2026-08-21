@@ -34,7 +34,7 @@ func TestIntegration_LiveToolStatus_KNProgress(t *testing.T) {
 	m.applyToolEvents([]bridgeToolEvt{
 		{Start: false, ToolCallID: "a", Name: "list_dir", Detail: "ok", At: time.Now()},
 	})
-	m.updateFromDrain(bridgeDrain{StepDetail: "tools 1/2 done · 2s", StepDetailAt: time.Now()})
+	m.updateFromDrain(BridgeDrain{StepDetail: "tools 1/2 done · 2s", StepDetailAt: time.Now()})
 	m.refreshLiveToolWaveStatus()
 
 	status = lastWorkStatus(m.blocks)
@@ -72,7 +72,7 @@ func TestIntegration_LiveToolStatus_HeartbeatOnly(t *testing.T) {
 		{Start: true, ToolCallID: "c", Name: "read_file", Detail: `{"path":"a.go"}`, At: time.Now()},
 	})
 	// 0 done, 3 open - heartbeat reports 0/3
-	m.updateFromDrain(bridgeDrain{StepDetail: "tools 0/3 done · 4s", StepDetailAt: time.Now()})
+	m.updateFromDrain(BridgeDrain{StepDetail: "tools 0/3 done · 4s", StepDetailAt: time.Now()})
 	m.refreshLiveToolWaveStatus()
 	st := lastWorkStatus(m.blocks)
 	if st == nil {
@@ -88,7 +88,7 @@ func TestIntegration_LiveToolStatus_HeartbeatOnly(t *testing.T) {
 
 func lastWorkStatus(blocks []ChatBlock) *ChatBlock {
 	for i := len(blocks) - 1; i >= 0; i-- {
-		if isWorkStatusBlock(blocks[i]) {
+		if IsWorkStatusBlock(blocks[i]) {
 			return &blocks[i]
 		}
 	}

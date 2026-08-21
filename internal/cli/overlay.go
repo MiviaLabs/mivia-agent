@@ -25,7 +25,7 @@ func detailDialogPrefs() DialogPrefs {
 }
 
 func safeDialogText(text string) string {
-	text = redactPreview(SafeChatBlockText(text, 0))
+	text = RedactPreview(SafeChatBlockText(text, 0))
 	return strings.NewReplacer("\r", " ", "\n", " ").Replace(text)
 }
 
@@ -49,7 +49,7 @@ func newBlockOverlay(block ChatBlock) *blockOverlay {
 	case block.Kind == ChatBlockTool && block.Elapsed > 0:
 		title += "  ✓"
 	}
-	content := redactPreview(SafeChatBlockText(block.Text, 0))
+	content := RedactPreview(SafeChatBlockText(block.Text, 0))
 	return &blockOverlay{title: title, lines: strings.Split(content, "\n"), prefs: detailDialogPrefs(), kind: "detail"}
 }
 
@@ -58,7 +58,7 @@ func (o *blockOverlay) layout(w, h int) DialogLayout {
 		rows := WrapDisplayRows(o.lines, innerW)
 		maxW := 0
 		for _, row := range rows {
-			maxW = max(maxW, ansi.StringWidth(row))
+			maxW = Max(maxW, ansi.StringWidth(row))
 		}
 		return maxW, len(rows)
 	})
@@ -120,8 +120,8 @@ func (o *blockOverlay) rowsForLayout(innerW, pageH int) []string {
 }
 
 func packStatusFacts(facts []string, innerW, pageH int) []string {
-	innerW = max(1, innerW)
-	pageH = max(1, pageH)
+	innerW = Max(1, innerW)
+	pageH = Max(1, pageH)
 	rows := packStatusWords(append([]string{"status: compact summary"}, facts...), innerW)
 	if len(rows) <= pageH {
 		return rows
@@ -141,7 +141,7 @@ func packStatusFacts(facts []string, innerW, pageH int) []string {
 			compact = append(compact, fields[0])
 			continue
 		}
-		compact = append(compact, fields[0]+"="+ansi.Truncate(value, max(4, innerW/2), "…"))
+		compact = append(compact, fields[0]+"="+ansi.Truncate(value, Max(4, innerW/2), "…"))
 	}
 	rows = packStatusWords(append([]string{"status:"}, compact...), innerW)
 	if len(rows) <= pageH {
@@ -199,7 +199,7 @@ func narrowStatusRows(facts []string, innerW, pageH int) []string {
 		if value == "" {
 			return ""
 		}
-		return alias + ansi.Truncate(value, max(1, innerW-len(alias)), "…")
+		return alias + ansi.Truncate(value, Max(1, innerW-len(alias)), "…")
 	}
 	if pageH == 3 {
 		rows := []string{
@@ -250,13 +250,13 @@ func (o *blockOverlay) clamp(pageH int) {
 	}
 	rows := o.renderedRows
 	if len(rows) == 0 {
-		rows = o.displayRows(max(1, o.lastInnerW))
+		rows = o.displayRows(Max(1, o.lastInnerW))
 	}
 	maxOffset := len(rows) - pageH
 	if maxOffset < 0 {
 		maxOffset = 0
 	}
-	o.yOffset = min(max(0, o.yOffset), maxOffset)
+	o.yOffset = Min(Max(0, o.yOffset), maxOffset)
 }
 
 // scroll receives the already-rendered page height, so key and View paths
@@ -280,9 +280,9 @@ func (o *blockOverlay) ViewAt(w, h int) (string, DialogLayout) {
 	if o.lastInnerW > 0 && o.lastInnerW != layout.InnerW && o.yOffset < len(o.renderedSources) {
 		previousSource = o.renderedSources[o.yOffset]
 	}
-	rows := o.rowsForLayout(max(1, layout.InnerW), layout.PageH)
+	rows := o.rowsForLayout(Max(1, layout.InnerW), layout.PageH)
 	o.renderedRows = rows
-	_, o.renderedSources = WrapDisplayRowsWithSources(o.lines, max(1, layout.InnerW))
+	_, o.renderedSources = WrapDisplayRowsWithSources(o.lines, Max(1, layout.InnerW))
 	if previousSource >= 0 {
 		for i, source := range o.renderedSources {
 			if source == previousSource {
@@ -291,21 +291,30 @@ func (o *blockOverlay) ViewAt(w, h int) (string, DialogLayout) {
 			}
 		}
 	}
-	o.lastInnerW = max(1, layout.InnerW)
+	o.lastInnerW = Max(1, layout.InnerW)
 	o.clamp(layout.PageH)
-	start := min(o.yOffset, len(rows))
-	end := min(len(rows), start+layout.PageH)
+	start := Min(o.yOffset, len(rows))
+	end := Min(len(rows), start+layout.PageH)
 	visible := rows[start:end]
 	pos := "all"
 	if len(rows) > layout.PageH {
 		pct := 100 * (o.yOffset + layout.PageH) / len(rows)
-		pos = fmt.Sprintf("%d%%", min(100, pct))
+		pos = fmt.Sprintf("%d%%", Min(100, pct))
 	}
-	return renderDialogFrame(o.title, visible, dialogFooter(pos, len(rows), o.prefs.Pager), layout), layout
+	return RenderDialogFrame(o.title, visible, dialogFooter(pos, len(rows), o.prefs.Pager), layout), layout
+}
+
+// dialogFooter builds the dialog footer hint line. Relocated from
+// dialog_compositor.go: this file is its sole caller.
+func dialogFooter(pos string, total int, pager bool) string {
+	if !pager {
+		return " esc close "
+	}
+	return fmt.Sprintf(" %s · %d lines · j/k scroll · pgup/pgdn · esc close ", pos, total)
 }
 
 func (o *blockOverlay) View(w, h int) string {
-	view, _ := o.ViewAt(max(1, w), max(1, h))
+	view, _ := o.ViewAt(Max(1, w), Max(1, h))
 	return view
 }
 
@@ -354,8 +363,8 @@ func (m *tuiModel) closeModal() {
 }
 
 func (m *tuiModel) handleOverlayKey(key string) (bool, bool, []tea.Cmd) {
-	layout := m.overlay.layout(max(1, m.width), max(1, m.height))
-	pageH := max(1, layout.PageH)
+	layout := m.overlay.layout(Max(1, m.width), Max(1, m.height))
+	pageH := Max(1, layout.PageH)
 	switch key {
 	case "esc", "q":
 		m.setOverlay(nil)

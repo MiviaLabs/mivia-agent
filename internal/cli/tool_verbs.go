@@ -34,9 +34,9 @@ func toolVerb(name string) string {
 		return "Listing"
 	case "run_command":
 		return "Running"
-	case handlerDelegate:
+	case HandlerDelegate:
 		return "Delegating"
-	case toolDispatchTasks:
+	case ToolDispatchTasks:
 		return "Dispatching tasks"
 	case "parallel":
 		return "Running tools in parallel"
@@ -55,7 +55,7 @@ func toolVerb(name string) string {
 // Never invents assistant speech; never leaks secrets from detail.
 func toolStatusLine(name, detail string) string {
 	name = strings.TrimSpace(name)
-	detail = redactPreview(detail)
+	detail = RedactPreview(detail)
 	if isBannerTool(name) {
 		return capRunes(toolVerb(name)+"…", toolStatusMaxRunes)
 	}
@@ -159,7 +159,7 @@ func toolObjectFromDetail(name, detail string) string {
 			return capRunes(s, 40)
 		}
 	}
-	if name == handlerDelegate || name == toolDispatchTasks {
+	if name == HandlerDelegate || name == ToolDispatchTasks {
 		if s := jsonStringField(detail, "task"); s != "" {
 			return capRunes(s, 40)
 		}
@@ -275,9 +275,9 @@ func capRunes(s string, max int) string {
 	return string(runes[:max-1]) + "…"
 }
 
-// shouldCommitInterim reports whether text is real assistant speech worth a bubble.
+// ShouldCommitInterim reports whether text is real assistant speech worth a bubble.
 // Rejects empty, whitespace, pure punctuation, lifecycle tokens, and very short ghosts.
-func shouldCommitInterim(s string) bool {
+func ShouldCommitInterim(s string) bool {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return false

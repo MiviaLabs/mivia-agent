@@ -18,7 +18,7 @@ func (m *tuiModel) renderQueuePanel(termW, maxH int) (string, Rect) {
 		item := m.queueItemAt(i)
 		glyph := "•"
 		if item.skill != nil {
-			glyph = glyphLozenge
+			glyph = GlyphLozenge
 		}
 		text := item.display
 		if text == "" {
@@ -42,8 +42,8 @@ func (m *tuiModel) renderQueuePanel(termW, maxH int) (string, Rect) {
 		footer = "↑↓ select · enter send now · d delete · esc close (skills: no edit) "
 	}
 	// Wider than the 72-col suggest cap: queued messages need room.
-	width := max(24, min(termW-4, 90))
-	return renderOverlayWindow(rows, m.queueMgr.selected, 8, termW, maxH, title, footer, width)
+	width := Max(24, Min(termW-4, 90))
+	return RenderOverlayWindow(rows, m.queueMgr.selected, 8, termW, maxH, title, footer, width)
 }
 
 // queueManagerHint is the hint-line segment shown while the queue manager is

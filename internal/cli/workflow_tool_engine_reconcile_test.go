@@ -92,7 +92,7 @@ func TestConfigureChatWorkspaceRunRecoverySweepFalseSkipsSweep(t *testing.T) {
 	applyWorkflowStoreRoot(res, root)
 
 	sess := chat.NewSession(res, nil)
-	cleanup, err := configureChatWorkspace(sess, root, true, res, &agentSessionState{}, true, false, false)
+	cleanup, err := configureChatWorkspace(sess, root, true, res, &AgentSessionState{}, true, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -7,14 +7,16 @@ package cli
 // Built-in handler names registered with runtime.Subagent.
 const (
 	handlerMultiStep = "multi_step"
-	handlerDelegate  = "delegate"
-	handlerOneshot   = "oneshot"
+	// HandlerDelegate is the wire name of the delegation handler.
+	HandlerDelegate = "delegate"
+	handlerOneshot  = "oneshot"
 )
 
 // Agent-control tool names (the surfaces that launch/control another agent).
 // agentControlTools (action.go) is the membership source of truth for this set.
 const (
-	toolDispatchTasks = "dispatch_tasks"
+	// ToolDispatchTasks is the wire name of the multi-task dispatch tool.
+	ToolDispatchTasks = "dispatch_tasks"
 	toolSpawnAgent    = "spawn_agent"
 	toolJoinRun       = "join_run"
 	toolInspectAgents = "inspect_agents"

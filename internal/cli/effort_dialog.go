@@ -78,51 +78,51 @@ func (d *effortDialog) move(delta int) {
 	if d.offersNothing() || delta == 0 {
 		return
 	}
-	d.cursor = max(0, min(d.cursor+delta, len(d.choices)-1))
+	d.cursor = Max(0, Min(d.cursor+delta, len(d.choices)-1))
 	d.clampScroll(1)
 }
 
 func (d *effortDialog) clampScroll(page int) {
-	page = max(1, page)
+	page = Max(1, page)
 	if d.cursor < d.scroll {
 		d.scroll = d.cursor
 	}
 	if d.cursor >= d.scroll+page {
 		d.scroll = d.cursor - page + 1
 	}
-	d.scroll = max(0, min(d.scroll, max(0, len(d.choices)-page)))
+	d.scroll = Max(0, Min(d.scroll, Max(0, len(d.choices)-page)))
 }
 
 func (d *effortDialog) layout(w, h int) DialogLayout {
 	return MakeDialogLayout(w, h, effortDialogPrefs(), func(innerW int) (int, int) {
-		rows := d.rowLinesAt(innerW, max(1, len(d.choices)), 0)
+		rows := d.rowLinesAt(innerW, Max(1, len(d.choices)), 0)
 		maxW := 0
 		for _, row := range rows {
-			maxW = max(maxW, ansi.StringWidth(row))
+			maxW = Max(maxW, ansi.StringWidth(row))
 		}
 		return maxW, len(rows)
 	})
 }
 
 func (d *effortDialog) rowLines(inner, visible int) []string {
-	visible = max(1, visible)
+	visible = Max(1, visible)
 	d.clampScroll(visible)
 	return d.rowLinesAt(inner, visible, d.scroll)
 }
 
 func (d *effortDialog) rowLinesAt(inner, visible, scroll int) []string {
-	visible = max(1, visible)
+	visible = Max(1, visible)
 	if d.offersNothing() {
 		// Two lines rather than one sentence: the model name is the part the
 		// user needs, and a single long line is the first thing a narrow
 		// terminal truncates away.
 		return []string{
-			ansi.Truncate(d.model, max(1, inner), "…"),
-			ansi.Truncate(TUIDimStyle.Render("no reasoning effort configured"), max(1, inner), "…"),
+			ansi.Truncate(d.model, Max(1, inner), "…"),
+			ansi.Truncate(TUIDimStyle.Render("no reasoning effort configured"), Max(1, inner), "…"),
 		}
 	}
-	scroll = max(0, min(scroll, max(0, len(d.choices)-visible)))
-	end := min(len(d.choices), scroll+visible)
+	scroll = Max(0, Min(scroll, Max(0, len(d.choices)-visible)))
+	end := Min(len(d.choices), scroll+visible)
 	lines := make([]string, 0, end-scroll)
 	for i := scroll; i < end; i++ {
 		choice := d.choices[i]
@@ -143,7 +143,7 @@ func (d *effortDialog) rowLinesAt(inner, visible, scroll int) []string {
 			// are different requests: this one carries no reasoning field.
 			text += TUIDimStyle.Render(" · sends no reasoning field")
 		}
-		lines = append(lines, ansi.Truncate(text, max(1, inner), "…"))
+		lines = append(lines, ansi.Truncate(text, Max(1, inner), "…"))
 	}
 	return lines
 }
@@ -151,7 +151,7 @@ func (d *effortDialog) rowLinesAt(inner, visible, scroll int) []string {
 func (d *effortDialog) ViewAt(w, h int) (string, DialogLayout) {
 	l := d.layout(w, h)
 	rows := d.rowLines(l.InnerW, l.PageH)
-	return renderDialogFrame("◇ reasoning effort", rows, d.footer(), l), l
+	return RenderDialogFrame("◇ reasoning effort", rows, d.footer(), l), l
 }
 
 func (d *effortDialog) footer() string {
@@ -211,7 +211,7 @@ func (m *tuiModel) handleEffortDialogKey(key string) (bool, bool, []tea.Cmd) {
 	// keystroke is a fresh look, so it does not inherit the old verdict; Enter
 	// writes a new one below if the refusal still stands.
 	d.notice = ""
-	layout := d.layout(max(1, m.width), max(1, m.height))
+	layout := d.layout(Max(1, m.width), Max(1, m.height))
 	switch key {
 	case "esc", "q":
 		m.effortDlg = nil
@@ -229,9 +229,9 @@ func (m *tuiModel) handleEffortDialogKey(key string) (bool, bool, []tea.Cmd) {
 		}
 		d.clampScroll(layout.PageH)
 	case "pgup", "b":
-		d.move(-max(1, layout.PageH))
+		d.move(-Max(1, layout.PageH))
 	case "pgdown", "f", " ":
-		d.move(max(1, layout.PageH))
+		d.move(Max(1, layout.PageH))
 	case "enter":
 		// Enter on the empty state is inert on purpose: there is nothing to
 		// choose, and closing would hide the explanation the user opened this
@@ -341,7 +341,7 @@ func formatEffortSummary(model string, choices []reasoning.Level, current, fallb
 	return line + ")"
 }
 
-// formatEffortStatus is the /status reading of the dial: the level plus the
+// FormatEffortStatus is the /status reading of the dial: the level plus the
 // dialect that carries it, since the same level reaches different providers as
 // different JSON. A model with no reasoning surface says so rather than
 // leaving the field blank.
@@ -351,7 +351,7 @@ func formatEffortSummary(model string, choices []reasoning.Level, current, fallb
 // an absent dialect resolves to the provider's default, and a declared one is a
 // wire shape for levels that may not exist. Callers take it from
 // Session.ReasoningChoices, the same set /effort accepts against.
-func formatEffortStatus(setting reasoning.Setting, offersReasoning bool) string {
+func FormatEffortStatus(setting reasoning.Setting, offersReasoning bool) string {
 	if !offersReasoning {
 		return "none · model declares no reasoning efforts"
 	}
@@ -391,11 +391,11 @@ func (m *tuiModel) handleTuiEffortSlash(fields []string) bool {
 	return true
 }
 
-// handleSlashEffort is the plain-surface /effort. There is no picker here, so
+// HandleSlashEffort is the plain-surface /effort. There is no picker here, so
 // the no-argument form prints what the picker would have shown: the active
 // level and the set this model offers, or why there is nothing to choose.
-func handleSlashEffort(fields []string, sess *chat.Session, term *Terminal) (bool, bool, error) {
-	sink := slashSinkFor(term)
+func HandleSlashEffort(fields []string, sess *chat.Session, term *Terminal) (bool, bool, error) {
+	sink := SlashSinkFor(term)
 	model := sess.CurrentModel()
 	if len(fields) < 2 {
 		sink.Info(formatEffortSummary(model, sess.ReasoningChoices(), sess.ReasoningEffort(), sess.ReasoningDefault()))
@@ -411,7 +411,7 @@ func handleSlashEffort(fields []string, sess *chat.Session, term *Terminal) (boo
 		return true, false, nil
 	}
 	sink.Info(formatEffortSet(model, level, sess.ReasoningSetting()))
-	if jsink, ok := sink.(*jsonSlashSink); ok {
+	if jsink, ok := sink.(*JSONSlashSink); ok {
 		jsink.EffortChanged(model, level)
 	}
 	return true, false, nil

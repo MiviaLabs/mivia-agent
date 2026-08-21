@@ -38,7 +38,7 @@ func TestNewSessionDispatcherOptsBuildsDispatcher(t *testing.T) {
 	if !d.Has(runtime.Subagent, handlerMultiStep) {
 		t.Fatal("multi_step handler not registered")
 	}
-	if !d.Has(runtime.Subagent, handlerDelegate) {
+	if !d.Has(runtime.Subagent, HandlerDelegate) {
 		t.Fatal("delegate handler not registered")
 	}
 	if !d.Has(runtime.Tool, "delegate") || !d.Has(runtime.Tool, "dispatch_tasks") {

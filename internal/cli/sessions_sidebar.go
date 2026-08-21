@@ -107,8 +107,8 @@ type sidebarLayout struct {
 }
 
 func newSidebarLayout(rows, width, height int) sidebarLayout {
-	height = max(1, height)
-	space := max(0, height-sidebarChromeRows)
+	height = Max(1, height)
+	space := Max(0, height-sidebarChromeRows)
 	layout := sidebarLayout{
 		newSessionY: sidebarNewSessionY,
 		rowsY:       sidebarRowsY,
@@ -118,17 +118,17 @@ func newSidebarLayout(rows, width, height int) sidebarLayout {
 	if width >= 24 && height >= 10 && space >= 4 {
 		layout.rowHeight = 2
 		layout.showMetadata = true
-		layout.rowCapacity = max(1, space/layout.rowHeight)
+		layout.rowCapacity = Max(1, space/layout.rowHeight)
 	}
 	if rows > layout.rowCapacity && space > layout.rowHeight {
 		layout.showCue = true
-		layout.rowCapacity = max(1, (space-1)/layout.rowHeight)
+		layout.rowCapacity = Max(1, (space-1)/layout.rowHeight)
 	}
 	return layout
 }
 
 func (s *sessionsSidebar) clampScroll(rows int, visible int) {
-	visible = max(1, visible)
+	visible = Max(1, visible)
 	if s.cursor == 0 || rows <= visible {
 		s.scroll = 0
 		return
@@ -140,7 +140,7 @@ func (s *sessionsSidebar) clampScroll(rows int, visible int) {
 	if cursor >= s.scroll+visible {
 		s.scroll = cursor - visible + 1
 	}
-	s.scroll = min(max(0, s.scroll), rows-visible)
+	s.scroll = Min(Max(0, s.scroll), rows-visible)
 }
 
 func newSessionsSidebar() *sessionsSidebar {
@@ -187,11 +187,11 @@ func (s *sessionsSidebar) selected(rows []chat.SessionInfo) (chat.SessionInfo, b
 
 // cursorAt returns the sidebar cursor at a rendered terminal row.
 func (s *sessionsSidebar) cursorAt(rows []chat.SessionInfo, width, height, y int) (int, bool) {
-	if y < 0 || y >= max(1, height) {
+	if y < 0 || y >= Max(1, height) {
 		return 0, false
 	}
 	layout := newSidebarLayout(len(rows), width, height)
-	if y == layout.newSessionY && y < max(1, height) {
+	if y == layout.newSessionY && y < Max(1, height) {
 		return 0, true
 	}
 	if layout.rowCapacity == 0 {
@@ -203,7 +203,7 @@ func (s *sessionsSidebar) cursorAt(rows []chat.SessionInfo, width, height, y int
 	}
 	row := (y - layout.rowsY) / layout.rowHeight
 	index := s.scroll + row
-	if row >= layout.rowCapacity || index < s.scroll || index >= min(len(rows), s.scroll+layout.rowCapacity) {
+	if row >= layout.rowCapacity || index < s.scroll || index >= Min(len(rows), s.scroll+layout.rowCapacity) {
 		return 0, false
 	}
 	return index + 1, true
@@ -229,14 +229,14 @@ func (s *sessionsSidebar) view(rows []chat.SessionInfo, width, height int, focus
 // viewWithActive renders the non-modal session picker. The model owns the
 // rows. Status is the live activity state of the active session.
 func (s *sessionsSidebar) viewWithActive(rows []chat.SessionInfo, width, height int, focused bool, active *chat.SessionInfo, status sidebarLiveStatus) string {
-	width = max(1, width)
-	height = max(1, height)
+	width = Max(1, width)
+	height = Max(1, height)
 	layout := newSidebarLayout(len(rows), width, height)
 	s.move(rows, 0)
 	if layout.rowCapacity > 0 {
 		s.clampScroll(len(rows), layout.rowCapacity)
 	}
-	end := min(len(rows), s.scroll+max(0, layout.rowCapacity))
+	end := Min(len(rows), s.scroll+Max(0, layout.rowCapacity))
 
 	title := fmt.Sprintf(" Sessions %d · saved sessions", len(rows))
 	lines := []string{
@@ -291,16 +291,16 @@ func (s *sessionsSidebar) renderSessionRow(row chat.SessionInfo, selected bool, 
 	// One cell is reserved for the dot on the active row. The plain name is
 	// truncated before the dot is added, so the dot color codes never enter
 	// the uniseg width math.
-	budget := max(1, width-runeWidth(marker))
+	budget := Max(1, width-RuneWidth(marker))
 	if active {
-		budget = max(1, budget-1)
+		budget = Max(1, budget-1)
 	}
-	name = truncateToWidth(name, budget)
+	name = TruncateToWidth(name, budget)
 	line := marker + name
 	if active {
 		line = marker + sidebarLiveDot(status, width >= sidebarStatusColorMinWidth) + name
 	}
-	line = line + strings.Repeat(" ", max(0, width-lipgloss.Width(line)))
+	line = line + strings.Repeat(" ", Max(0, width-lipgloss.Width(line)))
 	if selected {
 		line = sidebarSelectedStyle(width, focused).Render(line)
 	}
@@ -329,8 +329,8 @@ func sidebarSelectedStyle(width int, focused bool) lipgloss.Style {
 }
 
 func sidebarPad(text string, width int) string {
-	text = truncateToWidth(text, width)
-	return text + strings.Repeat(" ", max(0, width-runeWidth(text)))
+	text = TruncateToWidth(text, width)
+	return text + strings.Repeat(" ", Max(0, width-RuneWidth(text)))
 }
 
 func (s *sessionsSidebar) footer(rows []chat.SessionInfo) string {

@@ -336,7 +336,7 @@ func contains(slice []string, s string) bool {
 // highlightDiffLine colors a line from a diff code block.
 // Delegates to the package-shared theme-token renderer (diff_style.go).
 func highlightDiffLine(line string) string {
-	return renderDiffLine(line)
+	return RenderDiffLine(line)
 }
 
 // highlightCodeBlock takes a code block's language tag and content (no fences),

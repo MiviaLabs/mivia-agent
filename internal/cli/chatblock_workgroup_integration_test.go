@@ -25,7 +25,7 @@ func TestIntegration_RunningNTools_StatusExpandsOnToggle(t *testing.T) {
 	})
 	var statusID string
 	for _, b := range m.blocks {
-		if isWorkStatusBlock(b) {
+		if IsWorkStatusBlock(b) {
 			statusID = b.ID
 			if !b.Collapsed {
 				t.Fatal("multi-tool status must start collapsed")

@@ -177,11 +177,11 @@ func startPaintProgram(t *testing.T, cols, rows int, seed func(*tuiModel)) *pain
 	t.Helper()
 	installProgramProbe(t)
 
-	m := tallScrollModel(t, min(rows-4, 8), 50)
+	m := tallScrollModel(t, Min(rows-4, 8), 50)
 	m.width = cols
 	m.height = rows
 	m.layout()
-	m.viewport.Height = max(3, rows/2)
+	m.viewport.Height = Max(3, rows/2)
 	if seed != nil {
 		seed(m)
 	}

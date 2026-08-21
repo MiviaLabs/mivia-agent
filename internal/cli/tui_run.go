@@ -9,7 +9,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
-	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -17,15 +16,15 @@ import (
 // tea program exits. Hung tools must not pin process exit forever.
 const workerWaitTimeout = 15 * time.Second
 
-// workspaceRestart ends the current TUI so the chat command can construct a
-// new session rooted in dir. It avoids mutating live tools and hooks in place.
-type workspaceRestart struct {
-	dir, resumeSessionName string
-	worktreeInstance       contextstate.WorktreeInstance
+// WorkspaceRestart ends the current TUI so the chat command can construct a
+// new session rooted in Dir. It avoids mutating live tools and hooks in place.
+type WorkspaceRestart struct {
+	Dir, ResumeSessionName string
+	WorktreeInstance       contextstate.WorktreeInstance
 }
 
-func (e *workspaceRestart) Error() string {
-	return "restart chat in workspace " + e.dir
+func (e *WorkspaceRestart) Error() string {
+	return "restart chat in workspace " + e.Dir
 }
 
 // tuiInputOption is a test seam. When set, runTUI passes the option it
@@ -35,7 +34,9 @@ func (e *workspaceRestart) Error() string {
 // exist under a Windows CI runner. The seam is never set in production.
 var tuiInputOption func() tea.ProgramOption
 
-func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *agentSessionState, resumeSessionName string) error {
+// RunTUI starts the Bubble Tea TUI program for sess and blocks until it
+// exits. Shared with internal/clichat's chat command entry point.
+func RunTUI(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *AgentSessionState, resumeSessionName string) error {
 	defer func() {
 		err := sess.SaveLast()
 		if err != nil {
@@ -43,7 +44,7 @@ func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *
 		} else {
 			fmt.Fprintf(os.Stderr, "✓ session auto-saved\n")
 		}
-		writeAutosaveStatus(sess.SessionDir, err)
+		WriteAutosaveStatus(sess.SessionDir, err)
 	}()
 	model := newTUIModel(sess, res, toolsOn)
 	model.agentState = agentState
@@ -64,7 +65,7 @@ func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *
 	// own turns to internal/hub, so an observer (e.g. mivia-agent-desktop)
 	// sees a terminal TUI's live activity even though the TUI itself
 	// doesn't yet render the reverse direction.
-	hubHandle := joinHub(sess, nil)
+	hubHandle := JoinHub(sess, nil)
 	defer hubHandle.Leave()
 
 	// MetricsAdapter: subscribes to all event bus events for diagnostics.
@@ -90,7 +91,7 @@ func runTUI(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *
 	metricsAdapter.Close()
 	bus.Close()
 	if model.restartWorkspace != "" {
-		return &workspaceRestart{dir: model.restartWorkspace, resumeSessionName: model.resumeSessionName, worktreeInstance: model.restartWorktreeInstance}
+		return &WorkspaceRestart{Dir: model.restartWorkspace, ResumeSessionName: model.resumeSessionName, WorktreeInstance: model.restartWorktreeInstance}
 	}
 	return err
 }
@@ -105,50 +106,5 @@ func waitWorkerGroup(wg interface{ Wait() }, timeout time.Duration) {
 	case <-done:
 	case <-time.After(timeout):
 		fmt.Fprintf(os.Stderr, "⚠ agent worker still running after %s; exiting without wait\n", timeout)
-	}
-}
-
-// sessionInvocationSink adapts dispatcher invocation lifecycle events to the
-// session event bus. The bus is read when the event publishes because the
-// interactive dispatcher is attached before runTUI creates the bus. A nil
-// bus (REPL, one-shot, tests) makes the sink a no-op. The closure is safe
-// for concurrent callers: bus.Publish is goroutine-safe.
-func sessionInvocationSink(sess *chat.Session) func(runtime.Event) {
-	return func(e runtime.Event) {
-		var bus *events.Bus
-		if sess != nil {
-			bus = sess.EventBus
-		}
-		if bus == nil {
-			return
-		}
-		bus.Publish(invocationEvent(e))
-	}
-}
-
-// invocationEvent maps one runtime lifecycle observation to a session bus
-// event. The three lifecycle kinds map by name; any other type is terminal
-// and surfaces as completed.
-func invocationEvent(e runtime.Event) events.Event {
-	kind := events.KindInvocationCompleted
-	switch e.Type {
-	case "started":
-		kind = events.KindInvocationStarted
-	case "retrying":
-		kind = events.KindInvocationRetrying
-	}
-	return events.Event{
-		Kind:      kind,
-		Timestamp: time.Now(),
-		Name:      e.Metadata.Name,
-		Detail:    e.Metadata.Kind + " " + e.Metadata.Status,
-		Metadata: map[string]string{
-			"id":     e.Metadata.ID,
-			"turn":   e.Metadata.TurnID,
-			"parent": e.Metadata.ParentID,
-		},
-		AgentTask:  e.Metadata.ID,
-		AgentName:  e.Metadata.Name,
-		AgentDepth: 1,
 	}
 }

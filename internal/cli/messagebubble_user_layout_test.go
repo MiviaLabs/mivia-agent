@@ -78,14 +78,14 @@ func TestUserLayout_DistinctBackgroundOnAllLines(t *testing.T) {
 	}
 	// Every line is background-filled (ANSI SGR present when color on)
 	for i, ln := range lines {
-		if !strings.Contains(ln, "\033[") && visibleWidth(ln) > 0 {
+		if !strings.Contains(ln, "\033[") && VisibleWidth(ln) > 0 {
 			// Plain terminals may strip; still require full-width row
-			if visibleWidth(ln) < 36 {
-				t.Fatalf("line %d not full-width bg bar: vis=%d %q", i, visibleWidth(ln), stripANSI(ln))
+			if VisibleWidth(ln) < 36 {
+				t.Fatalf("line %d not full-width bg bar: vis=%d %q", i, VisibleWidth(ln), stripANSI(ln))
 			}
 		}
-		if visibleWidth(ln) != 36 {
-			t.Fatalf("line %d width=%d want 36 (full bg bar)", i, visibleWidth(ln))
+		if VisibleWidth(ln) != 36 {
+			t.Fatalf("line %d width=%d want 36 (full bg bar)", i, VisibleWidth(ln))
 		}
 	}
 }
@@ -147,19 +147,19 @@ func hasBlankBetween(lines []string, a, b int) bool {
 }
 
 func TestWantsBottomLane_SpeechOnly(t *testing.T) {
-	if !wantsBottomLane(ChatBlock{Kind: ChatBlockUser}, groupMember{}) {
+	if !wantsBottomLane(ChatBlock{Kind: ChatBlockUser}, GroupMember{}) {
 		t.Fatal("user wants bottom lane")
 	}
-	if !wantsBottomLane(ChatBlock{Kind: ChatBlockAssistant}, groupMember{}) {
+	if !wantsBottomLane(ChatBlock{Kind: ChatBlockAssistant}, GroupMember{}) {
 		t.Fatal("assistant wants bottom lane")
 	}
-	if wantsBottomLane(ChatBlock{Kind: ChatBlockTool}, groupMember{}) {
+	if wantsBottomLane(ChatBlock{Kind: ChatBlockTool}, GroupMember{}) {
 		t.Fatal("standalone tool: no bottom lane")
 	}
-	if wantsBottomLane(ChatBlock{Kind: ChatBlockTool}, groupMember{InGroup: true, ToolIndex: 0}) {
+	if wantsBottomLane(ChatBlock{Kind: ChatBlockTool}, GroupMember{InGroup: true, ToolIndex: 0}) {
 		t.Fatal("grouped tool: no bottom lane")
 	}
-	if wantsBottomLane(ChatBlock{Kind: ChatBlockThinking}, groupMember{}) {
+	if wantsBottomLane(ChatBlock{Kind: ChatBlockThinking}, GroupMember{}) {
 		t.Fatal("thinking: no bottom lane")
 	}
 }

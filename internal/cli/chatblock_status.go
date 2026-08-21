@@ -14,8 +14,8 @@ func HydrateChatBlocksForView(messages []provider.Message) []ChatBlock {
 	return ReconstructEmptySpeechStatus(HydrateChatBlocks(messages))
 }
 
-// isWorkStatusBlock reports live/reconstructed empty-speech status lines.
-func isWorkStatusBlock(b ChatBlock) bool {
+// IsWorkStatusBlock reports live/reconstructed empty-speech status lines.
+func IsWorkStatusBlock(b ChatBlock) bool {
 	return b.Kind == ChatBlockSystem && strings.HasPrefix(strings.TrimSpace(b.Text), "→")
 }
 
@@ -29,7 +29,7 @@ func ReconstructEmptySpeechStatus(blocks []ChatBlock) []ChatBlock {
 	i := 0
 	for i < len(blocks) {
 		// Ghost interim that never would have been committed live, when tools follow.
-		if blocks[i].Kind == ChatBlockAssistant && !shouldCommitInterim(blocks[i].Text) {
+		if blocks[i].Kind == ChatBlockAssistant && !ShouldCommitInterim(blocks[i].Text) {
 			if toolWaveFollows(blocks, i+1) {
 				i++
 				continue
@@ -41,13 +41,13 @@ func ReconstructEmptySpeechStatus(blocks []ChatBlock) []ChatBlock {
 			out = append(out, blocks[i])
 			i++
 			// After thinking, maybe tools (with optional status already present).
-			if i < len(blocks) && (blocks[i].Kind == ChatBlockTool || isWorkStatusBlock(blocks[i])) {
+			if i < len(blocks) && (blocks[i].Kind == ChatBlockTool || IsWorkStatusBlock(blocks[i])) {
 				i = appendToolWaveWithStatus(out, blocks, i, &out)
 			}
 			continue
 		}
 
-		if isWorkStatusBlock(blocks[i]) {
+		if IsWorkStatusBlock(blocks[i]) {
 			// Existing status: emit it then the following tool wave without second status.
 			out = append(out, blocks[i])
 			i++
@@ -74,7 +74,7 @@ func ReconstructEmptySpeechStatus(blocks []ChatBlock) []ChatBlock {
 func appendToolWaveWithStatus(_ []ChatBlock, blocks []ChatBlock, i int, out *[]ChatBlock) int {
 	// Skip existing status at wave head.
 	hasStatus := false
-	if i < len(blocks) && isWorkStatusBlock(blocks[i]) {
+	if i < len(blocks) && IsWorkStatusBlock(blocks[i]) {
 		hasStatus = true
 		*out = append(*out, blocks[i])
 		i++
@@ -112,7 +112,7 @@ func toolWaveFollows(blocks []ChatBlock, from int) bool {
 		case ChatBlockThinking:
 			continue
 		case ChatBlockSystem:
-			if isWorkStatusBlock(blocks[i]) {
+			if IsWorkStatusBlock(blocks[i]) {
 				continue
 			}
 			return false
@@ -127,7 +127,7 @@ func hasRealInterimBefore(out []ChatBlock) bool {
 	for i := len(out) - 1; i >= 0; i-- {
 		switch out[i].Kind {
 		case ChatBlockAssistant:
-			return shouldCommitInterim(out[i].Text)
+			return ShouldCommitInterim(out[i].Text)
 		case ChatBlockUser, ChatBlockDivider:
 			return false
 		case ChatBlockThinking, ChatBlockSystem, ChatBlockTool:

@@ -76,7 +76,7 @@ func (m *tuiModel) handleQueueManagerKey(key string) (bool, bool, []tea.Cmd) {
 func (m *tuiModel) queueManagerNav(delta int) (bool, bool, []tea.Cmd) {
 	n := m.queueCount()
 	if n > 0 {
-		m.queueMgr.selected = min(max(0, m.queueMgr.selected+delta), n-1)
+		m.queueMgr.selected = Min(Max(0, m.queueMgr.selected+delta), n-1)
 	}
 	return true, true, nil
 }

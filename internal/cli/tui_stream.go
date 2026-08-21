@@ -15,8 +15,8 @@ type bridgeToolEvt struct {
 	At         time.Time
 }
 
-// bridgeDrain is a one-shot snapshot of bridge UI state for the TUI update loop.
-type bridgeDrain struct {
+// BridgeDrain is a one-shot snapshot of bridge UI state for the TUI update loop.
+type BridgeDrain struct {
 	Stream       string
 	Tools        []bridgeToolEvt
 	Done         bool
@@ -35,16 +35,18 @@ type bridgeDrain struct {
 	CtxTokensSet bool
 }
 
-// streamBridge - agent goroutine → UI (coalesced, no goroutine storms)
-type streamBridge struct {
+// StreamBridge - agent goroutine → UI (coalesced, no goroutine storms)
+type StreamBridge struct {
 	mu      sync.Mutex
 	pending strings.Builder
 	tools   []bridgeToolEvt
 	done    bool
 	doneErr error
-	notify  chan struct{}
-	closed  bool
-	turnID  uint64 // non-zero when a turn fence is active
+	// Notify signals the TUI update loop that drainable state changed. Shared
+	// with internal/legacytui's event loop.
+	Notify chan struct{}
+	closed bool
+	turnID uint64 // non-zero when a turn fence is active
 	// Thinking buffer: dim reasoning chrome (optional).
 	thinking strings.Builder
 	// Interim buffer: user-visible multi-bubble assistant speech between tools.
@@ -66,21 +68,23 @@ type streamBridge struct {
 	resetStream bool
 }
 
-func newStreamBridge() *streamBridge {
-	return &streamBridge{
-		notify:      make(chan struct{}, 1),
+// NewStreamBridge constructs a StreamBridge ready to receive drained events.
+// Shared with internal/legacytui's TUI startup.
+func NewStreamBridge() *StreamBridge {
+	return &StreamBridge{
+		Notify:      make(chan struct{}, 1),
 		openToolIDs: make(map[string]struct{}),
 	}
 }
 
-func (b *streamBridge) signal() {
+func (b *StreamBridge) signal() {
 	select {
-	case b.notify <- struct{}{}:
+	case b.Notify <- struct{}{}:
 	default:
 	}
 }
 
-func (b *streamBridge) Write(p []byte) (int, error) {
+func (b *StreamBridge) Write(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
@@ -107,7 +111,7 @@ func (b *streamBridge) Write(p []byte) (int, error) {
 // RevokeStream clears optimistic final-stream text when tool_calls arrive.
 // Returns the revoked text for callers; does not treat it as thinking - the
 // agent re-emits EventAssistant so the TUI commits a durable speech bubble.
-func (b *streamBridge) RevokeStream() string {
+func (b *StreamBridge) RevokeStream() string {
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()
@@ -124,8 +128,8 @@ func (b *streamBridge) RevokeStream() string {
 // PushInterim queues user-visible assistant speech for the next Drain
 // (intermediate bubbles: "I'll look that up…", "Next I'll…").
 // Ghost/noise text is dropped here so the bus path cannot force empty bubbles.
-func (b *streamBridge) PushInterim(text string) {
-	if !shouldCommitInterim(text) {
+func (b *StreamBridge) PushInterim(text string) {
+	if !ShouldCommitInterim(text) {
 		return
 	}
 	b.mu.Lock()
@@ -153,7 +157,7 @@ func (b *streamBridge) PushInterim(text string) {
 // a tool was already running (activeTools > 0), which discarded exactly the
 // case that matters most: the chain of thought a model streams BEFORE it
 // decides to call anything.
-func (b *streamBridge) PushThinking(text string) {
+func (b *StreamBridge) PushThinking(text string) {
 	if text == "" {
 		return
 	}
@@ -177,28 +181,28 @@ func (b *streamBridge) PushThinking(text string) {
 	b.signal()
 }
 
-func (b *streamBridge) PushTool(start bool, name, detail string) {
+func (b *StreamBridge) PushTool(start bool, name, detail string) {
 	b.PushToolWithID(start, "", name, detail)
 }
 
 // PushCompletedBanner records a one-shot visibility row (parallel/prune) that
 // is immediately completed. Never leaves an open active-tool slot.
-func (b *streamBridge) PushCompletedBanner(name, detail string) {
+func (b *StreamBridge) PushCompletedBanner(name, detail string) {
 	b.PushToolWithID(true, "", name, detail)
 	b.PushToolWithID(false, "", name, "completed")
 }
 
-func (b *streamBridge) PushToolWithID(start bool, toolCallID, name, detail string) {
+func (b *StreamBridge) PushToolWithID(start bool, toolCallID, name, detail string) {
 	b.pushToolEvt(start, toolCallID, "", name, detail)
 }
 
 // PushSubagentTool records a nested tool event attributed to a subagent, so
 // the UI can badge the row with the agent that ran it.
-func (b *streamBridge) PushSubagentTool(start bool, toolCallID, agentName, name, detail string) {
+func (b *StreamBridge) PushSubagentTool(start bool, toolCallID, agentName, name, detail string) {
 	b.pushToolEvt(start, toolCallID, agentName, name, detail)
 }
 
-func (b *streamBridge) pushToolEvt(start bool, toolCallID, agentName, name, detail string) {
+func (b *StreamBridge) pushToolEvt(start bool, toolCallID, agentName, name, detail string) {
 	b.mu.Lock()
 	if b.closed || (b.done && b.turnID > 0) {
 		b.mu.Unlock()
@@ -242,7 +246,7 @@ func (b *streamBridge) pushToolEvt(start bool, toolCallID, agentName, name, deta
 	b.signal()
 }
 
-func (b *streamBridge) Finish(err error) {
+func (b *StreamBridge) Finish(err error) {
 	b.mu.Lock()
 	b.done = true
 	b.doneErr = err
@@ -251,7 +255,7 @@ func (b *streamBridge) Finish(err error) {
 }
 
 // PushStep stores a heartbeat/step event detail for UI display.
-func (b *streamBridge) PushStep(detail string) {
+func (b *StreamBridge) PushStep(detail string) {
 	b.mu.Lock()
 	b.stepDetail = detail
 	b.stepDetailAt = time.Now()
@@ -262,7 +266,7 @@ func (b *streamBridge) PushStep(detail string) {
 // PushCtxTokens stores the input-token count of the step's own provider
 // request, so the status bar can show context growth as it happens instead
 // of only after the turn commits its history to the session.
-func (b *streamBridge) PushCtxTokens(tokens int) {
+func (b *StreamBridge) PushCtxTokens(tokens int) {
 	b.mu.Lock()
 	b.ctxTokens = tokens
 	b.ctxTokensSet = true
@@ -276,7 +280,7 @@ func (b *streamBridge) PushCtxTokens(tokens int) {
 // Unlike Drain, it is non-consuming: the state is left intact so the next
 // pollCmd tick can still deliver it and finish via Done. An empty or nil
 // bridge counts as drained.
-func (b *streamBridge) Pending() bool {
+func (b *StreamBridge) Pending() bool {
 	if b == nil {
 		return false
 	}
@@ -293,10 +297,10 @@ func (b *streamBridge) Pending() bool {
 }
 
 // Drain returns and clears pending UI state.
-func (b *streamBridge) Drain() bridgeDrain {
+func (b *StreamBridge) Drain() BridgeDrain {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	d := bridgeDrain{
+	d := BridgeDrain{
 		Stream:       b.pending.String(),
 		Tools:        b.tools,
 		Done:         b.done,
@@ -325,7 +329,7 @@ func (b *streamBridge) Drain() bridgeDrain {
 }
 
 // SetTurnID sets the current turn fence ID without changing the done flag.
-func (b *streamBridge) SetTurnID(id uint64) {
+func (b *StreamBridge) SetTurnID(id uint64) {
 	b.mu.Lock()
 	b.turnID = id
 	b.mu.Unlock()
@@ -333,7 +337,7 @@ func (b *streamBridge) SetTurnID(id uint64) {
 
 // FenceTurn marks the bridge as accepting events only for the given turn.
 // It clears the done flag so new events can flow for this turn.
-func (b *streamBridge) FenceTurn(id uint64) {
+func (b *StreamBridge) FenceTurn(id uint64) {
 	b.mu.Lock()
 	b.turnID = id
 	b.done = false
@@ -342,7 +346,7 @@ func (b *streamBridge) FenceTurn(id uint64) {
 	b.signal()
 }
 
-func (b *streamBridge) Close() {
+func (b *StreamBridge) Close() {
 	b.mu.Lock()
 	b.closed = true
 	b.activeTools = 0
@@ -352,7 +356,7 @@ func (b *streamBridge) Close() {
 }
 
 // ActiveTools returns outstanding tool count (for tests).
-func (b *streamBridge) ActiveTools() int {
+func (b *StreamBridge) ActiveTools() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.activeTools

@@ -138,7 +138,7 @@ func (m *tuiModel) publishTurnEnd(turnID string, err error) {
 		TurnID:    turnID,
 		Detail:    detail,
 		Err:       err,
-		Identity:  sessionIdentity(m.session, m.agentState, m.session.CurrentModelGeneration()),
+		Identity:  SessionIdentity(m.session, m.agentState, m.session.CurrentModelGeneration()),
 	})
 }
 
@@ -162,13 +162,13 @@ func turnEndError(ev events.Event) error {
 
 // agentEventBridgeCallback returns an OnEvent handler that forwards
 // agent loop events to the TUI bridge for rendering.
-func agentEventBridgeCallback(bridge *streamBridge) func(agent.Event) {
+func agentEventBridgeCallback(bridge *StreamBridge) func(agent.Event) {
 	return func(e agent.Event) {
 		switch e.Kind {
 		case agent.EventToolStart:
-			bridge.PushToolWithID(true, e.ToolCallID, e.Name, eventPreview(e.Input, e.Detail))
+			bridge.PushToolWithID(true, e.ToolCallID, e.Name, EventPreview(e.Input, e.Detail))
 		case agent.EventToolEnd:
-			bridge.PushToolWithID(false, e.ToolCallID, e.Name, eventPreview(e.Output, e.Detail))
+			bridge.PushToolWithID(false, e.ToolCallID, e.Name, EventPreview(e.Output, e.Detail))
 		case agent.EventToolParallel:
 			// Banner only - must not leave an open tool row. A Start without End
 			// permanently inflated activeTools and kept the row yellow forever
@@ -200,9 +200,9 @@ func agentEventBridgeCallback(bridge *streamBridge) func(agent.Event) {
 			// carries the per-step cache hit rate.
 			bridge.PushStep(e.Detail)
 		case agent.EventSubagentStart:
-			bridge.PushSubagentTool(true, e.ToolCallID, e.Origin.Agent, e.Name, eventPreview(e.Input, e.Detail))
+			bridge.PushSubagentTool(true, e.ToolCallID, e.Origin.Agent, e.Name, EventPreview(e.Input, e.Detail))
 		case agent.EventSubagentEnd:
-			bridge.PushSubagentTool(false, e.ToolCallID, e.Origin.Agent, e.Name, eventPreview(e.Output, e.Detail))
+			bridge.PushSubagentTool(false, e.ToolCallID, e.Origin.Agent, e.Name, EventPreview(e.Output, e.Detail))
 		case agent.EventSubagentHeartbeat:
 			bridge.PushStep(e.Detail)
 		case agent.EventCompaction:
@@ -269,7 +269,9 @@ func hookBannerBody(e agent.Event) string {
 	return e.Detail + ": " + e.Output
 }
 
-func eventPreview(preview, fallback string) string {
+// EventPreview returns preview, falling back to fallback when preview is
+// empty. Shared with internal/clichat's JSON event writer.
+func EventPreview(preview, fallback string) string {
 	if preview != "" {
 		return preview
 	}

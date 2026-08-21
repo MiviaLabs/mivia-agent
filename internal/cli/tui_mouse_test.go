@@ -38,16 +38,16 @@ func TestTUIMouseHitMapZones(t *testing.T) {
 		kind    tuiHitZoneKind
 		blockID string
 	}{
-		{"transcript zone top", 0, true, hitTranscript, ""},
-		{"transcript zone middle", 5, true, hitTranscript, ""},
-		{"transcript zone bottom", 9, true, hitTranscript, ""},
-		{"typed block start", 3, true, hitTranscript, "turn-1-block-2"},
-		{"typed block middle", 4, true, hitTranscript, "turn-1-block-2"},
-		{"typed block end exclusive", 5, true, hitTranscript, ""},
-		{"transcript extends past old tools zone", 12, true, hitTranscript, ""},
-		{"composer zone top", 14, true, hitComposer, ""},
-		{"composer zone middle", 16, true, hitComposer, ""},
-		{"composer zone bottom", 18, true, hitComposer, ""},
+		{"transcript zone top", 0, true, HitTranscript, ""},
+		{"transcript zone middle", 5, true, HitTranscript, ""},
+		{"transcript zone bottom", 9, true, HitTranscript, ""},
+		{"typed block start", 3, true, HitTranscript, "turn-1-block-2"},
+		{"typed block middle", 4, true, HitTranscript, "turn-1-block-2"},
+		{"typed block end exclusive", 5, true, HitTranscript, ""},
+		{"transcript extends past old tools zone", 12, true, HitTranscript, ""},
+		{"composer zone top", 14, true, HitComposer, ""},
+		{"composer zone middle", 16, true, HitComposer, ""},
+		{"composer zone bottom", 18, true, HitComposer, ""},
 		{"below all zones", 19, false, 0, ""},
 		{"negative y", -1, false, 0, ""},
 		{"beyond height", 24, false, 0, ""},
@@ -60,11 +60,11 @@ func TestTUIMouseHitMapZones(t *testing.T) {
 				t.Fatalf("hit(%d) ok=%v, want %v", tc.y, ok, tc.wantHit)
 			}
 			if ok {
-				if z.kind != tc.kind {
-					t.Errorf("hit(%d).kind=%d, want %d", tc.y, z.kind, tc.kind)
+				if z.Kind != tc.kind {
+					t.Errorf("hit(%d).kind=%d, want %d", tc.y, z.Kind, tc.kind)
 				}
-				if z.blockID != tc.blockID {
-					t.Errorf("hit(%d).blockID=%q, want %q", tc.y, z.blockID, tc.blockID)
+				if z.BlockID != tc.blockID {
+					t.Errorf("hit(%d).blockID=%q, want %q", tc.y, z.BlockID, tc.blockID)
 				}
 			}
 		})
@@ -138,8 +138,8 @@ func TestTUIMouseOverLivePanelOverlayPassesThroughToTranscript(t *testing.T) {
 	}
 	for y := 1; y <= H; y++ {
 		z, ok := m.hitMap.hit(y)
-		if !ok || z.kind != hitTranscript {
-			t.Fatalf("row %d over the overlay: ok=%v kind=%v, want hitTranscript (no dead zone)", y, ok, z.kind)
+		if !ok || z.Kind != HitTranscript {
+			t.Fatalf("row %d over the overlay: ok=%v kind=%v, want hitTranscript (no dead zone)", y, ok, z.Kind)
 		}
 	}
 

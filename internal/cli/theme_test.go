@@ -185,7 +185,7 @@ func TestThemeByteStabilityMarkdown(t *testing.T) {
 		" and " + AnsiDim + AnsiYellow + "code" + AnsiReset + "\n" +
 		"  " + AnsiCyan + "•" + AnsiReset + " item\n"
 	if !strings.HasPrefix(got, want) {
-		t.Fatalf("markdown prefix drift\ngot  %q\nwant %q", got[:min(len(got), len(want)+20)], want)
+		t.Fatalf("markdown prefix drift\ngot  %q\nwant %q", got[:Min(len(got), len(want)+20)], want)
 	}
 	// Code fence path uses highlight (same ansi* vocab after Wave 3).
 	if !strings.Contains(got, AnsiBgDark+AnsiCyan+"func"+AnsiReset) {

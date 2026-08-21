@@ -20,7 +20,7 @@ import (
 // registry would have been computed. That is the only interesting failure
 // point: an /agent switch that dies here must leave nothing of the new agent
 // behind.
-func collideWithDelegate(state *agentSessionState) {
+func collideWithDelegate(state *AgentSessionState) {
 	state.ToolBase.Register(namedTool{name: "delegate"})
 }
 
@@ -39,7 +39,7 @@ func TestFailedAgentSwitchLeavesNoTraceOfTheNewAgent(t *testing.T) {
 	if err := fixture.state.Registry.Publish(writer); err != nil {
 		t.Fatal(err)
 	}
-	if err := applySessionAgent(fixture.sess, fixture.res, fixture.state, "writer", false); err == nil {
+	if err := ApplySessionAgent(fixture.sess, fixture.res, fixture.state, "writer", false); err == nil {
 		t.Fatal("a surface build that cannot register its delegation tools was accepted")
 	}
 	if got := currentAgentName(fixture.state); got != "reader" {
@@ -136,7 +136,7 @@ func TestCoreTierDoesNotShrinkARoutedAgentsToolSurface(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Rebuild the surface so the new definition gets a handler.
-	if err := applySessionAgent(fixture.sess, fixture.res, fixture.state, "reader", false); err != nil {
+	if err := ApplySessionAgent(fixture.sess, fixture.res, fixture.state, "reader", false); err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
 	stored, ok := fixture.state.Registry.Get("searcher")

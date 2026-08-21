@@ -66,7 +66,7 @@ func TestEventWithAgentAttribution(t *testing.T) {
 }
 
 func TestBridgeSubagentToolCarriesAgent(t *testing.T) {
-	b := newStreamBridge()
+	b := NewStreamBridge()
 	b.PushSubagentTool(true, "call-1", "audit", "grep", `{"pattern":"x"}`)
 	d := b.Drain()
 	if len(d.Tools) != 1 {

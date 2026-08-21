@@ -14,19 +14,19 @@ type ChatBlockRender struct {
 }
 
 func RenderChatBlocks(blocks []ChatBlock, model string, width int, thinkingExpandDefault ...bool) ChatBlockRender {
-	return RenderChatBlocksView(blocks, model, width, railView{}, thinkingExpandDefault...)
+	return RenderChatBlocksView(blocks, model, width, RailView{}, thinkingExpandDefault...)
 }
 
 // RenderChatBlocksView adds live frame/liveness for rail animation.
-func RenderChatBlocksView(blocks []ChatBlock, model string, width int, view railView, thinkingExpandDefault ...bool) ChatBlockRender {
-	if width < minCardWidth {
-		width = minCardWidth
+func RenderChatBlocksView(blocks []ChatBlock, model string, width int, view RailView, thinkingExpandDefault ...bool) ChatBlockRender {
+	if width < MinCardWidth {
+		width = MinCardWidth
 	}
 	ted := len(thinkingExpandDefault) > 0 && thinkingExpandDefault[0]
 	members := buildGroupMembers(blocks)
 	out := ChatBlockRender{Ranges: make(map[string][2]int)}
 	for i, block := range blocks {
-		mem := groupMember{}
+		mem := GroupMember{}
 		if i < len(members) {
 			mem = members[i]
 		}
@@ -48,13 +48,13 @@ func ensureBlockGap(out *ChatBlockRender) {
 
 // renderOneChatBlock paints a single block and applies hierarchical rail chrome.
 func renderOneChatBlock(block ChatBlock, model string, width int, thinkingExpandDefault bool) []string {
-	return renderOneChatBlockMem(block, model, width, thinkingExpandDefault, groupMember{}, railView{})
+	return renderOneChatBlockMem(block, model, width, thinkingExpandDefault, GroupMember{}, RailView{})
 }
 
-func renderOneChatBlockMem(block ChatBlock, model string, width int, thinkingExpandDefault bool, mem groupMember, view railView) []string {
+func renderOneChatBlockMem(block ChatBlock, model string, width int, thinkingExpandDefault bool, mem GroupMember, view RailView) []string {
 	opts := ChromeRenderOpts()
 	text := SafeChatBlockText(block.Text, 0)
-	rail := resolveBlockRail(block, mem, opts, view)
+	rail := ResolveBlockRail(block, mem, opts, view)
 
 	if early, ok := renderPreformattedBlock(block, rail); ok {
 		return early
@@ -79,7 +79,7 @@ func renderPreformattedBlock(block ChatBlock, rail LeftRail) ([]string, bool) {
 		}
 		return nil, false
 	case ChatBlockSystem:
-		if isWorkStatusBlock(block) {
+		if IsWorkStatusBlock(block) {
 			return nil, false
 		}
 		if block.Collapsed {
@@ -98,7 +98,7 @@ func collapsePreview(label, text string, maxRunes int) []string {
 	if len([]rune(preview)) > maxRunes {
 		preview = string([]rune(preview)[:maxRunes]) + "…"
 	}
-	return []string{"  " + glyphTriR + " " + label + "  " + preview}
+	return []string{"  " + GlyphTriR + " " + label + "  " + preview}
 }
 
 func renderBlockBody(block ChatBlock, text, model string, width int, thinkingExpandDefault bool) []string {
@@ -118,7 +118,7 @@ func renderBlockBody(block ChatBlock, text, model string, width int, thinkingExp
 	case ChatBlockThinking:
 		return renderThinkingBlock(text, block.Collapsed, block.ScrollOffset, thinkingExpandDefault, width)
 	case ChatBlockSystem:
-		if isWorkStatusBlock(block) {
+		if IsWorkStatusBlock(block) {
 			return renderWorkStatusBlock(text, block.Collapsed)
 		}
 		if text == "" {
@@ -155,7 +155,7 @@ func renderWorkStatusBlock(text string, collapsed bool) []string {
 	if len(parts) == 0 || strings.TrimSpace(parts[0]) == "" {
 		return nil
 	}
-	marker := glyphTriR
+	marker := GlyphTriR
 	if !collapsed {
 		marker = glyphTriD
 	}
@@ -178,7 +178,7 @@ func renderToolBlock(block ChatBlock, text string, model string, width int) []st
 	// Nested tools keep their ◆ producing-agent badge in history.
 	agentPart := ""
 	if block.AgentName != "" {
-		agentPart = AgentBadgeStyle.Render(glyphDiamond+" "+block.AgentName) + " "
+		agentPart = AgentBadgeStyle.Render(GlyphDiamond+" "+block.AgentName) + " "
 	}
 	if block.Collapsed {
 		// File edits are the agent's most consequential output: the collapsed
@@ -195,9 +195,9 @@ func renderToolBlock(block ChatBlock, text string, model string, width int) []st
 		// Ledger-row chrome: status glyph + duration when known.
 		status := ""
 		if block.Failed {
-			status = " " + ToolErrStyle.Render(glyphCross)
+			status = " " + ToolErrStyle.Render(GlyphCross)
 		} else if block.Elapsed > 0 {
-			status = " " + ToolOkStyle.Render(glyphCheck)
+			status = " " + ToolOkStyle.Render(GlyphCheck)
 		}
 		dur := ""
 		if block.Elapsed > 0 {
@@ -205,7 +205,7 @@ func renderToolBlock(block ChatBlock, text string, model string, width int) []st
 		}
 		// ▸ collapse affordance matches other block kinds.
 		line := fmt.Sprintf("  %s %s %s%s %s%s%s",
-			glyphTriR,
+			GlyphTriR,
 			ToolIconForName(block.ToolName),
 			agentPart,
 			ToolNameStyle.Render(block.ToolName),
@@ -227,9 +227,9 @@ func renderToolBlock(block ChatBlock, text string, model string, width int) []st
 	)
 	lines := []string{header}
 	// Apply redaction + line cap to expanded tool content for privacy.
-	redacted := redactPreview(text)
+	redacted := RedactPreview(text)
 	if IsEditTool(block.ToolName) || ResultLooksLikeDiff(redacted) {
-		for _, line := range renderDiffBody(redacted, width, 50) {
+		for _, line := range RenderDiffBody(redacted, width, 50) {
 			lines = append(lines, line)
 		}
 		return lines
@@ -247,8 +247,8 @@ func renderToolBlock(block ChatBlock, text string, model string, width int) []st
 	return lines
 }
 
-// maxThinkingLines is the max visible lines for a windowed thinking block.
-const maxThinkingLines = 6
+// MaxThinkingLines is the max visible lines for a windowed thinking block.
+const MaxThinkingLines = 6
 
 func renderThinkingBlock(text string, collapsed bool, scrollOffset int, thinkingExpandDefault bool, width int) []string {
 	// Per-block Collapsed controls visibility. thinkingExpandDefault only
@@ -257,7 +257,7 @@ func renderThinkingBlock(text string, collapsed bool, scrollOffset int, thinking
 	_ = thinkingExpandDefault
 	effectivelyCollapsed := collapsed
 	if strings.TrimSpace(text) == "" {
-		return []string{TUIThinkingStyle.Render("  " + glyphTriR + " thinking")}
+		return []string{TUIThinkingStyle.Render("  " + GlyphTriR + " thinking")}
 	}
 	rawLines := strings.Split(SafeChatBlockText(text, 0), "\n")
 	if effectivelyCollapsed {
@@ -269,27 +269,27 @@ func renderThinkingBlock(text string, collapsed bool, scrollOffset int, thinking
 				n++
 			}
 		}
-		return []string{TUIThinkingStyle.Render(fmt.Sprintf("  %s thinking · %d lines", glyphTriR, n))}
+		return []string{TUIThinkingStyle.Render(fmt.Sprintf("  %s thinking · %d lines", GlyphTriR, n))}
 	}
 	// Wrap each raw line to the pane width before windowing, so a single long
 	// reasoning line does not overflow the viewport (every other block kind
 	// wraps its text; this one used to emit raw lines unwrapped).
-	contentWidth := max(20, width-4)
+	contentWidth := Max(20, width-4)
 	allLines := make([]string, 0, len(rawLines))
 	for _, l := range rawLines {
 		if l == "" {
 			allLines = append(allLines, "")
 			continue
 		}
-		wrapped := wrapANSIv2(l, contentWidth)
+		wrapped := WrapANSIv2(l, contentWidth)
 		allLines = append(allLines, strings.Split(wrapped, "\n")...)
 	}
 	n := len(allLines)
 
 	// Determine the window bounds.
 	start := 0
-	if n > maxThinkingLines {
-		maxOffset := n - maxThinkingLines
+	if n > MaxThinkingLines {
+		maxOffset := n - MaxThinkingLines
 		if scrollOffset < 0 {
 			scrollOffset = 0
 		}
@@ -301,7 +301,7 @@ func renderThinkingBlock(text string, collapsed bool, scrollOffset int, thinking
 		start = maxOffset - scrollOffset
 	}
 
-	end := start + maxThinkingLines
+	end := start + MaxThinkingLines
 	if end > n {
 		end = n
 	}

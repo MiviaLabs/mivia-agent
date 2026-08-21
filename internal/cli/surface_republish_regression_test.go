@@ -51,7 +51,7 @@ func newSwitchableFixture(t *testing.T, dir string, completer *scriptedCompleter
 
 func switchToOtherModel(t *testing.T, fixture *deferredFixture) {
 	t.Helper()
-	if _, err := switchModelCommand(fixture.sess, fixture.res, "deepseek", "deepseek-reasoner"); err != nil {
+	if _, err := SwitchModelCommand(fixture.sess, fixture.res, "deepseek", "deepseek-reasoner"); err != nil {
 		t.Fatalf("model switch: %v", err)
 	}
 }
@@ -301,7 +301,7 @@ func TestTruncatedOutputSurvivesAnAgentSwitch(t *testing.T) {
 	if err := fixture.state.Registry.Publish(writer); err != nil {
 		t.Fatal(err)
 	}
-	if err := applySessionAgent(fixture.sess, fixture.res, fixture.state, "writer", false); err != nil {
+	if err := ApplySessionAgent(fixture.sess, fixture.res, fixture.state, "writer", false); err != nil {
 		t.Fatalf("agent switch: %v", err)
 	}
 
@@ -538,7 +538,7 @@ func TestAgentSwitchArmsTheWidenerItself(t *testing.T) {
 	fixture := newDeferredFixture(t, completer, []string{"read_file"}, []string{"read_file", "grep", "glob"})
 	fixture.sess.SetSurfaceWidener(nil)
 	deferringAgent(t, fixture, "narrow", []string{"read_file"}, "read_file", "grep")
-	if err := applySessionAgent(fixture.sess, fixture.res, fixture.state, "narrow", false); err != nil {
+	if err := ApplySessionAgent(fixture.sess, fixture.res, fixture.state, "narrow", false); err != nil {
 		t.Fatalf("switch: %v", err)
 	}
 
@@ -585,7 +585,7 @@ func TestAgentSwitchToAnInertAgentDisarmsAStaleWidener(t *testing.T) {
 	if err := fixture.state.Registry.Publish(wide); err != nil {
 		t.Fatal(err)
 	}
-	if err := applySessionAgent(fixture.sess, fixture.res, fixture.state, "wide", false); err != nil {
+	if err := ApplySessionAgent(fixture.sess, fixture.res, fixture.state, "wide", false); err != nil {
 		t.Fatalf("switch: %v", err)
 	}
 	_ = fixture.sess.TakeAdmissionNotes()
@@ -635,7 +635,7 @@ func TestAgentSwitchRebindsThePersistedAdmissionIdentity(t *testing.T) {
 	deferringAgent(t, fixture, "narrow", []string{"read_file"}, "read_file", "grep")
 	deferringAgent(t, fixture, "other", []string{"read_file"}, "read_file", "grep", "glob")
 
-	if err := applySessionAgent(fixture.sess, fixture.res, fixture.state, "narrow", false); err != nil {
+	if err := ApplySessionAgent(fixture.sess, fixture.res, fixture.state, "narrow", false); err != nil {
 		t.Fatalf("switch to narrow: %v", err)
 	}
 	if _, err := fixture.sess.StageToolAdmission([]string{"grep"}, 0); err != nil {
@@ -652,7 +652,7 @@ func TestAgentSwitchRebindsThePersistedAdmissionIdentity(t *testing.T) {
 	}
 
 	// A different agent, so the snapshot's admitted set belongs to nobody here.
-	if err := applySessionAgent(fixture.sess, fixture.res, fixture.state, "other", false); err != nil {
+	if err := ApplySessionAgent(fixture.sess, fixture.res, fixture.state, "other", false); err != nil {
 		t.Fatalf("switch to other: %v", err)
 	}
 	_ = fixture.sess.TakeAdmissionNotes()

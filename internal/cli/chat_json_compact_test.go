@@ -49,7 +49,7 @@ func TestSlashCompactJSONEmitsTypedEvents(t *testing.T) {
 	defer done()
 
 	var buf bytes.Buffer
-	activeJSONSlashSink = &jsonSlashSink{w: &buf}
+	activeJSONSlashSink = &JSONSlashSink{w: &buf}
 	defer func() { activeJSONSlashSink = nil }()
 
 	handled, exit, err := handleSlashCompact("/compact", sess, nil, nil)
@@ -139,7 +139,7 @@ func TestSlashCompactJSONFailureEmitsSlashError(t *testing.T) {
 	defer store.Close()
 
 	var buf bytes.Buffer
-	activeJSONSlashSink = &jsonSlashSink{w: &buf}
+	activeJSONSlashSink = &JSONSlashSink{w: &buf}
 	defer func() { activeJSONSlashSink = nil }()
 	handled, _, err := handleSlashCompact("/compact", sess, nil, nil)
 	if err != nil {
@@ -171,7 +171,7 @@ func TestSlashCompactTwiceSucceeds(t *testing.T) {
 	defer done()
 	for i := 0; i < 2; i++ {
 		var buf bytes.Buffer
-		activeJSONSlashSink = &jsonSlashSink{w: &buf}
+		activeJSONSlashSink = &JSONSlashSink{w: &buf}
 		handled, _, err := handleSlashCompact("/compact", sess, nil, nil)
 		if i == 1 {
 			activeJSONSlashSink = nil

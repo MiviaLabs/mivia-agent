@@ -12,9 +12,9 @@ func renderSuggestPanel(state suggestState, termW, maxH int) (string, Rect) {
 	for _, command := range state.commands {
 		glyph := "•"
 		if command.Kind == slashKindSkill {
-			glyph = glyphLozenge
+			glyph = GlyphLozenge
 			if command.Origin == "project" {
-				glyph = glyphDiamond
+				glyph = GlyphDiamond
 			}
 		}
 		label := command.Name
@@ -27,19 +27,19 @@ func renderSuggestPanel(state suggestState, termW, maxH int) (string, Rect) {
 		}
 		items = append(items, item)
 	}
-	return renderOverlayWindow(items, state.selected, suggestWindowRows, termW, maxH, " commands "+fmt.Sprintf("(%d)", len(state.commands)), "")
+	return RenderOverlayWindow(items, state.selected, suggestWindowRows, termW, maxH, " commands "+fmt.Sprintf("(%d)", len(state.commands)), "")
 }
 
 func suggestOverlayRect(m *tuiModel, panel string, panelSize Rect) Rect {
-	termW, termH := max(1, m.width), max(8, m.height)
+	termW, termH := Max(1, m.width), Max(8, m.height)
 	if panel == "" || panelSize.W <= 0 || panelSize.H <= 0 {
 		return Rect{}
 	}
 	pane := newChatPaneLayout(termW, m.sessionsSidebar != nil, m.workflowsSidebar != nil)
 	composerTop := m.suggestComposerTop()
-	y := max(1, composerTop-panelSize.H)
-	x := pane.chatX + max(0, min(2, pane.chatWidth-panelSize.W))
-	return Rect{X: x, Y: y, W: panelSize.W, H: min(panelSize.H, termH-y)}
+	y := Max(1, composerTop-panelSize.H)
+	x := pane.chatX + Max(0, Min(2, pane.chatWidth-panelSize.W))
+	return Rect{X: x, Y: y, W: panelSize.W, H: Min(panelSize.H, termH-y)}
 }
 
 func (m *tuiModel) suggestComposerTop() int {

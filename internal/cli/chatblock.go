@@ -32,7 +32,7 @@ func (m *tuiModel) appendBlock(block ChatBlock) {
 			m.blocks[i].ID = chatBlockID(m.blocks[i].TurnID, m.blocks[i].Sequence)
 		}
 		if m.msgOffset > 0 && m.session != nil {
-			m.msgOffset = min(m.session.MessagesCount(), m.msgOffset+dropped)
+			m.msgOffset = Min(m.session.MessagesCount(), m.msgOffset+dropped)
 		}
 	}
 	// Rebuild messages from blocks (single source of truth).
@@ -71,8 +71,8 @@ func (m *tuiModel) buildViewportContent() string {
 // map is nil (that made Enter/toggle appear broken).
 // History rails never animate (Live=false).
 func (m *tuiModel) renderBlocksForView() ChatBlockRender {
-	w := max(20, m.chatPaneWidth()-2)
-	view := railView{Frame: m.logoFrame, Live: false}
+	w := Max(20, m.chatPaneWidth()-2)
+	view := RailView{Frame: m.logoFrame, Live: false}
 	if m.workGroupCollapsed == nil {
 		m.workGroupCollapsed = map[string]bool{}
 	}

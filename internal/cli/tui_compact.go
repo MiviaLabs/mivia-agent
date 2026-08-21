@@ -87,7 +87,7 @@ func (m *tuiModel) applyCompactionDone(msg compactionDoneMsg) {
 		m.appendInfo(msg.notice)
 	}
 	if reason := summaryDisabledReason(m.session, m.config); reason != "" {
-		m.appendInfo(compactStructuralOnlyNotice(reason))
+		m.appendInfo(CompactStructuralOnlyNotice(reason))
 	}
 	usage := m.session.ContextUsage()
 	m.appendInfo(fmt.Sprintf("context compacted (%d%% used, %s/%s prompt)", usage.Percent, chat.FormatTokenK(usage.UsedTokens), chat.FormatTokenK(usage.BudgetTokens)))
