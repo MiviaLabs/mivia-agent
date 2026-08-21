@@ -12,6 +12,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
+	"github.com/MiviaLabs/mivia-agent/internal/usage"
 )
 
 type PrepareInput struct {
@@ -295,7 +296,7 @@ type ContextManager struct {
 	// usage events ephemeral (bus-only, today's production state everywhere
 	// this isn't wired). Constructed once per session, alongside Summarizer,
 	// and copied into agent.Options per turn the same way.
-	UsageWriter UsageWriter
+	UsageWriter usage.UsageWriter
 }
 
 func (m ContextManager) Prepare(ctx context.Context, input PrepareInput) (Preparation, error) {

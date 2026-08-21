@@ -6,9 +6,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/usage"
 )
 
 // fakeUsageWriter records every UsageRecord passed to it, optionally failing
@@ -18,21 +18,21 @@ import (
 // mutex is defensive rather than load-bearing.
 type fakeUsageWriter struct {
 	mu      sync.Mutex
-	records []contextmgr.UsageRecord
+	records []usage.UsageRecord
 	err     error
 }
 
-func (w *fakeUsageWriter) Record(_ context.Context, record contextmgr.UsageRecord) error {
+func (w *fakeUsageWriter) Record(_ context.Context, record usage.UsageRecord) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.records = append(w.records, record)
 	return w.err
 }
 
-func (w *fakeUsageWriter) recordsCopy() []contextmgr.UsageRecord {
+func (w *fakeUsageWriter) recordsCopy() []usage.UsageRecord {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return append([]contextmgr.UsageRecord(nil), w.records...)
+	return append([]usage.UsageRecord(nil), w.records...)
 }
 
 func TestEmitTokenUsagePublishesOnlyWhenReported(t *testing.T) {

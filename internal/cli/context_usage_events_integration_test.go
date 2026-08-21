@@ -15,6 +15,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
+	"github.com/MiviaLabs/mivia-agent/internal/usage"
 )
 
 // usageReportingCompleter answers every agent-loop turn with a plain final
@@ -297,7 +298,7 @@ func stringsRepeatX(n int) string {
 }
 
 // TestCompactionUsageWriteFailureDoesNotBreakTheRealTurn proves the
-// "best-effort, swallowed" design contract (contextmgr.UsageWriter's doc
+// "best-effort, swallowed" design contract (usage.UsageWriter's doc
 // comment, internal/agent/emit.go's recordUsage doc comment) holds against a
 // GENUINE RecordUsageEvent failure, not the fakeUsageWriter{err: ...} used by
 // TestEmitCompactionSwallowsWriterError. It wires the session's real
@@ -330,7 +331,7 @@ func TestCompactionUsageWriteFailureDoesNotBreakTheRealTurn(t *testing.T) {
 
 	// Confirm the closed store genuinely rejects a write, so this test is
 	// pinned against a real failure and not silently a no-op.
-	if err := failingUsageStore.RecordUsageEvent(context.Background(), "ws-failing", contextmgr.UsageRecord{Kind: "token_usage", SessionID: "probe", TurnID: "probe"}); err == nil {
+	if err := failingUsageStore.RecordUsageEvent(context.Background(), "ws-failing", usage.UsageRecord{Kind: "token_usage", SessionID: "probe", TurnID: "probe"}); err == nil {
 		t.Fatal("harness precondition failed: the closed store accepted a write, so the failure path was never exercised")
 	} else if !errors.Is(err, sql.ErrConnDone) && !isClosedDBError(err) {
 		// Not fatal - different drivers/versions phrase this differently -

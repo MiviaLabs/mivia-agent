@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	"github.com/MiviaLabs/mivia-agent/internal/usage"
 )
 
 func TestRecordUsageEventRoundTripsTokenUsage(t *testing.T) {
@@ -17,7 +17,7 @@ func TestRecordUsageEventRoundTripsTokenUsage(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 
 	ctx := context.Background()
-	err = store.RecordUsageEvent(ctx, "ws-1", contextmgr.UsageRecord{
+	err = store.RecordUsageEvent(ctx, "ws-1", usage.UsageRecord{
 		Kind: "token_usage", SessionID: "sess-1", TurnID: "turn:1",
 		Provider: "deepseek", Model: "deepseek-v4-flash",
 		InputTokens: 100, OutputTokens: 40, EstimatedTokens: 95, CalibrationRatio: 1.05,
@@ -55,7 +55,7 @@ func TestRecordUsageEventRoundTripsCompactionWithSummarizedFlag(t *testing.T) {
 
 	ctx := context.Background()
 	summarized := true
-	err = store.RecordUsageEvent(ctx, "ws-1", contextmgr.UsageRecord{
+	err = store.RecordUsageEvent(ctx, "ws-1", usage.UsageRecord{
 		Kind: "compaction", SessionID: "sess-1", TurnID: "turn:2",
 		BeforeTokens: 1000, AfterTokens: 400, ElidedMessages: 3, ElidedBytes: 2048,
 		Summarized: &summarized, Reason: "",
@@ -85,7 +85,7 @@ func TestRecordUsageEventNilSummarizedStaysNull(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 
 	ctx := context.Background()
-	if err := store.RecordUsageEvent(ctx, "ws-1", contextmgr.UsageRecord{
+	if err := store.RecordUsageEvent(ctx, "ws-1", usage.UsageRecord{
 		Kind: "cache_usage", SessionID: "sess-1", TurnID: "turn:3",
 		InputTokens: 50, CachedInputTokens: 30,
 	}); err != nil {
@@ -114,7 +114,7 @@ func TestNewUsageWriterDelegatesToRecordUsageEvent(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 
 	writer := NewUsageWriter(store, "ws-writer")
-	if err := writer.Record(context.Background(), contextmgr.UsageRecord{
+	if err := writer.Record(context.Background(), usage.UsageRecord{
 		Kind: "token_usage", SessionID: "sess-writer", TurnID: "turn:1", InputTokens: 10,
 	}); err != nil {
 		t.Fatalf("Record: %v", err)
@@ -147,7 +147,7 @@ func TestUsageWriterRecordDoesNotBlockOnAContendedWrite(t *testing.T) {
 	store.writeMu.Lock()
 	writer := NewUsageWriter(store, "ws-1")
 	start := time.Now()
-	if err := writer.Record(context.Background(), contextmgr.UsageRecord{
+	if err := writer.Record(context.Background(), usage.UsageRecord{
 		Kind: "token_usage", SessionID: "sess-contended", TurnID: "turn:1", InputTokens: 5,
 	}); err != nil {
 		t.Fatalf("Record: %v", err)
@@ -181,7 +181,7 @@ func TestSQLiteCloseWaitsForInFlightUsageWrites(t *testing.T) {
 
 	store.writeMu.Lock()
 	writer := NewUsageWriter(store, "ws-1")
-	if err := writer.Record(context.Background(), contextmgr.UsageRecord{
+	if err := writer.Record(context.Background(), usage.UsageRecord{
 		Kind: "token_usage", SessionID: "sess-close", TurnID: "turn:1", InputTokens: 5,
 	}); err != nil {
 		t.Fatalf("Record: %v", err)

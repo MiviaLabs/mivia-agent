@@ -13,6 +13,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
+	"github.com/MiviaLabs/mivia-agent/internal/usage"
 )
 
 // Options is one agent turn's immutable configuration. Every field is read,
@@ -120,7 +121,7 @@ type Options struct {
 	// measurements alongside the existing EventBus publish. Nil keeps usage
 	// events exactly as ephemeral as they are today (subagent/workflow-engine
 	// loops that never set this field are unaffected).
-	UsageWriter contextmgr.UsageWriter
+	UsageWriter usage.UsageWriter
 	FinalWriter io.Writer
 	// RequireFinalText fails a turn that produced no assistant text anywhere
 	// instead of reporting an empty success. Interactive surfaces set it: a turn

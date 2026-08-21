@@ -7,6 +7,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	usagepkg "github.com/MiviaLabs/mivia-agent/internal/usage"
 )
 
 // recordUsage writes record to opts.UsageWriter when one is set. Best-effort:
@@ -14,7 +15,7 @@ import (
 // it describes - matches the same "logged and dropped" contract as every
 // other emit-path failure in this file (e.g. a typed-event construction
 // error above), just with nothing yet to log to in this package.
-func recordUsage(ctx context.Context, opts Options, record contextmgr.UsageRecord) {
+func recordUsage(ctx context.Context, opts Options, record usagepkg.UsageRecord) {
 	if opts.UsageWriter == nil {
 		return
 	}
@@ -71,7 +72,7 @@ func EmitCacheUsage(ctx context.Context, opts Options, providerName, model strin
 	if err != nil {
 		return
 	}
-	recordUsage(ctx, opts, contextmgr.UsageRecord{
+	recordUsage(ctx, opts, usagepkg.UsageRecord{
 		Kind: "cache_usage", Provider: providerName, Model: model,
 		CachedInputTokens: typed.CachedInputTokens, CacheWriteTokens: typed.CacheWriteTokens,
 		InputTokens: typed.InputTokens,
@@ -106,7 +107,7 @@ func EmitTokenUsage(ctx context.Context, opts Options, providerName, model strin
 	if err != nil {
 		return
 	}
-	recordUsage(ctx, opts, contextmgr.UsageRecord{
+	recordUsage(ctx, opts, usagepkg.UsageRecord{
 		Kind: "token_usage", Provider: providerName, Model: model,
 		InputTokens: typed.InputTokens, OutputTokens: typed.OutputTokens,
 		EstimatedTokens: typed.EstimatedTokens, CalibrationRatio: typed.CalibrationRatio,
@@ -159,7 +160,7 @@ func EmitCompaction(ctx context.Context, opts Options, preparation contextmgr.Pr
 		return
 	}
 	summarizedCopy := typed.Summarized
-	recordUsage(ctx, opts, contextmgr.UsageRecord{
+	recordUsage(ctx, opts, usagepkg.UsageRecord{
 		Kind: "compaction", BeforeTokens: typed.BeforeTokens, AfterTokens: typed.AfterTokens,
 		ElidedMessages: typed.ElidedMessages, ElidedBytes: typed.ElidedBytes,
 		Summarized: &summarizedCopy, Reason: typed.Reason,

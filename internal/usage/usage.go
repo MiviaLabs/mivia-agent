@@ -1,14 +1,14 @@
-package contextmgr
+// Package usage defines the usage-accounting contract shared by the agent
+// runtime and the storage layer. It is a leaf package with zero internal
+// imports, so it can never take part in an import cycle.
+package usage
 
 import "context"
 
 // UsageWriter durably records one token/cache/compaction usage measurement.
-// Implemented by internal/storage (RecordUsageEvent). Lives in contextmgr,
-// not internal/agent, deliberately: internal/agent already imports
-// contextmgr (Preparation, Summarizer), so ContextManager holding a
-// UsageWriter field of an internal/agent type would create an
-// agent -> contextmgr -> agent import cycle. contextmgr is neutral ground
-// both agent and storage can depend on.
+// Implemented by internal/storage (RecordUsageEvent). Lives in internal/usage,
+// a zero-dependency leaf both internal/agent and internal/storage can import
+// directly, so neither side needs to depend on the other's domain package.
 //
 // A Record failure is logged and dropped by the caller, never returned to
 // or allowed to fail the turn it describes - this is a best-effort,

@@ -9,6 +9,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/usage"
 )
 
 func buildContextTurnResult(ctx context.Context, cfg contextTurnConfig, preparation *contextmgr.Preparation, active []provider.Message, ordered []provider.Message, turnID uint64) (contextmgr.TurnResult, error) {
@@ -70,7 +71,7 @@ func (s *Session) emitContextCompaction(ctx context.Context, cfg contextTurnConf
 	if identityFactory != nil {
 		identity = identityFactory(binding.ModelGeneration)
 	}
-	var usageWriter contextmgr.UsageWriter
+	var usageWriter usage.UsageWriter
 	if cfg.manager != nil {
 		usageWriter = cfg.manager.UsageWriter
 	}

@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	"github.com/MiviaLabs/mivia-agent/internal/usage"
 )
 
 // RecordUsageEvent durably records one token/cache/compaction usage
@@ -13,7 +13,7 @@ import (
 // write in this package (writeMu-serialized, retried on a transient busy
 // lock, since a session's own store can be written by more than one mivia
 // process sharing a workspace, same as every other table here).
-func (s *SQLite) RecordUsageEvent(ctx context.Context, workspaceID string, record contextmgr.UsageRecord) error {
+func (s *SQLite) RecordUsageEvent(ctx context.Context, workspaceID string, record usage.UsageRecord) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	return retrySQLiteBusy(ctx, func() error {
@@ -46,7 +46,7 @@ func (s *SQLite) RecordUsageEvent(ctx context.Context, workspaceID string, recor
 }
 
 // usageWriter adapts a *SQLite store, scoped to one workspace, to
-// contextmgr.UsageWriter. The workspace id is fixed at construction (a
+// usage.UsageWriter. The workspace id is fixed at construction (a
 // session's own workspace never changes mid-session), so the interface
 // method itself only needs the record.
 type usageWriter struct {
@@ -54,9 +54,9 @@ type usageWriter struct {
 	workspaceID string
 }
 
-// NewUsageWriter returns a contextmgr.UsageWriter that records into store,
+// NewUsageWriter returns a usage.UsageWriter that records into store,
 // scoped to workspaceID.
-func NewUsageWriter(store *SQLite, workspaceID string) contextmgr.UsageWriter {
+func NewUsageWriter(store *SQLite, workspaceID string) usage.UsageWriter {
 	return usageWriter{store: store, workspaceID: workspaceID}
 }
 
@@ -74,7 +74,7 @@ func NewUsageWriter(store *SQLite, workspaceID string) contextmgr.UsageWriter {
 // same WaitGroup, so a one-shot process (mivia compact, a single
 // non-interactive chat turn) or a test's TempDir cleanup cannot tear down
 // the store while this write is still in flight or hasn't started running.
-func (w usageWriter) Record(ctx context.Context, record contextmgr.UsageRecord) error {
+func (w usageWriter) Record(ctx context.Context, record usage.UsageRecord) error {
 	w.store.usageWriteWG.Add(1)
 	go func() {
 		defer w.store.usageWriteWG.Done()
