@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/composition"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
@@ -137,7 +138,7 @@ func workflowDefaultRegistry(root string, res *config.Resolved) (*tools.Registry
 		return nil, err
 	}
 	tc := res.Tools
-	return tools.NewDefaultRegistry(tools.DefaultOptions{
+	return composition.BuildRegistry(composition.RegistryInput{
 		Workspace: ws, TavilyAPIKey: res.TavilyAPIKey,
 		RunAllowlist: tc.RunAllowlist, RunAllowlistOnly: tc.RunAllowlistOnly,
 		RunBlocklist: tc.RunBlocklist, DisableTools: tc.DisableTools,
@@ -151,7 +152,7 @@ func workflowDefaultRegistry(root string, res *config.Resolved) (*tools.Registry
 		SecretPathPatterns:  tc.SecretPathPatterns, SecretPathExceptions: tc.SecretPathExceptions,
 		WritePathDenylist:    effectiveWorkflowWriteDenylist(res),
 		SearchIgnorePatterns: tc.SearchIgnorePatterns,
-	}), nil
+	})
 }
 
 func workflowWriteAuthority(wf *definition.CompiledWorkflow, registry *agents.AgentRegistry, authority *tools.Registry, extraDenylist []string) (bool, error) {

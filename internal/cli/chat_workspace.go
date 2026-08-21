@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/composition"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
@@ -107,13 +108,55 @@ func configureChatWorkspace(sess *chat.Session, root string, useTools bool, res 
 		return func() {}, err
 	}
 	stashMemoryOnState(state, opts.Memory, res)
-	sess.Tools = tools.NewDefaultRegistry(*opts)
+	// composition.BuildRegistry cannot fail today (see its doc comment); the
+	// error return is discarded here rather than propagated through a new,
+	// untestable branch, matching the pre-move tools.NewDefaultRegistry call
+	// this replaces, which had no error return at all.
+	registry, _ := composition.BuildRegistry(registryInputFromDefaultOptions(opts))
+	sess.Tools = registry
 	sess.RefreshPrefixIdentity()
 	return func() {
 		if opts.Memory != nil {
 			_ = opts.Memory.Close()
 		}
 	}, nil
+}
+
+// registryInputFromDefaultOptions copies opts field by field into a
+// composition.RegistryInput. opts has already been through
+// wireWorkflowToolOptions and wireSessionMemory by the time this runs, so it
+// carries the full set of fields the pre-refactor tools.NewDefaultRegistry
+// call site saw.
+func registryInputFromDefaultOptions(opts *tools.DefaultOptions) composition.RegistryInput {
+	return composition.RegistryInput{
+		Workspace:                 opts.Workspace,
+		RunAllowlist:              opts.RunAllowlist,
+		RunAllowlistOnly:          opts.RunAllowlistOnly,
+		RunBlocklist:              opts.RunBlocklist,
+		DisableTools:              opts.DisableTools,
+		RunTimeoutSec:             opts.RunTimeoutSec,
+		MaxReadBytes:              opts.MaxReadBytes,
+		MaxOutputBytes:            opts.MaxOutputBytes,
+		MaxWriteKB:                opts.MaxWriteKB,
+		MaxListDirEntries:         opts.MaxListDirEntries,
+		MaxToolResultBytes:        opts.MaxToolResultBytes,
+		MaxTavilyResponseBytes:    opts.MaxTavilyResponseBytes,
+		MaxFetchKB:                opts.MaxFetchKB,
+		MemoryBackstopBytes:       opts.MemoryBackstopBytes,
+		TavilyAPIKey:              opts.TavilyAPIKey,
+		EnvAllowlist:              opts.EnvAllowlist,
+		EnvAllowlistOnly:          opts.EnvAllowlistOnly,
+		EnvBlocklist:              opts.EnvBlocklist,
+		EnvAllowKeywordBlocklist:  opts.EnvAllowKeywordBlocklist,
+		SecretPathPatterns:        opts.SecretPathPatterns,
+		SecretPathExceptions:      opts.SecretPathExceptions,
+		WritePathDenylist:         opts.WritePathDenylist,
+		SearchIgnorePatterns:      opts.SearchIgnorePatterns,
+		MaxInspectRepositoryBytes: opts.MaxInspectRepositoryBytes,
+		DiagnosticsCommands:       opts.DiagnosticsCommands,
+		WorkflowTools:             opts.WorkflowTools,
+		Memory:                    opts.Memory,
+	}
 }
 
 // logDiagnosticsCommandsOnce states every configured get_diagnostics command

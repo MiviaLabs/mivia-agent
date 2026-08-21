@@ -82,6 +82,7 @@
       "internal/contentref",
       "internal/contextmgr",
       "internal/contextstate",
+      "internal/composition",
       "internal/coordinator",
       "internal/envfile",
       "internal/events",
@@ -112,6 +113,11 @@
       "internal/workflows/delivery",
       "internal/workflows/ledger",
       "internal/workflows/localengine",
+      "internal/workspace"
+    ],
+    "internal/composition": [
+      "internal/memory",
+      "internal/tools",
       "internal/workspace"
     ],
     "internal/config": [
