@@ -3,6 +3,7 @@
 ## Setup
 
 ```bash
+go env -w GOPRIVATE=github.com/MiviaLabs/*
 make install-hooks
 make verify
 make build
@@ -10,6 +11,20 @@ make build
 ```
 
 Required tools: Go 1.25+, Python 3, Semgrep.
+
+`go env -w GOPRIVATE=github.com/MiviaLabs/*` alone does not authenticate a
+private-module fetch. It only tells `go get` to skip the module proxy and
+sumdb for paths that match the glob. It carries no credential.
+
+Credential wiring (an SSH `insteadOf` rewrite, or a PAT-backed HTTPS
+rewrite) is a deferred follow-up. It lands alongside dropping any future
+`go.mod` `replace` directive. Until it lands, a developer who adds a
+genuine private MiviaLabs import will hit an unexplained 404 or auth
+failure at `go get`. This note exists so that failure is not a mystery.
+
+The setup above assumes developers already hold SSH keys for
+`github.com:MiviaLabs/*`. This assumption is unconfirmed with the team;
+treat it as an assumption to verify, not a settled fact.
 
 ## Workflow
 
