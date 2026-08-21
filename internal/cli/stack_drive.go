@@ -307,7 +307,7 @@ func resolveAndClaimStackDrive(ctx context.Context, prepared *preparedWorkflowRu
 	if err != nil {
 		return "", nil, err
 	}
-	storePath := contextStorePath(prepared.root, prepared.res.Subagents)
+	storePath := ContextStorePath(prepared.root, prepared.res.Subagents)
 	release, err = claimStackDrive(ctx, prepared.repo, prepared.root, storePath, stackID)
 	if err != nil {
 		return "", nil, fmt.Errorf("stack drive: %w", err)

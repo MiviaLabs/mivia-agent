@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworktree"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
@@ -38,7 +39,7 @@ func TestRuntimeCoverageBindingRejectsMarkerNameMismatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	marker := contextstate.WorktreeInstance{Worktree: "other", ID: "wt_1234567890abcdef"}
-	if err := writeWorktreeMarker(worktree.Path, marker); err != nil {
+	if err := cliworktree.WriteWorktreeMarker(worktree.Path, marker); err != nil {
 		t.Fatal(err)
 	}
 	session := chat.NewSession(&config.Resolved{Model: "model"}, nullCompleter{})
@@ -95,7 +96,7 @@ func TestRuntimeCoverageCreateRecoversReservations(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer store.Close()
-			principal, err := WorktreeRoutePrincipal(repo)
+			principal, err := cliworktree.WorktreeRoutePrincipal(repo)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -112,7 +113,7 @@ func TestRuntimeCoverageCreateRecoversReservations(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			worktree, err := createManagedWorktreeInStore(store, repo, instance.Worktree, "HEAD", "mivia/")
+			worktree, err := cliworktree.CreateManagedWorktreeInStore(store, repo, instance.Worktree, "HEAD", "mivia/")
 			if err != nil || worktree == nil {
 				t.Fatalf("recover %s reservation = %+v, %v", state, worktree, err)
 			}
@@ -127,7 +128,7 @@ func TestRuntimeCoverageRemovalAndReactivationWrappers(t *testing.T) {
 		t.Fatal(err)
 	}
 	session := chat.NewSession(&config.Resolved{Model: "model"}, nullCompleter{})
-	got, err := beginManagedWorktreeRemovalForSession(session, repo, worktree)
+	got, err := cliworktree.BeginManagedWorktreeRemovalForSession(session, repo, worktree)
 	if err != nil || got != instance {
 		t.Fatalf("begin removal = %+v, %v", got, err)
 	}
@@ -142,7 +143,7 @@ func TestRuntimeCoverageRemovalAndReactivationWrappers(t *testing.T) {
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := ReactivateManagedWorktreeInStore(store, repo, instance); err == nil {
+	if err := cliworktree.ReactivateManagedWorktreeInStore(store, repo, instance); err == nil {
 		t.Fatal("reactivation with a closed store succeeded")
 	}
 }
@@ -159,7 +160,7 @@ func TestRuntimeCoverageReactivationRejectsBrokenGitAndPath(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer store.Close()
-		principal, _ := WorktreeRoutePrincipal(repo)
+		principal, _ := cliworktree.WorktreeRoutePrincipal(repo)
 		if err := store.BeginWorktreeDeletion(context.Background(), principal, instance); err != nil {
 			t.Fatal(err)
 		}
@@ -169,7 +170,7 @@ func TestRuntimeCoverageReactivationRejectsBrokenGitAndPath(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = os.Rename(moved, gitDir) })
-		if err := ReactivateManagedWorktreeInStore(store, repo, instance); err == nil {
+		if err := cliworktree.ReactivateManagedWorktreeInStore(store, repo, instance); err == nil {
 			t.Fatal("reactivation with broken Git metadata succeeded")
 		}
 	})
@@ -185,7 +186,7 @@ func TestRuntimeCoverageReactivationRejectsBrokenGitAndPath(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer store.Close()
-		principal, _ := WorktreeRoutePrincipal(repo)
+		principal, _ := cliworktree.WorktreeRoutePrincipal(repo)
 		instance := contextstate.WorktreeInstance{Worktree: worktree.Name, ID: "wt_1234567890abcdef"}
 		wrongPath := filepath.Join(repo, ".mivia", "worktrees", "other")
 		if err := store.BeginWorktreeCreation(context.Background(), principal, instance, wrongPath); err != nil {
@@ -194,13 +195,13 @@ func TestRuntimeCoverageReactivationRejectsBrokenGitAndPath(t *testing.T) {
 		if err := store.RegisterWorktreeInstance(context.Background(), principal, instance, wrongPath); err != nil {
 			t.Fatal(err)
 		}
-		if err := writeWorktreeMarker(worktree.Path, instance); err != nil {
+		if err := cliworktree.WriteWorktreeMarker(worktree.Path, instance); err != nil {
 			t.Fatal(err)
 		}
 		if err := store.BeginWorktreeDeletion(context.Background(), principal, instance); err != nil {
 			t.Fatal(err)
 		}
-		if err := ReactivateManagedWorktreeInStore(store, repo, instance); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+		if err := cliworktree.ReactivateManagedWorktreeInStore(store, repo, instance); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
 			t.Fatalf("path mismatch error = %v", err)
 		}
 	})
@@ -217,15 +218,15 @@ func TestRuntimeCoverageReactivationRejectsMarkerReplacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, _ := WorktreeRoutePrincipal(repo)
+	principal, _ := cliworktree.WorktreeRoutePrincipal(repo)
 	if err := store.BeginWorktreeDeletion(context.Background(), principal, instance); err != nil {
 		t.Fatal(err)
 	}
 	replacement := contextstate.WorktreeInstance{Worktree: instance.Worktree, ID: "wt_0000000000000000"}
-	if err := writeWorktreeMarker(worktree.Path, replacement); err != nil {
+	if err := cliworktree.WriteWorktreeMarker(worktree.Path, replacement); err != nil {
 		t.Fatal(err)
 	}
-	if err := ReactivateManagedWorktreeInStore(store, repo, instance); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+	if err := cliworktree.ReactivateManagedWorktreeInStore(store, repo, instance); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
 		t.Fatalf("replacement marker error = %v", err)
 	}
 }
@@ -237,11 +238,11 @@ func TestRuntimeCoverageMarkerClassificationDatabaseErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal, _ := WorktreeRoutePrincipal(repo)
+	principal, _ := cliworktree.WorktreeRoutePrincipal(repo)
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := ClassifyMissingWorktreeMarker(store, principal, "wt-a", filepath.Join(repo, "wt-a")); err == nil {
+	if _, _, err := cliworktree.ClassifyMissingWorktreeMarker(store, principal, "wt-a", filepath.Join(repo, "wt-a")); err == nil {
 		t.Fatal("classification with a closed store succeeded")
 	}
 
@@ -259,7 +260,7 @@ func TestRuntimeCoverageMarkerClassificationDatabaseErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	db.Close()
-	if _, _, err := ClassifyMissingWorktreeMarker(store, principal, "wt-a", filepath.Join(repo, "wt-a")); err == nil {
+	if _, _, err := cliworktree.ClassifyMissingWorktreeMarker(store, principal, "wt-a", filepath.Join(repo, "wt-a")); err == nil {
 		t.Fatal("classification with a missing route table succeeded")
 	}
 }
@@ -279,7 +280,7 @@ func TestRuntimeCoverageExpectedInstanceRejectsDanglingSessionPath(t *testing.T)
 	if err := os.Symlink(filepath.Join(worktree.Path, "missing"), dangling); err != nil {
 		t.Fatal(err)
 	}
-	if err := ValidateExpectedWorktreeInstanceInStore(store, repo, dangling, instance); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+	if err := cliworktree.ValidateExpectedWorktreeInstanceInStore(store, repo, dangling, instance); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
 		t.Fatalf("dangling session path error = %v", err)
 	}
 }
@@ -290,7 +291,7 @@ func TestRuntimeCoverageMarkerRootHelperRejectsSymlink(t *testing.T) {
 	if err := os.Symlink(realRoot, linkedRoot); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := readMarkerAtCanonicalRoot(linkedRoot); err == nil {
+	if _, _, err := cliworktree.ReadMarkerAtCanonicalRoot(linkedRoot); err == nil {
 		t.Fatal("marker helper accepted a symlink root")
 	}
 }
@@ -302,17 +303,17 @@ func TestRuntimeCoverageRouteRemovalSuccessWrappers(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		principal, _ := WorktreeRoutePrincipal(repo)
+		principal, _ := cliworktree.WorktreeRoutePrincipal(repo)
 		if err := store.SaveWorktreeRoute(context.Background(), principal, "route", filepath.Join(repo, "route")); err != nil {
 			t.Fatal(err)
 		}
 		store.Close()
 		if withSession {
 			session := chat.NewSession(&config.Resolved{Model: "model"}, nullCompleter{})
-			if err := removeWorktreeRouteForSession(session, repo, "route"); err != nil {
+			if err := cliworktree.RemoveWorktreeRouteForSession(session, repo, "route"); err != nil {
 				t.Fatal(err)
 			}
-		} else if err := removeWorktreeRoute(repo, "route"); err != nil {
+		} else if err := cliworktree.RemoveWorktreeRoute(repo, "route"); err != nil {
 			t.Fatal(err)
 		}
 	}

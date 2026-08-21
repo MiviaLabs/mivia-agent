@@ -3,8 +3,10 @@ package legacytui
 import (
 	"context"
 	"errors"
-	"github.com/MiviaLabs/mivia-agent/internal/cli"
 	"testing"
+
+	"github.com/MiviaLabs/mivia-agent/internal/cli"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworktree"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
@@ -17,21 +19,21 @@ func testWorktreeInstance(name string) contextstate.WorktreeInstance {
 
 func TestStaleRoutePickerRejectsSameNameReplacement(t *testing.T) {
 	repoRoot := newWorktreeCommandRepo(t)
-	old, err := cli.CreateManagedWorktree(repoRoot, "picker-replacement", "HEAD", "mivia/")
+	old, err := cliworktree.CreateManagedWorktree(repoRoot, "picker-replacement", "HEAD", "mivia/")
 	if err != nil {
 		t.Fatal(err)
 	}
-	oldInstance, err := cli.BeginManagedWorktreeRemoval(repoRoot, old)
+	oldInstance, err := cliworktree.BeginManagedWorktreeRemoval(repoRoot, old)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := vcs.RemoveWithPrefix(context.Background(), repoRoot, old.Name, "mivia/"); err != nil {
 		t.Fatal(err)
 	}
-	if err := cli.FinishManagedWorktreeRemoval(repoRoot, oldInstance); err != nil {
+	if err := cliworktree.FinishManagedWorktreeRemoval(repoRoot, oldInstance); err != nil {
 		t.Fatal(err)
 	}
-	replacement, err := cli.CreateManagedWorktree(repoRoot, old.Name, "HEAD", "mivia/")
+	replacement, err := cliworktree.CreateManagedWorktree(repoRoot, old.Name, "HEAD", "mivia/")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,11 +50,11 @@ func TestStaleRoutePickerRejectsSameNameReplacement(t *testing.T) {
 
 func TestWorkspaceRestartRevalidatesSelectedInstance(t *testing.T) {
 	repoRoot := newWorktreeCommandRepo(t)
-	old, err := cli.CreateManagedWorktree(repoRoot, "restart-replacement", "HEAD", "mivia/")
+	old, err := cliworktree.CreateManagedWorktree(repoRoot, "restart-replacement", "HEAD", "mivia/")
 	if err != nil {
 		t.Fatal(err)
 	}
-	oldInstance, err := cli.ReadWorktreeMarker(old.Path)
+	oldInstance, err := cliworktree.ReadWorktreeMarker(old.Path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,16 +63,16 @@ func TestWorkspaceRestartRevalidatesSelectedInstance(t *testing.T) {
 	if err := m.openSessionInfo(chat.SessionInfo{Name: "worktree:" + old.Name, Dir: old.Path, Worktree: old.Name, WorktreeRoute: true, WorktreeInstance: oldInstance}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cli.BeginManagedWorktreeRemoval(repoRoot, old); err != nil {
+	if _, err := cliworktree.BeginManagedWorktreeRemoval(repoRoot, old); err != nil {
 		t.Fatal(err)
 	}
 	if err := vcs.RemoveWithPrefix(context.Background(), repoRoot, old.Name, "mivia/"); err != nil {
 		t.Fatal(err)
 	}
-	if err := cli.FinishManagedWorktreeRemoval(repoRoot, oldInstance); err != nil {
+	if err := cliworktree.FinishManagedWorktreeRemoval(repoRoot, oldInstance); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cli.CreateManagedWorktree(repoRoot, old.Name, "HEAD", "mivia/"); err != nil {
+	if _, err := cliworktree.CreateManagedWorktree(repoRoot, old.Name, "HEAD", "mivia/"); err != nil {
 		t.Fatal(err)
 	}
 	restart := stubWorkspaceRestart{dir: m.restartWorkspace, wt: m.restartWorktreeInstance}
@@ -113,24 +115,24 @@ func TestAsyncCreateMessageRetainsAllocatedInstance(t *testing.T) {
 	if msg.err != nil {
 		t.Fatal(msg.err)
 	}
-	marker, err := cli.ReadWorktreeMarker(msg.wt.Path)
+	marker, err := cliworktree.ReadWorktreeMarker(msg.wt.Path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if msg.instance != marker {
 		t.Fatalf("create message instance = %+v, want allocated %+v", msg.instance, marker)
 	}
-	if _, err := cli.BeginManagedWorktreeRemoval(repoRoot, msg.wt); err != nil {
+	if _, err := cliworktree.BeginManagedWorktreeRemoval(repoRoot, msg.wt); err != nil {
 		t.Fatal(err)
 	}
 	if err := vcs.RemoveWithPrefix(context.Background(), repoRoot, msg.wt.Name, "mivia/"); err != nil {
 		t.Fatal(err)
 	}
-	if err := cli.FinishManagedWorktreeRemoval(repoRoot, marker); err != nil {
+	if err := cliworktree.FinishManagedWorktreeRemoval(repoRoot, marker); err != nil {
 		t.Fatal(err)
 	}
 	m.applyWorktreeCreated(msg)
-	if _, err := cli.CreateManagedWorktree(repoRoot, msg.wt.Name, "HEAD", "mivia/"); err != nil {
+	if _, err := cliworktree.CreateManagedWorktree(repoRoot, msg.wt.Name, "HEAD", "mivia/"); err != nil {
 		t.Fatal(err)
 	}
 	m.handleChatKey("enter", false)
@@ -145,24 +147,24 @@ func TestAsyncCreateMessageRetainsAllocatedInstance(t *testing.T) {
 func staleManagedWorktreeDialog(t *testing.T, name string) (*TUIModel, string, *vcs.WorktreeInfo) {
 	t.Helper()
 	repoRoot := newWorktreeCommandRepo(t)
-	old, err := cli.CreateManagedWorktree(repoRoot, name, "HEAD", "mivia/")
+	old, err := cliworktree.CreateManagedWorktree(repoRoot, name, "HEAD", "mivia/")
 	if err != nil {
 		t.Fatal(err)
 	}
 	m := newReadyChatModel(30, 90)
 	m.workspaceDir = repoRoot
 	m.openWorktreeDialog()
-	oldInstance, err := cli.BeginManagedWorktreeRemoval(repoRoot, old)
+	oldInstance, err := cliworktree.BeginManagedWorktreeRemoval(repoRoot, old)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := vcs.RemoveWithPrefix(context.Background(), repoRoot, old.Name, "mivia/"); err != nil {
 		t.Fatal(err)
 	}
-	if err := cli.FinishManagedWorktreeRemoval(repoRoot, oldInstance); err != nil {
+	if err := cliworktree.FinishManagedWorktreeRemoval(repoRoot, oldInstance); err != nil {
 		t.Fatal(err)
 	}
-	replacement, err := cli.CreateManagedWorktree(repoRoot, name, "HEAD", "mivia/")
+	replacement, err := cliworktree.CreateManagedWorktree(repoRoot, name, "HEAD", "mivia/")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +177,7 @@ func assertManagedWorktreeActive(t *testing.T, repoRoot string, worktree *vcs.Wo
 	if err != nil || resolved == nil {
 		t.Fatalf("replacement worktree = %+v, %v", resolved, err)
 	}
-	instance, err := cli.ReadWorktreeMarker(worktree.Path)
+	instance, err := cliworktree.ReadWorktreeMarker(worktree.Path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +186,7 @@ func assertManagedWorktreeActive(t *testing.T, repoRoot string, worktree *vcs.Wo
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := cli.WorktreeRoutePrincipal(repoRoot)
+	principal, err := cliworktree.WorktreeRoutePrincipal(repoRoot)
 	if err != nil {
 		t.Fatal(err)
 	}

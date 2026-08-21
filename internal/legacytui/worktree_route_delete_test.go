@@ -4,11 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"github.com/MiviaLabs/mivia-agent/internal/cli"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/MiviaLabs/mivia-agent/internal/cli"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworktree"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
@@ -64,19 +66,19 @@ func readySidebarModel(t *testing.T, repoRoot string, infos []chat.SessionInfo) 
 func TestSidebarDeletesBrokenWorktreeRoute(t *testing.T) {
 	repoRoot := newWorktreeCommandRepo(t)
 	writeWorktreeStoreConfig(t, repoRoot, "repository.db")
-	worktree, err := cli.CreateManagedWorktree(repoRoot, "stuck-route", "HEAD", "mivia/")
+	worktree, err := cliworktree.CreateManagedWorktree(repoRoot, "stuck-route", "HEAD", "mivia/")
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Lose the marker while the instance stays active.
-	if err := os.Remove(cli.WorktreeMarkerPath(worktree.Path)); err != nil {
+	if err := os.Remove(cliworktree.WorktreeMarkerPath(worktree.Path)); err != nil {
 		t.Fatal(err)
 	}
 	store, err := cli.OpenRepositoryContextStore(repoRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal, err := cli.WorktreeRoutePrincipal(repoRoot)
+	principal, err := cliworktree.WorktreeRoutePrincipal(repoRoot)
 	if err != nil {
 		store.Close()
 		t.Fatal(err)
@@ -125,7 +127,7 @@ func TestSidebarDeletesBrokenWorktreeRoute(t *testing.T) {
 func TestSidebarKeepsHealthyWorktreeRouteOnWorktreesNotice(t *testing.T) {
 	repoRoot := newWorktreeCommandRepo(t)
 	writeWorktreeStoreConfig(t, repoRoot, "repository.db")
-	worktree, err := cli.CreateManagedWorktree(repoRoot, "healthy-route", "HEAD", "mivia/")
+	worktree, err := cliworktree.CreateManagedWorktree(repoRoot, "healthy-route", "HEAD", "mivia/")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +135,7 @@ func TestSidebarKeepsHealthyWorktreeRouteOnWorktreesNotice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal, err := cli.WorktreeRoutePrincipal(repoRoot)
+	principal, err := cliworktree.WorktreeRoutePrincipal(repoRoot)
 	if err != nil {
 		store.Close()
 		t.Fatal(err)
@@ -176,7 +178,7 @@ func TestSidebarKeepsHealthyWorktreeRouteOnWorktreesNotice(t *testing.T) {
 func TestSidebarDeletesLegacyGhostRoute(t *testing.T) {
 	repoRoot := newWorktreeCommandRepo(t)
 	writeWorktreeStoreConfig(t, repoRoot, "repository.db")
-	worktree, err := cli.CreateManagedWorktree(repoRoot, "legacy-ghost", "HEAD", "mivia/")
+	worktree, err := cliworktree.CreateManagedWorktree(repoRoot, "legacy-ghost", "HEAD", "mivia/")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +189,7 @@ func TestSidebarDeletesLegacyGhostRoute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal, err := cli.WorktreeRoutePrincipal(repoRoot)
+	principal, err := cliworktree.WorktreeRoutePrincipal(repoRoot)
 	if err != nil {
 		store.Close()
 		t.Fatal(err)
@@ -260,7 +262,7 @@ func TestSidebarDeletesLegacyGhostRoute(t *testing.T) {
 func TestSidebarRefusesStaleRouteDeletingReplacementWorktree(t *testing.T) {
 	repoRoot := newWorktreeCommandRepo(t)
 	writeWorktreeStoreConfig(t, repoRoot, "repository.db")
-	worktree, err := cli.CreateManagedWorktree(repoRoot, "replaced", "HEAD", "mivia/")
+	worktree, err := cliworktree.CreateManagedWorktree(repoRoot, "replaced", "HEAD", "mivia/")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +270,7 @@ func TestSidebarRefusesStaleRouteDeletingReplacementWorktree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal, err := cli.WorktreeRoutePrincipal(repoRoot)
+	principal, err := cliworktree.WorktreeRoutePrincipal(repoRoot)
 	if err != nil {
 		store.Close()
 		t.Fatal(err)
@@ -278,17 +280,17 @@ func TestSidebarRefusesStaleRouteDeletingReplacementWorktree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	oldInstance, err := cli.BeginManagedWorktreeRemoval(repoRoot, worktree)
+	oldInstance, err := cliworktree.BeginManagedWorktreeRemoval(repoRoot, worktree)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := vcs.RemoveWithPrefix(context.Background(), repoRoot, worktree.Name, "mivia/"); err != nil {
 		t.Fatal(err)
 	}
-	if err := cli.FinishManagedWorktreeRemoval(repoRoot, oldInstance); err != nil {
+	if err := cliworktree.FinishManagedWorktreeRemoval(repoRoot, oldInstance); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cli.CreateManagedWorktree(repoRoot, "replaced", "HEAD", "mivia/"); err != nil {
+	if _, err := cliworktree.CreateManagedWorktree(repoRoot, "replaced", "HEAD", "mivia/"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -312,18 +314,18 @@ func TestSidebarRefusesStaleRouteDeletingReplacementWorktree(t *testing.T) {
 func TestSidebarDeletesStaleInstanceBoundRouteWhenInstanceGone(t *testing.T) {
 	repoRoot := newWorktreeCommandRepo(t)
 	writeWorktreeStoreConfig(t, repoRoot, "repository.db")
-	worktree, err := cli.CreateManagedWorktree(repoRoot, "gone-route", "HEAD", "mivia/")
+	worktree, err := cliworktree.CreateManagedWorktree(repoRoot, "gone-route", "HEAD", "mivia/")
 	if err != nil {
 		t.Fatal(err)
 	}
-	instance, err := cli.BeginManagedWorktreeRemoval(repoRoot, worktree)
+	instance, err := cliworktree.BeginManagedWorktreeRemoval(repoRoot, worktree)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := vcs.RemoveWithPrefix(context.Background(), repoRoot, worktree.Name, "mivia/"); err != nil {
 		t.Fatal(err)
 	}
-	if err := cli.FinishManagedWorktreeRemoval(repoRoot, instance); err != nil {
+	if err := cliworktree.FinishManagedWorktreeRemoval(repoRoot, instance); err != nil {
 		t.Fatal(err)
 	}
 
@@ -350,7 +352,7 @@ func TestSidebarDeletesStaleInstanceBoundRouteWhenInstanceGone(t *testing.T) {
 func TestSidebarDeletesGhostBoundRouteRow(t *testing.T) {
 	repoRoot := newWorktreeCommandRepo(t)
 	writeWorktreeStoreConfig(t, repoRoot, "repository.db")
-	worktree, err := cli.CreateManagedWorktree(repoRoot, "ghost-bound", "HEAD", "mivia/")
+	worktree, err := cliworktree.CreateManagedWorktree(repoRoot, "ghost-bound", "HEAD", "mivia/")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -358,7 +360,7 @@ func TestSidebarDeletesGhostBoundRouteRow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal, err := cli.WorktreeRoutePrincipal(repoRoot)
+	principal, err := cliworktree.WorktreeRoutePrincipal(repoRoot)
 	if err != nil {
 		store.Close()
 		t.Fatal(err)

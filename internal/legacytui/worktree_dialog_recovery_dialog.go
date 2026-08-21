@@ -1,7 +1,7 @@
 package legacytui
 
 import (
-	"github.com/MiviaLabs/mivia-agent/internal/cli"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworktree"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 )
 
@@ -11,13 +11,13 @@ import (
 // instances against the lifecycle store.
 
 func (d *worktreeDialog) setRecovery(info contextstate.WorktreeInstanceInfo) {
-	d.recovery[info.Instance.Worktree] = cli.WorktreeRecoveryRow{Info: info}
+	d.recovery[info.Instance.Worktree] = cliworktree.WorktreeRecoveryRow{Info: info}
 }
 
-func (d *worktreeDialog) selectedRecovery() (cli.WorktreeRecoveryRow, bool) {
+func (d *worktreeDialog) selectedRecovery() (cliworktree.WorktreeRecoveryRow, bool) {
 	worktree, ok := d.selected()
 	if !ok {
-		return cli.WorktreeRecoveryRow{}, false
+		return cliworktree.WorktreeRecoveryRow{}, false
 	}
 	recovery, ok := d.recovery[worktree.Name]
 	return recovery, ok

@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/MiviaLabs/mivia-agent/internal/cli"
 	"os"
+
+	"github.com/MiviaLabs/mivia-agent/internal/cli"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworktree"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -174,7 +176,7 @@ func (m *TUIModel) deleteWorktreeRoute(si chat.SessionInfo) error {
 	if err != nil {
 		return err
 	}
-	lock, err := cli.LockWorktreeLifecycle(root, si.Worktree)
+	lock, err := cliworktree.LockWorktreeLifecycle(root, si.Worktree)
 	if err != nil {
 		return err
 	}
@@ -184,7 +186,7 @@ func (m *TUIModel) deleteWorktreeRoute(si chat.SessionInfo) error {
 		return err
 	}
 	defer closeStore()
-	principal, err := cli.WorktreeRoutePrincipal(root)
+	principal, err := cliworktree.WorktreeRoutePrincipal(root)
 	if err != nil {
 		return err
 	}
@@ -200,7 +202,7 @@ func (m *TUIModel) deleteWorktreeRoute(si chat.SessionInfo) error {
 		case errors.Is(err, contextstate.ErrWorktreeDeleted):
 			// The instance is gone. Clean leftover rows; the stale row is
 			// dropped from the list even when storage holds nothing more.
-			if _, err := cli.CleanupStaleWorktreeRows(store, principal, si.Worktree); err != nil {
+			if _, err := cliworktree.CleanupStaleWorktreeRows(store, principal, si.Worktree); err != nil {
 				return err
 			}
 			return nil
@@ -217,7 +219,7 @@ func (m *TUIModel) deleteWorktreeRoute(si chat.SessionInfo) error {
 			return fmt.Errorf("worktree %q exists; remove it with /worktrees", si.Worktree)
 		}
 	}
-	if _, err := cli.RemoveWorktreeLocked(root, si.Worktree, worktreeConfig.BranchPrefix, lock.File()); err != nil {
+	if _, err := cliworktree.RemoveWorktreeLocked(root, si.Worktree, worktreeConfig.BranchPrefix, lock.File()); err != nil {
 		return err
 	}
 	return nil

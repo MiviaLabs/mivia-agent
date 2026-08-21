@@ -3,13 +3,15 @@ package legacytui
 import (
 	"context"
 	"errors"
-	"github.com/MiviaLabs/mivia-agent/internal/cli"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/MiviaLabs/mivia-agent/internal/cli"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworktree"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
@@ -76,11 +78,11 @@ func TestWorktreeDialogEnterRecoveryRowShowsRecoveryNotice(t *testing.T) {
 func TestWorktreeDialogMarksLiveDeletingWorktreeForRecovery(t *testing.T) {
 	repoRoot := newWorktreeCommandRepo(t)
 	writeWorktreeStoreConfig(t, repoRoot, "repository.db")
-	worktree, err := cli.CreateManagedWorktree(repoRoot, "recover-live", "HEAD", "mivia/")
+	worktree, err := cliworktree.CreateManagedWorktree(repoRoot, "recover-live", "HEAD", "mivia/")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cli.BeginManagedWorktreeRemoval(repoRoot, worktree); err != nil {
+	if _, err := cliworktree.BeginManagedWorktreeRemoval(repoRoot, worktree); err != nil {
 		t.Fatal(err)
 	}
 	m := newReadyChatModel(30, 90)
@@ -105,7 +107,7 @@ func TestWorktreeDialogRecoversCreatingWorktreeBeforeRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal, err := cli.WorktreeRoutePrincipal(repoRoot)
+	principal, err := cliworktree.WorktreeRoutePrincipal(repoRoot)
 	if err != nil {
 		store.Close()
 		t.Fatal(err)
@@ -124,7 +126,7 @@ func TestWorktreeDialogRecoversCreatingWorktreeBeforeRestart(t *testing.T) {
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cli.ReadWorktreeMarker(worktree.Path); !errors.Is(err, os.ErrNotExist) {
+	if _, err := cliworktree.ReadWorktreeMarker(worktree.Path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("marker before recovery = %v, want missing marker", err)
 	}
 
@@ -138,7 +140,7 @@ func TestWorktreeDialogRecoversCreatingWorktreeBeforeRestart(t *testing.T) {
 		t.Fatalf("creating recovery = %#v, %v", recovery, ok)
 	}
 	m.handleChatKey("enter", false)
-	marker, err := cli.ReadWorktreeMarker(worktree.Path)
+	marker, err := cliworktree.ReadWorktreeMarker(worktree.Path)
 	if err != nil {
 		t.Fatalf("marker after recovery = %v", err)
 	}
@@ -175,7 +177,7 @@ func TestWorktreeDialogRefusesCreatingRecoveryWhileWorkspaceSwitchIsBusy(t *test
 			if err != nil {
 				t.Fatal(err)
 			}
-			principal, err := cli.WorktreeRoutePrincipal(repoRoot)
+			principal, err := cliworktree.WorktreeRoutePrincipal(repoRoot)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -199,7 +201,7 @@ func TestWorktreeDialogRefusesCreatingRecoveryWhileWorkspaceSwitchIsBusy(t *test
 			m.openWorktreeDialog()
 			m.handleChatKey("enter", false)
 
-			if _, err := cli.ReadWorktreeMarker(worktree.Path); !errors.Is(err, os.ErrNotExist) {
+			if _, err := cliworktree.ReadWorktreeMarker(worktree.Path); !errors.Is(err, os.ErrNotExist) {
 				t.Errorf("busy recovery marker error = %v, want missing marker", err)
 			}
 			if m.restartWorkspace != "" {
@@ -230,11 +232,11 @@ func TestWorktreeDialogRecoveryUsesBorrowedSessionStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer customStore.Close()
-	worktree, err := cli.CreateManagedWorktreeInStore(customStore, repoRoot, "custom-delete", "HEAD", "mivia/")
+	worktree, err := cliworktree.CreateManagedWorktreeInStore(customStore, repoRoot, "custom-delete", "HEAD", "mivia/")
 	if err != nil {
 		t.Fatal(err)
 	}
-	instance, err := cli.BeginManagedWorktreeRemovalInStore(customStore, repoRoot, worktree)
+	instance, err := cliworktree.BeginManagedWorktreeRemovalInStore(customStore, repoRoot, worktree)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +260,7 @@ func TestWorktreeDialogRecoveryUsesBorrowedSessionStore(t *testing.T) {
 	m.handleChatKey("d", false)
 	m.handleChatKey("y", false)
 
-	principal, err := cli.WorktreeRoutePrincipal(repoRoot)
+	principal, err := cliworktree.WorktreeRoutePrincipal(repoRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,11 +291,11 @@ func TestWorktreeDialogRecoveryUsesBorrowedSessionStore(t *testing.T) {
 func TestWorktreeDialogRecoveryKeepsSameNameReplacementRow(t *testing.T) {
 	repoRoot := newWorktreeCommandRepo(t)
 	writeWorktreeStoreConfig(t, repoRoot, "repository.db")
-	old, err := cli.CreateManagedWorktree(repoRoot, "recover-replacement", "HEAD", "mivia/")
+	old, err := cliworktree.CreateManagedWorktree(repoRoot, "recover-replacement", "HEAD", "mivia/")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cli.BeginManagedWorktreeRemoval(repoRoot, old); err != nil {
+	if _, err := cliworktree.BeginManagedWorktreeRemoval(repoRoot, old); err != nil {
 		t.Fatal(err)
 	}
 	if err := vcs.RemoveWithPrefix(context.Background(), repoRoot, old.Name, "mivia/"); err != nil {
@@ -606,7 +608,7 @@ func TestWorktreeDialogRecognizesCurrentDirectoryViaSymlink(t *testing.T) {
 		}
 	})
 
-	if !cli.WorktreeContainsCurrentDir(worktreePath) {
+	if !cliworktree.WorktreeContainsCurrentDir(worktreePath) {
 		t.Fatal("symbolic-link working directory must count as the current worktree")
 	}
 }
@@ -651,11 +653,11 @@ func TestWorktreeDialogFailsClosedWhenBorrowedStoreQueriesFail(t *testing.T) {
 func TestWorktreeDialogSwitchesToUnmanagedReplacementAfterCleanup(t *testing.T) {
 	repoRoot := newWorktreeCommandRepo(t)
 	writeWorktreeStoreConfig(t, repoRoot, "repository.db")
-	old, err := cli.CreateManagedWorktree(repoRoot, "replacement", "HEAD", "mivia/")
+	old, err := cliworktree.CreateManagedWorktree(repoRoot, "replacement", "HEAD", "mivia/")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cli.BeginManagedWorktreeRemoval(repoRoot, old); err != nil {
+	if _, err := cliworktree.BeginManagedWorktreeRemoval(repoRoot, old); err != nil {
 		t.Fatal(err)
 	}
 	if err := vcs.RemoveWithPrefix(context.Background(), repoRoot, old.Name, "mivia/"); err != nil {
@@ -665,10 +667,10 @@ func TestWorktreeDialogSwitchesToUnmanagedReplacementAfterCleanup(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cli.ReadWorktreeMarker(replacement.Path); !errors.Is(err, os.ErrNotExist) {
+	if _, err := cliworktree.ReadWorktreeMarker(replacement.Path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("replacement marker = %v, want missing marker", err)
 	}
-	recovered, err := cli.RecoverManagedWorktreeRemoval(repoRoot, old.Name, "mivia/")
+	recovered, err := cliworktree.RecoverManagedWorktreeRemoval(repoRoot, old.Name, "mivia/")
 	if err != nil || !recovered {
 		t.Fatalf("recover removal = %v, %v", recovered, err)
 	}
@@ -696,7 +698,7 @@ func TestWorktreeDialogSwitchesToUnmanagedReplacementAfterCleanup(t *testing.T) 
 func TestWorktreeDialogSwitchesToValidManagedWorktree(t *testing.T) {
 	repoRoot := newWorktreeCommandRepo(t)
 	writeWorktreeStoreConfig(t, repoRoot, "repository.db")
-	worktree, err := cli.CreateManagedWorktree(repoRoot, "managed-switch", "HEAD", "mivia/")
+	worktree, err := cliworktree.CreateManagedWorktree(repoRoot, "managed-switch", "HEAD", "mivia/")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -725,7 +727,7 @@ func TestWorktreeDialogReactivatesBorrowedStoreAfterGitRemovalFailure(t *testing
 		t.Fatal(err)
 	}
 	defer customStore.Close()
-	worktree, err := cli.CreateManagedWorktreeInStore(customStore, repoRoot, "reactivate-custom", "HEAD", "mivia/")
+	worktree, err := cliworktree.CreateManagedWorktreeInStore(customStore, repoRoot, "reactivate-custom", "HEAD", "mivia/")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -761,7 +763,7 @@ func TestWorktreeDialogReactivatesBorrowedStoreAfterGitRemovalFailure(t *testing
 	m.worktreeDlg = newWorktreeDialog([]vcs.WorktreeInfo{*worktree})
 	m.worktreeDlg.confirm = wtConfirmDelete
 	m.applyWorktreeConfirm()
-	principal, err := cli.WorktreeRoutePrincipal(repoRoot)
+	principal, err := cliworktree.WorktreeRoutePrincipal(repoRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -772,7 +774,7 @@ func TestWorktreeDialogReactivatesBorrowedStoreAfterGitRemovalFailure(t *testing
 	if len(deleting) != 0 {
 		t.Errorf("custom store deleting rows = %d, want 0", len(deleting))
 	}
-	instance, err := cli.ReadWorktreeMarker(worktree.Path)
+	instance, err := cliworktree.ReadWorktreeMarker(worktree.Path)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -190,7 +190,7 @@ func (e *sessionWorkflowEngine) keyedRunID(ctx context.Context, prepared *prepar
 // controller, settling resources on every failure path. On success the run
 // launches and prepared/built ownership transfers to the active run.
 func (e *sessionWorkflowEngine) buildAndStart(ctx context.Context, prepared *preparedWorkflowRun, req workflowledger.StartRequest, runID string) (workflowledger.StartResult, error) {
-	finishExecution, err := beginWorkflowExecution(prepared.root, contextStorePath(prepared.root, prepared.res.Subagents), runID)
+	finishExecution, err := beginWorkflowExecution(prepared.root, ContextStorePath(prepared.root, prepared.res.Subagents), runID)
 	if err != nil {
 		prepared.closeFn()
 		return workflowledger.StartResult{}, err

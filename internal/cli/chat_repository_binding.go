@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworktree"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
@@ -69,7 +70,7 @@ func bindManagedWorktreeSessionExpected(sess *chat.Session, repositoryRoot, work
 	if worktree == nil {
 		return fmt.Errorf("managed worktree %q is not available", name)
 	}
-	canonicalPath, err := canonicalMarkerRoot(worktree.Path)
+	canonicalPath, err := cliworktree.CanonicalMarkerRoot(worktree.Path)
 	if err != nil {
 		return err
 	}
@@ -84,8 +85,8 @@ func bindManagedWorktreeSessionExpected(sess *chat.Session, repositoryRoot, work
 		return err
 	}
 	defer store.Close()
-	principal, _ := WorktreeRoutePrincipal(repositoryRoot)
-	instance, markerErr := ReadWorktreeMarker(worktree.Path)
+	principal, _ := cliworktree.WorktreeRoutePrincipal(repositoryRoot)
+	instance, markerErr := cliworktree.ReadWorktreeMarker(worktree.Path)
 	if errors.Is(markerErr, os.ErrNotExist) {
 		if !expected.IsZero() {
 			return contextstate.ErrWorktreeDeleted
@@ -114,7 +115,7 @@ func bindManagedWorktreeSessionExpected(sess *chat.Session, repositoryRoot, work
 	if err := store.ValidateActiveWorktreeInstance(context.Background(), principal, instance, canonicalPath); err != nil {
 		return fmt.Errorf("validate worktree session binding: %w", err)
 	}
-	sessionDir, err := canonicalMarkerRoot(workspaceRoot)
+	sessionDir, err := cliworktree.CanonicalMarkerRoot(workspaceRoot)
 	if err != nil {
 		return err
 	}

@@ -329,7 +329,7 @@ func driveChunk(ctx context.Context, prepared *preparedWorkflowRun, ledger *work
 // path the workflow CLI uses; the invocation key is the only addition.
 func admitStackChunkRun(prepared *preparedWorkflowRun, stackID, chunkID string, inputs map[string]any, inputSnapshot map[string]string, stdout, stderr io.Writer) (workflowledger.RunSnapshot, error) {
 	runID := newCLIWorkflowRunID()
-	finishExecution, err := beginWorkflowExecution(prepared.root, contextStorePath(prepared.root, prepared.res.Subagents), runID)
+	finishExecution, err := beginWorkflowExecution(prepared.root, ContextStorePath(prepared.root, prepared.res.Subagents), runID)
 	if err != nil {
 		return workflowledger.RunSnapshot{}, err
 	}
@@ -391,7 +391,7 @@ func admitDecomposeContinuationRun(prepared *preparedWorkflowRun, stackID string
 	snapshot["remaining_scope"] = remainingScope
 
 	runID := newCLIWorkflowRunID()
-	finishExecution, err := beginWorkflowExecution(prepared.root, contextStorePath(prepared.root, prepared.res.Subagents), runID)
+	finishExecution, err := beginWorkflowExecution(prepared.root, ContextStorePath(prepared.root, prepared.res.Subagents), runID)
 	if err != nil {
 		return nil, false, "", err
 	}

@@ -200,7 +200,7 @@ func TestSessionResumeAllowPublishDelivers(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(closeFn)
-	finish, err := beginWorkflowExecution(root, contextStorePath(root, res.Subagents), runID)
+	finish, err := beginWorkflowExecution(root, ContextStorePath(root, res.Subagents), runID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +249,7 @@ func TestWorkflowToolSubagentConfigLoadsWorkspaceWhenResNil(t *testing.T) {
 	}
 	cfg := workflowToolSubagentConfig(root, nil)
 	// DefaultSubagentConfig or loaded defaults must be usable for open path.
-	path := contextStorePath(root, cfg)
+	path := ContextStorePath(root, cfg)
 	if path == "" {
 		t.Fatal("contextStorePath empty for res=nil config")
 	}
@@ -282,12 +282,12 @@ func TestWireWorkflowToolOptionsUsesResolvedStorePath(t *testing.T) {
 	}
 	// Factory path: openWorkflowStore uses contextStorePath when backend is
 	// sqlite and path is set → ExpandPath(custom).
-	want := contextStorePath(root, res.Subagents)
+	want := ContextStorePath(root, res.Subagents)
 	if want != custom && want != config.ExpandPath(custom) {
 		// contextStorePath returns ExpandPath when backend+path set.
 		t.Logf("contextStorePath = %q custom = %q", want, custom)
 	}
-	if got := contextStorePath(root, workflowToolSubagentConfig(root, res)); got != want {
+	if got := ContextStorePath(root, workflowToolSubagentConfig(root, res)); got != want {
 		t.Fatalf("wired store path = %q, want %q", got, want)
 	}
 }
@@ -390,7 +390,7 @@ func TestSessionAutoDeliveryRefusalRecordedNotDiscarded(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(closeFn)
-	finish, err := beginWorkflowExecution(root, contextStorePath(root, res.Subagents), runID)
+	finish, err := beginWorkflowExecution(root, ContextStorePath(root, res.Subagents), runID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -472,7 +472,7 @@ func TestSessionAutoDeliveryTransientFailureRecordedNotDiscarded(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(closeFn)
-	finish, err := beginWorkflowExecution(root, contextStorePath(root, res.Subagents), runID)
+	finish, err := beginWorkflowExecution(root, ContextStorePath(root, res.Subagents), runID)
 	if err != nil {
 		t.Fatal(err)
 	}

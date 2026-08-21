@@ -39,7 +39,7 @@ func newSessionAutoDeliveryRepairFixture(t *testing.T) (*sessionWorkflowEngine, 
 		t.Fatal(err)
 	}
 	t.Cleanup(closeFn)
-	finish, err := beginWorkflowExecution(root, contextStorePath(root, res.Subagents), runID)
+	finish, err := beginWorkflowExecution(root, ContextStorePath(root, res.Subagents), runID)
 	if err != nil {
 		t.Fatal(err)
 	}

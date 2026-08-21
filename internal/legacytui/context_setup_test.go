@@ -2,11 +2,13 @@ package legacytui
 
 import (
 	"context"
-	"github.com/MiviaLabs/mivia-agent/internal/cli"
 	"io"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/MiviaLabs/mivia-agent/internal/cli"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworktree"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -41,18 +43,18 @@ func TestSetupSessionContextIsAlwaysEnabled(t *testing.T) {
 
 func TestReactivationRejectsConcurrentlyRemovedWorktree(t *testing.T) {
 	repoRoot := newWorktreeCommandRepo(t)
-	worktree, err := cli.CreateManagedWorktree(repoRoot, "concurrent-remove", "HEAD", "mivia/")
+	worktree, err := cliworktree.CreateManagedWorktree(repoRoot, "concurrent-remove", "HEAD", "mivia/")
 	if err != nil {
 		t.Fatal(err)
 	}
-	instance, err := cli.BeginManagedWorktreeRemoval(repoRoot, worktree)
+	instance, err := cliworktree.BeginManagedWorktreeRemoval(repoRoot, worktree)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := vcs.RemoveWithPrefix(context.Background(), repoRoot, worktree.Name, "mivia/"); err != nil {
 		t.Fatal(err)
 	}
-	if err := cli.ReactivateManagedWorktree(repoRoot, instance); err == nil {
+	if err := cliworktree.ReactivateManagedWorktree(repoRoot, instance); err == nil {
 		t.Fatal("reactivation accepted an absent Git worktree and marker")
 	}
 	store, err := cli.OpenRepositoryContextStore(repoRoot)
@@ -60,7 +62,7 @@ func TestReactivationRejectsConcurrentlyRemovedWorktree(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := cli.WorktreeRoutePrincipal(repoRoot)
+	principal, err := cliworktree.WorktreeRoutePrincipal(repoRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +177,7 @@ func TestListSessionsIncludesMainRepositoryWorktreeRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cli.RegisterWorktreeRoute(repoRoot, worktree); err != nil {
+	if err := cliworktree.RegisterWorktreeRoute(repoRoot, worktree); err != nil {
 		t.Fatal(err)
 	}
 	containsRoute := func(infos []chat.SessionInfo) bool {
@@ -266,7 +268,7 @@ func TestWorktreeSessionListRestartsToResumeMainRepositorySession(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cli.RegisterManagedWorktreeInStore(worktreeStore, repoRoot, worktree); err != nil {
+	if _, err := cliworktree.RegisterManagedWorktreeInStore(worktreeStore, repoRoot, worktree); err != nil {
 		_ = worktreeStore.Close()
 		t.Fatal(err)
 	}

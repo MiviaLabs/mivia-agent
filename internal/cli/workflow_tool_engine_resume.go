@@ -47,7 +47,7 @@ func (e *sessionWorkflowEngine) prepareResume(ctx context.Context, req workflowl
 	if err != nil {
 		return resumePrepared{}, err
 	}
-	finishExecution, err := beginWorkflowExecution(workForResume(e, req), contextStorePath(workForResume(e, req), res.Subagents), req.RunID)
+	finishExecution, err := beginWorkflowExecution(workForResume(e, req), ContextStorePath(workForResume(e, req), res.Subagents), req.RunID)
 	if err != nil {
 		closeFn()
 		return resumePrepared{}, err

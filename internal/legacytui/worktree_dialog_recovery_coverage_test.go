@@ -3,11 +3,13 @@ package legacytui
 import (
 	"context"
 	"errors"
-	"github.com/MiviaLabs/mivia-agent/internal/cli"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/MiviaLabs/mivia-agent/internal/cli"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworktree"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
@@ -20,7 +22,7 @@ func TestDialogCoverageDeleteAbandonsPhantomCreatingRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := cli.WorktreeRoutePrincipal(repo)
+	principal, err := cliworktree.WorktreeRoutePrincipal(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +62,7 @@ func TestDialogCoverageRecoverAbandonsPhantomCreatingRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := cli.WorktreeRoutePrincipal(repo)
+	principal, err := cliworktree.WorktreeRoutePrincipal(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +101,7 @@ func TestDialogCoveragePhantomCreationPathExistsNotAbandoned(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := cli.WorktreeRoutePrincipal(repo)
+	principal, err := cliworktree.WorktreeRoutePrincipal(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +143,7 @@ func TestDialogCoveragePhantomCreationDeletePathExistsNotAbandoned(t *testing.T)
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := cli.WorktreeRoutePrincipal(repo)
+	principal, err := cliworktree.WorktreeRoutePrincipal(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +186,7 @@ func TestDialogFaultSeamAbandonStaleCreation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := cli.WorktreeRoutePrincipal(repo)
+	principal, err := cliworktree.WorktreeRoutePrincipal(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -297,7 +299,7 @@ func TestDialogFaultSeamAbandonAlreadyGone(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := cli.WorktreeRoutePrincipal(repo)
+	principal, err := cliworktree.WorktreeRoutePrincipal(repo)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -3,12 +3,14 @@ package legacytui
 import (
 	"context"
 	"errors"
-	"github.com/MiviaLabs/mivia-agent/internal/cli"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/MiviaLabs/mivia-agent/internal/cli"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworktree"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
@@ -33,10 +35,10 @@ func TestDialogCoverageRecoveryHelpers(t *testing.T) {
 	if _, ok := dialog.selectedRecovery(); ok {
 		t.Fatal("empty dialog returned recovery")
 	}
-	if got := cli.WorktreeRecoveryLabel(contextstate.WorktreeCreating); got != "creation recovery required" {
+	if got := cliworktree.WorktreeRecoveryLabel(contextstate.WorktreeCreating); got != "creation recovery required" {
 		t.Fatalf("creating label = %q", got)
 	}
-	if got := cli.WorktreeRecoveryLabel(contextstate.WorktreeDeleting); got != "recovery required" {
+	if got := cliworktree.WorktreeRecoveryLabel(contextstate.WorktreeDeleting); got != "recovery required" {
 		t.Fatalf("deleting label = %q", got)
 	}
 	info := contextstate.WorktreeInstanceInfo{
@@ -56,7 +58,7 @@ func TestDialogCoverageAddsOnlyMissingRecoveryRows(t *testing.T) {
 		{Instance: contextstate.WorktreeInstance{Worktree: "same", ID: "wt_1111111111111111"}, CanonicalPath: "/old"},
 		{Instance: contextstate.WorktreeInstance{Worktree: "new", ID: "wt_2222222222222222"}, CanonicalPath: "/new"},
 	}
-	got := cli.AddWorktreeRecoveryRows(list, infos)
+	got := cliworktree.AddWorktreeRecoveryRows(list, infos)
 	if len(got) != 2 || got[1].Name != "new" || got[1].Path != "/new" {
 		t.Fatalf("recovery rows = %+v", got)
 	}
@@ -78,11 +80,11 @@ func TestDialogCoverageSnapshotBindings(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := cli.WorktreeRoutePrincipal(repo)
+	principal, err := cliworktree.WorktreeRoutePrincipal(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
-	bad := cli.SnapshotWorktreeDialogBinding(store, principal, vcs.WorktreeInfo{Name: "bad", Path: filepath.Join(repo, "missing")})
+	bad := cliworktree.SnapshotWorktreeDialogBinding(store, principal, vcs.WorktreeInfo{Name: "bad", Path: filepath.Join(repo, "missing")})
 	if bad.Err == nil {
 		t.Fatal("missing path binding succeeded")
 	}
@@ -90,14 +92,14 @@ func TestDialogCoverageSnapshotBindings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plain := cli.SnapshotWorktreeDialogBinding(store, principal, *unmanaged)
+	plain := cliworktree.SnapshotWorktreeDialogBinding(store, principal, *unmanaged)
 	if plain.Err != nil || !plain.Instance.IsZero() {
 		t.Fatalf("unmanaged binding = %+v", plain)
 	}
 	if err := store.SaveWorktreeRoute(context.Background(), principal, unmanaged.Name, unmanaged.Path); err != nil {
 		t.Fatal(err)
 	}
-	legacy := cli.SnapshotWorktreeDialogBinding(store, principal, *unmanaged)
+	legacy := cliworktree.SnapshotWorktreeDialogBinding(store, principal, *unmanaged)
 	if legacy.Err == nil || !strings.Contains(legacy.Err.Error(), "adoption") {
 		t.Fatalf("legacy binding error = %v", legacy.Err)
 	}
@@ -118,7 +120,7 @@ func TestDialogCoverageValidatesMissingMarkerStates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal, err := cli.WorktreeRoutePrincipal(repo)
+	principal, err := cliworktree.WorktreeRoutePrincipal(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,13 +151,13 @@ func TestDialogCoverageValidateSwitchMarkerFailures(t *testing.T) {
 	}
 	m := newReadyChatModel(30, 90)
 	m.workspaceDir = repo
-	if err := cli.WriteWorktreeMarker(worktree.Path, contextstate.WorktreeInstance{Worktree: "other", ID: "wt_1234567890abcdef"}); err != nil {
+	if err := cliworktree.WriteWorktreeMarker(worktree.Path, contextstate.WorktreeInstance{Worktree: "other", ID: "wt_1234567890abcdef"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := m.validateWorktreeSwitch(*worktree); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
 		t.Fatalf("wrong marker error = %v", err)
 	}
-	if err := os.WriteFile(cli.WorktreeMarkerPath(worktree.Path), []byte("{"), 0o600); err != nil {
+	if err := os.WriteFile(cliworktree.WorktreeMarkerPath(worktree.Path), []byte("{"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := m.validateWorktreeSwitch(*worktree); err == nil {
@@ -214,19 +216,19 @@ func TestDialogCoverageSwitchUtilities(t *testing.T) {
 	if err := os.Chdir(cwd); err != nil {
 		t.Fatal(err)
 	}
-	if !cli.WorktreeContainsCurrentDir(cwd) {
+	if !cliworktree.WorktreeContainsCurrentDir(cwd) {
 		t.Fatal("current directory was not detected")
 	}
 	if runtime.GOOS == "windows" {
 		// Windows cannot delete its process working directory; inject the
 		// deleted-CWD state through the getwd seam instead.
-		orig := cli.GetwdWorktreeSwitch
-		cli.GetwdWorktreeSwitch = func() (string, error) { return "", os.ErrNotExist }
-		t.Cleanup(func() { cli.GetwdWorktreeSwitch = orig })
+		orig := cliworktree.GetwdWorktreeSwitch
+		cliworktree.GetwdWorktreeSwitch = func() (string, error) { return "", os.ErrNotExist }
+		t.Cleanup(func() { cliworktree.GetwdWorktreeSwitch = orig })
 	} else if err := os.Remove(cwd); err != nil {
 		t.Fatal(err)
 	}
-	if !cli.WorktreeContainsCurrentDir(t.TempDir()) {
+	if !cliworktree.WorktreeContainsCurrentDir(t.TempDir()) {
 		t.Fatal("deleted current directory did not fail closed")
 	}
 	if err := os.Chdir(old); err != nil {
@@ -264,7 +266,7 @@ func TestDialogCoverageBusyCreateAndInvalidCreatedMessage(t *testing.T) {
 
 func TestDialogCoverageDeleteReportsBusyLifecycleLock(t *testing.T) {
 	repo := newWorktreeCommandRepo(t)
-	worktree, err := cli.CreateManagedWorktree(repo, "busy-delete", "HEAD", "mivia/")
+	worktree, err := cliworktree.CreateManagedWorktree(repo, "busy-delete", "HEAD", "mivia/")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +278,7 @@ func TestDialogCoverageDeleteReportsBusyLifecycleLock(t *testing.T) {
 			m.worktreeDlg.cursor = index
 		}
 	}
-	lock, err := cli.LockWorktreeLifecycle(repo, worktree.Name)
+	lock, err := cliworktree.LockWorktreeLifecycle(repo, worktree.Name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,7 +297,7 @@ func TestDialogCoverageWriteDetachedRecoveryRow(t *testing.T) {
 		State:         contextstate.WorktreeDeleting,
 	}
 	var output strings.Builder
-	cli.WriteWorktreeList(&output, nil, []contextstate.WorktreeInstanceInfo{info})
+	cliworktree.WriteWorktreeList(&output, nil, []contextstate.WorktreeInstanceInfo{info})
 	if !strings.Contains(output.String(), "gone\trecovery required\t/gone") {
 		t.Fatalf("recovery list = %q", output.String())
 	}
@@ -307,7 +309,7 @@ func TestDialogCoverageSnapshotMarkerBranches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal, err := cli.WorktreeRoutePrincipal(repo)
+	principal, err := cliworktree.WorktreeRoutePrincipal(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -320,27 +322,27 @@ func TestDialogCoverageSnapshotMarkerBranches(t *testing.T) {
 		return worktree
 	}
 	wrong := makeWorktree("wrong-marker")
-	if err := cli.WriteWorktreeMarker(wrong.Path, contextstate.WorktreeInstance{Worktree: "other", ID: "wt_1111111111111111"}); err != nil {
+	if err := cliworktree.WriteWorktreeMarker(wrong.Path, contextstate.WorktreeInstance{Worktree: "other", ID: "wt_1111111111111111"}); err != nil {
 		t.Fatal(err)
 	}
-	if got := cli.SnapshotWorktreeDialogBinding(store, principal, *wrong); !errors.Is(got.Err, contextstate.ErrWorktreeDeleted) {
+	if got := cliworktree.SnapshotWorktreeDialogBinding(store, principal, *wrong); !errors.Is(got.Err, contextstate.ErrWorktreeDeleted) {
 		t.Fatalf("wrong marker binding = %+v", got)
 	}
 	unregistered := makeWorktree("unregistered-marker")
-	if err := cli.WriteWorktreeMarker(unregistered.Path, contextstate.WorktreeInstance{Worktree: unregistered.Name, ID: "wt_2222222222222222"}); err != nil {
+	if err := cliworktree.WriteWorktreeMarker(unregistered.Path, contextstate.WorktreeInstance{Worktree: unregistered.Name, ID: "wt_2222222222222222"}); err != nil {
 		t.Fatal(err)
 	}
-	if got := cli.SnapshotWorktreeDialogBinding(store, principal, *unregistered); !errors.Is(got.Err, contextstate.ErrWorktreeDeleted) {
+	if got := cliworktree.SnapshotWorktreeDialogBinding(store, principal, *unregistered); !errors.Is(got.Err, contextstate.ErrWorktreeDeleted) {
 		t.Fatalf("unregistered marker binding = %+v", got)
 	}
 	malformed := makeWorktree("malformed-marker")
-	if err := os.MkdirAll(filepath.Dir(cli.WorktreeMarkerPath(malformed.Path)), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(cliworktree.WorktreeMarkerPath(malformed.Path)), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(cli.WorktreeMarkerPath(malformed.Path), []byte("{"), 0o600); err != nil {
+	if err := os.WriteFile(cliworktree.WorktreeMarkerPath(malformed.Path), []byte("{"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got := cli.SnapshotWorktreeDialogBinding(store, principal, *malformed); got.Err == nil {
+	if got := cliworktree.SnapshotWorktreeDialogBinding(store, principal, *malformed); got.Err == nil {
 		t.Fatal("malformed marker binding succeeded")
 	}
 	live := makeWorktree("live-no-marker")
@@ -348,12 +350,12 @@ func TestDialogCoverageSnapshotMarkerBranches(t *testing.T) {
 	if err := store.BeginWorktreeCreation(context.Background(), principal, instance, live.Path); err != nil {
 		t.Fatal(err)
 	}
-	if got := cli.SnapshotWorktreeDialogBinding(store, principal, *live); !errors.Is(got.Err, contextstate.ErrWorktreeDeleted) {
+	if got := cliworktree.SnapshotWorktreeDialogBinding(store, principal, *live); !errors.Is(got.Err, contextstate.ErrWorktreeDeleted) {
 		t.Fatalf("live missing marker binding = %+v", got)
 	}
 	store.Close()
 	closed := makeWorktree("closed-store")
-	if got := cli.SnapshotWorktreeDialogBinding(store, principal, *closed); got.Err == nil {
+	if got := cliworktree.SnapshotWorktreeDialogBinding(store, principal, *closed); got.Err == nil {
 		t.Fatal("closed store binding succeeded")
 	}
 }
@@ -371,7 +373,7 @@ func TestDialogCoverageRejectsNonSQLiteLifecycleStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cli.WriteWorktreeMarker(worktree.Path, contextstate.WorktreeInstance{Worktree: worktree.Name, ID: "wt_9999999999999999"}); err != nil {
+	if err := cliworktree.WriteWorktreeMarker(worktree.Path, contextstate.WorktreeInstance{Worktree: worktree.Name, ID: "wt_9999999999999999"}); err != nil {
 		t.Fatal(err)
 	}
 	m.workspaceDir = repo
@@ -400,7 +402,7 @@ func TestDialogCoverageValidateSwitchRejectsUnregisteredMarker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cli.WriteWorktreeMarker(worktree.Path, contextstate.WorktreeInstance{Worktree: worktree.Name, ID: "wt_8888888888888888"}); err != nil {
+	if err := cliworktree.WriteWorktreeMarker(worktree.Path, contextstate.WorktreeInstance{Worktree: worktree.Name, ID: "wt_8888888888888888"}); err != nil {
 		t.Fatal(err)
 	}
 	m := newReadyChatModel(30, 90)
@@ -442,14 +444,14 @@ func TestDialogCoverageRelativePathsFailWithDeletedWorkingDirectory(t *testing.T
 		// uses: a working directory that can no longer be resolved. This
 		// exercises the same fail-closed branch the Unix test reaches by
 		// removing the directory.
-		orig := cli.GetwdWorktreeSwitch
-		cli.GetwdWorktreeSwitch = func() (string, error) { return "", os.ErrNotExist }
-		t.Cleanup(func() { cli.GetwdWorktreeSwitch = orig })
+		orig := cliworktree.GetwdWorktreeSwitch
+		cliworktree.GetwdWorktreeSwitch = func() (string, error) { return "", os.ErrNotExist }
+		t.Cleanup(func() { cliworktree.GetwdWorktreeSwitch = orig })
 		m.restartInWorkspace("relative")
 		if m.worktreeDlg == nil || !m.worktreeDlg.noticeErr {
 			t.Fatal("relative restart did not fail closed")
 		}
-		if !cli.WorktreeContainsCurrentDir("relative") {
+		if !cliworktree.WorktreeContainsCurrentDir("relative") {
 			t.Fatal("relative containment did not fail closed")
 		}
 		return
@@ -477,7 +479,7 @@ func TestDialogCoverageRelativePathsFailWithDeletedWorkingDirectory(t *testing.T
 	if m.worktreeDlg == nil || !m.worktreeDlg.noticeErr {
 		t.Fatal("relative restart did not fail closed")
 	}
-	if !cli.WorktreeContainsCurrentDir("relative") {
+	if !cliworktree.WorktreeContainsCurrentDir("relative") {
 		t.Fatal("relative containment did not fail closed")
 	}
 }
@@ -505,7 +507,7 @@ func TestDialogCoverageCreatingRecoveryReturnedWorktreeMismatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := cli.WorktreeRoutePrincipal(repo)
+	principal, err := cliworktree.WorktreeRoutePrincipal(repo)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2,10 +2,12 @@ package legacytui
 
 import (
 	"context"
-	"github.com/MiviaLabs/mivia-agent/internal/cli"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/MiviaLabs/mivia-agent/internal/cli"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworktree"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -46,7 +48,7 @@ func TestWorktreeDialogCreateStoresRouteInMainRepositoryCatalog(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := cli.WorktreeRoutePrincipal(repoRoot)
+	principal, err := cliworktree.WorktreeRoutePrincipal(repoRoot)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/MiviaLabs/mivia-agent/internal/cli"
 	"os"
 	"path/filepath"
 
+	"github.com/MiviaLabs/mivia-agent/internal/cliworktree"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
@@ -18,7 +18,7 @@ import (
 // recovery-row bookkeeping these methods drive.
 
 func (m *TUIModel) validateWorktreeSwitch(wt vcs.WorktreeInfo) (contextstate.WorktreeInstance, error) {
-	instance, err := cli.ReadWorktreeMarker(wt.Path)
+	instance, err := cliworktree.ReadWorktreeMarker(wt.Path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return contextstate.WorktreeInstance{}, m.validateWorktreeWithoutMarker(wt)
@@ -28,7 +28,7 @@ func (m *TUIModel) validateWorktreeSwitch(wt vcs.WorktreeInfo) (contextstate.Wor
 	if instance.Worktree != wt.Name {
 		return contextstate.WorktreeInstance{}, contextstate.ErrWorktreeDeleted
 	}
-	canonicalPath, err := cli.CanonicalWorktreeDialogRoot(wt.Path)
+	canonicalPath, err := cliworktree.CanonicalWorktreeDialogRoot(wt.Path)
 	if err != nil {
 		return contextstate.WorktreeInstance{}, err
 	}
@@ -38,7 +38,7 @@ func (m *TUIModel) validateWorktreeSwitch(wt vcs.WorktreeInfo) (contextstate.Wor
 		return contextstate.WorktreeInstance{}, err
 	}
 	defer closeStore()
-	principal, _ := cli.WorktreeRoutePrincipal(root)
+	principal, _ := cliworktree.WorktreeRoutePrincipal(root)
 	if err := store.ValidateActiveWorktreeInstance(context.Background(), principal, instance, canonicalPath); err != nil {
 		return contextstate.WorktreeInstance{}, err
 	}
@@ -46,7 +46,7 @@ func (m *TUIModel) validateWorktreeSwitch(wt vcs.WorktreeInfo) (contextstate.Wor
 }
 
 func (m *TUIModel) validateWorktreeWithoutMarker(wt vcs.WorktreeInfo) error {
-	canonicalPath, err := cli.CanonicalWorktreeDialogRoot(wt.Path)
+	canonicalPath, err := cliworktree.CanonicalWorktreeDialogRoot(wt.Path)
 	if err != nil {
 		return err
 	}
@@ -56,8 +56,8 @@ func (m *TUIModel) validateWorktreeWithoutMarker(wt vcs.WorktreeInfo) error {
 		return err
 	}
 	defer closeStore()
-	principal, _ := cli.WorktreeRoutePrincipal(root)
-	info, legacy, err := cli.ClassifyMissingWorktreeMarker(store, principal, wt.Name, canonicalPath)
+	principal, _ := cliworktree.WorktreeRoutePrincipal(root)
+	info, legacy, err := cliworktree.ClassifyMissingWorktreeMarker(store, principal, wt.Name, canonicalPath)
 	if err != nil {
 		return err
 	}
@@ -80,7 +80,7 @@ func (m *TUIModel) validateSessionWorktree(dir string, expected contextstate.Wor
 		return err
 	}
 	defer closeStore()
-	return cli.ValidateExpectedWorktreeInstanceInStore(store, root, dir, expected)
+	return cliworktree.ValidateExpectedWorktreeInstanceInStore(store, root, dir, expected)
 }
 
 func (m *TUIModel) recoverCreatingWorktree(wt vcs.WorktreeInfo, info contextstate.WorktreeInstanceInfo) {
@@ -104,7 +104,7 @@ func (m *TUIModel) recoverCreatingWorktree(wt vcs.WorktreeInfo, info contextstat
 		closeStore()
 		return
 	}
-	recovered, err := cli.RecoverManagedWorktreeCreationInStore(store, root, info)
+	recovered, err := cliworktree.RecoverManagedWorktreeCreationInStore(store, root, info)
 	closeStore()
 	if err != nil {
 		m.worktreeDlg.setNotice("creation recovery failed: "+err.Error(), true)
@@ -138,7 +138,7 @@ func (m *TUIModel) abandonStaleWorktreeCreation(store *storage.SQLite, root stri
 			return true, fmt.Errorf("inspect expected worktree path: parent is not a directory")
 		}
 	}
-	principal, _ := cli.WorktreeRoutePrincipal(root)
+	principal, _ := cliworktree.WorktreeRoutePrincipal(root)
 	if err := store.AbandonWorktreeCreation(context.Background(), principal, info.Instance); err != nil {
 		return true, err
 	}

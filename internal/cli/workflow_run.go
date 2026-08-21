@@ -123,7 +123,7 @@ func executeWorkflowRun(name, root, configPath string, rawInputs []string, allow
 	logMCPWarnings(stderr, prepared.res)
 	defer prepared.closeFn()
 	runID := newCLIWorkflowRunID()
-	releaseExecution, err := beginWorkflowRunExecution(prepared.root, contextStorePath(prepared.root, prepared.res.Subagents), runID)
+	releaseExecution, err := beginWorkflowRunExecution(prepared.root, ContextStorePath(prepared.root, prepared.res.Subagents), runID)
 	if err != nil {
 		return err
 	}

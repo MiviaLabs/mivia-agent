@@ -5,6 +5,7 @@ import (
 	"io"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworktree"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
@@ -27,7 +28,7 @@ func createManagedWorktreeWithInstance(root, name, baseRef, branchPrefix string)
 	}
 	defer store.Close()
 	var instance contextstate.WorktreeInstance
-	worktree, err := CreateManagedWorktreeInStoreWithInstance(store, root, name, baseRef, branchPrefix, &instance)
+	worktree, err := cliworktree.CreateManagedWorktreeInStoreWithInstance(store, root, name, baseRef, branchPrefix, &instance)
 	return worktree, instance, err
 }
 
@@ -36,19 +37,19 @@ func createManagedWorktreeWithInstance(root, name, baseRef, branchPrefix string)
 // (worktree_dialog.go): both are thin wrappers over already-exported
 // worktree-lifecycle functions, duplicated here for cli-only tests.
 func recoverManagedWorktreeRemovalInfoInStore(store *storage.SQLite, root string, info contextstate.WorktreeInstanceInfo, branchPrefix string) error {
-	lock, err := LockWorktreeLifecycle(root, info.Instance.Worktree)
+	lock, err := cliworktree.LockWorktreeLifecycle(root, info.Instance.Worktree)
 	if err != nil {
 		return err
 	}
 	defer lock.Close()
-	return RecoverManagedWorktreeRemovalInfoInStoreLocked(store, root, info, branchPrefix, lock.File())
+	return cliworktree.RecoverManagedWorktreeRemovalInfoInStoreLocked(store, root, info, branchPrefix, lock.File())
 }
 
 func reactivateManagedWorktreeForSession(sess *chat.Session, root string, instance contextstate.WorktreeInstance) error {
 	if store, ok := sess.ContextStore().(*storage.SQLite); ok && store != nil {
-		return ReactivateManagedWorktreeInStore(store, root, instance)
+		return cliworktree.ReactivateManagedWorktreeInStore(store, root, instance)
 	}
-	return ReactivateManagedWorktree(root, instance)
+	return cliworktree.ReactivateManagedWorktree(root, instance)
 }
 
 // stubAgentCompleter is a package-local copy of internal/legacytui's helper

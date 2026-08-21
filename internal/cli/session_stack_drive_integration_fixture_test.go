@@ -500,7 +500,7 @@ func (it *stackDriveIT) startPlanRun(bound time.Duration) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	finish, err := beginWorkflowExecution(prepared.root, contextStorePath(prepared.root, prepared.res.Subagents), runID)
+	finish, err := beginWorkflowExecution(prepared.root, ContextStorePath(prepared.root, prepared.res.Subagents), runID)
 	if err != nil {
 		t.Fatal(err)
 	}

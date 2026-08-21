@@ -216,7 +216,7 @@ func openWorkflowResolutionContext(root, configPath, runID string) (func(), work
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
-	releaseExecution, err := acquireWorkflowExecutionLock(contextStorePath(work.Abs, res.Subagents), runID)
+	releaseExecution, err := acquireWorkflowExecutionLock(ContextStorePath(work.Abs, res.Subagents), runID)
 	if err != nil {
 		closeFn()
 		return nil, nil, nil, nil, err
@@ -246,7 +246,7 @@ func openWorkflowResolutionContextBounded(ctx context.Context, root, configPath,
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
-	releaseExecution, err := acquireWorkflowExecutionLockBounded(ctx, contextStorePath(work.Abs, res.Subagents), runID, lockWait)
+	releaseExecution, err := acquireWorkflowExecutionLockBounded(ctx, ContextStorePath(work.Abs, res.Subagents), runID, lockWait)
 	if err != nil {
 		closeFn()
 		return nil, nil, nil, nil, err

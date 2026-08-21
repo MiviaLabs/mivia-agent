@@ -3,7 +3,9 @@ package legacytui
 import (
 	"context"
 	"fmt"
+
 	"github.com/MiviaLabs/mivia-agent/internal/cli"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworktree"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
@@ -22,28 +24,28 @@ func (m *TUIModel) openWorktreeDialog() {
 		return
 	}
 	var recoveries []contextstate.WorktreeInstanceInfo
-	bindings := make(map[string]cli.WorktreeDialogBinding)
+	bindings := make(map[string]cliworktree.WorktreeDialogBinding)
 	store, closeStore, storeErr := m.worktreeLifecycleStore(wtDir)
 	lifecycleErr := storeErr
 	if storeErr == nil {
-		principal, _ := cli.WorktreeRoutePrincipal(wtDir)
+		principal, _ := cliworktree.WorktreeRoutePrincipal(wtDir)
 		{
 			creating, createErr := store.ListCreatingWorktreeInstances(context.Background(), principal)
 			if createErr != nil {
 				lifecycleErr = createErr
 			} else {
-				list = cli.AddWorktreeRecoveryRows(list, creating)
+				list = cliworktree.AddWorktreeRecoveryRows(list, creating)
 				recoveries = append(recoveries, creating...)
 			}
 			deleting, deleteErr := store.ListDeletingWorktreeInstances(context.Background(), principal)
 			if deleteErr != nil {
 				lifecycleErr = deleteErr
 			} else {
-				list = cli.AddWorktreeRecoveryRows(list, deleting)
+				list = cliworktree.AddWorktreeRecoveryRows(list, deleting)
 				recoveries = append(recoveries, deleting...)
 			}
 			if lifecycleErr == nil {
-				bindings = cli.SnapshotWorktreeDialogBindings(store, principal, list, recoveries)
+				bindings = cliworktree.SnapshotWorktreeDialogBindings(store, principal, list, recoveries)
 			}
 		}
 		closeStore()

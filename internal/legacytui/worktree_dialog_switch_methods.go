@@ -1,11 +1,11 @@
 package legacytui
 
 import (
-	"github.com/MiviaLabs/mivia-agent/internal/cli"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/MiviaLabs/mivia-agent/internal/cliworktree"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
@@ -32,7 +32,7 @@ func (m *TUIModel) switchToWorktree(wt vcs.WorktreeInfo) {
 		}
 		instance = binding.Instance
 	}
-	if info, err := cli.StatWorktreeSwitchPath(wt.Path); err != nil {
+	if info, err := cliworktree.StatWorktreeSwitchPath(wt.Path); err != nil {
 		m.worktreeDlg.setNotice("switch failed: "+err.Error(), true)
 		return
 	} else if !info.IsDir() {
@@ -63,17 +63,17 @@ func (m *TUIModel) workspaceSwitchBusy() bool {
 
 func (m *TUIModel) restartInWorkspace(dir string) {
 	if !filepath.IsAbs(dir) {
-		cwd, err := cli.GetwdWorktreeSwitch()
+		cwd, err := cliworktree.GetwdWorktreeSwitch()
 		if err != nil {
 			m.worktreeDlg.setNotice("switch failed: "+err.Error(), true)
 			return
 		}
-		if _, err := cli.StatWorktreeSwitchPath(cwd); err != nil {
+		if _, err := cliworktree.StatWorktreeSwitchPath(cwd); err != nil {
 			m.worktreeDlg.setNotice("switch failed: "+err.Error(), true)
 			return
 		}
 	}
-	abs, err := cli.AbsWorktreeSwitchPath(dir)
+	abs, err := cliworktree.AbsWorktreeSwitchPath(dir)
 	if err != nil {
 		m.worktreeDlg.setNotice("switch failed: "+err.Error(), true)
 		return

@@ -5,11 +5,13 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"github.com/MiviaLabs/mivia-agent/internal/cli"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/MiviaLabs/mivia-agent/internal/cli"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworktree"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
@@ -40,17 +42,17 @@ func deleteWorktreeStorageRows(t *testing.T, storePath, name string) {
 func TestWorktreeCommandRemoveOrphanWithoutMarker(t *testing.T) {
 	repoRoot := newWorktreeCommandRepo(t)
 	writeWorktreeStoreConfig(t, repoRoot, "repository.db")
-	worktree, err := cli.CreateManagedWorktree(repoRoot, "orphan-nomarker", "HEAD", "mivia/")
+	worktree, err := cliworktree.CreateManagedWorktree(repoRoot, "orphan-nomarker", "HEAD", "mivia/")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(cli.WorktreeMarkerPath(worktree.Path)); err != nil {
+	if err := os.Remove(cliworktree.WorktreeMarkerPath(worktree.Path)); err != nil {
 		t.Fatal(err)
 	}
 	deleteWorktreeStorageRows(t, filepath.Join(repoRoot, "repository.db"), worktree.Name)
 
 	var output bytes.Buffer
-	if err := cli.RunWorktreeWithIO([]string{"remove", worktree.Name, "--workspace", repoRoot}, &output); err != nil {
+	if err := cliworktree.RunWorktreeWithIO([]string{"remove", worktree.Name, "--workspace", repoRoot}, &output); err != nil {
 		t.Fatalf("remove orphan without marker: %v", err)
 	}
 	if output.String() != "removed worktree \"orphan-nomarker\"\n" {
@@ -71,17 +73,17 @@ func TestWorktreeCommandRemoveOrphanWithoutMarker(t *testing.T) {
 func TestWorktreeCommandRemoveOrphanWithMarkerNoStorage(t *testing.T) {
 	repoRoot := newWorktreeCommandRepo(t)
 	writeWorktreeStoreConfig(t, repoRoot, "repository.db")
-	worktree, err := cli.CreateManagedWorktree(repoRoot, "orphan-marker", "HEAD", "mivia/")
+	worktree, err := cliworktree.CreateManagedWorktree(repoRoot, "orphan-marker", "HEAD", "mivia/")
 	if err != nil {
 		t.Fatal(err)
 	}
 	deleteWorktreeStorageRows(t, filepath.Join(repoRoot, "repository.db"), worktree.Name)
-	if _, err := cli.ReadWorktreeMarker(worktree.Path); err != nil {
+	if _, err := cliworktree.ReadWorktreeMarker(worktree.Path); err != nil {
 		t.Fatalf("marker must survive: %v", err)
 	}
 
 	var output bytes.Buffer
-	if err := cli.RunWorktreeWithIO([]string{"remove", worktree.Name, "--workspace", repoRoot}, &output); err != nil {
+	if err := cliworktree.RunWorktreeWithIO([]string{"remove", worktree.Name, "--workspace", repoRoot}, &output); err != nil {
 		t.Fatalf("remove orphan with marker: %v", err)
 	}
 	if output.String() != "removed worktree \"orphan-marker\"\n" {
@@ -103,7 +105,7 @@ func TestWorktreeCommandRemoveOrphanWithMarkerNoStorage(t *testing.T) {
 func TestWorktreeCommandRemoveGhostCleansStorage(t *testing.T) {
 	repoRoot := newWorktreeCommandRepo(t)
 	writeWorktreeStoreConfig(t, repoRoot, "repository.db")
-	worktree, err := cli.CreateManagedWorktree(repoRoot, "ghost-route", "HEAD", "mivia/")
+	worktree, err := cliworktree.CreateManagedWorktree(repoRoot, "ghost-route", "HEAD", "mivia/")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +119,7 @@ func TestWorktreeCommandRemoveGhostCleansStorage(t *testing.T) {
 	}
 
 	var output bytes.Buffer
-	if err := cli.RunWorktreeWithIO([]string{"remove", worktree.Name, "--workspace", repoRoot}, &output); err != nil {
+	if err := cliworktree.RunWorktreeWithIO([]string{"remove", worktree.Name, "--workspace", repoRoot}, &output); err != nil {
 		t.Fatalf("remove ghost: %v", err)
 	}
 	if output.String() != "removed worktree \"ghost-route\"\n" {
@@ -128,7 +130,7 @@ func TestWorktreeCommandRemoveGhostCleansStorage(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := cli.WorktreeRoutePrincipal(repoRoot)
+	principal, err := cliworktree.WorktreeRoutePrincipal(repoRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,16 +144,16 @@ func TestWorktreeCommandRemoveGhostCleansStorage(t *testing.T) {
 func TestWorktreeCommandRemoveMalformedMarkerFallsBack(t *testing.T) {
 	repoRoot := newWorktreeCommandRepo(t)
 	writeWorktreeStoreConfig(t, repoRoot, "repository.db")
-	worktree, err := cli.CreateManagedWorktree(repoRoot, "malformed-live", "HEAD", "mivia/")
+	worktree, err := cliworktree.CreateManagedWorktree(repoRoot, "malformed-live", "HEAD", "mivia/")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(cli.WorktreeMarkerPath(worktree.Path), []byte("{bad"), 0o600); err != nil {
+	if err := os.WriteFile(cliworktree.WorktreeMarkerPath(worktree.Path), []byte("{bad"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
 	var output bytes.Buffer
-	if err := cli.RunWorktreeWithIO([]string{"remove", worktree.Name, "--workspace", repoRoot}, &output); err != nil {
+	if err := cliworktree.RunWorktreeWithIO([]string{"remove", worktree.Name, "--workspace", repoRoot}, &output); err != nil {
 		t.Fatalf("remove malformed-marker worktree: %v", err)
 	}
 	if output.String() != "removed worktree \"malformed-live\"\n" {
@@ -166,7 +168,7 @@ func TestWorktreeCommandRemoveMalformedMarkerFallsBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := cli.WorktreeRoutePrincipal(repoRoot)
+	principal, err := cliworktree.WorktreeRoutePrincipal(repoRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +183,7 @@ func TestWorktreeCommandRemoveMalformedMarkerFallsBack(t *testing.T) {
 func TestWorktreeCommandRemoveUnknownNameStillFails(t *testing.T) {
 	repoRoot := newWorktreeCommandRepo(t)
 	writeWorktreeStoreConfig(t, repoRoot, "repository.db")
-	err := cli.RunWorktreeWithIO([]string{"remove", "never-existed", "--workspace", repoRoot}, &bytes.Buffer{})
+	err := cliworktree.RunWorktreeWithIO([]string{"remove", "never-existed", "--workspace", repoRoot}, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("remove unknown name error = %v, want not found", err)
 	}
@@ -193,7 +195,7 @@ func TestWorktreeCommandRemoveUnknownNameStillFails(t *testing.T) {
 func TestWorktreeCommandRemoveGhostWithLegacyRouteReportsRemoved(t *testing.T) {
 	repoRoot := newWorktreeCommandRepo(t)
 	writeWorktreeStoreConfig(t, repoRoot, "repository.db")
-	worktree, err := cli.CreateManagedWorktree(repoRoot, "legacy-ghost", "HEAD", "mivia/")
+	worktree, err := cliworktree.CreateManagedWorktree(repoRoot, "legacy-ghost", "HEAD", "mivia/")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +206,7 @@ func TestWorktreeCommandRemoveGhostWithLegacyRouteReportsRemoved(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal, err := cli.WorktreeRoutePrincipal(repoRoot)
+	principal, err := cliworktree.WorktreeRoutePrincipal(repoRoot)
 	if err != nil {
 		store.Close()
 		t.Fatal(err)
@@ -237,7 +239,7 @@ func TestWorktreeCommandRemoveGhostWithLegacyRouteReportsRemoved(t *testing.T) {
 	}
 
 	var output bytes.Buffer
-	if err := cli.RunWorktreeWithIO([]string{"remove", worktree.Name, "--workspace", repoRoot}, &output); err != nil {
+	if err := cliworktree.RunWorktreeWithIO([]string{"remove", worktree.Name, "--workspace", repoRoot}, &output); err != nil {
 		t.Fatalf("remove legacy ghost: %v", err)
 	}
 	if output.String() != "removed worktree \"legacy-ghost\"\n" {
@@ -255,15 +257,15 @@ func TestWorktreeCommandRemoveAdoptedWorktreeCleansLegacyRoute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cli.RegisterWorktreeRoute(repoRoot, worktree); err != nil {
+	if err := cliworktree.RegisterWorktreeRoute(repoRoot, worktree); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cli.AdoptManagedWorktree(repoRoot, worktree); err != nil {
+	if _, err := cliworktree.AdoptManagedWorktree(repoRoot, worktree); err != nil {
 		t.Fatal(err)
 	}
 
 	var output bytes.Buffer
-	if err := cli.RunWorktreeWithIO([]string{"remove", worktree.Name, "--workspace", repoRoot}, &output); err != nil {
+	if err := cliworktree.RunWorktreeWithIO([]string{"remove", worktree.Name, "--workspace", repoRoot}, &output); err != nil {
 		t.Fatalf("remove adopted worktree: %v", err)
 	}
 	if output.String() != "removed worktree \"adopted-remove\"\n" {
@@ -285,16 +287,16 @@ func TestWorktreeCommandRemoveAdoptedWorktreeCleansLegacyRoute(t *testing.T) {
 
 // TestWorktreeDialogDeletesOrphanWorktree pins the fix where the worktree
 // dialog could not delete a worktree with no storage binding: the delete
-// confirm failed in cli.BeginManagedWorktreeRemoval and the directory stayed on
+// confirm failed in cliworktree.BeginManagedWorktreeRemoval and the directory stayed on
 // disk. The dialog must fall back to unmanaged removal.
 func TestWorktreeDialogDeletesOrphanWorktree(t *testing.T) {
 	repoRoot := newWorktreeCommandRepo(t)
 	writeWorktreeStoreConfig(t, repoRoot, "repository.db")
-	worktree, err := cli.CreateManagedWorktree(repoRoot, "dialog-orphan", "HEAD", "mivia/")
+	worktree, err := cliworktree.CreateManagedWorktree(repoRoot, "dialog-orphan", "HEAD", "mivia/")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(cli.WorktreeMarkerPath(worktree.Path)); err != nil {
+	if err := os.Remove(cliworktree.WorktreeMarkerPath(worktree.Path)); err != nil {
 		t.Fatal(err)
 	}
 	deleteWorktreeStorageRows(t, filepath.Join(repoRoot, "repository.db"), worktree.Name)

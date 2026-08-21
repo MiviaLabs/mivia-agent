@@ -6,9 +6,11 @@ import (
 	"encoding/base32"
 	"errors"
 	"fmt"
-	"github.com/MiviaLabs/mivia-agent/internal/cli"
 	"os"
 	"strings"
+
+	"github.com/MiviaLabs/mivia-agent/internal/cli"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworktree"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -29,8 +31,8 @@ const (
 
 type worktreeDialog struct {
 	worktrees            []vcs.WorktreeInfo
-	recovery             map[string]cli.WorktreeRecoveryRow
-	bindings             map[string]cli.WorktreeDialogBinding
+	recovery             map[string]cliworktree.WorktreeRecoveryRow
+	bindings             map[string]cliworktree.WorktreeDialogBinding
 	cursor               int
 	scroll               int
 	confirm              worktreeConfirm
@@ -41,7 +43,7 @@ type worktreeDialog struct {
 }
 
 func newWorktreeDialog(worktrees []vcs.WorktreeInfo) *worktreeDialog {
-	return &worktreeDialog{worktrees: append([]vcs.WorktreeInfo(nil), worktrees...), recovery: make(map[string]cli.WorktreeRecoveryRow), bindings: make(map[string]cli.WorktreeDialogBinding)}
+	return &worktreeDialog{worktrees: append([]vcs.WorktreeInfo(nil), worktrees...), recovery: make(map[string]cliworktree.WorktreeRecoveryRow), bindings: make(map[string]cliworktree.WorktreeDialogBinding)}
 }
 
 func (d *worktreeDialog) setNotice(msg string, isErr bool) {
@@ -176,7 +178,7 @@ func (d *worktreeDialog) rowLines(inner, visible int) []string {
 		}
 		metaText := wt.Branch
 		if recovery, ok := d.recovery[wt.Name]; ok {
-			metaText = cli.WorktreeRecoveryLabel(recovery.Info.State)
+			metaText = cliworktree.WorktreeRecoveryLabel(recovery.Info.State)
 		}
 		meta := TUIDimStyle.Render(metaText)
 		line := marker + name
@@ -288,9 +290,9 @@ func (m *TUIModel) applyWorktreeConfirm() {
 
 func finishManagedWorktreeRemovalForSession(sess *chat.Session, root string, instance contextstate.WorktreeInstance) error {
 	if store, ok := sess.ContextStore().(*storage.SQLite); ok && store != nil {
-		return cli.FinishManagedWorktreeRemovalInStore(store, root, instance)
+		return cliworktree.FinishManagedWorktreeRemovalInStore(store, root, instance)
 	}
-	return cli.FinishManagedWorktreeRemoval(root, instance)
+	return cliworktree.FinishManagedWorktreeRemoval(root, instance)
 }
 
 // applyWorktreeDeleteConfirm deletes the selected worktree row. The caller
@@ -309,11 +311,11 @@ func (m *TUIModel) applyWorktreeDeleteConfirm(d *worktreeDialog) {
 	if m.handleWorktreeDeleteRecovery(wtDir, wt, worktreeConfig.BranchPrefix) {
 		return
 	}
-	if cli.WorktreeContainsCurrentDir(wt.Path) {
+	if cliworktree.WorktreeContainsCurrentDir(wt.Path) {
 		d.setNotice("cannot delete the current worktree", true)
 		return
 	}
-	lock, lockErr := cli.LockWorktreeLifecycle(wtDir, wt.Name)
+	lock, lockErr := cliworktree.LockWorktreeLifecycle(wtDir, wt.Name)
 	if lockErr != nil {
 		d.setNotice("delete failed: "+lockErr.Error(), true)
 		return
@@ -339,10 +341,10 @@ func (m *TUIModel) applyWorktreeDeleteConfirm(d *worktreeDialog) {
 	}
 	requireExpected := hasBinding && !expected.Instance.IsZero()
 	instance, err := BeginManagedWorktreeRemovalForSessionExpected(m.session, wtDir, &wt, expected.Instance, requireExpected)
-	if errors.Is(err, cli.ErrUnmanagedWorktree) {
+	if errors.Is(err, cliworktree.ErrUnmanagedWorktree) {
 		// The worktree has no valid lifecycle binding (missing marker or no
 		// storage entry). Remove it directly so its HDD space is freed.
-		if err := cli.RemoveUnmanagedWorktree(wtDir, &wt, worktreeConfig.BranchPrefix, lock.File()); err != nil {
+		if err := cliworktree.RemoveUnmanagedWorktree(wtDir, &wt, worktreeConfig.BranchPrefix, lock.File()); err != nil {
 			d.setNotice("delete failed: "+err.Error(), true)
 		} else {
 			name := wt.Name
@@ -377,12 +379,12 @@ func (m *TUIModel) applyWorktreeDeleteConfirm(d *worktreeDialog) {
 // handleWorktreeDeleteRecovery resolves a recovery row during delete confirm.
 // It returns true when it handled the row and the caller must stop.
 func recoverManagedWorktreeRemovalInfoInStore(store *storage.SQLite, root string, info contextstate.WorktreeInstanceInfo, branchPrefix string) error {
-	lock, err := cli.LockWorktreeLifecycle(root, info.Instance.Worktree)
+	lock, err := cliworktree.LockWorktreeLifecycle(root, info.Instance.Worktree)
 	if err != nil {
 		return err
 	}
 	defer lock.Close()
-	return cli.RecoverManagedWorktreeRemovalInfoInStoreLocked(store, root, info, branchPrefix, lock.File())
+	return cliworktree.RecoverManagedWorktreeRemovalInfoInStoreLocked(store, root, info, branchPrefix, lock.File())
 }
 
 func (m *TUIModel) handleWorktreeDeleteRecovery(wtDir string, wt vcs.WorktreeInfo, branchPrefix string) bool {
@@ -455,7 +457,7 @@ func (m *TUIModel) applyWorktreeCreated(msg worktreeCreatedMsg) {
 		return
 	}
 	d.worktrees = append(d.worktrees, *msg.wt)
-	d.bindings[msg.wt.Name] = cli.WorktreeDialogBinding{Instance: msg.instance}
+	d.bindings[msg.wt.Name] = cliworktree.WorktreeDialogBinding{Instance: msg.instance}
 	d.cursor = len(d.worktrees) - 1
 	d.setNotice(fmt.Sprintf("created %q at %s", msg.wt.Name, msg.wt.Path), false)
 	d.clampScroll()
@@ -477,13 +479,13 @@ type worktreeCreatedMsg struct {
 // BeginManagedWorktreeRemovalForSessionExpected is relocated to internal/cli
 // (pure business logic with no TUI dependency); aliased here so this
 // package's own call sites are unchanged.
-var BeginManagedWorktreeRemovalForSessionExpected = cli.BeginManagedWorktreeRemovalForSessionExpected
+var BeginManagedWorktreeRemovalForSessionExpected = cliworktree.BeginManagedWorktreeRemovalForSessionExpected
 
 func reactivateManagedWorktreeForSession(sess *chat.Session, root string, instance contextstate.WorktreeInstance) error {
 	if store, ok := sess.ContextStore().(*storage.SQLite); ok && store != nil {
-		return cli.ReactivateManagedWorktreeInStore(store, root, instance)
+		return cliworktree.ReactivateManagedWorktreeInStore(store, root, instance)
 	}
-	return cli.ReactivateManagedWorktree(root, instance)
+	return cliworktree.ReactivateManagedWorktree(root, instance)
 }
 
 func (m *TUIModel) createWorktreeFromDialog() tea.Cmd {

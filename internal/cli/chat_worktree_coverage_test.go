@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworktree"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
@@ -72,7 +73,7 @@ func TestChatWorktreeCoverageExpectedNameAndMarkerMismatch(t *testing.T) {
 	if err := bindManagedWorktreeSessionExpected(session, repo, worktree.Path, "", wrongID); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
 		t.Fatalf("wrong expected ID error = %v", err)
 	}
-	if err := os.Remove(worktreeMarkerPath(worktree.Path)); err != nil {
+	if err := os.Remove(cliworktree.WorktreeMarkerPath(worktree.Path)); err != nil {
 		t.Fatal(err)
 	}
 	if err := bindManagedWorktreeSessionExpected(session, repo, worktree.Path, "", instance); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
@@ -90,7 +91,7 @@ func TestChatWorktreeCoverageMissingMarkerLegacyAndMalformed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal, err := WorktreeRoutePrincipal(repo)
+	principal, err := cliworktree.WorktreeRoutePrincipal(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,10 +103,10 @@ func TestChatWorktreeCoverageMissingMarkerLegacyAndMalformed(t *testing.T) {
 	if err := bindManagedWorktreeSession(session, repo, worktree.Path, ""); err == nil || !strings.Contains(err.Error(), "adoption") {
 		t.Fatalf("legacy bind error = %v", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(worktreeMarkerPath(worktree.Path)), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(cliworktree.WorktreeMarkerPath(worktree.Path)), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(worktreeMarkerPath(worktree.Path), []byte("{"), 0o600); err != nil {
+	if err := os.WriteFile(cliworktree.WorktreeMarkerPath(worktree.Path), []byte("{"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := bindManagedWorktreeSession(session, repo, worktree.Path, ""); err == nil || !strings.Contains(err.Error(), "read worktree session marker") {

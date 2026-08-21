@@ -18,6 +18,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworktree"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
@@ -89,11 +90,6 @@ func SetupSessionContext(sess *chat.Session, root string, res *config.Resolved) 
 // OpenContextStorePath is openContextStorePath, exported for internal/legacytui.
 func OpenContextStorePath(path string) (*storage.SQLite, error) {
 	return openContextStorePath(path)
-}
-
-// ContextStorePath is contextStorePath, exported for internal/legacytui.
-func ContextStorePath(root string, cfg config.SubagentConfig) string {
-	return contextStorePath(root, cfg)
 }
 
 // ContextWorkspaceID is contextWorkspaceID, exported for internal/legacytui.
@@ -218,12 +214,12 @@ func RenderReplHelpInline() string {
 
 // RegisterManagedWorktreeInStore is registerManagedWorktreeInStore, exported for internal/legacytui.
 func RegisterManagedWorktreeInStore(store *storage.SQLite, root string, wt *vcs.WorktreeInfo) (contextstate.WorktreeInstance, error) {
-	return registerManagedWorktreeInStore(store, root, wt)
+	return cliworktree.RegisterManagedWorktreeInStore(store, root, wt)
 }
 
-// RecoverManagedWorktreeRemoval is recoverManagedWorktreeRemoval, exported for internal/legacytui.
+// RecoverManagedWorktreeRemoval is cliworktree.RecoverManagedWorktreeRemoval, exported for internal/legacytui.
 func RecoverManagedWorktreeRemoval(root, name, branchPrefix string) (bool, error) {
-	return recoverManagedWorktreeRemoval(root, name, branchPrefix)
+	return cliworktree.RecoverManagedWorktreeRemoval(root, name, branchPrefix)
 }
 
 // OpenWorkflowStore is openWorkflowStore, exported for internal/legacytui.
@@ -298,32 +294,32 @@ func SendLineMode(sess *chat.Session, line string, sigCh <-chan os.Signal, jsonM
 
 // CreateManagedWorktree is createManagedWorktree, exported for internal/legacytui.
 func CreateManagedWorktree(root, name, baseRef, branchPrefix string) (*vcs.WorktreeInfo, error) {
-	return createManagedWorktree(root, name, baseRef, branchPrefix)
+	return cliworktree.CreateManagedWorktree(root, name, baseRef, branchPrefix)
 }
 
-// BeginManagedWorktreeRemoval is beginManagedWorktreeRemoval, exported for internal/legacytui.
+// BeginManagedWorktreeRemoval is cliworktree.BeginManagedWorktreeRemoval, exported for internal/legacytui.
 func BeginManagedWorktreeRemoval(root string, wt *vcs.WorktreeInfo) (contextstate.WorktreeInstance, error) {
-	return beginManagedWorktreeRemoval(root, wt)
+	return cliworktree.BeginManagedWorktreeRemoval(root, wt)
 }
 
-// WorktreeMarkerPath is worktreeMarkerPath, exported for internal/legacytui.
+// WorktreeMarkerPath is cliworktree.WorktreeMarkerPath, exported for internal/legacytui.
 func WorktreeMarkerPath(root string) string {
-	return worktreeMarkerPath(root)
+	return cliworktree.WorktreeMarkerPath(root)
 }
 
-// WriteWorktreeMarker is writeWorktreeMarker, exported for internal/legacytui.
+// WriteWorktreeMarker is cliworktree.WriteWorktreeMarker, exported for internal/legacytui.
 func WriteWorktreeMarker(root string, instance contextstate.WorktreeInstance) error {
-	return writeWorktreeMarker(root, instance)
+	return cliworktree.WriteWorktreeMarker(root, instance)
 }
 
-// CreateManagedWorktreeInStore is createManagedWorktreeInStore, exported for internal/legacytui.
+// CreateManagedWorktreeInStore is cliworktree.CreateManagedWorktreeInStore, exported for internal/legacytui.
 func CreateManagedWorktreeInStore(store *storage.SQLite, root, name, baseRef, branchPrefix string) (*vcs.WorktreeInfo, error) {
-	return createManagedWorktreeInStore(store, root, name, baseRef, branchPrefix)
+	return cliworktree.CreateManagedWorktreeInStore(store, root, name, baseRef, branchPrefix)
 }
 
-// BeginManagedWorktreeRemovalInStore is beginManagedWorktreeRemovalInStore, exported for internal/legacytui.
+// BeginManagedWorktreeRemovalInStore is cliworktree.BeginManagedWorktreeRemovalInStore, exported for internal/legacytui.
 func BeginManagedWorktreeRemovalInStore(store *storage.SQLite, root string, wt *vcs.WorktreeInfo) (contextstate.WorktreeInstance, error) {
-	return beginManagedWorktreeRemovalInStore(store, root, wt)
+	return cliworktree.BeginManagedWorktreeRemovalInStore(store, root, wt)
 }
 
 // SetupChatSessionContext is setupChatSessionContext, exported for internal/legacytui.
@@ -336,9 +332,9 @@ func SetupRepositorySessionContext(sess *chat.Session, repositoryRoot, storePath
 	return setupRepositorySessionContext(sess, repositoryRoot, storePath, res)
 }
 
-// RegisterWorktreeRoute is registerWorktreeRoute, exported for internal/legacytui.
+// RegisterWorktreeRoute is cliworktree.RegisterWorktreeRoute, exported for internal/legacytui.
 func RegisterWorktreeRoute(root string, wt *vcs.WorktreeInfo) error {
-	return registerWorktreeRoute(root, wt)
+	return cliworktree.RegisterWorktreeRoute(root, wt)
 }
 
 // EnableSessionContext is enableSessionContext, exported for internal/legacytui.
@@ -441,21 +437,21 @@ func LoadAgentDefinitions(workspaceRoot, agentFlag string, skillReg *skills.Regi
 
 // SnapshotWorktreeDialogBinding is snapshotWorktreeDialogBinding, exported
 // for internal/legacytui.
-func SnapshotWorktreeDialogBinding(store *storage.SQLite, principal contextstate.Principal, worktree vcs.WorktreeInfo) WorktreeDialogBinding {
-	return snapshotWorktreeDialogBinding(store, principal, worktree)
+func SnapshotWorktreeDialogBinding(store *storage.SQLite, principal contextstate.Principal, worktree vcs.WorktreeInfo) cliworktree.WorktreeDialogBinding {
+	return cliworktree.SnapshotWorktreeDialogBinding(store, principal, worktree)
 }
 
-// WriteWorktreeList is writeWorktreeList, exported for internal/legacytui.
+// WriteWorktreeList is cliworktree.WriteWorktreeList, exported for internal/legacytui.
 func WriteWorktreeList(stdout io.Writer, worktrees []vcs.WorktreeInfo, deleting []contextstate.WorktreeInstanceInfo) {
-	writeWorktreeList(stdout, worktrees, deleting)
+	cliworktree.WriteWorktreeList(stdout, worktrees, deleting)
 }
 
-// RunWorktreeWithIO is runWorktreeWithIO, exported for internal/legacytui.
+// RunWorktreeWithIO is cliworktree.RunWorktreeWithIO, exported for internal/legacytui.
 func RunWorktreeWithIO(args []string, stdout io.Writer) error {
-	return runWorktreeWithIO(args, stdout)
+	return cliworktree.RunWorktreeWithIO(args, stdout)
 }
 
-// AdoptManagedWorktree is adoptManagedWorktree, exported for internal/legacytui.
+// AdoptManagedWorktree is cliworktree.AdoptManagedWorktree, exported for internal/legacytui.
 func AdoptManagedWorktree(root string, wt *vcs.WorktreeInfo) (contextstate.WorktreeInstance, error) {
-	return adoptManagedWorktree(root, wt)
+	return cliworktree.AdoptManagedWorktree(root, wt)
 }

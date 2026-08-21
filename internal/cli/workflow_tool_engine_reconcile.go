@@ -77,7 +77,7 @@ func (e *sessionWorkflowEngine) reconcileParkedRuns(ctx context.Context, quiet b
 		return
 	}
 	log.Printf("workflow: session recovery: %d parked run(s)", len(runs))
-	storePath := contextStorePath(work.Abs, res.Subagents)
+	storePath := ContextStorePath(work.Abs, res.Subagents)
 	// Fan out every parked run in parallel. Each run owns its execution file
 	// lock and run claim, so concurrent delivery/resume of different runs
 	// cannot conflict: those per-run fences are the only serialization points

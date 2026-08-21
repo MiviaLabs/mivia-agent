@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworktree"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
@@ -158,7 +159,7 @@ func parseChatInvocation(args []string) (chatInvocation, error) {
 
 var runConfiguredChatOnceImpl = runConfiguredChatOnce
 var loadConfigForRestart = config.Load
-var classifyMissingMarkerForBind = ClassifyMissingWorktreeMarker
+var classifyMissingMarkerForBind = cliworktree.ClassifyMissingWorktreeMarker
 
 func runConfiguredChat(invocation chatInvocation, res *config.Resolved) error {
 	configPath := invocation.configPath
@@ -241,7 +242,7 @@ func validateWorkspaceRestart(restart workspaceRestartError, invocation chatInvo
 		return err
 	}
 	defer store.Close()
-	return ValidateExpectedWorktreeInstanceInStore(store, root, dir, worktreeInstance)
+	return cliworktree.ValidateExpectedWorktreeInstanceInStore(store, root, dir, worktreeInstance)
 }
 
 // prepareChatStartup runs the pre-session startup policy: the API key gate,

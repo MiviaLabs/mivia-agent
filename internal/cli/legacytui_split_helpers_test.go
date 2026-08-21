@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworktree"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
@@ -233,7 +234,7 @@ func assertManagedWorktreeActive(t *testing.T, repoRoot string, worktree *vcs.Wo
 	if err != nil || resolved == nil {
 		t.Fatalf("replacement worktree = %+v, %v", resolved, err)
 	}
-	instance, err := ReadWorktreeMarker(worktree.Path)
+	instance, err := cliworktree.ReadWorktreeMarker(worktree.Path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +243,7 @@ func assertManagedWorktreeActive(t *testing.T, repoRoot string, worktree *vcs.Wo
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := WorktreeRoutePrincipal(repoRoot)
+	principal, err := cliworktree.WorktreeRoutePrincipal(repoRoot)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/MiviaLabs/mivia-agent/internal/cliworktree"
 	"github.com/MiviaLabs/mivia-agent/internal/version"
 )
 
@@ -45,7 +46,7 @@ func Execute(args []string) error {
 	case "stack":
 		return runStack(args[1:])
 	case "worktree":
-		return runWorktree(args[1:])
+		return cliworktree.RunWorktree(args[1:])
 	case "completion":
 		return runCompletion(args[1:])
 	case "setup":
