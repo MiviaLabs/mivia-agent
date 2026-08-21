@@ -1,0 +1,396 @@
+{
+  "description": "Internal import edges: an allowed-edge baseline, a hard edge-count cap, and a deny-list that overrides the baseline. Interim cap (commit 1 of 2, SDK convergence Stage 0 Item 3): measured 281 whole-module edges after the workflows collapse (Item 2) and the storage->contextmgr cut (Item 1), plus a documented +100 headroom margin for Item 4's internal/cli split (edgeCap 381). The split turns one 48-out-degree package into roughly 7 (composition root, legacytui, the cli router, 4-5 domain command packages); the edge-counting unit is package-pairs, not distinct targets, so redistributing one package's 48 targets across several new source packages can multiply the pair count even though the total dependency set does not grow. Known debt, not a target, same as go-structure.json's baseline: the final cap lands as the last commit of Item 4, after the split's real edge count is known, and regenerates this allow map from the final tree.",
+  "edgeCap": 381,
+  "deny": [
+    {
+      "from": "internal/storage",
+      "to": "internal/contextmgr",
+      "reason": "persistence package importing a domain policy package; the shared usage types moved to internal/usage (see internal/storage -> internal/usage)"
+    }
+  ],
+  "allow": {
+    "cmd/mivia": [
+      "internal/cli",
+      "internal/version"
+    ],
+    "cmd/mivia-ui": [
+      "internal/ui/app",
+      "internal/ui/component/composer",
+      "internal/ui/jsonout",
+      "internal/ui/screen/conversation",
+      "internal/ui/stream",
+      "internal/ui/theme",
+      "internal/uikit/config",
+      "internal/uikit/demoharness",
+      "internal/uikit/termprobe",
+      "internal/uikit/uievent"
+    ],
+    "cmd/mivia-ui-demo": [
+      "internal/ui/jsonout",
+      "internal/ui/stream",
+      "internal/ui/theme"
+    ],
+    "cmd/wfprobe": [
+      "internal/storage",
+      "internal/workflows/ledger"
+    ],
+    "internal/agent": [
+      "internal/contentref",
+      "internal/contextmgr",
+      "internal/contextstate",
+      "internal/events",
+      "internal/provider",
+      "internal/reasoning",
+      "internal/redact",
+      "internal/remainder",
+      "internal/runtime",
+      "internal/tools",
+      "internal/usage"
+    ],
+    "internal/agentmsg": [
+      "internal/contentref"
+    ],
+    "internal/agents": [
+      "internal/config",
+      "internal/providerregistry",
+      "internal/skills",
+      "internal/subagents",
+      "internal/tools"
+    ],
+    "internal/chat": [
+      "internal/agent",
+      "internal/config",
+      "internal/contextmgr",
+      "internal/contextstate",
+      "internal/events",
+      "internal/provider",
+      "internal/reasoning",
+      "internal/redact",
+      "internal/remainder",
+      "internal/runtime",
+      "internal/skills",
+      "internal/tools",
+      "internal/usage",
+      "internal/vcs"
+    ],
+    "internal/cli": [
+      "internal/agent",
+      "internal/agentmsg",
+      "internal/agents",
+      "internal/chat",
+      "internal/config",
+      "internal/contentref",
+      "internal/contextmgr",
+      "internal/contextstate",
+      "internal/coordinator",
+      "internal/envfile",
+      "internal/events",
+      "internal/hooks",
+      "internal/hub",
+      "internal/jschema",
+      "internal/ledger",
+      "internal/mcp",
+      "internal/memory",
+      "internal/miviaauth",
+      "internal/prompts",
+      "internal/provider",
+      "internal/providerregistry",
+      "internal/reasoning",
+      "internal/redact",
+      "internal/remainder",
+      "internal/runtime",
+      "internal/secretpath",
+      "internal/skills",
+      "internal/storage",
+      "internal/subagents",
+      "internal/textutil",
+      "internal/tools",
+      "internal/vcs",
+      "internal/version",
+      "internal/workflows/controller",
+      "internal/workflows/definition",
+      "internal/workflows/delivery",
+      "internal/workflows/ledger",
+      "internal/workflows/localengine",
+      "internal/workspace"
+    ],
+    "internal/config": [
+      "internal/envfile",
+      "internal/memory",
+      "internal/providerregistry",
+      "internal/reasoning",
+      "internal/redact",
+      "internal/secretpath",
+      "internal/workspace"
+    ],
+    "internal/contextmgr": [
+      "internal/contextstate",
+      "internal/provider",
+      "internal/redact",
+      "internal/remainder",
+      "internal/usage"
+    ],
+    "internal/coordinator": [
+      "internal/agentmsg",
+      "internal/config",
+      "internal/contentref",
+      "internal/ledger",
+      "internal/provider",
+      "internal/redact",
+      "internal/runtime",
+      "internal/subagents"
+    ],
+    "internal/events": [
+      "internal/contextstate"
+    ],
+    "internal/hub": [
+      "internal/chat",
+      "internal/contextstate",
+      "internal/events"
+    ],
+    "internal/jschema": [
+      "internal/textutil"
+    ],
+    "internal/ledger": [
+      "internal/contentref",
+      "internal/runtime",
+      "internal/storage"
+    ],
+    "internal/mcp": [
+      "internal/config",
+      "internal/redact",
+      "internal/tools"
+    ],
+    "internal/miviaauth": [
+      "internal/config",
+      "internal/envfile"
+    ],
+    "internal/provider": [
+      "internal/config",
+      "internal/providerregistry",
+      "internal/reasoning"
+    ],
+    "internal/remainder": [
+      "internal/contentref"
+    ],
+    "internal/runtime": [
+      "internal/redact",
+      "internal/remainder",
+      "internal/tools"
+    ],
+    "internal/skills": [
+      "internal/jschema",
+      "internal/tools"
+    ],
+    "internal/storage": [
+      "internal/contextstate",
+      "internal/usage",
+      "internal/workspace"
+    ],
+    "internal/subagents": [
+      "internal/agent",
+      "internal/chat",
+      "internal/contextmgr",
+      "internal/jschema",
+      "internal/prompts",
+      "internal/provider",
+      "internal/reasoning",
+      "internal/redact",
+      "internal/remainder",
+      "internal/runtime",
+      "internal/textutil",
+      "internal/tools"
+    ],
+    "internal/tools": [
+      "internal/codeintel",
+      "internal/diff",
+      "internal/memory",
+      "internal/redact",
+      "internal/secretpath",
+      "internal/textutil",
+      "internal/workspace"
+    ],
+    "internal/ui/app": [
+      "internal/ui/theme"
+    ],
+    "internal/ui/component/approval": [
+      "internal/ui/render",
+      "internal/ui/theme",
+      "internal/uikit/config",
+      "internal/uikit/ports",
+      "internal/uikit/uievent"
+    ],
+    "internal/ui/component/composer": [
+      "internal/ui/render",
+      "internal/ui/theme",
+      "internal/uikit/config"
+    ],
+    "internal/ui/component/field": [
+      "internal/ui/render",
+      "internal/ui/theme"
+    ],
+    "internal/ui/component/mark": [
+      "internal/ui/render",
+      "internal/ui/theme",
+      "internal/uikit/config"
+    ],
+    "internal/ui/component/picker": [
+      "internal/ui/render",
+      "internal/ui/theme"
+    ],
+    "internal/ui/component/statusline": [
+      "internal/ui/component/mark",
+      "internal/ui/render",
+      "internal/ui/theme"
+    ],
+    "internal/ui/component/topbar": [
+      "internal/ui/component/mark",
+      "internal/ui/render",
+      "internal/ui/theme",
+      "internal/uikit/ports"
+    ],
+    "internal/ui/component/transcript": [
+      "internal/ui/render",
+      "internal/ui/theme",
+      "internal/uikit/config",
+      "internal/uikit/uievent"
+    ],
+    "internal/ui/component/welcome": [
+      "internal/ui/render",
+      "internal/ui/theme"
+    ],
+    "internal/ui/jsonout": [
+      "internal/uikit/uievent"
+    ],
+    "internal/ui/render": [
+      "internal/ui/theme",
+      "internal/uikit/config",
+      "internal/uikit/keymap",
+      "internal/uikit/uievent"
+    ],
+    "internal/ui/screen/conversation": [
+      "internal/ui/app",
+      "internal/ui/component/approval",
+      "internal/ui/component/composer",
+      "internal/ui/component/mark",
+      "internal/ui/component/picker",
+      "internal/ui/component/statusline",
+      "internal/ui/component/topbar",
+      "internal/ui/component/transcript",
+      "internal/ui/component/welcome",
+      "internal/ui/render",
+      "internal/ui/screen/settings",
+      "internal/ui/screen/themepicker",
+      "internal/ui/screen/transcript",
+      "internal/ui/theme",
+      "internal/uikit/config",
+      "internal/uikit/intent",
+      "internal/uikit/keymap",
+      "internal/uikit/ports",
+      "internal/uikit/uievent"
+    ],
+    "internal/ui/screen/settings": [
+      "internal/ui/app",
+      "internal/ui/component/field",
+      "internal/ui/component/topbar",
+      "internal/ui/render",
+      "internal/ui/theme",
+      "internal/uikit/config",
+      "internal/uikit/keymap",
+      "internal/uikit/ports"
+    ],
+    "internal/ui/screen/themepicker": [
+      "internal/ui/app",
+      "internal/ui/component/picker",
+      "internal/ui/render",
+      "internal/ui/theme",
+      "internal/uikit/uievent"
+    ],
+    "internal/ui/screen/transcript": [
+      "internal/ui/app",
+      "internal/ui/component/transcript",
+      "internal/ui/render",
+      "internal/ui/theme",
+      "internal/uikit/config",
+      "internal/uikit/keymap",
+      "internal/uikit/uievent"
+    ],
+    "internal/ui/stream": [
+      "internal/uikit/uievent"
+    ],
+    "internal/uikit/demoharness": [
+      "internal/uikit/config",
+      "internal/uikit/intent",
+      "internal/uikit/ports",
+      "internal/uikit/uievent"
+    ],
+    "internal/uikit/ports": [
+      "internal/uikit/intent",
+      "internal/uikit/uievent"
+    ],
+    "internal/uikit/replay": [
+      "internal/uikit/intent",
+      "internal/uikit/ports",
+      "internal/uikit/uievent"
+    ],
+    "internal/vcs": [
+      "internal/workspace"
+    ],
+    "internal/workflows/controller": [
+      "internal/agents",
+      "internal/coordinator",
+      "internal/jschema",
+      "internal/ledger",
+      "internal/provider",
+      "internal/redact",
+      "internal/runtime",
+      "internal/secretpath",
+      "internal/subagents",
+      "internal/textutil",
+      "internal/workflows/definition",
+      "internal/workflows/delivery",
+      "internal/workflows/ledger"
+    ],
+    "internal/workflows/definition": [
+      "internal/agents",
+      "internal/jschema",
+      "internal/redact",
+      "internal/secretpath",
+      "internal/skills",
+      "internal/textutil",
+      "internal/workspace"
+    ],
+    "internal/workflows/delivery": [
+      "internal/redact",
+      "internal/textutil",
+      "internal/workflows/definition",
+      "internal/workflows/ledger",
+      "internal/workspace"
+    ],
+    "internal/workflows/ledger": [
+      "internal/coordinator",
+      "internal/jschema",
+      "internal/ledger",
+      "internal/redact",
+      "internal/runtime",
+      "internal/storage",
+      "internal/subagents",
+      "internal/textutil",
+      "internal/workspace"
+    ],
+    "internal/workflows/localengine": [
+      "internal/agents",
+      "internal/coordinator",
+      "internal/events",
+      "internal/provider",
+      "internal/storage",
+      "internal/textutil",
+      "internal/vcs",
+      "internal/workflows/controller",
+      "internal/workflows/definition",
+      "internal/workflows/delivery",
+      "internal/workflows/ledger",
+      "internal/workspace"
+    ]
+  }
+}
