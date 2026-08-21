@@ -10,8 +10,8 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/jschema"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/template"
 )
 
 // AgentStepRunner executes one workflow agent step through the coordinator.
@@ -257,7 +257,7 @@ func (r *CoordinatorRunner) RunStep(ctx context.Context, spec AgentStepRequest) 
 		prompt = spec.Prompt
 	} else {
 		var err error
-		prompt, err = template.Render(spec.Template, spec.Inputs, spec.Evidence, spec.MaxBindingBytes, spec.MaxContextBytes)
+		prompt, err = delivery.Render(spec.Template, spec.Inputs, spec.Evidence, spec.MaxBindingBytes, spec.MaxContextBytes)
 		if err != nil {
 			return AgentStepResult{}, err
 		}

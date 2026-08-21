@@ -10,34 +10,34 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/stacking"
 )
 
 // Stack task statuses, chunk-plan parsing, stable admission keys, and the
-// topological admission order live in the shared stacking package; these
+// topological admission order live in the shared delivery package; these
 // cli-local names are aliases and thin wrappers so the driver keeps its
-// existing call sites (see internal/workflows/stacking).
+// existing call sites (see internal/workflows/delivery).
 const (
-	stackStatusPlanned     = stacking.StatusPlanned
-	stackStatusQueued      = stacking.StatusQueued
-	stackStatusBlocked     = stacking.StatusBlocked
-	stackStatusRunning     = stacking.StatusRunning
-	stackStatusImplemented = stacking.StatusImplemented
-	stackStatusReviewed    = stacking.StatusReviewed
-	stackStatusPublished   = stacking.StatusPublished
-	stackStatusMerged      = stacking.StatusMerged
-	stackStatusReopened    = stacking.StatusReopened
-	stackStatusFailed      = stacking.StatusFailed
-	stackStatusSkipped     = stacking.StatusSkipped
-	stackStatusCanceled    = stacking.StatusCanceled
+	stackStatusPlanned     = delivery.StatusPlanned
+	stackStatusQueued      = delivery.StatusQueued
+	stackStatusBlocked     = delivery.StatusBlocked
+	stackStatusRunning     = delivery.StatusRunning
+	stackStatusImplemented = delivery.StatusImplemented
+	stackStatusReviewed    = delivery.StatusReviewed
+	stackStatusPublished   = delivery.StatusPublished
+	stackStatusMerged      = delivery.StatusMerged
+	stackStatusReopened    = delivery.StatusReopened
+	stackStatusFailed      = delivery.StatusFailed
+	stackStatusSkipped     = delivery.StatusSkipped
+	stackStatusCanceled    = delivery.StatusCanceled
 )
 
 // stackStatusIsTerminal reports whether a chunk task status is terminal: no
 // drive pass may re-admit it, re-open it, or re-mark it (see
-// stacking.TerminalStatuses).
+// delivery.TerminalStatuses).
 func stackStatusIsTerminal(status string) bool {
-	return stacking.StatusIsTerminal(status)
+	return delivery.StatusIsTerminal(status)
 }
 
 // stackAdmissiblePreStatuses are the statuses nextAdmissionWave selects a
@@ -45,46 +45,46 @@ func stackStatusIsTerminal(status string) bool {
 // list as its compare-and-swap precondition, so the two never drift apart:
 // a status nextAdmissionWave would offer for admission is always one
 // driveChunk's CAS accepts, and vice versa.
-var stackAdmissiblePreStatuses = stacking.AdmissiblePreStatuses
+var stackAdmissiblePreStatuses = delivery.AdmissiblePreStatuses
 
 // stackStatusIsAdmissiblePre reports whether status is one nextAdmissionWave
 // and driveChunk's admission CAS both treat as "not yet admitted."
 func stackStatusIsAdmissiblePre(status string) bool {
-	return stacking.StatusIsAdmissiblePre(status)
+	return delivery.StatusIsAdmissiblePre(status)
 }
 
 const (
-	stackPlanSchema         = stacking.PlanSchema
-	stackDecomposeStepID    = stacking.DecomposeStepID
-	stackIntegrationChunkID = stacking.IntegrationChunkID
-	stackMaxChunkAttempts   = stacking.MaxChunkAttempts
+	stackPlanSchema         = delivery.PlanSchema
+	stackDecomposeStepID    = delivery.DecomposeStepID
+	stackIntegrationChunkID = delivery.IntegrationChunkID
+	stackMaxChunkAttempts   = delivery.MaxChunkAttempts
 )
 
 // stackScope binds every stack task to the plan run that produced the chunk
 // plan, so queries never cross stacks (D8 scope binding).
 func stackScope(stackID string) workflowledger.Scope {
-	return stacking.Scope(stackID)
+	return delivery.Scope(stackID)
 }
 
 // ChunkPlan is one entry of a decompose chunk-plan output (shared type).
-type ChunkPlan = stacking.ChunkPlan
+type ChunkPlan = delivery.ChunkPlan
 
 // parseStackPlanOutput decodes a decompose step output (see
-// stacking.ParseStackPlanOutput).
+// delivery.ParseStackPlanOutput).
 func parseStackPlanOutput(raw []byte) (mode string, chunks []ChunkPlan, hasMore bool, remainingScope string, err error) {
-	return stacking.ParseStackPlanOutput(raw)
+	return delivery.ParseStackPlanOutput(raw)
 }
 
 // stackAdmissionKey derives the stable run invocation key for a chunk run
-// (plan F15): <stack-id>:<chunk-id> (see stacking.AdmissionKey).
+// (plan F15): <stack-id>:<chunk-id> (see delivery.AdmissionKey).
 func stackAdmissionKey(stackID, chunkID string) (string, error) {
-	return stacking.AdmissionKey(stackID, chunkID)
+	return delivery.AdmissionKey(stackID, chunkID)
 }
 
 // stackTopologicalOrder returns chunk ids in admission order, dependencies
-// first (see stacking.TopologicalOrder).
+// first (see delivery.TopologicalOrder).
 func stackTopologicalOrder(chunks []ChunkPlan) ([]string, error) {
-	return stacking.TopologicalOrder(chunks)
+	return delivery.TopologicalOrder(chunks)
 }
 
 // RunInfo is the driver's read of one chunk run's ledger state.
@@ -140,7 +140,7 @@ const (
 
 // reconcileTask derives the idempotent recovery action for one non-terminal
 // chunk task from its run and git merge state (plan §5a). Terminal task
-// statuses (stacking.TerminalStatuses: merged, failed, skipped, canceled)
+// statuses (delivery.TerminalStatuses: merged, failed, skipped, canceled)
 // always leave, BEFORE any other rule - a canceled dependent keeps a failed
 // run row, so a later short-circuit would let the reopen arm re-admit it,
 // and its branch can even report merged. Every decision is derived from

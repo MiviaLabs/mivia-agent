@@ -7,8 +7,8 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/template"
 )
 
 // panelMemberDeadlineDefault bounds one panel member attempt's wall clock when
@@ -104,7 +104,7 @@ func (c *LinearController) buildPanelAttempt(ctx context.Context, run workflowle
 		if !ok {
 			return workflowledger.StepAttempt{}, fmt.Errorf("panel schema %q is missing", member.OutputSchema)
 		}
-		prompt, err := template.Render(string(templateRef.Bytes), inputs, evidence, maxBinding(step), maxStepContextBytes)
+		prompt, err := delivery.Render(string(templateRef.Bytes), inputs, evidence, maxBinding(step), maxStepContextBytes)
 		if err != nil {
 			return workflowledger.StepAttempt{}, err
 		}

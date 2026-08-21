@@ -15,13 +15,12 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/stacking"
 )
 
 // loadStackPlanOutput reads the succeeded decompose step output of a
 // plan-mode run from the run ledger (F1/F8: the plan is a run output).
 func loadStackPlanOutput(repo workflowledger.Repository, stackID string) ([]byte, error) {
-	return stacking.LoadStackPlanOutput(context.Background(), repo, stackID)
+	return delivery.LoadStackPlanOutput(context.Background(), repo, stackID)
 }
 
 // loadAllStackChunks reconstructs the FULL chunk list a stack has planned
@@ -76,30 +75,30 @@ func loadAllStackChunks(repo workflowledger.Repository, stackID string) (chunks 
 }
 
 // seedStackLedger records the plan artifact and the chunk tasks (D8); see
-// stacking.SeedStackLedger. Re-entry is idempotent: existing tasks are left
+// delivery.SeedStackLedger. Re-entry is idempotent: existing tasks are left
 // untouched and only missing tasks are created.
 func seedStackLedger(ledger *workflowledger.Store, stackID string, chunks []ChunkPlan) error {
-	return stacking.SeedStackLedger(context.Background(), ledger, stackID, chunks)
+	return delivery.SeedStackLedger(context.Background(), ledger, stackID, chunks)
 }
 
 // chunkRunInputs builds the admission inputs and snapshot for one chunk-mode
-// run (see stacking.ChunkRunInputs).
+// run (see delivery.ChunkRunInputs).
 func chunkRunInputs(planInputs map[string]string, chunkID, prBase, stackPart string, plan *ChunkPlan, siblingFiles []string) (map[string]any, map[string]string) {
-	return stacking.ChunkRunInputs(planInputs, chunkID, prBase, stackPart, plan, siblingFiles)
+	return delivery.ChunkRunInputs(planInputs, chunkID, prBase, stackPart, plan, siblingFiles)
 }
 
 // stackPlanInputs reads the plan run's admitted snapshot and returns the
 // workflow-declared inputs the chunks were decomposed from, so chunk runs can
-// replay them (D3); see stacking.PlanInputs.
+// replay them (D3); see delivery.PlanInputs.
 func stackPlanInputs(repo workflowledger.Repository, stackID string) (map[string]string, error) {
-	return stacking.PlanInputs(context.Background(), repo, stackID)
+	return delivery.PlanInputs(context.Background(), repo, stackID)
 }
 
 // stackPRBase returns the delivery base branch the chunk PRs branch from:
 // the workflow's delivery policy base (delivery honors pr_base, S4); see
-// stacking.PRBase.
+// delivery.PRBase.
 func stackPRBase(wf *definition.CompiledWorkflow) (string, error) {
-	return stacking.PRBase(wf)
+	return delivery.PRBase(wf)
 }
 
 // reconcileStack applies the §5a recovery actions for every chunk task of
@@ -258,27 +257,27 @@ func stackRunHeadCommit(repo workflowledger.Repository, run workflowledger.RunSn
 }
 
 // stackTaskMap loads every stack task by id for the drive loop (see
-// stacking.TaskMap).
+// delivery.TaskMap).
 func stackTaskMap(ledger *workflowledger.Store, stackID string) (map[string]workflowledger.Task, error) {
-	return stacking.TaskMap(context.Background(), ledger, stackID)
+	return delivery.TaskMap(context.Background(), ledger, stackID)
 }
 
 // stackMergedSet returns the set of chunk ids whose tasks are merged (see
-// stacking.MergedSet).
+// delivery.MergedSet).
 func stackMergedSet(byID map[string]workflowledger.Task) map[string]bool {
-	return stacking.MergedSet(byID)
+	return delivery.MergedSet(byID)
 }
 
 // allChunksMerged reports whether every chunk in the plan is merged (see
-// stacking.AllChunksMerged).
+// delivery.AllChunksMerged).
 func allChunksMerged(chunks []ChunkPlan, merged map[string]bool) bool {
-	return stacking.AllChunksMerged(chunks, merged)
+	return delivery.AllChunksMerged(chunks, merged)
 }
 
 // chunkPartIndex returns the 0-based position of a chunk in dependency order,
-// for the canonical "k/N" stack_part (see stacking.ChunkPartIndex).
+// for the canonical "k/N" stack_part (see delivery.ChunkPartIndex).
 func chunkPartIndex(chunkID string, order []string) (int, error) {
-	return stacking.ChunkPartIndex(chunkID, order)
+	return delivery.ChunkPartIndex(chunkID, order)
 }
 
 // isResumableRunStatus mirrors the ledger's resumable set for the driver.

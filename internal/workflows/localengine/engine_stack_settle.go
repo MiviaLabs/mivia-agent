@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/stacking"
 )
 
 // finishStack admits the final full-suite integration run once every chunk is
@@ -27,13 +27,13 @@ import (
 // CLI's settleStackPlanRunIfComplete).
 func (e *Engine) finishStack(ctx context.Context, planRun workflowledger.RunSnapshot, compiled *definition.CompiledWorkflow, ledger *workflowledger.Store, stackID string, planInputs map[string]string, prBase string) {
 	autoPublish := compiled.Stacking.MergePolicy == "auto"
-	inputs, _ := stacking.IntegrationRunInputs(planInputs, prBase)
-	key, err := stacking.AdmissionKey(stackID, stacking.IntegrationChunkID)
+	inputs, _ := delivery.IntegrationRunInputs(planInputs, prBase)
+	key, err := delivery.AdmissionKey(stackID, delivery.IntegrationChunkID)
 	if err != nil {
 		log.Printf("workflow: drive stack %s: integration key: %v", stackID, err)
 		return
 	}
-	run, found, err := e.stackRunByKey(ctx, stackID, stacking.IntegrationChunkID)
+	run, found, err := e.stackRunByKey(ctx, stackID, delivery.IntegrationChunkID)
 	if err != nil {
 		log.Printf("workflow: drive stack %s: integration lookup: %v", stackID, err)
 		return
@@ -84,7 +84,7 @@ func (e *Engine) waitForIntegrationSettle(ctx context.Context, run workflowledge
 		progressed := false
 		switch fresh.Status {
 		case workflowledger.RunStatusSucceeded:
-			if autoPublish && e.PR != nil && !stacking.ChunkRunNoDiff(ctx, e.Repo, fresh) {
+			if autoPublish && e.PR != nil && !delivery.ChunkRunNoDiff(ctx, e.Repo, fresh) {
 				if !e.waitForPRMerged(ctx, fresh) {
 					return // ctx done or oracle error; the stack stays resumable
 				}
@@ -191,13 +191,13 @@ func (e *Engine) settlePlanRun(ctx context.Context, compiled *definition.Compile
 func stackHasProgress(byID map[string]workflowledger.Task, hasMergeOracle bool) bool {
 	for _, t := range byID {
 		switch t.Status {
-		case stacking.StatusRunning, stacking.StatusImplemented:
+		case delivery.StatusRunning, delivery.StatusImplemented:
 			return true
-		case stacking.StatusPublished:
+		case delivery.StatusPublished:
 			if hasMergeOracle {
 				return true
 			}
-		case stacking.StatusFailed, stacking.StatusCanceled:
+		case delivery.StatusFailed, delivery.StatusCanceled:
 			// A failed chunk is terminal (the operator reconcile leaves
 			// failed tasks alone) and blocks its dependents forever: the
 			// drive must halt instead of polling an uncompletable stack
@@ -214,7 +214,7 @@ func stackHasProgress(byID map[string]workflowledger.Task, hasMergeOracle bool) 
 // rather than a settled state the drive can act on or leave alone.
 func isStackInFlightStatus(status string) bool {
 	switch status {
-	case stacking.StatusQueued, stacking.StatusRunning, stacking.StatusImplemented, stacking.StatusReviewed, stacking.StatusPublished:
+	case delivery.StatusQueued, delivery.StatusRunning, delivery.StatusImplemented, delivery.StatusReviewed, delivery.StatusPublished:
 		return true
 	default:
 		return false
@@ -235,7 +235,7 @@ func transitionStackTask(ledger *workflowledger.Store, stackID, id, status strin
 // admission key, mirroring the CLI driver's stackRunRef (durable ledger
 // lookup, so re-entry after a restart resolves the same runs).
 func (e *Engine) stackRunByKey(ctx context.Context, stackID, chunkID string) (workflowledger.RunSnapshot, bool, error) {
-	key, err := stacking.AdmissionKey(stackID, chunkID)
+	key, err := delivery.AdmissionKey(stackID, chunkID)
 	if err != nil {
 		return workflowledger.RunSnapshot{}, false, err
 	}
@@ -266,7 +266,7 @@ func (e *Engine) undrivenPlanRunReason(ctx context.Context, repo workflowledger.
 	if compiled == nil || compiled.Stacking == nil || !compiled.Stacking.Enabled {
 		return ""
 	}
-	if _, ok := stacking.DecomposedChunks(ctx, repo, runID); !ok {
+	if _, ok := delivery.DecomposedChunks(ctx, repo, runID); !ok {
 		return ""
 	}
 	if e.stackDriveCompleted(ctx, repo, runID, compiled) {
@@ -283,11 +283,11 @@ func (e *Engine) undrivenPlanRunReason(ctx context.Context, repo workflowledger.
 // still merges it). Mirrors the CLI's stackDriveCompleted; without the task
 // ledger (e.Store) the drive cannot be verified, so the gate refuses.
 func (e *Engine) stackDriveCompleted(ctx context.Context, repo workflowledger.Repository, runID string, compiled *definition.CompiledWorkflow) bool {
-	planOutput, err := stacking.LoadStackPlanOutput(ctx, repo, runID)
+	planOutput, err := delivery.LoadStackPlanOutput(ctx, repo, runID)
 	if err != nil {
 		return false
 	}
-	mode, chunks, hasMore, _, err := stacking.ParseStackPlanOutput(planOutput)
+	mode, chunks, hasMore, _, err := delivery.ParseStackPlanOutput(planOutput)
 	if err != nil || mode != "multi" || len(chunks) == 0 {
 		return false
 	}
@@ -298,14 +298,14 @@ func (e *Engine) stackDriveCompleted(ctx context.Context, repo workflowledger.Re
 		return false
 	}
 	ledger := workflowledger.NewStore(e.Store)
-	byID, err := stacking.TaskMap(ctx, ledger, runID)
+	byID, err := delivery.TaskMap(ctx, ledger, runID)
 	if err != nil {
 		return false
 	}
-	if !stacking.AllChunksMerged(chunks, stacking.MergedSet(byID)) {
+	if !delivery.AllChunksMerged(chunks, delivery.MergedSet(byID)) {
 		return false
 	}
-	run, found, err := e.stackRunByKey(ctx, runID, stacking.IntegrationChunkID)
+	run, found, err := e.stackRunByKey(ctx, runID, delivery.IntegrationChunkID)
 	if err != nil || !found {
 		return false
 	}
@@ -323,7 +323,7 @@ func (e *Engine) stackDriveCompleted(ctx context.Context, repo workflowledger.Re
 		// no PR and needs no merge, and approve policy and the no-oracle
 		// degrade keep the pre-existing behavior. Fail closed: an oracle
 		// error or a still-open PR both leave the stack resumable.
-		if compiled.Stacking.MergePolicy == "auto" && e.PR != nil && !stacking.ChunkRunNoDiff(ctx, repo, run) {
+		if compiled.Stacking.MergePolicy == "auto" && e.PR != nil && !delivery.ChunkRunNoDiff(ctx, repo, run) {
 			merged, err := e.prMerged(ctx, run)
 			if err != nil || !merged {
 				return false

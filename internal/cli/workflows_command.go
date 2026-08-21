@@ -14,7 +14,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/template"
 )
 
 // runWorkflows handles the workflow CLI commands.
@@ -240,7 +239,7 @@ func validateWorkflowFileReferences(base string, wf *definition.CompiledWorkflow
 		prefix += fmt.Sprintf(": panel member %q", memberID)
 	}
 	if templateRef != "" {
-		data, err := readWorkflowRef(base, templateRef, template.MaxTemplateBytes)
+		data, err := readWorkflowRef(base, templateRef, delivery.MaxTemplateBytes)
 		if err != nil {
 			return fmt.Errorf("%s: template %q: %w", prefix, templateRef, err)
 		}
@@ -293,7 +292,7 @@ func validateWorkflowTemplateBindings(wf *definition.CompiledWorkflow, step defi
 			evidence[binding.As] = ""
 		}
 	}
-	_, err := template.Render(source, inputs, evidence, template.MaxTemplateBytes, template.MaxTemplateBytes)
+	_, err := delivery.Render(source, inputs, evidence, delivery.MaxTemplateBytes, delivery.MaxTemplateBytes)
 	return err
 }
 

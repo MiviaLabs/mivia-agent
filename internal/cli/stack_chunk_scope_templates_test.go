@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/template"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 )
 
 const exampleChunkScope = `{"id":"c2","title":"Add internal/pathutil SplitExt","files":["internal/pathutil/pathutil.go","internal/pathutil/pathutil_test.go"]}`
@@ -39,7 +39,7 @@ func TestImplementTemplateRendersChunkScope(t *testing.T) {
 	workflow, base := loadCommittedFeatureDeliveryWorkflow(t, root)
 	step := featureDeliveryStep(t, workflow, "implement")
 	chunkScopeBinding(t, step)
-	templateBytes, err := readWorkflowRef(base, step.Template, template.MaxTemplateBytes)
+	templateBytes, err := readWorkflowRef(base, step.Template, delivery.MaxTemplateBytes)
 	if err != nil {
 		t.Fatalf("read template %q: %v", step.Template, err)
 	}
@@ -48,7 +48,7 @@ func TestImplementTemplateRendersChunkScope(t *testing.T) {
 		"plan": "example plan", "test_plan": "example test plan",
 		"review_findings": "", "integration_findings": "",
 	}
-	rendered, err := template.Render(string(templateBytes), inputs, evidence, definition.MaxEvidenceBindingBytes, template.DefaultMaxRenderedBytes)
+	rendered, err := delivery.Render(string(templateBytes), inputs, evidence, definition.MaxEvidenceBindingBytes, delivery.DefaultMaxRenderedBytes)
 	if err != nil {
 		t.Fatalf("render implement template with chunk scope: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestImplementTemplateRendersChunkScope(t *testing.T) {
 		t.Fatalf("rendered implement template must carry an explicit only-this-chunk instruction:\n%s", rendered)
 	}
 	inputs["chunk_scope"] = ""
-	if _, err := template.Render(string(templateBytes), inputs, evidence, definition.MaxEvidenceBindingBytes, template.DefaultMaxRenderedBytes); err != nil {
+	if _, err := delivery.Render(string(templateBytes), inputs, evidence, definition.MaxEvidenceBindingBytes, delivery.DefaultMaxRenderedBytes); err != nil {
 		t.Fatalf("render implement template without chunk scope: %v", err)
 	}
 }
@@ -79,11 +79,11 @@ func TestPanelMembersReceiveChunkScope(t *testing.T) {
 		"prior_findings": "", "touched_files": `["a.go"]`,
 	}
 	for _, member := range step.Panel.Members {
-		templateBytes, err := readWorkflowRef(base, member.Template, template.MaxTemplateBytes)
+		templateBytes, err := readWorkflowRef(base, member.Template, delivery.MaxTemplateBytes)
 		if err != nil {
 			t.Fatalf("panel member %q: read template: %v", member.ID, err)
 		}
-		if _, err := template.Render(string(templateBytes), inputs, evidence, definition.MaxEvidenceBindingBytes, template.DefaultMaxRenderedBytes); err != nil {
+		if _, err := delivery.Render(string(templateBytes), inputs, evidence, definition.MaxEvidenceBindingBytes, delivery.DefaultMaxRenderedBytes); err != nil {
 			t.Fatalf("panel member %q: render with chunk scope: %v", member.ID, err)
 		}
 	}

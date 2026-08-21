@@ -1,4 +1,4 @@
-package stacking
+package delivery
 
 // stacking_state.go: the durable-state builders of the stack driver - task
 // ledger seeding, the admission-input builders for chunk and integration

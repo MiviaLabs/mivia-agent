@@ -6,23 +6,23 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/stacking"
 )
 
 // integrationRunInputs builds the admission inputs for the final full-suite
-// integration run (see stacking.IntegrationRunInputs).
+// integration run (see delivery.IntegrationRunInputs).
 func integrationRunInputs(planInputs map[string]string, prBase string) (map[string]any, map[string]string) {
-	return stacking.IntegrationRunInputs(planInputs, prBase)
+	return delivery.IntegrationRunInputs(planInputs, prBase)
 }
 
 // stackDecomposedChunks reports whether runID is the plan run of a
-// multi-chunk stack (see stacking.DecomposedChunks). ok=false covers every
+// multi-chunk stack (see delivery.DecomposedChunks). ok=false covers every
 // other case (not a stacking plan run, single/no_bug, a malformed decompose
 // output, or a lookup failure) - callers must treat a lookup failure as "not
 // applicable", never as a refusal or a false "undriven" diagnostic.
 func stackDecomposedChunks(ctx context.Context, repo workflowledger.Repository, runID string) (chunks int, ok bool) {
-	return stacking.DecomposedChunks(ctx, repo, runID)
+	return delivery.DecomposedChunks(ctx, repo, runID)
 }
 
 // stackPlanRunGate classifies a run for the drive-before-delivery decision

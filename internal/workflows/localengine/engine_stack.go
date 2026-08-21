@@ -7,7 +7,7 @@ package localengine
 // delivery can settle or publish. The CLI path drives in executeWorkflowRun
 // (maybeDriveSettledStack), the session path in sessionAutoDeliveryRepairLoop,
 // and this engine drives here. The drive reuses the same durable state layer
-// as the CLI driver (internal/workflows/stacking): the task ledger, the run
+// as the CLI driver (internal/workflows/delivery): the task ledger, the run
 // ledger, and the PR merge oracle. It admits chunk runs through the engine's
 // own Start with stable invocation keys (re-entry resolves to the same runs),
 // delivers them per the workflow's merge policy, waits for merges, admits the
@@ -23,7 +23,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/stacking"
 )
 
 // stackDrivePollInterval is how often a drive pass re-reads durable state
@@ -62,9 +61,9 @@ func (e *Engine) stackDriveAfterPark(ctx context.Context, runID string) {
 	// forever (live finding, 2026-08-17: the scripted-runner integration run
 	// re-decomposed the merged suite as mode=multi and the engine drove
 	// wfr-inv-* chains without bound). The plan run's own InvocationKey is
-	// always "" (stacking.PlanInputs), and derived keys are always
+	// always "" (delivery.PlanInputs), and derived keys are always
 	// "<stack-id>:<chunk-id>" / "<stack-id>:decompose:N" with the plan run's
-	// RunID as the stack-id prefix (stacking.AdmissionKey,
+	// RunID as the stack-id prefix (delivery.AdmissionKey,
 	// decomposeContinueKey), so a key whose colon-prefix is a real run marks
 	// a derived run beyond doubt.
 	if key := run.InvocationKey; key != "" {
@@ -78,11 +77,11 @@ func (e *Engine) stackDriveAfterPark(ctx context.Context, runID string) {
 	if err != nil || compiled == nil || compiled.Stacking == nil || !compiled.Stacking.Enabled || !compiled.DeliveryActive() {
 		return
 	}
-	planOutput, err := stacking.LoadStackPlanOutput(ctx, e.Repo, runID)
+	planOutput, err := delivery.LoadStackPlanOutput(ctx, e.Repo, runID)
 	if err != nil {
 		return // not a plan run with a succeeded decompose output
 	}
-	mode, chunks, hasMore, _, err := stacking.ParseStackPlanOutput(planOutput)
+	mode, chunks, hasMore, _, err := delivery.ParseStackPlanOutput(planOutput)
 	if err != nil || mode != "multi" || len(chunks) == 0 {
 		return
 	}
@@ -90,7 +89,7 @@ func (e *Engine) stackDriveAfterPark(ctx context.Context, runID string) {
 		return // no task ledger; the operator drive owns this stack
 	}
 	ledger := workflowledger.NewStore(e.Store)
-	if err := stacking.SeedStackLedger(ctx, ledger, runID, chunks); err != nil {
+	if err := delivery.SeedStackLedger(ctx, ledger, runID, chunks); err != nil {
 		log.Printf("workflow: drive stack for %s: seed: %v", runID, err)
 		return
 	}
@@ -100,17 +99,17 @@ func (e *Engine) stackDriveAfterPark(ctx context.Context, runID string) {
 		// delivery_pending and the stack resumable from durable state.
 		return
 	}
-	order, err := stacking.TopologicalOrder(chunks)
+	order, err := delivery.TopologicalOrder(chunks)
 	if err != nil {
 		log.Printf("workflow: drive stack for %s: %v", runID, err)
 		return
 	}
-	planInputs, err := stacking.PlanInputs(ctx, e.Repo, runID)
+	planInputs, err := delivery.PlanInputs(ctx, e.Repo, runID)
 	if err != nil {
 		log.Printf("workflow: drive stack for %s: plan inputs: %v", runID, err)
 		return
 	}
-	prBase, err := stacking.PRBase(compiled)
+	prBase, err := delivery.PRBase(compiled)
 	if err != nil {
 		log.Printf("workflow: drive stack for %s: pr base: %v", runID, err)
 		return
@@ -137,9 +136,9 @@ func compileStackPlanRun(ctx context.Context, repo workflowledger.Repository, ru
 
 // driveStackLoop advances the stack until it is complete or nothing can
 // progress, polling durable state between passes.
-func (e *Engine) driveStackLoop(ctx context.Context, planRun workflowledger.RunSnapshot, compiled *definition.CompiledWorkflow, ledger *workflowledger.Store, stackID string, chunks []stacking.ChunkPlan, order []string, planInputs map[string]string, prBase string) {
+func (e *Engine) driveStackLoop(ctx context.Context, planRun workflowledger.RunSnapshot, compiled *definition.CompiledWorkflow, ledger *workflowledger.Store, stackID string, chunks []delivery.ChunkPlan, order []string, planInputs map[string]string, prBase string) {
 	autoPublish := compiled.Stacking.MergePolicy == "auto"
-	chunkPlans := make(map[string]*stacking.ChunkPlan, len(chunks))
+	chunkPlans := make(map[string]*delivery.ChunkPlan, len(chunks))
 	for i := range chunks {
 		chunkPlans[chunks[i].ID] = &chunks[i]
 	}
@@ -154,7 +153,7 @@ func (e *Engine) driveStackLoop(ctx context.Context, planRun workflowledger.RunS
 		if err := ctx.Err(); err != nil {
 			return
 		}
-		byID, err := stacking.TaskMap(ctx, ledger, stackID)
+		byID, err := delivery.TaskMap(ctx, ledger, stackID)
 		if err != nil {
 			log.Printf("workflow: drive stack %s: task map: %v", stackID, err)
 			return
@@ -164,7 +163,7 @@ func (e *Engine) driveStackLoop(ctx context.Context, planRun workflowledger.RunS
 		//    published/merged, reopen failures).
 		if e.processSettledChunks(ctx, ledger, stackID, byID, autoPublish) {
 			progressed = true
-			byID, err = stacking.TaskMap(ctx, ledger, stackID)
+			byID, err = delivery.TaskMap(ctx, ledger, stackID)
 			if err != nil {
 				return
 			}
@@ -172,15 +171,15 @@ func (e *Engine) driveStackLoop(ctx context.Context, planRun workflowledger.RunS
 		// 2. Mark chunks merged once their PRs actually merged.
 		if e.markMergedChunks(ctx, ledger, stackID, byID) {
 			progressed = true
-			byID, err = stacking.TaskMap(ctx, ledger, stackID)
+			byID, err = delivery.TaskMap(ctx, ledger, stackID)
 			if err != nil {
 				return
 			}
 		}
-		merged := stacking.MergedSet(byID)
+		merged := delivery.MergedSet(byID)
 		// 3. Every chunk merged: admit the integration run and settle the
 		//    plan run.
-		if stacking.AllChunksMerged(chunks, merged) {
+		if delivery.AllChunksMerged(chunks, merged) {
 			e.finishStack(ctx, planRun, compiled, ledger, stackID, planInputs, prBase)
 			return
 		}
@@ -246,24 +245,24 @@ func (e *Engine) processSettledChunks(ctx context.Context, ledger *workflowledge
 		case workflowledger.RunStatusPending, workflowledger.RunStatusRunning, workflowledger.RunStatusWaitingApproval:
 			continue // still in flight
 		case workflowledger.RunStatusSucceeded:
-			if stacking.ChunkRunNoDiff(ctx, e.Repo, run) {
-				progressed = transitionStackTask(ledger, stackID, id, stacking.StatusMerged) || progressed
+			if delivery.ChunkRunNoDiff(ctx, e.Repo, run) {
+				progressed = transitionStackTask(ledger, stackID, id, delivery.StatusMerged) || progressed
 				continue
 			}
-			if stacking.RunPushed(ctx, e.Repo, run) {
-				if t.Status != stacking.StatusPublished {
-					progressed = transitionStackTask(ledger, stackID, id, stacking.StatusPublished) || progressed
+			if delivery.RunPushed(ctx, e.Repo, run) {
+				if t.Status != delivery.StatusPublished {
+					progressed = transitionStackTask(ledger, stackID, id, delivery.StatusPublished) || progressed
 				}
 				continue
 			}
-			if t.Status != stacking.StatusImplemented {
-				progressed = transitionStackTask(ledger, stackID, id, stacking.StatusImplemented) || progressed
+			if t.Status != delivery.StatusImplemented {
+				progressed = transitionStackTask(ledger, stackID, id, delivery.StatusImplemented) || progressed
 			}
 		case workflowledger.RunStatusDeliveryPending:
-			if t.Status == stacking.StatusPublished {
+			if t.Status == delivery.StatusPublished {
 				continue // PR open; the merge wait owns it
 			}
-			if t.Status == stacking.StatusReviewed {
+			if t.Status == delivery.StatusReviewed {
 				continue // awaiting the publish grant
 			}
 			if autoPublish {
@@ -275,7 +274,7 @@ func (e *Engine) processSettledChunks(ctx context.Context, ledger *workflowledge
 					log.Printf("workflow: drive stack %s: deliver chunk %s: %v", stackID, id, derr)
 				}
 			} else {
-				progressed = transitionStackTask(ledger, stackID, id, stacking.StatusReviewed) || progressed
+				progressed = transitionStackTask(ledger, stackID, id, delivery.StatusReviewed) || progressed
 			}
 		case workflowledger.RunStatusFailed, workflowledger.RunStatusCanceled, workflowledger.RunStatusTimedOut, workflowledger.RunStatusDeliveryFailed:
 			progressed = e.reopenOrFailStackTask(ctx, ledger, stackID, id) || progressed
@@ -291,7 +290,7 @@ func (e *Engine) processSettledChunks(ctx context.Context, ledger *workflowledge
 // delivery published and wedges the stack in published-never-merged, STACK-1
 // 2026-08-16), a delivery_failed run applies the bounded reopen-or-fail
 // decision (mirroring the CLI's reconcileReopenOrFail, capped at
-// stacking.MaxChunkAttempts), and anything else stays in flight. It reports
+// delivery.MaxChunkAttempts), and anything else stays in flight. It reports
 // whether the chunk's task map entry changed.
 func (e *Engine) settleChunkDelivery(ctx context.Context, ledger *workflowledger.Store, stackID, chunkID string, run workflowledger.RunSnapshot) bool {
 	fresh, err := e.Repo.GetRun(ctx, run.RunID)
@@ -301,10 +300,10 @@ func (e *Engine) settleChunkDelivery(ctx context.Context, ledger *workflowledger
 	}
 	switch fresh.Status {
 	case workflowledger.RunStatusSucceeded:
-		if stacking.ChunkRunNoDiff(ctx, e.Repo, fresh) {
-			return transitionStackTask(ledger, stackID, chunkID, stacking.StatusMerged)
+		if delivery.ChunkRunNoDiff(ctx, e.Repo, fresh) {
+			return transitionStackTask(ledger, stackID, chunkID, delivery.StatusMerged)
 		}
-		return transitionStackTask(ledger, stackID, chunkID, stacking.StatusPublished)
+		return transitionStackTask(ledger, stackID, chunkID, delivery.StatusPublished)
 	case workflowledger.RunStatusDeliveryFailed:
 		return e.reopenOrFailStackTask(ctx, ledger, stackID, chunkID)
 	default:
@@ -326,7 +325,7 @@ func (e *Engine) markMergedChunks(ctx context.Context, ledger *workflowledger.St
 	}
 	progressed := false
 	for id, t := range byID {
-		if t.Status != stacking.StatusPublished && t.Status != stacking.StatusImplemented {
+		if t.Status != delivery.StatusPublished && t.Status != delivery.StatusImplemented {
 			continue
 		}
 		run, found, err := e.stackRunByKey(ctx, stackID, id)
@@ -339,7 +338,7 @@ func (e *Engine) markMergedChunks(ctx context.Context, ledger *workflowledger.St
 			continue
 		}
 		if merged {
-			progressed = transitionStackTask(ledger, stackID, id, stacking.StatusMerged) || progressed
+			progressed = transitionStackTask(ledger, stackID, id, delivery.StatusMerged) || progressed
 		}
 	}
 	return progressed
@@ -375,12 +374,12 @@ func (e *Engine) prMerged(ctx context.Context, run workflowledger.RunSnapshot) (
 // only status a chunk's failure path is reached from); otherwise this is a
 // clean loss and returns false.
 func (e *Engine) reopenOrFailStackTask(ctx context.Context, ledger *workflowledger.Store, stackID, id string) bool {
-	applied, _, _, err := ledger.TransitionTaskCASDecide(stackID, id, []string{stacking.StatusRunning}, stacking.StatusReopened,
+	applied, _, _, err := ledger.TransitionTaskCASDecide(stackID, id, []string{delivery.StatusRunning}, delivery.StatusReopened,
 		func(attempts int) (string, bool) {
-			if attempts+1 > stacking.MaxChunkAttempts {
-				return stacking.StatusFailed, true
+			if attempts+1 > delivery.MaxChunkAttempts {
+				return delivery.StatusFailed, true
 			}
-			return stacking.StatusReopened, true
+			return delivery.StatusReopened, true
 		})
 	if err != nil {
 		log.Printf("workflow: drive stack %s: reopen-or-fail %s: %v", stackID, id, err)
@@ -398,7 +397,7 @@ func nextAdmissionWave(byID map[string]workflowledger.Task, merged map[string]bo
 		if !ok {
 			continue
 		}
-		if stacking.StatusIsAdmissiblePre(t.Status) && stacking.TaskReady(t, merged) {
+		if delivery.StatusIsAdmissiblePre(t.Status) && delivery.TaskReady(t, merged) {
 			wave = append(wave, id)
 		}
 	}
@@ -412,7 +411,7 @@ func nextAdmissionWave(byID map[string]workflowledger.Task, merged map[string]bo
 // the settle processing: in-flight runs are not double-admitted, and a
 // terminal run is handled by processSettledChunks (reopen) or the operator
 // drive (which mints a fresh run).
-func (e *Engine) admitWave(ctx context.Context, planRun workflowledger.RunSnapshot, ledger *workflowledger.Store, stackID string, chunkPlans map[string]*stacking.ChunkPlan, order, wave []string, planInputs map[string]string, prBase string, autoPublish bool) {
+func (e *Engine) admitWave(ctx context.Context, planRun workflowledger.RunSnapshot, ledger *workflowledger.Store, stackID string, chunkPlans map[string]*delivery.ChunkPlan, order, wave []string, planInputs map[string]string, prBase string, autoPublish bool) {
 	for _, id := range wave {
 		_, found, err := e.stackRunByKey(ctx, stackID, id)
 		if err != nil {
@@ -422,22 +421,22 @@ func (e *Engine) admitWave(ctx context.Context, planRun workflowledger.RunSnapsh
 		if found {
 			continue // in-flight or terminal; settle processing handles it
 		}
-		part, perr := stacking.ChunkPartIndex(id, order)
+		part, perr := delivery.ChunkPartIndex(id, order)
 		if perr != nil {
 			log.Printf("workflow: drive stack %s: chunk %s: %v", stackID, id, perr)
 			continue
 		}
 		stackPart := fmt.Sprintf("%d/%d", part+1, len(order))
-		siblings := stacking.SiblingFiles(chunkPlans, id)
-		inputs, _ := stacking.ChunkRunInputs(planInputs, id, prBase, stackPart, chunkPlans[id], siblings)
-		key, kerr := stacking.AdmissionKey(stackID, id)
+		siblings := delivery.SiblingFiles(chunkPlans, id)
+		inputs, _ := delivery.ChunkRunInputs(planInputs, id, prBase, stackPart, chunkPlans[id], siblings)
+		key, kerr := delivery.AdmissionKey(stackID, id)
 		if kerr != nil {
 			log.Printf("workflow: drive stack %s: chunk %s: %v", stackID, id, kerr)
 			continue
 		}
 		// Claim the task before admitting so a concurrent driver cleanly
 		// loses the race (CAS against admissible-pre statuses).
-		ok, terr := ledger.TransitionTaskCAS(stackID, id, stacking.AdmissiblePreStatuses, stacking.StatusRunning)
+		ok, terr := ledger.TransitionTaskCAS(stackID, id, delivery.AdmissiblePreStatuses, delivery.StatusRunning)
 		if terr != nil || !ok {
 			continue
 		}
@@ -448,7 +447,7 @@ func (e *Engine) admitWave(ctx context.Context, planRun workflowledger.RunSnapsh
 			AllowPublish:  autoPublish,
 		}); serr != nil {
 			log.Printf("workflow: drive stack %s: admit chunk %s: %v", stackID, id, serr)
-			_ = ledger.TransitionTask(stackID, id, stacking.StatusReopened)
+			_ = ledger.TransitionTask(stackID, id, delivery.StatusReopened)
 		}
 	}
 }

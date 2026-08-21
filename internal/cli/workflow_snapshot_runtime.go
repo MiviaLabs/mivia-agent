@@ -7,8 +7,8 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/template"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
@@ -145,7 +145,7 @@ func loadStepReferences(base string, step definition.Step, prior *workflowledger
 	var templateBytes []byte
 	var err error
 	if step.Template != "" {
-		templateBytes, err = readWorkflowRef(base, step.Template, template.MaxTemplateBytes)
+		templateBytes, err = readWorkflowRef(base, step.Template, delivery.MaxTemplateBytes)
 		if err != nil {
 			return "", nil, nil, nil, err
 		}

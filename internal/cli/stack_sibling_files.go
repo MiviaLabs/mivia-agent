@@ -1,12 +1,12 @@
 package cli
 
 import (
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/stacking"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 )
 
 // siblingChunkFiles returns the union of the declared files of every chunk
 // except the named one, sorted for a deterministic input digest (see
-// stacking.SiblingFiles).
+// delivery.SiblingFiles).
 func siblingChunkFiles(chunks map[string]*ChunkPlan, chunkID string) []string {
-	return stacking.SiblingFiles(chunks, chunkID)
+	return delivery.SiblingFiles(chunks, chunkID)
 }

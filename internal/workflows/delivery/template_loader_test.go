@@ -1,6 +1,6 @@
 //go:build !windows
 
-package template
+package delivery
 
 import (
 	"os"

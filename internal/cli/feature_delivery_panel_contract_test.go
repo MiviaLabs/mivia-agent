@@ -8,7 +8,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/template"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
@@ -91,7 +91,7 @@ func assertFeatureDeliveryReviewPanel(t *testing.T, workflow definition.Workflow
 // agentStepRequest's inputs.round injection - panel members never receive a
 // round input, unlike agent/agent_gate steps. A member template that
 // unconditionally references {{ inputs.round }} (copied from an agent_gate
-// review template without checking this) fails template.Render with
+// review template without checking this) fails delivery.Render with
 // "template binding \"inputs.round\" is missing" on every dispatch, so the
 // panel could never actually run. This renders each committed member
 // template with exactly the inputs/evidence shape buildPanelAttempt supplies
@@ -117,11 +117,11 @@ func TestFeatureDeliveryPanelMemberTemplatesRenderWithoutRound(t *testing.T) {
 		"touched_files":  `["a.go"]`,
 	}
 	for _, member := range step.Panel.Members {
-		templateBytes, err := readWorkflowRef(base, member.Template, template.MaxTemplateBytes)
+		templateBytes, err := readWorkflowRef(base, member.Template, delivery.MaxTemplateBytes)
 		if err != nil {
 			t.Fatalf("panel member %q: read template %q: %v", member.ID, member.Template, err)
 		}
-		if _, err := template.Render(string(templateBytes), inputs, evidence, definition.MaxEvidenceBindingBytes, template.DefaultMaxRenderedBytes); err != nil {
+		if _, err := delivery.Render(string(templateBytes), inputs, evidence, definition.MaxEvidenceBindingBytes, delivery.DefaultMaxRenderedBytes); err != nil {
 			t.Fatalf("panel member %q: render template %q without a round input: %v", member.ID, member.Template, err)
 		}
 	}

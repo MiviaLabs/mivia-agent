@@ -1,5 +1,5 @@
-// Package stacking provides the durable state layer of the workflow stack
-// driver: chunk-plan parsing, stable chunk admission keys, topological chunk
+// stacking_plan.go: the durable state layer of the workflow stack driver -
+// chunk-plan parsing, stable chunk admission keys, topological chunk
 // ordering, task-ledger seeding, and the admission-input builders for chunk
 // and integration runs.
 //
@@ -10,10 +10,10 @@
 //     path), which drives a parked multi-chunk plan run automatically after
 //     its controller settles (drive-before-delivery).
 //
-// Every decision in this package is derived from durable state only - the
-// task ledger, the run ledger, and git merge state - never from driver
-// memory, so either surface can resume the other's stack (D8, plan v2.1 §5a).
-package stacking
+// Every decision here is derived from durable state only - the task ledger,
+// the run ledger, and git merge state - never from driver memory, so either
+// surface can resume the other's stack (D8, plan v2.1 §5a).
+package delivery
 
 import (
 	"context"
@@ -25,7 +25,6 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
@@ -355,7 +354,7 @@ func PRBase(wf *definition.CompiledWorkflow) (string, error) {
 	if wf == nil || wf.Delivery == nil {
 		return "", fmt.Errorf("workflow has no delivery policy")
 	}
-	policy, ok := delivery.FromCompiled(wf)
+	policy, ok := FromCompiled(wf)
 	if !ok {
 		return "", fmt.Errorf("workflow delivery policy is not active")
 	}

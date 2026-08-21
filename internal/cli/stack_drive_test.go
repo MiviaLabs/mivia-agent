@@ -13,8 +13,8 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/stacking"
 )
 
 // TestStackDriveFailSettlesPlanRunFailed proves that driveStackOnePass
@@ -158,7 +158,7 @@ func seedExhaustedFailedChunk(t *testing.T, prepared *preparedWorkflowRun, planR
 	t.Helper()
 	ctx := context.Background()
 	ledger := workflowledger.NewStore(prepared.store)
-	if _, err := ledger.StorePlan(workflowledger.Plan{ID: planRunID, Scope: stackScope(planRunID), Schema: stacking.PlanSchema}); err != nil {
+	if _, err := ledger.StorePlan(workflowledger.Plan{ID: planRunID, Scope: stackScope(planRunID), Schema: delivery.PlanSchema}); err != nil {
 		t.Fatal(err)
 	}
 	if err := ledger.CreateTask(workflowledger.Task{ID: failedChunkID, PlanRef: planRunID, Scope: stackScope(planRunID), Status: stackStatusRunning}); err != nil {

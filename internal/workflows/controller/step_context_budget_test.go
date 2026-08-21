@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/template"
 )
 
 // TestStepContextBudgetFitsMultipleEvidenceBindings pins that a step can bind
@@ -20,7 +20,7 @@ import (
 func TestStepContextBudgetFitsMultipleEvidenceBindings(t *testing.T) {
 	a := strings.Repeat("a", 25<<10)
 	b := strings.Repeat("b", 25<<10)
-	rendered, err := template.Render("{{evidence.a}}\n{{evidence.b}}", nil, map[string]any{"a": a, "b": b}, definition.MaxEvidenceBindingBytes, maxStepContextBytes)
+	rendered, err := delivery.Render("{{evidence.a}}\n{{evidence.b}}", nil, map[string]any{"a": a, "b": b}, definition.MaxEvidenceBindingBytes, maxStepContextBytes)
 	if err != nil {
 		t.Fatalf("two legal evidence bindings must render within the step context budget: %v", err)
 	}
@@ -42,7 +42,7 @@ func TestStepContextBudgetExceedsSingleBinding(t *testing.T) {
 // after the aggregate cap was raised.
 func TestEvidenceBindingStillCapped(t *testing.T) {
 	big := strings.Repeat("a", definition.MaxEvidenceBindingBytes+1)
-	if _, err := template.Render("{{evidence.a}}", nil, map[string]any{"a": big}, definition.MaxEvidenceBindingBytes, maxStepContextBytes); err == nil {
+	if _, err := delivery.Render("{{evidence.a}}", nil, map[string]any{"a": big}, definition.MaxEvidenceBindingBytes, maxStepContextBytes); err == nil {
 		t.Fatal("expected oversized evidence binding to be rejected")
 	}
 }

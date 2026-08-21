@@ -15,7 +15,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/textutil"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/template"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
@@ -205,11 +204,11 @@ func renderTemplate(src string, inputs map[string]string, maxBytes int, allowNew
 	// individual binding sizes never cause premature rejection. The overall
 	// maxBytes is enforced after rendering via truncation.
 	const unboundedBinding = 1 << 20 // 1 MiB per binding
-	rendered, err := template.Render(src, anyInputs, nil, unboundedBinding, maxBytes)
+	rendered, err := Render(src, anyInputs, nil, unboundedBinding, maxBytes)
 	if err != nil {
-		// The rendered-output cap inside template.Render is strict. Retry with
+		// The rendered-output cap inside Render is strict. Retry with
 		// the high binding cap and truncate ourselves.
-		rendered, err = template.Render(src, anyInputs, nil, unboundedBinding, unboundedBinding)
+		rendered, err = Render(src, anyInputs, nil, unboundedBinding, unboundedBinding)
 		if err != nil {
 			return "", err
 		}

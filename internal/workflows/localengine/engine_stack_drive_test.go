@@ -27,7 +27,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/localengine"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/stacking"
 )
 
 // stackDriveWorkflowTOML is a stacking workflow with an active delivery
@@ -226,7 +225,7 @@ func integrationRunSettled(t *testing.T, engine *localengine.Engine, stackID str
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := stackID + ":" + stacking.IntegrationChunkID
+	want := stackID + ":" + delivery.IntegrationChunkID
 	for _, r := range runs {
 		if r.InvocationKey == want {
 			return r.Status == workflowledger.RunStatusSucceeded
@@ -257,7 +256,7 @@ func TestEngineStackAutoDrivesAfterPark(t *testing.T) {
 			continue // the plan run itself
 		}
 		key := r.InvocationKey
-		if strings.HasSuffix(key, ":"+stacking.IntegrationChunkID) {
+		if strings.HasSuffix(key, ":"+delivery.IntegrationChunkID) {
 			integrationRuns = append(integrationRuns, r)
 			continue
 		}
@@ -282,13 +281,13 @@ func TestEngineStackAutoDrivesAfterPark(t *testing.T) {
 
 	// The task ledger shows every chunk merged.
 	ledger := workflowledger.NewStore(db)
-	byID, err := stacking.TaskMap(context.Background(), ledger, started.RunID)
+	byID, err := delivery.TaskMap(context.Background(), ledger, started.RunID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, id := range []string{"c1", "c2"} {
 		task, ok := byID[id]
-		if !ok || task.Status != stacking.StatusMerged {
+		if !ok || task.Status != delivery.StatusMerged {
 			t.Fatalf("task %s = %+v, want merged", id, task)
 		}
 	}
@@ -308,11 +307,11 @@ func TestEngineStackApproveParksChunksAndGateRefusesUndrivenPublish(t *testing.T
 	ledger := workflowledger.NewStore(db)
 	deadline := time.Now().Add(30 * time.Second)
 	for {
-		byID, err := stacking.TaskMap(context.Background(), ledger, started.RunID)
+		byID, err := delivery.TaskMap(context.Background(), ledger, started.RunID)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if task, ok := byID["c1"]; ok && task.Status == stacking.StatusReviewed {
+		if task, ok := byID["c1"]; ok && task.Status == delivery.StatusReviewed {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -356,13 +355,13 @@ func TestEngineStackGateAllowsPublishAfterDrive(t *testing.T) {
 	ledger := workflowledger.NewStore(db)
 	deadline := time.Now().Add(30 * time.Second)
 	for {
-		byID, err := stacking.TaskMap(context.Background(), ledger, started.RunID)
+		byID, err := delivery.TaskMap(context.Background(), ledger, started.RunID)
 		if err != nil {
 			t.Fatal(err)
 		}
 		merged := 0
 		for _, id := range []string{"c1", "c2"} {
-			if task, ok := byID[id]; ok && task.Status == stacking.StatusMerged {
+			if task, ok := byID[id]; ok && task.Status == delivery.StatusMerged {
 				merged++
 			}
 		}
@@ -505,7 +504,7 @@ func TestStackDriveRefusedDeliveryDoesNotMarkPublished(t *testing.T) {
 	}
 	// The refused run settled delivery_failed and the task reopened with one
 	// attempt recorded in the durable transition journal.
-	if task := mustStackChunk(t, ledger, started.RunID, "c1"); task.Status != stacking.StatusReopened {
+	if task := mustStackChunk(t, ledger, started.RunID, "c1"); task.Status != delivery.StatusReopened {
 		t.Fatalf("chunk c1 = %+v, want reopened", task)
 	}
 	if reopens := countStackReopens(t, ledger, started.RunID, "c1"); reopens != 1 {
@@ -535,7 +534,7 @@ func waitChunkReopened(t *testing.T, ledger *workflowledger.Store, stackID strin
 	t.Helper()
 	deadline := time.Now().Add(30 * time.Second)
 	for {
-		byID, err := stacking.TaskMap(context.Background(), ledger, stackID)
+		byID, err := delivery.TaskMap(context.Background(), ledger, stackID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -547,10 +546,10 @@ func waitChunkReopened(t *testing.T, ledger *workflowledger.Store, stackID strin
 			<-time.After(100 * time.Millisecond)
 			continue
 		}
-		if task.Status == stacking.StatusPublished {
+		if task.Status == delivery.StatusPublished {
 			t.Fatalf("chunk c1 was marked published by a refused delivery")
 		}
-		if task.Status == stacking.StatusReopened {
+		if task.Status == delivery.StatusReopened {
 			return
 		}
 		if time.Now().After(deadline) {
@@ -563,7 +562,7 @@ func waitChunkReopened(t *testing.T, ledger *workflowledger.Store, stackID strin
 // mustStackChunk returns a chunk's current task map entry.
 func mustStackChunk(t *testing.T, ledger *workflowledger.Store, stackID, chunkID string) workflowledger.Task {
 	t.Helper()
-	byID, err := stacking.TaskMap(context.Background(), ledger, stackID)
+	byID, err := delivery.TaskMap(context.Background(), ledger, stackID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -585,7 +584,7 @@ func assertChunkRunSettled(t *testing.T, engine *localengine.Engine, stackID str
 	}
 	found := false
 	for _, r := range runs {
-		if strings.HasPrefix(r.InvocationKey, stackID+":") && !strings.HasSuffix(r.InvocationKey, ":"+stacking.IntegrationChunkID) {
+		if strings.HasPrefix(r.InvocationKey, stackID+":") && !strings.HasSuffix(r.InvocationKey, ":"+delivery.IntegrationChunkID) {
 			found = true
 			if r.Status != workflowledger.RunStatusDeliveryFailed {
 				t.Fatalf("chunk run %s (key %s) = %q, want delivery_failed after the refusal", r.RunID, r.InvocationKey, r.Status)
@@ -706,7 +705,7 @@ func TestStackDriveIntegrationFaultBackoffBoundsRetries(t *testing.T) {
 // is admitted and returns its run id.
 func waitIntegrationRun(t *testing.T, engine *localengine.Engine, stackID string) string {
 	t.Helper()
-	want := stackID + ":" + stacking.IntegrationChunkID
+	want := stackID + ":" + delivery.IntegrationChunkID
 	deadline := time.Now().Add(30 * time.Second)
 	for {
 		runs, err := engine.Repo.ListRuns(context.Background())
@@ -735,7 +734,7 @@ func countStackReopens(t *testing.T, ledger *workflowledger.Store, stackID, chun
 	}
 	n := 0
 	for _, tr := range trs {
-		if tr.TaskID == chunkID && tr.ToStatus == stacking.StatusReopened {
+		if tr.TaskID == chunkID && tr.ToStatus == delivery.StatusReopened {
 			n++
 		}
 	}
@@ -893,16 +892,16 @@ func seedFullyDrivenStackWithOpenIntegrationPR(t *testing.T, mergePolicy string)
 	// the gate both read.
 	seedSucceededDecomposeAttempt(t, repo, stackID, []byte(stackValidMultiPlan))
 
-	_, chunks, _, _, err := stacking.ParseStackPlanOutput([]byte(stackValidMultiPlan))
+	_, chunks, _, _, err := delivery.ParseStackPlanOutput([]byte(stackValidMultiPlan))
 	if err != nil || len(chunks) != 2 {
 		t.Fatalf("parse stack plan = %v, %v; want 2 chunks", chunks, err)
 	}
 	ledger := workflowledger.NewStore(db)
-	if err := stacking.SeedStackLedger(ctx, ledger, stackID, chunks); err != nil {
+	if err := delivery.SeedStackLedger(ctx, ledger, stackID, chunks); err != nil {
 		t.Fatal(err)
 	}
 	for _, c := range chunks {
-		if err := ledger.TransitionTask(stackID, c.ID, stacking.StatusMerged); err != nil {
+		if err := ledger.TransitionTask(stackID, c.ID, delivery.StatusMerged); err != nil {
 			t.Fatalf("transition chunk %s to merged: %v", c.ID, err)
 		}
 	}
@@ -911,7 +910,7 @@ func seedFullyDrivenStackWithOpenIntegrationPR(t *testing.T, mergePolicy string)
 	// a durable pushed delivery record and an open PR the oracle can see.
 	intRunID := stackID + "-integration"
 	seedDeliveryPendingRun(t, repo, workflowledger.RunSnapshot{
-		RunID: intRunID, InvocationKey: stackID + ":" + stacking.IntegrationChunkID,
+		RunID: intRunID, InvocationKey: stackID + ":" + delivery.IntegrationChunkID,
 		WorkflowName: workflowName, BaseRef: "main",
 		WorktreeName: "wt-integration", RemoteURL: "https://github.com/acme/stack.git",
 	}, snapshotJSON)
@@ -971,7 +970,7 @@ func setRunStatus(t *testing.T, repo workflowledger.Repository, runID string, wa
 }
 
 // seedSucceededDecomposeAttempt records a succeeded decompose step attempt
-// with a stored output on the given run, the shape stacking.LoadStackPlanOutput
+// with a stored output on the given run, the shape delivery.LoadStackPlanOutput
 // reads.
 func seedSucceededDecomposeAttempt(t *testing.T, repo workflowledger.Repository, runID string, output []byte) {
 	t.Helper()
@@ -980,7 +979,7 @@ func seedSucceededDecomposeAttempt(t *testing.T, repo workflowledger.Repository,
 	if err := repo.StoreContent(ctx, ref, output); err != nil {
 		t.Fatal(err)
 	}
-	attempt := workflowledger.StepAttempt{AttemptID: "wfa-decompose-1", RunID: runID, StepID: stacking.DecomposeStepID, AttemptNo: 1}
+	attempt := workflowledger.StepAttempt{AttemptID: "wfa-decompose-1", RunID: runID, StepID: delivery.DecomposeStepID, AttemptNo: 1}
 	if err := repo.RecordStepAttemptOutcome(ctx, attempt, workflowledger.AttemptOutcome{
 		Status: workflowledger.AttemptStatusSucceeded, OutputRef: ref, OutputDigest: workflowledger.DigestHex(output),
 	}); err != nil {

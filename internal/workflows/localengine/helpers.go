@@ -14,8 +14,8 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
+	workflowdelivery "github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	workflowtemplate "github.com/MiviaLabs/mivia-agent/internal/workflows/template"
 )
 
 func buildStepRuntimes(wf *definition.CompiledWorkflow, base string) (map[string]controller.StepRuntime, error) {
@@ -275,7 +275,7 @@ func loadOutputSchemaBytes(base, ref string) ([]byte, error) {
 }
 
 func loadTemplateBytes(base, ref string) ([]byte, error) {
-	return loadBoundedReferenceBytes(base, ref, workflowtemplate.MaxTemplateBytes)
+	return loadBoundedReferenceBytes(base, ref, workflowdelivery.MaxTemplateBytes)
 }
 
 func loadBoundedReferenceBytes(base, ref string, maxBytes int) ([]byte, error) {
