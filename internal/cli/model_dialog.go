@@ -142,7 +142,7 @@ func (d *modelDialog) rowLinesAt(inner, visible, scroll int) []string {
 			if row.reason != "" {
 				text += " · " + row.reason
 			}
-			lines = append(lines, tuiHeaderStyle.Render(text))
+			lines = append(lines, TUIHeaderStyle.Render(text))
 			continue
 		}
 		marker := "  "

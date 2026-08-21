@@ -166,7 +166,7 @@ func fillStatusLine(left, right string, width int, rule bool) string {
 	}
 	fill := strings.Repeat(" ", spacerN)
 	if rule {
-		fill = tuiHeaderStyle.Render(strings.Repeat("─", spacerN))
+		fill = TUIHeaderStyle.Render(strings.Repeat("─", spacerN))
 	}
 	return left + fill + right
 }

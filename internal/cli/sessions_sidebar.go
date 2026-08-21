@@ -240,7 +240,7 @@ func (s *sessionsSidebar) viewWithActive(rows []chat.SessionInfo, width, height 
 
 	title := fmt.Sprintf(" Sessions %d · saved sessions", len(rows))
 	lines := []string{
-		tuiHeaderStyle.Render(sidebarPad(title, width)),
+		TUIHeaderStyle.Render(sidebarPad(title, width)),
 		s.renderNewSession(rows, width, focused),
 		tuiDimStyle.Render(strings.Repeat("─", width)),
 	}

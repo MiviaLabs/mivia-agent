@@ -257,7 +257,7 @@ func renderThinkingBlock(text string, collapsed bool, scrollOffset int, thinking
 	_ = thinkingExpandDefault
 	effectivelyCollapsed := collapsed
 	if strings.TrimSpace(text) == "" {
-		return []string{tuiThinkingStyle.Render("  " + glyphTriR + " thinking")}
+		return []string{TUIThinkingStyle.Render("  " + glyphTriR + " thinking")}
 	}
 	rawLines := strings.Split(SafeChatBlockText(text, 0), "\n")
 	if effectivelyCollapsed {
@@ -269,7 +269,7 @@ func renderThinkingBlock(text string, collapsed bool, scrollOffset int, thinking
 				n++
 			}
 		}
-		return []string{tuiThinkingStyle.Render(fmt.Sprintf("  %s thinking · %d lines", glyphTriR, n))}
+		return []string{TUIThinkingStyle.Render(fmt.Sprintf("  %s thinking · %d lines", glyphTriR, n))}
 	}
 	// Wrap each raw line to the pane width before windowing, so a single long
 	// reasoning line does not overflow the viewport (every other block kind
@@ -308,22 +308,22 @@ func renderThinkingBlock(text string, collapsed bool, scrollOffset int, thinking
 	window := allLines[start:end]
 
 	var out []string
-	out = append(out, tuiThinkingStyle.Render("  "+glyphTriD+" thinking"))
+	out = append(out, TUIThinkingStyle.Render("  "+glyphTriD+" thinking"))
 
 	// Show "↑ ..." if there are lines above the window.
 	if start > 0 {
-		out = append(out, tuiThinkingStyle.Render("    ↑ ..."))
+		out = append(out, TUIThinkingStyle.Render("    ↑ ..."))
 	}
 
 	for _, line := range window {
 		if line != "" {
-			out = append(out, tuiThinkingStyle.Render("    "+line))
+			out = append(out, TUIThinkingStyle.Render("    "+line))
 		}
 	}
 
 	// Show "↓ ..." if there are lines below the window.
 	if end < n {
-		out = append(out, tuiThinkingStyle.Render("    ↓ ..."))
+		out = append(out, TUIThinkingStyle.Render("    ↓ ..."))
 	}
 
 	return out

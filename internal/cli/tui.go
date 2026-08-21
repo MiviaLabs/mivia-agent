@@ -26,12 +26,16 @@ import (
 // Styles (semantic palette + aliases live in theme.go)
 // ---------------------------------------------------------------------------
 var (
-	tuiHeaderStyle = lipgloss.NewStyle().Faint(true)
+	// TUIHeaderStyle renders faint section headers in the TUI chrome and in
+	// slash-command output shared with internal/clichat.
+	TUIHeaderStyle = lipgloss.NewStyle().Faint(true)
 	tuiBarStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorDim)).Background(lipgloss.Color(themeColorCardBg))
-	// Thinking chrome uses the brand's thinking phase colour (cyan) so the
-	// same state reads the same everywhere - it used to be magenta here and
-	// cyan in the status bar for the identical moment.
-	tuiThinkingStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorThinking)).Italic(true)
+	// TUIThinkingStyle renders live thinking-phase text. Thinking chrome uses
+	// the brand's thinking phase colour (cyan) so the same state reads the
+	// same everywhere - it used to be magenta here and cyan in the status bar
+	// for the identical moment. Shared with the classic-mode block renderer
+	// in internal/clichat.
+	TUIThinkingStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorThinking)).Italic(true)
 	thinkingLiveStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(brandColorThinking)).Italic(true)
 	thinkingDimStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(themeThinkingDim)).Italic(true).Faint(true)
 )

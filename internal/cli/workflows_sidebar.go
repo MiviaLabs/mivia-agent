@@ -260,7 +260,7 @@ func (s *workflowsSidebar) view(width, height int, focused bool) string {
 	}
 	title := fmt.Sprintf(" Workflows · %d runs", len(rows))
 	lines := []string{
-		tuiHeaderStyle.Render(sidebarPad(title, width)),
+		TUIHeaderStyle.Render(sidebarPad(title, width)),
 		tuiDimStyle.Render(strings.Repeat("─", width)),
 	}
 	if len(rows) == 0 {

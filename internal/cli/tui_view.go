@@ -314,7 +314,7 @@ func (m *tuiModel) viewWelcome() string {
 	if spacerN < 1 {
 		spacerN = 1
 	}
-	status := left + tuiHeaderStyle.Render(strings.Repeat("─", spacerN)) + right
+	status := left + TUIHeaderStyle.Render(strings.Repeat("─", spacerN)) + right
 
 	// Build hero block: Lockup+ (diamond left, identity right) on terminals
 	// wide enough for the side-by-side; text-only hero otherwise.

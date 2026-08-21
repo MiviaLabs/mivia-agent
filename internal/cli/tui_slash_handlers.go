@@ -347,7 +347,7 @@ func (m *tuiModel) handleTuiSessionStoreSlash(cmd string, fields []string) bool 
 		} else if len(sessions) == 0 {
 			m.appendInfo("no saved sessions")
 		} else {
-			m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: tuiHeaderStyle.Render("── saved sessions ──"), Rendered: tuiHeaderStyle.Render("── saved sessions ──")})
+			m.appendBlock(ChatBlock{Kind: ChatBlockSystem, Text: TUIHeaderStyle.Render("── saved sessions ──"), Rendered: TUIHeaderStyle.Render("── saved sessions ──")})
 			for _, si := range sessions {
 				marker := ""
 				if chat.IsAutoSaveName(si.Name) {

@@ -84,7 +84,7 @@ func TestThinkingUsesBrandPhaseColor(t *testing.T) {
 	// Thinking is cyan everywhere (the brand's thinking phase); it used to be
 	// magenta here and cyan in the status bar for the same state. Asserted on
 	// the style, since lipgloss drops color in a non-TTY test process.
-	if got := tuiThinkingStyle.GetForeground(); string(got.(lipgloss.Color)) != brandColorThinking {
+	if got := TUIThinkingStyle.GetForeground(); string(got.(lipgloss.Color)) != brandColorThinking {
 		t.Fatalf("thinking chrome color = %v, want brand thinking %q", got, brandColorThinking)
 	}
 	if got := thinkingLiveStyle.GetForeground(); string(got.(lipgloss.Color)) != brandColorThinking {
