@@ -8,31 +8,17 @@ import (
 	"testing"
 )
 
-// tuiLineCountBaseline is the tracked baseline for tui.go line count.
-// Update this when intentionally growing the file (e.g. new features).
-// Current: ~445 lines. Ceiling: 600 for generous headroom.
-const tuiLineCountBaseline = 600
-
 // maxFileLines is the maximum allowed lines for any single .go file
-// in internal/cli/ (except tui.go, which is grandfathered at 600).
+// in internal/cli/.
 const maxFileLines = 800
 
 // TestStructure_Baseline checks structural invariants for internal/cli/:
-//   - tui.go line count ≤ 600 (generous ceiling)
 //   - Package compiles without errors (via go/parser)
-//   - No .go file exceeds 800 lines (tui.go grandfathered at 600)
+//   - No .go file exceeds 800 lines
+//
+// tui.go and its line-count ceiling moved to internal/legacytui/ with the
+// rest of the TUI: this package no longer has a tui.go to check.
 func TestStructure_Baseline(t *testing.T) {
-	t.Run("tui.go line count", func(t *testing.T) {
-		lines, err := countLines("tui.go")
-		if err != nil {
-			t.Fatalf("reading tui.go: %v", err)
-		}
-		t.Logf("tui.go: %d lines (ceiling %d)", lines, tuiLineCountBaseline)
-		if lines > tuiLineCountBaseline {
-			t.Errorf("tui.go has %d lines, exceeds ceiling of %d", lines, tuiLineCountBaseline)
-		}
-	})
-
 	t.Run("package compiles (go/parser)", func(t *testing.T) {
 		fset := token.NewFileSet()
 		pkgs, err := parser.ParseDir(fset, ".", nil, parser.AllErrors)
@@ -65,10 +51,6 @@ func TestStructure_Baseline(t *testing.T) {
 		}
 		for _, e := range entries {
 			if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") {
-				continue
-			}
-			// tui.go has its own dedicated ceiling (600) instead of 800.
-			if e.Name() == "tui.go" {
 				continue
 			}
 			lines, err := countLines(e.Name())

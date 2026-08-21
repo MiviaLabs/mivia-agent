@@ -19,7 +19,7 @@ func handleSlashAgent(fields []string, sess *chat.Session, res *config.Resolved,
 		return true, false, nil
 	}
 	if len(fields) < 2 {
-		sink.Info(formatAgentCurrent(currentAgentName(state), state.Registry))
+		sink.Info(FormatAgentCurrent(CurrentAgentName(state), state.Registry))
 		return true, false, nil
 	}
 	name := fields[1]
@@ -27,7 +27,7 @@ func handleSlashAgent(fields []string, sess *chat.Session, res *config.Resolved,
 		sink.Info(FormatAgentUnavailable(err))
 		return true, false, nil
 	}
-	sink.Info(formatAgentSet(name))
+	sink.Info(FormatAgentSet(name))
 	return true, false, nil
 }
 
@@ -72,7 +72,7 @@ func handleSlashCompactJSON(sess *chat.Session, res *config.Resolved, focus stri
 		activeJSONSlashSink.Error("context compaction failed: " + err.Error())
 		return true, false, nil
 	}
-	if reason := summaryDisabledReason(sess, res); reason != "" {
+	if reason := SummaryDisabledReason(sess, res); reason != "" {
 		activeJSONSlashSink.Info(CompactStructuralOnlyNotice(reason))
 	}
 	writeContextUsageLine(w, sess)
@@ -91,7 +91,7 @@ func CompactStructuralOnlyNotice(reason string) string {
 // structural-only explanation when summarization is not configured.
 func compactResultMessage(sess *chat.Session, res *config.Resolved, usage chat.ContextUsage) string {
 	message := fmt.Sprintf("context compacted (%d%% used, %s/%s prompt)", usage.Percent, chat.FormatTokenK(usage.UsedTokens), chat.FormatTokenK(usage.BudgetTokens))
-	if reason := summaryDisabledReason(sess, res); reason != "" {
+	if reason := SummaryDisabledReason(sess, res); reason != "" {
 		message += "\n  " + CompactStructuralOnlyNotice(reason)
 	}
 	return message
@@ -110,7 +110,7 @@ func handleSlashInfo(cmd string, fields []string, sess *chat.Session, res *confi
 	sink := SlashSinkFor(term)
 	switch cmd {
 	case "/agents":
-		term.WriteString("\n" + formatAgentCurrent(currentAgentName(classicAgentState), registryForState(classicAgentState)))
+		term.WriteString("\n" + FormatAgentCurrent(CurrentAgentName(classicAgentState), RegistryForState(classicAgentState)))
 		return true, false, nil
 	case "/status":
 		binding := sess.CurrentBinding()
@@ -129,18 +129,18 @@ func handleSlashInfo(cmd string, fields []string, sess *chat.Session, res *confi
 		if res != nil {
 			defaultProvider = res.ProviderName
 		}
-		providerName, modelName, hasArg := parseModelArgs(fields, sess.CurrentSelection().ProviderName, defaultProvider)
-		choices := modelSwitchChoices(res, providerName, defaultProvider)
+		providerName, modelName, hasArg := ParseModelArgs(fields, sess.CurrentSelection().ProviderName, defaultProvider)
+		choices := ModelSwitchChoices(res, providerName, defaultProvider)
 		if !hasArg {
 			sink.Info(formatModelCurrent(sess.CurrentModel(), choices))
 			return true, false, nil
 		}
 		discarded, err := SwitchModelCommand(sess, res, providerName, modelName)
 		if err != nil {
-			sink.Error(formatModelUnavailable(providerName, choices))
+			sink.Error(FormatModelUnavailable(providerName, choices))
 			return true, false, nil
 		}
-		sink.Info(formatModelSet(sess.CurrentSelection().ProviderName, sess.CurrentModel(), discarded))
+		sink.Info(FormatModelSet(sess.CurrentSelection().ProviderName, sess.CurrentModel(), discarded))
 		if jsink, ok := sink.(*JSONSlashSink); ok {
 			jsink.ModelChanged(sess.CurrentSelection().ProviderName, sess.CurrentModel(), discarded)
 		}
@@ -157,7 +157,7 @@ func handleSlashInfo(cmd string, fields []string, sess *chat.Session, res *confi
 		for _, t := range registry.List() {
 			term.WriteString(fmt.Sprintf("\n  %s - %s", t.Name(), t.Description()))
 		}
-		term.WriteString("\n" + classicAgentState.schemaMassSnapshot().String())
+		term.WriteString("\n" + classicAgentState.SchemaMassSnapshot().String())
 	case "/workspace":
 		if registry, _, _ := sess.AgentSurfaceSnapshot(); registry == nil {
 			term.WriteString("\ntools disabled")
@@ -169,7 +169,8 @@ func handleSlashInfo(cmd string, fields []string, sess *chat.Session, res *confi
 	return true, false, nil
 }
 
-func registryForState(state *AgentSessionState) *agents.AgentRegistry {
+// RegistryForState implements registry for state.
+func RegistryForState(state *AgentSessionState) *agents.AgentRegistry {
 	if state == nil {
 		return nil
 	}
@@ -181,47 +182,47 @@ func handleSlashLimits(cmd string, fields []string, sess *chat.Session, term *Te
 		return handleBudget(fields, sess, term)
 	}
 	sink := terminalSlashSink{t: term}
-	n, hasArg, ok := parseNonNegInt(fields)
+	n, hasArg, ok := ParseNonNegInt(fields)
 	if hasArg {
 		if !ok {
 			arg := ""
 			if len(fields) >= 2 {
 				arg = fields[1]
 			}
-			sink.Info(formatStepsInvalid(arg))
+			sink.Info(FormatStepsInvalid(arg))
 			return true, false, nil
 		}
 		if err := sess.SetMaxSteps(n); err != nil {
 			sink.Info("invalid step limit: " + err.Error())
 			return true, false, nil
 		}
-		sink.Info(formatStepsSet(n))
+		sink.Info(FormatStepsSet(n))
 		return true, false, nil
 	}
-	sink.Info(formatStepsSummary(sess.MaxStepsValue()))
+	sink.Info(FormatStepsSummary(sess.MaxStepsValue()))
 	return true, false, nil
 }
 
 func handleBudget(fields []string, sess *chat.Session, term *Terminal) (bool, bool, error) {
 	sink := terminalSlashSink{t: term}
-	n, hasArg, ok := parseNonNegInt(fields)
+	n, hasArg, ok := ParseNonNegInt(fields)
 	if hasArg {
 		if !ok {
 			arg := ""
 			if len(fields) >= 2 {
 				arg = fields[1]
 			}
-			sink.Info(formatBudgetInvalid(arg))
+			sink.Info(FormatBudgetInvalid(arg))
 			return true, false, nil
 		}
 		if err := sess.SetPromptBudget(n); err != nil {
 			sink.Info("invalid budget: " + err.Error())
 			return true, false, nil
 		}
-		sink.Info(formatBudgetSet(sess.PromptBudget()))
+		sink.Info(FormatBudgetSet(sess.PromptBudget()))
 		return true, false, nil
 	}
-	sink.Info(formatBudgetSummary(sess.PromptBudget()))
+	sink.Info(FormatBudgetSummary(sess.PromptBudget()))
 	return true, false, nil
 }
 
@@ -238,7 +239,7 @@ func handleSlashSessions(cmd, line string, sess *chat.Session, term *Terminal) (
 			sink.Info(fmt.Sprintf("save error: %v", err))
 			return true, false, nil
 		}
-		sink.Info(saveSessionResult(name, len(sess.Messages), sess.UserTurns()))
+		sink.Info(SaveSessionResult(name, len(sess.Messages), sess.UserTurns()))
 	case "/load":
 		if name == "" {
 			// Preserve classic REPL typo (missing '>'); see plan non-goals.
@@ -250,9 +251,9 @@ func handleSlashSessions(cmd, line string, sess *chat.Session, term *Terminal) (
 			return true, false, nil
 		}
 		if sess.LoadedContextSession() {
-			sink.Info(loadContextSessionResult(name, len(sess.Messages), sess.UserTurns()) + "\n")
+			sink.Info(LoadContextSessionResult(name, len(sess.Messages), sess.UserTurns()) + "\n")
 		} else {
-			sink.Info(loadSessionResult(name, len(sess.Messages), sess.UserTurns()) + "\n")
+			sink.Info(LoadSessionResult(name, len(sess.Messages), sess.UserTurns()) + "\n")
 		}
 		writeModelRestoreNotice(term, sess)
 		NewChatRenderer(term, sess.CurrentModel()).RenderHistory(sess.Messages)
@@ -267,7 +268,7 @@ func handleSlashSessions(cmd, line string, sess *chat.Session, term *Terminal) (
 			sink.Info(fmt.Sprintf("delete error: %v", err))
 			return true, false, nil
 		}
-		sink.Info(deleteSessionResult(name))
+		sink.Info(DeleteSessionResult(name))
 	case "/session":
 		return showSession(sess, term)
 	}
@@ -276,7 +277,7 @@ func handleSlashSessions(cmd, line string, sess *chat.Session, term *Terminal) (
 
 func writeModelRestoreNotice(term *Terminal, sess *chat.Session) {
 	if saved, current, ok := sess.ModelRestoreNotice(); ok {
-		terminalSlashSink{t: term}.Info("(" + modelRestoreNoticeText(saved, current) + ")")
+		terminalSlashSink{t: term}.Info("(" + ModelRestoreNoticeText(saved, current) + ")")
 	}
 	for _, note := range sess.TakeAdmissionNotes() {
 		terminalSlashSink{t: term}.Info("(" + note + ")")
@@ -289,7 +290,7 @@ func listSessions(sess *chat.Session, term *Terminal) (bool, bool, error) {
 		term.WriteString(fmt.Sprintf("\nlist error: %v", err))
 		return true, false, nil
 	}
-	sessions = collapseConversations(sessions)
+	sessions = CollapseConversations(sessions)
 	if len(sessions) == 0 {
 		term.WriteString("\n(no saved sessions)")
 		return true, false, nil
@@ -327,30 +328,30 @@ func handleSlashResume(cmd string, fields []string, term *Terminal) (bool, bool,
 	}
 	if len(fields) < 2 {
 		// No argument: list interrupted runs.
-		c := findCoordinator()
+		c := FindCoordinator()
 		if c == nil {
 			term.WriteString("\nno active orchestration runs")
 			return true, false, nil
 		}
-		runs, err := listInterruptedRuns(context.Background(), c)
+		runs, err := ListInterruptedRuns(context.Background(), c)
 		if err != nil {
 			term.WriteString(fmt.Sprintf("\nerror: %v", err))
 			return true, false, nil
 		}
-		term.WriteString("\n" + formatListedRuns(runs))
+		term.WriteString("\n" + FormatListedRuns(runs))
 		return true, false, nil
 	}
 	// With a run ID: show confirmation and resume.
 	runID := fields[1]
-	c := findCoordinator()
+	c := FindCoordinator()
 	if c == nil {
 		term.WriteString("\nno active orchestration runs")
 		return true, false, nil
 	}
-	d := findDispatcher()
-	_, err := resumeRun(context.Background(), c, d, runID, nil)
+	d := FindDispatcher()
+	_, err := ResumeRun(context.Background(), c, d, runID, nil)
 	if err != nil {
-		term.WriteString(fmt.Sprintf("\n%v", formatResumeError(err, runID)))
+		term.WriteString(fmt.Sprintf("\n%v", FormatResumeError(err, runID)))
 		return true, false, nil
 	}
 	term.WriteString(fmt.Sprintf("\nrun %s resumed", runID))

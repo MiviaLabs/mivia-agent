@@ -24,7 +24,7 @@ func tuiHelpCommands() []helpSection {
 }
 
 func tuiHelpCommandsFor(registry *skills.Registry) []helpSection {
-	commands := slashCommands(slashSurfaceTUI, registry)
+	commands := SlashCommands(SlashSurfaceTUI, registry)
 	items := make([]helpItem, 0, len(commands))
 	for _, command := range commands {
 		key := command.Name

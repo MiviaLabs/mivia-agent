@@ -124,24 +124,24 @@ func TestMarkerCoverageExcludeLockAndAppend(t *testing.T) {
 
 func TestMarkerCoverageReadFailures(t *testing.T) {
 	missingRoot := filepath.Join(t.TempDir(), "missing")
-	if _, err := readWorktreeMarker(missingRoot); err == nil {
+	if _, err := ReadWorktreeMarker(missingRoot); err == nil {
 		t.Fatal("missing root marker read succeeded")
 	}
 	root := t.TempDir()
-	if _, err := readWorktreeMarker(root); err == nil {
+	if _, err := ReadWorktreeMarker(root); err == nil {
 		t.Fatal("missing marker directory succeeded")
 	}
 	if err := os.Mkdir(filepath.Join(root, ".mivia"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readWorktreeMarker(root); err == nil {
+	if _, err := ReadWorktreeMarker(root); err == nil {
 		t.Fatal("missing marker succeeded")
 	}
 	markerPath := worktreeMarkerPath(root)
 	if err := os.Mkdir(markerPath, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readWorktreeMarker(root); err == nil {
+	if _, err := ReadWorktreeMarker(root); err == nil {
 		t.Fatal("directory marker succeeded")
 	}
 	if err := os.Remove(markerPath); err != nil {
@@ -151,14 +151,14 @@ func TestMarkerCoverageReadFailures(t *testing.T) {
 		if err := os.WriteFile(markerPath, []byte(data), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := readWorktreeMarker(root); err == nil {
+		if _, err := ReadWorktreeMarker(root); err == nil {
 			t.Fatalf("invalid marker %q succeeded", data)
 		}
 	}
 }
 
 func TestLifecycleLockCoverageFilesystemFailures(t *testing.T) {
-	if _, err := lockWorktreeLifecycle(t.TempDir(), "wt-a"); err == nil {
+	if _, err := LockWorktreeLifecycle(t.TempDir(), "wt-a"); err == nil {
 		t.Fatal("lifecycle lock outside a repository succeeded")
 	}
 	repo := newWorktreeCommandRepo(t)
@@ -170,7 +170,7 @@ func TestLifecycleLockCoverageFilesystemFailures(t *testing.T) {
 	if err := os.WriteFile(lockDir, []byte("file"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := lockWorktreeLifecycle(repo, "wt-a"); err == nil {
+	if _, err := LockWorktreeLifecycle(repo, "wt-a"); err == nil {
 		t.Fatal("file lock directory succeeded")
 	}
 	if err := os.Remove(lockDir); err != nil {
@@ -182,25 +182,25 @@ func TestLifecycleLockCoverageFilesystemFailures(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(lockDir, "wt-a.lock"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := lockWorktreeLifecycle(repo, "wt-a"); err == nil {
+	if _, err := LockWorktreeLifecycle(repo, "wt-a"); err == nil {
 		t.Fatal("directory lock file succeeded")
 	}
 }
 
 func TestLifecycleLockCoverageBusyAndClose(t *testing.T) {
 	repo := newWorktreeCommandRepo(t)
-	first, err := lockWorktreeLifecycle(repo, "wt-a")
+	first, err := LockWorktreeLifecycle(repo, "wt-a")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if first.File() == nil {
 		t.Fatal("lock file is nil")
 	}
-	if _, err := lockWorktreeLifecycle(repo, "wt-a"); err == nil || !strings.Contains(err.Error(), "busy") {
+	if _, err := LockWorktreeLifecycle(repo, "wt-a"); err == nil || !strings.Contains(err.Error(), "busy") {
 		t.Fatalf("second lock error = %v", err)
 	}
 	first.Close()
-	second, err := lockWorktreeLifecycle(repo, "wt-a")
+	second, err := LockWorktreeLifecycle(repo, "wt-a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +280,7 @@ func TestMarkerCoverageReadFromRegularFileRoot(t *testing.T) {
 	if err := os.WriteFile(path, []byte("file"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readWorktreeMarker(path); err == nil {
+	if _, err := ReadWorktreeMarker(path); err == nil {
 		t.Fatal("regular file accepted as marker root")
 	}
 }
@@ -437,12 +437,12 @@ func TestMarkerCoverageInjectedStatAndReadFailures(t *testing.T) {
 	originalStat := statWorktreeMarkerFile
 	originalRead := readWorktreeMarkerFile
 	statWorktreeMarkerFile = func(*os.File) (os.FileInfo, error) { return nil, errors.New("stat failure") }
-	if _, err := readWorktreeMarker(root); err == nil {
+	if _, err := ReadWorktreeMarker(root); err == nil {
 		t.Fatal("injected marker stat failure succeeded")
 	}
 	statWorktreeMarkerFile = originalStat
 	readWorktreeMarkerFile = func(io.Reader) ([]byte, error) { return nil, errors.New("read failure") }
-	if _, err := readWorktreeMarker(root); err == nil {
+	if _, err := ReadWorktreeMarker(root); err == nil {
 		t.Fatal("injected marker read failure succeeded")
 	}
 	readWorktreeMarkerFile = originalRead
@@ -460,7 +460,7 @@ func TestMarkerCoverageInjectedStatAndReadFailures(t *testing.T) {
 		statWorktreeMarkerFile = originalStat
 		readWorktreeMarkerFile = originalRead
 	})
-	if _, err := readWorktreeMarker(root); err == nil || !strings.Contains(err.Error(), "too large") {
+	if _, err := ReadWorktreeMarker(root); err == nil || !strings.Contains(err.Error(), "too large") {
 		t.Fatalf("post-stat oversized marker error = %v", err)
 	}
 }

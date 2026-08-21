@@ -24,12 +24,12 @@ func RemoveUnmanagedWorktree(root string, wt *vcs.WorktreeInfo, branchPrefix str
 	if wt == nil {
 		return fmt.Errorf("worktree route requires a worktree")
 	}
-	store, err := openRepositoryContextStore(root)
+	store, err := OpenRepositoryContextStore(root)
 	if err != nil {
 		return err
 	}
 	defer store.Close()
-	principal, err := worktreeRoutePrincipal(root)
+	principal, err := WorktreeRoutePrincipal(root)
 	if err != nil {
 		return err
 	}
@@ -43,7 +43,7 @@ func RemoveUnmanagedWorktree(root string, wt *vcs.WorktreeInfo, branchPrefix str
 	if err := vcs.Prune(context.Background(), root, wt.Name); err != nil {
 		return err
 	}
-	_, err = cleanupStaleWorktreeRows(store, principal, wt.Name)
+	_, err = CleanupStaleWorktreeRows(store, principal, wt.Name)
 	return err
 }
 
@@ -54,23 +54,23 @@ func cleanupStaleWorktreeStorage(root, name string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	store, err := openRepositoryContextStore(root)
+	store, err := OpenRepositoryContextStore(root)
 	if err != nil {
 		return false, err
 	}
 	defer store.Close()
-	principal, err := worktreeRoutePrincipal(root)
+	principal, err := WorktreeRoutePrincipal(root)
 	if err != nil {
 		return false, err
 	}
-	return cleanupStaleWorktreeRows(store, principal, sanitized)
+	return CleanupStaleWorktreeRows(store, principal, sanitized)
 }
 
-// cleanupStaleWorktreeRows fences and removes every storage row for one
+// CleanupStaleWorktreeRows fences and removes every storage row for one
 // worktree name, tombstoning its sessions. It reports whether any row
 // existed. Call it only when the physical worktree is gone: the name owns at
 // most one non-deleted instance, so a same-name replacement is never touched.
-func cleanupStaleWorktreeRows(store *storage.SQLite, principal contextstate.Principal, name string) (bool, error) {
+func CleanupStaleWorktreeRows(store *storage.SQLite, principal contextstate.Principal, name string) (bool, error) {
 	cleaned := false
 	live, err := store.LiveWorktreeInstance(context.Background(), principal, name)
 	switch {
@@ -119,15 +119,17 @@ func cleanupStaleWorktreeRows(store *storage.SQLite, principal contextstate.Prin
 	return cleaned, nil
 }
 
-func finishManagedWorktreeRemoval(root string, instance contextstate.WorktreeInstance) error {
-	return finishManagedWorktreeRemovalInStore(nil, root, instance)
+// FinishManagedWorktreeRemoval implements finish managed worktree removal.
+func FinishManagedWorktreeRemoval(root string, instance contextstate.WorktreeInstance) error {
+	return FinishManagedWorktreeRemovalInStore(nil, root, instance)
 }
 
-func finishManagedWorktreeRemovalInStore(store *storage.SQLite, root string, instance contextstate.WorktreeInstance) error {
+// FinishManagedWorktreeRemovalInStore implements finish managed worktree removal in store.
+func FinishManagedWorktreeRemovalInStore(store *storage.SQLite, root string, instance contextstate.WorktreeInstance) error {
 	ownedStore := false
 	if store == nil {
 		var err error
-		store, err = openRepositoryContextStore(root)
+		store, err = OpenRepositoryContextStore(root)
 		if err != nil {
 			return err
 		}
@@ -136,7 +138,7 @@ func finishManagedWorktreeRemovalInStore(store *storage.SQLite, root string, ins
 	if ownedStore {
 		defer store.Close()
 	}
-	principal, err := worktreeRoutePrincipal(root)
+	principal, err := WorktreeRoutePrincipal(root)
 	if err != nil {
 		return err
 	}
@@ -150,12 +152,12 @@ func finishManagedWorktreeRemovalInStore(store *storage.SQLite, root string, ins
 	return err
 }
 
-// removeWorktreeLocked removes one worktree by name under an acquired
+// RemoveWorktreeLocked removes one worktree by name under an acquired
 // lifecycle lock. It runs deletion recovery, the managed removal, the
 // unmanaged fallback for worktrees without a storage binding, and ghost
 // cleanup for names whose Git worktree is gone. It reports whether the
 // worktree or its storage rows were removed.
-func removeWorktreeLocked(root, name, branchPrefix string, lease *os.File) (bool, error) {
+func RemoveWorktreeLocked(root, name, branchPrefix string, lease *os.File) (bool, error) {
 	if recovered, err := recoverManagedWorktreeRemovalLocked(root, name, branchPrefix, lease); err != nil {
 		return false, err
 	} else if recovered {
@@ -174,7 +176,7 @@ func removeWorktreeLocked(root, name, branchPrefix string, lease *os.File) (bool
 		}
 		return cleaned, nil
 	}
-	if worktreeContainsCurrentDir(worktree.Path) {
+	if WorktreeContainsCurrentDir(worktree.Path) {
 		return false, fmt.Errorf("cannot remove the current worktree")
 	}
 	instance, err := beginManagedWorktreeRemoval(root, worktree)
@@ -190,12 +192,12 @@ func removeWorktreeLocked(root, name, branchPrefix string, lease *os.File) (bool
 		return false, err
 	}
 	if err := vcs.RemoveWithPrefixLease(context.Background(), root, worktree.Name, branchPrefix, lease); err != nil {
-		if reactivateErr := reactivateManagedWorktree(root, instance); reactivateErr != nil {
+		if reactivateErr := ReactivateManagedWorktree(root, instance); reactivateErr != nil {
 			return false, fmt.Errorf("%w; session lifecycle recovery failed: %v", err, reactivateErr)
 		}
 		return false, err
 	}
-	if err := finishManagedWorktreeRemoval(root, instance); err != nil {
+	if err := FinishManagedWorktreeRemoval(root, instance); err != nil {
 		return false, fmt.Errorf("removed %q but could not clean its sessions: %w", worktree.Name, err)
 	}
 	return true, nil

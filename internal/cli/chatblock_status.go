@@ -145,7 +145,7 @@ func statusBlockForTools(names, details []string, firstID string) ChatBlock {
 	}
 	var body string
 	if len(names) == 1 {
-		body = toolStatusLine(names[0], details[0])
+		body = ToolStatusLine(names[0], details[0])
 	} else {
 		var b strings.Builder
 		b.WriteString(fmt.Sprintf("Running %d tools…", len(names)))
@@ -154,7 +154,7 @@ func statusBlockForTools(names, details []string, firstID string) ChatBlock {
 			if i < len(details) {
 				detail = details[i]
 			}
-			line := toolStatusLine(name, detail)
+			line := ToolStatusLine(name, detail)
 			if line == "" {
 				line = name
 			}

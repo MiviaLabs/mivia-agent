@@ -137,7 +137,7 @@ func TestHooksListStatesTheScriptBodyIsNotTracked(t *testing.T) {
 // The subcommand was real and will be in muscle memory. "unknown argument"
 // would read as a broken listing rather than as a removed concept.
 func TestHooksTrustExplainsThatConfirmationIsGone(t *testing.T) {
-	out := strings.ToLower(hooksSlashOutput([]string{"/hooks", "trust", "1"}))
+	out := strings.ToLower(HooksSlashOutput([]string{"/hooks", "trust", "1"}))
 	if !strings.Contains(out, "removed") {
 		t.Fatalf("/hooks trust must say the concept is gone, got %q", out)
 	}

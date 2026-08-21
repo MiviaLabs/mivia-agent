@@ -9,7 +9,7 @@ import (
 // help both list every plain-surface catalog command (no hand-maintained drift).
 func TestReplHelpAdvertisesEveryPlainCommand(t *testing.T) {
 	t.Parallel()
-	commands := slashCommands(slashSurfacePlain, nil)
+	commands := SlashCommands(slashSurfacePlain, nil)
 	if len(commands) == 0 {
 		t.Fatal("precondition: slashSurfacePlain catalog is empty")
 	}

@@ -35,9 +35,9 @@ func (s terminalSlashSink) Error(msg string) {
 	}
 }
 
-// parseModelArgs extracts provider/model from a /model slash line.
+// ParseModelArgs extracts provider/model from a /model slash line.
 // fields[0] is the command token. hasArg is false when only /model was given.
-func parseModelArgs(fields []string, currentProvider, defaultProvider string) (provider, model string, hasArg bool) {
+func ParseModelArgs(fields []string, currentProvider, defaultProvider string) (provider, model string, hasArg bool) {
 	provider = currentProvider
 	if provider == "" {
 		provider = defaultProvider
@@ -53,9 +53,9 @@ func parseModelArgs(fields []string, currentProvider, defaultProvider string) (p
 	return provider, model, true
 }
 
-// parseNonNegInt parses fields[1] as a non-negative integer for /budget and /steps.
+// ParseNonNegInt parses fields[1] as a non-negative integer for /budget and /steps.
 // hasArg is false when no argument was supplied; ok is false on parse failure.
-func parseNonNegInt(fields []string) (n int, hasArg bool, ok bool) {
+func ParseNonNegInt(fields []string) (n int, hasArg bool, ok bool) {
 	if len(fields) < 2 {
 		return 0, false, false
 	}
@@ -66,8 +66,8 @@ func parseNonNegInt(fields []string) (n int, hasArg bool, ok bool) {
 	return n, true, true
 }
 
-// modelSwitchChoices returns the selectable model list for providerName.
-func modelSwitchChoices(res *config.Resolved, providerName, defaultProvider string) string {
+// ModelSwitchChoices returns the selectable model list for providerName.
+func ModelSwitchChoices(res *config.Resolved, providerName, defaultProvider string) string {
 	if res == nil {
 		return ""
 	}
@@ -77,55 +77,65 @@ func modelSwitchChoices(res *config.Resolved, providerName, defaultProvider stri
 	return res.ModelChoicesFor(providerName)
 }
 
-// modelRestoreNoticeText is the single shared wording for a failed model
+// ModelRestoreNoticeText is the single shared wording for a failed model
 // restore after /load or auto-restore. Call sites must not re-format this.
-func modelRestoreNoticeText(saved, current string) string {
+func ModelRestoreNoticeText(saved, current string) string {
 	return fmt.Sprintf("session was saved with model %q, which is not available; using %s", saved, current)
 }
 
-func formatBudgetSummary(budget int) string {
+// FormatBudgetSummary implements format budget summary.
+func FormatBudgetSummary(budget int) string {
 	return fmt.Sprintf("context budget=%d tokens\nusage: /budget <tokens>\n  set to 0 for model default", budget)
 }
 
-func formatBudgetSet(budget int) string {
+// FormatBudgetSet implements format budget set.
+func FormatBudgetSet(budget int) string {
 	return fmt.Sprintf("(context budget set to %d tokens)", budget)
 }
 
-func formatBudgetInvalid(arg string) string {
+// FormatBudgetInvalid implements format budget invalid.
+func FormatBudgetInvalid(arg string) string {
 	return fmt.Sprintf("invalid budget %q; use a positive number", arg)
 }
 
-func formatStepsSummary(steps int) string {
+// FormatStepsSummary implements format steps summary.
+func FormatStepsSummary(steps int) string {
 	if steps <= 0 {
 		return "max steps: unlimited\nusage: /steps <n> (set to 0 for unlimited)"
 	}
 	return fmt.Sprintf("max steps: %d\nusage: /steps <n> (set to 0 for unlimited)", steps)
 }
 
-func formatStepsSet(steps int) string {
+// FormatStepsSet implements format steps set.
+func FormatStepsSet(steps int) string {
 	if steps <= 0 {
 		return "(max steps set to unlimited)"
 	}
 	return fmt.Sprintf("(max steps set to %d)", steps)
 }
 
-func formatStepsInvalid(arg string) string {
+// FormatStepsInvalid implements format steps invalid.
+func FormatStepsInvalid(arg string) string {
 	return fmt.Sprintf("invalid step limit %q; use a positive number (0 = unlimited)", arg)
 }
 
-func saveSessionResult(name string, msgs, turns int) string {
+// SaveSessionResult implements save session result.
+func SaveSessionResult(name string, msgs, turns int) string {
 	return fmt.Sprintf("(session %q saved - %d messages, %d turns)", name, msgs, turns)
 }
 
-func loadSessionResult(name string, msgs, turns int) string {
+// LoadSessionResult implements load session result.
+func LoadSessionResult(name string, msgs, turns int) string {
 	return fmt.Sprintf("(session %q loaded - %d messages, %d turns)", name, msgs, turns)
 }
 
-func loadContextSessionResult(name string, msgs, turns int) string {
+// LoadContextSessionResult implements load context session result.
+func LoadContextSessionResult(name string, msgs, turns int) string {
 	return fmt.Sprintf("(durable session %q adopted into current session - %d messages, %d turns; subsequent turns write to the current session)", name, msgs, turns)
 }
 
-func deleteSessionResult(name string) string {
+// DeleteSessionResult implements delete session result.
+func DeleteSessionResult(name string) string {
 	return fmt.Sprintf("(session %q deleted)", name)
 }
 
@@ -136,7 +146,8 @@ func formatModelCurrent(model, choices string) string {
 	return fmt.Sprintf("current model=%s\nusage: /model <name>", model)
 }
 
-func formatModelSet(providerName, model string, discarded reasoning.Level) string {
+// FormatModelSet implements format model set.
+func FormatModelSet(providerName, model string, discarded reasoning.Level) string {
 	return fmt.Sprintf("(model set to %s/%s%s)", providerName, model, EffortDiscardedSuffix(discarded))
 }
 
@@ -151,7 +162,8 @@ func EffortDiscardedSuffix(discarded reasoning.Level) string {
 	return fmt.Sprintf(" · effort %s discarded", discarded)
 }
 
-func formatModelUnavailable(providerName, choices string) string {
+// FormatModelUnavailable implements format model unavailable.
+func FormatModelUnavailable(providerName, choices string) string {
 	if choices != "" {
 		return fmt.Sprintf("model is not available for provider %s\navailable: %s", providerName, choices)
 	}

@@ -71,7 +71,7 @@ func (t *delegateTool) Parameters() map[string]any {
 				"type":        "string",
 				"description": "Natural language task description for the sub-agent",
 			},
-			handlerMultiStep: map[string]any{
+			HandlerMultiStep: map[string]any{
 				"type":        "boolean",
 				"description": "When true, the sub-agent gets full tool access (multi-step). Default false (one-shot LLM call, no tools).",
 			},
@@ -99,7 +99,7 @@ func (t *delegateTool) Execute(ctx context.Context, args json.RawMessage) (strin
 
 	handlerName := HandlerDelegate
 	if params.MultiStep {
-		handlerName = handlerMultiStep
+		handlerName = HandlerMultiStep
 	}
 
 	timeoutSec := config.RequestedTimeoutSec(t.cfg.DefaultTimeout, params.TimeoutSeconds)

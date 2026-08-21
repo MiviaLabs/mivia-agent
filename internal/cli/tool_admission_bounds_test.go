@@ -53,11 +53,11 @@ func TestSchemaMassStopsCountingAnAdmittedToolAsWithheld(t *testing.T) {
 		{Content: "done"},
 	}}
 	fixture := newDeferredFixture(t, completer, []string{"read_file"}, []string{"read_file", "grep", "glob"})
-	before := fixture.state.schemaMassSnapshot()
+	before := fixture.state.SchemaMassSnapshot()
 	if _, err := fixture.sess.SendUser(context.Background(), "load", io.Discard); err != nil {
 		t.Fatalf("turn: %v", err)
 	}
-	after := fixture.state.schemaMassSnapshot()
+	after := fixture.state.SchemaMassSnapshot()
 	if after.Locked != before.Locked-1 {
 		t.Fatalf("locked = %d, want one fewer than the pre-admission %d", after.Locked, before.Locked)
 	}

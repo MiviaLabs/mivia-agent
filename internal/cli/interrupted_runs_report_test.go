@@ -90,7 +90,7 @@ func TestInterruptedRunReportIgnoresTerminalRuns(t *testing.T) {
 // run, so the listing must say how old each one is. A two-day-dead run offered
 // with no age reads as something that just broke.
 func TestFormatListedRunsShowsAge(t *testing.T) {
-	out := formatListedRuns([]coordinator.RecoveredRun{{
+	out := FormatListedRuns([]coordinator.RecoveredRun{{
 		RunID:       "run-1",
 		DisplayName: "audit",
 		CreatedAt:   time.Now().Add(-48 * time.Hour),

@@ -11,7 +11,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
 )
 
-var lifecycleRoutePrincipal = worktreeRoutePrincipal
+var lifecycleRoutePrincipal = WorktreeRoutePrincipal
 var lifecycleCanonicalMarkerRoot = canonicalMarkerRoot
 var lifecycleResolveWorktree = vcs.Resolve
 
@@ -19,17 +19,17 @@ func adoptManagedWorktree(root string, wt *vcs.WorktreeInfo) (contextstate.Workt
 	if wt == nil {
 		return contextstate.WorktreeInstance{}, fmt.Errorf("worktree route requires a worktree")
 	}
-	lock, err := lockWorktreeLifecycle(root, wt.Name)
+	lock, err := LockWorktreeLifecycle(root, wt.Name)
 	if err != nil {
 		return contextstate.WorktreeInstance{}, err
 	}
 	defer lock.Close()
-	store, err := openRepositoryContextStore(root)
+	store, err := OpenRepositoryContextStore(root)
 	if err != nil {
 		return contextstate.WorktreeInstance{}, err
 	}
 	defer store.Close()
-	principal, err := worktreeRoutePrincipal(root)
+	principal, err := WorktreeRoutePrincipal(root)
 	if err != nil {
 		return contextstate.WorktreeInstance{}, err
 	}
@@ -37,7 +37,7 @@ func adoptManagedWorktree(root string, wt *vcs.WorktreeInfo) (contextstate.Workt
 	if err != nil {
 		return contextstate.WorktreeInstance{}, err
 	}
-	instance, markerErr := readWorktreeMarker(wt.Path)
+	instance, markerErr := ReadWorktreeMarker(wt.Path)
 	wroteMarker := false
 	if errors.Is(markerErr, os.ErrNotExist) {
 		creating, creatingErr := store.CreatingWorktreeInstance(context.Background(), principal, wt.Name)
@@ -81,7 +81,7 @@ func adoptManagedWorktree(root string, wt *vcs.WorktreeInfo) (contextstate.Workt
 }
 
 func recoverManagedWorktreeRemoval(root, name, branchPrefix string) (bool, error) {
-	store, err := openRepositoryContextStore(root)
+	store, err := OpenRepositoryContextStore(root)
 	if err != nil {
 		return false, err
 	}
@@ -90,7 +90,7 @@ func recoverManagedWorktreeRemoval(root, name, branchPrefix string) (bool, error
 }
 
 func recoverManagedWorktreeRemovalLocked(root, name, branchPrefix string, lease *os.File) (bool, error) {
-	store, err := openRepositoryContextStore(root)
+	store, err := OpenRepositoryContextStore(root)
 	if err != nil {
 		return false, err
 	}
@@ -107,7 +107,7 @@ func recoverManagedWorktreeRemovalInStore(store *storage.SQLite, root, name, bra
 	if err != nil {
 		return false, err
 	}
-	lock, err := lockWorktreeLifecycle(root, sanitized)
+	lock, err := LockWorktreeLifecycle(root, sanitized)
 	if err != nil {
 		return false, err
 	}
@@ -116,7 +116,7 @@ func recoverManagedWorktreeRemovalInStore(store *storage.SQLite, root, name, bra
 }
 
 func recoverManagedWorktreeRemovalInStoreLocked(store *storage.SQLite, root, sanitized, branchPrefix string, lease *os.File) (bool, error) {
-	principal, err := worktreeRoutePrincipal(root)
+	principal, err := WorktreeRoutePrincipal(root)
 	if err != nil {
 		return false, err
 	}
@@ -128,12 +128,13 @@ func recoverManagedWorktreeRemovalInStoreLocked(store *storage.SQLite, root, san
 		if info.Instance.Worktree != sanitized {
 			continue
 		}
-		return true, recoverManagedWorktreeRemovalInfoInStoreLocked(store, root, info, branchPrefix, lease)
+		return true, RecoverManagedWorktreeRemovalInfoInStoreLocked(store, root, info, branchPrefix, lease)
 	}
 	return false, nil
 }
 
-func recoverManagedWorktreeRemovalInfoInStoreLocked(store *storage.SQLite, root string, info contextstate.WorktreeInstanceInfo, branchPrefix string, lease *os.File) error {
+// RecoverManagedWorktreeRemovalInfoInStoreLocked implements recover managed worktree removal info in store locked.
+func RecoverManagedWorktreeRemovalInfoInStoreLocked(store *storage.SQLite, root string, info contextstate.WorktreeInstanceInfo, branchPrefix string, lease *os.File) error {
 	if info.State != contextstate.WorktreeDeleting {
 		return contextstate.ErrWorktreeDeleted
 	}
@@ -160,7 +161,7 @@ func recoverManagedWorktreeRemovalInfoInStoreLocked(store *storage.SQLite, root 
 		return err
 	}
 	if worktree != nil {
-		instance, markerErr := readWorktreeMarker(worktree.Path)
+		instance, markerErr := ReadWorktreeMarker(worktree.Path)
 		path, pathErr := lifecycleCanonicalMarkerRoot(worktree.Path)
 		if pathErr != nil {
 			return pathErr
@@ -180,8 +181,9 @@ func recoverManagedWorktreeRemovalInfoInStoreLocked(store *storage.SQLite, root 
 	return err
 }
 
-func recoverManagedWorktreeCreationInStore(store *storage.SQLite, root string, info contextstate.WorktreeInstanceInfo) (*vcs.WorktreeInfo, error) {
-	lock, err := lockWorktreeLifecycle(root, info.Instance.Worktree)
+// RecoverManagedWorktreeCreationInStore implements recover managed worktree creation in store.
+func RecoverManagedWorktreeCreationInStore(store *storage.SQLite, root string, info contextstate.WorktreeInstanceInfo) (*vcs.WorktreeInfo, error) {
+	lock, err := LockWorktreeLifecycle(root, info.Instance.Worktree)
 	if err != nil {
 		return nil, err
 	}

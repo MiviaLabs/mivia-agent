@@ -115,6 +115,27 @@
       "internal/workflows/localengine",
       "internal/workspace"
     ],
+    "internal/legacytui": [
+      "internal/agent",
+      "internal/agents",
+      "internal/chat",
+      "internal/cli",
+      "internal/config",
+      "internal/contextstate",
+      "internal/coordinator",
+      "internal/events",
+      "internal/ledger",
+      "internal/provider",
+      "internal/reasoning",
+      "internal/redact",
+      "internal/runtime",
+      "internal/skills",
+      "internal/storage",
+      "internal/vcs",
+      "internal/workflows/definition",
+      "internal/workflows/ledger",
+      "internal/workspace"
+    ],
     "internal/composition": [
       "internal/chat",
       "internal/config",

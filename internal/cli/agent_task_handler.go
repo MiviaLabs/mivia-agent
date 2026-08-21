@@ -346,7 +346,7 @@ func (h *agentTaskHandler) activateSkill(name string, registry *tools.Registry) 
 		}
 		exec, pinnedResources, pinnedRun = hydrated, resources, true
 	}
-	if err := skillScopeFromAgentAndRegistry(&h.definition, h.full).checkSkillDefinition(skill); err != nil {
+	if err := skillScopeFromAgentAndRegistry(&h.definition, h.full).CheckSkillDefinition(skill); err != nil {
 		return nil, "", noop, err
 	}
 	systemPrompt := exec.Instructions
@@ -363,7 +363,7 @@ func (h *agentTaskHandler) activateSkill(name string, registry *tools.Registry) 
 			return nil, "", noop, err
 		}
 		closeActivation = func() { activation.Close() }
-		registry, err = injectSkillResourceTool(registry, activation)
+		registry, err = InjectSkillResourceTool(registry, activation)
 		if err != nil {
 			closeActivation()
 			return nil, "", noop, err
@@ -434,7 +434,7 @@ func (h *agentTaskHandler) validateRequest(req runtime.Request) (agentBinding, e
 		}
 		return agentBinding{}, fmt.Errorf("unknown skill %q", req.Skill)
 	}
-	if err := skillScopeFromAgentAndRegistry(&h.definition, h.full).checkSkillDefinition(skill); err != nil {
+	if err := skillScopeFromAgentAndRegistry(&h.definition, h.full).CheckSkillDefinition(skill); err != nil {
 		return agentBinding{}, err
 	}
 	return binding, nil

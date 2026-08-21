@@ -113,12 +113,12 @@ func runWorktreeList(args []string, stdout io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("worktree list: %w", err)
 	}
-	store, err := openRepositoryContextStore(repoRoot)
+	store, err := OpenRepositoryContextStore(repoRoot)
 	if err != nil {
 		return fmt.Errorf("worktree list: %w", err)
 	}
 	defer store.Close()
-	principal, err := worktreeRoutePrincipal(repoRoot)
+	principal, err := WorktreeRoutePrincipal(repoRoot)
 	if err != nil {
 		return fmt.Errorf("worktree list: %w", err)
 	}
@@ -174,12 +174,12 @@ func runWorktreeRemove(args []string, stdout io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("worktree remove: %w", err)
 	}
-	lock, err := lockWorktreeLifecycle(repoRoot, args[0])
+	lock, err := LockWorktreeLifecycle(repoRoot, args[0])
 	if err != nil {
 		return fmt.Errorf("worktree remove: lock lifecycle: %w", err)
 	}
 	defer lock.Close()
-	removed, err := removeWorktreeLocked(repoRoot, args[0], worktreeConfig.BranchPrefix, lock.File())
+	removed, err := RemoveWorktreeLocked(repoRoot, args[0], worktreeConfig.BranchPrefix, lock.File())
 	if err != nil {
 		return fmt.Errorf("worktree remove: %w", err)
 	}

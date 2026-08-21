@@ -9,9 +9,9 @@ func TestToolAndHandlerNameConsts(t *testing.T) {
 		got  string
 		want string
 	}{
-		{"handlerMultiStep", handlerMultiStep, "multi_step"},
+		{"HandlerMultiStep", HandlerMultiStep, "multi_step"},
 		{"handlerDelegate", HandlerDelegate, "delegate"},
-		{"handlerOneshot", handlerOneshot, "oneshot"},
+		{"HandlerOneshot", HandlerOneshot, "oneshot"},
 		{"toolDispatchTasks", ToolDispatchTasks, "dispatch_tasks"},
 		{"toolSpawnAgent", toolSpawnAgent, "spawn_agent"},
 		{"toolJoinRun", toolJoinRun, "join_run"},

@@ -166,7 +166,7 @@ func (ui *classicAgentUI) onToolStart(e agent.Event) {
 	ui.mu.Unlock()
 
 	if needStatus {
-		line := toolStatusLine(e.Name, EventPreview(e.Input, e.Detail))
+		line := ToolStatusLine(e.Name, EventPreview(e.Input, e.Detail))
 		if line != "" {
 			ui.r.PrintStatusLine(line)
 		}

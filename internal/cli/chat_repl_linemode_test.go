@@ -224,7 +224,7 @@ func TestCancellationCanReplaceOnlyCancellationErrors(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := cancellationCanReplaceTurnError(test.err); got != test.want {
+			if got := CancellationCanReplaceTurnError(test.err); got != test.want {
 				t.Fatalf("result = %t, want %t", got, test.want)
 			}
 		})

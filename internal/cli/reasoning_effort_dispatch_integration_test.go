@@ -206,7 +206,7 @@ func TestIntegrationEffortOverrideReachesNestedHandlers(t *testing.T) {
 	}
 	assertDial(t, f.sessComp.last(t), reasoning.High, reasoning.DialectThinkingEffort, "the root turn")
 
-	for _, name := range []string{handlerOneshot, HandlerDelegate, handlerMultiStep} {
+	for _, name := range []string{HandlerOneshot, HandlerDelegate, HandlerMultiStep} {
 		f.invokeSubagent(t, name)
 		assertDial(t, f.sessComp.last(t), reasoning.High, reasoning.DialectThinkingEffort, "nested "+name)
 	}

@@ -60,7 +60,7 @@ func windowsStopHookBody(body string) string {
 
 func TestStopHookOutputBecomesAnAttributedContinuationPrompt(t *testing.T) {
 	dir := stopSession(t, "printf 'turn cost: 1420 tokens'\nexit 0\n")
-	got := runStopHookEvent(context.Background(), dir, "sess-1", "turn-1")
+	got := RunStopHookEvent(context.Background(), dir, "sess-1", "turn-1")
 	if !strings.Contains(got, "turn cost: 1420 tokens") {
 		t.Fatalf("Stop hook output = %q", got)
 	}
@@ -74,7 +74,7 @@ func TestStopHookCannotBlockTheTurn(t *testing.T) {
 	// The contract is that this returns without denial, and that the hook
 	// actually ran (produced output or warnings). A test that only checks for
 	// the absence of "denied" would also pass if the hook were silently skipped.
-	got := runStopHookEvent(context.Background(), dir, "s", "t")
+	got := RunStopHookEvent(context.Background(), dir, "s", "t")
 
 	session := currentHookSession()
 	session.mu.Lock()
@@ -90,7 +90,7 @@ func TestStopHookCannotBlockTheTurn(t *testing.T) {
 
 func TestStopHookOutputIsBounded(t *testing.T) {
 	dir := stopSession(t, "i=0\nwhile [ $i -lt 4000 ]; do printf '0123456789'; i=$((i+1)); done\nexit 0\n")
-	got := runStopHookEvent(context.Background(), dir, "s", "t")
+	got := RunStopHookEvent(context.Background(), dir, "s", "t")
 	if len(got) > hooks.MaxOutputBytes+256 {
 		t.Fatalf("Stop output = %d bytes, past the bound", len(got))
 	}
@@ -105,7 +105,7 @@ func TestStopHookOnACanceledTurnIsRecordedNotSilent(t *testing.T) {
 	dir := stopSession(t, "printf 'x'\nexit 0\n")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	runStopHookEvent(ctx, dir, "s", "t")
+	RunStopHookEvent(ctx, dir, "s", "t")
 
 	session := currentHookSession()
 	session.mu.Lock()
@@ -120,7 +120,7 @@ func TestStopHookWithNoConfiguredHooksReturnsNothing(t *testing.T) {
 	previous := sessionHookState.Load()
 	sessionHookState.Store(nil)
 	t.Cleanup(func() { sessionHookState.Store(previous) })
-	if got := runStopHookEvent(context.Background(), t.TempDir(), "s", "t"); got != "" {
+	if got := RunStopHookEvent(context.Background(), t.TempDir(), "s", "t"); got != "" {
 		t.Fatalf("no hooks configured, got %q", got)
 	}
 }

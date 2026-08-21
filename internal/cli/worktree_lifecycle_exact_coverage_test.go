@@ -21,12 +21,12 @@ func TestLifecycleExactLockErrors(t *testing.T) {
 	if _, err := recoverManagedWorktreeRemovalLocked(repo, strings.Repeat("x", 65), "mivia/", nil); err == nil {
 		t.Fatal("invalid locked recovery name succeeded")
 	}
-	lock, err := lockWorktreeLifecycle(repo, "busy")
+	lock, err := LockWorktreeLifecycle(repo, "busy")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer lock.Close()
-	store, err := openRepositoryContextStore(repo)
+	store, err := OpenRepositoryContextStore(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestLifecycleLockRejectsFinalSymlinkRace(t *testing.T) {
 	}
 	t.Cleanup(func() { lstatLifecyclePath = original })
 
-	lock, err := lockWorktreeLifecycle(repo, "victim")
+	lock, err := LockWorktreeLifecycle(repo, "victim")
 	if lock != nil {
 		lock.Close()
 	}
@@ -72,12 +72,12 @@ func TestLifecycleExactAdoptRejectsNilWorktree(t *testing.T) {
 
 func TestLifecycleExactRecoverySkipsOtherDeletingName(t *testing.T) {
 	repo := newWorktreeCommandRepo(t)
-	store, err := openRepositoryContextStore(repo)
+	store, err := OpenRepositoryContextStore(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := worktreeRoutePrincipal(repo)
+	principal, err := WorktreeRoutePrincipal(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +290,7 @@ func TestLifecycleFaultSeamLockDirectoryFirstUseRaceKeepsFailClosed(t *testing.T
 
 func TestLifecycleFaultSeamCreationRecoveryLockError(t *testing.T) {
 	repo := newWorktreeCommandRepo(t)
-	store, err := openRepositoryContextStore(repo)
+	store, err := OpenRepositoryContextStore(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -300,7 +300,7 @@ func TestLifecycleFaultSeamCreationRecoveryLockError(t *testing.T) {
 	openLifecycleGitRoot = func(string) (*os.Root, error) { return nil, sentinel }
 	t.Cleanup(func() { openLifecycleGitRoot = original })
 	info := contextstate.WorktreeInstanceInfo{Instance: contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1111111111111111"}, State: contextstate.WorktreeCreating}
-	if _, err := recoverManagedWorktreeCreationInStore(store, repo, info); !errors.Is(err, sentinel) {
+	if _, err := RecoverManagedWorktreeCreationInStore(store, repo, info); !errors.Is(err, sentinel) {
 		t.Fatalf("creation recovery lock error = %v", err)
 	}
 }
@@ -360,7 +360,7 @@ func TestLifecycleLockRejectsFifoLockFile(t *testing.T) {
 
 func TestLifecycleExactClosedStoreAndResolveErrors(t *testing.T) {
 	repo := newWorktreeCommandRepo(t)
-	store, err := openRepositoryContextStore(repo)
+	store, err := OpenRepositoryContextStore(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -368,16 +368,16 @@ func TestLifecycleExactClosedStoreAndResolveErrors(t *testing.T) {
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := recoverManagedWorktreeRemovalInfoInStoreLocked(store, repo, info, "mivia/", nil); err == nil {
+	if err := RecoverManagedWorktreeRemovalInfoInStoreLocked(store, repo, info, "mivia/", nil); err == nil {
 		t.Fatal("closed deletion store succeeded")
 	}
 
-	store, err = openRepositoryContextStore(repo)
+	store, err = OpenRepositoryContextStore(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := worktreeRoutePrincipal(repo)
+	principal, err := WorktreeRoutePrincipal(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -396,7 +396,7 @@ func TestLifecycleExactClosedStoreAndResolveErrors(t *testing.T) {
 	}
 	info.CanonicalPath = path
 	t.Setenv("PATH", t.TempDir())
-	if err := recoverManagedWorktreeRemovalInfoInStoreLocked(store, repo, info, "mivia/", nil); err == nil {
+	if err := RecoverManagedWorktreeRemovalInfoInStoreLocked(store, repo, info, "mivia/", nil); err == nil {
 		t.Fatal("Git resolution failure was hidden")
 	}
 }
@@ -407,16 +407,16 @@ func TestLifecycleExactRemovalAndCreationFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := openRepositoryContextStore(repo)
+	store, err := OpenRepositoryContextStore(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := worktreeRoutePrincipal(repo)
+	principal, err := WorktreeRoutePrincipal(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
-	instance, err := readWorktreeMarker(worktree.Path)
+	instance, err := ReadWorktreeMarker(worktree.Path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -424,7 +424,7 @@ func TestLifecycleExactRemovalAndCreationFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 	info := contextstate.WorktreeInstanceInfo{Instance: instance, CanonicalPath: worktree.Path, State: contextstate.WorktreeDeleting}
-	if err := recoverManagedWorktreeRemovalInfoInStoreLocked(store, repo, info, "bad-prefix", nil); err == nil {
+	if err := RecoverManagedWorktreeRemovalInfoInStoreLocked(store, repo, info, "bad-prefix", nil); err == nil {
 		t.Fatal("invalid removal prefix succeeded")
 	}
 
@@ -455,7 +455,7 @@ func TestLifecycleFaultSeamsLockErrors(t *testing.T) {
 	originalOpen := openLifecycleGitRoot
 	openLifecycleGitRoot = func(string) (*os.Root, error) { return nil, sentinel }
 	t.Cleanup(func() { openLifecycleGitRoot = originalOpen })
-	if _, err := lockWorktreeLifecycle(repo, "open-error"); !errors.Is(err, sentinel) {
+	if _, err := LockWorktreeLifecycle(repo, "open-error"); !errors.Is(err, sentinel) {
 		t.Fatalf("open root error = %v", err)
 	}
 	openLifecycleGitRoot = originalOpen
@@ -468,7 +468,7 @@ func TestLifecycleFaultSeamsLockErrors(t *testing.T) {
 		return root.Lstat(path)
 	}
 	t.Cleanup(func() { lstatLifecyclePath = originalLstat })
-	if _, err := lockWorktreeLifecycle(repo, "stat-error"); !errors.Is(err, sentinel) {
+	if _, err := LockWorktreeLifecycle(repo, "stat-error"); !errors.Is(err, sentinel) {
 		t.Fatalf("lock stat error = %v", err)
 	}
 }
@@ -511,7 +511,7 @@ func TestLifecycleFaultSeamsLockDirectoryErrors(t *testing.T) {
 
 func TestLifecycleFaultSeamsRecoveryPrincipalErrors(t *testing.T) {
 	repo := newWorktreeCommandRepo(t)
-	store, err := openRepositoryContextStore(repo)
+	store, err := OpenRepositoryContextStore(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -524,7 +524,7 @@ func TestLifecycleFaultSeamsRecoveryPrincipalErrors(t *testing.T) {
 	t.Cleanup(func() { lifecycleRoutePrincipal = original })
 	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1111111111111111"}
 	deleting := contextstate.WorktreeInstanceInfo{Instance: instance, State: contextstate.WorktreeDeleting}
-	if err := recoverManagedWorktreeRemovalInfoInStoreLocked(store, repo, deleting, "mivia/", nil); !errors.Is(err, sentinel) {
+	if err := RecoverManagedWorktreeRemovalInfoInStoreLocked(store, repo, deleting, "mivia/", nil); !errors.Is(err, sentinel) {
 		t.Fatalf("removal principal error = %v", err)
 	}
 	creating := contextstate.WorktreeInstanceInfo{Instance: instance, State: contextstate.WorktreeCreating}
@@ -546,13 +546,13 @@ func TestLifecycleFaultSeamsRecoveryPathAndResolveErrors(t *testing.T) {
 		return &vcs.WorktreeInfo{Name: info.Instance.Worktree, Path: info.CanonicalPath}, nil
 	}
 	lifecycleCanonicalMarkerRoot = func(string) (string, error) { return "", sentinel }
-	if err := recoverManagedWorktreeRemovalInfoInStoreLocked(store, repo, info, "mivia/", nil); !errors.Is(err, sentinel) {
+	if err := RecoverManagedWorktreeRemovalInfoInStoreLocked(store, repo, info, "mivia/", nil); !errors.Is(err, sentinel) {
 		t.Fatalf("canonical path error = %v", err)
 	}
 
 	creating := contextstate.WorktreeInstanceInfo{Instance: contextstate.WorktreeInstance{Worktree: "new", ID: "wt_2222222222222222"}, State: contextstate.WorktreeCreating}
 	creating.CanonicalPath = filepath.Join(repo, ".mivia", "worktrees", "new")
-	principal, err := worktreeRoutePrincipal(repo)
+	principal, err := WorktreeRoutePrincipal(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -567,11 +567,11 @@ func TestLifecycleFaultSeamsRecoveryPathAndResolveErrors(t *testing.T) {
 
 func prepareDeletingLifecycleInfo(t *testing.T, repo string) (*storage.SQLite, contextstate.WorktreeInstanceInfo) {
 	t.Helper()
-	store, err := openRepositoryContextStore(repo)
+	store, err := OpenRepositoryContextStore(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal, err := worktreeRoutePrincipal(repo)
+	principal, err := WorktreeRoutePrincipal(repo)
 	if err != nil {
 		store.Close()
 		t.Fatal(err)

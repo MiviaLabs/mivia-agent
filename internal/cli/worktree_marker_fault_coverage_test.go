@@ -55,7 +55,7 @@ func TestMarkerCoverageInjectedOpenFailure(t *testing.T) {
 		return nil, errors.New("open failure")
 	}
 	t.Cleanup(func() { openWorktreeMarkerFile = original })
-	if _, err := readWorktreeMarker(root); err == nil || !strings.Contains(err.Error(), "read worktree marker") {
+	if _, err := ReadWorktreeMarker(root); err == nil || !strings.Contains(err.Error(), "read worktree marker") {
 		t.Fatalf("injected marker open error = %v", err)
 	}
 }

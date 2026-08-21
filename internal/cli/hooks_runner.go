@@ -26,7 +26,7 @@ func hookPolicyFuncs(workspaceRoot string) (
 	})
 }
 
-// runStopHookEvent fires Stop hooks for a completed ROOT turn and returns their
+// RunStopHookEvent fires Stop hooks for a completed ROOT turn and returns their
 // output as an attributed continuation prompt.
 //
 // Stop is pure observation: it has no denial channel at all, so a Stop hook can
@@ -46,7 +46,7 @@ func hookPolicyFuncs(workspaceRoot string) (
 // turn therefore does not run its Stop hook, and the run is RECORDED rather
 // than skipped silently - detaching would make Ctrl-C wait out the hook's
 // timeout before the cancelled footer appeared.
-func runStopHookEvent(ctx context.Context, workspaceRoot, sessionID, turnID string) string {
+func RunStopHookEvent(ctx context.Context, workspaceRoot, sessionID, turnID string) string {
 	session := currentHookSession()
 	groups := session.runnable()
 	if len(groups) == 0 {

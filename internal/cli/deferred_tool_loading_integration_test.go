@@ -771,7 +771,7 @@ func TestResumeDropsAStaleAdmittedSetWithANote(t *testing.T) {
 func TestSchemaMassReportsWhatTheDeferredTierWithholds(t *testing.T) {
 	completer := &scriptedCompleter{turns: []provider.Response{{Content: "done"}}}
 	fixture := newDeferredFixture(t, completer, []string{"read_file"}, []string{"read_file", "grep", "glob"})
-	mass := fixture.state.schemaMassSnapshot()
+	mass := fixture.state.SchemaMassSnapshot()
 	if mass.Locked != 2 {
 		t.Fatalf("locked count = %d, want 2", mass.Locked)
 	}

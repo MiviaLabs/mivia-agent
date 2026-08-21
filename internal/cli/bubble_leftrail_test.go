@@ -294,8 +294,11 @@ func TestBlockToolFailed(t *testing.T) {
 func TestRenderChatBlocks_ToolWithRenderedGetsRail(t *testing.T) {
 	t.Setenv("NO_COLOR", "")
 	t.Setenv("TERM", "xterm-256color")
-	item := NewToolRenderItem("read_file", `{"path":"a.go"}`, "ok", true, false)
-	line := formatToolLine(item, 80, terminalToolRenderOptions())
+	// line mimics internal/legacytui's formatToolLine output: a rendered,
+	// terminal-formatted tool line. The exact formatting does not matter
+	// here, only that Rendered is a non-empty multi-line string, since
+	// this test checks that RenderChatBlocks still applies the rail.
+	line := "✓ read_file(path: a.go)\n  ok"
 	blocks := []ChatBlock{{
 		ID: "t1", Kind: ChatBlockTool, ToolName: "read_file",
 		Text: "ok", Rendered: line, Collapsed: true,

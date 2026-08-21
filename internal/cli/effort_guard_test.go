@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -78,8 +77,8 @@ func startBlockedOrchestration(t *testing.T, sessionID string) (release func()) 
 func TestIntegrationEffortRefusedWhileOrchestrationIsActive(t *testing.T) {
 	res := effortCatalogConfig()
 	sess := chat.NewSession(res, welcomeStubCompleter{})
-	cleanup, err := attachSessionDispatcher(sess, t.TempDir(), effortThinker, config.DefaultSubagentConfig,
-		&AgentSessionState{AllowProjectSkills: true}, nil, sessionRouting{})
+	cleanup, err := AttachSessionDispatcher(sess, t.TempDir(), effortThinker, config.DefaultSubagentConfig,
+		&AgentSessionState{AllowProjectSkills: true}, nil, SessionRouting{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +102,7 @@ func TestIntegrationEffortRefusedWhileOrchestrationIsActive(t *testing.T) {
 		t.Fatalf("a refused change altered the effort to %q", got)
 	}
 
-	notice := safeEffortError(err)
+	notice := SafeEffortError(err)
 	if strings.Contains(notice, "model switching") {
 		t.Fatalf("an effort refusal talks about switching models: %q", notice)
 	}
@@ -128,7 +127,7 @@ func TestIntegrationEffortRefusedWhileOrchestrationIsActive(t *testing.T) {
 // the guard while keeping "orchestration" passed and /effort went back to
 // naming a command the user did not type.
 func TestSafeEffortErrorRewritesTheGuardsOwnRefusal(t *testing.T) {
-	guard := orchestrationSwitchGuard("effort-mapping")
+	guard := OrchestrationSwitchGuard("effort-mapping")
 	release := startBlockedOrchestration(t, "effort-mapping")
 	defer release()
 
@@ -136,18 +135,7 @@ func TestSafeEffortErrorRewritesTheGuardsOwnRefusal(t *testing.T) {
 	if err == nil {
 		t.Fatal("the guard allowed a switch while orchestration is active")
 	}
-	if got := safeEffortError(err); got != effortOrchestrationNotice {
-		t.Fatalf("safeEffortError(guard refusal) = %q, want %q", got, effortOrchestrationNotice)
-	}
-}
-
-// The picker footer and a session refusal describe the same state, so they must
-// use the same words rather than two vocabularies for "wait".
-func TestEffortBusyRefusalMatchesThePickerWording(t *testing.T) {
-	// The session's verbatim wording, which reaches both surfaces unchanged.
-	notice := safeEffortError(errors.New("reasoning effort cannot change while work is active"))
-	d := newEffortDialog("m", []reasoning.Level{reasoning.High}, reasoning.High, reasoning.High, true)
-	if !strings.Contains(stripANSI(d.footer()), notice) {
-		t.Fatalf("session refusal %q does not match the busy footer %q", notice, stripANSI(d.footer()))
+	if got := SafeEffortError(err); got != EffortOrchestrationNotice {
+		t.Fatalf("SafeEffortError(guard refusal) = %q, want %q", got, EffortOrchestrationNotice)
 	}
 }

@@ -76,9 +76,9 @@ func TestParseModelArgs(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			provider, model, hasArg := parseModelArgs(tc.fields, tc.currentProvider, tc.defaultProvider)
+			provider, model, hasArg := ParseModelArgs(tc.fields, tc.currentProvider, tc.defaultProvider)
 			if provider != tc.wantProvider || model != tc.wantModel || hasArg != tc.wantHasArg {
-				t.Fatalf("parseModelArgs() = (%q, %q, %v), want (%q, %q, %v)",
+				t.Fatalf("ParseModelArgs() = (%q, %q, %v), want (%q, %q, %v)",
 					provider, model, hasArg, tc.wantProvider, tc.wantModel, tc.wantHasArg)
 			}
 		})
@@ -104,9 +104,9 @@ func TestParseNonNegInt(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			n, hasArg, ok := parseNonNegInt(tc.fields)
+			n, hasArg, ok := ParseNonNegInt(tc.fields)
 			if n != tc.wantN || hasArg != tc.wantHasArg || ok != tc.wantOK {
-				t.Fatalf("parseNonNegInt() = (%d, %v, %v), want (%d, %v, %v)",
+				t.Fatalf("ParseNonNegInt() = (%d, %v, %v), want (%d, %v, %v)",
 					n, hasArg, ok, tc.wantN, tc.wantHasArg, tc.wantOK)
 			}
 		})
@@ -119,67 +119,67 @@ func TestModelSwitchChoices(t *testing.T) {
 		ProviderName: "openai",
 		Models:       []string{"gpt-4o", "gpt-4o-mini"},
 	}
-	if got := modelSwitchChoices(res, "openai", "openai"); got != "gpt-4o, gpt-4o-mini" {
-		t.Fatalf("modelSwitchChoices active provider = %q", got)
+	if got := ModelSwitchChoices(res, "openai", "openai"); got != "gpt-4o, gpt-4o-mini" {
+		t.Fatalf("ModelSwitchChoices active provider = %q", got)
 	}
-	if got := modelSwitchChoices(res, "", "openai"); got != "gpt-4o, gpt-4o-mini" {
-		t.Fatalf("modelSwitchChoices empty provider falls back = %q", got)
+	if got := ModelSwitchChoices(res, "", "openai"); got != "gpt-4o, gpt-4o-mini" {
+		t.Fatalf("ModelSwitchChoices empty provider falls back = %q", got)
 	}
-	if got := modelSwitchChoices(nil, "openai", "openai"); got != "" {
-		t.Fatalf("modelSwitchChoices nil config = %q, want empty", got)
+	if got := ModelSwitchChoices(nil, "openai", "openai"); got != "" {
+		t.Fatalf("ModelSwitchChoices nil config = %q, want empty", got)
 	}
-	if got := modelSwitchChoices(res, "missing", "openai"); got != "" {
-		t.Fatalf("modelSwitchChoices unknown provider = %q, want empty", got)
+	if got := ModelSwitchChoices(res, "missing", "openai"); got != "" {
+		t.Fatalf("ModelSwitchChoices unknown provider = %q, want empty", got)
 	}
 }
 
 func TestModelRestoreNoticeText(t *testing.T) {
 	t.Parallel()
-	got := modelRestoreNoticeText("removed", "current")
+	got := ModelRestoreNoticeText("removed", "current")
 	want := `session was saved with model "removed", which is not available; using current`
 	if got != want {
-		t.Fatalf("modelRestoreNoticeText() = %q, want %q", got, want)
+		t.Fatalf("ModelRestoreNoticeText() = %q, want %q", got, want)
 	}
 }
 
 func TestFormatBudgetAndSteps(t *testing.T) {
 	t.Parallel()
-	if got, want := formatBudgetSummary(4096), "context budget=4096 tokens\nusage: /budget <tokens>\n  set to 0 for model default"; got != want {
-		t.Fatalf("formatBudgetSummary() = %q, want %q", got, want)
+	if got, want := FormatBudgetSummary(4096), "context budget=4096 tokens\nusage: /budget <tokens>\n  set to 0 for model default"; got != want {
+		t.Fatalf("FormatBudgetSummary() = %q, want %q", got, want)
 	}
-	if got, want := formatBudgetSet(100), "(context budget set to 100 tokens)"; got != want {
-		t.Fatalf("formatBudgetSet() = %q, want %q", got, want)
+	if got, want := FormatBudgetSet(100), "(context budget set to 100 tokens)"; got != want {
+		t.Fatalf("FormatBudgetSet() = %q, want %q", got, want)
 	}
-	if got, want := formatBudgetInvalid("100x"), `invalid budget "100x"; use a positive number`; got != want {
-		t.Fatalf("formatBudgetInvalid() = %q, want %q", got, want)
+	if got, want := FormatBudgetInvalid("100x"), `invalid budget "100x"; use a positive number`; got != want {
+		t.Fatalf("FormatBudgetInvalid() = %q, want %q", got, want)
 	}
-	if got, want := formatStepsSummary(0), "max steps: unlimited\nusage: /steps <n> (set to 0 for unlimited)"; got != want {
-		t.Fatalf("formatStepsSummary(0) = %q, want %q", got, want)
+	if got, want := FormatStepsSummary(0), "max steps: unlimited\nusage: /steps <n> (set to 0 for unlimited)"; got != want {
+		t.Fatalf("FormatStepsSummary(0) = %q, want %q", got, want)
 	}
-	if got, want := formatStepsSummary(5), "max steps: 5\nusage: /steps <n> (set to 0 for unlimited)"; got != want {
-		t.Fatalf("formatStepsSummary(5) = %q, want %q", got, want)
+	if got, want := FormatStepsSummary(5), "max steps: 5\nusage: /steps <n> (set to 0 for unlimited)"; got != want {
+		t.Fatalf("FormatStepsSummary(5) = %q, want %q", got, want)
 	}
-	if got, want := formatStepsSet(0), "(max steps set to unlimited)"; got != want {
-		t.Fatalf("formatStepsSet(0) = %q, want %q", got, want)
+	if got, want := FormatStepsSet(0), "(max steps set to unlimited)"; got != want {
+		t.Fatalf("FormatStepsSet(0) = %q, want %q", got, want)
 	}
-	if got, want := formatStepsSet(5), "(max steps set to 5)"; got != want {
-		t.Fatalf("formatStepsSet(5) = %q, want %q", got, want)
+	if got, want := FormatStepsSet(5), "(max steps set to 5)"; got != want {
+		t.Fatalf("FormatStepsSet(5) = %q, want %q", got, want)
 	}
-	if got, want := formatStepsInvalid("nope"), `invalid step limit "nope"; use a positive number (0 = unlimited)`; got != want {
-		t.Fatalf("formatStepsInvalid() = %q, want %q", got, want)
+	if got, want := FormatStepsInvalid("nope"), `invalid step limit "nope"; use a positive number (0 = unlimited)`; got != want {
+		t.Fatalf("FormatStepsInvalid() = %q, want %q", got, want)
 	}
 }
 
 func TestSessionResultFormatters(t *testing.T) {
 	t.Parallel()
-	if got, want := saveSessionResult("demo", 3, 1), `(session "demo" saved - 3 messages, 1 turns)`; got != want {
-		t.Fatalf("saveSessionResult() = %q, want %q", got, want)
+	if got, want := SaveSessionResult("demo", 3, 1), `(session "demo" saved - 3 messages, 1 turns)`; got != want {
+		t.Fatalf("SaveSessionResult() = %q, want %q", got, want)
 	}
-	if got, want := loadSessionResult("demo", 4, 2), `(session "demo" loaded - 4 messages, 2 turns)`; got != want {
-		t.Fatalf("loadSessionResult() = %q, want %q", got, want)
+	if got, want := LoadSessionResult("demo", 4, 2), `(session "demo" loaded - 4 messages, 2 turns)`; got != want {
+		t.Fatalf("LoadSessionResult() = %q, want %q", got, want)
 	}
-	if got, want := deleteSessionResult("demo"), `(session "demo" deleted)`; got != want {
-		t.Fatalf("deleteSessionResult() = %q, want %q", got, want)
+	if got, want := DeleteSessionResult("demo"), `(session "demo" deleted)`; got != want {
+		t.Fatalf("DeleteSessionResult() = %q, want %q", got, want)
 	}
 }
 
@@ -191,14 +191,14 @@ func TestModelMessageFormatters(t *testing.T) {
 	if got, want := formatModelCurrent("gpt-4o", ""), "current model=gpt-4o\nusage: /model <name>"; got != want {
 		t.Fatalf("formatModelCurrent without choices = %q, want %q", got, want)
 	}
-	if got, want := formatModelSet("openai", "gpt-4o", ""), "(model set to openai/gpt-4o)"; got != want {
-		t.Fatalf("formatModelSet() = %q, want %q", got, want)
+	if got, want := FormatModelSet("openai", "gpt-4o", ""), "(model set to openai/gpt-4o)"; got != want {
+		t.Fatalf("FormatModelSet() = %q, want %q", got, want)
 	}
-	if got, want := formatModelUnavailable("openai", "gpt-4o, mini"), "model is not available for provider openai\navailable: gpt-4o, mini"; got != want {
-		t.Fatalf("formatModelUnavailable with choices = %q, want %q", got, want)
+	if got, want := FormatModelUnavailable("openai", "gpt-4o, mini"), "model is not available for provider openai\navailable: gpt-4o, mini"; got != want {
+		t.Fatalf("FormatModelUnavailable with choices = %q, want %q", got, want)
 	}
-	if got, want := formatModelUnavailable("openai", ""), "model name is invalid"; got != want {
-		t.Fatalf("formatModelUnavailable without choices = %q, want %q", got, want)
+	if got, want := FormatModelUnavailable("openai", ""), "model name is invalid"; got != want {
+		t.Fatalf("FormatModelUnavailable without choices = %q, want %q", got, want)
 	}
 }
 

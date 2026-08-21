@@ -42,7 +42,7 @@ func TestFailedAgentSwitchLeavesNoTraceOfTheNewAgent(t *testing.T) {
 	if err := ApplySessionAgent(fixture.sess, fixture.res, fixture.state, "writer", false); err == nil {
 		t.Fatal("a surface build that cannot register its delegation tools was accepted")
 	}
-	if got := currentAgentName(fixture.state); got != "reader" {
+	if got := CurrentAgentName(fixture.state); got != "reader" {
 		t.Fatalf("selected agent = %q, want the switch rolled back to reader", got)
 	}
 	fixture.state.mu.Lock()

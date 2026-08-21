@@ -253,7 +253,8 @@ func createWorktreeMarkerExcludeTemp(root *os.Root, dir string, mode os.FileMode
 	return nil, "", fmt.Errorf("create Git exclude: temporary name collision")
 }
 
-func readWorktreeMarker(root string) (contextstate.WorktreeInstance, error) {
+// ReadWorktreeMarker implements read worktree marker.
+func ReadWorktreeMarker(root string) (contextstate.WorktreeInstance, error) {
 	canonical, err := canonicalMarkerRoot(root)
 	if err != nil {
 		return contextstate.WorktreeInstance{}, err

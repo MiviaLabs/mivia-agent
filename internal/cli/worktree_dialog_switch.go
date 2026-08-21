@@ -7,29 +7,30 @@ import (
 )
 
 var (
-	statWorktreeSwitchPath = os.Stat
-	absWorktreeSwitchPath  = filepath.Abs
-	evalWorktreeSwitchPath = filepath.EvalSymlinks
-	getwdWorktreeSwitch    = os.Getwd
-	relWorktreeSwitchPath  = filepath.Rel
+	StatWorktreeSwitchPath = os.Stat
+	AbsWorktreeSwitchPath  = filepath.Abs
+	EvalWorktreeSwitchPath = filepath.EvalSymlinks
+	GetwdWorktreeSwitch    = os.Getwd
+	RelWorktreeSwitchPath  = filepath.Rel
 )
 
-func worktreeContainsCurrentDir(path string) bool {
-	root, err := absWorktreeSwitchPath(path)
+// WorktreeContainsCurrentDir implements worktree contains current dir.
+func WorktreeContainsCurrentDir(path string) bool {
+	root, err := AbsWorktreeSwitchPath(path)
 	if err != nil {
 		return true
 	}
-	if resolved, err := evalWorktreeSwitchPath(root); err == nil {
+	if resolved, err := EvalWorktreeSwitchPath(root); err == nil {
 		root = resolved
 	}
-	cwd, err := getwdWorktreeSwitch()
+	cwd, err := GetwdWorktreeSwitch()
 	if err != nil {
 		return true
 	}
-	if cwd, err = evalWorktreeSwitchPath(cwd); err != nil {
+	if cwd, err = EvalWorktreeSwitchPath(cwd); err != nil {
 		return true
 	}
-	rel, err := relWorktreeSwitchPath(root, cwd)
+	rel, err := RelWorktreeSwitchPath(root, cwd)
 	if err != nil {
 		return true
 	}

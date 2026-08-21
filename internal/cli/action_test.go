@@ -73,7 +73,7 @@ func TestWorkGroupExpandedRowsCapped(t *testing.T) {
 		})
 	}
 	collapsed := map[string]bool{}
-	groups := findWorkGroups(blocks)
+	groups := FindWorkGroups(blocks)
 	if len(groups) != 1 {
 		t.Fatalf("groups: %d", len(groups))
 	}

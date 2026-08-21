@@ -193,8 +193,8 @@ func TestSummaryWiringOverrideDegradesOnUnusableProvider(t *testing.T) {
 	if ok || summarizer != nil || policy.SummaryEnabled {
 		t.Fatalf("unusable override wired a summarizer: ok=%v summarizer=%v policy=%+v", ok, summarizer != nil, policy)
 	}
-	if reason := summaryDisabledReason(session, res); !strings.Contains(reason, "override") {
-		t.Fatalf("summaryDisabledReason = %q, want it to name the override", reason)
+	if reason := SummaryDisabledReason(session, res); !strings.Contains(reason, "override") {
+		t.Fatalf("SummaryDisabledReason = %q, want it to name the override", reason)
 	}
 }
 
@@ -270,13 +270,13 @@ func TestSummaryWiringOverrideZeroGenerationSessionDegrades(t *testing.T) {
 }
 
 // TestSummaryDisabledReasonNamesMissingSessionBinding covers the session-path
-// branch of summaryDisabledReason (no override configured): a session with no
+// branch of SummaryDisabledReason (no override configured): a session with no
 // resolved binding gets the binding reason, and the override branch is
 // skipped.
 func TestSummaryDisabledReasonNamesMissingSessionBinding(t *testing.T) {
 	res := summaryWiringResolved(t, true)
-	if reason := summaryDisabledReason(&chat.Session{}, res); reason != "the session has no resolved provider/model binding" {
-		t.Fatalf("summaryDisabledReason = %q, want the missing-binding reason", reason)
+	if reason := SummaryDisabledReason(&chat.Session{}, res); reason != "the session has no resolved provider/model binding" {
+		t.Fatalf("SummaryDisabledReason = %q, want the missing-binding reason", reason)
 	}
 }
 

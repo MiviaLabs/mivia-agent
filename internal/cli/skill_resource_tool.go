@@ -8,11 +8,11 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
-// injectSkillResourceTool clones the given registry, checks for an existing
+// InjectSkillResourceTool clones the given registry, checks for an existing
 // skill resource tool (returning an error on conflict), registers a new
 // scoped reader bound to the activation, and returns the augmented clone.
 // The caller is responsible for calling activation.Close() when done.
-func injectSkillResourceTool(
+func InjectSkillResourceTool(
 	registry *tools.Registry,
 	activation *skills.SkillActivation,
 ) (*tools.Registry, error) {

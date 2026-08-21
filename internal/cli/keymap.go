@@ -17,7 +17,7 @@ package cli
 //	   every key while open)
 //	3. run dashboard - only while drawn AND the transcript has focus
 //	4. focus cycling, block actions, and the global chords below
-//	5. focus scope: composer keys when composing, scrollback keys when reading
+//	5. focus Scope: composer keys when composing, scrollback keys when reading
 //	6. the focused component itself (textarea keymap / viewport keymap)
 //
 // Bracketed paste is deliberately not a row here: it arrives as a message
@@ -31,6 +31,9 @@ import (
 )
 
 // keyScope is where a binding applies.
+//
+// KeyScope is the exported alias, for internal/legacytui's routing tests.
+type KeyScope = keyScope
 type keyScope uint8
 
 const (
@@ -90,11 +93,14 @@ func (s keyScope) String() string {
 
 // binding is one declared key. help == "" hides the row from /help (the key
 // still exists; it is an alias or an internal affordance).
+//
+// Binding is the exported alias, for internal/legacytui's routing tests.
+type Binding = binding
 type binding struct {
-	keys  []string
-	scope keyScope
-	help  string
-	group string
+	Keys  []string
+	Scope keyScope
+	Help  string
+	Group string
 }
 
 // forbiddenKeys can never be bound: at the byte level they are other keys.
@@ -114,101 +120,101 @@ var forbiddenKeys = map[string]string{
 // the order /help renders.
 var keyRegistry = []binding{
 	// ── Sending ──────────────────────────────────────────────────────────
-	{keys: []string{"enter"}, scope: scopeComposer, group: "Sending", help: "Send message"},
-	{keys: []string{"alt+enter"}, scope: scopeComposer, group: "Sending", help: "Insert newline"},
-	{keys: []string{"ctrl+up"}, scope: scopeComposer, group: "Sending", help: "Open the message queue manager"},
+	{Keys: []string{"enter"}, Scope: scopeComposer, Group: "Sending", Help: "Send message"},
+	{Keys: []string{"alt+enter"}, Scope: scopeComposer, Group: "Sending", Help: "Insert newline"},
+	{Keys: []string{"ctrl+up"}, Scope: scopeComposer, Group: "Sending", Help: "Open the message queue manager"},
 
 	// ── Slash suggestions ────────────────────────────────────────────────
-	{keys: []string{"up", "ctrl+p"}, scope: scopeSuggest, group: "In slash suggestions", help: "Previous command"},
-	{keys: []string{"down", "ctrl+n"}, scope: scopeSuggest, group: "In slash suggestions", help: "Next command"},
-	{keys: []string{"tab"}, scope: scopeSuggest, group: "In slash suggestions", help: "Insert selected command"},
-	{keys: []string{"enter"}, scope: scopeSuggest, group: "In slash suggestions", help: "Insert, then run eligible built-ins"},
-	{keys: []string{"esc", "shift+tab"}, scope: scopeSuggest, group: "In slash suggestions", help: "Dismiss"},
-	{keys: []string{"pgup", "pgdown", "home", "end"}, scope: scopeSuggest, group: "In slash suggestions", help: "Dismiss and navigate"},
+	{Keys: []string{"up", "ctrl+p"}, Scope: scopeSuggest, Group: "In slash suggestions", Help: "Previous command"},
+	{Keys: []string{"down", "ctrl+n"}, Scope: scopeSuggest, Group: "In slash suggestions", Help: "Next command"},
+	{Keys: []string{"tab"}, Scope: scopeSuggest, Group: "In slash suggestions", Help: "Insert selected command"},
+	{Keys: []string{"enter"}, Scope: scopeSuggest, Group: "In slash suggestions", Help: "Insert, then run eligible built-ins"},
+	{Keys: []string{"esc", "shift+tab"}, Scope: scopeSuggest, Group: "In slash suggestions", Help: "Dismiss"},
+	{Keys: []string{"pgup", "pgdown", "home", "end"}, Scope: scopeSuggest, Group: "In slash suggestions", Help: "Dismiss and navigate"},
 
 	// ── Message history picker ───────────────────────────────────────────
-	{keys: []string{"up", "ctrl+p"}, scope: scopeHistory, group: "In message history", help: "Previous message"},
-	{keys: []string{"down", "ctrl+n"}, scope: scopeHistory, group: "In message history", help: "Next message"},
-	{keys: []string{"enter", "tab"}, scope: scopeHistory, group: "In message history", help: "Recall selected message"},
-	{keys: []string{"esc", "shift+tab"}, scope: scopeHistory, group: "In message history", help: "Dismiss"},
+	{Keys: []string{"up", "ctrl+p"}, Scope: scopeHistory, Group: "In message history", Help: "Previous message"},
+	{Keys: []string{"down", "ctrl+n"}, Scope: scopeHistory, Group: "In message history", Help: "Next message"},
+	{Keys: []string{"enter", "tab"}, Scope: scopeHistory, Group: "In message history", Help: "Recall selected message"},
+	{Keys: []string{"esc", "shift+tab"}, Scope: scopeHistory, Group: "In message history", Help: "Dismiss"},
 
 	// ── Message queue manager (modal popup) ───────────────────────────────
-	{keys: []string{"up", "ctrl+p"}, scope: scopeQueue, group: "In message queue", help: "Previous message"},
-	{keys: []string{"down", "ctrl+n"}, scope: scopeQueue, group: "In message queue", help: "Next message"},
-	{keys: []string{"enter"}, scope: scopeQueue, group: "In message queue", help: "Send the selected message now"},
-	{keys: []string{"d"}, scope: scopeQueue, group: "In message queue", help: "Delete the selected message"},
-	{keys: []string{"e"}, scope: scopeQueue, group: "In message queue", help: "Edit the selected message"},
-	{keys: []string{"esc", "q"}, scope: scopeQueue, group: "In message queue", help: "Close"},
+	{Keys: []string{"up", "ctrl+p"}, Scope: scopeQueue, Group: "In message queue", Help: "Previous message"},
+	{Keys: []string{"down", "ctrl+n"}, Scope: scopeQueue, Group: "In message queue", Help: "Next message"},
+	{Keys: []string{"enter"}, Scope: scopeQueue, Group: "In message queue", Help: "Send the selected message now"},
+	{Keys: []string{"d"}, Scope: scopeQueue, Group: "In message queue", Help: "Delete the selected message"},
+	{Keys: []string{"e"}, Scope: scopeQueue, Group: "In message queue", Help: "Edit the selected message"},
+	{Keys: []string{"esc", "q"}, Scope: scopeQueue, Group: "In message queue", Help: "Close"},
 
 	// ── Cancel & quit ────────────────────────────────────────────────────
-	{keys: []string{"ctrl+c"}, scope: scopeGlobal, group: "Cancel & quit", help: "Cancel the turn · at rest: copy, clear draft, or arm quit"},
-	{keys: []string{"ctrl+q"}, scope: scopeGlobal, group: "Cancel & quit", help: "Quit immediately"},
+	{Keys: []string{"ctrl+c"}, Scope: scopeGlobal, Group: "Cancel & quit", Help: "Cancel the turn · at rest: copy, clear draft, or arm quit"},
+	{Keys: []string{"ctrl+q"}, Scope: scopeGlobal, Group: "Cancel & quit", Help: "Quit immediately"},
 
 	// ── Navigation ───────────────────────────────────────────────────────
-	{keys: []string{"tab", "shift+tab"}, scope: scopeGlobal, group: "Navigation", help: "Cycle composer and history blocks"},
-	{keys: []string{"esc"}, scope: scopeGlobal, group: "Navigation", help: "Back to composer, clear selection"},
-	{keys: []string{"pgup", "pgdown"}, scope: scopeGlobal, group: "Navigation", help: "Page the transcript"},
-	{keys: []string{"home", "end"}, scope: scopeScrollback, group: "Navigation", help: "Oldest message / back to latest"},
-	{keys: []string{"shift+home", "shift+end"}, scope: scopeGlobal, group: "Navigation", help: "Same from the composer (where the terminal forwards them)"},
-	{keys: []string{"up", "down"}, scope: scopeScrollback, group: "Navigation", help: "Scroll line by line (the run dashboard takes these while it is open)"},
-	{keys: []string{"enter", " "}, scope: scopeScrollback, group: "Navigation", help: "Expand or collapse the selected block"},
-	{keys: []string{"o"}, scope: scopeScrollback, group: "Navigation", help: "Open the selected block in the pager"},
-	{keys: []string{"j", "k"}, scope: scopeScrollback, group: "Navigation", help: "Scroll inside the selected work group"},
-	{keys: []string{"ctrl+g"}, scope: scopeGlobal, group: "Navigation", help: "Fleet detail (subagent activity)"},
+	{Keys: []string{"tab", "shift+tab"}, Scope: scopeGlobal, Group: "Navigation", Help: "Cycle composer and history blocks"},
+	{Keys: []string{"esc"}, Scope: scopeGlobal, Group: "Navigation", Help: "Back to composer, clear selection"},
+	{Keys: []string{"pgup", "pgdown"}, Scope: scopeGlobal, Group: "Navigation", Help: "Page the transcript"},
+	{Keys: []string{"home", "end"}, Scope: scopeScrollback, Group: "Navigation", Help: "Oldest message / back to latest"},
+	{Keys: []string{"shift+home", "shift+end"}, Scope: scopeGlobal, Group: "Navigation", Help: "Same from the composer (where the terminal forwards them)"},
+	{Keys: []string{"up", "down"}, Scope: scopeScrollback, Group: "Navigation", Help: "Scroll line by line (the run dashboard takes these while it is open)"},
+	{Keys: []string{"enter", " "}, Scope: scopeScrollback, Group: "Navigation", Help: "Expand or collapse the selected block"},
+	{Keys: []string{"o"}, Scope: scopeScrollback, Group: "Navigation", Help: "Open the selected block in the pager"},
+	{Keys: []string{"j", "k"}, Scope: scopeScrollback, Group: "Navigation", Help: "Scroll inside the selected work group"},
+	{Keys: []string{"ctrl+g"}, Scope: scopeGlobal, Group: "Navigation", Help: "Fleet detail (subagent activity)"},
 
 	// ── Editing ──────────────────────────────────────────────────────────
-	{keys: []string{"left", "right"}, scope: scopeComposer, group: "Editing", help: "Move the cursor"},
-	{keys: []string{"home", "end"}, scope: scopeComposer, group: "Editing", help: "Start / end of line"},
-	{keys: []string{"ctrl+a"}, scope: scopeComposer, group: "Editing", help: "Start of line"},
-	{keys: []string{"ctrl+e"}, scope: scopeComposer, group: "Editing", help: "End of line"},
-	{keys: []string{"ctrl+left", "ctrl+right"}, scope: scopeComposer, group: "Editing", help: "Word back / word forward (also alt+←/→)"},
-	{keys: []string{"ctrl+u", "ctrl+k"}, scope: scopeComposer, group: "Editing", help: "Delete to line start / to line end"},
-	{keys: []string{"ctrl+w", "alt+backspace"}, scope: scopeComposer, group: "Editing", help: "Delete the word before the cursor"},
-	{keys: []string{"ctrl+v"}, scope: scopeGlobal, group: "Editing", help: "Paste into the composer (the terminal's own paste also works)"},
+	{Keys: []string{"left", "right"}, Scope: scopeComposer, Group: "Editing", Help: "Move the cursor"},
+	{Keys: []string{"home", "end"}, Scope: scopeComposer, Group: "Editing", Help: "Start / end of line"},
+	{Keys: []string{"ctrl+a"}, Scope: scopeComposer, Group: "Editing", Help: "Start of line"},
+	{Keys: []string{"ctrl+e"}, Scope: scopeComposer, Group: "Editing", Help: "End of line"},
+	{Keys: []string{"ctrl+left", "ctrl+right"}, Scope: scopeComposer, Group: "Editing", Help: "Word back / word forward (also alt+←/→)"},
+	{Keys: []string{"ctrl+u", "ctrl+k"}, Scope: scopeComposer, Group: "Editing", Help: "Delete to line start / to line end"},
+	{Keys: []string{"ctrl+w", "alt+backspace"}, Scope: scopeComposer, Group: "Editing", Help: "Delete the word before the cursor"},
+	{Keys: []string{"ctrl+v"}, Scope: scopeGlobal, Group: "Editing", Help: "Paste into the composer (the terminal's own paste also works)"},
 
 	// ── Copying ──────────────────────────────────────────────────────────
-	{keys: []string{"y"}, scope: scopeScrollback, group: "Copying", help: "Copy the selected message"},
-	{keys: []string{"ctrl+y"}, scope: scopeGlobal, group: "Copying", help: "Copy the selected message (any focus)"},
-	{keys: []string{"f2"}, scope: scopeGlobal, group: "Copying", help: "Select mode: hand the mouse back to the terminal (also /select)"},
+	{Keys: []string{"y"}, Scope: scopeScrollback, Group: "Copying", Help: "Copy the selected message"},
+	{Keys: []string{"ctrl+y"}, Scope: scopeGlobal, Group: "Copying", Help: "Copy the selected message (any focus)"},
+	{Keys: []string{"f2"}, Scope: scopeGlobal, Group: "Copying", Help: "Select mode: hand the mouse back to the terminal (also /select)"},
 
 	// ── Panels ───────────────────────────────────────────────────────────
-	{keys: []string{"ctrl+t"}, scope: scopeGlobal, group: "Panels", help: "Toggle live thinking"},
-	{keys: []string{"ctrl+r"}, scope: scopeGlobal, group: "Panels", help: "Toggle the run dashboard"},
-	{keys: []string{"ctrl+l"}, scope: scopeGlobal, group: "Panels", help: "Clear the screen"},
+	{Keys: []string{"ctrl+t"}, Scope: scopeGlobal, Group: "Panels", Help: "Toggle live thinking"},
+	{Keys: []string{"ctrl+r"}, Scope: scopeGlobal, Group: "Panels", Help: "Toggle the run dashboard"},
+	{Keys: []string{"ctrl+l"}, Scope: scopeGlobal, Group: "Panels", Help: "Clear the screen"},
 
 	// ── Run dashboard (drawn, transcript focused) ────────────────────────
-	{keys: []string{"up", "down"}, scope: scopeDashboard, group: "In the run dashboard", help: "Move the run cursor"},
+	{Keys: []string{"up", "down"}, Scope: scopeDashboard, Group: "In the run dashboard", Help: "Move the run cursor"},
 
 	// ── Overlay / dialogs ────────────────────────────────────────────────
-	{keys: []string{"esc", "q"}, scope: scopeOverlay, group: "In a dialog", help: "Close"},
-	{keys: []string{"j", "k", "up", "down"}, scope: scopeOverlay, group: "In a dialog", help: "Scroll"},
-	{keys: []string{"pgup", "pgdown", "b", "f", " "}, scope: scopeOverlay, group: "In a dialog", help: "Page"},
-	{keys: []string{"g", "G", "home", "end"}, scope: scopeOverlay, group: "In a dialog", help: "Top / bottom"},
+	{Keys: []string{"esc", "q"}, Scope: scopeOverlay, Group: "In a dialog", Help: "Close"},
+	{Keys: []string{"j", "k", "up", "down"}, Scope: scopeOverlay, Group: "In a dialog", Help: "Scroll"},
+	{Keys: []string{"pgup", "pgdown", "b", "f", " "}, Scope: scopeOverlay, Group: "In a dialog", Help: "Page"},
+	{Keys: []string{"g", "G", "home", "end"}, Scope: scopeOverlay, Group: "In a dialog", Help: "Top / bottom"},
 
 	// ── Sessions manager ─────────────────────────────────────────────────
-	{keys: []string{"up", "down", "j", "k"}, scope: scopeSessions, group: "In /sessions", help: "Move"},
-	{keys: []string{"enter"}, scope: scopeSessions, group: "In /sessions", help: "Open the selected session"},
-	{keys: []string{"d"}, scope: scopeSessions, group: "In /sessions", help: "Delete (confirm with y)"},
-	{keys: []string{"P"}, scope: scopeSessions, group: "In /sessions", help: "Purge all (confirm with y)"},
-	{keys: []string{"home", "g"}, scope: scopeSessions, group: "In /sessions", help: "First session"},
-	{keys: []string{"end", "G"}, scope: scopeSessions, group: "In /sessions", help: "Last session"},
-	{keys: []string{"y", "n"}, scope: scopeSessions, group: "In /sessions", help: "Confirm / cancel a delete or purge"},
-	{keys: []string{"esc", "q"}, scope: scopeSessions, group: "In /sessions", help: "Close"},
+	{Keys: []string{"up", "down", "j", "k"}, Scope: scopeSessions, Group: "In /sessions", Help: "Move"},
+	{Keys: []string{"enter"}, Scope: scopeSessions, Group: "In /sessions", Help: "Open the selected session"},
+	{Keys: []string{"d"}, Scope: scopeSessions, Group: "In /sessions", Help: "Delete (confirm with y)"},
+	{Keys: []string{"P"}, Scope: scopeSessions, Group: "In /sessions", Help: "Purge all (confirm with y)"},
+	{Keys: []string{"home", "g"}, Scope: scopeSessions, Group: "In /sessions", Help: "First session"},
+	{Keys: []string{"end", "G"}, Scope: scopeSessions, Group: "In /sessions", Help: "Last session"},
+	{Keys: []string{"y", "n"}, Scope: scopeSessions, Group: "In /sessions", Help: "Confirm / cancel a delete or purge"},
+	{Keys: []string{"esc", "q"}, Scope: scopeSessions, Group: "In /sessions", Help: "Close"},
 
 	// ── Workflows manager ────────────────────────────────────────────────
-	{keys: []string{"up", "down", "j", "k"}, scope: scopeWorkflows, group: "In /workflows", help: "Move"},
-	{keys: []string{"enter"}, scope: scopeWorkflows, group: "In /workflows", help: "Print the run id and status"},
-	{keys: []string{"esc"}, scope: scopeWorkflows, group: "In /workflows", help: "Close"},
+	{Keys: []string{"up", "down", "j", "k"}, Scope: scopeWorkflows, Group: "In /workflows", Help: "Move"},
+	{Keys: []string{"enter"}, Scope: scopeWorkflows, Group: "In /workflows", Help: "Print the run id and status"},
+	{Keys: []string{"esc"}, Scope: scopeWorkflows, Group: "In /workflows", Help: "Close"},
 
 	// ── Worktrees manager (shares navigation, enter, d, y/n, esc with /sessions) ─
-	{keys: []string{"b"}, scope: scopeSessions, group: "In /worktrees", help: "Switch to main tree"},
-	{keys: []string{"c"}, scope: scopeSessions, group: "In /worktrees", help: "Create new worktree"},
+	{Keys: []string{"b"}, Scope: scopeSessions, Group: "In /worktrees", Help: "Switch to main tree"},
+	{Keys: []string{"c"}, Scope: scopeSessions, Group: "In /worktrees", Help: "Create new worktree"},
 
 	// ── Welcome screen ───────────────────────────────────────────────────
-	{keys: []string{"up", "down", "j", "k"}, scope: scopeWelcome, group: "On the welcome screen", help: "Pick a session (j/k only while the composer is empty)"},
-	{keys: []string{"pgup", "pgdown", "home", "end"}, scope: scopeWelcome, group: "On the welcome screen", help: "Jump through the session list"},
-	{keys: []string{"ctrl+o"}, scope: scopeWelcome, group: "On the welcome screen", help: "Continue the last session"},
-	{keys: []string{"enter"}, scope: scopeWelcome, group: "On the welcome screen", help: "Open the selected session, or start typing for a new one"},
+	{Keys: []string{"up", "down", "j", "k"}, Scope: scopeWelcome, Group: "On the welcome screen", Help: "Pick a session (j/k only while the composer is empty)"},
+	{Keys: []string{"pgup", "pgdown", "home", "end"}, Scope: scopeWelcome, Group: "On the welcome screen", Help: "Jump through the session list"},
+	{Keys: []string{"ctrl+o"}, Scope: scopeWelcome, Group: "On the welcome screen", Help: "Continue the last session"},
+	{Keys: []string{"enter"}, Scope: scopeWelcome, Group: "On the welcome screen", Help: "Open the selected session, or start typing for a new one"},
 }
 
 // validateKeyRegistry reports every structural problem with the registry: a
@@ -218,24 +224,24 @@ func validateKeyRegistry(rs []binding) []error {
 	var errs []error
 	seen := map[string]string{} // "scope/key" -> group it was first seen in
 	for _, b := range rs {
-		if len(b.keys) == 0 {
-			errs = append(errs, fmt.Errorf("binding in group %q declares no keys", b.group))
+		if len(b.Keys) == 0 {
+			errs = append(errs, fmt.Errorf("binding in group %q declares no keys", b.Group))
 		}
-		if b.group == "" {
-			errs = append(errs, fmt.Errorf("binding %v declares no group", b.keys))
+		if b.Group == "" {
+			errs = append(errs, fmt.Errorf("binding %v declares no group", b.Keys))
 		}
-		if b.help == "" {
-			errs = append(errs, fmt.Errorf("binding %v (%s) has no help text", b.keys, b.scope))
+		if b.Help == "" {
+			errs = append(errs, fmt.Errorf("binding %v (%s) has no help text", b.Keys, b.Scope))
 		}
-		for _, k := range b.keys {
+		for _, k := range b.Keys {
 			if why, bad := forbiddenKeys[k]; bad {
 				errs = append(errs, fmt.Errorf("binding %q must not be bound: %s", k, why))
 			}
-			id := b.scope.String() + "/" + k
+			id := b.Scope.String() + "/" + k
 			if prev, dup := seen[id]; dup {
-				errs = append(errs, fmt.Errorf("key %q is bound twice in scope %s (%s and %s)", k, b.scope, prev, b.group))
+				errs = append(errs, fmt.Errorf("key %q is bound twice in scope %s (%s and %s)", k, b.Scope, prev, b.Group))
 			}
-			seen[id] = b.group
+			seen[id] = b.Group
 		}
 	}
 	sort.Slice(errs, func(i, j int) bool { return errs[i].Error() < errs[j].Error() })
@@ -244,8 +250,8 @@ func validateKeyRegistry(rs []binding) []error {
 
 // keyLabel renders a binding's keys the way /help shows them.
 func keyLabel(b binding) string {
-	pretty := make([]string, 0, len(b.keys))
-	for _, k := range b.keys {
+	pretty := make([]string, 0, len(b.Keys))
+	for _, k := range b.Keys {
 		pretty = append(pretty, prettyKeyName(k))
 	}
 	return strings.Join(pretty, " / ")
@@ -301,13 +307,13 @@ func keyHelpSections(rs []binding) []helpSection {
 	var order []string
 	byGroup := map[string][]helpItem{}
 	for _, b := range rs {
-		if b.help == "" {
+		if b.Help == "" {
 			continue
 		}
-		if _, ok := byGroup[b.group]; !ok {
-			order = append(order, b.group)
+		if _, ok := byGroup[b.Group]; !ok {
+			order = append(order, b.Group)
 		}
-		byGroup[b.group] = append(byGroup[b.group], helpItem{Key: keyLabel(b), Desc: b.help})
+		byGroup[b.Group] = append(byGroup[b.Group], helpItem{Key: keyLabel(b), Desc: b.Help})
 	}
 	sections := make([]helpSection, 0, len(order))
 	for _, g := range order {

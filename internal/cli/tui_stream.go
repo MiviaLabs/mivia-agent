@@ -6,7 +6,8 @@ import (
 	"time"
 )
 
-type bridgeToolEvt struct {
+// BridgeToolEvt holds bridge tool evt state.
+type BridgeToolEvt struct {
 	Start      bool
 	ToolCallID string
 	Name       string
@@ -18,7 +19,7 @@ type bridgeToolEvt struct {
 // BridgeDrain is a one-shot snapshot of bridge UI state for the TUI update loop.
 type BridgeDrain struct {
 	Stream       string
-	Tools        []bridgeToolEvt
+	Tools        []BridgeToolEvt
 	Done         bool
 	DoneErr      error
 	Thinking     string
@@ -39,7 +40,7 @@ type BridgeDrain struct {
 type StreamBridge struct {
 	mu      sync.Mutex
 	pending strings.Builder
-	tools   []bridgeToolEvt
+	tools   []BridgeToolEvt
 	done    bool
 	doneErr error
 	// Notify signals the TUI update loop that drainable state changed. Shared
@@ -237,7 +238,7 @@ func (b *StreamBridge) pushToolEvt(start bool, toolCallID, agentName, name, deta
 		}
 	}
 	if len(b.tools) < 500 {
-		b.tools = append(b.tools, bridgeToolEvt{
+		b.tools = append(b.tools, BridgeToolEvt{
 			Start: start, ToolCallID: toolCallID, Name: name, Detail: detail,
 			Agent: agentName, At: time.Now(),
 		})

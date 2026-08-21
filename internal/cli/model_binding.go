@@ -123,7 +123,7 @@ func unscopedModelSurface(sess *chat.Session, res *config.Resolved, root string,
 		MaxTokens:                 res.MaxTokens,
 		Budget:                    sess.PromptBudget,
 		Reasoning:                 sess.ReasoningSetting,
-		SharedSQLite:              contextWiring.sharedSQLite,
+		SharedSQLite:              contextWiring.SharedSQLite,
 		ContextPreparationManager: contextWiring.preparation,
 		ContextPreparationInput:   contextWiring.preparationInput,
 		SkillReg:                  skillReg,
@@ -235,7 +235,7 @@ func loadSessionSkills(root string, allowProject bool) (*skills.Registry, []stri
 
 func reservedSkillNames() map[string]struct{} {
 	return map[string]struct{}{
-		HandlerDelegate: {}, handlerOneshot: {}, handlerMultiStep: {},
+		HandlerDelegate: {}, HandlerOneshot: {}, HandlerMultiStep: {},
 	}
 }
 

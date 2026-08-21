@@ -71,7 +71,7 @@ func (r *replRuntime) restore() {
 	}
 	r.renderer.PrintDim("Restored previous session (%d messages, %d turns)", len(r.sess.Messages), r.sess.UserTurns())
 	if saved, current, ok := r.sess.ModelRestoreNotice(); ok {
-		r.renderer.PrintDim("%s", modelRestoreNoticeText(saved, current))
+		r.renderer.PrintDim("%s", ModelRestoreNoticeText(saved, current))
 	}
 	for _, note := range r.sess.TakeAdmissionNotes() {
 		r.renderer.PrintDim("%s", note)

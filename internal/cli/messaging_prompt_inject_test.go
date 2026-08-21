@@ -125,7 +125,7 @@ func TestPlainMultiStepPromptIncludesProtocol(t *testing.T) {
 	defer d.Close()
 
 	result := d.Invoke(context.Background(), runtime.Request{
-		ID: "multi-prompt", Kind: runtime.Subagent, Name: handlerMultiStep,
+		ID: "multi-prompt", Kind: runtime.Subagent, Name: HandlerMultiStep,
 		Input: json.RawMessage(`"do the work"`), SessionID: "test",
 	})
 	if result.Err != nil {
@@ -160,7 +160,7 @@ func TestOneshotDelegateDoNotIncludeProtocol(t *testing.T) {
 	}
 	defer d.Close()
 
-	for _, name := range []string{handlerOneshot, HandlerDelegate} {
+	for _, name := range []string{HandlerOneshot, HandlerDelegate} {
 		result := d.Invoke(context.Background(), runtime.Request{
 			ID: "oneshot-" + name, Kind: runtime.Subagent, Name: name,
 			Input: json.RawMessage(`"do the work"`), SessionID: "test",

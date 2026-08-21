@@ -156,7 +156,7 @@ func runWorkflowCommandApprove(args []string, workspaceRoot, configPath string, 
 		return fmt.Errorf("workflow approve: expected a run ID and an approval ID")
 	}
 	if strings.TrimSpace(actor) == "" {
-		actor = workflowApprovalDefaultActor
+		actor = WorkflowApprovalDefaultActor
 	}
 	return executeWorkflowApprove(rest[0], rest[1], workspaceRoot, configPath, actor, stdout, stderr)
 }
@@ -174,7 +174,7 @@ func runWorkflowCommandReject(args []string, workspaceRoot, configPath string, s
 		return fmt.Errorf("workflow reject: expected a run ID and an approval ID")
 	}
 	if strings.TrimSpace(actor) == "" {
-		actor = workflowApprovalDefaultActor
+		actor = WorkflowApprovalDefaultActor
 	}
 	return executeWorkflowReject(rest[0], rest[1], workspaceRoot, configPath, actor, reason, stdout, stderr)
 }

@@ -56,7 +56,7 @@ func validatePanelAgentTools(agent agents.ResolvedAgent, skillName string, opts 
 	if synthesizer && !agent.AllowEmptyTools {
 		return fmt.Errorf("review-synthesizer must declare allow_empty_tools = true")
 	}
-	// skillHasResources mirrors the injectSkillResourceTool branch below so
+	// skillHasResources mirrors the InjectSkillResourceTool branch below so
 	// the expected tool set can include the scoped reader exactly when the
 	// runtime surface does.
 	skillHasResources := false
@@ -78,7 +78,7 @@ func validatePanelAgentTools(agent agents.ResolvedAgent, skillName string, opts 
 				return err
 			}
 			defer activation.Close()
-			surface, err = injectSkillResourceTool(surface, activation)
+			surface, err = InjectSkillResourceTool(surface, activation)
 			if err != nil {
 				return err
 			}
@@ -94,7 +94,7 @@ func validatePanelAgentTools(agent agents.ResolvedAgent, skillName string, opts 
 	if !synthesizer {
 		want = slices.Clone(panelReviewerTools)
 		// A member skill that declares resources gets the host-injected
-		// scoped reader (injectSkillResourceTool) in its runtime surface, so
+		// scoped reader (InjectSkillResourceTool) in its runtime surface, so
 		// the expected set must carry read_skill_resource too. The committed
 		// panel skills are deliberately resource-less JSON-only skills, so
 		// this branch stays a generic capability check rather than a panel

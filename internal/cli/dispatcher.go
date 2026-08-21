@@ -119,7 +119,7 @@ type SessionDispatcherOpts struct {
 
 	// SkillScope is the immutable per-instance skill policy for the selected
 	// root agent (plan 06). Zero value allows all skills (no agent selected).
-	SkillScope agentSkillScope
+	SkillScope AgentSkillScope
 
 	// AgentRegistry is the caller-authorized immutable catalogue whose names
 	// are the only task routing targets.

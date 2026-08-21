@@ -38,7 +38,7 @@ type sessionToolSpec struct {
 // binding advertises them.
 //
 // read_skill_resource is deliberately absent: it is injected per skill
-// activation (injectSkillResourceTool) into a skill-scoped clone, not
+// activation (InjectSkillResourceTool) into a skill-scoped clone, not
 // registered by the session dispatcher, so no root binding advertises it.
 var sessionToolCatalog = []sessionToolSpec{
 	{Name: "delegate", New: func() tools.Tool { return &delegateTool{} }},

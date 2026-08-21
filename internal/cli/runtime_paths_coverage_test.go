@@ -90,12 +90,12 @@ func TestRuntimeCoverageCreateRecoversReservations(t *testing.T) {
 	for _, state := range []contextstate.WorktreeInstanceState{contextstate.WorktreeCreating, contextstate.WorktreeDeleting} {
 		t.Run(string(state), func(t *testing.T) {
 			repo := newWorktreeCommandRepo(t)
-			store, err := openRepositoryContextStore(repo)
+			store, err := OpenRepositoryContextStore(repo)
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer store.Close()
-			principal, err := worktreeRoutePrincipal(repo)
+			principal, err := WorktreeRoutePrincipal(repo)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -135,14 +135,14 @@ func TestRuntimeCoverageRemovalAndReactivationWrappers(t *testing.T) {
 		t.Fatalf("reactivate wrapper: %v", err)
 	}
 
-	store, err := openRepositoryContextStore(repo)
+	store, err := OpenRepositoryContextStore(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := reactivateManagedWorktreeInStore(store, repo, instance); err == nil {
+	if err := ReactivateManagedWorktreeInStore(store, repo, instance); err == nil {
 		t.Fatal("reactivation with a closed store succeeded")
 	}
 }
@@ -154,12 +154,12 @@ func TestRuntimeCoverageReactivationRejectsBrokenGitAndPath(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		store, err := openRepositoryContextStore(repo)
+		store, err := OpenRepositoryContextStore(repo)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer store.Close()
-		principal, _ := worktreeRoutePrincipal(repo)
+		principal, _ := WorktreeRoutePrincipal(repo)
 		if err := store.BeginWorktreeDeletion(context.Background(), principal, instance); err != nil {
 			t.Fatal(err)
 		}
@@ -169,7 +169,7 @@ func TestRuntimeCoverageReactivationRejectsBrokenGitAndPath(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = os.Rename(moved, gitDir) })
-		if err := reactivateManagedWorktreeInStore(store, repo, instance); err == nil {
+		if err := ReactivateManagedWorktreeInStore(store, repo, instance); err == nil {
 			t.Fatal("reactivation with broken Git metadata succeeded")
 		}
 	})
@@ -180,12 +180,12 @@ func TestRuntimeCoverageReactivationRejectsBrokenGitAndPath(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		store, err := openRepositoryContextStore(repo)
+		store, err := OpenRepositoryContextStore(repo)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer store.Close()
-		principal, _ := worktreeRoutePrincipal(repo)
+		principal, _ := WorktreeRoutePrincipal(repo)
 		instance := contextstate.WorktreeInstance{Worktree: worktree.Name, ID: "wt_1234567890abcdef"}
 		wrongPath := filepath.Join(repo, ".mivia", "worktrees", "other")
 		if err := store.BeginWorktreeCreation(context.Background(), principal, instance, wrongPath); err != nil {
@@ -200,7 +200,7 @@ func TestRuntimeCoverageReactivationRejectsBrokenGitAndPath(t *testing.T) {
 		if err := store.BeginWorktreeDeletion(context.Background(), principal, instance); err != nil {
 			t.Fatal(err)
 		}
-		if err := reactivateManagedWorktreeInStore(store, repo, instance); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+		if err := ReactivateManagedWorktreeInStore(store, repo, instance); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
 			t.Fatalf("path mismatch error = %v", err)
 		}
 	})
@@ -212,12 +212,12 @@ func TestRuntimeCoverageReactivationRejectsMarkerReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := openRepositoryContextStore(repo)
+	store, err := OpenRepositoryContextStore(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, _ := worktreeRoutePrincipal(repo)
+	principal, _ := WorktreeRoutePrincipal(repo)
 	if err := store.BeginWorktreeDeletion(context.Background(), principal, instance); err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +225,7 @@ func TestRuntimeCoverageReactivationRejectsMarkerReplacement(t *testing.T) {
 	if err := writeWorktreeMarker(worktree.Path, replacement); err != nil {
 		t.Fatal(err)
 	}
-	if err := reactivateManagedWorktreeInStore(store, repo, instance); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+	if err := ReactivateManagedWorktreeInStore(store, repo, instance); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
 		t.Fatalf("replacement marker error = %v", err)
 	}
 }
@@ -237,11 +237,11 @@ func TestRuntimeCoverageMarkerClassificationDatabaseErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal, _ := worktreeRoutePrincipal(repo)
+	principal, _ := WorktreeRoutePrincipal(repo)
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := classifyMissingWorktreeMarker(store, principal, "wt-a", filepath.Join(repo, "wt-a")); err == nil {
+	if _, _, err := ClassifyMissingWorktreeMarker(store, principal, "wt-a", filepath.Join(repo, "wt-a")); err == nil {
 		t.Fatal("classification with a closed store succeeded")
 	}
 
@@ -259,7 +259,7 @@ func TestRuntimeCoverageMarkerClassificationDatabaseErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	db.Close()
-	if _, _, err := classifyMissingWorktreeMarker(store, principal, "wt-a", filepath.Join(repo, "wt-a")); err == nil {
+	if _, _, err := ClassifyMissingWorktreeMarker(store, principal, "wt-a", filepath.Join(repo, "wt-a")); err == nil {
 		t.Fatal("classification with a missing route table succeeded")
 	}
 }
@@ -270,7 +270,7 @@ func TestRuntimeCoverageExpectedInstanceRejectsDanglingSessionPath(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := openRepositoryContextStore(repo)
+	store, err := OpenRepositoryContextStore(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +279,7 @@ func TestRuntimeCoverageExpectedInstanceRejectsDanglingSessionPath(t *testing.T)
 	if err := os.Symlink(filepath.Join(worktree.Path, "missing"), dangling); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateExpectedWorktreeInstanceInStore(store, repo, dangling, instance); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+	if err := ValidateExpectedWorktreeInstanceInStore(store, repo, dangling, instance); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
 		t.Fatalf("dangling session path error = %v", err)
 	}
 }
@@ -298,11 +298,11 @@ func TestRuntimeCoverageMarkerRootHelperRejectsSymlink(t *testing.T) {
 func TestRuntimeCoverageRouteRemovalSuccessWrappers(t *testing.T) {
 	for _, withSession := range []bool{false, true} {
 		repo := newWorktreeCommandRepo(t)
-		store, err := openRepositoryContextStore(repo)
+		store, err := OpenRepositoryContextStore(repo)
 		if err != nil {
 			t.Fatal(err)
 		}
-		principal, _ := worktreeRoutePrincipal(repo)
+		principal, _ := WorktreeRoutePrincipal(repo)
 		if err := store.SaveWorktreeRoute(context.Background(), principal, "route", filepath.Join(repo, "route")); err != nil {
 			t.Fatal(err)
 		}
@@ -327,7 +327,7 @@ func TestRuntimeCoverageRepositoryContextAndIdentityErrors(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(configDir, "mivia.toml"), []byte("[broken"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := openRepositoryContextStore(repo); err == nil {
+	if _, err := OpenRepositoryContextStore(repo); err == nil {
 		t.Fatal("repository context store accepted invalid config")
 	}
 

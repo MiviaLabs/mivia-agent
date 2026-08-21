@@ -116,7 +116,7 @@ func (r *ChatRenderer) PrintToolStart(name, detail string) {
 	r.mu.Unlock()
 	icon := ToolIconForName(name)
 	r.out.WriteString(fmt.Sprintf("  %s%s%s %s%s%s %s%s%s\n",
-		AnsiCyan, NewToolRenderItem(name, detail, "", false, false).statusIcon(false), AnsiReset,
+		AnsiCyan, NewToolRenderItem(name, detail, "", false, false).StatusIcon(false), AnsiReset,
 		AnsiBold, name, AnsiBoldEnd,
 		AnsiDim, BoundedToolText(detail, 80), AnsiDimEnd,
 	))
@@ -145,14 +145,14 @@ func (r *ChatRenderer) PrintToolEnd(name, detail string) {
 		strings.Contains(detail, "exit=1") ||
 		strings.Contains(detail, "exit=error")
 	item := NewToolRenderItem(name, detail, detail, true, failed)
-	icon, color := item.statusIcon(false), AnsiGreen
+	icon, color := item.StatusIcon(false), AnsiGreen
 	if failed {
 		color = AnsiRed
 	}
 	r.out.WriteString(fmt.Sprintf("  %s%s%s %s%s%s %s%s%s%s%s%s\n",
 		color, icon, AnsiReset,
 		AnsiBold, name, AnsiBoldEnd,
-		AnsiDim, item.summary(80), AnsiDimEnd,
+		AnsiDim, item.Summary(80), AnsiDimEnd,
 		AnsiYellow, elapsed, AnsiReset,
 	))
 }
@@ -221,7 +221,7 @@ func RenderMessageForHistory(msg provider.Message, modelName string, width int) 
 		var lines []string
 		// Compact tool-call lines for any ToolCalls in this message.
 		for _, tc := range msg.ToolCalls {
-			args := NewToolRenderItem(tc.Function.Name, tc.Function.Arguments, "", false, false).summary(80)
+			args := NewToolRenderItem(tc.Function.Name, tc.Function.Arguments, "", false, false).Summary(80)
 			icon := ToolIconForName(tc.Function.Name)
 			line := fmt.Sprintf("  %s %s %s",
 				icon,
@@ -245,10 +245,10 @@ func RenderMessageForHistory(msg provider.Message, modelName string, width int) 
 
 	case provider.RoleTool:
 		item := NewToolRenderItem(msg.Name, "", msg.Content, true, strings.HasPrefix(strings.ToLower(msg.Content), "error"))
-		truncated := item.summary(maxToolResultPreview)
-		icon := ToolOkStyle.Render(item.statusIcon(false))
+		truncated := item.Summary(maxToolResultPreview)
+		icon := ToolOkStyle.Render(item.StatusIcon(false))
 		if item.Failed {
-			icon = ToolErrStyle.Render(item.statusIcon(false))
+			icon = ToolErrStyle.Render(item.StatusIcon(false))
 		}
 		line := fmt.Sprintf("  %s %s %s",
 			icon,
@@ -342,7 +342,7 @@ func renderTurnBody(msgs []provider.Message) ([]string, []string, string, bool) 
 func renderToolCalls(calls []provider.ToolCall) []string {
 	lines := make([]string, 0, len(calls))
 	for _, call := range calls {
-		args := NewToolRenderItem(call.Function.Name, call.Function.Arguments, "", false, false).summary(80)
+		args := NewToolRenderItem(call.Function.Name, call.Function.Arguments, "", false, false).Summary(80)
 		lines = append(lines, fmt.Sprintf("  %s %s %s", ToolIconForName(call.Function.Name), ToolNameStyle.Render(call.Function.Name), TUIDimStyle.Render(args)))
 	}
 	return lines
@@ -350,11 +350,11 @@ func renderToolCalls(calls []provider.ToolCall) []string {
 
 func renderToolResult(msg provider.Message) string {
 	item := NewToolRenderItem(msg.Name, "", msg.Content, true, strings.HasPrefix(strings.ToLower(msg.Content), "error"))
-	icon := ToolOkStyle.Render(item.statusIcon(false))
+	icon := ToolOkStyle.Render(item.StatusIcon(false))
 	if item.Failed {
-		icon = ToolErrStyle.Render(item.statusIcon(false))
+		icon = ToolErrStyle.Render(item.StatusIcon(false))
 	}
-	return fmt.Sprintf("  %s %s %s", icon, ToolNameStyle.Render(msg.Name), TUIDimStyle.Render(item.summary(maxToolResultPreview)))
+	return fmt.Sprintf("  %s %s %s", icon, ToolNameStyle.Render(msg.Name), TUIDimStyle.Render(item.Summary(maxToolResultPreview)))
 }
 
 // RenderHistoryMessages groups messages by user-message boundaries and

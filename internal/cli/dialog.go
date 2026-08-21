@@ -18,7 +18,7 @@ func replHelpContent() []helpSection {
 // replHelpCommands lists plain-surface slash commands from the catalog so
 // classic help cannot drift from what the REPL handles.
 func replHelpCommands() []helpSection {
-	commands := slashCommands(slashSurfacePlain, nil)
+	commands := SlashCommands(slashSurfacePlain, nil)
 	items := make([]helpItem, 0, len(commands))
 	for _, command := range commands {
 		key := command.Name

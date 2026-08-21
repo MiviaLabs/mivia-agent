@@ -104,7 +104,7 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 		MaxTokens:                 sess.MaxTokens,
 		Budget:                    sess.PromptBudget,
 		Reasoning:                 sess.ReasoningSetting,
-		SharedSQLite:              routing.Context.sharedSQLite,
+		SharedSQLite:              routing.Context.SharedSQLite,
 		ContextPreparationManager: routing.Context.preparation,
 		ContextPreparationInput:   routing.Context.preparationInput,
 		SkillReg:                  skillReg,
@@ -154,10 +154,10 @@ func attachBuiltSessionDispatcher(sess *chat.Session, state *AgentSessionState, 
 // spool's store alive for the session. A shared context store makes this moot:
 // the ledger adapter borrows it and owns nothing.
 func adoptSessionLedgerRepo(sess *chat.Session, cfg config.SubagentConfig, state *AgentSessionState, routing sessionRouting) {
-	if state == nil || routing.Context.sharedSQLite != nil {
+	if state == nil || routing.Context.SharedSQLite != nil {
 		return
 	}
-	if contextDispatcherFor(sess, cfg).sharedSQLite != nil {
+	if contextDispatcherFor(sess, cfg).SharedSQLite != nil {
 		return
 	}
 	repo, owned := openDurableLedgerRepo(cfg, os.Stderr)
@@ -206,7 +206,7 @@ func ledgerRepoOf(state *AgentSessionState) ledger.LedgerRepository {
 type attachedToolSurface struct {
 	plan       toolTierPlan
 	authority  *tools.Registry
-	skillScope agentSkillScope
+	skillScope AgentSkillScope
 }
 
 // scopeAttachedToolSurface captures the pre-scope base registry, freezes this

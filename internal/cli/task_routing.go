@@ -69,7 +69,7 @@ func resolveTaskRoute(reg *agents.AgentRegistry, skillReg *skills.Registry, agen
 		if !ok {
 			return taskRoute{}, fmt.Errorf("unknown skill %q", skillName)
 		}
-		if err := skillScopeFromAgent(&agent).checkSkillDefinition(skill); err != nil {
+		if err := skillScopeFromAgent(&agent).CheckSkillDefinition(skill); err != nil {
 			return taskRoute{}, err
 		}
 	}

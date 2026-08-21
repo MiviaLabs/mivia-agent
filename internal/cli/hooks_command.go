@@ -53,17 +53,17 @@ func hookSessionConfigured() bool {
 
 // handleSlashHooks serves /hooks.
 func handleSlashHooks(fields []string, term *Terminal) (bool, bool, error) {
-	term.WriteString("\n" + hooksSlashOutput(fields))
+	term.WriteString("\n" + HooksSlashOutput(fields))
 	return true, false, nil
 }
 
-// hooksSlashOutput is the surface-independent body of /hooks.
+// HooksSlashOutput is the surface-independent body of /hooks.
 //
 // `/hooks trust <n>` is answered rather than rejected as an unknown argument.
 // It was a real subcommand, it will be in muscle memory and in notes, and
 // "unknown argument" would read as a bug in the listing rather than as a
 // removed concept.
-func hooksSlashOutput(fields []string) string {
+func HooksSlashOutput(fields []string) string {
 	if len(fields) > 1 && strings.EqualFold(fields[1], "trust") {
 		return "hook trust confirmation was removed: a hook declared in your user config or in this " +
 			"workspace's .mivia/mivia.toml runs. Delete or comment out the [[hooks]] entry to stop one."

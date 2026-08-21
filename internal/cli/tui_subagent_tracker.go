@@ -1,4 +1,4 @@
-// subagentTracker aggregates attributed subagent events into per-agent rows.
+// SubagentTracker aggregates attributed subagent events into per-agent rows.
 // It is the data spine for the fleet box and the per-agent turn ledger: a
 // pure state machine - feed it with Apply, read it with Rows. It renders
 // nothing and holds no locks; the TUI update loop owns it. All methods are
@@ -11,14 +11,14 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 )
 
-// subagentTracker aggregates attributed subagent events into per-agent rows.
+// SubagentTracker aggregates attributed subagent events into per-agent rows.
 // It is the data spine for the fleet box and the per-agent turn ledger: a
 // pure state machine - feed it with Apply, read it with Rows. It renders
 // nothing and holds no locks; the TUI update loop owns it. All methods are
 // nil-receiver safe so models built without a tracker stay inert.
 
-// subagentRun is the aggregated view of one subagent's activity.
-type subagentRun struct {
+// SubagentRun is the aggregated view of one subagent's activity.
+type SubagentRun struct {
 	TaskID     string
 	Name       string
 	Depth      int
@@ -34,19 +34,21 @@ type subagentRun struct {
 	Done bool
 }
 
-type subagentTracker struct {
+// SubagentTracker holds subagent tracker state.
+type SubagentTracker struct {
 	order []string
-	runs  map[string]*subagentRun
+	runs  map[string]*SubagentRun
 }
 
-func newSubagentTracker() *subagentTracker {
-	return &subagentTracker{runs: map[string]*subagentRun{}}
+// NewSubagentTracker implements new subagent tracker.
+func NewSubagentTracker() *SubagentTracker {
+	return &SubagentTracker{runs: map[string]*SubagentRun{}}
 }
 
 // Apply folds one bus event into the tracker. Only events attributed to an
 // agent (AgentTask set) register; anything else is ignored rather than
 // misfiled. Reports whether state changed.
-func (t *subagentTracker) Apply(ev events.Event, now time.Time) bool {
+func (t *SubagentTracker) Apply(ev events.Event, now time.Time) bool {
 	if t == nil || ev.AgentTask == "" {
 		return false
 	}
@@ -61,7 +63,7 @@ func (t *subagentTracker) Apply(ev events.Event, now time.Time) bool {
 	}
 	run, ok := t.runs[ev.AgentTask]
 	if !ok {
-		run = &subagentRun{
+		run = &SubagentRun{
 			TaskID:  ev.AgentTask,
 			Name:    ev.AgentName,
 			Depth:   ev.AgentDepth,
@@ -107,11 +109,11 @@ func (t *subagentTracker) Apply(ev events.Event, now time.Time) bool {
 // Rows returns every run of the turn, finished ones included, in stable
 // first-seen order. This is turn history - the ctrl+g fleet detail and the
 // diagnostics dialog want it. Live chrome wants ActiveRows.
-func (t *subagentTracker) Rows() []subagentRun {
+func (t *SubagentTracker) Rows() []SubagentRun {
 	if t == nil || len(t.order) == 0 {
 		return nil
 	}
-	rows := make([]subagentRun, 0, len(t.order))
+	rows := make([]SubagentRun, 0, len(t.order))
 	for _, id := range t.order {
 		if run, ok := t.runs[id]; ok {
 			rows = append(rows, *run)
@@ -123,11 +125,11 @@ func (t *subagentTracker) Rows() []subagentRun {
 // ActiveRows returns the runs that have not finished, in stable first-seen
 // order. This is what the "now" panel and the fleet box render: a section
 // named for what is happening right now must not carry finished work.
-func (t *subagentTracker) ActiveRows() []subagentRun {
+func (t *SubagentTracker) ActiveRows() []SubagentRun {
 	if t == nil || len(t.order) == 0 {
 		return nil
 	}
-	rows := make([]subagentRun, 0, len(t.order))
+	rows := make([]SubagentRun, 0, len(t.order))
 	for _, id := range t.order {
 		if run, ok := t.runs[id]; ok && !run.Done {
 			rows = append(rows, *run)
@@ -141,7 +143,7 @@ func (t *subagentTracker) ActiveRows() []subagentRun {
 
 // Active counts runs that have not finished. It is the "n running" figure in
 // the fleet box header and must agree with the rows rendered beneath it.
-func (t *subagentTracker) Active() int {
+func (t *SubagentTracker) Active() int {
 	if t == nil {
 		return 0
 	}
@@ -155,10 +157,10 @@ func (t *subagentTracker) Active() int {
 }
 
 // Reset clears all runs (called when a new turn starts).
-func (t *subagentTracker) Reset() {
+func (t *SubagentTracker) Reset() {
 	if t == nil {
 		return
 	}
 	t.order = nil
-	t.runs = map[string]*subagentRun{}
+	t.runs = map[string]*SubagentRun{}
 }

@@ -27,24 +27,6 @@ func publishSurfaceLoop(t *testing.T, sess *chat.Session, iterations int) func()
 	return func() { <-done }
 }
 
-// TestTuiToolsSlashSnapshotsTheSurface: /tools runs on the Bubble Tea update
-// goroutine with no m.waiting gate, so it reads the tool surface while a turn
-// boundary is publishing a widened one. Run under -race.
-func TestTuiToolsSlashSnapshotsTheSurface(t *testing.T) {
-	m := newSmokeModel(t)
-	m.session.Tools = tierRegistry("read_file")
-	wait := publishSurfaceLoop(t, m.session, 300)
-	for i := 0; i < 300; i++ {
-		if !m.handleTuiInfoSlash("/tools", []string{"/tools"}) {
-			t.Fatal("/tools was not handled")
-		}
-	}
-	wait()
-	if m.overlay == nil {
-		t.Fatal("/tools opened no overlay")
-	}
-}
-
 // TestClassicToolsSlashSnapshotsTheSurface is the same read on the classic
 // REPL path, which reads Session.Tools three times unlocked.
 func TestClassicToolsSlashSnapshotsTheSurface(t *testing.T) {

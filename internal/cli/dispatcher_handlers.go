@@ -32,7 +32,7 @@ func registerOneShotHandlers(d *runtime.Dispatcher, comp provider.Completer, mod
 	if err := d.Register(runtime.Subagent, HandlerDelegate, handler); err != nil {
 		return fmt.Errorf("register delegate handler: %w", err)
 	}
-	if err := d.Register(runtime.Subagent, handlerOneshot, handler); err != nil {
+	if err := d.Register(runtime.Subagent, HandlerOneshot, handler); err != nil {
 		return fmt.Errorf("register oneshot handler: %w", err)
 	}
 	return nil
@@ -79,13 +79,13 @@ func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp p
 	if maxTokens != nil && *maxTokens > 0 {
 		h.MaxTokens = *maxTokens
 	}
-	if err := d.Register(runtime.Subagent, handlerMultiStep, h); err != nil {
+	if err := d.Register(runtime.Subagent, HandlerMultiStep, h); err != nil {
 		return fmt.Errorf("register multi-step handler: %w", err)
 	}
 	return nil
 }
 
-func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp provider.Completer, model string, dial sessionDial, cfg config.SubagentConfig, budgets resultBudgets, maxContextTokens int, maxTokens *int, budget func() int, skillReg *skills.Registry, scope agentSkillScope, preparation contextmgr.PreparationManager, preparationInput contextmgr.PrepareInput, spool *remainder.Spool) error {
+func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp provider.Completer, model string, dial sessionDial, cfg config.SubagentConfig, budgets resultBudgets, maxContextTokens int, maxTokens *int, budget func() int, skillReg *skills.Registry, scope AgentSkillScope, preparation contextmgr.PreparationManager, preparationInput contextmgr.PrepareInput, spool *remainder.Spool) error {
 	if skillReg == nil {
 		return nil
 	}
@@ -100,7 +100,7 @@ func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp prov
 	// logic as registerMultiStepHandler above.
 	requestTO := requestTimeout(cfg.DefaultRequestTimeoutSec, cfg.DefaultTimeout)
 	for _, skill := range skillReg.List() {
-		if err := scope.checkSkillDefinition(skill); err != nil {
+		if err := scope.CheckSkillDefinition(skill); err != nil {
 			// Skip registration for skills the selected agent may not invoke.
 			// Task-build paths also reject so the model gets a clear error.
 			continue
@@ -164,13 +164,13 @@ func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp prov
 // invocation so resume/retry cannot reuse a prior authority grant after an
 // agent switch or model rebuild narrowed the allowlist.
 type gatedSkillHandler struct {
-	scope agentSkillScope
+	scope AgentSkillScope
 	skill skills.Definition
 	inner runtime.Handler
 }
 
 func (h *gatedSkillHandler) Invoke(ctx context.Context, req runtime.Request) (json.RawMessage, error) {
-	if err := h.scope.checkSkillDefinition(h.skill); err != nil {
+	if err := h.scope.CheckSkillDefinition(h.skill); err != nil {
 		return nil, err
 	}
 	return h.inner.Invoke(ctx, req)

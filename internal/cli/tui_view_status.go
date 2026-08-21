@@ -4,7 +4,8 @@ import (
 	"fmt"
 )
 
-func appendCtxSuffix(detail string, percent int) string {
+// AppendCtxSuffix implements append ctx suffix.
+func AppendCtxSuffix(detail string, percent int) string {
 	suffix := fmt.Sprintf("ctx %d%%", percent)
 	if detail == "" {
 		return suffix

@@ -5,10 +5,10 @@ import (
 	"time"
 )
 
-// toolWaveCounts returns open/done/total for live toolRows (excludes banners).
-func toolWaveCounts(rows []toolRow) (open, done, total int) {
+// ToolWaveCounts returns open/done/total for live toolRows (excludes banners).
+func ToolWaveCounts(rows []ToolRow) (open, done, total int) {
 	for _, r := range rows {
-		if isBannerTool(r.Name) {
+		if IsBannerTool(r.Name) {
 			continue
 		}
 		total++
@@ -21,9 +21,9 @@ func toolWaveCounts(rows []toolRow) (open, done, total int) {
 	return open, done, total
 }
 
-// formatLiveToolWaveSummary builds the live one-line wave status.
+// FormatLiveToolWaveSummary builds the live one-line wave status.
 // Examples: "Running 2 tools… · 0/2 done · 3s", "Working · 1/3 done · 12s"
-func formatLiveToolWaveSummary(open, done, total int, elapsed time.Duration) string {
+func FormatLiveToolWaveSummary(open, done, total int, elapsed time.Duration) string {
 	if total <= 0 {
 		return ""
 	}

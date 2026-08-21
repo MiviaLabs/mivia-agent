@@ -36,8 +36,8 @@ func TestSlashResumeRouting(t *testing.T) {
 // arguments lists interrupted runs (tests the TUI handler).
 func TestResumeSlashCommandListsInterruptedRuns(t *testing.T) {
 	// Create a TUI model for testing the slash handler.
-	// We use the shared listInterruptedRuns and formatListedRuns functions.
-	msg := formatListedRuns([]coordinator.RecoveredRun{
+	// We use the shared ListInterruptedRuns and FormatListedRuns functions.
+	msg := FormatListedRuns([]coordinator.RecoveredRun{
 		{RunID: "run-1", DisplayName: "test-run-1", Status: "interrupted", WasInterrupted: true},
 		{RunID: "run-2", DisplayName: "test-run-2", Status: "interrupted", WasInterrupted: true},
 	})
@@ -56,13 +56,13 @@ func TestResumeSlashCommandListsInterruptedRuns(t *testing.T) {
 // the confirmation prompt.
 func TestResumeSlashWithConfirmation(t *testing.T) {
 	// Test the confirmation building and parsing.
-	info := resumeConfirmationInfo{
+	info := ResumeConfirmationInfo{
 		RunID:         "run-confirm",
 		DisplayName:   "test",
 		TaskCount:     2,
 		PriorAttempts: 1,
 	}
-	msg := formatResumeConfirmation(info)
+	msg := FormatResumeConfirmation(info)
 	if !strings.Contains(msg, "run-confirm") {
 		t.Fatal("confirmation should contain run ID")
 	}
@@ -70,30 +70,30 @@ func TestResumeSlashWithConfirmation(t *testing.T) {
 		t.Fatal("confirmation should contain task count")
 	}
 
-	// Verify parseConfirmResponse works.
-	if !parseConfirmResponse("y") {
+	// Verify ParseConfirmResponse works.
+	if !ParseConfirmResponse("y") {
 		t.Fatal("'y' should be parsed as confirmed")
 	}
-	if !parseConfirmResponse("Y") {
+	if !ParseConfirmResponse("Y") {
 		t.Fatal("'Y' should be parsed as confirmed")
 	}
-	if !parseConfirmResponse("yes") {
+	if !ParseConfirmResponse("yes") {
 		t.Fatal("'yes' should be parsed as confirmed")
 	}
-	if parseConfirmResponse("n") {
+	if ParseConfirmResponse("n") {
 		t.Fatal("'n' should NOT be parsed as confirmed")
 	}
-	if parseConfirmResponse("") {
+	if ParseConfirmResponse("") {
 		t.Fatal("empty should NOT be parsed as confirmed")
 	}
-	if parseConfirmResponse("garbage") {
+	if ParseConfirmResponse("garbage") {
 		t.Fatal("garbage should NOT be parsed as confirmed")
 	}
 }
 
 // TestResumeSlashRefusesHeldRun verifies the end-to-end error messaging.
 func TestResumeSlashRefusesHeldRun(t *testing.T) {
-	msg := formatResumeError(coordinator.ErrRunHeldByAnotherExecutor, "run-held")
+	msg := FormatResumeError(coordinator.ErrRunHeldByAnotherExecutor, "run-held")
 	if !strings.Contains(msg, "held by another") {
 		t.Fatalf("held-by-another message should mention 'held by another', got: %s", msg)
 	}
@@ -102,7 +102,7 @@ func TestResumeSlashRefusesHeldRun(t *testing.T) {
 // TestResumeSlashRefusesTerminalRun verifies the terminal run error message.
 func TestResumeSlashRefusesTerminalRun(t *testing.T) {
 	err := fmt.Errorf("resume: run %q is already terminal (%s)", "run-term", "completed")
-	msg := formatResumeError(err, "run-term")
+	msg := FormatResumeError(err, "run-term")
 	if !strings.Contains(msg, "already terminal") {
 		t.Fatalf("terminal message should mention 'already terminal', got: %s", msg)
 	}
@@ -111,7 +111,7 @@ func TestResumeSlashRefusesTerminalRun(t *testing.T) {
 // TestResumeSlashRefusesUnresumableRun verifies the missing-Input error message.
 func TestResumeSlashRefusesUnresumableRun(t *testing.T) {
 	err := fmt.Errorf("resume: task %q has no persisted input (created before task inputs were recorded; cannot resume this run)", "t1")
-	msg := formatResumeError(err, "run-no-input")
+	msg := FormatResumeError(err, "run-no-input")
 	if !strings.Contains(msg, "missing task input data") {
 		t.Fatalf("unresumable message should mention 'missing task input data', got: %s", msg)
 	}

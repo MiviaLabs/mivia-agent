@@ -17,7 +17,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
-var contextSetupRoutePrincipal = worktreeRoutePrincipal
+var contextSetupRoutePrincipal = WorktreeRoutePrincipal
 
 var abandonContextWorktreeCreation = func(store *storage.SQLite, principal contextstate.Principal, instance contextstate.WorktreeInstance) error {
 	return store.AbandonWorktreeCreation(context.Background(), principal, instance)
@@ -45,7 +45,8 @@ func openContextStorePath(path string) (*storage.SQLite, error) {
 	return store, nil
 }
 
-func worktreeRoutePrincipal(root string) (contextstate.Principal, error) {
+// WorktreeRoutePrincipal implements worktree route principal.
+func WorktreeRoutePrincipal(root string) (contextstate.Principal, error) {
 	return contextstate.NewPrincipal(contextWorkspaceID(root), "worktree-routes", "local-user")
 }
 
@@ -54,7 +55,7 @@ func registerWorktreeRoute(root string, wt *vcs.WorktreeInfo) error {
 	if wt == nil {
 		return fmt.Errorf("worktree route requires a worktree")
 	}
-	store, err := openRepositoryContextStore(root)
+	store, err := OpenRepositoryContextStore(root)
 	if err != nil {
 		return err
 	}
@@ -73,12 +74,12 @@ func registerWorktreeRouteInStore(store *storage.SQLite, root string, wt *vcs.Wo
 	if wt == nil {
 		return fmt.Errorf("worktree route requires a worktree")
 	}
-	principal, _ := worktreeRoutePrincipal(root)
+	principal, _ := WorktreeRoutePrincipal(root)
 	return store.SaveWorktreeRoute(context.Background(), principal, wt.Name, wt.Path)
 }
 
 func registerManagedWorktree(root string, wt *vcs.WorktreeInfo) (contextstate.WorktreeInstance, error) {
-	store, err := openRepositoryContextStore(root)
+	store, err := OpenRepositoryContextStore(root)
 	if err != nil {
 		return contextstate.WorktreeInstance{}, err
 	}
@@ -94,7 +95,7 @@ func registerManagedWorktreeInStore(store *storage.SQLite, root string, wt *vcs.
 	if err != nil {
 		return contextstate.WorktreeInstance{}, err
 	}
-	principal, err := worktreeRoutePrincipal(root)
+	principal, err := WorktreeRoutePrincipal(root)
 	if err != nil {
 		return contextstate.WorktreeInstance{}, err
 	}
@@ -115,11 +116,11 @@ func completeManagedWorktreeCreationInStore(store *storage.SQLite, root string, 
 	if wt == nil || wt.Name != instance.Worktree {
 		return fmt.Errorf("worktree creation does not match its instance")
 	}
-	principal, err := worktreeRoutePrincipal(root)
+	principal, err := WorktreeRoutePrincipal(root)
 	if err != nil {
 		return err
 	}
-	marker, err := readWorktreeMarker(wt.Path)
+	marker, err := ReadWorktreeMarker(wt.Path)
 	if err == nil && marker != instance {
 		return fmt.Errorf("worktree marker does not match its creation instance")
 	}
@@ -141,7 +142,7 @@ func completeManagedWorktreeCreationInStore(store *storage.SQLite, root string, 
 // createManagedWorktree reserves lifecycle state before it creates Git state.
 // A retry completes a retained creation with the same instance ID.
 func createManagedWorktree(root, name, baseRef, branchPrefix string) (*vcs.WorktreeInfo, error) {
-	store, err := openRepositoryContextStore(root)
+	store, err := OpenRepositoryContextStore(root)
 	if err != nil {
 		return nil, err
 	}
@@ -150,10 +151,24 @@ func createManagedWorktree(root, name, baseRef, branchPrefix string) (*vcs.Workt
 }
 
 func createManagedWorktreeInStore(store *storage.SQLite, root, name, baseRef, branchPrefix string) (*vcs.WorktreeInfo, error) {
-	return createManagedWorktreeInStoreWithInstance(store, root, name, baseRef, branchPrefix, nil)
+	return CreateManagedWorktreeInStoreWithInstance(store, root, name, baseRef, branchPrefix, nil)
 }
 
-func createManagedWorktreeInStoreLocked(store *storage.SQLite, root, name, baseRef, branchPrefix string, result *contextstate.WorktreeInstance, lease *os.File) (*vcs.WorktreeInfo, error) {
+// CreateManagedWorktreeInStoreWithInstance creates a managed worktree in
+// store and records the resulting instance in result. Relocated from
+// internal/legacytui/worktree_dialog_create.go: it is pure business logic
+// with no TUI dependency, needed unqualified there and here.
+func CreateManagedWorktreeInStoreWithInstance(store *storage.SQLite, root, name, baseRef, branchPrefix string, result *contextstate.WorktreeInstance) (*vcs.WorktreeInfo, error) {
+	lock, err := LockWorktreeLifecycle(root, name)
+	if err != nil {
+		return nil, err
+	}
+	defer lock.Close()
+	return CreateManagedWorktreeInStoreLocked(store, root, name, baseRef, branchPrefix, result, lock.File())
+}
+
+// CreateManagedWorktreeInStoreLocked implements create managed worktree in store locked.
+func CreateManagedWorktreeInStoreLocked(store *storage.SQLite, root, name, baseRef, branchPrefix string, result *contextstate.WorktreeInstance, lease *os.File) (*vcs.WorktreeInfo, error) {
 	principal, err := contextSetupRoutePrincipal(root)
 	if err != nil {
 		return nil, err
@@ -182,7 +197,7 @@ func createManagedWorktreeInStoreLocked(store *storage.SQLite, root, name, baseR
 				if _, cleanupErr := store.DeleteWorktreeSessions(context.Background(), principal, deleting); cleanupErr != nil {
 					return nil, cleanupErr
 				}
-				return createManagedWorktreeInStoreLocked(store, root, name, baseRef, branchPrefix, result, lease)
+				return CreateManagedWorktreeInStoreLocked(store, root, name, baseRef, branchPrefix, result, lease)
 			}
 			return nil, err
 		}
@@ -198,7 +213,7 @@ func createManagedWorktreeInStoreLocked(store *storage.SQLite, root, name, baseR
 				if err := abandonContextWorktreeCreation(store, principal, creating.Instance); err != nil {
 					return nil, err
 				}
-				return createManagedWorktreeInStoreLocked(store, root, name, baseRef, branchPrefix, result, lease)
+				return CreateManagedWorktreeInStoreLocked(store, root, name, baseRef, branchPrefix, result, lease)
 			}
 			return nil, fmt.Errorf("worktree creation recovery requires Git worktree %q", expectedPath)
 		}
@@ -252,18 +267,29 @@ func beginManagedWorktreeRemoval(root string, wt *vcs.WorktreeInfo) (contextstat
 }
 
 func beginManagedWorktreeRemovalForSession(sess *chat.Session, root string, wt *vcs.WorktreeInfo) (contextstate.WorktreeInstance, error) {
-	return beginManagedWorktreeRemovalForSessionExpected(sess, root, wt, contextstate.WorktreeInstance{}, false)
+	return BeginManagedWorktreeRemovalForSessionExpected(sess, root, wt, contextstate.WorktreeInstance{}, false)
+}
+
+// BeginManagedWorktreeRemovalForSessionExpected is relocated from
+// internal/legacytui/worktree_dialog.go: it is pure business logic with no
+// TUI dependency, needed unqualified there and here.
+func BeginManagedWorktreeRemovalForSessionExpected(sess *chat.Session, root string, wt *vcs.WorktreeInfo, expected contextstate.WorktreeInstance, requireExpected bool) (contextstate.WorktreeInstance, error) {
+	if store, ok := sess.ContextStore().(*storage.SQLite); ok && store != nil {
+		return BeginManagedWorktreeRemovalInStoreExpected(store, root, wt, expected, requireExpected)
+	}
+	return BeginManagedWorktreeRemovalInStoreExpected(nil, root, wt, expected, requireExpected)
 }
 
 func beginManagedWorktreeRemovalInStore(store *storage.SQLite, root string, wt *vcs.WorktreeInfo) (contextstate.WorktreeInstance, error) {
-	return beginManagedWorktreeRemovalInStoreExpected(store, root, wt, contextstate.WorktreeInstance{}, false)
+	return BeginManagedWorktreeRemovalInStoreExpected(store, root, wt, contextstate.WorktreeInstance{}, false)
 }
 
-func beginManagedWorktreeRemovalInStoreExpected(store *storage.SQLite, root string, wt *vcs.WorktreeInfo, expected contextstate.WorktreeInstance, requireExpected bool) (contextstate.WorktreeInstance, error) {
+// BeginManagedWorktreeRemovalInStoreExpected implements begin managed worktree removal in store expected.
+func BeginManagedWorktreeRemovalInStoreExpected(store *storage.SQLite, root string, wt *vcs.WorktreeInfo, expected contextstate.WorktreeInstance, requireExpected bool) (contextstate.WorktreeInstance, error) {
 	if wt == nil {
 		return contextstate.WorktreeInstance{}, fmt.Errorf("worktree route requires a worktree")
 	}
-	instance, err := readWorktreeMarker(wt.Path)
+	instance, err := ReadWorktreeMarker(wt.Path)
 	if err != nil {
 		if requireExpected {
 			// A bound instance must still match its marker. Fail closed so a
@@ -283,7 +309,7 @@ func beginManagedWorktreeRemovalInStoreExpected(store *storage.SQLite, root stri
 	ownedStore := false
 	if store == nil {
 		var err error
-		store, err = openRepositoryContextStore(root)
+		store, err = OpenRepositoryContextStore(root)
 		if err != nil {
 			return contextstate.WorktreeInstance{}, err
 		}
@@ -292,7 +318,7 @@ func beginManagedWorktreeRemovalInStoreExpected(store *storage.SQLite, root stri
 	if ownedStore {
 		defer store.Close()
 	}
-	principal, err := worktreeRoutePrincipal(root)
+	principal, err := WorktreeRoutePrincipal(root)
 	if err != nil {
 		return contextstate.WorktreeInstance{}, err
 	}
@@ -311,15 +337,17 @@ func beginManagedWorktreeRemovalInStoreExpected(store *storage.SQLite, root stri
 	return instance, store.BeginWorktreeDeletion(context.Background(), principal, instance)
 }
 
-func reactivateManagedWorktree(root string, instance contextstate.WorktreeInstance) error {
-	return reactivateManagedWorktreeInStore(nil, root, instance)
+// ReactivateManagedWorktree implements reactivate managed worktree.
+func ReactivateManagedWorktree(root string, instance contextstate.WorktreeInstance) error {
+	return ReactivateManagedWorktreeInStore(nil, root, instance)
 }
 
-func reactivateManagedWorktreeInStore(store *storage.SQLite, root string, instance contextstate.WorktreeInstance) error {
+// ReactivateManagedWorktreeInStore implements reactivate managed worktree in store.
+func ReactivateManagedWorktreeInStore(store *storage.SQLite, root string, instance contextstate.WorktreeInstance) error {
 	ownedStore := false
 	if store == nil {
 		var err error
-		store, err = openRepositoryContextStore(root)
+		store, err = OpenRepositoryContextStore(root)
 		if err != nil {
 			return err
 		}
@@ -350,14 +378,15 @@ func reactivateManagedWorktreeInStore(store *storage.SQLite, root string, instan
 	if err != nil || filepath.Clean(canonicalPath) != filepath.Clean(info.CanonicalPath) {
 		return contextstate.ErrWorktreeDeleted
 	}
-	marker, err := readWorktreeMarker(worktree.Path)
+	marker, err := ReadWorktreeMarker(worktree.Path)
 	if err != nil || marker != instance {
 		return contextstate.ErrWorktreeDeleted
 	}
 	return store.ReactivateWorktreeInstance(context.Background(), principal, instance)
 }
 
-func classifyMissingWorktreeMarker(store *storage.SQLite, principal contextstate.Principal, worktree, canonicalPath string) (contextstate.WorktreeInstanceInfo, bool, error) {
+// ClassifyMissingWorktreeMarker implements classify missing worktree marker.
+func ClassifyMissingWorktreeMarker(store *storage.SQLite, principal contextstate.Principal, worktree, canonicalPath string) (contextstate.WorktreeInstanceInfo, bool, error) {
 	info, err := store.LiveWorktreeInstance(context.Background(), principal, worktree)
 	if err == nil {
 		return info, false, nil
@@ -375,7 +404,8 @@ func classifyMissingWorktreeMarker(store *storage.SQLite, principal contextstate
 	return contextstate.WorktreeInstanceInfo{}, false, nil
 }
 
-func validateExpectedWorktreeInstanceInStore(store *storage.SQLite, root, dir string, expected contextstate.WorktreeInstance) error {
+// ValidateExpectedWorktreeInstanceInStore implements validate expected worktree instance in store.
+func ValidateExpectedWorktreeInstanceInStore(store *storage.SQLite, root, dir string, expected contextstate.WorktreeInstance) error {
 	if expected.IsZero() {
 		return nil
 	}
@@ -407,13 +437,13 @@ func readMarkerAtCanonicalRoot(root string) (contextstate.WorktreeInstance, stri
 	if err != nil {
 		return contextstate.WorktreeInstance{}, "", err
 	}
-	marker, err := readWorktreeMarker(canonicalRoot)
+	marker, err := ReadWorktreeMarker(canonicalRoot)
 	return marker, canonicalRoot, err
 }
 
 // removeWorktreeRoute removes the route after Git has removed its worktree.
 func removeWorktreeRoute(root, name string) error {
-	store, err := openRepositoryContextStore(root)
+	store, err := OpenRepositoryContextStore(root)
 	if err != nil {
 		return err
 	}
@@ -429,9 +459,9 @@ func removeWorktreeRouteForSession(sess *chat.Session, root, name string) error 
 }
 
 func removeWorktreeRouteInStore(store *storage.SQLite, root, name string) error {
-	// worktreeRoutePrincipal uses fixed valid identity fields and a fixed-size
+	// WorktreeRoutePrincipal uses fixed valid identity fields and a fixed-size
 	// workspace digest. It cannot fail for a caller-supplied root.
-	principal, _ := worktreeRoutePrincipal(root)
+	principal, _ := WorktreeRoutePrincipal(root)
 	_, err := store.DeleteWorktreeRoute(context.Background(), principal, name)
 	return err
 }

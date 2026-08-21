@@ -18,14 +18,14 @@ import (
 // summary call uses the same credential scope as the main turns.
 const summaryCredentialScope = "env-api-key"
 
-// summaryDisabledReason names the first unmet condition keeping compaction
+// SummaryDisabledReason names the first unmet condition keeping compaction
 // structural-only, or "" when summarization is wired. A workspace that has not
 // configured it gets an instant /compact that makes no LLM call, which is
 // correct but indistinguishable from a broken summarizer: the operator sees a
 // compaction succeed while the summary they expected never runs. The false
 // return stays a policy state rather than an error; this only makes the state
 // legible.
-func summaryDisabledReason(sess *chat.Session, res *config.Resolved) string {
+func SummaryDisabledReason(sess *chat.Session, res *config.Resolved) string {
 	if sess == nil || res == nil {
 		// Nothing to report rather than a guess: silence is safer than a
 		// wrong reason on a caller that has no resolved configuration.
@@ -58,7 +58,7 @@ func summaryDisabledReason(sess *chat.Session, res *config.Resolved) string {
 // is a resolved provider endpoint plus a usable provider/model binding.
 // Missing either keeps every compaction path structural-only. A false return
 // is a policy state, never an error: setup must not fail because a summary
-// cannot run - but summaryDisabledReason names the cause so it is never
+// cannot run - but SummaryDisabledReason names the cause so it is never
 // silent.
 //
 // A [context.summary] provider/model override replaces the session binding

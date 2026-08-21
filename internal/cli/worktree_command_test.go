@@ -41,7 +41,7 @@ func TestWorktreeCommandAdoptAddsMarker(t *testing.T) {
 	if !strings.Contains(output.String(), "adopted worktree \"legacy\"") {
 		t.Fatalf("adopt output = %q", output.String())
 	}
-	if _, err := readWorktreeMarker(worktree.Path); err != nil {
+	if _, err := ReadWorktreeMarker(worktree.Path); err != nil {
 		t.Fatalf("read adopted marker: %v", err)
 	}
 }
@@ -56,11 +56,11 @@ func TestWorktreeCommandAdoptRecoversAfterMarkerWriteCrash(t *testing.T) {
 	if err := registerWorktreeRoute(repoRoot, worktree); err != nil {
 		t.Fatal(err)
 	}
-	store, err := openRepositoryContextStore(repoRoot)
+	store, err := OpenRepositoryContextStore(repoRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal, err := worktreeRoutePrincipal(repoRoot)
+	principal, err := WorktreeRoutePrincipal(repoRoot)
 	if err != nil {
 		store.Close()
 		t.Fatal(err)
@@ -77,7 +77,7 @@ func TestWorktreeCommandAdoptRecoversAfterMarkerWriteCrash(t *testing.T) {
 	if err := runWorktreeWithIO([]string{"adopt", worktree.Name, "--workspace", repoRoot}, &output); err != nil {
 		t.Fatalf("recover adoption: %v", err)
 	}
-	marker, err := readWorktreeMarker(worktree.Path)
+	marker, err := ReadWorktreeMarker(worktree.Path)
 	if err != nil || marker != instance {
 		t.Fatalf("recovered marker = %+v, %v", marker, err)
 	}
@@ -126,12 +126,12 @@ func TestWorktreeCommandRemoveRecoversAfterGitRemovalBeforeCleanup(t *testing.T)
 	if output.String() != "removed worktree \"recover-gone\"\n" {
 		t.Fatalf("remove output = %q", output.String())
 	}
-	store, err := openRepositoryContextStore(repoRoot)
+	store, err := OpenRepositoryContextStore(repoRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := worktreeRoutePrincipal(repoRoot)
+	principal, err := WorktreeRoutePrincipal(repoRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,15 +169,15 @@ func TestWorktreeCommandRemoveRecoveryKeepsSameNameReplacement(t *testing.T) {
 	if err != nil || resolved == nil {
 		t.Fatalf("replacement worktree = %v, %v", resolved, err)
 	}
-	if _, err := readWorktreeMarker(resolved.Path); !errors.Is(err, os.ErrNotExist) {
+	if _, err := ReadWorktreeMarker(resolved.Path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("replacement marker = %v, want missing marker", err)
 	}
-	store, err := openRepositoryContextStore(repoRoot)
+	store, err := OpenRepositoryContextStore(repoRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := worktreeRoutePrincipal(repoRoot)
+	principal, err := WorktreeRoutePrincipal(repoRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,12 +206,12 @@ func TestWorktreeCommandRemoveRecoverySanitizesOriginalName(t *testing.T) {
 	if err := runWorktreeWithIO([]string{"remove", "Feature One", "--workspace", repoRoot}, &output); err != nil {
 		t.Fatalf("remove recovery with original name: %v", err)
 	}
-	store, err := openRepositoryContextStore(repoRoot)
+	store, err := OpenRepositoryContextStore(repoRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := worktreeRoutePrincipal(repoRoot)
+	principal, err := WorktreeRoutePrincipal(repoRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,11 +259,11 @@ func TestWorktreeCommandAdoptRejectsTruncatedAlias(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := openRepositoryContextStore(repoRoot)
+	store, err := OpenRepositoryContextStore(repoRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal, err := worktreeRoutePrincipal(repoRoot)
+	principal, err := WorktreeRoutePrincipal(repoRoot)
 	if err != nil {
 		store.Close()
 		t.Fatal(err)
@@ -279,7 +279,7 @@ func TestWorktreeCommandAdoptRejectsTruncatedAlias(t *testing.T) {
 	if err == nil {
 		t.Fatal("adopt accepted a truncated alias")
 	}
-	if _, err := readWorktreeMarker(worktree.Path); !errors.Is(err, os.ErrNotExist) {
+	if _, err := ReadWorktreeMarker(worktree.Path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("truncated alias wrote marker: %v", err)
 	}
 }
@@ -309,7 +309,7 @@ func TestWorktreeCommandRemoveRecoveryRejectsMalformedLiveMarker(t *testing.T) {
 		t.Errorf("Git worktree = %v, %v; want retained worktree", resolved, resolveErr)
 	}
 
-	principal, principalErr := worktreeRoutePrincipal(repoRoot)
+	principal, principalErr := WorktreeRoutePrincipal(repoRoot)
 	if principalErr != nil {
 		t.Fatal(principalErr)
 	}
@@ -325,7 +325,7 @@ func TestWorktreeCommandRemoveRecoveryRejectsMalformedLiveMarker(t *testing.T) {
 	if routeCount != 1 {
 		t.Errorf("exact route count = %d, want 1", routeCount)
 	}
-	store, openErr := openRepositoryContextStore(repoRoot)
+	store, openErr := OpenRepositoryContextStore(repoRoot)
 	if openErr != nil {
 		t.Fatal(openErr)
 	}
@@ -339,12 +339,12 @@ func TestWorktreeCommandRemoveRecoveryRejectsMalformedLiveMarker(t *testing.T) {
 func TestCreateManagedWorktreeRecoversAfterGitCreateBeforeMarker(t *testing.T) {
 	repoRoot := newWorktreeCommandRepo(t)
 	writeWorktreeStoreConfig(t, repoRoot, "repository.db")
-	store, err := openRepositoryContextStore(repoRoot)
+	store, err := OpenRepositoryContextStore(repoRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := worktreeRoutePrincipal(repoRoot)
+	principal, err := WorktreeRoutePrincipal(repoRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -370,7 +370,7 @@ func TestCreateManagedWorktreeRecoversAfterGitCreateBeforeMarker(t *testing.T) {
 	if recovered.Path != created.Path {
 		t.Fatalf("recovered path = %q, want %q", recovered.Path, created.Path)
 	}
-	marker, err := readWorktreeMarker(created.Path)
+	marker, err := ReadWorktreeMarker(created.Path)
 	if err != nil || marker != instance {
 		t.Fatalf("recovered marker = %+v, %v", marker, err)
 	}
@@ -386,11 +386,11 @@ func TestBindManagedWorktreeSessionRejectsMismatchedCatalogPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := openRepositoryContextStore(repoRoot)
+	store, err := OpenRepositoryContextStore(repoRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal, err := worktreeRoutePrincipal(repoRoot)
+	principal, err := WorktreeRoutePrincipal(repoRoot)
 	if err != nil {
 		store.Close()
 		t.Fatal(err)
@@ -410,8 +410,8 @@ func TestBindManagedWorktreeSessionRejectsMismatchedCatalogPath(t *testing.T) {
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	m := newReadyChatModel(30, 90)
-	if err := bindManagedWorktreeSession(m.session, repoRoot, worktree.Path, filepath.Join(repoRoot, "repository.db")); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+	sess := newTestSessionForModel("test")
+	if err := bindManagedWorktreeSession(sess, repoRoot, worktree.Path, filepath.Join(repoRoot, "repository.db")); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
 		t.Fatalf("bindManagedWorktreeSession = %v, want ErrWorktreeDeleted", err)
 	}
 }
@@ -422,8 +422,8 @@ func TestBindManagedWorktreeSessionLeavesUnmanagedWorktreeUnbound(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := newReadyChatModel(30, 90)
-	if err := bindManagedWorktreeSession(m.session, repoRoot, worktree.Path, filepath.Join(repoRoot, "repository.db")); err != nil {
+	sess := newTestSessionForModel("test")
+	if err := bindManagedWorktreeSession(sess, repoRoot, worktree.Path, filepath.Join(repoRoot, "repository.db")); err != nil {
 		t.Fatalf("bind unmanaged worktree: %v", err)
 	}
 }
@@ -438,8 +438,8 @@ func TestBindManagedWorktreeSessionRejectsActiveInstanceWithoutMarker(t *testing
 	if err := os.Remove(worktreeMarkerPath(worktree.Path)); err != nil {
 		t.Fatal(err)
 	}
-	m := newReadyChatModel(30, 90)
-	err = bindManagedWorktreeSession(m.session, repoRoot, worktree.Path, filepath.Join(repoRoot, "repository.db"))
+	sess := newTestSessionForModel("test")
+	err = bindManagedWorktreeSession(sess, repoRoot, worktree.Path, filepath.Join(repoRoot, "repository.db"))
 	if !errors.Is(err, contextstate.ErrWorktreeDeleted) {
 		t.Fatalf("bind active worktree without marker = %v, want ErrWorktreeDeleted", err)
 	}
@@ -465,7 +465,7 @@ func TestWorktreeCommandCreateListRemove(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open route store: %v", err)
 	}
-	principal, err := worktreeRoutePrincipal(repoRoot)
+	principal, err := WorktreeRoutePrincipal(repoRoot)
 	if err != nil {
 		routeStore.Close()
 		t.Fatal(err)
@@ -704,4 +704,14 @@ func newWorktreeCommandRepo(t *testing.T) string {
 	runGit(t, repoRoot, "add", "README.md")
 	runGit(t, repoRoot, "commit", "-m", "initial")
 	return repoRoot
+}
+
+// runGit runs a git command in the given directory. Fails the test on error.
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := append([]string{"-C", dir}, args...)
+	out, err := exec.Command("git", cmd...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, string(out))
+	}
 }

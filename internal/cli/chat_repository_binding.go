@@ -84,8 +84,8 @@ func bindManagedWorktreeSessionExpected(sess *chat.Session, repositoryRoot, work
 		return err
 	}
 	defer store.Close()
-	principal, _ := worktreeRoutePrincipal(repositoryRoot)
-	instance, markerErr := readWorktreeMarker(worktree.Path)
+	principal, _ := WorktreeRoutePrincipal(repositoryRoot)
+	instance, markerErr := ReadWorktreeMarker(worktree.Path)
 	if errors.Is(markerErr, os.ErrNotExist) {
 		if !expected.IsZero() {
 			return contextstate.ErrWorktreeDeleted

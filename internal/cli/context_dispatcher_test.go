@@ -51,7 +51,7 @@ func TestDispatcherInjectsIsolatedContextManager(t *testing.T) {
 	}
 	defer d.Close()
 	result := d.Invoke(context.Background(), runtime.Request{
-		ID: "nested-context", Kind: runtime.Subagent, Name: handlerMultiStep,
+		ID: "nested-context", Kind: runtime.Subagent, Name: HandlerMultiStep,
 		Input: json.RawMessage(`"task"`), SessionID: principal.SessionID,
 	})
 	if result.Err != nil {

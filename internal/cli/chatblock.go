@@ -42,7 +42,7 @@ type ChatBlock struct {
 	// Rendered preserves existing local UI formatting for compatibility-only
 	// lines. Structured history and stream blocks leave it empty.
 	Rendered string
-	// Failed marks a tool block that ended in failure (from toolRow.Failed).
+	// Failed marks a tool block that ended in failure (from ToolRow.Failed).
 	// Preferred over text heuristics for red rail chrome.
 	Failed bool
 	// Elapsed is the action's wall-clock duration (zero when unknown, e.g.
@@ -52,7 +52,7 @@ type ChatBlock struct {
 
 func chatBlockFromMessage(turn, seq uint64, msg provider.Message) ChatBlock {
 	kind := chatBlockKind(msg.Role)
-	return ChatBlock{ID: chatBlockID(turn, seq), TurnID: turn, Sequence: seq, Kind: kind, Text: msg.Content, ToolName: msg.Name, ToolCallID: msg.ToolCallID}
+	return ChatBlock{ID: ChatBlockID(turn, seq), TurnID: turn, Sequence: seq, Kind: kind, Text: msg.Content, ToolName: msg.Name, ToolCallID: msg.ToolCallID}
 }
 
 type ChatBlockEvent struct {
@@ -75,7 +75,7 @@ func HydrateChatBlocks(messages []provider.Message) []ChatBlock {
 			if turn > 0 {
 				// Insert turn divider before each new turn after the first.
 				blocks = append(blocks, ChatBlock{
-					ID:     chatBlockID(turn+1, 0),
+					ID:     ChatBlockID(turn+1, 0),
 					TurnID: turn + 1,
 					Kind:   ChatBlockDivider,
 				})
@@ -89,7 +89,7 @@ func HydrateChatBlocks(messages []provider.Message) []ChatBlock {
 		if msg.Content != "" || len(msg.ToolCalls) == 0 {
 			seq++
 			blocks = append(blocks, ChatBlock{
-				ID:         chatBlockID(turn, seq),
+				ID:         ChatBlockID(turn, seq),
 				TurnID:     turn,
 				Sequence:   seq,
 				Kind:       kind,
@@ -102,7 +102,7 @@ func HydrateChatBlocks(messages []provider.Message) []ChatBlock {
 		}
 		for _, call := range msg.ToolCalls {
 			seq++
-			blocks = append(blocks, ChatBlock{ID: chatBlockID(turn, seq), TurnID: turn, Sequence: seq, Kind: ChatBlockTool, Text: call.Function.Arguments, ToolName: call.Function.Name, ToolCallID: call.ID, Collapsed: true})
+			blocks = append(blocks, ChatBlock{ID: ChatBlockID(turn, seq), TurnID: turn, Sequence: seq, Kind: ChatBlockTool, Text: call.Function.Arguments, ToolName: call.Function.Name, ToolCallID: call.ID, Collapsed: true})
 		}
 	}
 	return blocks
@@ -120,7 +120,8 @@ func chatBlockKind(role string) ChatBlockKind {
 	return ""
 }
 
-func chatBlockID(turn, seq uint64) string { return fmt.Sprintf("turn-%d-block-%d", turn, seq) }
+// ChatBlockID implements chat block i d.
+func ChatBlockID(turn, seq uint64) string { return fmt.Sprintf("turn-%d-block-%d", turn, seq) }
 
 func ApplyChatBlockEvent(blocks []ChatBlock, event ChatBlockEvent) []ChatBlock {
 	if event.TurnID == 0 || event.Sequence == 0 {
@@ -136,7 +137,7 @@ func ApplyChatBlockEvent(blocks []ChatBlock, event ChatBlockEvent) []ChatBlock {
 		}
 	}
 	if event.BlockID == "" {
-		event.BlockID = chatBlockID(event.TurnID, event.Sequence)
+		event.BlockID = ChatBlockID(event.TurnID, event.Sequence)
 	}
 	for _, block := range blocks {
 		if block.TurnID == event.TurnID && block.Sequence >= event.Sequence {

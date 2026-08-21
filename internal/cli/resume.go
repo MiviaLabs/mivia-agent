@@ -12,22 +12,22 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 )
 
-// resumeConfirmationInfo holds the information displayed before confirming
+// ResumeConfirmationInfo holds the information displayed before confirming
 // a resume action, per §5 decision ii (show what will re-run and confirm).
-type resumeConfirmationInfo struct {
+type ResumeConfirmationInfo struct {
 	RunID         string
 	DisplayName   string
 	TaskCount     int
 	PriorAttempts int // total attempt count across all tasks
 }
 
-// listInterruptedRuns returns the list of interrupted runs from the coordinator.
+// ListInterruptedRuns returns the list of interrupted runs from the coordinator.
 // Used by both the slash command (no argument) and the TUI dashboard.
-func listInterruptedRuns(ctx context.Context, c coordinator.Coordinator) ([]coordinator.RecoveredRun, error) {
+func ListInterruptedRuns(ctx context.Context, c coordinator.Coordinator) ([]coordinator.RecoveredRun, error) {
 	return c.ListInterruptedRuns(ctx)
 }
 
-// resumeRun is the shared resume implementation behind the /resume slash
+// ResumeRun is the shared resume implementation behind the /resume slash
 // command. It:
 //  1. Calls ResumeInterruptedRun on the coordinator
 //  2. Registers the resumed handle with the resuming caller's principal (§3.2)
@@ -36,14 +36,14 @@ func listInterruptedRuns(ctx context.Context, c coordinator.Coordinator) ([]coor
 // The caller and dispatcher/repo parameters are needed for handle registration.
 // If c is nil, the function looks up the coordinator from the package-level map.
 // If d is nil, looks up a dispatcher from the coordinator map.
-func resumeRun(ctx context.Context, c coordinator.Coordinator, d *runtime.Dispatcher, runID string, repo ledger.LedgerRepository) (*orchestrationHandle, error) {
+func ResumeRun(ctx context.Context, c coordinator.Coordinator, d *runtime.Dispatcher, runID string, repo ledger.LedgerRepository) (*orchestrationHandle, error) {
 	if c == nil {
-		if c = findCoordinator(); c == nil {
+		if c = FindCoordinator(); c == nil {
 			return nil, errors.New("no active coordinator (no orchestration runs exist)")
 		}
 	}
 	if d == nil {
-		d = findDispatcher()
+		d = FindDispatcher()
 	}
 	if repo == nil {
 		repo = orchestrationRepoForDispatcher(d)
@@ -98,9 +98,9 @@ func resumeRun(ctx context.Context, c coordinator.Coordinator, d *runtime.Dispat
 	return record, nil
 }
 
-// formatResumeConfirmation builds the confirmation message shown to the user
+// FormatResumeConfirmation builds the confirmation message shown to the user
 // before re-spending budget on a resume, per §5 decision ii.
-func formatResumeConfirmation(info resumeConfirmationInfo) string {
+func FormatResumeConfirmation(info ResumeConfirmationInfo) string {
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("Resume run %s", info.RunID))
 	if info.DisplayName != "" {
@@ -120,12 +120,12 @@ func formatResumeConfirmation(info resumeConfirmationInfo) string {
 	return b.String()
 }
 
-// formatResumeError maps different resume errors to user-facing messages.
+// FormatResumeError maps different resume errors to user-facing messages.
 // Three distinct causes, three distinct messages (§3.3):
 //  1. Held by another executor
 //  2. Already terminal
 //  3. Cannot be resumed (missing Input)
-func formatResumeError(err error, runID string) string {
+func FormatResumeError(err error, runID string) string {
 	if errors.Is(err, coordinator.ErrRunHeldByAnotherExecutor) {
 		return fmt.Sprintf("cannot resume run %s: held by another executor", runID)
 	}
@@ -139,8 +139,8 @@ func formatResumeError(err error, runID string) string {
 	return fmt.Sprintf("cannot resume run %s: %v", runID, err)
 }
 
-// formatListedRuns formats a list of interrupted runs for display.
-func formatListedRuns(runs []coordinator.RecoveredRun) string {
+// FormatListedRuns formats a list of interrupted runs for display.
+func FormatListedRuns(runs []coordinator.RecoveredRun) string {
 	if len(runs) == 0 {
 		return "no interrupted runs"
 	}
@@ -165,8 +165,8 @@ func formatListedRuns(runs []coordinator.RecoveredRun) string {
 	return b.String()
 }
 
-// parseConfirmResponse returns true if the user confirmed the resume.
-func parseConfirmResponse(response string) bool {
+// ParseConfirmResponse returns true if the user confirmed the resume.
+func ParseConfirmResponse(response string) bool {
 	switch strings.ToLower(strings.TrimSpace(response)) {
 	case "y", "yes":
 		return true
@@ -175,8 +175,8 @@ func parseConfirmResponse(response string) bool {
 	}
 }
 
-// findCoordinator looks up the package-level coordinator singleton.
-func findCoordinator() coordinator.Coordinator {
+// FindCoordinator looks up the package-level coordinator singleton.
+func FindCoordinator() coordinator.Coordinator {
 	var c coordinator.Coordinator
 	coordinators.Range(func(_, value any) bool {
 		if coord, ok := value.(coordinator.Coordinator); ok {
@@ -188,8 +188,8 @@ func findCoordinator() coordinator.Coordinator {
 	return c
 }
 
-// findDispatcher looks up a dispatcher from the coordinator map.
-func findDispatcher() *runtime.Dispatcher {
+// FindDispatcher looks up a dispatcher from the coordinator map.
+func FindDispatcher() *runtime.Dispatcher {
 	var d *runtime.Dispatcher
 	coordinators.Range(func(key, _ any) bool {
 		if disp, ok := key.(*runtime.Dispatcher); ok {

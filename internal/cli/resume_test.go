@@ -58,7 +58,7 @@ func (f *fakeCoordinatorForResume) Inspect(ctx context.Context, h *coordinator.R
 	return ledger.RunSnapshot{RunID: "test-run"}, nil
 }
 
-// TestResumeRunListsInterruptedRuns verifies that listInterruptedRuns returns
+// TestResumeRunListsInterruptedRuns verifies that ListInterruptedRuns returns
 // the interrupted runs from the coordinator.
 func TestResumeRunListsInterruptedRuns(t *testing.T) {
 	fake := &fakeCoordinatorForResume{
@@ -69,9 +69,9 @@ func TestResumeRunListsInterruptedRuns(t *testing.T) {
 		},
 	}
 
-	runs, err := listInterruptedRuns(context.Background(), fake)
+	runs, err := ListInterruptedRuns(context.Background(), fake)
 	if err != nil {
-		t.Fatalf("listInterruptedRuns: %v", err)
+		t.Fatalf("ListInterruptedRuns: %v", err)
 	}
 	if len(runs) != 1 {
 		t.Fatalf("expected 1 run, got %d", len(runs))
@@ -92,12 +92,12 @@ func initResumeTestStoreHandle(runID string, record *orchestrationHandle) {
 
 // withActiveSession mirrors production: the CLI surfaces pass a bare context and
 // rely on the chat session principal recorded at startup by runChat. Tests that
-// drive resumeRun must establish the same identity, or they exercise a path
+// drive ResumeRun must establish the same identity, or they exercise a path
 // production never takes.
 func withActiveSession(t *testing.T, sessionID string) {
 	t.Helper()
 	prev := activeSessionCaller.Load()
-	setActiveSessionCaller(runtime.Caller{SessionID: sessionID})
+	SetActiveSessionCaller(runtime.Caller{SessionID: sessionID})
 	t.Cleanup(func() {
 		if prev != nil {
 			activeSessionCaller.Store(prev)
@@ -117,7 +117,7 @@ func TestResumeRunRefusesHeldRun(t *testing.T) {
 		},
 	}
 
-	_, err := resumeRun(context.Background(), fake, nil, "run-held", nil)
+	_, err := ResumeRun(context.Background(), fake, nil, "run-held", nil)
 	if err == nil {
 		t.Fatal("expected error for held run, got nil")
 	}
@@ -136,7 +136,7 @@ func TestResumeRunRefusesTerminalRun(t *testing.T) {
 		},
 	}
 
-	_, err := resumeRun(context.Background(), fake, nil, "run-term", nil)
+	_, err := ResumeRun(context.Background(), fake, nil, "run-term", nil)
 	if err == nil {
 		t.Fatal("expected error for terminal run, got nil")
 	}
@@ -158,7 +158,7 @@ func TestResumeRunRefusesUnresumableRun(t *testing.T) {
 		},
 	}
 
-	_, err := resumeRun(context.Background(), fake, nil, "run-no-input", nil)
+	_, err := ResumeRun(context.Background(), fake, nil, "run-no-input", nil)
 	if err == nil {
 		t.Fatal("expected error for unresumable run, got nil")
 	}
@@ -178,7 +178,7 @@ func TestResumeRunRefusesUnresumableRun(t *testing.T) {
 // This is the load-bearing test: M1 and M2 mutations must fail it.
 //
 // M1 (skip handle registration / skip Delete): the test pre-populates
-// runHandles with a dummy handle before resumeRun. If runHandles.Delete
+// runHandles with a dummy handle before ResumeRun. If runHandles.Delete
 // or Store is not called, the old handle remains and the assertion on
 // the stored record's principal fails.
 //
@@ -186,7 +186,7 @@ func TestResumeRunRefusesUnresumableRun(t *testing.T) {
 // handle's principal sessionID is the RESUMING caller's, not the original's.
 func TestResumeRunRegistersHandleWithResumingPrincipal(t *testing.T) {
 	// Pre-populate runHandles with a dummy handle for this runID to catch
-	// M1: if resumeRun skips runHandles.Delete, the old handle survives
+	// M1: if ResumeRun skips runHandles.Delete, the old handle survives
 	// and the new one (with the resuming principal) is never stored.
 	oldPrincipal := orchestrationPrincipal{sessionID: "old-session", role: "user"}
 	runHandles.Store("run-to-resume", &orchestrationHandle{
@@ -210,9 +210,9 @@ func TestResumeRunRegistersHandleWithResumingPrincipal(t *testing.T) {
 		Role:      "user",
 	})
 
-	record, err := resumeRun(ctx, fake, nil, "run-to-resume", nil)
+	record, err := ResumeRun(ctx, fake, nil, "run-to-resume", nil)
 	if err != nil {
-		t.Fatalf("resumeRun: %v", err)
+		t.Fatalf("ResumeRun: %v", err)
 	}
 	if record == nil {
 		t.Fatal("expected non-nil orchestrationHandle record")
@@ -242,13 +242,13 @@ func TestResumeRunRegistersHandleWithResumingPrincipal(t *testing.T) {
 // TestResumeConfirmationShowsWhatWillReRun verifies that the confirmation
 // message includes task count and prior attempt info (§5).
 func TestResumeConfirmationShowsWhatWillReRun(t *testing.T) {
-	info := resumeConfirmationInfo{
+	info := ResumeConfirmationInfo{
 		RunID:         "run-confirm",
 		DisplayName:   "test-run",
 		TaskCount:     3,
 		PriorAttempts: 2,
 	}
-	msg := formatResumeConfirmation(info)
+	msg := FormatResumeConfirmation(info)
 	if msg == "" {
 		t.Fatal("expected non-empty confirmation message")
 	}
@@ -272,10 +272,10 @@ func TestResumeConfirmationShowsWhatWillReRun(t *testing.T) {
 // TestResumeConfirmationHandlesEmptyFields verifies that the confirmation
 // works gracefully with minimal info.
 func TestResumeConfirmationHandlesEmptyFields(t *testing.T) {
-	info := resumeConfirmationInfo{
+	info := ResumeConfirmationInfo{
 		RunID: "run-minimal",
 	}
-	msg := formatResumeConfirmation(info)
+	msg := FormatResumeConfirmation(info)
 	if msg == "" {
 		t.Fatal("expected non-empty confirmation message")
 	}
@@ -325,9 +325,9 @@ func TestResumeFromCLISurfaceUsesSessionPrincipal(t *testing.T) {
 	t.Cleanup(func() { runHandles.Delete("run-cli") })
 
 	// Bare context, exactly as handleSlashResume and the dashboard key pass it.
-	record, err := resumeRun(context.Background(), newResumeFake("run-cli"), nil, "run-cli", nil)
+	record, err := ResumeRun(context.Background(), newResumeFake("run-cli"), nil, "run-cli", nil)
 	if err != nil {
-		t.Fatalf("resumeRun: %v", err)
+		t.Fatalf("ResumeRun: %v", err)
 	}
 	if record.principal.sessionID != "chat-session-1" {
 		t.Fatalf("handle principal = %q, want the chat session %q (an ephemeral principal makes the run unreachable)",
@@ -348,9 +348,9 @@ func TestResumedHandleRejectsForeignPrincipal(t *testing.T) {
 	withActiveSession(t, "owner-session")
 	t.Cleanup(func() { runHandles.Delete("run-owned") })
 
-	record, err := resumeRun(context.Background(), newResumeFake("run-owned"), nil, "run-owned", nil)
+	record, err := ResumeRun(context.Background(), newResumeFake("run-owned"), nil, "run-owned", nil)
 	if err != nil {
-		t.Fatalf("resumeRun: %v", err)
+		t.Fatalf("ResumeRun: %v", err)
 	}
 
 	ownerCtx := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "owner-session"})
@@ -375,7 +375,7 @@ func TestResumeRefusesWithoutSessionIdentity(t *testing.T) {
 			return &coordinator.RunHandle{}, nil
 		},
 	}
-	if _, err := resumeRun(context.Background(), fake, nil, "run-anon", nil); err == nil {
+	if _, err := ResumeRun(context.Background(), fake, nil, "run-anon", nil); err == nil {
 		t.Fatal("expected refusal when no session identity is available")
 	}
 	if resumeCalled {

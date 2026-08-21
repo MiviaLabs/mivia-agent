@@ -5,7 +5,6 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -13,14 +12,13 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
-	"github.com/MiviaLabs/mivia-agent/internal/skills"
 )
 
 // noteSession returns a session holding one queued admission note, standing in
 // for a resume that dropped a stale set or a stage that could not publish.
 func noteSession(t *testing.T) *chat.Session {
 	t.Helper()
-	sess := chat.NewSession(&config.Resolved{ProviderName: "p", Model: "m"}, stubAgentCompleter{})
+	sess := chat.NewSession(&config.Resolved{ProviderName: "p", Model: "m"}, nullCompleter{})
 	sess.SessionDir = t.TempDir()
 	sess.SetAdmissionBinding("reader", "digest-1")
 	store, err := chat.NewFileSessionStore(sess.SessionDir)
@@ -62,7 +60,7 @@ func TestSlashToolsReportsSchemaMassClassic(t *testing.T) {
 	t.Cleanup(func() { classicAgentState = previous })
 	classicAgentState = &AgentSessionState{LastSchemaMass: schemaMass{Advertised: 4, Tokens: 321, Locked: 2, LockedTokens: 210}}
 	res := &config.Resolved{ProviderName: "p", Model: "m"}
-	sess := chat.NewSession(res, stubAgentCompleter{})
+	sess := chat.NewSession(res, nullCompleter{})
 	sess.Tools = tierRegistry("read_file")
 	buf := new(bytes.Buffer)
 	term := &Terminal{out: buf}
@@ -75,67 +73,12 @@ func TestSlashToolsReportsSchemaMassClassic(t *testing.T) {
 	}
 }
 
-// TestTuiToolsDialogReportsSchemaMass: the TUI is the default surface, so its
-// /tools overlay owns the documented schema-mass claim.
-func TestTuiToolsDialogReportsSchemaMass(t *testing.T) {
-	m := newSmokeModel(t)
-	m.session.Tools = tierRegistry("read_file")
-	m.agentState = &AgentSessionState{LastSchemaMass: schemaMass{Advertised: 4, Tokens: 321, Locked: 2, LockedTokens: 210}}
-	if !m.handleTuiInfoSlash("/tools", []string{"/tools"}) {
-		t.Fatal("/tools was not handled")
-	}
-	if m.overlay == nil {
-		t.Fatal("/tools opened no overlay")
-	}
-	out := stripANSI(strings.Join(m.overlay.lines, "\n"))
-	if !strings.Contains(out, "4 tools advertised") || !strings.Contains(out, "2 locked") {
-		t.Fatalf("tools overlay = %q, want the schema-mass line", out)
-	}
-}
-
-// TestTuiToolsDialogWithoutAgentState: a TUI built without agent state must
-// still render the tool list rather than panicking on the measurement.
-func TestTuiToolsDialogWithoutAgentState(t *testing.T) {
-	m := newSmokeModel(t)
-	m.session.Tools = tierRegistry("read_file")
-	m.agentState = nil
-	if !m.handleTuiInfoSlash("/tools", []string{"/tools"}) {
-		t.Fatal("/tools was not handled")
-	}
-	out := stripANSI(strings.Join(m.overlay.lines, "\n"))
-	if !strings.Contains(out, "read_file") {
-		t.Fatalf("tools overlay = %q, want the tool list", out)
-	}
-	if strings.Contains(out, "tools advertised") {
-		t.Fatalf("tools overlay = %q, want no schema-mass line without a measurement", out)
-	}
-}
-
-func TestTuiSurfacesAdmissionNotes(t *testing.T) {
-	m := newSmokeModel(t)
-	m.session = noteSession(t)
-	before := len(m.messages)
-	m.appendAdmissionNotes()
-	if len(m.messages) == before {
-		t.Fatal("the TUI swallowed an admission note")
-	}
-	joined := strings.Join(m.messages, "\n")
-	if !strings.Contains(joined, "grep") {
-		t.Fatalf("TUI notes = %q, want the dropped tool named", joined)
-	}
-	before = len(m.messages)
-	m.appendAdmissionNotes()
-	if len(m.messages) != before {
-		t.Fatal("a drained note was repeated")
-	}
-}
-
 // TestReplRestorePrintsAdmissionNotes: the classic REPL's auto-resume is one of
 // the load sites, so a dropped admitted set has to be visible there too.
 func TestReplRestorePrintsAdmissionNotes(t *testing.T) {
 	dir := t.TempDir()
 	res := &config.Resolved{ProviderName: "p", Model: "m"}
-	sess := chat.NewSession(res, stubAgentCompleter{})
+	sess := chat.NewSession(res, nullCompleter{})
 	sess.SessionDir = dir
 	sess.SetAdmissionBinding("reader", "digest-1")
 	sess.Messages = []provider.Message{
@@ -166,7 +109,7 @@ func TestReplRestorePrintsAdmissionNotes(t *testing.T) {
 // turn boundary leaves exactly one queued admission note behind.
 func pendingNoteSession(t *testing.T) *chat.Session {
 	t.Helper()
-	sess := chat.NewSession(&config.Resolved{ProviderName: "p", Model: "m"}, stubAgentCompleter{})
+	sess := chat.NewSession(&config.Resolved{ProviderName: "p", Model: "m"}, nullCompleter{})
 	sess.SetSurfaceWidener(func([]string, chat.AgentSurfacePublication) (bool, error) {
 		return false, nil
 	})
@@ -198,7 +141,7 @@ func TestProcessLineChatPrintsAdmissionNotes(t *testing.T) {
 		false, term, renderer, input, "m"); err != nil {
 		t.Fatalf("processLineChat: %v", err)
 	}
-	if !strings.Contains(stripANSI(buf.String()), "grep") {
+	if !strings.Contains(stripAnsiOut(buf.String()), "grep") {
 		t.Fatalf("output = %q, want the deferred admission named", buf.String())
 	}
 	if notes := sess.TakeAdmissionNotes(); len(notes) != 0 {
@@ -230,7 +173,7 @@ func TestOneShotPrintsAdmissionNotesToStderr(t *testing.T) {
 	if runErr != nil {
 		t.Fatalf("oneShot: %v", runErr)
 	}
-	if !strings.Contains(stripANSI(string(stderr)), "grep") {
+	if !strings.Contains(stripAnsiOut(string(stderr)), "grep") {
 		t.Fatalf("stderr = %q, want the deferred admission named", stderr)
 	}
 	if strings.Contains(string(stdout), "grep") {
@@ -244,7 +187,7 @@ func TestOneShotPrintsAdmissionNotesToStderr(t *testing.T) {
 // TestLineModeTurnPrintsAdmissionNotes covers the plain line-mode turn path,
 // where a deferral note is the only signal the user gets.
 func TestLineModeTurnPrintsAdmissionNotes(t *testing.T) {
-	sess := chat.NewSession(&config.Resolved{ProviderName: "p", Model: "m"}, stubAgentCompleter{})
+	sess := chat.NewSession(&config.Resolved{ProviderName: "p", Model: "m"}, nullCompleter{})
 	// A widener that refuses leaves the stage pending and queues the note the
 	// line-mode turn is responsible for printing.
 	sess.SetSurfaceWidener(func([]string, chat.AgentSurfacePublication) (bool, error) {
@@ -273,7 +216,7 @@ func TestSlashWorkspaceReportsToolsDisabled(t *testing.T) {
 	// /workspace reads the surface through the snapshot like /tools does; a
 	// tools-off session has no registry to report against.
 	res := &config.Resolved{ProviderName: "p", Model: "m"}
-	sess := chat.NewSession(res, stubAgentCompleter{})
+	sess := chat.NewSession(res, nullCompleter{})
 	buf := new(bytes.Buffer)
 	term := &Terminal{out: buf}
 	if _, _, err := handleSlashInfo("/workspace", []string{"/workspace"}, sess, res, false, term); err != nil {
@@ -281,39 +224,5 @@ func TestSlashWorkspaceReportsToolsDisabled(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "tools disabled") {
 		t.Fatalf("/workspace = %q, want the tools-disabled notice", buf.String())
-	}
-}
-
-func TestSkillTurnWithResourcesRequiresTools(t *testing.T) {
-	// A skill carrying resources needs a live registry to scope; a tools-off
-	// session must be refused rather than handed a nil one.
-	m := newSmokeModel(t)
-	m.session.Tools = nil
-	m.session.UseTools = false
-	root := t.TempDir()
-	skillDir := filepath.Join(root, "probe")
-	if err := os.MkdirAll(skillDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	for name, content := range map[string]string{
-		"SKILL.md":       "---\nname: probe\nuser-invocable: true\n---\nBody.",
-		"resources.toml": "format = 1\n\n[[resources]]\nid = \"t\"\npath = \"t.md\"\nsummary = \"s\"\n",
-		"t.md":           "RESOURCE",
-	} {
-		if err := os.WriteFile(filepath.Join(skillDir, name), []byte(content), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	reg, _, err := skills.LoadMarkdownSources([]skills.Source{{Dir: root, Origin: skills.OriginProject}}, skills.LoadOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	def, ok := reg.Get("probe")
-	if !ok || len(def.Resources) == 0 {
-		t.Fatalf("resource skill not loaded: ok=%v resources=%d", ok, len(def.Resources))
-	}
-	if _, _, err := m.prepareSkillTurn(skillSlashSpec{definition: def}); err == nil ||
-		!strings.Contains(err.Error(), "require tools") {
-		t.Fatalf("error = %v, want the tools-off refusal", err)
 	}
 }

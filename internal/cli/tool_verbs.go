@@ -50,13 +50,13 @@ func toolVerb(name string) string {
 	}
 }
 
-// toolStatusLine returns a short human status for a tool start.
+// ToolStatusLine returns a short human status for a tool start.
 // Example: "Reading internal/foo.go…", "Searching for auth…".
 // Never invents assistant speech; never leaks secrets from detail.
-func toolStatusLine(name, detail string) string {
+func ToolStatusLine(name, detail string) string {
 	name = strings.TrimSpace(name)
 	detail = RedactPreview(detail)
-	if isBannerTool(name) {
+	if IsBannerTool(name) {
 		return capRunes(toolVerb(name)+"…", toolStatusMaxRunes)
 	}
 	verb := toolVerb(name)
@@ -67,11 +67,11 @@ func toolStatusLine(name, detail string) string {
 	return capRunes(verb+" "+obj+"…", toolStatusMaxRunes)
 }
 
-// realToolStarts filters a tool-event batch to non-banner Start events.
-func realToolStarts(starts []bridgeToolEvt) []bridgeToolEvt {
-	var real []bridgeToolEvt
+// RealToolStarts filters a tool-event batch to non-banner Start events.
+func RealToolStarts(starts []BridgeToolEvt) []BridgeToolEvt {
+	var real []BridgeToolEvt
 	for _, e := range starts {
-		if !e.Start || isBannerTool(e.Name) {
+		if !e.Start || IsBannerTool(e.Name) {
 			continue
 		}
 		// Lifecycle-only restarts (queued→running) without args: still count name.
@@ -81,38 +81,38 @@ func realToolStarts(starts []bridgeToolEvt) []bridgeToolEvt {
 }
 
 // toolBatchStatusLine summarizes a wave of tool starts (one line, not N).
-func toolBatchStatusLine(starts []bridgeToolEvt) string {
-	real := realToolStarts(starts)
+func toolBatchStatusLine(starts []BridgeToolEvt) string {
+	real := RealToolStarts(starts)
 	if len(real) == 0 {
 		// Only banners (parallel/prune).
 		for _, e := range starts {
-			if e.Start && isBannerTool(e.Name) {
-				return toolStatusLine(e.Name, e.Detail)
+			if e.Start && IsBannerTool(e.Name) {
+				return ToolStatusLine(e.Name, e.Detail)
 			}
 		}
 		return ""
 	}
 	if len(real) == 1 {
-		return toolStatusLine(real[0].Name, real[0].Detail)
+		return ToolStatusLine(real[0].Name, real[0].Detail)
 	}
 	return capRunes(fmt.Sprintf("Running %d tools…", len(real)), toolStatusMaxRunes)
 }
 
-// toolBatchStatusDetail is the expandable body for a multi-tool wave:
+// ToolBatchStatusDetail is the expandable body for a multi-tool wave:
 // first line is the one-line summary; following lines list each tool verb.
 // Single-tool waves return the same string as toolBatchStatusLine (no extra rows).
-func toolBatchStatusDetail(starts []bridgeToolEvt) string {
-	real := realToolStarts(starts)
+func ToolBatchStatusDetail(starts []BridgeToolEvt) string {
+	real := RealToolStarts(starts)
 	if len(real) == 0 {
 		return toolBatchStatusLine(starts)
 	}
 	if len(real) == 1 {
-		return toolStatusLine(real[0].Name, real[0].Detail)
+		return ToolStatusLine(real[0].Name, real[0].Detail)
 	}
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("Running %d tools…", len(real)))
 	for _, e := range real {
-		line := toolStatusLine(e.Name, e.Detail)
+		line := ToolStatusLine(e.Name, e.Detail)
 		if line == "" {
 			line = e.Name
 		}
@@ -122,7 +122,8 @@ func toolBatchStatusDetail(starts []bridgeToolEvt) string {
 	return b.String()
 }
 
-func isBannerTool(name string) bool {
+// IsBannerTool implements is banner tool.
+func IsBannerTool(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "parallel", "prune":
 		return true
@@ -299,10 +300,10 @@ func ShouldCommitInterim(s string) bool {
 	return hasWord
 }
 
-// shouldFollowOutput decides whether the viewport should stick to the bottom.
+// ShouldFollowOutput decides whether the viewport should stick to the bottom.
 // follow is the sticky flag; atBottom is viewport.AtBottom(); scrolledUp is an
 // explicit user scroll-away gesture in this update.
-func shouldFollowOutput(follow bool, atBottom bool, scrolledUp bool) bool {
+func ShouldFollowOutput(follow bool, atBottom bool, scrolledUp bool) bool {
 	if scrolledUp {
 		return false
 	}

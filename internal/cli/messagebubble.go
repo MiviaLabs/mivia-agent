@@ -9,6 +9,12 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// minPaneContentWidth is the content-width floor, mirroring
+// internal/legacytui/composer.go's private constant of the same value (kept
+// separate: that file's own pane-width floor is a distinct concept that only
+// coincidentally shares this number).
+const minPaneContentWidth = 8
+
 // Padding describes space around content inside the bubble background.
 // The background color extends into the padding area.
 type Padding struct {

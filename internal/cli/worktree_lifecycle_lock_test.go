@@ -11,7 +11,7 @@ import (
 
 func TestWorktreeLifecycleLockBlocksSameNameCreate(t *testing.T) {
 	repoRoot := newWorktreeCommandRepo(t)
-	lock, err := lockWorktreeLifecycle(repoRoot, "locked-create")
+	lock, err := LockWorktreeLifecycle(repoRoot, "locked-create")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +34,7 @@ func TestWorktreeLifecycleLockBlocksRemovalBeforeDeletionFence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lock, err := lockWorktreeLifecycle(repoRoot, worktree.Name)
+	lock, err := LockWorktreeLifecycle(repoRoot, worktree.Name)
 	if err != nil {
 		t.Fatal(err)
 	}

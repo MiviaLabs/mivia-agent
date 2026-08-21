@@ -47,7 +47,7 @@ func TestRunConfiguredChatRestartsWithCreatedWorktree(t *testing.T) {
 			if invocation.workspacePath != "" {
 				t.Fatalf("first workspace = %q, want empty", invocation.workspacePath)
 			}
-			return &WorkspaceRestart{Dir: worktree}
+			return stubWorkspaceRestart{dir: worktree}
 		}
 		if invocation.workspacePath != worktree {
 			t.Fatalf("restart workspace = %q, want %q", invocation.workspacePath, worktree)
@@ -96,7 +96,7 @@ func TestRunConfiguredChatCarriesResumeSessionAcrossRestart(t *testing.T) {
 	runConfiguredChatOnceImpl = func(invocation chatInvocation, _ *config.Resolved) error {
 		calls++
 		if calls == 1 {
-			return &WorkspaceRestart{Dir: worktree, ResumeSessionName: "root-session"}
+			return stubWorkspaceRestart{dir: worktree, resumeSessionName: "root-session"}
 		}
 		if invocation.resumeSessionName != "root-session" {
 			t.Fatalf("resume session = %q, want root-session", invocation.resumeSessionName)
@@ -334,7 +334,7 @@ func TestRunConfiguredChatKeepsRelativeEnvConfigOnRestart(t *testing.T) {
 	runConfiguredChatOnceImpl = func(_ chatInvocation, _ *config.Resolved) error {
 		calls++
 		if calls == 1 {
-			return &WorkspaceRestart{Dir: worktree}
+			return stubWorkspaceRestart{dir: worktree}
 		}
 		return nil
 	}

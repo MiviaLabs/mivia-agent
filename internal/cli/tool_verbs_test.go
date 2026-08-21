@@ -32,7 +32,7 @@ func TestToolVerbMap_KnownTools(t *testing.T) {
 
 func TestToolStatusLine_ReadFile(t *testing.T) {
 	t.Parallel()
-	got := toolStatusLine("read_file", `{"path":"internal/foo.go"}`)
+	got := ToolStatusLine("read_file", `{"path":"internal/foo.go"}`)
 	if !strings.Contains(got, "Reading") {
 		t.Fatalf("expected Reading verb, got %q", got)
 	}
@@ -49,13 +49,13 @@ func TestToolStatusLine_ReadFile(t *testing.T) {
 // process-wide.
 func TestToolStatusLine_RedactsSecrets(t *testing.T) {
 	installTestRedactionPolicy(t)
-	got := toolStatusLine("run_command", `{"argv":["echo"],"password":"super-secret-token-value"}`)
+	got := ToolStatusLine("run_command", `{"argv":["echo"],"password":"super-secret-token-value"}`)
 	// Status must not leak the secret token value.
 	if strings.Contains(got, "super-secret-token-value") {
 		t.Fatalf("secret leaked into status: %q", got)
 	}
 	// Also exercise redactPreview path via free-form detail.
-	got2 := toolStatusLine("grep", `password=hunter2 pattern=auth`)
+	got2 := ToolStatusLine("grep", `password=hunter2 pattern=auth`)
 	if strings.Contains(got2, "hunter2") {
 		t.Fatalf("password leaked: %q", got2)
 	}
@@ -65,7 +65,7 @@ func TestToolStatusLine_RedactsSecrets(t *testing.T) {
 // with no policy configured the status line redacts nothing.
 func TestToolStatusLine_WithoutPolicyShowsSecrets(t *testing.T) {
 	redact.SetPolicy(nil)
-	got := toolStatusLine("grep", `password=hunter2 pattern=auth`)
+	got := ToolStatusLine("grep", `password=hunter2 pattern=auth`)
 	if !strings.Contains(got, "hunter2") {
 		t.Fatalf("unconfigured workspace redacted status line: %q", got)
 	}
@@ -73,7 +73,7 @@ func TestToolStatusLine_WithoutPolicyShowsSecrets(t *testing.T) {
 
 func TestToolBatchStatusLine_ParallelNotSpam(t *testing.T) {
 	t.Parallel()
-	starts := []bridgeToolEvt{
+	starts := []BridgeToolEvt{
 		{Start: true, Name: "parallel", Detail: "2 tools"},
 		{Start: true, ToolCallID: "a", Name: "list_dir", Detail: `{"path":"."}`},
 		{Start: true, ToolCallID: "b", Name: "glob", Detail: `{"pattern":"*"}`},
@@ -82,8 +82,8 @@ func TestToolBatchStatusLine_ParallelNotSpam(t *testing.T) {
 	if !strings.Contains(got, "2 tools") && !strings.Contains(got, "Running") {
 		t.Fatalf("expected batch summary, got %q", got)
 	}
-	// Single real tool falls through to toolStatusLine.
-	one := toolBatchStatusLine([]bridgeToolEvt{
+	// Single real tool falls through to ToolStatusLine.
+	one := toolBatchStatusLine([]BridgeToolEvt{
 		{Start: true, ToolCallID: "a", Name: "read_file", Detail: `{"path":"a.go"}`},
 	})
 	if !strings.Contains(one, "Reading") {
@@ -93,11 +93,11 @@ func TestToolBatchStatusLine_ParallelNotSpam(t *testing.T) {
 
 func TestToolBatchStatusDetailListsTools(t *testing.T) {
 	t.Parallel()
-	starts := []bridgeToolEvt{
+	starts := []BridgeToolEvt{
 		{Start: true, ToolCallID: "a", Name: "list_dir", Detail: `{"path":"."}`},
 		{Start: true, ToolCallID: "b", Name: "glob", Detail: `{"pattern":"*"}`},
 	}
-	got := toolBatchStatusDetail(starts)
+	got := ToolBatchStatusDetail(starts)
 	if !strings.Contains(got, "Running 2 tools") {
 		t.Fatalf("summary missing: %q", got)
 	}
@@ -108,7 +108,7 @@ func TestToolBatchStatusDetailListsTools(t *testing.T) {
 		t.Fatalf("want multi-line detail, got %q", got)
 	}
 	// Single tool stays one line.
-	one := toolBatchStatusDetail([]bridgeToolEvt{
+	one := ToolBatchStatusDetail([]BridgeToolEvt{
 		{Start: true, ToolCallID: "a", Name: "read_file", Detail: `{"path":"a.go"}`},
 	})
 	if strings.Contains(one, "\n") {
@@ -140,16 +140,16 @@ func TestInterimAcceptedWhenRealProse(t *testing.T) {
 
 func TestShouldFollowOutput(t *testing.T) {
 	t.Parallel()
-	if shouldFollowOutput(true, false, true) {
+	if ShouldFollowOutput(true, false, true) {
 		t.Fatal("scrolled up must drop follow")
 	}
-	if !shouldFollowOutput(false, true, false) {
+	if !ShouldFollowOutput(false, true, false) {
 		t.Fatal("at bottom must re-enable follow")
 	}
-	if !shouldFollowOutput(true, false, false) {
+	if !ShouldFollowOutput(true, false, false) {
 		t.Fatal("sticky follow without scroll keeps follow")
 	}
-	if shouldFollowOutput(false, false, false) {
+	if ShouldFollowOutput(false, false, false) {
 		t.Fatal("not follow and not at bottom stays unfollowed")
 	}
 }

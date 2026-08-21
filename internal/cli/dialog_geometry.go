@@ -19,7 +19,7 @@ type Rect struct {
 // internal/clichat.
 type DialogPrefs struct {
 	// PreferredW is the preferred width in cells (0 = unset).
-	PreferredW, preferredH int
+	PreferredW, PreferredH int
 	// PreferredWPct is the preferred width as a percentage of the terminal.
 	// PreferredHPct is the preferred height as a percentage of the terminal.
 	PreferredWPct, PreferredHPct int
@@ -50,7 +50,7 @@ func dialogRect(termW, termH int, p DialogPrefs, contentW, contentH int) Rect {
 		return Rect{}
 	}
 	w := preferredDimension(termW, p.PreferredW, p.PreferredWPct, contentW)
-	h := preferredDimension(termH, p.preferredH, p.PreferredHPct, contentH)
+	h := preferredDimension(termH, p.PreferredH, p.PreferredHPct, contentH)
 	if p.maxWPct > 0 {
 		w = Min(w, percentOf(termW, p.maxWPct))
 	}

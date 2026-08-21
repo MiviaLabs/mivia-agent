@@ -31,7 +31,8 @@ func (lock *worktreeLifecycleLock) File() *os.File {
 	return lock.file
 }
 
-func lockWorktreeLifecycle(root, name string) (*worktreeLifecycleLock, error) {
+// LockWorktreeLifecycle implements lock worktree lifecycle.
+func LockWorktreeLifecycle(root, name string) (*worktreeLifecycleLock, error) {
 	sanitized, err := vcs.SanitizeName(name)
 	if err != nil {
 		return nil, err

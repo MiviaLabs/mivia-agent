@@ -92,9 +92,9 @@ func TestTableHistoryRoundTrip(t *testing.T) {
 	// Step 3: Verify viewport content building (simulating buildViewportContent)
 	// Store rendered as a message, then build viewport content from it
 	messages := []string{
-		TUIHeaderStyle.Render("── you ──"),
+		"── you ──",
 		"what are the keybindings?",
-		TUIHeaderStyle.Render("── deepseek-v4-flash ──"),
+		"── deepseek-v4-flash ──",
 		wrapped,
 	}
 

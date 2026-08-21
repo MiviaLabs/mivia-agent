@@ -209,7 +209,7 @@ func TestRecordSchemaMassWithoutAgentState(t *testing.T) {
 	sess := chat.NewSession(&config.Resolved{Model: "m", ProviderName: "p"}, stubAgentCompleter{})
 	sess.Tools = tierRegistry("read_file")
 	recordSchemaMass(sess, nil, toolTierPlan{}, nil, "", "attach")
-	if (*AgentSessionState)(nil).schemaMassSnapshot() != (schemaMass{}) {
+	if (*AgentSessionState)(nil).SchemaMassSnapshot() != (schemaMass{}) {
 		t.Fatal("a nil state must report the zero measurement")
 	}
 }
@@ -600,7 +600,7 @@ func TestAdoptSessionLedgerRepoSkipsASharedStore(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	adoptSessionLedgerRepo(sess, config.DefaultSubagentConfig, state,
-		sessionRouting{Context: contextDispatcherWiring{sharedSQLite: store}})
+		sessionRouting{Context: contextDispatcherWiring{SharedSQLite: store}})
 	if state.LedgerRepo != nil || state.ownedLedgerStore != nil {
 		t.Fatal("a shared context store must not be shadowed by a session-owned ledger")
 	}

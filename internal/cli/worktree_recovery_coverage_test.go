@@ -23,7 +23,7 @@ func TestRecoveryCoverageWrapperErrors(t *testing.T) {
 		t.Fatal("locked recovery opened blocked store")
 	}
 	repo := newWorktreeCommandRepo(t)
-	store, err := openRepositoryContextStore(repo)
+	store, err := OpenRepositoryContextStore(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +31,7 @@ func TestRecoveryCoverageWrapperErrors(t *testing.T) {
 	if _, err := recoverManagedWorktreeRemovalInStore(store, repo, strings.Repeat("x", 65), "mivia/"); err == nil {
 		t.Fatal("invalid recovery name succeeded")
 	}
-	lock, err := lockWorktreeLifecycle(repo, "busy")
+	lock, err := LockWorktreeLifecycle(repo, "busy")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,31 +43,31 @@ func TestRecoveryCoverageWrapperErrors(t *testing.T) {
 
 func TestRecoveryCoverageRejectsStaleRemovalRows(t *testing.T) {
 	repo := newWorktreeCommandRepo(t)
-	store, err := openRepositoryContextStore(repo)
+	store, err := OpenRepositoryContextStore(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
 	instance := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
 	active := contextstate.WorktreeInstanceInfo{Instance: instance, CanonicalPath: filepath.Join(repo, "wt-a"), State: contextstate.WorktreeActive}
-	if err := recoverManagedWorktreeRemovalInfoInStoreLocked(store, repo, active, "mivia/", nil); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+	if err := RecoverManagedWorktreeRemovalInfoInStoreLocked(store, repo, active, "mivia/", nil); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
 		t.Fatalf("active recovery error = %v", err)
 	}
 	deleting := active
 	deleting.State = contextstate.WorktreeDeleting
-	if err := recoverManagedWorktreeRemovalInfoInStoreLocked(store, repo, deleting, "mivia/", nil); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+	if err := RecoverManagedWorktreeRemovalInfoInStoreLocked(store, repo, deleting, "mivia/", nil); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
 		t.Fatalf("missing deleting row error = %v", err)
 	}
 }
 
 func TestRecoveryCoverageCreationFailures(t *testing.T) {
 	repo := newWorktreeCommandRepo(t)
-	store, err := openRepositoryContextStore(repo)
+	store, err := OpenRepositoryContextStore(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := worktreeRoutePrincipal(repo)
+	principal, err := WorktreeRoutePrincipal(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,12 +95,12 @@ func TestRecoveryCoverageCreationPathMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := openRepositoryContextStore(repo)
+	store, err := OpenRepositoryContextStore(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := worktreeRoutePrincipal(repo)
+	principal, err := WorktreeRoutePrincipal(repo)
 	if err != nil {
 		t.Fatal(err)
 	}

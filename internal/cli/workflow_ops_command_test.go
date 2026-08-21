@@ -284,8 +284,8 @@ func TestWorkflowApproveCommandHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(approvals) != 1 || approvals[0].Status != "approved" || approvals[0].Actor != workflowApprovalDefaultActor {
-		t.Fatalf("approvals = %+v, want one approved by %q", approvals, workflowApprovalDefaultActor)
+	if len(approvals) != 1 || approvals[0].Status != "approved" || approvals[0].Actor != WorkflowApprovalDefaultActor {
+		t.Fatalf("approvals = %+v, want one approved by %q", approvals, WorkflowApprovalDefaultActor)
 	}
 }
 

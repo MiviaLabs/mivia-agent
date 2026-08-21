@@ -4,7 +4,7 @@ package cli
 // working. Queued input is held, then sent when the turn ends (or force-sent
 // on an empty Enter). Slash commands run locally as they come off the queue.
 //
-// The queue is three index-aligned slices on tuiModel
+// The queue is three index-aligned slices on TUIModel
 // (pendingQueue / pendingQueueLabels / pendingSkillTurns). Every mutation
 // goes through queueRemoveAt/queueInsertAt/queueAppend (tui_queue_manager.go)
 // so the alignment cannot drift, and sendQueuedItem owns the canonical

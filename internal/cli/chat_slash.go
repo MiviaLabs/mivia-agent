@@ -39,7 +39,7 @@ func handleSlash(line string, sess *chat.Session, res *config.Resolved, toolsOn 
 			term.WriteString("\n(new session failed: " + err.Error() + ")")
 			return true, false, nil
 		}
-		setActiveSessionCaller(runtime.Caller{SessionID: newID})
+		SetActiveSessionCaller(runtime.Caller{SessionID: newID})
 		if store, ok := sess.Store().(*chat.FileSessionStore); ok && store != nil {
 			binding := sess.CurrentBinding()
 			mgr := chat.NewSaveManager(store, binding.Model, binding.Completer.Name())

@@ -4,7 +4,7 @@ import "strings"
 
 // chromeAwait is the live-running-pulse rail color (relocated from
 // bubble_leftrail.go: its only caller is this file).
-const chromeAwait = brandColorThinking // "44" vivid cyan - live running pulse
+const chromeAwait = BrandColorThinking // "44" vivid cyan - live running pulse
 
 // Hierarchical left-rail roles + semantic color palette.
 //
@@ -80,7 +80,7 @@ type GroupMember struct {
 
 func buildGroupMembers(blocks []ChatBlock) []GroupMember {
 	out := make([]GroupMember, len(blocks))
-	for _, g := range findWorkGroups(blocks) {
+	for _, g := range FindWorkGroups(blocks) {
 		toolI := 0
 		for i := g.Start; i < g.End && i < len(blocks); i++ {
 			m := GroupMember{
@@ -157,7 +157,7 @@ func resolveRailState(block ChatBlock, role RailRole, view RailView) RailState {
 // file).
 //
 // True when any of:
-//   - ChatBlock.Failed (production toolRow.Failed)
+//   - ChatBlock.Failed (production ToolRow.Failed)
 //   - body/rendered has exit=1|error|timeout|canceled as a token (not exit=10)
 //   - first non-empty text line is error:/failed: / exact "failed"/"error"
 func blockToolFailed(b ChatBlock) bool {

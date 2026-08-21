@@ -56,7 +56,7 @@ func TestWorkflowApproveRejectDeleteCleanupResumeUseBoundedLock(t *testing.T) {
 
 	// approve: settles the parked run to succeeded.
 	var approveOut strings.Builder
-	if err := executeWorkflowApprove(runID, "wfa-approval-review-1", root, configPath, workflowApprovalDefaultActor, &approveOut, io.Discard); err != nil {
+	if err := executeWorkflowApprove(runID, "wfa-approval-review-1", root, configPath, WorkflowApprovalDefaultActor, &approveOut, io.Discard); err != nil {
 		t.Fatalf("approve after lock release: %v", err)
 	}
 	if !strings.Contains(approveOut.String(), "status=succeeded") {

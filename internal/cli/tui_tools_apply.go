@@ -4,7 +4,8 @@ import (
 	"strings"
 )
 
-func toolResultFailed(body string) bool {
+// ToolResultFailed implements tool result failed.
+func ToolResultFailed(body string) bool {
 	if body == "" {
 		return false
 	}

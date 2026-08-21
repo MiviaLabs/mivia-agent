@@ -1,25 +1,27 @@
 package cli
 
 import (
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 )
 
 // Chrome color tokens - semantic status only (not tool names).
-// Tools/steps default to neutral gray; yellow is for status-bar tools phase only.
+// Tools/steps default to neutral gray; yellow is for status-bar tools phase
+// only. Values mirror internal/legacytui/brand.go's brandColor* constants
+// (relocated here: needed unqualified by this package's own rail resolver
+// and by internal/legacytui's rendering, which imports this package).
 const (
-	// ChromeNeutral is the default structural rail color. Shared with the
-	// hierarchical rail-role palette in internal/clichat.
-	ChromeNeutral   = brandColorCancel // "8" dim gray - structure default
-	chromeUser      = brandColorStream // "33" vivid blue - user label (not rail)
-	chromeAssistant = brandColorCancel // "8" quiet speech
-	chromeThinking  = brandColorMulti  // "170" vivid magenta - rare multi
-	chromeTools     = brandColorTools  // "178" vivid gold - brand bar phase only
-	chromeOK        = brandColorQueue  // "40" vivid green - rare; not default tool OK
-	// ChromeError is the strict-failure rail color. Shared with the
-	// hierarchical rail-role palette in internal/clichat.
-	ChromeError = brandColorError // "160" vivid red - strict failures only
+	// ChromeNeutral is the default structural rail color.
+	ChromeNeutral   = "8"   // dim gray - structure default
+	chromeUser      = "33"  // vivid blue - user label (not rail)
+	chromeAssistant = "8"   // quiet speech
+	chromeThinking  = "170" // vivid magenta - rare multi
+	chromeTools     = "178" // vivid gold - brand bar phase only
+	chromeOK        = "40"  // vivid green - rare; not default tool OK
+	// ChromeError is the strict-failure rail color.
+	ChromeError = "160" // vivid red - strict failures only
 )
 
 // LeftRail is a left-edge indicator. Prefer header-only thin gray.
@@ -37,18 +39,18 @@ type LeftRail struct {
 	Plain   bool
 }
 
-// RailOpts controls environment-sensitive chrome. Shared with the
-// hierarchical rail-role resolver in internal/clichat.
+// RailOpts controls environment-sensitive chrome.
 type RailOpts struct {
 	ASCII bool
 	Color bool
 }
 
-// ChromeRenderOpts mirrors tool render env (NO_COLOR, TERM=dumb). Shared
-// with the classic-mode block renderer in internal/clichat.
+// ChromeRenderOpts mirrors tool render env (NO_COLOR, TERM=dumb). Mirrors
+// internal/legacytui's terminalToolRenderOptions (private to that package).
 func ChromeRenderOpts() RailOpts {
-	o := terminalToolRenderOptions()
-	return RailOpts{ASCII: o.ASCII, Color: o.Color}
+	term := strings.ToLower(os.Getenv("TERM"))
+	plain := os.Getenv("NO_COLOR") != "" || term == "dumb"
+	return RailOpts{ASCII: term == "dumb", Color: !plain}
 }
 
 // railForBlock is a kind-level convenience (no group membership / no live view).
@@ -359,8 +361,14 @@ func RailError() LeftRail {
 	return LeftRail{Width: 1, Glyph: "!", Char: "!", Color: ChromeError, Bold: true, Mode: RailModeHeader}
 }
 
-// stripANSI removes ANSI escape sequences from a string.
-func stripANSI(s string) string {
+// stripANSI is a package-local convenience alias of StripANSI.
+var stripANSI = StripANSI
+
+// StripANSI removes ANSI escape sequences from a string. Exported: relocated
+// from internal/legacytui/bubble_leftrail.go, which is also called by three
+// other internal/legacytui files (overlay.go, tui_selection.go, clipboard.go)
+// that now reach it as StripANSI.
+func StripANSI(s string) string {
 	var out strings.Builder
 	skip := 0
 	for _, r := range s {

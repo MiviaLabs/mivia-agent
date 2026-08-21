@@ -88,7 +88,7 @@ func testWorktreeLifecycleLockSurvivesParentExit(t *testing.T, phase string) {
 		t.Fatal("killed Mivia parent exits successfully")
 	}
 
-	lock, err := lockWorktreeLifecycle(repoRoot, worktree.Name)
+	lock, err := LockWorktreeLifecycle(repoRoot, worktree.Name)
 	if err == nil {
 		lock.Close()
 		t.Fatalf("same-name lock succeeds while the orphan Git child is alive; parent output: %s", output.String())

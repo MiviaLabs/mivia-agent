@@ -123,8 +123,8 @@ func recordSchemaMassLocked(sess *chat.Session, state *AgentSessionState, plan t
 	publishSchemaMass(sess, mass)
 }
 
-// schemaMassSnapshot returns the last recorded measurement for display.
-func (s *AgentSessionState) schemaMassSnapshot() schemaMass {
+// SchemaMassSnapshot returns the last recorded measurement for display.
+func (s *AgentSessionState) SchemaMassSnapshot() schemaMass {
 	if s == nil {
 		return schemaMass{}
 	}

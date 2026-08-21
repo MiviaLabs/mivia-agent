@@ -10,7 +10,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
-// agentSkillScope is an immutable per-instance skill policy snapshot for the
+// AgentSkillScope is an immutable per-instance skill policy snapshot for the
 // selected root agent. Built once at dispatcher construction; never shared
 // across concurrent agents or model switches as a mutable registry.
 //
@@ -21,7 +21,7 @@ import (
 // v1 scope is root fan-out only: nested multi_step agents do not receive
 // privileged dispatch_tasks/spawn_agent, so they cannot synthesize skill tasks.
 // Resume/retry re-enters skill handlers which re-check this scope.
-type agentSkillScope struct {
+type AgentSkillScope struct {
 	agentName string
 	// restricted is true when Skills was explicitly set (including empty []).
 	// Zero value (restricted=false) allows all skill names.
@@ -43,15 +43,15 @@ type agentSkillScope struct {
 
 // skillScopeFromAgent snapshots the selected agent's skill allowlist and tools.
 // A nil agent means the compiled default root (all skills, no tool subset gate).
-func skillScopeFromAgent(selected *agents.ResolvedAgent) agentSkillScope {
+func skillScopeFromAgent(selected *agents.ResolvedAgent) AgentSkillScope {
 	if selected == nil {
-		return agentSkillScope{}
+		return AgentSkillScope{}
 	}
 	tools := make(map[string]struct{}, len(selected.EffectiveTools))
 	for _, n := range selected.EffectiveTools {
 		tools[n] = struct{}{}
 	}
-	scope := agentSkillScope{
+	scope := AgentSkillScope{
 		agentName:    selected.Name,
 		enforceTools: true,
 		agentTools:   tools,
@@ -78,7 +78,7 @@ func skillScopeFromAgent(selected *agents.ResolvedAgent) agentSkillScope {
 // tool registry snapshot (after disable/deny filtering). A nil agent stays
 // unrestricted (compiled default root owns the full catalogue); a nil registry
 // leaves the live check disabled.
-func skillScopeFromAgentAndRegistry(selected *agents.ResolvedAgent, reg *tools.Registry) agentSkillScope {
+func skillScopeFromAgentAndRegistry(selected *agents.ResolvedAgent, reg *tools.Registry) AgentSkillScope {
 	scope := skillScopeFromAgent(selected)
 	if selected == nil || reg == nil {
 		return scope
@@ -93,7 +93,7 @@ func skillScopeFromAgentAndRegistry(selected *agents.ResolvedAgent, reg *tools.R
 
 // checkSkill reports whether the scope may invoke the named skill with its
 // declared tools. Built-in handlers (non-skills) are not passed here.
-func (s agentSkillScope) checkSkill(name string, skillTools []string) error {
+func (s AgentSkillScope) checkSkill(name string, skillTools []string) error {
 	if s.restricted {
 		if _, ok := s.allowed[name]; !ok {
 			agent := s.agentName
@@ -129,12 +129,12 @@ func (s agentSkillScope) checkSkill(name string, skillTools []string) error {
 	return nil
 }
 
-// checkSkillDefinition enforces the full plan 43 policy for one skill
+// CheckSkillDefinition enforces the full plan 43 policy for one skill
 // definition: allowlist, declared-tool subset of the agent's effective tools
 // and the live registry, and origin fail-closed (a runtime definition whose
 // origin differs from the allowlist-bound origin for the same name is an
 // authorization event).
-func (s agentSkillScope) checkSkillDefinition(def skills.Definition) error {
+func (s AgentSkillScope) CheckSkillDefinition(def skills.Definition) error {
 	if err := s.checkSkill(def.Name, def.Tools); err != nil {
 		return err
 	}
@@ -161,7 +161,7 @@ func (s agentSkillScope) checkSkillDefinition(def skills.Definition) error {
 
 // filterSkillsForScope returns a registry containing only skills the scope may
 // invoke (name allowlist only; tool subset is checked at invocation).
-func filterSkillsForScope(reg *skills.Registry, scope agentSkillScope) *skills.Registry {
+func filterSkillsForScope(reg *skills.Registry, scope AgentSkillScope) *skills.Registry {
 	if reg == nil || !scope.restricted {
 		return reg
 	}
@@ -177,7 +177,7 @@ func filterSkillsForScope(reg *skills.Registry, scope agentSkillScope) *skills.R
 
 // skillAllowlistPtr returns the ListModelFacing allowlist pointer for the scope.
 // nil = all; &empty = none; &names = those names.
-func skillAllowlistPtr(scope agentSkillScope) *[]string {
+func skillAllowlistPtr(scope AgentSkillScope) *[]string {
 	if !scope.restricted {
 		return nil
 	}

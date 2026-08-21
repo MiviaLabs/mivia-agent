@@ -19,8 +19,8 @@ const (
 // launches or controls another agent, so the transcript marks it ◆.
 var agentControlTools = map[string]bool{
 	HandlerDelegate:   true,
-	handlerOneshot:    true,
-	handlerMultiStep:  true,
+	HandlerOneshot:    true,
+	HandlerMultiStep:  true,
 	ToolDispatchTasks: true,
 	toolSpawnAgent:    true,
 	toolJoinRun:       true,

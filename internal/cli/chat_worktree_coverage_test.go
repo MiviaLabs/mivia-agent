@@ -37,7 +37,7 @@ func TestChatWorktreeCoverageRunRejectsStaleRestart(t *testing.T) {
 	t.Cleanup(func() { runConfiguredChatOnceImpl = original })
 	expected := contextstate.WorktreeInstance{Worktree: "wt-a", ID: "wt_1234567890abcdef"}
 	runConfiguredChatOnceImpl = func(chatInvocation, *config.Resolved) error {
-		return &WorkspaceRestart{Dir: t.TempDir(), WorktreeInstance: expected}
+		return stubWorkspaceRestart{dir: t.TempDir(), wt: expected}
 	}
 	// workspacePath isolates this test from the ambient main repository's
 	// real .mivia/mivia.toml (see the note in
@@ -86,11 +86,11 @@ func TestChatWorktreeCoverageMissingMarkerLegacyAndMalformed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := openRepositoryContextStore(repo)
+	store, err := OpenRepositoryContextStore(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal, err := worktreeRoutePrincipal(repo)
+	principal, err := WorktreeRoutePrincipal(repo)
 	if err != nil {
 		t.Fatal(err)
 	}

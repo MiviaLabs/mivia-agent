@@ -17,7 +17,7 @@ func TestWorktreeMarkerRejectsOversizedRegularFile(t *testing.T) {
 	if err := os.WriteFile(worktreeMarkerPath(root), marker, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readWorktreeMarker(root); err == nil {
+	if _, err := ReadWorktreeMarker(root); err == nil {
 		t.Fatal("oversized marker was accepted")
 	}
 }

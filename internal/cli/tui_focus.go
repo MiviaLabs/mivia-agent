@@ -1,30 +1,30 @@
 package cli
 
-// tuiFocus identifies the pane that owns keyboard navigation in chat mode.
-type tuiFocus uint8
+// TuiFocus identifies the pane that owns keyboard navigation in chat mode.
+type TuiFocus uint8
 
 const (
-	focusComposer tuiFocus = iota
-	focusScrollback
-	focusSidebar
-	focusWorkflowsSidebar
+	FocusComposer TuiFocus = iota
+	FocusScrollback
+	FocusSidebar
+	FocusWorkflowsSidebar
 )
 
-func (f tuiFocus) String() string {
+func (f TuiFocus) String() string {
 	switch f {
-	case focusScrollback:
+	case FocusScrollback:
 		return "scrollback"
-	case focusSidebar:
+	case FocusSidebar:
 		return "sidebar"
-	case focusWorkflowsSidebar:
+	case FocusWorkflowsSidebar:
 		return "workflows"
 	default:
 		return "composer"
 	}
 }
 
-func nextTUIFocus(current tuiFocus, reverse bool) tuiFocus {
-	panes := []tuiFocus{focusComposer, focusScrollback}
+func nextTUIFocus(current TuiFocus, reverse bool) TuiFocus {
+	panes := []TuiFocus{FocusComposer, FocusScrollback}
 	for i, pane := range panes {
 		if pane != current {
 			continue
@@ -35,27 +35,27 @@ func nextTUIFocus(current tuiFocus, reverse bool) tuiFocus {
 		}
 		return panes[(i+step+len(panes))%len(panes)]
 	}
-	return focusComposer
+	return FocusComposer
 }
 
 func isPrintableKey(key string) bool { return len([]rune(key)) == 1 }
 
-// routeFocusKey returns the new focus and whether the key was consumed.
+// RouteFocusKey returns the new focus and whether the key was consumed.
 // Printable input from another pane returns focus to the composer but is not consumed.
-func routeFocusKey(current tuiFocus, key string) (tuiFocus, bool) {
+func RouteFocusKey(current TuiFocus, key string) (TuiFocus, bool) {
 	switch key {
 	case "tab":
 		return nextTUIFocus(current, false), true
 	case "shift+tab":
 		return nextTUIFocus(current, true), true
 	case "esc":
-		if current != focusComposer {
-			return focusComposer, true
+		if current != FocusComposer {
+			return FocusComposer, true
 		}
 	case "up", "down":
-		return current, current != focusComposer
+		return current, current != FocusComposer
 	case "pgup", "pgdown":
-		return focusScrollback, true
+		return FocusScrollback, true
 	case "shift+home", "shift+end":
 		// Reach the transcript extremes without disturbing the draft: focus
 		// stays where it is, the handler scrolls. Bonus route only - VTE and
@@ -65,10 +65,10 @@ func routeFocusKey(current tuiFocus, key string) (tuiFocus, bool) {
 		// Line editing first. These are the composer's only line-start and
 		// line-end keys, so they are promoted to the transcript only when it
 		// already owns focus; handleChatControlKey resolves the meaning.
-		return current, current == focusScrollback
+		return current, current == FocusScrollback
 	default:
-		if current != focusComposer && isPrintableKey(key) {
-			return focusComposer, false
+		if current != FocusComposer && isPrintableKey(key) {
+			return FocusComposer, false
 		}
 	}
 	return current, false

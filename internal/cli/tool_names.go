@@ -6,10 +6,10 @@ package cli
 
 // Built-in handler names registered with runtime.Subagent.
 const (
-	handlerMultiStep = "multi_step"
+	HandlerMultiStep = "multi_step"
 	// HandlerDelegate is the wire name of the delegation handler.
 	HandlerDelegate = "delegate"
-	handlerOneshot  = "oneshot"
+	HandlerOneshot  = "oneshot"
 )
 
 // Agent-control tool names (the surfaces that launch/control another agent).

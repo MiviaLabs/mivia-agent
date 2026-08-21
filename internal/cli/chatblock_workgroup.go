@@ -17,8 +17,8 @@ const workGroupWindowRows = 12
 // maxWorkGroupRows is the legacy alias kept for the non-windowed renderer.
 const maxWorkGroupRows = workGroupWindowRows
 
-// workGroup is a half-open index range [Start,End) of thinking/status/tool blocks.
-type workGroup struct {
+// WorkGroup is a half-open index range [Start,End) of thinking/status/tool blocks.
+type WorkGroup struct {
 	Start, End int
 	ToolCount  int
 	AgentCount int    // agent-control actions (◆) among the tools
@@ -26,9 +26,9 @@ type workGroup struct {
 	Key        string // stable id for collapse state
 }
 
-// findWorkGroups returns contiguous work runs broken by user/assistant/divider/non-status system.
-func findWorkGroups(blocks []ChatBlock) []workGroup {
-	var groups []workGroup
+// FindWorkGroups returns contiguous work runs broken by user/assistant/divider/non-status system.
+func FindWorkGroups(blocks []ChatBlock) []WorkGroup {
+	var groups []WorkGroup
 	i := 0
 	for i < len(blocks) {
 		if !isWorkMember(blocks[i]) {
@@ -69,7 +69,7 @@ func findWorkGroups(blocks []ChatBlock) []workGroup {
 		if key == "" {
 			key = fmt.Sprintf("wg-%d-%d", start, i)
 		}
-		groups = append(groups, workGroup{
+		groups = append(groups, WorkGroup{
 			Start: start, End: i, ToolCount: tools,
 			AgentCount: agents, FailCount: failed,
 			Key: "work:" + key,
@@ -89,8 +89,8 @@ func isWorkMember(b ChatBlock) bool {
 	}
 }
 
-// workGroupCollapsedDefault returns whether a group should start collapsed.
-func workGroupCollapsedDefault(g workGroup, overrides map[string]bool) bool {
+// WorkGroupCollapsedDefault returns whether a group should start collapsed.
+func WorkGroupCollapsedDefault(g WorkGroup, overrides map[string]bool) bool {
 	if overrides != nil {
 		if v, ok := overrides[g.Key]; ok {
 			return v
@@ -116,8 +116,8 @@ func RenderChatBlocksWithWorkGroupsWindow(blocks []ChatBlock, model string, widt
 	if width < MinCardWidth {
 		width = MinCardWidth
 	}
-	groups := findWorkGroups(blocks)
-	groupByStart := make(map[int]workGroup, len(groups))
+	groups := FindWorkGroups(blocks)
+	groupByStart := make(map[int]WorkGroup, len(groups))
 	for _, g := range groups {
 		groupByStart[g.Start] = g
 	}
@@ -127,7 +127,7 @@ func RenderChatBlocksWithWorkGroupsWindow(blocks []ChatBlock, model string, widt
 	i := 0
 	for i < len(blocks) {
 		if g, ok := groupByStart[i]; ok {
-			isCollapsed := workGroupCollapsedDefault(g, collapsed)
+			isCollapsed := WorkGroupCollapsedDefault(g, collapsed)
 			ensureBlockGap(&out)
 			startLine := len(out.Lines)
 			header := formatWorkGroupHeader(g, isCollapsed, view)
@@ -136,7 +136,7 @@ func RenderChatBlocksWithWorkGroupsWindow(blocks []ChatBlock, model string, widt
 			if !isCollapsed {
 				// Bounded scrollable window over the group's members.
 				total := g.End - g.Start
-				off := clampWorkGroupScroll(scroll[g.Key], total)
+				off := ClampWorkGroupScroll(scroll[g.Key], total)
 				if off > 0 {
 					out.Lines = append(out.Lines, TUIDimStyle.Render(
 						fmt.Sprintf("    ↑ %d earlier", off)))
@@ -172,7 +172,7 @@ func RenderChatBlocksWithWorkGroupsWindow(blocks []ChatBlock, model string, widt
 	return out
 }
 
-func formatWorkGroupHeader(g workGroup, collapsed bool, view RailView) string {
+func formatWorkGroupHeader(g WorkGroup, collapsed bool, view RailView) string {
 	marker := glyphTriD
 	if collapsed {
 		marker = GlyphTriR
@@ -185,7 +185,7 @@ func formatWorkGroupHeader(g workGroup, collapsed bool, view RailView) string {
 	}
 	line := TUIDimStyle.Render(text)
 	if g.FailCount > 0 {
-		line += TUIDimStyle.Render(" · ") + tuiErrorStyle.Render(fmt.Sprintf("%d ✗", g.FailCount))
+		line += TUIDimStyle.Render(" · ") + TUIErrorStyle.Render(fmt.Sprintf("%d ✗", g.FailCount))
 	}
 	opts := ChromeRenderOpts()
 	state := RailStateNeutral
@@ -234,8 +234,8 @@ func wantsBottomLane(block ChatBlock, mem GroupMember) bool {
 	}
 }
 
-// clampWorkGroupScroll bounds a group's window offset to its member count.
-func clampWorkGroupScroll(off, total int) int {
+// ClampWorkGroupScroll bounds a group's window offset to its member count.
+func ClampWorkGroupScroll(off, total int) int {
 	maxOff := total - workGroupWindowRows
 	if maxOff < 0 {
 		maxOff = 0

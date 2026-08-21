@@ -4,6 +4,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -47,9 +48,9 @@ var defaultOrchestrationRepo ledger.LedgerRepository = ledger.NewMemoryLedgerRep
 // session holds, making it permanently uninspectable and uncancellable.
 var activeSessionCaller atomic.Pointer[runtime.Caller]
 
-// setActiveSessionCaller records the chat session's identity for CLI-initiated
+// SetActiveSessionCaller records the chat session's identity for CLI-initiated
 // orchestration control.
-func setActiveSessionCaller(caller runtime.Caller) {
+func SetActiveSessionCaller(caller runtime.Caller) {
 	activeSessionCaller.Store(&caller)
 }
 
@@ -189,10 +190,17 @@ func activeOrchestrationForSession(sessionID string) bool {
 	return active
 }
 
+// ErrOrchestrationSwitchActive is orchestrationSwitchGuard's refusal as a
+// value, because internal/legacytui's /effort rewrites it for a surface where
+// "model switching" names a command the user did not type. Matching that
+// rewrite on the text would go quiet the first time someone copy-edits this
+// sentence, and the notice would silently revert.
+var ErrOrchestrationSwitchActive = errors.New("model switching is unavailable while orchestration is active")
+
 func orchestrationSwitchGuard(sessionID string) func() error {
 	return func() error {
 		if activeOrchestrationForSession(sessionID) {
-			return errOrchestrationSwitchActive
+			return ErrOrchestrationSwitchActive
 		}
 		return nil
 	}
@@ -286,10 +294,10 @@ func poolLimitsFromConfig(cfg config.SubagentConfig) (maxDepth, maxFanout int) {
 	return maxDepth, maxFanout
 }
 
-// activeCoordinator returns the first Coordinator registered in the
+// ActiveCoordinator returns the first Coordinator registered in the
 // package-level coordinators map, if any. Used to find a running dispatch's
 // Coordinator from a caller that does not hold the *runtime.Dispatcher key.
-func activeCoordinator() (coordinator.Coordinator, bool) {
+func ActiveCoordinator() (coordinator.Coordinator, bool) {
 	var found coordinator.Coordinator
 	var ok bool
 	coordinators.Range(func(_, value any) bool {

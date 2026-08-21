@@ -17,7 +17,8 @@ var setContextManagerForSetup = func(session *chat.Session, manager *contextmgr.
 	return session.SetContextManager(manager, principal, policies...)
 }
 
-func openRepositoryContextStore(root string) (*storage.SQLite, error) {
+// OpenRepositoryContextStore implements open repository context store.
+func OpenRepositoryContextStore(root string) (*storage.SQLite, error) {
 	path, err := repositorySessionStorePath(root, chatInvocation{}, &config.Resolved{})
 	if err != nil {
 		return nil, err
@@ -129,10 +130,10 @@ func enableSessionContext(sess *chat.Session, root string, store *storage.SQLite
 		policy = snapshot
 	} else {
 		// Captured once here so every compaction this session ever emits can
-		// report the real cause (see summaryDisabledReason) instead of a
+		// report the real cause (see SummaryDisabledReason) instead of a
 		// generic "no summary" banner that always points at [context.summary]
 		// even when that key was never the problem.
-		manager.SummaryUnavailableReason = summaryDisabledReason(sess, res)
+		manager.SummaryUnavailableReason = SummaryDisabledReason(sess, res)
 	}
 	if err := setContextManagerForSetup(sess, manager, principal, policy); err != nil {
 		return err
@@ -143,7 +144,7 @@ func enableSessionContext(sess *chat.Session, root string, store *storage.SQLite
 type contextDispatcherWiring struct {
 	preparation      contextmgr.PreparationManager
 	preparationInput contextmgr.PrepareInput
-	sharedSQLite     *storage.SQLite
+	SharedSQLite     *storage.SQLite
 }
 
 func contextDispatcherFor(sess *chat.Session, _ config.SubagentConfig) contextDispatcherWiring {
@@ -152,6 +153,6 @@ func contextDispatcherFor(sess *chat.Session, _ config.SubagentConfig) contextDi
 		return contextDispatcherWiring{}
 	}
 	wiring := contextDispatcherWiring{preparation: manager, preparationInput: input}
-	wiring.sharedSQLite, _ = sess.ContextStore().(*storage.SQLite)
+	wiring.SharedSQLite, _ = sess.ContextStore().(*storage.SQLite)
 	return wiring
 }

@@ -25,7 +25,7 @@ func summaryReasonResolved(t *testing.T, mutate func(*config.Resolved)) *config.
 // TestSummaryDisabledReasonStaysSilentWithoutConfig pins that a caller with
 // no resolved configuration reports nothing rather than inventing a cause.
 func TestSummaryDisabledReasonStaysSilentWithoutConfig(t *testing.T) {
-	if reason := summaryDisabledReason(nil, nil); reason != "" {
+	if reason := SummaryDisabledReason(nil, nil); reason != "" {
 		t.Fatalf("reason = %q, want silence when there is no configuration", reason)
 	}
 }
@@ -47,7 +47,7 @@ func TestSummaryDisabledReasonNamesTheMissingCondition(t *testing.T) {
 			if ok {
 				t.Fatal("summaryWiring reported enabled for a workspace missing a condition")
 			}
-			reason := summaryDisabledReason(sess, res)
+			reason := SummaryDisabledReason(sess, res)
 			if reason == "" {
 				t.Fatal("a disabled summary reported no reason")
 			}
@@ -68,7 +68,7 @@ func TestSummaryDisabledReasonIgnoresMissingRedaction(t *testing.T) {
 	res.RedactionPolicy = nil
 	res.Privacy = config.PrivacyConfig{}
 	sess := chat.NewSession(res, nullCompleter{})
-	if reason := summaryDisabledReason(sess, res); reason != "" {
+	if reason := SummaryDisabledReason(sess, res); reason != "" {
 		t.Fatalf("missing [privacy] reported as disabling the summary: %q", reason)
 	}
 }
@@ -79,7 +79,7 @@ func TestSummaryDisabledReasonIsEmptyWhenWired(t *testing.T) {
 	if _, _, ok := summaryWiring(sess, res); !ok {
 		t.Fatal("harness precondition: summaryWiring should be enabled here")
 	}
-	if reason := summaryDisabledReason(sess, res); reason != "" {
+	if reason := SummaryDisabledReason(sess, res); reason != "" {
 		t.Fatalf("a wired summary still reported %q", reason)
 	}
 }

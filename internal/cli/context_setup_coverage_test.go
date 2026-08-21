@@ -27,7 +27,7 @@ func blockedContextRoot(t *testing.T) string {
 
 func TestContextSetupCoverageOpenErrors(t *testing.T) {
 	blocked := blockedContextRoot(t)
-	if _, err := openRepositoryContextStore(blocked); err == nil {
+	if _, err := OpenRepositoryContextStore(blocked); err == nil {
 		t.Fatal("repository store opened through a file")
 	}
 	res := &config.Resolved{Subagents: config.SubagentConfig{StoreBackend: "sqlite", StorePath: filepath.Join(blocked, "blocked", "store.db")}}
@@ -68,7 +68,7 @@ func TestContextSetupCoverageConfigureErrorsAndZeroPolicy(t *testing.T) {
 		t.Fatal("nil context components succeeded")
 	}
 	session := chat.NewSession(&config.Resolved{Model: "model"}, nullCompleter{})
-	if wiring := contextDispatcherFor(session, config.SubagentConfig{}); wiring.preparation != nil || wiring.sharedSQLite != nil {
+	if wiring := contextDispatcherFor(session, config.SubagentConfig{}); wiring.preparation != nil || wiring.SharedSQLite != nil {
 		t.Fatalf("disabled context wiring = %+v", wiring)
 	}
 }
@@ -102,47 +102,47 @@ func TestContextSetupCoverageRemovalGuards(t *testing.T) {
 		t.Fatal(err)
 	}
 	wrong := contextstate.WorktreeInstance{Worktree: worktree.Name, ID: "wt_0000000000000000"}
-	if _, err := beginManagedWorktreeRemovalInStoreExpected(nil, repo, nil, wrong, true); err == nil {
+	if _, err := BeginManagedWorktreeRemovalInStoreExpected(nil, repo, nil, wrong, true); err == nil {
 		t.Fatal("nil worktree removal succeeded")
 	}
-	if _, err := beginManagedWorktreeRemovalInStoreExpected(nil, repo, worktree, wrong, true); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+	if _, err := BeginManagedWorktreeRemovalInStoreExpected(nil, repo, worktree, wrong, true); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
 		t.Fatalf("wrong expected instance error = %v", err)
 	}
-	if err := finishManagedWorktreeRemoval(blockedContextRoot(t), instance); err == nil {
+	if err := FinishManagedWorktreeRemoval(blockedContextRoot(t), instance); err == nil {
 		t.Fatal("finish removal opened blocked store")
 	}
-	if err := reactivateManagedWorktreeInStore(nil, blockedContextRoot(t), instance); err == nil {
+	if err := ReactivateManagedWorktreeInStore(nil, blockedContextRoot(t), instance); err == nil {
 		t.Fatal("reactivation opened blocked store")
 	}
-	store, err := openRepositoryContextStore(repo)
+	store, err := OpenRepositoryContextStore(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if err := reactivateManagedWorktreeInStore(store, repo, wrong); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+	if err := ReactivateManagedWorktreeInStore(store, repo, wrong); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
 		t.Fatalf("unknown reactivation error = %v", err)
 	}
 }
 
 func TestContextSetupCoverageMarkerClassification(t *testing.T) {
 	repo := newWorktreeCommandRepo(t)
-	store, err := openRepositoryContextStore(repo)
+	store, err := OpenRepositoryContextStore(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	principal, err := worktreeRoutePrincipal(repo)
+	principal, err := WorktreeRoutePrincipal(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(repo, ".mivia", "worktrees", "wt-a")
-	if info, legacy, err := classifyMissingWorktreeMarker(store, principal, "wt-a", path); err != nil || legacy || !info.Instance.IsZero() {
+	if info, legacy, err := ClassifyMissingWorktreeMarker(store, principal, "wt-a", path); err != nil || legacy || !info.Instance.IsZero() {
 		t.Fatalf("empty classification = %+v, %v, %v", info, legacy, err)
 	}
 	if err := store.SaveWorktreeRoute(context.Background(), principal, "wt-a", path); err != nil {
 		t.Fatal(err)
 	}
-	if _, legacy, err := classifyMissingWorktreeMarker(store, principal, "wt-a", path); err != nil || !legacy {
+	if _, legacy, err := ClassifyMissingWorktreeMarker(store, principal, "wt-a", path); err != nil || !legacy {
 		t.Fatalf("legacy classification = %v, %v", legacy, err)
 	}
 	instance := contextstate.WorktreeInstance{Worktree: "wt-b", ID: "wt_1234567890abcdef"}
@@ -150,7 +150,7 @@ func TestContextSetupCoverageMarkerClassification(t *testing.T) {
 	if err := store.BeginWorktreeCreation(context.Background(), principal, instance, pathB); err != nil {
 		t.Fatal(err)
 	}
-	info, legacy, err := classifyMissingWorktreeMarker(store, principal, "wt-b", pathB)
+	info, legacy, err := ClassifyMissingWorktreeMarker(store, principal, "wt-b", pathB)
 	if err != nil || legacy || info.Instance != instance {
 		t.Fatalf("live classification = %+v, %v, %v", info, legacy, err)
 	}
@@ -162,26 +162,26 @@ func TestContextSetupCoverageExpectedInstanceValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := openRepositoryContextStore(repo)
+	store, err := OpenRepositoryContextStore(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if err := validateExpectedWorktreeInstanceInStore(store, repo, worktree.Path, contextstate.WorktreeInstance{}); err != nil {
+	if err := ValidateExpectedWorktreeInstanceInStore(store, repo, worktree.Path, contextstate.WorktreeInstance{}); err != nil {
 		t.Fatal(err)
 	}
 	missing := contextstate.WorktreeInstance{Worktree: "missing", ID: "wt_1234567890abcdef"}
-	if err := validateExpectedWorktreeInstanceInStore(store, repo, repo, missing); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+	if err := ValidateExpectedWorktreeInstanceInStore(store, repo, repo, missing); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
 		t.Fatalf("missing expected instance error = %v", err)
 	}
-	if err := validateExpectedWorktreeInstanceInStore(store, repo, repo, instance); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
+	if err := ValidateExpectedWorktreeInstanceInStore(store, repo, repo, instance); !errors.Is(err, contextstate.ErrWorktreeDeleted) {
 		t.Fatalf("outside worktree error = %v", err)
 	}
 	child := filepath.Join(worktree.Path, "child")
 	if err := os.Mkdir(child, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateExpectedWorktreeInstanceInStore(store, repo, child, instance); err != nil {
+	if err := ValidateExpectedWorktreeInstanceInStore(store, repo, child, instance); err != nil {
 		t.Fatalf("valid expected instance: %v", err)
 	}
 }
@@ -192,7 +192,7 @@ func TestContextSetupCoverageRoutePrincipalErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := openRepositoryContextStore(repo)
+	store, err := OpenRepositoryContextStore(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,20 +205,20 @@ func TestContextSetupCoverageRoutePrincipalErrors(t *testing.T) {
 	}
 	t.Cleanup(func() { contextSetupRoutePrincipal = original })
 
-	if _, err := createManagedWorktreeInStoreLocked(store, repo, "new", "HEAD", "mivia/", nil, nil); !errors.Is(err, injected) {
+	if _, err := CreateManagedWorktreeInStoreLocked(store, repo, "new", "HEAD", "mivia/", nil, nil); !errors.Is(err, injected) {
 		t.Fatalf("create route error = %v", err)
 	}
-	if err := reactivateManagedWorktreeInStore(store, repo, instance); !errors.Is(err, injected) {
+	if err := ReactivateManagedWorktreeInStore(store, repo, instance); !errors.Is(err, injected) {
 		t.Fatalf("reactivate route error = %v", err)
 	}
-	if err := validateExpectedWorktreeInstanceInStore(store, repo, worktree.Path, instance); !errors.Is(err, injected) {
+	if err := ValidateExpectedWorktreeInstanceInStore(store, repo, worktree.Path, instance); !errors.Is(err, injected) {
 		t.Fatalf("validate route error = %v", err)
 	}
 }
 
 func TestContextSetupCoverageCreationAbandonError(t *testing.T) {
 	repo := newWorktreeCommandRepo(t)
-	store, err := openRepositoryContextStore(repo)
+	store, err := OpenRepositoryContextStore(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +231,7 @@ func TestContextSetupCoverageCreationAbandonError(t *testing.T) {
 	}
 	t.Cleanup(func() { abandonContextWorktreeCreation = original })
 
-	_, err = createManagedWorktreeInStoreWithInstance(store, repo, "bad-base", "refs/heads/does-not-exist", "mivia/", nil)
+	_, err = CreateManagedWorktreeInStoreWithInstance(store, repo, "bad-base", "refs/heads/does-not-exist", "mivia/", nil)
 	if err == nil || !strings.Contains(err.Error(), injected.Error()) {
 		t.Fatalf("create abandon error = %v", err)
 	}
@@ -254,11 +254,11 @@ func TestContextSetupCoverageRegisterForSQLiteSessionRejectsNilWorktree(t *testi
 
 func TestContextSetupCoverageRouteRemovalWrappers(t *testing.T) {
 	repo := newWorktreeCommandRepo(t)
-	store, err := openRepositoryContextStore(repo)
+	store, err := OpenRepositoryContextStore(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal, err := worktreeRoutePrincipal(repo)
+	principal, err := WorktreeRoutePrincipal(repo)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -91,7 +91,7 @@ func sendLineMode(sess *chat.Session, line string, sigCh <-chan os.Signal, jsonM
 	if !jsonMode {
 		fmt.Fprintln(os.Stdout)
 	}
-	if interrupted && cancellationCanReplaceTurnError(err) {
+	if interrupted && CancellationCanReplaceTurnError(err) {
 		fmt.Fprintln(os.Stderr, "(cancelled)")
 		if jsonMode {
 			// The turn was interrupted mid-stream: whatever ndjsonChunkWriter

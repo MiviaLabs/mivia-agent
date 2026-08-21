@@ -10,9 +10,9 @@ import (
 // Diff stat colors (foreground only - the ± counts on edit rows). Relocated
 // from toolui.go: this file was their sole caller.
 var (
-	toolDiffAdd = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorDiffAdd))
-	toolDiffDel = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorDiffDel))
-	toolDiffCtx = lipgloss.NewStyle().Foreground(lipgloss.Color(themeColorDim)) // dim context
+	toolDiffAdd = lipgloss.NewStyle().Foreground(lipgloss.Color(ThemeColorDiffAdd))
+	toolDiffDel = lipgloss.NewStyle().Foreground(lipgloss.Color(ThemeColorDiffDel))
+	toolDiffCtx = lipgloss.NewStyle().Foreground(lipgloss.Color(ThemeColorDim)) // dim context
 )
 
 // RenderDiffBody renders a redacted, width-clamped diff body as display

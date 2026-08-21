@@ -15,10 +15,10 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
-// workflowApprovalDefaultActor names the operator when --actor is not given.
+// WorkflowApprovalDefaultActor names the operator when --actor is not given.
 // It is deterministic (never the ambient OS user) so operator scripts and
 // tests see stable approval records.
-const workflowApprovalDefaultActor = "operator"
+const WorkflowApprovalDefaultActor = "operator"
 
 // executeWorkflowApprove approves one pending human_gate approval and lets
 // the run continue, mirroring executeWorkflowResume's preamble (file lock,
@@ -275,11 +275,11 @@ func buildResolutionController(ctx context.Context, repo workflowledger.Reposito
 	return controller.NewResolutionController(repo, compiled, runID, raw, inputs)
 }
 
-// resolveWorkflowDialogApproval resolves one pending gate approval through the
+// ResolveWorkflowDialogApproval resolves one pending gate approval through the
 // same bounded-lock controller path as the workflow_approval CLI surface. The
-// actor is fixed to workflowApprovalDefaultActor so operator scripts and tests
+// actor is fixed to WorkflowApprovalDefaultActor so operator scripts and tests
 // see deterministic approval records.
-func resolveWorkflowDialogApproval(runID, approvalID, root, configPath, actor string, reject bool) error {
+func ResolveWorkflowDialogApproval(runID, approvalID, root, configPath, actor string, reject bool) error {
 	releaseExecution, repo, _, closeFn, err := openWorkflowResolutionContextBounded(context.Background(), root, configPath, runID, workflowResolutionLockWait)
 	if err != nil {
 		return err

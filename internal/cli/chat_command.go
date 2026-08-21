@@ -158,7 +158,7 @@ func parseChatInvocation(args []string) (chatInvocation, error) {
 
 var runConfiguredChatOnceImpl = runConfiguredChatOnce
 var loadConfigForRestart = config.Load
-var classifyMissingMarkerForBind = classifyMissingWorktreeMarker
+var classifyMissingMarkerForBind = ClassifyMissingWorktreeMarker
 
 func runConfiguredChat(invocation chatInvocation, res *config.Resolved) error {
 	configPath := invocation.configPath
@@ -241,7 +241,7 @@ func validateWorkspaceRestart(restart workspaceRestartError, invocation chatInvo
 		return err
 	}
 	defer store.Close()
-	return validateExpectedWorktreeInstanceInStore(store, root, dir, worktreeInstance)
+	return ValidateExpectedWorktreeInstanceInStore(store, root, dir, worktreeInstance)
 }
 
 // prepareChatStartup runs the pre-session startup policy: the API key gate,
@@ -311,7 +311,7 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 	agentState.BaselinePrompt = sess.BaseSystemPrompt
 	agentState.BaselineMaxSteps = sess.MaxStepsValue()
 	agentState.BaselineCaptured = true
-	setActiveSessionCaller(runtime.Caller{SessionID: sess.SessionID})
+	SetActiveSessionCaller(runtime.Caller{SessionID: sess.SessionID})
 	memClose, err := configureChatWorkspace(sess, wsRoot, useTools, res, agentState, invocation.quiet, invocation.fullDisk, true)
 	if err != nil {
 		return err

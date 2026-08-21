@@ -53,7 +53,7 @@ func TestWorktreeMarkerRoundTripAndRejectsWrongRoot(t *testing.T) {
 	if err := writeWorktreeMarker(root, instance); err != nil {
 		t.Fatalf("write marker: %v", err)
 	}
-	got, err := readWorktreeMarker(root)
+	got, err := ReadWorktreeMarker(root)
 	if err != nil {
 		t.Fatalf("read marker: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestWorktreeMarkerRoundTripAndRejectsWrongRoot(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(root, "child"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readWorktreeMarker(filepath.Join(root, "child")); err == nil {
+	if _, err := ReadWorktreeMarker(filepath.Join(root, "child")); err == nil {
 		t.Fatal("subdirectory marker read succeeded")
 	}
 }

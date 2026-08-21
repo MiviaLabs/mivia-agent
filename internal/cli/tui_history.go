@@ -4,9 +4,9 @@ import (
 	"strings"
 )
 
-// visualLineCount returns how many viewport lines the given content slots occupy.
+// VisualLineCount returns how many viewport lines the given content slots occupy.
 // Each string may itself contain newlines after markdown/wrap.
-func visualLineCount(lines []string) int {
+func VisualLineCount(lines []string) int {
 	n := 0
 	for _, line := range lines {
 		n += strings.Count(line, "\n") + 1

@@ -156,7 +156,8 @@ func applySelectedAgentPrompt(sess *chat.Session, res *config.Resolved, selected
 	}
 }
 
-func currentAgentName(state *AgentSessionState) string {
+// CurrentAgentName implements current agent name.
+func CurrentAgentName(state *AgentSessionState) string {
 	if state == nil {
 		return ""
 	}
@@ -182,11 +183,13 @@ func formatAgentAvailable(reg *agents.AgentRegistry) string {
 	return strings.Join(rows, ", ")
 }
 
-func formatAgentSet(name string) string {
+// FormatAgentSet implements format agent set.
+func FormatAgentSet(name string) string {
 	return "agent set to " + name
 }
 
-func formatAgentCurrent(name string, reg *agents.AgentRegistry) string {
+// FormatAgentCurrent implements format agent current.
+func FormatAgentCurrent(name string, reg *agents.AgentRegistry) string {
 	if name == "" {
 		name = "(compiled default)"
 	}

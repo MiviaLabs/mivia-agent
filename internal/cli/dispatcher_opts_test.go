@@ -35,7 +35,7 @@ func TestNewSessionDispatcherOptsBuildsDispatcher(t *testing.T) {
 	}
 	defer d.Close()
 
-	if !d.Has(runtime.Subagent, handlerMultiStep) {
+	if !d.Has(runtime.Subagent, HandlerMultiStep) {
 		t.Fatal("multi_step handler not registered")
 	}
 	if !d.Has(runtime.Subagent, HandlerDelegate) {
@@ -49,7 +49,7 @@ func TestNewSessionDispatcherOptsBuildsDispatcher(t *testing.T) {
 		t.Fatal(err)
 	}
 	result := d.Invoke(context.Background(), runtime.Request{
-		ID: "opts-budget", Kind: runtime.Subagent, Name: handlerOneshot,
+		ID: "opts-budget", Kind: runtime.Subagent, Name: HandlerOneshot,
 		Input: json.RawMessage(`"nested prompt"`),
 	})
 	if !errors.Is(result.Err, agent.ErrPromptBudgetExceeded) {

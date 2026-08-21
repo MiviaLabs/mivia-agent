@@ -62,7 +62,7 @@ func oneShotContext(ctx context.Context, sess *chat.Session, prompt string, tool
 		}
 	}
 	if err != nil {
-		if ctx.Err() != nil && cancellationCanReplaceTurnError(err) {
+		if ctx.Err() != nil && CancellationCanReplaceTurnError(err) {
 			fmt.Fprintln(os.Stderr, "\n(cancelled)")
 			return nil
 		}
@@ -73,15 +73,16 @@ func oneShotContext(ctx context.Context, sess *chat.Session, prompt string, tool
 }
 
 func shouldPrintOneShotOutput(ctx context.Context, err error) bool {
-	return err == nil || errors.Is(err, chat.ErrPersistence) || (ctx.Err() != nil && cancellationCanReplaceTurnError(err))
+	return err == nil || errors.Is(err, chat.ErrPersistence) || (ctx.Err() != nil && CancellationCanReplaceTurnError(err))
 }
 
-func cancellationCanReplaceTurnError(err error) bool {
+// CancellationCanReplaceTurnError implements cancellation can replace turn error.
+func CancellationCanReplaceTurnError(err error) bool {
 	return err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 func shouldReportChatCancellation(ctx context.Context, err error) bool {
-	return ctx.Err() != nil && cancellationCanReplaceTurnError(err)
+	return ctx.Err() != nil && CancellationCanReplaceTurnError(err)
 }
 
 var classicTurnContext = context.WithCancel
@@ -190,7 +191,7 @@ func handleTab(input *InputBuffer) {
 	if !strings.HasPrefix(current, "/") {
 		return
 	}
-	commands := slashCommands(slashSurfacePlain, nil)
+	commands := SlashCommands(slashSurfacePlain, nil)
 	known := make([]string, 0, len(commands)*2)
 	for _, command := range commands {
 		known = append(known, command.Name)

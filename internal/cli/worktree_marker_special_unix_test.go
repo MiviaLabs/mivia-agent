@@ -23,7 +23,7 @@ func TestWorktreeMarkerRejectsFIFOWithoutBlocking(t *testing.T) {
 	}
 	result := make(chan error, 1)
 	go func() {
-		_, err := readWorktreeMarker(root)
+		_, err := ReadWorktreeMarker(root)
 		result <- err
 	}()
 	select {
@@ -60,7 +60,7 @@ func TestWorktreeMarkerRejectsSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer listener.Close()
-	if _, err := readWorktreeMarker(root); err == nil {
+	if _, err := ReadWorktreeMarker(root); err == nil {
 		t.Fatal("socket marker was accepted")
 	}
 }
