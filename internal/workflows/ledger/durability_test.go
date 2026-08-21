@@ -1,4 +1,4 @@
-package tasks
+package ledger
 
 import (
 	"context"
@@ -227,12 +227,12 @@ func TestConcurrentTransitionsSameInstance(t *testing.T) {
 	}
 }
 
-// transitionWithRetry re-runs a transition after ErrConflict: a concurrent
+// transitionWithRetry re-runs a transition after ErrTaskConflict: a concurrent
 // writer took the sequence slot; the retry catches up and reappends.
 func transitionWithRetry(s *Store, planRef, taskID, status string) error {
 	for {
 		err := s.TransitionTask(planRef, taskID, status)
-		if err == nil || !errors.Is(err, ErrConflict) {
+		if err == nil || !errors.Is(err, ErrTaskConflict) {
 			return err
 		}
 	}

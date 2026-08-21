@@ -10,7 +10,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
 // TestStackDriveCompletedAutoPolicyWaitsForIntegrationMerge pins the durable
@@ -54,7 +53,7 @@ func seedUnmergedIntegrationStack(t *testing.T) (root string, store *storage.SQL
 	repo = mem
 
 	root = t.TempDir()
-	storePath := filepath.Join(root, "tasks.db")
+	storePath := filepath.Join(root, "workflowledger.db")
 	store, err := openContextStorePath(storePath)
 	if err != nil {
 		t.Fatal(err)
@@ -76,7 +75,7 @@ func seedUnmergedIntegrationStack(t *testing.T) (root string, store *storage.SQL
 	if err != nil || len(chunks) != 2 {
 		t.Fatalf("parse chunks = %v, %v; want 2", chunks, err)
 	}
-	ledger := tasks.NewStore(store)
+	ledger := workflowledger.NewStore(store)
 	if err := seedStackLedger(ledger, stackID, chunks); err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +149,7 @@ func seedFailedIntegrationStack(t *testing.T, intStatus workflowledger.RunStatus
 	repo = mem
 
 	root = t.TempDir()
-	storePath := filepath.Join(root, "tasks.db")
+	storePath := filepath.Join(root, "workflowledger.db")
 	store, err := openContextStorePath(storePath)
 	if err != nil {
 		t.Fatal(err)
@@ -172,7 +171,7 @@ func seedFailedIntegrationStack(t *testing.T, intStatus workflowledger.RunStatus
 	if err != nil || len(chunks) != 2 {
 		t.Fatalf("parse chunks = %v, %v; want 2", chunks, err)
 	}
-	ledger := tasks.NewStore(store)
+	ledger := workflowledger.NewStore(store)
 	if err := seedStackLedger(ledger, stackID, chunks); err != nil {
 		t.Fatal(err)
 	}

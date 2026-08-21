@@ -12,7 +12,7 @@ import (
 	"io"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
+	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
 func TestSettleIntegrationRunBlockedByUnsettledWave(t *testing.T) {
@@ -53,7 +53,7 @@ func TestSettleIntegrationRunBlockedByUnsettledWave(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var admitted bool
 			orig := waitIntegrationRunSettledFn
-			waitIntegrationRunSettledFn = func(_ context.Context, _ *preparedWorkflowRun, _ *tasks.Store, _ MergeChecker, _, _ string, _ bool, _, _ io.Writer) error {
+			waitIntegrationRunSettledFn = func(_ context.Context, _ *preparedWorkflowRun, _ *workflowledger.Store, _ MergeChecker, _, _ string, _ bool, _, _ io.Writer) error {
 				admitted = true
 				return nil
 			}
@@ -73,9 +73,9 @@ func TestSettleIntegrationRunBlockedByUnsettledWave(t *testing.T) {
 
 // seedMergedChunks seeds the ledger with the chunk plan and transitions every
 // chunk task to merged so allChunksMerged and allTasksMerged pass.
-func seedMergedChunks(t *testing.T, prepared *preparedWorkflowRun, stackID string, chunks []ChunkPlan) *tasks.Store {
+func seedMergedChunks(t *testing.T, prepared *preparedWorkflowRun, stackID string, chunks []ChunkPlan) *workflowledger.Store {
 	t.Helper()
-	ledger := tasks.NewStore(prepared.store)
+	ledger := workflowledger.NewStore(prepared.store)
 	if err := seedStackLedger(ledger, stackID, chunks); err != nil {
 		t.Fatal(err)
 	}

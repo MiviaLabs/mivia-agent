@@ -1,4 +1,4 @@
-package agenttools_test
+package ledger_test
 
 import (
 	"context"
@@ -6,8 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
-	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
 // deleteEngine records Delete calls so service/tool tests can assert the
@@ -17,30 +16,30 @@ type deleteEngine struct {
 	forces  []bool
 }
 
-func (e *deleteEngine) Start(context.Context, agenttools.StartRequest) (agenttools.StartResult, error) {
-	return agenttools.StartResult{}, nil
+func (e *deleteEngine) Start(context.Context, ledger.StartRequest) (ledger.StartResult, error) {
+	return ledger.StartResult{}, nil
 }
-func (e *deleteEngine) Cancel(context.Context, string) (agenttools.CancelResult, error) {
-	return agenttools.CancelResult{}, nil
+func (e *deleteEngine) Cancel(context.Context, string) (ledger.CancelResult, error) {
+	return ledger.CancelResult{}, nil
 }
-func (e *deleteEngine) Deliver(context.Context, string, bool) (agenttools.DeliverResult, error) {
-	return agenttools.DeliverResult{}, nil
+func (e *deleteEngine) Deliver(context.Context, string, bool) (ledger.DeliverResult, error) {
+	return ledger.DeliverResult{}, nil
 }
-func (e *deleteEngine) Delete(_ context.Context, runID string, force bool) (agenttools.DeleteResult, error) {
+func (e *deleteEngine) Delete(_ context.Context, runID string, force bool) (ledger.DeleteResult, error) {
 	e.deleted = append(e.deleted, runID)
 	e.forces = append(e.forces, force)
-	return agenttools.DeleteResult{RunID: runID, Status: "delivery_pending", Deleted: true}, nil
+	return ledger.DeleteResult{RunID: runID, Status: "delivery_pending", Deleted: true}, nil
 }
 
 // TestDeleteToolExecutes asserts the workflow_delete tool decodes run_id,
 // forwards it to the engine, and encodes the DeleteResult within budget.
 func TestDeleteToolExecutes(t *testing.T) {
 	engine := &deleteEngine{}
-	svc := testService(t, workflowledger.NewMemoryRepository(), engine)
-	tool := findTool(t, svc, agenttools.ToolWorkflowDelete)
+	svc := testService(t, ledger.NewMemoryRepository(), engine)
+	tool := findTool(t, svc, ledger.ToolWorkflowDelete)
 
-	if tool.Name() != agenttools.ToolWorkflowDelete {
-		t.Fatalf("Name = %q, want %q", tool.Name(), agenttools.ToolWorkflowDelete)
+	if tool.Name() != ledger.ToolWorkflowDelete {
+		t.Fatalf("Name = %q, want %q", tool.Name(), ledger.ToolWorkflowDelete)
 	}
 	if tool.Class() != "write" {
 		t.Fatalf("Class = %q, want write", tool.Class())
@@ -80,8 +79,8 @@ func TestDeleteToolExecutes(t *testing.T) {
 // force=true and forwards it to the engine (the crash-recovery override).
 func TestDeleteToolForwardsForce(t *testing.T) {
 	engine := &deleteEngine{}
-	svc := testService(t, workflowledger.NewMemoryRepository(), engine)
-	tool := findTool(t, svc, agenttools.ToolWorkflowDelete)
+	svc := testService(t, ledger.NewMemoryRepository(), engine)
+	tool := findTool(t, svc, ledger.ToolWorkflowDelete)
 
 	params := tool.Parameters()
 	props, _ := params["properties"].(map[string]any)
@@ -103,8 +102,8 @@ func TestDeleteToolForwardsForce(t *testing.T) {
 // and a missing required field both refuse without touching the engine.
 func TestDeleteToolInvalidArguments(t *testing.T) {
 	engine := &deleteEngine{}
-	svc := testService(t, workflowledger.NewMemoryRepository(), engine)
-	tool := findTool(t, svc, agenttools.ToolWorkflowDelete)
+	svc := testService(t, ledger.NewMemoryRepository(), engine)
+	tool := findTool(t, svc, ledger.ToolWorkflowDelete)
 
 	if _, err := tool.Execute(context.Background(), json.RawMessage(`{`)); err == nil {
 		t.Fatal("malformed JSON accepted")
@@ -121,7 +120,7 @@ func TestDeleteToolInvalidArguments(t *testing.T) {
 // engine is consulted.
 func TestDeleteServiceRequiresRunID(t *testing.T) {
 	engine := &deleteEngine{}
-	svc := testService(t, workflowledger.NewMemoryRepository(), engine)
+	svc := testService(t, ledger.NewMemoryRepository(), engine)
 	if _, err := svc.Delete(context.Background(), "", false); err == nil {
 		t.Fatal("empty run_id accepted")
 	}
@@ -136,9 +135,9 @@ func TestDeleteServiceRequiresRunID(t *testing.T) {
 // TestDeleteServiceNoEngine pins the fail-closed refusal when no engine is
 // configured (e.g. a read-only session).
 func TestDeleteServiceNoEngine(t *testing.T) {
-	svc, err := agenttools.NewService(agenttools.ServiceOptions{
-		Repo: func(context.Context) (workflowledger.Repository, func(), error) {
-			return workflowledger.NewMemoryRepository(), func() {}, nil
+	svc, err := ledger.NewService(ledger.ServiceOptions{
+		Repo: func(context.Context) (ledger.Repository, func(), error) {
+			return ledger.NewMemoryRepository(), func() {}, nil
 		},
 	})
 	if err != nil {

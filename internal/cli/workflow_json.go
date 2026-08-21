@@ -6,12 +6,11 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
 // readOnlyWorkflowService opens root's workflow ledger and wraps it as an
-// agenttools.Service with no Engine - only the read tools (list/status)
+// workflowledger.Service with no Engine - only the read tools (list/status)
 // work; any mutating call refuses via the Service's own nil-Engine guard.
 // This is the one-shot machine-readable read path a caller polling on an
 // interval (e.g. mivia-agent-desktop; see workflow_progress_bus.go's doc
@@ -19,12 +18,12 @@ import (
 // is this project's sanctioned way to observe runs from outside the TUI
 // process) uses, never to drive them. The returned close func must be
 // deferred by the caller.
-func readOnlyWorkflowService(root, configPath string) (*agenttools.Service, func(), error) {
+func readOnlyWorkflowService(root, configPath string) (*workflowledger.Service, func(), error) {
 	repo, closeFn, err := openWorkflowReportContext(root, configPath)
 	if err != nil {
 		return nil, nil, err
 	}
-	svc, err := agenttools.NewService(agenttools.ServiceOptions{
+	svc, err := workflowledger.NewService(workflowledger.ServiceOptions{
 		Repo: func(context.Context) (workflowledger.Repository, func(), error) {
 			return repo, func() {}, nil
 		},
@@ -37,7 +36,7 @@ func readOnlyWorkflowService(root, configPath string) (*agenttools.Service, func
 }
 
 // executeWorkflowRunsJSON prints workflow_list_runs' own JSON view
-// (agenttools.ListRunsView) to stdout - the one-shot machine-readable
+// (workflowledger.ListRunsView) to stdout - the one-shot machine-readable
 // counterpart of executeWorkflowRuns' human-readable columns, reusing the
 // exact same ledger reads (and the same active_step/heartbeat fields a
 // desktop-app live run list needs) rather than hand-rolling a second JSON
@@ -56,7 +55,7 @@ func executeWorkflowRunsJSON(root, configPath, statusFilter string, limit int, s
 }
 
 // executeWorkflowStatusJSON prints workflow_status' own JSON view
-// (agenttools.StatusView) to stdout for one run - the one-shot
+// (workflowledger.StatusView) to stdout for one run - the one-shot
 // machine-readable counterpart of executeWorkflowStatus' formatted report,
 // carrying every field a run-detail view needs (steps/attempts, verdicts,
 // heartbeat and its staleness, delivery/approval records) without a second

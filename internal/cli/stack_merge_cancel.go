@@ -3,7 +3,7 @@ package cli
 import (
 	"fmt"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
+	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
 // cancelStackDependents transitions every non-terminal chunk that depends
@@ -16,7 +16,7 @@ import (
 // prevents dependents from being admitted later by the outer drive loop
 // after a terminal failure halted the stack; stacking.StatusCanceled is
 // terminal, so no reconcile pass re-admits or re-marks them.
-func cancelStackDependents(ledger *tasks.Store, stackID string) error {
+func cancelStackDependents(ledger *workflowledger.Store, stackID string) error {
 	byID, err := stackTaskMap(ledger, stackID)
 	if err != nil {
 		return err
@@ -54,7 +54,7 @@ func cancelStackDependents(ledger *tasks.Store, stackID string) error {
 // haltStackForFailedChunk cancels a terminally failed chunk's dependents and
 // builds the halt error that ends the stack drive. note is the reconcile
 // mark-failed note, empty on the resumed-durable-failure path.
-func haltStackForFailedChunk(ledger *tasks.Store, stackID, taskID, note string) error {
+func haltStackForFailedChunk(ledger *workflowledger.Store, stackID, taskID, note string) error {
 	if cancelErr := cancelStackDependents(ledger, stackID); cancelErr != nil {
 		if note == "" {
 			return fmt.Errorf("stack %s halted: chunk %s failed terminally (cancel dependents: %w)", stackID, taskID, cancelErr)

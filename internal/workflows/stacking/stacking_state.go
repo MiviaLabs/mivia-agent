@@ -14,7 +14,6 @@ import (
 	"strings"
 
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
 // SeedStackLedger records the plan artifact and the chunk tasks (D8).
@@ -23,8 +22,8 @@ import (
 // seed, or the recovery sweep must never overwrite or re-create them), and
 // only missing tasks are created. A lost race against a concurrent seed is
 // also a no-op (the other writer won).
-func SeedStackLedger(ctx context.Context, ledger *tasks.Store, stackID string, chunks []ChunkPlan) error {
-	if _, err := ledger.StorePlan(tasks.Plan{ID: stackID, Scope: Scope(stackID), Schema: PlanSchema}); err != nil {
+func SeedStackLedger(ctx context.Context, ledger *workflowledger.Store, stackID string, chunks []ChunkPlan) error {
+	if _, err := ledger.StorePlan(workflowledger.Plan{ID: stackID, Scope: Scope(stackID), Schema: PlanSchema}); err != nil {
 		return err
 	}
 	for _, c := range chunks {
@@ -32,7 +31,7 @@ func SeedStackLedger(ctx context.Context, ledger *tasks.Store, stackID string, c
 			_ = existing // durable state wins; never overwrite a seeded/advanced task
 			continue
 		}
-		task := tasks.Task{
+		task := workflowledger.Task{
 			ID: c.ID, PlanRef: stackID, Scope: Scope(stackID),
 			Status: StatusPlanned, Deps: append([]string(nil), c.DependsOn...),
 		}
@@ -126,12 +125,12 @@ func IntegrationRunInputs(planInputs map[string]string, prBase string) (map[stri
 }
 
 // TaskMap loads every stack task by id for a drive pass.
-func TaskMap(ctx context.Context, ledger *tasks.Store, stackID string) (map[string]tasks.Task, error) {
+func TaskMap(ctx context.Context, ledger *workflowledger.Store, stackID string) (map[string]workflowledger.Task, error) {
 	list, err := ledger.ListTasksByScope(Scope(stackID))
 	if err != nil {
 		return nil, err
 	}
-	out := make(map[string]tasks.Task, len(list))
+	out := make(map[string]workflowledger.Task, len(list))
 	for _, t := range list {
 		out[t.ID] = t
 	}
@@ -139,7 +138,7 @@ func TaskMap(ctx context.Context, ledger *tasks.Store, stackID string) (map[stri
 }
 
 // MergedSet returns the set of chunk ids whose tasks are merged.
-func MergedSet(byID map[string]tasks.Task) map[string]bool {
+func MergedSet(byID map[string]workflowledger.Task) map[string]bool {
 	out := make(map[string]bool, len(byID))
 	for id, t := range byID {
 		if t.Status == StatusMerged {
@@ -160,7 +159,7 @@ func AllChunksMerged(chunks []ChunkPlan, merged map[string]bool) bool {
 }
 
 // TaskReady reports whether a task's dependencies are all merged.
-func TaskReady(t tasks.Task, merged map[string]bool) bool {
+func TaskReady(t workflowledger.Task, merged map[string]bool) bool {
 	for _, dep := range t.Deps {
 		if !merged[dep] {
 			return false

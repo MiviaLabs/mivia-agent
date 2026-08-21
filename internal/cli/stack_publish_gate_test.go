@@ -123,7 +123,7 @@ func TestStackRunAutoPublishAllowedUnknownRun(t *testing.T) {
 }
 
 // TestStackRunAutoPublishAllowedOrdinaryRunWithColonInInvocationKey pins a
-// false-positive regression: agenttools.StartRequest.InvocationKey is a
+// false-positive regression: ledger.StartRequest.InvocationKey is a
 // fully caller-supplied, unconstrained string used for idempotent retries of
 // the ORDINARY (non-stacking) workflow_run tool - nothing requires it to
 // avoid colons. A caller using e.g. "release:v1.2" as their invocation key

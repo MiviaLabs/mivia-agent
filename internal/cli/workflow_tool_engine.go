@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/events"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
@@ -99,12 +98,12 @@ func (e *sessionWorkflowEngine) attachWorkflowProgressBus(ctrl *controller.Linea
 	_ = ctrl.SetProgressSink(sink)
 }
 
-// Start implements agenttools.Engine.
+// Start implements workflowledger.Engine.
 // New runs and resumes use the full CLI admission path only. There is no
 // silent fallback to a scripted local runner: missing provider config fails.
-func (e *sessionWorkflowEngine) Start(ctx context.Context, req agenttools.StartRequest) (agenttools.StartResult, error) {
+func (e *sessionWorkflowEngine) Start(ctx context.Context, req workflowledger.StartRequest) (workflowledger.StartResult, error) {
 	if e == nil {
-		return agenttools.StartResult{}, fmt.Errorf("workflow engine is nil")
+		return workflowledger.StartResult{}, fmt.Errorf("workflow engine is nil")
 	}
 	if req.Resume {
 		return e.resumeCLI(ctx, req)
@@ -112,20 +111,20 @@ func (e *sessionWorkflowEngine) Start(ctx context.Context, req agenttools.StartR
 	return e.startCLI(ctx, req)
 }
 
-func (e *sessionWorkflowEngine) startCLI(ctx context.Context, req agenttools.StartRequest) (agenttools.StartResult, error) {
+func (e *sessionWorkflowEngine) startCLI(ctx context.Context, req workflowledger.StartRequest) (workflowledger.StartResult, error) {
 	rawInputs, err := inputsToRawFlags(req.Inputs)
 	if err != nil {
-		return agenttools.StartResult{}, err
+		return workflowledger.StartResult{}, err
 	}
 	prepared, err := prepareWorkflowRun(req.Workflow, e.root, e.configPath, rawInputs)
 	if err != nil {
-		return agenttools.StartResult{}, err
+		return workflowledger.StartResult{}, err
 	}
 	runID := newCLIWorkflowRunID()
 	if strings.TrimSpace(req.InvocationKey) != "" {
 		keyedID, existing, err := e.keyedRunID(ctx, prepared, req)
 		if err != nil {
-			return agenttools.StartResult{}, err
+			return workflowledger.StartResult{}, err
 		}
 		if existing != nil {
 			return *existing, nil
@@ -146,8 +145,8 @@ func (e *sessionWorkflowEngine) startCLI(ctx context.Context, req agenttools.Sta
 // path except the fresh-start one - it closes the admission store before
 // resuming or returning an existing result, and returns the keyed runID for
 // a fresh start with ownership intact.
-func (e *sessionWorkflowEngine) keyedRunID(ctx context.Context, prepared *preparedWorkflowRun, req agenttools.StartRequest) (string, *agenttools.StartResult, error) {
-	runID := agenttools.InvocationRunID(strings.TrimSpace(req.InvocationKey))
+func (e *sessionWorkflowEngine) keyedRunID(ctx context.Context, prepared *preparedWorkflowRun, req workflowledger.StartRequest) (string, *workflowledger.StartResult, error) {
+	runID := workflowledger.InvocationRunID(strings.TrimSpace(req.InvocationKey))
 	existing, getErr := prepared.repo.GetRun(ctx, runID)
 	if getErr != nil {
 		if errors.Is(getErr, workflowledger.ErrNotFound) {
@@ -179,28 +178,28 @@ func (e *sessionWorkflowEngine) keyedRunID(ctx context.Context, prepared *prepar
 				}
 			}
 			prepared.closeFn()
-			resumed, resumeErr := e.resumeCLI(ctx, agenttools.StartRequest{Resume: true, RunID: runID, Force: req.Force, AllowPublish: req.AllowPublish})
+			resumed, resumeErr := e.resumeCLI(ctx, workflowledger.StartRequest{Resume: true, RunID: runID, Force: req.Force, AllowPublish: req.AllowPublish})
 			return "", &resumed, resumeErr
 		}
 	}
 	prepared.closeFn()
-	return runID, &agenttools.StartResult{RunID: runID, Status: string(existing.Status), Workflow: existing.WorkflowName}, nil
+	return runID, &workflowledger.StartResult{RunID: runID, Status: string(existing.Status), Workflow: existing.WorkflowName}, nil
 }
 
 // buildAndStart performs the CLI admission build for runID and starts the
 // controller, settling resources on every failure path. On success the run
 // launches and prepared/built ownership transfers to the active run.
-func (e *sessionWorkflowEngine) buildAndStart(ctx context.Context, prepared *preparedWorkflowRun, req agenttools.StartRequest, runID string) (agenttools.StartResult, error) {
+func (e *sessionWorkflowEngine) buildAndStart(ctx context.Context, prepared *preparedWorkflowRun, req workflowledger.StartRequest, runID string) (workflowledger.StartResult, error) {
 	finishExecution, err := beginWorkflowExecution(prepared.root, contextStorePath(prepared.root, prepared.res.Subagents), runID)
 	if err != nil {
 		prepared.closeFn()
-		return agenttools.StartResult{}, err
+		return workflowledger.StartResult{}, err
 	}
 	built, err := workflowRunBuild(prepared.root, prepared.res, prepared.store, prepared.repo, prepared.compiled, prepared.refBase, prepared.inputs, prepared.inputSnapshot, prepared.raw, runID, nil, nil, nil, nil, nil)
 	if err != nil {
 		finishExecution()
 		prepared.closeFn()
-		return agenttools.StartResult{}, err
+		return workflowledger.StartResult{}, err
 	}
 	built.Admission.InvocationKey = strings.TrimSpace(req.InvocationKey)
 	if err := workflowRunSetAdmission(built); err != nil {
@@ -208,7 +207,7 @@ func (e *sessionWorkflowEngine) buildAndStart(ctx context.Context, prepared *pre
 		built.Dispatcher.Close()
 		finishExecution()
 		prepared.closeFn()
-		return agenttools.StartResult{}, err
+		return workflowledger.StartResult{}, err
 	}
 	e.attachWorkflowProgressBus(built.Controller)
 	created, err := built.Controller.StartNew(ctx)
@@ -217,7 +216,7 @@ func (e *sessionWorkflowEngine) buildAndStart(ctx context.Context, prepared *pre
 		built.Dispatcher.Close()
 		finishExecution()
 		prepared.closeFn()
-		return agenttools.StartResult{}, err
+		return workflowledger.StartResult{}, err
 	}
 	if !created {
 		existing, getErr := prepared.repo.GetRun(ctx, runID)
@@ -226,9 +225,9 @@ func (e *sessionWorkflowEngine) buildAndStart(ctx context.Context, prepared *pre
 		finishExecution()
 		prepared.closeFn()
 		if getErr != nil {
-			return agenttools.StartResult{}, getErr
+			return workflowledger.StartResult{}, getErr
 		}
-		return agenttools.StartResult{RunID: runID, Status: string(existing.Status), Workflow: existing.WorkflowName}, nil
+		return workflowledger.StartResult{RunID: runID, Status: string(existing.Status), Workflow: existing.WorkflowName}, nil
 	}
 	return e.launchStartedWorkflow(ctx, prepared, built, runID, req.Workflow, finishExecution)
 }
@@ -250,7 +249,7 @@ func invocationInputsMatchRun(repo workflowledger.Repository, runID string, inpu
 	return run.InputDigest == workflowledger.InputDigest(strInputs), nil
 }
 
-func (e *sessionWorkflowEngine) launchStartedWorkflow(ctx context.Context, prepared *preparedWorkflowRun, built workflowControllerBuild, runID, workflow string, finishExecution func()) (agenttools.StartResult, error) {
+func (e *sessionWorkflowEngine) launchStartedWorkflow(ctx context.Context, prepared *preparedWorkflowRun, built workflowControllerBuild, runID, workflow string, finishExecution func()) (workflowledger.StartResult, error) {
 	runCtx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	e.mu.Lock()
@@ -314,9 +313,9 @@ func (e *sessionWorkflowEngine) launchStartedWorkflow(ctx context.Context, prepa
 	}()
 	run, err := prepared.repo.GetRun(ctx, runID)
 	if err != nil {
-		return agenttools.StartResult{}, err
+		return workflowledger.StartResult{}, err
 	}
-	return agenttools.StartResult{RunID: runID, Status: string(run.Status), Workflow: workflow}, nil
+	return workflowledger.StartResult{RunID: runID, Status: string(run.Status), Workflow: workflow}, nil
 }
 
 // stopActive cancels an in-process controller for runID and waits until it

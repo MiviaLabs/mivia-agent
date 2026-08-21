@@ -13,11 +13,9 @@ import (
 	"log"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/stacking"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
 // finishStack admits the final full-suite integration run once every chunk is
@@ -27,7 +25,7 @@ import (
 // publishing (the chunk PRs carry the reviewable work); deliver_plan_run=true
 // leaves it delivery_pending for an explicit workflow_deliver (mirrors the
 // CLI's settleStackPlanRunIfComplete).
-func (e *Engine) finishStack(ctx context.Context, planRun workflowledger.RunSnapshot, compiled *definition.CompiledWorkflow, ledger *tasks.Store, stackID string, planInputs map[string]string, prBase string) {
+func (e *Engine) finishStack(ctx context.Context, planRun workflowledger.RunSnapshot, compiled *definition.CompiledWorkflow, ledger *workflowledger.Store, stackID string, planInputs map[string]string, prBase string) {
 	autoPublish := compiled.Stacking.MergePolicy == "auto"
 	inputs, _ := stacking.IntegrationRunInputs(planInputs, prBase)
 	key, err := stacking.AdmissionKey(stackID, stacking.IntegrationChunkID)
@@ -41,7 +39,7 @@ func (e *Engine) finishStack(ctx context.Context, planRun workflowledger.RunSnap
 		return
 	}
 	if !found {
-		res, serr := e.Start(ctx, agenttools.StartRequest{
+		res, serr := e.Start(ctx, workflowledger.StartRequest{
 			Workflow:      planRun.WorkflowName,
 			Inputs:        inputs,
 			InvocationKey: key,
@@ -190,7 +188,7 @@ func (e *Engine) settlePlanRun(ctx context.Context, compiled *definition.Compile
 // planned/blocked/reopened) never count: a chunk is only waiting because a
 // dependency has not merged, and that dependency is either in flight (counted
 // above) or dead.
-func stackHasProgress(byID map[string]tasks.Task, hasMergeOracle bool) bool {
+func stackHasProgress(byID map[string]workflowledger.Task, hasMergeOracle bool) bool {
 	for _, t := range byID {
 		switch t.Status {
 		case stacking.StatusRunning, stacking.StatusImplemented:
@@ -225,7 +223,7 @@ func isStackInFlightStatus(status string) bool {
 
 // transitionStackTask transitions one chunk task, reporting whether the
 // transition applied.
-func transitionStackTask(ledger *tasks.Store, stackID, id, status string) bool {
+func transitionStackTask(ledger *workflowledger.Store, stackID, id, status string) bool {
 	if err := ledger.TransitionTask(stackID, id, status); err != nil {
 		log.Printf("workflow: drive stack %s: transition %s to %s: %v", stackID, id, status, err)
 		return false
@@ -299,7 +297,7 @@ func (e *Engine) stackDriveCompleted(ctx context.Context, repo workflowledger.Re
 	if e.Store == nil {
 		return false
 	}
-	ledger := tasks.NewStore(e.Store)
+	ledger := workflowledger.NewStore(e.Store)
 	byID, err := stacking.TaskMap(ctx, ledger, runID)
 	if err != nil {
 		return false

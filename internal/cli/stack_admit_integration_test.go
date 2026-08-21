@@ -16,7 +16,6 @@ import (
 	"testing"
 
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
 func TestIntegrationRunInputsAdmitAsStackModeSingle(t *testing.T) {
@@ -125,7 +124,7 @@ func TestClassifyStackPlanRunDeliveryFailedChunk(t *testing.T) {
 	if err != nil || len(chunks) != 2 {
 		t.Fatalf("parse chunks = %v, %v; want 2", chunks, err)
 	}
-	ledger := tasks.NewStore(store)
+	ledger := workflowledger.NewStore(store)
 	if err := seedStackLedger(ledger, runID, chunks); err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +165,7 @@ func TestStackPlanRunFailureReasonCanceledChunk(t *testing.T) {
 	if err != nil || len(chunks) != 2 {
 		t.Fatalf("parse chunks = %v, %v; want 2", chunks, err)
 	}
-	ledger := tasks.NewStore(store)
+	ledger := workflowledger.NewStore(store)
 	if err := seedStackLedger(ledger, runID, chunks); err != nil {
 		t.Fatal(err)
 	}

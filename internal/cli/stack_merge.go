@@ -15,7 +15,6 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
 // waitForChunkMerges polls the reconcile loop until every chunk is merged,
@@ -28,7 +27,7 @@ import (
 // workflowReconcileInterval).
 var stackMergePollInterval = 20 * time.Second
 
-func waitForChunkMerges(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, checker MergeChecker, stackID string, chunks []ChunkPlan, policy string, stdout, stderr io.Writer) error {
+func waitForChunkMerges(ctx context.Context, prepared *preparedWorkflowRun, ledger *workflowledger.Store, checker MergeChecker, stackID string, chunks []ChunkPlan, policy string, stdout, stderr io.Writer) error {
 	ticks := 0
 	for {
 		done, err := chunkMergePollPass(ctx, prepared, ledger, checker, stackID, chunks, policy, stdout, stderr)
@@ -57,7 +56,7 @@ func waitForChunkMerges(ctx context.Context, prepared *preparedWorkflowRun, ledg
 // driveStackToCompletion loop must re-drive), and errStackAwaitsGrant (a
 // durable pause). Split out of waitForChunkMerges to keep that function
 // under the file-size gate's function-length cap.
-func chunkMergePollPass(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, checker MergeChecker, stackID string, chunks []ChunkPlan, policy string, stdout, stderr io.Writer) (done bool, err error) {
+func chunkMergePollPass(ctx context.Context, prepared *preparedWorkflowRun, ledger *workflowledger.Store, checker MergeChecker, stackID string, chunks []ChunkPlan, policy string, stdout, stderr io.Writer) (done bool, err error) {
 	repo := prepared.repo
 	actions, err := reconcileStack(ctx, ledger, repo, checker, stackID, stackMaxChunkAttempts)
 	if err != nil {
@@ -150,7 +149,7 @@ func chunkMergePollPass(ctx context.Context, prepared *preparedWorkflowRun, ledg
 // delivery_pending (a concurrent human grant or an earlier pass already
 // delivered it - reconcile will pick up the fresh status next pass), is not
 // an error: the caller keeps polling.
-func autoDeliverReviewedChunks(ctx context.Context, prepared *preparedWorkflowRun, repo workflowledger.Repository, ledger *tasks.Store, stackID string, stdout, stderr io.Writer) error {
+func autoDeliverReviewedChunks(ctx context.Context, prepared *preparedWorkflowRun, repo workflowledger.Repository, ledger *workflowledger.Store, stackID string, stdout, stderr io.Writer) error {
 	byID, err := stackTaskMap(ledger, stackID)
 	if err != nil {
 		return err
@@ -183,7 +182,7 @@ func autoDeliverReviewedChunks(ctx context.Context, prepared *preparedWorkflowRu
 // blockedByUnmergedDependent. A PR that is not mergeable yet (checks
 // pending/red, review requirements) reports why and is retried on the next
 // poll; reconcile marks it merged the moment git reports the merge landed.
-func autoMergePublishedChunks(ctx context.Context, prepared *preparedWorkflowRun, repo workflowledger.Repository, ledger *tasks.Store, stackID string, stdout, stderr io.Writer) error {
+func autoMergePublishedChunks(ctx context.Context, prepared *preparedWorkflowRun, repo workflowledger.Repository, ledger *workflowledger.Store, stackID string, stdout, stderr io.Writer) error {
 	byID, err := stackTaskMap(ledger, stackID)
 	if err != nil {
 		return err
@@ -220,7 +219,7 @@ func autoMergePublishedChunks(ctx context.Context, prepared *preparedWorkflowRun
 // deadlocked auto-merge on any stack with a genuine dependency: A publishes,
 // this function finds unmerged B depending on A and defers A's merge
 // forever, while B can never be admitted because A never merges.
-func blockedByUnmergedDependent(byID map[string]tasks.Task, chunkID string) (string, bool) {
+func blockedByUnmergedDependent(byID map[string]workflowledger.Task, chunkID string) (string, bool) {
 	for id, t := range byID {
 		if id != chunkID+"-deferred" {
 			continue
@@ -306,7 +305,7 @@ var waitIntegrationRunSettledFn = waitIntegrationRunSettled
 // allowed and report the stack's terminal state. With merge_policy=auto the
 // integration PR is merged and the merge waited out before the stack reports
 // complete.
-func waitIntegrationRunSettled(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, checker MergeChecker, stackID string, policy string, allowPublish bool, stdout, stderr io.Writer) error {
+func waitIntegrationRunSettled(ctx context.Context, prepared *preparedWorkflowRun, ledger *workflowledger.Store, checker MergeChecker, stackID string, policy string, allowPublish bool, stdout, stderr io.Writer) error {
 	run, found, err := stackRunRef(prepared.repo, stackID, stackIntegrationChunkID)
 	if err != nil {
 		return err

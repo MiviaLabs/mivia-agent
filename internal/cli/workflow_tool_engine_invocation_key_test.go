@@ -18,7 +18,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
 // soloWorkflowDefinition is a second single-step workflow for invocation-key
@@ -73,7 +73,7 @@ func newTwoWorkflowFixture(t *testing.T) (root, configPath string) {
 func newGatedKeyFixture(t *testing.T, key string) (root, configPath string) {
 	t.Helper()
 	root, configPath, storePath, raw, run := newGatedApprovalWorkspace(t)
-	run.RunID = agenttools.InvocationRunID(key)
+	run.RunID = ledger.InvocationRunID(key)
 	run.InvocationKey = key
 	seedGatedApprovalHistory(t, storePath, raw, run)
 	if err := os.WriteFile(filepath.Join(root, ".mivia", "workflows", "solo.toml"), []byte(soloWorkflowDefinition), 0o600); err != nil {
@@ -90,7 +90,7 @@ func TestSessionEngineInvocationKeyRejectsDifferentWorkflow(t *testing.T) {
 	e := newSessionWorkflowEngine(root, configPath)
 	key := "caller-request-1"
 
-	first, err := e.Start(context.Background(), agenttools.StartRequest{
+	first, err := e.Start(context.Background(), ledger.StartRequest{
 		Workflow: "two-step", Inputs: map[string]any{"task": "compile"}, InvocationKey: key,
 	})
 	if err != nil {
@@ -98,7 +98,7 @@ func TestSessionEngineInvocationKeyRejectsDifferentWorkflow(t *testing.T) {
 	}
 	waitForSessionEngineIdle(t, e, first.RunID)
 
-	_, err = e.Start(context.Background(), agenttools.StartRequest{
+	_, err = e.Start(context.Background(), ledger.StartRequest{
 		Workflow: "solo", Inputs: map[string]any{"task": "compile"}, InvocationKey: key,
 	})
 	if err == nil {
@@ -117,7 +117,7 @@ func TestSessionEngineInvocationKeyResumeRejectsDifferentWorkflow(t *testing.T) 
 	root, configPath := newGatedKeyFixture(t, key)
 	e := newSessionWorkflowEngine(root, configPath)
 
-	_, err := e.Start(context.Background(), agenttools.StartRequest{
+	_, err := e.Start(context.Background(), ledger.StartRequest{
 		Workflow: "solo", Inputs: map[string]any{"task": "test"}, InvocationKey: key,
 	})
 	if err == nil {
@@ -136,7 +136,7 @@ func TestSessionEngineInvocationKeyResumeRejectsDifferentInputs(t *testing.T) {
 	root, configPath := newGatedKeyFixture(t, key)
 	e := newSessionWorkflowEngine(root, configPath)
 
-	_, err := e.Start(context.Background(), agenttools.StartRequest{
+	_, err := e.Start(context.Background(), ledger.StartRequest{
 		Workflow: "gated", Inputs: map[string]any{"task": "different"}, InvocationKey: key,
 	})
 	if err == nil {

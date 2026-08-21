@@ -16,7 +16,6 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
@@ -261,7 +260,7 @@ func isStackPlanRun(repo workflowledger.Repository, r workflowledger.RunSnapshot
 // openStackLedger opens the workspace, config, workflow store, and the task
 // ledger (D8: the task ledger is the durable stack state). Non-owning: the
 // returned close function closes the shared store.
-func openStackLedger(root, configPath string) (*tasks.Store, workflowledger.Repository, func(), error) {
+func openStackLedger(root, configPath string) (*workflowledger.Store, workflowledger.Repository, func(), error) {
 	if strings.TrimSpace(root) == "" {
 		root = "."
 	}
@@ -280,5 +279,5 @@ func openStackLedger(root, configPath string) (*tasks.Store, workflowledger.Repo
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	return tasks.NewStore(store), repo, closeFn, nil
+	return workflowledger.NewStore(store), repo, closeFn, nil
 }

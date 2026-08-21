@@ -7,7 +7,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
@@ -43,7 +42,7 @@ func sessionEngineConfigPath(root string, res *config.Resolved) string {
 // workspace. res carries the session config identity when available; nil
 // falls back to the workspace project config. Returns nil when the workspace
 // has no .mivia/workflows/ or the service cannot be built.
-func workflowToolService(root string, res *config.Resolved) *agenttools.Service {
+func workflowToolService(root string, res *config.Resolved) *workflowledger.Service {
 	return workflowToolServiceWithBus(root, res, nil, false)
 }
 
@@ -56,8 +55,8 @@ func workflowToolService(root string, res *config.Resolved) *agenttools.Service 
 // passes a non-nil provider. quiet (--quiet) suppresses the session-start
 // recovery sweep's per-run skip/failure logs, the same way it suppresses the
 // other startup notices.
-func workflowToolServiceWithBus(root string, res *config.Resolved, provider func() *events.Bus, quiet bool) *agenttools.Service {
-	if !agenttools.HasWorkflows(root) {
+func workflowToolServiceWithBus(root string, res *config.Resolved, provider func() *events.Bus, quiet bool) *workflowledger.Service {
+	if !workflowledger.HasWorkflows(root) {
 		return nil
 	}
 	cfg := workflowToolSubagentConfig(root, res)
@@ -89,7 +88,7 @@ func workflowToolServiceWithBus(root string, res *config.Resolved, provider func
 	// NewService fails only when the repository factory is nil; this caller
 	// always provides one, so the error is impossible by construction and the
 	// branch would be dead code (diff-coverage gate).
-	svc, _ := agenttools.NewService(agenttools.ServiceOptions{
+	svc, _ := workflowledger.NewService(workflowledger.ServiceOptions{
 		Engine: engine,
 		Repo:   repoFactory,
 	})

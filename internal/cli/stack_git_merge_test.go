@@ -18,7 +18,6 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
 // gitRun runs git in dir and fails the test on error.
@@ -75,12 +74,12 @@ func seedDeliveryPendingRun(t *testing.T, repo workflowledger.Repository, run wo
 }
 
 // seedStackTask stores the stack plan and its first running chunk task.
-func seedStackTask(t *testing.T, ledger *tasks.Store, stackID, chunkID string) {
+func seedStackTask(t *testing.T, ledger *workflowledger.Store, stackID, chunkID string) {
 	t.Helper()
-	if _, err := ledger.StorePlan(tasks.Plan{ID: stackID, Scope: stackScope(stackID), Schema: stackPlanSchema}); err != nil {
+	if _, err := ledger.StorePlan(workflowledger.Plan{ID: stackID, Scope: stackScope(stackID), Schema: stackPlanSchema}); err != nil {
 		t.Fatal(err)
 	}
-	if err := ledger.CreateTask(tasks.Task{ID: chunkID, PlanRef: stackID, Scope: stackScope(stackID), Status: stackStatusRunning}); err != nil {
+	if err := ledger.CreateTask(workflowledger.Task{ID: chunkID, PlanRef: stackID, Scope: stackScope(stackID), Status: stackStatusRunning}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -187,7 +186,7 @@ func TestStackReconcileWithRealGitNeverPushedDeliversNotMerged(t *testing.T) {
 	_, gc := scratchStackRepo(t)
 	repo := workflowledger.NewMemoryRepository()
 	t.Cleanup(func() { _ = repo.Close() })
-	ledger := tasks.NewMemoryStore()
+	ledger := workflowledger.NewMemoryStore()
 	stackID := "stack-never-pushed"
 	seedStackTask(t, ledger, stackID, "a")
 	run := workflowledger.RunSnapshot{
@@ -230,7 +229,7 @@ func TestStackReconcileDeliveryPendingWedgeUnwedges(t *testing.T) {
 	_, gc := scratchStackRepo(t)
 	repo := workflowledger.NewMemoryRepository()
 	t.Cleanup(func() { _ = repo.Close() })
-	ledger := tasks.NewMemoryStore()
+	ledger := workflowledger.NewMemoryStore()
 	stackID := "stack-orphaned-delivery"
 	seedStackTask(t, ledger, stackID, "a")
 	run := workflowledger.RunSnapshot{
@@ -299,7 +298,7 @@ func TestStackReconcileWithRealGitMergedOnRemoteCompletes(t *testing.T) {
 
 	repo := workflowledger.NewMemoryRepository()
 	t.Cleanup(func() { _ = repo.Close() })
-	ledger := tasks.NewMemoryStore()
+	ledger := workflowledger.NewMemoryStore()
 	stackID := "stack-merged"
 	seedStackTask(t, ledger, stackID, "a")
 	run := workflowledger.RunSnapshot{

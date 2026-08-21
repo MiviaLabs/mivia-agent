@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/events"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
 // recordingEventBusHandler collects events published on an events.Bus.
@@ -205,7 +205,7 @@ func TestSessionWorkflowEngineLazyBusProvesRealOrdering(t *testing.T) {
 	bus, h := newRecordingWorkflowBus(t)
 	slot = bus
 
-	result, err := e.Start(context.Background(), agenttools.StartRequest{
+	result, err := e.Start(context.Background(), ledger.StartRequest{
 		Workflow: "two-step",
 		Inputs:   map[string]any{"task": "compile"},
 	})
@@ -237,7 +237,7 @@ func TestSessionWorkflowEngineStartCLIPublishesProgress(t *testing.T) {
 	e := newSessionWorkflowEngine(root, configPath)
 	e.SetEventBus(bus)
 
-	result, err := e.Start(context.Background(), agenttools.StartRequest{
+	result, err := e.Start(context.Background(), ledger.StartRequest{
 		Workflow: "two-step",
 		Inputs:   map[string]any{"task": "compile"},
 		// Auto-delivery must run so the delivery_pending park settles to

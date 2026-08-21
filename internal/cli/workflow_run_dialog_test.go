@@ -9,7 +9,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
@@ -76,32 +75,32 @@ type recordingWorkflowEngine struct {
 	deletes  []string
 }
 
-func (e *recordingWorkflowEngine) Start(_ context.Context, req agenttools.StartRequest) (agenttools.StartResult, error) {
+func (e *recordingWorkflowEngine) Start(_ context.Context, req workflowledger.StartRequest) (workflowledger.StartResult, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.resumes = append(e.resumes, req.RunID)
-	return agenttools.StartResult{RunID: req.RunID, Status: string(workflowledger.RunStatusRunning), Resumed: true}, e.err
+	return workflowledger.StartResult{RunID: req.RunID, Status: string(workflowledger.RunStatusRunning), Resumed: true}, e.err
 }
 
-func (e *recordingWorkflowEngine) Cancel(_ context.Context, runID string) (agenttools.CancelResult, error) {
+func (e *recordingWorkflowEngine) Cancel(_ context.Context, runID string) (workflowledger.CancelResult, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.cancels = append(e.cancels, runID)
-	return agenttools.CancelResult{RunID: runID, Status: string(workflowledger.RunStatusCanceled)}, e.err
+	return workflowledger.CancelResult{RunID: runID, Status: string(workflowledger.RunStatusCanceled)}, e.err
 }
 
-func (e *recordingWorkflowEngine) Deliver(_ context.Context, runID string, allowPublish bool) (agenttools.DeliverResult, error) {
+func (e *recordingWorkflowEngine) Deliver(_ context.Context, runID string, allowPublish bool) (workflowledger.DeliverResult, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.delivers = append(e.delivers, runID)
-	return agenttools.DeliverResult{RunID: runID, Status: string(workflowledger.RunStatusSucceeded), Mode: "draft"}, e.err
+	return workflowledger.DeliverResult{RunID: runID, Status: string(workflowledger.RunStatusSucceeded), Mode: "draft"}, e.err
 }
 
-func (e *recordingWorkflowEngine) Delete(_ context.Context, runID string, _ bool) (agenttools.DeleteResult, error) {
+func (e *recordingWorkflowEngine) Delete(_ context.Context, runID string, _ bool) (workflowledger.DeleteResult, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.deletes = append(e.deletes, runID)
-	return agenttools.DeleteResult{RunID: runID, Status: string(workflowledger.RunStatusCanceled), Deleted: true}, e.err
+	return workflowledger.DeleteResult{RunID: runID, Status: string(workflowledger.RunStatusCanceled), Deleted: true}, e.err
 }
 
 func (e *recordingWorkflowEngine) called() (cancels, resumes, delivers, deletes int) {

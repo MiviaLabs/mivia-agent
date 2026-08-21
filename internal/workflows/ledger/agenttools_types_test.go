@@ -1,4 +1,4 @@
-package agenttools_test
+package ledger_test
 
 import (
 	"encoding/json"
@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
 // TestInvocationRunIDFitsWorktreeNameLimit pins that every invocation run ID
@@ -17,7 +17,7 @@ import (
 // "name is too long" (that rejection contract is pinned by vcs tests).
 func TestInvocationRunIDFitsWorktreeNameLimit(t *testing.T) {
 	for _, k := range []string{"", "request-1", strings.Repeat("x", 4096)} {
-		runID := agenttools.InvocationRunID(k)
+		runID := ledger.InvocationRunID(k)
 		if got, want := len(runID), len("wfr-inv-")+32; got != want {
 			t.Fatalf("InvocationRunID(%q) length = %d, want %d", k, got, want)
 		}
@@ -35,10 +35,10 @@ func TestInvocationRunIDFitsWorktreeNameLimit(t *testing.T) {
 // (plan v3 P2): the default page size for output text and the hard refusal
 // ceiling beyond which the tool must refuse to page an artifact at all.
 func TestInspectPagingConstants(t *testing.T) {
-	if got, want := agenttools.DefaultInspectPageBytes, 64<<10; got != want {
+	if got, want := ledger.DefaultInspectPageBytes, 64<<10; got != want {
 		t.Fatalf("DefaultInspectPageBytes = %d, want %d", got, want)
 	}
-	if got, want := agenttools.MaxPageableBytes, 8<<20; got != want {
+	if got, want := ledger.MaxPageableBytes, 8<<20; got != want {
 		t.Fatalf("MaxPageableBytes = %d, want %d", got, want)
 	}
 }
@@ -46,7 +46,7 @@ func TestInspectPagingConstants(t *testing.T) {
 // TestInspectViewPagingRoundTrip verifies the new paging fields survive an
 // encoding/json round trip alongside the legacy Output payload.
 func TestInspectViewPagingRoundTrip(t *testing.T) {
-	in := agenttools.InspectView{
+	in := ledger.InspectView{
 		RunID:             "wfr-page-1",
 		Step:              "build",
 		Attempt:           2,
@@ -57,7 +57,7 @@ func TestInspectViewPagingRoundTrip(t *testing.T) {
 		OutputRef:         "sha256:out",
 		OutputDigest:      "outdigest",
 		EvidenceSelection: []any{"task"},
-		Transition: &agenttools.TransitionView{
+		Transition: &ledger.TransitionView{
 			Index: 0, ToStep: "deploy", MatchDigest: "md",
 			Selected: map[string]any{"x": "y"},
 		},
@@ -78,7 +78,7 @@ func TestInspectViewPagingRoundTrip(t *testing.T) {
 		}
 	}
 
-	var out agenttools.InspectView
+	var out ledger.InspectView
 	if err := json.Unmarshal(b, &out); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestInspectViewPagingRoundTrip(t *testing.T) {
 // empty page (all-zero paging fields, including an exhausted
 // OutputNextOffset of 0) must marshal without any of the new keys.
 func TestEmptyInspectViewOmitsPagingFields(t *testing.T) {
-	in := agenttools.InspectView{RunID: "wfr-page-1", OutputText: "", OutputBytes: 0, OutputOffset: 0, OutputNextOffset: 0}
+	in := ledger.InspectView{RunID: "wfr-page-1", OutputText: "", OutputBytes: 0, OutputOffset: 0, OutputNextOffset: 0}
 	b, err := json.Marshal(in)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)

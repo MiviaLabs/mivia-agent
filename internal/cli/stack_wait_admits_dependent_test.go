@@ -24,7 +24,6 @@ import (
 	"time"
 
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
 // alwaysMergedChecker reports every branch merged - stackReconcile promotes
@@ -39,15 +38,15 @@ func (alwaysMergedChecker) Merged(context.Context, string, string, string, strin
 func TestWaitForChunkMergesReturnsWhenADependentBecomesAdmissible(t *testing.T) {
 	repo := workflowledger.NewMemoryRepository()
 	t.Cleanup(func() { _ = repo.Close() })
-	ledger := tasks.NewMemoryStore()
+	ledger := workflowledger.NewMemoryStore()
 	stackID := "stack-diamond"
-	if _, err := ledger.StorePlan(tasks.Plan{ID: stackID, Scope: stackScope(stackID), Schema: stackPlanSchema}); err != nil {
+	if _, err := ledger.StorePlan(workflowledger.Plan{ID: stackID, Scope: stackScope(stackID), Schema: stackPlanSchema}); err != nil {
 		t.Fatal(err)
 	}
 	// c1, c2 admitted and about to merge (checker reports merged=true,
 	// reconcile promotes them once a run row shows pushed evidence).
 	for _, id := range []string{"c1", "c2"} {
-		if err := ledger.CreateTask(tasks.Task{ID: id, PlanRef: stackID, Scope: stackScope(stackID), Status: stackStatusRunning}); err != nil {
+		if err := ledger.CreateTask(workflowledger.Task{ID: id, PlanRef: stackID, Scope: stackScope(stackID), Status: stackStatusRunning}); err != nil {
 			t.Fatal(err)
 		}
 		seedDeliveryPendingRun(t, repo, workflowledger.RunSnapshot{RunID: "wfr-" + id, InvocationKey: stackID + ":" + id, WorktreeName: "wt-" + id, BaseCommit: "deadbeef"}, []byte("snapshot"))
@@ -70,13 +69,13 @@ func TestWaitForChunkMergesReturnsWhenADependentBecomesAdmissible(t *testing.T) 
 		// pre-seed its (never-used) follow-up task id so its early-return
 		// fires instead of resolving a real worktree - this test is about
 		// admission readiness, not the deferred-split follow-up path.
-		if err := ledger.CreateTask(tasks.Task{ID: deferredFollowUpChunkID(id), PlanRef: stackID, Scope: stackScope(stackID), Status: stackStatusMerged}); err != nil {
+		if err := ledger.CreateTask(workflowledger.Task{ID: deferredFollowUpChunkID(id), PlanRef: stackID, Scope: stackScope(stackID), Status: stackStatusMerged}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	// c3 depends on both c1 and c2, but was NEVER ADMITTED (still planned) -
 	// exactly nextAdmissionWave's job to pick up once c1/c2 merge.
-	if err := ledger.CreateTask(tasks.Task{ID: "c3", PlanRef: stackID, Scope: stackScope(stackID), Status: stackStatusPlanned, Deps: []string{"c1", "c2"}}); err != nil {
+	if err := ledger.CreateTask(workflowledger.Task{ID: "c3", PlanRef: stackID, Scope: stackScope(stackID), Status: stackStatusPlanned, Deps: []string{"c1", "c2"}}); err != nil {
 		t.Fatal(err)
 	}
 	chunks := []ChunkPlan{{ID: "c1"}, {ID: "c2"}, {ID: "c3", DependsOn: []string{"c1", "c2"}}}

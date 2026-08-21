@@ -1,4 +1,4 @@
-package agenttools
+package ledger
 
 import (
 	"context"
@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
-	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
 // Service is the in-process host for the eight workflow tools.
@@ -86,7 +85,7 @@ func (s *Service) getEngine() Engine {
 	return s.engine
 }
 
-func (s *Service) openRepo(ctx context.Context) (workflowledger.Repository, func(), error) {
+func (s *Service) openRepo(ctx context.Context) (Repository, func(), error) {
 	if s == nil || s.repo == nil {
 		return nil, nil, fmt.Errorf("workflow tool service has no repository factory")
 	}
@@ -185,7 +184,7 @@ func (s *Service) Events(ctx context.Context, runID string, limit, offset int) (
 	defer closeFn()
 	// Confirm the run exists before listing.
 	if _, err := repo.GetRun(ctx, runID); err != nil {
-		if errors.Is(err, workflowledger.ErrNotFound) {
+		if errors.Is(err, ErrNotFound) {
 			return EventsPage{}, fmt.Errorf("workflow run %q not found", runID)
 		}
 		return EventsPage{}, err
@@ -234,7 +233,7 @@ func (s *Service) Inspect(ctx context.Context, runID, step string, attemptNo, of
 	}
 	defer closeFn()
 	if _, err := repo.GetRun(ctx, runID); err != nil {
-		if errors.Is(err, workflowledger.ErrNotFound) {
+		if errors.Is(err, ErrNotFound) {
 			return InspectView{}, fmt.Errorf("workflow run %q not found", runID)
 		}
 		return InspectView{}, err
@@ -259,7 +258,7 @@ func (s *Service) Inspect(ctx context.Context, runID, step string, attemptNo, of
 			return InspectView{}, fmt.Errorf("workflow run %q not found", runID)
 		}
 	}
-	var found *workflowledger.StepAttempt
+	var found *StepAttempt
 	for i := range attempts {
 		if attempts[i].StepID == step && attempts[i].AttemptNo == attemptNo {
 			found = &attempts[i]
@@ -281,7 +280,7 @@ func (s *Service) Inspect(ctx context.Context, runID, step string, attemptNo, of
 // result budget, halve the page once and rebuild it before returning. Bounded
 // (at most one shrink, never fail-closed on framing); the tool's encodeJSON
 // remains the outer fail-closed guard.
-func (s *Service) inspectWithinBudget(ctx context.Context, repo workflowledger.Repository, runID string, attempt workflowledger.StepAttempt, offset, limit int) (InspectView, error) {
+func (s *Service) inspectWithinBudget(ctx context.Context, repo Repository, runID string, attempt StepAttempt, offset, limit int) (InspectView, error) {
 	view, err := buildInspectView(ctx, repo, runID, attempt, offset, limit)
 	if err != nil {
 		return InspectView{}, err
@@ -306,16 +305,16 @@ func (s *Service) inspectWithinBudget(ctx context.Context, repo workflowledger.R
 // mirrors the ledger's RunStatus values (and the CLI twin's
 // workflowRunStatuses in internal/cli/workflow_runs.go); an unknown value is
 // rejected rather than silently filtering to zero rows.
-var workflowRunStatuses = map[string]workflowledger.RunStatus{
-	string(workflowledger.RunStatusPending):         workflowledger.RunStatusPending,
-	string(workflowledger.RunStatusRunning):         workflowledger.RunStatusRunning,
-	string(workflowledger.RunStatusWaitingApproval): workflowledger.RunStatusWaitingApproval,
-	string(workflowledger.RunStatusDeliveryPending): workflowledger.RunStatusDeliveryPending,
-	string(workflowledger.RunStatusSucceeded):       workflowledger.RunStatusSucceeded,
-	string(workflowledger.RunStatusFailed):          workflowledger.RunStatusFailed,
-	string(workflowledger.RunStatusCanceled):        workflowledger.RunStatusCanceled,
-	string(workflowledger.RunStatusTimedOut):        workflowledger.RunStatusTimedOut,
-	string(workflowledger.RunStatusDeliveryFailed):  workflowledger.RunStatusDeliveryFailed,
+var workflowRunStatuses = map[string]RunStatus{
+	string(RunStatusPending):         RunStatusPending,
+	string(RunStatusRunning):         RunStatusRunning,
+	string(RunStatusWaitingApproval): RunStatusWaitingApproval,
+	string(RunStatusDeliveryPending): RunStatusDeliveryPending,
+	string(RunStatusSucceeded):       RunStatusSucceeded,
+	string(RunStatusFailed):          RunStatusFailed,
+	string(RunStatusCanceled):        RunStatusCanceled,
+	string(RunStatusTimedOut):        RunStatusTimedOut,
+	string(RunStatusDeliveryFailed):  RunStatusDeliveryFailed,
 }
 
 // workflowRunStatusNames returns the accepted status filter values, sorted,
@@ -337,13 +336,13 @@ func (s *Service) ListRuns(ctx context.Context, statusFilter string, limit, offs
 	if limit == 0 {
 		limit = DefaultListRunsPageSize
 	}
-	var statuses []workflowledger.RunStatus
+	var statuses []RunStatus
 	if trimmed := strings.TrimSpace(statusFilter); trimmed != "" {
 		status, ok := workflowRunStatuses[trimmed]
 		if !ok {
 			return ListRunsView{}, fmt.Errorf("unknown status %q (want one of %s)", trimmed, workflowRunStatusNames())
 		}
-		statuses = []workflowledger.RunStatus{status}
+		statuses = []RunStatus{status}
 	}
 	repo, closeFn, err := s.openRepo(ctx)
 	if err != nil {
@@ -378,10 +377,10 @@ func (s *Service) ListRuns(ctx context.Context, statusFilter string, limit, offs
 		if !r.StartedAt.IsZero() {
 			item.Age = now.UTC().Sub(r.StartedAt.UTC()).Truncate(time.Second).String()
 		}
-		if !workflowledger.IsTerminalRunStatus(r.Status) && r.ActiveStepID != "" {
+		if !IsTerminalRunStatus(r.Status) && r.ActiveStepID != "" {
 			item.LastHeartbeatAt = formatTime(activeStepHeartbeat(ctx, repo, r.RunID, r.ActiveStepID))
 		}
-		if r.Status == workflowledger.RunStatusDeliveryPending {
+		if r.Status == RunStatusDeliveryPending {
 			if _, at, ok, err := repo.GetRunClaim(ctx, r.RunID); err == nil && ok {
 				item.DeliveryClaimHeld = true
 				item.DeliveryClaimAt = formatTime(at)
@@ -396,7 +395,7 @@ func (s *Service) ListRuns(ctx context.Context, statusFilter string, limit, offs
 // active step, or the zero time when the run has no attempts on that step
 // yet or the ledger read fails - a list view degrades to "no heartbeat
 // column" rather than failing the whole listing over one run's read.
-func activeStepHeartbeat(ctx context.Context, repo workflowledger.Repository, runID, activeStepID string) time.Time {
+func activeStepHeartbeat(ctx context.Context, repo Repository, runID, activeStepID string) time.Time {
 	attempts, err := repo.ListStepAttempts(ctx, runID)
 	if err != nil {
 		return time.Time{}

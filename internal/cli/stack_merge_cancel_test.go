@@ -16,22 +16,22 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
+	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
 // newCancelTestLedger builds a fresh in-memory ledger with one stored plan
-// for stackID, ready for tasks.Task seeding.
-func newCancelTestLedger(t *testing.T, stackID string) *tasks.Store {
+// for stackID, ready for workflowledger.Task seeding.
+func newCancelTestLedger(t *testing.T, stackID string) *workflowledger.Store {
 	t.Helper()
-	ledger := tasks.NewMemoryStore()
-	if _, err := ledger.StorePlan(tasks.Plan{ID: stackID, Scope: stackScope(stackID), Schema: stackPlanSchema}); err != nil {
+	ledger := workflowledger.NewMemoryStore()
+	if _, err := ledger.StorePlan(workflowledger.Plan{ID: stackID, Scope: stackScope(stackID), Schema: stackPlanSchema}); err != nil {
 		t.Fatal(err)
 	}
 	return ledger
 }
 
 // createCancelTestTask seeds one task under stackID's plan and scope.
-func createCancelTestTask(t *testing.T, ledger *tasks.Store, stackID string, task tasks.Task) {
+func createCancelTestTask(t *testing.T, ledger *workflowledger.Store, stackID string, task workflowledger.Task) {
 	t.Helper()
 	task.PlanRef = stackID
 	task.Scope = stackScope(stackID)
@@ -46,9 +46,9 @@ func createCancelTestTask(t *testing.T, ledger *tasks.Store, stackID string, tas
 func TestCancelStackDependentsDiamondCancelsBothBranches(t *testing.T) {
 	stackID := "stack-cancel-diamond"
 	ledger := newCancelTestLedger(t, stackID)
-	createCancelTestTask(t, ledger, stackID, tasks.Task{ID: "a", Status: stackStatusFailed})
-	createCancelTestTask(t, ledger, stackID, tasks.Task{ID: "b", Status: stackStatusPlanned, Deps: []string{"a"}})
-	createCancelTestTask(t, ledger, stackID, tasks.Task{ID: "c", Status: stackStatusPlanned, Deps: []string{"a"}})
+	createCancelTestTask(t, ledger, stackID, workflowledger.Task{ID: "a", Status: stackStatusFailed})
+	createCancelTestTask(t, ledger, stackID, workflowledger.Task{ID: "b", Status: stackStatusPlanned, Deps: []string{"a"}})
+	createCancelTestTask(t, ledger, stackID, workflowledger.Task{ID: "c", Status: stackStatusPlanned, Deps: []string{"a"}})
 
 	if err := cancelStackDependents(ledger, stackID); err != nil {
 		t.Fatalf("cancelStackDependents() error = %v", err)
@@ -66,9 +66,9 @@ func TestCancelStackDependentsDiamondCancelsBothBranches(t *testing.T) {
 func TestCancelStackDependentsTransitiveChainCancelsAll(t *testing.T) {
 	stackID := "stack-cancel-transitive"
 	ledger := newCancelTestLedger(t, stackID)
-	createCancelTestTask(t, ledger, stackID, tasks.Task{ID: "a", Status: stackStatusFailed})
-	createCancelTestTask(t, ledger, stackID, tasks.Task{ID: "b", Status: stackStatusPlanned, Deps: []string{"a"}})
-	createCancelTestTask(t, ledger, stackID, tasks.Task{ID: "c", Status: stackStatusPlanned, Deps: []string{"b"}})
+	createCancelTestTask(t, ledger, stackID, workflowledger.Task{ID: "a", Status: stackStatusFailed})
+	createCancelTestTask(t, ledger, stackID, workflowledger.Task{ID: "b", Status: stackStatusPlanned, Deps: []string{"a"}})
+	createCancelTestTask(t, ledger, stackID, workflowledger.Task{ID: "c", Status: stackStatusPlanned, Deps: []string{"b"}})
 
 	if err := cancelStackDependents(ledger, stackID); err != nil {
 		t.Fatalf("cancelStackDependents() error = %v", err)
@@ -86,8 +86,8 @@ func TestCancelStackDependentsTransitiveChainCancelsAll(t *testing.T) {
 func TestCancelStackDependentsSkipsDanglingDependency(t *testing.T) {
 	stackID := "stack-cancel-dangling"
 	ledger := newCancelTestLedger(t, stackID)
-	createCancelTestTask(t, ledger, stackID, tasks.Task{ID: "a", Status: stackStatusFailed})
-	createCancelTestTask(t, ledger, stackID, tasks.Task{ID: "b", Status: stackStatusPlanned, Deps: []string{"missing", "a"}})
+	createCancelTestTask(t, ledger, stackID, workflowledger.Task{ID: "a", Status: stackStatusFailed})
+	createCancelTestTask(t, ledger, stackID, workflowledger.Task{ID: "b", Status: stackStatusPlanned, Deps: []string{"missing", "a"}})
 
 	if err := cancelStackDependents(ledger, stackID); err != nil {
 		t.Fatalf("cancelStackDependents() error = %v", err)
@@ -125,7 +125,7 @@ func (f *failingChangesStore) Changes(ctx context.Context, afterCursor uint64) (
 // TestCancelStackDependentsPropagatesTaskMapError pins that a stackTaskMap
 // read failure propagates as-is instead of being swallowed.
 func TestCancelStackDependentsPropagatesTaskMapError(t *testing.T) {
-	ledger := tasks.NewStore(&failingChangesStore{Memory: storage.NewMemory()})
+	ledger := workflowledger.NewStore(&failingChangesStore{Memory: storage.NewMemory()})
 	err := cancelStackDependents(ledger, "stack-cancel-taskmap-error")
 	if err == nil || !strings.Contains(err.Error(), "injected changes failure") {
 		t.Fatalf("cancelStackDependents() error = %v, want it to propagate stackTaskMap's read failure", err)
@@ -158,12 +158,12 @@ func (f *failingTransitionStore) AppendBatch(ctx context.Context, events []stora
 func TestCancelStackDependentsPropagatesTransitionFailure(t *testing.T) {
 	stackID := "stack-cancel-transition-fail"
 	backing := &failingTransitionStore{Memory: storage.NewMemory(), failSubstr: `"to_status":"canceled"`}
-	ledger := tasks.NewStore(backing)
-	if _, err := ledger.StorePlan(tasks.Plan{ID: stackID, Scope: stackScope(stackID), Schema: stackPlanSchema}); err != nil {
+	ledger := workflowledger.NewStore(backing)
+	if _, err := ledger.StorePlan(workflowledger.Plan{ID: stackID, Scope: stackScope(stackID), Schema: stackPlanSchema}); err != nil {
 		t.Fatal(err)
 	}
-	createCancelTestTask(t, ledger, stackID, tasks.Task{ID: "a", Status: stackStatusFailed})
-	createCancelTestTask(t, ledger, stackID, tasks.Task{ID: "b", Status: stackStatusPlanned, Deps: []string{"a"}})
+	createCancelTestTask(t, ledger, stackID, workflowledger.Task{ID: "a", Status: stackStatusFailed})
+	createCancelTestTask(t, ledger, stackID, workflowledger.Task{ID: "b", Status: stackStatusPlanned, Deps: []string{"a"}})
 
 	err := cancelStackDependents(ledger, stackID)
 	if err == nil || !strings.Contains(err.Error(), "cancel dependent chunk b") {
@@ -178,12 +178,12 @@ func TestCancelStackDependentsPropagatesTransitionFailure(t *testing.T) {
 func TestHaltStackForFailedChunkWrapsCancelError(t *testing.T) {
 	stackID := "stack-halt-cancel-fail"
 	backing := &failingTransitionStore{Memory: storage.NewMemory(), failSubstr: `"to_status":"canceled"`}
-	ledger := tasks.NewStore(backing)
-	if _, err := ledger.StorePlan(tasks.Plan{ID: stackID, Scope: stackScope(stackID), Schema: stackPlanSchema}); err != nil {
+	ledger := workflowledger.NewStore(backing)
+	if _, err := ledger.StorePlan(workflowledger.Plan{ID: stackID, Scope: stackScope(stackID), Schema: stackPlanSchema}); err != nil {
 		t.Fatal(err)
 	}
-	createCancelTestTask(t, ledger, stackID, tasks.Task{ID: "a", Status: stackStatusFailed})
-	createCancelTestTask(t, ledger, stackID, tasks.Task{ID: "b", Status: stackStatusPlanned, Deps: []string{"a"}})
+	createCancelTestTask(t, ledger, stackID, workflowledger.Task{ID: "a", Status: stackStatusFailed})
+	createCancelTestTask(t, ledger, stackID, workflowledger.Task{ID: "b", Status: stackStatusPlanned, Deps: []string{"a"}})
 
 	withNote := haltStackForFailedChunk(ledger, stackID, "a", "run failed after 3 attempts")
 	if withNote == nil || !strings.Contains(withNote.Error(), "run failed after 3 attempts") || !strings.Contains(withNote.Error(), "cancel dependents") {

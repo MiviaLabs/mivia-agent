@@ -16,7 +16,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
 // TestChunkFailureHaltsBeforeAutoMerge pins the ordering guard: a durably
@@ -26,7 +25,7 @@ import (
 func TestChunkFailureHaltsBeforeAutoMerge(t *testing.T) {
 	repo := workflowledger.NewMemoryRepository()
 	t.Cleanup(func() { _ = repo.Close() })
-	ledger := tasks.NewMemoryStore()
+	ledger := workflowledger.NewMemoryStore()
 
 	stackID := "stack-fail-halts"
 	seedStackTask(t, ledger, stackID, "c1")
@@ -34,7 +33,7 @@ func TestChunkFailureHaltsBeforeAutoMerge(t *testing.T) {
 		t.Fatal(err)
 	}
 	// c2 is already durably failed.
-	if err := ledger.CreateTask(tasks.Task{ID: "c2", PlanRef: stackID, Scope: stackScope(stackID), Status: stackStatusFailed}); err != nil {
+	if err := ledger.CreateTask(workflowledger.Task{ID: "c2", PlanRef: stackID, Scope: stackScope(stackID), Status: stackStatusFailed}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -103,14 +102,14 @@ func TestChunkFailureHaltsBeforeAutoMerge(t *testing.T) {
 func TestChunkFailureCancelsDependents(t *testing.T) {
 	repo := workflowledger.NewMemoryRepository()
 	t.Cleanup(func() { _ = repo.Close() })
-	ledger := tasks.NewMemoryStore()
+	ledger := workflowledger.NewMemoryStore()
 
 	stackID := "stack-fail-cancels"
 	seedStackTask(t, ledger, stackID, "c1")
 	if err := ledger.TransitionTask(stackID, "c1", stackStatusFailed); err != nil {
 		t.Fatal(err)
 	}
-	if err := ledger.CreateTask(tasks.Task{
+	if err := ledger.CreateTask(workflowledger.Task{
 		ID: "c2", PlanRef: stackID, Scope: stackScope(stackID),
 		Status: stackStatusPlanned, Deps: []string{"c1"},
 	}); err != nil {
@@ -149,7 +148,7 @@ func TestChunkFailureCancelsDependents(t *testing.T) {
 func TestChunkMergePollPassFreshFailureHaltsBeforeAutoMerge(t *testing.T) {
 	repo := workflowledger.NewMemoryRepository()
 	t.Cleanup(func() { _ = repo.Close() })
-	ledger := tasks.NewMemoryStore()
+	ledger := workflowledger.NewMemoryStore()
 
 	stackID := "stack-fresh-fail-halts"
 	seedStackTask(t, ledger, stackID, "c1")
@@ -207,7 +206,7 @@ func TestChunkMergePollPassFreshFailureHaltsBeforeAutoMerge(t *testing.T) {
 func TestChunkMergePollPassAutoPolicyRunsAutoDeliverAndMerge(t *testing.T) {
 	repo := workflowledger.NewMemoryRepository()
 	t.Cleanup(func() { _ = repo.Close() })
-	ledger := tasks.NewMemoryStore()
+	ledger := workflowledger.NewMemoryStore()
 
 	stackID := "stack-auto-policy-clean-pass"
 	seedStackTask(t, ledger, stackID, "c1")
@@ -233,7 +232,7 @@ func TestChunkMergePollPassAutoPolicyRunsAutoDeliverAndMerge(t *testing.T) {
 func TestChunkMergePollPassPropagatesAutoDeliverError(t *testing.T) {
 	repo := workflowledger.NewMemoryRepository()
 	t.Cleanup(func() { _ = repo.Close() })
-	ledger := tasks.NewMemoryStore()
+	ledger := workflowledger.NewMemoryStore()
 
 	stackID := "stack-auto-deliver-err"
 	seedStackTask(t, ledger, stackID, "c1")
@@ -268,7 +267,7 @@ func TestChunkMergePollPassPropagatesAutoDeliverError(t *testing.T) {
 func TestChunkMergePollPassPropagatesAutoMergeError(t *testing.T) {
 	repo := workflowledger.NewMemoryRepository()
 	t.Cleanup(func() { _ = repo.Close() })
-	ledger := tasks.NewMemoryStore()
+	ledger := workflowledger.NewMemoryStore()
 
 	stackID := "stack-auto-merge-err"
 	seedStackTask(t, ledger, stackID, "c1")

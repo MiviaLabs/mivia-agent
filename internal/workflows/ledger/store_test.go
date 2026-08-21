@@ -1,26 +1,14 @@
-package tasks
+package ledger
 
 import (
-	"errors"
 	"reflect"
 	"sync"
 	"testing"
 	"time"
 )
 
-// fixedClock is the deterministic time source for tests that assert exact
-// journal timestamps.
-var fixedClock = time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
-
-// requireErr asserts err equals want (via errors.Is, so wrapped sentinels
-// count). want == nil asserts success. Shared by every test file in this
-// package.
-func requireErr(t *testing.T, err, want error, msg string) {
-	t.Helper()
-	if !errors.Is(err, want) {
-		t.Fatalf("%s: err = %v, want %v", msg, err, want)
-	}
-}
+// fixedClock and requireErr are declared once for the package, in
+// storage_test.go; every test file in this package shares them.
 
 func TestStorePlanAndReadBack(t *testing.T) {
 	s := NewMemoryStore()
@@ -68,7 +56,7 @@ func TestStorePlanDuplicate(t *testing.T) {
 	other := plan
 	other.Schema = "other-schema-v1"
 	_, err = s.StorePlan(other)
-	requireErr(t, err, ErrDuplicate, "different content same ID")
+	requireErr(t, err, ErrTaskDuplicate, "different content same ID")
 }
 
 func TestBindPlanToScope(t *testing.T) {
@@ -165,7 +153,7 @@ func TestCreateTaskDuplicate(t *testing.T) {
 	// Same ID under the same plan with different content is a duplicate.
 	other := task
 	other.Status = "queued"
-	requireErr(t, s.CreateTask(other), ErrDuplicate, "different content same ID")
+	requireErr(t, s.CreateTask(other), ErrTaskDuplicate, "different content same ID")
 }
 
 // TestStoreBindQueryEachScopeType covers the locked scope vocabulary:

@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -29,7 +28,7 @@ func TestIntegrationRunObserveInspect(t *testing.T) {
 	assertListed(t, svc, started.RunID)
 }
 
-func scriptedTwoStep(t *testing.T) (*localengine.Engine, *agenttools.Service) {
+func scriptedTwoStep(t *testing.T) (*localengine.Engine, *workflowledger.Service) {
 	t.Helper()
 	root := writeTwoStepWorkspace(t)
 	repo := workflowledger.NewMemoryRepository()
@@ -48,14 +47,14 @@ func scriptedTwoStep(t *testing.T) (*localengine.Engine, *agenttools.Service) {
 	return engine, mustService(t, engine, repo)
 }
 
-func startTwoStep(t *testing.T, svc *agenttools.Service) agenttools.StartResult {
+func startTwoStep(t *testing.T, svc *workflowledger.Service) workflowledger.StartResult {
 	t.Helper()
-	out, err := mustTool(t, svc, agenttools.ToolWorkflowRun).Execute(
+	out, err := mustTool(t, svc, workflowledger.ToolWorkflowRun).Execute(
 		context.Background(), json.RawMessage(`{"workflow":"two-step","inputs":{"task":"build"}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var started agenttools.StartResult
+	var started workflowledger.StartResult
 	if err := json.Unmarshal([]byte(out), &started); err != nil {
 		t.Fatal(err)
 	}
@@ -74,14 +73,14 @@ func waitRun(t *testing.T, engine *localengine.Engine, runID string) {
 	}
 }
 
-func assertSucceededStatus(t *testing.T, svc *agenttools.Service, runID string) {
+func assertSucceededStatus(t *testing.T, svc *workflowledger.Service, runID string) {
 	t.Helper()
-	statusOut, err := mustTool(t, svc, agenttools.ToolWorkflowStatus).Execute(
+	statusOut, err := mustTool(t, svc, workflowledger.ToolWorkflowStatus).Execute(
 		context.Background(), json.RawMessage(fmt.Sprintf(`{"run_id":%q}`, runID)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var status agenttools.StatusView
+	var status workflowledger.StatusView
 	if err := json.Unmarshal([]byte(statusOut), &status); err != nil {
 		t.Fatal(err)
 	}
@@ -95,14 +94,14 @@ func assertSucceededStatus(t *testing.T, svc *agenttools.Service, runID string) 
 	}
 }
 
-func assertEventsPresent(t *testing.T, svc *agenttools.Service, runID string) {
+func assertEventsPresent(t *testing.T, svc *workflowledger.Service, runID string) {
 	t.Helper()
-	evOut, err := mustTool(t, svc, agenttools.ToolWorkflowEvents).Execute(
+	evOut, err := mustTool(t, svc, workflowledger.ToolWorkflowEvents).Execute(
 		context.Background(), json.RawMessage(fmt.Sprintf(`{"run_id":%q,"limit":50}`, runID)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var events agenttools.EventsPage
+	var events workflowledger.EventsPage
 	if err := json.Unmarshal([]byte(evOut), &events); err != nil {
 		t.Fatal(err)
 	}
@@ -111,14 +110,14 @@ func assertEventsPresent(t *testing.T, svc *agenttools.Service, runID string) {
 	}
 }
 
-func assertInspectDetail(t *testing.T, svc *agenttools.Service, runID string) {
+func assertInspectDetail(t *testing.T, svc *workflowledger.Service, runID string) {
 	t.Helper()
-	insOut, err := mustTool(t, svc, agenttools.ToolWorkflowInspect).Execute(
+	insOut, err := mustTool(t, svc, workflowledger.ToolWorkflowInspect).Execute(
 		context.Background(), json.RawMessage(fmt.Sprintf(`{"run_id":%q,"step":"one","attempt":1}`, runID)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var inspect agenttools.InspectView
+	var inspect workflowledger.InspectView
 	if err := json.Unmarshal([]byte(insOut), &inspect); err != nil {
 		t.Fatal(err)
 	}
@@ -130,14 +129,14 @@ func assertInspectDetail(t *testing.T, svc *agenttools.Service, runID string) {
 	}
 }
 
-func assertListed(t *testing.T, svc *agenttools.Service, runID string) {
+func assertListed(t *testing.T, svc *workflowledger.Service, runID string) {
 	t.Helper()
-	listOut, err := mustTool(t, svc, agenttools.ToolWorkflowListRuns).Execute(
+	listOut, err := mustTool(t, svc, workflowledger.ToolWorkflowListRuns).Execute(
 		context.Background(), json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var list agenttools.ListRunsView
+	var list workflowledger.ListRunsView
 	if err := json.Unmarshal([]byte(listOut), &list); err != nil {
 		t.Fatal(err)
 	}
@@ -164,8 +163,8 @@ func TestIntegrationParallelRunsIsolation(t *testing.T) {
 		},
 	}
 	svc := mustService(t, engine, repo)
-	runTool := mustTool(t, svc, agenttools.ToolWorkflowRun)
-	statusTool := mustTool(t, svc, agenttools.ToolWorkflowStatus)
+	runTool := mustTool(t, svc, workflowledger.ToolWorkflowRun)
+	statusTool := mustTool(t, svc, workflowledger.ToolWorkflowStatus)
 
 	const n = 3
 	var wg sync.WaitGroup
@@ -180,7 +179,7 @@ func TestIntegrationParallelRunsIsolation(t *testing.T) {
 				errs[i] = err
 				return
 			}
-			var started agenttools.StartResult
+			var started workflowledger.StartResult
 			if err := json.Unmarshal([]byte(out), &started); err != nil {
 				errs[i] = err
 				return
@@ -211,7 +210,7 @@ func TestIntegrationParallelRunsIsolation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var status agenttools.StatusView
+		var status workflowledger.StatusView
 		if err := json.Unmarshal([]byte(out), &status); err != nil {
 			t.Fatal(err)
 		}
@@ -249,11 +248,11 @@ func TestIntegrationInvocationKeyAdmitsOneRunAcrossEngines(t *testing.T) {
 		}}
 	}
 	engines := []*localengine.Engine{newEngine(), newEngine()}
-	results := make(chan agenttools.StartResult, len(engines))
+	results := make(chan workflowledger.StartResult, len(engines))
 	errs := make(chan error, len(engines))
 	for _, engine := range engines {
 		go func(engine *localengine.Engine) {
-			result, err := engine.Start(context.Background(), agenttools.StartRequest{
+			result, err := engine.Start(context.Background(), workflowledger.StartRequest{
 				Workflow: "two-step", Inputs: map[string]any{"task": "same"}, InvocationKey: "same-request",
 			})
 			results <- result
@@ -263,7 +262,7 @@ func TestIntegrationInvocationKeyAdmitsOneRunAcrossEngines(t *testing.T) {
 	<-ready
 	<-ready
 	close(release)
-	var first agenttools.StartResult
+	var first workflowledger.StartResult
 	for range engines {
 		result := <-results
 		if err := <-errs; err != nil {
@@ -306,12 +305,12 @@ func TestIntegrationCancelSettlesRun(t *testing.T) {
 		},
 	}
 	svc := mustService(t, engine, repo)
-	out, err := mustTool(t, svc, agenttools.ToolWorkflowRun).Execute(
+	out, err := mustTool(t, svc, workflowledger.ToolWorkflowRun).Execute(
 		context.Background(), json.RawMessage(`{"workflow":"two-step","inputs":{"task":"x"}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var started agenttools.StartResult
+	var started workflowledger.StartResult
 	if err := json.Unmarshal([]byte(out), &started); err != nil {
 		t.Fatal(err)
 	}
@@ -322,20 +321,20 @@ func TestIntegrationCancelSettlesRun(t *testing.T) {
 	}
 	// Cancel while the step is blocked. The runner watches ctx.Done, so the
 	// controller exits without closing block first.
-	cOut, err := mustTool(t, svc, agenttools.ToolWorkflowCancel).Execute(
+	cOut, err := mustTool(t, svc, workflowledger.ToolWorkflowCancel).Execute(
 		context.Background(), json.RawMessage(fmt.Sprintf(`{"run_id":%q}`, started.RunID)))
 	close(block)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var canceled agenttools.CancelResult
+	var canceled workflowledger.CancelResult
 	if err := json.Unmarshal([]byte(cOut), &canceled); err != nil {
 		t.Fatal(err)
 	}
 	if canceled.Status != "canceled" && canceled.Status != "succeeded" {
 		t.Fatalf("cancel status = %q", canceled.Status)
 	}
-	if _, err := mustTool(t, svc, agenttools.ToolWorkflowCancel).Execute(
+	if _, err := mustTool(t, svc, workflowledger.ToolWorkflowCancel).Execute(
 		context.Background(), json.RawMessage(fmt.Sprintf(`{"run_id":%q}`, started.RunID))); err != nil {
 		t.Fatalf("second cancel: %v", err)
 	}
@@ -357,12 +356,12 @@ func TestIntegrationDeliverAllowPublishRefusalAndSuccess(t *testing.T) {
 		PR:  noopPR{},
 	}
 	svc := mustService(t, engine, repo)
-	runTool := mustTool(t, svc, agenttools.ToolWorkflowRun)
+	runTool := mustTool(t, svc, workflowledger.ToolWorkflowRun)
 	out, err := runTool.Execute(context.Background(), json.RawMessage(`{"workflow":"deliver-me","inputs":{"task":"x"}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var started agenttools.StartResult
+	var started workflowledger.StartResult
 	if err := json.Unmarshal([]byte(out), &started); err != nil {
 		t.Fatal(err)
 	}
@@ -371,12 +370,12 @@ func TestIntegrationDeliverAllowPublishRefusalAndSuccess(t *testing.T) {
 	if err := engine.Wait(waitCtx, started.RunID); err != nil {
 		t.Fatal(err)
 	}
-	statusTool := mustTool(t, svc, agenttools.ToolWorkflowStatus)
+	statusTool := mustTool(t, svc, workflowledger.ToolWorkflowStatus)
 	statusOut, err := statusTool.Execute(context.Background(), json.RawMessage(fmt.Sprintf(`{"run_id":%q}`, started.RunID)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var status agenttools.StatusView
+	var status workflowledger.StatusView
 	if err := json.Unmarshal([]byte(statusOut), &status); err != nil {
 		t.Fatal(err)
 	}
@@ -384,13 +383,13 @@ func TestIntegrationDeliverAllowPublishRefusalAndSuccess(t *testing.T) {
 		t.Fatalf("status = %q, want delivery_pending; body=%s", status.Status, statusOut)
 	}
 
-	deliverTool := mustTool(t, svc, agenttools.ToolWorkflowDeliver)
+	deliverTool := mustTool(t, svc, workflowledger.ToolWorkflowDeliver)
 	// Refusal without allow_publish (tool-level, no engine call).
 	refOut, err := deliverTool.Execute(context.Background(), json.RawMessage(fmt.Sprintf(`{"run_id":%q}`, started.RunID)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var refused agenttools.DeliverResult
+	var refused workflowledger.DeliverResult
 	if err := json.Unmarshal([]byte(refOut), &refused); err != nil {
 		t.Fatal(err)
 	}
@@ -407,7 +406,7 @@ func TestIntegrationDeliverAllowPublishRefusalAndSuccess(t *testing.T) {
 		t.Logf("deliver with allow_publish error (path exercised): %v", err)
 		return
 	}
-	var delivered agenttools.DeliverResult
+	var delivered workflowledger.DeliverResult
 	if err := json.Unmarshal([]byte(delOut), &delivered); err != nil {
 		t.Fatal(err)
 	}
@@ -446,7 +445,7 @@ func TestIntegrationInterruptAndResume(t *testing.T) {
 	}
 }
 
-func startBlockedTwoStep(t *testing.T) (*localengine.Engine, workflowledger.Repository, *agenttools.Service, agenttools.StartResult, chan struct{}, chan struct{}, *int, *sync.Mutex) {
+func startBlockedTwoStep(t *testing.T) (*localengine.Engine, workflowledger.Repository, *workflowledger.Service, workflowledger.StartResult, chan struct{}, chan struct{}, *int, *sync.Mutex) {
 	t.Helper()
 	root := writeTwoStepWorkspace(t)
 	repo := workflowledger.NewMemoryRepository()
@@ -472,12 +471,12 @@ func startBlockedTwoStep(t *testing.T) (*localengine.Engine, workflowledger.Repo
 		},
 	}
 	svc := mustService(t, engine, repo)
-	out, err := mustTool(t, svc, agenttools.ToolWorkflowRun).Execute(
+	out, err := mustTool(t, svc, workflowledger.ToolWorkflowRun).Execute(
 		context.Background(), json.RawMessage(`{"workflow":"two-step","inputs":{"task":"x"}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var started agenttools.StartResult
+	var started workflowledger.StartResult
 	if err := json.Unmarshal([]byte(out), &started); err != nil {
 		t.Fatal(err)
 	}
@@ -505,15 +504,15 @@ func assertInterruptedNonTerminal(t *testing.T, repo workflowledger.Repository, 
 	t.Fatalf("expected an interrupted attempt after Interrupt: %+v", attempts)
 }
 
-func resumeAndAssertSucceeded(t *testing.T, engine *localengine.Engine, svc *agenttools.Service, runID string) {
+func resumeAndAssertSucceeded(t *testing.T, engine *localengine.Engine, svc *workflowledger.Service, runID string) {
 	t.Helper()
-	resOut, err := mustTool(t, svc, agenttools.ToolWorkflowRun).Execute(
+	resOut, err := mustTool(t, svc, workflowledger.ToolWorkflowRun).Execute(
 		context.Background(), json.RawMessage(fmt.Sprintf(
 			`{"resume":true,"run_id":%q,"force":true}`, runID)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var resumed agenttools.StartResult
+	var resumed workflowledger.StartResult
 	if err := json.Unmarshal([]byte(resOut), &resumed); err != nil {
 		t.Fatal(err)
 	}
@@ -521,12 +520,12 @@ func resumeAndAssertSucceeded(t *testing.T, engine *localengine.Engine, svc *age
 		t.Fatalf("resume = %+v", resumed)
 	}
 	waitRun(t, engine, runID)
-	statusOut, err := mustTool(t, svc, agenttools.ToolWorkflowStatus).Execute(
+	statusOut, err := mustTool(t, svc, workflowledger.ToolWorkflowStatus).Execute(
 		context.Background(), json.RawMessage(fmt.Sprintf(`{"run_id":%q}`, runID)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var status agenttools.StatusView
+	var status workflowledger.StatusView
 	if err := json.Unmarshal([]byte(statusOut), &status); err != nil {
 		t.Fatal(err)
 	}
@@ -543,7 +542,7 @@ func TestResumeTerminalRunRefused(t *testing.T) {
 	engine, svc := scriptedTwoStep(t)
 	started := startTwoStep(t, svc)
 	waitRun(t, engine, started.RunID)
-	_, err := mustTool(t, svc, agenttools.ToolWorkflowRun).Execute(
+	_, err := mustTool(t, svc, workflowledger.ToolWorkflowRun).Execute(
 		context.Background(), json.RawMessage(fmt.Sprintf(
 			`{"resume":true,"run_id":%q,"force":true}`, started.RunID)))
 	if err == nil || !strings.Contains(err.Error(), "terminal") {
@@ -575,7 +574,7 @@ func TestResumeDeliveryFailedPointsAtDeliver(t *testing.T) {
 			t.Fatalf("transition to %s: %v", to, err)
 		}
 	}
-	_, err := mustTool(t, svc, agenttools.ToolWorkflowRun).Execute(
+	_, err := mustTool(t, svc, workflowledger.ToolWorkflowRun).Execute(
 		ctx, json.RawMessage(fmt.Sprintf(`{"resume":true,"run_id":%q,"force":true}`, runID)))
 	if err == nil || !strings.Contains(err.Error(), "failed delivery") || !strings.Contains(err.Error(), "workflow_deliver") {
 		t.Fatalf("resume delivery_failed error = %v, want deliver pointer", err)
@@ -594,9 +593,9 @@ func TestIntegrationRaceConcurrentTools(t *testing.T) {
 		},
 	}
 	svc := mustService(t, engine, repo)
-	runTool := mustTool(t, svc, agenttools.ToolWorkflowRun)
-	statusTool := mustTool(t, svc, agenttools.ToolWorkflowStatus)
-	cancelTool := mustTool(t, svc, agenttools.ToolWorkflowCancel)
+	runTool := mustTool(t, svc, workflowledger.ToolWorkflowRun)
+	statusTool := mustTool(t, svc, workflowledger.ToolWorkflowStatus)
+	cancelTool := mustTool(t, svc, workflowledger.ToolWorkflowCancel)
 
 	var wg sync.WaitGroup
 	for i := 0; i < 4; i++ {
@@ -608,7 +607,7 @@ func TestIntegrationRaceConcurrentTools(t *testing.T) {
 				t.Errorf("run: %v", err)
 				return
 			}
-			var started agenttools.StartResult
+			var started workflowledger.StartResult
 			if err := json.Unmarshal([]byte(out), &started); err != nil {
 				t.Errorf("decode: %v", err)
 				return
@@ -634,7 +633,7 @@ func TestIntegrationRaceInterruptResume(t *testing.T) {
 	const n = 4
 	type runCase struct {
 		engine  *localengine.Engine
-		svc     *agenttools.Service
+		svc     *workflowledger.Service
 		runID   string
 		block   chan struct{}
 		entered chan struct{}
@@ -663,14 +662,14 @@ func TestIntegrationRaceInterruptResume(t *testing.T) {
 			}()
 			go func() {
 				defer inner.Done()
-				_, _ = mustTool(t, c.svc, agenttools.ToolWorkflowStatus).Execute(
+				_, _ = mustTool(t, c.svc, workflowledger.ToolWorkflowStatus).Execute(
 					context.Background(), json.RawMessage(fmt.Sprintf(`{"run_id":%q}`, c.runID)))
 			}()
 			go func() {
 				defer inner.Done()
 				// Resume may fail if Interrupt has not finished; that is fine.
 				// The race detector must not fire on the fence map either way.
-				_, _ = mustTool(t, c.svc, agenttools.ToolWorkflowRun).Execute(
+				_, _ = mustTool(t, c.svc, workflowledger.ToolWorkflowRun).Execute(
 					context.Background(), json.RawMessage(fmt.Sprintf(
 						`{"resume":true,"run_id":%q,"force":true}`, c.runID)))
 			}()
@@ -686,9 +685,9 @@ func TestIntegrationRaceInterruptResume(t *testing.T) {
 
 // --- helpers ---
 
-func mustService(t *testing.T, engine agenttools.Engine, repo workflowledger.Repository) *agenttools.Service {
+func mustService(t *testing.T, engine workflowledger.Engine, repo workflowledger.Repository) *workflowledger.Service {
 	t.Helper()
-	svc, err := agenttools.NewService(agenttools.ServiceOptions{
+	svc, err := workflowledger.NewService(workflowledger.ServiceOptions{
 		Engine: engine,
 		Repo: func(context.Context) (workflowledger.Repository, func(), error) {
 			return repo, func() {}, nil
@@ -700,9 +699,9 @@ func mustService(t *testing.T, engine agenttools.Engine, repo workflowledger.Rep
 	return svc
 }
 
-func mustTool(t *testing.T, svc *agenttools.Service, name string) agenttools.Tool {
+func mustTool(t *testing.T, svc *workflowledger.Service, name string) workflowledger.Tool {
 	t.Helper()
-	for _, tool := range agenttools.Tools(svc) {
+	for _, tool := range workflowledger.Tools(svc) {
 		if tool.Name() == name {
 			return tool
 		}

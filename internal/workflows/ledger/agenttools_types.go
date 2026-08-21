@@ -2,15 +2,13 @@
 // Tools call the shared workflow ledger for reads and an injected Engine for
 // mutations. This package must not import controller/agents/skills so the
 // tools package can import it without an import cycle.
-package agenttools
+package ledger
 
 import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"time"
-
-	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
 // InvocationRunID returns the stable workflow run ID for a caller key.
@@ -310,7 +308,7 @@ type Engine interface {
 }
 
 // RepoFactory opens a workflow ledger repository. The closer releases resources.
-type RepoFactory func(ctx context.Context) (workflowledger.Repository, func(), error)
+type RepoFactory func(ctx context.Context) (Repository, func(), error)
 
 // ErrRepoUnset is returned when tools register before a ledger is wired.
 var ErrRepoUnset = errRepoUnset("workflow ledger is not configured for this session")
@@ -320,7 +318,7 @@ type errRepoUnset string
 func (e errRepoUnset) Error() string { return string(e) }
 
 // UnsetRepoFactory is used when tools register before a ledger is available.
-func UnsetRepoFactory(context.Context) (workflowledger.Repository, func(), error) {
+func UnsetRepoFactory(context.Context) (Repository, func(), error) {
 	return nil, func() {}, ErrRepoUnset
 }
 

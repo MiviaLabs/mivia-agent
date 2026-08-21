@@ -1,4 +1,4 @@
-package tasks
+package ledger
 
 import (
 	"bytes"
@@ -72,7 +72,7 @@ func (s *Store) SetTimeSource(now func() time.Time) {
 
 // StorePlan durably stores a plan and returns its ref (the plan ID).
 // Re-storing an identical record is an idempotent no-op (recovery re-entry);
-// the same ref with different content returns ErrDuplicate.
+// the same ref with different content returns ErrTaskDuplicate.
 func (s *Store) StorePlan(plan Plan) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -89,7 +89,7 @@ func (s *Store) StorePlan(plan Plan) (string, error) {
 		if reflect.DeepEqual(existing.plan, plan) {
 			return plan.ID, nil
 		}
-		return "", ErrDuplicate
+		return "", ErrTaskDuplicate
 	}
 	s.plans[plan.ID] = &planState{plan: plan, tasks: make(map[string]Task)}
 	err := s.marshalAndAppend(planRunID(plan.ID), eventID(plan.ID, eventKindPlanStored),
@@ -127,7 +127,7 @@ func (s *Store) BindPlanToScope(planID string, scope Scope) error {
 
 // CreateTask durably records a task under an existing plan. Re-creating an
 // identical record is an idempotent no-op; the same (plan, task) with
-// different content returns ErrDuplicate.
+// different content returns ErrTaskDuplicate.
 func (s *Store) CreateTask(task Task) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -151,7 +151,7 @@ func (s *Store) CreateTask(task Task) error {
 		if reflect.DeepEqual(existing, task) {
 			return nil
 		}
-		return ErrDuplicate
+		return ErrTaskDuplicate
 	}
 	state.tasks[task.ID] = task
 	return s.marshalAndAppend(planRunID(task.PlanRef), eventID(task.PlanRef, eventKindTaskCreated, task.ID),
@@ -378,7 +378,7 @@ func (s *Store) ListTransitions(planRef string) ([]Transition, error) {
 // AppendBatch: the batch path enforces per-run sequence uniqueness on BOTH
 // backends (the memory store checks it only in appendBatchLocked; SQLite has
 // a (run_id, sequence) UNIQUE index), so a concurrent writer that takes the
-// same sequence fails with ErrDuplicate instead of silently sharing it.
+// same sequence fails with ErrTaskDuplicate instead of silently sharing it.
 // Called with s.mu held; the projection was already mutated by the caller, so
 // any append failure rebuilds the run from the store before returning.
 func (s *Store) marshalAndAppend(runID, id, kind string, payload any) error {
@@ -401,11 +401,11 @@ func (s *Store) marshalAndAppend(runID, id, kind string, payload any) error {
 // advances the applied watermark past the events' sequences so catch-up never
 // re-reads this instance's own writes.
 //
-// On ErrDuplicate (the store's id PRIMARY KEY or the (run_id, sequence)
+// On ErrTaskDuplicate (the store's id PRIMARY KEY or the (run_id, sequence)
 // UNIQUE constraint) it rebuilds the run from the store, then compares the
 // stored event with the SAME ID: a byte-identical payload means an idempotent
 // retry (nil); a different payload means the logical key was taken by a
-// concurrent writer (ErrConflict).
+// concurrent writer (ErrTaskConflict).
 //
 // On any other append error it rebuilds the run so the in-memory state
 // matches durable state before returning.
@@ -440,10 +440,10 @@ func (s *Store) appendEvent(ctx context.Context, events []storage.Event) error {
 			if bytes.Equal(e.Payload, evt.Payload) {
 				return nil // idempotent retry
 			}
-			return ErrConflict
+			return ErrTaskConflict
 		}
 	}
 	// The duplicate came from the (run_id, sequence) UNIQUE constraint with
 	// no event carrying our ID: the sequence was lost to another writer.
-	return ErrConflict
+	return ErrTaskConflict
 }

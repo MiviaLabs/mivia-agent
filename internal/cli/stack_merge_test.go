@@ -22,7 +22,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
 // neverMergedChecker is a MergeChecker stub that never reports a merge, so the
@@ -40,7 +39,7 @@ func (neverMergedChecker) Merged(context.Context, string, string, string, string
 func TestWaitForChunkMergesHonorsCancelledContext(t *testing.T) {
 	repo := workflowledger.NewMemoryRepository()
 	t.Cleanup(func() { _ = repo.Close() })
-	ledger := tasks.NewMemoryStore()
+	ledger := workflowledger.NewMemoryStore()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // pre-cancelled: the wait must return immediately
@@ -103,7 +102,7 @@ func TestWaitForIntegrationMergeHonorsCancelledContext(t *testing.T) {
 // orphaning its content. autoMergePublishedChunks must never merge a chunk
 // while a task that depends on it (its follow-up) has not merged yet.
 func TestBlockedByUnmergedDependentBlocksParentUntilFollowUpMerges(t *testing.T) {
-	byID := map[string]tasks.Task{
+	byID := map[string]workflowledger.Task{
 		"c1":          {ID: "c1", Status: stackStatusPublished},
 		"c1-deferred": {ID: "c1-deferred", Status: stackStatusPublished, Deps: []string{"c1"}},
 	}
@@ -116,7 +115,7 @@ func TestBlockedByUnmergedDependentBlocksParentUntilFollowUpMerges(t *testing.T)
 		t.Fatal("blockedByUnmergedDependent(c1-deferred) = blocked, want unblocked (it has no dependents)")
 	}
 
-	byID["c1-deferred"] = tasks.Task{ID: "c1-deferred", Status: stackStatusMerged, Deps: []string{"c1"}}
+	byID["c1-deferred"] = workflowledger.Task{ID: "c1-deferred", Status: stackStatusMerged, Deps: []string{"c1"}}
 	if _, blocked := blockedByUnmergedDependent(byID, "c1"); blocked {
 		t.Fatal("blockedByUnmergedDependent(c1) = blocked after its follow-up merged, want unblocked")
 	}
@@ -228,7 +227,7 @@ func seedIntegrationRunAdmitted(t *testing.T, repo workflowledger.Repository, st
 func TestAutoDeliverReviewedChunksRetriesOrphanedDelivery(t *testing.T) {
 	repo := workflowledger.NewMemoryRepository()
 	t.Cleanup(func() { _ = repo.Close() })
-	ledger := tasks.NewMemoryStore()
+	ledger := workflowledger.NewMemoryStore()
 
 	stackID := "stack-auto-redeliver"
 	seedStackTask(t, ledger, stackID, "a")
@@ -290,7 +289,7 @@ func TestDriveStackAutoRedeliverGatesOnPolicy(t *testing.T) {
 		t.Run(tc.policy, func(t *testing.T) {
 			repo := workflowledger.NewMemoryRepository()
 			t.Cleanup(func() { _ = repo.Close() })
-			ledger := tasks.NewMemoryStore()
+			ledger := workflowledger.NewMemoryStore()
 
 			stackID := "stack-drive-redeliver-" + tc.policy
 			if stackID == "stack-drive-redeliver-" {
@@ -333,7 +332,7 @@ func TestDriveStackAutoRedeliverGatesOnPolicy(t *testing.T) {
 func TestWaitIntegrationRunSettledAutoPolicyDeliversWithoutAllowPublish(t *testing.T) {
 	repo := workflowledger.NewMemoryRepository()
 	t.Cleanup(func() { _ = repo.Close() })
-	ledger := tasks.NewMemoryStore()
+	ledger := workflowledger.NewMemoryStore()
 
 	stackID := "stack-auto-publish"
 	seedIntegrationRunAdmitted(t, repo, stackID, false)
@@ -388,7 +387,7 @@ func TestWaitIntegrationRunSettledAutoPolicyDeliversWithoutAllowPublish(t *testi
 func TestWaitIntegrationRunSettledAutoPolicyMergesExternallyDeliveredRun(t *testing.T) {
 	repo := workflowledger.NewMemoryRepository()
 	t.Cleanup(func() { _ = repo.Close() })
-	ledger := tasks.NewMemoryStore()
+	ledger := workflowledger.NewMemoryStore()
 
 	stackID := "stack-auto-external"
 	run := seedIntegrationRunAdmitted(t, repo, stackID, false)
@@ -444,7 +443,7 @@ func TestWaitIntegrationRunSettledAutoPolicyMergesExternallyDeliveredRun(t *test
 func TestWaitIntegrationRunSettledNoDiffIntegrationCompletesWithoutMerge(t *testing.T) {
 	repo := workflowledger.NewMemoryRepository()
 	t.Cleanup(func() { _ = repo.Close() })
-	ledger := tasks.NewMemoryStore()
+	ledger := workflowledger.NewMemoryStore()
 
 	stackID := "stack-auto-nodiff"
 	run := seedIntegrationRunAdmitted(t, repo, stackID, true)
@@ -485,7 +484,7 @@ func TestWaitIntegrationRunSettledNoDiffIntegrationCompletesWithoutMerge(t *test
 func TestWaitIntegrationRunSettledGrantPolicyPausesForPublishGrant(t *testing.T) {
 	repo := workflowledger.NewMemoryRepository()
 	t.Cleanup(func() { _ = repo.Close() })
-	ledger := tasks.NewMemoryStore()
+	ledger := workflowledger.NewMemoryStore()
 
 	stackID := "stack-grant-pause"
 	run := seedIntegrationRunAdmitted(t, repo, stackID, false)
@@ -527,7 +526,7 @@ func TestWaitIntegrationRunSettledGrantPolicyPausesForPublishGrant(t *testing.T)
 func TestWaitIntegrationRunSettledTerminalFailureReportsError(t *testing.T) {
 	repo := workflowledger.NewMemoryRepository()
 	t.Cleanup(func() { _ = repo.Close() })
-	ledger := tasks.NewMemoryStore()
+	ledger := workflowledger.NewMemoryStore()
 
 	stackID := "stack-terminal-fail"
 	run := seedIntegrationRunAdmitted(t, repo, stackID, false)
@@ -573,7 +572,7 @@ func TestWaitIntegrationRunSettledTerminalFailureReportsError(t *testing.T) {
 func TestAutoMergeOnePermanentErrorHaltPoll(t *testing.T) {
 	repo := workflowledger.NewMemoryRepository()
 	t.Cleanup(func() { _ = repo.Close() })
-	ledger := tasks.NewMemoryStore()
+	ledger := workflowledger.NewMemoryStore()
 
 	stackID := "stack-perm-fail"
 	seedStackTask(t, ledger, stackID, "c1")
@@ -629,7 +628,7 @@ func TestAutoMergeOnePermanentErrorHaltPoll(t *testing.T) {
 func TestAutoMergeOneRetriableErrorKeepsPolling(t *testing.T) {
 	repo := workflowledger.NewMemoryRepository()
 	t.Cleanup(func() { _ = repo.Close() })
-	ledger := tasks.NewMemoryStore()
+	ledger := workflowledger.NewMemoryStore()
 
 	stackID := "stack-retry-ok"
 	seedStackTask(t, ledger, stackID, "c1")
@@ -688,7 +687,7 @@ func TestAutoMergeOneRetriableErrorKeepsPolling(t *testing.T) {
 func TestAutoMergeOneOverlapProbeFailureSkipsMerge(t *testing.T) {
 	repo := workflowledger.NewMemoryRepository()
 	t.Cleanup(func() { _ = repo.Close() })
-	ledger := tasks.NewMemoryStore()
+	ledger := workflowledger.NewMemoryStore()
 
 	stackID := "stack-overlap-probe"
 	seedStackTask(t, ledger, stackID, "c1")

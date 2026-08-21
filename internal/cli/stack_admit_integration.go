@@ -8,7 +8,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/stacking"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
 // integrationRunInputs builds the admission inputs for the final full-suite
@@ -114,7 +113,7 @@ var classifyStackPlanRunDeliveryFn = classifyStackPlanRunDelivery
 var stackPlanRunFailureReasonFn = stackPlanRunFailureReason
 
 func stackPlanRunFailureReason(ctx context.Context, root string, store *storage.SQLite, repo workflowledger.Repository, runID string) (failed bool, reason string) {
-	byID, err := stackTaskMap(tasks.NewStore(store), runID)
+	byID, err := stackTaskMap(workflowledger.NewStore(store), runID)
 	if err == nil {
 		for taskID, task := range byID {
 			if task.Status == stackStatusFailed {

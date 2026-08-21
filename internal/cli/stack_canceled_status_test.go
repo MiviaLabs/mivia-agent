@@ -13,14 +13,13 @@ import (
 	"testing"
 
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
 // TestReconcileTaskLeavesCanceledChunkWithFailedRun pins that a canceled
 // chunk whose run failed is left alone, never reopened.
 func TestReconcileTaskLeavesCanceledChunkWithFailedRun(t *testing.T) {
 	for _, runStatus := range []string{runStatusFailed, runStatusCanceled, runStatusTimedOut, runStatusDeliveryFailed} {
-		task := tasks.Task{ID: "c2", Status: stackStatusCanceled, Deps: []string{"c1"}}
+		task := workflowledger.Task{ID: "c2", Status: stackStatusCanceled, Deps: []string{"c1"}}
 		act := reconcileCase(t, task, RunInfo{Present: true, Status: runStatus}, false, false, stackMaxChunkAttempts)
 		if act.Action != stackActionLeave || act.NewStatus != "" {
 			t.Fatalf("run %s: action = %q status = %q, want leave with no transition", runStatus, act.Action, act.NewStatus)
@@ -32,7 +31,7 @@ func TestReconcileTaskLeavesCanceledChunkWithFailedRun(t *testing.T) {
 // evidence never resurrects a canceled chunk as merged: the chunk was given
 // up on, and marking it merged would unblock its dependents.
 func TestReconcileTaskDoesNotMarkCanceledChunkMerged(t *testing.T) {
-	task := tasks.Task{ID: "c2", Status: stackStatusCanceled, Deps: []string{"c1"}}
+	task := workflowledger.Task{ID: "c2", Status: stackStatusCanceled, Deps: []string{"c1"}}
 	act := reconcileCase(t, task, RunInfo{Present: true, Status: runStatusSucceeded}, true, true, stackMaxChunkAttempts)
 	if act.Action != stackActionLeave || act.NewStatus != "" {
 		t.Fatalf("action = %q status = %q, want leave with no transition", act.Action, act.NewStatus)
@@ -46,14 +45,14 @@ func TestReconcileStackKeepsCanceledChunkOutOfTheNextWave(t *testing.T) {
 	ctx := context.Background()
 	repo := workflowledger.NewMemoryRepository()
 	t.Cleanup(func() { _ = repo.Close() })
-	ledger := tasks.NewMemoryStore()
+	ledger := workflowledger.NewMemoryStore()
 
 	stackID := "stack-canceled-not-readmitted"
 	seedStackTask(t, ledger, stackID, "c1")
 	if err := ledger.TransitionTask(stackID, "c1", stackStatusFailed); err != nil {
 		t.Fatal(err)
 	}
-	if err := ledger.CreateTask(tasks.Task{
+	if err := ledger.CreateTask(workflowledger.Task{
 		ID: "c2", PlanRef: stackID, Scope: stackScope(stackID),
 		Status: stackStatusRunning, Deps: []string{"c1"},
 	}); err != nil {
@@ -88,7 +87,7 @@ func TestReconcileStackKeepsCanceledChunkOutOfTheNextWave(t *testing.T) {
 // does not disable the durable grant pause: it is terminal and dead, exactly
 // like a merged one.
 func TestStackAwaitsGrantOnlyIgnoresCanceledChunk(t *testing.T) {
-	byID := map[string]tasks.Task{
+	byID := map[string]workflowledger.Task{
 		"c1": {ID: "c1", Status: stackStatusReviewed},
 		"c2": {ID: "c2", Status: stackStatusCanceled, Deps: []string{"c3"}},
 	}
@@ -101,7 +100,7 @@ func TestStackAwaitsGrantOnlyIgnoresCanceledChunk(t *testing.T) {
 // paths: with the reconcile mark-failed note and without it (the
 // resumed-durable-failure path).
 func TestHaltStackForFailedChunkMessages(t *testing.T) {
-	ledger := tasks.NewMemoryStore()
+	ledger := workflowledger.NewMemoryStore()
 	stackID := "stack-halt-message"
 	seedStackTask(t, ledger, stackID, "c1")
 	if err := ledger.TransitionTask(stackID, "c1", stackStatusFailed); err != nil {
@@ -118,7 +117,7 @@ func TestHaltStackForFailedChunkMessages(t *testing.T) {
 }
 
 // mustTaskStatus reads one chunk task status.
-func mustTaskStatus(t *testing.T, ledger *tasks.Store, stackID, chunkID string) string {
+func mustTaskStatus(t *testing.T, ledger *workflowledger.Store, stackID, chunkID string) string {
 	t.Helper()
 	task, err := ledger.GetTask(stackID, chunkID)
 	if err != nil {

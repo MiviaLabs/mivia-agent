@@ -12,7 +12,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -98,7 +98,7 @@ type tuiModel struct {
 	workflowRunDlg *workflowRunDialog
 	// workflowSvc is the in-process workflow tool service the run dialog
 	// routes actions through (nil when the workspace has no workflows).
-	workflowSvc *agenttools.Service
+	workflowSvc *ledger.Service
 	// pendingWorkflowDialogCmd carries the dialog's first async ledger read
 	// from an open path that has no tea.Cmd return of its own (sidebar key
 	// and mouse double-click).

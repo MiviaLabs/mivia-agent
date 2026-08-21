@@ -1,4 +1,4 @@
-package agenttools_test
+package ledger_test
 
 import (
 	"context"
@@ -9,51 +9,50 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
-	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
 // seedRunForCoordinator mirrors seedRunningAttempt's shape but records the
 // given coordinator run id on the attempt, so a caller-identity scoping test
 // can build a run that belongs to a different coordinator.
-func seedRunForCoordinator(t *testing.T, repo workflowledger.Repository, runID, coordinatorRunID string) {
+func seedRunForCoordinator(t *testing.T, repo ledger.Repository, runID, coordinatorRunID string) {
 	t.Helper()
 	ctx := context.Background()
-	snapshot, err := workflowledger.MarshalSnapshot(workflowledger.Snapshot{
+	snapshot, err := ledger.MarshalSnapshot(ledger.Snapshot{
 		SchemaVersion: 1, DefinitionTOML: []byte("name=x"), DefinitionDigest: "digest",
 		Inputs: map[string]string{"task": "build"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.CreateRun(ctx, workflowledger.RunSnapshot{
+	if err := repo.CreateRun(ctx, ledger.RunSnapshot{
 		RunID: runID, WorkflowName: "two-step", WorkflowDigest: "digest",
-		SnapshotDigest: workflowledger.SnapshotDigest(snapshot),
-		InputDigest:    workflowledger.InputDigest(map[string]string{"task": "build"}),
-		Status:         workflowledger.RunStatusPending, ActiveStepID: "one",
+		SnapshotDigest: ledger.SnapshotDigest(snapshot),
+		InputDigest:    ledger.InputDigest(map[string]string{"task": "build"}),
+		Status:         ledger.RunStatusPending, ActiveStepID: "one",
 		StartedAt: time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC),
 	}, snapshot); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.CompareAndSetRunStatus(ctx, runID, 1, workflowledger.RunStatusRunning, nil); err != nil {
+	if err := repo.CompareAndSetRunStatus(ctx, runID, 1, ledger.RunStatusRunning, nil); err != nil {
 		t.Fatal(err)
 	}
-	attempt := workflowledger.StepAttempt{
+	attempt := ledger.StepAttempt{
 		AttemptID: "wfa-one-1", RunID: runID, StepID: "one", AttemptNo: 1,
-		Status: workflowledger.AttemptStatusRunning,
+		Status: ledger.AttemptStatusRunning,
 	}
 	if err := repo.CreateStepAttempt(ctx, attempt); err != nil {
 		t.Fatal(err)
 	}
 	out := []byte(`{"ok":true,"verdict":"approved"}`)
-	ref := "sha256:" + workflowledger.DigestHex(out)
+	ref := "sha256:" + ledger.DigestHex(out)
 	if err := repo.StoreContent(ctx, ref, out); err != nil {
 		t.Fatal(err)
 	}
 	stored, _ := repo.GetStepAttempt(ctx, runID, attempt.AttemptID)
 	decision, _ := json.Marshal(map[string]any{"selected": map[string]any{"output": map[string]any{"verdict": "approved"}}})
-	if err := repo.CompleteStepAttempt(ctx, runID, attempt.AttemptID, stored.Version, workflowledger.AttemptOutcome{
-		Status: workflowledger.AttemptStatusSucceeded, OutputRef: ref, OutputDigest: workflowledger.DigestHex(out),
+	if err := repo.CompleteStepAttempt(ctx, runID, attempt.AttemptID, stored.Version, ledger.AttemptOutcome{
+		Status: ledger.AttemptStatusSucceeded, OutputRef: ref, OutputDigest: ledger.DigestHex(out),
 		ToStepID: "two", TransitionIndex: 0, MatchDigest: "md", DecisionJSON: decision,
 		CoordinatorRunID: coordinatorRunID, TaskID: "task-1", EvidenceJSON: []byte(`[{"name":"task"}]`),
 	}); err != nil {
@@ -72,7 +71,7 @@ func TestInspectScopedToCallerRun(t *testing.T) {
 	childRunID := "wfr-child-1"
 	otherRunID := "wfr-other-1"
 
-	repo := workflowledger.NewMemoryRepository()
+	repo := ledger.NewMemoryRepository()
 	// A run whose attempt records CoordinatorRunID == coordinatorRunID.
 	seedRunningAttempt(t, repo, childRunID)
 	// A different, real run whose attempt belongs to another coordinator.
@@ -83,12 +82,12 @@ func TestInspectScopedToCallerRun(t *testing.T) {
 
 	t.Run("own run allowed", func(t *testing.T) {
 		ctx := runtime.ContextWithTaskIdentity(context.Background(), identity)
-		out, err := findTool(t, svc, agenttools.ToolWorkflowInspect).Execute(
+		out, err := findTool(t, svc, ledger.ToolWorkflowInspect).Execute(
 			ctx, json.RawMessage(`{"run_id":"`+childRunID+`","step":"one","attempt":1}`))
 		if err != nil {
 			t.Fatalf("inspect own run: %v", err)
 		}
-		var view agenttools.InspectView
+		var view ledger.InspectView
 		if err := json.Unmarshal([]byte(out), &view); err != nil {
 			t.Fatal(err)
 		}
@@ -102,7 +101,7 @@ func TestInspectScopedToCallerRun(t *testing.T) {
 
 	t.Run("non-member run refused indistinguishably", func(t *testing.T) {
 		ctx := runtime.ContextWithTaskIdentity(context.Background(), identity)
-		_, err := findTool(t, svc, agenttools.ToolWorkflowInspect).Execute(
+		_, err := findTool(t, svc, ledger.ToolWorkflowInspect).Execute(
 			ctx, json.RawMessage(`{"run_id":"`+otherRunID+`","step":"one","attempt":1}`))
 		if err == nil {
 			t.Fatal("inspect non-member run: expected refusal")
@@ -113,7 +112,7 @@ func TestInspectScopedToCallerRun(t *testing.T) {
 		}
 		// The same identity against a truly absent run yields the identical
 		// not-found class, so the caller cannot distinguish membership.
-		_, ghostErr := findTool(t, svc, agenttools.ToolWorkflowInspect).Execute(
+		_, ghostErr := findTool(t, svc, ledger.ToolWorkflowInspect).Execute(
 			ctx, json.RawMessage(`{"run_id":"wfr-ghost","step":"one","attempt":1}`))
 		if ghostErr == nil {
 			t.Fatal("inspect ghost run: expected not-found")
@@ -124,12 +123,12 @@ func TestInspectScopedToCallerRun(t *testing.T) {
 	})
 
 	t.Run("no identity allowed", func(t *testing.T) {
-		out, err := findTool(t, svc, agenttools.ToolWorkflowInspect).Execute(
+		out, err := findTool(t, svc, ledger.ToolWorkflowInspect).Execute(
 			context.Background(), json.RawMessage(`{"run_id":"`+childRunID+`","step":"one","attempt":1}`))
 		if err != nil {
 			t.Fatalf("inspect without identity: %v", err)
 		}
-		var view agenttools.InspectView
+		var view ledger.InspectView
 		if err := json.Unmarshal([]byte(out), &view); err != nil {
 			t.Fatal(err)
 		}
@@ -145,11 +144,11 @@ func TestInspectScopedToCallerRun(t *testing.T) {
 // A negative offset reaching the service validation is the observable proof
 // that Execute forwards the values rather than dropping them.
 func TestInspectToolPagingParams(t *testing.T) {
-	repo := workflowledger.NewMemoryRepository()
+	repo := ledger.NewMemoryRepository()
 	runID := "wfr-paging-1"
 	seedRunningAttempt(t, repo, runID)
 	svc := testService(t, repo, nil)
-	tool := findTool(t, svc, agenttools.ToolWorkflowInspect)
+	tool := findTool(t, svc, ledger.ToolWorkflowInspect)
 
 	t.Run("missing paging params behave as 0", func(t *testing.T) {
 		out, err := tool.Execute(context.Background(),
@@ -157,7 +156,7 @@ func TestInspectToolPagingParams(t *testing.T) {
 		if err != nil {
 			t.Fatalf("inspect without offset/limit: %v", err)
 		}
-		var view agenttools.InspectView
+		var view ledger.InspectView
 		if err := json.Unmarshal([]byte(out), &view); err != nil {
 			t.Fatal(err)
 		}

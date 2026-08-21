@@ -7,11 +7,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
 // TestExecuteWorkflowRunsJSONMatchesToolShape pins the wire contract: `workflow
-// runs --json` prints exactly agenttools.ListRunsView, the same shape
+// runs --json` prints exactly ledger.ListRunsView, the same shape
 // workflow_list_runs already returns to the model - a desktop-app caller
 // polling this command gets a stable, already-tested JSON structure rather
 // than a second hand-rolled one that could drift.
@@ -25,7 +25,7 @@ func TestExecuteWorkflowRunsJSONMatchesToolShape(t *testing.T) {
 		t.Fatalf("executeWorkflowRunsJSON: %v", err)
 	}
 
-	var view agenttools.ListRunsView
+	var view ledger.ListRunsView
 	if err := json.Unmarshal(stdout.Bytes(), &view); err != nil {
 		t.Fatalf("output is not valid ListRunsView JSON: %v (%s)", err, stdout.String())
 	}
@@ -45,7 +45,7 @@ func TestExecuteWorkflowRunsJSONHonorsStatusFilter(t *testing.T) {
 	if err := executeWorkflowRunsJSON(root, config, "failed", 20, &stdout); err != nil {
 		t.Fatalf("executeWorkflowRunsJSON: %v", err)
 	}
-	var view agenttools.ListRunsView
+	var view ledger.ListRunsView
 	if err := json.Unmarshal(stdout.Bytes(), &view); err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestExecuteWorkflowRunsJSONHonorsStatusFilter(t *testing.T) {
 }
 
 // TestExecuteWorkflowStatusJSONMatchesToolShape pins the same contract for
-// `workflow status <id> --json` against agenttools.StatusView.
+// `workflow status <id> --json` against ledger.StatusView.
 func TestExecuteWorkflowStatusJSONMatchesToolShape(t *testing.T) {
 	root, _, _, closeFn, _, run := openEventsFixtureWithRun(t, "wfr-JSON0003")
 	defer closeFn()
@@ -66,7 +66,7 @@ func TestExecuteWorkflowStatusJSONMatchesToolShape(t *testing.T) {
 	if err := executeWorkflowStatusJSON(run, root, config, &stdout); err != nil {
 		t.Fatalf("executeWorkflowStatusJSON: %v", err)
 	}
-	var view agenttools.StatusView
+	var view ledger.StatusView
 	if err := json.Unmarshal(stdout.Bytes(), &view); err != nil {
 		t.Fatalf("output is not valid StatusView JSON: %v (%s)", err, stdout.String())
 	}
@@ -135,7 +135,7 @@ func TestRunWorkflowCommandStatusJSONFlag(t *testing.T) {
 	if err := runWorkflowCommandStatus([]string{"--json", run}, root, config, &stdout, &stderr); err != nil {
 		t.Fatalf("runWorkflowCommandStatus: %v", err)
 	}
-	var view agenttools.StatusView
+	var view ledger.StatusView
 	if err := json.Unmarshal(stdout.Bytes(), &view); err != nil {
 		t.Fatalf("output is not valid StatusView JSON: %v (%s)", err, stdout.String())
 	}

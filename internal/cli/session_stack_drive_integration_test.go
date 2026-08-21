@@ -13,7 +13,6 @@ import (
 	"time"
 
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
 // TestSessionSweepDrivesParkedStackAfterAbortedDrive is THE parked-stack wedge
@@ -300,7 +299,7 @@ func TestSessionSingleModePlanPublishesOwnPR(t *testing.T) {
 	if creates, _ := it.prs.callCounts(); creates != 1 {
 		t.Fatalf("PR creates = %d, want 1 (the plan run's own PR)", creates)
 	}
-	byID, err := stackTaskMap(tasks.NewStore(it.store), planRunID)
+	byID, err := stackTaskMap(workflowledger.NewStore(it.store), planRunID)
 	if err != nil {
 		t.Fatal(err)
 	}

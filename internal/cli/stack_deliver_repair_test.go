@@ -18,7 +18,6 @@ import (
 	"testing"
 
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
 func TestChunkPublishedOnlyWhenRunActuallySucceeded(t *testing.T) {
@@ -81,9 +80,9 @@ func TestChunkSettleAfterDeliveryOnlyPublishesOnRealSuccess(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := workflowledger.NewMemoryRepository()
 			t.Cleanup(func() { _ = repo.Close() })
-			ledger := tasks.NewMemoryStore()
+			ledger := workflowledger.NewMemoryStore()
 			stackID := "stack-settle-" + string(tc.runStatus)
-			if _, err := ledger.StorePlan(tasks.Plan{ID: stackID, Scope: stackScope(stackID), Schema: stackPlanSchema}); err != nil {
+			if _, err := ledger.StorePlan(workflowledger.Plan{ID: stackID, Scope: stackScope(stackID), Schema: stackPlanSchema}); err != nil {
 				t.Fatal(err)
 			}
 			seedStackTaskStatus(t, ledger, stackID, "c1", stackStatusReviewed)

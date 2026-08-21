@@ -13,7 +13,6 @@ import (
 	"time"
 
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
 // stackChunkResumeFn resumes an orphaned in-flight chunk run (F7 self-heal
@@ -49,7 +48,7 @@ func init() {
 // self-heals by resuming it through the exact non-force expired-claim
 // takeover `mivia workflow resume` already uses (claimWorkflowResumeHandoff),
 // instead of waiting for a manual resume or the >=2min session sweep.
-func driveChunkInFlight(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID, chunkID string, run workflowledger.RunSnapshot, allowPublish bool, stdout, stderr io.Writer) (bool, error) {
+func driveChunkInFlight(ctx context.Context, prepared *preparedWorkflowRun, ledger *workflowledger.Store, stackID, chunkID string, run workflowledger.RunSnapshot, allowPublish bool, stdout, stderr io.Writer) (bool, error) {
 	holder, acquiredAt, ok, claimErr := prepared.repo.GetRunClaim(ctx, run.RunID)
 	if claimErr == nil && ok && time.Since(acquiredAt) <= workflowledger.DefaultClaimLease {
 		fmt.Fprintf(stdout, "chunk=%s run=%s already in flight (%s), held by %s, refreshed %s ago; re-run drive after it settles\n", chunkID, run.RunID, run.Status, holder, time.Since(acquiredAt).Round(time.Second))
@@ -77,7 +76,7 @@ func driveChunkInFlight(ctx context.Context, prepared *preparedWorkflowRun, ledg
 // records. A still-delivery_pending run means the resume did not deliver
 // (no --allow-publish, policy not auto): that mirrors driveChunk's own
 // "awaits the publish grant" branch exactly.
-func driveChunkResumedOutcome(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID, chunkID, runID string, stdout io.Writer) (bool, error) {
+func driveChunkResumedOutcome(ctx context.Context, prepared *preparedWorkflowRun, ledger *workflowledger.Store, stackID, chunkID, runID string, stdout io.Writer) (bool, error) {
 	fresh, err := prepared.repo.GetRun(ctx, runID)
 	if err != nil {
 		return true, fmt.Errorf("chunk %s: read run status after resume: %w", chunkID, err)
@@ -135,7 +134,7 @@ func driveIntegrationInFlight(ctx context.Context, prepared *preparedWorkflowRun
 // stack stalls. Each stale-claim chunk is routed to driveChunkInFlight which
 // resumes it through the same non-force expired-claim takeover path that
 // `mivia workflow resume` uses.
-func driveStackResumeStaleClaims(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID string, order []string, stdout, stderr io.Writer) error {
+func driveStackResumeStaleClaims(ctx context.Context, prepared *preparedWorkflowRun, ledger *workflowledger.Store, stackID string, order []string, stdout, stderr io.Writer) error {
 	for _, chunkID := range order {
 		t, err := ledger.GetTask(stackID, chunkID)
 		if err != nil {

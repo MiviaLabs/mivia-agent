@@ -1,4 +1,4 @@
-package agenttools
+package ledger
 
 import (
 	"bytes"
@@ -11,42 +11,41 @@ import (
 	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
-	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
 // seedCompletedAttempt mirrors seedRunningAttemptWithOutput's shape but runs
 // in the internal package so buildInspectView can be exercised directly with
 // explicit offset/limit. It returns the completed attempt carrying out.
-func seedCompletedAttempt(t *testing.T, repo workflowledger.Repository, runID string, out []byte) workflowledger.StepAttempt {
+func seedCompletedAttempt(t *testing.T, repo Repository, runID string, out []byte) StepAttempt {
 	t.Helper()
 	ctx := context.Background()
-	snapshot, err := workflowledger.MarshalSnapshot(workflowledger.Snapshot{
+	snapshot, err := MarshalSnapshot(Snapshot{
 		SchemaVersion: 1, DefinitionTOML: []byte("name=x"), DefinitionDigest: "digest",
 		Inputs: map[string]string{"task": "build"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.CreateRun(ctx, workflowledger.RunSnapshot{
+	if err := repo.CreateRun(ctx, RunSnapshot{
 		RunID: runID, WorkflowName: "two-step", WorkflowDigest: "digest",
-		SnapshotDigest: workflowledger.SnapshotDigest(snapshot),
-		InputDigest:    workflowledger.InputDigest(map[string]string{"task": "build"}),
-		Status:         workflowledger.RunStatusPending, ActiveStepID: "one",
+		SnapshotDigest: SnapshotDigest(snapshot),
+		InputDigest:    InputDigest(map[string]string{"task": "build"}),
+		Status:         RunStatusPending, ActiveStepID: "one",
 		StartedAt: time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC),
 	}, snapshot); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.CompareAndSetRunStatus(ctx, runID, 1, workflowledger.RunStatusRunning, nil); err != nil {
+	if err := repo.CompareAndSetRunStatus(ctx, runID, 1, RunStatusRunning, nil); err != nil {
 		t.Fatal(err)
 	}
-	attempt := workflowledger.StepAttempt{
+	attempt := StepAttempt{
 		AttemptID: "wfa-one-1", RunID: runID, StepID: "one", AttemptNo: 1,
-		Status: workflowledger.AttemptStatusRunning,
+		Status: AttemptStatusRunning,
 	}
 	if err := repo.CreateStepAttempt(ctx, attempt); err != nil {
 		t.Fatal(err)
 	}
-	ref := "sha256:" + workflowledger.DigestHex(out)
+	ref := "sha256:" + DigestHex(out)
 	if err := repo.StoreContent(ctx, ref, out); err != nil {
 		t.Fatal(err)
 	}
@@ -58,8 +57,8 @@ func seedCompletedAttempt(t *testing.T, repo workflowledger.Repository, runID st
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.CompleteStepAttempt(ctx, runID, attempt.AttemptID, stored.Version, workflowledger.AttemptOutcome{
-		Status: workflowledger.AttemptStatusSucceeded, OutputRef: ref, OutputDigest: workflowledger.DigestHex(out),
+	if err := repo.CompleteStepAttempt(ctx, runID, attempt.AttemptID, stored.Version, AttemptOutcome{
+		Status: AttemptStatusSucceeded, OutputRef: ref, OutputDigest: DigestHex(out),
 		ToStepID: "two", TransitionIndex: 0, MatchDigest: "md", DecisionJSON: decision,
 		CoordinatorRunID: "coord-1", TaskID: "task-1", EvidenceJSON: []byte(`[{"name":"task"}]`),
 	}); err != nil {
@@ -74,31 +73,31 @@ func seedCompletedAttempt(t *testing.T, repo workflowledger.Repository, runID st
 
 // seedRunningAttemptForStatus persists a run with one still-running attempt,
 // mirroring seedRunningAttempt's shape for the internal package.
-func seedRunningAttemptForStatus(t *testing.T, repo workflowledger.Repository, runID string) workflowledger.StepAttempt {
+func seedRunningAttemptForStatus(t *testing.T, repo Repository, runID string) StepAttempt {
 	t.Helper()
 	ctx := context.Background()
-	snapshot, err := workflowledger.MarshalSnapshot(workflowledger.Snapshot{
+	snapshot, err := MarshalSnapshot(Snapshot{
 		SchemaVersion: 1, DefinitionTOML: []byte("name=x"), DefinitionDigest: "digest",
 		Inputs: map[string]string{"task": "build"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.CreateRun(ctx, workflowledger.RunSnapshot{
+	if err := repo.CreateRun(ctx, RunSnapshot{
 		RunID: runID, WorkflowName: "two-step", WorkflowDigest: "digest",
-		SnapshotDigest: workflowledger.SnapshotDigest(snapshot),
-		InputDigest:    workflowledger.InputDigest(map[string]string{"task": "build"}),
-		Status:         workflowledger.RunStatusPending, ActiveStepID: "one",
+		SnapshotDigest: SnapshotDigest(snapshot),
+		InputDigest:    InputDigest(map[string]string{"task": "build"}),
+		Status:         RunStatusPending, ActiveStepID: "one",
 		StartedAt: time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC),
 	}, snapshot); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.CompareAndSetRunStatus(ctx, runID, 1, workflowledger.RunStatusRunning, nil); err != nil {
+	if err := repo.CompareAndSetRunStatus(ctx, runID, 1, RunStatusRunning, nil); err != nil {
 		t.Fatal(err)
 	}
-	attempt := workflowledger.StepAttempt{
+	attempt := StepAttempt{
 		AttemptID: "wfa-one-1", RunID: runID, StepID: "one", AttemptNo: 1,
-		Status: workflowledger.AttemptStatusRunning,
+		Status: AttemptStatusRunning,
 	}
 	if err := repo.CreateStepAttempt(ctx, attempt); err != nil {
 		t.Fatal(err)
@@ -124,7 +123,7 @@ func withKeyPolicy(t *testing.T) {
 }
 
 func TestBuildInspectViewSmallArtifactBackwardCompat(t *testing.T) {
-	repo := workflowledger.NewMemoryRepository()
+	repo := NewMemoryRepository()
 	runID := "wfr-page-small-1"
 	raw := []byte(`{"ok":true,"verdict":"approved"}`)
 	attempt := seedCompletedAttempt(t, repo, runID, raw)
@@ -159,7 +158,7 @@ func TestBuildInspectViewSmallArtifactBackwardCompat(t *testing.T) {
 }
 
 func TestBuildInspectViewSmallNonJSONBackwardCompat(t *testing.T) {
-	repo := workflowledger.NewMemoryRepository()
+	repo := NewMemoryRepository()
 	runID := "wfr-page-smalltext-1"
 	raw := []byte("hello world\nline two\n")
 	attempt := seedCompletedAttempt(t, repo, runID, raw)
@@ -193,7 +192,7 @@ func TestBuildInspectViewPagesHugeArtifact(t *testing.T) {
 	raw := []byte(fmt.Sprintf(`{"api_key":"%s","filler":"%s"}`, secret, strings.Repeat("x", 200<<10)))
 	expected := strings.Replace(string(raw), secret, "[redacted]", 1)
 
-	repo := workflowledger.NewMemoryRepository()
+	repo := NewMemoryRepository()
 	runID := "wfr-page-huge-1"
 	attempt := seedCompletedAttempt(t, repo, runID, raw)
 
@@ -278,7 +277,7 @@ func TestBuildInspectViewRedactsSecretAcrossPageBoundary(t *testing.T) {
 	}
 	expected := strings.Replace(string(raw), secret, "[redacted]", 1)
 
-	repo := workflowledger.NewMemoryRepository()
+	repo := NewMemoryRepository()
 	runID := "wfr-page-split-1"
 	attempt := seedCompletedAttempt(t, repo, runID, raw)
 
@@ -315,7 +314,7 @@ func TestBuildInspectViewRedactsSecretAcrossPageBoundary(t *testing.T) {
 }
 
 func TestBuildInspectViewOffsetBeyondEndReturnsEmptyPage(t *testing.T) {
-	repo := workflowledger.NewMemoryRepository()
+	repo := NewMemoryRepository()
 	runID := "wfr-page-end-1"
 	raw := []byte(`{"ok":true}`)
 	attempt := seedCompletedAttempt(t, repo, runID, raw)
@@ -354,7 +353,7 @@ func TestBuildInspectViewPagesNonJSONRuneAligned(t *testing.T) {
 		t.Fatalf("test construction: expected text must already be redacted, got %q", expected)
 	}
 
-	repo := workflowledger.NewMemoryRepository()
+	repo := NewMemoryRepository()
 	runID := "wfr-page-text-1"
 	attempt := seedCompletedAttempt(t, repo, runID, raw)
 
@@ -415,7 +414,7 @@ func TestBuildInspectViewPagesNonJSONRuneAligned(t *testing.T) {
 // TestBuildInspectViewClampsLimit pins the limit <= DefaultInspectPageBytes
 // contract: an oversized requested limit is clamped to the page budget.
 func TestBuildInspectViewClampsLimit(t *testing.T) {
-	repo := workflowledger.NewMemoryRepository()
+	repo := NewMemoryRepository()
 	runID := "wfr-page-clamp-1"
 	raw := []byte(fmt.Sprintf(`{"filler":"%s"}`, strings.Repeat("x", 100<<10)))
 	attempt := seedCompletedAttempt(t, repo, runID, raw)
@@ -432,7 +431,7 @@ func TestBuildInspectViewClampsLimit(t *testing.T) {
 // TestBuildInspectViewRefusesOversizedArtifact pins the MaxPageableBytes
 // ceiling documented on InspectView: artifacts beyond it are refused outright.
 func TestBuildInspectViewRefusesOversizedArtifact(t *testing.T) {
-	repo := workflowledger.NewMemoryRepository()
+	repo := NewMemoryRepository()
 	runID := "wfr-page-huge-refused-1"
 	raw := []byte(fmt.Sprintf(`{"filler":"%s"}`, strings.Repeat("x", MaxPageableBytes+1)))
 	attempt := seedCompletedAttempt(t, repo, runID, raw)
@@ -494,7 +493,7 @@ func TestInspectPagingExpandingRedactionReachesTail(t *testing.T) {
 // completed attempt surfaces its ledger started and finished timestamps plus
 // the elapsed seconds computed from them.
 func TestBuildStatusViewCompletedAttemptTiming(t *testing.T) {
-	repo := workflowledger.NewMemoryRepository()
+	repo := NewMemoryRepository()
 	runID := "wfr-status-timing-1"
 	attempt := seedCompletedAttempt(t, repo, runID, []byte(`{"ok":true}`))
 
@@ -528,7 +527,7 @@ func TestBuildStatusViewCompletedAttemptTiming(t *testing.T) {
 // instant plus a non-negative staleness in seconds, and the JSON envelope
 // exposes both under the documented tag names.
 func TestBuildStatusViewRunningAttemptHeartbeat(t *testing.T) {
-	repo := workflowledger.NewMemoryRepository()
+	repo := NewMemoryRepository()
 	runID := "wfr-status-heartbeat-1"
 	attempt := seedRunningAttemptForStatus(t, repo, runID)
 
@@ -569,7 +568,7 @@ func TestBuildStatusViewRunningAttemptHeartbeat(t *testing.T) {
 // an attempt with no heartbeat records renders an empty last_heartbeat_at and
 // zero staleness, and the JSON envelope omits both fields.
 func TestBuildStatusViewNoHeartbeatIsZero(t *testing.T) {
-	repo := workflowledger.NewMemoryRepository()
+	repo := NewMemoryRepository()
 	runID := "wfr-status-no-heartbeat-1"
 	seedRunningAttemptForStatus(t, repo, runID)
 
@@ -596,7 +595,7 @@ func TestBuildStatusViewNoHeartbeatIsZero(t *testing.T) {
 // TestBuildStatusViewRunningAttemptTiming pins G6 for a live attempt: started
 // is set, finished stays empty, and elapsed is non-negative.
 func TestBuildStatusViewRunningAttemptTiming(t *testing.T) {
-	repo := workflowledger.NewMemoryRepository()
+	repo := NewMemoryRepository()
 	runID := "wfr-status-timing-running-1"
 	attempt := seedRunningAttemptForStatus(t, repo, runID)
 
@@ -622,7 +621,7 @@ func TestBuildStatusViewRunningAttemptTiming(t *testing.T) {
 // TestBuildInspectViewAttemptTiming pins G6 for the inspect view: the same
 // three timing fields mirror the ledger attempt.
 func TestBuildInspectViewAttemptTiming(t *testing.T) {
-	repo := workflowledger.NewMemoryRepository()
+	repo := NewMemoryRepository()
 	runID := "wfr-inspect-timing-1"
 	attempt := seedCompletedAttempt(t, repo, runID, []byte(`{"ok":true}`))
 
@@ -649,21 +648,21 @@ func TestBuildInspectViewAttemptTiming(t *testing.T) {
 // stored failure text is resolved into the status view, so the harness shows
 // the error hint automatically instead of an opaque error_ref.
 func TestStatusViewSurfacesDeliveryErrorText(t *testing.T) {
-	repo := workflowledger.NewMemoryRepository()
+	repo := NewMemoryRepository()
 	ctx := context.Background()
 	const runID = "wfr-errhint"
-	snapshot, err := workflowledger.MarshalSnapshot(workflowledger.Snapshot{
+	snapshot, err := MarshalSnapshot(Snapshot{
 		SchemaVersion: 1, DefinitionTOML: []byte("name=x"), DefinitionDigest: "digest",
 		Inputs: map[string]string{"task": "build"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.CreateRun(ctx, workflowledger.RunSnapshot{
+	if err := repo.CreateRun(ctx, RunSnapshot{
 		RunID: runID, WorkflowName: "two-step", WorkflowDigest: "digest",
-		SnapshotDigest: workflowledger.SnapshotDigest(snapshot),
-		InputDigest:    workflowledger.InputDigest(map[string]string{"task": "build"}),
-		Status:         workflowledger.RunStatusPending,
+		SnapshotDigest: SnapshotDigest(snapshot),
+		InputDigest:    InputDigest(map[string]string{"task": "build"}),
+		Status:         RunStatusPending,
 		StartedAt:      time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC),
 	}, snapshot); err != nil {
 		t.Fatal(err)
@@ -671,9 +670,9 @@ func TestStatusViewSurfacesDeliveryErrorText(t *testing.T) {
 	// Advance to delivery_pending through the legal transitions: a run cannot
 	// be created directly in delivery_pending (pending -> running ->
 	// delivery_pending).
-	for _, next := range []workflowledger.RunStatus{
-		workflowledger.RunStatusRunning,
-		workflowledger.RunStatusDeliveryPending,
+	for _, next := range []RunStatus{
+		RunStatusRunning,
+		RunStatusDeliveryPending,
 	} {
 		run, getErr := repo.GetRun(ctx, runID)
 		if getErr != nil {
@@ -684,11 +683,11 @@ func TestStatusViewSurfacesDeliveryErrorText(t *testing.T) {
 		}
 	}
 	errText := "git push origin HEAD:refs/heads/wf/x: signal: killed: verify_agent_config: ok"
-	ref := "sha256:" + workflowledger.DigestHex([]byte(errText))
+	ref := "sha256:" + DigestHex([]byte(errText))
 	if err := repo.StoreContent(ctx, ref, []byte(errText)); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.UpsertDelivery(ctx, workflowledger.DeliveryRecord{
+	if err := repo.UpsertDelivery(ctx, DeliveryRecord{
 		RunID: runID, IdempotencyKey: "wfdel:k", Mode: "draft", BaseRef: "master",
 		HeadRef: "wf/x", Provider: "github", Status: "failed", ErrorRef: ref,
 	}); err != nil {
@@ -713,28 +712,28 @@ func TestStatusViewSurfacesDeliveryErrorText(t *testing.T) {
 // DeliveryClaimHeld=true with the claim's acquired_at - the same fresh/stale
 // distinction the TUI's workflowDeliveryClaimLine already renders.
 func TestBuildStatusViewDeliveryClaim(t *testing.T) {
-	repo := workflowledger.NewMemoryRepository()
+	repo := NewMemoryRepository()
 	ctx := context.Background()
 	const runID = "wfr-claim"
-	snapshot, err := workflowledger.MarshalSnapshot(workflowledger.Snapshot{
+	snapshot, err := MarshalSnapshot(Snapshot{
 		SchemaVersion: 1, DefinitionTOML: []byte("name=x"), DefinitionDigest: "digest",
 		Inputs: map[string]string{"task": "build"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.CreateRun(ctx, workflowledger.RunSnapshot{
+	if err := repo.CreateRun(ctx, RunSnapshot{
 		RunID: runID, WorkflowName: "two-step", WorkflowDigest: "digest",
-		SnapshotDigest: workflowledger.SnapshotDigest(snapshot),
-		InputDigest:    workflowledger.InputDigest(map[string]string{"task": "build"}),
-		Status:         workflowledger.RunStatusPending,
+		SnapshotDigest: SnapshotDigest(snapshot),
+		InputDigest:    InputDigest(map[string]string{"task": "build"}),
+		Status:         RunStatusPending,
 		StartedAt:      time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC),
 	}, snapshot); err != nil {
 		t.Fatal(err)
 	}
-	for _, next := range []workflowledger.RunStatus{
-		workflowledger.RunStatusRunning,
-		workflowledger.RunStatusDeliveryPending,
+	for _, next := range []RunStatus{
+		RunStatusRunning,
+		RunStatusDeliveryPending,
 	} {
 		run, getErr := repo.GetRun(ctx, runID)
 		if getErr != nil {

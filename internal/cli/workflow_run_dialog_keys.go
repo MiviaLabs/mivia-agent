@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
@@ -26,7 +25,7 @@ type workflowRunDialog struct {
 	runID       string
 	root        string
 	configPath  string
-	engine      agenttools.Engine // nil when no engine surface is wired
+	engine      workflowledger.Engine // nil when no engine surface is wired
 	view        *workflowRunView
 	scroll      int
 	confirm     workflowConfirmAction
@@ -290,7 +289,7 @@ func (m *tuiModel) workflowDialogActionCmd(action workflowConfirmAction) tea.Cmd
 			}
 		case workflowConfirmResume:
 			return func() tea.Msg {
-				res, err := engine.Start(ctx, agenttools.StartRequest{Resume: true, RunID: runID})
+				res, err := engine.Start(ctx, workflowledger.StartRequest{Resume: true, RunID: runID})
 				return workflowRunDialogActionMsg{runID: runID, action: action, result: "resumed · " + res.Status, err: err}
 			}
 		case workflowConfirmDeliver:

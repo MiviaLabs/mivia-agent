@@ -20,7 +20,6 @@ import (
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
 // stackDriveClaimHeartbeat is how often an active `stack drive` invocation
@@ -98,7 +97,7 @@ func runStackDrive(args []string, workspaceRoot, configPath string, stdout, stde
 // itself once the stack is complete. Split out of runStackDrive to keep both
 // under the repo's per-function line budget.
 func driveStackOnePass(prepared *preparedWorkflowRun, stackID string, planInputs map[string]string, stdout, stderr io.Writer) error {
-	ledger := tasks.NewStore(prepared.store)
+	ledger := workflowledger.NewStore(prepared.store)
 	planOutput, err := loadStackPlanOutput(prepared.repo, stackID)
 	if err != nil {
 		return fmt.Errorf("stack drive: %w", err)
@@ -200,7 +199,7 @@ func settleStackPlanRunIfComplete(ctx context.Context, prepared *preparedWorkflo
 // delivery and auto-merge under merge_policy=auto. This closes the gap where
 // the operator path never called waitIntegrationRunSettled and left the final
 // PR open even under auto-merge.
-func settleStackIntegrationRunIfReady(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID string, chunks []ChunkPlan, hasMore bool, hasUnsettledWave bool, stdout, stderr io.Writer) error {
+func settleStackIntegrationRunIfReady(ctx context.Context, prepared *preparedWorkflowRun, ledger *workflowledger.Store, stackID string, chunks []ChunkPlan, hasMore bool, hasUnsettledWave bool, stdout, stderr io.Writer) error {
 	byID, err := stackTaskMap(ledger, stackID)
 	if err != nil {
 		return err
@@ -228,7 +227,7 @@ func settleStackIntegrationRunIfReady(ctx context.Context, prepared *preparedWor
 // returns the cancellation error so the caller can release the run's
 // execution flock instead of polling forever. CLI foreground paths pass
 // context.Background() and stay unbounded by design.
-func driveStackToCompletion(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID string, chunks []ChunkPlan, hasMore bool, hasUnsettledWave bool, remainingScope string, planInputs map[string]string, allowPublish bool, stdout, stderr io.Writer) error {
+func driveStackToCompletion(ctx context.Context, prepared *preparedWorkflowRun, ledger *workflowledger.Store, stackID string, chunks []ChunkPlan, hasMore bool, hasUnsettledWave bool, remainingScope string, planInputs map[string]string, allowPublish bool, stdout, stderr io.Writer) error {
 	checker := gitMergeChecker{
 		git: workflowDeliverGit,
 		pr:  workflowDeliverNewPR(),

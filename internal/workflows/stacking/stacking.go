@@ -27,7 +27,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
 // Stack task statuses (stacking vocabulary; D8: statuses are opaque strings
@@ -104,8 +103,8 @@ const MaxChunkAttempts = 3
 
 // Scope binds every stack task to the plan run that produced the chunk plan,
 // so queries never cross stacks (D8 scope binding).
-func Scope(stackID string) tasks.Scope {
-	return tasks.Scope{Type: tasks.ScopeRun, ID: stackID}
+func Scope(stackID string) workflowledger.Scope {
+	return workflowledger.Scope{Type: workflowledger.ScopeRun, ID: stackID}
 }
 
 // ChunkPlan is one entry of a decompose chunk-plan output.

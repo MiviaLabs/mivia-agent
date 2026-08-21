@@ -33,7 +33,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 	workflowspace "github.com/MiviaLabs/mivia-agent/internal/workflows/workspace"
 )
 
@@ -174,7 +173,7 @@ type orderRecordingDrive struct {
 	inner *recordingStackDrive
 }
 
-func (d *orderRecordingDrive) Drive(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID string, chunks []ChunkPlan, hasMore bool, hasUnsettledWave bool, remainingScope string, planInputs map[string]string, allowPublish bool, stdout, stderr io.Writer) error {
+func (d *orderRecordingDrive) Drive(ctx context.Context, prepared *preparedWorkflowRun, ledger *workflowledger.Store, stackID string, chunks []ChunkPlan, hasMore bool, hasUnsettledWave bool, remainingScope string, planInputs map[string]string, allowPublish bool, stdout, stderr io.Writer) error {
 	d.rec.add("drive")
 	return d.inner.Drive(ctx, prepared, ledger, stackID, chunks, hasMore, hasUnsettledWave, remainingScope, planInputs, allowPublish, stdout, stderr)
 }

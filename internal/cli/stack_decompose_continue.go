@@ -15,7 +15,6 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
 // decomposeContinuePrefix namespaces decompose-continuation invocation keys
@@ -255,7 +254,7 @@ func succeededDecomposeContinueRunRef(repo workflowledger.Repository, stackID st
 // the next wave (a bounded extra step, not a full drive-to-completion loop -
 // the operator re-runs `stack drive` to keep advancing, matching this
 // command's existing one-pass-per-invocation contract).
-func admitNextWaveIfReady(prepared *preparedWorkflowRun, ledger *tasks.Store, stackID string, chunks []ChunkPlan, hasMore bool, remainingScope string, planInputs map[string]string, stdout, stderr io.Writer) error {
+func admitNextWaveIfReady(prepared *preparedWorkflowRun, ledger *workflowledger.Store, stackID string, chunks []ChunkPlan, hasMore bool, remainingScope string, planInputs map[string]string, stdout, stderr io.Writer) error {
 	if !hasMore {
 		return nil
 	}
@@ -295,7 +294,7 @@ func admitNextWaveIfReady(prepared *preparedWorkflowRun, ledger *tasks.Store, st
 // admitted continuation run whose chunks the cap then rejects is an orphan
 // (admitted, never seeded, never driven). The post-admission check stays for
 // a wave that alone jumps over the cap.
-func admitNextDecomposeWave(prepared *preparedWorkflowRun, ledger *tasks.Store, stackID string, wave int, chunks []ChunkPlan, remainingScope string, planInputs map[string]string, stdout, stderr io.Writer) ([]ChunkPlan, bool, string, error) {
+func admitNextDecomposeWave(prepared *preparedWorkflowRun, ledger *workflowledger.Store, stackID string, wave int, chunks []ChunkPlan, remainingScope string, planInputs map[string]string, stdout, stderr io.Writer) ([]ChunkPlan, bool, string, error) {
 	if maxTotal := prepared.compiled.Stacking.MaxTotalChunks; maxTotal > 0 && len(chunks) >= maxTotal {
 		return nil, false, "", fmt.Errorf("stack drive: stack %s reached max_total_chunks=%d with more scope declared; halting before admitting wave %d", stackID, maxTotal, wave)
 	}

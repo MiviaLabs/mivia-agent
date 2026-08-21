@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/events"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -177,7 +176,7 @@ func TestCoverageSessionEngineResumeAttachesProgressBus(t *testing.T) {
 	e := newSessionWorkflowEngine(root, configPath)
 	e.SetEventBus(bus)
 
-	result, err := e.Start(context.Background(), agenttools.StartRequest{
+	result, err := e.Start(context.Background(), workflowledger.StartRequest{
 		Resume: true,
 		RunID:  run.RunID,
 	})

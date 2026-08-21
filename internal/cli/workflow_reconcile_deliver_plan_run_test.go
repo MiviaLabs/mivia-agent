@@ -7,7 +7,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
 // miniStackDeliverPlanRunWorkflowTOML is miniStackWorkflowTOML with
@@ -128,7 +127,7 @@ func seedParkedStackingPlanRunDeliverPlanRunTOML(t *testing.T, root, storePath s
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	if err := seedStackLedger(tasks.NewStore(store), runID, chunks); err != nil {
+	if err := seedStackLedger(workflowledger.NewStore(store), runID, chunks); err != nil {
 		t.Fatal(err)
 	}
 	return runID

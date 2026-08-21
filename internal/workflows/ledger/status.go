@@ -1,4 +1,4 @@
-package agenttools
+package ledger
 
 import (
 	"context"
@@ -11,13 +11,12 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/textutil"
-	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
-func buildStatusView(ctx context.Context, repo workflowledger.Repository, runID string) (StatusView, error) {
+func buildStatusView(ctx context.Context, repo Repository, runID string) (StatusView, error) {
 	run, err := repo.GetRun(ctx, runID)
 	if err != nil {
-		if errors.Is(err, workflowledger.ErrNotFound) {
+		if errors.Is(err, ErrNotFound) {
 			return StatusView{}, fmt.Errorf("workflow run %q not found", runID)
 		}
 		return StatusView{}, err
@@ -36,7 +35,7 @@ func buildStatusView(ctx context.Context, repo workflowledger.Repository, runID 
 		Worktree:   run.WorktreeName,
 		Attempts:   []AttemptView{},
 	}
-	if run.Status == workflowledger.RunStatusDeliveryPending {
+	if run.Status == RunStatusDeliveryPending {
 		if _, at, ok, err := repo.GetRunClaim(ctx, runID); err == nil && ok {
 			view.DeliveryClaimHeld = true
 			view.DeliveryClaimAt = formatTime(at)
@@ -94,7 +93,7 @@ const deliveryErrorHintMax = 4 << 10
 // status view surfaces the failure hint automatically. Fail-soft: an empty or
 // unresolvable ref yields an empty string; a missing hint must not block the
 // status view (DC-9).
-func resolvedDeliveryError(ctx context.Context, repo workflowledger.Repository, ref string) string {
+func resolvedDeliveryError(ctx context.Context, repo Repository, ref string) string {
 	if ref == "" {
 		return ""
 	}
@@ -107,7 +106,7 @@ func resolvedDeliveryError(ctx context.Context, repo workflowledger.Repository, 
 
 // attemptView renders one ledger attempt as an AttemptView, including the
 // RFC3339 UTC timestamps and the elapsed seconds from the ledger.
-func attemptView(a workflowledger.StepAttempt) AttemptView {
+func attemptView(a StepAttempt) AttemptView {
 	av := AttemptView{
 		Step:                          a.StepID,
 		Attempt:                       a.AttemptNo,
@@ -135,7 +134,7 @@ func attemptView(a workflowledger.StepAttempt) AttemptView {
 // seconds: finished minus started for a completed attempt, or elapsed since
 // start for a running one. Zero when the start time is unknown or the clock
 // is skewed (negative duration).
-func attemptElapsedSeconds(a workflowledger.StepAttempt) int64 {
+func attemptElapsedSeconds(a StepAttempt) int64 {
 	if a.StartedAt.IsZero() {
 		return 0
 	}
@@ -154,7 +153,7 @@ func attemptElapsedSeconds(a workflowledger.StepAttempt) int64 {
 // heartbeat, or 0 when none is recorded or the clock is skewed (a future
 // heartbeat reads as fresh). Heartbeats only exist for RUNNING attempts, so a
 // completed attempt carries 0 unless its final tick was persisted.
-func attemptHeartbeatStaleness(a workflowledger.StepAttempt) int64 {
+func attemptHeartbeatStaleness(a StepAttempt) int64 {
 	if a.LastHeartbeatAt.IsZero() {
 		return 0
 	}
@@ -167,7 +166,7 @@ func attemptHeartbeatStaleness(a workflowledger.StepAttempt) int64 {
 
 // extractVerdict pulls a gate verdict from decision JSON or stored output fields
 // without loading full output bodies into the status envelope.
-func extractVerdict(a workflowledger.StepAttempt) string {
+func extractVerdict(a StepAttempt) string {
 	if len(a.DecisionJSON) == 0 {
 		return ""
 	}
@@ -201,7 +200,7 @@ func extractVerdict(a workflowledger.StepAttempt) string {
 // limit=DefaultInspectPageBytes, which keeps the pre-pagination behavior for
 // artifacts that fit the page. Artifacts larger than MaxPageableBytes are
 // refused outright.
-func buildInspectView(ctx context.Context, repo workflowledger.Repository, runID string, attempt workflowledger.StepAttempt, page ...int) (InspectView, error) {
+func buildInspectView(ctx context.Context, repo Repository, runID string, attempt StepAttempt, page ...int) (InspectView, error) {
 	pageOffset, pageLimit := 0, DefaultInspectPageBytes
 	if len(page) > 0 {
 		pageOffset = page[0]
@@ -258,7 +257,7 @@ func buildInspectView(ctx context.Context, repo workflowledger.Repository, runID
 	}
 	if attempt.OutputRef != "" {
 		data, err := repo.LoadContent(ctx, attempt.OutputRef)
-		if err != nil && !errors.Is(err, workflowledger.ErrContentNotFound) {
+		if err != nil && !errors.Is(err, ErrContentNotFound) {
 			return InspectView{}, err
 		}
 		if err == nil && len(data) > 0 {
@@ -270,7 +269,7 @@ func buildInspectView(ctx context.Context, repo workflowledger.Repository, runID
 	}
 	if attempt.ErrorRef != "" {
 		data, err := repo.LoadContent(ctx, attempt.ErrorRef)
-		if err != nil && !errors.Is(err, workflowledger.ErrContentNotFound) {
+		if err != nil && !errors.Is(err, ErrContentNotFound) {
 			return InspectView{}, err
 		}
 		if err == nil && len(data) > 0 {

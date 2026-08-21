@@ -19,12 +19,11 @@ import (
 	"time"
 
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
-func seedStackTaskStatus(t *testing.T, ledger *tasks.Store, stackID, chunkID, status string) {
+func seedStackTaskStatus(t *testing.T, ledger *workflowledger.Store, stackID, chunkID, status string) {
 	t.Helper()
-	if err := ledger.CreateTask(tasks.Task{ID: chunkID, PlanRef: stackID, Scope: stackScope(stackID), Status: status}); err != nil {
+	if err := ledger.CreateTask(workflowledger.Task{ID: chunkID, PlanRef: stackID, Scope: stackScope(stackID), Status: status}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -46,9 +45,9 @@ func TestStackAwaitsGrantOnly(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			byID := map[string]tasks.Task{}
+			byID := map[string]workflowledger.Task{}
 			for id, st := range tc.statuses {
-				byID[id] = tasks.Task{ID: id, Status: st}
+				byID[id] = workflowledger.Task{ID: id, Status: st}
 			}
 			if got := stackAwaitsGrantOnly(byID); got != tc.want {
 				t.Fatalf("stackAwaitsGrantOnly = %v, want %v", got, tc.want)
@@ -66,9 +65,9 @@ func TestStackAwaitsGrantOnly(t *testing.T) {
 func TestWaitForChunkMergesPausesWhenPublishedFollowUpRemains(t *testing.T) {
 	repo := workflowledger.NewMemoryRepository()
 	t.Cleanup(func() { _ = repo.Close() })
-	ledger := tasks.NewMemoryStore()
+	ledger := workflowledger.NewMemoryStore()
 	stackID := "stack-published"
-	if _, err := ledger.StorePlan(tasks.Plan{ID: stackID, Scope: stackScope(stackID), Schema: stackPlanSchema}); err != nil {
+	if _, err := ledger.StorePlan(workflowledger.Plan{ID: stackID, Scope: stackScope(stackID), Schema: stackPlanSchema}); err != nil {
 		t.Fatal(err)
 	}
 	seedStackTaskStatus(t, ledger, stackID, "c1", stackStatusMerged)
@@ -102,9 +101,9 @@ func TestWaitForChunkMergesPausesWhenPublishedFollowUpRemains(t *testing.T) {
 func TestWaitForChunkMergesPausesWhenOnlyGrantsRemain(t *testing.T) {
 	repo := workflowledger.NewMemoryRepository()
 	t.Cleanup(func() { _ = repo.Close() })
-	ledger := tasks.NewMemoryStore()
+	ledger := workflowledger.NewMemoryStore()
 	stackID := "stack-grant"
-	if _, err := ledger.StorePlan(tasks.Plan{ID: stackID, Scope: stackScope(stackID), Schema: stackPlanSchema}); err != nil {
+	if _, err := ledger.StorePlan(workflowledger.Plan{ID: stackID, Scope: stackScope(stackID), Schema: stackPlanSchema}); err != nil {
 		t.Fatal(err)
 	}
 	seedStackTaskStatus(t, ledger, stackID, "c1", stackStatusReviewed)
@@ -135,7 +134,7 @@ func TestWaitForChunkMergesPausesWhenOnlyGrantsRemain(t *testing.T) {
 // reviewed chunk's row is followed by the exact ready-to-paste deliver
 // command so the pause message and `mivia stack status` agree.
 func TestStackGrantHintLinesNameTheDeliverCommand(t *testing.T) {
-	lines := stackGrantHintLines([]tasks.Task{
+	lines := stackGrantHintLines([]workflowledger.Task{
 		{ID: "c1", Status: stackStatusReviewed},
 		{ID: "c2", Status: stackStatusMerged},
 	}, func(chunkID string) string {
@@ -156,7 +155,7 @@ func TestStackGrantHintLinesNameTheDeliverCommand(t *testing.T) {
 // warning: under merge_policy=approve a parent chunk with an unmerged deferred
 // follow-up must tell the human to merge the follow-up first.
 func TestStackGrantHintLinesWarnsAboutDeferredFollowUpOrder(t *testing.T) {
-	lines := stackGrantHintLines([]tasks.Task{
+	lines := stackGrantHintLines([]workflowledger.Task{
 		{ID: "c1", Status: stackStatusPublished},
 		{ID: "c1-deferred", Status: stackStatusPublished, Deps: []string{"c1"}},
 	}, func(string) string { return "" })

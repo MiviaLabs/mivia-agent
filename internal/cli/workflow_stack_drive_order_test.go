@@ -33,7 +33,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
 // multiChunkPlanOutput is a decompose step output that satisfies
@@ -119,7 +118,7 @@ type recordingStackDrive struct {
 	chunks  []ChunkPlan
 }
 
-func (d *recordingStackDrive) Drive(_ context.Context, _ *preparedWorkflowRun, _ *tasks.Store, stackID string, chunks []ChunkPlan, _ bool, _ bool, _ string, _ map[string]string, _ bool, _ io.Writer, _ io.Writer) error {
+func (d *recordingStackDrive) Drive(_ context.Context, _ *preparedWorkflowRun, _ *workflowledger.Store, stackID string, chunks []ChunkPlan, _ bool, _ bool, _ string, _ map[string]string, _ bool, _ io.Writer, _ io.Writer) error {
 	d.called = true
 	d.stackID = stackID
 	d.chunks = chunks
@@ -241,7 +240,7 @@ func TestExecuteWorkflowRunDrivesSettledStackBeforeDelivery(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	seeded, err := tasks.NewStore(store).ListTasksByScope(stackScope(runID))
+	seeded, err := workflowledger.NewStore(store).ListTasksByScope(stackScope(runID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -416,7 +415,7 @@ func TestMaybeDriveSettledStackDrivesMultiChunkPlan(t *testing.T) {
 	if !strings.Contains(stdout.String(), "multi-chunk plan (2 chunks)") {
 		t.Fatalf("stdout = %q, want the stack drive notice", stdout.String())
 	}
-	seeded, err := tasks.NewStore(store).ListTasksByScope(stackScope(runID))
+	seeded, err := workflowledger.NewStore(store).ListTasksByScope(stackScope(runID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -458,7 +457,7 @@ func TestMaybeDriveSettledStackNoopForSingleMode(t *testing.T) {
 	if drive.called {
 		t.Fatal("stack drive ran for a single-chunk plan; nothing to stack")
 	}
-	if seeded, err := tasks.NewStore(store).ListTasksByScope(stackScope(runID)); err != nil || len(seeded) != 0 {
+	if seeded, err := workflowledger.NewStore(store).ListTasksByScope(stackScope(runID)); err != nil || len(seeded) != 0 {
 		t.Fatalf("seeded chunk tasks = %v, %v; want zero for a single plan", seeded, err)
 	}
 }
@@ -476,7 +475,7 @@ type continuationDriveRecorder struct {
 	inputs         map[string]string
 }
 
-func (d *continuationDriveRecorder) Drive(_ context.Context, _ *preparedWorkflowRun, _ *tasks.Store, stackID string, chunks []ChunkPlan, hasMore bool, _ bool, remainingScope string, inputs map[string]string, _ bool, _ io.Writer, _ io.Writer) error {
+func (d *continuationDriveRecorder) Drive(_ context.Context, _ *preparedWorkflowRun, _ *workflowledger.Store, stackID string, chunks []ChunkPlan, hasMore bool, _ bool, remainingScope string, inputs map[string]string, _ bool, _ io.Writer, _ io.Writer) error {
 	d.called = true
 	d.stackID = stackID
 	d.chunks = append([]ChunkPlan(nil), chunks...)
@@ -541,7 +540,7 @@ func TestMaybeDriveSettledStackReconstructsAdmittedContinuationWave(t *testing.T
 	if rec.remainingScope != "" {
 		t.Fatalf("drive remainingScope = %q, want empty", rec.remainingScope)
 	}
-	seeded, err := tasks.NewStore(store).ListTasksByScope(stackScope(runID))
+	seeded, err := workflowledger.NewStore(store).ListTasksByScope(stackScope(runID))
 	if err != nil {
 		t.Fatal(err)
 	}

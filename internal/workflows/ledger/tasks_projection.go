@@ -2,7 +2,7 @@
 // state: it is rebuilt from the durable event log of each plan run, so a fresh
 // Store instance over the same storage backend sees identical state after a
 // restart, and incremental catch-up keeps several instances coherent.
-package tasks
+package ledger
 
 import (
 	"context"

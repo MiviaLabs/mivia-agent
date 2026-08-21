@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/localengine"
@@ -95,7 +94,7 @@ func TestEngineAdmitsFeatureBranchTargetingDev(t *testing.T) {
 		},
 		NewRunID: func() string { return "wfr-feature-to-dev" },
 	}
-	started, err := engine.Start(context.Background(), agenttools.StartRequest{
+	started, err := engine.Start(context.Background(), workflowledger.StartRequest{
 		Workflow: "deliver-to-dev", Inputs: map[string]any{"task": "x"},
 	})
 	if err != nil {

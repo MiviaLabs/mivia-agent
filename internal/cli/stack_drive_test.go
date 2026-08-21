@@ -15,7 +15,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/stacking"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
 // TestStackDriveFailSettlesPlanRunFailed proves that driveStackOnePass
@@ -117,7 +116,7 @@ func seedStackDriveGateFixtureBase(t *testing.T, planRunID string) *preparedWork
 	if err != nil {
 		t.Fatal(err)
 	}
-	ledger := tasks.NewStore(prepared.store)
+	ledger := workflowledger.NewStore(prepared.store)
 	if err := seedStackLedger(ledger, planRunID, chunks); err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +133,7 @@ func seedStackDriveFailedGateFixture(t *testing.T) (*preparedWorkflowRun, string
 	t.Helper()
 	const planRunID = "wfr-drive-failed-gate"
 	prepared := seedStackDriveGateFixtureBase(t, planRunID)
-	ledger := tasks.NewStore(prepared.store)
+	ledger := workflowledger.NewStore(prepared.store)
 	if err := ledger.TransitionTask(planRunID, "c2", stackStatusFailed); err != nil {
 		t.Fatal(err)
 	}
@@ -158,11 +157,11 @@ func seedStackDriveIncompleteGateFixture(t *testing.T) (*preparedWorkflowRun, st
 func seedExhaustedFailedChunk(t *testing.T, prepared *preparedWorkflowRun, planRunID, failedChunkID string) {
 	t.Helper()
 	ctx := context.Background()
-	ledger := tasks.NewStore(prepared.store)
-	if _, err := ledger.StorePlan(tasks.Plan{ID: planRunID, Scope: stackScope(planRunID), Schema: stacking.PlanSchema}); err != nil {
+	ledger := workflowledger.NewStore(prepared.store)
+	if _, err := ledger.StorePlan(workflowledger.Plan{ID: planRunID, Scope: stackScope(planRunID), Schema: stacking.PlanSchema}); err != nil {
 		t.Fatal(err)
 	}
-	if err := ledger.CreateTask(tasks.Task{ID: failedChunkID, PlanRef: planRunID, Scope: stackScope(planRunID), Status: stackStatusRunning}); err != nil {
+	if err := ledger.CreateTask(workflowledger.Task{ID: failedChunkID, PlanRef: planRunID, Scope: stackScope(planRunID), Status: stackStatusRunning}); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < stackMaxChunkAttempts; i++ {

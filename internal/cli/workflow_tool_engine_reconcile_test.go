@@ -17,7 +17,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
 // parkedSweepHolder is the claim holder the parked-run sweep's resume build
@@ -217,7 +216,7 @@ func seedParkedStackingPlanRunTOML(t *testing.T, root, storePath string, repo wo
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	if err := seedStackLedger(tasks.NewStore(store), runID, chunks); err != nil {
+	if err := seedStackLedger(workflowledger.NewStore(store), runID, chunks); err != nil {
 		t.Fatal(err)
 	}
 	return runID
@@ -241,7 +240,7 @@ func mergeParkedStackChunks(t *testing.T, storePath string, repo workflowledger.
 	if err != nil || len(chunks) != 2 {
 		t.Fatalf("parse multi-chunk plan = %v, %v; want 2 chunks", chunks, err)
 	}
-	ledger := tasks.NewStore(store)
+	ledger := workflowledger.NewStore(store)
 	for _, c := range chunks {
 		if err := ledger.TransitionTask(runID, c.ID, stackStatusMerged); err != nil {
 			t.Fatalf("transition chunk %s to merged: %v", c.ID, err)
@@ -550,7 +549,7 @@ func TestReconcileParkedDeliverySettlesFailedStack(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	if err := tasks.NewStore(store).TransitionTask(planRunID, "c2", stackStatusFailed); err != nil {
+	if err := workflowledger.NewStore(store).TransitionTask(planRunID, "c2", stackStatusFailed); err != nil {
 		t.Fatalf("transition chunk c2 to failed: %v", err)
 	}
 

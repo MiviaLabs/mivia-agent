@@ -17,13 +17,12 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
 func TestDriveChunkResumedOutcomeSucceededNoDiffMarksMerged(t *testing.T) {
 	repo := workflowledger.NewMemoryRepository()
 	t.Cleanup(func() { _ = repo.Close() })
-	ledger := tasks.NewMemoryStore()
+	ledger := workflowledger.NewMemoryStore()
 	stackID := "stack-resume-nodiff"
 	seedStackTask(t, ledger, stackID, "a")
 
@@ -65,7 +64,7 @@ func TestDriveChunkResumedOutcomeSucceededNoDiffMarksMerged(t *testing.T) {
 func TestDriveChunkResumedOutcomeDeliveryPendingAwaitsGrant(t *testing.T) {
 	repo := workflowledger.NewMemoryRepository()
 	t.Cleanup(func() { _ = repo.Close() })
-	ledger := tasks.NewMemoryStore()
+	ledger := workflowledger.NewMemoryStore()
 	stackID := "stack-resume-pending"
 	seedStackTask(t, ledger, stackID, "a")
 
@@ -100,7 +99,7 @@ func TestDriveChunkResumedOutcomeDeliveryPendingAwaitsGrant(t *testing.T) {
 func TestDriveChunkResumedOutcomeFailedReopensBounded(t *testing.T) {
 	repo := workflowledger.NewMemoryRepository()
 	t.Cleanup(func() { _ = repo.Close() })
-	ledger := tasks.NewMemoryStore()
+	ledger := workflowledger.NewMemoryStore()
 	stackID := "stack-resume-failed"
 	seedStackTask(t, ledger, stackID, "a")
 
@@ -172,9 +171,9 @@ func (m *claimOverrideRepo) GetRunClaim(_ context.Context, _ string) (string, ti
 func TestDriveIntegrationRunResumesOrphanedRun(t *testing.T) {
 	repo := workflowledger.NewMemoryRepository()
 	t.Cleanup(func() { _ = repo.Close() })
-	ledger := tasks.NewMemoryStore()
+	ledger := workflowledger.NewMemoryStore()
 	stackID := "stack-integration-resume"
-	if _, err := ledger.StorePlan(tasks.Plan{ID: stackID, Scope: stackScope(stackID), Schema: stackPlanSchema}); err != nil {
+	if _, err := ledger.StorePlan(workflowledger.Plan{ID: stackID, Scope: stackScope(stackID), Schema: stackPlanSchema}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -225,9 +224,9 @@ func TestDriveIntegrationRunResumesOrphanedRun(t *testing.T) {
 func TestDriveIntegrationRunParksOnLiveClaim(t *testing.T) {
 	repo := workflowledger.NewMemoryRepository()
 	t.Cleanup(func() { _ = repo.Close() })
-	ledger := tasks.NewMemoryStore()
+	ledger := workflowledger.NewMemoryStore()
 	stackID := "stack-integration-park"
-	if _, err := ledger.StorePlan(tasks.Plan{ID: stackID, Scope: stackScope(stackID), Schema: stackPlanSchema}); err != nil {
+	if _, err := ledger.StorePlan(workflowledger.Plan{ID: stackID, Scope: stackScope(stackID), Schema: stackPlanSchema}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -282,9 +281,9 @@ func TestDriveIntegrationRunParksOnLiveClaim(t *testing.T) {
 func TestDriveIntegrationRunResumedFailureLeavesForCompletion(t *testing.T) {
 	repo := workflowledger.NewMemoryRepository()
 	t.Cleanup(func() { _ = repo.Close() })
-	ledger := tasks.NewMemoryStore()
+	ledger := workflowledger.NewMemoryStore()
 	stackID := "stack-integration-fail"
-	if _, err := ledger.StorePlan(tasks.Plan{ID: stackID, Scope: stackScope(stackID), Schema: stackPlanSchema}); err != nil {
+	if _, err := ledger.StorePlan(workflowledger.Plan{ID: stackID, Scope: stackScope(stackID), Schema: stackPlanSchema}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -345,14 +344,14 @@ func TestDriveIntegrationRunResumedFailureLeavesForCompletion(t *testing.T) {
 func TestDriveStackResumeStaleClaimsResumesOrphanedRunningTask(t *testing.T) {
 	repo := workflowledger.NewMemoryRepository()
 	t.Cleanup(func() { _ = repo.Close() })
-	ledger := tasks.NewMemoryStore()
+	ledger := workflowledger.NewMemoryStore()
 	stackID := "stack-stale-claim-resume"
-	if _, err := ledger.StorePlan(tasks.Plan{ID: stackID, Scope: stackScope(stackID), Schema: stackPlanSchema}); err != nil {
+	if _, err := ledger.StorePlan(workflowledger.Plan{ID: stackID, Scope: stackScope(stackID), Schema: stackPlanSchema}); err != nil {
 		t.Fatal(err)
 	}
 
 	chunkID := "c1"
-	if err := ledger.CreateTask(tasks.Task{ID: chunkID, PlanRef: stackID, Scope: stackScope(stackID), Status: stackStatusRunning}); err != nil {
+	if err := ledger.CreateTask(workflowledger.Task{ID: chunkID, PlanRef: stackID, Scope: stackScope(stackID), Status: stackStatusRunning}); err != nil {
 		t.Fatal(err)
 	}
 

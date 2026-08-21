@@ -21,7 +21,6 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 	workflowspace "github.com/MiviaLabs/mivia-agent/internal/workflows/workspace"
 )
 
@@ -36,7 +35,7 @@ import (
 // created without going through checkChunkDiffSize/Deliver at all, so it
 // can never itself declare deferred_files - no recursion is possible, but
 // the skip keeps the scan cheap.
-func admitPendingFollowUps(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID string, byID map[string]tasks.Task, stdout, stderr io.Writer) error {
+func admitPendingFollowUps(ctx context.Context, prepared *preparedWorkflowRun, ledger *workflowledger.Store, stackID string, byID map[string]workflowledger.Task, stdout, stderr io.Writer) error {
 	for chunkID := range byID {
 		if strings.HasSuffix(chunkID, "-deferred") {
 			continue
@@ -54,7 +53,7 @@ func admitPendingFollowUps(ctx context.Context, prepared *preparedWorkflowRun, l
 // chunk plan, so allChunksMerged alone would consider the stack complete
 // while a follow-up PR is still open; this closes that gap without needing
 // to thread follow-ups back into the chunks slice everywhere it is passed.
-func allTasksMerged(byID map[string]tasks.Task) bool {
+func allTasksMerged(byID map[string]workflowledger.Task) bool {
 	for _, t := range byID {
 		if t.Status != stackStatusMerged {
 			return false
@@ -78,7 +77,7 @@ func deferredFollowUpChunkID(parentChunkID string) string {
 // run row is reserved with a DETERMINISTIC run id BEFORE any git/GitHub
 // call, so a retry or a concurrent admission resumes the same registration
 // instead of duplicating run rows, delivery records, or PRs (bug 4).
-func admitFollowUpsForChunk(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID, chunkID string, stdout, stderr io.Writer) error {
+func admitFollowUpsForChunk(ctx context.Context, prepared *preparedWorkflowRun, ledger *workflowledger.Store, stackID, chunkID string, stdout, stderr io.Writer) error {
 	run, found, err := stackRunRef(prepared.repo, stackID, chunkID)
 	if err != nil || !found {
 		return err
@@ -203,7 +202,7 @@ func followUpRunRank(status workflowledger.RunStatus) int {
 // makes it participate in reconcileStack/stackTaskMap like any seeded
 // chunk. Every step is idempotent, so a retry resumes a crashed or
 // concurrent registration instead of duplicating it.
-func registerFollowUpChunk(repo workflowledger.Repository, ledger *tasks.Store, stackID, parentChunkID, followUpID, runID, deferredBranch, deferredSHA string, parentRun workflowledger.RunSnapshot, ref delivery.PRRef) error {
+func registerFollowUpChunk(repo workflowledger.Repository, ledger *workflowledger.Store, stackID, parentChunkID, followUpID, runID, deferredBranch, deferredSHA string, parentRun workflowledger.RunSnapshot, ref delivery.PRRef) error {
 	ctx := context.Background()
 	// Settle the reserved run row toward succeeded. A crashed or concurrent
 	// admission may have left it at any status (pending, running, or
@@ -241,7 +240,7 @@ func registerFollowUpChunk(repo workflowledger.Repository, ledger *tasks.Store, 
 	if err := repo.UpsertDelivery(ctx, rec); err != nil {
 		return fmt.Errorf("record follow-up delivery: %w", err)
 	}
-	task := tasks.Task{
+	task := workflowledger.Task{
 		ID: followUpID, PlanRef: stackID, Scope: stackScope(stackID),
 		Status: stackStatusPublished, Deps: []string{parentChunkID},
 	}

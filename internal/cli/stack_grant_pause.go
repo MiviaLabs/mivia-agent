@@ -17,7 +17,6 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
 // errStackAwaitsGrant reports a stack whose every unmerged chunk waits on a
@@ -61,7 +60,7 @@ func stackingDriveAllowPublish(compiled *definition.CompiledWorkflow) bool {
 // policy-agnostic; the caller applies it only when merge_policy != "auto"
 // (under auto the driver itself merges published PRs, so polling does
 // advance the stack).
-func stackAwaitsGrantOnly(byID map[string]tasks.Task) bool {
+func stackAwaitsGrantOnly(byID map[string]workflowledger.Task) bool {
 	waiting := 0
 	for _, t := range byID {
 		switch t.Status {
@@ -86,7 +85,7 @@ func stackAwaitsGrantOnly(byID map[string]tasks.Task) bool {
 // chunk: reviewed chunks get the deliver command, published chunks get the
 // human-merge instruction (merge_policy=approve). runRefByChunk resolves a
 // chunk's run ID ("" when unknown).
-func stackGrantHintLines(list []tasks.Task, runRefByChunk func(chunkID string) string) []string {
+func stackGrantHintLines(list []workflowledger.Task, runRefByChunk func(chunkID string) string) []string {
 	var lines []string
 	for _, t := range list {
 		switch t.Status {
@@ -112,8 +111,8 @@ func stackGrantHintLines(list []tasks.Task, runRefByChunk func(chunkID string) s
 // merge_policy=approve the parent PR must not merge before its follow-up,
 // because the follow-up is stacked on the parent's branch and would be closed
 // unmerged (orphaning its content) when the parent branch is deleted.
-func chunkHasUnmergedDeferredDependent(list []tasks.Task, chunkID string) bool {
-	byID := make(map[string]tasks.Task, len(list))
+func chunkHasUnmergedDeferredDependent(list []workflowledger.Task, chunkID string) bool {
+	byID := make(map[string]workflowledger.Task, len(list))
 	for _, t := range list {
 		byID[t.ID] = t
 	}
@@ -131,8 +130,8 @@ func chunkHasUnmergedDeferredDependent(list []tasks.Task, chunkID string) bool {
 }
 
 // printStackGrantPause writes the pause guidance for every reviewed chunk.
-func printStackGrantPause(repo workflowledger.Repository, stackID string, byID map[string]tasks.Task, stdout io.Writer) {
-	list := make([]tasks.Task, 0, len(byID))
+func printStackGrantPause(repo workflowledger.Repository, stackID string, byID map[string]workflowledger.Task, stdout io.Writer) {
+	list := make([]workflowledger.Task, 0, len(byID))
 	for _, t := range byID {
 		list = append(list, t)
 	}
@@ -151,7 +150,7 @@ func printStackGrantPause(repo workflowledger.Repository, stackID string, byID m
 
 // anyChunkDurablyFailed reports whether the stack has a chunk task at
 // stackStatusFailed right now, regardless of which pass produced it.
-func anyChunkDurablyFailed(ledger *tasks.Store, stackID string) (string, bool) {
+func anyChunkDurablyFailed(ledger *workflowledger.Store, stackID string) (string, bool) {
 	byID, err := stackTaskMap(ledger, stackID)
 	if err != nil {
 		return "", false
@@ -188,7 +187,7 @@ func chunkDeliveryOutcomeMessage(chunkID, runID, runStatus string) string {
 // dependency merged. It mirrors nextAdmissionWave's readiness check
 // (stackTaskReady) without needing topological order: the caller only needs
 // to know whether SOMETHING is newly admissible, not the wave's sequencing.
-func chunkNowAdmissible(chunks []ChunkPlan, byID map[string]tasks.Task) bool {
+func chunkNowAdmissible(chunks []ChunkPlan, byID map[string]workflowledger.Task) bool {
 	merged := stackMergedSet(byID)
 	for _, c := range chunks {
 		t, ok := byID[c.ID]

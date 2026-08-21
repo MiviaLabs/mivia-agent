@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
@@ -26,14 +26,14 @@ func TestWorkflowToolsDefaultInDefaultRegistry(t *testing.T) {
 		t.Fatal(err)
 	}
 	reg := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
-	for _, name := range agenttools.AllToolNames() {
+	for _, name := range ledger.AllToolNames() {
 		if _, ok := reg.Get(name); !ok {
 			t.Errorf("expected %s registered by default when the workspace has .mivia/workflows/", name)
 		}
 	}
 	// The read tools must be functional, not UnsetRepoFactory stubs: an
 	// empty workspace must list zero runs, not report an unconfigured ledger.
-	tool, ok := reg.Get(agenttools.ToolWorkflowListRuns)
+	tool, ok := reg.Get(ledger.ToolWorkflowListRuns)
 	if !ok {
 		t.Fatal("workflow_list_runs is not registered")
 	}
@@ -54,7 +54,7 @@ func TestWorkflowToolsDefaultAbsentWithoutWorkflowsDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	reg := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
-	for _, name := range agenttools.AllToolNames() {
+	for _, name := range ledger.AllToolNames() {
 		if _, ok := reg.Get(name); ok {
 			t.Errorf("did not expect %s without .mivia/workflows/", name)
 		}

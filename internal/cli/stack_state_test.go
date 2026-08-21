@@ -8,7 +8,6 @@ import (
 	"time"
 
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
 func TestChunkRunNoDiff(t *testing.T) {
@@ -164,25 +163,25 @@ func settleRunToSucceeded(t *testing.T, repo workflowledger.Repository, runID st
 }
 
 // TestReconcileStackToleratesErrConflict pins F12 finding 2: when two
-// concurrent drivers reconcile the same task, the loser gets tasks.ErrConflict
-// from applyReconcileAction (via tasks.Store.TransitionTask → appendEvent).
+// concurrent drivers reconcile the same task, the loser gets workflowledger.ErrTaskConflict
+// from applyReconcileAction (via workflowledger.Store.TransitionTask → appendEvent).
 // The reconcile pass must skip that task and continue instead of aborting the
-// whole pass. Because tasks.Store is a concrete type that serializes through
+// whole pass. Because workflowledger.Store is a concrete type that serializes through
 // a mutex, we verify the ErrConflict sentinel path and the reconcile-level
 // error handling separately.
 func TestReconcileStackToleratesErrConflict(t *testing.T) {
 	repo := workflowledger.NewMemoryRepository()
 	t.Cleanup(func() { _ = repo.Close() })
-	ledger := tasks.NewMemoryStore()
+	ledger := workflowledger.NewMemoryStore()
 
 	stackID := "stack-conflict"
-	if _, err := ledger.StorePlan(tasks.Plan{ID: stackID, Scope: stackScope(stackID)}); err != nil {
+	if _, err := ledger.StorePlan(workflowledger.Plan{ID: stackID, Scope: stackScope(stackID)}); err != nil {
 		t.Fatal(err)
 	}
-	if err := ledger.CreateTask(tasks.Task{ID: "c1", PlanRef: stackID, Scope: stackScope(stackID), Status: stackStatusPlanned}); err != nil {
+	if err := ledger.CreateTask(workflowledger.Task{ID: "c1", PlanRef: stackID, Scope: stackScope(stackID), Status: stackStatusPlanned}); err != nil {
 		t.Fatal(err)
 	}
-	if err := ledger.CreateTask(tasks.Task{ID: "c2", PlanRef: stackID, Scope: stackScope(stackID), Status: stackStatusPlanned}); err != nil {
+	if err := ledger.CreateTask(workflowledger.Task{ID: "c2", PlanRef: stackID, Scope: stackScope(stackID), Status: stackStatusPlanned}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -196,19 +195,19 @@ func TestReconcileStackToleratesErrConflict(t *testing.T) {
 	}
 }
 
-// TestErrConflictSentinelIdentity verifies that the tasks.ErrConflict sentinel
+// TestErrConflictSentinelIdentity verifies that the workflowledger.ErrTaskConflict sentinel
 // is correctly identifiable through errors.Is, which is the guard reconcileStack
 // uses to skip concurrent-writer collisions.
 func TestErrConflictSentinelIdentity(t *testing.T) {
-	if !errors.Is(tasks.ErrConflict, tasks.ErrConflict) {
-		t.Fatal("errors.Is(tasks.ErrConflict, tasks.ErrConflict) = false; sentinel identity broken")
+	if !errors.Is(workflowledger.ErrTaskConflict, workflowledger.ErrTaskConflict) {
+		t.Fatal("errors.Is(workflowledger.ErrTaskConflict, workflowledger.ErrTaskConflict) = false; sentinel identity broken")
 	}
-	wrapped := fmt.Errorf("transition task: %w", tasks.ErrConflict)
-	if !errors.Is(wrapped, tasks.ErrConflict) {
-		t.Fatal("errors.Is(wrapped ErrConflict, tasks.ErrConflict) = false; unwrap broken")
+	wrapped := fmt.Errorf("transition task: %w", workflowledger.ErrTaskConflict)
+	if !errors.Is(wrapped, workflowledger.ErrTaskConflict) {
+		t.Fatal("errors.Is(wrapped ErrConflict, workflowledger.ErrTaskConflict) = false; unwrap broken")
 	}
 	other := errors.New("some other error")
-	if errors.Is(other, tasks.ErrConflict) {
-		t.Fatal("errors.Is(unrelated error, tasks.ErrConflict) = true; false positive")
+	if errors.Is(other, workflowledger.ErrTaskConflict) {
+		t.Fatal("errors.Is(unrelated error, workflowledger.ErrTaskConflict) = true; false positive")
 	}
 }

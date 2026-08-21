@@ -14,7 +14,6 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
 // driveStack reconciles the stack and admits chunk runs in topological order
@@ -28,7 +27,7 @@ import (
 // already-known chunks while later waves' work is still pending. The caller
 // re-drives with hasMore=false once every continuation wave landed, and only
 // then does the tail admit the integration run.
-func driveStack(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID string, chunks []ChunkPlan, planInputs map[string]string, allowPublish bool, hasMore bool, hasUnsettledWave bool, stdout, stderr io.Writer) error {
+func driveStack(ctx context.Context, prepared *preparedWorkflowRun, ledger *workflowledger.Store, stackID string, chunks []ChunkPlan, planInputs map[string]string, allowPublish bool, hasMore bool, hasUnsettledWave bool, stdout, stderr io.Writer) error {
 	repo := prepared.repo
 	checker := gitMergeChecker{
 		git: workflowDeliverGit,
@@ -114,7 +113,7 @@ func driveStack(ctx context.Context, prepared *preparedWorkflowRun, ledger *task
 // stack drive` command (unlike driveStackToCompletion's chunkMergePollPass)
 // would leave a merge_policy=auto stack needing a manual `workflow deliver`
 // despite the policy saying auto.
-func driveStackAutoRedeliver(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID, policy string, stdout, stderr io.Writer) error {
+func driveStackAutoRedeliver(ctx context.Context, prepared *preparedWorkflowRun, ledger *workflowledger.Store, stackID, policy string, stdout, stderr io.Writer) error {
 	if policy != "auto" {
 		return nil
 	}
@@ -183,7 +182,7 @@ type driveWaveResult struct {
 // caller's resolution stays deterministic. stdout/stderr are wrapped in a
 // mutex so concurrent Fprintf calls from different chunks never interleave
 // mid-line.
-func driveWave(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID string, wave []string, order []string, chunkPlans map[string]*ChunkPlan, prBase, policy string, allowPublish bool, planInputs map[string]string, maxConcurrent int, stdout, stderr io.Writer) []driveWaveResult {
+func driveWave(ctx context.Context, prepared *preparedWorkflowRun, ledger *workflowledger.Store, stackID string, wave []string, order []string, chunkPlans map[string]*ChunkPlan, prBase, policy string, allowPublish bool, planInputs map[string]string, maxConcurrent int, stdout, stderr io.Writer) []driveWaveResult {
 	syncStdout := newSyncWriter(stdout)
 	syncStderr := newSyncWriter(stderr)
 	work := func(chunkID string) (bool, error) {
@@ -245,7 +244,7 @@ func (s *syncWriter) Write(p []byte) (int, error) {
 // driveChunk admits and runs one chunk, then applies the merge policy.
 // halt=true means the driver must stop: policy A waits for the human publish
 // grant, and any terminal failure halts the stack (halt-on-failure).
-func driveChunk(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID, chunkID string, chunkPlan *ChunkPlan, chunkPlans map[string]*ChunkPlan, prBase, part, policy string, allowPublish bool, planInputs map[string]string, stdout, stderr io.Writer) (bool, error) {
+func driveChunk(ctx context.Context, prepared *preparedWorkflowRun, ledger *workflowledger.Store, stackID, chunkID string, chunkPlan *ChunkPlan, chunkPlans map[string]*ChunkPlan, prBase, part, policy string, allowPublish bool, planInputs map[string]string, stdout, stderr io.Writer) (bool, error) {
 	// A live run already exists for this chunk's key: leave it alone (F15 -
 	// never admit a duplicate). This covers crash recovery (a prior process
 	// admitted the run but died before its task-status transition landed);
@@ -459,7 +458,7 @@ var stackDecomposeContinueAdmit = admitDecomposeContinuationRun
 // 2026-08-16: TestSessionSweepDrivesParkedStackAfterAbortedDrive failed at
 // originHeads with the integration branch still pushed; the earlier no_diff
 // settle masked the skip by never creating a branch at all).
-func driveIntegrationRun(ctx context.Context, prepared *preparedWorkflowRun, ledger *tasks.Store, stackID, prBase, policy string, planInputs map[string]string, allowPublish bool, stdout, stderr io.Writer) error {
+func driveIntegrationRun(ctx context.Context, prepared *preparedWorkflowRun, ledger *workflowledger.Store, stackID, prBase, policy string, planInputs map[string]string, allowPublish bool, stdout, stderr io.Writer) error {
 	chunkID := stackIntegrationChunkID
 	if run, found, err := stackRunRef(prepared.repo, stackID, chunkID); err == nil && found {
 		if isResumableRunStatus(run.Status) {

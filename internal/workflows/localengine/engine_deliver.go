@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
@@ -17,10 +16,10 @@ import (
 	workflowspace "github.com/MiviaLabs/mivia-agent/internal/workflows/workspace"
 )
 
-// Deliver implements agenttools.Engine.
-func (e *Engine) Deliver(ctx context.Context, runID string, allowPublish bool) (agenttools.DeliverResult, error) {
+// Deliver implements workflowledger.Engine.
+func (e *Engine) Deliver(ctx context.Context, runID string, allowPublish bool) (workflowledger.DeliverResult, error) {
 	if e == nil || e.Repo == nil {
-		return agenttools.DeliverResult{}, fmt.Errorf("workflow engine is incomplete")
+		return workflowledger.DeliverResult{}, fmt.Errorf("workflow engine is incomplete")
 	}
 	if !allowPublish {
 		emitProgress(controller.ProgressEvent{
@@ -29,36 +28,36 @@ func (e *Engine) Deliver(ctx context.Context, runID string, allowPublish bool) (
 			Detail:    "delivery requires allow_publish=true",
 			Timestamp: time.Now(),
 		})
-		return agenttools.DeliverResult{RunID: runID, Refused: true, Reason: "delivery requires allow_publish=true"}, nil
+		return workflowledger.DeliverResult{RunID: runID, Refused: true, Reason: "delivery requires allow_publish=true"}, nil
 	}
 	run, err := e.Repo.GetRun(ctx, runID)
 	if err != nil {
 		if errors.Is(err, workflowledger.ErrNotFound) {
-			return agenttools.DeliverResult{}, fmt.Errorf("workflow run %q not found", runID)
+			return workflowledger.DeliverResult{}, fmt.Errorf("workflow run %q not found", runID)
 		}
-		return agenttools.DeliverResult{}, err
+		return workflowledger.DeliverResult{}, err
 	}
 	if run.Status == workflowledger.RunStatusSucceeded {
 		return e.replayDelivery(ctx, run)
 	}
 	if run.Status != workflowledger.RunStatusDeliveryPending && run.Status != workflowledger.RunStatusDeliveryFailed {
-		return agenttools.DeliverResult{}, fmt.Errorf("run is not waiting for delivery (status %q)", run.Status)
+		return workflowledger.DeliverResult{}, fmt.Errorf("run is not waiting for delivery (status %q)", run.Status)
 	}
 	return e.deliverPending(ctx, run)
 }
 
-func (e *Engine) replayDelivery(ctx context.Context, run workflowledger.RunSnapshot) (agenttools.DeliverResult, error) {
+func (e *Engine) replayDelivery(ctx context.Context, run workflowledger.RunSnapshot) (workflowledger.DeliverResult, error) {
 	rec, err := e.Repo.GetDeliveryByIdempotencyKey(ctx, delivery.DeliveryKey(run.RunID, run.WorkflowDigest))
 	if err != nil {
 		// A succeeded run without a readable delivery record must surface the
 		// loss, not silently report success with empty URL/Mode: the CLI
 		// replay path propagates this error, and the engine must not diverge.
-		return agenttools.DeliverResult{}, fmt.Errorf("replay delivery for %q: %w", run.RunID, err)
+		return workflowledger.DeliverResult{}, fmt.Errorf("replay delivery for %q: %w", run.RunID, err)
 	}
-	return agenttools.DeliverResult{RunID: run.RunID, Status: string(run.Status), URL: rec.URL, Mode: rec.Mode}, nil
+	return workflowledger.DeliverResult{RunID: run.RunID, Status: string(run.Status), URL: rec.URL, Mode: rec.Mode}, nil
 }
 
-func (e *Engine) deliverPending(ctx context.Context, run workflowledger.RunSnapshot) (agenttools.DeliverResult, error) {
+func (e *Engine) deliverPending(ctx context.Context, run workflowledger.RunSnapshot) (workflowledger.DeliverResult, error) {
 	return e.deliverPendingWithStackGate(ctx, run, true)
 }
 
@@ -73,7 +72,7 @@ func (e *Engine) deliverPending(ctx context.Context, run workflowledger.RunSnaps
 // workflow's decompose inline in single mode) - the operator gate would
 // misread that as a fresh undriven stack and refuse the integration run
 // forever, leaving it delivery_pending for the auto-drive to cascade on.
-func (e *Engine) deliverPendingDirect(ctx context.Context, run workflowledger.RunSnapshot) (agenttools.DeliverResult, error) {
+func (e *Engine) deliverPendingDirect(ctx context.Context, run workflowledger.RunSnapshot) (workflowledger.DeliverResult, error) {
 	return e.deliverPendingWithStackGate(ctx, run, false)
 }
 
@@ -89,7 +88,7 @@ func (e *Engine) clearDeliveryAbandon(runID string) {
 	e.mu.Unlock()
 }
 
-func (e *Engine) deliverPendingWithStackGate(ctx context.Context, run workflowledger.RunSnapshot, enforceStackGate bool) (agenttools.DeliverResult, error) {
+func (e *Engine) deliverPendingWithStackGate(ctx context.Context, run workflowledger.RunSnapshot, enforceStackGate bool) (workflowledger.DeliverResult, error) {
 	runID := run.RunID
 	// A delivery_pending/delivery_failed run has no live controller (the
 	// controller parked and exited), so no dying goroutine can settle it:
@@ -103,19 +102,19 @@ func (e *Engine) deliverPendingWithStackGate(ctx context.Context, run workflowle
 	e.clearDeliveryAbandon(runID)
 	raw, err := e.Repo.GetRunSnapshot(ctx, runID)
 	if err != nil {
-		return agenttools.DeliverResult{}, err
+		return workflowledger.DeliverResult{}, err
 	}
 	snapshot, err := workflowledger.UnmarshalSnapshot(raw)
 	if err != nil {
-		return agenttools.DeliverResult{}, err
+		return workflowledger.DeliverResult{}, err
 	}
 	wf, _, err := definition.ParseWorkflowTOML(snapshot.DefinitionTOML, run.WorkflowName+".toml")
 	if err != nil {
-		return agenttools.DeliverResult{}, err
+		return workflowledger.DeliverResult{}, err
 	}
 	compiled, err := definition.CompileForResume(&wf)
 	if err != nil {
-		return agenttools.DeliverResult{}, err
+		return workflowledger.DeliverResult{}, err
 	}
 	// Drive-before-delivery gate (mirrors the CLI's
 	// classifyStackPlanRunDelivery): the plan run of a multi-chunk stack must
@@ -127,13 +126,13 @@ func (e *Engine) deliverPendingWithStackGate(ctx context.Context, run workflowle
 	if enforceStackGate {
 		if reason := e.undrivenPlanRunReason(ctx, e.Repo, runID, compiled); reason != "" {
 			e.emitDeliveryRefused(runID, reason)
-			return agenttools.DeliverResult{}, fmt.Errorf("workflow run %q: %s", runID, reason)
+			return workflowledger.DeliverResult{}, fmt.Errorf("workflow run %q: %s", runID, reason)
 		}
 	}
 	policy, ok := delivery.FromCompiled(compiled)
 	if !ok {
 		e.emitDeliveryRefused(runID, fmt.Sprintf("workflow delivery policy is not active for run %q", runID))
-		return agenttools.DeliverResult{}, fmt.Errorf("workflow delivery policy is not active for run %q", runID)
+		return workflowledger.DeliverResult{}, fmt.Errorf("workflow delivery policy is not active for run %q", runID)
 	}
 	// Serialize in-process deliveries per run: two concurrent tool calls must
 	// not both publish to the shared workspace branch. The claim probe below
@@ -145,7 +144,7 @@ func (e *Engine) deliverPendingWithStackGate(ctx context.Context, run workflowle
 	}
 	if holder, busy := e.delivering[runID]; busy {
 		e.mu.Unlock()
-		return agenttools.DeliverResult{}, fmt.Errorf("workflow run %q delivery already in progress (holder %s)", runID, holder)
+		return workflowledger.DeliverResult{}, fmt.Errorf("workflow run %q delivery already in progress (holder %s)", runID, holder)
 	}
 	e.delivering[runID] = "in-flight"
 	e.mu.Unlock()
@@ -156,7 +155,7 @@ func (e *Engine) deliverPendingWithStackGate(ctx context.Context, run workflowle
 	}()
 	holder, release, err := e.claimDelivery(ctx, runID)
 	if err != nil {
-		return agenttools.DeliverResult{}, err
+		return workflowledger.DeliverResult{}, err
 	}
 	defer release()
 	ctx = workflowledger.ContextWithClaimHolder(ctx, holder)
@@ -183,7 +182,7 @@ func (e *Engine) claimDelivery(ctx context.Context, runID string) (string, func(
 	return holder, func() { _ = e.Repo.ReleaseRun(context.Background(), runID, holder) }, nil
 }
 
-func (e *Engine) publishDelivery(ctx context.Context, run workflowledger.RunSnapshot, snapshot workflowledger.Snapshot, policy delivery.Policy) (agenttools.DeliverResult, error) {
+func (e *Engine) publishDelivery(ctx context.Context, run workflowledger.RunSnapshot, snapshot workflowledger.Snapshot, policy delivery.Policy) (workflowledger.DeliverResult, error) {
 	runID := run.RunID
 	ctx = workflowledger.ContextWithRunID(ctx, runID)
 	repo := e.ctrlRepo()
@@ -212,9 +211,9 @@ func (e *Engine) publishDelivery(ctx context.Context, run workflowledger.RunSnap
 		if delivery.IsRefusal(err) {
 			e.settleDeliveryFailed(ctx, repo, runID)
 			e.emitDeliveryRefused(runID, err.Error())
-			return agenttools.DeliverResult{RunID: runID, Status: string(workflowledger.RunStatusDeliveryFailed), Refused: true, Reason: err.Error()}, nil
+			return workflowledger.DeliverResult{RunID: runID, Status: string(workflowledger.RunStatusDeliveryFailed), Refused: true, Reason: err.Error()}, nil
 		}
-		return agenttools.DeliverResult{}, err
+		return workflowledger.DeliverResult{}, err
 	}
 	// Every numbered delivery stage is published through the package progress
 	// sink as one workflow_delivery_stage event (nil sink no-ops), so the
@@ -236,12 +235,12 @@ func (e *Engine) publishDelivery(ctx context.Context, run workflowledger.RunSnap
 			return res, nil
 		}
 		if rerr != nil {
-			return agenttools.DeliverResult{}, rerr
+			return workflowledger.DeliverResult{}, rerr
 		}
-		return agenttools.DeliverResult{}, err
+		return workflowledger.DeliverResult{}, err
 	}
 	if err := e.settleDeliverySucceeded(ctx, repo, runID); err != nil {
-		return agenttools.DeliverResult{}, err
+		return workflowledger.DeliverResult{}, err
 	}
 	// A split (checkChunkDiffSize) can leave a deferred branch nobody ever
 	// pushes unless something publishes it - see delivery.EnsureFollowUpPublished's
@@ -252,17 +251,17 @@ func (e *Engine) publishDelivery(ctx context.Context, run workflowledger.RunSnap
 	if _, _, _, _, ferr := delivery.EnsureFollowUpPublished(ctx, git, pr, gitCtx.Dir, repo, run, runID, nil); ferr != nil {
 		log.Printf("workflow %s delivered but its follow-up PR could not be published: %v", runID, ferr)
 	}
-	return agenttools.DeliverResult{RunID: runID, Status: string(workflowledger.RunStatusSucceeded), URL: result.URL, Mode: result.Mode}, nil
+	return workflowledger.DeliverResult{RunID: runID, Status: string(workflowledger.RunStatusSucceeded), URL: result.URL, Mode: result.Mode}, nil
 }
 
 // settleDeliveryAttemptError routes one failed delivery attempt: a refusal
 // settles delivery_failed (handled), an expired attempt bound is returned
 // unhandled so the run stays delivery_pending (retryable), and anything
 // repairable reopens the policy's repair step.
-func (e *Engine) settleDeliveryAttemptError(ctx, deliveryCtx context.Context, repo workflowledger.Repository, runID string, policy delivery.Policy, err error) (agenttools.DeliverResult, bool, error) {
+func (e *Engine) settleDeliveryAttemptError(ctx, deliveryCtx context.Context, repo workflowledger.Repository, runID string, policy delivery.Policy, err error) (workflowledger.DeliverResult, bool, error) {
 	if delivery.IsRefusal(err) {
 		e.settleDeliveryFailed(ctx, repo, runID)
-		return agenttools.DeliverResult{RunID: runID, Status: string(workflowledger.RunStatusDeliveryFailed), Refused: true, Reason: err.Error()}, true, nil
+		return workflowledger.DeliverResult{RunID: runID, Status: string(workflowledger.RunStatusDeliveryFailed), Refused: true, Reason: err.Error()}, true, nil
 	}
 	// The attempt's own bound fired (a hung git push or gh call hit
 	// DeliveryTimeout) or the caller cancelled the attempt: a transport
@@ -272,7 +271,7 @@ func (e *Engine) settleDeliveryAttemptError(ctx, deliveryCtx context.Context, re
 	// bare context deadline, so without this check the error routes to
 	// the repair step and burns a repair cycle per timeout.
 	if deliveryCtx.Err() != nil {
-		return agenttools.DeliverResult{}, false, err
+		return workflowledger.DeliverResult{}, false, err
 	}
 	return routeDeliveryRepair(ctx, repo, runID, policy, err)
 }
@@ -323,22 +322,22 @@ func (e *Engine) settleDeliverySucceeded(ctx context.Context, repo workflowledge
 // before. The boolean reports whether the failure was routed (handled); a
 // non-nil error means the routing itself failed and the caller must surface
 // it.
-func routeDeliveryRepair(ctx context.Context, repo workflowledger.Repository, runID string, policy delivery.Policy, err error) (agenttools.DeliverResult, bool, error) {
+func routeDeliveryRepair(ctx context.Context, repo workflowledger.Repository, runID string, policy delivery.Policy, err error) (workflowledger.DeliverResult, bool, error) {
 	step := delivery.RepairTarget(err, policy)
 	// A git/gh transport fault is no more repairable than a provider one:
 	// provider.IsTransient does not know git's texts, so both classifiers
 	// gate the dispatch (mirrors the CLI's deliveryFaultTransient).
 	if step == "" || provider.IsTransient(err) || delivery.IsTransportFault(err) {
-		return agenttools.DeliverResult{}, false, nil
+		return workflowledger.DeliverResult{}, false, nil
 	}
 	if rerr := delivery.ReopenForRepair(ctx, repo, runID, step, policy.MaxRepairs, err, io.Discard); rerr != nil {
-		return agenttools.DeliverResult{}, false, rerr
+		return workflowledger.DeliverResult{}, false, rerr
 	}
 	fresh, gerr := repo.GetRun(ctx, runID)
 	if gerr != nil {
-		return agenttools.DeliverResult{}, false, gerr
+		return workflowledger.DeliverResult{}, false, gerr
 	}
-	return agenttools.DeliverResult{RunID: runID, Status: string(fresh.Status)}, true, nil
+	return workflowledger.DeliverResult{RunID: runID, Status: string(fresh.Status)}, true, nil
 }
 
 // deliveryGitCtx resolves the run's delivery workspace and verifies its real

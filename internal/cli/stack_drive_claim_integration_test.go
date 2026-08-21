@@ -16,7 +16,6 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
 // seedPlanRun creates the plan run directly, with a succeeded decompose
@@ -144,7 +143,7 @@ func TestStackDriveRefusesWhenClaimHeldByAnotherHolder(t *testing.T) {
 
 	// The refused drive must never have touched the task ledger: admission
 	// happens strictly after the claim in runStackDrive's body.
-	seeded, err := tasks.NewStore(it.store).ListTasksByScope(stackScope(stackID))
+	seeded, err := workflowledger.NewStore(it.store).ListTasksByScope(stackScope(stackID))
 	if err != nil {
 		t.Fatal(err)
 	}

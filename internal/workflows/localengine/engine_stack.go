@@ -20,12 +20,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/stacking"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
 // stackDrivePollInterval is how often a drive pass re-reads durable state
@@ -91,7 +89,7 @@ func (e *Engine) stackDriveAfterPark(ctx context.Context, runID string) {
 	if e.Store == nil {
 		return // no task ledger; the operator drive owns this stack
 	}
-	ledger := tasks.NewStore(e.Store)
+	ledger := workflowledger.NewStore(e.Store)
 	if err := stacking.SeedStackLedger(ctx, ledger, runID, chunks); err != nil {
 		log.Printf("workflow: drive stack for %s: seed: %v", runID, err)
 		return
@@ -139,7 +137,7 @@ func compileStackPlanRun(ctx context.Context, repo workflowledger.Repository, ru
 
 // driveStackLoop advances the stack until it is complete or nothing can
 // progress, polling durable state between passes.
-func (e *Engine) driveStackLoop(ctx context.Context, planRun workflowledger.RunSnapshot, compiled *definition.CompiledWorkflow, ledger *tasks.Store, stackID string, chunks []stacking.ChunkPlan, order []string, planInputs map[string]string, prBase string) {
+func (e *Engine) driveStackLoop(ctx context.Context, planRun workflowledger.RunSnapshot, compiled *definition.CompiledWorkflow, ledger *workflowledger.Store, stackID string, chunks []stacking.ChunkPlan, order []string, planInputs map[string]string, prBase string) {
 	autoPublish := compiled.Stacking.MergePolicy == "auto"
 	chunkPlans := make(map[string]*stacking.ChunkPlan, len(chunks))
 	for i := range chunks {
@@ -230,7 +228,7 @@ func (e *Engine) driveStackLoop(ctx context.Context, planRun workflowledger.RunS
 //     or mark failed
 //
 // Returns whether any task transitioned.
-func (e *Engine) processSettledChunks(ctx context.Context, ledger *tasks.Store, stackID string, byID map[string]tasks.Task, autoPublish bool) bool {
+func (e *Engine) processSettledChunks(ctx context.Context, ledger *workflowledger.Store, stackID string, byID map[string]workflowledger.Task, autoPublish bool) bool {
 	progressed := false
 	for id, t := range byID {
 		if !isStackInFlightStatus(t.Status) {
@@ -295,7 +293,7 @@ func (e *Engine) processSettledChunks(ctx context.Context, ledger *tasks.Store, 
 // decision (mirroring the CLI's reconcileReopenOrFail, capped at
 // stacking.MaxChunkAttempts), and anything else stays in flight. It reports
 // whether the chunk's task map entry changed.
-func (e *Engine) settleChunkDelivery(ctx context.Context, ledger *tasks.Store, stackID, chunkID string, run workflowledger.RunSnapshot) bool {
+func (e *Engine) settleChunkDelivery(ctx context.Context, ledger *workflowledger.Store, stackID, chunkID string, run workflowledger.RunSnapshot) bool {
 	fresh, err := e.Repo.GetRun(ctx, run.RunID)
 	if err != nil {
 		log.Printf("workflow: drive stack %s: reread chunk %s: %v", stackID, chunkID, err)
@@ -322,7 +320,7 @@ func (e *Engine) settleChunkDelivery(ctx context.Context, ledger *tasks.Store, s
 // host or an operator lands the merge, and the PR oracle (e.PR) reports it.
 // Without an oracle nothing can be marked merged and the drive stops (the
 // operator `mivia stack drive` path carries the git+gh oracle).
-func (e *Engine) markMergedChunks(ctx context.Context, ledger *tasks.Store, stackID string, byID map[string]tasks.Task) bool {
+func (e *Engine) markMergedChunks(ctx context.Context, ledger *workflowledger.Store, stackID string, byID map[string]workflowledger.Task) bool {
 	if e.PR == nil {
 		return false
 	}
@@ -376,7 +374,7 @@ func (e *Engine) prMerged(ctx context.Context, run workflowledger.RunSnapshot) (
 // cannot both reopen past MaxChunkAttempts. The task must be running (the
 // only status a chunk's failure path is reached from); otherwise this is a
 // clean loss and returns false.
-func (e *Engine) reopenOrFailStackTask(ctx context.Context, ledger *tasks.Store, stackID, id string) bool {
+func (e *Engine) reopenOrFailStackTask(ctx context.Context, ledger *workflowledger.Store, stackID, id string) bool {
 	applied, _, _, err := ledger.TransitionTaskCASDecide(stackID, id, []string{stacking.StatusRunning}, stacking.StatusReopened,
 		func(attempts int) (string, bool) {
 			if attempts+1 > stacking.MaxChunkAttempts {
@@ -393,7 +391,7 @@ func (e *Engine) reopenOrFailStackTask(ctx context.Context, ledger *tasks.Store,
 
 // nextAdmissionWave returns the next wave of ready chunks in topological
 // order: admissible-pre and with all dependencies merged.
-func nextAdmissionWave(byID map[string]tasks.Task, merged map[string]bool, order []string) []string {
+func nextAdmissionWave(byID map[string]workflowledger.Task, merged map[string]bool, order []string) []string {
 	var wave []string
 	for _, id := range order {
 		t, ok := byID[id]
@@ -414,7 +412,7 @@ func nextAdmissionWave(byID map[string]tasks.Task, merged map[string]bool, order
 // the settle processing: in-flight runs are not double-admitted, and a
 // terminal run is handled by processSettledChunks (reopen) or the operator
 // drive (which mints a fresh run).
-func (e *Engine) admitWave(ctx context.Context, planRun workflowledger.RunSnapshot, ledger *tasks.Store, stackID string, chunkPlans map[string]*stacking.ChunkPlan, order, wave []string, planInputs map[string]string, prBase string, autoPublish bool) {
+func (e *Engine) admitWave(ctx context.Context, planRun workflowledger.RunSnapshot, ledger *workflowledger.Store, stackID string, chunkPlans map[string]*stacking.ChunkPlan, order, wave []string, planInputs map[string]string, prBase string, autoPublish bool) {
 	for _, id := range wave {
 		_, found, err := e.stackRunByKey(ctx, stackID, id)
 		if err != nil {
@@ -443,7 +441,7 @@ func (e *Engine) admitWave(ctx context.Context, planRun workflowledger.RunSnapsh
 		if terr != nil || !ok {
 			continue
 		}
-		if _, serr := e.Start(ctx, agenttools.StartRequest{
+		if _, serr := e.Start(ctx, workflowledger.StartRequest{
 			Workflow:      planRun.WorkflowName,
 			Inputs:        inputs,
 			InvocationKey: key,

@@ -30,7 +30,6 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 	workflowspace "github.com/MiviaLabs/mivia-agent/internal/workflows/workspace"
 )
 
@@ -57,7 +56,7 @@ func followUpTestRunID(key string) string {
 // repo root, the run ledger, the task ledger, the parent run snapshot, the
 // FOLLOW-UP admission key (stack:chunk-deferred), and the deterministic
 // follow-up run id derived from it.
-func newFollowUpAdmissionFixture(t *testing.T) (root string, repo workflowledger.Repository, ledger *tasks.Store, parentRun workflowledger.RunSnapshot, key, runID string) {
+func newFollowUpAdmissionFixture(t *testing.T) (root string, repo workflowledger.Repository, ledger *workflowledger.Store, parentRun workflowledger.RunSnapshot, key, runID string) {
 	t.Helper()
 	root = t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "fixture.txt"), []byte("seeded fixture\n"), 0o600); err != nil {
@@ -75,8 +74,8 @@ func newFollowUpAdmissionFixture(t *testing.T) (root string, repo workflowledger
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	repo = workflowledger.NewStorageRepository(store)
-	ledger = tasks.NewStore(store)
-	if _, err := ledger.StorePlan(tasks.Plan{ID: followUpTestStackID, Scope: stackScope(followUpTestStackID)}); err != nil {
+	ledger = workflowledger.NewStore(store)
+	if _, err := ledger.StorePlan(workflowledger.Plan{ID: followUpTestStackID, Scope: stackScope(followUpTestStackID)}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -156,7 +155,7 @@ func followUpRunSnapshot(parentRun workflowledger.RunSnapshot, runID, key string
 
 // assertSingleFollowUpRegistration checks the exactly-once contract: one run
 // row per follow-up key, one delivery record, and one task.
-func assertSingleFollowUpRegistration(t *testing.T, repo workflowledger.Repository, ledger *tasks.Store, key, runID string) {
+func assertSingleFollowUpRegistration(t *testing.T, repo workflowledger.Repository, ledger *workflowledger.Store, key, runID string) {
 	t.Helper()
 	ctx := context.Background()
 	runs, err := repo.ListRuns(ctx)

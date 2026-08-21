@@ -19,7 +19,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
 // failCASRepository embeds a real Repository and forces every
@@ -53,7 +52,7 @@ func TestDriveParkedStackIfNeededLogsPreDriveSettleError(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	if err := tasks.NewStore(store).TransitionTask(planRunID, "c2", stackStatusFailed); err != nil {
+	if err := workflowledger.NewStore(store).TransitionTask(planRunID, "c2", stackStatusFailed); err != nil {
 		t.Fatalf("transition chunk c2 to failed: %v", err)
 	}
 
@@ -128,7 +127,7 @@ func TestDriveParkedStackIfNeededSettlesAfterDriveErrorDiscoversFailure(t *testi
 		// Model a drive attempt that discovers a chunk died mid-attempt: the
 		// stack was merely incomplete going in (the pre-drive gate let it
 		// through), and the failure is only visible after this call returns.
-		if err := tasks.NewStore(s).TransitionTask(runID, "c2", stackStatusFailed); err != nil {
+		if err := workflowledger.NewStore(s).TransitionTask(runID, "c2", stackStatusFailed); err != nil {
 			t.Fatalf("simulate chunk failure: %v", err)
 		}
 		return false, driveErr
@@ -188,7 +187,7 @@ func TestDriveParkedStackIfNeededLogsPostDriveSettleError(t *testing.T) {
 	originalDrive := driveParkedStackImpl
 	t.Cleanup(func() { driveParkedStackImpl = originalDrive })
 	driveParkedStackImpl = func(_ *sessionWorkflowEngine, _ context.Context, _ string, _ *config.Resolved, s *storage.SQLite, _ workflowledger.Repository, runID string) (bool, error) {
-		if err := tasks.NewStore(s).TransitionTask(runID, "c2", stackStatusFailed); err != nil {
+		if err := workflowledger.NewStore(s).TransitionTask(runID, "c2", stackStatusFailed); err != nil {
 			t.Fatalf("simulate chunk failure: %v", err)
 		}
 		return false, driveErr
@@ -238,7 +237,7 @@ func TestDriveParkedStackIfNeededPreDriveEmptyReasonFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	if err := tasks.NewStore(store).TransitionTask(planRunID, "c2", stackStatusFailed); err != nil {
+	if err := workflowledger.NewStore(store).TransitionTask(planRunID, "c2", stackStatusFailed); err != nil {
 		t.Fatalf("transition chunk c2 to failed: %v", err)
 	}
 

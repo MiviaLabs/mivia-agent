@@ -14,7 +14,6 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -29,7 +28,7 @@ type Engine struct {
 	// Repo is the shared workflow ledger. Required.
 	Repo workflowledger.Repository
 	// Store is the shared SQLite store backing the stack task ledger
-	// (tasks.NewStore). Required to drive (or verify the drive of) a
+	// (workflowledger.NewStore). Required to drive (or verify the drive of) a
 	// multi-chunk stacking plan run; a nil Store degrades the engine to the
 	// operator drive (`mivia stack drive`) and refuses delivery of an
 	// undriven plan run instead of publishing it.
@@ -100,10 +99,10 @@ func (e *Engine) panelLimiter() *controller.PanelActorLimiter {
 	return processservices.PanelLimiter()
 }
 
-// Start implements agenttools.Engine.
-func (e *Engine) Start(ctx context.Context, req agenttools.StartRequest) (agenttools.StartResult, error) {
+// Start implements workflowledger.Engine.
+func (e *Engine) Start(ctx context.Context, req workflowledger.StartRequest) (workflowledger.StartResult, error) {
 	if e == nil || e.Repo == nil {
-		return agenttools.StartResult{}, fmt.Errorf("workflow engine is incomplete")
+		return workflowledger.StartResult{}, fmt.Errorf("workflow engine is incomplete")
 	}
 	if req.Resume {
 		return e.resume(ctx, req)
@@ -116,58 +115,58 @@ func (e *Engine) Start(ctx context.Context, req agenttools.StartRequest) (agentt
 // this call as the run's sole starter. done=true means startNew must return
 // (result, err) immediately; otherwise runID is ready and finish must be
 // deferred by the caller to release invocation admission.
-func (e *Engine) admitInvocation(ctx context.Context, req agenttools.StartRequest) (runID string, result agenttools.StartResult, done bool, err error, finish func()) {
+func (e *Engine) admitInvocation(ctx context.Context, req workflowledger.StartRequest) (runID string, result workflowledger.StartResult, done bool, err error, finish func()) {
 	noop := func() {}
 	key := strings.TrimSpace(req.InvocationKey)
 	if key == "" {
-		return e.newRunID(), agenttools.StartResult{}, false, nil, noop
+		return e.newRunID(), workflowledger.StartResult{}, false, nil, noop
 	}
-	runID = agenttools.InvocationRunID(key)
+	runID = workflowledger.InvocationRunID(key)
 	existing, getErr := e.Repo.GetRun(ctx, runID)
 	if getErr == nil {
 		if result, resumed, resumeErr := e.resumeExistingInvocation(ctx, existing, req); resumed || resumeErr != nil {
 			return runID, result, true, resumeErr, noop
 		}
-		return runID, agenttools.StartResult{RunID: runID, Status: string(existing.Status), Workflow: existing.WorkflowName}, true, nil, noop
+		return runID, workflowledger.StartResult{RunID: runID, Status: string(existing.Status), Workflow: existing.WorkflowName}, true, nil, noop
 	} else if !errors.Is(getErr, workflowledger.ErrNotFound) {
-		return runID, agenttools.StartResult{}, false, getErr, noop
+		return runID, workflowledger.StartResult{}, false, getErr, noop
 	}
 	owner, release := e.beginInvocationAdmission(runID)
 	if !owner {
 		select {
 		case <-release:
 		case <-ctx.Done():
-			return runID, agenttools.StartResult{}, false, ctx.Err(), noop
+			return runID, workflowledger.StartResult{}, false, ctx.Err(), noop
 		}
 		existing, getErr := e.Repo.GetRun(ctx, runID)
 		if getErr != nil {
-			return runID, agenttools.StartResult{}, false, fmt.Errorf("invocation %q did not admit run %q: %w", key, runID, getErr), noop
+			return runID, workflowledger.StartResult{}, false, fmt.Errorf("invocation %q did not admit run %q: %w", key, runID, getErr), noop
 		}
-		return runID, agenttools.StartResult{RunID: runID, Status: string(existing.Status), Workflow: existing.WorkflowName}, true, nil, noop
+		return runID, workflowledger.StartResult{RunID: runID, Status: string(existing.Status), Workflow: existing.WorkflowName}, true, nil, noop
 	}
-	return runID, agenttools.StartResult{}, false, nil, func() { e.finishInvocationAdmission(runID, release) }
+	return runID, workflowledger.StartResult{}, false, nil, func() { e.finishInvocationAdmission(runID, release) }
 }
 
-func (e *Engine) startNew(ctx context.Context, req agenttools.StartRequest) (agenttools.StartResult, error) {
+func (e *Engine) startNew(ctx context.Context, req workflowledger.StartRequest) (workflowledger.StartResult, error) {
 	compiled, raw, baseDir, inputs, inputSnapshot, err := e.loadAndValidateWorkflow(req)
 	if err != nil {
-		return agenttools.StartResult{}, err
+		return workflowledger.StartResult{}, err
 	}
 	runID, admitResult, done, admitErr, finish := e.admitInvocation(ctx, req)
 	if done {
 		return admitResult, admitErr
 	}
 	if admitErr != nil {
-		return agenttools.StartResult{}, admitErr
+		return workflowledger.StartResult{}, admitErr
 	}
 	defer finish()
 	ctrl, admission, err := e.newRunController(compiled, raw, baseDir, inputs, inputSnapshot, runID, req.InvocationKey)
 	if err != nil {
-		return agenttools.StartResult{}, err
+		return workflowledger.StartResult{}, err
 	}
 	cleanup, err := e.pinNewRunIdentity(ctx, ctrl, compiled, &admission, runID, inputSnapshot)
 	if err != nil {
-		return agenttools.StartResult{}, err
+		return workflowledger.StartResult{}, err
 	}
 	// A fresh admission created the run worktree before control returns to us.
 	// If a later admission step fails - SetAdmission or StartNew - the worktree
@@ -182,19 +181,19 @@ func (e *Engine) startNew(ctx context.Context, req agenttools.StartRequest) (age
 		}
 	}()
 	if err := ctrl.SetAdmission(admission); err != nil {
-		return agenttools.StartResult{}, err
+		return workflowledger.StartResult{}, err
 	}
 	created, err := ctrl.StartNew(ctx)
 	if err != nil {
-		return agenttools.StartResult{}, err
+		return workflowledger.StartResult{}, err
 	}
 	disarmCleanup = true
 	if !created {
 		existing, getErr := e.Repo.GetRun(ctx, runID)
 		if getErr != nil {
-			return agenttools.StartResult{}, getErr
+			return workflowledger.StartResult{}, getErr
 		}
-		return agenttools.StartResult{RunID: runID, Status: string(existing.Status), Workflow: existing.WorkflowName}, nil
+		return workflowledger.StartResult{RunID: runID, Status: string(existing.Status), Workflow: existing.WorkflowName}, nil
 	}
 	_ = req.AllowPublish // publication is a separate deliver step for tools
 	// Durable local trace: create .mivia/runs + admission summary; fail-soft.
@@ -202,9 +201,9 @@ func (e *Engine) startNew(ctx context.Context, req agenttools.StartRequest) (age
 	e.launch(ctrl)
 	run, err := e.Repo.GetRun(ctx, runID)
 	if err != nil {
-		return agenttools.StartResult{}, err
+		return workflowledger.StartResult{}, err
 	}
-	return agenttools.StartResult{RunID: runID, Status: string(run.Status), Workflow: compiled.Name}, nil
+	return workflowledger.StartResult{RunID: runID, Status: string(run.Status), Workflow: compiled.Name}, nil
 }
 
 // beginInvocationAdmission acquires the invocation-key admission slot for
@@ -319,5 +318,5 @@ func (e *Engine) Wait(ctx context.Context, runID string) error {
 	}
 }
 
-// Ensure Engine implements agenttools.Engine.
-var _ agenttools.Engine = (*Engine)(nil)
+// Ensure Engine implements workflowledger.Engine.
+var _ workflowledger.Engine = (*Engine)(nil)

@@ -23,13 +23,11 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/localengine"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/stacking"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
 // stackDriveWorkflowTOML is a stacking workflow with an active delivery
@@ -154,7 +152,7 @@ func writeStackDriveWorkspace(t *testing.T) string {
 
 // stackDriveEngine builds an engine over the drive workspace with a shared
 // SQLite store (the task ledger) and the scripted runner.
-func stackDriveEngine(t *testing.T) (*localengine.Engine, *agenttools.Service, *storage.SQLite) {
+func stackDriveEngine(t *testing.T) (*localengine.Engine, *workflowledger.Service, *storage.SQLite) {
 	t.Helper()
 	root := writeStackDriveWorkspace(t)
 	repo := workflowledger.NewMemoryRepository()
@@ -182,7 +180,7 @@ func stackDriveEngine(t *testing.T) (*localengine.Engine, *agenttools.Service, *
 // stackDriveEngineNoStore is the same engine without the shared store: the
 // drive cannot seed a task ledger and the engine degrades to the operator
 // drive.
-func stackDriveEngineNoStore(t *testing.T) (*localengine.Engine, *agenttools.Service) {
+func stackDriveEngineNoStore(t *testing.T) (*localengine.Engine, *workflowledger.Service) {
 	t.Helper()
 	root := writeStackDriveWorkspace(t)
 	repo := workflowledger.NewMemoryRepository()
@@ -203,7 +201,7 @@ func stackDriveEngineNoStore(t *testing.T) (*localengine.Engine, *agenttools.Ser
 
 // waitPlanRunStatus polls a run until its status matches want or the deadline
 // passes.
-func waitPlanRunStatus(t *testing.T, svc *agenttools.Service, runID, want string, timeout time.Duration) {
+func waitPlanRunStatus(t *testing.T, svc *workflowledger.Service, runID, want string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for {
@@ -283,7 +281,7 @@ func TestEngineStackAutoDrivesAfterPark(t *testing.T) {
 	}
 
 	// The task ledger shows every chunk merged.
-	ledger := tasks.NewStore(db)
+	ledger := workflowledger.NewStore(db)
 	byID, err := stacking.TaskMap(context.Background(), ledger, started.RunID)
 	if err != nil {
 		t.Fatal(err)
@@ -307,7 +305,7 @@ func TestEngineStackApproveParksChunksAndGateRefusesUndrivenPublish(t *testing.T
 	started := startStackingRunFor(t, svc, "stack-approve-me", nil)
 	waitRun(t, engine, started.RunID)
 
-	ledger := tasks.NewStore(db)
+	ledger := workflowledger.NewStore(db)
 	deadline := time.Now().Add(30 * time.Second)
 	for {
 		byID, err := stacking.TaskMap(context.Background(), ledger, started.RunID)
@@ -355,7 +353,7 @@ func TestEngineStackGateAllowsPublishAfterDrive(t *testing.T) {
 	// merged AND the integration run settled (stackDriveCompleted requires
 	// both; the chunks-merged wait alone races the drive's final
 	// integration-run settle).
-	ledger := tasks.NewStore(db)
+	ledger := workflowledger.NewStore(db)
 	deadline := time.Now().Add(30 * time.Second)
 	for {
 		byID, err := stacking.TaskMap(context.Background(), ledger, started.RunID)
@@ -417,7 +415,7 @@ func TestEngineStackNoStoreDegradesToOperatorDrive(t *testing.T) {
 // stackDriveEngineWithGit is stackDriveEngine with a caller-supplied git
 // runner, so the drive tests can script refused and transient delivery
 // outcomes through the automatic stack drive.
-func stackDriveEngineWithGit(t *testing.T, git delivery.GitRunner) (*localengine.Engine, *agenttools.Service, *storage.SQLite, string) {
+func stackDriveEngineWithGit(t *testing.T, git delivery.GitRunner) (*localengine.Engine, *workflowledger.Service, *storage.SQLite, string) {
 	t.Helper()
 	root := writeStackDriveWorkspace(t)
 	repo := workflowledger.NewMemoryRepository()
@@ -500,7 +498,7 @@ func TestStackDriveRefusedDeliveryDoesNotMarkPublished(t *testing.T) {
 	started := startStackingRunFor(t, svc, "stack-drive-me", nil)
 	waitRun(t, engine, started.RunID)
 
-	ledger := tasks.NewStore(db)
+	ledger := workflowledger.NewStore(db)
 	waitChunkReopened(t, ledger, started.RunID)
 	if got := git.attempts(); got != 1 {
 		t.Fatalf("delivery attempts = %d, want exactly 1 (the refused attempt)", got)
@@ -533,7 +531,7 @@ func TestStackDriveRefusedDeliveryDoesNotMarkPublished(t *testing.T) {
 // waitChunkReopened polls the task map until chunk c1 of the stack is
 // reopened after a refused delivery, failing immediately if it is ever
 // marked published (STACK-1) or if the deadline passes.
-func waitChunkReopened(t *testing.T, ledger *tasks.Store, stackID string) {
+func waitChunkReopened(t *testing.T, ledger *workflowledger.Store, stackID string) {
 	t.Helper()
 	deadline := time.Now().Add(30 * time.Second)
 	for {
@@ -563,7 +561,7 @@ func waitChunkReopened(t *testing.T, ledger *tasks.Store, stackID string) {
 }
 
 // mustStackChunk returns a chunk's current task map entry.
-func mustStackChunk(t *testing.T, ledger *tasks.Store, stackID, chunkID string) tasks.Task {
+func mustStackChunk(t *testing.T, ledger *workflowledger.Store, stackID, chunkID string) workflowledger.Task {
 	t.Helper()
 	byID, err := stacking.TaskMap(context.Background(), ledger, stackID)
 	if err != nil {
@@ -729,7 +727,7 @@ func waitIntegrationRun(t *testing.T, engine *localengine.Engine, stackID string
 
 // countStackReopens counts the durable reopened transitions recorded for a
 // chunk (the journal, not the TaskMap Attempts field, is authoritative).
-func countStackReopens(t *testing.T, ledger *tasks.Store, stackID, chunkID string) int {
+func countStackReopens(t *testing.T, ledger *workflowledger.Store, stackID, chunkID string) int {
 	t.Helper()
 	trs, err := ledger.ListTransitions(stackID)
 	if err != nil {
@@ -899,7 +897,7 @@ func seedFullyDrivenStackWithOpenIntegrationPR(t *testing.T, mergePolicy string)
 	if err != nil || len(chunks) != 2 {
 		t.Fatalf("parse stack plan = %v, %v; want 2 chunks", chunks, err)
 	}
-	ledger := tasks.NewStore(db)
+	ledger := workflowledger.NewStore(db)
 	if err := stacking.SeedStackLedger(ctx, ledger, stackID, chunks); err != nil {
 		t.Fatal(err)
 	}

@@ -13,10 +13,8 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
@@ -206,7 +204,7 @@ func (e *sessionWorkflowEngine) reconcileParkedDelivery(ctx context.Context, roo
 	}
 	fresh, getErr := repo.GetRun(ctx, runID)
 	if getErr == nil && fresh.Status == workflowledger.RunStatusRunning {
-		if _, err := e.resumeCLI(ctx, agenttools.StartRequest{Resume: true, RunID: runID, Force: false}); err != nil {
+		if _, err := e.resumeCLI(ctx, workflowledger.StartRequest{Resume: true, RunID: runID, Force: false}); err != nil {
 			if !quiet {
 				log.Printf("workflow: session recovery: re-advance repair route for %s failed: %v", runID, err)
 			}
@@ -319,7 +317,7 @@ func skipParkedPlanRunPublication(ctx context.Context, store *storage.SQLite, re
 	if compiled == nil || compiled.Delivery == nil || compiled.Delivery.DeliverPlanRun {
 		return false
 	}
-	_, err = tasks.NewStore(store).ReadBackPlan(runID)
+	_, err = workflowledger.NewStore(store).ReadBackPlan(runID)
 	return err == nil
 }
 
@@ -433,7 +431,7 @@ func stackDriveCompleted(ctx context.Context, root string, store *storage.SQLite
 	if hasMore {
 		return false
 	}
-	byID, err := stackTaskMap(tasks.NewStore(store), runID)
+	byID, err := stackTaskMap(workflowledger.NewStore(store), runID)
 	if err != nil {
 		return false
 	}
@@ -506,7 +504,7 @@ func stackDriveCompleted(ctx context.Context, root string, store *storage.SQLite
 // the human gate and re-park (pauseHumanGate is idempotent): the resume
 // never re-executes agents or auto-approves.
 func (e *sessionWorkflowEngine) reconcileParkedResume(ctx context.Context, runID string, quiet bool) {
-	if _, err := e.resumeCLI(ctx, agenttools.StartRequest{Resume: true, RunID: runID, Force: false}); err != nil {
+	if _, err := e.resumeCLI(ctx, workflowledger.StartRequest{Resume: true, RunID: runID, Force: false}); err != nil {
 		if !quiet {
 			log.Printf("workflow: session recovery: resume %s skipped: %v", runID, err)
 		}

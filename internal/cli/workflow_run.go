@@ -19,7 +19,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
@@ -262,7 +261,7 @@ func maybeDriveSettledStack(ctx context.Context, prepared *preparedWorkflowRun, 
 		return false, nil
 	}
 	fmt.Fprintf(stdout, "stack %s: multi-chunk plan (%d chunks); driving the stack to completion\n", planRunID, len(chunks))
-	ledger := tasks.NewStore(prepared.store)
+	ledger := workflowledger.NewStore(prepared.store)
 	if err := seedStackLedger(ledger, planRunID, chunks); err != nil {
 		return false, fmt.Errorf("stack seed: %w", err)
 	}

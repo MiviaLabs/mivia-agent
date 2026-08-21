@@ -4,11 +4,11 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
 // reconcileCase drives the pure §5a reconciler.
-func reconcileCase(t *testing.T, task tasks.Task, run RunInfo, merged bool, runPushed bool, maxAttempts int) ReconcileAction {
+func reconcileCase(t *testing.T, task ledger.Task, run RunInfo, merged bool, runPushed bool, maxAttempts int) ReconcileAction {
 	t.Helper()
 	return reconcileTask(task, run, merged, runPushed, maxAttempts)
 }
@@ -18,9 +18,9 @@ func reconcileCase(t *testing.T, task tasks.Task, run RunInfo, merged bool, runP
 func TestReconcileRestartMidStackNoop(t *testing.T) {
 	// A stack that was driving when the driver died: a merged chunk, an
 	// in-flight chunk with a live run, and a planned dependent.
-	a := tasks.Task{ID: "a", Status: stackStatusMerged}
-	b := tasks.Task{ID: "b", Status: stackStatusRunning, Deps: []string{"a"}}
-	c := tasks.Task{ID: "c", Status: stackStatusPlanned, Deps: []string{"b"}}
+	a := ledger.Task{ID: "a", Status: stackStatusMerged}
+	b := ledger.Task{ID: "b", Status: stackStatusRunning, Deps: []string{"a"}}
+	c := ledger.Task{ID: "c", Status: stackStatusPlanned, Deps: []string{"b"}}
 
 	if act := reconcileCase(t, a, RunInfo{Present: true, Status: runStatusDeliveryPending}, true, true, 3); act.Action != stackActionLeave {
 		t.Fatalf("merged task a: action = %q, want leave", act.Action)
@@ -36,7 +36,7 @@ func TestReconcileRestartMidStackNoop(t *testing.T) {
 // --- Reconciliation: F7 stale-claim note on an orphaned in-flight run ----
 
 func TestReconcileActiveRunWithLiveClaimLeavesGenericNote(t *testing.T) {
-	task := tasks.Task{ID: "b", Status: stackStatusRunning}
+	task := ledger.Task{ID: "b", Status: stackStatusRunning}
 	act := reconcileCase(t, task, RunInfo{Present: true, Status: runStatusRunning, ClaimStale: false}, false, true, 3)
 	if act.Action != stackActionLeave {
 		t.Fatalf("action = %q, want leave", act.Action)
@@ -53,7 +53,7 @@ func TestReconcileActiveRunWithStaleClaimNotesSelfHeal(t *testing.T) {
 	// find the SAME orphaned run again), but its note must stop claiming the
 	// run "is active" and point at the self-healing path.
 	for _, status := range []string{runStatusPending, runStatusRunning, runStatusWaitingApproval} {
-		task := tasks.Task{ID: "b", Status: stackStatusRunning}
+		task := ledger.Task{ID: "b", Status: stackStatusRunning}
 		act := reconcileCase(t, task, RunInfo{Present: true, Status: status, ClaimStale: true}, false, true, 3)
 		if act.Action != stackActionLeave {
 			t.Fatalf("status %s: action = %q, want leave (the run, not the task, needs healing)", status, act.Action)
@@ -69,7 +69,7 @@ func TestReconcileActiveRunWithStaleClaimNotesSelfHeal(t *testing.T) {
 func TestReconcileRunDiedMidFlightReopens(t *testing.T) {
 	// The chunk's run failed while the task says running: reopen with a
 	// bounded retry and a durable attempt count.
-	task := tasks.Task{ID: "b", Status: stackStatusRunning, Attempts: 0}
+	task := ledger.Task{ID: "b", Status: stackStatusRunning, Attempts: 0}
 	act := reconcileCase(t, task, RunInfo{Present: true, Status: runStatusFailed}, false, true, 3)
 	if act.Action != stackActionReopen {
 		t.Fatalf("action = %q, want reopen", act.Action)
@@ -84,7 +84,7 @@ func TestReconcileRunDiedMidFlightReopens(t *testing.T) {
 
 func TestReconcileReopenBoundedThenHalt(t *testing.T) {
 	// Past the bound the chunk is marked failed and the stack halts.
-	task := tasks.Task{ID: "b", Status: stackStatusReopened, Attempts: 3}
+	task := ledger.Task{ID: "b", Status: stackStatusReopened, Attempts: 3}
 	act := reconcileCase(t, task, RunInfo{Present: true, Status: runStatusTimedOut}, false, true, 3)
 	if act.Action != stackActionMarkFailed {
 		t.Fatalf("action = %q, want mark_failed", act.Action)
@@ -99,7 +99,7 @@ func TestReconcileReopenBoundedThenHalt(t *testing.T) {
 func TestReconcileInterruptedMerge(t *testing.T) {
 	// A chunk reached delivery and its PR merged, but the task ledger never
 	// learned: git merge state decides mark_merged, unblocking dependents.
-	task := tasks.Task{ID: "b", Status: stackStatusReviewed, Deps: []string{"a"}}
+	task := ledger.Task{ID: "b", Status: stackStatusReviewed, Deps: []string{"a"}}
 	act := reconcileCase(t, task, RunInfo{Present: true, Status: runStatusDeliveryPending}, true, true, 3)
 	if act.Action != stackActionMarkMerged {
 		t.Fatalf("action = %q, want mark_merged", act.Action)
@@ -112,7 +112,7 @@ func TestReconcileInterruptedMerge(t *testing.T) {
 func TestReconcileDeliveryPendingNotesPublish(t *testing.T) {
 	// Succeeded + delivery_pending -> deliver (publish grant note), NOT
 	// merged: the human checkpoint (D1 policy A) still owns publication.
-	task := tasks.Task{ID: "b", Status: stackStatusRunning}
+	task := ledger.Task{ID: "b", Status: stackStatusRunning}
 	act := reconcileCase(t, task, RunInfo{Present: true, Status: runStatusDeliveryPending}, false, true, 3)
 	if act.Action != stackActionDeliver {
 		t.Fatalf("action = %q, want deliver", act.Action)
@@ -133,7 +133,7 @@ func TestReconcileDeliveryPendingNeverPushedNotMerged(t *testing.T) {
 	// record never reached pushed/succeeded) must NOT be marked merged even
 	// when git reports ref absence: the PR was never created, and marking the
 	// chunk merged would complete the stack with a silent PR loss.
-	task := tasks.Task{ID: "b", Status: stackStatusRunning, Deps: []string{"a"}}
+	task := ledger.Task{ID: "b", Status: stackStatusRunning, Deps: []string{"a"}}
 	act := reconcileCase(t, task, RunInfo{Present: true, Status: runStatusDeliveryPending}, true, false, 3)
 	if act.Action == stackActionMarkMerged {
 		t.Fatalf("never-pushed delivery_pending run was marked merged (action=%q); the chunk must wait for its publish grant", act.Action)
@@ -145,7 +145,7 @@ func TestReconcileDeliveryPendingNeverPushedNotMerged(t *testing.T) {
 
 func TestReconcileMergedTaskNeverReopens(t *testing.T) {
 	// Terminal task statuses are untouched even when the run looks failed.
-	task := tasks.Task{ID: "a", Status: stackStatusMerged}
+	task := ledger.Task{ID: "a", Status: stackStatusMerged}
 	act := reconcileCase(t, task, RunInfo{Present: true, Status: runStatusFailed}, false, true, 3)
 	if act.Action != stackActionLeave || act.NewStatus != "" {
 		t.Fatalf("merged task with failed run: action=%q new=%q, want leave/no-op", act.Action, act.NewStatus)
@@ -209,7 +209,7 @@ func TestStackAdmissionKeyStable(t *testing.T) {
 // --- Next admission wave (schedule after deps merge) ---------------------
 
 func TestNextAdmissionWaveDepsMerged(t *testing.T) {
-	byID := map[string]tasks.Task{
+	byID := map[string]ledger.Task{
 		"a": {ID: "a", Status: stackStatusMerged},
 		"b": {ID: "b", Status: stackStatusPlanned, Deps: []string{"a"}},
 		"c": {ID: "c", Status: stackStatusBlocked, Deps: []string{"a"}},
@@ -223,7 +223,7 @@ func TestNextAdmissionWaveDepsMerged(t *testing.T) {
 
 func TestNextAdmissionWaveNoopWhenConsistent(t *testing.T) {
 	// Every chunk merged: no admission wave (the stack is done).
-	byID := map[string]tasks.Task{
+	byID := map[string]ledger.Task{
 		"a": {ID: "a", Status: stackStatusMerged},
 		"b": {ID: "b", Status: stackStatusMerged, Deps: []string{"a"}},
 	}
@@ -236,12 +236,12 @@ func TestNextAdmissionWaveNoopWhenConsistent(t *testing.T) {
 // --- Durable attempt counting via the transition journal (D8) ------------
 
 func TestStackAttemptCountFromJournal(t *testing.T) {
-	store := tasks.NewMemoryStore()
+	store := ledger.NewMemoryStore()
 	stackID := "stack-1"
-	if _, err := store.StorePlan(tasks.Plan{ID: stackID, Scope: stackScope(stackID), Schema: stackPlanSchema}); err != nil {
+	if _, err := store.StorePlan(ledger.Plan{ID: stackID, Scope: stackScope(stackID), Schema: stackPlanSchema}); err != nil {
 		t.Fatalf("StorePlan: %v", err)
 	}
-	task := tasks.Task{ID: "b", PlanRef: stackID, Scope: stackScope(stackID), Status: stackStatusRunning}
+	task := ledger.Task{ID: "b", PlanRef: stackID, Scope: stackScope(stackID), Status: stackStatusRunning}
 	if err := store.CreateTask(task); err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -389,7 +389,7 @@ func TestReconcileNoDiffChunkMarkedMerged(t *testing.T) {
 	// merged. RunInfo.NoDiff carries the confirmed evidence (F4 fix); it is
 	// never inferred from the mere absence of pushed evidence (see
 	// TestReconcileAmbiguousEvidenceNeverMarksMerged below).
-	task := tasks.Task{ID: "c1", Status: stackStatusRunning, Deps: []string{"a"}}
+	task := ledger.Task{ID: "c1", Status: stackStatusRunning, Deps: []string{"a"}}
 	act := reconcileCase(t, task, RunInfo{Present: true, Status: runStatusSucceeded, NoDiff: true}, false, false, 3)
 	if act.Action != stackActionMarkMerged {
 		t.Fatalf("action = %q, want mark_merged", act.Action)
@@ -403,7 +403,7 @@ func TestReconcileNoDiffChunkCrashRecoveryFromPublished(t *testing.T) {
 	// If a confirmed no_diff run landed but the task was already moved to
 	// published, reconcile must still recover it to merged, not leave it
 	// published forever.
-	task := tasks.Task{ID: "c1", Status: stackStatusPublished, Deps: []string{"a"}}
+	task := ledger.Task{ID: "c1", Status: stackStatusPublished, Deps: []string{"a"}}
 	act := reconcileCase(t, task, RunInfo{Present: true, Status: runStatusSucceeded, NoDiff: true}, false, false, 3)
 	if act.Action != stackActionMarkMerged {
 		t.Fatalf("action = %q, want mark_merged", act.Action)
@@ -418,7 +418,7 @@ func TestReconcileNoDiffChunkCrashRecoveryFromPublished(t *testing.T) {
 // terminal, durable mark_merged transition that would silently drop the
 // chunk's content.
 func TestReconcileAmbiguousEvidenceNeverMarksMerged(t *testing.T) {
-	task := tasks.Task{ID: "c1", Status: stackStatusRunning, Deps: []string{"a"}}
+	task := ledger.Task{ID: "c1", Status: stackStatusRunning, Deps: []string{"a"}}
 	act := reconcileCase(t, task, RunInfo{Present: true, Status: runStatusSucceeded, NoDiff: false}, false, false, 3)
 	if act.Action == stackActionMarkMerged {
 		t.Fatalf("action = mark_merged with no confirmed evidence; must never mark merged on ambiguous state")
@@ -435,7 +435,7 @@ func TestReconcilePublishedOutsideDriveMarksPublished(t *testing.T) {
 	// admission CAS only claims planned/queued/blocked/reopened tasks, so a
 	// task stuck at running/reviewed is never re-admitted and never merged
 	// (reachable-bug audit finding 2).
-	task := tasks.Task{ID: "c1", Status: stackStatusRunning, Deps: []string{"a"}}
+	task := ledger.Task{ID: "c1", Status: stackStatusRunning, Deps: []string{"a"}}
 	act := reconcileCase(t, task, RunInfo{Present: true, Status: runStatusSucceeded, NoDiff: false}, false, true, 3)
 	if act.Action != stackActionMarkPublished {
 		t.Fatalf("action = %q, want mark_published", act.Action)
@@ -451,7 +451,7 @@ func TestReconcilePublishedOutsideDriveFromReviewed(t *testing.T) {
 	// approve-policy remedy). That publishes the run without ever going
 	// through driveChunk, so reconcile must be the one to move the task to
 	// published.
-	task := tasks.Task{ID: "c1", Status: stackStatusReviewed, Deps: []string{"a"}}
+	task := ledger.Task{ID: "c1", Status: stackStatusReviewed, Deps: []string{"a"}}
 	act := reconcileCase(t, task, RunInfo{Present: true, Status: runStatusSucceeded, NoDiff: false}, false, true, 3)
 	if act.Action != stackActionMarkPublished {
 		t.Fatalf("action = %q, want mark_published", act.Action)
@@ -463,7 +463,7 @@ func TestReconcileAlreadyPublishedStaysSteady(t *testing.T) {
 	// run must not re-fire mark_published every pass; it falls through to
 	// the existing deliver/no-op branch (autoMergePublishedChunks owns
 	// merging it from here).
-	task := tasks.Task{ID: "c1", Status: stackStatusPublished, Deps: []string{"a"}}
+	task := ledger.Task{ID: "c1", Status: stackStatusPublished, Deps: []string{"a"}}
 	act := reconcileCase(t, task, RunInfo{Present: true, Status: runStatusSucceeded, NoDiff: false}, false, true, 3)
 	if act.Action != stackActionDeliver {
 		t.Fatalf("action = %q, want deliver (steady state; already published)", act.Action)
@@ -476,12 +476,12 @@ func TestReconcileAlreadyPublishedStaysSteady(t *testing.T) {
 // applyReconcileAction must skip the transition rather than appending a
 // duplicate journal entry every pass while the grant is outstanding.
 func TestApplyReconcileActionSkipsRedundantReviewedToReviewed(t *testing.T) {
-	store := tasks.NewMemoryStore()
+	store := ledger.NewMemoryStore()
 	stackID := "stack-dedup"
-	if _, err := store.StorePlan(tasks.Plan{ID: stackID, Scope: stackScope(stackID), Schema: stackPlanSchema}); err != nil {
+	if _, err := store.StorePlan(ledger.Plan{ID: stackID, Scope: stackScope(stackID), Schema: stackPlanSchema}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.CreateTask(tasks.Task{ID: "c1", PlanRef: stackID, Scope: stackScope(stackID), Status: stackStatusReviewed}); err != nil {
+	if err := store.CreateTask(ledger.Task{ID: "c1", PlanRef: stackID, Scope: stackScope(stackID), Status: stackStatusReviewed}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -514,12 +514,12 @@ func TestApplyReconcileActionSkipsRedundantReviewedToReviewed(t *testing.T) {
 // reviewed transition still lands: a task moving from running to reviewed
 // records exactly one transition event.
 func TestApplyReconcileActionRunsToReviewedOnce(t *testing.T) {
-	store := tasks.NewMemoryStore()
+	store := ledger.NewMemoryStore()
 	stackID := "stack-real-transition"
-	if _, err := store.StorePlan(tasks.Plan{ID: stackID, Scope: stackScope(stackID), Schema: stackPlanSchema}); err != nil {
+	if _, err := store.StorePlan(ledger.Plan{ID: stackID, Scope: stackScope(stackID), Schema: stackPlanSchema}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.CreateTask(tasks.Task{ID: "c1", PlanRef: stackID, Scope: stackScope(stackID), Status: stackStatusRunning}); err != nil {
+	if err := store.CreateTask(ledger.Task{ID: "c1", PlanRef: stackID, Scope: stackScope(stackID), Status: stackStatusRunning}); err != nil {
 		t.Fatal(err)
 	}
 

@@ -1,19 +1,17 @@
-package agenttools
+package ledger
 
 import (
 	"testing"
 	"time"
-
-	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
 // TestCoverageAttemptElapsedSecondsZeroStart pins attemptElapsedSeconds on an
 // attempt with no start timestamp: it must return 0 without touching the
 // clock (covers the zero-start early return).
 func TestCoverageAttemptElapsedSecondsZeroStart(t *testing.T) {
-	a := workflowledger.StepAttempt{
+	a := StepAttempt{
 		AttemptID: "cov-zero-start", RunID: "cov-run", StepID: "one", AttemptNo: 1,
-		Status: workflowledger.AttemptStatusRunning,
+		Status: AttemptStatusRunning,
 		// StartedAt intentionally left zero.
 	}
 	if got := attemptElapsedSeconds(a); got != 0 {
@@ -27,9 +25,9 @@ func TestCoverageAttemptElapsedSecondsZeroStart(t *testing.T) {
 // return).
 func TestCoverageAttemptElapsedSecondsNegativeSkew(t *testing.T) {
 	finished := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
-	a := workflowledger.StepAttempt{
+	a := StepAttempt{
 		AttemptID: "cov-neg-skew", RunID: "cov-run", StepID: "one", AttemptNo: 1,
-		Status:     workflowledger.AttemptStatusSucceeded,
+		Status:     AttemptStatusSucceeded,
 		StartedAt:  finished.Add(30 * time.Second),
 		FinishedAt: &finished,
 	}
@@ -44,9 +42,9 @@ func TestCoverageAttemptElapsedSecondsNegativeSkew(t *testing.T) {
 func TestCoverageAttemptElapsedSecondsCompleted(t *testing.T) {
 	started := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 	finished := started.Add(90*time.Second + 400*time.Millisecond)
-	a := workflowledger.StepAttempt{
+	a := StepAttempt{
 		AttemptID: "cov-completed", RunID: "cov-run", StepID: "one", AttemptNo: 1,
-		Status:     workflowledger.AttemptStatusSucceeded,
+		Status:     AttemptStatusSucceeded,
 		StartedAt:  started,
 		FinishedAt: &finished,
 	}

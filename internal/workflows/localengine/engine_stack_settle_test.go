@@ -7,8 +7,8 @@ package localengine
 import (
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/stacking"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
 // TestStackHasProgressCanceledChunkHalts pins that a canceled chunk task
@@ -16,7 +16,7 @@ import (
 // one: it exists only because a dependency died, so nothing here can move
 // the stack forward on its own.
 func TestStackHasProgressCanceledChunkHalts(t *testing.T) {
-	byID := map[string]tasks.Task{
+	byID := map[string]ledger.Task{
 		"c1": {ID: "c1", Status: stacking.StatusCanceled},
 	}
 	if stackHasProgress(byID, true) {

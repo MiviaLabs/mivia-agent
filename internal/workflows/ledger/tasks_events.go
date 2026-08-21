@@ -1,4 +1,4 @@
-package tasks
+package ledger
 
 import (
 	"encoding/hex"
@@ -30,8 +30,8 @@ func planRunID(planRef string) string { return runIDPrefix + planRef }
 // caller-controlled characters (plan refs, task IDs, scope IDs may contain
 // ':'). The store's events.id PRIMARY KEY is therefore the uniqueness
 // constraint for every logical key: a second writer appending the same key
-// gets ErrDuplicate (identical payload -> success; different payload ->
-// ErrConflict).
+// gets ErrTaskDuplicate (identical payload -> success; different payload ->
+// ErrTaskConflict).
 func eventID(planRef, kind string, parts ...string) string {
 	id := "tke:" + hex.EncodeToString([]byte(planRef)) + ":" + kind
 	for _, part := range parts {

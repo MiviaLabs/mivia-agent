@@ -10,7 +10,7 @@
 // (the same primitive the workflow ledger builds on). The in-memory
 // projection is rebuilt from the event log on catch-up, so state survives
 // restarts and each mutation is atomic with its journal entry.
-package tasks
+package ledger
 
 import (
 	"errors"
@@ -41,10 +41,10 @@ var (
 	ErrInvalidPlan = errors.New("invalid plan")
 	// ErrInvalidTask reports a task record that cannot be created (empty id or plan ref).
 	ErrInvalidTask = errors.New("invalid task")
-	// ErrDuplicate reports a record that already exists with different content.
-	ErrDuplicate = errors.New("duplicate record")
-	// ErrConflict reports a logical key taken by a concurrent writer.
-	ErrConflict = errors.New("state conflict")
+	// ErrTaskDuplicate reports a record that already exists with different content.
+	ErrTaskDuplicate = errors.New("duplicate record")
+	// ErrTaskConflict reports a logical key taken by a concurrent writer.
+	ErrTaskConflict = errors.New("state conflict")
 )
 
 // Scope identifies one engine entity: a session, a workflow step, an agent,

@@ -44,7 +44,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
 // singlePlanOutput is the decompose output of a single-mode run (the
@@ -590,7 +589,7 @@ func (it *stackDriveIT) runStatus(runID string) workflowledger.RunStatus {
 // taskStatuses reads every stack task's durable status.
 func (it *stackDriveIT) taskStatuses(stackID string) map[string]string {
 	it.t.Helper()
-	byID, err := stackTaskMap(tasks.NewStore(it.store), stackID)
+	byID, err := stackTaskMap(workflowledger.NewStore(it.store), stackID)
 	if err != nil {
 		it.t.Fatal(err)
 	}

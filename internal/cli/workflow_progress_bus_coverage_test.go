@@ -9,7 +9,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
 // TestWorkflowProgressSinkNilBusFromProvider covers workflowProgressSink's
@@ -177,7 +176,7 @@ func settleSucceededStackPlanRun(t *testing.T, ctx context.Context) (root, confi
 	if err != nil || len(chunks) != 2 {
 		t.Fatalf("parse multi-chunk plan = %v, %v; want 2 chunks", chunks, err)
 	}
-	ledger := tasks.NewStore(store)
+	ledger := workflowledger.NewStore(store)
 	if err := seedStackLedger(ledger, runID, chunks); err != nil {
 		t.Fatalf("seed stack ledger: %v", err)
 	}

@@ -12,7 +12,6 @@ import (
 
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/stacking"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
 // Stack task statuses, chunk-plan parsing, stable admission keys, and the
@@ -63,7 +62,7 @@ const (
 
 // stackScope binds every stack task to the plan run that produced the chunk
 // plan, so queries never cross stacks (D8 scope binding).
-func stackScope(stackID string) tasks.Scope {
+func stackScope(stackID string) workflowledger.Scope {
 	return stacking.Scope(stackID)
 }
 
@@ -156,7 +155,7 @@ const (
 // the branch was ever pushed (a delivery record that reached pushed/succeeded
 // with a commit SHA). A delivery_pending run whose branch was never pushed has
 // no remote ref and no PR; ref absence must not complete its stack.
-func reconcileTask(t tasks.Task, run RunInfo, merged bool, runPushed bool, maxAttempts int) ReconcileAction {
+func reconcileTask(t workflowledger.Task, run RunInfo, merged bool, runPushed bool, maxAttempts int) ReconcileAction {
 	leave := func(note string) ReconcileAction {
 		return ReconcileAction{TaskID: t.ID, Action: stackActionLeave, Note: note}
 	}
@@ -246,7 +245,7 @@ func isInFlightStackStatus(status string) bool {
 
 // reopenOrFail reopens a task whose run ended without merging, bounded by the
 // task's attempt count; past the bound the stack halts on a failed task.
-func reopenOrFail(t tasks.Task, maxAttempts int) ReconcileAction {
+func reopenOrFail(t workflowledger.Task, maxAttempts int) ReconcileAction {
 	if maxAttempts <= 0 {
 		maxAttempts = stackMaxChunkAttempts
 	}
@@ -264,11 +263,11 @@ func reopenOrFail(t tasks.Task, maxAttempts int) ReconcileAction {
 // must be in stackStatusRunning (the only status a chunk's failure path is
 // reached from); a task no longer running has already been handled by
 // another caller, and this returns a leave action, not an error.
-func reconcileReopenOrFail(ledger *tasks.Store, stackID, chunkID string) (ReconcileAction, error) {
+func reconcileReopenOrFail(ledger *workflowledger.Store, stackID, chunkID string) (ReconcileAction, error) {
 	var built ReconcileAction
 	applied, _, attempts, err := ledger.TransitionTaskCASDecide(stackID, chunkID, []string{stackStatusRunning}, stackStatusReopened,
 		func(attempts int) (string, bool) {
-			built = reopenOrFail(tasks.Task{ID: chunkID, Attempts: attempts}, stackMaxChunkAttempts)
+			built = reopenOrFail(workflowledger.Task{ID: chunkID, Attempts: attempts}, stackMaxChunkAttempts)
 			return built.NewStatus, true
 		})
 	if err != nil {
@@ -281,7 +280,7 @@ func reconcileReopenOrFail(ledger *tasks.Store, stackID, chunkID string) (Reconc
 }
 
 // stackTaskReady reports whether a task's dependencies are all merged.
-func stackTaskReady(t tasks.Task, merged map[string]bool) bool {
+func stackTaskReady(t workflowledger.Task, merged map[string]bool) bool {
 	for _, dep := range t.Deps {
 		if !merged[dep] {
 			return false
@@ -293,7 +292,7 @@ func stackTaskReady(t tasks.Task, merged map[string]bool) bool {
 // nextAdmissionWave returns the chunk ids to admit now: planned/queued/
 // blocked/reopened tasks whose dependencies are all merged, in dependency
 // order (§5a step 4: schedule the next wave).
-func nextAdmissionWave(tasksByID map[string]tasks.Task, merged map[string]bool, order []string) []string {
+func nextAdmissionWave(tasksByID map[string]workflowledger.Task, merged map[string]bool, order []string) []string {
 	var wave []string
 	for _, id := range order {
 		t, ok := tasksByID[id]
@@ -348,7 +347,7 @@ func stackHeadBranch(run workflowledger.RunSnapshot) string {
 // stackAttemptCount counts a task's reopen transitions in the durable
 // journal (D8): the ledger has no task-field update API, so the transition
 // journal IS the attempt counter, rebuilt from the event log on restart.
-func stackAttemptCount(ledger *tasks.Store, stackID, taskID string) int {
+func stackAttemptCount(ledger *workflowledger.Store, stackID, taskID string) int {
 	trs, err := ledger.ListTransitions(stackID)
 	if err != nil {
 		return 0
@@ -367,7 +366,7 @@ func stackAttemptCount(ledger *tasks.Store, stackID, taskID string) int {
 // statuses, but not an already-published task (see reconcileTask's deliver
 // arm) - guard on NewStatus rather than the action, or that case hits
 // TransitionTask with an empty status.
-func applyReconcileAction(ledger *tasks.Store, stackID string, act ReconcileAction) error {
+func applyReconcileAction(ledger *workflowledger.Store, stackID string, act ReconcileAction) error {
 	if act.NewStatus == "" {
 		return nil
 	}

@@ -4,14 +4,14 @@ package localengine
 // validation, including the engine-reserved stacking inputs (decision D3).
 
 import (
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
 // loadAndValidateWorkflow loads and compiles the workflow, extends the input
 // contract with the engine-reserved stacking inputs when the workflow is
 // stacking, and validates the run's inputs against the effective contract.
-func (e *Engine) loadAndValidateWorkflow(req agenttools.StartRequest) (*definition.CompiledWorkflow, []byte, string, map[string]any, map[string]string, error) {
+func (e *Engine) loadAndValidateWorkflow(req ledger.StartRequest) (*definition.CompiledWorkflow, []byte, string, map[string]any, map[string]string, error) {
 	compiled, raw, baseDir, err := e.loadWorkflow(req.Workflow)
 	if err != nil {
 		return nil, nil, "", nil, nil, err

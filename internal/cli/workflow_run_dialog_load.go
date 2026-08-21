@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/events"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	tea "github.com/charmbracelet/bubbletea"
@@ -202,7 +201,7 @@ func (m *tuiModel) takePendingWorkflowDialogCmd() []tea.Cmd {
 // actions through, building it once from the session's own config identity
 // when the workspace has workflows (same factory and store as the session
 // workflow tools). Tests may pre-set m.workflowSvc to a recording service.
-func (m *tuiModel) workflowDialogService() *agenttools.Service {
+func (m *tuiModel) workflowDialogService() *workflowledger.Service {
 	if m.workflowSvc != nil {
 		return m.workflowSvc
 	}

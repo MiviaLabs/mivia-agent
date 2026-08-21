@@ -16,7 +16,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/stacking"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
 )
 
 // loadStackPlanOutput reads the succeeded decompose step output of a
@@ -79,7 +78,7 @@ func loadAllStackChunks(repo workflowledger.Repository, stackID string) (chunks 
 // seedStackLedger records the plan artifact and the chunk tasks (D8); see
 // stacking.SeedStackLedger. Re-entry is idempotent: existing tasks are left
 // untouched and only missing tasks are created.
-func seedStackLedger(ledger *tasks.Store, stackID string, chunks []ChunkPlan) error {
+func seedStackLedger(ledger *workflowledger.Store, stackID string, chunks []ChunkPlan) error {
 	return stacking.SeedStackLedger(context.Background(), ledger, stackID, chunks)
 }
 
@@ -105,7 +104,7 @@ func stackPRBase(wf *definition.CompiledWorkflow) (string, error) {
 
 // reconcileStack applies the §5a recovery actions for every chunk task of
 // the stack: task ledger x run ledger x git merge state, idempotently.
-func reconcileStack(ctx context.Context, ledger *tasks.Store, repo workflowledger.Repository, checker MergeChecker, stackID string, maxAttempts int) ([]ReconcileAction, error) {
+func reconcileStack(ctx context.Context, ledger *workflowledger.Store, repo workflowledger.Repository, checker MergeChecker, stackID string, maxAttempts int) ([]ReconcileAction, error) {
 	list, err := ledger.ListTasksByScope(stackScope(stackID))
 	if err != nil {
 		return nil, err
@@ -140,7 +139,7 @@ func reconcileStack(ctx context.Context, ledger *tasks.Store, repo workflowledge
 		act.CurrentStatus = t.Status
 		actions = append(actions, act)
 		if err := applyReconcileAction(ledger, stackID, act); err != nil {
-			if errors.Is(err, tasks.ErrConflict) {
+			if errors.Is(err, workflowledger.ErrTaskConflict) {
 				continue // a concurrent writer already made this transition
 			}
 			return nil, err
@@ -192,7 +191,7 @@ func chunkRunNoDiff(repo workflowledger.Repository, run workflowledger.RunSnapsh
 // repair re-entry must NOT mark the chunk published, or the stack ledger
 // permanently lies about a chunk with no PR at all, and the merge-wait loop
 // polls a merge that can never land.
-func chunkSettleAfterDelivery(repo workflowledger.Repository, ledger *tasks.Store, stackID, chunkID string, fresh workflowledger.RunSnapshot) string {
+func chunkSettleAfterDelivery(repo workflowledger.Repository, ledger *workflowledger.Store, stackID, chunkID string, fresh workflowledger.RunSnapshot) string {
 	if chunkRunNoDiff(repo, fresh) {
 		_ = ledger.TransitionTask(stackID, chunkID, stackStatusMerged)
 		return fmt.Sprintf("chunk=%s has no diff; marking merged", chunkID)
@@ -206,7 +205,7 @@ func chunkSettleAfterDelivery(repo workflowledger.Repository, ledger *tasks.Stor
 // chunkSettleSucceeded transitions the chunk task when the run was already
 // succeeded at admission. A no_diff outcome marks it merged and prints a
 // message; otherwise it moves to implemented for normal delivery tracking.
-func chunkSettleSucceeded(repo workflowledger.Repository, ledger *tasks.Store, stackID, chunkID string, snap workflowledger.RunSnapshot, stdout io.Writer) {
+func chunkSettleSucceeded(repo workflowledger.Repository, ledger *workflowledger.Store, stackID, chunkID string, snap workflowledger.RunSnapshot, stdout io.Writer) {
 	if chunkRunNoDiff(repo, snap) {
 		_ = ledger.TransitionTask(stackID, chunkID, stackStatusMerged)
 		fmt.Fprintf(stdout, "chunk=%s has no diff; marking merged\n", chunkID)
@@ -260,13 +259,13 @@ func stackRunHeadCommit(repo workflowledger.Repository, run workflowledger.RunSn
 
 // stackTaskMap loads every stack task by id for the drive loop (see
 // stacking.TaskMap).
-func stackTaskMap(ledger *tasks.Store, stackID string) (map[string]tasks.Task, error) {
+func stackTaskMap(ledger *workflowledger.Store, stackID string) (map[string]workflowledger.Task, error) {
 	return stacking.TaskMap(context.Background(), ledger, stackID)
 }
 
 // stackMergedSet returns the set of chunk ids whose tasks are merged (see
 // stacking.MergedSet).
-func stackMergedSet(byID map[string]tasks.Task) map[string]bool {
+func stackMergedSet(byID map[string]workflowledger.Task) map[string]bool {
 	return stacking.MergedSet(byID)
 }
 
