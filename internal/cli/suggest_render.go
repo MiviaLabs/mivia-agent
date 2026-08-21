@@ -41,9 +41,3 @@ func suggestOverlayRect(m *tuiModel, panel string, panelSize Rect) Rect {
 	x := pane.chatX + Max(0, Min(2, pane.chatWidth-panelSize.W))
 	return Rect{X: x, Y: y, W: panelSize.W, H: Min(panelSize.H, termH-y)}
 }
-
-func (m *tuiModel) suggestComposerTop() int {
-	// The live panel is an overlay and holds no layout band, so the composer
-	// sits directly below the full-height viewport.
-	return 1 + m.viewport.Height
-}
