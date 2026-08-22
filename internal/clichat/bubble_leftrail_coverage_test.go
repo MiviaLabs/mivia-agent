@@ -9,6 +9,7 @@ package clichat
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestLeftPadWithRailVariants(t *testing.T) {
@@ -22,8 +23,8 @@ func TestLeftPadWithRailVariants(t *testing.T) {
 		// the helper is exercised either way. We assert only the pad=4
 		// path that always returns 4 chars.
 		_ = leftPadWithRail(0, rail)
-		if got := leftPadWithRail(4, rail); len(got) != 4 {
-			t.Errorf("leftPadWithRail(4, kind=%v) = %q (len=%d)", kind, got, len(got))
+		if got := leftPadWithRail(4, rail); utf8.RuneCountInString(got) != 4 {
+			t.Errorf("leftPadWithRail(4, kind=%v) = %q (runes=%d)", kind, got, utf8.RuneCountInString(got))
 		}
 	}
 }
