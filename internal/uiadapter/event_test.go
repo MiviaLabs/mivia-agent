@@ -1,0 +1,573 @@
+package uiadapter_test
+
+import (
+	"encoding/json"
+	"testing"
+
+	"github.com/MiviaLabs/mivia-agent/internal/agent"
+	"github.com/MiviaLabs/mivia-agent/internal/uiadapter"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
+)
+
+// allEventKinds enumerates every agent.EventKind constant. The table tests
+// reference these values directly so adding a new constant here without
+// adding a row to the per-group tests below fails the test at compile
+// time.
+//
+// Mirror in lockstep with internal/agent/event.go. The exhaustive coverage
+// test below is the second line of defence (it asserts the switch covers
+// the constants declared at the time the test runs).
+func allEventKinds() []agent.EventKind {
+	return []agent.EventKind{
+		agent.EventAssistant,
+		agent.EventToolStart,
+		agent.EventToolEnd,
+		agent.EventStep,
+		agent.EventHeartbeat,
+		agent.EventPrune,
+		agent.EventToolParallel,
+		agent.EventSubagentStart,
+		agent.EventSubagentEnd,
+		agent.EventSubagentHeartbeat,
+		agent.EventSubagentDone,
+		agent.EventThinking,
+		agent.EventHook,
+		agent.EventCompaction,
+		agent.EventCacheUsage,
+		agent.EventTokenUsage,
+		agent.EventWorkLimit,
+	}
+}
+
+// mappingCase pairs an agent.Event input with the uievent.Events the
+// TranslateEvent switch must produce. Each per-group test below holds
+// one table of these for its logical category.
+type mappingCase struct {
+	name string
+	ev   agent.Event
+	want []uievent.Event
+}
+
+// runMappingCases iterates the supplied table, naming each row and
+// comparing TranslateEvent's output against want via the shared equality
+// helper. Parallel subtests run within their parent; the parent itself
+// is parallel.
+func runMappingCases(t *testing.T, cases []mappingCase) {
+	t.Helper()
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := uiadapter.TranslateEvent(tc.ev)
+			assertUIEventsEqual(t, got, tc.want)
+		})
+	}
+}
+
+// TestTranslateEvent_Assistant covers the EventAssistant fan-out. Detail
+// is the agent loop's mode marker: "delta" for streaming chunks,
+// "interim" for batch-aggregated interim content, and empty for the
+// final whole-turn text. Empty Content on any mode drops because the
+// uievent body set has no representation for an empty payload.
+func TestTranslateEvent_Assistant(t *testing.T) {
+	t.Parallel()
+	runMappingCases(t, []mappingCase{
+		{
+			name: "delta_streams_as_text.delta",
+			ev:   agent.Event{Kind: agent.EventAssistant, Content: "chunk", Detail: "delta"},
+			want: []uievent.Event{{Kind: uievent.KindTextDelta, Body: uievent.TextDeltaBody{Text: "chunk"}}},
+		},
+		{
+			name: "interim_is_interim_text.end",
+			ev:   agent.Event{Kind: agent.EventAssistant, Content: "batched so far", Detail: "interim"},
+			want: []uievent.Event{{Kind: uievent.KindTextEnd, Body: uievent.TextEndBody{Text: "batched so far"}}},
+		},
+		{
+			name: "empty_detail_is_final_text.end",
+			ev:   agent.Event{Kind: agent.EventAssistant, Content: "final text"},
+			want: []uievent.Event{{Kind: uievent.KindTextEnd, Body: uievent.TextEndBody{Text: "final text"}}},
+		},
+		{
+			name: "empty_content_dropped_regardless_of_mode",
+			ev:   agent.Event{Kind: agent.EventAssistant, Content: "", Detail: "delta"},
+			want: nil,
+		},
+	})
+}
+
+// TestTranslateEvent_Tool covers the tool lifecycle (start, end).
+// EventToolStart maps to tool.start with parsed Args; EventToolEnd maps
+// to tool.end with OK derived from Detail's vocabulary ("completed"
+// vs anything starting with "failed") and Err carrying the same string
+// so a renderer has something to show without re-parsing.
+func TestTranslateEvent_Tool(t *testing.T) {
+	t.Parallel()
+	runMappingCases(t, []mappingCase{
+		{
+			name: "tool_start_with_parseable_input",
+			ev: agent.Event{
+				Kind: agent.EventToolStart, ToolCallID: "c1", Name: "read_file",
+				Detail: "running", Input: `{"path":"/tmp/x"}`,
+			},
+			want: []uievent.Event{{
+				Kind: uievent.KindToolStart,
+				Body: uievent.ToolStartBody{
+					ToolCallID: "c1", Name: "read_file",
+					Args: map[string]any{"path": "/tmp/x"},
+				},
+			}},
+		},
+		{
+			name: "tool_start_with_empty_input_yields_nil_args",
+			ev:   agent.Event{Kind: agent.EventToolStart, ToolCallID: "c2", Name: "noop"},
+			want: []uievent.Event{{
+				Kind: uievent.KindToolStart,
+				Body: uievent.ToolStartBody{ToolCallID: "c2", Name: "noop"},
+			}},
+		},
+		{
+			name: "tool_end_completed_is_OK_true",
+			ev: agent.Event{
+				Kind: agent.EventToolEnd, ToolCallID: "c1", Name: "read_file",
+				Detail: "completed", Output: "ok\n",
+			},
+			want: []uievent.Event{{
+				Kind: uievent.KindToolEnd,
+				Body: uievent.ToolEndBody{
+					ToolCallID: "c1", Name: "read_file", OK: true,
+					Result: "ok\n",
+				},
+			}},
+		},
+		{
+			name: "tool_end_failed_is_OK_false_with_err",
+			ev: agent.Event{
+				Kind: agent.EventToolEnd, ToolCallID: "c2", Name: "run_command",
+				Detail: "failed", Output: "exit=1",
+			},
+			want: []uievent.Event{{
+				Kind: uievent.KindToolEnd,
+				Body: uievent.ToolEndBody{
+					ToolCallID: "c2", Name: "run_command", OK: false,
+					Result: "exit=1", Err: "failed",
+				},
+			}},
+		},
+	})
+}
+
+// TestTranslateEvent_Notice covers every kind that resolves to a free-
+// text advisory line (notice). The kinds are split across two tests so
+// neither grows past the function-length soft cap: this one holds the
+// kinds whose payload has no agent-side structured equivalent (step,
+// prune, tool_parallel, hook). TestTranslateEvent_NoticeMetrics holds the
+// kinds whose payload is a typed accounting event from the agent loop
+// (compaction, cache_usage, token_usage, work_limit).
+func TestTranslateEvent_Notice(t *testing.T) {
+	t.Parallel()
+	runMappingCases(t, []mappingCase{
+		{
+			name: "step_uses_detail_as_text",
+			ev:   agent.Event{Kind: agent.EventStep, Detail: "step 3 of 5"},
+			want: []uievent.Event{{
+				Kind: uievent.KindNotice,
+				Body: uievent.NoticeBody{Text: "step 3 of 5"},
+			}},
+		},
+		{
+			name: "prune_carries_retry_message",
+			ev: agent.Event{
+				Kind:   agent.EventPrune,
+				Detail: "provider rejected prompt (prompt too long); compacted and retrying once",
+			},
+			want: []uievent.Event{{
+				Kind: uievent.KindNotice,
+				Body: uievent.NoticeBody{
+					Text: "provider rejected prompt (prompt too long); compacted and retrying once",
+				},
+			}},
+		},
+		{
+			name: "tool_parallel_carries_banner",
+			ev:   agent.Event{Kind: agent.EventToolParallel, Detail: "3 tools: a, b, c"},
+			want: []uievent.Event{{
+				Kind: uievent.KindNotice,
+				Body: uievent.NoticeBody{Text: "3 tools: a, b, c"},
+			}},
+		},
+		{
+			name: "hook_with_detail_uses_detail",
+			ev: agent.Event{
+				Kind: agent.EventHook, Name: "PreToolUse",
+				Detail: "prettier blocked the call",
+			},
+			want: []uievent.Event{{
+				Kind: uievent.KindNotice,
+				Body: uievent.NoticeBody{Text: "prettier blocked the call"},
+			}},
+		},
+		{
+			name: "hook_without_detail_falls_back_to_name",
+			ev:   agent.Event{Kind: agent.EventHook, Name: "PostToolUse"},
+			want: []uievent.Event{{
+				Kind: uievent.KindNotice,
+				Body: uievent.NoticeBody{Text: "PostToolUse"},
+			}},
+		},
+	})
+}
+
+// TestTranslateEvent_NoticeMetrics covers the kinds whose payload is a
+// typed accounting event from the agent loop (compaction, cache_usage,
+// token_usage, work_limit). They arrive as free-text notices here because
+// the uievent contract has no dedicated body for typed accounting yet;
+// the typed payloads still travel alongside (events.CompactionEvent etc.)
+// for consumers that want the structured form.
+func TestTranslateEvent_NoticeMetrics(t *testing.T) {
+	t.Parallel()
+	runMappingCases(t, []mappingCase{
+		{
+			name: "compaction_summary_is_notice",
+			ev: agent.Event{
+				Kind:   agent.EventCompaction,
+				Detail: "context compacted: 120000 -> 60000 tokens",
+			},
+			want: []uievent.Event{{
+				Kind: uievent.KindNotice,
+				Body: uievent.NoticeBody{Text: "context compacted: 120000 -> 60000 tokens"},
+			}},
+		},
+		{
+			name: "cache_usage_hit_rate_is_notice",
+			ev: agent.Event{
+				Kind:   agent.EventCacheUsage,
+				Detail: "prompt cache: 800/1000 tokens cached (80%)",
+			},
+			want: []uievent.Event{{
+				Kind: uievent.KindNotice,
+				Body: uievent.NoticeBody{Text: "prompt cache: 800/1000 tokens cached (80%)"},
+			}},
+		},
+		{
+			name: "token_usage_in_out_is_notice",
+			ev: agent.Event{
+				Kind:   agent.EventTokenUsage,
+				Detail: "actual 1234 in / 567 out",
+			},
+			want: []uievent.Event{{
+				Kind: uievent.KindNotice,
+				Body: uievent.NoticeBody{Text: "actual 1234 in / 567 out"},
+			}},
+		},
+		{
+			name: "work_limit_is_notice",
+			ev:   agent.Event{Kind: agent.EventWorkLimit, Detail: "conclude: approaching a work bound"},
+			want: []uievent.Event{{
+				Kind: uievent.KindNotice,
+				Body: uievent.NoticeBody{Text: "conclude: approaching a work bound"},
+			}},
+		},
+	})
+}
+
+// TestTranslateEvent_Subagent covers the subagent lifecycle kinds.
+// EventSubagentStart/End reuse the tool.start/tool.end body shape so the
+// UI shows the row alongside other tool calls (attribution rides on the
+// input Origin); EventSubagentHeartbeat is dropped because subagent
+// progress rides Progress on tool.output later; EventSubagentDone is a
+// notice carrying the most informative label from Origin.
+func TestTranslateEvent_Subagent(t *testing.T) {
+	t.Parallel()
+	runMappingCases(t, []mappingCase{
+		{
+			name: "subagent_start_maps_to_tool.start",
+			ev: agent.Event{
+				Kind: agent.EventSubagentStart, ToolCallID: "tc-1", Name: "delegate",
+				Detail: "running", Input: `{"task":"audit"}`,
+				Origin: agent.EventOrigin{
+					TaskID: "wft-1", Agent: "audit", Depth: 1,
+					TaskDescription: "audit the diff",
+				},
+			},
+			want: []uievent.Event{{
+				Kind: uievent.KindToolStart,
+				Body: uievent.ToolStartBody{
+					ToolCallID: "tc-1", Name: "delegate",
+					Args: map[string]any{"task": "audit"},
+				},
+			}},
+		},
+		{
+			name: "subagent_end_maps_to_tool.end",
+			ev: agent.Event{
+				Kind: agent.EventSubagentEnd, ToolCallID: "tc-1", Name: "delegate",
+				Detail: "completed", Output: "clean",
+			},
+			want: []uievent.Event{{
+				Kind: uievent.KindToolEnd,
+				Body: uievent.ToolEndBody{
+					ToolCallID: "tc-1", Name: "delegate", OK: true,
+					Result: "clean",
+				},
+			}},
+		},
+		{
+			name: "subagent_heartbeat_dropped",
+			ev:   agent.Event{Kind: agent.EventSubagentHeartbeat, Detail: "elapsed=30s steps=2"},
+			want: nil,
+		},
+		{
+			name: "subagent_done_carries_task_description",
+			ev: agent.Event{
+				Kind: agent.EventSubagentDone,
+				Origin: agent.EventOrigin{
+					TaskID: "wft-1", Agent: "audit",
+					TaskDescription: "audit the diff",
+				},
+			},
+			want: []uievent.Event{{
+				Kind: uievent.KindNotice,
+				Body: uievent.NoticeBody{Text: "subagent done: audit the diff"},
+			}},
+		},
+		{
+			name: "subagent_done_falls_back_to_agent",
+			ev: agent.Event{
+				Kind:   agent.EventSubagentDone,
+				Origin: agent.EventOrigin{TaskID: "wft-1", Agent: "audit"},
+			},
+			want: []uievent.Event{{
+				Kind: uievent.KindNotice,
+				Body: uievent.NoticeBody{Text: "subagent done: audit"},
+			}},
+		},
+		{
+			name: "subagent_done_with_no_origin_bare_text",
+			ev:   agent.Event{Kind: agent.EventSubagentDone},
+			want: []uievent.Event{{
+				Kind: uievent.KindNotice,
+				Body: uievent.NoticeBody{Text: "subagent done"},
+			}},
+		},
+	})
+}
+
+// TestTranslateEvent_Dropped covers the two drop-list entries (and proves
+// they really do drop rather than fall through to a default case). A
+// non-empty Detail is set so a future change that returns nil only for
+// empty Detail is caught here.
+func TestTranslateEvent_Dropped(t *testing.T) {
+	t.Parallel()
+	runMappingCases(t, []mappingCase{
+		{
+			name: "heartbeat_dropped",
+			ev:   agent.Event{Kind: agent.EventHeartbeat, Detail: "tools 2/4 done"},
+			want: nil,
+		},
+	})
+}
+
+// TestTranslateEvent_Reasoning covers EventThinking's chain-of-thought.
+// Content drives the body; empty Content drops because reasoning.delta
+// has no representation for an empty payload.
+func TestTranslateEvent_Reasoning(t *testing.T) {
+	t.Parallel()
+	runMappingCases(t, []mappingCase{
+		{
+			name: "thinking_with_content_maps",
+			ev:   agent.Event{Kind: agent.EventThinking, Content: "step 1: enumerate"},
+			want: []uievent.Event{{
+				Kind: uievent.KindReasoning,
+				Body: uievent.ReasoningDeltaBody{Text: "step 1: enumerate"},
+			}},
+		},
+		{
+			name: "thinking_empty_content_dropped",
+			ev:   agent.Event{Kind: agent.EventThinking},
+			want: nil,
+		},
+	})
+}
+
+// TestTranslateEvent_ExhaustiveCoverage is the structural guardrail. It
+// asserts two cooperating invariants:
+//
+//  1. Every agent.EventKind constant declared at test time has a case in
+//     TranslateEvent's switch; an unrecognised kind panics (so a new
+//     constant added to internal/agent/event.go without a switch entry
+//     surfaces as a panic rather than a silent drop).
+//  2. Every kind in the drop-list truly drops regardless of input, and
+//     every other kind produces at least one uievent.Event when fed a
+//     content-bearing event so an accidentally-conditional return-nil
+//     fails the test rather than the test passing by accident.
+func TestTranslateEvent_ExhaustiveCoverage(t *testing.T) {
+	t.Parallel()
+	covered := map[agent.EventKind]struct{}{}
+	for _, k := range allEventKinds() {
+		if _, dup := covered[k]; dup {
+			t.Fatalf("allEventKinds has duplicate %q", k)
+		}
+		covered[k] = struct{}{}
+	}
+	kinds := allEventKinds()
+	if len(kinds) == 0 {
+		t.Fatal("allEventKinds is empty; mirror internal/agent/event.go")
+	}
+	seen := map[agent.EventKind]bool{}
+	for _, k := range kinds {
+		ev := contentBearingEvent(k)
+		got := safeTranslate(t, ev)
+		switch k {
+		case agent.EventHeartbeat, agent.EventSubagentHeartbeat:
+			if len(got) != 0 {
+				t.Errorf("%s must drop (no UI representation); got %d events", k, len(got))
+			}
+		default:
+			if len(got) == 0 {
+				t.Errorf("%s is content-bearing but produced 0 uievents; check for an accidental drop", k)
+			}
+		}
+		seen[k] = true
+	}
+	for _, k := range kinds {
+		if !seen[k] {
+			t.Errorf("kind %q declared but never exercised in coverage loop", k)
+		}
+	}
+}
+
+// TestTranslateEvent_PanicsOnUnknownKind pins the "no default case"
+// rule at test time. Without this, adding a new EventKind would compile
+// fine (the production switch has a panic on the fall-through) and only
+// surface when the loop runs through every kind.
+func TestTranslateEvent_PanicsOnUnknownKind(t *testing.T) {
+	t.Parallel()
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("TranslateEvent must panic on an unrecognised agent.EventKind")
+		}
+	}()
+	_ = uiadapter.TranslateEvent(agent.Event{Kind: agent.EventKind("definitely_not_in_the_switch")})
+}
+
+// contentBearingEvent returns one agent.Event of kind k with enough fields
+// populated that every case in TranslateEvent (other than the explicit
+// drop-list pair) would emit at least one uievent.Event. Used by the
+// exhaustive coverage test to distinguish "this kind always drops" from
+// "this kind drops only when fields are empty".
+func contentBearingEvent(k agent.EventKind) agent.Event {
+	ev := agent.Event{Kind: k, Detail: "running", Output: "ok", Content: "text", Name: "tool"}
+	switch k {
+	case agent.EventSubagentStart, agent.EventSubagentEnd, agent.EventSubagentHeartbeat, agent.EventSubagentDone:
+		ev = agent.Event{Kind: k, ToolCallID: "tc-1", Detail: "running", Origin: agent.EventOrigin{
+			TaskID: "wft-1", Agent: "audit", TaskDescription: "audit the diff",
+		}}
+		ev.Name = "delegate"
+	case agent.EventToolStart, agent.EventToolEnd:
+		ev = agent.Event{Kind: k, ToolCallID: "tc-1", Name: "read_file", Detail: "completed"}
+	case agent.EventAssistant:
+		ev = agent.Event{Kind: k, Content: "hi", Detail: "delta"}
+	case agent.EventThinking:
+		ev = agent.Event{Kind: k, Content: "thought"}
+	case agent.EventHook:
+		ev = agent.Event{Kind: k, Name: "PreToolUse", Detail: "ran"}
+	}
+	return ev
+}
+
+// safeTranslate runs TranslateEvent and converts a panic into a t.Errorf
+// for the exhaustive coverage test, so a forgotten case is reported as a
+// coverage miss instead of crashing the test binary mid-loop.
+func safeTranslate(t *testing.T, ev agent.Event) (out []uievent.Event) {
+	t.Helper()
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("TranslateEvent panicked on %q: %v", ev.Kind, r)
+		}
+	}()
+	return uiadapter.TranslateEvent(ev)
+}
+
+// assertUIEventsEqual fails unless got and want are identical including
+// the body type and its fields. Body comparison goes through JSON
+// round-trip so non-comparable types inside the body (map[string]any,
+// *Diff, *Progress, []byte derivatives) can be compared meaningfully;
+// a type mismatch is reported as such before the round-trip kicks in.
+func assertUIEventsEqual(t *testing.T, got, want []uievent.Event) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("event count: got %d, want %d (got=%+v, want=%+v)", len(got), len(want), got, want)
+	}
+	for i := range got {
+		if got[i].Kind != want[i].Kind {
+			t.Fatalf("event[%d] kind: got %q, want %q", i, got[i].Kind, want[i].Kind)
+		}
+		if bodyTypeDiffers(got[i].Body, want[i].Body) {
+			t.Fatalf("event[%d] body type: got %T, want %T", i, got[i].Body, want[i].Body)
+		}
+		gotJSON, err := json.Marshal(got[i].Body)
+		if err != nil {
+			t.Fatalf("event[%d] marshal got body: %v", i, err)
+		}
+		wantJSON, err := json.Marshal(want[i].Body)
+		if err != nil {
+			t.Fatalf("event[%d] marshal want body: %v", i, err)
+		}
+		if string(gotJSON) != string(wantJSON) {
+			t.Fatalf("event[%d] body mismatch: got %s, want %s", i, gotJSON, wantJSON)
+		}
+	}
+}
+
+// bodyTypeDiffers reports whether two Body values have different dynamic
+// types. Two different concrete body implementations carrying the same
+// fields would still be considered different by this helper because the
+// uievent contract is that Body's concrete type is decided by Kind.
+func bodyTypeDiffers(a, b uievent.Body) bool {
+	switch a.(type) {
+	case uievent.TurnStartBody:
+		_, ok := b.(uievent.TurnStartBody)
+		return !ok
+	case uievent.TextDeltaBody:
+		_, ok := b.(uievent.TextDeltaBody)
+		return !ok
+	case uievent.TextEndBody:
+		_, ok := b.(uievent.TextEndBody)
+		return !ok
+	case uievent.ReasoningDeltaBody:
+		_, ok := b.(uievent.ReasoningDeltaBody)
+		return !ok
+	case uievent.ToolPendingBody:
+		_, ok := b.(uievent.ToolPendingBody)
+		return !ok
+	case uievent.ToolStartBody:
+		_, ok := b.(uievent.ToolStartBody)
+		return !ok
+	case uievent.ToolOutputBody:
+		_, ok := b.(uievent.ToolOutputBody)
+		return !ok
+	case uievent.ToolEndBody:
+		_, ok := b.(uievent.ToolEndBody)
+		return !ok
+	case uievent.PlanBody:
+		_, ok := b.(uievent.PlanBody)
+		return !ok
+	case uievent.NoticeBody:
+		_, ok := b.(uievent.NoticeBody)
+		return !ok
+	case uievent.UsageBody:
+		_, ok := b.(uievent.UsageBody)
+		return !ok
+	case uievent.ErrorBody:
+		_, ok := b.(uievent.ErrorBody)
+		return !ok
+	case uievent.TurnEndBody:
+		_, ok := b.(uievent.TurnEndBody)
+		return !ok
+	case nil:
+		return b != nil
+	}
+	// Unknown body types compare unequal as a conservative default; this
+	// branch is unreachable for the bodies uievent declares today.
+	return true
+}
