@@ -8,6 +8,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
 	"io"
 	"path/filepath"
 	"sync"
@@ -27,12 +28,12 @@ import (
 // already-known chunks while later waves' work is still pending. The caller
 // re-drives with hasMore=false once every continuation wave landed, and only
 // then does the tail admit the integration run.
-func driveStack(ctx context.Context, prepared *preparedWorkflowRun, ledger *workflowledger.Store, stackID string, chunks []ChunkPlan, planInputs map[string]string, allowPublish bool, hasMore bool, hasUnsettledWave bool, stdout, stderr io.Writer) error {
-	repo := prepared.repo
+func driveStack(ctx context.Context, prepared *cliworkflow.PreparedWorkflowRun, ledger *workflowledger.Store, stackID string, chunks []ChunkPlan, planInputs map[string]string, allowPublish bool, hasMore bool, hasUnsettledWave bool, stdout, stderr io.Writer) error {
+	repo := prepared.Repo
 	checker := gitMergeChecker{
-		git: workflowDeliverGit,
-		pr:  workflowDeliverNewPR(),
-		gc:  delivery.GitContext{Dir: prepared.root, GitDir: filepath.Join(prepared.root, ".git")},
+		git: cliworkflow.WorkflowDeliverGit,
+		pr:  cliworkflow.WorkflowDeliverNewPR(),
+		gc:  delivery.GitContext{Dir: prepared.Root, GitDir: filepath.Join(prepared.Root, ".git")},
 	}
 	actions, err := reconcileStack(ctx, ledger, repo, checker, stackID, stackMaxChunkAttempts)
 	if err != nil {
@@ -42,11 +43,11 @@ func driveStack(ctx context.Context, prepared *preparedWorkflowRun, ledger *work
 		return err
 	}
 
-	prBase, err := stackPRBase(prepared.compiled)
+	prBase, err := stackPRBase(prepared.Compiled)
 	if err != nil {
 		return err
 	}
-	policy := prepared.compiled.Stacking.MergePolicy
+	policy := prepared.Compiled.Stacking.MergePolicy
 	if err := driveStackAutoRedeliver(ctx, prepared, ledger, stackID, policy, stdout, stderr); err != nil {
 		return err
 	}
@@ -62,8 +63,8 @@ func driveStack(ctx context.Context, prepared *preparedWorkflowRun, ledger *work
 	merged := stackMergedSet(byID)
 
 	maxConcurrent := 1
-	if prepared.compiled.Stacking.MaxConcurrentChunks > 0 {
-		maxConcurrent = prepared.compiled.Stacking.MaxConcurrentChunks
+	if prepared.Compiled.Stacking.MaxConcurrentChunks > 0 {
+		maxConcurrent = prepared.Compiled.Stacking.MaxConcurrentChunks
 	}
 	if err := driveStackResumeStaleClaims(ctx, prepared, ledger, stackID, order, stdout, stderr); err != nil {
 		return err
@@ -113,11 +114,11 @@ func driveStack(ctx context.Context, prepared *preparedWorkflowRun, ledger *work
 // stack drive` command (unlike driveStackToCompletion's chunkMergePollPass)
 // would leave a merge_policy=auto stack needing a manual `workflow deliver`
 // despite the policy saying auto.
-func driveStackAutoRedeliver(ctx context.Context, prepared *preparedWorkflowRun, ledger *workflowledger.Store, stackID, policy string, stdout, stderr io.Writer) error {
+func driveStackAutoRedeliver(ctx context.Context, prepared *cliworkflow.PreparedWorkflowRun, ledger *workflowledger.Store, stackID, policy string, stdout, stderr io.Writer) error {
 	if policy != "auto" {
 		return nil
 	}
-	if err := autoDeliverReviewedChunks(ctx, prepared, prepared.repo, ledger, stackID, stdout, stderr); err != nil {
+	if err := autoDeliverReviewedChunks(ctx, prepared, prepared.Repo, ledger, stackID, stdout, stderr); err != nil {
 		return fmt.Errorf("stack drive: %w", err)
 	}
 	return nil
@@ -176,13 +177,13 @@ type driveWaveResult struct {
 // driveWave dispatches every chunk in wave concurrently, bounded by
 // maxConcurrent chunk runs in flight at once. Each chunk already gets its own
 // isolated worktree via admitStackChunkRun's per-runID ensureRunWorktree
-// (through workflowRunBuild), so concurrent dispatch is safe by construction;
+// (through cliworkflow.WorkflowRunBuild), so concurrent dispatch is safe by construction;
 // this function adds no new isolation, only bounded fan-out. Results are
 // returned in wave order (index-addressed, not completion order) so the
 // caller's resolution stays deterministic. stdout/stderr are wrapped in a
 // mutex so concurrent Fprintf calls from different chunks never interleave
 // mid-line.
-func driveWave(ctx context.Context, prepared *preparedWorkflowRun, ledger *workflowledger.Store, stackID string, wave []string, order []string, chunkPlans map[string]*ChunkPlan, prBase, policy string, allowPublish bool, planInputs map[string]string, maxConcurrent int, stdout, stderr io.Writer) []driveWaveResult {
+func driveWave(ctx context.Context, prepared *cliworkflow.PreparedWorkflowRun, ledger *workflowledger.Store, stackID string, wave []string, order []string, chunkPlans map[string]*ChunkPlan, prBase, policy string, allowPublish bool, planInputs map[string]string, maxConcurrent int, stdout, stderr io.Writer) []driveWaveResult {
 	syncStdout := newSyncWriter(stdout)
 	syncStderr := newSyncWriter(stderr)
 	work := func(chunkID string) (bool, error) {
@@ -244,12 +245,12 @@ func (s *syncWriter) Write(p []byte) (int, error) {
 // driveChunk admits and runs one chunk, then applies the merge policy.
 // halt=true means the driver must stop: policy A waits for the human publish
 // grant, and any terminal failure halts the stack (halt-on-failure).
-func driveChunk(ctx context.Context, prepared *preparedWorkflowRun, ledger *workflowledger.Store, stackID, chunkID string, chunkPlan *ChunkPlan, chunkPlans map[string]*ChunkPlan, prBase, part, policy string, allowPublish bool, planInputs map[string]string, stdout, stderr io.Writer) (bool, error) {
+func driveChunk(ctx context.Context, prepared *cliworkflow.PreparedWorkflowRun, ledger *workflowledger.Store, stackID, chunkID string, chunkPlan *ChunkPlan, chunkPlans map[string]*ChunkPlan, prBase, part, policy string, allowPublish bool, planInputs map[string]string, stdout, stderr io.Writer) (bool, error) {
 	// A live run already exists for this chunk's key: leave it alone (F15 -
 	// never admit a duplicate). This covers crash recovery (a prior process
 	// admitted the run but died before its task-status transition landed);
 	// the CAS below covers the concurrent-goroutine case within one process.
-	if run, found, err := stackRunRef(prepared.repo, stackID, chunkID); err == nil && found {
+	if run, found, err := stackRunRef(prepared.Repo, stackID, chunkID); err == nil && found {
 		if isResumableRunStatus(run.Status) {
 			return driveChunkInFlight(ctx, prepared, ledger, stackID, chunkID, run, allowPublish, stdout, stderr)
 		}
@@ -282,28 +283,28 @@ func driveChunk(ctx context.Context, prepared *preparedWorkflowRun, ledger *work
 	switch snap.Status {
 	case workflowledger.RunStatusDeliveryPending:
 		if policy == "auto" || allowPublish {
-			if err := deliverRunWithStore(ctx, prepared.root, prepared.res, prepared.store, prepared.repo, snap.RunID, true, false, stdout, stderr); err != nil {
+			if err := cliworkflow.DeliverRunWithStore(ctx, prepared.Root, prepared.Res, prepared.Store, prepared.Repo, snap.RunID, true, false, stdout, stderr); err != nil {
 				return true, fmt.Errorf("chunk %s auto-delivery failed: %w", chunkID, err)
 			}
-			// deliverRunWithStore returns nil both on a REAL publish and on a
+			// cliworkflow.DeliverRunWithStore returns nil both on a REAL publish and on a
 			// repairable rejection ReopenForRepair re-entered (the run settles
 			// back to "running", not "succeeded" - live finding: dag-v3
 			// chunks c1/c2 and stack-v8 chunk c3 were all falsely marked
 			// published with no PR ever created, orphaning the repair since
 			// nothing re-drives a "running" chunk without a manual resume).
 			// Re-read the run's fresh status to tell the two apart.
-			fresh, freshErr := prepared.repo.GetRun(ctx, snap.RunID)
+			fresh, freshErr := prepared.Repo.GetRun(ctx, snap.RunID)
 			if freshErr != nil {
 				return true, fmt.Errorf("chunk %s: read run status after delivery: %w", chunkID, freshErr)
 			}
-			fmt.Fprintln(stdout, chunkSettleAfterDelivery(prepared.repo, ledger, stackID, chunkID, fresh))
+			fmt.Fprintln(stdout, chunkSettleAfterDelivery(prepared.Repo, ledger, stackID, chunkID, fresh))
 			return true, nil // sequential create-merge (v1): one chunk per drive pass
 		}
 		_ = ledger.TransitionTask(stackID, chunkID, stackStatusReviewed)
 		fmt.Fprintf(stdout, "chunk=%s awaits the publish grant: mivia workflow deliver %s --allow-publish\n", chunkID, snap.RunID)
 		return true, nil // policy A: the human publish grant is the single checkpoint (D1)
 	case workflowledger.RunStatusSucceeded:
-		chunkSettleSucceeded(prepared.repo, ledger, stackID, chunkID, snap, stdout)
+		chunkSettleSucceeded(prepared.Repo, ledger, stackID, chunkID, snap, stdout)
 		return false, nil
 	case workflowledger.RunStatusFailed, workflowledger.RunStatusCanceled, workflowledger.RunStatusTimedOut, workflowledger.RunStatusDeliveryFailed:
 		act, err := reconcileReopenOrFail(ledger, stackID, chunkID)
@@ -327,14 +328,14 @@ func driveChunk(ctx context.Context, prepared *preparedWorkflowRun, ledger *work
 // admitStackChunkRun admits and runs one chunk-mode workflow run with the
 // chunk's stable invocation key (F15). It reuses the exact controller build
 // path the workflow CLI uses; the invocation key is the only addition.
-func admitStackChunkRun(prepared *preparedWorkflowRun, stackID, chunkID string, inputs map[string]any, inputSnapshot map[string]string, stdout, stderr io.Writer) (workflowledger.RunSnapshot, error) {
-	runID := newCLIWorkflowRunID()
-	finishExecution, err := beginWorkflowExecution(prepared.root, ContextStorePath(prepared.root, prepared.res.Subagents), runID)
+func admitStackChunkRun(prepared *cliworkflow.PreparedWorkflowRun, stackID, chunkID string, inputs map[string]any, inputSnapshot map[string]string, stdout, stderr io.Writer) (workflowledger.RunSnapshot, error) {
+	runID := cliworkflow.NewCLIWorkflowRunID()
+	finishExecution, err := cliworkflow.BeginWorkflowExecution(prepared.Root, ContextStorePath(prepared.Root, prepared.Res.Subagents), runID)
 	if err != nil {
 		return workflowledger.RunSnapshot{}, err
 	}
 	defer finishExecution()
-	built, err := workflowRunBuild(prepared.root, prepared.res, prepared.store, prepared.repo, prepared.compiled, prepared.refBase, inputs, inputSnapshot, prepared.raw, runID, nil, nil, nil, nil, nil)
+	built, err := cliworkflow.WorkflowRunBuild(prepared.Root, prepared.Res, prepared.Store, prepared.Repo, prepared.Compiled, prepared.RefBase, inputs, inputSnapshot, prepared.Raw, runID, nil, nil, nil, nil, nil)
 	if err != nil {
 		return workflowledger.RunSnapshot{}, err
 	}
@@ -353,14 +354,14 @@ func admitStackChunkRun(prepared *preparedWorkflowRun, stackID, chunkID string, 
 	if err := built.Controller.SetAdmission(built.Admission); err != nil {
 		return workflowledger.RunSnapshot{}, err
 	}
-	wireCLIWorkflowProgress(&built, stderr)
+	cliworkflow.WireCLIWorkflowProgress(&built, stderr)
 	if err := built.Controller.Start(context.Background()); err != nil {
 		return workflowledger.RunSnapshot{}, err
 	}
 	admitted = true
 	snap, err := built.Controller.Run(context.Background())
 	if err != nil {
-		settleCLIRunFailure(prepared.repo, built.Controller.RunID, err)
+		cliworkflow.SettleCLIRunFailure(prepared.Repo, built.Controller.RunID, err)
 		return snap, err
 	}
 	return snap, nil
@@ -374,7 +375,7 @@ func admitStackChunkRun(prepared *preparedWorkflowRun, stackID, chunkID string, 
 // per-run worktree isolation, same stable-key resumability), differing only
 // in which reserved inputs it carries. Returns the next wave's chunks and
 // whether decompose declared yet more scope beyond THIS wave.
-func admitDecomposeContinuationRun(prepared *preparedWorkflowRun, stackID string, wave int, remainingScope string, planInputs map[string]string, stdout, stderr io.Writer) (chunks []ChunkPlan, hasMore bool, nextRemainingScope string, err error) {
+func admitDecomposeContinuationRun(prepared *cliworkflow.PreparedWorkflowRun, stackID string, wave int, remainingScope string, planInputs map[string]string, stdout, stderr io.Writer) (chunks []ChunkPlan, hasMore bool, nextRemainingScope string, err error) {
 	key, err := stackDecomposeContinueKey(stackID, wave)
 	if err != nil {
 		return nil, false, "", err
@@ -390,13 +391,13 @@ func admitDecomposeContinuationRun(prepared *preparedWorkflowRun, stackID string
 	snapshot["stack_mode"] = "decompose_continue"
 	snapshot["remaining_scope"] = remainingScope
 
-	runID := newCLIWorkflowRunID()
-	finishExecution, err := beginWorkflowExecution(prepared.root, ContextStorePath(prepared.root, prepared.res.Subagents), runID)
+	runID := cliworkflow.NewCLIWorkflowRunID()
+	finishExecution, err := cliworkflow.BeginWorkflowExecution(prepared.Root, ContextStorePath(prepared.Root, prepared.Res.Subagents), runID)
 	if err != nil {
 		return nil, false, "", err
 	}
 	defer finishExecution()
-	built, err := workflowRunBuild(prepared.root, prepared.res, prepared.store, prepared.repo, prepared.compiled, prepared.refBase, inputs, snapshot, prepared.raw, runID, nil, nil, nil, nil, nil)
+	built, err := cliworkflow.WorkflowRunBuild(prepared.Root, prepared.Res, prepared.Store, prepared.Repo, prepared.Compiled, prepared.RefBase, inputs, snapshot, prepared.Raw, runID, nil, nil, nil, nil, nil)
 	if err != nil {
 		return nil, false, "", err
 	}
@@ -411,21 +412,21 @@ func admitDecomposeContinuationRun(prepared *preparedWorkflowRun, stackID string
 	if err := built.Controller.SetAdmission(built.Admission); err != nil {
 		return nil, false, "", err
 	}
-	wireCLIWorkflowProgress(&built, stderr)
+	cliworkflow.WireCLIWorkflowProgress(&built, stderr)
 	if err := built.Controller.Start(context.Background()); err != nil {
 		return nil, false, "", err
 	}
 	admitted = true
 	snap, err := built.Controller.Run(context.Background())
 	if err != nil {
-		settleCLIRunFailure(prepared.repo, built.Controller.RunID, err)
+		cliworkflow.SettleCLIRunFailure(prepared.Repo, built.Controller.RunID, err)
 		return nil, false, "", fmt.Errorf("decompose continuation wave %d failed: %w", wave, err)
 	}
 	fmt.Fprintf(stdout, "stack %s: decompose continuation wave %d run=%s status=%s\n", stackID, wave, snap.RunID, snap.Status)
 	if snap.Status != workflowledger.RunStatusSucceeded && snap.Status != workflowledger.RunStatusDeliveryPending {
 		return nil, false, "", fmt.Errorf("decompose continuation wave %d settled at %s, not succeeded", wave, snap.Status)
 	}
-	raw, err := loadStackPlanOutput(prepared.repo, snap.RunID)
+	raw, err := loadStackPlanOutput(prepared.Repo, snap.RunID)
 	if err != nil {
 		return nil, false, "", fmt.Errorf("decompose continuation wave %d: %w", wave, err)
 	}
@@ -458,9 +459,9 @@ var stackDecomposeContinueAdmit = admitDecomposeContinuationRun
 // 2026-08-16: TestSessionSweepDrivesParkedStackAfterAbortedDrive failed at
 // originHeads with the integration branch still pushed; the earlier no_diff
 // settle masked the skip by never creating a branch at all).
-func driveIntegrationRun(ctx context.Context, prepared *preparedWorkflowRun, ledger *workflowledger.Store, stackID, prBase, policy string, planInputs map[string]string, allowPublish bool, stdout, stderr io.Writer) error {
+func driveIntegrationRun(ctx context.Context, prepared *cliworkflow.PreparedWorkflowRun, ledger *workflowledger.Store, stackID, prBase, policy string, planInputs map[string]string, allowPublish bool, stdout, stderr io.Writer) error {
 	chunkID := stackIntegrationChunkID
-	if run, found, err := stackRunRef(prepared.repo, stackID, chunkID); err == nil && found {
+	if run, found, err := stackRunRef(prepared.Repo, stackID, chunkID); err == nil && found {
 		if isResumableRunStatus(run.Status) {
 			return driveIntegrationInFlight(ctx, prepared, run, allowPublish, stdout, stderr)
 		}

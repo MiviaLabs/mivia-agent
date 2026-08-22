@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"strings"
 	"testing"
 	"time"
@@ -31,12 +32,12 @@ func TestPostMessageFindingRoundTrip(t *testing.T) {
 	}))
 	pool := subagents.New(d, subagents.Policy{Workers: 1})
 	c := coordinator.New(repo, pool)
-	// Wire tool's initCoordinator path: store coordinator under d.
-	coordinators.Store(d, c)
-	coordinatorRepos.Store(d, repo)
+	// Wire tool's cliorchestrate.InitCoordinator path: store coordinator under d.
+	cliorchestrate.CoordinatorsForTest.Store(d, c)
+	cliorchestrate.CoordinatorReposForTest.Store(d, repo)
 	t.Cleanup(func() {
-		coordinators.Delete(d)
-		coordinatorRepos.Delete(d)
+		cliorchestrate.CoordinatorsForTest.Delete(d)
+		cliorchestrate.CoordinatorReposForTest.Delete(d)
 	})
 
 	h, err := c.Spawn(context.Background(), []subagents.Task{
@@ -63,7 +64,7 @@ func TestPostMessageFindingRoundTrip(t *testing.T) {
 		t.Fatalf("synopsis = %q", msgs[0].Synopsis)
 	}
 	// Result envelope attachment
-	idx := taskMessageIndex(context.Background(), repo, result.Snapshot.Tasks)
+	idx := cliorchestrate.TaskMessageIndex(context.Background(), repo, result.Snapshot.Tasks)
 	if got := idx["find-1"]; len(got) != 1 || got[0].Kind != "finding" {
 		t.Fatalf("envelope index = %+v", idx)
 	}
@@ -83,11 +84,11 @@ func TestPostMessageQuestionTimeoutNoAnswer(t *testing.T) {
 	}))
 	pool := subagents.New(d, subagents.Policy{Workers: 1})
 	c := coordinator.New(repo, pool)
-	coordinators.Store(d, c)
-	coordinatorRepos.Store(d, repo)
+	cliorchestrate.CoordinatorsForTest.Store(d, c)
+	cliorchestrate.CoordinatorReposForTest.Store(d, repo)
 	t.Cleanup(func() {
-		coordinators.Delete(d)
-		coordinatorRepos.Delete(d)
+		cliorchestrate.CoordinatorsForTest.Delete(d)
+		cliorchestrate.CoordinatorReposForTest.Delete(d)
 	})
 
 	h, err := c.Spawn(context.Background(), []subagents.Task{
@@ -140,11 +141,11 @@ func TestPostMessageQuestionUserAnswer(t *testing.T) {
 	}))
 	pool := subagents.New(d, subagents.Policy{Workers: 1})
 	c := coordinator.New(repo, pool)
-	coordinators.Store(d, c)
-	coordinatorRepos.Store(d, repo)
+	cliorchestrate.CoordinatorsForTest.Store(d, c)
+	cliorchestrate.CoordinatorReposForTest.Store(d, repo)
 	t.Cleanup(func() {
-		coordinators.Delete(d)
-		coordinatorRepos.Delete(d)
+		cliorchestrate.CoordinatorsForTest.Delete(d)
+		cliorchestrate.CoordinatorReposForTest.Delete(d)
 	})
 
 	h, err := c.Spawn(context.Background(), []subagents.Task{
@@ -283,11 +284,8 @@ func TestRunMessagesWithBody(t *testing.T) {
 	// Register accessible handle for principal gate.
 	caller := runtime.Caller{SessionID: "sess-rm"}
 	ctx := runtime.ContextWithCaller(context.Background(), caller)
-	runHandles.Store(runID, &orchestrationHandle{
-		coord: c, handle: h, repo: repo, dispatcher: d,
-		principal: orchestrationPrincipal{sessionID: "sess-rm"},
-	})
-	t.Cleanup(func() { runHandles.Delete(runID) })
+	cliorchestrate.StoreTestRunHandle(runID, c, h, repo, d, "sess-rm")
+	t.Cleanup(func() { cliorchestrate.RunHandlesForTest.Delete(runID) })
 
 	tool := &runMessagesTool{dispatcher: d, cfg: cfg, repo: repo}
 	out, err := tool.Execute(ctx, json.RawMessage(`{"run_id":"`+runID+`","include_body":true}`))
@@ -307,11 +305,11 @@ func TestPostMessageQuotaNotConsumedOnValidationFailure(t *testing.T) {
 	// Oversized body fails NewMessage before post; quota must remain available.
 	tool := &postMessageTool{dispatcher: d, cfg: cfg, repo: repo}
 	c := coordinator.New(repo, subagents.New(d, subagents.Policy{Workers: 1}))
-	coordinators.Store(d, c)
-	coordinatorRepos.Store(d, repo)
+	cliorchestrate.CoordinatorsForTest.Store(d, c)
+	cliorchestrate.CoordinatorReposForTest.Store(d, repo)
 	t.Cleanup(func() {
-		coordinators.Delete(d)
-		coordinatorRepos.Delete(d)
+		cliorchestrate.CoordinatorsForTest.Delete(d)
+		cliorchestrate.CoordinatorReposForTest.Delete(d)
 	})
 	ctx := runtime.ContextWithTaskIdentity(context.Background(), runtime.TaskIdentity{
 		RunID: "run-q", TaskID: "t-q", Agent: "w",
@@ -396,11 +394,11 @@ func TestPostMessageCancelWhileParked(t *testing.T) {
 	}))
 	pool := subagents.New(d, subagents.Policy{Workers: 1})
 	c := coordinator.New(repo, pool)
-	coordinators.Store(d, c)
-	coordinatorRepos.Store(d, repo)
+	cliorchestrate.CoordinatorsForTest.Store(d, c)
+	cliorchestrate.CoordinatorReposForTest.Store(d, repo)
 	t.Cleanup(func() {
-		coordinators.Delete(d)
-		coordinatorRepos.Delete(d)
+		cliorchestrate.CoordinatorsForTest.Delete(d)
+		cliorchestrate.CoordinatorReposForTest.Delete(d)
 	})
 	h, err := c.Spawn(context.Background(), []subagents.Task{
 		{ID: "cancel-park", Name: "asker", AgentName: "asker", Timeout: 30 * time.Second},

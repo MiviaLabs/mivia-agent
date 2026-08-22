@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
@@ -36,7 +37,7 @@ const (
 	// proceed with normal delivery.
 	stackPlanRunNotApplicable stackPlanRunGate = iota
 	// stackPlanRunIncomplete: a multi-chunk plan run whose stack has not yet
-	// driven to completion (stackDriveCompleted false) - must be refused.
+	// driven to completion (cliworkflow.StackDriveCompleted false) - must be refused.
 	stackPlanRunIncomplete
 	// stackPlanRunComplete: a multi-chunk plan run whose stack drove to
 	// completion (every chunk merged, integration run settled) - safe to
@@ -60,8 +61,8 @@ const (
 // plan run keeps its succeeded decompose attempt whether or not the stack
 // it produced ever completed (live finding, 2026-08-16). Completion reuses
 // the same durable check the driver and the session recovery sweep apply
-// (stackDriveCompleted), so a CLI operator sees the identical verdict.
-// remoteMergeOracle is stackDriveCompleted's parameter: settle paths pass
+// (cliworkflow.StackDriveCompleted), so a CLI operator sees the identical verdict.
+// remoteMergeOracle is cliworkflow.StackDriveCompleted's parameter: settle paths pass
 // true, read-only display surfaces pass false.
 func classifyStackPlanRunDelivery(ctx context.Context, root string, store *storage.SQLite, repo workflowledger.Repository, runID string, remoteMergeOracle bool) stackPlanRunGate {
 	// An integration run (<stack>:integration) also records decompose chunks
@@ -75,8 +76,8 @@ func classifyStackPlanRunDelivery(ctx context.Context, root string, store *stora
 	if failed, _ := stackPlanRunFailureReason(ctx, root, store, repo, runID); failed {
 		return stackPlanRunFailed
 	}
-	policy := stackPlanMergePolicy(ctx, repo, runID)
-	if !stackDriveCompleted(ctx, root, store, repo, runID, policy, remoteMergeOracle) {
+	policy := cliworkflow.StackPlanMergePolicy(ctx, repo, runID)
+	if !cliworkflow.StackDriveCompleted(ctx, root, store, repo, runID, policy, remoteMergeOracle) {
 		return stackPlanRunIncomplete
 	}
 	return stackPlanRunComplete
@@ -98,7 +99,7 @@ var classifyStackPlanRunDeliveryFn = classifyStackPlanRunDelivery
 //
 // delivery_failed is deliberately NOT in that set. It is the REPAIRABLE
 // delivery state: ValidRunTransition gives delivery_failed ->
-// delivery_pending|delivery_failed|running, deliverRunWithStore re-delivers
+// delivery_pending|delivery_failed|running, cliworkflow.DeliverRunWithStore re-delivers
 // such a run, and waitIntegrationRunSettled tells the operator to "fix the
 // refusal and resume or re-deliver before the stack can complete". Counting
 // it as terminal made a commit hook that rejected the integration PR

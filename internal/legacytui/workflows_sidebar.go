@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/MiviaLabs/mivia-agent/internal/cli"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
 	"sort"
 	"strings"
 	"time"
@@ -373,12 +374,12 @@ func (s *workflowsSidebar) footerLines(width int) []string {
 // without description or next step; a ledger read failure is returned so the
 // caller keeps the previous rows.
 var workflowSidebarLoad = func(root, configPath string) ([]workflowRunRow, error) {
-	repo, closeFn, err := cli.OpenWorkflowReportContext(root, configPath)
+	repo, closeFn, err := cliworkflow.OpenWorkflowReportContext(root, configPath)
 	if err != nil {
 		return nil, err
 	}
 	defer closeFn()
-	runs, err := cli.WorkflowRunsList(context.Background(), repo)
+	runs, err := cliworkflow.WorkflowRunsList(context.Background(), repo)
 	if err != nil {
 		return nil, err
 	}
@@ -389,7 +390,7 @@ var workflowSidebarLoad = func(root, configPath string) ([]workflowRunRow, error
 		if cw := compiled[r.WorkflowName]; cw != nil {
 			row.description = cw.Description
 			if !workflowledger.IsTerminalRunStatus(r.Status) {
-				row.nextStep = cli.NextStepAfterActive(cw, r.ActiveStepID)
+				row.nextStep = cliworkflow.NextStepAfterActive(cw, r.ActiveStepID)
 			}
 		}
 		if r.Status == workflowledger.RunStatusRunning {
@@ -485,7 +486,7 @@ func (m *TUIModel) refreshWorkflowsSidebar() tea.Cmd {
 	}
 	sidebar.lastRefresh = now
 	root := m.resolveRepoRoot()
-	configPath := cli.SessionEngineConfigPath(root, m.config)
+	configPath := cliworkflow.SessionEngineConfigPath(root, m.config)
 	return func() tea.Msg {
 		rows, err := workflowSidebarLoad(root, configPath)
 		return workflowsSidebarRefreshMsg{rows: rows, err: err}

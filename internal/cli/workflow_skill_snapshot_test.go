@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,7 +27,7 @@ func TestWorkflowSkillSnapshotRejectsChangedSkillOnResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err = pinWorkflowSkills(raw, wf, initial)
+	raw, err = cliworkflow.PinWorkflowSkills(raw, wf, initial)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,14 +35,14 @@ func TestWorkflowSkillSnapshotRejectsChangedSkillOnResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyWorkflowSkillSnapshot(wf, initial, &prior); err != nil {
+	if err := cliworkflow.VerifyWorkflowSkillSnapshot(wf, initial, &prior); err != nil {
 		t.Fatalf("admitted skill rejected: %v", err)
 	}
 	changed := skills.NewRegistry()
 	if err := changed.Register(skills.Definition{Name: "workflow-safe", Instructions: "changed instruction", Tools: []string{"read_file"}}); err != nil {
 		t.Fatal(err)
 	}
-	err = verifyWorkflowSkillSnapshot(wf, changed, &prior)
+	err = cliworkflow.VerifyWorkflowSkillSnapshot(wf, changed, &prior)
 	if err == nil || !strings.Contains(err.Error(), "changed since admission") {
 		t.Fatalf("changed skill error = %v", err)
 	}
@@ -52,7 +53,7 @@ func TestWorkflowSkillBytesWrapsResourceSnapshotError(t *testing.T) {
 		Name:      "bad-resource",
 		Resources: []skills.ResourceDescriptor{{ID: "missing", Summary: "missing resource file"}},
 	}
-	_, err := workflowSkillBytes(def)
+	_, err := cliworkflow.WorkflowSkillBytes(def)
 	if err == nil {
 		t.Fatal("expected error for skill with unavailable resources")
 	}
@@ -80,7 +81,7 @@ func TestWorkflowSkillSnapshotRejectsChangedPanelMemberSkillOnResume(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err = pinWorkflowSkills(raw, wf, initial)
+	raw, err = cliworkflow.PinWorkflowSkills(raw, wf, initial)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,15 +89,15 @@ func TestWorkflowSkillSnapshotRejectsChangedPanelMemberSkillOnResume(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyWorkflowSkillSnapshot(wf, initial, &prior); err != nil {
+	if err := cliworkflow.VerifyWorkflowSkillSnapshot(wf, initial, &prior); err != nil {
 		t.Fatalf("verify admitted panel skill: %v", err)
 	}
 	changed := skills.NewRegistry()
 	if err := changed.Register(skills.Definition{Name: "review", Instructions: "changed instruction"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyWorkflowSkillSnapshot(wf, changed, &prior); err == nil {
-		t.Fatal("verifyWorkflowSkillSnapshot accepted a changed panel skill")
+	if err := cliworkflow.VerifyWorkflowSkillSnapshot(wf, changed, &prior); err == nil {
+		t.Fatal("cliworkflow.VerifyWorkflowSkillSnapshot accepted a changed panel skill")
 	}
 }
 
@@ -121,7 +122,7 @@ func TestWorkflowSkillSnapshotRejectsChangedResourceOnResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err = pinWorkflowSkills(raw, wf, initial)
+	raw, err = cliworkflow.PinWorkflowSkills(raw, wf, initial)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,14 +133,14 @@ func TestWorkflowSkillSnapshotRejectsChangedResourceOnResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyWorkflowSkillSnapshot(wf, initial, &prior); err != nil {
+	if err := cliworkflow.VerifyWorkflowSkillSnapshot(wf, initial, &prior); err != nil {
 		t.Fatalf("admitted resource rejected: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "private-checklist.md"), []byte("changed resource body"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	changed := loadWorkflowSnapshotSkills(t, root)
-	err = verifyWorkflowSkillSnapshot(wf, changed, &prior)
+	err = cliworkflow.VerifyWorkflowSkillSnapshot(wf, changed, &prior)
 	if err == nil || !strings.Contains(err.Error(), "changed since admission") {
 		t.Fatalf("changed resource error = %v", err)
 	}
@@ -156,13 +157,13 @@ func TestWorkflowSkillDispatchServesPinnedBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err = pinWorkflowSkills(raw, wf, skillReg)
+	raw, err = cliworkflow.PinWorkflowSkills(raw, wf, skillReg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	handler := newSkillInjectionHandler(t, skillReg)
 	handler.opts.WorkflowSkillSnapshots = make(map[string]workflowledger.RefSnapshot)
-	if err := installWorkflowSkillSnapshots(handler.opts.WorkflowSkillSnapshots, raw); err != nil {
+	if err := cliworkflow.InstallWorkflowSkillSnapshots(handler.opts.WorkflowSkillSnapshots, raw); err != nil {
 		t.Fatal(err)
 	}
 	// Edit the on-disk resource and instructions AFTER admission.
@@ -269,7 +270,7 @@ func TestAcceptSkillChangeReachesDispatch(t *testing.T) {
 	prior := skillPinnedSnapshot(t, wf, reg)
 
 	changed := skillTestRegistry(map[string]string{"audit": "changed instructions"})
-	if _, err := acceptWorkflowSkillChanges(prior, wf, changed); err != nil {
+	if _, err := cliworkflow.AcceptWorkflowSkillChanges(prior, wf, changed); err != nil {
 		t.Fatalf("accept: %v", err)
 	}
 	// The resume path marshals the ACCEPTED in-memory prior for dispatch-pin
@@ -280,7 +281,7 @@ func TestAcceptSkillChangeReachesDispatch(t *testing.T) {
 	}
 	handler := newSkillInjectionHandler(t, changed)
 	handler.opts.WorkflowSkillSnapshots = make(map[string]workflowledger.RefSnapshot)
-	if err := installWorkflowSkillSnapshots(handler.opts.WorkflowSkillSnapshots, raw); err != nil {
+	if err := cliworkflow.InstallWorkflowSkillSnapshots(handler.opts.WorkflowSkillSnapshots, raw); err != nil {
 		t.Fatal(err)
 	}
 	prompt, _, _, closeActivation, err := handler.prepareInvokeSurface(runtime.Request{Skill: "audit"})
@@ -332,7 +333,7 @@ func TestWorkflowRemainingSteps(t *testing.T) {
 
 	// Active s2: s1 completed and is unreachable; s2 and s3 remain.
 	repo := newRun(t, "wfr-remaining-mid", "s2")
-	remaining, err := workflowRemainingSteps(ctx, repo, "wfr-remaining-mid", wf)
+	remaining, err := cliworkflow.WorkflowRemainingSteps(ctx, repo, "wfr-remaining-mid", wf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -342,7 +343,7 @@ func TestWorkflowRemainingSteps(t *testing.T) {
 
 	// Active s3 with an on_failure route back to s2: both remain in scope.
 	repo = newRun(t, "wfr-remaining-loop", "s3")
-	remaining, err = workflowRemainingSteps(ctx, repo, "wfr-remaining-loop", wf)
+	remaining, err = cliworkflow.WorkflowRemainingSteps(ctx, repo, "wfr-remaining-loop", wf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,7 +353,7 @@ func TestWorkflowRemainingSteps(t *testing.T) {
 
 	// An active step unknown to the graph falls back to nil: check all steps.
 	repo = newRun(t, "wfr-remaining-unknown", "ghost")
-	remaining, err = workflowRemainingSteps(ctx, repo, "wfr-remaining-unknown", wf)
+	remaining, err = cliworkflow.WorkflowRemainingSteps(ctx, repo, "wfr-remaining-unknown", wf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -407,7 +408,7 @@ func skillPinnedSnapshot(t *testing.T, wf *definition.CompiledWorkflow, reg *ski
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err = pinWorkflowSkills(raw, wf, reg)
+	raw, err = cliworkflow.PinWorkflowSkills(raw, wf, reg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -423,17 +424,17 @@ func TestSkillPinAndResumeVerification(t *testing.T) {
 	wf := skillTestWorkflow(map[string]string{"s1": "audit"})
 	prior := skillPinnedSnapshot(t, wf, reg)
 
-	if err := verifyWorkflowSkillSnapshot(wf, reg, prior); err != nil {
+	if err := cliworkflow.VerifyWorkflowSkillSnapshot(wf, reg, prior); err != nil {
 		t.Fatalf("unchanged skill must verify: %v", err)
 	}
 
 	drifted := skillTestRegistry(map[string]string{"audit": "changed instructions"})
-	if err := verifyWorkflowSkillSnapshot(wf, drifted, prior); err == nil {
+	if err := cliworkflow.VerifyWorkflowSkillSnapshot(wf, drifted, prior); err == nil {
 		t.Fatal("drifted skill must fail closed")
 	}
 
 	empty := skillTestRegistry(map[string]string{})
-	if err := verifyWorkflowSkillSnapshot(wf, empty, prior); err == nil || !strings.Contains(err.Error(), "missing on resume") {
+	if err := cliworkflow.VerifyWorkflowSkillSnapshot(wf, empty, prior); err == nil || !strings.Contains(err.Error(), "missing on resume") {
 		t.Fatalf("deleted skill must fail closed, got %v", err)
 	}
 }
@@ -450,27 +451,27 @@ func TestVerifyWorkflowSkillSnapshotScopesToRemainingSteps(t *testing.T) {
 
 	// nil remaining steps: guard checks ALL steps (no scoping info available).
 	// This is the safe default used by the build-phase call before PlanResume.
-	if err := verifyWorkflowSkillSnapshotScoped(wf, drifted, prior, nil); err == nil {
+	if err := cliworkflow.VerifyWorkflowSkillSnapshotScoped(wf, drifted, prior, nil); err == nil {
 		t.Fatal("nil remaining must check all steps")
 	}
 
 	// Empty remaining: no steps left to run, guard passes.
-	if err := verifyWorkflowSkillSnapshotScoped(wf, drifted, prior, map[string]bool{}); err != nil {
+	if err := cliworkflow.VerifyWorkflowSkillSnapshotScoped(wf, drifted, prior, map[string]bool{}); err != nil {
 		t.Fatalf("empty remaining steps must pass: %v", err)
 	}
 
 	// s1 remains: s1 references "audit", so drift is caught.
-	if err := verifyWorkflowSkillSnapshotScoped(wf, drifted, prior, map[string]bool{"s1": true}); err == nil {
+	if err := cliworkflow.VerifyWorkflowSkillSnapshotScoped(wf, drifted, prior, map[string]bool{"s1": true}); err == nil {
 		t.Fatal("remaining step using drifted skill must fail")
 	}
 
 	// s2 remains: same skill, same failure.
-	if err := verifyWorkflowSkillSnapshotScoped(wf, drifted, prior, map[string]bool{"s2": true}); err == nil {
+	if err := cliworkflow.VerifyWorkflowSkillSnapshotScoped(wf, drifted, prior, map[string]bool{"s2": true}); err == nil {
 		t.Fatal("remaining step using drifted skill must fail")
 	}
 
 	// Original registry with remaining steps: must pass.
-	if err := verifyWorkflowSkillSnapshotScoped(wf, reg, prior, map[string]bool{"s1": true}); err != nil {
+	if err := cliworkflow.VerifyWorkflowSkillSnapshotScoped(wf, reg, prior, map[string]bool{"s1": true}); err != nil {
 		t.Fatalf("unchanged skill must verify with remaining steps: %v", err)
 	}
 }
@@ -485,7 +486,7 @@ func TestSkillSnapshotScopedErrorIncludesRecoveryGuidance(t *testing.T) {
 	drifted := skillTestRegistry(map[string]string{"audit": "changed instructions", "other-skill": "other instructions"})
 	remaining := map[string]bool{"s1": true, "s2": true, "s3": true}
 
-	err := verifyWorkflowSkillSnapshotScoped(wf, drifted, prior, remaining)
+	err := cliworkflow.VerifyWorkflowSkillSnapshotScoped(wf, drifted, prior, remaining)
 	if err == nil {
 		t.Fatal("drifted skill must fail")
 	}
@@ -504,57 +505,57 @@ func TestSkillSnapshotScopedErrorIncludesRecoveryGuidance(t *testing.T) {
 	}
 }
 
-// R2: acceptWorkflowSkillChanges re-pins drifted skills so verification passes.
+// R2: cliworkflow.AcceptWorkflowSkillChanges re-pins drifted skills so verification passes.
 func TestAcceptWorkflowSkillChanges(t *testing.T) {
 	reg := skillTestRegistry(map[string]string{"audit": "original instructions"})
 	wf := skillTestWorkflow(map[string]string{"s1": "audit"})
 	prior := skillPinnedSnapshot(t, wf, reg)
 
 	// Unchanged: acceptance is a no-op.
-	drifted, err := acceptWorkflowSkillChanges(prior, wf, reg)
+	drifted, err := cliworkflow.AcceptWorkflowSkillChanges(prior, wf, reg)
 	if err != nil || len(drifted) != 0 {
 		t.Fatalf("no drift expected, got %v, %v", drifted, err)
 	}
 
 	// Drifted skill: acceptance rewrites the pin.
 	changed := skillTestRegistry(map[string]string{"audit": "changed instructions"})
-	if err := verifyWorkflowSkillSnapshot(wf, changed, prior); err == nil {
+	if err := cliworkflow.VerifyWorkflowSkillSnapshot(wf, changed, prior); err == nil {
 		t.Fatal("drift must fail closed before acceptance")
 	}
-	drifted, err = acceptWorkflowSkillChanges(prior, wf, changed)
+	drifted, err = cliworkflow.AcceptWorkflowSkillChanges(prior, wf, changed)
 	if err != nil || len(drifted) != 1 || drifted[0] != "audit" {
 		t.Fatalf("accept = %v, %v", drifted, err)
 	}
-	if err := verifyWorkflowSkillSnapshot(wf, changed, prior); err != nil {
+	if err := cliworkflow.VerifyWorkflowSkillSnapshot(wf, changed, prior); err != nil {
 		t.Fatalf("verification must pass after acceptance: %v", err)
 	}
 
 	// A deleted skill cannot be accepted.
-	if _, err := acceptWorkflowSkillChanges(prior, wf, skillTestRegistry(map[string]string{})); err == nil {
+	if _, err := cliworkflow.AcceptWorkflowSkillChanges(prior, wf, skillTestRegistry(map[string]string{})); err == nil {
 		t.Fatal("acceptance must refuse a missing skill")
 	}
 }
 
-// R2: applyAcceptedSkillChanges reports drifted skills to stderr.
+// R2: cliworkflow.ApplyAcceptedSkillChanges reports drifted skills to stderr.
 func TestApplyAcceptedSkillChangesReportsDrift(t *testing.T) {
 	reg := skillTestRegistry(map[string]string{"audit": "original instructions"})
 	wf := skillTestWorkflow(map[string]string{"s1": "audit"})
 	prior := skillPinnedSnapshot(t, wf, reg)
 
 	changed := skillTestRegistry(map[string]string{"audit": "changed instructions"})
-	if err := verifyWorkflowSkillSnapshot(wf, changed, prior); err == nil {
+	if err := cliworkflow.VerifyWorkflowSkillSnapshot(wf, changed, prior); err == nil {
 		t.Fatal("must fail before acceptance")
 	}
 
 	var stderr strings.Builder
-	if err := applyAcceptedSkillChanges(prior, wf, changed, &stderr); err != nil {
+	if err := cliworkflow.ApplyAcceptedSkillChanges(prior, wf, changed, &stderr); err != nil {
 		t.Fatalf("apply must succeed: %v", err)
 	}
 	if !strings.Contains(stderr.String(), "audit") {
 		t.Fatalf("stderr must name the accepted skill, got: %q", stderr.String())
 	}
 
-	if err := verifyWorkflowSkillSnapshot(wf, changed, prior); err != nil {
+	if err := cliworkflow.VerifyWorkflowSkillSnapshot(wf, changed, prior); err != nil {
 		t.Fatalf("must verify after acceptance: %v", err)
 	}
 }
@@ -573,19 +574,19 @@ func TestSkillSnapshotScopedWithCompletedAndRemainingSteps(t *testing.T) {
 	// s1 is completed, s2 is remaining. The skill drifted but only s2 uses it.
 	// Since s2 is remaining, the guard should catch the drift.
 	remaining := map[string]bool{"s2": true}
-	if err := verifyWorkflowSkillSnapshotScoped(wf, drifted, prior, remaining); err == nil {
+	if err := cliworkflow.VerifyWorkflowSkillSnapshotScoped(wf, drifted, prior, remaining); err == nil {
 		t.Fatal("drifted skill used by remaining step must fail")
 	}
 
 	// Both steps completed: no remaining steps use the skill, guard passes.
 	remaining = map[string]bool{}
-	if err := verifyWorkflowSkillSnapshotScoped(wf, drifted, prior, remaining); err != nil {
+	if err := cliworkflow.VerifyWorkflowSkillSnapshotScoped(wf, drifted, prior, remaining); err != nil {
 		t.Fatalf("no remaining steps using skill must pass: %v", err)
 	}
 
 	// Only s1 remaining (s2 completed): skill used by remaining step, must fail.
 	remaining = map[string]bool{"s1": true}
-	if err := verifyWorkflowSkillSnapshotScoped(wf, drifted, prior, remaining); err == nil {
+	if err := cliworkflow.VerifyWorkflowSkillSnapshotScoped(wf, drifted, prior, remaining); err == nil {
 		t.Fatal("drifted skill used by remaining s1 must fail")
 	}
 }
@@ -600,7 +601,7 @@ func TestSkillSnapshotScopedMultiSkillOnlyNamesDrifted(t *testing.T) {
 	drifted := skillTestRegistry(map[string]string{"audit": "changed", "review": "original"})
 	remaining := map[string]bool{"s1": true, "s2": true}
 
-	err := verifyWorkflowSkillSnapshotScoped(wf, drifted, prior, remaining)
+	err := cliworkflow.VerifyWorkflowSkillSnapshotScoped(wf, drifted, prior, remaining)
 	if err == nil {
 		t.Fatal("drifted skill must fail")
 	}
@@ -613,7 +614,7 @@ func TestSkillSnapshotScopedMultiSkillOnlyNamesDrifted(t *testing.T) {
 	}
 }
 
-// F8: acceptWorkflowSkillChanges must fail closed when a panel skill binding
+// F8: cliworkflow.AcceptWorkflowSkillChanges must fail closed when a panel skill binding
 // was stripped from the snapshot, instead of fabricating a zero-value binding.
 func TestAcceptWorkflowSkillChangesRejectsMissingPanelBinding(t *testing.T) {
 	wf := &definition.CompiledWorkflow{Steps: []definition.Step{{
@@ -621,7 +622,7 @@ func TestAcceptWorkflowSkillChangesRejectsMissingPanelBinding(t *testing.T) {
 	}}}
 	reg := skillTestRegistry(map[string]string{"review": "original instructions"})
 
-	// Seed the panel binding so pinWorkflowSkills can build the admission snapshot.
+	// Seed the panel binding so cliworkflow.PinWorkflowSkills can build the admission snapshot.
 	raw, err := workflowledger.MarshalSnapshot(workflowledger.Snapshot{
 		SchemaVersion: workflowledger.SnapshotSchemaVersion, DefinitionTOML: []byte("workflow"), DefinitionDigest: "digest",
 		PanelBindings: map[string]workflowledger.PanelBindingSnapshot{"review/security": {StepID: "review", MemberID: "security"}},
@@ -629,7 +630,7 @@ func TestAcceptWorkflowSkillChangesRejectsMissingPanelBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err = pinWorkflowSkills(raw, wf, reg)
+	raw, err = cliworkflow.PinWorkflowSkills(raw, wf, reg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -642,9 +643,9 @@ func TestAcceptWorkflowSkillChangesRejectsMissingPanelBinding(t *testing.T) {
 	// entry was removed after admission.
 	delete(prior.PanelBindings, "review/security")
 
-	_, err = acceptWorkflowSkillChanges(&prior, wf, reg)
+	_, err = cliworkflow.AcceptWorkflowSkillChanges(&prior, wf, reg)
 	if err == nil {
-		t.Fatal("acceptWorkflowSkillChanges accepted a missing panel binding")
+		t.Fatal("cliworkflow.AcceptWorkflowSkillChanges accepted a missing panel binding")
 	}
 	if !strings.Contains(err.Error(), "panel binding \"review/security\" is missing") {
 		t.Fatalf("error must report missing panel binding, got: %v", err)
@@ -661,13 +662,13 @@ func TestAcceptThenScopedVerifyPasses(t *testing.T) {
 	drifted := skillTestRegistry(map[string]string{"audit": "changed"})
 
 	// Step 1: acceptance rewrites the pin.
-	if _, err := acceptWorkflowSkillChanges(prior, wf, drifted); err != nil {
+	if _, err := cliworkflow.AcceptWorkflowSkillChanges(prior, wf, drifted); err != nil {
 		t.Fatalf("accept: %v", err)
 	}
 
 	// Step 2: scoped verification with remaining steps passes.
 	remaining := map[string]bool{"s1": true}
-	if err := verifyWorkflowSkillSnapshotScoped(wf, drifted, prior, remaining); err != nil {
+	if err := cliworkflow.VerifyWorkflowSkillSnapshotScoped(wf, drifted, prior, remaining); err != nil {
 		t.Fatalf("scoped verify after accept must pass: %v", err)
 	}
 }
@@ -699,9 +700,9 @@ func TestWorkflowSkillSnapshotAcceptsLegacyPreSummaryPin(t *testing.T) {
 	if !ok {
 		t.Fatal("legacy-skill not found in registry")
 	}
-	current, legacy, err := workflowSkillBytesCurrentAndLegacy(def)
+	current, legacy, err := cliworkflow.WorkflowSkillBytesCurrentAndLegacy(def)
 	if err != nil {
-		t.Fatalf("workflowSkillBytesCurrentAndLegacy: %v", err)
+		t.Fatalf("cliworkflow.WorkflowSkillBytesCurrentAndLegacy: %v", err)
 	}
 	if bytes.Equal(current, legacy) {
 		t.Fatal("current and legacy bytes must differ when Summary is present")
@@ -713,11 +714,11 @@ func TestWorkflowSkillSnapshotAcceptsLegacyPreSummaryPin(t *testing.T) {
 		DefinitionTOML:   []byte("workflow"),
 		DefinitionDigest: "digest",
 		Skills: map[string]workflowledger.RefSnapshot{
-			"legacy-skill": {Digest: digestBytes(legacy), Bytes: legacy},
+			"legacy-skill": {Digest: cliworkflow.DigestBytes(legacy), Bytes: legacy},
 		},
 	}
 
-	if err := verifyWorkflowSkillSnapshot(wf, reg, prior); err != nil {
+	if err := cliworkflow.VerifyWorkflowSkillSnapshot(wf, reg, prior); err != nil {
 		t.Fatalf("legacy pre-Summary pin must verify against current skill: %v", err)
 	}
 
@@ -727,7 +728,7 @@ func TestWorkflowSkillSnapshotAcceptsLegacyPreSummaryPin(t *testing.T) {
 		t.Fatal(err)
 	}
 	changed = loadWorkflowSnapshotSkills(t, root)
-	if err := verifyWorkflowSkillSnapshot(wf, changed, prior); err == nil {
+	if err := cliworkflow.VerifyWorkflowSkillSnapshot(wf, changed, prior); err == nil {
 		t.Fatal("changed skill must still fail closed with a legacy pin")
 	}
 }

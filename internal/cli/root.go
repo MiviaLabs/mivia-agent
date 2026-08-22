@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
 	"github.com/MiviaLabs/mivia-agent/internal/cliworktree"
 	"github.com/MiviaLabs/mivia-agent/internal/version"
 )
@@ -31,7 +33,7 @@ func Execute(args []string) error {
 	case "config":
 		return runConfig(args[1:])
 	case "doctor":
-		return runDoctor(args[1:])
+		return cliorchestrate.RunDoctor(args[1:])
 	case "agents":
 		return cliagents.RunAgents(args[1:])
 	case "sessions":
@@ -41,9 +43,9 @@ func Execute(args []string) error {
 	case "memory":
 		return runMemory(args[1:])
 	case "workflows":
-		return runWorkflows(args[1:])
+		return cliworkflow.RunWorkflows(args[1:])
 	case "workflow":
-		return runWorkflow(args[1:])
+		return cliworkflow.RunWorkflow(args[1:])
 	case "stack":
 		return runStack(args[1:])
 	case "worktree":

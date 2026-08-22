@@ -5,6 +5,10 @@
 // misaligns columns in real terminals.
 package cli
 
+import (
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
+)
+
 type actionKind int
 
 const (
@@ -18,14 +22,14 @@ const (
 // agentControlTools are the delegation/orchestration surfaces: calling one
 // launches or controls another agent, so the transcript marks it ◆.
 var agentControlTools = map[string]bool{
-	HandlerDelegate:   true,
-	HandlerOneshot:    true,
-	HandlerMultiStep:  true,
-	ToolDispatchTasks: true,
-	toolSpawnAgent:    true,
-	toolJoinRun:       true,
-	toolInspectAgents: true,
-	toolCancelRun:     true,
+	cliorchestrate.HandlerDelegate:   true,
+	cliorchestrate.HandlerOneshot:    true,
+	cliorchestrate.HandlerMultiStep:  true,
+	cliorchestrate.ToolDispatchTasks: true,
+	cliorchestrate.ToolSpawnAgent:    true,
+	cliorchestrate.ToolJoinRun:       true,
+	cliorchestrate.ToolInspectAgents: true,
+	cliorchestrate.ToolCancelRun:     true,
 }
 
 // ActionKindForTool classifies a tool name. Workspace skills are dispatched

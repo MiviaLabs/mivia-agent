@@ -13,6 +13,7 @@ package cli
 // parseDoctorArgs).
 
 import (
+	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
 	"io"
 	"strings"
 	"testing"
@@ -182,9 +183,9 @@ func TestParseChatInvocationRejectsSwallowedPlain(t *testing.T) {
 // `mivia workflow run <wf> --input --allow-publish` must refuse with a value
 // error instead of swallowing --allow-publish as an input token.
 func TestRunWorkflowCommandRejectsFlagLikeInput(t *testing.T) {
-	err := runWorkflowCommandRun([]string{"wf", "--input", "--allow-publish"}, "", "", io.Discard, io.Discard)
+	err := cliworkflow.RunWorkflowCommandRun([]string{"wf", "--input", "--allow-publish"}, "", "", io.Discard, io.Discard)
 	if err == nil {
-		t.Fatal("runWorkflowCommandRun([wf --input --allow-publish]) returned nil error")
+		t.Fatal("cliworkflow.RunWorkflowCommandRun([wf --input --allow-publish]) returned nil error")
 	}
 	if !strings.Contains(err.Error(), "--input requires a value") {
 		t.Fatalf("error = %v, want '--input requires a value'", err)

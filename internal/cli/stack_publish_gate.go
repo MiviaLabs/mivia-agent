@@ -13,6 +13,7 @@ package cli
 
 import (
 	"context"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
 	"log"
 	"strings"
 
@@ -47,7 +48,7 @@ func stackRunAutoPublishAllowed(ctx context.Context, repo workflowledger.Reposit
 	if err != nil {
 		return false, false
 	}
-	snapshot, compiled, _, err := validateWorkflowResumeSnapshot(run, raw)
+	snapshot, compiled, _, err := cliworkflow.ValidateWorkflowResumeSnapshot(run, raw)
 	if err != nil || compiled == nil || compiled.Stacking == nil {
 		return false, false
 	}
@@ -90,7 +91,7 @@ func isStackRunInputs(inputs map[string]string) bool {
 }
 
 // stackPlanCompiledWorkflow resolves a run id's admitted compiled workflow,
-// mirroring stackPlanMergePolicy's resolution but reporting ok=false on any
+// mirroring cliworkflow.StackPlanMergePolicy's resolution but reporting ok=false on any
 // failure instead of collapsing straight to a policy string - the caller
 // needs to distinguish "not a stacking plan run at all" from "is one, but
 // merge_policy isn't auto".
@@ -103,7 +104,7 @@ func stackPlanCompiledWorkflow(ctx context.Context, repo workflowledger.Reposito
 	if err != nil {
 		return nil, false
 	}
-	_, compiled, _, err := validateWorkflowResumeSnapshot(run, raw)
+	_, compiled, _, err := cliworkflow.ValidateWorkflowResumeSnapshot(run, raw)
 	if err != nil || compiled == nil {
 		return nil, false
 	}
@@ -115,7 +116,7 @@ func stackPlanCompiledWorkflow(ctx context.Context, repo workflowledger.Reposito
 // whether runID's publication must be withheld (a stack chunk/integration
 // run under a non-auto merge policy) and, when so, logs the reason unless
 // quiet. A caller that gets withheld=true must return without attempting
-// deliverRunWithStore - the run stays parked at delivery_pending for the
+// cliworkflow.DeliverRunWithStore - the run stays parked at delivery_pending for the
 // human publish grant.
 func stackRunPublishWithheld(ctx context.Context, repo workflowledger.Repository, runID string, quiet bool) bool {
 	isStackRun, allowed := stackRunAutoPublishAllowed(ctx, repo, runID)

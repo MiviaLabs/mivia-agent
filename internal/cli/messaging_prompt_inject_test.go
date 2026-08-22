@@ -9,6 +9,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"strings"
 	"testing"
 
@@ -125,7 +126,7 @@ func TestPlainMultiStepPromptIncludesProtocol(t *testing.T) {
 	defer d.Close()
 
 	result := d.Invoke(context.Background(), runtime.Request{
-		ID: "multi-prompt", Kind: runtime.Subagent, Name: HandlerMultiStep,
+		ID: "multi-prompt", Kind: runtime.Subagent, Name: cliorchestrate.HandlerMultiStep,
 		Input: json.RawMessage(`"do the work"`), SessionID: "test",
 	})
 	if result.Err != nil {
@@ -160,7 +161,7 @@ func TestOneshotDelegateDoNotIncludeProtocol(t *testing.T) {
 	}
 	defer d.Close()
 
-	for _, name := range []string{HandlerOneshot, HandlerDelegate} {
+	for _, name := range []string{cliorchestrate.HandlerOneshot, cliorchestrate.HandlerDelegate} {
 		result := d.Invoke(context.Background(), runtime.Request{
 			ID: "oneshot-" + name, Kind: runtime.Subagent, Name: name,
 			Input: json.RawMessage(`"do the work"`), SessionID: "test",

@@ -21,7 +21,7 @@ func TimeoutHint() string {
 		float64(config.DefaultOrchestrationTimeoutSec)/3600)
 }
 
-// dispatchOrchestrationSec picks the wall-clock budget for the whole
+// DispatchOrchestrationSec picks the wall-clock budget for the whole
 // dispatch_tasks invocation from config, batch timeout_seconds, and any
 // per-task timeout_seconds (max wins). Always positive.
 //
@@ -29,7 +29,7 @@ func TimeoutHint() string {
 // it is not floored to the 12h default. Per-task timeout_seconds values can
 // still raise it: a task that legitimately needs more than the batch budget
 // extends the whole-call budget to accommodate it.
-func dispatchOrchestrationSec(defaultTimeout int, args json.RawMessage) int {
+func DispatchOrchestrationSec(defaultTimeout int, args json.RawMessage) int {
 	var params struct {
 		TimeoutSeconds int `json:"timeout_seconds"`
 		Tasks          []struct {

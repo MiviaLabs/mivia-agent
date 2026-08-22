@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,9 +16,9 @@ import (
 
 func TestOpenDurableLedgerRepoNonSQLite(t *testing.T) {
 	var buf bytes.Buffer
-	repo, owned := openDurableLedgerRepo(config.SubagentConfig{StoreBackend: "memory"}, &buf)
-	if repo != defaultOrchestrationRepo {
-		t.Fatal("non-sqlite config must return defaultOrchestrationRepo")
+	repo, owned := cliorchestrate.OpenDurableLedgerRepo(config.SubagentConfig{StoreBackend: "memory"}, &buf)
+	if repo != *cliorchestrate.DefaultOrchestrationRepo {
+		t.Fatal("non-sqlite config must return cliorchestrate.DefaultOrchestrationRepo")
 	}
 	if owned != nil {
 		t.Fatal("non-sqlite config must not own a store")
@@ -38,9 +39,9 @@ func TestOpenDurableLedgerRepoOpenFailureFallsBack(t *testing.T) {
 		StoreBackend: "sqlite",
 		StorePath:    filepath.Join(blocker, "ledger.db"),
 	}
-	repo, owned := openDurableLedgerRepo(cfg, &buf)
-	if repo != defaultOrchestrationRepo {
-		t.Fatal("open failure must fall back to defaultOrchestrationRepo")
+	repo, owned := cliorchestrate.OpenDurableLedgerRepo(cfg, &buf)
+	if repo != *cliorchestrate.DefaultOrchestrationRepo {
+		t.Fatal("open failure must fall back to cliorchestrate.DefaultOrchestrationRepo")
 	}
 	if owned != nil {
 		t.Fatal("open failure must not return an owned store")
@@ -58,7 +59,7 @@ func TestOpenDurableLedgerRepoSuccess(t *testing.T) {
 	var buf bytes.Buffer
 	path := filepath.Join(t.TempDir(), "orch.db")
 	cfg := config.SubagentConfig{StoreBackend: "sqlite", StorePath: path}
-	repo, owned := openDurableLedgerRepo(cfg, &buf)
+	repo, owned := cliorchestrate.OpenDurableLedgerRepo(cfg, &buf)
 	if owned == nil {
 		t.Fatal("successful open must return owned store")
 	}
@@ -96,7 +97,7 @@ func TestOpenDurableLedgerRepoClosedOnDispatcherClose(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSessionDispatcher: %v", err)
 	}
-	repo := orchestrationRepoForDispatcher(d)
+	repo := OrchestrationRepoForDispatcher(d)
 	sr, ok := repo.(*ledger.StorageLedgerRepository)
 	if !ok || sr == nil {
 		t.Fatalf("expected StorageLedgerRepository, got %T", repo)

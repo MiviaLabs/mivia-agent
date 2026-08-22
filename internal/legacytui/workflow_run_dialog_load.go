@@ -9,6 +9,7 @@ package legacytui
 import (
 	"context"
 	"github.com/MiviaLabs/mivia-agent/internal/cli"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/events"
@@ -53,7 +54,7 @@ type workflowRunDialogData struct {
 // workflowledger.ErrNotFound so the dialog can keep stale content with a
 // notice.
 func workflowRunDialogLoad(root, configPath, runID string) (workflowRunDialogData, error) {
-	repo, closeFn, err := cli.OpenWorkflowReportContext(root, configPath)
+	repo, closeFn, err := cliworkflow.OpenWorkflowReportContext(root, configPath)
 	if err != nil {
 		return workflowRunDialogData{}, err
 	}
@@ -139,7 +140,7 @@ func (m *TUIModel) refreshWorkflowRunDialog() tea.Cmd {
 	}
 	dlg.lastRefresh = now
 	root := m.resolveRepoRoot()
-	configPath := cli.SessionEngineConfigPath(root, m.config)
+	configPath := cliworkflow.SessionEngineConfigPath(root, m.config)
 	runID := dlg.runID
 	return func() tea.Msg {
 		data, err := workflowRunDialogLoad(root, configPath, runID)
@@ -170,7 +171,7 @@ func (m *TUIModel) openWorkflowRunDialog(row workflowRunRow) tea.Cmd {
 	dlg := &workflowRunDialog{
 		runID:      row.run.RunID,
 		root:       root,
-		configPath: cli.SessionEngineConfigPath(root, m.config),
+		configPath: cliworkflow.SessionEngineConfigPath(root, m.config),
 	}
 	if svc := m.workflowDialogService(); svc != nil {
 		dlg.engine = svc.Engine()
@@ -210,6 +211,6 @@ func (m *TUIModel) workflowDialogService() *workflowledger.Service {
 	if root == "" {
 		return nil
 	}
-	m.workflowSvc = cli.WorkflowToolServiceWithBus(root, m.config, func() *events.Bus { return m.eventBus }, false)
+	m.workflowSvc = cliworkflow.WorkflowToolServiceWithBus(root, m.config, func() *events.Bus { return m.eventBus }, false)
 	return m.workflowSvc
 }

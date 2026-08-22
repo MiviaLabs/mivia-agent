@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/MiviaLabs/mivia-agent/internal/cli"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
 	"os"
 	"path/filepath"
 	"strings"
@@ -389,8 +390,8 @@ func TestWorkflowRunDialogApproveActionResolvesApproval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(approvals) != 1 || approvals[0].ApprovalID != "wfa-approval-review-1" || approvals[0].Status != "approved" || approvals[0].Actor != cli.WorkflowApprovalDefaultActor {
-		t.Fatalf("approvals = %#v, want one approved by %s", approvals, cli.WorkflowApprovalDefaultActor)
+	if len(approvals) != 1 || approvals[0].ApprovalID != "wfa-approval-review-1" || approvals[0].Status != "approved" || approvals[0].Actor != cliworkflow.WorkflowApprovalDefaultActor {
+		t.Fatalf("approvals = %#v, want one approved by %s", approvals, cliworkflow.WorkflowApprovalDefaultActor)
 	}
 }
 

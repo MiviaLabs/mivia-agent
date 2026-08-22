@@ -1,7 +1,7 @@
 package cli
 
 // Pins a live e2e finding (dag-v3 chunks c1/c2, stack-v8 chunk c3, all on
-// 2026-08-15): deliverRunWithStore returns nil both when a chunk's PR
+// 2026-08-15): cliworkflow.DeliverRunWithStore returns nil both when a chunk's PR
 // actually published (the run settles RunStatusSucceeded) AND when a
 // rejected delivery re-entered the repair loop (ReopenForRepair CASes the
 // run back to RunStatusRunning and returns nil - see its doc comment:

@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"strings"
 	"sync"
 	"testing"
@@ -48,7 +49,7 @@ func (s *signalOnce) fire() { s.once.Do(func() { close(s.ch) }) }
 
 // spawnBroadcastRun spawns a run whose tasks all share the "worker" handler.
 // Tasks named in `live` block on a release channel (kept live); all others
-// return immediately (terminal). The run handle is registered in runHandles
+// return immediately (terminal). The run handle is registered in cliorchestrate.RunHandlesForTest
 // under an owner caller so sendToTaskTool's principal gate passes.
 func spawnBroadcastRun(t *testing.T, live map[string]bool, taskIDs ...string) *broadcastRun {
 	t.Helper()
@@ -93,11 +94,11 @@ func spawnBroadcastRun(t *testing.T, live map[string]bool, taskIDs ...string) *b
 			s.fire()
 		}
 	}
-	coordinators.Store(d, c)
-	coordinatorRepos.Store(d, repo)
+	cliorchestrate.CoordinatorsForTest.Store(d, c)
+	cliorchestrate.CoordinatorReposForTest.Store(d, repo)
 	t.Cleanup(func() {
-		coordinators.Delete(d)
-		coordinatorRepos.Delete(d)
+		cliorchestrate.CoordinatorsForTest.Delete(d)
+		cliorchestrate.CoordinatorReposForTest.Delete(d)
 	})
 	tasks := make([]subagents.Task, 0, len(taskIDs))
 	for _, id := range taskIDs {
@@ -114,12 +115,9 @@ func spawnBroadcastRun(t *testing.T, live map[string]bool, taskIDs ...string) *b
 	runID := snap.RunID
 	caller := runtime.Caller{SessionID: "sess-broadcast"}
 	ctx := runtime.ContextWithCaller(context.Background(), caller)
-	runHandles.Store(runID, &orchestrationHandle{
-		coord: c, handle: h, repo: repo, dispatcher: d,
-		principal: orchestrationPrincipal{sessionID: "sess-broadcast"},
-	})
+	cliorchestrate.StoreTestRunHandle(runID, c, h, repo, d, "sess-broadcast")
 	t.Cleanup(func() {
-		runHandles.Delete(runID)
+		cliorchestrate.RunHandlesForTest.Delete(runID)
 		release()
 	})
 	tool := &sendToTaskTool{dispatcher: d, cfg: cfg, repo: repo}

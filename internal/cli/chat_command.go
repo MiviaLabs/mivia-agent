@@ -9,6 +9,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/cliworktree"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
@@ -313,7 +314,7 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 	agentState.BaselinePrompt = sess.BaseSystemPrompt
 	agentState.BaselineMaxSteps = sess.MaxStepsValue()
 	agentState.BaselineCaptured = true
-	SetActiveSessionCaller(runtime.Caller{SessionID: sess.SessionID})
+	cliorchestrate.SetActiveSessionCaller(runtime.Caller{SessionID: sess.SessionID})
 	memClose, err := cliagents.ConfigureChatWorkspace(sess, wsRoot, useTools, res, agentState, invocation.quiet, invocation.fullDisk, true)
 	if err != nil {
 		return err

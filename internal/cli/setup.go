@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"io"
 	"os"
 	"path/filepath"
@@ -111,14 +112,14 @@ func printSetupSummary(stdout io.Writer, provider, keyEnv, envPath, cfgPath stri
 		fmt.Fprintln(stdout, "  mode:       local daemon - no API key needed (set base_url to http://127.0.0.1:11434/v1 in [providers.ollama])")
 		fmt.Fprintf(stdout, "  mode:       Ollama Cloud - needs the key (default base_url https://ollama.com/v1); pass --key or set %s\n", keyEnv)
 	} else {
-		fmt.Fprintf(stdout, "  key file:   %s (written)\n", displayPath(envPath))
+		fmt.Fprintf(stdout, "  key file:   %s (written)\n", cliorchestrate.DisplayPath(envPath))
 	}
 	if cfgWritten {
-		fmt.Fprintf(stdout, "  config:     %s (written)\n", displayPath(cfgPath))
+		fmt.Fprintf(stdout, "  config:     %s (written)\n", cliorchestrate.DisplayPath(cfgPath))
 	} else if provider != config.DefaultProvider {
-		fmt.Fprintf(stdout, "  config:     %s (untouched; add a [providers.%s] block to select it)\n", displayPath(cfgPath), provider)
+		fmt.Fprintf(stdout, "  config:     %s (untouched; add a [providers.%s] block to select it)\n", cliorchestrate.DisplayPath(cfgPath), provider)
 	} else {
-		fmt.Fprintf(stdout, "  config:     %s (existing)\n", displayPath(cfgPath))
+		fmt.Fprintf(stdout, "  config:     %s (existing)\n", cliorchestrate.DisplayPath(cfgPath))
 	}
 	if keylessOllama {
 		fmt.Fprintln(stdout, "  next:       add a [providers.ollama] block to your config, then run mivia doctor")

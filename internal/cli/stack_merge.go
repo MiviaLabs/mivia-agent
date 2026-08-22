@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
 	"io"
 	"path/filepath"
 	"time"
@@ -27,7 +28,7 @@ import (
 // workflowReconcileInterval).
 var stackMergePollInterval = 20 * time.Second
 
-func waitForChunkMerges(ctx context.Context, prepared *preparedWorkflowRun, ledger *workflowledger.Store, checker MergeChecker, stackID string, chunks []ChunkPlan, policy string, stdout, stderr io.Writer) error {
+func waitForChunkMerges(ctx context.Context, prepared *cliworkflow.PreparedWorkflowRun, ledger *workflowledger.Store, checker MergeChecker, stackID string, chunks []ChunkPlan, policy string, stdout, stderr io.Writer) error {
 	ticks := 0
 	for {
 		done, err := chunkMergePollPass(ctx, prepared, ledger, checker, stackID, chunks, policy, stdout, stderr)
@@ -56,8 +57,8 @@ func waitForChunkMerges(ctx context.Context, prepared *preparedWorkflowRun, ledg
 // driveStackToCompletion loop must re-drive), and errStackAwaitsGrant (a
 // durable pause). Split out of waitForChunkMerges to keep that function
 // under the file-size gate's function-length cap.
-func chunkMergePollPass(ctx context.Context, prepared *preparedWorkflowRun, ledger *workflowledger.Store, checker MergeChecker, stackID string, chunks []ChunkPlan, policy string, stdout, stderr io.Writer) (done bool, err error) {
-	repo := prepared.repo
+func chunkMergePollPass(ctx context.Context, prepared *cliworkflow.PreparedWorkflowRun, ledger *workflowledger.Store, checker MergeChecker, stackID string, chunks []ChunkPlan, policy string, stdout, stderr io.Writer) (done bool, err error) {
+	repo := prepared.Repo
 	actions, err := reconcileStack(ctx, ledger, repo, checker, stackID, stackMaxChunkAttempts)
 	if err != nil {
 		return false, fmt.Errorf("stack drive: reconcile: %w", err)
@@ -149,7 +150,7 @@ func chunkMergePollPass(ctx context.Context, prepared *preparedWorkflowRun, ledg
 // delivery_pending (a concurrent human grant or an earlier pass already
 // delivered it - reconcile will pick up the fresh status next pass), is not
 // an error: the caller keeps polling.
-func autoDeliverReviewedChunks(ctx context.Context, prepared *preparedWorkflowRun, repo workflowledger.Repository, ledger *workflowledger.Store, stackID string, stdout, stderr io.Writer) error {
+func autoDeliverReviewedChunks(ctx context.Context, prepared *cliworkflow.PreparedWorkflowRun, repo workflowledger.Repository, ledger *workflowledger.Store, stackID string, stdout, stderr io.Writer) error {
 	byID, err := stackTaskMap(ledger, stackID)
 	if err != nil {
 		return err
@@ -165,7 +166,7 @@ func autoDeliverReviewedChunks(ctx context.Context, prepared *preparedWorkflowRu
 		if !found || run.Status != workflowledger.RunStatusDeliveryPending {
 			continue
 		}
-		if err := workflowStackDeliverRun(ctx, prepared.root, prepared.res, prepared.store, prepared.repo, run.RunID, true, false, stdout, stderr); err != nil {
+		if err := workflowStackDeliverRun(ctx, prepared.Root, prepared.Res, prepared.Store, prepared.Repo, run.RunID, true, false, stdout, stderr); err != nil {
 			return fmt.Errorf("chunk %s auto-delivery failed: %w", id, err)
 		}
 		fresh, err := repo.GetRun(ctx, run.RunID)
@@ -182,7 +183,7 @@ func autoDeliverReviewedChunks(ctx context.Context, prepared *preparedWorkflowRu
 // blockedByUnmergedDependent. A PR that is not mergeable yet (checks
 // pending/red, review requirements) reports why and is retried on the next
 // poll; reconcile marks it merged the moment git reports the merge landed.
-func autoMergePublishedChunks(ctx context.Context, prepared *preparedWorkflowRun, repo workflowledger.Repository, ledger *workflowledger.Store, stackID string, stdout, stderr io.Writer) error {
+func autoMergePublishedChunks(ctx context.Context, prepared *cliworkflow.PreparedWorkflowRun, repo workflowledger.Repository, ledger *workflowledger.Store, stackID string, stdout, stderr io.Writer) error {
 	byID, err := stackTaskMap(ledger, stackID)
 	if err != nil {
 		return err
@@ -241,12 +242,12 @@ var workflowStackMergePR = delivery.MergePullRequest
 
 // workflowStackDeliverRun is the delivery boundary for the integration run.
 // A package var so tests can stub delivery without standing up a full
-// controller/workflow-run fixture; production points at deliverRunWithStore.
-var workflowStackDeliverRun = deliverRunWithStore
+// controller/workflow-run fixture; production points at cliworkflow.DeliverRunWithStore.
+var workflowStackDeliverRun = cliworkflow.DeliverRunWithStore
 
 // autoMergeOne resolves one chunk's PR (by its run's head branch) and merges
 // it. No PR yet, or a merge refusal, is not an error: the wait loop retries.
-func autoMergeOne(ctx context.Context, prepared *preparedWorkflowRun, repo workflowledger.Repository, stackID, chunkID string, stdout, stderr io.Writer) error {
+func autoMergeOne(ctx context.Context, prepared *cliworkflow.PreparedWorkflowRun, repo workflowledger.Repository, stackID, chunkID string, stdout, stderr io.Writer) error {
 	run, found, err := stackRunRef(repo, stackID, chunkID)
 	if err != nil {
 		return err
@@ -262,7 +263,7 @@ func autoMergeOne(ctx context.Context, prepared *preparedWorkflowRun, repo workf
 	if err != nil {
 		return fmt.Errorf("chunk %s: resolve repo: %w", chunkID, err)
 	}
-	ref, err := workflowDeliverNewPR().FindByHead(ctx, slug, head)
+	ref, err := cliworkflow.WorkflowDeliverNewPR().FindByHead(ctx, slug, head)
 	if err != nil {
 		return fmt.Errorf("chunk %s: find PR: %w", chunkID, err)
 	}
@@ -275,9 +276,9 @@ func autoMergeOne(ctx context.Context, prepared *preparedWorkflowRun, repo workf
 	// guard is not a passed guard - but it also must not halt the drive:
 	// keep polling with the reason visible, so a transient failure heals on
 	// the next pass and a persistent one names itself.
-	base := prepared.compiled.Delivery.Base
-	gc := delivery.GitContext{Dir: prepared.root, GitDir: filepath.Join(prepared.root, ".git")}
-	if err := guardChunkMergeOverlap(ctx, workflowDeliverGit, gc, base, head, chunkID); err != nil {
+	base := prepared.Compiled.Delivery.Base
+	gc := delivery.GitContext{Dir: prepared.Root, GitDir: filepath.Join(prepared.Root, ".git")}
+	if err := guardChunkMergeOverlap(ctx, cliworkflow.WorkflowDeliverGit, gc, base, head, chunkID); err != nil {
 		if errors.Is(err, errOverlapProbeFailed) {
 			fmt.Fprintf(stdout, "chunk=%s overlap guard could not run; not merging this pass: %v\n", chunkID, err)
 			return nil
@@ -305,8 +306,8 @@ var waitIntegrationRunSettledFn = waitIntegrationRunSettled
 // allowed and report the stack's terminal state. With merge_policy=auto the
 // integration PR is merged and the merge waited out before the stack reports
 // complete.
-func waitIntegrationRunSettled(ctx context.Context, prepared *preparedWorkflowRun, ledger *workflowledger.Store, checker MergeChecker, stackID string, policy string, allowPublish bool, stdout, stderr io.Writer) error {
-	run, found, err := stackRunRef(prepared.repo, stackID, stackIntegrationChunkID)
+func waitIntegrationRunSettled(ctx context.Context, prepared *cliworkflow.PreparedWorkflowRun, ledger *workflowledger.Store, checker MergeChecker, stackID string, policy string, allowPublish bool, stdout, stderr io.Writer) error {
+	run, found, err := stackRunRef(prepared.Repo, stackID, stackIntegrationChunkID)
 	if err != nil {
 		return err
 	}
@@ -319,10 +320,10 @@ func waitIntegrationRunSettled(ctx context.Context, prepared *preparedWorkflowRu
 	// driveChunk's behavior; otherwise the caller must pass allowPublish=true.
 	mayDeliver := policy == "auto" || allowPublish
 	if run.Status == workflowledger.RunStatusDeliveryPending && mayDeliver {
-		if err := workflowStackDeliverRun(ctx, prepared.root, prepared.res, prepared.store, prepared.repo, run.RunID, true, false, stdout, stderr); err != nil {
+		if err := workflowStackDeliverRun(ctx, prepared.Root, prepared.Res, prepared.Store, prepared.Repo, run.RunID, true, false, stdout, stderr); err != nil {
 			return fmt.Errorf("integration run delivery failed: %w", err)
 		}
-		fresh, err := prepared.repo.GetRun(ctx, run.RunID)
+		fresh, err := prepared.Repo.GetRun(ctx, run.RunID)
 		if err != nil {
 			return fmt.Errorf("integration run: read status after delivery: %w", err)
 		}
@@ -344,7 +345,7 @@ func waitIntegrationRunSettled(ctx context.Context, prepared *preparedWorkflowRu
 
 	// A no-diff integration run settles succeeded without ever pushing a branch.
 	// There is no PR to merge, so the stack is complete immediately.
-	if run.Status == workflowledger.RunStatusSucceeded && !stackRunPushed(prepared.repo, run) {
+	if run.Status == workflowledger.RunStatusSucceeded && !stackRunPushed(prepared.Repo, run) {
 		fmt.Fprintf(stdout, "stack %s complete: integration run=%s status=%s (no diff)\n", stackID, run.RunID, run.Status)
 		return nil
 	}
@@ -354,11 +355,11 @@ func waitIntegrationRunSettled(ctx context.Context, prepared *preparedWorkflowRu
 	// `mivia workflow deliver`, and a recovery sweep that delivered the run
 	// before the driver reached this point. Without this, a later drive sees
 	// run.Status=succeeded and skips autoMergeOne, leaving the final PR open.
-	if policy == "auto" && stackRunPushed(prepared.repo, run) {
-		if err := autoMergeOne(ctx, prepared, prepared.repo, stackID, stackIntegrationChunkID, stdout, stderr); err != nil {
+	if policy == "auto" && stackRunPushed(prepared.Repo, run) {
+		if err := autoMergeOne(ctx, prepared, prepared.Repo, stackID, stackIntegrationChunkID, stdout, stderr); err != nil {
 			return err
 		}
-		return waitForIntegrationMerge(ctx, prepared, prepared.repo, checker, stackID, policy, stdout, stderr)
+		return waitForIntegrationMerge(ctx, prepared, prepared.Repo, checker, stackID, policy, stdout, stderr)
 	}
 
 	if run.Status == workflowledger.RunStatusDeliveryPending {
@@ -374,7 +375,7 @@ func waitIntegrationRunSettled(ctx context.Context, prepared *preparedWorkflowRu
 // PR actually lands. Under merge_policy=auto it also re-attempts the merge
 // each poll tick, matching the per-pass retry chunk PRs already get via
 // autoMergePublishedChunks (F3).
-func waitForIntegrationMerge(ctx context.Context, prepared *preparedWorkflowRun, repo workflowledger.Repository, checker MergeChecker, stackID, policy string, stdout, stderr io.Writer) error {
+func waitForIntegrationMerge(ctx context.Context, prepared *cliworkflow.PreparedWorkflowRun, repo workflowledger.Repository, checker MergeChecker, stackID, policy string, stdout, stderr io.Writer) error {
 	ticks := 0
 	for {
 		run, found, err := stackRunRef(repo, stackID, stackIntegrationChunkID)

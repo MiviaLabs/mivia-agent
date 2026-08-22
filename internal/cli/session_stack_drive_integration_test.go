@@ -19,7 +19,7 @@ import (
 // regression: a session whose bounded in-session drive aborts after publishing
 // the first chunk PR (here: the merge queue never merges it within the bound)
 // used to leave the plan run parked at delivery_pending FOREVER - the recovery
-// sweep only checked stackDriveCompleted and then said "leaving parked" with
+// sweep only checked cliworkflow.StackDriveCompleted and then said "leaving parked" with
 // no chunk runs, no PRs, and no drive. Now the sweep DRIVES the parked stack
 // itself. The test proves both halves: the wedge state (plan run parked, c1
 // published, c2 NOT admitted, NOT settled) and the recovery (a fresh session's

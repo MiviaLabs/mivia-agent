@@ -7,12 +7,13 @@ package cli
 
 import (
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
 )
 
 func init() {
 	cliagents.NewSessionDispatcherVar = NewSessionDispatcher
 	cliagents.RemainderSpoolFromRegistryVar = RemainderSpoolFromRegistry
-	cliagents.WireWorkflowToolOptionsVar = wireWorkflowToolOptions
+	cliagents.WireWorkflowToolOptionsVar = cliworkflow.WireWorkflowToolOptions
 	cliagents.BuiltInSlashTokensVar = builtInSlashTokenSet
 	cliagents.SummaryWiringVar = summaryWiring
 	cliagents.AdvertisedSessionToolSpecsVar = advertisedSessionToolSpecs

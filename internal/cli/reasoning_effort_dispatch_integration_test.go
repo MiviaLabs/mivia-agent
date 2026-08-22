@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"io"
 	"sync"
 	"testing"
@@ -206,7 +207,7 @@ func TestIntegrationEffortOverrideReachesNestedHandlers(t *testing.T) {
 	}
 	assertDial(t, f.sessComp.last(t), reasoning.High, reasoning.DialectThinkingEffort, "the root turn")
 
-	for _, name := range []string{HandlerOneshot, HandlerDelegate, HandlerMultiStep} {
+	for _, name := range []string{cliorchestrate.HandlerOneshot, cliorchestrate.HandlerDelegate, cliorchestrate.HandlerMultiStep} {
 		f.invokeSubagent(t, name)
 		assertDial(t, f.sessComp.last(t), reasoning.High, reasoning.DialectThinkingEffort, "nested "+name)
 	}

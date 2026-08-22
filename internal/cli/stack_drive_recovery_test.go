@@ -15,6 +15,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
 	"io"
 	"strings"
 	"testing"
@@ -98,7 +99,7 @@ func createContinuationRun(t *testing.T, repo workflowledger.Repository, stackID
 
 // stubAdmission swaps the admission seam for the test and restores it on
 // cleanup.
-func stubAdmission(t *testing.T, fn func(*preparedWorkflowRun, string, int, string, map[string]string, io.Writer, io.Writer) ([]ChunkPlan, bool, string, error)) {
+func stubAdmission(t *testing.T, fn func(*cliworkflow.PreparedWorkflowRun, string, int, string, map[string]string, io.Writer, io.Writer) ([]ChunkPlan, bool, string, error)) {
 	t.Helper()
 	original := stackDecomposeContinueAdmit
 	stackDecomposeContinueAdmit = fn
@@ -142,7 +143,7 @@ func TestLoadAllStackChunksForDriveReAdmitsFailedContinuationWave(t *testing.T) 
 	var admitted int
 	var admittedWave int
 	var admittedScope string
-	stubAdmission(t, func(_ *preparedWorkflowRun, stackID string, wave int, remainingScope string, _ map[string]string, stdout, _ io.Writer) ([]ChunkPlan, bool, string, error) {
+	stubAdmission(t, func(_ *cliworkflow.PreparedWorkflowRun, stackID string, wave int, remainingScope string, _ map[string]string, stdout, _ io.Writer) ([]ChunkPlan, bool, string, error) {
 		admitted++
 		admittedWave = wave
 		admittedScope = remainingScope
@@ -158,7 +159,7 @@ func TestLoadAllStackChunksForDriveReAdmitsFailedContinuationWave(t *testing.T) 
 	})
 
 	var stdout, stderr bytes.Buffer
-	chunks, hasMore, _, remaining, err := loadAllStackChunksForDrive(&preparedWorkflowRun{repo: repo}, stackID, []byte(wave0DecomposeOutput), map[string]string{"task": "demo"}, &stdout, &stderr)
+	chunks, hasMore, _, remaining, err := loadAllStackChunksForDrive(&cliworkflow.PreparedWorkflowRun{Repo: repo}, stackID, []byte(wave0DecomposeOutput), map[string]string{"task": "demo"}, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("loadAllStackChunksForDrive = %v, want no error (failed wave must be re-admitted, not wedged)", err)
 	}
@@ -198,12 +199,12 @@ func TestLoadAllStackChunksForDriveFailedWaveReAdmissionErrorIsActionable(t *tes
 	repo := newDecomposeRecoveryRepo(t, stackID)
 	createContinuationRun(t, repo, stackID, 1, "wfr-wave1-failed", workflowledger.RunStatusFailed, time.Now())
 
-	stubAdmission(t, func(*preparedWorkflowRun, string, int, string, map[string]string, io.Writer, io.Writer) ([]ChunkPlan, bool, string, error) {
+	stubAdmission(t, func(*cliworkflow.PreparedWorkflowRun, string, int, string, map[string]string, io.Writer, io.Writer) ([]ChunkPlan, bool, string, error) {
 		return nil, false, "", errors.New("sentinel re-admission failure")
 	})
 
 	var stdout, stderr bytes.Buffer
-	chunks, hasMore, hasUnsettledWave, _, err := loadAllStackChunksForDrive(&preparedWorkflowRun{repo: repo}, stackID, []byte(wave0DecomposeOutput), map[string]string{"task": "demo"}, &stdout, &stderr)
+	chunks, hasMore, hasUnsettledWave, _, err := loadAllStackChunksForDrive(&cliworkflow.PreparedWorkflowRun{Repo: repo}, stackID, []byte(wave0DecomposeOutput), map[string]string{"task": "demo"}, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("loadAllStackChunksForDrive = %v, want no hard error (re-admission failure must be actionable, not a wedge)", err)
 	}
@@ -234,13 +235,13 @@ func TestLoadAllStackChunksForDrivePendingWaveSkipsWithActionableMessage(t *test
 	repo := newDecomposeRecoveryRepo(t, stackID)
 	createContinuationRun(t, repo, stackID, 1, "wfr-wave1-pending", workflowledger.RunStatusPending, time.Now())
 
-	stubAdmission(t, func(*preparedWorkflowRun, string, int, string, map[string]string, io.Writer, io.Writer) ([]ChunkPlan, bool, string, error) {
+	stubAdmission(t, func(*cliworkflow.PreparedWorkflowRun, string, int, string, map[string]string, io.Writer, io.Writer) ([]ChunkPlan, bool, string, error) {
 		t.Fatal("admission must not run for a still-pending wave")
 		return nil, false, "", nil
 	})
 
 	var stdout, stderr bytes.Buffer
-	chunks, hasMore, hasUnsettledWave, _, err := loadAllStackChunksForDrive(&preparedWorkflowRun{repo: repo}, stackID, []byte(wave0DecomposeOutput), map[string]string{"task": "demo"}, &stdout, &stderr)
+	chunks, hasMore, hasUnsettledWave, _, err := loadAllStackChunksForDrive(&cliworkflow.PreparedWorkflowRun{Repo: repo}, stackID, []byte(wave0DecomposeOutput), map[string]string{"task": "demo"}, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("loadAllStackChunksForDrive = %v, want no hard error (pending wave must be skipped, not wedged)", err)
 	}
@@ -274,13 +275,13 @@ func TestLoadAllStackChunksForDriveReplaysAlreadySeededWave(t *testing.T) {
 	seedSucceededDecomposeAttempt(t, repo, "wfr-wave1-old", []byte(wave1DecomposeOutput))
 	createContinuationRun(t, repo, stackID, 1, "wfr-wave1-failed", workflowledger.RunStatusFailed, older.Add(time.Minute))
 
-	stubAdmission(t, func(*preparedWorkflowRun, string, int, string, map[string]string, io.Writer, io.Writer) ([]ChunkPlan, bool, string, error) {
+	stubAdmission(t, func(*cliworkflow.PreparedWorkflowRun, string, int, string, map[string]string, io.Writer, io.Writer) ([]ChunkPlan, bool, string, error) {
 		t.Fatal("admission must not run when the wave's chunks are already produced by an older succeeded run")
 		return nil, false, "", nil
 	})
 
 	var stdout, stderr bytes.Buffer
-	chunks, hasMore, _, _, err := loadAllStackChunksForDrive(&preparedWorkflowRun{repo: repo}, stackID, []byte(wave0DecomposeOutput), map[string]string{"task": "demo"}, &stdout, &stderr)
+	chunks, hasMore, _, _, err := loadAllStackChunksForDrive(&cliworkflow.PreparedWorkflowRun{Repo: repo}, stackID, []byte(wave0DecomposeOutput), map[string]string{"task": "demo"}, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("loadAllStackChunksForDrive = %v, want no error (seeded wave must be replayed, not wedged)", err)
 	}
@@ -317,13 +318,13 @@ func TestLoadAllStackChunksForDriveHealthyContinuationWaveUnchanged(t *testing.T
 	createContinuationRun(t, repo, stackID, 1, "wfr-wave1-ok", workflowledger.RunStatusSucceeded, time.Now())
 	seedSucceededDecomposeAttempt(t, repo, "wfr-wave1-ok", []byte(wave1DecomposeOutput))
 
-	stubAdmission(t, func(*preparedWorkflowRun, string, int, string, map[string]string, io.Writer, io.Writer) ([]ChunkPlan, bool, string, error) {
+	stubAdmission(t, func(*cliworkflow.PreparedWorkflowRun, string, int, string, map[string]string, io.Writer, io.Writer) ([]ChunkPlan, bool, string, error) {
 		t.Fatal("admission must not run for a healthy wave")
 		return nil, false, "", nil
 	})
 
 	var stdout, stderr bytes.Buffer
-	chunks, hasMore, _, _, err := loadAllStackChunksForDrive(&preparedWorkflowRun{repo: repo}, stackID, []byte(wave0DecomposeOutput), map[string]string{"task": "demo"}, &stdout, &stderr)
+	chunks, hasMore, _, _, err := loadAllStackChunksForDrive(&cliworkflow.PreparedWorkflowRun{Repo: repo}, stackID, []byte(wave0DecomposeOutput), map[string]string{"task": "demo"}, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("loadAllStackChunksForDrive = %v, want no error", err)
 	}

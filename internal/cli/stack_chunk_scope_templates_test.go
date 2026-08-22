@@ -7,6 +7,7 @@ package cli
 // and the implement template must instruct the agent to stay inside it.
 
 import (
+	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
 	"strings"
 	"testing"
 
@@ -39,7 +40,7 @@ func TestImplementTemplateRendersChunkScope(t *testing.T) {
 	workflow, base := loadCommittedFeatureDeliveryWorkflow(t, root)
 	step := featureDeliveryStep(t, workflow, "implement")
 	chunkScopeBinding(t, step)
-	templateBytes, err := readWorkflowRef(base, step.Template, delivery.MaxTemplateBytes)
+	templateBytes, err := cliworkflow.ReadWorkflowRef(base, step.Template, delivery.MaxTemplateBytes)
 	if err != nil {
 		t.Fatalf("read template %q: %v", step.Template, err)
 	}
@@ -79,7 +80,7 @@ func TestPanelMembersReceiveChunkScope(t *testing.T) {
 		"prior_findings": "", "touched_files": `["a.go"]`,
 	}
 	for _, member := range step.Panel.Members {
-		templateBytes, err := readWorkflowRef(base, member.Template, delivery.MaxTemplateBytes)
+		templateBytes, err := cliworkflow.ReadWorkflowRef(base, member.Template, delivery.MaxTemplateBytes)
 		if err != nil {
 			t.Fatalf("panel member %q: read template: %v", member.ID, err)
 		}

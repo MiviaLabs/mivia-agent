@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"net"
 	"strings"
 	"testing"
@@ -65,7 +66,7 @@ func TestFinalAuditDoctorHostileResolverKeylessAndCloud(t *testing.T) {
 	// Keyless loopback ollama: exit 0, local-daemon explanation, status ok.
 	loopbackCfg := writeOllamaDoctorConfig(t, "http://127.0.0.1:11434/v1")
 	var loopbackOut, loopbackErr bytes.Buffer
-	if err := runDoctorWithIO([]string{"--config", loopbackCfg, "--workspace", t.TempDir()}, &loopbackOut, &loopbackErr); err != nil {
+	if err := cliorchestrate.RunDoctorWithIO([]string{"--config", loopbackCfg, "--workspace", t.TempDir()}, &loopbackOut, &loopbackErr); err != nil {
 		t.Fatalf("doctor error for keyless loopback ollama under a hostile resolver = %v (want ok)", err)
 	}
 	if !strings.Contains(loopbackOut.String(), "not required (local daemon)") {
@@ -78,7 +79,7 @@ func TestFinalAuditDoctorHostileResolverKeylessAndCloud(t *testing.T) {
 	// Cloud ollama with no key: MISSING state naming OLLAMA_API_KEY.
 	cloudCfg := writeOllamaDoctorConfig(t, "https://ollama.com/v1")
 	var cloudOut, cloudErr bytes.Buffer
-	err := runDoctorWithIO([]string{"--config", cloudCfg, "--workspace", t.TempDir()}, &cloudOut, &cloudErr)
+	err := cliorchestrate.RunDoctorWithIO([]string{"--config", cloudCfg, "--workspace", t.TempDir()}, &cloudOut, &cloudErr)
 	if err == nil {
 		t.Fatal("doctor must report a non-ok status for cloud ollama with no key")
 	}

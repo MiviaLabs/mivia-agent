@@ -16,6 +16,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
 	"io"
 	"strings"
 
@@ -35,7 +36,7 @@ import (
 // created without going through checkChunkDiffSize/Deliver at all, so it
 // can never itself declare deferred_files - no recursion is possible, but
 // the skip keeps the scan cheap.
-func admitPendingFollowUps(ctx context.Context, prepared *preparedWorkflowRun, ledger *workflowledger.Store, stackID string, byID map[string]workflowledger.Task, stdout, stderr io.Writer) error {
+func admitPendingFollowUps(ctx context.Context, prepared *cliworkflow.PreparedWorkflowRun, ledger *workflowledger.Store, stackID string, byID map[string]workflowledger.Task, stdout, stderr io.Writer) error {
 	for chunkID := range byID {
 		if strings.HasSuffix(chunkID, "-deferred") {
 			continue
@@ -77,8 +78,8 @@ func deferredFollowUpChunkID(parentChunkID string) string {
 // run row is reserved with a DETERMINISTIC run id BEFORE any git/GitHub
 // call, so a retry or a concurrent admission resumes the same registration
 // instead of duplicating run rows, delivery records, or PRs (bug 4).
-func admitFollowUpsForChunk(ctx context.Context, prepared *preparedWorkflowRun, ledger *workflowledger.Store, stackID, chunkID string, stdout, stderr io.Writer) error {
-	run, found, err := stackRunRef(prepared.repo, stackID, chunkID)
+func admitFollowUpsForChunk(ctx context.Context, prepared *cliworkflow.PreparedWorkflowRun, ledger *workflowledger.Store, stackID, chunkID string, stdout, stderr io.Writer) error {
+	run, found, err := stackRunRef(prepared.Repo, stackID, chunkID)
 	if err != nil || !found {
 		return err
 	}
@@ -98,30 +99,30 @@ func admitFollowUpsForChunk(ctx context.Context, prepared *preparedWorkflowRun, 
 	// StackRemainingCommits > 0), which is durable by the time this runs -
 	// the split record is written during delivery, before the follow-up
 	// admission pass.
-	if !delivery.HasDeferredFollowUp(ctx, prepared.repo, run.RunID) {
+	if !delivery.HasDeferredFollowUp(ctx, prepared.Repo, run.RunID) {
 		return nil
 	}
 	// The durable fence: reserve the follow-up run row (deterministic run
 	// id) before any side effect. A crash after the PR was created, or a
 	// concurrent admission, then resumes the SAME row instead of minting a
 	// duplicate.
-	runID, err := reserveFollowUpRun(prepared.repo, stackID, followUpID, run)
+	runID, err := reserveFollowUpRun(prepared.Repo, stackID, followUpID, run)
 	if err != nil {
 		return fmt.Errorf("chunk %s: reserve follow-up run: %w", chunkID, err)
 	}
-	worktreeRoot, err := resolveRunWorktreeRoot(ctx, prepared.root, run)
+	worktreeRoot, err := resolveRunWorktreeRoot(ctx, prepared.Root, run)
 	if err != nil {
 		return fmt.Errorf("chunk %s: resolve worktree for follow-up: %w", chunkID, err)
 	}
 	stdoutFn := func(s string) { fmt.Fprint(stdout, s) }
-	deferredBranch, deferredSHA, ref, published, err := delivery.EnsureFollowUpPublished(ctx, workflowDeliverGit, workflowDeliverNewPR(), worktreeRoot, prepared.repo, run, chunkID, stdoutFn)
+	deferredBranch, deferredSHA, ref, published, err := delivery.EnsureFollowUpPublished(ctx, cliworkflow.WorkflowDeliverGit, cliworkflow.WorkflowDeliverNewPR(), worktreeRoot, prepared.Repo, run, chunkID, stdoutFn)
 	if err != nil {
 		return fmt.Errorf("chunk %s: %w", chunkID, err)
 	}
 	if !published {
 		return nil
 	}
-	if err := registerFollowUpChunk(prepared.repo, ledger, stackID, chunkID, followUpID, runID, deferredBranch, deferredSHA, run, ref); err != nil {
+	if err := registerFollowUpChunk(prepared.Repo, ledger, stackID, chunkID, followUpID, runID, deferredBranch, deferredSHA, run, ref); err != nil {
 		return fmt.Errorf("chunk %s: register follow-up %s: %w", chunkID, followUpID, err)
 	}
 	return nil

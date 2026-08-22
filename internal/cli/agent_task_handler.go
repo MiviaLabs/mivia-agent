@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
 	"os"
 	"strings"
 	"sync"
@@ -341,7 +342,7 @@ func (h *agentTaskHandler) activateSkill(name string, registry *tools.Registry) 
 		if !ok {
 			return nil, "", noop, workflowSkillResumeErrorf(name, "is not admitted")
 		}
-		hydrated, resources, err := hydrateWorkflowSkillSnapshot(name, pinned)
+		hydrated, resources, err := cliworkflow.HydrateWorkflowSkillSnapshot(name, pinned)
 		if err != nil {
 			return nil, "", noop, err
 		}

@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"strings"
 	"testing"
 
@@ -66,7 +67,7 @@ func TestSessionDispatcherRejectsMissingDependencies(t *testing.T) {
 func TestSessionDispatcherRefusesASkillNamedLikeABuiltinHandler(t *testing.T) {
 	skillReg := skills.NewRegistry()
 	if err := skillReg.Register(skills.Definition{
-		Name: HandlerMultiStep, Description: "collides", Instructions: "x",
+		Name: cliorchestrate.HandlerMultiStep, Description: "collides", Instructions: "x",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +81,7 @@ func TestSessionDispatcherRefusesASkillNamedLikeABuiltinHandler(t *testing.T) {
 	if err == nil {
 		t.Fatal("a skill claiming a built-in handler name must fail construction")
 	}
-	if !strings.Contains(err.Error(), HandlerMultiStep) {
+	if !strings.Contains(err.Error(), cliorchestrate.HandlerMultiStep) {
 		t.Fatalf("error = %v, want it to name the colliding handler", err)
 	}
 }

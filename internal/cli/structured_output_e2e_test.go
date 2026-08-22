@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"io"
 	"strings"
 	"sync/atomic"
@@ -59,7 +60,7 @@ func okSchema() map[string]any {
 
 // newSchemaDispatchTool builds a real session dispatcher (agent → multi_step)
 // and returns the model-facing dispatch_tasks tool registered on it.
-func newSchemaDispatchTool(t *testing.T, replies []string, cfg config.SubagentConfig) (*dispatchTasksTool, *runtime.Dispatcher) {
+func newSchemaDispatchTool(t *testing.T, replies []string, cfg config.SubagentConfig) (*cliorchestrate.DispatchTasksToolForTest, *runtime.Dispatcher) {
 	t.Helper()
 	ws, err := workspace.Open(t.TempDir())
 	if err != nil {
@@ -94,7 +95,7 @@ func newSchemaDispatchTool(t *testing.T, replies []string, cfg config.SubagentCo
 		d.Close()
 		t.Fatal("dispatch_tasks not registered")
 	}
-	tool, ok := raw.(*dispatchTasksTool)
+	tool, ok := raw.(*cliorchestrate.DispatchTasksToolForTest)
 	if !ok {
 		d.Close()
 		t.Fatalf("dispatch_tasks type %T", raw)
@@ -102,7 +103,7 @@ func newSchemaDispatchTool(t *testing.T, replies []string, cfg config.SubagentCo
 	return tool, d
 }
 
-func dispatchWithSchema(t *testing.T, tool *dispatchTasksTool, schema map[string]any) []map[string]any {
+func dispatchWithSchema(t *testing.T, tool *cliorchestrate.DispatchTasksToolForTest, schema map[string]any) []map[string]any {
 	t.Helper()
 	args := map[string]any{
 		"tasks": []map[string]any{{

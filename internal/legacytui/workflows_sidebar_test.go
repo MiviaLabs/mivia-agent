@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/MiviaLabs/mivia-agent/internal/cli"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -273,10 +274,10 @@ func TestWorkflowSidebarLoadSortsActiveFirst(t *testing.T) {
 func TestWorkflowSidebarLoadLedgerFailure(t *testing.T) {
 	root, _, _, closeFn, _, _ := openEventsFixtureWithRun(t, "wfr-LOADFAIL1")
 	defer closeFn()
-	original := cli.WorkflowRunsList
-	t.Cleanup(func() { cli.WorkflowRunsList = original })
+	original := cliworkflow.WorkflowRunsList
+	t.Cleanup(func() { cliworkflow.WorkflowRunsList = original })
 	sentinel := errors.New("injected list failure")
-	cli.WorkflowRunsList = func(ctx context.Context, repo workflowledger.Repository, filter ...workflowledger.RunStatus) ([]workflowledger.RunSnapshot, error) {
+	cliworkflow.WorkflowRunsList = func(ctx context.Context, repo workflowledger.Repository, filter ...workflowledger.RunStatus) ([]workflowledger.RunSnapshot, error) {
 		return nil, sentinel
 	}
 	if _, err := workflowSidebarLoad(root, ""); err == nil {

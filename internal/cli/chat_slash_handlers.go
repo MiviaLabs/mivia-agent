@@ -10,6 +10,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
 
@@ -329,30 +330,30 @@ func handleSlashResume(cmd string, fields []string, term *Terminal) (bool, bool,
 	}
 	if len(fields) < 2 {
 		// No argument: list interrupted runs.
-		c := FindCoordinator()
+		c := cliorchestrate.FindCoordinator()
 		if c == nil {
 			term.WriteString("\nno active orchestration runs")
 			return true, false, nil
 		}
-		runs, err := ListInterruptedRuns(context.Background(), c)
+		runs, err := cliorchestrate.ListInterruptedRuns(context.Background(), c)
 		if err != nil {
 			term.WriteString(fmt.Sprintf("\nerror: %v", err))
 			return true, false, nil
 		}
-		term.WriteString("\n" + FormatListedRuns(runs))
+		term.WriteString("\n" + cliorchestrate.FormatListedRuns(runs))
 		return true, false, nil
 	}
 	// With a run ID: show confirmation and resume.
 	runID := fields[1]
-	c := FindCoordinator()
+	c := cliorchestrate.FindCoordinator()
 	if c == nil {
 		term.WriteString("\nno active orchestration runs")
 		return true, false, nil
 	}
-	d := FindDispatcher()
-	_, err := ResumeRun(context.Background(), c, d, runID, nil)
+	d := cliorchestrate.FindDispatcher()
+	_, err := cliorchestrate.ResumeRun(context.Background(), c, d, runID, nil)
 	if err != nil {
-		term.WriteString(fmt.Sprintf("\n%v", FormatResumeError(err, runID)))
+		term.WriteString(fmt.Sprintf("\n%v", cliorchestrate.FormatResumeError(err, runID)))
 		return true, false, nil
 	}
 	term.WriteString(fmt.Sprintf("\nrun %s resumed", runID))

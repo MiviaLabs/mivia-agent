@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
 	"io"
 	"log"
 	"time"
@@ -13,7 +14,7 @@ import (
 
 // workflowAutoDeliveryAttemptTimeout bounds one stack-drive attempt (merge-wait
 // polls plus the drive loop-top check; the deliver attempt after it gets its
-// own bound, workflowDeliveryTimeout). It deliberately does NOT bound the
+// own bound, cliworkflow.WorkflowDeliveryTimeout). It deliberately does NOT bound the
 // in-process chunk/integration controller runs (each has its own workflow
 // deadline, possibly none) or the git/gh subprocess calls: aborting those at
 // the session bound would kill legitimate long chunk runs, worse than holding
@@ -43,7 +44,7 @@ var workflowAutoDeliveryAttemptTimeout = 30 * time.Minute
 func sessionAutoDeliveryRepairLoop(runCtx context.Context, repo workflowledger.Repository, root string, res *config.Resolved, store *storage.SQLite, runID string, advance func(context.Context) (workflowledger.RunSnapshot, error), driveStack func(context.Context) (bool, error), deliverPlanRun bool) {
 	snap, err := advance(runCtx)
 	if err != nil {
-		settleSessionRunFailure(repo, runID, err)
+		cliworkflow.SettleSessionRunFailure(repo, runID, err)
 		return
 	}
 	for {
@@ -69,7 +70,7 @@ func sessionAutoDeliveryRepairLoop(runCtx context.Context, repo workflowledger.R
 				// are recorded in the ledger; settle the run succeeded (the same
 				// terminal a delivered run reaches) and stop - nothing is
 				// published for this run.
-				if err := settlePlanRunSkippedDelivery(context.Background(), repo, runID); err != nil {
+				if err := cliworkflow.SettlePlanRunSkippedDelivery(context.Background(), repo, runID); err != nil {
 					log.Printf("workflow: run %s settle skipped plan run: %v", runID, err)
 				}
 				return
@@ -88,7 +89,7 @@ func sessionAutoDeliveryRepairLoop(runCtx context.Context, repo workflowledger.R
 		}
 		snap, err = advance(runCtx)
 		if err != nil {
-			settleSessionRunFailure(repo, runID, err)
+			cliworkflow.SettleSessionRunFailure(repo, runID, err)
 			return
 		}
 	}
@@ -106,13 +107,13 @@ func sessionAutoDeliveryRepairLoop(runCtx context.Context, repo workflowledger.R
 func sessionAutoDeliveryAttempt(runCtx context.Context, repo workflowledger.Repository, root string, res *config.Resolved, store *storage.SQLite, runID string) (cont bool) {
 	// A FRESH delivery bound, never the caller's (possibly expired) driveCtx:
 	// the delivery claim heartbeat must not die mid-publish.
-	deliverCtx, cancelDeliver := context.WithTimeout(runCtx, workflowDeliveryTimeout)
-	deliverErr := deliverRunWithStore(deliverCtx, root, res, store, repo, runID, true, false, io.Discard, io.Discard)
+	deliverCtx, cancelDeliver := context.WithTimeout(runCtx, cliworkflow.WorkflowDeliveryTimeout)
+	deliverErr := cliworkflow.DeliverRunWithStore(deliverCtx, root, res, store, repo, runID, true, false, io.Discard, io.Discard)
 	cancelDeliver()
 	// Transport faults stay unrecorded (same rule as settleDeliveryError):
 	// they say nothing about the change, and a later deliver succeeds.
-	if deliverErr != nil && !deliveryFaultTransient(deliverErr) {
-		recordAutoDeliveryFailure(context.Background(), repo, runID, deliverErr)
+	if deliverErr != nil && !cliworkflow.DeliveryFaultTransient(deliverErr) {
+		cliworkflow.RecordAutoDeliveryFailure(context.Background(), repo, runID, deliverErr)
 	}
 	fresh, getErr := repo.GetRun(context.Background(), runID)
 	if getErr != nil {

@@ -9,6 +9,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
 	"io"
 	"time"
 
@@ -18,19 +19,19 @@ import (
 // stackChunkResumeFn resumes an orphaned in-flight chunk run (F7 self-heal
 // in driveChunkInFlight). It is set in init(), not by a direct var
 // initializer, to avoid a package-initialization cycle: driveChunkInFlight
-// is reached from driveStackToCompletion's call graph, but executeWorkflowResume's
+// is reached from driveStackToCompletion's call graph, but cliworkflow.ExecuteWorkflowResume's
 // own call graph reaches back into workflowStackDriveToCompletion via
 // finishWorkflowResumeSettled -> maybeDriveSettledStack (see that var's
 // comment in workflow_run.go for the mirror-image problem it already
-// solves). A direct `var stackChunkResumeFn = executeWorkflowResume` here
+// solves). A direct `var stackChunkResumeFn = cliworkflow.ExecuteWorkflowResume` here
 // would close that loop and fail with "initialization cycle"; Go's
 // dependency analysis only traces variable INITIALIZER expressions, so a
 // nil-initialized var assigned inside init() carries no such dependency.
-// Production always resolves to executeWorkflowResume; tests may override it.
+// Production always resolves to cliworkflow.ExecuteWorkflowResume; tests may override it.
 var stackChunkResumeFn func(runID, root, configPath string, force, allowPublish, acceptVerifierChange, acceptSkillChange bool, stdout, stderr io.Writer) error
 
 func init() {
-	stackChunkResumeFn = executeWorkflowResume
+	stackChunkResumeFn = cliworkflow.ExecuteWorkflowResume
 }
 
 // driveChunkInFlight handles a chunk whose run is already pending/running/
@@ -48,13 +49,13 @@ func init() {
 // self-heals by resuming it through the exact non-force expired-claim
 // takeover `mivia workflow resume` already uses (claimWorkflowResumeHandoff),
 // instead of waiting for a manual resume or the >=2min session sweep.
-func driveChunkInFlight(ctx context.Context, prepared *preparedWorkflowRun, ledger *workflowledger.Store, stackID, chunkID string, run workflowledger.RunSnapshot, allowPublish bool, stdout, stderr io.Writer) (bool, error) {
-	holder, acquiredAt, ok, claimErr := prepared.repo.GetRunClaim(ctx, run.RunID)
+func driveChunkInFlight(ctx context.Context, prepared *cliworkflow.PreparedWorkflowRun, ledger *workflowledger.Store, stackID, chunkID string, run workflowledger.RunSnapshot, allowPublish bool, stdout, stderr io.Writer) (bool, error) {
+	holder, acquiredAt, ok, claimErr := prepared.Repo.GetRunClaim(ctx, run.RunID)
 	if claimErr == nil && ok && time.Since(acquiredAt) <= workflowledger.DefaultClaimLease {
 		fmt.Fprintf(stdout, "chunk=%s run=%s already in flight (%s), held by %s, refreshed %s ago; re-run drive after it settles\n", chunkID, run.RunID, run.Status, holder, time.Since(acquiredAt).Round(time.Second))
 		return true, nil
 	}
-	if err := stackChunkResumeFn(run.RunID, prepared.root, prepared.res.ConfigPath, false, allowPublish, false, false, stdout, stderr); err != nil {
+	if err := stackChunkResumeFn(run.RunID, prepared.Root, prepared.Res.ConfigPath, false, allowPublish, false, false, stdout, stderr); err != nil {
 		// Most commonly a genuine race: another executor claimed the run
 		// between the probe above and this call. Fall back to the honest
 		// park message rather than halting the stack over it.
@@ -66,7 +67,7 @@ func driveChunkInFlight(ctx context.Context, prepared *preparedWorkflowRun, ledg
 
 // driveChunkResumedOutcome maps a resumed chunk run's final status to the
 // stack task ledger. Unlike driveChunk's fresh-admission switch, this never
-// triggers deliverRunWithStore itself: executeWorkflowResume already drove
+// triggers cliworkflow.DeliverRunWithStore itself: cliworkflow.ExecuteWorkflowResume already drove
 // delivery (via finishWorkflowResumeSettled) when the run reached
 // delivery_pending during the resume, so RunStatusSucceeded here covers both
 // an already-delivered run and a confirmed no-diff run - chunkSettleAfterDelivery
@@ -76,14 +77,14 @@ func driveChunkInFlight(ctx context.Context, prepared *preparedWorkflowRun, ledg
 // records. A still-delivery_pending run means the resume did not deliver
 // (no --allow-publish, policy not auto): that mirrors driveChunk's own
 // "awaits the publish grant" branch exactly.
-func driveChunkResumedOutcome(ctx context.Context, prepared *preparedWorkflowRun, ledger *workflowledger.Store, stackID, chunkID, runID string, stdout io.Writer) (bool, error) {
-	fresh, err := prepared.repo.GetRun(ctx, runID)
+func driveChunkResumedOutcome(ctx context.Context, prepared *cliworkflow.PreparedWorkflowRun, ledger *workflowledger.Store, stackID, chunkID, runID string, stdout io.Writer) (bool, error) {
+	fresh, err := prepared.Repo.GetRun(ctx, runID)
 	if err != nil {
 		return true, fmt.Errorf("chunk %s: read run status after resume: %w", chunkID, err)
 	}
 	switch fresh.Status {
 	case workflowledger.RunStatusSucceeded:
-		fmt.Fprintln(stdout, chunkSettleAfterDelivery(prepared.repo, ledger, stackID, chunkID, fresh))
+		fmt.Fprintln(stdout, chunkSettleAfterDelivery(prepared.Repo, ledger, stackID, chunkID, fresh))
 		return true, nil
 	case workflowledger.RunStatusDeliveryPending:
 		_ = ledger.TransitionTask(stackID, chunkID, stackStatusReviewed)
@@ -109,17 +110,17 @@ func driveChunkResumedOutcome(ctx context.Context, prepared *preparedWorkflowRun
 // the same liveness-probe and auto-resume self-heal as driveChunkInFlight.
 // Integration runs have no task ledger entry, so this function does not call
 // driveChunkResumedOutcome; it only probes the claim and resumes.
-func driveIntegrationInFlight(ctx context.Context, prepared *preparedWorkflowRun, run workflowledger.RunSnapshot, allowPublish bool, stdout, stderr io.Writer) error {
-	holder, acquiredAt, ok, claimErr := prepared.repo.GetRunClaim(ctx, run.RunID)
+func driveIntegrationInFlight(ctx context.Context, prepared *cliworkflow.PreparedWorkflowRun, run workflowledger.RunSnapshot, allowPublish bool, stdout, stderr io.Writer) error {
+	holder, acquiredAt, ok, claimErr := prepared.Repo.GetRunClaim(ctx, run.RunID)
 	if claimErr == nil && ok && time.Since(acquiredAt) <= workflowledger.DefaultClaimLease {
 		fmt.Fprintf(stdout, "integration run=%s already in flight (%s), held by %s, refreshed %s ago; re-run drive after it settles\n", run.RunID, run.Status, holder, time.Since(acquiredAt).Round(time.Second))
 		return nil
 	}
-	if err := stackChunkResumeFn(run.RunID, prepared.root, prepared.res.ConfigPath, false, allowPublish, false, false, stdout, stderr); err != nil {
+	if err := stackChunkResumeFn(run.RunID, prepared.Root, prepared.Res.ConfigPath, false, allowPublish, false, false, stdout, stderr); err != nil {
 		fmt.Fprintf(stdout, "integration run=%s already in flight (%s); auto-resume failed (%v); re-run drive after it settles\n", run.RunID, run.Status, err)
 		return nil
 	}
-	fresh, err := prepared.repo.GetRun(ctx, run.RunID)
+	fresh, err := prepared.Repo.GetRun(ctx, run.RunID)
 	if err != nil {
 		return fmt.Errorf("integration run: read status after resume: %w", err)
 	}
@@ -134,7 +135,7 @@ func driveIntegrationInFlight(ctx context.Context, prepared *preparedWorkflowRun
 // stack stalls. Each stale-claim chunk is routed to driveChunkInFlight which
 // resumes it through the same non-force expired-claim takeover path that
 // `mivia workflow resume` uses.
-func driveStackResumeStaleClaims(ctx context.Context, prepared *preparedWorkflowRun, ledger *workflowledger.Store, stackID string, order []string, stdout, stderr io.Writer) error {
+func driveStackResumeStaleClaims(ctx context.Context, prepared *cliworkflow.PreparedWorkflowRun, ledger *workflowledger.Store, stackID string, order []string, stdout, stderr io.Writer) error {
 	for _, chunkID := range order {
 		t, err := ledger.GetTask(stackID, chunkID)
 		if err != nil {
@@ -143,14 +144,14 @@ func driveStackResumeStaleClaims(ctx context.Context, prepared *preparedWorkflow
 		if t.Status != stackStatusRunning {
 			continue
 		}
-		run, found, err := stackRunRef(prepared.repo, stackID, chunkID)
+		run, found, err := stackRunRef(prepared.Repo, stackID, chunkID)
 		if err != nil || !found {
 			continue
 		}
 		if !isResumableRunStatus(run.Status) {
 			continue
 		}
-		if !stackRunClaimStale(prepared.repo, run.RunID) {
+		if !stackRunClaimStale(prepared.Repo, run.RunID) {
 			continue
 		}
 		fmt.Fprintf(stdout, "chunk=%s task is running with stale claim; auto-resuming\n", chunkID)

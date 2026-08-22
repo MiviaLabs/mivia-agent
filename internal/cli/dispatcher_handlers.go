@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
@@ -29,10 +30,10 @@ func registerOneShotHandlers(d *runtime.Dispatcher, comp provider.Completer, mod
 		MaxContextTokens: maxContextTokens, MaxTokens: maxTokens,
 		MaxContextTokensFunc: budget,
 	}
-	if err := d.Register(runtime.Subagent, HandlerDelegate, handler); err != nil {
+	if err := d.Register(runtime.Subagent, cliorchestrate.HandlerDelegate, handler); err != nil {
 		return fmt.Errorf("register delegate handler: %w", err)
 	}
-	if err := d.Register(runtime.Subagent, HandlerOneshot, handler); err != nil {
+	if err := d.Register(runtime.Subagent, cliorchestrate.HandlerOneshot, handler); err != nil {
 		return fmt.Errorf("register oneshot handler: %w", err)
 	}
 	return nil
@@ -61,7 +62,7 @@ func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp p
 		Completer: comp, FullRegistry: reg, Dispatcher: d, Model: model,
 		Reasoning: dial.static, ReasoningFunc: dial.live,
 		SystemPrompt: multiSysPrompt, MaxSteps: cfg.NestedSteps,
-		ToolTimeout: toolTO, TotalTimeout: totalTO, MaxTokens: defaultMaxTokens, MaxContextTokens: maxContextTokens,
+		ToolTimeout: toolTO, TotalTimeout: totalTO, MaxTokens: cliorchestrate.DefaultMaxTokens, MaxContextTokens: maxContextTokens,
 		MaxToolResultChars:        budgets.perCall,
 		BatchResultBudgetBytes:    budgets.perBatch,
 		RefOnlyTools:              budgets.refOnlyTools,
@@ -79,7 +80,7 @@ func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp p
 	if maxTokens != nil && *maxTokens > 0 {
 		h.MaxTokens = *maxTokens
 	}
-	if err := d.Register(runtime.Subagent, HandlerMultiStep, h); err != nil {
+	if err := d.Register(runtime.Subagent, cliorchestrate.HandlerMultiStep, h); err != nil {
 		return fmt.Errorf("register multi-step handler: %w", err)
 	}
 	return nil
@@ -131,7 +132,7 @@ func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp prov
 			ToolTimeout:               toolTO,
 			RequestTimeout:            requestTO,
 			SteerWatchdog:             time.Duration(cfg.Messaging.SteerWatchdogSecondsResolved()) * time.Second,
-			MaxTokens:                 defaultMaxTokens,
+			MaxTokens:                 cliorchestrate.DefaultMaxTokens,
 			MaxContextTokens:          maxContextTokens,
 			MaxContextTokensFunc:      budget,
 			MaxToolResultChars:        budgets.perCall,

@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"strings"
 	"testing"
 	"time"
@@ -43,19 +44,13 @@ func startBlockedOrchestration(t *testing.T, sessionID string) (release func()) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	runHandles.Store(snap.RunID, &orchestrationHandle{
-		coord:      c,
-		handle:     h,
-		repo:       repo,
-		dispatcher: dispatcher,
-		principal:  orchestrationPrincipal{sessionID: sessionID},
-	})
+	cliorchestrate.StoreTestRunHandle(snap.RunID, c, h, repo, dispatcher, sessionID)
 	closed := false
 	t.Cleanup(func() {
 		if !closed {
 			close(gate)
 		}
-		runHandles.Delete(snap.RunID)
+		cliorchestrate.RunHandlesForTest.Delete(snap.RunID)
 	})
 	return func() {
 		if closed {

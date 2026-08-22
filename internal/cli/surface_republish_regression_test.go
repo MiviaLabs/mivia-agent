@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"io"
 	"os"
 	"path/filepath"
@@ -184,7 +185,7 @@ func TestNestedMultiStepIsScopedFromTheAuthorityRegistry(t *testing.T) {
 	if _, ok := fixture.sess.Tools.Get("grep"); ok {
 		t.Fatal("precondition: grep must be deferred off the advertised surface")
 	}
-	names := nestedAdvertisedTools(t, fixture, HandlerMultiStep)
+	names := nestedAdvertisedTools(t, fixture, cliorchestrate.HandlerMultiStep)
 	if !slices.Contains(names, "grep") {
 		t.Fatalf("nested multi_step tools = %v, want the root's deferred grep: a core tier narrowed delegation", names)
 	}
@@ -198,7 +199,7 @@ func TestNestedMultiStepIsScopedFromTheAuthorityRegistry(t *testing.T) {
 func TestNestedMultiStepSeesTheDispatcherOwnedTools(t *testing.T) {
 	completer := &scriptedCompleter{turns: []provider.Response{{Content: "done"}}}
 	fixture := newDeferredFixture(t, completer, []string{"read_file"}, []string{"read_file", "grep"})
-	names := nestedAdvertisedTools(t, fixture, HandlerMultiStep)
+	names := nestedAdvertisedTools(t, fixture, cliorchestrate.HandlerMultiStep)
 	if !slices.Contains(names, "read_output") {
 		t.Fatalf("nested multi_step tools = %v, want read_output adopted into the authority registry", names)
 	}
@@ -332,7 +333,7 @@ func TestSessionCleanupClosesTheLiveDispatcher(t *testing.T) {
 
 	fixture.cleanup()
 
-	if _, leaked := coordinators.Load(live); leaked {
+	if _, leaked := cliorchestrate.CoordinatorsForTest.Load(live); leaked {
 		t.Fatal("cleanup closed a stale dispatcher; the live one's OnClose hooks never ran")
 	}
 }

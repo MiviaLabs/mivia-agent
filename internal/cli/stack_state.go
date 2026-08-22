@@ -182,7 +182,7 @@ func chunkRunNoDiff(repo workflowledger.Repository, run workflowledger.RunSnapsh
 // chunkSettleAfterDelivery transitions the chunk task after an in-drive
 // delivery attempt and returns the status line the driver should print. A
 // no_diff outcome marks the chunk merged; a real publish (fresh.Status ==
-// succeeded, per chunkDeliverySucceeded) marks it published. deliverRunWithStore
+// succeeded, per chunkDeliverySucceeded) marks it published. cliworkflow.DeliverRunWithStore
 // returns nil both on a real publish and on a repairable rejection that
 // ReopenForRepair re-entered (the run settles back to running, not
 // succeeded - see chunkDeliverySucceeded's doc comment and

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/MiviaLabs/mivia-agent/internal/cli"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -229,10 +230,10 @@ func TestIntegrationWorkflowsSidebarLedgerFailureKeepsStaleRows(t *testing.T) {
 	m, _, _, closeFn := integrationWorkflowModel(t)
 	defer closeFn()
 	m.handleSlash("/workflows")
-	original := cli.WorkflowRunsList
-	t.Cleanup(func() { cli.WorkflowRunsList = original })
+	original := cliworkflow.WorkflowRunsList
+	t.Cleanup(func() { cliworkflow.WorkflowRunsList = original })
 	sentinel := errors.New("injected list failure")
-	cli.WorkflowRunsList = func(ctx context.Context, repo workflowledger.Repository, filter ...workflowledger.RunStatus) ([]workflowledger.RunSnapshot, error) {
+	cliworkflow.WorkflowRunsList = func(ctx context.Context, repo workflowledger.Repository, filter ...workflowledger.RunStatus) ([]workflowledger.RunSnapshot, error) {
 		return nil, sentinel
 	}
 	m.workflowsSidebar.rows = []workflowRunRow{{run: workflowledger.RunSnapshot{RunID: "wfr-STALE1", WorkflowName: "test-wf"}}}

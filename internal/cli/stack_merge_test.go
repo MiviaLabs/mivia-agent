@@ -12,6 +12,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
 	"io"
 	"strings"
 	"testing"
@@ -45,7 +46,7 @@ func TestWaitForChunkMergesHonorsCancelledContext(t *testing.T) {
 	cancel() // pre-cancelled: the wait must return immediately
 	done := make(chan error, 1)
 	go func() {
-		done <- waitForChunkMerges(ctx, &preparedWorkflowRun{repo: repo}, ledger, neverMergedChecker{}, "stack-ctx", []ChunkPlan{{ID: "c1"}}, "", io.Discard, io.Discard)
+		done <- waitForChunkMerges(ctx, &cliworkflow.PreparedWorkflowRun{Repo: repo}, ledger, neverMergedChecker{}, "stack-ctx", []ChunkPlan{{ID: "c1"}}, "", io.Discard, io.Discard)
 	}()
 	select {
 	case err := <-done:
@@ -76,7 +77,7 @@ func TestWaitForIntegrationMergeHonorsCancelledContext(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // pre-cancelled: the wait must return immediately
-	prepared := &preparedWorkflowRun{repo: repo}
+	prepared := &cliworkflow.PreparedWorkflowRun{Repo: repo}
 	done := make(chan error, 1)
 	go func() {
 		done <- waitForIntegrationMerge(ctx, prepared, repo, neverMergedChecker{}, "stack-ctx", "approve", io.Discard, io.Discard)
@@ -249,7 +250,7 @@ func TestAutoDeliverReviewedChunksRetriesOrphanedDelivery(t *testing.T) {
 	t.Cleanup(func() { workflowStackDeliverRun = prevDeliver })
 	workflowStackDeliverRun = deliver.Deliver
 
-	prepared := &preparedWorkflowRun{repo: repo}
+	prepared := &cliworkflow.PreparedWorkflowRun{Repo: repo}
 	var stdout bytes.Buffer
 	if err := autoDeliverReviewedChunks(context.Background(), prepared, repo, ledger, stackID, &stdout, io.Discard); err != nil {
 		t.Fatalf("autoDeliverReviewedChunks() error = %v; stdout = %q", err, stdout.String())
@@ -259,7 +260,7 @@ func TestAutoDeliverReviewedChunksRetriesOrphanedDelivery(t *testing.T) {
 		t.Fatal("orphaned reviewed chunk's run was never re-delivered")
 	}
 	if !deliver.allowPublish {
-		t.Fatalf("deliverRunWithStore allowPublish = %v, want true", deliver.allowPublish)
+		t.Fatalf("cliworkflow.DeliverRunWithStore allowPublish = %v, want true", deliver.allowPublish)
 	}
 	task, err := ledger.GetTask(stackID, "a")
 	if err != nil {
@@ -314,7 +315,7 @@ func TestDriveStackAutoRedeliverGatesOnPolicy(t *testing.T) {
 			t.Cleanup(func() { workflowStackDeliverRun = prevDeliver })
 			workflowStackDeliverRun = deliver.Deliver
 
-			prepared := &preparedWorkflowRun{repo: repo}
+			prepared := &cliworkflow.PreparedWorkflowRun{Repo: repo}
 			if err := driveStackAutoRedeliver(context.Background(), prepared, ledger, stackID, tc.policy, io.Discard, io.Discard); err != nil {
 				t.Fatalf("driveStackAutoRedeliver() error = %v", err)
 			}
@@ -347,9 +348,9 @@ func TestWaitIntegrationRunSettledAutoPolicyDeliversWithoutAllowPublish(t *testi
 	t.Cleanup(func() { workflowStackMergePR = prevMerge })
 	workflowStackMergePR = merges.Merge
 
-	prevNewPR := workflowDeliverNewPR
-	t.Cleanup(func() { workflowDeliverNewPR = prevNewPR })
-	workflowDeliverNewPR = func() delivery.PRClient { return &fakeFindPRClient{ref: &delivery.PRRef{RemoteID: "123"}} }
+	prevNewPR := cliworkflow.WorkflowDeliverNewPR
+	t.Cleanup(func() { cliworkflow.WorkflowDeliverNewPR = prevNewPR })
+	cliworkflow.WorkflowDeliverNewPR = func() delivery.PRClient { return &fakeFindPRClient{ref: &delivery.PRRef{RemoteID: "123"}} }
 
 	checker := &immediateMergedChecker{}
 	var stdout bytes.Buffer
@@ -359,7 +360,7 @@ func TestWaitIntegrationRunSettledAutoPolicyDeliversWithoutAllowPublish(t *testi
 	root, _ := scratchStackRepo(t)
 	gitRun(t, root, "checkout", "-b", "wf/wt-integration")
 	gitRun(t, root, "push", "origin", "wf/wt-integration")
-	prepared := &preparedWorkflowRun{repo: repo, root: root, compiled: &definition.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}}}
+	prepared := &cliworkflow.PreparedWorkflowRun{Repo: repo, Root: root, Compiled: &definition.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}}}
 
 	if err := waitIntegrationRunSettled(context.Background(), prepared, ledger, checker, stackID, "auto", false, &stdout, io.Discard); err != nil {
 		t.Fatalf("waitIntegrationRunSettled() error = %v; stdout = %q", err, stdout.String())
@@ -369,7 +370,7 @@ func TestWaitIntegrationRunSettledAutoPolicyDeliversWithoutAllowPublish(t *testi
 		t.Fatal("integration run was not delivered under merge_policy=auto without --allow-publish")
 	}
 	if !deliver.allowPublish {
-		t.Fatalf("deliverRunWithStore allowPublish = %v, want true", deliver.allowPublish)
+		t.Fatalf("cliworkflow.DeliverRunWithStore allowPublish = %v, want true", deliver.allowPublish)
 	}
 	if merges.called == 0 {
 		t.Fatal("integration PR was not auto-merged after delivery")
@@ -413,9 +414,9 @@ func TestWaitIntegrationRunSettledAutoPolicyMergesExternallyDeliveredRun(t *test
 	t.Cleanup(func() { workflowStackMergePR = prevMerge })
 	workflowStackMergePR = merges.Merge
 
-	prevNewPR := workflowDeliverNewPR
-	t.Cleanup(func() { workflowDeliverNewPR = prevNewPR })
-	workflowDeliverNewPR = func() delivery.PRClient { return &fakeFindPRClient{ref: &delivery.PRRef{RemoteID: "123"}} }
+	prevNewPR := cliworkflow.WorkflowDeliverNewPR
+	t.Cleanup(func() { cliworkflow.WorkflowDeliverNewPR = prevNewPR })
+	cliworkflow.WorkflowDeliverNewPR = func() delivery.PRClient { return &fakeFindPRClient{ref: &delivery.PRRef{RemoteID: "123"}} }
 
 	checker := &immediateMergedChecker{}
 	var stdout bytes.Buffer
@@ -425,7 +426,7 @@ func TestWaitIntegrationRunSettledAutoPolicyMergesExternallyDeliveredRun(t *test
 	root, _ := scratchStackRepo(t)
 	gitRun(t, root, "checkout", "-b", "wf/wt-integration")
 	gitRun(t, root, "push", "origin", "wf/wt-integration")
-	prepared := &preparedWorkflowRun{repo: repo, root: root, compiled: &definition.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}}}
+	prepared := &cliworkflow.PreparedWorkflowRun{Repo: repo, Root: root, Compiled: &definition.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}}}
 
 	if err := waitIntegrationRunSettled(context.Background(), prepared, ledger, checker, stackID, "auto", false, &stdout, io.Discard); err != nil {
 		t.Fatalf("waitIntegrationRunSettled() error = %v; stdout = %q", err, stdout.String())
@@ -463,7 +464,7 @@ func TestWaitIntegrationRunSettledNoDiffIntegrationCompletesWithoutMerge(t *test
 
 	checker := &immediateMergedChecker{}
 	var stdout bytes.Buffer
-	prepared := &preparedWorkflowRun{repo: repo}
+	prepared := &cliworkflow.PreparedWorkflowRun{Repo: repo}
 
 	if err := waitIntegrationRunSettled(context.Background(), prepared, ledger, checker, stackID, "auto", false, &stdout, io.Discard); err != nil {
 		t.Fatalf("waitIntegrationRunSettled() error = %v; stdout = %q", err, stdout.String())
@@ -501,7 +502,7 @@ func TestWaitIntegrationRunSettledGrantPolicyPausesForPublishGrant(t *testing.T)
 
 	checker := &immediateMergedChecker{}
 	var stdout bytes.Buffer
-	prepared := &preparedWorkflowRun{repo: repo}
+	prepared := &cliworkflow.PreparedWorkflowRun{Repo: repo}
 
 	if err := waitIntegrationRunSettled(context.Background(), prepared, ledger, checker, stackID, "approve", false, &stdout, io.Discard); err != nil {
 		t.Fatalf("waitIntegrationRunSettled() error = %v; stdout = %q", err, stdout.String())
@@ -552,7 +553,7 @@ func TestWaitIntegrationRunSettledTerminalFailureReportsError(t *testing.T) {
 	workflowStackMergePR = merges.Merge
 
 	checker := &immediateMergedChecker{}
-	prepared := &preparedWorkflowRun{repo: repo}
+	prepared := &cliworkflow.PreparedWorkflowRun{Repo: repo}
 
 	err = waitIntegrationRunSettled(context.Background(), prepared, ledger, checker, stackID, "auto", false, io.Discard, io.Discard)
 	if err == nil {
@@ -601,9 +602,9 @@ func TestAutoMergeOnePermanentErrorHaltPoll(t *testing.T) {
 	t.Cleanup(func() { workflowStackMergePR = prevMerge })
 	workflowStackMergePR = merges.Merge
 
-	prevNewPR := workflowDeliverNewPR
-	t.Cleanup(func() { workflowDeliverNewPR = prevNewPR })
-	workflowDeliverNewPR = func() delivery.PRClient { return &fakeFindPRClient{ref: &delivery.PRRef{RemoteID: "123"}} }
+	prevNewPR := cliworkflow.WorkflowDeliverNewPR
+	t.Cleanup(func() { cliworkflow.WorkflowDeliverNewPR = prevNewPR })
+	cliworkflow.WorkflowDeliverNewPR = func() delivery.PRClient { return &fakeFindPRClient{ref: &delivery.PRRef{RemoteID: "123"}} }
 
 	// A real repo whose origin carries the chunk's head branch, so the
 	// overlap guard genuinely evaluates (and passes) instead of failing its
@@ -611,7 +612,7 @@ func TestAutoMergeOnePermanentErrorHaltPoll(t *testing.T) {
 	root, _ := scratchStackRepo(t)
 	gitRun(t, root, "checkout", "-b", "wf/wt-perm-fail")
 	gitRun(t, root, "push", "origin", "wf/wt-perm-fail")
-	prepared := &preparedWorkflowRun{repo: repo, root: root, compiled: &definition.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}}}
+	prepared := &cliworkflow.PreparedWorkflowRun{Repo: repo, Root: root, Compiled: &definition.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}}}
 	var stdout bytes.Buffer
 	err = autoMergeOne(context.Background(), prepared, repo, stackID, "c1", &stdout, io.Discard)
 	if err == nil {
@@ -657,9 +658,9 @@ func TestAutoMergeOneRetriableErrorKeepsPolling(t *testing.T) {
 	t.Cleanup(func() { workflowStackMergePR = prevMerge })
 	workflowStackMergePR = merges.Merge
 
-	prevNewPR := workflowDeliverNewPR
-	t.Cleanup(func() { workflowDeliverNewPR = prevNewPR })
-	workflowDeliverNewPR = func() delivery.PRClient { return &fakeFindPRClient{ref: &delivery.PRRef{RemoteID: "123"}} }
+	prevNewPR := cliworkflow.WorkflowDeliverNewPR
+	t.Cleanup(func() { cliworkflow.WorkflowDeliverNewPR = prevNewPR })
+	cliworkflow.WorkflowDeliverNewPR = func() delivery.PRClient { return &fakeFindPRClient{ref: &delivery.PRRef{RemoteID: "123"}} }
 
 	// A real repo whose origin carries the chunk's head branch, so the
 	// overlap guard genuinely evaluates (and passes) instead of failing its
@@ -667,7 +668,7 @@ func TestAutoMergeOneRetriableErrorKeepsPolling(t *testing.T) {
 	root, _ := scratchStackRepo(t)
 	gitRun(t, root, "checkout", "-b", "wf/wt-retry")
 	gitRun(t, root, "push", "origin", "wf/wt-retry")
-	prepared := &preparedWorkflowRun{repo: repo, root: root, compiled: &definition.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}}}
+	prepared := &cliworkflow.PreparedWorkflowRun{Repo: repo, Root: root, Compiled: &definition.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}}}
 	var stdout bytes.Buffer
 	err = autoMergeOne(context.Background(), prepared, repo, stackID, "c1", &stdout, io.Discard)
 	if err != nil {
@@ -716,15 +717,15 @@ func TestAutoMergeOneOverlapProbeFailureSkipsMerge(t *testing.T) {
 	t.Cleanup(func() { workflowStackMergePR = prevMerge })
 	workflowStackMergePR = merges.Merge
 
-	prevNewPR := workflowDeliverNewPR
-	t.Cleanup(func() { workflowDeliverNewPR = prevNewPR })
-	workflowDeliverNewPR = func() delivery.PRClient { return &fakeFindPRClient{ref: &delivery.PRRef{RemoteID: "123"}} }
+	prevNewPR := cliworkflow.WorkflowDeliverNewPR
+	t.Cleanup(func() { cliworkflow.WorkflowDeliverNewPR = prevNewPR })
+	cliworkflow.WorkflowDeliverNewPR = func() delivery.PRClient { return &fakeFindPRClient{ref: &delivery.PRRef{RemoteID: "123"}} }
 
-	prevGit := workflowDeliverGit
-	t.Cleanup(func() { workflowDeliverGit = prevGit })
-	workflowDeliverGit = errorGitRunner{err: errors.New("test: fetch failed")}
+	prevGit := cliworkflow.WorkflowDeliverGit
+	t.Cleanup(func() { cliworkflow.WorkflowDeliverGit = prevGit })
+	cliworkflow.WorkflowDeliverGit = errorGitRunner{err: errors.New("test: fetch failed")}
 
-	prepared := &preparedWorkflowRun{repo: repo, root: t.TempDir(), compiled: &definition.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}}}
+	prepared := &cliworkflow.PreparedWorkflowRun{Repo: repo, Root: t.TempDir(), Compiled: &definition.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}}}
 	var stdout bytes.Buffer
 	if err := autoMergeOne(context.Background(), prepared, repo, stackID, "c1", &stdout, io.Discard); err != nil {
 		t.Fatalf("autoMergeOne errored on an overlap probe failure: %v; want keep-polling nil", err)

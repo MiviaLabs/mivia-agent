@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -35,7 +36,7 @@ func TestFeatureDeliveryWorkflowContract(t *testing.T) {
 		t.Fatalf("validate committed workflow schemas: %v", err)
 	}
 	for _, step := range workflow.Steps {
-		if _, _, _, _, err := loadStepReferences(base, step, nil); err != nil {
+		if _, _, _, _, err := cliworkflow.LoadStepReferences(base, step, nil); err != nil {
 			t.Fatalf("load references for step %q: %v", step.ID, err)
 		}
 	}

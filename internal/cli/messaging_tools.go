@@ -9,6 +9,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agentmsg"
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
@@ -122,7 +123,7 @@ func (t *postMessageTool) Execute(ctx context.Context, args json.RawMessage) (st
 	if !ok {
 		return "", fmt.Errorf("post_message requires a running task identity")
 	}
-	c := initCoordinator(t.dispatcher, t.cfg, t.repo)
+	c := cliorchestrate.InitCoordinator(t.dispatcher, t.cfg, t.repo)
 
 	if kind == agentmsg.KindAsk {
 		return t.handleAsk(ctx, c, id, in.Body, in.Refs, in.ToRole, in.WaitSeconds, in.InReplyTo)
@@ -333,13 +334,13 @@ func (t *runMessagesTool) Execute(ctx context.Context, args json.RawMessage) (st
 		return "", fmt.Errorf("invalid args: %w", err)
 	}
 	// INV-AG-9: same principal gate as join_run / cancel_run.
-	record, errJSON := accessibleOrchestrationHandle(ctx, in.RunID, t.dispatcher, t.repo)
+	record, errJSON := cliorchestrate.AccessibleOrchestrationHandle(ctx, in.RunID, t.dispatcher, t.repo)
 	if errJSON != "" {
 		return errJSON, nil
 	}
-	c := record.coord
+	c := record.GetCoordinator()
 	if c == nil {
-		c = initCoordinator(t.dispatcher, t.cfg, t.repo)
+		c = cliorchestrate.InitCoordinator(t.dispatcher, t.cfg, t.repo)
 	}
 	msgs, err := c.ListRunMessages(ctx, in.RunID, in.TaskID)
 	if err != nil {
@@ -381,11 +382,11 @@ func registerMessagingTools(d *runtime.Dispatcher, reg *tools.Registry, cfg conf
 	post := &postMessageTool{
 		dispatcher: d, cfg: cfg, repo: repo,
 		referralSpawn: func(ctx context.Context, runID, toRole string, ask agentmsg.Message) (string, error) {
-			c := initCoordinator(d, cfg, repo)
+			c := cliorchestrate.InitCoordinator(d, cfg, repo)
 			var meta coordinator.ReferralSpawnMeta
 			if agentReg != nil {
-				if route, err := resolveTaskRoute(agentReg, nil, toRole, ""); err == nil {
-					meta.AgentDigest = route.digest
+				if route, err := cliorchestrate.ResolveTaskRoute(agentReg, nil, toRole, ""); err == nil {
+					meta.AgentDigest = route.Digest()
 					// Provider/model left empty: pool uses session defaults when unset.
 				}
 			}

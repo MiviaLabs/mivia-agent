@@ -164,7 +164,7 @@ func anyChunkDurablyFailed(ledger *workflowledger.Store, stackID string) (string
 }
 
 // chunkDeliverySucceeded reports whether a run's status, freshly read AFTER
-// deliverRunWithStore returned a nil error, reflects a REAL publish. A nil
+// cliworkflow.DeliverRunWithStore returned a nil error, reflects a REAL publish. A nil
 // error also covers a repairable rejection that ReopenForRepair re-entered
 // (the run settles back to "running", not "succeeded") - see
 // stack_deliver_repair_test.go for the live finding this guards against.

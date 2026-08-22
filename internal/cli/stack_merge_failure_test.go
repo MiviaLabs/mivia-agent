@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
 	"io"
 	"strings"
 	"testing"
@@ -66,18 +67,18 @@ func TestChunkFailureHaltsBeforeAutoMerge(t *testing.T) {
 	t.Cleanup(func() { workflowStackDeliverRun = prevDeliver })
 	workflowStackDeliverRun = delivers.Deliver
 
-	prevNewPR := workflowDeliverNewPR
-	t.Cleanup(func() { workflowDeliverNewPR = prevNewPR })
-	workflowDeliverNewPR = func() delivery.PRClient { return &fakeFindPRClient{ref: &delivery.PRRef{RemoteID: "123"}} }
+	prevNewPR := cliworkflow.WorkflowDeliverNewPR
+	t.Cleanup(func() { cliworkflow.WorkflowDeliverNewPR = prevNewPR })
+	cliworkflow.WorkflowDeliverNewPR = func() delivery.PRClient { return &fakeFindPRClient{ref: &delivery.PRRef{RemoteID: "123"}} }
 
 	// A real repo whose origin carries the chunk's head branch, so the overlap
 	// guard genuinely evaluates and would let the merge proceed.
 	root, _ := scratchStackRepo(t)
 	gitRun(t, root, "checkout", "-b", "wf/wt-fail-c1")
 	gitRun(t, root, "push", "origin", "wf/wt-fail-c1")
-	prepared := &preparedWorkflowRun{
-		repo: repo, root: root,
-		compiled: &definition.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}},
+	prepared := &cliworkflow.PreparedWorkflowRun{
+		Repo: repo, Root: root,
+		Compiled: &definition.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}},
 	}
 
 	var stdout bytes.Buffer
@@ -116,9 +117,9 @@ func TestChunkFailureCancelsDependents(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	prepared := &preparedWorkflowRun{
-		repo:     repo,
-		compiled: &definition.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}},
+	prepared := &cliworkflow.PreparedWorkflowRun{
+		Repo:     repo,
+		Compiled: &definition.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}},
 	}
 
 	_, err := chunkMergePollPass(context.Background(), prepared, ledger, neverMergedChecker{}, stackID, []ChunkPlan{{ID: "c1"}, {ID: "c2"}}, "approve", io.Discard, io.Discard)
@@ -173,8 +174,8 @@ func TestChunkMergePollPassFreshFailureHaltsBeforeAutoMerge(t *testing.T) {
 	t.Cleanup(func() { workflowStackDeliverRun = prevDeliver })
 	workflowStackDeliverRun = delivers.Deliver
 
-	prepared := &preparedWorkflowRun{
-		repo: repo, compiled: &definition.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}},
+	prepared := &cliworkflow.PreparedWorkflowRun{
+		Repo: repo, Compiled: &definition.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}},
 	}
 
 	_, err := chunkMergePollPass(context.Background(), prepared, ledger, neverMergedChecker{}, stackID, []ChunkPlan{{ID: "c1"}}, "auto", io.Discard, io.Discard)
@@ -214,7 +215,7 @@ func TestChunkMergePollPassAutoPolicyRunsAutoDeliverAndMerge(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	prepared := &preparedWorkflowRun{repo: repo}
+	prepared := &cliworkflow.PreparedWorkflowRun{Repo: repo}
 
 	done, err := chunkMergePollPass(context.Background(), prepared, ledger, neverMergedChecker{}, stackID, []ChunkPlan{{ID: "c1"}}, "auto", io.Discard, io.Discard)
 	if err != nil {
@@ -254,7 +255,7 @@ func TestChunkMergePollPassPropagatesAutoDeliverError(t *testing.T) {
 	t.Cleanup(func() { workflowStackDeliverRun = prevDeliver })
 	workflowStackDeliverRun = deliver.Deliver
 
-	prepared := &preparedWorkflowRun{repo: repo}
+	prepared := &cliworkflow.PreparedWorkflowRun{Repo: repo}
 	_, err = chunkMergePollPass(context.Background(), prepared, ledger, neverMergedChecker{}, stackID, []ChunkPlan{{ID: "c1"}}, "auto", io.Discard, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "injected deliver failure") {
 		t.Fatalf("chunkMergePollPass() error = %v, want it to propagate autoDeliverReviewedChunks' failure", err)
@@ -296,9 +297,9 @@ func TestChunkMergePollPassPropagatesAutoMergeError(t *testing.T) {
 	t.Cleanup(func() { workflowStackMergePR = prevMerge })
 	workflowStackMergePR = merges.Merge
 
-	prevNewPR := workflowDeliverNewPR
-	t.Cleanup(func() { workflowDeliverNewPR = prevNewPR })
-	workflowDeliverNewPR = func() delivery.PRClient { return &fakeFindPRClient{ref: &delivery.PRRef{RemoteID: "123"}} }
+	prevNewPR := cliworkflow.WorkflowDeliverNewPR
+	t.Cleanup(func() { cliworkflow.WorkflowDeliverNewPR = prevNewPR })
+	cliworkflow.WorkflowDeliverNewPR = func() delivery.PRClient { return &fakeFindPRClient{ref: &delivery.PRRef{RemoteID: "123"}} }
 
 	// A real repo whose origin carries the chunk's head branch, so the
 	// overlap guard genuinely evaluates (and passes) - this pins the
@@ -306,9 +307,9 @@ func TestChunkMergePollPassPropagatesAutoMergeError(t *testing.T) {
 	root, _ := scratchStackRepo(t)
 	gitRun(t, root, "checkout", "-b", "wf/wt-auto-merge-err")
 	gitRun(t, root, "push", "origin", "wf/wt-auto-merge-err")
-	prepared := &preparedWorkflowRun{
-		repo: repo, root: root,
-		compiled: &definition.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}},
+	prepared := &cliworkflow.PreparedWorkflowRun{
+		Repo: repo, Root: root,
+		Compiled: &definition.CompiledWorkflow{Name: "test", Delivery: &definition.Delivery{Base: "main"}},
 	}
 
 	_, err = chunkMergePollPass(context.Background(), prepared, ledger, neverMergedChecker{}, stackID, []ChunkPlan{{ID: "c1"}}, "auto", io.Discard, io.Discard)

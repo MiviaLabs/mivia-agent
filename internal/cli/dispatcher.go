@@ -6,6 +6,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/composition"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/hooks"
@@ -56,7 +57,7 @@ func NewSessionDispatcher(opts SessionDispatcherOpts) (*runtime.Dispatcher, erro
 		if opts.SharedSQLite != nil {
 			repo = ledger.NewBorrowedStorageLedgerRepository(opts.SharedSQLite)
 		} else {
-			repo, ownedStore = openDurableLedgerRepo(opts.Config, os.Stderr)
+			repo, ownedStore = cliorchestrate.OpenDurableLedgerRepo(opts.Config, os.Stderr)
 		}
 	}
 	d, err := newSessionDispatcherCore(opts, repo)
@@ -69,7 +70,7 @@ func NewSessionDispatcher(opts SessionDispatcherOpts) (*runtime.Dispatcher, erro
 	if ownedStore != nil {
 		d.OnClose(func() { _ = ownedStore.Close() })
 	}
-	initCoordinator(d, opts.Config, repo)
+	cliorchestrate.InitCoordinator(d, opts.Config, repo)
 	return d, nil
 }
 
@@ -121,7 +122,7 @@ func newSessionDispatcherCore(opts SessionDispatcherOpts, repo ledger.LedgerRepo
 	// issued survive the rebuild.
 	spool := opts.RemainderSpool
 	if spool == nil {
-		spool = newRemainderSpool(effectiveOrchestrationRepo(repo))
+		spool = newRemainderSpool(cliorchestrate.EffectiveOrchestrationRepo(repo))
 	}
 	dial := sessionDialFor(opts)
 	// One loop rather than four copies of the same error branch: handler names
@@ -146,7 +147,7 @@ func newSessionDispatcherCore(opts SessionDispatcherOpts, repo ledger.LedgerRepo
 	if err := registerDelegationTools(d, opts.Registry, opts.Config, opts.SkillReg, repo, opts.AgentRegistry, opts.ProviderName, opts.Model); err != nil {
 		return nil, err
 	}
-	if err := registerOrchestrationTools(d, opts.Registry, opts.Config, repo, opts.SkillReg, opts.AgentRegistry, opts.ProviderName, opts.Model); err != nil {
+	if err := cliorchestrate.RegisterOrchestrationTools(d, opts.Registry, opts.Config, repo, opts.SkillReg, opts.AgentRegistry, opts.ProviderName, opts.Model); err != nil {
 		return nil, err
 	}
 	if err := registerMessagingTools(d, opts.Registry, opts.Config, repo, opts.AgentRegistry); err != nil {
@@ -229,7 +230,7 @@ func sessionDialFor(opts SessionDispatcherOpts) sessionDial {
 func registerDelegationTools(d *runtime.Dispatcher, reg *tools.Registry, cfg config.SubagentConfig, skillReg *skills.Registry, repo ledger.LedgerRepository, agentReg *agents.AgentRegistry, providerName, model string) error {
 	// Register on both the model-visible registry and the dispatcher snapshot.
 	delegate := &delegateTool{dispatcher: d, cfg: cfg, repo: repo}
-	dispatchTasks := &dispatchTasksTool{dispatcher: d, cfg: cfg, skillReg: skillReg, repo: repo, agentReg: agentReg, providerName: providerName, model: model}
+	dispatchTasks := cliorchestrate.NewDispatchTasksTool(d, cfg, skillReg, repo, agentReg, providerName, model)
 	if err := registerSessionTool(d, reg, delegate); err != nil {
 		return err
 	}

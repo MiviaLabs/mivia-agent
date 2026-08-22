@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"io"
 	"slices"
 	"strconv"
@@ -259,7 +260,7 @@ func countKind(kinds []string, want string) int {
 // multi_step) with asker, auditor, and go-engineer agents and returns the
 // dispatch_tasks tool, the dispatcher, and the shared ledger repo for
 // assertions. Mirrors newAskE2EDispatchTool with a third agent.
-func newAskChainE2EDispatchTool(t *testing.T, cfg config.SubagentConfig) (*dispatchTasksTool, *runtime.Dispatcher, ledger.LedgerRepository) {
+func newAskChainE2EDispatchTool(t *testing.T, cfg config.SubagentConfig) (*cliorchestrate.DispatchTasksToolForTest, *runtime.Dispatcher, ledger.LedgerRepository) {
 	t.Helper()
 	ws, err := workspace.Open(t.TempDir())
 	if err != nil {
@@ -304,12 +305,12 @@ func newAskChainE2EDispatchTool(t *testing.T, cfg config.SubagentConfig) (*dispa
 	if err != nil {
 		t.Fatalf("NewSessionDispatcher: %v", err)
 	}
-	raw, ok := reg.Get(ToolDispatchTasks)
+	raw, ok := reg.Get(cliorchestrate.ToolDispatchTasks)
 	if !ok {
 		d.Close()
 		t.Fatal("dispatch_tasks not registered")
 	}
-	tool, ok := raw.(*dispatchTasksTool)
+	tool, ok := raw.(*cliorchestrate.DispatchTasksToolForTest)
 	if !ok {
 		d.Close()
 		t.Fatalf("dispatch_tasks type %T", raw)

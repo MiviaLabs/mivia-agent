@@ -8,6 +8,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
@@ -341,7 +342,7 @@ func stackHeadBranch(run workflowledger.RunSnapshot) string {
 	if run.WorktreeName == "" {
 		return ""
 	}
-	return workflowBranchPrefix + run.WorktreeName
+	return cliworkflow.WorkflowBranchPrefix + run.WorktreeName
 }
 
 // stackAttemptCount counts a task's reopen transitions in the durable

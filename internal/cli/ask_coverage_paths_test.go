@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"strings"
 	"sync"
 	"testing"
@@ -325,11 +326,11 @@ func livePeerRun(t *testing.T) (*runtime.Dispatcher, coordinator.Coordinator, le
 		return json.RawMessage(`{}`), nil
 	}))
 	c := coordinator.New(repo, subagents.New(d, subagents.Policy{Workers: 2}))
-	coordinators.Store(d, c)
-	coordinatorRepos.Store(d, repo)
+	cliorchestrate.CoordinatorsForTest.Store(d, c)
+	cliorchestrate.CoordinatorReposForTest.Store(d, repo)
 	t.Cleanup(func() {
-		coordinators.Delete(d)
-		coordinatorRepos.Delete(d)
+		cliorchestrate.CoordinatorsForTest.Delete(d)
+		cliorchestrate.CoordinatorReposForTest.Delete(d)
 	})
 	h, err := c.Spawn(context.Background(), []subagents.Task{
 		{ID: "peer-1", Name: "peer", AgentName: "peer", Timeout: 4 * time.Second},
@@ -452,7 +453,7 @@ func TestHandleAskParkHeldWithLivePeer(t *testing.T) {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
-		coord := initCoordinator(d, cfg, repo)
+		coord := cliorchestrate.InitCoordinator(d, cfg, repo)
 		id, _ := runtime.TaskIdentityFrom(ctx)
 		_, unpark, err := coord.ParkQuestion(id.RunID, id.TaskID, "held")
 		if err != nil {
@@ -467,11 +468,11 @@ func TestHandleAskParkHeldWithLivePeer(t *testing.T) {
 		return json.RawMessage(`{"ok":true}`), nil
 	}))
 	c := coordinator.New(repo, subagents.New(d, subagents.Policy{Workers: 2}))
-	coordinators.Store(d, c)
-	coordinatorRepos.Store(d, repo)
+	cliorchestrate.CoordinatorsForTest.Store(d, c)
+	cliorchestrate.CoordinatorReposForTest.Store(d, repo)
 	t.Cleanup(func() {
-		coordinators.Delete(d)
-		coordinatorRepos.Delete(d)
+		cliorchestrate.CoordinatorsForTest.Delete(d)
+		cliorchestrate.CoordinatorReposForTest.Delete(d)
 	})
 	h, err := c.Spawn(context.Background(), []subagents.Task{
 		{ID: "peer-1", Name: "peer", AgentName: "peer", Timeout: 4 * time.Second},

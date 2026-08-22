@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 )
 
@@ -37,7 +38,7 @@ func SafeEffortError(err error) string {
 	if err == nil {
 		return ""
 	}
-	if errors.Is(err, ErrOrchestrationSwitchActive) {
+	if errors.Is(err, cliorchestrate.ErrOrchestrationSwitchActive) {
 		return EffortOrchestrationNotice
 	}
 	if msg := err.Error(); msg != SessionEffortBusyRefusal {

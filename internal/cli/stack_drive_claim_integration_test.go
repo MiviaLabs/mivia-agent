@@ -10,6 +10,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
 	"strings"
 	"sync"
 	"testing"
@@ -27,7 +28,7 @@ import (
 func (it *stackDriveIT) seedPlanRun(planOutput string) string {
 	t := it.t
 	t.Helper()
-	runID := newCLIWorkflowRunID()
+	runID := cliworkflow.NewCLIWorkflowRunID()
 	snap := miniStackSnapshot(t, it.root, it.compiled, it.rawDef)
 	snap.Inputs = map[string]string{"task": "x"}
 	raw, err := workflowledger.MarshalSnapshot(snap)
@@ -47,7 +48,7 @@ func (it *stackDriveIT) seedPlanRun(planOutput string) string {
 
 // driveDirect calls runStackDrive directly against stackID — the actual CLI
 // entrypoint under test (as opposed to startPlanRun's session-engine path,
-// which drives through launchStartedWorkflow/maybeDriveSettledStack and does
+// which drives through LaunchStartedWorkflow/maybeDriveSettledStack and does
 // not exercise runStackDrive's claim wrap at all).
 func (it *stackDriveIT) driveDirect(stackID string) (stdout, stderr string, err error) {
 	it.t.Helper()
@@ -59,7 +60,7 @@ func (it *stackDriveIT) driveDirect(stackID string) (stdout, stderr string, err 
 // claimObservingGit wraps a GitRunner and invokes check before delegating,
 // so a test can observe ledger state (e.g. GetRunClaim) at the moment the
 // real drive is actively doing git work — a synchronous seam already wired
-// into every drive path via workflowDeliverGit, reused here purely for
+// into every drive path via cliworkflow.WorkflowDeliverGit, reused here purely for
 // observation rather than behavior stubbing.
 type claimObservingGit struct {
 	inner delivery.GitRunner
@@ -81,9 +82,9 @@ func TestStackDriveClaimsRunForDuration(t *testing.T) {
 	var mu sync.Mutex
 	var heldDuringDrive bool
 	var checked bool
-	prevGit := workflowDeliverGit
-	t.Cleanup(func() { workflowDeliverGit = prevGit })
-	workflowDeliverGit = claimObservingGit{
+	prevGit := cliworkflow.WorkflowDeliverGit
+	t.Cleanup(func() { cliworkflow.WorkflowDeliverGit = prevGit })
+	cliworkflow.WorkflowDeliverGit = claimObservingGit{
 		inner: prevGit,
 		check: func() {
 			mu.Lock()
@@ -207,21 +208,21 @@ func TestStackDriveReleasesClaimOnFailure(t *testing.T) {
 // This test reproduces exactly that degraded state directly — plan run
 // claimed by the drive's flock but with NO live DB claim, mirroring a dead
 // heartbeat — and pins that claimStackDrive's added flock (mirroring every
-// other CLI-operator command's beginWorkflowExecution) refuses the delete on
+// other CLI-operator command's cliworkflow.BeginWorkflowExecution) refuses the delete on
 // its own, independent of claim freshness.
 func TestWorkflowDeleteRefusedWhileStackDriveHoldsExecutionFlock(t *testing.T) {
-	shortenWorkflowResolutionLockWait(t)
+	cliworkflow.ShortenWorkflowResolutionLockWaitForTest(t)
 	it := newStackDriveIT(t, "auto", "")
 	stackID := it.seedPlanRun(multiChunkPlanOutput)
 
-	release, err := acquireWorkflowExecutionLock(it.storePath, stackID)
+	release, err := cliworkflow.AcquireWorkflowExecutionLock(it.storePath, stackID)
 	if err != nil {
-		t.Fatalf("acquireWorkflowExecutionLock: %v", err)
+		t.Fatalf("cliworkflow.AcquireWorkflowExecutionLock: %v", err)
 	}
 	defer release()
 
 	var stdout, stderr bytes.Buffer
-	err = runWorkflowWithIO([]string{"delete", stackID, "--force", "--workspace", it.root, "--config", it.configPath}, &stdout, &stderr)
+	err = cliworkflow.RunWorkflowWithIO([]string{"delete", stackID, "--force", "--workspace", it.root, "--config", it.configPath}, &stdout, &stderr)
 	if err == nil {
 		t.Fatal("workflow delete --force succeeded against a stack drive's held execution flock; want a refusal")
 	}

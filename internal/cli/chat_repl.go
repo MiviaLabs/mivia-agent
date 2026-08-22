@@ -6,6 +6,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/mcp"
@@ -57,7 +58,7 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 	if sess == nil {
 		return func() {}, nil
 	}
-	sess.SetSwitchGuard(orchestrationSwitchGuard(sess.SessionID))
+	sess.SetSwitchGuard(cliorchestrate.OrchestrationSwitchGuard(sess.SessionID))
 	binding := sess.CurrentBinding()
 	if binding.Completer == nil {
 		return nil, fmt.Errorf("dispatcher: nil completer")
@@ -161,7 +162,7 @@ func adoptSessionLedgerRepo(sess *chat.Session, cfg config.SubagentConfig, state
 	if contextDispatcherFor(sess, cfg).SharedSQLite != nil {
 		return
 	}
-	repo, owned := openDurableLedgerRepo(cfg, os.Stderr)
+	repo, owned := cliorchestrate.OpenDurableLedgerRepo(cfg, os.Stderr)
 	state.AdoptLedgerRepo(repo, owned)
 }
 

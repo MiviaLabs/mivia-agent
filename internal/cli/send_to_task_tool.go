@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agentmsg"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -94,7 +95,7 @@ func (t *sendToTaskTool) Execute(ctx context.Context, args json.RawMessage) (str
 	case in.TaskID == "" && len(in.TaskIDs) == 0:
 		return "", fmt.Errorf("exactly one of task_id or task_ids is required")
 	}
-	record, errJSON := accessibleOrchestrationHandle(ctx, in.RunID, t.dispatcher, t.repo)
+	record, errJSON := cliorchestrate.AccessibleOrchestrationHandle(ctx, in.RunID, t.dispatcher, t.repo)
 	if errJSON != "" {
 		return errJSON, nil
 	}
@@ -125,7 +126,7 @@ func (t *sendToTaskTool) Execute(ctx context.Context, args json.RawMessage) (str
 	if err != nil {
 		return "", err
 	}
-	delivered, err := record.coord.SendToTask(ctx, record.handle, in.TaskID, msg)
+	delivered, err := record.GetCoordinator().SendToTask(ctx, record.GetHandle(), in.TaskID, msg)
 	if err != nil {
 		return "", err
 	}
@@ -141,7 +142,7 @@ func (t *sendToTaskTool) Execute(ctx context.Context, args json.RawMessage) (str
 // per-task result map {task_id: {delivered, error}}. Each target gets its own
 // minted message; a failure on one child (unknown, terminal, or mailbox-full)
 // is recorded on that entry and does not fail the whole call.
-func (t *sendToTaskTool) broadcastToTasks(ctx context.Context, record *orchestrationHandle, in sendToTaskParams, kind agentmsg.Kind) (string, error) {
+func (t *sendToTaskTool) broadcastToTasks(ctx context.Context, record cliorchestrate.RunAccess, in sendToTaskParams, kind agentmsg.Kind) (string, error) {
 	type perTaskResult struct {
 		Delivered bool   `json:"delivered"`
 		Error     string `json:"error,omitempty"`
@@ -167,7 +168,7 @@ func (t *sendToTaskTool) broadcastToTasks(ctx context.Context, record *orchestra
 			results[taskID] = perTaskResult{Error: err.Error()}
 			continue
 		}
-		delivered, err := record.coord.SendToTask(ctx, record.handle, taskID, msg)
+		delivered, err := record.GetCoordinator().SendToTask(ctx, record.GetHandle(), taskID, msg)
 		if err != nil {
 			results[taskID] = perTaskResult{Error: err.Error()}
 			continue

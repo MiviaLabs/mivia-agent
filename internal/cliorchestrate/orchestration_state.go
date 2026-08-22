@@ -105,12 +105,12 @@ func EffectiveOrchestrationRepo(repo ledger.LedgerRepository) ledger.LedgerRepos
 
 // Orchestration default constants.
 //
-// defaultMaxTokens is intentionally 0: when no explicit [subagents] max_tokens
+// DefaultMaxTokens is intentionally 0: when no explicit [subagents] max_tokens
 // is configured, the subagent loop passes nil to the provider, letting the
 // model use its own default response length. A hardcoded 4096 cap truncated
 // comprehensive subagent reports mid-sentence (finish_reason="length").
 const (
-	defaultMaxTokens          = 0
+	DefaultMaxTokens          = 0
 	defaultJoinRunTimeout     = time.Duration(config.DefaultOrchestrationTimeoutSec+DispatchOrchestrationSlackSec) * time.Second
 	orchestrationPollInterval = 25 * time.Millisecond
 	// DefaultToolOwner is the default owner for orchestration tasks.
@@ -287,11 +287,11 @@ func CloseSharedSQLite(store *storage.SQLite) error {
 	return store.Close()
 }
 
-// poolLimitsFromConfig maps the [subagents] config contract onto pool
+// PoolLimitsFromConfig maps the [subagents] config contract onto pool
 // limits. Config zero means unlimited (see resolveSubagentConfig and the
 // mivia.toml comments); the pool primitive would otherwise substitute its
 // safe defaults for zero and silently cap agent-planned DAGs.
-func poolLimitsFromConfig(cfg config.SubagentConfig) (maxDepth, maxFanout int) {
+func PoolLimitsFromConfig(cfg config.SubagentConfig) (maxDepth, maxFanout int) {
 	maxDepth, maxFanout = cfg.MaxDepth, cfg.MaxFanout
 	if maxDepth == 0 {
 		maxDepth = subagents.Unlimited
@@ -327,7 +327,7 @@ func InitCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...
 	if existing, ok := coordinators.Load(d); ok {
 		return existing.(coordinator.Coordinator)
 	}
-	poolDepth, poolFanout := poolLimitsFromConfig(cfg)
+	poolDepth, poolFanout := PoolLimitsFromConfig(cfg)
 	repo := defaultOrchestrationRepo
 	// ownedStore is the store THIS call opened, and the only one the close hook
 	// below may close. A caller-supplied repository outlives the dispatcher -
@@ -351,7 +351,7 @@ func InitCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...
 		MaxBudget: cfg.DefaultBudget,
 		Timeout:   time.Duration(cfg.DefaultTimeout) * time.Second,
 	})
-	c := coordinator.New(repo, pool).WithRetryPolicy(taskRetryPolicyFromConfig(cfg.TaskRetry))
+	c := coordinator.New(repo, pool).WithRetryPolicy(TaskRetryPolicyFromConfig(cfg.TaskRetry))
 	// Wire [subagents.messaging] body/mailbox budgets (plan 53).
 	c = c.WithMessagingLimits(cfg.Messaging.MaxBodyBytes, cfg.Messaging.MailboxCapacity)
 	actual, _ := coordinators.LoadOrStore(d, c)
@@ -380,13 +380,13 @@ const (
 	minTaskRetryBaseBackoff = 50 * time.Millisecond
 )
 
-// taskRetryPolicyFromConfig converts the [subagents.retry] TOML surface into
+// TaskRetryPolicyFromConfig converts the [subagents.retry] TOML surface into
 // a coordinator.RetryPolicy. internal/config cannot import internal/coordinator
 // (coordinator already imports config), so this CLI-layer seam does the
 // conversion. An all-zero TaskRetryConfig (the default) converts to
 // coordinator.NoRetry, identical to today's hardcoded behavior - a deployment
 // must opt in via [subagents.retry] max_retries > 0 to enable retry.
-func taskRetryPolicyFromConfig(cfg config.TaskRetryConfig) coordinator.RetryPolicy {
+func TaskRetryPolicyFromConfig(cfg config.TaskRetryConfig) coordinator.RetryPolicy {
 	if cfg.MaxRetries <= 0 {
 		return coordinator.NoRetry
 	}

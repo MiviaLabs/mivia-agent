@@ -6,6 +6,7 @@ package cli
 
 import (
 	"context"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
 	"io"
 	"os"
 	"path/filepath"
@@ -27,7 +28,7 @@ func TestStackDriveFailSettlesPlanRunFailed(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "cannot complete") {
 		t.Fatalf("driveStackOnePass() error = %v, want errFailedStackPlanRun", err)
 	}
-	run, err := prepared.repo.GetRun(context.Background(), planRunID)
+	run, err := prepared.Repo.GetRun(context.Background(), planRunID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +39,7 @@ func TestStackDriveFailSettlesPlanRunFailed(t *testing.T) {
 
 // seedStackDriveFailSettleFixture builds a delivery_pending plan run whose
 // stack has one chunk that exhausted its retry budget and a failed run row.
-func seedStackDriveFailSettleFixture(t *testing.T) (*preparedWorkflowRun, string) {
+func seedStackDriveFailSettleFixture(t *testing.T) (*cliworkflow.PreparedWorkflowRun, string) {
 	t.Helper()
 	root := t.TempDir()
 	storePath := filepath.Join(root, "workflow.db")
@@ -47,15 +48,15 @@ func seedStackDriveFailSettleFixture(t *testing.T) (*preparedWorkflowRun, string
 	if err := os.WriteFile(miniStackPath, []byte(miniStackWorkflowTOML), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	prepared, err := prepareWorkflowRun("mini-stack", root, filepath.Join(root, "config.toml"), []string{"task=x"})
+	prepared, err := cliworkflow.PrepareWorkflowRun("mini-stack", root, filepath.Join(root, "config.toml"), []string{"task=x"})
 	if err != nil {
-		t.Fatalf("prepareWorkflowRun() error = %v", err)
+		t.Fatalf("cliworkflow.PrepareWorkflowRun() error = %v", err)
 	}
-	t.Cleanup(prepared.closeFn)
+	t.Cleanup(prepared.CloseFn)
 
 	const planRunID = "wfr-drive-fail-settle"
-	seedPlanRunDeliveryPending(t, prepared.repo, planRunID, prepared.compiled.Digest)
-	seedSucceededDecomposeAttempt(t, prepared.repo, planRunID, []byte(multiChunkPlanOutput))
+	seedPlanRunDeliveryPending(t, prepared.Repo, planRunID, prepared.Compiled.Digest)
+	seedSucceededDecomposeAttempt(t, prepared.Repo, planRunID, []byte(multiChunkPlanOutput))
 	seedExhaustedFailedChunk(t, prepared, planRunID, "c1")
 	return prepared, planRunID
 }
@@ -94,7 +95,7 @@ func seedPlanRunDeliveryPending(t *testing.T, repo workflowledger.Repository, pl
 // with its two decomposed chunks seeded into the ledger (both still
 // "planned"), so callers can layer either a terminal failure (for the Failed
 // gate) or leave it as-is (for the Incomplete gate) on top.
-func seedStackDriveGateFixtureBase(t *testing.T, planRunID string) *preparedWorkflowRun {
+func seedStackDriveGateFixtureBase(t *testing.T, planRunID string) *cliworkflow.PreparedWorkflowRun {
 	t.Helper()
 	root := t.TempDir()
 	storePath := filepath.Join(root, "workflow.db")
@@ -103,20 +104,20 @@ func seedStackDriveGateFixtureBase(t *testing.T, planRunID string) *preparedWork
 	if err := os.WriteFile(miniStackPath, []byte(miniStackWorkflowTOML), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	prepared, err := prepareWorkflowRun("mini-stack", root, filepath.Join(root, "config.toml"), []string{"task=x"})
+	prepared, err := cliworkflow.PrepareWorkflowRun("mini-stack", root, filepath.Join(root, "config.toml"), []string{"task=x"})
 	if err != nil {
-		t.Fatalf("prepareWorkflowRun() error = %v", err)
+		t.Fatalf("cliworkflow.PrepareWorkflowRun() error = %v", err)
 	}
-	t.Cleanup(prepared.closeFn)
+	t.Cleanup(prepared.CloseFn)
 
-	seedPlanRunDeliveryPending(t, prepared.repo, planRunID, prepared.compiled.Digest)
-	seedSucceededDecomposeAttempt(t, prepared.repo, planRunID, []byte(multiChunkPlanOutput))
+	seedPlanRunDeliveryPending(t, prepared.Repo, planRunID, prepared.Compiled.Digest)
+	seedSucceededDecomposeAttempt(t, prepared.Repo, planRunID, []byte(multiChunkPlanOutput))
 
 	_, chunks, _, _, err := parseStackPlanOutput([]byte(multiChunkPlanOutput))
 	if err != nil {
 		t.Fatal(err)
 	}
-	ledger := workflowledger.NewStore(prepared.store)
+	ledger := workflowledger.NewStore(prepared.Store)
 	if err := seedStackLedger(ledger, planRunID, chunks); err != nil {
 		t.Fatal(err)
 	}
@@ -127,13 +128,13 @@ func seedStackDriveGateFixtureBase(t *testing.T, planRunID string) *preparedWork
 // stack has one chunk directly marked failed (no need to exhaust the retry
 // budget): enough for classifyStackPlanRunDelivery to report stackPlanRunFailed
 // so callers that switch on the gate (settleStackPlanRunIfComplete,
-// driveStackOnePass's settle-on-error path, settleFailedStackPlanRunIfNeeded)
+// driveStackOnePass's settle-on-error path, SettleFailedStackPlanRunIfNeeded)
 // can be tested directly.
-func seedStackDriveFailedGateFixture(t *testing.T) (*preparedWorkflowRun, string) {
+func seedStackDriveFailedGateFixture(t *testing.T) (*cliworkflow.PreparedWorkflowRun, string) {
 	t.Helper()
 	const planRunID = "wfr-drive-failed-gate"
 	prepared := seedStackDriveGateFixtureBase(t, planRunID)
-	ledger := workflowledger.NewStore(prepared.store)
+	ledger := workflowledger.NewStore(prepared.Store)
 	if err := ledger.TransitionTask(planRunID, "c2", stackStatusFailed); err != nil {
 		t.Fatal(err)
 	}
@@ -143,9 +144,9 @@ func seedStackDriveFailedGateFixture(t *testing.T) (*preparedWorkflowRun, string
 // seedStackDriveIncompleteGateFixture builds a delivery_pending plan run whose
 // stack has not driven at all (both chunks still "planned"): classifyStack-
 // PlanRunDelivery reports stackPlanRunIncomplete, not stackPlanRunFailed, so
-// callers that gate on Failed specifically (settleFailedStackPlanRunIfNeeded)
+// callers that gate on Failed specifically (SettleFailedStackPlanRunIfNeeded)
 // can be proven to no-op on it.
-func seedStackDriveIncompleteGateFixture(t *testing.T) (*preparedWorkflowRun, string) {
+func seedStackDriveIncompleteGateFixture(t *testing.T) (*cliworkflow.PreparedWorkflowRun, string) {
 	t.Helper()
 	const planRunID = "wfr-drive-incomplete-gate"
 	return seedStackDriveGateFixtureBase(t, planRunID), planRunID
@@ -154,10 +155,10 @@ func seedStackDriveIncompleteGateFixture(t *testing.T) (*preparedWorkflowRun, st
 // seedExhaustedFailedChunk pre-seeds a chunk whose retry budget is exhausted
 // (reopened stackMaxChunkAttempts times) with a failed run row: reconcile will
 // mark it terminally failed, halting the drive pass.
-func seedExhaustedFailedChunk(t *testing.T, prepared *preparedWorkflowRun, planRunID, failedChunkID string) {
+func seedExhaustedFailedChunk(t *testing.T, prepared *cliworkflow.PreparedWorkflowRun, planRunID, failedChunkID string) {
 	t.Helper()
 	ctx := context.Background()
-	ledger := workflowledger.NewStore(prepared.store)
+	ledger := workflowledger.NewStore(prepared.Store)
 	if _, err := ledger.StorePlan(workflowledger.Plan{ID: planRunID, Scope: stackScope(planRunID), Schema: delivery.PlanSchema}); err != nil {
 		t.Fatal(err)
 	}
@@ -181,15 +182,15 @@ func seedExhaustedFailedChunk(t *testing.T, prepared *preparedWorkflowRun, planR
 		RunID: "wfr-fail-c1", InvocationKey: key, WorkflowName: "mini-stack",
 		Status: workflowledger.RunStatusPending,
 	}
-	if err := prepared.repo.CreateRun(ctx, chunkRun, chunkSnap); err != nil {
+	if err := prepared.Repo.CreateRun(ctx, chunkRun, chunkSnap); err != nil {
 		t.Fatal(err)
 	}
 	for _, next := range []workflowledger.RunStatus{workflowledger.RunStatusRunning, workflowledger.RunStatusFailed} {
-		stored, err := prepared.repo.GetRun(ctx, chunkRun.RunID)
+		stored, err := prepared.Repo.GetRun(ctx, chunkRun.RunID)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := prepared.repo.CompareAndSetRunStatus(ctx, chunkRun.RunID, stored.Version, next, nil); err != nil {
+		if err := prepared.Repo.CompareAndSetRunStatus(ctx, chunkRun.RunID, stored.Version, next, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -207,7 +208,7 @@ func TestSettleStackPlanRunIfCompleteFailedGateRefusesAndSettles(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "cannot complete") {
 		t.Fatalf("settleStackPlanRunIfComplete() error = %v, want errFailedStackPlanRun", err)
 	}
-	run, getErr := prepared.repo.GetRun(context.Background(), planRunID)
+	run, getErr := prepared.Repo.GetRun(context.Background(), planRunID)
 	if getErr != nil {
 		t.Fatal(getErr)
 	}
@@ -223,13 +224,13 @@ func TestSettleStackPlanRunIfCompleteFailedGateRefusesAndSettles(t *testing.T) {
 // (delivery_pending) rather than silently advancing.
 func TestDriveStackOnePassSettleFailurePropagates(t *testing.T) {
 	prepared, planRunID := seedStackDriveFailSettleFixture(t)
-	prepared.repo = &failingCASRepository{Repository: prepared.repo, failStatus: workflowledger.RunStatusFailed}
+	prepared.Repo = &failingCASRepository{Repository: prepared.Repo, failStatus: workflowledger.RunStatusFailed}
 
 	err := driveStackOnePass(prepared, planRunID, map[string]string{"task": "x"}, io.Discard, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "settle failed plan run") {
 		t.Fatalf("driveStackOnePass() error = %v, want it to surface the settle failure", err)
 	}
-	run, getErr := prepared.repo.GetRun(context.Background(), planRunID)
+	run, getErr := prepared.Repo.GetRun(context.Background(), planRunID)
 	if getErr != nil {
 		t.Fatal(getErr)
 	}

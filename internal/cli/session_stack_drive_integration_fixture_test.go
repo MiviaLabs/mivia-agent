@@ -4,7 +4,7 @@ package cli
 // and its recovery sweep (the parked-stack wedge regression: a seeding
 // multi-chunk plan run whose drive aborted used to sit delivery_pending
 // forever - zero chunk runs, zero PRs - because the sweep only checked
-// stackDriveCompleted and then left it parked for 'mivia stack drive' that
+// cliworkflow.StackDriveCompleted and then left it parked for 'mivia stack drive' that
 // nobody ran; now reconcileParkedDelivery DRIVES the parked stack itself).
 //
 // Everything is real except the two host boundaries that cannot exist in a
@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
 	"io"
 	"log"
 	"os"
@@ -171,7 +172,7 @@ func (m *stackITMergeSim) Merge(_ context.Context, _ string, number string, _ bo
 	return nil
 }
 
-// originGitWrapper is the workflowDeliverGit seam. `git remote get-url
+// originGitWrapper is the cliworkflow.WorkflowDeliverGit seam. `git remote get-url
 // origin` reports the github-style URL the runs record (delivery's base
 // checks and ParseOwnerRepo need a github.com host), while every actual git
 // operation (fetch, push, merge-base, ls-remote) is REAL and is transparently
@@ -364,7 +365,7 @@ func newStackDriveIT(t *testing.T, mergePolicy, planOutput string) *stackDriveIT
 	if err != nil {
 		t.Fatal(err)
 	}
-	applyWorkflowStoreRoot(res, root)
+	cliworkflow.ApplyWorkflowStoreRoot(res, root)
 	store, err := openContextStorePath(storePath)
 	if err != nil {
 		t.Fatal(err)
@@ -410,42 +411,42 @@ func (it *stackDriveIT) installDriveSeams() {
 	t := it.t
 	t.Helper()
 	prevMergePR := workflowStackMergePR
-	prevPR := workflowDeliverNewPR
-	prevGit := workflowDeliverGit
-	prevBuild := workflowRunBuild
+	prevPR := cliworkflow.WorkflowDeliverNewPR
+	prevGit := cliworkflow.WorkflowDeliverGit
+	prevBuild := cliworkflow.WorkflowRunBuild
 	prevPoll := stackMergePollInterval
 	prevBound := workflowAutoDeliveryAttemptTimeout
-	prevDrive := workflowStackDriveToCompletion
+	prevDrive := cliworkflow.WorkflowStackDriveToCompletion
 	t.Cleanup(func() {
-		workflowStackDriveToCompletion = prevDrive
+		cliworkflow.WorkflowStackDriveToCompletion = prevDrive
 		workflowAutoDeliveryAttemptTimeout = prevBound
 		stackMergePollInterval = prevPoll
-		workflowRunBuild = prevBuild
-		workflowDeliverGit = prevGit
-		workflowDeliverNewPR = prevPR
+		cliworkflow.WorkflowRunBuild = prevBuild
+		cliworkflow.WorkflowDeliverGit = prevGit
+		cliworkflow.WorkflowDeliverNewPR = prevPR
 		workflowStackMergePR = prevMergePR
 	})
 	workflowStackMergePR = it.merges.Merge
-	workflowDeliverNewPR = func() delivery.PRClient { return it.prs }
-	workflowDeliverGit = originGitWrapper{real: delivery.RealGit{}, localOrigin: it.originDir, remoteURL: it.remoteURL}
+	cliworkflow.WorkflowDeliverNewPR = func() delivery.PRClient { return it.prs }
+	cliworkflow.WorkflowDeliverGit = originGitWrapper{real: delivery.RealGit{}, localOrigin: it.originDir, remoteURL: it.remoteURL}
 	stackMergePollInterval = 100 * time.Millisecond
-	workflowStackDriveToCompletion = driveStackToCompletion // production default, pinned explicitly
-	workflowRunBuild = it.buildStub
+	cliworkflow.WorkflowStackDriveToCompletion = driveStackToCompletion // production default, pinned explicitly
+	cliworkflow.WorkflowRunBuild = it.buildStub
 }
 
-// buildStub is the workflowRunBuild seam: it runs the SAME scripted step
+// buildStub is the cliworkflow.WorkflowRunBuild seam: it runs the SAME scripted step
 // runtimes the production build path would, in the run's per-run worktree
-// (the isolation selectWorkflowWorkspace provides), so the controller sees a
+// (the isolation cliworkflow.SelectWorkflowWorkspace provides), so the controller sees a
 // faithful build result without invoking real tool runs.
-func (it *stackDriveIT) buildStub(buildRoot string, _ *config.Resolved, _ *storage.SQLite, repo workflowledger.Repository, compiled *definition.CompiledWorkflow, _ string, _ map[string]any, inputSnapshot map[string]string, _ []byte, id string, _ *workflowledger.Snapshot, _ []byte, _ *workflowledger.RunSnapshot, _ map[string]bool, _ *skills.Registry) (workflowControllerBuild, error) {
-	identity, cleanup, err := selectWorkflowWorkspace(context.Background(), buildRoot, id, true, nil)
+func (it *stackDriveIT) buildStub(buildRoot string, _ *config.Resolved, _ *storage.SQLite, repo workflowledger.Repository, compiled *definition.CompiledWorkflow, _ string, _ map[string]any, inputSnapshot map[string]string, _ []byte, id string, _ *workflowledger.Snapshot, _ []byte, _ *workflowledger.RunSnapshot, _ map[string]bool, _ *skills.Registry) (cliworkflow.WorkflowControllerBuild, error) {
+	identity, cleanup, err := cliworkflow.SelectWorkflowWorkspace(context.Background(), buildRoot, id, true, nil)
 	if err != nil {
-		return workflowControllerBuild{}, err
+		return cliworkflow.WorkflowControllerBuild{}, err
 	}
 	synth, err := definition.SynthesizeStacking(compiled)
 	if err != nil {
 		cleanup()
-		return workflowControllerBuild{}, err
+		return cliworkflow.WorkflowControllerBuild{}, err
 	}
 	steps := scriptedMiniStackRuntimes(it.t, synth)
 	snap := miniStackSnapshot(it.t, it.root, compiled, it.rawDef)
@@ -453,7 +454,7 @@ func (it *stackDriveIT) buildStub(buildRoot string, _ *config.Resolved, _ *stora
 	rawSnapshot, err := workflowledger.MarshalSnapshot(snap)
 	if err != nil {
 		cleanup()
-		return workflowControllerBuild{}, err
+		return cliworkflow.WorkflowControllerBuild{}, err
 	}
 	inputs := make(map[string]any, len(inputSnapshot))
 	for k, v := range inputSnapshot {
@@ -462,9 +463,9 @@ func (it *stackDriveIT) buildStub(buildRoot string, _ *config.Resolved, _ *stora
 	ctrl, err := controller.NewLinearController(repo, it.runner, synth, steps, inputs, id, rawSnapshot)
 	if err != nil {
 		cleanup()
-		return workflowControllerBuild{}, err
+		return cliworkflow.WorkflowControllerBuild{}, err
 	}
-	return workflowControllerBuild{
+	return cliworkflow.WorkflowControllerBuild{
 		Controller: ctrl,
 		Dispatcher: workflowTestDispatcher{},
 		Admission: controller.Admission{
@@ -478,9 +479,9 @@ func (it *stackDriveIT) buildStub(buildRoot string, _ *config.Resolved, _ *stora
 
 // startPlanRun launches the mini-stack plan run through the REAL session
 // engine surface: the synchronous StartNew admission, then
-// launchStartedWorkflow (real controller + the auto-delivery repair loop that
+// LaunchStartedWorkflow (real controller + the auto-delivery repair loop that
 // drives the stack) - the exact order startCLI uses, because
-// launchStartedWorkflow reads the run right after spawning its goroutine and
+// LaunchStartedWorkflow reads the run right after spawning its goroutine and
 // production admits synchronously first. It returns when the engine's
 // goroutine has fully exited (idle), so the caller observes the durable end
 // state of the drive attempt.
@@ -491,20 +492,20 @@ func (it *stackDriveIT) startPlanRun(bound time.Duration) string {
 	t.Cleanup(func() { workflowAutoDeliveryAttemptTimeout = prevBound })
 	workflowAutoDeliveryAttemptTimeout = bound
 
-	prepared, err := prepareWorkflowRun("mini-stack", it.root, it.configPath, []string{"task=x"})
+	prepared, err := cliworkflow.PrepareWorkflowRun("mini-stack", it.root, it.configPath, []string{"task=x"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	runID := newCLIWorkflowRunID()
-	built, err := workflowRunBuild(prepared.root, prepared.res, prepared.store, prepared.repo, prepared.compiled, prepared.refBase, prepared.inputs, prepared.inputSnapshot, prepared.raw, runID, nil, nil, nil, nil, nil)
+	runID := cliworkflow.NewCLIWorkflowRunID()
+	built, err := cliworkflow.WorkflowRunBuild(prepared.Root, prepared.Res, prepared.Store, prepared.Repo, prepared.Compiled, prepared.RefBase, prepared.Inputs, prepared.InputSnapshot, prepared.Raw, runID, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	finish, err := beginWorkflowExecution(prepared.root, ContextStorePath(prepared.root, prepared.res.Subagents), runID)
+	finish, err := cliworkflow.BeginWorkflowExecution(prepared.Root, ContextStorePath(prepared.Root, prepared.Res.Subagents), runID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := workflowRunSetAdmission(built); err != nil {
+	if err := cliworkflow.WorkflowRunSetAdmission(built); err != nil {
 		t.Fatal(err)
 	}
 	created, err := built.Controller.StartNew(context.Background())
@@ -515,23 +516,23 @@ func (it *stackDriveIT) startPlanRun(bound time.Duration) string {
 		t.Fatalf("plan run %s was not admitted as a fresh run", runID)
 	}
 	// The engine must resolve the SAME store the fixture writes. The sweep's
-	// config.Load uses workflowConfigPath(root, engine.configPath): with ""
+	// config.Load uses cliworkflow.WorkflowConfigPath(root, engine.configPath): with ""
 	// it probes .mivia/mivia.toml (absent in the fixture) and falls back to
-	// defaults, so applyWorkflowStoreRoot pins root/context.db while the
+	// defaults, so cliworkflow.ApplyWorkflowStoreRoot pins root/context.db while the
 	// runs live in root/workflow.db (the fixture's config.toml store_path) -
 	// the sweep then logged "0 parked run(s)" and the parked-stack backstop
 	// was dead (live finding: every sweep in this suite found nothing, so
 	// the retry/grant tests stalled at delivery_pending forever). Passing
 	// the fixture's config path mirrors production (workflow_tool_service.go
 	// constructs the engine with the session's config path).
-	e := newSessionWorkflowEngine(it.root, it.configPath)
-	if _, err := e.launchStartedWorkflow(context.Background(), prepared, built, runID, "mini-stack", finish); err != nil {
+	e := cliworkflow.NewSessionWorkflowEngine(it.root, it.configPath)
+	if _, err := e.LaunchStartedWorkflow(context.Background(), prepared, built, runID, "mini-stack", finish); err != nil {
 		t.Fatal(err)
 	}
 	// The in-session drive runs for up to the attempt bound (merges that never
 	// land keep it polling the full bound), so the idle wait must exceed the
 	// bound or it fails while the drive is still legitimately advancing.
-	waitForSessionEngineIdleWithin(t, e, runID, bound+10*time.Second)
+	cliworkflow.WaitForSessionEngineIdleWithin(t, e, runID, bound+10*time.Second)
 	return runID
 }
 
@@ -542,8 +543,8 @@ func (it *stackDriveIT) runSweep() {
 	it.t.Helper()
 	// Same configPath as startPlanRun: the sweep must open the store the
 	// runs actually live in (see the note there).
-	e := newSessionWorkflowEngine(it.root, it.configPath)
-	e.reconcileParkedRuns(context.Background(), false)
+	e := cliworkflow.NewSessionWorkflowEngine(it.root, it.configPath)
+	e.ReconcileParkedRuns(context.Background(), false)
 }
 
 // deliverRun grants publication for one delivery_pending run (the human's
@@ -551,7 +552,7 @@ func (it *stackDriveIT) runSweep() {
 // pipeline.
 func (it *stackDriveIT) deliverRun(runID string) {
 	it.t.Helper()
-	if err := deliverRunWithStore(context.Background(), it.root, it.res, it.store, it.repo, runID, true, false, io.Discard, io.Discard); err != nil {
+	if err := cliworkflow.DeliverRunWithStore(context.Background(), it.root, it.res, it.store, it.repo, runID, true, false, io.Discard, io.Discard); err != nil {
 		it.t.Fatalf("deliver %s: %v", runID, err)
 	}
 }

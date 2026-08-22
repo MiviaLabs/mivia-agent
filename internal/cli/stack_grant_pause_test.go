@@ -13,6 +13,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
 	"io"
 	"strings"
 	"testing"
@@ -79,7 +80,7 @@ func TestWaitForChunkMergesPausesWhenPublishedFollowUpRemains(t *testing.T) {
 	var out strings.Builder
 	done := make(chan error, 1)
 	go func() {
-		done <- waitForChunkMerges(context.Background(), &preparedWorkflowRun{repo: repo}, ledger, neverMergedChecker{}, stackID, []ChunkPlan{{ID: "c1"}}, "", &out, io.Discard)
+		done <- waitForChunkMerges(context.Background(), &cliworkflow.PreparedWorkflowRun{Repo: repo}, ledger, neverMergedChecker{}, stackID, []ChunkPlan{{ID: "c1"}}, "", &out, io.Discard)
 	}()
 	select {
 	case err := <-done:
@@ -115,7 +116,7 @@ func TestWaitForChunkMergesPausesWhenOnlyGrantsRemain(t *testing.T) {
 	var out strings.Builder
 	done := make(chan error, 1)
 	go func() {
-		done <- waitForChunkMerges(context.Background(), &preparedWorkflowRun{repo: repo}, ledger, neverMergedChecker{}, stackID, []ChunkPlan{{ID: "c1"}}, "", &out, io.Discard)
+		done <- waitForChunkMerges(context.Background(), &cliworkflow.PreparedWorkflowRun{Repo: repo}, ledger, neverMergedChecker{}, stackID, []ChunkPlan{{ID: "c1"}}, "", &out, io.Discard)
 	}()
 	select {
 	case err := <-done:

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
 	"path/filepath"
 	"testing"
 
@@ -117,7 +118,7 @@ func TestFeatureDeliveryPanelMemberTemplatesRenderWithoutRound(t *testing.T) {
 		"touched_files":  `["a.go"]`,
 	}
 	for _, member := range step.Panel.Members {
-		templateBytes, err := readWorkflowRef(base, member.Template, delivery.MaxTemplateBytes)
+		templateBytes, err := cliworkflow.ReadWorkflowRef(base, member.Template, delivery.MaxTemplateBytes)
 		if err != nil {
 			t.Fatalf("panel member %q: read template %q: %v", member.ID, member.Template, err)
 		}
@@ -130,7 +131,7 @@ func TestFeatureDeliveryPanelMemberTemplatesRenderWithoutRound(t *testing.T) {
 // TestFeatureDeliveryPanelMembersAdmit is the live-shaped regression test for
 // the enabled agent_panel review gate: every committed panel member
 // (panel-reviewer with panel-bug-audit / panel-secure-change /
-// panel-architecture-review) must pass validatePanelAgentTools, the exact
+// panel-architecture-review) must pass cliworkflow.ValidatePanelAgentTools, the exact
 // admission check workflow_run runs before a run starts, and so must the
 // review-synthesizer. The three panel skills are deliberately resource-less
 // (JSON-only, no report-template), so each member's runtime surface is exactly
@@ -183,7 +184,7 @@ func TestFeatureDeliveryPanelMembersAdmit(t *testing.T) {
 		if !ok {
 			t.Fatalf("panel member %q references unknown agent %q", member.ID, member.Agent)
 		}
-		if err := validatePanelAgentTools(agent, member.Skill, opts, false); err != nil {
+		if err := cliworkflow.ValidatePanelAgentTools(agent, member.Skill, opts, false); err != nil {
 			t.Fatalf("panel member %q (%s/%s, skill %q) must admit: %v", member.ID, member.Provider, member.Model, member.Skill, err)
 		}
 	}
@@ -191,7 +192,7 @@ func TestFeatureDeliveryPanelMembersAdmit(t *testing.T) {
 	if !ok {
 		t.Fatalf("panel step references unknown synthesizer %q", step.Agent)
 	}
-	if err := validatePanelAgentTools(synthesizer, step.Skill, opts, true); err != nil {
+	if err := cliworkflow.ValidatePanelAgentTools(synthesizer, step.Skill, opts, true); err != nil {
 		t.Fatalf("review-synthesizer must admit: %v", err)
 	}
 }

@@ -7,6 +7,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -213,4 +215,14 @@ func TestMCPStdioHelper(t *testing.T) {
 		os.Exit(3)
 	}
 	os.Exit(0)
+}
+
+// handlerFunc implements runtime.Handler for test subagents (duplicated from
+// internal/cliorchestrate/test_helpers_test.go; Go forbids cross-package
+// _test.go sharing).
+type handlerFunc func(context.Context, runtime.Request) (json.RawMessage, error)
+
+// Invoke dispatches to the underlying func.
+func (f handlerFunc) Invoke(ctx context.Context, req runtime.Request) (json.RawMessage, error) {
+	return f(ctx, req)
 }

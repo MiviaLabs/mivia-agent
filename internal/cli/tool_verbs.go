@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -34,9 +35,9 @@ func toolVerb(name string) string {
 		return "Listing"
 	case "run_command":
 		return "Running"
-	case HandlerDelegate:
+	case cliorchestrate.HandlerDelegate:
 		return "Delegating"
-	case ToolDispatchTasks:
+	case cliorchestrate.ToolDispatchTasks:
 		return "Dispatching tasks"
 	case "parallel":
 		return "Running tools in parallel"
@@ -160,7 +161,7 @@ func toolObjectFromDetail(name, detail string) string {
 			return capRunes(s, 40)
 		}
 	}
-	if name == HandlerDelegate || name == ToolDispatchTasks {
+	if name == cliorchestrate.HandlerDelegate || name == cliorchestrate.ToolDispatchTasks {
 		if s := jsonStringField(detail, "task"); s != "" {
 			return capRunes(s, 40)
 		}

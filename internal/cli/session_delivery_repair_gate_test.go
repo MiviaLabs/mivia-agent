@@ -73,14 +73,14 @@ func TestSessionAutoDeliveryRepairLoopWithholdsApprovePolicyChunkPublish(t *test
 	}
 	key := delivery.DeliveryKey(chunkRun.RunID, final.WorkflowDigest)
 	if _, err := repo.GetDeliveryByIdempotencyKey(ctx, key); err == nil {
-		t.Fatal("chunk run has a delivery record, want none (deliverRunWithStore must not run)")
+		t.Fatal("chunk run has a delivery record, want none (cliworkflow.DeliverRunWithStore must not run)")
 	}
 }
 
 // TestSessionAutoDeliveryRepairLoopAllowsAutoPolicyChunkPublish is the
 // positive control: under merge_policy=auto the same loop MAY publish the
 // chunk run, proving the gate distinguishes policy rather than blocking
-// every stack run unconditionally. deliverRunWithStore is expected to fail
+// every stack run unconditionally. cliworkflow.DeliverRunWithStore is expected to fail
 // in this hermetic fixture (no real git remote/worktree), which is fine -
 // what this test pins is that the gate did not short-circuit the attempt.
 func TestSessionAutoDeliveryRepairLoopAllowsAutoPolicyChunkPublish(t *testing.T) {
@@ -128,13 +128,13 @@ func TestSessionAutoDeliveryRepairLoopAllowsAutoPolicyChunkPublish(t *testing.T)
 	// The hermetic fixture has no real git remote, so delivery cannot
 	// actually succeed - but it must have been ATTEMPTED (and failed) not
 	// silently withheld the way the approve-policy case above withholds it.
-	// deliverRunWithStore's workspace-resolution refusal is recorded as a
+	// cliworkflow.DeliverRunWithStore's workspace-resolution refusal is recorded as a
 	// failed delivery attempt, which is exactly the "the gate let it
 	// through" signal this test pins.
 	key := delivery.DeliveryKey(chunkRun.RunID, final.WorkflowDigest)
 	rec, delErr := repo.GetDeliveryByIdempotencyKey(ctx, key)
 	if delErr != nil {
-		t.Fatalf("auto policy chunk run has no delivery record; want a recorded attempt (the gate must have let deliverRunWithStore run): %v", delErr)
+		t.Fatalf("auto policy chunk run has no delivery record; want a recorded attempt (the gate must have let cliworkflow.DeliverRunWithStore run): %v", delErr)
 	}
 	if rec.Status != "failed" {
 		t.Fatalf("delivery record status = %q, want failed (the hermetic fixture has no real git remote)", rec.Status)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"io"
 	"os"
 	"path/filepath"
@@ -236,13 +237,13 @@ func TestDelegateAndDispatchCapabilityExtendsBeyondDefaultToolTimeout(t *testing
 	d := newTestDelegateDispatcher(&mockDelegateCompleter{name: "test", response: "ok"})
 	cfg := config.DefaultSubagentConfig // DefaultTimeout 0 → safety ceiling
 	delegate := &delegateTool{dispatcher: d, cfg: cfg}
-	dispatch := &dispatchTasksTool{dispatcher: d, cfg: cfg}
+	dispatch := cliorchestrate.NewDispatchTasksToolConfigured(d, cfg, nil, nil)
 
 	dCap := delegate.Capability(json.RawMessage(`{"task":"x"}`))
 	if dCap.Timeout < time.Hour {
 		t.Fatalf("delegate capability timeout %s too short for multi-step work", dCap.Timeout)
 	}
-	wantDelegate := time.Duration(config.DefaultOrchestrationTimeoutSec+dispatchOrchestrationSlackSec) * time.Second
+	wantDelegate := time.Duration(config.DefaultOrchestrationTimeoutSec+cliorchestrate.DispatchOrchestrationSlackSec) * time.Second
 	if dCap.Timeout != wantDelegate {
 		t.Fatalf("delegate capability=%s want %s ceiling", dCap.Timeout, wantDelegate)
 	}
@@ -264,7 +265,7 @@ func TestDelegateAndDispatchCapabilityExtendsBeyondDefaultToolTimeout(t *testing
 	// got a 12h budget. Now RequestedTimeoutSec honors the explicit value, so
 	// a 5s override yields a ~20s call budget (5 + slack), NOT the 12h floor.
 	short := dispatch.Capability(json.RawMessage(`{"tasks":[{"id":"t1","prompt":"x"}],"timeout_seconds":5}`))
-	wantShort := 5*time.Second + time.Duration(dispatchOrchestrationSlackSec)*time.Second
+	wantShort := 5*time.Second + time.Duration(cliorchestrate.DispatchOrchestrationSlackSec)*time.Second
 	if short.Timeout != wantShort {
 		t.Fatalf("short dispatch capability=%s must honor the explicit 5s override (want %s); before the fix it was silently floored to the 12h default", short.Timeout, wantShort)
 	}
@@ -289,7 +290,7 @@ func TestDispatchTasksTimeoutReturnsStructuredStatus(t *testing.T) {
 	// meant a 1s override could not shrink the 12h default; the tool was given
 	// a 1s default to compensate. The fix honors explicit overrides, so the 1s
 	// default + 1s override still yields a tight ~16s budget here.)
-	tool := &dispatchTasksTool{dispatcher: d, cfg: config.SubagentConfig{DefaultTimeout: 1, InlineOutputBytes: config.DefaultSubagentConfig.InlineOutputBytes}, agentReg: testAgentRegistry(t, "oneshot")}
+	tool := cliorchestrate.NewDispatchTasksToolConfigured(d, config.SubagentConfig{DefaultTimeout: 1, InlineOutputBytes: config.DefaultSubagentConfig.InlineOutputBytes}, nil, testAgentRegistry(t, "oneshot"))
 	start := time.Now()
 	// timeout_seconds is integer seconds; use 1s budget vs 5s work.
 	body, err := tool.Execute(context.Background(), json.RawMessage(`{
@@ -315,18 +316,12 @@ func TestDispatchTasksTimeoutReturnsStructuredStatus(t *testing.T) {
 }
 
 // handlerFunc adapts a function to runtime.Handler for tests in this package.
-type handlerFunc func(context.Context, runtime.Request) (json.RawMessage, error)
-
-func (f handlerFunc) Invoke(ctx context.Context, req runtime.Request) (json.RawMessage, error) {
-	return f(ctx, req)
-}
-
 func TestDispatchTasksToolValid(t *testing.T) {
 	d := newTestDelegateDispatcher(&mockDelegateCompleter{
 		name:     "test",
 		response: "{\"output\":\"analysis result\"}",
 	})
-	tool := &dispatchTasksTool{dispatcher: d, cfg: config.DefaultSubagentConfig, agentReg: testAgentRegistry(t, "oneshot")}
+	tool := cliorchestrate.NewDispatchTasksToolConfigured(d, config.DefaultSubagentConfig, nil, testAgentRegistry(t, "oneshot"))
 
 	result, err := tool.Execute(context.Background(), json.RawMessage(`{
 		"tasks": [
@@ -362,7 +357,7 @@ func TestDispatchTasksToolEmpty(t *testing.T) {
 	d := newTestDelegateDispatcher(&mockDelegateCompleter{
 		name: "test", response: "ok",
 	})
-	tool := &dispatchTasksTool{dispatcher: d, cfg: config.DefaultSubagentConfig, agentReg: testAgentRegistry(t, "oneshot")}
+	tool := cliorchestrate.NewDispatchTasksToolConfigured(d, config.DefaultSubagentConfig, nil, testAgentRegistry(t, "oneshot"))
 
 	result, err := tool.Execute(context.Background(), json.RawMessage(`{"tasks":[]}`))
 	if err != nil {
@@ -378,7 +373,7 @@ func TestDispatchTasksToolWithDependencies(t *testing.T) {
 		name:     "test",
 		response: "{\"output\":\"dependency result\"}",
 	})
-	tool := &dispatchTasksTool{dispatcher: d, cfg: config.DefaultSubagentConfig, agentReg: testAgentRegistry(t, "oneshot")}
+	tool := cliorchestrate.NewDispatchTasksToolConfigured(d, config.DefaultSubagentConfig, nil, testAgentRegistry(t, "oneshot"))
 
 	result, err := tool.Execute(context.Background(), json.RawMessage(`{
 		"tasks": [
@@ -408,7 +403,7 @@ func TestDispatchTasksToolCanceled(t *testing.T) {
 	d := newTestDelegateDispatcher(&mockDelegateCompleter{
 		name: "test", response: "will be canceled",
 	})
-	tool := &dispatchTasksTool{dispatcher: d, cfg: config.DefaultSubagentConfig, agentReg: testAgentRegistry(t, "oneshot")}
+	tool := cliorchestrate.NewDispatchTasksToolConfigured(d, config.DefaultSubagentConfig, nil, testAgentRegistry(t, "oneshot"))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -432,7 +427,7 @@ func TestDispatchTasksToolCanceled(t *testing.T) {
 //
 // Regression: INV-AG-10
 func TestDispatchTasksErrorEnvelopeOmitsUnstoredReference(t *testing.T) {
-	tool := &dispatchTasksTool{dispatcher: runtime.New(runtime.Policy{}), cfg: config.DefaultSubagentConfig, agentReg: testAgentRegistry(t, "worker")}
+	tool := cliorchestrate.NewDispatchTasksToolConfigured(runtime.New(runtime.Policy{}), config.DefaultSubagentConfig, nil, testAgentRegistry(t, "worker"))
 	out, err := tool.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"t1","agent":"worker","prompt":"x","depends_on":["missing"]}]}`))
 	// Missing dependency: empty results + model-visible JSON envelope, nil transport err.
 	if err != nil {
@@ -561,11 +556,11 @@ func TestNewSessionDispatcherRegistersDelegationTools(t *testing.T) {
 func TestSessionToolsImplementPrivilegedTool(t *testing.T) {
 	for _, tool := range []tools.Tool{
 		&delegateTool{},
-		&dispatchTasksTool{},
-		&spawnAgentTool{skillReg: nil},
-		&inspectAgentTool{},
-		&joinRunTool{},
-		&cancelRunTool{},
+		cliorchestrate.NewDispatchTasksToolZero(),
+		cliorchestrate.NewSpawnAgentToolZero(),
+		cliorchestrate.NewInspectAgentsToolZero(),
+		cliorchestrate.NewJoinRunToolZero(),
+		cliorchestrate.NewCancelRunToolZero(),
 	} {
 		if _, ok := tool.(tools.PrivilegedTool); !ok {
 			t.Errorf("%q does not implement PrivilegedTool", tool.Name())

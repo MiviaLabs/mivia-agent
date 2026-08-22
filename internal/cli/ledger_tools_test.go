@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"strings"
 	"testing"
 
@@ -81,8 +82,8 @@ type ledgerReadResponse struct {
 // runOneTaskForModel runs a single task through a real coordinator and returns
 // the repository plus the results exactly as the model receives them from
 // spawn_agent/dispatch_tasks. Nothing here mints a reference: the refs under
-// test come from modelTaskResults, the same function the tools use.
-func runOneTaskForModel(t *testing.T, out json.RawMessage, handlerErr error) (ledger.LedgerRepository, []modelTaskResult) {
+// test come from cliorchestrate.ModelTaskResults, the same function the tools use.
+func runOneTaskForModel(t *testing.T, out json.RawMessage, handlerErr error) (ledger.LedgerRepository, []cliorchestrate.ModelTaskResultForTest) {
 	t.Helper()
 	repo := ledger.NewMemoryLedgerRepository()
 	d := runtime.New(runtime.Policy{})
@@ -101,7 +102,7 @@ func runOneTaskForModel(t *testing.T, out json.RawMessage, handlerErr error) (le
 	if err != nil {
 		t.Fatal(err)
 	}
-	results := modelTaskResults(result.Snapshot.Tasks, result.Results, 4096)
+	results := cliorchestrate.ModelTaskResults(result.Snapshot.Tasks, result.Results, 4096)
 	if len(results) != 1 {
 		t.Fatalf("expected 1 model-visible task result, got %d", len(results))
 	}
@@ -114,7 +115,7 @@ func runOneTaskForModel(t *testing.T, out json.RawMessage, handlerErr error) (le
 // reference, so every output_ref the model saw was a dead pointer.
 //
 // The loop is closed end to end on purpose. The reference comes only from
-// modelTaskResults - what the model actually receives - and is resolved only
+// cliorchestrate.ModelTaskResults - what the model actually receives - and is resolved only
 // through ledger_read, the agent-facing tool. A test that minted its own
 // reference, or that read content by a key it computed itself, would agree
 // with itself and prove nothing.
@@ -438,7 +439,7 @@ func TestListRunEventsKindEnumMatchesSchema(t *testing.T) {
 	}
 }
 
-// ownedRunFixture registers a run in runHandles owned by principalSession and
+// ownedRunFixture registers a run in cliorchestrate.RunHandlesForTest owned by principalSession and
 // returns the repository, dispatcher, and run ID. Setup mirrors
 // TestRunHandleNotAccessibleToOtherOwner in orchestrate_lifecycle_test.go.
 func ownedRunFixture(t *testing.T, key, runID, principalSession string) (ledger.LedgerRepository, *runtime.Dispatcher) {
@@ -455,11 +456,8 @@ func ownedRunFixture(t *testing.T, key, runID, principalSession string) (ledger.
 	if err != nil {
 		t.Fatal(err)
 	}
-	runHandles.Store(runID, &orchestrationHandle{
-		coord: c, handle: h, repo: repo, dispatcher: dispatcher,
-		principal: orchestrationPrincipal{sessionID: principalSession},
-	})
-	t.Cleanup(func() { runHandles.Delete(runID) })
+	cliorchestrate.StoreTestRunHandle(runID, c, h, repo, dispatcher, principalSession)
+	t.Cleanup(func() { cliorchestrate.RunHandlesForTest.Delete(runID) })
 	return repo, dispatcher
 }
 

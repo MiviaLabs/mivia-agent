@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"path/filepath"
 	"testing"
 
@@ -51,7 +52,7 @@ func TestDispatcherInjectsIsolatedContextManager(t *testing.T) {
 	}
 	defer d.Close()
 	result := d.Invoke(context.Background(), runtime.Request{
-		ID: "nested-context", Kind: runtime.Subagent, Name: HandlerMultiStep,
+		ID: "nested-context", Kind: runtime.Subagent, Name: cliorchestrate.HandlerMultiStep,
 		Input: json.RawMessage(`"task"`), SessionID: principal.SessionID,
 	})
 	if result.Err != nil {
@@ -68,7 +69,7 @@ func TestSharedSQLiteInjectedIntoChatAndLedger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer closeSharedSQLite(store)
+	defer cliorchestrate.CloseSharedSQLite(store)
 	d, err := NewSessionDispatcher(SessionDispatcherOpts{
 		Registry: tools.NewRegistry(), Completer: nullCompleter{}, Model: "model",
 		Config: config.SubagentConfig{StoreBackend: "memory", DefaultTimeout: 60}, SharedSQLite: store,
@@ -76,7 +77,7 @@ func TestSharedSQLiteInjectedIntoChatAndLedger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo, ok := orchestrationRepoForDispatcher(d).(*ledger.StorageLedgerRepository)
+	repo, ok := cliorchestrate.OrchestrationRepoForDispatcher(d).(*ledger.StorageLedgerRepository)
 	if !ok || repo.UnderlyingStore() != store {
 		t.Fatalf("ledger store = %T/%p, want shared %p", repo.UnderlyingStore(), repo.UnderlyingStore(), store)
 	}
@@ -99,10 +100,10 @@ func TestOrchestrationStateClosesSharedSQLiteOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := closeSharedSQLite(store); err != nil {
+	if err := cliorchestrate.CloseSharedSQLite(store); err != nil {
 		t.Fatal(err)
 	}
-	if err := closeSharedSQLite(store); err != nil {
+	if err := cliorchestrate.CloseSharedSQLite(store); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.Events(context.Background(), "closed"); err == nil {

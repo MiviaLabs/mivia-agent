@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/MiviaLabs/mivia-agent/internal/cli"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
 	"strings"
 	"time"
 
@@ -267,7 +268,7 @@ func (m *TUIModel) workflowDialogActionCmd(action workflowConfirmAction) tea.Cmd
 		}
 		reject := action == workflowConfirmReject
 		return func() tea.Msg {
-			err := cli.ResolveWorkflowDialogApproval(runID, approvalID, root, configPath, cli.WorkflowApprovalDefaultActor, reject)
+			err := cliworkflow.ResolveWorkflowDialogApproval(runID, approvalID, root, configPath, cliworkflow.WorkflowApprovalDefaultActor, reject)
 			result := "approved"
 			if reject {
 				result = "rejected"
@@ -276,7 +277,7 @@ func (m *TUIModel) workflowDialogActionCmd(action workflowConfirmAction) tea.Cmd
 		}
 	case workflowConfirmCleanup:
 		return func() tea.Msg {
-			err := cli.CleanupWorkflowRunForDialog(runID, root, configPath)
+			err := cliworkflow.CleanupWorkflowRunForDialog(runID, root, configPath)
 			return workflowRunDialogActionMsg{runID: runID, action: action, result: "cleanup done", err: err}
 		}
 	case workflowConfirmCancel, workflowConfirmResume, workflowConfirmDeliver, workflowConfirmDelete:

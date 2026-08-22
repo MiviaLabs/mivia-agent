@@ -2,6 +2,7 @@ package cli
 
 import (
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -43,11 +44,11 @@ type sessionToolSpec struct {
 // registered by the session dispatcher, so no root binding advertises it.
 var sessionToolCatalog = []sessionToolSpec{
 	{Name: "delegate", New: func() tools.Tool { return &delegateTool{} }},
-	{Name: "dispatch_tasks", New: func() tools.Tool { return &dispatchTasksTool{} }},
-	{Name: "spawn_agent", New: func() tools.Tool { return &spawnAgentTool{} }},
-	{Name: "inspect_agents", New: func() tools.Tool { return &inspectAgentTool{} }},
-	{Name: "join_run", New: func() tools.Tool { return &joinRunTool{} }},
-	{Name: "cancel_run", New: func() tools.Tool { return &cancelRunTool{} }},
+	{Name: "dispatch_tasks", New: func() tools.Tool { return cliorchestrate.NewDispatchTasksToolZero() }},
+	{Name: "spawn_agent", New: func() tools.Tool { return cliorchestrate.NewSpawnAgentToolZero() }},
+	{Name: "inspect_agents", New: func() tools.Tool { return cliorchestrate.NewInspectAgentsToolZero() }},
+	{Name: "join_run", New: func() tools.Tool { return cliorchestrate.NewJoinRunToolZero() }},
+	{Name: "cancel_run", New: func() tools.Tool { return cliorchestrate.NewCancelRunToolZero() }},
 	{Name: "post_message", New: func() tools.Tool { return &postMessageTool{} }},
 	{Name: "run_messages", New: func() tools.Tool { return &runMessagesTool{} }},
 	{Name: "send_to_task", New: func() tools.Tool { return &sendToTaskTool{} }},

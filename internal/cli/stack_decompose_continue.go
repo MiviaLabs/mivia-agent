@@ -9,6 +9,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
 	"io"
 	"strconv"
 	"strings"
@@ -101,7 +102,7 @@ func latestDecomposeContinueWave(repo workflowledger.Repository, stackID string)
 // wave admission (hasMore=false) so the drive never auto-requests a wave out
 // of order; the operator resolves the live run and re-runs `mivia stack
 // drive`. The wave-0 output is passed in (already loaded by the caller).
-func loadAllStackChunksForDrive(prepared *preparedWorkflowRun, stackID string, planOutput []byte, planInputs map[string]string, stdout, stderr io.Writer) (chunks []ChunkPlan, hasMore bool, hasUnsettledWave bool, remainingScope string, err error) {
+func loadAllStackChunksForDrive(prepared *cliworkflow.PreparedWorkflowRun, stackID string, planOutput []byte, planInputs map[string]string, stdout, stderr io.Writer) (chunks []ChunkPlan, hasMore bool, hasUnsettledWave bool, remainingScope string, err error) {
 	mode, waveChunks, waveHasMore, waveRemaining, err := parseStackPlanOutput(planOutput)
 	if err != nil {
 		return nil, false, false, "", err
@@ -111,20 +112,20 @@ func loadAllStackChunksForDrive(prepared *preparedWorkflowRun, stackID string, p
 	}
 	chunks = append(chunks, waveChunks...)
 	hasMore, remainingScope = waveHasMore, waveRemaining
-	lastWave, err := latestDecomposeContinueWave(prepared.repo, stackID)
+	lastWave, err := latestDecomposeContinueWave(prepared.Repo, stackID)
 	if err != nil {
 		return nil, false, false, "", err
 	}
 	skippedWave := false
 	for wave := 1; wave <= lastWave; wave++ {
-		run, found, rerr := stackDecomposeContinueRunRef(prepared.repo, stackID, wave)
+		run, found, rerr := stackDecomposeContinueRunRef(prepared.Repo, stackID, wave)
 		if rerr != nil {
 			return nil, false, false, "", rerr
 		}
 		if !found {
 			return nil, false, false, "", fmt.Errorf("stack %s: decompose continuation wave %d has an invocation key but no run", stackID, wave)
 		}
-		raw, lerr := loadStackPlanOutput(prepared.repo, run.RunID)
+		raw, lerr := loadStackPlanOutput(prepared.Repo, run.RunID)
 		if lerr == nil {
 			_, waveChunks, waveHasMore, waveRemaining, perr := parseStackPlanOutput(raw)
 			if perr != nil {
@@ -146,8 +147,8 @@ func loadAllStackChunksForDrive(prepared *preparedWorkflowRun, stackID string, p
 		hasMore, remainingScope = waveHasMore, waveRemaining
 	}
 	hasUnsettledWave = skippedWave
-	if prepared.compiled != nil {
-		if err := enforceMaxTotalChunks(prepared.compiled.Stacking, stackID, len(chunks)); err != nil {
+	if prepared.Compiled != nil {
+		if err := enforceMaxTotalChunks(prepared.Compiled.Stacking, stackID, len(chunks)); err != nil {
 			return nil, false, false, "", err
 		}
 	}
@@ -177,17 +178,17 @@ func enforceMaxTotalChunks(stacking *definition.StackingConfig, stackID string, 
 // on the next drive). Every path either recovers the wave or reports exactly
 // which run to resume or delete - never the bare 'plan run %q has no
 // succeeded decompose output' wedge error.
-func recoverDecomposeContinueWave(prepared *preparedWorkflowRun, stackID string, wave int, run workflowledger.RunSnapshot, remainingScope string, planInputs map[string]string, stdout, stderr io.Writer) (chunks []ChunkPlan, hasMore bool, nextRemainingScope string, skipped bool, err error) {
+func recoverDecomposeContinueWave(prepared *cliworkflow.PreparedWorkflowRun, stackID string, wave int, run workflowledger.RunSnapshot, remainingScope string, planInputs map[string]string, stdout, stderr io.Writer) (chunks []ChunkPlan, hasMore bool, nextRemainingScope string, skipped bool, err error) {
 	if isResumableRunStatus(run.Status) {
 		fmt.Fprintf(stderr, "stack %s: decompose continuation wave %d run=%s is %s (resumable); resume it with `mivia workflow resume %s` or wait for it to settle, then re-run `mivia stack drive`\n", stackID, wave, run.RunID, run.Status, run.RunID)
 		return nil, false, "", true, nil
 	}
-	older, found, rerr := succeededDecomposeContinueRunRef(prepared.repo, stackID, wave)
+	older, found, rerr := succeededDecomposeContinueRunRef(prepared.Repo, stackID, wave)
 	if rerr != nil {
 		return nil, false, "", false, rerr
 	}
 	if found {
-		raw, lerr := loadStackPlanOutput(prepared.repo, older.RunID)
+		raw, lerr := loadStackPlanOutput(prepared.Repo, older.RunID)
 		if lerr != nil {
 			return nil, false, "", false, fmt.Errorf("stack %s: decompose continuation wave %d: %w", stackID, wave, lerr)
 		}
@@ -254,7 +255,7 @@ func succeededDecomposeContinueRunRef(repo workflowledger.Repository, stackID st
 // the next wave (a bounded extra step, not a full drive-to-completion loop -
 // the operator re-runs `stack drive` to keep advancing, matching this
 // command's existing one-pass-per-invocation contract).
-func admitNextWaveIfReady(prepared *preparedWorkflowRun, ledger *workflowledger.Store, stackID string, chunks []ChunkPlan, hasMore bool, remainingScope string, planInputs map[string]string, stdout, stderr io.Writer) error {
+func admitNextWaveIfReady(prepared *cliworkflow.PreparedWorkflowRun, ledger *workflowledger.Store, stackID string, chunks []ChunkPlan, hasMore bool, remainingScope string, planInputs map[string]string, stdout, stderr io.Writer) error {
 	if !hasMore {
 		return nil
 	}
@@ -265,21 +266,21 @@ func admitNextWaveIfReady(prepared *preparedWorkflowRun, ledger *workflowledger.
 	if !allChunksMerged(chunks, stackMergedSet(byID)) {
 		return nil
 	}
-	wave, err := latestDecomposeContinueWave(prepared.repo, stackID)
+	wave, err := latestDecomposeContinueWave(prepared.Repo, stackID)
 	if err != nil {
 		return fmt.Errorf("stack drive: %w", err)
 	}
 	wave++
 	// Halt BEFORE admitting when the cap is already reached (same rationale
 	// as driveStackToCompletion's pre-admission check).
-	if maxTotal := prepared.compiled.Stacking.MaxTotalChunks; maxTotal > 0 && len(chunks) >= maxTotal {
+	if maxTotal := prepared.Compiled.Stacking.MaxTotalChunks; maxTotal > 0 && len(chunks) >= maxTotal {
 		return fmt.Errorf("stack drive: stack %s reached max_total_chunks=%d with more scope declared; halting before admitting wave %d", stackID, maxTotal, wave)
 	}
 	nextChunks, _, _, err := admitDecomposeContinuationRun(prepared, stackID, wave, remainingScope, planInputs, stdout, stderr)
 	if err != nil {
 		return fmt.Errorf("stack drive: %w", err)
 	}
-	if maxTotal := prepared.compiled.Stacking.MaxTotalChunks; maxTotal > 0 && len(chunks)+len(nextChunks) > maxTotal {
+	if maxTotal := prepared.Compiled.Stacking.MaxTotalChunks; maxTotal > 0 && len(chunks)+len(nextChunks) > maxTotal {
 		return fmt.Errorf("stack drive: stack %s would admit %d total chunks, exceeding max_total_chunks=%d",
 			stackID, len(chunks)+len(nextChunks), maxTotal)
 	}
@@ -294,15 +295,15 @@ func admitNextWaveIfReady(prepared *preparedWorkflowRun, ledger *workflowledger.
 // admitted continuation run whose chunks the cap then rejects is an orphan
 // (admitted, never seeded, never driven). The post-admission check stays for
 // a wave that alone jumps over the cap.
-func admitNextDecomposeWave(prepared *preparedWorkflowRun, ledger *workflowledger.Store, stackID string, wave int, chunks []ChunkPlan, remainingScope string, planInputs map[string]string, stdout, stderr io.Writer) ([]ChunkPlan, bool, string, error) {
-	if maxTotal := prepared.compiled.Stacking.MaxTotalChunks; maxTotal > 0 && len(chunks) >= maxTotal {
+func admitNextDecomposeWave(prepared *cliworkflow.PreparedWorkflowRun, ledger *workflowledger.Store, stackID string, wave int, chunks []ChunkPlan, remainingScope string, planInputs map[string]string, stdout, stderr io.Writer) ([]ChunkPlan, bool, string, error) {
+	if maxTotal := prepared.Compiled.Stacking.MaxTotalChunks; maxTotal > 0 && len(chunks) >= maxTotal {
 		return nil, false, "", fmt.Errorf("stack drive: stack %s reached max_total_chunks=%d with more scope declared; halting before admitting wave %d", stackID, maxTotal, wave)
 	}
 	nextChunks, nextHasMore, nextRemaining, err := admitDecomposeContinuationRun(prepared, stackID, wave, remainingScope, planInputs, stdout, stderr)
 	if err != nil {
 		return nil, false, "", fmt.Errorf("stack drive: %w", err)
 	}
-	if maxTotal := prepared.compiled.Stacking.MaxTotalChunks; maxTotal > 0 && len(chunks)+len(nextChunks) > maxTotal {
+	if maxTotal := prepared.Compiled.Stacking.MaxTotalChunks; maxTotal > 0 && len(chunks)+len(nextChunks) > maxTotal {
 		return nil, false, "", fmt.Errorf("stack drive: stack %s would admit %d total chunks, exceeding max_total_chunks=%d (already have %d, wave %d adds %d)",
 			stackID, len(chunks)+len(nextChunks), maxTotal, len(chunks), wave, len(nextChunks))
 	}

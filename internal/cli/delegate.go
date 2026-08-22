@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
@@ -36,8 +37,8 @@ func (t *delegateTool) Capability(args json.RawMessage) tools.Capability {
 	sec := config.RequestedTimeoutSec(t.cfg.DefaultTimeout, delegateTimeoutOverride(args))
 	return tools.Capability{
 		Class:       tools.ExecutionExternal,
-		ResourceKey: HandlerDelegate,
-		Timeout:     time.Duration(sec+dispatchOrchestrationSlackSec) * time.Second,
+		ResourceKey: cliorchestrate.HandlerDelegate,
+		Timeout:     time.Duration(sec+cliorchestrate.DispatchOrchestrationSlackSec) * time.Second,
 	}
 }
 
@@ -48,7 +49,7 @@ func delegateTimeoutOverride(args json.RawMessage) int {
 	_ = json.Unmarshal(args, &params)
 	return params.TimeoutSeconds
 }
-func (t *delegateTool) Name() string { return HandlerDelegate }
+func (t *delegateTool) Name() string { return cliorchestrate.HandlerDelegate }
 func (t *delegateTool) Privileged()  {}
 func (t *delegateTool) Description() string {
 	return "Delegate a SINGLE focused subtask to a sub-agent. Use delegate for isolated fixes or " +
@@ -71,13 +72,13 @@ func (t *delegateTool) Parameters() map[string]any {
 				"type":        "string",
 				"description": "Natural language task description for the sub-agent",
 			},
-			HandlerMultiStep: map[string]any{
+			cliorchestrate.HandlerMultiStep: map[string]any{
 				"type":        "boolean",
 				"description": "When true, the sub-agent gets full tool access (multi-step). Default false (one-shot LLM call, no tools).",
 			},
 			"timeout_seconds": map[string]any{
 				"type":        "integer",
-				"description": "Timeout budget in seconds. " + timeoutHint(),
+				"description": "Timeout budget in seconds. " + cliorchestrate.TimeoutHint(),
 			},
 		},
 		"required":             []string{"task"},
@@ -97,9 +98,9 @@ func (t *delegateTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		return "", fmt.Errorf("delegate: task is required")
 	}
 
-	handlerName := HandlerDelegate
+	handlerName := cliorchestrate.HandlerDelegate
 	if params.MultiStep {
-		handlerName = HandlerMultiStep
+		handlerName = cliorchestrate.HandlerMultiStep
 	}
 
 	timeoutSec := config.RequestedTimeoutSec(t.cfg.DefaultTimeout, params.TimeoutSeconds)
@@ -116,12 +117,12 @@ func (t *delegateTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		ID:            invocationID,
 		InvocationKey: invocationID,
 		Name:          handlerName,
-		Owner:         defaultToolOwner,
+		Owner:         cliorchestrate.DefaultToolOwner,
 		Input:         input,
 		Timeout:       timeout,
 	}}
 
-	_, result, err := runThroughCoordinator(ctx, t.dispatcher, t.cfg, tasks, "", t.repo)
+	_, result, err := cliorchestrate.RunThroughCoordinator(ctx, t.dispatcher, t.cfg, tasks, "", t.repo)
 	// The result payload is attempted first, mirroring dispatch_tasks. A
 	// run-level error can be a pure persistence failure (e.g. the content write
 	// for an otherwise successful task), and that must not destroy a result the
@@ -136,14 +137,14 @@ func (t *delegateTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	if result != nil && result.Err != nil {
 		payload, _ := json.Marshal(map[string]any{
 			"error":  result.Err.Error(),
-			"status": statusFromErr(result.Err),
+			"status": cliorchestrate.StatusFromErr(result.Err),
 		})
 		return string(payload), nil
 	}
 	if err != nil {
 		payload, _ := json.Marshal(map[string]string{
 			"error":  err.Error(),
-			"status": statusFromErr(err),
+			"status": cliorchestrate.StatusFromErr(err),
 		})
 		return string(payload), nil
 	}
@@ -170,11 +171,11 @@ func delegateResultPayload(result *coordinator.RunResult, threshold int) (string
 		return "", false
 	}
 	r := result.Results[0]
-	outputRef, errorRef := storedResultRefs(result.Snapshot.Tasks, r)
+	outputRef, errorRef := cliorchestrate.StoredResultRefs(result.Snapshot.Tasks, r)
 	if r.Err != nil {
 		// Model-visible status body; nil transport err so agent loop keeps body.
 		payloadData := map[string]any{"status": r.Status}
-		if belowInlineThreshold([]byte(r.Err.Error()), threshold, errorRef) {
+		if cliorchestrate.BelowInlineThreshold([]byte(r.Err.Error()), threshold, errorRef) {
 			payloadData["error"] = r.Err.Error()
 			addRef(payloadData, "error_ref", errorRef)
 		} else {
@@ -200,14 +201,14 @@ func delegateResultPayload(result *coordinator.RunResult, threshold int) (string
 // read_hint as appropriate. Used by delegate which builds map[string]any
 // payloads rather than struct-based ones.
 func mergeOutputFields(payload map[string]any, output []byte, outputRef string, threshold int) {
-	if belowInlineThreshold(output, threshold, outputRef) {
-		payload["output"] = modelVisibleOutput(output)
+	if cliorchestrate.BelowInlineThreshold(output, threshold, outputRef) {
+		payload["output"] = cliorchestrate.ModelVisibleOutput(output)
 		addRef(payload, "output_ref", outputRef)
 	} else {
 		payload["output_ref"] = outputRef
 		payload["output_bytes"] = len(output)
-		payload["synopsis"] = synopsize(output)
-		if hint := readHint(threshold, len(output), outputRef); hint != "" {
+		payload["synopsis"] = cliorchestrate.Synopsize(output)
+		if hint := cliorchestrate.ReadHint(threshold, len(output), outputRef); hint != "" {
 			payload["read_hint"] = hint
 		}
 	}
@@ -224,17 +225,6 @@ func addRef(payload map[string]any, key, ref string) {
 	if ref != "" {
 		payload[key] = ref
 	}
-}
-
-// modelVisibleOutput returns the handler response as a JSON value when valid,
-// otherwise as text. The accompanying reference is a resolvable handle to the
-// persisted content, and the actual result is also included inline in this
-// response while the completed run is in memory.
-func modelVisibleOutput(raw json.RawMessage) any {
-	if json.Valid(raw) {
-		return json.RawMessage(raw)
-	}
-	return string(raw)
 }
 
 // Ensure delegateTool implements required interfaces at compile time.

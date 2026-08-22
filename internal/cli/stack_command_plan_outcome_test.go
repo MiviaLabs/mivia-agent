@@ -5,7 +5,7 @@ package cli
 // errStackAwaitsGrant) as a plan failure ("did not succeed... fix the plan
 // and re-run"). stackPlanOutcomeLine is the pure decision runStackPlan
 // prints from; testing it directly avoids driving a full stacking workflow
-// through executeWorkflowRun just to observe the status-line branch.
+// through cliworkflow.ExecuteWorkflowRun just to observe the status-line branch.
 
 import (
 	"strings"

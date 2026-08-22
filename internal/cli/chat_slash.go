@@ -7,6 +7,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 )
@@ -40,7 +41,7 @@ func handleSlash(line string, sess *chat.Session, res *config.Resolved, toolsOn 
 			term.WriteString("\n(new session failed: " + err.Error() + ")")
 			return true, false, nil
 		}
-		SetActiveSessionCaller(runtime.Caller{SessionID: newID})
+		cliorchestrate.SetActiveSessionCaller(runtime.Caller{SessionID: newID})
 		if store, ok := sess.Store().(*chat.FileSessionStore); ok && store != nil {
 			binding := sess.CurrentBinding()
 			mgr := chat.NewSaveManager(store, binding.Model, binding.Completer.Name())

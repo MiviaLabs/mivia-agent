@@ -16,50 +16,14 @@ import (
 	"testing"
 	"time"
 
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/envfile"
 )
 
 // closedLoopbackPort reserves a 127.0.0.1 port and releases it, so every
-// dial to it fails deterministically with connection refused.
-func closedLoopbackPort(t *testing.T) string {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	ln.Close()
-	return addr
-}
 
 // writeOllamaChatConfig writes a HOME-isolated single-provider ollama config
-// with the given base_url and returns the loaded Resolved plus workspace.
-func writeOllamaChatConfig(t *testing.T, baseURL string) (*config.Resolved, string) {
-	t.Helper()
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("OLLAMA_API_KEY", "")
-	ws := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(ws, ".mivia"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	cfgPath := filepath.Join(ws, ".mivia", "mivia.toml")
-	fixture := fmt.Sprintf(`[provider]
-name = "ollama"
-
-[providers.ollama]
-base_url = %q
-models = [{ name = "llama3.1:8b", context_window_tokens = 128000 }]
-`, baseURL)
-	if err := os.WriteFile(cfgPath, []byte(fixture), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	res, err := config.Load(config.LoadOptions{ConfigPath: cfgPath, WorkspaceRoot: ws})
-	if err != nil {
-		t.Fatalf("config.Load(%s): %v", baseURL, err)
-	}
-	return res, ws
-}
 
 // runChatOnceGuarded runs runConfiguredChatOnceImpl and turns a panic into a
 // test failure: the Round-4 contract is no panic on any of these paths.
@@ -155,7 +119,7 @@ func TestR4DoctorLoopbackLocalhostKeyless(t *testing.T) {
 	cfgPath := writeOllamaDoctorConfig(t, "http://localhost:11434/v1")
 	t.Setenv("OLLAMA_API_KEY", "")
 	var stdout, stderr bytes.Buffer
-	if err := runDoctorWithIO([]string{"--config", cfgPath, "--workspace", t.TempDir()}, &stdout, &stderr); err != nil {
+	if err := cliorchestrate.RunDoctorWithIO([]string{"--config", cfgPath, "--workspace", t.TempDir()}, &stdout, &stderr); err != nil {
 		t.Fatalf("doctor error for loopback ollama = %v (want ok)", err)
 	}
 	out := stdout.String()
@@ -179,7 +143,7 @@ func TestR4DoctorCloudNoKeyReportsMissing(t *testing.T) {
 	cfgPath := writeOllamaDoctorConfig(t, "https://ollama.com/v1")
 	t.Setenv("OLLAMA_API_KEY", "")
 	var stdout, stderr bytes.Buffer
-	err := runDoctorWithIO([]string{"--config", cfgPath, "--workspace", t.TempDir()}, &stdout, &stderr)
+	err := cliorchestrate.RunDoctorWithIO([]string{"--config", cfgPath, "--workspace", t.TempDir()}, &stdout, &stderr)
 	if err == nil {
 		t.Fatal("doctor must report a non-ok status for cloud ollama with no key")
 	}

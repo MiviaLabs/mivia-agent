@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
 	"os"
 	"path/filepath"
 	"testing"
@@ -30,7 +31,7 @@ func TestBugFixWorkflowPanelContract(t *testing.T) {
 		t.Fatalf("validate committed bug-fix workflow schemas: %v", err)
 	}
 	for _, step := range workflow.Steps {
-		if _, _, _, _, err := loadStepReferences(base, step, nil); err != nil {
+		if _, _, _, _, err := cliworkflow.LoadStepReferences(base, step, nil); err != nil {
 			t.Fatalf("load references for step %q: %v", step.ID, err)
 		}
 	}
@@ -251,7 +252,7 @@ func assertBugFixPanelLimits(t *testing.T, workflow definition.WorkflowFile) {
 // are DISABLED on the fast debug path: review_panel is commented out of
 // bug-fix.toml (see docs/development/debug-cut.md). They guard the panel
 // member templates rendering without an inputs.round injection and
-// validatePanelAgentTools admission for every member plus the synthesizer.
+// cliworkflow.ValidatePanelAgentTools admission for every member plus the synthesizer.
 // Restore them with the panel; the live bodies are in git history at the
 // last commit before the cut (HEAD moves, this SHA does not):
 // git show ce7538ad:internal/cli/bug_fix_panel_contract_test.go

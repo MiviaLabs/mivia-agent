@@ -7,6 +7,7 @@ package cli
 
 import (
 	"fmt"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"strings"
 	"testing"
 
@@ -47,7 +48,7 @@ func TestEncodeDispatchResultAlwaysCarriesASchemaVerdict(t *testing.T) {
 		TaskID: "t1",
 		Err:    fmt.Errorf("subagent: %w", subagents.ErrSchemaViolation),
 	}
-	tr := encodeOneDispatchResult(result, nil, 0)
+	tr := cliorchestrate.EncodeOneDispatchResult(result, nil, 0)
 	if tr.Reason != "schema_violation" {
 		t.Fatalf("reason = %q, want schema_violation", tr.Reason)
 	}

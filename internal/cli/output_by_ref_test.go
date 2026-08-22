@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"strings"
 	"testing"
 
@@ -16,14 +17,14 @@ import (
 // inline threshold are delivered inline with output_ref (backward compatible).
 func TestEncodeResultsSmallOutputInlined(t *testing.T) {
 	ref := "ref:output:small"
-	tool := &dispatchTasksTool{cfg: config.SubagentConfig{InlineOutputBytes: 4096}}
+	tool := cliorchestrate.NewDispatchTasksToolWithCfg(config.SubagentConfig{InlineOutputBytes: 4096})
 	snaps := []ledger.TaskSnapshot{
 		{TaskID: "a", AgentName: "researcher", OutputRef: ref},
 	}
 	results := []subagents.Result{
 		{TaskID: "a", Status: "completed", Output: json.RawMessage(`{"short": true}`)},
 	}
-	raw := tool.encodeResults(snaps, results)
+	raw := tool.EncodeResultsForTest(snaps, results)
 	var decoded []map[string]any
 	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
 		t.Fatalf("unmarshal %q: %v", raw, err)
@@ -50,7 +51,7 @@ func TestEncodeResultsLargeOutputUsesRef(t *testing.T) {
 	snaps := []ledger.TaskSnapshot{
 		{TaskID: "a", AgentName: "researcher", OutputRef: ref},
 	}
-	tool := &dispatchTasksTool{cfg: config.SubagentConfig{InlineOutputBytes: 100}}
+	tool := cliorchestrate.NewDispatchTasksToolWithCfg(config.SubagentConfig{InlineOutputBytes: 100})
 
 	// Build output larger than 100 bytes.
 	largeOutput := make([]byte, 500)
@@ -60,7 +61,7 @@ func TestEncodeResultsLargeOutputUsesRef(t *testing.T) {
 	results := []subagents.Result{
 		{TaskID: "a", Status: "completed", Output: json.RawMessage(largeOutput)},
 	}
-	raw := tool.encodeResults(snaps, results)
+	raw := tool.EncodeResultsForTest(snaps, results)
 	var decoded []map[string]any
 	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
 		t.Fatalf("unmarshal %q: %v", raw, err)
@@ -94,7 +95,7 @@ func TestEncodeResultsLargeOutputNoRefInlines(t *testing.T) {
 	snaps := []ledger.TaskSnapshot{
 		{TaskID: "a", AgentName: "researcher", OutputRef: ""}, // No ref stored
 	}
-	tool := &dispatchTasksTool{cfg: config.SubagentConfig{InlineOutputBytes: 100}}
+	tool := cliorchestrate.NewDispatchTasksToolWithCfg(config.SubagentConfig{InlineOutputBytes: 100})
 
 	largeOutput := make([]byte, 500)
 	for i := range largeOutput {
@@ -103,7 +104,7 @@ func TestEncodeResultsLargeOutputNoRefInlines(t *testing.T) {
 	results := []subagents.Result{
 		{TaskID: "a", Status: "completed", Output: json.RawMessage(largeOutput)},
 	}
-	raw := tool.encodeResults(snaps, results)
+	raw := tool.EncodeResultsForTest(snaps, results)
 	var decoded []map[string]any
 	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
 		t.Fatalf("unmarshal %q: %v", raw, err)
@@ -123,7 +124,7 @@ func TestEncodeResultsMixedFanOut(t *testing.T) {
 		{TaskID: "big-1", AgentName: "researcher", OutputRef: ref},
 		{TaskID: "small-2", AgentName: "researcher", OutputRef: "ref:output:s2"},
 	}
-	tool := &dispatchTasksTool{cfg: config.SubagentConfig{InlineOutputBytes: 100}}
+	tool := cliorchestrate.NewDispatchTasksToolWithCfg(config.SubagentConfig{InlineOutputBytes: 100})
 
 	bigOutput := make([]byte, 500)
 	for i := range bigOutput {
@@ -134,7 +135,7 @@ func TestEncodeResultsMixedFanOut(t *testing.T) {
 		{TaskID: "big-1", Status: "completed", Output: json.RawMessage(bigOutput)},
 		{TaskID: "small-2", Status: "completed", Output: json.RawMessage(`{"b":2}`)},
 	}
-	raw := tool.encodeResults(snaps, results)
+	raw := tool.EncodeResultsForTest(snaps, results)
 	var decoded []map[string]any
 	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
 		t.Fatalf("unmarshal %q: %v", raw, err)
@@ -168,14 +169,14 @@ func TestEncodeResultsJSONSynopsis(t *testing.T) {
 	snaps := []ledger.TaskSnapshot{
 		{TaskID: "a", AgentName: "researcher", OutputRef: ref},
 	}
-	tool := &dispatchTasksTool{cfg: config.SubagentConfig{InlineOutputBytes: 50}}
+	tool := cliorchestrate.NewDispatchTasksToolWithCfg(config.SubagentConfig{InlineOutputBytes: 50})
 
 	// JSON object with keys, exceeding 50 bytes.
 	largeJSON := `{"findings":["a long finding description that makes this big"],"files":["f1.go"],"summary":"done"}`
 	results := []subagents.Result{
 		{TaskID: "a", Status: "completed", Output: json.RawMessage(largeJSON)},
 	}
-	raw := tool.encodeResults(snaps, results)
+	raw := tool.EncodeResultsForTest(snaps, results)
 	var decoded []map[string]any
 	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
 		t.Fatalf("unmarshal %q: %v", raw, err)
@@ -194,7 +195,7 @@ func TestEncodeResultsJSONSynopsis(t *testing.T) {
 	}
 }
 
-// TestModelTaskResultsThreshold verifies that modelTaskResults correctly
+// TestModelTaskResultsThreshold verifies that cliorchestrate.ModelTaskResults correctly
 // switches between inline and ref+synopsis based on threshold.
 func TestModelTaskResultsThreshold(t *testing.T) {
 	ref := "ref:output:large"
@@ -208,7 +209,7 @@ func TestModelTaskResultsThreshold(t *testing.T) {
 
 	// Small output with high threshold: inlined.
 	results := []subagents.Result{{TaskID: "t1", Status: "completed", Output: smallOutput}}
-	mtrs := modelTaskResults(tasks, results, 4096)
+	mtrs := cliorchestrate.ModelTaskResults(tasks, results, 4096)
 	if mtrs[0].Output == nil {
 		t.Fatal("small output should be inlined")
 	}
@@ -218,7 +219,7 @@ func TestModelTaskResultsThreshold(t *testing.T) {
 
 	// Large output with low threshold: ref+synopsis.
 	results = []subagents.Result{{TaskID: "t1", Status: "completed", Output: largeOutput}}
-	mtrs = modelTaskResults(tasks, results, 100)
+	mtrs = cliorchestrate.ModelTaskResults(tasks, results, 100)
 	if mtrs[0].Output != nil {
 		t.Fatal("large output should NOT be inlined")
 	}
@@ -245,8 +246,8 @@ func TestDelegateResultPayloadLargeOutputUsesRef(t *testing.T) {
 	// We can't call delegateResultPayload with runResultLike since it's a
 	// different type. Test via encodeResults instead which exercises the same
 	// logic through a different path.
-	tool := &dispatchTasksTool{cfg: config.SubagentConfig{InlineOutputBytes: 100}}
-	raw := tool.encodeResults(
+	tool := cliorchestrate.NewDispatchTasksToolWithCfg(config.SubagentConfig{InlineOutputBytes: 100})
+	raw := tool.EncodeResultsForTest(
 		[]ledger.TaskSnapshot{{TaskID: "d1", OutputRef: ref}},
 		[]subagents.Result{{TaskID: "d1", Status: "completed", Output: json.RawMessage(largeOutput)}},
 	)
@@ -265,12 +266,12 @@ func TestDelegateResultPayloadLargeOutputUsesRef(t *testing.T) {
 // TestSynopsisBoundaryConditions verifies synopsize edge cases.
 func TestSynopsisBoundaryConditions(t *testing.T) {
 	// Exactly at threshold: inlined.
-	tool := &dispatchTasksTool{cfg: config.SubagentConfig{InlineOutputBytes: 100}}
+	tool := cliorchestrate.NewDispatchTasksToolWithCfg(config.SubagentConfig{InlineOutputBytes: 100})
 	exactly := make([]byte, 100)
 	for i := range exactly {
 		exactly[i] = 'e'
 	}
-	raw := tool.encodeResults(
+	raw := tool.EncodeResultsForTest(
 		[]ledger.TaskSnapshot{{TaskID: "t", OutputRef: "ref:output:exact"}},
 		[]subagents.Result{{TaskID: "t", Status: "completed", Output: json.RawMessage(exactly)}},
 	)
@@ -287,7 +288,7 @@ func TestSynopsisBoundaryConditions(t *testing.T) {
 	for i := range over {
 		over[i] = 'o'
 	}
-	raw = tool.encodeResults(
+	raw = tool.EncodeResultsForTest(
 		[]ledger.TaskSnapshot{{TaskID: "t", OutputRef: "ref:output:over"}},
 		[]subagents.Result{{TaskID: "t", Status: "completed", Output: json.RawMessage(over)}},
 	)
@@ -303,8 +304,8 @@ func TestSynopsisBoundaryConditions(t *testing.T) {
 // TestZeroThresholdAlwaysUsesRefs verifies threshold=0 means always refs.
 func TestZeroThresholdAlwaysUsesRefs(t *testing.T) {
 	ref := "ref:output:zero"
-	tool := &dispatchTasksTool{cfg: config.SubagentConfig{InlineOutputBytes: 0}}
-	raw := tool.encodeResults(
+	tool := cliorchestrate.NewDispatchTasksToolWithCfg(config.SubagentConfig{InlineOutputBytes: 0})
+	raw := tool.EncodeResultsForTest(
 		[]ledger.TaskSnapshot{{TaskID: "t", OutputRef: ref}},
 		[]subagents.Result{{TaskID: "t", Status: "completed", Output: json.RawMessage(`{"tiny": true}`)}},
 	)
@@ -327,13 +328,13 @@ func TestErrorAboveThreshold(t *testing.T) {
 	snaps := []ledger.TaskSnapshot{
 		{TaskID: "t1", AgentName: "researcher", ErrorRef: ref},
 	}
-	tool := &dispatchTasksTool{cfg: config.SubagentConfig{InlineOutputBytes: 20}}
+	tool := cliorchestrate.NewDispatchTasksToolWithCfg(config.SubagentConfig{InlineOutputBytes: 20})
 
 	longErr := fmt.Sprintf("this is a very long error message that exceeds the threshold of 20 bytes")
 	results := []subagents.Result{
 		{TaskID: "t1", Status: "failed", Err: fmt.Errorf("%s", longErr)},
 	}
-	raw := tool.encodeResults(snaps, results)
+	raw := tool.EncodeResultsForTest(snaps, results)
 	var decoded []map[string]any
 	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
 		t.Fatalf("unmarshal %q: %v", raw, err)
@@ -428,7 +429,7 @@ func TestDelegateResultPayloadSuccessAboveThreshold(t *testing.T) {
 // encoder's error branch, which is a third copy of the threshold rule.
 func TestModelTaskResultsErrorAboveThreshold(t *testing.T) {
 	errorRef := "ref:error:live"
-	out := modelTaskResults(
+	out := cliorchestrate.ModelTaskResults(
 		[]ledger.TaskSnapshot{{TaskID: "t1", ErrorRef: errorRef}},
 		[]subagents.Result{{TaskID: "t1", Status: "failed", Err: fmt.Errorf("%s", strings.Repeat("x", 200))}},
 		50,
@@ -449,7 +450,7 @@ func TestModelTaskResultsErrorAboveThreshold(t *testing.T) {
 // actually ran.
 func TestEncodeOneDispatchResultDefaultsAndElapsed(t *testing.T) {
 	output := json.RawMessage(`{"elapsed":"1.5s","steps":3,"step_count":7}`)
-	tr := encodeOneDispatchResult(
+	tr := cliorchestrate.EncodeOneDispatchResult(
 		subagents.Result{TaskID: "t1", Output: output},
 		[]ledger.TaskSnapshot{{TaskID: "t1", AgentName: "researcher"}},
 		4096,
@@ -467,7 +468,7 @@ func TestEncodeOneDispatchResultDefaultsAndElapsed(t *testing.T) {
 		t.Errorf("StepCount = %d, want 7", tr.StepCount)
 	}
 
-	failed := encodeOneDispatchResult(
+	failed := cliorchestrate.EncodeOneDispatchResult(
 		subagents.Result{TaskID: "t2", Err: fmt.Errorf("boom")},
 		[]ledger.TaskSnapshot{{TaskID: "t2"}},
 		4096,

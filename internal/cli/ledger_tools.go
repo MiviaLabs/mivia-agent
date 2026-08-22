@@ -8,12 +8,17 @@ import (
 	"time"
 	"unicode/utf8"
 
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
+
+// errJSONUnknownRunID mirrors cliorchestrate's constant for the list_run_events
+// ErrNotFound path. INV-AG-9: unknown and inaccessible must be indistinguishable.
+const errJSONUnknownRunID = `{"error":"unknown run_id"}`
 
 // newRemainderSpool wraps a ledger repository as a principal-scoped remainder
 // store for truncated tool results.
@@ -308,7 +313,7 @@ func (t *listRunEventsTool) Execute(ctx context.Context, args json.RawMessage) (
 	// timing. The accepted consequence is that runs not registered in this
 	// process (for example recovered from a previous session and not resumed)
 	// are unreachable here; that is the correct trade-off.
-	if _, errJSON := accessibleOrchestrationHandle(ctx, params.RunID, t.dispatcher, t.repo); errJSON != "" {
+	if _, errJSON := cliorchestrate.AccessibleOrchestrationHandle(ctx, params.RunID, t.dispatcher, t.repo); errJSON != "" {
 		return errJSON, nil
 	}
 	if t.repo == nil {
@@ -399,7 +404,7 @@ var (
 // that truncate tool results should pass it into agent.Options.RemainderSpool
 // so notices and reads share one visibility domain. Nil when registration fails.
 func registerLedgerTools(d *runtime.Dispatcher, reg *tools.Registry, repo ledger.LedgerRepository, toolResultCapBytes int, spool *remainder.Spool) (*remainder.Spool, error) {
-	effective := effectiveOrchestrationRepo(repo)
+	effective := cliorchestrate.EffectiveOrchestrationRepo(repo)
 	if spool == nil {
 		spool = newRemainderSpool(effective)
 	}

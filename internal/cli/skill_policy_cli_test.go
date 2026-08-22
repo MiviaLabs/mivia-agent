@@ -1,7 +1,7 @@
 package cli
 
 // skill_policy_cli_test.go contains the skill policy tests that need internal
-// cli types (dispatchTasksTool, gatedSkillHandler, agentTaskHandler). These
+// cli types (cliorchestrate.DispatchTasksToolForTest, gatedSkillHandler, agentTaskHandler). These
 // tests were separated from internal/cliagents/agent_skill_policy_test.go
 // because the cli-internal types they exercise cannot be accessed from
 // outside the cli package.
@@ -9,6 +9,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"strings"
 	"testing"
 
@@ -60,16 +61,16 @@ func TestSkillCannotBypassAgentSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tool := &dispatchTasksTool{skillReg: skillReg, agentReg: reg, cfg: config.DefaultSubagentConfig}
-	_, err := tool.buildTasks([]dispatchTaskParam{{
+	tool := cliorchestrate.NewDispatchTasksToolForSkillPolicy(skillReg, reg, config.DefaultSubagentConfig)
+	_, err := tool.BuildTasksForTest([]cliorchestrate.DispatchTaskParamForTest{{
 		ID: "t1", Prompt: "audit", Agent: "locked", Skill: "bug-audit",
 	}}, 30)
 	if err == nil || !strings.Contains(err.Error(), "may not invoke") {
 		t.Fatalf("skill selection must not bypass allowlist, got %v", err)
 	}
 
-	spawn := &spawnAgentTool{skillReg: skillReg, agentReg: reg, cfg: config.DefaultSubagentConfig}
-	_, err = spawn.buildSpawnTasks([]spawnTaskParams{{
+	spawn := cliorchestrate.NewSpawnAgentToolForSkillPolicy(skillReg, reg, config.DefaultSubagentConfig)
+	_, err = spawn.BuildSpawnTasksForTest([]cliorchestrate.SpawnTaskParamsForTest{{
 		ID: "t1", Agent: "locked", Skill: "bug-audit", Prompt: "audit",
 	}}, runtime.Caller{})
 	if err == nil || !strings.Contains(err.Error(), "may not invoke") {
@@ -122,8 +123,8 @@ func TestRouteTimeRejectsSkillWithUnmetTool(t *testing.T) {
 	}
 	skillReg := skills.NewRegistry()
 	_ = skillReg.Register(skills.Definition{Name: "audit", Tools: []string{"read_file", "run_command"}})
-	tool := &dispatchTasksTool{skillReg: skillReg, agentReg: reg, cfg: config.DefaultSubagentConfig}
-	_, err := tool.buildTasks([]dispatchTaskParam{{ID: "t1", Prompt: "audit", Agent: "researcher", Skill: "audit"}}, 30)
+	tool := cliorchestrate.NewDispatchTasksToolForSkillPolicy(skillReg, reg, config.DefaultSubagentConfig)
+	_, err := tool.BuildTasksForTest([]cliorchestrate.DispatchTaskParamForTest{{ID: "t1", Prompt: "audit", Agent: "researcher", Skill: "audit"}}, 30)
 	if err == nil || !strings.Contains(err.Error(), "run_command") {
 		t.Fatalf("route-time must reject unmet skill tool, got %v", err)
 	}

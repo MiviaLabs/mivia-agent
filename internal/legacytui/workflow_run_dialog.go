@@ -13,7 +13,7 @@ package legacytui
 import (
 	"errors"
 	"fmt"
-	"github.com/MiviaLabs/mivia-agent/internal/cli"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
@@ -139,7 +139,7 @@ func buildWorkflowRunView(run workflowledger.RunSnapshot, compiled *definition.C
 				line += " · " + rec.URL
 			}
 			if rec.CommitSHA != "" {
-				line += " · commit " + cli.ShortDigest(rec.CommitSHA)
+				line += " · commit " + cliworkflow.ShortDigest(rec.CommitSHA)
 			}
 			v.header = append(v.header, line)
 		}
