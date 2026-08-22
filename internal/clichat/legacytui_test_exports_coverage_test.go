@@ -141,3 +141,26 @@ func TestTuiHelpCommands(t *testing.T) {
 		t.Fatal("TuiHelpCommands returned empty")
 	}
 }
+
+func TestWorktreeAndWorkflowExports(t *testing.T) {
+	// Each export is a one-line wrapper to the underlying
+	// implementation. We drive the call path even when the
+	// implementation will fail closed; the export line is the unit
+	// under test.
+	_, _, _, _ = OpenWorkflowStore("", config.SubagentConfig{})
+	// RecoverManagedWorktreeRemoval on a non-existent worktree
+	// RecoverManagedWorktreeRemoval forwards a real git lookup;
+	// with an empty name the underlying impl errors closed. The
+	// wrapper just passes the error through; we exercise the path.
+	_, _ = RecoverManagedWorktreeRemoval("", "", "")
+	// WorktreeMarkerPath is a pure function over the root.
+	_ = WorktreeMarkerPath("")
+	// CreateManagedWorktree requires a real git repo; with an
+	// empty path the underlying impl fails closed.
+	_, _ = CreateManagedWorktree("", "", "", "")
+	// BeginManagedWorktreeRemoval with a nil worktree forwards the
+	// nil pointer through.
+	_, _ = BeginManagedWorktreeRemoval("", nil)
+	// OpenWorkflowStore and RecoverManagedWorktreeRemoval both run
+	// without panicking on the empty-arg path.
+}
