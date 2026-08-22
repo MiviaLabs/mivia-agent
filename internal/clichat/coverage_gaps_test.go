@@ -504,6 +504,10 @@ func (resumeCoordinatorFake) ResumeInterruptedRun(ctx context.Context, runID str
 }
 
 func TestHandleSlashResumeWithTerminal(t *testing.T) {
+	// Hermetic: other tests in this package may have cached a real
+	// coordinator via ensureCoordinator; clear the map so this test sees
+	// the no-coordinator baseline regardless of ordering.
+	cliorchestrate.ClearAllCoordinators()
 	term := NewTestTerminal(&bytes.Buffer{})
 	// No argument with no active orchestration reports no runs.
 	if ok, _, err := handleSlashResume("/resume", []string{"/resume"}, term); !ok || err != nil {
@@ -519,6 +523,9 @@ func TestHandleSlashResumeWithTerminal(t *testing.T) {
 }
 
 func TestHandleSlashResumeWithCoordinator(t *testing.T) {
+	// Hermetic: clear any coordinator cached by earlier tests so
+	// FindCoordinator deterministically returns this test's fake.
+	cliorchestrate.ClearAllCoordinators()
 	d := &runtime.Dispatcher{}
 	cleanup := cliorchestrate.StoreTestCoordinator(d, resumeCoordinatorFake{}, ledger.NewMemoryLedgerRepository())
 	t.Cleanup(cleanup)
