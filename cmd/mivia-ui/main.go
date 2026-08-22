@@ -41,6 +41,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/demoharness"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/termprobe"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 	"golang.org/x/term"
 )
 
@@ -309,7 +310,7 @@ func newRealScreen(ctx context.Context, c cfg, th theme.Theme, tier theme.Tier, 
 	}
 	storePath := resolved.StorePath
 	if storePath == "" {
-		storePath = filepath.Join(workspaceRoot, ".mivia", "session.sqlite")
+		storePath = workspace.NamespacePath(workspaceRoot, "session.sqlite")
 	}
 	adapter, cleanup, err := uiadapter.New(ctx, uiadapter.Input{
 		Resolved:      resolved,

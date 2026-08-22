@@ -27,6 +27,7 @@
       "internal/uikit/config",
       "internal/uikit/demoharness",
       "internal/uikit/termprobe",
+      "internal/workspace",
       "internal/uikit/uievent"
     ],
     "cmd/mivia-ui-demo": [
