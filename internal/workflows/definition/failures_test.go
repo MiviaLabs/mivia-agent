@@ -188,3 +188,45 @@ func TestCommandProfileFailuresPopulated(t *testing.T) {
 		t.Fatalf("check failures = %q", check.Failures)
 	}
 }
+
+// TestContextErrorFromRunDeadlineExceeded pins that a host-class failure
+// wrapping context.DeadlineExceeded surfaces the context error itself, so
+// the controller settles the run as timed_out instead of a host failure.
+func TestContextErrorFromRunDeadlineExceeded(t *testing.T) {
+	wrapped := fmt.Errorf("host verifier command failed: %w", context.DeadlineExceeded)
+	got := contextErrorFromRun(wrapped)
+	if !errors.Is(got, context.DeadlineExceeded) {
+		t.Fatalf("contextErrorFromRun(deadline) = %v, want context.DeadlineExceeded", got)
+	}
+}
+
+// TestContextErrorFromRunCanceled pins the cancel twin of the deadline path.
+func TestContextErrorFromRunCanceled(t *testing.T) {
+	wrapped := fmt.Errorf("host verifier command failed: %w", context.Canceled)
+	got := contextErrorFromRun(wrapped)
+	if !errors.Is(got, context.Canceled) {
+		t.Fatalf("contextErrorFromRun(canceled) = %v, want context.Canceled", got)
+	}
+}
+
+// TestExtractFailuresDeduplicatesRepeatedLines pins the dedup path: a runner
+// that prints the same failure marker line twice yields one entry, not two.
+func TestExtractFailuresDeduplicatesRepeatedLines(t *testing.T) {
+	out := "--- FAIL: TestAlpha (0.00s)\n" +
+		"--- FAIL: TestAlpha (0.00s)\n" +
+		"FAIL\n" +
+		"FAIL\n"
+	f := extractFailures([]byte(out))
+	count := 0
+	for _, line := range f {
+		if line == "--- FAIL: TestAlpha (0.00s)" {
+			count++
+		}
+		if line == "FAIL" {
+			count++
+		}
+	}
+	if count != 2 {
+		t.Fatalf("duplicate failure lines must appear once each; got %q", f)
+	}
+}

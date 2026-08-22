@@ -1,5 +1,5 @@
 {
-  "description": "Internal import edges: an allowed-edge baseline, a hard edge-count cap, and a deny-list that overrides the baseline. Re-baselined after the internal/clichat extraction (SDK convergence Stage 0 Item 4, slice 5): the split of the former 44-out-degree internal/cli into router + domain packages multiplies package-pair edges even though the total dependency set does not grow, exactly as the previous interim cap note predicted. The cap is now the measured count (400); known debt, not a target, same as go-structure.json baselines.",
+  "description": "Internal import edges: an allowed-edge baseline, a hard edge-count cap, and a deny-list that overrides the baseline. Final measured 398 edges after the SDK convergence Stage 0 Item 4 split (slices 1-6: cliworktree, cliagents, cliorchestrate, cliworkflow, clichat) of the former 44-out-degree internal/cli. Edge cap set to 400 with a 2-edge headroom margin so a single new dependency does not push the tree over the cap without an explicit review of the policy.",
   "edgeCap": 400,
   "deny": [
     {
