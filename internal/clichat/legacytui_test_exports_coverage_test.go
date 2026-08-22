@@ -180,3 +180,19 @@ func TestMoreLegacytuiTestExports(t *testing.T) {
 	_ = HandleSlashInfo
 	_ = HandleSlashAgent
 }
+
+func TestPureReExports(t *testing.T) {
+	// Each re-export is a single return statement; the only way
+	// to cover it is to call the export.
+	now := time.Now()
+	_ = FormatUserBubbleTime(now)
+	_ = FormatUserMessageCard("text", 80, now)
+	_ = OrchestrationSwitchGuard("")
+	_ = FilterSkillsForScope(nil, AgentSkillScope{})
+	_ = RenderOneChatBlock(ChatBlock{}, "", 80, true)
+	_ = RenderThinkingBlock("text", true, 0, true, 80)
+	_ = SummarizeToolDetail("read_file", `{"path":"/tmp/x"}`, "ok")
+	_ = HighlightCodeBlock("go", "package main")
+	EmitSubagentProgress(agent.Event{})
+	_, _ = RepositorySessionStorePath("", ChatInvocation{}, nil)
+}
