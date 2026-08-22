@@ -61,8 +61,11 @@ def test_policy_exists_and_thresholds() -> None:
     assert p["funcLines"]["hard"] == 120
     assert p["commentBlockLines"]["soft"] == 25
     assert p["commentBlockLines"]["hard"] == 30
-    assert "internal/cli/chat_json_writer.go" in p["commentBlockLines"]["baseline"]
-    assert "internal/cli/tui.go" in p["baseline"]["files"]
+    # Baselines are pinned to current file locations after the cli split;
+    # chat_json_writer moved from internal/cli to internal/clichat, and the
+    # TUI god-file moved from internal/cli/tui.go to internal/legacytui/tui.go.
+    assert "internal/clichat/chat_json_writer.go" in p["commentBlockLines"]["baseline"]
+    assert "internal/legacytui/tui.go" in p["baseline"]["files"]
 
 
 def test_small_file_ok() -> None:
