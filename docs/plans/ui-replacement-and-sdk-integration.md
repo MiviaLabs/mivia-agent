@@ -263,6 +263,15 @@ needs.
 
 ### B.0.5 — `internal/sdkadapter`: small bridge for type-shape mismatches
 
+**Sequencing.** B.0.5 lands before B.1 because B.0.5's
+`provider.go` and `tool.go` import SDK primitives whose surface
+may be extended by B.1; if B.1 lands first, B.0.5 will define a
+bridge that compiles against a narrower API and then has to be
+edited when B.1's extensions merge. The order is right but the
+rationale is undocumented; one sentence here is enough. The
+same rationale applies to B.2 #8 (the inner-loop swap), which
+must follow both B.0.5 and the B.1 extensions it consumes.
+
 **Why this exists.** Three local mirrors (CLI's `tools.Tool`,
 `skills.Definition`, `provider.Message`) have richer shapes than
 their SDK counterparts. The CLI's `tools.Tool` has 8 methods; the
@@ -277,10 +286,57 @@ named for what it does and lives in one directory with a clear
 shape. Its responsibilities:
 
 - `internal/sdkadapter/tool.go` — wrap an SDK `tools.Tool` as a CLI
-  `Tool` (forward `Name` and `Run`; synthesize `Description`,
-  `Parameters`, `Capability`, `ResultBudgetBytes` from CLI config).
-  Tests: round-trip a tool with Name and Run; assert the CLI side
-  sees a Description and Parameters it can read.
+  `Tool`. The CLI's `Tool` interface has 8 methods across the base
+  interface (`Name`, `Description`, `Parameters`, `Execute`) and
+  four optional mix-ins (`EphemeralResultTool`,
+  `EphemeralResultMarker`; `PrivilegedTool`, `Privileged`;
+  `CapableTool`, `Capability`; `ResultBudgetTool`,
+  `ResultBudgetBytes`) per `internal/tools/tools.go:21-80`. The
+  SDK's `tools.Tool` has 2 methods (`Name`, `Run`); the SDK
+  declares `SchemaTool` (4 methods), `ProfiledTool`,
+  `ExecutionProfile`, `ResultBudgetTool`, `PrivilegedTool` per
+  `api/tools.txt:32-58`. The bridge must forward all eight CLI
+  methods and adapt the SDK's narrower surface:
+  - `Name()` forwards directly (both sides have it).
+  - `Description()` returns the CLI-config description registered
+    alongside the bridge; the SDK has no per-tool description on
+    `tools.Tool` (only `ParameterSchema() []byte` for tools that
+    implement `SchemaTool`). The bridge's CLI-config table is
+    the only place a description comes from.
+  - `Parameters()` returns `SchemaOf(t)` (verified at
+    `tools/schema.go:18`, returns `([]byte, bool)`) decoded from
+    the SDK's parameter-schema bytes, or the CLI-config
+    `Parameters` if the SDK side does not implement `SchemaTool`.
+  - `Execute(ctx, args)` calls `SchemaTool.DecodeArguments`
+    (`tools/schema.go:11`) when the SDK tool implements it,
+    otherwise it wraps the raw args into `tools.InOut{Value: ...}`
+    (`tools/tool.go:7-9`) and calls `Tool.Run` directly; the
+    bridge unwraps `Out.Value` back into the CLI's
+    `(string, error)` return.
+  - `EphemeralResultMarker(args)` forwards to a CLI-side
+    table-backed function registered on the bridge (no SDK
+    analogue; the SDK's `ResultBudgetTool` covers a different
+    concern).
+  - `Privileged()` forwards to `tools.IsPrivileged(t)`
+    (`api/tools.txt:15`).
+  - `Capability(args)` forwards to `tools.ExecutionProfileOf(t)`
+    (`api/tools.txt:14`) and translates the SDK's
+    `ExecutionProfile` (`Class`, `ResourceKey`, `Timeout`) into
+    the CLI's `Capability` (`Class`, `ResourceKey`, `Timeout`,
+    `MaxResultBytes`).
+  - `ResultBudgetBytes()` forwards to
+    `tools.ResultBudgetOf(t)` (`api/tools.txt:18`).
+  The file is expected to land near ~250-300 LOC because the
+  eight method bodies and the two translation tables
+  (`ExecutionProfile` → `Capability`, `Description` synthesis)
+  exceed the 200-LOC cap. The plan accepts the overshoot; if
+  the file grows past 300 LOC, split the `Capability` translator
+  into `internal/sdkadapter/tool_capability.go`. Tests: round-trip
+  a tool that implements the SDK's `SchemaTool` +
+  `ProfiledTool` + `ResultBudgetTool` mix-ins and assert each
+  of the eight CLI-side methods returns the expected value;
+  round-trip a tool that does *not* implement `SchemaTool` and
+  assert `Parameters()` returns the CLI-config fallback.
 - `internal/sdkadapter/skill.go` — wrap an SDK `skills.Skill` as a
   CLI `skills.Definition` (forward `Name`, `Instructions`,
   `Triggers`; fill the rest from the CLI's product layer at the
@@ -336,11 +392,11 @@ it stays in the CLI and gets a bridge in `internal/sdkadapter`.
 
 | # | Local mirror | SDK primitive | Extension needed | Why this belongs in SDK (cited evidence) |
 |---|---|---|---|---|
-| B.1.1 | `internal/agent` *only the parts the SDK doesn't have* | `mivia-ai-sdk/agentloop` | Add `WithHeartbeat(interval, fn)`, `WithToolScrubOnRegistryChange()`, `WithToolResultSpool(spool)`. **Do NOT propose `WithRetryAfterPromptTooLong` (it is mivia's prompt-budget shape), `WithToolParallelism` (it is mivia's work-limit shape; the SDK's loop runs tools sequentially by design), or `WithHystereticPrune` (no evidence in either codebase).** | The SDK's `agentloop/loop.go` has none of heartbeat-on-loop, scrub-on-registry-change, or spool-aware tool-result shaping. The SDK's own gap-analysis admission at `policy/pending_wiring.json:30` lists these as the CLI side of the gap. mivia-agent must build an adapter to call them; the SDK exposes the configuration surface so any caller can. |
-| B.1.2 | `internal/ledger` *the production-grade SQLite repo* | `mivia-ai-sdk/ledger` | Extend the `Store` interface with `Recover`, `SetTaskAttempt`, `CompareAndSetTaskStatus`, `DisplayName`. Move `StorageLedgerRepository` (the SQLite repo CLI owns today) to a new SDK package `ledger/sqlitestore` so any caller can use the same production repo. | The SDK already has `MemStore` (`ledger/memstore.go`) and a build-tagged `ledger_sqlite`. The CLI's `StorageLedgerRepository` is the production-quality impl; promoting it to `ledger/sqlitestore` makes it the canonical durable repo. mivia-agent's "Recover a crashed run, display the human name, CAS the task status" pattern is the one every durable agent runtime wants. |
-| B.1.3 | `internal/hooks` *the registry surface* | `mivia-ai-sdk/hooks` | Add an external-program `Handler` variant: `HandlerFunc func(ctx, payload) (veto bool, err error)` already exists; add `ExternalHandler{ Path, Args, StdinJSON, ParsePermissionDecision(veto bool, err error) (Veto, error) }` so any Claude-Code-style runtime (not just mivia) can register external programs as lifecycle hooks. The CLI's `internal/hooks/exec.go` becomes one such handler, with the mivia-specific JSON schema parsing as a separate file. | Two or more non-mivia agent runtimes in the wild use external-program hooks (Claude Code, Cline, Continue). The SDK's `hooks/doc.go:1-10` advertises the lifecycle registry; an external-program handler is a generic pattern. |
-| B.1.4 | `internal/reasoning` *type definitions* (Level / Dialect / Setting) | `mivia-ai-sdk/provider` | Add `ReasoningBudget` (a 0..100 token-budget knob the provider can pass through) and `FormatReasoningEfforts([]Effort) string` (the presentational helper). **Do NOT propose to absorb the 7-level `Level` enum into `ReasoningEffort`'s 4 values — the SDK's policy is deliberately coarser; expanding it would change the user-visible config and any caller who mapped CLI's `XHigh` to SDK's `High` would silently lose fidelity. Keep CLI's `Level`; bridge at the request-encoder boundary.** | `ReasoningBudget` is a generic provider capability any model that supports thinking can consume. `FormatReasoningEfforts` is a presentational helper every model-facing surface needs. The 7-level / 4-level mismatch is product-specific. |
-| B.1.5 | `internal/events` *the per-handler buffered subscription* | `mivia-ai-sdk/events` | Add per-handler buffered subscription: `Subscribe(name, opts SubscribeOptions) (Sub, error)` with `opts.BufferSize`, `opts.CloseOnPanic`. The current `Bus.Subscribe` is broadcast-only. **Do NOT propose `Delivery` (re-entrant subscription handle from inside a handler) or `Flush / Close / Unsubscribe` on a `Bus` — these are product patterns. The per-handler buffer is generic; the rest is mivia's REPL.** | The SDK's `events/bus.go:42-88` is broadcast-only. A buffered subscription lets any caller consume events without blocking the emitter. Two or more non-mivia callers (recorder, sidecar, hub) would benefit. |
+| B.1.1 | *(deleted — none of the proposed extensions are actually missing from the SDK)* | n/a | **No extension.** The SDK's `agentloop.Options` already exposes `HeartbeatInterval` (`agentloop/options.go:259-263`), `DedupWithinTurn` (`:254-258`), `TurnResultBudget` (`:264-278`), `ConcludeMargin`/`ConcludeNotice` (`:234-253`), and `Audit AuditFunc` (`:218-220`). The CLI's `internal/agent/options.go` carries analogues (`MaxToolResultChars`, `MaxToolCallsPerBatch`, `MaxConcurrentTools`, etc.) that the inner-loop swap at B.2 #8 already maps per-field onto the SDK options; no `With*` setter is needed because the SDK uses struct fields, not option-setter methods. The CLI's per-step scrub-on-registry-change and the spool-aware tool-result shaping remain CLI-only concerns (B.4). **Do NOT propose `WithRetryAfterPromptTooLong` (it is mivia's prompt-budget shape), `WithToolParallelism` (it is mivia's work-limit shape; the SDK's loop runs tools sequentially by design), or `WithHystereticPrune` (no evidence in either codebase).** | Verified at `agentloop/options.go:99-106` (sentinel errors for `ErrTurnResultBudget`, `ErrConcludeMargin`, `ErrHeartbeatRequiresBus`), `:218-220` (`Audit AuditFunc`), `:234-253` (`ConcludeMargin`, `ConcludeNotice`), `:254-258` (`DedupWithinTurn`), `:259-263` (`HeartbeatInterval`), `:264-278` (`TurnResultBudget`). The plan's previous "With*" setters were fabricated; the SDK uses struct fields and `Options.Validate()` directly. |
+| B.1.2 | `internal/ledger` *the production-grade SQLite repo* | `mivia-ai-sdk/ledger` | **No new SDK extension; no new SDK subpackage.** The SDK already exposes `ledger.SQLiteStore` (`ledger/sqlite_store.go:54-90`, gated by the `ledger_sqlite` build tag) and `ledger.NewSQLiteStore(path)` (`:64`). The CLI's `StorageLedgerRepository` is replaced by `ledger.SQLiteStore` directly; the CLI no longer owns the SQLite repo. The four CLI-specific concerns named in the previous revision (`Recover`, `SetTaskAttempt`, `CompareAndSetTaskStatus`, `DisplayName`) are not on the SDK's `Store` interface (`api/ledger.txt:57-61` only declares `Load`, `CompareAndSwap`, `Range`) and are **not** proposed as extensions: they are CLI-side adapter logic in `internal/sdkadapter/ledger.go` and belong to the mivia product, not the SDK's contract. | Verified at `ledger/sqlite_store.go:53-90` (the `SQLiteStore` struct and `NewSQLiteStore`), `api/ledger.txt:38` (`func NewSQLiteStore(path string) (*SQLiteStore, error)`) and `:51-61` (the `SQLiteStore` and `Store` interface). Promoting the CLI's repo to a separate `ledger/sqlitestore` subpackage would duplicate a package the SDK already exposes under the `ledger_sqlite` build tag. |
+| B.1.3 | `internal/hooks` *the registry surface* | `mivia-ai-sdk/hooks` | Add an external-program `Handler` variant: `HandlerFunc func(ctx, payload) (veto bool, err error)` already exists; add `ExternalHandler{ Path, Args, StdinJSON, ParsePermissionDecision(veto bool, err error) (Veto, error) }` so any Claude-Code-style runtime (not just mivia) can register external programs as lifecycle hooks. The CLI's `internal/hooks/exec.go` becomes one such handler, with the mivia-specific JSON schema parsing as a separate file. | Two or more non-mivia agent runtimes in the wild use external-program hooks (Claude Code, Cline, Continue). The SDK's `hooks/doc.go:1-10` advertises the lifecycle registry; an external-program handler is a generic pattern. **Bridge file** for B.2 #10: the CLI's `Runner.Run` (struct method on `internal/hooks.Runner`) becomes an SDK `Handler` (Go func signature `func(ctx context.Context, payload any) (bool, error)` at `hooks/registry.go:32`) via `internal/sdkadapter/hooks.go`. Shape (~30-40 LOC): a `handlerAdapter` struct holding `runner *hooks.Runner` and a `Handler()` method that calls `runner.Run`, returning `(allow, err)` in the SDK's shape. The Event/Point name mapping lives next to the bridge (see B.1.3-followup and finding #9 below); the handler func itself is point-agnostic. |
+| B.1.4 | `internal/reasoning` *type definitions* (Level / Dialect / Setting) | `mivia-ai-sdk/provider` | Add `ReasoningBudget` (a 0..100 token-budget knob the provider can pass through) **only**. **Do NOT propose `FormatReasoningEfforts` — that is a UI-side presentational helper that belongs in the CLI's `internal/reasoning/reasoning.go` (the file survives the drop; the 7-value `Level` survives; the request-encoder does the Level → ReasoningEffort mapping).** **Do NOT propose to absorb the 7-level `Level` enum into `ReasoningEffort`'s 4 values — the SDK's policy is deliberately coarser; expanding it would change the user-visible config and any caller who mapped CLI's `XHigh` to SDK's `High` would silently lose fidelity. Keep CLI's `Level`; bridge at the request-encoder boundary.** | `ReasoningBudget` is a generic provider capability any model that supports thinking can consume. `FormatReasoningEfforts` is a presentational helper every model-facing surface needs, but it is mivia's model-specific surface (today it lives alongside `internal/reasoning`'s 7-value `Level`); making it SDK-side would couple the SDK to a 7-value vocabulary the SDK deliberately rejects (`provider/reasoning.go:9-22` documents the 4-value closed set). The 7-level / 4-level mismatch is product-specific. |
+| B.1.5 | `internal/events` *the per-handler buffered subscription* | `mivia-ai-sdk/events` | Add per-handler buffered subscription: `Subscribe(name, opts SubscribeOptions) (Sub, error)` with `opts.BufferSize`, `opts.CloseOnPanic`. The current `Bus.Subscribe` is broadcast-only. **Do NOT propose `Delivery` (re-entrant subscription handle from inside a handler) or `Flush / Close / Unsubscribe` on a `Bus` — these are product patterns. The per-handler buffer is generic; the rest is mivia's REPL.** | The SDK's `events/bus.go:42-88` is broadcast-only (`Subscribe(name, h Handler) error`; `Emit` calls handlers inline under the mutex, with no per-subscriber buffer). A buffered subscription lets any caller consume events without blocking the emitter. Justified by *exclusion of broadcast-only `Subscribe`* in `events/bus.go:55-66` and by the SDK's own docstring commitment that "handlers for one event run in order" — a slow consumer in a synchronous broadcast can back-pressure the emitter. The previous "two non-mivia callers (recorder, sidecar, hub)" rationale cited mivia's own subsystems and is dropped; the extension is justified on leaf-package design grounds, not on call-site enumeration. |
 
 **Extensions explicitly NOT proposed** (after the plan-reviewer's
 review):
@@ -387,9 +443,9 @@ Tests (which contract must hold after the drop).
 |---|---|---|---|
 | 1 | `internal/durablefence` (test-only harness) | `mivia-ai-sdk/durablefence` | **Goal**: drop the local test-only conformance kit. **Scope**: delete `internal/durablefence/`; the SDK's `durablefence.Run` and `Check*` are the canonical four checks. **API**: same exported symbol set; the SDK's call sites replace the local one. **Tests**: the SDK's `durablefence_test/` is run in place of the local. |
 | 2 | `internal/envfile` | `mivia-ai-sdk/envfile.Load` | **Goal**: drop the local env-file loader. **Scope**: delete `internal/envfile/`; the SDK's `envfile.Load` is wire-compatible. **API**: same; the SDK's `Lookup` helper (if it exists) covers the local's preference order; if not, the local's `Lookup` stays in CLI as a small wrapper around the SDK's `Load`. **Tests**: the SDK's `envfile_test/` is run in place of the local. |
-| 3 | `internal/contentref` (adopt `sha256:<digest>`; **dual-format parsing during transition**) | `mivia-ai-sdk/contextstate.Mint` | **Goal**: drop the local content-ref minter; adopt the SDK's `sha256:<digest>` shape as canonical. **Scope**: delete `internal/contentref/`; the minter becomes `contextstate.Mint`; the parser `Parse(ref string)` becomes `contextstate.Parse` with **dual-format support**: `ref:kind:digest` and `sha256:digest` both parse to the same value during transition. A follow-up commit removes the dual-format support once the `usage_events.content_ref` table is migrated. **API**: `Mint(data []byte) string` returns `sha256:<digest>`; `Parse(ref) (kind, digest, err)` returns the kind-or-empty and digest. **Tests**: round-trip a byte slice; dual-format parse returns the same digest for both `ref:foo:abc...` and `sha256:abc...`; persisted-ref migration test (a `usage_events` row with `ref:output:abc` parses to the same content as a `sha256:abc` row). |
+| 3 | `internal/contentref` (adopt `sha256:<digest>`; **dual-format parsing during transition**) | `mivia-ai-sdk/contextstate.Mint` | **Goal**: drop the local content-ref minter; adopt the SDK's `sha256:<digest>` shape as canonical. **Scope**: delete `internal/contentref/`; the minter becomes `contextstate.Mint` (verified at `contextstate/ref.go:31-33`). The dual-format parser `Parse(ref string)` **does not move to the SDK** because `contextstate.Parse` does not exist (`api/contextstate.txt:26-28` only locks `Mint`, `Digest`, `IsRef`); the parser lives in the CLI as `internal/sdkadapter/ref.go` and accepts both `ref:kind:digest` and `sha256:digest` during the transition window. A follow-up commit removes the dual-format support once the `usage_events.content_ref` table is migrated. **API**: `Mint(data []byte) string` returns `sha256:<digest>` (the SDK's); `Parse(ref) (kind, digest string, err error)` lives in `internal/sdkadapter/ref.go` and is the single CLI-side migration helper. **Tests**: round-trip a byte slice through the SDK's `Mint`; the dual-format parser returns the same `digest` for both `ref:foo:abc...` and `sha256:abc...`; persisted-ref migration test (a `usage_events` row with `ref:output:abc` parses to the same content as a `sha256:abc` row). |
 | 4 | `internal/contextstate` (every type and validator) | `mivia-ai-sdk/contextstate` | **Goal**: drop the local mirror of the SDK's contract types. **Scope**: delete `internal/contextstate/`; import the SDK's `contextstate` package directly. The CLI's `contracts.go` and `commit_validation.go` are byte-identical with the SDK's per `contextstate/doc.go:6-9`. **API**: every `internal/contextstate.X` becomes `mivia-ai-sdk/contextstate.X`. **Tests**: any local test that imported `internal/contextstate` switches to the SDK's import; the SDK's tests cover the contract. |
-| 5 | `internal/reasoning` (Level / Dialect / Setting) | `mivia-ai-sdk/provider` reasoning types (the 4-value `ReasoningEffort`, the open `ReasoningDialect` typed string) | **Goal**: drop the local mirror of the SDK's reasoning types where the vocabulary overlaps. **Scope**: keep CLI's 7-level `Level` enum (it is the product's user-visible config vocabulary); the SDK's `ReasoningEffort` (4 values) is used at the request-encoder boundary only. Delete `internal/reasoning.FormatLevels` (replaced by `provider.FormatReasoningEfforts` per B.1.4). **API**: CLI's `Level` is the source-of-truth; the request encoder translates `Level → ReasoningEffort` at the call site (the mapping is product-specific, defined in `internal/sdkadapter/provider.go`). **Tests**: the existing `internal/reasoning` tests keep working; the bridge has its own tests. |
+| 5 | `internal/reasoning` (Level / Dialect / Setting) | `mivia-ai-sdk/provider` reasoning types (the 4-value `ReasoningEffort`, the open `ReasoningDialect` typed string) | **Goal**: drop the local mirror of the SDK's reasoning types where the vocabulary overlaps. **Scope**: keep CLI's 7-level `Level` enum (it is the product's user-visible config vocabulary); the SDK's `ReasoningEffort` (4 values) is used at the request-encoder boundary only. `internal/reasoning.FormatReasoningEfforts` stays as a CLI-side helper in `internal/reasoning/reasoning.go` (per B.1.4's revision — `FormatReasoningEfforts` is mivia's presentational layer, not an SDK-side function). **API**: CLI's `Level` is the source-of-truth; the request encoder translates `Level → ReasoningEffort` at the call site (the mapping is product-specific, defined in `internal/sdkadapter/provider.go`). **Tests**: the existing `internal/reasoning` tests keep working; the bridge has its own tests. |
 | 6 | `internal/usage` in-memory accumulation; keep `UsageRecord`/`UsageWriter` as the durable log schema | `mivia-ai-sdk/usage.Accumulator` | **Goal**: drop the local in-memory accumulation; keep the durable log schema. **Scope**: delete `internal/usage/accumulator.go`; `internal/usage/record.go` (the durable schema) stays. The SDK's `usage.Accumulator` (`usage/accumulator.go:1-30`) is the in-memory total; CLI's `UsageRecord` (the row written to SQLite) is the durable per-turn log. **API**: `accumulator.Total()` is the SDK's `usage.Accumulator.Total()`; `UsageWriter.Record(usageRecord)` is the local write path. **Tests**: the existing durable-schema tests keep working; the bridge has its own tests. |
 | 7 | `internal/agentmsg.ContentRef` (call sites that mint a ref) | `mivia-ai-sdk/contextstate.Mint` | **Goal**: drop the duplicate content-ref minter; the call sites in `internal/agentmsg/message.go:241` use `contextstate.Mint`. **Scope**: the roll-in is part of the Wave 1 #3 drop; the dual-format parsing covers the persisted-data migration. **API**: `agentmsg.Message` keeps its current shape; only the `ContentRef` field's underlying minter changes. **Tests**: dual-format parse test (same as Wave 1 #3). |
 
@@ -397,9 +453,9 @@ Tests (which contract must hold after the drop).
 
 | Order | Local mirror | Replaces with | ADLC shape |
 |---|---|---|---|
-| 8 | `internal/agent` (CLI's `Loop` stays; CLI's `Loop` is wrapped by an `agentloop.Runner` adapter) | `mivia-ai-sdk/agentloop` (`agentloop.Runner` is the new entry point; the CLI's `Loop` is composed below it via B.1.1's `WithHeartbeat` etc.) | **Goal**: keep `internal/agent` as the CLI's session-loop layer; swap the inner tool-call loop to the SDK's. **Scope**: `internal/agent/loop.go:104` `Loop.Run` is wrapped; the SDK's `agentloop.Runner.Run` is the lower-level driver. CLI's `Options` (input shape) keeps the `WithHeartbeat` / `WithToolScrubOnRegistryChange` / `WithToolResultSpool` fields per B.1.1. The CLI's `internal/runtime.Dispatcher` is a separate package and is NOT in this drop (it has features the SDK doesn't: id-keyed dedup across steps, hook runs, work limits, audit preview, per-tool output ceiling, graceful conclude — see B.4 for the gap). **API**: `Loop.Run(ctx, prompt, writer)` continues to work; under the hood, it constructs an `agentloop.Runner` from `agentloop.Options` and calls `Runner.Run`. **Tests**: every `internal/agent` test that runs the loop must still pass with the SDK-backed inner loop; the leak test from Phase 2 still passes; the `agentloop.Runner`'s own tests cover the SDK side. **Commit subject**: `refactor(agent): back internal/agent with mivia-ai-sdk/agentloop`. **Pre-Phase-8 gate**: this drop is a precondition for Phase 8. If the inner loop is not SDK-backed by Phase 8, the cutover falls back to the legacy loop. |
-| 9 | `internal/ledger` (CLI's `StorageLedgerRepository` migrates to a new SDK `ledger/sqlitestore`; `MemoryLedgerRepository` drops) | `mivia-ai-sdk/ledger` | **Goal**: drop the local ledger; promote the CLI's `StorageLedgerRepository` to the SDK as `ledger/sqlitestore`. **Scope**: delete `internal/ledger/storage.go`, `internal/ledger/memory.go`, `internal/ledger/memory_claims.go`, `internal/ledger/storage_recovery.go`. The `ledger/sqlitestore` package is added in the SDK repo (B.1.2) and the CLI imports it. **API**: same exported surface; the SDK's `ledger.Store` has the new `Recover`, `SetTaskAttempt`, `CompareAndSetTaskStatus`, `DisplayName` methods. **Tests**: the SDK's `ledger/sqlitestore` test (run in the SDK repo) covers the migration; the CLI's integration tests assert the same observable behaviour. |
-| 10 | `internal/hooks` (split: registry shape to SDK; executor stays in CLI) | `mivia-ai-sdk/hooks` | **Goal**: split the registry shape from the executor. **Scope**: `internal/hooks/config.go` (the registry) and `internal/hooks/exec.go:47` (the JSON-I/O executor) split. The registry moves to the SDK repo per B.1.3; the executor stays. The CLI's executor is one `ExternalHandler` impl; the SDK is the registry. **API**: CLI's `internal/hooks/exec.go:79` `Run` becomes a `Handler` impl that the SDK's `Registry` calls. **Tests**: the SDK's `hooks/external_test` covers the registry shape; the CLI's `internal/hooks/exec_test` covers the JSON-I/O parsing. |
+| 8 | `internal/agent` (CLI's `Loop` stays; CLI's `Loop` is wrapped by an SDK `*Loop` adapter) | `mivia-ai-sdk/agentloop` (`New(opts Options) (*Loop, error)` is the entry point; the CLI's session loop constructs an `*Loop` and calls `(*Loop).Run` / `(*Loop).RunSteerable` / `agentloop.NewSteer` + `(*Steer).Trigger`) | **Goal**: keep `internal/agent` as the CLI's session-loop layer; swap the inner tool-call loop to the SDK's. **Scope**: `internal/agent/loop.go:104` `Loop.Run` is wrapped; the SDK's `(*Loop).Run(ctx, msgs []provider.Message) (Result, error)` (`agentloop/loop.go:42-43`, `api/agentloop.txt:23`) is the lower-level driver. CLI's `Options` keeps its existing fields (the `WithHeartbeat`/`WithToolScrubOnRegistryChange`/`WithToolResultSpool` fields proposed in the prior revision did not exist and are deleted per B.1.1); the inner-loop swap maps per-field onto `agentloop.Options` (verified at `agentloop/options.go:167-279`). Steering uses `agentloop.NewSteer() (*Steer, error)` and `(*Steer).Trigger()` (`api/agentloop.txt:26, 29`); the CLI's `Options.InterruptCh` / `MailboxPending` / `WatchdogInterval` get bridged to `*Steer.Trigger` calls at the boundary. The CLI's `internal/runtime.Dispatcher` is a separate package and is NOT in this drop (see B.4 for the residual gap). **API**: `Loop.Run(ctx, prompt, writer)` continues to work; under the hood, it constructs an `*Loop` from `agentloop.Options` and calls `(*Loop).Run`. **Tests**: every `internal/agent` test that runs the loop must still pass with the SDK-backed inner loop; the leak test from Phase 2 still passes; the `*Loop`'s own tests cover the SDK side. **Commit subject**: `refactor(agent): back internal/agent with mivia-ai-sdk/agentloop`. **Pre-Phase-8 gate**: this drop is a precondition for Phase 8. If the inner loop is not SDK-backed by Phase 8, the cutover falls back to the legacy loop. |
+| 9 | `internal/ledger` (CLI's `StorageLedgerRepository` is replaced by `ledger.SQLiteStore`; `MemoryLedgerRepository` drops) | `mivia-ai-sdk/ledger` | **Goal**: drop the local ledger; the CLI no longer owns the SQLite repo. **Scope**: delete `internal/ledger/storage.go`, `internal/ledger/memory.go`, `internal/ledger/memory_claims.go`, `internal/ledger/storage_recovery.go`. The CLI imports `github.com/MiviaLabs/mivia-ai-sdk/ledger` and uses `ledger.NewSQLiteStore(path) (*SQLiteStore, error)` (`api/ledger.txt:38`) gated by the `ledger_sqlite` build tag. The mivia-specific `Recover`/`SetTaskAttempt`/`CompareAndSetTaskStatus`/`DisplayName` adapter layer lives in `internal/sdkadapter/ledger.go` (CLI-side; not on the SDK's `Store` interface per `api/ledger.txt:57-61`). **API**: same exported surface where the SDK already has it (the CLI's adapter fills the gaps); the SDK's `ledger.Store` is unchanged (Load / CompareAndSwap / Range only). **Tests**: the SDK's `ledger/sqlite_store_test` (run in the SDK repo) covers the migration; the CLI's integration tests assert the same observable behaviour; the adapter has its own round-trip tests. |
+| 10 | `internal/hooks` (split: registry shape to SDK; executor stays in CLI; Event/Point vocabulary bridged at the Fire call sites) | `mivia-ai-sdk/hooks` | **Goal**: split the registry shape from the executor. **Scope**: `internal/hooks/config.go` (the registry) and `internal/hooks/exec.go:47` (the JSON-I/O executor) split. The registry moves to the SDK repo per B.1.3; the executor stays. The CLI's executor is one `ExternalHandler` impl; the SDK is the registry. **Event/Point vocabulary (decided here, applied at the bridge)**: the CLI's `Event` names (`PreToolUse`, `PostToolUse`, `Stop` per `internal/hooks/config.go:27-31`) are the source of truth because the user configures hooks by name in `mivia.toml` (`internal/hooks/config.go:111-139`'s `deferredEvents` map explicitly references Claude Code config keys like `"PostToolUseFailure"`, `"SessionStart"`, etc., proving the user-visible vocabulary is the CLI's). The SDK's `Point` constants (`PointPreTool`, `PointPostTool`, `PointStop` per `api/hooks.txt:2-4`) are bridged at the four `Fire` call sites: a 10-20 LOC table in `internal/sdkadapter/hooks.go` mapping `Event` → `Point` for the three names in `V1Events()`. Any future vocabulary expansion (e.g. `PointSessionStart`) requires a CLI-side `EventSessionStart` declaration first; the bridge is the single point of change. **API**: CLI's `internal/hooks/exec.go:79` `Run` becomes a `Handler` impl that the SDK's `Registry` calls (per the bridge in B.1.3). The `Fire` call sites take an `Event` and translate to `Point` before invoking `hooks.Registry.Fire`. **Tests**: the SDK's `hooks/external_test` covers the registry shape; the CLI's `internal/hooks/exec_test` covers the JSON-I/O parsing; the bridge has a 3-row table test (each V1 event maps to the right `Point`; an unknown event returns the SDK's `Point.Validate` error wrapped with the CLI event name). |
 
 #### Partial drops (CLI keeps the product-specific part, drops the generic part)
 
@@ -436,23 +492,60 @@ dead-set audit. The two threads merge at the Phase 10 commit.
 ### B.4 — gap admissions (the things the SDK doesn't have and the CLI keeps)
 
 The audit found three local systems that have **partial** SDK
-analogues but the SDK side is feature-incomplete. The CLI keeps
-these as the source of truth; the B.1 extensions above close parts
-of the gap, but not all of it.
+analogues. The SDK's `agentloop.Options` already covers three
+concerns the prior plan revision claimed were SDK-gaps (per-tool
+output ceiling, audit target, graceful conclude); the CLI's
+adapter layer maps them per-field at the B.2 #8 inner-loop swap.
+The remaining four CLI-side concerns stay in the CLI and are not
+in scope for SDK extension.
 
-- `internal/runtime.Dispatcher`: the SDK's `agentloop.Run` runs
-  tools, but the CLI's `runtime.Dispatcher` has features the SDK
-  doesn't: id-keyed dedup across steps (the SDK's is
-  `DedupWithinTurn` only), hook runs, work limits, audit preview,
-  per-tool output ceiling, graceful conclude. The SDK's own
-  `policy/pending_wiring.json:30` gap analysis lists these as the
-  CLI side of the gap. B.1.1 closes part of it; the rest stays in
-  CLI. The CLI's `internal/runtime/` is not in the drop list.
-- `internal/agent` (the larger session-loop layer): even after
-  B.1.1 lands, the CLI's `Loop` is the layer that composes
-  `agentloop.Runner` with the session's tool admission, model
-  binding, autosave, and checkpointing. Drop #8 is *wrap* the
-  inner loop, not delete the layer.
+- `internal/runtime.Dispatcher`: the SDK's `(*Loop).Run` runs tools,
+  but the CLI's `runtime.Dispatcher` has features the SDK doesn't,
+  after B.1.1's re-statement. The SDK's `Options` already covers
+  three concerns the prior revision claimed were SDK-gaps:
+  - **Per-tool output ceiling** — the SDK has
+    `tools.ResultBudgetOf(t Tool) (int, bool)` (`api/tools.txt:18`)
+    for one tool's bound, and `agentloop.Options.TurnResultBudget`
+    (`agentloop/options.go:264-278`) for the batched result shape.
+    The CLI's `internal/runtime/output_ceiling.go` (the
+    per-call byte backstop) and `internal/agent/options.go`'s
+    `BatchResultBudgetBytes` field map onto these.
+  - **Audit preview** — the SDK's `Options.Audit AuditFunc`
+    (`agentloop/options.go:218-220`) gives the audit target per
+    call. The CLI's `Metadata.OutputPreview` and `OutputHash`
+    (`internal/runtime/result.go:29-30`) are *CLI-side presentation
+    fields* on `runtime.Result`, not an SDK contract.
+  - **Graceful conclude** — the SDK's `Options.ConcludeMargin` and
+    `StopConcluded` (`agentloop/options.go:234-253`, `api/agentloop.txt:17`)
+    are the canonical pattern; the CLI's `MaxIterations`-based
+    notice in the inner loop is replaced by `ConcludeMargin` per
+    the per-field map in B.2 #8.
+  The four remaining CLI-side concerns stay in the CLI:
+  - **id-keyed dedup across steps** — the SDK's `DedupWithinTurn`
+    (`agentloop/options.go:254-258`) dedups within one turn by
+    (tool, canonical-arguments); the CLI's
+    `internal/runtime/dispatcher_id_dedup.go` keys on
+    `(request.ID, request.Step)` for cross-step and
+    cross-generation dedup with waiter fan-in. Different invariant.
+  - **hook runs** — the CLI records `runtime.Result.HookRuns`
+    (`internal/runtime/dispatcher.go:63-67`) for the operator's
+    view (a hook that ran and said nothing appears here and
+    nowhere else). The SDK's `hooks.Registry.Fire` does not
+    return a run-record; it returns `(allow, err)` per handler.
+  - **work limits** — the CLI's `runtime.WorkLimits` are a session
+    contract; the SDK has no equivalent.
+  - **the dispatcher-as-`Handler` pattern** — the CLI's
+    `runtime.Dispatcher` is the SDK `Handler`'s payload side; the
+    bridge in `internal/sdkadapter/hooks.go` (B.1.3, B.2 #10)
+    makes the dispatcher's reserved-invocation state visible to
+    the hook. The pattern itself stays CLI-side because the
+    reservation primitive is CLI-side.
+  The CLI's `internal/runtime/` is not in the drop list.
+- `internal/agent` (the larger session-loop layer): the CLI's
+  `Loop` is the layer that composes `agentloop.New(...).Run(...)`
+  with the session's tool admission (`runtime.Dispatcher`),
+  model binding, autosave, and checkpointing. Drop #8 is *wrap*
+  the inner loop, not delete the layer.
 - `internal/coordinator` (run-level orchestrator with
   idempotency-keyed admission, claim-lease heartbeat, referral
   spawn, mailboxes): no SDK analogue. The SDK's `subagent` is a
@@ -462,25 +555,29 @@ of the gap, but not all of it.
 ### B.5 — what is NOT in this plan (per the "do not over-engineer" rule, and per the plan-reviewer's first-round findings)
 
 - **No full chat-REPL rewrite.** B.2 #8 (Wave 2) wraps
-  `internal/agent.Loop` to use `agentloop.Runner`; the REPL's
-  structure (slash commands, bubble rendering, dispatcher) stays.
-  The diff is the inner-loop swap plus the call-site updates; the
-  surrounding REPL is unchanged.
+  `internal/agent.Loop` to use the SDK's `agentloop.New(opts) (*Loop, error)`
+  plus `(*Loop).Run` / `(*Loop).RunSteerable` / `agentloop.NewSteer`
+  + `(*Steer).Trigger`; the REPL's structure (slash commands, bubble
+  rendering, dispatcher) stays. The diff is the inner-loop swap
+  plus the call-site updates; the surrounding REPL is unchanged.
 - **No SDK-backed `Conversation` adapter.** The Phase 2
   `Conversation` wraps `*chat.Session`. It does NOT need a sibling
-  `SDKConversation` wrapping `mivialabs-sdk/agentloop.Runner`;
+  `SDKConversation` wrapping `mivia-ai-sdk/agentloop.Loop`;
   the Phase 8 cutover delegates the entire chat path to the
   SDK-backed loop the cli-family owns, and the new UI consumes
   that loop's output through the same uievent stream.
 - **No `sdkcompat` package.** The plan-reviewer found that an
   `sdkcompat` is necessary for the type-shape mismatches in
-  drops #8, #10, #15, #18; the user-flagged "do not over-engineer"
-  rule kept me from including one. The plan now has a small
-  per-type-shape `internal/sdkadapter` package (B.0.5) that is
-  named for what it does and lives in one directory; this is the
-  narrowest form of bridge that resolves the reviewer's findings.
-  The package stays under 200 LOC per file; if it grows, split
-  it.
+  drops #8 (inner-loop swap), #10 (hooks split), and the partial
+  drops #11-#14 (mcp, tools, workspace, skills); the
+  user-flagged "do not over-engineer" rule kept me from including
+  one. The plan now has a small per-type-shape `internal/sdkadapter`
+  package (B.0.5) that is named for what it does and lives in one
+  directory; this is the narrowest form of bridge that resolves
+  the reviewer's findings. The package stays under 200 LOC per
+  file where possible; `tool.go` lands near 250-300 LOC because
+  it must forward eight CLI methods (B.0.5), and is split if it
+  grows past 300 LOC.
 
 ---
 
