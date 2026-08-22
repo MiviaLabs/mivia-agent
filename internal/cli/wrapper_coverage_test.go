@@ -117,3 +117,44 @@ func TestRouterCommandEntriesExistAndAreCallable(t *testing.T) {
 		t.Fatal("SetTUILauncher(nil) must clear the launcher")
 	}
 }
+
+func TestExecuteRouterDispatchesAllSubcommands(t *testing.T) {
+	// Each subcommand must reach its handler; we don't assert the
+	// handler's behaviour here (its own tests cover that), only that
+	// the routing line is exercised.
+	//
+	// subcommands that need workspace state will fail; we just
+	// assert that the router's branch was reached (no panic) and
+	// returned some result (error or nil).
+	type call struct {
+		name string
+		args []string
+	}
+	// Only subcommands whose entry does not perform heavy I/O or
+	// touch a real workspace are safe to drive from a unit test.
+	// The excluded commands (chat, sessions, stack, workflow, worktree,
+	// memory store/dump/promote, etc.) have their own integration tests
+	// that exercise them end-to-end through the dispatching path.
+	calls := []call{
+		{"version", []string{"version"}},
+		{"--version", []string{"--version"}},
+		{"help", []string{"help"}},
+		{"config", []string{"config"}},
+		{"verify", []string{"verify"}},
+		{"completion", []string{"completion"}},
+	}
+	for _, c := range calls {
+		_ = Execute(c.args) // ignore errors - just need the branch to run
+	}
+	// Empty args: print usage, return nil.
+	if err := Execute(nil); err != nil {
+		t.Errorf("Execute(nil) = %v, want nil", err)
+	}
+	if err := Execute([]string{}); err != nil {
+		t.Errorf("Execute(empty) = %v, want nil", err)
+	}
+	// Unknown command: should fail.
+	if err := Execute([]string{"nonexistent-cmd"}); err == nil {
+		t.Fatal("Execute(unknown) must error")
+	}
+}

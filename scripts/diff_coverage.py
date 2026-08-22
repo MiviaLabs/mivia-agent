@@ -184,7 +184,13 @@ def tip_file_text(root: Path, diff_args: list[str], path: str) -> str | None:
 
 def non_executable_lines(text: str) -> set[int]:
     """Line numbers in text that cannot carry a statement: blank lines, whole-
-    line // comments, and lines wholly inside a /* */ comment.
+    line // comments, lines wholly inside a /* */ comment, and switch labels
+    (`case X:` / `default:` in a Go switch). Switch labels are not executable:
+    a `case "x":` line has no statement of its own; the statement that
+    follows the label is the one that runs when the case is selected. Without
+    filtering, a renumbered switch statement in a renamed file reports every
+    case label as a fresh uncovered addition and the gate reports phantom
+    violations that no test can satisfy.
 
     A single left-to-right pass tracks whether a /* */ region is open, so a
     line in the middle of a commented-out block is recognised as such. String
@@ -218,6 +224,12 @@ def non_executable_lines(text: str) -> set[int]:
                 has_code = True
             idx += 1
         if has_code:
+            # Skip Go switch / select labels. They have code text but no
+            # statement of their own; the next non-label line is the
+            # statement that actually executes.
+            if re.match(r"(case\s+[^\s:]+(\s*,\s*[^\s:]+)*\s*:|default\s*:|case\s+[^\n]*:\s*$)", line):
+                skip.add(number)
+                continue
             continue
         if line == "" or line.startswith("//") or started_open or open_block:
             skip.add(number)
