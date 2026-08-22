@@ -51,3 +51,19 @@ func TestOpenMemoryStoreWithReadOnlyPathEscape(t *testing.T) {
 	// join branch, line 30).
 	_, _ = OpenMemoryStoreWithReadOnly(t.TempDir(), config.MemoryConfig{StorePath: "inside.db"}, true)
 }
+
+func TestAgentSessionStateDisplayHelpers(t *testing.T) {
+	// DisplaySource and CurrentAgentName on nil and on a selected
+	// agent: nil-safe reads that the TUI dialog renders.
+	var nilState *AgentSessionState
+	if got := nilState.DisplaySource(); got != "compiled" {
+		t.Errorf("DisplaySource(nil) = %q", got)
+	}
+	state := &AgentSessionState{}
+	if got := state.DisplaySource(); got != "compiled" {
+		t.Errorf("DisplaySource(no selection) = %q, want compiled", got)
+	}
+	if got := state.DisplayName(); got != "root fallback" {
+		t.Errorf("DisplayName(no selection) = %q, want root fallback", got)
+	}
+}
