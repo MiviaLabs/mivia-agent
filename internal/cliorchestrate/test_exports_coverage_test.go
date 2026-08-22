@@ -127,3 +127,9 @@ func TestMoreCliorchestrateTestExports(t *testing.T) {
 		}
 	}
 }
+
+func TestCoordinatorForRunMissingRun(t *testing.T) {
+	if got := CoordinatorForRun("nonexistent"); got != nil {
+		t.Errorf("CoordinatorForRun(nonexistent) = %v, want nil", got)
+	}
+}

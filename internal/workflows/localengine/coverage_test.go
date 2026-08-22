@@ -55,3 +55,24 @@ func TestClearDeliveryAbandonOnNilFence(t *testing.T) {
 	e := &Engine{}
 	e.clearDeliveryAbandon("run-x")
 }
+
+func TestPanelLimiterAndCtrlRepo(t *testing.T) {
+	e := &Engine{Repo: nil}
+	// ctrlRepo on a nil-Repo Engine must not panic; it creates an
+	// abandon fence and returns it.
+	got := e.ctrlRepo()
+	if got == nil {
+		t.Fatal("ctrlRepo must return non-nil")
+	}
+	// panelLimiter with no PanelLimiter set falls back to the shared
+	// PanelLimiter() factory.
+	if got := e.panelLimiter(); got == nil {
+		t.Fatal("panelLimiter must return non-nil")
+	}
+	// With an explicit PanelLimiter, panelLimiter returns it.
+	want := PanelLimiter()
+	e.PanelLimiter = want
+	if got := e.panelLimiter(); got != want {
+		t.Errorf("panelLimiter(explicit) returned a different instance")
+	}
+}
