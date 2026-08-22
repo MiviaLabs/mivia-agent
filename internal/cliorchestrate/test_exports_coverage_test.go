@@ -5,6 +5,7 @@ package cliorchestrate
 // them as covered after the cli split.
 
 import (
+	"context"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
@@ -99,4 +100,30 @@ func TestLoadCoordinatorNoMatch(t *testing.T) {
 func TestClearAllCoordinatorsIsNoop(t *testing.T) {
 	// Must not panic on empty state.
 	ClearAllCoordinators()
+}
+
+func TestMoreCliorchestrateTestExports(t *testing.T) {
+	// ActiveSessionCallerForTest and PrincipalForTest are simple getters.
+	if got := ActiveSessionCallerForTest(); got != nil {
+		t.Errorf("ActiveSessionCallerForTest returned non-nil: %v", got)
+	}
+	p := PrincipalForTest("session-a", "owner")
+	if p.sessionID != "session-a" {
+		t.Errorf("PrincipalForTest sessionID = %q", p.sessionID)
+	}
+	// StoreHandleForPrincipal on an empty map must not panic.
+	StoreHandleForPrincipal("run-x", "session-a", "owner")
+	// OrchestrationHandleAccessibleForTest on a nil record returns false.
+	if OrchestrationHandleAccessibleForTest(context.Background(), nil, nil, nil) {
+		t.Fatal("OrchestrationHandleAccessibleForTest(nil) must be false")
+	}
+	// Configured constructors build concrete tools.
+	for name, tool := range map[string]func() tools.Tool{
+		"inspect_agent": func() tools.Tool { return NewInspectAgentToolConfigured(nil) },
+		"join_run":      func() tools.Tool { return NewJoinRunToolConfigured(nil) },
+	} {
+		if tool() == nil {
+			t.Errorf("%s configured-constructor returned nil", name)
+		}
+	}
 }
