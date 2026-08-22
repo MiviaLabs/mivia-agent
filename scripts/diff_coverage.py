@@ -20,7 +20,10 @@ Exit codes:
   1 = uncovered changed line(s) found
   2 = usage / environment error (no scope given, go missing, go test failed)
 
-Policy reuse: .mivia/policy/go-structure.json excludeGlobs (generated/vendor).
+Policy reuse: .mivia/policy/go-structure.json excludeGlobs (generated/vendor; internal/legacytui
+is excluded there too because that package is scheduled for deletion at the end of the UI
+migration - covering its lines would be waste, and the glob removes it from this gate's scope
+as well as the structure gate's).
 """
 from __future__ import annotations
 

@@ -10,6 +10,9 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -131,5 +134,65 @@ func TestMoreCliorchestrateTestExports(t *testing.T) {
 func TestCoordinatorForRunMissingRun(t *testing.T) {
 	if got := CoordinatorForRun("nonexistent"); got != nil {
 		t.Errorf("CoordinatorForRun(nonexistent) = %v, want nil", got)
+	}
+}
+
+func TestStoreTestCoordinatorRoundTrip(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	coord := coordinator.New(repo, nil)
+	d := &runtime.Dispatcher{}
+
+	cleanup := StoreTestCoordinator(d, coord, repo)
+	t.Cleanup(cleanup)
+
+	gotCoord, ok := LoadCoordinator(d)
+	if !ok {
+		t.Fatal("LoadCoordinator after StoreTestCoordinator returned ok=false")
+	}
+	if gotCoord == nil {
+		t.Fatal("LoadCoordinator returned nil coordinator")
+	}
+	gotRepo, ok := LoadCoordinatorRepo(d)
+	if !ok {
+		t.Fatal("LoadCoordinatorRepo after StoreTestCoordinator returned ok=false")
+	}
+	if gotRepo == nil {
+		t.Fatal("LoadCoordinatorRepo returned nil repository")
+	}
+
+	cleanup()
+	if _, ok := LoadCoordinator(d); ok {
+		t.Error("LoadCoordinator after cleanup returned ok=true")
+	}
+	if _, ok := LoadCoordinatorRepo(d); ok {
+		t.Error("LoadCoordinatorRepo after cleanup returned ok=true")
+	}
+}
+
+func TestStoreTestRunHandleRoundTrip(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	coord := coordinator.New(repo, nil)
+
+	cleanup := StoreTestRunHandle("run-handle-a", coord, nil, repo, nil, "session-a")
+	t.Cleanup(cleanup)
+	if got := CoordinatorForRun("run-handle-a"); got == nil {
+		t.Fatal("CoordinatorForRun after StoreTestRunHandle returned nil")
+	}
+	cleanup()
+	if got := CoordinatorForRun("run-handle-a"); got != nil {
+		t.Errorf("CoordinatorForRun after cleanup = %v, want nil", got)
+	}
+
+	// A wrongly typed handle entry must return nil, not panic.
+	RunHandlesForTest.Store("run-handle-bogus", "not-a-handle")
+	defer RunHandlesForTest.Delete("run-handle-bogus")
+	if got := CoordinatorForRun("run-handle-bogus"); got != nil {
+		t.Errorf("CoordinatorForRun(wrongly typed entry) = %v, want nil", got)
+	}
+}
+
+func TestNewDispatchTasksToolFullNilSafe(t *testing.T) {
+	if got := NewDispatchTasksToolFull(nil, config.SubagentConfig{}, nil, nil, nil); got == nil {
+		t.Fatal("NewDispatchTasksToolFull(nil) returned nil")
 	}
 }

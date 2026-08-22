@@ -30,7 +30,8 @@
   "excludeGlobs": [
     "vendor/**",
     "**/*_gen.go",
-    "**/zz_generated*.go"
+    "**/zz_generated*.go",
+    "internal/legacytui/**"
   ],
   "baseline": {
     "comment": "Files already over hard limits. Growth beyond maxLines fails. Reduce maxLines when splitting; never raise without review.",
