@@ -1,0 +1,235 @@
+// Package cli implements mivia command handlers.
+package clichat
+
+import (
+	"strings"
+
+	"github.com/rivo/uniseg"
+)
+
+// replHelpContent is the classic REPL's help: catalog-driven Commands plus
+// hand-written key sections. The TUI documents its keys in tuiHelpContent
+// (tui_help_content.go); the two surfaces bind different keys and must never
+// share a help source.
+func replHelpContent() []helpSection {
+	return append(replHelpCommands(), replHelpKeySections()...)
+}
+
+// replHelpCommands lists plain-surface slash commands from the catalog so
+// classic help cannot drift from what the REPL handles.
+func replHelpCommands() []helpSection {
+	commands := SlashCommands(slashSurfacePlain, nil)
+	items := make([]helpItem, 0, len(commands))
+	for _, command := range commands {
+		key := command.Name
+		if len(command.Aliases) > 0 {
+			key += " " + command.Aliases[0]
+			for _, alias := range command.Aliases[1:] {
+				key += " " + alias
+			}
+		}
+		if command.ArgsHint != "" {
+			key += " " + command.ArgsHint
+		}
+		items = append(items, helpItem{Key: key, Desc: command.Description})
+	}
+	return []helpSection{{Title: "Commands", Items: items}}
+}
+
+// replHelpKeySections documents classic REPL line-editor bindings only
+// (not slash commands). Arrows are written once, correctly.
+func replHelpKeySections() []helpSection {
+	return []helpSection{
+		{
+			Title: "Session Keys",
+			Items: []helpItem{
+				{Key: "Ctrl-C at prompt", Desc: "Exit session"},
+				{Key: "Ctrl-C while busy", Desc: "Cancel current turn"},
+				{Key: "Ctrl-D", Desc: "Exit session"},
+			},
+		},
+		{
+			Title: "Editing Keys",
+			Items: []helpItem{
+				{Key: "↑ ↓", Desc: "History navigation"},
+				{Key: "← →", Desc: "Move cursor"},
+				{Key: "Home / End", Desc: "Move to start/end of line"},
+				{Key: "Backspace / Delete", Desc: "Delete character"},
+				{Key: "Ctrl+U", Desc: "Kill entire line"},
+				{Key: "Ctrl+W", Desc: "Kill word before cursor"},
+				{Key: "Esc / q", Desc: "Close this dialog"},
+				{Key: "Tab", Desc: "Command completion"},
+			},
+		},
+	}
+}
+
+type helpSection struct {
+	// Title is the section heading shown in the help dialog.
+	Title string
+	// Items lists the key/description rows under this section. Shared with
+	// internal/legacytui's help dialog renderer.
+	Items []helpItem
+}
+
+type helpItem struct {
+	// Key is the keybinding or command text shown in the left column.
+	Key string
+	// Desc is the one-line explanation shown in the right column.
+	Desc string
+}
+
+// ShowHelpDialog draws a bordered help dialog and waits for Esc or 'q'.
+func ShowHelpDialog(t *Terminal) error {
+	w, h := t.Size()
+	if w < 50 || h < 10 {
+		return displayInlineHelp(t)
+	}
+	lines, boxW, contentH, topRow, leftCol := helpDialogLayout(w, h)
+
+	// Draw dialog.
+	t.SaveScreen()
+	t.HideCursor()
+	defer t.ShowCursor()
+	defer t.RestoreScreen()
+
+	drawHelpDialog(t, lines, boxW, contentH, topRow, leftCol)
+	return waitHelpDialog(t)
+}
+
+func helpDialogLayout(w, h int) ([]string, int, int, int, int) {
+	maxH := h - 4
+	boxW := Min(72, Max(40, w-4))
+	lines := renderHelpLines(boxW - 2)
+	contentH := Min(len(lines), maxH)
+	return lines[:contentH], boxW, contentH, Max(1, (h-contentH-2)/2), Max(1, (w-boxW)/2)
+}
+
+func drawHelpDialog(t *Terminal, lines []string, boxW, contentH, topRow, leftCol int) {
+	t.MoveTo(topRow, leftCol)
+	t.WriteString("┌" + strings.Repeat("─", boxW-2) + "┐")
+	for i, line := range lines {
+		t.MoveTo(topRow+1+i, leftCol)
+		padding := Max(0, boxW-2-RuneWidth(line))
+		t.WriteString("│" + line + strings.Repeat(" ", padding) + "│")
+	}
+	t.MoveTo(topRow+1+contentH, leftCol)
+	t.WriteString("└" + strings.Repeat("─", boxW-2) + "┘")
+	footerLine := dim("Esc / q - close")
+	t.MoveTo(topRow+contentH+2, leftCol)
+	pad := Max(0, boxW-2-RuneWidth(footerLine))
+	t.WriteString(" " + footerLine + strings.Repeat(" ", pad) + " ")
+}
+
+func waitHelpDialog(t *Terminal) error {
+	for {
+		key, err := t.ReadKey()
+		if err != nil {
+			return err
+		}
+		if key == "\033" || key == "q" || key == "Q" {
+			break
+		}
+	}
+	return nil
+}
+
+// renderHelpLines produces the formatted lines of help content,
+// each without leading/trailing border characters, fitting within maxW columns.
+func renderHelpLines(maxW int) []string {
+	var out []string
+	for _, section := range replHelpContent() {
+		out = append(out, bold(section.Title))
+		for _, item := range section.Items {
+			keyW := RuneWidth(item.Key)
+			padding := 26 - keyW
+			if padding < 1 {
+				padding = 1
+			}
+			descW := RuneWidth(item.Desc)
+			maxDesc := maxW - keyW - padding
+			if maxDesc < 5 {
+				maxDesc = 5
+			}
+			desc := item.Desc
+			if descW > maxDesc {
+				desc = TruncateToWidth(desc, maxDesc-3) + "..."
+			}
+			line := "  " + item.Key + strings.Repeat(" ", padding) + dim(desc)
+			if RuneWidth(line) > maxW {
+				line = TruncateToWidth(line, maxW-3) + "..."
+			}
+			out = append(out, line)
+		}
+		// Blank line between sections.
+		out = append(out, "")
+	}
+	return out
+}
+
+// renderReplHelpInline flattens the same help sections the dialog uses into a
+// plain-text block for too-small terminals and no-term stderr fallbacks.
+func renderReplHelpInline() string {
+	var b strings.Builder
+	for _, section := range replHelpContent() {
+		b.WriteString(section.Title)
+		b.WriteByte('\n')
+		for _, item := range section.Items {
+			keyW := RuneWidth(item.Key)
+			padding := 26 - keyW
+			if padding < 1 {
+				padding = 1
+			}
+			b.WriteString("  ")
+			b.WriteString(item.Key)
+			b.WriteString(strings.Repeat(" ", padding))
+			b.WriteString(item.Desc)
+			b.WriteByte('\n')
+		}
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+func displayInlineHelp(t *Terminal) error {
+	t.ClearLine()
+	t.WriteString("\n  (terminal too small for dialog - inline help below)\n\n")
+	t.WriteString(renderReplHelpInline())
+	t.WriteString("\n  " + dim("Press Enter to continue"))
+	// Wait for any key.
+	for {
+		key, err := t.ReadKey()
+		if err != nil {
+			return err
+		}
+		if key == "\r" || key == "\n" || key == "\033" {
+			break
+		}
+	}
+	return nil
+}
+
+func bold(s string) string {
+	return "\033[1m" + s + "\033[22m"
+}
+
+func dim(s string) string {
+	return "\033[2m" + s + "\033[22m"
+}
+
+// TruncateToWidth truncates s to at most maxW display columns, grapheme
+// aware. Shared with internal/legacytui's chrome and dialog renderers.
+func TruncateToWidth(s string, maxW int) string {
+	var out strings.Builder
+	w := 0
+	for g := uniseg.NewGraphemes(s); g.Next(); {
+		cluster := g.Str()
+		width := uniseg.StringWidth(cluster)
+		if w+width > maxW {
+			break
+		}
+		out.WriteString(cluster)
+		w += width
+	}
+	return out.String()
+}

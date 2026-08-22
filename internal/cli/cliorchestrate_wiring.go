@@ -1,7 +1,10 @@
 package cli
 
-import cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
+import (
+	clichat "github.com/MiviaLabs/mivia-agent/internal/clichat"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
+)
 
 func init() {
-	cliorchestrate.SessionToolRegister = registerSessionTool
+	cliorchestrate.SessionToolRegister = clichat.RegisterSessionTool
 }

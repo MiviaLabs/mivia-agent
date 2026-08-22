@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	clichat "github.com/MiviaLabs/mivia-agent/internal/clichat"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -53,7 +54,7 @@ func hookSessionConfigured() bool {
 }
 
 // handleSlashHooks serves /hooks.
-func handleSlashHooks(fields []string, term *Terminal) (bool, bool, error) {
+func handleSlashHooks(fields []string, term *clichat.Terminal) (bool, bool, error) {
 	term.WriteString("\n" + HooksSlashOutput(fields))
 	return true, false, nil
 }

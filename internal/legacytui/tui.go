@@ -28,7 +28,7 @@ import (
 // ---------------------------------------------------------------------------
 var (
 	// TUIHeaderStyle renders faint section headers in the TUI chrome and in
-	// slash-command output shared with internal/clichat.
+	// slash-command output shared with internal/cli.
 	TUIHeaderStyle = lipgloss.NewStyle().Faint(true)
 	tuiBarStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color(ThemeColorDim)).Background(lipgloss.Color(themeColorCardBg))
 	// TUIThinkingStyle is relocated to internal/cli (needed there by the

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	clichat "github.com/MiviaLabs/mivia-agent/internal/clichat"
 	"io"
 	"os"
 	"strconv"
@@ -41,7 +42,7 @@ func runMemorySearch(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	root, err := chatWorkspaceRoot(workspaceRoot)
+	root, err := clichat.ChatWorkspaceRoot(workspaceRoot)
 	if err != nil {
 		return fmt.Errorf("memory search: %w", err)
 	}
@@ -80,7 +81,7 @@ func runMemoryPromote(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	root, err := chatWorkspaceRoot(workspaceRoot)
+	root, err := clichat.ChatWorkspaceRoot(workspaceRoot)
 	if err != nil {
 		return fmt.Errorf("memory promote: %w", err)
 	}
@@ -122,7 +123,7 @@ func runMemoryDump(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	root, err := chatWorkspaceRoot(workspaceRoot)
+	root, err := clichat.ChatWorkspaceRoot(workspaceRoot)
 	if err != nil {
 		return fmt.Errorf("memory dump: %w", err)
 	}

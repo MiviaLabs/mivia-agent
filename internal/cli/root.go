@@ -3,6 +3,7 @@ package cli
 
 import (
 	"fmt"
+	clichat "github.com/MiviaLabs/mivia-agent/internal/clichat"
 	"os"
 	"strings"
 
@@ -29,7 +30,7 @@ func Execute(args []string) error {
 		printUsage(os.Stdout)
 		return nil
 	case "chat":
-		return runChat(args[1:])
+		return clichat.RunChat(args[1:])
 	case "config":
 		return runConfig(args[1:])
 	case "doctor":
@@ -37,9 +38,9 @@ func Execute(args []string) error {
 	case "agents":
 		return cliagents.RunAgents(args[1:])
 	case "sessions":
-		return runSessions(args[1:])
+		return clichat.RunSessions(args[1:])
 	case "compact":
-		return runCompact(args[1:])
+		return clichat.RunCompact(args[1:])
 	case "memory":
 		return runMemory(args[1:])
 	case "workflows":

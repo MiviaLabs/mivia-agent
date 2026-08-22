@@ -7,23 +7,24 @@ package cli
 
 import (
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
+	clichat "github.com/MiviaLabs/mivia-agent/internal/clichat"
 	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
 )
 
 func init() {
-	cliagents.NewSessionDispatcherVar = NewSessionDispatcher
-	cliagents.RemainderSpoolFromRegistryVar = RemainderSpoolFromRegistry
+	cliagents.NewSessionDispatcherVar = clichat.NewSessionDispatcher
+	cliagents.RemainderSpoolFromRegistryVar = clichat.RemainderSpoolFromRegistry
 	cliagents.WireWorkflowToolOptionsVar = cliworkflow.WireWorkflowToolOptions
 	cliagents.BuiltInSlashTokensVar = builtInSlashTokenSet
-	cliagents.SummaryWiringVar = summaryWiring
-	cliagents.AdvertisedSessionToolSpecsVar = advertisedSessionToolSpecs
-	cliagents.ContextDispatcherForVar = contextDispatcherFor
+	cliagents.SummaryWiringVar = clichat.SummaryWiring
+	cliagents.AdvertisedSessionToolSpecsVar = clichat.AdvertisedSessionToolSpecs
+	cliagents.ContextDispatcherForVar = clichat.ContextDispatcherFor
 }
 
 // builtInSlashTokenSet returns the set of reserved slash command names.
 // Used by cliagents.LoadSessionSkills to reject skill names that collide.
 func builtInSlashTokenSet() map[string]struct{} {
-	cmds := builtInSlashCommands()
+	cmds := clichat.BuiltInSlashCommands()
 	out := make(map[string]struct{}, len(cmds))
 	for _, cmd := range cmds {
 		out[cmd.Name] = struct{}{}

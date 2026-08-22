@@ -2,9 +2,9 @@ package legacytui
 
 import (
 	"context"
-	"github.com/MiviaLabs/mivia-agent/internal/cli"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/cli"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	tea "github.com/charmbracelet/bubbletea"
 )
