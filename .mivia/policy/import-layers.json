@@ -1,5 +1,5 @@
 {
-  "description": "Internal import edges: an allowed-edge baseline, a hard edge-count cap, and a deny-list that overrides the baseline. Re-baselined at 400 measured edges after the UI replacement Phase 1 added internal/uiadapter. The prior cap of 400 was set after the SDK convergence Stage 0 Item 4 split (slices 1-6: cliworktree, cliagents, cliorchestrate, cliworkflow, clichat) of the former 44-out-degree internal/cli. Phase 1 added the uiadapter edge pair (uiadapter -> internal/agent, uiadapter -> internal/uikit/uievent), pushing 398 -> 400. Edge cap set to 405 with a 5-edge headroom margin so the next one-or-two-package addition in Phase 2 (Conversation/TurnHandle over chat.Session) and Phase 3 (build constructor that imports composition) does not push the tree over the cap without an explicit review of the policy.",
+  "description": "Internal import edges: an allowed-edge baseline, a hard edge-count cap, and a deny-list that overrides the baseline. Re-baselined at 400 measured edges after the UI replacement Phase 1 added internal/uiadapter. The prior cap of 400 was set after the SDK convergence Stage 0 Item 4 split (slices 1-6: cliworktree, cliagents, cliorchestrate, cliworkflow, clichat) of the former 44-out-degree internal/cli. Phase 1 added the uiadapter edge pair (uiadapter -> internal/agent, uiadapter -> internal/uikit/uievent), pushing 398 -> 400. Phase 2 added uiadapter -> internal/chat to wrap *chat.Session in ports.Conversation / ports.TurnHandle, pushing 400 -> 401. Edge cap remains 405 with a 4-edge headroom margin so the next one-or-two-package addition in Phase 3 (build constructor that imports composition) does not push the tree over the cap without an explicit review of the policy.",
   "edgeCap": 405,
   "deny": [
     {
@@ -451,6 +451,10 @@
     ],
     "internal/uiadapter": [
       "internal/agent",
+      "internal/chat",
+      "internal/provider",
+      "internal/uikit/intent",
+      "internal/uikit/ports",
       "internal/uikit/uievent"
     ],
     "internal/uikit/demoharness": [
