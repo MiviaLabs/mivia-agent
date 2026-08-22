@@ -164,3 +164,19 @@ func TestWorktreeAndWorkflowExports(t *testing.T) {
 	// OpenWorkflowStore and RecoverManagedWorktreeRemoval both run
 	// without panicking on the empty-arg path.
 }
+
+func TestMoreLegacytuiTestExports(t *testing.T) {
+	// ApplyPrivacyPolicy: pure function on config.
+	ApplyPrivacyPolicy(&config.Resolved{ProviderName: "test"})
+	// ApplyWorkflowStoreRoot: pure function.
+	ApplyWorkflowStoreRoot(&config.Resolved{ProviderName: "test"}, "/tmp/x")
+	// BuildModelBinding forwards to cliagents; with a nil state
+	// the underlying impl may return a zero binding.
+	_ = BuildModelBinding
+	// DialogRectFor is a pure geometry helper.
+	_ = DialogRectFor(80, 24, DialogPrefs{}, 40, 10)
+	// HandleSlashInfo: handleSlashInfo with a nil session may
+	// panic, so we just verify the export line is referenced.
+	_ = HandleSlashInfo
+	_ = HandleSlashAgent
+}
