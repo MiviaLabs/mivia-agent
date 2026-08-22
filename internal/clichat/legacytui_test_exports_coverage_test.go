@@ -215,3 +215,9 @@ func TestWorktreeListAndAgentExports(t *testing.T) {
 	_ = ApplySessionAgent
 	_ = SwitchModelCommand
 }
+
+func TestTuiHelpContentNilRegistry(t *testing.T) {
+	if got := tuiHelpContent(); len(got) == 0 {
+		t.Fatal("tuiHelpContent() returned empty")
+	}
+}

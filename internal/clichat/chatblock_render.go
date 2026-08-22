@@ -130,9 +130,9 @@ func renderBlockBody(block ChatBlock, text, model string, width int, thinkingExp
 			}
 			return collapsePreview("system", text, 48)
 		}
-		if strings.HasPrefix(strings.TrimSpace(text), "→") {
-			return []string{TUIDimStyle.Render("  " + text)}
-		}
+		// (No "→"-prefix special case: this branch only runs when text is
+		// empty - the non-empty case returns above - and an empty string
+		// never carries the prefix.)
 		return []string{TUIDimStyle.Render("  ⚙ " + text)}
 	case ChatBlockDivider:
 		if text != "" {

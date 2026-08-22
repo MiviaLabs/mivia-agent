@@ -267,15 +267,9 @@ func ClipPreviewLine(l string, width int) string {
 	if len(l) <= maxBody {
 		return l
 	}
-	// Keep at least 1 rune of content before "...".
-	cut := maxBody - 3
-	if cut < 1 {
-		cut = 1
-	}
-	if cut > len(l) {
-		cut = len(l)
-	}
-	return TruncatePreviewUTF8(l, cut) + "..."
+	// Keep at least 1 rune of content before "..." (maxBody is floored at
+	// 8 above, so cut = maxBody-3 is always >= 5 and always < len(l)).
+	return TruncatePreviewUTF8(l, maxBody-3) + "..."
 }
 
 // TruncatePreviewUTF8 cuts s to at most maxBytes bytes, backing off until the

@@ -5,6 +5,7 @@ package cli
 // any chat-path test runs through the moved code.
 
 import (
+	"fmt"
 	"os"
 	"testing"
 
@@ -18,9 +19,9 @@ func TestMain(m *testing.M) {
 	clichat.FlagValueFunc = flagValue
 	clichat.FlagVarFunc = flagVar
 	clichat.InstallHookSessionFunc = installHookSession
-	clichat.CurrentHookSessionFunc = func() clichat.HookSessionState {
-		return hookSessionStateAdapter{currentHookSession()}
-	}
+	// CurrentHookSessionFunc stays as wired by clichat_wiring.go's init: the
+	// production closure has the same body the testmain used to install, and
+	// keeping the production one lets the wiring file's own lines run.
 	clichat.HookSessionConfiguredFunc = hookSessionConfigured
 	clichat.HandleSlashHooksFunc = handleSlashHooks
 	clichat.MemoryOfFunc = func(state *AgentSessionState) memory.Store { return memoryOf(state) }
@@ -29,6 +30,21 @@ func TestMain(m *testing.M) {
 	}
 	clichat.OpenStackLedgerFunc = openStackLedger
 	clichat.ResolveStackIDFunc = resolveStackID
-	clichat.ParseStackWorkflowArgsFunc = parseStackWorkflowArgs
+	// The parseStackWorkflowArgs shim captures clichat.ParseStackWorkflowArgsFunc
+	// before anything wires it (nil), so wire the real semantics here through
+	// the already-assigned FlagValueFunc instead of the shim.
+	clichat.ParseStackWorkflowArgsFunc = func(args []string) (name, stackFlag string, rest []string, err error) {
+		stackFlag, rest, _, err = clichat.FlagValueFunc(args, "--stack")
+		if err != nil {
+			return "", "", nil, err
+		}
+		if len(rest) != 1 {
+			if len(rest) == 0 {
+				return "", "", nil, fmt.Errorf("stack: expected a workflow name (or --stack <id> with a workflow name)")
+			}
+			return "", "", nil, fmt.Errorf("stack: unexpected argument %q", rest[0])
+		}
+		return rest[0], stackFlag, rest[1:], nil
+	}
 	os.Exit(m.Run())
 }

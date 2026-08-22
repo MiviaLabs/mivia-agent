@@ -196,3 +196,17 @@ func TestNewDispatchTasksToolFullNilSafe(t *testing.T) {
 		t.Fatal("NewDispatchTasksToolFull(nil) returned nil")
 	}
 }
+
+func TestActiveCoordinatorWithStoredEntry(t *testing.T) {
+	// ActiveCoordinator's loop body when a coordinator IS stored: it must
+	// stop at the first entry and report ok=true. Store, assert, cleanup.
+	repo := ledger.NewMemoryLedgerRepository()
+	coord := coordinator.New(repo, nil)
+	d := runtime.New(runtime.Policy{})
+	cleanup := StoreTestCoordinator(d, coord, repo)
+	defer cleanup()
+	got, ok := ActiveCoordinator()
+	if !ok || got == nil {
+		t.Fatalf("ActiveCoordinator() = (%v, %v); want (non-nil, true)", got, ok)
+	}
+}
