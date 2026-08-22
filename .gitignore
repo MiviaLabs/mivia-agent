@@ -34,6 +34,12 @@ __pycache__/
 **/.mivia/memory.db-wal
 **/.mivia/memory.db-shm
 **/.mivia/memory.db
+**/.mivia/context.db
+**/.mivia/context.db-shm
+**/.mivia/context.db-wal
+**/.mivia/*.db
+**/.mivia/*.db-shm
+**/.mivia/*.db-wal
 .mivia/memory.db-shm
 # memory.jsonl was a pre-commit-maintained reviewable export of memory.db;
 # the hook step that generated and staged it was removed (the export went
