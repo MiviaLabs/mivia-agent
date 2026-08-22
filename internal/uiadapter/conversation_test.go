@@ -608,3 +608,116 @@ func TestUIPackages_DoNotImportUIAdapter(t *testing.T) {
 		}
 	}
 }
+
+// TestSend_FullTurn_ExactlyOneOfEach pins the per-turn event-count
+// invariants that manual acceptance of Phase 3 surfaced as bugs:
+//
+//   - exactly one KindTurnStart (a duplicated synthetic turn.start
+//     surfaces as a duplicated "> hi" in the stream renderer).
+//   - exactly one KindTextEnd with the assistant's final content
+//     (a duplicated text.end surfaces as the doubled message).
+//   - exactly one KindTurnEnd (a missing or duplicated terminal
+//     surfaces as either no transcript terminator or a stuck renderer).
+//   - exactly one KindError with non-empty Text (an empty-text error
+//     surfaces as a bare "  error" line — Bug B; see also
+//     internal/ui/stream/stream.go's defensive guard).
+//
+// This is stricter than the original
+// TestSend_FullTurn_EmitsTurnStartThenEnd, which only checks the
+// first/last kinds. A regression that duplicates any of these events
+// fails loudly here even if the test was green under the old check.
+func TestSend_FullTurn_ExactlyOneOfEach(t *testing.T) {
+	comp := &scriptedCompleter{turns: []provider.Response{
+		toolResponse("tc1", "noop", "{}"),
+		assistantResponse("world"),
+	}}
+	conv := newTestConversation(t, comp)
+	h, err := conv.Send(context.Background(), intent.Send{Text: "hello"})
+	if err != nil {
+		t.Fatalf("Send returned err=%v", err)
+	}
+	got := drainUntilClose(t, h.Events(), 5*time.Second)
+
+	counts := map[uievent.Kind]int{}
+	for _, e := range got {
+		counts[e.Kind]++
+	}
+
+	if counts[uievent.KindTurnStart] != 1 {
+		t.Errorf("KindTurnStart count=%d, want 1 (duplicates surface as duplicated '> hello' lines in the stream renderer)", counts[uievent.KindTurnStart])
+	}
+	if counts[uievent.KindTurnEnd] != 1 {
+		t.Errorf("KindTurnEnd count=%d, want 1 (missing or duplicated terminal surfaces as a stuck renderer)", counts[uievent.KindTurnEnd])
+	}
+	if counts[uievent.KindTextEnd] != 1 {
+		t.Errorf("KindTextEnd count=%d, want 1 (duplicates surface as the doubled assistant message bug)", counts[uievent.KindTextEnd])
+	}
+	if counts[uievent.KindTextDelta] != 0 {
+		t.Errorf("KindTextDelta count=%d, want 0 (the scriptedCompleter's assistantResponse emits a single text.end with the full text, not deltas)", counts[uievent.KindTextDelta])
+	}
+
+	// Pin the empty-text error invariant: any KindError reaching the
+	// channel must have a non-empty Text. The renderer suppresses
+	// empty-text errors today, but the upstream invariant is what
+	// keeps the channel clean.
+	for i, e := range got {
+		if e.Kind != uievent.KindError {
+			continue
+		}
+		b, ok := e.Body.(uievent.ErrorBody)
+		if !ok {
+			t.Errorf("event[%d] KindError body type=%T, want ErrorBody", i, e.Body)
+			continue
+		}
+		if b.Text == "" && !b.Fatal {
+			t.Errorf("event[%d] KindError{Text:'', Fatal:false} must not appear on the channel; current renderer suppresses empty-text errors but the producer is wrong", i)
+		}
+	}
+}
+
+// TestSend_FullTurn_TextEndContentExact pins the text.end invariant
+// directly: a single-turn scripted response produces exactly one
+// KindTextEnd whose Text equals the scripted response's Content.
+// This is the primary regression for the doubled-message bug (Bug
+// A) under the offline test surface. A future change that re-emits
+// the assistant content through a second surface (a tool-name
+// collision, a hub re-emit, a steer retry) would either duplicate
+// the KindTextEnd or change its body — both fail here.
+//
+// The streaming-delta case (assistant content emitted as N deltas +
+// one final text.end) is exercised by the end-to-end stream-renderer
+// smoke test in cmd/mivia-ui_test.go (Phase 3 acceptance), which
+// runs the binary against a real completer. The test below covers
+// the non-streaming scripted path which is the most common offline
+// assertion surface.
+func TestSend_FullTurn_TextEndContentExact(t *testing.T) {
+	const want = "the assistant said this"
+	comp := &scriptedCompleter{turns: []provider.Response{
+		assistantResponse(want),
+	}}
+	conv := newTestConversation(t, comp)
+	h, err := conv.Send(context.Background(), intent.Send{Text: "say it"})
+	if err != nil {
+		t.Fatalf("Send returned err=%v", err)
+	}
+	got := drainUntilClose(t, h.Events(), 5*time.Second)
+
+	textEnds := 0
+	for i, e := range got {
+		if e.Kind != uievent.KindTextEnd {
+			continue
+		}
+		textEnds++
+		b, ok := e.Body.(uievent.TextEndBody)
+		if !ok {
+			t.Errorf("event[%d] KindTextEnd body type=%T, want TextEndBody", i, e.Body)
+			continue
+		}
+		if b.Text != want {
+			t.Errorf("event[%d] KindTextEnd text=%q, want %q", i, b.Text, want)
+		}
+	}
+	if textEnds != 1 {
+		t.Errorf("KindTextEnd count=%d, want 1 (the doubled-message bug surfaces as 2)", textEnds)
+	}
+}

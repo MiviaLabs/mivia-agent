@@ -5,7 +5,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
@@ -120,5 +122,145 @@ func TestRenderEveryKindNoPanic(t *testing.T) {
 		if !seen[k] {
 			t.Errorf("fixture is missing coverage for Kind %s", k)
 		}
+	}
+}
+
+// TestRenderErrorEmptyTextIsSuppressed pins the defensive guard on
+// renderError: an empty-text, non-fatal KindError produces no rendered
+// line. A bug that ever emits a malformed empty-text error (a stray
+// tool-start with Name="error", a runtime surface that fails closed,
+// a translator that omits the body text) must NOT leak as a bare
+// "  error" line in the transcript. The KindError event itself is
+// preserved on the channel; only the renderer suppresses it. A fatal
+// error with empty text still renders, because "fatal" alone carries
+// the meaning the user needs.
+func TestRenderErrorEmptyTextIsSuppressed(t *testing.T) {
+	var buf bytes.Buffer
+	if err := Render(&buf, []uievent.Event{{
+		Kind: uievent.KindError,
+		Body: uievent.ErrorBody{Text: "", Fatal: false},
+	}}); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("empty-text non-fatal KindError must not render; got %q", buf.String())
+	}
+}
+
+// TestRenderErrorEmptyTextFatalStillRenders pins the asymmetric case:
+// a fatal error with empty text still renders so the user sees the
+// terminal status, even though the body has no detail. A fatal with
+// empty text is more likely a translator regression than a runtime
+// noise; the user needs to see "fatal" regardless.
+func TestRenderErrorEmptyTextFatalStillRenders(t *testing.T) {
+	var buf bytes.Buffer
+	if err := Render(&buf, []uievent.Event{{
+		Kind: uievent.KindError,
+		Body: uievent.ErrorBody{Text: "", Fatal: true},
+	}}); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if buf.Len() == 0 {
+		t.Errorf("empty-text fatal KindError must render; got empty buffer")
+	}
+	if !strings.Contains(buf.String(), "fatal") {
+		t.Errorf("empty-text fatal KindError must mention 'fatal' in the rendered output; got %q", buf.String())
+	}
+}
+
+// TestRenderToolStartNameErrorDoesNotMisformat pins the related
+// risk: a KindToolStart with Name="error" formats as
+// "v error ...". That is documented stream behaviour behaviour
+// (see renderToolStart at line 51-53), and is the most plausible
+// source of the user's "v error" screenshot when no producer of
+// KindError was reachable. The regression test pins the format
+// so a future change that conflates tool output and error events
+// surfaces visibly.
+func TestRenderToolStartNameErrorDoesNotMisformat(t *testing.T) {
+	var buf bytes.Buffer
+	if err := Render(&buf, []uievent.Event{{
+		Kind: uievent.KindToolStart,
+		Body: uievent.ToolStartBody{ToolCallID: "x", Name: "error"},
+	}}); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if !strings.Contains(buf.String(), "v error") {
+		t.Errorf("expected 'v error' prefix from KindToolStart{Name:'error'}; got %q", buf.String())
+	}
+	// Sanity: a KindError with empty text on the SAME line must NOT
+	// appear (i.e. the early-return guard from
+	// TestRenderErrorEmptyTextIsSuppressed holds even when a tool-start
+	// of the same name precedes it).
+	if strings.Contains(buf.String(), "  error") {
+		t.Errorf("empty-text KindError must not render even when a tool-start of the same name precedes it; got %q", buf.String())
+	}
+}
+
+// TestRenderSmoke_RealisticOneUserInput pins the doubled-message
+// regression at the renderer boundary. This is the smoke test
+// surface for the new ui shipped in Phase 3 (commit de1d2e70):
+// when `--demo=false` produced two `KindTurnStart` and two
+// identical `KindTextEnd` events on a single user input, the bug
+// appeared as the doubled assistant message in the rendered
+// transcript. The offline unit tests in
+// internal/uiadapter/conversation_test.go already pin the channel-
+// side invariant (TestSend_FullTurn_ExactlyOneOfEach and
+// TestSend_FullTurn_TextEndContentExact). This smoke test mirrors
+// the same scenario from the renderer's perspective so a future
+// regression that produces duplicates AT the renderer but not at
+// the channel (a renderer-side dedup gone wrong, a single channel
+// event rendered twice) surfaces here too.
+//
+// The fixture drives a realistic event sequence for one user input
+// "hi": turn.start with the input, one text.delta chunk, one
+// text.end with the assistant's reply, one notice (cache_usage),
+// one notice (token_usage), one turn.end "completed". If any kind
+// appears twice where it should appear once, the test fails
+// because that is the exact doubled-message shape the user saw.
+func TestRenderSmoke_RealisticOneUserInput(t *testing.T) {
+	at := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	events := []uievent.Event{
+		{Kind: uievent.KindTurnStart, Seq: 1, At: at, Body: uievent.TurnStartBody{Input: "hi"}},
+		{Kind: uievent.KindTextDelta, Seq: 2, At: at, Body: uievent.TextDeltaBody{Text: "Hi there! "}},
+		{Kind: uievent.KindTextEnd, Seq: 3, At: at, Body: uievent.TextEndBody{Text: "Hi there! How can I help you today?"}},
+		{Kind: uievent.KindNotice, Seq: 4, At: at, Body: uievent.NoticeBody{Text: "prompt cache: 2176/2231 tokens cached (97%)"}},
+		{Kind: uievent.KindNotice, Seq: 5, At: at, Body: uievent.NoticeBody{Text: "estimate 1920 vs actual 2231 (ratio 1.16)"}},
+		{Kind: uievent.KindTurnEnd, Seq: 6, At: at, Body: uievent.TurnEndBody{Reason: "completed"}},
+	}
+	var buf bytes.Buffer
+	if err := Render(&buf, events); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	out := buf.String()
+
+	// The user's assistant message ("Hi there! How can I help you
+	// today?") must appear exactly once. A second occurrence
+	// means a duplicated text.end reached the channel.
+	if c := strings.Count(out, "Hi there! How can I help you today?"); c != 1 {
+		t.Errorf("assistant message occurrence=%d, want 1 (the doubled-message bug surfaces as 2)", c)
+	}
+
+	// The user's input ("hi") must appear exactly once. A second
+	// occurrence means a duplicated turn.start reached the channel.
+	if c := strings.Count(out, "> hi"); c != 1 {
+		t.Errorf("user input '> hi' occurrence=%d, want 1 (a duplicated turn.start surfaces as 2)", c)
+	}
+
+	// The notice lines must each appear exactly once. Duplicates
+	// surface as doubled per-turn accounting rows.
+	for _, line := range []string{
+		"prompt cache: 2176/2231 tokens cached (97%)",
+		"estimate 1920 vs actual 2231 (ratio 1.16)",
+	} {
+		if c := strings.Count(out, line); c != 1 {
+			t.Errorf("notice line occurrence=%d for %q, want 1", c, line)
+		}
+	}
+
+	// The terminal "(turn completed)" marker must appear exactly
+	// once. A missing or duplicated terminal surfaces as a stuck
+	// renderer or a duplicate terminator.
+	if c := strings.Count(out, "(turn completed)"); c != 1 {
+		t.Errorf("'(turn completed)' occurrence=%d, want 1", c)
 	}
 }

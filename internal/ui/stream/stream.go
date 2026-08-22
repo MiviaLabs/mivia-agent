@@ -85,6 +85,16 @@ func printBlock(w io.Writer, prefix, text string) error {
 }
 
 func renderError(w io.Writer, b uievent.ErrorBody) error {
+	// Defensive guard: an empty-text error produces "  error" with no body,
+	// which reads as a bare "error" line and tells the user nothing about
+	// what failed. Mirror the TextEndBody early-return at line 35 so a
+	// downstream producer that emits a malformed empty-text error is
+	// suppressed at the renderer rather than mis-formatted. The typed
+	// KindError event itself is preserved on the channel; only the
+	// rendered transcript drops it.
+	if strings.TrimSpace(b.Text) == "" && !b.Fatal {
+		return nil
+	}
 	lines := strings.Split(b.Text, "\n")
 	status := ""
 	if b.Fatal {
