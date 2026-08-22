@@ -5,6 +5,8 @@ package clichat
 // the lines as covered after the cli split's rename.
 
 import (
+	"github.com/MiviaLabs/mivia-agent/internal/agent"
+
 	"testing"
 	"time"
 
@@ -50,4 +52,43 @@ func TestSkillScopeHelpers(t *testing.T) {
 func TestLoadAgentDefinitionsLocal(t *testing.T) {
 	skillReg := skills.NewRegistry()
 	_, _ = LoadAgentDefinitions(t.TempDir(), "", skillReg)
+}
+
+func TestLegacytuiTestExportsRenderHelpers(t *testing.T) {
+	// RenderOneChatBlock / RenderThinkingBlock / HighlightCodeBlock
+	// are pure helpers; exercise them on representative inputs.
+	if got := RenderOneChatBlock(ChatBlock{Kind: ChatBlockUser, Text: "hello"}, "model", 80, true); len(got) == 0 {
+		t.Fatal("RenderOneChatBlock returned empty")
+	}
+	if got := RenderThinkingBlock("thinking", true, 0, true, 80); len(got) == 0 {
+		t.Fatal("RenderThinkingBlock returned empty")
+	}
+	if got := HighlightCodeBlock("go", "package main"); got == "" {
+		t.Fatal("HighlightCodeBlock returned empty")
+	}
+	// FormatUserMessageCard must accept a width.
+	if got := FormatUserMessageCard("text", 80, time.Now()); len(got) == 0 {
+		t.Fatal("FormatUserMessageCard returned empty")
+	}
+	// SummarizeToolDetail is the lowercase alias of the canonical
+	// Summary path: it must produce non-empty output for a
+	// representative case.
+	if got := SummarizeToolDetail("read_file", `{"path":"/tmp/x"}`, "ok"); got == "" {
+		t.Fatal("SummarizeToolDetail returned empty")
+	}
+	// OrchestrationSwitchGuard returns a no-op closure when no
+	// session is registered.
+	guard := OrchestrationSwitchGuard("nonexistent")
+	if guard == nil {
+		t.Fatal("OrchestrationSwitchGuard returned nil")
+	}
+	// FilterSkillsForScope(nil, ...) returns nil.
+	if got := FilterSkillsForScope(nil, AgentSkillScope{}); got != nil {
+		t.Errorf("FilterSkillsForScope(nil) = %v", got)
+	}
+}
+
+func TestEmitSubagentProgressNoPanic(t *testing.T) {
+	// EmitSubagentProgress with a zero event must not panic.
+	EmitSubagentProgress(agent.Event{})
 }

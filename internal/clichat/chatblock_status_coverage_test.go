@@ -4,6 +4,8 @@ package clichat
 // chatblock_status.go.
 
 import (
+	"errors"
+
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
@@ -46,4 +48,17 @@ func TestReconstructEmptySpeechStatus(t *testing.T) {
 	if out := ReconstructEmptySpeechStatus(nil); out != nil {
 		t.Fatalf("ReconstructEmptySpeechStatus(nil) = %v, want nil", out)
 	}
+}
+
+func TestSummaryDisabledReasonEmpty(t *testing.T) {
+	// With a fresh resolved config and session, the function returns "".
+	if got := SummaryDisabledReason(nil, nil); got != "" {
+		t.Errorf("SummaryDisabledReason(nil, nil) = %q, want empty", got)
+	}
+}
+
+func TestCompactHelpersHandleNilTerminal(t *testing.T) {
+	// reportCompactFailure with a nil terminal must write to stderr
+	// without panicking.
+	reportCompactFailure(nil, errors.New("simulated"))
 }

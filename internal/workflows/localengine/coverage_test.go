@@ -49,3 +49,9 @@ func TestRecordWorktreeStoresIdentity(t *testing.T) {
 		t.Fatalf("recordWorktree then worktreeIdentity = (%+v, %v)", got, ok)
 	}
 }
+
+func TestClearDeliveryAbandonOnNilFence(t *testing.T) {
+	// e.fence == nil: the clear must no-op rather than panic.
+	e := &Engine{}
+	e.clearDeliveryAbandon("run-x")
+}
