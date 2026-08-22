@@ -135,3 +135,9 @@ func TestReplHelpAndRender(t *testing.T) {
 		t.Fatal("RenderReplHelpInline returned empty")
 	}
 }
+
+func TestTuiHelpCommands(t *testing.T) {
+	if got := TuiHelpCommands(); len(got) == 0 {
+		t.Fatal("TuiHelpCommands returned empty")
+	}
+}
