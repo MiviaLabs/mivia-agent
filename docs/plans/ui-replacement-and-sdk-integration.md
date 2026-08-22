@@ -263,14 +263,17 @@ needs.
 
 ### B.0.5 — `internal/sdkadapter`: small bridge for type-shape mismatches
 
-**Sequencing.** B.0.5 lands before B.1 because B.0.5's
-`provider.go` and `tool.go` import SDK primitives whose surface
-may be extended by B.1; if B.1 lands first, B.0.5 will define a
-bridge that compiles against a narrower API and then has to be
-edited when B.1's extensions merge. The order is right but the
-rationale is undocumented; one sentence here is enough. The
-same rationale applies to B.2 #8 (the inner-loop swap), which
-must follow both B.0.5 and the B.1 extensions it consumes.
+**Sequencing.** B.0.5 lands before B.2 because the bridge
+files (especially `provider.go`, `tool.go`, `hooks.go`) are the
+artifacts the Wave 2 drops consume; if B.2 starts before B.0.5,
+each drop will re-derive the bridge inline rather than reuse it.
+B.0.5 also lands before B.1 extensions land in the SDK repo
+because the bridge's `provider.go` reads `provider.ReasoningEffort`
+whose surface may be extended by B.1.4's `ReasoningBudget`; the
+order is right, the rationale is documented here in one
+sentence. B.2 #8 (the inner-loop swap) is the load-bearing
+consumer of B.0.5 + B.1.1; Phase 8 of Thread A is gated on B.2 #8
+landing successfully.
 
 **Why this exists.** Three local mirrors (CLI's `tools.Tool`,
 `skills.Definition`, `provider.Message`) have richer shapes than
@@ -370,8 +373,14 @@ new row: `internal/sdkadapter` → `internal/provider`, `internal/tools`,
 `internal/uikit/ports` (or whatever the CLI's surface needs), plus
 `github.com/MiviaLabs/mivia-ai-sdk/provider`, `.../tools`, `.../skills`.
 
-**Edge-cap impact.** B.0.5 adds 5-7 edges (3 to CLI, 3-4 to SDK).
-The cap is re-baselined upward; the per-drop drops in B.2 then
+**Edge-cap impact.** B.0.5 adds 3 internal edges
+(`internal/sdkadapter → internal/provider`,
+`internal/sdkadapter → internal/tools`,
+`internal/sdkadapter → internal/uikit/ports`) per the policy's
+`compute_edges` filter at `scripts/check_import_layers.py:152-173`
+(SDK external imports are excluded from the policy's edge count).
+The cap is re-baselined upward by 3 to reflect these; the per-drop
+drops in B.2 then
 offset the increase.
 
 **Commit subject:** `feat(agent): add sdkadapter bridges for type-shape mismatches`.
@@ -445,7 +454,7 @@ Tests (which contract must hold after the drop).
 | 2 | `internal/envfile` | `mivia-ai-sdk/envfile.Load` | **Goal**: drop the local env-file loader. **Scope**: delete `internal/envfile/`; the SDK's `envfile.Load` is wire-compatible. **API**: same; the SDK's `Lookup` helper (if it exists) covers the local's preference order; if not, the local's `Lookup` stays in CLI as a small wrapper around the SDK's `Load`. **Tests**: the SDK's `envfile_test/` is run in place of the local. |
 | 3 | `internal/contentref` (adopt `sha256:<digest>`; **dual-format parsing during transition**) | `mivia-ai-sdk/contextstate.Mint` | **Goal**: drop the local content-ref minter; adopt the SDK's `sha256:<digest>` shape as canonical. **Scope**: delete `internal/contentref/`; the minter becomes `contextstate.Mint` (verified at `contextstate/ref.go:31-33`). The dual-format parser `Parse(ref string)` **does not move to the SDK** because `contextstate.Parse` does not exist (`api/contextstate.txt:26-28` only locks `Mint`, `Digest`, `IsRef`); the parser lives in the CLI as `internal/sdkadapter/ref.go` and accepts both `ref:kind:digest` and `sha256:digest` during the transition window. A follow-up commit removes the dual-format support once the `usage_events.content_ref` table is migrated. **API**: `Mint(data []byte) string` returns `sha256:<digest>` (the SDK's); `Parse(ref) (kind, digest string, err error)` lives in `internal/sdkadapter/ref.go` and is the single CLI-side migration helper. **Tests**: round-trip a byte slice through the SDK's `Mint`; the dual-format parser returns the same `digest` for both `ref:foo:abc...` and `sha256:abc...`; persisted-ref migration test (a `usage_events` row with `ref:output:abc` parses to the same content as a `sha256:abc` row). |
 | 4 | `internal/contextstate` (every type and validator) | `mivia-ai-sdk/contextstate` | **Goal**: drop the local mirror of the SDK's contract types. **Scope**: delete `internal/contextstate/`; import the SDK's `contextstate` package directly. The CLI's `contracts.go` and `commit_validation.go` are byte-identical with the SDK's per `contextstate/doc.go:6-9`. **API**: every `internal/contextstate.X` becomes `mivia-ai-sdk/contextstate.X`. **Tests**: any local test that imported `internal/contextstate` switches to the SDK's import; the SDK's tests cover the contract. |
-| 5 | `internal/reasoning` (Level / Dialect / Setting) | `mivia-ai-sdk/provider` reasoning types (the 4-value `ReasoningEffort`, the open `ReasoningDialect` typed string) | **Goal**: drop the local mirror of the SDK's reasoning types where the vocabulary overlaps. **Scope**: keep CLI's 7-level `Level` enum (it is the product's user-visible config vocabulary); the SDK's `ReasoningEffort` (4 values) is used at the request-encoder boundary only. `internal/reasoning.FormatReasoningEfforts` stays as a CLI-side helper in `internal/reasoning/reasoning.go` (per B.1.4's revision — `FormatReasoningEfforts` is mivia's presentational layer, not an SDK-side function). **API**: CLI's `Level` is the source-of-truth; the request encoder translates `Level → ReasoningEffort` at the call site (the mapping is product-specific, defined in `internal/sdkadapter/provider.go`). **Tests**: the existing `internal/reasoning` tests keep working; the bridge has its own tests. |
+| 5 | `internal/reasoning` (Level / Dialect / Setting) | `mivia-ai-sdk/provider` reasoning types (the 4-value `ReasoningEffort`, the open `ReasoningDialect` typed string) | **Goal**: drop the local mirror of the SDK's reasoning types where the vocabulary overlaps. **Scope**: keep CLI's 7-level `Level` enum (it is the product's user-visible config vocabulary); the SDK's `ReasoningEffort` (4 values) is used at the request-encoder boundary only. If a presentational helper for the 4-value `ReasoningEffort` set is needed at the call site, it lives in CLI as a small helper in `internal/reasoning/reasoning.go` (per B.1.4's revision — that helper is mivia's presentational layer, not an SDK-side function). **API**: CLI's `Level` is the source-of-truth; the request encoder translates `Level → ReasoningEffort` at the call site (the mapping is product-specific, defined in `internal/sdkadapter/provider.go`). **Tests**: the existing `internal/reasoning` tests keep working; the bridge has its own tests. |
 | 6 | `internal/usage` in-memory accumulation; keep `UsageRecord`/`UsageWriter` as the durable log schema | `mivia-ai-sdk/usage.Accumulator` | **Goal**: drop the local in-memory accumulation; keep the durable log schema. **Scope**: delete `internal/usage/accumulator.go`; `internal/usage/record.go` (the durable schema) stays. The SDK's `usage.Accumulator` (`usage/accumulator.go:1-30`) is the in-memory total; CLI's `UsageRecord` (the row written to SQLite) is the durable per-turn log. **API**: `accumulator.Total()` is the SDK's `usage.Accumulator.Total()`; `UsageWriter.Record(usageRecord)` is the local write path. **Tests**: the existing durable-schema tests keep working; the bridge has its own tests. |
 | 7 | `internal/agentmsg.ContentRef` (call sites that mint a ref) | `mivia-ai-sdk/contextstate.Mint` | **Goal**: drop the duplicate content-ref minter; the call sites in `internal/agentmsg/message.go:241` use `contextstate.Mint`. **Scope**: the roll-in is part of the Wave 1 #3 drop; the dual-format parsing covers the persisted-data migration. **API**: `agentmsg.Message` keeps its current shape; only the `ContentRef` field's underlying minter changes. **Tests**: dual-format parse test (same as Wave 1 #3). |
 
