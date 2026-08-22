@@ -16,7 +16,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
-func TestCompactStructuralOnlyNotice(t *testing.T) {
+func TestCompactStructuralOnlyNoticeDetails(t *testing.T) {
 	if got := CompactStructuralOnlyNotice("pruned older turns"); !strings.Contains(got, "pruned older turns") {
 		t.Fatalf("CompactStructuralOnlyNotice must echo reason; got %q", got)
 	}
@@ -43,4 +43,23 @@ func TestCompactResultMessageAndReportCompactFailure(t *testing.T) {
 	sess := chat.NewSession(&config.Resolved{Model: "x", ProviderName: "p"}, nil)
 	_ = compactResultMessage(sess, &config.Resolved{}, chat.ContextUsage{})
 	reportCompactFailure(nil, errors.New("simulated failure"))
+}
+
+func TestCompactResultMessage(t *testing.T) {
+	sess := chat.NewSession(&config.Resolved{Model: "x", ProviderName: "p"}, nil)
+	got := compactResultMessage(sess, &config.Resolved{}, chat.ContextUsage{
+		Percent: 50, UsedTokens: 1000, BudgetTokens: 2000,
+	})
+	if got == "" {
+		t.Fatal("compactResultMessage returned empty")
+	}
+}
+
+func TestReportCompactFailureNilTerminal(t *testing.T) {
+	reportCompactFailure(nil, errors.New("simulated"))
+}
+
+func TestWriteModelRestoreNotice(t *testing.T) {
+	sess := chat.NewSession(&config.Resolved{Model: "x", ProviderName: "p"}, nil)
+	writeModelRestoreNotice(nil, sess)
 }
