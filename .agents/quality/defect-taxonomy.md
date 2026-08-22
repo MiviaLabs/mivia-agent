@@ -201,6 +201,19 @@ promoted to a load error.
   a silent default-keep - the operator configures the override and the runtime does the
   default thing with no error, which is exactly how `b151445e`'s summary override
   shipped dead.
+- **Empty-body event rendering.** A typed event body (`ErrorBody`,
+  `NoticeBody`, `TextEndBody`) with an empty string payload must
+  either be suppressed at the renderer (defensive guard) or fail at
+  the producer (fix the producer). A renderer that prints "  error"
+  for `ErrorBody{Text:""}` is dishonest status: the kind says an
+  error happened, the body says nothing did, and the user sees
+  one line with no actionable content. The canonical guard is on
+  `TextEndBody` in `internal/ui/stream/stream.go:35-37`; mirror it
+  for `ErrorBody` and any future Body type. Defensive guards on
+  the renderer are NOT a fix for the producer — the producer is
+  still wrong — but they prevent a noise line from reaching the
+  transcript and surface the producer defect as a "garbled line
+  is missing" instead of a "garbled line is misleading".
 
 ## DC-10 Path, environment, and isolation escape
 
@@ -374,6 +387,23 @@ first fix, still only one of two) actually fed it.
   that it writes correctly to its own direct caller's writer. A path that streams
   correctly to the terminal in front of it can still be fully silent to every other
   consumer of the shared signal.
+- **End-to-end smoke test parity.** A user-visible pipeline that has
+  both a unit-test surface (scripted fixtures, one-shot canned
+  responses) AND a real-world surface (live provider, real event
+  sequence under the agent loop) is exactly the kind of split this
+  DC is about. When the unit-test surface passes but the real
+  surface breaks, the regression is in the un-tested path. For every
+  UI-ship phase, list the path the user takes and the path the
+  unit test takes; if they are not the same path, add an offline
+  smoke test that bridges them. The smoke test must run in CI
+  without live credentials and must drive a realistic event
+  sequence (turn.start -> text.delta -> text.end -> notices ->
+  turn.end), with the test asserting per-kind event counts. The
+  canonical shape is `TestSend_FullTurn_ExactlyOneOfEach` in
+  `internal/uiadapter/conversation_test.go` plus
+  `TestRenderSmoke_RealisticOneUserInput` in
+  `internal/ui/stream/stream_test.go`. The two together cover both
+  halves of the channel-to-renderer pipeline.
 - A fix that adds publishing to one producer path is not complete until every other
   producer path feeding the same user-visible signal is checked against the same gap
   (this is DC-16 restating the Chain control rule below, but the "site" here is a code

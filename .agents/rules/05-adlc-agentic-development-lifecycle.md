@@ -32,6 +32,68 @@ Read this file before starting any task. See also `AGENTS.md` ("Mandatory proces
 | **Unit test (GREEN)** | Step 4b | Sub-agent | Production code passing the RED test. | `go test -run TestXxx ./pkg/...` pass |
 | **Integration test** | Step 4c | Dedicated sub-agent | End-to-end across layers. | `go test -run TestIntegration ./...` pass |
 | **Race test** | After every wave + Step 6 | Orchestrator | Detects data races. | `go test -race ./affected...` pass |
+| **Offline smoke test** | Step 4c (mandatory for UI-ship phases) | Sub-agent | End-to-end event pipeline driven by a scripted fixture; must run without live credentials. Asserts per-kind event counts and rendered transcript shape. | `go test -run TestSmoke ./pkg/...` pass |
+
+### Smoke tests for UI-ship phases
+
+A phase that ships user-visible behavior on the new UI (e.g. a new
+adapter, a new renderer, the conversation screen, an Approver panel,
+a settings port, a `--demo=false` real-mode path) must include an
+**offline smoke test** in addition to the unit tests. The smoke test
+is the regression that catches what unit tests miss: a real
+provider's behaviour differs from a scripted one-shot response, and
+the renderer must be tested against a realistic event stream rather
+than a recorded fixture.
+
+**When the planner must add a smoke test:**
+
+- The plan adds a new adapter that translates events from one
+  surface to another.
+- The plan adds or modifies a renderer for a UI surface.
+- The plan wires a new `--demo=false` real-mode path.
+- The plan's `MANUAL ACCEPTANCE REQUIRED` line is the binding plan's
+  acknowledgement that offline tests cannot exercise the path.
+
+**Smoke test shape (mandatory):**
+
+- The test must run in CI without live credentials (no `MIVIA_*`
+  env vars, no provider API keys). It drives the path with a
+  scripted fixture that mirrors a realistic event sequence.
+- The test asserts **per-kind event counts**, not just first/last.
+  `TestSend_FullTurn_ExactlyOneOfEach` in
+  `internal/uiadapter/conversation_test.go` is the canonical shape.
+- If the plan touches a renderer, the test also asserts the rendered
+  transcript shape: the user input appears once, each assistant
+  message appears once, each notice line appears once, the terminal
+  marker appears once. `TestRenderSmoke_RealisticOneUserInput` in
+  `internal/ui/stream/stream_test.go` is the canonical shape.
+- The test must reproduce the bug shape that the prior phase's
+  manual acceptance surfaced. If the prior phase surfaced a doubled
+  message, the test fails when given a doubled sequence. If the
+  prior phase surfaced an empty-text error, the test fails when
+  given one.
+
+**Defensive guards (mandatory for renderers):**
+
+Any renderer that handles a Body type with a string payload
+(`TextEndBody`, `ErrorBody`, `NoticeBody`) must early-return when
+the string is empty and the event is non-fatal. The first such
+guard is on `TextEndBody` in `internal/ui/stream/stream.go:35-37`;
+mirror it for `ErrorBody` and any future Body type that has the
+same empty-string-as-noise failure mode.
+
+**What the reviewer must check on a UI-ship phase:**
+
+1. A smoke test is in the diff and runs in CI under
+   `go test ./affected-pkg/...` (no live credentials).
+2. The smoke test fails when given the duplicated-event sequence
+   from the prior manual-acceptance bug.
+3. The defensive guards on empty-text bodies are present and
+   tested.
+4. The smoke test asserts per-kind counts, not just first/last.
+
+If any of these checks fail, the reviewer returns **Block** with
+the specific missing piece, not as a polish note.
 
 ---
 
