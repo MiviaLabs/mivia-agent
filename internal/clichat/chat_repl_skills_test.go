@@ -11,7 +11,7 @@ import (
 
 func TestAttachSessionDispatcherBindsSkillsWithoutTools(t *testing.T) {
 	root := t.TempDir()
-	dir := filepath.Join(root, ".mivia", "skills", "review")
+	dir := filepath.Join(root, ".agents", "skills", "review")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}

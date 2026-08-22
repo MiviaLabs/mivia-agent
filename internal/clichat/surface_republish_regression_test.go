@@ -430,7 +430,7 @@ func TestModelSwitchKeepsTheBindingSkillRegistry(t *testing.T) {
 	// An operator removes the skill mid-session. The binding is already frozen
 	// against the attach-time registry, so nothing may re-read this directory
 	// until /agent starts a new binding.
-	if err := os.RemoveAll(filepath.Join(dir, ".mivia", "skills", "searchy")); err != nil {
+	if err := os.RemoveAll(filepath.Join(dir, ".agents", "skills", "searchy")); err != nil {
 		t.Fatal(err)
 	}
 

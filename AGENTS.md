@@ -11,7 +11,7 @@ Predecessor: `mivia-agentkit` MVP (legacy CLI name mivia-agent; patterns reused,
 2. `.agents/INDEX.md` - fuller control-surface index (skills, policy, quality, hooks, semgrep)
 3. `.agents/doctrines/*` - evidence and verification doctrines
 4. `.agents/rules/*` - durable policy (linked by title below)
-5. `.agents/skills/*` - workflows, symlinked from `.mivia/skills/` (the real tree, and the `mivia` binary's own load path); `.claude/skills/` symlinks the same
+5. `.agents/skills/*` - real-directory skills under the development surface; the `mivia` binary's loader (`internal/workspace.SkillsDir`) reads from this path. `.claude/skills/` mirrors each skill as a real directory for tool discovery
 6. `docs/OWNERS.yaml` - doc ownership map; ADRs are prohibited
 7. Thin adapters only: `CLAUDE.md`, `.claude/`, `.codex/`, `.github/`
 
@@ -31,14 +31,23 @@ functional, not instructional.
 
 `.agents/memories/*.md` is team-shared, cross-tool operational memory - facts
 and corrected preferences about how to work in THIS repo, not policy -
-following the open `.agents` protocol (https://dotagentsprotocol.com/). Each
-file uses that protocol's frontmatter (`id`, `title`, `content`, `importance`,
-`tags`). It is git-committed, so it is not a substitute for `.agents/rules/*`
-(durable policy) or a private per-machine agent memory store; a fact that
-becomes a hard rule belongs in `.agents/rules/`, not here.
+following the open `.agents` protocol (https://dotagentsprotocol.com/). Format
+and conventions live in [`.agents/memories/README.md`](.agents/memories/README.md).
+It is git-committed, so it is not a substitute for `.agents/rules/*` (durable
+policy) or a private per-machine agent memory store; a fact that becomes a
+hard rule belongs in `.agents/rules/`, not here.
 
 Read every file under `.agents/memories/` at the start of a task, the same
 way you read this file.
+
+### `.agents/agents/`
+
+Markdown subagent role definitions for the human and ADLC-driven workflow:
+`planner.md`, `plan-reviewer.md`, `builder.md`, `reviewer.md`. Format,
+loading contract, and the path to the legacy `.mivia/agents/*.toml` set
+that the `mivia` binary still loads directly are documented in
+[`.agents/agents/README.md`](.agents/agents/README.md). Run `make
+agents-check` after editing any role file.
 
 ## Mandatory process - read before any work
 

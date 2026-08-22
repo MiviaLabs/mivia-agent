@@ -42,18 +42,35 @@ func NamespacePath(root string, elem ...string) string {
 	return filepath.Join(parts...)
 }
 
-// SkillsDir holds workspace skill definitions as <name>/SKILL.md.
-func SkillsDir(root string) string { return NamespacePath(root, "skills") }
+// AgentsPath joins elem beneath the project's .agents/ directory in root.
+// Workspace skills live under .agents/skills/ so the development surface
+// (skills, subagent roles, memories, rules, doctrines) stays together and
+// is editable without touching the binary's own runtime namespace. The
+// remaining runtime state (sessions, runs, worktrees, memory, hooks,
+// policies, workflow definitions, agent role TOMLs) keeps living under
+// Namespace.
+func AgentsPath(root string, elem ...string) string {
+	parts := append([]string{root, ".agents"}, elem...)
+	return filepath.Join(parts...)
+}
 
-// UserSkillsDir holds user-level skill definitions. An unavailable home
-// directory yields an empty path so callers can warn and continue without
-// treating optional user customization as a startup failure.
+// SkillsDir holds workspace skill definitions as <name>/SKILL.md. Skills
+// live under the project's .agents/skills/ directory so the development
+// surface is editable as ordinary workspace content and shares no path
+// with the binary's own runtime namespace (.mivia).
+func SkillsDir(root string) string { return AgentsPath(root, "skills") }
+
+// UserSkillsDir holds user-level skill definitions in the user's own
+// .mivia home namespace (a sibling, not a child, of the project .agents/
+// surface). An unavailable home directory yields an empty path so callers
+// can warn and continue without treating optional user customization as a
+// startup failure.
 func UserSkillsDir() string {
 	home, err := UserHomeDir()
 	if err != nil || home == "" {
 		return ""
 	}
-	return SkillsDir(home)
+	return NamespacePath(home, "skills")
 }
 
 // SessionsDir holds persisted chat sessions.

@@ -440,14 +440,17 @@ func TestTranslateEvent_ExhaustiveCoverage(t *testing.T) {
 // rule at test time. Without this, adding a new EventKind would compile
 // fine (the production switch has a panic on the fall-through) and only
 // surface when the loop runs through every kind.
-func TestTranslateEvent_PanicsOnUnknownKind(t *testing.T) {
+func TestTranslateEvent_LogsAndDropsUnknownKind(t *testing.T) {
 	t.Parallel()
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("TranslateEvent must panic on an unrecognised agent.EventKind")
-		}
-	}()
-	_ = uiadapter.TranslateEvent(agent.Event{Kind: agent.EventKind("definitely_not_in_the_switch")})
+	// An unrecognised agent.EventKind must not panic - production code
+	// returns errors, not crashes. The helper logs the drop and returns
+	// nil. The compile-time exhaustiveness check on the switch is the
+	// primary defence; this test confirms the runtime fallback is a
+	// graceful drop, not a process exit.
+	got := uiadapter.TranslateEvent(agent.Event{Kind: agent.EventKind("definitely_not_in_the_switch")})
+	if got != nil {
+		t.Fatalf("unrecognised kind must drop to nil, got %#v", got)
+	}
 }
 
 // contentBearingEvent returns one agent.Event of kind k with enough fields
@@ -570,4 +573,72 @@ func bodyTypeDiffers(a, b uievent.Body) bool {
 	// Unknown body types compare unequal as a conservative default; this
 	// branch is unreachable for the bodies uievent declares today.
 	return true
+}
+
+// TestParseArgs covers the small surface of parseArgs in event.go: empty
+// input, the "{}" sentinel, a non-empty object, an invalid JSON string,
+// and a JSON literal that parses but yields an empty map. Each branch
+// is exercised to keep diff-coverage clean for the lines introduced with
+// the uiadapter package.
+func TestParseArgs(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want map[string]any
+	}{
+		{name: "empty", in: "", want: nil},
+		{name: "whitespace", in: "   \t\n ", want: nil},
+		{name: "sentinel", in: "{}", want: nil},
+		{name: "valid", in: `{"foo":"bar"}`, want: map[string]any{"foo": "bar"}},
+		{name: "invalid", in: "not-json", want: nil},
+		{name: "parses-empty", in: `{"a":null}`, want: map[string]any{"a": nil}},
+		{name: "json-null", in: `null`, want: nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := uiadapter.ParseArgsForTest(tc.in)
+			if (got == nil) != (tc.want == nil) {
+				t.Fatalf("nil-ness mismatch: got %v want %v", got, tc.want)
+			}
+			if got == nil {
+				return
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("len mismatch: got %d want %d", len(got), len(tc.want))
+			}
+			for k, v := range tc.want {
+				if got[k] != v {
+					t.Fatalf("key %q: got %v want %v", k, got[k], v)
+				}
+			}
+		})
+	}
+}
+
+// TestErrFromDetail covers errFromDetail's three branches: ok=true returns
+// ""; a Detail of "" or "failed" with ok=false returns "failed"; any
+// other non-empty detail with ok=false returns the detail verbatim. The
+// third branch is what the diff-coverage gate flagged on the original
+// uiadapter commit and what this test keeps under coverage.
+func TestErrFromDetail(t *testing.T) {
+	cases := []struct {
+		name   string
+		detail string
+		ok     bool
+		want   string
+	}{
+		{name: "ok-empty-detail", detail: "", ok: true, want: ""},
+		{name: "ok-non-empty-detail", detail: "anything", ok: true, want: ""},
+		{name: "failed-empty-detail", detail: "", ok: false, want: "failed"},
+		{name: "failed-bare", detail: "failed", ok: false, want: "failed"},
+		{name: "failed-qualified", detail: "permission denied", ok: false, want: "permission denied"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := uiadapter.ErrFromDetailForTest(tc.detail, tc.ok)
+			if got != tc.want {
+				t.Fatalf("ErrFromDetail(%q, %v) = %q, want %q", tc.detail, tc.ok, got, tc.want)
+			}
+		})
+	}
 }

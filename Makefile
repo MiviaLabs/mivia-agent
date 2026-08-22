@@ -79,7 +79,7 @@ verify: verify-agent docs-check release-test secret-scan structure-check \
 	validate-invariants semgrep verify-go
 	@python3 scripts/check_mutation.py --probe
 
-verify-agent:
+verify-agent: agents-check
 	@python3 scripts/verify_agent_config.py
 
 validate-invariants:
@@ -179,6 +179,43 @@ go-check: fmt-check
 	@go test ./...
 	@go vet ./...
 	@go build -ldflags "$(VERSION_LDFLAGS)" -o $(BINARY) $(CMD_PKG)
+
+# verify-fast is the Go-only subset of verify: gofmt + vet + tests + build +
+# diff-coverage, without the agent-config / docs / secrets / structure /
+# import-layers / semgrep / hook-test gates. Use it for tight iteration when
+# the only thing that changed is Go code; the full `make verify` still runs
+# on every push.
+verify-fast: verify-go
+
+# agents-check validates the four subagent role files under
+# .agents/agents/: required frontmatter keys, name matches filename, tools
+# list non-empty, and a Disallowed operations section is present. The
+# script is stdlib-only and exits non-zero with the exact failure list.
+agents-check:
+	@python3 scripts/check_agents.py
+
+# skills-move is a one-time migration target: when the canonical skill
+# home moves (today from .mivia/skills/ to .agents/skills/), this target
+# performs the copy, verifies the destination, and removes the source.
+# It is idempotent: running it twice when the source is already gone is
+# a clean no-op. After the migration lands, this target stays as the
+# documented procedure if the home ever has to move again.
+skills-move:
+	@src=.mivia/skills; dst=.agents/skills; claude_dst=.claude/skills; \
+	if [ ! -d "$$src" ]; then \
+		echo "skills-move: $$src already absent, nothing to do"; \
+	else \
+		mkdir -p "$$dst" "$$claude_dst"; \
+		for d in "$$src"/*/; do \
+			[ -d "$$d" ] || continue; \
+			name=$$(basename "$$d"); \
+			rm -rf "$$dst/$$name" "$$claude_dst/$$name"; \
+			cp -r "$$d" "$$dst/$$name"; \
+			cp -r "$$d" "$$claude_dst/$$name"; \
+		done; \
+		rm -rf "$$src"; \
+		echo "skills-move: copied $$(ls $$dst | wc -l) skill(s) to $$dst and $$claude_dst"; \
+	fi
 
 # verify-go is go-check plus the diff-coverage gate over ONE instrumented run
 # of the suite. The two used to be separate full runs of the same tests: an

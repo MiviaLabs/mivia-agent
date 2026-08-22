@@ -354,9 +354,9 @@ func TestCatalogueAndRuntimeOriginPrecedenceAgree(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	root := t.TempDir()
-	write := func(base, name, description string) {
+	write := func(base, subdir, name, description string) {
 		t.Helper()
-		dir := filepath.Join(base, ".mivia", "skills", name)
+		dir := filepath.Join(base, subdir, "skills", name)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -365,8 +365,8 @@ func TestCatalogueAndRuntimeOriginPrecedenceAgree(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write(home, "shared", "user")
-	write(root, "shared", "project")
+	write(home, ".mivia", "shared", "user")
+	write(root, ".agents", "shared", "project")
 
 	catalogue, _ := BuildSkillCatalogue(root)
 	entry, ok := catalogue["shared"]
@@ -427,7 +427,7 @@ func TestUserSkillSurvivesProjectShadowWhenWorkspaceGateOff(t *testing.T) {
 	}
 	userSkills := filepath.Join(home, ".mivia", "skills")
 	writeSkill(userSkills, "shared", "---\nname: shared\ndescription: user\n---\nuser body\n")
-	writeSkill(filepath.Join(root, ".mivia", "skills"), "shared", "---\nname: shared\ndescription: project\n---\nproject body\n")
+	writeSkill(filepath.Join(root, ".agents", "skills"), "shared", "---\nname: shared\ndescription: project\n---\nproject body\n")
 
 	// Gate off: must not load project sources at all.
 	reg, _, err := LoadSessionSkills(root, false)

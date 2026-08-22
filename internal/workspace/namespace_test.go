@@ -12,7 +12,7 @@ import (
 
 func TestNamespaceResolvesMivia(t *testing.T) {
 	root := "/w"
-	if got, want := SkillsDir(root), filepath.Join("/w", ".mivia", "skills"); got != want {
+	if got, want := SkillsDir(root), filepath.Join("/w", ".agents", "skills"); got != want {
 		t.Errorf("SkillsDir: got %q want %q", got, want)
 	}
 	if got, want := SessionsDir(root), filepath.Join("/w", ".mivia", "sessions"); got != want {
@@ -28,7 +28,7 @@ func TestWorktreesDir(t *testing.T) {
 }
 
 func TestNamespaceEmptyRootIsWorkingDirectory(t *testing.T) {
-	if got, want := SkillsDir(""), filepath.Join(".mivia", "skills"); got != want {
+	if got, want := SkillsDir(""), filepath.Join(".agents", "skills"); got != want {
 		t.Errorf("got %q want %q", got, want)
 	}
 }

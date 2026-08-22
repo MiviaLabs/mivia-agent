@@ -1,0 +1,6 @@
+format = 1
+
+[[resources]]
+id = "report-template"
+path = "report-template.md"
+summary = "Required finding or clean-audit output structure."

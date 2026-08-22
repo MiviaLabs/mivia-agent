@@ -81,6 +81,11 @@ rules:
         - /.mivia/policy/**
         - /semgrep/**
         - /scripts/**
+        # SKILL.md files describe the rule itself (the marker tokens are the
+        # banned tokens); excluding them prevents self-hits on the rule's own
+        # description text. The metadata frontmatter is also where legitimate
+        # TODO/FIXME cross-references live, and SKILL.md is prose, not code.
+        - "**/SKILL.md"
     # Product + tool adapters. Policy markdown that lists the ban tokens is excluded to avoid self-hits.
     pattern-regex: '(?i)\b(TODO|FIXME|HACK|XXX)\b'
 
@@ -445,3 +450,42 @@ rules:
       - pattern: var $X sync.Map
       - pattern: var $X sync.WaitGroup
       - pattern: var $X atomic.$T
+
+  # --- Workspace skills live under .agents/skills, never .mivia/skills ---
+  #
+  # Project-level skill paths must go through workspace.SkillsDir(root) so
+  # the canonical home stays in one place. User-level skills legitimately
+  # live under ~/.mivia/skills (resolved via workspace.UserSkillsDir), so
+  # constructions of the form `filepath.Join(home, ".mivia", "skills")`
+  # or `t.TempDir() + HOME` are allowlisted below. Any OTHER hardcoded
+  # `.mivia`, `skills` tuple in production or test code is a path-discipline
+  # defect: a new contributor copying the old shape will load skills from
+  # a tree the binary no longer reads.
+  - id: mivia.go.no-hardcoded-mivia-skills-path
+    languages:
+      - generic
+    severity: ERROR
+    message: |
+      Hardcoded `.mivia` + `skills` path in code outside the HOME anchor
+      (workspace.UserSkillsDir). Project-level skills live under
+      .agents/skills (workspace.SkillsDir); the loader does not read
+      .mivia/skills. Use workspace.SkillsDir(root) for project skills
+      and workspace.UserSkillsDir() for user skills.
+    paths:
+      include:
+        - /internal/**/*.go
+        - /cmd/**/*.go
+    patterns:
+      - pattern-regex: '"\.mivia"\s*,\s*"skills"|\.mivia/\s*skills'
+      - pattern-not-inside: |
+          $HOME = ...
+          ...
+      - pattern-not-inside: |
+          t.Setenv("HOME", ...)
+          ...
+      - pattern-not-inside: |
+          UserSkillsDir(...)
+          ...
+      - pattern-not-inside: |
+          filepath.Join(home, ".mivia", "skills")
+          ...

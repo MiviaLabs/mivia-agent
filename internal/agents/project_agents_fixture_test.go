@@ -229,10 +229,12 @@ func TestCommittedSkillsDeclareValidTools(t *testing.T) {
 	}
 	wantNames := []string{
 		"architecture-review", "bug-audit", "concurrency-review",
+		"delivery",
 		"docs-maintenance", "docs-update", "fast-bug-audit", "feature-delivery",
 		"logic-review",
 		"memory-housekeeping", "panel-architecture-review",
 		"panel-bug-audit", "panel-secure-change", "performance-review",
+		"review",
 		"review-synthesis",
 		"secure-change", "simplification-review",
 		"session-analysis", "test-review",
@@ -271,19 +273,14 @@ func TestCommittedSkillsDeclareValidTools(t *testing.T) {
 	}
 }
 
-// committedSkillsDir locates the repo's .mivia/skills directory from the test
-// working directory, mirroring TestProjectAgentDefinitionsResolve. .mivia/skills
-// holds the real (non-symlink) directories; .agents/skills mirrors most of them
-// via symlinks that the os.Root-sandboxed loader cannot follow, so the loader
-// must read from the real tree.
+// committedSkillsDir locates the repo's .agents/skills directory from the test
+// working directory, mirroring TestProjectAgentDefinitionsResolve. Project
+// skills live as real directories under .agents/skills/ and are read
+// directly by the loader's os.Root sandbox (which does not follow symlinks).
 func committedSkillsDir(t *testing.T) string {
 	t.Helper()
 	cwd, _ := os.Getwd()
-	dir := filepath.Join(cwd, "..", "..", ".mivia", "skills")
-	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
-		root, _ := filepath.Abs("../..")
-		dir = filepath.Join(root, ".mivia", "skills")
-	}
+	dir := filepath.Join(cwd, "..", "..", ".agents", "skills")
 	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
 		t.Skip("committed skills not present at", dir)
 	}

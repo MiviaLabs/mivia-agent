@@ -218,7 +218,7 @@ func TestWorkflowsValidateLoadsWorkflowReferences(t *testing.T) {
 			name: "skill tools",
 			mutate: func(t *testing.T, root string) {
 				t.Helper()
-				path := filepath.Join(root, ".mivia", "skills", "delivery-skill", "SKILL.md")
+				path := filepath.Join(root, ".agents", "skills", "delivery-skill", "SKILL.md")
 				if err := os.WriteFile(path, []byte("---\nname: delivery-skill\ntools: [write_file]\n---\nDeliver the task.\n"), 0o600); err != nil {
 					t.Fatal(err)
 				}
@@ -327,10 +327,10 @@ func newWorkflowValidationFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	for path, body := range map[string]string{
-		".mivia/agents/worker.toml":             "name = \"worker\"\ntools = [\"read_file\"]\nskills = [\"delivery-skill\"]\n",
-		".mivia/skills/delivery-skill/SKILL.md": "---\nname: delivery-skill\ntools: [read_file]\n---\nDeliver the task.\n",
-		".mivia/workflows/templates/plan.md":    "Task: {{ inputs.task }}\n",
-		".mivia/workflows/schemas/result.json":  `{"type":"object","additionalProperties":false}`,
+		".mivia/agents/worker.toml":              "name = \"worker\"\ntools = [\"read_file\"]\nskills = [\"delivery-skill\"]\n",
+		".agents/skills/delivery-skill/SKILL.md": "---\nname: delivery-skill\ntools: [read_file]\n---\nDeliver the task.\n",
+		".mivia/workflows/templates/plan.md":     "Task: {{ inputs.task }}\n",
+		".mivia/workflows/schemas/result.json":   `{"type":"object","additionalProperties":false}`,
 	} {
 		path = filepath.Join(root, path)
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {

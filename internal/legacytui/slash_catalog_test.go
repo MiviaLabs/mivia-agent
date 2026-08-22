@@ -103,9 +103,9 @@ func TestLoadSessionSkillsMergesUserAndProjectScopes(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	root := t.TempDir()
-	write := func(base, name, description string) {
+	write := func(base, subdir, name, description string) {
 		t.Helper()
-		dir := filepath.Join(base, ".mivia", "skills", name)
+		dir := filepath.Join(base, subdir, "skills", name)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -114,8 +114,8 @@ func TestLoadSessionSkillsMergesUserAndProjectScopes(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write(home, "review", "user")
-	write(root, "review", "project")
+	write(home, ".mivia", "review", "user")
+	write(root, ".agents", "review", "project")
 	reg, warnings, err := cli.LoadSessionSkills(root, true)
 	if err != nil {
 		t.Fatal(err)

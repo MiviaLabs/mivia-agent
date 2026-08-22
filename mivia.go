@@ -2,7 +2,7 @@
 // v1 -> v2 change.
 //
 // WHAT CHANGED (schema v1 -> v2; contract files under
-// .mivia/skills/session-analysis/):
+// .agents/skills/session-analysis/):
 //
 //   - queries.py now emits three new report fields:
 //     "derivation" (workspace_id algorithm disclosure, hex_chars=16),

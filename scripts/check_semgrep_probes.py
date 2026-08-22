@@ -210,6 +210,13 @@ PROBES = [
         "internal/uikit/probe/state_clean.go",
         'package probe\n\nvar names = map[string]string{"a": "b"}\n',
     ),
+    (
+        "mivia.go.no-hardcoded-mivia-skills-path",
+        "internal/probe/mivia_skills.go",
+        'package probe\n\nimport "path/filepath"\n\nfunc p(root string) string {\n\treturn filepath.Join(root, ".mivia", "skills", "shared")\n}\n',
+        "internal/probe/mivia_skills_clean.go",
+        'package probe\n\nimport "github.com/MiviaLabs/mivia-agent/internal/workspace"\n\nfunc p(root string) string {\n\treturn workspace.SkillsDir(root) + "/shared"\n}\n',
+    ),
 ]
 
 

@@ -103,7 +103,7 @@ func TestTieredRootRegistryClampsAPlanToTheSelectedAgent(t *testing.T) {
 
 func writeSkill(t *testing.T, root, name, body string) {
 	t.Helper()
-	dir := filepath.Join(root, ".mivia", "skills", name)
+	dir := filepath.Join(root, ".agents", "skills", name)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}

@@ -151,7 +151,7 @@ func TestFeatureDeliveryPanelMembersAdmit(t *testing.T) {
 		t.Fatal("step review_panel must declare [steps.panel]")
 	}
 	skillRegistry, warnings, err := skills.LoadMarkdownSources(
-		[]skills.Source{{Dir: filepath.Join(root, ".mivia", "skills"), Origin: skills.OriginProject}},
+		[]skills.Source{{Dir: filepath.Join(root, ".agents", "skills"), Origin: skills.OriginProject}},
 		skills.LoadOptions{},
 	)
 	if err != nil {
