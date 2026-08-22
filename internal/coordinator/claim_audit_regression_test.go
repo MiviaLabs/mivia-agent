@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -28,7 +29,20 @@ func auditNewPool(t *testing.T) *subagents.Pool {
 
 func auditCloseStore(t *testing.T, store *storage.SQLite) {
 	t.Helper()
-	t.Cleanup(func() { _ = store.Close() })
+	t.Cleanup(func() {
+		_ = store.Close()
+		// The modernc.org/sqlite driver may leave numbered subdirs
+		// (e.g. "001/ledger.db-shm") inside the TempDir on Windows
+		// and in WAL-mode on macOS. Remove them before TempDir's
+		// own RemoveAll cleanup runs, otherwise the cleanup fails
+		// with "directory not empty".
+		for _, ext := range []string{"", "-wal", "-shm", "-journal"} {
+			_ = os.RemoveAll(store.Path() + ext)
+		}
+		for _, sub := range []string{"001", "002"} {
+			_ = os.RemoveAll(filepath.Join(filepath.Dir(store.Path()), sub))
+		}
+	})
 }
 
 // TestCancelRecoveredRefusesForeignClaim pins the fail-closed claim contract

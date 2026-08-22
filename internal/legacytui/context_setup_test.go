@@ -124,7 +124,12 @@ func TestSetupSessionContextListsExistingSQLiteContextSessions(t *testing.T) {
 	if _, err := first.SendUser(context.Background(), "persist this", io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	_ = store.Close()
+	// Close must complete (WAL checkpoint + write drain) before the
+	// next session opens the same file, or the second open races
+	// with the first's async writes and gets SQLITE_BUSY.
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
 
 	second := chat.NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, nullCompleter{})
 	store, err = cli.SetupSessionContext(second, root, &config.Resolved{Subagents: config.DefaultSubagentConfig})
@@ -134,7 +139,9 @@ func TestSetupSessionContextListsExistingSQLiteContextSessions(t *testing.T) {
 	if _, err := second.SendUser(context.Background(), "second session", io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	_ = store.Close()
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
 
 	loader := chat.NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, nullCompleter{})
 	store, err = cli.SetupSessionContext(loader, root, &config.Resolved{Subagents: config.DefaultSubagentConfig})
