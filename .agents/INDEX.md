@@ -58,7 +58,17 @@ or in the code.
 
 ## Skills
 
-Canonical project skills live under `.mivia/skills/` as real directories - the path the compiled `mivia` binary's own loader reads via `internal/workspace.SkillsDir`, and the only tree the loader's `os.Root` sandbox can actually traverse (it does not follow symlinks). `.agents/skills/` and `.claude/skills/` symlink each skill back to `.mivia/skills/<name>` for the respective tool. Edit skills under `.mivia/skills/`; add a matching symlink in both mirrors for any new skill.
+Canonical project skills live under `.agents/skills/` as real directories.
+The compiled `mivia` binary's loader (`internal/workspace.SkillsDir`,
+returns `<root>/.agents/skills`) reads from this path; the loader's
+`os.Root` sandbox cannot follow symlinks, so a skill must be a real
+directory at this path to be discovered. `.claude/skills/` mirrors each
+skill as a real directory for tool discovery (Claude's adapter looks
+there independently of the binary). To add a skill: create a directory
+under `.agents/skills/<name>/SKILL.md` with the YAML frontmatter schema
+documented in any existing skill, and a matching copy under
+`.claude/skills/<name>/`. Run `make skills-move` only when migrating
+the canonical home, not for routine skill additions.
 
 Ported from **mivia-agent-skills** (higher reliability than agentkit MVP copies):
 
@@ -75,6 +85,8 @@ Repo-native:
 - `simplification-review` - post-implementation over-engineering and pattern-fitness review of landed code
 - `performance-review` - measurement-driven profiling and benchmarking; no findings without measurements
 - `feature-delivery` - bounded feature slice with verification
+- `review` - meta-skill that routes a diff to the right per-lens skill (no duplicated logic)
+- `delivery` - ADLC loop in skill form; points at the rule, role files, and runtime templates without duplicating them
 - `workflow-runs-analysis` - read-only validated analysis of workflow-run ledger; process-quality findings (default window last 24h)
 - `session-analysis` - read-only validated analysis of chat sessions in the durable chat ledger; metadata-only (no message content); default window last 24h; owned by the unrestricted root
 - `memory-housekeeping` - audit the memory store: verify facts, delete stale or duplicate entries, update outdated ones, create missing ones
@@ -86,6 +98,26 @@ Workflow panel (read-only, JSON-only; used by the `feature-delivery` and `bug-fi
 - `panel-architecture-review` - integration member: boundary fitness, dependency direction, abstraction cost
 
 `bug-audit`, `architecture-review`, `simplification-review`, and `performance-review` remain report-only. They do not commit or push.
+
+## Subagents
+
+Markdown subagent role definitions live under `.agents/agents/` for the
+human and ADLC-driven workflow. The four standard roles are:
+
+| Role | File | Tools |
+|------|------|-------|
+| `planner` | `.agents/agents/planner.md` | read-only |
+| `plan-reviewer` | `.agents/agents/plan-reviewer.md` | read-only |
+| `builder` | `.agents/agents/builder.md` | read + write + run_command |
+| `reviewer` | `.agents/agents/reviewer.md` | read + run_command |
+
+Frontmatter schema and the loading contract are documented in
+[`.agents/agents/README.md`](agents/README.md). The legacy TOML set
+under `.mivia/agents/*.toml` is what the `mivia` binary's workflow
+engine reads directly; it will be migrated to Markdown in a follow-up
+refactor. Run `make agents-check` after editing any role file - the
+script enforces the frontmatter schema, the filename / `name` match,
+and the role-specific disallowed-operations list.
 
 ## Policy
 
