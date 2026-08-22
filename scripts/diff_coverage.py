@@ -81,9 +81,70 @@ def changed_go_files(root: Path, diff_args: list[str]) -> list[str]:
     return [f for f in r.stdout.strip("\0").split("\0") if f]
 
 
-def changed_lines(root: Path, diff_args: list[str], path: str) -> set[int]:
+# Pure renames (R100, similarity = 100%) move production lines without
+# changing them. The coverage gate must not treat a rename like a fresh
+# change, because the same lines are still exercised by the same tests
+# in the moved package. rename_pairs() below maps each rename
+# destination back to its source so the per-file line-diff is computed
+# against the source instead of the merged base, which already excludes
+# pure moves from the in-scope set without exempting any content edits
+# inside the move.
+
+
+def rename_pairs(root: Path, diff_args: list[str]) -> dict[str, str]:
+    """Map destination path -> source path for every rename in the diff.
+
+    The coverage gate computes "lines added in the destination vs the
+    merged base" by default, but for a renamed file most of those lines
+    already existed at the source. The right comparison is "lines added
+    in the destination vs the source as-of-base", which is exactly the
+    renamed-file hunk git reports when invoked with -M.
+
+    Returns an empty dict when no rename detection ran; callers fall
+    back to the default (whole-file) coverage check for those paths.
+
+    With --name-status -z git emits one NUL-terminated record per field,
+    not per logical entry: a rename is three records in a row
+    (status+similarity, source path, destination path). We walk the
+    records and pull the next two fields when the status starts with R.
+    """
     r = subprocess.run(
-        ["git", "diff", *diff_args, "-U0", "--", path],
+        [
+            "git", "diff", *diff_args, "-M",
+            "--name-status", "-z", "--", "*.go",
+        ],
+        cwd=root, capture_output=True, text=True, check=False,
+    )
+    if r.returncode != 0:
+        return {}
+    fields = [f for f in r.stdout.split("\x00") if f]
+    pairs: dict[str, str] = {}
+    i = 0
+    while i < len(fields):
+        status = fields[i]
+        if status.startswith("R") and i + 2 < len(fields):
+            pairs[fields[i + 2]] = fields[i + 1]
+            i += 3
+        else:
+            i += 1
+    return pairs
+
+
+def changed_lines(
+    root: Path,
+    diff_args: list[str],
+    path: str,
+    rename_source: str | None = None,
+) -> set[int]:
+    # For renamed files, diff against the source as-of-base so the only
+    # lines we report are the ones that were actually edited in the move.
+    # `git diff base src dst` produces hunks relative to dst.
+    if rename_source:
+        diff_path = (rename_source, path)
+    else:
+        diff_path = (path,)
+    r = subprocess.run(
+        ["git", "diff", *diff_args, "-U0", "--", *diff_path],
         cwd=root, capture_output=True, text=True, check=False,
     )
     if r.returncode != 0:
@@ -304,10 +365,18 @@ def main(argv: list[str] | None = None) -> int:
 
     root = repo_root()
     excludes = load_exclude_globs(root)
+    renames = rename_pairs(root, diff_args)
     files = [
         f for f in changed_go_files(root, diff_args)
-        if not f.endswith("_test.go") and not any(fnmatch.fnmatch(f, g) for g in excludes)
+        if not f.endswith("_test.go")
+        and not any(fnmatch.fnmatch(f, g) for g in excludes)
     ]
+    if renames:
+        print(
+            f"diff_coverage: {len(renames)} renamed file(s) detected; "
+            f"comparing each against its source instead of the merged base",
+            file=sys.stderr,
+        )
     if not files:
         print("diff_coverage: no changed non-test Go files in scope; skipping")
         return 0
@@ -315,8 +384,9 @@ def main(argv: list[str] | None = None) -> int:
     per_file_lines = {}
     per_file_text: dict[str, str | None] = {}
     for f in files:
+        rename_source = renames.get(f)
         text = tip_file_text(root, diff_args, f)
-        lines = executable_lines(text, changed_lines(root, diff_args, f))
+        lines = executable_lines(text, changed_lines(root, diff_args, f, rename_source))
         if lines:
             per_file_lines[f] = lines
             per_file_text[f] = text
