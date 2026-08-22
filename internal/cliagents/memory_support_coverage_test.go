@@ -38,3 +38,16 @@ func TestOpenMemoryStoreRejectsMissingPath(t *testing.T) {
 		t.Fatal("OpenMemoryStoreWithReadOnly(garbage backend) must error")
 	}
 }
+
+func TestOpenMemoryStoreWithReadOnlyPathEscape(t *testing.T) {
+	// A relative store_path escaping the workspace root must be
+	// rejected (lines 27-29).
+	_, err := OpenMemoryStoreWithReadOnly(t.TempDir(), config.MemoryConfig{StorePath: "../escape"}, false)
+	if err == nil {
+		t.Fatal("OpenMemoryStoreWithReadOnly(../escape) must error")
+	}
+	// A relative store_path inside the root is joined to the root
+	// and opened (the backend may then fail; we only exercise the
+	// join branch, line 30).
+	_, _ = OpenMemoryStoreWithReadOnly(t.TempDir(), config.MemoryConfig{StorePath: "inside.db"}, true)
+}
