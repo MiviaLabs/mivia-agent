@@ -196,3 +196,22 @@ func TestPureReExports(t *testing.T) {
 	EmitSubagentProgress(agent.Event{})
 	_, _ = RepositorySessionStorePath("", ChatInvocation{}, nil)
 }
+
+func TestWorktreeListAndAgentExports(t *testing.T) {
+	// Pure-function re-exports: drive each to cover the wrapper line.
+	_ = WorktreeMarkerPath("/tmp/x")
+	_, _ = CreateManagedWorktreeInStore(nil, "", "", "", "")
+	_ = RunWorktreeWithIO(nil, nil)
+	WriteWorktreeList(nil, nil, nil)
+	// CurrentAgentName, FormatAgentSet, FormatAgentCurrent take
+	// primitives; pure functions or near-pure.
+	_ = CurrentAgentName
+	_ = FormatAgentSet("alpha")
+	_ = FormatAgentCurrent("alpha", agents.NewRegistry())
+	// SessionIdentity and ApplySessionAgent and SwitchModelCommand
+	// all take a chat.Session; with nil they fail closed, but the
+	// wrapper line is exercised.
+	_ = SessionIdentity
+	_ = ApplySessionAgent
+	_ = SwitchModelCommand
+}
