@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -141,7 +142,7 @@ func prepareWorkflowBuild(root string, res *config.Resolved, wf *definition.Comp
 		cleanup()
 		return workflowBuildSetup{}, err
 	}
-	closeMCP, err := addMCPTools(authority, res, workflowMCPServers(wf, loaded.Registry))
+	closeMCP, err := cliagents.AddMCPTools(authority, res, workflowMCPServers(wf, loaded.Registry))
 	if err != nil {
 		cleanup()
 		return workflowBuildSetup{}, err
@@ -172,7 +173,7 @@ func newWorkflowDispatcher(res *config.Resolved, store *storage.SQLite, setup wo
 		return nil, SessionDispatcherOpts{}, nil, err
 	}
 	legacy := ledger.NewStorageLedgerRepository(store)
-	opts := SessionDispatcherOpts{Registry: setup.authority, AuthorityRegistry: setup.authority, Completer: comp, Model: res.Model, ProviderName: res.ProviderName, AllowWorkspaceAgentProviders: setup.loaded.Global.AllowWorkspaceAgentProviders, ModelCatalog: res.ModelCatalog(), CompleterFactory: newProviderCompleterFactory(res), Config: res.Subagents, MCP: res.MCP, Repo: legacy, SharedSQLite: store, SkillReg: setup.skills, WorkflowSkillSnapshots: make(map[string]workflowledger.RefSnapshot), AgentRegistry: setup.loaded.Registry, WorkspaceRoot: setup.identity.Root}
+	opts := SessionDispatcherOpts{Registry: setup.authority, AuthorityRegistry: setup.authority, Completer: comp, Model: res.Model, ProviderName: res.ProviderName, AllowWorkspaceAgentProviders: setup.loaded.Global.AllowWorkspaceAgentProviders, ModelCatalog: res.ModelCatalog(), CompleterFactory: cliagents.NewProviderCompleterFactory(res), Config: res.Subagents, MCP: res.MCP, Repo: legacy, SharedSQLite: store, SkillReg: setup.skills, WorkflowSkillSnapshots: make(map[string]workflowledger.RefSnapshot), AgentRegistry: setup.loaded.Registry, WorkspaceRoot: setup.identity.Root}
 	dispatcher, err := workflowBuildDispatcher(opts)
 	if err != nil {
 		return nil, SessionDispatcherOpts{}, nil, err

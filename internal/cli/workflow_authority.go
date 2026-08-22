@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/composition"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -43,12 +44,12 @@ func effectiveWorkflowWriteDenylist(res *config.Resolved) []string {
 var panelReviewerTools = []string{"find_references", "glob", "grep", "list_dir", "read_file"}
 
 func validatePanelAgentTools(agent agents.ResolvedAgent, skillName string, opts SessionDispatcherOpts, synthesizer bool) error {
-	authority := opts.authority()
+	authority := opts.Authority()
 	if authority == nil {
 		return fmt.Errorf("panel agent %q has no runtime tool registry", agent.Name)
 	}
 	surface := tools.ScopedRegistry(authority, tools.ScopeOptions{
-		Mode: tools.ScopeSpawned, Allowlist: agents.AllowlistSet(authorizedAgentTools(&agent, authority)),
+		Mode: tools.ScopeSpawned, Allowlist: agents.AllowlistSet(cliagents.AuthorizedAgentTools(&agent, authority)),
 	})
 	if !slices.Contains(agent.DisallowedTools, toolPostMessage) {
 		return fmt.Errorf("panel agent %q must disallow post_message", agent.Name)
@@ -111,7 +112,7 @@ func validatePanelAgentTools(agent agents.ResolvedAgent, skillName string, opts 
 	// The expected set must include every MCP tool the runtime grants, or a
 	// live panel can never admit - the synthesizer's second live failure was
 	// exactly this: want stayed [] while its surface held the mcp__ tools.
-	for _, name := range authorizedAgentTools(&agent, authority) {
+	for _, name := range cliagents.AuthorizedAgentTools(&agent, authority) {
 		if strings.HasPrefix(name, "mcp__") {
 			want = append(want, name)
 		}
@@ -171,7 +172,7 @@ func workflowWriteAuthority(wf *definition.CompiledWorkflow, registry *agents.Ag
 			return false, fmt.Errorf("workflow step %q references unknown agent %q", step.ID, step.Agent)
 		}
 		surface := tools.ScopedRegistry(authority, tools.ScopeOptions{
-			Mode: tools.ScopeSpawned, Allowlist: agents.AllowlistSet(authorizedAgentTools(&agent, authority)),
+			Mode: tools.ScopeSpawned, Allowlist: agents.AllowlistSet(cliagents.AuthorizedAgentTools(&agent, authority)),
 			ExtraDenylist: extraDenylist,
 		})
 		for _, tool := range surface.List() {

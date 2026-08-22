@@ -19,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
@@ -105,7 +106,7 @@ func runSessionsWithIO(args []string, stdout, stderr io.Writer) error {
 	case "delete":
 		return runSessionsDelete(rest, stdout, stderr)
 	default:
-		return fmt.Errorf("sessions: unknown subcommand %q", safeCatalogText(subcommand, 80))
+		return fmt.Errorf("sessions: unknown subcommand %q", cliagents.SafeCatalogText(subcommand, 80))
 	}
 }
 
@@ -191,7 +192,7 @@ func newCatalogSessionAt(workspaceRoot string) (*chat.Session, *storage.SQLite, 
 	// being invoked; configuredProfile fills in the prompt-budget inputs
 	// from the same catalog bindingAllowsLocked already validates against.
 	sess.SetBindingFactory(func(providerName, model string) (chat.ModelBinding, error) {
-		profile, _ := configuredProfile(res, providerName, model)
+		profile, _ := cliagents.ConfiguredProfile(res, providerName, model)
 		return chat.ModelBinding{
 			ProviderName: providerName,
 			Model:        model,
@@ -225,7 +226,7 @@ func parseSessionsWorkspaceAndJSON(cmdLabel string, args []string, allowPosition
 		case arg == "--json":
 			jsonFlag = true
 		case strings.HasPrefix(arg, "-"):
-			return "", false, nil, fmt.Errorf("%s: unknown flag %q", cmdLabel, safeCatalogText(arg, 80))
+			return "", false, nil, fmt.Errorf("%s: unknown flag %q", cmdLabel, cliagents.SafeCatalogText(arg, 80))
 		default:
 			positional = append(positional, arg)
 		}
@@ -336,7 +337,7 @@ func runSessionsUsage(args []string, stdout io.Writer) error {
 	// notices into the JSON stream. runRecoverySweep=false (F14): a usage
 	// query is read-only and must not push branches, publish PRs, or drive
 	// stacks as a side effect.
-	cleanup, err := configureChatWorkspace(sess, root, true, res, &AgentSessionState{}, true, false, false)
+	cleanup, err := cliagents.ConfigureChatWorkspace(sess, root, true, res, &AgentSessionState{}, true, false, false)
 	defer cleanup()
 	if err != nil {
 		return fmt.Errorf("sessions usage: %w", err)

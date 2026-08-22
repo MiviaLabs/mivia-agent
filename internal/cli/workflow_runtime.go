@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
@@ -49,9 +50,9 @@ func prepareWorkflowRuntime(root, refBase string, wf *definition.CompiledWorkflo
 		if err != nil {
 			return preparedWorkflowRuntime{}, err
 		}
-		pinned.ProviderName, pinned.Model = binding.providerName, binding.model
+		pinned.ProviderName, pinned.Model = binding.ProviderName, binding.Model
 		snapshot.Agents[runtime.Agent.Name] = pinned
-		runtime.ProviderName, runtime.Model = binding.providerName, binding.model
+		runtime.ProviderName, runtime.Model = binding.ProviderName, binding.Model
 		steps[stepID] = runtime
 	}
 	if prior != nil {
@@ -100,7 +101,7 @@ func authorizeWorkflowPanelBindings(wf *definition.CompiledWorkflow, registry *a
 			if !ok {
 				return fmt.Errorf("panel binding %q references unknown agent %q", key, member.Agent)
 			}
-			if agent.Name != "panel-reviewer" || declaredBinding(agent) {
+			if agent.Name != "panel-reviewer" || cliagents.DeclaredBinding(agent) {
 				return fmt.Errorf("panel binding %q requires provider-neutral panel-reviewer agent", key)
 			}
 			if strings.TrimSpace(binding.ProviderName) == "" || strings.TrimSpace(binding.Model) == "" {
@@ -109,11 +110,11 @@ func authorizeWorkflowPanelBindings(wf *definition.CompiledWorkflow, registry *a
 			if _, ok := providerregistry.Lookup(binding.ProviderName); !ok {
 				return fmt.Errorf("panel binding %q uses unknown provider %q", key, binding.ProviderName)
 			}
-			resolved, err := resolvePinnedAgentBinding(agent, opts, binding.ProviderName, binding.Model)
+			resolved, err := cliagents.ResolvePinnedAgentBinding(agent, opts, binding.ProviderName, binding.Model)
 			if err != nil {
 				return fmt.Errorf("panel binding %q is not authorized: %w", key, err)
 			}
-			if resolved.completer == nil {
+			if resolved.Completer == nil {
 				return fmt.Errorf("panel binding %q has no usable completer", key)
 			}
 			if err := validatePanelAgentTools(agent, member.Skill, opts, false); err != nil {
@@ -127,7 +128,7 @@ func authorizeWorkflowPanelBindings(wf *definition.CompiledWorkflow, registry *a
 		if !ok {
 			return fmt.Errorf("panel step %q references unknown synthesizer %q", step.ID, step.Agent)
 		}
-		if synthesizer.Name != "review-synthesizer" || declaredBinding(synthesizer) {
+		if synthesizer.Name != "review-synthesizer" || cliagents.DeclaredBinding(synthesizer) {
 			return fmt.Errorf("panel step %q requires provider-neutral review-synthesizer agent", step.ID)
 		}
 		if err := validatePanelAgentTools(synthesizer, step.Skill, opts, true); err != nil {
@@ -160,7 +161,7 @@ func resolveWorkflowPanelSynthesisBindings(wf *definition.CompiledWorkflow, regi
 		if !ok {
 			return fmt.Errorf("panel step %q references unknown synthesizer %q", step.ID, step.Agent)
 		}
-		if synthesizer.Name != "review-synthesizer" || declaredBinding(synthesizer) {
+		if synthesizer.Name != "review-synthesizer" || cliagents.DeclaredBinding(synthesizer) {
 			return fmt.Errorf("panel step %q requires provider-neutral review-synthesizer agent", step.ID)
 		}
 		digest, err := synthesizer.DefinitionDigest()
@@ -173,19 +174,19 @@ func resolveWorkflowPanelSynthesisBindings(wf *definition.CompiledWorkflow, regi
 			if !ok {
 				return fmt.Errorf("panel synthesis binding %q is missing", key)
 			}
-			binding, err = resolvePinnedAgentBinding(synthesizer, opts, pinned.ProviderName, pinned.Model)
+			binding, err = cliagents.ResolvePinnedAgentBinding(synthesizer, opts, pinned.ProviderName, pinned.Model)
 		} else {
-			binding, err = resolveAgentBinding(synthesizer, opts)
+			binding, err = cliagents.ResolveAgentBinding(synthesizer, opts)
 		}
 		if err != nil {
 			return fmt.Errorf("panel synthesis binding %q is not authorized: %w", key, err)
 		}
-		if binding.completer == nil {
+		if binding.Completer == nil {
 			return fmt.Errorf("panel synthesis binding %q has no usable completer", key)
 		}
 		next := workflowledger.PanelBindingSnapshot{
 			StepID: step.ID, MemberID: "synthesis", AgentName: synthesizer.Name, AgentDigest: digest,
-			ProviderName: binding.providerName, Model: binding.model,
+			ProviderName: binding.ProviderName, Model: binding.Model,
 			TemplateDigest: digestBytes(snapshot.Templates[step.Template].Bytes),
 			SchemaDigest:   digestBytes(snapshot.Schemas[step.OutputSchema].Bytes),
 		}
@@ -203,9 +204,9 @@ func resolveWorkflowPanelSynthesisBindings(wf *definition.CompiledWorkflow, regi
 
 func workflowRuntimeBinding(agent agents.ResolvedAgent, pinned workflowledger.AgentSnapshot, resume bool, opts SessionDispatcherOpts) (agentBinding, error) {
 	if resume {
-		return resolvePinnedAgentBinding(agent, opts, pinned.ProviderName, pinned.Model)
+		return cliagents.ResolvePinnedAgentBinding(agent, opts, pinned.ProviderName, pinned.Model)
 	}
-	return resolveAgentBinding(agent, opts)
+	return cliagents.ResolveAgentBinding(agent, opts)
 }
 
 func cloneStringMap(values map[string]string) map[string]string {

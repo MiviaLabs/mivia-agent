@@ -1,6 +1,7 @@
 package cli
 
 import (
+	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -53,7 +54,7 @@ var sessionToolCatalog = []sessionToolSpec{
 	{Name: "ledger_read", New: func() tools.Tool { return &ledgerReadTool{} }},
 	{Name: "list_run_events", New: func() tools.Tool { return &listRunEventsTool{} }},
 	{Name: "read_output", New: func() tools.Tool { return &readOutputTool{} }},
-	{Name: "load_tools", New: func() tools.Tool { return &loadToolsTool{} }, DeferredOnly: true},
+	{Name: "load_tools", New: func() tools.Tool { return cliagents.NewLoadToolsTool(nil, nil) }, DeferredOnly: true},
 }
 
 // advertisedSessionToolSpecs renders the catalog's advertised schemas for one

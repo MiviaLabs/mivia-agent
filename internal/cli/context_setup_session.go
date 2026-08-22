@@ -141,18 +141,12 @@ func enableSessionContext(sess *chat.Session, root string, store *storage.SQLite
 	return sess.SetContextStore(store)
 }
 
-type contextDispatcherWiring struct {
-	preparation      contextmgr.PreparationManager
-	preparationInput contextmgr.PrepareInput
-	SharedSQLite     *storage.SQLite
-}
-
-func contextDispatcherFor(sess *chat.Session, _ config.SubagentConfig) contextDispatcherWiring {
+func contextDispatcherFor(sess *chat.Session, _ config.SubagentConfig) ContextDispatcherWiring {
 	manager, input, ok := sess.ContextPreparation()
 	if !ok {
-		return contextDispatcherWiring{}
+		return ContextDispatcherWiring{}
 	}
-	wiring := contextDispatcherWiring{preparation: manager, preparationInput: input}
+	wiring := ContextDispatcherWiring{Preparation: manager, PreparationInput: input}
 	wiring.SharedSQLite, _ = sess.ContextStore().(*storage.SQLite)
 	return wiring
 }

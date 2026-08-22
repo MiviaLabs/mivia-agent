@@ -18,11 +18,14 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/cliworktree"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
@@ -117,19 +120,19 @@ func ValidateKeyRegistry(rs []binding) []error {
 	return validateKeyRegistry(rs)
 }
 
-// SkillScopeFromAgent is skillScopeFromAgent, exported for internal/legacytui.
+// SkillScopeFromAgent is cliagents.SkillScopeFromAgent, exported for internal/legacytui.
 func SkillScopeFromAgent(selected *agents.ResolvedAgent) AgentSkillScope {
-	return skillScopeFromAgent(selected)
+	return cliagents.SkillScopeFromAgent(selected)
 }
 
-// SkillScopeFromAgentAndRegistry is skillScopeFromAgentAndRegistry, exported for internal/legacytui.
+// SkillScopeFromAgentAndRegistry is cliagents.SkillScopeFromAgentAndRegistry, exported for internal/legacytui.
 func SkillScopeFromAgentAndRegistry(selected *agents.ResolvedAgent, reg *tools.Registry) AgentSkillScope {
-	return skillScopeFromAgentAndRegistry(selected, reg)
+	return cliagents.SkillScopeFromAgentAndRegistry(selected, reg)
 }
 
-// FilterSkillsForScope is filterSkillsForScope, exported for internal/legacytui.
+// FilterSkillsForScope is cliagents.FilterSkillsForScope, exported for internal/legacytui.
 func FilterSkillsForScope(reg *skills.Registry, scope AgentSkillScope) *skills.Registry {
-	return filterSkillsForScope(reg, scope)
+	return cliagents.FilterSkillsForScope(reg, scope)
 }
 
 // RenderOneChatBlock is renderOneChatBlock, exported for internal/legacytui.
@@ -177,9 +180,9 @@ func EmitSubagentProgress(e agent.Event) {
 	emitSubagentProgress(e)
 }
 
-// BuildSkillCatalogue is buildSkillCatalogue, exported for internal/legacytui.
+// BuildSkillCatalogue is cliagents.BuildSkillCatalogue, exported for internal/legacytui.
 func BuildSkillCatalogue(workspaceRoot string) (map[string]agents.SkillCatalogueEntry, []string) {
-	return buildSkillCatalogue(workspaceRoot)
+	return cliagents.BuildSkillCatalogue(workspaceRoot)
 }
 
 // NewAgentTaskHandler is newAgentTaskHandler, exported for internal/legacytui.
@@ -262,14 +265,14 @@ func DialogRectFor(termW, termH int, p DialogPrefs, contentW, contentH int) Rect
 	return dialogRect(termW, termH, p, contentW, contentH)
 }
 
-// ConfigureChatWorkspace is configureChatWorkspace, exported for internal/legacytui.
+// ConfigureChatWorkspace is cliagents.ConfigureChatWorkspace, exported for internal/legacytui.
 func ConfigureChatWorkspace(sess *chat.Session, root string, useTools bool, res *config.Resolved, state *AgentSessionState, quiet bool, fullDisk bool, runRecoverySweep bool) (func(), error) {
-	return configureChatWorkspace(sess, root, useTools, res, state, quiet, fullDisk, runRecoverySweep)
+	return cliagents.ConfigureChatWorkspace(sess, root, useTools, res, state, quiet, fullDisk, runRecoverySweep)
 }
 
-// BuildModelBinding is buildModelBinding, exported for internal/legacytui.
+// BuildModelBinding is cliagents.BuildModelBinding, exported for internal/legacytui.
 func BuildModelBinding(sess *chat.Session, res *config.Resolved, root, providerName, model string, state *AgentSessionState) (chat.ModelBinding, error) {
-	return buildModelBinding(sess, res, root, providerName, model, state)
+	return cliagents.BuildModelBinding(sess, res, root, providerName, model, state)
 }
 
 // ApplyWorkflowStoreRoot is applyWorkflowStoreRoot, exported for internal/legacytui.
@@ -347,20 +350,14 @@ func OpenContextStore(root string, cfg config.SubagentConfig) (*storage.SQLite, 
 	return openContextStore(root, cfg)
 }
 
-// SchemaMass is schemaMass, exported for internal/legacytui.
-type SchemaMass = schemaMass
-
-// ClassicAgentState is classicAgentState, exported for internal/legacytui.
-var ClassicAgentStatePtr = &classicAgentState
+// ClassicAgentStatePtr is &cliagents.ClassicAgentState, exported for internal/legacytui.
+var ClassicAgentStatePtr = &cliagents.ClassicAgentState
 
 // NewTestTerminal builds a Terminal that writes to w, for tests that need a
 // Terminal without opening a real tty. Exported for internal/legacytui.
 func NewTestTerminal(w io.Writer) *Terminal {
 	return &Terminal{out: w}
 }
-
-// ContextDispatcherWiring is contextDispatcherWiring, exported for internal/legacytui.
-type ContextDispatcherWiring = contextDispatcherWiring
 
 // ContextDispatcherFor is contextDispatcherFor, exported for internal/legacytui.
 func ContextDispatcherFor(sess *chat.Session, cfg config.SubagentConfig) ContextDispatcherWiring {
@@ -407,9 +404,9 @@ func RestoreREPLRuntime(sess *chat.Session, res *config.Resolved, term *Terminal
 // SlashSurfacePlain is slashSurfacePlain, exported for internal/legacytui.
 const SlashSurfacePlain = slashSurfacePlain
 
-// LoadSessionSkills is loadSessionSkills, exported for internal/legacytui.
+// LoadSessionSkills is cliagents.LoadSessionSkills, exported for internal/legacytui.
 func LoadSessionSkills(root string, allowProject bool) (*skills.Registry, []string, error) {
-	return loadSessionSkills(root, allowProject)
+	return cliagents.LoadSessionSkills(root, allowProject)
 }
 
 // SkillTurnPreamble is skillTurnPreamble, exported for internal/legacytui.
@@ -422,17 +419,14 @@ const (
 	AnsiBgDiffDel = ansiBgDiffDel
 )
 
-// AgentLoadResult is agentLoadResult, exported for internal/legacytui.
-type AgentLoadResult = agentLoadResult
-
 // LoadChatSkills is loadChatSkills, exported for internal/legacytui.
 func LoadChatSkills(wsRoot string) (*skills.Registry, error) {
 	return loadChatSkills(wsRoot)
 }
 
-// LoadAgentDefinitions is loadAgentDefinitions, exported for internal/legacytui.
+// LoadAgentDefinitions is cliagents.LoadAgentDefinitions, exported for internal/legacytui.
 func LoadAgentDefinitions(workspaceRoot, agentFlag string, skillReg *skills.Registry) (AgentLoadResult, error) {
-	return loadAgentDefinitions(workspaceRoot, agentFlag, skillReg)
+	return cliagents.LoadAgentDefinitions(workspaceRoot, agentFlag, skillReg)
 }
 
 // SnapshotWorktreeDialogBinding is snapshotWorktreeDialogBinding, exported
@@ -454,4 +448,34 @@ func RunWorktreeWithIO(args []string, stdout io.Writer) error {
 // AdoptManagedWorktree is cliworktree.AdoptManagedWorktree, exported for internal/legacytui.
 func AdoptManagedWorktree(root string, wt *vcs.WorktreeInfo) (contextstate.WorktreeInstance, error) {
 	return cliworktree.AdoptManagedWorktree(root, wt)
+}
+
+// CurrentAgentName is cliagents.CurrentAgentName, exported for internal/legacytui.
+func CurrentAgentName(state *AgentSessionState) string {
+	return cliagents.CurrentAgentName(state)
+}
+
+// FormatAgentSet is cliagents.FormatAgentSet, exported for internal/legacytui.
+func FormatAgentSet(name string) string {
+	return cliagents.FormatAgentSet(name)
+}
+
+// FormatAgentCurrent is cliagents.FormatAgentCurrent, exported for internal/legacytui.
+func FormatAgentCurrent(name string, reg *agents.AgentRegistry) string {
+	return cliagents.FormatAgentCurrent(name, reg)
+}
+
+// ApplySessionAgent is cliagents.ApplySessionAgent, exported for internal/legacytui.
+func ApplySessionAgent(sess *chat.Session, res *config.Resolved, state *AgentSessionState, name string, busy bool) error {
+	return cliagents.ApplySessionAgent(sess, res, state, name, busy)
+}
+
+// SwitchModelCommand is cliagents.SwitchModelCommand, exported for internal/legacytui.
+func SwitchModelCommand(sess *chat.Session, res *config.Resolved, providerName, model string) (reasoning.Level, error) {
+	return cliagents.SwitchModelCommand(sess, res, providerName, model)
+}
+
+// SessionIdentity is cliagents.SessionIdentity, exported for internal/legacytui.
+func SessionIdentity(sess *chat.Session, state *AgentSessionState, generation uint64) *events.Identity {
+	return cliagents.SessionIdentity(sess, state, generation)
 }

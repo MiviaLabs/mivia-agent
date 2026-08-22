@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 )
 
@@ -69,7 +70,7 @@ func resolveTaskRoute(reg *agents.AgentRegistry, skillReg *skills.Registry, agen
 		if !ok {
 			return taskRoute{}, fmt.Errorf("unknown skill %q", skillName)
 		}
-		if err := skillScopeFromAgent(&agent).CheckSkillDefinition(skill); err != nil {
+		if err := cliagents.SkillScopeFromAgent(&agent).CheckSkillDefinition(skill); err != nil {
 			return taskRoute{}, err
 		}
 	}

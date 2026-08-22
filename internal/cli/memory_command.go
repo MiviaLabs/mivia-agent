@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
 )
@@ -31,7 +32,7 @@ func runMemoryWithIO(args []string, stdout, stderr io.Writer) error {
 	case "dump":
 		return runMemoryDump(args[1:], stdout, stderr)
 	default:
-		return fmt.Errorf("memory: unknown subcommand %q (try search, promote, dump)", safeCatalogText(subcommand, 80))
+		return fmt.Errorf("memory: unknown subcommand %q (try search, promote, dump)", cliagents.SafeCatalogText(subcommand, 80))
 	}
 }
 
@@ -173,9 +174,9 @@ func parseMemoryDumpArgs(args []string) (workspaceRoot, configPath string, err e
 			// cutMemoryFlag returns "" only for non-flag args: dump takes
 			// no positional arguments (Step 5 review: this used to fall to
 			// "unknown flag", mislabeling a stray non-flag token as one).
-			err = fmt.Errorf("memory dump: unexpected argument %q (dump takes no positional arguments)", safeCatalogText(arg, 80))
+			err = fmt.Errorf("memory dump: unexpected argument %q (dump takes no positional arguments)", cliagents.SafeCatalogText(arg, 80))
 		default:
-			err = fmt.Errorf("memory dump: unknown flag %q", safeCatalogText(arg, 80))
+			err = fmt.Errorf("memory dump: unknown flag %q", cliagents.SafeCatalogText(arg, 80))
 		}
 		if err != nil {
 			return "", "", err
@@ -205,7 +206,7 @@ func parseMemoryPromoteArgs(args []string) (id, workspaceRoot, configPath string
 		case "":
 			positional = append(positional, arg)
 		default:
-			err = fmt.Errorf("memory promote: unknown flag %q", safeCatalogText(arg, 80))
+			err = fmt.Errorf("memory promote: unknown flag %q", cliagents.SafeCatalogText(arg, 80))
 		}
 		if err != nil {
 			return "", "", "", err
@@ -254,7 +255,7 @@ func parseMemorySearchArgs(args []string) (query string, scope memory.Scope, lim
 			}
 		case "--json":
 			if hasValue {
-				err = fmt.Errorf("memory search: unknown flag %q", safeCatalogText(arg, 80))
+				err = fmt.Errorf("memory search: unknown flag %q", cliagents.SafeCatalogText(arg, 80))
 				break
 			}
 			if jsonFlag {
@@ -267,7 +268,7 @@ func parseMemorySearchArgs(args []string) (query string, scope memory.Scope, lim
 			// prefix here is unreachable; unknown flags land in default.
 			positional = append(positional, arg)
 		default:
-			err = fmt.Errorf("memory search: unknown flag %q", safeCatalogText(arg, 80))
+			err = fmt.Errorf("memory search: unknown flag %q", cliagents.SafeCatalogText(arg, 80))
 		}
 		if err != nil {
 			return "", "", 0, false, "", "", err
@@ -319,7 +320,7 @@ func parseMemoryScope(value string) (memory.Scope, error) {
 	case memory.ScopeProject, memory.ScopeOrg, memory.ScopeAll:
 		return scope, nil
 	default:
-		return "", fmt.Errorf("memory search: --scope must be project, org, or all, got %q", safeCatalogText(value, 40))
+		return "", fmt.Errorf("memory search: --scope must be project, org, or all, got %q", cliagents.SafeCatalogText(value, 40))
 	}
 }
 
@@ -329,7 +330,7 @@ func parseMemoryScope(value string) (memory.Scope, error) {
 func parseMemoryLimit(value string) (int, error) {
 	n, err := strconv.Atoi(strings.TrimSpace(value))
 	if err != nil {
-		return 0, fmt.Errorf("memory search: --limit must be a positive integer, got %q", safeCatalogText(value, 40))
+		return 0, fmt.Errorf("memory search: --limit must be a positive integer, got %q", cliagents.SafeCatalogText(value, 40))
 	}
 	if n <= 0 {
 		return 0, nil

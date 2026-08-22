@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/cliworktree"
 	"github.com/MiviaLabs/mivia-agent/internal/version"
 )
@@ -32,7 +33,7 @@ func Execute(args []string) error {
 	case "doctor":
 		return runDoctor(args[1:])
 	case "agents":
-		return runAgents(args[1:])
+		return cliagents.RunAgents(args[1:])
 	case "sessions":
 		return runSessions(args[1:])
 	case "compact":

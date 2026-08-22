@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/cliworktree"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
@@ -281,7 +282,7 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 	if err != nil {
 		return err
 	}
-	applyWorkspacePromptGate(res, agentState.Global)
+	cliagents.ApplyWorkspacePromptGate(res, agentState.Global)
 	releaseHooks, err := installHookSession(wsRoot, invocation.staleBypass, invocation.quiet)
 	if err != nil {
 		return err
@@ -289,7 +290,7 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 	defer releaseHooks()
 	// The get_diagnostics disclosure prints only when tools are on - the same condition under which the tool is registered.
 	if useTools {
-		logDiagnosticsCommandsOnce(os.Stderr, res.Tools, invocation.quiet)
+		cliagents.LogDiagnosticsCommandsOnce(os.Stderr, res.Tools, invocation.quiet)
 	}
 	if strings.TrimSpace(res.SystemPrompt) == "" {
 		if useTools {
@@ -304,7 +305,7 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 	}
 	sess := chat.NewSession(res, comp)
 	sess.UseTools = useTools
-	installSessionIdentity(sess, agentState)
+	cliagents.InstallSessionIdentity(sess, agentState)
 	// BaseSystemPrompt, not SystemPrompt (plan 77, E3): equivalent right
 	// now (NewSession sets both identically and no compose has happened
 	// yet), but reading the field that's guaranteed memory-block-free stays
@@ -313,19 +314,19 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 	agentState.BaselineMaxSteps = sess.MaxStepsValue()
 	agentState.BaselineCaptured = true
 	SetActiveSessionCaller(runtime.Caller{SessionID: sess.SessionID})
-	memClose, err := configureChatWorkspace(sess, wsRoot, useTools, res, agentState, invocation.quiet, invocation.fullDisk, true)
+	memClose, err := cliagents.ConfigureChatWorkspace(sess, wsRoot, useTools, res, agentState, invocation.quiet, invocation.fullDisk, true)
 	if err != nil {
 		return err
 	}
 	defer memClose()
-	applySelectedAgentPrompt(sess, res, agentState.Selected, agentState)
+	cliagents.ApplySelectedAgentPrompt(sess, res, agentState.Selected, agentState)
 	contextStore, err := setupChatSessionContext(sess, wsRoot, invocation, res)
 	if err != nil {
 		return err
 	}
 	defer contextStore.Close()
 	// Capture pointer so /agent and model-switch rebuilds see updates.
-	sess.SetBindingFactory(chatBindingFactory(sess, res, wsRoot, agentState))
+	sess.SetBindingFactory(cliagents.ChatBindingFactory(sess, res, wsRoot, agentState))
 	if invocation.session != "" {
 		if err := sess.Load(invocation.session); err != nil {
 			return fmt.Errorf("--session %q: %w (omit --session to start a new session under a system-assigned id)", invocation.session, err)
@@ -333,7 +334,7 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 	}
 	contextWiring := contextDispatcherFor(sess, res.Subagents)
 	cleanup, err := attachSessionDispatcher(sess, wsRoot, res.Model, res.Subagents, agentState, skillReg, sessionRouting{
-		Catalog: res.ModelCatalog(), CompleterFactory: newProviderCompleterFactory(res),
+		Catalog: res.ModelCatalog(), CompleterFactory: cliagents.NewProviderCompleterFactory(res),
 		Context: contextWiring, Resolved: res,
 	})
 	if err != nil {
@@ -357,8 +358,8 @@ func dispatchChatSurface(invocation chatInvocation, sess *chat.Session, res *con
 		return oneShot(sess, invocation.prompt, useTools, res, invocation.quiet)
 	}
 	// Classic REPL /agent uses package state; TUI stores agentState on the model.
-	classicAgentState = agentState
-	defer func() { classicAgentState = nil }()
+	cliagents.ClassicAgentState = agentState
+	defer func() { cliagents.ClassicAgentState = nil }()
 	if invocation.plainUI || !term.IsTerminal(int(os.Stdin.Fd())) || strings.EqualFold(os.Getenv("TERM"), "dumb") {
 		return repl(sess, res, useTools, agentState, invocation.jsonMode, invocation.quiet)
 	}
@@ -418,21 +419,21 @@ func loadChatSkills(wsRoot string) (*skills.Registry, error) {
 	if err != nil {
 		return nil, err
 	}
-	skillReg, skillWarnings, err := loadSessionSkills(wsRoot, globalPreview.LoadWorkspaceConfig)
+	skillReg, skillWarnings, err := cliagents.LoadSessionSkills(wsRoot, globalPreview.LoadWorkspaceConfig)
 	if err != nil {
 		return nil, fmt.Errorf("load skills: %w", err)
 	}
-	warnSkillLoad(skillWarnings)
+	cliagents.WarnSkillLoad(skillWarnings)
 	return skillReg, nil
 }
 
 // prepareAgentSession loads and optionally selects a named agent definition.
 func prepareAgentSession(wsRoot, agentFlag string, skillReg *skills.Registry) (*AgentSessionState, error) {
-	loaded, err := loadAgentDefinitions(wsRoot, agentFlag, skillReg)
+	loaded, err := cliagents.LoadAgentDefinitions(wsRoot, agentFlag, skillReg)
 	if err != nil {
 		return nil, err
 	}
-	warnAgentLoad(loaded.Warnings)
+	cliagents.WarnAgentLoad(loaded.Warnings)
 	return &AgentSessionState{
 		Global:             loaded.Global,
 		Selected:           loaded.Selected,

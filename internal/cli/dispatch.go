@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
@@ -433,7 +434,7 @@ func terminationReason(r subagents.Result) string {
 		return ""
 	case errors.Is(r.Err, subagents.ErrSchemaViolation):
 		return "schema_violation"
-	case errors.Is(r.Err, ErrAgentWallClockExceeded):
+	case errors.Is(r.Err, cliagents.ErrAgentWallClockExceeded):
 		return "agent_wall_clock_exceeded"
 	case errors.Is(r.Err, context.DeadlineExceeded):
 		return "deadline_exceeded"

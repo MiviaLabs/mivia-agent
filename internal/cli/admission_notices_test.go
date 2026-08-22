@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
@@ -56,9 +57,9 @@ func TestSlashLoadPrintsAdmissionNotes(t *testing.T) {
 }
 
 func TestSlashToolsReportsSchemaMassClassic(t *testing.T) {
-	previous := classicAgentState
-	t.Cleanup(func() { classicAgentState = previous })
-	classicAgentState = &AgentSessionState{LastSchemaMass: schemaMass{Advertised: 4, Tokens: 321, Locked: 2, LockedTokens: 210}}
+	previous := cliagents.ClassicAgentState
+	t.Cleanup(func() { cliagents.ClassicAgentState = previous })
+	cliagents.ClassicAgentState = &AgentSessionState{LastSchemaMass: schemaMass{Advertised: 4, Tokens: 321, Locked: 2, LockedTokens: 210}}
 	res := &config.Resolved{ProviderName: "p", Model: "m"}
 	sess := chat.NewSession(res, nullCompleter{})
 	sess.Tools = tierRegistry("read_file")

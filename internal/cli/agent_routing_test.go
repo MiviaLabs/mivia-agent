@@ -224,7 +224,7 @@ func TestPinnedInheritedBindingReauthorizesCurrentProviderAndModel(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if binding.providerName != "deepseek" || binding.model != "deepseek-v4-flash" || binding.completer.Name() != "deepseek" {
+	if binding.ProviderName != "deepseek" || binding.Model != "deepseek-v4-flash" || binding.Completer.Name() != "deepseek" {
 		t.Fatalf("pinned binding = %#v, want deepseek/deepseek-v4-flash with a deepseek completer", binding)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"io"
 	"strings"
 
+	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
 
@@ -78,7 +79,7 @@ func writeDoctorJSON(stdout io.Writer, res *config.Resolved, view agentCatalogVi
 		Model:         res.Model,
 		ModelCatalog:  mapModelCatalogJSON(res.ModelCatalog()),
 		BaseURL:       safeDoctorURL(res.BaseURL),
-		APIKeyEnv:     safeCatalogText(res.APIKeyEnv, 128),
+		APIKeyEnv:     cliagents.SafeCatalogText(res.APIKeyEnv, 128),
 		APIKeySet:     res.APIKeySet,
 		KeyRequired:   !(res.ProviderName == "ollama" && config.IsOllamaLoopback(res.BaseURL)),
 		AgentCatalog:  []jsonAgentEntry{},

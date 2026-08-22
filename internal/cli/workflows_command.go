@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/secretpath"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
@@ -166,7 +167,7 @@ func validateWorkflowReferences(root, base string, wf *definition.CompiledWorkfl
 	if err != nil {
 		return fmt.Errorf("load workflow skills: %w", err)
 	}
-	loaded, err := loadAgentDefinitions(root, "", skillRegistry)
+	loaded, err := cliagents.LoadAgentDefinitions(root, "", skillRegistry)
 	if err != nil {
 		return fmt.Errorf("load workflow agents: %w", err)
 	}

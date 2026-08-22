@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
@@ -28,7 +29,7 @@ var (
 		return b.Controller.SetAdmission(b.Admission)
 	}
 	workflowBuildLoadSkills = loadChatSkills
-	workflowBuildLoadAgents = loadAgentDefinitions
+	workflowBuildLoadAgents = cliagents.LoadAgentDefinitions
 	workflowBuildRegistry   = workflowDefaultRegistry
 	workflowBuildWorkspace  = selectWorkflowWorkspace
 	workflowBuildProvider   = provider.New

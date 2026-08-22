@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
 
@@ -26,7 +27,7 @@ func runDoctorWithIO(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	view, catalogErr := loadAgentCatalog(workspaceRoot)
+	view, catalogErr := cliagents.LoadAgentCatalog(workspaceRoot)
 	res, err := config.Load(config.LoadOptions{
 		ConfigPath:         cfgPath,
 		WorkspaceRoot:      workspaceRoot,
@@ -84,7 +85,7 @@ func writeDoctorHumanLoadError(stdout, stderr io.Writer, view agentCatalogView, 
 	fmt.Fprintln(stdout, "mivia doctor")
 	fmt.Fprintln(stdout, "  config:     unavailable")
 	if catalogErr == nil {
-		writeAgentCatalog(stdout, view, stderr)
+		cliagents.WriteAgentCatalog(stdout, view, stderr)
 	} else {
 		fmt.Fprintln(stdout, "agents:")
 		fmt.Fprintln(stdout, "  state: unavailable")
@@ -125,14 +126,14 @@ func writeDoctorHuman(stdout, stderr io.Writer, res *config.Resolved, view agent
 		fmt.Fprintf(stdout, "  prompt_budget: %s\n", advisory)
 	}
 	fmt.Fprintf(stdout, "  base_url:   %s\n", safeDoctorURL(res.BaseURL))
-	fmt.Fprintf(stdout, "  api_key_env:%s\n", safeCatalogText(res.APIKeyEnv, 128))
+	fmt.Fprintf(stdout, "  api_key_env:%s\n", cliagents.SafeCatalogText(res.APIKeyEnv, 128))
 
 	if catalogErr != nil {
 		fmt.Fprintln(stdout, "agents:")
 		fmt.Fprintln(stdout, "  state: unavailable")
 		fmt.Fprintln(stderr, "doctor: agent diagnostics unavailable")
 	} else {
-		writeAgentCatalog(stdout, view, stderr)
+		cliagents.WriteAgentCatalog(stdout, view, stderr)
 		for _, warning := range view.Report.Warnings {
 			fmt.Fprintln(stderr, "warning:", warning)
 		}
@@ -163,7 +164,7 @@ func safeDoctorURL(raw string) string {
 	parsed.RawQuery = ""
 	parsed.Fragment = ""
 	value := parsed.String()
-	return safeCatalogText(value, 240)
+	return cliagents.SafeCatalogText(value, 240)
 }
 
 func parseDoctorArgs(args []string) (configPath, workspaceRoot string, jsonMode bool, err error) {
@@ -194,7 +195,7 @@ func parseDoctorArgs(args []string) (configPath, workspaceRoot string, jsonMode 
 				return "", "", false, fmt.Errorf("doctor: --workspace requires a directory")
 			}
 		case strings.HasPrefix(args[i], "-"):
-			return "", "", false, fmt.Errorf("doctor: unknown flag %q", safeCatalogText(args[i], 80))
+			return "", "", false, fmt.Errorf("doctor: unknown flag %q", cliagents.SafeCatalogText(args[i], 80))
 		default:
 			return "", "", false, fmt.Errorf("doctor: unexpected arguments (%d)", len(args)-i)
 		}
@@ -233,5 +234,5 @@ func displayPath(p string) string {
 	if p == "" {
 		return "(none)"
 	}
-	return safeCatalogText(p, 240)
+	return cliagents.SafeCatalogText(p, 240)
 }

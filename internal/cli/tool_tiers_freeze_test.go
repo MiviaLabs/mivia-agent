@@ -60,11 +60,11 @@ func TestModelSwitchReusesTheFrozenTierPlan(t *testing.T) {
 	if slices.Contains(before, "grep") {
 		t.Fatalf("precondition: grep is not deferred before the switch: %v", before)
 	}
-	fixture.state.mu.Lock()
+	fixture.state.Lock()
 	widened := *fixture.state.Selected
 	widened.CoreTools = corePtr("read_file", "grep")
 	fixture.state.Selected = &widened
-	fixture.state.mu.Unlock()
+	fixture.state.Unlock()
 
 	switchToOtherModel(t, fixture)
 

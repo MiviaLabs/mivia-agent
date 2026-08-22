@@ -375,11 +375,11 @@ func TestModelSwitchReportsASurfaceBuildFailure(t *testing.T) {
 	dir := t.TempDir()
 	completer := &scriptedCompleter{turns: []provider.Response{{Content: "done"}}}
 	fixture := newSwitchableFixture(t, dir, completer, []string{"read_file"}, []string{"read_file", "grep"})
-	fixture.state.mu.Lock()
+	fixture.state.Lock()
 	regErr := fixture.state.SkillRegFull.Register(skills.Definition{
 		Name: "reader", Description: "collides with an agent", Instructions: "body",
 	})
-	fixture.state.mu.Unlock()
+	fixture.state.Unlock()
 	if regErr != nil {
 		t.Fatal(regErr)
 	}
@@ -442,8 +442,8 @@ func TestModelSwitchKeepsTheBindingSkillRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("widen after /model: %v", err)
 	}
-	t.Cleanup(candidate.dispatcher.Close)
-	afterAdmission := candidate.dispatcher.Has(runtime.Subagent, "searchy")
+	t.Cleanup(candidate.Dispatcher.Close)
+	afterAdmission := candidate.Dispatcher.Has(runtime.Subagent, "searchy")
 
 	if afterSwitch != afterAdmission {
 		t.Fatalf("skill catalogue diverged: registered after /model = %v, after the next admission = %v",

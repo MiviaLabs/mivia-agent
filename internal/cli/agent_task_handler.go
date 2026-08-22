@@ -12,6 +12,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/jschema"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -60,7 +61,7 @@ func registerAgentHandlers(d *runtime.Dispatcher, opts SessionDispatcherOpts) er
 		if err != nil {
 			return err
 		}
-		h := newAgentTaskHandler(definition, digest, opts.authority(), d, opts)
+		h := newAgentTaskHandler(definition, digest, opts.Authority(), d, opts)
 		warnBindingOnce(h.bindingErr)
 		if err := d.Register(runtime.Subagent, definition.Name, h); err != nil {
 			return fmt.Errorf("register agent subagent %q: %w", definition.Name, err)
@@ -94,7 +95,7 @@ func warnBindingOnce(err error) {
 // it safe for concurrent Invokes to share this handler.
 func newAgentTaskHandler(definition agents.ResolvedAgent, digest string, full *tools.Registry, d *runtime.Dispatcher, opts SessionDispatcherOpts) *agentTaskHandler {
 	h := &agentTaskHandler{definition: definition, digest: digest, full: full, dispatcher: d, opts: opts}
-	h.binding, h.bindingErr = resolveAgentBinding(definition, opts)
+	h.binding, h.bindingErr = cliagents.ResolveAgentBinding(definition, opts)
 	return h
 }
 
@@ -113,7 +114,7 @@ func (h *agentTaskHandler) Invoke(ctx context.Context, req runtime.Request) (jso
 	// rather than replacing it, so unlimited turns still cannot produce an
 	// unbounded run and a generous agent policy cannot loosen a tight task
 	// deadline. Exhaustion carries a typed cause.
-	ctx, cancel, ceilingCause := binding.withWallClock(ctx, h.definition.Name)
+	ctx, cancel, ceilingCause := binding.WithWallClock(ctx, h.definition.Name)
 	defer cancel()
 	out, err := handler.Invoke(ctx, req)
 	// Identity, not errors.Is: an ancestor that breached its own ceiling
@@ -149,7 +150,7 @@ func (h *agentTaskHandler) prepareInvokeSurface(req runtime.Request) (string, st
 		systemPrompt = subagents.MultiStepSystemPrompt
 	}
 	registry := tools.ScopedRegistry(h.full, tools.ScopeOptions{
-		Mode: tools.ScopeSpawned, Allowlist: agents.AllowlistSet(authorizedAgentTools(&h.definition, h.full)),
+		Mode: tools.ScopeSpawned, Allowlist: agents.AllowlistSet(cliagents.AuthorizedAgentTools(&h.definition, h.full)),
 	})
 	// Baseline messaging: inject post_message after allowlist filter unless
 	// the agent opted out via disallowed_tools = ["post_message"] (plan 53.02).
@@ -167,7 +168,7 @@ func (h *agentTaskHandler) prepareInvokeSurface(req runtime.Request) (string, st
 	// The core-memory block rides in its own message (D1c's ordering
 	// concern - keeping the messaging-protocol/schema tail closest to the
 	// prompt's end - is moot now that the block never enters the prompt).
-	memoryContext := chat.MemoryContextContent(coreMemoryBlockForOpts(h.opts))
+	memoryContext := chat.MemoryContextContent(cliagents.CoreMemoryBlockForOpts(h.opts))
 	if req.Skill == "" {
 		return withMessagingProtocol(systemPrompt) + schemaBlock, memoryContext, registry, noop, nil
 	}
@@ -245,7 +246,7 @@ func (h *agentTaskHandler) newMultiStepHandler(binding agentBinding, registry *t
 	if generation == 0 {
 		generation = 1
 	}
-	identity := routedIdentity(h.definition, instanceID, generation)
+	identity := cliagents.RoutedIdentity(h.definition, instanceID, generation)
 	maxSteps := h.opts.Config.NestedSteps
 	if h.definition.MaxTurns != nil {
 		maxSteps = *h.definition.MaxTurns
@@ -253,7 +254,7 @@ func (h *agentTaskHandler) newMultiStepHandler(binding agentBinding, registry *t
 	if limits.MaxTurns > 0 && (maxSteps <= 0 || limits.MaxTurns < maxSteps) {
 		maxSteps = limits.MaxTurns
 	}
-	maxTokens := binding.maxTokens
+	maxTokens := binding.MaxTokens
 	if limit := limits.MaxOutputPerCall; limit > 0 && (maxTokens <= 0 || maxTokens > limit) {
 		maxTokens = limit
 	}
@@ -263,17 +264,17 @@ func (h *agentTaskHandler) newMultiStepHandler(binding agentBinding, registry *t
 	// before the loop soft-interrupts the in-flight LLM call. nil means the
 	// 300s default; an explicit 0 disables the watchdog (unbounded).
 	return &subagents.MultiStepHandler{
-		Completer: binding.completer, FullRegistry: registry,
-		Dispatcher: h.dispatcher, Model: binding.model, Reasoning: binding.reasoning,
-		ReasoningFunc: binding.effectiveReasoning,
+		Completer: binding.Completer, FullRegistry: registry,
+		Dispatcher: h.dispatcher, Model: binding.Model, Reasoning: binding.Reasoning,
+		ReasoningFunc: binding.EffectiveReasoning,
 		SystemPrompt:  systemPrompt, MemoryContext: memoryContext, MaxSteps: maxSteps,
 		WorkLimits: limits, DisableProviderReplay: req.DisableProviderReplay,
 		ToolTimeout: time.Duration(h.opts.Config.DefaultTimeout) * time.Second,
-		MaxTokens:   maxTokens, MaxContextTokens: binding.contextBudget(),
-		MaxContextTokensFunc: binding.contextBudget, MaxToolResultChars: h.opts.ToolResultCapBytes,
+		MaxTokens:   maxTokens, MaxContextTokens: binding.ContextBudget(),
+		MaxContextTokensFunc: binding.ContextBudget, MaxToolResultChars: h.opts.ToolResultCapBytes,
 		BatchResultBudgetBytes: h.opts.BatchResultBudgetBytes,
 		RefOnlyTools:           h.opts.RefOnlyTools,
-		RemainderSpool:         RemainderSpoolFromRegistry(registry),
+		RemainderSpool:         cliagents.RemainderSpoolFromRegistryVar(registry),
 		OutputSchema:           outSchema, SchemaRetryMax: h.opts.Config.SchemaRetryMax,
 		RequestTimeout:            requestTimeout(h.opts.Config.DefaultRequestTimeoutSec, h.opts.Config.DefaultTimeout),
 		SteerWatchdog:             time.Duration(h.opts.Config.Messaging.SteerWatchdogSecondsResolved()) * time.Second,
@@ -297,7 +298,7 @@ func (h *agentTaskHandler) effectiveWorkLimits(binding agentBinding, req runtime
 	if h.definition.MaxTokens != nil {
 		agentLimits.MaxOutputPerCall = *h.definition.MaxTokens
 	}
-	modelLimits := runtime.WorkLimits{MaxOutputPerCall: binding.maxTokens}
+	modelLimits := runtime.WorkLimits{MaxOutputPerCall: binding.MaxTokens}
 	return runtime.LowestPositiveWorkLimits(agentLimits, h.opts.WorkLimits, modelLimits, req.WorkLimits)
 }
 
@@ -346,7 +347,7 @@ func (h *agentTaskHandler) activateSkill(name string, registry *tools.Registry) 
 		}
 		exec, pinnedResources, pinnedRun = hydrated, resources, true
 	}
-	if err := skillScopeFromAgentAndRegistry(&h.definition, h.full).CheckSkillDefinition(skill); err != nil {
+	if err := cliagents.SkillScopeFromAgentAndRegistry(&h.definition, h.full).CheckSkillDefinition(skill); err != nil {
 		return nil, "", noop, err
 	}
 	systemPrompt := exec.Instructions
@@ -388,19 +389,19 @@ func (h *agentTaskHandler) bindingForRequest(req runtime.Request) (agentBinding,
 		// session-following behavior, while all new snapshots carry a pair.
 		return h.binding, nil
 	}
-	if declaredBinding(h.definition) {
-		if req.ProviderName != h.binding.providerName || req.Model != h.binding.model {
-			return agentBinding{}, fmt.Errorf("agent %q persisted provider/model %s/%s does not match the current definition binding %s/%s", h.definition.Name, req.ProviderName, req.Model, h.binding.providerName, h.binding.model)
+	if cliagents.DeclaredBinding(h.definition) {
+		if req.ProviderName != h.binding.ProviderName || req.Model != h.binding.Model {
+			return agentBinding{}, fmt.Errorf("agent %q persisted provider/model %s/%s does not match the current definition binding %s/%s", h.definition.Name, req.ProviderName, req.Model, h.binding.ProviderName, h.binding.Model)
 		}
 		return h.binding, nil
 	}
-	if req.ProviderName == h.binding.providerName && req.Model == h.binding.model {
+	if req.ProviderName == h.binding.ProviderName && req.Model == h.binding.Model {
 		// The current registration already authorized the live session pair.
 		// This keeps test/minimal sessions without a catalog compatible while a
 		// changed session still takes the strict pinned re-authorization path.
 		return h.binding, nil
 	}
-	return resolvePinnedAgentBinding(h.definition, h.opts, req.ProviderName, req.Model)
+	return cliagents.ResolvePinnedAgentBinding(h.definition, h.opts, req.ProviderName, req.Model)
 }
 
 func (h *agentTaskHandler) validateRequest(req runtime.Request) (agentBinding, error) {
@@ -434,7 +435,7 @@ func (h *agentTaskHandler) validateRequest(req runtime.Request) (agentBinding, e
 		}
 		return agentBinding{}, fmt.Errorf("unknown skill %q", req.Skill)
 	}
-	if err := skillScopeFromAgentAndRegistry(&h.definition, h.full).CheckSkillDefinition(skill); err != nil {
+	if err := cliagents.SkillScopeFromAgentAndRegistry(&h.definition, h.full).CheckSkillDefinition(skill); err != nil {
 		return agentBinding{}, err
 	}
 	return binding, nil

@@ -44,9 +44,9 @@ const (
 // pinnedBudgetRegistry builds the default registry with every conditional
 // input fixed, mirroring this repo's own live surface (.mivia/mivia.toml):
 // extract (Tavily key), run_command (allowlist), memory tools (store),
-// workflow tools (.mivia/workflows/ + the builder this package's init
-// installs), code-nav tools (workspace), get_diagnostics (configured default
-// whose argv[0] is allowlisted and on PATH wherever `go test` runs).
+// workflow tools (.mivia/workflows/ + the builder cli's init installs),
+// code-nav tools (workspace), get_diagnostics (configured default whose
+// argv[0] is allowlisted and on PATH wherever `go test` runs).
 func pinnedBudgetRegistry(t *testing.T) *tools.Registry {
 	t.Helper()
 	dir := t.TempDir()
@@ -137,7 +137,7 @@ func budgetSpecs(t *testing.T) (core, deferred, session []provider.ToolSpec) {
 	return core, deferred, session
 }
 
-// specCostPrices one spec the way EstimateToolSchemaCost does, and splits its
+// specCost prices one spec the way EstimateToolSchemaCost does, and splits its
 // marshaled bytes into description vs parameters shares.
 func specCost(t *testing.T, spec provider.ToolSpec) (tokens, descBytes, paramBytes int) {
 	t.Helper()
@@ -159,7 +159,7 @@ func specCost(t *testing.T, spec provider.ToolSpec) (tokens, descBytes, paramByt
 // TestCoreToolSchemaBudget is the growth guard: the core tier must stay at
 // the configured size and at or under the ratcheted token budgets. A failure
 // here means a schema grew (or a tool joined/left the tier) without a
-// measured justification - raise the constants only with the measurement
+// measured justification — raise the constants only with the measurement
 // recorded in the ratchet table above.
 func TestCoreToolSchemaBudget(t *testing.T) {
 	core, deferred, session := budgetSpecs(t)

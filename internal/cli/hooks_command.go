@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/hooks"
 )
@@ -122,7 +123,7 @@ func installHookSession(workspaceRoot string, staleBypass, quiet bool) (func(), 
 		notices = append(notices, "--bypass-hook-trust no longer does anything and can be removed: "+
 			"a hook declared in ~/.mivia/mivia.toml runs without confirmation.")
 	}
-	warnHookLoad(notices)
+	cliagents.WarnHookLoad(notices)
 	sessionHookState.Store(state)
 	return func() { sessionHookState.Store(nil) }, nil
 }

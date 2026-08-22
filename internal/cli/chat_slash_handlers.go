@@ -9,6 +9,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
 
@@ -19,15 +20,15 @@ func handleSlashAgent(fields []string, sess *chat.Session, res *config.Resolved,
 		return true, false, nil
 	}
 	if len(fields) < 2 {
-		sink.Info(FormatAgentCurrent(CurrentAgentName(state), state.Registry))
+		sink.Info(cliagents.FormatAgentCurrent(cliagents.CurrentAgentName(state), state.Registry))
 		return true, false, nil
 	}
 	name := fields[1]
-	if err := ApplySessionAgent(sess, res, state, name, false); err != nil {
+	if err := cliagents.ApplySessionAgent(sess, res, state, name, false); err != nil {
 		sink.Info(FormatAgentUnavailable(err))
 		return true, false, nil
 	}
-	sink.Info(FormatAgentSet(name))
+	sink.Info(cliagents.FormatAgentSet(name))
 	return true, false, nil
 }
 
@@ -110,7 +111,7 @@ func handleSlashInfo(cmd string, fields []string, sess *chat.Session, res *confi
 	sink := SlashSinkFor(term)
 	switch cmd {
 	case "/agents":
-		term.WriteString("\n" + FormatAgentCurrent(CurrentAgentName(classicAgentState), RegistryForState(classicAgentState)))
+		term.WriteString("\n" + cliagents.FormatAgentCurrent(cliagents.CurrentAgentName(cliagents.ClassicAgentState), RegistryForState(cliagents.ClassicAgentState)))
 		return true, false, nil
 	case "/status":
 		binding := sess.CurrentBinding()
@@ -121,8 +122,8 @@ func handleSlashInfo(cmd string, fields []string, sess *chat.Session, res *confi
 		if usage.BudgetTokens > 0 {
 			term.WriteString(fmt.Sprintf("\ncontext=%s (output=%s, prompt budget=%s, %d%% used)", chat.FormatTokenK(usage.ContextWindowTokens), chat.FormatTokenK(usage.OutputReserveTokens), chat.FormatTokenK(usage.BudgetTokens), usage.Percent))
 		}
-		if classicAgentState != nil {
-			term.WriteString("\n" + strings.TrimSpace(formatSessionAgentStatus(classicAgentState, sess)))
+		if cliagents.ClassicAgentState != nil {
+			term.WriteString("\n" + strings.TrimSpace(cliagents.FormatSessionAgentStatus(cliagents.ClassicAgentState, sess)))
 		}
 	case "/model":
 		defaultProvider := ""
@@ -135,7 +136,7 @@ func handleSlashInfo(cmd string, fields []string, sess *chat.Session, res *confi
 			sink.Info(formatModelCurrent(sess.CurrentModel(), choices))
 			return true, false, nil
 		}
-		discarded, err := SwitchModelCommand(sess, res, providerName, modelName)
+		discarded, err := cliagents.SwitchModelCommand(sess, res, providerName, modelName)
 		if err != nil {
 			sink.Error(FormatModelUnavailable(providerName, choices))
 			return true, false, nil
@@ -157,7 +158,7 @@ func handleSlashInfo(cmd string, fields []string, sess *chat.Session, res *confi
 		for _, t := range registry.List() {
 			term.WriteString(fmt.Sprintf("\n  %s - %s", t.Name(), t.Description()))
 		}
-		term.WriteString("\n" + classicAgentState.SchemaMassSnapshot().String())
+		term.WriteString("\n" + cliagents.ClassicAgentState.SchemaMassSnapshot().String())
 	case "/workspace":
 		if registry, _, _ := sess.AgentSurfaceSnapshot(); registry == nil {
 			term.WriteString("\ntools disabled")

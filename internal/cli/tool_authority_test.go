@@ -45,9 +45,9 @@ func TestFailedAgentSwitchLeavesNoTraceOfTheNewAgent(t *testing.T) {
 	if got := CurrentAgentName(fixture.state); got != "reader" {
 		t.Fatalf("selected agent = %q, want the switch rolled back to reader", got)
 	}
-	fixture.state.mu.Lock()
+	fixture.state.Lock()
 	core := slices.Clone(fixture.state.TierPlan.Tiers.Core)
-	fixture.state.mu.Unlock()
+	fixture.state.Unlock()
 	if slices.Contains(core, "write_file") {
 		t.Fatalf("tier plan core = %v, want reader's plan, not the failed agent's", core)
 	}

@@ -64,8 +64,8 @@ func TestRoutedAgentUsesItsOwnModelsReasoning(t *testing.T) {
 		t.Fatalf("resolve: %v", err)
 	}
 	want := reasoning.Setting{Level: reasoning.Low}
-	if binding.reasoning != want {
-		t.Fatalf("routed binding carried %+v, want the routed model's %+v", binding.reasoning, want)
+	if binding.Reasoning != want {
+		t.Fatalf("routed binding carried %+v, want the routed model's %+v", binding.Reasoning, want)
 	}
 }
 
@@ -77,8 +77,8 @@ func TestSessionFollowingAgentMatchesTheSessionModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
-	if binding.reasoning != sessionReasoning(opts) {
-		t.Fatalf("session-following agent carried %+v, session has %+v", binding.reasoning, sessionReasoning(opts))
+	if binding.Reasoning != sessionReasoning(opts) {
+		t.Fatalf("session-following agent carried %+v, session has %+v", binding.Reasoning, sessionReasoning(opts))
 	}
 }
 
@@ -92,8 +92,8 @@ func TestRoutedAgentOnANonReasoningModelSendsNothing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
-	if binding.reasoning != (reasoning.Setting{}) {
-		t.Fatalf("routed agent inherited %+v from the session model", binding.reasoning)
+	if binding.Reasoning != (reasoning.Setting{}) {
+		t.Fatalf("routed agent inherited %+v from the session model", binding.Reasoning)
 	}
 }
 

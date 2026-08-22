@@ -160,7 +160,7 @@ func TestAgentTaskCombinesAllWorkLimitSources(t *testing.T) {
 		definition: agents.ResolvedAgent{MaxTurns: &agentTurns, MaxTokens: &agentOutput},
 		opts:       SessionDispatcherOpts{WorkLimits: runtime.WorkLimits{MaxTurns: 12, MaxPromptTokens: 90, MaxToolCalls: 8}},
 	}
-	got := handler.effectiveWorkLimits(agentBinding{maxTokens: 4096}, runtime.Request{WorkLimits: runtime.WorkLimits{
+	got := handler.effectiveWorkLimits(agentBinding{MaxTokens: 4096}, runtime.Request{WorkLimits: runtime.WorkLimits{
 		MaxTurns: 10, MaxPromptTokens: 100, MaxOutputTokens: 70, MaxOutputPerCall: 2048, MaxToolCalls: 9,
 	}})
 	want := runtime.WorkLimits{MaxTurns: 10, MaxPromptTokens: 90, MaxOutputTokens: 70, MaxOutputPerCall: 2048, MaxToolCalls: 8}

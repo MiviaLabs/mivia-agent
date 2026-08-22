@@ -72,7 +72,7 @@ func TestContextSetupCoverageConfigureErrorsAndZeroPolicy(t *testing.T) {
 		t.Fatal("nil context components succeeded")
 	}
 	session := chat.NewSession(&config.Resolved{Model: "model"}, nullCompleter{})
-	if wiring := contextDispatcherFor(session, config.SubagentConfig{}); wiring.preparation != nil || wiring.SharedSQLite != nil {
+	if wiring := contextDispatcherFor(session, config.SubagentConfig{}); wiring.Preparation != nil || wiring.SharedSQLite != nil {
 		t.Fatalf("disabled context wiring = %+v", wiring)
 	}
 }
