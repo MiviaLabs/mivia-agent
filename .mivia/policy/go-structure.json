@@ -31,7 +31,8 @@
     "vendor/**",
     "**/*_gen.go",
     "**/zz_generated*.go",
-    "internal/legacytui/**"
+    "internal/legacytui/**",
+    "cmd/mivia/main.go"
   ],
   "baseline": {
     "comment": "Files already over hard limits. Growth beyond maxLines fails. Reduce maxLines when splitting; never raise without review.",

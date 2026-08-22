@@ -15,6 +15,14 @@ var lifecycleRoutePrincipal = WorktreeRoutePrincipal
 var lifecycleCanonicalMarkerRoot = CanonicalMarkerRoot
 var lifecycleResolveWorktree = vcs.Resolve
 
+// lifecycleRegisterAdoptedInstance is the test seam over the store's
+// RegisterAdoptedWorktreeInstance call in AdoptManagedWorktree: it defaults
+// to the store method so tests can inject a register fault after the
+// worktree marker write.
+var lifecycleRegisterAdoptedInstance = func(ctx context.Context, store *storage.SQLite, principal contextstate.Principal, instance contextstate.WorktreeInstance, canonicalPath string) error {
+	return store.RegisterAdoptedWorktreeInstance(ctx, principal, instance, canonicalPath)
+}
+
 func AdoptManagedWorktree(root string, wt *vcs.WorktreeInfo) (contextstate.WorktreeInstance, error) {
 	if wt == nil {
 		return contextstate.WorktreeInstance{}, fmt.Errorf("worktree route requires a worktree")
@@ -70,7 +78,7 @@ func AdoptManagedWorktree(root string, wt *vcs.WorktreeInfo) (contextstate.Workt
 			return contextstate.WorktreeInstance{}, contextstate.ErrWorktreeDeleted
 		}
 	}
-	if err := store.RegisterAdoptedWorktreeInstance(context.Background(), principal, instance, canonicalPath); err != nil {
+	if err := lifecycleRegisterAdoptedInstance(context.Background(), store, principal, instance, canonicalPath); err != nil {
 		if wroteMarker {
 			_ = os.Remove(WorktreeMarkerPath(canonicalPath))
 			_ = store.AbandonWorktreeCreation(context.Background(), principal, instance)

@@ -592,6 +592,30 @@ func TestGapResumeGetRunAfterLaunchError(t *testing.T) {
 	gapsWaitTerminal(t, owner, res.RunID)
 }
 
+func TestGapResumePostLaunchGetRunErrorPropagates(t *testing.T) {
+	owner, _, res := gapsBlockedEngine(t)
+	// Stop the owning controller so the resume owns the run exclusively.
+	if err := owner.Interrupt(res.RunID); err != nil {
+		t.Fatalf("interrupt: %v", err)
+	}
+	// Fail-after 2, not fail-after 1: on resume the wrapped repo sees the
+	// resume's own status read (1) and the controller start's duplicate
+	// admission re-read (2) before the launch. With fail-after 1 the fault
+	// stops ctrl.Start instead of the post-launch read; with fail-after 2
+	// the run launches and only the read that builds the StartResult fails.
+	wrapped := &gapsRepo{Repository: owner.Repo, failGetRunAfter: 2}
+	fresh := &Engine{WorkspaceRoot: owner.WorkspaceRoot, Repo: wrapped, NewRunner: func() controller.AgentStepRunner { return &StaticStepRunner{} }}
+	_, err := fresh.Start(context.Background(), workflowledger.StartRequest{Resume: true, RunID: res.RunID})
+	if err == nil || !strings.Contains(err.Error(), "get run refused by test") {
+		t.Fatalf("resume with a failing post-launch GetRun error = %v", err)
+	}
+	// Drain the FRESH engine's launch goroutine before t.TempDir cleanup.
+	_ = fresh.Interrupt(res.RunID)
+	gapsDrainLaunch(t, fresh, res.RunID)
+	_, _ = owner.Cancel(context.Background(), res.RunID)
+	gapsWaitTerminal(t, owner, res.RunID)
+}
+
 // --- stack drive internals ---------------------------------------------------
 
 type gapsMergedPR struct{}

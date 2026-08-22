@@ -101,6 +101,13 @@ func stackPRBase(wf *definition.CompiledWorkflow) (string, error) {
 	return delivery.PRBase(wf)
 }
 
+// applyReconcileActionFn stands for applyReconcileAction inside
+// reconcileStack's task loop. Production keeps the direct call; tests may
+// override it to force workflowledger.ErrTaskConflict, which through the
+// serialized workflowledger.Store mutex only a genuinely concurrent writer
+// can produce, so the skip-and-continue branch stays testable single-threaded.
+var applyReconcileActionFn = applyReconcileAction
+
 // reconcileStack applies the §5a recovery actions for every chunk task of
 // the stack: task ledger x run ledger x git merge state, idempotently.
 func reconcileStack(ctx context.Context, ledger *workflowledger.Store, repo workflowledger.Repository, checker MergeChecker, stackID string, maxAttempts int) ([]ReconcileAction, error) {
@@ -137,7 +144,7 @@ func reconcileStack(ctx context.Context, ledger *workflowledger.Store, repo work
 		act := reconcileTask(t, info, merged, stackRunPushed(repo, run), maxAttempts)
 		act.CurrentStatus = t.Status
 		actions = append(actions, act)
-		if err := applyReconcileAction(ledger, stackID, act); err != nil {
+		if err := applyReconcileActionFn(ledger, stackID, act); err != nil {
 			if errors.Is(err, workflowledger.ErrTaskConflict) {
 				continue // a concurrent writer already made this transition
 			}

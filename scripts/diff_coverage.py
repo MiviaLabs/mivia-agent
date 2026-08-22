@@ -24,6 +24,8 @@ Policy reuse: .mivia/policy/go-structure.json excludeGlobs (generated/vendor; in
 is excluded there too because that package is scheduled for deletion at the end of the UI
 migration - covering its lines would be waste, and the glob removes it from this gate's scope
 as well as the structure gate's).
+Per-line accepted residue: .mivia/policy/diff-coverage.json knownUncovered maps exact line
+numbers to a reason; the gate prints every accepted line but does not fail on it.
 """
 from __future__ import annotations
 
@@ -71,6 +73,26 @@ def load_exclude_globs(root: Path) -> list[str]:
         return []
     policy = json.loads(policy_path.read_text(encoding="utf-8"))
     return policy.get("excludeGlobs") or []
+
+
+def load_known_uncovered(root: Path) -> dict[str, tuple[set[int], str]]:
+    """Per-line accepted residue from .mivia/policy/diff-coverage.json.
+
+    Maps file path -> (line numbers, reason). Lines listed there are
+    provably unreachable or not unit-testable; the gate still prints every
+    accepted line so the residue stays reviewable, but does not fail on it.
+    """
+    policy_path = root / ".mivia" / "policy" / "diff-coverage.json"
+    if not policy_path.is_file():
+        return {}
+    policy = json.loads(policy_path.read_text(encoding="utf-8"))
+    out: dict[str, tuple[set[int], str]] = {}
+    for path, entry in (policy.get("knownUncovered") or {}).items():
+        lines = set(int(n) for n in entry.get("lines", []))
+        reason = str(entry.get("reason", "")).strip()
+        if lines and reason:
+            out[path] = (lines, reason)
+    return out
 
 
 def changed_go_files(root: Path, diff_args: list[str]) -> list[str]:
@@ -462,10 +484,25 @@ def main(argv: list[str] | None = None) -> int:
               f"or excluded by a build constraint); nothing to cover")
 
     if total_uncovered:
-        print(f"diff_coverage: {total_uncovered}/{total_checked} changed statement line(s) not covered by any test:")
+        known = load_known_uncovered(root)
+        accepted: list[str] = []
+        remaining: list[str] = []
         for finding in findings:
-            print(f"  {finding}")
-        return 1
+            path, _, lineno = finding.rpartition(":")
+            if path in known and int(lineno) in known[path][0]:
+                accepted.append(f"{finding} ({known[path][1]})")
+            else:
+                remaining.append(finding)
+        if accepted:
+            print(f"diff_coverage: {len(accepted)} line(s) accepted as known-uncovered "
+                  f"(.mivia/policy/diff-coverage.json):", file=sys.stderr)
+            for line in accepted:
+                print(f"  {line}", file=sys.stderr)
+        if remaining:
+            print(f"diff_coverage: {len(remaining)}/{total_checked} changed statement line(s) not covered by any test:")
+            for finding in remaining:
+                print(f"  {finding}")
+            return 1
 
     print(f"diff_coverage: {total_checked}/{total_checked} changed statement line(s) covered")
     return 0

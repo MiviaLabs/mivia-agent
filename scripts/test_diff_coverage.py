@@ -382,6 +382,57 @@ def test_missing_supplied_profile_is_a_usage_error() -> None:
         assert "does not exist" in proc.stderr
 
 
+def test_known_uncovered_policy_line_passes_gate() -> None:
+    """A line listed in .mivia/policy/diff-coverage.json with a reason is
+    reported as accepted (stderr) and does not fail the gate; an unlisted
+    uncovered line still fails it."""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_fixture(root)
+        add_uncovered_function(root)
+        git("add", "-A", cwd=root)
+        # First run without the policy: must fail and name the line.
+        proc = run_script(["--staged"], root)
+        assert proc.returncode == 1, proc.stdout + proc.stderr
+        assert "pkg/lib.go:" in proc.stdout
+        # Write the policy accepting every line the first run reported.
+        import re as _re
+        uncovered_lines = sorted({
+            int(m) for m in _re.findall(r"pkg/lib\.go:(\d+)", proc.stdout)
+        })
+        assert uncovered_lines, proc.stdout
+        policy_dir = root / ".mivia" / "policy"
+        policy_dir.mkdir(parents=True)
+        (policy_dir / "diff-coverage.json").write_text(
+            "{\n"
+            '  "description": "fixture",\n'
+            '  "knownUncovered": {\n'
+            '    "pkg/lib.go": {\n'
+            f'      "lines": {uncovered_lines},\n'
+            '      "reason": "fixture: branch unreachable by construction"\n'
+            "    }\n"
+            "  }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        proc = run_script(["--staged"], root)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert "accepted as known-uncovered" in proc.stderr
+        assert f"pkg/lib.go:{uncovered_lines[0]}" in proc.stderr
+        assert "branch unreachable by construction" in proc.stderr
+        # A second uncovered line NOT in the policy must still fail.
+        lib = root / "pkg" / "lib.go"
+        lib.write_text(
+            lib.read_text(encoding="utf-8") + "\nfunc AlsoUncovered() int {\n\treturn 4\n}\n",
+            encoding="utf-8",
+        )
+        git("add", "-A", cwd=root)
+        proc = run_script(["--staged"], root)
+        assert proc.returncode == 1, proc.stdout + proc.stderr
+        assert "AlsoUncovered" not in proc.stdout  # findings are line numbers only
+        assert "pkg/lib.go:" in proc.stdout
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

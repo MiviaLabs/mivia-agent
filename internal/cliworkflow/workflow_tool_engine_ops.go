@@ -14,6 +14,19 @@ import (
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
+// SessionDeleteRunFunc is the test seam over the session engine Delete
+// path's ledger write: it defaults to the repository DeleteRun call so tests
+// can inject a write fault after the operator claim succeeds.
+var SessionDeleteRunFunc = func(ctx context.Context, repo workflowledger.Repository, runID string) error {
+	return repo.DeleteRun(ctx, runID)
+}
+
+// SessionDeliverLedgerReopenFunc is the test seam over the session engine
+// Deliver path's post-success ledger reopen: it defaults to
+// OpenWorkflowReportContext so tests can inject an open or read fault after
+// a successful delivery.
+var SessionDeliverLedgerReopenFunc = OpenWorkflowReportContext
+
 // Cancel implements workflowledger.Engine.
 // Refusal gates first (a lock-free status read): a terminal run is an
 // idempotent no-op and a delivery_pending run is refused, both without
@@ -203,7 +216,7 @@ func (e *sessionWorkflowEngine) Delete(ctx context.Context, runID string, force 
 		return workflowledger.DeleteResult{}, fmt.Errorf("workflow run %q is claimed by another executor; delete refused", runID)
 	}
 	ctx = workflowledger.ContextWithClaimHolder(ctx, holder)
-	if err := repo.DeleteRun(ctx, runID); err != nil {
+	if err := SessionDeleteRunFunc(ctx, repo, runID); err != nil {
 		return workflowledger.DeleteResult{}, err
 	}
 	return workflowledger.DeleteResult{RunID: runID, Status: string(run.Status), Deleted: true}, nil
@@ -256,7 +269,7 @@ func (e *sessionWorkflowEngine) Deliver(ctx context.Context, runID string, allow
 		}
 		return workflowledger.DeliverResult{}, err
 	}
-	repo, closeFn, err := OpenWorkflowReportContext(e.root, e.configPath)
+	repo, closeFn, err := SessionDeliverLedgerReopenFunc(e.root, e.configPath)
 	if err != nil {
 		return workflowledger.DeliverResult{RunID: runID, Status: "unknown"}, nil
 	}
