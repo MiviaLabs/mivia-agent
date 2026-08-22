@@ -40,7 +40,7 @@ func newDemoHarnessRoot(t *testing.T, scenario string, pace time.Duration) app.M
 	if err != nil {
 		t.Fatal(err)
 	}
-	th, err := resolveTheme(themes, config{themeName: "mivia-dark", themeExplicit: true})
+	th, err := resolveTheme(themes, cfg{themeName: "mivia-dark", themeExplicit: true})
 	if err != nil {
 		t.Fatal(err)
 	}

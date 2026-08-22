@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -58,7 +59,7 @@ func themes(t *testing.T) []theme.Theme {
 }
 
 func TestResolveThemeExplicitName(t *testing.T) {
-	got, err := resolveTheme(themes(t), config{themeName: "mivia-light", themeExplicit: true})
+	got, err := resolveTheme(themes(t), cfg{themeName: "mivia-light", themeExplicit: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,13 +69,13 @@ func TestResolveThemeExplicitName(t *testing.T) {
 }
 
 func TestResolveThemeUnknownNameErrors(t *testing.T) {
-	if _, err := resolveTheme(themes(t), config{themeName: "nope", themeExplicit: true}); err == nil {
+	if _, err := resolveTheme(themes(t), cfg{themeName: "nope", themeExplicit: true}); err == nil {
 		t.Error("expected an error for an unknown theme name")
 	}
 }
 
 func TestResolveThemeLightDefaultsWhenNotExplicit(t *testing.T) {
-	got, err := resolveTheme(themes(t), config{themeName: "mivia-dark", light: true})
+	got, err := resolveTheme(themes(t), cfg{themeName: "mivia-dark", light: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +85,7 @@ func TestResolveThemeLightDefaultsWhenNotExplicit(t *testing.T) {
 }
 
 func TestResolveThemeDarkDefaultsWhenNotExplicit(t *testing.T) {
-	got, err := resolveTheme(themes(t), config{themeName: "mivia-dark", dark: true})
+	got, err := resolveTheme(themes(t), cfg{themeName: "mivia-dark", dark: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +96,7 @@ func TestResolveThemeDarkDefaultsWhenNotExplicit(t *testing.T) {
 
 func TestResolveThemeExplicitOverridesLight(t *testing.T) {
 	// --theme mivia-dark --light: explicit --theme wins, no light variant swap.
-	got, err := resolveTheme(themes(t), config{themeName: "mivia-dark", themeExplicit: true, light: true})
+	got, err := resolveTheme(themes(t), cfg{themeName: "mivia-dark", themeExplicit: true, light: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +113,7 @@ func TestFirstByDarkNoMatch(t *testing.T) {
 
 func TestRunOutputJSON(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"--output", "json"}, &stdout, &stderr, nil)
+	code := run(context.Background(), []string{"--output", "json"}, &stdout, &stderr, nil)
 	if code != 0 {
 		t.Fatalf("got exit code %d, stderr: %s", code, stderr.String())
 	}
@@ -125,7 +126,7 @@ func TestRunNonTTYFallsBackToPlainStream(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	// A *bytes.Buffer is not *os.File, so run's isFile check fails
 	// closed to the plain renderer - exactly the non-TTY / piped path.
-	code := run(nil, &stdout, &stderr, nil)
+	code := run(context.Background(), nil, &stdout, &stderr, nil)
 	if code != 0 {
 		t.Fatalf("got exit code %d, stderr: %s", code, stderr.String())
 	}
@@ -136,7 +137,7 @@ func TestRunNonTTYFallsBackToPlainStream(t *testing.T) {
 
 func TestRunUnknownThemeErrors(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"--theme", "nope"}, &stdout, &stderr, nil)
+	code := run(context.Background(), []string{"--theme", "nope"}, &stdout, &stderr, nil)
 	if code != 1 {
 		t.Errorf("got exit code %d, want 1", code)
 	}
@@ -155,7 +156,7 @@ var errWriteFailed = errors.New("write failed")
 
 func TestRunOutputJSONWriteErrorExits1(t *testing.T) {
 	var stderr bytes.Buffer
-	code := run([]string{"--output", "json"}, errWriter{}, &stderr, nil)
+	code := run(context.Background(), []string{"--output", "json"}, errWriter{}, &stderr, nil)
 	if code != 1 {
 		t.Errorf("got exit code %d, want 1", code)
 	}
@@ -163,7 +164,7 @@ func TestRunOutputJSONWriteErrorExits1(t *testing.T) {
 
 func TestRunPlainStreamWriteErrorExits1(t *testing.T) {
 	var stderr bytes.Buffer
-	code := run(nil, errWriter{}, &stderr, nil)
+	code := run(context.Background(), nil, errWriter{}, &stderr, nil)
 	if code != 1 {
 		t.Errorf("got exit code %d, want 1", code)
 	}
@@ -171,7 +172,7 @@ func TestRunPlainStreamWriteErrorExits1(t *testing.T) {
 
 func TestRunFlagParseErrorExits2(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{"--bogus"}, &stdout, &stderr, nil); code != 2 {
+	if code := run(context.Background(), []string{"--bogus"}, &stdout, &stderr, nil); code != 2 {
 		t.Errorf("got exit code %d, want 2", code)
 	}
 }
@@ -200,7 +201,7 @@ func TestParseFlagsScrollLinesMustBePositive(t *testing.T) {
 // stream renders.
 func TestRunScreenReaderFallsBackToPlainStream(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	code := run(nil, &stdout, &stderr, []string{"MIVIA_SCREEN_READER=1"})
+	code := run(context.Background(), nil, &stdout, &stderr, []string{"MIVIA_SCREEN_READER=1"})
 	if code != 0 {
 		t.Fatalf("got exit code %d, stderr: %s", code, stderr.String())
 	}
@@ -216,7 +217,7 @@ func TestRunScreenReaderFallsBackToPlainStream(t *testing.T) {
 // TestRunDumbTerminalFallsBackToPlainStream pins rule 9.6.
 func TestRunDumbTerminalFallsBackToPlainStream(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	code := run(nil, &stdout, &stderr, []string{"TERM=dumb"})
+	code := run(context.Background(), nil, &stdout, &stderr, []string{"TERM=dumb"})
 	if code != 0 {
 		t.Fatalf("got exit code %d, stderr: %s", code, stderr.String())
 	}
@@ -230,7 +231,7 @@ func TestRunDumbTerminalFallsBackToPlainStream(t *testing.T) {
 // stream renders.
 func TestRunTmuxControlModeRefused(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	code := run(nil, &stdout, &stderr, []string{
+	code := run(context.Background(), nil, &stdout, &stderr, []string{
 		"TERM_PROGRAM=iTerm.app", "TERM=screen-256color", "TMUX=/tmp/tmux-0/default",
 	})
 	if code != 0 {
@@ -275,7 +276,7 @@ func TestScrollLinesFlagSetsConfig(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	// A non-TTY stdout short-circuits into the plain renderer AFTER the
 	// flag was parsed and applied, which is all this test needs.
-	if code := run([]string{"--scroll-lines", "5"}, &stdout, &stderr, nil); code != 0 {
+	if code := run(context.Background(), []string{"--scroll-lines", "5"}, &stdout, &stderr, nil); code != 0 {
 		t.Fatalf("got exit code %d, stderr: %s", code, stderr.String())
 	}
 	if uikitconfig.CockpitScrollLines != 5 {
@@ -301,5 +302,42 @@ func TestMockCommandsAreRealCandidates(t *testing.T) {
 		if c.Name == "" || c.Desc == "" {
 			t.Errorf("command %+v must have both a name and a description", c)
 		}
+	}
+}
+
+// TestParseFlagsDemoDefaultIsTrue pins the demo default: --demo is true
+// when not explicitly set, matching the documented behaviour that the
+// cockpit launches against the demo harness until --demo=false flips it.
+func TestParseFlagsDemoDefaultIsTrue(t *testing.T) {
+	cfg, err := parseFlags(nil, &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.demo {
+		t.Error("--demo default should be true")
+	}
+}
+
+// TestParseFlagsDemoFalseSwitchesMode pins --demo=false: the cockpit
+// runs against a real chat.Session via internal/uiadapter.
+func TestParseFlagsDemoFalseSwitchesMode(t *testing.T) {
+	cfg, err := parseFlags([]string{"--demo=false"}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.demo {
+		t.Error("--demo=false should set demo=false")
+	}
+}
+
+// TestParseFlagsWorkspaceDefaultsToCWD pins the --workspace default
+// being the current working directory, not empty.
+func TestParseFlagsWorkspaceDefaultsToCWD(t *testing.T) {
+	cfg, err := parseFlags(nil, &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.workspace == "" {
+		t.Error("--workspace should default to cwd, got empty string")
 	}
 }

@@ -1,6 +1,6 @@
 {
-  "description": "Internal import edges: an allowed-edge baseline, a hard edge-count cap, and a deny-list that overrides the baseline. Re-baselined at 400 measured edges after the UI replacement Phase 1 added internal/uiadapter. The prior cap of 400 was set after the SDK convergence Stage 0 Item 4 split (slices 1-6: cliworktree, cliagents, cliorchestrate, cliworkflow, clichat) of the former 44-out-degree internal/cli. Phase 1 added the uiadapter edge pair (uiadapter -> internal/agent, uiadapter -> internal/uikit/uievent), pushing 398 -> 400. Phase 2 added uiadapter -> internal/chat to wrap *chat.Session in ports.Conversation / ports.TurnHandle, pushing 400 -> 401. Edge cap remains 405 with a 4-edge headroom margin so the next one-or-two-package addition in Phase 3 (build constructor that imports composition) does not push the tree over the cap without an explicit review of the policy.",
-  "edgeCap": 405,
+  "description": "Internal import edges: an allowed-edge baseline, a hard edge-count cap, and a deny-list that overrides the baseline. Re-baselined at 400 measured edges after the UI replacement Phase 1 added internal/uiadapter. The prior cap of 400 was set after the SDK convergence Stage 0 Item 4 split (slices 1-6: cliworktree, cliagents, cliorchestrate, cliworkflow, clichat) of the former 44-out-degree internal/cli. Phase 1 added the uiadapter edge pair (uiadapter -> internal/agent, uiadapter -> internal/uikit/uievent), pushing 398 -> 400. Phase 2 added uiadapter -> internal/chat to wrap *chat.Session in ports.Conversation / ports.TurnHandle; the discovered-during-implementation edges (provider, uikit/intent, uikit/ports) took 400 -> 404. Phase 3 added 10 edges for the build constructor: 7 from internal/uiadapter to composition-root packages (composition, config, hooks, mcp, redact, storage, workspace), plus 2 from internal/uiadapter extracted as helper signatures during the gate-driven refactor (contextstate, tools), plus 3 from cmd/mivia-ui (uiadapter, config, provider) for the --demo=false real-harness path. Measured count 404 -> 416, edge cap 405 -> 420 leaving 4 edges of headroom for the Phase 4+ wiring (settings ports, approver, MCP server selection from config).",
+  "edgeCap": 420,
   "deny": [
     {
       "from": "internal/storage",
@@ -15,12 +15,15 @@
       "internal/version"
     ],
     "cmd/mivia-ui": [
+      "internal/config",
+      "internal/provider",
       "internal/ui/app",
       "internal/ui/component/composer",
       "internal/ui/jsonout",
       "internal/ui/screen/conversation",
       "internal/ui/stream",
       "internal/ui/theme",
+      "internal/uiadapter",
       "internal/uikit/config",
       "internal/uikit/demoharness",
       "internal/uikit/termprobe",
@@ -452,10 +455,19 @@
     "internal/uiadapter": [
       "internal/agent",
       "internal/chat",
+      "internal/composition",
+      "internal/config",
+      "internal/contextstate",
+      "internal/hooks",
+      "internal/mcp",
       "internal/provider",
+      "internal/redact",
+      "internal/storage",
+      "internal/tools",
       "internal/uikit/intent",
       "internal/uikit/ports",
-      "internal/uikit/uievent"
+      "internal/uikit/uievent",
+      "internal/workspace"
     ],
     "internal/uikit/demoharness": [
       "internal/uikit/config",

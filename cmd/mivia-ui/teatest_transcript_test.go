@@ -46,7 +46,7 @@ func newTranscriptRoot(t *testing.T) app.Model {
 	if err != nil {
 		t.Fatal(err)
 	}
-	th, err := resolveTheme(themes, config{themeName: "mivia-dark", themeExplicit: true})
+	th, err := resolveTheme(themes, cfg{themeName: "mivia-dark", themeExplicit: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func newStreamingTranscriptRoot(t *testing.T, pace time.Duration) app.Model {
 	if err != nil {
 		t.Fatal(err)
 	}
-	th, err := resolveTheme(themes, config{themeName: "mivia-dark", themeExplicit: true})
+	th, err := resolveTheme(themes, cfg{themeName: "mivia-dark", themeExplicit: true})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -6,8 +6,15 @@
 // Phase 1 ships ONLY the pure translation layer. Session lifecycle
 // (Conversation, TurnHandle, Cancel), approval gating, settings ports, and
 // the build/constructor live in later phases of docs/design/ui-replacement-
-// phases.md. Keeping the package free of I/O in this phase means every case
-// in TranslateEvent is reachable from a unit test with no harness.
+// phases.md.
+//
+// Empty-TurnID window: the first event on every turn is KindTurnStart
+// with TurnID="" (chat.Session only surfaces the real ID after
+// SendUserWithEvent returns). The terminal KindTurnEnd always carries
+// the real ID, so renderers that read TurnID off the end event are
+// correct; renderers that need it for every intermediate event must
+// accept the leading-empty window. See conversation.go's
+// emitSyntheticTurnStart comment for the tap-stamp mechanism.
 //
 // The full per-kind mapping table lives next to TranslateEvent.
 package uiadapter

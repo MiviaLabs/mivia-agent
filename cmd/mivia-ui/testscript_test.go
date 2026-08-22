@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"testing"
 
@@ -13,7 +14,7 @@ import (
 func TestMain(m *testing.M) {
 	os.Exit(testscript.RunMain(m, map[string]func() int{
 		"mivia-ui": func() int {
-			return run(os.Args[1:], os.Stdout, os.Stderr, os.Environ())
+			return run(context.Background(), os.Args[1:], os.Stdout, os.Stderr, os.Environ())
 		},
 	}))
 }

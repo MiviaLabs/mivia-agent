@@ -14,7 +14,6 @@ import (
 	"reflect"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -491,10 +490,11 @@ func TestTitle_DerivedFromFirstUserMessage(t *testing.T) {
 }
 
 // TestSend_GoroutineLeak performs 20 sequential Send calls and asserts
-// the per-turn goroutine returned for each via a sync.WaitGroup fed by
-// a small wrapper inside the adapter. The primary mechanism is a
-// 1-second timeout; runtime.NumGoroutine is documented as a deliberate
-// alternative in the implementation comment.
+// every per-turn goroutine has fully returned by waiting on the
+// SetTurnWaiterForTest-installed WaitGroup. The channel-close check
+// (drainUntilClose) precedes the goroutine's final defers and so is
+// not by itself evidence that the goroutine returned end-to-end; the
+// WaitGroup is the authoritative signal.
 func TestSend_GoroutineLeak(t *testing.T) {
 	comp := &scriptedCompleter{turns: []provider.Response{assistantResponse("r")}}
 	res := &config.Resolved{Model: "m", SystemPrompt: "sys"}
@@ -503,21 +503,29 @@ func TestSend_GoroutineLeak(t *testing.T) {
 	sess.Tools = tools.NewRegistry()
 	sess.Tools.Register(noopTool{})
 	c := uiadapter.NewConversation(sess)
+	var wg sync.WaitGroup
+	uiadapter.SetTurnWaiterForTest(&wg)
+	defer uiadapter.SetTurnWaiterForTest(nil)
 	const n = 20
 	for i := 0; i < n; i++ {
+		wg.Add(1)
 		h, err := c.Send(context.Background(), intent.Send{Text: "x"})
 		if err != nil {
 			t.Fatalf("Send #%d err=%v", i, err)
 		}
 		drainUntilClose(t, h.Events(), 5*time.Second)
 	}
-	// Best-effort sanity: runtime.NumGoroutine should be near baseline.
-	// Allow generous slack because the race detector can keep
-	// goroutines alive longer.
-	// Primary mechanism for "did the goroutine return": the channel
-	// was closed (drainUntilClose observed the close), which is
-	// sequenced before the goroutine's defer cancelTurn().
-	_ = atomic.LoadInt32 // keep the import alive even if unused
+	// All per-turn goroutines must have fully returned by now: every
+	// Add(1) above is matched by a Done() from runTurnGoroutine's final
+	// defer. Wait() with a generous timeout proves the test seam is
+	// wired and the goroutines do not leak past the close.
+	waitDone := make(chan struct{})
+	go func() { wg.Wait(); close(waitDone) }()
+	select {
+	case <-waitDone:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("per-turn goroutines did not return within 5s after channel close")
+	}
 }
 
 // TestSend_ChannelCloseIsExactlyOnce fans out N Cancel calls and
@@ -600,7 +608,3 @@ func TestUIPackages_DoNotImportUIAdapter(t *testing.T) {
 		}
 	}
 }
-
-// _ keeps the encoding/json import referenced when no test uses it
-// directly; it is used transitively by the tool implementations.
-var _ = json.RawMessage(nil)

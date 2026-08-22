@@ -39,6 +39,15 @@ import (
 // agent cannot grow memory without bound.
 const turnBufferSize = 32
 
+// turnWaiter is the package-private sync.WaitGroup every per-turn
+// goroutine calls Done() on when it returns. It is installed by the
+// SetTurnWaiterForTest test seam in export_test.go; production code
+// never touches it. Reading from the goroutine rather than from a
+// per-handle field keeps the seam in package-private scope: production
+// callers of internal/uiadapter cannot install a waiter because the
+// setter only exists in the test-export file.
+var turnWaiter *sync.WaitGroup
+
 // titleRuneLimit is the maximum rune count before deriveTitle ellipsises
 // the title. Rune count, not byte count: a UI that renders the title is
 // counting visible glyphs.
@@ -111,6 +120,14 @@ func (c *Conversation) Send(ctx context.Context, in intent.Send) (ports.TurnHand
 // TurnID="" so no agent event can race ahead of it on the per-turn
 // channel. The channel buffer is sized to hold this event without
 // blocking.
+//
+// The empty TurnID is the documented "empty-TurnID window" (see the
+// package doc in event.go): chat.Session only surfaces the real ID
+// after SendUserWithEvent returns, so the tap-installed events stamp
+// the real ID via a shared atomic.Pointer once known. The terminal
+// KindTurnEnd emitted by emitTurnEndIfWinner carries the real ID
+// unconditionally, so renderers that index by TurnID should defer
+// indexing until they see that event.
 func emitSyntheticTurnStart(events chan<- uievent.Event, input string, seq *uint64) {
 	atomic.AddUint64(seq, 1)
 	events <- uievent.Event{
@@ -164,7 +181,6 @@ func newTurnHandle(events chan uievent.Event, closed *atomic.Bool, cancel contex
 		cancel:   cancel,
 		closed:   closed,
 		restore:  restore,
-		done:     make(chan struct{}),
 	}
 }
 
@@ -173,13 +189,25 @@ func newTurnHandle(events chan uievent.Event, closed *atomic.Bool, cancel contex
 // turn.end if it wins the closed CAS, and releases turnMu so the next
 // Send can proceed. cancelTurn is called at the very end so a stray
 // emit from the agent loop after restore sees the cancelled context.
+// If a turnWaiter WaitGroup was installed by SetTurnWaiterForTest, the
+// goroutine calls Done() on it as the very last defer so the test can
+// assert the goroutine has fully returned rather than only that the
+// channel has closed (the latter is sequenced before this defer).
+//
+// The waiter pointer is captured into a local at goroutine start so
+// concurrent SetTurnWaiterForTest calls across tests (a common pattern
+// when -race runs reuse the package's shared global) do not race
+// against the goroutine's read.
 func (c *Conversation) runTurnGoroutine(turnCtx context.Context, in intent.Send, h *turnHandle, closed *atomic.Bool, turnIDPtr *atomic.Pointer[string], seq *uint64, cancelTurn context.CancelFunc) {
+	waiter := turnWaiter
 	go func() {
 		defer h.restore()
-		defer close(h.done)
 		// Release turnMu only after the goroutine has fully finished so
 		// the next Send waits for this turn to complete end-to-end.
 		defer c.turnMu.Unlock()
+		if waiter != nil {
+			defer waiter.Done()
+		}
 		turnID, err := c.sess.SendUserWithEvent(turnCtx, in.Text, io.Discard, nil)
 		h.idAtomic.Store(&turnID)
 		turnIDPtr.Store(&turnID)
@@ -325,7 +353,6 @@ type turnHandle struct {
 	cancel   context.CancelFunc
 	closed   *atomic.Bool
 	restore  func()
-	done     chan struct{}
 }
 
 // ID returns the turn ID assigned by chat.Session.SendUserWithEvent.

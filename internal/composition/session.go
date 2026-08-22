@@ -10,6 +10,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
+	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
 // SessionInput carries every value BuildSession needs to construct a working
@@ -30,6 +31,13 @@ type SessionInput struct {
 	// Workspace field may be nil, which yields a registry with no
 	// filesystem tools.
 	Registry RegistryInput
+	// PrebuiltRegistry, when non-nil, skips BuildRegistry(in.Registry)
+	// entirely and assigns sess.Tools = in.PrebuiltRegistry directly. Use
+	// this when the caller has already merged additional tools (e.g. MCP
+	// wrappers via AttachMCPServers) into a registry it owns. The dispatcher's
+	// view matches regardless of the path taken: dispatcher.Registry is set
+	// to whatever sess.Tools ends up as.
+	PrebuiltRegistry *tools.Registry
 	// Dispatcher configures the dispatcher BuildDispatcher builds.
 	// Dispatcher.Registry is overwritten with the registry BuildSession just
 	// built, so the caller does not need to set it.
@@ -72,9 +80,15 @@ func BuildSession(in SessionInput) (*chat.Session, *storage.SQLite, contextstate
 	sess := chat.NewSession(in.Config, in.Completer)
 	sess.UseTools = true
 
-	registry, err := BuildRegistry(in.Registry)
-	if err != nil {
-		return nil, nil, contextstate.Principal{}, fmt.Errorf("build session: %w", err)
+	var registry *tools.Registry
+	var err error
+	if in.PrebuiltRegistry != nil {
+		registry = in.PrebuiltRegistry
+	} else {
+		registry, err = BuildRegistry(in.Registry)
+		if err != nil {
+			return nil, nil, contextstate.Principal{}, fmt.Errorf("build session: %w", err)
+		}
 	}
 	sess.Tools = registry
 

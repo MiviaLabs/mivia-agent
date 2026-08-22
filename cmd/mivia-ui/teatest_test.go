@@ -48,7 +48,7 @@ func newDemoRoot(t *testing.T) app.Model {
 	if err != nil {
 		t.Fatal(err)
 	}
-	th, err := resolveTheme(themes, config{themeName: "mivia-dark", themeExplicit: true})
+	th, err := resolveTheme(themes, cfg{themeName: "mivia-dark", themeExplicit: true})
 	if err != nil {
 		t.Fatal(err)
 	}
