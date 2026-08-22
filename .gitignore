@@ -31,6 +31,7 @@ __pycache__/
 # travel with the repository). Only the transient WAL/SHM sidecars are
 # machine-local. Other repos may ignore the whole database instead.
 .mivia/memory.db-wal
+**/.mivia/memory.db-wal
 .mivia/memory.db-shm
 # memory.jsonl was a pre-commit-maintained reviewable export of memory.db;
 # the hook step that generated and staged it was removed (the export went
