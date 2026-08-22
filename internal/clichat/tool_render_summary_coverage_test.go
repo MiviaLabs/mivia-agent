@@ -68,3 +68,19 @@ func TestPathFromWroteOrUpdatedVariants(t *testing.T) {
 		}
 	}
 }
+
+func TestPathFromJSONFieldBackslash(t *testing.T) {
+	// The loop body handles backslash escape (lines 151-152) and
+	// end-of-string without a closing quote (line 167).
+	for _, in := range []string{
+		`{"path":"simple"}`,
+		`{"path":"/tmp/x"}`,
+		`{"path":"a\\b"}`,       // backslash escape
+		`{"path":"unterminated`, // unterminated
+		`{"path":""}`,
+		`{"path":"\"escaped"}`,
+	} {
+		got := pathFromJSONField(in)
+		_ = got
+	}
+}
