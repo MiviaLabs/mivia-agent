@@ -265,5 +265,22 @@ func convertToSDKResponse(r provider.Response) sdkshape.Response {
 		},
 		ToolCalls:    toolCalls,
 		FinishReason: r.FinishReason,
+		Usage:        cliTokenUsageToSDK(r.TokenUsage),
+	}
+}
+
+// cliTokenUsageToSDK projects the CLI's TokenUsage onto the SDK's
+// Usage. The CLI gates on Reported (a zero Reported means the
+// provider said nothing); the SDK has no such flag, so an unreported
+// CLI usage converts to the zero SDK Usage - the same "no observation"
+// value the SDK treats as absent.
+func cliTokenUsageToSDK(t provider.TokenUsage) sdkshape.Usage {
+	if !t.Reported {
+		return sdkshape.Usage{}
+	}
+	return sdkshape.Usage{
+		PromptTokens:     t.InputTokens,
+		CompletionTokens: t.OutputTokens,
+		TotalTokens:      t.InputTokens + t.OutputTokens,
 	}
 }

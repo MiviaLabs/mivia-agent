@@ -5,9 +5,9 @@ package agent
 // the RunAgentLoopOnce helper.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
-	"io"
 	"strings"
 	"sync"
 	"testing"
@@ -15,6 +15,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
+	"github.com/MiviaLabs/mivia-agent/internal/usage"
 	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
 )
@@ -49,10 +50,8 @@ func TestBuildAgentLoopOptionsFailClosed(t *testing.T) {
 		{"RefOnlyTools", Options{RefOnlyTools: []string{"x"}}, "RefOnlyTools"},
 		{"NegativeBatchBudget", Options{BatchResultBudgetBytes: -1}, "BatchResultBudgetBytes"},
 		{"PreserveWorkLimits", Options{PreserveWorkLimits: true}, "PreserveWorkLimits"},
-		{"RequireFinalText", Options{RequireFinalText: true}, "RequireFinalText"},
 		{"MaxContextTokens", Options{MaxContextTokens: 1000}, "MaxContextTokens"},
 		{"MailboxPendingInterrupt", Options{MailboxPendingInterrupt: func() bool { return false }}, "MailboxPendingInterrupt"},
-		{"FinalWriter", Options{FinalWriter: io.Discard}, "FinalWriter"},
 	}
 	l := &Loop{Completer: &fakeCompleter{name: "test"}, Tools: tools.NewRegistry()}
 	for _, tt := range tests {
@@ -237,5 +236,83 @@ func TestRunAgentLoopOnceTranslatesEvents(t *testing.T) {
 		if e.Kind == EventToolStart && !strings.Contains(e.Detail, "echo") {
 			t.Fatalf("tool_start Detail = %q, want it to name echo", e.Detail)
 		}
+	}
+}
+
+// recordingUsageWriter records every UsageRecord it receives.
+type recordingUsageWriter struct {
+	records []usage.UsageRecord
+}
+
+func (f *recordingUsageWriter) Record(_ context.Context, r usage.UsageRecord) error {
+	f.records = append(f.records, r)
+	return nil
+}
+
+// TestRunAgentLoopOnceRecordsTokenUsage asserts the audit bridge: a
+// completer turn with reported token usage yields one token_usage
+// row carrying the provider-reported actuals, the same shape the
+// legacy path's EmitTokenUsage writes.
+func TestRunAgentLoopOnceRecordsTokenUsage(t *testing.T) {
+	comp := &scriptCompleter{steps: []provider.Response{
+		{Content: "done", FinishReason: "stop", TokenUsage: provider.TokenUsage{Reported: true, InputTokens: 100, OutputTokens: 40}},
+	}}
+	w := &recordingUsageWriter{}
+	l := &Loop{Completer: comp, Tools: tools.NewRegistry()}
+	_, err := l.Run(context.Background(), "hi", Options{
+		Model: "m", MaxSteps: 1, Backend: "sdk",
+		SessionID: "s1", UsageWriter: w,
+	})
+	if err != nil {
+		t.Fatalf("Run(sdk): %v", err)
+	}
+	if len(w.records) != 1 {
+		t.Fatalf("usage records = %d, want 1", len(w.records))
+	}
+	r := w.records[0]
+	if r.Kind != "token_usage" || r.InputTokens != 100 || r.OutputTokens != 40 {
+		t.Fatalf("record = %+v, want token_usage 100/40", r)
+	}
+	if r.SessionID != "s1" {
+		t.Fatalf("SessionID = %q, want s1 (recordUsage stamps it)", r.SessionID)
+	}
+}
+
+// TestRunAgentLoopOnceWritesFinalText asserts FinalWriter receives
+// the final assistant text after a graceful stop.
+func TestRunAgentLoopOnceWritesFinalText(t *testing.T) {
+	comp := &scriptCompleter{steps: []provider.Response{
+		{Content: "final answer", FinishReason: "stop"},
+	}}
+	var buf bytes.Buffer
+	l := &Loop{Completer: comp, Tools: tools.NewRegistry()}
+	_, err := l.Run(context.Background(), "hi", Options{
+		Model: "m", MaxSteps: 1, Backend: "sdk", FinalWriter: &buf,
+	})
+	if err != nil {
+		t.Fatalf("Run(sdk): %v", err)
+	}
+	if buf.String() != "final answer" {
+		t.Fatalf("FinalWriter got %q, want %q", buf.String(), "final answer")
+	}
+}
+
+// TestRunAgentLoopOnceRequireFinalTextFailsEmpty asserts the
+// empty-turn refusal: RequireFinalText with a turn that produced no
+// assistant text anywhere returns an error, matching the legacy
+// surface's loud-failure contract.
+func TestRunAgentLoopOnceRequireFinalTextFailsEmpty(t *testing.T) {
+	comp := &scriptCompleter{steps: []provider.Response{
+		{Content: "", FinishReason: "stop"},
+	}}
+	l := &Loop{Completer: comp, Tools: tools.NewRegistry()}
+	_, err := l.Run(context.Background(), "hi", Options{
+		Model: "m", MaxSteps: 1, Backend: "sdk", RequireFinalText: true,
+	})
+	if err == nil {
+		t.Fatal("RequireFinalText with empty turn returned nil error; want refusal")
+	}
+	if !strings.Contains(err.Error(), "no assistant text") {
+		t.Fatalf("err = %v, want it to name the empty turn", err)
 	}
 }

@@ -21,11 +21,14 @@ package agent
 import (
 	"context"
 	"fmt"
+	"io"
+	"strings"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
+	"github.com/MiviaLabs/mivia-agent/internal/usage"
 	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
 )
@@ -129,25 +132,17 @@ func rejectUnsupportedSDKBatches(opts Options) error {
 	if opts.PreserveWorkLimits {
 		return unsupportedSDKOption("PreserveWorkLimits")
 	}
-	if opts.RequireFinalText {
-		return unsupportedSDKOption("RequireFinalText")
-	}
 	if opts.MaxContextTokens > 0 {
 		return unsupportedSDKOption("MaxContextTokens")
 	}
 	if opts.MailboxPendingInterrupt != nil {
 		return unsupportedSDKOption("MailboxPendingInterrupt")
 	}
-	// OnEvent and EventBus are carried: RunAgentLoopOnce installs an
-	// SDK bus whose emissions bridgeAgentLoopEvents translates onto
-	// the CLI event surface through the same emit helper the legacy
-	// path uses.
-	if opts.UsageWriter != nil {
-		return unsupportedSDKOption("UsageWriter")
-	}
-	if opts.FinalWriter != nil {
-		return unsupportedSDKOption("FinalWriter")
-	}
+	// OnEvent, EventBus, UsageWriter, FinalWriter, and RequireFinalText
+	// are carried: the event bridge translates SDK loop events, the
+	// audit bridge writes durable token-usage rows per completed
+	// completion, and finalizeSDKTurn writes the final text and
+	// enforces the empty-turn refusal after the run.
 	if opts.SummaryConfig.Summarizer != nil {
 		return unsupportedSDKOption("SummaryConfig.Summarizer")
 	}
@@ -180,13 +175,67 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 		// firing in practice.
 		sdkOpts.HeartbeatInterval = sdkEventEmitInterval
 	}
+	if opts.UsageWriter != nil {
+		sdkOpts.Audit = bridgeUsageAudit(opts, l.Completer.Name())
+	}
 	loop, err := sdkagentloop.New(sdkOpts)
 	if err != nil {
 		return sdkagentloop.Result{}, err
 	}
 	steer := sdkagentloop.NewSteer()
 	bridgeSteerSignals(ctx, opts, steer)
-	return loop.RunSteerable(ctx, cliMessagesToSDK(msgs), steer)
+	res, err := loop.RunSteerable(ctx, cliMessagesToSDK(msgs), steer)
+	if err != nil {
+		return sdkagentloop.Result{}, err
+	}
+	if err := finalizeSDKTurn(opts, res); err != nil {
+		return sdkagentloop.Result{}, err
+	}
+	return res, nil
+}
+
+// bridgeUsageAudit adapts the CLI's durable usage writer onto the
+// SDK's per-event audit callback. One completed completion yields one
+// token_usage row with the provider-reported actuals, the same shape
+// the legacy path's EmitTokenUsage writes; estimate and calibration
+// fields stay zero because the SDK reports actuals only. A non-nil
+// return from an AuditFunc is a hard run failure, and usage writes
+// are best-effort by contract, so the bridge always returns nil.
+func bridgeUsageAudit(opts Options, providerName string) sdkagentloop.AuditFunc {
+	return func(ctx context.Context, rec sdkagentloop.AuditRecord) error {
+		if rec.Kind != sdkagentloop.AuditKindCompletion {
+			return nil
+		}
+		u := rec.Response.Usage
+		if u.PromptTokens == 0 && u.CompletionTokens == 0 {
+			return nil
+		}
+		recordUsage(ctx, opts, usage.UsageRecord{
+			Kind:         "token_usage",
+			Provider:     providerName,
+			Model:        rec.Request.Model,
+			InputTokens:  u.PromptTokens,
+			OutputTokens: u.CompletionTokens,
+		})
+		return nil
+	}
+}
+
+// finalizeSDKTurn applies the CLI's post-turn Options after a
+// graceful SDK stop: FinalWriter receives the final assistant text
+// (post-hoc rather than streamed - the SDK result is whole), and
+// RequireFinalText fails a turn that produced no assistant text
+// anywhere, matching the legacy empty-turn refusal.
+func finalizeSDKTurn(opts Options, res sdkagentloop.Result) error {
+	if opts.FinalWriter != nil && res.Final.Content != "" {
+		if _, err := io.WriteString(opts.FinalWriter, res.Final.Content); err != nil {
+			return fmt.Errorf("agent: write final text: %w", err)
+		}
+	}
+	if opts.RequireFinalText && strings.TrimSpace(res.Final.Content) == "" {
+		return fmt.Errorf("agent: turn produced no assistant text")
+	}
+	return nil
 }
 
 // RunAgentLoop drives the SDK's agentloop.Loop for one Options. It
