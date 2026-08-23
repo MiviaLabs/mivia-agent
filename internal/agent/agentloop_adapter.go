@@ -26,7 +26,6 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
-	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/usage"
 	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
@@ -84,6 +83,13 @@ func buildAgentLoopOptions(l *Loop, opts Options) (sdkagentloop.Options, error) 
 	if opts.BatchResultBudgetBytes > 0 {
 		out.TurnResultBudget = opts.BatchResultBudgetBytes
 	}
+	// WorkLimits.MaxTurns clamps MaxIterations, mirroring the legacy
+	// clamp at loop.go's runOnceLegacy: the test reads opts.MaxSteps
+	// (pre-default) because an unset MaxSteps means unbounded, so ANY
+	// positive turn limit becomes the bound even above the default 25.
+	if limit := opts.WorkLimits.MaxTurns; limit > 0 && (opts.MaxSteps <= 0 || limit < opts.MaxSteps) {
+		out.MaxIterations = limit
+	}
 	// WatchdogInterval deliberately does NOT map to
 	// HeartbeatInterval: a positive HeartbeatInterval requires a Bus
 	// the CLI path does not wire, and Validate would reject the
@@ -120,8 +126,22 @@ func rejectUnsupportedSDKBatches(opts Options) error {
 	if opts.BatchResultBudgetBytes < 0 {
 		return unsupportedSDKOption("BatchResultBudgetBytes (negative derived mode)")
 	}
-	if opts.WorkLimits != (runtime.WorkLimits{}) {
-		return unsupportedSDKOption("WorkLimits")
+	// WorkLimits splits: MaxTurns and DeadlineAt are carried (the
+	// turn clamp in buildAgentLoopOptions and the deadline narrowing
+	// in RunAgentLoopOnce); the four token-reservation fields have no
+	// SDK analogue - the SDK loop reserves nothing and refunds
+	// nothing - so each fails closed by name.
+	if opts.WorkLimits.MaxPromptTokens > 0 {
+		return unsupportedSDKOption("WorkLimits.MaxPromptTokens")
+	}
+	if opts.WorkLimits.MaxOutputTokens > 0 {
+		return unsupportedSDKOption("WorkLimits.MaxOutputTokens")
+	}
+	if opts.WorkLimits.MaxOutputPerCall > 0 {
+		return unsupportedSDKOption("WorkLimits.MaxOutputPerCall")
+	}
+	if opts.WorkLimits.MaxToolCalls > 0 {
+		return unsupportedSDKOption("WorkLimits.MaxToolCalls")
 	}
 	if opts.PreserveWorkLimits {
 		return unsupportedSDKOption("PreserveWorkLimits")
@@ -156,6 +176,17 @@ func rejectUnsupportedSDKBatches(opts Options) error {
 // the predicate returns true. A nil InterruptCh or MailboxPending
 // spawns nothing.
 func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provider.Message) (sdkagentloop.Result, error) {
+	// WorkLimits.DeadlineAt narrows the context deadline, mirroring
+	// the legacy narrowing at loop.go's runOnceLegacy: the earlier of
+	// the parent deadline and the work deadline wins; an unset parent
+	// takes the work deadline as-is.
+	if deadline := opts.WorkLimits.DeadlineAt; !deadline.IsZero() {
+		if parent, ok := ctx.Deadline(); !ok || deadline.Before(parent) {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithDeadline(ctx, deadline)
+			defer cancel()
+		}
+	}
 	sdkOpts, err := buildAgentLoopOptions(l, opts)
 	if err != nil {
 		return sdkagentloop.Result{}, err

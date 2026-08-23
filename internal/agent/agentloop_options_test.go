@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/usage"
 	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
@@ -52,6 +53,10 @@ func TestBuildAgentLoopOptionsFailClosed(t *testing.T) {
 		{"PreserveWorkLimits", Options{PreserveWorkLimits: true}, "PreserveWorkLimits"},
 		{"MaxContextTokens", Options{MaxContextTokens: 1000}, "MaxContextTokens"},
 		{"MailboxPendingInterrupt", Options{MailboxPendingInterrupt: func() bool { return false }}, "MailboxPendingInterrupt"},
+		{"WL.MaxPromptTokens", Options{WorkLimits: runtime.WorkLimits{MaxPromptTokens: 1}}, "WorkLimits.MaxPromptTokens"},
+		{"WL.MaxOutputTokens", Options{WorkLimits: runtime.WorkLimits{MaxOutputTokens: 1}}, "WorkLimits.MaxOutputTokens"},
+		{"WL.MaxOutputPerCall", Options{WorkLimits: runtime.WorkLimits{MaxOutputPerCall: 1}}, "WorkLimits.MaxOutputPerCall"},
+		{"WL.MaxToolCalls", Options{WorkLimits: runtime.WorkLimits{MaxToolCalls: 1}}, "WorkLimits.MaxToolCalls"},
 	}
 	l := &Loop{Completer: &fakeCompleter{name: "test"}, Tools: tools.NewRegistry()}
 	for _, tt := range tests {
@@ -314,5 +319,65 @@ func TestRunAgentLoopOnceRequireFinalTextFailsEmpty(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no assistant text") {
 		t.Fatalf("err = %v, want it to name the empty turn", err)
+	}
+}
+
+// TestBuildAgentLoopOptionsWorkLimitsTurnsClamp asserts the MaxTurns
+// clamp mirrors the legacy rule exactly: the test reads MaxSteps
+// pre-default, so an unset MaxSteps takes ANY positive turn limit as
+// the bound (even above the default 25), and a set MaxSteps takes
+// the tighter of the two.
+func TestBuildAgentLoopOptionsWorkLimitsTurnsClamp(t *testing.T) {
+	l := &Loop{Completer: &fakeCompleter{name: "f"}, Tools: tools.NewRegistry()}
+	cases := []struct {
+		name     string
+		maxSteps int
+		maxTurns int
+		want     int
+	}{
+		{"unset steps take any limit", 0, 30, 30},
+		{"unset steps take small limit", 0, 3, 3},
+		{"tighter limit wins", 5, 3, 3},
+		{"configured steps win when tighter", 3, 10, 3},
+		{"zero limit leaves default", 0, 0, defaultSDKMaxIterations},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := buildAgentLoopOptions(l, Options{MaxSteps: tc.maxSteps, WorkLimits: runtime.WorkLimits{MaxTurns: tc.maxTurns}})
+			if err != nil {
+				t.Fatalf("buildAgentLoopOptions: %v", err)
+			}
+			if got.MaxIterations != tc.want {
+				t.Fatalf("MaxIterations = %d, want %d", got.MaxIterations, tc.want)
+			}
+		})
+	}
+}
+
+// TestRunAgentLoopOnceDeadlineExpiry asserts a past WorkLimits
+// deadline fails the turn promptly instead of reaching the completer:
+// the deadline narrowing wraps the context before the SDK loop runs.
+func TestRunAgentLoopOnceDeadlineExpiry(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+	l := &Loop{Completer: &fakeCompleter{name: "f", blocksChat: release}, Tools: tools.NewRegistry()}
+	done := make(chan struct{})
+	var err error
+	go func() {
+		defer close(done)
+		_, err = RunAgentLoopOnce(context.Background(), l, Options{
+			MaxSteps: 1,
+			WorkLimits: runtime.WorkLimits{
+				DeadlineAt: time.Now().Add(-1 * time.Second),
+			},
+		}, nil)
+	}()
+	select {
+	case <-done:
+		if err == nil {
+			t.Fatal("past deadline returned nil error; want deadline-exceeded failure")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("RunAgentLoopOnce hung for 2s with a past deadline")
 	}
 }
