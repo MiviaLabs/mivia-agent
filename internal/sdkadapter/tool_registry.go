@@ -11,15 +11,20 @@
 // tool's Parameters() map - the same OpenAI-parameters object the
 // CLI's OpenAITools() publishes today.
 //
-// Admission-checked conversion: ConvertToolRegistryWithAdmission
-// accepts optional StagedMessage and UnadmittedHandler predicates
-// mirroring the legacy CLI's loop_tool_exec.go:13-27 checks. When a
-// predicate answers true for a call, the wrapped tool returns the
-// denial string wrapped in tools.Out, the SDK renders it as a
-// RoleTool message, and the model retries on the next iteration.
-// Per-call evaluation keeps the UnadmittedHandler auto-stage side
-// effect (see internal/agent/options.go:108-117) firing only when
-// the model actually invokes the unadmitted tool. See
+// ConvertToolRegistryWithAdmission adds the legacy CLI's per-call
+// staged/unadmitted predicates (see internal/agent/loop_tool_exec.go:13-27)
+// on top of the standard wrapper: a predicate answering true
+// returns a denial string wrapped in tools.Out, which the SDK
+// renders as a RoleTool message so the model retries on the next
+// iteration. Per-call evaluation keeps the UnadmittedHandler
+// auto-stage side effect (see internal/agent/options.go:108-117)
+// firing only when the model actually invokes the unadmitted tool.
+//
+// The ref-only shim lives in the agent package
+// (internal/agent/refonly_shim.go) and is applied after this
+// converter. It cannot live here because *remainder.Spool already
+// imports sdkadapter for sdkadapter.Mint; placing the shim in
+// sdkadapter would create an import cycle. See
 // docs/development/sdk-backend-field-mapping.md for the wider
 // rationale.
 package sdkadapter

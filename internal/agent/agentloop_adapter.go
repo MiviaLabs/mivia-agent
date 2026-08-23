@@ -64,6 +64,7 @@ func buildAgentLoopOptions(l *Loop, opts Options) (sdkagentloop.Options, error) 
 	if err != nil {
 		return sdkagentloop.Options{}, err
 	}
+	applyRefOnlyShim(sdkTools, opts.RefOnlyTools, opts.RemainderSpool, BatchDegradeFloorBytes, opts.SessionID)
 	maxIterations := opts.MaxSteps
 	if maxIterations <= 0 {
 		maxIterations = defaultSDKMaxIterations
@@ -118,12 +119,10 @@ func rejectUnsupportedSDKBatches(opts Options) error {
 	if opts.BeforeStep != nil {
 		return unsupportedSDKOption("BeforeStep")
 	}
-	if len(opts.RefOnlyTools) > 0 {
-		return unsupportedSDKOption("RefOnlyTools")
-	}
-	if opts.RemainderSpool != nil {
-		return unsupportedSDKOption("RemainderSpool")
-	}
+	// RefOnlyTools and RemainderSpool are carried by the per-call
+	// ref-only shim in the tool-registry converter. The shim mirrors
+	// the legacy CLI's refOnlyTier (internal/agent/shape_batch_refonly.go:25-45)
+	// faithfully: floor check, tool membership, spool, ref-notice text.
 	// Negative BatchResultBudgetBytes derives a budget from
 	// MaxContextTokens in the CLI's shape_batch path; the SDK's
 	// TurnResultBudget is a literal byte budget only, so this
@@ -163,21 +162,23 @@ func rejectUnsupportedSDKBatches(opts Options) error {
 	// byte count after the fact.
 	// OnEvent, EventBus, UsageWriter, FinalWriter, RequireFinalText,
 	// SummaryConfig.Summarizer, StagedToolMessage, UnadmittedToolHandler,
-	// and MailboxPendingInterrupt are carried: the event bridge
-	// translates SDK loop events, the audit bridge writes durable
-	// token-usage rows per completed completion, finalizeSDKTurn
-	// writes the final text and enforces the empty-turn refusal after
-	// the run, the steer bridge spawns a third goroutine that
-	// polls MailboxPendingInterrupt as the strict signal branch
-	// (parallel to the InterruptCh one-shot and the MailboxPending
-	// watchdog poller), prepareSDKHistory runs the CLI's host-side
-	// SummaryConfig.Summarizer once before the SDK loop runs so the
-	// SDK receives a starting history with the summary message
-	// already injected, and the tool-registry converter wraps every
-	// CLI tool with admission checks that mirror the legacy
-	// loop_tool_exec.go:13-27 checks (staged/unadmitted predicates
-	// run per-call so the UnadmittedHandler auto-stage side effect
-	// fires only when the model actually calls the unadmitted tool).
+	// RefOnlyTools, RemainderSpool, and MailboxPendingInterrupt are
+	// carried: the event bridge translates SDK loop events, the audit
+	// bridge writes durable token-usage rows per completed completion,
+	// finalizeSDKTurn writes the final text and enforces the
+	// empty-turn refusal after the run, the steer bridge spawns a
+	// third goroutine that polls MailboxPendingInterrupt as the
+	// strict signal branch (parallel to the InterruptCh one-shot and
+	// the MailboxPending watchdog poller), prepareSDKHistory runs the
+	// CLI's host-side SummaryConfig.Summarizer once before the SDK
+	// loop runs so the SDK receives a starting history with the
+	// summary message already injected, and the tool-registry
+	// converter wraps every CLI tool with admission predicates plus
+	// the per-call ref-only shim (mirroring the legacy
+	// loop_tool_exec.go:13-27 admission checks and
+	// shape_batch_refonly.go:25-45 ref-only tier; per-call evaluation
+	// keeps the UnadmittedHandler auto-stage side effect firing only
+	// when the model actually invokes the unadmitted tool).
 	// injected as the last user-role frame.
 	return nil
 }

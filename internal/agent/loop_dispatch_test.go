@@ -79,13 +79,13 @@ func TestRunOnceSDKFailClosedSurfacesThroughRun(t *testing.T) {
 		Tools:     tools.NewRegistry(),
 	}
 	opts := Options{Model: "m", MaxSteps: 1, Backend: "sdk"}
-	opts.RefOnlyTools = []string{"x"}
+	opts.PreserveWorkLimits = true
 	_, err := loop.Run(context.Background(), "hi", opts)
 	if err == nil {
-		t.Fatal("Run with RefOnlyTools under the sdk backend returned nil error; want fail-closed error")
+		t.Fatal("Run with PreserveWorkLimits under the sdk backend returned nil error; want fail-closed error")
 	}
-	if !strings.Contains(err.Error(), "RefOnlyTools") {
-		t.Fatalf("err = %v, want it to name RefOnlyTools", err)
+	if !strings.Contains(err.Error(), "PreserveWorkLimits") {
+		t.Fatalf("err = %v, want it to name PreserveWorkLimits", err)
 	}
 }
 

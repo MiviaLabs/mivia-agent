@@ -20,6 +20,10 @@ The SDK path consumes these directly:
 | `Reasoning` | `Options.ReasoningEffort` | 7→4 mapping in `sdkadapter` |
 | `MaxToolCallsPerBatch` | `Options.MaxCallsPerTurn` | positive only |
 | `BatchResultBudgetBytes > 0` | `Options.TurnResultBudget` | literal bytes |
+| `MaxContextTokens` | host-side compaction | `prepareSDKHistory` calls `PreparationManager.Prepare`; SDK's `Window` stays nil |
+| `SummaryConfig.Summarizer` | host-side inject | `prepareSDKHistory` calls `Loop.injectSummary` after compaction; SDK sees injected summary frame |
+| `StagedToolMessage` / `UnadmittedToolHandler` | per-call wrapper | `sdkadapter.ConvertToolRegistryWithAdmission`; SDK renders denial as `RoleTool` |
+| `RefOnlyTools` / `RemainderSpool` | per-call wrapper | `applyRefOnlyShim` calls CLI's `*remainder.Spool` directly (sidesteps `WithPrincipal` requirement) |
 | `OnEvent` / `EventBus` | `Options.Bus` | via `bridgeAgentLoopEvents` |
 | `UsageWriter` | `Options.Audit` | via `bridgeUsageAudit` |
 | `FinalWriter` / `RequireFinalText` | post-run finalize | via `finalizeSDKTurn` |
@@ -127,51 +131,27 @@ table tests in `tool_registry_test.go`.
 
 ### `RefOnlyTools`, `RemainderSpool`
 
-The SDK exposes `spool.SpoolTool` (`spool/tool.go:202-234`) for
-per-call oversize-to-spool and `BatchTruncationNotice`
-(`agentloop/wire.go:32-37`) as the over-budget fallback. The CLI's
-"promote oversize to ref instead of notice, gated by tool name and
-batch byte pressure" is a *policy* on top of these primitives.
+**Carried.** The SDK's `spool.SpoolTool` (`spool/tool.go:202-234`)
+requires `WithPrincipal` on ctx, which no SDK call site attaches
+(no production caller invokes `spool.WithPrincipal`); wrapping
+`RefOnlyTools` tools in `SpoolTool` would fail every wrapped call
+with `ErrNoPrincipal`. The agent-side `applyRefOnlyShim` in
+`internal/agent/refonly_shim.go` mirrors the legacy CLI's
+`refOnlyTier` (`internal/agent/shape_batch_refonly.go:25-45`)
+faithfully on the SDK path: floor check, tool membership, then
+call the CLI's `*remainder.Spool.Spool(ctx, principal, body)` and
+return the same ref-notice text. The shim runs after the
+`ConvertToolRegistryWithAdmission` call so the order matches
+`loop_tool_exec.go:13-27` (admission first) and
+`shape_batch_refonly.go:25-45` (ref-only after tool execution).
 
-**Carried today (A3): stay fail-closed; document the gap.** The
-adapter's `rejectUnsupportedSDKBatches` keeps `RefOnlyTools` and
-`RemainderSpool` in the unsupported set. A `Backend: "sdk"` caller
-that needs ref-notices must stay on `Backend: "legacy"`.
-
-Why the originally proposed A1 / A2 wiring does not work:
-
-1. **Batch-level vs per-call semantics.** The CLI's
-   `refOnlyTier` (`internal/agent/shape_batch.go:341`,
-   `shape_batch_refonly.go:25-45`) fires only when the batch is over
-   `effectiveBatchBudget` AND the body clears `BatchDegradeFloorBytes`
-   AND the tool is in `RefOnlyTools`. `spool.SpoolTool` is
-   unconditional per-call: every wrapped Run spools when its content
-   exceeds `maxBytes`. Wrapping `RefOnlyTools` tools in `SpoolTool`
-   changes user-facing behavior for under-budget batches and small
-   results.
-
-2. **Missing principal injection.** `spool.SpoolTool.Run` reads the
-   spool principal via `spool.PrincipalFrom(ctx)`
-   (`spool/tool.go:38-42`); without `spool.WithPrincipal(ctx, name)`
-   attached, every wrapped call returns `ErrNoPrincipal`. No
-   production SDK call site attaches `WithPrincipal` (grep across
-   the SDK: zero non-test call sites), and the SDK's pre-tool hook
-   layer (`agentloop/toolcall.go:165-173`) discards the handler's
-   returned context, so a `PointPreTool` handler cannot inject the
-   principal before the wrapped tool runs. Wrapping `RefOnlyTools`
-   in `SpoolTool` would fail every wrapped call.
-
-An SDK-side fix would unlock this. Either (a) a `PointPreTool`
-handler return shape that lets the handler attach a context
-(consumed by `RunScoped`), or (b) a `spool.Spool` constructor
-variant taking a `principal func(ctx) string` resolver. Either is
-a non-trivial SDK decision; either is out of scope for the
-flag-flip series. Until one lands, `Backend: "sdk"` callers cannot
-get ref-notices from these flags. The host's existing
-`read_output` tool (`internal/clichat/read_output.go:42-43`) is
-unaffected — it reads through the CLI's `*remainder.Spool` directly
-and continues to work for any caller that stays on
-`Backend: "legacy"`.
+The shim is a per-call wrapper registered under each named tool,
+post-conversion. Read-back continues to flow through the CLI's
+existing `read_output` tool (`internal/clichat/read_output.go:42-43`),
+which reads through the same `*remainder.Spool`. The shim lives
+in the agent package (not `sdkadapter`) because `*remainder.Spool`
+already imports `sdkadapter` for `sdkadapter.Mint`; placing the
+shim in `sdkadapter` would create an import cycle.
 
 ### `MaxContextTokens`
 
@@ -220,14 +200,14 @@ semantics, and the SDK's 5-field schema is never reached.
 ## 4. Under CLI refactor (fail-closed today)
 
 No fields remain in this section. `MaxContextTokens`,
-`SummaryConfig.Summarizer`, `StagedToolMessage`, and
-`UnadmittedToolHandler` are all carried today (see §1 and §3). The
-remaining fail-closed fields are documented as legacy-only in §3:
-`Surface` rotation, the four `WorkLimits` token reservations, and
-`RefOnlyTools`/`RemainderSpool`. None of those need SDK extensions;
-they are accepted semantic gaps that require either SDK work the
-SDK authors have not yet committed to or design decisions the CLI
-cannot make on its own.
+`SummaryConfig.Summarizer`, `StagedToolMessage`,
+`UnadmittedToolHandler`, `RefOnlyTools`, and `RemainderSpool` are
+all carried today (see §1 and §3). The remaining fail-closed
+fields are documented as legacy-only in §3: `Surface` rotation and
+the four `WorkLimits` token reservations. None of those need SDK
+extensions; they are accepted semantic gaps that require either
+SDK work the SDK authors have not yet committed to or design
+decisions the CLI cannot make on its own.
 
 `MaxContextTokens` and `SummaryConfig.Summarizer` are carried by
 the SDK path: `RunAgentLoopOnce` calls `opts.PreparationManager.Prepare`
