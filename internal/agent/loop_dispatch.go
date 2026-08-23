@@ -47,7 +47,6 @@ func (l *Loop) runOnceSDK(ctx context.Context, userText string, opts Options) (s
 	msgs := make([]provider.Message, 0, len(l.Messages)+1)
 	msgs = append(msgs, l.Messages...)
 	msgs = append(msgs, provider.Message{Role: provider.RoleUser, Content: userText})
-	startLen := len(msgs)
 	res, err := RunAgentLoopOnce(ctx, l, opts, msgs)
 	// Write the turn's history back even on error: the legacy path keeps
 	// the user message and every completed step's messages in l.Messages
@@ -60,12 +59,13 @@ func (l *Loop) runOnceSDK(ctx context.Context, userText string, opts Options) (s
 		// A canceled or timed-out run keeps the partial reply the turn
 		// already produced, mirroring the legacy interrupted-step
 		// contract (Loop.Run returns lastText on an interrupted step;
-		// the subagent pool maps this to status canceled/timed_out and
+		// the subagent pool maps it to status canceled/timed_out and
 		// keeps the output). Every other error returns empty so a raw
 		// provider body cannot leak (the pinned guarantee in
 		// TestMultiStepHandlerFailureOmitsRawProviderBodyAndRefs).
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			for i := len(res.History) - 1; i >= startLen; i-- {
+			startIdx := sdkCurrentTurnStart(res.History, userText)
+			for i := len(res.History) - 1; i >= startIdx; i-- {
 				if m := res.History[i]; m.Role == sdkshape.RoleAssistant && strings.TrimSpace(m.Content) != "" {
 					return m.Content, err
 				}
@@ -74,7 +74,7 @@ func (l *Loop) runOnceSDK(ctx context.Context, userText string, opts Options) (s
 		return "", err
 	}
 	if res.Stop == sdkagentloop.StopSteered {
-		return "", errSteerInterrupt
+		return sdkSteeredStopPartial(res.History, userText)
 	}
 	if res.Stop == sdkagentloop.StopMaxIterations {
 		// Legacy parity: exceeding the step cap is a hard error naming
@@ -82,16 +82,68 @@ func (l *Loop) runOnceSDK(ctx context.Context, userText string, opts Options) (s
 		return "", fmt.Errorf("agent exceeded max_steps (%d)", effectiveSDKMaxIterations(opts))
 	}
 	if strings.TrimSpace(res.Final.Content) == "" {
-		// Mirror the legacy lastText fallback, scoped to THIS turn: a
-		// graceful stop whose final step produced no text returns the
-		// last assistant text the turn produced, never a prior turn's.
-		for i := len(res.History) - 1; i >= startLen; i-- {
+		startIdx := sdkCurrentTurnStart(res.History, userText)
+		for i := len(res.History) - 1; i >= startIdx; i-- {
 			if m := res.History[i]; m.Role == sdkshape.RoleAssistant && strings.TrimSpace(m.Content) != "" {
 				return m.Content, nil
 			}
 		}
 	}
 	return res.Final.Content, nil
+}
+
+// sdkCurrentTurnStart returns the index in `history` of the first
+// in-scope message of the current turn. Locate by matching the user
+// message Content from history backward; a stale index computed
+// against the pre-prepare msgs slice would land past the start of
+// `history` when prepareSDKHistory compacts the pre-turn prefix.
+func sdkCurrentTurnStart(history []sdkshape.Message, userText string) int {
+	for i := len(history) - 1; i >= 0; i-- {
+		m := history[i]
+		if m.Role == sdkshape.RoleUser && m.Content == userText {
+			return i + 1
+		}
+	}
+	return 0
+}
+
+// sdkSteeredStopPartial returns the partial reply a steered-stop run
+// carries. The SDK cancels the in-flight Completer.Chat wholesale on
+// Trigger, so the bytes emitted inside the canceled call are lost;
+// what survives in `history` are the assistant messages appended
+// before the cancel. The function locates the current turn's start
+// marker (the most recent user-role message whose Content matches
+// `userText`) and walks history backward from there, returning the
+// most recent non-empty assistant content along with
+// `errSteerInterrupt`, mirroring the legacy `lastText` contract at
+// loop.go:143-179.
+//
+// Locating the boundary by Content match (not by an index precomputed
+// against the pre-prepare msgs) is load-bearing: when a
+// PreparationManager is wired, prepareSDKHistory may shrink the
+// pre-turn prefix, so an index computed from the original msgs slice
+// would land past the start of `history` and the walk would never
+// execute. Content match is robust against that prefix compaction.
+//
+// A steered-stop run with no surviving in-scope assistant content
+// returns ("", errSteerInterrupt) so callers that read text=empty
+// recognize the truly-empty case.
+func sdkSteeredStopPartial(history []sdkshape.Message, userText string) (string, error) {
+	startIdx := 0
+	for i := len(history) - 1; i >= 0; i-- {
+		m := history[i]
+		if m.Role == sdkshape.RoleUser && m.Content == userText {
+			startIdx = i + 1
+			break
+		}
+	}
+	for i := len(history) - 1; i >= startIdx; i-- {
+		m := history[i]
+		if m.Role == sdkshape.RoleAssistant && strings.TrimSpace(m.Content) != "" {
+			return m.Content, errSteerInterrupt
+		}
+	}
+	return "", errSteerInterrupt
 }
 
 // restoreSDKHistoryTimestamps copies CreatedAt from the pre-turn slice
