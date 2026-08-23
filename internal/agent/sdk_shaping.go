@@ -139,12 +139,25 @@ type resultBudgetTool interface {
 }
 
 // applyTurnShaping wraps every tool in the SDK registry with the
-// turn-level shaping wrapper when a positive BatchResultBudgetBytes is
-// configured. The SDK's own TurnResultBudget stays unset so its
-// omission path never runs. A non-positive budget leaves the registry
-// unchanged.
+// turn-level shaping wrapper. Positive BatchResultBudgetBytes is
+// literal; negative selects the legacy derived-from-context budget
+// (shape_batch.go:505-517); zero leaves the registry inert. The
+// SDK's own TurnResultBudget stays unset across all three branches so
+// its omission path never runs.
 func applyTurnShaping(sdkReg *sdktools.Registry, cliReg *tools.Registry, opts Options, turn *sdkTurnState) {
-	if sdkReg == nil || opts.BatchResultBudgetBytes <= 0 {
+	if sdkReg == nil {
+		return
+	}
+	budget := opts.BatchResultBudgetBytes
+	switch {
+	case budget > 0:
+		// literal
+	case budget < 0:
+		budget = derivedBatchBudget(opts.MaxContextTokens)
+		if budget <= 0 {
+			return
+		}
+	default:
 		return
 	}
 	counter := &turnShapeCounter{}
@@ -161,7 +174,7 @@ func applyTurnShaping(sdkReg *sdktools.Registry, cliReg *tools.Registry, opts Op
 		}
 		wrapped := &turnShapeWrapper{
 			inner:     t,
-			budget:    opts.BatchResultBudgetBytes,
+			budget:    budget,
 			counter:   counter,
 			env:       env,
 			ephemeral: ephemeral,
