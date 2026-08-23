@@ -115,9 +115,12 @@ func (d *dispatcherShim) Run(ctx context.Context, in sdktools.InOut) (sdktools.O
 		defer cancel()
 	}
 	var result, hookContext string
-	if d.opts.Dispatcher == nil {
-		return sdktools.Out{}, fmt.Errorf("agent: tool %q: no dispatcher wired for SDK tool execution", d.inner.Name())
-	}
+	// RunAgentLoopOnce guarantees a non-nil opts.Dispatcher before tools
+	// are wrapped (either the caller wired one or a scoped dispatcher
+	// was built from l.Tools). A nil dispatcher at this point is a
+	// programmer error in package wiring, not a runtime condition;
+	// dispatch via the caller's hook has nothing to attach to, so the
+	// dispatcher must be there.
 	r := d.opts.Dispatcher.Invoke(ctx, runtime.Request{
 		ParentID: d.opts.ParentID, TurnID: d.opts.TurnID, SessionID: d.opts.SessionID,
 		Role: d.opts.Role, Depth: d.opts.Depth, Budget: d.opts.Budget,

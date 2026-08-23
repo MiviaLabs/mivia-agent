@@ -3,6 +3,7 @@ package sdkadapter
 // Tests for the CLI-to-SDK tool-registry converter.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"testing"
@@ -240,4 +241,70 @@ func (c *countingCLITool) Parameters() map[string]any { return c.params }
 func (c *countingCLITool) Execute(_ context.Context, _ json.RawMessage) (string, error) {
 	c.calls++
 	return c.exec, nil
+}
+
+// TestRelaxTopLevelAdditionalPropertiesUnmarshalFailure pins
+// sdkadapter/tool_registry.go:166-168: a schema that contains the
+// "additionalProperties" key but is not valid JSON unmarshals as
+// err != nil and the relaxer returns the schema unchanged.
+func TestRelaxTopLevelAdditionalPropertiesUnmarshalFailure(t *testing.T) {
+	// An object-shaped string is valid JSON but map[string]any
+	// unmarshalling sees a non-object type. json.Unmarshal of an
+	// object into map[string]any succeeds; we need INVALID JSON.
+	garbled := []byte(`{"additionalProperties": false, malformed`)
+	got := relaxTopLevelAdditionalProperties(garbled)
+	if !bytes.Equal(got, garbled) {
+		t.Fatalf("schema changed on garbled input")
+	}
+}
+
+// TestRelaxTopLevelAdditionalPropertiesNonBoolEarlyReturn pins
+// sdkadapter/tool_registry.go:170-172: a schema whose
+// "additionalProperties" is not the bool `false` (e.g. an object, a
+// string, or a number) returns the schema as-is.
+func TestRelaxTopLevelAdditionalPropertiesNonBoolEarlyReturn(t *testing.T) {
+	input := []byte(`{"type":"object","additionalProperties":{"type":"string"}}`)
+	got := relaxTopLevelAdditionalProperties(input)
+	if !bytes.Equal(got, input) {
+		t.Fatalf("schema changed when additionalProperties was not bool false: %s", got)
+	}
+}
+
+// TestRelaxTopLevelAdditionalPropertiesTrueEarlyReturn pins the same
+// branch with the JSON literal `true`, which is the most common
+// non-`false` boolean value.
+func TestRelaxTopLevelAdditionalPropertiesTrueEarlyReturn(t *testing.T) {
+	input := []byte(`{"type":"object","additionalProperties":true}`)
+	got := relaxTopLevelAdditionalProperties(input)
+	if !bytes.Equal(got, input) {
+		t.Fatalf("schema changed when additionalProperties was true: %s", got)
+	}
+}
+
+// TestRelaxTopLevelAdditionalPropertiesAbsentEarlyReturn pins
+// sdkadapter/tool_registry.go:163-165: a schema with no
+// "additionalProperties" key returns the schema as-is. This is the
+// common case for most tool parameters.
+func TestRelaxTopLevelAdditionalPropertiesAbsentEarlyReturn(t *testing.T) {
+	input := []byte(`{"type":"object","properties":{"x":{"type":"string"}}}`)
+	got := relaxTopLevelAdditionalProperties(input)
+	if !bytes.Equal(got, input) {
+		t.Fatalf("absent additionalProperties changed: %s", got)
+	}
+}
+
+// TestRelaxTopLevelAdditionalPropertiesRemoveKeyAndMarshal pins
+// sdkadapter/tool_registry.go:173-177: when the JSON unmarshals
+// successfully and the key is bool false, the relaxer deletes the
+// key and re-marshals. Assert the deletion by examining the resulting
+// bytes.
+func TestRelaxTopLevelAdditionalPropertiesRemoveKeyAndMarshal(t *testing.T) {
+	input := []byte(`{"type":"object","properties":{},"additionalProperties":false}`)
+	got := relaxTopLevelAdditionalProperties(input)
+	if bytes.Contains(got, []byte("additionalProperties")) {
+		t.Fatalf("additionalProperties key not removed: %s", got)
+	}
+	if !bytes.Contains(got, []byte(`"type":"object"`)) {
+		t.Fatalf("other keys lost during relax: %s", got)
+	}
 }
