@@ -92,6 +92,15 @@ func buildAgentLoopOptions(l *Loop, opts Options) (sdkagentloop.Options, error) 
 		MaxCallsPerTurn: opts.MaxToolCallsPerBatch,
 		SessionID:       opts.SessionID,
 	}
+	// Streaming: a FinalWriter becomes the SDK's StreamingWriter,
+	// teed through the same teeWriter the legacy path uses so
+	// EventAssistant deltas fire per write. The completer forwards
+	// the writer into the CLI request, the SDK mirrors every byte
+	// into its per-run capture buffer, and the events bridge revokes
+	// the optimistic stream when a turn's tool calls start.
+	if opts.FinalWriter != nil {
+		out.StreamingWriter = &teeWriter{w: opts.FinalWriter, opts: opts}
+	}
 	// BatchResultBudgetBytes > 0 is carried by the host-side turn
 	// shaping wrapper applied above (applyTurnShaping); the SDK's
 	// TurnResultBudget stays unset because its semantics (omit the
@@ -239,7 +248,7 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 	if err != nil {
 		return sdkagentloop.Result{}, err
 	}
-	if opts.OnEvent != nil || opts.EventBus != nil {
+	if opts.OnEvent != nil || opts.EventBus != nil || opts.FinalWriter != nil {
 		// The SDK (since mivia-ai-sdk commit c207575) fires the four
 		// lifecycle names whenever Bus is non-nil; the heartbeat ticks
 		// gate separately on HeartbeatInterval, which stays zero here
@@ -374,7 +383,14 @@ func finalizeSDKTurn(opts Options, res sdkagentloop.Result, startLen int) error 
 			}
 		}
 	}
-	if opts.FinalWriter != nil && text != "" {
+	// A non-empty res.Final streamed live to a FinalWriter through
+	// the SDK StreamingWriter tee (see buildAgentLoopOptions), the
+	// same rule the legacy commitFinalAnswer follows: rewriting it
+	// here would duplicate the answer. A zero Final (StopMaxIterations
+	// and the other pre-response stops) means the turn's last text
+	// was revoked as optimistic content when its tool calls started,
+	// so that text reaches the writer only here.
+	if opts.FinalWriter != nil && text != "" && strings.TrimSpace(res.Final.Content) == "" {
 		if _, err := io.WriteString(opts.FinalWriter, text); err != nil {
 			return fmt.Errorf("agent: write final text: %w", err)
 		}

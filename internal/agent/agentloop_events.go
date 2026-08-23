@@ -26,19 +26,38 @@ import (
 // installs the returned bus as agentloop.Options.Bus.
 func bridgeAgentLoopEvents(opts Options) *sdkevents.Bus {
 	bus := sdkevents.New()
-	subscribe := func(name sdkevents.Name, kind EventKind) {
-		// Subscribe errors are impossible here: the names are
-		// non-blank package constants and the bus is fresh, so the
-		// only failure modes (blank name, duplicate registration)
-		// cannot occur. Ignoring the error keeps the handler body
-		// focused on the translation.
-		_ = bus.Subscribe(name, func(_ context.Context, e sdkevents.Event) error {
-			emit(opts, Event{Kind: kind, Detail: e.Data})
-			return nil
-		})
-	}
-	subscribe(sdkagentloop.EventIterationStart, EventStep)
-	subscribe(sdkagentloop.EventToolCallStart, EventToolStart)
-	subscribe(sdkagentloop.EventToolCallEnd, EventToolEnd)
+	// revoked gates the stream revoke to once per iteration. The SDK
+	// emits every event of one run from that run's goroutine, so no
+	// lock guards it; it is a local so concurrent runs on separate
+	// bridges never share it.
+	revoked := false
+	// Subscribe errors are impossible here: the names are
+	// non-blank package constants and the bus is fresh, so the
+	// only failure modes (blank name, duplicate registration)
+	// cannot occur. Ignoring the error keeps the handler bodies
+	// focused on the translation.
+	_ = bus.Subscribe(sdkagentloop.EventIterationStart, func(_ context.Context, e sdkevents.Event) error {
+		revoked = false
+		emit(opts, Event{Kind: EventStep, Detail: e.Data})
+		return nil
+	})
+	_ = bus.Subscribe(sdkagentloop.EventToolCallStart, func(_ context.Context, e sdkevents.Event) error {
+		// Content-then-tools: the first tool call of an iteration
+		// clears the optimistic final-stream tokens the Completer
+		// streamed before the tool_calls arrived, the same
+		// revokeStreamWriter call the legacy loop makes ahead of
+		// processToolCalls. Once per iteration: later calls in the
+		// same batch must not revoke again.
+		if !revoked {
+			revoked = true
+			revokeStreamWriter(opts.FinalWriter)
+		}
+		emit(opts, Event{Kind: EventToolStart, Detail: e.Data})
+		return nil
+	})
+	_ = bus.Subscribe(sdkagentloop.EventToolCallEnd, func(_ context.Context, e sdkevents.Event) error {
+		emit(opts, Event{Kind: EventToolEnd, Detail: e.Data})
+		return nil
+	})
 	return bus
 }

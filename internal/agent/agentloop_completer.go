@@ -95,7 +95,7 @@ func (a *agentLoopCompleter) Name() string { return a.cli.Name() }
 // SDK treats Reported=false Usage as "no observation", which is
 // the correct neutral value here.
 func (a *agentLoopCompleter) Chat(ctx context.Context, req sdkshape.Request) (sdkshape.Response, error) {
-	cliReq := mergeTurnDefaults(translateAgentLoopRequest(req), a.defaults)
+	cliReq := applyStreaming(mergeTurnDefaults(translateAgentLoopRequest(req), a.defaults), req)
 	if a.onChat != nil {
 		a.onChat()
 	}
@@ -121,19 +121,22 @@ func (a *agentLoopCompleter) Chat(ctx context.Context, req sdkshape.Request) (sd
 	}, nil
 }
 
-// ChatStream implements provider.Completer. It returns a buffered
-// channel of one content Chunk and one terminal Chunk, then closes
-// the channel. The body invokes the CLI's synchronous Chat and
-// emits the content as a single delta chunk; true streaming is
-// deferred to a follow-up commit. The goroutine selects on
-// ctx.Done() before each emit so a cancellation does not block
-// the channel close.
+// ChatStream implements provider.Completer. It forwards to the CLI's
+// ChatStream, which writes content deltas live to the request's
+// StreamWriter as they arrive; when the SDK request carries no
+// StreamingWriter the assembled content still reaches the caller as
+// one delta chunk on the returned channel. The goroutine selects on
+// ctx.Done() before each emit so a cancellation does not block the
+// channel close.
 func (a *agentLoopCompleter) ChatStream(ctx context.Context, req sdkshape.Request) (<-chan sdkshape.Chunk, error) {
 	ch := make(chan sdkshape.Chunk, 1)
 	go func() {
 		defer close(ch)
-		cliReq := mergeTurnDefaults(translateAgentLoopRequest(req), a.defaults)
-		content, err := a.cli.Chat(ctx, cliReq)
+		cliReq := applyStreaming(mergeTurnDefaults(translateAgentLoopRequest(req), a.defaults), req)
+		if a.onChat != nil {
+			a.onChat()
+		}
+		content, err := a.cli.ChatStream(ctx, cliReq, cliReq.StreamWriter)
 		if err != nil {
 			select {
 			case ch <- sdkshape.Chunk{Err: err}:
@@ -141,7 +144,11 @@ func (a *agentLoopCompleter) ChatStream(ctx context.Context, req sdkshape.Reques
 			}
 			return
 		}
-		if content != "" {
+		finish := "stop"
+		if a.onFinish != nil {
+			a.onFinish(finish)
+		}
+		if content != "" && cliReq.StreamWriter == nil {
 			select {
 			case ch <- sdkshape.Chunk{Delta: content}:
 			case <-ctx.Done():
@@ -149,11 +156,24 @@ func (a *agentLoopCompleter) ChatStream(ctx context.Context, req sdkshape.Reques
 			}
 		}
 		select {
-		case ch <- sdkshape.Chunk{Done: true, FinishReason: "stop"}:
+		case ch <- sdkshape.Chunk{Done: true, FinishReason: finish}:
 		case <-ctx.Done():
 		}
 	}()
 	return ch, nil
+}
+
+// applyStreaming turns the SDK request's StreamingWriter into the CLI
+// request's live-stream plumbing: Stream on (the legacy loop streams
+// whenever a FinalWriter is attached) and StreamWriter as the delta
+// sink. A nil StreamingWriter leaves the CLI request unchanged.
+func applyStreaming(cliReq provider.Request, req sdkshape.Request) provider.Request {
+	if req.StreamingWriter == nil {
+		return cliReq
+	}
+	cliReq.Stream = true
+	cliReq.StreamWriter = req.StreamingWriter
+	return cliReq
 }
 
 // translateAgentLoopRequest projects an SDK Request onto a CLI

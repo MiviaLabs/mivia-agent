@@ -305,7 +305,13 @@ type errWriter struct{}
 func (errWriter) Write([]byte) (int, error) { return 0, context.DeadlineExceeded }
 
 func TestFinalizeSDKTurnFinalWriterErrorIsHard(t *testing.T) {
-	res := sdkagentloop.Result{Final: sdkshape.Message{Role: sdkshape.RoleAssistant, Content: "answer"}}
+	// A zero Final: the text comes from history, so finalize is the
+	// writer's only delivery path and the write error surfaces. (A
+	// non-empty Final streamed live and is never rewritten.)
+	res := sdkagentloop.Result{History: []sdkshape.Message{
+		{Role: sdkshape.RoleUser, Content: "q"},
+		{Role: sdkshape.RoleAssistant, Content: "answer"},
+	}}
 	err := finalizeSDKTurn(Options{FinalWriter: errWriter{}}, res, 0)
 	if err == nil || !strings.Contains(err.Error(), "write final text") {
 		t.Fatalf("err = %v, want the final-text write error", err)

@@ -162,7 +162,7 @@ func TestLoopRevokesStreamOnToolCalls(t *testing.T) {
 	}
 	var fw revokeBuffer
 	loop := &Loop{Completer: comp, Tools: reg}
-	_, err := loop.Run(context.Background(), "read a", Options{Backend: "legacy",
+	_, err := loop.Run(context.Background(), "read a", Options{Backend: "sdk",
 		Model: "m", MaxSteps: 5, FinalWriter: &fw,
 	})
 	if err != nil {
