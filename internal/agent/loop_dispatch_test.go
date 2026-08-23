@@ -79,13 +79,13 @@ func TestRunOnceSDKFailClosedSurfacesThroughRun(t *testing.T) {
 		Tools:     tools.NewRegistry(),
 	}
 	opts := Options{Model: "m", MaxSteps: 1, Backend: "sdk"}
-	opts.StagedToolMessage = func(string) (string, bool) { return "", false }
+	opts.RefOnlyTools = []string{"x"}
 	_, err := loop.Run(context.Background(), "hi", opts)
 	if err == nil {
-		t.Fatal("Run with StagedToolMessage under the sdk backend returned nil error; want fail-closed error")
+		t.Fatal("Run with RefOnlyTools under the sdk backend returned nil error; want fail-closed error")
 	}
-	if !strings.Contains(err.Error(), "StagedToolMessage") {
-		t.Fatalf("err = %v, want it to name StagedToolMessage", err)
+	if !strings.Contains(err.Error(), "RefOnlyTools") {
+		t.Fatalf("err = %v, want it to name RefOnlyTools", err)
 	}
 }
 

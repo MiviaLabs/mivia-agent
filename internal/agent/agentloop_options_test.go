@@ -49,7 +49,6 @@ func TestBuildAgentLoopOptionsFailClosed(t *testing.T) {
 	}{
 		{"Surface", Options{Surface: func() Surface { return Surface{} }}, "Surface"},
 		{"BeforeStep", Options{BeforeStep: func() []provider.Message { return nil }}, "BeforeStep"},
-		{"StagedToolMessage", Options{StagedToolMessage: func(string) (string, bool) { return "", false }}, "StagedToolMessage"},
 		{"RefOnlyTools", Options{RefOnlyTools: []string{"x"}}, "RefOnlyTools"},
 		{"PreserveWorkLimits", Options{PreserveWorkLimits: true}, "PreserveWorkLimits"},
 		{"WL.MaxPromptTokens", Options{WorkLimits: runtime.WorkLimits{MaxPromptTokens: 1}}, "WorkLimits.MaxPromptTokens"},

@@ -112,29 +112,18 @@ input/output guardrails; MCP is server-side only). The SDK's
 `hooks.Handler` shape is the right generic primitive; the
 substitute-message path is mivia-agent-shaped, not generic.
 
-Two CLI-side workarounds fit the SDK's existing shape and stay
-fail-closed until the CLI does the refactor:
-
-1. **SDK `Scope.Approve` for known-but-declined tools** — register
-   `tools.Scope.Approve` against the live registry for staged or
-   unadmitted names. The SDK denies via `ErrToolDeclined`, the loop
-   ends on this iteration, and the CLI's retry logic produces a
-   `RoleTool` denial message naming the deferred tool on the next
-   iteration. The auto-stage side effect runs inside the CLI's
-   `Approve` callback at the moment of denial — not at conversion
-   time.
-
-2. **Pre-tool hooks that synthesize denial** — register a
-   `PointPreTool` handler that, for a known staged name, returns
-   `(allow=false, err=nil)` and let `StopHookVeto` end the iteration.
-   The CLI catches `StopHookVeto` and rewrites the run's final
-   message to a denial. This is wrong for interactive runs (the
-   user sees a `StopHookVeto` end-of-run) but matches a non-interactive
-   batch shape.
-
-Both routes fit the SDK's current primitives without an SDK
-extension. The CLI picks one in the (A) refactor slice and drops
-`StagedToolMessage`/`UnadmittedToolHandler` from `Options`.
+**Carried.** The CLI's `internal/sdkadapter.ConvertToolRegistryWithAdmission`
+wraps every CLI tool with an admission wrapper that runs the
+`StagedToolMessage` and `UnadmittedHandler` predicates per-call. When
+a predicate answers true, the wrapper returns the predicate's denial
+string wrapped in `tools.Out{Value: msg}`; the SDK renders that as a
+`RoleTool` message exactly the way the legacy path does. The model
+sees the denial and retries on the next iteration. Per-call
+evaluation keeps the `UnadmittedHandler` auto-stage side effect
+(`internal/agent/options.go:108-117`) firing only when the model
+actually invokes the unadmitted tool, not at conversion time. See
+`internal/sdkadapter/tool_registry.go` for the converter and its
+table tests in `tool_registry_test.go`.
 
 ### `RefOnlyTools`, `RemainderSpool`
 
@@ -230,28 +219,23 @@ semantics, and the SDK's 5-field schema is never reached.
 
 ## 4. Under CLI refactor (fail-closed today)
 
-The two fields below stay fail-closed on the SDK path. They will
-be unwired in mivia-agent by the (A) refactor slices — each one
-removes a CLI vocabulary quirk (or wraps an SDK primitive) rather
-than extending the SDK. The SDK never grows a new primitive for
-the flag flip.
+No fields remain in this section. `MaxContextTokens`,
+`SummaryConfig.Summarizer`, `StagedToolMessage`, and
+`UnadmittedToolHandler` are all carried today (see §1 and §3). The
+remaining fail-closed fields are documented as legacy-only in §3:
+`Surface` rotation, the four `WorkLimits` token reservations, and
+`RefOnlyTools`/`RemainderSpool`. None of those need SDK extensions;
+they are accepted semantic gaps that require either SDK work the
+SDK authors have not yet committed to or design decisions the CLI
+cannot make on its own.
 
-- `StagedToolMessage`, `UnadmittedToolHandler`: refactor to use
-  `tools.Scope.Approve` + retry-on-decline.
-
-`MaxContextTokens` and `SummaryConfig.Summarizer` are now carried:
-`RunAgentLoopOnce` calls `opts.PreparationManager.Prepare` on the
-loop's history, then runs the CLI's host-side summary inject when a
-summarizer is wired, and hands the resulting history to
+`MaxContextTokens` and `SummaryConfig.Summarizer` are carried by
+the SDK path: `RunAgentLoopOnce` calls `opts.PreparationManager.Prepare`
+on the loop's history, then runs the CLI's host-side summary inject
+when a summarizer is wired, and hands the resulting history to
 `RunSteerable`. The SDK's `Window` stays nil so the SDK never runs
-its own per-iteration planning pass on top of the CLI's
-host-side compaction.
-
-`RefOnlyTools` and `RemainderSpool` are documented as
-**legacy-only**: see §3 above. A future SDK extension (principal
-injection on pre-tool, or a principal-resolver constructor on
-`spool.Spool`) would unlock them. Until then, callers needing
-ref-notices stay on `Backend: "legacy"`.
+its own per-iteration planning pass on top of the CLI's host-side
+compaction.
 
 ## See also
 

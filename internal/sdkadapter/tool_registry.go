@@ -7,18 +7,21 @@
 //
 // SchemaTool is required, not optional: the SDK's Definitions helper
 // fails closed with ErrNoSchemas when a non-empty registry holds no
-// schema-publishing tool, so a Name/Run-only wrapper would make every
-// non-empty conversion unusable. The schema is the json.Marshal of the
-// CLI tool's Parameters() map - the same OpenAI-parameters object the
+// schema-publishing tool. The schema is the json.Marshal of the CLI
+// tool's Parameters() map - the same OpenAI-parameters object the
 // CLI's OpenAITools() publishes today.
 //
-// The Execute call below is the bridge's entire purpose: this package
-// is the sanctioned SDK-boundary seam (not agent orchestration), so
-// the semgrep rule that routes agent-package execution through the
-// runtime Dispatcher does not apply here. The dispatcher-side
-// concerns the legacy path enforces (per-tool output ceilings, hooks,
-// result shaping) are the chat-surface wiring's responsibility, not
-// the type converter's.
+// Admission-checked conversion: ConvertToolRegistryWithAdmission
+// accepts optional StagedMessage and UnadmittedHandler predicates
+// mirroring the legacy CLI's loop_tool_exec.go:13-27 checks. When a
+// predicate answers true for a call, the wrapped tool returns the
+// denial string wrapped in tools.Out, the SDK renders it as a
+// RoleTool message, and the model retries on the next iteration.
+// Per-call evaluation keeps the UnadmittedHandler auto-stage side
+// effect (see internal/agent/options.go:108-117) firing only when
+// the model actually invokes the unadmitted tool. See
+// docs/development/sdk-backend-field-mapping.md for the wider
+// rationale.
 package sdkadapter
 
 import (
@@ -29,6 +32,91 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	sdktools "github.com/MiviaLabs/mivia-ai-sdk/tools"
 )
+
+// AdmissionPredicates carries the optional per-call admission checks
+// the legacy CLI applies in loop_tool_exec.go. Either predicate may
+// be nil; both nil produces the same result as ConvertToolRegistry
+// without admission checks.
+type AdmissionPredicates struct {
+	// StagedMessage answers whether name is a tool staged for
+	// publication. The returned message becomes the RoleTool denial
+	// content when true. nil disables the check.
+	StagedMessage func(name string) (string, bool)
+	// UnadmittedHandler answers whether name is a tool advertised but
+	// not yet admitted for execution. The handler may auto-stage the
+	// tool for publication at the next step boundary as a side
+	// effect; the returned message becomes the RoleTool denial
+	// content when true. nil disables the check.
+	UnadmittedHandler func(ctx context.Context, name string) (string, bool)
+}
+
+// admissionCheckedToolAdapter wraps a CLI tool plus the admission
+// predicates. Run checks StagedMessage and UnadmittedHandler first;
+// if either answers true, Run returns the denial message wrapped in
+// tools.Out so the SDK renders it as the RoleTool content. Otherwise
+// Run delegates to the inner CLI tool the same way sdkToolAdapter
+// does.
+type admissionCheckedToolAdapter struct {
+	inner      *sdkToolAdapter
+	staged     func(name string) (string, bool)
+	unadmitted func(ctx context.Context, name string) (string, bool)
+}
+
+var _ sdktools.Tool = (*admissionCheckedToolAdapter)(nil)
+var _ sdktools.SchemaTool = (*admissionCheckedToolAdapter)(nil)
+
+func (a *admissionCheckedToolAdapter) Name() string { return a.inner.cli.Name() }
+
+func (a *admissionCheckedToolAdapter) Run(ctx context.Context, in sdktools.InOut) (sdktools.Out, error) {
+	name := a.inner.cli.Name()
+	if a.staged != nil {
+		if msg, ok := a.staged(name); ok {
+			return sdktools.Out{Value: msg}, nil
+		}
+	}
+	if a.unadmitted != nil {
+		if msg, ok := a.unadmitted(ctx, name); ok {
+			return sdktools.Out{Value: msg}, nil
+		}
+	}
+	return a.inner.Run(ctx, in)
+}
+
+func (a *admissionCheckedToolAdapter) ParameterSchema() []byte { return a.inner.ParameterSchema() }
+
+func (a *admissionCheckedToolAdapter) DecodeArguments(raw []byte) (sdktools.InOut, error) {
+	return a.inner.DecodeArguments(raw)
+}
+
+// ConvertToolRegistryWithAdmission converts a CLI registry to an SDK
+// registry, wrapping each tool with the admission predicates. A nil
+// pred produces the same result as ConvertToolRegistry. The check
+// runs at call time so UnadmittedHandler's auto-stage side effect
+// fires only when the model actually invokes the unadmitted tool.
+func ConvertToolRegistryWithAdmission(cliReg *tools.Registry, pred AdmissionPredicates) (*sdktools.Registry, error) {
+	if cliReg == nil {
+		return nil, nil
+	}
+	if pred.StagedMessage == nil && pred.UnadmittedHandler == nil {
+		return ConvertToolRegistry(cliReg)
+	}
+	sdkReg := sdktools.New()
+	for _, t := range cliReg.List() {
+		inner, err := newSDKToolAdapter(t)
+		if err != nil {
+			return nil, err
+		}
+		wrapped := &admissionCheckedToolAdapter{
+			inner:      inner,
+			staged:     pred.StagedMessage,
+			unadmitted: pred.UnadmittedHandler,
+		}
+		if err := sdkReg.Add(wrapped); err != nil {
+			return nil, fmt.Errorf("sdkadapter: add tool %q to SDK registry: %w", t.Name(), err)
+		}
+	}
+	return sdkReg, nil
+}
 
 // sdkToolAdapter wraps one CLI tools.Tool as the SDK's tools.Tool and
 // tools.SchemaTool. Run marshals the SDK's InOut.Value to the JSON
