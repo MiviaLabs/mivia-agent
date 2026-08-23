@@ -85,7 +85,8 @@ type AdmissionPredicates struct {
 // Run delegates to the inner CLI tool the same way sdkToolAdapter
 // does.
 type admissionCheckedToolAdapter struct {
-	inner      *sdkToolAdapter
+	inner      sdktools.Tool
+	cliName    string
 	staged     func(name string) (string, bool)
 	unadmitted func(ctx context.Context, name string) (string, bool)
 }
@@ -93,10 +94,10 @@ type admissionCheckedToolAdapter struct {
 var _ sdktools.Tool = (*admissionCheckedToolAdapter)(nil)
 var _ sdktools.SchemaTool = (*admissionCheckedToolAdapter)(nil)
 
-func (a *admissionCheckedToolAdapter) Name() string { return a.inner.cli.Name() }
+func (a *admissionCheckedToolAdapter) Name() string { return a.cliName }
 
 func (a *admissionCheckedToolAdapter) Run(ctx context.Context, in sdktools.InOut) (sdktools.Out, error) {
-	name := a.inner.cli.Name()
+	name := a.cliName
 	if a.staged != nil {
 		if msg, ok := a.staged(name); ok {
 			return sdktools.Out{Value: msg}, nil
@@ -110,10 +111,18 @@ func (a *admissionCheckedToolAdapter) Run(ctx context.Context, in sdktools.InOut
 	return a.inner.Run(ctx, in)
 }
 
-func (a *admissionCheckedToolAdapter) ParameterSchema() []byte { return a.inner.ParameterSchema() }
+func (a *admissionCheckedToolAdapter) ParameterSchema() []byte {
+	if st, ok := a.inner.(sdktools.SchemaTool); ok {
+		return st.ParameterSchema()
+	}
+	return nil
+}
 
 func (a *admissionCheckedToolAdapter) DecodeArguments(raw []byte) (sdktools.InOut, error) {
-	return a.inner.DecodeArguments(raw)
+	if st, ok := a.inner.(sdktools.SchemaTool); ok {
+		return st.DecodeArguments(raw)
+	}
+	return sdktools.InOut{}, nil
 }
 
 // ConvertToolRegistryWithAdmission converts a CLI registry to an SDK
@@ -140,20 +149,26 @@ func ConvertToolRegistryWithAdmission(cliReg *tools.Registry, pred AdmissionPred
 		if err != nil {
 			return nil, err
 		}
-		wrapped := sdktools.Tool(&admissionCheckedToolAdapter{
-			inner:      inner,
-			staged:     pred.StagedMessage,
-			unadmitted: pred.UnadmittedHandler,
-		})
+		// Admission wraps OUTSIDE approval so its checks run first:
+		// a staged or unadmitted tool is rejected before the user is
+		// ever prompted. Approval then wraps the plain adapter and,
+		// when it approves, delegates into the same admission layer.
+		wrapped := sdktools.Tool(inner)
 		if pred.ApprovalGate != nil {
 			wrapped = &approvalGatedToolAdapter{
-				inner:           wrapped,
+				inner:           inner,
 				cliName:         t.Name(),
 				gate:            pred.ApprovalGate,
 				standing:        pred.ApprovalStanding,
 				emitPending:     pred.EmitPending,
 				getCapabilities: capabilitiesFor(t),
 			}
+		}
+		wrapped = &admissionCheckedToolAdapter{
+			inner:      wrapped,
+			cliName:    t.Name(),
+			staged:     pred.StagedMessage,
+			unadmitted: pred.UnadmittedHandler,
 		}
 		if err := sdkReg.Add(wrapped); err != nil {
 			return nil, fmt.Errorf("sdkadapter: add tool %q to SDK registry: %w", t.Name(), err)
