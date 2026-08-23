@@ -91,14 +91,14 @@ func buildAgentLoopOptions(l *Loop, opts Options) (sdkagentloop.Options, *sdkTur
 		MaxCallsPerTurn: opts.MaxToolCallsPerBatch,
 		SessionID:       opts.SessionID,
 	}
-	// Streaming: a FinalWriter becomes the SDK's StreamingWriter,
-	// teed through the same teeWriter the legacy path uses so
-	// EventAssistant deltas fire per write. The completer forwards
-	// the writer into the CLI request, the SDK mirrors every byte
-	// into its per-run capture buffer, and the events bridge revokes
-	// the optimistic stream when a turn's tool calls start.
+	// Streaming: a FinalWriter becomes the SDK's StreamingWriter, teed
+	// through the same teeWriter the legacy path uses so
+	// EventAssistant deltas fire per write; the tee is stored on the
+	// turn state so a canceled run can record its streamed partial.
 	if opts.FinalWriter != nil {
-		out.StreamingWriter = &teeWriter{w: opts.FinalWriter, opts: opts}
+		tw := &teeWriter{w: opts.FinalWriter, opts: opts}
+		out.StreamingWriter = tw
+		turn.setStreamTee(tw)
 	}
 	// BatchResultBudgetBytes > 0 is carried by the host-side turn
 	// shaping wrapper applied above (applyTurnShaping); the SDK's
@@ -361,6 +361,11 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 	res, err := runSDKPromptTooLongRecoverable(ctx, l, sdkOpts, opts, preparedMsgs)
 	stampSDKToolMessageNames(res.History)
 	if err != nil {
+		// A canceled or timed-out run keeps the streamed partial the
+		// tee emitted (recorded into l.Messages BEFORE the dispatcher's
+		// history write-back; runOnceSDK preserves messages appended
+		// past the turn's pre-append).
+		recordSDKCanceledStreamPartial(ctx, l, turn, err)
 		// Return the partial Result alongside the error: the SDK's
 		// hard-fail Result carries the messages completed so far, and
 		// the dispatcher writes them back so an errored turn keeps its
@@ -379,6 +384,21 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 		return res, err
 	}
 	return res, nil
+}
+
+// recordSDKCanceledStreamPartial keeps the streamed partial a canceled
+// or timed-out SDK run already emitted through its StreamingWriter tee:
+// the SDK's hard-fail Result never carries in-flight stream bytes, so
+// recordInterruptedPartial (the real legacy method, with its own
+// narrowness: non-blank text only) records them into l.Messages. Any
+// other error is a fragment, not a turn, and records nothing.
+func recordSDKCanceledStreamPartial(ctx context.Context, l *Loop, turn *sdkTurnState, err error) {
+	if !(errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil) {
+		return
+	}
+	if tee := turn.currentStreamTee(); tee != nil {
+		l.recordInterruptedPartial(tee)
+	}
 }
 
 // runSDKPromptTooLongRecoverable drives one SDK run and, when the

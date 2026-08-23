@@ -56,10 +56,15 @@ type sdkTurnState struct {
 	pass1      pass1Holder
 	dispatcher atomic.Pointer[runtime.Dispatcher]
 	spool      atomic.Pointer[remainder.Spool]
-	shapeOnce  sync.Once
-	shape      *turnShapeCounter
-	errMu      sync.Mutex
-	bridgeErr  error
+	// streamTee holds the teeWriter installed as the SDK run's
+	// StreamingWriter, so RunAgentLoopOnce can feed it to
+	// recordInterruptedPartial when a canceled run leaves streamed
+	// bytes that the SDK's hard-fail Result never carried.
+	streamTee atomic.Pointer[teeWriter]
+	shapeOnce sync.Once
+	shape     *turnShapeCounter
+	errMu     sync.Mutex
+	bridgeErr error
 }
 
 func newSDKTurnState() *sdkTurnState { return &sdkTurnState{} }
@@ -91,6 +96,16 @@ func (s *sdkTurnState) currentDispatcher() *runtime.Dispatcher { return s.dispat
 // currentSpool returns the live remainder spool, or nil when no
 // rotation and no seed ever installed one.
 func (s *sdkTurnState) currentSpool() *remainder.Spool { return s.spool.Load() }
+
+// setStreamTee installs the run's StreamingWriter tee. It runs once
+// from the single sdkTurnState construction site
+// (buildAgentLoopOptions); a run without a FinalWriter never installs
+// one and currentStreamTee stays nil.
+func (s *sdkTurnState) setStreamTee(t *teeWriter) { s.streamTee.Store(t) }
+
+// currentStreamTee returns the run's StreamingWriter tee, or nil when
+// the run streamed nowhere.
+func (s *sdkTurnState) currentStreamTee() *teeWriter { return s.streamTee.Load() }
 
 // shapeCounter lazily builds the one turn-level shaping counter a
 // run (and every surface rotation inside it) shares.

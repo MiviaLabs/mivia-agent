@@ -44,17 +44,35 @@ func (l *Loop) runOnceSDK(ctx context.Context, userText string, opts Options) (s
 	// caller's read. The SDK path leaves the field empty because the
 	// SDK's Message shape carries no finish reason.
 	l.LastFinishReason = ""
-	msgs := make([]provider.Message, 0, len(l.Messages)+1)
-	msgs = append(msgs, l.Messages...)
-	msgs = append(msgs, provider.Message{Role: provider.RoleUser, Content: userText})
+	// Pre-append the user message to the carried history BEFORE the run,
+	// mirroring runOnceLegacy's append (loop.go): a turn that fails
+	// before any SDK iteration completes must still keep the user
+	// message in l.Messages, because the SDK's hard-fail Result is empty
+	// when iterations == 0 and a write-back-only path would lose the
+	// whole turn. The slice handed to RunAgentLoopOnce is a copy of the
+	// post-append history, so the user message is never added twice.
+	l.Messages = append(l.Messages, provider.Message{
+		Role:      provider.RoleUser,
+		Content:   userText,
+		CreatedAt: time.Now(),
+	})
+	msgs := make([]provider.Message, len(l.Messages))
+	copy(msgs, l.Messages)
+	preLen := len(l.Messages)
 	res, err := RunAgentLoopOnce(ctx, l, opts, msgs)
-	// Write the turn's history back even on error: the legacy path keeps
-	// the user message and every completed step's messages in l.Messages
-	// when a turn fails mid-flight, and callers persist the partial turn
-	// from the loop. The SDK returns a partial History with its error.
+	// Messages RunAgentLoopOnce appended past the pre-append (the
+	// streamed partial recorded on a cancel) must survive the history
+	// write-back below, so capture them first.
+	extras := append([]provider.Message(nil), l.Messages[preLen:]...)
+	// Write-back rule: a non-empty res.History replaces the carried
+	// history wholesale (the success path's rule); an empty res.History
+	// keeps the pre-appended l.Messages so the turn is never lost.
+	// Either way, the recorded partial (extras) lands after the
+	// replaced history, preserving the turn's emission order.
 	if len(res.History) > 0 {
-		l.Messages = restoreSDKHistoryTimestamps(sdkMessagesToCLI(res.History), l.Messages)
+		l.Messages = restoreSDKHistoryTimestamps(sdkMessagesToCLI(res.History), l.Messages[:preLen])
 	}
+	l.Messages = append(l.Messages, extras...)
 	if err != nil {
 		// A canceled or timed-out run keeps the partial reply the turn
 		// already produced, mirroring the legacy interrupted-step
