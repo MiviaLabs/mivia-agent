@@ -90,14 +90,43 @@ fresh registry each step — would require rebuilding the loop per
 step, which the SDK does not support. A `Backend: "sdk"` caller that
 needs surface rotation must stay on `Backend: "legacy"`.
 
+### `StagedToolMessage`, `UnadmittedToolHandler`
+
+The SDK's `PointPreTool` hook
+(`mivia-ai-sdk/hooks.Handler`) returns `(bool, error)` — a veto
+(`false, nil`) stops the run with `StopHookVeto`; an error fails the
+run. It has no substitution shape: a handler cannot return a
+synthetic `RoleTool` message to replace the failed call. The CLI's
+`executeToolTask` (in `internal/agent/loop_tool_exec.go:13-27`) uses
+the staged/unadmitted predicates to produce a denial `RoleTool`
+message and let the model retry on the next iteration — a continue,
+not a stop.
+
+Two workarounds were considered and rejected:
+
+1. **Per-step SDK registry rebuild** — at each iteration, enumerate
+   `AdvertisedToolSpecs`, call `StagedToolMessage(name)` for names
+   not in the live registry, register stub tools that produce the
+   staged message as their `Out.Value`. Rejected because
+   `UnadmittedToolHandler` has a documented side effect ("auto-stage
+   it for publication at the next step boundary", see
+   `options.go:111`), so probing it at conversion time would trigger
+   that side effect before the model even asks for the tool.
+
+2. **Pre-step hooks that veto** — wrong shape, since the staged case
+   must continue, not stop.
+
+Wiring requires either a SDK extension (`PointPreTool` returns
+`(allow bool, substitute *provider.Message, err error)`) or a host
+loop that catches `StopHookVeto` and retries. Both are out of scope
+for the flag flip; the fields stay fail-closed for now.
+
 ## 4. Under active wiring (fail-closed today, wire planned)
 
 These fields are documented here because they will eventually be wired
 into the SDK path. Until each lands, setting the field returns an
 unsupported-SDK-option error.
 
-- `StagedToolMessage`, `UnadmittedToolHandler`: wire as a pre-step
-  short-circuit that runs before the SDK's `runToolCalls`.
 - `RefOnlyTools`, `RemainderSpool`: wire via the SDK's
   `contextplan.Planner` with a planner policy that promotes oversized
   results to refs.
