@@ -388,7 +388,7 @@ func analyzerEnv() []string {
 	return filtered
 }
 
-// splitSymbol parses "contentref.Reference" or "Reference" into (pkgPart, name).
+// splitSymbol parses "sdkadapter.Mint" or "Mint" into (pkgPart, name).
 func splitSymbol(symbol string) (pkgPart, name string) {
 	if lastDot := strings.LastIndex(symbol, "."); lastDot >= 0 {
 		return symbol[:lastDot], symbol[lastDot+1:]

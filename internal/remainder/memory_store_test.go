@@ -1,7 +1,7 @@
 package remainder_test
 
 // Content-addressing and idempotency of the in-process content store: the
-// same body must mint the same ref (contentref.Reference is deterministic),
+// same body must mint the same ref (sdkadapter.Mint is deterministic),
 // and storing it twice must not duplicate storage. Also covers the missing
 // basics: Load roundtrip and not-found reporting.
 
@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contentref"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 )
 
 func TestMemoryStoreIdempotent(t *testing.T) {
@@ -20,7 +20,7 @@ func TestMemoryStoreIdempotent(t *testing.T) {
 	body := []byte(strings.Repeat("idempotent-body-", 8))
 
 	// Content addressing: the same data mints the same ref every time.
-	first := contentref.Reference(contentref.KindOutput, body)
+	first := sdkadapter.Mint(sdkadapter.KindOutput, body)
 	if first == "" {
 		t.Fatal("expected a non-empty ref for non-empty body")
 	}
@@ -28,7 +28,7 @@ func TestMemoryStoreIdempotent(t *testing.T) {
 		t.Fatalf("first store: %v", err)
 	}
 
-	again := contentref.Reference(contentref.KindOutput, body)
+	again := sdkadapter.Mint(sdkadapter.KindOutput, body)
 	if again != first {
 		t.Fatalf("same content minted different refs: %q vs %q", first, again)
 	}
@@ -55,8 +55,8 @@ func TestMemoryStoreDistinctContent(t *testing.T) {
 	bodyA := []byte("distinct-body-a")
 	bodyB := []byte("distinct-body-b")
 
-	refA := contentref.Reference(contentref.KindOutput, bodyA)
-	refB := contentref.Reference(contentref.KindOutput, bodyB)
+	refA := sdkadapter.Mint(sdkadapter.KindOutput, bodyA)
+	refB := sdkadapter.Mint(sdkadapter.KindOutput, bodyB)
 	if refA == "" || refB == "" {
 		t.Fatal("expected non-empty refs")
 	}
@@ -89,7 +89,7 @@ func TestMemoryStoreLoadRoundtrip(t *testing.T) {
 	store := remainder.NewMemoryStore()
 	body := []byte("load-roundtrip-body")
 
-	ref := contentref.Reference(contentref.KindOutput, body)
+	ref := sdkadapter.Mint(sdkadapter.KindOutput, body)
 	if err := store.StoreContent(ctx, ref, body); err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestMemoryStoreMissingIsErrNotFound(t *testing.T) {
 	store := remainder.NewMemoryStore()
 
 	// A ref nobody stored is unknown: the package sentinel, not a store fault.
-	ref := contentref.Reference(contentref.KindOutput, []byte("never-stored"))
+	ref := sdkadapter.Mint(sdkadapter.KindOutput, []byte("never-stored"))
 	if _, err := store.LoadContent(ctx, ref); err != remainder.ErrNotFound {
 		t.Fatalf("LoadContent(missing) = %v, want ErrNotFound", err)
 	}

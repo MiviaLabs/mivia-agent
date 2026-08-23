@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contentref"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -75,7 +75,7 @@ func TestReadOutputRefusesMalformedRequests(t *testing.T) {
 	if err != nil || !strings.Contains(out, "malformed reference") {
 		t.Fatalf("malformed ref = %q, %v", out, err)
 	}
-	errorRef := contentref.Reference(contentref.KindError, []byte("body"))
+	errorRef := sdkadapter.Mint(sdkadapter.KindError, []byte("body"))
 	if errorRef == "" {
 		t.Fatal("fixture reference not minted")
 	}
@@ -87,7 +87,7 @@ func TestReadOutputRefusesMalformedRequests(t *testing.T) {
 }
 
 func TestReadOutputRequiresASpoolAndACaller(t *testing.T) {
-	ref := contentref.Reference(contentref.KindOutput, []byte("body"))
+	ref := sdkadapter.Mint(sdkadapter.KindOutput, []byte("body"))
 	raw, _ := json.Marshal(map[string]any{"ref": ref})
 
 	spoolless := &readOutputTool{}

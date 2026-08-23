@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contentref"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 )
 
 // Aggregate per-batch tool-result budget (plan tools/06).
@@ -366,10 +366,10 @@ func shapeOne(p resultParts, remaining int, env shapeEnv) (string, degradeState,
 }
 
 // refPlaceholder sizes a notice for a body that has not been spooled yet.
-// Minted through contentref rather than assembled from a literal - references
+// Minted through sdkadapter rather than assembled from a literal - references
 // have exactly one minter, and every reference is the same length, so a real
 // one over throwaway bytes measures the notice exactly.
-var refPlaceholder = contentref.Reference(contentref.KindOutput, []byte("size probe"))
+var refPlaceholder = sdkadapter.Mint(sdkadapter.KindOutput, []byte("size probe"))
 
 // degradeMinSize is the smallest body a degrade of p could produce: the
 // truncation notice alone, sized for the ref that degrade would name.

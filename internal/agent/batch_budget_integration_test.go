@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contentref"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -437,7 +437,7 @@ func TestIntegration_EphemeralResultIsChargedButNeverReferenced(t *testing.T) {
 	// (b) The ephemeral body is not in the store under ANY ref: refs are
 	// content addressed, so its own digest is the only key it could occupy.
 	if data, err := store.LoadContent(context.Background(),
-		contentref.Reference(contentref.KindOutput, []byte(strings.Repeat("z", 300<<10)))); err == nil {
+		sdkadapter.Mint(sdkadapter.KindOutput, []byte(strings.Repeat("z", 300<<10)))); err == nil {
 		t.Fatalf("the ephemeral body is retrievable from the store (%d bytes)", len(data))
 	}
 

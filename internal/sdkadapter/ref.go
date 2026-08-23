@@ -1,9 +1,11 @@
 package sdkadapter
 
 import (
+	"crypto/sha256"
 	"errors"
+	"fmt"
+	"strings"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contentref"
 	sdkref "github.com/MiviaLabs/mivia-ai-sdk/contextstate"
 )
 
@@ -22,11 +24,25 @@ import (
 // buried in a thread or a memory entry.
 const migrationWindow = "2026-12-31"
 
+// Reference kinds for content-addressed task results and agent messages.
+// The bridge owns the CLI kind vocabulary: every package that needs to
+// emit or recognise a "ref:<kind>:<digest>" string imports these
+// constants from internal/sdkadapter instead of minting its own. Three
+// kinds cover every model-visible content reference today: tool output,
+// tool error, and agent-to-agent message bodies.
+const (
+	KindOutput  = "output"
+	KindError   = "error"
+	KindMessage = "message"
+)
+
 // ErrMalformedReference is the bridge's fail-closed response when Parse
 // sees a string that is neither a CLI reference nor an SDK reference.
-// The CLI contentref.ErrMalformed covers the CLI-only path; this
-// bridges the union shape.
 var ErrMalformedReference = errors.New("sdkadapter: malformed content reference")
+
+// digestLen is the length of a hex-encoded SHA-256 digest. The CLI shape
+// and the SDK shape share the digest width; only the prefix differs.
+const digestLen = 64
 
 // Parse splits a content reference into its (kind, digest) pair. The
 // returned kind is the CLI kind (output, error, message) when the input
@@ -45,22 +61,61 @@ func Parse(ref string) (kind, digest string, err error) {
 		return "", ref[len(sdkref.HashPrefix):], nil
 	}
 	// Then try the CLI shape: "ref:<kind>:<hex>".
-	if k, d, perr := contentref.Parse(ref); perr == nil {
+	if k, d, ok := parseCLI(ref); ok {
 		return k, d, nil
 	}
 	return "", "", ErrMalformedReference
 }
 
+// parseCLI splits a canonical CLI reference into its kind and digest.
+// It returns ok=false for any other shape. Surrounding whitespace is
+// never trimmed: such a reference is malformed.
+func parseCLI(ref string) (kind, digest string, ok bool) {
+	parts := strings.Split(ref, ":")
+	if len(parts) != 3 || parts[0] != "ref" || !knownKind(parts[1]) {
+		return "", "", false
+	}
+	if !isLowerHexDigest(parts[2]) {
+		return "", "", false
+	}
+	return parts[1], parts[2], true
+}
+
+// knownKind reports whether kind is one the bridge will mint and parse.
+func knownKind(kind string) bool {
+	return kind == KindOutput || kind == KindError || kind == KindMessage
+}
+
+// isLowerHexDigest reports whether s is exactly a lowercase hex SHA-256 digest.
+func isLowerHexDigest(s string) bool {
+	if len(s) != digestLen {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
 // Mint returns a content reference for data. The shape depends on kind:
-// a non-empty kind produces the CLI "ref:<kind>:<hex>" shape; an empty
-// kind produces the SDK "sha256:<hex>" shape.
+// a non-empty kind produces the CLI "ref:<kind>:<hex>" shape by inlining
+// the SDK digest and prefixing with "ref:<kind>:"; an empty kind produces
+// the SDK "sha256:<hex>" shape.
 //
-// The CLI shape is produced by contentref.Reference; the SDK shape is
-// produced by contextstate.Mint. The bridge never invents a hybrid;
-// callers pick the shape they need by passing or omitting kind.
+// The CLI shape is computed inline here rather than delegated to a
+// second package, so this file is the one canonical minter for the CLI
+// shape. The SDK shape is delegated to contextstate.Mint. The bridge
+// never invents a hybrid; callers pick the shape they need by passing
+// or omitting kind.
 func Mint(kind string, data []byte) string {
 	if kind == "" {
 		return sdkref.Mint(data)
 	}
-	return contentref.Reference(kind, data)
+	if !knownKind(kind) || len(data) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("ref:%s:%x", kind, sha256.Sum256(data))
 }

@@ -6,10 +6,10 @@ import (
 	"fmt"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agentmsg"
-	"github.com/MiviaLabs/mivia-agent/internal/contentref"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 )
 
 // Lifecycle kind for agent-to-agent message announcements (plan 53.01).
@@ -110,11 +110,11 @@ func (c *coordinator) PostTaskMessage(ctx context.Context, runID, taskID string,
 
 // encodeMessageForLedger serializes the full message for content-addressed
 // storage and returns the KindMessage ref. Message is always JSON-serializable
-// (strings/time/structs); contentref.KindMessage is registered, so the ref is
+// (strings/time/structs); sdkadapter.KindMessage is registered, so the ref is
 // non-empty for any non-empty marshaled envelope.
 func encodeMessageForLedger(msg agentmsg.Message) (data []byte, ref string) {
 	data, _ = json.Marshal(msg)
-	ref = contentref.Reference(contentref.KindMessage, data)
+	ref = sdkadapter.Mint(sdkadapter.KindMessage, data)
 	return data, ref
 }
 

@@ -10,10 +10,10 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contentref"
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -98,14 +98,14 @@ func (t *readOutputTool) Execute(ctx context.Context, args json.RawMessage) (str
 	if params.Ref == "" {
 		return `{"error":"ref is required"}`, nil
 	}
-	kind, _, err := contentref.Parse(params.Ref)
+	kind, _, err := sdkadapter.Parse(params.Ref)
 	if err != nil {
 		return jsonPayload(map[string]any{
 			"error":  "malformed reference",
 			"detail": err.Error(),
 		}), nil
 	}
-	if kind != contentref.KindOutput {
+	if kind != sdkadapter.KindOutput {
 		return jsonPayload(map[string]any{
 			"error":  "malformed reference",
 			"detail": "read_output accepts only ref:output references",

@@ -2,7 +2,7 @@
 //
 // It defines the fixed message-kind vocabulary, strict validation, and
 // construction helpers. This package may import only the standard library and
-// internal/contentref. It must never import ledger, coordinator, or cli: those
+// internal/sdkadapter. It must never import ledger, coordinator, or cli: those
 // layers own serialization into lifecycle payloads and delivery.
 //
 // A2A mapping (documented only; not implemented):

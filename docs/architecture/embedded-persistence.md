@@ -100,10 +100,12 @@ body is stored under a content-addressed ref and the principal that received
 the truncation notice is granted read access. The model pages that body via
 the host's `read_output` tool.
 
-Content-addressed refs use `contentref.Reference`, which produces
-`"ref:<kind>:<64-hex-sha256>"` strings. The kind for tool-result bodies is
-`output`. The same body always mints the same ref, so re-storing a duplicate
-lands on the same key and never grows the store.
+Content-addressed refs use `sdkadapter.Mint`, which produces
+`"ref:<kind>:<64-hex-sha256>"` strings when called with a non-empty kind
+(the CLI shape) and `"sha256:<64-hex>"` when called with an empty kind
+(the SDK shape). The kind for tool-result bodies is `output`. The same
+body always mints the same ref, so re-storing a duplicate lands on the
+same key and never grows the store.
 
 `StoreContent` is idempotent: storing the same data twice returns the same
 ref and the store does not grow unboundedly for duplicates. `MemoryStore` is

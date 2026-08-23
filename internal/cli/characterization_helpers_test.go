@@ -7,7 +7,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/contentref"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
@@ -215,7 +215,7 @@ func newWorkflowBuildFixture(t *testing.T) (string, *config.Resolved, *storage.S
 func seedSucceededDecomposeAttempt(t *testing.T, repo workflowledger.Repository, runID string, output []byte) {
 	t.Helper()
 	ctx := context.Background()
-	ref := contentref.Reference(contentref.KindOutput, output)
+	ref := sdkadapter.Mint(sdkadapter.KindOutput, output)
 	if err := repo.StoreContent(ctx, ref, output); err != nil {
 		t.Fatal(err)
 	}

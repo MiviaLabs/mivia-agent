@@ -9,7 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contentref"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 )
 
 // Kind is the fixed message-kind vocabulary. Unknown kinds are rejected.
@@ -239,7 +239,10 @@ func Synopsis(body string, maxBytes int) string {
 // ContentRef mints the content-addressed reference for a message body.
 // Empty body yields "".
 func ContentRef(body string) string {
-	return contentref.Reference(contentref.KindMessage, []byte(body))
+	if body == "" {
+		return ""
+	}
+	return sdkadapter.Mint(sdkadapter.KindMessage, []byte(body))
 }
 
 // LifecyclePayload is the bounded announcement shape for task_message events.
@@ -267,7 +270,7 @@ func validateRef(ref string) error {
 	if ref == "" {
 		return errors.New("empty ref")
 	}
-	if _, _, err := contentref.Parse(ref); err != nil {
+	if _, _, err := sdkadapter.Parse(ref); err != nil {
 		return err
 	}
 	return nil

@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contentref"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -271,7 +271,7 @@ func TestTruncationNoticeToReadOutputRoundTrip(t *testing.T) {
 	if cut := strings.IndexAny(ref, ",)"); cut >= 0 {
 		ref = ref[:cut]
 	}
-	if _, _, err := contentref.Parse(ref); err != nil {
+	if _, _, err := sdkadapter.Parse(ref); err != nil {
 		t.Fatalf("notice ref not parseable %q: %v", ref, err)
 	}
 

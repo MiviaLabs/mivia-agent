@@ -62,15 +62,15 @@ func TestAnalyzerResolvesSymbolInThisRepo(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	result, err := a.References(ctx, "contentref.Reference", nil, 50)
+	result, err := a.References(ctx, "sdkadapter.Mint", nil, 50)
 	if err != nil {
-		t.Fatalf("References(contentref.Reference): %v", err)
+		t.Fatalf("References(sdkadapter.Mint): %v", err)
 	}
 	if result.Symbol == "" {
 		t.Fatal("expected non-empty symbol")
 	}
 	if len(result.Locations) == 0 {
-		t.Fatal("expected at least one location for contentref.Reference")
+		t.Fatal("expected at least one location for sdkadapter.Mint")
 	}
 	var foundDef bool
 	for _, loc := range result.Locations {
@@ -80,7 +80,7 @@ func TestAnalyzerResolvesSymbolInThisRepo(t *testing.T) {
 		}
 	}
 	if !foundDef {
-		t.Error("expected at least one definition location for contentref.Reference")
+		t.Error("expected at least one definition location for sdkadapter.Mint")
 	}
 }
 
@@ -178,11 +178,11 @@ func TestReferencesFullyQualifiedMatchesShortForm(t *testing.T) {
 	defer cancel()
 
 	// Both forms must return results from the same package.
-	short, err := a.References(ctx, "contentref.Reference", nil, 50)
+	short, err := a.References(ctx, "sdkadapter.Mint", nil, 50)
 	if err != nil {
 		t.Fatalf("short form: %v", err)
 	}
-	fq, err := a.References(ctx, "github.com/MiviaLabs/mivia-agent/internal/contentref.Reference", nil, 50)
+	fq, err := a.References(ctx, "github.com/MiviaLabs/mivia-agent/internal/sdkadapter.Mint", nil, 50)
 	if err != nil {
 		t.Fatalf("fully-qualified form: %v", err)
 	}

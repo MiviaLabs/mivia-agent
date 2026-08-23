@@ -281,7 +281,7 @@ func (s *StorageRepository) StoreContent(ctx context.Context, ref string, data [
 // against the ref's embedded hex digest: a mismatch (corrupted bytes, or bytes
 // stored under the wrong ref) returns an error instead of the bytes, so a bare
 // ref lookup can never hand back content that does not hash to the ref. Other
-// ref shapes (e.g. contentref "ref:<kind>:<hex>") are looked up verbatim
+// ref shapes (e.g. sdkadapter CLI "ref:<kind>:<hex>") are looked up verbatim
 // without digest verification.
 func (s *StorageRepository) LoadContent(ctx context.Context, ref string) ([]byte, error) {
 	if err := s.checkOpen(); err != nil {
