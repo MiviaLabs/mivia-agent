@@ -34,8 +34,15 @@ type Options struct {
 	AdvertisedToolSpecs []provider.ToolSpec
 	// Reasoning is the selected model's reasoning dial, carried onto every
 	// request this loop makes. Its zero value sends nothing.
-	Reasoning  reasoning.Setting
-	MaxSteps   int
+	Reasoning reasoning.Setting
+	MaxSteps  int
+	// Backend names which inner loop drives (*Loop).Run. The empty value
+	// (the default) and "legacy" both run today's (*Loop).Run body
+	// byte-identical to how it ran before the flag existed; "sdk" runs
+	// the SDK-backed path. "sdk" is wired in follow-up commits; until
+	// then, "sdk" returns an error from runOnce so an opt-in fails
+	// closed instead of silently falling back to the legacy path.
+	Backend    string
 	WorkLimits runtime.WorkLimits
 	// PreserveWorkLimits keeps cumulative reservations across a corrective
 	// re-entry of the same task invocation.
