@@ -13,25 +13,27 @@ require (
 )
 
 require (
+	charm.land/bubbles/v2 v2.1.1
+	charm.land/bubbletea/v2 v2.0.8
+	charm.land/lipgloss/v2 v2.0.6
 	git.sr.ht/~jamesponddotco/gitignore-go v1.0.0
 	github.com/Microsoft/go-winio v0.6.2
+	github.com/MiviaLabs/mivia-ai-sdk v0.0.0-00010101000000-000000000000
+	github.com/charmbracelet/x/exp/teatest/v2 v2.0.0-20260816001655-68d539dca504
 	github.com/creack/pty v1.1.24
 	github.com/gofrs/flock v0.13.0
 	github.com/modelcontextprotocol/go-sdk v1.7.0
-	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
+	github.com/rogpeppe/go-internal v1.16.0
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	golang.org/x/mod v0.38.0
 	golang.org/x/tools v0.48.0
 )
 
 require (
-	charm.land/bubbles/v2 v2.1.1 // indirect
-	charm.land/bubbletea/v2 v2.0.8 // indirect
-	charm.land/lipgloss/v2 v2.0.6 // indirect
 	git.sr.ht/~jamesponddotco/xstd-go v0.9.0 // indirect
 	github.com/aymanbagabas/go-udiff v0.4.1 // indirect
 	github.com/charmbracelet/ultraviolet v0.0.0-20260811164956-006e29f97886 // indirect
 	github.com/charmbracelet/x/exp/golden v0.0.0-20251109135125-8916d276318f // indirect
-	github.com/charmbracelet/x/exp/teatest/v2 v2.0.0-20260816001655-68d539dca504 // indirect
 	github.com/charmbracelet/x/termios v0.1.1 // indirect
 	github.com/charmbracelet/x/windows v0.2.2 // indirect
 	github.com/dprotaso/go-yit v0.0.0-20220510233725-9ba8df137936 // indirect
@@ -42,7 +44,6 @@ require (
 	github.com/oapi-codegen/oapi-codegen/v2 v2.8.0 // indirect
 	github.com/oasdiff/yaml v0.1.1 // indirect
 	github.com/oasdiff/yaml3 v0.0.14 // indirect
-	github.com/rogpeppe/go-internal v1.16.0 // indirect
 	github.com/segmentio/asm v1.1.3 // indirect
 	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/speakeasy-api/jsonpath v0.6.3 // indirect

@@ -1,6 +1,6 @@
 {
-  "description": "Internal import edges: an allowed-edge baseline, a hard edge-count cap, and a deny-list that overrides the baseline. Re-baselined at 400 measured edges after the UI replacement Phase 1 added internal/uiadapter. The prior cap of 400 was set after the SDK convergence Stage 0 Item 4 split (slices 1-6: cliworktree, cliagents, cliorchestrate, cliworkflow, clichat) of the former 44-out-degree internal/cli. Phase 1 added the uiadapter edge pair (uiadapter -> internal/agent, uiadapter -> internal/uikit/uievent), pushing 398 -> 400. Phase 2 added uiadapter -> internal/chat to wrap *chat.Session in ports.Conversation / ports.TurnHandle; the discovered-during-implementation edges (provider, uikit/intent, uikit/ports) took 400 -> 404. Phase 3 added 10 edges for the build constructor: 7 from internal/uiadapter to composition-root packages (composition, config, hooks, mcp, redact, storage, workspace), plus 2 from internal/uiadapter extracted as helper signatures during the gate-driven refactor (contextstate, tools), plus 3 from cmd/mivia-ui (uiadapter, config, provider) for the --demo=false real-harness path. Measured count 404 -> 416, edge cap 405 -> 420 leaving 4 edges of headroom for the Phase 4+ wiring (settings ports, approver, MCP server selection from config).",
-  "edgeCap": 420,
+  "description": "Internal import edges: an allowed-edge baseline, a hard edge-count cap, and a deny-list that overrides the baseline. Re-baselined at 400 measured edges after the UI replacement Phase 1 added internal/uiadapter. The prior cap of 400 was set after the SDK convergence Stage 0 Item 4 split (slices 1-6: cliworktree, cliagents, cliorchestrate, cliworkflow, clichat) of the former 44-out-degree internal/cli. Phase 1 added the uiadapter edge pair (uiadapter -> internal/agent, uiadapter -> internal/uikit/uievent), pushing 398 -> 400. Phase 2 added uiadapter -> internal/chat to wrap *chat.Session in ports.Conversation / ports.TurnHandle; the discovered-during-implementation edges (provider, uikit/intent, uikit/ports) took 400 -> 404. Phase 3 added 10 edges for the build constructor: 7 from internal/uiadapter to composition-root packages (composition, config, hooks, mcp, redact, storage, workspace), plus 2 from internal/uiadapter extracted as helper signatures during the gate-driven refactor (contextstate, tools), plus 3 from cmd/mivia-ui (uiadapter, config, provider) for the --demo=false real-harness path. Measured count 404 -> 416, edge cap 405 -> 420 leaving 4 edges of headroom for the Phase 4+ wiring (settings ports, approver, MCP server selection from config). B.0.5 added internal/sdkadapter with 7 edges to bridge package-shape mismatches between the CLI types and the SDK types (provider, tools, skills, hooks, contentref, reasoning, ledger); measured count 416 -> 420 baseline, edge cap 420 -> 430 leaving 10 edges of headroom for Phase 4+ sdkadapter edges plus the Phase 5+ bundle and pipeline work.",
+  "edgeCap": 430,
   "deny": [
     {
       "from": "internal/storage",
@@ -311,6 +311,15 @@
     "internal/runtime": [
       "internal/redact",
       "internal/remainder",
+      "internal/tools"
+    ],
+    "internal/sdkadapter": [
+      "internal/contentref",
+      "internal/hooks",
+      "internal/ledger",
+      "internal/provider",
+      "internal/reasoning",
+      "internal/skills",
       "internal/tools"
     ],
     "internal/skills": [
