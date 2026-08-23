@@ -7,6 +7,8 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -320,4 +322,75 @@ func TestSQLiteFenceGenerationMigration_LegacyDefaultsToZero(t *testing.T) {
 		t.Fatalf("second reopen: %v", err)
 	}
 	t.Cleanup(func() { _ = reopened.Close() })
+}
+
+// TestTakeoverClaimConcurrentMutateSurvivesSQLiteBusy reproduces the SDK
+// CheckTakeoverFencesConcurrentMutate contention pattern at the storage
+// level: a goroutine spins AppendClaimedFenced (the single Exec the SDK's
+// Mutate calls) while the main goroutine runs TakeoverClaimFenced. Before
+// the retry wrapper, the Takeover's BeginTx could fail with SQLITE_BUSY
+// (snapshot-level, not lock-wait-level) and busy_timeout could not clear
+// it; the retry now clears it on a fresh snapshot. The test is not
+// deterministic across machines (CI may have different timings), so it
+// is gated behind testing.Short and uses a generous deadline.
+func TestTakeoverClaimConcurrentMutateSurvivesSQLiteBusy(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping contention test in short mode")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "busy.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	const runID = "run-busy"
+	ownerClaim, err := store.ClaimRunFenced(ctx, runID, "owner")
+	if err != nil {
+		t.Fatalf("ClaimRunFenced: %v", err)
+	}
+
+	var stopSpinning atomic.Bool
+	var spinErr atomic.Pointer[error]
+	var wg sync.WaitGroup
+	const spinners = 8
+	for i := 0; i < spinners; i++ {
+		wg.Add(1)
+		go func(slot int) {
+			defer wg.Done()
+			seq := 1
+			for !stopSpinning.Load() {
+				event := Event{ID: "spin", RunID: runID, Sequence: seq, Kind: "spin", Payload: []byte("x")}
+				if err := store.AppendClaimedFenced(ctx, event, ownerClaim); err != nil && !errors.Is(err, ErrClaimHeld) && !errors.Is(err, ErrDuplicate) {
+					e := err
+					spinErr.Store(&e)
+					return
+				}
+				seq++
+				if seq > 10000 {
+					seq = 1
+				}
+			}
+		}(i)
+	}
+
+	if _, err := store.TakeoverClaimFenced(ctx, runID, "new-owner"); err != nil {
+		stopSpinning.Store(true)
+		wg.Wait()
+		t.Fatalf("TakeoverClaimFenced under contention: %v", err)
+	}
+	stopSpinning.Store(true)
+	wg.Wait()
+	if ptr := spinErr.Load(); ptr != nil {
+		t.Fatalf("spinner goroutine failed: %v", *ptr)
+	}
+
+	fenced, err := store.IsRunTokenFenced(ctx, runID, "owner")
+	if err != nil {
+		t.Fatalf("IsRunTokenFenced: %v", err)
+	}
+	if !fenced {
+		t.Fatal("IsRunTokenFenced(owner) = false, want true after Takeover")
+	}
 }

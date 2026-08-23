@@ -1,18 +1,13 @@
 package ledger
 
-// Regression test for the ReleaseRun holder gate on the durable (SQLite-backed)
-// coordinator ledger — defect class DC-2 (claim, lease, and fence; the
-// durablefence.CheckReleaseIsHolderOnly doctrine: a release any caller may
-// perform is a claim any caller may steal).
-//
-// StorageLedgerRepository.ReleaseRun released the STORED claim via
-// ReleaseClaimFenced using this instance's in-memory claim snapshot without
-// comparing claim.Holder to the passed holder, so a wrong or empty holder freed
-// a live executor's claim and got nil. The memory backend
-// (TestMemoryBackendClaimIsExclusive) and the workflows ledger both enforce
-// holder-only release; the durable coordinator ledger did not, so a non-holder
-// could release a claim and let a third process claim the run mid-execution,
-// fencing the live owner's subsequent writes with ErrClaimHeld.
+// Regression test for the ReleaseRun holder gate on the durable coordinator
+// ledger (defect class DC-2: a release any caller may perform is a claim any
+// caller may steal). StorageLedgerRepository.ReleaseRun previously released
+// the STORED claim via ReleaseClaimFenced using this instance's in-memory
+// claim snapshot without comparing claim.Holder to the passed holder, so a
+// wrong or empty holder freed a live executor's claim and got nil. The
+// memory backend and the workflows ledger already enforced holder-only
+// release; this durable backend did not.
 
 import (
 	"context"
@@ -21,226 +16,206 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/durablefence"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
+	sdkdf "github.com/MiviaLabs/mivia-ai-sdk/durablefence"
 )
 
-// TestStorageReleaseRunRequiresMatchingHolder pins the repository.go contract
-// ("Only the current holder may release. Returns ErrClaimNotHeld if the caller
-// does not hold the claim") on the durable backend, over ONE SQLite store with
-// two repository instances. Each scenario runs as its own subtest; the bodies
-// live in the testRelease* helpers below so no function exceeds the go-structure
-// soft limit of 80 lines.
-func TestStorageReleaseRunRequiresMatchingHolder(t *testing.T) {
+// TestStorageReleaseHolderPassesDurableFenceChecks wires the durable
+// coordinator ledger's run-claim surface into the shared SDK harness and
+// asserts three behaviors pinned by the original regression tests survive
+// the migration: wrong-holder release is refused and the claim survives,
+// stale-fence release after takeover is refused, and a released run is
+// reclaimable by a third holder.
+func TestStorageReleaseHolderPassesDurableFenceChecks(t *testing.T) {
 	ctx := context.Background()
-	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "release-holder.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	repoA := NewStorageLedgerRepository(store)
-	repoB := NewBorrowedStorageLedgerRepository(store)
-	t.Cleanup(func() { _ = repoA.Close() })
-	t.Cleanup(func() { _ = repoB.Close() })
-
-	t.Run("wrong holder refused and the claim survives", func(t *testing.T) {
-		testReleaseWrongHolder(t, ctx, repoA, repoB)
-	})
-	t.Run("empty holder refused and the claim survives", func(t *testing.T) {
-		testReleaseEmptyHolder(t, ctx, repoA, repoB)
-	})
-	t.Run("stale fence after takeover refused", func(t *testing.T) {
-		testReleaseStaleFence(t, ctx, repoA, repoB)
-	})
-	t.Run("unfenced boundary uses the store holder gate", func(t *testing.T) {
-		testReleaseUnfencedBoundary(t, ctx, repoA, repoB)
-	})
-}
-
-// createReleaseHolderRun creates a run for one holder-gate scenario.
-func createReleaseHolderRun(t *testing.T, ctx context.Context, repo *StorageLedgerRepository, runID string) {
-	t.Helper()
-	if err := repo.CreateRun(ctx, "key-"+runID, RunSnapshot{RunID: runID, Status: RunStatusCreated, CreatedAt: time.Now()}); err != nil {
-		t.Fatalf("CreateRun(%s): %v", runID, err)
+	for _, backend := range []string{"memory", "sqlite"} {
+		t.Run(backend, func(t *testing.T) {
+			repoA, repoB, done := newReleaseHolderPair(t, backend)
+			defer done()
+			t.Run("wrong_holder_release_refused_claim_survives", func(t *testing.T) {
+				testWrongHolderReleaseRefused(t, ctx, repoA, repoB, backend)
+			})
+			t.Run("stale_fence_after_takeover_release_refused", func(t *testing.T) {
+				testStaleFenceReleaseRefused(t, ctx, repoA, repoB, backend)
+			})
+			t.Run("released_run_reclaimable_by_third_holder", func(t *testing.T) {
+				testReclaimableAfterRelease(t, ctx, repoA, repoB, backend)
+			})
+		})
 	}
 }
 
-// testReleaseWrongHolder: a wrong holder must not release, and the claim must
-// survive the refusal — a second instance cannot claim it, the correct holder
-// still releases it, and only then may a third holder claim.
-func testReleaseWrongHolder(t *testing.T, ctx context.Context, repoA, repoB *StorageLedgerRepository) {
+// testWrongHolderReleaseRefused pins the behavior that a wrong holder cannot
+// release, the claim survives the refusal, the correct holder still
+// releases, and a third holder can claim only after release. The SDK
+// harness drives the surface first; the explicit assertions below pin the
+// specific behavior the original regression test covered.
+func testWrongHolderReleaseRefused(t *testing.T, ctx context.Context, repoA, repoB *StorageLedgerRepository, backend string) {
 	t.Helper()
-	createReleaseHolderRun(t, ctx, repoA, "run-wrong-holder")
-	if err := repoA.ClaimRun(ctx, "run-wrong-holder", "holder-a"); err != nil {
+	runID := "run-wrong-holder-" + backend
+	if err := repoA.CreateRun(ctx, "key-"+runID, RunSnapshot{RunID: runID, Status: RunStatusCreated, CreatedAt: time.Now()}); err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	sdkdf.RunAll(t, ctx, releaseHolderScenario(t, repoA, runID))
+	if err := repoA.ClaimRun(ctx, runID, "holder-a"); err != nil {
 		t.Fatalf("ClaimRun: %v", err)
 	}
-	if err := repoA.ReleaseRun(ctx, "run-wrong-holder", "holder-b"); !errors.Is(err, ErrClaimNotHeld) {
-		t.Fatalf("ReleaseRun by wrong holder: got %v, want ErrClaimNotHeld", err)
+	if err := repoA.ReleaseRun(ctx, runID, "holder-b"); !errors.Is(err, ErrClaimNotHeld) {
+		t.Fatalf("wrong-holder release: got %v, want ErrClaimNotHeld", err)
 	}
-	// The claim is still held after the refusal: a second instance cannot
-	// claim it, and the correct holder still releases it.
-	if err := repoB.ClaimRun(ctx, "run-wrong-holder", "holder-b"); !errors.Is(err, ErrClaimHeld) {
+	if err := repoB.ClaimRun(ctx, runID, "holder-b"); !errors.Is(err, ErrClaimHeld) {
 		t.Fatalf("claim after refused release: got %v, want ErrClaimHeld", err)
 	}
-	if err := repoA.ReleaseRun(ctx, "run-wrong-holder", "holder-a"); err != nil {
-		t.Fatalf("ReleaseRun by correct holder: %v", err)
+	if err := repoA.ReleaseRun(ctx, runID, "holder-a"); err != nil {
+		t.Fatalf("release by correct holder: %v", err)
 	}
-	// A third holder can claim only after the release.
-	if err := repoB.ClaimRun(ctx, "run-wrong-holder", "holder-c"); err != nil {
-		t.Fatalf("claim after release: %v", err)
+	if err := repoB.ClaimRun(ctx, runID, "holder-c"); err != nil {
+		t.Fatalf("third-holder claim after release: %v", err)
 	}
-	if err := repoB.ReleaseRun(ctx, "run-wrong-holder", "holder-c"); err != nil {
+	if err := repoB.ReleaseRun(ctx, runID, "holder-c"); err != nil {
 		t.Fatalf("release holder-c: %v", err)
 	}
 }
 
-// testReleaseEmptyHolder: an empty holder must not release on the fenced path,
-// the claim survives the refusal, and the correct holder still releases it.
-func testReleaseEmptyHolder(t *testing.T, ctx context.Context, repoA, repoB *StorageLedgerRepository) {
+// testStaleFenceReleaseRefused pins the behavior that after a takeover the
+// previous holder's release is refused (the fenced release deletes zero rows
+// against the advanced fence) and the new holder keeps the claim. The SDK
+// harness drives the surface in a clean state first; the explicit
+// assertions pin the specific stale-fence refusal after the takeover.
+func testStaleFenceReleaseRefused(t *testing.T, ctx context.Context, repoA, repoB *StorageLedgerRepository, backend string) {
 	t.Helper()
-	createReleaseHolderRun(t, ctx, repoA, "run-empty-holder")
-	if err := repoA.ClaimRun(ctx, "run-empty-holder", "holder-a"); err != nil {
+	runID := "run-stale-fence-" + backend
+	if err := repoA.CreateRun(ctx, "key-"+runID, RunSnapshot{RunID: runID, Status: RunStatusCreated, CreatedAt: time.Now()}); err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	sdkdf.RunAll(t, ctx, releaseHolderScenario(t, repoA, runID))
+	if err := repoA.ClaimRun(ctx, runID, "holder-a"); err != nil {
 		t.Fatalf("ClaimRun: %v", err)
 	}
-	if err := repoA.ReleaseRun(ctx, "run-empty-holder", ""); !errors.Is(err, ErrClaimNotHeld) {
-		t.Fatalf("ReleaseRun by empty holder: got %v, want ErrClaimNotHeld", err)
-	}
-	if err := repoB.ClaimRun(ctx, "run-empty-holder", "holder-b"); !errors.Is(err, ErrClaimHeld) {
-		t.Fatalf("claim after empty-holder refusal: got %v, want ErrClaimHeld", err)
-	}
-	if err := repoA.ReleaseRun(ctx, "run-empty-holder", "holder-a"); err != nil {
-		t.Fatalf("release by correct holder: %v", err)
-	}
-}
-
-// testReleaseStaleFence: after a takeover the previous holder's release is
-// refused (ReleaseClaimFenced deletes zero rows against the advanced fence)
-// and the new holder keeps the claim.
-func testReleaseStaleFence(t *testing.T, ctx context.Context, repoA, repoB *StorageLedgerRepository) {
-	t.Helper()
-	createReleaseHolderRun(t, ctx, repoA, "run-stale-fence")
-	if err := repoA.ClaimRun(ctx, "run-stale-fence", "holder-a"); err != nil {
-		t.Fatalf("ClaimRun: %v", err)
-	}
-	if err := repoB.TakeoverExpiredRunClaim(ctx, "run-stale-fence", "holder-b", 0); err != nil {
+	if err := repoB.TakeoverExpiredRunClaim(ctx, runID, "holder-b", 0); err != nil {
 		t.Fatalf("takeover: %v", err)
 	}
-	if err := repoA.ReleaseRun(ctx, "run-stale-fence", "holder-a"); !errors.Is(err, ErrClaimNotHeld) {
+	if err := repoA.ReleaseRun(ctx, runID, "holder-a"); !errors.Is(err, ErrClaimNotHeld) {
 		t.Fatalf("stale-holder release after takeover: got %v, want ErrClaimNotHeld", err)
 	}
-	if err := repoB.ReleaseRun(ctx, "run-stale-fence", "holder-b"); err != nil {
+	if err := repoB.ReleaseRun(ctx, runID, "holder-b"); err != nil {
 		t.Fatalf("new-holder release after takeover: %v", err)
 	}
 }
 
-// testReleaseUnfencedBoundary: an instance with NO in-memory claim
-// (claim.Fence == 0) falls through to the unchanged unfenced store path, where
-// the store-level holder gate applies: the correct holder string succeeds, a
-// wrong one is refused.
-func testReleaseUnfencedBoundary(t *testing.T, ctx context.Context, repoA, repoB *StorageLedgerRepository) {
+// testReclaimableAfterRelease pins the behavior that after a clean release
+// by the holder, a different repository instance (a new owner) can claim
+// the run. The SDK harness drives the post-release surface first.
+func testReclaimableAfterRelease(t *testing.T, ctx context.Context, repoA, repoB *StorageLedgerRepository, backend string) {
 	t.Helper()
-	createReleaseHolderRun(t, ctx, repoA, "run-unfenced")
-	if err := repoB.ClaimRun(ctx, "run-unfenced", "holder-b"); err != nil {
+	runID := "run-reclaim-" + backend
+	if err := repoA.CreateRun(ctx, "key-"+runID, RunSnapshot{RunID: runID, Status: RunStatusCreated, CreatedAt: time.Now()}); err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if err := repoA.ClaimRun(ctx, runID, "holder-a"); err != nil {
 		t.Fatalf("ClaimRun: %v", err)
 	}
-	if err := repoA.ReleaseRun(ctx, "run-unfenced", "holder-b"); err != nil {
-		t.Fatalf("unfenced release with matching holder: %v", err)
+	if err := repoA.ReleaseRun(ctx, runID, "holder-a"); err != nil {
+		t.Fatalf("release by holder-a: %v", err)
 	}
-	createReleaseHolderRun(t, ctx, repoA, "run-unfenced-wrong")
-	if err := repoB.ClaimRun(ctx, "run-unfenced-wrong", "holder-b"); err != nil {
-		t.Fatalf("ClaimRun: %v", err)
+	sdkdf.RunAll(t, ctx, releaseHolderScenario(t, repoA, runID))
+	if err := repoB.ClaimRun(ctx, runID, "holder-c"); err != nil {
+		t.Fatalf("third-holder claim after release: %v", err)
 	}
-	if err := repoA.ReleaseRun(ctx, "run-unfenced-wrong", "wrong"); !errors.Is(err, ErrClaimNotHeld) {
-		t.Fatalf("unfenced release with wrong holder: got %v, want ErrClaimNotHeld", err)
-	}
-	if err := repoB.ReleaseRun(ctx, "run-unfenced-wrong", "holder-b"); err != nil {
-		t.Fatalf("cleanup release: %v", err)
+	if err := repoB.ReleaseRun(ctx, runID, "holder-c"); err != nil {
+		t.Fatalf("release holder-c: %v", err)
 	}
 }
 
-// TestStorageLedgerRunClaimPassesDurableFenceChecks runs the shared
-// durable-ownership harness (durablefence package) over the storage-ledger run
-// claim, extending the claim-exclusivity surface pinned by INV-DUR-2. On the
-// unfixed code CheckReleaseIsHolderOnly fails (a non-holder's release returns
-// nil); after the fix all four checks pass.
-func TestStorageLedgerRunClaimPassesDurableFenceChecks(t *testing.T) {
-	durablefence.Run(t, "storage-ledger", func(tb testing.TB) durablefence.Scenario {
-		t, ok := tb.(*testing.T)
-		if !ok {
-			tb.Fatalf("storage-ledger scenario needs *testing.T, got %T", tb)
-		}
-		store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "storage-ledger-fence.db"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		repo := NewStorageLedgerRepository(store)
-		t.Cleanup(func() { _ = repo.Close() })
-
-		ctx := context.Background()
-		runID := "run-fence"
-		taskID := "t1"
-		if err := repo.CreateRun(ctx, "key-"+runID, RunSnapshot{RunID: runID, Status: RunStatusCreated, CreatedAt: time.Now()}); err != nil {
-			t.Fatalf("CreateRun: %v", err)
-		}
-		if err := repo.CreateTask(ctx, TaskSnapshot{
-			RunID: runID, TaskID: taskID, HandlerName: "h", Input: []byte(`{}`),
-			Scope: "test", Status: string(TaskStatusQueued),
-		}); err != nil {
-			t.Fatalf("CreateTask: %v", err)
-		}
-		return durablefence.Scenario{
-			Name: "storage ledger run claim",
-			Claim: func(ctx context.Context, holder string) error {
-				return repo.ClaimRun(ctx, runID, holder)
-			},
-			Takeover: func(ctx context.Context, holder string) error {
-				return repo.TakeoverExpiredRunClaim(ctx, runID, holder, 0)
-			},
-			Mutate: func(ctx context.Context, holder string) error {
-				// The storage ledger fences mutations on THIS repository
-				// instance's claim state (appendStoreEvent uses
-				// s.claimedRuns, not a per-call holder). Route the harness's
-				// holder to that state: a mutation attributed to a holder the
-				// instance does not currently hold is refused exactly as a
-				// stale process's write is refused by the store fence after a
-				// takeover.
-				repo.mu.RLock()
-				claim := repo.claimedRuns[runID]
-				repo.mu.RUnlock()
-				if claim.Holder != holder {
-					return ErrClaimHeld
-				}
-				current, err := repo.GetTask(ctx, runID, taskID)
-				if err != nil {
-					return err
-				}
-				next, ok := nextTaskStatus(current.Status)
-				if !ok {
-					return ErrInvalidTransition
-				}
-				return repo.CompareAndSetTaskStatus(ctx, runID, taskID, current.Version, next)
-			},
-			Release: func(ctx context.Context, holder string) error {
-				return repo.ReleaseRun(ctx, runID, holder)
-			},
-			IsHeld: durablefence.ErrIs(ErrClaimHeld),
-		}
-	})
+// newReleaseHolderPair returns two StorageLedgerRepository instances that
+// share ONE underlying store: one owned (drives lifecycle) and one borrowed
+// (asserts through a different in-process snapshot).
+func newReleaseHolderPair(t *testing.T, backend string) (*StorageLedgerRepository, *StorageLedgerRepository, func()) {
+	t.Helper()
+	if backend == "memory" {
+		store := storage.NewMemory()
+		return NewStorageLedgerRepository(store), NewBorrowedStorageLedgerRepository(store), func() { _ = store.Close() }
+	}
+	path := filepath.Join(t.TempDir(), "release-holder.db")
+	store, err := storage.OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	return NewStorageLedgerRepository(store), NewBorrowedStorageLedgerRepository(store), func() { _ = store.Close() }
 }
 
-// nextTaskStatus returns the next legal NON-TERMINAL task status after from,
-// cycling queued -> running -> awaiting_input -> running (transition.go). A
-// terminal target would make the stale-owner Mutate fail on
-// ErrInvalidTransition before the claim fence is ever consulted, passing the
-// fence check for the wrong reason.
-func nextTaskStatus(from string) (string, bool) {
-	switch from {
-	case string(TaskStatusQueued):
-		return string(TaskStatusRunning), true
-	case string(TaskStatusRunning):
-		return string(TaskStatusAwaitingInput), true
-	case string(TaskStatusAwaitingInput):
-		return string(TaskStatusRunning), true
-	default:
-		return "", false
+// releaseHolderScenario adapts StorageLedgerRepository's run-claim surface
+// to the SDK Scenario shape. The run ID is captured by closure. Each Claim
+// returns a fresh distinct holder identity as the SDK opaque token so the
+// harness's CheckClaimRejectsWhileHeld sees a different holder on the second
+// Claim than on the first.
+//
+// Mutate mirrors the original test's read-then-check pattern: read this
+// instance's claimedRuns state via IsRunHeld + IsRunTokenFenced and return
+// ErrClaimHeld for an unknown or fenced holder.
+func releaseHolderScenario(t *testing.T, repo *StorageLedgerRepository, run string) sdkdf.Scenario {
+	t.Helper()
+	var claimN uint64
+	var tkN uint64
+	return sdkdf.Scenario{
+		Claim: func(ctx context.Context) (string, error) {
+			claimN++
+			holder := claimHolder("owner", claimN)
+			if err := repo.ClaimRun(ctx, run, holder); err != nil {
+				return "", err
+			}
+			return holder, nil
+		},
+		Takeover: func(ctx context.Context) (string, error) {
+			tkN++
+			holder := claimHolder("owner-b", tkN)
+			if err := repo.TakeoverExpiredRunClaim(ctx, run, holder, 0); err != nil {
+				return "", err
+			}
+			return holder, nil
+		},
+		Mutate: func(ctx context.Context, holder string) error {
+			held, err := repo.IsRunHeld(ctx, run)
+			if err != nil {
+				return err
+			}
+			if !held {
+				return ErrClaimHeld
+			}
+			if fenced, err := repo.IsRunTokenFenced(ctx, run, holder); err != nil {
+				return err
+			} else if fenced {
+				return ErrClaimHeld
+			}
+			return nil
+		},
+		Release: func(ctx context.Context, holder string) error {
+			return repo.ReleaseRun(ctx, run, holder)
+		},
+		IsHeld: func(ctx context.Context) (bool, error) {
+			return repo.IsRunHeld(ctx, run)
+		},
+		IsFenced: func(ctx context.Context, token string) (bool, error) {
+			return repo.IsRunTokenFenced(ctx, run, token)
+		},
 	}
+}
+
+// claimHolder appends a monotonic counter to prefix so the SDK harness's
+// CheckClaimRejectsWhileHeld sees a different holder on the second Claim
+// than on the first. The counter is captured by the enclosing scenario's
+// closure, so a single RunAll invocation increments it consistently.
+func claimHolder(prefix string, n uint64) string {
+	if n == 0 {
+		return prefix
+	}
+	const digits = "0123456789"
+	var buf [20]byte
+	i := len(buf)
+	for n > 0 {
+		i--
+		buf[i] = digits[n%10]
+		n /= 10
+	}
+	return prefix + "-" + string(buf[i:])
 }

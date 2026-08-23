@@ -51,52 +51,75 @@ func (s *SQLite) TakeoverClaim(ctx context.Context, id, h string) error {
 	// records the previous holder in fenced_tokens atomically inside the same
 	// transaction so a later state query (IsRunTokenFenced) sees the prior
 	// owner as fenced exactly once.
+	//
+	// The Go writeMu serialises concurrent takeovers in-process; the SQL
+	// retry handles cross-process or connection-pool contention: a separate
+	// AppendClaimedFenced goroutine saturating the connection pool can raise
+	// SQLITE_BUSY (snapshot-level, not lock-wait-level) before busy_timeout
+	// clears, which the in-Go mutex cannot help with.
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("take over claim %q: %w", id, err)
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback()
+	return retrySQLiteBusy(ctx, func() error {
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("take over claim %q: %w", id, err)
 		}
-	}()
-	if _, err := takeoverClaimTx(ctx, tx, id, h); err != nil {
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("take over claim %q: %w", id, err)
-	}
-	committed = true
-	return nil
+		committed := false
+		defer func() {
+			if !committed {
+				_ = tx.Rollback()
+			}
+		}()
+		if _, err := takeoverClaimTx(ctx, tx, id, h); err != nil {
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("take over claim %q: %w", id, err)
+		}
+		committed = true
+		return nil
+	})
 }
 
 func (s *SQLite) TakeoverClaimFenced(ctx context.Context, id, h string) (Claim, error) {
 	if h == "" {
 		return Claim{}, ErrClaimNotHeld
 	}
+	// Same retry rationale as TakeoverClaim: the writeMu serialises in-process
+	// takeovers, the SQL retry clears a SQLITE_BUSY collision raised by
+	// concurrent AppendClaimedFenced goroutines saturating the connection
+	// pool. A retry re-reads the prior holder, so a second takeover that
+	// landed between attempts fences the more-recent prior holder; the SDK
+	// check cares that "any previously-issued token for this run" is fenced,
+	// so this is correct.
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return Claim{}, fmt.Errorf("take over claim %q: %w", id, err)
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback()
+	var claim Claim
+	err := retrySQLiteBusy(ctx, func() error {
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("take over claim %q: %w", id, err)
 		}
-	}()
-	claim, err := takeoverClaimTx(ctx, tx, id, h)
+		committed := false
+		defer func() {
+			if !committed {
+				_ = tx.Rollback()
+			}
+		}()
+		c, err := takeoverClaimTx(ctx, tx, id, h)
+		if err != nil {
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("take over claim %q: %w", id, err)
+		}
+		committed = true
+		claim = c
+		return nil
+	})
 	if err != nil {
 		return Claim{}, err
 	}
-	if err := tx.Commit(); err != nil {
-		return Claim{}, fmt.Errorf("take over claim %q: %w", id, err)
-	}
-	committed = true
 	return claim, nil
 }
 
@@ -150,51 +173,63 @@ func (s *SQLite) TakeoverExpiredClaimFenced(ctx context.Context, id, h string, m
 		return Claim{}, ErrClaimNotHeld
 	}
 	millis := maxAge.Milliseconds()
+	// Same retry rationale as TakeoverClaimFenced: the writeMu serialises
+	// in-process takeovers; the SQL retry clears SQLITE_BUSY raised by a
+	// saturating AppendClaimedFenced goroutine. ErrClaimNotHeld and
+	// ErrClaimHeld are NOT busy errors, so they exit on the first attempt.
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return Claim{}, fmt.Errorf("take over expired claim %q: %w", id, err)
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback()
-		}
-	}()
-	// Capture the prior holder ONLY when the row matches the age predicate:
-	// a row that exists but is too fresh is a held claim, not a fenced one.
-	var prevHolder string
-	err = tx.QueryRowContext(ctx, `SELECT holder FROM run_claims WHERE run_id = ? AND julianday(acquired_at) <= julianday('now') - (? / 86400000.0)`, id, millis).Scan(&prevHolder)
-	if err == sql.ErrNoRows {
-		// Distinguish a missing row (ErrClaimNotHeld) from a held-but-not-
-		// expired row (ErrClaimHeld), matching the single-statement semantics
-		// the caller contract relies on.
-		var found int
-		if rerr := tx.QueryRowContext(ctx, `SELECT 1 FROM run_claims WHERE run_id = ?`, id).Scan(&found); rerr == sql.ErrNoRows {
-			return Claim{}, ErrClaimNotHeld
-		} else if rerr != nil {
-			return Claim{}, fmt.Errorf("read expired claim %q: %w", id, rerr)
-		}
-		return Claim{}, ErrClaimHeld
-	}
-	if err != nil {
-		return Claim{}, fmt.Errorf("read expired claim %q: %w", id, err)
-	}
 	var claim Claim
-	err = tx.QueryRowContext(ctx, `UPDATE run_claims SET holder = ?, acquired_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), fence = fence + 1, fence_generation = fence_generation + 1 WHERE run_id = ? RETURNING run_id, holder, acquired_at, fence`, h, id).Scan(&claim.RunID, &claim.Holder, &claim.AcquiredAt, &claim.Fence)
-	if err != nil {
-		return Claim{}, fmt.Errorf("take over expired claim %q: %w", id, err)
-	}
-	if prevHolder != claim.Holder {
-		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO fenced_tokens(run_id, token) VALUES(?, ?)`, id, prevHolder); err != nil {
-			return Claim{}, fmt.Errorf("record fenced token for %q: %w", id, err)
+	err := retrySQLiteBusy(ctx, func() error {
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("take over expired claim %q: %w", id, err)
 		}
+		committed := false
+		defer func() {
+			if !committed {
+				_ = tx.Rollback()
+			}
+		}()
+		// Capture the prior holder ONLY when the row matches the age predicate:
+		// a row that exists but is too fresh is a held claim, not a fenced one.
+		var prevHolder string
+		err = tx.QueryRowContext(ctx, `SELECT holder FROM run_claims WHERE run_id = ? AND julianday(acquired_at) <= julianday('now') - (? / 86400000.0)`, id, millis).Scan(&prevHolder)
+		if err == sql.ErrNoRows {
+			// Distinguish a missing row (ErrClaimNotHeld) from a held-but-not-
+			// expired row (ErrClaimHeld), matching the single-statement semantics
+			// the caller contract relies on.
+			var found int
+			if rerr := tx.QueryRowContext(ctx, `SELECT 1 FROM run_claims WHERE run_id = ?`, id).Scan(&found); rerr == sql.ErrNoRows {
+				return ErrClaimNotHeld
+			} else if rerr != nil {
+				return fmt.Errorf("read expired claim %q: %w", id, rerr)
+			}
+			return ErrClaimHeld
+		}
+		if err != nil {
+			return fmt.Errorf("read expired claim %q: %w", id, err)
+		}
+		var c Claim
+		err = tx.QueryRowContext(ctx, `UPDATE run_claims SET holder = ?, acquired_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), fence = fence + 1, fence_generation = fence_generation + 1 WHERE run_id = ? RETURNING run_id, holder, acquired_at, fence`, h, id).Scan(&c.RunID, &c.Holder, &c.AcquiredAt, &c.Fence)
+		if err != nil {
+			return fmt.Errorf("take over expired claim %q: %w", id, err)
+		}
+		if prevHolder != c.Holder {
+			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO fenced_tokens(run_id, token) VALUES(?, ?)`, id, prevHolder); err != nil {
+				return fmt.Errorf("record fenced token for %q: %w", id, err)
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("take over expired claim %q: %w", id, err)
+		}
+		committed = true
+		claim = c
+		return nil
+	})
+	if err != nil {
+		return Claim{}, err
 	}
-	if err := tx.Commit(); err != nil {
-		return Claim{}, fmt.Errorf("take over expired claim %q: %w", id, err)
-	}
-	committed = true
 	return claim, nil
 }
 
