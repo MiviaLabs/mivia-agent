@@ -36,12 +36,16 @@ type Options struct {
 	// request this loop makes. Its zero value sends nothing.
 	Reasoning reasoning.Setting
 	MaxSteps  int
-	// Backend names which inner loop drives (*Loop).Run. The empty value
-	// (the default) and "legacy" both run today's (*Loop).Run body
-	// byte-identical to how it ran before the flag existed; "sdk" runs
-	// the SDK-backed path. "sdk" is wired in follow-up commits; until
-	// then, "sdk" returns an error from runOnce so an opt-in fails
-	// closed instead of silently falling back to the legacy path.
+	// Backend names which inner loop drives (*Loop).Run. The empty
+	// value (the default) and "legacy" both run today's (*Loop).Run
+	// body byte-identical to how it ran before the flag existed;
+	// "sdk" runs the SDK-backed path through RunAgentLoopOnce. The
+	// SDK path carries every field the legacy path carries except
+	// Surface rotation and the four WorkLimits token reservations
+	// (those fields stay fail-closed on the SDK path; callers that
+	// need them keep using Backend: "legacy"). The default flips
+	// to "sdk" once every caller that depends on the legacy-only
+	// fields is migrated to set Backend: "legacy" explicitly.
 	Backend    string
 	WorkLimits runtime.WorkLimits
 	// PreserveWorkLimits keeps cumulative reservations across a corrective

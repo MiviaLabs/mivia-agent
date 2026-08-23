@@ -9,10 +9,14 @@ import (
 )
 
 // runOnce is the flag-dispatched driver behind (*Loop).Run. opts.Backend
-// picks the inner loop: the legacy branch is the unchanged pre-flag body,
-// and the sdk branch drives the SDK-backed loop through
+// picks the inner loop: the empty value (the default) and "legacy"
+// both run today's (*Loop).Run body byte-identical to how it ran
+// before the flag existed; "sdk" runs the SDK-backed loop through
 // RunAgentLoopOnce (completer wrapper, registry converter, steer
-// bridge, and the fail-closed Options checks all live there).
+// bridge, and the fail-closed Options checks all live there). The
+// default flips to "sdk" once every caller that depends on the
+// legacy-only options (Surface rotation, the four WorkLimits token
+// reservations) is migrated to set Backend: "legacy" explicitly.
 func (l *Loop) runOnce(ctx context.Context, userText string, opts Options) (string, error) {
 	switch opts.Backend {
 	case "", "legacy":
