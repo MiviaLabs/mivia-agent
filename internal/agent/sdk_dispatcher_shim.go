@@ -32,20 +32,92 @@ import (
 )
 
 // sdkTurnState is the per-run state shared by the SDK path's
-// completer wrapper and tool shims. steps counts completed Completer
-// calls (the SDK loop's iteration counter as the host observes it) so
-// tool dispatches can stamp runtime.Request.Step and re-issue an
-// identical read in a later iteration without the turn-scoped dedup
-// suppressing it. pass1 carries the newest pass-1 result parts from
-// the dispatcher shim to the turn shaping wrapper so a budget degrade
-// reports the ORIGINAL body's true total and pages the original
-// bytes, exactly like the legacy shapeBatch chain.
+// completer wrapper and tool shims, and the SINGLE place bridge and
+// adapter errors surface (they are recorded here, never returned
+// ad hoc from inside per-call hooks that have no error channel).
+// steps counts completed Completer calls (the SDK loop's iteration
+// counter as the host observes it) so tool dispatches can stamp
+// runtime.Request.Step and re-issue an identical read in a later
+// iteration without the turn-scoped dedup suppressing it. pass1
+// carries the newest pass-1 result parts from the dispatcher shim to
+// the turn shaping wrapper so a budget degrade reports the ORIGINAL
+// body's true total and pages the original bytes, exactly like the
+// legacy shapeBatch chain. dispatcher and spool hold the CURRENT
+// surface rotation values: the CLI Surface hook can swap either
+// mid-run (agentloop_adapter.go's surface bridge), and the shims
+// read them per call instead of the wrap-time Options copy. shape
+// owns the turn-level shaping counter so a surface rotation that
+// rebuilds the registry keeps charging ONE shared budget. bridgeErr
+// records the first surface-bridge failure so the run can fail with
+// it after RunSteerable returns (the SDK Surface hook has no error
+// channel; a nil return keeps the prior surface).
 type sdkTurnState struct {
-	steps atomic.Int64
-	pass1 pass1Holder
+	steps      atomic.Int64
+	pass1      pass1Holder
+	dispatcher atomic.Pointer[runtime.Dispatcher]
+	spool      atomic.Pointer[remainder.Spool]
+	shapeOnce  sync.Once
+	shape      *turnShapeCounter
+	errMu      sync.Mutex
+	bridgeErr  error
 }
 
 func newSDKTurnState() *sdkTurnState { return &sdkTurnState{} }
+
+// seedSurface installs the run's initial dispatcher and spool. It
+// runs once from the single sdkTurnState construction site
+// (buildAgentLoopOptions) so every later read starts from the
+// caller's Options values, not zero.
+func (s *sdkTurnState) seedSurface(dispatcher *runtime.Dispatcher, spool *remainder.Spool) {
+	s.rotateSurface(dispatcher, spool)
+}
+
+// rotateSurface installs a surface rotation's dispatcher and spool.
+// Nil values keep the current one, mirroring the legacy Surface
+// contract's zero-field-means-keep rule.
+func (s *sdkTurnState) rotateSurface(dispatcher *runtime.Dispatcher, spool *remainder.Spool) {
+	if dispatcher != nil {
+		s.dispatcher.Store(dispatcher)
+	}
+	if spool != nil {
+		s.spool.Store(spool)
+	}
+}
+
+// currentDispatcher returns the live dispatcher, or nil when no
+// rotation and no seed ever installed one.
+func (s *sdkTurnState) currentDispatcher() *runtime.Dispatcher { return s.dispatcher.Load() }
+
+// currentSpool returns the live remainder spool, or nil when no
+// rotation and no seed ever installed one.
+func (s *sdkTurnState) currentSpool() *remainder.Spool { return s.spool.Load() }
+
+// shapeCounter lazily builds the one turn-level shaping counter a
+// run (and every surface rotation inside it) shares.
+func (s *sdkTurnState) shapeCounter() *turnShapeCounter {
+	s.shapeOnce.Do(func() { s.shape = &turnShapeCounter{} })
+	return s.shape
+}
+
+// recordBridgeError keeps the FIRST bridge error; later ones are
+// dropped because the first is the cause the operator needs.
+func (s *sdkTurnState) recordBridgeError(err error) {
+	if err == nil {
+		return
+	}
+	s.errMu.Lock()
+	defer s.errMu.Unlock()
+	if s.bridgeErr == nil {
+		s.bridgeErr = err
+	}
+}
+
+// bridgeError returns the recorded bridge error, if any.
+func (s *sdkTurnState) bridgeError() error {
+	s.errMu.Lock()
+	defer s.errMu.Unlock()
+	return s.bridgeErr
+}
 
 // currentStep is the 1-based iteration the in-flight tool batch
 // belongs to: the completer bumps steps at the top of each Chat, so a
@@ -120,8 +192,20 @@ func (d *dispatcherShim) Run(ctx context.Context, in sdktools.InOut) (sdktools.O
 	// was built from l.Tools). A nil dispatcher at this point is a
 	// programmer error in package wiring, not a runtime condition;
 	// dispatch via the caller's hook has nothing to attach to, so the
-	// dispatcher must be there.
-	r := d.opts.Dispatcher.Invoke(ctx, runtime.Request{
+	// dispatcher must be there. A surface rotation may have swapped
+	// the dispatcher or spool since the wrap; the turn state carries
+	// the live values and wins over the wrap-time Options copy.
+	dispatcher := d.opts.Dispatcher
+	spool := d.opts.RemainderSpool
+	if d.turn != nil {
+		if live := d.turn.currentDispatcher(); live != nil {
+			dispatcher = live
+		}
+		if live := d.turn.currentSpool(); live != nil {
+			spool = live
+		}
+	}
+	r := dispatcher.Invoke(ctx, runtime.Request{
 		ParentID: d.opts.ParentID, TurnID: d.opts.TurnID, SessionID: d.opts.SessionID,
 		Role: d.opts.Role, Depth: d.opts.Depth, Budget: d.opts.Budget,
 		Kind: runtime.Tool, Name: d.inner.Name(), Input: args, Timeout: callTimeout,
@@ -137,7 +221,6 @@ func (d *dispatcherShim) Run(ctx context.Context, in sdktools.InOut) (sdktools.O
 	// D10 mirror: an ephemeral body is capped with a NIL spool so the
 	// notice never mints a ref the scrub exists to remove.
 	_, ephemeral := d.cli.(tools.EphemeralResultTool)
-	spool := d.opts.RemainderSpool
 	if ephemeral {
 		spool = nil
 	}

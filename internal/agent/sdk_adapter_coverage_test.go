@@ -480,7 +480,7 @@ func TestBuildAgentLoopOptionsBadParamsToolFailsClosed(t *testing.T) {
 	reg := tools.NewRegistry()
 	reg.Register(&badParamsTool{})
 	loop := &Loop{Completer: &beforeStepCompleter{}, Tools: reg}
-	_, err := buildAgentLoopOptions(loop, Options{
+	_, _, err := buildAgentLoopOptions(loop, Options{
 		Model:      "m",
 		MaxSteps:   2,
 		Dispatcher: mustDispatcher(t),

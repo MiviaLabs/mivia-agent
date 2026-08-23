@@ -81,7 +81,7 @@ func TestSDKTurnShapingKeepsToolsOffered(t *testing.T) {
 	f := newBatchFixture(t, []int{1 << 10})
 	loop := f.h.newLoop()
 	_ = loop
-	sdkOpts, err := buildAgentLoopOptions(loop, Options{
+	sdkOpts, _, err := buildAgentLoopOptions(loop, Options{
 		Model: "m", BatchResultBudgetBytes: 16 << 10,
 		SessionID: budgetTestSession, RemainderSpool: f.spool,
 	})

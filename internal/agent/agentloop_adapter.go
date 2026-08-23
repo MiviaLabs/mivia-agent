@@ -18,6 +18,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -28,9 +29,11 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
+	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/usage"
 	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
+	sdktools "github.com/MiviaLabs/mivia-ai-sdk/tools"
 )
 
 // defaultSDKMaxIterations backs MaxSteps when the caller leaves it
@@ -52,42 +55,30 @@ func unsupportedSDKOption(field string) error {
 // the remaining mapped fields come from Options. Every unsupported
 // non-zero field fails closed before any conversion runs, so a
 // rejected configuration never constructs a half-converted registry.
-func buildAgentLoopOptions(l *Loop, opts Options) (sdkagentloop.Options, error) {
+// It also returns the run's sdkTurnState: the single construction
+// site, seeded with the run's surface values, that RunAgentLoopOnce
+// consults for bridge errors after the run.
+func buildAgentLoopOptions(l *Loop, opts Options) (sdkagentloop.Options, *sdkTurnState, error) {
 	if err := rejectUnsupportedSDKBatches(opts); err != nil {
-		return sdkagentloop.Options{}, err
+		return sdkagentloop.Options{}, nil, err
 	}
 	turn := newSDKTurnState()
+	turn.seedSurface(opts.Dispatcher, opts.RemainderSpool)
 	// Item 8: WorkLimits token reservations ride the SDK's WorkBudget
 	// hook over the loop's workLimitMeter, with the legacy outputCap
 	// clamp on Options.MaxTokens.
 	budgetHook, clampedMaxTokens, err := newSDKWorkBudgetHook(l, opts)
 	if err != nil {
-		return sdkagentloop.Options{}, err
+		return sdkagentloop.Options{}, nil, err
 	}
-	completer, err := newAgentLoopCompleterWithDefaults(l.Completer, turnRequestDefaults{
-		reasoning:             opts.Reasoning,
-		maxTokens:             clampedMaxTokens,
-		temperature:           opts.Temperature,
-		requestTimeout:        opts.RequestTimeout,
-		disableProviderReplay: opts.DisableProviderReplay,
-		sessionID:             opts.SessionID,
-	}, func(finishReason string) { l.LastFinishReason = finishReason }, func() { turn.steps.Add(1) })
+	completer, err := newSDKTurnCompleter(l, opts, turn, clampedMaxTokens)
 	if err != nil {
-		return sdkagentloop.Options{}, err
+		return sdkagentloop.Options{}, nil, err
 	}
-	sdkTools, err := sdkadapter.ConvertToolRegistryWithAdmission(l.Tools, sdkadapter.AdmissionPredicates{
-		StagedMessage:     opts.StagedToolMessage,
-		UnadmittedHandler: opts.UnadmittedToolHandler,
-	})
+	sdkTools, err := buildSDKToolRegistry(l, opts, l.Tools, turn)
 	if err != nil {
-		return sdkagentloop.Options{}, err
+		return sdkagentloop.Options{}, nil, err
 	}
-	applyDispatcherShim(sdkTools, l.Tools, opts, turn)
-	applyRefOnlyShim(sdkTools, l.Tools, opts.RefOnlyTools, opts.RemainderSpool, BatchDegradeFloorBytes, opts.SessionID)
-	// Host-side turn shaping replaces the SDK's TurnResultBudget: the
-	// CLI contract degrades with an honest notice and never omits a
-	// call, so out.TurnResultBudget stays unset below.
-	applyTurnShaping(sdkTools, l.Tools, opts, turn)
 	maxIterations := opts.MaxSteps
 	if maxIterations <= 0 {
 		maxIterations = defaultSDKMaxIterations
@@ -125,12 +116,120 @@ func buildAgentLoopOptions(l *Loop, opts Options) (sdkagentloop.Options, error) 
 	// MaxToolCalls stays fail-closed: the SDK path runs tool calls
 	// through the converted registry (see rejectUnsupportedSDKBatches).
 	out.WorkBudget = budgetHook
+	// Surface rotation: the CLI's per-step Surface hook (legacy
+	// applySurfaceHook) bridges onto the SDK's own Options.Surface,
+	// consulted at the top of every iteration from the second one on -
+	// the same skip-step-1 rule the legacy loop applies. The bridge
+	// records the rotation's Dispatcher/RemainderSpool into the turn
+	// state (so the per-call shims read the live values), rebuilds the
+	// converted registry from the rotation's CLI registry through the
+	// same shim chain (sharing the turn's shaping counter), and
+	// re-advertises the rotation's pinned ToolSpecs. A registry
+	// conversion failure is recorded in the turn state and the hook
+	// returns nil (keep prior surface); RunAgentLoopOnce fails the run
+	// with the recorded error after RunSteerable returns.
+	if opts.Surface != nil {
+		out.Surface = bridgeSDKBridgeSurface(l, opts, turn)
+	}
 	// WatchdogInterval deliberately does NOT map to
 	// HeartbeatInterval: a positive HeartbeatInterval requires a Bus
 	// the CLI path does not wire, and Validate would reject the
 	// options. The watchdog's steer-latency role is carried by the
 	// MailboxPending poller in the steer bridge instead.
-	return out, nil
+	return out, turn, nil
+}
+
+// newSDKTurnCompleter wraps the CLI completer with the run's turn
+// defaults and the turn-state step counter (extracted from
+// buildAgentLoopOptions to keep it under the function-size budget).
+func newSDKTurnCompleter(l *Loop, opts Options, turn *sdkTurnState, clampedMaxTokens *int) (*agentLoopCompleter, error) {
+	return newAgentLoopCompleterWithDefaults(l.Completer, turnRequestDefaults{
+		reasoning:             opts.Reasoning,
+		maxTokens:             clampedMaxTokens,
+		temperature:           opts.Temperature,
+		requestTimeout:        opts.RequestTimeout,
+		disableProviderReplay: opts.DisableProviderReplay,
+		sessionID:             opts.SessionID,
+	}, func(finishReason string) { l.LastFinishReason = finishReason }, func() { turn.steps.Add(1) })
+}
+
+// buildSDKToolRegistry converts one CLI registry onto a fully
+// shimmed SDK registry: admission predicates, the dispatcher shim
+// (innermost), the ref-only shim, and the turn shaping wrapper
+// (outermost). It is the ONE construction path for SDK registries:
+// the turn-start build and every mid-run surface rotation rebuild go
+// through it, so a rotated registry carries the identical execution
+// contract and shares the turn state (shaping counter, live
+// dispatcher/spool).
+func buildSDKToolRegistry(l *Loop, opts Options, cliReg *tools.Registry, turn *sdkTurnState) (*sdktools.Registry, error) {
+	sdkReg, err := sdkadapter.ConvertToolRegistryWithAdmission(cliReg, sdkadapter.AdmissionPredicates{
+		StagedMessage:     opts.StagedToolMessage,
+		UnadmittedHandler: opts.UnadmittedToolHandler,
+	})
+	if err != nil {
+		return nil, err
+	}
+	applyDispatcherShim(sdkReg, cliReg, opts, turn)
+	applyRefOnlyShim(sdkReg, cliReg, opts.RefOnlyTools, turn.currentSpool(), BatchDegradeFloorBytes, opts.SessionID)
+	// Host-side turn shaping replaces the SDK's TurnResultBudget: the
+	// CLI contract degrades with an honest notice and never omits a
+	// call, so the SDK's TurnResultBudget stays unset.
+	applyTurnShaping(sdkReg, cliReg, opts, turn)
+	return sdkReg, nil
+}
+
+// bridgeSDKBridgeSurface adapts the CLI's per-step Surface hook onto
+// the SDK's Options.Surface. Non-nil rotation fields install: the
+// Dispatcher and RemainderSpool go to the turn state (per-call shim
+// reads), the Registry rebuilds through buildSDKToolRegistry, and
+// ToolSpecs re-advertise as SDK ToolDefinitions. On a registry
+// conversion failure the error is recorded in the turn state and the
+// hook returns nil so the SDK keeps the prior surface for the step;
+// RunAgentLoopOnce fails the run with the recorded error afterwards.
+func bridgeSDKBridgeSurface(l *Loop, opts Options, turn *sdkTurnState) func() *sdkagentloop.Surface {
+	return func() *sdkagentloop.Surface {
+		surf := opts.Surface()
+		turn.rotateSurface(surf.Dispatcher, surf.RemainderSpool)
+		out := &sdkagentloop.Surface{}
+		if len(surf.ToolSpecs) > 0 {
+			out.Advertised = cliToolSpecsToSDKDefs(surf.ToolSpecs)
+		}
+		if surf.Registry != nil {
+			reg, err := buildSDKToolRegistry(l, opts, surf.Registry, turn)
+			if err != nil {
+				turn.recordBridgeError(fmt.Errorf("agent: SDK surface rotation: %w", err))
+				return nil
+			}
+			out.Registry = reg
+		}
+		return out
+	}
+}
+
+// cliToolSpecsToSDKDefs converts the CLI's OpenAI-shaped ToolSpec
+// maps (the pinned advertised snapshot a Surface hook returns) into
+// the SDK's ToolDefinition list. A spec without a function name is
+// skipped; missing parameters become an empty object schema so the
+// definition still compiles.
+func cliToolSpecsToSDKDefs(specs []provider.ToolSpec) []sdkshape.ToolDefinition {
+	out := make([]sdkshape.ToolDefinition, 0, len(specs))
+	for _, spec := range specs {
+		fn, _ := spec["function"].(map[string]any)
+		if fn == nil {
+			continue
+		}
+		name, _ := fn["name"].(string)
+		if name == "" {
+			continue
+		}
+		description, _ := fn["description"].(string)
+		schema, err := json.Marshal(fn["parameters"])
+		if err != nil || fn["parameters"] == nil {
+			schema = []byte(`{"type":"object"}`)
+		}
+		out = append(out, sdkshape.ToolDefinition{Name: name, Description: description, Schema: schema})
+	}
+	return out
 }
 
 // rejectUnsupportedSDKBatches fails closed on every CLI Options field
@@ -146,18 +245,14 @@ func buildAgentLoopOptions(l *Loop, opts Options) (sdkagentloop.Options, error) 
 // "derived from MaxContextTokens" mode). Both pass through to the SDK
 // silently; the CLI caller accepts the difference.
 func rejectUnsupportedSDKBatches(opts Options) error {
-	if opts.Surface != nil {
-		return unsupportedSDKOption("Surface")
-	}
+	// Surface is carried via bridgeSDKBridgeSurface (field-mapping doc §1).
 	// BeforeStep is carried via the Steer injector installed in
 	// RunAgentLoopOnce: RunAgentLoopOnce calls opts.BeforeStep on
 	// the loop goroutine at the top of each iteration (after this
 	// reject ran) and at every steered-stop downgrade point, then
 	// converts the returned CLI messages to SDK shape and appends
-	// them to history. The SDK-side carrier is
-	// agentloop/steer.go's SetInjector; see the carrier cell in
-	// docs/development/sdk-backend-field-mapping.md for the
-	// placement, ordering, and gap table.
+	// them to history via agentloop/steer.go's SetInjector; the
+	// carrier cell in sdk-backend-field-mapping.md has the details.
 	// RefOnlyTools and RemainderSpool are carried by the per-call
 	// ref-only shim in the tool-registry converter. The shim mirrors
 	// the legacy CLI's refOnlyTier (internal/agent/shape_batch_refonly.go:25-45)
@@ -249,7 +344,7 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 		opts.Dispatcher = d
 		defer d.Close()
 	}
-	sdkOpts, err := buildAgentLoopOptions(l, opts)
+	sdkOpts, turn, err := buildAgentLoopOptions(l, opts)
 	if err != nil {
 		return sdkagentloop.Result{}, err
 	}
@@ -271,6 +366,14 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 		// the dispatcher writes them back so an errored turn keeps its
 		// partial history, mirroring the legacy path.
 		return res, err
+	}
+	// A surface-bridge failure (registry conversion at a mid-run
+	// rotation) recorded in the turn state kept the prior surface so
+	// the run could wind down gracefully; the turn still fails with
+	// the recorded error, carried through the same partial-Result
+	// path as a hard failure.
+	if berr := turn.bridgeError(); berr != nil {
+		return res, berr
 	}
 	if err := finalizeSDKTurn(opts, res, len(preparedMsgs)); err != nil {
 		return res, err

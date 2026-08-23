@@ -46,6 +46,7 @@ The SDK path consumes these directly:
 | `MailboxPending` | steer bridge | watchdog poller; continuous across repeated steers, exits on a run-scoped done channel closed in `RunAgentLoopOnce`'s defer |
 | `MailboxPendingInterrupt` | steer bridge | strict signal-branch poller; continuous across repeated steers, exits on the run-scoped done channel |
 | `BeforeStep` | Steer injector | `RunAgentLoopOnce` installs `opts.BeforeStep` as `Steer.SetInjector`; the SDK drains it at the top of every iteration (BEFORE the MaxIterations check, matching `context.go:15-19`) and at every steered-stop downgrade point. A non-empty return appends to history and the run CONTINUES; an empty return keeps existing Trigger semantics. The `ackTriggered` at the downgrade point is load-bearing: without it the next iteration's Chat call would arm a still-triggered Steer and cancel instantly. |
+| `Surface` | `Options.Surface` bridge | `bridgeSDKBridgeSurface` maps the CLI per-step hook onto the SDK's own per-iteration `Options.Surface` (consulted from the second iteration on, the legacy skip-step-1 rule). The rotation's `Dispatcher`/`RemainderSpool` land in the run's `sdkTurnState` (per-call shim reads), the `Registry` rebuilds through the ONE construction path `buildSDKToolRegistry` (shared shaping counter), and `ToolSpecs` re-advertise as SDK definitions. A conversion failure at a rotation records into the turn state and fails the run after `RunSteerable` returns. Accepted gap: step 1 advertises registry-derived definitions (no `Description`), so the pinned snapshot with descriptions applies from step 2 on; and a call to an advertised-but-unregistered name degrades to the SDK's `[tool-error]` `RoleTool` body instead of the legacy `UnadmittedToolHandler` auto-stage denial (the handler still fires for registered tools). |
 | `BatchResultBudgetBytes < 0` | host-side derivation | `applyTurnShaping` now resolves the negative form via `derivedBatchBudget(opts.MaxContextTokens)` (shared with `effectiveBatchBudget` in `shape_batch.go:493`); constants (`bytesPerToken`, `derivedBudgetShare`, `derivedBatchBudgetFloorBytes`, `maxDerivableTokens`) cannot drift between the legacy and SDK paths. |
 | turn history | `Result.History` | `runOnceSDK` writes the SDK history back onto `Loop.Messages`, including the turn's assistant and tool messages, and falls back to the last assistant text when the final step produced none. The legacy `lastText` contract at `loop.go:143-179` is mirrored on every graceful-cancel path: the steered-stop branch returns the in-scope partial via `sdkSteeredStopPartial`, the cancel branch (errors.Is `context.Canceled`/`context.DeadlineExceeded`) and the graceful-empty fallback both walk history with the same `sdkCurrentTurnStart` Content-match helper. Streamed bytes inside an in-flight cancel are still lost — the SDK cancels `Completer.Chat` wholesale on Trigger — but assistant messages appended to history before the cancel point survive. |
 
@@ -129,12 +130,10 @@ returns an error naming the field from `buildAgentLoopOptions`, so a
 caller learns the boundary at the call instead of silently losing
 behavior.
 
-- **`Surface` rotation** — the SDK reads `Options.Tools` once at
-  `agentloop.New` and runs one loop per Run call; per-step surface
-  rotation would require rebuilding the loop per step, which the SDK
-  does not support. This is why `internal/chat/session.go` (per-step
-  admission publication via `wireStepBoundaryAdmission`) pins
-  `Backend: "legacy"`.
+- **`Surface` rotation** — carried since the SDK grew its own
+  per-iteration `Options.Surface`; see the §1 carrier row. (The
+  historical fail-closed note — the SDK read `Options.Tools` once at
+  `agentloop.New` — no longer applies.)
 - **`WorkLimits` token reservations** — `MaxPromptTokens`,
   `MaxOutputTokens`, `MaxOutputPerCall`, and `MaxToolCalls`. The CLI's
   reservation model (refuse to start a turn that would exceed; refund

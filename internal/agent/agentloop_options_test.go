@@ -29,7 +29,7 @@ import (
 // wrapped, registry converted, MaxIterations positive.
 func TestBuildAgentLoopOptionsPassesValidate(t *testing.T) {
 	l := &Loop{Completer: &fakeCompleter{name: "test"}, Tools: tools.NewRegistry()}
-	got, err := buildAgentLoopOptions(l, Options{MaxSteps: 5})
+	got, _, err := buildAgentLoopOptions(l, Options{MaxSteps: 5})
 	if err != nil {
 		t.Fatalf("buildAgentLoopOptions: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestBuildAgentLoopOptionsFailClosed(t *testing.T) {
 		opts Options
 		want string
 	}{
-		{"Surface", Options{Surface: func() Surface { return Surface{} }}, "Surface"},
+		// Surface moved to the carried table: bridgeSDKBridgeSurface maps it onto the SDK's own per-iteration Options.Surface (see docs/development/sdk-backend-field-mapping.md §1).
 		// BeforeStep moved to the carried table: RunAgentLoopOnce
 		// installs it as the SDK Steer's pull injector (see
 		// docs/development/sdk-backend-field-mapping.md §1).
@@ -63,7 +63,7 @@ func TestBuildAgentLoopOptionsFailClosed(t *testing.T) {
 	l := &Loop{Completer: &fakeCompleter{name: "test"}, Tools: tools.NewRegistry()}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := buildAgentLoopOptions(l, tt.opts)
+			_, _, err := buildAgentLoopOptions(l, tt.opts)
 			if err == nil {
 				t.Fatalf("Options with %s set passed; want fail-closed error", tt.want)
 			}
@@ -385,7 +385,7 @@ func TestBuildAgentLoopOptionsWorkLimitsTurnsClamp(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := buildAgentLoopOptions(l, Options{MaxSteps: tc.maxSteps, WorkLimits: runtime.WorkLimits{MaxTurns: tc.maxTurns}})
+			got, _, err := buildAgentLoopOptions(l, Options{MaxSteps: tc.maxSteps, WorkLimits: runtime.WorkLimits{MaxTurns: tc.maxTurns}})
 			if err != nil {
 				t.Fatalf("buildAgentLoopOptions: %v", err)
 			}

@@ -19,7 +19,7 @@ import (
 // and converted.
 func TestBuildAgentLoopOptions_ProjectsModelAndSteps(t *testing.T) {
 	l := &Loop{Completer: &fakeCompleter{name: "test"}, Tools: tools.NewRegistry()}
-	got, err := buildAgentLoopOptions(l, Options{Model: "test-model", MaxSteps: 5})
+	got, _, err := buildAgentLoopOptions(l, Options{Model: "test-model", MaxSteps: 5})
 	if err != nil {
 		t.Fatalf("buildAgentLoopOptions: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestBuildAgentLoopOptions_ProjectsModelAndSteps(t *testing.T) {
 // MaxIterations and 0 is the most common unset configuration.
 func TestBuildAgentLoopOptions_EmptyRequest(t *testing.T) {
 	l := &Loop{Completer: &fakeCompleter{name: "test"}, Tools: tools.NewRegistry()}
-	got, err := buildAgentLoopOptions(l, Options{})
+	got, _, err := buildAgentLoopOptions(l, Options{})
 	if err != nil {
 		t.Fatalf("buildAgentLoopOptions: %v", err)
 	}

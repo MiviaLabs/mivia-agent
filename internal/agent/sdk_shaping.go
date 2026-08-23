@@ -160,8 +160,13 @@ func applyTurnShaping(sdkReg *sdktools.Registry, cliReg *tools.Registry, opts Op
 	default:
 		return
 	}
-	counter := &turnShapeCounter{}
-	env := newShapeEnv(opts.RemainderSpool, opts.SessionID)
+	// The counter lives on the turn state so a mid-run surface
+	// rotation that rebuilds the registry keeps charging the SAME
+	// turn-level budget instead of resetting it per step. The spool
+	// likewise reads the turn state's live value so a rotation's
+	// RemainderSpool swap reaches degrade re-cuts minted after it.
+	counter := turn.shapeCounter()
+	env := newShapeEnv(turn.currentSpool(), opts.SessionID)
 	for _, t := range sdkReg.Tools() {
 		name := t.Name()
 		var ephemeral bool
