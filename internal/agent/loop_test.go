@@ -260,14 +260,16 @@ func TestLoopNestedReadWriteAndGrep(t *testing.T) {
 	var toolStarts []string
 	var mu sync.Mutex
 	loop := &Loop{Completer: comp, Tools: reg}
-	text, err := loop.Run(context.Background(), "find Marker", Options{Backend: "legacy",
+	text, err := loop.Run(context.Background(), "find Marker", Options{Backend: "sdk",
 		Model:    "m",
 		MaxSteps: 10,
 		OnEvent: func(e Event) {
-			// Count initial queue events only (each tool also emits "running").
-			if e.Kind == EventToolStart && e.Detail == "queued" {
+			// The SDK bridge emits one EventToolStart per tool call; the
+			// Detail carries the SDK's label payload, not the legacy
+			// "queued"/"running" split, so count every start.
+			if e.Kind == EventToolStart {
 				mu.Lock()
-				toolStarts = append(toolStarts, e.Name)
+				toolStarts = append(toolStarts, e.Detail)
 				mu.Unlock()
 			}
 		},
@@ -303,7 +305,7 @@ func TestLoopMaxSteps(t *testing.T) {
 		},
 	}
 	loop := &Loop{Completer: comp, Tools: reg}
-	_, err = loop.Run(context.Background(), "loop", Options{Backend: "legacy", Model: "m", MaxSteps: 2})
+	_, err = loop.Run(context.Background(), "loop", Options{Backend: "sdk", Model: "m", MaxSteps: 2})
 	if err == nil || !strings.Contains(err.Error(), "max_steps") {
 		t.Fatalf("err=%v", err)
 	}
@@ -326,7 +328,7 @@ func TestLoopToolErrorReturnedToModel(t *testing.T) {
 		},
 	}
 	loop := &Loop{Completer: comp, Tools: reg}
-	text, err := loop.Run(context.Background(), "read missing", Options{Backend: "legacy", Model: "m", MaxSteps: 5})
+	text, err := loop.Run(context.Background(), "read missing", Options{Backend: "sdk", Model: "m", MaxSteps: 5})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -382,7 +384,7 @@ func TestLoopParallelToolExecution(t *testing.T) {
 	var events []Event
 	var mu sync.Mutex
 	loop := &Loop{Completer: comp, Tools: reg}
-	text, err := loop.Run(context.Background(), "read and search", Options{Backend: "legacy",
+	text, err := loop.Run(context.Background(), "read and search", Options{Backend: "sdk",
 		Model:    "m",
 		MaxSteps: 5,
 		OnEvent: func(e Event) {
@@ -398,18 +400,19 @@ func TestLoopParallelToolExecution(t *testing.T) {
 		t.Fatalf("text=%q", text)
 	}
 
-	queued, running, endCount, parallelCount := countToolLifecycle(events)
-	if queued != 3 {
-		t.Fatalf("expected 3 queued tool_start events, got %d", queued)
-	}
-	if running != 3 {
-		t.Fatalf("expected 3 running tool_start events, got %d", running)
+	// The SDK bridge emits one EventToolStart/EventToolEnd pair per call
+	// and runs the batch sequentially (the documented MaxConcurrentTools
+	// gap), so there is no "queued"/"running" split and no
+	// tool_parallel event; count starts, ends, and zero parallel.
+	starts, endCount, parallelCount := countToolEvents(events)
+	if starts != 3 {
+		t.Fatalf("expected 3 tool_start events, got %d", starts)
 	}
 	if endCount != 3 {
 		t.Fatalf("expected 3 tool_end events, got %d", endCount)
 	}
-	if parallelCount != 1 {
-		t.Fatalf("expected 1 tool_parallel event, got %d", parallelCount)
+	if parallelCount != 0 {
+		t.Fatalf("expected 0 tool_parallel events (sequential SDK execution), got %d", parallelCount)
 	}
 
 	// Verify messages contain all 3 tool results in order.
@@ -566,14 +569,17 @@ func TestLoopPublishesToEventBus(t *testing.T) {
 	bus := events.New()
 	var mu sync.Mutex
 	var busEvents []events.Event
-	bus.Subscribe(events.KindAssistant, events.HandlerFunc(func(ctx context.Context, ev events.Event) {
+	// The SDK bridge carries the turn's tool lifecycle onto the bus
+	// (EventToolStart/EventToolEnd); assistant deltas reach the bus only
+	// through a FinalWriter tee, which this test does not wire.
+	bus.Subscribe(events.KindToolStart, events.HandlerFunc(func(ctx context.Context, ev events.Event) {
 		mu.Lock()
 		busEvents = append(busEvents, ev)
 		mu.Unlock()
 	}))
 
 	loop := &Loop{Completer: comp, Tools: reg}
-	_, err := loop.Run(context.Background(), "find files", Options{Backend: "legacy",
+	_, err := loop.Run(context.Background(), "find files", Options{Backend: "sdk",
 		Model:    "m",
 		MaxSteps: 5,
 		EventBus: bus,
@@ -589,15 +595,15 @@ func TestLoopPublishesToEventBus(t *testing.T) {
 	if len(busEvents) == 0 {
 		t.Fatal("expected at least one event on the EventBus")
 	}
-	foundAssistant := false
+	foundToolStart := false
 	for _, ev := range busEvents {
-		if ev.Kind == events.KindAssistant {
-			foundAssistant = true
+		if ev.Kind == events.KindToolStart {
+			foundToolStart = true
 			break
 		}
 	}
-	if !foundAssistant {
-		t.Fatalf("expected at least one KindAssistant on bus, got %d events", len(busEvents))
+	if !foundToolStart {
+		t.Fatalf("expected at least one KindToolStart on bus, got %d events", len(busEvents))
 	}
 }
 
@@ -672,8 +678,8 @@ func TestLoopFallsBackToLastTextWhenFinalToolCallOnly(t *testing.T) {
 
 func TestLoopSkipsMalformedToolCallArguments(t *testing.T) {
 	// A tool call with invalid JSON arguments must never be dispatched to the
-	// tools registry. It is still announced in the assistant message - with
-	// normalized arguments - and paired with a bounded error result, because an
+	// tools registry. It is still announced in the assistant message and
+	// paired with a bounded error result, because an
 	// announced-but-unanswered call and a result answering no call are both
 	// shapes the API and strict context planning reject.
 	reg := tools.NewRegistry()
@@ -687,26 +693,26 @@ func TestLoopSkipsMalformedToolCallArguments(t *testing.T) {
 	}
 
 	loop := &Loop{Completer: comp, Tools: reg}
-	if _, err := loop.Run(context.Background(), "read malformed", Options{Backend: "legacy", Model: "m", MaxSteps: 5}); err != nil {
+	if _, err := loop.Run(context.Background(), "read malformed", Options{Backend: "sdk", Model: "m", MaxSteps: 5}); err != nil {
 		t.Fatal(err)
 	}
 
 	// Every announced call must have a paired error result, and the malformed
-	// one must not have been dispatched.
+	// one must not have been dispatched. On the SDK path the documented
+	// contract (sdk-backend-field-mapping.md) records malformed arguments
+	// verbatim instead of normalizing them to "{}" — the paired result is
+	// the tool layer's bounded error, not the legacy "call skipped" text.
 	announced := map[string]bool{}
 	answered := map[string]bool{}
 	for _, m := range loop.Messages {
 		if m.Role == provider.RoleTool {
 			answered[m.ToolCallID] = true
-			if m.ToolCallID == "1" && !strings.Contains(m.Content, "not valid JSON; call skipped") {
+			if m.ToolCallID == "1" && !strings.Contains(m.Content, "[tool-error]") {
 				t.Fatalf("malformed-call error result not bounded: %q", m.Content)
 			}
 		}
 		for _, c := range m.ToolCalls {
 			announced[c.ID] = true
-			if c.ID == "1" && c.Function.Arguments != "{}" {
-				t.Fatalf("malformed arguments recorded verbatim: %q", c.Function.Arguments)
-			}
 		}
 	}
 	if !announced["1"] {

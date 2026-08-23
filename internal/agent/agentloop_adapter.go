@@ -18,6 +18,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -258,11 +259,7 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 	if opts.UsageWriter != nil {
 		sdkOpts.Audit = bridgeUsageAudit(opts, l.Completer.Name())
 	}
-	loop, err := sdkagentloop.New(sdkOpts)
-	if err != nil {
-		return sdkagentloop.Result{}, err
-	}
-	res, err := runSDKSteerable(ctx, loop, opts, preparedMsgs)
+	res, err := runSDKPromptTooLongRecoverable(ctx, l, sdkOpts, opts, preparedMsgs)
 	stampSDKToolMessageNames(res.History)
 	if err != nil {
 		// Return the partial Result alongside the error: the SDK's
@@ -277,7 +274,67 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 	return res, nil
 }
 
-// runSDKSteerable installs the BeforeStep injector and the steer
+// runSDKPromptTooLongRecoverable drives one SDK run and, when the
+// provider rejects the prompt as too long, applies the LEGACY recovery
+// from loop_recovery.go's retryAfterPromptTooLong once: compact the
+// starting history to the same fixed 16K target (clamped to
+// MaxContextTokens/4 when smaller), append the same model-visible
+// compact notice, emit the same EventPrune, and retry the run exactly
+// once on a freshly built SDK loop. A second rejection propagates
+// unchanged (fail fast - no second retry, no loop). DisableProviderReplay
+// suppresses the retry, mirroring the legacy gate: the retry IS a
+// provider replay of the rejected call. Accepted gaps versus the legacy
+// retry (documented, not wired here): the legacy path's retry-time
+// summary re-derivation (refreshOmittedEvidenceAfterRetry, memo
+// invalidation, injectSummary) and its prompt-token reservation are not
+// reproduced; the SDK's own Window-based recovery stays disabled
+// because the host wires no Window (that is a separate semantic item).
+func runSDKPromptTooLongRecoverable(ctx context.Context, l *Loop, sdkOpts sdkagentloop.Options, opts Options, preparedMsgs []sdkshape.Message) (sdkagentloop.Result, error) {
+	run := func(msgs []sdkshape.Message) (sdkagentloop.Result, error) {
+		loop, err := sdkagentloop.New(sdkOpts)
+		if err != nil {
+			return sdkagentloop.Result{}, err
+		}
+		return runSDKSteerable(ctx, loop, opts, msgs)
+	}
+	res, err := run(preparedMsgs)
+	if err == nil || opts.DisableProviderReplay ||
+		(!errors.Is(err, provider.ErrPromptTooLong) && !errors.Is(err, sdkshape.ErrPromptTooLong)) {
+		return res, err
+	}
+	return run(sdkCompactAfterPromptTooLong(l, opts, preparedMsgs))
+}
+
+// sdkCompactAfterPromptTooLong applies the legacy
+// retryAfterPromptTooLong recovery shape to an SDK starting history:
+// the fixed 16K target (clamped to MaxContextTokens/4 when smaller),
+// the notice's own tokens charged against the same target,
+// PruneMessagesKeepTurns keeps the system prompt and the newest turns
+// and drops tool exchanges as a unit, and the model-visible notice is
+// appended after the prune. One EventPrune announces the compaction
+// with the same detail text the legacy path emits.
+func sdkCompactAfterPromptTooLong(l *Loop, opts Options, msgs []sdkshape.Message) []sdkshape.Message {
+	target := 16 << 10
+	if opts.MaxContextTokens > 0 && opts.MaxContextTokens/4 < target {
+		target = opts.MaxContextTokens / 4
+	}
+	if target < 1 {
+		target = 1
+	}
+	notice := provider.Message{Role: provider.RoleUser, Content: promptTooLongCompactNotice}
+	pruneTarget := target - provider.MessageTokens(notice)
+	if pruneTarget < 1 {
+		pruneTarget = 1
+	}
+	pruned := provider.PruneMessagesKeepTurns(sdkMessagesToCLI(msgs), pruneTarget, l.contextAccounting())
+	pruned = append(pruned, notice)
+	emit(opts, Event{
+		Kind:   EventPrune,
+		Detail: fmt.Sprintf("provider rejected prompt (prompt too long); compacted to %d tokens and retrying once", target),
+	})
+	return cliMessagesToSDK(pruned)
+}
+
 // signal bridge on one built SDK loop and drives RunSteerable.
 func runSDKSteerable(ctx context.Context, loop *sdkagentloop.Loop, opts Options, preparedMsgs []sdkshape.Message) (sdkagentloop.Result, error) {
 	steer := sdkagentloop.NewSteer()
