@@ -37,6 +37,12 @@ import (
 // zero-value configuration.
 const defaultSDKMaxIterations = 25
 
+// sdkEventEmitInterval is the HeartbeatInterval the adapter installs
+// alongside the event bus. The SDK gates every event emission on a
+// positive interval; one hour enables the lifecycle events while
+// keeping the tick heartbeats (dropped by the CLI surface) inert.
+const sdkEventEmitInterval = time.Hour
+
 // unsupportedSDKOption reports one CLI Options field the SDK path
 // cannot carry. The message names the field so the operator can find
 // the knob to unset.
@@ -132,12 +138,10 @@ func rejectUnsupportedSDKBatches(opts Options) error {
 	if opts.MailboxPendingInterrupt != nil {
 		return unsupportedSDKOption("MailboxPendingInterrupt")
 	}
-	if opts.OnEvent != nil {
-		return unsupportedSDKOption("OnEvent")
-	}
-	if opts.EventBus != nil {
-		return unsupportedSDKOption("EventBus")
-	}
+	// OnEvent and EventBus are carried: RunAgentLoopOnce installs an
+	// SDK bus whose emissions bridgeAgentLoopEvents translates onto
+	// the CLI event surface through the same emit helper the legacy
+	// path uses.
 	if opts.UsageWriter != nil {
 		return unsupportedSDKOption("UsageWriter")
 	}
@@ -166,6 +170,15 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 	sdkOpts, err := buildAgentLoopOptions(l, opts)
 	if err != nil {
 		return sdkagentloop.Result{}, err
+	}
+	if opts.OnEvent != nil || opts.EventBus != nil {
+		sdkOpts.Bus = bridgeAgentLoopEvents(opts)
+		// HeartbeatInterval gates EVERY SDK event emission, not only
+		// the ticking ones; any positive value enables the lifecycle
+		// events the bridge subscribes to. The hour keeps the tick
+		// heartbeats - which the CLI surface drops by design - from
+		// firing in practice.
+		sdkOpts.HeartbeatInterval = sdkEventEmitInterval
 	}
 	loop, err := sdkagentloop.New(sdkOpts)
 	if err != nil {

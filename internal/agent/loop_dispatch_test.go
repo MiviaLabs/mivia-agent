@@ -70,21 +70,21 @@ func TestRunOnceDispatchesToSDKBackend(t *testing.T) {
 }
 
 // TestRunOnceSDKFailClosedSurfacesThroughRun asserts that a CLI
-// Options field the SDK path cannot carry (EventBus) surfaces the
-// fail-closed error through the public Run, so an opt-in caller
-// learns the boundary at the call.
+// Options field the SDK path cannot carry (MaxContextTokens)
+// surfaces the fail-closed error through the public Run, so an
+// opt-in caller learns the boundary at the call.
 func TestRunOnceSDKFailClosedSurfacesThroughRun(t *testing.T) {
 	loop := &Loop{
 		Completer: &fakeCompleter{name: "fake"},
 		Tools:     tools.NewRegistry(),
 	}
-	opts := Options{Model: "m", MaxSteps: 1, Backend: "sdk", OnEvent: func(Event) {}}
+	opts := Options{Model: "m", MaxSteps: 1, Backend: "sdk", MaxContextTokens: 1000}
 	_, err := loop.Run(context.Background(), "hi", opts)
 	if err == nil {
-		t.Fatal("Run with OnEvent under the sdk backend returned nil error; want fail-closed error")
+		t.Fatal("Run with MaxContextTokens under the sdk backend returned nil error; want fail-closed error")
 	}
-	if !strings.Contains(err.Error(), "OnEvent") {
-		t.Fatalf("err = %v, want it to name OnEvent", err)
+	if !strings.Contains(err.Error(), "MaxContextTokens") {
+		t.Fatalf("err = %v, want it to name MaxContextTokens", err)
 	}
 }
 

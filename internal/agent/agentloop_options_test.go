@@ -6,12 +6,13 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
@@ -51,8 +52,6 @@ func TestBuildAgentLoopOptionsFailClosed(t *testing.T) {
 		{"RequireFinalText", Options{RequireFinalText: true}, "RequireFinalText"},
 		{"MaxContextTokens", Options{MaxContextTokens: 1000}, "MaxContextTokens"},
 		{"MailboxPendingInterrupt", Options{MailboxPendingInterrupt: func() bool { return false }}, "MailboxPendingInterrupt"},
-		{"OnEvent", Options{OnEvent: func(Event) {}}, "OnEvent"},
-		{"EventBus", Options{EventBus: events.New()}, "EventBus"},
 		{"FinalWriter", Options{FinalWriter: io.Discard}, "FinalWriter"},
 	}
 	l := &Loop{Completer: &fakeCompleter{name: "test"}, Tools: tools.NewRegistry()}
@@ -165,5 +164,78 @@ func TestRunAgentLoopOnceSteerTriggers(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("RunAgentLoopOnce hung for 2s; steer bridge did not unblock the call")
+	}
+}
+
+// echoTool is the minimal CLI tool the event-translation test
+// registers: its Execute returns a fixed string.
+type echoTool struct{}
+
+func (echoTool) Name() string               { return "echo" }
+func (echoTool) Description() string        { return "echo" }
+func (echoTool) Parameters() map[string]any { return map[string]any{"type": "object"} }
+func (echoTool) Execute(_ context.Context, _ json.RawMessage) (string, error) {
+	return "tool-result", nil
+}
+
+// TestRunAgentLoopOnceTranslatesEvents asserts the event bridge: a
+// two-step SDK turn (one tool call, then a final answer) emits the
+// CLI event sequence step, tool_start, tool_end through the caller's
+// OnEvent - the same surface the legacy path publishes. The SDK's
+// label payloads ride on Detail.
+func TestRunAgentLoopOnceTranslatesEvents(t *testing.T) {
+	call := provider.ToolCall{}
+	call.Type = "function"
+	call.Function.Name = "echo"
+	call.Function.Arguments = "{}"
+	comp := &scriptCompleter{steps: []provider.Response{
+		{ToolCalls: []provider.ToolCall{call}, FinishReason: "tool_calls"},
+		{Content: "final answer", FinishReason: "stop"},
+	}}
+	reg := tools.NewRegistry()
+	reg.Register(echoTool{})
+	l := &Loop{Completer: comp, Tools: reg}
+
+	var mu sync.Mutex
+	var got []Event
+	opts := Options{
+		Model:    "m",
+		MaxSteps: 3,
+		Backend:  "sdk",
+		OnEvent: func(e Event) {
+			mu.Lock()
+			got = append(got, e)
+			mu.Unlock()
+		},
+	}
+	out, err := l.Run(context.Background(), "hi", opts)
+	if err != nil {
+		t.Fatalf("Run(sdk): %v", err)
+	}
+	if out != "final answer" {
+		t.Fatalf("Run output = %q, want %q", out, "final answer")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	var kinds []EventKind
+	for _, e := range got {
+		kinds = append(kinds, e.Kind)
+	}
+	for _, want := range []EventKind{EventStep, EventToolStart, EventToolEnd} {
+		found := false
+		for _, k := range kinds {
+			if k == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("event kinds %v missing %q", kinds, want)
+		}
+	}
+	// The tool events must carry the SDK label, which names the tool.
+	for _, e := range got {
+		if e.Kind == EventToolStart && !strings.Contains(e.Detail, "echo") {
+			t.Fatalf("tool_start Detail = %q, want it to name echo", e.Detail)
+		}
 	}
 }
