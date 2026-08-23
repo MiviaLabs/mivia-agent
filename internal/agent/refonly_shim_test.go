@@ -182,3 +182,34 @@ func (*stubContentStore) StoreContent(_ context.Context, _ string, _ []byte) err
 func (*stubContentStore) LoadContent(_ context.Context, _ string) ([]byte, error) {
 	return nil, remainder.ErrNotFound
 }
+
+// TestRefOnlyShimPropagatesInnerError pins the error branch: a failing
+// inner tool surfaces its error unchanged, with no spool attempt.
+func TestRefOnlyShimPropagatesInnerError(t *testing.T) {
+	reg := tools.NewRegistry()
+	reg.Register(&errRefOnlyTool{})
+	sdkReg, err := sdkadapter.ConvertToolRegistry(reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spool, _ := testSpool(t)
+	applyRefOnlyShim(sdkReg, reg, []string{"errtool"}, spool, BatchDegradeFloorBytes, "principal-err")
+	tool, ok := sdkReg.Get("errtool")
+	if !ok {
+		t.Fatal("errtool missing")
+	}
+	if _, err := tool.Run(context.Background(), sdktools.InOut{Value: map[string]any{}}); err == nil {
+		t.Fatal("want inner error propagated")
+	}
+}
+
+type errRefOnlyTool struct{}
+
+func (e *errRefOnlyTool) Name() string        { return "errtool" }
+func (e *errRefOnlyTool) Description() string { return "failing ref-only test tool" }
+func (e *errRefOnlyTool) Parameters() map[string]any {
+	return map[string]any{"type": "object"}
+}
+func (e *errRefOnlyTool) Execute(context.Context, json.RawMessage) (string, error) {
+	return "", context.DeadlineExceeded
+}

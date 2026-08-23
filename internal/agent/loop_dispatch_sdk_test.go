@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
@@ -207,6 +208,20 @@ func TestRefOnlyShimKeepsToolInSDKDefinitions(t *testing.T) {
 	}
 	spool, _ := testSpool(t)
 	applyRefOnlyShim(sdkReg, reg, []string{"bigtool"}, spool, BatchDegradeFloorBytes, "principal-defs")
+	wrapped, ok := sdkReg.Get("bigtool")
+	if !ok {
+		t.Fatal("bigtool missing from SDK registry")
+	}
+	st, ok := wrapped.(sdktools.SchemaTool)
+	if !ok {
+		t.Fatal("shim does not implement SchemaTool")
+	}
+	if string(st.ParameterSchema()) == "" {
+		t.Fatal("shim dropped the parameter schema")
+	}
+	if _, err := st.DecodeArguments([]byte(`{}`)); err != nil {
+		t.Fatalf("shim DecodeArguments: %v", err)
+	}
 	defs, _, err := sdkagentloop.Definitions(sdkReg, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -260,3 +275,39 @@ func (e *ephemeralRefOnlyTool) Execute(context.Context, json.RawMessage) (string
 	return e.body, nil
 }
 func (e *ephemeralRefOnlyTool) EphemeralResultMarker(json.RawMessage) string { return "ephemeral" }
+
+// TestEffectiveSDKMaxIterations pins the cap the step-cap error names:
+// unset MaxSteps maps to the documented default, and a stricter
+// MaxTurns wins in both the set and unset MaxSteps cases.
+func TestEffectiveSDKMaxIterations(t *testing.T) {
+	cases := []struct {
+		name string
+		opts Options
+		want int
+	}{
+		{"unset", Options{}, defaultSDKMaxIterations},
+		{"set", Options{MaxSteps: 7}, 7},
+		{"turns under steps", Options{MaxSteps: 20, WorkLimits: runtime.WorkLimits{MaxTurns: 10}}, 10},
+		{"turns over steps", Options{MaxSteps: 20, WorkLimits: runtime.WorkLimits{MaxTurns: 30}}, 20},
+		{"turns with unset steps", Options{WorkLimits: runtime.WorkLimits{MaxTurns: 40}}, 40},
+	}
+	for _, c := range cases {
+		if got := effectiveSDKMaxIterations(c.opts); got != c.want {
+			t.Fatalf("%s: got %d, want %d", c.name, got, c.want)
+		}
+	}
+}
+
+// errWriter fails on the first Write, pinning the FinalWriter error
+// branch of finalizeSDKTurn.
+type errWriter struct{}
+
+func (errWriter) Write([]byte) (int, error) { return 0, context.DeadlineExceeded }
+
+func TestFinalizeSDKTurnFinalWriterErrorIsHard(t *testing.T) {
+	res := sdkagentloop.Result{Final: sdkshape.Message{Role: sdkshape.RoleAssistant, Content: "answer"}}
+	err := finalizeSDKTurn(Options{FinalWriter: errWriter{}}, res, 0)
+	if err == nil || !strings.Contains(err.Error(), "write final text") {
+		t.Fatalf("err = %v, want the final-text write error", err)
+	}
+}

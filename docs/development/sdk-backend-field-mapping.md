@@ -23,7 +23,7 @@ The SDK path consumes these directly:
 | `AdvertisedToolSpecs` | converted registry | via `sdkadapter.ConvertToolRegistry` |
 | `Reasoning` | `Options.ReasoningEffort` | 7→4 mapping in `sdkadapter` |
 | `MaxToolCallsPerBatch` | `Options.MaxCallsPerTurn` | positive only |
-| `BatchResultBudgetBytes > 0` | `Options.TurnResultBudget` | literal bytes; omits rather than degrades (see §2) |
+| `BatchResultBudgetBytes > 0` | host-side shaping wrapper | `applyTurnShaping` charges one shared per-turn counter and applies the legacy degrade tiers (fit / re-cut with notice / notice alone); the SDK's omit-on-budget `TurnResultBudget` stays unset |
 | `MaxContextTokens` | host-side compaction | `prepareSDKHistory` calls `PreparationManager.Prepare`; SDK's `Window` stays nil |
 | `SummaryConfig.Summarizer` | host-side inject | `prepareSDKHistory` runs `Loop.injectSummary` once pre-run; SDK sees the summary frame |
 | `StagedToolMessage` / `UnadmittedToolHandler` | per-call wrapper | `sdkadapter.ConvertToolRegistryWithAdmission` on registered tools; denial renders as `RoleTool` |
@@ -56,11 +56,14 @@ caller accepts the difference.
   SDK's `Validate` requires a positive `MaxIterations`, so the adapter
   substitutes `defaultSDKMaxIterations = 25`. An unbounded run is
   impossible on the SDK path.
-- **`BatchResultBudgetBytes`** — the positive form maps to
-  `TurnResultBudget`, but where the legacy batch shaper degrades an
-  over-budget result to an honest truncation notice (never dropping a
-  call), the SDK budget OMITS the result with a bare "omitted" notice.
-  The negative derived-budget mode has no SDK analogue at all.
+- **`BatchResultBudgetBytes`** — the positive form is carried by the
+  host-side turn shaping wrapper (§1), which degrades with an honest
+  notice like the legacy batch shaper. Two divergences remain: the D8
+  per-batch status line (composed into the LAST degraded result) has
+  no sequential analogue and is omitted; and per-call budget charging
+  happens in call order (the SDK executes sequentially) rather than
+  after the whole batch resolves. The negative derived-budget mode has
+  no SDK analogue at all.
 - **Same-batch dedup** — the legacy dispatcher collapses identical
   read-class calls within one batch; the SDK executes every call.
 - **Conclude-steer nudges** — the legacy loop injects a conclude

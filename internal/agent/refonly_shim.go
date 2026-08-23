@@ -24,7 +24,6 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"slices"
 
@@ -40,7 +39,10 @@ import (
 // the legacy CLI shape_batch ref-only tier produces. A nil Spool
 // or a non-positive Floor makes the shim a transparent pass-through.
 type refOnlyShim struct {
-	inner     sdktools.Tool
+	inner sdktools.Tool
+	// schema is the same tool's SchemaTool face, asserted at wrap
+	// time; converter products always implement it.
+	schema    sdktools.SchemaTool
 	spool     *remainder.Spool
 	names     []string
 	floor     int
@@ -56,23 +58,14 @@ var _ sdktools.SchemaTool = (*refOnlyShim)(nil)
 
 func (r *refOnlyShim) Name() string { return r.inner.Name() }
 
-// ParameterSchema delegates to the inner tool. The SDK's Definitions
-// skips any tool that does not implement SchemaTool, so without this
-// delegation a ref-only tool silently vanishes from the offered set.
-func (r *refOnlyShim) ParameterSchema() []byte {
-	if st, ok := r.inner.(sdktools.SchemaTool); ok {
-		return st.ParameterSchema()
-	}
-	return nil
-}
+// ParameterSchema and DecodeArguments delegate to the inner tool: the
+// SDK's Definitions skips any tool that does not implement SchemaTool,
+// so without the delegation a ref-only tool silently vanishes from the
+// offered set.
+func (r *refOnlyShim) ParameterSchema() []byte { return r.schema.ParameterSchema() }
 
-// DecodeArguments delegates to the inner tool so the schema-validating
-// path the SDK runs at call time stays intact through the shim.
 func (r *refOnlyShim) DecodeArguments(raw []byte) (sdktools.InOut, error) {
-	if st, ok := r.inner.(sdktools.SchemaTool); ok {
-		return st.DecodeArguments(raw)
-	}
-	return sdktools.InOut{Value: json.RawMessage(raw)}, nil
+	return r.schema.DecodeArguments(raw)
 }
 
 func (r *refOnlyShim) Run(ctx context.Context, in sdktools.InOut) (sdktools.Out, error) {
@@ -154,6 +147,13 @@ func applyRefOnlyShim(sdkReg *sdktools.Registry, cliReg *tools.Registry, names [
 		if !ok {
 			continue
 		}
+		st, ok := t.(sdktools.SchemaTool)
+		if !ok {
+			// Converter products always implement SchemaTool; a
+			// foreign tool cannot be wrapped without dropping it from
+			// the offered set, so it keeps its unwrapped form.
+			continue
+		}
 		var ephemeral bool
 		if cliReg != nil {
 			if cliTool, ok := cliReg.Get(name); ok {
@@ -165,6 +165,7 @@ func applyRefOnlyShim(sdkReg *sdktools.Registry, cliReg *tools.Registry, names [
 		sdkReg.Remove(name)
 		wrapped := &refOnlyShim{
 			inner:     t,
+			schema:    st,
 			spool:     spool,
 			names:     names,
 			floor:     floor,

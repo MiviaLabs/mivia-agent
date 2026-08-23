@@ -138,6 +138,9 @@ func TestIntegration_BatchBudgetZeroIsInert(t *testing.T) {
 func TestIntegration_ParallelBatchCannotJointlyBlowTheBudget(t *testing.T) {
 	const budget = 128 << 10
 	f := newBatchFixture(t, []int{200 << 10, 200 << 10, 200 << 10})
+	// Legacy-only: the D8 per-batch status line is composed into the
+	// LAST degraded result, which the SDK path's sequential shaping
+	// wrapper cannot know in advance.
 	loop := f.run(t, Options{Backend: "legacy", BatchResultBudgetBytes: budget})
 
 	bodies := toolBodies(loop)
@@ -247,7 +250,7 @@ func TestIntegration_DegradedResultRefPagesTheOriginalBytes(t *testing.T) {
 // under its parent's SessionID.
 func TestIntegration_RemainderRefsAreInvisibleAcrossSessions(t *testing.T) {
 	f := newBatchFixture(t, []int{300 << 10})
-	loop := f.run(t, Options{Backend: "legacy", BatchResultBudgetBytes: 16 << 10, SessionID: "session-A"})
+	loop := f.run(t, Options{BatchResultBudgetBytes: 16 << 10, SessionID: "session-A"})
 
 	body := toolBodies(loop)["call_read_0"]
 	ref := refIn(t, body)

@@ -65,6 +65,10 @@ func buildAgentLoopOptions(l *Loop, opts Options) (sdkagentloop.Options, error) 
 		return sdkagentloop.Options{}, err
 	}
 	applyRefOnlyShim(sdkTools, l.Tools, opts.RefOnlyTools, opts.RemainderSpool, BatchDegradeFloorBytes, opts.SessionID)
+	// Host-side turn shaping replaces the SDK's TurnResultBudget: the
+	// CLI contract degrades with an honest notice and never omits a
+	// call, so out.TurnResultBudget stays unset below.
+	applyTurnShaping(sdkTools, l.Tools, opts)
 	maxIterations := opts.MaxSteps
 	if maxIterations <= 0 {
 		maxIterations = defaultSDKMaxIterations
@@ -77,14 +81,12 @@ func buildAgentLoopOptions(l *Loop, opts Options) (sdkagentloop.Options, error) 
 		MaxCallsPerTurn: opts.MaxToolCallsPerBatch,
 		SessionID:       opts.SessionID,
 	}
-	// BatchResultBudgetBytes bounds one batch's summed result bytes;
-	// the SDK's TurnResultBudget bounds one turn's summed result
-	// bytes - the closest single analogue the SDK carries. The
-	// negative derived-budget mode has no SDK analogue and was
-	// rejected above.
-	if opts.BatchResultBudgetBytes > 0 {
-		out.TurnResultBudget = opts.BatchResultBudgetBytes
-	}
+	// BatchResultBudgetBytes > 0 is carried by the host-side turn
+	// shaping wrapper applied above (applyTurnShaping); the SDK's
+	// TurnResultBudget stays unset because its semantics (omit the
+	// over-budget result) contradict the CLI's degrade-with-notice
+	// contract. The negative derived-budget mode has no SDK analogue
+	// and was rejected above.
 	// WorkLimits.MaxTurns clamps MaxIterations, mirroring the legacy
 	// clamp at loop.go's runOnceLegacy: the test reads opts.MaxSteps
 	// (pre-default) because an unset MaxSteps means unbounded, so ANY
