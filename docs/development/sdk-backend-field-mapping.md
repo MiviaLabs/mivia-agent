@@ -102,41 +102,124 @@ the staged/unadmitted predicates to produce a denial `RoleTool`
 message and let the model retry on the next iteration — a continue,
 not a stop.
 
-Two workarounds were considered and rejected:
+The initial design assumption was that the SDK needs a new primitive
+("deny-and-substitute-message") to support this flow. After research
+and review, the assumption was wrong: every adjacent generic agent
+SDK exposes pre-tool deny as a stop, not a continue-with-message
+(Anthropic Claude Code's `PreToolUse` exposes `permissionDecision`
+and `updatedInput` for *input* rewriting; OpenAI Agents SDK exposes
+input/output guardrails; MCP is server-side only). The SDK's
+`hooks.Handler` shape is the right generic primitive; the
+substitute-message path is mivia-agent-shaped, not generic.
 
-1. **Per-step SDK registry rebuild** — at each iteration, enumerate
-   `AdvertisedToolSpecs`, call `StagedToolMessage(name)` for names
-   not in the live registry, register stub tools that produce the
-   staged message as their `Out.Value`. Rejected because
-   `UnadmittedToolHandler` has a documented side effect ("auto-stage
-   it for publication at the next step boundary", see
-   `options.go:111`), so probing it at conversion time would trigger
-   that side effect before the model even asks for the tool.
+Two CLI-side workarounds fit the SDK's existing shape and stay
+fail-closed until the CLI does the refactor:
 
-2. **Pre-step hooks that veto** — wrong shape, since the staged case
-   must continue, not stop.
+1. **SDK `Scope.Approve` for known-but-declined tools** — register
+   `tools.Scope.Approve` against the live registry for staged or
+   unadmitted names. The SDK denies via `ErrToolDeclined`, the loop
+   ends on this iteration, and the CLI's retry logic produces a
+   `RoleTool` denial message naming the deferred tool on the next
+   iteration. The auto-stage side effect runs inside the CLI's
+   `Approve` callback at the moment of denial — not at conversion
+   time.
 
-Wiring requires either a SDK extension (`PointPreTool` returns
-`(allow bool, substitute *provider.Message, err error)`) or a host
-loop that catches `StopHookVeto` and retries. Both are out of scope
-for the flag flip; the fields stay fail-closed for now.
+2. **Pre-tool hooks that synthesize denial** — register a
+   `PointPreTool` handler that, for a known staged name, returns
+   `(allow=false, err=nil)` and let `StopHookVeto` end the iteration.
+   The CLI catches `StopHookVeto` and rewrites the run's final
+   message to a denial. This is wrong for interactive runs (the
+   user sees a `StopHookVeto` end-of-run) but matches a non-interactive
+   batch shape.
 
-## 4. Under active wiring (fail-closed today, wire planned)
+Both routes fit the SDK's current primitives without an SDK
+extension. The CLI picks one in the (A) refactor slice and drops
+`StagedToolMessage`/`UnadmittedToolHandler` from `Options`.
 
-These fields are documented here because they will eventually be wired
-into the SDK path. Until each lands, setting the field returns an
-unsupported-SDK-option error.
+### `RefOnlyTools`, `RemainderSpool`
 
-- `RefOnlyTools`, `RemainderSpool`: wire via the SDK's
-  `contextplan.Planner` with a planner policy that promotes oversized
-  results to refs.
-- `MaxContextTokens`: wire as "pass-compacted-history" — the CLI's
-  `PreparationManager` keeps hosting compaction, and the SDK receives
-  the compacted history as its starting `Request.Messages`.
-- `SummaryConfig.Summarizer`: wire as a post-compaction inject — the
-  CLI's `internal/agent/summary_inject` keeps hosting the LLM summary
-  call, and the SDK receives the injected message as part of the
-  history.
+The SDK already exposes `spool.SpoolTool` (`spool/tool.go:202-234`)
+for per-call, per-tool oversize-to-spool and `BatchTruncationNotice`
+(`agentloop/wire.go:32-37`) as the over-budget fallback. The CLI's
+"promote oversize to ref instead of notice, gated by tool name and
+batch byte pressure" is a *policy* on top of these primitives, not a
+new primitive.
+
+The initial assumption was that the SDK needs an extension
+(`TurnResultBudget.RefOnlyToolNames` + `TurnResultBudget.Spool`).
+After review, a non-mivia consumer wanting this behavior composes
+`spool.SpoolTool` per named tool at registration time; tools not in
+`RefOnlyToolNames` continue to receive `BatchTruncationNotice`. No
+SDK extension needed.
+
+The CLI's (A) refactor wraps each `RefOnlyTools` tool in
+`spool.SpoolTool` at conversion time, leaving the rest of the
+registry untouched. The CLI drops `RefOnlyTools`/`RemainderSpool`
+from `Options` and replaces them with `Options.SpooledToolNames` (a
+naming-only change in the SDK path).
+
+### `MaxContextTokens`
+
+The CLI's `MaxContextTokens` is a prompt budget; the SDK's
+`Window.MaxTokens` is the model's context window
+(`mivia-ai-sdk/contextplan/window.go:23-27`). These are different
+concepts: the CLI's value gates the `PreparationManager.Prepare`
+prune pass (`internal/agent/context.go:74-91`); the SDK's value gates
+`contextplan.Compact` (`mivia-ai-sdk/contextplan/compact.go:28-78`).
+Mapping CLI's value to `Window.MaxTokens` would either over-budget
+the SDK or silently change the CLI's cache-miss amortization.
+
+The CLI keeps `PreparationManager` on the SDK path; the SDK receives
+already-compacted `Request.Messages` and runs with `Window = nil`.
+The SDK's `Budget` (`agentloop/options.go:208-212`) does the per-call
+byte cap after the fact, mirroring the CLI's
+`promptBudgetErrorWithTools` (`internal/agent/context.go:225-237`).
+
+This is an (A) refactor in the CLI's `RunAgentLoopOnce` glue: build
+`Request.Messages` from the compacted history before calling the
+SDK. No SDK extension needed; no SDK field mapping needed.
+
+### `SummaryConfig.Summarizer`
+
+The SDK's `contextsummary.Summary` has 5 fields
+(`mivia-ai-sdk/contextsummary/summary.go:28-34`); the CLI's
+`Summary` has 7 (`internal/contextmgr/contracts.go:188-198`). The
+CLI's two extra fields (`Evidence`, `ChangedSurfaces`) carry
+host-side omitted-evidence and write-class tracking that downstream
+CLI consumers depend on
+(`internal/agent/summary_inject_test.go:456-460`).
+
+The CLI's (A) refactor wraps the SDK's `contextsummary.Summarizer`
+in a CLI-owned adapter that:
+
+1. Calls the SDK `Summarizer` to produce the 5-field summary.
+2. Fills `Evidence` and `ChangedSurfaces` from the host-side
+   `TurnState.OmittedEvidence` and the per-call write-class
+   accumulator.
+3. Injects the resulting 7-field message via
+   `internal/agent/RenderSummaryMessage` so the wire format is
+   unchanged.
+
+The CLI keeps `SummaryConfig.Summarizer` as the source of truth on
+both paths; the SDK's `Summarizer` is only used on the SDK path and
+only as the LLM-call primitive. No SDK extension needed.
+
+## 4. Under CLI refactor (fail-closed today)
+
+The four fields below all stay fail-closed on the SDK path. They
+will be unwired in mivia-agent by the (A) refactor slices — each one
+removes a CLI vocabulary quirk (or wraps an SDK primitive) rather
+than extending the SDK. The SDK never grows a new primitive for the
+flag flip.
+
+- `StagedToolMessage`, `UnadmittedToolHandler`: refactor to use
+  `tools.Scope.Approve` + retry-on-decline.
+- `RefOnlyTools`, `RemainderSpool`: refactor to wrap `RefOnlyTools`
+  tools in `spool.SpoolTool` at conversion time.
+- `MaxContextTokens`: keep `PreparationManager` on the SDK path; pass
+  compacted history; `Window = nil`.
+- `SummaryConfig.Summarizer`: wrap SDK `Summarizer` with a CLI-owned
+  adapter that fills `Evidence` and `ChangedSurfaces` host-side.
 
 ## See also
 
