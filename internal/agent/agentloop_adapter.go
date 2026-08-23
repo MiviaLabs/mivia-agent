@@ -30,7 +30,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
-	"github.com/MiviaLabs/mivia-agent/internal/usage"
 	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
 	sdktools "github.com/MiviaLabs/mivia-ai-sdk/tools"
@@ -142,7 +141,16 @@ func buildAgentLoopOptions(l *Loop, opts Options) (sdkagentloop.Options, *sdkTur
 // newSDKTurnCompleter wraps the CLI completer with the run's turn
 // defaults and the turn-state step counter (extracted from
 // buildAgentLoopOptions to keep it under the function-size budget).
+// The usage callback carries the legacy calibration: every completed
+// Chat call reports its CLI request/response pair through
+// l.emitTurnUsage, the same update the legacy loop runs per completion
+// (loop.go's emitTurnUsage call site). ChatStream stays unwired -
+// it yields no usage response, and the agent loop calls Chat anyway.
 func newSDKTurnCompleter(l *Loop, opts Options, turn *sdkTurnState, clampedMaxTokens *int) (*agentLoopCompleter, error) {
+	onUsage := func(ctx context.Context, cliReq provider.Request, resp *provider.Response) {
+		estimatedTokens, _ := provider.EstimatePromptCost(cliReq.Messages, cliReq.Tools, l.contextAccounting())
+		l.emitTurnUsage(ctx, opts, cliReq, resp, estimatedTokens)
+	}
 	return newAgentLoopCompleterWithDefaults(l.Completer, turnRequestDefaults{
 		reasoning:             opts.Reasoning,
 		maxTokens:             clampedMaxTokens,
@@ -150,7 +158,7 @@ func newSDKTurnCompleter(l *Loop, opts Options, turn *sdkTurnState, clampedMaxTo
 		requestTimeout:        opts.RequestTimeout,
 		disableProviderReplay: opts.DisableProviderReplay,
 		sessionID:             opts.SessionID,
-	}, func(finishReason string) { l.LastFinishReason = finishReason }, func() { turn.steps.Add(1) })
+	}, func(finishReason string) { l.LastFinishReason = finishReason }, func() { turn.steps.Add(1) }, onUsage)
 }
 
 // buildSDKToolRegistry converts one CLI registry onto a fully
@@ -355,9 +363,9 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 		// because the CLI surface drops tick events by design.
 		sdkOpts.Bus = bridgeAgentLoopEvents(opts)
 	}
-	if opts.UsageWriter != nil {
-		sdkOpts.Audit = bridgeUsageAudit(opts, l.Completer.Name())
-	}
+	// Usage rows: the completer's onUsage callback (newSDKTurnCompleter)
+	// runs l.emitTurnUsage per Chat call and writes the one token_usage
+	// row the legacy loop writes; an Audit bridge would duplicate it.
 	res, err := runSDKPromptTooLongRecoverable(ctx, l, sdkOpts, opts, preparedMsgs)
 	stampSDKToolMessageNames(res.History)
 	if err != nil {
@@ -519,33 +527,6 @@ func sdkPromptBudgetPreflight(l *Loop, opts Options, msgs []provider.Message) er
 		return promptBudgetErrorWithTools(msgs, opts.MaxContextTokens, l.initialToolSpecs(opts), l.contextAccounting())
 	}
 	return nil
-}
-
-// bridgeUsageAudit adapts the CLI's durable usage writer onto the
-// SDK's per-event audit callback. One completed completion yields one
-// token_usage row with the provider-reported actuals, the same shape
-// the legacy path's EmitTokenUsage writes; estimate and calibration
-// fields stay zero because the SDK reports actuals only. A non-nil
-// return from an AuditFunc is a hard run failure, and usage writes
-// are best-effort by contract, so the bridge always returns nil.
-func bridgeUsageAudit(opts Options, providerName string) sdkagentloop.AuditFunc {
-	return func(ctx context.Context, rec sdkagentloop.AuditRecord) error {
-		if rec.Kind != sdkagentloop.AuditKindCompletion {
-			return nil
-		}
-		u := rec.Response.Usage
-		if u.PromptTokens == 0 && u.CompletionTokens == 0 {
-			return nil
-		}
-		recordUsage(ctx, opts, usage.UsageRecord{
-			Kind:         "token_usage",
-			Provider:     providerName,
-			Model:        rec.Request.Model,
-			InputTokens:  u.PromptTokens,
-			OutputTokens: u.CompletionTokens,
-		})
-		return nil
-	}
 }
 
 // finalizeSDKTurn applies the CLI's post-turn Options after a

@@ -46,6 +46,11 @@ type agentLoopCompleter struct {
 	// each Chat call so the tool shims can stamp
 	// runtime.Request.Step (later-step re-issues must re-run reads).
 	onChat func()
+	// onUsage reports each completed provider call's CLI request and
+	// response pair, the carrier the SDK path uses for the legacy
+	// emitTurnUsage calibration/token-usage update. Nil drops the
+	// report.
+	onUsage func(ctx context.Context, req provider.Request, resp *provider.Response)
 }
 
 // turnRequestDefaults is the per-turn request shape the completer
@@ -69,17 +74,18 @@ var _ sdkshape.Completer = (*agentLoopCompleter)(nil)
 // nil-derefs on the first call, per the repo rule that internal
 // packages return errors instead of panicking.
 func newAgentLoopCompleter(c provider.Completer) (*agentLoopCompleter, error) {
-	return newAgentLoopCompleterWithDefaults(c, turnRequestDefaults{}, nil, nil)
+	return newAgentLoopCompleterWithDefaults(c, turnRequestDefaults{}, nil, nil, nil)
 }
 
 // newAgentLoopCompleterWithDefaults builds the wrapper with the
-// per-turn request defaults, an optional finish-reason recorder, and
-// an optional per-Chat iteration bump. Nil callbacks drop the report.
-func newAgentLoopCompleterWithDefaults(c provider.Completer, defaults turnRequestDefaults, onFinish func(string), onChat func()) (*agentLoopCompleter, error) {
+// per-turn request defaults, an optional finish-reason recorder, an
+// optional per-Chat iteration bump, and an optional per-call usage
+// reporter. Nil callbacks drop the report.
+func newAgentLoopCompleterWithDefaults(c provider.Completer, defaults turnRequestDefaults, onFinish func(string), onChat func(), onUsage func(context.Context, provider.Request, *provider.Response)) (*agentLoopCompleter, error) {
 	if c == nil {
 		return nil, errors.New("agent: nil CLI completer")
 	}
-	return &agentLoopCompleter{cli: c, defaults: defaults, onFinish: onFinish, onChat: onChat}, nil
+	return &agentLoopCompleter{cli: c, defaults: defaults, onFinish: onFinish, onChat: onChat, onUsage: onUsage}, nil
 }
 
 // Name implements provider.Completer. It forwards to the wrapped
@@ -103,6 +109,9 @@ func (a *agentLoopCompleter) Chat(ctx context.Context, req sdkshape.Request) (sd
 		if a.onFinish != nil {
 			a.onFinish(r.FinishReason)
 		}
+		if a.onUsage != nil {
+			a.onUsage(ctx, cliReq, r)
+		}
 		return convertToSDKResponse(*r), nil
 	} else if err != nil {
 		return sdkshape.Response{}, err
@@ -111,6 +120,9 @@ func (a *agentLoopCompleter) Chat(ctx context.Context, req sdkshape.Request) (sd
 	content, err := a.cli.Chat(ctx, cliReq)
 	if err != nil {
 		return sdkshape.Response{}, err
+	}
+	if a.onUsage != nil {
+		a.onUsage(ctx, cliReq, &provider.Response{Content: content})
 	}
 	return sdkshape.Response{
 		Message: sdkshape.Message{
