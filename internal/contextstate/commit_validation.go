@@ -5,6 +5,17 @@ import (
 	"fmt"
 )
 
+// The validators in this file intentionally do NOT delegate to
+// sdkctx.CommitRequest.Validate. The CLI's CommitRequest carries four
+// fields the SDK's does not know about (Principal, ActiveContext,
+// BaseDigest, Fingerprint, WorktreeInstance) plus a different Checkpoint
+// type (CheckpointRecord vs Checkpoint, with SummaryMetadata and
+// Complete). The SDK's validator would reject every well-formed CLI
+// commit on those five fields and on the missing sdk Checkpoint shape.
+// Keeping a parallel local implementation means the CLI's failure modes
+// (ErrInvalidDTO-wrapped, named-field rejections) and persisted shape
+// stay stable across SDK releases.
+
 func validateCommitRequest(r CommitRequest) error {
 	if err := validateCommitIdentity(r); err != nil {
 		return err

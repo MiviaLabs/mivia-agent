@@ -1,109 +1,58 @@
-// Package contextstate defines the dependency-neutral durable context
-// contract. It deliberately knows nothing about providers, chat, or storage.
+// Package contextstate is the CLI's durable context contract layer. It
+// composes the upstream mivia-ai-sdk/contextstate transport structs with
+// the CLI's identity, redaction, worktree, and lifecycle extensions.
+//
+// The byte-identical subset (shape constants and the ref-mint
+// primitives) is re-exported from mivia-ai-sdk/contextstate so every
+// CLI caller sees the SDK's canonical implementation under one symbol.
+// The divergent subset (ContentRef with the CLI's "ctxp_<hex>"
+// primary-key namespace, CheckpointID with the CLI's SummaryModel
+// field, the commit/checkpoint records with the CLI's Principal,
+// fingerprint, and worktree-instance fields, and the 13 CLI sentinel
+// errors) stays as distinct local types so the CLI's failure modes and
+// persisted shape do not move with an SDK release.
 package contextstate
 
 import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"strings"
 	"unicode/utf8"
 )
 
-// Shape bounds. These describe the FORM a durable value must take rather than
-// how much the user said, so they stay compiled in: an identifier that long is
-// malformed at any scale, and a source range that wide breaks range arithmetic
-// rather than merely costing storage. Volume bounds live in Limits, are
-// operator-owned, and are uncapped by default - see limits.go.
-const (
-	Namespace                    = "mivia.context.payload.v1"
-	MaxIdentifierBytes           = 128
-	MaxPayloadReferenceBytes     = 256
-	MaxSourceRangeEvents         = 100_000
-	DefaultMaxCheckpointMetadata = 16 * 1024
-	DefaultMaxSummaryMetadata    = 12 * 1024
-	MaxAuditBytes                = 1 * 1024
-)
-
-var (
-	ErrInvalidDTO           = errors.New("invalid context DTO")
-	ErrPrincipalMismatch    = errors.New("principal mismatch")
-	ErrSessionNotFound      = errors.New("session not found")
-	ErrSessionTombstoned    = errors.New("session tombstoned")
-	ErrPayloadNotFound      = errors.New("payload not found")
-	ErrPayloadRevoked       = errors.New("payload revoked")
-	ErrExportTooLarge       = errors.New("context export too large")
-	ErrSummaryUnavailable   = errors.New("summary unavailable")
-	ErrStaleRevision        = errors.New("stale revision")
-	ErrStaleBinding         = errors.New("stale binding")
-	ErrCheckpointConflict   = errors.New("checkpoint conflict")
-	ErrWorktreeDeleted      = errors.New("worktree session deleted")
-	ErrPromptBudgetExceeded = errors.New("prompt budget exceeded")
-)
-
-// EffectiveSummaryMetadataLimit returns the operator-configured summary
-// metadata bound, falling back to the compiled-in default when uncapped.
-func EffectiveSummaryMetadataLimit() int {
-	if v := CurrentLimits().SummaryMetadataBytes; v > 0 {
-		return v
-	}
-	return DefaultMaxSummaryMetadata
-}
-
-// EffectiveCheckpointMetadataLimit returns the operator-configured
-// checkpoint metadata bound, falling back to the compiled-in default.
-func EffectiveCheckpointMetadataLimit() int {
-	if v := CurrentLimits().CheckpointMetadataBytes; v > 0 {
-		return v
-	}
-	return DefaultMaxCheckpointMetadata
-}
-
-// ValidationError retains the field that made a DTO invalid while allowing
-// callers to use errors.Is(err, ErrInvalidDTO).
-type ValidationError struct {
-	Field  string
-	Reason string
-}
-
-func (e *ValidationError) Error() string {
-	if e == nil {
-		return ErrInvalidDTO.Error()
-	}
-	if e.Field == "" {
-		return fmt.Sprintf("%s: %s", ErrInvalidDTO, e.Reason)
-	}
-	return fmt.Sprintf("%s: %s: %s", ErrInvalidDTO, e.Field, e.Reason)
-}
-
-func (e *ValidationError) Unwrap() error { return ErrInvalidDTO }
-
-func invalid(field, reason string) error { return &ValidationError{Field: field, Reason: reason} }
-
+// SourceID names one event: a session and a sequence number. The local
+// Validate wraps ErrInvalidDTO so the CLI's failure mode does not move
+// with an SDK release; the SDK's Validate wraps ErrInvalidRecord.
 type SourceID struct {
 	SessionID string `json:"session_id"`
 	Sequence  uint64 `json:"sequence"`
 }
 
+// NewSourceID builds one SourceID and validates it.
 func NewSourceID(sessionID string, sequence uint64) (SourceID, error) {
 	id := SourceID{SessionID: sessionID, Sequence: sequence}
 	return id, id.Validate()
 }
 
+// Validate bounds the identifier.
 func (id SourceID) Validate() error { return validateIdentifier("source_id.session_id", id.SessionID) }
 
+// SourceRange spans events of one session, inclusive of both ends.
 type SourceRange struct {
 	Start SourceID `json:"start"`
 	End   SourceID `json:"end"`
 }
 
+// NewSourceRange builds one SourceRange and validates it.
 func NewSourceRange(start, end SourceID) (SourceRange, error) {
 	r := SourceRange{Start: start, End: end}
 	return r, r.Validate()
 }
 
+// Validate enforces one session, an ordered span, and a span under
+// MaxSourceRangeEvents.
 func (r SourceRange) Validate() error {
 	if err := r.Start.Validate(); err != nil {
 		return err
@@ -123,17 +72,20 @@ func (r SourceRange) Validate() error {
 	return nil
 }
 
+// BindingRevision names the provider-model pair and its generation.
 type BindingRevision struct {
 	Provider   string `json:"provider"`
 	Model      string `json:"model"`
 	Generation uint64 `json:"generation"`
 }
 
+// NewBindingRevision builds one BindingRevision and validates it.
 func NewBindingRevision(providerName, model string, generation uint64) (BindingRevision, error) {
 	b := BindingRevision{Provider: providerName, Model: model, Generation: generation}
 	return b, b.Validate()
 }
 
+// Validate bounds both identifiers and requires a positive generation.
 func (b BindingRevision) Validate() error {
 	if err := validateIdentifier("binding.provider", b.Provider); err != nil {
 		return err
@@ -147,18 +99,26 @@ func (b BindingRevision) Validate() error {
 	return nil
 }
 
+// Revision is a session's three counters. It carries no Validate; the
+// commit rules compare it as a whole.
 type Revision struct {
 	Session uint64 `json:"session"`
 	Durable uint64 `json:"durable"`
 	Source  uint64 `json:"source"`
 }
 
+// NewRevision builds one Revision from its three counters.
 func NewRevision(session, durable, source uint64) Revision {
 	return Revision{Session: session, Durable: durable, Source: source}
 }
 
+// Validate always returns nil so Revision stays a value type callers
+// can range over.
 func (r Revision) Validate() error { return nil }
 
+// CheckpointID identifies one checkpoint within a session. The CLI
+// adds SummaryModel so storage can record which model authored the
+// summary; the SDK has no such field, so this type stays local.
 type CheckpointID struct {
 	SessionID      string      `json:"session_id"`
 	SourceRange    SourceRange `json:"source_range"`
@@ -168,11 +128,16 @@ type CheckpointID struct {
 	IdempotencyKey string      `json:"idempotency_key"`
 }
 
+// NewCheckpointID builds one CheckpointID and validates it.
 func NewCheckpointID(sessionID string, sourceRange SourceRange, algorithm string, schemaVersion uint32, summaryModel, key string) (CheckpointID, error) {
 	id := CheckpointID{SessionID: sessionID, SourceRange: sourceRange, Algorithm: algorithm, SchemaVersion: schemaVersion, SummaryModel: summaryModel, IdempotencyKey: key}
 	return id, id.Validate()
 }
 
+// Validate enforces the identifier bounds, a valid same-session
+// SourceRange, an Algorithm bounded at 64 bytes, a positive
+// SchemaVersion, an optional bounded SummaryModel, and a bounded
+// IdempotencyKey.
 func (id CheckpointID) Validate() error {
 	if err := validateIdentifier("checkpoint.session_id", id.SessionID); err != nil {
 		return err
@@ -195,6 +160,10 @@ func (id CheckpointID) Validate() error {
 	return validateBoundedText("checkpoint.idempotency_key", id.IdempotencyKey, MaxIdentifierBytes, false)
 }
 
+// Principal is the CLI's three-tuple identity plus a per-process
+// capability secret. The SDK has no equivalent; storage persists the
+// capability digest alongside the owner tuple so a second handle with
+// matching strings cannot authorize reads or writes.
 type Principal struct {
 	WorkspaceID string `json:"workspace_id"`
 	SessionID   string `json:"session_id"`
@@ -202,6 +171,7 @@ type Principal struct {
 	capability  [32]byte
 }
 
+// NewPrincipal mints a Principal with a fresh capability secret.
 func NewPrincipal(workspaceID, sessionID, subjectID string) (Principal, error) {
 	p := Principal{WorkspaceID: workspaceID, SessionID: sessionID, SubjectID: subjectID}
 	if _, err := rand.Read(p.capability[:]); err != nil {
@@ -210,11 +180,13 @@ func NewPrincipal(workspaceID, sessionID, subjectID string) (Principal, error) {
 	return p, p.Validate()
 }
 
+// IsBound reports whether the Principal carries a non-zero capability.
 func (p Principal) IsBound() bool { return p.capability != [32]byte{} }
 
-// CapabilityDigest is the durable, non-reversible identity of this principal
-// handle. Storage persists this digest alongside the owner tuple so a second
-// handle with matching strings cannot authorize reads or writes.
+// CapabilityDigest is the durable, non-reversible identity of this
+// principal handle. Storage persists this digest alongside the owner
+// tuple so a second handle with matching strings cannot authorize
+// reads or writes.
 func (p Principal) CapabilityDigest() string {
 	if !p.IsBound() {
 		return ""
@@ -223,6 +195,7 @@ func (p Principal) CapabilityDigest() string {
 	return hex.EncodeToString(digest[:])
 }
 
+// Validate bounds the three owner strings at MaxIdentifierBytes.
 func (p Principal) Validate() error {
 	for field, value := range map[string]string{"principal.workspace_id": p.WorkspaceID, "principal.session_id": p.SessionID, "principal.subject_id": p.SubjectID} {
 		if err := validateIdentifier(field, value); err != nil {
@@ -232,6 +205,12 @@ func (p Principal) Validate() error {
 	return nil
 }
 
+// ContentRef is the CLI's durable address of one shared context blob.
+// The SDK's ContentRef enforces Ref == HashPrefix+SHA256; the CLI uses
+// "ctxp_<hex>" refs derived from the owner tuple so two principals
+// with identical content do not collide on a global primary key. The
+// two types share their field set and stay as two distinct Go types so
+// the local validator can enforce the CLI's namespace.
 type ContentRef struct {
 	Ref         string `json:"ref"`
 	Namespace   string `json:"namespace"`
@@ -242,6 +221,10 @@ type ContentRef struct {
 	Size        int    `json:"size"`
 }
 
+// Validate bounds the Ref, enforces the CLI namespace, requires a
+// lowercase 64-character SHA-256, bounds the owner strings, and
+// rejects a negative Size. The validator refuses any "sha256:"-prefixed
+// Ref so an SDK reference cannot pass through the CLI's storage.
 func (r ContentRef) Validate() error {
 	if err := validateBoundedText("content.ref", r.Ref, MaxPayloadReferenceBytes, false); err != nil {
 		return err
@@ -268,13 +251,18 @@ func (r ContentRef) Validate() error {
 	return nil
 }
 
+// RetentionClass labels how long a payload is kept.
 type RetentionClass string
 
 const (
-	RetentionSession    RetentionClass = "session"
+	// RetentionSession keeps a payload for the session's lifetime.
+	RetentionSession RetentionClass = "session"
+	// RetentionCompliance keeps a payload past session deletion.
 	RetentionCompliance RetentionClass = "compliance"
 )
 
+// SanitizedPayload is the CLI's content-addressed payload shape with
+// the redaction outcome attached.
 type SanitizedPayload struct {
 	Ref             ContentRef     `json:"ref"`
 	Bytes           []byte         `json:"bytes,omitempty"`
@@ -284,6 +272,10 @@ type SanitizedPayload struct {
 	Retention       RetentionClass `json:"retention"`
 }
 
+// PayloadRecord is one stored payload under its content address. The
+// field set matches the SDK's, but Ref is the CLI's local ContentRef
+// (sha256:-prefixed SDK references do not pass Validate), so the type
+// stays local.
 type PayloadRecord struct {
 	Ref       ContentRef     `json:"ref"`
 	Retention RetentionClass `json:"retention"`
@@ -291,6 +283,8 @@ type PayloadRecord struct {
 	Data      []byte         `json:"data,omitempty"`
 }
 
+// Validate enforces a valid Ref, a non-empty Retention, and, when
+// Data is present, a length and digest that match Ref.
 func (p PayloadRecord) Validate() error {
 	if err := p.Ref.Validate(); err != nil {
 		return err
@@ -310,6 +304,9 @@ func (p PayloadRecord) Validate() error {
 	return nil
 }
 
+// SourceEvent is one durable event in a session's source log. The
+// field set matches the SDK's; the local Validate wraps ErrInvalidDTO
+// so the CLI's failure mode does not move with an SDK release.
 type SourceEvent struct {
 	ID              SourceID `json:"id"`
 	Kind            string   `json:"kind"`
@@ -321,6 +318,8 @@ type SourceEvent struct {
 	Size            int      `json:"size"`
 }
 
+// Validate bounds the four required text fields at 256 bytes, the two
+// optional fields when set, and rejects a negative Size.
 func (e SourceEvent) Validate() error {
 	if err := e.ID.Validate(); err != nil {
 		return err
@@ -347,6 +346,9 @@ func (e SourceEvent) Validate() error {
 	return nil
 }
 
+// CheckpointRecord is one committed state of a session with the CLI's
+// summary metadata column and Complete flag. Distinct from the SDK's
+// Checkpoint because storage persists Complete and SummaryMetadata.
 type CheckpointRecord struct {
 	ID              CheckpointID    `json:"id"`
 	Revision        Revision        `json:"revision"`
@@ -358,6 +360,11 @@ type CheckpointRecord struct {
 	Complete        bool            `json:"complete"`
 }
 
+// Validate enforces a valid ID, a valid Binding, a SourceRange that
+// matches the ID, a non-empty ActiveContext within the CheckpointBytes
+// bound, a SummaryMetadata within the EffectiveCheckpointMetadataLimit,
+// a positive TurnID, and that ActiveContext + SummaryMetadata fit the
+// overall checkpoint bound.
 func (c CheckpointRecord) Validate() error {
 	if err := c.ID.Validate(); err != nil {
 		return err
@@ -387,6 +394,8 @@ func (c CheckpointRecord) Validate() error {
 	return nil
 }
 
+// Snapshot is the read model of one session. Tombstoned marks a
+// session that DeleteSession removed.
 type Snapshot struct {
 	Revision   Revision         `json:"revision"`
 	Binding    BindingRevision  `json:"binding"`
@@ -395,6 +404,8 @@ type Snapshot struct {
 	Tombstoned bool             `json:"tombstoned"`
 }
 
+// PolicySnapshot exposes the resolved redaction and credential policy
+// to the runtime so a UI surface can render the operator's ceiling.
 type PolicySnapshot struct {
 	SummaryEnabled      bool     `json:"summary_enabled"`
 	RedactionConfigured bool     `json:"redaction_configured"`
@@ -406,10 +417,13 @@ type PolicySnapshot struct {
 	PolicyDigest        string   `json:"policy_digest"`
 }
 
+// validateIdentifier bounds a required identifier at MaxIdentifierBytes.
 func validateIdentifier(field, value string) error {
 	return validateBoundedText(field, value, MaxIdentifierBytes, false)
 }
 
+// validateBoundedText rejects empty text when required, then text
+// over max, invalid UTF-8, or a control character.
 func validateBoundedText(field, value string, max int, allowEmpty bool) error {
 	if !allowEmpty && strings.TrimSpace(value) == "" {
 		return invalid(field, "must not be empty")
@@ -425,6 +439,8 @@ func validateBoundedText(field, value string, max int, allowEmpty bool) error {
 	return nil
 }
 
+// isLowerHex reports whether every character in value is a lowercase hex digit.
+// An empty string passes (length is checked separately at the caller).
 func isLowerHex(value string) bool {
 	for _, r := range value {
 		if !(r >= '0' && r <= '9') && !(r >= 'a' && r <= 'f') {
