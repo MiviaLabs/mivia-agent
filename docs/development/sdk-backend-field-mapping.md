@@ -192,24 +192,19 @@ host-side omitted-evidence and write-class tracking that downstream
 CLI consumers depend on
 (`internal/agent/summary_inject_test.go:456-460`).
 
-The CLI's (A) refactor wraps the SDK's `contextsummary.Summarizer`
-in a CLI-owned adapter that:
-
-1. Calls the SDK `Summarizer` to produce the 5-field summary.
-2. Fills `Evidence` and `ChangedSurfaces` from the host-side
-   `TurnState.OmittedEvidence` and the per-call write-class
-   accumulator.
-3. Injects the resulting 7-field message via
-   `internal/agent/RenderSummaryMessage` so the wire format is
-   unchanged.
-
-The CLI keeps `SummaryConfig.Summarizer` as the source of truth on
-both paths; the SDK's `Summarizer` is only used on the SDK path and
-only as the LLM-call primitive. No SDK extension needed.
+**Carried.** The SDK's `Window` is nil on this path, so the SDK
+never invokes its own LLM summary call. The CLI's
+`SummaryConfig.Summarizer` runs host-side through
+`Loop.injectSummary` after `PreparationManager.Prepare` reports a
+compacted outcome; the rendered summary message rides on the
+prepared history as the last user-role frame before the SDK loop
+runs. The CLI's 7-field `Summary` schema stays authoritative on the
+wire — `Evidence` and `ChangedSurfaces` keep their host-side
+semantics, and the SDK's 5-field schema is never reached.
 
 ## 4. Under CLI refactor (fail-closed today)
 
-The four fields below all stay fail-closed on the SDK path. They
+The three fields below all stay fail-closed on the SDK path. They
 will be unwired in mivia-agent by the (A) refactor slices — each one
 removes a CLI vocabulary quirk (or wraps an SDK primitive) rather
 than extending the SDK. The SDK never grows a new primitive for the
@@ -219,15 +214,14 @@ flag flip.
   `tools.Scope.Approve` + retry-on-decline.
 - `RefOnlyTools`, `RemainderSpool`: refactor to wrap `RefOnlyTools`
   tools in `spool.SpoolTool` at conversion time.
-- `SummaryConfig.Summarizer`: wrap SDK `Summarizer` with a CLI-owned
-  adapter that fills `Evidence` and `ChangedSurfaces` host-side.
 
-`MaxContextTokens` is now carried: `RunAgentLoopOnce` calls
-`opts.PreparationManager.Prepare` on the loop's history before the
-SDK loop runs, hands the prepared messages to `RunSteerable`, and
-leaves the SDK's `Window` nil. The CLI keeps `PreparationManager`
-as the source of truth on the SDK path; the SDK never sees a raw
-over-budget history.
+`MaxContextTokens` and `SummaryConfig.Summarizer` are now carried:
+`RunAgentLoopOnce` calls `opts.PreparationManager.Prepare` on the
+loop's history, then runs the CLI's host-side summary inject when a
+summarizer is wired, and hands the resulting history to
+`RunSteerable`. The SDK's `Window` stays nil so the SDK never runs
+its own per-iteration planning pass on top of the CLI's
+host-side compaction.
 
 ## See also
 

@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -80,13 +79,13 @@ func TestRunOnceSDKFailClosedSurfacesThroughRun(t *testing.T) {
 		Tools:     tools.NewRegistry(),
 	}
 	opts := Options{Model: "m", MaxSteps: 1, Backend: "sdk"}
-	opts.SummaryConfig.Summarizer = &contextmgr.Summarizer{}
+	opts.StagedToolMessage = func(string) (string, bool) { return "", false }
 	_, err := loop.Run(context.Background(), "hi", opts)
 	if err == nil {
-		t.Fatal("Run with SummaryConfig.Summarizer under the sdk backend returned nil error; want fail-closed error")
+		t.Fatal("Run with StagedToolMessage under the sdk backend returned nil error; want fail-closed error")
 	}
-	if !strings.Contains(err.Error(), "SummaryConfig.Summarizer") {
-		t.Fatalf("err = %v, want it to name SummaryConfig.Summarizer", err)
+	if !strings.Contains(err.Error(), "StagedToolMessage") {
+		t.Fatalf("err = %v, want it to name StagedToolMessage", err)
 	}
 }
 

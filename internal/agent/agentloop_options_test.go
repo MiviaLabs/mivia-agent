@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -509,4 +510,140 @@ func (c *captureCompleter) ChatTurn(_ context.Context, req provider.Request) (*p
 		c.onTurn(req)
 	}
 	return c.chatTurnOut, c.chatTurnErr
+}
+
+// compactAndSummarizeManager marks every Prepare outcome as
+// Compacted so injectSummary runs on the SDK path. The default
+// stubPreparationManager only sets Compacted when the message slice
+// shrinks; this one always sets it, simulating a structural-pruning
+// pass that always has something to summarize.
+type compactAndSummarizeManager struct{}
+
+func (c *compactAndSummarizeManager) Prepare(_ context.Context, in contextmgr.PrepareInput) (contextmgr.Preparation, error) {
+	rangeValue := contextstate.SourceRange{
+		Start: contextstate.SourceID{SessionID: in.Principal.SessionID, Sequence: in.Revision.Source},
+		End:   contextstate.SourceID{SessionID: in.Principal.SessionID, Sequence: in.Revision.Source},
+	}
+	return contextmgr.CapturePreparation(in, contextmgr.CheckpointCandidate{
+		SourceRange: rangeValue, ActiveContext: []byte("active"),
+	}, in.Messages, true, "sdk-summary-test")
+}
+
+func (c *compactAndSummarizeManager) Discard(_ contextmgr.Preparation) {}
+
+// stubSummaryProvider returns a fixed valid Summary so the CLI's
+// NewSummarizer can be built without a real provider. The test
+// inspects Loop.InjectedSummary() rather than the wire result.
+type stubSummaryProvider struct{}
+
+func (*stubSummaryProvider) Summarize(_ context.Context, request contextmgr.SummaryRequest) (contextmgr.Summary, error) {
+	return contextmgr.Summary{
+		Version:     request.Input.Version,
+		Objective:   "obj",
+		State:       request.Input.State,
+		SourceRange: request.SourceRange,
+	}, nil
+}
+
+// TestPrepareSDKHistoryInjectsSummary asserts that when both
+// PreparationManager and SummaryConfig.Summarizer are wired, the
+// SDK path produces a final history whose tail message carries the
+// SummaryMessageName (the summary injection frame). The completer
+// records the last message it received so the test can read the
+// injection directly.
+func TestPrepareSDKHistoryInjectsSummary(t *testing.T) {
+	var lastName string
+	cap := &captureCompleter{
+		fakeCompleter: fakeCompleter{name: "fake", chatTurnOut: &provider.Response{Content: "ok", FinishReason: "stop"}},
+		onTurn: func(req provider.Request) {
+			if len(req.Messages) > 0 {
+				lastName = req.Messages[len(req.Messages)-1].Name
+			}
+		},
+	}
+	l := &Loop{Completer: cap, Tools: tools.NewRegistry()}
+	summ := summaryInjectSummarizer(t, &stubSummaryProvider{})
+	in := []provider.Message{
+		{Role: provider.RoleUser, Content: "m1"},
+		{Role: provider.RoleAssistant, Content: "a1"},
+		{Role: provider.RoleUser, Content: "m2"},
+		{Role: provider.RoleAssistant, Content: "a2"},
+		{Role: provider.RoleUser, Content: "m3"},
+	}
+	principal, perr := contextstate.NewPrincipal("workspace", "session", "subject")
+	if perr != nil {
+		t.Fatalf("NewPrincipal: %v", perr)
+	}
+	binding := mustBinding(t)
+	opts := Options{
+		Model: "model", MaxSteps: 1, MaxContextTokens: 100,
+		PreparationManager: &compactAndSummarizeManager{},
+		PreparationInput: contextmgr.PrepareInput{
+			Budget: 100, Principal: principal, Binding: binding,
+			Revision: contextstate.Revision{Session: 1, Durable: 1, Source: 1},
+		},
+		SummaryConfig: SummaryConfig{
+			Summarizer: &summ,
+			Redaction:  contextstate.RedactionPolicy{Configured: true, Patterns: []string{"never-match"}},
+		},
+	}
+	_, err := RunAgentLoopOnce(context.Background(), l, opts, in)
+	if err != nil {
+		t.Fatalf("RunAgentLoopOnce: %v", err)
+	}
+	if lastName != SummaryMessageName {
+		t.Fatalf("last message name = %q, want %q", lastName, SummaryMessageName)
+	}
+}
+
+// TestPrepareSDKHistoryNoSummarizerCompactsOnly asserts that a
+// non-nil PreparationManager without a Summarizer compacts the
+// messages but does NOT append a summary frame at the tail.
+func TestPrepareSDKHistoryNoSummarizerCompactsOnly(t *testing.T) {
+	var lastName string
+	cap := &captureCompleter{
+		fakeCompleter: fakeCompleter{name: "fake", chatTurnOut: &provider.Response{Content: "ok", FinishReason: "stop"}},
+		onTurn: func(req provider.Request) {
+			if len(req.Messages) > 0 {
+				lastName = req.Messages[len(req.Messages)-1].Name
+			}
+		},
+	}
+	l := &Loop{Completer: cap, Tools: tools.NewRegistry()}
+	principal, perr := contextstate.NewPrincipal("workspace", "session", "subject")
+	if perr != nil {
+		t.Fatalf("NewPrincipal: %v", perr)
+	}
+	binding := mustBinding(t)
+	in := []provider.Message{
+		{Role: provider.RoleUser, Content: "m1"},
+		{Role: provider.RoleAssistant, Content: "a1"},
+		{Role: provider.RoleUser, Content: "m2"},
+		{Role: provider.RoleAssistant, Content: "a2"},
+		{Role: provider.RoleUser, Content: "m3"},
+	}
+	opts := Options{
+		Model: "model", MaxSteps: 1, MaxContextTokens: 100,
+		PreparationManager: &compactAndSummarizeManager{},
+		PreparationInput: contextmgr.PrepareInput{
+			Budget: 100, Principal: principal, Binding: binding,
+			Revision: contextstate.Revision{Session: 1, Durable: 1, Source: 1},
+		},
+		// SummaryConfig.Summarizer left nil.
+	}
+	if _, err := RunAgentLoopOnce(context.Background(), l, opts, in); err != nil {
+		t.Fatalf("RunAgentLoopOnce: %v", err)
+	}
+	if lastName == SummaryMessageName {
+		t.Fatalf("last message name = %q; expected no summary injection without a Summarizer", lastName)
+	}
+}
+
+func mustBinding(t *testing.T) contextstate.BindingRevision {
+	t.Helper()
+	b, err := contextstate.NewBindingRevision("summary-test", "model", 1)
+	if err != nil {
+		t.Fatalf("NewBindingRevision: %v", err)
+	}
+	return b
 }

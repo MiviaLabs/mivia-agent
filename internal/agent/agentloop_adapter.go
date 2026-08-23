@@ -165,17 +165,17 @@ func rejectUnsupportedSDKBatches(opts Options) error {
 	// per-call Budget still bounds one Completer call's messages by
 	// byte count after the fact.
 	// OnEvent, EventBus, UsageWriter, FinalWriter, RequireFinalText,
-	// and MailboxPendingInterrupt are carried: the event bridge
-	// translates SDK loop events, the audit bridge writes durable
-	// token-usage rows per completed completion, finalizeSDKTurn
-	// writes the final text and enforces the empty-turn refusal after
-	// the run, and the steer bridge spawns a third goroutine that
-	// polls MailboxPendingInterrupt as the strict signal branch
+	// SummaryConfig.Summarizer, and MailboxPendingInterrupt are carried:
+	// the event bridge translates SDK loop events, the audit bridge
+	// writes durable token-usage rows per completed completion,
+	// finalizeSDKTurn writes the final text and enforces the empty-turn
+	// refusal after the run, the steer bridge spawns a third goroutine
+	// that polls MailboxPendingInterrupt as the strict signal branch
 	// (parallel to the InterruptCh one-shot and the MailboxPending
-	// watchdog poller).
-	if opts.SummaryConfig.Summarizer != nil {
-		return unsupportedSDKOption("SummaryConfig.Summarizer")
-	}
+	// watchdog poller), and prepareSDKHistory runs the CLI's host-side
+	// SummaryConfig.Summarizer once before the SDK loop runs so the
+	// SDK receives a starting history with the summary message already
+	// injected as the last user-role frame.
 	return nil
 }
 
@@ -362,25 +362,18 @@ func bridgeSteerSignals(ctx context.Context, opts Options, steer *sdkagentloop.S
 	}
 }
 
-// prepareSDKHistory applies the CLI's host-side preparation pass to
-// the loop's history before the SDK runs. A nil PreparationManager
-// returns the loop's history unchanged (with the SDK's per-call
-// Budget still applying). When MaxContextTokens is positive but no
-// PreparationManager is wired, the SDK path silently bypasses the
-// host-side compaction: that is a CLI-side misconfiguration (no
-// compaction despite a positive budget) rather than a path-level
-// error.
-//
-// The Tools field of PrepareInput is left nil here: the SDK carries
-// its own registry and the host-side structural accounting at
-// planner.go:140 short-circuits to zero schema cost on nil. Passing
-// the SDK-converted registry is unsafe because the CLI's planning
-// pass expects provider.ToolSpec, not the SDK's tools.SchemaTool
-// shape.
-//
-// The returned slice is freshly allocated via clonePreparedMessages
-// so the SDK's appending history mutations never reach the loop's
-// live l.Messages.
+// prepareSDKHistory applies the CLI's host-side preparation and
+// summary-injection passes to the loop's history before the SDK
+// runs. The SDK's Window stays nil so the SDK does not run its own
+// per-iteration planning pass on top of the CLI's host-side
+// compaction; the CLI's SummaryConfig.Summarizer runs host-side
+// through Loop.injectSummary after a compacted outcome, and the SDK
+// receives the rendered summary message as the last user-role
+// frame in its starting history. The CLI's 7-field Summary stays
+// authoritative on the wire (the SDK's 5-field schema is never
+// reached). A nil PreparationManager returns the loop's history
+// unchanged. See docs/development/sdk-backend-field-mapping.md for
+// the full rationale.
 func prepareSDKHistory(ctx context.Context, l *Loop, opts Options, msgs []provider.Message) ([]sdkshape.Message, error) {
 	if opts.PreparationManager == nil {
 		return cliMessagesToSDK(msgs), nil
@@ -397,7 +390,7 @@ func prepareSDKHistory(ctx context.Context, l *Loop, opts Options, msgs []provid
 			if fallback, ferr := opts.PreparationManager.Prepare(context.Background(), input); ferr == nil {
 				l.recordPreparation(fallback)
 				l.captureOmittedEvidence(input, fallback)
-				return cliMessagesToSDK(clonePreparedMessages(fallback.Messages)), nil
+				return cliMessagesToSDK(clonePreparedMessages(injectSummaryAfterPrepare(l, ctx, opts, fallback.Messages))), nil
 			} else {
 				return nil, ferr
 			}
@@ -406,7 +399,27 @@ func prepareSDKHistory(ctx context.Context, l *Loop, opts Options, msgs []provid
 	}
 	l.recordPreparation(preparation)
 	l.captureOmittedEvidence(input, preparation)
-	return cliMessagesToSDK(clonePreparedMessages(preparation.Messages)), nil
+	return cliMessagesToSDK(clonePreparedMessages(injectSummaryAfterPrepare(l, ctx, opts, preparation.Messages))), nil
+}
+
+// injectSummaryAfterPrepare runs the CLI's host-side summary inject
+// on a freshly prepared messages slice and returns the slice with the
+// summary message appended as the last user-role frame. A nil
+// summarizer or a non-compacted preparation returns the messages
+// unchanged, mirroring injectSummary's structural-only fallback.
+func injectSummaryAfterPrepare(l *Loop, ctx context.Context, opts Options, prepared []provider.Message) []provider.Message {
+	if opts.SummaryConfig.Summarizer == nil || !l.HasPreparation || !l.LastPreparation.Compacted {
+		return prepared
+	}
+	// Temporarily swap l.Messages to the prepared slice so injectSummary
+	// reads the compacted history instead of the live one, then restore.
+	// This matches what loop.go:332 does in the legacy path: prepareStep
+	// overwrites l.Messages from preparation.Messages before
+	// injectSummary sees them.
+	original := l.Messages
+	l.Messages = prepared
+	defer func() { l.Messages = original }()
+	return l.injectSummary(ctx, opts)
 }
 
 // Compile-time check: SDK's Completer type is reachable from the
