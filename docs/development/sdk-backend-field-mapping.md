@@ -169,15 +169,18 @@ prune pass (`internal/agent/context.go:74-91`); the SDK's value gates
 Mapping CLI's value to `Window.MaxTokens` would either over-budget
 the SDK or silently change the CLI's cache-miss amortization.
 
-The CLI keeps `PreparationManager` on the SDK path; the SDK receives
-already-compacted `Request.Messages` and runs with `Window = nil`.
-The SDK's `Budget` (`agentloop/options.go:208-212`) does the per-call
-byte cap after the fact, mirroring the CLI's
+**Carried.** The CLI keeps `PreparationManager` on the SDK path;
+`RunAgentLoopOnce` calls `Prepare` on the loop's history and hands
+the prepared messages to `RunSteerable`. The SDK's `Window` stays
+nil; the SDK's per-call `Budget`
+(`agentloop/options.go:208-212`) bounds one Completer call by byte
+count after the fact, mirroring the CLI's
 `promptBudgetErrorWithTools` (`internal/agent/context.go:225-237`).
 
-This is an (A) refactor in the CLI's `RunAgentLoopOnce` glue: build
-`Request.Messages` from the compacted history before calling the
-SDK. No SDK extension needed; no SDK field mapping needed.
+When `PreparationManager` is nil but `MaxContextTokens` is positive,
+the SDK path silently bypasses the host-side compaction. That is a
+CLI-side misconfiguration (no compaction despite a positive budget)
+rather than a path-level error.
 
 ### `SummaryConfig.Summarizer`
 
@@ -216,10 +219,15 @@ flag flip.
   `tools.Scope.Approve` + retry-on-decline.
 - `RefOnlyTools`, `RemainderSpool`: refactor to wrap `RefOnlyTools`
   tools in `spool.SpoolTool` at conversion time.
-- `MaxContextTokens`: keep `PreparationManager` on the SDK path; pass
-  compacted history; `Window = nil`.
 - `SummaryConfig.Summarizer`: wrap SDK `Summarizer` with a CLI-owned
   adapter that fills `Evidence` and `ChangedSurfaces` host-side.
+
+`MaxContextTokens` is now carried: `RunAgentLoopOnce` calls
+`opts.PreparationManager.Prepare` on the loop's history before the
+SDK loop runs, hands the prepared messages to `RunSteerable`, and
+leaves the SDK's `Window` nil. The CLI keeps `PreparationManager`
+as the source of truth on the SDK path; the SDK never sees a raw
+over-budget history.
 
 ## See also
 

@@ -157,9 +157,13 @@ func rejectUnsupportedSDKBatches(opts Options) error {
 	if opts.PreserveWorkLimits {
 		return unsupportedSDKOption("PreserveWorkLimits")
 	}
-	if opts.MaxContextTokens > 0 {
-		return unsupportedSDKOption("MaxContextTokens")
-	}
+	// MaxContextTokens is carried: RunAgentLoopOnce pre-compacts the
+	// loop's history through opts.PreparationManager before handing
+	// the resulting messages to RunSteerable. The SDK's Window stays
+	// nil so the SDK does not run its own per-iteration planning
+	// pass on top of the CLI's host-side compaction. The SDK's
+	// per-call Budget still bounds one Completer call's messages by
+	// byte count after the fact.
 	// OnEvent, EventBus, UsageWriter, FinalWriter, RequireFinalText,
 	// and MailboxPendingInterrupt are carried: the event bridge
 	// translates SDK loop events, the audit bridge writes durable
@@ -199,6 +203,17 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 			defer cancel()
 		}
 	}
+	// MaxContextTokens is honored by pre-compacting the loop's history
+	// through opts.PreparationManager before handing the messages to
+	// the SDK. The SDK's Window stays nil so the SDK does not run its
+	// own per-iteration planning pass on top of the CLI's host-side
+	// compaction. A nil PreparationManager keeps the loop's history
+	// unchanged; the SDK's per-call Budget still bounds one Completer
+	// call's messages by byte count after the fact.
+	preparedMsgs, err := prepareSDKHistory(ctx, l, opts, msgs)
+	if err != nil {
+		return sdkagentloop.Result{}, err
+	}
 	sdkOpts, err := buildAgentLoopOptions(l, opts)
 	if err != nil {
 		return sdkagentloop.Result{}, err
@@ -219,7 +234,7 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 	}
 	steer := sdkagentloop.NewSteer()
 	bridgeSteerSignals(ctx, opts, steer)
-	res, err := loop.RunSteerable(ctx, cliMessagesToSDK(msgs), steer)
+	res, err := loop.RunSteerable(ctx, preparedMsgs, steer)
 	if err != nil {
 		return sdkagentloop.Result{}, err
 	}
@@ -345,6 +360,53 @@ func bridgeSteerSignals(ctx context.Context, opts Options, steer *sdkagentloop.S
 			}
 		}()
 	}
+}
+
+// prepareSDKHistory applies the CLI's host-side preparation pass to
+// the loop's history before the SDK runs. A nil PreparationManager
+// returns the loop's history unchanged (with the SDK's per-call
+// Budget still applying). When MaxContextTokens is positive but no
+// PreparationManager is wired, the SDK path silently bypasses the
+// host-side compaction: that is a CLI-side misconfiguration (no
+// compaction despite a positive budget) rather than a path-level
+// error.
+//
+// The Tools field of PrepareInput is left nil here: the SDK carries
+// its own registry and the host-side structural accounting at
+// planner.go:140 short-circuits to zero schema cost on nil. Passing
+// the SDK-converted registry is unsafe because the CLI's planning
+// pass expects provider.ToolSpec, not the SDK's tools.SchemaTool
+// shape.
+//
+// The returned slice is freshly allocated via clonePreparedMessages
+// so the SDK's appending history mutations never reach the loop's
+// live l.Messages.
+func prepareSDKHistory(ctx context.Context, l *Loop, opts Options, msgs []provider.Message) ([]sdkshape.Message, error) {
+	if opts.PreparationManager == nil {
+		return cliMessagesToSDK(msgs), nil
+	}
+	input := l.buildPrepareInput(nil, opts)
+	input.Messages = msgs
+	preparation, err := opts.PreparationManager.Prepare(ctx, input)
+	if err != nil {
+		// Match context.go:27-39's fallback: an interrupted ctx on a
+		// fresh attempt with no recorded preparation retries once with
+		// context.Background so the run still produces a compacted
+		// history to ship downstream.
+		if !opts.WorkLimits.DeadlineAt.IsZero() && interruptedContext(ctx, err) {
+			if fallback, ferr := opts.PreparationManager.Prepare(context.Background(), input); ferr == nil {
+				l.recordPreparation(fallback)
+				l.captureOmittedEvidence(input, fallback)
+				return cliMessagesToSDK(clonePreparedMessages(fallback.Messages)), nil
+			} else {
+				return nil, ferr
+			}
+		}
+		return nil, err
+	}
+	l.recordPreparation(preparation)
+	l.captureOmittedEvidence(input, preparation)
+	return cliMessagesToSDK(clonePreparedMessages(preparation.Messages)), nil
 }
 
 // Compile-time check: SDK's Completer type is reachable from the

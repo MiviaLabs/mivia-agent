@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -50,7 +51,6 @@ func TestBuildAgentLoopOptionsFailClosed(t *testing.T) {
 		{"StagedToolMessage", Options{StagedToolMessage: func(string) (string, bool) { return "", false }}, "StagedToolMessage"},
 		{"RefOnlyTools", Options{RefOnlyTools: []string{"x"}}, "RefOnlyTools"},
 		{"PreserveWorkLimits", Options{PreserveWorkLimits: true}, "PreserveWorkLimits"},
-		{"MaxContextTokens", Options{MaxContextTokens: 1000}, "MaxContextTokens"},
 		{"WL.MaxPromptTokens", Options{WorkLimits: runtime.WorkLimits{MaxPromptTokens: 1}}, "WorkLimits.MaxPromptTokens"},
 		{"WL.MaxOutputTokens", Options{WorkLimits: runtime.WorkLimits{MaxOutputTokens: 1}}, "WorkLimits.MaxOutputTokens"},
 		{"WL.MaxOutputPerCall", Options{WorkLimits: runtime.WorkLimits{MaxOutputPerCall: 1}}, "WorkLimits.MaxOutputPerCall"},
@@ -418,4 +418,95 @@ func TestRunAgentLoopOnceDeadlineExpiry(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("RunAgentLoopOnce hung for 2s with a past deadline")
 	}
+}
+
+// stubPreparationManager satisfies contextmgr.PreparationManager with
+// a fixed compaction outcome: it drops everything past a configurable
+// keep-first-N count. The point of the test is that the SDK path
+// pre-compacts through it before the SDK loop runs.
+type stubPreparationManager struct {
+	keep int
+}
+
+func (s *stubPreparationManager) Prepare(_ context.Context, in contextmgr.PrepareInput) (contextmgr.Preparation, error) {
+	kept := in.Messages
+	if len(kept) > s.keep {
+		kept = kept[:s.keep]
+	}
+	return contextmgr.Preparation{Messages: append([]provider.Message(nil), kept...), Compacted: true}, nil
+}
+func (s *stubPreparationManager) Discard(_ contextmgr.Preparation) {}
+
+// TestPrepareSDKHistoryCompactsThroughManager asserts that when a
+// PreparationManager is wired and MaxContextTokens is set, the SDK
+// path pre-compacts the loop's history through the manager before
+// handing the messages to the SDK. The test reads the messages the
+// SDK saw by checking the request the wrapped completer received.
+func TestPrepareSDKHistoryCompactsThroughManager(t *testing.T) {
+	var seen int
+	cap := &captureCompleter{
+		fakeCompleter: fakeCompleter{name: "fake", chatTurnOut: &provider.Response{Content: "ok", FinishReason: "stop"}},
+		onTurn: func(req provider.Request) {
+			seen = len(req.Messages)
+		},
+	}
+	l := &Loop{Completer: cap, Tools: tools.NewRegistry()}
+	in := []provider.Message{
+		{Role: provider.RoleUser, Content: "m1"},
+		{Role: provider.RoleAssistant, Content: "a1"},
+		{Role: provider.RoleUser, Content: "m2"},
+		{Role: provider.RoleAssistant, Content: "a2"},
+		{Role: provider.RoleUser, Content: "m3"},
+	}
+	opts := Options{
+		Model:              "m",
+		MaxSteps:           1,
+		MaxContextTokens:   100,
+		PreparationManager: &stubPreparationManager{keep: 3},
+	}
+	if _, err := RunAgentLoopOnce(context.Background(), l, opts, in); err != nil {
+		t.Fatalf("RunAgentLoopOnce: %v", err)
+	}
+	if seen != 3 {
+		t.Fatalf("completer saw %d messages; want 3 (the manager's keep count)", seen)
+	}
+}
+
+// TestPrepareSDKHistoryNoManagerPassesThrough asserts that a nil
+// PreparationManager leaves the messages unchanged (the SDK's
+// per-call Budget still bounds one call).
+func TestPrepareSDKHistoryNoManagerPassesThrough(t *testing.T) {
+	var seen int
+	cap := &captureCompleter{
+		fakeCompleter: fakeCompleter{name: "fake", chatTurnOut: &provider.Response{Content: "ok", FinishReason: "stop"}},
+		onTurn: func(req provider.Request) {
+			seen = len(req.Messages)
+		},
+	}
+	l := &Loop{Completer: cap, Tools: tools.NewRegistry()}
+	in := []provider.Message{
+		{Role: provider.RoleUser, Content: "m1"},
+		{Role: provider.RoleUser, Content: "m2"},
+	}
+	if _, err := RunAgentLoopOnce(context.Background(), l, Options{Model: "m", MaxSteps: 1}, in); err != nil {
+		t.Fatalf("RunAgentLoopOnce: %v", err)
+	}
+	if seen != 2 {
+		t.Fatalf("completer saw %d messages; want 2 (unchanged)", seen)
+	}
+}
+
+// captureCompleter wraps fakeCompleter with an onTurn observer that
+// captures the request's message count. It exists to assert the
+// pre-compaction path without exposing internal state.
+type captureCompleter struct {
+	fakeCompleter
+	onTurn func(provider.Request)
+}
+
+func (c *captureCompleter) ChatTurn(_ context.Context, req provider.Request) (*provider.Response, error) {
+	if c.onTurn != nil {
+		c.onTurn(req)
+	}
+	return c.chatTurnOut, c.chatTurnErr
 }

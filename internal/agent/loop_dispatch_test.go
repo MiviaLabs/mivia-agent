@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -78,13 +79,14 @@ func TestRunOnceSDKFailClosedSurfacesThroughRun(t *testing.T) {
 		Completer: &fakeCompleter{name: "fake"},
 		Tools:     tools.NewRegistry(),
 	}
-	opts := Options{Model: "m", MaxSteps: 1, Backend: "sdk", MaxContextTokens: 1000}
+	opts := Options{Model: "m", MaxSteps: 1, Backend: "sdk"}
+	opts.SummaryConfig.Summarizer = &contextmgr.Summarizer{}
 	_, err := loop.Run(context.Background(), "hi", opts)
 	if err == nil {
-		t.Fatal("Run with MaxContextTokens under the sdk backend returned nil error; want fail-closed error")
+		t.Fatal("Run with SummaryConfig.Summarizer under the sdk backend returned nil error; want fail-closed error")
 	}
-	if !strings.Contains(err.Error(), "MaxContextTokens") {
-		t.Fatalf("err = %v, want it to name MaxContextTokens", err)
+	if !strings.Contains(err.Error(), "SummaryConfig.Summarizer") {
+		t.Fatalf("err = %v, want it to name SummaryConfig.Summarizer", err)
 	}
 }
 
