@@ -152,11 +152,34 @@ After review, a non-mivia consumer wanting this behavior composes
 `RefOnlyToolNames` continue to receive `BatchTruncationNotice`. No
 SDK extension needed.
 
+**Carried today, with a documented semantic gap.** The CLI's
+`RefOnlyTools` policy in `internal/agent/shape_batch.go:341` runs
+inside the batch shaper and is conditional on batch-level byte
+pressure — a small result from a `RefOnlyTools` tool still gets
+inline when the batch is under budget. `spool.SpoolTool` is
+unconditional per-call: wrapping a `RefOnlyTools` tool in
+`SpoolTool(name, 0, sp, inner)` always spools, so small results
+from named tools now get a ref-notice instead of being inlined.
+
 The CLI's (A) refactor wraps each `RefOnlyTools` tool in
 `spool.SpoolTool` at conversion time, leaving the rest of the
 registry untouched. The CLI drops `RefOnlyTools`/`RemainderSpool`
 from `Options` and replaces them with `Options.SpooledToolNames` (a
-naming-only change in the SDK path).
+naming-only change in the SDK path). A `Backend: "sdk"` caller that
+needs the original conditional policy must stay on
+`Backend: "legacy"`; a `Backend: "sdk"` caller that is happy with
+"named tools always get a ref-notice" gets the simpler
+spool-on-everything behavior.
+
+The two spool types are not bridge-compatible without work:
+`internal/remainder.Spool` uses `ContentStore.StoreContent/LoadContent`
+and content-addressed refs minted through `sdkadapter.Mint`, while
+`mivia-ai-sdk/spool.Spool` uses `ContentStore.Put/Get` and its own
+ref minting. The bridge is a `*sdkadapter.spoolAdapter` that exposes
+the SDK's `ContentStore` on top of the CLI's `*remainder.Spool`,
+plus an SDK `*spool.Spool` constructed once at conversion time. The
+adapter lives in `internal/sdkadapter` (the sanctioned SDK-boundary
+package) and is the only place that imports `mivia-ai-sdk/spool`.
 
 ### `MaxContextTokens`
 
