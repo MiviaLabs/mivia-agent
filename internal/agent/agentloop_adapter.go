@@ -40,12 +40,6 @@ import (
 // zero-value configuration.
 const defaultSDKMaxIterations = 25
 
-// sdkEventEmitInterval is the HeartbeatInterval the adapter installs
-// alongside the event bus. The SDK gates every event emission on a
-// positive interval; one hour enables the lifecycle events while
-// keeping the tick heartbeats (dropped by the CLI surface) inert.
-const sdkEventEmitInterval = time.Hour
-
 // unsupportedSDKOption reports one CLI Options field the SDK path
 // cannot carry. The message names the field so the operator can find
 // the knob to unset.
@@ -167,13 +161,11 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 		return sdkagentloop.Result{}, err
 	}
 	if opts.OnEvent != nil || opts.EventBus != nil {
+		// The SDK (since mivia-ai-sdk commit c207575) fires the four
+		// lifecycle names whenever Bus is non-nil; the heartbeat ticks
+		// gate separately on HeartbeatInterval, which stays zero here
+		// because the CLI surface drops tick events by design.
 		sdkOpts.Bus = bridgeAgentLoopEvents(opts)
-		// HeartbeatInterval gates EVERY SDK event emission, not only
-		// the ticking ones; any positive value enables the lifecycle
-		// events the bridge subscribes to. The hour keeps the tick
-		// heartbeats - which the CLI surface drops by design - from
-		// firing in practice.
-		sdkOpts.HeartbeatInterval = sdkEventEmitInterval
 	}
 	if opts.UsageWriter != nil {
 		sdkOpts.Audit = bridgeUsageAudit(opts, l.Completer.Name())
