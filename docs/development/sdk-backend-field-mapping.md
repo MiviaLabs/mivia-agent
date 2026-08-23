@@ -46,7 +46,8 @@ The SDK path consumes these directly:
 | `MailboxPending` | steer bridge | watchdog poller; continuous across repeated steers, exits on a run-scoped done channel closed in `RunAgentLoopOnce`'s defer |
 | `MailboxPendingInterrupt` | steer bridge | strict signal-branch poller; continuous across repeated steers, exits on the run-scoped done channel |
 | `BeforeStep` | Steer injector | `RunAgentLoopOnce` installs `opts.BeforeStep` as `Steer.SetInjector`; the SDK drains it at the top of every iteration (BEFORE the MaxIterations check, matching `context.go:15-19`) and at every steered-stop downgrade point. A non-empty return appends to history and the run CONTINUES; an empty return keeps existing Trigger semantics. The `ackTriggered` at the downgrade point is load-bearing: without it the next iteration's Chat call would arm a still-triggered Steer and cancel instantly. |
-| turn history | `Result.History` | `runOnceSDK` writes the SDK history back onto `Loop.Messages`, including the turn's assistant and tool messages, and falls back to the last assistant text when the final step produced none |
+| `BatchResultBudgetBytes < 0` | host-side derivation | `applyTurnShaping` now resolves the negative form via `derivedBatchBudget(opts.MaxContextTokens)` (shared with `effectiveBatchBudget` in `shape_batch.go:493`); constants (`bytesPerToken`, `derivedBudgetShare`, `derivedBatchBudgetFloorBytes`, `maxDerivableTokens`) cannot drift between the legacy and SDK paths. |
+| turn history | `Result.History` | `runOnceSDK` writes the SDK history back onto `Loop.Messages`, including the turn's assistant and tool messages, and falls back to the last assistant text when the final step produced none. The legacy `lastText` contract at `loop.go:143-179` is mirrored on every graceful-cancel path: the steered-stop branch returns the in-scope partial via `sdkSteeredStopPartial`, the cancel branch (errors.Is `context.Canceled`/`context.DeadlineExceeded`) and the graceful-empty fallback both walk history with the same `sdkCurrentTurnStart` Content-match helper. Streamed bytes inside an in-flight cancel are still lost — the SDK cancels `Completer.Chat` wholesale on Trigger — but assistant messages appended to history before the cancel point survive. |
 
 ## 2. Accepted semantic gaps
 
@@ -64,12 +65,13 @@ caller accepts the difference.
   impossible on the SDK path.
 - **`BatchResultBudgetBytes`** — the positive form is carried by the
   host-side turn shaping wrapper (§1), which degrades with an honest
-  notice like the legacy batch shaper. Two divergences remain: the D8
-  per-batch status line (composed into the LAST degraded result) has
-  no sequential analogue and is omitted; and per-call budget charging
+  notice like the legacy batch shaper. The negative form is also
+  carried now: `applyTurnShaping` resolves via the shared
+  `derivedBatchBudget`. One divergence remains: the D8 per-batch
+  status line (composed into the LAST degraded result) has no
+  sequential analogue and is omitted; per-call budget charging
   happens in call order (the SDK executes sequentially) rather than
-  after the whole batch resolves. The negative derived-budget mode has
-  no SDK analogue at all.
+  after the whole batch resolves.
 - **Same-batch dedup** — the legacy dispatcher collapses identical
   read-class calls within one batch; the SDK executes every call.
 - **Conclude-steer nudges** — the legacy loop injects a conclude
@@ -87,9 +89,13 @@ caller accepts the difference.
   going instead of stopping, which is the correct SDK behaviour for
   a non-empty mailbox drain; for an empty drain the SDK still stops
   with `Stop == StopSteered` and `Final` empty, where the legacy path
-  would have surfaced the partial. A `Backend: "sdk"` caller that
-  needs the legacy partial-as-final contract must keep that step on
-  the legacy backend.
+  would have surfaced the partial. The dispatcher at
+  `loop_dispatch.go:77` (delegating to `sdkSteeredStopPartial`)
+  walks `res.History` and returns the most recent in-scope assistant
+  text along with `errSteerInterrupt`, mirroring the legacy
+  `lastText` contract for what was already appended to history
+  before the cancel. Bytes the Completer had streamed inside the
+  canceled call itself are still lost.
 - **Prompt-too-long retry** — the legacy loop retries once with a
   compacted prompt on `ErrPromptTooLong`; the SDK path fails the turn.
 - **Malformed tool-call repair** — the legacy path synthesizes IDs for
