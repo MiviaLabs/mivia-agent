@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
@@ -447,5 +448,118 @@ func TestApplyTurnShapingWrapReAddsOnAddFailure(t *testing.T) {
 		t.Fatal("alpha vanished after applyTurnShaping; the restore path didn't fire")
 	} else if got == nil {
 		t.Fatal("alpha entry is nil (registry dropped it)")
+	}
+}
+
+// ---- Phase A reconciliation: cover the four zero-count error branches
+// in RunAgentLoopOnce/buildAgentLoopOptions that the diff-coverage
+// allowlist had mislabeled as "closure-brace artifacts". Each test
+// drives one branch through a constructible failure.
+
+// badParamsTool returns a Parameters map containing a channel, which
+// fails json.Marshal inside sdkadapter.newSDKToolAdapter.
+type badParamsTool struct{}
+
+func (b *badParamsTool) Name() string        { return "bad-params" }
+func (b *badParamsTool) Description() string { return "unmarshalable params" }
+func (b *badParamsTool) Parameters() map[string]any {
+	return map[string]any{"type": "object", "bad": make(chan int)}
+}
+func (b *badParamsTool) Capability(json.RawMessage) tools.Capability {
+	return tools.Capability{MaxResultBytes: 1024}
+}
+func (b *badParamsTool) Execute(context.Context, json.RawMessage) (string, error) {
+	return "x", nil
+}
+
+// TestBuildAgentLoopOptionsBadParamsToolFailsClosed covers the
+// ConvertToolRegistryWithAdmission error return: a tool whose
+// Parameters() cannot marshal must fail the turn before the SDK loop
+// is built, naming the tool.
+func TestBuildAgentLoopOptionsBadParamsToolFailsClosed(t *testing.T) {
+	reg := tools.NewRegistry()
+	reg.Register(&badParamsTool{})
+	loop := &Loop{Completer: &beforeStepCompleter{}, Tools: reg}
+	_, err := buildAgentLoopOptions(loop, Options{
+		Model:      "m",
+		MaxSteps:   2,
+		Dispatcher: mustDispatcher(t),
+	})
+	if err == nil {
+		t.Fatal("expected marshal-parameters error, got nil")
+	}
+	if !strings.Contains(err.Error(), "bad-params") || !strings.Contains(err.Error(), "marshal parameters") {
+		t.Fatalf("err = %v, want it to name the tool and the marshal failure", err)
+	}
+}
+
+// failingPrepManager always fails Prepare, driving the
+// prepareSDKHistory error return in RunAgentLoopOnce.
+type failingPrepManager struct{}
+
+func (failingPrepManager) Prepare(context.Context, contextmgr.PrepareInput) (contextmgr.Preparation, error) {
+	return contextmgr.Preparation{}, errors.New("prep exploded")
+}
+func (failingPrepManager) Discard(contextmgr.Preparation) {}
+
+// TestRunAgentLoopOncePreparationFailureSurfaces covers the
+// prepareSDKHistory error return: a PreparationManager failure fails
+// the run before any completer call.
+func TestRunAgentLoopOncePreparationFailureSurfaces(t *testing.T) {
+	loop := &Loop{Completer: &beforeStepCompleter{}, Tools: tools.NewRegistry()}
+	_, err := RunAgentLoopOnce(context.Background(), loop, Options{
+		Model:              "m",
+		MaxSteps:           2,
+		PreparationManager: failingPrepManager{},
+	}, nil)
+	if err == nil || !strings.Contains(err.Error(), "prep exploded") {
+		t.Fatalf("err = %v, want the preparation failure surfaced", err)
+	}
+}
+
+// blankNameTool registers under an empty name; the CLI registry does
+// not validate names, but the scoped dispatcher's RegisterTool does,
+// driving the scoped-dispatcher error return.
+type blankNameTool struct{}
+
+func (b *blankNameTool) Name() string               { return "" }
+func (b *blankNameTool) Description() string        { return "blank" }
+func (b *blankNameTool) Parameters() map[string]any { return map[string]any{"type": "object"} }
+func (b *blankNameTool) Capability(json.RawMessage) tools.Capability {
+	return tools.Capability{MaxResultBytes: 1024}
+}
+func (b *blankNameTool) Execute(context.Context, json.RawMessage) (string, error) {
+	return "x", nil
+}
+
+// TestRunAgentLoopOnceScopedDispatcherRejectsBlankNameTool covers the
+// scoped NewToolDispatcher error return: a blank-named tool passes CLI
+// registry registration but fails dispatcher registration, failing the
+// run closed with the scoped-dispatcher wrap.
+func TestRunAgentLoopOnceScopedDispatcherRejectsBlankNameTool(t *testing.T) {
+	reg := tools.NewRegistry()
+	reg.Register(&blankNameTool{})
+	loop := &Loop{Completer: &beforeStepCompleter{}, Tools: reg}
+	_, err := RunAgentLoopOnce(context.Background(), loop, Options{
+		Model:    "m",
+		MaxSteps: 2,
+	}, nil)
+	if err == nil || !strings.Contains(err.Error(), "scoped tool dispatcher") {
+		t.Fatalf("err = %v, want the scoped tool dispatcher wrap", err)
+	}
+}
+
+// TestRunAgentLoopOnceNilToolsFailsAtSDKNew covers the sdkagentloop.New
+// error return: a nil registry survives the adapter's own checks (the
+// converter returns nil,nil) and fails inside the SDK's Validate with
+// ErrNoTools.
+func TestRunAgentLoopOnceNilToolsFailsAtSDKNew(t *testing.T) {
+	loop := &Loop{Completer: &beforeStepCompleter{}, Tools: nil}
+	_, err := RunAgentLoopOnce(context.Background(), loop, Options{
+		Model:    "m",
+		MaxSteps: 2,
+	}, nil)
+	if !errors.Is(err, sdkagentloop.ErrNoTools) {
+		t.Fatalf("err = %v, want the SDK's ErrNoTools sentinel", err)
 	}
 }

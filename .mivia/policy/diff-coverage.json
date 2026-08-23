@@ -89,17 +89,6 @@
       ],
       "reason": "no RunStatus value is both non-terminal and non-resumable: the ledger enum leaves the branch dead"
     },
-    "internal/agent/agentloop_adapter.go": {
-      "lines": [
-        76,
-        221,
-        232,
-        233,
-        234,
-        255
-      ],
-      "reason": "closure-brace artifacts at line 76 (rejectUnsupportedSDKBatches end), 221/234/255 (buildAgentLoopOptions if-body tails): go cover reports zero count on tokens the source compiler never measures statements under (the closing }, the bare return); coverage-tool false positives where block-edge lines are reported without a statement to instrument. Reaching the prior line in each case exercises the path."
-    },
     "internal/agent/sdk_dispatcher_shim.go": {
       "lines": [
         110,
