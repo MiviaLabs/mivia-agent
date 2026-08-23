@@ -136,6 +136,45 @@ func (s *StorageLedgerRepository) ClearRunClaim(ctx context.Context, runID strin
 	return nil
 }
 
+// IsRunHeld reports whether runID currently has an active claim. The probe is
+// read-only: it never acquires, refreshes, or releases a claim, so observing
+// a run can never disturb its holder. Backends that cannot expose claim state
+// report (false, nil) instead of failing.
+func (s *StorageLedgerRepository) IsRunHeld(ctx context.Context, runID string) (bool, error) {
+	if err := s.checkOpen(); err != nil {
+		return false, err
+	}
+	reader, ok := s.store.(interface {
+		IsRunHeld(context.Context, string) (bool, error)
+	})
+	if !ok {
+		return false, nil
+	}
+	return reader.IsRunHeld(ctx, runID)
+}
+
+// IsRunTokenFenced reports whether token has been fenced out of runID by a
+// subsequent takeover. The history is durable: a fenced token stays fenced
+// across releases, so a re-issued claim by the same token reads true until
+// cleanup. A token that is the current holder of runID always reads false.
+// Backends that cannot expose fence history report (false, nil).
+//
+// The Wave 2 caller captures runID via closure (its filter loop binds the
+// run's ID at construction time), so the same probe can be reused across
+// panel tick intervals without re-resolving the run.
+func (s *StorageLedgerRepository) IsRunTokenFenced(ctx context.Context, runID, token string) (bool, error) {
+	if err := s.checkOpen(); err != nil {
+		return false, err
+	}
+	reader, ok := s.store.(interface {
+		IsRunTokenFenced(context.Context, string, string) (bool, error)
+	})
+	if !ok {
+		return false, nil
+	}
+	return reader.IsRunTokenFenced(ctx, runID, token)
+}
+
 func (s *StorageLedgerRepository) StoreContent(ctx context.Context, ref string, data []byte) error {
 	if err := s.checkOpen(); err != nil {
 		return err

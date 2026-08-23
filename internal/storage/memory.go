@@ -19,12 +19,24 @@ type Memory struct {
 	maxSeq map[string]int
 	// claims tracks exclusive run execution claims.
 	claims map[string]Claim // runID → claim
+	// fencedTokens records every holder a run has ever ejected (token → nothing,
+	// per-run set). The history is durable across releases so a re-issued
+	// claim by a previously fenced token reads true until cleanup. The
+	// current holder is, by definition, never in this set.
+	fencedTokens map[string]map[string]struct{} // runID → set of tokens
 	// content maps content-addressed references to raw bytes.
 	content map[string][]byte
 }
 
 func NewMemory() *Memory {
-	return &Memory{events: map[string][]Event{}, ids: map[string]struct{}{}, maxSeq: map[string]int{}, claims: map[string]Claim{}, content: map[string][]byte{}}
+	return &Memory{
+		events:       map[string][]Event{},
+		ids:          map[string]struct{}{},
+		maxSeq:       map[string]int{},
+		claims:       map[string]Claim{},
+		fencedTokens: map[string]map[string]struct{}{},
+		content:      map[string][]byte{},
+	}
 }
 
 func (m *Memory) Append(_ context.Context, e Event) error {
@@ -270,6 +282,9 @@ func (m *Memory) TakeoverClaim(_ context.Context, runID, holder string) error {
 	if !ok {
 		fence = 1
 	}
+	if ok && existing.Holder != holder {
+		m.recordFencedLocked(runID, existing.Holder)
+	}
 	m.claims[runID] = Claim{RunID: runID, Holder: holder, AcquiredAt: time.Now().UTC().Format(time.RFC3339Nano), Fence: fence}
 	return nil
 }
@@ -285,9 +300,23 @@ func (m *Memory) TakeoverClaimFenced(_ context.Context, runID, holder string) (C
 	if !ok {
 		fence = 1
 	}
+	if ok && existing.Holder != holder {
+		m.recordFencedLocked(runID, existing.Holder)
+	}
 	claim := Claim{RunID: runID, Holder: holder, AcquiredAt: time.Now().UTC().Format(time.RFC3339Nano), Fence: fence}
 	m.claims[runID] = claim
 	return claim, nil
+}
+
+// recordFencedLocked adds token to the run's fenced-token set. Caller must
+// hold m.mu.
+func (m *Memory) recordFencedLocked(runID, token string) {
+	set, ok := m.fencedTokens[runID]
+	if !ok {
+		set = map[string]struct{}{}
+		m.fencedTokens[runID] = set
+	}
+	set[token] = struct{}{}
 }
 
 // RefreshClaimFenced refreshes the claim's acquired_at ONLY when holder already
@@ -329,6 +358,9 @@ func (m *Memory) TakeoverExpiredClaimFenced(_ context.Context, runID, holder str
 		if err != nil || time.Since(when) < maxAge {
 			return Claim{}, ErrClaimHeld
 		}
+	}
+	if existing.Holder != holder {
+		m.recordFencedLocked(runID, existing.Holder)
 	}
 	existing.Holder = holder
 	existing.Fence++
@@ -390,6 +422,35 @@ func (m *Memory) GetClaim(_ context.Context, runID string) (Claim, error) {
 		return Claim{}, ErrClaimNotHeld
 	}
 	return claim, nil
+}
+
+// IsRunHeld reports whether runID currently has an active claim. A pure
+// liveness probe; it never acquires, refreshes, or releases a claim.
+func (m *Memory) IsRunHeld(_ context.Context, runID string) (bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	_, ok := m.claims[runID]
+	return ok, nil
+}
+
+// IsRunTokenFenced reports whether token has been fenced out of runID by a
+// subsequent takeover. The history is durable across releases. A token that
+// is the current holder of runID always reads false.
+func (m *Memory) IsRunTokenFenced(_ context.Context, runID, token string) (bool, error) {
+	if token == "" {
+		return false, nil
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if claim, ok := m.claims[runID]; ok && claim.Holder == token {
+		return false, nil
+	}
+	set, ok := m.fencedTokens[runID]
+	if !ok {
+		return false, nil
+	}
+	_, fenced := set[token]
+	return fenced, nil
 }
 
 func (m *Memory) PutContent(_ context.Context, ref string, data []byte) error {

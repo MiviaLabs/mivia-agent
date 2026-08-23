@@ -71,6 +71,14 @@ func OpenSQLite(path string) (*SQLite, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate run claim fence: %w", err)
 	}
+	if _, err = db.Exec(`ALTER TABLE run_claims ADD COLUMN fence_generation INTEGER NOT NULL DEFAULT 0`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		db.Close()
+		return nil, fmt.Errorf("migrate run claim fence_generation: %w", err)
+	}
+	if _, err = db.Exec(`CREATE TABLE IF NOT EXISTS fenced_tokens (run_id TEXT NOT NULL, token TEXT NOT NULL, fenced_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(run_id, token))`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("create fenced_tokens: %w", err)
+	}
 	if err := migrateContextSchema(db); err != nil {
 		db.Close()
 		return nil, err
