@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -50,7 +51,6 @@ func TestBuildAgentLoopOptionsFailClosed(t *testing.T) {
 		{"RefOnlyTools", Options{RefOnlyTools: []string{"x"}}, "RefOnlyTools"},
 		{"PreserveWorkLimits", Options{PreserveWorkLimits: true}, "PreserveWorkLimits"},
 		{"MaxContextTokens", Options{MaxContextTokens: 1000}, "MaxContextTokens"},
-		{"MailboxPendingInterrupt", Options{MailboxPendingInterrupt: func() bool { return false }}, "MailboxPendingInterrupt"},
 		{"WL.MaxPromptTokens", Options{WorkLimits: runtime.WorkLimits{MaxPromptTokens: 1}}, "WorkLimits.MaxPromptTokens"},
 		{"WL.MaxOutputTokens", Options{WorkLimits: runtime.WorkLimits{MaxOutputTokens: 1}}, "WorkLimits.MaxOutputTokens"},
 		{"WL.MaxOutputPerCall", Options{WorkLimits: runtime.WorkLimits{MaxOutputPerCall: 1}}, "WorkLimits.MaxOutputPerCall"},
@@ -166,6 +166,46 @@ func TestRunAgentLoopOnceSteerTriggers(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("RunAgentLoopOnce hung for 2s; steer bridge did not unblock the call")
+	}
+}
+
+// TestRunAgentLoopOnceMailboxPendingInterruptTriggers asserts the
+// strict signal branch: a MailboxPendingInterrupt predicate that flips
+// to true during a blocking chat call must let RunAgentLoopOnce return
+// rather than hang. The guard is 2 seconds; the default poll interval
+// is 250ms, plus a round of scheduling, so the steer should land well
+// inside the budget.
+func TestRunAgentLoopOnceMailboxPendingInterruptTriggers(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+	var pendingFlag atomic.Bool
+	pendingFlag.Store(false)
+	l := &Loop{
+		Completer: &fakeCompleter{
+			name:        "fake",
+			blocksChat:  release,
+			chatTurnOut: &provider.Response{Content: "x"},
+			onChatTurn:  func() { pendingFlag.Store(true) },
+		},
+		Tools: tools.NewRegistry(),
+	}
+	opts := Options{
+		MaxSteps:                1,
+		MailboxPendingInterrupt: func() bool { return pendingFlag.Load() },
+	}
+	done := make(chan struct{})
+	var err error
+	go func() {
+		defer close(done)
+		_, err = RunAgentLoopOnce(context.Background(), l, opts, nil)
+	}()
+	select {
+	case <-done:
+		if err != nil && !strings.Contains(err.Error(), "context") && err != context.Canceled {
+			t.Logf("RunAgentLoopOnce returned err (acceptable for steer test): %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("RunAgentLoopOnce hung for 2s; MailboxPendingInterrupt steer did not unblock the call")
 	}
 }
 

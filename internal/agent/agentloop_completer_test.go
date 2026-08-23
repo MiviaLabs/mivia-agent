@@ -22,6 +22,11 @@ type fakeCompleter struct {
 	// blocksChat is set to a non-nil channel to make Chat block until
 	// the channel is closed (for cancellation tests).
 	blocksChat chan struct{}
+	// onChatTurn, when non-nil, runs inside ChatTurn before the
+	// configured return value, letting tests observe that a turn has
+	// actually started (used to flip signal-branch predicates from
+	// the test goroutine).
+	onChatTurn func()
 }
 
 func (f *fakeCompleter) Name() string { return f.name }
@@ -43,6 +48,9 @@ func (f *fakeCompleter) ChatStream(_ context.Context, _ provider.Request, _ io.W
 	return f.chatOut, f.chatErr
 }
 func (f *fakeCompleter) ChatTurn(_ context.Context, _ provider.Request) (*provider.Response, error) {
+	if f.onChatTurn != nil {
+		f.onChatTurn()
+	}
 	return f.chatTurnOut, f.chatTurnErr
 }
 

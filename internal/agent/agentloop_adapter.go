@@ -136,6 +136,9 @@ func rejectUnsupportedSDKBatches(opts Options) error {
 	// caller with a negative value sees no batch shaping from this
 	// knob, not the derived one. The positive form still maps in
 	// buildAgentLoopOptions.
+	// MailboxPendingInterrupt is wired in bridgeSteerSignals as a
+	// fast poll (it gates the interrupt branch; the watchdog branch
+	// keeps using MailboxPending).
 	// WorkLimits splits: MaxTurns and DeadlineAt are carried (the
 	// turn clamp in buildAgentLoopOptions and the deadline narrowing
 	// in RunAgentLoopOnce); the four token-reservation fields have no
@@ -159,14 +162,15 @@ func rejectUnsupportedSDKBatches(opts Options) error {
 	if opts.MaxContextTokens > 0 {
 		return unsupportedSDKOption("MaxContextTokens")
 	}
-	if opts.MailboxPendingInterrupt != nil {
-		return unsupportedSDKOption("MailboxPendingInterrupt")
-	}
-	// OnEvent, EventBus, UsageWriter, FinalWriter, and RequireFinalText
-	// are carried: the event bridge translates SDK loop events, the
-	// audit bridge writes durable token-usage rows per completed
-	// completion, and finalizeSDKTurn writes the final text and
-	// enforces the empty-turn refusal after the run.
+	// OnEvent, EventBus, UsageWriter, FinalWriter, RequireFinalText,
+	// and MailboxPendingInterrupt are carried: the event bridge
+	// translates SDK loop events, the audit bridge writes durable
+	// token-usage rows per completed completion, finalizeSDKTurn
+	// writes the final text and enforces the empty-turn refusal after
+	// the run, and the steer bridge spawns a third goroutine that
+	// polls MailboxPendingInterrupt as the strict signal branch
+	// (parallel to the InterruptCh one-shot and the MailboxPending
+	// watchdog poller).
 	if opts.SummaryConfig.Summarizer != nil {
 		return unsupportedSDKOption("SummaryConfig.Summarizer")
 	}
@@ -282,9 +286,19 @@ func RunAgentLoop(ctx context.Context, opts Options) (sdkagentloop.Result, error
 }
 
 // bridgeSteerSignals wires the CLI's interrupt signals onto one Steer
-// handle. Each non-nil signal spawns one goroutine; both exit on
+// handle. Each non-nil signal spawns one goroutine; all exit on
 // ctx.Done. Trigger fires at most once per signal source because the
 // Steer resets its own state at RunSteerable start.
+//
+// The three signal sources model the CLI's three cancellation layers:
+//   - InterruptCh resolves once and fires Trigger (one-shot signal).
+//   - MailboxPendingInterrupt gates the strict signal branch: the
+//     predicate reports whether an Interrupt-flagged steer is queued.
+//     The goroutine polls at the watcher's poll interval (or 250ms
+//     when unset) because the predicate is just a flag read.
+//   - MailboxPending is the loose watchdog branch: the predicate
+//     reports whether ANY message is waiting, so a stale signal after
+//     a drain can never cancel a call.
 func bridgeSteerSignals(ctx context.Context, opts Options, steer *sdkagentloop.Steer) {
 	if ch := opts.InterruptCh; ch != nil {
 		go func() {
@@ -295,13 +309,30 @@ func bridgeSteerSignals(ctx context.Context, opts Options, steer *sdkagentloop.S
 			}
 		}()
 	}
-	if pending := opts.MailboxPending; pending != nil {
-		interval := opts.WatchdogInterval
-		if interval <= 0 {
-			interval = 250 * time.Millisecond
-		}
+	pollInterval := opts.WatchdogInterval
+	if pollInterval <= 0 {
+		pollInterval = 250 * time.Millisecond
+	}
+	if interrupt := opts.MailboxPendingInterrupt; interrupt != nil {
 		go func() {
-			ticker := time.NewTicker(interval)
+			ticker := time.NewTicker(pollInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					if interrupt() {
+						steer.Trigger()
+						return
+					}
+				}
+			}
+		}()
+	}
+	if pending := opts.MailboxPending; pending != nil {
+		go func() {
+			ticker := time.NewTicker(pollInterval)
 			defer ticker.Stop()
 			for {
 				select {
