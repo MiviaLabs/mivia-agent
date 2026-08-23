@@ -88,3 +88,9 @@ require (
 )
 
 tool github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
+
+// (a) Temporary: removed when the SDK publishes its first semver tag.
+// (b) Local path is hardcoded; CI and forks must override via a workspace-local replace or GOPROXY-staging.
+// (c) Do not add to go.sum until a tag lands; the local replace short-circuits the checksum.
+// (d) The first mivia-agent commit that uses this dependency is B.0.5 (sdkadapter).
+replace github.com/MiviaLabs/mivia-ai-sdk => /home/mac/projects/mivialabs/mivia-ai-sdk
