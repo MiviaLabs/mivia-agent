@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/envfile"
+	sdkenvfile "github.com/MiviaLabs/mivia-ai-sdk/envfile"
 )
 
 // Moved from ollama_r4_hostile_audit_test.go during the clichat extraction:
@@ -28,7 +28,7 @@ func TestR4SetupOllamaWithKeyWritesEnvFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setup error = %v", err)
 	}
-	entries, err := envfile.Load(envPath)
+	entries, err := sdkenvfile.Load(envPath)
 	if err != nil {
 		t.Fatalf("load written env file: %v", err)
 	}

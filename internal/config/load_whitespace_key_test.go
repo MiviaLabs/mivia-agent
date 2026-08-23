@@ -7,7 +7,7 @@ import (
 )
 
 // A whitespace-only key value must count as missing everywhere (doctor, chat
-// gate, provider runtime). envfile.Lookup returns ("   ", true) for it, so the
+// gate, provider runtime). config.Lookup returns ("   ", true) for it, so the
 // APIKeySet computation has to trim before deciding.
 func TestLoadWhitespaceOnlyKeyIsMissing(t *testing.T) {
 	dir := t.TempDir()

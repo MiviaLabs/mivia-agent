@@ -3,8 +3,6 @@ package config
 import (
 	"sort"
 	"strings"
-
-	"github.com/MiviaLabs/mivia-agent/internal/envfile"
 )
 
 func resolveProviderRuntimes(file File, envMap map[string]string, active string) (map[string]ProviderRuntime, []ProviderModelGroup) {
@@ -23,7 +21,7 @@ func resolveProviderRuntimes(file File, envMap map[string]string, active string)
 		}
 		seen[name] = true
 		pc := file.Providers[name]
-		key, keySet := envfile.Lookup(pc.APIKeyEnv, envMap)
+		key, keySet := Lookup(pc.APIKeyEnv, envMap)
 		keySetNonBlank := keySet && strings.TrimSpace(key) != ""
 		ollamaLoopback := name == "ollama" && IsOllamaLoopback(pc.BaseURL)
 		runtimes[name] = ProviderRuntime{

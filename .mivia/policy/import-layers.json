@@ -88,7 +88,6 @@
       "internal/composition",
       "internal/config",
       "internal/coordinator",
-      "internal/envfile",
       "internal/hooks",
       "internal/ledger",
       "internal/memory",
@@ -227,7 +226,6 @@
       "internal/workspace"
     ],
     "internal/config": [
-      "internal/envfile",
       "internal/memory",
       "internal/providerregistry",
       "internal/reasoning",
@@ -297,8 +295,7 @@
       "internal/tools"
     ],
     "internal/miviaauth": [
-      "internal/config",
-      "internal/envfile"
+      "internal/config"
     ],
     "internal/provider": [
       "internal/config",

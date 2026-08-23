@@ -1,8 +1,11 @@
-package envfile
+package config
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
+
+	sdkenvfile "github.com/MiviaLabs/mivia-ai-sdk/envfile"
 )
 
 func TestLookup(t *testing.T) {
@@ -46,15 +49,36 @@ func TestLookup(t *testing.T) {
 }
 
 func TestLookupEnvEmptyFallback(t *testing.T) {
-	// Set env to empty, no file → should return empty value from env
+	// Set env to empty, no file - should return empty value from env.
 	key := "MIVIA_TEST_LOOKUP_EMPTYFALLBACK_XYZ"
 	os.Setenv(key, "")
 	defer os.Unsetenv(key)
 
 	v, ok := Lookup(key, nil)
-	// The function returns (v, true) if the env key exists even with empty value
-	// on the second pass (line 71-72)
+	// The function returns (v, true) if the env key exists even with empty
+	// value on the second pass.
 	if !ok {
 		t.Errorf("Lookup() = %q, %v, want true for empty env var", v, ok)
 	}
+}
+
+// TestLookupSDKLoadRoundTrip writes a dotenv file through the SDK loader and
+// confirms the wrapper can read what the SDK returned, proving the two halves
+// (Load and Lookup) compose.
+func TestLookupSDKLoadRoundTrip(t *testing.T) {
+	t.Run("sdk load round-trips through wrapper", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, ".env")
+		if err := os.WriteFile(path, []byte("K=v\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		m, err := sdkenvfile.Load(path)
+		if err != nil {
+			t.Fatalf("sdkenvfile.Load: %v", err)
+		}
+		v, ok := Lookup("K", m)
+		if !ok || v != "v" {
+			t.Errorf("Lookup(K, m) = %q, %v, want \"v\", true", v, ok)
+		}
+	})
 }

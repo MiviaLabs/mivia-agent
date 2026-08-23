@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/envfile"
+	sdkenvfile "github.com/MiviaLabs/mivia-ai-sdk/envfile"
 )
 
 // runSetupCapture runs setup with controlled IO and returns the summary text.
@@ -36,7 +36,7 @@ func TestSetupWritesKeyToNewEnvFile(t *testing.T) {
 	if !strings.Contains(out, "provider:   openrouter") {
 		t.Fatalf("setup summary lacks the provider: %q", out)
 	}
-	entries, err := envfile.Load(envPath)
+	entries, err := sdkenvfile.Load(envPath)
 	if err != nil {
 		t.Fatalf("load written env file: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestSetupPreservesExistingEnvKeys(t *testing.T) {
 	}, ""); err != nil {
 		t.Fatalf("setup error = %v", err)
 	}
-	entries, err := envfile.Load(envPath)
+	entries, err := sdkenvfile.Load(envPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestSetupReadsKeyFromEnvVar(t *testing.T) {
 	}, ""); err != nil {
 		t.Fatalf("setup error = %v", err)
 	}
-	entries, err := envfile.Load(envPath)
+	entries, err := sdkenvfile.Load(envPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +247,7 @@ func TestSetupOllamaWithKeyWritesEnvFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setup error = %v", err)
 	}
-	entries, err := envfile.Load(envPath)
+	entries, err := sdkenvfile.Load(envPath)
 	if err != nil {
 		t.Fatalf("load written env file: %v", err)
 	}
@@ -396,7 +396,7 @@ func TestSetupTrimsPaddedKeyValue(t *testing.T) {
 	if string(raw) != "OPENROUTER_API_KEY=sk-test\n" {
 		t.Fatalf("env file = %q, want exactly %q", raw, "OPENROUTER_API_KEY=sk-test\n")
 	}
-	entries, err := envfile.Load(envPath)
+	entries, err := sdkenvfile.Load(envPath)
 	if err != nil {
 		t.Fatal(err)
 	}

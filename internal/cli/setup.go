@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"io"
@@ -12,7 +13,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/envfile"
+	sdkenvfile "github.com/MiviaLabs/mivia-ai-sdk/envfile"
 )
 
 // setupDefaultConfig is the minimal config written when no config exists and
@@ -148,9 +149,9 @@ func writeSetupEnvFile(path, key, value string) error {
 		return fmt.Errorf("setup: create %s: %w", dir, err)
 	}
 	entries := map[string]string{}
-	if existing, err := envfile.Load(path); err == nil {
+	if existing, err := sdkenvfile.Load(path); err == nil {
 		entries = existing
-	} else if !os.IsNotExist(err) {
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("setup: read %s: %w", path, err)
 	}
 	entries[key] = value

@@ -14,7 +14,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/envfile"
+	sdkenvfile "github.com/MiviaLabs/mivia-ai-sdk/envfile"
 )
 
 func TestRound8IsOllamaLoopbackEdgeInputs(t *testing.T) {
@@ -122,7 +122,7 @@ func TestRound8ExampleConfigsLoad(t *testing.T) {
 	t.Setenv("ZAI_API_KEY", "")
 	root := repoRoot(t)
 	// .env.example must parse and leave every key unset (blank values).
-	if _, err := envfile.Load(root + "/.env.example"); err != nil {
+	if _, err := sdkenvfile.Load(root + "/.env.example"); err != nil {
 		t.Fatalf(".env.example load: %v", err)
 	}
 	exampleCfg := root + "/.mivia/mivia.toml.example"

@@ -7,11 +7,11 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/MiviaLabs/mivia-agent/internal/envfile"
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
 	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
+	sdkenvfile "github.com/MiviaLabs/mivia-ai-sdk/envfile"
 	"github.com/pelletier/go-toml/v2"
 )
 
@@ -70,7 +70,7 @@ func resolveLoaded(file File, configPath string, found bool, opts LoadOptions, m
 	if err != nil {
 		return nil, err
 	}
-	key, keySet := envfile.Lookup(pc.APIKeyEnv, envMap)
+	key, keySet := Lookup(pc.APIKeyEnv, envMap)
 	activeProfile := activeModelProfile(pc, model)
 	activePromptBudget := EffectivePromptTokens(activeProfile, file.Chat.MaxTokens, promptCap(file.Chat.MaxPromptTokens), 0)
 	subagentCfg, storePath, err := resolveSubagentStoreBackend(resolveSubagentConfig(file.Subagents), configPath)
@@ -178,7 +178,7 @@ func resolveTavilyAPIKey(tc TavilyConfig, envMap map[string]string) string {
 	if tc.Disable {
 		return ""
 	}
-	key, ok := envfile.Lookup(envName, envMap)
+	key, ok := Lookup(envName, envMap)
 	if ok && strings.TrimSpace(key) != "" {
 		return strings.TrimSpace(key)
 	}
@@ -460,14 +460,14 @@ func loadSelectedWorktreeConfig(path string, found bool) (WorktreeConfig, error)
 func loadEnvMap(explicit string) (map[string]string, string, bool, error) {
 	if explicit != "" {
 		path := ExpandPath(explicit)
-		m, err := envfile.Load(path)
+		m, err := sdkenvfile.Load(path)
 		if err != nil {
 			return nil, path, false, fmt.Errorf("load env_file %s: %w", path, err)
 		}
 		return m, path, true, nil
 	}
 	if p, ok := FirstExisting(DefaultEnvCandidates()); ok {
-		m, err := envfile.Load(p)
+		m, err := sdkenvfile.Load(p)
 		if err != nil {
 			return nil, p, false, fmt.Errorf("load env file %s: %w", p, err)
 		}
