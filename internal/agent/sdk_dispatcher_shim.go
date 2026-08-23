@@ -174,10 +174,11 @@ func (d *dispatcherShim) Run(ctx context.Context, in sdktools.InOut) (sdktools.O
 		capability = capable.Capability(args)
 	}
 	// Per-call timeout resolution mirrors prepareToolTasks: the tool's
-	// own requested timeout (when larger) wins, clamped to the run
-	// deadline; the clock starts here because the SDK runs calls one
-	// at a time.
-	callTimeout := d.opts.ToolTimeout
+	// capability timeout is authoritative when set, the Options default
+	// otherwise; the model's own requested timeout (when larger) then
+	// wins, clamped to the run deadline; the clock starts here because
+	// the SDK runs calls one at a time.
+	callTimeout := resolveToolCallTimeout(d.opts.ToolTimeout, capability.Timeout)
 	if requested := requestedToolTimeout(args); requested > callTimeout {
 		callTimeout = clampToDeadline(ctx, requested)
 	}

@@ -43,6 +43,55 @@ func (s *marshalFailToolSDK) Run(context.Context, sdktools.InOut) (sdktools.Out,
 	return sdktools.Out{Value: "x"}, nil
 }
 
+// capTimeoutShimTool declares a Capability.Timeout that exceeds the
+// loop default, with work that outlives the default: only honoring the
+// capability budget lets it finish.
+type capTimeoutShimTool struct{}
+
+func (c *capTimeoutShimTool) Name() string               { return "cap-timeout-tool" }
+func (c *capTimeoutShimTool) Description() string        { return "test" }
+func (c *capTimeoutShimTool) Parameters() map[string]any { return map[string]any{"type": "object"} }
+func (c *capTimeoutShimTool) Capability(json.RawMessage) tools.Capability {
+	return tools.Capability{Timeout: 250 * time.Millisecond, MaxResultBytes: 1024}
+}
+func (c *capTimeoutShimTool) Execute(ctx context.Context, _ json.RawMessage) (string, error) {
+	select {
+	case <-time.After(80 * time.Millisecond):
+		return "cap-done", nil
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+}
+
+// TestDispatcherShimCapabilityTimeoutExtendsDefault pins the legacy
+// prepareToolTasks budget on the SDK dispatcher shim: the tool's
+// Capability.Timeout (250ms) replaces the 40ms Options.ToolTimeout, so
+// 80ms of work completes instead of being killed by the default.
+func TestDispatcherShimCapabilityTimeoutExtendsDefault(t *testing.T) {
+	reg := tools.NewRegistry()
+	tool := &capTimeoutShimTool{}
+	reg.Register(tool)
+	dispatcher, err := runtime.NewToolDispatcher(reg, runtime.Policy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(dispatcher.Close)
+	shim := &dispatcherShim{
+		inner: &sdkToolForName{name: "cap-timeout-tool"},
+		cli:   tool,
+		opts:  Options{Dispatcher: dispatcher, SessionID: "s", ToolTimeout: 40 * time.Millisecond},
+		turn:  newSDKTurnState(),
+	}
+	out, err := shim.Run(context.Background(), sdktools.InOut{Value: map[string]any{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := out.Value.(string)
+	if !strings.Contains(body, "cap-done") {
+		t.Fatalf("body = %q, want the tool's completed result under its capability timeout", body)
+	}
+}
+
 // TestDispatcherShimMarshalFailure pins sdk_dispatcher_shim.go:96-99:
 // when the SDK loop hands the shim an in.Value that is not
 // JSON-encodable, the shim surfaces a wrapped marshal error.
