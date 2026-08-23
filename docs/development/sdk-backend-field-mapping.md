@@ -138,48 +138,51 @@ extension. The CLI picks one in the (A) refactor slice and drops
 
 ### `RefOnlyTools`, `RemainderSpool`
 
-The SDK already exposes `spool.SpoolTool` (`spool/tool.go:202-234`)
-for per-call, per-tool oversize-to-spool and `BatchTruncationNotice`
+The SDK exposes `spool.SpoolTool` (`spool/tool.go:202-234`) for
+per-call oversize-to-spool and `BatchTruncationNotice`
 (`agentloop/wire.go:32-37`) as the over-budget fallback. The CLI's
 "promote oversize to ref instead of notice, gated by tool name and
-batch byte pressure" is a *policy* on top of these primitives, not a
-new primitive.
+batch byte pressure" is a *policy* on top of these primitives.
 
-The initial assumption was that the SDK needs an extension
-(`TurnResultBudget.RefOnlyToolNames` + `TurnResultBudget.Spool`).
-After review, a non-mivia consumer wanting this behavior composes
-`spool.SpoolTool` per named tool at registration time; tools not in
-`RefOnlyToolNames` continue to receive `BatchTruncationNotice`. No
-SDK extension needed.
+**Carried today (A3): stay fail-closed; document the gap.** The
+adapter's `rejectUnsupportedSDKBatches` keeps `RefOnlyTools` and
+`RemainderSpool` in the unsupported set. A `Backend: "sdk"` caller
+that needs ref-notices must stay on `Backend: "legacy"`.
 
-**Carried today, with a documented semantic gap.** The CLI's
-`RefOnlyTools` policy in `internal/agent/shape_batch.go:341` runs
-inside the batch shaper and is conditional on batch-level byte
-pressure — a small result from a `RefOnlyTools` tool still gets
-inline when the batch is under budget. `spool.SpoolTool` is
-unconditional per-call: wrapping a `RefOnlyTools` tool in
-`SpoolTool(name, 0, sp, inner)` always spools, so small results
-from named tools now get a ref-notice instead of being inlined.
+Why the originally proposed A1 / A2 wiring does not work:
 
-The CLI's (A) refactor wraps each `RefOnlyTools` tool in
-`spool.SpoolTool` at conversion time, leaving the rest of the
-registry untouched. The CLI drops `RefOnlyTools`/`RemainderSpool`
-from `Options` and replaces them with `Options.SpooledToolNames` (a
-naming-only change in the SDK path). A `Backend: "sdk"` caller that
-needs the original conditional policy must stay on
-`Backend: "legacy"`; a `Backend: "sdk"` caller that is happy with
-"named tools always get a ref-notice" gets the simpler
-spool-on-everything behavior.
+1. **Batch-level vs per-call semantics.** The CLI's
+   `refOnlyTier` (`internal/agent/shape_batch.go:341`,
+   `shape_batch_refonly.go:25-45`) fires only when the batch is over
+   `effectiveBatchBudget` AND the body clears `BatchDegradeFloorBytes`
+   AND the tool is in `RefOnlyTools`. `spool.SpoolTool` is
+   unconditional per-call: every wrapped Run spools when its content
+   exceeds `maxBytes`. Wrapping `RefOnlyTools` tools in `SpoolTool`
+   changes user-facing behavior for under-budget batches and small
+   results.
 
-The two spool types are not bridge-compatible without work:
-`internal/remainder.Spool` uses `ContentStore.StoreContent/LoadContent`
-and content-addressed refs minted through `sdkadapter.Mint`, while
-`mivia-ai-sdk/spool.Spool` uses `ContentStore.Put/Get` and its own
-ref minting. The bridge is a `*sdkadapter.spoolAdapter` that exposes
-the SDK's `ContentStore` on top of the CLI's `*remainder.Spool`,
-plus an SDK `*spool.Spool` constructed once at conversion time. The
-adapter lives in `internal/sdkadapter` (the sanctioned SDK-boundary
-package) and is the only place that imports `mivia-ai-sdk/spool`.
+2. **Missing principal injection.** `spool.SpoolTool.Run` reads the
+   spool principal via `spool.PrincipalFrom(ctx)`
+   (`spool/tool.go:38-42`); without `spool.WithPrincipal(ctx, name)`
+   attached, every wrapped call returns `ErrNoPrincipal`. No
+   production SDK call site attaches `WithPrincipal` (grep across
+   the SDK: zero non-test call sites), and the SDK's pre-tool hook
+   layer (`agentloop/toolcall.go:165-173`) discards the handler's
+   returned context, so a `PointPreTool` handler cannot inject the
+   principal before the wrapped tool runs. Wrapping `RefOnlyTools`
+   in `SpoolTool` would fail every wrapped call.
+
+An SDK-side fix would unlock this. Either (a) a `PointPreTool`
+handler return shape that lets the handler attach a context
+(consumed by `RunScoped`), or (b) a `spool.Spool` constructor
+variant taking a `principal func(ctx) string` resolver. Either is
+a non-trivial SDK decision; either is out of scope for the
+flag-flip series. Until one lands, `Backend: "sdk"` callers cannot
+get ref-notices from these flags. The host's existing
+`read_output` tool (`internal/clichat/read_output.go:42-43`) is
+unaffected — it reads through the CLI's `*remainder.Spool` directly
+and continues to work for any caller that stays on
+`Backend: "legacy"`.
 
 ### `MaxContextTokens`
 
@@ -227,16 +230,14 @@ semantics, and the SDK's 5-field schema is never reached.
 
 ## 4. Under CLI refactor (fail-closed today)
 
-The three fields below all stay fail-closed on the SDK path. They
-will be unwired in mivia-agent by the (A) refactor slices — each one
+The two fields below stay fail-closed on the SDK path. They will
+be unwired in mivia-agent by the (A) refactor slices — each one
 removes a CLI vocabulary quirk (or wraps an SDK primitive) rather
-than extending the SDK. The SDK never grows a new primitive for the
-flag flip.
+than extending the SDK. The SDK never grows a new primitive for
+the flag flip.
 
 - `StagedToolMessage`, `UnadmittedToolHandler`: refactor to use
   `tools.Scope.Approve` + retry-on-decline.
-- `RefOnlyTools`, `RemainderSpool`: refactor to wrap `RefOnlyTools`
-  tools in `spool.SpoolTool` at conversion time.
 
 `MaxContextTokens` and `SummaryConfig.Summarizer` are now carried:
 `RunAgentLoopOnce` calls `opts.PreparationManager.Prepare` on the
@@ -245,6 +246,12 @@ summarizer is wired, and hands the resulting history to
 `RunSteerable`. The SDK's `Window` stays nil so the SDK never runs
 its own per-iteration planning pass on top of the CLI's
 host-side compaction.
+
+`RefOnlyTools` and `RemainderSpool` are documented as
+**legacy-only**: see §3 above. A future SDK extension (principal
+injection on pre-tool, or a principal-resolver constructor on
+`spool.Spool`) would unlock them. Until then, callers needing
+ref-notices stay on `Backend: "legacy"`.
 
 ## See also
 
