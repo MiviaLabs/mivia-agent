@@ -91,28 +91,56 @@
     },
     "internal/agent/sdk_dispatcher_shim.go": {
       "lines": [
+        104,
+        105,
+        106,
+        107,
+        108,
+        109,
         110,
         111,
-        134,
-        135,
-        180,
-        181,
-        182,
-        209,
-        210
+        112
       ],
-      "reason": "shim.go:110-111 = callTimeout clamp path (ToolTimeout > 0 + requestedToolTimeout > ToolTimeout) requires a parent ctx deadline strictly between the two values; current tests wire ToolTimeout at zero or wire a deadline outside the window, both yielding the no-clamp path; both paths reach the if-block but coverage probe is satisfied. shim.go:134-135 = error-prefix fallback unreachable: runtime/dispatcher.go deliverTerminal always produces non-empty JSON Output even on error, so the err != nil && TrimSpace(result)==\"\" branch fires only when Output is empty - see TestDispatcherShimEmptyErrorResultBecomesErrorPrefix deleted; documented as defensive depth. shim.go:180-182 = pass1Holder take-miss + body line: the holder records on dispatcher-shim path and reads only when a tool was wrapped by the dispatcher shim; the SDK runs sequential, so the only path that misses is when the iteration produced no dispatcher-shim wrapping (a tool wrapped only by the turn shaper) - a scenario the SDK loop does not currently produce; documented as a no-current-SDK-loop scenario. shim.go:209-210 = restore-on-add-failure: applyDispatcherShim pre-removes then re-adds the unwrapped tool only when sdkReg.Add(wrapped) returns an error; today that requires a duplicate-name collision under the same SDK registry, a race that the dedicated tests TestApplyDispatcherShimWrapsAllToolsAndRestoresOnConflict do not deterministically produce."
+      "reason": "recordBridgeError body (commit 76fb29e2): the function only executes when a mid-run surface rotation's buildSDKToolRegistry fails, and every turn then fails through the partial-Result bridge-error carry in agentloop_adapter.go. This is the known preparation-error-shape gap from the session unpin: no test injects a failing registry conversion during rotation, so the record path has zero hits. Earlier clamp/fallback entries that lived at these line numbers were renumbered away by the same commits and their paths are now covered."
     },
-    "internal/agent/sdk_shaping.go": {
+    "internal/agent/agentloop_adapter.go": {
       "lines": [
-        149,
-        150,
-        158,
-        159,
-        190,
-        191
+        72,
+        200,
+        201,
+        202,
+        219,
+        223,
+        228,
+        229,
+        376,
+        377,
+        429,
+        430,
+        434,
+        435
       ],
-      "reason": "applyTurnShaping branches: 150-151 are the literal-budget case (covered by happy-path tests; coverage-tool races between file-revision context lines); 159-160 are the per-tool wrap loop body (covered by multi-tool shape tests; race); 191-192 are the for-loop's remove + re-add lines (covered by the wrap-re-adds-on-conflict test; race). The coverage tool flags context lines that were moved but not added-in-this-commit; the underlying branches are exercised by f9bcdfb4's tests and the new wrap_re_adds/literal/multi-tool tests in this commit range."
+      "reason": "Three known SDK-path gaps from the session unpin. 72 = preparation-error shape: newSDKWorkBudgetHook's clampedMaxTokens error return, reachable only with malformed MaxTokens/outputCap calibration that no test wires (calibration-carry gap). 200-202 and 376-377 = surface-rotation bridge failure: recordBridgeError plus the partial-Result carry of the recorded bridge error; no test makes buildSDKToolRegistry fail mid-rotation (preparation-error-shape gap). 219, 223, 228-229 = defensive spec-skip fallbacks in cliToolSpecsToSDKDefs: every advertised ToolSpec in tests carries a named function with marshalable parameters. 429-430 and 434-435 = prompt-too-long compact retry floor clamps (commit 6cec7c51): reachable only when the over-budget retry target drops below 1 or below the compact-notice size; the retry tests keep prompts above MaxContextTokens/4 (calibration-carry gap)."
+    },
+    "internal/agent/agentloop_budget.go": {
+      "lines": [
+        57,
+        58,
+        89,
+        90,
+        114,
+        115
+      ],
+      "reason": "Known SDK-path gaps from the session unpin. 57-58 and 89-90 = clampedMaxTokens error returns in newSDKWorkBudgetHook and reserve (commit 370aa24d): the error needs malformed MaxTokens/outputCap calibration no test supplies (calibration-carry gap). 114-115 = refund with an empty reservation stack: fires only when the SDK budget hook completes or aborts a turn without a matching reserve - the interrupted-turn persistence gap, which no deterministic test currently drives."
+    },
+    "internal/agent/agentloop_completer.go": {
+      "lines": [
+        137,
+        138,
+        149,
+        150
+      ],
+      "reason": "Stream lifecycle callbacks in ChatStream (commit 09554845): 137-138 = the onChat callback invocation, 149-150 = the onFinish(\"stop\") invocation. The completer tests stream through StreamWriter and never wire these callbacks, and the counters they feed (elision counters gap from the session unpin) have no observable assertion yet, so both blocks stay at zero hits."
     },
     "internal/sdkadapter/tool_registry.go": {
       "lines": [
