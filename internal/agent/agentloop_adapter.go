@@ -325,19 +325,15 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 			defer cancel()
 		}
 	}
-	// MaxContextTokens is honored by pre-compacting the loop's history
-	// through opts.PreparationManager before handing the messages to
-	// the SDK. The SDK's Window stays nil so the SDK does not run its
-	// own per-iteration planning pass on top of the CLI's host-side
-	// compaction. A nil PreparationManager keeps the loop's history
-	// unchanged; the SDK's per-call Budget still bounds one Completer
-	// call's messages by byte count after the fact.
 	// The initial history reaches the SDK unprepared: host-side
 	// preparation runs per iteration through sdkOpts.Trim below (the
 	// SDK applies Trim before every Completer call, iteration 1
-	// included), replacing the old one-shot prepareSDKHistory whose
-	// mid-turn elision never fired.
-	preparedMsgs := cliMessagesToSDK(msgs)
+	// included), which is also what honors MaxContextTokens; the
+	// SDK's Window stays nil (see sdk_prepare.go).
+	preparedMsgs, err := sdkInitialHistory(ctx, l, opts, msgs)
+	if err != nil {
+		return sdkagentloop.Result{}, err
+	}
 	if err := sdkPromptBudgetPreflight(l, opts, msgs); err != nil {
 		return sdkagentloop.Result{}, err
 	}

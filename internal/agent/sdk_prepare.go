@@ -79,3 +79,20 @@ func injectSummaryAfterPrepare(l *Loop, ctx context.Context, opts Options, prepa
 	defer func() { l.Messages = original }()
 	return l.injectSummary(ctx, opts)
 }
+
+// sdkInitialHistory returns the SDK run's starting history. Preparation
+// runs per iteration through Trim; the ONLY up-front pass is a
+// pre-canceled ctx, where the SDK would bail at its loop-top check
+// before Trim ever runs and the interrupted-preparation recovery
+// identity would never surface (the turn commit would misreport a
+// checkpoint conflict). A live ctx defers entirely to Trim.
+func sdkInitialHistory(ctx context.Context, l *Loop, opts Options, msgs []provider.Message) ([]sdkshape.Message, error) {
+	if opts.PreparationManager == nil || ctx.Err() == nil {
+		return cliMessagesToSDK(msgs), nil
+	}
+	prepared, perr := prepareSDKOnce(ctx, l, opts, msgs)
+	if perr != nil {
+		return nil, perr
+	}
+	return cliMessagesToSDK(prepared), nil
+}
