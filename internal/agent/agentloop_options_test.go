@@ -51,13 +51,13 @@ func TestBuildAgentLoopOptionsFailClosed(t *testing.T) {
 		// BeforeStep moved to the carried table: RunAgentLoopOnce
 		// installs it as the SDK Steer's pull injector (see
 		// docs/development/sdk-backend-field-mapping.md §1).
-		// PreserveWorkLimits moved off the table too: the flag only
-		// preserves the four token-reservation counters, and each of
-		// those still fails closed by name below. With them all zero
-		// the legacy meter is inert, so the flag alone passes.
-		{"WL.MaxPromptTokens", Options{WorkLimits: runtime.WorkLimits{MaxPromptTokens: 1}}, "WorkLimits.MaxPromptTokens"},
-		{"WL.MaxOutputTokens", Options{WorkLimits: runtime.WorkLimits{MaxOutputTokens: 1}}, "WorkLimits.MaxOutputTokens"},
-		{"WL.MaxOutputPerCall", Options{WorkLimits: runtime.WorkLimits{MaxOutputPerCall: 1}}, "WorkLimits.MaxOutputPerCall"},
+		// PreserveWorkLimits and the three token-reservation fields
+		// (MaxPromptTokens, MaxOutputTokens, MaxOutputPerCall) moved
+		// to the carried table too (Item 8): they ride the WorkBudget
+		// bridge over the same workLimitMeter the legacy path uses.
+		// MaxToolCalls stays fail-closed: the SDK path runs tool calls
+		// through the converted registry, so the legacy
+		// reserveToolBatch has no call point.
 		{"WL.MaxToolCalls", Options{WorkLimits: runtime.WorkLimits{MaxToolCalls: 1}}, "WorkLimits.MaxToolCalls"},
 	}
 	l := &Loop{Completer: &fakeCompleter{name: "test"}, Tools: tools.NewRegistry()}

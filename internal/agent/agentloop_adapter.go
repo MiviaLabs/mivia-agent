@@ -57,9 +57,16 @@ func buildAgentLoopOptions(l *Loop, opts Options) (sdkagentloop.Options, error) 
 		return sdkagentloop.Options{}, err
 	}
 	turn := newSDKTurnState()
+	// Item 8: WorkLimits token reservations ride the SDK's WorkBudget
+	// hook over the loop's workLimitMeter, with the legacy outputCap
+	// clamp on Options.MaxTokens.
+	budgetHook, clampedMaxTokens, err := newSDKWorkBudgetHook(l, opts)
+	if err != nil {
+		return sdkagentloop.Options{}, err
+	}
 	completer, err := newAgentLoopCompleterWithDefaults(l.Completer, turnRequestDefaults{
 		reasoning:             opts.Reasoning,
-		maxTokens:             opts.MaxTokens,
+		maxTokens:             clampedMaxTokens,
 		temperature:           opts.Temperature,
 		requestTimeout:        opts.RequestTimeout,
 		disableProviderReplay: opts.DisableProviderReplay,
@@ -115,6 +122,9 @@ func buildAgentLoopOptions(l *Loop, opts Options) (sdkagentloop.Options, error) 
 	if limit := opts.WorkLimits.MaxTurns; limit > 0 && (opts.MaxSteps <= 0 || limit < opts.MaxSteps) {
 		out.MaxIterations = limit
 	}
+	// MaxToolCalls stays fail-closed: the SDK path runs tool calls
+	// through the converted registry (see rejectUnsupportedSDKBatches).
+	out.WorkBudget = budgetHook
 	// WatchdogInterval deliberately does NOT map to
 	// HeartbeatInterval: a positive HeartbeatInterval requires a Bus
 	// the CLI path does not wire, and Validate would reject the
@@ -164,25 +174,19 @@ func rejectUnsupportedSDKBatches(opts Options) error {
 	// keeps using MailboxPending).
 	// WorkLimits splits: MaxTurns and DeadlineAt are carried (the
 	// turn clamp in buildAgentLoopOptions and the deadline narrowing
-	// in RunAgentLoopOnce); the four token-reservation fields have no
-	// SDK analogue - the SDK loop reserves nothing and refunds
-	// nothing - so each fails closed by name.
-	if opts.WorkLimits.MaxPromptTokens > 0 {
-		return unsupportedSDKOption("WorkLimits.MaxPromptTokens")
-	}
-	if opts.WorkLimits.MaxOutputTokens > 0 {
-		return unsupportedSDKOption("WorkLimits.MaxOutputTokens")
-	}
-	if opts.WorkLimits.MaxOutputPerCall > 0 {
-		return unsupportedSDKOption("WorkLimits.MaxOutputPerCall")
-	}
+	// in RunAgentLoopOnce); MaxPromptTokens, MaxOutputTokens, and
+	// MaxOutputPerCall ride the WorkBudget bridge (Item 8); and
+	// MaxToolCalls still fails closed - the SDK path runs tool calls
+	// through the converted registry, so the legacy reserveToolBatch
+	// has no call point here.
 	if opts.WorkLimits.MaxToolCalls > 0 {
 		return unsupportedSDKOption("WorkLimits.MaxToolCalls")
 	}
-	// PreserveWorkLimits passes: the flag only preserves the four
-	// token-reservation counters, and each of those already fails
-	// closed by name above. With them all zero the legacy meter is
-	// inert, so rejecting the flag alone would fail-close a no-op.
+	// PreserveWorkLimits passes: the flag preserves the cumulative
+	// token-reservation counters, and those now ride the WorkBudget
+	// bridge (newSDKWorkBudget applies the same reset rule the legacy
+	// runOnceLegacy does), so the flag means the same thing on both
+	// backends.
 	// MaxContextTokens, OnEvent, EventBus, UsageWriter, FinalWriter,
 	// RequireFinalText, SummaryConfig.Summarizer, StagedToolMessage,
 	// UnadmittedToolHandler, RefOnlyTools, RemainderSpool, Dispatcher,
