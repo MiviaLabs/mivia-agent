@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"testing"
 
@@ -50,25 +49,42 @@ func TestRunOnceDispatchesToLegacyOnExplicitLegacyBackend(t *testing.T) {
 	}
 }
 
-// TestRunOnceReturnsErrSDKBackendUnwirenedForSDKBackend asserts that
-// Options{Backend: "sdk"} returns errSDKBackendUnwirened from the
-// dispatcher, so an opt-in fails closed until the SDK completer wrapper,
-// options adapter, and steer bridge land. The assertion uses errors.Is so
-// the sentinel identity is the contract, not its message.
-func TestRunOnceReturnsErrSDKBackendUnwirenedForSDKBackend(t *testing.T) {
-	reg := tools.NewRegistry()
-	comp := &scriptCompleter{}
-	loop := &Loop{Completer: comp, Tools: reg}
+// TestRunOnceDispatchesToSDKBackend asserts that Options{Backend:
+// "sdk"} drives the SDK-backed loop end to end through the public
+// (*Loop).Run: the fake completer's ChatTurn content comes back as
+// the turn result. This is the commit-4 wiring test - the flag
+// reaches runOnceSDK, which reaches RunAgentLoopOnce, which drives
+// the SDK loop over the wrapped completer and converted registry.
+func TestRunOnceDispatchesToSDKBackend(t *testing.T) {
+	loop := &Loop{
+		Completer: &fakeCompleter{name: "fake", chatTurnOut: &provider.Response{Content: "sdk-output", FinishReason: "stop"}},
+		Tools:     tools.NewRegistry(),
+	}
+	got, err := loop.Run(context.Background(), "hi", Options{Model: "m", MaxSteps: 1, Backend: "sdk"})
+	if err != nil {
+		t.Fatalf("sdk path failed: %v", err)
+	}
+	if got != "sdk-output" {
+		t.Fatalf("got %q, want %q", got, "sdk-output")
+	}
+}
 
-	got, err := loop.runOnce(context.Background(), "hi", Options{Model: "m", MaxSteps: 1, Backend: "sdk"})
+// TestRunOnceSDKFailClosedSurfacesThroughRun asserts that a CLI
+// Options field the SDK path cannot carry (EventBus) surfaces the
+// fail-closed error through the public Run, so an opt-in caller
+// learns the boundary at the call.
+func TestRunOnceSDKFailClosedSurfacesThroughRun(t *testing.T) {
+	loop := &Loop{
+		Completer: &fakeCompleter{name: "fake"},
+		Tools:     tools.NewRegistry(),
+	}
+	opts := Options{Model: "m", MaxSteps: 1, Backend: "sdk", OnEvent: func(Event) {}}
+	_, err := loop.Run(context.Background(), "hi", opts)
 	if err == nil {
-		t.Fatalf("expected error from sdk branch, got nil (text=%q)", got)
+		t.Fatal("Run with OnEvent under the sdk backend returned nil error; want fail-closed error")
 	}
-	if !errors.Is(err, errSDKBackendUnwirened) {
-		t.Fatalf("err=%v, want errors.Is(err, errSDKBackendUnwirened)", err)
-	}
-	if got != "" {
-		t.Fatalf("sdk branch returned text %q, want empty", got)
+	if !strings.Contains(err.Error(), "OnEvent") {
+		t.Fatalf("err = %v, want it to name OnEvent", err)
 	}
 }
 

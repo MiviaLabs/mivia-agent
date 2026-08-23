@@ -102,7 +102,7 @@ type Loop struct {
 }
 
 func (l *Loop) Run(ctx context.Context, userText string, opts Options) (string, error) {
-	return l.runOnceLegacy(ctx, userText, opts)
+	return l.runOnce(ctx, userText, opts)
 }
 
 func (l *Loop) runOnceLegacy(ctx context.Context, userText string, opts Options) (string, error) {
