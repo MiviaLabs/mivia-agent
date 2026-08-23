@@ -18,6 +18,7 @@ import (
 	"errors"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
 )
 
@@ -114,10 +115,126 @@ func (a *agentLoopCompleter) ChatStream(ctx context.Context, req sdkshape.Reques
 }
 
 // translateAgentLoopRequest projects an SDK Request onto a CLI
-// Request. Commit 2 returns the zero provider.Request; the SDK
-// request is discarded. Commit 3 supplies the field-level mapping.
-func translateAgentLoopRequest(_ sdkshape.Request) provider.Request {
-	return provider.Request{}
+// Request. Model, Temperature, MaxTokens, Stream, Timeout,
+// DisableProviderReplay, and SessionID pass through; Messages convert
+// through sdkMessageToCLI; ReasoningEffort inverts to ReasoningLevel
+// and ReasoningDialect maps by string. Tools stay nil: the SDK loop
+// builds its own definitions from the registry, and re-translating
+// the SDK's ToolDefinition list into the CLI's map-shaped ToolSpec is
+// lossy and unneeded on this path. StreamWriter stays nil for the
+// same reason - the wrapper's Chat path is non-streaming.
+func translateAgentLoopRequest(req sdkshape.Request) provider.Request {
+	return provider.Request{
+		Model:                 req.Model,
+		Messages:              sdkMessagesToCLI(req.Messages),
+		Temperature:           req.Temperature,
+		MaxTokens:             req.MaxTokens,
+		Stream:                req.Stream,
+		Timeout:               req.Timeout,
+		DisableProviderReplay: req.DisableProviderReplay,
+		ReasoningLevel:        sdkEffortToLevel(req.ReasoningEffort),
+		ReasoningDialect:      reasoning.Dialect(req.ReasoningDialect),
+		SessionID:             req.SessionID,
+	}
+}
+
+// sdkEffortToLevel inverts the SDK's four-value ReasoningEffort onto
+// the CLI's seven-value Level. An unknown effort maps to the empty
+// Level (unset), which sends no reasoning field - the honest
+// fail-open for a vocabulary the CLI does not carry, matching the
+// encoder's treatment of an unset dial.
+func sdkEffortToLevel(e sdkshape.ReasoningEffort) reasoning.Level {
+	switch e {
+	case sdkshape.ReasoningEffortNone:
+		return reasoning.Off
+	case sdkshape.ReasoningEffortLow:
+		return reasoning.Low
+	case sdkshape.ReasoningEffortMedium:
+		return reasoning.Medium
+	case sdkshape.ReasoningEffortHigh:
+		return reasoning.High
+	default:
+		return ""
+	}
+}
+
+// sdkMessagesToCLI converts a slice of SDK messages to CLI messages.
+// A nil slice converts to nil so an empty request stays empty.
+func sdkMessagesToCLI(msgs []sdkshape.Message) []provider.Message {
+	if msgs == nil {
+		return nil
+	}
+	out := make([]provider.Message, len(msgs))
+	for i, m := range msgs {
+		out[i] = sdkMessageToCLI(m)
+	}
+	return out
+}
+
+// sdkMessageToCLI converts one SDK message to a CLI message. Role,
+// Content, Name, ToolCallID, and ReasoningContent pass through;
+// ToolCalls convert through sdkToolCallToCLI.
+func sdkMessageToCLI(m sdkshape.Message) provider.Message {
+	calls := make([]provider.ToolCall, len(m.ToolCalls))
+	for i, tc := range m.ToolCalls {
+		calls[i] = sdkToolCallToCLI(tc)
+	}
+	return provider.Message{
+		Role:             string(m.Role),
+		Content:          m.Content,
+		ToolCalls:        calls,
+		ToolCallID:       m.ToolCallID,
+		Name:             m.Name,
+		ReasoningContent: m.ReasoningContent,
+	}
+}
+
+// sdkToolCallToCLI converts one SDK tool call to the CLI's
+// OpenAI-compatible shape: Type is "function" and the SDK's byte
+// Arguments become the CLI's string Arguments.
+func sdkToolCallToCLI(tc sdkshape.ToolCall) provider.ToolCall {
+	var call provider.ToolCall
+	call.ID = tc.ID
+	call.Type = "function"
+	call.Function.Name = tc.Name
+	call.Function.Arguments = string(tc.Arguments)
+	return call
+}
+
+// cliMessagesToSDK converts a slice of CLI messages to SDK messages.
+// A nil slice converts to nil so an empty history stays empty.
+func cliMessagesToSDK(msgs []provider.Message) []sdkshape.Message {
+	if msgs == nil {
+		return nil
+	}
+	out := make([]sdkshape.Message, len(msgs))
+	for i, m := range msgs {
+		out[i] = cliMessageToSDK(m)
+	}
+	return out
+}
+
+// cliMessageToSDK converts one CLI message to an SDK message. It is
+// the inverse of sdkMessageToCLI; the CLI's string Arguments become
+// the SDK's byte Arguments.
+func cliMessageToSDK(m provider.Message) sdkshape.Message {
+	calls := make([]sdkshape.ToolCall, len(m.ToolCalls))
+	for i, tc := range m.ToolCalls {
+		calls[i] = sdkshape.ToolCall{
+			Index:     i,
+			ID:        tc.ID,
+			Name:      tc.Function.Name,
+			Arguments: []byte(tc.Function.Arguments),
+		}
+	}
+	return sdkshape.Message{
+		Role:             sdkshape.Role(m.Role),
+		Content:          m.Content,
+		ToolCalls:        calls,
+		ToolCallID:       m.ToolCallID,
+		Name:             m.Name,
+		ReasoningContent: m.ReasoningContent,
+	}
 }
 
 // convertToSDKResponse projects a CLI Response onto an SDK

@@ -3,60 +3,75 @@ package agent
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
+	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
 )
 
-// TestBuildAgentLoopOptions_ProjectsModelAndSteps locks the
-// one-to-one mapping the SDK adapter exposes: Model -> Model and
-// MaxSteps -> MaxIterations. Every other Options field stays at its
-// SDK zero value because the SDK Options struct has no carrier for
-// them.
+// TestBuildAgentLoopOptions_ProjectsModelAndSteps locks the mapping
+// the SDK adapter exposes: Model -> Model, MaxSteps -> MaxIterations,
+// and the Loop's Completer and Tools land on the SDK Options wrapped
+// and converted.
 func TestBuildAgentLoopOptions_ProjectsModelAndSteps(t *testing.T) {
-	opts := Options{Model: "test-model", MaxSteps: 5}
-	got := buildAgentLoopOptions(opts)
+	l := &Loop{Completer: &fakeCompleter{name: "test"}, Tools: tools.NewRegistry()}
+	got, err := buildAgentLoopOptions(l, Options{Model: "test-model", MaxSteps: 5})
+	if err != nil {
+		t.Fatalf("buildAgentLoopOptions: %v", err)
+	}
 	if got.Model != "test-model" {
-		t.Fatalf("buildAgentLoopOptions(%+v).Model = %q, want %q", opts, got.Model, "test-model")
+		t.Fatalf("Model = %q, want %q", got.Model, "test-model")
 	}
 	if got.MaxIterations != 5 {
-		t.Fatalf("buildAgentLoopOptions(%+v).MaxIterations = %d, want 5", opts, got.MaxIterations)
+		t.Fatalf("MaxIterations = %d, want 5", got.MaxIterations)
+	}
+	if got.Completer == nil {
+		t.Fatal("Completer = nil, want the wrapped CLI completer")
+	}
+	if got.Tools == nil {
+		t.Fatal("Tools = nil, want the converted registry")
 	}
 }
 
 // TestBuildAgentLoopOptions_EmptyRequest locks the zero-input
-// behavior: a zero-value Options must produce a zero-value
-// agentloop.Options, so a future caller can rely on the bridge as a
-// pure projection.
+// behavior: a zero-value Options maps MaxSteps 0 to the documented
+// default of 25, because the SDK's Validate requires a positive
+// MaxIterations and 0 is the most common unset configuration.
 func TestBuildAgentLoopOptions_EmptyRequest(t *testing.T) {
-	opts := Options{}
-	got := buildAgentLoopOptions(opts)
-	if got.Model != "" {
-		t.Fatalf("buildAgentLoopOptions(zero).Model = %q, want \"\"", got.Model)
+	l := &Loop{Completer: &fakeCompleter{name: "test"}, Tools: tools.NewRegistry()}
+	got, err := buildAgentLoopOptions(l, Options{})
+	if err != nil {
+		t.Fatalf("buildAgentLoopOptions: %v", err)
 	}
-	if got.MaxIterations != 0 {
-		t.Fatalf("buildAgentLoopOptions(zero).MaxIterations = %d, want 0", got.MaxIterations)
+	if got.Model != "" {
+		t.Fatalf("Model = %q, want empty", got.Model)
+	}
+	if got.MaxIterations != defaultSDKMaxIterations {
+		t.Fatalf("MaxIterations = %d, want default %d", got.MaxIterations, defaultSDKMaxIterations)
 	}
 }
 
-// TestRunAgentLoop_NewFailsOnInvalidOptions locks the SDK's
-// construction-time validation path: agentloop.New refuses Options
-// that fail Validate, and RunAgentLoop must surface that error
-// rather than silently proceeding. MaxSteps:0 maps to
-// MaxIterations:0, which the SDK rejects. The exact sentinel is
-// not asserted because Validate checks Completer before
-// MaxIterations and the adapter does not bind a Completer today;
-// the test only asserts that the construction gate fails closed.
-func TestRunAgentLoop_NewFailsOnInvalidOptions(t *testing.T) {
-	_, err := RunAgentLoop(context.Background(), Options{MaxSteps: 0})
+// TestRunAgentLoop_FailsOnNilCompleter locks the fail-closed path:
+// RunAgentLoop delegates to RunAgentLoopOnce with a zero Loop, whose
+// nil Completer is rejected by the wrapper constructor before the
+// SDK's own Validate runs.
+func TestRunAgentLoop_FailsOnNilCompleter(t *testing.T) {
+	_, err := RunAgentLoop(context.Background(), Options{})
 	if err == nil {
-		t.Fatal("RunAgentLoop(MaxSteps:0) returned nil error; want construction-time error")
+		t.Fatal("RunAgentLoop(zero Loop) returned nil error; want nil-completer error")
 	}
-	if !errors.Is(err, sdkagentloop.ErrMaxIterations) && !errors.Is(err, sdkagentloop.ErrNoCompleter) {
-		t.Fatalf("RunAgentLoop(MaxSteps:0) err = %v, want ErrMaxIterations or ErrNoCompleter", err)
+	if !strings.Contains(err.Error(), "nil CLI completer") {
+		t.Fatalf("err = %v, want it to name the nil CLI completer", err)
+	}
+	if !errors.Is(err, sdkagentloop.ErrNoCompleter) {
+		// The wrapper error is its own error; the SDK sentinel is not
+		// expected here - the assertion documents that the failure
+		// happens at the wrapper, before Validate.
+		t.Logf("note: err does not wrap ErrNoCompleter (fails at wrapper): %v", err)
 	}
 }
 
