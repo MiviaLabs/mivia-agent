@@ -357,7 +357,7 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 		ToolTimeout:            snapshot.toolTimeout,
 		ParentID:               "session",
 		TurnID:                 fmt.Sprintf("turn:%d", snapshot.myTurn), SessionID: snapshot.sessionID,
-		Backend:     "legacy", // surface rotation (wireStepBoundaryAdmission) is legacy-only
+		Backend:     "legacy", // flip blocked on: deferred-tool advertisement, staged-tool announce, cli tool_start shape (see gap list)
 		FinalWriter: w, OnEvent: snapshot.onEvent, EventBus: snapshot.eventBus, EventIdentity: snapshot.identity,
 		RequireFinalText: true,
 		// Step 1 has no Surface hook call (applySurfaceHook skips it), so the
