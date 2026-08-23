@@ -37,16 +37,16 @@ func (p *prepCallRecorder) Prepare(ctx context.Context, _ contextmgr.PrepareInpu
 
 func (p *prepCallRecorder) Discard(contextmgr.Preparation) {}
 
-// TestSDKPrepareHistoryRecordsPreparationErr pins that the first
+// TestSDKPrepareOnceRecordsPreparationErr pins that the first
 // Prepare failure sets loop.PreparationErr (identity, not a wrap) so
 // the turn commit can carry it, while the error still propagates -
 // matching legacy prepareStep (context.go:27).
-func TestSDKPrepareHistoryRecordsPreparationErr(t *testing.T) {
+func TestSDKPrepareOnceRecordsPreparationErr(t *testing.T) {
 	boom := errors.New("prep exploded")
 	mgr := &prepCallRecorder{fail: boom}
 	loop := &Loop{}
 	opts := Options{PreparationManager: mgr}
-	_, err := prepareSDKHistory(context.Background(), loop, opts, nil)
+	_, err := prepareSDKOnce(context.Background(), loop, opts, nil)
 	if err == nil || !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want the preparation failure propagated", err)
 	}
@@ -55,17 +55,17 @@ func TestSDKPrepareHistoryRecordsPreparationErr(t *testing.T) {
 	}
 }
 
-// TestSDKPrepareHistoryFallbackGateMatchesLegacy pins the legacy
+// TestSDKPrepareOnceFallbackGateMatchesLegacy pins the legacy
 // fallback gate (context.go:28): an interrupted ctx on a fresh loop
 // with zero WorkLimits retries Prepare once on context.Background();
 // success clears PreparationErr, and the fallback ran on a live ctx.
-func TestSDKPrepareHistoryFallbackGateMatchesLegacy(t *testing.T) {
+func TestSDKPrepareOnceFallbackGateMatchesLegacy(t *testing.T) {
 	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
 	mgr := &prepCallRecorder{}
 	loop := &Loop{}
 	opts := Options{PreparationManager: mgr}
-	msgs, err := prepareSDKHistory(canceled, loop, opts, nil)
+	msgs, err := prepareSDKOnce(canceled, loop, opts, nil)
 	if err != nil {
 		t.Fatalf("err = %v, want the fallback Prepare to succeed", err)
 	}

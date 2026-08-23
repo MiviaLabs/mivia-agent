@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
@@ -44,6 +45,13 @@ func (l *Loop) runOnceSDK(ctx context.Context, userText string, opts Options) (s
 	// caller's read. The SDK path leaves the field empty because the
 	// SDK's Message shape carries no finish reason.
 	l.LastFinishReason = ""
+	// Run-start resets, mirroring runOnceLegacy: stale preparation from
+	// a previous turn is discarded, the turn compaction counters reset,
+	// and the turn gets a fresh TurnState. The per-iteration Trim
+	// closure then re-records preparation on every Completer call.
+	l.discardPreparation(opts)
+	l.resetTurnCompaction()
+	l.TurnState = contextmgr.NewTurnState()
 	// Pre-append the user message to the carried history BEFORE the run,
 	// mirroring runOnceLegacy's append (loop.go): a turn that fails
 	// before any SDK iteration completes must still keep the user

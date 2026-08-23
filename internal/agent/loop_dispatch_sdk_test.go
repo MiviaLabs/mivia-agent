@@ -160,7 +160,7 @@ func TestFinalizeSDKTurnUsesTurnWideLastText(t *testing.T) {
 		History: []sdkshape.Message{prior, user, textStep},
 	}
 	var buf bytes.Buffer
-	err := finalizeSDKTurn(Options{RequireFinalText: true, FinalWriter: &buf}, res, 2)
+	err := finalizeSDKTurn(Options{RequireFinalText: true, FinalWriter: &buf}, res, "question")
 	if err != nil {
 		t.Fatalf("finalizeSDKTurn: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestFinalizeSDKTurnPriorTurnTextDoesNotSatisfyRequire(t *testing.T) {
 		Stop:    sdkagentloop.StopMaxIterations,
 		History: []sdkshape.Message{prior, user},
 	}
-	err := finalizeSDKTurn(Options{RequireFinalText: true}, res, 2)
+	err := finalizeSDKTurn(Options{RequireFinalText: true}, res, "question")
 	if err == nil || !strings.Contains(err.Error(), "no assistant text") {
 		t.Fatalf("err = %v, want the empty-turn refusal", err)
 	}
@@ -190,7 +190,7 @@ func TestFinalizeSDKTurnPriorTurnTextDoesNotSatisfyRequire(t *testing.T) {
 // error; the dispatcher maps it to errSteerInterrupt instead.
 func TestFinalizeSDKTurnSteeredStopSkipsRequire(t *testing.T) {
 	res := sdkagentloop.Result{Stop: sdkagentloop.StopSteered}
-	if err := finalizeSDKTurn(Options{RequireFinalText: true}, res, 0); err != nil {
+	if err := finalizeSDKTurn(Options{RequireFinalText: true}, res, ""); err != nil {
 		t.Fatalf("steered stop must not fail finalize: %v", err)
 	}
 }
@@ -312,7 +312,7 @@ func TestFinalizeSDKTurnFinalWriterErrorIsHard(t *testing.T) {
 		{Role: sdkshape.RoleUser, Content: "q"},
 		{Role: sdkshape.RoleAssistant, Content: "answer"},
 	}}
-	err := finalizeSDKTurn(Options{FinalWriter: errWriter{}}, res, 0)
+	err := finalizeSDKTurn(Options{FinalWriter: errWriter{}}, res, "q")
 	if err == nil || !strings.Contains(err.Error(), "write final text") {
 		t.Fatalf("err = %v, want the final-text write error", err)
 	}

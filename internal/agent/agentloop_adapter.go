@@ -332,10 +332,12 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 	// compaction. A nil PreparationManager keeps the loop's history
 	// unchanged; the SDK's per-call Budget still bounds one Completer
 	// call's messages by byte count after the fact.
-	preparedMsgs, err := prepareSDKHistory(ctx, l, opts, msgs)
-	if err != nil {
-		return sdkagentloop.Result{}, err
-	}
+	// The initial history reaches the SDK unprepared: host-side
+	// preparation runs per iteration through sdkOpts.Trim below (the
+	// SDK applies Trim before every Completer call, iteration 1
+	// included), replacing the old one-shot prepareSDKHistory whose
+	// mid-turn elision never fired.
+	preparedMsgs := cliMessagesToSDK(msgs)
 	if err := sdkPromptBudgetPreflight(l, opts, msgs); err != nil {
 		return sdkagentloop.Result{}, err
 	}
@@ -356,6 +358,7 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 	if err != nil {
 		return sdkagentloop.Result{}, err
 	}
+	sdkOpts.Trim = sdkPrepareTrim(l, opts)
 	if opts.OnEvent != nil || opts.EventBus != nil || opts.FinalWriter != nil {
 		// The SDK (since mivia-ai-sdk commit c207575) fires the four
 		// lifecycle names whenever Bus is non-nil; the heartbeat ticks
@@ -388,7 +391,18 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 	if berr := turn.bridgeError(); berr != nil {
 		return res, berr
 	}
-	if err := finalizeSDKTurn(opts, res, len(preparedMsgs)); err != nil {
+	return finishSDKResult(opts, res, msgs)
+}
+
+// finishSDKTurn applies finalizeSDKTurn with the current turn's user
+// text (the last message of the starting history) as the content-match
+// boundary.
+func finishSDKResult(opts Options, res sdkagentloop.Result, msgs []provider.Message) (sdkagentloop.Result, error) {
+	turnUser := ""
+	if n := len(msgs); n > 0 && msgs[n-1].Role == provider.RoleUser {
+		turnUser = msgs[n-1].Content
+	}
+	if err := finalizeSDKTurn(opts, res, turnUser); err != nil {
 		return res, err
 	}
 	return res, nil
@@ -538,10 +552,15 @@ func sdkPromptBudgetPreflight(l *Loop, opts Options, msgs []provider.Message) er
 // RequireFinalText fails a turn that produced no assistant text in any
 // step of the turn, except a steered stop, which the dispatcher maps
 // to errSteerInterrupt instead.
-func finalizeSDKTurn(opts Options, res sdkagentloop.Result, startLen int) error {
+func finalizeSDKTurn(opts Options, res sdkagentloop.Result, turnUserText string) error {
 	text := res.Final.Content
 	if strings.TrimSpace(text) == "" {
-		for i := len(res.History) - 1; i >= startLen; i-- {
+		// Content-match boundary, not an index bound: per-iteration
+		// Trim compaction can shrink res.History below the turn's
+		// starting length, so the backward scan starts at the current
+		// turn's user message (sdkCurrentTurnStart's pattern) instead.
+		startIdx := sdkCurrentTurnStart(res.History, turnUserText)
+		for i := len(res.History) - 1; i >= startIdx; i-- {
 			if m := res.History[i]; m.Role == sdkshape.RoleAssistant && strings.TrimSpace(m.Content) != "" {
 				text = m.Content
 				break
@@ -713,59 +732,6 @@ func bridgeSteerSignals(ctx context.Context, runDone <-chan struct{}, opts Optio
 // reached). A nil PreparationManager returns the loop's history
 // unchanged. See docs/development/sdk-backend-field-mapping.md for
 // the full rationale.
-func prepareSDKHistory(ctx context.Context, l *Loop, opts Options, msgs []provider.Message) ([]sdkshape.Message, error) {
-	if opts.PreparationManager == nil {
-		return cliMessagesToSDK(msgs), nil
-	}
-	input := l.buildPrepareInput(nil, opts)
-	input.Messages = msgs
-	preparation, err := opts.PreparationManager.Prepare(ctx, input)
-	if err != nil {
-		// Carry the failure identity so the turn commit can surface it,
-		// exactly as legacy prepareStep does (context.go:27).
-		l.PreparationErr = err
-		// Match context.go:28's fallback: an interrupted ctx on a
-		// fresh attempt with no recorded preparation retries once with
-		// context.Background so the run still produces a compacted
-		// history to ship downstream.
-		if !l.HasPreparation && opts.WorkLimits.DeadlineAt.IsZero() && interruptedContext(ctx, err) {
-			if fallback, ferr := opts.PreparationManager.Prepare(context.Background(), input); ferr == nil {
-				l.recordPreparation(fallback)
-				l.captureOmittedEvidence(input, fallback)
-				l.PreparationErr = nil
-				return cliMessagesToSDK(clonePreparedMessages(injectSummaryAfterPrepare(l, ctx, opts, fallback.Messages))), nil
-			} else {
-				l.PreparationErr = ferr
-				return nil, ferr
-			}
-		}
-		return nil, err
-	}
-	l.recordPreparation(preparation)
-	l.captureOmittedEvidence(input, preparation)
-	return cliMessagesToSDK(clonePreparedMessages(injectSummaryAfterPrepare(l, ctx, opts, preparation.Messages))), nil
-}
-
-// injectSummaryAfterPrepare runs the CLI's host-side summary inject
-// on a freshly prepared messages slice and returns the slice with the
-// summary message appended as the last user-role frame. A nil
-// summarizer or a non-compacted preparation returns the messages
-// unchanged, mirroring injectSummary's structural-only fallback.
-func injectSummaryAfterPrepare(l *Loop, ctx context.Context, opts Options, prepared []provider.Message) []provider.Message {
-	if opts.SummaryConfig.Summarizer == nil || !l.HasPreparation || !l.LastPreparation.Compacted {
-		return prepared
-	}
-	// Temporarily swap l.Messages to the prepared slice so injectSummary
-	// reads the compacted history instead of the live one, then restore.
-	// This matches what loop.go:332 does in the legacy path: prepareStep
-	// overwrites l.Messages from preparation.Messages before
-	// injectSummary sees them.
-	original := l.Messages
-	l.Messages = prepared
-	defer func() { l.Messages = original }()
-	return l.injectSummary(ctx, opts)
-}
-
 // Compile-time check: SDK's Completer type is reachable from the
 // adapter package through the same alias the bridge package uses.
 var _ sdkshape.Completer
