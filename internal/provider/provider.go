@@ -13,6 +13,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
+	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
 )
 
 // Role message roles.
@@ -81,6 +82,12 @@ type Request struct {
 	// request. Empty falls back to the client default; when neither resolves,
 	// nothing is sent rather than a guessed wire shape.
 	ReasoningDialect reasoning.Dialect
+	// SDKReasoningEffort is the SDK-shaped reasoning effort for one request,
+	// produced by sdkadapter.LevelToReasoningEffort(ReasoningLevel). Empty
+	// string means "no SDK surface" (the user picked a level the SDK cannot
+	// carry on the wire, or the request is unset). Currently unused by any
+	// consumer in the tree; reserved for B.2 #8's SDK-backed inner loop.
+	SDKReasoningEffort sdkshape.ReasoningEffort `json:"sdk_reasoning_effort,omitempty"`
 	// SessionID is the caller's session/run identifier, threaded through
 	// unchanged from whatever principal issued this turn (chat session,
 	// delegated subagent, workflow step). Empty means unknown - only a
