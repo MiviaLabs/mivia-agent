@@ -51,6 +51,11 @@ type agentLoopCompleter struct {
 	// emitTurnUsage calibration/token-usage update. Nil drops the
 	// report.
 	onUsage func(ctx context.Context, req provider.Request, resp *provider.Response)
+	// advertised returns the run's pinned advertised ToolSpec snapshot
+	// (nil when none exists); applyAdvertisedTools replaces the
+	// request's registry-derived tools with it. See sdk_advertised.go
+	// for the recovery-request safety note. Nil disables the override.
+	advertised func() []provider.ToolSpec
 }
 
 // turnRequestDefaults is the per-turn request shape the completer
@@ -101,7 +106,7 @@ func (a *agentLoopCompleter) Name() string { return a.cli.Name() }
 // SDK treats Reported=false Usage as "no observation", which is
 // the correct neutral value here.
 func (a *agentLoopCompleter) Chat(ctx context.Context, req sdkshape.Request) (sdkshape.Response, error) {
-	cliReq := applyStreaming(mergeTurnDefaults(translateAgentLoopRequest(req), a.defaults), req)
+	cliReq := applyAdvertisedTools(applyStreaming(mergeTurnDefaults(translateAgentLoopRequest(req), a.defaults), req), a.advertised)
 	if a.onChat != nil {
 		a.onChat()
 	}
@@ -144,7 +149,7 @@ func (a *agentLoopCompleter) ChatStream(ctx context.Context, req sdkshape.Reques
 	ch := make(chan sdkshape.Chunk, 1)
 	go func() {
 		defer close(ch)
-		cliReq := applyStreaming(mergeTurnDefaults(translateAgentLoopRequest(req), a.defaults), req)
+		cliReq := applyAdvertisedTools(applyStreaming(mergeTurnDefaults(translateAgentLoopRequest(req), a.defaults), req), a.advertised)
 		if a.onChat != nil {
 			a.onChat()
 		}

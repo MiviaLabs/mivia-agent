@@ -62,7 +62,7 @@ func buildAgentLoopOptions(l *Loop, opts Options) (sdkagentloop.Options, *sdkTur
 		return sdkagentloop.Options{}, nil, err
 	}
 	turn := newSDKTurnState()
-	turn.seedSurface(opts.Dispatcher, opts.RemainderSpool)
+	seedSDKTurnState(turn, opts)
 	// Item 8: WorkLimits token reservations ride the SDK's WorkBudget
 	// hook over the loop's workLimitMeter, with the legacy outputCap
 	// clamp on Options.MaxTokens.
@@ -151,7 +151,7 @@ func newSDKTurnCompleter(l *Loop, opts Options, turn *sdkTurnState, clampedMaxTo
 		estimatedTokens, _ := provider.EstimatePromptCost(cliReq.Messages, cliReq.Tools, l.contextAccounting())
 		l.emitTurnUsage(ctx, opts, cliReq, resp, estimatedTokens)
 	}
-	return newAgentLoopCompleterWithDefaults(l.Completer, turnRequestDefaults{
+	completer, err := newAgentLoopCompleterWithDefaults(l.Completer, turnRequestDefaults{
 		reasoning:             opts.Reasoning,
 		maxTokens:             clampedMaxTokens,
 		temperature:           opts.Temperature,
@@ -159,6 +159,11 @@ func newSDKTurnCompleter(l *Loop, opts Options, turn *sdkTurnState, clampedMaxTo
 		disableProviderReplay: opts.DisableProviderReplay,
 		sessionID:             opts.SessionID,
 	}, func(finishReason string) { l.LastFinishReason = finishReason }, func() { turn.steps.Add(1) }, onUsage)
+	if err != nil {
+		return nil, err
+	}
+	completer.advertised = turn.currentAdvertised
+	return completer, nil
 }
 
 // buildSDKToolRegistry converts one CLI registry onto a fully
@@ -198,8 +203,14 @@ func bridgeSDKBridgeSurface(l *Loop, opts Options, turn *sdkTurnState) func() *s
 	return func() *sdkagentloop.Surface {
 		surf := opts.Surface()
 		turn.rotateSurface(surf.Dispatcher, surf.RemainderSpool)
+		// Non-nil ToolSpecs replace the advertised snapshot (the legacy
+		// keep-rule: nil keeps the prior one), and the completer override
+		// carries them onto the wire from the next request.
+		if surf.ToolSpecs != nil {
+			turn.setAdvertised(surf.ToolSpecs)
+		}
 		out := &sdkagentloop.Surface{}
-		if len(surf.ToolSpecs) > 0 {
+		if surf.ToolSpecs != nil {
 			out.Advertised = cliToolSpecsToSDKDefs(surf.ToolSpecs)
 		}
 		if surf.Registry != nil {
@@ -209,6 +220,15 @@ func bridgeSDKBridgeSurface(l *Loop, opts Options, turn *sdkTurnState) func() *s
 				return nil
 			}
 			out.Registry = reg
+		}
+		// A rotation that carries neither ToolSpecs nor a Registry keeps
+		// the SDK's prior surface (nil return, the SDK's documented
+		// nil-keeps-prior contract). Returning the empty non-nil Surface
+		// instead would make the SDK's apply treat it as a wholesale
+		// replace: defs and schemas cleared, so every later tool call
+		// fails with ErrToolNotOffered.
+		if out.Advertised == nil && out.Registry == nil {
+			return nil
 		}
 		return out
 	}

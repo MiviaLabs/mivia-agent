@@ -30,7 +30,7 @@ The SDK path consumes these directly:
 | `LastFinishReason` | completer `onFinish` callback | the wrapper reports each response's finish reason onto `Loop.LastFinishReason`; the truncation-aware corrective turn keys on it |
 | `MaxSteps > 0` | `Options.MaxIterations` | clamped by `MaxTurns` when set; `MaxSteps <= 0` caps at the adapter default 25 (see §2) |
 | `SessionID` | `Options.SessionID` | required when Usage is set |
-| `AdvertisedToolSpecs` | converted registry | via `sdkadapter.ConvertToolRegistry` |
+| `AdvertisedToolSpecs` | turn-state advertised snapshot + completer override | the snapshot seeds `sdkTurnState.advertised` (request 0, the legacy `initialToolSpecs` contract) and each surface rotation's non-nil `ToolSpecs` replaces it; the completer's `applyAdvertisedTools` REPLACES the wire request's registry-derived tools with the live snapshot, so deferred tools outside the registry reach the wire from request 0 (see `internal/agent/sdk_advertised.go` for the recovery-request safety note: the SDK's Window-gated recovery never fires because the host wires no Window) |
 | `MaxToolCallsPerBatch` | `Options.MaxCallsPerTurn` | positive only |
 | `BatchResultBudgetBytes > 0` | host-side shaping wrapper | `applyTurnShaping` charges one shared per-turn counter and applies the legacy degrade tiers (fit / re-cut with notice / notice alone); the SDK's omit-on-budget `TurnResultBudget` stays unset |
 | `MaxContextTokens` | host-side compaction | `prepareSDKHistory` calls `PreparationManager.Prepare`; SDK's `Window` stays nil |

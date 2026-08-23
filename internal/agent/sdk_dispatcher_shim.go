@@ -25,6 +25,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -61,10 +62,19 @@ type sdkTurnState struct {
 	// recordInterruptedPartial when a canceled run leaves streamed
 	// bytes that the SDK's hard-fail Result never carried.
 	streamTee atomic.Pointer[teeWriter]
-	shapeOnce sync.Once
-	shape     *turnShapeCounter
-	errMu     sync.Mutex
-	bridgeErr error
+	// advertised holds the run's pinned advertised ToolSpec snapshot:
+	// the request-0 seed from Options.AdvertisedToolSpecs, replaced by
+	// each surface rotation's non-nil ToolSpecs (the legacy keep-rule:
+	// nil keeps the prior snapshot). The completer reads it per Chat
+	// call and REPLACES the wire request's registry-derived tools with
+	// it, so deferred tools outside the registry reach the wire from
+	// request 0. See sdk_advertised.go's applyAdvertisedTools for the
+	// recovery-request safety note.
+	advertised atomic.Pointer[[]provider.ToolSpec]
+	shapeOnce  sync.Once
+	shape      *turnShapeCounter
+	errMu      sync.Mutex
+	bridgeErr  error
 }
 
 func newSDKTurnState() *sdkTurnState { return &sdkTurnState{} }
@@ -106,6 +116,26 @@ func (s *sdkTurnState) setStreamTee(t *teeWriter) { s.streamTee.Store(t) }
 // currentStreamTee returns the run's StreamingWriter tee, or nil when
 // the run streamed nowhere.
 func (s *sdkTurnState) currentStreamTee() *teeWriter { return s.streamTee.Load() }
+
+// setAdvertised installs the advertised ToolSpec snapshot. A nil
+// argument keeps the prior snapshot, mirroring the legacy Surface
+// contract's nil-means-keep rule; a non-nil slice (empty included)
+// replaces it.
+func (s *sdkTurnState) setAdvertised(specs []provider.ToolSpec) {
+	if specs == nil {
+		return
+	}
+	s.advertised.Store(&specs)
+}
+
+// currentAdvertised returns the live advertised snapshot, or nil when
+// neither a seed nor a rotation installed one.
+func (s *sdkTurnState) currentAdvertised() []provider.ToolSpec {
+	if p := s.advertised.Load(); p != nil {
+		return *p
+	}
+	return nil
+}
 
 // shapeCounter lazily builds the one turn-level shaping counter a
 // run (and every surface rotation inside it) shares.
