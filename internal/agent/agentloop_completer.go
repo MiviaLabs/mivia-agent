@@ -15,7 +15,9 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
@@ -28,6 +30,33 @@ import (
 // unchanged.
 type agentLoopCompleter struct {
 	cli provider.Completer
+	// defaults carries the CLI Options the SDK loop's bare
+	// provider.Request never sets (run.go's runChat builds Model,
+	// Messages, and Tools only): the reasoning dial, the token and
+	// temperature ceilings, the per-request timeout, the replay
+	// suppression flag, and the session key. translateAgentLoopRequest
+	// merges them into every converted request.
+	defaults turnRequestDefaults
+	// onFinish records each response's FinishReason. The CLI Loop's
+	// LastFinishReason has no SDK Result carrier, so the wrapper -
+	// the only place the provider's reason still exists - reports it
+	// back through this callback.
+	onFinish func(finishReason string)
+	// onChat bumps the shared turn's iteration counter at the top of
+	// each Chat call so the tool shims can stamp
+	// runtime.Request.Step (later-step re-issues must re-run reads).
+	onChat func()
+}
+
+// turnRequestDefaults is the per-turn request shape the completer
+// wrapper injects because the SDK loop does not carry it.
+type turnRequestDefaults struct {
+	reasoning             reasoning.Setting
+	maxTokens             *int
+	temperature           *float64
+	requestTimeout        time.Duration
+	disableProviderReplay bool
+	sessionID             string
 }
 
 // Compile-time assertion: the wrapper satisfies the SDK's
@@ -40,10 +69,17 @@ var _ sdkshape.Completer = (*agentLoopCompleter)(nil)
 // nil-derefs on the first call, per the repo rule that internal
 // packages return errors instead of panicking.
 func newAgentLoopCompleter(c provider.Completer) (*agentLoopCompleter, error) {
+	return newAgentLoopCompleterWithDefaults(c, turnRequestDefaults{}, nil, nil)
+}
+
+// newAgentLoopCompleterWithDefaults builds the wrapper with the
+// per-turn request defaults, an optional finish-reason recorder, and
+// an optional per-Chat iteration bump. Nil callbacks drop the report.
+func newAgentLoopCompleterWithDefaults(c provider.Completer, defaults turnRequestDefaults, onFinish func(string), onChat func()) (*agentLoopCompleter, error) {
 	if c == nil {
 		return nil, errors.New("agent: nil CLI completer")
 	}
-	return &agentLoopCompleter{cli: c}, nil
+	return &agentLoopCompleter{cli: c, defaults: defaults, onFinish: onFinish, onChat: onChat}, nil
 }
 
 // Name implements provider.Completer. It forwards to the wrapped
@@ -59,8 +95,14 @@ func (a *agentLoopCompleter) Name() string { return a.cli.Name() }
 // SDK treats Reported=false Usage as "no observation", which is
 // the correct neutral value here.
 func (a *agentLoopCompleter) Chat(ctx context.Context, req sdkshape.Request) (sdkshape.Response, error) {
-	cliReq := translateAgentLoopRequest(req)
+	cliReq := mergeTurnDefaults(translateAgentLoopRequest(req), a.defaults)
+	if a.onChat != nil {
+		a.onChat()
+	}
 	if r, err := a.cli.ChatTurn(ctx, cliReq); err == nil && r != nil {
+		if a.onFinish != nil {
+			a.onFinish(r.FinishReason)
+		}
 		return convertToSDKResponse(*r), nil
 	} else if err != nil {
 		return sdkshape.Response{}, err
@@ -90,7 +132,7 @@ func (a *agentLoopCompleter) ChatStream(ctx context.Context, req sdkshape.Reques
 	ch := make(chan sdkshape.Chunk, 1)
 	go func() {
 		defer close(ch)
-		cliReq := translateAgentLoopRequest(req)
+		cliReq := mergeTurnDefaults(translateAgentLoopRequest(req), a.defaults)
 		content, err := a.cli.Chat(ctx, cliReq)
 		if err != nil {
 			select {
@@ -135,7 +177,63 @@ func translateAgentLoopRequest(req sdkshape.Request) provider.Request {
 		ReasoningLevel:        sdkEffortToLevel(req.ReasoningEffort),
 		ReasoningDialect:      reasoning.Dialect(req.ReasoningDialect),
 		SessionID:             req.SessionID,
+		Tools:                 sdkToolDefsToCLI(req.Tools),
 	}
+}
+
+// sdkToolDefsToCLI converts the SDK loop's tool definitions onto the
+// CLI's OpenAI-shaped ToolSpec map, the same shape
+// tools.Registry.OpenAITools publishes: without this conversion the
+// CLI completer's request carried no tool surface at all, so the
+// provider never saw the tools the loop offered. A definition whose
+// schema fails to parse falls back to an empty parameters object -
+// the tool stays advertised under its name rather than vanishing.
+func sdkToolDefsToCLI(defs []sdkshape.ToolDefinition) []provider.ToolSpec {
+	if len(defs) == 0 {
+		return nil
+	}
+	out := make([]provider.ToolSpec, 0, len(defs))
+	for _, d := range defs {
+		params := map[string]any{}
+		if len(d.Schema) > 0 {
+			_ = json.Unmarshal(d.Schema, &params)
+		}
+		out = append(out, provider.ToolSpec{
+			"type": "function",
+			"function": map[string]any{
+				"name":        d.Name,
+				"description": d.Description,
+				"parameters":  params,
+			},
+		})
+	}
+	return out
+}
+
+// mergeTurnDefaults folds the wrapper's per-turn defaults into a
+// converted request. The SDK loop never sets these request fields
+// (runChat builds Model, Messages, Tools only), so the defaults win
+// whenever the SDK left the field zero; an explicit SDK value - none
+// today - would take precedence.
+func mergeTurnDefaults(req provider.Request, d turnRequestDefaults) provider.Request {
+	if req.ReasoningLevel == "" && req.ReasoningDialect == "" {
+		req.ReasoningLevel = d.reasoning.Level
+		req.ReasoningDialect = d.reasoning.Dialect
+	}
+	if req.MaxTokens == nil {
+		req.MaxTokens = d.maxTokens
+	}
+	if req.Temperature == nil {
+		req.Temperature = d.temperature
+	}
+	if req.Timeout <= 0 {
+		req.Timeout = d.requestTimeout
+	}
+	req.DisableProviderReplay = req.DisableProviderReplay || d.disableProviderReplay
+	if req.SessionID == "" {
+		req.SessionID = d.sessionID
+	}
+	return req
 }
 
 // sdkEffortToLevel inverts the SDK's four-value ReasoningEffort onto

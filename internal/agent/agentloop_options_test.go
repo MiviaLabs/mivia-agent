@@ -48,8 +48,13 @@ func TestBuildAgentLoopOptionsFailClosed(t *testing.T) {
 		want string
 	}{
 		{"Surface", Options{Surface: func() Surface { return Surface{} }}, "Surface"},
-		{"BeforeStep", Options{BeforeStep: func() []provider.Message { return nil }}, "BeforeStep"},
-		{"PreserveWorkLimits", Options{PreserveWorkLimits: true}, "PreserveWorkLimits"},
+		// BeforeStep moved to the carried table: RunAgentLoopOnce
+		// installs it as the SDK Steer's pull injector (see
+		// docs/development/sdk-backend-field-mapping.md §1).
+		// PreserveWorkLimits moved off the table too: the flag only
+		// preserves the four token-reservation counters, and each of
+		// those still fails closed by name below. With them all zero
+		// the legacy meter is inert, so the flag alone passes.
 		{"WL.MaxPromptTokens", Options{WorkLimits: runtime.WorkLimits{MaxPromptTokens: 1}}, "WorkLimits.MaxPromptTokens"},
 		{"WL.MaxOutputTokens", Options{WorkLimits: runtime.WorkLimits{MaxOutputTokens: 1}}, "WorkLimits.MaxOutputTokens"},
 		{"WL.MaxOutputPerCall", Options{WorkLimits: runtime.WorkLimits{MaxOutputPerCall: 1}}, "WorkLimits.MaxOutputPerCall"},

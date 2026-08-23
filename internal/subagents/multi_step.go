@@ -215,9 +215,14 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 func (h *MultiStepHandler) loopOptions(scoped *scopedLoop, steps int, maxTokens *int, toolTimeout time.Duration, req runtime.Request, taskPrompt string) agent.Options {
 	opts := agent.Options{
 		// The nested loop wires a BeforeStep mailbox drain
-		// (applyMailboxAccess), which the SDK backend fail-closes on.
-		// Stay on the legacy backend until the mailbox drain migrates.
-		Backend:          "legacy",
+		// (applyMailboxAccess). It maps onto the SDK path through the
+		// Steer injector installed in RunAgentLoopOnce: the SDK
+		// drains the injector at the top of every iteration and at
+		// every steered-stop downgrade point, growing history with
+		// the framed parent message and downgrading a pending
+		// StopSteered when the drain is non-empty. No Backend override
+		// here: the SDK is the default and the BeforeStep carrier
+		// lives there now.
 		Model:            h.Model,
 		Reasoning:        h.dial(),
 		MaxSteps:         steps,

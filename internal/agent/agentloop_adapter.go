@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/usage"
 	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
@@ -53,7 +54,15 @@ func buildAgentLoopOptions(l *Loop, opts Options) (sdkagentloop.Options, error) 
 	if err := rejectUnsupportedSDKBatches(opts); err != nil {
 		return sdkagentloop.Options{}, err
 	}
-	completer, err := newAgentLoopCompleter(l.Completer)
+	turn := newSDKTurnState()
+	completer, err := newAgentLoopCompleterWithDefaults(l.Completer, turnRequestDefaults{
+		reasoning:             opts.Reasoning,
+		maxTokens:             opts.MaxTokens,
+		temperature:           opts.Temperature,
+		requestTimeout:        opts.RequestTimeout,
+		disableProviderReplay: opts.DisableProviderReplay,
+		sessionID:             opts.SessionID,
+	}, func(finishReason string) { l.LastFinishReason = finishReason }, func() { turn.steps.Add(1) })
 	if err != nil {
 		return sdkagentloop.Options{}, err
 	}
@@ -64,11 +73,12 @@ func buildAgentLoopOptions(l *Loop, opts Options) (sdkagentloop.Options, error) 
 	if err != nil {
 		return sdkagentloop.Options{}, err
 	}
+	applyDispatcherShim(sdkTools, l.Tools, opts, turn)
 	applyRefOnlyShim(sdkTools, l.Tools, opts.RefOnlyTools, opts.RemainderSpool, BatchDegradeFloorBytes, opts.SessionID)
 	// Host-side turn shaping replaces the SDK's TurnResultBudget: the
 	// CLI contract degrades with an honest notice and never omits a
 	// call, so out.TurnResultBudget stays unset below.
-	applyTurnShaping(sdkTools, l.Tools, opts)
+	applyTurnShaping(sdkTools, l.Tools, opts, turn)
 	maxIterations := opts.MaxSteps
 	if maxIterations <= 0 {
 		maxIterations = defaultSDKMaxIterations
@@ -118,9 +128,15 @@ func rejectUnsupportedSDKBatches(opts Options) error {
 	if opts.Surface != nil {
 		return unsupportedSDKOption("Surface")
 	}
-	if opts.BeforeStep != nil {
-		return unsupportedSDKOption("BeforeStep")
-	}
+	// BeforeStep is carried via the Steer injector installed in
+	// RunAgentLoopOnce: RunAgentLoopOnce calls opts.BeforeStep on
+	// the loop goroutine at the top of each iteration (after this
+	// reject ran) and at every steered-stop downgrade point, then
+	// converts the returned CLI messages to SDK shape and appends
+	// them to history. The SDK-side carrier is
+	// agentloop/steer.go's SetInjector; see the carrier cell in
+	// docs/development/sdk-backend-field-mapping.md for the
+	// placement, ordering, and gap table.
 	// RefOnlyTools and RemainderSpool are carried by the per-call
 	// ref-only shim in the tool-registry converter. The shim mirrors
 	// the legacy CLI's refOnlyTier (internal/agent/shape_batch_refonly.go:25-45)
@@ -152,36 +168,18 @@ func rejectUnsupportedSDKBatches(opts Options) error {
 	if opts.WorkLimits.MaxToolCalls > 0 {
 		return unsupportedSDKOption("WorkLimits.MaxToolCalls")
 	}
-	if opts.PreserveWorkLimits {
-		return unsupportedSDKOption("PreserveWorkLimits")
-	}
-	// MaxContextTokens is carried: RunAgentLoopOnce pre-compacts the
-	// loop's history through opts.PreparationManager before handing
-	// the resulting messages to RunSteerable. The SDK's Window stays
-	// nil so the SDK does not run its own per-iteration planning
-	// pass on top of the CLI's host-side compaction. The SDK's
-	// per-call Budget still bounds one Completer call's messages by
-	// byte count after the fact.
-	// OnEvent, EventBus, UsageWriter, FinalWriter, RequireFinalText,
-	// SummaryConfig.Summarizer, StagedToolMessage, UnadmittedToolHandler,
-	// RefOnlyTools, RemainderSpool, and MailboxPendingInterrupt are
-	// carried: the event bridge translates SDK loop events, the audit
-	// bridge writes durable token-usage rows per completed completion,
-	// finalizeSDKTurn writes the final text and enforces the
-	// empty-turn refusal after the run, the steer bridge spawns a
-	// third goroutine that polls MailboxPendingInterrupt as the
-	// strict signal branch (parallel to the InterruptCh one-shot and
-	// the MailboxPending watchdog poller), prepareSDKHistory runs the
-	// CLI's host-side SummaryConfig.Summarizer once before the SDK
-	// loop runs so the SDK receives a starting history with the
-	// summary message already injected, and the tool-registry
-	// converter wraps every CLI tool with admission predicates plus
-	// the per-call ref-only shim (mirroring the legacy
-	// loop_tool_exec.go:13-27 admission checks and
-	// shape_batch_refonly.go:25-45 ref-only tier; per-call evaluation
-	// keeps the UnadmittedHandler auto-stage side effect firing only
-	// when the model actually invokes the unadmitted tool).
-	// injected as the last user-role frame.
+	// PreserveWorkLimits passes: the flag only preserves the four
+	// token-reservation counters, and each of those already fails
+	// closed by name above. With them all zero the legacy meter is
+	// inert, so rejecting the flag alone would fail-close a no-op.
+	// MaxContextTokens, OnEvent, EventBus, UsageWriter, FinalWriter,
+	// RequireFinalText, SummaryConfig.Summarizer, StagedToolMessage,
+	// UnadmittedToolHandler, RefOnlyTools, RemainderSpool, Dispatcher,
+	// MaxToolResultChars, ToolTimeout, Reasoning, MaxTokens,
+	// Temperature, RequestTimeout, DisableProviderReplay, and
+	// MailboxPendingInterrupt are carried. The full carrier table -
+	// placement, ordering, and each field's mechanism - lives in
+	// docs/development/sdk-backend-field-mapping.md §1.
 	return nil
 }
 
@@ -220,6 +218,22 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 	if err != nil {
 		return sdkagentloop.Result{}, err
 	}
+	if err := sdkPromptBudgetPreflight(l, opts, msgs); err != nil {
+		return sdkagentloop.Result{}, err
+	}
+	// Tool execution on the SDK path routes through a runtime
+	// dispatcher, like the legacy executeToolTask. A caller that
+	// wired none gets a scoped one over the loop's registry (the
+	// same construction the subagent handler uses), closed with the
+	// run.
+	if opts.Dispatcher == nil && l.Tools != nil {
+		d, derr := runtime.NewToolDispatcher(l.Tools, runtime.Policy{})
+		if derr != nil {
+			return sdkagentloop.Result{}, fmt.Errorf("agent: scoped tool dispatcher: %w", derr)
+		}
+		opts.Dispatcher = d
+		defer d.Close()
+	}
 	sdkOpts, err := buildAgentLoopOptions(l, opts)
 	if err != nil {
 		return sdkagentloop.Result{}, err
@@ -238,9 +252,8 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 	if err != nil {
 		return sdkagentloop.Result{}, err
 	}
-	steer := sdkagentloop.NewSteer()
-	bridgeSteerSignals(ctx, opts, steer)
-	res, err := loop.RunSteerable(ctx, preparedMsgs, steer)
+	res, err := runSDKSteerable(ctx, loop, opts, preparedMsgs)
+	stampSDKToolMessageNames(res.History)
 	if err != nil {
 		// Return the partial Result alongside the error: the SDK's
 		// hard-fail Result carries the messages completed so far, and
@@ -252,6 +265,66 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 		return res, err
 	}
 	return res, nil
+}
+
+// runSDKSteerable installs the BeforeStep injector and the steer
+// signal bridge on one built SDK loop and drives RunSteerable.
+func runSDKSteerable(ctx context.Context, loop *sdkagentloop.Loop, opts Options, preparedMsgs []sdkshape.Message) (sdkagentloop.Result, error) {
+	steer := sdkagentloop.NewSteer()
+	// BeforeStep carrier (plan 54, blocker 2 of the SDK convergence):
+	// install the legacy BeforeStep as the SDK's pull-based steer
+	// injector. The SDK drains it at the top of every iteration AND
+	// at every steered-stop decision point, exactly mirroring the
+	// legacy context.go:15-19 placement. A nil opts.BeforeStep means
+	// no injector is installed and the SDK's existing Trigger
+	// semantics are unchanged.
+	if opts.BeforeStep != nil {
+		steer.SetInjector(func() []sdkshape.Message {
+			return cliMessagesToSDK(opts.BeforeStep())
+		})
+	}
+	// bridgeSteerSignals spawns at most three goroutines (InterruptCh,
+	// MailboxPendingInterrupt poller, MailboxPending poller) and
+	// selects each one on a run-scoped done channel, so the goroutines
+	// exit when RunSteerable returns, not only when ctx is canceled.
+	// A long-lived caller ctx no longer leaks two pollers per turn.
+	runDone := make(chan struct{})
+	defer close(runDone)
+	bridgeSteerSignals(ctx, runDone, opts, steer)
+	return loop.RunSteerable(ctx, preparedMsgs, steer)
+}
+
+// stampSDKToolMessageNames fills each RoleTool message's Name from the
+// assistant ToolCall that requested it, mirroring the legacy
+// processToolCalls (loop_tools.go:47-52): the SDK's RoleTool messages
+// carry only ToolCallID, and CLI-side consumers (tests, history
+// writers, message routing) match tool results by name.
+func stampSDKToolMessageNames(history []sdkshape.Message) {
+	names := make(map[string]string, len(history))
+	for i := range history {
+		m := &history[i]
+		for _, tc := range m.ToolCalls {
+			if tc.ID != "" {
+				names[tc.ID] = tc.Name
+			}
+		}
+		if m.Role == sdkshape.RoleTool && m.Name == "" {
+			m.Name = names[m.ToolCallID]
+		}
+	}
+}
+
+// sdkPromptBudgetPreflight mirrors the legacy prepareStep's
+// PreparationManager-nil branch (context.go:20-23): when no
+// preparation manager runs, MaxContextTokens is a hard preflight
+// over the whole starting history plus tool schemas, before any
+// completer call. A preparation manager owns the budget itself, so
+// that path does no second check here either.
+func sdkPromptBudgetPreflight(l *Loop, opts Options, msgs []provider.Message) error {
+	if opts.PreparationManager == nil && opts.MaxContextTokens > 0 {
+		return promptBudgetErrorWithTools(msgs, opts.MaxContextTokens, l.initialToolSpecs(opts), l.contextAccounting())
+	}
+	return nil
 }
 
 // bridgeUsageAudit adapts the CLI's durable usage writer onto the
@@ -319,25 +392,46 @@ func RunAgentLoop(ctx context.Context, l *Loop, opts Options) (sdkagentloop.Resu
 }
 
 // bridgeSteerSignals wires the CLI's interrupt signals onto one Steer
-// handle. Each non-nil signal spawns one goroutine; all exit on
-// ctx.Done. Trigger fires at most once per signal source because the
-// Steer resets its own state at RunSteerable start.
+// handle. Each non-nil signal spawns one goroutine; all exit when
+// runDone closes (i.e. RunSteerable returns) OR ctx is canceled,
+// whichever comes first, so a long-lived caller ctx leaks no pollers.
 //
 // The three signal sources model the CLI's three cancellation layers:
-//   - InterruptCh resolves once and fires Trigger (one-shot signal).
-//   - MailboxPendingInterrupt gates the strict signal branch: the
-//     predicate reports whether an Interrupt-flagged steer is queued.
-//     The goroutine polls at the watcher's poll interval (or 250ms
-//     when unset) because the predicate is just a flag read.
-//   - MailboxPending is the loose watchdog branch: the predicate
+//   - InterruptCh resolves once per fire and, when MailboxPendingInterrupt
+//     is also set, fires Trigger ONLY when an Interrupt-flagged steer
+//     is queued. When MailboxPendingInterrupt is nil, InterruptCh fires
+//     Trigger unconditionally — a bare InterruptCh with no mailbox gate
+//     is an explicit interrupt (the legacy "fire on close" semantics).
+//   - MailboxPendingInterrupt is the strict signal-branch poller:
+//     the predicate reports whether an Interrupt-flagged steer is
+//     queued. Trigger fires the moment it returns true.
+//   - MailboxPending is the loose watchdog poller: the predicate
 //     reports whether ANY message is waiting, so a stale signal after
 //     a drain can never cancel a call.
-func bridgeSteerSignals(ctx context.Context, opts Options, steer *sdkagentloop.Steer) {
+//
+// Each spawned goroutine selects on runDone alongside ctx.Done so
+// every poller exits when the run ends; without this, a long-lived
+// caller ctx would leak two pollers per SDK turn (the prior
+// implementation returned from each poller after a single Trigger,
+// so a second steer in the same run never re-armed the bridge).
+func bridgeSteerSignals(ctx context.Context, runDone <-chan struct{}, opts Options, steer *sdkagentloop.Steer) {
 	if ch := opts.InterruptCh; ch != nil {
+		interrupt := opts.MailboxPendingInterrupt
 		go func() {
 			select {
 			case <-ch():
-				steer.Trigger()
+				if interrupt == nil {
+					steer.Trigger()
+					return
+				}
+				if interrupt() {
+					steer.Trigger()
+				}
+				// An Interrupt-flagged steer not yet queued: drain
+				// the stale signal without firing. The strict
+				// watchdog poller below will catch the
+				// queued-and-flagged case.
+			case <-runDone:
 			case <-ctx.Done():
 			}
 		}()
@@ -352,29 +446,49 @@ func bridgeSteerSignals(ctx context.Context, opts Options, steer *sdkagentloop.S
 			defer ticker.Stop()
 			for {
 				select {
+				case <-runDone:
+					return
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
-					if interrupt() {
+					// A trigger fired when no Completer.Chat call is
+					// in flight sets the SDK's per-RunSteerable
+					// trigger flag; the next arm observes it and
+					// immediately cancels the next chat, the bridge
+					// fires again, the next chat cancels, and the
+					// run never makes progress. Guard on
+					// HasActiveCall so bridge triggers fire only
+					// when there is a live chat to cancel. A
+					// pre-chat trigger that the bridge intentionally
+					// means to "save for the next arm" is the
+					// legacy semantics; the bridge mirrors the
+					// legacy per-call watcher and must observe the
+					// same gate.
+					if interrupt() && steer.HasActiveCall() {
 						steer.Trigger()
-						return
 					}
 				}
 			}
 		}()
 	}
-	if pending := opts.MailboxPending; pending != nil {
+	// The loose watchdog poller mirrors the legacy SteerWatchdog: 0
+	// disables it, so a non-urgent steer to a child configured without
+	// a watchdog waits for the step boundary instead of canceling the
+	// in-flight call (TestSteerLandsAtStepBoundaryUnchanged). A
+	// positive interval keeps the legacy steer-latency bound.
+	if pending := opts.MailboxPending; pending != nil && opts.WatchdogInterval > 0 {
 		go func() {
 			ticker := time.NewTicker(pollInterval)
 			defer ticker.Stop()
 			for {
 				select {
+				case <-runDone:
+					return
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
 					if pending() {
 						steer.Trigger()
-						return
 					}
 				}
 			}

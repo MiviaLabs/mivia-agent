@@ -56,7 +56,7 @@ func TestSoftInterruptContinuesLoop(t *testing.T) {
 		interrupt <- struct{}{}
 	}()
 
-	text, err := runLoop(t, loop, context.Background(), "user task", Options{Backend: "legacy",
+	text, err := runLoop(t, loop, context.Background(), "user task", Options{
 		Model:                   "m",
 		MaxSteps:                10,
 		InterruptCh:             func() <-chan struct{} { return interrupt },
@@ -111,6 +111,11 @@ func TestSoftInterruptPartialSurvivesAsFinalText(t *testing.T) {
 		interrupt <- struct{}{}
 	}()
 
+	// KEEP PINNED: the SDK cancels Completer.Chat wholesale on Trigger
+	// and the SDK's Result.Final on a steered stop is the zero value
+	// by design; the legacy stream-as-final-reply contract has no SDK
+	// analogue in this slice. Recorded as an accepted gap in
+	// docs/development/sdk-backend-field-mapping.md §2.
 	text, err := runLoop(t, loop, context.Background(), "user", Options{Backend: "legacy",
 		Model:                   "m",
 		MaxSteps:                10,
@@ -177,7 +182,7 @@ func TestSoftInterruptToolBatchNotCanceled(t *testing.T) {
 		close(tool.release) // let the tool finish
 	}()
 
-	text, err := runLoop(t, loop, context.Background(), "user", Options{Backend: "legacy",
+	text, err := runLoop(t, loop, context.Background(), "user", Options{
 		Model:                   "m",
 		MaxSteps:                10,
 		InterruptCh:             func() <-chan struct{} { return interrupt },
@@ -350,7 +355,7 @@ func TestSoftInterruptStress(t *testing.T) {
 		}
 	}()
 
-	text, err := runLoop(t, loop, context.Background(), "user", Options{Backend: "legacy",
+	text, err := runLoop(t, loop, context.Background(), "user", Options{
 		Model:                   "m",
 		MaxSteps:                iters + 5,
 		InterruptCh:             func() <-chan struct{} { return interrupt },

@@ -71,22 +71,22 @@ func TestRunOnceDispatchesToSDKBackend(t *testing.T) {
 }
 
 // TestRunOnceSDKFailClosedSurfacesThroughRun asserts that a CLI
-// Options field the SDK path cannot carry (MaxContextTokens)
-// surfaces the fail-closed error through the public Run, so an
-// opt-in caller learns the boundary at the call.
+// Options field the SDK path cannot carry surfaces the fail-closed
+// error through the public Run, so an opt-in caller learns the
+// boundary at the call.
 func TestRunOnceSDKFailClosedSurfacesThroughRun(t *testing.T) {
 	loop := &Loop{
 		Completer: &fakeCompleter{name: "fake"},
 		Tools:     tools.NewRegistry(),
 	}
 	opts := Options{Model: "m", MaxSteps: 1, Backend: "sdk"}
-	opts.PreserveWorkLimits = true
+	opts.WorkLimits.MaxToolCalls = 1
 	_, err := loop.Run(context.Background(), "hi", opts)
 	if err == nil {
-		t.Fatal("Run with PreserveWorkLimits under the sdk backend returned nil error; want fail-closed error")
+		t.Fatal("Run with WorkLimits.MaxToolCalls under the sdk backend returned nil error; want fail-closed error")
 	}
-	if !strings.Contains(err.Error(), "PreserveWorkLimits") {
-		t.Fatalf("err = %v, want it to name PreserveWorkLimits", err)
+	if !strings.Contains(err.Error(), "WorkLimits.MaxToolCalls") {
+		t.Fatalf("err = %v, want it to name WorkLimits.MaxToolCalls", err)
 	}
 }
 

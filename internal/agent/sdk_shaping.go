@@ -47,6 +47,7 @@ type turnShapeWrapper struct {
 	env       shapeEnv
 	ephemeral bool
 	toolName  string
+	turn      *sdkTurnState
 	// cap is the CLI tool's declared ResultBudgetBytes (0 = uncapped);
 	// the re-cut target never exceeds it (F3).
 	cap int
@@ -89,16 +90,31 @@ func (w *turnShapeWrapper) Run(ctx context.Context, in sdktools.InOut) (sdktools
 	if remaining < 0 {
 		remaining = 0
 	}
-	// The SDK path has no pass-1 capping: the executed body IS the
-	// original, so cappedBody/totalN agree and refA is empty.
-	parts := resultParts{
-		cappedBody: s,
-		totalN:     len(s),
-		ephemeral:  w.ephemeral,
-		toolName:   w.toolName,
+	// The dispatcher shim (innermost) records its pass-1 parts when it
+	// capped or spooled the body; a hit preserves the ORIGINAL total
+	// and ref through the degrade, exactly like the legacy shapeBatch
+	// chain. A miss means no pass-1 ran (or an intermediate shim
+	// rewrote the body): the executed body IS the original, so
+	// cappedBody/totalN agree and refA is empty.
+	parts, ok := w.turn.pass1.take(s)
+	if !ok {
+		parts = resultParts{
+			cappedBody: s,
+			totalN:     len(s),
+			ephemeral:  w.ephemeral,
+			toolName:   w.toolName,
+		}
 	}
-	parts.effectiveCap = w.cap
+	// The pass-1 cap (hit path) stays authoritative for the re-cut
+	// target; the tool's declared ResultBudgetBytes fills in only when
+	// pass 1 ran uncapped.
+	if parts.effectiveCap == 0 {
+		parts.effectiveCap = w.cap
+	}
 	shaped, state, degraded := shapeOne(parts, remaining, w.env)
+	if parts.hookContext != "" {
+		shaped = appendHookContext(shaped, parts.hookContext)
+	}
 	w.counter.mu.Lock()
 	if degraded && !state.refOnly {
 		// A budget-tier degrade spends the rest of the turn's budget
@@ -127,7 +143,7 @@ type resultBudgetTool interface {
 // configured. The SDK's own TurnResultBudget stays unset so its
 // omission path never runs. A non-positive budget leaves the registry
 // unchanged.
-func applyTurnShaping(sdkReg *sdktools.Registry, cliReg *tools.Registry, opts Options) {
+func applyTurnShaping(sdkReg *sdktools.Registry, cliReg *tools.Registry, opts Options, turn *sdkTurnState) {
 	if sdkReg == nil || opts.BatchResultBudgetBytes <= 0 {
 		return
 	}
@@ -151,6 +167,7 @@ func applyTurnShaping(sdkReg *sdktools.Registry, cliReg *tools.Registry, opts Op
 			ephemeral: ephemeral,
 			toolName:  name,
 			cap:       cap,
+			turn:      turn,
 			onDegrade: func(charged, budget int) {
 				emitBatchShapingRow(opts, charged, budget)
 			},

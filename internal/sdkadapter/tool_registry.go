@@ -30,6 +30,7 @@
 package sdkadapter
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -146,7 +147,35 @@ func newSDKToolAdapter(t tools.Tool) (*sdkToolAdapter, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sdkadapter: tool %q: marshal parameters: %w", t.Name(), err)
 	}
-	return &sdkToolAdapter{cli: t, schema: schema}, nil
+	return &sdkToolAdapter{cli: t, schema: relaxTopLevelAdditionalProperties(schema)}, nil
+}
+
+// relaxTopLevelAdditionalProperties strips a top-level
+// "additionalProperties": false from a tool's schema. The legacy CLI
+// never validated call arguments against the schema - the tool's own
+// Execute owns argument validation and the dispatcher renders its
+// failure as the bounded JSON error envelope. The SDK loop compiles
+// and enforces the published schema, so without this relaxation an
+// extra model-supplied field is rejected by the loop before the tool
+// runs, replacing the CLI's JSON envelope with the SDK's
+// "[tool-error]" notice. Nested keywords pass through unchanged.
+func relaxTopLevelAdditionalProperties(schema []byte) []byte {
+	if !bytes.Contains(schema, []byte(`"additionalProperties"`)) {
+		return schema
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(schema, &doc); err != nil {
+		return schema
+	}
+	if flag, ok := doc["additionalProperties"]; !ok || flag != false {
+		return schema
+	}
+	delete(doc, "additionalProperties")
+	out, err := json.Marshal(doc)
+	if err != nil {
+		return schema
+	}
+	return out
 }
 
 // Name implements tools.Tool. It forwards to the wrapped CLI tool.

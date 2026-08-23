@@ -74,7 +74,7 @@ func TestWatchdogInterruptsOnlyWhenPending(t *testing.T) {
 		}
 		loop := &Loop{Completer: comp, Tools: tools.NewRegistry()}
 
-		text, err := runLoop(t, loop, context.Background(), "user", Options{Backend: "legacy",
+		text, err := runLoop(t, loop, context.Background(), "user", Options{
 			Model:            "m",
 			MaxSteps:         10,
 			WatchdogInterval: 20 * time.Millisecond,
@@ -117,7 +117,7 @@ func TestWatchdogInterruptsOnlyWhenPending(t *testing.T) {
 			close(release)
 		}()
 
-		text, err := runLoop(t, loop, context.Background(), "user", Options{Backend: "legacy",
+		text, err := runLoop(t, loop, context.Background(), "user", Options{
 			Model:            "m",
 			MaxSteps:         5,
 			WatchdogInterval: 20 * time.Millisecond,
@@ -169,6 +169,12 @@ func TestSoftInterruptCooldownCapsFlood(t *testing.T) {
 		close(release) // release promptly: call 2 finishes inside the cooldown window
 	}()
 
+	// KEEP PINNED: SoftInterruptCooldown has no SDK mapping (recorded
+	// as an accepted semantic gap in docs/development/sdk-backend-field-mapping.md
+	// §2); the SDK's steer bridge fires Trigger on every poll tick
+	// that survives the gate with no minimum spacing, so the cooldown
+	// contract this test pins cannot move to the SDK path in this
+	// slice.
 	text, err := runLoop(t, loop, context.Background(), "user", Options{Backend: "legacy",
 		Model:                   "m",
 		MaxSteps:                10,
@@ -218,7 +224,7 @@ func TestStaleSignalNoCancelWithoutInterruptPending(t *testing.T) {
 		close(release)
 	}()
 
-	text, err := runLoop(t, loop, context.Background(), "user", Options{Backend: "legacy",
+	text, err := runLoop(t, loop, context.Background(), "user", Options{
 		Model:       "m",
 		MaxSteps:    5,
 		InterruptCh: func() <-chan struct{} { return interrupt },
@@ -264,7 +270,7 @@ func TestStaleSignalWithPendingNonInterruptDoesNotCancel(t *testing.T) {
 		close(release) // let the completer finish normally
 	}()
 
-	text, err := runLoop(t, loop, context.Background(), "user", Options{Backend: "legacy",
+	text, err := runLoop(t, loop, context.Background(), "user", Options{
 		Model:       "m",
 		MaxSteps:    5,
 		InterruptCh: func() <-chan struct{} { return interrupt },

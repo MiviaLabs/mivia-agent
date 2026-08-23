@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -56,6 +57,20 @@ func (l *Loop) runOnceSDK(ctx context.Context, userText string, opts Options) (s
 		l.Messages = restoreSDKHistoryTimestamps(sdkMessagesToCLI(res.History), l.Messages)
 	}
 	if err != nil {
+		// A canceled or timed-out run keeps the partial reply the turn
+		// already produced, mirroring the legacy interrupted-step
+		// contract (Loop.Run returns lastText on an interrupted step;
+		// the subagent pool maps this to status canceled/timed_out and
+		// keeps the output). Every other error returns empty so a raw
+		// provider body cannot leak (the pinned guarantee in
+		// TestMultiStepHandlerFailureOmitsRawProviderBodyAndRefs).
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			for i := len(res.History) - 1; i >= startLen; i-- {
+				if m := res.History[i]; m.Role == sdkshape.RoleAssistant && strings.TrimSpace(m.Content) != "" {
+					return m.Content, err
+				}
+			}
+		}
 		return "", err
 	}
 	if res.Stop == sdkagentloop.StopSteered {
