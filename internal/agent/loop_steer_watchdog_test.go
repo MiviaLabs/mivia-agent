@@ -74,7 +74,7 @@ func TestWatchdogInterruptsOnlyWhenPending(t *testing.T) {
 		}
 		loop := &Loop{Completer: comp, Tools: tools.NewRegistry()}
 
-		text, err := runLoop(t, loop, context.Background(), "user", Options{
+		text, err := runLoop(t, loop, context.Background(), "user", Options{Backend: "legacy",
 			Model:            "m",
 			MaxSteps:         10,
 			WatchdogInterval: 20 * time.Millisecond,
@@ -117,7 +117,7 @@ func TestWatchdogInterruptsOnlyWhenPending(t *testing.T) {
 			close(release)
 		}()
 
-		text, err := runLoop(t, loop, context.Background(), "user", Options{
+		text, err := runLoop(t, loop, context.Background(), "user", Options{Backend: "legacy",
 			Model:            "m",
 			MaxSteps:         5,
 			WatchdogInterval: 20 * time.Millisecond,
@@ -169,7 +169,7 @@ func TestSoftInterruptCooldownCapsFlood(t *testing.T) {
 		close(release) // release promptly: call 2 finishes inside the cooldown window
 	}()
 
-	text, err := runLoop(t, loop, context.Background(), "user", Options{
+	text, err := runLoop(t, loop, context.Background(), "user", Options{Backend: "legacy",
 		Model:                   "m",
 		MaxSteps:                10,
 		InterruptCh:             func() <-chan struct{} { return interrupt },
@@ -218,7 +218,7 @@ func TestStaleSignalNoCancelWithoutInterruptPending(t *testing.T) {
 		close(release)
 	}()
 
-	text, err := runLoop(t, loop, context.Background(), "user", Options{
+	text, err := runLoop(t, loop, context.Background(), "user", Options{Backend: "legacy",
 		Model:       "m",
 		MaxSteps:    5,
 		InterruptCh: func() <-chan struct{} { return interrupt },
@@ -264,7 +264,7 @@ func TestStaleSignalWithPendingNonInterruptDoesNotCancel(t *testing.T) {
 		close(release) // let the completer finish normally
 	}()
 
-	text, err := runLoop(t, loop, context.Background(), "user", Options{
+	text, err := runLoop(t, loop, context.Background(), "user", Options{Backend: "legacy",
 		Model:       "m",
 		MaxSteps:    5,
 		InterruptCh: func() <-chan struct{} { return interrupt },

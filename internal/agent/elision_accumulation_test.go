@@ -83,7 +83,7 @@ func TestLoopAccumulatesElisionAcrossSteps(t *testing.T) {
 
 	prep := &multiStepElisionPrep{}
 	loop := &Loop{Completer: &twoStepCompleter{}, Tools: reg}
-	_, err = loop.Run(context.Background(), "question", Options{
+	_, err = loop.Run(context.Background(), "question", Options{Backend: "legacy",
 		Model: "model", MaxContextTokens: 100_000, MaxSteps: 5,
 		PreparationManager: prep,
 		PreparationInput: contextmgr.PrepareInput{
@@ -128,7 +128,7 @@ func TestLoopResetsTurnCompactionOnNewRun(t *testing.T) {
 		turnCompacted: true, turnBeforeTokens: 99, turnElidedMessages: 7,
 	}
 	probe := &agentPreparationProbe{}
-	_, err = loop.Run(context.Background(), "question", Options{
+	_, err = loop.Run(context.Background(), "question", Options{Backend: "legacy",
 		Model: "model", MaxContextTokens: 100, PreparationManager: probe,
 		PreparationInput: contextmgr.PrepareInput{Budget: 100, Principal: principal, Binding: binding},
 	})

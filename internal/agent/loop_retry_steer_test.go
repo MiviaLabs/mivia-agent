@@ -83,7 +83,7 @@ func (c *steerPromptTooLongCompleter) ChatTurn(ctx context.Context, req provider
 func steerPromptTooLongOptions(pending *atomic.Bool, stepCalls *int) Options {
 	interrupt := make(chan struct{}, 1)
 	interrupt <- struct{}{}
-	return Options{
+	return Options{Backend: "legacy",
 		Model: "m", MaxSteps: 10, MaxContextTokens: 20000,
 		InterruptCh:             func() <-chan struct{} { return interrupt },
 		MailboxPendingInterrupt: func() bool { return pending.Load() },
@@ -224,7 +224,7 @@ func TestLoopSteerDuringPromptTooLongRetryInterruptsTheRetry(t *testing.T) {
 		interrupt <- struct{}{}
 	}()
 
-	text, err := runLoop(t, loop, context.Background(), "final question", Options{
+	text, err := runLoop(t, loop, context.Background(), "final question", Options{Backend: "legacy",
 		Model:                   "m",
 		MaxSteps:                10,
 		MaxContextTokens:        20000,

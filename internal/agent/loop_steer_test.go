@@ -56,7 +56,7 @@ func TestSoftInterruptContinuesLoop(t *testing.T) {
 		interrupt <- struct{}{}
 	}()
 
-	text, err := runLoop(t, loop, context.Background(), "user task", Options{
+	text, err := runLoop(t, loop, context.Background(), "user task", Options{Backend: "legacy",
 		Model:                   "m",
 		MaxSteps:                10,
 		InterruptCh:             func() <-chan struct{} { return interrupt },
@@ -111,7 +111,7 @@ func TestSoftInterruptPartialSurvivesAsFinalText(t *testing.T) {
 		interrupt <- struct{}{}
 	}()
 
-	text, err := runLoop(t, loop, context.Background(), "user", Options{
+	text, err := runLoop(t, loop, context.Background(), "user", Options{Backend: "legacy",
 		Model:                   "m",
 		MaxSteps:                10,
 		FinalWriter:             &fw,
@@ -177,7 +177,7 @@ func TestSoftInterruptToolBatchNotCanceled(t *testing.T) {
 		close(tool.release) // let the tool finish
 	}()
 
-	text, err := runLoop(t, loop, context.Background(), "user", Options{
+	text, err := runLoop(t, loop, context.Background(), "user", Options{Backend: "legacy",
 		Model:                   "m",
 		MaxSteps:                10,
 		InterruptCh:             func() <-chan struct{} { return interrupt },
@@ -350,7 +350,7 @@ func TestSoftInterruptStress(t *testing.T) {
 		}
 	}()
 
-	text, err := runLoop(t, loop, context.Background(), "user", Options{
+	text, err := runLoop(t, loop, context.Background(), "user", Options{Backend: "legacy",
 		Model:                   "m",
 		MaxSteps:                iters + 5,
 		InterruptCh:             func() <-chan struct{} { return interrupt },

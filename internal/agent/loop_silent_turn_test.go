@@ -51,7 +51,7 @@ func TestNoMessageLossEmptyTurnFailsLoudly(t *testing.T) {
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
 			loop := &Loop{Completer: &scriptCompleter{steps: tt.steps}, Tools: silentTurnRegistry(t)}
-			_, err := loop.Run(context.Background(), "go", Options{
+			_, err := loop.Run(context.Background(), "go", Options{Backend: "legacy",
 				Model: "m", MaxSteps: 10, RequireFinalText: true,
 			})
 			if err == nil {
@@ -150,7 +150,7 @@ func TestNoMessageLossInterruptedTurnKeepsWhatWasShown(t *testing.T) {
 				Completer: cancelMidStreamCompleter{partial: partial, err: tt.err},
 				Tools:     silentTurnRegistry(t),
 			}
-			_, err := loop.Run(context.Background(), "prove it", Options{
+			_, err := loop.Run(context.Background(), "prove it", Options{Backend: "legacy",
 				Model: "m", MaxSteps: 5, FinalWriter: &sink,
 			})
 			if err == nil {
@@ -177,7 +177,7 @@ func TestCanceledContextKeepsHistoryWhenProviderReturnsTransportError(t *testing
 		Completer: cancelMidStreamCompleter{partial: partial, err: errors.New("stream closed by transport")},
 		Tools:     silentTurnRegistry(t),
 	}
-	_, err := loop.Run(ctx, "queued follow-up", Options{Model: "m", MaxSteps: 5, FinalWriter: &sink})
+	_, err := loop.Run(ctx, "queued follow-up", Options{Backend: "legacy", Model: "m", MaxSteps: 5, FinalWriter: &sink})
 	if err == nil || !strings.Contains(err.Error(), "transport") {
 		t.Fatalf("expected provider transport error, got %v", err)
 	}

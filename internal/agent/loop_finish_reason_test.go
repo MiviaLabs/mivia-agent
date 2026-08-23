@@ -37,7 +37,7 @@ func TestLoopLastFinishReasonSurfacesFinalStepReason(t *testing.T) {
 			Completer: &scriptCompleter{steps: []provider.Response{{Content: "answer", FinishReason: "stop"}}},
 			Tools:     silentTurnRegistry(t),
 		}
-		if _, err := loop.Run(context.Background(), "go", Options{Model: "m", MaxSteps: 5}); err != nil {
+		if _, err := loop.Run(context.Background(), "go", Options{Backend: "legacy", Model: "m", MaxSteps: 5}); err != nil {
 			t.Fatal(err)
 		}
 		if loop.LastFinishReason != "stop" {
@@ -50,7 +50,7 @@ func TestLoopLastFinishReasonSurfacesFinalStepReason(t *testing.T) {
 			Completer: &scriptCompleter{steps: []provider.Response{{Content: `{"ok":`, FinishReason: "length"}}},
 			Tools:     silentTurnRegistry(t),
 		}
-		if _, err := loop.Run(context.Background(), "go", Options{Model: "m", MaxSteps: 5}); err != nil {
+		if _, err := loop.Run(context.Background(), "go", Options{Backend: "legacy", Model: "m", MaxSteps: 5}); err != nil {
 			t.Fatalf("without RequireFinalText a truncated reply must stay successful: %v", err)
 		}
 		if loop.LastFinishReason != "length" {
@@ -67,7 +67,7 @@ func TestLoopLastFinishReasonSurfacesFinalStepReason(t *testing.T) {
 			}},
 			Tools: silentTurnRegistry(t),
 		}
-		if _, err := loop.Run(context.Background(), "go", Options{Model: "m", MaxSteps: 10}); err != nil {
+		if _, err := loop.Run(context.Background(), "go", Options{Backend: "legacy", Model: "m", MaxSteps: 10}); err != nil {
 			t.Fatal(err)
 		}
 		if loop.LastFinishReason != "stop" {
@@ -80,7 +80,7 @@ func TestLoopLastFinishReasonSurfacesFinalStepReason(t *testing.T) {
 			Completer: failingCompleter{err: errors.New("provider down")},
 			Tools:     silentTurnRegistry(t),
 		}
-		if _, err := loop.Run(context.Background(), "go", Options{Model: "m", MaxSteps: 5}); err == nil {
+		if _, err := loop.Run(context.Background(), "go", Options{Backend: "legacy", Model: "m", MaxSteps: 5}); err == nil {
 			t.Fatal("expected the provider error")
 		}
 		if loop.LastFinishReason != "" {
@@ -93,14 +93,14 @@ func TestLoopLastFinishReasonSurfacesFinalStepReason(t *testing.T) {
 			Completer: &scriptCompleter{steps: []provider.Response{{Content: "answer", FinishReason: "stop"}}},
 			Tools:     silentTurnRegistry(t),
 		}
-		if _, err := loop.Run(context.Background(), "go", Options{Model: "m", MaxSteps: 5}); err != nil {
+		if _, err := loop.Run(context.Background(), "go", Options{Backend: "legacy", Model: "m", MaxSteps: 5}); err != nil {
 			t.Fatal(err)
 		}
 		if loop.LastFinishReason != "stop" {
 			t.Fatalf("LastFinishReason = %q, want %q", loop.LastFinishReason, "stop")
 		}
 		loop.Completer = failingCompleter{err: errors.New("provider down")}
-		if _, err := loop.Run(context.Background(), "go", Options{Model: "m", MaxSteps: 5}); err == nil {
+		if _, err := loop.Run(context.Background(), "go", Options{Backend: "legacy", Model: "m", MaxSteps: 5}); err == nil {
 			t.Fatal("expected the provider error")
 		}
 		if loop.LastFinishReason != "" {

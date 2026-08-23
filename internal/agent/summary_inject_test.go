@@ -107,7 +107,7 @@ func summaryProbeOptions(t *testing.T, summarizer *contextmgr.Summarizer, probe 
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Options{
+	return Options{Backend: "legacy",
 		Model: "model", MaxContextTokens: maxContextTokens, MaxSteps: 5,
 		PreparationManager: probe,
 		PreparationInput: contextmgr.PrepareInput{

@@ -9,23 +9,24 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
-// TestRunOnceDispatchesToLegacyOnEmptyBackend asserts that a default
-// Options{} (Backend empty) reaches the legacy branch through runOnce.
-// The scripted completer returns "legacy-output" so we can distinguish
-// the dispatcher outcome from the SDK stub.
-func TestRunOnceDispatchesToLegacyOnEmptyBackend(t *testing.T) {
-	reg := tools.NewRegistry()
-	comp := &scriptCompleter{
-		steps: []provider.Response{{Content: "legacy-output", FinishReason: "stop"}},
+// TestRunOnceDispatchesToSDKOnEmptyBackend asserts that a default
+// Options{} (Backend empty) reaches the SDK branch through runOnce.
+// The fake completer's ChatTurn returns "sdk-output" so the test can
+// distinguish the dispatcher outcome from a legacy completer. The
+// empty-Value-is-SDK mapping is the SDK convergence's default
+// flip: production callers that do not set Backend now run the
+// SDK-backed loop.
+func TestRunOnceDispatchesToSDKOnEmptyBackend(t *testing.T) {
+	loop := &Loop{
+		Completer: &fakeCompleter{name: "fake", chatTurnOut: &provider.Response{Content: "sdk-output", FinishReason: "stop"}},
+		Tools:     tools.NewRegistry(),
 	}
-	loop := &Loop{Completer: comp, Tools: reg}
-
 	got, err := loop.runOnce(context.Background(), "hi", Options{Model: "m", MaxSteps: 1})
 	if err != nil {
-		t.Fatalf("legacy path failed: %v", err)
+		t.Fatalf("sdk path failed: %v", err)
 	}
-	if got != "legacy-output" {
-		t.Fatalf("got %q, want %q", got, "legacy-output")
+	if got != "sdk-output" {
+		t.Fatalf("got %q, want %q", got, "sdk-output")
 	}
 }
 

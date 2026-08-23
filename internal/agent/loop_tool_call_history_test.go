@@ -27,7 +27,7 @@ func TestMalformedToolCallStaysPairedInHistory(t *testing.T) {
 	}
 
 	loop := &Loop{Completer: comp, Tools: reg}
-	if _, err := loop.Run(context.Background(), "read malformed", Options{Model: "m", MaxSteps: 5}); err != nil {
+	if _, err := loop.Run(context.Background(), "read malformed", Options{Backend: "legacy", Model: "m", MaxSteps: 5}); err != nil {
 		t.Fatal(err)
 	}
 	if err := provider.ValidateToolPairing(loop.Messages); err != nil {
@@ -63,7 +63,7 @@ func TestArgumentlessToolCallRecordsAJSONObject(t *testing.T) {
 	}
 
 	loop := &Loop{Completer: comp, Tools: reg}
-	if _, err := loop.Run(context.Background(), "call with no arguments", Options{Model: "m", MaxSteps: 5}); err != nil {
+	if _, err := loop.Run(context.Background(), "call with no arguments", Options{Backend: "legacy", Model: "m", MaxSteps: 5}); err != nil {
 		t.Fatal(err)
 	}
 	if err := provider.ValidateToolPairing(loop.Messages); err != nil {
@@ -95,7 +95,7 @@ func TestMalformedCallBesideAValidOneIsNotOrphaned(t *testing.T) {
 	}
 
 	loop := &Loop{Completer: comp, Tools: reg}
-	if _, err := loop.Run(context.Background(), "mixed batch", Options{Model: "m", MaxSteps: 5}); err != nil {
+	if _, err := loop.Run(context.Background(), "mixed batch", Options{Backend: "legacy", Model: "m", MaxSteps: 5}); err != nil {
 		t.Fatal(err)
 	}
 	// The reported failure: the skipped call's error result referenced a
@@ -117,7 +117,7 @@ func TestAllMalformedToolCallsLeaveAValidAssistantMessage(t *testing.T) {
 	}
 
 	loop := &Loop{Completer: comp, Tools: reg}
-	if _, err := loop.Run(context.Background(), "malformed only", Options{Model: "m", MaxSteps: 5}); err != nil {
+	if _, err := loop.Run(context.Background(), "malformed only", Options{Backend: "legacy", Model: "m", MaxSteps: 5}); err != nil {
 		t.Fatal(err)
 	}
 	// An assistant message with neither content nor tool calls is rejected by
@@ -142,7 +142,7 @@ func TestUnidentifiedToolCallIsGivenAnIDAndStaysPaired(t *testing.T) {
 	}
 
 	loop := &Loop{Completer: comp, Tools: reg}
-	if _, err := loop.Run(context.Background(), "unidentified calls", Options{Model: "m", MaxSteps: 5}); err != nil {
+	if _, err := loop.Run(context.Background(), "unidentified calls", Options{Backend: "legacy", Model: "m", MaxSteps: 5}); err != nil {
 		t.Fatal(err)
 	}
 	// A call the provider left unidentified cannot be paired with its result by
@@ -179,7 +179,7 @@ func TestSynthesizedToolCallIDsDoNotRepeatAcrossSteps(t *testing.T) {
 	comp := &scriptCompleter{steps: []provider.Response{step, step}}
 
 	loop := &Loop{Completer: comp, Tools: reg}
-	if _, err := loop.Run(context.Background(), "two unidentified steps", Options{Model: "m", MaxSteps: 5}); err != nil {
+	if _, err := loop.Run(context.Background(), "two unidentified steps", Options{Backend: "legacy", Model: "m", MaxSteps: 5}); err != nil {
 		t.Fatal(err)
 	}
 	if err := provider.ValidateToolPairing(loop.Messages); err != nil {

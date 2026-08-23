@@ -66,7 +66,7 @@ func TestEmitReasoningKeepsHistoryRaw(t *testing.T) {
 	}
 	loop := &Loop{Completer: comp, Tools: tools.NewRegistry()}
 	var got *Event
-	if _, err := loop.Run(context.Background(), "say hi", Options{
+	if _, err := loop.Run(context.Background(), "say hi", Options{Backend: "legacy",
 		Model:    "m",
 		MaxSteps: 3,
 		OnEvent: func(e Event) {

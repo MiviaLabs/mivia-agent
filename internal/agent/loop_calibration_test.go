@@ -69,7 +69,7 @@ func TestLoopCalibrationUsesReserveFreePromptEstimate(t *testing.T) {
 		Completer: &usageReportingCompleter{usage: provider.TokenUsage{Reported: true, InputTokens: promptEstimate, OutputTokens: 5}},
 		Tools:     tools.NewRegistry(),
 	}
-	if _, err := loop.Run(context.Background(), "hello", Options{Model: "m", MaxSteps: 5, MaxTokens: &maxTokens}); err != nil {
+	if _, err := loop.Run(context.Background(), "hello", Options{Backend: "legacy", Model: "m", MaxSteps: 5, MaxTokens: &maxTokens}); err != nil {
 		t.Fatal(err)
 	}
 	if loop.Calibration.Samples != 1 {

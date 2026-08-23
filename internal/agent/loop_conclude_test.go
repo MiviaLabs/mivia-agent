@@ -45,7 +45,7 @@ func TestConcludeSteerInjectedWhenToolCallsNearlyExhausted(t *testing.T) {
 		{resp: provider.Response{Content: "done", FinishReason: "stop"}},
 	}}
 	loop := &Loop{Completer: comp, Tools: reg}
-	text, err := loop.Run(context.Background(), "run", Options{
+	text, err := loop.Run(context.Background(), "run", Options{Backend: "legacy",
 		Model: "m", MaxSteps: 5,
 		WorkLimits: appruntime.WorkLimits{MaxToolCalls: 4},
 	})
@@ -83,7 +83,7 @@ func TestConcludeSteerInjectedWhenDeadlineClose(t *testing.T) {
 	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(time.Minute))
 	defer cancel()
 	var sawWorkLimit bool
-	text, err := loop.Run(ctx, "run", Options{
+	text, err := loop.Run(ctx, "run", Options{Backend: "legacy",
 		Model: "m", MaxSteps: 5,
 		OnEvent: func(e Event) {
 			if e.Kind == EventWorkLimit {
@@ -134,7 +134,7 @@ func TestConcludeSteerNotInjectedWithoutBounds(t *testing.T) {
 func TestConcludeSteerInjectedWhenOutputBudgetNearlyExhausted(t *testing.T) {
 	comp := &steerCompleter{}
 	loop := &Loop{Completer: comp, Tools: tools.NewRegistry()}
-	text, err := loop.Run(context.Background(), "run", Options{
+	text, err := loop.Run(context.Background(), "run", Options{Backend: "legacy",
 		Model: "m", MaxSteps: 5,
 		WorkLimits: appruntime.WorkLimits{MaxOutputTokens: 4000, MaxOutputPerCall: 8192},
 	})
@@ -158,7 +158,7 @@ func TestConcludeSteerInjectedWhenOutputBudgetNearlyExhausted(t *testing.T) {
 func TestConcludeSteerBoundaryFullPerCallAllowance(t *testing.T) {
 	comp := &steerCompleter{}
 	loop := &Loop{Completer: comp, Tools: tools.NewRegistry()}
-	text, err := loop.Run(context.Background(), "run", Options{
+	text, err := loop.Run(context.Background(), "run", Options{Backend: "legacy",
 		Model: "m", MaxSteps: 5,
 		WorkLimits: appruntime.WorkLimits{MaxOutputTokens: 8192, MaxOutputPerCall: 8192},
 	})
@@ -196,7 +196,7 @@ func TestConcludeSteerInjectedWhenStepBudgetNearlyExhausted(t *testing.T) {
 	}}
 	var workLimitEvents int
 	loop := &Loop{Completer: comp, Tools: reg}
-	text, err := loop.Run(context.Background(), "run", Options{
+	text, err := loop.Run(context.Background(), "run", Options{Backend: "legacy",
 		Model: "m", MaxSteps: 3,
 		OnEvent: func(e Event) {
 			if e.Kind == EventWorkLimit {
@@ -251,7 +251,7 @@ func TestConcludeSteerBoundaryStepBudget(t *testing.T) {
 		{resp: provider.Response{Content: "done", FinishReason: "stop"}},
 	}}
 	loop := &Loop{Completer: comp, Tools: reg}
-	text, err := loop.Run(context.Background(), "run", Options{Model: "m", MaxSteps: 5})
+	text, err := loop.Run(context.Background(), "run", Options{Backend: "legacy", Model: "m", MaxSteps: 5})
 	if err != nil {
 		t.Fatalf("Run error: %v", err)
 	}

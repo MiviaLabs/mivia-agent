@@ -70,7 +70,7 @@ func TestLoopDeclinedPerBatchCallsDoNotConsumeToolBudget(t *testing.T) {
 		{Content: "done", FinishReason: "stop"},
 	}}
 	loop := &Loop{Completer: comp, Tools: reg}
-	text, err := loop.Run(context.Background(), "run", Options{
+	text, err := loop.Run(context.Background(), "run", Options{Backend: "legacy",
 		Model: "m", MaxSteps: 5,
 		WorkLimits:           appruntime.WorkLimits{MaxToolCalls: 4},
 		MaxToolCallsPerBatch: 2,
@@ -108,7 +108,7 @@ func TestLoopToolBudgetStillBoundsExecutedCalls(t *testing.T) {
 		{Content: "done", FinishReason: "stop"},
 	}}
 	loop := &Loop{Completer: comp, Tools: reg}
-	_, err := loop.Run(context.Background(), "run", Options{
+	_, err := loop.Run(context.Background(), "run", Options{Backend: "legacy",
 		Model: "m", MaxSteps: 5,
 		WorkLimits:           appruntime.WorkLimits{MaxToolCalls: 3},
 		MaxToolCallsPerBatch: 2,

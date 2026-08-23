@@ -138,7 +138,7 @@ func TestLoopDedupCollapsesIdenticalCallsInOneBatch(t *testing.T) {
 
 	loop := h.newLoop()
 	ctx := context.Background()
-	text, err := loop.Run(ctx, "append x to out.txt once", Options{
+	text, err := loop.Run(ctx, "append x to out.txt once", Options{Backend: "legacy",
 		Model:              "integration-model",
 		TurnID:             "turn:2",
 		ParentID:           "session",
@@ -185,7 +185,7 @@ func TestLoopDedupRetryAfterFailureRerunsInLaterStep(t *testing.T) {
 
 	loop := h.newLoop()
 	ctx := context.Background()
-	text, err := loop.Run(ctx, "run a failing command, then try it again", Options{
+	text, err := loop.Run(ctx, "run a failing command, then try it again", Options{Backend: "legacy",
 		Model:              "integration-model",
 		TurnID:             "turn:3",
 		ParentID:           "session",
@@ -283,7 +283,7 @@ func TestLoopReadToolAlwaysExecutesFreshAcrossSteps(t *testing.T) {
 
 	loop := h.newLoop()
 	ctx := context.Background()
-	text, err := loop.Run(ctx, "run the counted read tool three times", Options{
+	text, err := loop.Run(ctx, "run the counted read tool three times", Options{Backend: "legacy",
 		Model:              "integration-model",
 		TurnID:             "turn:read-fresh",
 		ParentID:           "session",
@@ -339,7 +339,7 @@ func TestLoopDuplicateDeliveryMarkedInHistory(t *testing.T) {
 
 	loop := h.newLoop()
 	ctx := context.Background()
-	text, err := loop.Run(ctx, "append x to out.txt once, then append again", Options{
+	text, err := loop.Run(ctx, "append x to out.txt once, then append again", Options{Backend: "legacy",
 		Model:                  "integration-model",
 		TurnID:                 "turn:dup-marked",
 		ParentID:               "session",

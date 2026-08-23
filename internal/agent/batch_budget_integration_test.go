@@ -138,7 +138,7 @@ func TestIntegration_BatchBudgetZeroIsInert(t *testing.T) {
 func TestIntegration_ParallelBatchCannotJointlyBlowTheBudget(t *testing.T) {
 	const budget = 128 << 10
 	f := newBatchFixture(t, []int{200 << 10, 200 << 10, 200 << 10})
-	loop := f.run(t, Options{BatchResultBudgetBytes: budget})
+	loop := f.run(t, Options{Backend: "legacy", BatchResultBudgetBytes: budget})
 
 	bodies := toolBodies(loop)
 	if len(bodies) != 3 {
@@ -247,7 +247,7 @@ func TestIntegration_DegradedResultRefPagesTheOriginalBytes(t *testing.T) {
 // under its parent's SessionID.
 func TestIntegration_RemainderRefsAreInvisibleAcrossSessions(t *testing.T) {
 	f := newBatchFixture(t, []int{300 << 10})
-	loop := f.run(t, Options{BatchResultBudgetBytes: 16 << 10, SessionID: "session-A"})
+	loop := f.run(t, Options{Backend: "legacy", BatchResultBudgetBytes: 16 << 10, SessionID: "session-A"})
 
 	body := toolBodies(loop)["call_read_0"]
 	ref := refIn(t, body)
@@ -318,7 +318,7 @@ func TestIntegration_FailedCallKeepsItsErrorTextUnderBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	loop := h.newLoop()
-	if _, err := loop.Run(context.Background(), "read them", Options{
+	if _, err := loop.Run(context.Background(), "read them", Options{Backend: "legacy",
 		Model: "integration-model", MaxSteps: 5, MaxConcurrentTools: 2,
 		ToolTimeout: 20 * time.Second, SessionID: budgetTestSession,
 		RemainderSpool:         remainder.NewSpool(remainder.NewMemoryStore()),
@@ -342,7 +342,7 @@ func TestIntegration_HookContextSurvivesShapingUncut(t *testing.T) {
 	const advice = "REMEMBER-THE-HOUSE-STYLE"
 	loop := f.h.newLoop()
 	dispatcher := hookContextDispatcher(t, f.h, strings.Repeat(advice+" ", 40))
-	if _, err := loop.Run(context.Background(), "read the files", Options{
+	if _, err := loop.Run(context.Background(), "read the files", Options{Backend: "legacy",
 		Model: "integration-model", MaxSteps: 5, MaxConcurrentTools: 2,
 		ToolTimeout: 20 * time.Second, SessionID: budgetTestSession,
 		RemainderSpool: f.spool, Dispatcher: dispatcher,
@@ -406,7 +406,7 @@ func TestIntegration_EphemeralResultIsChargedButNeverReferenced(t *testing.T) {
 	spool := remainder.NewSpool(store)
 
 	loop := h.newLoop()
-	if _, err := loop.Run(context.Background(), "read them", Options{
+	if _, err := loop.Run(context.Background(), "read them", Options{Backend: "legacy",
 		Model: "integration-model", MaxSteps: 5, MaxConcurrentTools: 2,
 		ToolTimeout: 20 * time.Second, SessionID: budgetTestSession,
 		RemainderSpool: spool, BatchResultBudgetBytes: 32 << 10,

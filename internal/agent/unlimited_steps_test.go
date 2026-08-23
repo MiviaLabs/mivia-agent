@@ -78,7 +78,7 @@ func TestLoopUnlimitedStepsRunsPast100(t *testing.T) {
 	var events []Event
 
 	loop := &Loop{Completer: comp, Tools: reg}
-	text, err := loop.Run(context.Background(), "run many steps", Options{
+	text, err := loop.Run(context.Background(), "run many steps", Options{Backend: "legacy",
 		Model:    "m",
 		MaxSteps: 0, // unlimited
 		OnEvent: func(e Event) {

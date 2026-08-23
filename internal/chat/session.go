@@ -357,8 +357,8 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 		ToolTimeout:            snapshot.toolTimeout,
 		ParentID:               "session",
 		TurnID:                 fmt.Sprintf("turn:%d", snapshot.myTurn), SessionID: snapshot.sessionID,
-		FinalWriter: w,
-		OnEvent:     snapshot.onEvent, EventBus: snapshot.eventBus, EventIdentity: snapshot.identity,
+		Backend:     "legacy", // surface rotation (wireStepBoundaryAdmission) is legacy-only
+		FinalWriter: w, OnEvent: snapshot.onEvent, EventBus: snapshot.eventBus, EventIdentity: snapshot.identity,
 		RequireFinalText: true,
 		// Step 1 has no Surface hook call (applySurfaceHook skips it), so the
 		// turn's very first request must already carry the pinned snapshot;

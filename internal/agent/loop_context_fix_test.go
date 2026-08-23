@@ -115,7 +115,7 @@ func cappedResultLoop(t *testing.T) (loop *Loop, spool *remainder.Spool, store *
 	loop = &Loop{Completer: comp, Tools: reg}
 	principal, binding := elisionPrincipalBinding(t)
 	var err error
-	text, err = loop.Run(context.Background(), "read the huge file", Options{
+	text, err = loop.Run(context.Background(), "read the huge file", Options{Backend: "legacy",
 		Model: "model", MaxContextTokens: 8000, MaxSteps: 5,
 		SessionID: "session-r1a", RemainderSpool: spool,
 		// The context manager never elides the current turn's mandatory latest
@@ -146,7 +146,7 @@ func TestAgentPromptTooLongCompactionLeavesVisibleNotice(t *testing.T) {
 	}
 	loop := &Loop{Completer: comp, Tools: tools.NewRegistry(), Messages: buildOversizedHistory()}
 	var pruned []Event
-	text, err := loop.Run(context.Background(), "final question", Options{
+	text, err := loop.Run(context.Background(), "final question", Options{Backend: "legacy",
 		Model: "model", MaxSteps: 5,
 		OnEvent: func(e Event) {
 			if e.Kind == EventPrune {
@@ -223,7 +223,7 @@ func TestPromptTooLongRetryRefreshesPreparation(t *testing.T) {
 		steps:            []provider.Response{{Content: "recovered", FinishReason: "stop"}},
 	}
 	loop := &Loop{Completer: comp, Tools: tools.NewRegistry(), Messages: buildOversizedHistory()}
-	text, err := loop.Run(context.Background(), "final question", Options{
+	text, err := loop.Run(context.Background(), "final question", Options{Backend: "legacy",
 		Model: "model", MaxSteps: 5,
 		PreparationManager: prep,
 		PreparationInput: contextmgr.PrepareInput{
@@ -289,7 +289,7 @@ func TestPromptTooLongRetryClearsStalePreparationWithoutManager(t *testing.T) {
 		steps:            []provider.Response{{Content: "recovered", FinishReason: "stop"}},
 	}
 	loop := &Loop{Completer: comp, Tools: tools.NewRegistry(), Messages: buildOversizedHistory()}
-	text, err := loop.Run(context.Background(), "final question", Options{Model: "model", MaxSteps: 5})
+	text, err := loop.Run(context.Background(), "final question", Options{Backend: "legacy", Model: "model", MaxSteps: 5})
 	if err != nil {
 		t.Fatal(err)
 	}

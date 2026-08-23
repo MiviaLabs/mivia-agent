@@ -162,7 +162,7 @@ func TestLoopRevokesStreamOnToolCalls(t *testing.T) {
 	}
 	var fw revokeBuffer
 	loop := &Loop{Completer: comp, Tools: reg}
-	_, err := loop.Run(context.Background(), "read a", Options{
+	_, err := loop.Run(context.Background(), "read a", Options{Backend: "legacy",
 		Model: "m", MaxSteps: 5, FinalWriter: &fw,
 	})
 	if err != nil {
@@ -260,7 +260,7 @@ func TestLoopNestedReadWriteAndGrep(t *testing.T) {
 	var toolStarts []string
 	var mu sync.Mutex
 	loop := &Loop{Completer: comp, Tools: reg}
-	text, err := loop.Run(context.Background(), "find Marker", Options{
+	text, err := loop.Run(context.Background(), "find Marker", Options{Backend: "legacy",
 		Model:    "m",
 		MaxSteps: 10,
 		OnEvent: func(e Event) {
@@ -303,7 +303,7 @@ func TestLoopMaxSteps(t *testing.T) {
 		},
 	}
 	loop := &Loop{Completer: comp, Tools: reg}
-	_, err = loop.Run(context.Background(), "loop", Options{Model: "m", MaxSteps: 2})
+	_, err = loop.Run(context.Background(), "loop", Options{Backend: "legacy", Model: "m", MaxSteps: 2})
 	if err == nil || !strings.Contains(err.Error(), "max_steps") {
 		t.Fatalf("err=%v", err)
 	}
@@ -326,7 +326,7 @@ func TestLoopToolErrorReturnedToModel(t *testing.T) {
 		},
 	}
 	loop := &Loop{Completer: comp, Tools: reg}
-	text, err := loop.Run(context.Background(), "read missing", Options{Model: "m", MaxSteps: 5})
+	text, err := loop.Run(context.Background(), "read missing", Options{Backend: "legacy", Model: "m", MaxSteps: 5})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -382,7 +382,7 @@ func TestLoopParallelToolExecution(t *testing.T) {
 	var events []Event
 	var mu sync.Mutex
 	loop := &Loop{Completer: comp, Tools: reg}
-	text, err := loop.Run(context.Background(), "read and search", Options{
+	text, err := loop.Run(context.Background(), "read and search", Options{Backend: "legacy",
 		Model:    "m",
 		MaxSteps: 5,
 		OnEvent: func(e Event) {
@@ -573,7 +573,7 @@ func TestLoopPublishesToEventBus(t *testing.T) {
 	}))
 
 	loop := &Loop{Completer: comp, Tools: reg}
-	_, err := loop.Run(context.Background(), "find files", Options{
+	_, err := loop.Run(context.Background(), "find files", Options{Backend: "legacy",
 		Model:    "m",
 		MaxSteps: 5,
 		EventBus: bus,
@@ -687,7 +687,7 @@ func TestLoopSkipsMalformedToolCallArguments(t *testing.T) {
 	}
 
 	loop := &Loop{Completer: comp, Tools: reg}
-	if _, err := loop.Run(context.Background(), "read malformed", Options{Model: "m", MaxSteps: 5}); err != nil {
+	if _, err := loop.Run(context.Background(), "read malformed", Options{Backend: "legacy", Model: "m", MaxSteps: 5}); err != nil {
 		t.Fatal(err)
 	}
 

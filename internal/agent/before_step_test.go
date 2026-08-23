@@ -27,7 +27,7 @@ func TestBeforeStepInjectsBeforePrune(t *testing.T) {
 	reg := tools.NewRegistry()
 	loop := &Loop{Completer: beforeStepCompleter{}, Tools: reg}
 	injected := false
-	opts := Options{
+	opts := Options{Backend: "legacy",
 		Model:    "m",
 		MaxSteps: 1,
 		BeforeStep: func() []provider.Message {

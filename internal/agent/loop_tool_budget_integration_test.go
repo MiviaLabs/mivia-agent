@@ -96,7 +96,7 @@ func TestLoopToolInputEventsRedactCredentialsWithConfiguredPolicy(t *testing.T) 
 		mu     sync.Mutex
 		inputs []string
 	)
-	if _, err := loop.Run(context.Background(), "write the env file", Options{
+	if _, err := loop.Run(context.Background(), "write the env file", Options{Backend: "legacy",
 		Model:              "integration-model",
 		MaxSteps:           5,
 		MaxConcurrentTools: 2,
@@ -163,7 +163,7 @@ func TestLoopUnconfiguredWorkspaceRedactsNothingEndToEnd(t *testing.T) {
 		mu     sync.Mutex
 		inputs []string
 	)
-	if _, err := loop.Run(context.Background(), "write the env file", Options{
+	if _, err := loop.Run(context.Background(), "write the env file", Options{Backend: "legacy",
 		Model:              "integration-model",
 		MaxSteps:           5,
 		MaxConcurrentTools: 2,

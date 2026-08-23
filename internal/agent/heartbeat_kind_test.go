@@ -55,7 +55,7 @@ func TestLoopModelThinkingHeartbeatUsesEventHeartbeat(t *testing.T) {
 
 	var mu sync.Mutex
 	var events []Event
-	_, err := loop.Run(context.Background(), "blocking request", Options{
+	_, err := loop.Run(context.Background(), "blocking request", Options{Backend: "legacy",
 		Model:    "test",
 		MaxSteps: 3,
 		OnEvent: func(e Event) {

@@ -44,7 +44,7 @@ func TestLoopPublishesCacheUsageEventOnEventBus(t *testing.T) {
 	}))
 
 	loop := &Loop{Completer: comp, Tools: tools.NewRegistry()}
-	_, err := loop.Run(context.Background(), "hello", Options{
+	_, err := loop.Run(context.Background(), "hello", Options{Backend: "legacy",
 		Model: "deepseek-v4-pro", MaxSteps: 5, EventBus: bus,
 	})
 	if err != nil {

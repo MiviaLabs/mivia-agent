@@ -45,7 +45,7 @@ func TestSoftInterruptRefundsWorkLimitReservation(t *testing.T) {
 		interrupt <- struct{}{}
 	}()
 
-	text, err := runLoop(t, loop, context.Background(), "user task", Options{
+	text, err := runLoop(t, loop, context.Background(), "user task", Options{Backend: "legacy",
 		Model:                   "m",
 		MaxSteps:                10,
 		WorkLimits:              runtime.WorkLimits{MaxOutputTokens: 4000},
@@ -99,7 +99,7 @@ func TestProviderErrorKeepsWorkLimitReservation(t *testing.T) {
 		<-comp.started // call in flight; the watcher fires on the signal
 	}()
 
-	_, err := runLoop(t, loop, context.Background(), "user", Options{
+	_, err := runLoop(t, loop, context.Background(), "user", Options{Backend: "legacy",
 		Model:                   "m",
 		MaxSteps:                5,
 		WorkLimits:              runtime.WorkLimits{MaxOutputTokens: 4000},

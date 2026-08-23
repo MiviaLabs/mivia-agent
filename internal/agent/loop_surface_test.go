@@ -71,7 +71,7 @@ func TestSurfaceHookRefreshesToolSurfacePerStep(t *testing.T) {
 		},
 	}
 	loop := &Loop{Completer: comp, Tools: reg}
-	_, err := loop.Run(context.Background(), "run", Options{
+	_, err := loop.Run(context.Background(), "run", Options{Backend: "legacy",
 		Model:    "m",
 		MaxSteps: 5,
 		Surface: func() Surface {
@@ -111,7 +111,7 @@ func TestSurfaceHookCalledExactlyOncePerStep(t *testing.T) {
 	}
 	comp := &scriptCompleter{steps: steps}
 	loop := &Loop{Completer: comp, Tools: reg}
-	if _, err := loop.Run(context.Background(), "run", Options{
+	if _, err := loop.Run(context.Background(), "run", Options{Backend: "legacy",
 		Model:    "m",
 		MaxSteps: 5,
 		Surface: func() Surface {
@@ -150,7 +150,7 @@ func TestSurfaceHookSwapsDispatcher(t *testing.T) {
 		},
 	}
 	loop := &Loop{Completer: comp, Tools: reg}
-	_, err := loop.Run(context.Background(), "run", Options{
+	_, err := loop.Run(context.Background(), "run", Options{Backend: "legacy",
 		Model:    "m",
 		MaxSteps: 5,
 		Surface: func() Surface {
@@ -188,7 +188,7 @@ func TestSurfaceHookSwapsRemainderSpool(t *testing.T) {
 		},
 	}
 	loop := &Loop{Completer: comp, Tools: reg}
-	_, err := loop.Run(context.Background(), "run", Options{
+	_, err := loop.Run(context.Background(), "run", Options{Backend: "legacy",
 		Model:              "m",
 		MaxSteps:           5,
 		SessionID:          "sess-swap",
@@ -224,7 +224,7 @@ func TestSurfaceHookNilFieldsKeepStepSurface(t *testing.T) {
 		},
 	}
 	loop := &Loop{Completer: comp, Tools: reg}
-	text, err := loop.Run(context.Background(), "run", Options{
+	text, err := loop.Run(context.Background(), "run", Options{Backend: "legacy",
 		Model:    "m",
 		MaxSteps: 5,
 		Surface: func() Surface {

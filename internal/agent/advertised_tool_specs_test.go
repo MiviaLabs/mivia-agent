@@ -84,7 +84,7 @@ func TestAdvertisedToolSpecsByteIdenticalAcrossSteps(t *testing.T) {
 		{Content: "done", FinishReason: "stop"},
 	}}
 	loop := &Loop{Completer: comp, Tools: startReg}
-	_, err := loop.Run(context.Background(), "run", Options{
+	_, err := loop.Run(context.Background(), "run", Options{Backend: "legacy",
 		Model:               "m",
 		MaxSteps:            5,
 		AdvertisedToolSpecs: pinned,
@@ -131,7 +131,7 @@ func TestAdvertisedToolSpecsFallsBackWhenNil(t *testing.T) {
 	reg.Register(&scheduledTestTool{name: "read_file", class: tools.ExecutionRead, key: "path:a"})
 	comp := &toolCaptureCompleter{steps: []provider.Response{{Content: "done", FinishReason: "stop"}}}
 	loop := &Loop{Completer: comp, Tools: reg}
-	if _, err := loop.Run(context.Background(), "run", Options{Model: "m", MaxSteps: 5}); err != nil {
+	if _, err := loop.Run(context.Background(), "run", Options{Backend: "legacy", Model: "m", MaxSteps: 5}); err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
 	requests := comp.requestTools()

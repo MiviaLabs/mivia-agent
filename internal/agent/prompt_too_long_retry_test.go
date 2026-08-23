@@ -93,7 +93,7 @@ func TestAgentRetriesOnceAfterPromptTooLongWithCompaction(t *testing.T) {
 	loop := &Loop{Completer: comp, Tools: tools.NewRegistry(), Messages: history}
 
 	var prunedEvents []Event
-	text, err := loop.Run(context.Background(), "final question", Options{
+	text, err := loop.Run(context.Background(), "final question", Options{Backend: "legacy",
 		Model:    "deepseek-v4-flash",
 		MaxSteps: 5,
 		OnEvent: func(e Event) {
@@ -140,7 +140,7 @@ func TestAgentPromptTooLongFailsFastAfterOneRetry(t *testing.T) {
 	}
 	loop := &Loop{Completer: comp, Tools: tools.NewRegistry(), Messages: buildOversizedHistory()}
 
-	_, err := loop.Run(context.Background(), "final question", Options{Model: "deepseek-v4-flash", MaxSteps: 5})
+	_, err := loop.Run(context.Background(), "final question", Options{Backend: "legacy", Model: "deepseek-v4-flash", MaxSteps: 5})
 	if err == nil {
 		t.Fatal("expected an error")
 	}
@@ -181,7 +181,7 @@ func TestPromptTooLongRetryDoesNotDoubleChargeOutputBudget(t *testing.T) {
 	}
 	loop := &Loop{Completer: comp, Tools: tools.NewRegistry(), Messages: buildOversizedHistory()}
 
-	text, err := loop.Run(context.Background(), "final question", Options{
+	text, err := loop.Run(context.Background(), "final question", Options{Backend: "legacy",
 		Model:      "deepseek-v4-flash",
 		MaxTokens:  &maxTokens,
 		WorkLimits: runtime.WorkLimits{MaxOutputTokens: outputBudget},
@@ -215,7 +215,7 @@ func TestPromptTooLongRetryClampsOutputBudgetToRemaining(t *testing.T) {
 	}
 	loop := &Loop{Completer: comp, Tools: tools.NewRegistry(), Messages: buildOversizedHistory()}
 
-	text, err := loop.Run(context.Background(), "final question", Options{
+	text, err := loop.Run(context.Background(), "final question", Options{Backend: "legacy",
 		Model:      "deepseek-v4-flash",
 		MaxTokens:  &maxTokens,
 		WorkLimits: runtime.WorkLimits{MaxOutputTokens: 4000},

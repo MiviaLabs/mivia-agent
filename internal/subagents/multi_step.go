@@ -214,6 +214,10 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 // which owns the step counter and the origin-stamped sink.
 func (h *MultiStepHandler) loopOptions(scoped *scopedLoop, steps int, maxTokens *int, toolTimeout time.Duration, req runtime.Request, taskPrompt string) agent.Options {
 	opts := agent.Options{
+		// The nested loop wires a BeforeStep mailbox drain
+		// (applyMailboxAccess), which the SDK backend fail-closes on.
+		// Stay on the legacy backend until the mailbox drain migrates.
+		Backend:          "legacy",
 		Model:            h.Model,
 		Reasoning:        h.dial(),
 		MaxSteps:         steps,
