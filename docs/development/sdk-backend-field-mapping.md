@@ -58,7 +58,23 @@ caller accepts the difference.
 - **`MaxConcurrentTools > 1`** — the SDK runs tool calls sequentially
   within a turn, ordered by `ToolCall.Index`
   (`mivia-ai-sdk/agentloop/toolcall.go`). Parallel batches do not
-  exist on the SDK path.
+  exist on the SDK path. Permanently accepted: a real carrier would
+  require SDK-side parallel-tool support and is out of scope for the
+  v3 convergence. Closes the v3 plan's tab on `MaxConcurrentTools`.
+- **`SoftInterruptCooldown`** — the SDK's `bridgeSteerSignals` now
+  caps `Steer.Trigger` fires with a shared `cooldownUntil atomic.Int64`
+  over all three sites (the `InterruptCh` one-shot, the strict
+  `MailboxPendingInterrupt` poller, the loose `MailboxPending`
+  poller), matching the legacy's `Loop.steerCooldownOK` semantics.
+  Two divergences remain: the gate is intra-`RunAgentLoopOnce` only
+  (a local atomic.Int64 here, not the legacy's cross-call
+  `Loop.softInterruptAt`), so a multi-turn SDK session resets the
+  gate at every turn; and the gate's effective minimum spacing is
+  bounded by the strict poller's `pollInterval` (250ms default when
+  `WatchdogInterval` is zero), so a sub-`pollInterval` cooldown is
+  not portable to the SDK path. The subagent pre-blob wiring sets
+  `SoftInterruptCooldown = 5s` so the effective floor is the poller
+  interval, not the caller's cooldown.
 - **`MaxSteps <= 0`** — the legacy loop treats 0 as unbounded; the
   SDK's `Validate` requires a positive `MaxIterations`, so the adapter
   substitutes `defaultSDKMaxIterations = 25`. An unbounded run is
@@ -119,16 +135,6 @@ behavior.
   does not support. This is why `internal/chat/session.go` (per-step
   admission publication via `wireStepBoundaryAdmission`) pins
   `Backend: "legacy"`.
-- **`SoftInterruptCooldown`** — the SDK has no per-iteration soft-
-  interrupt frequency cap. The legacy `Loop.steerCooldownOK` gate
-  fires at most one soft interrupt per cooldown window; the SDK's
-  steer bridge fires Trigger on every poll tick or interrupt-channel
-  close that survives the gate, with no minimum spacing. A `Backend:
-  "sdk"` caller that floods steers will see proportionally more
-  cancels. The subagent pre-blob wiring sets
-  `SoftInterruptCooldown = 5s` so worst-case the SDK path absorbs
-  one cancel every 5s when the watcher's poll interval cooperates;
-  the exact cap the legacy loop enforced is not portable.
 - **`WorkLimits` token reservations** — `MaxPromptTokens`,
   `MaxOutputTokens`, `MaxOutputPerCall`, and `MaxToolCalls`. The CLI's
   reservation model (refuse to start a turn that would exceed; refund

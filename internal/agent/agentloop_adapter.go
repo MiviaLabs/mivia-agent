@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
@@ -405,27 +406,50 @@ func RunAgentLoop(ctx context.Context, l *Loop, opts Options) (sdkagentloop.Resu
 //   - MailboxPendingInterrupt is the strict signal-branch poller:
 //     the predicate reports whether an Interrupt-flagged steer is
 //     queued. Trigger fires the moment it returns true.
-//   - MailboxPending is the loose watchdog poller: the predicate
-//     reports whether ANY message is waiting, so a stale signal after
-//     a drain can never cancel a call.
+//   - MailboxPending is the loose watchdog poller (gated on
+//     WatchdogInterval > 0): the predicate reports whether ANY message
+//     is waiting, so a stale signal after a drain can never cancel a call.
 //
-// Each spawned goroutine selects on runDone alongside ctx.Done so
-// every poller exits when the run ends; without this, a long-lived
-// caller ctx would leak two pollers per SDK turn (the prior
-// implementation returned from each poller after a single Trigger,
-// so a second steer in the same run never re-armed the bridge).
+// All three sites share one SoftInterruptCooldown gate. A positive
+// cooldown caps Trigger fires to one per window; a zero cooldown
+// disables the gate, mirroring the legacy steerCooldownOK semantics.
+// The shared cooldownUntil is intra-RunAgentLoopOnce only (a local
+// atomic.Int64 here), so the gate does not span multiple SDK turns;
+// the legacy's cross-call gate (Loop.softInterruptAt) is not portable
+// to the SDK's per-RunSteerable Steer value and is recorded as an
+// accepted semantic gap.
 func bridgeSteerSignals(ctx context.Context, runDone <-chan struct{}, opts Options, steer *sdkagentloop.Steer) {
+	var cooldownUntil atomic.Int64
+	cooldownOK := func() bool {
+		if opts.SoftInterruptCooldown <= 0 {
+			return true
+		}
+		return time.Now().UnixNano() >= cooldownUntil.Load()
+	}
+	noteFire := func() {
+		if opts.SoftInterruptCooldown <= 0 {
+			return
+		}
+		cooldownUntil.Store(time.Now().UnixNano() + int64(opts.SoftInterruptCooldown))
+	}
+	fireSteer := func() {
+		if !cooldownOK() {
+			return
+		}
+		noteFire()
+		steer.Trigger()
+	}
 	if ch := opts.InterruptCh; ch != nil {
 		interrupt := opts.MailboxPendingInterrupt
 		go func() {
 			select {
 			case <-ch():
 				if interrupt == nil {
-					steer.Trigger()
+					fireSteer()
 					return
 				}
 				if interrupt() {
-					steer.Trigger()
+					fireSteer()
 				}
 				// An Interrupt-flagged steer not yet queued: drain
 				// the stale signal without firing. The strict
@@ -465,7 +489,7 @@ func bridgeSteerSignals(ctx context.Context, runDone <-chan struct{}, opts Optio
 					// legacy per-call watcher and must observe the
 					// same gate.
 					if interrupt() && steer.HasActiveCall() {
-						steer.Trigger()
+						fireSteer()
 					}
 				}
 			}
@@ -488,7 +512,7 @@ func bridgeSteerSignals(ctx context.Context, runDone <-chan struct{}, opts Optio
 					return
 				case <-ticker.C:
 					if pending() {
-						steer.Trigger()
+						fireSteer()
 					}
 				}
 			}

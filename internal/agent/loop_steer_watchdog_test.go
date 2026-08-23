@@ -166,21 +166,33 @@ func TestSoftInterruptCooldownCapsFlood(t *testing.T) {
 			interrupt <- struct{}{}
 		}
 		<-comp.started // call 2 in flight
-		close(release) // release promptly: call 2 finishes inside the cooldown window
+		// Hold release so call 2 stays in flight past several strict-
+		// poller ticks (pollInterval defaults to 250ms when
+		// WatchdogInterval is zero). Without the cooldown gate, the
+		// poller would fire Trigger on every pending=true tick and
+		// cancel call 2; with the 2s gate the polled ticks fall
+		// inside the cooldown window and skip. The 1s hold gives a
+		// wide safety margin under CI jitter (the cooldown is 2x the
+		// hold). Legacy does not poll here, so the sleep is inert on
+		// that path.
+		time.Sleep(1 * time.Second)
+		close(release)
 	}()
 
-	// KEEP PINNED: SoftInterruptCooldown has no SDK mapping (recorded
-	// as an accepted semantic gap in docs/development/sdk-backend-field-mapping.md
-	// §2); the SDK's steer bridge fires Trigger on every poll tick
-	// that survives the gate with no minimum spacing, so the cooldown
-	// contract this test pins cannot move to the SDK path in this
-	// slice.
-	text, err := runLoop(t, loop, context.Background(), "user", Options{Backend: "legacy",
+	// SoftInterruptCooldown: 2s covers the SDK's strict
+	// MailboxPendingInterrupt poller (pollInterval defaults to 250ms when
+	// WatchdogInterval is zero) for the full 1s hold above AND a
+	// follow-up tick after release, so the second call completes
+	// inside the cooldown window without a second Trigger fire. The
+	// legacy path also accepts this value: only the InterruptCh
+	// branch fires there, and a 2s cooldown still gates the buffer-
+	// drained signals from the per-step watchers.
+	text, err := runLoop(t, loop, context.Background(), "user", Options{
 		Model:                   "m",
 		MaxSteps:                10,
 		InterruptCh:             func() <-chan struct{} { return interrupt },
 		MailboxPendingInterrupt: func() bool { return pending.Load() },
-		SoftInterruptCooldown:   100 * time.Millisecond,
+		SoftInterruptCooldown:   2 * time.Second,
 		BeforeStep: func() []provider.Message {
 			stepCalls++
 			if stepCalls == 1 {
