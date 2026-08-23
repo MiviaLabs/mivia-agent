@@ -720,16 +720,21 @@ func prepareSDKHistory(ctx context.Context, l *Loop, opts Options, msgs []provid
 	input.Messages = msgs
 	preparation, err := opts.PreparationManager.Prepare(ctx, input)
 	if err != nil {
-		// Match context.go:27-39's fallback: an interrupted ctx on a
+		// Carry the failure identity so the turn commit can surface it,
+		// exactly as legacy prepareStep does (context.go:27).
+		l.PreparationErr = err
+		// Match context.go:28's fallback: an interrupted ctx on a
 		// fresh attempt with no recorded preparation retries once with
 		// context.Background so the run still produces a compacted
 		// history to ship downstream.
-		if !opts.WorkLimits.DeadlineAt.IsZero() && interruptedContext(ctx, err) {
+		if !l.HasPreparation && opts.WorkLimits.DeadlineAt.IsZero() && interruptedContext(ctx, err) {
 			if fallback, ferr := opts.PreparationManager.Prepare(context.Background(), input); ferr == nil {
 				l.recordPreparation(fallback)
 				l.captureOmittedEvidence(input, fallback)
+				l.PreparationErr = nil
 				return cliMessagesToSDK(clonePreparedMessages(injectSummaryAfterPrepare(l, ctx, opts, fallback.Messages))), nil
 			} else {
+				l.PreparationErr = ferr
 				return nil, ferr
 			}
 		}
