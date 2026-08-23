@@ -4,15 +4,13 @@
 // one turn: it converts the CLI registry, wraps the CLI completer,
 // bridges the steer signals, and returns the SDK Result. It is
 // ADDITIVE: the legacy (*Loop).Run in loop.go is unchanged, and the
-// dispatcher's "sdk" branch stays stubbed until commit 4 wires it.
+// dispatcher's "sdk" branch (loop_dispatch.go) chooses the runtime.
 //
-// The field mapping below is deliberately partial. Every CLI Options
-// field whose semantics the SDK path cannot yet carry fails closed
-// with an error naming the field, so an opt-in caller learns the
-// boundary at the call instead of silently losing behavior. The
-// fail-closed set shrinks as later commits wire event translation,
-// context planning, and the batch-budget derivation.
-//
+// CLI Options fields split into three groups on the SDK path: carried
+// today, accepted semantic gaps, and fail-closed. See
+// docs/development/sdk-backend-field-mapping.md for the full table;
+// the fail-closed set shrinks as each slice lands.
+
 // The SDK imports are out-of-prefix; the gate filters them out of
 // the in-prefix edge set (scripts/check_import_layers.py
 // compute_edges), and the policy baseline is unchanged.

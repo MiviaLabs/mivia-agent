@@ -64,6 +64,11 @@ topics:
     owner: quality
     description: Self-contained system prompt reference for agent rebuilds
 
+  sdk-backend-field-mapping:
+    path: docs/development/sdk-backend-field-mapping.md
+    owner: agent
+    description: Which CLI agent.Options fields the SDK backend carries, accepts as semantic gaps, or fail-closes on
+
   terminal-input:
     path: docs/development/terminal-input.md
     owner: quality
