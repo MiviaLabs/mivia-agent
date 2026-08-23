@@ -101,10 +101,16 @@ func buildAgentLoopOptions(l *Loop, opts Options) (sdkagentloop.Options, error) 
 // rejectUnsupportedSDKBatches fails closed on every CLI Options field
 // whose semantics the SDK path cannot carry. Zero values pass: a
 // caller that never set the knob loses nothing by switching backends.
+//
+// Fields the SDK accepts at zero but interprets differently are NOT
+// rejected here: the accepted-semantic-gap table lives on the
+// agentloop adapter's package doc. Today those are MaxConcurrentTools
+// (the SDK runs tool calls sequentially within a turn, ordered by
+// ToolCall.Index) and a negative BatchResultBudgetBytes (the SDK's
+// TurnResultBudget is a literal byte budget only, not the CLI's
+// "derived from MaxContextTokens" mode). Both pass through to the SDK
+// silently; the CLI caller accepts the difference.
 func rejectUnsupportedSDKBatches(opts Options) error {
-	if opts.MaxConcurrentTools > 1 {
-		return unsupportedSDKOption("MaxConcurrentTools")
-	}
 	if opts.Surface != nil {
 		return unsupportedSDKOption("Surface")
 	}
@@ -123,9 +129,13 @@ func rejectUnsupportedSDKBatches(opts Options) error {
 	if opts.RemainderSpool != nil {
 		return unsupportedSDKOption("RemainderSpool")
 	}
-	if opts.BatchResultBudgetBytes < 0 {
-		return unsupportedSDKOption("BatchResultBudgetBytes (negative derived mode)")
-	}
+	// Negative BatchResultBudgetBytes derives a budget from
+	// MaxContextTokens in the CLI's shape_batch path; the SDK's
+	// TurnResultBudget is a literal byte budget only, so this
+	// "derived mode" is an accepted semantic gap. A Backend:"sdk"
+	// caller with a negative value sees no batch shaping from this
+	// knob, not the derived one. The positive form still maps in
+	// buildAgentLoopOptions.
 	// WorkLimits splits: MaxTurns and DeadlineAt are carried (the
 	// turn clamp in buildAgentLoopOptions and the deadline narrowing
 	// in RunAgentLoopOnce); the four token-reservation fields have no

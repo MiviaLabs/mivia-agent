@@ -44,12 +44,10 @@ func TestBuildAgentLoopOptionsFailClosed(t *testing.T) {
 		opts Options
 		want string
 	}{
-		{"MaxConcurrentTools", Options{MaxConcurrentTools: 2}, "MaxConcurrentTools"},
 		{"Surface", Options{Surface: func() Surface { return Surface{} }}, "Surface"},
 		{"BeforeStep", Options{BeforeStep: func() []provider.Message { return nil }}, "BeforeStep"},
 		{"StagedToolMessage", Options{StagedToolMessage: func(string) (string, bool) { return "", false }}, "StagedToolMessage"},
 		{"RefOnlyTools", Options{RefOnlyTools: []string{"x"}}, "RefOnlyTools"},
-		{"NegativeBatchBudget", Options{BatchResultBudgetBytes: -1}, "BatchResultBudgetBytes"},
 		{"PreserveWorkLimits", Options{PreserveWorkLimits: true}, "PreserveWorkLimits"},
 		{"MaxContextTokens", Options{MaxContextTokens: 1000}, "MaxContextTokens"},
 		{"MailboxPendingInterrupt", Options{MailboxPendingInterrupt: func() bool { return false }}, "MailboxPendingInterrupt"},
