@@ -355,6 +355,8 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 		return sdkagentloop.Result{}, err
 	}
 	sdkOpts.Trim = sdkPrepareTrim(l, opts)
+	// Legacy not-in-registry denial: see agentloop_tool_error.go.
+	sdkOpts.OnToolCallError = sdkToolCallErrorReporter(opts)
 	if opts.OnEvent != nil || opts.EventBus != nil || opts.FinalWriter != nil {
 		// The SDK (since mivia-ai-sdk commit c207575) fires the four
 		// lifecycle names whenever Bus is non-nil; the heartbeat ticks
