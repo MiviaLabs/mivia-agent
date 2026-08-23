@@ -64,7 +64,7 @@ func buildAgentLoopOptions(l *Loop, opts Options) (sdkagentloop.Options, error) 
 	if err != nil {
 		return sdkagentloop.Options{}, err
 	}
-	applyRefOnlyShim(sdkTools, opts.RefOnlyTools, opts.RemainderSpool, BatchDegradeFloorBytes, opts.SessionID)
+	applyRefOnlyShim(sdkTools, l.Tools, opts.RefOnlyTools, opts.RemainderSpool, BatchDegradeFloorBytes, opts.SessionID)
 	maxIterations := opts.MaxSteps
 	if maxIterations <= 0 {
 		maxIterations = defaultSDKMaxIterations
@@ -240,10 +240,14 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 	bridgeSteerSignals(ctx, opts, steer)
 	res, err := loop.RunSteerable(ctx, preparedMsgs, steer)
 	if err != nil {
-		return sdkagentloop.Result{}, err
+		// Return the partial Result alongside the error: the SDK's
+		// hard-fail Result carries the messages completed so far, and
+		// the dispatcher writes them back so an errored turn keeps its
+		// partial history, mirroring the legacy path.
+		return res, err
 	}
-	if err := finalizeSDKTurn(opts, res); err != nil {
-		return sdkagentloop.Result{}, err
+	if err := finalizeSDKTurn(opts, res, len(preparedMsgs)); err != nil {
+		return res, err
 	}
 	return res, nil
 }
@@ -276,29 +280,39 @@ func bridgeUsageAudit(opts Options, providerName string) sdkagentloop.AuditFunc 
 }
 
 // finalizeSDKTurn applies the CLI's post-turn Options after a
-// graceful SDK stop: FinalWriter receives the final assistant text
-// (post-hoc rather than streamed - the SDK result is whole), and
-// RequireFinalText fails a turn that produced no assistant text
-// anywhere, matching the legacy empty-turn refusal.
-func finalizeSDKTurn(opts Options, res sdkagentloop.Result) error {
-	if opts.FinalWriter != nil && res.Final.Content != "" {
-		if _, err := io.WriteString(opts.FinalWriter, res.Final.Content); err != nil {
+// graceful SDK stop. FinalWriter receives the turn's final text: the
+// final message's content, or - when the SDK zeroed Final (its
+// documented behavior on StopMaxIterations, StopHookVeto, and
+// StopSteered) - the last assistant text the turn produced anywhere,
+// matching the legacy "no assistant text ANYWHERE" contract.
+// RequireFinalText fails a turn that produced no assistant text in any
+// step of the turn, except a steered stop, which the dispatcher maps
+// to errSteerInterrupt instead.
+func finalizeSDKTurn(opts Options, res sdkagentloop.Result, startLen int) error {
+	text := res.Final.Content
+	if strings.TrimSpace(text) == "" {
+		for i := len(res.History) - 1; i >= startLen; i-- {
+			if m := res.History[i]; m.Role == sdkshape.RoleAssistant && strings.TrimSpace(m.Content) != "" {
+				text = m.Content
+				break
+			}
+		}
+	}
+	if opts.FinalWriter != nil && text != "" {
+		if _, err := io.WriteString(opts.FinalWriter, text); err != nil {
 			return fmt.Errorf("agent: write final text: %w", err)
 		}
 	}
-	if opts.RequireFinalText && strings.TrimSpace(res.Final.Content) == "" {
+	if opts.RequireFinalText && strings.TrimSpace(text) == "" && res.Stop != sdkagentloop.StopSteered {
 		return fmt.Errorf("agent: turn produced no assistant text")
 	}
 	return nil
 }
 
 // RunAgentLoop drives the SDK's agentloop.Loop for one Options. It
-// delegates to RunAgentLoopOnce with a Loop carrying only the
-// completer and registry the opts imply; the legacy (*Loop).Run in
-// loop.go is NOT replaced. Kept for the B.2 #8 minimum-viable commit's
-// exported surface; the dispatcher (commit 4) calls RunAgentLoopOnce.
-func RunAgentLoop(ctx context.Context, opts Options) (sdkagentloop.Result, error) {
-	l := &Loop{Completer: nil, Tools: nil}
+// requires a Loop carrying the completer and registry; a zero Loop
+// fails closed at the nil-completer check in newAgentLoopCompleter.
+func RunAgentLoop(ctx context.Context, l *Loop, opts Options) (sdkagentloop.Result, error) {
 	return RunAgentLoopOnce(ctx, l, opts, nil)
 }
 

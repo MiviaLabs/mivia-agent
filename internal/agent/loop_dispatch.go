@@ -3,6 +3,8 @@ package agent
 import (
 	"context"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
@@ -44,29 +46,64 @@ func (l *Loop) runOnceSDK(ctx context.Context, userText string, opts Options) (s
 	msgs := make([]provider.Message, 0, len(l.Messages)+1)
 	msgs = append(msgs, l.Messages...)
 	msgs = append(msgs, provider.Message{Role: provider.RoleUser, Content: userText})
+	startLen := len(msgs)
 	res, err := RunAgentLoopOnce(ctx, l, opts, msgs)
+	// Write the turn's history back even on error: the legacy path keeps
+	// the user message and every completed step's messages in l.Messages
+	// when a turn fails mid-flight, and callers persist the partial turn
+	// from the loop. The SDK returns a partial History with its error.
+	if len(res.History) > 0 {
+		l.Messages = restoreSDKHistoryTimestamps(sdkMessagesToCLI(res.History), l.Messages)
+	}
 	if err != nil {
 		return "", err
 	}
-	// The SDK's History carries the starting messages plus every
-	// assistant and tool message the turn appended. Replace the loop's
-	// carried history with it so the next Run - and callers reading
-	// l.Messages - see the turn's tool results, mirroring the legacy
-	// path's incremental appends.
-	l.Messages = sdkMessagesToCLI(res.History)
 	if res.Stop == sdkagentloop.StopSteered {
 		return "", errSteerInterrupt
 	}
-	if res.Final.Content == "" {
-		// Mirror the legacy lastText fallback: a graceful stop whose
-		// final step produced no text (StopMaxIterations, a vetoed
-		// stop) returns the last assistant text the turn produced
-		// instead of an empty answer.
-		for i := len(res.History) - 1; i >= 0; i-- {
-			if m := res.History[i]; m.Role == sdkshape.RoleAssistant && m.Content != "" {
+	if res.Stop == sdkagentloop.StopMaxIterations {
+		// Legacy parity: exceeding the step cap is a hard error naming
+		// the cap, not a graceful partial answer.
+		return "", fmt.Errorf("agent exceeded max_steps (%d)", effectiveSDKMaxIterations(opts))
+	}
+	if strings.TrimSpace(res.Final.Content) == "" {
+		// Mirror the legacy lastText fallback, scoped to THIS turn: a
+		// graceful stop whose final step produced no text returns the
+		// last assistant text the turn produced, never a prior turn's.
+		for i := len(res.History) - 1; i >= startLen; i-- {
+			if m := res.History[i]; m.Role == sdkshape.RoleAssistant && strings.TrimSpace(m.Content) != "" {
 				return m.Content, nil
 			}
 		}
 	}
 	return res.Final.Content, nil
+}
+
+// restoreSDKHistoryTimestamps copies CreatedAt from the pre-turn slice
+// onto the converted history's matching prefix (the SDK Message shape
+// carries no timestamp) and stamps the turn's new messages with the
+// current time, matching the legacy path's time.Now() appends.
+func restoreSDKHistoryTimestamps(fresh, old []provider.Message) []provider.Message {
+	now := time.Now()
+	for i := range fresh {
+		if i < len(old) {
+			fresh[i].CreatedAt = old[i].CreatedAt
+		} else if fresh[i].CreatedAt.IsZero() {
+			fresh[i].CreatedAt = now
+		}
+	}
+	return fresh
+}
+
+// effectiveSDKMaxIterations mirrors buildAgentLoopOptions' iteration
+// clamp so an error message can name the same cap the SDK enforced.
+func effectiveSDKMaxIterations(opts Options) int {
+	limit := opts.MaxSteps
+	if limit <= 0 {
+		limit = defaultSDKMaxIterations
+	}
+	if wl := opts.WorkLimits.MaxTurns; wl > 0 && (opts.MaxSteps <= 0 || wl < opts.MaxSteps) {
+		limit = wl
+	}
+	return limit
 }

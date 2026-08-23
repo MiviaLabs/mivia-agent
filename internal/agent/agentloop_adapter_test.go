@@ -60,7 +60,7 @@ func TestBuildAgentLoopOptions_EmptyRequest(t *testing.T) {
 // nil Completer is rejected by the wrapper constructor before the
 // SDK's own Validate runs.
 func TestRunAgentLoop_FailsOnNilCompleter(t *testing.T) {
-	_, err := RunAgentLoop(context.Background(), Options{})
+	_, err := RunAgentLoop(context.Background(), &Loop{}, Options{})
 	if err == nil {
 		t.Fatal("RunAgentLoop(zero Loop) returned nil error; want nil-completer error")
 	}

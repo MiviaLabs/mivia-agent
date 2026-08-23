@@ -24,10 +24,12 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
+	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	sdktools "github.com/MiviaLabs/mivia-ai-sdk/tools"
 )
 
@@ -43,11 +45,35 @@ type refOnlyShim struct {
 	names     []string
 	floor     int
 	principal string
+	// ephemeral marks a CLI tool implementing tools.EphemeralResultTool:
+	// its body must never be spooled durably (mirrors refOnlyTier's
+	// p.ephemeral skip at shape_batch_refonly.go:26-27).
+	ephemeral bool
 }
 
 var _ sdktools.Tool = (*refOnlyShim)(nil)
+var _ sdktools.SchemaTool = (*refOnlyShim)(nil)
 
 func (r *refOnlyShim) Name() string { return r.inner.Name() }
+
+// ParameterSchema delegates to the inner tool. The SDK's Definitions
+// skips any tool that does not implement SchemaTool, so without this
+// delegation a ref-only tool silently vanishes from the offered set.
+func (r *refOnlyShim) ParameterSchema() []byte {
+	if st, ok := r.inner.(sdktools.SchemaTool); ok {
+		return st.ParameterSchema()
+	}
+	return nil
+}
+
+// DecodeArguments delegates to the inner tool so the schema-validating
+// path the SDK runs at call time stays intact through the shim.
+func (r *refOnlyShim) DecodeArguments(raw []byte) (sdktools.InOut, error) {
+	if st, ok := r.inner.(sdktools.SchemaTool); ok {
+		return st.DecodeArguments(raw)
+	}
+	return sdktools.InOut{Value: json.RawMessage(raw)}, nil
+}
 
 func (r *refOnlyShim) Run(ctx context.Context, in sdktools.InOut) (sdktools.Out, error) {
 	body, err := r.inner.Run(ctx, in)
@@ -58,7 +84,7 @@ func (r *refOnlyShim) Run(ctx context.Context, in sdktools.InOut) (sdktools.Out,
 		return body, nil
 	}
 	name := r.inner.Name()
-	if !slices.Contains(r.names, name) {
+	if !slices.Contains(r.names, name) || r.ephemeral {
 		return body, nil
 	}
 	s, ok := body.Value.(string)
@@ -114,9 +140,12 @@ func refOnlyCeilPowerOfTwo(n int) int {
 // applyRefOnlyShim post-processes the SDK registry built by
 // sdkadapter.ConvertToolRegistryWithAdmission, wrapping each named
 // tool with the ref-only shim. Tools not in names keep their
-// existing wrapped form. A nil spool or empty names returns the
+// existing wrapped form. cliReg is the CLI registry the SDK registry
+// was converted from; it is consulted (never mutated) to detect
+// tools implementing tools.EphemeralResultTool, whose bodies must
+// never be spooled durably. A nil spool or empty names returns the
 // registry unchanged.
-func applyRefOnlyShim(sdkReg *sdktools.Registry, names []string, spool *remainder.Spool, floor int, principal string) {
+func applyRefOnlyShim(sdkReg *sdktools.Registry, cliReg *tools.Registry, names []string, spool *remainder.Spool, floor int, principal string) {
 	if sdkReg == nil || len(names) == 0 || spool == nil || floor <= 0 || principal == "" {
 		return
 	}
@@ -124,6 +153,12 @@ func applyRefOnlyShim(sdkReg *sdktools.Registry, names []string, spool *remainde
 		t, ok := sdkReg.Get(name)
 		if !ok {
 			continue
+		}
+		var ephemeral bool
+		if cliReg != nil {
+			if cliTool, ok := cliReg.Get(name); ok {
+				_, ephemeral = cliTool.(tools.EphemeralResultTool)
+			}
 		}
 		// Replace by re-adding under a fresh shim. The SDK's
 		// Registry exposes Remove, so the swap is two operations.
@@ -134,6 +169,7 @@ func applyRefOnlyShim(sdkReg *sdktools.Registry, names []string, spool *remainde
 			names:     names,
 			floor:     floor,
 			principal: principal,
+			ephemeral: ephemeral,
 		}
 		if err := sdkReg.Add(wrapped); err != nil {
 			// Restore the unwrapped tool so the registry stays

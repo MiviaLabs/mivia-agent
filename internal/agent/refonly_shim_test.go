@@ -48,7 +48,7 @@ func TestRefOnlyShimSpoolsOversizedResult(t *testing.T) {
 		t.Fatalf("ConvertToolRegistry: %v", err)
 	}
 	spool := remainder.NewSpool(&stubContentStore{})
-	applyRefOnlyShim(sdkReg, []string{"bigtool"}, spool, BatchDegradeFloorBytes, "principal-1")
+	applyRefOnlyShim(sdkReg, nil, []string{"bigtool"}, spool, BatchDegradeFloorBytes, "principal-1")
 	wrapped, ok := sdkReg.Get("bigtool")
 	if !ok {
 		t.Fatal("SDK registry missing bigtool")
@@ -85,7 +85,7 @@ func TestRefOnlyShimPassesThroughSmallResult(t *testing.T) {
 		t.Fatalf("ConvertToolRegistry: %v", err)
 	}
 	spool := remainder.NewSpool(&stubContentStore{})
-	applyRefOnlyShim(sdkReg, []string{"smalltool"}, spool, BatchDegradeFloorBytes, "principal-1")
+	applyRefOnlyShim(sdkReg, nil, []string{"smalltool"}, spool, BatchDegradeFloorBytes, "principal-1")
 	wrapped, _ := sdkReg.Get("smalltool")
 	out, err := wrapped.Run(context.Background(), sdktools.InOut{Value: map[string]any{}})
 	if err != nil {
@@ -109,7 +109,7 @@ func TestRefOnlyShimDoesNotWrapUnnamedTool(t *testing.T) {
 		t.Fatalf("ConvertToolRegistry: %v", err)
 	}
 	spool := remainder.NewSpool(&stubContentStore{})
-	applyRefOnlyShim(sdkReg, []string{"bigtool"}, spool, BatchDegradeFloorBytes, "principal-1")
+	applyRefOnlyShim(sdkReg, nil, []string{"bigtool"}, spool, BatchDegradeFloorBytes, "principal-1")
 	wrapped, _ := sdkReg.Get("passthrough")
 	out, err := wrapped.Run(context.Background(), sdktools.InOut{Value: map[string]any{}})
 	if err != nil {
@@ -135,7 +135,7 @@ func TestRefOnlyShimPlainNoticeOnSpoolFailure(t *testing.T) {
 	}
 	// A nil-store spool returns "" for every Spool call (INV-AG-10).
 	spool := remainder.NewSpool(nil)
-	applyRefOnlyShim(sdkReg, []string{"failspool"}, spool, BatchDegradeFloorBytes, "principal-1")
+	applyRefOnlyShim(sdkReg, nil, []string{"failspool"}, spool, BatchDegradeFloorBytes, "principal-1")
 	wrapped, _ := sdkReg.Get("failspool")
 	out, err := wrapped.Run(context.Background(), sdktools.InOut{Value: map[string]any{}})
 	if err != nil {
