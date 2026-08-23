@@ -8,9 +8,17 @@ type EventKind string
 
 const (
 	EventAssistant EventKind = "assistant"
-	EventToolStart EventKind = "tool_start"
-	EventToolEnd   EventKind = "tool_end"
-	EventStep      EventKind = "step"
+	// EventToolPending is emitted BEFORE EventToolStart when a tool call
+	// needs user approval. It is the only "pre-start" event: the loop
+	// gates Dispatcher.Invoke on ApprovalGate when Emit returns, and
+	// the resulting decision (approve / deny) determines whether
+	// EventToolStart follows. Detail carries the execution class as
+	// its string name so downstream consumers can route without
+	// re-deriving from the registry.
+	EventToolPending EventKind = "tool_pending"
+	EventToolStart   EventKind = "tool_start"
+	EventToolEnd     EventKind = "tool_end"
+	EventStep        EventKind = "step"
 	// EventHeartbeat is a wall-clock progress tick (model thinking, tool
 	// batch, batch shaping). It is NOT a step: only real loop steps emitted
 	// by emitStep may be EventStep, so consumers that budget or count steps

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/usage"
 )
@@ -120,6 +122,23 @@ type Options struct {
 	// generic denial message is used. Nil disables the check. Must be safe
 	// for concurrent calls.
 	UnadmittedToolHandler func(ctx context.Context, name string) (string, bool)
+	// ApprovalGate is the synchronous user-approval bridge for tool calls.
+	// It is invoked by executeToolTask and by the SDK-path approval wrapper
+	// before Dispatcher.Invoke for any tool whose capability.Class >=
+	// tools.ExecutionWrite; tools of class ExecutionRead or Unclassified
+	// skip the call. The function MUST be safe to call concurrently from
+	// multiple goroutines (parallel tool batches). A nil gate is equivalent
+	// to "approve every call": the loop runs as if there were no approval
+	// surface at all, matching pre-Phase-4 behavior.
+	ApprovalGate func(ctx context.Context, name string, args json.RawMessage) sdkadapter.ApprovalResult
+	// ApprovalStanding is consulted BEFORE ApprovalGate to honor "always"
+	// decisions ("a always" / "D deny always"). It is keyed on tool name
+	// and carries a verdict (approved or denied) plus a class tag so the
+	// same call short-circuits the gate for the rest of the session.
+	// Nil is safe: every call falls through to ApprovalGate. The same
+	// instance backs the SDK-path wrapper so a "always" decision persists
+	// across legacy and SDK turns within one session.
+	ApprovalStanding *sdkadapter.ApprovalStanding
 	// RemainderSpool, when non-nil, stores truncated tool-result bodies under
 	// content refs so the model can page them via read_output. Nil means
 	// truncation notices omit refs (legacy plain notices).
@@ -213,3 +232,7 @@ type SummaryConfig struct {
 	// wire or storage.
 	Redaction contextstate.RedactionPolicy
 }
+
+// Approval types live in internal/sdkadapter so the SDK-path wrapper can
+// use them without creating an import cycle (internal/sdkadapter already
+// imports nothing from internal/agent).

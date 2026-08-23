@@ -54,6 +54,28 @@ type AdmissionPredicates struct {
 	// effect; the returned message becomes the RoleTool denial
 	// content when true. nil disables the check.
 	UnadmittedHandler func(ctx context.Context, name string) (string, bool)
+	// ApprovalGate, when non-nil, is invoked before the tool runs for
+	// any tool whose internal Capability.Class >= tools.ExecutionWrite.
+	// Read-class tools skip the gate. The verdict drives the wrap
+	// layer added below: Approved true delegates to the inner CLI
+	// tool; Approved false returns the denial Err as the RoleTool
+	// content (mirroring the staged/unadmitted denial shape).
+	ApprovalGate func(ctx context.Context, name string, args json.RawMessage) ApprovalResult
+	// ApprovalStanding is consulted BEFORE ApprovalGate to honor
+	// "always" decisions. The same instance must be shared across
+	// legacy and SDK paths within one session so a "always" decision
+	// persists across backends.
+	ApprovalStanding *ApprovalStanding
+	// EmitPending publishes a "tool pending approval" advisory from
+	// inside the SDK wrapper, before invoking the gate. The fields
+	// are the bridge primitives so the wrapper does not need to
+	// import internal/agent (the agent package imports sdkadapter;
+	// reversing that direction would create a cycle). The caller
+	// reconstructs an agent.Event and routes it through the same
+	// emit path the legacy loop uses (OnEvent + EventBus). nil
+	// disables the surface (the bridge still runs; the wrapper
+	// just does not publish the pending event).
+	EmitPending func(name, detail, input string)
 }
 
 // admissionCheckedToolAdapter wraps a CLI tool plus the admission
@@ -99,11 +121,17 @@ func (a *admissionCheckedToolAdapter) DecodeArguments(raw []byte) (sdktools.InOu
 // pred produces the same result as ConvertToolRegistry. The check
 // runs at call time so UnadmittedHandler's auto-stage side effect
 // fires only when the model actually invokes the unadmitted tool.
+//
+// When pred.ApprovalGate is non-nil, an approval layer is added
+// OUTSIDE the admission layer: the admission checks (staged /
+// unadmitted) run first; if those pass, the approval gate runs
+// before the inner CLI tool. Layering order matters - a staged
+// tool never reaches the approval gate.
 func ConvertToolRegistryWithAdmission(cliReg *tools.Registry, pred AdmissionPredicates) (*sdktools.Registry, error) {
 	if cliReg == nil {
 		return nil, nil
 	}
-	if pred.StagedMessage == nil && pred.UnadmittedHandler == nil {
+	if pred.StagedMessage == nil && pred.UnadmittedHandler == nil && pred.ApprovalGate == nil {
 		return ConvertToolRegistry(cliReg)
 	}
 	sdkReg := sdktools.New()
@@ -112,10 +140,20 @@ func ConvertToolRegistryWithAdmission(cliReg *tools.Registry, pred AdmissionPred
 		if err != nil {
 			return nil, err
 		}
-		wrapped := &admissionCheckedToolAdapter{
+		wrapped := sdktools.Tool(&admissionCheckedToolAdapter{
 			inner:      inner,
 			staged:     pred.StagedMessage,
 			unadmitted: pred.UnadmittedHandler,
+		})
+		if pred.ApprovalGate != nil {
+			wrapped = &approvalGatedToolAdapter{
+				inner:           wrapped,
+				cliName:         t.Name(),
+				gate:            pred.ApprovalGate,
+				standing:        pred.ApprovalStanding,
+				emitPending:     pred.EmitPending,
+				getCapabilities: capabilitiesFor(t),
+			}
 		}
 		if err := sdkReg.Add(wrapped); err != nil {
 			return nil, fmt.Errorf("sdkadapter: add tool %q to SDK registry: %w", t.Name(), err)
