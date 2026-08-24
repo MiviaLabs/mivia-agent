@@ -28,7 +28,7 @@ The SDK path consumes these directly:
 | `MaxToolResultChars` | `applyDispatcherShim` | the shim applies the legacy pass-1 cap (`effectiveResultCap` + `CapWithSpoolRef`) and records pass-1 parts so the turn shaper's degrade reports the ORIGINAL total and pages the original bytes |
 | `ToolTimeout` | `applyDispatcherShim` | per-call timeout with the tool's own larger request timeout honored, clamped to the deadline |
 | `LastFinishReason` | completer `onFinish` callback | the wrapper reports each response's finish reason onto `Loop.LastFinishReason`; the truncation-aware corrective turn keys on it |
-| `MaxSteps > 0` | `Options.MaxIterations` | clamped by `MaxTurns` when set; `MaxSteps <= 0` caps at the adapter default 25 (see §2) |
+| `MaxSteps` | `Options.MaxIterations` | passed through; SDK's `unboundedOrSet` maps `0` → `math.MaxInt32` so `MaxSteps = 0` (unbounded) reaches the SDK unchanged. `MaxTurns` (when > 0) clamps to the smaller of the two positive values, and stays applied over an unset `MaxSteps` (see §2) |
 | `SessionID` | `Options.SessionID` | required when Usage is set |
 | `AdvertisedToolSpecs` | turn-state advertised snapshot + completer override | the snapshot seeds `sdkTurnState.advertised` (request 0, the legacy `initialToolSpecs` contract) and each surface rotation's non-nil `ToolSpecs` replaces it; the completer's `applyAdvertisedTools` REPLACES the wire request's registry-derived tools with the live snapshot, so deferred tools outside the registry reach the wire from request 0 (see `internal/agent/sdk_advertised.go` for the recovery-request safety note: the SDK's Window-gated recovery never fires because the host wires no Window) |
 | `MaxToolCallsPerBatch` | `Options.MaxCallsPerTurn` | positive only |
@@ -70,10 +70,15 @@ caller accepts the difference.
   not portable to the SDK path. The subagent pre-blob wiring sets
   `SoftInterruptCooldown = 5s` so the effective floor is the poller
   interval, not the caller's cooldown.
-- **`MaxSteps <= 0`** — the legacy loop treats 0 as unbounded; the
-  SDK's `Validate` requires a positive `MaxIterations`, so the adapter
-  substitutes `defaultSDKMaxIterations = 25`. An unbounded run is
-  impossible on the SDK path.
+- **`MaxSteps <= 0`** — the legacy loop treats 0 as unbounded, and
+  the SDK does too: `agentloop.New` runs `unboundedOrSet(opts.MaxIterations)`,
+  which maps `0` to `math.MaxInt32` so the run loop's `iterations >=
+  l.maxIterations` check at `agentloop/run.go:89` never fires. The
+  adapter passes `opts.MaxSteps` straight through
+  (`internal/agent/agentloop_adapter.go`); the historical
+  `defaultSDKMaxIterations = 25` substitution was removed because it
+  capped the SDK path at a value the legacy loop never honored,
+  breaking parity. An unbounded run is now possible on the SDK path.
 - **`BatchResultBudgetBytes`** — the positive form is carried by the
   host-side turn shaping wrapper (§1), which degrades with an honest
   notice like the legacy batch shaper. The negative form is also
