@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agentmsg"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/evidencecheck"
 	"github.com/MiviaLabs/mivia-agent/internal/jschema"
@@ -391,7 +392,59 @@ func (r *CoordinatorRunner) finish(ctx context.Context, spec AgentStepRequest, h
 	if err != nil {
 		return AgentStepResult{CoordinatorRunID: run.RunID, TaskID: actualTaskID, Output: output, EvidenceJSON: evidenceJSON, Status: result.Status}, err
 	}
+	reportText := extractReportText(output)
+	if reportText != "" && strings.Contains(reportText, "mivia-report/v1") {
+		history, histErr := r.fetchToolExecutionHistory(ctx, run.RunID, actualTaskID)
+		if histErr != nil {
+			return AgentStepResult{CoordinatorRunID: run.RunID, TaskID: actualTaskID, Output: output, EvidenceJSON: evidenceJSON, Status: result.Status}, histErr
+		}
+		if err := ValidateReportEvidence(reportText, history); err != nil {
+			return AgentStepResult{CoordinatorRunID: run.RunID, TaskID: actualTaskID, Output: output, EvidenceJSON: evidenceJSON, Status: result.Status}, &SchemaValidationError{StepID: spec.StepID, Err: err}
+		}
+	}
 	return AgentStepResult{CoordinatorRunID: run.RunID, TaskID: actualTaskID, Output: output, ValidatedOutput: validated, EvidenceJSON: evidenceJSON, Status: result.Status}, nil
+}
+
+func (r *CoordinatorRunner) fetchToolExecutionHistory(ctx context.Context, runID, taskID string) ([]evidencecheck.ToolExecutionRecord, error) {
+	if r.Coordinator == nil {
+		return nil, nil
+	}
+	summaries, err := r.Coordinator.ListRunMessages(ctx, runID, taskID)
+	if err != nil {
+		return nil, err
+	}
+	var history []evidencecheck.ToolExecutionRecord
+	for _, s := range summaries {
+		if s.Kind == agentmsg.KindFinding || s.Kind == "tool_execution" {
+			msg, err := r.Coordinator.LoadMessageBody(ctx, s.ContentRef)
+			if err != nil {
+				continue
+			}
+			var rec evidencecheck.ToolExecutionRecord
+			if err := json.Unmarshal([]byte(msg.Body), &rec); err == nil && (rec.ToolName != "" || len(rec.Argv) > 0 || rec.CommandLine != "") {
+				history = append(history, rec)
+				continue
+			}
+			if strings.HasPrefix(s.Synopsis, "run_command:") {
+				cmd := strings.TrimSpace(strings.TrimPrefix(s.Synopsis, "run_command:"))
+				history = append(history, evidencecheck.ToolExecutionRecord{
+					ToolName:    "run_command",
+					CommandLine: cmd,
+					Argv:        strings.Fields(cmd),
+					ExitCode:    0,
+				})
+			} else if strings.HasPrefix(msg.Body, "run_command:") {
+				cmd := strings.TrimSpace(strings.TrimPrefix(msg.Body, "run_command:"))
+				history = append(history, evidencecheck.ToolExecutionRecord{
+					ToolName:    "run_command",
+					CommandLine: cmd,
+					Argv:        strings.Fields(cmd),
+					ExitCode:    0,
+				})
+			}
+		}
+	}
+	return history, nil
 }
 
 // applyChildResult copies the child task's terminal status and output onto a

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agentmsg"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/evidencecheck"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
@@ -392,5 +393,61 @@ func TestValidateOutput_EvidenceClaims(t *testing.T) {
 
 	if err := ValidateReportEvidence("# Agent Report\n\nFormat: mivia-report/v1\n\n## Evidence\n\n- make test: PASS\n", history); err == nil {
 		t.Fatal("expected unexecuted claim to fail ValidateReportEvidence")
+	}
+}
+
+func TestCoordinatorRunner_EvidenceCrossCheck(t *testing.T) {
+	// Report claiming "make verify: PASS" without any recorded tool executions in the coordinator ledger.
+	unexecutedReport := json.RawMessage(`{"output": {"report": "# Agent Report\n\nFormat: mivia-report/v1\n\n## Evidence\n\n- make verify: PASS\n"}, "status": "completed"}`)
+	runner := stepRunner(t, stepHandler{out: unexecutedReport})
+
+	spec := validStepRequest()
+	spec.OutputSchema = nil
+	spec.CoordinatorRunID = coordinator.NewRunID()
+	_, err := runner.RunStep(context.Background(), spec)
+	if err == nil {
+		t.Fatal("expected RunStep to fail when report contains unexecuted PASS claim")
+	}
+	var schemaErr *SchemaValidationError
+	if !errors.As(err, &schemaErr) || schemaErr.Err == nil || !strings.Contains(schemaErr.Err.Error(), "evidence verification failed") {
+		t.Fatalf("expected evidence verification error, got: %v (wrapped: %v)", err, errors.Unwrap(err))
+	}
+}
+
+type evidencePostingHandler struct {
+	coord coordinator.Coordinator
+	runID string
+	out   json.RawMessage
+}
+
+func (h *evidencePostingHandler) Invoke(ctx context.Context, req runtime.Request) (json.RawMessage, error) {
+	// Simulate agent tool execution recording a finding in the coordinator
+	msg, _ := agentmsg.NewMessage(h.runID, agentmsg.KindFinding, agentmsg.Party{TaskID: "task-1"}, agentmsg.Party{}, `{"tool_name":"run_command","argv":["make","verify"],"exit_code":0}`, nil, agentmsg.Options{})
+	_ = h.coord.PostTaskMessage(ctx, h.runID, "task-1", msg)
+	return h.out, nil
+}
+
+func TestCoordinatorRunner_EvidenceCrossCheck_Success(t *testing.T) {
+	report := json.RawMessage(`{"output": {"report": "# Agent Report\n\nFormat: mivia-report/v1\n\n## Evidence\n\n- make verify: PASS\n"}, "status": "completed"}`)
+	d := runtime.New(runtime.Policy{})
+	h := &evidencePostingHandler{out: report}
+	if err := d.Register(runtime.Subagent, "agent", h); err != nil {
+		t.Fatal(err)
+	}
+	p := subagents.New(d, subagents.Policy{Workers: 1})
+	coord := coordinator.New(ledger.NewMemoryLedgerRepository(), p)
+	h.coord = coord
+	runner := NewCoordinatorRunner(coord)
+
+	spec := validStepRequest()
+	spec.OutputSchema = nil
+	spec.CoordinatorRunID = coordinator.NewRunID()
+	h.runID = spec.CoordinatorRunID
+	got, err := runner.RunStep(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("expected RunStep to pass with recorded tool execution, got: %v", err)
+	}
+	if got.Status != "completed" {
+		t.Fatalf("status = %q, want completed", got.Status)
 	}
 }
