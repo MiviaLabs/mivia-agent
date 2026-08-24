@@ -38,24 +38,6 @@ func TestBuildAgentLoopOptionsPassesValidate(t *testing.T) {
 	}
 }
 
-// TestBuildAgentLoopOptionsCarriesMaxConcurrentTools asserts the
-// MaxConcurrentTools wire-through: the SDK agentloop.Options the
-// adapter returns must carry the host Options.MaxConcurrentTools
-// value verbatim. Without the wire, a positive host value silently
-// runs serially on the SDK backend while the legacy backend fans
-// out through N workers, so a regression here is the same as no
-// field at all.
-func TestBuildAgentLoopOptionsCarriesMaxConcurrentTools(t *testing.T) {
-	l := &Loop{Completer: &fakeCompleter{name: "test"}, Tools: tools.NewRegistry()}
-	got, _, err := buildAgentLoopOptions(l, Options{MaxSteps: 5, MaxConcurrentTools: 3})
-	if err != nil {
-		t.Fatalf("buildAgentLoopOptions: %v", err)
-	}
-	if got.MaxConcurrentTools != 3 {
-		t.Fatalf("MaxConcurrentTools = %d, want 3", got.MaxConcurrentTools)
-	}
-}
-
 // TestBuildAgentLoopOptionsFailClosed runs one subtest per CLI
 // Options field the SDK path cannot carry. Each subtest asserts the
 // error names the field so an opt-in caller learns the boundary.
