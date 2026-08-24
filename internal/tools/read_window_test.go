@@ -363,3 +363,51 @@ func TestReadFileWindowCollectionBoundedByBudget(t *testing.T) {
 		t.Fatalf("result len=%d exceeds maxBytes+256 framing slack", len(out))
 	}
 }
+
+func TestReadFileActionableTruncationGuidance(t *testing.T) {
+	ws, _ := setupWS(t)
+	var b strings.Builder
+	for i := 1; i <= 30; i++ {
+		fmt.Fprintf(&b, "row-%02d: detailed payload\n", i)
+	}
+	if err := os.WriteFile(filepath.Join(ws.Abs, "pages.txt"), []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reg := NewDefaultRegistry(DefaultOptions{
+		Workspace:    ws,
+		MaxReadBytes: 150,
+	})
+
+	// First page read
+	out1, err := reg.Execute(context.Background(), "read_file",
+		json.RawMessage(`{"path":"pages.txt","offset":1,"limit":30}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out1, "Call read_file with offset=") {
+		t.Fatalf("expected actionable next call offset hint: %q", out1)
+	}
+
+	// Parse next offset from notice
+	idx := strings.Index(out1, "offset=")
+	if idx == -1 {
+		t.Fatalf("could not find offset= in %q", out1)
+	}
+	var nextOffset int
+	if _, err := fmt.Sscanf(out1[idx:], "offset=%d", &nextOffset); err != nil {
+		t.Fatalf("failed to parse offset from %q: %v", out1[idx:], err)
+	}
+	if nextOffset <= 1 {
+		t.Fatalf("next offset must be > 1, got %d", nextOffset)
+	}
+
+	// Follow continuation
+	out2, err := reg.Execute(context.Background(), "read_file",
+		json.RawMessage(fmt.Sprintf(`{"path":"pages.txt","offset":%d,"limit":30}`, nextOffset)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(out2, fmt.Sprintf("… lines %d–", nextOffset)) {
+		t.Fatalf("page 2 header must start with nextOffset %d: %q", nextOffset, out2)
+	}
+}

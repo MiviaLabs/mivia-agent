@@ -218,7 +218,9 @@ func (t *readFileTool) formatWindow(lines []string, offset, totalLines int) (str
 			if b.Len() == 0 {
 				return "", fmt.Errorf("line %d exceeds max read size (%d bytes)", num, t.maxBytes)
 			}
-			fmt.Fprintf(&b, "\n... truncated at max read size (%d bytes)", t.maxBytes)
+			lastNum := offset + formatted - 1
+			nextOffset := offset + formatted
+			fmt.Fprintf(&b, "\n... truncated at max read size (%d bytes; line %d of %d). Call read_file with offset=%d to read the next window", t.maxBytes, lastNum, totalLines, nextOffset)
 			break
 		}
 		if b.Len() > 0 {
