@@ -49,6 +49,14 @@ func (r *ValidationReport) SummaryNotice() string {
 	return strings.TrimSpace(sb.String())
 }
 
+// Error returns an error if the report contains unexecuted or failed PASS claims.
+func (r *ValidationReport) Error() error {
+	if r.Valid && len(r.UnexecutedClaims) == 0 && len(r.FailedClaims) == 0 {
+		return nil
+	}
+	return fmt.Errorf("evidence verification failed:\n%s", r.SummaryNotice())
+}
+
 // Validate cross-checks extracted claims against recorded tool executions.
 func Validate(claims []Claim, history []ToolExecutionRecord) ValidationReport {
 	report := ValidationReport{
@@ -100,7 +108,7 @@ func findMatchingExecution(claim Claim, history []ToolExecutionRecord) (ToolExec
 		return ToolExecutionRecord{}, false
 	}
 
-	// Try exact match, then sub-command match from latest to earliest execution
+	// Try match from latest to earliest execution
 	for i := len(history) - 1; i >= 0; i-- {
 		rec := history[i]
 		if rec.ToolName != "run_command" && rec.ToolName != "" {
@@ -127,14 +135,27 @@ func normalizeArgv(argv []string) []string {
 		if cleaned == "" {
 			continue
 		}
-		// If argument contains sub-invocations like "bash -c 'make verify'"
-		if (cleaned == "bash" || cleaned == "sh") && len(argv) >= 3 && argv[1] == "-c" {
+		base := filepath.Base(cleaned)
+		if (base == "bash" || base == "sh" || base == "zsh") && len(argv) >= 3 && argv[1] == "-c" {
 			subArgs := strings.Fields(strings.Trim(strings.Join(argv[2:], " "), "`'\""))
 			return normalizeArgv(subArgs)
 		}
 		out = append(out, cleaned)
 	}
 	return out
+}
+
+func isDryRunFlag(arg string) bool {
+	return arg == "-n" || arg == "--dry-run" || arg == "-dry-run" || arg == "-list"
+}
+
+func firstSubcommand(args []string) string {
+	for _, a := range args {
+		if !strings.HasPrefix(a, "-") {
+			return a
+		}
+	}
+	return ""
 }
 
 func matchesArgv(claim, executed []string) bool {
@@ -148,37 +169,62 @@ func matchesArgv(claim, executed []string) bool {
 
 	if claimProg != execProg && !strings.EqualFold(claimProg, execProg) {
 		// Handle python/python3 interchangeability
-		if strings.HasPrefix(claimProg, "python") && strings.HasPrefix(execProg, "python") {
+		if (claimProg == "python" || claimProg == "python3") && (execProg == "python" || execProg == "python3") {
 			// matches
 		} else {
 			return false
 		}
 	}
 
-	if len(claim) == 1 && len(executed) == 1 {
-		return true
-	}
-
-	// Check if claim arguments are a prefix or subset of executed arguments
 	claimArgs := claim[1:]
 	execArgs := executed[1:]
 
-	// If claim is "make verify" and executed is "make verify", exact match
-	if len(claimArgs) <= len(execArgs) {
-		matchedAll := true
-		for i, ca := range claimArgs {
-			if !strings.EqualFold(ca, execArgs[i]) && filepath.Base(ca) != filepath.Base(execArgs[i]) {
-				matchedAll = false
+	if len(claimArgs) == 0 && len(execArgs) == 0 {
+		return true
+	}
+
+	// Reject dry-run / listing flags in executed command if claim did not ask for dry-run
+	claimHasDryRun := false
+	for _, ca := range claimArgs {
+		if isDryRunFlag(ca) {
+			claimHasDryRun = true
+			break
+		}
+	}
+	if !claimHasDryRun {
+		for _, ea := range execArgs {
+			if isDryRunFlag(ea) {
+				return false
+			}
+		}
+	}
+
+	// Subcommand anchoring: the primary non-flag subcommand of claim must match the primary subcommand of executed
+	claimSub := firstSubcommand(claimArgs)
+	execSub := firstSubcommand(execArgs)
+	if claimSub != "" && execSub != "" && !strings.EqualFold(claimSub, execSub) && filepath.Base(claimSub) != filepath.Base(execSub) {
+		return false
+	}
+
+	if len(claimArgs) > len(execArgs) {
+		return false
+	}
+
+	// Match argument tokens
+	for i := 0; i <= len(execArgs)-len(claimArgs); i++ {
+		match := true
+		for j := 0; j < len(claimArgs); j++ {
+			ca := claimArgs[j]
+			ea := execArgs[i+j]
+			if !strings.EqualFold(ca, ea) && filepath.Base(ca) != filepath.Base(ea) {
+				match = false
 				break
 			}
 		}
-		if matchedAll {
+		if match {
 			return true
 		}
 	}
 
-	// Substring / token matching for multi-word invocations
-	claimStr := strings.Join(claim, " ")
-	execStr := strings.Join(executed, " ")
-	return strings.Contains(execStr, claimStr) || strings.Contains(claimStr, execStr)
+	return false
 }

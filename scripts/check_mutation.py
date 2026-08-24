@@ -18,6 +18,7 @@ readiness table; it never ran a mutation.
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
 import re
 import signal
@@ -216,12 +217,23 @@ def sweep(pkg: str, sample: int = None, denylist_dir: Path = DENYLIST_DIR) -> di
     sites = collect_sites(pkg, denylist_dir)
     if sample is not None:
         sites = sites[:sample]
+    # Snapshot all target file bytes BEFORE any mutation is applied
     originals: dict[Path, bytes] = {}
+    for site in sites:
+        if site.path not in originals:
+            originals[site.path] = site.path.read_bytes()
+
+    def restore_all() -> None:
+        for path, original in originals.items():
+            try:
+                path.write_bytes(original)
+            except Exception:
+                pass
+
+    atexit.register(restore_all)
     killed = survived = discarded = 0
     try:
         for site in sites:
-            if site.path not in originals:
-                originals[site.path] = site.path.read_bytes()
             outcome = run_mutant(site, originals[site.path], pkg, str(pkg_dir))
             if outcome == KILLED:
                 killed += 1
@@ -234,19 +246,21 @@ def sweep(pkg: str, sample: int = None, denylist_dir: Path = DENYLIST_DIR) -> di
             else:
                 discarded += 1
     finally:
-        for path, original in originals.items():
-            path.write_bytes(original)
+        restore_all()
+        try:
+            atexit.unregister(restore_all)
+        except Exception:
+            pass
     total = killed + survived
     rate = 100.0 * killed / total if total else 100.0
     return {"killed": killed, "survived": survived, "discarded": discarded, "rate": rate}
 
 
-def resolve_floor(pkg: str, cli_floor=None, denylist_dir: Path | None = None):
+def resolve_floor(pkg: str, cli_floor=None, denylist_dir: Path | None = None) -> float | None:
     """resolve_floor honors a CLI --floor for one run only; otherwise it
-    reads the package's own stored floor, or None if it has none yet."""
-    if cli_floor is not None:
-        return cli_floor
-    val = load_denylist(pkg, denylist_dir).get("floor")
+    reads the package's own stored floor, or None if it has none yet.
+    Normalizes fractional floors (e.g. 0.75) to percentages (75.0)."""
+    val = cli_floor if cli_floor is not None else load_denylist(pkg, denylist_dir).get("floor")
     if val is not None:
         try:
             f = float(val)
@@ -254,7 +268,7 @@ def resolve_floor(pkg: str, cli_floor=None, denylist_dir: Path | None = None):
                 return f * 100.0
             return f
         except (ValueError, TypeError):
-            return val
+            return None
     return None
 
 
@@ -572,12 +586,22 @@ def main() -> int:
 
     if args.check_floors:
         configured = []
+        known_pkgs = recognized_packages()
         if POLICY_MUTATION_DIR.is_dir():
             for p in POLICY_MUTATION_DIR.glob("*.json"):
                 try:
                     data = json.loads(p.read_text(encoding="utf-8"))
                     if data.get("floor") is not None:
-                        configured.append(p.stem.replace("_", "/"))
+                        pkg = data.get("package")
+                        if not pkg:
+                            stem = p.stem
+                            for kp in known_pkgs:
+                                if kp.replace("/", "_") == stem:
+                                    pkg = kp
+                                    break
+                        if not pkg:
+                            pkg = p.stem.replace("_", "/")
+                        configured.append(pkg)
                 except Exception:
                     continue
         if not configured:
@@ -585,6 +609,10 @@ def main() -> int:
             return 0
         failed = False
         for pkg in sorted(configured):
+            if pkg not in known_pkgs or not (ROOT / pkg).is_dir():
+                print(f"check_mutation: invalid or missing package directory for {pkg}", file=sys.stderr)
+                failed = True
+                continue
             try:
                 result = sweep(pkg, args.sample)
             except MutationError as exc:

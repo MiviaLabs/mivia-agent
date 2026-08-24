@@ -221,7 +221,7 @@ func TestBuildClaim_HeaderFiltering(t *testing.T) {
 	}
 }
 
-func TestNormalizeArgv_And_MatchesArgv(t *testing.T) {
+func TestNormalizeArgv(t *testing.T) {
 	// Normalize empty
 	if len(normalizeArgv(nil)) != 0 {
 		t.Error("expected empty")
@@ -242,6 +242,14 @@ func TestNormalizeArgv_And_MatchesArgv(t *testing.T) {
 		t.Errorf("expected normalized sh wrapper, got %v", shWrapped)
 	}
 
+	// /usr/bin/zsh wrapper
+	zshWrapped := normalizeArgv([]string{"/usr/bin/zsh", "-c", "cargo test"})
+	if len(zshWrapped) != 2 || zshWrapped[0] != "cargo" || zshWrapped[1] != "test" {
+		t.Errorf("expected normalized zsh wrapper, got %v", zshWrapped)
+	}
+}
+
+func TestMatchesArgv_Basic(t *testing.T) {
 	// matchesArgv empty
 	if matchesArgv(nil, []string{"make"}) != false {
 		t.Error("expected false for empty claim")
@@ -254,10 +262,16 @@ func TestNormalizeArgv_And_MatchesArgv(t *testing.T) {
 	if matchesArgv([]string{"make"}, []string{"pytest"}) != false {
 		t.Error("expected false for program mismatch")
 	}
+	if matchesArgv([]string{"./custom_python_tool", "run"}, []string{"./other_tool", "run"}) != false {
+		t.Error("expected false for non-matching binary")
+	}
 
 	// python variations
 	if matchesArgv([]string{"python", "test.py"}, []string{"python3", "test.py"}) != true {
 		t.Error("expected python and python3 to match")
+	}
+	if matchesArgv([]string{"python3", "test.py"}, []string{"python", "test.py"}) != true {
+		t.Error("expected python3 and python to match")
 	}
 
 	// Single token match
@@ -270,15 +284,84 @@ func TestNormalizeArgv_And_MatchesArgv(t *testing.T) {
 		t.Error("expected path base and case insensitive match")
 	}
 
-	// Substring match
+	// Substring / token match
 	if matchesArgv([]string{"go", "test", "-race"}, []string{"go", "test", "-race", "./..."}) != true {
 		t.Error("expected substring match")
 	}
 }
 
-func TestSummaryNotice_EmptyOnValid(t *testing.T) {
+func TestMatchesArgv_Security(t *testing.T) {
+	// Explicit dry-run match: when claim explicitly has dry-run flag
+	if matchesArgv([]string{"make", "-n", "verify"}, []string{"make", "-n", "verify"}) != true {
+		t.Error("expected explicit dry-run match")
+	}
+
+	// Leading flags in claim and executed
+	if matchesArgv([]string{"go", "-v", "test"}, []string{"go", "-v", "test", "./..."}) != true {
+		t.Error("expected leading flag match")
+	}
+
+	// Exact token vs partial prefix token: make verify must NOT match make verify-agent or make verify-fast
+	if matchesArgv([]string{"make", "verify"}, []string{"make", "verify-agent"}) != false {
+		t.Error("expected make verify NOT to match make verify-agent")
+	}
+	if matchesArgv([]string{"make", "verify"}, []string{"make", "verify-fast"}) != false {
+		t.Error("expected make verify NOT to match make verify-fast")
+	}
+
+	// Dry run rejection: make -n verify must NOT satisfy make verify
+	if matchesArgv([]string{"make", "verify"}, []string{"make", "-n", "verify"}) != false {
+		t.Error("expected dry-run make -n verify NOT to satisfy make verify")
+	}
+
+	// Claim has more arguments than executed
+	if matchesArgv([]string{"make", "verify", "extra", "flag"}, []string{"make", "verify"}) != false {
+		t.Error("expected false when claim has more arguments than executed")
+	}
+
+	// Argument token mismatch inside loop
+	if matchesArgv([]string{"make", "build"}, []string{"make", "clean"}) != false {
+		t.Error("expected false when arguments do not match")
+	}
+
+	// Loop exhaustion with no match
+	if matchesArgv([]string{"go", "test", "pkg1"}, []string{"go", "test", "pkg2", "pkg3"}) != false {
+		t.Error("expected false when argument subsequence is not found")
+	}
+
+	// Subcommand mismatch: git commit -m "status" must NOT satisfy git status
+	if matchesArgv([]string{"git", "status"}, []string{"git", "commit", "-m", "status"}) != false {
+		t.Error("expected git commit NOT to satisfy git status")
+	}
+}
+
+func TestSummaryNotice_And_Error(t *testing.T) {
 	rep := ValidationReport{Valid: true}
 	if rep.SummaryNotice() != "" {
 		t.Errorf("expected empty notice on valid report, got %q", rep.SummaryNotice())
+	}
+	if err := rep.Error(); err != nil {
+		t.Errorf("expected nil error on valid report, got %v", err)
+	}
+
+	invalidRep := ValidationReport{
+		Valid: false,
+		UnexecutedClaims: []Claim{
+			{Command: "make verify", ClaimedVerdict: "PASS"},
+		},
+	}
+	if err := invalidRep.Error(); err == nil {
+		t.Error("expected non-nil error on invalid report")
+	}
+
+	// Fail closed if Valid is true but slices have entries
+	inconsistentRep := ValidationReport{
+		Valid: true,
+		UnexecutedClaims: []Claim{
+			{Command: "make verify", ClaimedVerdict: "PASS"},
+		},
+	}
+	if err := inconsistentRep.Error(); err == nil {
+		t.Error("expected non-nil error on inconsistent report")
 	}
 }
