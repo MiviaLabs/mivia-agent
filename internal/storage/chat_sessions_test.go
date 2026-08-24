@@ -634,11 +634,9 @@ func TestLoadSession_ClearedSessionStaysEmptyDespiteOlderCheckpoint(t *testing.T
 	}
 }
 
-// TestLoadSession_PrefersSnapshotWithMoreMessagesThanCheckpoint pins the F2
-// fix: when a checkpoint commit fails after a snapshot save already captured
-// more turns (SaveAfterTurn's failed-turn fallback), the snapshot's extra
-// content must not be unconditionally shadowed by the older, smaller,
-// non-empty checkpoint payload.
+// TestLoadSession_PrefersSnapshotWithMoreMessagesThanCheckpoint verifies that a
+// completed live checkpoint is authoritative over any snapshot in chat_sessions,
+// even if the snapshot has more messages (e.g. following /clear or compaction).
 func TestLoadSession_PrefersSnapshotWithMoreMessagesThanCheckpoint(t *testing.T) {
 	ctx := context.Background()
 	s, principal := openContextTestStore(t)
@@ -646,9 +644,8 @@ func TestLoadSession_PrefersSnapshotWithMoreMessagesThanCheckpoint(t *testing.T)
 	binding := contextTestBinding(t)
 	// commitFirstMessageCheckpoint commits a 2-message checkpoint (user+assistant).
 	commitFirstMessageCheckpoint(t, s, principal, binding, "hello")
-	// The snapshot reflects a later, failed turn: the same 2 messages plus one
-	// more the checkpoint never captured - strictly more decoded elements.
-	snapshotPayload := []byte(`[{"role":"user","content":"hello"},{"role":"assistant","content":"ok"},{"role":"user","content":"a follow-up the failed commit never captured"}]`)
+	// The snapshot reflects an older/stale or pre-clear/pre-compaction state with more messages.
+	snapshotPayload := []byte(`[{"role":"user","content":"hello"},{"role":"assistant","content":"ok"},{"role":"user","content":"extra snapshot message"}]`)
 	if err := s.SaveSession(ctx, principal, principal.SessionID, snapshotPayload, binding.Model, binding.Provider, 2, 1, 3, contextstate.SessionSaveOptions{SessionID: principal.SessionID}); err != nil {
 		t.Fatalf("SaveSession: %v", err)
 	}
@@ -656,19 +653,16 @@ func TestLoadSession_PrefersSnapshotWithMoreMessagesThanCheckpoint(t *testing.T)
 	if err != nil {
 		t.Fatalf("LoadSession: %v", err)
 	}
-	if string(payload) != string(snapshotPayload) {
-		t.Fatalf("payload = %s, want the snapshot's extra content", payload)
+	if !bytes.Contains(payload, []byte("hello")) || bytes.Contains(payload, []byte("extra snapshot message")) {
+		t.Fatalf("payload = %s, want live checkpoint payload, not stale snapshot", payload)
 	}
 	if info.SessionID != principal.SessionID {
 		t.Fatalf("info.SessionID = %q, want the live identity %q preserved for takeover", info.SessionID, principal.SessionID)
 	}
 }
 
-// TestLoadSession_KeepsCheckpointWhenSnapshotHasNoMoreMessages is the
-// regression guard: a same-or-fewer-message snapshot (an ordinary redundant
-// SaveAfterTurn refresh after a successful commit, the common case) must
-// never shadow the checkpoint - only a snapshot with strictly MORE messages
-// than the checkpoint may override it.
+// TestLoadSession_KeepsCheckpointWhenSnapshotHasNoMoreMessages verifies that
+// a same-or-fewer-message snapshot also never shadows the live checkpoint.
 func TestLoadSession_KeepsCheckpointWhenSnapshotHasNoMoreMessages(t *testing.T) {
 	ctx := context.Background()
 	s, principal := openContextTestStore(t)

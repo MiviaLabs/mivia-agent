@@ -141,10 +141,10 @@ func (s *Session) sessionSaveOptions() contextstate.SessionSaveOptions {
 // binding: context binding changed" once a synthetic Completer worked
 // around the first failure) - the raw messages were never actually lost,
 // this path just couldn't reach them without behaving like a live resume.
-func (s *Session) loadContextCatalog(name string, readOnly bool) (bool, error) {
+func (s *Session) fetchCatalogSessionData(name string) ([]byte, contextstate.SessionCatalogInfo, contextstate.Principal, error) {
 	catalog, principal, ok := s.contextCatalogState()
 	if !ok {
-		return false, fmt.Errorf("context session catalog is not configured")
+		return nil, contextstate.SessionCatalogInfo{}, contextstate.Principal{}, fmt.Errorf("context session catalog is not configured")
 	}
 	s.mu.RLock()
 	instance := s.contextWorktree
@@ -155,16 +155,51 @@ func (s *Session) loadContextCatalog(name string, readOnly bool) (bool, error) {
 	if !instance.IsZero() {
 		scoped, ok := catalog.(contextstate.WorktreeSessionCatalog)
 		if !ok {
-			return false, fmt.Errorf("worktree session catalog is not configured")
+			return nil, contextstate.SessionCatalogInfo{}, contextstate.Principal{}, fmt.Errorf("worktree session catalog is not configured")
 		}
 		data, info, err = scoped.LoadWorktreeSession(context.Background(), principal, name, instance)
 	} else {
 		data, info, err = catalog.LoadSession(context.Background(), principal, name)
 	}
 	if err != nil {
-		return false, fmt.Errorf("load session %q: %w", name, err)
+		return nil, contextstate.SessionCatalogInfo{}, contextstate.Principal{}, fmt.Errorf("load session %q: %w", name, err)
+	}
+	return data, info, principal, nil
+}
+
+func (s *Session) loadContextCatalog(name string, readOnly bool) (bool, error) {
+	data, info, principal, err := s.fetchCatalogSessionData(name)
+	if err != nil {
+		return false, err
 	}
 	isContextSession := info.SessionID != ""
+	// Decode messages FIRST before attempting any reclaim or binding mutation,
+	// so a corrupted payload fails immediately without side effects.
+	msgs, err := decodeCatalogMessages(data)
+	if err != nil {
+		return false, err
+	}
+	if readOnly {
+		token := s.captureOperationToken("catalog-load:" + name)
+		return isContextSession, s.adoptLoadedMessages(token, msgs)
+	}
+
+	// Validate / prepare the model binding before reclaiming ownership in SQLite,
+	// so an unconfigured provider or invalid model fails closed before ownership is transferred.
+	factory := s.bindingFactorySnapshot()
+	var preparedBinding *ModelBinding
+	selection := s.CurrentSelection()
+	needsReclaim := isContextSession && info.SessionID != principal.SessionID
+	needsBindingChange := needsReclaim || selection.ProviderName != info.Provider || selection.Model != info.Model
+
+	if factory != nil && needsBindingChange {
+		binding, err := factory(info.Provider, info.Model)
+		if err != nil {
+			return false, fmt.Errorf("prepare session binding: %w", err)
+		}
+		preparedBinding = &binding
+	}
+
 	// A loaded live context session's history now sits in memory, but every
 	// commit still authorizes against s.contextPrincipal - which, until this
 	// point, is still the fresh principal this process minted at startup for
@@ -175,24 +210,29 @@ func (s *Session) loadContextCatalog(name string, readOnly bool) (bool, error) {
 	// instead of one record whose turn count grew. Reclaiming the loaded
 	// session's ownership before adopting its messages closes that gap.
 	var reclaimedBinding *contextstate.BindingRevision
-	if !readOnly && isContextSession && info.SessionID != principal.SessionID {
+	if needsReclaim {
 		binding, err := s.reclaimContextSession(info.SessionID)
 		if err != nil {
+			if preparedBinding != nil && preparedBinding.Dispatcher != nil {
+				preparedBinding.Dispatcher.Close()
+			}
 			return false, fmt.Errorf("resume session %q: %w", name, err)
 		}
 		reclaimedBinding = &binding
 	}
-	msgs, err := decodeCatalogMessages(data)
-	if err != nil {
-		return false, err
-	}
-	if readOnly {
-		token := s.captureOperationToken("catalog-load:" + name)
-		return isContextSession, s.adoptLoadedMessages(token, msgs)
-	}
-	factory := s.bindingFactorySnapshot()
+
 	if factory != nil {
-		return s.reconcileCatalogBinding(name, info, msgs, factory, reclaimedBinding)
+		if preparedBinding == nil {
+			token := s.captureOperationToken("catalog-load:" + name)
+			return isContextSession, s.adoptLoadedMessages(token, msgs)
+		}
+		var generation *uint64
+		if reclaimedBinding != nil {
+			g := reclaimedBinding.Generation
+			generation = &g
+		}
+		token := s.captureOperationToken("catalog-load:" + name)
+		return isContextSession, s.publishLoadedSession(token, *preparedBinding, msgs, generation)
 	}
 	token := s.captureOperationToken("catalog-load:" + name)
 	return isContextSession, s.publishLoadedMessages(token, msgs, info.Model)

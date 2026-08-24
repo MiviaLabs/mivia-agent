@@ -131,8 +131,8 @@ func TestLoadSessionProjectionResolvesLivePayload(t *testing.T) {
 }
 
 // TestLoadSessionProjectionWithoutCheckpointKeepsIdentity: a projection whose
-// live session exists but has no completed checkpoint serves the snapshot
-// payload while preserving the live identity (id is id) and title, so the
+// live session exists but has no completed checkpoint serves the empty live payload
+// while preserving the live identity (id is id) and title, so the
 // caller still recognizes a live session to take over.
 func TestLoadSessionProjectionWithoutCheckpointKeepsIdentity(t *testing.T) {
 	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
@@ -159,14 +159,136 @@ func TestLoadSessionProjectionWithoutCheckpointKeepsIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(payload) != string(snapshot) {
-		t.Fatalf("payload = %q, want the snapshot %q (no completed checkpoint)", payload, snapshot)
+	if string(payload) != string(emptyContextPayload) {
+		t.Fatalf("payload = %q, want empty live context payload %q (no completed checkpoint)", payload, emptyContextPayload)
 	}
 	if info.SessionID != principal.SessionID {
 		t.Fatalf("info.SessionID = %q, want %q (identity preserved)", info.SessionID, principal.SessionID)
 	}
 	if info.Title != "my title" {
 		t.Fatalf("info.Title = %q, want the live title %q", info.Title, "my title")
+	}
+}
+
+// TestLoadSessionProjectionAfterClearAndShrink: a session whose live checkpoint
+// shrinks (e.g. after /clear followed by a smaller 1-message turn) serves the
+// live checkpoint payload rather than a stale pre-clear snapshot with more messages.
+func TestLoadSessionProjectionAfterClearAndShrink(t *testing.T) {
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	principal, err := contextstate.NewPrincipal("workspace", "live-shrink-1", "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := contextTestBinding(t)
+	commitFirstMessageCheckpoint(t, store, principal, binding, "first message before clear")
+
+	// Snapshot carries 3 messages (pre-clear)
+	snapshot := []byte(`[{"role":"user","content":"msg1"},{"role":"assistant","content":"msg2"},{"role":"user","content":"msg3"}]`)
+	if err := store.SaveSession(ctx, principal, principal.SessionID, snapshot, "model", "provider", 3, 3, 3, contextstate.SessionSaveOptions{SessionID: principal.SessionID}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Now clear the session (ClearActive)
+	snap, err := store.Load(ctx, principal, principal.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Advance(ctx, contextstate.AdvanceRequest{
+		Principal:         principal,
+		SessionID:         principal.SessionID,
+		OperationID:       "op-clear-1",
+		Expected:          snap.Revision,
+		NewSession:        snap.Revision.Session + 1,
+		NewDurable:        snap.Revision.Durable + 1,
+		NewSourceSequence: snap.Revision.Source,
+		ExpectedBinding:   snap.Binding,
+		NewBinding:        snap.Binding,
+		ClearActive:       true,
+		Reason:            "clear",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Immediately after /clear, LoadSession must serve empty payload, not the 3-message snapshot
+	payload, info, err := store.LoadSession(ctx, principal, principal.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(payload) != string(emptyContextPayload) {
+		t.Fatalf("payload after clear = %q, want %q", payload, emptyContextPayload)
+	}
+	if info.SessionID != principal.SessionID {
+		t.Fatalf("info.SessionID = %q, want %q", info.SessionID, principal.SessionID)
+	}
+
+	// Commit a new single-message turn post-clear (shorter than the 3-message pre-clear snapshot)
+	commitPostClearSingleMessage(t, store, principal, binding, "post clear question")
+
+	// Even though chat_sessions snapshot STILL carries 3 messages (simulating lagging catalog auto-save),
+	// LoadSession must serve the post-clear checkpoint (1 message), NOT the 3-message snapshot!
+	payload, info, err = store.LoadSession(ctx, principal, principal.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(payload, []byte("post clear question")) {
+		t.Fatalf("payload = %q, want post-clear turn checkpoint payload, got stale snapshot", payload)
+	}
+	if info.SessionID != principal.SessionID {
+		t.Fatalf("info.SessionID = %q, want %q", info.SessionID, principal.SessionID)
+	}
+}
+
+func commitPostClearSingleMessage(t *testing.T, store *SQLite, principal contextstate.Principal, binding contextstate.BindingRevision, content string) {
+	t.Helper()
+	ctx := context.Background()
+	snapAfterClear, err := store.Load(ctx, principal, principal.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newTurnPayload, err := contextstate.MarshalCanonical([]map[string]string{
+		{"role": "user", "content": content},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sequence := snapAfterClear.Revision.Source + 1
+	sourceID, err := contextstate.NewSourceID(principal.SessionID, sequence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rng, err := contextstate.NewSourceRange(sourceID, sourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpointID, err := contextstate.NewCheckpointID(principal.SessionID, rng, "context-compact-v1", 1, binding.Model, "post-clear-turn")
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint := contextstate.CheckpointRecord{
+		ID:              checkpointID,
+		Revision:        contextstate.Revision{Session: snapAfterClear.Revision.Session + 1, Durable: snapAfterClear.Revision.Durable + 1, Source: sequence},
+		Binding:         snapAfterClear.Binding,
+		SourceRange:     rng,
+		ActiveContext:   newTurnPayload,
+		SummaryMetadata: []byte(`{"version":1}`),
+		TurnID:          2,
+	}
+	event := contextstate.SourceEvent{ID: sourceID, Kind: "message", Role: "user", Provenance: "test", RedactionStatus: "metadata", Size: len(content)}
+	req, err := contextstate.NewCommitRequest(principal, principal.SessionID, snapAfterClear.Revision, snapAfterClear.Binding, []contextstate.SourceEvent{event}, checkpoint, newTurnPayload, snapAfterClear.Binding, sequence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Fingerprint, err = contextstate.FingerprintCommitRequest(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Commit(ctx, req); err != nil {
+		t.Fatal(err)
 	}
 }
 

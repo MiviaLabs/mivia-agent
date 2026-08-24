@@ -53,6 +53,9 @@ func (s *Session) resetSystem() error {
 		s.contextHead = contextstate.Revision{Session: contextExpected.Session + 1, Durable: contextExpected.Durable + 1, Source: contextExpected.Source}
 	}
 	s.mu.Unlock()
+	if contextEnabled {
+		s.autoSaveContextSession()
+	}
 	return nil
 }
 

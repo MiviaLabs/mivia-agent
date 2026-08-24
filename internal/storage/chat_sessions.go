@@ -3,7 +3,6 @@ package storage
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -152,8 +151,6 @@ func (s *SQLite) LoadSession(ctx context.Context, principal contextstate.Princip
 
 // resolveProjection decides whether a chat_sessions projection row (name is a
 // live context session's own id) serves its live checkpoint or its snapshot.
-// See snapshotHasMoreMessages for why message count, not recency, is the
-// deciding signal.
 func (s *SQLite) resolveProjection(ctx context.Context, principal contextstate.Principal, catalogSessionID string, payload []byte, info contextstate.SessionCatalogInfo) ([]byte, contextstate.SessionCatalogInfo, error) {
 	live, livePayload, hasLive, err := s.loadLiveContextSession(ctx, principal, catalogSessionID)
 	if err != nil {
@@ -161,58 +158,17 @@ func (s *SQLite) resolveProjection(ctx context.Context, principal contextstate.P
 	}
 	// A projection's transcript lives in its completed context checkpoints;
 	// the chat_sessions row is only a catalog projection of that state,
-	// refreshed by SaveAfterTurn on its own schedule. A projection that lags
-	// the checkpoints must not shadow the newer state, so the completed live
-	// payload wins UNLESS the snapshot demonstrably carries more messages than
-	// the checkpoint (a checkpoint commit that failed after a snapshot save
-	// already captured a later turn).
-	if hasLive && len(livePayload) > len(emptyContextPayload) && !snapshotHasMoreMessages(livePayload, payload) {
-		return livePayload, live, nil
-	}
+	// refreshed by SaveAfterTurn on its own schedule. When a live context
+	// session exists (hasLive == true), its live checkpoint state is authoritative:
+	// either a completed checkpoint payload or emptyContextPayload ("[]")
+	// when never turned or explicitly cleared (/clear).
 	if hasLive {
-		// The live session exists but has no completed checkpoint (a cleared
-		// or never-turned session): serve the snapshot, preserving the live
-		// identity (id is id) so the caller still recognizes a live session
-		// to take over instead of forking a new one.
-		info.SessionID = catalogSessionID
-		info.Title = live.Title
-		return append([]byte(nil), payload...), info, nil
+		return livePayload, live, nil
 	}
 	// The live row is gone (tombstoned or deleted): the projection is now a
 	// plain copy.
 	info.SessionID = ""
 	return append([]byte(nil), payload...), info, nil
-}
-
-// snapshotHasMoreMessages reports whether snapshotPayload decodes to strictly
-// more top-level JSON array elements than livePayload. Both are canonical
-// message-array encodings in real production writes (contextmgr's
-// MarshalCanonical(result.Active) for a checkpoint, catalogMessages(msgs) for
-// a snapshot), so element count is a direct, hard-to-spoof measure of
-// captured conversational content - unlike a timestamp (recency alone can't
-// tell a same-content refresh from real divergence) or chat_sessions'
-// caller-supplied message_count column (recorded, not derived, so it is not
-// authoritative). Either side failing to decode as an array defaults to
-// false so the checkpoint keeps winning, matching today's behavior rather
-// than guessing.
-func snapshotHasMoreMessages(livePayload, snapshotPayload []byte) bool {
-	liveCount, err := jsonArrayLen(livePayload)
-	if err != nil {
-		return false
-	}
-	snapshotCount, err := jsonArrayLen(snapshotPayload)
-	if err != nil {
-		return false
-	}
-	return snapshotCount > liveCount
-}
-
-func jsonArrayLen(data []byte) (int, error) {
-	var elements []json.RawMessage
-	if err := json.Unmarshal(data, &elements); err != nil {
-		return 0, err
-	}
-	return len(elements), nil
 }
 
 // emptyContextPayload is the COALESCE default the live-row query serves when
