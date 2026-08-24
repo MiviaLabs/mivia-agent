@@ -523,3 +523,18 @@ func TestMentionMenuViewAndScrolling(t *testing.T) {
 		t.Errorf("AcceptMention on inactive menu modified text: %q", m.Value())
 	}
 }
+
+func TestActiveMenuView_MentionMenu(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII, 80)
+	m.SetMentions([]Mention{{Path: "main.go", Desc: "entrypoint"}})
+	m.SetValue("@ma")
+	if !m.MentionMenuActive() {
+		t.Fatal("expected mention menu active")
+	}
+	if rows := m.MenuRows(); rows == 0 {
+		t.Errorf("expected non-zero MenuRows for active mention menu")
+	}
+	if view := m.View(); !strings.Contains(view, "main.go") {
+		t.Errorf("expected View to contain mention entry main.go, got:\n%s", view)
+	}
+}

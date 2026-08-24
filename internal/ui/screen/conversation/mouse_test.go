@@ -212,3 +212,25 @@ func TestConversationViewFlagsHoldAltScreen(t *testing.T) {
 		t.Error("the conversation screen must hold the alternate screen")
 	}
 }
+
+func TestClickOnSplitPanelRightNavIgnored(t *testing.T) {
+	s := toolScreen(t)
+	s.width = uikitconfig.BreakpointWide + 20
+	s.height = 30
+	s.panel.open = true
+	next, _ := s.Update(leftClick(s.width-5, 10))
+	if next == nil {
+		t.Fatal("expected non-nil screen")
+	}
+}
+
+func TestClickOnNarrowPanelIgnored(t *testing.T) {
+	s := toolScreen(t)
+	s.width = 60
+	s.height = 30
+	s.panel.open = true
+	next, _ := s.Update(leftClick(10, 5))
+	if next == nil {
+		t.Fatal("expected non-nil screen")
+	}
+}
