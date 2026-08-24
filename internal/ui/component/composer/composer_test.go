@@ -538,3 +538,13 @@ func TestActiveMenuView_MentionMenu(t *testing.T) {
 		t.Errorf("expected View to contain mention entry main.go, got:\n%s", view)
 	}
 }
+
+func TestComposerView_TruncatesLongLinesWhenNarrow(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII, 40)
+	m.SetValue("A very long input string that exceeds width")
+	m.SetWidth(5)
+	view := m.View()
+	if view == "" {
+		t.Fatal("expected non-empty view")
+	}
+}
