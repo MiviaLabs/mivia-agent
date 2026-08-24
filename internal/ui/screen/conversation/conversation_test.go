@@ -757,17 +757,22 @@ func TestWelcomeBannerRendersOnEmptyTranscript(t *testing.T) {
 	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	scr := next.(Screen)
 	view := ansi.Strip(scr.View())
-	if !strings.Contains(view, "M I V I A") && !strings.Contains(view, "Mivia") {
+	if !strings.Contains(view, "Ｍ Ｉ Ｖ Ｉ Ａ") &&
+		!strings.Contains(view, "M    I    V    I    A") &&
+		!strings.Contains(view, "Mivia") {
 		t.Errorf("empty transcript view missing Mivia banner:\n%s", view)
 	}
-	if !strings.Contains(view, "For the work that takes longer than a chat.") {
-		t.Errorf("empty transcript view missing tagline:\n%s", view)
+	if !strings.Contains(view, "ctrl+n:sidebar") {
+		t.Errorf("empty transcript view missing keybinding hint:\n%s", view)
 	}
-	if !strings.Contains(view, "Mac Lisowski") {
-		t.Errorf("empty transcript view missing author credit:\n%s", view)
+	if strings.Contains(view, "For the work that takes longer than a chat.") {
+		t.Errorf("empty transcript view should not show the tagline:\n%s", view)
 	}
-	if !strings.Contains(view, "MIT License") {
-		t.Errorf("empty transcript view missing MIT license:\n%s", view)
+	if strings.Contains(view, "Mac Lisowski") {
+		t.Errorf("empty transcript view should not show the author credit:\n%s", view)
+	}
+	if strings.Contains(view, "MIT License") {
+		t.Errorf("empty transcript view should not show the MIT license:\n%s", view)
 	}
 
 	// Starting a turn replaces the welcome banner
@@ -777,8 +782,8 @@ func TestWelcomeBannerRendersOnEmptyTranscript(t *testing.T) {
 	}})
 	scr = next.(Screen)
 	turnView := ansi.Strip(scr.View())
-	if strings.Contains(turnView, "Mac Lisowski") {
-		t.Errorf("active conversation view should not retain welcome credits:\n%s", turnView)
+	if strings.Contains(turnView, "type a prompt or /") {
+		t.Errorf("active conversation view should not retain welcome hint:\n%s", turnView)
 	}
 	if !strings.Contains(turnView, "hello agent") {
 		t.Errorf("active conversation view missing user input:\n%s", turnView)

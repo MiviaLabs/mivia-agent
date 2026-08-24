@@ -306,20 +306,30 @@ func TestSetThemeReRendersBlocks(t *testing.T) {
 		Body: uievent.TextEndBody{Text: "```go\nfunc hello() {}\n```"},
 	})
 
-	origBody := m.Blocks()[0].Body[0]
+	origBody := m.Blocks()[0].Body
+	origConcat := strings.Join(origBody, "\n")
 
-	// Create a different theme
+	// Create a different theme. The Glamour-backed code block uses
+	// RoleBGSubtle (outer background) and RoleString (foreground) for
+	// its primitive colour, so flipping a role that flows into the
+	// code block is what proves SetTheme re-renders it. The OLD
+	// render.Text applied RoleBGInset to fenced lines, but that role
+	// belongs to inline code (RoleKeyword + RoleBGInset) under the
+	// new mapping; a test that flipped RoleBGInset only would still
+	// pass for the wrong reason now (the inline code is not in body
+	// row 0 for a fenced block).
 	lightTheme := th
 	lightTheme.Colors = make(map[theme.Role]string)
 	for k, v := range th.Colors {
 		lightTheme.Colors[k] = v
 	}
-	lightTheme.Colors[theme.RoleBGInset] = "#fafafa"
+	lightTheme.Colors[theme.RoleKeyword] = "#abcdef"
+	lightTheme.Colors[theme.RoleFunction] = "#123456"
 
 	m.SetTheme(lightTheme, theme.TierTrueColor)
 
-	newBody := m.Blocks()[0].Body[0]
-	if newBody == origBody {
+	newConcat := strings.Join(m.Blocks()[0].Body, "\n")
+	if newConcat == origConcat {
 		t.Error("SetTheme failed to re-render code block with new theme colors")
 	}
 }

@@ -48,20 +48,24 @@ func (m Model) renderLegend() string {
 func (m Model) bannerLines() []string {
 	var lines []string
 	accent := render.Role(m.Theme, m.Tier, theme.RoleAccent)
-	fg := render.Role(m.Theme, m.Tier, theme.RoleFG)
 	subtle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
 
 	logoMark := "⬖"
+	// Fullwidth Latin letters render ~2x wider per cell on every modern
+	// terminal, so the title visibly grows without a multi-line figlet.
+	// ASCII/no-tty tiers fall back to spaced regular caps because
+	// fullwidth glyphs do not round-trip through the smallest emulators.
+	bigTitle := "Ｍ Ｉ Ｖ Ｉ Ａ"
 	if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
 		logoMark = "<>"
+		bigTitle = "M    I    V    I    A"
 	}
 
 	lines = append(lines, accent.Render(logoMark))
 	lines = append(lines, "")
-	lines = append(lines, accent.Render("M I V I A"))
-	lines = append(lines, fg.Render("For the work that takes longer than a chat."))
 	lines = append(lines, "")
-	lines = append(lines, subtle.Render("Author: Mac Lisowski  •  MIT License"))
+	lines = append(lines, accent.Render(bigTitle))
+	lines = append(lines, "")
 	lines = append(lines, m.renderLegend())
 	lines = append(lines, "")
 	lines = append(lines, subtle.Render("type a prompt or / for commands  •  ctrl+n:sidebar  •  ctrl+c:quit"))
@@ -76,8 +80,7 @@ func (m Model) compactLines() []string {
 		markGlyph = "< "
 	}
 	return []string{
-		accent.Render(markGlyph+"Mivia") + subtle.Render(" — For the work that takes longer than a chat."),
-		subtle.Render("Author: Mac Lisowski  •  MIT License"),
+		accent.Render(markGlyph + "Mivia"),
 		subtle.Render("type a prompt or / for commands  •  ctrl+n:sidebar  •  ctrl+c:quit"),
 	}
 }

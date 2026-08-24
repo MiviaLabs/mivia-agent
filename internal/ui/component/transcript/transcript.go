@@ -126,7 +126,7 @@ func (m Model) HandleEvent(ev uievent.Event) (Model, tea.Cmd) {
 			Kind:  uievent.KindTextEnd,
 			Prose: true,
 			Input: b.Text,
-			Body:  proseLines(render.Text(m.Theme, m.Tier, b.Text)),
+			Body:  proseLines(render.Markdown(m.Theme, m.Tier, m.proseRenderWidth(), b.Text)),
 		})
 	case uievent.TurnStartBody:
 		m = m.flushPending()
@@ -208,6 +208,18 @@ const shortResultCols = 16
 // rather than continue it - see their own case bodies). Skipping the
 // flush silently drops the partial span, and the next block's own first
 // row can then visually collide with the abandoned streaming tail.
+//
+// flushPending renders through render.Markdown (not the raw partial
+// bytes) for streaming-parity with text.end: the live streaming tail
+// is plain text styled via render.Wrap, the committed text.end block
+// is markdown, and a partial stream that gets bumped by a tool.start /
+// turn.start / plan / error / unfinished-turn.end event used to land as
+// raw text. The two rendering paths disagreed on heading chrome, list
+// markers, and code fences - a partial stream that contained "# "
+// would render as '# heading' in the streaming tail and as styled bold
+// in the committed block. Routing flushPending through the same
+// renderer as text.end makes a bump-mid-stream indistinguishable from
+// a clean text.end, which is the contract the user picked.
 func (m Model) flushPending() Model {
 	partial := m.pending
 	if partial == "" {
@@ -217,7 +229,7 @@ func (m Model) flushPending() Model {
 	m, _ = m.pushBlock(Block{
 		Kind:  uievent.KindTextEnd,
 		Prose: true,
-		Body:  strings.Split(partial, "\n"),
+		Body:  proseLines(render.Markdown(m.Theme, m.Tier, m.proseRenderWidth(), partial)),
 	})
 	return m
 }
@@ -436,7 +448,7 @@ func (m Model) restyle(b Block) Block {
 	case b.Kind == uievent.KindTurnStart && b.Input != "":
 		b.Body = userLines(m.Theme, m.Tier, m.width, b.Input)
 	case b.Kind == uievent.KindTextEnd && b.Input != "":
-		b.Body = proseLines(render.Text(m.Theme, m.Tier, b.Input))
+		b.Body = proseLines(render.Markdown(m.Theme, m.Tier, m.proseRenderWidth(), b.Input))
 	case b.Plan != nil:
 		// Rebuild the body, not the whole block: the block's identity and
 		// its collapse/focus state are the reader's, not the payload's.
@@ -462,4 +474,21 @@ func replaceDiffTail(body, diff []string) []string {
 	out := make([]string, 0, len(body))
 	out = append(out, body[:len(body)-len(diff)]...)
 	return append(out, diff...)
+}
+
+// proseRenderWidth is the wrap width the Glamour-backed markdown
+// renderer gets at every prose block: terminal width minus two, with a
+// hard floor of 20 columns so a 0-width or under-measured terminal
+// never asks Glamour for a 0-column wrap. The two columns are the
+// bullet rail that block.BodyRows reserves in the prose path; the floor
+// matches render.Markdown's own width guard so the contract has only
+// one place to read.
+func (m Model) proseRenderWidth() int {
+	if m.width <= 0 {
+		return 20
+	}
+	if m.width-2 < 20 {
+		return 20
+	}
+	return m.width - 2
 }
