@@ -85,10 +85,15 @@ func (s Screen) handleClick(msg tea.MouseClickMsg) (app.Screen, tea.Cmd) {
 	case y == inputRow:
 		// One column in for the gutter, then the composer's own column
 		// offset: the click lands on the input's column space.
-		s.composer.ClickToColumn(x - 1 - colOffset)
+		comp := s.composer
+		comp.ClickToColumn(x - 1 - colOffset)
+		s.composer = comp
 	// The menu sits directly above the input row: menu rows run from inputRow-menuRows to inputRow-1.
 	case s.composer.MenuActive() && y >= inputRow-menuRows && y < inputRow:
-		s.composer.MenuClickRow(y - (inputRow - menuRows))
+		comp := s.composer
+		if comp.MenuClickRow(y - (inputRow - menuRows)) {
+			s.composer = comp
+		}
 	}
 	return s, nil
 }

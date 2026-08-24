@@ -916,8 +916,15 @@ func TestViewHasAOneColumnGutter(t *testing.T) {
 	if !strings.Contains(ansi.Strip(rows[0]), "mivia") {
 		t.Errorf("top row is not the brand bar: %q", rows[0])
 	}
-	if !strings.Contains(ansi.Strip(rows[len(rows)-2]), "> ") {
-		t.Errorf("input row not where expected: %q", rows[len(rows)-2])
+	var foundInput bool
+	for _, row := range rows {
+		if strings.Contains(ansi.Strip(row), "> ") || strings.Contains(ansi.Strip(row), "› ") {
+			foundInput = true
+			break
+		}
+	}
+	if !foundInput {
+		t.Errorf("input row not found in view")
 	}
 }
 

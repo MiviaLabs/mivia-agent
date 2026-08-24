@@ -127,10 +127,10 @@ func TestHeightGrowsWithLines(t *testing.T) {
 }
 
 func TestHeightCappedAtMaxLines(t *testing.T) {
-	// 10 lines of text should not exceed maxInputLines + 2 (frame border rows).
+	// 10 lines of text should not exceed maxInputLines.
 	lines := strings.Repeat("text\n", 10)
 	m := sizedComposer(t, 80, strings.TrimSuffix(lines, "\n"))
-	maxExpected := maxInputLines + 2 // border top + border bottom
+	maxExpected := maxInputLines
 	if got := m.Height(); got > maxExpected {
 		t.Errorf("height %d exceeds cap %d with many lines", got, maxExpected)
 	}
@@ -162,12 +162,23 @@ func TestViewShowsPromptAndText(t *testing.T) {
 	}
 }
 
-func TestViewFrameContainsHint(t *testing.T) {
-	// Use a wide enough terminal so the hint fits inside the bottom border.
-	m := New(loadTheme(t), theme.TierASCII, 100)
+func TestViewAppliesBGInset(t *testing.T) {
+	th := loadTheme(t)
+	m := New(th, theme.TierTrueColor, 40)
 	got := m.View()
-	if !strings.Contains(ansi.Strip(got), "Send") {
-		t.Errorf("hint not found in view: %q", ansi.Strip(got))
+	insetBG := strings.TrimSuffix(render.FillBG(th, theme.TierTrueColor, theme.RoleBGInset, ""), "\x1b[m")
+	if !strings.Contains(got, insetBG) {
+		t.Errorf("expected view to contain RoleBGInset background (%q), got:\n%q", insetBG, got)
+	}
+}
+
+func TestInputOffsets(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII, 40)
+	if got := m.InputRowFromBottom(); got != 1 {
+		t.Errorf("InputRowFromBottom() = %d, want 1", got)
+	}
+	if got := m.InputColumnOffset(); got != 0 {
+		t.Errorf("InputColumnOffset() = %d, want 0", got)
 	}
 }
 
