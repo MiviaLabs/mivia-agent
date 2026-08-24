@@ -56,10 +56,6 @@ func (s *StorageLedgerRepository) AdmitSingleTask(ctx context.Context, a SingleT
 	if err := s.mem.CreateTask(ctx, a.Task); err != nil {
 		return err
 	}
-	s.mu.Lock()
-	if uint64(taskEvent.Sequence) > s.applied[a.Run.RunID] {
-		s.applied[a.Run.RunID] = uint64(taskEvent.Sequence)
-	}
-	s.mu.Unlock()
+	s.engine.Watermarks().SetApplied(a.Run.RunID, uint64(taskEvent.Sequence))
 	return nil
 }

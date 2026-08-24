@@ -109,10 +109,8 @@ func runDeleteCatchUpRace(t *testing.T, ctx context.Context, repo *StorageLedger
 	}
 
 	_, claimPresent := repo.claims.GetClaim(runID)
-	repo.mu.RLock()
-	_, appliedPresent := repo.applied[runID]
-	_, allocatedPresent := repo.allocated[runID]
-	repo.mu.RUnlock()
+	appliedPresent := repo.engine.Watermarks().Applied(runID) != 0
+	allocatedPresent := repo.engine.Watermarks().Allocated(runID) != 0
 	if claimPresent {
 		t.Fatal("claimedRuns still holds a stale fenced claim after DeleteRun")
 	}

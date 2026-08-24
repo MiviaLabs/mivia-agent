@@ -23,72 +23,37 @@ import (
 // incremental: a per-run applied-sequence watermark bounds the tail read to
 // the events that arrived since this instance last looked.
 type StorageLedgerRepository struct {
-	store storage.Store
-	mem   *MemoryLedgerRepository
-	// ownsStore distinguishes the normal repository owner from adapters that
-	// borrow a CLI-owned SQLite pointer for a shared context session.
+	store     storage.Store
+	mem       *MemoryLedgerRepository
+	engine    *ledgercore.Engine
+	claims    *ledgercore.ClaimsTracker
 	ownsStore bool
 	mu        sync.RWMutex
-	closed    bool
-	claims    *ledgercore.ClaimsTracker
-	// applied is the highest store sequence per run that has been folded into
-	// the in-memory projection. It replaces the old one-shot `built` flag.
-	applied map[string]uint64
-	// allocated is the highest sequence per run this instance has handed out
-	// for its own appends. Kept separate from applied so that a failed append
-	// (for example a sequence lost to a concurrent writer) cannot mark a
-	// foreign event as already applied.
-	allocated map[string]uint64
-	// inflight holds sequences minted by this instance whose append has not
-	// resolved yet. Catch-up skips them: the writer publishes its own events.
-	inflight map[inflightKey]struct{}
-	// cursor is the store append position this instance has already probed.
-	// It makes the freshness check constant-time when nothing has changed.
-	cursor uint64
-	now    func() time.Time
+	inflight  map[inflightKey]struct{}
 }
 
 // SetTimeSource replaces the clock for deterministic tests.
 func (s *StorageLedgerRepository) SetTimeSource(now func() time.Time) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.now = now
+	s.engine.SetTimeSource(now)
 	s.mem.SetTimeSource(now)
 }
 
 // checkOpen returns ErrClosed if the repository has been closed.
 func (s *StorageLedgerRepository) checkOpen() error {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.closed {
-		return ErrClosed
-	}
-	return nil
+	return s.engine.CheckOpen()
 }
 
 // nowLocked returns the current time using the repository's time source.
 // Caller must hold at least s.mu read lock.
 func (s *StorageLedgerRepository) nowLocked() time.Time {
-	return s.now()
+	return s.engine.Now()
 }
 
 // Close closes the underlying store and marks the repository as closed.
 // All claims held by this instance are released before closing the store.
 // Subsequent method calls will return ErrClosed.
 func (s *StorageLedgerRepository) Close() error {
-	s.mu.Lock()
-	s.closed = true
-	s.mu.Unlock()
-
-	// Release all claims held by this instance.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_ = s.claims.Close(ctx, s.store)
-
-	if s.ownsStore {
-		return s.store.Close()
-	}
-	return nil
+	return s.engine.Close(context.Background())
 }
 
 // ensureBuilt brings the in-memory projection up to date with the store,
@@ -201,7 +166,7 @@ func (s *StorageLedgerRepository) CreateRun(ctx context.Context, key string, sna
 		// Roll back the registration so a failed CreateRun leaves the key free
 		// (mem.DeleteRun removes the run and its idemLookup entries).
 		_ = s.mem.DeleteRun(ctx, snapshot.RunID)
-		if err == storage.ErrDuplicate {
+		if errors.Is(err, storage.ErrDuplicate) || errors.Is(err, ErrDuplicate) {
 			return ErrDuplicate
 		}
 		return fmt.Errorf("store append: %w", err)
@@ -225,7 +190,7 @@ func (s *StorageLedgerRepository) CreateTask(ctx context.Context, snap TaskSnaps
 		return fmt.Errorf("marshal task snapshot: %w", err)
 	}
 	if err := s.appendStoreEventOrRebuild(ctx, s.newStoreEvent(snap.RunID, storageKindTaskCreated, payload)); err != nil {
-		if err == storage.ErrDuplicate {
+		if errors.Is(err, storage.ErrDuplicate) || errors.Is(err, ErrDuplicate) {
 			return ErrDuplicate
 		}
 		return fmt.Errorf("store append: %w", err)
@@ -422,8 +387,7 @@ func (s *StorageLedgerRepository) DeleteRun(ctx context.Context, runID string) e
 	}
 	s.claims.DropClaim(runID)
 	s.mu.Lock()
-	delete(s.applied, runID)
-	delete(s.allocated, runID)
+	s.engine.Watermarks().DeleteRun(runID)
 	for key := range s.inflight {
 		if key.runID == runID {
 			delete(s.inflight, key)

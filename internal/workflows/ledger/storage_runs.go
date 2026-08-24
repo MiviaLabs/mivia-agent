@@ -11,16 +11,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
-// checkOpen returns ErrClosed if the repository has been closed.
-func (s *StorageRepository) checkOpen() error {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.closed {
-		return ErrClosed
-	}
-	return nil
-}
-
 // ---------------------------------------------------------------------------
 // Repository implementation
 // ---------------------------------------------------------------------------

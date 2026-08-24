@@ -16,7 +16,7 @@ import (
 // committed batch here; without the fold the run would be invisible to that
 // instance forever.
 func (s *StorageLedgerRepository) rebaseRunSequence(ctx context.Context, runID string) error {
-	events, err := s.store.Events(ctx, runID)
+	events, err := s.engine.Store().Events(ctx, runID)
 	if err != nil {
 		return fmt.Errorf("read existing events for %s: %w", runID, err)
 	}
@@ -34,7 +34,7 @@ func (s *StorageLedgerRepository) rebaseRunSequence(ctx context.Context, runID s
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, evt := range events {
-		if uint64(evt.Sequence) <= s.applied[evt.RunID] ||
+		if uint64(evt.Sequence) <= s.engine.Watermarks().Applied(evt.RunID) ||
 			s.isInflightLocked(evt.RunID, uint64(evt.Sequence)) {
 			continue
 		}
@@ -45,7 +45,7 @@ func (s *StorageLedgerRepository) rebaseRunSequence(ctx context.Context, runID s
 		// tombstone's own sequence is restored here as the new floor: the next
 		// minted sequence must sit above the surviving tombstone, and a later
 		// reused-ID run_created folds after it.
-		s.applied[evt.RunID] = uint64(evt.Sequence)
+		s.engine.Watermarks().SetApplied(evt.RunID, uint64(evt.Sequence))
 		// Keep new event IDs from colliding with replayed ones after a
 		// restart, exactly as applyTail does.
 		advanceStorageEventIDCounter(parseSuffixNum(evt.ID, "se-"))
