@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
@@ -32,6 +33,28 @@ func (s *Session) adoptInterruptedPlainTurn(ctx context.Context, err error, snap
 
 func (s *Session) persistPlainLegacyTurn(token OperationToken) error {
 	return plainPersistenceError(s.saveAfterTurn(token))
+}
+
+// adoptErroredPlainTurn best-effort persists a non-interrupted legacy plain
+// turn's history (the user's message, and any already-streamed partial
+// reply) as a pure side effect - it never changes what the caller returns.
+// Unlike adoptInterruptedPlainTurn, a real provider error must still surface
+// to the caller exactly as before; this only prevents that history from
+// vanishing on the next resume. Only a still-current turn may persist
+// (stale-turn fence); any persistence failure is discarded rather than
+// compounding the original error the caller already has.
+func (s *Session) adoptErroredPlainTurn(snapshot plainTurnSnapshot, prepared []provider.Message, persistedText, partial string) {
+	if !s.plainTurnCurrent(snapshot.token, snapshot.myTurn) {
+		return
+	}
+	s.mu.Lock()
+	replaceNewestUserText(prepared, snapshot.messages[len(snapshot.messages)-1].Content, persistedText)
+	s.Messages = prepared
+	if strings.TrimSpace(partial) != "" {
+		s.Messages = append(s.Messages, provider.Message{Role: provider.RoleAssistant, Content: partial, CreatedAt: time.Now()})
+	}
+	s.mu.Unlock()
+	_ = s.persistPlainLegacyTurn(snapshot.token)
 }
 
 // appendCommitted appends the rendered context summary to a durable artifact
@@ -111,6 +134,73 @@ func (s *Session) commitInterruptedPlainContext(ctx context.Context, err error, 
 		s.contextPublishMu.Unlock()
 	}
 	snapshot.context.manager.PreparationManager.Discard(preparation)
+	return "", err
+}
+
+// commitErroredPlainContext handles a non-interrupted error from a plain
+// context turn's ChatStream call. Unlike commitInterruptedPlainContext, the
+// original error must still surface to the caller - a real provider failure
+// must not look like a quiet success - so this function's return value is
+// always ("", err) regardless of whether the best-effort commit below
+// succeeds, fails, or is skipped. The commit is a pure side effect: it exists
+// only so the user's question (and any already-streamed partial reply)
+// survive on resume instead of vanishing, mirroring
+// finishErroredContextTurn on the agent/tools path (turn_finish.go).
+func (s *Session) commitErroredPlainContext(ctx context.Context, err error, snapshot plainTurnSnapshot, prepared []provider.Message, persistedText, partial string, preparation contextmgr.Preparation, summary injectedSummary) (string, error) {
+	if errors.Is(err, agent.ErrPromptBudgetExceeded) {
+		// Defense-in-depth: an over-budget history must never be committed.
+		// Unreachable today via this call site (Prepare's own budget check
+		// returns before ChatStream ever runs), mirrored from
+		// finishErroredContextTurn's identical guard.
+		snapshot.context.manager.PreparationManager.Discard(preparation)
+		return "", err
+	}
+	if !s.plainTurnCurrent(snapshot.token, snapshot.myTurn) {
+		snapshot.context.manager.PreparationManager.Discard(preparation)
+		return "", err
+	}
+	s.contextPublishMu.Lock()
+	defer s.contextPublishMu.Unlock()
+	if !s.plainTurnCurrent(snapshot.token, snapshot.myTurn) {
+		snapshot.context.manager.PreparationManager.Discard(preparation)
+		return "", err
+	}
+	candidate := cloneContextMessages(prepared)
+	userText := snapshot.messages[len(snapshot.messages)-1].Content
+	replaceNewestUserText(candidate, userText, persistedText)
+	if strings.TrimSpace(partial) != "" {
+		candidate = append(candidate, provider.Message{Role: provider.RoleAssistant, Content: partial, CreatedAt: time.Now()})
+	}
+	ordered := contextTurnMessages(candidate, userText)
+	result, commitErr := buildContextTurnResult(ctx, snapshot.context, &preparation, candidate, ordered, snapshot.myTurn)
+	if commitErr == nil {
+		result.Active = summary.appendCommitted(result.Active)
+		candidate = summary.appendCommitted(candidate)
+		result.Outcome = contextmgr.OutcomeUpstreamErr
+		commitErr = snapshot.context.manager.Commit(ctx, preparation, result)
+	}
+	snapshot.context.manager.PreparationManager.Discard(preparation)
+	if commitErr != nil {
+		// The commit itself failed - most commonly message-shape validation
+		// rejecting a turn that died mid-stream in an unpairable state. Fall
+		// back to the original discard behavior rather than surfacing a
+		// second, unrelated persistence error on top of err.
+		return "", err
+	}
+	s.mu.Lock()
+	current := s.tokenCurrentLocked(snapshot.token)
+	if current {
+		s.Messages = candidate
+		s.contextHead = nextContextRevision(preparation, result)
+	}
+	s.mu.Unlock()
+	if !current {
+		// The commit succeeded durably but the in-memory fence drifted during
+		// commit I/O: re-sync so the session is not wedged (same recovery as
+		// commitContextTurn/commitInterruptedPlainContext).
+		_ = s.resyncContextHead()
+	}
+	s.emitContextCompaction(ctx, snapshot.context, preparation, snapshot.myTurn, summary.present)
 	return "", err
 }
 

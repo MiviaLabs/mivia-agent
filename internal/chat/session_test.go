@@ -411,19 +411,24 @@ func TestClearAndUserTurns(t *testing.T) {
 	}
 }
 
-func TestFailedSendDropsUserTurn(t *testing.T) {
+// TestFailedSendPreservesUserTurnButSurfacesTheError pins the corrected
+// contract: a non-interrupted provider failure must still surface to the
+// caller exactly as before (no quiet success), but the user's question is no
+// longer a phantom lost to history - adoptErroredPlainTurn now persists it
+// (see TestNoMessageLossErroredPlainLegacyTurnIsPersisted), the same fix
+// finishErroredContextTurn already applies on the agent/tools path. This
+// test previously asserted the opposite (UserTurns() == 0, "must not leave a
+// phantom user turn"), which was the bug: losing the question on every
+// provider error is exactly what made resume drop history.
+func TestFailedSendPreservesUserTurnButSurfacesTheError(t *testing.T) {
 	res := &config.Resolved{Model: "m", SystemPrompt: "sys"}
-	// A non-interrupted provider failure must not leave a phantom user turn in
-	// history. (context.Canceled is deliberately not used: an interrupted turn
-	// now preserves the user's message and partial answer, see
-	// TestNoMessageLossInterruptedPlainLegacyTurnIsPersisted.)
 	s := NewSession(res, &fakeCompleter{err: errors.New("provider failure")})
 	_, err := s.SendUser(context.Background(), "hi", io.Discard)
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if s.UserTurns() != 0 {
-		t.Fatalf("user turn should be dropped, turns=%d", s.UserTurns())
+	if s.UserTurns() != 1 {
+		t.Fatalf("user turn should be preserved despite the error, turns=%d", s.UserTurns())
 	}
 }
 

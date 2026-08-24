@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -83,11 +84,19 @@ func (s *Session) sendPlainLegacy(ctx context.Context, persistedText string, w i
 	if err != nil {
 		// An interrupted turn (Ctrl+C / force-send / deadline) must not lose
 		// the user's message or the answer already streamed: adopt both and
-		// persist, then hand the partial back instead of the error. Only a
-		// still-current turn may persist (stale-turn fence). Non-interrupted
-		// errors keep today's drop-everything behavior.
+		// persist, then hand the partial back instead of the error.
 		if partial, ok, persistErr := s.adoptInterruptedPlainTurn(ctx, err, snapshot, prepared, persistedText, captured.String()); ok {
 			return partial, persistErr
+		}
+		// Any other error (a real provider failure, not an interrupt) must
+		// still surface unchanged - unlike the interrupted case, this is not
+		// a quiet success. But the same history-loss bug applies: the
+		// question the user asked, and any partial reply already streamed to
+		// them, must not vanish from the next resume just because the
+		// completer call itself failed. Persist as a pure best-effort side
+		// effect; never let it change what this function returns.
+		if !errors.Is(err, agent.ErrPromptBudgetExceeded) {
+			s.adoptErroredPlainTurn(snapshot, prepared, persistedText, captured.String())
 		}
 		return "", err
 	}
@@ -143,9 +152,15 @@ func (s *Session) sendPlainContext(ctx context.Context, persistedText string, w 
 	if err != nil {
 		// An interrupted turn (Ctrl+C / force-send / deadline) must not lose
 		// the user's message or the answer already streamed: the interrupted
-		// branch commits the partial turn durably with OutcomeCancelled; all
-		// other errors keep today's discard-and-drop behavior.
-		return s.commitInterruptedPlainContext(ctx, err, snapshot, prepared, persistedText, captured.String(), preparation, summary)
+		// branch commits the partial turn durably with OutcomeCancelled and
+		// hands the partial back as if it succeeded. Any other error commits
+		// durably too (tagged OutcomeUpstreamErr) but must still surface to
+		// the caller unchanged - a real provider failure is not a quiet
+		// success, unlike an interrupt.
+		if isInterruptedTurn(ctx, err) {
+			return s.commitInterruptedPlainContext(ctx, err, snapshot, prepared, persistedText, captured.String(), preparation, summary)
+		}
+		return s.commitErroredPlainContext(ctx, err, snapshot, prepared, persistedText, captured.String(), preparation, summary)
 	}
 	return s.commitPlainContextTurn(ctx, reply, snapshot, prepared, persistedText, preparation, summary)
 }
