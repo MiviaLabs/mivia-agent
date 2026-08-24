@@ -56,12 +56,23 @@ The set value passes through (or the knob is simply absent), but the
 SDK interprets it differently or not at all. A `Backend: "sdk"`
 caller accepts the difference.
 
-- **`MaxConcurrentTools > 1`** — the SDK runs tool calls sequentially
-  within a turn, ordered by `ToolCall.Index`
-  (`mivia-ai-sdk/agentloop/toolcall.go`). Parallel batches do not
-  exist on the SDK path. Permanently accepted: a real carrier would
-  require SDK-side parallel-tool support and is out of scope for the
-  v3 convergence. Closes the v3 plan's tab on `MaxConcurrentTools`.
+- **`MaxConcurrentTools > 1`** — the SDK has a real worker pool
+  (`mivia-ai-sdk/agentloop/toolcall.go:119-163`), so a positive host
+  value DOES parallelize dispatch. Turn-shaping (`applyTurnShaping`
+  in `internal/agent/sdk_shaping.go`), however, charges the shaping
+  budget inside each worker goroutine in completion order, while the
+  legacy path charges in call order after all workers join
+  (`internal/agent/loop_tools.go:389-413` +
+  `internal/agent/shape_batch.go:183-213`). A host-side barrier-based
+  fix was attempted and structurally fails: the SDK does not expose
+  the call ID to `Tool.Run`, and its worker pool reuses goroutines
+  across calls (`executeCalls` inner loop), breaking
+  runtime-stack-based keying. Permanently accepted: closing the
+  parity gap requires an SDK-side change to thread call ID through
+  `InOut.Value` or `ctx`, which is out of scope here. A caller using
+  `MaxConcurrentTools > 1` with a positive `BatchResultBudgetBytes`
+  accepts non-deterministic shaping on the SDK backend; the legacy
+  backend remains deterministic.
 - **`SoftInterruptCooldown`** — the SDK's `bridgeSteerSignals` now
   caps `Steer.Trigger` fires with a shared `cooldownUntil atomic.Int64`
   over all three sites (the `InterruptCh` one-shot, the strict
