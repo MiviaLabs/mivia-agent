@@ -77,7 +77,13 @@ const (
 	// forcing a read_output round trip for content that would have fit
 	// trivially. Funded from tailPreviewReserveBytes, not from the primary
 	// budget, so this never changes the primary budget's own bound.
-	zeroBudgetPreviewBytes = 512
+	// Sized to match the common case observed in practice: a long-running
+	// agent's batches/turns commonly carry a dozen-plus small results (greps,
+	// small file reads, inspect_repository/read_output pages in the few-KB
+	// range) after the one straddler pays the floor. 512 B was too thin to
+	// be worth reading on its own; 2 KiB mirrors the preview size other
+	// coding-agent harnesses use for an over-budget tool result.
+	zeroBudgetPreviewBytes = 2 << 10
 
 	// tailPreviewReserveBytes bounds the TOTAL bytes zeroBudgetPreviewBytes
 	// may spend across one entire batch/turn, independent of how many results
@@ -85,7 +91,10 @@ const (
 	// each claim a preview and the aggregate bound (F6) would stop being a
 	// small constant - it would scale with batch size. Once the reserve is
 	// spent, later tail results return to a bare notice exactly as before.
-	tailPreviewReserveBytes = 8 << 10
+	// 32 KiB at the 2 KiB preview above covers ~16 post-exhaustion results
+	// before falling back - enough for a long-running agent's typical
+	// research burst, and still a small fraction of the 256 KiB budget floor.
+	tailPreviewReserveBytes = 32 << 10
 )
 
 // resultParts is one tool result in structured form, as the worker produced it

@@ -200,7 +200,10 @@ func TestIntegration_HugeBatchStaysBoundedWithNoCallCountLimit(t *testing.T) {
 		t.Fatalf("got %d tool results, want %d - no call may be failed by the budget", len(bodies), batchSize)
 	}
 	total := totalToolBytes(loop)
-	bound := budget + BatchDegradeFloorBytes + batchSize*(256+statusLineMaxBytes)
+	// tailPreviewReserveBytes is a small, batch-size-independent addition
+	// (see shape_batch.go): the reserve pool is fixed regardless of how many
+	// of the 40 calls draw from it.
+	bound := budget + BatchDegradeFloorBytes + tailPreviewReserveBytes + batchSize*(512+statusLineMaxBytes)
 	if total > bound {
 		t.Fatalf("%d-call batch put %d bytes in history, over the finite bound %d", batchSize, total, bound)
 	}
