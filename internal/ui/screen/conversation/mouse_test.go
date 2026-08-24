@@ -8,7 +8,9 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/composer"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/component/picker"
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
 
@@ -236,5 +238,52 @@ func TestClickOnNarrowPanelIgnored(t *testing.T) {
 	next, _ := s.Update(leftClick(10, 5))
 	if next == nil {
 		t.Fatal("expected non-nil screen")
+	}
+}
+
+func TestDoubleClickOnTopBarModelOpensModelPicker(t *testing.T) {
+	s := sized(t, 0)
+	s.SetCommandRunner(&fakeRunner{outcome: ports.CommandOutcome{ModelChoices: []string{"model-1", "model-2"}}})
+	s.topbar.SetSession(ports.ModelInfo{Name: "claude-3-7-sonnet", Provider: "anthropic"}, ports.Usage{})
+	s.width = 100
+	s.height = 24
+
+	start, end, ok := s.topbar.ModelBounds()
+	if !ok {
+		t.Fatal("expected ModelBounds ok")
+	}
+	modelCol := 1 + (start+end)/2 // 1 for gutter
+
+	// First click: does not open
+	next, _ := s.Update(leftClick(modelCol, 1)) // topGutter is 1
+	s = next.(Screen)
+	if s.modelPicker != nil {
+		t.Error("single click should not open model picker")
+	}
+
+	// Second click within 500ms at same spot: opens model picker
+	next, _ = s.Update(leftClick(modelCol, 1))
+	s = next.(Screen)
+	if s.modelPicker == nil {
+		t.Error("double click on top bar model must open model picker")
+	}
+}
+
+func TestClickOnDialogCloseButtonOrBackdropDismissesPicker(t *testing.T) {
+	s := sized(t, 0)
+	s.width = 80
+	s.height = 24
+	pm := picker.New(s.Theme, s.Tier, []string{"model-1", "model-2"})
+	s.modelPicker = &pm
+
+	if s.modelPicker == nil {
+		t.Fatal("precondition: model picker open")
+	}
+
+	// Click outside / backdrop dismisses dialog
+	next, _ := s.Update(leftClick(1, 1))
+	s = next.(Screen)
+	if s.modelPicker != nil {
+		t.Error("click on dialog backdrop must dismiss model picker")
 	}
 }

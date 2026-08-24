@@ -112,6 +112,10 @@ type Screen struct {
 	// tracked from the start or resize is silently a no-op.
 	width  int
 	height int
+
+	lastClickTime time.Time
+	lastClickX    int
+	lastClickY    int
 }
 
 // New builds a Screen. themes is the candidate set offered by ctrl+t;

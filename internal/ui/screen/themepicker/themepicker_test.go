@@ -464,3 +464,20 @@ func TestViewRightAlignsTheCountAgainstDialogWidth(t *testing.T) {
 		t.Errorf("count at column %d is not right-aligned against inner width %d:\n%q", idx, inner, titleRow)
 	}
 }
+
+func TestMouseClickCloseDismissesThemePicker(t *testing.T) {
+	themes := loadThemes(t)
+	s := New(themes[0], theme.TierASCII, themes)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 30})
+	s = next.(Screen)
+
+	// Click on backdrop (outside dialog)
+	next, cmd := s.Update(tea.MouseClickMsg{X: 1, Y: 1, Button: tea.MouseLeft})
+	if cmd == nil {
+		t.Fatal("expected non-nil Cmd when clicking backdrop")
+	}
+	msg := cmd()
+	if _, ok := msg.(app.PopScreenMsg); !ok {
+		t.Errorf("got msg %T, want app.PopScreenMsg", msg)
+	}
+}

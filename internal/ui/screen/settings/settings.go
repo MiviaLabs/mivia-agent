@@ -200,6 +200,11 @@ func (s Screen) Update(msg tea.Msg) (app.Screen, tea.Cmd) {
 		return s, nil
 	case tea.KeyPressMsg:
 		return s.handleKey(msg)
+	case tea.MouseClickMsg:
+		if s.overlay != "" {
+			s.overlay = ""
+			return s, tea.ClearScreen
+		}
 	}
 	// Every other message (a section's own async save-result Msg -
 	// generalSavedMsg, mcpFailedMsg, and so on) has nowhere else to go:

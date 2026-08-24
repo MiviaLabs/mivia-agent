@@ -1,6 +1,8 @@
 package conversation
 
 import (
+	"time"
+
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
@@ -50,10 +52,6 @@ func (s Screen) handleClick(msg tea.MouseClickMsg) (app.Screen, tea.Cmd) {
 	if msg.Button != tea.MouseLeft {
 		return s, nil
 	}
-	if s.overlay != "" {
-		s.overlay = ""
-		return s, tea.ClearScreen
-	}
 	x, y := msg.X, msg.Y
 	topGutter := 0
 	bottomGutter := 0
@@ -61,6 +59,14 @@ func (s Screen) handleClick(msg tea.MouseClickMsg) (app.Screen, tea.Cmd) {
 		topGutter = 1
 		bottomGutter = 1
 	}
+
+	if next, cmd, handled := s.handleModalClick(x, y, topGutter); handled {
+		return next, cmd
+	}
+	if next, cmd, handled := s.handleTopbarDoubleClick(x, y, topGutter); handled {
+		return next, cmd
+	}
+
 	transcriptTop := topGutter + s.topbar.Height() + 1
 	if s.panelIsSplit() {
 		// Column 0 is the gutter; the reading column runs to the rule.
@@ -106,6 +112,54 @@ func (s Screen) handleClick(msg tea.MouseClickMsg) (app.Screen, tea.Cmd) {
 		}
 	}
 	return s, nil
+}
+
+func (s Screen) handleModalClick(x, y, topGutter int) (Screen, tea.Cmd, bool) {
+	if s.overlay != "" {
+		s.overlay = ""
+		return s, tea.ClearScreen, true
+	}
+	if s.modelPicker != nil || s.agentPicker != nil || s.sessionPicker != nil || s.panel.dialog {
+		dw, dh := contentWidth(s.width), s.transcriptHeight()
+		transcriptTop := topGutter + s.topbar.Height() + 1
+		localX, localY := x-1, y-transcriptTop
+		if render.DialogHitsClose(dw, dh, 10, localX, localY) || render.DialogHitsBackdrop(dw, dh, 10, localX, localY) {
+			s.modelPicker = nil
+			s.agentPicker = nil
+			s.sessionPicker = nil
+			s.panel.dialog = false
+			s.panel.dialogAgent = ""
+			return s, tea.ClearScreen, true
+		}
+		return s, nil, true
+	}
+	return s, nil, false
+}
+
+func (s Screen) handleTopbarDoubleClick(x, y, topGutter int) (Screen, tea.Cmd, bool) {
+	if y != topGutter || !s.topbar.HitsModel(x-1) {
+		return s, nil, false
+	}
+	now := time.Now()
+	if s.now != nil {
+		now = s.now()
+	}
+	isDoubleClick := !s.lastClickTime.IsZero() && now.Sub(s.lastClickTime) < 500*time.Millisecond && abs(x-s.lastClickX) <= 1 && y == s.lastClickY
+	s.lastClickTime = now
+	s.lastClickX = x
+	s.lastClickY = y
+	if isDoubleClick {
+		scr, cmd := s.runSlashCommand("/model")
+		return scr.(Screen), cmd, true
+	}
+	return s, nil, true
+}
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
 }
 
 // transcriptShown reports whether the transcript itself is the content

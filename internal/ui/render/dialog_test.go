@@ -369,3 +369,36 @@ func TestDialogBorderUsesTheDecorativeRoleNotFocus(t *testing.T) {
 		t.Errorf("dialog border still uses RoleBorderFocus's colour %q:\n%s", focusSeq, got)
 	}
 }
+
+func TestDialogCloseButtonAndHitTesting(t *testing.T) {
+	th := dialogTheme(t)
+	width, height := 80, 24
+	got := Dialog(th, theme.TierTrueColor, width, height, "Test Title", "Body content", "esc to cancel")
+	plain := ansi.Strip(got)
+
+	if !strings.Contains(plain, "[x]") {
+		t.Errorf("dialog missing [x] close button:\n%s", plain)
+	}
+
+	// Hit test close button (top-right of dialog box)
+	// Dialog box inner width is 80 - 2*4 - 6 = 66, boxWidth = 72, boxX = 4, boxY = 7
+	// closeBtnX is roughly 4 + 3 + 66 - 3 = 70
+	if !DialogHitsClose(width, height, 5, 70, 8) {
+		t.Errorf("expected DialogHitsClose to return true for click on close button")
+	}
+
+	// Click on top-left of dialog (title area) should NOT hit close button
+	if DialogHitsClose(width, height, 5, 10, 8) {
+		t.Errorf("expected DialogHitsClose to return false for click on title")
+	}
+
+	// Click on backdrop (far outside dialog box)
+	if !DialogHitsBackdrop(width, height, 5, 1, 1) {
+		t.Errorf("expected DialogHitsBackdrop to return true for click outside box")
+	}
+
+	// Click inside dialog body should NOT hit backdrop
+	if DialogHitsBackdrop(width, height, 5, 40, 12) {
+		t.Errorf("expected DialogHitsBackdrop to return false for click inside dialog")
+	}
+}

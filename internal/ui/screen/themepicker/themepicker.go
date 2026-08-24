@@ -120,6 +120,11 @@ func (s Screen) Update(msg tea.Msg) (app.Screen, tea.Cmd) {
 		s.picker.Theme, s.picker.Tier = changed.Theme, changed.Tier
 		return s, nil
 	}
+	if mouse, ok := msg.(tea.MouseClickMsg); ok && mouse.Button == tea.MouseLeft {
+		if render.DialogHitsClose(s.width, s.height, 10, mouse.X, mouse.Y) || render.DialogHitsBackdrop(s.width, s.height, 10, mouse.X, mouse.Y) {
+			return s, func() tea.Msg { return app.PopScreenMsg{} }
+		}
+	}
 	next, cmd := s.picker.Update(msg)
 	s.picker = next
 	if cmd == nil {
@@ -163,7 +168,7 @@ func (s Screen) title() string {
 		return base + "  " + count
 	}
 	inner := render.DialogBodyWidth(s.width)
-	pad := inner - ansi.StringWidth(base) - ansi.StringWidth(count)
+	pad := inner - ansi.StringWidth(base) - ansi.StringWidth(count) - 5
 	if pad < 2 {
 		return base + "  " + count
 	}

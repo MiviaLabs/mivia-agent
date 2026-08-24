@@ -190,3 +190,30 @@ func TestActivityBadge(t *testing.T) {
 		t.Errorf("narrow topbar should omit activity badge, got: %q", narrowView)
 	}
 }
+
+func TestHitsModel(t *testing.T) {
+	m := New(loadTheme(t), theme.TierTrueColor, ports.ModelInfo{
+		Name: "claude-3-7-sonnet", Provider: "anthropic", ContextWindow: 200_000,
+	}, ports.Usage{InputTokens: 20_000, OutputTokens: 4_000}, 100)
+
+	start, end, ok := m.ModelBounds()
+	if !ok {
+		t.Fatal("expected ok = true for ModelBounds")
+	}
+	if start <= 0 || end <= start {
+		t.Fatalf("unexpected bounds [%d, %d)", start, end)
+	}
+
+	// Inside capsule
+	if !m.HitsModel((start + end) / 2) {
+		t.Errorf("expected HitsModel to return true for col %d", (start+end)/2)
+	}
+	// Before capsule
+	if m.HitsModel(start - 1) {
+		t.Errorf("expected HitsModel to return false before capsule")
+	}
+	// After capsule (in context badge)
+	if m.HitsModel(end + 1) {
+		t.Errorf("expected HitsModel to return false after capsule")
+	}
+}
