@@ -84,7 +84,7 @@ func setupTwoSessionScreen(t *testing.T) (Screen, *backgroundTestConversation, *
 }
 
 func TestMultiSession_BackgroundTurnAndSwitching(t *testing.T) {
-	s, sessA, sessB, runner := setupTwoSessionScreen(t)
+	s, _, sessB, runner := setupTwoSessionScreen(t)
 
 	// User sends a message in Session A
 	s = typeText(t, s, "Run long task in A")
