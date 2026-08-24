@@ -157,10 +157,15 @@ func planBlockValue(t theme.Theme, tier theme.Tier, b uievent.PlanBody) Block {
 		body = append(body, style.Render(mark+" "+item.Text))
 	}
 	planCopy := b
+	var state string
+	var role theme.Role
+	if b.Total > 0 && b.Done == b.Total {
+		state, role = "done", theme.RoleSuccess
+	}
 	return Block{
 		Kind:   uievent.KindPlan,
 		Plan:   &planCopy,
-		Header: Header{Label: "plan", Meta: fmt.Sprintf("%d of %d", b.Done, b.Total)},
+		Header: Header{Label: "plan", Meta: fmt.Sprintf("%d of %d", b.Done, b.Total), State: state, Role: role},
 		Body:   body,
 	}
 }
