@@ -15,7 +15,10 @@ func (l *Loop) initialToolSpecs(opts Options) []provider.ToolSpec {
 	if opts.AdvertisedToolSpecs != nil {
 		return opts.AdvertisedToolSpecs
 	}
-	return l.Tools.OpenAITools()
+	if l != nil && l.Tools != nil {
+		return l.Tools.OpenAITools()
+	}
+	return opts.PreparationInput.Tools
 }
 
 // emitReasoning surfaces model chain of thought when the provider exposes

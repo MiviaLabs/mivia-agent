@@ -78,6 +78,11 @@ func (s *Session) ContextPreparation() (contextmgr.PreparationManager, contextmg
 	}
 	input := prepareInputForContext(s.Messages, s.MaxContextTokens, s.MaxTokens, s.binding, cfg.principal, cfg.policy, cfg.worktree)
 	input.Revision = cfg.revision
+	if s.advertisedToolSpecs != nil {
+		input.Tools = s.advertisedToolSpecs
+	} else if s.Tools != nil {
+		input.Tools = s.Tools.OpenAITools()
+	}
 	return cfg.manager.PreparationManager, input, true
 }
 
@@ -130,6 +135,40 @@ func (s *Session) compactLoadSnapshot(ctx context.Context, cfg contextTurnConfig
 	return nil
 }
 
+type manualCompactState struct {
+	cfg       contextTurnConfig
+	store     contextstate.Store
+	messages  []provider.Message
+	binding   ModelBinding
+	turnID    uint64
+	toolSpecs []provider.ToolSpec
+}
+
+func (s *Session) captureManualCompactState() (manualCompactState, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.activeTurns > 0 {
+		return manualCompactState{}, ErrStaleOperation
+	}
+	cfg := s.captureContextLocked()
+	store := s.contextStore
+	messages := cloneContextMessages(s.Messages)
+	turnID := s.turnID
+	if turnID == 0 {
+		turnID = 1
+	}
+	var toolSpecs []provider.ToolSpec
+	if s.advertisedToolSpecs != nil {
+		toolSpecs = s.advertisedToolSpecs
+	} else if s.Tools != nil {
+		toolSpecs = s.Tools.OpenAITools()
+	}
+	return manualCompactState{
+		cfg: cfg, store: store, messages: messages,
+		binding: s.binding, turnID: turnID, toolSpecs: toolSpecs,
+	}, nil
+}
+
 func (s *Session) compact(ctx context.Context, focus string) (contextmgr.Preparation, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -137,29 +176,22 @@ func (s *Session) compact(ctx context.Context, focus string) (contextmgr.Prepara
 	s.contextPublishMu.Lock()
 	defer s.contextPublishMu.Unlock()
 
-	s.mu.RLock()
-	if s.activeTurns > 0 {
-		s.mu.RUnlock()
-		return contextmgr.Preparation{}, ErrStaleOperation
-	}
-	cfg := s.captureContextLocked()
-	store := s.contextStore
-	messages := cloneContextMessages(s.Messages)
-	binding := s.binding
-	turnID := s.turnID
-	if turnID == 0 {
-		turnID = 1
-	}
-	s.mu.RUnlock()
-	if cfg.manager == nil || store == nil {
-		return contextmgr.Preparation{}, fmt.Errorf("context compaction is not configured")
-	}
-	input := prepareInputForContext(messages, s.MaxContextTokens, s.MaxTokens, binding, cfg.principal, cfg.policy, cfg.worktree)
-	input.Revision = cfg.revision
-	input.Force = true
-	if err := s.compactLoadSnapshot(ctx, cfg, store, &input); err != nil {
+	st, err := s.captureManualCompactState()
+	if err != nil {
 		return contextmgr.Preparation{}, err
 	}
+	if st.cfg.manager == nil || st.store == nil {
+		return contextmgr.Preparation{}, fmt.Errorf("context compaction is not configured")
+	}
+	input := prepareInputForContext(st.messages, s.MaxContextTokens, s.MaxTokens, st.binding, st.cfg.principal, st.cfg.policy, st.cfg.worktree)
+	input.Revision = st.cfg.revision
+	input.Force = true
+	input.Tools = st.toolSpecs
+	if err := s.compactLoadSnapshot(ctx, st.cfg, st.store, &input); err != nil {
+		return contextmgr.Preparation{}, err
+	}
+	cfg, store, messages, turnID := st.cfg, st.store, st.messages, st.turnID
+	_ = store
 	preparation, err := cfg.manager.PreparationManager.Prepare(ctx, input)
 	if err != nil {
 		return contextmgr.Preparation{}, err

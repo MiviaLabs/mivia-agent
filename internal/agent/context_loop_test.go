@@ -90,8 +90,10 @@ func TestAgentTurnDiscardsFailedPreparation(t *testing.T) {
 	if err == nil || !errors.Is(err, errPreparationProvider) {
 		t.Fatalf("provider error = %v", err)
 	}
-	if probe.discards != 1 || loop.HasPreparation {
-		t.Fatalf("discards=%d hasPreparation=%v", probe.discards, loop.HasPreparation)
+	// The loop retains preparation so the session layer can commit an
+	// OutcomeUpstreamErr checkpoint; discard is deferred to session lifecycle.
+	if probe.discards != 0 || !loop.HasPreparation {
+		t.Fatalf("discards=%d hasPreparation=%v, want discards=0 hasPreparation=true", probe.discards, loop.HasPreparation)
 	}
 }
 

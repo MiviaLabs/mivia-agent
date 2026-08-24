@@ -55,7 +55,7 @@ func TestSDKTrimRunsPreparationEachIteration(t *testing.T) {
 // nil PreparationManager installs no Trim and the run behaves exactly
 // as before the Trim hook existed.
 func TestSDKTrimNilManagerKeepsHistory(t *testing.T) {
-	trim := sdkPrepareTrim(&Loop{}, Options{})
+	trim := sdkPrepareTrim(&Loop{}, Options{}, nil)
 	if trim != nil {
 		t.Fatalf("sdkPrepareTrim with nil PreparationManager returned a non-nil closure")
 	}
@@ -83,3 +83,58 @@ func TestSDKTrimPrepareFailureFailsRun(t *testing.T) {
 type errPrep struct{}
 
 func (errPrep) Error() string { return "prep boom" }
+
+// TestSDKTrimPreparationUsesRotatedToolSpecs pins that when dynamic tool surface
+// rotation occurs mid-turn, the Trim preparation pass prices the rotated tool specs.
+func TestSDKTrimPreparationUsesRotatedToolSpecs(t *testing.T) {
+	specA := provider.ToolSpec{"type": "function", "function": map[string]any{"name": "initial_tool"}}
+	specB := provider.ToolSpec{"type": "function", "function": map[string]any{"name": "rotated_tool"}}
+
+	var recordedTools [][]provider.ToolSpec
+	mgr := &customPrepManager{
+		prep: func(_ context.Context, in contextmgr.PrepareInput) (contextmgr.Preparation, error) {
+			recordedTools = append(recordedTools, in.Tools)
+			return contextmgr.Preparation{Messages: in.Messages}, nil
+		},
+	}
+
+	turn := &sdkTurnState{}
+	turn.setAdvertised([]provider.ToolSpec{specA})
+
+	loop := &Loop{}
+	opts := Options{PreparationManager: mgr, AdvertisedToolSpecs: []provider.ToolSpec{specA}}
+
+	trim := sdkPrepareTrim(loop, opts, turn)
+	if trim == nil {
+		t.Fatal("sdkPrepareTrim returned nil")
+	}
+
+	// First Trim call (iteration 1): uses specA
+	if _, err := trim(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(recordedTools) != 1 || len(recordedTools[0]) != 1 || recordedTools[0][0]["function"].(map[string]any)["name"] != "initial_tool" {
+		t.Fatalf("first trim Tools = %v, want initial_tool", recordedTools)
+	}
+
+	// Surface rotation mid-turn installs specB
+	turn.setAdvertised([]provider.ToolSpec{specB})
+
+	// Second Trim call (iteration 2): uses specB
+	if _, err := trim(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(recordedTools) != 2 || len(recordedTools[1]) != 1 || recordedTools[1][0]["function"].(map[string]any)["name"] != "rotated_tool" {
+		t.Fatalf("second trim Tools = %v, want rotated_tool", recordedTools)
+	}
+}
+
+type customPrepManager struct {
+	prep func(context.Context, contextmgr.PrepareInput) (contextmgr.Preparation, error)
+}
+
+func (m *customPrepManager) Prepare(ctx context.Context, in contextmgr.PrepareInput) (contextmgr.Preparation, error) {
+	return m.prep(ctx, in)
+}
+
+func (m *customPrepManager) Discard(contextmgr.Preparation) {}

@@ -80,7 +80,7 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 	if err != nil {
 		return sdkagentloop.Result{}, err
 	}
-	sdkOpts.Trim = sdkPrepareTrim(l, opts)
+	sdkOpts.Trim = sdkPrepareTrim(l, opts, turn)
 	// Legacy not-in-registry denial (agentloop_tool_error.go; the
 	// reporter records a failed outcome for its synthesized denials)
 	// and the legacy tool_start/tool_end wire shape (sdk_tool_events.go).
@@ -167,20 +167,14 @@ func sdkErrIsInterrupted(ctx context.Context, err error) bool {
 // handleSDKRunError applies RunAgentLoopOnce's post-run error handling:
 // an interrupted run keeps the streamed partial the tee emitted
 // (recorded into l.Messages BEFORE the dispatcher's history
-// write-back); a genuine hard failure instead discards a
-// successfully-captured preparation, mirroring the legacy runStep's
-// non-interrupted error branch (loop.go) - a preparation captured
-// against a request whose call then failed for its own reason must
-// not be committed as this turn's LastPreparation. Either way the
-// partial Result is returned alongside err: the SDK's hard-fail
-// Result carries the messages completed so far, and the dispatcher
-// writes them back so an errored turn keeps its partial history,
-// mirroring the legacy path.
+// write-back). The loop retains any successfully-captured preparation
+// on both interrupted and hard errors so the caller (finishErroredContextTurn
+// or subagent runner) can decide whether to commit an OutcomeUpstreamErr
+// checkpoint or discard it. The partial Result is returned alongside err:
+// the SDK's hard-fail Result carries the messages completed so far, and the
+// dispatcher writes them back so an errored turn keeps its partial history.
 func handleSDKRunError(ctx context.Context, l *Loop, opts Options, turn *sdkTurnState, res sdkagentloop.Result, err error) (sdkagentloop.Result, error) {
 	recordSDKCanceledStreamPartial(ctx, l, turn, err)
-	if !sdkErrIsInterrupted(ctx, err) {
-		l.discardPreparation(opts)
-	}
 	return res, err
 }
 

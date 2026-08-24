@@ -91,9 +91,21 @@ func TestErroredContextTurn_ValidShapeCommitsDurably(t *testing.T) {
 		t.Fatal("errored turn's question is missing from in-memory history")
 	}
 
-	// Durable resume must see it too - this is the actual regression the fix
-	// closes: before F3, finishContextTurn's error branch never called Commit
-	// at all, so this Load would come back with none of this turn's content.
+	// Durable resume must see it too - a checkpoint must be committed to the
+	// context store (tagged OutcomeUpstreamErr) so store.Load retrieves it.
+	snapshot, err := store.Load(context.Background(), principal, principal.SessionID)
+	if err != nil {
+		t.Fatalf("Load checkpoint: %v", err)
+	}
+	var checkpointMsgs []provider.Message
+	if err := contextstate.UnmarshalCanonical(snapshot.Active.ActiveContext, &checkpointMsgs); err != nil {
+		t.Fatalf("UnmarshalCanonical: %v", err)
+	}
+	if !historyContains(checkpointMsgs, "does this survive a failed turn") {
+		t.Fatal("errored turn's question is missing from durable checkpoint active context")
+	}
+
+	// LoadSession catalog projection also serves the updated state.
 	payload, info, err := store.LoadSession(context.Background(), principal, principal.SessionID)
 	if err != nil {
 		t.Fatalf("LoadSession: %v", err)
@@ -103,6 +115,102 @@ func TestErroredContextTurn_ValidShapeCommitsDurably(t *testing.T) {
 	}
 	if !strings.Contains(string(payload), "does this survive a failed turn") {
 		t.Fatalf("durable payload = %s, want it to contain the errored turn's question", payload)
+	}
+}
+
+// TestErroredContextTurn_CompactedHistoryPreservesSummaryOnHardError verifies
+// that when a turn triggers compaction during preparation and then hard-errors
+// on the provider call, the compaction summary is committed to the durable
+// checkpoint and live history rather than lost.
+func TestErroredContextTurn_CompactedHistoryPreservesSummaryOnHardError(t *testing.T) {
+	upstream := errors.New("upstream 500")
+	sess, store, principal, manager := newErroredContextTurnFixture(t, erroringAgentCompleter{err: upstream})
+	defer store.Close()
+
+	// Seed multiple large messages so compaction triggers under a small budget.
+	sess.mu.Lock()
+	sess.Messages = []provider.Message{
+		{Role: provider.RoleSystem, Content: "You are a helpful assistant."},
+		{Role: provider.RoleUser, Content: strings.Repeat("pre-existing long user query ", 50)},
+		{Role: provider.RoleAssistant, Content: strings.Repeat("pre-existing long assistant reply ", 50)},
+		{Role: provider.RoleUser, Content: strings.Repeat("second long user query ", 50)},
+		{Role: provider.RoleAssistant, Content: strings.Repeat("second long assistant reply ", 50)},
+	}
+	sess.mu.Unlock()
+
+	summaryProvider := &chatSummaryProvider{}
+	summarizer := plainSummarySummarizer(t, summaryProvider)
+	manager.Summarizer = summarizer
+	sess.SetSummarizer(summarizer)
+
+	// Set a tight budget so preparation triggers compaction.
+	sess.SetPromptBudget(300)
+
+	var sink strings.Builder
+	_, err := sess.SendUser(context.Background(), "question after compaction", &sink)
+	if !errors.Is(err, upstream) {
+		t.Fatalf("SendUser error = %v, want upstream error surfaced unchanged", err)
+	}
+
+	// 1. In-memory history must contain the user question and the injected summary.
+	inMemory := sess.MessagesCopy()
+	if !historyContains(inMemory, "question after compaction") {
+		t.Fatal("question missing from in-memory history")
+	}
+	if !historyContains(inMemory, "summarized objective") {
+		t.Fatal("injected compaction summary missing from in-memory history")
+	}
+
+	// 2. Durable checkpoint must carry the summary in active context.
+	snapshot, err := store.Load(context.Background(), principal, principal.SessionID)
+	if err != nil {
+		t.Fatalf("store.Load: %v", err)
+	}
+	var checkpointMsgs []provider.Message
+	if err := contextstate.UnmarshalCanonical(snapshot.Active.ActiveContext, &checkpointMsgs); err != nil {
+		t.Fatalf("UnmarshalCanonical: %v", err)
+	}
+	if !historyContains(checkpointMsgs, "question after compaction") {
+		t.Fatal("question missing from checkpoint active context")
+	}
+	if !historyContains(checkpointMsgs, "summarized objective") {
+		t.Fatal("injected compaction summary missing from checkpoint active context")
+	}
+}
+
+// TestErroredContextTurn_InvalidShapeDiscardsGracefully verifies that when a turn
+// fails with an unpairable tool-call shape (which cannot produce a valid commit
+// request), finishErroredContextTurn falls back cleanly and drops pending admission.
+func TestErroredContextTurn_InvalidShapeDiscardsGracefully(t *testing.T) {
+	sess, store, principal, manager := newErroredContextTurnFixture(t, erroringAgentCompleter{})
+	defer store.Close()
+
+	token := sess.captureOperationToken("turn:invalid")
+	if _, err := sess.StageToolAdmission([]string{"bash"}, token.TurnID); err != nil {
+		t.Fatalf("StageToolAdmission: %v", err)
+	}
+
+	cfg := contextTurnConfig{manager: manager, principal: principal}
+	// An unpairable history: tool call with no matching tool result.
+	toolCall := provider.ToolCall{ID: "call-1", Type: "function"}
+	toolCall.Function.Name = "bash"
+	toolCall.Function.Arguments = "{}"
+	loop := &agent.Loop{
+		Messages: []provider.Message{
+			{Role: provider.RoleSystem, Content: "sys"},
+			{Role: provider.RoleUser, Content: "run tool"},
+			{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{toolCall}},
+		},
+		HasPreparation: true,
+	}
+
+	upstreamErr := errors.New("upstream failed mid-tool")
+	if err := sess.finishErroredContextTurn(context.Background(), loop, "run tool", token, nil, cfg, upstreamErr); err != nil {
+		t.Fatalf("finishErroredContextTurn = %v, want nil", err)
+	}
+
+	if _, ok := sess.PendingAdmission(); ok {
+		t.Fatal("pending admission must be dropped when commit fails")
 	}
 }
 

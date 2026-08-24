@@ -15,8 +15,14 @@ import (
 // value replaces it. Failure identity, the interrupted-context
 // fallback, and the PreparationErr bookkeeping match context.go's
 // prepareStep exactly.
-func prepareSDKOnce(ctx context.Context, l *Loop, opts Options, msgs []provider.Message) ([]provider.Message, error) {
-	input := l.buildPrepareInput(nil, opts)
+func prepareSDKOnce(ctx context.Context, l *Loop, opts Options, turn *sdkTurnState, msgs []provider.Message) ([]provider.Message, error) {
+	toolSpecs := l.initialToolSpecs(opts)
+	if turn != nil {
+		if adv := turn.currentAdvertised(); adv != nil {
+			toolSpecs = adv
+		}
+	}
+	input := l.buildPrepareInput(toolSpecs, opts)
 	input.Messages = msgs
 	preparation, err := opts.PreparationManager.Prepare(ctx, input)
 	if err != nil {
@@ -47,12 +53,12 @@ func prepareSDKOnce(ctx context.Context, l *Loop, opts Options, msgs []provider.
 // returns nil: no Trim, the raw history passes through, exactly the
 // pre-Trim behavior. The SDK's Window stays nil so the SDK never runs
 // its own planning pass on top of the host's.
-func sdkPrepareTrim(l *Loop, opts Options) func(context.Context, []sdkshape.Message) ([]sdkshape.Message, error) {
+func sdkPrepareTrim(l *Loop, opts Options, turn *sdkTurnState) func(context.Context, []sdkshape.Message) ([]sdkshape.Message, error) {
 	if opts.PreparationManager == nil {
 		return nil
 	}
 	return func(ctx context.Context, sdkMsgs []sdkshape.Message) ([]sdkshape.Message, error) {
-		prepared, err := prepareSDKOnce(ctx, l, opts, sdkMessagesToCLI(sdkMsgs))
+		prepared, err := prepareSDKOnce(ctx, l, opts, turn, sdkMessagesToCLI(sdkMsgs))
 		if err != nil {
 			return nil, err
 		}
@@ -90,7 +96,7 @@ func sdkInitialHistory(ctx context.Context, l *Loop, opts Options, msgs []provid
 	if opts.PreparationManager == nil || ctx.Err() == nil {
 		return cliMessagesToSDK(msgs), nil
 	}
-	prepared, perr := prepareSDKOnce(ctx, l, opts, msgs)
+	prepared, perr := prepareSDKOnce(ctx, l, opts, nil, msgs)
 	if perr != nil {
 		return nil, perr
 	}

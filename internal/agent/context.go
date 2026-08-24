@@ -29,10 +29,9 @@ func (l *Loop) captureOmittedEvidence(input contextmgr.PrepareInput, preparation
 	}
 }
 
-// buildPrepareInput assembles the manager input shared by prepareStep and the
-// prompt-too-long retry re-preparation (refreshPreparationAfterRetry), so both
-// call sites price the SAME history, budget, tools, reserve, objective, and
-// calibration. It mirrors the caller-supplied PrepareInput, overlaying the
+// buildPrepareInput assembles the manager input for step preparation so all
+// preparation calls price the SAME history, budget, tools, reserve, objective,
+// and calibration. It mirrors the caller-supplied PrepareInput, overlaying the
 // loop's live state.
 func (l *Loop) buildPrepareInput(toolSpecs []provider.ToolSpec, opts Options) contextmgr.PrepareInput {
 	input := opts.PreparationInput
@@ -51,33 +50,6 @@ func (l *Loop) buildPrepareInput(toolSpecs []provider.ToolSpec, opts Options) co
 		input.CalibrationRatio = l.Calibration.Ratio
 	}
 	return input
-}
-
-// refreshPreparationAfterRetry re-synchronizes the recorded preparation with
-// the history a prompt-too-long retry actually sent. retryAfterPromptTooLong
-// pruned l.Messages in place and appended the compaction notice, leaving
-// LastPreparation pointing at the rejected (never-sent) history; committing
-// that stale preparation would fingerprint a BaseDigest over bytes the
-// checkpoint does not hold. Discard it and re-Prepare on the pruned history so
-// commit and checkpoint agree. A re-Prepare failure fails the turn honestly:
-// a checkpoint built from a preparation that could not be produced is worse
-// than none. With no manager configured, discarding is enough - nothing stale
-// can be committed.
-func (l *Loop) refreshPreparationAfterRetry(ctx context.Context, req provider.Request, opts Options) error {
-	l.discardPreparation(opts)
-	if opts.PreparationManager == nil {
-		return nil
-	}
-	input := l.buildPrepareInput(req.Tools, opts)
-	preparation, err := opts.PreparationManager.Prepare(ctx, input)
-	if err != nil {
-		l.PreparationErr = err
-		return err
-	}
-	l.recordPreparation(preparation)
-	l.PreparationErr = nil
-	l.Messages = clonePreparedMessages(l.LastPreparation.Messages)
-	return nil
 }
 
 // recordPreparation stores the step preparation and overlays turn-level
