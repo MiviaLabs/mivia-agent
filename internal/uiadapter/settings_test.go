@@ -2,14 +2,23 @@ package uiadapter_test
 
 import (
 	"context"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/component/topbar"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/conversation"
+	settingsscreen "github.com/MiviaLabs/mivia-agent/internal/ui/screen/settings"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	"github.com/MiviaLabs/mivia-agent/internal/uiadapter"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
 
@@ -350,4 +359,159 @@ func TestProviderSettings_ActivateModelWithSession(t *testing.T) {
 			}
 		}
 	}
+}
+
+func setupIntegrationEnvironment(t *testing.T, initialModel string) (*chat.Session, *config.Resolved, *cliagents.AgentSessionState) {
+	t.Helper()
+	res := &config.Resolved{
+		ProviderName: "ollama",
+		Model:        initialModel,
+		Models:       []string{"llama3.2", "llama3.3", "qwen2.5"},
+		ModelProfiles: []config.ModelSpec{
+			{Name: "llama3.2", ContextWindowTokens: 128000},
+			{Name: "llama3.3", ContextWindowTokens: 128000},
+			{Name: "qwen2.5", ContextWindowTokens: 128000},
+		},
+	}
+	completer := &scriptedCompleter{
+		turns: []provider.Response{
+			{Content: "Hello from test model", FinishReason: "stop"},
+		},
+	}
+	sess := chat.NewSession(res, completer)
+	sess.UseTools = true
+	sess.Tools = tools.NewRegistry()
+	sess.Tools.Register(noopTool{})
+	sess.SelectModel(initialModel)
+
+	reg := agents.NewRegistry()
+	state := &cliagents.AgentSessionState{
+		Registry: reg,
+		ToolBase: tools.NewRegistry(),
+	}
+	return sess, res, state
+}
+
+func TestIntegration_SettingsModelActivationSwitchesSessionAndNextTurn(t *testing.T) {
+	sess, res, state := setupIntegrationEnvironment(t, "llama3.2")
+	conv := uiadapter.NewConversation(sess)
+	store := uiadapter.NewSettingsStore(sess, res, state)
+	settings := store.Settings()
+
+	if got := conv.Model().Name; got != "llama3.2" {
+		t.Fatalf("expected initial conv model 'llama3.2', got %q", got)
+	}
+	if got := sess.CurrentModel(); got != "llama3.2" {
+		t.Fatalf("expected initial session model 'llama3.2', got %q", got)
+	}
+
+	handle, err := settings.Providers.Apply(context.Background(), ports.ScopeUser, ports.ActivateModel{
+		Provider: "ollama",
+		Model:    "llama3.3",
+	})
+	if err != nil {
+		t.Fatalf("Apply ActivateModel error: %v", err)
+	}
+	drainOK(t, handle)
+
+	if got := sess.CurrentModel(); got != "llama3.3" {
+		t.Errorf("expected session model switched to 'llama3.3', got %q", got)
+	}
+	if got := conv.Model().Name; got != "llama3.3" {
+		t.Errorf("expected conv model switched to 'llama3.3', got %q", got)
+	}
+	if res.Model != "llama3.3" {
+		t.Errorf("expected res.Model 'llama3.3', got %q", res.Model)
+	}
+
+	turnHandle, err := conv.Send(context.Background(), intent.Send{Text: "Test query"})
+	if err != nil {
+		t.Fatalf("conv.Send error: %v", err)
+	}
+	events := drainUntilClose(t, turnHandle.Events(), 3*time.Second)
+	if len(events) == 0 {
+		t.Fatal("expected events from turn execution")
+	}
+
+	if got := sess.CurrentModel(); got != "llama3.3" {
+		t.Errorf("expected session model to remain 'llama3.3' after turn, got %q", got)
+	}
+	if got := conv.Model().Name; got != "llama3.3" {
+		t.Errorf("expected conv model to remain 'llama3.3' after turn, got %q", got)
+	}
+}
+
+func TestIntegration_CommandRunnerSelectModelSwitchesSessionAndConversation(t *testing.T) {
+	sess, res, state := setupIntegrationEnvironment(t, "llama3.2")
+	conv := uiadapter.NewConversation(sess)
+	runner := uiadapter.NewCommandRunner(sess, res, state)
+
+	outcome := runner.SelectModel(context.Background(), "llama3.3")
+	if outcome.Err != "" {
+		t.Fatalf("SelectModel error: %s", outcome.Err)
+	}
+
+	if got := sess.CurrentModel(); got != "llama3.3" {
+		t.Errorf("expected session model 'llama3.3', got %q", got)
+	}
+	if got := conv.Model().Name; got != "llama3.3" {
+		t.Errorf("expected conv model 'llama3.3', got %q", got)
+	}
+}
+
+func TestIntegration_SettingsModalPopUpdatesConversationTopbarView(t *testing.T) {
+	sess, res, state := setupIntegrationEnvironment(t, "llama3.2")
+	conv := uiadapter.NewConversation(sess)
+	store := uiadapter.NewSettingsStore(sess, res, state)
+	approver := uiadapter.NewApprover(sess)
+
+	th := loadTestTheme(t)
+	themes := []theme.Theme{th}
+
+	convScreen := conversation.New(th, theme.TierASCII, themes, conv, approver, 80, nil)
+	convScreen.SetSettings(store.Settings())
+
+	root := app.New(convScreen, th, theme.TierASCII, themes)
+
+	view := root.View().Content
+	if !strings.Contains(view, "llama3.2") {
+		t.Fatalf("expected initial root view to contain 'llama3.2', got:\n%s", view)
+	}
+
+	top := topbar.New(th, theme.TierASCII, conv.Model(), conv.ContextUsage(), 80)
+	settingsSc := settingsscreen.New(th, theme.TierASCII, top, store.Settings(), 5)
+	next, _ := root.Update(app.PushScreenMsg{Screen: settingsSc})
+	root = next.(app.Model)
+
+	handle, err := store.Settings().Providers.Apply(context.Background(), ports.ScopeUser, ports.ActivateModel{
+		Provider: "ollama",
+		Model:    "llama3.3",
+	})
+	if err != nil {
+		t.Fatalf("Apply ActivateModel error: %v", err)
+	}
+	drainOK(t, handle)
+
+	next, _ = root.Update(app.PopScreenMsg{})
+	root = next.(app.Model)
+
+	viewAfterPop := root.View().Content
+	if !strings.Contains(viewAfterPop, "llama3.3") {
+		t.Errorf("expected root view after pop to contain 'llama3.3', got:\n%s", viewAfterPop)
+	}
+}
+
+func loadTestTheme(t *testing.T) theme.Theme {
+	t.Helper()
+	themes, err := theme.Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, th := range themes {
+		if th.Name == "mivia-dark" {
+			return th
+		}
+	}
+	t.Fatal("mivia-dark theme not found")
+	return theme.Theme{}
 }

@@ -64,7 +64,15 @@ func (s *SettingsStore) initProvidersFromConfig() {
 	catalog := s.res.ModelCatalog()
 	if len(catalog) == 0 && s.res.ProviderName != "" {
 		var models []ports.ModelView
-		if s.res.Model != "" {
+		if len(s.res.ModelProfiles) > 0 {
+			for _, p := range s.res.ModelProfiles {
+				models = append(models, ports.ModelView{Name: p.Name, ContextWindowTokens: p.ContextWindowTokens})
+			}
+		} else if len(s.res.Models) > 0 {
+			for _, m := range s.res.Models {
+				models = append(models, ports.ModelView{Name: m, ContextWindowTokens: 128000})
+			}
+		} else if s.res.Model != "" {
 			models = append(models, ports.ModelView{Name: s.res.Model, ContextWindowTokens: 128000})
 		}
 		activeModel := s.res.Model
