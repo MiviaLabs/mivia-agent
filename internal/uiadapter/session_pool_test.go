@@ -81,3 +81,28 @@ func TestSessionPool_NilConfigReturnsError(t *testing.T) {
 		t.Fatal("expected error on GetOrCreate with nil config")
 	}
 }
+
+func TestSessionPool_InheritsStore(t *testing.T) {
+	dir := t.TempDir()
+	res := &config.Resolved{Model: "test-model"}
+	store, err := chat.NewFileSessionStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sess1 := chat.NewSession(res, nil)
+	sess1.SetSessionStore(store, nil)
+	sess1.SessionID = "stored-1"
+	if err := sess1.Save("stored-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	pool := uiadapter.NewSessionPool(sess1, res, nil, false)
+	conv, err := pool.GetOrCreate("stored-1")
+	if err != nil {
+		t.Fatalf("GetOrCreate failed: %v", err)
+	}
+	if conv.ID() != "stored-1" {
+		t.Errorf("got ID %q, want stored-1", conv.ID())
+	}
+}
