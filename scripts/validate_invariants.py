@@ -76,19 +76,61 @@ def check_duplicate_ids(manifest_text: str) -> None:
     return None
 
 
-def load_invariant_skips_policy(policy_path: Path = POLICY_SKIPS_PATH) -> dict:
+def load_invariant_skips_policy(policy_path: Path = POLICY_SKIPS_PATH, repo: Path = REPO, diff_args: list[str] | None = None) -> dict:
     if not policy_path.is_file():
         return {}
+
+    raw_text = ""
+    is_modified_in_diff = False
+    diff_scope = diff_args if diff_args is not None else ["--cached"]
+    r = subprocess.run(
+        ["git", "diff", *diff_scope, "--name-only", "--", str(policy_path.relative_to(repo) if policy_path.is_relative_to(repo) else policy_path)],
+        cwd=repo, capture_output=True, text=True, check=False,
+    )
+    if r.returncode == 0 and r.stdout.strip():
+        is_modified_in_diff = True
+        base_ref = "HEAD"
+        if diff_args is not None:
+            if len(diff_args) >= 2 and not diff_args[0].startswith("-"):
+                base_ref = diff_args[0]
+            elif len(diff_args) == 1 and ".." in diff_args[0]:
+                base_ref = diff_args[0].split("..")[0]
+            elif len(diff_args) == 1 and not diff_args[0].startswith("-"):
+                base_ref = diff_args[0]
+
+        rel_policy = str(policy_path.relative_to(repo) if policy_path.is_relative_to(repo) else ".mivia/policy/invariant-skips.json")
+        show_res = subprocess.run(
+            ["git", "show", f"{base_ref}:{rel_policy}"],
+            cwd=repo, capture_output=True, text=True, check=False,
+        )
+        print(
+            "validate_invariants: .mivia/policy/invariant-skips.json is modified in this diff; "
+            "evaluating skips against base policy to prevent same-commit bypass",
+            file=sys.stderr,
+        )
+        if show_res.returncode == 0 and show_res.stdout.strip():
+            raw_text = show_res.stdout
+        else:
+            # File did not exist at base ref: fail closed with zero allowlisted skips
+            return {}
+
+    if not is_modified_in_diff:
+        try:
+            raw_text = policy_path.read_text(encoding="utf-8")
+        except Exception as e:
+            print(f"FAIL: invalid policy {policy_path}: {e}")
+            sys.exit(1)
+
     try:
-        return json.loads(policy_path.read_text(encoding="utf-8")).get("allowlistedSkips", {})
+        return json.loads(raw_text).get("allowlistedSkips", {})
     except Exception as e:
         print(f"FAIL: invalid policy {policy_path}: {e}")
         sys.exit(1)
 
 
-def check_invariant_skips(manifest_refs: set[str], repo: Path = REPO, policy_path: Path = POLICY_SKIPS_PATH) -> list[str]:
+def check_invariant_skips(manifest_refs: set[str], repo: Path = REPO, policy_path: Path = POLICY_SKIPS_PATH, diff_args: list[str] | None = None) -> list[str]:
     """Finds all t.Skip calls in manifest-referenced invariant tests and fails on unallowlisted ones."""
-    allowlisted = load_invariant_skips_policy(policy_path)
+    allowlisted = load_invariant_skips_policy(policy_path, repo, diff_args)
     violations = []
 
     skip_dirs = {".git", "testdata", "node_modules", "vendor"}
