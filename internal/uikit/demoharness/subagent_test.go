@@ -51,6 +51,9 @@ func TestSubagentScenarioFeedsProgressAndThreads(t *testing.T) {
 	if !ok {
 		t.Fatal("Thread(sa-1) did not resolve the scripted thread")
 	}
+	if conv.ID() != "sa-1" {
+		t.Errorf("conv.ID() = %q, want sa-1", conv.ID())
+	}
 	if hist := conv.History(); len(hist) != 2 || hist[0].Role != "user" || hist[1].Role != "assistant" {
 		t.Fatalf("thread history %+v, want the fixture's user+assistant pair", hist)
 	}

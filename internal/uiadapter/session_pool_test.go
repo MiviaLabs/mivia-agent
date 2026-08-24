@@ -73,3 +73,11 @@ func TestSessionPool_GetOrCreateLoadsPersistedSession(t *testing.T) {
 		t.Errorf("convAlpha.ID() = %q, want sess-alpha", convAlpha.ID())
 	}
 }
+
+func TestSessionPool_NilConfigReturnsError(t *testing.T) {
+	pool := uiadapter.NewSessionPool(nil, nil, nil, false)
+	_, err := pool.GetOrCreate("nonexistent")
+	if err == nil {
+		t.Fatal("expected error on GetOrCreate with nil config")
+	}
+}

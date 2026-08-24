@@ -33,6 +33,9 @@ func TestSubagentThreads_RegisterAndLookup(t *testing.T) {
 	if gotConv.Title() != "subagent-1" {
 		t.Errorf("got Title()=%q, want %q", gotConv.Title(), "subagent-1")
 	}
+	if gotConv.ID() != "subagent-1" {
+		t.Errorf("got ID()=%q, want %q", gotConv.ID(), "subagent-1")
+	}
 	if gotConv.Model().Name != "m1" {
 		t.Errorf("got Model()=%+v, want name m1", gotConv.Model())
 	}

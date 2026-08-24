@@ -201,3 +201,69 @@ func TestMultiSession_TurnEndCleansUpBackgroundSession(t *testing.T) {
 		t.Errorf("expected Session A active handle to be cleared on turn end, got %v", s.active)
 	}
 }
+
+func TestMultiSession_BackgroundToolEventsUpdateState(t *testing.T) {
+	s, _, _, runner := setupTwoSessionScreen(t)
+
+	// Start turn on A
+	s = typeText(t, s, "Task in A")
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	s = next.(Screen)
+
+	// Switch to B
+	next, _ = s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-B"))
+	s = next.(Screen)
+
+	// Emit ToolStart, ToolOutput, ToolEnd, TurnEnd for Session A
+	s2, _ := s.Update(uievent.EventMsg{
+		SessionID: "sess-A",
+		Event: uievent.Event{
+			Kind:   uievent.KindToolStart,
+			TurnID: "turn-sess-A",
+			Body:   uievent.ToolStartBody{Name: "search", Args: map[string]any{"q": "go"}},
+		},
+	})
+	s = s2.(Screen)
+
+	s3, _ := s.Update(uievent.EventMsg{
+		SessionID: "sess-A",
+		Event: uievent.Event{
+			Kind:   uievent.KindToolOutput,
+			TurnID: "turn-sess-A",
+			Body: uievent.ToolOutputBody{
+				ToolCallID: "tc-1",
+				Progress:   &uievent.Progress{Status: "indexing", Step: 1, Total: 2},
+			},
+		},
+	})
+	s = s3.(Screen)
+
+	s4, _ := s.Update(uievent.EventMsg{
+		SessionID: "sess-A",
+		Event: uievent.Event{
+			Kind:   uievent.KindToolEnd,
+			TurnID: "turn-sess-A",
+			Body: uievent.ToolEndBody{
+				Diff: &uievent.DiffStat{Path: "main.go", Added: 2, Removed: 1},
+			},
+		},
+	})
+	s = s4.(Screen)
+
+	s5, _ := s.Update(uievent.EventMsg{
+		SessionID: "sess-A",
+		Event: uievent.Event{
+			Kind:   uievent.KindTurnEnd,
+			TurnID: "turn-sess-A",
+			Body:   uievent.TurnEndBody{Reason: "completed"},
+		},
+	})
+	s = s5.(Screen)
+
+	// Switch back to A
+	next, _ = s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-A"))
+	s = next.(Screen)
+	if s.conv.ID() != "sess-A" {
+		t.Fatalf("expected to switch back to sess-A, got %q", s.conv.ID())
+	}
+}
