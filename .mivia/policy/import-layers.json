@@ -479,6 +479,7 @@
     "internal/workflows/controller": [
       "internal/agents",
       "internal/coordinator",
+      "internal/evidencecheck",
       "internal/jschema",
       "internal/ledger",
       "internal/provider",
