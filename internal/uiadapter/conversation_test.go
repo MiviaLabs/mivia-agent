@@ -830,71 +830,80 @@ func TestHistory_IncludesToolCallsAndReasoning(t *testing.T) {
 	}
 }
 
-func TestSend_SubagentProgressForwarded(t *testing.T) {
-	var capturedFn func(agent.Event)
-	var cleared bool
-	prevRegistrar := uiadapter.SubagentProgressRegistrar
+// registerCapturingSubagentProgress installs a SubagentProgressRegistrar
+// that captures the handler and signals clearedCh (not a plain bool -
+// the cleanup runs on the turn's background goroutine, so a bool read
+// after drainUntilClose has no happens-before edge; see -race) when the
+// turn's cleanup runs. Restores the prior registrar on t.Cleanup.
+func registerCapturingSubagentProgress(t *testing.T) (registered func() bool, capturedFn func(agent.Event), clearedCh chan struct{}) {
+	t.Helper()
+	var realFn func(agent.Event)
+	clearedCh = make(chan struct{})
+	prev := uiadapter.SubagentProgressRegistrar
 	uiadapter.SubagentProgressRegistrar = func(fn func(agent.Event)) func() {
-		capturedFn = fn
-		return func() {
-			cleared = true
+		realFn = fn
+		return func() { close(clearedCh) }
+	}
+	t.Cleanup(func() { uiadapter.SubagentProgressRegistrar = prev })
+	return func() bool { return realFn != nil }, func(ev agent.Event) { realFn(ev) }, clearedCh
+}
+
+// hasSubagentToolEvents reports whether events contains a translated
+// tool.start and a successful tool.end for the given subagent call.
+func hasSubagentToolEvents(events []uievent.Event, toolCallID, name string) (hasStart, hasEnd bool) {
+	for _, ev := range events {
+		if ev.Kind == uievent.KindToolStart {
+			if body, ok := ev.Body.(uievent.ToolStartBody); ok && body.ToolCallID == toolCallID && body.Name == name {
+				hasStart = true
+			}
+		}
+		if ev.Kind == uievent.KindToolEnd {
+			if body, ok := ev.Body.(uievent.ToolEndBody); ok && body.ToolCallID == toolCallID && body.Name == name && body.OK {
+				hasEnd = true
+			}
 		}
 	}
-	defer func() {
-		uiadapter.SubagentProgressRegistrar = prevRegistrar
-	}()
+	return hasStart, hasEnd
+}
 
-	completer := &scriptedCompleter{
-		turns: []provider.Response{
-			{Content: "done"},
-		},
-	}
+// block (below) pins ChatTurn until this test has injected the synthetic
+// subagent events, so the turn cannot finish - and close handle.Events() -
+// before those events reach the channel. Without this gate a scripted
+// completer that answers immediately races the turn goroutine's
+// completion against this test's own post-Send injections: on a
+// slow/contended scheduler (observed under `make verify`'s full parallel
+// run) the turn goroutine can win, mark the handler closed, and silently
+// drop both injected events, failing nondeterministically.
+func TestSend_SubagentProgressForwarded(t *testing.T) {
+	registered, capturedFn, clearedCh := registerCapturingSubagentProgress(t)
+
+	block := make(chan struct{})
+	completer := &scriptedCompleter{block: block, turns: []provider.Response{{Content: "done"}}}
 	conv := newTestConversation(t, completer)
 	handle, err := conv.Send(context.Background(), intent.Send{Text: "run audit"})
 	if err != nil {
 		t.Fatalf("conv.Send: %v", err)
 	}
-	if capturedFn == nil {
+	if !registered() {
 		t.Fatal("SubagentProgressRegistrar was not invoked")
 	}
 
-	// Emit subagent progress events while turn is active.
-	capturedFn(agent.Event{
-		Kind:       agent.EventSubagentStart,
-		ToolCallID: "sub_1",
-		Name:       "read_file",
-		Input:      `{"path":"docs/OWNERS.yaml"}`,
-	})
-	capturedFn(agent.Event{
-		Kind:       agent.EventSubagentEnd,
-		ToolCallID: "sub_1",
-		Name:       "read_file",
-		Detail:     "completed",
-		Output:     "owners content",
-	})
+	capturedFn(agent.Event{Kind: agent.EventSubagentStart, ToolCallID: "sub_1", Name: "read_file", Input: `{"path":"docs/OWNERS.yaml"}`})
+	capturedFn(agent.Event{Kind: agent.EventSubagentEnd, ToolCallID: "sub_1", Name: "read_file", Detail: "completed", Output: "owners content"})
+	close(block)
 
 	events := drainUntilClose(t, handle.Events(), 2*time.Second)
-	if !cleared {
+	select {
+	case <-clearedCh:
+	case <-time.After(2 * time.Second):
 		t.Error("SubagentProgressRegistrar cleanup was not invoked on turn end")
 	}
 
-	var hasSubStart, hasSubEnd bool
-	for _, ev := range events {
-		if ev.Kind == uievent.KindToolStart {
-			if body, ok := ev.Body.(uievent.ToolStartBody); ok && body.ToolCallID == "sub_1" && body.Name == "read_file" {
-				hasSubStart = true
-			}
-		}
-		if ev.Kind == uievent.KindToolEnd {
-			if body, ok := ev.Body.(uievent.ToolEndBody); ok && body.ToolCallID == "sub_1" && body.Name == "read_file" && body.OK {
-				hasSubEnd = true
-			}
-		}
-	}
-	if !hasSubStart {
+	hasStart, hasEnd := hasSubagentToolEvents(events, "sub_1", "read_file")
+	if !hasStart {
 		t.Errorf("events stream missing subagent tool.start, events=%+v", events)
 	}
-	if !hasSubEnd {
+	if !hasEnd {
 		t.Errorf("events stream missing subagent tool.end, events=%+v", events)
 	}
 }
