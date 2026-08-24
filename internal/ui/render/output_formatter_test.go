@@ -93,3 +93,22 @@ func TestFormatJSONOutputSorted(t *testing.T) {
 		t.Errorf("keys not sorted: %v", lines)
 	}
 }
+
+func TestFormatMemoryOutput(t *testing.T) {
+	th := loadTheme(t)
+	raw := `[{"created":"2026-08-12","id":"6ddfa4ccc1a537fe86eaa93943f16d47","scope":"project","summary":"Plans live in the sibling mivia-agent-plans repo","tags":["workflow","feature-delivery"]}]`
+	summary, lines := FormatMemoryOutput(th, theme.TierTrueColor, raw, 80)
+	if summary != "1 memory item" {
+		t.Errorf("unexpected summary: %q", summary)
+	}
+	plain := ansi.Strip(strings.Join(lines, "\n"))
+	if !strings.Contains(plain, "• [project] 6ddfa4cc (2026-08-12)") {
+		t.Errorf("missing header chip in:\n%s", plain)
+	}
+	if !strings.Contains(plain, "Plans live in the sibling") {
+		t.Errorf("missing summary in:\n%s", plain)
+	}
+	if !strings.Contains(plain, "tags: workflow, feature-delivery") {
+		t.Errorf("missing tags in:\n%s", plain)
+	}
+}

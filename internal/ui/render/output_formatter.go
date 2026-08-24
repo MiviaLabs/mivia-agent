@@ -23,6 +23,9 @@ func FormatToolOutput(t theme.Theme, tier theme.Tier, name, output string, ok bo
 	case isCommandTool(lower):
 		body, collapsible = FormatCommandOutput(t, tier, output, ok, width)
 		return "", body, collapsible
+	case isMemoryTool(lower):
+		summary, body := FormatMemoryOutput(t, tier, output, width)
+		return summary, body, len(body) > 4
 	case isSearchTool(lower):
 		summary, body := FormatGrepOutput(t, tier, output, width)
 		return summary, body, len(body) > 6
@@ -40,6 +43,10 @@ func FormatToolOutput(t theme.Theme, tier theme.Tier, name, output string, ok bo
 
 func isCommandTool(lower string) bool {
 	return lower == "run_command" || lower == "bash" || lower == "terminal" || lower == "exec" || lower == "command"
+}
+
+func isMemoryTool(lower string) bool {
+	return strings.Contains(lower, "memory")
 }
 
 func isSearchTool(lower string) bool {
@@ -171,12 +178,84 @@ func FormatFileReadOutput(t theme.Theme, tier theme.Tier, output string, width i
 	return out, true
 }
 
-// FormatJSONOutput formats JSON objects into readable key-value summary lines.
+type memoryItem struct {
+	ID      string   `json:"id"`
+	Scope   string   `json:"scope"`
+	Created string   `json:"created"`
+	Summary string   `json:"summary"`
+	Tags    []string `json:"tags"`
+}
+
+// FormatMemoryOutput renders memory search/list results into clean memory cards.
+func FormatMemoryOutput(t theme.Theme, tier theme.Tier, output string, width int) (string, []string) {
+	trimmed := strings.TrimSpace(output)
+	var items []memoryItem
+
+	if strings.HasPrefix(trimmed, "[") {
+		_ = json.Unmarshal([]byte(trimmed), &items)
+	} else if strings.HasPrefix(trimmed, "{") {
+		var single memoryItem
+		if err := json.Unmarshal([]byte(trimmed), &single); err == nil && single.Summary != "" {
+			items = []memoryItem{single}
+		}
+	}
+
+	if len(items) == 0 {
+		return "", strings.Split(strings.TrimRight(output, "\n"), "\n")
+	}
+
+	accent := Role(t, tier, theme.RoleAccent)
+	subtle := Role(t, tier, theme.RoleFGSubtle)
+	fg := Role(t, tier, theme.RoleFG)
+
+	var out []string
+	for _, item := range items {
+		id := item.ID
+		if len(id) > 8 {
+			id = id[:8]
+		}
+		header := "•"
+		if item.Scope != "" {
+			header += " [" + item.Scope + "]"
+		}
+		if id != "" {
+			header += " " + id
+		}
+		line1 := accent.Render(header)
+		if item.Created != "" {
+			line1 += " " + subtle.Render("("+item.Created+")")
+		}
+		out = append(out, line1)
+
+		summary := strings.TrimSpace(item.Summary)
+		if width > 8 && ansi.StringWidth(summary) > width-4 {
+			summary = ansi.Truncate(summary, width-4, "…")
+		}
+		if summary != "" {
+			out = append(out, "  "+fg.Render(summary))
+		}
+
+		if len(item.Tags) > 0 {
+			out = append(out, "  "+subtle.Render("tags: "+strings.Join(item.Tags, ", ")))
+		}
+	}
+
+	summary := fmt.Sprintf("%d memory item", len(items))
+	if len(items) != 1 {
+		summary += "s"
+	}
+	return summary, out
+}
+
+// FormatJSONOutput formats JSON objects or arrays into readable key-value summary lines.
 func FormatJSONOutput(t theme.Theme, tier theme.Tier, output string, width int) []string {
+	trimmed := strings.TrimSpace(output)
+	accent := Role(t, tier, theme.RoleAccent)
+	subtle := Role(t, tier, theme.RoleFGSubtle)
+
+	// Object format
 	var obj map[string]any
-	if err := json.Unmarshal([]byte(strings.TrimSpace(output)), &obj); err == nil {
-		accent := Role(t, tier, theme.RoleAccent)
-		subtle := Role(t, tier, theme.RoleFGSubtle)
+	if err := json.Unmarshal([]byte(trimmed), &obj); err == nil {
 		keys := make([]string, 0, len(obj))
 		for k := range obj {
 			keys = append(keys, k)
@@ -184,10 +263,9 @@ func FormatJSONOutput(t theme.Theme, tier theme.Tier, output string, width int) 
 		slices.Sort(keys)
 		var out []string
 		for _, k := range keys {
-			v := obj[k]
-			valStr := fmt.Sprintf("%v", v)
-			if ansi.StringWidth(valStr) > 40 {
-				valStr = ansi.Truncate(valStr, 40, "…")
+			valStr := fmt.Sprintf("%v", obj[k])
+			if width > 16 && ansi.StringWidth(valStr) > width-20 {
+				valStr = ansi.Truncate(valStr, width-20, "…")
 			}
 			out = append(out, accent.Render(k)+": "+subtle.Render(valStr))
 		}
@@ -195,5 +273,31 @@ func FormatJSONOutput(t theme.Theme, tier theme.Tier, output string, width int) 
 			return out
 		}
 	}
+
+	// Array format
+	var arr []any
+	if err := json.Unmarshal([]byte(trimmed), &arr); err == nil && len(arr) > 0 {
+		var out []string
+		for i, item := range arr {
+			if m, ok := item.(map[string]any); ok {
+				keys := make([]string, 0, len(m))
+				for k := range m {
+					keys = append(keys, k)
+				}
+				slices.Sort(keys)
+				var parts []string
+				for _, k := range keys {
+					parts = append(parts, accent.Render(k)+": "+subtle.Render(fmt.Sprintf("%v", m[k])))
+				}
+				out = append(out, subtle.Render(fmt.Sprintf("[%d] ", i+1))+strings.Join(parts, "  "))
+			} else {
+				out = append(out, subtle.Render(fmt.Sprintf("[%d] ", i+1))+fmt.Sprintf("%v", item))
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+
 	return strings.Split(strings.TrimRight(output, "\n"), "\n")
 }

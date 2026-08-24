@@ -46,6 +46,11 @@ func TestFormatToolDetail(t *testing.T) {
 			want: "[example.com] /api/v1/中文路径_test_route_l…",
 		},
 		{
+			name: "memory_search",
+			args: map[string]any{"query": "sandbox run_command landlock security", "scope": "project"},
+			want: `"sandbox run_command landlock security" [project]`,
+		},
+		{
 			name: "custom_generic_tool",
 			args: map[string]any{"foo": "bar", "count": 42},
 			want: "count=42 foo=bar",

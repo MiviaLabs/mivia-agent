@@ -20,6 +20,9 @@ func FormatToolDetail(name string, args map[string]any) string {
 	if detail := formatCommandDetail(lower, args); detail != "" {
 		return detail
 	}
+	if detail := formatMemoryDetail(lower, args); detail != "" {
+		return detail
+	}
 	if detail := formatFileDetail(lower, args); detail != "" {
 		return detail
 	}
@@ -30,6 +33,27 @@ func FormatToolDetail(name string, args map[string]any) string {
 		return detail
 	}
 	return FormatArgs(args)
+}
+
+func formatMemoryDetail(lower string, args map[string]any) string {
+	if !strings.Contains(lower, "memory") {
+		return ""
+	}
+	var text string
+	for _, k := range []string{"query", "summary", "key", "id"} {
+		if v, ok := args[k].(string); ok && v != "" {
+			text = fmt.Sprintf("%q", v)
+			break
+		}
+	}
+	scope, _ := args["scope"].(string)
+	if scope != "" {
+		if text != "" {
+			return text + " [" + scope + "]"
+		}
+		return "[" + scope + "]"
+	}
+	return text
 }
 
 func formatCommandDetail(lower string, args map[string]any) string {
