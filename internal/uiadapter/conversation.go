@@ -283,20 +283,29 @@ func (c *Conversation) History() []ports.Message {
 			out = append(out, ports.Message{Role: "user", Text: m.Content, At: m.CreatedAt})
 		case provider.RoleAssistant:
 			var diffs []uievent.Diff
+			var tcs []ports.ToolCall
 			for _, tc := range m.ToolCalls {
 				output := toolOutputs[tc.ID]
 				if d := parseToolDiff(tc.Function.Name, tc.Function.Arguments, output); d != nil {
 					diffs = append(diffs, *d)
 				}
+				tcs = append(tcs, ports.ToolCall{
+					ID:        tc.ID,
+					Name:      tc.Function.Name,
+					Arguments: tc.Function.Arguments,
+					Output:    output,
+				})
 			}
 			out = append(out, ports.Message{
-				Role:  "assistant",
-				Text:  m.Content,
-				At:    m.CreatedAt,
-				Diffs: diffs,
+				Role:      "assistant",
+				Text:      m.Content,
+				Reasoning: m.ReasoningContent,
+				At:        m.CreatedAt,
+				Diffs:     diffs,
+				ToolCalls: tcs,
 			})
 		}
-		// system / tool roles are not exposed by the UI history view.
+		// system / tool roles are attached to the assistant messages above.
 	}
 	if len(out) == 0 {
 		return nil

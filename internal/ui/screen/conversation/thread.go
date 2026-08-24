@@ -16,6 +16,8 @@
 package conversation
 
 import (
+	"encoding/json"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -63,20 +65,57 @@ func (s Screen) awaitEvent(events <-chan uievent.Event) tea.Cmd {
 	}
 }
 
+func parseToolArgs(args string) map[string]any {
+	if args == "" {
+		return nil
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(args), &out); err == nil {
+		return out
+	}
+	return nil
+}
+
 // LoadHistory replays a thread's prior turns into the transcript as
 // finished blocks - no streaming, no side effects - so reopening a
 // thread shows the conversation so far.
 func (s *Screen) LoadHistory(msgs []ports.Message) {
 	for _, m := range msgs {
-		var ev uievent.Event
 		switch m.Role {
 		case "user":
-			ev = uievent.Event{Kind: uievent.KindTurnStart, Body: uievent.TurnStartBody{Input: m.Text}}
+			ev := uievent.Event{Kind: uievent.KindTurnStart, Body: uievent.TurnStartBody{Input: m.Text}}
+			s.transcript, _ = s.transcript.HandleEvent(ev)
 		default:
-			ev = uievent.Event{Kind: uievent.KindTextEnd, Body: uievent.TextEndBody{Text: m.Text}}
+			if m.Reasoning != "" {
+				s.transcript, _ = s.transcript.HandleEvent(uievent.Event{
+					Kind: uievent.KindReasoning,
+					Body: uievent.ReasoningDeltaBody{Text: m.Reasoning, WordCount: len(strings.Fields(m.Reasoning))},
+				})
+			}
+			for _, tc := range m.ToolCalls {
+				s.transcript, _ = s.transcript.HandleEvent(uievent.Event{
+					Kind: uievent.KindToolStart,
+					Body: uievent.ToolStartBody{
+						ToolCallID: tc.ID,
+						Name:       tc.Name,
+						Args:       parseToolArgs(tc.Arguments),
+					},
+				})
+				s.transcript, _ = s.transcript.HandleEvent(uievent.Event{
+					Kind: uievent.KindToolEnd,
+					Body: uievent.ToolEndBody{
+						ToolCallID: tc.ID,
+						Name:       tc.Name,
+						OK:         true,
+						Result:     tc.Output,
+					},
+				})
+			}
+			if m.Text != "" {
+				ev := uievent.Event{Kind: uievent.KindTextEnd, Body: uievent.TextEndBody{Text: m.Text}}
+				s.transcript, _ = s.transcript.HandleEvent(ev)
+			}
 		}
-		next, _ := s.transcript.HandleEvent(ev)
-		s.transcript = next
 		for _, d := range m.Diffs {
 			s.panel.appendLive(d)
 		}

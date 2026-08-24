@@ -391,3 +391,32 @@ func TestEmbeddedThreadSwallowsF2(t *testing.T) {
 		t.Error("expected f2 to be swallowed inside an embedded thread")
 	}
 }
+
+func TestLoadHistory_RendersToolCallsAndReasoning(t *testing.T) {
+	conv := &scriptedThread{
+		history: []ports.Message{
+			{Role: "user", Text: "read file"},
+			{
+				Role:      "assistant",
+				Text:      "Done reading file",
+				Reasoning: "Looking up file contents",
+				ToolCalls: []ports.ToolCall{
+					{
+						ID:        "tc-1",
+						Name:      "view_file",
+						Arguments: `{"path": "foo.go"}`,
+						Output:    "package foo",
+					},
+				},
+			},
+		},
+	}
+	s := New(loadTheme(t), theme.TierASCII, nil, conv, nil, 80, fixedNow)
+	s.LoadHistory(conv.History())
+	view := ansi.Strip(s.transcript.View())
+	for _, want := range []string{"read file", "view_file", "Done reading file"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("transcript view missing %q:\n%s", want, view)
+		}
+	}
+}

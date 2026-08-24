@@ -774,4 +774,58 @@ func TestHistory_CarriesDiffsFromPriorToolCalls(t *testing.T) {
 	if diff.Added != 2 || diff.Removed != 1 {
 		t.Errorf("diff Added=%d, Removed=%d, want +2 -1", diff.Added, diff.Removed)
 	}
+	if len(assistantMsg.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(assistantMsg.ToolCalls))
+	}
+	if assistantMsg.ToolCalls[0].Name != "replace_file_content" {
+		t.Errorf("got tool call name %q, want replace_file_content", assistantMsg.ToolCalls[0].Name)
+	}
+	if assistantMsg.ToolCalls[0].Output != msgs[2].Content {
+		t.Errorf("got tool call output %q, want %q", assistantMsg.ToolCalls[0].Output, msgs[2].Content)
+	}
+}
+
+func TestHistory_IncludesToolCallsAndReasoning(t *testing.T) {
+	tc := provider.ToolCall{
+		ID:   "call_view_1",
+		Type: "function",
+	}
+	tc.Function.Name = "view_file"
+	tc.Function.Arguments = `{"path": "main.go"}`
+
+	msgs := []provider.Message{
+		{Role: provider.RoleUser, Content: "read main.go"},
+		{
+			Role:             provider.RoleAssistant,
+			Content:          "Let me check main.go",
+			ReasoningContent: "Thinking about checking main.go...",
+			ToolCalls:        []provider.ToolCall{tc},
+		},
+		{
+			Role:       provider.RoleTool,
+			ToolCallID: "call_view_1",
+			Content:    "package main\n\nfunc main() {}",
+		},
+	}
+	conv := newTestConversation(t, &scriptedCompleter{}, msgs...)
+	hist := conv.History()
+	if len(hist) != 2 {
+		t.Fatalf("expected 2 history messages, got %d", len(hist))
+	}
+	assistantMsg := hist[1]
+	if assistantMsg.Reasoning != "Thinking about checking main.go..." {
+		t.Errorf("assistant Reasoning = %q, want %q", assistantMsg.Reasoning, "Thinking about checking main.go...")
+	}
+	if assistantMsg.Text != "Let me check main.go" {
+		t.Errorf("assistant Text = %q, want %q", assistantMsg.Text, "Let me check main.go")
+	}
+	if len(assistantMsg.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(assistantMsg.ToolCalls))
+	}
+	if assistantMsg.ToolCalls[0].Name != "view_file" {
+		t.Errorf("tool call name = %q, want view_file", assistantMsg.ToolCalls[0].Name)
+	}
+	if assistantMsg.ToolCalls[0].Output != "package main\n\nfunc main() {}" {
+		t.Errorf("tool call output = %q, want package main...", assistantMsg.ToolCalls[0].Output)
+	}
 }

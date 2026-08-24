@@ -23,12 +23,22 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
 
+// ToolCall represents a tool call and its output in conversation history.
+type ToolCall struct {
+	ID        string
+	Name      string
+	Arguments string
+	Output    string
+}
+
 // Message is one turn of conversation history.
 type Message struct {
-	Role  string // "user" | "assistant"
-	Text  string
-	At    time.Time
-	Diffs []uievent.Diff
+	Role      string // "user" | "assistant"
+	Text      string
+	Reasoning string
+	At        time.Time
+	Diffs     []uievent.Diff
+	ToolCalls []ToolCall
 }
 
 // ModelInfo names the model and provider currently bound to a session.
