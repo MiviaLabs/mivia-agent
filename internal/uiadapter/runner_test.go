@@ -124,8 +124,8 @@ func TestCommandRunner_ModelSwitching(t *testing.T) {
 
 	// Open model picker
 	out := runner.Run(context.Background(), "model", "")
-	if len(out.ModelChoices) == 0 {
-		t.Fatalf("expected ModelChoices, got %+v", out)
+	if len(out.ModelChoiceGroups) == 0 {
+		t.Fatalf("expected ModelChoiceGroups, got %+v", out)
 	}
 
 	// Direct switch via /model glm-5.2

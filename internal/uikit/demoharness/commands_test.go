@@ -36,8 +36,15 @@ func TestRunHelp(t *testing.T) {
 func TestRunModelReturnsChoices(t *testing.T) {
 	h := newHarness(t)
 	got := h.Run(context.Background(), "model", "")
-	if len(got.ModelChoices) != len(demoModels) {
-		t.Errorf("got %d choices, want %d: %+v", len(got.ModelChoices), len(demoModels), got)
+	if len(got.ModelChoiceGroups) == 0 {
+		t.Fatalf("got no groups, want at least one: %+v", got)
+	}
+	var total int
+	for _, g := range got.ModelChoiceGroups {
+		total += len(g.Models)
+	}
+	if total != len(demoModels) {
+		t.Errorf("got %d models across groups, want %d: %+v", total, len(demoModels), got)
 	}
 }
 

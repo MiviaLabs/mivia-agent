@@ -63,20 +63,32 @@ func (s Screen) applyCommandOutcome(o ports.CommandOutcome) (app.Screen, tea.Cmd
 	case o.OpenHelp:
 		return s.openHelp(), tea.ClearScreen
 	case o.ClearTranscript:
-		s.transcript = s.transcript.Clear()
-		if s.conv != nil {
-			s.LoadHistory(s.conv.History())
-			s.topbar.SetSession(s.conv.Model(), s.conv.ContextUsage())
-			if title := s.conv.Title(); title != "" {
-				s.topbar.SetBreadcrumb([]string{title})
-			} else {
-				s.topbar.SetBreadcrumb(nil)
+		if o.Conversation != nil {
+			s.switchConversation(o.Conversation)
+		} else {
+			s.transcript = s.transcript.Clear()
+			if s.conv != nil {
+				s.LoadHistory(s.conv.History())
+				s.topbar.SetSession(s.conv.Model(), s.conv.ContextUsage())
+				if title := s.conv.Title(); title != "" {
+					s.topbar.SetBreadcrumb([]string{title})
+				} else {
+					s.topbar.SetBreadcrumb(nil)
+				}
 			}
 		}
 		if o.Notice != "" {
 			return s.withNotice(o.Notice), nil
 		}
 		return s, nil
+	case len(o.ModelChoiceGroups) > 0:
+		var groups []picker.Group
+		for _, g := range o.ModelChoiceGroups {
+			groups = append(groups, picker.Group{Provider: g.Provider, Models: g.Models})
+		}
+		pm := picker.NewGroups(s.Theme, s.Tier, groups)
+		s.modelPicker = &pm
+		return s, tea.ClearScreen
 	case len(o.ModelChoices) > 0:
 		pm := picker.New(s.Theme, s.Tier, o.ModelChoices)
 		s.modelPicker = &pm

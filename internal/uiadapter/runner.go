@@ -16,6 +16,7 @@ import (
 // config, and agent state.
 type CommandRunner struct {
 	sess       *chat.Session
+	pool       *SessionPool
 	res        *config.Resolved
 	agentState *cliagents.AgentSessionState
 }
@@ -25,8 +26,24 @@ var _ ports.CommandRunner = (*CommandRunner)(nil)
 
 // NewCommandRunner constructs a CommandRunner for the given session and configuration.
 func NewCommandRunner(sess *chat.Session, res *config.Resolved, state *cliagents.AgentSessionState) *CommandRunner {
+	var toolsOn bool
+	if sess != nil {
+		toolsOn = sess.UseTools
+	}
+	pool := NewSessionPool(sess, res, state, toolsOn)
 	return &CommandRunner{
 		sess:       sess,
+		pool:       pool,
+		res:        res,
+		agentState: state,
+	}
+}
+
+// NewCommandRunnerWithPool constructs a CommandRunner with an explicit SessionPool.
+func NewCommandRunnerWithPool(sess *chat.Session, pool *SessionPool, res *config.Resolved, state *cliagents.AgentSessionState) *CommandRunner {
+	return &CommandRunner{
+		sess:       sess,
+		pool:       pool,
 		res:        res,
 		agentState: state,
 	}
@@ -132,29 +149,46 @@ func (r *CommandRunner) handleModel(args string) ports.CommandOutcome {
 	if args != "" {
 		return r.SelectModel(context.Background(), args)
 	}
-	choices := r.availableModels()
-	if len(choices) == 0 {
+	groups := r.availableModelsByProvider()
+	if len(groups) == 0 {
 		return ports.CommandOutcome{Err: "no models loaded"}
 	}
-	return ports.CommandOutcome{ModelChoices: choices}
+	return ports.CommandOutcome{ModelChoiceGroups: groups}
 }
 
-func (r *CommandRunner) availableModels() []string {
-	var choices []string
-	if r.res != nil {
-		for _, group := range r.res.ModelCatalog() {
-			if !group.Selectable {
-				continue
-			}
-			for _, m := range group.Models {
-				choices = append(choices, m.Name)
-			}
+// availableModelsByProvider returns the selectable catalog grouped by
+// provider, in catalog order. The first group's provider name is the
+// currently selected provider; later groups keep their catalog order
+// so the picker stays stable across re-opens. An empty catalog
+// falls back to the session's current model in a single flat group
+// with no provider header.
+func (r *CommandRunner) availableModelsByProvider() []ports.ModelChoiceGroup {
+	if r.res == nil {
+		return nil
+	}
+	var groups []ports.ModelChoiceGroup
+	for _, group := range r.res.ModelCatalog() {
+		if !group.Selectable {
+			continue
+		}
+		names := make([]string, 0, len(group.Models))
+		for _, m := range group.Models {
+			names = append(names, m.Name)
+		}
+		if len(names) == 0 {
+			continue
+		}
+		groups = append(groups, ports.ModelChoiceGroup{
+			Provider: group.Provider,
+			Models:   names,
+		})
+	}
+	if len(groups) == 0 && r.sess != nil {
+		if cur := r.sess.CurrentModel(); cur != "" {
+			return []ports.ModelChoiceGroup{{Models: []string{cur}}}
 		}
 	}
-	if len(choices) == 0 && r.sess != nil {
-		choices = append(choices, r.sess.CurrentModel())
-	}
-	return choices
+	return groups
 }
 
 // SelectModel switches the session's active model.
@@ -294,16 +328,31 @@ func (r *CommandRunner) listSessionSummaries() ([]ports.SessionSummary, error) {
 
 // SelectSession loads and resumes a saved session.
 func (r *CommandRunner) SelectSession(_ context.Context, id string) ports.CommandOutcome {
-	if r.sess == nil {
+	if r.sess == nil && r.res == nil {
 		return ports.CommandOutcome{Err: "no active session"}
 	}
 	if id == "" {
 		return ports.CommandOutcome{Err: "session ID is empty"}
 	}
+	if r.pool != nil {
+		conv, err := r.pool.GetOrCreate(id)
+		if err != nil {
+			return ports.CommandOutcome{Err: fmt.Sprintf("failed to resume session %q: %v", id, err)}
+		}
+		return ports.CommandOutcome{
+			Conversation:    conv,
+			ClearTranscript: true,
+			Notice:          fmt.Sprintf("Resumed session %s.", id),
+		}
+	}
+	if r.sess == nil {
+		return ports.CommandOutcome{Err: "no active session"}
+	}
 	if err := r.sess.Load(id); err != nil {
 		return ports.CommandOutcome{Err: fmt.Sprintf("failed to resume session %q: %v", id, err)}
 	}
 	return ports.CommandOutcome{
+		Conversation:    NewConversation(r.sess),
 		ClearTranscript: true,
 		Notice:          fmt.Sprintf("Resumed session %s.", id),
 	}

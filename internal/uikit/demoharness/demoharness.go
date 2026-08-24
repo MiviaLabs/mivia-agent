@@ -108,6 +108,11 @@ func (h *Harness) Title() string {
 	return h.title
 }
 
+// ID returns the current session ID.
+func (h *Harness) ID() string {
+	return "demoharness"
+}
+
 // History returns every user message sent so far, oldest first.
 func (h *Harness) History() []ports.Message {
 	h.mu.Lock()

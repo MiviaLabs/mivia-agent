@@ -6,8 +6,8 @@ import "context"
 // screen checks the fields in a fixed priority order (see
 // internal/ui/screen/conversation/commands.go): Err first, then Quit,
 // then the open-a-modal fields, then ClearTranscript, then
-// ModelChoices, then Notice. Only one field is normally set per
-// outcome.
+// ModelChoiceGroups, then AgentChoices, then SessionChoices, then
+// Notice. Only one field is normally set per outcome.
 type CommandOutcome struct {
 	// Err, when non-empty, is shown as a transcript error block instead
 	// of any other field. Set this for an unknown command or a command
@@ -35,9 +35,16 @@ type CommandOutcome struct {
 	ClearTranscript bool
 
 	// ModelChoices, when non-empty, asks the UI to open a picker over
-	// these model names. The chosen name comes back through
-	// CommandRunner.SelectModel.
+	// these model names, first entry highlighted.
 	ModelChoices []string
+
+	// ModelChoiceGroups, when non-empty, asks the UI to open a
+	// grouped picker. The provider name is shown as a non-selectable
+	// header row; each Models entry is a selectable row. An empty
+	// Provider renders its items as a flat list without a header.
+	// The chosen model name comes back through
+	// CommandRunner.SelectModel.
+	ModelChoiceGroups []ModelChoiceGroup
 
 	// AgentChoices, when non-empty, asks the UI to open a picker over
 	// these agent names, first entry highlighted. The chosen name comes
@@ -54,6 +61,19 @@ type CommandOutcome struct {
 	// Notice, when non-empty, is appended to the transcript as an
 	// informational block.
 	Notice string
+
+	// Conversation, when non-nil, asks the UI to switch the active
+	// conversation to this new instance.
+	Conversation Conversation
+}
+
+// ModelChoiceGroup groups selectable models under one provider for
+// the /model picker dialog. Provider is shown as a header row; an
+// empty Provider renders the items as a flat list without a header.
+// Groups with no Models are dropped before display.
+type ModelChoiceGroup struct {
+	Provider string
+	Models   []string
 }
 
 // Command is a slash command candidate for auto-completion.
