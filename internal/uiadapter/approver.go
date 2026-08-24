@@ -10,6 +10,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
+	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
 )
 
 const defaultPendingBuffer = 16
@@ -73,7 +74,24 @@ func (a *Approver) Resolve(id string, decision ports.Decision) {
 
 // gate is installed as chat.Session.ApprovalGate.
 func (a *Approver) gate(ctx context.Context, name string, args json.RawMessage) sdkadapter.ApprovalResult {
-	callID := fmt.Sprintf("appr-%d", atomic.AddUint64(&a.counter, 1))
+	// The waiting map's key must be the id the UI will Resolve with.
+	// The new TUI arms its approval prompt from the tool.pending
+	// uievent, whose ToolCallID is the in-flight TOOL CALL id
+	// (EventToolPending.ToolCallID, stamped from toolcallctx by the
+	// SDK approval wrapper). Keying by an internally generated
+	// "appr-N" id made every Resolve a silent no-op and the gate
+	// blocked forever - the "approved but still pending" hang. When
+	// the ctx carries no tool call (legacy backend, direct callers),
+	// fall back to the generated id; consumers of Pending() resolve
+	// with whatever ID the request carries, so both domains stay
+	// self-consistent.
+	callID := ""
+	if tc, ok := toolcallctx.ToolCallFromContext(ctx); ok && tc.ID != "" {
+		callID = tc.ID
+	}
+	if callID == "" {
+		callID = fmt.Sprintf("appr-%d", atomic.AddUint64(&a.counter, 1))
+	}
 
 	var parsedArgs map[string]any
 	if len(args) > 0 {
