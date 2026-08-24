@@ -22,9 +22,9 @@ import (
 // slash-completion menu, and the @-mention picker.
 //
 // Dynamic height: the textarea grows from 1 line to maxInputLines as the
-// user types, and shrinks when lines are removed. The composer uses borderless
-// background styling (RoleBGInset) so the rest of the cockpit layout never
-// reflows (ux-rules.md rule 2.7, 2.8).
+// user types, and shrinks when lines are removed. The frame around the input
+// always occupies a fixed gutter (top and bottom border rows) so the rest of
+// the cockpit layout never reflows (ux-rules.md rule 2.7, 2.8).
 type Model struct {
 	Theme theme.Theme
 	Tier  theme.Tier
@@ -38,12 +38,21 @@ type Model struct {
 }
 
 // maxInputLines is the maximum number of visible textarea rows before it
-// scrolls internally rather than growing further.
+// scrolls internally rather than growing the frame further.
 const maxInputLines = 6
 
 // promptWidth is the display width of the accent prompt rendered by this
-// package ("> "). Two columns: one for the glyph, one for the space.
+// package ("› "). Two columns: one for the glyph, one for the space.
 const promptWidth = 2
+
+// frameInset is the total column overhead the border removes from the inner
+// textarea width: one left border cell + one right border cell + lipgloss's
+// two internal padding columns = 4.
+const frameInset = 4
+
+// minFramedWidth is the narrowest terminal that can still hold the border,
+// prompt, cursor, and one text cell.
+const minFramedWidth = 8
 
 // New returns a focused, empty composer sized to width.
 func New(t theme.Theme, tier theme.Tier, width int) Model {
@@ -56,7 +65,7 @@ func New(t theme.Theme, tier theme.Tier, width int) Model {
 
 // newTextarea initialises a textarea.Model with the settings this composer
 // requires: dynamic height, no line numbers, custom keymap (enter submits —
-// the textarea only inserts newlines on shift+enter / alt+enter).
+// the textarea only inserts newlines on ctrl+j).
 func newTextarea(t theme.Theme, tier theme.Tier) textarea.Model {
 	ta := textarea.New()
 	ta.Placeholder = "Ask a question, describe a change, or type / for commands..."
@@ -67,8 +76,8 @@ func newTextarea(t theme.Theme, tier theme.Tier) textarea.Model {
 	ta.MaxHeight = maxInputLines
 	ta.ShowLineNumbers = false
 
-	// Remove the border that textarea draws by default; the composer uses
-	// borderless styling with an inset background fill.
+	// Remove the border that textarea draws by default; the composer draws
+	// its own themed frame via render.BorderedWithHint.
 	ta.SetStyles(noopStyles(ta.Styles()))
 
 	// Rebind InsertNewline to shift+enter and alt+enter.
@@ -85,9 +94,9 @@ func newTextarea(t theme.Theme, tier theme.Tier) textarea.Model {
 	return ta
 }
 
-// noopStyles returns styles with the built-in textarea border stripped.
-// Prompt is set to two spaces as a placeholder; the real prompt is injected
-// via SetPromptFunc after theme is applied.
+// noopStyles returns styles with the built-in textarea border stripped so we
+// can draw our own frame.  Prompt is set to two spaces as a placeholder; the
+// real prompt is injected via SetPromptFunc after theme is applied.
 func noopStyles(s textarea.Styles) textarea.Styles {
 	blank := lipgloss.NewStyle()
 	s.Focused.Base = blank
@@ -230,6 +239,9 @@ func (m Model) AcceptCommonPrefix() (Model, bool) {
 func (m *Model) SetWidth(width int) {
 	m.width = width
 	inner := width - promptWidth
+	if width >= minFramedWidth {
+		inner = width - promptWidth - frameInset
+	}
 	if inner < 1 {
 		inner = 1
 	}
@@ -310,14 +322,20 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	return m, cmd
 }
 
-// Height is the total row count View draws: textarea-rows
-// (dynamic 1–maxInputLines) + completion-menu-rows (when open).
+// Height is the total row count View draws. It is: border-top(1) +
+// textarea-rows (dynamic 1–maxInputLines) + border-bottom(1) +
+// completion-menu-rows (when open). Below minFramedWidth the border is
+// omitted, so height equals textarea-rows + menu-rows.
 func (m Model) Height() int {
 	taRows := m.input.Height()
 	if taRows < 1 {
 		taRows = 1
 	}
-	base := taRows
+	var frame int
+	if m.width >= minFramedWidth {
+		frame = 2 // top + bottom border
+	}
+	base := taRows + frame
 	// menu rows (slash or mention — only one open at a time)
 	if v := m.activeMenuView(); v != "" {
 		return base + strings.Count(v, "\n") + 1
@@ -325,7 +343,7 @@ func (m Model) Height() int {
 	return base
 }
 
-// MenuRows returns how many rows the active completion or mention menu occupies (0 when closed).
+// MenuRows returns the row count the active completion or mention menu occupies (0 when closed).
 func (m Model) MenuRows() int {
 	if v := m.activeMenuView(); v != "" {
 		return strings.Count(v, "\n") + 1
@@ -334,16 +352,22 @@ func (m Model) MenuRows() int {
 }
 
 // InputRowFromBottom is how many rows above the screen's last row the top
-// input line sits (for mouse routing). The status row sits at the bottom of the
-// screen (offset 0), so the composer input line sits 1 row above.
+// input line sits (for mouse routing). When framed, the bottom border is the
+// last row so the input is 1 above. When bare, the input is the last row.
 func (m Model) InputRowFromBottom() int {
+	if m.width < minFramedWidth {
+		return 0
+	}
 	return 1
 }
 
 // InputColumnOffset is how many display columns the left border puts before
-// the prompt. With borderless background styling, there is no border offset.
+// the prompt. Mouse clicks subtract it to land on the input's own column space.
 func (m Model) InputColumnOffset() int {
-	return 0
+	if m.width < minFramedWidth {
+		return 0
+	}
+	return 1
 }
 
 // activeMenuView returns whichever menu is currently showing, prefer slash
@@ -355,25 +379,27 @@ func (m Model) activeMenuView() string {
 	return m.mmenu.view(m.Theme, m.Tier, m.width)
 }
 
-// View renders the active menu above the textarea, which is padded to m.width
-// and styled with an inset background fill. The textarea is the last block, so
-// it never moves as the menu grows or shrinks (ux-rules.md rule 2.8).
+// View renders the active menu above the textarea, which is then optionally
+// wrapped in a themed frame. The textarea is the last block, so it never
+// moves as the menu grows or shrinks (ux-rules.md rule 2.8).
 func (m Model) View() string {
 	body := m.input.View()
 
-	if m.width > 0 {
-		lines := strings.Split(body, "\n")
-		for i, ln := range lines {
-			w := ansi.StringWidth(ln)
-			if w < m.width {
-				lines[i] = ln + strings.Repeat(" ", m.width-w)
-			} else if w > m.width {
-				lines[i] = ansi.Truncate(ln, m.width, "")
+	if m.width >= minFramedWidth {
+		hint := "[ ↵ Send  •  / Commands  •  @ Files ]"
+		if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
+			hint = "[ Enter: Send  •  / Commands  •  @ Files ]"
+		}
+		if m.input.Value() != "" {
+			hint = "[ ↵ Send  •  Esc Cancel ]"
+			if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
+				hint = "[ Enter: Send  •  Esc Cancel ]"
 			}
 		}
-		body = strings.Join(lines, "\n")
+		body = render.BorderedWithHint(m.Theme, m.Tier, theme.RoleBorder, theme.RoleFGSubtle, m.width, body, hint)
+	} else if m.width > 0 && ansi.StringWidth(body) > m.width {
+		body = ansi.Truncate(body, m.width, "")
 	}
-	body = render.FillBG(m.Theme, m.Tier, theme.RoleBGInset, body)
 
 	if v := m.activeMenuView(); v != "" {
 		return v + "\n" + body
