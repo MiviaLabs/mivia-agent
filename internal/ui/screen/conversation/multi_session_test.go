@@ -267,3 +267,63 @@ func TestMultiSession_BackgroundToolEventsUpdateState(t *testing.T) {
 		t.Fatalf("expected to switch back to sess-A, got %q", s.conv.ID())
 	}
 }
+
+func TestMultiSession_SwitchConversationReflowsDimensions(t *testing.T) {
+	th := theme.Theme{Name: "test"}
+	convA := &backgroundTestConversation{
+		id:    "sess-A",
+		title: "Session A",
+		history: []ports.Message{
+			{Role: "user", Text: "Hello in A", At: time.Now()},
+			{Role: "assistant", Text: "Response in A", At: time.Now()},
+		},
+		events: make(chan uievent.Event, 10),
+	}
+	convB := &backgroundTestConversation{
+		id:    "sess-B",
+		title: "Session B",
+		history: []ports.Message{
+			{Role: "user", Text: "Hello in B", At: time.Now()},
+			{Role: "assistant", Text: "Response in B", At: time.Now()},
+		},
+		events: make(chan uievent.Event, 10),
+	}
+
+	runner := &testMultiSessionRunner{
+		convs: map[string]ports.Conversation{
+			"sess-A": convA,
+			"sess-B": convB,
+		},
+	}
+
+	screen := New(th, theme.TierTrueColor, []theme.Theme{th}, convA, nil, 100, func() time.Time { return time.Time{} })
+	screen.SetCommandRunner(runner)
+
+	// Set window size to 120 width x 40 height
+	s1, _ := screen.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	s := s1.(Screen)
+
+	wantChatWidth := 120 - 2 // contentWidth(120) = 118
+	if s.transcript.Width() != wantChatWidth {
+		t.Fatalf("initial transcript width = %d, want %d", s.transcript.Width(), wantChatWidth)
+	}
+
+	// Switch to sess-B
+	next, _ := s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-B"))
+	s = next.(Screen)
+
+	if s.conv.ID() != "sess-B" {
+		t.Fatalf("expected active conv to be sess-B, got %q", s.conv.ID())
+	}
+	if s.transcript.Width() != wantChatWidth {
+		t.Errorf("after switch to sess-B, transcript.Width() = %d, want %d", s.transcript.Width(), wantChatWidth)
+	}
+	if s.transcript.Height() != s.transcriptHeight() {
+		t.Errorf("after switch to sess-B, transcript.Height() = %d, want %d", s.transcript.Height(), s.transcriptHeight())
+	}
+
+	view := s.View()
+	if !strings.Contains(view, "Hello in B") || !strings.Contains(view, "Response in B") {
+		t.Errorf("view after switch missing sess-B messages: %s", view)
+	}
+}

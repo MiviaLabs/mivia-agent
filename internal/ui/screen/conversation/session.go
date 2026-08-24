@@ -95,6 +95,7 @@ func (s *Screen) switchConversation(newConv ports.Conversation) {
 	}
 
 	s.refreshTopbar()
+	s.reflow()
 }
 
 func (s Screen) handleEventMsg(msg uievent.EventMsg) (app.Screen, tea.Cmd) {
