@@ -116,15 +116,7 @@ func (m Model) HandleEvent(ev uievent.Event) (Model, tea.Cmd) {
 		cmd := m.appendPending(uievent.KindTextDelta, b.Text)
 		return m, cmd
 	case uievent.ReasoningDeltaBody:
-		if b.WordCount == 0 {
-			cmd := m.appendPending(uievent.KindReasoning, b.Text)
-			return m, cmd
-		}
-		m.clearPending()
-		return m.pushBlock(Block{
-			Kind:   uievent.KindReasoning,
-			Header: Header{Label: "reasoning", Meta: fmt.Sprintf("%d words", b.WordCount), State: "hidden"},
-		})
+		return m.handleReasoningDelta(b)
 	case uievent.TextEndBody:
 		m.clearPending()
 		if b.Text == "" {
@@ -239,6 +231,29 @@ func (m Model) endTurnUnfinished(reason string) (Model, tea.Cmd) {
 	return m.pushBlock(Block{
 		Kind:   uievent.KindTurnEnd,
 		Header: Header{Label: reason, Role: theme.RoleWarning},
+	})
+}
+
+func (m Model) handleReasoningDelta(b uievent.ReasoningDeltaBody) (Model, tea.Cmd) {
+	if b.WordCount == 0 {
+		return m, m.appendPending(uievent.KindReasoning, b.Text)
+	}
+	raw := m.pending
+	m.clearPending()
+	var body []string
+	if raw != "" {
+		body = strings.Split(strings.TrimRight(raw, "\n"), "\n")
+	}
+	return m.pushBlock(Block{
+		Kind:        uievent.KindReasoning,
+		Collapsible: true,
+		Collapsed:   true,
+		Header: Header{
+			Label: "reasoning",
+			Meta:  fmt.Sprintf("%d words", b.WordCount),
+			State: "hidden",
+		},
+		Body: body,
 	})
 }
 
@@ -387,7 +402,7 @@ func (m Model) tailRows() []string {
 	}
 	style := render.Role(m.Theme, m.Tier, theme.RoleFG)
 	if m.pendingKind == uievent.KindReasoning {
-		style = render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
+		style = render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Italic(true)
 	}
 	measure := render.ProseMeasure(m.width)
 	var out []string

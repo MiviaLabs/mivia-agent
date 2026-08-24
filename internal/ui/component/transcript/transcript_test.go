@@ -153,9 +153,9 @@ func TestReasoningLiveTailUsesSubtleStyle(t *testing.T) {
 	if !strings.Contains(got, "thinking...") {
 		t.Fatalf("got %q, want the live reasoning tail present before the final word-count chunk", got)
 	}
-	wantStyle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Render("thinking...")
+	wantStyle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Italic(true).Render("thinking...")
 	if !strings.Contains(got, wantStyle) {
-		t.Errorf("got %q, want the reasoning tail styled with RoleFGSubtle: %q", got, wantStyle)
+		t.Errorf("got %q, want the reasoning tail styled with RoleFGSubtle italic: %q", got, wantStyle)
 	}
 }
 
@@ -547,5 +547,42 @@ func TestTranscriptSliceImmutability(t *testing.T) {
 	_ = mOut
 	if len(oldStart.blocks[0].Body) != 0 {
 		t.Errorf("updateLive mutated previous model block body: got len %d", len(oldStart.blocks[0].Body))
+	}
+}
+
+func TestAutoFoldReasoningPreservesBody(t *testing.T) {
+	th := loadTheme(t)
+	m := New(th, theme.TierTrueColor)
+	m.SetSize(80, 24)
+
+	// Stream reasoning delta chunks
+	m, _ = m.HandleEvent(uievent.Event{
+		Kind: uievent.KindReasoning,
+		Body: uievent.ReasoningDeltaBody{Text: "thinking deeply...\nsecond thought line"},
+	})
+	// Finalize with word count
+	m, _ = m.HandleEvent(uievent.Event{
+		Kind: uievent.KindReasoning,
+		Body: uievent.ReasoningDeltaBody{WordCount: 5},
+	})
+
+	if len(m.Blocks()) != 1 {
+		t.Fatalf("expected 1 block, got %d", len(m.Blocks()))
+	}
+	blk := m.Blocks()[0]
+	if blk.Kind != uievent.KindReasoning {
+		t.Errorf("expected KindReasoning, got %v", blk.Kind)
+	}
+	if !blk.Collapsible {
+		t.Error("reasoning block must be collapsible")
+	}
+	if !blk.Collapsed {
+		t.Error("reasoning block must be collapsed by default on completion")
+	}
+	if len(blk.Body) != 2 {
+		t.Fatalf("expected preserved body with 2 lines, got %d lines: %v", len(blk.Body), blk.Body)
+	}
+	if blk.Body[0] != "thinking deeply..." {
+		t.Errorf("expected line 1 %q, got %q", "thinking deeply...", blk.Body[0])
 	}
 }

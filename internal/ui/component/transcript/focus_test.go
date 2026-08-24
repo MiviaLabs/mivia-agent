@@ -220,6 +220,12 @@ func TestFocusedTextIgnoresCollapseState(t *testing.T) {
 func TestToggleReasoning(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII)
 	m.SetSize(80, 40)
+	// Stream reasoning delta with text
+	m, _ = m.HandleEvent(uievent.Event{
+		Kind: uievent.KindReasoning,
+		Body: uievent.ReasoningDeltaBody{Text: "step 1: analyze\nstep 2: plan"},
+	})
+	// Finalize reasoning delta with word count
 	m, _ = m.HandleEvent(uievent.Event{
 		Kind: uievent.KindReasoning,
 		Body: uievent.ReasoningDeltaBody{WordCount: 12},
@@ -229,6 +235,8 @@ func TestToggleReasoning(t *testing.T) {
 	if m.ReasoningHidden() {
 		t.Fatal("reasoning starts shown")
 	}
+
+	// Toggle reasoning hides reasoning
 	m = m.ToggleReasoning()
 	if !m.ReasoningHidden() {
 		t.Fatal("the toggle did not record the hidden state")
@@ -241,7 +249,10 @@ func TestToggleReasoning(t *testing.T) {
 			t.Error("the toggle collapsed a block that is not reasoning")
 		}
 	}
-	if m.ToggleReasoning().ReasoningHidden() {
+
+	// Second toggle shows reasoning again
+	m = m.ToggleReasoning()
+	if m.ReasoningHidden() {
 		t.Error("the second press did not show reasoning again")
 	}
 }

@@ -102,13 +102,16 @@ func (m *Model) clampOffset() {
 //
 // A block that arrives while the reader paused auto-follow COUNTS: the
 // jump-to-bottom affordance must state what the reader missed, or the
-// newest output looks like silence (rule 6.7).
 func (m *Model) push(b Block) {
 	if !m.follow {
 		m.missed++
 	}
-	b.Collapsible = !b.Prose
-	b.Collapsed = b.Collapsible && defaultCollapsed(b.Body)
+	if !b.Collapsible && !b.Prose {
+		b.Collapsible = true
+		b.Collapsed = defaultCollapsed(b.Body)
+	} else if b.Collapsible && !b.Collapsed {
+		b.Collapsed = defaultCollapsed(b.Body)
+	}
 	m.blocks = append(slices.Clone(m.blocks), b)
 	m.trim()
 	m.clampOffset()
