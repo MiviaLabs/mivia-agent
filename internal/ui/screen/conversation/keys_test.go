@@ -911,10 +911,10 @@ func TestViewHasAOneColumnGutter(t *testing.T) {
 			t.Errorf("row %d touches the right edge", i)
 		}
 	}
-	// The persistent pieces are present: brand mark + wordmark top row,
+	// The persistent pieces are present: brand mark + wordmark row (row 1 after top gutter),
 	// framed composer at the bottom.
-	if !strings.Contains(ansi.Strip(rows[0]), "mivia") {
-		t.Errorf("top row is not the brand bar: %q", rows[0])
+	if !strings.Contains(ansi.Strip(rows[1]), "mivia") {
+		t.Errorf("row 1 is not the brand bar: %q", rows[1])
 	}
 	var foundInput bool
 	for _, row := range rows {

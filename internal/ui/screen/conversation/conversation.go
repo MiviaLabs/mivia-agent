@@ -177,10 +177,67 @@ func (s Screen) Update(msg tea.Msg) (app.Screen, tea.Cmd) {
 // screen edge. Below 3 columns the gutter gives way - there is nothing
 // to frame.
 func contentWidth(width int) int {
+	if width <= 0 {
+		return 80
+	}
 	if width < 3 {
 		return width
 	}
 	return width - 2
+}
+
+func (s Screen) contentWidth() int {
+	if s.width <= 0 {
+		return 80
+	}
+	return contentWidth(s.width)
+}
+
+func contentHeight(height int) int {
+	if height <= 0 {
+		return 24
+	}
+	if height < 3 {
+		return height
+	}
+	return height - 2
+}
+
+func (s Screen) contentHeight() int {
+	if s.height <= 0 {
+		return 24
+	}
+	if s.embedded {
+		return s.height
+	}
+	return contentHeight(s.height)
+}
+
+// gutter frames every rendered row with one blank column each side, and
+// one blank row at the top and bottom: no text touches the screen edge.
+func (s Screen) gutter(lines []string) string {
+	if (s.width > 0 && s.width < 3) && (s.height > 0 && s.height < 3) {
+		return strings.Join(lines, "\n")
+	}
+	inner := s.contentWidth()
+	blankRow := " " + strings.Repeat(" ", inner) + " "
+
+	out := make([]string, 0, len(lines)+2)
+	if s.height >= 3 && !s.embedded {
+		out = append(out, blankRow)
+	}
+	for _, ln := range lines {
+		pad := inner - ansi.StringWidth(ln)
+		if pad < 0 {
+			ln = ansi.Truncate(ln, inner, uikitconfig.ClipMarker)
+			pad = 0
+		}
+		out = append(out, " "+ln+strings.Repeat(" ", pad)+" ")
+	}
+	if s.height >= 3 && !s.embedded {
+		out = append(out, blankRow)
+	}
+	return render.FillBG(s.Theme, s.Tier, theme.RoleBG, strings.Join(out, "\n"))
 }
 
 // resize gives the transcript the rows the chrome does not claim.
@@ -325,55 +382,41 @@ func (s Screen) reservedRows() int {
 // The transcript always returns exactly its own height, padded, so
 // nothing below it moves as output streams in (ux-rules.md rule 2.8).
 func (s Screen) View() string {
-	if !s.embedded && s.panelIsSplit() {
-		return s.gutter(s.panelFrameRows())
-	}
 	var lines []string
-	if !s.embedded {
-		// The top bar may draw a second breadcrumb row (topbar.Height
-		// accounts for it); its rows land as frame rows, then the margin.
-		lines = append(lines, strings.Split(s.topbar.View(), "\n")...)
-		lines = append(lines, "")
-	}
-	switch {
-	case s.modelPicker != nil || s.agentPicker != nil || s.sessionPicker != nil || s.overlay != "":
-		lines = append(lines, s.centerRows()...)
-	case !s.embedded && s.panel.open:
-		lines = append(lines, s.narrowPanelRows()...)
-	case !s.embedded && s.transcript.Empty():
-		lines = append(lines, s.welcome.Rows(s.chatWidth(), s.transcriptHeight())...)
-	default:
-		lines = append(lines, s.transcript.Rows()...)
-	}
-	lines = append(lines, s.chatTailRows()...)
-	return s.gutter(lines)
-}
-
-// gutter frames every rendered row with one blank column each side: no
-// text touches the screen edge. Rows are padded to the full width so
-// background styles (the diff colours, the approval border) reach the
-// edge cleanly while their glyphs stay off it.
-func (s Screen) gutter(lines []string) string {
-	if s.width < 3 {
-		return strings.Join(lines, "\n")
-	}
-	out := make([]string, len(lines))
-	inner := contentWidth(s.width)
-	for i, ln := range lines {
-		pad := inner - ansi.StringWidth(ln)
-		if pad < 0 {
-			ln = ansi.Truncate(ln, inner, uikitconfig.ClipMarker)
-			pad = 0
+	if !s.embedded && s.panelIsSplit() {
+		lines = s.panelFrameRows()
+	} else {
+		if !s.embedded {
+			// The top bar may draw a second breadcrumb row (topbar.Height
+			// accounts for it); its rows land as frame rows, then the margin.
+			lines = append(lines, strings.Split(s.topbar.View(), "\n")...)
+			lines = append(lines, "")
 		}
-		out[i] = " " + ln + strings.Repeat(" ", pad) + " "
+		switch {
+		case s.modelPicker != nil || s.agentPicker != nil || s.sessionPicker != nil || s.overlay != "":
+			lines = append(lines, s.centerRows()...)
+		case !s.embedded && s.panel.open:
+			lines = append(lines, s.narrowPanelRows()...)
+		case !s.embedded && s.transcript.Empty():
+			lines = append(lines, s.welcome.Rows(s.chatWidth(), s.transcriptHeight())...)
+		default:
+			tRows := s.transcript.Rows()
+			tH := s.transcriptHeight()
+			if len(tRows) > tH {
+				tRows = tRows[:tH]
+			}
+			lines = append(lines, tRows...)
+		}
+		lines = append(lines, s.chatTailRows()...)
 	}
-	// Paint the theme's own surface under every cell, including the cells
-	// between styled runs. The screen is the last thing that can do this:
-	// without it the terminal's background shows through and a theme
-	// change looks like it did nothing, because the largest coloured area
-	// on screen never changes. FillBG is a no-op at a tier without
-	// colour, so NO_COLOR output is unaffected.
-	return render.FillBG(s.Theme, s.Tier, theme.RoleBG, strings.Join(out, "\n"))
+
+	if s.height > 0 {
+		innerH := s.contentHeight()
+		if len(lines) > innerH {
+			lines = lines[:innerH]
+		}
+	}
+	return s.gutter(lines)
 }
 
 // overlayRows pads or clips an overlay to the transcript's own height, so

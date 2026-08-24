@@ -178,6 +178,9 @@ func (s Screen) openHelp() Screen {
 // instead recenters it against rows it never gets, and its bottom
 // border and hint land below the cut.
 func (s Screen) dialogSize() (int, int) {
+	if s.height <= 0 {
+		return s.chatWidth(), 0
+	}
 	return s.chatWidth(), s.transcriptHeight()
 }
 

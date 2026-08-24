@@ -55,12 +55,18 @@ func (s Screen) handleClick(msg tea.MouseClickMsg) (app.Screen, tea.Cmd) {
 		return s, tea.ClearScreen
 	}
 	x, y := msg.X, msg.Y
-	transcriptTop := s.topbar.Height() + 1
+	topGutter := 0
+	bottomGutter := 0
+	if s.height >= 3 && !s.embedded {
+		topGutter = 1
+		bottomGutter = 1
+	}
+	transcriptTop := topGutter + s.topbar.Height() + 1
 	if s.panelIsSplit() {
 		// Column 0 is the gutter; the reading column runs to the rule.
 		reading, _ := render.SplitWidths(contentWidth(s.width))
 		if x > reading {
-			return s.handleNavClick(y - 1)
+			return s.handleNavClick(y - topGutter - 1)
 		}
 	} else if s.panel.open {
 		if y-transcriptTop < s.transcriptHeight() {
@@ -70,7 +76,7 @@ func (s Screen) handleClick(msg tea.MouseClickMsg) (app.Screen, tea.Cmd) {
 	transcriptRows := s.transcriptHeight()
 	// The status row sits at the screen bottom, so the input row sits
 	// above it. The composer owns the exact numbers (InputRowFromBottom, InputColumnOffset).
-	inputRow := s.height - 1 - s.composer.InputRowFromBottom()
+	inputRow := s.height - bottomGutter - 1 - s.composer.InputRowFromBottom()
 	colOffset := s.composer.InputColumnOffset()
 	menuRows := s.composer.MenuRows()
 

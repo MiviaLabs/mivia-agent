@@ -588,9 +588,10 @@ func TestTopBarHasAOneRowMargin(t *testing.T) {
 	// The final layout pass pads every line to the terminal width, so the
 	// margin row is width spaces, not a literal empty string - assert on
 	// content, not exact bytes.
-	marginLine := lines[scr.topbar.Height()]
+	topGutter := 1
+	marginLine := lines[topGutter+scr.topbar.Height()]
 	if strings.TrimSpace(marginLine) != "" {
-		t.Errorf("line %d (right under the top bar) = %q, want a blank margin row", scr.topbar.Height(), marginLine)
+		t.Errorf("line %d (right under the top bar) = %q, want a blank margin row", topGutter+scr.topbar.Height(), marginLine)
 	}
 }
 

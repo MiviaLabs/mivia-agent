@@ -45,9 +45,9 @@ func TestClickCollapsedBlockExpandsIt(t *testing.T) {
 	}
 
 	// The conversation is shorter than the viewport, so the block's
-	// header sits at transcript row 0 - screen row topRow, below the top bar
-	// and its margin row.
-	topRow := s.topbar.Height() + 1
+	// header sits at transcript row 0 - screen row topRow, below top gutter,
+	// top bar and its margin row.
+	topRow := 1 + s.topbar.Height() + 1
 	next, _ := s.Update(leftClick(3, topRow))
 	s = next.(Screen)
 	if got := s.transcript.Blocks()[0].Collapsed; got {
@@ -58,7 +58,7 @@ func TestClickCollapsedBlockExpandsIt(t *testing.T) {
 // TestClickExpandedBodyDoesNothing: only a collapsed header is a target.
 func TestClickExpandedBodyDoesNothing(t *testing.T) {
 	s := toolScreen(t)
-	topRow := s.topbar.Height() + 1
+	topRow := 1 + s.topbar.Height() + 1
 	next, _ := s.Update(leftClick(3, topRow))
 	s = next.(Screen) // now expanded
 
@@ -78,9 +78,9 @@ func TestClickComposerPositionsCursor(t *testing.T) {
 	next, _ = s.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	s = next.(Screen)
 
-	// The input sits framed above the status row: inputRow is 2 rows above the
-	// bottom status row (accounting for the bottom border), 1 column for gutter + 2 for border/padding.
-	inputRow := 24 - 1 - 2
+	// The input sits framed above the status row and bottom gutter:
+	// inputRow is 24 - 1(bottom gutter) - 1(status) - 2(composer bottom border + input row) = 20.
+	inputRow := 24 - 1 - 1 - 2
 	next, _ = s.Update(leftClick(1+2+2+3, inputRow)) // column 8 on screen == column 5 in input == after "hel"
 	s = next.(Screen)
 	if got := s.composer.Value(); got != "hello" {
@@ -111,10 +111,10 @@ func TestClickCompletionRowAcceptsIt(t *testing.T) {
 		t.Fatal("precondition: the menu is open")
 	}
 
-	// Layout at height 24: status row 23, composer bottom border 22,
-	// composer input line 21, composer top border 20,
-	// menu rows 18-19 (2 rows directly above composer frame).
-	next, _ = s.Update(leftClick(4, 19)) // second menu row: "agents"
+	// Layout at height 24: bottom gutter 23, status row 22, composer bottom border 21,
+	// composer input line 20, composer top border 19,
+	// menu rows 17-18 (2 rows directly above composer frame).
+	next, _ = s.Update(leftClick(4, 18)) // second menu row: "agents"
 	s = next.(Screen)
 	if s.composer.MenuActive() {
 		t.Error("clicking a row must accept it and close the menu")

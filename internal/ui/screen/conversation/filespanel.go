@@ -363,7 +363,13 @@ func (s Screen) chatWidth() int {
 // chrome's claim. The split draws no horizontal frame, so the claim is
 // the same with the panel open as without it.
 func (s Screen) transcriptHeight() int {
+	if s.height <= 0 {
+		return 0
+	}
 	h := s.height - s.reservedRows()
+	if s.height >= 3 && !s.embedded {
+		h = s.height - 2 - s.reservedRows()
+	}
 	if h < 0 {
 		return 0
 	}
@@ -375,7 +381,7 @@ func (s Screen) transcriptHeight() int {
 func (s Screen) panelBodyRows() int {
 	h := s.transcriptHeight()
 	if s.panelIsSplit() {
-		h = s.height
+		h = s.contentHeight()
 	}
 	return render.DialogBodyRows(h)
 }
@@ -406,7 +412,7 @@ func (s *Screen) scrollPanel(dir int) {
 // dialog drawn would swallow keys and clicks aimed at what IS drawn.
 func (s Screen) panelDialogFits() bool {
 	if s.panelIsSplit() {
-		return s.height >= 8
+		return s.contentHeight() >= 8
 	}
 	return s.transcriptHeight() >= 6
 }
@@ -694,7 +700,7 @@ func (s Screen) dialogParts() (title, body, hint string) {
 // file list in the right nav pane.
 func (s Screen) panelFrameRows() []string {
 	w := contentWidth(s.width)
-	paneH := max(1, s.height)
+	paneH := max(1, s.contentHeight())
 	readingW, navW := render.SplitWidths(w)
 
 	innerNavW := max(1, navW-3)
