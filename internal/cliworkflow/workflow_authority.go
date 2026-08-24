@@ -4,12 +4,14 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/composition"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
@@ -39,6 +41,35 @@ func effectiveWorkflowWriteDenylist(res *config.Resolved) []string {
 		removed[r] = true
 	}
 	return slices.DeleteFunc(list, func(entry string) bool { return removed[entry] })
+}
+
+// effectiveWorkflowPanelLimits resolves [workflows.panels] onto
+// controller.DefaultPanelLimits(): each *int field that is set overrides
+// the matching default field, an unset (nil) field keeps the default. A
+// nil res, or an unset [workflows.panels] table entirely, reproduces
+// today's hardcoded values exactly.
+func effectiveWorkflowPanelLimits(res *config.Resolved) controller.PanelLimits {
+	limits := controller.DefaultPanelLimits()
+	if res == nil {
+		return limits
+	}
+	p := res.Workflows.Panels
+	if p.MemberMaxOutputPerCall != nil {
+		limits.MemberMaxOutputPerCall = *p.MemberMaxOutputPerCall
+	}
+	if p.MemberMaxToolCalls != nil {
+		limits.MemberMaxToolCalls = *p.MemberMaxToolCalls
+	}
+	if p.SynthesisMaxOutputPerCall != nil {
+		limits.SynthesisMaxOutputPerCall = *p.SynthesisMaxOutputPerCall
+	}
+	if p.SynthesisMaxToolCalls != nil {
+		limits.SynthesisMaxToolCalls = *p.SynthesisMaxToolCalls
+	}
+	if p.MemberDeadlineDefaultSeconds != nil {
+		limits.MemberDeadlineDefault = time.Duration(*p.MemberDeadlineDefaultSeconds) * time.Second
+	}
+	return limits
 }
 
 var panelReviewerTools = []string{"find_references", "glob", "grep", "list_dir", "read_file"}

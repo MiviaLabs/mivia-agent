@@ -389,6 +389,34 @@ The summarize request carries bounded quotes of the dropped messages' real conte
 
 For `mivia chat`, mivia uses one SQLite file for all durable chat state: sessions, context, worktree routes, and runs. When `store_path` is unset, mivia uses the shared global path `~/.mivia/context.db`, so every workspace on the machine has the same chat history by default. Sessions stay isolated inside that shared file by workspace ID: two projects never see each other's sessions even though they share one file. A worktree never creates another chat database. Set `store_path` to give one workspace its own separate file instead of the shared default.
 
+## Workflow panel limits
+
+`[workflows.panels]` overrides the per-child-agent bounds every `agent_panel`
+step's member and synthesis children run under. Each key is optional; an
+unset key keeps mivia's compiled default, so an empty or absent
+`[workflows.panels]` table reproduces today's behavior exactly.
+
+| Key | Type | Default | Meaning |
+|-----|------|---------|---------|
+| `member_max_output_per_call` | int | `8192` | Output-token ceiling for one panel member's provider call |
+| `member_max_tool_calls` | int | `64` | Cumulative tool calls one panel member may make |
+| `synthesis_max_output_per_call` | int | `8192` | Output-token ceiling for one synthesis child's provider call |
+| `synthesis_max_tool_calls` | int | `16` | Cumulative tool calls the synthesis child may make |
+| `member_deadline_default_seconds` | int | `86400` (24h) | Wall-clock default for a panel member attempt when the workflow declares no run deadline (`max_duration_seconds = 0`); a workflow's own deadline always wins when it is earlier |
+
+A step's own `max_turns` (see the workflow definition's step syntax, not this
+file) always bounds turns per child; it is not part of `[workflows.panels]`
+because it is a per-step knob, not a host-wide default. Cumulative prompt and
+output token totals are deliberately unbounded for panel children regardless
+of this table - only the per-call ceiling and the cumulative tool-call count
+are host-configurable.
+
+```toml
+[workflows.panels]
+member_max_tool_calls = 128
+member_deadline_default_seconds = 43200
+```
+
 ## Live cross-process relay
 
 Mivia processes that resolve the same store directory share a live event hub. `hub.lock` and `hub.sock` sit beside `context.db`: one process owns the hub and every other process joins it as a client, so a turn published by one process is relayed to all hub members. Two surfaces relay only when their effective configs agree on the store directory - which happens automatically today, since every workspace defaults to the same shared `~/.mivia/context.db`.

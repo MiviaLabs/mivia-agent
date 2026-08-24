@@ -24,6 +24,7 @@ type File struct {
 	Memory       MemoryConfig              `toml:"memory"`
 	Harness      HarnessConfig             `toml:"harness"`
 	Approvals    ApprovalsConfig           `toml:"approvals"`
+	Workflows    WorkflowsConfig           `toml:"workflows"`
 	// Verifiers is populated by LoadWorkspaceVerifiers from the WORKSPACE'S
 	// own .mivia/mivia.toml only (loadFile), never by the tolerant struct
 	// decode and never from a user-level base layer: a verifier table with an
@@ -283,6 +284,30 @@ type WorktreeConfig struct {
 	BranchPrefix string `toml:"branch_prefix"`
 }
 
+// WorkflowsConfig holds workflow-engine defaults.
+type WorkflowsConfig struct {
+	Panels WorkflowPanelLimits `toml:"panels"`
+}
+
+// WorkflowPanelLimits overrides the compiled defaults every agent_panel
+// step's member and synthesis children run under
+// (internal/workflows/controller.DefaultPanelLimits, applied in
+// buildPanelAttempt/buildPanelSynthesisWork). A nil field keeps the
+// compiled default; this mirrors the [chat] max_steps *int
+// nil-means-default pattern (ChatConfig.MaxSteps above), not a new
+// convention.
+type WorkflowPanelLimits struct {
+	MemberMaxOutputPerCall    *int `toml:"member_max_output_per_call"`
+	MemberMaxToolCalls        *int `toml:"member_max_tool_calls"`
+	SynthesisMaxOutputPerCall *int `toml:"synthesis_max_output_per_call"`
+	SynthesisMaxToolCalls     *int `toml:"synthesis_max_tool_calls"`
+	// MemberDeadlineDefaultSeconds overrides the wall-clock default a
+	// panel member attempt gets when the workflow declares no run
+	// deadline (max_duration_seconds = 0). Seconds, matching
+	// definition.Limits.MaxDurationSeconds' unit.
+	MemberDeadlineDefaultSeconds *int `toml:"member_deadline_default_seconds"`
+}
+
 // Resolved is the fully resolved runtime config used by the CLI.
 type Resolved struct {
 	// RedactionPolicy is compiled during Load so an invalid pattern fails at
@@ -341,6 +366,8 @@ type Resolved struct {
 	Harness HarnessConfig
 	// Approvals is the resolved [approvals] configuration.
 	Approvals ApprovalsConfig
+	// Workflows is the resolved [workflows] configuration.
+	Workflows WorkflowsConfig
 	// Verifiers is the workspace-declared verifier profile set from the
 	// [verifiers.<name>] tables. The host ships no built-in profiles.
 	Verifiers map[string]VerifierProfile

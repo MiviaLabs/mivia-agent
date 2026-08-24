@@ -8,8 +8,10 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 )
 
 // workflowDefaultProtectedPaths are concrete files under the built-in write
@@ -209,6 +211,44 @@ func TestWorkflowRegistryAllowsWorkspaceWrites(t *testing.T) {
 	}
 	if string(got) != "done" {
 		t.Fatalf("output.txt = %q, want done", got)
+	}
+}
+
+// TestEffectiveWorkflowPanelLimitsDefaultsUnconfigured proves a nil res
+// and an unset [workflows.panels] table both reproduce
+// controller.DefaultPanelLimits() exactly - no [workflows.panels] key
+// changes today's behavior.
+func TestEffectiveWorkflowPanelLimitsDefaultsUnconfigured(t *testing.T) {
+	want := controller.DefaultPanelLimits()
+	if got := effectiveWorkflowPanelLimits(nil); got != want {
+		t.Fatalf("nil res: PanelLimits = %+v, want default %+v", got, want)
+	}
+	if got := effectiveWorkflowPanelLimits(&config.Resolved{}); got != want {
+		t.Fatalf("unset [workflows.panels]: PanelLimits = %+v, want default %+v", got, want)
+	}
+}
+
+// TestEffectiveWorkflowPanelLimitsAppliesOverrides proves each
+// [workflows.panels] key overrides exactly its matching PanelLimits
+// field, leaving the rest at the compiled default.
+func TestEffectiveWorkflowPanelLimitsAppliesOverrides(t *testing.T) {
+	memberOut, memberCalls, synthOut, synthCalls, deadlineSec := 4096, 8, 2048, 4, 3600
+	res := &config.Resolved{Workflows: config.WorkflowsConfig{Panels: config.WorkflowPanelLimits{
+		MemberMaxOutputPerCall:       &memberOut,
+		MemberMaxToolCalls:           &memberCalls,
+		SynthesisMaxOutputPerCall:    &synthOut,
+		SynthesisMaxToolCalls:        &synthCalls,
+		MemberDeadlineDefaultSeconds: &deadlineSec,
+	}}}
+	want := controller.PanelLimits{
+		MemberMaxOutputPerCall:    4096,
+		MemberMaxToolCalls:        8,
+		SynthesisMaxOutputPerCall: 2048,
+		SynthesisMaxToolCalls:     4,
+		MemberDeadlineDefault:     time.Hour,
+	}
+	if got := effectiveWorkflowPanelLimits(res); got != want {
+		t.Fatalf("PanelLimits = %+v, want %+v", got, want)
 	}
 }
 

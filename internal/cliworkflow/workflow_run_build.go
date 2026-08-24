@@ -269,6 +269,9 @@ func newWorkflowController(repo workflowledger.Repository, dispatcher *runtime.D
 	if err := ctrl.SetWritePathBlocklist(effectiveWorkflowWriteDenylist(res)); err != nil {
 		return nil, err
 	}
+	if err := ctrl.SetPanelLimits(effectiveWorkflowPanelLimits(res)); err != nil {
+		return nil, err
+	}
 	if err := ctrl.SetWorkDir(identity.Root); err != nil {
 		return nil, err
 	}
