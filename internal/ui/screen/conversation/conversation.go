@@ -324,16 +324,15 @@ func (s Screen) reservedRows() int {
 // The transcript always returns exactly its own height, padded, so
 // nothing below it moves as output streams in (ux-rules.md rule 2.8).
 func (s Screen) View() string {
+	if !s.embedded && s.panelIsSplit() {
+		return s.gutter(s.panelFrameRows())
+	}
 	var lines []string
 	if !s.embedded {
 		// The top bar may draw a second breadcrumb row (topbar.Height
 		// accounts for it); its rows land as frame rows, then the margin.
 		lines = append(lines, strings.Split(s.topbar.View(), "\n")...)
 		lines = append(lines, "")
-	}
-	if !s.embedded && s.panelIsSplit() {
-		lines = append(lines, s.panelFrameRows()...)
-		return s.gutter(lines)
 	}
 	switch {
 	case s.modelPicker != nil || s.agentPicker != nil || s.sessionPicker != nil || s.overlay != "":

@@ -375,7 +375,7 @@ func (s Screen) transcriptHeight() int {
 func (s Screen) panelBodyRows() int {
 	h := s.transcriptHeight()
 	if s.panelIsSplit() {
-		h = s.height - (s.topbar.Height() + 1)
+		h = s.height
 	}
 	return render.DialogBodyRows(h)
 }
@@ -406,7 +406,7 @@ func (s *Screen) scrollPanel(dir int) {
 // dialog drawn would swallow keys and clicks aimed at what IS drawn.
 func (s Screen) panelDialogFits() bool {
 	if s.panelIsSplit() {
-		return s.height-(s.topbar.Height()+1) >= 6
+		return s.height >= 8
 	}
 	return s.transcriptHeight() >= 6
 }
@@ -694,7 +694,7 @@ func (s Screen) dialogParts() (title, body, hint string) {
 // file list in the right nav pane.
 func (s Screen) panelFrameRows() []string {
 	w := contentWidth(s.width)
-	paneH := max(1, s.height-(s.topbar.Height()+1)) // the top bar and its margin row
+	paneH := max(1, s.height)
 	_, navW := render.SplitWidths(w)
 
 	innerNavW := max(1, navW-3)
@@ -713,7 +713,11 @@ func (s Screen) panelFrameRows() []string {
 		if s.panel.focused {
 			focus = render.Right
 		}
-		chat := append(s.centerRows(), s.chatTailRows()...)
+		var chat []string
+		chat = append(chat, strings.Split(s.topbar.View(), "\n")...)
+		chat = append(chat, "")
+		chat = append(chat, s.centerRows()...)
+		chat = append(chat, s.chatTailRows()...)
 		if len(chat) > paneH {
 			chat = chat[:paneH]
 		}

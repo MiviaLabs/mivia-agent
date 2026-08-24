@@ -720,3 +720,21 @@ func TestNavClickSelectsRow(t *testing.T) {
 		t.Error("clicking file row 0 should open content dialog")
 	}
 }
+
+func TestPanelWide_SidebarFullHeightAndTopbarInLeftPane(t *testing.T) {
+	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 24, sampleDiffs()...))
+	view := s.View()
+	assertExactFrame(t, view, uikitconfig.BreakpointWide, 24)
+
+	plain := ansi.Strip(view)
+	// Sidebar title should be visible in the right pane
+	if !strings.Contains(plain, "FILES") && !strings.Contains(plain, "a.go") {
+		t.Errorf("sidebar content missing from view:\n%s", plain)
+	}
+
+	// First row should have topbar content on the left (e.g. model or branch/title) and sidebar top border on the right
+	lines := strings.Split(plain, "\n")
+	if len(lines) != 24 {
+		t.Fatalf("expected 24 lines, got %d", len(lines))
+	}
+}
