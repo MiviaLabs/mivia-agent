@@ -16,12 +16,27 @@ import (
 // both into the session and persist, then hand the partial back instead of the
 // error. Only a still-current turn may persist (stale-turn fence); otherwise it
 // returns ok=false and the caller keeps today's drop-everything error path.
-// A save failure returns with the partial reply.
+// A save failure returns with the partial reply. The fence check happens
+// INSIDE the same lock that performs the write, not as a separate
+// plainTurnCurrent call before acquiring the lock: a check-then-separately-
+// lock shape leaves a window where a concurrent /clear (which bumps
+// s.turnID and resets s.Messages under its own s.mu.Lock(), specifically to
+// fence out an in-flight turn - see session_reset.go's resetSystem) can
+// complete between the check and the write, and an unconditional write
+// afterward would silently resurrect the pre-clear history the user just
+// cleared - the same TOCTOU a bug audit caught in adoptErroredPlainTurn
+// (commit 29b25da3), fixed here the same way. isInterruptedTurn itself
+// carries no session state, so it stays outside the lock; only the
+// session-state check moves in.
 func (s *Session) adoptInterruptedPlainTurn(ctx context.Context, err error, snapshot plainTurnSnapshot, prepared []provider.Message, persistedText, partial string) (string, bool, error) {
-	if !isInterruptedTurn(ctx, err) || !s.plainTurnCurrent(snapshot.token, snapshot.myTurn) {
+	if !isInterruptedTurn(ctx, err) {
 		return "", false, nil
 	}
 	s.mu.Lock()
+	if s.turnID != snapshot.myTurn || !s.tokenCurrentLocked(snapshot.token) {
+		s.mu.Unlock()
+		return "", false, nil
+	}
 	replaceNewestUserText(prepared, snapshot.messages[len(snapshot.messages)-1].Content, persistedText)
 	s.Messages = prepared
 	if strings.TrimSpace(partial) != "" {

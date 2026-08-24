@@ -100,10 +100,16 @@ func (s *Session) sendPlainLegacy(ctx context.Context, persistedText string, w i
 		}
 		return "", err
 	}
-	if !s.plainTurnCurrent(snapshot.token, snapshot.myTurn) {
+	// The fence check happens INSIDE the same lock that performs the write,
+	// not as a separate plainTurnCurrent call before acquiring the lock: see
+	// adoptInterruptedPlainTurn's doc comment (context_integration_turn.go)
+	// for why a check-then-separately-lock shape is a TOCTOU that can let a
+	// concurrent /clear be silently undone.
+	s.mu.Lock()
+	if s.turnID != snapshot.myTurn || !s.tokenCurrentLocked(snapshot.token) {
+		s.mu.Unlock()
 		return reply, nil
 	}
-	s.mu.Lock()
 	replaceNewestUserText(prepared, snapshot.messages[len(snapshot.messages)-1].Content, persistedText)
 	s.Messages = prepared
 	if strings.TrimSpace(reply) != "" {
