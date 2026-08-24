@@ -324,8 +324,8 @@ Use this map when you need to inspect or change the shipped workflow.
 | Step order, routes, limits, and delivery policy | [`.mivia/workflows/feature-delivery.toml`](../../.mivia/workflows/feature-delivery.toml) | This file is the workflow contract. It cannot grant provider, tool, or publish permission. |
 | Agent prompts | [`.mivia/workflows/templates/`](../../.mivia/workflows/templates/) | Each template defines the task for one workflow step. |
 | Structured step results | [`.mivia/workflows/schemas/`](../../.mivia/workflows/schemas/) | Routes use these validated fields, not free-form prose. |
-| Implementation agent | [`.mivia/agents/workflow-engineer.toml`](../../.mivia/agents/workflow-engineer.toml) | This agent can edit its isolated worktree. It cannot run commands or publish. |
-| Review agent | [`.mivia/agents/reviewer.toml`](../../.mivia/agents/reviewer.toml) | This agent is read-only. It returns review evidence. |
+| Implementation agent | [`.agents/agents/workflow-engineer.md`](../../.agents/agents/workflow-engineer.md) | This agent can edit its isolated worktree. It cannot run commands or publish. |
+| Review agent | [`.agents/agents/reviewer.md`](../../.agents/agents/reviewer.md) | This agent is read-only. It returns review evidence. |
 | Provider catalog, credentials, worktrees, and subagent limits | [`.mivia/mivia.toml`](../../.mivia/mivia.toml) | Keep API keys in the environment or env file, never in this file. |
 
 ### Agent models
@@ -738,7 +738,7 @@ invocation.
 
 A reviewer must return schema-valid structured evidence. Prose is never a routing signal. See [Workflows](workflows.md#trust-what-a-workflow-file-can-and-cannot-do) for the full model.
 
-Workflow agent steps run inside an isolated worktree with a restricted tool surface. Their write tools honor the project write-path blocklist (`[tools].write_path_blocklist` in the config that started the run). Two paths are blocked by default: `.git` and `.mivia/mivia.toml`. The blocklist key adds more; `[tools].write_path_blocklist_remove` removes entries, including the two defaults, which is a trust decision (an agent that can edit the config or Git metadata can remove its own restrictions or bypass hook gates). A project that omits the key leaves `.mivia/agents`, `.mivia/policy`, `.mivia/skills`, `.agents/rules`, `.agents/skills`, `.mivia/workflows`, and Go module files writable by workflow agents, including the workflow definition itself. The interactive session is not bound by the blocklist. See [Configuration](config.md#write-path-blocklist).
+Workflow agent steps run inside an isolated worktree with a restricted tool surface. Their write tools honor the project write-path blocklist (`[tools].write_path_blocklist` in the config that started the run). Two paths are blocked by default: `.git` and `.mivia/mivia.toml`. The blocklist key adds more; `[tools].write_path_blocklist_remove` removes entries, including the two defaults, which is a trust decision (an agent that can edit the config or Git metadata can remove its own restrictions or bypass hook gates). A project that omits the key leaves `.agents/agents`, `.mivia/policy`, `.mivia/skills`, `.agents/rules`, `.agents/skills`, `.mivia/workflows`, and Go module files writable by workflow agents, including the workflow definition itself. The interactive session is not bound by the blocklist. See [Configuration](config.md#write-path-blocklist).
 
 ### Blocked writes are a host problem, never a review failure
 

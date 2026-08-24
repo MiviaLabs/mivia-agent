@@ -89,6 +89,13 @@ def _tools_count(value: str) -> int:
     return len([line for line in value.split("\n") if line.strip()])
 
 
+KNOWN_FRONTMATTER_KEYS = frozenset({
+    "name", "description", "tools", "allow_empty_tools", "inherits", "tools_add", "tools_remove",
+    "disallowed_tools", "tools_core", "skills", "mcp_servers", "provider", "model",
+    "max_turns", "timeout_seconds", "max_tokens", "output_schema", "input_schema",
+})
+
+
 def _check_role(path: Path) -> list[str]:
     failures: list[str] = []
     role_name = path.stem
@@ -96,19 +103,25 @@ def _check_role(path: Path) -> list[str]:
         failures.append(f"{path}: role {role_name!r} is not in the standard set {sorted(ALLOWED_ROLES)}")
     text = path.read_text(encoding="utf-8")
     keys, body = _parse_frontmatter(text)
+    if not keys and not text.startswith("---\n"):
+        failures.append(f"{path}: missing YAML frontmatter delimiters '---'")
+    for key in keys:
+        if key not in KNOWN_FRONTMATTER_KEYS:
+            failures.append(f"{path}: unknown frontmatter key {key!r} (must match Go AgentFileSpec schema)")
     for key in ("name", "description"):
-        if key not in keys:
-            failures.append(f"{path}: missing required frontmatter key {key!r}")
+        if key not in keys or not keys[key].strip():
+            failures.append(f"{path}: missing or empty required frontmatter key {key!r}")
     name_value = keys.get("name", "").strip()
     if name_value and name_value != role_name:
         failures.append(f"{path}: frontmatter name {name_value!r} does not match filename {role_name!r}")
-    if role_name in ADLC_ROLES:
+    if role_name not in ("mivia", "review-synthesizer"):
         if "tools" not in keys:
             failures.append(f"{path}: missing required frontmatter key 'tools'")
         else:
             tools_value = keys.get("tools", "")
             if _tools_count(tools_value) == 0:
                 failures.append(f"{path}: tools list is empty")
+    if role_name in ADLC_ROLES:
         if "Disallowed operations" not in body:
             failures.append(f"{path}: body must include a 'Disallowed operations' section")
     return failures

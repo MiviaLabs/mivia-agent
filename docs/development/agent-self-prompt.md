@@ -4,12 +4,12 @@ The agent system prompt for **agent mode** (tools enabled) comes from:
 
 ## Priority order
 
-1. **Selected agent definition** under `.mivia/agents/<name>.toml` (or `~/.mivia/agents/`)
+1. **Selected agent definition** under `.agents/agents/<name>.md` (or `~/.agents/agents/`)
    - When `--agent` is omitted and a definition named **`mivia`** exists, it is auto-selected.
 2. **`[chat].system_prompt`** in config (if set and not stripped by the workspace gate)
 3. **Compiled-in fallback** (`defaultAgentPrompt` in `internal/cli/prompt.go`)
 
-Workspace agent files **always load** from `<workspace>/.mivia/agents/`. They
+Workspace agent files **always load** from `<workspace>/.agents/agents/`. They
 replace the former `.mivia/agent-prompt.md` surface.
 
 ## How it works
@@ -24,7 +24,7 @@ On launch, `runChat`:
 **mivia never creates agent files.** You author them (or the agent writes them
 with `write_file`); the next launch picks them up.
 
-## What belongs in `.mivia/agents/*.toml`
+## What belongs in `.agents/agents/*.md`
 
 | Workspace | Content |
 |-----------|---------|
@@ -39,7 +39,7 @@ with `write_file`); the next launch picks them up.
 | `skills` | Skill **invocation** allowlist (see [Skill System Architecture](../architecture/skills.md#agent-skill-binding)): omit = all trusted skills; `[]` = none; list = only those skill handlers |
 | `system_prompt`, `model`, `max_turns`, `inherits` | Prompt, model, turn cap, inheritance |
 
-Example (this repo’s go-engineer — skills list as shipped in `.mivia/agents/go-engineer.toml`):
+Example (this repo’s go-engineer — skills list as shipped in `.agents/agents/go-engineer.md`):
 
 ```toml
 skills = [
@@ -83,6 +83,6 @@ project skill cannot shadow then remove a user skill of the same name.
 
 ## Related
 
-- This repo’s agents: `.mivia/agents/*.toml` (mivia, go-engineer, researcher,
+- This repo’s agents: `.agents/agents/*.md` (mivia, go-engineer, researcher,
   reviewer, security, docs, verifier)
 - Namespace: `internal/workspace/namespace.go`, `internal/config/agents.go`

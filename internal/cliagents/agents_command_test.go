@@ -14,7 +14,11 @@ func writeCatalogAgent(t *testing.T, dir, name, body string) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, name+".toml"), []byte(body), 0o600); err != nil {
+	ext := ".md"
+	if strings.HasSuffix(name, ".toml") || strings.HasSuffix(name, ".md") {
+		ext = ""
+	}
+	if err := os.WriteFile(filepath.Join(dir, name+ext), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -22,8 +26,8 @@ func writeCatalogAgent(t *testing.T, dir, name, body string) {
 func TestAgentsListShowsSelectableDefinitionsOnly(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	workspace := t.TempDir()
-	writeCatalogAgent(t, filepath.Join(workspace, ".mivia", "agents"), "zeta", "name = \"zeta\"\ndescription = \"z\"\ntools = [\"read_file\"]\n")
-	writeCatalogAgent(t, filepath.Join(workspace, ".mivia", "agents"), "alpha", "name = \"alpha\"\ndescription = \"a\"\nmodel = \"worker-model\"\nmax_turns = 3\n")
+	writeCatalogAgent(t, filepath.Join(workspace, ".agents", "agents"), "zeta", "---\nname: zeta\ndescription: z\ntools: [read_file]\n---\n")
+	writeCatalogAgent(t, filepath.Join(workspace, ".agents", "agents"), "alpha", "---\nname: alpha\ndescription: a\nmodel: worker-model\nmax_turns: 3\n---\n")
 
 	var out, errOut strings.Builder
 	if err := runAgentsWithIO([]string{"list", "--workspace", workspace}, &out, &errOut); err != nil {
@@ -48,7 +52,7 @@ func TestAgentsExplainDoesNotPrintSystemPromptDigestOrSecret(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	workspace := t.TempDir()
 	secret := "do-not-print-this-prompt"
-	writeCatalogAgent(t, filepath.Join(workspace, ".mivia", "agents"), "researcher", "name = \"researcher\"\ndescription = \"inspect\"\nsystem_prompt = \""+secret+"\"\ntools_add = [\"grep\"]\n")
+	writeCatalogAgent(t, filepath.Join(workspace, ".agents", "agents"), "researcher", "---\nname: researcher\ndescription: inspect\ntools_add: [grep]\n---\n"+secret)
 
 	var out, errOut strings.Builder
 	if err := runAgentsWithIO([]string{"explain", "researcher", "--workspace", workspace}, &out, &errOut); err != nil {
@@ -83,7 +87,7 @@ func TestAgentsCommandRejectsInvalidGrammar(t *testing.T) {
 func TestAgentsListWorksWithoutProviderKey(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	workspace := t.TempDir()
-	writeCatalogAgent(t, filepath.Join(workspace, ".mivia", "agents"), "local", "name = \"local\"\ndescription = \"local only\"\n")
+	writeCatalogAgent(t, filepath.Join(workspace, ".agents", "agents"), "local", "---\nname: local\ndescription: local only\n---\n")
 	var out, errOut strings.Builder
 	if err := runAgentsWithIO([]string{"list", "--workspace", workspace}, &out, &errOut); err != nil {
 		t.Fatalf("provider-independent list failed: %v", err)
@@ -93,8 +97,8 @@ func TestAgentsListWorksWithoutProviderKey(t *testing.T) {
 func TestAgentsListDefaultUnchanged(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	workspace := t.TempDir()
-	writeCatalogAgent(t, filepath.Join(workspace, ".mivia", "agents"), "alpha", "name = \"alpha\"\ndescription = \"a\"\nmodel = \"worker-model\"\nmax_turns = 3\n")
-	writeCatalogAgent(t, filepath.Join(workspace, ".mivia", "agents"), "zeta", "name = \"zeta\"\ndescription = \"z\"\ntools = [\"read_file\"]\n")
+	writeCatalogAgent(t, filepath.Join(workspace, ".agents", "agents"), "alpha", "---\nname: alpha\ndescription: a\nmodel: worker-model\nmax_turns: 3\n---\n")
+	writeCatalogAgent(t, filepath.Join(workspace, ".agents", "agents"), "zeta", "---\nname: zeta\ndescription: z\ntools: [read_file]\n---\n")
 
 	var out, errOut strings.Builder
 	if err := runAgentsWithIO([]string{"list", "--workspace", workspace}, &out, &errOut); err != nil {
@@ -136,8 +140,8 @@ func TestAgentsListDefaultUnchanged(t *testing.T) {
 func TestAgentsListJSONOutputsValidArray(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	workspace := t.TempDir()
-	writeCatalogAgent(t, filepath.Join(workspace, ".mivia", "agents"), "alpha", "name = \"alpha\"\ndescription = \"a\"\nmodel = \"worker-model\"\nmax_turns = 3\ntools = [\"read_file\"]\n")
-	writeCatalogAgent(t, filepath.Join(workspace, ".mivia", "agents"), "beta", "name = \"beta\"\ndescription = \"A beta agent\"\n")
+	writeCatalogAgent(t, filepath.Join(workspace, ".agents", "agents"), "alpha", "---\nname: alpha\ndescription: a\nmodel: worker-model\nmax_turns: 3\ntools: [read_file]\n---\n")
+	writeCatalogAgent(t, filepath.Join(workspace, ".agents", "agents"), "beta", "---\nname: beta\ndescription: A beta agent\n---\n")
 
 	var out, errOut strings.Builder
 	if err := runAgentsWithIO([]string{"list", "--json", "--workspace", workspace}, &out, &errOut); err != nil {
@@ -196,7 +200,7 @@ func TestAgentsListJSONNoSensitiveFields(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	workspace := t.TempDir()
 	secret := "secret-content"
-	writeCatalogAgent(t, filepath.Join(workspace, ".mivia", "agents"), "spy", "name = \"spy\"\ndescription = \"s\"\nsystem_prompt = \""+secret+"\"\n")
+	writeCatalogAgent(t, filepath.Join(workspace, ".agents", "agents"), "spy", "---\nname: spy\ndescription: s\n---\n"+secret)
 
 	var out, errOut strings.Builder
 	if err := runAgentsWithIO([]string{"list", "--json", "--workspace", workspace}, &out, &errOut); err != nil {
@@ -267,7 +271,7 @@ func TestAgentsExplainRejectsJSON(t *testing.T) {
 func TestAgentsExplainRejectsJSONWithAgent(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	workspace := t.TempDir()
-	writeCatalogAgent(t, filepath.Join(workspace, ".mivia", "agents"), "alpha", "name = \"alpha\"\ndescription = \"a\"\n")
+	writeCatalogAgent(t, filepath.Join(workspace, ".agents", "agents"), "alpha", "---\nname: alpha\ndescription: a\n---\n")
 
 	// Test --json after positional agent name.
 	var out, errOut strings.Builder
@@ -308,15 +312,15 @@ func TestAgentsDiagnosticSummaryPreservedForJSON(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	workspace := t.TempDir()
 	// Write a malformed TOML file (not valid agent TOML syntax).
-	agentsDir := filepath.Join(workspace, ".mivia", "agents")
+	agentsDir := filepath.Join(workspace, ".agents", "agents")
 	if err := os.MkdirAll(agentsDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(agentsDir, "bad.toml"), []byte("{{invalid toml"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(agentsDir, "bad.md"), []byte("--- invalid yaml"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	// Also write a valid agent so there is at least one row.
-	writeCatalogAgent(t, agentsDir, "good", "name = \"good\"\ndescription = \"ok\"\n")
+	writeCatalogAgent(t, agentsDir, "good", "---\nname: good\ndescription: ok\n---\n")
 
 	var out, errOut strings.Builder
 	err := runAgentsWithIO([]string{"list", "--json", "--workspace", workspace}, &out, &errOut)
@@ -348,8 +352,8 @@ func TestAgentsListJSONWarnsOnStderr(t *testing.T) {
 	// emitted. The provider must be a known provider (registered in
 	// providerregistry) so that checkResolvedBinding succeeds and the agent
 	// resolves far enough to reach the credential-routing protection code.
-	writeCatalogAgent(t, filepath.Join(workspace, ".mivia", "agents"), "withprovider",
-		"name = \"withprovider\"\ndescription = \"wp\"\nprovider = \"openrouter\"\nmodel = \"openai/gpt-4o-mini\"\n")
+	writeCatalogAgent(t, filepath.Join(workspace, ".agents", "agents"), "withprovider",
+		"---\nname: withprovider\ndescription: wp\nprovider: openrouter\nmodel: openai/gpt-4o-mini\n---\n")
 
 	var out, errOut strings.Builder
 	err := runAgentsWithIO([]string{"list", "--json", "--workspace", workspace}, &out, &errOut)
@@ -387,7 +391,7 @@ func TestAgentsListJSONWarnsOnStderr(t *testing.T) {
 func TestAgentsListJSONStdoutOnly(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	workspace := t.TempDir()
-	writeCatalogAgent(t, filepath.Join(workspace, ".mivia", "agents"), "simple", "name = \"simple\"\ndescription = \"s\"\n")
+	writeCatalogAgent(t, filepath.Join(workspace, ".agents", "agents"), "simple", "---\nname: simple\ndescription: s\n---\n")
 
 	var buf bytes.Buffer
 	var errOut strings.Builder

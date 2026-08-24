@@ -28,22 +28,22 @@ func agentTestWorkflow(stepID, kind, agent string) *WorkflowFile {
 }
 
 func TestValidateAgentReferences_NoAgentsDir(t *testing.T) {
-	// Create a temp workspace with no .mivia/agents/ directory
+	// Create a temp workspace with no .agents/agents/ directory
 	tmpDir := t.TempDir()
 
 	wf := agentTestWorkflow("do-thing", "agent", "worker")
 	errs := ValidateAgentReferences(wf, tmpDir)
 	if len(errs) == 0 {
-		t.Fatal("expected error when .mivia/agents/ doesn't exist and step references agent")
+		t.Fatal("expected error when .agents/agents/ doesn't exist and step references agent")
 	}
-	if strings.Join(errs, "; ") != `step "do-thing": agent "worker" not found in `+filepath.Join(tmpDir, ".mivia", "agents") {
+	if strings.Join(errs, "; ") != `step "do-thing": agent "worker" not found in `+filepath.Join(tmpDir, ".agents", "agents") {
 		t.Errorf("unexpected error: %v", errs)
 	}
 }
 
 func TestValidateAgentReferences_AgentFound(t *testing.T) {
 	tmpDir := t.TempDir()
-	agentsDir := filepath.Join(tmpDir, ".mivia", "agents")
+	agentsDir := filepath.Join(tmpDir, ".agents", "agents")
 	if err := os.MkdirAll(agentsDir, 0755); err != nil {
 		t.Fatalf("creating agents dir: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestValidateAgentReferences_AgentFound(t *testing.T) {
 
 func TestValidateAgentReferences_AgentNotFound(t *testing.T) {
 	tmpDir := t.TempDir()
-	agentsDir := filepath.Join(tmpDir, ".mivia", "agents")
+	agentsDir := filepath.Join(tmpDir, ".agents", "agents")
 	if err := os.MkdirAll(agentsDir, 0755); err != nil {
 		t.Fatalf("creating agents dir: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestValidateAgentReferences_AgentNotFound(t *testing.T) {
 	wf := agentTestWorkflow("do-thing", "agent", "worker")
 	errs := ValidateAgentReferences(wf, tmpDir)
 	if len(errs) == 0 {
-		t.Fatal("expected error when agent 'worker' is not in .mivia/agents/")
+		t.Fatal("expected error when agent 'worker' is not in .agents/agents/")
 	}
 	expected := `step "do-thing": agent "worker" not found in ` + agentsDir
 	if strings.Join(errs, "; ") != expected {
@@ -92,7 +92,7 @@ func TestValidateAgentReferences_NonAgentStepSkipped(t *testing.T) {
 
 func TestValidateAgentReferences_YamlExtension(t *testing.T) {
 	tmpDir := t.TempDir()
-	agentsDir := filepath.Join(tmpDir, ".mivia", "agents")
+	agentsDir := filepath.Join(tmpDir, ".agents", "agents")
 	if err := os.MkdirAll(agentsDir, 0755); err != nil {
 		t.Fatalf("creating agents dir: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestValidateAgentReferences_YamlExtension(t *testing.T) {
 
 func TestValidateAgentReferences_TOMLExtension(t *testing.T) {
 	tmpDir := t.TempDir()
-	agentsDir := filepath.Join(tmpDir, ".mivia", "agents")
+	agentsDir := filepath.Join(tmpDir, ".agents", "agents")
 	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -122,10 +122,10 @@ func TestValidateAgentReferences_TOMLExtension(t *testing.T) {
 }
 
 func TestValidateAgentReferences_AgentsDirIsFile(t *testing.T) {
-	// When .mivia/agents is a regular file, os.ReadDir fails with an error
+	// When .agents/agents is a regular file, os.ReadDir fails with an error
 	// that is not IsNotExist, so discoverAgentFiles propagates it.
 	tmpDir := t.TempDir()
-	agentsPath := filepath.Join(tmpDir, ".mivia", "agents")
+	agentsPath := filepath.Join(tmpDir, ".agents", "agents")
 	if err := os.MkdirAll(filepath.Dir(agentsPath), 0o755); err != nil {
 		t.Fatalf("creating .mivia dir: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestValidateAgentReferences_AgentsDirIsFile(t *testing.T) {
 	wf := agentTestWorkflow("do-thing", "agent", "worker")
 	errs := ValidateAgentReferences(wf, tmpDir)
 	if len(errs) == 0 {
-		t.Fatal("expected error when .mivia/agents is a regular file")
+		t.Fatal("expected error when .agents/agents is a regular file")
 	}
 	if !strings.Contains(strings.Join(errs, "; "), "reading agents directory") {
 		t.Errorf("error %q should mention reading agents directory", strings.Join(errs, "; "))
@@ -147,7 +147,7 @@ func TestValidateAgentReferences_SkipsEmptyAgentField(t *testing.T) {
 	// A step with kind "agent" but an empty agent field is skipped;
 	// the next step's agent is validated normally.
 	tmpDir := t.TempDir()
-	agentsDir := filepath.Join(tmpDir, ".mivia", "agents")
+	agentsDir := filepath.Join(tmpDir, ".agents", "agents")
 	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
 		t.Fatalf("creating agents dir: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestValidateAgentReferences_SkipsEmptyAgentField(t *testing.T) {
 
 func TestValidateAgentReferences_SkipsSubdirectories(t *testing.T) {
 	tmpDir := t.TempDir()
-	agentsDir := filepath.Join(tmpDir, ".mivia", "agents")
+	agentsDir := filepath.Join(tmpDir, ".agents", "agents")
 	if err := os.MkdirAll(filepath.Join(agentsDir, "team"), 0o755); err != nil {
 		t.Fatalf("creating agents subdir: %v", err)
 	}
@@ -192,7 +192,7 @@ func TestValidateAgentReferences_SkipsSubdirectories(t *testing.T) {
 
 func TestValidateAgentReferences_SkipsSymlinks(t *testing.T) {
 	tmpDir := t.TempDir()
-	agentsDir := filepath.Join(tmpDir, ".mivia", "agents")
+	agentsDir := filepath.Join(tmpDir, ".agents", "agents")
 	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
 		t.Fatalf("creating agents dir: %v", err)
 	}
@@ -221,7 +221,7 @@ func TestValidateAgentReferences_InfoErrorSkipsEntry(t *testing.T) {
 		t.Skip("permission checks are bypassed when running as root")
 	}
 	tmpDir := t.TempDir()
-	agentsDir := filepath.Join(tmpDir, ".mivia", "agents")
+	agentsDir := filepath.Join(tmpDir, ".agents", "agents")
 	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
 		t.Fatalf("creating agents dir: %v", err)
 	}
@@ -296,7 +296,7 @@ func TestValidateAgentSkillReferences(t *testing.T) {
 
 func TestValidateAgentReferences_AgentPanel(t *testing.T) {
 	tmpDir := t.TempDir()
-	agentsDir := filepath.Join(tmpDir, ".mivia", "agents")
+	agentsDir := filepath.Join(tmpDir, ".agents", "agents")
 	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}

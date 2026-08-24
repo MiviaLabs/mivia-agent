@@ -339,8 +339,7 @@ func assertFinalAssistantMessage(t *testing.T, decoded []charLine, want string) 
 func TestCharacterization_AgentsListFromWorkspace(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	ws := t.TempDir()
-	writeCatalogAgent(t, filepath.Join(ws, ".mivia", "agents"), "reviewer",
-		"name = \"reviewer\"\ndescription = \"reviews changes\"\ntools = [\"read_file\"]\n")
+	writeCatalogAgent(t, filepath.Join(ws, ".agents", "agents"), "reviewer", "---\nname: reviewer\ndescription: reviews changes\ntools: [read_file]\n---\n")
 
 	var out, errOut strings.Builder
 	if err := runAgentsWithIO([]string{"list", "--workspace", ws}, &out, &errOut); err != nil {

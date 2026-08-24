@@ -28,7 +28,7 @@ Config: TOML + env file for secrets. See `docs/product/config.md`.
 
 Two distinct agent concepts, both covered below:
 
-- **The root agent** is one file-backed definition (`.mivia/agents/*.toml`)
+- **The root agent** is one file-backed definition (`.agents/agents/*.md`)
   selected for a session - system prompt, tool scope, model, skill allowlist.
   See [Agent definition pipeline](#agent-definition-pipeline).
 - **Sub-agents** are concurrent DAG tasks the root agent spawns and manages
@@ -41,8 +41,8 @@ Two distinct agent concepts, both covered below:
 File-backed agent configuration follows a bounded four-stage path:
 
 1. The config layer reads the trusted user `[agents]` controls and parses one
-   strict TOML definition per file from `~/.mivia/agents/` and
-   `<workspace>/.mivia/agents/`.
+   strict TOML definition per file from `~/.agents/agents/` and
+   `<workspace>/.agents/agents/`.
 2. Discovery attaches user/workspace provenance, gives same-name user files
    precedence, and always discovers workspace agent files. The user gate is
    applied later to workspace prompts and project skill handlers.

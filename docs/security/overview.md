@@ -56,13 +56,13 @@ Permissions, scopes, roles, and caller identity are deliberately not stored. The
 
 ## Workspace agent files load unconditionally
 
-`.mivia/agents/*.toml` files always load as agent definitions. When a definition named `mivia` exists, it is auto-selected as the root session, prompt and tool allowlist included. User files with the same name take precedence over workspace files. The workspace file remains a diagnostic shadow row. Malformed files, unsafe paths, unknown fields, and cross-origin inheritance fail closed and do not become selectable agents.
+`.agents/agents/*.md` files always load as agent definitions. When a definition named `mivia` exists, it is auto-selected as the root session, prompt and tool allowlist included. User files with the same name take precedence over workspace files. The workspace file remains a diagnostic shadow row. Malformed files, unsafe paths, unknown fields, and cross-origin inheritance fail closed and do not become selectable agents.
 
 Consequence: cloning a repository and running `mivia chat` in it hands that repository authorship of your root agent's system prompt and tool scope. A hostile agent file shapes every turn of that session. Agent files must not contain credentials, provider catalogs, raw secrets, or environment-specific absolute paths.
 
 Two mitigations are yours to apply:
 
-- Treat an unfamiliar repository the way you would treat any untrusted code. Read `.mivia/agents/` before running `mivia chat` in it.
+- Treat an unfamiliar repository the way you would treat any untrusted code. Read `.agents/agents/` before running `mivia chat` in it.
 - `mivia chat --no-tools` limits what a hostile prompt can direct. The tool surface is what turns prompt influence into filesystem or command access.
 
 ## The config file is workspace-sourced in a checkout

@@ -50,7 +50,7 @@ func TestWorkflowRunLinearTwoStepExitCriterion(t *testing.T) {
 	repo := ledger.NewStorageRepository(store)
 	before := assertWorkflowAdmission(t, repo, runID)
 	beforeRequests := requests.Load()
-	if err := os.WriteFile(filepath.Join(root, ".mivia", "agents", "one.toml"), []byte("not valid toml = ["), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".agents", "agents", "one.md"), []byte("not valid toml = ["), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	var resumed strings.Builder
@@ -198,8 +198,8 @@ func TestWorkflowRunAllowsRunCommandAuthority(t *testing.T) {
 	if err := file.Close(); err != nil {
 		t.Fatal(err)
 	}
-	agentPath := filepath.Join(root, ".mivia", "agents", "one.toml")
-	body := "name = \"one\"\ndescription = \"command agent\"\ntools = [\"run_command\"]\nmax_turns = 1\n"
+	agentPath := filepath.Join(root, ".agents", "agents", "one.md")
+	body := "---\nname: one\ndescription: command agent\ntools: [run_command]\nmax_turns: 1\n---\n"
 	if err := os.WriteFile(agentPath, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -235,8 +235,8 @@ func TestWorkflowRunCreatesWorktreeForWriteAuthority(t *testing.T) {
 	t.Setenv("MIVIA_ALLOW_INSECURE_HTTP", "1")
 	writeWorkflowRunFixture(t, root, server.URL, storePath)
 	for _, name := range []string{"one", "two"} {
-		path := filepath.Join(root, ".mivia", "agents", name+".toml")
-		body := "name = \"" + name + "\"\ndescription = \"writer\"\ntools = [\"write_file\"]\nmax_turns = 1\n"
+		path := filepath.Join(root, ".agents", "agents", name+".md")
+		body := "---\nname: " + name + "\ndescription: writer\ntools: [write_file]\nmax_turns: 1\n---\n"
 		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}

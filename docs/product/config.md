@@ -208,7 +208,7 @@ If you change the prefix, branches with the old prefix remain. Remove them manua
 
 ## Named agents
 
-Named agents are separate TOML files, one definition per file. User-owned definitions live in `~/.mivia/agents/<name>.toml`. Workspace definitions live in `<workspace>/.mivia/agents/<name>.toml`. Create those two directories as needed. The filename is canonical: `<name>.toml` must contain the same lowercase `name`. Agent files are not inline `[agents]` configuration. Read [Coding agent mode](agent.md#named-agents-and-skill-binding) for the full schema.
+Named agents are separate TOML files, one definition per file. User-owned definitions live in `~/.agents/agents/<name>.md`. Workspace definitions live in `<workspace>/.agents/agents/<name>.md`. Create those two directories as needed. The filename is canonical: `<name>.toml` must contain the same lowercase `name`. Agent files are not inline `[agents]` configuration. Read [Coding agent mode](agent.md#named-agents-and-skill-binding) for the full schema.
 
 ## MCP servers
 
@@ -272,7 +272,7 @@ Two paths are blocked by default: `.git` and `.mivia/mivia.toml`. The key adds t
 
 Entries use forward slashes. At load, mivia trims whitespace and cleans each entry, so `" go.mod/ "` becomes `"go.mod"`. An entry that is empty, that resolves to the workspace root, or that is absolute is a config error: mivia refuses to start rather than silently ignore a blocklist entry that can never match.
 
-This key is a project decision. A project that omits it leaves paths such as `.mivia/agents`, `.mivia/policy`, `.mivia/skills`, `.agents/rules`, `.agents/skills`, `.mivia/workflows`, `go.mod`, `go.sum`, and `go.work` writable by workflow agents. That includes the workflow definition the run executes. Recommended starting values ship in `.mivia/mivia.toml.example` and in this repository's own `.mivia/mivia.toml`.
+This key is a project decision. A project that omits it leaves paths such as `.agents/agents`, `.mivia/policy`, `.mivia/skills`, `.agents/rules`, `.agents/skills`, `.mivia/workflows`, `go.mod`, `go.sum`, and `go.work` writable by workflow agents. That includes the workflow definition the run executes. Recommended starting values ship in `.mivia/mivia.toml.example` and in this repository's own `.mivia/mivia.toml`.
 
 ## Redaction and persisted orchestration history
 

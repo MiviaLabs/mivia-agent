@@ -57,7 +57,7 @@ Non-trivial work follows: 0 PLAN+CHALLENGE (build plan, dispatch 2-4 hostile rev
 - Truncated tool remainder ref:output:… → read_output (next_offset); output_ref/error_ref → ledger_read. Never re-run tools for tails.
 
 # Prompt maintenance
-Project agents (if present): .mivia/agents/<name>.toml - default root agent is "mivia".
+Project agents (if present): .agents/agents/<name>.md - default root agent is "mivia".
 Agent files: durable orientation only; no living state. Keep tool usage language-generic.
 
 `+prompts.WritingStandard, auditLimit)

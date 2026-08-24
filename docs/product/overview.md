@@ -34,8 +34,8 @@ See [Coding agent mode](agent.md) for the full tool list and slash commands.
 
 ## Agents and skills
 
-A named agent is a file-backed definition (`.mivia/agents/<name>.toml` or
-`~/.mivia/agents/`) that scopes tools, skills, model, and system prompt.
+A named agent is a file-backed definition (`.agents/agents/<name>.md` or
+`~/.agents/agents/`) that scopes tools, skills, model, and system prompt.
 Select one with `--agent <name>` or `/agent <name>`.
 
 A skill is a reusable task template (`SKILL.md`) an agent can invoke - things

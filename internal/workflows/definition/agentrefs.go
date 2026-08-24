@@ -13,11 +13,11 @@ import (
 )
 
 // ValidateAgentReferences checks that every step with kind "agent" or "agent_gate"
-// references an agent file that exists in <workspaceRoot>/.mivia/agents/.
+// references an agent file that exists in <workspaceRoot>/.agents/agents/.
 // Returns errors for any referenced agent that is not found.
 func ValidateAgentReferences(wf *WorkflowFile, workspaceRoot string) []string {
 	var errs []string
-	agentsDir := workspace.NamespacePath(workspaceRoot, "agents")
+	agentsDir := workspace.AgentsDir(workspaceRoot)
 
 	knownAgents, err := discoverAgentFiles(agentsDir)
 	if err != nil {

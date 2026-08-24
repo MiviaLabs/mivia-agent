@@ -526,7 +526,8 @@ env_blocklist = ["GIT_DIR", "GIT_WORK_TREE"]
 # bypass the host hook-policy gates. Keep both blocked unless a host-owned
 # step genuinely needs the path. An entry in BOTH keys is a load error.
 write_path_blocklist = [
-    ".mivia/agents",   # agent definitions
+    ".agents/agents",  # agent definitions
+    ".mivia/agents",   # agent definitions (legacy path)
     ".mivia/skills",   # skill definitions (mivia binary's own load path)
     ".agents/rules",   # durable rules
     ".agents/skills",  # skill definitions (shared cross-tool mirror)

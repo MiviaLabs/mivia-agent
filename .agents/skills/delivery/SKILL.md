@@ -22,7 +22,7 @@ spawn agents - the orchestrator does that, in order.
   This is the canonical definition. If this skill disagrees with the
   rule, the rule wins.
 - Role definitions: `.agents/agents/{planner,plan-reviewer,builder,reviewer}.md`.
-- Subagent dispatch contract: `.mivia/agents/*.toml` (binary's
+- Subagent dispatch contract: `.agents/agents/*.md` (binary's
   workflow engine) or the Markdown set above (human/ADLC). Use one,
   not both, per dispatch.
 - Workflow templates: `.mivia/workflows/templates/` (plan, plan-review,

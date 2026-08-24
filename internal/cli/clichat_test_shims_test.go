@@ -10,6 +10,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -32,14 +33,16 @@ var loadChatSkills = func(wsRoot string) (*skills.Registry, error) { return clic
 // runAgentsWithIO delegates to cliagents.RunAgentsWithIO for tests.
 var runAgentsWithIO = cliagents.RunAgentsWithIO
 
-// writeCatalogAgent is duplicated from cliagents so the characterization
-// suite stays byte-identical.
 func writeCatalogAgent(t *testing.T, dir, name, body string) {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, name+".toml"), []byte(body), 0o600); err != nil {
+	ext := ".md"
+	if strings.HasSuffix(name, ".toml") || strings.HasSuffix(name, ".md") {
+		ext = ""
+	}
+	if err := os.WriteFile(filepath.Join(dir, name+ext), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }

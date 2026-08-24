@@ -31,28 +31,17 @@ list appears in the body. Run `make agents-check` to validate.
 
 ## Loading
 
-These files are **not** loaded by the `mivia` binary. The binary reads
-`.mivia/agents/*.toml` for its workflow-engine agent roles. This
-directory is for the human/ADLC dispatch surface; the workflow-engine
-roles will be migrated here as Markdown in a follow-up refactor.
+These Markdown definitions are the canonical workspace agent definitions loaded
+by both the `mivia` binary and workflow engine from `<workspaceRoot>/.agents/agents/*.md`.
+The runtime parser (`internal/config/agents_parse.go`) decodes the YAML frontmatter
+into `AgentFileSpec` and maps the Markdown body to the agent's `SystemPrompt`.
 
-When a future orchestration tool wants to dispatch one of these roles,
-it reads the frontmatter to discover tools and the body for the role
-contract.
+When orchestration tools or workflow steps dispatch an agent, the runtime discovers
+and resolves definitions from this directory.
 
 ## Adding a role
 
-1. Pick a name that matches the ADLC vocabulary (`Block / PASS / REJECT /
-   findings`); avoid introducing a second vocabulary.
-2. Match the frontmatter schema above.
-3. Include a "Disallowed operations" section listing the tools the role
-   must NOT use, with the reason.
+1. Pick a name that matches lowercase identifier conventions (`[a-z0-9_-]+`).
+2. Match the frontmatter schema above (`name`, `description`, `tools`, etc.).
+3. Include clear guidelines and, for ADLC roles, a "Disallowed operations" section.
 4. Run `make agents-check` before committing.
-
-## Legacy roles
-
-The legacy role definitions still live under `.mivia/agents/*.toml`. They
-will be migrated here as Markdown in a follow-up. Until then both sets
-coexist; do not edit a `.toml` to change role semantics - the Markdown
-set is the source of truth for human/ADLC work, and the TOML set is the
-binary's workflow-engine contract.

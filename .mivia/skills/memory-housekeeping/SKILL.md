@@ -65,7 +65,7 @@ Answer these questions for every entry:
 Check claims against the current workspace:
 
 - Trace each claim to a file, a line, or a test with grep and read_file.
-- Check config bindings against `.mivia/mivia.toml` and `.mivia/agents/*.toml`.
+- Check config bindings against `.mivia/mivia.toml` and `.agents/agents/*.md`.
 - Verify tool-behavior claims against the tool source. When you cannot verify
   a claim, flag it as unverified. Do not guess.
 - Verify external claims (prices, vendor behavior) with web search.

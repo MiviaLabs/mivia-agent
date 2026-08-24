@@ -90,8 +90,8 @@ Every advertised tool costs schema bytes on every request, whether the model use
 
 Named agents are file-backed definitions. They live in two places:
 
-- user definitions: `~/.mivia/agents/<name>.toml`
-- workspace definitions: `<workspace>/.mivia/agents/<name>.toml`
+- user definitions: `~/.agents/agents/<name>.md`
+- workspace definitions: `<workspace>/.agents/agents/<name>.md`
 
 Select an agent with `mivia chat --agent <name>` or `/agent <name>`. If a file-backed `mivia` definition exists, it is selected as the root session when no agent is specified. Otherwise mivia uses a built-in default agent. The built-in default is not a file-backed definition and cannot be selected with `--agent`.
 

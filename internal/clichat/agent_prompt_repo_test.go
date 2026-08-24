@@ -40,12 +40,12 @@ func repoRoot(t *testing.T) string {
 }
 
 func TestRepoMiviaAgentIsMetaOrientationNotState(t *testing.T) {
-	path := filepath.Join(repoRoot(t), ".mivia", "agents", "mivia.toml")
+	path := filepath.Join(repoRoot(t), ".agents", "agents", "mivia.md")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v (this repo must ship the default mivia agent)", path, err)
 	}
-	spec, name, err := config.ParseAgentFileTOML(data, "mivia.toml")
+	spec, name, err := config.ParseAgentFileMarkdown(data, "mivia.md")
 	if err != nil {
 		t.Fatalf("parse mivia agent: %v", err)
 	}
@@ -86,17 +86,12 @@ func TestDefaultAgentIsMiviaWhenPresent(t *testing.T) {
 	ws := t.TempDir()
 	t.Setenv("HOME", home)
 
-	agentsDir := filepath.Join(ws, ".mivia", "agents")
+	agentsDir := filepath.Join(ws, ".agents", "agents")
 	if err := os.MkdirAll(agentsDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	body := []byte(`
-name = "mivia"
-description = "default root"
-tools = ["read_file"]
-system_prompt = "from mivia agent"
-`)
-	if err := os.WriteFile(filepath.Join(agentsDir, "mivia.toml"), body, 0o600); err != nil {
+	body := []byte("---\nname: mivia\ndescription: default root\ntools: [read_file]\n---\nfrom mivia agent")
+	if err := os.WriteFile(filepath.Join(agentsDir, "mivia.md"), body, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -126,19 +121,12 @@ func TestDefaultAgentIsMiviaWhenPresentProviderStripped(t *testing.T) {
 	ws := t.TempDir()
 	t.Setenv("HOME", home)
 
-	agentsDir := filepath.Join(ws, ".mivia", "agents")
+	agentsDir := filepath.Join(ws, ".agents", "agents")
 	if err := os.MkdirAll(agentsDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	body := []byte(`
-name = "mivia"
-description = "default root"
-tools = ["read_file"]
-provider = "deepseek"
-model = "deepseek-v4-flash"
-system_prompt = "from mivia agent"
-`)
-	if err := os.WriteFile(filepath.Join(agentsDir, "mivia.toml"), body, 0o600); err != nil {
+	body := []byte("---\nname: mivia\ndescription: default root\ntools: [read_file]\nprovider: deepseek\nmodel: deepseek-v4-flash\n---\nfrom mivia agent")
+	if err := os.WriteFile(filepath.Join(agentsDir, "mivia.md"), body, 0o600); err != nil {
 		t.Fatal(err)
 	}
 

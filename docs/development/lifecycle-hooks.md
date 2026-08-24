@@ -225,7 +225,7 @@ gofmt rewrote 2 files
 Two edges, not one prefix. A label says where hook text *begins*; it never says
 where it ends, so text shaped like a new section simply reads as one. The block
 also states its own status, because a workspace agent definition under
-`.mivia/agents/` replaces the compiled system prompt wholesale - a frame that
+`.agents/agents/` replaces the compiled system prompt wholesale - a frame that
 leaned on that prompt for its meaning would be a frame any workspace could
 silently unframe.
 

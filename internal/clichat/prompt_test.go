@@ -19,7 +19,7 @@ func TestDefaultAgentPromptIsShort(t *testing.T) {
 	// step contract (the full spec lives in the workspace rules; a workspace
 	// prompt supersedes this fallback anyway). Do not raise this budget
 	// again to make room for content that a project agent definition under
-	// .mivia/agents/ can carry instead.
+	// .agents/agents/ can carry instead.
 	prompt := buildAgentPrompt(config.SubagentConfig{})
 	if len(prompt) > 4150 {
 		t.Fatalf("buildAgentPrompt is %d bytes, expected < 4150", len(prompt))
@@ -27,8 +27,8 @@ func TestDefaultAgentPromptIsShort(t *testing.T) {
 	if !strings.Contains(prompt, "ASD-STE100") {
 		t.Fatal("buildAgentPrompt must carry the writing standard")
 	}
-	if !strings.Contains(prompt, ".mivia/agents/") {
-		t.Fatal("buildAgentPrompt must mention .mivia/agents/ for self-maintenance")
+	if !strings.Contains(prompt, ".agents/agents/") {
+		t.Fatal("buildAgentPrompt must mention .agents/agents/ for self-maintenance")
 	}
 }
 
@@ -61,7 +61,7 @@ func TestLoadAgentPromptIgnoresAgentPromptMarkdown(t *testing.T) {
 
 	prompt := buildAgentPrompt(config.SubagentConfig{})
 	if strings.Contains(prompt, marker) {
-		t.Fatal("agent-prompt.md must not be loaded; use .mivia/agents/*.toml")
+		t.Fatal("agent-prompt.md must not be loaded; use .agents/agents/*.toml")
 	}
 }
 
@@ -97,7 +97,7 @@ func TestDefaultAgentPromptHasGenericVerifyGuidance(t *testing.T) {
 	prompt := buildAgentPrompt(config.SubagentConfig{})
 	lower := strings.ToLower(prompt)
 	checks := []string{
-		"run_command", "discover", ".mivia/agents/", "last resort",
+		"run_command", "discover", ".agents/agents/", "last resort",
 	}
 	for _, c := range checks {
 		if !strings.Contains(lower, strings.ToLower(c)) {
@@ -105,7 +105,7 @@ func TestDefaultAgentPromptHasGenericVerifyGuidance(t *testing.T) {
 		}
 	}
 	if strings.Contains(prompt, "go test ./...") {
-		t.Fatal("buildAgentPrompt must not hardcode go test ./... (use .mivia/agents/*.toml)")
+		t.Fatal("buildAgentPrompt must not hardcode go test ./... (use .agents/agents/*.toml)")
 	}
 }
 
@@ -198,7 +198,7 @@ func TestRootPromptMessagingBlockOmitsHandler(t *testing.T) {
 }
 
 // workspaceRoot walks up from the test working directory to the workspace
-// containing .mivia/agents/mivia.toml.
+// containing .agents/agents/mivia.md.
 func workspaceRoot(t *testing.T) string {
 	t.Helper()
 	dir, err := os.Getwd()
@@ -206,52 +206,48 @@ func workspaceRoot(t *testing.T) string {
 		t.Fatal(err)
 	}
 	for {
-		if _, err := os.Stat(filepath.Join(dir, ".mivia", "agents", "mivia.toml")); err == nil {
+		if _, err := os.Stat(filepath.Join(dir, ".agents", "agents", "mivia.md")); err == nil {
 			return dir
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			t.Fatalf("could not locate .mivia/agents/mivia.toml from %s", dir)
+			t.Fatalf("could not locate .agents/agents/mivia.md from %s", dir)
 		}
 		dir = parent
 	}
 }
 
-// extractTomlSystemPrompt pulls the system_prompt TOML multi-line string
-// ("""...""") out of an agent definition file with a simple scan.
-func extractTomlSystemPrompt(raw string) (string, bool) {
-	const key = `system_prompt = """`
-	idx := strings.Index(raw, key)
-	if idx < 0 {
+// extractMarkdownBody pulls the body out of a markdown agent definition.
+func extractMarkdownBody(raw string) (string, bool) {
+	if !strings.HasPrefix(raw, "---\n") {
 		return "", false
 	}
-	rest := raw[idx+len(key):]
-	end := strings.Index(rest, `"""`)
+	end := strings.Index(raw[4:], "\n---\n")
 	if end < 0 {
 		return "", false
 	}
-	return rest[:end], true
+	return strings.TrimSpace(raw[4+end+len("\n---\n"):]), true
 }
 
 // TestProtocolMarkersAgreeAcrossSurfaces pins the parent-side messaging
 // markers across the surfaces that teach them: the compiled prompt and the
-// live .mivia/agents/mivia.toml system_prompt. The formats differ so the
+// live .agents/agents/mivia.md system prompt. The formats differ so the
 // surfaces can't be byte-equal; the shared vocabulary markers are what keep
 // cross-surface drift honest.
 func TestProtocolMarkersAgreeAcrossSurfaces(t *testing.T) {
-	tomlPath := filepath.Join(workspaceRoot(t), ".mivia", "agents", "mivia.toml")
-	raw, err := os.ReadFile(tomlPath)
+	mdPath := filepath.Join(workspaceRoot(t), ".agents", "agents", "mivia.md")
+	raw, err := os.ReadFile(mdPath)
 	if err != nil {
-		t.Fatalf("read %s: %v", tomlPath, err)
+		t.Fatalf("read %s: %v", mdPath, err)
 	}
-	tomlPrompt, ok := extractTomlSystemPrompt(string(raw))
+	mdPrompt, ok := extractMarkdownBody(string(raw))
 	if !ok {
-		t.Fatalf("could not extract system_prompt multi-line string from %s", tomlPath)
+		t.Fatalf("could not extract system prompt markdown body from %s", mdPath)
 	}
 
 	surfaces := map[string]string{
 		"buildAgentPrompt": buildAgentPrompt(config.SubagentConfig{}),
-		"mivia.toml":       tomlPrompt,
+		"mivia.md":         mdPrompt,
 	}
 	for name, prompt := range surfaces {
 		if !strings.Contains(prompt, "send_to_task") {

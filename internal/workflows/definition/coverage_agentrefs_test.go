@@ -31,7 +31,7 @@ func TestCoverageValidateAgentReferencesTable(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
-			dir := workspace.NamespacePath(root, "agents")
+			dir := workspace.AgentsDir(root)
 			wantSubstrings(t, errToSlice(os.MkdirAll(dir, 0o755)), nil)
 			for _, a := range tt.agents {
 				wantSubstrings(t, errToSlice(os.WriteFile(filepath.Join(dir, a), []byte("# "+a), 0o644)), nil)

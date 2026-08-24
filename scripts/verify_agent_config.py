@@ -231,13 +231,19 @@ def model_facing_prompts() -> list[tuple[str, str]]:
     out = []
     for literal in re.findall(r"`([^`]*)`", text("internal/clichat/prompt.go")):
         out.append(("internal/clichat/prompt.go", literal))
-    agents_dir = ROOT / ".mivia" / "agents"
+    agents_dir = ROOT / ".agents" / "agents"
     if agents_dir.is_dir():
-        for agent in sorted(agents_dir.glob("*.toml")):
+        for agent in sorted(agents_dir.glob("*.md")):
+            if agent.name == "README.md":
+                continue
             body = agent.read_text(encoding="utf-8")
             rel = str(agent.relative_to(ROOT))
-            for literal in re.findall(r'system_prompt\s*=\s*"""(.*?)"""', body, re.S):
-                out.append((rel, literal))
+            if body.startswith("---\n"):
+                end = body.find("\n---\n", 4)
+                if end != -1:
+                    prompt_body = body[end + len("\n---\n"):].strip()
+                    if prompt_body:
+                        out.append((rel, prompt_body))
     return out
 
 

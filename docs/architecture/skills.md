@@ -74,7 +74,7 @@ second tool registration path.
 
 ## Agent–skill binding
 
-Named agents (`.mivia/agents/*.toml` / `~/.mivia/agents/*.toml`) may set:
+Named agents (`.agents/agents/*.md` / `~/.agents/agents/*.md`) may set:
 
 ```toml
 skills = ["bug-audit", "verify-change"]
@@ -110,7 +110,7 @@ When the gate is off, project skill sources are not loaded at all, so a
 workspace skill cannot erase a user skill of the same name.
 
 This gate is deliberately narrower than agent discovery. Workspace
-`.mivia/agents/*.toml` files always load and retain workspace provenance; the
+`.agents/agents/*.md` files always load and retain workspace provenance; the
 gate only controls workspace `[chat]`/`[subagents]` prompt surfaces and project
 skill handlers. A workspace agent cannot inherit from a user agent, and a
 workspace-only skill cannot enter an agent allowlist while the gate is off.

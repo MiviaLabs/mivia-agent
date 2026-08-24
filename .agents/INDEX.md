@@ -112,12 +112,10 @@ human and ADLC-driven workflow. The four standard roles are:
 | `reviewer` | `.agents/agents/reviewer.md` | read + run_command |
 
 Frontmatter schema and the loading contract are documented in
-[`.agents/agents/README.md`](agents/README.md). The legacy TOML set
-under `.mivia/agents/*.toml` is what the `mivia` binary's workflow
-engine reads directly; it will be migrated to Markdown in a follow-up
-refactor. Run `make agents-check` after editing any role file - the
-script enforces the frontmatter schema, the filename / `name` match,
-and the role-specific disallowed-operations list.
+[`.agents/agents/README.md`](agents/README.md). The `mivia` binary and workflow
+engine load workspace agents directly from `.agents/agents/*.md`. Run `make
+agents-check` after editing any role file - the script enforces the frontmatter
+schema, the filename / `name` match, and the role-specific tool and disallowed-operations constraints.
 
 ## Policy
 

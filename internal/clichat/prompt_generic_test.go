@@ -31,12 +31,12 @@ func TestDefaultAgentPromptIsLanguageGeneric(t *testing.T) {
 	p := buildAgentPrompt(config.SubagentConfig{})
 	for _, b := range promptLanguageBias {
 		if b.re.MatchString(p) {
-			t.Fatalf("buildAgentPrompt matches language/product bias %q - keep fallback generic; put repo-specific knowledge in .mivia/agents/*.toml only", b.name)
+			t.Fatalf("buildAgentPrompt matches language/product bias %q - keep fallback generic; put repo-specific knowledge in .agents/agents/*.md only", b.name)
 		}
 	}
 	// Must teach discovery + generic tool discipline.
 	needles := []string{
-		".mivia/agents/",
+		".agents/agents/",
 		"run_command",
 		"workspace",
 		"argv",

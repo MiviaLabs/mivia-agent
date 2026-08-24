@@ -17,7 +17,7 @@ import (
 func handleSlashAgent(fields []string, sess *chat.Session, res *config.Resolved, term *Terminal, state *AgentSessionState) (bool, bool, error) {
 	sink := terminalSlashSink{t: term}
 	if state == nil || state.Registry == nil || state.Registry.Len() == 0 {
-		sink.Info("no agents loaded (add .mivia/agents/<name>.toml)")
+		sink.Info("no agents loaded (add .agents/agents/<name>.md)")
 		return true, false, nil
 	}
 	if len(fields) < 2 {

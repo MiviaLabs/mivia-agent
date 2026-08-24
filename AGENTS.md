@@ -21,11 +21,10 @@ Do not fork policy into adapters. Fix `.agents/` or this file instead.
 instructions: `mivia.toml` (this repo's own dogfooded config), `workflows/*`
 (the workflow engine's definitions, read at runtime by
 `internal/tools/workflow_tools.go`), `hooks/` (this repo's lifecycle hook
-scripts), `agents/*.toml` (workflow-engine agent role definitions), `policy/*`
-(commit-message, pr-title, go-structure, docs-ownership, agent-hook-bypass -
-all read by compiled Go code or scripts at a hardcoded `.mivia/policy/` path),
-and `skills/` (a required mirror - see point 5). Never move those; they are
-functional, not instructional.
+scripts), `policy/*` (commit-message, pr-title, go-structure, docs-ownership,
+agent-hook-bypass - all read by compiled Go code or scripts at a hardcoded
+`.mivia/policy/` path), and `skills/` (a required mirror - see point 5). Never
+move those; they are functional, not instructional.
 
 ### `.agents/memories/`
 
@@ -42,10 +41,9 @@ way you read this file.
 
 ### `.agents/agents/`
 
-Markdown subagent role definitions for the human and ADLC-driven workflow:
-`planner.md`, `plan-reviewer.md`, `builder.md`, `reviewer.md`. Format,
-loading contract, and the path to the legacy `.mivia/agents/*.toml` set
-that the `mivia` binary still loads directly are documented in
+Markdown subagent role definitions with YAML frontmatter: `mivia.md`,
+`planner.md`, `plan-reviewer.md`, `builder.md`, `reviewer.md`, and specialist
+roles. Format and loading contracts are documented in
 [`.agents/agents/README.md`](.agents/agents/README.md). Run `make
 agents-check` after editing any role file.
 
@@ -146,8 +144,8 @@ cmd/mivia-ui-demo/   Theme and render demo, development only
 internal/            Go packages
 internal/ui/         New terminal UI: app, screens, components, render, theme
 internal/uikit/      UI data with no bubbletea import: config, keymap, ports
-.agents/             Canonical agent control surface (rules, doctrines, skills, quality, templates)
-.mivia/              Product runtime config/state: mivia.toml, workflows/, hooks/, agents/*.toml, policy/*
+.agents/             Canonical agent control surface (rules, doctrines, skills, quality, templates, agents/*.md)
+.mivia/              Product runtime config/state: mivia.toml, workflows/, hooks/, policy/*
 .mivia/hooks/        This repo's own mivia lifecycle hook scripts (project-scoped)
 docs/                Human docs (OWNERS enforced)
 scripts/             Guards, hooks, scans, contract tests

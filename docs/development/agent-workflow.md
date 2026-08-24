@@ -59,7 +59,7 @@ stops at `delivery_pending` and opens no pull request.
 
 `.mivia/workflows/e2e-split-test.toml`, `.mivia/workflows/e2e-pr-metadata-test.toml`,
 and `.mivia/workflows/e2e-scope-escape-test.toml`
-(plus `.mivia/agents/e2e-engineer.toml` and `.mivia/workflows/templates/e2e-*.md`)
+(plus `.agents/agents/e2e-engineer.md` and `.mivia/workflows/templates/e2e-*.md`)
 are real, checked-in workflows that exercise the delivery engine's repair
 paths against the ACTUAL `MiviaLabs/mivia-agent` GitHub repo: real branches
 pushed, real draft PRs opened, real `gh` and DeepSeek API calls.
@@ -178,7 +178,7 @@ The cap is 256 KiB, mirroring the maximum skill file size.
 
 ## Agent skills allowlist
 
-File-backed agents may set `skills = ["…"]` in `.mivia/agents/<name>.toml`.
+File-backed agents may set `skills = ["…"]` in `.agents/agents/<name>.md`.
 That is an **invocation allowlist**, not a preload. See
 [Skill System Architecture](../architecture/skills.md#agent-skill-binding) and
-this repo’s `.mivia/agents/go-engineer.toml` for a worked example.
+this repo’s `.agents/agents/go-engineer.md` for a worked example.
