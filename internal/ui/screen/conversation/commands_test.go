@@ -15,6 +15,7 @@ import (
 	settingsscreen "github.com/MiviaLabs/mivia-agent/internal/ui/screen/settings"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/themepicker"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/replay"
 )
@@ -617,5 +618,102 @@ func TestRunSlashCommandOpenSettingsUnknownSectionIsAnError(t *testing.T) {
 	}
 	if got := lastErrorDetail(t, next); !strings.Contains(got, "unknown settings section") {
 		t.Errorf("got error detail %q, want it to name the unknown section", got)
+	}
+}
+
+type fakeCustomConversation struct {
+	history []ports.Message
+	model   ports.ModelInfo
+	usage   ports.Usage
+	title   string
+}
+
+func (f *fakeCustomConversation) Send(context.Context, intent.Send) (ports.TurnHandle, error) {
+	return nil, nil
+}
+func (f *fakeCustomConversation) History() []ports.Message  { return f.history }
+func (f *fakeCustomConversation) Model() ports.ModelInfo    { return f.model }
+func (f *fakeCustomConversation) ContextUsage() ports.Usage { return f.usage }
+func (f *fakeCustomConversation) Title() string             { return f.title }
+
+func TestSessionPickerSelectionLoadsHistoryAndNotice(t *testing.T) {
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	fakeConv := &fakeCustomConversation{
+		history: []ports.Message{
+			{Role: "user", Text: "question 1"},
+			{Role: "assistant", Text: "answer 1"},
+		},
+		title: "Resumed Topic",
+	}
+	runner := &fakeRunner{
+		outcome: ports.CommandOutcome{SessionChoices: sampleSessions(now)},
+		selectOutcome: ports.CommandOutcome{
+			ClearTranscript: true,
+			Notice:          "Resumed session s-1.",
+		},
+	}
+	s := newScreen(t, fakeConv, nil, nil)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	s = next.(Screen)
+	s.SetCommandRunner(runner)
+	s, _ = sendLine(t, s, "/resume")
+
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	s = next.(Screen)
+
+	if s.sessionPicker != nil {
+		t.Error("enter left the session picker open")
+	}
+	// Blocks should contain: 1 user block, 1 assistant block, 1 notice block
+	blocks := s.transcript.Blocks()
+	if len(blocks) != 3 {
+		t.Fatalf("expected 3 blocks (user, assistant, notice), got %d: %+v", len(blocks), blocks)
+	}
+	view := s.View()
+	if !strings.Contains(view, "question 1") {
+		t.Errorf("view missing loaded history user question:\n%s", view)
+	}
+	if !strings.Contains(view, "answer 1") {
+		t.Errorf("view missing loaded history assistant answer:\n%s", view)
+	}
+	if !strings.Contains(view, "Resumed session s-1.") {
+		t.Errorf("view missing resume confirmation notice:\n%s", view)
+	}
+	if !strings.Contains(view, "Resumed Topic") {
+		t.Errorf("view topbar missing resumed breadcrumb title:\n%s", view)
+	}
+}
+
+func TestRunSlashCommandResumeDirectLoadsHistoryAndNotice(t *testing.T) {
+	fakeConv := &fakeCustomConversation{
+		history: []ports.Message{
+			{Role: "user", Text: "earlier message"},
+			{Role: "assistant", Text: "earlier reply"},
+		},
+		title: "Direct Resume Topic",
+	}
+	runner := &fakeRunner{
+		outcome: ports.CommandOutcome{
+			ClearTranscript: true,
+			Notice:          "Resumed session saved-123.",
+		},
+	}
+	s := newScreen(t, fakeConv, nil, nil)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	s = next.(Screen)
+	s.SetCommandRunner(runner)
+
+	s, _ = sendLine(t, s, "/resume saved-123")
+
+	blocks := s.transcript.Blocks()
+	if len(blocks) != 3 {
+		t.Fatalf("expected 3 blocks (user, assistant, notice), got %d", len(blocks))
+	}
+	view := s.View()
+	if !strings.Contains(view, "earlier message") || !strings.Contains(view, "earlier reply") {
+		t.Errorf("view missing history turns:\n%s", view)
+	}
+	if !strings.Contains(view, "Resumed session saved-123.") {
+		t.Errorf("view missing resume notice:\n%s", view)
 	}
 }

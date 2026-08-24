@@ -1106,3 +1106,43 @@ func TestFilesPanelSliceImmutability(t *testing.T) {
 		t.Errorf("observeAgent mutated previous agent log in place: len=%d", len(oldPanelWithAgent.agents[0].Log))
 	}
 }
+
+type scriptedTestConversation struct {
+	history []ports.Message
+	model   ports.ModelInfo
+	usage   ports.Usage
+	title   string
+}
+
+func (s *scriptedTestConversation) Send(context.Context, intent.Send) (ports.TurnHandle, error) {
+	return nil, nil
+}
+func (s *scriptedTestConversation) History() []ports.Message  { return s.history }
+func (s *scriptedTestConversation) Model() ports.ModelInfo    { return s.model }
+func (s *scriptedTestConversation) ContextUsage() ports.Usage { return s.usage }
+func (s *scriptedTestConversation) Title() string             { return s.title }
+
+func TestConversationNewLoadsExistingHistory(t *testing.T) {
+	dark, _, themes := themePair(t)
+	conv := &scriptedTestConversation{
+		history: []ports.Message{
+			{Role: "user", Text: "startup prompt"},
+			{Role: "assistant", Text: "startup answer"},
+		},
+		title: "Startup Session",
+	}
+	s := New(dark, theme.TierASCII, themes, conv, nil, 80, nil)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	s = next.(Screen)
+	blocks := s.transcript.Blocks()
+	if len(blocks) != 2 {
+		t.Fatalf("expected 2 blocks loaded on startup, got %d", len(blocks))
+	}
+	view := s.View()
+	if !strings.Contains(view, "startup prompt") || !strings.Contains(view, "startup answer") {
+		t.Errorf("view missing startup history:\n%s", view)
+	}
+	if !strings.Contains(view, "Startup Session") {
+		t.Errorf("view topbar missing startup session title:\n%s", view)
+	}
+}

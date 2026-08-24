@@ -44,6 +44,15 @@ base_url = "https://api.deepseek.com/v1"
 # The V4 family reports a 1M+ context window and supports graded reasoning
 # effort high/max; OpenRouter normalizes reasoning_effort per upstream model.
 models = [
+  # Anthropic / Claude models
+  { name = "anthropic/claude-opus-5", context_window_tokens = 200000, max_output_tokens = 128000, reasoning_efforts = ["low", "medium", "high", "max"], reasoning = "high", reasoning_dialect = "openrouter" },
+  { name = "anthropic/claude-sonnet-5", context_window_tokens = 200000, max_output_tokens = 128000, reasoning_efforts = ["low", "medium", "high", "max"], reasoning = "high", reasoning_dialect = "openrouter" },
+  { name = "anthropic/claude-sonnet-4-7", context_window_tokens = 200000, max_output_tokens = 128000, reasoning_efforts = ["low", "medium", "high", "max"], reasoning = "high", reasoning_dialect = "openrouter" },
+  { name = "anthropic/claude-fable-5", context_window_tokens = 200000, max_output_tokens = 128000, reasoning_efforts = ["low", "medium", "high", "max"], reasoning = "high", reasoning_dialect = "openrouter" },
+  # Google / Gemini models
+  { name = "google/gemini-3.1-pro", context_window_tokens = 1000000, max_output_tokens = 65536, reasoning_efforts = ["low", "medium", "high"], reasoning = "high", reasoning_dialect = "openrouter" },
+  { name = "google/gemini-3.7-flash", context_window_tokens = 1000000, max_output_tokens = 65536, reasoning_efforts = ["low", "medium", "high"], reasoning = "high", reasoning_dialect = "openrouter" },
+  { name = "google/gemini-3-flash", context_window_tokens = 1000000, max_output_tokens = 65536, reasoning_efforts = ["low", "medium", "high"], reasoning = "high", reasoning_dialect = "openrouter" },
   { name = "deepseek/deepseek-v4-pro", context_window_tokens = 1000000, max_output_tokens = 384000, reasoning_efforts = ["high", "max"], reasoning = "high", reasoning_dialect = "openrouter" },
   { name = "deepseek/deepseek-v4-flash", context_window_tokens = 1000000, max_output_tokens = 384000, reasoning_efforts = ["high", "max"], reasoning = "high", reasoning_dialect = "openrouter" },
   # Reasoner: deep-thinking variant of the V4 family (deepseek-reasoner
@@ -164,48 +173,30 @@ base_url = "http://127.0.0.1:11434/v1"
 
 [providers.llmgateway]
 # Switch with: mivia --provider llmgateway
-# LLM Gateway OpenAI-compatible endpoint. One key type works: a DevPass
-# coding-plan key or a pay-as-you-go key, same endpoint and auth header. The
-# gateway normalizes reasoning_effort per upstream model (vetted default
-# dialect "openai" - no reasoning_dialect override needed here).
-# deepseek-v4-flash is also offered here (runware serving) for sessions that
-# want DeepSeek through the gateway, but the workspace default keeps routing
-# deepseek-v4-flash through the native "deepseek" provider
-# (https://api.deepseek.com/v1) - select this entry explicitly with
-# --model runware/deepseek-v4-flash when using --provider llmgateway.
+# CLIProxyAPI local OpenAI-compatible endpoint (http://127.0.0.1:8317/v1).
 models = [
-  # runware/deepseek-v4-flash proxies to DeepSeek's own thinking-mode model,
-  # which speaks the "thinking_effort" wire dialect ({"thinking":{...},
-  # "reasoning_effort":...}), not the plain openai shorthand the gateway
-  # defaults to, so reasoning_dialect must override to match the native
-  # "deepseek" provider's dialect (internal/provider/deepseek.go).
-  # Cap per the live gateway catalog (api.llmgateway.io/v1/models) and
-  # runware docs: runware serves deepseek-v4-flash with up to 384000 output
-  # tokens on a 1M context, so max_output_tokens mirrors the native entry.
-  # This value is ALSO the wire max_tokens sub-agent dispatches send
-  # (resolveCeilings -> agent_task_handler), so if "max_tokens exceeds the
-  # allowed limit" (HTTP 400 invalid_request_error) ever reappears, the
-  # provider clamp (internal/provider/openai_compat_max_tokens.go) has
-  # already retried with halved caps; the residual cause is routing
-  # variance: the gateway exposes deepseek-v4-flash across
-  # providers with different caps (ranoai 128000, together-ai 163840, runware
-  # 384000) and once deactivated runware deepseek mappings (llmgateway
-  # changelog #3426) - lower this value to the tightest route's cap.
+  # Claude models (served via CLIProxyAPI)
+  { name = "claude-sonnet-5", context_window_tokens = 200000, max_output_tokens = 128000, reasoning_efforts = ["low", "medium", "high", "max"], reasoning = "high" },
+  { name = "claude-sonnet-4-7", context_window_tokens = 200000, max_output_tokens = 128000, reasoning_efforts = ["low", "medium", "high", "max"], reasoning = "high" },
+  { name = "claude-sonnet-4-6", context_window_tokens = 200000, max_output_tokens = 128000, reasoning_efforts = ["low", "medium", "high", "max"], reasoning = "high" },
+  { name = "claude-opus-5", context_window_tokens = 200000, max_output_tokens = 128000, reasoning_efforts = ["low", "medium", "high", "max"], reasoning = "high" },
+  { name = "claude-opus-4-7", context_window_tokens = 200000, max_output_tokens = 128000, reasoning_efforts = ["low", "medium", "high", "max"], reasoning = "high" },
+  { name = "claude-fable-5", context_window_tokens = 200000, max_output_tokens = 128000, reasoning_efforts = ["low", "medium", "high", "max"], reasoning = "high" },
+
+  # Gemini models (served via CLIProxyAPI)
+  { name = "gemini-3.1-pro-low", context_window_tokens = 1000000, max_output_tokens = 65536, reasoning_efforts = ["low", "medium", "high"], reasoning = "high" },
+  { name = "gemini-pro-agent", context_window_tokens = 1000000, max_output_tokens = 65536, reasoning_efforts = ["low", "medium", "high"], reasoning = "high" },
+  { name = "gemini-3.7-flash-high", context_window_tokens = 1000000, max_output_tokens = 65536, reasoning_efforts = ["low", "medium", "high"], reasoning = "high" },
+  { name = "gemini-3.6-flash-high", context_window_tokens = 1000000, max_output_tokens = 65536, reasoning_efforts = ["low", "medium", "high"], reasoning = "high" },
+  { name = "gemini-3-flash", context_window_tokens = 1000000, max_output_tokens = 65536, reasoning_efforts = ["low", "medium", "high"], reasoning = "high" },
+
+  # Runware / Open-weight models
   { name = "runware/deepseek-v4-flash", context_window_tokens = 1000000, max_output_tokens = 384000, reasoning_efforts = ["high", "max"], reasoning = "high", reasoning_dialect = "thinking_effort" },
-  # runware/gpt-oss-120b: OpenAI's open-weight MoE reasoning model (117B
-  # total / 5.1B active, MXFP4), served via runware on the gateway. Native
-  # 131072-token context; OpenAI API reference caps a single response at
-  # 32768 output tokens, hence max_output_tokens (runware's own cap is
-  # 32768; the gateway's aggregate entry says 32000 because bytedance caps
-  # at 32000 - if this request is ever routed off runware, 32000 is the
-  # safe ceiling and 32768 can 400 with "max_tokens exceeds the allowed
-  # limit"). Graded reasoning_effort low/medium/high over the openai wire
-  # dialect; tool calling supported.
   { name = "runware/gpt-oss-120b", context_window_tokens = 131072, max_output_tokens = 32768, reasoning_efforts = ["low", "medium", "high"], reasoning = "high" },
 ]
-default_model = "runware/gpt-oss-120b"
-api_key_env = "LLMGATEWAY_API_KEY"
-base_url = "https://api.llmgateway.io/v1"
+default_model = "claude-sonnet-5"
+api_key_env = "CLIPROXY_API_KEY"
+base_url = "http://127.0.0.1:8317/v1"
 
 [providers.minimax]
 # Switch with: mivia --provider minimax
@@ -435,6 +426,7 @@ env_allowlist = [
     "OPENROUTER_API_KEY",
     "ZAI_API_KEY",
     "MINIMAX_API_KEY",
+    "CLIPROXY_API_KEY",
 
     # POSIX / shell essentials
     "PATH", "HOME", "USER", "USERNAME", "LOGNAME",

@@ -60,11 +60,12 @@ type Conversation struct {
 	// turnMu serializes Send so two concurrent callers do not interleave
 	// their agent events on the same session.
 	turnMu sync.Mutex
-	// titleMu guards lastTitle/titleDone for double-check-locked memoisation
+	// titleMu guards lastTitle/titleDone/lastSessionID for memoisation
 	// in Title().
-	titleMu   sync.Mutex
-	lastTitle string
-	titleDone bool
+	titleMu       sync.Mutex
+	lastTitle     string
+	lastSessionID string
+	titleDone     bool
 }
 
 // NewConversation wraps an existing chat.Session. The caller owns the
@@ -306,14 +307,19 @@ func (c *Conversation) ContextUsage() ports.Usage {
 }
 
 // Title returns the session's display title, derived from the first user
-// message. Memoised on first call.
+// message. Memoised on first call for the current session ID.
 func (c *Conversation) Title() string {
 	c.titleMu.Lock()
 	defer c.titleMu.Unlock()
-	if c.titleDone {
+	var currentID string
+	if c.sess != nil {
+		currentID = c.sess.SessionID
+	}
+	if c.titleDone && c.lastSessionID == currentID {
 		return c.lastTitle
 	}
 	c.lastTitle = deriveTitle(c.sess.MessagesCopy())
+	c.lastSessionID = currentID
 	c.titleDone = true
 	return c.lastTitle
 }

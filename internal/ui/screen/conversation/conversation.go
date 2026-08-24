@@ -132,9 +132,14 @@ func New(th theme.Theme, tier theme.Tier, themes []theme.Theme, conv ports.Conve
 		now:        now,
 	}
 	s.approval.SetWidth(contentWidth(width))
-	s.topbar = topbar.New(th, tier, conv.Model(), conv.ContextUsage(), contentWidth(width))
-	if title := conv.Title(); title != "" {
-		s.topbar.SetBreadcrumb([]string{title})
+	if conv != nil {
+		s.topbar = topbar.New(th, tier, conv.Model(), conv.ContextUsage(), contentWidth(width))
+		if title := conv.Title(); title != "" {
+			s.topbar.SetBreadcrumb([]string{title})
+		}
+		s.LoadHistory(conv.History())
+	} else {
+		s.topbar = topbar.New(th, tier, ports.ModelInfo{}, ports.Usage{}, contentWidth(width))
 	}
 	return s
 }

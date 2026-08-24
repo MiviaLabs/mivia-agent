@@ -64,6 +64,18 @@ func (s Screen) applyCommandOutcome(o ports.CommandOutcome) (app.Screen, tea.Cmd
 		return s.openHelp(), tea.ClearScreen
 	case o.ClearTranscript:
 		s.transcript = s.transcript.Clear()
+		if s.conv != nil {
+			s.LoadHistory(s.conv.History())
+			s.topbar.SetSession(s.conv.Model(), s.conv.ContextUsage())
+			if title := s.conv.Title(); title != "" {
+				s.topbar.SetBreadcrumb([]string{title})
+			} else {
+				s.topbar.SetBreadcrumb(nil)
+			}
+		}
+		if o.Notice != "" {
+			return s.withNotice(o.Notice), nil
+		}
 		return s, nil
 	case len(o.ModelChoices) > 0:
 		pm := picker.New(s.Theme, s.Tier, o.ModelChoices)
@@ -232,9 +244,6 @@ func (s Screen) handleSessionPickerKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd
 			return s.withError("no command runner configured for /resume"), tea.ClearScreen
 		}
 		out := s.runner.SelectSession(context.Background(), m.Item)
-		if title := s.conv.Title(); title != "" {
-			s.topbar.SetBreadcrumb([]string{title})
-		}
 		next, outcomeCmd := s.applyCommandOutcome(out)
 		return next, tea.Batch(outcomeCmd, tea.ClearScreen)
 	case picker.CancelMsg:

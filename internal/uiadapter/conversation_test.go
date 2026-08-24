@@ -487,6 +487,21 @@ func TestTitle_DerivedFromFirstUserMessage(t *testing.T) {
 			t.Fatalf("memoisation broken: first=%q second=%q", a, b)
 		}
 	})
+	t.Run("ResetsOnSessionIDChange", func(t *testing.T) {
+		sess := chat.NewSession(&config.Resolved{Model: "m"}, comp)
+		sess.SessionID = "session-1"
+		sess.Messages = []provider.Message{{Role: provider.RoleUser, Content: "title 1"}}
+		conv := uiadapter.NewConversation(sess)
+		if got := conv.Title(); got != "title 1" {
+			t.Fatalf("Title()=%q, want %q", got, "title 1")
+		}
+
+		sess.SessionID = "session-2"
+		sess.Messages = []provider.Message{{Role: provider.RoleUser, Content: "title 2"}}
+		if got := conv.Title(); got != "title 2" {
+			t.Fatalf("Title() after session switch=%q, want %q", got, "title 2")
+		}
+	})
 }
 
 // TestSend_GoroutineLeak performs 20 sequential Send calls and asserts
