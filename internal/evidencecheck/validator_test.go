@@ -196,3 +196,89 @@ func TestValidate_GenericEcosystems(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildClaim_HeaderFiltering(t *testing.T) {
+	if isHeader("ReportFormat") != true {
+		t.Error("expected ReportFormat to be header")
+	}
+	if isHeader("make verify") != false {
+		t.Error("expected make verify not to be header")
+	}
+
+	_, ok := buildClaim("ReportFormat: mivia-report/v1", "ReportFormat", "mivia-report/v1", "")
+	if ok {
+		t.Error("expected header not to be built as claim")
+	}
+
+	_, ok = buildClaim("   ", "", "PASS", "")
+	if ok {
+		t.Error("expected empty command not to be built as claim")
+	}
+
+	_, ok = buildClaim("make verify", "make verify", "", "")
+	if ok {
+		t.Error("expected empty verdict not to be built as claim")
+	}
+}
+
+func TestNormalizeArgv_And_MatchesArgv(t *testing.T) {
+	// Normalize empty
+	if len(normalizeArgv(nil)) != 0 {
+		t.Error("expected empty")
+	}
+	if len(normalizeArgv([]string{""})) != 0 {
+		t.Error("expected empty for blanks")
+	}
+
+	// Bash wrapper
+	bashWrapped := normalizeArgv([]string{"bash", "-c", "make verify"})
+	if len(bashWrapped) != 2 || bashWrapped[0] != "make" || bashWrapped[1] != "verify" {
+		t.Errorf("expected normalized bash wrapper to be [make verify], got %v", bashWrapped)
+	}
+
+	// Sh wrapper
+	shWrapped := normalizeArgv([]string{"sh", "-c", "pytest tests/"})
+	if len(shWrapped) != 2 || shWrapped[0] != "pytest" || shWrapped[1] != "tests/" {
+		t.Errorf("expected normalized sh wrapper, got %v", shWrapped)
+	}
+
+	// matchesArgv empty
+	if matchesArgv(nil, []string{"make"}) != false {
+		t.Error("expected false for empty claim")
+	}
+	if matchesArgv([]string{"make"}, nil) != false {
+		t.Error("expected false for empty executed")
+	}
+
+	// program mismatch
+	if matchesArgv([]string{"make"}, []string{"pytest"}) != false {
+		t.Error("expected false for program mismatch")
+	}
+
+	// python variations
+	if matchesArgv([]string{"python", "test.py"}, []string{"python3", "test.py"}) != true {
+		t.Error("expected python and python3 to match")
+	}
+
+	// Single token match
+	if matchesArgv([]string{"make"}, []string{"make"}) != true {
+		t.Error("expected single token match")
+	}
+
+	// Case sensitivity & path base
+	if matchesArgv([]string{"./bin/make", "VERIFY"}, []string{"make", "verify"}) != true {
+		t.Error("expected path base and case insensitive match")
+	}
+
+	// Substring match
+	if matchesArgv([]string{"go", "test", "-race"}, []string{"go", "test", "-race", "./..."}) != true {
+		t.Error("expected substring match")
+	}
+}
+
+func TestSummaryNotice_EmptyOnValid(t *testing.T) {
+	rep := ValidationReport{Valid: true}
+	if rep.SummaryNotice() != "" {
+		t.Errorf("expected empty notice on valid report, got %q", rep.SummaryNotice())
+	}
+}

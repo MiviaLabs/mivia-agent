@@ -32,7 +32,7 @@ func ParseClaims(text string) []Claim {
 		}
 
 		lower := strings.ToLower(trimmed)
-		if lower == "evidence:" || strings.HasPrefix(lower, "evidence:") || strings.HasPrefix(lower, "## evidence") {
+		if strings.HasPrefix(lower, "evidence:") || strings.HasPrefix(lower, "## evidence") {
 			inEvidenceSection = true
 			if m := inlineEvidenceRegex.FindStringSubmatch(trimmed); len(m) > 2 {
 				if c, ok := buildClaim(trimmed, m[1], m[2], getGroup(m, 3)); ok {
@@ -79,7 +79,7 @@ func buildClaim(raw, cmdStr, verdict, note string) (Claim, bool) {
 	}
 
 	// Filter out non-command prose headers
-	if strings.EqualFold(cmdStr, "reportformat") || strings.EqualFold(cmdStr, "skill") || strings.EqualFold(cmdStr, "result") || strings.EqualFold(cmdStr, "scope") || strings.EqualFold(cmdStr, "summary") {
+	if isHeader(cmdStr) {
 		return Claim{}, false
 	}
 
@@ -95,4 +95,12 @@ func buildClaim(raw, cmdStr, verdict, note string) (Claim, bool) {
 		ClaimedVerdict: verdict,
 		Note:           note,
 	}, true
+}
+
+func isHeader(s string) bool {
+	return strings.EqualFold(s, "reportformat") ||
+		strings.EqualFold(s, "skill") ||
+		strings.EqualFold(s, "result") ||
+		strings.EqualFold(s, "scope") ||
+		strings.EqualFold(s, "summary")
 }

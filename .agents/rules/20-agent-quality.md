@@ -22,6 +22,8 @@ Required for every:
 
 Procedure: apply the described code mutation → confirm the named test fails → revert → record result in the completion report. Inspection-only “mutation proof” is invalid.
 
+Package kill-rate floors and audited equivalent-mutant denylists are declared in `.mivia/policy/mutation/<pkg>.json` and verified with `make mutation-check` (`scripts/check_mutation.py --check-floors`). Diff and staged mutations are checked with `python3 scripts/check_mutation.py --staged`.
+
 ## Regression Tests
 
 Every commit of type `fix` **must** include a reproduction test that exercises the

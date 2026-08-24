@@ -268,6 +268,11 @@ invariants:
 mutation:
 	@python3 scripts/check_mutation.py --pkg $(PKG)
 
+mutation-check:
+	@echo "Checking mutation kill-rate floors across configured packages in .mivia/policy/mutation/..."
+	@python3 scripts/check_mutation.py --check-floors
+
+
 # Informational, not part of `make verify`: check_labels.py and check_prose.py
 # currently flag pre-existing content (this repo's docs legitimately embed
 # durable correction/decision-reference IDs like C1/S3/INV-AG-12, and several

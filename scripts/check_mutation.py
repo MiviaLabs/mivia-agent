@@ -35,7 +35,9 @@ from mutation_tokenize import MutationError, sites_for_file, sites_from_tokens
 signal.signal(signal.SIGTERM, signal.default_int_handler)
 
 ROOT = Path(__file__).resolve().parent.parent
-DENYLIST_DIR = ROOT / "scripts" / "mutation_denylist"
+POLICY_MUTATION_DIR = ROOT / ".mivia" / "policy" / "mutation"
+LEGACY_DENYLIST_DIR = ROOT / "scripts" / "mutation_denylist"
+DENYLIST_DIR = POLICY_MUTATION_DIR if POLICY_MUTATION_DIR.exists() else LEGACY_DENYLIST_DIR
 TEST_TIMEOUT_SECONDS = 60
 
 # Default sweep targets: the packages backing the invariants listed in
@@ -48,6 +50,7 @@ CORE_PACKAGES = [
     "internal/tools",
     "internal/chat",
     "internal/config",
+    "internal/hooks",
 ]
 
 KILLED = "killed"
@@ -55,14 +58,22 @@ SURVIVED = "survived"
 DISCARDED = "discarded"
 
 
-def denylist_path(pkg: str, denylist_dir: Path = DENYLIST_DIR) -> Path:
+def denylist_path(pkg: str, denylist_dir: Path | None = None) -> Path:
     """denylist_path maps a nested package (internal/cli) onto a flat
     JSON filename (internal_cli.json): a package name containing "/"
     cannot be a filename directly."""
-    return denylist_dir / f"{pkg.replace('/', '_')}.json"
+    if denylist_dir is not None:
+        return denylist_dir / f"{pkg.replace('/', '_')}.json"
+    primary = POLICY_MUTATION_DIR / f"{pkg.replace('/', '_')}.json"
+    if primary.exists():
+        return primary
+    legacy = LEGACY_DENYLIST_DIR / f"{pkg.replace('/', '_')}.json"
+    if legacy.exists():
+        return legacy
+    return primary
 
 
-def load_denylist(pkg: str, denylist_dir: Path = DENYLIST_DIR) -> dict:
+def load_denylist(pkg: str, denylist_dir: Path | None = None) -> dict:
     """load_denylist reads a package's denylist and floor, or empty defaults."""
     path = denylist_path(pkg, denylist_dir)
     if not path.exists():
@@ -230,12 +241,21 @@ def sweep(pkg: str, sample: int = None, denylist_dir: Path = DENYLIST_DIR) -> di
     return {"killed": killed, "survived": survived, "discarded": discarded, "rate": rate}
 
 
-def resolve_floor(pkg: str, cli_floor, denylist_dir: Path = DENYLIST_DIR):
+def resolve_floor(pkg: str, cli_floor=None, denylist_dir: Path | None = None):
     """resolve_floor honors a CLI --floor for one run only; otherwise it
     reads the package's own stored floor, or None if it has none yet."""
     if cli_floor is not None:
         return cli_floor
-    return load_denylist(pkg, denylist_dir).get("floor")
+    val = load_denylist(pkg, denylist_dir).get("floor")
+    if val is not None:
+        try:
+            f = float(val)
+            if 0 < f <= 1.0:
+                return f * 100.0
+            return f
+        except (ValueError, TypeError):
+            return val
+    return None
 
 
 def recognized_packages() -> set:
@@ -536,6 +556,11 @@ def main() -> int:
     parser.add_argument("--base", help="Base git ref for diff mutation sweep")
     parser.add_argument("--tip", default="HEAD", help="Tip git ref for diff mutation sweep")
     parser.add_argument(
+        "--check-floors",
+        action="store_true",
+        help="sweep all packages with configured floors in .mivia/policy/mutation and fail if below floor",
+    )
+    parser.add_argument(
         "--all-core",
         action="store_true",
         help="sweep every package in CORE_PACKAGES instead of one --pkg",
@@ -544,6 +569,36 @@ def main() -> int:
 
     if args.probe:
         return 0 if run_probe() else 1
+
+    if args.check_floors:
+        configured = []
+        if POLICY_MUTATION_DIR.is_dir():
+            for p in POLICY_MUTATION_DIR.glob("*.json"):
+                try:
+                    data = json.loads(p.read_text(encoding="utf-8"))
+                    if data.get("floor") is not None:
+                        configured.append(p.stem.replace("_", "/"))
+                except Exception:
+                    continue
+        if not configured:
+            print("check_mutation: no package floors configured in .mivia/policy/mutation")
+            return 0
+        failed = False
+        for pkg in sorted(configured):
+            try:
+                result = sweep(pkg, args.sample)
+            except MutationError as exc:
+                print(str(exc))
+                return 1
+            floor = resolve_floor(pkg, None)
+            print(
+                f"{pkg}: killed={result['killed']} survived={result['survived']} "
+                f"discarded={result['discarded']} rate={result['rate']:.2f}%"
+            )
+            if floor is not None and result["rate"] < floor:
+                print(f"{pkg}: kill rate {result['rate']:.2f}% below the {floor:.2f}% floor")
+                failed = True
+        return 1 if failed else 0
 
     if args.staged:
         _, failed = sweep_diff(["--cached"])
@@ -559,7 +614,7 @@ def main() -> int:
 
     targets = CORE_PACKAGES if args.all_core else ([args.pkg] if args.pkg else None)
     if not targets:
-        print("--pkg, --all-core, --staged, or --diff is required unless --probe is set")
+        print("--pkg, --all-core, --check-floors, --staged, or --diff is required unless --probe is set")
         return 2
 
     known = recognized_packages()

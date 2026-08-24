@@ -154,6 +154,14 @@ def test_sweep_diff_empty_scope() -> None:
     assert res["survived"] == 0
 
 
+def test_policy_mutation_discovery_and_floor() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        pdir = Path(td)
+        (pdir / "pkg_a.json").write_text(json.dumps({"floor": 0.85, "denylist": []}))
+        assert cm.resolve_floor("pkg/a", None, pdir) == 85.0
+        assert cm.resolve_floor("pkg/a", 90.0, pdir) == 90.0
+        assert cm.load_denylist("pkg/a", pdir)["floor"] == 0.85
+
 
 def main() -> int:
     tests = [
