@@ -38,11 +38,29 @@ import (
 // toolCallOutcome is one call's recorded execution result: the
 // model-visible body (post cap, hook context, and any ref-only or
 // turn-shaping rewrite) and whether the dispatcher reported it failed.
+// duplicate + originalBody mirror the legacy toolExecResult pair
+// (loop_scheduler.go:38-44): duplicate marks a dedup-cache-served
+// call, and originalBody preserves the OWNER's pre-rewrite body so
+// toolEndDetail can scan it for a run_command exit=N header (the
+// suppression notice that replaced the body carries no status of its
+// own).
 type toolCallOutcome struct {
 	id     string
 	name   string
 	body   string
 	failed bool
+	// duplicate marks a result served from the dedup cache rather
+	// than executed. Its model-visible body is the suppression notice,
+	// never the recorded body, so the operator row needs its own
+	// failure signal.
+	duplicate bool
+	// originalBody is the recorded body a duplicate was served from,
+	// retained ONLY for the operator row: toolEndDetail judges a
+	// duplicate's failure signal against this original output (a
+	// run_command duplicate reports its child exit in the recorded
+	// header with err=nil), because the notice that replaced it
+	// carries no status of its own.
+	originalBody string
 	// previewOverride replaces the redacted body in the tool_end
 	// Output field only (the model still sees body): the legacy
 	// emitToolEnd substitutes an ephemeral tool's marker here so the
@@ -80,17 +98,21 @@ func (s *sdkTurnState) currentPendingToolCall() *sdkshape.ToolCall {
 }
 
 // recordToolOutcome records one executed call's outcome: the final
-// model-visible body and the dispatcher's failure flag.
+// model-visible body and the dispatcher's failure flag. Callers that
+// are not the dispatcher shim pass zero values for duplicate and
+// originalBody; only a dedup-cache-served dispatch carries both.
 func (s *sdkTurnState) recordToolOutcome(id, name, body string, failed bool) {
-	s.recordToolOutcomeWithPreview(id, name, body, failed, "")
+	s.recordToolOutcomeWithPreview(id, name, body, failed, "", false, "")
 }
 
 // recordToolOutcomeWithPreview is recordToolOutcome with the tool_end
-// Output override (the ephemeral marker).
-func (s *sdkTurnState) recordToolOutcomeWithPreview(id, name, body string, failed bool, previewOverride string) {
+// Output override (the ephemeral marker) and the duplicate/originalBody
+// pair the legacy toolEndDetail uses to emit the "(duplicate)" suffix
+// on a dedup-cache-served call.
+func (s *sdkTurnState) recordToolOutcomeWithPreview(id, name, body string, failed bool, previewOverride string, duplicate bool, originalBody string) {
 	s.toolMu.Lock()
 	defer s.toolMu.Unlock()
-	s.toolOutcome = &toolCallOutcome{id: id, name: name, body: body, failed: failed, previewOverride: previewOverride}
+	s.toolOutcome = &toolCallOutcome{id: id, name: name, body: body, failed: failed, duplicate: duplicate, originalBody: originalBody, previewOverride: previewOverride}
 }
 
 // overwriteToolOutcomeBody replaces the recorded outcome's body after
@@ -167,9 +189,11 @@ func sdkToolEventHooks(opts Options, turn *sdkTurnState) *sdkhooks.Registry {
 }
 
 // sdkToolEndDetail reuses the legacy toolEndDetail vocabulary
-// (loop_tools.go) for one recorded SDK-path outcome: failed takes
-// precedence, the run_command body scan applies, and completed is the
-// healthy word the uiadapter derives status ok from.
+// (loop_tools.go) for one recorded SDK-path outcome: a dedup-cache
+// served call emits the "(duplicate)" suffix (failed or completed),
+// failed takes precedence, the run_command body scan applies to the
+// ORIGINAL body the dedup cache served, and completed is the healthy
+// word the uiadapter derives status ok from.
 func sdkToolEndDetail(o toolCallOutcome) string {
 	var call provider.ToolCall
 	call.ID = o.id
@@ -178,5 +202,11 @@ func sdkToolEndDetail(o toolCallOutcome) string {
 	if o.failed {
 		err = errors.New("tool call failed")
 	}
-	return toolEndDetail(toolExecResult{toolCall: call, result: o.body, err: err})
+	return toolEndDetail(toolExecResult{
+		toolCall:     call,
+		result:       o.body,
+		err:          err,
+		duplicate:    o.duplicate,
+		originalBody: o.originalBody,
+	})
 }

@@ -69,8 +69,12 @@ func sdkToolCallErrorReporter(opts Options, turn *sdkTurnState) sdkagentloop.Err
 		// the denial as the same failed tool_end the legacy path emits
 		// (sdk_tool_events.go); without it the deferred
 		// EventToolCallEnd would find neither outcome nor pending.
+		// duplicate=false, originalBody="" (the denial IS the recorded
+		// body here, so failed-duplicate detection has nothing to scan
+		// against; in practice a denial never has a prior duplicate to
+		// pair with).
 		if turn != nil {
-			turn.recordToolOutcome(call.ID, call.Name, "error: "+msg, true)
+			turn.recordToolOutcomeWithPreview(call.ID, call.Name, "error: "+msg, true, "", false, "")
 		}
 		return sdkshape.Message{
 			Role:       provider.RoleTool,

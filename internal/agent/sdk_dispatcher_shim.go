@@ -280,7 +280,14 @@ func (d *dispatcherShim) Run(ctx context.Context, in sdktools.InOut) (sdktools.O
 		Kind: runtime.Tool, Name: d.inner.Name(), Input: args, Timeout: callTimeout,
 		Step: d.turn.currentStep(), SkipDedup: !capability.Dedups(),
 	})
-	result = string(r.Output)
+	// A duplicate never re-ran: the model's result is the suppression
+	// notice, but the OWNER's pre-rewrite body is what failed-duplicate
+	// detection must scan (a run_command duplicate reports its non-zero
+	// child exit in the recorded header with err=nil; toolResultBodyFailed
+	// in loop_tools.go operates on the originalBody for exactly this
+	// reason). Capture it BEFORE the notice rewrite.
+	originalBody := string(r.Output)
+	result = originalBody
 	if r.IsDuplicate() {
 		result = duplicateDeliveryNotice
 	} else if r.Err != nil && strings.TrimSpace(result) == "" {
@@ -308,18 +315,20 @@ func (d *dispatcherShim) Run(ctx context.Context, in sdktools.InOut) (sdktools.O
 		})
 	}
 	body := appendHookContext(capped, hookContext)
-	d.recordToolEventOutcome(args, body, r.Err, ephemeral)
+	d.recordToolEventOutcome(args, body, r.Err, ephemeral, r.IsDuplicate(), originalBody)
 	return sdktools.Out{Value: body}, nil
 }
 
 // recordToolEventOutcome records the outcome the EventToolCallEnd
 // handler renders the legacy tool_end from (sdk_tool_events.go): the
-// final model-visible body and the dispatcher's failure flag. An
-// ephemeral tool's marker overrides only the operator preview
+// final model-visible body, the dispatcher's failure flag, and the
+// duplicate/originalBody pair that drives the legacy
+// "(duplicate)" vocabulary on tool_end (loop_tools.go toolEndDetail).
+// An ephemeral tool's marker overrides only the operator preview
 // (loop_tools.go emitToolEnd's rule); a later shim (ref-only notice,
 // turn-shaping re-cut) that rewrites the body overwrites the record so
 // tool_end matches the post-shaping body.
-func (d *dispatcherShim) recordToolEventOutcome(args []byte, body string, dispatchErr error, ephemeral bool) {
+func (d *dispatcherShim) recordToolEventOutcome(args []byte, body string, dispatchErr error, ephemeral bool, isDuplicate bool, originalBody string) {
 	if d.turn == nil {
 		return
 	}
@@ -329,7 +338,7 @@ func (d *dispatcherShim) recordToolEventOutcome(args []byte, body string, dispat
 			preview = et.EphemeralResultMarker(args)
 		}
 	}
-	d.turn.recordToolOutcomeWithPreview(callIDOf(d.turn), d.inner.Name(), body, dispatchErr != nil, preview)
+	d.turn.recordToolOutcomeWithPreview(callIDOf(d.turn), d.inner.Name(), body, dispatchErr != nil, preview, isDuplicate, originalBody)
 }
 
 // callIDOf returns the pending call's ID, or "" when none is stashed.
