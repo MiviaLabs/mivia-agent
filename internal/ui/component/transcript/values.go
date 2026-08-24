@@ -124,24 +124,27 @@ func toolEndBlockValue(t theme.Theme, tier theme.Tier, w int, b uievent.ToolEndB
 	if b.Err != "" {
 		summary = b.Err
 	}
-	lines := strings.Split(summary, "\n")
-	first := lines[0]
-	var body []string
-	if len(lines) > 1 {
-		body = lines[1:]
+	if w <= 0 {
+		w = 80
 	}
+
+	detail, body, coll := render.FormatToolOutput(t, tier, b.Name, summary, b.OK, w)
+	if detail == "" {
+		lines := strings.Split(summary, "\n")
+		detail = lines[0]
+	}
+
 	blk := Block{
 		Kind: uievent.KindToolEnd,
 		Header: Header{
-			Label: b.Name, Detail: first,
+			Label: b.Name, Detail: detail,
 			Meta: fmt.Sprintf("%dms", b.DurationMS), State: status, Role: role,
 		},
-		Body: body,
+		Body:        body,
+		Collapsible: coll,
+		Collapsed:   coll,
 	}
 	if b.Diff != nil {
-		if w <= 0 {
-			w = 80
-		}
 		blk.Diff = b.Diff
 		blk.Header.Detail = b.Diff.Path
 		blk.Header.Meta = fmt.Sprintf("+%d -%d  %dms", b.Diff.Added, b.Diff.Removed, b.DurationMS)

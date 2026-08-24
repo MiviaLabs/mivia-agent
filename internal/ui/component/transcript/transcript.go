@@ -358,17 +358,9 @@ func (m Model) handleToolEnd(b uievent.ToolEndBody) (Model, tea.Cmd) {
 		// preserving the payload.
 		blk.Diff = end.Diff
 		detail := blk.Header.Detail
-		result := end.Header.Detail
 		blk.Header = end.Header
 		if detail != "" && b.Diff == nil {
 			blk.Header.Detail = detail
-			switch {
-			case result == "":
-			case len(result) <= shortResultCols:
-				blk.Header.Meta = result + "  " + blk.Header.Meta
-			default:
-				blk.Body = append([]string{result}, blk.Body...)
-			}
 		}
 		if b.Diff != nil {
 			blk.Body = append(slices.Clone(blk.Body), render.FormatDiffLines(m.Theme, m.Tier, w, *b.Diff)...)
