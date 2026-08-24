@@ -35,20 +35,57 @@ import (
 // turnShapeCounter is the per-Run shared budget. One instance is
 // created per RunAgentLoopOnce call and referenced by every wrapped
 // tool, so sequential calls see the bytes their siblings spent.
-// Under parallel dispatch (MaxConcurrentTools > 1), cond synchronizes
-// shaping in call index order so shaping remains deterministic (F4).
+// Under parallel dispatch (MaxConcurrentTools > 1), an internal
+// broadcast channel serializes shaping in call index order so shaping
+// remains deterministic (F4).
+//
+// The signal is a channel that the broadcaster swaps on every wake
+// and the abort path closes once: a waiter that re-enters the wait
+// after waking from a normal advance re-selects on the new channel
+// (the old one is now garbage); a waiter that re-enters after an
+// abort/cancel observes the closed channel and exits. This replaces
+// sync.Cond.Wait, which has no context awareness and would strand a
+// goroutine indefinitely when ctx cancels mid-batch (no SDK
+// iteration boundary reaches the host to broadcast it).
 type turnShapeCounter struct {
-	mu        sync.Mutex
-	cond      *sync.Cond
-	nextIndex int
-	charged   int
-	aborted   bool
+	mu            sync.Mutex
+	signal        chan struct{} // closed = abort; swapped = normal advance
+	nextIndex     int
+	charged       int
+	aborted       bool
+	closedByAbort bool // tracks who owns the close of the CURRENT signal channel
 }
 
 func newTurnShapeCounter() *turnShapeCounter {
-	c := &turnShapeCounter{}
-	c.cond = sync.NewCond(&c.mu)
-	return c
+	return &turnShapeCounter{signal: make(chan struct{})}
+}
+
+// broadcast swaps the signal channel. Old waiters see the closed
+// channel and re-select; new waiters see the fresh channel.
+func (c *turnShapeCounter) broadcast() {
+	c.mu.Lock()
+	if c.aborted {
+		c.mu.Unlock()
+		return
+	}
+	ch := c.signal
+	close(ch)
+	c.signal = make(chan struct{})
+	c.mu.Unlock()
+}
+
+// abort closes the signal channel permanently. Subsequent waiters
+// observe the closed channel and exit immediately. closedByAbort
+// records that THIS abort owns the close, so a racing reset does not
+// try to close the same channel twice.
+func (c *turnShapeCounter) abort() {
+	c.mu.Lock()
+	if !c.aborted {
+		c.aborted = true
+		c.closedByAbort = true
+		close(c.signal)
+	}
+	c.mu.Unlock()
 }
 
 // turnShapeWrapper shapes one tool's result against the turn budget.
@@ -102,37 +139,12 @@ func (w *turnShapeWrapper) Run(ctx context.Context, in sdktools.InOut) (sdktools
 		callIndex = tc.Index
 	}
 	w.counter.mu.Lock()
-	if callIndex > 0 && w.counter.cond != nil {
-		for w.counter.nextIndex < callIndex && !w.counter.aborted && ctx.Err() == nil {
-			w.counter.cond.Wait()
-		}
-	}
+	w.waitForOrderingSlot(ctx, callIndex)
 	remaining := w.budget - w.counter.charged
 	if remaining < 0 {
 		remaining = 0
 	}
-	// The dispatcher shim (innermost) records its pass-1 parts when it
-	// capped or spooled the body; a hit preserves the ORIGINAL total
-	// and ref through the degrade, exactly like the legacy shapeBatch
-	// chain. A miss means no pass-1 ran (or an intermediate shim
-	// rewrote the body): the executed body IS the original, so
-	// cappedBody/totalN agree and refA is empty.
-	var parts resultParts
-	var found bool
-	if w.turn != nil && callKey != "" {
-		parts, found = w.turn.pass1.take(callKey, s)
-	}
-	if !found {
-		parts = resultParts{
-			cappedBody: s,
-			totalN:     len(s),
-			ephemeral:  w.ephemeral,
-			toolName:   w.toolName,
-		}
-	}
-	// The pass-1 cap (hit path) stays authoritative for the re-cut
-	// target; the tool's declared ResultBudgetBytes fills in only when
-	// pass 1 ran uncapped.
+	parts := w.resolveShapeParts(callKey, s)
 	if parts.effectiveCap == 0 {
 		parts.effectiveCap = w.cap
 	}
@@ -140,23 +152,11 @@ func (w *turnShapeWrapper) Run(ctx context.Context, in sdktools.InOut) (sdktools
 	if parts.hookContext != "" {
 		shaped = appendHookContext(shaped, parts.hookContext)
 	}
-	if degraded && !state.refOnly {
-		// A budget-tier degrade spends the rest of the turn's budget
-		// (shapeBatch's F6 rule): no later result may claim the floor.
-		w.counter.charged = w.budget
-	} else {
-		w.counter.charged += len(shaped)
-	}
-	charged := w.counter.charged
-	if callIndex >= 0 {
-		if callIndex >= w.counter.nextIndex {
-			w.counter.nextIndex = callIndex + 1
-		}
-		if w.counter.cond != nil {
-			w.counter.cond.Broadcast()
-		}
-	}
+	charged, advanced := w.chargeAndAdvance(degraded, state, len(shaped), callIndex)
 	w.counter.mu.Unlock()
+	if advanced {
+		w.counter.broadcast()
+	}
 	if degraded && w.onDegrade != nil {
 		w.onDegrade(charged, w.budget)
 	}
@@ -166,6 +166,69 @@ func (w *turnShapeWrapper) Run(ctx context.Context, in sdktools.InOut) (sdktools
 		w.turn.overwriteToolOutcomeBody(callKey, shaped)
 	}
 	return sdktools.Out{Value: shaped}, nil
+}
+
+// waitForOrderingSlot blocks until the call index slot is ready or
+// the run is aborted / ctx cancels. Caller must hold counter.mu.
+//
+// Order shaping by call index (F4). The wait is a channel select so a
+// context cancel (no Cond.Broadcast on the cancel path) wakes the
+// waiter - sync.Cond.Wait has no context awareness and would strand
+// the goroutine indefinitely.
+func (w *turnShapeWrapper) waitForOrderingSlot(ctx context.Context, callIndex int) {
+	if callIndex <= 0 {
+		return
+	}
+	for w.counter.nextIndex < callIndex && ctx.Err() == nil && !w.counter.aborted {
+		ch := w.counter.signal
+		w.counter.mu.Unlock()
+		select {
+		case <-ch:
+		case <-ctx.Done():
+		}
+		w.counter.mu.Lock()
+	}
+}
+
+// resolveShapeParts returns the parts the turn-shape layer shapes
+// against: the dispatcher's pass-1 record when it captured this
+// call, or the executed body as its own original when no pass-1
+// ran (or an intermediate shim rewrote the body). Caller must hold
+// counter.mu.
+func (w *turnShapeWrapper) resolveShapeParts(callKey, s string) resultParts {
+	if w.turn != nil && callKey != "" {
+		if parts, found := w.turn.pass1.take(callKey, s); found {
+			return parts
+		}
+	}
+	return resultParts{
+		cappedBody: s,
+		totalN:     len(s),
+		ephemeral:  w.ephemeral,
+		toolName:   w.toolName,
+	}
+}
+
+// chargeAndAdvance updates the counter after shapeOne. A budget-tier
+// degrade spends the rest of the turn's budget (shapeBatch's F6
+// rule): no later result may claim the floor. Returns the charged
+// total and whether the counter's nextIndex was advanced past this
+// callIndex, so the caller can broadcast. Caller must hold counter.mu.
+func (w *turnShapeWrapper) chargeAndAdvance(degraded bool, state degradeState, shapedLen, callIndex int) (int, bool) {
+	if degraded && !state.refOnly {
+		w.counter.charged = w.budget
+	} else {
+		w.counter.charged += shapedLen
+	}
+	charged := w.counter.charged
+	advanced := false
+	if callIndex >= 0 {
+		if callIndex >= w.counter.nextIndex {
+			w.counter.nextIndex = callIndex + 1
+			advanced = true
+		}
+	}
+	return charged, advanced
 }
 
 // perCallResultBudget reads the CLI tool's honest ResultBudgetBytes

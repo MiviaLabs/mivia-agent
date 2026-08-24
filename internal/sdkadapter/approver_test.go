@@ -51,11 +51,11 @@ func (f *approvalFixture) gate(_ context.Context, name string, args json.RawMess
 	return f.verdict
 }
 
-func (f *approvalFixture) emitPending(name, detail, input string) {
+func (f *approvalFixture) emitPending(toolCallID, name, detail, input string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.seq++
-	f.pending = append(f.pending, name+"|"+detail+"|"+input)
+	f.pending = append(f.pending, toolCallID+"|"+name+"|"+detail+"|"+input)
 }
 
 func (f *approvalFixture) gateCount() int {
@@ -200,8 +200,16 @@ func TestApprovalGatedToolAdapterEmitPendingFiresBeforeGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	pending := f.lastPending()
-	if !strings.HasPrefix(pending, "gated|write|") || !strings.Contains(pending, "a.txt") {
-		t.Fatalf("pending = %q, want gated|write|<args with a.txt>", pending)
+	// Format: "toolCallID|name|detail|input". runGated uses a bare
+	// context.Background() so the toolCallID slot is empty here;
+	// strip it before the suffix check.
+	parts := strings.SplitN(pending, "|", 4)
+	if len(parts) != 4 {
+		t.Fatalf("pending has %d fields, want 4: %q", len(parts), pending)
+	}
+	tail := strings.Join(parts[1:], "|")
+	if tail != "gated|write|{\"path\":\"a.txt\"}" {
+		t.Fatalf("pending tail = %q, want gated|write|<args with a.txt>", tail)
 	}
 	if f.lastPendingSeq() < f.lastGateSeq() {
 		t.Fatalf("pending seq %d not before gate seq %d", f.lastPendingSeq(), f.lastGateSeq())

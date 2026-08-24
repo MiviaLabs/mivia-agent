@@ -81,11 +81,21 @@ func bridgeAgentLoopEvents(opts Options, turn *sdkTurnState) *sdkevents.Bus {
 				Output:     output,
 			})
 		case callKey != "":
+			// No recorded outcome means the SDK's dedup short-circuited
+			// the call BEFORE the dispatcher shim could record one
+			// (sdkagentloop.runToolCalls.planCalls returns the cached
+			// DuplicateCallNotice without invoking runOneToolCall). The
+			// model still saw a successful tool message - the dedup
+			// cache served it - so the operator-facing detail must
+			// not read "failed". Emit "completed (duplicate)" to match
+			// the legacy toolEndDetail vocabulary, with an empty body
+			// because the suppression notice is model-side, not
+			// operator-side.
 			emit(opts, Event{
 				Kind:       EventToolEnd,
 				ToolCallID: callKey,
 				Name:       callName,
-				Detail:     "failed",
+				Detail:     "completed (duplicate)",
 				Output:     "",
 			})
 		}

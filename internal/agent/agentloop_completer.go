@@ -165,6 +165,14 @@ func (a *agentLoopCompleter) ChatStream(ctx context.Context, req sdkshape.Reques
 		if a.onFinish != nil {
 			a.onFinish(finish)
 		}
+		// ChatStream has no TokenUsage path on the wrapped CLI
+		// provider; report a zero Usage so the CLI's calibration
+		// pipeline observes the call (Reported=false means
+		// "no observation", which is the correct neutral value,
+		// matching the Chat fallback path above).
+		if a.onUsage != nil {
+			a.onUsage(ctx, cliReq, &provider.Response{Content: content})
+		}
 		if content != "" && cliReq.StreamWriter == nil {
 			select {
 			case ch <- sdkshape.Chunk{Delta: content}:
@@ -222,18 +230,23 @@ func translateAgentLoopRequest(req sdkshape.Request) provider.Request {
 // CLI's OpenAI-shaped ToolSpec map, the same shape
 // tools.Registry.OpenAITools publishes: without this conversion the
 // CLI completer's request carried no tool surface at all, so the
-// provider never saw the tools the loop offered. A definition whose
-// schema fails to parse falls back to an empty parameters object -
-// the tool stays advertised under its name rather than vanishing.
+// provider never saw the tools the loop offered.
+//
+// The schema bytes round-trip as json.RawMessage: passing the bytes
+// through verbatim (instead of unmarshalling into a map and
+// remarshalling) preserves unknown shapes (null, primitives,
+// non-object payloads) and avoids key reordering or float-precision
+// drift. An empty schema falls back to an empty parameters object
+// so the tool stays advertised under its name rather than vanishing.
 func sdkToolDefsToCLI(defs []sdkshape.ToolDefinition) []provider.ToolSpec {
 	if len(defs) == 0 {
 		return nil
 	}
 	out := make([]provider.ToolSpec, 0, len(defs))
 	for _, d := range defs {
-		params := map[string]any{}
+		var params any = map[string]any{}
 		if len(d.Schema) > 0 {
-			_ = json.Unmarshal(d.Schema, &params)
+			params = json.RawMessage(d.Schema)
 		}
 		out = append(out, provider.ToolSpec{
 			"type": "function",
@@ -252,9 +265,17 @@ func sdkToolDefsToCLI(defs []sdkshape.ToolDefinition) []provider.ToolSpec {
 // (runChat builds Model, Messages, Tools only), so the defaults win
 // whenever the SDK left the field zero; an explicit SDK value - none
 // today - would take precedence.
+//
+// Reasoning.Level and Reasoning.Dialect are checked independently:
+// the AND-clause (both zero) used to miss the case where the SDK
+// sent one of the two and left the other zero, losing the wrap-time
+// default for the missing half. Independent checks honour each
+// default independently.
 func mergeTurnDefaults(req provider.Request, d turnRequestDefaults) provider.Request {
-	if req.ReasoningLevel == "" && req.ReasoningDialect == "" {
+	if req.ReasoningLevel == "" {
 		req.ReasoningLevel = d.reasoning.Level
+	}
+	if req.ReasoningDialect == "" {
 		req.ReasoningDialect = d.reasoning.Dialect
 	}
 	if req.MaxTokens == nil {
@@ -352,14 +373,25 @@ func cliMessagesToSDK(msgs []provider.Message) []sdkshape.Message {
 // cliMessageToSDK converts one CLI message to an SDK message. It is
 // the inverse of sdkMessageToCLI; the CLI's string Arguments become
 // the SDK's byte Arguments.
+//
+// Empty Arguments round-trip as nil (not []byte("")) so the SDK's
+// "no payload yet" reading matches convertToSDKResponse's own
+// handling at line 410 below. A literal "" survives the round-trip as
+// "no JSON" and breaks the SDK's compiled-schema validator with
+// ErrArgumentValidation, replacing the legacy "error: ..." envelope
+// with the SDK's "[tool-error]" notice - a silent shape mismatch.
 func cliMessageToSDK(m provider.Message) sdkshape.Message {
 	calls := make([]sdkshape.ToolCall, len(m.ToolCalls))
 	for i, tc := range m.ToolCalls {
+		var args []byte
+		if tc.Function.Arguments != "" {
+			args = []byte(tc.Function.Arguments)
+		}
 		calls[i] = sdkshape.ToolCall{
 			Index:     i,
 			ID:        tc.ID,
 			Name:      tc.Function.Name,
-			Arguments: []byte(tc.Function.Arguments),
+			Arguments: args,
 		}
 	}
 	return sdkshape.Message{

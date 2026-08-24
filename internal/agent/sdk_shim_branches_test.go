@@ -57,7 +57,7 @@ func newTurnShapeWrapperForTest(t *testing.T, inner sdktools.Tool, budget int) *
 	if err := sdkReg.Add(inner); err != nil {
 		t.Fatal(err)
 	}
-	counter := &turnShapeCounter{}
+	counter := newTurnShapeCounter()
 	return &turnShapeWrapper{
 		inner: inner, budget: budget, counter: counter,
 		env: newShapeEnv(nil, "test-session"), toolName: inner.Name(),

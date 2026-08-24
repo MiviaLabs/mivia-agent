@@ -154,27 +154,34 @@ func (s *sdkTurnState) shapeCounter() *turnShapeCounter {
 }
 
 // resetIterationShaping resets nextIndex at the top of each iteration.
+// A new broadcast channel is installed so the previous one - which the
+// now-completed waiters drained - does not leak as a permanently-open
+// pipe. The new channel reads as zero (open) for fresh waiters in
+// the new iteration. The close of the previous channel must NOT
+// re-close an already-closed one: abortIterationShaping can race this
+// path during teardown and has already closed `old`; closing twice
+// panics. The aborted flag tells us which side owns the channel's
+// closure; only close when we still own it.
 func (s *sdkTurnState) resetIterationShaping() {
 	if s.shape != nil {
 		s.shape.mu.Lock()
 		s.shape.nextIndex = 0
 		s.shape.aborted = false
-		if s.shape.cond != nil {
-			s.shape.cond.Broadcast()
-		}
+		old := s.shape.signal
+		s.shape.signal = make(chan struct{})
+		owned := !s.shape.closedByAbort
+		s.shape.closedByAbort = false
 		s.shape.mu.Unlock()
+		if owned {
+			close(old)
+		}
 	}
 }
 
 // abortIterationShaping wakes any waiters when a batch aborts.
 func (s *sdkTurnState) abortIterationShaping() {
 	if s.shape != nil {
-		s.shape.mu.Lock()
-		s.shape.aborted = true
-		if s.shape.cond != nil {
-			s.shape.cond.Broadcast()
-		}
-		s.shape.mu.Unlock()
+		s.shape.abort()
 	}
 }
 
@@ -392,6 +399,12 @@ func (m *pass1Map) store(callID string, p resultParts) {
 // parts' model-visible output (hook context appended), clearing the
 // record. A body rewritten by an intermediate shim (the ref-only
 // notice) misses and leaves the caller on its default single-pass path.
+//
+// The miss path ALWAYS deletes the stored entry: the dispatcher shim
+// already ran for this call, so the entry can never again serve a
+// later shaping pass (no other wrapper will see the original body
+// either). Leaving it orphaned grows the map monotonically across a
+// long session and balloons memory under MaxConcurrentTools > 1.
 func (m *pass1Map) take(callID string, body string) (resultParts, bool) {
 	if callID == "" {
 		return resultParts{}, false
@@ -405,15 +418,28 @@ func (m *pass1Map) take(callID string, body string) (resultParts, bool) {
 	if !ok {
 		return resultParts{}, false
 	}
+	delete(m.parts, callID)
 	if p.cappedBody == "" {
-		delete(m.parts, callID)
 		return resultParts{}, false
 	}
 	if body != appendHookContext(p.cappedBody, p.hookContext) {
 		return resultParts{}, false
 	}
-	delete(m.parts, callID)
 	return p, true
+}
+
+// purge removes any stored pass-1 entry for callID. Callers that
+// observe a mismatch via take should follow up with purge so the
+// entry does not leak; the take helper already deletes on miss, but
+// purge is the public seam for callers that never called take at all
+// (e.g. an aborted or skipped call). Safe on a missing key.
+func (m *pass1Map) purge(callID string) {
+	if callID == "" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.parts, callID)
 }
 
 // applyDispatcherShim wraps every tool in the converted SDK registry

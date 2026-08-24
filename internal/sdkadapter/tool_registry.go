@@ -75,7 +75,14 @@ type AdmissionPredicates struct {
 	// emit path the legacy loop uses (OnEvent + EventBus). nil
 	// disables the surface (the bridge still runs; the wrapper
 	// just does not publish the pending event).
-	EmitPending func(name, detail, input string)
+	//
+	// toolCallID is the in-flight call's id (toolcallctx.ToolCall.ID)
+	// or "" when context did not carry one. The host MUST thread it
+	// into the model-visible EventToolPending.ToolCallID: a drop
+	// strands the UI's approval resolver, which keys on this id,
+	// and the gate's blocking select never fires - the tool hangs
+	// silently after the user approves.
+	EmitPending func(toolCallID, name, detail, input string)
 }
 
 // admissionCheckedToolAdapter wraps a CLI tool plus the admission

@@ -6,8 +6,21 @@ import (
 	"fmt"
 
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
+	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
 	sdktools "github.com/MiviaLabs/mivia-ai-sdk/tools"
 )
+
+// callIDFromContext returns the in-flight call's id from
+// toolcallctx, or "" when the ctx did not carry one (an SDK call
+// outside the loop, or a hand-built test fixture). The pending event
+// must carry the id so the UI's approval resolver can match a
+// decision back to the gate that is blocked on it.
+func callIDFromContext(ctx context.Context) string {
+	if tc, ok := toolcallctx.ToolCallFromContext(ctx); ok {
+		return tc.ID
+	}
+	return ""
+}
 
 // approvalGatedToolAdapter wraps one already-converted sdktools.Tool
 // with a synchronous approval gate. It is the SDK-path twin of
@@ -32,7 +45,7 @@ type approvalGatedToolAdapter struct {
 	cliName         string
 	gate            func(ctx context.Context, name string, args json.RawMessage) ApprovalResult
 	standing        *ApprovalStanding
-	emitPending     func(name, detail, input string)
+	emitPending     func(toolCallID, name, detail, input string)
 	getCapabilities func(json.RawMessage) tools.Capability
 }
 
@@ -90,8 +103,11 @@ func (a *approvalGatedToolAdapter) Run(ctx context.Context, in sdktools.InOut) (
 		// Emit the pending advisory BEFORE invoking the gate so the UI
 		// can render the prompt while the gate blocks. The bridge
 		// downstream reconstructs an agent.EventToolPending and routes it
-		// through the same emit path the legacy loop uses.
-		a.emitPending(a.cliName, approvalClassName(cap.Class), string(args))
+		// through the same emit path the legacy loop uses. toolCallID is
+		// the in-flight call id (toolcallctx.ToolCall.ID) so the UI's
+		// approval resolver can match a user decision back to this gate;
+		// without it, the gate blocks forever after approval.
+		a.emitPending(callIDFromContext(ctx), a.cliName, approvalClassName(cap.Class), string(args))
 	}
 	res := a.gate(ctx, a.cliName, args)
 	if res.ApprovedForClass && a.standing != nil {
