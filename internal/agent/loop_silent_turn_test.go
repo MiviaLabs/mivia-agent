@@ -51,13 +51,11 @@ func TestNoMessageLossEmptyTurnFailsLoudly(t *testing.T) {
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
 			loop := &Loop{Completer: &scriptCompleter{steps: tt.steps}, Tools: silentTurnRegistry(t)}
-			_, err := loop.Run(context.Background(), "go", Options{Backend: "legacy",
-				Model: "m", MaxSteps: 10, RequireFinalText: true,
-			})
+			_, err := loop.Run(context.Background(), "go", Options{Model: "m", MaxSteps: 10, RequireFinalText: true})
 			if err == nil {
 				t.Fatal("a turn that produced no text anywhere must not report success")
 			}
-			if !strings.Contains(err.Error(), "no content") {
+			if !strings.Contains(err.Error(), "no assistant text") {
 				t.Fatalf("error should name the cause, got: %v", err)
 			}
 		})
@@ -150,9 +148,7 @@ func TestNoMessageLossInterruptedTurnKeepsWhatWasShown(t *testing.T) {
 				Completer: cancelMidStreamCompleter{partial: partial, err: tt.err},
 				Tools:     silentTurnRegistry(t),
 			}
-			_, err := loop.Run(context.Background(), "prove it", Options{Backend: "legacy",
-				Model: "m", MaxSteps: 5, FinalWriter: &sink,
-			})
+			_, err := loop.Run(context.Background(), "prove it", Options{Model: "m", MaxSteps: 5, FinalWriter: &sink})
 			if err == nil {
 				t.Fatal("interrupted turn must still report the error")
 			}
@@ -168,7 +164,17 @@ func TestNoMessageLossInterruptedTurnKeepsWhatWasShown(t *testing.T) {
 	}
 }
 
-func TestCanceledContextKeepsHistoryWhenProviderReturnsTransportError(t *testing.T) {
+// TestCanceledContextBeforeCallFailsFastWithoutInvokingProvider asserts
+// the SDK path's fail-fast behavior for a context already canceled
+// BEFORE Run starts: it never invokes the completer at all (no wasted
+// provider call on a doomed context), reports ctx.Canceled, and history
+// keeps only the user message - there is no partial to preserve because
+// nothing ever streamed. This intentionally differs from the legacy
+// loop, which called the provider regardless and could surface the
+// provider's own transport error instead of the generic cancellation;
+// the SDK's early exit is a deliberate improvement (see
+// docs/development/sdk-backend-field-mapping.md), not a gap to close.
+func TestCanceledContextBeforeCallFailsFastWithoutInvokingProvider(t *testing.T) {
 	const partial = "answer already shown"
 	var sink strings.Builder
 	ctx, cancel := context.WithCancel(context.Background())
@@ -177,12 +183,15 @@ func TestCanceledContextKeepsHistoryWhenProviderReturnsTransportError(t *testing
 		Completer: cancelMidStreamCompleter{partial: partial, err: errors.New("stream closed by transport")},
 		Tools:     silentTurnRegistry(t),
 	}
-	_, err := loop.Run(ctx, "queued follow-up", Options{Backend: "legacy", Model: "m", MaxSteps: 5, FinalWriter: &sink})
-	if err == nil || !strings.Contains(err.Error(), "transport") {
-		t.Fatalf("expected provider transport error, got %v", err)
+	_, err := loop.Run(ctx, "queued follow-up", Options{Model: "m", MaxSteps: 5, FinalWriter: &sink})
+	if err == nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
 	}
-	if got := loop.Messages[len(loop.Messages)-1]; got.Role != provider.RoleAssistant || got.Content != partial {
-		t.Fatalf("canceled transport error lost partial history: %+v", got)
+	if sink.String() != "" {
+		t.Fatalf("provider must never be invoked on an already-canceled context, but streamed %q", sink.String())
+	}
+	if len(loop.Messages) != 1 || loop.Messages[0].Role != provider.RoleUser {
+		t.Fatalf("history = %+v, want only the user message (no provider call happened)", loop.Messages)
 	}
 }
 

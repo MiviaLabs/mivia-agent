@@ -13,6 +13,7 @@ package agent
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -45,7 +46,20 @@ import (
 // the legacy's cross-call gate (Loop.softInterruptAt) is not portable
 // to the SDK's per-RunSteerable Steer value and is recorded as an
 // accepted semantic gap.
-func bridgeSteerSignals(ctx context.Context, runDone <-chan struct{}, opts Options, steer *sdkagentloop.Steer) {
+//
+// wg.Add(1) runs before each spawn and every goroutine defers
+// wg.Done(); the caller waits on wg after closing runDone, so no
+// goroutine from this call can outlive it - see the wg param doc.
+func bridgeSteerSignals(ctx context.Context, runDone <-chan struct{}, opts Options, steer *sdkagentloop.Steer,
+	// wg lets the caller confirm every spawned goroutine has fully
+	// exited (not just been signaled to). Required across a
+	// prompt-too-long retry, which calls this twice in sequence
+	// reusing the same opts.InterruptCh()-returned channel: without
+	// the wait, a stale goroutine from the first attempt can still be
+	// selecting on that channel when the retry's fresh goroutine also
+	// is, and can win the race for an interrupt meant for the retry -
+	// see docs/development/sdk-backend-field-mapping.md §4.
+	wg *sync.WaitGroup) {
 	var cooldownUntil atomic.Int64
 	cooldownOK := func() bool {
 		if opts.SoftInterruptCooldown <= 0 {
@@ -68,7 +82,9 @@ func bridgeSteerSignals(ctx context.Context, runDone <-chan struct{}, opts Optio
 	}
 	if ch := opts.InterruptCh; ch != nil {
 		interrupt := opts.MailboxPendingInterrupt
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			// Resolve the channel once, OUTSIDE the select: ch() may
 			// return nil (a misconfigured InterruptCh), and `<-nil`
 			// blocks forever. A nil return is treated as "no signal"
@@ -105,7 +121,9 @@ func bridgeSteerSignals(ctx context.Context, runDone <-chan struct{}, opts Optio
 		pollInterval = 250 * time.Millisecond
 	}
 	if interrupt := opts.MailboxPendingInterrupt; interrupt != nil {
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			ticker := time.NewTicker(pollInterval)
 			defer ticker.Stop()
 			for {
@@ -141,7 +159,9 @@ func bridgeSteerSignals(ctx context.Context, runDone <-chan struct{}, opts Optio
 	// in-flight call (TestSteerLandsAtStepBoundaryUnchanged). A
 	// positive interval keeps the legacy steer-latency bound.
 	if pending := opts.MailboxPending; pending != nil && opts.WatchdogInterval > 0 {
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			ticker := time.NewTicker(pollInterval)
 			defer ticker.Stop()
 			for {

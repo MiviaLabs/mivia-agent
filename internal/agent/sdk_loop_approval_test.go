@@ -68,7 +68,6 @@ func TestSDKLoopApprovalWriteClassPromptsAndApprovedCallRuns(t *testing.T) {
 	opts := Options{
 		Model:        "test-model",
 		MaxSteps:     3,
-		Backend:      "sdk",
 		ApprovalGate: gate,
 		OnEvent: func(e Event) {
 			if e.Kind == EventToolPending {
@@ -127,7 +126,6 @@ func TestSDKLoopApprovalDenialFailsToolTaskWithDenialText(t *testing.T) {
 	opts := Options{
 		Model:        "test-model",
 		MaxSteps:     3,
-		Backend:      "sdk",
 		ApprovalGate: gate,
 	}
 
@@ -186,7 +184,6 @@ func TestSDKLoopApprovalReadClassSkipsGate(t *testing.T) {
 	opts := Options{
 		Model:        "test-model",
 		MaxSteps:     3,
-		Backend:      "sdk",
 		ApprovalGate: gate,
 	}
 
@@ -237,7 +234,6 @@ func TestSDKLoopApprovalStandingAllowShortCircuitsGate(t *testing.T) {
 	opts := Options{
 		Model:            "test-model",
 		MaxSteps:         3,
-		Backend:          "sdk",
 		ApprovalGate:     gate,
 		ApprovalStanding: standing,
 	}
@@ -289,7 +285,6 @@ func TestSDKLoopApprovalStandingDenyRejectsWithoutGate(t *testing.T) {
 	opts := Options{
 		Model:            "test-model",
 		MaxSteps:         3,
-		Backend:          "sdk",
 		ApprovalGate:     gate,
 		ApprovalStanding: standing,
 	}

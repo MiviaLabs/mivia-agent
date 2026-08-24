@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -391,16 +392,7 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 	res, err := runSDKPromptTooLongRecoverable(ctx, l, sdkOpts, opts, preparedMsgs, turn)
 	stampSDKToolMessageNames(res.History)
 	if err != nil {
-		// A canceled or timed-out run keeps the streamed partial the
-		// tee emitted (recorded into l.Messages BEFORE the dispatcher's
-		// history write-back; runOnceSDK preserves messages appended
-		// past the turn's pre-append).
-		recordSDKCanceledStreamPartial(ctx, l, turn, err)
-		// Return the partial Result alongside the error: the SDK's
-		// hard-fail Result carries the messages completed so far, and
-		// the dispatcher writes them back so an errored turn keeps its
-		// partial history, mirroring the legacy path.
-		return res, err
+		return handleSDKRunError(ctx, l, opts, turn, res, err)
 	}
 	// A surface-bridge failure (registry conversion at a mid-run
 	// rotation) recorded in the turn state kept the prior surface so
@@ -449,12 +441,40 @@ func finishSDKResult(opts Options, res sdkagentloop.Result, msgs []provider.Mess
 // narrowness: non-blank text only) records them into l.Messages. Any
 // other error is a fragment, not a turn, and records nothing.
 func recordSDKCanceledStreamPartial(ctx context.Context, l *Loop, turn *sdkTurnState, err error) {
-	if !(errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil) {
+	if !sdkErrIsInterrupted(ctx, err) {
 		return
 	}
 	if tee := turn.currentStreamTee(); tee != nil {
 		l.recordInterruptedPartial(tee)
 	}
+}
+
+// sdkErrIsInterrupted reports whether err represents a canceled or
+// timed-out run rather than a genuine hard failure. Shared by
+// recordSDKCanceledStreamPartial and handleSDKRunError so both agree
+// on the same interrupted/hard-failure split the legacy runStep made.
+func sdkErrIsInterrupted(ctx context.Context, err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil
+}
+
+// handleSDKRunError applies RunAgentLoopOnce's post-run error handling:
+// an interrupted run keeps the streamed partial the tee emitted
+// (recorded into l.Messages BEFORE the dispatcher's history
+// write-back); a genuine hard failure instead discards a
+// successfully-captured preparation, mirroring the legacy runStep's
+// non-interrupted error branch (loop.go) - a preparation captured
+// against a request whose call then failed for its own reason must
+// not be committed as this turn's LastPreparation. Either way the
+// partial Result is returned alongside err: the SDK's hard-fail
+// Result carries the messages completed so far, and the dispatcher
+// writes them back so an errored turn keeps its partial history,
+// mirroring the legacy path.
+func handleSDKRunError(ctx context.Context, l *Loop, opts Options, turn *sdkTurnState, res sdkagentloop.Result, err error) (sdkagentloop.Result, error) {
+	recordSDKCanceledStreamPartial(ctx, l, turn, err)
+	if !sdkErrIsInterrupted(ctx, err) {
+		l.discardPreparation(opts)
+	}
+	return res, err
 }
 
 // runSDKPromptTooLongRecoverable drives one SDK run and, when the
@@ -538,9 +558,22 @@ func runSDKSteerable(ctx context.Context, loop *sdkagentloop.Loop, opts Options,
 	// selects each one on a run-scoped done channel, so the goroutines
 	// exit when RunSteerable returns, not only when ctx is canceled.
 	// A long-lived caller ctx no longer leaks two pollers per turn.
+	//
+	// wg.Wait() (deferred BEFORE close(runDone), so it runs AFTER it -
+	// defers unwind LIFO) blocks this call from returning until every
+	// bridge goroutine has actually exited, not just been signaled to.
+	// This matters for runSDKPromptTooLongRecoverable's retry, which
+	// calls runSDKSteerable a second time reusing the same
+	// opts.InterruptCh()-returned channel: without the wait, the first
+	// call's not-yet-scheduled goroutine and the retry's freshly
+	// spawned one can both still be selecting on that channel, and the
+	// stale one can win the race for a caller-sent interrupt - firing
+	// a Steer nobody is listening to anymore while the retry hangs.
+	var wg sync.WaitGroup
+	defer wg.Wait()
 	runDone := make(chan struct{})
 	defer close(runDone)
-	bridgeSteerSignals(ctx, runDone, opts, steer)
+	bridgeSteerSignals(ctx, runDone, opts, steer, &wg)
 	// Context-cancel hook for the host-side turn shaping cond: a
 	// wrapper parked waiting on its predecessors would never wake if
 	// nothing else broadcasts the cond on ctx cancel - sync.Cond.Wait

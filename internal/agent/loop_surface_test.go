@@ -71,8 +71,7 @@ func TestSurfaceHookRefreshesToolSurfacePerStep(t *testing.T) {
 		},
 	}
 	loop := &Loop{Completer: comp, Tools: reg}
-	_, err := loop.Run(context.Background(), "run", Options{Backend: "legacy",
-		Model:    "m",
+	_, err := loop.Run(context.Background(), "run", Options{Model: "m",
 		MaxSteps: 5,
 		Surface: func() Surface {
 			return Surface{Registry: newReg, Dispatcher: newDisp, ToolSpecs: newReg.OpenAITools()}
@@ -111,8 +110,7 @@ func TestSurfaceHookCalledExactlyOncePerStep(t *testing.T) {
 	}
 	comp := &scriptCompleter{steps: steps}
 	loop := &Loop{Completer: comp, Tools: reg}
-	if _, err := loop.Run(context.Background(), "run", Options{Backend: "legacy",
-		Model:    "m",
+	if _, err := loop.Run(context.Background(), "run", Options{Model: "m",
 		MaxSteps: 5,
 		Surface: func() Surface {
 			invocations.Add(1)
@@ -150,8 +148,7 @@ func TestSurfaceHookSwapsDispatcher(t *testing.T) {
 		},
 	}
 	loop := &Loop{Completer: comp, Tools: reg}
-	_, err := loop.Run(context.Background(), "run", Options{Backend: "legacy",
-		Model:    "m",
+	_, err := loop.Run(context.Background(), "run", Options{Model: "m",
 		MaxSteps: 5,
 		Surface: func() Surface {
 			return Surface{Registry: swappedReg, Dispatcher: swappedDisp, ToolSpecs: swappedReg.OpenAITools()}
@@ -171,6 +168,15 @@ func TestSurfaceHookSwapsDispatcher(t *testing.T) {
 // spool's backing store can end up non-empty. While uncalled, the loop spools
 // into its own (nil) spool, so the swapped store stays empty and the
 // assertion fails.
+//
+// The Surface rotates Dispatcher alongside Registry, matching every real
+// production Surface hook (internal/chat/session_turn_surface.go always
+// pairs them via resolveTurnExecutionSurface): a Registry-only rotation with
+// no matching Dispatcher has no real caller and behaves differently across
+// backends (the legacy loop's executeToolsParallel re-scopes a fresh
+// dispatcher per batch over whatever registry is current when Dispatcher is
+// nil; the SDK path's dispatcher is scoped once at run start and does not
+// follow a Registry-only rotation).
 func TestSurfaceHookSwapsRemainderSpool(t *testing.T) {
 	reg := tools.NewRegistry()
 	reg.Register(&scheduledTestTool{name: "start_tool", class: tools.ExecutionRead, key: "path:start"})
@@ -179,6 +185,7 @@ func TestSurfaceHookSwapsRemainderSpool(t *testing.T) {
 	swappedSpool := remainder.NewSpool(swappedStore)
 	bigReg := tools.NewRegistry()
 	bigReg.Register(&bigResultTool{name: "big_tool", body: strings.Repeat("B", 4096)})
+	bigDisp := surfaceHookDispatcher(t, bigReg)
 
 	comp := &scriptCompleter{
 		steps: []provider.Response{
@@ -188,14 +195,13 @@ func TestSurfaceHookSwapsRemainderSpool(t *testing.T) {
 		},
 	}
 	loop := &Loop{Completer: comp, Tools: reg}
-	_, err := loop.Run(context.Background(), "run", Options{Backend: "legacy",
-		Model:              "m",
+	_, err := loop.Run(context.Background(), "run", Options{Model: "m",
 		MaxSteps:           5,
 		SessionID:          "sess-swap",
 		MaxToolResultChars: 64,
 		RemainderSpool:     nil, // loop's own spool; the swapped one must take over per step
 		Surface: func() Surface {
-			return Surface{Registry: bigReg, RemainderSpool: swappedSpool, ToolSpecs: bigReg.OpenAITools()}
+			return Surface{Registry: bigReg, Dispatcher: bigDisp, RemainderSpool: swappedSpool, ToolSpecs: bigReg.OpenAITools()}
 		},
 	})
 	if err != nil {
@@ -224,8 +230,7 @@ func TestSurfaceHookNilFieldsKeepStepSurface(t *testing.T) {
 		},
 	}
 	loop := &Loop{Completer: comp, Tools: reg}
-	text, err := loop.Run(context.Background(), "run", Options{Backend: "legacy",
-		Model:    "m",
+	text, err := loop.Run(context.Background(), "run", Options{Model: "m",
 		MaxSteps: 5,
 		Surface: func() Surface {
 			hookCalls.Add(1)

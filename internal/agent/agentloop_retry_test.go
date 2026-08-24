@@ -36,8 +36,7 @@ func TestSDKRetriesOnceAfterPromptTooLongWithCompaction(t *testing.T) {
 	loop := &Loop{Completer: comp, Tools: tools.NewRegistry(), Messages: history}
 
 	var prunedEvents []Event
-	text, err := loop.Run(context.Background(), "final question", Options{Backend: "sdk",
-		Model:    "deepseek-v4-flash",
+	text, err := loop.Run(context.Background(), "final question", Options{Model: "deepseek-v4-flash",
 		MaxSteps: 5,
 		OnEvent: func(e Event) {
 			if e.Kind == EventPrune {
@@ -82,7 +81,7 @@ func TestSDKPromptTooLongFailsFastAfterOneRetry(t *testing.T) {
 	}
 	loop := &Loop{Completer: comp, Tools: tools.NewRegistry(), Messages: buildOversizedHistory()}
 
-	_, err := loop.Run(context.Background(), "final question", Options{Backend: "sdk", Model: "deepseek-v4-flash", MaxSteps: 5})
+	_, err := loop.Run(context.Background(), "final question", Options{Model: "deepseek-v4-flash", MaxSteps: 5})
 	if err == nil {
 		t.Fatal("expected an error")
 	}
@@ -101,7 +100,7 @@ func TestSDKPromptTooLongFailsFastAfterOneRetry(t *testing.T) {
 func TestSDKDoesNotCompactRetryWhenProviderReplayIsDisabled(t *testing.T) {
 	comp := &promptTooLongCompleter{failN: 1, promptTooLongErr: fmt.Errorf("%w", provider.ErrPromptTooLong)}
 	loop := &Loop{Completer: comp, Tools: tools.NewRegistry(), Messages: buildOversizedHistory()}
-	_, err := loop.Run(context.Background(), "final question", Options{Backend: "sdk", Model: "deepseek-v4-flash", MaxSteps: 5, DisableProviderReplay: true})
+	_, err := loop.Run(context.Background(), "final question", Options{Model: "deepseek-v4-flash", MaxSteps: 5, DisableProviderReplay: true})
 	if !errors.Is(err, provider.ErrPromptTooLong) {
 		t.Fatalf("err=%v, want prompt-too-long error", err)
 	}

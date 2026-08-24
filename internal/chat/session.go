@@ -385,7 +385,6 @@ func (s *Session) buildAgentTurnOptions(snapshot agentTurnSnapshot, userText str
 		ToolTimeout:            snapshot.toolTimeout,
 		ParentID:               "session",
 		TurnID:                 fmt.Sprintf("turn:%d", snapshot.myTurn), SessionID: snapshot.sessionID,
-		Backend:          "sdk", // surface rotation, streaming, preparation, budgets, advertised union, and tool-event shape all bridge (docs/development/sdk-backend-field-mapping.md)
 		ApprovalGate:     snapshot.approvalGate,
 		ApprovalStanding: snapshot.approvalStanding,
 		ApprovalPolicy:   snapshot.approvalPolicy,

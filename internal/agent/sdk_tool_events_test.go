@@ -43,7 +43,6 @@ func runSDKToolTurn(t *testing.T, reg *tools.Registry, calls []provider.ToolCall
 	var mu sync.Mutex
 	var got []Event
 	opts := Options{
-		Backend:  "sdk",
 		Model:    "m",
 		MaxSteps: 5,
 		OnEvent: func(e Event) {

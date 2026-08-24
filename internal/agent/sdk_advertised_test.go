@@ -83,7 +83,7 @@ func TestRunAgentLoopOnce_Request0CarriesAdvertisedUnion(t *testing.T) {
 	reg.Register(echoTool{})
 	l := &Loop{Completer: comp, Tools: reg}
 
-	_, err := l.Run(context.Background(), "question", Options{Backend: "sdk", MaxSteps: 5,
+	_, err := l.Run(context.Background(), "question", Options{MaxSteps: 5,
 		AdvertisedToolSpecs: []provider.ToolSpec{
 			advertisedSpec("echo", "echo tool"),
 			advertisedSpec("grep", "deferred grep tool"),
@@ -121,7 +121,7 @@ func TestRunAgentLoopOnce_RotationUpdatesAdvertisedUnion(t *testing.T) {
 	reg.Register(echoTool{})
 	l := &Loop{Completer: comp, Tools: reg}
 
-	_, err := l.Run(context.Background(), "question", Options{Backend: "sdk", MaxSteps: 5,
+	_, err := l.Run(context.Background(), "question", Options{MaxSteps: 5,
 		Surface: func() Surface {
 			calls++
 			if calls == 1 {
@@ -153,7 +153,7 @@ func TestRunAgentLoopOnce_NilAdvertisedKeepsRegistryDefs(t *testing.T) {
 	reg.Register(echoTool{})
 	l := &Loop{Completer: comp, Tools: reg}
 
-	_, err := l.Run(context.Background(), "question", Options{Backend: "sdk", MaxSteps: 5})
+	_, err := l.Run(context.Background(), "question", Options{MaxSteps: 5})
 	if err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestBridgeSurface_NilToolSpecsKeepsSDKSurface(t *testing.T) {
 	reg.Register(echoTool{})
 	l := &Loop{Completer: comp, Tools: reg}
 
-	_, err := l.Run(context.Background(), "question", Options{Backend: "sdk", MaxSteps: 5,
+	_, err := l.Run(context.Background(), "question", Options{MaxSteps: 5,
 		Surface: func() Surface { return Surface{} },
 	})
 	if err != nil {

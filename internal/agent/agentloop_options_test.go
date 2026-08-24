@@ -219,7 +219,6 @@ func TestRunAgentLoopOnceTranslatesEvents(t *testing.T) {
 	opts := Options{
 		Model:    "m",
 		MaxSteps: 3,
-		Backend:  "sdk",
 		OnEvent: func(e Event) {
 			mu.Lock()
 			got = append(got, e)
@@ -285,8 +284,7 @@ func TestRunAgentLoopOnceRecordsTokenUsage(t *testing.T) {
 	w := &recordingUsageWriter{}
 	l := &Loop{Completer: comp, Tools: tools.NewRegistry()}
 	_, err := l.Run(context.Background(), "hi", Options{
-		Model: "m", MaxSteps: 1, Backend: "sdk",
-		SessionID: "s1", UsageWriter: w,
+		Model: "m", MaxSteps: 1, SessionID: "s1", UsageWriter: w,
 	})
 	if err != nil {
 		t.Fatalf("Run(sdk): %v", err)
@@ -312,7 +310,7 @@ func TestRunAgentLoopOnceWritesFinalText(t *testing.T) {
 	var buf bytes.Buffer
 	l := &Loop{Completer: comp, Tools: tools.NewRegistry()}
 	_, err := l.Run(context.Background(), "hi", Options{
-		Model: "m", MaxSteps: 1, Backend: "sdk", FinalWriter: &buf,
+		Model: "m", MaxSteps: 1, FinalWriter: &buf,
 	})
 	if err != nil {
 		t.Fatalf("Run(sdk): %v", err)
@@ -332,7 +330,7 @@ func TestRunAgentLoopOnceRequireFinalTextFailsEmpty(t *testing.T) {
 	}}
 	l := &Loop{Completer: comp, Tools: tools.NewRegistry()}
 	_, err := l.Run(context.Background(), "hi", Options{
-		Model: "m", MaxSteps: 1, Backend: "sdk", RequireFinalText: true,
+		Model: "m", MaxSteps: 1, RequireFinalText: true,
 	})
 	if err == nil {
 		t.Fatal("RequireFinalText with empty turn returned nil error; want refusal")

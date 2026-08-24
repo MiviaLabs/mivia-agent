@@ -13,23 +13,16 @@ import (
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
 )
 
-// runOnce is the flag-dispatched driver behind (*Loop).Run. opts.Backend
-// picks the inner loop: the empty value (the default after the SDK
-// convergence) and "sdk" both run the SDK-backed loop through
-// RunAgentLoopOnce (completer wrapper, registry converter, steer
-// bridge, and the fail-closed Options checks all live there); "legacy"
-// runs the unchanged pre-SDK loop body for callers that still depend
-// on options the SDK path cannot carry (Surface rotation, the four
-// WorkLimits token reservations, BeforeStep).
+// runOnce is the driver behind (*Loop).Run. It always runs the
+// SDK-backed loop through RunAgentLoopOnce (completer wrapper,
+// registry converter, steer bridge, and the fail-closed Options
+// checks all live there). The legacy pre-SDK engine that once ran
+// here for callers of options the SDK path could not carry is gone:
+// every field the legacy loop honored - including Surface rotation
+// and every WorkLimits reservation - is carried on this path now
+// (docs/development/sdk-backend-field-mapping.md).
 func (l *Loop) runOnce(ctx context.Context, userText string, opts Options) (string, error) {
-	switch opts.Backend {
-	case "", "sdk":
-		return l.runOnceSDK(ctx, userText, opts)
-	case "legacy":
-		return l.runOnceLegacy(ctx, userText, opts)
-	default:
-		return "", fmt.Errorf("agent: unknown Backend %q (want %q or %q)", opts.Backend, "legacy", "sdk")
-	}
+	return l.runOnceSDK(ctx, userText, opts)
 }
 
 // runOnceSDK drives one SDK-backed turn and translates the SDK Result

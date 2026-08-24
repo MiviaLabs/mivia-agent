@@ -138,10 +138,12 @@ func TestIntegration_BatchBudgetZeroIsInert(t *testing.T) {
 func TestIntegration_ParallelBatchCannotJointlyBlowTheBudget(t *testing.T) {
 	const budget = 128 << 10
 	f := newBatchFixture(t, []int{200 << 10, 200 << 10, 200 << 10})
-	// Legacy-only: the D8 per-batch status line is composed into the
-	// LAST degraded result, which the SDK path's sequential shaping
-	// wrapper cannot know in advance.
-	loop := f.run(t, Options{Backend: "legacy", BatchResultBudgetBytes: budget})
+	// The D8 per-batch status line (see the omitted assertion below) is
+	// composed into the LAST degraded result; the SDK path's sequential
+	// shaping wrapper cannot know in advance which result will be last,
+	// so it omits the status line entirely instead - an accepted gap
+	// (docs/development/sdk-backend-field-mapping.md §2).
+	loop := f.run(t, Options{BatchResultBudgetBytes: budget})
 
 	bodies := toolBodies(loop)
 	if len(bodies) != 3 {
@@ -172,8 +174,10 @@ func TestIntegration_ParallelBatchCannotJointlyBlowTheBudget(t *testing.T) {
 	if degraded == 0 {
 		t.Fatal("no result degraded although the batch was 600 KiB over a 128 KiB budget")
 	}
-	if got := strings.Count(strings.Join(valuesOf(bodies), "\x00"), "batch result budget"); got != 1 {
-		t.Fatalf("status line appears %d times, want exactly 1", got)
+	// The SDK path omits the D8 status line entirely (see above), unlike
+	// legacy's exactly-once guarantee; it must never appear more than once.
+	if got := strings.Count(strings.Join(valuesOf(bodies), "\x00"), "batch result budget"); got > 1 {
+		t.Fatalf("status line appears %d times, want at most 1", got)
 	}
 }
 
@@ -324,8 +328,7 @@ func TestIntegration_FailedCallKeepsItsErrorTextUnderBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	loop := h.newLoop()
-	if _, err := loop.Run(context.Background(), "read them", Options{Backend: "legacy",
-		Model: "integration-model", MaxSteps: 5, MaxConcurrentTools: 2,
+	if _, err := loop.Run(context.Background(), "read them", Options{Model: "integration-model", MaxSteps: 5, MaxConcurrentTools: 2,
 		ToolTimeout: 20 * time.Second, SessionID: budgetTestSession,
 		RemainderSpool:         remainder.NewSpool(remainder.NewMemoryStore()),
 		BatchResultBudgetBytes: 16 << 10,
@@ -348,8 +351,7 @@ func TestIntegration_HookContextSurvivesShapingUncut(t *testing.T) {
 	const advice = "REMEMBER-THE-HOUSE-STYLE"
 	loop := f.h.newLoop()
 	dispatcher := hookContextDispatcher(t, f.h, strings.Repeat(advice+" ", 40))
-	if _, err := loop.Run(context.Background(), "read the files", Options{Backend: "legacy",
-		Model: "integration-model", MaxSteps: 5, MaxConcurrentTools: 2,
+	if _, err := loop.Run(context.Background(), "read the files", Options{Model: "integration-model", MaxSteps: 5, MaxConcurrentTools: 2,
 		ToolTimeout: 20 * time.Second, SessionID: budgetTestSession,
 		RemainderSpool: f.spool, Dispatcher: dispatcher,
 		BatchResultBudgetBytes: 16 << 10,
@@ -412,8 +414,7 @@ func TestIntegration_EphemeralResultIsChargedButNeverReferenced(t *testing.T) {
 	spool := remainder.NewSpool(store)
 
 	loop := h.newLoop()
-	if _, err := loop.Run(context.Background(), "read them", Options{Backend: "legacy",
-		Model: "integration-model", MaxSteps: 5, MaxConcurrentTools: 2,
+	if _, err := loop.Run(context.Background(), "read them", Options{Model: "integration-model", MaxSteps: 5, MaxConcurrentTools: 2,
 		ToolTimeout: 20 * time.Second, SessionID: budgetTestSession,
 		RemainderSpool: spool, BatchResultBudgetBytes: 32 << 10,
 		// Pass 1 truncates both 300 KiB bodies. The read_file body is

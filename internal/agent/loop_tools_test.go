@@ -261,7 +261,7 @@ func TestLoopToolTimeoutAndConflictSerialization(t *testing.T) {
 	calls := []provider.ToolCall{tc("1", "write", `{}`), tc("2", "write", `{}`)}
 	comp := &scriptCompleter{steps: []provider.Response{{ToolCalls: calls, FinishReason: "tool_calls"}, {Content: "done"}}}
 	loop := &Loop{Completer: comp, Tools: reg}
-	_, err := loop.Run(context.Background(), "run", Options{Backend: "legacy", Model: "m", MaxSteps: 3, MaxConcurrentTools: 4})
+	_, err := loop.Run(context.Background(), "run", Options{Model: "m", MaxSteps: 3, MaxConcurrentTools: 4})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +274,7 @@ func TestLoopToolTimeoutAndConflictSerialization(t *testing.T) {
 	comp = &scriptCompleter{steps: []provider.Response{{ToolCalls: []provider.ToolCall{tc("1", "slow", `{}`)}, FinishReason: "tool_calls"}}}
 	loop = &Loop{Completer: comp, Tools: reg}
 	start := time.Now()
-	_, err = loop.Run(context.Background(), "run", Options{Backend: "legacy", Model: "m", MaxSteps: 2, ToolTimeout: 10 * time.Millisecond})
+	_, err = loop.Run(context.Background(), "run", Options{Model: "m", MaxSteps: 2, ToolTimeout: 10 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,7 +296,7 @@ func TestToolLifecycleEventsExposeBoundedRedactedIO(t *testing.T) {
 	var events []Event
 	var mu sync.Mutex
 	loop := &Loop{Completer: comp, Tools: reg}
-	if _, err := loop.Run(context.Background(), "inspect", Options{Backend: "legacy", Model: "m", MaxSteps: 3, OnEvent: func(event Event) {
+	if _, err := loop.Run(context.Background(), "inspect", Options{Model: "m", MaxSteps: 3, OnEvent: func(event Event) {
 		mu.Lock()
 		events = append(events, event)
 		mu.Unlock()
@@ -431,8 +431,7 @@ func TestToolEndFiresPerToolBeforeBatchCompletes(t *testing.T) {
 		starts = time.Now()
 	)
 	loop := &Loop{Completer: comp, Tools: reg}
-	if _, err := loop.Run(context.Background(), "batch", Options{Backend: "legacy",
-		Model: "m", MaxSteps: 3, MaxConcurrentTools: 2,
+	if _, err := loop.Run(context.Background(), "batch", Options{Model: "m", MaxSteps: 3, MaxConcurrentTools: 2,
 		OnEvent: func(e Event) {
 			if e.Kind != EventToolEnd {
 				return
@@ -503,7 +502,7 @@ func TestLoopToolResultBudgetIsExact(t *testing.T) {
 	reg.Register(&scheduledTestTool{name: "large", class: tools.ExecutionRead, delay: time.Millisecond})
 	comp := &scriptCompleter{steps: []provider.Response{{ToolCalls: []provider.ToolCall{tc("1", "large", `{}`)}, FinishReason: "tool_calls"}, {Content: "done"}}}
 	loop := &Loop{Completer: comp, Tools: reg}
-	if _, err := loop.Run(context.Background(), "run", Options{Backend: "legacy", Model: "m", MaxSteps: 3, MaxToolResultChars: 5}); err != nil {
+	if _, err := loop.Run(context.Background(), "run", Options{Model: "m", MaxSteps: 3, MaxToolResultChars: 5}); err != nil {
 		t.Fatal(err)
 	}
 	for _, message := range loop.Messages {

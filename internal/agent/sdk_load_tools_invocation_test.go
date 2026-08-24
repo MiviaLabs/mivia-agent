@@ -241,7 +241,6 @@ func TestSDKLoopLoadToolsApprovalRunsAfterApproval(t *testing.T) {
 	opts := Options{
 		Model:        "test-model",
 		MaxSteps:     3,
-		Backend:      "sdk",
 		ApprovalGate: gate,
 	}
 

@@ -92,6 +92,17 @@ caller accepts the difference.
   after the whole batch resolves.
 - **Same-batch dedup** — the legacy dispatcher collapses identical
   read-class calls within one batch; the SDK executes every call.
+- **A `Surface` rotation that changes `Registry` without also changing
+  `Dispatcher`** — no real caller does this (every production Surface
+  hook pairs them, e.g. `internal/chat/session_turn_surface.go`'s
+  `resolveTurnExecutionSurface`), but the two backends behave
+  differently if one ever did: the legacy `executeToolsParallel`
+  re-scopes a fresh dispatcher per batch over whatever registry is
+  current when `Options.Dispatcher` is nil, so a Registry-only
+  rotation still dispatches against the new registry; the SDK path's
+  dispatcher (`ensureSDKDispatcher`) is scoped once at run start over
+  the ORIGINAL registry and does not follow a Registry-only rotation.
+  Always rotate `Dispatcher` alongside `Registry`.
 - **Conclude-steer nudges** — the legacy loop injects a conclude
   message when budgets or the deadline are nearly exhausted; the SDK
   path has no equivalent injection.
@@ -148,6 +159,72 @@ SDK path, historical entries kept below for the record.
   `MaxTurns` and `DeadlineAt` are carried too (§1). `PreserveWorkLimits`
   passes: it preserves the same meter's cumulative counters across a
   corrective re-entry, on either backend.
+
+## 4. Known bugs requiring follow-up
+
+Unlike §2 (deliberately accepted differences), these are real defects
+found while removing the legacy engine and forcing its pinning tests
+onto the SDK path. They already affect production today (the SDK path
+has been the default since the convergence flip; nothing here is a
+regression from removing legacy) - they were simply never exercised by
+a test that could catch them until the legacy path stopped being an
+option.
+
+- **Summary injection is not ephemeral on the SDK path** — the legacy
+  `injectSummary` builds a request-only clone that never touches
+  `l.Messages`. On the SDK path, `sdkPrepareTrim`'s `Trim` closure
+  (`sdk_prepare.go`) returns the summary-injected slice, and the SDK's
+  own `run.go` (`*history = trimmed`, `agentloop/run.go:142`) adopts
+  that return value AS the run's carried history, which becomes
+  `Result.History` and gets written back onto `l.Messages` wholesale
+  (`runOnceSDK`'s write-back rule, §1's "turn history" row). The
+  injected summary frame leaks into durable history and corrupts
+  later-step evidence tracking that reads from it. Confirmed by
+  `TestSummaryInjectionDoesNotTouchDurableState`,
+  `TestSummaryInjectionToolFactsReachLaterRequest`, and
+  `TestSummaryInjectionOneSummarizePerCompactionAcrossSteps`
+  (`internal/agent`, currently skipped pending a fix). Fix sketch: stop
+  routing the ephemeral injection through `Trim` (whose contract is
+  "this becomes the real history"); inject per-request only, mirroring
+  how `newAgentLoopCompleterWithDefaults` already does per-call
+  injection for other fields, or strip the injected frame from
+  `res.History` before write-back.
+- **A steer that fires during a prompt-too-long retry does not resume
+  the run afterward** — `runSDKPromptTooLongRecoverable` implements
+  the retry as a second, independent `sdkagentloop.New` +
+  `RunSteerable` call. A steer that cancels that retry's in-flight
+  call produces a graceful `StopSteered` result with a nil error;
+  `runSDKPromptTooLongRecoverable`'s retry-condition
+  (`err == nil || ...`) treats a nil error as "done" and returns
+  immediately - there is no continuation to a further call the way the
+  legacy single continuous step-loop provided (a soft interrupt there
+  just continues the SAME loop to its next iteration). Confirmed by
+  `TestLoopSteerDuringPromptTooLongRetryInterruptsTheRetry`
+  (`internal/agent/loop_retry_steer_test.go`, currently skipped
+  pending a fix - it hangs 5s waiting for a "recovered" third call that
+  never happens). A related, already-fixed goroutine race in the same
+  area: `bridgeSteerSignals` (`agentloop_steer.go`) now takes a
+  `sync.WaitGroup` so `runSDKSteerable` waits for its bridge goroutines
+  to fully exit before returning, closing a window where a stale
+  goroutine from the first (failed) attempt could win the race for an
+  interrupt signal meant for the retry.
+- **`WorkBudget`'s refund does not distinguish a steer-canceled call
+  from a call that failed for its own reason** — the SDK's `Refund`
+  contract (`mivia-ai-sdk/agentloop/budget.go`) only receives
+  `(ctx, req, used Usage)`; a zero `Usage` means "never consumed,"
+  refunded unconditionally by `sdkWorkBudget.refund`
+  (`agentloop_budget.go`). The legacy `workLimitMeter.refundProvider`
+  was called ONLY on the steer-interrupt path
+  (`steerInterruptOutcome`), not on a plain provider error, on the
+  reasoning that a call that failed for its own reason still consumed
+  real work. This widens (never narrows) a finite
+  `WorkLimits.MaxOutputTokens`/`MaxPromptTokens` budget after an
+  ordinary provider error - a leniency bug, not a safety one. Confirmed
+  by `TestProviderErrorKeepsWorkLimitReservation`
+  (`loop_steer_worklimit_test.go`, currently skipped pending a fix).
+  Fix sketch: thread a per-call "was Trigger fired for THIS call" flag
+  from `agentloop_steer.go`'s `fireSteer` through `sdkTurnState` for
+  `agentloop_budget.go`'s `refund` to consult.
 
 ## See also
 

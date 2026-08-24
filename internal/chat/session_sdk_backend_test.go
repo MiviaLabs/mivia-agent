@@ -1,15 +1,15 @@
 package chat
 
-// Pre-flip regression tests for Blocker 1 (unpin session.go from the
-// legacy backend). runSDKSessionTurn mirrors sendAgent's turn
-// construction (internal/chat/session.go sendAgent) field for field
-// but forces Backend "sdk", so the session-loop turn path -
-// beginAgentTurn, surfaceForTurnStart, wireStepBoundaryAdmission,
-// commitTurnToken, finishAgentTurn - runs on the SDK backend BEFORE
-// session.go itself flips. The behaviors the legacy pin protected are
-// asserted here: streaming to FinalWriter with tool-call revoke,
-// prompt-too-long retry, WorkLimits reservation fail-closed, and the
-// step-boundary admission surface rotation.
+// Session-loop regression tests for the SDK-backed agent loop (the
+// only backend now - see internal/agent/loop_dispatch.go).
+// runSDKSessionTurn mirrors sendAgent's turn construction
+// (internal/chat/session.go sendAgent) field for field, so the
+// session-loop turn path - beginAgentTurn, surfaceForTurnStart,
+// wireStepBoundaryAdmission, commitTurnToken, finishAgentTurn - is
+// exercised the same way production traffic exercises it. Coverage:
+// streaming to FinalWriter with tool-call revoke, prompt-too-long
+// retry, WorkLimits reservation fail-closed, and the step-boundary
+// admission surface rotation.
 
 import (
 	"context"
@@ -64,7 +64,6 @@ func runSDKSessionTurn(t *testing.T, s *Session, userText string, w io.Writer, m
 		ToolTimeout:            snapshot.toolTimeout,
 		ParentID:               "session",
 		TurnID:                 fmt.Sprintf("turn:%d", snapshot.myTurn), SessionID: snapshot.sessionID,
-		Backend:     "sdk",
 		FinalWriter: w, OnEvent: snapshot.onEvent, EventBus: snapshot.eventBus, EventIdentity: snapshot.identity,
 		RequireFinalText:    true,
 		AdvertisedToolSpecs: s.AdvertisedToolSpecs(),

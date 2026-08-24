@@ -82,8 +82,7 @@ func TestAgentTurnDiscardsFailedPreparation(t *testing.T) {
 	}
 	probe := &agentPreparationProbe{}
 	loop := &Loop{Completer: &preparationFailureCompleter{err: errPreparationProvider}, Tools: tools.NewRegistry()}
-	_, err = loop.Run(context.Background(), "question", Options{Backend: "legacy",
-		Model: "model", MaxContextTokens: 100, PreparationManager: probe,
+	_, err = loop.Run(context.Background(), "question", Options{Model: "model", MaxContextTokens: 100, PreparationManager: probe,
 		PreparationInput: contextmgr.PrepareInput{
 			Budget: 100, Principal: principal, Binding: binding,
 		},
@@ -126,7 +125,7 @@ func TestAgentTurnRetainsSuccessfulPreparationForSessionCommit(t *testing.T) {
 func TestAgentDeadlineDoesNotUseBackgroundPreparationFallback(t *testing.T) {
 	probe := &deadlinePreparationProbe{}
 	loop := &Loop{Completer: preparationSuccessCompleter{}, Tools: tools.NewRegistry()}
-	_, err := loop.Run(context.Background(), "question", Options{Backend: "legacy", Model: "model", PreparationManager: probe, WorkLimits: runtime.WorkLimits{DeadlineAt: time.Now().Add(20 * time.Millisecond)}})
+	_, err := loop.Run(context.Background(), "question", Options{Model: "model", PreparationManager: probe, WorkLimits: runtime.WorkLimits{DeadlineAt: time.Now().Add(20 * time.Millisecond)}})
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("err=%v, want deadline exceeded", err)
 	}
