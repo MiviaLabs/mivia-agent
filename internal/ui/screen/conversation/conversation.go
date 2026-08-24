@@ -5,8 +5,6 @@
 package conversation
 
 import (
-	"context"
-	"fmt"
 	"strings"
 	"time"
 
@@ -25,7 +23,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/keymap"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
@@ -147,23 +144,6 @@ func (s Screen) Init() tea.Cmd { return nil }
 // ViewFlags holds the alternate screen: the conversation is the cockpit.
 func (s Screen) ViewFlags() app.ViewFlags { return app.ViewFlags{AltScreen: true} }
 
-// turnEndedMsg signals the active TurnHandle's Events() channel closed.
-type turnEndedMsg struct{}
-
-// waitForEvent is the one real tea.Cmd that reads one event and, when
-// the caller re-issues it after handling the Msg, reads the next one -
-// the shape build spec section 4.5 requires: no goroutine touches the
-// model, only this Cmd's own closure over the channel.
-func waitForEvent(events <-chan uievent.Event) tea.Cmd {
-	return func() tea.Msg {
-		ev, ok := <-events
-		if !ok {
-			return turnEndedMsg{}
-		}
-		return uievent.EventMsg{Event: ev}
-	}
-}
-
 // Update delegates to update, then re-sizes the transcript whenever the
 // chrome's row claim changed.
 //
@@ -223,6 +203,9 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		return s.handleKey(msg)
+	case tea.PasteMsg:
+		// Paste lands in the composer; see handlePaste for the why.
+		return s.handlePaste(msg)
 	case uievent.EventMsg:
 		return s.handleTurnEvent(msg.Event)
 	case threadEventMsg:
@@ -296,118 +279,10 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 // is no shared pointer - so a component this misses keeps rendering in
 // the old theme until it is rebuilt.
 //
-// The cached subagent-thread Screen is included: openThread reuses it
-// for the same call ID, so a thread opened before the switch and
-// reopened after it would otherwise come back in the previous theme.
-func (s Screen) applyTheme(msg app.ThemeChangedMsg) Screen {
-	s.Theme, s.Tier = msg.Theme, msg.Tier
-	s.transcript.SetTheme(msg.Theme, msg.Tier)
-	s.composer.SetTheme(msg.Theme, msg.Tier)
-	s.statusline.SetTheme(msg.Theme, msg.Tier)
-	s.approval.Theme, s.approval.Tier = msg.Theme, msg.Tier
-	s.topbar.SetTheme(msg.Theme, msg.Tier)
-	s.panel.list.Theme, s.panel.list.Tier = msg.Theme, msg.Tier
-	s.welcome.SetTheme(msg.Theme, msg.Tier)
-	if s.thread != nil {
-		next := s.thread.applyTheme(msg)
-		s.thread = &next
-	}
-	return s
-}
-
-// handleWheel applies one mouse-wheel notch. Wheel events scroll the
-// conversation; CockpitScrollLines is the multiplier: terminals
-// disagree on how many events one physical notch produces, and some
-// amplify while others send exactly one
-// (docs/design/cockpit-research.md rule 6.6).
-func (s Screen) handleWheel(msg tea.MouseWheelMsg) (app.Screen, tea.Cmd) {
-	step := uikitconfig.CockpitScrollLines
-	if msg.Button == tea.MouseWheelUp {
-		step = -step
-	}
-	if s.approval.Active() {
-		// The approval prompt is modal for keys; the wheel follows it,
-		// scrolling the diff preview instead of the transcript behind
-		// it.
-		s.approval = s.approval.ScrollBy(step)
-		return s, nil
-	}
-	// The content dialog covers the chat column; scrolling a transcript
-	// the user cannot see acts on something invisible (the same rule
-	// that dismisses overlays on any key). The dialog scrolls by
-	// keyboard only.
-	if s.panel.dialog {
-		return s, nil
-	}
-	s.transcript = s.transcript.ScrollBy(step)
-	return s, nil
-}
-
-func (s Screen) send() (app.Screen, tea.Cmd) {
-	text := s.composer.SubmitText()
-	if text == "" || s.active != nil {
-		return s, nil
-	}
-	handle, err := s.conv.Send(context.Background(), intent.Send{Text: text})
-	if err != nil {
-		var cmd tea.Cmd
-		s.transcript, cmd = s.transcript.HandleEvent(uievent.Event{
-			Kind: uievent.KindError,
-			Body: uievent.ErrorBody{Text: err.Error(), Fatal: false},
-		})
-		return s, cmd
-	}
-	s.composer.Clear()
-	s.active = handle
-	cmd := s.statusline.Start("thinking", s.now())
-	return s, tea.Batch(cmd, s.awaitEvent(handle.Events()))
-}
-
-func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
-	next, flushCmd := s.transcript.HandleEvent(ev)
-	s.transcript = next
-
-	switch b := ev.Body.(type) {
-	case uievent.ToolPendingBody:
-		s.approval.SetRequest(b)
-		s.statusline.SetLabel("pending")
-		s.statusline.SetDetail(toolDetail(b.Name, b.Args))
-		// The approval prompt claims the chat column and every key; a
-		// content dialog open over that column would hide the prompt it
-		// pre-empts, so it closes.
-		s.panel.dialog, s.panel.dialogAgent = false, ""
-	case uievent.ToolStartBody:
-		s.approval.Clear()
-		s.statusline.SetLabel("running")
-		s.statusline.SetDetail(toolDetail(b.Name, b.Args))
-	case uievent.ToolOutputBody:
-		// A progress-bearing output is a subagent status update (see
-		// uievent.ToolOutputBody): the panel's subagents section feeds
-		// from the same stream the transcript renders.
-		if b.Progress != nil {
-			s.panel.observeAgent(b.ToolCallID, b.Progress)
-		}
-	case uievent.ToolEndBody:
-		s.approval.Clear()
-		s.statusline.SetLabel("thinking")
-		if b.Diff != nil {
-			// The panel's data, fed live: every completed edit appears
-			// as a touched file the moment it happens, exactly as the
-			// transcript renders it. Deletions carry no diff in the
-			// event vocabulary, so only edits and creations record here.
-			s.panel.appendLive(*b.Diff)
-		}
-	case uievent.TurnEndBody:
-		s.approval.Clear()
-	}
-
-	var readCmd tea.Cmd
-	if s.active != nil {
-		readCmd = s.awaitEvent(s.active.Events())
-	}
-	return s, tea.Batch(flushCmd, readCmd)
-}
-
+// applyTheme, handlePaste, handleWheel, send, and handleTurnEvent live
+// in events.go, paste.go, and mouse.go, grouped by the input shape they
+// handle.
+//
 // reservedRows is how many rows the chrome below the transcript claims.
 //
 // The status row is PERMANENT in the cockpit. The inline design had no
@@ -510,6 +385,11 @@ func overlayRows(text string, height int) []string {
 	return rows
 }
 
+// handlePaste, handleWheel, send, handleTurnEvent, and applyTheme live in
+// paste.go, mouse.go, and events.go respectively, grouped by the input
+// shape they handle. statusRow / turnTail / statusText / toolDetail live
+// in status.go.
+//
 // SetCommands supplies the slash-completion candidates. The command set
 // belongs to the harness, so the screen takes it rather than inventing
 // one.
@@ -574,104 +454,4 @@ func (s *Screen) Notice(text string) {
 		Body: uievent.NoticeBody{Text: text},
 	})
 	s.transcript = next
-}
-
-// statusRow is the permanent bottom status line.
-//
-// It is always drawn, even when there is nothing to say, because a row
-// that appears and disappears reflows every wrapped line above it
-// (docs/design/ux-rules.md rule 2.7). Its right side carries the compact
-// key hint, generated from the keymap table so it cannot drift from the
-// help screen; transient state (turn status, scroll affordances) takes
-// the left. The whole row is one line, truncated to the chat column's
-// width - inside the split's left pane it must not exceed the pane.
-func (s Screen) statusRow() string {
-	line := s.statusText()
-	var hint string
-	if s.embedded {
-		hint = render.Role(s.Theme, s.Tier, theme.RoleFGSubtle).Render("esc:close dialog")
-	} else if s.quitArmed {
-		prefix := s.keys.Hint(keymap.IDHelp, keymap.IDOpenPager, keymap.IDPanelToggle)
-		warn := render.Role(s.Theme, s.Tier, theme.RoleWarning).Render("ctrl+c:press again to quit")
-		if prefix != "" {
-			hint = render.Role(s.Theme, s.Tier, theme.RoleFGSubtle).Render(prefix) + "  " + warn
-		} else {
-			hint = warn
-		}
-	} else {
-		hint = render.Role(s.Theme, s.Tier, theme.RoleFGSubtle).
-			Render(s.keys.Hint(keymap.IDHelp, keymap.IDOpenPager, keymap.IDPanelToggle, keymap.IDQuit))
-	}
-	if line == "" {
-		line = hint
-	} else {
-		line += "  " + hint
-	}
-	if s.width > 2 {
-		line = ansi.Truncate(line, s.chatWidth(), uikitconfig.ClipMarker)
-	}
-	return line
-}
-
-// toolDetail is the status line's "<detail>" field for a pending or
-// running tool call - the wireframe's "go test
-// ./internal/storage/..." - built the same way the transcript block's
-// own header already does (component/transcript/transcript.go's
-// handleToolPending/handleToolStart: "Label: b.Name, Detail:
-// render.FormatArgs(b.Args)"), just flattened into one string since
-// the status line has no separate label/detail columns.
-func toolDetail(name string, args map[string]any) string {
-	detail := name
-	if a := render.FormatArgs(args); a != "" {
-		detail += " " + a
-	}
-	return detail
-}
-
-// turnTail is the trailing fields wireframes-panes.md section 9 adds
-// to an active turn's status line, after the mark/label/elapsed
-// statusline.Model already draws: the context share (when the window
-// size is known - an unknown window is left out rather than printing
-// a fabricated percentage) and the cancel hint, which states real
-// behavior (keymap.IDCancel binds esc to "cancel the turn, keep the
-// text" in ContextGlobal - ux-rules.md rule 1.4 forbids a hint that
-// promises something the current state cannot do).
-func (s Screen) turnTail() string {
-	subtle := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle)
-	var tail string
-	if pct, ok := s.topbar.ContextPercent(); ok {
-		tail += subtle.Render(fmt.Sprintf("  %d%% ctx", pct))
-	}
-	tail += subtle.Render("  esc to cancel")
-	return tail
-}
-
-// statusText is the transient left side of the status row: the turn's
-// status line, or the scroll and truncation affordances.
-func (s Screen) statusText() string {
-	if v := s.statusline.View(s.now()); v != "" {
-		if s.active != nil {
-			v += s.turnTail()
-		}
-		return v
-	}
-	// Narrow panel open: the transcript is hidden behind the list, so
-	// its scroll affordances would narrate something the user cannot
-	// see.
-	if s.panel.open && !s.panelIsSplit() {
-		return ""
-	}
-	if !s.transcript.Following() {
-		if n := s.transcript.NewWhilePaused(); n > 0 {
-			return render.Role(s.Theme, s.Tier, theme.RoleWarning).
-				Render(fmt.Sprintf("%d new blocks while you read - ctrl+end to follow again", n))
-		}
-		return render.Role(s.Theme, s.Tier, theme.RoleWarning).
-			Render("scrolled up - ctrl+end to follow again")
-	}
-	if n := s.transcript.Dropped(); n > 0 {
-		return render.Role(s.Theme, s.Tier, theme.RoleFGSubtle).
-			Render(fmt.Sprintf("%d earlier blocks dropped from this transcript", n))
-	}
-	return ""
 }
