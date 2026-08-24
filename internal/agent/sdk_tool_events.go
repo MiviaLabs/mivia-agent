@@ -33,6 +33,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	sdkhooks "github.com/MiviaLabs/mivia-ai-sdk/hooks"
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
+	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
 )
 
 // toolCallOutcome is one call's recorded execution result: the
@@ -71,32 +72,6 @@ type toolCallOutcome struct {
 // sdkToolEventState fields live on sdkTurnState (sdk_dispatcher_shim.go);
 // the accessors below are their single synchronization point. The SDK
 // runs tool calls sequentially from the run goroutine, so the mutex
-// only has to hold off the bus handler's take, not sibling calls.
-
-// beginToolCall stashes the call PointPreTool admitted and clears any
-// stale outcome, mirroring the legacy queued-start position.
-func (s *sdkTurnState) beginToolCall(call *sdkshape.ToolCall) {
-	s.toolMu.Lock()
-	defer s.toolMu.Unlock()
-	s.pendingTool = call
-	s.toolOutcome = nil
-}
-
-// endToolCall clears the pending call (PointPostTool). The recorded
-// outcome, if any, survives for the EventToolCallEnd render.
-func (s *sdkTurnState) endToolCall() {
-	s.toolMu.Lock()
-	defer s.toolMu.Unlock()
-	s.pendingTool = nil
-}
-
-// currentPendingToolCall returns the call PointPreTool stashed, or nil.
-func (s *sdkTurnState) currentPendingToolCall() *sdkshape.ToolCall {
-	s.toolMu.Lock()
-	defer s.toolMu.Unlock()
-	return s.pendingTool
-}
-
 // recordToolOutcome records one executed call's outcome: the final
 // model-visible body and the dispatcher's failure flag. Callers that
 // are not the dispatcher shim pass zero values for duplicate and
@@ -110,33 +85,46 @@ func (s *sdkTurnState) recordToolOutcome(id, name, body string, failed bool) {
 // pair the legacy toolEndDetail uses to emit the "(duplicate)" suffix
 // on a dedup-cache-served call.
 func (s *sdkTurnState) recordToolOutcomeWithPreview(id, name, body string, failed bool, previewOverride string, duplicate bool, originalBody string) {
+	if id == "" {
+		return
+	}
 	s.toolMu.Lock()
 	defer s.toolMu.Unlock()
-	s.toolOutcome = &toolCallOutcome{id: id, name: name, body: body, failed: failed, duplicate: duplicate, originalBody: originalBody, previewOverride: previewOverride}
+	if s.toolOutcomes == nil {
+		s.toolOutcomes = make(map[string]*toolCallOutcome)
+	}
+	s.toolOutcomes[id] = &toolCallOutcome{id: id, name: name, body: body, failed: failed, duplicate: duplicate, originalBody: originalBody, previewOverride: previewOverride}
 }
 
 // overwriteToolOutcomeBody replaces the recorded outcome's body after
 // a later shim (ref-only notice, turn-shaping re-cut) rewrites it, so
 // tool_end matches the legacy post-shaping body the model sees.
-func (s *sdkTurnState) overwriteToolOutcomeBody(body string) {
+func (s *sdkTurnState) overwriteToolOutcomeBody(id string, body string) {
+	if id == "" {
+		return
+	}
 	s.toolMu.Lock()
 	defer s.toolMu.Unlock()
-	if s.toolOutcome != nil {
-		s.toolOutcome.body = body
+	if s.toolOutcomes != nil {
+		if o, ok := s.toolOutcomes[id]; ok && o != nil {
+			o.body = body
+		}
 	}
 }
 
-// takeToolCallOutcome consumes the recorded outcome and the pending
-// call. The pending call outlives the outcome only on a veto or hook
-// error (EventToolCallEnd fires from a deferred closure on every
-// return path; no outcome is recorded there), which the caller renders
-// as the amendment-5 failed fallback.
-func (s *sdkTurnState) takeToolCallOutcome() (*toolCallOutcome, *sdkshape.ToolCall) {
+// takeToolCallOutcome consumes the recorded outcome for callID.
+func (s *sdkTurnState) takeToolCallOutcome(id string) *toolCallOutcome {
+	if id == "" {
+		return nil
+	}
 	s.toolMu.Lock()
 	defer s.toolMu.Unlock()
-	o, p := s.toolOutcome, s.pendingTool
-	s.toolOutcome, s.pendingTool = nil, nil
-	return o, p
+	if s.toolOutcomes == nil {
+		return nil
+	}
+	o := s.toolOutcomes[id]
+	delete(s.toolOutcomes, id)
+	return o
 }
 
 // armStreamRevoke is the once-per-iteration stream-revoke gate the
@@ -152,24 +140,25 @@ func (s *sdkTurnState) resetStreamRevoke() {
 }
 
 // sdkToolEventHooks builds the hooks.Registry the SDK options carry:
-// a PointPreTool observer that arms the stream revoke, stashes the
-// call, and emits the legacy "queued" tool_start, and a PointPostTool
-// observer that clears the stash. Both always allow (observers never
+// a PointPreTool observer that arms the stream revoke and emits the
+// legacy "queued" tool_start. Both hooks always allow (observers never
 // veto - the approval and admission gates live elsewhere).
 func sdkToolEventHooks(opts Options, turn *sdkTurnState) *sdkhooks.Registry {
 	reg := sdkhooks.New()
-	_ = reg.Add(sdkhooks.PointPreTool, "agent.tool-events", func(_ context.Context, payload any) (bool, error) {
+	_ = reg.Add(sdkhooks.PointPreTool, "agent.tool-events", func(ctx context.Context, payload any) (bool, error) {
 		call, ok := payload.(sdkshape.ToolCall)
 		if !ok {
-			return true, nil
+			if tc, hasTC := toolcallctx.ToolCallFromContext(ctx); hasTC {
+				call = tc
+			} else {
+				return true, nil
+			}
 		}
-		stash := call
-		turn.beginToolCall(&stash)
 		// Content-then-tools: the first tool call of an iteration
 		// clears the optimistic final-stream tokens, the same
 		// revokeStreamWriter call the legacy loop makes ahead of
 		// processToolCalls, once per iteration.
-		if turn.armStreamRevoke() {
+		if turn != nil && turn.armStreamRevoke() {
 			revokeStreamWriter(opts.FinalWriter)
 		}
 		emit(opts, Event{
@@ -182,7 +171,6 @@ func sdkToolEventHooks(opts Options, turn *sdkTurnState) *sdkhooks.Registry {
 		return true, nil
 	})
 	_ = reg.Add(sdkhooks.PointPostTool, "agent.tool-events", func(_ context.Context, _ any) (bool, error) {
-		turn.endToolCall()
 		return true, nil
 	})
 	return reg

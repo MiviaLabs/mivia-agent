@@ -19,6 +19,7 @@ import (
 
 	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 	sdkevents "github.com/MiviaLabs/mivia-ai-sdk/events"
+	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
 )
 
 // bridgeAgentLoopEvents builds the SDK-side bus whose emissions are
@@ -42,23 +43,28 @@ func bridgeAgentLoopEvents(opts Options, turn *sdkTurnState) *sdkevents.Bus {
 		// PointPreTool fires before the queued tool_start, the
 		// legacy ordering).
 		turn.resetStreamRevoke()
+		turn.resetIterationShaping()
 		emit(opts, Event{Kind: EventStep, Detail: e.Data})
 		return nil
 	})
-	_ = bus.Subscribe(sdkagentloop.EventToolCallEnd, func(_ context.Context, _ sdkevents.Event) error {
+	_ = bus.Subscribe(sdkagentloop.EventToolCallEnd, func(ctx context.Context, _ sdkevents.Event) error {
 		if turn == nil {
 			return nil
 		}
-		// The SDK fires EventToolCallEnd from a deferred closure on
-		// EVERY return path of runOneToolCall, including PointPreTool
-		// vetoes and hook errors where no outcome was recorded.
-		// Render order: a recorded outcome wins (the legacy
-		// completed/failed vocabulary over the redacted body); a
-		// pending call with no outcome is a veto - emit the failed
-		// fallback with an empty output; neither means the call never
-		// reached the host (e.g. an ordinary decode failure the
-		// error reporter owns), so nothing is emitted.
-		outcome, pending := turn.takeToolCallOutcome()
+		// The SDK fires EventToolCallEnd with callCtx on EVERY return path
+		// of runOneToolCall, including PointPreTool vetoes and hook errors.
+		var outcome *toolCallOutcome
+		var callKey, callName string
+		if tc, ok := toolcallctx.ToolCallFromContext(ctx); ok {
+			callKey = tc.ID
+			if callKey == "" {
+				callKey = tc.Name
+			}
+			callName = tc.Name
+		}
+		if callKey != "" {
+			outcome = turn.takeToolCallOutcome(callKey)
+		}
 		switch {
 		case outcome != nil:
 			// Legacy emitToolEnd preview rule: the redacted body,
@@ -74,11 +80,11 @@ func bridgeAgentLoopEvents(opts Options, turn *sdkTurnState) *sdkevents.Bus {
 				Detail:     sdkToolEndDetail(*outcome),
 				Output:     output,
 			})
-		case pending != nil:
+		case callKey != "":
 			emit(opts, Event{
 				Kind:       EventToolEnd,
-				ToolCallID: pending.ID,
-				Name:       pending.Name,
+				ToolCallID: callKey,
+				Name:       callName,
 				Detail:     "failed",
 				Output:     "",
 			})

@@ -74,7 +74,11 @@ func sdkToolCallErrorReporter(opts Options, turn *sdkTurnState) sdkagentloop.Err
 		// against; in practice a denial never has a prior duplicate to
 		// pair with).
 		if turn != nil {
-			turn.recordToolOutcomeWithPreview(call.ID, call.Name, "error: "+msg, true, "", false, "")
+			callKey := call.ID
+			if callKey == "" {
+				callKey = call.Name
+			}
+			turn.recordToolOutcomeWithPreview(callKey, call.Name, "error: "+msg, true, "", false, "")
 		}
 		return sdkshape.Message{
 			Role:       provider.RoleTool,

@@ -88,19 +88,20 @@ func (r *refOnlyShim) Run(ctx context.Context, in sdktools.InOut) (sdktools.Out,
 	if !ok || len(s) < r.floor {
 		return body, nil
 	}
+	callKey := toolCallKeyFromContext(ctx, name)
 	ref := r.spool.Spool(ctx, r.principal, []byte(s))
 	if ref == "" {
 		// Plain notice when the spool cannot mint (nil store, empty
 		// principal, or write failure). Mirrors refOnlyTier:36-43.
 		notice := fmt.Sprintf("[tool result for %s elided; original ~%s]", name, refOnlySizeLabel(len(s)))
-		if r.turn != nil {
-			r.turn.overwriteToolOutcomeBody(notice)
+		if r.turn != nil && callKey != "" {
+			r.turn.overwriteToolOutcomeBody(callKey, notice)
 		}
 		return sdktools.Out{Value: notice}, nil
 	}
 	notice := fmt.Sprintf("[tool result for %s elided to a remainder ref (original ~%s): %s — use read_output to fetch the full body]", name, refOnlySizeLabel(len(s)), ref)
-	if r.turn != nil {
-		r.turn.overwriteToolOutcomeBody(notice)
+	if r.turn != nil && callKey != "" {
+		r.turn.overwriteToolOutcomeBody(callKey, notice)
 	}
 	return sdktools.Out{Value: notice}, nil
 }

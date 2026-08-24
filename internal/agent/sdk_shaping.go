@@ -28,15 +28,27 @@ import (
 	"sync"
 
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
+	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
 	sdktools "github.com/MiviaLabs/mivia-ai-sdk/tools"
 )
 
 // turnShapeCounter is the per-Run shared budget. One instance is
 // created per RunAgentLoopOnce call and referenced by every wrapped
 // tool, so sequential calls see the bytes their siblings spent.
+// Under parallel dispatch (MaxConcurrentTools > 1), cond synchronizes
+// shaping in call index order so shaping remains deterministic (F4).
 type turnShapeCounter struct {
-	mu      sync.Mutex
-	charged int
+	mu        sync.Mutex
+	cond      *sync.Cond
+	nextIndex int
+	charged   int
+	aborted   bool
+}
+
+func newTurnShapeCounter() *turnShapeCounter {
+	c := &turnShapeCounter{}
+	c.cond = sync.NewCond(&c.mu)
+	return c
 }
 
 // turnShapeWrapper shapes one tool's result against the turn budget.
@@ -76,6 +88,7 @@ func (w *turnShapeWrapper) DecodeArguments(raw []byte) (sdktools.InOut, error) {
 }
 
 func (w *turnShapeWrapper) Run(ctx context.Context, in sdktools.InOut) (sdktools.Out, error) {
+	callKey := toolCallKeyFromContext(ctx, w.toolName)
 	body, err := w.inner.Run(ctx, in)
 	if err != nil {
 		return body, err
@@ -84,9 +97,17 @@ func (w *turnShapeWrapper) Run(ctx context.Context, in sdktools.InOut) (sdktools
 	if !ok {
 		return body, nil
 	}
+	callIndex := -1
+	if tc, ok := toolcallctx.ToolCallFromContext(ctx); ok {
+		callIndex = tc.Index
+	}
 	w.counter.mu.Lock()
+	if callIndex > 0 && w.counter.cond != nil {
+		for w.counter.nextIndex < callIndex && !w.counter.aborted && ctx.Err() == nil {
+			w.counter.cond.Wait()
+		}
+	}
 	remaining := w.budget - w.counter.charged
-	w.counter.mu.Unlock()
 	if remaining < 0 {
 		remaining = 0
 	}
@@ -96,8 +117,12 @@ func (w *turnShapeWrapper) Run(ctx context.Context, in sdktools.InOut) (sdktools
 	// chain. A miss means no pass-1 ran (or an intermediate shim
 	// rewrote the body): the executed body IS the original, so
 	// cappedBody/totalN agree and refA is empty.
-	parts, ok := w.turn.pass1.take(s)
-	if !ok {
+	var parts resultParts
+	var found bool
+	if w.turn != nil && callKey != "" {
+		parts, found = w.turn.pass1.take(callKey, s)
+	}
+	if !found {
 		parts = resultParts{
 			cappedBody: s,
 			totalN:     len(s),
@@ -115,7 +140,6 @@ func (w *turnShapeWrapper) Run(ctx context.Context, in sdktools.InOut) (sdktools
 	if parts.hookContext != "" {
 		shaped = appendHookContext(shaped, parts.hookContext)
 	}
-	w.counter.mu.Lock()
 	if degraded && !state.refOnly {
 		// A budget-tier degrade spends the rest of the turn's budget
 		// (shapeBatch's F6 rule): no later result may claim the floor.
@@ -124,14 +148,22 @@ func (w *turnShapeWrapper) Run(ctx context.Context, in sdktools.InOut) (sdktools
 		w.counter.charged += len(shaped)
 	}
 	charged := w.counter.charged
+	if callIndex >= 0 {
+		if callIndex >= w.counter.nextIndex {
+			w.counter.nextIndex = callIndex + 1
+		}
+		if w.counter.cond != nil {
+			w.counter.cond.Broadcast()
+		}
+	}
 	w.counter.mu.Unlock()
 	if degraded && w.onDegrade != nil {
 		w.onDegrade(charged, w.budget)
 	}
 	// The re-cut body is what the model sees; the recorded tool-event
 	// outcome follows it so tool_end matches (sdk_tool_events.go).
-	if w.turn != nil {
-		w.turn.overwriteToolOutcomeBody(shaped)
+	if w.turn != nil && callKey != "" {
+		w.turn.overwriteToolOutcomeBody(callKey, shaped)
 	}
 	return sdktools.Out{Value: shaped}, nil
 }

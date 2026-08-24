@@ -32,6 +32,7 @@ The SDK path consumes these directly:
 | `SessionID` | `Options.SessionID` | required when Usage is set |
 | `AdvertisedToolSpecs` | turn-state advertised snapshot + completer override | the snapshot seeds `sdkTurnState.advertised` (request 0, the legacy `initialToolSpecs` contract) and each surface rotation's non-nil `ToolSpecs` replaces it; the completer's `applyAdvertisedTools` REPLACES the wire request's registry-derived tools with the live snapshot, so deferred tools outside the registry reach the wire from request 0 (see `internal/agent/sdk_advertised.go` for the recovery-request safety note: the SDK's Window-gated recovery never fires because the host wires no Window) |
 | `MaxToolCallsPerBatch` | `Options.MaxCallsPerTurn` | positive only |
+| `MaxConcurrentTools` | `Options.MaxConcurrentTools` | parallel dispatch worker pool; call context threads tool call IDs so per-call pass-1 parts and event synthesis do not race |
 | `BatchResultBudgetBytes > 0` | host-side shaping wrapper | `applyTurnShaping` charges one shared per-turn counter and applies the legacy degrade tiers (fit / re-cut with notice / notice alone); the SDK's omit-on-budget `TurnResultBudget` stays unset |
 | `MaxContextTokens` | host-side compaction | `prepareSDKHistory` calls `PreparationManager.Prepare`; SDK's `Window` stays nil |
 | `SummaryConfig.Summarizer` | host-side inject | `prepareSDKHistory` runs `Loop.injectSummary` once pre-run; SDK sees the summary frame |
@@ -55,24 +56,6 @@ The SDK path consumes these directly:
 The set value passes through (or the knob is simply absent), but the
 SDK interprets it differently or not at all. A `Backend: "sdk"`
 caller accepts the difference.
-
-- **`MaxConcurrentTools > 1`** — the SDK has a real worker pool
-  (`mivia-ai-sdk/agentloop/toolcall.go:119-163`), so a positive host
-  value DOES parallelize dispatch. Turn-shaping (`applyTurnShaping`
-  in `internal/agent/sdk_shaping.go`), however, charges the shaping
-  budget inside each worker goroutine in completion order, while the
-  legacy path charges in call order after all workers join
-  (`internal/agent/loop_tools.go:389-413` +
-  `internal/agent/shape_batch.go:183-213`). A host-side barrier-based
-  fix was attempted and structurally fails: the SDK does not expose
-  the call ID to `Tool.Run`, and its worker pool reuses goroutines
-  across calls (`executeCalls` inner loop), breaking
-  runtime-stack-based keying. Permanently accepted: closing the
-  parity gap requires an SDK-side change to thread call ID through
-  `InOut.Value` or `ctx`, which is out of scope here. A caller using
-  `MaxConcurrentTools > 1` with a positive `BatchResultBudgetBytes`
-  accepts non-deterministic shaping on the SDK backend; the legacy
-  backend remains deterministic.
 - **`SoftInterruptCooldown`** — the SDK's `bridgeSteerSignals` now
   caps `Steer.Trigger` fires with a shared `cooldownUntil atomic.Int64`
   over all three sites (the `InterruptCh` one-shot, the strict

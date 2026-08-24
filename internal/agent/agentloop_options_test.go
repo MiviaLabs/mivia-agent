@@ -656,3 +656,16 @@ func mustBinding(t *testing.T) contextstate.BindingRevision {
 	}
 	return b
 }
+
+// TestBuildAgentLoopOptionsCarriesMaxConcurrentTools asserts the host
+// Options.MaxConcurrentTools is forwarded to SDK agentloop.Options.
+func TestBuildAgentLoopOptionsCarriesMaxConcurrentTools(t *testing.T) {
+	l := &Loop{Completer: &fakeCompleter{name: "test"}, Tools: tools.NewRegistry()}
+	got, _, err := buildAgentLoopOptions(l, Options{MaxSteps: 5, MaxConcurrentTools: 4})
+	if err != nil {
+		t.Fatalf("buildAgentLoopOptions: %v", err)
+	}
+	if got.MaxConcurrentTools != 4 {
+		t.Fatalf("MaxConcurrentTools = %d, want 4", got.MaxConcurrentTools)
+	}
+}

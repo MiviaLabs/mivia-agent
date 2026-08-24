@@ -30,7 +30,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
-	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
+	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
 	sdktools "github.com/MiviaLabs/mivia-ai-sdk/tools"
 )
 
@@ -56,7 +56,7 @@ import (
 // channel; a nil return keeps the prior surface).
 type sdkTurnState struct {
 	steps      atomic.Int64
-	pass1      pass1Holder
+	pass1      pass1Map
 	dispatcher atomic.Pointer[runtime.Dispatcher]
 	spool      atomic.Pointer[remainder.Spool]
 	// streamTee holds the teeWriter installed as the SDK run's
@@ -77,14 +77,12 @@ type sdkTurnState struct {
 	shape      *turnShapeCounter
 	errMu      sync.Mutex
 	bridgeErr  error
-	// Tool-event synthesis state (sdk_tool_events.go): the call
-	// PointPreTool stashed (pendingTool), the executed call's recorded
-	// outcome (toolOutcome), and the once-per-iteration stream-revoke
+	// Tool-event synthesis state (sdk_tool_events.go): outcomes keyed
+	// by tool call ID, and the once-per-iteration stream-revoke
 	// gate (streamRevoked, armed at the first tool call, reset by the
 	// EventIterationStart bus subscription).
 	toolMu        sync.Mutex
-	pendingTool   *sdkshape.ToolCall
-	toolOutcome   *toolCallOutcome
+	toolOutcomes  map[string]*toolCallOutcome
 	streamRevoked atomic.Bool
 }
 
@@ -151,8 +149,33 @@ func (s *sdkTurnState) currentAdvertised() []provider.ToolSpec {
 // shapeCounter lazily builds the one turn-level shaping counter a
 // run (and every surface rotation inside it) shares.
 func (s *sdkTurnState) shapeCounter() *turnShapeCounter {
-	s.shapeOnce.Do(func() { s.shape = &turnShapeCounter{} })
+	s.shapeOnce.Do(func() { s.shape = newTurnShapeCounter() })
 	return s.shape
+}
+
+// resetIterationShaping resets nextIndex at the top of each iteration.
+func (s *sdkTurnState) resetIterationShaping() {
+	if s.shape != nil {
+		s.shape.mu.Lock()
+		s.shape.nextIndex = 0
+		s.shape.aborted = false
+		if s.shape.cond != nil {
+			s.shape.cond.Broadcast()
+		}
+		s.shape.mu.Unlock()
+	}
+}
+
+// abortIterationShaping wakes any waiters when a batch aborts.
+func (s *sdkTurnState) abortIterationShaping() {
+	if s.shape != nil {
+		s.shape.mu.Lock()
+		s.shape.aborted = true
+		if s.shape.cond != nil {
+			s.shape.cond.Broadcast()
+		}
+		s.shape.mu.Unlock()
+	}
 }
 
 // recordBridgeError keeps the FIRST bridge error; later ones are
@@ -180,13 +203,12 @@ func (s *sdkTurnState) bridgeError() error {
 // batch spawned by iteration N's response sees N.
 func (s *sdkTurnState) currentStep() int { return int(s.steps.Load()) }
 
-// pass1Holder hands one pass-1 resultParts from the dispatcher shim
-// (innermost) to the turn shaping wrapper (outermost). The SDK runs
-// tool calls sequentially, so the newest record always belongs to the
-// call whose wrapper chain is currently unwinding.
-type pass1Holder struct {
+// pass1Map hands pass-1 resultParts from the dispatcher shim
+// (innermost) to the turn shaping wrapper (outermost), keyed by tool
+// call ID so parallel calls under MaxConcurrentTools > 1 do not race.
+type pass1Map struct {
 	mu    sync.Mutex
-	parts resultParts
+	parts map[string]resultParts
 }
 
 // dispatcherShim wraps one SDK-converted tool with the legacy tool
@@ -249,30 +271,12 @@ func (d *dispatcherShim) Run(ctx context.Context, in sdktools.InOut) (sdktools.O
 	ctx, cancelTimeout, callTimeout := armDispatcherTimeout(ctx, d.opts, args, capability)
 	defer cancelTimeout()
 	var result, hookContext string
-	// RunAgentLoopOnce guarantees a non-nil opts.Dispatcher before tools
-	// are wrapped (either the caller wired one or a scoped dispatcher
-	// was built from l.Tools). A nil dispatcher at this point is a
-	// programmer error in package wiring, not a runtime condition;
-	// dispatch via the caller's hook has nothing to attach to, so the
-	// dispatcher must be there. A surface rotation may have swapped
-	// the dispatcher or spool since the wrap; the turn state carries
-	// the live values and wins over the wrap-time Options copy.
-	dispatcher := d.opts.Dispatcher
-	spool := d.opts.RemainderSpool
-	if d.turn != nil {
-		if live := d.turn.currentDispatcher(); live != nil {
-			dispatcher = live
-		}
-		if live := d.turn.currentSpool(); live != nil {
-			spool = live
-		}
-	}
+	dispatcher, spool := d.dispatcherAndSpool()
+	callKey := toolCallKeyFromContext(ctx, d.inner.Name())
 	// Legacy "running" tool_start: the analogue of loop_tool_exec.go's
-	// pre-dispatch emission, keyed on the call PointPreTool stashed.
-	if d.turn != nil {
-		if pending := d.turn.currentPendingToolCall(); pending != nil {
-			emit(d.opts, Event{Kind: EventToolStart, ToolCallID: pending.ID, Name: d.inner.Name(), Detail: "running"})
-		}
+	// pre-dispatch emission, keyed on the call ID in context.
+	if callKey != "" {
+		emit(d.opts, Event{Kind: EventToolStart, ToolCallID: callKey, Name: d.inner.Name(), Detail: "running"})
 	}
 	r := dispatcher.Invoke(ctx, runtime.Request{
 		ParentID: d.opts.ParentID, TurnID: d.opts.TurnID, SessionID: d.opts.SessionID,
@@ -302,8 +306,8 @@ func (d *dispatcherShim) Run(ctx context.Context, in sdktools.InOut) (sdktools.O
 	}
 	capBytes := effectiveResultCap(d.opts.MaxToolResultChars, capability.MaxResultBytes)
 	capped, refA, truncated := remainder.CapWithSpoolRef(spool, d.opts.SessionID, result, capBytes)
-	if d.turn != nil {
-		d.turn.pass1.store(resultParts{
+	if d.turn != nil && callKey != "" {
+		d.turn.pass1.store(callKey, resultParts{
 			cappedBody:   capped,
 			refA:         refA,
 			totalN:       len(result),
@@ -315,8 +319,38 @@ func (d *dispatcherShim) Run(ctx context.Context, in sdktools.InOut) (sdktools.O
 		})
 	}
 	body := appendHookContext(capped, hookContext)
-	d.recordToolEventOutcome(args, body, r.Err, ephemeral, r.IsDuplicate(), originalBody)
+	d.recordToolEventOutcome(callKey, args, body, r.Err, ephemeral, r.IsDuplicate(), originalBody)
 	return sdktools.Out{Value: body}, nil
+}
+
+// dispatcherAndSpool reads the live dispatcher and spool from the turn
+// state when available, falling back to the wrap-time Options copies.
+func (d *dispatcherShim) dispatcherAndSpool() (*runtime.Dispatcher, *remainder.Spool) {
+	dispatcher := d.opts.Dispatcher
+	spool := d.opts.RemainderSpool
+	if d.turn != nil {
+		if live := d.turn.currentDispatcher(); live != nil {
+			dispatcher = live
+		}
+		if live := d.turn.currentSpool(); live != nil {
+			spool = live
+		}
+	}
+	return dispatcher, spool
+}
+
+// toolCallKeyFromContext returns the lookup key for the in-flight tool call:
+// call.ID when non-empty, falling back to call.Name for ID-less test fixtures.
+func toolCallKeyFromContext(ctx context.Context, fallbackName string) string {
+	if tc, ok := toolcallctx.ToolCallFromContext(ctx); ok {
+		if tc.ID != "" {
+			return tc.ID
+		}
+		if tc.Name != "" {
+			return tc.Name
+		}
+	}
+	return fallbackName
 }
 
 // recordToolEventOutcome records the outcome the EventToolCallEnd
@@ -328,8 +362,8 @@ func (d *dispatcherShim) Run(ctx context.Context, in sdktools.InOut) (sdktools.O
 // (loop_tools.go emitToolEnd's rule); a later shim (ref-only notice,
 // turn-shaping re-cut) that rewrites the body overwrites the record so
 // tool_end matches the post-shaping body.
-func (d *dispatcherShim) recordToolEventOutcome(args []byte, body string, dispatchErr error, ephemeral bool, isDuplicate bool, originalBody string) {
-	if d.turn == nil {
+func (d *dispatcherShim) recordToolEventOutcome(callID string, args []byte, body string, dispatchErr error, ephemeral bool, isDuplicate bool, originalBody string) {
+	if d.turn == nil || callID == "" {
 		return
 	}
 	preview := ""
@@ -338,39 +372,47 @@ func (d *dispatcherShim) recordToolEventOutcome(args []byte, body string, dispat
 			preview = et.EphemeralResultMarker(args)
 		}
 	}
-	d.turn.recordToolOutcomeWithPreview(callIDOf(d.turn), d.inner.Name(), body, dispatchErr != nil, preview, isDuplicate, originalBody)
+	d.turn.recordToolOutcomeWithPreview(callID, d.inner.Name(), body, dispatchErr != nil, preview, isDuplicate, originalBody)
 }
 
-// callIDOf returns the pending call's ID, or "" when none is stashed.
-func callIDOf(turn *sdkTurnState) string {
-	if pending := turn.currentPendingToolCall(); pending != nil {
-		return pending.ID
+// store records the pass-1 parts for callID.
+func (m *pass1Map) store(callID string, p resultParts) {
+	if callID == "" {
+		return
 	}
-	return ""
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.parts == nil {
+		m.parts = make(map[string]resultParts)
+	}
+	m.parts[callID] = p
 }
 
-// store records the newest pass-1 parts.
-func (h *pass1Holder) store(p resultParts) {
-	h.mu.Lock()
-	h.parts = p
-	h.mu.Unlock()
-}
-
-// take returns the stored parts when body is exactly the parts'
-// model-visible output (hook context appended), clearing the record.
-// A body rewritten by an intermediate shim (the ref-only notice)
-// misses and leaves the caller on its default single-pass path.
-func (h *pass1Holder) take(body string) (resultParts, bool) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	p := h.parts
+// take returns the stored parts for callID when body is exactly the
+// parts' model-visible output (hook context appended), clearing the
+// record. A body rewritten by an intermediate shim (the ref-only
+// notice) misses and leaves the caller on its default single-pass path.
+func (m *pass1Map) take(callID string, body string) (resultParts, bool) {
+	if callID == "" {
+		return resultParts{}, false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.parts == nil {
+		return resultParts{}, false
+	}
+	p, ok := m.parts[callID]
+	if !ok {
+		return resultParts{}, false
+	}
 	if p.cappedBody == "" {
+		delete(m.parts, callID)
 		return resultParts{}, false
 	}
 	if body != appendHookContext(p.cappedBody, p.hookContext) {
 		return resultParts{}, false
 	}
-	h.parts = resultParts{}
+	delete(m.parts, callID)
 	return p, true
 }
 
