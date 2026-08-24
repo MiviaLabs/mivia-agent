@@ -27,7 +27,7 @@ func TestSDKTurnShapingNeverDropsACall(t *testing.T) {
 		t.Fatalf("got %d tool results, want 3 - shaping must never drop a call", len(bodies))
 	}
 	total := totalToolBytes(loop)
-	bound := budget + BatchDegradeFloorBytes + 3*(256+statusLineMaxBytes)
+	bound := budget + BatchDegradeFloorBytes + tailPreviewReserveBytes + 3*(256+statusLineMaxBytes)
 	if total > bound {
 		t.Fatalf("turn put %d bytes in history, over the bound %d", total, bound)
 	}

@@ -58,6 +58,34 @@ const (
 	derivedBudgetShare   = 4 // 25%
 	maxDerivableTokens   = math.MaxInt / bytesPerToken
 	unlimitedBatchBudget = 0
+
+	// readOutputToolName is the model-facing reader for remainder refs
+	// (internal/clichat.readOutputTool). It is already a bounded, paginated
+	// reader over content the batch/turn shaper itself spooled (32 KiB page /
+	// 256 KiB result cap - see internal/clichat/read_output.go), so it is
+	// exempt from the degrade tiers below: re-truncating it into ANOTHER
+	// remainder ref would send the model chasing a ref through its own
+	// recovery tool, which is the "ref-to-ref" failure this constant exists
+	// to prevent. agent cannot import clichat (clichat depends on agent), so
+	// the name is duplicated here rather than shared.
+	readOutputToolName = "read_output"
+
+	// zeroBudgetPreviewBytes is the small per-result preview a tail result
+	// gets once the batch/turn budget itself is fully spent (remaining <= 0).
+	// Without it, EVERY result after the one straddling result degrades to a
+	// bare "kept 0" notice - even a result whose whole body was a few KB -
+	// forcing a read_output round trip for content that would have fit
+	// trivially. Funded from tailPreviewReserveBytes, not from the primary
+	// budget, so this never changes the primary budget's own bound.
+	zeroBudgetPreviewBytes = 512
+
+	// tailPreviewReserveBytes bounds the TOTAL bytes zeroBudgetPreviewBytes
+	// may spend across one entire batch/turn, independent of how many results
+	// degrade to zero. Without this cap, a batch of many tiny results would
+	// each claim a preview and the aggregate bound (F6) would stop being a
+	// small constant - it would scale with batch size. Once the reserve is
+	// spent, later tail results return to a bare notice exactly as before.
+	tailPreviewReserveBytes = 8 << 10
 )
 
 // resultParts is one tool result in structured form, as the worker produced it
@@ -266,10 +294,11 @@ func shapeBatch(parts []resultParts, budget int, env shapeEnv) ([]string, shapeR
 	}
 
 	remaining := budget
+	previewReserve := tailPreviewReserveBytes
 	lastDegraded := -1
 	var lastState degradeState
 	for i, p := range parts {
-		body, state, degraded := shapeOne(p, remaining, env)
+		body, state, degraded, previewUsed := shapeOne(p, remaining, previewReserve, env)
 		shaped[i] = body
 		if !degraded {
 			remaining -= len(body)
@@ -296,6 +325,13 @@ func shapeBatch(parts []resultParts, budget int, env shapeEnv) ([]string, shapeR
 			}
 		} else {
 			remaining = 0
+			// previewUsed is only ever non-zero when this degrade drew from
+			// the reserve (remaining was already 0 going in), so a
+			// floor-tier straddle never touches it.
+			previewReserve -= previewUsed
+			if previewReserve < 0 {
+				previewReserve = 0
+			}
 		}
 		report.degraded++
 		lastDegraded, lastState = i, state
@@ -332,27 +368,51 @@ func shapeBatch(parts []resultParts, budget int, env shapeEnv) ([]string, shapeR
 // model loses a whole result - and short bodies are exactly where the failure
 // explanations live ("error: no such file"). Requiring the saving to cover the
 // notice itself is the threshold.
-func shapeOne(p resultParts, remaining int, env shapeEnv) (string, degradeState, bool) {
+//
+// previewReserve is the reserve pool left for the zero-budget preview tier
+// (see tailPreviewReserveBytes); the fourth return value is how much of it
+// this call spent, which is always 0 unless that tier fired.
+func shapeOne(p resultParts, remaining, previewReserve int, env shapeEnv) (string, degradeState, bool, int) {
 	// Ref-only tier (plan tools/06): a tool opted out of inlining is elided
 	// before the budget tiers see it. The notice is carried in fallback so
 	// the D8 status-line recomposition returns it verbatim, and refOnly marks
 	// the elision so shapeBatch charges its notice's bytes instead of
 	// spending the rest of the budget on it.
 	if notice, ok := refOnlyTier(env, p, p.toolName); ok {
-		return notice, degradeState{fallback: notice, refOnly: true}, true
+		return notice, degradeState{fallback: notice, refOnly: true}, true, 0
+	}
+	// read_output is the model's own recovery path for a degraded result
+	// (see readOutputToolName). Degrading ITS result would hand the model a
+	// ref to a ref instead of the page it asked for, so it is charged like
+	// any tier-1 result that fits and never re-cut.
+	if p.toolName == readOutputToolName {
+		return p.cappedBody, degradeState{}, false, 0
 	}
 	if len(p.cappedBody) <= remaining {
-		return p.cappedBody, degradeState{}, false
+		return p.cappedBody, degradeState{}, false, 0
 	}
 	// The pre-check skips the spool round trip for bodies that cannot possibly
 	// clear the threshold.
 	minNotice := degradeMinSize(p)
 	if len(p.cappedBody) <= 2*minNotice {
-		return p.cappedBody, degradeState{}, false
+		return p.cappedBody, degradeState{}, false, 0
 	}
 	target := 0
-	if remaining > 0 {
+	previewUsed := 0
+	switch {
+	case remaining > 0:
 		target = recutTarget(p, remaining)
+	case previewReserve > 0:
+		// The primary budget is spent, but a small reserve remains: keep a
+		// short preview instead of collapsing straight to a bare notice.
+		target = zeroBudgetPreviewBytes
+		if p.effectiveCap > 0 && target > p.effectiveCap {
+			target = p.effectiveCap
+		}
+		if target > previewReserve {
+			target = previewReserve
+		}
+		previewUsed = target
 	}
 	state := resolveDegrade(p, target, env)
 	body := composeDegraded(state, "")
@@ -360,9 +420,9 @@ func shapeOne(p resultParts, remaining int, env shapeEnv) (string, degradeState,
 		// Same threshold, decided against the body that was actually built: a
 		// re-cut whose target lands on the per-call cap reproduces pass 1 byte
 		// for byte, and paying a second notice for that is pure loss.
-		return p.cappedBody, degradeState{}, false
+		return p.cappedBody, degradeState{}, false, 0
 	}
-	return body, state, true
+	return body, state, true, previewUsed
 }
 
 // refPlaceholder sizes a notice for a body that has not been spooled yet.

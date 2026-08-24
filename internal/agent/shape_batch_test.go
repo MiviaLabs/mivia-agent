@@ -118,14 +118,19 @@ func TestShapeBatchTailDegradesToNoticeOnlyAndStaysBounded(t *testing.T) {
 		t.Fatalf("degraded=%d, want %d", report.degraded, len(parts))
 	}
 	framing := (len(remainder.TruncationNotice(math.MaxInt32, math.MaxInt32, "ref:output:"+strings.Repeat("f", 64))) + statusLineMaxBytes) * len(parts)
-	bound := budget + BatchDegradeFloorBytes + framing
+	// tailPreviewReserveBytes is a small, batch-size-independent addition: the
+	// reserve pool is fixed regardless of how many of the 200 tail results
+	// draw from it, so the bound stays a constant rather than scaling with
+	// len(parts).
+	bound := budget + BatchDegradeFloorBytes + tailPreviewReserveBytes + framing
 	if report.charged > bound {
 		t.Fatalf("charged %d bytes, over the finite bound %d", report.charged, bound)
 	}
-	// The real point: the tail is notices, not bodies.
+	// The real point: the tail is notices (with at most a small reserve-funded
+	// preview on the first few), not full bodies.
 	for i := 1; i < len(shaped); i++ {
-		if len(shaped[i]) > 256 {
-			t.Fatalf("tail result %d kept %d bytes, want a notice-only degrade", i, len(shaped[i]))
+		if len(shaped[i]) > zeroBudgetPreviewBytes+256 {
+			t.Fatalf("tail result %d kept %d bytes, want a notice-only degrade (or small preview)", i, len(shaped[i]))
 		}
 		if !strings.Contains(shaped[i], "ref:output:") {
 			t.Fatalf("tail result %d was destroyed instead of referenced: %q", i, shaped[i])
@@ -256,6 +261,98 @@ func TestShapeBatchNeverPutsAnEphemeralBodyBehindARef(t *testing.T) {
 	}
 	if got := store.Len(); got != 0 {
 		t.Fatalf("%d bodies were spooled for an all-ephemeral degrade, want 0", got)
+	}
+}
+
+// read_output is already a bounded, paginated reader for remainder refs
+// (32 KiB page / 256 KiB result cap). Degrading its own result into ANOTHER
+// remainder ref would send the model chasing a ref through its own recovery
+// tool, so it is exempt from the degrade tiers - charged like tier 1
+// (fits-whole) and never re-cut into a notice.
+func TestShapeBatchNeverDegradesReadOutputResults(t *testing.T) {
+	spool, _ := testSpool(t)
+	const budget = 1 << 10
+	grep := untruncatedPart(body(200<<10), 0)
+	grep.toolName = "grep"
+	readOut := untruncatedPart(body(4<<10), 0)
+	readOut.toolName = "read_output"
+	parts := []resultParts{grep, readOut}
+
+	shaped, report := shapeBatch(parts, budget, newShapeEnv(spool, shapeTestPrincipal))
+
+	if shaped[0] == parts[0].cappedBody {
+		t.Fatal("precondition: grep result should have degraded to leave the budget spent")
+	}
+	if shaped[1] != parts[1].cappedBody {
+		t.Fatalf("read_output result was degraded to %d bytes, want the full %d-byte body kept whole",
+			len(shaped[1]), len(parts[1].cappedBody))
+	}
+	if strings.Contains(shaped[1], "... truncated: kept ") {
+		t.Fatal("read_output result carries a truncation notice; it must never be re-truncated")
+	}
+	if report.degraded != 1 {
+		t.Fatalf("degraded=%d, want 1 (only grep; read_output is exempt)", report.degraded)
+	}
+}
+
+// A batch budget correctly bounds aggregate bytes, but once it is fully
+// spent, a handful of small tail results getting reduced to a bare "kept 0"
+// notice is a needless round trip: the content was already small. A bounded
+// reserve (independent of how many results are in the batch, so the F6
+// aggregate bound stays a small constant) lets the first few post-exhaustion
+// results keep a short preview instead of nothing.
+func TestShapeBatchGivesEarlyTailResultsASmallPreviewInsteadOfZero(t *testing.T) {
+	spool, _ := testSpool(t)
+	const budget = 1 << 10
+	straddler := untruncatedPart(body(64<<10), 0)
+	tailA := untruncatedPart(body(3<<10), 0)
+	tailB := untruncatedPart(body(3<<10), 0)
+	parts := []resultParts{straddler, tailA, tailB}
+
+	shaped, report := shapeBatch(parts, budget, newShapeEnv(spool, shapeTestPrincipal))
+
+	if report.remaining != 0 {
+		t.Fatalf("remaining=%d, want 0 (budget fully spent by the straddler)", report.remaining)
+	}
+	if len(keptContent(shaped[1])) == 0 {
+		t.Fatalf("first post-exhaustion result kept 0 bytes, want a short preview: tail=%q", tailOf(shaped[1]))
+	}
+	if !strings.Contains(shaped[1], "ref:output:") {
+		t.Fatal("previewed tail result carries no remainder ref to read the rest")
+	}
+	if len(shaped[1]) > zeroBudgetPreviewBytes+512 {
+		t.Fatalf("preview result kept %d bytes, over the small preview bound", len(shaped[1]))
+	}
+}
+
+// The preview reserve is a bounded pool, not a per-result allowance: once it
+// is spent, later tail results go back to a bare notice, so a batch with many
+// tail results still has a finite (batch-size-independent) worst case.
+func TestShapeBatchExhaustsThePreviewReserveThenReturnsToBareNotices(t *testing.T) {
+	spool, _ := testSpool(t)
+	const budget = 1 << 10
+	parts := make([]resultParts, 0, 1+tailPreviewReserveBytes/zeroBudgetPreviewBytes+4)
+	parts = append(parts, untruncatedPart(body(64<<10), 0))
+	for i := 0; i < cap(parts)-1; i++ {
+		parts = append(parts, untruncatedPart(body(3<<10), 0))
+	}
+	shaped, _ := shapeBatch(parts, budget, newShapeEnv(spool, shapeTestPrincipal))
+
+	previewed := 0
+	for i := 1; i < len(shaped); i++ {
+		if len(keptContent(shaped[i])) > 0 {
+			previewed++
+		}
+	}
+	if previewed == 0 {
+		t.Fatal("no tail result ever got a preview")
+	}
+	if previewed*zeroBudgetPreviewBytes > tailPreviewReserveBytes+zeroBudgetPreviewBytes {
+		t.Fatalf("%d results previewed, spending more than the %d-byte reserve allows",
+			previewed, tailPreviewReserveBytes)
+	}
+	if len(keptContent(shaped[len(shaped)-1])) != 0 {
+		t.Fatal("last tail result still got a preview; the reserve should have run out by then")
 	}
 }
 

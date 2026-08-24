@@ -48,16 +48,21 @@ import (
 // goroutine indefinitely when ctx cancels mid-batch (no SDK
 // iteration boundary reaches the host to broadcast it).
 type turnShapeCounter struct {
-	mu            sync.Mutex
-	signal        chan struct{} // closed = abort; swapped = normal advance
-	nextIndex     int
-	charged       int
-	aborted       bool
-	closedByAbort bool // tracks who owns the close of the CURRENT signal channel
+	mu        sync.Mutex
+	signal    chan struct{} // closed = abort; swapped = normal advance
+	nextIndex int
+	charged   int
+	// previewReserve mirrors shapeBatch's tailPreviewReserveBytes pool for
+	// the SDK's sequential-charging path: a small, turn-size-independent
+	// budget so post-exhaustion results get a short preview instead of a
+	// bare "kept 0" notice (see zeroBudgetPreviewBytes).
+	previewReserve int
+	aborted        bool
+	closedByAbort  bool // tracks who owns the close of the CURRENT signal channel
 }
 
 func newTurnShapeCounter() *turnShapeCounter {
-	return &turnShapeCounter{signal: make(chan struct{})}
+	return &turnShapeCounter{signal: make(chan struct{}), previewReserve: tailPreviewReserveBytes}
 }
 
 // broadcast swaps the signal channel. Old waiters see the closed
@@ -148,11 +153,11 @@ func (w *turnShapeWrapper) Run(ctx context.Context, in sdktools.InOut) (sdktools
 	if parts.effectiveCap == 0 {
 		parts.effectiveCap = w.cap
 	}
-	shaped, state, degraded := shapeOne(parts, remaining, w.env)
+	shaped, state, degraded, previewUsed := shapeOne(parts, remaining, w.counter.previewReserve, w.env)
 	if parts.hookContext != "" {
 		shaped = appendHookContext(shaped, parts.hookContext)
 	}
-	charged, advanced := w.chargeAndAdvance(degraded, state, len(shaped), callIndex)
+	charged, advanced := w.chargeAndAdvance(degraded, state, len(shaped), callIndex, previewUsed)
 	w.counter.mu.Unlock()
 	if advanced {
 		w.counter.broadcast()
@@ -214,9 +219,13 @@ func (w *turnShapeWrapper) resolveShapeParts(callKey, s string) resultParts {
 // rule): no later result may claim the floor. Returns the charged
 // total and whether the counter's nextIndex was advanced past this
 // callIndex, so the caller can broadcast. Caller must hold counter.mu.
-func (w *turnShapeWrapper) chargeAndAdvance(degraded bool, state degradeState, shapedLen, callIndex int) (int, bool) {
+func (w *turnShapeWrapper) chargeAndAdvance(degraded bool, state degradeState, shapedLen, callIndex, previewUsed int) (int, bool) {
 	if degraded && !state.refOnly {
 		w.counter.charged = w.budget
+		w.counter.previewReserve -= previewUsed
+		if w.counter.previewReserve < 0 {
+			w.counter.previewReserve = 0
+		}
 	} else {
 		w.counter.charged += shapedLen
 	}
