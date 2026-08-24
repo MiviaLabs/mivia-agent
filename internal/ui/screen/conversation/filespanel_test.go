@@ -697,3 +697,13 @@ func TestPanelUserMessageRendering(t *testing.T) {
 	viewClosedAgain := s.View()
 	assertExactFrame(t, viewClosedAgain, uikitconfig.BreakpointWide, 30)
 }
+
+func TestNavClickSelectsRow(t *testing.T) {
+	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 24, sampleDiffs()...))
+	// Row 0 is top gutter, row 1 is SIDEBAR, row 2 is files header, row 3 is file 0
+	next, _ := s.handleNavClick(3)
+	s = next.(Screen)
+	if !s.panel.dialog {
+		t.Error("clicking file row 0 should open content dialog")
+	}
+}

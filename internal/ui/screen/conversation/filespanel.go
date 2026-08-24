@@ -436,19 +436,23 @@ func (s Screen) panelFilterEntries(needle string) ([]fileEntry, []subagentRow) {
 
 // selectNavRow maps a rendered row in the nav sidebar to an entry index in the picker.
 func (p *panel) selectNavRow(clickRow int) bool {
-	needle := strings.ToLower(p.list.Filter())
-	visible, agents := p.filterEntries(needle)
-	total := len(visible) + len(agents)
-	if total == 0 {
+	// row 0 is SIDEBAR title
+	// row 1 is "files changed (N)" header
+	if clickRow <= 1 {
 		return false
 	}
-	if clickRow > 0 && clickRow <= len(visible) {
-		p.list.MoveTo(clickRow - 1)
+	fileIdx := clickRow - 2
+	if fileIdx >= 0 && fileIdx < len(p.entries) {
+		p.list.MoveTo(fileIdx)
 		return true
 	}
-	subHeader := len(visible) + 1
-	if clickRow > subHeader && clickRow <= subHeader+len(agents) {
-		p.list.MoveTo(len(p.entries) + (clickRow - subHeader - 1))
+	subHeader := 2 + len(p.entries)
+	if clickRow == subHeader {
+		return false
+	}
+	agentIdx := clickRow - (subHeader + 1)
+	if agentIdx >= 0 && agentIdx < len(p.agents) {
+		p.list.MoveTo(len(p.entries) + agentIdx)
 		return true
 	}
 	return false
