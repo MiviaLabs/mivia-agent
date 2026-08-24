@@ -526,7 +526,7 @@ func TestMentionMenuViewAndScrolling(t *testing.T) {
 
 func TestActiveMenuView_MentionMenu(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII, 80)
-	m.SetMentions([]Mention{{Path: "main.go", Desc: "entrypoint"}})
+	m.SetMentions([]Mention{{Path: "main.go", Display: "main.go"}})
 	m.SetValue("@ma")
 	if !m.MentionMenuActive() {
 		t.Fatal("expected mention menu active")
