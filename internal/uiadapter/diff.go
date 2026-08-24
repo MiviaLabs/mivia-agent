@@ -108,6 +108,11 @@ func parseDiffHunks(output string) (hunks []uievent.DiffHunk, added, removed int
 					Kind: uievent.DiffLineContext,
 					Text: strings.TrimPrefix(line, " "),
 				})
+			} else if line == "" {
+				currentHunk.Lines = append(currentHunk.Lines, uievent.DiffLine{
+					Kind: uievent.DiffLineContext,
+					Text: "",
+				})
 			}
 		}
 	}

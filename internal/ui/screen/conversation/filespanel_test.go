@@ -472,6 +472,19 @@ func TestPanelNarrowCollapsesToListFullWidth(t *testing.T) {
 	}
 }
 
+func TestPanelDiffDialog_FitsInsideDialogFrameWithoutClipTruncation(t *testing.T) {
+	d := sampleDiffs()[0]
+	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 24, d))
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	s = next.(Screen)
+	view := s.View()
+	for _, line := range strings.Split(view, "\n") {
+		if strings.HasSuffix(strings.TrimRight(line, " │"), "~") {
+			t.Errorf("line was truncated with clip marker: %q", line)
+		}
+	}
+}
+
 // TestPanelLiveEntryAppearsWhileComposerFocused is the panel's
 // defining contract: with the panel open and focus back on the
 // composer, a sent message whose turn edits a file grows the panel's

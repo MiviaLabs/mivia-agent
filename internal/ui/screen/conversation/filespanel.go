@@ -385,7 +385,12 @@ func (s Screen) panelBodyRows() int {
 // go negative (a negative window reads as dead scroll keys).
 func (s *Screen) scrollPanel(dir int) {
 	s.panel.offset += dir * max(1, s.panelBodyRows()/2)
-	rows := len(s.panel.contentRows(s.Theme, s.Tier, s.chatWidth()-4))
+	frameW := contentWidth(s.width)
+	if s.panelIsSplit() {
+		frameW, _ = render.SplitWidths(frameW)
+	}
+	bodyW := render.DialogBodyWidth(frameW)
+	rows := len(s.panel.contentRows(s.Theme, s.Tier, bodyW))
 	if max := rows - s.panelBodyRows(); max >= 0 {
 		s.panel.offset = min(s.panel.offset, max)
 	} else {
@@ -671,7 +676,12 @@ func (s Screen) dialogParts() (title, body, hint string) {
 	if e, ok := s.panel.selected(); ok {
 		title = e.Path
 	}
-	rows := s.panel.contentRows(s.Theme, s.Tier, s.chatWidth()-4)
+	frameW := contentWidth(s.width)
+	if s.panelIsSplit() {
+		frameW, _ = render.SplitWidths(frameW)
+	}
+	bodyW := render.DialogBodyWidth(frameW)
+	rows := s.panel.contentRows(s.Theme, s.Tier, bodyW)
 	fit := s.panelBodyRows()
 	start := min(max(0, s.panel.offset), max(0, len(rows)-fit))
 	end := min(start+fit, len(rows))
