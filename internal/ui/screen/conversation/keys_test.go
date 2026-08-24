@@ -664,7 +664,7 @@ func TestStatusRowStatesWhenScrolledAway(t *testing.T) {
 		}})
 		scr = n.(Screen)
 	}
-	if got := ansi.Strip(scr.statusRow()); got != "?:help  ctrl+o:transcript  ctrl+b:sidebar  ctrl+c:quit" {
+	if got := strings.TrimSpace(ansi.Strip(scr.statusRow())); got != "?:help  ctrl+o:transcript  ctrl+b:sidebar  ctrl+c:quit" {
 		t.Errorf("got %q, want only the persistent key hint while following", got)
 	}
 

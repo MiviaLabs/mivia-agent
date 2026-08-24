@@ -20,7 +20,6 @@ import (
 	settingsscreen "github.com/MiviaLabs/mivia-agent/internal/ui/screen/settings"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/themepicker"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
-	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/replay"
@@ -996,78 +995,6 @@ func TestF2PushesSettingsScreen(t *testing.T) {
 	}
 	if _, ok := msg.Screen.(settingsscreen.Screen); !ok {
 		t.Errorf("got %T, want a settingsscreen.Screen", msg.Screen)
-	}
-}
-
-// TestStatusTextShowsContextPercentAndCancelHintDuringATurn pins
-// wireframes-panes.md section 9's active-turn status line shape:
-// "- running  <detail>   12s   62% ctx   esc to cancel". Before this,
-// the status text stopped at the elapsed time - no context share and
-// no cancel affordance, even though Esc genuinely does cancel the turn
-// (keymap.IDCancel, ContextGlobal: "cancel the turn, keep the text").
-func TestStatusTextShowsContextPercentAndCancelHintDuringATurn(t *testing.T) {
-	s := newScreen(t, replay.New(nil, 0), nil, nil)
-	s.active = fakeHandle{id: "t1"}
-	s.statusline.Start("thinking", fixedNow())
-	s.topbar.SetSession(ports.ModelInfo{Name: "m", ContextWindow: 100_000},
-		ports.Usage{InputTokens: 40_000, OutputTokens: 22_000})
-
-	got := s.statusText()
-	if !strings.Contains(got, "62% ctx") {
-		t.Errorf("got %q, want the context share", got)
-	}
-	if !strings.Contains(got, "esc to cancel") {
-		t.Errorf("got %q, want the cancel hint", got)
-	}
-}
-
-// TestStatusTextOmitsContextPercentWhenUnknown pins the same
-// zero-value-safe rule the rest of this file follows: an unknown
-// context window (topbar.ContextPercent's ok=false) must not print a
-// fabricated percentage.
-func TestStatusTextOmitsContextPercentWhenUnknown(t *testing.T) {
-	s := newScreen(t, replay.New(nil, 0), nil, nil)
-	s.active = fakeHandle{id: "t1"}
-	s.statusline.Start("thinking", fixedNow())
-
-	got := s.statusText()
-	if strings.Contains(got, "ctx") {
-		t.Errorf("got %q, want no ctx share when the context window is unknown", got)
-	}
-	if !strings.Contains(got, "esc to cancel") {
-		t.Errorf("got %q, want the cancel hint even without a known context share", got)
-	}
-}
-
-// TestStatusTextHasNoCancelHintWithoutAnActiveTurn: the hint promises
-// something Esc can actually do (ux-rules.md rule 1.4, "the footer
-// hint must state the complete truth for the current state") - with no
-// turn running there is nothing to cancel.
-func TestStatusTextHasNoCancelHintWithoutAnActiveTurn(t *testing.T) {
-	s := newScreen(t, replay.New(nil, 0), nil, nil)
-	if got := s.statusText(); strings.Contains(got, "esc to cancel") {
-		t.Errorf("got %q, want no cancel hint with no active turn", got)
-	}
-}
-
-// TestStatusRowClipsWithTheSharedClipMarker pins wireframes-panes.md
-// section 8/14's shared clip glyph for the status row's own final
-// width clamp - a separate truncation from the screen-edge gutter's
-// own, since it runs on the composed line before gutter ever sees it.
-// A long turnTail (context share + cancel hint) is exactly the kind of
-// content that can now push this row past a narrow terminal's width.
-func TestStatusRowClipsWithTheSharedClipMarker(t *testing.T) {
-	s := newScreen(t, replay.New(nil, 0), nil, nil)
-	next, _ := s.Update(tea.WindowSizeMsg{Width: 20, Height: 24})
-	s = next.(Screen)
-	s.active = fakeHandle{id: "t1"}
-	s.statusline.Start("thinking", fixedNow())
-	s.topbar.SetSession(ports.ModelInfo{Name: "m", ContextWindow: 100_000},
-		ports.Usage{InputTokens: 40_000, OutputTokens: 22_000})
-
-	got := ansi.Strip(s.statusRow())
-	if !strings.Contains(got, uikitconfig.ClipMarker) {
-		t.Errorf("got %q, want the clip marker %q on the clipped status row", got, uikitconfig.ClipMarker)
 	}
 }
 

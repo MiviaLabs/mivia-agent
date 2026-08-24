@@ -5,6 +5,7 @@ package conversation
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/charmbracelet/x/ansi"
 
@@ -19,39 +20,71 @@ import (
 // It is always drawn, even when there is nothing to say, because a row
 // that appears and disappears reflows every wrapped line above it
 // (docs/design/ux-rules.md rule 2.7). Its right side carries the compact
-// key hint, generated from the keymap table so it cannot drift from the
-// help screen; transient state (turn status, scroll affordances) takes
-// the left. The whole row is one line, truncated to the chat column's
-// width - inside the split's left pane it must not exceed the pane.
+// key hints / tooltips, generated from the keymap table so it cannot drift
+// from the help screen; transient state (turn status, elapsed timer,
+// scroll affordances) takes the left. The whole row is one line,
+// truncated to the chat column's width.
 func (s Screen) statusRow() string {
-	line := s.statusText()
-	var hint string
-	if s.embedded {
-		hint = render.Role(s.Theme, s.Tier, theme.RoleFGSubtle).Render("esc:close dialog")
-	} else if s.panel.open && s.panel.focused {
-		hint = render.Role(s.Theme, s.Tier, theme.RoleAccent).Render("tab:composer") + "  " +
-			render.Role(s.Theme, s.Tier, theme.RoleFGSubtle).Render("↑/↓:select  enter:view  esc:back")
-	} else if s.quitArmed {
-		prefix := s.keys.Hint(keymap.IDHelp, keymap.IDOpenPager, keymap.IDPanelToggle)
-		warn := render.Role(s.Theme, s.Tier, theme.RoleWarning).Render("ctrl+c:press again to quit")
-		if prefix != "" {
-			hint = render.Role(s.Theme, s.Tier, theme.RoleFGSubtle).Render(prefix) + "  " + warn
+	left := s.statusText()
+	right := s.statusRight()
+	w := s.chatWidth()
+	if w <= 0 {
+		w = 80
+	}
+
+	var line string
+	leftW := ansi.StringWidth(left)
+	rightW := ansi.StringWidth(right)
+
+	if left != "" && right != "" {
+		gap := w - leftW - rightW
+		if gap >= 1 {
+			line = left + strings.Repeat(" ", gap) + right
 		} else {
-			hint = warn
+			line = ansi.Truncate(left+" "+right, w, uikitconfig.ClipMarker)
 		}
-	} else {
-		hint = render.Role(s.Theme, s.Tier, theme.RoleFGSubtle).
-			Render(s.keys.Hint(keymap.IDHelp, keymap.IDOpenPager, keymap.IDPanelToggle, keymap.IDQuit))
+	} else if left != "" {
+		line = left
+		if leftW > w {
+			line = ansi.Truncate(line, w, uikitconfig.ClipMarker)
+		}
+	} else if right != "" {
+		gap := w - rightW
+		if gap > 0 {
+			line = strings.Repeat(" ", gap) + right
+		} else {
+			line = ansi.Truncate(right, w, uikitconfig.ClipMarker)
+		}
 	}
-	if line == "" {
-		line = hint
-	} else {
-		line += "  " + hint
-	}
-	if s.width > 2 {
+
+	if s.width > 2 && ansi.StringWidth(line) > s.chatWidth() {
 		line = ansi.Truncate(line, s.chatWidth(), uikitconfig.ClipMarker)
 	}
 	return line
+}
+
+func (s Screen) statusRight() string {
+	if s.embedded {
+		return render.Role(s.Theme, s.Tier, theme.RoleFGSubtle).Render("esc:close dialog")
+	}
+	if s.panel.open && s.panel.focused {
+		return render.Role(s.Theme, s.Tier, theme.RoleAccent).Render("tab:composer") + "  " +
+			render.Role(s.Theme, s.Tier, theme.RoleFGSubtle).Render("↑/↓:select  enter:view  esc:back")
+	}
+	if s.quitArmed {
+		prefix := s.keys.Hint(keymap.IDHelp, keymap.IDOpenPager, keymap.IDPanelToggle)
+		warn := render.Role(s.Theme, s.Tier, theme.RoleWarning).Render("ctrl+c:press again to quit")
+		if prefix != "" {
+			return render.Role(s.Theme, s.Tier, theme.RoleFGSubtle).Render(prefix) + "  " + warn
+		}
+		return warn
+	}
+	subtle := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle)
+	base := s.keys.Hint(keymap.IDHelp, keymap.IDOpenPager, keymap.IDPanelToggle, keymap.IDQuit)
+	if s.active != nil {
+		return subtle.Render("esc:cancel") + "  " + subtle.Render(base)
+	}
+	return subtle.Render(base)
 }
 
 // toolDetail is the status line's "<detail>" field for a pending or
@@ -69,31 +102,10 @@ func toolDetail(name string, args map[string]any) string {
 	return detail
 }
 
-// turnTail is the trailing fields wireframes-panes.md section 9 adds
-// to an active turn's status line, after the mark/label/elapsed
-// statusline.Model already draws: the context share (when the window
-// size is known - an unknown window is left out rather than printing
-// a fabricated percentage) and the cancel hint, which states real
-// behavior (keymap.IDCancel binds esc to "cancel the turn, keep the
-// text" in ContextGlobal - ux-rules.md rule 1.4 forbids a hint that
-// promises something the current state cannot do).
-func (s Screen) turnTail() string {
-	subtle := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle)
-	var tail string
-	if pct, ok := s.topbar.ContextPercent(); ok {
-		tail += subtle.Render(fmt.Sprintf("  %d%% ctx", pct))
-	}
-	tail += subtle.Render("  esc to cancel")
-	return tail
-}
-
 // statusText is the transient left side of the status row: the turn's
 // status line, or the scroll and truncation affordances.
 func (s Screen) statusText() string {
 	if v := s.statusline.View(s.now()); v != "" {
-		if s.active != nil {
-			v += s.turnTail()
-		}
 		return v
 	}
 	// Narrow panel open: the transcript is hidden behind the list, so

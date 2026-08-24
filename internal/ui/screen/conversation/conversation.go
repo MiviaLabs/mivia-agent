@@ -437,7 +437,7 @@ func overlayRows(text string, height int) []string {
 
 // handlePaste, handleWheel, send, handleTurnEvent, and applyTheme live in
 // paste.go, mouse.go, and events.go respectively, grouped by the input
-// shape they handle. statusRow / turnTail / statusText / toolDetail live
+// shape they handle. statusRow / statusRight / statusText / toolDetail live
 // in status.go.
 //
 // SetCommands supplies the slash-completion candidates. The command set
