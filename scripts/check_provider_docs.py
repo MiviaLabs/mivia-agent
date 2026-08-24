@@ -41,6 +41,7 @@ DISPLAY_TO_KEY = {
     "ZAI": "zai",
     "Ollama": "ollama",
     "LLM Gateway": "llmgateway",
+    "MiniMax": "minimax",
 }
 
 # Reverse: registry key -> the display names the docs may use for it. The arch
@@ -51,6 +52,7 @@ KEY_TO_DISPLAYS = {
     "zai": ["ZAI", "z.ai"],
     "ollama": ["Ollama"],
     "llmgateway": ["LLM Gateway"],
+    "minimax": ["MiniMax"],
 }
 
 

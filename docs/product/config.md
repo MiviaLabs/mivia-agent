@@ -44,6 +44,7 @@ The workspace `.env` stays beside the project files at `./.env`. Tools such as d
 | DeepSeek advanced example | `deepseek-v4-pro` (declare it, then set `default_model` or use `--model`) |
 | ZAI example | `glm-5.2` (declare it under `providers.zai`) |
 | Ollama example | `gpt-oss:120b` (declare it under `providers.ollama`) |
+| MiniMax example | `MiniMax-M3` (declare it under `providers.minimax`) |
 
 ## Set up a provider
 

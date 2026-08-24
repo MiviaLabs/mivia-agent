@@ -16,8 +16,13 @@ func TestLookupAndNamesAreStable(t *testing.T) {
 		ollama.DefaultURL != "https://ollama.com/v1" || ollama.DefaultAPIKeyEnv != "OLLAMA_API_KEY" {
 		t.Fatalf("ollama descriptor=%+v ok=%v", ollama, ok)
 	}
+	minimax, ok := Lookup("minimax")
+	if !ok || minimax.Name != "minimax" || minimax.DefaultModel != "MiniMax-M3" ||
+		minimax.DefaultURL != "https://api.minimax.io/v1" || minimax.DefaultAPIKeyEnv != "MINIMAX_API_KEY" {
+		t.Fatalf("minimax descriptor=%+v ok=%v", minimax, ok)
+	}
 	names := Names()
-	if len(names) != 5 || names[0] != "deepseek" || names[1] != "llmgateway" || names[2] != "ollama" || names[3] != "openrouter" || names[4] != "zai" {
+	if len(names) != 6 || names[0] != "deepseek" || names[1] != "llmgateway" || names[2] != "minimax" || names[3] != "ollama" || names[4] != "openrouter" || names[5] != "zai" {
 		t.Fatalf("names=%v", names)
 	}
 	names[0] = "mutated"

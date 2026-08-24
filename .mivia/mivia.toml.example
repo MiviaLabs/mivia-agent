@@ -7,7 +7,7 @@
 
 [provider]
 # Default provider: openrouter. Default model: openai/gpt-5.6-luna.
-# Other providers: deepseek, zai, ollama, llmgateway.
+# Other providers: deepseek, zai, ollama, llmgateway, minimax.
 name = "openrouter"
 # "auto" (default) captures and publishes provider-reported prompt-cache
 # usage accounting (cache hit/miss token counts) when a response reports it.
@@ -112,10 +112,28 @@ models = [
   # The :free variant trains on your inputs - use the paid endpoint (retains
   # prompts 90 days, trains nothing).
   { name = "poolside/laguna-s-2.1", context_window_tokens = 1048576, max_output_tokens = 131072, reasoning_efforts = ["off", "max"], reasoning = "max", reasoning_dialect = "openrouter_onoff" },
+  # MiniMax-M3: frontier multimodal foundation model for coding and agentic workflows.
+  { name = "minimax/minimax-m3", context_window_tokens = 1000000, max_output_tokens = 131072 },
+  # MiniMax-01: high-context model.
+  { name = "minimax/minimax-01", context_window_tokens = 1000192, max_output_tokens = 131072 },
 ]
 default_model = "openai/gpt-5.6-luna"
 api_key_env = "OPENROUTER_API_KEY"
 base_url = "https://openrouter.ai/api/v1"
+
+[providers.minimax]
+# Override CLI provider with --provider minimax
+# MiniMax's OpenAI-compatible endpoint (https://api.minimax.io/v1).
+# MiniMax-M3 is the latest flagship multimodal model with 1M context window.
+models = [
+  { name = "MiniMax-M3", context_window_tokens = 1000000, max_output_tokens = 131072 },
+  { name = "MiniMax-Text-01", context_window_tokens = 1000000, max_output_tokens = 131072 },
+  { name = "MiniMax-M2.7", context_window_tokens = 204800, max_output_tokens = 131072 },
+  { name = "MiniMax-M2.5", context_window_tokens = 204800, max_output_tokens = 131072 },
+]
+default_model = "MiniMax-M3"
+api_key_env = "MINIMAX_API_KEY"
+base_url = "https://api.minimax.io/v1"
 
 [providers.zai]
 # Override CLI provider with --provider zai

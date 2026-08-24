@@ -23,6 +23,10 @@ var descriptors = map[string]Descriptor{
 		Name: "llmgateway", DefaultModel: "deepseek-v4-pro",
 		DefaultURL: "https://api.llmgateway.io/v1", DefaultAPIKeyEnv: "LLMGATEWAY_API_KEY",
 	},
+	"minimax": {
+		Name: "minimax", DefaultModel: "MiniMax-M3",
+		DefaultURL: "https://api.minimax.io/v1", DefaultAPIKeyEnv: "MINIMAX_API_KEY",
+	},
 	"ollama": {
 		Name: "ollama", DefaultModel: "gpt-oss:120b",
 		DefaultURL: "https://ollama.com/v1", DefaultAPIKeyEnv: "OLLAMA_API_KEY",

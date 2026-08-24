@@ -277,6 +277,7 @@ var builtins = []builtinEntry{
 	{"zai", NewZAI},
 	{"ollama", NewOllama},
 	{"llmgateway", NewLLMGateway},
+	{"minimax", NewMiniMax},
 }
 
 // registerAll registers each entry in order, stopping at the first error.

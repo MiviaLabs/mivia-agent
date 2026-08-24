@@ -88,7 +88,7 @@ Shell completions: `mivia completion bash|zsh|fish` prints a completion script f
 ## Supported providers
 
 mivia is a local-first agent: prompts and selected context go to exactly one
-configured AI provider. Five providers are built in:
+configured AI provider. Six providers are built in:
 
 | Provider | Default model | Default API base URL |
 |----------|---------------|-----------------------|
@@ -97,6 +97,7 @@ configured AI provider. Five providers are built in:
 | ZAI (z.ai) | `glm-5.2` | `https://api.z.ai/api/paas/v4` |
 | Ollama | `gpt-oss:120b` | `https://ollama.com/v1` |
 | LLM Gateway | `deepseek-v4-pro` | `https://api.llmgateway.io/v1` |
+| MiniMax | `MiniMax-M3` | `https://api.minimax.io/v1` |
 
 mivia does not accept an arbitrary OpenAI-compatible provider name: the
 provider registry rejects names it does not support, and every provider must
