@@ -1,6 +1,6 @@
 package clichat
 
-import "github.com/charmbracelet/lipgloss"
+import "charm.land/lipgloss/v2"
 
 // ANSI SGR codes - one vocabulary for markdown + highlight rendering.
 // Relocated from internal/legacytui/theme.go: internal/legacytui aliases
