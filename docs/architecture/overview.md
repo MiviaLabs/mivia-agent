@@ -202,6 +202,7 @@ flowchart TD
 |-----------|---------|------|
 | `Coordinator` interface | `internal/coordinator` | Public API: Spawn/Inspect/Join/Cancel, retry policy, lifecycle subscriptions |
 | `RunHandle` | `internal/coordinator` | Opaque handle to an active run; safe for concurrent use |
+| `Engine` / `ClaimsTracker` | `internal/ledgercore` | Shared ledger coordination core: claim tracking, watermarks, sequencing, concurrency locks |
 | `LedgerRepository` interface | `internal/ledger` | Storage boundary: 20 methods for run/task/event CRUD with CAS, including run-claim leasing (`ClaimRun`, `ReleaseRun`, `ClearRunClaim`) |
 | `LeaseRepository` interface | `internal/ledger` | Separate, narrower storage boundary holding only `TakeoverExpiredRunClaim` |
 | `MemoryLedgerRepository` | `internal/ledger` | In-memory backend with RWMutex, defensive copies - default for ephemeral sessions |
@@ -209,6 +210,8 @@ flowchart TD
 | `DisplayNameGenerator` | `internal/ledger` | Unique human-readable agent names (e.g. "agent-7"), collision-safe |
 | `MetricsAdapter` | `internal/events` | Per-kind event counts and handler timing |
 | `Diagnostics` | `internal/cli` | ListRuns, ActiveHandles, MetricsSnapshot (privacy-safe operator views) |
+| `OutputFormatter` | `internal/ui/render` | Formats raw tool outputs (commands, search, files, ledger, JSON) into structured transcript lines |
+| `SettingsScreen` | `internal/ui/screen/settings` | Settings modal for provider, automation, agent, and MCP configuration via `ports.Settings` |
 
 ### Lifecycle
 

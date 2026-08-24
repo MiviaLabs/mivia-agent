@@ -30,7 +30,7 @@ See also "Mandatory process" in `AGENTS.md`.
 |------|---------|
 | `.agents/rules/00-operating-doctrine.md` | Scope control, docs-first work, idempotency, verification contracts |
 | `.agents/rules/01-output-budget.md` | Terse status, final-answer shape, task slicing |
-| `.agents/rules/10-security-privacy.md` | Secrets, network, hooks, PII, fail-closed protected actions |
+| `.agents/rules/10-security-privacy.md` | Secrets, network, hooks, PII, YOLO mode, fail-closed protected actions |
 | `.agents/rules/20-agent-quality.md` | Tests, mutation proofs, review gates, contract coverage |
 | `.agents/rules/30-go-standards.md` | Go layout for `cmd/mivia` + `internal/`, errors, naming, embed |
 | `.agents/rules/40-docs-ownership.md` | Single source of truth per topic; no parallel docs; `docs/OWNERS.yaml` |

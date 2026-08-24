@@ -31,6 +31,16 @@ With nothing configured, nothing is filtered and nothing is redacted. The user t
 
 `prompt` and `reasoning` are never redacted. They are the agent's own instructions and deliberation, not the user's secrets. Eliding them made audit metadata useless for reconstructing agent behavior while protecting nothing.
 
+## Tool approval policies and YOLO mode
+
+Tool approval is policy-gated:
+
+- `write-only` (default): requests interactive confirmation for mutating file and command tools.
+- `always`: requests interactive confirmation for all tool calls.
+- `auto` (`yolo`): executes tool calls without interactive confirmation.
+
+YOLO mode (`--yolo` or `[approvals].policy = "auto"`) disables interactive prompts only. It does not bypass path boundaries, Git hook guards, command allowlists, secret redaction, or verifier sandboxes.
+
 ## Secret path filtering
 
 `[tools].secret_path_patterns` and `[tools].secret_path_exceptions` are the only source of the file-tool secret filter. Recommended values ship in `.mivia/mivia.toml.example`. With neither configured, no paths are filtered.

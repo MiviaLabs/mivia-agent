@@ -45,6 +45,21 @@ Protected actions: commit (policy-gated), push, open PR, deploy, release, live s
 - Agents must not bypass Git hooks (see `.mivia/policy/agent-hook-bypass.json`).
 - Quality stamps / policy decisions, when implemented, gate protected actions; do not invent bypass paths.
 
+## Tool Approval Policies And YOLO Mode
+
+The runtime supports three tool approval policies: `write-only` (default), `always`, and `auto` (`yolo`).
+
+- `write-only`: requires interactive confirmation for mutating file and command tools.
+- `always`: requires interactive confirmation for all tool calls.
+- `auto` / `yolo`: auto-approves tool calls without interactive confirmation (`--yolo` flag or `[approvals] policy = "auto"`).
+
+**YOLO security boundary:**
+- Auto-approval skips only interactive confirmation prompts.
+- Auto-approval does not bypass path safety rules.
+- Auto-approval does not bypass Git hook guards (see `.mivia/policy/agent-hook-bypass.json`).
+- Auto-approval does not disable redaction, secrets scrubbing, or audit logging.
+- Auto-approval does not disable the workflow verifier sandbox.
+
 ## Path And Process Safety
 
 - Never follow symlinks outside the target repo for writes.

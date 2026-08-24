@@ -67,7 +67,7 @@ If unsure whether a change is trivial, use the full ADLC.
 | [00-operating-doctrine](.agents/rules/00-operating-doctrine.md) | Scope control, docs-first work, idempotency, verification contracts |
 | [01-output-budget](.agents/rules/01-output-budget.md) | Terse status, final-answer shape, task slicing |
 | [05-adlc-agentic-development-lifecycle](.agents/rules/05-adlc-agentic-development-lifecycle.md) | The mandatory 7-step engineering cycle (see above) |
-| [10-security-privacy](.agents/rules/10-security-privacy.md) | Secrets, network, hooks, PII, fail-closed protected actions |
+| [10-security-privacy](.agents/rules/10-security-privacy.md) | Secrets, network, hooks, PII, YOLO mode, fail-closed protected actions |
 | [20-agent-quality](.agents/rules/20-agent-quality.md) | Tests, mutation proofs, review gates, contract coverage |
 | [30-go-standards](.agents/rules/30-go-standards.md) | Go layout for `cmd/mivia` + `internal/`, errors, naming, embed |
 | [40-docs-ownership](.agents/rules/40-docs-ownership.md) | Single source of truth per topic; no parallel docs; `docs/OWNERS.yaml` |
