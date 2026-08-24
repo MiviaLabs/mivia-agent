@@ -556,6 +556,38 @@ initial_step = "x"
 	}
 }
 
+func TestWorkflowsValidateByDirectFilePath(t *testing.T) {
+	workspace := t.TempDir()
+	writeWorkflowValidationAgent(t, workspace, "worker")
+	filePath := filepath.Join(workspace, "custom-workflow.toml")
+	if err := os.WriteFile(filePath, []byte(`version = 1
+name = "custom-workflow"
+description = "Custom external workflow"
+initial_step = "run"
+
+[[steps]]
+id = "run"
+kind = "agent"
+agent = "worker"
+
+[[transitions]]
+from = "run"
+to = "success"
+match = { status = "succeeded" }
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errOut strings.Builder
+	if err := RunWorkflowsWithIO([]string{"validate", filePath, "--workspace", workspace}, &out, &errOut); err != nil {
+		t.Fatalf("validate file path error: %v\n%s", err, out.String())
+	}
+	text := out.String()
+	if !strings.Contains(text, "✓ custom-workflow") {
+		t.Fatalf("expected '✓ custom-workflow' in validate output: %s", text)
+	}
+}
+
 func TestWorkflowsValidateInvalidWorkflowReportsError(t *testing.T) {
 	workspace := t.TempDir()
 	writeWorkflowFixture(t, workspace, "broken", `version = 1

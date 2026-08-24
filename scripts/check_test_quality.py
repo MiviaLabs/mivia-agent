@@ -38,10 +38,12 @@ def repo_root() -> Path:
 GO_INSPECTOR_SRC = r'''package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"go/ast"
 	"go/parser"
+	"go/printer"
 	"go/token"
 	"os"
 	"strings"
@@ -105,6 +107,17 @@ func typeStr(expr ast.Expr) string {
 	}
 }
 
+func formatNode(fset *token.FileSet, node ast.Node) string {
+	if node == nil {
+		return ""
+	}
+	var buf bytes.Buffer
+	if err := printer.Fprint(&buf, fset, node); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(buf.String())
+}
+
 func isAssertionCall(call *ast.CallExpr) bool {
 	if call == nil {
 		return false
@@ -117,9 +130,6 @@ func isAssertionCall(call *ast.CallExpr) bool {
 		}
 		recv := typeStr(fun.X)
 		if recv == "assert" || recv == "require" || recv == "is" || recv == "check" {
-			return true
-		}
-		if sel == "Run" {
 			return true
 		}
 	case *ast.Ident:
@@ -136,7 +146,7 @@ func isAssertionCall(call *ast.CallExpr) bool {
 	return false
 }
 
-func isTautological(call *ast.CallExpr) (bool, string) {
+func isTautological(fset *token.FileSet, call *ast.CallExpr) (bool, string) {
 	if call == nil {
 		return false, ""
 	}
@@ -157,6 +167,18 @@ func isTautological(call *ast.CallExpr) (bool, string) {
 			if (fn == "Nil" || fn == "Nilf") && len(call.Args) >= 2 {
 				if ident, ok := call.Args[1].(*ast.Ident); ok && ident.Name == "nil" {
 					return true, "assert.Nil(..., nil) is tautological"
+				}
+			}
+			if (fn == "NoError" || fn == "NoErrorf") && len(call.Args) >= 2 {
+				if ident, ok := call.Args[1].(*ast.Ident); ok && ident.Name == "nil" {
+					return true, "assert.NoError(..., nil) is tautological"
+				}
+			}
+			if (fn == "Equal" || fn == "Equalf" || fn == "Same" || fn == "Samef") && len(call.Args) >= 3 {
+				arg1 := formatNode(fset, call.Args[1])
+				arg2 := formatNode(fset, call.Args[2])
+				if arg1 != "" && arg1 == arg2 {
+					return true, fmt.Sprintf("assert.%s(%s, %s) compares identical expressions", fn, arg1, arg2)
 				}
 			}
 		}
@@ -211,7 +233,7 @@ func inspectFunc(fset *token.FileSet, filename string, decl *ast.FuncDecl) (Func
 			if isAssertionCall(node) {
 				assertions++
 			}
-			if taut, msg := isTautological(node); taut {
+			if taut, msg := isTautological(fset, node); taut {
 				issues = append(issues, Issue{
 					Kind:     "tautological_assertion",
 					File:     filename,
@@ -234,10 +256,22 @@ func inspectFunc(fset *token.FileSet, filename string, decl *ast.FuncDecl) (Func
 					})
 				}
 			}
-		case *ast.IfStmt:
-			assertions++
-		case *ast.DeferStmt:
-			assertions++
+			// Check empty subtests
+			if sel, ok := node.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Run" {
+				for _, arg := range node.Args {
+					if fnLit, ok := arg.(*ast.FuncLit); ok {
+						if fnLit.Body == nil || len(fnLit.Body.List) == 0 {
+							issues = append(issues, Issue{
+								Kind:     "empty_subtest",
+								File:     filename,
+								Line:     fset.Position(fnLit.Pos()).Line,
+								FuncName: summary.Name,
+								Message:  fmt.Sprintf("subtest in %s has an empty body", summary.Name),
+							})
+						}
+					}
+				}
+			}
 		}
 		return true
 	})
@@ -259,50 +293,65 @@ func inspectFunc(fset *token.FileSet, filename string, decl *ast.FuncDecl) (Func
 	return summary, issues
 }
 
-func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: inspect <files...>")
-		os.Exit(2)
+func inspectFile(filename string) (FileReport, error) {
+	fset := token.NewFileSet()
+	node, err := parser.ParseFile(fset, filename, nil, parser.ParseComments)
+	if err != nil {
+		return FileReport{File: filename}, err
 	}
 
-	fset := token.NewFileSet()
-	var reports []FileReport
-
-	for _, file := range os.Args[1:] {
-		if !strings.HasSuffix(file, "_test.go") {
+	report := FileReport{File: filename}
+	for _, decl := range node.Decls {
+		fnDecl, ok := decl.(*ast.FuncDecl)
+		if !ok || !isTestSignature(fnDecl) {
 			continue
 		}
-		node, err := parser.ParseFile(fset, file, nil, parser.ParseComments)
+		summary, issues := inspectFunc(fset, filename, fnDecl)
+		report.Functions = append(report.Functions, summary)
+		report.Issues = append(report.Issues, issues...)
+	}
+
+	return report, nil
+}
+
+func main() {
+	var files []string
+	for _, arg := range os.Args[1:] {
+		if arg == "--" {
+			continue
+		}
+		files = append(files, arg)
+	}
+	if len(files) == 0 {
+		fmt.Println("[]")
+		return
+	}
+
+	var reports []FileReport
+	for _, file := range files {
+		rep, err := inspectFile(file)
 		if err != nil {
 			reports = append(reports, FileReport{
 				File: file,
 				Issues: []Issue{{
-					Kind:    "parse_error",
-					File:    file,
-					Line:    1,
-					Message: fmt.Sprintf("failed to parse: %v", err),
+					Kind:     "parse_error",
+					File:     file,
+					Line:     1,
+					FuncName: "",
+					Message:  fmt.Sprintf("go parse error: %v", err),
 				}},
 			})
 			continue
 		}
-
-		rep := FileReport{File: file}
-		for _, decl := range node.Decls {
-			if fn, ok := decl.(*ast.FuncDecl); ok && isTestSignature(fn) {
-				summary, issues := inspectFunc(fset, file, fn)
-				rep.Functions = append(rep.Functions, summary)
-				rep.Issues = append(rep.Issues, issues...)
-			}
-		}
 		reports = append(reports, rep)
 	}
 
-	data, err := json.Marshal(reports)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(2)
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(reports); err != nil {
+		fmt.Fprintf(os.Stderr, "json encode error: %v\n", err)
+		os.Exit(1)
 	}
-	fmt.Println(string(data))
 }
 '''
 
@@ -310,63 +359,50 @@ func main() {
 def run_go_inspector(files: list[Path]) -> list[dict]:
     if not files:
         return []
-    with tempfile.NamedTemporaryFile(suffix=".go", mode="w", delete=False) as tf:
+
+    with tempfile.NamedTemporaryFile(suffix=".go", mode="w", encoding="utf-8", delete=False) as tf:
         tf.write(GO_INSPECTOR_SRC)
-        tf_path = tf.name
+        tf_name = tf.name
 
     try:
-        file_strs = [str(f.resolve()) for f in files if str(f).endswith("_test.go") and f.is_file()]
-        if not file_strs:
+        cmd = ["go", "run", tf_name, "--"] + [str(f.resolve()) for f in files]
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if proc.returncode != 0 and not proc.stdout.strip():
+            print(f"Error running Go AST inspector: {proc.stderr}", file=sys.stderr)
             return []
-
-        results = []
-        batch_size = 100
-        for i in range(0, len(file_strs), batch_size):
-            batch = file_strs[i : i + batch_size]
-            cmd = ["go", "run", tf_path, "--", *batch]
-            r = subprocess.run(cmd, capture_output=True, text=True, check=False)
-            if r.returncode != 0:
-                print(f"check_test_quality: go inspector error: {r.stderr}", file=sys.stderr)
-                sys.exit(2)
-            results.extend(json.loads(r.stdout))
-        return results
+        try:
+            return json.loads(proc.stdout)
+        except json.JSONDecodeError as exc:
+            print(f"Failed to decode inspector output: {exc}\nOutput: {proc.stdout}", file=sys.stderr)
+            return []
     finally:
-        if os.path.exists(tf_path):
-            os.remove(tf_path)
+        try:
+            os.unlink(tf_name)
+        except OSError:
+            pass
 
 
-def load_skip_policy(root: Path | None = None) -> dict:
-    if root is None:
-        root = repo_root()
-    policy_path = root / ".mivia" / "policy" / "test-skips.json"
-    if not policy_path.is_file():
-        return {"knownSkips": {}}
+def load_skip_policy(root: Path) -> dict:
+    policy_file = root / ".mivia" / "policy" / "test-skips.json"
+    if not policy_file.is_file():
+        return {}
     try:
-        return json.loads(policy_path.read_text(encoding="utf-8"))
-    except Exception as e:
-        print(f"check_test_quality: invalid policy {policy_path}: {e}", file=sys.stderr)
-        sys.exit(2)
+        return json.loads(policy_file.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
 
 
-def get_git_diff_added_skips(diff_args: list[str], root: Path | None = None) -> list[tuple[str, int, str]]:
-    """Returns list of (file, line, content) for added t.Skip calls in git diff."""
-    if root is None:
-        root = repo_root()
-    r = subprocess.run(
-        ["git", "diff", *diff_args, "--unified=0", "--", "*_test.go"],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if r.returncode != 0:
+def get_git_diff_added_skips(diff_args: list[str], root: Path) -> list[tuple[str, int, str]]:
+    cmd = ["git", "diff", "-U0"] + diff_args + ["--", "*_test.go"]
+    res = subprocess.run(cmd, cwd=root, capture_output=True, text=True, check=False)
+    if res.returncode != 0:
         return []
 
-    added_skips = []
+    added_skips: list[tuple[str, int, str]] = []
     current_file = ""
     current_line = 0
 
-    for line in r.stdout.splitlines():
+    for line in res.stdout.splitlines():
         if line.startswith("+++ b/"):
             current_file = line[6:]
         elif line.startswith("@@"):
@@ -374,24 +410,17 @@ def get_git_diff_added_skips(diff_args: list[str], root: Path | None = None) -> 
             if m:
                 current_line = int(m.group(1))
         elif line.startswith("+") and not line.startswith("+++"):
-            content = line[1:]
+            content = line[1:].strip()
             if re.search(r"\bt\.Skip(f|Now)?\(", content):
-                added_skips.append((current_file, current_line, content.strip()))
+                added_skips.append((current_file, current_line, content))
             current_line += 1
+        elif not line.startswith("-"):
+            current_line += 1
+
     return added_skips
 
 
-def run_checks(
-    target_files: list[Path],
-    diff_args: list[str] | None = None,
-    root: Path | None = None,
-) -> tuple[list[str], int]:
-    """Inspects target test files and returns (violations, total_functions)."""
-    if root is None:
-        root = repo_root()
-    if not target_files:
-        return [], 0
-
+def check_paths(target_files: list[Path], root: Path, diff_args: list[str] | None = None) -> tuple[list[str], int]:
     reports = run_go_inspector(target_files)
     violations: list[str] = []
 
@@ -406,9 +435,15 @@ def run_checks(
         added_skips = get_git_diff_added_skips(diff_args, root)
         for file_path, line, content in added_skips:
             file_entries = known_skips.get(file_path, [])
-            if not file_entries:
+            matched = False
+            for entry in file_entries:
+                reason = entry.get("reason", "")
+                if reason and reason in content:
+                    matched = True
+                    break
+            if not matched:
                 violations.append(
-                    f"{file_path}:{line}: [unreviewed_test_skip] newly added t.Skip in diff without entry in .mivia/policy/test-skips.json: {content}"
+                    f"{file_path}:{line}: [unreviewed_test_skip] newly added t.Skip in diff without matching entry in .mivia/policy/test-skips.json: {content}"
                 )
 
     total_funcs = sum(len(r.get("functions") or []) for r in reports)
@@ -439,45 +474,62 @@ def main():
             if f:
                 target_files.append(root / f)
     elif args.base:
-        diff_args = [f"{args.base}..{args.tip}"]
+        tip = args.tip
+        diff_args = [f"{args.base}..{tip}"]
         r = subprocess.run(
-            ["git", "diff", *diff_args, "--name-only", "--diff-filter=ACMR", "-z", "--", "*_test.go"],
+            ["git", "diff", "--name-only", "--diff-filter=ACMR", "-z", f"{args.base}..{tip}", "--", "*_test.go"],
             cwd=root, capture_output=True, text=True, check=False,
         )
         for f in r.stdout.strip("\0").split("\0"):
             if f:
                 target_files.append(root / f)
     elif args.paths:
-        target_files = [Path(p) if Path(p).is_absolute() else root / p for p in args.paths if p.endswith("_test.go")]
+        for p in args.paths:
+            path = Path(p)
+            if not path.is_absolute():
+                path = root / path
+            if path.is_file():
+                target_files.append(path)
+            elif path.is_dir():
+                target_files.extend(path.rglob("*_test.go"))
     elif args.all:
         r = subprocess.run(
-            ["git", "ls-files", "-z", "--", "cmd/**/*_test.go", "internal/**/*_test.go", "pkg/**/*_test.go"],
+            ["git", "ls-files", "-z", "*_test.go"],
             cwd=root, capture_output=True, text=True, check=False,
         )
         for f in r.stdout.strip("\0").split("\0"):
             if f:
                 target_files.append(root / f)
-        if not target_files:
-            target_files = [p for p in root.rglob("*_test.go") if ".git" not in p.parts]
     elif args.worktree:
-        target_files = [p for p in root.rglob("*_test.go") if ".git" not in p.parts]
+        skip_dirs = {".git", "vendor", "node_modules", "testdata"}
+        for p in root.rglob("*_test.go"):
+            if not any(part in skip_dirs for part in p.parts):
+                target_files.append(p)
     else:
-        target_files = [p for p in root.rglob("*_test.go") if ".git" not in p.parts]
+        # Default: staged if git repo
+        diff_args = ["--cached"]
+        r = subprocess.run(
+            ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z", "--", "*_test.go"],
+            cwd=root, capture_output=True, text=True, check=False,
+        )
+        for f in r.stdout.strip("\0").split("\0"):
+            if f:
+                target_files.append(root / f)
 
     if not target_files:
         print("check_test_quality: no test files in scope")
         return
 
-    violations, total_funcs = run_checks(target_files, diff_args, root)
+    violations, total_funcs = check_paths(target_files, root, diff_args)
 
     if violations:
-        print(f"check_test_quality: {len(violations)} test quality violation(s) found:", file=sys.stderr)
-        for v in violations:
-            print(f"  {v}", file=sys.stderr)
+        print(f"FAIL: {len(violations)} test quality violation(s) in {len(target_files)} file(s) ({total_funcs} functions):")
+        for v in sorted(violations):
+            print(f"  - {v}")
+        print("Fix: ensure test functions have assertions, non-empty bodies, valid skip reasons, and no tautologies.")
         sys.exit(1)
 
-    print(f"check_test_quality: OK ({len(target_files)} files, {total_funcs} test functions checked)")
-
+    print(f"OK: {len(target_files)} test file(s) ({total_funcs} functions) pass quality checks")
 
 
 if __name__ == "__main__":

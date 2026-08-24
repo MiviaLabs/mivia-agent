@@ -118,6 +118,32 @@ func runWorkflowsValidate(args []string, stdout, stderr io.Writer) error {
 		workspaceRoot = "."
 	}
 
+	// If a specific file path is provided, validate it directly.
+	if len(positional) > 0 {
+		targetPath := positional[0]
+		if strings.HasSuffix(targetPath, ".toml") {
+			data, err := os.ReadFile(targetPath)
+			if err != nil {
+				return fmt.Errorf("workflows validate: %w", err)
+			}
+			base := filepath.Base(targetPath)
+			parsed, name, err := definition.ParseWorkflowTOML(data, base)
+			if err != nil {
+				fmt.Fprint(stdout, definition.FormatWorkflowValidate(base, nil, err))
+				return fmt.Errorf("workflows validate: one or more workflows are invalid")
+			}
+			compiled, err := definition.Compile(&parsed)
+			if err == nil {
+				err = validateWorkflowReferences(workspaceRoot, filepath.Dir(targetPath), compiled)
+			}
+			fmt.Fprint(stdout, definition.FormatWorkflowValidate(name, compiled, err))
+			if err != nil {
+				return fmt.Errorf("workflows validate: one or more workflows are invalid")
+			}
+			return nil
+		}
+	}
+
 	workflows, err := definition.DiscoverWorkflows(workspaceRoot)
 	if err != nil {
 		return fmt.Errorf("workflows validate: %w", err)

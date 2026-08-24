@@ -3,10 +3,11 @@
 
 Builds isolated git+Go fixture modules and drives the script to verify:
 1. Rejection of empty test bodies
-2. Rejection of zero-assertion test functions
-3. Rejection of tautological assertions (assert.True(t, true), etc.)
-4. Rejection of unreviewed t.Skip in git diff
-5. Acceptance of proper assertions (t.Fatalf, t.Errorf, assert.*, helper calls, subtests)
+2. Rejection of zero-assertion test functions (including non-asserting control flow)
+3. Rejection of tautological assertions (assert.True(t, true), assert.Equal(a, a), assert.NoError(t, nil))
+4. Rejection of empty subtest bodies (t.Run)
+5. Rejection of unreviewed t.Skip in git diff even when file already has other allowlisted skips
+6. Acceptance of proper assertions (t.Fatalf, t.Errorf, assert.*, helper calls, subtests)
 """
 from __future__ import annotations
 
@@ -80,7 +81,7 @@ func TestEmpty(t *testing.T) {
         git("add", "-A", cwd=root)
         r = run_script(["--worktree"], cwd=root)
         assert r.returncode == 1, f"expected failure, got {r.stdout}"
-        assert "empty_test" in r.stderr
+        assert "empty_test" in r.stdout
 
 
 def test_zero_assertions_rejected() -> None:
@@ -100,21 +101,22 @@ func TestZero(t *testing.T) {
         git("add", "-A", cwd=root)
         r = run_script(["--worktree"], cwd=root)
         assert r.returncode == 1, f"expected failure, got {r.stdout}"
-        assert "zero_assertions" in r.stderr
+        assert "zero_assertions" in r.stdout
 
 
-def test_tautological_assertion_rejected() -> None:
+def test_control_flow_only_rejected_as_zero_assertions() -> None:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         init_fixture(root)
-        (root / "pkg" / "taut_test.go").write_text(
+        (root / "pkg" / "ctrl_test.go").write_text(
             """package pkg
 import "testing"
-type AssertHelper struct{}
-func (a AssertHelper) True(t *testing.T, val bool) {}
-var assert AssertHelper
-func TestTaut(t *testing.T) {
-    assert.True(t, true)
+func TestControlOnly(t *testing.T) {
+    defer func() {}()
+    if 1+1 == 2 {
+        x := 1
+        _ = x
+    }
 }
 """,
             encoding="utf-8",
@@ -122,88 +124,105 @@ func TestTaut(t *testing.T) {
         git("add", "-A", cwd=root)
         r = run_script(["--worktree"], cwd=root)
         assert r.returncode == 1, f"expected failure, got {r.stdout}"
-        assert "tautological_assertion" in r.stderr
+        assert "zero_assertions" in r.stdout
 
 
-def test_unreviewed_skip_in_diff_rejected() -> None:
+def test_tautological_assertions_rejected() -> None:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         init_fixture(root)
-        (root / "pkg" / "base_test.go").write_text(
+        (root / "pkg" / "taut_test.go").write_text(
             """package pkg
-import "testing"
-func TestBase(t *testing.T) {
-    t.Log("base")
+import (
+    "testing"
+    "github.com/stretchr/testify/assert"
+)
+func TestTautological(t *testing.T) {
+    assert.True(t, true)
+    assert.Equal(t, "foo", "foo")
+    assert.NoError(t, nil)
 }
 """,
             encoding="utf-8",
         )
         git("add", "-A", cwd=root)
-        git("commit", "-q", "-m", "base", cwd=root)
+        r = run_script(["--worktree"], cwd=root)
+        assert r.returncode == 1, f"expected failure, got {r.stdout}"
+        assert "tautological_assertion" in r.stdout
 
-        (root / "pkg" / "base_test.go").write_text(
+
+def test_empty_subtest_rejected() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_fixture(root)
+        (root / "pkg" / "sub_test.go").write_text(
             """package pkg
 import "testing"
-func TestBase(t *testing.T) {
-    t.Skip("skipping without policy entry")
+func TestSub(t *testing.T) {
+    t.Run("empty_case", func(t *testing.T) {
+    })
 }
 """,
             encoding="utf-8",
         )
         git("add", "-A", cwd=root)
-        r = run_script(["--staged"], cwd=root)
-        assert r.returncode == 1, f"expected diff failure, got {r.stdout}"
-        assert "unreviewed_test_skip" in r.stderr
+        r = run_script(["--worktree"], cwd=root)
+        assert r.returncode == 1, f"expected failure, got {r.stdout}"
+        assert "empty_subtest" in r.stdout
 
 
-def test_allowlisted_skip_in_diff_accepted() -> None:
+def test_unreviewed_skip_in_diff_rejected_even_with_other_entry() -> None:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         init_fixture(root)
         (root / ".mivia" / "policy" / "test-skips.json").write_text(
             """{
   "knownSkips": {
-    "pkg/base_test.go": [
-      { "line": 4, "reason": "documented environment issue" }
+    "pkg/skip_test.go": [
+      {
+        "reason": "existing legitimate skip"
+      }
     ]
   }
-}""",
+}
+""",
             encoding="utf-8",
         )
-        (root / "pkg" / "base_test.go").write_text(
+        (root / "pkg" / "skip_test.go").write_text(
             """package pkg
 import "testing"
-func TestBase(t *testing.T) {
-    t.Log("base")
+func TestExisting(t *testing.T) {
+    t.Skip("existing legitimate skip")
 }
 """,
             encoding="utf-8",
         )
         git("add", "-A", cwd=root)
-        git("commit", "-q", "-m", "base", cwd=root)
+        git("commit", "-m", "init", cwd=root)
 
-        (root / "pkg" / "base_test.go").write_text(
+        # Now add a NEW, unreviewed skip to the same file
+        (root / "pkg" / "skip_test.go").write_text(
             """package pkg
 import "testing"
-func TestBase(t *testing.T) {
-    t.Skip("documented environment issue")
+func TestExisting(t *testing.T) {
+    t.Skip("existing legitimate skip")
+}
+func TestNewSkipped(t *testing.T) {
+    t.Skip("sneaky unreviewed skip")
 }
 """,
             encoding="utf-8",
         )
         git("add", "-A", cwd=root)
         r = run_script(["--staged"], cwd=root)
-        assert r.returncode == 0, f"expected success for allowlisted skip, got {r.stderr}"
+        assert r.returncode == 1, f"expected failure, got {r.stdout}"
+        assert "unreviewed_test_skip" in r.stdout
 
 
 def main() -> None:
-    print("running test_check_test_quality...")
-    test_valid_test_passes()
-    test_empty_test_rejected()
-    test_zero_assertions_rejected()
-    test_tautological_assertion_rejected()
-    test_unreviewed_skip_in_diff_rejected()
-    test_allowlisted_skip_in_diff_accepted()
+    for name, fn in sorted(globals().items()):
+        if name.startswith("test_") and callable(fn):
+            fn()
     print("test_check_test_quality: ok")
 
 
