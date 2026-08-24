@@ -203,14 +203,14 @@ func TestDemoHarnessThemeCommandOpensPicker(t *testing.T) {
 }
 
 // TestDemoHarnessModelCommandOpensPickerAndSelects is the second
-// command-dispatch-seam proof: /model opens the Settings > Models screen
-// over the configured providers and models, with provider grouping.
+// command-dispatch-seam proof: /model opens the model picker dialog
+// overlay over the configured models.
 func TestDemoHarnessModelCommandOpensPickerAndSelects(t *testing.T) {
 	tm, shadow, wait := newDemoShadow(t, "smalltalk", 0)
 
 	typeAndRun(tm, "/model")
-	wait(contains("settings > Models"))
-	wait(contains("openrouter"))
+	wait(contains("select a model"))
+	wait(contains("mivia-fast"))
 
 	quit(tm)
 	tm.WaitFinished(t, teatest.WithFinalTimeout(3*time.Second))

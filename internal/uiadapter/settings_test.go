@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
@@ -498,6 +500,50 @@ func TestIntegration_SettingsModalPopUpdatesConversationTopbarView(t *testing.T)
 	viewAfterPop := root.View().Content
 	if !strings.Contains(viewAfterPop, "llama3.3") {
 		t.Errorf("expected root view after pop to contain 'llama3.3', got:\n%s", viewAfterPop)
+	}
+}
+
+func TestIntegration_SlashModelOpensPickerAndSwitchesModel(t *testing.T) {
+	sess, res, state := setupIntegrationEnvironment(t, "llama3.2")
+	conv := uiadapter.NewConversation(sess)
+	runner := uiadapter.NewCommandRunner(sess, res, state)
+	approver := uiadapter.NewApprover(sess)
+
+	th := loadTestTheme(t)
+	themes := []theme.Theme{th}
+
+	convScreen := conversation.New(th, theme.TierASCII, themes, conv, approver, 80, nil)
+	convScreen.SetCommandRunner(runner)
+
+	root := app.New(convScreen, th, theme.TierASCII, themes)
+	next, _ := root.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	root = next.(app.Model)
+
+	// Type "/model" and submit to open the picker dialog
+	for _, ch := range "/model" {
+		next, _ = root.Update(tea.KeyPressMsg{Text: string(ch), Code: ch})
+		root = next.(app.Model)
+	}
+	next, _ = root.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	root = next.(app.Model)
+
+	// Verify the dialog is visible in the view
+	view := root.View().Content
+	if !strings.Contains(view, "select a model") {
+		t.Fatalf("expected view to contain 'select a model' dialog, got:\n%s", view)
+	}
+
+	// Press Enter to accept the first model
+	next, _ = root.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	root = next.(app.Model)
+
+	// Verify the picker dialog is closed and a notice was appended
+	viewAfterSelect := root.View().Content
+	if strings.Contains(viewAfterSelect, "select a model") {
+		t.Errorf("expected 'select a model' dialog to be closed after selection, got:\n%s", viewAfterSelect)
+	}
+	if !strings.Contains(viewAfterSelect, "Model set to") {
+		t.Errorf("expected view to contain 'Model set to' confirmation notice, got:\n%s", viewAfterSelect)
 	}
 }
 

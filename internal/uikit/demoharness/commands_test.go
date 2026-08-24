@@ -36,8 +36,8 @@ func TestRunHelp(t *testing.T) {
 func TestRunModelReturnsChoices(t *testing.T) {
 	h := newHarness(t)
 	got := h.Run(context.Background(), "model", "")
-	if !got.OpenSettings || got.SettingsSection != "models" {
-		t.Errorf("got %+v, want OpenSettings: true, SettingsSection: models", got)
+	if len(got.ModelChoices) != len(demoModels) {
+		t.Errorf("got %d choices, want %d: %+v", len(got.ModelChoices), len(demoModels), got)
 	}
 }
 

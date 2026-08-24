@@ -132,7 +132,11 @@ func (r *CommandRunner) handleModel(args string) ports.CommandOutcome {
 	if args != "" {
 		return r.SelectModel(context.Background(), args)
 	}
-	return ports.CommandOutcome{OpenSettings: true, SettingsSection: "models"}
+	choices := r.availableModels()
+	if len(choices) == 0 {
+		return ports.CommandOutcome{Err: "no models loaded"}
+	}
+	return ports.CommandOutcome{ModelChoices: choices}
 }
 
 func (r *CommandRunner) availableModels() []string {
