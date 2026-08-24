@@ -40,14 +40,23 @@ func (s *Session) persistPlainLegacyTurn(token OperationToken) error {
 // reply) as a pure side effect - it never changes what the caller returns.
 // Unlike adoptInterruptedPlainTurn, a real provider error must still surface
 // to the caller exactly as before; this only prevents that history from
-// vanishing on the next resume. Only a still-current turn may persist
-// (stale-turn fence); any persistence failure is discarded rather than
+// vanishing on the next resume. The fence check happens INSIDE the same lock
+// that performs the write, not as a separate plainTurnCurrent call before
+// acquiring the lock: a check-then-separately-lock shape leaves a window
+// where a concurrent /clear (which bumps s.turnID and resets s.Messages
+// under its own s.mu.Lock()) can complete between the check and the write,
+// and an unconditional write afterward would silently resurrect the
+// pre-clear history the user just cleared. commitErroredPlainContext,
+// commitInterruptedPlainContext, and commitPlainContextTurn all already
+// re-check their fence inside the locked section for the same reason; this
+// mirrors that pattern. Any persistence failure is discarded rather than
 // compounding the original error the caller already has.
 func (s *Session) adoptErroredPlainTurn(snapshot plainTurnSnapshot, prepared []provider.Message, persistedText, partial string) {
-	if !s.plainTurnCurrent(snapshot.token, snapshot.myTurn) {
+	s.mu.Lock()
+	if s.turnID != snapshot.myTurn || !s.tokenCurrentLocked(snapshot.token) {
+		s.mu.Unlock()
 		return
 	}
-	s.mu.Lock()
 	replaceNewestUserText(prepared, snapshot.messages[len(snapshot.messages)-1].Content, persistedText)
 	s.Messages = prepared
 	if strings.TrimSpace(partial) != "" {
