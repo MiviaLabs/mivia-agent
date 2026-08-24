@@ -50,6 +50,38 @@ func TestCommandRunner_RunBasicCommands(t *testing.T) {
 	}
 }
 
+func TestCommandRunner_NilSessionErrors(t *testing.T) {
+	runner := uiadapter.NewCommandRunner(nil, nil, nil)
+
+	if out := runner.Run(context.Background(), "clear", ""); out.Err == "" {
+		t.Errorf("expected Err on nil session clear, got %+v", out)
+	}
+	if out := runner.Run(context.Background(), "compact", ""); out.Err == "" {
+		t.Errorf("expected Err on nil session compact, got %+v", out)
+	}
+	if out := runner.Run(context.Background(), "context", ""); out.Err == "" {
+		t.Errorf("expected Err on nil session context, got %+v", out)
+	}
+	if out := runner.Run(context.Background(), "cost", ""); out.Err == "" {
+		t.Errorf("expected Err on nil session cost, got %+v", out)
+	}
+	if out := runner.Run(context.Background(), "model", ""); out.Err == "" {
+		t.Errorf("expected Err on nil session model, got %+v", out)
+	}
+	if out := runner.SelectModel(context.Background(), "m1"); out.Err == "" {
+		t.Errorf("expected Err on nil session SelectModel, got %+v", out)
+	}
+	if out := runner.SelectAgent(context.Background(), "a1"); out.Err == "" {
+		t.Errorf("expected Err on nil session SelectAgent, got %+v", out)
+	}
+	if out := runner.Run(context.Background(), "resume", ""); out.Err == "" {
+		t.Errorf("expected Err on nil session resume, got %+v", out)
+	}
+	if out := runner.SelectSession(context.Background(), "s1"); out.Err == "" {
+		t.Errorf("expected Err on nil session SelectSession, got %+v", out)
+	}
+}
+
 func TestCommandRunner_ClearAndUsage(t *testing.T) {
 	comp := &nullCompleter{}
 	res := &config.Resolved{ProviderName: "test", Model: "m1"}
@@ -113,6 +145,12 @@ func TestCommandRunner_ModelSwitching(t *testing.T) {
 	if out.Notice == "" {
 		t.Errorf("expected confirmation notice on SelectModel, got %+v", out)
 	}
+
+	// SelectModel error
+	out = runner.SelectModel(context.Background(), "invalid-model")
+	if out.Err == "" {
+		t.Errorf("expected error on invalid model switch, got %+v", out)
+	}
 }
 
 func TestCommandRunner_AgentSwitching(t *testing.T) {
@@ -144,6 +182,12 @@ func TestCommandRunner_AgentSwitching(t *testing.T) {
 		t.Fatalf("expected at least 2 AgentChoices, got %+v", out)
 	}
 
+	// Direct switch via /agent reviewer
+	out = runner.Run(context.Background(), "agent", "reviewer")
+	if out.Err != "" {
+		t.Fatalf("Run agent reviewer error: %s", out.Err)
+	}
+
 	// SelectAgent
 	out = runner.SelectAgent(context.Background(), "reviewer")
 	if out.Err != "" {
@@ -152,15 +196,24 @@ func TestCommandRunner_AgentSwitching(t *testing.T) {
 	if out.Notice == "" {
 		t.Errorf("expected confirmation notice, got %+v", out)
 	}
+
+	// SelectAgent empty name
+	if out := runner.SelectAgent(context.Background(), ""); out.Err == "" {
+		t.Errorf("expected error on empty agent name, got %+v", out)
+	}
+
+	// SelectAgent unknown
+	if out := runner.SelectAgent(context.Background(), "unknown"); out.Err == "" {
+		t.Errorf("expected error on unknown agent, got %+v", out)
+	}
 }
 
-func TestCommandRunner_ResumeAndCompact(t *testing.T) {
+func setupSessionStoreFixture(t *testing.T) (*chat.Session, *config.Resolved, *storage.SQLite, func()) {
+	t.Helper()
 	tmpDir, err := os.MkdirTemp("", "uiadapter-runner-test-*")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
-
 	comp := &nullCompleter{}
 	res := &config.Resolved{ProviderName: "fake", Model: "m1", SystemPrompt: "sys"}
 	sess := chat.NewSession(res, comp)
@@ -170,7 +223,6 @@ func TestCommandRunner_ResumeAndCompact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
 
 	principal, err := contextstate.NewPrincipal("workspace", sess.SessionID, "subject")
 	if err != nil {
@@ -189,7 +241,22 @@ func TestCommandRunner_ResumeAndCompact(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	cleanup := func() {
+		_ = store.Close()
+		_ = os.RemoveAll(tmpDir)
+	}
+	return sess, res, store, cleanup
+}
+
+func TestCommandRunner_ResumeSession(t *testing.T) {
+	sess, res, _, cleanup := setupSessionStoreFixture(t)
+	defer cleanup()
 	runner := uiadapter.NewCommandRunner(sess, res, nil)
+
+	// Resume on empty store
+	if out := runner.Run(context.Background(), "resume", ""); out.Err == "" {
+		t.Errorf("expected error or no sessions on empty store, got %+v", out)
+	}
 
 	// Save a session so resume has content
 	if err := sess.Save("saved-1"); err != nil {
@@ -202,6 +269,21 @@ func TestCommandRunner_ResumeAndCompact(t *testing.T) {
 		t.Fatalf("expected SessionChoices, got %+v", out)
 	}
 
+	// Direct resume via /resume saved-1
+	if out := runner.Run(context.Background(), "resume", "saved-1"); out.Err != "" {
+		t.Fatalf("Run resume saved-1 error: %s", out.Err)
+	}
+
+	// SelectSession empty
+	if out := runner.SelectSession(context.Background(), ""); out.Err == "" {
+		t.Errorf("expected error on empty session ID, got %+v", out)
+	}
+
+	// SelectSession unknown
+	if out := runner.SelectSession(context.Background(), "nonexistent"); out.Err == "" {
+		t.Errorf("expected error on nonexistent session, got %+v", out)
+	}
+
 	// SelectSession
 	out = runner.SelectSession(context.Background(), "saved-1")
 	if out.Err != "" {
@@ -210,6 +292,12 @@ func TestCommandRunner_ResumeAndCompact(t *testing.T) {
 	if !out.ClearTranscript {
 		t.Error("SelectSession must set ClearTranscript=true")
 	}
+}
+
+func TestCommandRunner_Compact(t *testing.T) {
+	sess, res, _, cleanup := setupSessionStoreFixture(t)
+	defer cleanup()
+	runner := uiadapter.NewCommandRunner(sess, res, nil)
 
 	// Send a turn and add history for compaction
 	if _, err := sess.SendUser(context.Background(), "hello", nil); err != nil {
@@ -223,7 +311,7 @@ func TestCommandRunner_ResumeAndCompact(t *testing.T) {
 	}
 
 	// Compact
-	out = runner.Run(context.Background(), "compact", "")
+	out := runner.Run(context.Background(), "compact", "")
 	if out.Err != "" {
 		t.Fatalf("compact error: %s", out.Err)
 	}
