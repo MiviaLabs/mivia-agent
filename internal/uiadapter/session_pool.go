@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
@@ -19,12 +20,12 @@ type SessionPool struct {
 	sessions   map[string]*chat.Session
 	convs      map[string]*Conversation
 	res        *config.Resolved
-	agentState *cli.AgentSessionState
+	agentState *cliagents.AgentSessionState
 	toolsOn    bool
 }
 
 // NewSessionPool constructs a SessionPool seeded with the initial session.
-func NewSessionPool(initialSess *chat.Session, res *config.Resolved, agentState *cli.AgentSessionState, toolsOn bool) *SessionPool {
+func NewSessionPool(initialSess *chat.Session, res *config.Resolved, agentState *cliagents.AgentSessionState, toolsOn bool) *SessionPool {
 	pool := &SessionPool{
 		sessions:   make(map[string]*chat.Session),
 		convs:      make(map[string]*Conversation),
