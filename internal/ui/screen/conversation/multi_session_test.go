@@ -107,7 +107,7 @@ func TestMultiSession_BackgroundTurnAndSwitching(t *testing.T) {
 		TurnID: "turn-sess-A",
 		Body:   uievent.TextDeltaBody{Text: "Background output in A"},
 	}
-	next, _ = s.Update(sessionEventMsg{sessionID: "sess-A", event: evA})
+	next, _ = s.Update(uievent.EventMsg{SessionID: "sess-A", Event: evA})
 	s = next.(Screen)
 	if strings.Contains(s.View(), "Background output in A") {
 		t.Errorf("Session B view was polluted with Session A event:\n%s", s.View())
@@ -147,7 +147,7 @@ func TestMultiSession_ApprovalInSessionA_DoesNotBlockSessionB(t *testing.T) {
 			Args:       map[string]any{"path": "main.go"},
 		},
 	}
-	next, _ = s.Update(sessionEventMsg{sessionID: "sess-A", event: pendingEv})
+	next, _ = s.Update(uievent.EventMsg{SessionID: "sess-A", Event: pendingEv})
 	s = next.(Screen)
 	if !s.approval.Active() {
 		t.Fatal("expected approval to be active on Session A")
@@ -189,7 +189,7 @@ func TestMultiSession_TurnEndCleansUpBackgroundSession(t *testing.T) {
 	s = next.(Screen)
 
 	// Session A completes in background
-	next, _ = s.Update(sessionTurnEndedMsg{sessionID: "sess-A"})
+	next, _ = s.Update(turnEndedMsg{sessionID: "sess-A"})
 	s = next.(Screen)
 
 	// Switch back to A

@@ -216,17 +216,9 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 	case tea.PasteMsg:
 		// Paste lands in the composer; see handlePaste for the why.
 		return s.handlePaste(msg)
-	case sessionEventMsg:
-		return s.handleSessionEvent(msg)
-	case sessionTurnEndedMsg:
-		return s.handleSessionTurnEnded(msg)
 	case uievent.EventMsg:
-		return s.handleTurnEvent(msg.Event)
+		return s.handleEventMsg(msg)
 	case threadEventMsg:
-		// A subagent thread's streamed event. Marked Msgs reaching the
-		// MAIN screen are forwarded to the cached thread; the same Msg
-		// reaching an EMBEDDED screen is its own turn's event. See
-		// thread.go.
 		if s.embedded {
 			return s.handleTurnEvent(msg.event)
 		}
@@ -243,13 +235,7 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 		s.refreshTopbar()
 		return s, nil
 	case turnEndedMsg:
-		s.statusline.Stop()
-		s.approval.Clear()
-		s.active = nil
-		// Session values move at turn boundaries: refresh the top bar's
-		// model, context share, and title now, not per token.
-		s.refreshTopbar()
-		return s, nil
+		return s.handleTurnEndedMsg(msg)
 	case approval.DecisionMsg:
 		if s.approver != nil {
 			s.approver.Resolve(msg.ToolCallID, msg.Decision)

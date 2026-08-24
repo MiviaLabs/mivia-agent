@@ -97,31 +97,31 @@ func (s *Screen) switchConversation(newConv ports.Conversation) {
 	s.refreshTopbar()
 }
 
-func (s Screen) handleSessionEvent(msg sessionEventMsg) (app.Screen, tea.Cmd) {
-	if s.convID() == msg.sessionID {
-		return s.handleTurnEvent(msg.event)
-	}
-	if st, ok := s.sessions[msg.sessionID]; ok {
-		st.handleTurnEvent(msg.event)
-		if st.active != nil {
-			return s, s.awaitSessionEvent(msg.sessionID, st.active.Events())
+func (s Screen) handleEventMsg(msg uievent.EventMsg) (app.Screen, tea.Cmd) {
+	if msg.SessionID != "" && s.convID() != msg.SessionID {
+		if st, ok := s.sessions[msg.SessionID]; ok {
+			st.handleTurnEvent(msg.Event)
+			if st.active != nil {
+				return s, s.awaitSessionEvent(msg.SessionID, st.active.Events())
+			}
 		}
-	}
-	return s, nil
-}
-
-func (s Screen) handleSessionTurnEnded(msg sessionTurnEndedMsg) (app.Screen, tea.Cmd) {
-	if s.convID() == msg.sessionID {
-		s.statusline.Stop()
-		s.approval.Clear()
-		s.active = nil
-		s.refreshTopbar()
 		return s, nil
 	}
-	if st, ok := s.sessions[msg.sessionID]; ok {
-		st.statusline.Stop()
-		st.approval.Clear()
-		st.active = nil
+	return s.handleTurnEvent(msg.Event)
+}
+
+func (s Screen) handleTurnEndedMsg(msg turnEndedMsg) (app.Screen, tea.Cmd) {
+	if msg.sessionID != "" && s.convID() != msg.sessionID {
+		if st, ok := s.sessions[msg.sessionID]; ok {
+			st.statusline.Stop()
+			st.approval.Clear()
+			st.active = nil
+		}
+		return s, nil
 	}
+	s.statusline.Stop()
+	s.approval.Clear()
+	s.active = nil
+	s.refreshTopbar()
 	return s, nil
 }

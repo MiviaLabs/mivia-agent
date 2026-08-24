@@ -228,5 +228,6 @@ func (TurnEndBody) isBody() {}
 // EventMsg wraps one Event for message delivery. It satisfies tea.Msg
 // without an import.
 type EventMsg struct {
-	Event Event
+	SessionID string
+	Event     Event
 }

@@ -14,7 +14,9 @@ import (
 // Defined alongside the read continuation (waitForEvent) so the type and
 // its producer live together; the channel-close case in waitForEvent is
 // the only sender.
-type turnEndedMsg struct{}
+type turnEndedMsg struct {
+	sessionID string
+}
 
 // waitForEvent is the one real tea.Cmd that reads one event and, when
 // the caller re-issues it after handling the Msg, reads the next one -
@@ -54,17 +56,6 @@ func (s Screen) applyTheme(msg app.ThemeChangedMsg) Screen {
 	return s
 }
 
-// sessionEventMsg tags a streamed uievent.Event with its originating session ID.
-type sessionEventMsg struct {
-	sessionID string
-	event     uievent.Event
-}
-
-// sessionTurnEndedMsg signals that a session's turn handle events channel closed.
-type sessionTurnEndedMsg struct {
-	sessionID string
-}
-
 func (s Screen) awaitSessionEvent(sessionID string, events <-chan uievent.Event) tea.Cmd {
 	if s.embedded {
 		return s.awaitEvent(events)
@@ -72,9 +63,9 @@ func (s Screen) awaitSessionEvent(sessionID string, events <-chan uievent.Event)
 	return func() tea.Msg {
 		ev, ok := <-events
 		if !ok {
-			return sessionTurnEndedMsg{sessionID: sessionID}
+			return turnEndedMsg{sessionID: sessionID}
 		}
-		return sessionEventMsg{sessionID: sessionID, event: ev}
+		return uievent.EventMsg{SessionID: sessionID, Event: ev}
 	}
 }
 
