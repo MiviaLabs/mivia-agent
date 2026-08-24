@@ -829,3 +829,72 @@ func TestHistory_IncludesToolCallsAndReasoning(t *testing.T) {
 		t.Errorf("tool call output = %q, want package main...", assistantMsg.ToolCalls[0].Output)
 	}
 }
+
+func TestSend_SubagentProgressForwarded(t *testing.T) {
+	var capturedFn func(agent.Event)
+	var cleared bool
+	prevRegistrar := uiadapter.SubagentProgressRegistrar
+	uiadapter.SubagentProgressRegistrar = func(fn func(agent.Event)) func() {
+		capturedFn = fn
+		return func() {
+			cleared = true
+		}
+	}
+	defer func() {
+		uiadapter.SubagentProgressRegistrar = prevRegistrar
+	}()
+
+	completer := &scriptedCompleter{
+		turns: []provider.Response{
+			{Content: "done"},
+		},
+	}
+	conv := newTestConversation(t, completer)
+	handle, err := conv.Send(context.Background(), intent.Send{Text: "run audit"})
+	if err != nil {
+		t.Fatalf("conv.Send: %v", err)
+	}
+	if capturedFn == nil {
+		t.Fatal("SubagentProgressRegistrar was not invoked")
+	}
+
+	// Emit subagent progress events while turn is active.
+	capturedFn(agent.Event{
+		Kind:       agent.EventSubagentStart,
+		ToolCallID: "sub_1",
+		Name:       "read_file",
+		Input:      `{"path":"docs/OWNERS.yaml"}`,
+	})
+	capturedFn(agent.Event{
+		Kind:       agent.EventSubagentEnd,
+		ToolCallID: "sub_1",
+		Name:       "read_file",
+		Detail:     "completed",
+		Output:     "owners content",
+	})
+
+	events := drainUntilClose(t, handle.Events(), 2*time.Second)
+	if !cleared {
+		t.Error("SubagentProgressRegistrar cleanup was not invoked on turn end")
+	}
+
+	var hasSubStart, hasSubEnd bool
+	for _, ev := range events {
+		if ev.Kind == uievent.KindToolStart {
+			if body, ok := ev.Body.(uievent.ToolStartBody); ok && body.ToolCallID == "sub_1" && body.Name == "read_file" {
+				hasSubStart = true
+			}
+		}
+		if ev.Kind == uievent.KindToolEnd {
+			if body, ok := ev.Body.(uievent.ToolEndBody); ok && body.ToolCallID == "sub_1" && body.Name == "read_file" && body.OK {
+				hasSubEnd = true
+			}
+		}
+	}
+	if !hasSubStart {
+		t.Errorf("events stream missing subagent tool.start, events=%+v", events)
+	}
+	if !hasSubEnd {
+		t.Errorf("events stream missing subagent tool.end, events=%+v", events)
+	}
+}

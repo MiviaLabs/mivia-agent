@@ -5,6 +5,7 @@ import (
 	"log"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/cli"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -13,6 +14,15 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	"github.com/MiviaLabs/mivia-agent/internal/uiadapter"
 )
+
+func init() {
+	uiadapter.SubagentProgressRegistrar = func(fn func(agent.Event)) func() {
+		token := cli.SetSubagentProgress(fn)
+		return func() {
+			cli.ClearSubagentProgress(token)
+		}
+	}
+}
 
 // RunTUI is the alternative launcher that wires the new Mivia UI.
 func RunTUI(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *cli.AgentSessionState, resumeSessionName string) error {

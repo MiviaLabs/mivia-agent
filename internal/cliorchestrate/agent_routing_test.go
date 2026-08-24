@@ -123,6 +123,24 @@ func TestAgentEnumInParameters(t *testing.T) {
 	}
 }
 
+func TestAgentEnumOmittedWhenRegistryEmpty(t *testing.T) {
+	for name, parameters := range map[string]map[string]any{
+		"dispatch nil":   (&dispatchTasksTool{}).Parameters(),
+		"spawn nil":      (&spawnAgentTool{}).Parameters(),
+		"dispatch empty": (&dispatchTasksTool{agentReg: agents.NewRegistry()}).Parameters(),
+		"spawn empty":    (&spawnAgentTool{agentReg: agents.NewRegistry()}).Parameters(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			items := parameters["properties"].(map[string]any)["tasks"].(map[string]any)["items"].(map[string]any)
+			props := items["properties"].(map[string]any)
+			agent := props["agent"].(map[string]any)
+			if enumVal, found := agent["enum"]; found {
+				t.Fatalf("empty registry must not emit enum key, got %#v", enumVal)
+			}
+		})
+	}
+}
+
 func TestTaskBuildersRecordResolvedBinding(t *testing.T) {
 	reg := agents.NewRegistry()
 	if err := reg.Publish(agents.ResolvedAgent{

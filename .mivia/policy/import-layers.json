@@ -534,6 +534,7 @@
       "internal/workspace"
     ],
     "internal/newtui": [
+      "internal/agent",
       "internal/chat",
       "internal/cli",
       "internal/config",

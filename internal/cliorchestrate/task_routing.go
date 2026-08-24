@@ -92,12 +92,16 @@ func taskItemSchema(reg *agents.AgentRegistry, includeBudget, includeRoster bool
 	if includeRoster {
 		agentDescription = agentRoutingDescription(reg)
 	}
+	agentProp := map[string]any{
+		"type":        "string",
+		"description": agentDescription,
+	}
+	if names := agentNames(reg); len(names) > 0 {
+		agentProp["enum"] = names
+	}
 	properties := map[string]any{
-		"id": map[string]any{"type": "string", "description": "Unique task identifier within this run"},
-		"agent": map[string]any{
-			"type": "string", "enum": agentNames(reg),
-			"description": agentDescription,
-		},
+		"id":              map[string]any{"type": "string", "description": "Unique task identifier within this run"},
+		"agent":           agentProp,
 		"skill":           map[string]any{"type": "string", "description": "Optional skill invoked under the selected agent's policy"},
 		"depends_on":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Task IDs that must complete first"},
 		"prompt":          map[string]any{"type": "string", "description": "Natural language task description for the selected agent"},

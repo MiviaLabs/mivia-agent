@@ -87,6 +87,10 @@ func NewConversation(sess *chat.Session) *Conversation {
 // An atomic.Bool closed is the single source of truth for "events is
 // closed"; Cancel and the goroutine CAS-claim it; the tap drops on
 // closed. Exactly one close occurs.
+// SubagentProgressRegistrar allows the UI layer to receive live subagent progress events
+// (nested tool calls, steps, heartbeats) from the subagent progress callback.
+var SubagentProgressRegistrar func(fn func(agent.Event)) (cleanup func())
+
 func (c *Conversation) Send(ctx context.Context, in intent.Send) (ports.TurnHandle, error) {
 	if c.sess == nil {
 		return nil, errors.New("uiadapter: Conversation.Send on nil session")
@@ -112,7 +116,17 @@ func (c *Conversation) Send(ctx context.Context, in intent.Send) (ports.TurnHand
 	handler := newTurnHandler(events, closed, turnIDPtr, &seq, turnCtx)
 	previous := c.sess.SwapOnAgentEvent(handler)
 
-	h := newTurnHandle(events, closed, cancelTurn, func() { c.sess.SwapOnAgentEvent(previous) })
+	var clearSubagent func()
+	if SubagentProgressRegistrar != nil {
+		clearSubagent = SubagentProgressRegistrar(handler)
+	}
+
+	h := newTurnHandle(events, closed, cancelTurn, func() {
+		c.sess.SwapOnAgentEvent(previous)
+		if clearSubagent != nil {
+			clearSubagent()
+		}
+	})
 	c.runTurnGoroutine(turnCtx, in, h, closed, turnIDPtr, &seq, cancelTurn)
 	return h, nil
 }
