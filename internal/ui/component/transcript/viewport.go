@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
 
 // The cockpit owns the whole drawing surface, so the transcript owns the
@@ -40,9 +39,7 @@ func (m *Model) SetSize(width, height int) {
 	if widthChanged {
 		m.blocks = slices.Clone(m.blocks)
 		for i := range m.blocks {
-			if m.blocks[i].Kind == uievent.KindTurnStart {
-				m.blocks[i].Body = userLines(m.Theme, m.Tier, width, m.blocks[i].Input)
-			}
+			m.blocks[i] = m.restyle(m.blocks[i])
 		}
 	}
 	m.clampOffset()

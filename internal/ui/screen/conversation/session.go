@@ -86,6 +86,7 @@ func (s *Screen) switchConversation(newConv ports.Conversation) {
 		s.panel = st.panel
 	} else {
 		s.transcript = transcript.New(s.Theme, s.Tier)
+		s.transcript.SetSize(s.chatWidth(), s.transcriptHeight())
 		s.active = nil
 		s.statusline = statusline.New(s.Theme, s.Tier)
 		s.approval = approval.New(s.Theme, s.Tier)

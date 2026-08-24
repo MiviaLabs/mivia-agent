@@ -596,3 +596,24 @@ func TestAutoFoldReasoningPreservesBody(t *testing.T) {
 		t.Errorf("expected line 1 %q, got %q", "thinking deeply...", blk.Body[0])
 	}
 }
+
+func TestSetSize_ReflowsProseMarkdownBlocks(t *testing.T) {
+	th := loadTheme(t)
+	m := New(th, theme.TierTrueColor)
+	// Add long markdown text when width is uninitialized (width 0 -> prose width 20)
+	longText := "This is a long sentence that should wrap to many lines when narrow and fewer lines when wide."
+	m, _ = m.HandleEvent(uievent.Event{
+		Kind: uievent.KindTextEnd,
+		Body: uievent.TextEndBody{Text: longText},
+	})
+
+	initialLineCount := len(m.Blocks()[0].Body)
+
+	// Now resize to wide width (120)
+	m.SetSize(120, 24)
+	wideLineCount := len(m.Blocks()[0].Body)
+
+	if wideLineCount >= initialLineCount {
+		t.Errorf("expected reflowed markdown to have fewer lines at width 120 (%d) than initial width 20 (%d)", wideLineCount, initialLineCount)
+	}
+}

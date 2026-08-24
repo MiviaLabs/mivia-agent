@@ -135,6 +135,7 @@ func New(th theme.Theme, tier theme.Tier, themes []theme.Theme, conv ports.Conve
 		now:        now,
 	}
 	s.approval.SetWidth(contentWidth(width))
+	s.transcript.SetSize(contentWidth(width), 24)
 	if conv != nil {
 		s.topbar = topbar.New(th, tier, conv.Model(), conv.ContextUsage(), contentWidth(width))
 		if title := conv.Title(); title != "" {
