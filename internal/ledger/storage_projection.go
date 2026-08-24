@@ -3,7 +3,6 @@ package ledger
 import (
 	"context"
 	"fmt"
-	"sort"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ledgercore"
@@ -28,36 +27,7 @@ import (
 // the projection. Store I/O happens without s.mu held; only the application of
 // an already-read tail takes the write lock.
 func (s *StorageLedgerRepository) catchUp(ctx context.Context) error {
-	cursor := s.engine.Watermarks().Cursor()
-	maxSequences, newCursor, err := s.engine.Store().Changes(ctx, cursor)
-	if err != nil {
-		return fmt.Errorf("read store changes: %w", err)
-	}
-
-	behind := s.engine.Watermarks().CheckBehind(maxSequences)
-	if len(behind) == 0 {
-		s.engine.Watermarks().AdvanceCursor(newCursor)
-		return nil
-	}
-
-	var pending []storage.Event
-	for _, runID := range behind {
-		from := s.engine.Watermarks().Applied(runID)
-		events, err := s.engine.Store().EventsSince(ctx, runID, int(from))
-		if err != nil {
-			return fmt.Errorf("read events for %s: %w", runID, err)
-		}
-		pending = append(pending, events...)
-	}
-	if len(pending) == 0 {
-		s.engine.Watermarks().AdvanceCursor(newCursor)
-		return nil
-	}
-	if err := s.applyTail(ctx, pending); err != nil {
-		return err
-	}
-	s.engine.Watermarks().AdvanceCursor(newCursor)
-	return nil
+	return s.engine.CatchUpSince(ctx, nil, s.applyTail)
 }
 
 // applyTail folds an ordered set of store events into the projection under the
@@ -71,12 +41,7 @@ func (s *StorageLedgerRepository) catchUp(ctx context.Context) error {
 // was read starting at a watermark snapshot, skipping already-applied prefixes
 // cannot open a gap.
 func (s *StorageLedgerRepository) applyTail(ctx context.Context, events []storage.Event) error {
-	sort.SliceStable(events, func(i, j int) bool {
-		if events[i].RowID != events[j].RowID {
-			return events[i].RowID < events[j].RowID
-		}
-		return events[i].Sequence < events[j].Sequence
-	})
+	ledgercore.SortEventsStable(events)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -305,12 +270,7 @@ func (s *StorageLedgerRepository) rebuildRunProjection(ctx context.Context, runI
 	if err != nil {
 		return fmt.Errorf("read events for %s: %w", runID, err)
 	}
-	sort.SliceStable(events, func(i, j int) bool {
-		if events[i].RowID != events[j].RowID {
-			return events[i].RowID < events[j].RowID
-		}
-		return events[i].Sequence < events[j].Sequence
-	})
+	ledgercore.SortEventsStable(events)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -397,9 +357,10 @@ func (s *StorageLedgerRepository) isInflightLocked(runID string, sequence uint64
 // applied watermark past it so catch-up never re-reads this instance's own
 // writes. The caller updates the in-memory projection itself.
 func (s *StorageLedgerRepository) appendStoreEvent(ctx context.Context, evt storage.Event) error {
-	err := s.engine.AppendEvent(ctx, evt, ledgercore.AppendOptions{})
-	s.mu.Lock()
-	s.releaseInflightLocked(evt.RunID, uint64(evt.Sequence))
-	s.mu.Unlock()
-	return err
+	defer func() {
+		s.mu.Lock()
+		s.releaseInflightLocked(evt.RunID, uint64(evt.Sequence))
+		s.mu.Unlock()
+	}()
+	return s.engine.AppendEvent(ctx, evt, ledgercore.AppendOptions{})
 }

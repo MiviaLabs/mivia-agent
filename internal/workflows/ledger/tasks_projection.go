@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/MiviaLabs/mivia-agent/internal/ledgercore"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
@@ -19,29 +20,14 @@ import (
 // coordinator run-, ...) and are never read; advancing the cursor past their
 // appends keeps the probe constant-time.
 func (s *Store) catchUp(ctx context.Context) error {
-	maxSequences, cursor, err := s.store.Changes(ctx, s.cursor)
-	if err != nil {
-		return fmt.Errorf("read store changes: %w", err)
-	}
-	var behind []string
-	for runID, maxSeq := range maxSequences {
+	return s.engine.CatchUp(ctx, func(runID string, maxSeq int) ledgercore.FilterDecision {
 		if !strings.HasPrefix(runID, runIDPrefix) {
-			continue
+			return ledgercore.FilterAdvanceOnly
 		}
-		if uint64(maxSeq) > s.applied[runID] {
-			behind = append(behind, runID)
-		}
-	}
-	sort.Strings(behind)
-	for _, runID := range behind {
-		if err := s.rebuildRunFromStore(ctx, runID); err != nil {
-			return err
-		}
-	}
-	if cursor > s.cursor {
-		s.cursor = cursor
-	}
-	return nil
+		return ledgercore.FilterApply
+	}, func(ctx context.Context, runID string, events []storage.Event) error {
+		return s.rebuildRun(runID, events)
+	})
 }
 
 // rebuildRunFromStore rebuilds one plan run's projection from its full event
@@ -59,12 +45,7 @@ func (s *Store) rebuildRunFromStore(ctx context.Context, runID string) error {
 // an undecodable KNOWN kind fails loudly, mirroring the workflow ledger.
 func (s *Store) rebuildRun(runID string, events []storage.Event) error {
 	sorted := append([]storage.Event(nil), events...)
-	sort.Slice(sorted, func(i, j int) bool {
-		if sorted[i].Sequence != sorted[j].Sequence {
-			return sorted[i].Sequence < sorted[j].Sequence
-		}
-		return sorted[i].RowID < sorted[j].RowID
-	})
+	ledgercore.SortEventsStable(sorted)
 
 	planRef := strings.TrimPrefix(runID, runIDPrefix)
 	state := &planState{tasks: make(map[string]Task)}
@@ -119,9 +100,7 @@ func (s *Store) rebuildRun(runID string, events []storage.Event) error {
 	} else {
 		s.plans[planRef] = state
 	}
-	if maxSeq > s.applied[runID] {
-		s.applied[runID] = maxSeq
-	}
+	s.engine.Watermarks().SetApplied(runID, maxSeq)
 	return nil
 }
 
@@ -130,13 +109,7 @@ func (s *Store) rebuildRun(runID string, events []storage.Event) error {
 // allocations. allocated keeps a failed append from ever reusing a sequence
 // that was already handed out.
 func (s *Store) nextSequence(runID string) uint64 {
-	next := s.applied[runID]
-	if s.allocated[runID] > next {
-		next = s.allocated[runID]
-	}
-	next++
-	s.allocated[runID] = next
-	return next
+	return s.engine.NextSequence(runID)
 }
 
 func sortedPlanRefs(plans map[string]*planState) []string {

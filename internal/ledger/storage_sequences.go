@@ -3,7 +3,8 @@ package ledger
 import (
 	"context"
 	"fmt"
-	"sort"
+
+	"github.com/MiviaLabs/mivia-agent/internal/ledgercore"
 )
 
 // rebaseRunSequence preserves sequence monotonicity when a deleted run ID is
@@ -25,12 +26,7 @@ func (s *StorageLedgerRepository) rebaseRunSequence(ctx context.Context, runID s
 	}
 	// Fold in global append order, exactly like applyTail, so a run_deleted
 	// tombstone always lands before a later reused-ID run_created.
-	sort.SliceStable(events, func(i, j int) bool {
-		if events[i].RowID != events[j].RowID {
-			return events[i].RowID < events[j].RowID
-		}
-		return events[i].Sequence < events[j].Sequence
-	})
+	ledgercore.SortEventsStable(events)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, evt := range events {

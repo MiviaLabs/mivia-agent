@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -266,4 +267,167 @@ func (e *Engine) CheckDuplicatePayload(ctx context.Context, evt storage.Event) e
 		}
 	}
 	return ErrConflict
+}
+
+// CatchUpSince probes store changes and fetches new events using EventsSince
+// for all runs behind their applied watermark, passing the merged tail to applyTail.
+func (e *Engine) CatchUpSince(
+	ctx context.Context,
+	filterRun func(runID string, maxSeq int) FilterDecision,
+	applyTail func(ctx context.Context, events []storage.Event) error,
+) error {
+	if err := e.CheckOpen(); err != nil {
+		return err
+	}
+
+	cursor := e.watermarks.Cursor()
+	maxSequences, newCursor, err := e.store.Changes(ctx, cursor)
+	if err != nil {
+		return fmt.Errorf("read store changes: %w", err)
+	}
+
+	behind := e.watermarks.CheckBehind(maxSequences)
+	if len(behind) == 0 {
+		e.watermarks.AdvanceCursor(newCursor)
+		return nil
+	}
+
+	var pending []storage.Event
+	for _, runID := range behind {
+		maxSeq := maxSequences[runID]
+		if filterRun != nil {
+			switch filterRun(runID, maxSeq) {
+			case FilterSkip:
+				continue
+			case FilterAdvanceOnly:
+				e.watermarks.SetApplied(runID, uint64(maxSeq))
+				continue
+			}
+		}
+		from := e.watermarks.Applied(runID)
+		events, err := e.store.EventsSince(ctx, runID, int(from))
+		if err != nil {
+			return fmt.Errorf("read events for %s: %w", runID, err)
+		}
+		pending = append(pending, events...)
+	}
+	if len(pending) == 0 {
+		e.watermarks.AdvanceCursor(newCursor)
+		return nil
+	}
+	if applyTail != nil {
+		if err := applyTail(ctx, pending); err != nil {
+			return err
+		}
+	}
+	e.watermarks.AdvanceCursor(newCursor)
+	return nil
+}
+
+// SortEvents sorts events in-place into global store order (RowID ascending, then Sequence ascending).
+func SortEvents(events []storage.Event) {
+	sort.Slice(events, func(i, j int) bool {
+		if events[i].RowID != events[j].RowID {
+			return events[i].RowID < events[j].RowID
+		}
+		return events[i].Sequence < events[j].Sequence
+	})
+}
+
+// SortEventsStable stably sorts events in-place into global store order (RowID ascending, then Sequence ascending).
+func SortEventsStable(events []storage.Event) {
+	sort.SliceStable(events, func(i, j int) bool {
+		if events[i].RowID != events[j].RowID {
+			return events[i].RowID < events[j].RowID
+		}
+		return events[i].Sequence < events[j].Sequence
+	})
+}
+
+// ClaimRun acquires an exclusive run execution claim on store.
+func (e *Engine) ClaimRun(ctx context.Context, runID, holder string) error {
+	if err := e.CheckOpen(); err != nil {
+		return err
+	}
+	return e.claims.ClaimRun(ctx, e.store, runID, holder)
+}
+
+// RefreshRunClaim refreshes the claim's acquired_at only if already held.
+func (e *Engine) RefreshRunClaim(ctx context.Context, runID, holder string) error {
+	if err := e.CheckOpen(); err != nil {
+		return err
+	}
+	return e.claims.RefreshRunClaim(ctx, e.store, runID, holder)
+}
+
+// TakeoverRunClaim atomically replaces any existing claim on store.
+func (e *Engine) TakeoverRunClaim(ctx context.Context, runID, holder string) error {
+	if err := e.CheckOpen(); err != nil {
+		return err
+	}
+	return e.claims.TakeoverRunClaim(ctx, e.store, runID, holder)
+}
+
+// TakeoverExpiredRunClaim replaces a claim only when its age exceeds maxAge.
+func (e *Engine) TakeoverExpiredRunClaim(ctx context.Context, runID, holder string, maxAge time.Duration) error {
+	if err := e.CheckOpen(); err != nil {
+		return err
+	}
+	return e.claims.TakeoverExpiredRunClaim(ctx, e.store, runID, holder, maxAge)
+}
+
+// ReleaseRun releases the claim on runID. Only the current holder may release it.
+func (e *Engine) ReleaseRun(ctx context.Context, runID, holder string) error {
+	if err := e.CheckOpen(); err != nil {
+		return err
+	}
+	return e.claims.ReleaseRun(ctx, e.store, runID, holder)
+}
+
+// ClearRunClaim removes a run claim (force release).
+func (e *Engine) ClearRunClaim(ctx context.Context, runID string) error {
+	if err := e.CheckOpen(); err != nil {
+		return err
+	}
+	return e.claims.ClearRunClaim(ctx, e.store, runID)
+}
+
+// GetRunClaim reads the run's current execution claim without modifying it.
+func (e *Engine) GetRunClaim(ctx context.Context, runID string) (holder string, acquiredAt time.Time, ok bool, err error) {
+	if err := e.CheckOpen(); err != nil {
+		return "", time.Time{}, false, err
+	}
+	return e.claims.GetRunClaim(ctx, e.store, runID)
+}
+
+// IsRunHeld reports whether runID currently has an active claim.
+func (e *Engine) IsRunHeld(ctx context.Context, runID string) (bool, error) {
+	if err := e.CheckOpen(); err != nil {
+		return false, err
+	}
+	return e.claims.IsRunHeld(ctx, e.store, runID)
+}
+
+// IsRunTokenFenced reports whether token has been fenced out of runID.
+func (e *Engine) IsRunTokenFenced(ctx context.Context, runID, token string) (bool, error) {
+	if err := e.CheckOpen(); err != nil {
+		return false, err
+	}
+	return e.claims.IsRunTokenFenced(ctx, e.store, runID, token)
+}
+
+// StoreContent persists bytes under a content-addressed reference.
+func (e *Engine) StoreContent(ctx context.Context, ref string, data []byte) error {
+	if err := e.CheckOpen(); err != nil {
+		return err
+	}
+	return StoreContent(ctx, e.store, ref, data)
+}
+
+// LoadContent retrieves stored bytes under ref.
+func (e *Engine) LoadContent(ctx context.Context, ref string) ([]byte, error) {
+	if err := e.CheckOpen(); err != nil {
+		return nil, err
+	}
+	return LoadContent(ctx, e.store, ref)
 }

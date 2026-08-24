@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/ledgercore"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
@@ -21,15 +22,10 @@ import (
 // survives restarts and is atomic per mutation. The package is a NON-OWNING
 // user of the store: it never closes it.
 type Store struct {
-	store storage.Store
+	store  storage.Store
+	engine *ledgercore.Engine
 
 	mu sync.Mutex
-	// cursor is the store append position this instance has already probed.
-	cursor uint64
-	// applied is the highest sequence per plan run folded into the projection.
-	applied map[string]uint64
-	// allocated guards sequence reuse in-process after a failed append.
-	allocated map[string]uint64
 	// plans holds the derived projection, keyed by plan ref.
 	plans map[string]*planState
 	// now is the swappable clock (SetTimeSource) for journal timestamps.
@@ -50,11 +46,10 @@ type planState struct {
 // NewStore wraps a shared storage.Store (non-owning).
 func NewStore(store storage.Store) *Store {
 	return &Store{
-		store:     store,
-		applied:   make(map[string]uint64),
-		allocated: make(map[string]uint64),
-		plans:     make(map[string]*planState),
-		now:       time.Now,
+		store:  store,
+		engine: ledgercore.NewEngine(store, false, ""),
+		plans:  make(map[string]*planState),
+		now:    time.Now,
 	}
 }
 
@@ -418,9 +413,7 @@ func (s *Store) appendEvent(ctx context.Context, events []storage.Event) error {
 	err := batch.AppendBatch(ctx, events)
 	if err == nil {
 		for _, evt := range events {
-			if uint64(evt.Sequence) > s.applied[evt.RunID] {
-				s.applied[evt.RunID] = uint64(evt.Sequence)
-			}
+			s.engine.Watermarks().SetApplied(evt.RunID, uint64(evt.Sequence))
 		}
 		return nil
 	}
