@@ -120,10 +120,14 @@ type Model struct {
 // New returns a router with base as the only (non-poppable) screen.
 // themes is the full candidate set ThemeSelectedMsg resolves against;
 // pass nil if nothing in this Program ever offers a theme picker.
+//
+// Options.Mouse defaults to false (rule 7.1: agent output is text the
+// user copies, and capture removes that). The opt-in flag is set by
+// cmd/mivia-ui when the user passes --mouse.
 func New(base Screen, th theme.Theme, tier theme.Tier, themes []theme.Theme) Model {
 	return Model{
 		Theme: th, Tier: tier, themes: slices.Clone(themes),
-		Opts:  Options{Mouse: true},
+		Opts:  Options{Mouse: false},
 		stack: []Screen{base},
 	}
 }
@@ -304,7 +308,7 @@ func (m Model) pop() (tea.Model, tea.Cmd) {
 // traffic buys nothing here. Capture is off entirely while the surface
 // is handed back - the terminal's own selection must reach the
 // transcript in the scrollback - and when Options.Mouse is off (rule
-// 6.5, --no-mouse).
+// 7.1: agent output is text the user copies; the opt-in is --mouse).
 func (m Model) View() tea.View {
 	top, ok := m.top()
 	if !ok {

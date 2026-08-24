@@ -179,13 +179,27 @@ func TestRunFlagParseErrorExits2(t *testing.T) {
 
 func TestParseFlagsNewCockpitFlags(t *testing.T) {
 	cfg, err := parseFlags([]string{
-		"--no-mouse", "--scroll-lines", "7", "--full-repaint",
+		"--mouse", "--scroll-lines", "7", "--full-repaint",
 	}, &bytes.Buffer{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cfg.noMouse || cfg.scrollLines != 7 || !cfg.fullRepaint {
-		t.Errorf("got %+v, want no-mouse, 7 scroll lines, full-repaint", cfg)
+	if !cfg.mouse || cfg.scrollLines != 7 || !cfg.fullRepaint {
+		t.Errorf("got %+v, want mouse, 7 scroll lines, full-repaint", cfg)
+	}
+}
+
+// TestParseFlagsMouseDefaultIsFalse pins rule 7.1 at the CLI surface:
+// the binary does not request mouse capture unless --mouse is passed.
+// Terminal selection (Cmd-A, click-drag) must work the moment the user
+// launches mivia-ui, with no flags.
+func TestParseFlagsMouseDefaultIsFalse(t *testing.T) {
+	cfg, err := parseFlags(nil, &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.mouse {
+		t.Errorf("got cfg.mouse=%v, want false by default", cfg.mouse)
 	}
 }
 

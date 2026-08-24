@@ -136,8 +136,11 @@ func (s Screen) openHelp() Screen {
 	// and inside tmux and must never scroll off the help.
 	hint := "any key closes this"
 	if s.mouseHint != "" {
+		// With --mouse the user opts into capture. The override key
+		// (Fn/Option/Shift, set by termprobe) is the escape hatch back
+		// to the terminal's own selection.
 		hint = "any key closes this  -  hold " + s.mouseHint +
-			" to select with the terminal (--no-mouse releases it)"
+			" to select with the terminal (drop --mouse for native selection by default)"
 	}
 	w, h := s.dialogSize()
 	s.overlay = render.Dialog(s.Theme, s.Tier, w, h, "keys", help, hint)

@@ -114,18 +114,19 @@ detects `MIVIA_SCREEN_READER`; `cmd/mivia-ui` prints one line that says
 why and renders the plain stream from `internal/ui/stream` instead.
 `TERM=dumb` takes the same path (ux-rules rule 9.6).
 
-**Rule 6.5. IMPLEMENTED 2026-08-19.** Mouse capture is opt-out, not
-mandatory. Provide a flag that keeps the cockpit and releases the mouse,
-because mouse capture is the most common friction point over SSH and
-inside tmux. State the terminal's own override key on screen: `Fn` on
-Terminal.app, `Option` on iTerm2, `Shift` almost everywhere else.
-Implementation: `--no-mouse` unsets `View.MouseMode` through
-`app.Options`. The help overlay states the override key from
-`termprobe.MouseOverrideHint` (`Option` on iTerm2, `Fn` on Terminal.app,
-`Shift` elsewhere, all three named over SSH where the terminal cannot be
-identified). Mouse capture is also released while a `[` handover holds
-no alternate screen, so the terminal's own selection can reach the
-transcript in scrollback.
+**Rule 6.5. AMENDED 2026-08-24.** Mouse capture is OFF by default
+(ux-rules.md rule 7.1) and `--mouse` is the opt-in. The previous
+implementation had capture on with `--no-mouse` as the escape hatch;
+that contradicted rule 7.1 and made terminal-native selection
+(Cmd-A, click-and-drag, middle-click PRIMARY paste on Linux) silently
+broken the moment the cockpit rendered. The opt-in (`--mouse`) keeps
+the cockpit and turns on `tea.MouseModeCellMotion` so clicks, drags
+and the wheel reach the transcript. The help overlay states the
+terminal's own override key (Fn on Terminal.app, Option on iTerm2,
+Shift almost everywhere else) so the user can still native-select
+under capture; `termprobe.MouseOverrideHint` provides it. Capture is
+also released while a `[` handover holds no alternate screen, so the
+terminal's own selection can reach the transcript in scrollback.
 
 **Rule 6.6. IMPLEMENTED 2026-08-19.** Wheel speed is not portable. Some
 terminals send one event per notch and some amplify. Ship a multiplier in

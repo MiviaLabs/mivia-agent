@@ -94,7 +94,7 @@ type cfg struct {
 	dark          bool
 	noColor       bool
 	outputJSON    bool
-	noMouse       bool
+	mouse         bool
 	scrollLines   int
 	fullRepaint   bool
 }
@@ -119,7 +119,10 @@ func parseFlags(args []string, stderr io.Writer) (cfg, error) {
 	fs.BoolVar(&c.light, "light", false, "default to a light theme instead of --theme's default")
 	fs.BoolVar(&c.dark, "dark", false, "default to a dark theme instead of --theme's default")
 	fs.BoolVar(&c.noColor, "no-color", false, "force the no-colour/ASCII degradation tier")
-	fs.BoolVar(&c.noMouse, "no-mouse", false, "keep the cockpit but release mouse capture (rule 6.5)")
+	// --mouse is the opt-in for capture. Default off (rule 7.1): agent
+	// output is text the user copies, and capture removes native
+	// selection (Cmd-A, click-and-drag, middle-click PRIMARY paste).
+	fs.BoolVar(&c.mouse, "mouse", false, "opt in to mouse capture (clicks, drags, wheel) at the cost of native selection")
 	fs.IntVar(&c.scrollLines, "scroll-lines", uikitconfig.CockpitScrollLines,
 		"rows one mouse-wheel notch scrolls (rule 6.6)")
 	fs.BoolVar(&c.fullRepaint, "full-repaint", false,
@@ -238,12 +241,14 @@ func runCockpit(ctx context.Context, c cfg, th theme.Theme, tier theme.Tier, the
 	for _, w := range probe.Warnings {
 		screen.Notice(w)
 	}
-	if !c.noMouse {
+	if !c.mouse {
+		screen.SetMouseOverrideHint("")
+	} else {
 		screen.SetMouseOverrideHint(probe.MouseHint)
 	}
 	root := app.New(screen, th, tier, themes).
 		WithOptions(app.Options{
-			Mouse:       !c.noMouse,
+			Mouse:       c.mouse,
 			FullRepaint: c.fullRepaint || probe.FullRepaint,
 		})
 

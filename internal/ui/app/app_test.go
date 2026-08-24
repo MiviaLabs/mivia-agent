@@ -437,24 +437,41 @@ func TestViewFollowsTopScreenFlags(t *testing.T) {
 	}
 }
 
-// TestViewRequestsCellMotionMouse pins the mode. Cell motion carries
-// clicks, drags and the wheel, which is everything the transcript needs.
-// All-motion adds an event for every cursor movement and buys nothing.
-func TestViewRequestsCellMotionMouse(t *testing.T) {
+// TestViewMouseDefaultsToNone pins rule 7.1: an agent CLI's output is
+// prose, code, diffs and paths - text that exists to be copied. Mouse
+// capture removes that, so the default is OFF and the terminal's own
+// selection (Cmd-A, click-and-drag, middle-click PRIMARY paste) works
+// the moment the cockpit renders. The opt-in is Options{Mouse: true};
+// see TestMouseOptionEnablesCapture.
+func TestViewMouseDefaultsToNone(t *testing.T) {
 	m := New(stubScreen{name: "base", flags: ViewFlags{AltScreen: true}}, loadTheme(t), theme.TierASCII, nil)
-	if got := m.View().MouseMode; got != tea.MouseModeCellMotion {
-		t.Errorf("got mouse mode %v, want tea.MouseModeCellMotion", got)
+	if got := m.View().MouseMode; got != tea.MouseModeNone {
+		t.Errorf("got mouse mode %v, want MouseModeNone by default", got)
 	}
 }
 
-// TestNoMouseOptionReleasesCapture pins rule 6.5: --no-mouse keeps the
-// cockpit and drops mouse capture, so the terminal's own
-// copy-on-select works over SSH and inside tmux.
-func TestNoMouseOptionReleasesCapture(t *testing.T) {
+// TestMouseOptionEnablesCapture pins the opt-in path: --mouse opts the
+// user into clicks, drags and wheel scrolling at the cost of native
+// selection. Cell motion carries clicks, drags and the wheel, which is
+// everything the transcript needs; AllMotion adds an event for every
+// cursor movement and buys nothing.
+func TestMouseOptionEnablesCapture(t *testing.T) {
+	m := New(stubScreen{name: "base", flags: ViewFlags{AltScreen: true}}, loadTheme(t), theme.TierASCII, nil).
+		WithOptions(Options{Mouse: true})
+	if got := m.View().MouseMode; got != tea.MouseModeCellMotion {
+		t.Errorf("got mouse mode %v, want CellMotion when Options.Mouse is true", got)
+	}
+}
+
+// TestMouseOffKeepsNativeSelection pins that setting Options.Mouse to
+// false (now also the default) leaves the terminal free to select text
+// from the cockpit's own frame. The same assertion holds at the default
+// since rule 7.1 makes off the default.
+func TestMouseOffKeepsNativeSelection(t *testing.T) {
 	m := New(stubScreen{name: "base", flags: ViewFlags{AltScreen: true}}, loadTheme(t), theme.TierASCII, nil).
 		WithOptions(Options{Mouse: false})
 	if got := m.View().MouseMode; got != tea.MouseModeNone {
-		t.Errorf("got mouse mode %v, want none under --no-mouse", got)
+		t.Errorf("got mouse mode %v, want none when Options.Mouse is false", got)
 	}
 }
 
