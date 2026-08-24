@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Allowlist of accepted environmental skips in manifest-referenced invariant tests (.mivia/invariants.md). Any unlisted t.Skip in an invariant test is rejected as a self-disarming invariant violation.",
+  "allowlistedSkips": {
+    "TestSummaryInjectionOneSummarizePerCompactionAcrossSteps": {
+      "file": "internal/agent/summary_memo_test.go",
+      "reason": "accepted SDK trim bug (docs/development/sdk-backend-field-mapping.md §4)"
+    },
+    "TestIntegrationProjectHookRunsFromTheWorkspace": {
+      "file": "internal/cli/hooks_integration_test.go",
+      "reason": "POSIX shell script fixture requirement"
+    },
+    "TestIntegrationUserAndProjectHooksBothFireUserFirst": {
+      "file": "internal/cli/hooks_integration_test.go",
+      "reason": "POSIX shell script fixture requirement"
+    },
+    "TestIntegrationAProjectHookCanBlockACall": {
+      "file": "internal/cli/hooks_integration_test.go",
+      "reason": "POSIX shell script fixture requirement"
+    },
+    "TestAnalyzerDoesNotReachNetwork": {
+      "file": "internal/codeintel/analyzer_test.go",
+      "reason": "integration test skipped in short mode"
+    },
+    "TestAgentHardlinkRefused": {
+      "file": "internal/config/agents_test.go",
+      "reason": "OS-dependent filesystem hard link capability"
+    },
+    "TestProjectHookConfigFailsSoftAndRefusesLinks": {
+      "file": "internal/config/hooks_scope_test.go",
+      "reason": "OS-dependent filesystem symlink capability"
+    },
+    "TestHooksSourceRefusesSymlinkedUserConfig": {
+      "file": "internal/config/hooks_scope_test.go",
+      "reason": "OS-dependent filesystem symlink capability"
+    },
+    "TestHooksTransitiveDepsExcludeRuntimeAndTools": {
+      "file": "internal/hooks/boundary_test.go",
+      "reason": "go toolchain / go list availability check"
+    },
+    "TestDeriveOutputCeilingCoversDiagnosticsCommands": {
+      "file": "internal/runtime/output_ceiling_test.go",
+      "reason": "sh command presence on PATH"
+    },
+    "TestConversation_DoesNotImportCLIFamily": {
+      "file": "internal/uiadapter/conversation_test.go",
+      "reason": "invariants skip in short mode"
+    },
+    "TestUIPackages_DoNotImportUIAdapter": {
+      "file": "internal/uiadapter/conversation_test.go",
+      "reason": "invariants skip in short mode"
+    }
+  }
+}

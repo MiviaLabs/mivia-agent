@@ -6,6 +6,7 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import io
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -69,6 +70,54 @@ def test_real_manifest_has_no_duplicates() -> None:
     m = load_module()
     manifest = (ROOT / ".mivia" / "invariants.md").read_text(encoding="utf-8")
     assert not reports_duplicate(m, manifest), ".mivia/invariants.md has a duplicate id"
+
+
+def test_unallowlisted_invariant_skip_is_rejected() -> None:
+    import tempfile
+    import json
+    m = load_module()
+    with tempfile.TemporaryDirectory() as td:
+        tmp_repo = Path(td)
+        policy_path = tmp_repo / "invariant-skips.json"
+        policy_path.write_text(json.dumps({"allowlistedSkips": {}}), encoding="utf-8")
+
+        test_file = tmp_repo / "inv_test.go"
+        test_file.write_text(
+            'package foo\nimport "testing"\nfunc TestInv(t *testing.T) {\n\tt.Skip("self disarming")\n}\n',
+            encoding="utf-8",
+        )
+        violations = m.check_invariant_skips({"TestInv"}, repo=tmp_repo, policy_path=policy_path)
+        assert len(violations) == 1
+        assert "TestInv" in violations[0]
+
+
+def test_allowlisted_invariant_skip_is_accepted() -> None:
+    import tempfile
+    import json
+    m = load_module()
+    with tempfile.TemporaryDirectory() as td:
+        tmp_repo = Path(td)
+        policy_path = tmp_repo / "invariant-skips.json"
+        policy_path.write_text(
+            json.dumps({"allowlistedSkips": {"TestInv": {"reason": "ok"}}}),
+            encoding="utf-8",
+        )
+
+        test_file = tmp_repo / "inv_test.go"
+        test_file.write_text(
+            'package foo\nimport "testing"\nfunc TestInv(t *testing.T) {\n\tt.Skip("accepted os limitation")\n}\n',
+            encoding="utf-8",
+        )
+        violations = m.check_invariant_skips({"TestInv"}, repo=tmp_repo, policy_path=policy_path)
+        assert len(violations) == 0
+
+
+def test_real_repo_invariants_pass_skip_check() -> None:
+    m = load_module()
+    manifest = (ROOT / ".mivia" / "invariants.md").read_text(encoding="utf-8")
+    refs = set(re.findall(r"`(Test\w+)`", manifest))
+    violations = m.check_invariant_skips(refs)
+    assert not violations, f"unallowlisted skips in real repo invariants: {violations}"
 
 
 def main() -> None:

@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Validate that all test names referenced in .mivia/invariants.md exist in the codebase.
+"""Validate that all test names referenced in .mivia/invariants.md exist in the codebase
+and do not contain unallowlisted self-disarming t.Skip calls.
 
 Extracts backtick-quoted `Test*` names from the manifest markdown, extracts all
-func Test names from Go test files, and fails if any reference is stale.
+func Test names from Go test files, checks for missing references, and verifies
+that invariant tests do not self-disarm with unallowlisted skips.
 """
 
+import json
 import re
 import subprocess
 import sys
@@ -13,16 +16,11 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 MANIFEST = REPO / ".mivia" / "invariants.md"
 MAKEFILE = REPO / "Makefile"
+POLICY_SKIPS_PATH = REPO / ".mivia" / "policy" / "invariant-skips.json"
 
 
 def collect_test_names() -> set[str]:
-    """Every `func Test*` name in the tree.
-
-    Prefers ripgrep, but falls back to a stdlib walk. This runs inside
-    `make verify`, and `rg` is not one of the tool's declared local
-    requirements (python3, plus go/gofmt and semgrep) - so the gate must not
-    depend on it being installed.
-    """
+    """Every `func Test*` name in the tree."""
     try:
         result = subprocess.run(
             ["rg", "-n", "^func Test", "-g", "*_test.go"],
@@ -36,10 +34,6 @@ def collect_test_names() -> set[str]:
     except (OSError, ValueError):
         pass
 
-    # Empty rg output is NOT evidence the tests are absent: on some platforms
-    # (e.g. Homebrew ripgrep on macOS) the same invocation returns zero matches
-    # for a tree that plainly contains tests. The stdlib walk is the source of
-    # truth for the gate; rg is only a fast path.
     names: set[str] = set()
     skip = {".git", "testdata", "node_modules", "vendor"}
     for path in REPO.rglob("*_test.go"):
@@ -50,24 +44,13 @@ def collect_test_names() -> set[str]:
 
 
 def check_duplicate_ids(manifest_text: str) -> None:
-    """Fail on a duplicated invariant ID.
-
-    IDs are allocated by hand at landing time, lowest free. Nothing else parses
-    them, so two plans claiming the same number silently produce one row that
-    overwrites the other's meaning.
-
-    Only the ID column of a definition row counts. `.mivia/invariants.md` also
-    holds cross-reference tables (e.g. "Liveness Gap Notes") that key rows by an
-    ID already defined above, and IDs are cited inline inside descriptions --
-    counting either as a definition produces false duplicates.
-    """
+    """Fail on a duplicated invariant ID."""
     seen: dict[str, int] = {}
     dupes: list[str] = []
     in_definitions = True
     for lineno, line in enumerate(manifest_text.splitlines(), 1):
         heading = line.strip().lower()
         if heading.startswith("#"):
-            # Cross-reference tables restate IDs defined elsewhere.
             in_definitions = "gap" not in heading and "note" not in heading
             continue
         if not in_definitions:
@@ -90,10 +73,50 @@ def check_duplicate_ids(manifest_text: str) -> None:
     return None
 
 
+def load_invariant_skips_policy(policy_path: Path = POLICY_SKIPS_PATH) -> dict:
+    if not policy_path.is_file():
+        return {}
+    try:
+        return json.loads(policy_path.read_text(encoding="utf-8")).get("allowlistedSkips", {})
+    except Exception as e:
+        print(f"FAIL: invalid policy {policy_path}: {e}")
+        sys.exit(1)
+
+
+def check_invariant_skips(manifest_refs: set[str], repo: Path = REPO, policy_path: Path = POLICY_SKIPS_PATH) -> list[str]:
+    """Finds all t.Skip calls in manifest-referenced invariant tests and fails on unallowlisted ones."""
+    allowlisted = load_invariant_skips_policy(policy_path)
+    violations = []
+
+    skip_dirs = {".git", "testdata", "node_modules", "vendor"}
+    for path in repo.rglob("*_test.go"):
+        if skip_dirs & set(path.relative_to(repo).parts):
+            continue
+        content = path.read_text(encoding="utf-8")
+        for m in re.finditer(r"(?m)^func (Test\w+)\s*\(", content):
+            test_name = m.group(1)
+            if test_name not in manifest_refs:
+                continue
+
+            start_pos = m.start()
+            body_start = content.find("{", start_pos)
+            if body_start == -1:
+                continue
+            next_func = content.find("\nfunc ", body_start)
+            body = content[body_start:next_func] if next_func != -1 else content[body_start:]
+
+            if re.search(r"\bt\.Skip(f|Now)?\(", body):
+                if test_name not in allowlisted:
+                    rel_path = str(path.relative_to(repo))
+                    line_offset = content.count("\n", 0, start_pos) + 1
+                    violations.append(f"{test_name} in {rel_path}:{line_offset}")
+
+    return violations
+
+
 def main() -> None:
-    manifest_text = MANIFEST.read_text()
+    manifest_text = MANIFEST.read_text(encoding="utf-8")
     check_duplicate_ids(manifest_text)
-    # Extract backtick-quoted test names from markdown table cells
     refs = set(re.findall(r"`(Test\w+)`", manifest_text))
     if not refs:
         print("FAIL: no test references found in .mivia/invariants.md")
@@ -112,7 +135,16 @@ def main() -> None:
         print("Fix: rename or remove the stale entries in .mivia/invariants.md")
         sys.exit(1)
 
-    makefile_text = MAKEFILE.read_text()
+    # Check for unallowlisted self-disarming skips in invariant tests
+    skip_violations = check_invariant_skips(refs)
+    if skip_violations:
+        print(f"FAIL: {len(skip_violations)} manifest-referenced invariant test(s) contain unallowlisted self-disarming t.Skip:")
+        for v in sorted(skip_violations):
+            print(f"  - {v}")
+        print("Fix: invariant tests must not self-disarm by skipping. If the skip is an accepted OS capability limitation, declare it in .mivia/policy/invariant-skips.json.")
+        sys.exit(1)
+
+    makefile_text = MAKEFILE.read_text(encoding="utf-8")
     match = re.search(r"^invariants:.*?^-?\t@go test -run '([^']+)'", makefile_text, re.MULTILINE | re.DOTALL)
     if not match:
         print("FAIL: could not find the invariants go test regex in Makefile")
@@ -125,7 +157,7 @@ def main() -> None:
             print(f"  - {test}")
         sys.exit(1)
 
-    print(f"OK: all {len(refs)} referenced tests exist and are selected by make invariants")
+    print(f"OK: all {len(refs)} referenced tests exist, have no unallowlisted self-disarming skips, and are selected by make invariants")
 
 
 if __name__ == "__main__":
