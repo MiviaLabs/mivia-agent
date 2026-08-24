@@ -92,3 +92,4 @@ func (c *threadConversation) History() []ports.Message {
 func (c *threadConversation) Model() ports.ModelInfo    { return ports.ModelInfo{} }
 func (c *threadConversation) ContextUsage() ports.Usage { return ports.Usage{} }
 func (c *threadConversation) Title() string             { return c.fix.CallID }
+func (c *threadConversation) ID() string                { return c.fix.CallID }

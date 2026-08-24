@@ -590,6 +590,7 @@ func (c *scriptedConversation) History() []ports.Message  { return nil }
 func (c *scriptedConversation) Model() ports.ModelInfo    { return ports.ModelInfo{} }
 func (c *scriptedConversation) ContextUsage() ports.Usage { return ports.Usage{} }
 func (c *scriptedConversation) Title() string             { return "scripted" }
+func (c *scriptedConversation) ID() string                { return "scripted" }
 
 type scriptedHandle struct{ ch chan uievent.Event }
 

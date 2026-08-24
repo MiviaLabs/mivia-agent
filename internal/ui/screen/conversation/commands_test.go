@@ -635,6 +635,7 @@ func (f *fakeCustomConversation) History() []ports.Message  { return f.history }
 func (f *fakeCustomConversation) Model() ports.ModelInfo    { return f.model }
 func (f *fakeCustomConversation) ContextUsage() ports.Usage { return f.usage }
 func (f *fakeCustomConversation) Title() string             { return f.title }
+func (f *fakeCustomConversation) ID() string                { return f.title }
 
 func TestSessionPickerSelectionLoadsHistoryAndNotice(t *testing.T) {
 	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)

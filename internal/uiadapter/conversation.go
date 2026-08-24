@@ -324,6 +324,14 @@ func (c *Conversation) Title() string {
 	return c.lastTitle
 }
 
+// ID returns the active session's ID.
+func (c *Conversation) ID() string {
+	if c.sess == nil {
+		return ""
+	}
+	return c.sess.SessionID
+}
+
 // deriveTitle finds the first user message, trims and collapses runs of
 // whitespace to one space, and ellipsises past titleRuneLimit runes.
 // Returns "" when no user message exists. The result is a derived

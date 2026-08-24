@@ -24,3 +24,8 @@ func (s *Session) ContextManager() *contextmgr.ContextManager {
 	copyManager := *s.contextManager
 	return &copyManager
 }
+func (s *Session) ContextPrincipal() contextstate.Principal {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.contextPrincipal
+}

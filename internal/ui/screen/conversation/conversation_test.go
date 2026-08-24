@@ -63,6 +63,7 @@ func (errConversation) History() []ports.Message  { return nil }
 func (errConversation) Model() ports.ModelInfo    { return ports.ModelInfo{} }
 func (errConversation) ContextUsage() ports.Usage { return ports.Usage{} }
 func (errConversation) Title() string             { return "error session" }
+func (errConversation) ID() string                { return "err-session" }
 
 func typeText(t *testing.T, s Screen, text string) Screen {
 	t.Helper()
@@ -166,6 +167,9 @@ func TestTurnEventUpdatesTranscriptAndReschedulesRead(t *testing.T) {
 	for _, msg := range msgs {
 		if _, ok := msg.(turnEndedMsg); ok {
 			sawRead = true // fakeHandle's closed channel: the re-issued read observes it immediately
+		}
+		if _, ok := msg.(sessionTurnEndedMsg); ok {
+			sawRead = true
 		}
 	}
 	if !sawCommit {
@@ -1121,6 +1125,7 @@ func (s *scriptedTestConversation) History() []ports.Message  { return s.history
 func (s *scriptedTestConversation) Model() ports.ModelInfo    { return s.model }
 func (s *scriptedTestConversation) ContextUsage() ports.Usage { return s.usage }
 func (s *scriptedTestConversation) Title() string             { return s.title }
+func (s *scriptedTestConversation) ID() string                { return s.title }
 
 func TestConversationNewLoadsExistingHistory(t *testing.T) {
 	dark, _, themes := themePair(t)

@@ -94,6 +94,7 @@ func (c *Conversation) Model() ports.ModelInfo {
 func (c *Conversation) ContextUsage() ports.Usage { return ports.Usage{} }
 
 func (c *Conversation) Title() string { return "Replay Session" }
+func (c *Conversation) ID() string    { return "replay" }
 
 type turnHandle struct {
 	id     string

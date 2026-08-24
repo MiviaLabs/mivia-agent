@@ -38,6 +38,7 @@ func (c *fakeConversation) History() []Message  { return c.history }
 func (c *fakeConversation) Model() ModelInfo    { return c.model }
 func (c *fakeConversation) ContextUsage() Usage { return c.usage }
 func (c *fakeConversation) Title() string       { return "fake title" }
+func (c *fakeConversation) ID() string          { return "fake-conv" }
 
 var _ Conversation = (*fakeConversation)(nil)
 var _ TurnHandle = (*fakeTurnHandle)(nil)

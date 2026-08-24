@@ -77,6 +77,8 @@ type Screen struct {
 	approval   approval.Model
 	welcome    welcome.Model
 
+	sessions map[string]*sessionState
+
 	active ports.TurnHandle
 	now    func() time.Time
 
@@ -122,6 +124,7 @@ func New(th theme.Theme, tier theme.Tier, themes []theme.Theme, conv ports.Conve
 	s := Screen{
 		Theme: th, Tier: tier, themes: themes,
 		conv: conv, approver: approver,
+		sessions:   make(map[string]*sessionState),
 		transcript: transcript.New(th, tier),
 		composer:   composer.New(th, tier, width),
 		statusline: statusline.New(th, tier),
@@ -200,6 +203,8 @@ func (s *Screen) refreshTopbar() {
 		s.topbar.SetSession(s.conv.Model(), s.conv.ContextUsage())
 		if title := s.conv.Title(); title != "" {
 			s.topbar.SetBreadcrumb([]string{title})
+		} else {
+			s.topbar.SetBreadcrumb(nil)
 		}
 	}
 }
@@ -211,6 +216,10 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 	case tea.PasteMsg:
 		// Paste lands in the composer; see handlePaste for the why.
 		return s.handlePaste(msg)
+	case sessionEventMsg:
+		return s.handleSessionEvent(msg)
+	case sessionTurnEndedMsg:
+		return s.handleSessionTurnEnded(msg)
 	case uievent.EventMsg:
 		return s.handleTurnEvent(msg.Event)
 	case threadEventMsg:

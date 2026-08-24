@@ -35,6 +35,7 @@ func (c *scriptedThread) History() []ports.Message  { return c.history }
 func (c *scriptedThread) Model() ports.ModelInfo    { return ports.ModelInfo{} }
 func (c *scriptedThread) ContextUsage() ports.Usage { return ports.Usage{} }
 func (c *scriptedThread) Title() string             { return "scripted thread" }
+func (c *scriptedThread) ID() string                { return "scripted thread" }
 
 // stubThreads is the ports.SubagentThreads seam for tests.
 type stubThreads map[string]ports.Conversation

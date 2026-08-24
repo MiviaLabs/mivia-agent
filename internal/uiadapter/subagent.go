@@ -119,6 +119,11 @@ func (c *SubagentTranscriptConversation) Title() string {
 	return c.title
 }
 
+// ID returns the subagent thread ID.
+func (c *SubagentTranscriptConversation) ID() string {
+	return c.title
+}
+
 type subagentTurnHandle struct {
 	id     string
 	events chan uievent.Event

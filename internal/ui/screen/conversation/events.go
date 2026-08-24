@@ -54,6 +54,30 @@ func (s Screen) applyTheme(msg app.ThemeChangedMsg) Screen {
 	return s
 }
 
+// sessionEventMsg tags a streamed uievent.Event with its originating session ID.
+type sessionEventMsg struct {
+	sessionID string
+	event     uievent.Event
+}
+
+// sessionTurnEndedMsg signals that a session's turn handle events channel closed.
+type sessionTurnEndedMsg struct {
+	sessionID string
+}
+
+func (s Screen) awaitSessionEvent(sessionID string, events <-chan uievent.Event) tea.Cmd {
+	if s.embedded {
+		return s.awaitEvent(events)
+	}
+	return func() tea.Msg {
+		ev, ok := <-events
+		if !ok {
+			return sessionTurnEndedMsg{sessionID: sessionID}
+		}
+		return sessionEventMsg{sessionID: sessionID, event: ev}
+	}
+}
+
 // send submits the composer's text to ports.Conversation and arms the
 // turn. Empty text and an already-active turn both return no-op so a
 // stray Enter cannot desync the visible draft from what was actually
@@ -76,7 +100,7 @@ func (s Screen) send() (app.Screen, tea.Cmd) {
 	s.composer.Clear()
 	s.active = handle
 	cmd := s.statusline.Start("thinking", s.now())
-	return s, tea.Batch(cmd, s.awaitEvent(handle.Events()))
+	return s, tea.Batch(cmd, s.awaitSessionEvent(s.convID(), handle.Events()))
 }
 
 // handleTurnEvent routes one streamed uievent.Event into the transcript,
@@ -124,7 +148,7 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 
 	var readCmd tea.Cmd
 	if s.active != nil {
-		readCmd = s.awaitEvent(s.active.Events())
+		readCmd = s.awaitSessionEvent(s.convID(), s.active.Events())
 	}
 	return s, tea.Batch(flushCmd, readCmd)
 }
