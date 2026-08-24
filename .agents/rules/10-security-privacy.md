@@ -69,10 +69,10 @@ The runtime supports three tool approval policies: `write-only` (default), `alwa
 
 ## Workflow Verifier Sandbox
 
-- Every workflow verifier/evidence-gate command runs inside a bubblewrap (bwrap) sandbox by default (`internal/workflows/verifier/sandbox.go`): an isolated filesystem and network namespace, so a command a workflow or repair agent runs cannot touch the real host filesystem, network, or credentials.
+- Every workflow verifier/evidence-gate command runs inside a bubblewrap (bwrap) sandbox by default (`internal/workflows/definition/sandbox.go`): an isolated filesystem and network namespace, so a command a workflow or repair agent runs cannot touch the real host filesystem, network, or credentials.
 - `[harness] sandbox = false` in `mivia.toml` is the explicit, host-local escape hatch for a machine that cannot run bwrap (missing unprivileged user namespaces, missing binary). It runs verifier commands directly on the host with no isolation. It is a harness-wide setting, not per-project or per-verifier.
 - Default is enabled everywhere, including CI. Do not disable it in CI or in any shared/automated environment — it exists for a developer's own machine, never for a pipeline that runs untrusted or agent-authored commands unattended.
-- Disabling it logs a warning once at workflow-controller startup (`applyHarnessSandboxSetting` in `internal/cli/workflow_run_build.go`).
+- Disabling it logs a warning once at workflow-controller startup (`applyHarnessSandboxSetting` in `internal/cliworkflow/workflow_run_build.go`).
 
 ## Authz And Tenancy (when product surfaces exist)
 

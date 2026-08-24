@@ -76,10 +76,10 @@ project skill cannot shadow then remove a user skill of the same name.
 
 ## Compiled-in default
 
-`internal/cli/prompt.go` → `defaultAgentPrompt`.
+`internal/clichat/prompt.go` → `defaultAgentPrompt`.
 
 - Project/language-generic for any user workspace
-- Guards: `internal/cli/prompt_generic_test.go`, rule 60
+- Guards: `internal/clichat/prompt_generic_test.go`, rule 60
 
 ## Related
 

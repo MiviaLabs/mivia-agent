@@ -29,7 +29,7 @@ This repo is confusing on purpose: the product is an agent CLI for agents. Do no
 ## Mechanical enforcement
 
 - Go tests: `internal/tools/generic_surface_test.go` - fails CI if model-facing tool text matches language-bias patterns.
-- Go tests: `internal/cli/prompt_generic_test.go` - fails if compiled-in default prompts are stack-biased.
+- Go tests: `internal/clichat/prompt_generic_test.go` - fails if compiled-in default prompts are stack-biased.
 - Semgrep: `mivia.generic.architecture-review-must-stay-portable` - rejects a tested
   regression corpus of product, fixed-path, version-control, language, and build-tool
   assumptions in the portable skill. `scripts/test_semgrep_rules.py` checks the
@@ -41,7 +41,7 @@ This repo is confusing on purpose: the product is an agent CLI for agents. Do no
 
 1. Change behavior in `internal/tools/*`.
 2. Keep `Description()` / schema prose generic.
-3. Run `go test ./internal/tools/ ./internal/cli/ -count=1`.
+3. Run `go test ./internal/tools/ ./internal/clichat/ -count=1`.
 4. Update `docs/product/agent.md` with multi-ecosystem wording if the product contract changed.
 5. Update **this rule** only if the generic contract itself changes.
 

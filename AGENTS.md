@@ -114,7 +114,7 @@ If unsure whether a change is trivial, use the full ADLC.
   bridge used by `cmd/mivia-ui` for live mode (`--demo=false`), isolated from UI
   packages and CLI entrypoints per INV-TUI-29. Enforced by semgrep rule
   `mivia.go.ui-no-harness-imports`; policy: [docs/design/ui-isolation.md](docs/design/ui-isolation.md)
-- **Model-facing tools + compiled default prompts are project/language-generic** (any user workspace). Host code may be Go; do not bake Go/`cmd/mivia` into tool `Description()` or `defaultAgentPrompt`. Rule: [60-tools-project-language-generic](.agents/rules/60-tools-project-language-generic.md). Enforced by `internal/tools/generic_surface_test.go` and `internal/cli/prompt_generic_test.go`.
+- **Model-facing tools + compiled default prompts are project/language-generic** (any user workspace). Host code may be Go; do not bake Go/`cmd/mivia` into tool `Description()` or `defaultAgentPrompt`. Rule: [60-tools-project-language-generic](.agents/rules/60-tools-project-language-generic.md). Enforced by `internal/tools/generic_surface_test.go` and `internal/clichat/prompt_generic_test.go`.
 - **No spaghetti growth:** prefer files ≤500 LOC and functions ≤80 LOC (hard 800 / 120). Staged files ≤500 KiB. Policy `.mivia/policy/go-structure.json`; gate `scripts/check_go_structure.py` + `file-size-check`. Do not raise baselines to silence failures - split code.
 
 ## Local commands

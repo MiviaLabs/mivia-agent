@@ -35,7 +35,7 @@ instructions and task-specific skills should extend it, not duplicate it.
 
 ## mivia host vs tool surface
 
-This product is an agent CLI for agents. The **host** is Go; **model-facing tools and compiled default prompts must stay project- and language-generic** for any user workspace. Do not bake `go test`, `*.go`, or `cmd/mivia` into tool `Description()` or `defaultAgentPrompt`. Rule: `.agents/rules/60-tools-project-language-generic.md`. Mechanical tests: `internal/tools/generic_surface_test.go`, `internal/cli/prompt_generic_test.go`.
+This product is an agent CLI for agents. The **host** is Go; **model-facing tools and compiled default prompts must stay project- and language-generic** for any user workspace. Do not bake `go test`, `*.go`, or `cmd/mivia` into tool `Description()` or `defaultAgentPrompt`. Rule: `.agents/rules/60-tools-project-language-generic.md`. Mechanical tests: `internal/tools/generic_surface_test.go`, `internal/clichat/prompt_generic_test.go`.
 
 ## Engineering
 

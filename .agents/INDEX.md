@@ -79,16 +79,24 @@ Repo-native:
 
 - `verify-change` - mechanical package/gates report via `mivia-report/v1`
 - `docs-update` - OWNERS-safe documentation edits; no duplicates
+- `docs-maintenance` - maintain documentation consistency, check ownership, and repair stale docs
 - `secure-change` - secrets, authz, network, tool isolation
 - `concurrency-review` - subagent caps, pools, cancel, race
 - `architecture-review` - portable structural review of boundaries, dependencies, abstraction cost, and evolution risk; runs at ADLC Step 0
 - `simplification-review` - post-implementation over-engineering and pattern-fitness review of landed code
 - `performance-review` - measurement-driven profiling and benchmarking; no findings without measurements
 - `feature-delivery` - bounded feature slice with verification
+- `workflow-feature-delivery` - deliver one scoped feature in a workflow worktree with verification and report
 - `review` - meta-skill that routes a diff to the right per-lens skill (no duplicated logic)
+- `review-synthesis` - synthesize multiple review reports into one structured result
 - `delivery` - ADLC loop in skill form; points at the rule, role files, and runtime templates without duplicating them
+- `fast-bug-audit` - fast opportunistic read-only hunt for reachable confirmed bugs
+- `logic-review` - line-level correctness review inside one function and its tests
+- `test-review` - audit package tests for truth, coverage quality, and assertion rigor
 - `workflow-runs-analysis` - read-only validated analysis of workflow-run ledger; process-quality findings (default window last 24h)
 - `session-analysis` - read-only validated analysis of chat sessions in the durable chat ledger; metadata-only (no message content); default window last 24h; owned by the unrestricted root
+- `capture` - record a durable decision or correction to `.agents/memories/`
+- `housekeeping` - audit `.agents/memories/` for staleness, duplicates, and orphan facts
 - `memory-housekeeping` - audit the memory store: verify facts, delete stale or duplicate entries, update outdated ones, create missing ones
 
 Workflow panel (read-only, JSON-only; used by the `feature-delivery` and `bug-fix` `review_panel` members):
@@ -97,7 +105,7 @@ Workflow panel (read-only, JSON-only; used by the `feature-delivery` and `bug-fi
 - `panel-secure-change` - security member: authz, secrets, injection, SSRF, prompt injection, fail-closed defaults
 - `panel-architecture-review` - integration member: boundary fitness, dependency direction, abstraction cost
 
-`bug-audit`, `architecture-review`, `simplification-review`, and `performance-review` remain report-only. They do not commit or push.
+`bug-audit`, `fast-bug-audit`, `architecture-review`, `simplification-review`, and `performance-review` remain report-only. They do not commit or push.
 
 ## Subagents
 
@@ -127,6 +135,11 @@ Machine-readable hook and agent policy:
 | `.mivia/policy/agent-hook-bypass.json` | Blocked verification-bypass flags/env vars + corrective message |
 | `.mivia/policy/docs-ownership.json` | Required `docs/OWNERS.yaml`, forbidden duplicate titles, canonical path rules |
 | `.mivia/policy/pr-title.toml` | PR title and summary validation policy |
+| `.mivia/policy/destructive-commands.json` | Destructive command patterns blocked without confirmation |
+| `.mivia/policy/diff-coverage.json` | Diff test coverage thresholds and path exclusions |
+| `.mivia/policy/go-structure.json` | Go file and function LOC limits and file size baselines |
+| `.mivia/policy/import-layers.json` | Allowed Go package import dependencies and layer constraints |
+| `.mivia/policy/required-paths.json` | Mandatory repository directories and configuration paths |
 
 ## Quality
 
