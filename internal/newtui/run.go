@@ -15,7 +15,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/uiadapter"
 )
 
-func init() {
+func registerSubagentProgress() {
 	uiadapter.SubagentProgressRegistrar = func(fn func(agent.Event)) func() {
 		token := cli.SetSubagentProgress(fn)
 		return func() {
@@ -26,6 +26,7 @@ func init() {
 
 // RunTUI is the alternative launcher that wires the new Mivia UI.
 func RunTUI(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *cli.AgentSessionState, resumeSessionName string) error {
+	registerSubagentProgress()
 	prevLogWriter := log.Writer()
 	log.SetOutput(io.Discard)
 	defer log.SetOutput(prevLogWriter)
@@ -41,6 +42,7 @@ func RunTUI(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *
 }
 
 func buildApp(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *cli.AgentSessionState, resumeSessionName string) (tea.Model, error) {
+	registerSubagentProgress()
 	conv := uiadapter.NewConversation(sess)
 	approver := uiadapter.NewApprover(sess)
 	themes, err := theme.Embedded()

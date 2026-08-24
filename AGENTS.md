@@ -107,10 +107,12 @@ If unsure whether a change is trivial, use the full ADLC.
 - All agent-authored prose must use ASD-STE100 Simplified Technical English (STE). See [90-writing-standard-ste100](.agents/rules/90-writing-standard-ste100.md).
 - Ship binary name is `mivia` only
 - **mivia-ui is self-contained on mocks:** `cmd/mivia-ui*`, `internal/ui/**`, and
-  `internal/uikit/**` must not import `internal/cli`, `internal/chat`,
-  `internal/agent`, `internal/coordinator`, or `internal/hub` until the CLI refactor
-  lands. The only future integration seam is `internal/uikit/ports` plus the
-  `internal/uikit/uievent` vocabulary. Enforced by semgrep rule
+  `internal/uikit/**` must not import `internal/cli*`, `internal/chat`,
+  `internal/agent`, `internal/coordinator`, or `internal/hub`. `internal/ui/**` and
+  `internal/uikit/**` connect only through `internal/uikit/ports` and the
+  `internal/uikit/uievent` vocabulary. `internal/uiadapter` is the sole integration
+  bridge used by `cmd/mivia-ui` for live mode (`--demo=false`), isolated from UI
+  packages and CLI entrypoints per INV-TUI-29. Enforced by semgrep rule
   `mivia.go.ui-no-harness-imports`; policy: [docs/design/ui-isolation.md](docs/design/ui-isolation.md)
 - **Model-facing tools + compiled default prompts are project/language-generic** (any user workspace). Host code may be Go; do not bake Go/`cmd/mivia` into tool `Description()` or `defaultAgentPrompt`. Rule: [60-tools-project-language-generic](.agents/rules/60-tools-project-language-generic.md). Enforced by `internal/tools/generic_surface_test.go` and `internal/cli/prompt_generic_test.go`.
 - **No spaghetti growth:** prefer files ≤500 LOC and functions ≤80 LOC (hard 800 / 120). Staged files ≤500 KiB. Policy `.mivia/policy/go-structure.json`; gate `scripts/check_go_structure.py` + `file-size-check`. Do not raise baselines to silence failures - split code.

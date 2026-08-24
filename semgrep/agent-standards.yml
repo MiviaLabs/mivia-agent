@@ -396,7 +396,7 @@ rules:
         - /cmd/mivia-ui-demo/**/*.go
         - /internal/ui/**/*.go
         - /internal/uikit/**/*.go
-    pattern-regex: '"github\.com/MiviaLabs/mivia-agent/internal/(cli|chat|agent|coordinator|hub)"'
+    pattern-regex: '"github\.com/MiviaLabs/mivia-agent/internal/(cli.*|chat|agent|coordinator|hub)"'
 
   - id: mivia.go.ui-no-raw-print
     languages:
@@ -417,11 +417,12 @@ rules:
     languages:
       - go
     severity: ERROR
-    message: internal/uikit/** and internal/ui/** must not use init(); wire dependencies explicitly.
+    message: internal/uikit/**, internal/ui/**, and internal/newtui/** must not use init(); wire dependencies explicitly.
     paths:
       include:
         - /internal/uikit/**/*.go
         - /internal/ui/**/*.go
+        - /internal/newtui/**/*.go
       exclude:
         - /**/*_test.go
     pattern: func init() { ... }
@@ -431,9 +432,9 @@ rules:
       - go
     severity: ERROR
     message: >-
-      internal/uikit/** and internal/ui/** must not hold package-level mutable
-      singleton state (sync.Mutex/RWMutex/Map, atomic.*). This is the exact
-      god-object pattern (subagent_progress.go's globalBusState,
+      internal/uikit/**, internal/ui/**, and internal/newtui/** must not hold
+      package-level mutable singleton state (sync.Mutex/RWMutex/Map, atomic.*).
+      This is the exact god-object pattern (subagent_progress.go's globalBusState,
       orchestration_state.go's coordinators sync.Map) the new UI tree exists to
       avoid; immutable lookup tables built once at package init (const-like
       var maps/slices, go:embed FS vars) are not the target and are not
@@ -442,6 +443,7 @@ rules:
       include:
         - /internal/uikit/**/*.go
         - /internal/ui/**/*.go
+        - /internal/newtui/**/*.go
       exclude:
         - /**/*_test.go
     pattern-either:

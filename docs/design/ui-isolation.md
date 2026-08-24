@@ -8,14 +8,19 @@ owner on 2026-08-19.
 The new terminal UI is SELF-CONTAINED:
 
 - `cmd/mivia-ui`, `cmd/mivia-ui-demo`, `internal/ui/**`, and
-  `internal/uikit/**` build and run against MOCK DATA ONLY.
-- They must not import `internal/cli`, `internal/chat`, `internal/agent`,
-  `internal/coordinator`, or `internal/hub`. Semgrep enforces this with
-  rule `mivia.go.ui-no-harness-imports`, which runs in `make semgrep`
-  and in `make verify`.
-- The ONLY future integration seam is the ports surface in
-  `internal/uikit/ports` (`Conversation`, `TurnHandle`, `Approver`) plus
-  the event vocabulary in `internal/uikit/uievent`.
+  `internal/uikit/**` build and run against mock data or ports interfaces.
+- `internal/ui/**` and `internal/uikit/**` must not import `internal/cli*`,
+  `internal/chat`, `internal/agent`, `internal/coordinator`, `internal/hub`,
+  or `internal/uiadapter`. Semgrep enforces this with rule
+  `mivia.go.ui-no-harness-imports`, which runs in `make semgrep` and in
+  `make verify`.
+- The ONLY integration seam for UI components is the ports surface in
+  `internal/uikit/ports` (`Conversation`, `TurnHandle`, `Approver`,
+  `CommandRunner`, `Settings`) plus the event vocabulary in
+  `internal/uikit/uievent`.
+- `internal/uiadapter` connects real sessions (`internal/chat`, `internal/agent`)
+  to `internal/uikit/ports` for `cmd/mivia-ui` live mode (`--demo=false`).
+  Per invariant INV-TUI-29, `internal/uiadapter` must never import `internal/cli*`.
 
 ## Why
 
