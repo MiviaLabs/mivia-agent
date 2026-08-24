@@ -60,6 +60,8 @@ func TranslateEvent(ev agent.Event) []uievent.Event {
 	switch ev.Kind {
 	case agent.EventAssistant:
 		return translateAssistant(ev)
+	case agent.EventToolPending:
+		return translateToolPending(ev)
 	case agent.EventToolStart:
 		return translateToolStart(ev)
 	case agent.EventToolEnd:

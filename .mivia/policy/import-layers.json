@@ -470,6 +470,7 @@
       "internal/mcp",
       "internal/provider",
       "internal/redact",
+      "internal/sdkadapter",
       "internal/storage",
       "internal/tools",
       "internal/uikit/intent",

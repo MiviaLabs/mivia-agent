@@ -20,6 +20,7 @@ import (
 func allEventKinds() []agent.EventKind {
 	return []agent.EventKind{
 		agent.EventAssistant,
+		agent.EventToolPending,
 		agent.EventToolStart,
 		agent.EventToolEnd,
 		agent.EventStep,
@@ -103,6 +104,28 @@ func TestTranslateEvent_Assistant(t *testing.T) {
 func TestTranslateEvent_Tool(t *testing.T) {
 	t.Parallel()
 	runMappingCases(t, []mappingCase{
+		{
+			name: "tool_pending_with_parseable_input",
+			ev: agent.Event{
+				Kind: agent.EventToolPending, ToolCallID: "c1", Name: "write_file",
+				Detail: "write", Input: `{"path":"/tmp/x"}`,
+			},
+			want: []uievent.Event{{
+				Kind: uievent.KindToolPending,
+				Body: uievent.ToolPendingBody{
+					ToolCallID: "c1", Name: "write_file",
+					Args: map[string]any{"path": "/tmp/x"},
+				},
+			}},
+		},
+		{
+			name: "tool_pending_with_empty_input_yields_nil_args",
+			ev:   agent.Event{Kind: agent.EventToolPending, ToolCallID: "c2", Name: "custom_tool"},
+			want: []uievent.Event{{
+				Kind: uievent.KindToolPending,
+				Body: uievent.ToolPendingBody{ToolCallID: "c2", Name: "custom_tool"},
+			}},
+		},
 		{
 			name: "tool_start_with_parseable_input",
 			ev: agent.Event{
@@ -466,6 +489,8 @@ func contentBearingEvent(k agent.EventKind) agent.Event {
 			TaskID: "wft-1", Agent: "audit", TaskDescription: "audit the diff",
 		}}
 		ev.Name = "delegate"
+	case agent.EventToolPending:
+		ev = agent.Event{Kind: k, ToolCallID: "tc-1", Name: "write_file", Detail: "write", Input: `{"path":"/tmp/x"}`}
 	case agent.EventToolStart, agent.EventToolEnd:
 		ev = agent.Event{Kind: k, ToolCallID: "tc-1", Name: "read_file", Detail: "completed"}
 	case agent.EventAssistant:

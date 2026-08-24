@@ -12,6 +12,7 @@ import (
 // live in event_test.go and exercise every constant listed here.
 //
 //	EventAssistant        -> text.delta ("delta"); text.end otherwise
+//	EventToolPending      -> tool.pending
 //	EventToolStart        -> tool.start
 //	EventToolEnd          -> tool.end
 //	EventStep             -> notice
@@ -53,6 +54,16 @@ func translateAssistant(ev agent.Event) []uievent.Event {
 	// "interim", "" (final), and any future mode all collapse to text.end.
 	return []uievent.Event{{Kind: uievent.KindTextEnd, Body: uievent.TextEndBody{
 		Text: ev.Content,
+	}}}
+}
+
+// translateToolPending maps EventToolPending to a tool.pending uievent with
+// the agent loop's bounded, redacted input parsed into Args.
+func translateToolPending(ev agent.Event) []uievent.Event {
+	return []uievent.Event{{Kind: uievent.KindToolPending, Body: uievent.ToolPendingBody{
+		ToolCallID: ev.ToolCallID,
+		Name:       ev.Name,
+		Args:       parseArgs(ev.Input),
 	}}}
 }
 

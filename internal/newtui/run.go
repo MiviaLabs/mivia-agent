@@ -14,6 +14,7 @@ import (
 // RunTUI is the alternative launcher that wires the new Mivia UI.
 func RunTUI(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *cli.AgentSessionState, resumeSessionName string) error {
 	conv := uiadapter.NewConversation(sess)
+	approver := uiadapter.NewApprover(sess)
 	themes, err := theme.Embedded()
 	if err != nil {
 		return err
@@ -26,7 +27,7 @@ func RunTUI(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *
 		}
 	}
 
-	screen := conversation.New(th, theme.TierTrueColor, themes, conv, nil, 80, nil)
+	screen := conversation.New(th, theme.TierTrueColor, themes, conv, approver, 80, nil)
 
 	root := app.New(screen, th, theme.TierTrueColor, themes).WithOptions(app.Options{
 		Mouse: true,
