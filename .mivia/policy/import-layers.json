@@ -477,6 +477,7 @@
       "internal/workspace"
     ],
     "internal/workflows/controller": [
+      "internal/agentmsg",
       "internal/agents",
       "internal/coordinator",
       "internal/evidencecheck",

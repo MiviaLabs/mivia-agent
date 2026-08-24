@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -163,4 +165,52 @@ func sawFramedSteer(req provider.Request) bool {
 		}
 	}
 	return false
+}
+
+func TestSubagentParentSteerCompactsWithoutDTOError(t *testing.T) {
+	mailbox := &steerMailbox{}
+	reg := tools.NewRegistry()
+	reg.Register(&steerSignalTool{mailbox: mailbox})
+	comp := &steerSinkCompleter{}
+	principal, err := contextstate.NewPrincipal("workspace", "session", "agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := contextstate.NewBindingRevision("test-provider", "test-model", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &MultiStepHandler{
+		Completer:                 comp,
+		FullRegistry:              reg,
+		Model:                     "test-model",
+		MaxSteps:                  4,
+		MaxContextTokens:          500,
+		ContextPreparationManager: contextmgr.StructuralPreparationManager{},
+		ContextPreparationInput: contextmgr.PrepareInput{
+			Budget:    500,
+			Force:     true, // force compaction on each step to exercise compaction with steer
+			Principal: principal,
+			Binding:   binding,
+			Revision:  contextstate.NewRevision(1, 1, 1),
+		},
+	}
+	ctx := runtime.ContextWithMailboxAccess(context.Background(), runtime.MailboxAccess{
+		Drain:   mailbox.drain,
+		Pending: mailbox.hasPending,
+	})
+	result, err := h.Invoke(ctx, runtime.Request{
+		ID: "task-compaction-1", Name: "multi_step", Kind: runtime.Subagent,
+		Input: json.RawMessage(`"do the work with compaction"`),
+	})
+	if err != nil {
+		t.Fatalf("steered subagent run with compaction must not error, got %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(result, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["status"] != "completed" {
+		t.Fatalf("status = %v, want completed (payload %s)", payload["status"], result)
+	}
 }

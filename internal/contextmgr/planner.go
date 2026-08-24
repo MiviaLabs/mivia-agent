@@ -182,14 +182,18 @@ func PercentFloor(value, numerator, denominator int) int {
 }
 
 func currentObjective(messages []provider.Message, explicit string) (provider.Message, int, error) {
+	if explicit != "" {
+		for index := len(messages) - 1; index >= 0; index-- {
+			if messages[index].Role == provider.RoleUser && messages[index].Content == explicit {
+				return messages[index], index, nil
+			}
+		}
+		return provider.Message{}, -1, invalidPlan("current_objective", "does not match any user message")
+	}
 	for index := len(messages) - 1; index >= 0; index-- {
-		if messages[index].Role != provider.RoleUser {
-			continue
+		if messages[index].Role == provider.RoleUser {
+			return messages[index], index, nil
 		}
-		if explicit != "" && messages[index].Content != explicit {
-			return provider.Message{}, -1, invalidPlan("current_objective", "does not match the latest user message")
-		}
-		return messages[index], index, nil
 	}
 	return provider.Message{}, -1, fmt.Errorf("%w: planner current objective is missing", contextstate.ErrPromptBudgetExceeded)
 }

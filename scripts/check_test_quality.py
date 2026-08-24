@@ -436,15 +436,8 @@ def load_skip_policy(root: Path, diff_args: list[str] | None = None) -> dict:
             )
             if show_res.returncode == 0 and show_res.stdout.strip():
                 raw_text = show_res.stdout
-            elif show_res.returncode != 0:
-                # Policy file does not exist at base ref at all: this is a
-                # one-time adoption, not a same-commit bypass of existing
-                # policy (there is no prior policy state to bypass). Fall
-                # back to the tip's on-disk policy so the diff that
-                # introduces the file can also populate it.
-                raw_text = policy_file.read_text(encoding="utf-8")
             else:
-                # File exists at base ref but is empty: base policy has zero allowlisted skips
+                # File does not exist at base ref or is empty: base policy has zero allowlisted skips
                 return {}
 
     if not is_modified_in_diff:

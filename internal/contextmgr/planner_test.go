@@ -408,3 +408,102 @@ func TestPlannerFingerprintDistinguishesReasoning(t *testing.T) {
 		t.Fatalf("identical messages produced unstable keys: %q vs %q", k1, k1b)
 	}
 }
+
+func TestPlanRetainsPinnedObjectiveWithTrailingUserSteers(t *testing.T) {
+	callOld := plannerToolCall("call-old", "read_file", `{"path":"old.txt"}`)
+	callNew := plannerToolCall("call-new", "read_file", `{"path":"new.txt"}`)
+	messages := []provider.Message{
+		{Role: provider.RoleSystem, Content: "system"},
+		{Role: provider.RoleUser, Content: "root task prompt"},
+		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{callOld}},
+		{Role: provider.RoleTool, ToolCallID: callOld.ID, Name: callOld.Function.Name, Content: strings.Repeat("result ", 100)},
+		{Role: provider.RoleAssistant, Content: "in progress"},
+		{Role: provider.RoleUser, Content: "[parent instruction: remember to check errors]"},
+		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{callNew}},
+		{Role: provider.RoleTool, ToolCallID: callNew.ID, Name: callNew.Function.Name, Content: "done"},
+	}
+	// Plan with explicit CurrentObjective pinned to "root task prompt" and Force=true
+	plan, err := Plan(PlanInput{
+		Messages:         messages,
+		Budget:           2000,
+		CurrentObjective: "root task prompt",
+		Force:            true,
+		RecentTail:       4,
+	})
+	if err != nil {
+		t.Fatalf("Plan failed with pinned objective and trailing steer: %v", err)
+	}
+	if !plan.Compacted {
+		t.Fatal("expected compaction to occur")
+	}
+	// Pinned root objective must be retained as mandatory
+	if !containsPlannerMessage(plan.Messages, provider.RoleUser, "root task prompt") {
+		t.Fatal("pinned root task prompt was dropped during compaction")
+	}
+	// Trailing steer in recent tail must also be retained
+	if !containsPlannerMessage(plan.Messages, provider.RoleUser, "[parent instruction: remember to check errors]") {
+		t.Fatal("trailing steer frame in recent tail was dropped")
+	}
+	if err := provider.ValidateToolPairing(plan.Messages); err != nil {
+		t.Fatalf("retained message shape invalid: %v", err)
+	}
+}
+
+func TestPlanRetainsPinnedObjectiveWithPromptTooLongNotice(t *testing.T) {
+	compactNotice := "[context compacted: the provider rejected the prompt as too long, so earlier turns and tool results were dropped to fit the model context; re-read any needed file with offset/limit for the remaining parts]"
+	messages := []provider.Message{
+		{Role: provider.RoleSystem, Content: "system"},
+		{Role: provider.RoleUser, Content: "user original prompt"},
+		{Role: provider.RoleAssistant, Content: "reply"},
+		{Role: provider.RoleUser, Content: compactNotice},
+		{Role: provider.RoleAssistant, Content: "ready"},
+	}
+	plan, err := Plan(PlanInput{
+		Messages:         messages,
+		Budget:           1000,
+		CurrentObjective: "user original prompt",
+		Force:            true,
+	})
+	if err != nil {
+		t.Fatalf("Plan failed with prompt-too-long notice: %v", err)
+	}
+	if !plan.Compacted {
+		t.Fatal("expected compaction to occur")
+	}
+	if !containsPlannerMessage(plan.Messages, provider.RoleUser, "user original prompt") {
+		t.Fatal("pinned user original prompt was dropped")
+	}
+	if !containsPlannerMessage(plan.Messages, provider.RoleUser, compactNotice) {
+		t.Fatal("compact notice was dropped")
+	}
+}
+
+func TestPlanRejectsUnmatchedExplicitObjective(t *testing.T) {
+	messages := []provider.Message{
+		{Role: provider.RoleSystem, Content: "system"},
+		{Role: provider.RoleUser, Content: "task objective"},
+	}
+	_, err := Plan(PlanInput{
+		Messages:         messages,
+		Budget:           1000,
+		CurrentObjective: "completely different objective",
+		Force:            true,
+	})
+	if !errors.Is(err, contextstate.ErrInvalidDTO) {
+		t.Fatalf("error = %v, want ErrInvalidDTO for unmatched explicit objective", err)
+	}
+}
+
+func TestPlanRejectsMissingObjectiveWhenNoUserMessages(t *testing.T) {
+	messages := []provider.Message{
+		{Role: provider.RoleSystem, Content: "system"},
+	}
+	_, err := Plan(PlanInput{
+		Messages: messages,
+		Budget:   1000,
+		Force:    true,
+	})
+	if !errors.Is(err, contextstate.ErrPromptBudgetExceeded) {
+		t.Fatalf("error = %v, want ErrPromptBudgetExceeded when no user message exists", err)
+	}
+}
