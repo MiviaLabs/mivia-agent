@@ -6,6 +6,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/uiadapter"
 )
 
@@ -131,5 +132,31 @@ func TestSessionPool_GetOrCreateWithModelCatalog(t *testing.T) {
 	}
 	if conv == nil || conv.ID() != "sess-catalog-1" {
 		t.Errorf("got conversation ID %v, want sess-catalog-1", conv.ID())
+	}
+}
+
+func TestSessionPool_LoadedSessionInheritsTools(t *testing.T) {
+	dir := t.TempDir()
+	res := &config.Resolved{
+		ProviderName: "test-provider",
+		Model:        "test-model",
+		Models:       []string{"test-model"},
+	}
+	sess1 := chat.NewSession(res, nil)
+	sess1.SessionDir = dir
+	sess1.SessionID = "sess-tools-1"
+	sess1.Tools = tools.NewRegistry()
+	sess1.UseTools = true
+	if err := sess1.Save("sess-tools-1"); err != nil {
+		t.Fatalf("saving sess1: %v", err)
+	}
+
+	pool := uiadapter.NewSessionPool(sess1, res, nil, true)
+	conv, err := pool.GetOrCreate("sess-tools-1")
+	if err != nil {
+		t.Fatalf("GetOrCreate failed: %v", err)
+	}
+	if conv == nil || conv.ID() != "sess-tools-1" {
+		t.Errorf("got conversation ID %v, want sess-tools-1", conv.ID())
 	}
 }

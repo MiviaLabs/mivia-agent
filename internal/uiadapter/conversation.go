@@ -232,6 +232,18 @@ func (c *Conversation) emitTurnEndIfWinner(h *turnHandle, closed *atomic.Bool, s
 			reason = "cancelled"
 		} else {
 			reason = "error"
+			atomic.AddUint64(seq, 1)
+			errEvent := uievent.Event{
+				Kind:   uievent.KindNotice,
+				TurnID: turnID,
+				Seq:    atomic.LoadUint64(seq),
+				At:     time.Now(),
+				Body:   uievent.NoticeBody{Text: err.Error()},
+			}
+			select {
+			case h.events <- errEvent:
+			default:
+			}
 		}
 	}
 	atomic.AddUint64(seq, 1)

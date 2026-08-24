@@ -43,15 +43,35 @@ func (c fallbackCompleter) ChatTurn(context.Context, provider.Request) (*provide
 
 func sessionBindingFactory(sess *chat.Session, res *config.Resolved, state *cliagents.AgentSessionState) func(string, string) (chat.ModelBinding, error) {
 	return func(providerName, model string) (chat.ModelBinding, error) {
+		if providerName == "" && res != nil {
+			providerName = res.ProviderName
+		}
+		if model == "" && res != nil {
+			model = res.Model
+		}
 		binding, err := cliagents.BuildModelBinding(sess, res, ".", providerName, model, state)
 		if err == nil {
 			return binding, nil
 		}
+		// If binding failed because provider or model is not selectable in current config,
+		// fallback to building with current configured provider/model
+		if res != nil && (providerName != res.ProviderName || model != res.Model) {
+			if b, err2 := cliagents.BuildModelBinding(sess, res, ".", res.ProviderName, res.Model, state); err2 == nil {
+				return b, nil
+			}
+		}
 		profile, _ := cliagents.ConfiguredProfile(res, providerName, model)
+		var comp provider.Completer
+		if res != nil && res.ProviderName != "" {
+			comp, _ = provider.New(res)
+		}
+		if comp == nil {
+			comp = fallbackCompleter{providerName: providerName}
+		}
 		return chat.ModelBinding{
 			ProviderName:       providerName,
 			Model:              model,
-			Completer:          fallbackCompleter{providerName: providerName},
+			Completer:          comp,
 			Profile:            profile,
 			PromptBudgetTokens: sess.PromptBudgetFor(profile),
 		}, nil
@@ -97,12 +117,20 @@ func (p *SessionPool) GetOrCreate(sessionID string) (ports.Conversation, error) 
 	}
 	sess := chat.NewSession(p.res, comp)
 	sess.UseTools = p.toolsOn
-	sess.SetBindingFactory(sessionBindingFactory(sess, p.res, p.agentState))
 
-	// Inherit session directory and session/context stores from existing session if set
+	// Inherit session directory, tools, event bus, and session/context stores from existing session if set
 	for _, existing := range p.sessions {
 		if existing.SessionDir != "" {
 			sess.SessionDir = existing.SessionDir
+		}
+		if existing.Tools != nil {
+			sess.Tools = existing.Tools
+			sess.MaxToolResultChars = existing.MaxToolResultChars
+			sess.BatchResultBudgetBytes = existing.BatchResultBudgetBytes
+			sess.RefOnlyTools = existing.RefOnlyTools
+		}
+		if existing.EventBus != nil {
+			sess.EventBus = existing.EventBus
 		}
 		if store := existing.Store(); store != nil {
 			sess.SetSessionStore(store, nil)
@@ -121,6 +149,11 @@ func (p *SessionPool) GetOrCreate(sessionID string) (ports.Conversation, error) 
 		}
 		break
 	}
+
+	if p.agentState != nil && p.res != nil {
+		sess.SetSurfaceWidener(cliagents.NewSurfaceWidener(sess, p.res, p.agentState))
+	}
+	sess.SetBindingFactory(sessionBindingFactory(sess, p.res, p.agentState))
 
 	if err := sess.Load(sessionID); err != nil {
 		return nil, err
