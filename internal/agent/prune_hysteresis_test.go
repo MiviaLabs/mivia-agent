@@ -1,16 +1,19 @@
 package agent
 
-// pruneHistory hysteresis (mirrors contextmgr.Plan's trigger 80% / target 50%
-// shape): pruning must not fire on every step once history nears the budget,
-// only once the estimated cost crosses the trigger, and then down to the
-// target - so the provider prompt-cache prefix survives many steps between
-// drops instead of being invalidated from token 0 on every step.
+// sdkPromptBudgetPreflight's prune hysteresis (mirrors contextmgr.Plan's
+// trigger 80% / target 50% shape, ported from the legacy pruneHistory in
+// agentloop_adapter.go's sdkPruneToBudget): pruning must not fire on every
+// step once history nears the budget, only once the estimated cost crosses
+// the trigger, and then down to the target - so the provider prompt-cache
+// prefix survives many steps between drops instead of being invalidated
+// from token 0 on every step.
 
 import (
 	"strings"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
 // pruneTurn returns one user/assistant exchange whose combined content is
@@ -35,13 +38,13 @@ func countPruneEvents(t *testing.T, opts *Options) *int {
 	return &n
 }
 
-// TestPruneHistoryStaysUntouchedUnderTrigger locks that a history whose
-// estimated cost never crosses 80% of the budget is never pruned, across
-// repeated per-step calls, and the untouched prefix stays byte-identical
-// (same messages, same content) as new turns are appended - the exact
-// invariant a provider's prompt cache depends on.
-func TestPruneHistoryStaysUntouchedUnderTrigger(t *testing.T) {
-	loop := &Loop{Messages: []provider.Message{
+// TestSDKPromptBudgetPreflightStaysUntouchedUnderTrigger locks that a history
+// whose estimated cost never crosses 80% of the budget is never pruned,
+// across repeated per-step calls, and the untouched prefix stays
+// byte-identical (same messages, same content) as new turns are appended -
+// the exact invariant a provider's prompt cache depends on.
+func TestSDKPromptBudgetPreflightStaysUntouchedUnderTrigger(t *testing.T) {
+	loop := &Loop{Tools: tools.NewRegistry(), Messages: []provider.Message{
 		{Role: provider.RoleSystem, Content: "fixed system prompt"},
 	}}
 	opts := Options{MaxContextTokens: 10_000}
@@ -50,7 +53,9 @@ func TestPruneHistoryStaysUntouchedUnderTrigger(t *testing.T) {
 	for step := 0; step < 5; step++ {
 		loop.Messages = append(loop.Messages, pruneTurn("t", 400)...)
 		before := append([]provider.Message(nil), loop.Messages...)
-		loop.pruneHistory(opts, nil)
+		if _, err := sdkPromptBudgetPreflight(loop, opts, loop.Messages); err != nil {
+			t.Fatalf("step %d: %v", step, err)
+		}
 		if len(loop.Messages) != len(before) {
 			t.Fatalf("step %d: history mutated while under trigger: had %d messages, now %d", step, len(before), len(loop.Messages))
 		}
@@ -65,15 +70,15 @@ func TestPruneHistoryStaysUntouchedUnderTrigger(t *testing.T) {
 	}
 }
 
-// TestPruneHistoryPrunesOnceThenStabilizes locks the hysteresis shape itself:
-// once history crosses the 80% trigger, pruneHistory drops old turns down to
-// roughly the 50% target in one shot, and does NOT prune again on the very
-// next call even though the trimmed history is still below the (now much
-// higher relative) trigger - i.e. one front-drop buys several stable steps,
-// not a fresh drop every step at the boundary.
-func TestPruneHistoryPrunesOnceThenStabilizes(t *testing.T) {
+// TestSDKPromptBudgetPreflightPrunesOnceThenStabilizes locks the hysteresis
+// shape itself: once history crosses the 80% trigger, the preflight drops
+// old turns down to roughly the 50% target in one shot, and does NOT prune
+// again on the very next call even though the trimmed history is still below
+// the (now much higher relative) trigger - i.e. one front-drop buys several
+// stable steps, not a fresh drop every step at the boundary.
+func TestSDKPromptBudgetPreflightPrunesOnceThenStabilizes(t *testing.T) {
 	const budget = 10_000
-	loop := &Loop{Messages: []provider.Message{
+	loop := &Loop{Tools: tools.NewRegistry(), Messages: []provider.Message{
 		{Role: provider.RoleSystem, Content: "fixed system prompt"},
 	}}
 	// Build history comfortably past the 80% trigger (8,000 tokens ~= 32,000
@@ -91,13 +96,15 @@ func TestPruneHistoryPrunesOnceThenStabilizes(t *testing.T) {
 	opts := Options{MaxContextTokens: budget}
 	pruned := countPruneEvents(t, &opts)
 
-	loop.pruneHistory(opts, nil)
+	if _, err := sdkPromptBudgetPreflight(loop, opts, loop.Messages); err != nil {
+		t.Fatal(err)
+	}
 	if *pruned != 1 {
 		t.Fatalf("prune fired %d times on the crossing step, want exactly 1", *pruned)
 	}
 	afterTokens := provider.MessagesTokens(loop.Messages, profile)
 	target := budget / 2
-	// Generous slack: pruneHistory trims by whole turns, so it can land
+	// Generous slack: pruning trims by whole turns, so it can land
 	// somewhat under the exact target, never far over it.
 	if afterTokens > target+target/2 {
 		t.Fatalf("pruned history is %d tokens, want near the %d target (budget=%d)", afterTokens, target, budget)
@@ -109,7 +116,9 @@ func TestPruneHistoryPrunesOnceThenStabilizes(t *testing.T) {
 	// The very next call, with nothing appended, must be a no-op: the pruned
 	// history already sits well under ITS OWN 80% trigger.
 	stable := append([]provider.Message(nil), loop.Messages...)
-	loop.pruneHistory(opts, nil)
+	if _, err := sdkPromptBudgetPreflight(loop, opts, loop.Messages); err != nil {
+		t.Fatal(err)
+	}
 	if *pruned != 1 {
 		t.Fatalf("prune fired again immediately after pruning down to target (count=%d), want it to stay at 1", *pruned)
 	}

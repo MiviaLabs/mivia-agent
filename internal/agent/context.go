@@ -9,43 +9,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
 
-func (l *Loop) prepareStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts Options) error {
-	// Parent-message inject (plan 53.03): before prune so injected frames are
-	// part of a complete turn for PruneMessagesKeepTurns.
-	if opts.BeforeStep != nil {
-		if injected := opts.BeforeStep(); len(injected) > 0 {
-			l.Messages = append(l.Messages, injected...)
-		}
-	}
-	if opts.PreparationManager == nil {
-		l.pruneHistory(opts, toolSpecs)
-		return promptBudgetErrorWithTools(l.Messages, opts.MaxContextTokens, toolSpecs, l.contextAccounting())
-	}
-	input := l.buildPrepareInput(toolSpecs, opts)
-	preparation, err := opts.PreparationManager.Prepare(ctx, input)
-	if err != nil {
-		l.PreparationErr = err
-		if !l.HasPreparation && opts.WorkLimits.DeadlineAt.IsZero() && interruptedContext(ctx, err) {
-			preparation, fallbackErr := opts.PreparationManager.Prepare(context.Background(), input)
-			if fallbackErr == nil {
-				l.recordPreparation(preparation)
-				l.captureOmittedEvidence(input, preparation)
-				l.Messages = clonePreparedMessages(preparation.Messages)
-				l.PreparationErr = nil
-			} else {
-				l.PreparationErr = fallbackErr
-			}
-		}
-		return err
-	}
-	l.discardPreparation(opts)
-	l.recordPreparation(preparation)
-	l.PreparationErr = nil
-	l.captureOmittedEvidence(input, preparation)
-	l.Messages = clonePreparedMessages(l.LastPreparation.Messages)
-	return nil
-}
-
 // captureOmittedEvidence folds the content-free diff of the pre-compaction
 // history against the retained preparation into the run's TurnState BEFORE
 // l.Messages is overwritten, and stashes the pre-compaction history so the

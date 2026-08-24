@@ -16,7 +16,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
-	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -540,46 +539,6 @@ func TestInjectSummaryMessageAppendsAfterPrefix(t *testing.T) {
 	solo := InjectSummaryMessage(nil, injected)
 	if len(solo) != 1 || solo[0].Name != SummaryMessageName {
 		t.Fatalf("empty-history inject = %+v", solo)
-	}
-}
-
-// TestStepRequestOrderSummaryThenConcludeNudge pins the ephemeral request
-// order when both injections fire: structural prefix unchanged, then the
-// summary, then the soft-conclude nudge LAST.
-func TestStepRequestOrderSummaryThenConcludeNudge(t *testing.T) {
-	summ := &capturingSummaryProvider{}
-	summarizer := summaryInjectSummarizer(t, summ)
-	loop := summaryInjectedLoopFixture(t, contextmgr.NewTurnState())
-	// MaxToolCalls=1 leaves fewer than concludeToolCallsLeft reservations, so
-	// the conclude nudge fires on the next request.
-	loop.workLimits = &workLimitMeter{limits: runtime.WorkLimits{MaxToolCalls: 1}}
-	structural := append([]provider.Message(nil), loop.Messages...)
-	opts := Options{
-		MaxContextTokens: 100_000,
-		SummaryConfig:    SummaryConfig{Summarizer: &summarizer, Redaction: summaryRedaction()},
-	}
-	req, err := loop.stepRequest(context.Background(), nil, opts, false, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	messages := req.Messages
-	if len(messages) != len(structural)+2 {
-		t.Fatalf("len=%d, want structural+summary+nudge=%d", len(messages), len(structural)+2)
-	}
-	for index := range structural {
-		if !reflect.DeepEqual(messages[index], structural[index]) {
-			t.Fatalf("structural message at index %d changed: %+v", index, messages[index])
-		}
-	}
-	if messages[len(structural)].Name != SummaryMessageName {
-		t.Fatalf("summary is not directly after the structural prefix: %+v", messages[len(structural)])
-	}
-	last := messages[len(messages)-1]
-	if last.Role != provider.RoleUser || last.Content != concludeMessage {
-		t.Fatalf("conclude nudge is not last: %+v", last)
-	}
-	if !reflect.DeepEqual(loop.Messages, structural) {
-		t.Fatal("stepRequest mutated loop history")
 	}
 }
 

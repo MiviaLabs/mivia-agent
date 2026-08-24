@@ -75,7 +75,7 @@ func TestRefOnlySpoolsWholeBody(t *testing.T) {
 		SessionID:              shapeTestPrincipal,
 		RemainderSpool:         spool,
 	}
-	bodies := shapeBatchResults([]toolExecResult{refOnlyResult("read_file", text)}, opts)
+	bodies := shapeResultsForTest([]toolExecResult{refOnlyResult("read_file", text)}, opts)
 
 	got := bodies[0]
 	if !strings.Contains(got, "elided to a remainder ref (original ~512 KiB)") {
@@ -127,7 +127,7 @@ func TestRefOnlyBelowFloorStaysInline(t *testing.T) {
 		SessionID:              shapeTestPrincipal,
 		RemainderSpool:         spool,
 	}
-	bodies := shapeBatchResults([]toolExecResult{refOnlyResult("read_file", text)}, opts)
+	bodies := shapeResultsForTest([]toolExecResult{refOnlyResult("read_file", text)}, opts)
 
 	if bodies[0] != text {
 		t.Fatalf("sub-floor body was not inlined whole: %q", trunc(bodies[0], 120))
@@ -153,7 +153,7 @@ func TestRefOnlyNotInSetUnchanged(t *testing.T) {
 		SessionID:              shapeTestPrincipal,
 		RemainderSpool:         spool,
 	}
-	bodies := shapeBatchResults([]toolExecResult{refOnlyResult("read_file_x", text)}, opts)
+	bodies := shapeResultsForTest([]toolExecResult{refOnlyResult("read_file_x", text)}, opts)
 
 	got := bodies[0]
 	if !strings.Contains(got, "... truncated: kept ") {
@@ -188,7 +188,7 @@ func TestRefOnlySkipsEphemeral(t *testing.T) {
 		SessionID:              shapeTestPrincipal,
 		RemainderSpool:         spool,
 	}
-	bodies := shapeBatchResults([]toolExecResult{r}, opts)
+	bodies := shapeResultsForTest([]toolExecResult{r}, opts)
 
 	got := bodies[0]
 	if strings.Contains(got, "elided") {
@@ -217,7 +217,7 @@ func TestRefOnlyNilSpoolFallsBackToPlainNotice(t *testing.T) {
 		SessionID:              shapeTestPrincipal,
 		// RemainderSpool left nil: no ref can be minted.
 	}
-	bodies := shapeBatchResults([]toolExecResult{refOnlyResult("read_file", text)}, opts)
+	bodies := shapeResultsForTest([]toolExecResult{refOnlyResult("read_file", text)}, opts)
 
 	want := refOnlyPlainNotice("read_file", big)
 	if bodies[0] != want {
@@ -240,7 +240,7 @@ func TestRefOnlyStoreFailureFallsBackToPlainNotice(t *testing.T) {
 		SessionID:              shapeTestPrincipal,
 		RemainderSpool:         spool,
 	}
-	bodies := shapeBatchResults([]toolExecResult{refOnlyResult("read_file", text)}, opts)
+	bodies := shapeResultsForTest([]toolExecResult{refOnlyResult("read_file", text)}, opts)
 
 	want := refOnlyPlainNotice("read_file", big)
 	if bodies[0] != want {
@@ -264,7 +264,7 @@ func TestRefOnlyEmptyPrincipalFallsBack(t *testing.T) {
 		SessionID:              "", // empty principal: no ref, no store
 		RemainderSpool:         spool,
 	}
-	bodies := shapeBatchResults([]toolExecResult{refOnlyResult("read_file", text)}, opts)
+	bodies := shapeResultsForTest([]toolExecResult{refOnlyResult("read_file", text)}, opts)
 
 	want := refOnlyPlainNotice("read_file", big)
 	if bodies[0] != want {
@@ -293,7 +293,7 @@ func TestRefOnlyBudgetExhaustedStillRefOnly(t *testing.T) {
 		SessionID:              shapeTestPrincipal,
 		RemainderSpool:         spool,
 	}
-	bodies := shapeBatchResults([]toolExecResult{refOnlyResult("read_file", text)}, opts)
+	bodies := shapeResultsForTest([]toolExecResult{refOnlyResult("read_file", text)}, opts)
 
 	got := bodies[0]
 	if !strings.Contains(got, "elided to a remainder ref (original ~512 KiB)") {
@@ -342,7 +342,7 @@ func TestRefOnlyNamesPassOneRefForTruncatedResult(t *testing.T) {
 		result:   capped.cappedBody,
 		parts:    capped,
 	}
-	bodies := shapeBatchResults([]toolExecResult{r}, opts)
+	bodies := shapeResultsForTest([]toolExecResult{r}, opts)
 
 	got := bodies[0]
 	if !strings.Contains(got, "elided to a remainder ref (original ~512 KiB)") {
@@ -392,7 +392,7 @@ func TestRefOnlyTruncatedNoPassOneRefFallsBackToPlainNotice(t *testing.T) {
 		result:   capped.cappedBody,
 		parts:    capped,
 	}
-	bodies := shapeBatchResults([]toolExecResult{r}, opts)
+	bodies := shapeResultsForTest([]toolExecResult{r}, opts)
 
 	want := refOnlyPlainNotice("read_file", big)
 	if bodies[0] != want {

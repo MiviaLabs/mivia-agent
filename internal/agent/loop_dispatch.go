@@ -13,6 +13,13 @@ import (
 	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
 )
 
+// errSteerInterrupt marks a turn a soft interrupt (plan 54) canceled:
+// the interrupted step's partial reply is returned alongside this
+// sentinel instead of a raw context.Canceled, so a caller can
+// distinguish "the model was asked to stop and complied" from a hard
+// cancellation. Test with errors.Is.
+var errSteerInterrupt = errors.New("agent: steer interrupt")
+
 // runOnce is the driver behind (*Loop).Run. It always runs the
 // SDK-backed loop through RunAgentLoopOnce (completer wrapper,
 // registry converter, steer bridge, and the fail-closed Options
@@ -61,19 +68,7 @@ func (l *Loop) runOnceSDK(ctx context.Context, userText string, opts Options) (s
 	copy(msgs, l.Messages)
 	preLen := len(l.Messages)
 	res, err := RunAgentLoopOnce(ctx, l, opts, msgs)
-	// Messages RunAgentLoopOnce appended past the pre-append (the
-	// streamed partial recorded on a cancel) must survive the history
-	// write-back below, so capture them first.
-	extras := append([]provider.Message(nil), l.Messages[preLen:]...)
-	// Write-back rule: a non-empty res.History replaces the carried
-	// history wholesale (the success path's rule); an empty res.History
-	// keeps the pre-appended l.Messages so the turn is never lost.
-	// Either way, the recorded partial (extras) lands after the
-	// replaced history, preserving the turn's emission order.
-	if len(res.History) > 0 {
-		l.Messages = restoreSDKHistoryTimestamps(sdkMessagesToCLI(res.History), l.Messages[:preLen])
-	}
-	l.Messages = append(l.Messages, extras...)
+	l.writeBackSDKHistory(res, preLen)
 	if err != nil {
 		// A canceled or timed-out run keeps the partial reply the turn
 		// already produced, mirroring the legacy interrupted-step
@@ -109,6 +104,27 @@ func (l *Loop) runOnceSDK(ctx context.Context, userText string, opts Options) (s
 		}
 	}
 	return res.Final.Content, nil
+}
+
+// writeBackSDKHistory applies runOnceSDK's post-run history write-back.
+// Messages RunAgentLoopOnce appended past the pre-append (the streamed
+// partial recorded on a cancel) must survive the write-back, so they
+// are captured first as extras. preLen can no longer be trusted as an
+// exact boundary into l.Messages: the no-PreparationManager preflight
+// (sdkPromptBudgetPreflight) may have PRUNED l.Messages below preLen
+// before any iteration ran, replacing it wholesale rather than only
+// appending to it - clamped here so a pruned run never slices out of
+// range. A non-empty res.History then replaces the carried history
+// wholesale (the success path's rule); an empty res.History keeps the
+// pre-appended l.Messages so the turn is never lost. Either way, extras
+// lands after the replaced history, preserving emission order.
+func (l *Loop) writeBackSDKHistory(res sdkagentloop.Result, preLen int) {
+	preLen = min(preLen, len(l.Messages))
+	extras := append([]provider.Message(nil), l.Messages[preLen:]...)
+	if len(res.History) > 0 {
+		l.Messages = restoreSDKHistoryTimestamps(sdkMessagesToCLI(res.History), l.Messages[:preLen])
+	}
+	l.Messages = append(l.Messages, extras...)
 }
 
 // sdkCurrentTurnStart returns the index in `history` of the first

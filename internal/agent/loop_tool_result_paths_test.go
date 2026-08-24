@@ -1,91 +1,18 @@
 package agent
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/provider"
-	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
-// Defensive seams on the tool-result path: the places a batch can go wrong
-// before any result body exists. Each must still leave one result per call -
-// a missing result orphans a tool_call_id and makes the next provider request
-// malformed.
-
-// A dispatcher that cannot be built fails every call in the batch rather than
-// returning short: the loop builds this fallback itself when no dispatcher was
-// injected, so its failure is the whole batch's failure.
-func TestExecuteToolsParallelFailsEveryCallWhenTheDispatcherCannotBeBuilt(t *testing.T) {
-	calls := []provider.ToolCall{
-		tc("call_a", "read_file", `{"path":"a"}`),
-		tc("call_b", "read_file", `{"path":"b"}`),
-	}
-	var ended []string
-	// A nil registry is the one construction failure NewToolDispatcher
-	// reports; the loop's own Run guards against it, so only this direct call
-	// can reach the branch.
-	results := executeToolsParallel(context.Background(), calls, nil, Options{
-		OnEvent: func(e Event) {
-			if e.Kind == EventToolEnd {
-				ended = append(ended, e.ToolCallID)
-			}
-		},
-	})
-
-	if len(results) != len(calls) {
-		t.Fatalf("got %d results for %d calls", len(results), len(calls))
-	}
-	for i, r := range results {
-		if r.err == nil {
-			t.Fatalf("result %d reports success although no dispatcher exists", i)
-		}
-		if !strings.Contains(r.result, "tool registry") {
-			t.Fatalf("result %d body %q does not explain the failure", i, r.result)
-		}
-		// The body must be charged like any other: a result whose parts are
-		// empty is charged as zero bytes and emitted as an empty message.
-		if r.parts.cappedBody != r.result || r.parts.totalN != len(r.result) {
-			t.Fatalf("result %d carries no structured parts: %+v", i, r.parts)
-		}
-	}
-	if len(ended) != len(calls) {
-		t.Fatalf("emitted %d tool_end events, want %d", len(ended), len(calls))
-	}
-}
-
-// A tool that fails without saying anything gets a synthesized body; one that
-// failed but still spoke keeps its own words. The model needs the tool's
-// account of the failure whenever there is one.
-func TestBuildExecResultSynthesizesABodyOnlyWhenTheToolSaidNothing(t *testing.T) {
-	reg := tools.NewRegistry()
-	task := &toolTask{call: tc("call_x", "some_tool", `{}`)}
-
-	silent := buildExecResult(0, task, reg, Options{}, runtime.Result{
-		Err: errors.New("boom"),
-	})
-	if !strings.Contains(silent.result, "error: boom") {
-		t.Fatalf("silent failure body = %q, want the synthesized error", silent.result)
-	}
-	if silent.parts.cappedBody != silent.result || silent.parts.totalN != len(silent.result) {
-		t.Fatalf("synthesized body was not charged: %+v", silent.parts)
-	}
-
-	spoke := buildExecResult(0, task, reg, Options{}, runtime.Result{
-		Output: []byte("exit=1\nreal tool output"),
-		Err:    errors.New("boom"),
-	})
-	if strings.Contains(spoke.result, "error: boom") {
-		t.Fatalf("a failing tool's own output was replaced: %q", spoke.result)
-	}
-	if spoke.err == nil {
-		t.Fatal("the failure itself was dropped")
-	}
-}
+// Defensive seams on the tool-result path. Coverage for the legacy
+// executeToolsParallel/buildExecResult construction paths is gone with the
+// legacy engine; the SDK path's equivalent dispatcher-shim behavior is
+// pinned in sdk_adapter_coverage_test.go and sdk_dispatcher_shim's own
+// tests. This file keeps the shared preview/redaction helper coverage.
 
 // The argument preview walks arrays as well as objects, and stops descending
 // at the depth bound: crafted input must not be able to recurse the previewer

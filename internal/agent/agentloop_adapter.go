@@ -25,6 +25,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
@@ -347,6 +348,16 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 			defer cancel()
 		}
 	}
+	// The no-PreparationManager preflight runs BEFORE the initial
+	// history is captured below: it prunes old turns to fit
+	// MaxContextTokens first (matching the legacy prepareStep's
+	// fallback branch), and the pruned slice - not the raw msgs this
+	// call received - is what the rest of the turn, including
+	// sdkInitialHistory, must see.
+	msgs, err := sdkPromptBudgetPreflight(l, opts, msgs)
+	if err != nil {
+		return sdkagentloop.Result{}, err
+	}
 	// The initial history reaches the SDK unprepared: host-side
 	// preparation runs per iteration through sdkOpts.Trim below (the
 	// SDK applies Trim before every Completer call, iteration 1
@@ -354,9 +365,6 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 	// SDK's Window stays nil (see sdk_prepare.go).
 	preparedMsgs, err := sdkInitialHistory(ctx, l, opts, msgs)
 	if err != nil {
-		return sdkagentloop.Result{}, err
-	}
-	if err := sdkPromptBudgetPreflight(l, opts, msgs); err != nil {
 		return sdkagentloop.Result{}, err
 	}
 	// Tool execution on the SDK path routes through a runtime
@@ -508,9 +516,18 @@ func runSDKPromptTooLongRecoverable(ctx context.Context, l *Loop, sdkOpts sdkage
 	return run(sdkCompactAfterPromptTooLong(l, opts, preparedMsgs))
 }
 
-// sdkCompactAfterPromptTooLong applies the legacy
-// retryAfterPromptTooLong recovery shape to an SDK starting history:
-// the fixed 16K target (clamped to MaxContextTokens/4 when smaller),
+// promptTooLongCompactNotice is the model-visible notice appended to
+// history after a prompt-too-long rejection compacts it. Dropping
+// earlier tool results with only an operator EventPrune silently
+// desynchronises the transcript from what the model can see: the next
+// step would re-derive or re-read findings with no way to know they
+// are gone. RoleUser keeps ValidateToolPairing happy (RoleSystem is
+// only valid at index 0) and matches how the loop injects
+// step-boundary notes (BeforeStep frames are user-role).
+const promptTooLongCompactNotice = "[context compacted: the provider rejected the prompt as too long, so earlier turns and tool results were dropped to fit the model context; re-read any needed file with offset/limit for the remaining parts]"
+
+// sdkCompactAfterPromptTooLong compacts an SDK starting history after a
+// prompt-too-long rejection: the fixed 16K target (clamped to MaxContextTokens/4 when smaller),
 // the notice's own tokens charged against the same target,
 // PruneMessagesKeepTurns keeps the system prompt and the newest turns
 // and drops tool exchanges as a unit, and the model-visible notice is
@@ -626,16 +643,82 @@ func stampSDKToolMessageNames(history []sdkshape.Message) {
 }
 
 // sdkPromptBudgetPreflight mirrors the legacy prepareStep's
-// PreparationManager-nil branch (context.go:20-23): when no
-// preparation manager runs, MaxContextTokens is a hard preflight
-// over the whole starting history plus tool schemas, before any
-// completer call. A preparation manager owns the budget itself, so
-// that path does no second check here either.
-func sdkPromptBudgetPreflight(l *Loop, opts Options, msgs []provider.Message) error {
-	if opts.PreparationManager == nil && opts.MaxContextTokens > 0 {
-		return promptBudgetErrorWithTools(msgs, opts.MaxContextTokens, l.initialToolSpecs(opts), l.contextAccounting())
+// PreparationManager-nil branch (context.go:20-23) in full, not just
+// its final rejection: when no preparation manager runs,
+// MaxContextTokens is a hard preflight over the whole starting
+// history plus tool schemas, before any completer call - but the
+// legacy path pruned old turns to fit FIRST (pruneHistory) and only
+// rejected what pruning could not fix. A preparation-manager-less
+// caller with a real MaxContextTokens budget is not a rare edge case:
+// every subagent/workflow loop that does not wire a
+// ContextPreparationManager (optional; MaxContextTokens is not) hits
+// this path, and skipping the prune would spuriously reject turns the
+// legacy path pruned and admitted. Returns the (possibly pruned)
+// messages the rest of the turn must use; the caller assigns them
+// back over its own msgs so sdkInitialHistory sees the pruned form.
+// A preparation manager owns the budget itself, so that path does no
+// check here either.
+func sdkPromptBudgetPreflight(l *Loop, opts Options, msgs []provider.Message) ([]provider.Message, error) {
+	if opts.PreparationManager != nil || opts.MaxContextTokens <= 0 {
+		return msgs, nil
 	}
-	return nil
+	toolSpecs := l.initialToolSpecs(opts)
+	profile := l.contextAccounting()
+	beforeTokens := provider.MessagesTokens(msgs, profile)
+	pruned := sdkPruneToBudget(msgs, opts.MaxContextTokens, toolSpecs, profile)
+	l.Messages = pruned
+	if afterTokens := provider.MessagesTokens(pruned, profile); afterTokens < beforeTokens {
+		emit(opts, Event{
+			Kind:   EventPrune,
+			Detail: fmt.Sprintf("pruned ~%d tokens (before=%d after=%d budget=%d)", beforeTokens-afterTokens, beforeTokens, afterTokens, opts.MaxContextTokens),
+		})
+	}
+	if err := promptBudgetErrorWithTools(pruned, opts.MaxContextTokens, toolSpecs, profile); err != nil {
+		return nil, err
+	}
+	return pruned, nil
+}
+
+// sdkPruneToBudget is the legacy pruneHistory's trim logic (deleted
+// with the legacy engine), ported to return a new slice instead of
+// mutating l.Messages directly - the only caller here already assigns
+// the result onto l.Messages itself, once, at its one call site.
+// Hysteretic like contextmgr.Plan: only prunes once the estimated
+// request cost crosses the 80% trigger, down to the 50% target when
+// it does, so the front-dropped prefix - and the provider
+// prompt-cache miss it costs - happens once per many turns instead of
+// every time the budget is merely close.
+func sdkPruneToBudget(messages []provider.Message, maxContextTokens int, toolSpecs []provider.ToolSpec, profile provider.ContextAccountingProfile) []provider.Message {
+	schemaCost := 0
+	if len(toolSpecs) > 0 {
+		if cost, err := provider.EstimateToolSchemaCost(toolSpecs); err == nil {
+			schemaCost = cost
+		}
+	}
+	trigger := contextmgr.PercentFloor(maxContextTokens, 4, 5)
+	totalCost := provider.EstimateMessagesPromptCost(messages, schemaCost, profile)
+	if totalCost < trigger {
+		return messages
+	}
+	budget := contextmgr.PercentFloor(maxContextTokens, 1, 2)
+	// Pass 1 drops old turns by content minus schema cost; pass 2 trims to
+	// the exact frame- and schema-aware target of the remaining set -
+	// mirrors the rejection check's own accounting so a history at the
+	// boundary is trimmed instead of rejected.
+	pass1 := budget - schemaCost
+	if pass1 < 1 {
+		pass1 = 1
+	}
+	pruned := provider.PruneMessagesKeepTurns(messages, pass1, profile)
+	overhead := provider.EstimateMessagesPromptCost(pruned, 0, profile) - provider.MessagesTokens(pruned, profile)
+	target := budget - schemaCost - overhead
+	if target < 1 {
+		target = 1
+	}
+	if provider.MessagesTokens(pruned, profile) > target {
+		pruned = provider.PruneMessagesKeepTurns(pruned, target, profile)
+	}
+	return pruned
 }
 
 // finalizeSDKTurn applies the CLI's post-turn Options after a

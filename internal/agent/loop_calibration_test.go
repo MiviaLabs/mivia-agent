@@ -170,17 +170,29 @@ func TestLoopEmitsPreUpdateCalibrationRatio(t *testing.T) {
 	}}
 	req := provider.Request{Model: "m", Messages: msgs}
 
+	// emitTurnUsage is what requestStep (deleted with the legacy engine)
+	// used to call after every completed ChatTurn; calling it directly
+	// pins the same pre-update-ratio contract the SDK completer wrapper
+	// now drives it from (newSDKTurnCompleter's onUsage callback).
+	callAndEmit := func() {
+		resp, err := loop.Completer.ChatTurn(context.Background(), req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		estimatedTokens, err := provider.EstimatePromptCost(req.Messages, req.Tools, loop.contextAccounting())
+		if err != nil {
+			t.Fatal(err)
+		}
+		loop.emitTurnUsage(context.Background(), opts, req, resp, estimatedTokens)
+	}
+
 	// Turn 1: reported = 2*estimate. Warm start stores Ratio = 2.0, but the
 	// emitted ratio must be the PRE-update value: 0.0, shown as 1.00 (unity).
-	if _, err := loop.requestStep(context.Background(), req, opts); err != nil {
-		t.Fatal(err)
-	}
+	callAndEmit()
 	// Turn 2: reported = estimate (raw ratio 1.0). The post-update EWMA is
 	// 0.2*1.0 + 0.8*2.0 = 1.8; the emitted ratio must be the pre-update 2.0.
 	loop.Completer = &usageReportingCompleter{usage: provider.TokenUsage{Reported: true, InputTokens: est, OutputTokens: 5}}
-	if _, err := loop.requestStep(context.Background(), req, opts); err != nil {
-		t.Fatal(err)
-	}
+	callAndEmit()
 
 	if len(ratios) != 2 {
 		t.Fatalf("got %d token usage events, want 2", len(ratios))

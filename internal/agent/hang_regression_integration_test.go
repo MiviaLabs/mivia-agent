@@ -13,7 +13,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	appruntime "github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
-	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 // Integration regressions for tool hang classes:
@@ -324,68 +323,5 @@ func TestIntegration_RunCommandYesFloodDoesNotHangLoop(t *testing.T) {
 	}
 	if !strings.Contains(body, "truncated") {
 		t.Fatalf("expected truncation notice, got head %q", body[:min(len(body), 200)])
-	}
-}
-
-// TestIntegration_ExecuteToolsParallel_FIFOAndFloodBatch: direct parallel batch
-// (no model) through scheduler + dispatcher - regression for worker pin.
-func TestIntegration_ExecuteToolsParallel_FIFOAndFloodBatch(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("unix tools")
-	}
-	dir := t.TempDir()
-	ws, err := workspace.Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "ok.txt"), []byte("ok-data"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := exec.Command("mkfifo", filepath.Join(dir, "block.fifo")).Run(); err != nil {
-		t.Fatal(err)
-	}
-	reg := tools.NewDefaultRegistry(tools.DefaultOptions{
-		Workspace:      ws,
-		RunAllowlist:   []string{"yes"},
-		RunTimeoutSec:  1,
-		MaxOutputBytes: 2048,
-	})
-	disp, err := appruntime.NewToolDispatcher(reg, appruntime.Policy{MaxOutputBytes: 128 << 10})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(disp.Close)
-
-	calls := []provider.ToolCall{
-		toolCall("t1", "read_file", `{"path":"block.fifo"}`),
-		toolCall("t2", "read_file", `{"path":"ok.txt"}`),
-		toolCall("t3", "run_command", `{"argv":["yes"]}`),
-	}
-	start := time.Now()
-	results := executeToolsParallel(context.Background(), calls, reg, Options{
-		Dispatcher:         disp,
-		MaxConcurrentTools: 3,
-		ToolTimeout:        3 * time.Second,
-	})
-	elapsed := time.Since(start)
-	if elapsed > 6*time.Second {
-		t.Fatalf("parallel batch hung: %s", elapsed)
-	}
-	if len(results) != 3 {
-		t.Fatalf("results=%d", len(results))
-	}
-	byID := map[string]toolExecResult{}
-	for _, r := range results {
-		byID[r.toolCall.ID] = r
-	}
-	if !strings.Contains(byID["t2"].result, "ok-data") {
-		t.Fatalf("ok read missing: %+v", byID["t2"])
-	}
-	if byID["t1"].err == nil && !strings.Contains(strings.ToLower(byID["t1"].result), "error") &&
-		!strings.Contains(strings.ToLower(byID["t1"].result), "regular") {
-		t.Fatalf("fifo expected failure: %+v", byID["t1"])
-	}
-	if !strings.Contains(byID["t3"].result, "exit=timeout") && !strings.Contains(byID["t3"].result, "truncated") {
-		t.Fatalf("yes expected timeout/trunc: %+v", byID["t3"])
 	}
 }

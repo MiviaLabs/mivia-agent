@@ -2,14 +2,12 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
-	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
 // SummaryMessageName is the Name a rendered context summary rides on. The
@@ -21,13 +19,6 @@ import (
 // continue. The Name lets hosts identify the injection when the wire keeps
 // it; the header text carries the framing when the wire drops the Name.
 const SummaryMessageName = "context-summary"
-
-// ConcludeNudgeMessageName is the Name the ephemeral soft-conclude nudge
-// rides on. Every trailing host injection is a NAMED user message; user-typed
-// input never carries a Name. The DeepSeek reject gate relies on that
-// distinction to keep the current tool exchange on the wire (see
-// internal/provider terminalToolExchange).
-const ConcludeNudgeMessageName = "conclude-nudge"
 
 // SummaryOutputLimitTokens is the default token cap for one summary request.
 // OutputLimit is bounded above by 2048 in the summary validators.
@@ -177,63 +168,6 @@ func (l *Loop) summarizeTurn(ctx context.Context, opts Options) (contextmgr.Untr
 		return contextmgr.UntrustedSummary{}, contextmgr.SummaryRequest{}, false
 	}
 	return summary, request, true
-}
-
-// refreshOmittedEvidenceAfterRetry re-derives the omitted-evidence diff for a
-// prompt-too-long retry. retryAfterPromptTooLong prunes l.Messages in place,
-// so the evidence the first prepareStep captured (for the rejected, never-sent
-// history) would otherwise leave the retried request's summary referencing the
-// wrong omitted set. The fresh diff is the pre-prune history against the
-// pruned history - exactly the messages the retry drops - appended on top of
-// the accumulated turn facts, which remain accurate for the retried request
-// too (those messages are still absent from it). The diff is pure and
-// content-free (role + tool name + size bucket only) and tracker-bounded; a
-// rejected item is dropped, never an error. A dry-run re-Prepare cannot serve
-// this diff: the pruner already shrinks the history below the planner's 50%
-// compaction trigger, so Prepare would retain it unchanged and the diff would
-// be empty.
-func (l *Loop) refreshOmittedEvidenceAfterRetry(prePrune []provider.Message) {
-	if l.TurnState == nil {
-		return
-	}
-	for _, item := range contextmgr.OmittedEvidence(prePrune, l.Messages) {
-		_ = l.TurnState.AddEvidence(item)
-	}
-}
-
-// recordToolFacts accumulates bounded, content-free host facts from one
-// completed tool call into the run's TurnState: the tool name as evidence, the
-// tool name as a changed surface when the capability class is a write, and a
-// bounded risk on failure. Tracker overflow or an envelope-invalid value drops
-// the fact silently - summary input is best-effort and must never fail a turn.
-func (l *Loop) recordToolFacts(r toolExecResult) {
-	if l.TurnState == nil {
-		return
-	}
-	name := boundedSummaryText(r.toolCall.Function.Name)
-	if name != "" {
-		_ = l.TurnState.AddEvidence(name)
-	}
-	if capability := l.Tools.Capability(r.toolCall.Function.Name, json.RawMessage(r.toolCall.Function.Arguments)); capability.Class == tools.ExecutionWrite && name != "" {
-		_ = l.TurnState.AddChangedSurface(name)
-	}
-	if r.err != nil {
-		if risk := boundedSummaryText("tool " + name + " failed: " + r.err.Error()); risk != "" {
-			_ = l.TurnState.AddRisk(risk)
-		}
-	}
-}
-
-// recordAssistantState captures the latest completed assistant content into
-// the run's TurnState, bounded to the summary state field. The latest call
-// wins (SetState overwrites).
-func (l *Loop) recordAssistantState(content string) {
-	if l.TurnState == nil {
-		return
-	}
-	if state := boundedSummaryText(content); state != "" {
-		_ = l.TurnState.SetState(state)
-	}
 }
 
 // RenderSummaryMessage renders a validated summary as a bounded user-role
