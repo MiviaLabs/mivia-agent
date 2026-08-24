@@ -81,6 +81,8 @@ type Session struct {
 	ApprovalGate func(ctx context.Context, name string, args json.RawMessage) sdkadapter.ApprovalResult
 	// ApprovalStanding is the per-session "always" cache consulted before ApprovalGate.
 	ApprovalStanding *sdkadapter.ApprovalStanding
+	// ApprovalPolicy controls tool execution approval policy ("write-only", "auto" / "never", "always").
+	ApprovalPolicy string
 	// OnAgentEvent optional tool/step tracing.
 	OnAgentEvent func(agent.Event)
 	// EventBus optional extensible event delivery (TUI UIAdapter, etc.).
@@ -384,6 +386,7 @@ func (s *Session) buildAgentTurnOptions(snapshot agentTurnSnapshot, userText str
 		Backend:          "sdk", // surface rotation, streaming, preparation, budgets, advertised union, and tool-event shape all bridge (docs/development/sdk-backend-field-mapping.md)
 		ApprovalGate:     snapshot.approvalGate,
 		ApprovalStanding: snapshot.approvalStanding,
+		ApprovalPolicy:   snapshot.approvalPolicy,
 		FinalWriter:      w, OnEvent: snapshot.onEvent, EventBus: snapshot.eventBus, EventIdentity: snapshot.identity,
 		RequireFinalText: true,
 		// Step 1 has no Surface hook call (applySurfaceHook skips it), so the

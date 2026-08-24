@@ -63,6 +63,7 @@ func DefaultCommands() []composer.Command {
 		{Name: "resume", Desc: "resume a previous session"},
 		{Name: "settings", Desc: "open the settings screen"},
 		{Name: "theme", Desc: "pick a theme"},
+		{Name: "yolo", Desc: "toggle YOLO mode (auto-approve all tool executions)"},
 	}
 }
 
@@ -91,6 +92,8 @@ func (r *CommandRunner) Run(ctx context.Context, name, args string) ports.Comman
 		return r.handleAgents(args)
 	case "resume", "load":
 		return r.handleResume(args)
+	case "yolo":
+		return r.handleYolo()
 	default:
 		label := "/" + name
 		if args != "" {
@@ -356,4 +359,16 @@ func (r *CommandRunner) SelectSession(_ context.Context, id string) ports.Comman
 		ClearTranscript: true,
 		Notice:          fmt.Sprintf("Resumed session %s.", id),
 	}
+}
+
+func (r *CommandRunner) handleYolo() ports.CommandOutcome {
+	if r.sess == nil {
+		return ports.CommandOutcome{Err: "no active session"}
+	}
+	if r.sess.ApprovalPolicy == config.ApprovalPolicyAuto {
+		r.sess.ApprovalPolicy = config.ApprovalPolicyWriteOnly
+		return ports.CommandOutcome{Notice: "YOLO mode disabled: write tools require approval."}
+	}
+	r.sess.ApprovalPolicy = config.ApprovalPolicyAuto
+	return ports.CommandOutcome{Notice: "YOLO mode enabled: all tool calls auto-approved."}
 }

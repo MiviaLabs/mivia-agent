@@ -199,3 +199,30 @@ func runChatOnceGuardedWithSession(t *testing.T, res *config.Resolved, ws, sessi
 	}()
 	return runConfiguredChatOnceImpl(chatInvocation{prompt: "hi", workspacePath: ws, noTools: true, session: session}, res)
 }
+
+func TestParseChatInvocationYOLOFlags(t *testing.T) {
+	tests := []struct {
+		args       []string
+		wantYolo   bool
+		wantPolicy string
+	}{
+		{[]string{"--yolo"}, true, ""},
+		{[]string{"-y"}, true, ""},
+		{[]string{"--approval-policy", "auto"}, false, "auto"},
+		{[]string{"--approval-policy", "write-only"}, false, "write-only"},
+		{[]string{"--yolo", "-p", "hello"}, true, ""},
+	}
+
+	for _, tc := range tests {
+		inv, err := parseChatInvocation(tc.args)
+		if err != nil {
+			t.Fatalf("parseChatInvocation(%v): %v", tc.args, err)
+		}
+		if inv.yolo != tc.wantYolo {
+			t.Errorf("parseChatInvocation(%v).yolo = %v, want %v", tc.args, inv.yolo, tc.wantYolo)
+		}
+		if inv.approvalPolicy != tc.wantPolicy {
+			t.Errorf("parseChatInvocation(%v).approvalPolicy = %q, want %q", tc.args, inv.approvalPolicy, tc.wantPolicy)
+		}
+	}
+}

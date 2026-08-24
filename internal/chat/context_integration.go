@@ -55,6 +55,7 @@ type agentTurnSnapshot struct {
 	refOnlyTools      []string
 	approvalGate      func(context.Context, string, json.RawMessage) sdkadapter.ApprovalResult
 	approvalStanding  *sdkadapter.ApprovalStanding
+	approvalPolicy    string
 	onEvent           func(agent.Event)
 	toolRegistry      *tools.Registry
 	toolTimeout       time.Duration
@@ -435,8 +436,9 @@ func (s *Session) beginAgentTurn(userText string, eventOverride func(agent.Event
 		maxSteps: s.MaxSteps, maxToolResult: s.MaxToolResultChars,
 		batchResultBudget: s.BatchResultBudgetBytes, refOnlyTools: s.RefOnlyTools,
 		approvalGate: s.ApprovalGate, approvalStanding: s.ApprovalStanding,
-		onEvent:      onEvent,
-		toolRegistry: s.Tools, toolTimeout: s.ToolTimeout, sessionID: s.SessionID,
+		approvalPolicy: s.ApprovalPolicy,
+		onEvent:        onEvent,
+		toolRegistry:   s.Tools, toolTimeout: s.ToolTimeout, sessionID: s.SessionID,
 		// Captured under the lock: the host republishes the spool after a
 		// surface publication, concurrently with turns starting.
 		remainderSpool: s.RemainderSpool,

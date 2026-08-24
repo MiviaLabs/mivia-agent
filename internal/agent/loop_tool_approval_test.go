@@ -264,3 +264,23 @@ func TestGateToolApprovalPostApprovalContextCancelFailsTask(t *testing.T) {
 		t.Fatalf("handler ran %d times after cancel, want 0", got)
 	}
 }
+
+func TestGateToolApprovalYOLOMode(t *testing.T) {
+	env := newApprovalEnv(t, tools.ExecutionWrite)
+	opts := env.approvalOptions(nil)
+	opts.ApprovalPolicy = "auto"
+
+	results := env.runOneGatedCall(t, opts)
+	if len(results) != 1 || results[0].err != nil {
+		t.Fatalf("results=%+v err=%v, want one clean result in YOLO mode", results, results[0].err)
+	}
+	if got := env.gate.count(); got != 0 {
+		t.Fatalf("gate calls = %d, want 0 in YOLO mode", got)
+	}
+	if got := env.started.Load(); got != 1 {
+		t.Fatalf("handler runs = %d, want 1 in YOLO mode", got)
+	}
+	if len(env.pendingSeq) != 0 {
+		t.Fatalf("EventToolPending fired in YOLO mode, want none")
+	}
+}

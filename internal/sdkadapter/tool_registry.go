@@ -66,6 +66,8 @@ type AdmissionPredicates struct {
 	// legacy and SDK paths within one session so a "always" decision
 	// persists across backends.
 	ApprovalStanding *ApprovalStanding
+	// ApprovalPolicy controls tool execution approval policy ("write-only", "auto", "always").
+	ApprovalPolicy string
 	// EmitPending publishes a "tool pending approval" advisory from
 	// inside the SDK wrapper, before invoking the gate. The fields
 	// are the bridge primitives so the wrapper does not need to
@@ -142,6 +144,7 @@ func WrapToolWithAdmission(inner sdktools.Tool, cliTool tools.Tool, pred Admissi
 			cliName:         cliTool.Name(),
 			gate:            pred.ApprovalGate,
 			standing:        pred.ApprovalStanding,
+			policy:          pred.ApprovalPolicy,
 			emitPending:     pred.EmitPending,
 			getCapabilities: capabilitiesFor(cliTool),
 		}

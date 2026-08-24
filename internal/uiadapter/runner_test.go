@@ -340,3 +340,36 @@ func TestDefaultCommands(t *testing.T) {
 		t.Errorf("missing core commands in DefaultCommands: %+v", cmds)
 	}
 }
+
+func TestCommandRunner_YoloToggle(t *testing.T) {
+	res := &config.Resolved{
+		ProviderName: "test",
+		Model:        "test-model",
+	}
+	sess := chat.NewSession(res, nil)
+	runner := uiadapter.NewCommandRunner(sess, res, nil)
+
+	// First toggle: enable YOLO
+	out1 := runner.Run(context.Background(), "yolo", "")
+	if out1.Err != "" {
+		t.Fatalf("unexpected err: %v", out1.Err)
+	}
+	if !strings.Contains(out1.Notice, "enabled") {
+		t.Errorf("expected enabled notice, got %q", out1.Notice)
+	}
+	if sess.ApprovalPolicy != config.ApprovalPolicyAuto {
+		t.Errorf("expected sess.ApprovalPolicy = %q, got %q", config.ApprovalPolicyAuto, sess.ApprovalPolicy)
+	}
+
+	// Second toggle: disable YOLO
+	out2 := runner.Run(context.Background(), "yolo", "")
+	if out2.Err != "" {
+		t.Fatalf("unexpected err: %v", out2.Err)
+	}
+	if !strings.Contains(out2.Notice, "disabled") {
+		t.Errorf("expected disabled notice, got %q", out2.Notice)
+	}
+	if sess.ApprovalPolicy != config.ApprovalPolicyWriteOnly {
+		t.Errorf("expected sess.ApprovalPolicy = %q, got %q", config.ApprovalPolicyWriteOnly, sess.ApprovalPolicy)
+	}
+}

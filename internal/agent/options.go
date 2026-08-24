@@ -139,6 +139,8 @@ type Options struct {
 	// instance backs the SDK-path wrapper so a "always" decision persists
 	// across legacy and SDK turns within one session.
 	ApprovalStanding *sdkadapter.ApprovalStanding
+	// ApprovalPolicy controls tool execution approval policy ("write-only", "auto" / "never" [yolo], "always").
+	ApprovalPolicy string
 	// RemainderSpool, when non-nil, stores truncated tool-result bodies under
 	// content refs so the model can page them via read_output. Nil means
 	// truncation notices omit refs (legacy plain notices).

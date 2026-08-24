@@ -79,7 +79,9 @@ type chatInvocation struct {
 	jsonMode bool
 	// fullDisk is --full-disk: lift workspace confinement so file tools may
 	// access anywhere on the filesystem. Operator-invocation only.
-	fullDisk bool
+	fullDisk       bool
+	approvalPolicy string
+	yolo           bool
 }
 
 func runChat(args []string) error {
@@ -152,7 +154,11 @@ func parseChatInvocation(args []string) (chatInvocation, error) {
 	if err != nil {
 		return chatInvocation{}, err
 	}
-	invocation.noTools, invocation.plainUI, invocation.staleBypass, invocation.jsonMode, invocation.quiet, invocation.fullDisk, args = chatFlags(args)
+	invocation.approvalPolicy, args, _, err = FlagValueFunc(args, "--approval-policy")
+	if err != nil {
+		return chatInvocation{}, err
+	}
+	invocation.noTools, invocation.plainUI, invocation.staleBypass, invocation.jsonMode, invocation.quiet, invocation.fullDisk, invocation.yolo, args = chatFlags(args)
 	if len(args) > 0 {
 		return chatInvocation{}, fmt.Errorf("chat: unexpected arguments: %v", args)
 	}
@@ -306,6 +312,7 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 	}
 	sess := chat.NewSession(res, comp)
 	sess.UseTools = useTools
+	applySessionApprovalPolicy(sess, invocation, res)
 	cliagents.InstallSessionIdentity(sess, agentState)
 	// BaseSystemPrompt, not SystemPrompt (plan 77, E3): equivalent right
 	// now (NewSession sets both identically and no compose has happened
@@ -343,6 +350,16 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 	}
 	defer cleanup()
 	return dispatchChatSurface(invocation, sess, res, useTools, agentState)
+}
+
+func applySessionApprovalPolicy(sess *chat.Session, invocation chatInvocation, res *config.Resolved) {
+	if invocation.yolo {
+		sess.ApprovalPolicy = config.ApprovalPolicyAuto
+	} else if invocation.approvalPolicy != "" {
+		sess.ApprovalPolicy = config.ApprovalsConfig{Policy: invocation.approvalPolicy}.ApprovalPolicy()
+	} else if res != nil && res.Approvals.Policy != "" {
+		sess.ApprovalPolicy = res.Approvals.ApprovalPolicy()
+	}
 }
 
 // dispatchChatSurface picks and runs the surface (one-shot, classic REPL, or

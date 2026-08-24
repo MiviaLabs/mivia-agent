@@ -117,6 +117,7 @@ func resolveLoaded(file File, configPath string, found bool, opts LoadOptions, m
 		Tools:            resolveToolsConfig(file.Tools),
 		Memory:           memCfg,
 		Harness:          file.Harness,
+		Approvals:        file.Approvals,
 		Verifiers:        cloneVerifierProfiles(file.Verifiers),
 		MCP:              mcpConfig,
 		MCPWarnings:      append([]string(nil), mcpWarnings...),

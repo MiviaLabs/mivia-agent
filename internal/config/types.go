@@ -23,6 +23,7 @@ type File struct {
 	MCP          MCPConfig                 `toml:"mcp"`
 	Memory       MemoryConfig              `toml:"memory"`
 	Harness      HarnessConfig             `toml:"harness"`
+	Approvals    ApprovalsConfig           `toml:"approvals"`
 	// Verifiers is populated by LoadWorkspaceVerifiers from the WORKSPACE'S
 	// own .mivia/mivia.toml only (loadFile), never by the tolerant struct
 	// decode and never from a user-level base layer: a verifier table with an
@@ -338,6 +339,8 @@ type Resolved struct {
 	Memory MemoryConfig
 	// Harness is the resolved [harness] configuration.
 	Harness HarnessConfig
+	// Approvals is the resolved [approvals] configuration.
+	Approvals ApprovalsConfig
 	// Verifiers is the workspace-declared verifier profile set from the
 	// [verifiers.<name>] tables. The host ships no built-in profiles.
 	Verifiers map[string]VerifierProfile

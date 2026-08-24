@@ -2,13 +2,16 @@ package clichat
 
 // chatFlags extracts boolean chat-invocation flags from a raw argument list.
 // Unrecognised tokens are passed through in rest.
-func chatFlags(args []string) (noTools, plainUI, staleBypass, jsonMode, quiet, fullDisk bool, rest []string) {
+func chatFlags(args []string) (noTools, plainUI, staleBypass, jsonMode, quiet, fullDisk, yolo bool, rest []string) {
 	for _, arg := range args {
 		switch arg {
 		case "--no-tools":
 			noTools = true
 		case "--plain":
 			plainUI = true
+		case "--yolo", "-y":
+			// Auto-approve all tool executions (YOLO mode).
+			yolo = true
 		case "--bypass-hook-trust":
 			// Accepted and ignored. The flag existed to run hooks that were
 			// never confirmed; there is no confirmation to bypass any more.
@@ -37,5 +40,5 @@ func chatFlags(args []string) (noTools, plainUI, staleBypass, jsonMode, quiet, f
 			rest = append(rest, arg)
 		}
 	}
-	return noTools, plainUI, staleBypass, jsonMode, quiet, fullDisk, rest
+	return noTools, plainUI, staleBypass, jsonMode, quiet, fullDisk, yolo, rest
 }

@@ -45,6 +45,7 @@ type approvalGatedToolAdapter struct {
 	cliName         string
 	gate            func(ctx context.Context, name string, args json.RawMessage) ApprovalResult
 	standing        *ApprovalStanding
+	policy          string
 	emitPending     func(toolCallID, name, detail, input string)
 	getCapabilities func(json.RawMessage) tools.Capability
 }
@@ -78,16 +79,19 @@ func (a *approvalGatedToolAdapter) DecodeArguments(raw []byte) (sdktools.InOut, 
 }
 
 func (a *approvalGatedToolAdapter) Run(ctx context.Context, in sdktools.InOut) (sdktools.Out, error) {
+	if a.policy == "auto" || a.policy == "never" || a.policy == "yolo" {
+		return a.inner.Run(ctx, in)
+	}
 	args := json.RawMessage(nil)
 	if v, ok := in.Value.(json.RawMessage); ok {
 		args = v
 	} else if b, err := json.Marshal(in.Value); err == nil {
 		args = b
 	}
-	// Read-class and Unclassified tools bypass the gate entirely.
+	// Read-class and Unclassified tools bypass the gate unless policy is "always".
 	// Mirror the legacy executeToolTask threshold.
 	cap := a.getCapabilities(args)
-	if cap.Class < tools.ExecutionWrite {
+	if a.policy != "always" && cap.Class < tools.ExecutionWrite {
 		return a.inner.Run(ctx, in)
 	}
 	// Standing decisions short-circuit the gate.

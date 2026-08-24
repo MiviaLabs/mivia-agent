@@ -51,7 +51,13 @@ const approvalDenied = "tool call denied by user: %s"
 // the prompt for the rest of the session. It returns false when the
 // task was failed (denied or canceled) and must not proceed.
 func gateToolApproval(idx int, task *toolTask, opts Options, results []toolExecResult, finished *atomic.Int32) bool {
-	if task.capability.Class < approvalClassThreshold || opts.ApprovalGate == nil {
+	if opts.ApprovalPolicy == "auto" || opts.ApprovalPolicy == "never" || opts.ApprovalPolicy == "yolo" {
+		return true
+	}
+	if opts.ApprovalPolicy != "always" && task.capability.Class < approvalClassThreshold {
+		return true
+	}
+	if opts.ApprovalGate == nil {
 		return true
 	}
 	approved, standingHit := true, false

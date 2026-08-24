@@ -197,6 +197,7 @@ func buildSDKToolRegistry(l *Loop, opts Options, cliReg *tools.Registry, turn *s
 	if err := sdkadapter.WrapRegistryWithAdmission(sdkReg, cliReg, sdkadapter.AdmissionPredicates{
 		ApprovalGate:     opts.ApprovalGate,
 		ApprovalStanding: opts.ApprovalStanding,
+		ApprovalPolicy:   opts.ApprovalPolicy,
 		EmitPending:      emitPending,
 		// StagedMessage and UnadmittedToolHandler are NOT threaded into
 		// the SDK admission wrapper on purpose: the SDK's decodeAndRun

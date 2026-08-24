@@ -96,9 +96,15 @@ func (f *approvalFixture) convertGated(t *testing.T, class tools.ExecutionClass,
 	reg := tools.NewRegistry()
 	reg.Register(inner)
 	pred := AdmissionPredicates{
-		ApprovalGate:     f.gate,
-		ApprovalStanding: standing,
-		EmitPending:      f.emitPending,
+		ApprovalGate:      f.gate,
+		ApprovalStanding:  standing,
+		ApprovalPolicy:    extra.ApprovalPolicy,
+		StagedMessage:     extra.StagedMessage,
+		UnadmittedHandler: extra.UnadmittedHandler,
+		EmitPending:       f.emitPending,
+	}
+	if extra.ApprovalGate != nil {
+		pred.ApprovalGate = extra.ApprovalGate
 	}
 	got, err := ConvertToolRegistryWithAdmission(reg, pred)
 	if err != nil {
@@ -330,5 +336,25 @@ func TestNilGatePlusStandingAloneDoesNotWrap(t *testing.T) {
 	}
 	if f.lastPending() != "" {
 		t.Fatalf("EmitPending fired without a gate: %q", f.lastPending())
+	}
+}
+
+func TestApprovalGatedToolAdapterYOLOMode(t *testing.T) {
+	f := &approvalFixture{}
+	reg, inner := f.convertGated(t, tools.ExecutionWrite, nil, AdmissionPredicates{
+		ApprovalPolicy: "auto",
+	})
+	s, err := runGated(t, reg)
+	if err != nil || s != "real result" {
+		t.Fatalf("Run = (%q,%v), want real result in YOLO mode", s, err)
+	}
+	if inner.calls != 1 {
+		t.Fatalf("inner calls = %d, want 1", inner.calls)
+	}
+	if got := f.gateCount(); got != 0 {
+		t.Fatalf("gate calls = %d, want 0 in YOLO mode", got)
+	}
+	if f.lastPending() != "" {
+		t.Fatalf("EmitPending fired in YOLO mode: %q", f.lastPending())
 	}
 }

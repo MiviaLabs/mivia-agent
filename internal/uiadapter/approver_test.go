@@ -286,3 +286,14 @@ func TestApprover_EndToEndTurnExecution(t *testing.T) {
 		t.Error("expected to see tool.end event")
 	}
 }
+
+func TestApproverAutoModeReturnsImmediately(t *testing.T) {
+	sess := chat.NewSession(&config.Resolved{}, nil)
+	sess.ApprovalPolicy = "auto"
+	_ = uiadapter.NewApprover(sess)
+
+	res := sess.ApprovalGate(context.Background(), "some_tool", json.RawMessage(`{}`))
+	if !res.Approved {
+		t.Fatalf("expected Approved=true in auto mode, got %+v", res)
+	}
+}
