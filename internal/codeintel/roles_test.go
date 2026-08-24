@@ -101,12 +101,12 @@ func TestReferencesClassifiesErrorsIsAsComparison(t *testing.T) {
 		if loc.Role != RoleComparison {
 			t.Errorf("query filtered to roles=[comparison] returned a %s location", loc.Role)
 		}
-		if strings.Contains(loc.Path, "storage_claims.go") {
+		if strings.Contains(loc.Path, "storage_claims.go") || strings.Contains(loc.Path, "ledgercore/errors.go") || strings.Contains(loc.Path, "ledgercore/claims.go") {
 			foundStorageClaims = true
 		}
 	}
 	if !foundStorageClaims {
-		t.Errorf("expected internal/ledger/storage_claims.go's errors.Is(err, storage.ErrClaimHeld) among comparison locations, got: %+v", result.Locations)
+		t.Errorf("expected errors.Is(err, storage.ErrClaimHeld) among comparison locations, got: %+v", result.Locations)
 	}
 }
 

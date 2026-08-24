@@ -35,9 +35,7 @@ func (s *StorageRepository) DeleteRun(ctx context.Context, runID string) error {
 		return err
 	}
 	tombstone := storage.Event{ID: EventID(runID, eventKindRunDeleted, fmt.Sprintf("%d", seq)), RunID: runID, Sequence: int(seq), Kind: eventKindRunDeleted, Payload: payload}
-	s.mu.RLock()
-	claim := s.claimedRuns[runID]
-	s.mu.RUnlock()
+	claim, _ := s.claims.GetClaim(runID)
 	if holder, bound := claimHolderFromContext(ctx); bound {
 		claim.Holder = holder
 	}
@@ -48,11 +46,11 @@ func (s *StorageRepository) DeleteRun(ctx context.Context, runID string) error {
 		}
 		return fmt.Errorf("store delete run %q: %w", runID, err)
 	}
+	s.claims.DropClaim(runID)
 	s.mu.Lock()
 	delete(s.proj, runID)
 	delete(s.applied, runID)
 	delete(s.allocated, runID)
-	delete(s.claimedRuns, runID)
 	for key := range s.deliverySeqs {
 		if key.runID == runID {
 			delete(s.deliverySeqs, key)

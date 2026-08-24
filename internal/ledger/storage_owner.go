@@ -3,6 +3,7 @@ package ledger
 import (
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/ledgercore"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
@@ -23,7 +24,7 @@ func NewBorrowedStorageLedgerRepository(store storage.Store) *StorageLedgerRepos
 func newStorageLedgerRepository(store storage.Store, ownsStore bool) *StorageLedgerRepository {
 	return &StorageLedgerRepository{
 		store: store, mem: NewMemoryLedgerRepository(), ownsStore: ownsStore,
-		holder: newHolderID(), claimedRuns: make(map[string]storage.Claim),
+		claims:  ledgercore.NewClaimsTracker(""),
 		applied: make(map[string]uint64), allocated: make(map[string]uint64),
 		inflight: make(map[inflightKey]struct{}), now: time.Now,
 	}

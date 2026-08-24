@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/ledgercore"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
@@ -39,14 +40,7 @@ type StorageRepository struct {
 	mu    sync.RWMutex
 	// closed gates every public method: after Close, all calls return ErrClosed.
 	closed bool
-	// holder is a random per-process identifier for run execution claims.
-	// It identifies which process (repository instance) holds a run claim.
-	holder string
-	// claimedRuns tracks the runs this instance has claimed (runID → the stored
-	// claim, including its fence). A stored claim is what fenced writes and
-	// releases are authorized by: a write/release only lands while the live
-	// claim row still matches this (holder, fence) pair.
-	claimedRuns map[string]storage.Claim
+	claims *ledgercore.ClaimsTracker
 	// runLocks serializes mutations per run (intra-process). Cross-process
 	// writers are fenced by the execution claim (ClaimRun).
 	runLocks map[string]*sync.Mutex
@@ -79,8 +73,7 @@ type StorageRepository struct {
 func NewStorageRepository(store storage.Store) *StorageRepository {
 	return &StorageRepository{
 		store:        store,
-		holder:       newHolderID(),
-		claimedRuns:  make(map[string]storage.Claim),
+		claims:       ledgercore.NewClaimsTracker(newHolderID()),
 		runLocks:     make(map[string]*sync.Mutex),
 		now:          time.Now,
 		applied:      make(map[string]uint64),
@@ -113,24 +106,12 @@ func (s *StorageRepository) Close() error {
 		return nil
 	}
 	s.closed = true
-	claims := make(map[string]storage.Claim, len(s.claimedRuns))
-	for runID, claim := range s.claimedRuns {
-		claims[runID] = claim
-	}
-	s.claimedRuns = make(map[string]storage.Claim)
 	s.mu.Unlock()
 
 	// Release all claims held by this instance (crash cleanup simulation).
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	for runID, claim := range claims {
-		if fenced, ok := s.store.(storage.FencedLeaseStore); ok && claim.Fence != 0 {
-			_ = fenced.ReleaseClaimFenced(ctx, claim)
-		} else {
-			_ = s.store.ReleaseClaim(ctx, runID, claim.Holder)
-		}
-	}
-	return nil
+	return s.claims.Close(ctx, s.store)
 }
 
 // runLock returns the per-run mutex for runID, creating it on first use.
@@ -361,9 +342,7 @@ func (s *StorageRepository) nextSequence(runID string) uint64 {
 // the in-memory state matches durable state before returning.
 func (s *StorageRepository) appendEvent(ctx context.Context, evt storage.Event, rollback func()) error {
 	holder, bound := claimHolderFromContext(ctx)
-	s.mu.RLock()
-	claim := s.claimedRuns[evt.RunID]
-	s.mu.RUnlock()
+	claim, _ := s.claims.GetClaim(evt.RunID)
 	if !bound {
 		holder = claim.Holder
 	}

@@ -2,20 +2,21 @@ package ledger
 
 import (
 	"context"
-	"errors"
 	"time"
+
+	"github.com/MiviaLabs/mivia-agent/internal/ledgercore"
 )
 
 // Sentinel errors returned by Repository methods.
 var (
-	ErrDuplicate         = errors.New("duplicate record")
-	ErrNotFound          = errors.New("not found")
-	ErrConflict          = errors.New("state conflict")
-	ErrInvalidTransition = errors.New("invalid state transition")
-	ErrClaimHeld         = errors.New("run claim held by another executor")
-	ErrClaimNotHeld      = errors.New("run claim not held by this executor")
-	ErrClosed            = errors.New("repository is closed")
-	ErrContentNotFound   = errors.New("content not found")
+	ErrDuplicate         = ledgercore.ErrDuplicate
+	ErrNotFound          = ledgercore.ErrNotFound
+	ErrConflict          = ledgercore.ErrConflict
+	ErrInvalidTransition = ledgercore.ErrInvalidTransition
+	ErrClaimHeld         = ledgercore.ErrClaimHeld
+	ErrClaimNotHeld      = ledgercore.ErrClaimNotHeld
+	ErrClosed            = ledgercore.ErrClosed
+	ErrContentNotFound   = ledgercore.ErrContentNotFound
 )
 
 // RecoveredRun summarises one workflow run for the startup recovery report.

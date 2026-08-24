@@ -2,14 +2,9 @@ package ledger
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"errors"
-	"fmt"
-	"strings"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/storage"
+	"github.com/MiviaLabs/mivia-agent/internal/ledgercore"
 )
 
 // ClaimRun acquires the exclusive execution claim on a run. Returns
@@ -18,27 +13,7 @@ func (s *StorageRepository) ClaimRun(ctx context.Context, runID, holder string) 
 	if err := s.checkOpen(); err != nil {
 		return err
 	}
-	if holder == "" {
-		return ErrClaimNotHeld
-	}
-	var claim storage.Claim
-	var err error
-	if fenced, ok := s.store.(storage.FencedLeaseStore); ok {
-		claim, err = fenced.ClaimRunFenced(ctx, runID, holder)
-	} else {
-		err = s.store.ClaimRun(ctx, runID, holder)
-		claim = storage.Claim{RunID: runID, Holder: holder}
-	}
-	if err != nil {
-		if errors.Is(err, storage.ErrClaimHeld) {
-			return ErrClaimHeld
-		}
-		return err
-	}
-	s.mu.Lock()
-	s.claimedRuns[runID] = claim
-	s.mu.Unlock()
-	return nil
+	return s.claims.ClaimRun(ctx, s.store, runID, holder)
 }
 
 // RefreshRunClaim refreshes the claim's acquired_at ONLY when this repository
@@ -49,37 +24,7 @@ func (s *StorageRepository) RefreshRunClaim(ctx context.Context, runID, holder s
 	if err := s.checkOpen(); err != nil {
 		return err
 	}
-	if holder == "" {
-		return ErrClaimNotHeld
-	}
-	fenced, ok := s.store.(storage.FencedLeaseStore)
-	if !ok {
-		// Backends without fence support keep the pre-fencing semantics: a
-		// refresh is a same-holder claim (insert-or-refresh). Returning
-		// ErrClaimNotHeld here instead would make every heartbeat read its own
-		// live claim as lost and cancel the step within one interval.
-		if err := s.store.ClaimRun(ctx, runID, holder); err != nil {
-			if errors.Is(err, storage.ErrClaimHeld) {
-				return ErrClaimHeld
-			}
-			return err
-		}
-		s.mu.Lock()
-		s.claimedRuns[runID] = storage.Claim{RunID: runID, Holder: holder}
-		s.mu.Unlock()
-		return nil
-	}
-	claim, err := fenced.RefreshClaimFenced(ctx, runID, holder)
-	if err != nil {
-		if errors.Is(err, storage.ErrClaimNotHeld) {
-			return ErrClaimNotHeld
-		}
-		return err
-	}
-	s.mu.Lock()
-	s.claimedRuns[runID] = claim
-	s.mu.Unlock()
-	return nil
+	return s.claims.RefreshRunClaim(ctx, s.store, runID, holder)
 }
 
 // TakeoverRunClaim atomically replaces any existing execution claim. The
@@ -89,24 +34,7 @@ func (s *StorageRepository) TakeoverRunClaim(ctx context.Context, runID, holder 
 	if err := s.checkOpen(); err != nil {
 		return err
 	}
-	if holder == "" {
-		return ErrClaimNotHeld
-	}
-	var claim storage.Claim
-	var err error
-	if fenced, ok := s.store.(storage.FencedLeaseStore); ok {
-		claim, err = fenced.TakeoverClaimFenced(ctx, runID, holder)
-	} else {
-		err = s.store.TakeoverClaim(ctx, runID, holder)
-		claim = storage.Claim{RunID: runID, Holder: holder}
-	}
-	if err != nil {
-		return err
-	}
-	s.mu.Lock()
-	s.claimedRuns[runID] = claim
-	s.mu.Unlock()
-	return nil
+	return s.claims.TakeoverRunClaim(ctx, s.store, runID, holder)
 }
 
 // TakeoverExpiredRunClaim replaces a claim only when its age exceeds maxAge.
@@ -114,34 +42,7 @@ func (s *StorageRepository) TakeoverExpiredRunClaim(ctx context.Context, runID, 
 	if err := s.checkOpen(); err != nil {
 		return err
 	}
-	if holder == "" {
-		holder = s.holder
-	}
-	lease, ok := s.store.(storage.LeaseStore)
-	if !ok {
-		return ErrClaimHeld
-	}
-	var claim storage.Claim
-	var err error
-	if fenced, ok := s.store.(storage.FencedLeaseStore); ok {
-		claim, err = fenced.TakeoverExpiredClaimFenced(ctx, runID, holder, maxAge)
-	} else {
-		err = lease.TakeoverExpiredClaim(ctx, runID, holder, maxAge)
-		claim = storage.Claim{RunID: runID, Holder: holder}
-	}
-	if err != nil {
-		if errors.Is(err, storage.ErrClaimHeld) {
-			return ErrClaimHeld
-		}
-		if errors.Is(err, storage.ErrClaimNotHeld) {
-			return ErrClaimNotHeld
-		}
-		return err
-	}
-	s.mu.Lock()
-	s.claimedRuns[runID] = claim
-	s.mu.Unlock()
-	return nil
+	return s.claims.TakeoverExpiredRunClaim(ctx, s.store, runID, holder, maxAge)
 }
 
 // ReleaseRun releases the claim. Only the current holder may release it. The
@@ -152,28 +53,7 @@ func (s *StorageRepository) ReleaseRun(ctx context.Context, runID, holder string
 	if err := s.checkOpen(); err != nil {
 		return err
 	}
-	s.mu.RLock()
-	claim := s.claimedRuns[runID]
-	s.mu.RUnlock()
-	var err error
-	if fenced, ok := s.store.(storage.FencedLeaseStore); ok && claim.Fence != 0 {
-		if claim.Holder != holder {
-			return ErrClaimNotHeld
-		}
-		err = fenced.ReleaseClaimFenced(ctx, claim)
-	} else {
-		err = s.store.ReleaseClaim(ctx, runID, holder)
-	}
-	if err != nil {
-		if errors.Is(err, storage.ErrClaimNotHeld) {
-			return ErrClaimNotHeld
-		}
-		return err
-	}
-	s.mu.Lock()
-	delete(s.claimedRuns, runID)
-	s.mu.Unlock()
-	return nil
+	return s.claims.ReleaseRun(ctx, s.store, runID, holder)
 }
 
 // ClearRunClaim removes a run claim. It is for an operator force release.
@@ -181,13 +61,7 @@ func (s *StorageRepository) ClearRunClaim(ctx context.Context, runID string) err
 	if err := s.checkOpen(); err != nil {
 		return err
 	}
-	if err := s.store.ClearClaim(ctx, runID); err != nil {
-		return err
-	}
-	s.mu.Lock()
-	delete(s.claimedRuns, runID)
-	s.mu.Unlock()
-	return nil
+	return s.claims.ClearRunClaim(ctx, s.store, runID)
 }
 
 // GetRunClaim reads the run's current execution claim as a pure liveness
@@ -201,32 +75,7 @@ func (s *StorageRepository) GetRunClaim(ctx context.Context, runID string) (hold
 	if err := s.checkOpen(); err != nil {
 		return "", time.Time{}, false, err
 	}
-	reader, readable := s.store.(storage.ClaimReader)
-	if !readable {
-		return "", time.Time{}, false, nil
-	}
-	claim, err := reader.GetClaim(ctx, runID)
-	if err != nil {
-		if errors.Is(err, storage.ErrClaimNotHeld) {
-			return "", time.Time{}, false, nil
-		}
-		return "", time.Time{}, false, err
-	}
-	at, err := parseClaimAcquiredAt(claim.AcquiredAt)
-	if err != nil {
-		return "", time.Time{}, false, fmt.Errorf("read claim %q acquired_at: %w", runID, err)
-	}
-	return claim.Holder, at, true, nil
-}
-
-// parseClaimAcquiredAt parses a claim's acquired_at timestamp. The SQLite
-// backend stores RFC3339 with millisecond precision; legacy rows may carry
-// the space-separated form.
-func parseClaimAcquiredAt(s string) (time.Time, error) {
-	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
-		return t, nil
-	}
-	return time.Parse("2006-01-02 15:04:05", s)
+	return s.claims.GetRunClaim(ctx, s.store, runID)
 }
 
 // IsRunHeld reports whether runID currently has an active claim. The probe is
@@ -237,13 +86,7 @@ func (s *StorageRepository) IsRunHeld(ctx context.Context, runID string) (bool, 
 	if err := s.checkOpen(); err != nil {
 		return false, err
 	}
-	reader, ok := s.store.(interface {
-		IsRunHeld(context.Context, string) (bool, error)
-	})
-	if !ok {
-		return false, nil
-	}
-	return reader.IsRunHeld(ctx, runID)
+	return s.claims.IsRunHeld(ctx, s.store, runID)
 }
 
 // IsRunTokenFenced reports whether token has been fenced out of runID by a
@@ -251,21 +94,11 @@ func (s *StorageRepository) IsRunHeld(ctx context.Context, runID string) (bool, 
 // across releases, so a re-issued claim by the same token reads true until
 // cleanup. A token that is the current holder of runID always reads false.
 // Backends that cannot expose fence history report (false, nil).
-//
-// The Wave 2 caller captures runID via closure (its filter loop binds the
-// run's ID at construction time), so the same probe can be reused across
-// panel tick intervals without re-resolving the run.
 func (s *StorageRepository) IsRunTokenFenced(ctx context.Context, runID, token string) (bool, error) {
 	if err := s.checkOpen(); err != nil {
 		return false, err
 	}
-	reader, ok := s.store.(interface {
-		IsRunTokenFenced(context.Context, string, string) (bool, error)
-	})
-	if !ok {
-		return false, nil
-	}
-	return reader.IsRunTokenFenced(ctx, runID, token)
+	return s.claims.IsRunTokenFenced(ctx, s.store, runID, token)
 }
 
 // StoreContent persists bytes under a content-addressed reference.
@@ -273,36 +106,19 @@ func (s *StorageRepository) StoreContent(ctx context.Context, ref string, data [
 	if err := s.checkOpen(); err != nil {
 		return err
 	}
-	return s.store.PutContent(ctx, ref, data)
+	return ledgercore.StoreContent(ctx, s.store, ref, data)
 }
 
 // LoadContent retrieves stored bytes. It returns ErrContentNotFound if absent.
-// When the ref carries the "sha256:" prefix, the stored bytes are verified
-// against the ref's embedded hex digest: a mismatch (corrupted bytes, or bytes
-// stored under the wrong ref) returns an error instead of the bytes, so a bare
-// ref lookup can never hand back content that does not hash to the ref. Other
-// ref shapes (e.g. sdkadapter CLI "ref:<kind>:<hex>") are looked up verbatim
-// without digest verification.
 func (s *StorageRepository) LoadContent(ctx context.Context, ref string) ([]byte, error) {
 	if err := s.checkOpen(); err != nil {
 		return nil, err
 	}
-	data, err := s.store.GetContent(ctx, ref)
-	if err != nil {
-		if errors.Is(err, storage.ErrContentNotFound) {
-			return nil, ErrContentNotFound
-		}
-		return nil, err
-	}
-	if hexDigest, ok := strings.CutPrefix(ref, "sha256:"); ok {
-		sum := sha256.Sum256(data)
-		got := hex.EncodeToString(sum[:])
-		if !strings.EqualFold(got, hexDigest) {
-			return nil, fmt.Errorf("content digest mismatch for %q: sha256(data) = %s", ref, got)
-		}
-	}
-	return data, nil
+	return ledgercore.LoadContent(ctx, s.store, ref)
 }
+
+// parseClaimAcquiredAt parses a claim's acquired_at timestamp.
+var parseClaimAcquiredAt = ledgercore.ParseClaimAcquiredAt
 
 // Ensure StorageRepository implements Repository at compile time.
 var _ Repository = (*StorageRepository)(nil)

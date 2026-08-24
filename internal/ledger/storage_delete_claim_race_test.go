@@ -108,8 +108,8 @@ func runDeleteCatchUpRace(t *testing.T, ctx context.Context, repo *StorageLedger
 		t.Fatalf("DeleteRun after catch-up folded tombstone first: %v, want nil", err)
 	}
 
+	_, claimPresent := repo.claims.GetClaim(runID)
 	repo.mu.RLock()
-	_, claimPresent := repo.claimedRuns[runID]
 	_, appliedPresent := repo.applied[runID]
 	_, allocatedPresent := repo.allocated[runID]
 	repo.mu.RUnlock()

@@ -4,19 +4,21 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/MiviaLabs/mivia-agent/internal/ledgercore"
 )
 
 // Sentinel errors returned by LedgerRepository methods.
 var (
-	ErrDuplicate         = errors.New("duplicate record")
-	ErrNotFound          = errors.New("not found")
-	ErrInvalidTransition = errors.New("invalid state transition")
-	ErrConflict          = errors.New("version conflict")
-	ErrClosed            = errors.New("run is closed")
+	ErrDuplicate         = ledgercore.ErrDuplicate
+	ErrNotFound          = ledgercore.ErrNotFound
+	ErrInvalidTransition = ledgercore.ErrInvalidTransition
+	ErrConflict          = ledgercore.ErrConflict
+	ErrClosed            = ledgercore.ErrClosed
 	ErrInvalidReference  = errors.New("invalid ledger reference")
-	ErrClaimHeld         = errors.New("run claim held by another executor")
-	ErrClaimNotHeld      = errors.New("run claim not held by this executor")
-	ErrContentNotFound   = errors.New("content not found")
+	ErrClaimHeld         = ledgercore.ErrClaimHeld
+	ErrClaimNotHeld      = ledgercore.ErrClaimNotHeld
+	ErrContentNotFound   = ledgercore.ErrContentNotFound
 )
 
 // LedgerRepository is the narrow storage boundary for the coordinator.

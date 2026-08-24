@@ -2,9 +2,9 @@ package ledger
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base32"
 	"sort"
+
+	"github.com/MiviaLabs/mivia-agent/internal/ledgercore"
 )
 
 // newHolderID generates a random per-process identifier for run execution
@@ -14,9 +14,7 @@ import (
 // crashing the program itself if the operating system's source fails, so
 // there is no error to handle.
 func newHolderID() string {
-	var b [8]byte
-	_, _ = rand.Read(b[:])
-	return "wfh-" + base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b[:])
+	return "wf" + ledgercore.NewHolderID()
 }
 
 // Recover brings the projection up to date, classifies every run, and
@@ -80,9 +78,7 @@ func (s *StorageRepository) Recover(ctx context.Context) ([]RecoveredRun, error)
 			if err := s.store.ClearClaim(ctx, c.run.RunID); err != nil {
 				return out, err
 			}
-			s.mu.Lock()
-			delete(s.claimedRuns, c.run.RunID)
-			s.mu.Unlock()
+			s.claims.DropClaim(c.run.RunID)
 		}
 	}
 	return out, nil

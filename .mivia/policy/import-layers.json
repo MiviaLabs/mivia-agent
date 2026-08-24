@@ -259,8 +259,12 @@
       "internal/textutil"
     ],
     "internal/ledger": [
+      "internal/ledgercore",
       "internal/runtime",
       "internal/sdkadapter",
+      "internal/storage"
+    ],
+    "internal/ledgercore": [
       "internal/storage"
     ],
     "internal/mcp": [
@@ -507,6 +511,7 @@
       "internal/coordinator",
       "internal/jschema",
       "internal/ledger",
+      "internal/ledgercore",
       "internal/redact",
       "internal/runtime",
       "internal/storage",
