@@ -657,26 +657,22 @@ func (s Screen) panelRows(inner, maxRows int) []string {
 func (s Screen) dialogParts() (title, body, hint string) {
 	if s.panel.dialogAgent != "" {
 		if s.thread != nil && s.threadID == s.panel.dialogAgent {
-			// Size the embedded screen to the EXACT body area the
-			// Dialog frame gives this body: any wider and the clip
-			// cuts the composer's edge, any taller and it drops rows
-			// off the bottom. panelBodyRows IS DialogBodyRows for the
-			// dialog height the current mode draws.
 			frameW := contentWidth(s.width)
 			if s.panelIsSplit() {
 				frameW, _ = render.SplitWidths(frameW)
 			}
 			s.thread.setSurface(render.DialogBodyWidth(frameW), s.panelBodyRows())
-			return s.panel.dialogAgent, s.thread.View(), "esc close"
+			title = "subagent: " + s.panel.dialogAgent
+			return title, s.thread.View(), "esc close"
 		}
 		for _, a := range s.panel.agents {
 			if a.ID != s.panel.dialogAgent {
 				continue
 			}
 			rows := append([]string{a.ID + "  " + a.Status}, a.Log...)
-			return a.ID, strings.Join(rows, "\n"), "any key closes"
+			return "subagent: " + a.ID, strings.Join(rows, "\n"), "any key closes"
 		}
-		return s.panel.dialogAgent, "", "any key closes"
+		return "subagent: " + s.panel.dialogAgent, "", "any key closes"
 	}
 	title = "files"
 	if e, ok := s.panel.selected(); ok {

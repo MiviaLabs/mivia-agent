@@ -398,9 +398,17 @@ func (m Model) View() string {
 			hint = "[ Enter: Send  •  / Commands  •  @ Files ]"
 		}
 		if m.input.Value() != "" {
-			hint = "[ ↵ Send  •  Esc Cancel ]"
-			if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
-				hint = "[ Enter: Send  •  Esc Cancel ]"
+			lineCount := strings.Count(m.input.Value(), "\n") + 1
+			if lineCount > 1 {
+				hint = "[ " + strconv.Itoa(lineCount) + " lines  •  ↵ Send  •  Esc Cancel ]"
+				if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
+					hint = "[ " + strconv.Itoa(lineCount) + " lines  •  Enter: Send  •  Esc Cancel ]"
+				}
+			} else {
+				hint = "[ ↵ Send  •  Esc Cancel ]"
+				if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
+					hint = "[ Enter: Send  •  Esc Cancel ]"
+				}
 			}
 		}
 		inner := m.width - frameInset
