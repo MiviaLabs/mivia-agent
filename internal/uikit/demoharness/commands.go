@@ -48,7 +48,7 @@ func (h *Harness) Run(_ context.Context, name, args string) ports.CommandOutcome
 	case "help":
 		return ports.CommandOutcome{OpenHelp: true}
 	case "model":
-		return ports.CommandOutcome{ModelChoices: append([]string(nil), demoModels...)}
+		return ports.CommandOutcome{OpenSettings: true, SettingsSection: "models"}
 	case "context":
 		return ports.CommandOutcome{Notice: formatContext(h.ContextUsage())}
 	case "cost":

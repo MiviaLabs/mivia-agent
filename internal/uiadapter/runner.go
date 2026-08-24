@@ -3,6 +3,7 @@ package uiadapter
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
@@ -131,11 +132,7 @@ func (r *CommandRunner) handleModel(args string) ports.CommandOutcome {
 	if args != "" {
 		return r.SelectModel(context.Background(), args)
 	}
-	choices := r.availableModels()
-	if len(choices) == 0 {
-		return ports.CommandOutcome{Err: "no models available in catalog"}
-	}
-	return ports.CommandOutcome{ModelChoices: choices}
+	return ports.CommandOutcome{OpenSettings: true, SettingsSection: "models"}
 }
 
 func (r *CommandRunner) availableModels() []string {
@@ -161,14 +158,46 @@ func (r *CommandRunner) SelectModel(_ context.Context, name string) ports.Comman
 	if r.sess == nil || r.res == nil {
 		return ports.CommandOutcome{Err: "session or configuration not initialized"}
 	}
+	name = strings.TrimSpace(name)
 	providerName := r.res.ProviderName
 	if sel := r.sess.CurrentSelection(); sel.ProviderName != "" {
 		providerName = sel.ProviderName
 	}
+
+	// 1. Check if model name has an explicit provider prefix (e.g. "openrouter/anthropic/claude-3.5-sonnet")
+	for _, group := range r.res.ModelCatalog() {
+		prefix := group.Provider + "/"
+		if strings.HasPrefix(strings.ToLower(name), prefix) {
+			providerName = group.Provider
+			name = name[len(prefix):]
+			break
+		}
+	}
+
+	// 2. Check if the model name belongs uniquely to a provider in the catalog
+	foundInCatalog := false
+	for _, group := range r.res.ModelCatalog() {
+		if !group.Selectable {
+			continue
+		}
+		for _, m := range group.Models {
+			if m.Name == name {
+				providerName = group.Provider
+				foundInCatalog = true
+				break
+			}
+		}
+		if foundInCatalog {
+			break
+		}
+	}
+
 	discarded, err := cliagents.SwitchModelCommand(r.sess, r.res, providerName, name)
 	if err != nil {
-		return ports.CommandOutcome{Err: fmt.Sprintf("failed to switch model to %q: %v", name, err)}
+		return ports.CommandOutcome{Err: fmt.Sprintf("failed to switch model to %q (%s): %v", name, providerName, err)}
 	}
+	r.res.ProviderName = providerName
+	r.res.Model = name
 	notice := fmt.Sprintf("Model set to %s (%s).", name, providerName)
 	if discarded != "" {
 		notice += fmt.Sprintf(" (Reasoning effort override %q discarded).", discarded)
