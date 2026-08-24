@@ -51,6 +51,8 @@ func newDemoHarnessRoot(t *testing.T, scenario string, pace time.Duration) app.M
 	screen := conversation.New(th, theme.TierASCII, themes, harness, harness, 80, nil)
 	screen.SetCommands(mockCommands())
 	screen.SetCommandRunner(harness)
+	screen.SetSubagentThreads(harness)
+	screen.SetSettings(harness.SettingsAdapters())
 	return app.New(screen, th, theme.TierASCII, themes)
 }
 
@@ -201,16 +203,14 @@ func TestDemoHarnessThemeCommandOpensPicker(t *testing.T) {
 }
 
 // TestDemoHarnessModelCommandOpensPickerAndSelects is the second
-// command-dispatch-seam proof: /model opens a picker over the fake
-// model roster, and accepting the highlighted choice applies it and
-// posts a confirmation notice - never sent as chat text.
+// command-dispatch-seam proof: /model opens the Settings > Models screen
+// over the configured providers and models, with provider grouping.
 func TestDemoHarnessModelCommandOpensPickerAndSelects(t *testing.T) {
 	tm, shadow, wait := newDemoShadow(t, "smalltalk", 0)
 
 	typeAndRun(tm, "/model")
-	wait(contains("select a model"))
-	tm.Send(enterKey()) // accept the first (highlighted) model
-	wait(contains("model set to"))
+	wait(contains("settings > Models"))
+	wait(contains("openrouter"))
 
 	quit(tm)
 	tm.WaitFinished(t, teatest.WithFinalTimeout(3*time.Second))
