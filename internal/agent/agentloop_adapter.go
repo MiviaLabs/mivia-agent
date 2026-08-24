@@ -82,14 +82,7 @@ func buildAgentLoopOptions(l *Loop, opts Options) (sdkagentloop.Options, *sdkTur
 	if maxIterations <= 0 {
 		maxIterations = defaultSDKMaxIterations
 	}
-	out := sdkagentloop.Options{
-		Completer:       completer,
-		Tools:           sdkTools,
-		Model:           opts.Model,
-		MaxIterations:   maxIterations,
-		MaxCallsPerTurn: opts.MaxToolCallsPerBatch,
-		SessionID:       opts.SessionID,
-	}
+	out := initialSDKAgentLoopOptions(opts, completer, sdkTools, maxIterations)
 	// Streaming: a FinalWriter becomes the SDK's StreamingWriter, teed
 	// through the same teeWriter the legacy path uses so
 	// EventAssistant deltas fire per write; the tee is stored on the
@@ -136,6 +129,28 @@ func buildAgentLoopOptions(l *Loop, opts Options) (sdkagentloop.Options, *sdkTur
 	// options. The watchdog's steer-latency role is carried by the
 	// MailboxPending poller in the steer bridge instead.
 	return out, turn, nil
+}
+
+// initialSDKAgentLoopOptions projects the carry-through fields
+// from CLI Options onto a freshly-constructed
+// sdkagentloop.Options. Extracted from buildAgentLoopOptions to
+// keep that helper under the 80-LOC soft cap (the field table is
+// small but the prose around it is load-bearing). The Completer
+// and Tools come from the build pipeline; MaxIterations is the
+// pre-default value the caller computed (positive-or-zero after
+// the MaxSteps/WorkLimits.MaxTurns clamps layered above).
+// MaxConcurrentTools is a carried field: positive N fans the SDK
+// path out through a worker pool of N (per agentloop.Options.MaxConcurrentTools).
+func initialSDKAgentLoopOptions(opts Options, completer *agentLoopCompleter, tools *sdktools.Registry, maxIterations int) sdkagentloop.Options {
+	return sdkagentloop.Options{
+		Completer:          completer,
+		Tools:              tools,
+		Model:              opts.Model,
+		MaxIterations:      maxIterations,
+		MaxCallsPerTurn:    opts.MaxToolCallsPerBatch,
+		MaxConcurrentTools: opts.MaxConcurrentTools,
+		SessionID:          opts.SessionID,
+	}
 }
 
 // newSDKTurnCompleter wraps the CLI completer with the run's turn
@@ -266,12 +281,14 @@ func cliToolSpecsToSDKDefs(specs []provider.ToolSpec) []sdkshape.ToolDefinition 
 //
 // Fields the SDK accepts at zero but interprets differently are NOT
 // rejected here: the accepted-semantic-gap table lives on the
-// agentloop adapter's package doc. Today those are MaxConcurrentTools
-// (the SDK runs tool calls sequentially within a turn, ordered by
-// ToolCall.Index) and a negative BatchResultBudgetBytes (the SDK's
-// TurnResultBudget is a literal byte budget only, not the CLI's
-// "derived from MaxContextTokens" mode). Both pass through to the SDK
-// silently; the CLI caller accepts the difference.
+// agentloop adapter's package doc. Today those are a negative
+// BatchResultBudgetBytes (the SDK's TurnResultBudget is a literal byte
+// budget only, not the CLI's "derived from MaxContextTokens" mode).
+// The positive BatchResultBudgetBytes form still maps in
+// buildAgentLoopOptions. MaxConcurrentTools is a carried field
+// (initialSDKAgentLoopOptions); the host-side value reaches the SDK
+// verbatim, so a positive N fans the SDK path out through a worker
+// pool of N (per agentloop.Options.MaxConcurrentTools).
 func rejectUnsupportedSDKBatches(opts Options) error {
 	// Surface is carried via bridgeSDKBridgeSurface (field-mapping doc §1).
 	// BeforeStep is carried via the Steer injector installed in

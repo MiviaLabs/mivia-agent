@@ -32,6 +32,7 @@ The SDK path consumes these directly:
 | `SessionID` | `Options.SessionID` | required when Usage is set |
 | `AdvertisedToolSpecs` | turn-state advertised snapshot + completer override | the snapshot seeds `sdkTurnState.advertised` (request 0, the legacy `initialToolSpecs` contract) and each surface rotation's non-nil `ToolSpecs` replaces it; the completer's `applyAdvertisedTools` REPLACES the wire request's registry-derived tools with the live snapshot, so deferred tools outside the registry reach the wire from request 0 (see `internal/agent/sdk_advertised.go` for the recovery-request safety note: the SDK's Window-gated recovery never fires because the host wires no Window) |
 | `MaxToolCallsPerBatch` | `Options.MaxCallsPerTurn` | positive only |
+| `MaxConcurrentTools` | `Options.MaxConcurrentTools` | pass-through; positive N fans the SDK path out through a worker pool of N (verified by `TestMaxConcurrentToolsSDKCarriesHostValue` and `TestMaxConcurrentToolsHostOneRemainsSerial` in `agentloop_maxconcurrent_test.go`); zero stays serial — the legacy default contract |
 | `BatchResultBudgetBytes > 0` | host-side shaping wrapper | `applyTurnShaping` charges one shared per-turn counter and applies the legacy degrade tiers (fit / re-cut with notice / notice alone); the SDK's omit-on-budget `TurnResultBudget` stays unset |
 | `MaxContextTokens` | host-side compaction | `prepareSDKHistory` calls `PreparationManager.Prepare`; SDK's `Window` stays nil |
 | `SummaryConfig.Summarizer` | host-side inject | `prepareSDKHistory` runs `Loop.injectSummary` once pre-run; SDK sees the summary frame |
@@ -56,12 +57,6 @@ The set value passes through (or the knob is simply absent), but the
 SDK interprets it differently or not at all. A `Backend: "sdk"`
 caller accepts the difference.
 
-- **`MaxConcurrentTools > 1`** — the SDK runs tool calls sequentially
-  within a turn, ordered by `ToolCall.Index`
-  (`mivia-ai-sdk/agentloop/toolcall.go`). Parallel batches do not
-  exist on the SDK path. Permanently accepted: a real carrier would
-  require SDK-side parallel-tool support and is out of scope for the
-  v3 convergence. Closes the v3 plan's tab on `MaxConcurrentTools`.
 - **`SoftInterruptCooldown`** — the SDK's `bridgeSteerSignals` now
   caps `Steer.Trigger` fires with a shared `cooldownUntil atomic.Int64`
   over all three sites (the `InterruptCh` one-shot, the strict
