@@ -343,6 +343,14 @@ func (m Model) Height() int {
 	return base
 }
 
+// MenuRows returns the row count the active completion or mention menu occupies (0 when closed).
+func (m Model) MenuRows() int {
+	if v := m.activeMenuView(); v != "" {
+		return strings.Count(v, "\n") + 1
+	}
+	return 0
+}
+
 // InputRowFromBottom is how many rows above the screen's last row the top
 // input line sits (for mouse routing). When framed, the bottom border is the
 // last row so the input is 1 above. When bare, the input is the last row.
