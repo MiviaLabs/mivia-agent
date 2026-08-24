@@ -58,13 +58,8 @@ func (m Model) bannerLines() []string {
 
 	lines = append(lines, accent.Render(logoMark))
 	lines = append(lines, "")
-	if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
-		lines = append(lines, accent.Render("M I V I A   A G E N T"))
-	} else {
-		lines = append(lines, accent.Render("█▀▄▀█ █ █   █ █ ▄▀█   ▄▀█ █▀▀ █▀▀ █▄ █ ▀█▀"))
-		lines = append(lines, accent.Render("█ █ █ █  ▀▄▀  █ █▀█   █▀█ █▄█ ██▄ █ ▀█  █ "))
-	}
-	lines = append(lines, fg.Render("Autonomous Coding Assistant"))
+	lines = append(lines, accent.Render("M I V I A"))
+	lines = append(lines, fg.Render("For the work that takes longer than a chat."))
 	lines = append(lines, "")
 	lines = append(lines, subtle.Render("Author: Mac Lisowski  •  MIT License"))
 	lines = append(lines, m.renderLegend())
@@ -81,7 +76,7 @@ func (m Model) compactLines() []string {
 		markGlyph = "< "
 	}
 	return []string{
-		accent.Render(markGlyph+"Mivia Agent") + subtle.Render(" — Autonomous Coding Assistant"),
+		accent.Render(markGlyph+"Mivia") + subtle.Render(" — For the work that takes longer than a chat."),
 		subtle.Render("Author: Mac Lisowski  •  MIT License"),
 		subtle.Render("type a prompt or / for commands  •  ctrl+n:sidebar  •  ctrl+c:quit"),
 	}
@@ -94,7 +89,7 @@ func (m Model) Rows(width, height int) []string {
 	}
 
 	var content []string
-	if height < 12 || width < 48 {
+	if height < 12 || width < 54 {
 		content = m.compactLines()
 	} else {
 		content = m.bannerLines()

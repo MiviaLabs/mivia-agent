@@ -28,8 +28,11 @@ func TestWelcomeBannerFullRendering(t *testing.T) {
 	}
 
 	view := ansi.Strip(m.View(80, 20))
-	if !strings.Contains(view, "█▀▄▀█") {
-		t.Errorf("missing enlarged Mivia Agent typography in view:\n%s", view)
+	if !strings.Contains(view, "M I V I A") {
+		t.Errorf("missing M I V I A typography in view:\n%s", view)
+	}
+	if !strings.Contains(view, "For the work that takes longer than a chat.") {
+		t.Errorf("missing tagline in view:\n%s", view)
 	}
 	if !strings.Contains(view, "⬖") {
 		t.Errorf("missing diamond logo mark in view:\n%s", view)
@@ -58,8 +61,11 @@ func TestWelcomeCompactRendering(t *testing.T) {
 	}
 
 	view := ansi.Strip(m.View(80, 6))
-	if !strings.Contains(view, "Mivia Agent") {
+	if !strings.Contains(view, "Mivia") {
 		t.Errorf("compact view missing title:\n%s", view)
+	}
+	if !strings.Contains(view, "For the work that takes longer than a chat.") {
+		t.Errorf("compact view missing tagline:\n%s", view)
 	}
 	if !strings.Contains(view, "Mac Lisowski") {
 		t.Errorf("compact view missing author:\n%s", view)
@@ -74,10 +80,37 @@ func TestWelcomeASCIITierRendering(t *testing.T) {
 	if !strings.Contains(view, "<>") {
 		t.Errorf("ASCII tier missing ASCII diamond logo:\n%s", view)
 	}
-	if !strings.Contains(view, "M I V I A   A G E N T") {
-		t.Errorf("ASCII tier missing ASCII Mivia Agent title:\n%s", view)
+	if !strings.Contains(view, "M I V I A") {
+		t.Errorf("ASCII tier missing ASCII M I V I A title:\n%s", view)
+	}
+	if !strings.Contains(view, "For the work that takes longer than a chat.") {
+		t.Errorf("ASCII tier missing tagline:\n%s", view)
 	}
 	if !strings.Contains(view, "Mac Lisowski") {
 		t.Errorf("ASCII tier missing author:\n%s", view)
+	}
+
+	compactView := ansi.Strip(m.View(80, 6))
+	if !strings.Contains(compactView, "< Mivia") {
+		t.Errorf("ASCII compact view missing '< Mivia' mark:\n%s", compactView)
+	}
+}
+
+func TestWelcomeModelMethods(t *testing.T) {
+	th := loadTheme(t)
+	m := New(th, theme.TierTrueColor)
+
+	m.SetTheme(th, theme.TierASCII)
+	if m.Tier != theme.TierASCII {
+		t.Errorf("SetTheme failed to set tier, got %v, want %v", m.Tier, theme.TierASCII)
+	}
+
+	m2 := m.UpdateFrame()
+	if m2.frame != 1 {
+		t.Errorf("UpdateFrame frame = %d, want 1", m2.frame)
+	}
+
+	if rows := m.Rows(0, 0); rows != nil {
+		t.Errorf("Rows(0, 0) = %v, want nil", rows)
 	}
 }

@@ -757,8 +757,11 @@ func TestWelcomeBannerRendersOnEmptyTranscript(t *testing.T) {
 	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	scr := next.(Screen)
 	view := ansi.Strip(scr.View())
-	if !strings.Contains(view, "█▀▄▀█") && !strings.Contains(view, "Mivia Agent") && !strings.Contains(view, "M I V I A   A G E N T") {
-		t.Errorf("empty transcript view missing Mivia Agent banner:\n%s", view)
+	if !strings.Contains(view, "M I V I A") && !strings.Contains(view, "Mivia") {
+		t.Errorf("empty transcript view missing Mivia banner:\n%s", view)
+	}
+	if !strings.Contains(view, "For the work that takes longer than a chat.") {
+		t.Errorf("empty transcript view missing tagline:\n%s", view)
 	}
 	if !strings.Contains(view, "Mac Lisowski") {
 		t.Errorf("empty transcript view missing author credit:\n%s", view)
