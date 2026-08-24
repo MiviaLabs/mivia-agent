@@ -41,7 +41,7 @@ func FuzzMarkdown(f *testing.F) {
 		// markdown on every call, and a multi-MB input makes a fuzz
 		// iteration take seconds rather than milliseconds.
 		if len(s) > 64*1024 {
-			t.Skip()
+			t.Skip("fuzz corpus size guard: input exceeds the 64KiB safety bound")
 		}
 		got := Markdown(mivia, theme.TierTrueColor, 80, s)
 		// Width contract: no row may exceed the wrap width.
