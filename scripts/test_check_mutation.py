@@ -147,6 +147,14 @@ def test_cli_rejects_unrecognized_package() -> None:
     assert "unrecognized package" in proc.stdout, proc.stdout
 
 
+def test_sweep_diff_empty_scope() -> None:
+    res, failed = cm.sweep_diff(["HEAD"])
+    assert not failed
+    assert res["killed"] == 0
+    assert res["survived"] == 0
+
+
+
 def main() -> int:
     tests = [
         v

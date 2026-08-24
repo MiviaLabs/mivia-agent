@@ -491,3 +491,38 @@ rules:
       - pattern-not-inside: |
           filepath.Join(home, ".mivia", "skills")
           ...
+
+  # --- Test quality & fake-test prevention ---
+  - id: mivia.go.no-empty-test
+    languages:
+      - go
+    severity: ERROR
+    message: Test functions and subtests must not have an empty body.
+    paths:
+      include:
+        - /cmd/**/*_test.go
+        - /internal/**/*_test.go
+        - /pkg/**/*_test.go
+    pattern-either:
+      - pattern: func $FN(t *$T) {}
+      - pattern: func $FN(t testing.TB) {}
+      - pattern: t.Run($NAME, func(t *$T) {})
+
+
+  - id: mivia.go.no-tautological-test-assertion
+    languages:
+      - go
+    severity: ERROR
+    message: Do not use tautological test assertions that always pass unconditionally.
+    paths:
+      include:
+        - /cmd/**/*_test.go
+        - /internal/**/*_test.go
+        - /pkg/**/*_test.go
+    pattern-either:
+      - pattern: assert.True($T, true)
+      - pattern: assert.False($T, false)
+      - pattern: assert.Nil($T, nil)
+      - pattern: require.True($T, true)
+      - pattern: require.False($T, false)
+      - pattern: require.Nil($T, nil)

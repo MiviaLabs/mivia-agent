@@ -19,7 +19,7 @@ VERSION_LDFLAGS := -X $(VERSION_PKG).Commit=$(COMMIT) -X $(VERSION_PKG).Dirty=$(
 
 .PHONY: help install-hooks hooks verify verify-agent pre-commit pre-push \
 	secret-scan docs-check semgrep semgrep-validate semgrep-test \
-	hook-test agent-hook-test structure-check import-layers-check commit-check go-check verify-go test test-changed race vet build tidy fmt fmt-check \
+	hook-test agent-hook-test test-quality structure-check import-layers-check commit-check go-check verify-go test test-changed race vet build tidy fmt fmt-check \
 	validate-invariants invariants mutation diff-coverage verifier-integration smoke release release-test \
 	prose-check ui-demo ui-demo-json ui-themes
 
@@ -29,6 +29,7 @@ help:
 		'  make install-hooks     Install repo Git hooks for this clone' \
 		'  make verify            Run all offline local quality gates' \
 		'  make verify-agent      Validate agent adapter surface' \
+		'  make test-quality      Inspect Go test quality and anti-fake-work gates' \
 		'  make validate-invariants  Verify all test refs in .mivia/invariants.md exist' \
 		'  make invariants        Run all invariant tests (TUI, agent, security)' \
 		'  make pre-commit        Run the committed pre-commit hook' \
@@ -76,11 +77,17 @@ install-hooks hooks:
 # verifier-integration`.
 verify: verify-agent docs-check release-test secret-scan structure-check \
 	import-layers-check semgrep-validate semgrep-test hook-test agent-hook-test \
-	validate-invariants semgrep verify-go
+	test-quality validate-invariants semgrep verify-go
 	@python3 scripts/check_mutation.py --probe
+	@python3 scripts/check_mutation.py --staged
 
 verify-agent: agents-check
 	@python3 scripts/verify_agent_config.py
+
+test-quality:
+	@echo "Checking test quality and fake-test prevention..."
+	@python3 scripts/test_check_test_quality.py
+	@python3 scripts/check_test_quality.py --staged
 
 validate-invariants:
 	@echo "Validating invariant test references in .mivia/invariants.md..."
@@ -160,13 +167,13 @@ pre-push:
 	@.githooks/pre-push
 
 fmt:
-	@files=(); while IFS= read -r file; do files+=("$$file"); done < <(git ls-files '*.go' 2>/dev/null || true); \
-	if (($${#files[@]}==0)); then while IFS= read -r file; do files+=("$$file"); done < <(find cmd internal -name '*.go' 2>/dev/null || true); fi; \
+	@files=(); while IFS= read -r file; do [[ -f "$$file" ]] && files+=("$$file"); done < <(git ls-files '*.go' 2>/dev/null || true); \
+	if (($${#files[@]}==0)); then while IFS= read -r file; do [[ -f "$$file" ]] && files+=("$$file"); done < <(find cmd internal -name '*.go' 2>/dev/null || true); fi; \
 	if (($${#files[@]})); then gofmt -w "$${files[@]}"; fi
 
 fmt-check:
-	@files=(); while IFS= read -r file; do files+=("$$file"); done < <(git ls-files '*.go' 2>/dev/null || true); \
-	if (($${#files[@]}==0)); then while IFS= read -r file; do files+=("$$file"); done < <(find cmd internal -name '*.go' 2>/dev/null || true); fi; \
+	@files=(); while IFS= read -r file; do [[ -f "$$file" ]] && files+=("$$file"); done < <(git ls-files '*.go' 2>/dev/null || true); \
+	if (($${#files[@]}==0)); then while IFS= read -r file; do [[ -f "$$file" ]] && files+=("$$file"); done < <(find cmd internal -name '*.go' 2>/dev/null || true); fi; \
 	if (($${#files[@]})); then \
 		unformatted="$$(gofmt -l "$${files[@]}")"; \
 		if [[ -n "$$unformatted" ]]; then \
@@ -174,6 +181,7 @@ fmt-check:
 			exit 1; \
 		fi; \
 	fi
+
 
 go-check: fmt-check
 	@go test ./...

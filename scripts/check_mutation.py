@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import signal
 import subprocess
 import sys
@@ -429,12 +430,111 @@ def run_probe() -> bool:
     return True
 
 
+def changed_go_files(diff_args: list[str]) -> list[Path]:
+    r = subprocess.run(
+        ["git", "diff", *diff_args, "--name-only", "--diff-filter=ACMR", "-z", "--", "*.go"],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+    if r.returncode != 0:
+        return []
+    return [ROOT / f for f in r.stdout.strip("\0").split("\0") if f and not f.endswith("_test.go")]
+
+
+def changed_lines_for_file(diff_args: list[str], path: Path) -> set[int]:
+    try:
+        rel_path = str(path.relative_to(ROOT))
+    except ValueError:
+        rel_path = str(path)
+    r = subprocess.run(
+        ["git", "diff", *diff_args, "-U0", "--", rel_path],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+    if r.returncode != 0:
+        return set()
+    lines = set()
+    for line in r.stdout.splitlines():
+        m = re.match(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", line)
+        if m:
+            start = int(m.group(1))
+            count = int(m.group(2)) if m.group(2) is not None else 1
+            if count > 0:
+                lines.update(range(start, start + count))
+    return lines
+
+
+def sweep_diff(diff_args: list[str]) -> tuple[dict, bool]:
+    files = changed_go_files(diff_args)
+    if not files:
+        print("mutation diff sweep: no changed non-test .go files in scope")
+        return {"killed": 0, "survived": 0, "discarded": 0, "rate": 100.0}, False
+
+    pkg_sites: dict[str, list] = {}
+    for f in files:
+        if is_build_tag_gated(f):
+            continue
+        try:
+            rel = f.relative_to(ROOT)
+            pkg = str(rel.parent)
+        except ValueError:
+            continue
+
+        changed_lines = changed_lines_for_file(diff_args, f)
+        if not changed_lines:
+            continue
+
+        file_text = f.read_text()
+        data = load_denylist(pkg, DENYLIST_DIR)
+        spans = denylisted_spans(ROOT / pkg, data.get("denylist", []))
+
+        for site in sites_for_file(f):
+            if is_denylisted(site, spans):
+                continue
+            line_no = file_text.count("\n", 0, site.start) + 1
+            if line_no in changed_lines:
+                pkg_sites.setdefault(pkg, []).append((site, line_no))
+
+    total_killed = total_survived = total_discarded = 0
+    failed = False
+
+    for pkg, sites_with_lines in pkg_sites.items():
+        pkg_dir = ROOT / pkg
+        originals: dict[Path, bytes] = {}
+        try:
+            for site, line_no in sites_with_lines:
+                if site.path not in originals:
+                    originals[site.path] = site.path.read_bytes()
+                outcome = run_mutant(site, originals[site.path], pkg, str(pkg_dir))
+                if outcome == KILLED:
+                    total_killed += 1
+                elif outcome == SURVIVED:
+                    total_survived += 1
+                    failed = True
+                    print(
+                        f"SURVIVED on diff line: {site.path.name}:{line_no} "
+                        f"{site.kind} {site.old!r} -> {site.new!r} (missing test assertion)"
+                    )
+                else:
+                    total_discarded += 1
+        finally:
+            for path, original in originals.items():
+                path.write_bytes(original)
+
+    total = total_killed + total_survived
+    rate = 100.0 * total_killed / total if total else 100.0
+    print(f"mutation diff sweep: killed={total_killed} survived={total_survived} discarded={total_discarded} rate={rate:.2f}%")
+    return {"killed": total_killed, "survived": total_survived, "discarded": total_discarded, "rate": rate}, failed
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="mutation kit: per-package kill rate")
     parser.add_argument("--pkg", help="package directory to mutate, e.g. internal/cli")
     parser.add_argument("--floor", type=float, help="override the stored floor for this run")
     parser.add_argument("--sample", type=int, help="run only the first N mutants")
     parser.add_argument("--probe", action="store_true", help="run the kit's own probe suite")
+    parser.add_argument("--staged", action="store_true", help="sweep mutants on staged diff vs HEAD")
+    parser.add_argument("--diff", action="store_true", help="sweep mutants on unstaged diff vs HEAD")
+    parser.add_argument("--base", help="Base git ref for diff mutation sweep")
+    parser.add_argument("--tip", default="HEAD", help="Tip git ref for diff mutation sweep")
     parser.add_argument(
         "--all-core",
         action="store_true",
@@ -445,9 +545,21 @@ def main() -> int:
     if args.probe:
         return 0 if run_probe() else 1
 
+    if args.staged:
+        _, failed = sweep_diff(["--cached"])
+        return 1 if failed else 0
+
+    if args.diff:
+        _, failed = sweep_diff(["HEAD"])
+        return 1 if failed else 0
+
+    if args.base:
+        _, failed = sweep_diff([f"{args.base}..{args.tip}"])
+        return 1 if failed else 0
+
     targets = CORE_PACKAGES if args.all_core else ([args.pkg] if args.pkg else None)
     if not targets:
-        print("--pkg or --all-core is required unless --probe is set")
+        print("--pkg, --all-core, --staged, or --diff is required unless --probe is set")
         return 2
 
     known = recognized_packages()

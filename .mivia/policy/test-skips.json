@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Policy for test skips (t.Skip / t.Skipf). Diffs introducing new t.Skip calls are rejected unless explicitly declared in knownSkips with a documented reason and issue/doc reference. Every t.Skip must provide a non-empty descriptive justification.",
+  "requireReason": true,
+  "allowInDiffWithoutEntry": false,
+  "knownSkips": {
+    "internal/agent/advertised_tool_specs_test.go": [
+      {
+        "line": 129,
+        "reason": "accepted gap: step 1 wire tools[] advertises registry-derived definitions without description (docs/development/sdk-backend-field-mapping.md §1)"
+      }
+    ],
+    "internal/agent/hang_regression_integration_test.go": [
+      {
+        "line": 55,
+        "reason": "named pipes environment requirement"
+      },
+      {
+        "line": 106,
+        "reason": "named pipes environment requirement"
+      },
+      {
+        "line": 155,
+        "reason": "named pipes environment requirement"
+      },
+      {
+        "line": 231,
+        "reason": "cat command path dependency"
+      },
+      {
+        "line": 275,
+        "reason": "yes command path dependency"
+      },
+      {
+        "line": 334,
+        "reason": "unix tools dependency"
+      }
+    ],
+    "internal/agent/heartbeat_kind_test.go": [
+      {
+        "line": 47,
+        "reason": "accepted gap: legacy model-thinking heartbeat has no SDK bridge (docs/development/sdk-backend-field-mapping.md §2)"
+      }
+    ],
+    "internal/agent/loop_context_fix_test.go": [
+      {
+        "line": 216,
+        "reason": "accepted gap: runSDKPromptTooLongRecoverable retry does not reproduce legacy retry-time summary re-derivation"
+      }
+    ],
+    "internal/agent/loop_reasoning_redaction_test.go": [
+      {
+        "line": 60,
+        "reason": "accepted gap: legacy EventThinking has no SDK bridge"
+      }
+    ],
+    "internal/agent/loop_retry_steer_test.go": [
+      {
+        "line": 199,
+        "reason": "known bug: runSDKPromptTooLongRecoverable retry has no continuation-after-steer path"
+      }
+    ],
+    "internal/agent/loop_steer_test.go": [
+      {
+        "line": 93,
+        "reason": "accepted gap: SDK cancels Completer.Chat wholesale on Trigger and Result.Final is zero value"
+      }
+    ],
+    "internal/agent/loop_steer_worklimit_test.go": [
+      {
+        "line": 87,
+        "reason": "known bug: sdkWorkBudget.refund cannot distinguish steer-canceled call from provider error"
+      }
+    ],
+    "internal/agent/loop_tools_budget_test.go": [
+      {
+        "line": 57,
+        "reason": "accepted approximation: SDK ToolBudget.Reserve is charged raw per-turn tool-call count"
+      },
+      {
+        "line": 95,
+        "reason": "accepted approximation: SDK ToolBudget.Reserve is charged raw per-turn tool-call count"
+      }
+    ],
+    "internal/agent/summary_inject_test.go": [
+      {
+        "line": 231,
+        "reason": "known bug: SDK Trim return leaks ephemeral summary into durable state"
+      },
+      {
+        "line": 622,
+        "reason": "known bug: SDK Trim return leaks ephemeral summary into durable state"
+      },
+      {
+        "line": 656,
+        "reason": "accepted gap: runSDKPromptTooLongRecoverable retry does not reproduce legacy summary re-derivation"
+      }
+    ],
+    "internal/agent/summary_memo_test.go": [
+      {
+        "line": 62,
+        "reason": "known bug: SDK Trim return leaks ephemeral summary into durable state"
+      }
+    ]
+  }
+}

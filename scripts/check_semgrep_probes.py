@@ -176,6 +176,20 @@ PROBES = [
         'package probe\n\nimport "testing"\n\nfunc TestX(t *testing.T) {\n\t_ = 1\n}\n',
     ),
     (
+        "mivia.go.no-empty-test",
+        "internal/probe/empty_test.go",
+        'package probe\n\nimport "testing"\n\nfunc TestEmpty(t *testing.T) {}\n',
+        "internal/probe/empty_clean_test.go",
+        'package probe\n\nimport "testing"\n\nfunc TestNonEmpty(t *testing.T) {\n\tif 1 != 1 {\n\t\tt.Fatal("fail")\n\t}\n}\n',
+    ),
+    (
+        "mivia.go.no-tautological-test-assertion",
+        "internal/probe/taut_test.go",
+        'package probe\n\nimport "testing"\n\ntype A struct{}\nfunc (A) True(t *testing.T, b bool) {}\nvar assert A\n\nfunc TestTaut(t *testing.T) {\n\tassert.True(t, true)\n}\n',
+        "internal/probe/taut_clean_test.go",
+        'package probe\n\nimport "testing"\n\ntype A struct{}\nfunc (A) True(t *testing.T, b bool) {}\nvar assert A\n\nfunc TestProper(t *testing.T) {\n\tx := 1\n\tassert.True(t, x == 1)\n}\n',
+    ),
+    (
         "mivia.go.no-direct-tool-execution-outside-dispatcher",
         "internal/agent/probe/exec.go",
         'package probe\n\nfunc f() {\n\tregistry.Execute(ctx, "tool", nil)\n}\n',

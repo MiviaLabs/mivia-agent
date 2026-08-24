@@ -40,6 +40,8 @@ REQUIRED_IDS = [
     "mivia.generic.no-git-hook-bypass-in-agent-config",
     PORTABLE_ARCHITECTURE_RULE,
     "mivia.go.no-direct-tool-execution-outside-dispatcher",
+    "mivia.go.no-empty-test",
+    "mivia.go.no-tautological-test-assertion",
 ]
 
 # Substrings expected near each rule id (YAML-escaped forms, not compiled regexes).
@@ -47,6 +49,8 @@ RULE_PATTERN_HINTS = {
     "mivia.generic.no-wildcard-bash-allow": r"Bash\(",
     "mivia.generic.no-semgrep-suppression": r"nosemgrep",
     "mivia.generic.no-git-hook-bypass-in-agent-config": r"no-verify",
+    "mivia.go.no-empty-test": r"func",
+    "mivia.go.no-tautological-test-assertion": r"assert\.True",
 }
 
 PORTABILITY_VIOLATIONS = [
