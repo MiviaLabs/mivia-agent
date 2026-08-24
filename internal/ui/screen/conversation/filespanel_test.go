@@ -424,15 +424,15 @@ func TestPanelDialogScrollReachesTheTail(t *testing.T) {
 	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 16, long))
 	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	s = next.(Screen)
-	last := "tailrow-" + strings.Repeat("y", 40)
+	last := "tailrow-"
 	// A short pane windows only a few rows at a time and steps by half
 	// that, so the tail can be many presses away - but it must be
 	// reachable.
-	for i := 0; i < 80 && !strings.Contains(s.View(), last); i++ {
+	for i := 0; i < 80 && !strings.Contains(ansi.Strip(s.View()), last); i++ {
 		n, _ := s.Update(tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl})
 		s = n.(Screen)
 	}
-	if !strings.Contains(s.View(), last) {
+	if !strings.Contains(ansi.Strip(s.View()), last) {
 		t.Errorf("half-page scrolls never reached the diff's last row:\n%s", s.View())
 	}
 }

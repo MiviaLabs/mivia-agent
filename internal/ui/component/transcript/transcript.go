@@ -455,7 +455,11 @@ func (m Model) restyle(b Block) Block {
 		next := planBlockValue(m.Theme, m.Tier, *b.Plan)
 		b.Header, b.Body = next.Header, next.Body
 	case b.Diff != nil:
-		b.Body = replaceDiffTail(b.Body, render.DiffLines(m.Theme, m.Tier, *b.Diff))
+		w := m.width - uikitconfig.BodyIndent
+		if w <= 0 {
+			w = 80
+		}
+		b.Body = replaceDiffTail(b.Body, render.FormatDiffLines(m.Theme, m.Tier, w, *b.Diff))
 	case b.Progress != nil:
 		b.Body = progressBody(m.Theme, m.Tier, *b.Progress)
 	}

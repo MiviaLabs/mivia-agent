@@ -321,7 +321,7 @@ func (p panel) selected() (fileEntry, bool) {
 
 // contentRows is the selected file's content: its diff, or its
 // post-edit source when sourceView is set.
-func (p panel) contentRows(t theme.Theme, tier theme.Tier) []string {
+func (p panel) contentRows(t theme.Theme, tier theme.Tier, width int) []string {
 	e, ok := p.selected()
 	if !ok {
 		if len(p.entries) == 0 {
@@ -335,7 +335,7 @@ func (p panel) contentRows(t theme.Theme, tier theme.Tier) []string {
 		}
 		return e.Diff.After
 	}
-	if lines := render.DiffLines(t, tier, e.Diff); len(lines) > 0 {
+	if lines := render.FormatDiffLines(t, tier, width, e.Diff); len(lines) > 0 {
 		return lines
 	}
 	return []string{"no changes recorded"}
@@ -385,7 +385,7 @@ func (s Screen) panelBodyRows() int {
 // go negative (a negative window reads as dead scroll keys).
 func (s *Screen) scrollPanel(dir int) {
 	s.panel.offset += dir * max(1, s.panelBodyRows()/2)
-	rows := len(s.panel.contentRows(s.Theme, s.Tier))
+	rows := len(s.panel.contentRows(s.Theme, s.Tier, s.chatWidth()-4))
 	if max := rows - s.panelBodyRows(); max >= 0 {
 		s.panel.offset = min(s.panel.offset, max)
 	} else {
@@ -667,7 +667,7 @@ func (s Screen) dialogParts() (title, body, hint string) {
 	if e, ok := s.panel.selected(); ok {
 		title = e.Path
 	}
-	rows := s.panel.contentRows(s.Theme, s.Tier)
+	rows := s.panel.contentRows(s.Theme, s.Tier, s.chatWidth()-4)
 	fit := s.panelBodyRows()
 	start := min(max(0, s.panel.offset), max(0, len(rows)-fit))
 	end := min(start+fit, len(rows))

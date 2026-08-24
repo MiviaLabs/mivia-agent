@@ -13,6 +13,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/stream"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
+	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
 
@@ -354,7 +355,7 @@ func TestSetThemeReRendersADiffMergedIntoALiveBlock(t *testing.T) {
 	m.SetTheme(light, theme.TierTrueColor)
 	after := strings.Join(m.Blocks()[0].Body, "\n")
 
-	want := render.Diff(light, theme.TierTrueColor, *sampleDiff())
+	want := render.SplitDiff(light, theme.TierTrueColor, 80-uikitconfig.BodyIndent, *sampleDiff())
 	if !strings.Contains(after, want) {
 		t.Errorf("the diff was not re-rendered in the new theme:\ngot  %q\nwant %q", after, want)
 	}

@@ -209,12 +209,16 @@ func (m Model) ScrollBy(n int) Model {
 	return m
 }
 
+func (m Model) diffLines() []string {
+	if m.active == nil || m.active.Diff == nil {
+		return nil
+	}
+	return render.FormatDiffLines(m.Theme, m.Tier, m.width-4, *m.active.Diff)
+}
+
 // diffTotal is the full rendered line count of the pending diff.
 func (m Model) diffTotal() int {
-	if m.active == nil || m.active.Diff == nil {
-		return 0
-	}
-	return render.DiffLineCount(*m.active.Diff)
+	return len(m.diffLines())
 }
 
 // windowHeight is how many diff lines the preview shows at once.
@@ -231,10 +235,10 @@ func (m Model) scrollable() bool {
 // the box's inner width: an over-long line would widen (or wrap inside)
 // the border and move it while the user scrolls.
 func (m Model) diffWindow() []string {
-	if m.active == nil || m.active.Diff == nil {
+	lines := m.diffLines()
+	if len(lines) == 0 {
 		return nil
 	}
-	lines := render.DiffLines(m.Theme, m.Tier, *m.active.Diff)
 	end := m.offset + m.windowHeight()
 	if end > len(lines) {
 		end = len(lines)

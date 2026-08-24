@@ -142,7 +142,7 @@ func toolEndBlockValue(t theme.Theme, tier theme.Tier, b uievent.ToolEndBody) Bl
 		blk.Diff = b.Diff
 		blk.Header.Detail = b.Diff.Path
 		blk.Header.Meta = fmt.Sprintf("+%d -%d  %dms", b.Diff.Added, b.Diff.Removed, b.DurationMS)
-		blk.Body = strings.Split(render.Diff(t, tier, *b.Diff), "\n")
+		blk.Body = render.FormatDiffLines(t, tier, 80, *b.Diff)
 	}
 	return blk
 }
