@@ -462,7 +462,9 @@
     ],
     "internal/uiadapter": [
       "internal/agent",
+      "internal/agents",
       "internal/chat",
+      "internal/cliagents",
       "internal/composition",
       "internal/config",
       "internal/contextstate",
