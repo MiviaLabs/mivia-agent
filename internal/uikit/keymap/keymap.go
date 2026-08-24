@@ -228,8 +228,8 @@ func settingsBindings() []Binding {
 	return []Binding{
 		{ID: IDSettingsUp, Context: ContextSettings, Keys: []string{"up", "k"}, Help: "previous"},
 		{ID: IDSettingsDown, Context: ContextSettings, Keys: []string{"down", "j"}, Help: "next"},
-		{ID: IDSettingsPaneLeft, Context: ContextSettings, Keys: []string{"left", "h"}, Help: "focus the section list"},
-		{ID: IDSettingsPaneRight, Context: ContextSettings, Keys: []string{"right", "l"}, Help: "focus the detail pane"},
+		{ID: IDSettingsPaneLeft, Context: ContextSettings, Keys: []string{"left", "h", "shift+tab"}, Help: "focus the section list"},
+		{ID: IDSettingsPaneRight, Context: ContextSettings, Keys: []string{"right", "l", "tab"}, Help: "focus the detail pane"},
 		{ID: IDSettingsSelect, Context: ContextSettings, Keys: []string{"enter"}, Help: "open or edit", Short: "edit"},
 		{ID: IDSettingsNew, Context: ContextSettings, Keys: []string{"n"}, Help: "new", Short: "new"},
 		{ID: IDSettingsDelete, Context: ContextSettings, Keys: []string{"x"}, Help: "delete", Short: "delete"},

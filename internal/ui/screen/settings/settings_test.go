@@ -305,3 +305,36 @@ func TestGutterClipsAnOverflowingRowWithTheClipMarker(t *testing.T) {
 		t.Errorf("got %q, want the clip marker %q on the overflowing row", got, uikitconfig.ClipMarker)
 	}
 }
+
+func TestTabAndShiftTabSwitchPanes(t *testing.T) {
+	s := newScreen(t, 100, 30)
+	if s.focus != render.Left {
+		t.Fatalf("expected initial focus = Left, got %v", s.focus)
+	}
+
+	// Press Tab: switches focus to Right (options pane)
+	next, _ := s.Update(keySettingsMsg("tab"))
+	s = next.(Screen)
+	if s.focus != render.Right {
+		t.Fatalf("expected Tab to switch focus to Right, got %v", s.focus)
+	}
+
+	// Press Shift+Tab: switches focus back to Left (sidebar tabs)
+	next, _ = s.Update(keySettingsMsg("shift+tab"))
+	s = next.(Screen)
+	if s.focus != render.Left {
+		t.Fatalf("expected Shift+Tab to switch focus to Left, got %v", s.focus)
+	}
+}
+
+func TestDialogTitleFollowsActiveSection(t *testing.T) {
+	s := newScreen(t, 100, 30)
+	if !strings.Contains(s.title(), "general") {
+		t.Errorf("expected initial title to contain 'general', got %q", s.title())
+	}
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	s = next.(Screen)
+	if !strings.Contains(s.title(), "projects") {
+		t.Errorf("expected title after Down to contain 'projects', got %q", s.title())
+	}
+}

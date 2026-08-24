@@ -145,20 +145,12 @@ func (s Screen) reservedRows() int {
 }
 
 func (s Screen) bodyHeight() int {
-	if h := s.height - s.reservedRows(); h > 0 {
-		return h
-	}
-	return 0
+	return render.DialogBodyRows(s.height)
 }
 
-// contentWidth is the same "one-column gutter each side" convention
-// conversation.Screen's own contentWidth uses, so the settings screen
-// reads as the same surface, not a different frame.
+// contentWidth is the inner width convention used for dialog calculations.
 func contentWidth(width int) int {
-	if width < 3 {
-		return width
-	}
-	return width - 2
+	return render.DialogBodyWidth(width)
 }
 
 // navWidth is the left nav's column count: SplitNavShare of the body
@@ -185,10 +177,15 @@ func (s Screen) Update(msg tea.Msg) (app.Screen, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		s.width, s.height = msg.Width, msg.Height
-		s.top.SetWidth(contentWidth(msg.Width))
-		w := contentWidth(msg.Width) - navWidth(contentWidth(msg.Width)) - 1
+		bw := render.DialogBodyWidth(msg.Width)
+		bh := render.DialogBodyRows(msg.Height)
+		nw := navWidth(bw)
+		detailW := bw - nw - 1
+		if detailW < 0 {
+			detailW = 0
+		}
 		for _, sec := range s.sections {
-			sec.SetSize(w, s.bodyHeight())
+			sec.SetSize(detailW, bh)
 		}
 		return s, nil
 	case app.ThemeChangedMsg:
@@ -324,39 +321,43 @@ func (s Screen) moveNav(delta int) Screen {
 	return s
 }
 
-// View draws the frame: top bar, margin, the nav|detail split (or the
-// help overlay in the split's place), and the status row - every row
-// gutter-framed and theme-painted, matching conversation.Screen's own
-// gutter so the two screens read as one surface family.
-func (s Screen) View() string {
-	var lines []string
-	lines = append(lines, strings.Split(s.top.View(), "\n")...)
-	lines = append(lines, "")
-
-	bw := contentWidth(s.width)
-	nw := navWidth(bw)
-	if s.overlay != "" {
-		lines = append(lines, strings.Split(s.overlay, "\n")...)
-	} else {
-		body := render.SplitAt(s.Theme, s.Tier, bw, s.bodyHeight(), nw, s.focus,
-			s.navView(), s.sections[s.nav].View())
-		lines = append(lines, strings.Split(body, "\n")...)
+func (s Screen) title() string {
+	base := "settings"
+	if s.nav >= 0 && s.nav < len(s.sections) {
+		return base + " > " + strings.ToLower(s.sections[s.nav].Title())
 	}
-	lines = append(lines, s.statusRow())
-	return s.gutter(lines)
+	return base
 }
 
-// navView draws the section list: a ">" marker plus reverse video on
-// the active row, and nothing else - wireframes-panes.md §3 states the
-// Unicode and ASCII glyph sets are identical, so there is no tier
-// branch here, matching picker.View()'s own convention.
+// View draws the settings modal dialog: a centered bordered box with
+// the tabs sidebar on the left and the active section's options on the right.
+func (s Screen) View() string {
+	bw := render.DialogBodyWidth(s.width)
+	bh := render.DialogBodyRows(s.height)
+	nw := navWidth(bw)
+	if s.overlay != "" {
+		return render.Dialog(s.Theme, s.Tier, s.width, s.height, s.title(), s.overlay, s.statusRow())
+	}
+	body := render.SplitAt(s.Theme, s.Tier, bw, bh, nw, s.focus,
+		s.navView(), s.sections[s.nav].View())
+	return render.Dialog(s.Theme, s.Tier, s.width, s.height, s.title(), body, s.statusRow())
+}
+
+// navView draws the tab sidebar list: active tab marked with '>' and
+// highlighted background when the sidebar holds focus, or '•' when detail has focus.
 func (s Screen) navView() string {
 	var b strings.Builder
 	for i, sec := range s.sections {
-		style, prefix := render.Role(s.Theme, s.Tier, theme.RoleFG), "  "
+		style := render.Role(s.Theme, s.Tier, theme.RoleFG)
+		prefix := "  "
 		if i == s.nav {
-			style = render.WithBg(style, s.Theme, s.Tier, theme.RoleBGSelection)
-			prefix = "> "
+			if s.focus == render.Left {
+				style = render.WithBg(style, s.Theme, s.Tier, theme.RoleBGSelection)
+				prefix = "> "
+			} else {
+				style = render.Role(s.Theme, s.Tier, theme.RoleAccent)
+				prefix = "• "
+			}
 		}
 		b.WriteString(style.Render(prefix + sec.Title()))
 		b.WriteByte('\n')
