@@ -128,6 +128,13 @@ func TestApprover_DecisionMappings(t *testing.T) {
 			wantApprovedForClass: true,
 			wantDenialErr:        true,
 		},
+		{
+			name:                 "DecisionUnknown",
+			decision:             ports.Decision(999),
+			wantApproved:         false,
+			wantApprovedForClass: false,
+			wantDenialErr:        true,
+		},
 	}
 
 	for _, tc := range cases {
@@ -147,9 +154,25 @@ func TestApprover_ResolveUnknownIDIsNoOp(t *testing.T) {
 	appr.Resolve("", ports.DecisionDeny)
 }
 
-func TestApprover_ContextCancellationUnblocks(t *testing.T) {
+func TestApprover_ContextCancellationBeforePending(t *testing.T) {
 	sess := chat.NewSession(&config.Resolved{}, nil)
 	_ = uiadapter.NewApprover(sess)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Already canceled before gate called
+
+	res := sess.ApprovalGate(ctx, "delete_file", json.RawMessage(`{}`))
+	if res.Approved {
+		t.Error("pre-canceled context must return Approved=false")
+	}
+	if res.Err != "canceled" {
+		t.Errorf("got res.Err = %q, want %q", res.Err, "canceled")
+	}
+}
+
+func TestApprover_ContextCancellationWhilePending(t *testing.T) {
+	sess := chat.NewSession(&config.Resolved{}, nil)
+	appr := uiadapter.NewApprover(sess)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -163,9 +186,15 @@ func TestApprover_ContextCancellationUnblocks(t *testing.T) {
 		close(done)
 	}()
 
-	// Cancel context without resolving
-	time.Sleep(50 * time.Millisecond)
-	cancel()
+	select {
+	case req := <-appr.Pending():
+		if req.ToolName != "delete_file" {
+			t.Fatalf("req.ToolName = %q, want delete_file", req.ToolName)
+		}
+		cancel()
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for pending request")
+	}
 
 	select {
 	case <-done:
@@ -176,8 +205,8 @@ func TestApprover_ContextCancellationUnblocks(t *testing.T) {
 	if res.Approved {
 		t.Error("canceled gate must return Approved=false")
 	}
-	if res.Err == "" {
-		t.Error("canceled gate must return non-empty Err")
+	if res.Err != "canceled" {
+		t.Errorf("got res.Err = %q, want %q", res.Err, "canceled")
 	}
 }
 
