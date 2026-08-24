@@ -168,9 +168,6 @@ func TestTurnEventUpdatesTranscriptAndReschedulesRead(t *testing.T) {
 		if _, ok := msg.(turnEndedMsg); ok {
 			sawRead = true // fakeHandle's closed channel: the re-issued read observes it immediately
 		}
-		if _, ok := msg.(sessionTurnEndedMsg); ok {
-			sawRead = true
-		}
 	}
 	if !sawCommit {
 		t.Errorf("expected a CommitMsg among %v", msgs)
