@@ -76,6 +76,12 @@ func (s Screen) handleClick(msg tea.MouseClickMsg) (app.Screen, tea.Cmd) {
 	colOffset := s.composer.InputColumnOffset()
 	menuRows := s.composer.MenuRows()
 
+	topBorder := 0
+	if colOffset > 0 {
+		topBorder = 1
+	}
+	menuStart := inputRow - topBorder - menuRows
+
 	switch {
 	case y-transcriptTop < transcriptRows && s.transcriptShown():
 		next, expanded := s.transcript.ExpandBlockAtScreenRow(y - transcriptTop)
@@ -88,10 +94,10 @@ func (s Screen) handleClick(msg tea.MouseClickMsg) (app.Screen, tea.Cmd) {
 		comp := s.composer
 		comp.ClickToColumn(x - 1 - colOffset)
 		s.composer = comp
-	// The menu sits directly above the input row: menu rows run from inputRow-menuRows to inputRow-1.
-	case s.composer.MenuActive() && y >= inputRow-menuRows && y < inputRow:
+	// The menu sits directly above the composer frame: menu rows run from menuStart to menuStart+menuRows-1.
+	case s.composer.MenuActive() && y >= menuStart && y < menuStart+menuRows:
 		comp := s.composer
-		if comp.MenuClickRow(y - (inputRow - menuRows)) {
+		if comp.MenuClickRow(y - menuStart) {
 			s.composer = comp
 		}
 	}

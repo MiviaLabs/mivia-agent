@@ -127,10 +127,10 @@ func TestHeightGrowsWithLines(t *testing.T) {
 }
 
 func TestHeightCappedAtMaxLines(t *testing.T) {
-	// 10 lines of text should not exceed maxInputLines.
+	// 10 lines of text should not exceed maxInputLines + 2 (for top and bottom frame).
 	lines := strings.Repeat("text\n", 10)
 	m := sizedComposer(t, 80, strings.TrimSuffix(lines, "\n"))
-	maxExpected := maxInputLines
+	maxExpected := maxInputLines + 2
 	if got := m.Height(); got > maxExpected {
 		t.Errorf("height %d exceeds cap %d with many lines", got, maxExpected)
 	}
@@ -162,23 +162,31 @@ func TestViewShowsPromptAndText(t *testing.T) {
 	}
 }
 
-func TestViewAppliesBGInset(t *testing.T) {
+func TestViewAppliesBGSubtle(t *testing.T) {
 	th := loadTheme(t)
 	m := New(th, theme.TierTrueColor, 40)
 	got := m.View()
-	insetBG := strings.TrimSuffix(render.FillBG(th, theme.TierTrueColor, theme.RoleBGInset, ""), "\x1b[m")
-	if !strings.Contains(got, insetBG) {
-		t.Errorf("expected view to contain RoleBGInset background (%q), got:\n%q", insetBG, got)
+	subtleBG := strings.TrimSuffix(render.FillBG(th, theme.TierTrueColor, theme.RoleBGSubtle, ""), "\x1b[m")
+	if !strings.Contains(got, subtleBG) {
+		t.Errorf("expected view to contain RoleBGSubtle background (%q), got:\n%q", subtleBG, got)
 	}
 }
 
 func TestInputOffsets(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII, 40)
-	if got := m.InputRowFromBottom(); got != 1 {
-		t.Errorf("InputRowFromBottom() = %d, want 1", got)
+	if got := m.InputRowFromBottom(); got != 2 {
+		t.Errorf("InputRowFromBottom() = %d, want 2", got)
 	}
-	if got := m.InputColumnOffset(); got != 0 {
-		t.Errorf("InputColumnOffset() = %d, want 0", got)
+	if got := m.InputColumnOffset(); got != 2 {
+		t.Errorf("InputColumnOffset() = %d, want 2", got)
+	}
+
+	narrow := New(loadTheme(t), theme.TierASCII, 4)
+	if got := narrow.InputRowFromBottom(); got != 1 {
+		t.Errorf("narrow InputRowFromBottom() = %d, want 1", got)
+	}
+	if got := narrow.InputColumnOffset(); got != 0 {
+		t.Errorf("narrow InputColumnOffset() = %d, want 0", got)
 	}
 }
 
@@ -542,9 +550,54 @@ func TestActiveMenuView_MentionMenu(t *testing.T) {
 func TestComposerView_TruncatesLongLinesWhenNarrow(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII, 40)
 	m.SetValue("A very long input string that exceeds width")
-	m.SetWidth(5)
+	// Set width directly on model without resizing textarea so lines exceed m.width
+	m.width = 5
 	view := m.View()
 	if view == "" {
 		t.Fatal("expected non-empty view")
+	}
+}
+
+func TestComposerView_TruncatesLongLinesWhenFramed(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII, 80)
+	m.SetValue("A very long input string that exceeds framed inner width")
+	// Set width directly to framed width so lines exceed inner (10 - frameInset = 6)
+	m.width = 10
+	view := m.View()
+	if view == "" {
+		t.Fatal("expected non-empty view")
+	}
+}
+
+func TestClickToColumn(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII, 40)
+	m.SetValue("hello world\nline 2")
+	// Click before/at prompt
+	m.ClickToColumn(1)
+	m.ClickToColumn(2)
+	// Click middle of text
+	m.ClickToColumn(5)
+	// Click far right
+	m.ClickToColumn(100)
+}
+
+func TestMenuClickRow(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII, 40)
+	m.SetCommands([]Command{{Name: "agent", Desc: "pick agent"}})
+	// Inactive menu
+	if m.MenuClickRow(0) {
+		t.Error("expected false when menu is inactive")
+	}
+	m.SetValue("/a")
+	// Out of bounds row
+	if m.MenuClickRow(-1) {
+		t.Error("expected false for negative row")
+	}
+	if m.MenuClickRow(10) {
+		t.Error("expected false for out-of-range row")
+	}
+	// Valid row
+	if !m.MenuClickRow(0) {
+		t.Error("expected true when clicking valid menu row")
 	}
 }

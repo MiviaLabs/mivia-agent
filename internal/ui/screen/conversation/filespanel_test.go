@@ -318,10 +318,9 @@ func TestPanelWideSplitFrameContract(t *testing.T) {
 				t.Errorf("width %d: split view missing %q:\n%s", w, want, plain)
 			}
 		}
-		// The split frames nothing: with the borderless composer, no box
-		// borders are drawn.
-		if got := strings.Count(view, "╭"); got != 0 {
-			t.Errorf("width %d: framed %d boxes, want 0 (borderless composer)", w, got)
+		// The split frames nothing extra: only the framed composer box border is drawn.
+		if got := strings.Count(view, "╭"); got != 1 {
+			t.Errorf("width %d: framed %d boxes, want 1 (framed composer)", w, got)
 		}
 		// The rule stands at the sidebar's left edge on every content
 		// row: check the first transcript row's column.

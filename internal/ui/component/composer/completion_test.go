@@ -225,9 +225,9 @@ func TestViewPutsTheMenuAboveTheInput(t *testing.T) {
 	if len(rows) < 2 {
 		t.Fatalf("got %d rows, want the menu plus the input", len(rows))
 	}
-	// With borderless background styling, the input row is the last row.
-	if !strings.Contains(ansi.Strip(rows[len(rows)-1]), "/c") {
-		t.Errorf("the input must be the LAST row, got %q", rows[len(rows)-1])
+	// With framed composer, the input row sits inside the frame (one above bottom border).
+	if !strings.Contains(ansi.Strip(rows[len(rows)-2]), "/c") {
+		t.Errorf("the input must sit inside the frame above the bottom border, got %q", rows[len(rows)-2])
 	}
 	if got, want := m.Height(), len(rows); got != want {
 		t.Errorf("Height() = %d but View drew %d rows", got, want)
@@ -236,8 +236,8 @@ func TestViewPutsTheMenuAboveTheInput(t *testing.T) {
 
 func TestHeightWithNoMenu(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII, 40)
-	if got := m.Height(); got != 1 {
-		t.Errorf("got height %d, want 1 with no menu showing", got)
+	if got := m.Height(); got != 3 {
+		t.Errorf("got height %d, want 3 with no menu showing (1 input row + 2 frame rows)", got)
 	}
 	narrow := New(loadTheme(t), theme.TierASCII, 4)
 	if got := narrow.Height(); got != 1 {

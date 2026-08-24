@@ -1,7 +1,9 @@
 package uiadapter
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"sync"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
@@ -24,6 +26,38 @@ type SessionPool struct {
 	toolsOn    bool
 }
 
+type fallbackCompleter struct {
+	providerName string
+}
+
+func (c fallbackCompleter) Name() string { return c.providerName }
+func (c fallbackCompleter) Chat(context.Context, provider.Request) (string, error) {
+	return "", fmt.Errorf("provider %q has no active client: cannot dispatch", c.providerName)
+}
+func (c fallbackCompleter) ChatStream(context.Context, provider.Request, io.Writer) (string, error) {
+	return "", fmt.Errorf("provider %q has no active client: cannot dispatch", c.providerName)
+}
+func (c fallbackCompleter) ChatTurn(context.Context, provider.Request) (*provider.Response, error) {
+	return nil, fmt.Errorf("provider %q has no active client: cannot dispatch", c.providerName)
+}
+
+func sessionBindingFactory(sess *chat.Session, res *config.Resolved, state *cliagents.AgentSessionState) func(string, string) (chat.ModelBinding, error) {
+	return func(providerName, model string) (chat.ModelBinding, error) {
+		binding, err := cliagents.BuildModelBinding(sess, res, ".", providerName, model, state)
+		if err == nil {
+			return binding, nil
+		}
+		profile, _ := cliagents.ConfiguredProfile(res, providerName, model)
+		return chat.ModelBinding{
+			ProviderName:       providerName,
+			Model:              model,
+			Completer:          fallbackCompleter{providerName: providerName},
+			Profile:            profile,
+			PromptBudgetTokens: sess.PromptBudgetFor(profile),
+		}, nil
+	}
+}
+
 // NewSessionPool constructs a SessionPool seeded with the initial session.
 func NewSessionPool(initialSess *chat.Session, res *config.Resolved, agentState *cliagents.AgentSessionState, toolsOn bool) *SessionPool {
 	pool := &SessionPool{
@@ -34,6 +68,9 @@ func NewSessionPool(initialSess *chat.Session, res *config.Resolved, agentState 
 		toolsOn:    toolsOn,
 	}
 	if initialSess != nil {
+		if res != nil {
+			initialSess.SetBindingFactory(sessionBindingFactory(initialSess, res, agentState))
+		}
 		id := initialSess.SessionID
 		pool.sessions[id] = initialSess
 		pool.convs[id] = NewConversation(initialSess)
@@ -60,6 +97,7 @@ func (p *SessionPool) GetOrCreate(sessionID string) (ports.Conversation, error) 
 	}
 	sess := chat.NewSession(p.res, comp)
 	sess.UseTools = p.toolsOn
+	sess.SetBindingFactory(sessionBindingFactory(sess, p.res, p.agentState))
 
 	// Inherit session directory and session/context stores from existing session if set
 	for _, existing := range p.sessions {

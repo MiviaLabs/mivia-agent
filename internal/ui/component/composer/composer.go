@@ -351,23 +351,23 @@ func (m Model) MenuRows() int {
 	return 0
 }
 
-// InputRowFromBottom is how many rows above the screen's last row the top
-// input line sits (for mouse routing). When framed, the bottom border is the
-// last row so the input is 1 above. When bare, the input is the last row.
+// InputRowFromBottom is how many rows above the screen's status row the top
+// input line sits (for mouse routing). When framed, the bottom border is 1 row
+// above the status row, so the input is 2 above. When bare, the input is 1 above.
 func (m Model) InputRowFromBottom() int {
 	if m.width < minFramedWidth {
-		return 0
+		return 1
 	}
-	return 1
+	return 2
 }
 
-// InputColumnOffset is how many display columns the left border puts before
-// the prompt. Mouse clicks subtract it to land on the input's own column space.
+// InputColumnOffset is how many display columns the left border and padding put
+// before the prompt. Mouse clicks subtract it to land on the input's own column space.
 func (m Model) InputColumnOffset() int {
 	if m.width < minFramedWidth {
 		return 0
 	}
-	return 1
+	return 2
 }
 
 // activeMenuView returns whichever menu is currently showing, prefer slash
@@ -379,7 +379,8 @@ func (m Model) activeMenuView() string {
 	return m.mmenu.view(m.Theme, m.Tier, m.width)
 }
 
-// View renders the active menu above the textarea, which is then optionally
+// View renders the active menu above the textarea, which is styled with the
+// subtle card background (RoleBGSubtle) matching the web app, and optionally
 // wrapped in a themed frame. The textarea is the last block, so it never
 // moves as the menu grows or shrinks (ux-rules.md rule 2.8).
 func (m Model) View() string {
@@ -396,9 +397,31 @@ func (m Model) View() string {
 				hint = "[ Enter: Send  •  Esc Cancel ]"
 			}
 		}
+		inner := m.width - frameInset
+		lines := strings.Split(body, "\n")
+		for i, ln := range lines {
+			w := ansi.StringWidth(ln)
+			if w < inner {
+				lines[i] = ln + strings.Repeat(" ", inner-w)
+			} else if w > inner {
+				lines[i] = ansi.Truncate(ln, inner, "")
+			}
+		}
+		body = strings.Join(lines, "\n")
+		body = render.FillBG(m.Theme, m.Tier, theme.RoleBGSubtle, body)
 		body = render.BorderedWithHint(m.Theme, m.Tier, theme.RoleBorder, theme.RoleFGSubtle, m.width, body, hint)
-	} else if m.width > 0 && ansi.StringWidth(body) > m.width {
-		body = ansi.Truncate(body, m.width, "")
+	} else if m.width > 0 {
+		lines := strings.Split(body, "\n")
+		for i, ln := range lines {
+			w := ansi.StringWidth(ln)
+			if w < m.width {
+				lines[i] = ln + strings.Repeat(" ", m.width-w)
+			} else if w > m.width {
+				lines[i] = ansi.Truncate(ln, m.width, "")
+			}
+		}
+		body = strings.Join(lines, "\n")
+		body = render.FillBG(m.Theme, m.Tier, theme.RoleBGSubtle, body)
 	}
 
 	if v := m.activeMenuView(); v != "" {
