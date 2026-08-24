@@ -87,12 +87,17 @@ func translateToolStart(ev agent.Event) []uievent.Event {
 func translateToolEnd(ev agent.Event) []uievent.Event {
 	detail := ev.Detail
 	ok := detail != "" && !strings.HasPrefix(detail, "failed")
+	var diff *uievent.Diff
+	if ok {
+		diff = parseToolDiff(ev.Name, ev.Input, ev.Output)
+	}
 	return []uievent.Event{{Kind: uievent.KindToolEnd, Body: uievent.ToolEndBody{
 		ToolCallID: ev.ToolCallID,
 		Name:       ev.Name,
 		OK:         ok,
 		Result:     ev.Output,
 		Err:        errFromDetail(detail, ok),
+		Diff:       diff,
 	}}}
 }
 

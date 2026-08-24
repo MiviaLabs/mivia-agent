@@ -25,9 +25,10 @@ import (
 
 // Message is one turn of conversation history.
 type Message struct {
-	Role string // "user" | "assistant"
-	Text string
-	At   time.Time
+	Role  string // "user" | "assistant"
+	Text  string
+	At    time.Time
+	Diffs []uievent.Diff
 }
 
 // ModelInfo names the model and provider currently bound to a session.

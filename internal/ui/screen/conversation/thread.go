@@ -77,7 +77,11 @@ func (s *Screen) LoadHistory(msgs []ports.Message) {
 		}
 		next, _ := s.transcript.HandleEvent(ev)
 		s.transcript = next
+		for _, d := range m.Diffs {
+			s.panel.appendLive(d)
+		}
 	}
+	s.refreshTopbar()
 }
 
 // setSurface is the embedded screen's resize entry point: the dialog

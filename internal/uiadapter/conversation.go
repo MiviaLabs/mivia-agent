@@ -269,13 +269,32 @@ func (c *Conversation) History() []ports.Message {
 		return nil
 	}
 	msgs := c.sess.MessagesCopy()
+	toolOutputs := make(map[string]string)
+	for _, m := range msgs {
+		if m.Role == provider.RoleTool && m.ToolCallID != "" {
+			toolOutputs[m.ToolCallID] = m.Content
+		}
+	}
+
 	out := make([]ports.Message, 0, len(msgs))
 	for _, m := range msgs {
 		switch m.Role {
 		case provider.RoleUser:
 			out = append(out, ports.Message{Role: "user", Text: m.Content, At: m.CreatedAt})
 		case provider.RoleAssistant:
-			out = append(out, ports.Message{Role: "assistant", Text: m.Content, At: m.CreatedAt})
+			var diffs []uievent.Diff
+			for _, tc := range m.ToolCalls {
+				output := toolOutputs[tc.ID]
+				if d := parseToolDiff(tc.Function.Name, tc.Function.Arguments, output); d != nil {
+					diffs = append(diffs, *d)
+				}
+			}
+			out = append(out, ports.Message{
+				Role:  "assistant",
+				Text:  m.Content,
+				At:    m.CreatedAt,
+				Diffs: diffs,
+			})
 		}
 		// system / tool roles are not exposed by the UI history view.
 	}

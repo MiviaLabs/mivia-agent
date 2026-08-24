@@ -735,3 +735,43 @@ func TestSend_FullTurn_TextEndContentExact(t *testing.T) {
 		t.Errorf("KindTextEnd count=%d, want 1 (the doubled-message bug surfaces as 2)", textEnds)
 	}
 }
+
+func TestHistory_CarriesDiffsFromPriorToolCalls(t *testing.T) {
+	tc := provider.ToolCall{
+		ID:   "call_1",
+		Type: "function",
+	}
+	tc.Function.Name = "replace_file_content"
+	tc.Function.Arguments = `{"path": "foo/bar.go"}`
+
+	msgs := []provider.Message{
+		{Role: provider.RoleUser, Content: "edit foo"},
+		{
+			Role:      provider.RoleAssistant,
+			Content:   "editing...",
+			ToolCalls: []provider.ToolCall{tc},
+		},
+		{
+			Role:       provider.RoleTool,
+			ToolCallID: "call_1",
+			Content:    "updated foo/bar.go (1 replacement, +2 −1)\n--- a/foo/bar.go\n+++ b/foo/bar.go\n@@ -1,3 +1,4 @@\n-old\n+new1\n+new2\n context",
+		},
+	}
+	comp := &scriptedCompleter{}
+	conv := newTestConversation(t, comp, msgs...)
+	hist := conv.History()
+	if len(hist) < 2 {
+		t.Fatalf("expected at least 2 history messages, got %d", len(hist))
+	}
+	assistantMsg := hist[1]
+	if len(assistantMsg.Diffs) != 1 {
+		t.Fatalf("expected 1 diff in assistant history message, got %d", len(assistantMsg.Diffs))
+	}
+	diff := assistantMsg.Diffs[0]
+	if diff.Path != "foo/bar.go" {
+		t.Errorf("diff.Path = %q, want %q", diff.Path, "foo/bar.go")
+	}
+	if diff.Added != 2 || diff.Removed != 1 {
+		t.Errorf("diff Added=%d, Removed=%d, want +2 -1", diff.Added, diff.Removed)
+	}
+}
