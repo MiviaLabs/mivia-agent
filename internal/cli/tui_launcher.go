@@ -2,6 +2,7 @@ package cli
 
 import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/clichat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
 
@@ -13,4 +14,5 @@ var tuiLauncher func(sess *chat.Session, res *config.Resolved, toolsOn bool, age
 // before any command that might launch the TUI runs.
 func SetTUILauncher(fn func(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *AgentSessionState, resumeSessionName string) error) {
 	tuiLauncher = fn
+	clichat.TUILauncherFunc = fn
 }

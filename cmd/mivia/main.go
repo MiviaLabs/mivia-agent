@@ -6,12 +6,12 @@ import (
 	"os"
 
 	"github.com/MiviaLabs/mivia-agent/internal/cli"
-	"github.com/MiviaLabs/mivia-agent/internal/legacytui"
+	"github.com/MiviaLabs/mivia-agent/internal/newtui"
 	"github.com/MiviaLabs/mivia-agent/internal/version"
 )
 
 func main() {
-	cli.SetTUILauncher(legacytui.RunTUI)
+	cli.SetTUILauncher(newtui.RunTUI)
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", version.Binary, err)
 		os.Exit(1)

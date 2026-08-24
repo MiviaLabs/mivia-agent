@@ -12,7 +12,8 @@
     "cmd/mivia": [
       "internal/cli",
       "internal/legacytui",
-      "internal/version"
+      "internal/version",
+      "internal/newtui"
     ],
     "cmd/mivia-ui": [
       "internal/config",
@@ -73,6 +74,7 @@
       "internal/redact",
       "internal/remainder",
       "internal/runtime",
+      "internal/sdkadapter",
       "internal/skills",
       "internal/tools",
       "internal/usage",
@@ -548,6 +550,15 @@
       "internal/workflows/delivery",
       "internal/workflows/ledger",
       "internal/workspace"
+    ],
+    "internal/newtui": [
+      "internal/chat",
+      "internal/cli",
+      "internal/config",
+      "internal/ui/app",
+      "internal/ui/screen/conversation",
+      "internal/ui/theme",
+      "internal/uiadapter"
     ]
   }
 }

@@ -228,9 +228,10 @@ func TestCommittedSkillsDeclareValidTools(t *testing.T) {
 		t.Fatalf("committed skills must load without warnings, got: %v", warnings)
 	}
 	wantNames := []string{
-		"architecture-review", "bug-audit", "concurrency-review",
+		"architecture-review", "bug-audit", "capture", "concurrency-review",
 		"delivery",
 		"docs-maintenance", "docs-update", "fast-bug-audit", "feature-delivery",
+		"housekeeping",
 		"logic-review",
 		"memory-housekeeping", "panel-architecture-review",
 		"panel-bug-audit", "panel-secure-change", "performance-review",

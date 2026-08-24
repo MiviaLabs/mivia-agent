@@ -178,14 +178,26 @@ func newSDKTurnCompleter(l *Loop, opts Options, turn *sdkTurnState, clampedMaxTo
 // contract and shares the turn state (shaping counter, live
 // dispatcher/spool).
 func buildSDKToolRegistry(l *Loop, opts Options, cliReg *tools.Registry, turn *sdkTurnState) (*sdktools.Registry, error) {
-	sdkReg, err := sdkadapter.ConvertToolRegistryWithAdmission(cliReg, sdkadapter.AdmissionPredicates{
-		StagedMessage:     opts.StagedToolMessage,
-		UnadmittedHandler: opts.UnadmittedToolHandler,
-	})
+	sdkReg, err := sdkadapter.ConvertToolRegistry(cliReg)
 	if err != nil {
 		return nil, err
 	}
 	applyDispatcherShim(sdkReg, cliReg, opts, turn)
+	emitPending := func(name, detail, input string) {
+		emit(opts, Event{
+			Kind:   EventToolPending,
+			Name:   name,
+			Detail: detail,
+			Input:  input,
+		})
+	}
+	if err := sdkadapter.WrapRegistryWithAdmission(sdkReg, cliReg, sdkadapter.AdmissionPredicates{
+		ApprovalGate:     opts.ApprovalGate,
+		ApprovalStanding: opts.ApprovalStanding,
+		EmitPending:      emitPending,
+	}); err != nil {
+		return nil, err
+	}
 	applyRefOnlyShim(sdkReg, cliReg, opts.RefOnlyTools, turn.currentSpool(), BatchDegradeFloorBytes, opts.SessionID, turn)
 	// Host-side turn shaping replaces the SDK's TurnResultBudget: the
 	// CLI contract degrades with an honest notice and never omits a
@@ -314,9 +326,9 @@ func rejectUnsupportedSDKBatches(opts Options) error {
 	// backends.
 	// MaxContextTokens, OnEvent, EventBus, UsageWriter, FinalWriter,
 	// RequireFinalText, SummaryConfig.Summarizer, StagedToolMessage,
-	// UnadmittedToolHandler, RefOnlyTools, RemainderSpool, Dispatcher,
-	// MaxToolResultChars, ToolTimeout, Reasoning, MaxTokens,
-	// Temperature, RequestTimeout, DisableProviderReplay, and
+	// UnadmittedToolHandler, ApprovalGate, ApprovalStanding, RefOnlyTools,
+	// RemainderSpool, Dispatcher, MaxToolResultChars, ToolTimeout, Reasoning,
+	// MaxTokens, Temperature, RequestTimeout, DisableProviderReplay, and
 	// MailboxPendingInterrupt are carried. The full carrier table -
 	// placement, ordering, and each field's mechanism - lives in
 	// docs/development/sdk-backend-field-mapping.md §1.

@@ -125,6 +125,58 @@ func (a *admissionCheckedToolAdapter) DecodeArguments(raw []byte) (sdktools.InOu
 	return sdktools.InOut{}, nil
 }
 
+// WrapToolWithAdmission wraps one already-converted SDK tool with
+// approval and admission layers according to pred.
+func WrapToolWithAdmission(inner sdktools.Tool, cliTool tools.Tool, pred AdmissionPredicates) sdktools.Tool {
+	wrapped := inner
+	if pred.ApprovalGate != nil {
+		wrapped = &approvalGatedToolAdapter{
+			inner:           wrapped,
+			cliName:         cliTool.Name(),
+			gate:            pred.ApprovalGate,
+			standing:        pred.ApprovalStanding,
+			emitPending:     pred.EmitPending,
+			getCapabilities: capabilitiesFor(cliTool),
+		}
+	}
+	if pred.StagedMessage != nil || pred.UnadmittedHandler != nil {
+		wrapped = &admissionCheckedToolAdapter{
+			inner:      wrapped,
+			cliName:    cliTool.Name(),
+			staged:     pred.StagedMessage,
+			unadmitted: pred.UnadmittedHandler,
+		}
+	}
+	return wrapped
+}
+
+// WrapRegistryWithAdmission wraps each tool in sdkReg with the
+// admission and approval predicates corresponding to cliReg.
+func WrapRegistryWithAdmission(sdkReg *sdktools.Registry, cliReg *tools.Registry, pred AdmissionPredicates) error {
+	if sdkReg == nil || (pred.StagedMessage == nil && pred.UnadmittedHandler == nil && pred.ApprovalGate == nil) {
+		return nil
+	}
+	for _, t := range sdkReg.Tools() {
+		name := t.Name()
+		var cliTool tools.Tool
+		if cliReg != nil {
+			if ct, ok := cliReg.Get(name); ok {
+				cliTool = ct
+			}
+		}
+		if cliTool == nil {
+			continue
+		}
+		wrapped := WrapToolWithAdmission(t, cliTool, pred)
+		sdkReg.Remove(name)
+		if err := sdkReg.Add(wrapped); err != nil {
+			_ = sdkReg.Add(t)
+			return fmt.Errorf("sdkadapter: wrap tool %q in SDK registry: %w", name, err)
+		}
+	}
+	return nil
+}
+
 // ConvertToolRegistryWithAdmission converts a CLI registry to an SDK
 // registry, wrapping each tool with the admission predicates. A nil
 // pred produces the same result as ConvertToolRegistry. The check
@@ -149,27 +201,7 @@ func ConvertToolRegistryWithAdmission(cliReg *tools.Registry, pred AdmissionPred
 		if err != nil {
 			return nil, err
 		}
-		// Admission wraps OUTSIDE approval so its checks run first:
-		// a staged or unadmitted tool is rejected before the user is
-		// ever prompted. Approval then wraps the plain adapter and,
-		// when it approves, delegates into the same admission layer.
-		wrapped := sdktools.Tool(inner)
-		if pred.ApprovalGate != nil {
-			wrapped = &approvalGatedToolAdapter{
-				inner:           inner,
-				cliName:         t.Name(),
-				gate:            pred.ApprovalGate,
-				standing:        pred.ApprovalStanding,
-				emitPending:     pred.EmitPending,
-				getCapabilities: capabilitiesFor(t),
-			}
-		}
-		wrapped = &admissionCheckedToolAdapter{
-			inner:      wrapped,
-			cliName:    t.Name(),
-			staged:     pred.StagedMessage,
-			unadmitted: pred.UnadmittedHandler,
-		}
+		wrapped := WrapToolWithAdmission(inner, t, pred)
 		if err := sdkReg.Add(wrapped); err != nil {
 			return nil, fmt.Errorf("sdkadapter: add tool %q to SDK registry: %w", t.Name(), err)
 		}

@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -51,6 +53,8 @@ type agentTurnSnapshot struct {
 	maxToolResult     int
 	batchResultBudget int
 	refOnlyTools      []string
+	approvalGate      func(context.Context, string, json.RawMessage) sdkadapter.ApprovalResult
+	approvalStanding  *sdkadapter.ApprovalStanding
 	onEvent           func(agent.Event)
 	toolRegistry      *tools.Registry
 	toolTimeout       time.Duration
@@ -429,7 +433,9 @@ func (s *Session) beginAgentTurn(userText string, eventOverride func(agent.Event
 		context: s.captureContextLocked(), contextBudget: budget,
 		temperature: s.Temperature, maxTokens: config.EffectiveOutputTokens(binding.Profile, s.MaxTokens),
 		maxSteps: s.MaxSteps, maxToolResult: s.MaxToolResultChars,
-		batchResultBudget: s.BatchResultBudgetBytes, refOnlyTools: s.RefOnlyTools, onEvent: onEvent,
+		batchResultBudget: s.BatchResultBudgetBytes, refOnlyTools: s.RefOnlyTools,
+		approvalGate: s.ApprovalGate, approvalStanding: s.ApprovalStanding,
+		onEvent:      onEvent,
 		toolRegistry: s.Tools, toolTimeout: s.ToolTimeout, sessionID: s.SessionID,
 		// Captured under the lock: the host republishes the spool after a
 		// surface publication, concurrently with turns starting.

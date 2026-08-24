@@ -3,6 +3,7 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -18,6 +19,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -75,6 +77,10 @@ type Session struct {
 	// Read into every agent turn snapshot; the zero value is safe (no
 	// correction).
 	Calibration contextmgr.Calibration
+	// ApprovalGate is the synchronous user-approval bridge for tool calls.
+	ApprovalGate func(ctx context.Context, name string, args json.RawMessage) sdkadapter.ApprovalResult
+	// ApprovalStanding is the per-session "always" cache consulted before ApprovalGate.
+	ApprovalStanding *sdkadapter.ApprovalStanding
 	// OnAgentEvent optional tool/step tracing.
 	OnAgentEvent func(agent.Event)
 	// EventBus optional extensible event delivery (TUI UIAdapter, etc.).
@@ -345,6 +351,24 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 	if snapshot.toolTimeout <= 0 {
 		snapshot.toolTimeout = agent.DefaultToolTimeout
 	}
+	opts := s.buildAgentTurnOptions(snapshot, userText, w, turnDispatcher, turn)
+	reply, err := loop.Run(ctx, userText, opts)
+
+	// A step-boundary publication mid-turn swapped the binding surface and
+	// bumped the operation fence (TryPublishAgentSurface -> invalidateLocked);
+	// hand the commit the token re-captured under the post-publication fence so
+	// this turn is not fenced out of its own history. When no step-boundary
+	// publication happened, the fallback (the turn's own token) is unchanged.
+	commitToken := s.commitTurnToken(uint64(snapshot.myTurn), snapshot.token)
+	// loop.Tools is the post-run registry: after a step-boundary publication it
+	// carries the newly admitted tools, so the ephemeral-tool scrub sees them.
+	if persistErr := s.finishAgentTurn(ctx, loop, loop.Tools, userText, persistedText, commitToken, turn, snapshot.context, err); persistErr != nil && !errors.Is(persistErr, ErrStaleOperation) {
+		return reply, persistErr
+	}
+	return reply, err
+}
+
+func (s *Session) buildAgentTurnOptions(snapshot agentTurnSnapshot, userText string, w io.Writer, turnDispatcher *runtime.Dispatcher, turn *TurnOptions) agent.Options {
 	opts := agent.Options{
 		Model: snapshot.binding.Model, Temperature: snapshot.temperature, MaxTokens: snapshot.maxTokens,
 		Reasoning: config.ModelReasoning(snapshot.binding.Profile),
@@ -357,8 +381,10 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 		ToolTimeout:            snapshot.toolTimeout,
 		ParentID:               "session",
 		TurnID:                 fmt.Sprintf("turn:%d", snapshot.myTurn), SessionID: snapshot.sessionID,
-		Backend:     "sdk", // surface rotation, streaming, preparation, budgets, advertised union, and tool-event shape all bridge (docs/development/sdk-backend-field-mapping.md)
-		FinalWriter: w, OnEvent: snapshot.onEvent, EventBus: snapshot.eventBus, EventIdentity: snapshot.identity,
+		Backend:          "sdk", // surface rotation, streaming, preparation, budgets, advertised union, and tool-event shape all bridge (docs/development/sdk-backend-field-mapping.md)
+		ApprovalGate:     snapshot.approvalGate,
+		ApprovalStanding: snapshot.approvalStanding,
+		FinalWriter:      w, OnEvent: snapshot.onEvent, EventBus: snapshot.eventBus, EventIdentity: snapshot.identity,
 		RequireFinalText: true,
 		// Step 1 has no Surface hook call (applySurfaceHook skips it), so the
 		// turn's very first request must already carry the pinned snapshot;
@@ -385,20 +411,7 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 	// becomes callable from the next step via the loop's Surface hook, and a
 	// deferred stage reports the reason instead of the unknown-tool denial.
 	s.wireStepBoundaryAdmission(&opts, turn)
-	reply, err := loop.Run(ctx, userText, opts)
-
-	// A step-boundary publication mid-turn swapped the binding surface and
-	// bumped the operation fence (TryPublishAgentSurface -> invalidateLocked);
-	// hand the commit the token re-captured under the post-publication fence so
-	// this turn is not fenced out of its own history. When no step-boundary
-	// publication happened, the fallback (the turn's own token) is unchanged.
-	commitToken := s.commitTurnToken(uint64(snapshot.myTurn), snapshot.token)
-	// loop.Tools is the post-run registry: after a step-boundary publication it
-	// carries the newly admitted tools, so the ephemeral-tool scrub sees them.
-	if persistErr := s.finishAgentTurn(ctx, loop, loop.Tools, userText, persistedText, commitToken, turn, snapshot.context, err); persistErr != nil && !errors.Is(persistErr, ErrStaleOperation) {
-		return reply, persistErr
-	}
-	return reply, err
+	return opts
 }
 
 // commitTurnToken and SetRemainderSpool live in session_turn_surface.go.
