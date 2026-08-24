@@ -5,7 +5,6 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/picker"
-	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/themepicker"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/transcript"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/keymap"
@@ -297,76 +296,6 @@ func (s *Screen) panelFocus(focused bool) {
 	} else {
 		s.panel.dialog, s.panel.dialogAgent = false, ""
 	}
-}
-
-// handleClick routes one mouse click. The row layout mirrors View:
-// transcript rows, then the approval prompt, then the status row, then
-// the completion menu, then the input line as the last row.
-//
-// Left button only. A click on a collapsed block header expands it; a
-// click on a completion row accepts it; a click on the input line
-// places the cursor. With the panel open wide the chat column keeps
-// its normal geometry (the split draws no frame around it), and the
-// nav pane and its rule carry no click actions; narrow, the list
-// covers the transcript area and answers nothing.
-func (s Screen) handleClick(msg tea.MouseClickMsg) (app.Screen, tea.Cmd) {
-	if msg.Button != tea.MouseLeft {
-		return s, nil
-	}
-	if s.overlay != "" {
-		s.overlay = ""
-		return s, tea.ClearScreen
-	}
-	x, y := msg.X, msg.Y
-	transcriptTop := 2 // top bar, then its margin row
-	if s.panelIsSplit() {
-		// Column 0 is the gutter; the reading column runs to the rule.
-		// Clicks on the rule or the nav pane are not panel actions, so
-		// they stop here.
-		reading, _ := render.SplitWidths(contentWidth(s.width))
-		if x > reading {
-			return s, nil
-		}
-	} else if s.panel.open {
-		if y-transcriptTop < s.transcriptHeight() {
-			return s, nil // the list covers the transcript area
-		}
-	}
-	transcriptRows := s.transcriptHeight()
-	// The composer's frame puts the input above the bottom border, so
-	// the input row and its first column both shift; the composer owns
-	// the exact numbers (InputRowFromBottom, InputColumnOffset).
-	inputRow := s.height - 1 - s.composer.InputRowFromBottom()
-	colOffset := s.composer.InputColumnOffset()
-	menuRows := s.composer.Height() - 3
-	if menuRows < 0 {
-		menuRows = 0
-	}
-
-	switch {
-	case y-transcriptTop < transcriptRows && s.transcriptShown():
-		next, expanded := s.transcript.ExpandBlockAtScreenRow(y - transcriptTop)
-		if expanded {
-			s.transcript = next
-		}
-	case y == inputRow:
-		// One column in for the gutter, then the composer's own border
-		// offset: the click lands on the input's column space.
-		s.composer.ClickToColumn(x - 1 - colOffset)
-	// The menu sits above the frame's top border, which sits above the
-	// input row: menu rows run from inputRow-1-menuRows to inputRow-2.
-	case s.composer.MenuActive() && y >= inputRow-1-menuRows && y < inputRow-1:
-		s.composer.MenuClickRow(y - (inputRow - 1 - menuRows))
-	}
-	return s, nil
-}
-
-// transcriptShown reports whether the transcript itself is the content
-// of its area right now - not a picker dialog, the overlay, or the
-// panel's content dialog. Clicks that hit the area while something else
-// draws there must not act on the transcript hidden behind it.
-func (s Screen) transcriptShown() bool {
-	return s.modelPicker == nil && s.agentPicker == nil && s.sessionPicker == nil && s.overlay == "" && !s.panel.dialog
 }
 
 func (s Screen) completionAction(id keymap.ID) (app.Screen, tea.Cmd) {

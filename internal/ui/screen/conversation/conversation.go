@@ -306,8 +306,8 @@ func (s Screen) reservedRows() int {
 }
 
 // View draws the cockpit. The transcript area fills the surface between
-// the top bar's margin and the chrome below (approval prompt, status
-// row, composer), and the composer is the last row. With the panel open
+// the top bar's margin and the chrome below (approval prompt, composer,
+// status row), and the status row is the last row. With the panel open
 // wide, that whole assembly moves into the split's left reading pane
 // with the file list in the right nav pane (panelFrameRows); narrow, the
 // list replaces the transcript area and the chrome keeps its place.

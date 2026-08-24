@@ -303,8 +303,8 @@ func (s Screen) panelIsSplit() bool {
 	return s.panel.open && s.width >= uikitconfig.BreakpointWide
 }
 
-// chatWidth is the width the chat column (transcript, approval, status
-// row, composer) renders at: the reading pane's width while the panel
+// chatWidth is the width the chat column (transcript, approval, composer,
+// status row) renders at: the reading pane's width while the panel
 // splits the screen, the full content width otherwise.
 func (s Screen) chatWidth() int {
 	if !s.panelIsSplit() {
@@ -600,7 +600,7 @@ func (s Screen) panelFrameRows() []string {
 // narrowPanelRows draws the narrow layout: the list over the transcript
 // area at full width, or the content dialog over the same area, padded
 // or clipped to exactly that area's height. The chrome below (approval,
-// status row, composer) keeps its place.
+// composer, status row) keeps its place.
 func (s Screen) narrowPanelRows() []string {
 	h := s.transcriptHeight()
 	w := contentWidth(s.width)
@@ -612,14 +612,14 @@ func (s Screen) narrowPanelRows() []string {
 }
 
 // chatTailRows is the chat column below the transcript area: the
-// approval prompt when armed, the status row, and the composer.
+// approval prompt when armed, the composer, and the status row.
 func (s Screen) chatTailRows() []string {
 	var rows []string
 	if v := s.approval.View(); v != "" {
 		rows = append(rows, strings.Split(v, "\n")...)
 	}
-	rows = append(rows, s.statusRow())
 	rows = append(rows, strings.Split(s.composer.View(), "\n")...)
+	rows = append(rows, s.statusRow())
 	return rows
 }
 

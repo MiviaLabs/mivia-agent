@@ -71,4 +71,13 @@ func TestSessionState_BackgroundPendingApprovalAndEdgeCases(t *testing.T) {
 	if s.conv.ID() != "sess-C" {
 		t.Errorf("expected session C, got %q", s.conv.ID())
 	}
+
+	// Event arriving for an unknown session ID or inactive session
+	sUnk, cmdUnk := s.Update(uievent.EventMsg{
+		SessionID: "unknown-session",
+		Event:     uievent.Event{Kind: uievent.KindNotice, Body: uievent.NoticeBody{Text: "ignored"}},
+	})
+	if cmdUnk != nil || sUnk == nil {
+		t.Errorf("expected no-op on unknown session event, got cmd=%v", cmdUnk)
+	}
 }
