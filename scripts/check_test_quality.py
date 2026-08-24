@@ -118,8 +118,13 @@ func isAssertionCall(call *ast.CallExpr, tbNames map[string]bool) bool {
 		}
 	case *ast.Ident:
 		name := strings.ToLower(fun.Name)
-		if strings.HasPrefix(name, "assert") || strings.HasPrefix(name, "require") || strings.HasPrefix(name, "check") || strings.HasPrefix(name, "verify") || strings.HasPrefix(name, "must") || strings.HasPrefix(name, "expect") {
-			return true
+		if strings.HasPrefix(name, "assert") || strings.HasPrefix(name, "require") || strings.HasPrefix(name, "check") || strings.HasPrefix(name, "verify") || strings.HasPrefix(name, "expect") {
+			for _, arg := range call.Args {
+				if ident, ok := arg.(*ast.Ident); ok && tbNames[ident.Name] {
+					return true
+				}
+			}
+			return false
 		}
 	}
 	return false
@@ -234,6 +239,20 @@ func inspectFunc(fset *token.FileSet, filename string, decl *ast.FuncDecl) (Func
 		}
 	}
 
+	// Only top-level t.Skip calls directly on the test function body exempt the test from zero assertions
+	for _, stmt := range decl.Body.List {
+		if exprStmt, ok := stmt.(*ast.ExprStmt); ok {
+			if call, ok := exprStmt.X.(*ast.CallExpr); ok {
+				if isSkip, reason := isSkipCall(call, tbNames); isSkip {
+					summary.HasSkip = true
+					if reason != "" {
+						summary.SkipReasons = append(summary.SkipReasons, reason)
+					}
+				}
+			}
+		}
+	}
+
 	assertions := 0
 	ast.Inspect(decl.Body, func(n ast.Node) bool {
 		if n == nil {
@@ -261,12 +280,6 @@ func inspectFunc(fset *token.FileSet, filename string, decl *ast.FuncDecl) (Func
 			}
 		}
 		if call, ok := n.(*ast.CallExpr); ok {
-			if isSkip, reason := isSkipCall(call, tbNames); isSkip {
-				summary.HasSkip = true
-				if reason != "" {
-					summary.SkipReasons = append(summary.SkipReasons, reason)
-				}
-			}
 			if isTaut, reason := isTautological(fset, call); isTaut {
 				issues = append(issues, Issue{
 					Kind:     "tautological_assertion",
@@ -488,13 +501,17 @@ def check_paths(target_files: list[Path], root: Path, diff_args: list[str] | Non
     reports = run_go_inspector(target_files)
     violations: list[str] = []
 
+    policy = load_skip_policy(root, diff_args)
+    known_zero_assertions = set(policy.get("knownZeroAssertions", []))
+
     for rep in reports:
         for issue in (rep.get("issues") or []):
+            if issue.get("kind") == "zero_assertions" and issue.get("func_name") in known_zero_assertions:
+                continue
             rel_file = str(Path(issue["file"]).relative_to(root)) if Path(issue["file"]).is_absolute() and str(issue["file"]).startswith(str(root)) else issue["file"]
             violations.append(f"{rel_file}:{issue['line']}: [{issue['kind']}] {issue['message']}")
 
     if diff_args is not None:
-        policy = load_skip_policy(root, diff_args)
         known_skips = policy.get("knownSkips", {})
         added_skips = get_git_diff_added_skips(diff_args, root)
         for file_path, line, content in added_skips:
@@ -525,6 +542,7 @@ def check_paths(target_files: list[Path], root: Path, diff_args: list[str] | Non
 def main() -> int:
     parser = argparse.ArgumentParser(description="Check Go test quality (anti-fake-test enforcement).")
     parser.add_argument("--staged", action="store_true", help="Inspect staged _test.go files vs HEAD")
+    parser.add_argument("--diff", action="store_true", help="Inspect modified _test.go files vs HEAD")
     parser.add_argument("--base", help="Base git ref for diff inspection")
     parser.add_argument("--tip", default="HEAD", help="Tip git ref for diff inspection")
     parser.add_argument("--all", action="store_true", help="Inspect all _test.go files in the repository")
@@ -553,6 +571,25 @@ def main() -> int:
             if rev_check.returncode == 0:
                 diff_args = ["HEAD~1..HEAD"]
                 res = subprocess.run(["git", "diff", "--name-only", "HEAD~1..HEAD", "--", "*_test.go"], cwd=root, capture_output=True, text=True, check=False)
+                target_files = [root / f for f in res.stdout.splitlines() if f.strip()]
+    elif args.diff:
+        # Check uncommitted diff vs HEAD first
+        res = subprocess.run(["git", "diff", "--name-only", "HEAD", "--", "*_test.go"], cwd=root, capture_output=True, text=True, check=False)
+        target_files = [root / f for f in res.stdout.splitlines() if f.strip()]
+        diff_args = ["HEAD"]
+        if not target_files:
+            # On clean checkout (CI), resolve merge base against origin/main, main, or HEAD~1
+            base_ref = None
+            for candidate in ["origin/main", "main", "HEAD~1"]:
+                check = subprocess.run(["git", "rev-parse", "--verify", candidate], cwd=root, capture_output=True, text=True, check=False)
+                if check.returncode == 0:
+                    mb = subprocess.run(["git", "merge-base", "HEAD", candidate], cwd=root, capture_output=True, text=True, check=False)
+                    if mb.returncode == 0 and mb.stdout.strip():
+                        base_ref = mb.stdout.strip()
+                        break
+            if base_ref:
+                diff_args = [f"{base_ref}..HEAD"]
+                res = subprocess.run(["git", "diff", "--name-only", f"{base_ref}..HEAD", "--", "*_test.go"], cwd=root, capture_output=True, text=True, check=False)
                 target_files = [root / f for f in res.stdout.splitlines() if f.strip()]
     elif args.base:
         diff_args = [f"{args.base}..{args.tip}"]

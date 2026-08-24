@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
+	"github.com/MiviaLabs/mivia-agent/internal/evidencecheck"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
@@ -235,7 +236,9 @@ func TestCoordinatorRunnerCancelsChild(t *testing.T) {
 
 func TestCoordinatorRunnerUsesStableIdempotencyKey(t *testing.T) {
 	spec := validStepRequest()
-	if idempotencyKey(spec) != idempotencyKey(spec) {
+	k1 := idempotencyKey(spec)
+	k2 := idempotencyKey(spec)
+	if k1 != k2 {
 		t.Fatal("idempotency key is not stable")
 	}
 	other := spec
@@ -354,5 +357,40 @@ func TestRecordStepResultStoresChildIdentityAndEvidence(t *testing.T) {
 	}
 	if len(got.EvidenceJSON) == 0 {
 		t.Fatal("evidence selection was not stored")
+	}
+}
+
+func TestValidateOutput_EvidenceClaims(t *testing.T) {
+	emptyReport := json.RawMessage(`"# Agent Report\n\nFormat: mivia-report/v1\n\n## Summary\n\nAll good.\n"`)
+	if _, err := validateOutput("step-1", emptyReport, nil); err != nil {
+		t.Fatalf("expected empty report to pass, got %v", err)
+	}
+
+	validReport := json.RawMessage(`"# Agent Report\n\nFormat: mivia-report/v1\n\n## Evidence\n\n- make verify: PASS\n"`)
+	if _, err := validateOutput("step-1", validReport, nil); err != nil {
+		t.Fatalf("expected valid report to pass syntax validation, got %v", err)
+	}
+
+	invalidReport := json.RawMessage(`"# Agent Report\n\nFormat: mivia-report/v1\n\n## Evidence\n\n- : PASS\n"`)
+	if _, err := validateOutput("step-1", invalidReport, nil); err == nil {
+		t.Fatal("expected invalid empty command claim in report to fail")
+	}
+
+	// Test object-wrapped report
+	objReport := json.RawMessage(`{"report": "# Agent Report\n\nFormat: mivia-report/v1\n\n## Evidence\n\n- : PASS\n"}`)
+	if _, err := validateOutput("step-1", objReport, nil); err == nil {
+		t.Fatal("expected invalid empty command claim in object report to fail")
+	}
+
+	// Test ValidateReportEvidence cross-check
+	history := []evidencecheck.ToolExecutionRecord{
+		{ToolName: "run_command", Argv: []string{"make", "verify"}, ExitCode: 0},
+	}
+	if err := ValidateReportEvidence("# Agent Report\n\nFormat: mivia-report/v1\n\n## Evidence\n\n- make verify: PASS\n", history); err != nil {
+		t.Fatalf("expected executed claim to validate, got %v", err)
+	}
+
+	if err := ValidateReportEvidence("# Agent Report\n\nFormat: mivia-report/v1\n\n## Evidence\n\n- make test: PASS\n", history); err == nil {
+		t.Fatal("expected unexecuted claim to fail ValidateReportEvidence")
 	}
 }

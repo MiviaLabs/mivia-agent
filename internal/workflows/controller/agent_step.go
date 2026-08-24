@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
+	"github.com/MiviaLabs/mivia-agent/internal/evidencecheck"
 	"github.com/MiviaLabs/mivia-agent/internal/jschema"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
@@ -462,6 +464,9 @@ func validateOutput(stepID string, raw json.RawMessage, schema map[string]any) (
 	if len(raw) == 0 {
 		return nil, &SchemaValidationError{StepID: stepID, Err: jschema.ErrValidation}
 	}
+	if err := validateEvidenceClaims(stepID, raw); err != nil {
+		return nil, &SchemaValidationError{StepID: stepID, Err: err}
+	}
 	if schema == nil {
 		var value any
 		if err := json.Unmarshal(raw, &value); err != nil {
@@ -478,6 +483,59 @@ func validateOutput(stepID string, raw json.RawMessage, schema map[string]any) (
 		return nil, &SchemaValidationError{StepID: stepID, Err: err}
 	}
 	return value, nil
+}
+
+// ValidateReportEvidence cross-checks report claims against recorded tool executions.
+func ValidateReportEvidence(reportText string, history []evidencecheck.ToolExecutionRecord) error {
+	claims := evidencecheck.ParseClaims(reportText)
+	if len(claims) == 0 {
+		return nil
+	}
+	rep := evidencecheck.Validate(claims, history)
+	return rep.Error()
+}
+
+func validateEvidenceClaims(stepID string, raw json.RawMessage) error {
+	text := extractReportText(raw)
+	if text == "" || !strings.Contains(text, "mivia-report/v1") {
+		return nil
+	}
+	lines := strings.Split(text, "\n")
+	inEvidence := false
+	for _, l := range lines {
+		trimmed := strings.TrimSpace(l)
+		lower := strings.ToLower(trimmed)
+		if strings.HasPrefix(lower, "evidence:") || strings.HasPrefix(lower, "## evidence") {
+			inEvidence = true
+			continue
+		}
+		if inEvidence && strings.HasPrefix(lower, "#") {
+			inEvidence = false
+		}
+		if inEvidence && (strings.Contains(trimmed, "PASS") || strings.Contains(trimmed, "FAIL")) {
+			if strings.HasPrefix(trimmed, "- :") || strings.HasPrefix(trimmed, "* :") || strings.HasPrefix(trimmed, "- PASS") || strings.HasPrefix(trimmed, "* PASS") {
+				return fmt.Errorf("step %q report contains malformed evidence line %q", stepID, trimmed)
+			}
+		}
+	}
+	return nil
+}
+
+func extractReportText(raw json.RawMessage) string {
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		return text
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err == nil {
+		if report, ok := m["report"].(string); ok {
+			return report
+		}
+		if output, ok := m["output"].(string); ok {
+			return output
+		}
+	}
+	return ""
 }
 
 func findResult(results []subagents.Result, taskID string) (subagents.Result, error) {

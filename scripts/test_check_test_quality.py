@@ -293,6 +293,47 @@ func TestSubSkipped(t *testing.T) {
         assert "unreviewed_test_skip" in r.stdout
 
 
+def test_subtest_skip_does_not_suppress_zero_assertions() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_fixture(root)
+        (root / "pkg" / "subskip_zero_test.go").write_text(
+            """package pkg
+import "testing"
+func TestSubSkippedZero(t *testing.T) {
+    t.Run("sub", func(st *testing.T) {
+        st.Skip("wip")
+    })
+}
+""",
+            encoding="utf-8",
+        )
+        git("add", "-A", cwd=root)
+        r = run_script(["--worktree"], cwd=root)
+        assert r.returncode == 1, f"expected zero_assertions failure despite subtest skip, got {r.stdout}"
+        assert "zero_assertions" in r.stdout
+
+
+def test_must_bare_call_without_t_rejected_as_zero_assertions() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_fixture(root)
+        (root / "pkg" / "must_test.go").write_text(
+            """package pkg
+import "testing"
+func mustBuild() string { return "ok" }
+func TestMustBare(t *testing.T) {
+    _ = mustBuild()
+}
+""",
+            encoding="utf-8",
+        )
+        git("add", "-A", cwd=root)
+        r = run_script(["--worktree"], cwd=root)
+        assert r.returncode == 1, f"expected zero_assertions for bare mustBuild(), got {r.stdout}"
+        assert "zero_assertions" in r.stdout
+
+
 def test_deleted_test_function_in_diff_rejected() -> None:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)

@@ -87,7 +87,7 @@ verify-agent: agents-check
 test-quality:
 	@echo "Checking test quality and fake-test prevention..."
 	@python3 scripts/test_check_test_quality.py
-	@python3 scripts/check_test_quality.py --staged
+	@python3 scripts/check_test_quality.py --diff
 
 validate-invariants:
 	@echo "Validating invariant test references in .mivia/invariants.md..."
