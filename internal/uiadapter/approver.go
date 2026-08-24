@@ -74,7 +74,7 @@ func (a *Approver) Resolve(id string, decision ports.Decision) {
 
 // gate is installed as chat.Session.ApprovalGate.
 func (a *Approver) gate(ctx context.Context, name string, args json.RawMessage) sdkadapter.ApprovalResult {
-	if a.sess != nil && (a.sess.ApprovalPolicy == "auto" || a.sess.ApprovalPolicy == "never" || a.sess.ApprovalPolicy == "yolo") {
+	if a.sess != nil && sdkadapter.IsAutoApproval(a.sess.ApprovalPolicyValue()) {
 		return sdkadapter.ApprovalResult{Approved: true}
 	}
 	// The waiting map's key must be the id the UI will Resolve with.

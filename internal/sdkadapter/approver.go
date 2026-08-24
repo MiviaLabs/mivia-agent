@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
@@ -78,8 +79,28 @@ func (a *approvalGatedToolAdapter) DecodeArguments(raw []byte) (sdktools.InOut, 
 	return sdktools.InOut{Value: json.RawMessage(raw)}, nil
 }
 
+// IsAutoApproval reports whether the policy represents auto-approval.
+func IsAutoApproval(policy string) bool {
+	switch strings.ToLower(strings.TrimSpace(policy)) {
+	case "auto", "never", "none", "yolo":
+		return true
+	default:
+		return false
+	}
+}
+
+// IsAlwaysApproval reports whether the policy represents always-prompt.
+func IsAlwaysApproval(policy string) bool {
+	switch strings.ToLower(strings.TrimSpace(policy)) {
+	case "always", "paranoid", "all":
+		return true
+	default:
+		return false
+	}
+}
+
 func (a *approvalGatedToolAdapter) Run(ctx context.Context, in sdktools.InOut) (sdktools.Out, error) {
-	if a.policy == "auto" || a.policy == "never" || a.policy == "yolo" {
+	if IsAutoApproval(a.policy) {
 		return a.inner.Run(ctx, in)
 	}
 	args := json.RawMessage(nil)
@@ -91,7 +112,7 @@ func (a *approvalGatedToolAdapter) Run(ctx context.Context, in sdktools.InOut) (
 	// Read-class and Unclassified tools bypass the gate unless policy is "always".
 	// Mirror the legacy executeToolTask threshold.
 	cap := a.getCapabilities(args)
-	if a.policy != "always" && cap.Class < tools.ExecutionWrite {
+	if !IsAlwaysApproval(a.policy) && cap.Class < tools.ExecutionWrite {
 		return a.inner.Run(ctx, in)
 	}
 	// Standing decisions short-circuit the gate.

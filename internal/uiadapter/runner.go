@@ -365,10 +365,9 @@ func (r *CommandRunner) handleYolo() ports.CommandOutcome {
 	if r.sess == nil {
 		return ports.CommandOutcome{Err: "no active session"}
 	}
-	if r.sess.ApprovalPolicy == config.ApprovalPolicyAuto {
-		r.sess.ApprovalPolicy = config.ApprovalPolicyWriteOnly
-		return ports.CommandOutcome{Notice: "YOLO mode disabled: write tools require approval."}
+	enabled, policy := r.sess.ToggleYOLO()
+	if enabled {
+		return ports.CommandOutcome{Notice: "YOLO mode enabled: all tool calls auto-approved."}
 	}
-	r.sess.ApprovalPolicy = config.ApprovalPolicyAuto
-	return ports.CommandOutcome{Notice: "YOLO mode enabled: all tool calls auto-approved."}
+	return ports.CommandOutcome{Notice: fmt.Sprintf("YOLO mode disabled: active approval policy is %q.", policy)}
 }

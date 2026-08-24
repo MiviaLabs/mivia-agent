@@ -55,3 +55,19 @@ func TestApprovalsConfigFromTOML(t *testing.T) {
 		t.Fatalf("expected Approvals.IsAuto() == true, got policy %q", res.Approvals.ApprovalPolicy())
 	}
 }
+
+func TestPolicyPredicates(t *testing.T) {
+	if !IsAutoPolicy("yolo") || !IsAutoPolicy("auto") || !IsAutoPolicy("none") || !IsAutoPolicy("never") {
+		t.Errorf("IsAutoPolicy failed for auto aliases")
+	}
+	if IsAutoPolicy("always") || IsAutoPolicy("write-only") || IsAutoPolicy("") {
+		t.Errorf("IsAutoPolicy returned true for non-auto policy")
+	}
+
+	if !IsAlwaysPolicy("always") || !IsAlwaysPolicy("paranoid") || !IsAlwaysPolicy("all") {
+		t.Errorf("IsAlwaysPolicy failed for always aliases")
+	}
+	if IsAlwaysPolicy("auto") || IsAlwaysPolicy("write-only") || IsAlwaysPolicy("") {
+		t.Errorf("IsAlwaysPolicy returned true for non-always policy")
+	}
+}

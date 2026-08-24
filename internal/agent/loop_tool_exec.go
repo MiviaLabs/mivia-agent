@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -51,10 +52,10 @@ const approvalDenied = "tool call denied by user: %s"
 // the prompt for the rest of the session. It returns false when the
 // task was failed (denied or canceled) and must not proceed.
 func gateToolApproval(idx int, task *toolTask, opts Options, results []toolExecResult, finished *atomic.Int32) bool {
-	if opts.ApprovalPolicy == "auto" || opts.ApprovalPolicy == "never" || opts.ApprovalPolicy == "yolo" {
+	if sdkadapter.IsAutoApproval(opts.ApprovalPolicy) {
 		return true
 	}
-	if opts.ApprovalPolicy != "always" && task.capability.Class < approvalClassThreshold {
+	if !sdkadapter.IsAlwaysApproval(opts.ApprovalPolicy) && task.capability.Class < approvalClassThreshold {
 		return true
 	}
 	if opts.ApprovalGate == nil {

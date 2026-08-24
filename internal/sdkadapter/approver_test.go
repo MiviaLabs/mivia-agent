@@ -358,3 +358,19 @@ func TestApprovalGatedToolAdapterYOLOMode(t *testing.T) {
 		t.Fatalf("EmitPending fired in YOLO mode: %q", f.lastPending())
 	}
 }
+
+func TestApprovalPredicates(t *testing.T) {
+	if !IsAutoApproval("auto") || !IsAutoApproval("yolo") || !IsAutoApproval("none") || !IsAutoApproval("never") {
+		t.Errorf("IsAutoApproval failed for auto aliases")
+	}
+	if IsAutoApproval("always") || IsAutoApproval("write-only") || IsAutoApproval("") {
+		t.Errorf("IsAutoApproval returned true for non-auto policy")
+	}
+
+	if !IsAlwaysApproval("always") || !IsAlwaysApproval("paranoid") || !IsAlwaysApproval("all") {
+		t.Errorf("IsAlwaysApproval failed for always aliases")
+	}
+	if IsAlwaysApproval("auto") || IsAlwaysApproval("write-only") || IsAlwaysApproval("") {
+		t.Errorf("IsAlwaysApproval returned true for non-always policy")
+	}
+}

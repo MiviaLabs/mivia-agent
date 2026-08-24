@@ -83,6 +83,8 @@ type Session struct {
 	ApprovalStanding *sdkadapter.ApprovalStanding
 	// ApprovalPolicy controls tool execution approval policy ("write-only", "auto" / "never", "always").
 	ApprovalPolicy string
+	// BaseApprovalPolicy records the initial configured approval policy before dynamic runtime overrides.
+	BaseApprovalPolicy string
 	// OnAgentEvent optional tool/step tracing.
 	OnAgentEvent func(agent.Event)
 	// EventBus optional extensible event delivery (TUI UIAdapter, etc.).
