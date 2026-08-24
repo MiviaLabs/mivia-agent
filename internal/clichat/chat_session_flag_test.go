@@ -29,6 +29,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
@@ -224,5 +225,55 @@ func TestParseChatInvocationYOLOFlags(t *testing.T) {
 		if inv.approvalPolicy != tc.wantPolicy {
 			t.Errorf("parseChatInvocation(%v).approvalPolicy = %q, want %q", tc.args, inv.approvalPolicy, tc.wantPolicy)
 		}
+	}
+}
+
+func TestParseChatInvocationApprovalPolicyRequiresValue(t *testing.T) {
+	if _, err := parseChatInvocation([]string{"--approval-policy"}); err == nil {
+		t.Fatal("--approval-policy with no value: want error, got nil")
+	}
+}
+
+func TestApplySessionApprovalPolicy(t *testing.T) {
+	tests := []struct {
+		name string
+		inv  chatInvocation
+		res  *config.Resolved
+		want string
+	}{
+		{
+			name: "yolo flag",
+			inv:  chatInvocation{yolo: true},
+			res:  &config.Resolved{},
+			want: config.ApprovalPolicyAuto,
+		},
+		{
+			name: "approval policy flag",
+			inv:  chatInvocation{approvalPolicy: "always"},
+			res:  &config.Resolved{},
+			want: config.ApprovalPolicyAlways,
+		},
+		{
+			name: "resolved config",
+			inv:  chatInvocation{},
+			res:  &config.Resolved{Approvals: config.ApprovalsConfig{Policy: "auto"}},
+			want: config.ApprovalPolicyAuto,
+		},
+		{
+			name: "default",
+			inv:  chatInvocation{},
+			res:  &config.Resolved{},
+			want: "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			sess := chat.NewSession(tc.res, nil)
+			applySessionApprovalPolicy(sess, tc.inv, tc.res)
+			if sess.ApprovalPolicy != tc.want {
+				t.Errorf("sess.ApprovalPolicy = %q, want %q", sess.ApprovalPolicy, tc.want)
+			}
+		})
 	}
 }

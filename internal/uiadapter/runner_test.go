@@ -77,6 +77,9 @@ func TestCommandRunner_NilSessionErrors(t *testing.T) {
 	if out := runner.Run(context.Background(), "resume", ""); out.Err == "" {
 		t.Errorf("expected Err on nil session resume, got %+v", out)
 	}
+	if out := runner.Run(context.Background(), "yolo", ""); out.Err == "" {
+		t.Errorf("expected Err on nil session yolo, got %+v", out)
+	}
 	if out := runner.SelectSession(context.Background(), "s1"); out.Err == "" {
 		t.Errorf("expected Err on nil session SelectSession, got %+v", out)
 	}
