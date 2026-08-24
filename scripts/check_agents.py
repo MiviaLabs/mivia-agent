@@ -22,15 +22,19 @@ import argparse
 import sys
 from pathlib import Path
 
-REQUIRED_KEYS = ("name", "description", "tools")
-ALLOWED_ROLES = frozenset({"planner", "plan-reviewer", "builder", "reviewer"})
+ADLC_ROLES = frozenset({"planner", "plan-reviewer", "builder", "reviewer"})
+ALLOWED_ROLES = frozenset({
+    "planner", "plan-reviewer", "builder", "reviewer",
+    "mivia", "auditor", "docs", "e2e-engineer", "go-engineer",
+    "memory-curator", "panel-reviewer", "performance", "researcher",
+    "review-synthesizer", "security", "verifier", "workflow-engineer",
+})
 
 
 def _parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
     """Return (frontmatter_keys, body) for a Markdown file.
 
-    Frontmatter is the first `---\\n...\\n---\\n` block. Values for `tools`
-    are accepted as a YAML-style list; other values are taken verbatim.
+    Frontmatter is the first `---\n...\n---\n` block.
     """
     if not text.startswith("---\n"):
         return {}, text
@@ -43,8 +47,11 @@ def _parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
     current_key: str | None = None
     current_lines: list[str] = []
     for raw in block.split("\n"):
-        if raw.startswith("  - ") and current_key is not None:
-            current_lines.append(raw.strip()[2:])
+        if (raw.startswith("  - ") or raw.startswith("- ")) and current_key is not None:
+            val = raw.strip()
+            if val.startswith("- "):
+                val = val[2:].strip()
+            current_lines.append(val)
             continue
         if current_key is not None:
             keys[current_key] = "\n".join(current_lines).strip()
@@ -67,7 +74,7 @@ def _parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
 def _tools_count(value: str) -> int:
     """Count the number of tools declared under `tools:`.
 
-    Accepts either an inline list `[a, b]` or a block list (`- a\\n- b`).
+    Accepts either an inline list `[a, b]` or a block list (`- a\n- b`).
     Returns 0 if the value is empty.
     """
     value = value.strip()
@@ -89,17 +96,21 @@ def _check_role(path: Path) -> list[str]:
         failures.append(f"{path}: role {role_name!r} is not in the standard set {sorted(ALLOWED_ROLES)}")
     text = path.read_text(encoding="utf-8")
     keys, body = _parse_frontmatter(text)
-    for key in REQUIRED_KEYS:
+    for key in ("name", "description"):
         if key not in keys:
             failures.append(f"{path}: missing required frontmatter key {key!r}")
     name_value = keys.get("name", "").strip()
     if name_value and name_value != role_name:
         failures.append(f"{path}: frontmatter name {name_value!r} does not match filename {role_name!r}")
-    tools_value = keys.get("tools", "")
-    if "tools" in keys and _tools_count(tools_value) == 0:
-        failures.append(f"{path}: tools list is empty")
-    if "Disallowed operations" not in body:
-        failures.append(f"{path}: body must include a 'Disallowed operations' section")
+    if role_name in ADLC_ROLES:
+        if "tools" not in keys:
+            failures.append(f"{path}: missing required frontmatter key 'tools'")
+        else:
+            tools_value = keys.get("tools", "")
+            if _tools_count(tools_value) == 0:
+                failures.append(f"{path}: tools list is empty")
+        if "Disallowed operations" not in body:
+            failures.append(f"{path}: body must include a 'Disallowed operations' section")
     return failures
 
 

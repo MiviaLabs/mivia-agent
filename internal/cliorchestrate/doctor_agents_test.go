@@ -29,7 +29,7 @@ func TestDoctorReportsAgentsBeforeMissingCredentialError(t *testing.T) {
 	root := t.TempDir()
 	configPath := writeDoctorConfig(t, root)
 	workspace := t.TempDir()
-	writeCatalogAgent(t, filepath.Join(workspace, ".mivia", "agents"), "local", "name = \"local\"\ndescription = \"safe\"\n")
+	writeCatalogAgent(t, filepath.Join(workspace, ".agents", "agents"), "local", "---\nname: local\ndescription: safe\n---\n")
 	var out, errOut strings.Builder
 	err := RunDoctorWithIO([]string{"--config", configPath, "--workspace", workspace}, &out, &errOut)
 	if err == nil || !strings.Contains(err.Error(), "missing DEEPSEEK_API_KEY") {

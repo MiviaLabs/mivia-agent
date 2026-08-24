@@ -446,12 +446,15 @@ func TestBuildWorkflowControllerConfiguresEvidenceInIsolatedWorktree(t *testing.
 		t.Fatal(err)
 	}
 	initWorkflowGitRepo(t, root)
-	writer := `name = "writer"
-description = "workflow test writer"
-tools = ["write_file"]
-max_turns = 1
+	writer := `---
+name: writer
+description: workflow test writer
+tools:
+  - write_file
+max_turns: 1
+---
 `
-	if err := os.WriteFile(filepath.Join(root, ".mivia", "agents", "writer.toml"), []byte(writer), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".agents", "agents", "writer.md"), []byte(writer), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	wf.Steps[0].Agent = "writer"

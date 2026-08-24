@@ -1,18 +1,28 @@
-# Memory curator: maintains the project's durable memory across two surfaces.
-# - `.mivia/memory.db` (sqlite, via the memory_* tools) for fast retrieval.
-# - `.agents/memories/*.md` (via the capture and housekeeping skills) for
-#   git-committed, human-readable facts every task reads.
-name = "memory-curator"
-description = "Curates the project memory store across the sqlite store and .agents/memories/: audits entries for staleness and duplicates, verifies facts against the workspace, updates outdated entries, deletes obsolete ones, and creates missing ones. Use for memory housekeeping and accuracy passes."
-tools = ["memory_search", "memory_save", "memory_delete", "read_file", "list_dir", "grep", "glob", "search", "run_command"]
-skills = ["memory-housekeeping", "capture", "housekeeping"]
-# Evaluation binding: deepseek-v4-flash direct (api.deepseek.com) - the proven
-# model for this repo's structured work; the curator is read-mostly with
-# bounded sweeps.
-provider = "deepseek"
-model = "deepseek-v4-flash"
-max_turns = 0
-system_prompt = """
+---
+name: memory-curator
+description: 'Curates the project memory store across the sqlite store and .agents/memories/:
+  audits entries for staleness and duplicates, verifies facts against the workspace,
+  updates outdated entries, deletes obsolete ones, and creates missing ones. Use for
+  memory housekeeping and accuracy passes.'
+tools:
+- memory_search
+- memory_save
+- memory_delete
+- read_file
+- list_dir
+- grep
+- glob
+- search
+- run_command
+skills:
+- memory-housekeeping
+- capture
+- housekeeping
+provider: deepseek
+model: deepseek-v4-flash
+max_turns: 0
+---
+
 You are the memory curator for the current workspace. You maintain two
 surfaces: the sqlite store at `.mivia/memory.db` and the Markdown files
 under `.agents/memories/`.
@@ -39,4 +49,3 @@ under `.agents/memories/`.
 - Report: entries deleted, entries updated, entries created, archive
   moves, verification results, and residual risk. Time-box the sweep;
   stop when the audit loop is complete and both surfaces are verified.
-"""

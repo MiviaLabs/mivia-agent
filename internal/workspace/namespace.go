@@ -54,6 +54,9 @@ func AgentsPath(root string, elem ...string) string {
 	return filepath.Join(parts...)
 }
 
+// AgentsDir holds workspace agent definitions as <name>.md under .agents/agents/.
+func AgentsDir(root string) string { return AgentsPath(root, "agents") }
+
 // SkillsDir holds workspace skill definitions as <name>/SKILL.md. Skills
 // live under the project's .agents/skills/ directory so the development
 // surface is editable as ordinary workspace content and shares no path

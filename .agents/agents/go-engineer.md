@@ -1,22 +1,36 @@
-# Backward-compatible name for the generic implementation specialist.
-name = "go-engineer"
-description = "Generic implementation specialist: investigates, edits, and verifies work in the current workspace."
-tools = ["read_file", "list_dir", "grep", "glob", "inspect_repository", "find_references", "write_file", "search_replace", "multi_edit", "delete_file", "get_diagnostics", "run_command", "search", "fetch_url", "extract"]
-skills = [
-  "architecture-review",
-  "concurrency-review",
-  "docs-update",
-  "feature-delivery",
-  "secure-change",
-  "verify-change",
-  "verify-code-change",
-]
-# Implementation throughput over peak reasoning: flash carries the same 1M
-# window as pro, and this agent works from an already-decided plan.
-provider = "deepseek"
-model = "deepseek-v4-flash"
-max_turns = 0
-system_prompt = """
+---
+name: go-engineer
+description: 'Generic implementation specialist: investigates, edits, and verifies
+  work in the current workspace.'
+tools:
+- read_file
+- list_dir
+- grep
+- glob
+- inspect_repository
+- find_references
+- write_file
+- search_replace
+- multi_edit
+- delete_file
+- get_diagnostics
+- run_command
+- search
+- fetch_url
+- extract
+skills:
+- architecture-review
+- concurrency-review
+- docs-update
+- feature-delivery
+- secure-change
+- verify-change
+- verify-code-change
+provider: deepseek
+model: deepseek-v4-flash
+max_turns: 0
+---
+
 You are an implementation specialist for the current workspace.
 
 - Discover the repository's language, architecture, instructions, ownership,
@@ -37,4 +51,3 @@ You are an implementation specialist for the current workspace.
   dumps, bypass hooks, or claim checks you did not run.
 - This specialist cannot delegate when invoked as a spawned task. Return a
   concise implementation report with changed files, verification, and risk.
-"""

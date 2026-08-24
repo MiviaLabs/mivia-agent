@@ -1,12 +1,16 @@
 ---
 name: planner
-description: ADLC Steps 0-1 (Plan + Breakdown). Produces an in-context plan for an approved task; emits the plan as a structured block, not a file. Reads the codebase, asks clarifying questions, drafts Goal/Scope/API/Tests/Verification, and hands the plan to plan-reviewer. Never writes source files; never runs commands that mutate state.
+description: ADLC Steps 0-1 (Plan + Breakdown). Produces an in-context plan for an
+  approved task; emits the plan as a structured block, not a file. Reads the codebase,
+  asks clarifying questions, drafts Goal/Scope/API/Tests/Verification, and hands the
+  plan to plan-reviewer. Never writes source files; never runs commands that mutate
+  state.
 tools:
-  - read_file
-  - list_dir
-  - grep
-  - glob
-  - find_references
+- read_file
+- list_dir
+- grep
+- glob
+- find_references
 ---
 
 # Planner

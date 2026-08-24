@@ -11,30 +11,13 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
-// Ensures the committed repo agent definitions under .mivia/agents/ still parse
+// Ensures the committed repo agent definitions under .agents/agents/ still parse
 // and resolve. Skips if the workspace is not the mivia-agent tree.
 func TestProjectAgentDefinitionsResolve(t *testing.T) {
-	root, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Prefer module root via go.mod walk from cwd
-	cwd, _ := os.Getwd()
-	// test runs with package dir as cwd for relative; use repo-relative from this file
-	dir := filepath.Join(cwd, "..", "..", ".mivia", "agents")
-	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
-		// Try from module root when tests run with -C or different cwd
-		dir = filepath.Join(root, ".mivia", "agents")
-	}
-	if _, err := os.Stat(filepath.Join(dir, "mivia.toml")); err != nil {
-		t.Skip("project agents not present at", dir)
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	inputs := committedAgentInputs(t)
 	wantNames := map[string]bool{
 		"auditor":            true,
+		"builder":            true,
 		"docs":               true,
 		"e2e-engineer":       true,
 		"go-engineer":        true,
@@ -42,6 +25,8 @@ func TestProjectAgentDefinitionsResolve(t *testing.T) {
 		"mivia":              true,
 		"panel-reviewer":     true,
 		"performance":        true,
+		"plan-reviewer":      true,
+		"planner":            true,
 		"researcher":         true,
 		"review-synthesizer": true,
 		"reviewer":           true,
@@ -49,35 +34,16 @@ func TestProjectAgentDefinitionsResolve(t *testing.T) {
 		"verifier":           true,
 		"workflow-engineer":  true,
 	}
-	var inputs []ResolveInput
-	seen := make(map[string]bool, len(entries))
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".toml" {
-			continue
-		}
-		name := entry.Name()
-		data, err := os.ReadFile(filepath.Join(dir, name))
-		if err != nil {
-			t.Fatal(err)
-		}
-		spec, canonical, err := config.ParseAgentFileTOML(data, name)
-		if err != nil {
-			t.Fatalf("%s: %v", name, err)
-		}
-		seen[canonical] = true
-		inputs = append(inputs, ResolveInput{
-			Name:   canonical,
-			Source: config.AgentSourceWorkspace,
-			Path:   filepath.Join(dir, name),
-			Spec:   spec,
-		})
+	seen := make(map[string]bool, len(inputs))
+	for _, input := range inputs {
+		seen[input.Name] = true
 	}
 	if len(seen) != len(wantNames) {
 		t.Fatalf("agent roster names = %v, want exactly %v", seen, wantNames)
 	}
 	for name := range wantNames {
 		if !seen[name] {
-			t.Fatalf("required agent %q is missing from %s", name, dir)
+			t.Fatalf("required agent %q is missing from roster", name)
 		}
 	}
 	reg, _, err := ResolveAll(inputs, ResolveOptions{
@@ -288,17 +254,17 @@ func committedSkillsDir(t *testing.T) string {
 	return dir
 }
 
-// committedAgentInputs discovers the committed .mivia/agents TOML files into
+// committedAgentInputs discovers the committed .agents/agents Markdown files into
 // ResolveInputs, mirroring TestProjectAgentDefinitionsResolve's discovery.
 func committedAgentInputs(t *testing.T) []ResolveInput {
 	t.Helper()
 	cwd, _ := os.Getwd()
-	dir := filepath.Join(cwd, "..", "..", ".mivia", "agents")
-	if st, err := os.Stat(filepath.Join(dir, "mivia.toml")); err != nil || !st.IsDir() {
+	dir := filepath.Join(cwd, "..", "..", ".agents", "agents")
+	if st, err := os.Stat(filepath.Join(dir, "mivia.md")); err != nil || !st.IsDir() {
 		root, _ := filepath.Abs("../..")
-		dir = filepath.Join(root, ".mivia", "agents")
+		dir = filepath.Join(root, ".agents", "agents")
 	}
-	if _, err := os.Stat(filepath.Join(dir, "mivia.toml")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, "mivia.md")); err != nil {
 		t.Skip("project agents not present at", dir)
 	}
 	entries, err := os.ReadDir(dir)
@@ -307,14 +273,14 @@ func committedAgentInputs(t *testing.T) []ResolveInput {
 	}
 	var inputs []ResolveInput
 	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".toml" {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".md" || strings.EqualFold(entry.Name(), "readme.md") {
 			continue
 		}
 		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
 		if err != nil {
 			t.Fatal(err)
 		}
-		spec, canonical, err := config.ParseAgentFileTOML(data, entry.Name())
+		spec, canonical, err := config.ParseAgentFileMarkdown(data, entry.Name())
 		if err != nil {
 			t.Fatalf("%s: %v", entry.Name(), err)
 		}

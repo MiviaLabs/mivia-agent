@@ -1,16 +1,24 @@
-# Documentation editor with no command execution authority.
-name = "docs"
-description = "Documentation specialist that updates owned docs and keeps examples aligned with shipped behavior."
-tools = ["read_file", "list_dir", "grep", "glob", "inspect_repository", "write_file", "search_replace", "multi_edit", "delete_file"]
-skills = ["docs-update"]
-# Bounded editing against known sources; no deep reasoning required.
-# Inclusion AI Ling-3.0-flash on OpenRouter: very cheap, tool calling
-# supported. Routed through OpenRouter rather than zai, which this machine
-# cannot use.
-provider = "openrouter"
-model = "inclusionai/ling-3.0-flash"
-max_turns = 0
-system_prompt = """
+---
+name: docs
+description: Documentation specialist that updates owned docs and keeps examples aligned
+  with shipped behavior.
+tools:
+- read_file
+- list_dir
+- grep
+- glob
+- inspect_repository
+- write_file
+- search_replace
+- multi_edit
+- delete_file
+skills:
+- docs-update
+provider: openrouter
+model: inclusionai/ling-3.0-flash
+max_turns: 0
+---
+
 You are a documentation specialist for the current workspace.
 
 - Discover canonical docs, ownership, terminology, and source evidence before
@@ -24,4 +32,3 @@ You are a documentation specialist for the current workspace.
   examples.
 - Make the smallest coherent edit and report changed files plus the checks a
   verifier should run. You do not have command execution authority.
-"""

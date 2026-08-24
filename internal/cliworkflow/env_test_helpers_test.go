@@ -267,7 +267,7 @@ func writeWorkflowRunFixture(t *testing.T, root, providerURL, storePath string) 
 	for _, dir := range []string{
 		filepath.Join(workflowRoot, "templates"),
 		filepath.Join(workflowRoot, "schemas"),
-		filepath.Join(root, ".mivia", "agents"),
+		filepath.Join(root, ".agents", "agents"),
 	} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			t.Fatal(err)
@@ -294,11 +294,7 @@ store_path = "` + tomlPathLiteral(storePath) + `"
 `
 	writeFile(filepath.Join(root, "config.toml"), config)
 	for _, name := range []string{"one", "two"} {
-		writeFile(filepath.Join(root, ".mivia", "agents", name+".toml"), `name = "`+name+`"
-description = "workflow test agent"
-tools = ["read_file"]
-max_turns = 1
-`)
+		writeFile(filepath.Join(root, ".agents", "agents", name+".md"), "---\nname: "+name+"\ndescription: test\ntools: [read_file]\nmax_turns: 1\n---\n")
 	}
 	writeFile(filepath.Join(workflowRoot, "templates", "one.md"), "Return the result for {{ inputs.task }}.")
 	writeFile(filepath.Join(workflowRoot, "templates", "two.md"), "Return the result for {{ evidence.previous }}.")
@@ -348,8 +344,8 @@ status = "succeeded"
 func setWorkflowAgentTools(t *testing.T, root, tool string) {
 	t.Helper()
 	for _, name := range []string{"one", "two"} {
-		path := filepath.Join(root, ".mivia", "agents", name+".toml")
-		body := "name = \"" + name + "\"\ndescription = \"workflow agent\"\ntools = [\"" + tool + "\"]\nmax_turns = 2\n"
+		path := filepath.Join(root, ".agents", "agents", name+".md")
+		body := "---\nname: " + name + "\ndescription: \"workflow agent\"\ntools:\n  - " + tool + "\nmax_turns: 2\n---\n"
 		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}

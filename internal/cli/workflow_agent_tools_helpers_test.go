@@ -13,8 +13,8 @@ import (
 func setWorkflowAgentTools(t *testing.T, root, tool string) {
 	t.Helper()
 	for _, name := range []string{"one", "two"} {
-		path := filepath.Join(root, ".mivia", "agents", name+".toml")
-		body := "name = \"" + name + "\"\ndescription = \"workflow agent\"\ntools = [\"" + tool + "\"]\nmax_turns = 2\n"
+		path := filepath.Join(root, ".agents", "agents", name+".md")
+		body := "---\nname: " + name + "\ndescription: \"workflow agent\"\ntools:\n  - " + tool + "\nmax_turns: 2\n---\n"
 		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}

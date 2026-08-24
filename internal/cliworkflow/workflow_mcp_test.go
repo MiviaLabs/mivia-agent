@@ -48,13 +48,17 @@ func TestPrepareWorkflowBuildRegistersMCPToolsBeforeControllerStart(t *testing.T
 
 	// The workspace agent selects the global MCP server "repo".
 	// A workspace agent can select only a global server.
-	agentOne := `name = "one"
-description = "workflow test agent with MCP scope"
-tools = ["read_file"]
-mcp_servers = ["repo"]
-max_turns = 1
+	agentOne := `---
+name: one
+description: workflow test agent with MCP scope
+tools:
+  - read_file
+mcp_servers:
+  - repo
+max_turns: 1
+---
 `
-	if err := os.WriteFile(filepath.Join(root, ".mivia", "agents", "one.toml"), []byte(agentOne), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".agents", "agents", "one.md"), []byte(agentOne), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	// The workspace MCP table makes the server "repo" known to agent resolution.

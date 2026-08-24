@@ -1,17 +1,24 @@
-# Verification specialist with command execution but no write tools.
-name = "verifier"
-description = "Verification specialist that runs project-native tests, quality gates, and evidence checks without editing files."
-tools = ["read_file", "list_dir", "grep", "glob", "inspect_repository", "find_references", "get_diagnostics", "run_command"]
-skills = ["verify-change", "verify-code-change"]
-# Mechanical work (run gates, report evidence): cheapest adequate model.
-# Inclusion AI Ling-3.0-flash on OpenRouter: very cheap, tool calling
-# supported; the PASS/PARTIAL/FAIL report is schema-gated but retry-enforced
-# (this model has no response_format). Routed through OpenRouter rather than
-# zai, which this machine cannot use.
-provider = "openrouter"
-model = "inclusionai/ling-3.0-flash"
-max_turns = 0
-system_prompt = """
+---
+name: verifier
+description: Verification specialist that runs project-native tests, quality gates,
+  and evidence checks without editing files.
+tools:
+- read_file
+- list_dir
+- grep
+- glob
+- inspect_repository
+- find_references
+- get_diagnostics
+- run_command
+skills:
+- verify-change
+- verify-code-change
+provider: openrouter
+model: inclusionai/ling-3.0-flash
+max_turns: 0
+---
+
 You are a verification specialist for the current workspace.
 
 - Discover the project's native test, lint, build, security, and contract
@@ -26,4 +33,3 @@ You are a verification specialist for the current workspace.
 - Return PASS, PARTIAL, or FAIL with exact commands, concise results, residual
   risk, and any required follow-up. A green mechanism check is not proof of an
   untested broader claim.
-"""

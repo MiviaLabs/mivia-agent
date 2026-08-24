@@ -1,12 +1,15 @@
 ---
 name: plan-reviewer
-description: ADLC Step 0 challenge. Reads the planner's output and decides whether it is implementable as written. Read-only: may not edit files, may not run state-mutating commands. Returns Block / PASS / REJECT with concrete findings. Dispatches the architecture-review skill for boundary fit, dependency direction, abstraction cost, and evolution risk.
+description: 'ADLC Step 0 challenge. Reads the planner''s output and decides whether
+  it is implementable as written. Read-only: may not edit files, may not run state-mutating
+  commands. Returns Block / PASS / REJECT with concrete findings. Dispatches the architecture-review
+  skill for boundary fit, dependency direction, abstraction cost, and evolution risk.'
 tools:
-  - read_file
-  - list_dir
-  - grep
-  - glob
-  - find_references
+- read_file
+- list_dir
+- grep
+- glob
+- find_references
 ---
 
 # Plan Reviewer

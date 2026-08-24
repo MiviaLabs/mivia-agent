@@ -314,8 +314,8 @@ func TestDoctorJSONAgentCatalogEntries(t *testing.T) {
 	root := t.TempDir()
 	configPath := writeDoctorConfig(t, root)
 	workspace := t.TempDir()
-	writeCatalogAgent(t, filepath.Join(workspace, ".mivia", "agents"), "local", "name = \"local\"\ndescription = \"safe agent\"\n")
-	writeCatalogAgent(t, filepath.Join(workspace, ".mivia", "agents"), "coder", "name = \"coder\"\ndescription = \"code helper\"\ntools = [\"read_file\", \"write_file\"]\nmax_turns = 5\n")
+	writeCatalogAgent(t, filepath.Join(workspace, ".agents", "agents"), "local", "---\nname: local\ndescription: safe agent\n---\n")
+	writeCatalogAgent(t, filepath.Join(workspace, ".agents", "agents"), "coder", "---\nname: coder\ndescription: code helper\ntools: [read_file, write_file]\nmax_turns: 5\n---\n")
 	var out, errOut strings.Builder
 	err := RunDoctorWithIO([]string{"--config", configPath, "--json", "--workspace", workspace}, &out, &errOut)
 	if err != nil {

@@ -327,7 +327,7 @@ func newWorkflowValidationFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	for path, body := range map[string]string{
-		".mivia/agents/worker.toml":              "name = \"worker\"\ntools = [\"read_file\"]\nskills = [\"delivery-skill\"]\n",
+		".agents/agents/worker.md":               "---\nname: worker\ndescription: worker\ntools: [read_file]\nskills: [delivery-skill]\n---\n",
 		".agents/skills/delivery-skill/SKILL.md": "---\nname: delivery-skill\ntools: [read_file]\n---\nDeliver the task.\n",
 		".mivia/workflows/templates/plan.md":     "Task: {{ inputs.task }}\n",
 		".mivia/workflows/schemas/result.json":   `{"type":"object","additionalProperties":false}`,
@@ -346,11 +346,11 @@ func newWorkflowValidationFixture(t *testing.T) string {
 
 func writeWorkflowValidationAgent(t *testing.T, root, name string) {
 	t.Helper()
-	dir := filepath.Join(root, ".mivia", "agents")
+	dir := filepath.Join(root, ".agents", "agents")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, name+".toml"), []byte("name = \""+name+"\"\ntools = [\"read_file\"]\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, name+".md"), []byte("---\nname: "+name+"\ndescription: "+name+"\ntools: [read_file]\n---\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 
@@ -184,7 +185,11 @@ func writeCatalogAgent(t *testing.T, dir, name, body string) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, name+".toml"), []byte(body), 0o600); err != nil {
+	ext := ".md"
+	if strings.HasSuffix(name, ".toml") || strings.HasSuffix(name, ".md") {
+		ext = ""
+	}
+	if err := os.WriteFile(filepath.Join(dir, name+ext), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }

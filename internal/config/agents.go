@@ -116,12 +116,12 @@ func UserAgentsDir() string {
 	return workspace.NamespacePath(home, "agents")
 }
 
-// WorkspaceAgentsDir returns <root>/.mivia/agents without checking the filesystem.
+// WorkspaceAgentsDir returns <root>/.agents/agents without checking the filesystem.
 func WorkspaceAgentsDir(root string) string {
 	if strings.TrimSpace(root) == "" {
 		root = "."
 	}
-	return workspace.NamespacePath(root, "agents")
+	return workspace.AgentsDir(root)
 }
 
 // LoadAgentsGlobal reads the trusted user config for [agents] gate and
