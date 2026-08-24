@@ -113,8 +113,8 @@ func renderSplitHunk(ctx splitDiffContext, hunk uievent.DiffHunk) []string {
 			var leftCell, rightCell string
 			if r < len(dels) {
 				leftNum := formatLineNum(oldLine, numWidth, ctx.mutedStyle)
-				leftCode := clipOrPad(dels[r], ctx.leftCodeWidth)
-				leftCell = leftNum + " " + ctx.delStyle.Render("-"+leftCode[:max(0, len(leftCode)-1)])
+				leftCode := clipOrPad(dels[r], max(0, ctx.leftCodeWidth-1))
+				leftCell = leftNum + " " + ctx.delStyle.Render("-"+leftCode)
 				oldLine++
 			} else {
 				leftCell = strings.Repeat(" ", ctx.leftWidth)
@@ -122,8 +122,8 @@ func renderSplitHunk(ctx splitDiffContext, hunk uievent.DiffHunk) []string {
 
 			if r < len(adds) {
 				rightNum := formatLineNum(newLine, numWidth, ctx.mutedStyle)
-				rightCode := clipOrPad(adds[r], ctx.rightCodeWidth)
-				rightCell = rightNum + " " + ctx.addStyle.Render("+"+rightCode[:max(0, len(rightCode)-1)])
+				rightCode := clipOrPad(adds[r], max(0, ctx.rightCodeWidth-1))
+				rightCell = rightNum + " " + ctx.addStyle.Render("+"+rightCode)
 				newLine++
 			} else {
 				rightCell = strings.Repeat(" ", ctx.rightWidth)

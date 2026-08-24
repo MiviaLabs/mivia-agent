@@ -13,7 +13,9 @@ func parseToolDiff(name, input, output string) *uievent.Diff {
 		strings.Contains(lower, "edit") ||
 		strings.Contains(lower, "replace") ||
 		strings.Contains(lower, "patch") ||
-		strings.Contains(lower, "delete")
+		strings.Contains(lower, "delete") ||
+		strings.Contains(lower, "create") ||
+		strings.Contains(lower, "append")
 	if !isFileTool {
 		return nil
 	}
