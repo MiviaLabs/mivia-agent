@@ -25,17 +25,40 @@ import (
 // scroll affordances) takes the left. The whole row is one line,
 // truncated to the chat column's width.
 func (s Screen) statusRow() string {
-	left := s.statusText()
-	right := s.statusRight()
 	w := s.chatWidth()
 	if w <= 0 {
 		w = 80
 	}
 
-	var line string
+	left := s.statusText()
 	leftW := ansi.StringWidth(left)
+
+	avail := w
+	if left != "" {
+		avail = w - leftW - 2
+		if avail < 0 {
+			avail = 0
+		}
+	}
+
+	if s.active != nil && w >= 15 {
+		cancelW := ansi.StringWidth("esc:cancel")
+		if avail < cancelW {
+			maxLeftW := max(0, w-cancelW-2)
+			if maxLeftW > 0 {
+				left = ansi.Truncate(left, maxLeftW, uikitconfig.ClipMarker)
+			} else {
+				left = ""
+			}
+			leftW = ansi.StringWidth(left)
+			avail = max(0, w-leftW-2)
+		}
+	}
+
+	right := s.statusRight(avail)
 	rightW := ansi.StringWidth(right)
 
+	var line string
 	if left != "" && right != "" {
 		gap := w - leftW - rightW
 		if gap >= 1 {
@@ -63,28 +86,111 @@ func (s Screen) statusRow() string {
 	return line
 }
 
-func (s Screen) statusRight() string {
+func (s Screen) statusRight(avail int) string {
+	if avail <= 0 {
+		return ""
+	}
 	if s.embedded {
-		return render.Role(s.Theme, s.Tier, theme.RoleFGSubtle).Render("esc:close dialog")
+		txt := "esc:close dialog"
+		if ansi.StringWidth(txt) <= avail {
+			return render.Role(s.Theme, s.Tier, theme.RoleFGSubtle).Render(txt)
+		}
+		return ""
 	}
 	if s.panel.open && s.panel.focused {
-		return render.Role(s.Theme, s.Tier, theme.RoleAccent).Render("tab:composer") + "  " +
-			render.Role(s.Theme, s.Tier, theme.RoleFGSubtle).Render("↑/↓:select  enter:view  esc:back")
+		return s.panelFocusedHints(avail)
 	}
 	if s.quitArmed {
-		prefix := s.keys.Hint(keymap.IDHelp, keymap.IDOpenPager, keymap.IDPanelToggle)
-		warn := render.Role(s.Theme, s.Tier, theme.RoleWarning).Render("ctrl+c:press again to quit")
-		if prefix != "" {
-			return render.Role(s.Theme, s.Tier, theme.RoleFGSubtle).Render(prefix) + "  " + warn
-		}
-		return warn
+		return s.quitArmedHints(avail)
 	}
-	subtle := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle)
-	base := s.keys.Hint(keymap.IDHelp, keymap.IDOpenPager, keymap.IDPanelToggle, keymap.IDQuit)
+
+	candidateList := [][]keymap.ID{
+		{keymap.IDHelp, keymap.IDOpenPager, keymap.IDPanelToggle, keymap.IDQuit},
+		{keymap.IDHelp, keymap.IDPanelToggle, keymap.IDQuit},
+		{keymap.IDHelp, keymap.IDQuit},
+		{keymap.IDHelp},
+	}
+
 	if s.active != nil {
-		return subtle.Render("esc:cancel") + "  " + subtle.Render(base)
+		return s.activeTurnHints(avail, candidateList)
 	}
-	return subtle.Render(base)
+	return s.idleHints(avail, candidateList)
+}
+
+func (s Screen) panelFocusedHints(avail int) string {
+	accent := render.Role(s.Theme, s.Tier, theme.RoleAccent)
+	subtle := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle)
+	tab := accent.Render("tab:composer")
+	candidates := []string{
+		"↑/↓:select  enter:view  esc:back",
+		"enter:view  esc:back",
+		"esc:back",
+		"",
+	}
+	for _, rest := range candidates {
+		full := tab
+		if rest != "" {
+			full = tab + "  " + subtle.Render(rest)
+		}
+		if ansi.StringWidth(full) <= avail {
+			return full
+		}
+	}
+	return ""
+}
+
+func (s Screen) quitArmedHints(avail int) string {
+	subtle := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle)
+	warn := render.Role(s.Theme, s.Tier, theme.RoleWarning).Render("ctrl+c:press again to quit")
+	if ansi.StringWidth(warn) > avail {
+		return ansi.Truncate(warn, avail, uikitconfig.ClipMarker)
+	}
+	prefixCandidates := [][]keymap.ID{
+		{keymap.IDHelp, keymap.IDOpenPager, keymap.IDPanelToggle},
+		{keymap.IDHelp, keymap.IDPanelToggle},
+		{keymap.IDHelp},
+	}
+	for _, ids := range prefixCandidates {
+		if prefix := s.keys.Hint(ids...); prefix != "" {
+			full := subtle.Render(prefix) + "  " + warn
+			if ansi.StringWidth(full) <= avail {
+				return full
+			}
+		}
+	}
+	return warn
+}
+
+func (s Screen) activeTurnHints(avail int, candidateList [][]keymap.ID) string {
+	subtle := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle)
+	cancel := subtle.Render("esc:cancel")
+	if ansi.StringWidth(cancel) > avail {
+		return ""
+	}
+	for _, ids := range candidateList {
+		base := s.keys.Hint(ids...)
+		if base != "" {
+			full := cancel + "  " + subtle.Render(base)
+			if ansi.StringWidth(full) <= avail {
+				return full
+			}
+		}
+	}
+	return cancel
+}
+
+func (s Screen) idleHints(avail int, candidateList [][]keymap.ID) string {
+	subtle := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle)
+	for _, ids := range candidateList {
+		base := s.keys.Hint(ids...)
+		if base != "" {
+			rendered := subtle.Render(base)
+			if ansi.StringWidth(rendered) <= avail {
+				return rendered
+			}
+		}
+	}
+	return ""
 }
 
 // toolDetail is the status line's "<detail>" field for a pending or

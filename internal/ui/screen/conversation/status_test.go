@@ -93,3 +93,50 @@ func TestStatusRowClipsWithTheSharedClipMarker(t *testing.T) {
 		t.Errorf("got %q, want the clip marker %q on the clipped status row", got, uikitconfig.ClipMarker)
 	}
 }
+
+// TestStatusRowAdaptiveHintsWithSidebarOpen tests that when the sidebar is open
+// on a constrained screen, fewer options are shown without clipping or breaking.
+func TestStatusRowAdaptiveHintsWithSidebarOpen(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
+	s = next.(Screen)
+
+	// Open sidebar (chatWidth becomes ~69)
+	s.panel.open = true
+
+	// Active turn with thinking status
+	s.active = fakeHandle{id: "t1"}
+	s.statusline.Start("thinking", fixedNow())
+
+	row := ansi.Strip(s.statusRow())
+	// Should not have the clip marker
+	if strings.Contains(row, uikitconfig.ClipMarker) {
+		t.Errorf("expected no clip marker in adaptive status row with sidebar open, got %q", row)
+	}
+	// Must contain high-priority cancel hint
+	if !strings.Contains(row, "esc:cancel") {
+		t.Errorf("expected esc:cancel in adaptive status row, got %q", row)
+	}
+	// Must fit inside chatWidth
+	if ansi.StringWidth(row) > s.chatWidth() {
+		t.Errorf("row width %d exceeds chatWidth %d: %q", ansi.StringWidth(row), s.chatWidth(), row)
+	}
+}
+
+// TestStatusRowAdaptiveHintsPanelFocused tests navigation hint tiers when the panel is focused.
+func TestStatusRowAdaptiveHintsPanelFocused(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 60, Height: 24})
+	s = next.(Screen)
+
+	s.panel.open = true
+	s.panel.focused = true
+
+	row := ansi.Strip(s.statusRow())
+	if strings.Contains(row, uikitconfig.ClipMarker) {
+		t.Errorf("expected no clip marker in panel focused status row, got %q", row)
+	}
+	if !strings.Contains(row, "tab:composer") {
+		t.Errorf("expected tab:composer in panel focused status row, got %q", row)
+	}
+}
