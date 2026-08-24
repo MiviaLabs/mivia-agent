@@ -285,7 +285,7 @@ func TestEffectiveSDKMaxIterations(t *testing.T) {
 		opts Options
 		want int
 	}{
-		{"unset", Options{}, defaultSDKMaxIterations},
+		{"unset", Options{}, 0},
 		{"set", Options{MaxSteps: 7}, 7},
 		{"turns under steps", Options{MaxSteps: 20, WorkLimits: runtime.WorkLimits{MaxTurns: 10}}, 10},
 		{"turns over steps", Options{MaxSteps: 20, WorkLimits: runtime.WorkLimits{MaxTurns: 30}}, 20},

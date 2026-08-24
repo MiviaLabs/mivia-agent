@@ -387,7 +387,7 @@ func TestBuildAgentLoopOptionsWorkLimitsTurnsClamp(t *testing.T) {
 		{"unset steps take small limit", 0, 3, 3},
 		{"tighter limit wins", 5, 3, 3},
 		{"configured steps win when tighter", 3, 10, 3},
-		{"zero limit leaves default", 0, 0, defaultSDKMaxIterations},
+		{"zero limit leaves unbounded", 0, 0, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

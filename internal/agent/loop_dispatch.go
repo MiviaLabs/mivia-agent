@@ -190,11 +190,11 @@ func restoreSDKHistoryTimestamps(fresh, old []provider.Message) []provider.Messa
 
 // effectiveSDKMaxIterations mirrors buildAgentLoopOptions' iteration
 // clamp so an error message can name the same cap the SDK enforced.
+// When MaxSteps is unset (0), the SDK treats it as uncapped; the
+// error path is unreachable in practice but is preserved so the
+// message reports "no cap" honestly if it ever fires.
 func effectiveSDKMaxIterations(opts Options) int {
 	limit := opts.MaxSteps
-	if limit <= 0 {
-		limit = defaultSDKMaxIterations
-	}
 	if wl := opts.WorkLimits.MaxTurns; wl > 0 && (opts.MaxSteps <= 0 || wl < opts.MaxSteps) {
 		limit = wl
 	}

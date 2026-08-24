@@ -33,13 +33,6 @@ import (
 	sdktools "github.com/MiviaLabs/mivia-ai-sdk/tools"
 )
 
-// defaultSDKMaxIterations backs MaxSteps when the caller leaves it
-// unset. The legacy loop treats 0 as unbounded; the SDK's Validate
-// requires a positive MaxIterations, so the adapter substitutes a
-// finite default rather than fail-closing on the most common
-// zero-value configuration.
-const defaultSDKMaxIterations = 25
-
 // unsupportedSDKOption reports one CLI Options field the SDK path
 // cannot carry. The message names the field so the operator can find
 // the knob to unset.
@@ -76,10 +69,14 @@ func buildAgentLoopOptions(l *Loop, opts Options) (sdkagentloop.Options, *sdkTur
 	if err != nil {
 		return sdkagentloop.Options{}, nil, err
 	}
+	// MaxSteps passes through verbatim. The SDK's Validate accepts 0
+	// and treats it as uncapped via unboundedOrSet (MaxInt32), matching
+	// the legacy loop's MaxSteps <= 0 == unbounded contract. A
+	// positive MaxSteps is the requested cap as-is. The previous
+	// defaultSDKMaxIterations = 25 substitution was removed: it capped
+	// the SDK path at a value the legacy loop never honored, breaking
+	// the parity the field-mapping doc advertises.
 	maxIterations := opts.MaxSteps
-	if maxIterations <= 0 {
-		maxIterations = defaultSDKMaxIterations
-	}
 	out := sdkagentloop.Options{
 		Completer:          completer,
 		Tools:              sdkTools,

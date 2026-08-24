@@ -38,9 +38,11 @@ func TestBuildAgentLoopOptions_ProjectsModelAndSteps(t *testing.T) {
 }
 
 // TestBuildAgentLoopOptions_EmptyRequest locks the zero-input
-// behavior: a zero-value Options maps MaxSteps 0 to the documented
-// default of 25, because the SDK's Validate requires a positive
-// MaxIterations and 0 is the most common unset configuration.
+// behavior: a zero-value Options passes MaxSteps 0 through to the SDK,
+// which the SDK's Validate accepts and treats as uncapped (matches the
+// legacy loop's MaxSteps <= 0 == unbounded contract; see
+// mivia-ai-sdk/agentloop.New's defaulting via unboundedOrSet). The
+// adapter no longer substitutes a finite default.
 func TestBuildAgentLoopOptions_EmptyRequest(t *testing.T) {
 	l := &Loop{Completer: &fakeCompleter{name: "test"}, Tools: tools.NewRegistry()}
 	got, _, err := buildAgentLoopOptions(l, Options{})
@@ -50,8 +52,8 @@ func TestBuildAgentLoopOptions_EmptyRequest(t *testing.T) {
 	if got.Model != "" {
 		t.Fatalf("Model = %q, want empty", got.Model)
 	}
-	if got.MaxIterations != defaultSDKMaxIterations {
-		t.Fatalf("MaxIterations = %d, want default %d", got.MaxIterations, defaultSDKMaxIterations)
+	if got.MaxIterations != 0 {
+		t.Fatalf("MaxIterations = %d, want 0 (unbounded passes through to SDK)", got.MaxIterations)
 	}
 }
 
