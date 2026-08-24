@@ -90,6 +90,7 @@ func (s Screen) send() (app.Screen, tea.Cmd) {
 	}
 	s.composer.Clear()
 	s.active = handle
+	s.refreshTopbar()
 	cmd := s.statusline.Start("thinking", s.now())
 	return s, tea.Batch(cmd, s.awaitSessionEvent(s.convID(), handle.Events()))
 }
@@ -102,6 +103,7 @@ func (s Screen) send() (app.Screen, tea.Cmd) {
 func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 	next, flushCmd := s.transcript.HandleEvent(ev)
 	s.transcript = next
+	s.refreshTopbar()
 
 	switch b := ev.Body.(type) {
 	case uievent.ToolPendingBody:

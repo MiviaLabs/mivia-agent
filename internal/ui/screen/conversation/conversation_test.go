@@ -1148,3 +1148,50 @@ func TestConversationNewLoadsExistingHistory(t *testing.T) {
 		t.Errorf("view topbar missing startup session title:\n%s", view)
 	}
 }
+
+func TestConversationZeroContextUsageOnStartup(t *testing.T) {
+	dark, _, themes := themePair(t)
+	conv := &scriptedTestConversation{
+		model: ports.ModelInfo{Name: "test-model", ContextWindow: 200_000},
+		usage: ports.Usage{InputTokens: 0, OutputTokens: 0},
+	}
+	s := New(dark, theme.TierASCII, themes, conv, nil, 80, nil)
+	pct, ok := s.topbar.ContextPercent()
+	if !ok {
+		t.Fatalf("expected ContextPercent ok=true, got ok=false")
+	}
+	if pct != 0 {
+		t.Fatalf("expected startup ContextPercent=0%%, got %d%%", pct)
+	}
+}
+
+func TestTopbarContextRefreshesLiveOnTurnEvent(t *testing.T) {
+	dark, _, themes := themePair(t)
+	conv := &scriptedTestConversation{
+		model: ports.ModelInfo{Name: "test-model", ContextWindow: 100_000},
+		usage: ports.Usage{InputTokens: 10_000, OutputTokens: 0},
+	}
+	s := New(dark, theme.TierASCII, themes, conv, nil, 80, nil)
+	pct, ok := s.topbar.ContextPercent()
+	if !ok || pct != 10 {
+		t.Fatalf("initial ContextPercent=%d, want 10%%", pct)
+	}
+
+	// Update conversation usage mid-turn (simulating agent loop consuming tokens / tool steps)
+	conv.usage = ports.Usage{InputTokens: 50_000, OutputTokens: 0}
+
+	// Send a turn event
+	evMsg := uievent.EventMsg{
+		Event: uievent.Event{
+			Kind: uievent.KindToolStart,
+			Body: uievent.ToolStartBody{Name: "exec", Args: map[string]any{"cmd": "ls"}},
+		},
+	}
+	next, _ := s.Update(evMsg)
+	s = next.(Screen)
+
+	pct, ok = s.topbar.ContextPercent()
+	if !ok || pct != 50 {
+		t.Fatalf("after turn event ContextPercent=%d, want 50%% live refresh", pct)
+	}
+}

@@ -301,7 +301,7 @@ func (c *Conversation) Model() ports.ModelInfo {
 
 // ContextUsage reports the session's live prompt-cost estimate. Field
 // mapping: InputTokens <- chat.ContextUsage.UsedTokens,
-// OutputTokens <- chat.ContextUsage.OutputReserveTokens,
+// OutputTokens = 0 (chat.ContextUsage.OutputReserveTokens is max output capacity, not consumed tokens),
 // CachedTokens = 0 (chat has no cache field; honest zero),
 // CostUSD = 0 (chat has no cost field; honest zero).
 // Percent from chat.ContextUsage is discarded.
@@ -312,7 +312,7 @@ func (c *Conversation) ContextUsage() ports.Usage {
 	u := c.sess.ContextUsage()
 	return ports.Usage{
 		InputTokens:  int64(u.UsedTokens),
-		OutputTokens: int64(u.OutputReserveTokens),
+		OutputTokens: 0,
 		CachedTokens: 0,
 		CostUSD:      0,
 	}

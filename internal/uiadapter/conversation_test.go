@@ -428,17 +428,18 @@ func TestContextUsage_MapsFields(t *testing.T) {
 	comp := &scriptedCompleter{turns: []provider.Response{assistantResponse("r")}}
 	conv := newTestConversation(t, comp)
 	u := conv.ContextUsage()
-	// We don't pin exact numbers (the session's estimate depends on the
-	// prompt budget, system prompt length, etc.), but we assert the
-	// fields are wired and that CachedTokens / CostUSD are honest zeros.
+	// OutputTokens must be 0 (OutputReserveTokens is reservation capacity, not consumed tokens),
+	// and CachedTokens / CostUSD are honest zeros.
+	if u.OutputTokens != 0 {
+		t.Fatalf("OutputTokens=%d, want 0 (reservation output tokens must not be charged as used tokens)", u.OutputTokens)
+	}
 	if u.CachedTokens != 0 {
 		t.Fatalf("CachedTokens=%d, want 0", u.CachedTokens)
 	}
 	if u.CostUSD != 0 {
 		t.Fatalf("CostUSD=%f, want 0", u.CostUSD)
 	}
-	// InputTokens and OutputTokens must be non-negative.
-	if u.InputTokens < 0 || u.OutputTokens < 0 {
+	if u.InputTokens < 0 {
 		t.Fatalf("negative tokens: %+v", u)
 	}
 }
