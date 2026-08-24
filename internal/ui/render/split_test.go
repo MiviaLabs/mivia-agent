@@ -21,8 +21,9 @@ func colAt(row, needle string) int {
 	return ansi.StringWidth(row[:i])
 }
 
-func TestSplitSeparatesWithOneRuleAndNoBoxes(t *testing.T) {
-	got := Split(loadTheme(t), theme.TierASCII, 100, 10, Left, "reading", "nav")
+func TestSplitSeparatesWithGutterAndSubtleBG(t *testing.T) {
+	th := loadTheme(t)
+	got := Split(th, theme.TierTrueColor, 100, 10, Left, "reading", "nav")
 	rows := strings.Split(got, "\n")
 	if len(rows) != 10 {
 		t.Fatalf("%d rows, want 10 (exact height contract)", len(rows))
@@ -32,35 +33,37 @@ func TestSplitSeparatesWithOneRuleAndNoBoxes(t *testing.T) {
 			t.Errorf("row %d width %d, want 100 (exact width contract)", i, w)
 		}
 	}
-	// The split's only frame is the vertical rule on the sidebar's left
-	// edge: one rule glyph per row, and no box corners anywhere.
-	if n := strings.Count(got, "│"); n != 10 {
-		t.Errorf("drew %d rule glyphs, want one per row (10)", n)
+	// The split draws no border line (rule) and no box corners.
+	if strings.Contains(got, "│") {
+		t.Errorf("the split should not draw a vertical rule:\n%s", got)
 	}
 	if strings.Contains(got, "╭") || strings.Contains(got, "╰") {
-		t.Errorf("the split frames a pane with a box; only the rule may draw:\n%s", got)
+		t.Errorf("the split frames a pane with a box; only gutter and background may draw:\n%s", got)
 	}
-	// The reading column sits left of the rule, the nav content right of
-	// it.
-	var contentRow string
+	// The reading column sits left of the gutter, the nav content right of it (after top padding).
+	var readingRow, navRow string
 	for _, r := range rows {
-		if strings.Contains(r, "reading") {
-			contentRow = r
-			break
+		if readingRow == "" && strings.Contains(r, "reading") {
+			readingRow = r
+		}
+		if navRow == "" && strings.Contains(r, "nav") {
+			navRow = r
 		}
 	}
-	if contentRow == "" {
-		t.Fatalf("no row shows the panes' content:\n%s", got)
+	if readingRow == "" || navRow == "" {
+		t.Fatalf("rows missing panes' content:\n%s", got)
 	}
 	reading, _ := SplitWidths(100)
-	if i := colAt(contentRow, "reading"); i > 2 {
-		t.Errorf("reading content at column %d, want inside the left column: %q", i, contentRow)
+	if i := colAt(readingRow, "reading"); i > 2 {
+		t.Errorf("reading content at column %d, want inside the left column: %q", i, readingRow)
 	}
-	if i := colAt(contentRow, "│"); i != reading {
-		t.Errorf("rule at column %d, want %d (the sidebar's left edge): %q", i, reading, contentRow)
+	if i := colAt(navRow, "nav"); i < reading+1 {
+		t.Errorf("nav content at column %d, want right of the gutter at %d: %q", i, reading+1, navRow)
 	}
-	if i := colAt(contentRow, "nav"); i < reading {
-		t.Errorf("nav content at column %d, want right of the rule at %d: %q", i, reading, contentRow)
+	// Check nav pane carries RoleBGSubtle background in TrueColor
+	subtleBG := strings.TrimSuffix(FillBG(th, theme.TierTrueColor, theme.RoleBGSubtle, ""), "\x1b[m")
+	if subtleBG != "" && !strings.Contains(got, subtleBG) {
+		t.Errorf("split nav pane missing RoleBGSubtle background (%q):\n%q", subtleBG, got)
 	}
 }
 

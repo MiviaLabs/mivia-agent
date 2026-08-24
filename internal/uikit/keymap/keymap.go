@@ -159,11 +159,9 @@ func Default() []Binding {
 		{ID: IDThemeDialog, Context: ContextGlobal, Keys: []string{"ctrl+t"}, Help: "theme"},
 		{ID: IDOpenPager, Context: ContextGlobal, Keys: []string{"ctrl+o"}, Help: "open the pager", Short: "transcript"},
 		{ID: IDToggleReason, Context: ContextGlobal, Keys: []string{"ctrl+r"}, Help: "show or hide reasoning"},
-		// ctrl+n drives the files panel: open it focused, hand focus
-		// back to the composer, close it. No context claims it anywhere
-		// else; n alone is transcript copy-block's neighbour, but
-		// ctrl-modified it is free.
-		{ID: IDPanelToggle, Context: ContextGlobal, Keys: []string{"ctrl+n"}, Help: "open, focus, or close the sidebar", Short: "sidebar"},
+		// ctrl+b drives the files panel: open it focused, hand focus
+		// back to the composer, close it.
+		{ID: IDPanelToggle, Context: ContextGlobal, Keys: []string{"ctrl+b"}, Help: "open, focus, or close the sidebar", Short: "sidebar"},
 		// f2, not ctrl+g: ctrl+g is already IDCollapseAll in
 		// ContextTranscript and would only be PARTIALLY free (rule
 		// 1.4 forbids a hint that is not true in every state); f2 is

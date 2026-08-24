@@ -121,13 +121,13 @@ func (s *Screen) closeThread() {
 }
 
 // threadDialogKey routes a key into the open subagent-thread dialog.
-// Esc, ctrl+n, and ctrl+c close the dialog back to the list (the thread
+// Esc, ctrl+b, and ctrl+c close the dialog back to the list (the thread
 // keeps streaming in the background and reopens with its state).
 // Everything else goes to the embedded screen's OWN Update - its composer,
 // its completion menu, its transcript - never the main chat's.
 func (s Screen) threadDialogKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
 	switch msg.String() {
-	case "esc", "ctrl+n", "ctrl+c":
+	case "esc", "ctrl+b", "ctrl+c":
 		s.panel.dialog, s.panel.dialogAgent = false, ""
 		return s, tea.ClearScreen
 	}

@@ -38,8 +38,8 @@ func TestWelcomeBannerFullRendering(t *testing.T) {
 	if !strings.Contains(view, "thinking") {
 		t.Errorf("missing state legend in view:\n%s", view)
 	}
-	if !strings.Contains(view, "ctrl+n:sidebar") {
-		t.Errorf("missing ctrl+n:sidebar hint in view:\n%s", view)
+	if !strings.Contains(view, "ctrl+b:sidebar") {
+		t.Errorf("missing ctrl+b:sidebar hint in view:\n%s", view)
 	}
 	if strings.Contains(view, "For the work that takes longer than a chat.") {
 		t.Errorf("welcome banner should not show the tagline:\n%s", view)
@@ -65,7 +65,7 @@ func TestWelcomeCompactRendering(t *testing.T) {
 	if !strings.Contains(view, "Mivia") {
 		t.Errorf("compact view missing title:\n%s", view)
 	}
-	if !strings.Contains(view, "ctrl+n:sidebar") {
+	if !strings.Contains(view, "ctrl+b:sidebar") {
 		t.Errorf("compact view missing keybinding hint:\n%s", view)
 	}
 	if strings.Contains(view, "Mac Lisowski") {

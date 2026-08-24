@@ -45,7 +45,7 @@ const (
 const (
 	BreakpointPlainStream = 40
 	BreakpointNarrow      = 80
-	BreakpointWide        = 120
+	BreakpointWide        = 100
 )
 
 // Dialog geometry. wireframes-panes.md sections 8 and 12: a fixed-width

@@ -72,7 +72,7 @@ func driveFilesPanel(t *testing.T, width int, openDialog bool, cond func(string)
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	tm.Send(tea.KeyPressMsg{Code: 'n', Mod: tea.ModCtrl}) // panel: open, list focused
+	tm.Send(tea.KeyPressMsg{Code: 'b', Mod: tea.ModCtrl}) // panel: open, list focused
 	if openDialog {
 		tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
 	}

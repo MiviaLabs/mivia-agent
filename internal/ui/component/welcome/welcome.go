@@ -68,7 +68,7 @@ func (m Model) bannerLines() []string {
 	lines = append(lines, "")
 	lines = append(lines, m.renderLegend())
 	lines = append(lines, "")
-	lines = append(lines, subtle.Render("type a prompt or / for commands  •  ctrl+n:sidebar  •  ctrl+c:quit"))
+	lines = append(lines, subtle.Render("type a prompt or / for commands  •  ctrl+b:sidebar  •  ctrl+c:quit"))
 	return lines
 }
 
@@ -81,7 +81,7 @@ func (m Model) compactLines() []string {
 	}
 	return []string{
 		accent.Render(markGlyph + "Mivia"),
-		subtle.Render("type a prompt or / for commands  •  ctrl+n:sidebar  •  ctrl+c:quit"),
+		subtle.Render("type a prompt or / for commands  •  ctrl+b:sidebar  •  ctrl+c:quit"),
 	}
 }
 

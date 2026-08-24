@@ -159,7 +159,7 @@ func (s Screen) handleOpenPickerKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, b
 // handlePanelKey routes a key into the open, focused panel: its content
 // dialog first (any key closes it; the view toggle, the half-page
 // scrolls, and ctrl+c survive), then the list. The list is a focusable
-// pane, not a modal: ctrl+c, ctrl+n, ctrl+t, and ctrl+o stay live over
+// pane, not a modal: ctrl+c, ctrl+b, ctrl+t, and ctrl+o stay live over
 // it (a ctrl-modified key carries no Text, so the picker would silently
 // swallow them), esc hands focus back to the composer WITHOUT closing
 // the panel, the files bindings navigate, and every other key feeds the
@@ -194,7 +194,7 @@ func (s Screen) handlePanelKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bool) 
 	if id, ok := s.keys.Match(keymap.ContextGlobal, msg.String()); ok {
 		switch id {
 		case keymap.IDPanelToggle:
-			// The middle state of ctrl+n's cycle: focus returns to the
+			// The middle state of ctrl+b's cycle: focus returns to the
 			// composer; the panel stays open and live beside it.
 			s.panelFocus(false)
 			return s, nil, true
@@ -406,12 +406,12 @@ func (s Screen) globalAction(id keymap.ID) (app.Screen, tea.Cmd, bool) {
 		s.transcript = s.transcript.ScrollToBottom()
 		return s, nil, true
 	case keymap.IDPanelToggle:
-		// ctrl+n drives the panel's three states. This site handles the
+		// ctrl+b drives the panel's three states. This site handles the
 		// two the global context can see: closed opens the panel focused
 		// in its list, and open-with-the-composer-focused closes it (a
 		// close also drops the filter - a hidden list must not resurface
 		// later as an unexplained short list). The middle state - the
-		// list focused - claims ctrl+n earlier, in handlePanelKey, to
+		// list focused - claims ctrl+b earlier, in handlePanelKey, to
 		// hand focus back without closing.
 		if s.panel.open {
 			s.panel.open, s.panel.focused, s.panel.dialog, s.panel.dialogAgent = false, false, false, ""

@@ -27,8 +27,10 @@ import (
 	"strconv"
 	"strings"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/picker"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
@@ -230,6 +232,49 @@ func (p panel) selectedAgent() (subagentRow, bool) {
 	return subagentRow{}, false
 }
 
+// observeAgentStart registers an agent or delegation immediately upon launch.
+func (p *panel) observeAgentStart(id, name string) {
+	p.agents = slices.Clone(p.agents)
+	for i, a := range p.agents {
+		if a.ID == id {
+			if a.Status == "" || a.Status == "pending" {
+				p.agents[i].Status = "running"
+			}
+			p.rebindIfOpen()
+			return
+		}
+	}
+	p.agents = append(p.agents, subagentRow{ID: id, Status: "running"})
+	p.rebindIfOpen()
+}
+
+// observeAgentEnd updates a tracked subagent's terminal state upon completion or failure.
+func (p *panel) observeAgentEnd(id string, ok bool) {
+	status := "completed"
+	if !ok {
+		status = "failed"
+	}
+	p.agents = slices.Clone(p.agents)
+	for i, a := range p.agents {
+		if a.ID == id {
+			p.agents[i].Status = status
+			p.rebindIfOpen()
+			return
+		}
+	}
+}
+
+// activeAgentCount returns the count of currently running/pending subagents.
+func (p panel) activeAgentCount() int {
+	count := 0
+	for _, a := range p.agents {
+		if a.Status == "running" || a.Status == "pending" || a.Status == "" {
+			count++
+		}
+	}
+	return count
+}
+
 // observeAgent folds one subagent-progress update into the agents
 // section, latest per subagent - the same fold files use. The step log
 // rides along: it is the fallback content when no thread Conversation
@@ -389,6 +434,70 @@ func (s Screen) panelFilterEntries(needle string) ([]fileEntry, []subagentRow) {
 	return visible, agents
 }
 
+// selectNavRow maps a rendered row in the nav sidebar to an entry index in the picker.
+func (p *panel) selectNavRow(clickRow int) bool {
+	needle := strings.ToLower(p.list.Filter())
+	visible, agents := p.filterEntries(needle)
+	total := len(visible) + len(agents)
+	if total == 0 {
+		return false
+	}
+	if clickRow > 0 && clickRow <= len(visible) {
+		p.list.MoveTo(clickRow - 1)
+		return true
+	}
+	subHeader := len(visible) + 1
+	if clickRow > subHeader && clickRow <= subHeader+len(agents) {
+		p.list.MoveTo(len(p.entries) + (clickRow - subHeader - 1))
+		return true
+	}
+	return false
+}
+
+func (p panel) filterEntries(needle string) ([]fileEntry, []subagentRow) {
+	visible := make([]fileEntry, 0, len(p.entries))
+	for _, e := range p.entries {
+		if needle == "" || strings.Contains(strings.ToLower(e.rowLabel()), needle) {
+			visible = append(visible, e)
+		}
+	}
+	agents := make([]subagentRow, 0, len(p.agents))
+	for _, a := range p.agents {
+		if needle == "" || strings.Contains(strings.ToLower(a.rowLabel()), needle) {
+			agents = append(agents, a)
+		}
+	}
+	return visible, agents
+}
+
+// openPanelDialogForSelected opens the diff dialog or subagent thread for the selected item.
+func (s *Screen) openPanelDialogForSelected() {
+	if !s.panelDialogFits() {
+		return
+	}
+	if a, isAgent := s.panel.selectedAgent(); isAgent {
+		s.panel.dialogAgent = a.ID
+		s.openThread(a.ID)
+	} else {
+		s.panel.dialogAgent = ""
+	}
+	s.panel.dialog, s.panel.offset = true, 0
+}
+
+// handleNavClick routes mouse clicks within the nav sidebar.
+func (s *Screen) handleNavClick(clickRow int) (app.Screen, tea.Cmd) {
+	// clickRow 0 is top padding row; content starts at clickRow 1
+	clickRow--
+	if clickRow < 0 {
+		return *s, nil
+	}
+	s.panel.focused = true
+	if s.panel.selectNavRow(clickRow) {
+		s.openPanelDialogForSelected()
+	}
+	return *s, nil
+}
+
 // panelWindowRows clips rows to a window around the selection, reserving a
 // row for the filter indicator when one will be appended: the indicator is
 // the only on-screen explanation of a shortened list, so it must never be
@@ -463,11 +572,12 @@ func (s Screen) panelFileRow(e fileEntry, selLabel string, marked bool) string {
 
 func (s Screen) panelAgentRow(a subagentRow, selLabel string, marked bool) string {
 	prefix := "  · "
-	if marked && a.rowLabel() == selLabel {
-		prefix = "> · "
-	}
 	subtle := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle)
 	fg := render.Role(s.Theme, s.Tier, theme.RoleFG)
+	if marked && a.rowLabel() == selLabel {
+		prefix = "> · "
+		fg = render.WithBg(fg, s.Theme, s.Tier, theme.RoleBGSelection)
+	}
 	border := render.Role(s.Theme, s.Tier, theme.RoleBorder)
 	var statusBadge string
 	if a.Status != "" {
@@ -567,6 +677,9 @@ func (s Screen) panelFrameRows() []string {
 	paneH := max(1, s.height-(s.topbar.Height()+1)) // the top bar and its margin row
 	_, navW := render.SplitWidths(w)
 
+	innerNavW := max(1, navW-3)
+	innerNavH := max(1, paneH-2)
+
 	var frame string
 	switch {
 	case s.panel.dialog && s.panelDialogFits():
@@ -574,7 +687,7 @@ func (s Screen) panelFrameRows() []string {
 		// The list keeps keyboard focus under its dialog ("any key
 		// closes"), so the rule keeps the focused colour.
 		frame = render.SplitDialog(s.Theme, s.Tier, w, paneH, s.panel.focused, title, body, hint,
-			strings.Join(s.panelRows(navW-1, paneH), "\n"))
+			strings.Join(s.panelRows(innerNavW, innerNavH), "\n"))
 	default:
 		focus := render.Left
 		if s.panel.focused {
@@ -585,7 +698,7 @@ func (s Screen) panelFrameRows() []string {
 			chat = chat[:paneH]
 		}
 		frame = render.Split(s.Theme, s.Tier, w, paneH, focus,
-			strings.Join(chat, "\n"), strings.Join(s.panelRows(navW-1, paneH), "\n"))
+			strings.Join(chat, "\n"), strings.Join(s.panelRows(innerNavW, innerNavH), "\n"))
 	}
 	rows := strings.Split(frame, "\n")
 	if len(rows) > paneH {

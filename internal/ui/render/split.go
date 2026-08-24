@@ -54,19 +54,15 @@ func SplitWidths(width int) (reading, nav int) {
 }
 
 // Split composes the reading column and the nav sidebar side by side,
-// separated by ONE vertical rule on the sidebar's left edge - the only
-// frame the split draws. The reading column keeps the cockpit's open
-// look (a full box around the conversation reads as a second terminal
-// inside the terminal), and the rule is what says "pane boundary".
+// separated by a 1-column gutter. The nav sidebar has a subtle card
+// background (RoleBGSubtle) matching the composer where the user types.
 //
-// The focused pane names the rule's colour, carrying the same
-// RoleBorderFocus/RoleBorder convention the approval prompt uses. Both
-// columns draw exactly height rows: content is padded, and surplus rows
+// Both columns draw exactly height rows: content is padded, and surplus rows
 // clip from the bottom (Split never scrolls - windowing belongs to the
 // pane's owner, so there stays one implementation of it).
 //
 // This is the codebase's only side-by-side composition; it exists so
-// the ratio, the height contract, and the focus-colour convention live
+// the ratio, the height contract, and the layout convention live
 // in one place when more panes arrive.
 func Split(t theme.Theme, tier theme.Tier, width, height int, focus Side, left, right string) string {
 	reading, _ := SplitWidths(width)
@@ -79,20 +75,22 @@ func Split(t theme.Theme, tier theme.Tier, width, height int, focus Side, left, 
 // screen's five-word nav sidebar needs a different share and a different
 // cap, and neither belongs in this package (uikitconfig owns literals -
 // see internal/uikit/config's package doc). SplitAt is the geometry both
-// policies share: left is drawn at exactly leftWidth, the rule sits at
-// column leftWidth, and right takes what remains after the rule column.
+// policies share: left is drawn at exactly leftWidth, separated by a
+// 1-column gutter, and right takes what remains with RoleBGSubtle background.
 func SplitAt(t theme.Theme, tier theme.Tier, width, height, leftWidth int, focus Side, left, right string) string {
 	rightWidth := width - leftWidth - 1
-	return joinWithRule(t, tier, focus == Right, height,
-		clipBlock(left, leftWidth, height), clipBlock(right, rightWidth, height))
+	if rightWidth < 0 {
+		rightWidth = 0
+	}
+	return joinPanes(t, tier, height,
+		clipBlock(left, leftWidth, height), clipNavBlock(t, tier, right, rightWidth, height))
 }
 
 // SplitDialog is the split with its reading column replaced by a
 // centered dialog: the dialog is sized to the reading column's whole
 // area, so the blocks compose with no gap, and the nav pane stays
 // visible and legible beside it instead of hiding behind a
-// full-surface dialog. navFocused names the rule's colour, so a caller
-// whose list keeps keyboard focus under the dialog can keep saying so.
+// full-surface dialog.
 func SplitDialog(t theme.Theme, tier theme.Tier, width, height int, navFocused bool, title, body, hint, nav string) string {
 	reading, _ := SplitWidths(width)
 	return SplitAtDialog(t, tier, width, height, reading, navFocused, title, body, hint, nav)
@@ -105,23 +103,54 @@ func SplitDialog(t theme.Theme, tier theme.Tier, width, height int, navFocused b
 func SplitAtDialog(t theme.Theme, tier theme.Tier, width, height, leftWidth int, navFocused bool, title, body, hint, nav string) string {
 	dlg := Dialog(t, tier, leftWidth, height, title, body, hint)
 	rightWidth := width - leftWidth - 1
-	return joinWithRule(t, tier, navFocused, height, dlg, clipBlock(nav, rightWidth, height))
-}
-
-// joinWithRule stacks block, one rule column, block.
-func joinWithRule(t theme.Theme, tier theme.Tier, focus bool, height int, reading, nav string) string {
-	return lipgloss.JoinHorizontal(lipgloss.Top, reading, verticalRule(t, tier, focus, height), nav)
-}
-
-// verticalRule is the sidebar's left edge: one column of rule glyphs,
-// focus-coloured. It is the split's only frame.
-func verticalRule(t theme.Theme, tier theme.Tier, focus bool, height int) string {
-	role := theme.RoleBorder
-	if focus {
-		role = theme.RoleBorderFocus
+	if rightWidth < 0 {
+		rightWidth = 0
 	}
-	glyph := strings.Repeat("│\n", height)
-	return Role(t, tier, role).Render(strings.TrimSuffix(glyph, "\n"))
+	return joinPanes(t, tier, height, dlg, clipNavBlock(t, tier, nav, rightWidth, height))
+}
+
+// joinPanes stacks reading block, 1-col space gutter, and the nav block.
+func joinPanes(t theme.Theme, tier theme.Tier, height int, reading, navBlock string) string {
+	gap := strings.Repeat(" \n", height)
+	gap = strings.TrimSuffix(gap, "\n")
+	return lipgloss.JoinHorizontal(lipgloss.Top, reading, gap, navBlock)
+}
+
+// clipNavBlock normalizes the nav sidebar with 1-cell inner padding on all 4 faces
+// (top, bottom, left, right), filled with RoleBGSubtle background.
+func clipNavBlock(t theme.Theme, tier theme.Tier, content string, width, height int) string {
+	if width <= 2 || height <= 2 {
+		return FillBG(t, tier, theme.RoleBGSubtle, clipBlock(content, width, height))
+	}
+	innerWidth := width - 2
+	innerHeight := height - 2
+
+	rows := strings.Split(content, "\n")
+	if len(rows) > innerHeight {
+		rows = rows[:innerHeight]
+	}
+	for i, r := range rows {
+		if w := ansi.StringWidth(r); w > innerWidth {
+			rows[i] = ansi.Truncate(r, innerWidth, uikitconfig.ClipMarker)
+		}
+	}
+	for len(rows) < innerHeight {
+		rows = append(rows, "")
+	}
+
+	paddedRows := make([]string, 0, height)
+	// Top padding row
+	paddedRows = append(paddedRows, strings.Repeat(" ", width))
+
+	st := lipgloss.NewStyle().Width(innerWidth)
+	for _, r := range rows {
+		paddedRows = append(paddedRows, " "+st.Render(r)+" ")
+	}
+
+	// Bottom padding row
+	paddedRows = append(paddedRows, strings.Repeat(" ", width))
+
+	return FillBG(t, tier, theme.RoleBGSubtle, strings.Join(paddedRows, "\n"))
 }
 
 // clipBlock normalizes content into an exact width x height block:

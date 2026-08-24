@@ -55,14 +55,12 @@ func (s Screen) handleClick(msg tea.MouseClickMsg) (app.Screen, tea.Cmd) {
 		return s, tea.ClearScreen
 	}
 	x, y := msg.X, msg.Y
-	transcriptTop := 2 // top bar, then its margin row
+	transcriptTop := s.topbar.Height() + 1
 	if s.panelIsSplit() {
 		// Column 0 is the gutter; the reading column runs to the rule.
-		// Clicks on the rule or the nav pane are not panel actions, so
-		// they stop here.
 		reading, _ := render.SplitWidths(contentWidth(s.width))
 		if x > reading {
-			return s, nil
+			return s.handleNavClick(y - transcriptTop)
 		}
 	} else if s.panel.open {
 		if y-transcriptTop < s.transcriptHeight() {

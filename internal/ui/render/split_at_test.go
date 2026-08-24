@@ -23,54 +23,33 @@ func TestSplitAtSizesTheLeftPaneExactly(t *testing.T) {
 			t.Errorf("row %d width %d, want 100", i, w)
 		}
 	}
-	var contentRow string
+	var leftRow, rightRow string
 	for _, r := range rows {
-		if strings.Contains(r, "left-content") {
-			contentRow = r
-			break
+		if leftRow == "" && strings.Contains(r, "left-content") {
+			leftRow = r
+		}
+		if rightRow == "" && strings.Contains(r, "right-content") {
+			rightRow = r
 		}
 	}
-	if contentRow == "" {
-		t.Fatalf("no row shows the left pane's content:\n%s", got)
+	if leftRow == "" || rightRow == "" {
+		t.Fatalf("rows missing panes' content:\n%s", got)
 	}
-	if i := colAt(contentRow, "left-content"); i > 2 {
-		t.Errorf("left content at column %d, want inside the left pane: %q", i, contentRow)
+	if i := colAt(leftRow, "left-content"); i > 2 {
+		t.Errorf("left content at column %d, want inside the left pane: %q", i, leftRow)
 	}
-	if i := colAt(contentRow, "│"); i != 20 {
-		t.Errorf("rule at column %d, want 20 (leftWidth): %q", i, contentRow)
-	}
-	if i := colAt(contentRow, "right-content"); i < 20 {
-		t.Errorf("right content at column %d, want right of the rule at 20: %q", i, contentRow)
+	if i := colAt(rightRow, "right-content"); i < 21 {
+		t.Errorf("right content at column %d, want right of the gutter at 21: %q", i, rightRow)
 	}
 }
 
-// TestSplitAtPlacesTheLeftPaneOnEitherSide is really about the pane the
-// caller wants first (left argument) always landing left of the rule -
-// SplitAt has no separate "side" concept beyond argument order, which is
-// what lets a settings screen put its nav on the left while Split keeps
-// its nav on the right, from the same primitive.
-func TestSplitAtHonoursFocusColour(t *testing.T) {
+// TestSplitAtSubtleBackground asserts that the right pane receives RoleBGSubtle background.
+func TestSplitAtSubtleBackground(t *testing.T) {
 	th := loadTheme(t)
-	leftFocus := SplitAt(th, theme.TierTrueColor, 60, 6, 15, Left, "l", "r")
-	rightFocus := SplitAt(th, theme.TierTrueColor, 60, 6, 15, Right, "l", "r")
-	if leftFocus == rightFocus {
-		t.Error("focus side made no difference to the rendered rule colour")
-	}
-	focusColour := Role(th, theme.TierTrueColor, theme.RoleBorderFocus).Render("x")
-	calmColour := Role(th, theme.TierTrueColor, theme.RoleBorder).Render("x")
-	i := strings.Index(focusColour, "\x1b[")
-	j := strings.Index(calmColour, "\x1b[")
-	if i < 0 || j < 0 {
-		t.Fatal("expected coloured roles at TrueColor")
-	}
-	// Side names which ARGUMENT has focus, not which pane is "nav": the
-	// rule colours for the Right argument, matching Split's own
-	// focus==Right convention (Split's nav is its right argument too).
-	if !strings.Contains(leftFocus, calmColour[j:strings.IndexByte(calmColour[j:], 'm')+j+1]) {
-		t.Errorf("Left focus (right argument unfocused) did not draw the calm rule: %q", leftFocus)
-	}
-	if !strings.Contains(rightFocus, focusColour[i:strings.IndexByte(focusColour[i:], 'm')+i+1]) {
-		t.Errorf("Right focus did not draw the focus-coloured rule: %q", rightFocus)
+	got := SplitAt(th, theme.TierTrueColor, 60, 6, 15, Left, "l", "r")
+	subtleBG := strings.TrimSuffix(FillBG(th, theme.TierTrueColor, theme.RoleBGSubtle, ""), "\x1b[m")
+	if subtleBG != "" && !strings.Contains(got, subtleBG) {
+		t.Errorf("SplitAt missing RoleBGSubtle background in right pane (%q):\n%q", subtleBG, got)
 	}
 }
 

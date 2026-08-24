@@ -19,8 +19,8 @@ func TestProseMeasure(t *testing.T) {
 		{-5, uikitconfig.ProseMeasureNarrow, "negative is treated as unmeasured"},
 		{40, 40, "a terminal narrower than the measure wraps to the terminal"},
 		{80, uikitconfig.ProseMeasureNarrow, "the narrow breakpoint uses the narrow measure"},
-		{119, uikitconfig.ProseMeasureNarrow, "just under wide stays narrow"},
-		{120, uikitconfig.ProseMeasureWide, "the wide breakpoint widens the measure"},
+		{uikitconfig.BreakpointWide - 1, uikitconfig.ProseMeasureNarrow, "just under wide stays narrow"},
+		{uikitconfig.BreakpointWide, uikitconfig.ProseMeasureWide, "the wide breakpoint widens the measure"},
 		{200, uikitconfig.ProseMeasureWide, "wider than wide does not widen further"},
 	}
 	for _, c := range cases {

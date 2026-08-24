@@ -763,7 +763,7 @@ func TestWelcomeBannerRendersOnEmptyTranscript(t *testing.T) {
 		!strings.Contains(view, "Mivia") {
 		t.Errorf("empty transcript view missing Mivia banner:\n%s", view)
 	}
-	if !strings.Contains(view, "ctrl+n:sidebar") {
+	if !strings.Contains(view, "ctrl+b:sidebar") {
 		t.Errorf("empty transcript view missing keybinding hint:\n%s", view)
 	}
 	if strings.Contains(view, "For the work that takes longer than a chat.") {

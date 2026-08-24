@@ -2,11 +2,13 @@ package conversation
 
 import (
 	"context"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
 
@@ -118,6 +120,9 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 		s.approval.Clear()
 		s.statusline.SetLabel("running")
 		s.statusline.SetDetail(toolDetail(b.Name, b.Args))
+		if isSubagentTool(b.Name) || (s.threads != nil && isThreadRegistered(s.threads, b.ToolCallID)) {
+			s.panel.observeAgentStart(b.ToolCallID, b.Name)
+		}
 	case uievent.ToolOutputBody:
 		// A progress-bearing output is a subagent status update (see
 		// uievent.ToolOutputBody): the panel's subagents section feeds
@@ -128,6 +133,7 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 	case uievent.ToolEndBody:
 		s.approval.Clear()
 		s.statusline.SetLabel("thinking")
+		s.panel.observeAgentEnd(b.ToolCallID, b.OK)
 		if b.Diff != nil {
 			// The panel's data, fed live: every completed edit appears
 			// as a touched file the moment it happens, exactly as the
@@ -139,9 +145,32 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 		s.approval.Clear()
 	}
 
+	s.refreshTopbar()
+
 	var readCmd tea.Cmd
 	if s.active != nil {
 		readCmd = s.awaitSessionEvent(s.convID(), s.active.Events())
 	}
 	return s, tea.Batch(flushCmd, readCmd)
+}
+
+func isSubagentTool(name string) bool {
+	lower := strings.ToLower(name)
+	return strings.HasPrefix(lower, "agent_") ||
+		strings.HasPrefix(lower, "subagent_") ||
+		strings.HasPrefix(lower, "delegate") ||
+		strings.HasPrefix(lower, "invoke_") ||
+		strings.HasPrefix(lower, "workflow_") ||
+		strings.Contains(lower, "planner") ||
+		strings.Contains(lower, "builder") ||
+		strings.Contains(lower, "reviewer") ||
+		strings.Contains(lower, "research")
+}
+
+func isThreadRegistered(threads ports.SubagentThreads, callID string) bool {
+	if threads == nil {
+		return false
+	}
+	_, ok := threads.Thread(callID)
+	return ok
 }

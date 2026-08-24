@@ -148,3 +148,32 @@ func TestBreadcrumbASCIITier(t *testing.T) {
 		t.Errorf("width %d exceeds 25: %q", w, lines[1])
 	}
 }
+
+func TestActivityBadge(t *testing.T) {
+	m := New(loadTheme(t), theme.TierTrueColor, ports.ModelInfo{Name: "mivia-fast", Provider: "demo"}, ports.Usage{}, 100)
+	if m.activityBadge() != "" {
+		t.Errorf("expected empty activity badge initially, got %q", m.activityBadge())
+	}
+
+	m.SetActivity(1, 0)
+	if got := ansi.Strip(m.activityBadge()); got != "[ 1 file ]" {
+		t.Errorf("got %q, want %q", got, "[ 1 file ]")
+	}
+
+	m.SetActivity(3, 2)
+	if got := ansi.Strip(m.activityBadge()); got != "[ 3 files | ⚡ 2 agents ]" {
+		t.Errorf("got %q, want %q", got, "[ 3 files | ⚡ 2 agents ]")
+	}
+
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "[ 3 files | ⚡ 2 agents ]") {
+		t.Errorf("topbar View() missing activity badge: %q", view)
+	}
+
+	// Narrow width omits activity badge
+	m.SetWidth(50)
+	narrowView := ansi.Strip(m.View())
+	if strings.Contains(narrowView, "3 files") {
+		t.Errorf("narrow topbar should omit activity badge, got: %q", narrowView)
+	}
+}

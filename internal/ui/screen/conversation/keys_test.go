@@ -664,7 +664,7 @@ func TestStatusRowStatesWhenScrolledAway(t *testing.T) {
 		}})
 		scr = n.(Screen)
 	}
-	if got := ansi.Strip(scr.statusRow()); got != "?:help  ctrl+o:transcript  ctrl+n:sidebar  ctrl+c:quit" {
+	if got := ansi.Strip(scr.statusRow()); got != "?:help  ctrl+o:transcript  ctrl+b:sidebar  ctrl+c:quit" {
 		t.Errorf("got %q, want only the persistent key hint while following", got)
 	}
 
@@ -928,22 +928,22 @@ func TestViewHasAOneColumnGutter(t *testing.T) {
 	}
 }
 
-// TestCtrlNWhilePanelFocusedIsHandledByThePanel pins the dispatch
-// order: with the panel's list focused, ctrl+n is consumed by the panel
+// TestCtrlBWhilePanelFocusedIsHandledByThePanel pins the dispatch
+// order: with the panel's list focused, ctrl+b is consumed by the panel
 // (focus returns to the composer, panel stays open) rather than
 // reaching the global cycle's close step. The full cycle, layout, and
 // live-update coverage lives in filespanel_test.go.
-func TestCtrlNWhilePanelFocusedIsHandledByThePanel(t *testing.T) {
+func TestCtrlBWhilePanelFocusedIsHandledByThePanel(t *testing.T) {
 	s := sized(t, 1)
 	next, _ := s.Update(tea.WindowSizeMsg{Width: uikitconfig.BreakpointWide, Height: 24})
 	scr := next.(Screen)
-	scr, _ = press(t, scr, ctrl('n')) // open + focus
+	scr, _ = press(t, scr, ctrl('b')) // open + focus
 	if !scr.panel.open || !scr.panel.focused {
 		t.Fatalf("precondition: panel open and focused, got open=%v focused=%v", scr.panel.open, scr.panel.focused)
 	}
-	scr, _ = press(t, scr, ctrl('n')) // focused: hand focus back, stay open
+	scr, _ = press(t, scr, ctrl('b')) // focused: hand focus back, stay open
 	if !scr.panel.open || scr.panel.focused {
-		t.Errorf("second ctrl+n: open=%v focused=%v, want open with composer focus", scr.panel.open, scr.panel.focused)
+		t.Errorf("second ctrl+b: open=%v focused=%v, want open with composer focus", scr.panel.open, scr.panel.focused)
 	}
 	// The composer takes keys again: typing lands in the input.
 	scr, _ = press(t, scr, key("h"))
@@ -956,7 +956,7 @@ func TestTabSwitchesFocusBetweenPanelAndComposer(t *testing.T) {
 	s := sized(t, 1)
 	next, _ := s.Update(tea.WindowSizeMsg{Width: uikitconfig.BreakpointWide, Height: 24})
 	scr := next.(Screen)
-	scr, _ = press(t, scr, ctrl('n')) // open + focus
+	scr, _ = press(t, scr, ctrl('b')) // open + focus
 	if !scr.panel.open || !scr.panel.focused {
 		t.Fatalf("precondition: panel open and focused")
 	}
@@ -979,7 +979,7 @@ func TestTabWithSlashCommandHasCompletionPriority(t *testing.T) {
 	s.SetCommands([]composer.Command{{Name: "help", Desc: "show help"}, {Name: "history", Desc: "show history"}})
 	next, _ := s.Update(tea.WindowSizeMsg{Width: uikitconfig.BreakpointWide, Height: 24})
 	scr := next.(Screen)
-	scr, _ = press(t, scr, ctrl('n'))  // open + focus
+	scr, _ = press(t, scr, ctrl('b'))  // open + focus
 	scr, _ = press(t, scr, key("tab")) // switch focus to composer
 	if !scr.panel.open || scr.panel.focused {
 		t.Fatalf("precondition: open with composer focus")

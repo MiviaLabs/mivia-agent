@@ -58,13 +58,13 @@ func sampleDiffs() []uievent.EventMsg {
 	}
 }
 
-// openPanel presses ctrl+n to open the panel focused in its list.
+// openPanel presses ctrl+b to open the panel focused in its list.
 func openPanel(t *testing.T, s Screen) Screen {
 	t.Helper()
-	next, _ := s.Update(ctrl('n'))
+	next, _ := s.Update(ctrl('b'))
 	scr := next.(Screen)
 	if !scr.panel.open || !scr.panel.focused {
-		t.Fatalf("ctrl+n left the panel open=%v focused=%v, want open and focused", scr.panel.open, scr.panel.focused)
+		t.Fatalf("ctrl+b left the panel open=%v focused=%v, want open and focused", scr.panel.open, scr.panel.focused)
 	}
 	return scr
 }
@@ -185,7 +185,7 @@ func TestPanelEmptyStateNamesItsSections(t *testing.T) {
 	}
 }
 
-// TestPanelToggleCycle: ctrl+n walks closed -> open with the list
+// TestPanelToggleCycle: ctrl+b walks closed -> open with the list
 // focused -> open with the composer focused -> closed, and no state
 // leaves the key dead.
 func TestPanelToggleCycle(t *testing.T) {
@@ -193,10 +193,10 @@ func TestPanelToggleCycle(t *testing.T) {
 
 	s = openPanel(t, s) // closed -> open + focused
 
-	next, _ := s.Update(ctrl('n')) // focused -> composer, panel stays
+	next, _ := s.Update(ctrl('b')) // focused -> composer, panel stays
 	s = next.(Screen)
 	if !s.panel.open || s.panel.focused {
-		t.Fatalf("second ctrl+n: open=%v focused=%v, want open with composer focus", s.panel.open, s.panel.focused)
+		t.Fatalf("second ctrl+b: open=%v focused=%v, want open with composer focus", s.panel.open, s.panel.focused)
 	}
 	// The composer takes keys while the panel stays on screen.
 	next, _ = s.Update(key("h"))
@@ -205,10 +205,10 @@ func TestPanelToggleCycle(t *testing.T) {
 		t.Fatalf("composer value %q after defocus, want \"h\" (panel must not eat typing)", got)
 	}
 
-	next, _ = s.Update(ctrl('n')) // open + composer -> closed
+	next, _ = s.Update(ctrl('b')) // open + composer -> closed
 	s = next.(Screen)
 	if s.panel.open || s.panel.focused {
-		t.Fatalf("third ctrl+n: open=%v focused=%v, want closed", s.panel.open, s.panel.focused)
+		t.Fatalf("third ctrl+b: open=%v focused=%v, want closed", s.panel.open, s.panel.focused)
 	}
 	// The transcript renders the diffs too, so the panel's section
 	// header form is the panel-shaped string to test for.
@@ -318,16 +318,13 @@ func TestPanelWideSplitFrameContract(t *testing.T) {
 				t.Errorf("width %d: split view missing %q:\n%s", w, want, plain)
 			}
 		}
-		// The split frames nothing extra: only the framed composer box border is drawn.
+		// The split frames nothing extra: only the framed composer box border is drawn (no vertical rule separating panes).
+		first := ansi.Strip(strings.Split(view, "\n")[3])
+		if strings.Contains(first, "│") {
+			t.Errorf("width %d: split drawn with unexpected vertical rule on content row: %q", w, first)
+		}
 		if got := strings.Count(view, "╭"); got != 1 {
 			t.Errorf("width %d: framed %d boxes, want 1 (framed composer)", w, got)
-		}
-		// The rule stands at the sidebar's left edge on every content
-		// row: check the first transcript row's column.
-		reading, _ := render.SplitWidths(w - 2)
-		first := ansi.Strip(strings.Split(view, "\n")[3])
-		if i := strings.Index(first, "│"); i < 0 || ansi.StringWidth(first[:i]) != 1+reading {
-			t.Errorf("width %d: no rule at column %d (gutter + reading width): %q", w, 1+reading, first)
 		}
 		// The top bar names the product, not a tab strip that no longer
 		// exists.
@@ -652,9 +649,9 @@ func TestPanelCloseDropsTheFilter(t *testing.T) {
 	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 24, sampleDiffs()...))
 	next, _ := s.Update(key("b"))
 	s = next.(Screen)
-	next, _ = s.Update(ctrl('n')) // defocus
+	next, _ = s.Update(ctrl('b')) // defocus
 	s = next.(Screen)
-	next, _ = s.Update(ctrl('n')) // close
+	next, _ = s.Update(ctrl('b')) // close
 	s = next.(Screen)
 	s = openPanel(t, s) // reopen
 	if got := s.panel.list.Filter(); got != "" {
@@ -752,9 +749,9 @@ func TestPanelUserMessageRendering(t *testing.T) {
 	}
 
 	// Panel closed again
-	next, _ = s.Update(ctrl('n'))
+	next, _ = s.Update(ctrl('b'))
 	s = next.(Screen)
-	next, _ = s.Update(ctrl('n'))
+	next, _ = s.Update(ctrl('b'))
 	s = next.(Screen)
 	viewClosedAgain := s.View()
 	assertExactFrame(t, viewClosedAgain, uikitconfig.BreakpointWide, 30)

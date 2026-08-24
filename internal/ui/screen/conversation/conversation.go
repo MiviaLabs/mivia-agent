@@ -197,6 +197,7 @@ func (s *Screen) reflow() {
 	s.composer.SetWidth(w)
 	s.approval.SetWidth(w)
 	s.resize()
+	s.refreshTopbar()
 }
 
 func (s *Screen) refreshTopbar() {
@@ -207,6 +208,11 @@ func (s *Screen) refreshTopbar() {
 		} else {
 			s.topbar.SetBreadcrumb(nil)
 		}
+	}
+	if s.panel.open {
+		s.topbar.SetActivity(0, 0)
+	} else {
+		s.topbar.SetActivity(len(s.panel.entries), s.panel.activeAgentCount())
 	}
 }
 

@@ -45,9 +45,10 @@ func TestClickCollapsedBlockExpandsIt(t *testing.T) {
 	}
 
 	// The conversation is shorter than the viewport, so the block's
-	// header sits at transcript row 0 - screen row 2, below the top bar
+	// header sits at transcript row 0 - screen row topRow, below the top bar
 	// and its margin row.
-	next, _ := s.Update(leftClick(3, 2))
+	topRow := s.topbar.Height() + 1
+	next, _ := s.Update(leftClick(3, topRow))
 	s = next.(Screen)
 	if got := s.transcript.Blocks()[0].Collapsed; got {
 		t.Error("a click on the collapsed header must expand the block")
@@ -57,10 +58,11 @@ func TestClickCollapsedBlockExpandsIt(t *testing.T) {
 // TestClickExpandedBodyDoesNothing: only a collapsed header is a target.
 func TestClickExpandedBodyDoesNothing(t *testing.T) {
 	s := toolScreen(t)
-	next, _ := s.Update(leftClick(3, 2))
+	topRow := s.topbar.Height() + 1
+	next, _ := s.Update(leftClick(3, topRow))
 	s = next.(Screen) // now expanded
 
-	next, _ = s.Update(leftClick(6, 4)) // a body row
+	next, _ = s.Update(leftClick(6, topRow+2)) // a body row
 	s = next.(Screen)
 	if !s.transcript.Following() {
 		t.Error("a body click must not change scroll state")

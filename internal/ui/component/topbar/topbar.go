@@ -29,17 +29,25 @@ type Model struct {
 	Theme theme.Theme
 	Tier  theme.Tier
 
-	mark       mark.Model
-	info       ports.ModelInfo
-	usage      ports.Usage
-	breadcrumb []string
-	width      int
+	mark        mark.Model
+	info        ports.ModelInfo
+	usage       ports.Usage
+	breadcrumb  []string
+	width       int
+	filesCount  int
+	agentsCount int
 }
 
 // New returns a top bar showing the given session values. width is the
 // terminal width; the bar truncates to it on narrow terminals.
 func New(t theme.Theme, tier theme.Tier, info ports.ModelInfo, usage ports.Usage, width int) Model {
 	return Model{Theme: t, Tier: tier, mark: mark.New(t, tier, mark.Idle), info: info, usage: usage, width: width}
+}
+
+// SetActivity updates the live count of touched files and running/dispatched agents.
+func (m *Model) SetActivity(filesCount, agentsCount int) {
+	m.filesCount = filesCount
+	m.agentsCount = agentsCount
 }
 
 // SetWidth records a resize.
@@ -191,6 +199,36 @@ func (m Model) modelCapsule() string {
 	return border.Render("[ ") + label + border.Render(" ]")
 }
 
+func (m Model) activityBadge() string {
+	if m.filesCount == 0 && m.agentsCount == 0 {
+		return ""
+	}
+	border := render.Role(m.Theme, m.Tier, theme.RoleBorder)
+	subtle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
+	var parts []string
+	if m.filesCount > 0 {
+		label := fmt.Sprintf("%d files", m.filesCount)
+		if m.filesCount == 1 {
+			label = "1 file"
+		}
+		parts = append(parts, subtle.Render(label))
+	}
+	if m.agentsCount > 0 {
+		label := fmt.Sprintf("⚡ %d agents", m.agentsCount)
+		if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
+			label = fmt.Sprintf("%d agents", m.agentsCount)
+		}
+		if m.agentsCount == 1 {
+			label = "⚡ 1 agent"
+			if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
+				label = "1 agent"
+			}
+		}
+		parts = append(parts, render.Role(m.Theme, m.Tier, theme.RoleAccent).Render(label))
+	}
+	return border.Render("[ ") + strings.Join(parts, subtle.Render(" | ")) + border.Render(" ]")
+}
+
 // View renders the top bar. The first row states the mark/wordmark on the
 // left, and model/provider/context share on the right. When breadcrumbs
 // are present, a second row renders the trail.
@@ -199,6 +237,9 @@ func (m Model) View() string {
 	fg := render.Role(m.Theme, m.Tier, theme.RoleFG)
 
 	left := m.mark.View() + subtle.Render("  ") + fg.Render(Wordmark)
+	if act := m.activityBadge(); act != "" && (m.width <= 0 || m.width >= 70) {
+		left += " " + act
+	}
 	right := m.modelCapsule()
 	if pct, ok := m.ContextPercent(); ok {
 		right += " " + m.contextBadge(pct)
