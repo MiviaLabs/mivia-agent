@@ -335,7 +335,7 @@ func (s Screen) handleWheel(msg tea.MouseWheelMsg) (app.Screen, tea.Cmd) {
 }
 
 func (s Screen) send() (app.Screen, tea.Cmd) {
-	text := s.composer.Value()
+	text := s.composer.SubmitText()
 	if text == "" || s.active != nil {
 		return s, nil
 	}
@@ -508,6 +508,16 @@ func (s *Screen) SetCommands(cmds []composer.Command) {
 	s.composer.SetCommands(cmds)
 	if s.thread != nil {
 		s.thread.SetCommands(cmds)
+	}
+}
+
+// SetMentions supplies the @-mention candidates for the workspace file
+// picker. The caller (harness or demo) builds this list from the workspace
+// index; the screen holds no filesystem access.
+func (s *Screen) SetMentions(mentions []composer.Mention) {
+	s.composer.SetMentions(mentions)
+	if s.thread != nil {
+		s.thread.SetMentions(mentions)
 	}
 }
 

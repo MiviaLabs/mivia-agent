@@ -74,6 +74,11 @@ func (s Screen) handleKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
 			return s.completionAction(id)
 		}
 	}
+	if s.composer.MentionMenuActive() {
+		if id, ok := s.keys.Match(keymap.ContextCompletion, key); ok {
+			return s.mentionCompletionAction(id)
+		}
+	}
 	if s.panel.open && !s.panel.focused && key == "tab" {
 		s.panelFocus(true)
 		s.transcript = s.transcript.ClearFocus()
@@ -383,6 +388,24 @@ func (s Screen) completionAction(id keymap.ID) (app.Screen, tea.Cmd) {
 			next = next.AcceptSelected()
 		}
 		s.composer = next
+	}
+	return s, nil
+}
+
+// mentionCompletionAction routes ContextCompletion keys to the @-mention
+// picker when the mention menu is open. The key IDs are the same as the
+// slash-command menu — only one menu can be open at a time (the routing in
+// keyPress guards on MentionMenuActive).
+func (s Screen) mentionCompletionAction(id keymap.ID) (app.Screen, tea.Cmd) {
+	switch id {
+	case keymap.IDMenuNext:
+		s.composer = s.composer.MentionMenuNext()
+	case keymap.IDMenuPrev:
+		s.composer = s.composer.MentionMenuPrev()
+	case keymap.IDMenuDismiss:
+		s.composer = s.composer.MentionMenuDismiss()
+	case keymap.IDMenuAccept, keymap.IDAcceptPrefix:
+		s.composer = s.composer.AcceptMention()
 	}
 	return s, nil
 }

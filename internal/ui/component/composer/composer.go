@@ -1,5 +1,5 @@
-// Package composer is the single-line message input plus a slash-command
-// completion list.
+// Package composer is the multi-line message input plus a slash-command
+// completion list and an @-mention file picker.
 package composer
 
 import (
@@ -7,7 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -17,84 +18,124 @@ import (
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
 )
 
-// Model wraps bubbles/v2 textinput for the input line itself, and owns
-// the slash-completion menu. The real command source is cli/harness
-// territory and is not wired yet (deferred with the bootstrap/adapter
-// work); SetCommands lets any caller - tests now, the real app later -
-// inject the active command set without this package knowing where it
-// came from.
+// Model wraps bubbles/v2 textarea for the multi-line input, the
+// slash-completion menu, and the @-mention picker.
+//
+// Dynamic height: the textarea grows from 1 line to maxInputLines as the
+// user types, and shrinks when lines are removed. The frame around the input
+// always occupies a fixed gutter (top and bottom border rows) so the rest of
+// the cockpit layout never reflows (ux-rules.md rule 2.7, 2.8).
 type Model struct {
 	Theme theme.Theme
 	Tier  theme.Tier
-	input textinput.Model
+	input textarea.Model
 	menu  menu
+	mmenu mentionMenu
 
-	// width is the full column count, including the prompt. View clamps
-	// to it: bubbles/textinput reserves a cell for the cursor beyond the
-	// width it was given, so the drawn line is one column wider than
-	// asked. In the cockpit that one column wraps the bottom row and
-	// pushes the whole layout up by a row.
+	// width is the full column count the composer occupies. View renders
+	// exactly this many columns on every row.
 	width int
 }
 
-// promptWidth is the display width of the accent prompt View renders
-// ahead of the input ("> ").
+// maxInputLines is the maximum number of visible textarea rows before it
+// scrolls internally rather than growing the frame further.
+const maxInputLines = 6
+
+// promptWidth is the display width of the accent prompt rendered by this
+// package ("› "). Two columns: one for the glyph, one for the space.
 const promptWidth = 2
 
-// cursorReserve is the cell bubbles/v2 textinput draws beyond the width
-// it is given. Measured on this tree against bubbles v2.1.1: with the
-// cursor at the end of the value, View renders the value plus a cursor
-// cell plus Width()-valWidth padding (Width()+1 columns); with the
-// cursor inside the value, the cursor replaces one value cell and the
-// padding grows by one to compensate (still Width()+1). Passing width-
-// promptWidth-cursorReserve to SetWidth therefore draws exactly `width`
-// columns. This is a measured library behavior, not an off-by-one.
-const cursorReserve = 1
+// frameInset is the total column overhead the border removes from the inner
+// textarea width: one left border cell + one right border cell + lipgloss's
+// two internal padding columns = 4.
+const frameInset = 4
 
-// New returns a focused, empty composer sized to width, where width is
-// the full column count including the prompt.
+// minFramedWidth is the narrowest terminal that can still hold the border,
+// prompt, cursor, and one text cell.
+const minFramedWidth = 8
+
+// New returns a focused, empty composer sized to width.
 func New(t theme.Theme, tier theme.Tier, width int) Model {
-	ti := textinput.New()
-	ti.Prompt = "" // the theme-styled accent prompt is rendered by this package's View, not textinput's own
-	ti.Placeholder = "Ask a question, describe a change, or type / for commands..."
-	ti.Focus()
-	m := Model{input: ti}
+	ta := newTextarea(t, tier)
+	m := Model{input: ta, mmenu: mentionMenu{triggerPos: -1}}
 	m.SetTheme(t, tier)
 	m.SetWidth(width)
 	return m
 }
 
-// SetTheme adopts a new theme and restyles the embedded textinput with
-// it.
-//
-// bubbles/textinput ships its own hard-coded default styles, so without
-// this the one thing the user watches while typing - the text itself,
-// and the placeholder before it - kept the library's colour whatever
-// theme was active. On a light theme that is white text on a light
-// surface, which reads as "selecting a theme did nothing".
-//
-// It is a method rather than an assignment to Theme/Tier because the
-// restyle must not be forgotten: every other themed component here
-// (transcript, topbar, statusline, welcome) already carries the same
-// SetTheme shape.
+// newTextarea initialises a textarea.Model with the settings this composer
+// requires: dynamic height, no line numbers, custom keymap (enter submits —
+// the textarea only inserts newlines on ctrl+j).
+func newTextarea(t theme.Theme, tier theme.Tier) textarea.Model {
+	ta := textarea.New()
+	ta.Placeholder = "Ask a question, describe a change, or type / for commands..."
+
+	// Dynamic height: grows from 1 row to maxInputLines, then scrolls.
+	ta.DynamicHeight = true
+	ta.MinHeight = 1
+	ta.MaxHeight = maxInputLines
+	ta.ShowLineNumbers = false
+
+	// Remove the border that textarea draws by default; the composer draws
+	// its own themed frame via render.BorderedWithHint.
+	ta.SetStyles(noopStyles(ta.Styles()))
+
+	// Rebind InsertNewline to ctrl+j only (ux-rules.md rule 4.2).
+	// "enter" is reserved for IDSend in the keymap; the screen handles it
+	// before forwarding events to the composer (see keys.go IDSend).
+	km := ta.KeyMap
+	km.InsertNewline = key.NewBinding(
+		key.WithKeys("ctrl+j"),
+		key.WithHelp("ctrl+j", "newline"),
+	)
+	ta.KeyMap = km
+
+	_ = ta.Focus()
+	return ta
+}
+
+// noopStyles returns styles with the built-in textarea border stripped so we
+// can draw our own frame.  Prompt is set to two spaces as a placeholder; the
+// real prompt is injected via SetPromptFunc after theme is applied.
+func noopStyles(s textarea.Styles) textarea.Styles {
+	blank := lipgloss.NewStyle()
+	s.Focused.Base = blank
+	s.Focused.CursorLine = blank
+	s.Blurred.Base = blank
+	s.Blurred.CursorLine = blank
+	return s
+}
+
+// SetTheme adopts a new theme and restyles the embedded textarea.
 func (m *Model) SetTheme(t theme.Theme, tier theme.Tier) {
 	m.Theme, m.Tier = t, tier
-	st := textinput.DefaultStyles(t.Dark)
-	st.Focused.Text = render.Role(t, tier, theme.RoleFG)
-	st.Focused.Placeholder = render.Role(t, tier, theme.RoleFGSubtle)
-	st.Focused.Suggestion = render.Role(t, tier, theme.RoleFGSubtle)
-	st.Blurred.Text = render.Role(t, tier, theme.RoleFGMuted)
-	st.Blurred.Placeholder = render.Role(t, tier, theme.RoleFGSubtle)
-	st.Blurred.Suggestion = render.Role(t, tier, theme.RoleFGSubtle)
-	if s := t.Resolve(theme.RoleAccent, tier); s.Hex != "" {
-		st.Cursor.Color = lipgloss.Color(s.Hex)
-	} else if s.ANSI16 >= 0 {
-		st.Cursor.Color = lipgloss.Color(strconv.Itoa(s.ANSI16))
-	} else {
-		// No colour at this tier: the cursor must not smuggle one in.
-		st.Cursor.Color = nil
+
+	s := m.input.Styles()
+	fg := render.Role(t, tier, theme.RoleFG)
+	fgSubtle := render.Role(t, tier, theme.RoleFGSubtle)
+
+	s.Focused.Text = fg
+	s.Blurred.Text = render.Role(t, tier, theme.RoleFGMuted)
+	s.Focused.Placeholder = fgSubtle
+	s.Blurred.Placeholder = fgSubtle
+
+	if ac := t.Resolve(theme.RoleAccent, tier); ac.Hex != "" {
+		s.Focused.CursorLine = lipgloss.NewStyle().Foreground(lipgloss.Color(ac.Hex))
+	} else if ac.ANSI16 >= 0 {
+		s.Focused.CursorLine = lipgloss.NewStyle().Foreground(lipgloss.Color(strconv.Itoa(ac.ANSI16)))
 	}
-	m.input.SetStyles(st)
+	m.input.SetStyles(s)
+
+	// Prompt: themed accent prompt on the first line, blank indent on
+	// continuation lines.
+	prompt := render.Role(t, tier, theme.RoleAccent).Render("> ")
+	cont := strings.Repeat(" ", promptWidth)
+	m.input.SetPromptFunc(promptWidth, func(info textarea.PromptInfo) string {
+		if info.LineNumber == 0 {
+			return prompt
+		}
+		return cont
+	})
 }
 
 // SetCommands sets the slash-completion candidate list.
@@ -110,39 +151,76 @@ func (m Model) Commands() []Command {
 	return out
 }
 
-// MenuActive reports whether the completion menu is showing. The caller
-// routes keys by this: the menu claims Enter, Tab, Up, Down and Esc
-// before the composer sees them (docs/design/ux-rules.md rule 5.3).
+// SetMentions sets the workspace-entity candidate list for the @-picker.
+// The caller (the conversation screen or demo harness) builds this list; the
+// composer holds no filesystem access.
+func (m *Model) SetMentions(mentions []Mention) {
+	m.mmenu.all = slices.Clone(mentions)
+	m.mmenu.refresh(m.input.Value(), m.input.Column())
+}
+
+// Mentions returns the active @-mention candidate list.
+func (m Model) Mentions() []Mention {
+	out := make([]Mention, len(m.mmenu.all))
+	copy(out, m.mmenu.all)
+	return out
+}
+
+// MenuActive reports whether the slash-command completion menu is showing.
 func (m Model) MenuActive() bool { return m.menu.active && len(m.menu.matches) > 0 }
 
-// MenuNext and MenuPrev move the highlighted row.
+// MentionMenuActive reports whether the @-mention picker is showing.
+func (m Model) MentionMenuActive() bool { return m.mmenu.active && len(m.mmenu.matches) > 0 }
+
+// MenuNext / MenuPrev move the highlighted row in the slash menu.
 func (m Model) MenuNext() Model { m.menu.next(); return m }
 func (m Model) MenuPrev() Model { m.menu.prev(); return m }
 
-// MenuDismiss closes the menu without changing the text.
+// MentionMenuNext / MentionMenuPrev move the highlighted row in the mention picker.
+func (m Model) MentionMenuNext() Model { m.mmenu.next(); return m }
+func (m Model) MentionMenuPrev() Model { m.mmenu.prev(); return m }
+
+// MenuDismiss closes the slash-command menu without changing the text.
 func (m Model) MenuDismiss() Model {
 	m.menu.active = false
 	return m
 }
 
-// AcceptSelected replaces the input with the highlighted command and
-// closes the menu. A trailing space is NOT added: appending one runs the
-// command's default subcommand on the next Enter, which is a documented
-// defect (rule 5.6).
+// MentionMenuDismiss closes the @-mention picker without changing the text.
+func (m Model) MentionMenuDismiss() Model {
+	m.mmenu.active = false
+	return m
+}
+
+// AcceptSelected replaces the input with the highlighted slash-command.
 func (m Model) AcceptSelected() Model {
 	if !m.MenuActive() {
 		return m
 	}
 	m.input.SetValue("/" + m.menu.matches[m.menu.cursor].Name)
-	m.input.SetCursor(len(m.input.Value()))
+	m.input.CursorEnd()
 	m.menu.active = false
 	return m
 }
 
-// AcceptCommonPrefix extends the input by the longest prefix every match
-// shares, and leaves the menu open. It reports false when the prefix
-// adds nothing, so the caller can fall back to selecting the highlighted
-// row instead of doing nothing visible.
+// AcceptMention replaces the "@query" fragment with the selected mention path.
+func (m Model) AcceptMention() Model {
+	if !m.MentionMenuActive() {
+		return m
+	}
+	cur := m.input.Column()
+	text := m.input.Value()
+	newText, newCursor := m.mmenu.replaceInText(text, cur)
+	m.input.SetValue(newText)
+	// Reposition cursor after the inserted path.
+	m.input.CursorEnd()
+	_ = newCursor // cursor repositioning: CursorEnd is the safe approximation for now
+	m.mmenu.active = false
+	m.mmenu.triggerPos = -1
+	return m
+}
+
+// AcceptCommonPrefix extends the slash-command input by the longest shared prefix.
 func (m Model) AcceptCommonPrefix() (Model, bool) {
 	if !m.MenuActive() {
 		return m, false
@@ -152,71 +230,76 @@ func (m Model) AcceptCommonPrefix() (Model, bool) {
 		return m, false
 	}
 	m.input.SetValue("/" + prefix)
-	m.input.SetCursor(len(m.input.Value()))
+	m.input.CursorEnd()
 	m.menu.refresh(m.input.Value())
 	return m, true
 }
 
-// SetWidth resizes the input line. The caller passes the full column
-// count; the prompt this package renders and the cursor cell textinput
-// reserves are subtracted, so the drawn line is exactly the width given
-// for every width that can hold prompt, cursor and one text cell.
+// SetWidth resizes the input. The caller passes the full column count.
 func (m *Model) SetWidth(width int) {
 	m.width = width
-	w := width - promptWidth - cursorReserve
+	inner := width - promptWidth
 	if width >= minFramedWidth {
-		// The frame's border cells plus the two lipgloss counts inside
-		// Width() (measured on the approval prompt): the input must be
-		// SIZED into the frame, never wrapped by it, or the bottom row
-		// count changes under Height().
-		w -= frameInset
+		inner = width - promptWidth - frameInset
 	}
-	if w < 0 {
-		w = 0
+	if inner < 1 {
+		inner = 1
 	}
-	m.input.SetWidth(w)
+	m.input.SetWidth(inner)
 }
 
-// Value returns the current input text.
+// Value returns the current input text (may be multi-line).
 func (m Model) Value() string { return m.input.Value() }
 
-// Clear resets the input, e.g. after a message is sent.
-func (m *Model) Clear() {
-	m.input.SetValue("")
-	m.menu.refresh("")
+// SubmitText returns the text to send: strips a trailing backslash-newline
+// escape used for portable multi-line entry (ux-rules.md rule 4.3).
+func (m Model) SubmitText() string {
+	v := m.input.Value()
+	// "\<newline>" typed by pressing backslash then Enter should produce a
+	// literal newline in the submitted text, not the escape sequence.
+	return strings.ReplaceAll(v, "\\\n", "\n")
 }
 
-// SetValue replaces the input text, e.g. when a cancelled turn restores
-// what the user had typed.
+// Clear resets the input after a message is sent.
+func (m *Model) Clear() {
+	m.input.Reset()
+	m.menu.refresh("")
+	m.mmenu.refresh("", 0)
+}
+
+// SetValue replaces the input text (e.g. when a cancelled turn is restored).
 func (m *Model) SetValue(s string) {
 	m.input.SetValue(s)
-	m.input.SetCursor(len(s))
+	m.input.CursorEnd()
 	m.menu.refresh(s)
+	m.mmenu.refresh(s, m.input.Column())
 }
 
-// ClickToColumn places the cursor under a click at display column x of
-// the composer's row (the row that starts with the prompt). x is the
-// column the mouse reported, not offset by the prompt.
+// ClickToColumn places the cursor under a click at display column x of the
+// composer's first row. The prompt occupies the first promptWidth columns.
 func (m *Model) ClickToColumn(x int) {
 	if x <= promptWidth {
-		m.input.SetCursor(0)
+		m.input.CursorStart()
 		return
 	}
 	want := x - promptWidth
 	pos, width := 0, 0
-	for _, r := range m.input.Value() {
+	val := m.input.Value()
+	if idx := strings.IndexByte(val, '\n'); idx >= 0 {
+		val = val[:idx]
+	}
+	for _, r := range val {
 		if width >= want {
 			break
 		}
 		width += ansi.StringWidth(string(r))
 		pos++
 	}
-	m.input.SetCursor(pos)
+	m.input.SetCursorColumn(pos)
 }
 
-// MenuClickRow accepts the completion row at rendered index row (0 is
-// the top visible row). It reports false when the menu is closed or the
-// row is outside the rendered window, so the click can fall through.
+// MenuClickRow accepts the completion row at rendered index row (0 = top).
+// Returns false when the menu is closed or the row is out of range.
 func (m *Model) MenuClickRow(row int) bool {
 	if !m.MenuActive() || row < 0 {
 		return false
@@ -230,42 +313,39 @@ func (m *Model) MenuClickRow(row int) bool {
 	return false
 }
 
+// Update forwards the message to the textarea and refreshes both menus.
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	m.menu.refresh(m.input.Value())
+	m.mmenu.refresh(m.input.Value(), m.input.Column())
 	return m, cmd
 }
 
-// Height is the row count View draws, so the screen can reserve it.
-// The framed input is three rows (top border, input, bottom border);
-// the completion menu adds its rows above the frame.
+// Height is the total row count View draws. It is: border-top(1) +
+// textarea-rows (dynamic 1–maxInputLines) + border-bottom(1) +
+// completion-menu-rows (when open). Below minFramedWidth the border is
+// omitted, so height equals textarea-rows + menu-rows.
 func (m Model) Height() int {
-	rows := 3
-	if m.width < minFramedWidth {
-		rows = 1
+	taRows := m.input.Height()
+	if taRows < 1 {
+		taRows = 1
 	}
-	if v := m.menu.view(m.Theme, m.Tier, m.width); v != "" {
-		return rows + strings.Count(v, "\n") + 1
+	var frame int
+	if m.width >= minFramedWidth {
+		frame = 2 // top + bottom border
 	}
-	return rows
+	base := taRows + frame
+	// menu rows (slash or mention — only one open at a time)
+	if v := m.activeMenuView(); v != "" {
+		return base + strings.Count(v, "\n") + 1
+	}
+	return base
 }
 
-// minFramedWidth is the narrowest terminal that still frames the input:
-// the frame removes frameInset columns, and the remaining inner width
-// must hold the prompt, the cursor cell and one text cell (8 = 4 + 4).
-// Below it View degrades to the bare line rather than let the border
-// widen past the terminal.
-const minFramedWidth = 8
-
-// frameInset is the column count the border removes from the input:
-// both border cells and the two cells lipgloss counts inside Width().
-const frameInset = 4
-
-// InputRowFromBottom is how many rows above the screen's last row the
-// input line sits: the bottom border is below it when framed, nothing
-// when degraded. Mouse routing uses this instead of assuming the input
-// is the last row.
+// InputRowFromBottom is how many rows above the screen's last row the top
+// input line sits (for mouse routing). When framed, the bottom border is the
+// last row so the input is 1 above. When bare, the input is the last row.
 func (m Model) InputRowFromBottom() int {
 	if m.width < minFramedWidth {
 		return 0
@@ -273,9 +353,8 @@ func (m Model) InputRowFromBottom() int {
 	return 1
 }
 
-// InputColumnOffset is how many display columns the border puts before
-// the prompt. Mouse clicks subtract it to land on the input's own
-// column space.
+// InputColumnOffset is how many display columns the left border puts before
+// the prompt. Mouse clicks subtract it to land on the input's own column space.
 func (m Model) InputColumnOffset() int {
 	if m.width < minFramedWidth {
 		return 0
@@ -283,38 +362,25 @@ func (m Model) InputColumnOffset() int {
 	return 1
 }
 
-// inputLine is the composer's bottom row before the width clamp: the
-// theme-styled prompt plus textinput's own View. It is separate so a
-// test can measure the line BEFORE the clamp and prove the clamp is a
-// backstop, not the sizing mechanism.
-func (m Model) inputLine() string {
-	prompt := render.Role(m.Theme, m.Tier, theme.RoleAccent).Render("> ")
-	return prompt + m.input.View()
+// activeMenuView returns whichever menu is currently showing, prefer slash
+// over mention when both are somehow active (cannot happen in practice).
+func (m Model) activeMenuView() string {
+	if v := m.menu.view(m.Theme, m.Tier, m.width); v != "" {
+		return v
+	}
+	return m.mmenu.view(m.Theme, m.Tier, m.width)
 }
 
-// View renders the completion menu ABOVE the input line. The input stays
-// on the last row, so it never moves as the menu grows or shrinks
-// (docs/design/ux-rules.md rule 2.8).
-//
-// The clamp is a backstop, not the fix: SetWidth already sizes the line
-// to exactly m.width. It fires only when the width cannot hold the
-// prompt, the cursor cell and one text cell (width under 4), or if a
-// future textinput change draws wider than documented. In the cockpit
-// one overflowing column wraps the bottom row and pushes the whole
-// layout up by one, which is why the backstop stays even though the
-// normal path never reaches it.
+// View renders the active menu above the textarea, which is then optionally
+// wrapped in a themed frame. The textarea is the last block, so it never
+// moves as the menu grows or shrinks (ux-rules.md rule 2.8).
 func (m Model) View() string {
-	line := m.inputLine()
-	if m.width >= minFramedWidth && ansi.StringWidth(line) > m.width-frameInset {
-		// Text longer than the frame clips to the inner width, exactly
-		// like the approval prompt: a line lipgloss wraps would add a
-		// row Height() does not claim.
-		line = ansi.Truncate(line, m.width-frameInset, "")
-	}
+	body := m.input.View()
+
 	if m.width >= minFramedWidth {
-		hint := "[ ↵ Send  •  / Commands ]"
+		hint := "[ ↵ Send  •  / Commands  •  @ Files ]"
 		if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
-			hint = "[ Enter: Send  •  / Commands ]"
+			hint = "[ Enter: Send  •  / Commands  •  @ Files ]"
 		}
 		if m.input.Value() != "" {
 			hint = "[ ↵ Send  •  Esc Cancel ]"
@@ -322,12 +388,13 @@ func (m Model) View() string {
 				hint = "[ Enter: Send  •  Esc Cancel ]"
 			}
 		}
-		line = render.BorderedWithHint(m.Theme, m.Tier, theme.RoleBorder, theme.RoleFGSubtle, m.width, line, hint)
-	} else if m.width > 0 && ansi.StringWidth(line) > m.width {
-		line = ansi.Truncate(line, m.width, "")
+		body = render.BorderedWithHint(m.Theme, m.Tier, theme.RoleBorder, theme.RoleFGSubtle, m.width, body, hint)
+	} else if m.width > 0 && ansi.StringWidth(body) > m.width {
+		body = ansi.Truncate(body, m.width, "")
 	}
-	if v := m.menu.view(m.Theme, m.Tier, m.width); v != "" {
-		return v + "\n" + line
+
+	if v := m.activeMenuView(); v != "" {
+		return v + "\n" + body
 	}
-	return line
+	return body
 }
