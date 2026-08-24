@@ -345,7 +345,11 @@ func (m Model) handleToolOutput(b uievent.ToolOutputBody) (Model, tea.Cmd) {
 }
 
 func (m Model) handleToolEnd(b uievent.ToolEndBody) (Model, tea.Cmd) {
-	end := toolEndBlockValue(m.Theme, m.Tier, b)
+	w := m.width - uikitconfig.BodyIndent
+	if w <= 0 {
+		w = 80
+	}
+	end := toolEndBlockValue(m.Theme, m.Tier, w, b)
 	if ok := m.updateLive(b.ToolCallID, func(blk *Block) {
 		blk.Kind = uievent.KindToolEnd
 		// Carry the raw diff onto the live block, not just its rendered
@@ -366,7 +370,9 @@ func (m Model) handleToolEnd(b uievent.ToolEndBody) (Model, tea.Cmd) {
 				blk.Body = append([]string{result}, blk.Body...)
 			}
 		}
-		if len(end.Body) > 0 {
+		if b.Diff != nil {
+			blk.Body = append(slices.Clone(blk.Body), render.FormatDiffLines(m.Theme, m.Tier, w, *b.Diff)...)
+		} else if len(end.Body) > 0 {
 			blk.Body = append(slices.Clone(blk.Body), end.Body...)
 		}
 	}); ok {

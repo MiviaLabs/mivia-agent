@@ -146,6 +146,7 @@ func formatLineNum(num, width int, st lipgloss.Style) string {
 }
 
 func clipOrPad(s string, width int) string {
+	s = expandTabs(s, 4)
 	w := ansi.StringWidth(s)
 	if w > width {
 		return ansi.Truncate(s, width, "…")
@@ -154,6 +155,31 @@ func clipOrPad(s string, width int) string {
 		return s + strings.Repeat(" ", width-w)
 	}
 	return s
+}
+
+// expandTabs replaces tab characters with spaces aligned to tab stops.
+func expandTabs(s string, tabWidth int) string {
+	if !strings.Contains(s, "\t") {
+		return s
+	}
+	if tabWidth <= 0 {
+		tabWidth = 4
+	}
+	var b strings.Builder
+	col := 0
+	for _, r := range s {
+		if r == '\t' {
+			spaces := tabWidth - (col % tabWidth)
+			for i := 0; i < spaces; i++ {
+				b.WriteByte(' ')
+			}
+			col += spaces
+		} else {
+			b.WriteRune(r)
+			col += ansi.StringWidth(string(r))
+		}
+	}
+	return b.String()
 }
 
 // parseHunkHeader extracts starting old and new line numbers from @@ -A,B +C,D @@.

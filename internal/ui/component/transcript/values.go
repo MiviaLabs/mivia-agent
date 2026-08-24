@@ -115,7 +115,7 @@ func progressBody(t theme.Theme, tier theme.Tier, p uievent.Progress) []string {
 	return append(body, p.Log...)
 }
 
-func toolEndBlockValue(t theme.Theme, tier theme.Tier, b uievent.ToolEndBody) Block {
+func toolEndBlockValue(t theme.Theme, tier theme.Tier, w int, b uievent.ToolEndBody) Block {
 	role, status := theme.RoleSuccess, "ok"
 	if !b.OK {
 		role, status = theme.RoleDanger, "failed"
@@ -139,10 +139,13 @@ func toolEndBlockValue(t theme.Theme, tier theme.Tier, b uievent.ToolEndBody) Bl
 		Body: body,
 	}
 	if b.Diff != nil {
+		if w <= 0 {
+			w = 80
+		}
 		blk.Diff = b.Diff
 		blk.Header.Detail = b.Diff.Path
 		blk.Header.Meta = fmt.Sprintf("+%d -%d  %dms", b.Diff.Added, b.Diff.Removed, b.DurationMS)
-		blk.Body = render.FormatDiffLines(t, tier, 80, *b.Diff)
+		blk.Body = render.FormatDiffLines(t, tier, w, *b.Diff)
 	}
 	return blk
 }
