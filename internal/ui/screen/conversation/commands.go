@@ -40,6 +40,9 @@ func (s Screen) runSlashCommand(line string) (app.Screen, tea.Cmd) {
 		return s.withError("no command runner configured for /" + name), nil
 	}
 	outcome := s.runner.Run(context.Background(), name, args)
+	if s.conv != nil {
+		s.topbar.SetSession(s.conv.Model(), s.conv.ContextUsage())
+	}
 	return s.applyCommandOutcome(outcome)
 }
 
@@ -182,6 +185,9 @@ func (s Screen) handlePickerKey(msg tea.KeyPressMsg, which *picker.Model, cmdNam
 			return s.withError("no command runner configured for /" + cmdName), tea.ClearScreen
 		}
 		out := apply(m.Item)
+		if s.conv != nil {
+			s.topbar.SetSession(s.conv.Model(), s.conv.ContextUsage())
+		}
 		next, outcomeCmd := s.applyCommandOutcome(out)
 		return next, tea.Batch(outcomeCmd, tea.ClearScreen)
 	case picker.CancelMsg:

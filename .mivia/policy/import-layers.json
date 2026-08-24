@@ -11,7 +11,6 @@
   "allow": {
     "cmd/mivia": [
       "internal/cli",
-      "internal/legacytui",
       "internal/version",
       "internal/newtui"
     ],
@@ -268,29 +267,6 @@
       "internal/sdkadapter",
       "internal/storage"
     ],
-    "internal/legacytui": [
-      "internal/agent",
-      "internal/agents",
-      "internal/chat",
-      "internal/cli",
-      "internal/cliworkflow",
-      "internal/cliworktree",
-      "internal/config",
-      "internal/contextstate",
-      "internal/coordinator",
-      "internal/events",
-      "internal/ledger",
-      "internal/provider",
-      "internal/reasoning",
-      "internal/redact",
-      "internal/runtime",
-      "internal/skills",
-      "internal/storage",
-      "internal/vcs",
-      "internal/workflows/definition",
-      "internal/workflows/ledger",
-      "internal/workspace"
-    ],
     "internal/mcp": [
       "internal/config",
       "internal/redact",
@@ -475,6 +451,7 @@
       "internal/sdkadapter",
       "internal/storage",
       "internal/tools",
+      "internal/ui/component/composer",
       "internal/uikit/intent",
       "internal/uikit/ports",
       "internal/uikit/uievent",

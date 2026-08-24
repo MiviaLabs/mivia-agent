@@ -20,11 +20,22 @@ func RunTUI(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *
 	log.SetOutput(io.Discard)
 	defer log.SetOutput(prevLogWriter)
 
+	root, err := buildApp(sess, res, toolsOn, agentState, resumeSessionName)
+	if err != nil {
+		return err
+	}
+
+	p := tea.NewProgram(root)
+	_, err = p.Run()
+	return err
+}
+
+func buildApp(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *cli.AgentSessionState, resumeSessionName string) (tea.Model, error) {
 	conv := uiadapter.NewConversation(sess)
 	approver := uiadapter.NewApprover(sess)
 	themes, err := theme.Embedded()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var th theme.Theme
 	for _, t := range themes {
@@ -35,7 +46,7 @@ func RunTUI(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *
 	}
 
 	threads := uiadapter.NewSubagentThreads()
-	settingsStore := uiadapter.NewSettingsStore(res, agentState)
+	settingsStore := uiadapter.NewSettingsStore(sess, res, agentState)
 
 	runner := uiadapter.NewCommandRunner(sess, res, agentState)
 	screen := conversation.New(th, theme.TierTrueColor, themes, conv, approver, 80, nil)
@@ -48,7 +59,5 @@ func RunTUI(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *
 		Mouse: true,
 	})
 
-	p := tea.NewProgram(root)
-	_, err = p.Run()
-	return err
+	return root, nil
 }

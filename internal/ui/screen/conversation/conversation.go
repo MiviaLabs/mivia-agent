@@ -210,6 +210,15 @@ func (s *Screen) reflow() {
 	s.resize()
 }
 
+func (s *Screen) refreshTopbar() {
+	if s.conv != nil {
+		s.topbar.SetSession(s.conv.Model(), s.conv.ContextUsage())
+		if title := s.conv.Title(); title != "" {
+			s.topbar.SetBreadcrumb([]string{title})
+		}
+	}
+}
+
 func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
@@ -233,16 +242,16 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 			return s, nil
 		}
 		return s.forwardThreadMsg(msg)
+	case app.ScreenResumedMsg:
+		s.refreshTopbar()
+		return s, nil
 	case turnEndedMsg:
 		s.statusline.Stop()
 		s.approval.Clear()
 		s.active = nil
 		// Session values move at turn boundaries: refresh the top bar's
 		// model, context share, and title now, not per token.
-		s.topbar.SetSession(s.conv.Model(), s.conv.ContextUsage())
-		if title := s.conv.Title(); title != "" {
-			s.topbar.SetBreadcrumb([]string{title})
-		}
+		s.refreshTopbar()
 		return s, nil
 	case approval.DecisionMsg:
 		if s.approver != nil {

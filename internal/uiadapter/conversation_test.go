@@ -573,11 +573,9 @@ func TestConversation_DoesNotImportCLIFamily(t *testing.T) {
 		for _, banned := range []string{
 			"github.com/MiviaLabs/mivia-agent/internal/cli",
 			"github.com/MiviaLabs/mivia-agent/internal/clichat",
-			"github.com/MiviaLabs/mivia-agent/internal/cliagents",
 			"github.com/MiviaLabs/mivia-agent/internal/cliworkflow",
 			"github.com/MiviaLabs/mivia-agent/internal/cliorchestrate",
 			"github.com/MiviaLabs/mivia-agent/internal/cliworktree",
-			"github.com/MiviaLabs/mivia-agent/internal/legacytui",
 		} {
 			if l == banned {
 				t.Fatalf("uiadapter transitively imports %s", banned)

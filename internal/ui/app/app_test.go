@@ -275,12 +275,30 @@ func TestThemeSelectedMsgAdoptsThemeAndPops(t *testing.T) {
 	// Both the base screen (still on the stack) and the picker (about to
 	// be popped) must have received the broadcast - not just the top.
 	base := m.stack[0].(stubScreen)
-	if len(base.received) != 1 {
-		t.Fatalf("expected the base screen to receive ThemeChangedMsg, got %d received msgs", len(base.received))
+	if len(base.received) != 2 {
+		t.Fatalf("expected the base screen to receive ThemeChangedMsg and ScreenResumedMsg, got %d received msgs", len(base.received))
 	}
 	got, ok := base.received[0].(ThemeChangedMsg)
 	if !ok || got.Theme.Name != light.Name {
 		t.Errorf("got %+v, want ThemeChangedMsg{Theme: %s}", base.received[0], light.Name)
+	}
+	if _, ok := base.received[1].(ScreenResumedMsg); !ok {
+		t.Errorf("got %+v, want ScreenResumedMsg", base.received[1])
+	}
+}
+
+func TestPopScreenMsgSendsScreenResumedMsg(t *testing.T) {
+	m := New(stubScreen{name: "base"}, loadTheme(t), theme.TierASCII, nil)
+	next, _ := m.Update(PushScreenMsg{Screen: stubScreen{name: "modal"}})
+	m = next.(Model)
+	next, _ = m.Update(PopScreenMsg{})
+	m = next.(Model)
+	base := m.stack[0].(stubScreen)
+	if len(base.received) != 1 {
+		t.Fatalf("expected 1 msg on base screen, got %d", len(base.received))
+	}
+	if _, ok := base.received[0].(ScreenResumedMsg); !ok {
+		t.Errorf("expected ScreenResumedMsg, got %T", base.received[0])
 	}
 }
 

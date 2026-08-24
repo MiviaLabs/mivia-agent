@@ -56,6 +56,12 @@ type CommandOutcome struct {
 	Notice string
 }
 
+// Command is a slash command candidate for auto-completion.
+type Command struct {
+	Name string
+	Desc string
+}
+
 // CommandRunner executes one slash command against session state - a
 // fake today, real harness state after the CLI refactor lands. name is
 // the command word without the leading "/"; args is the remainder of

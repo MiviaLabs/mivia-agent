@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
@@ -12,6 +13,7 @@ import (
 
 // SettingsStore holds the active configuration and state for settings management.
 type SettingsStore struct {
+	sess       *chat.Session
 	res        *config.Resolved
 	agentState *cliagents.AgentSessionState
 
@@ -29,8 +31,9 @@ type SettingsStore struct {
 }
 
 // NewSettingsStore builds a SettingsStore populated from the resolved configuration and agent state.
-func NewSettingsStore(res *config.Resolved, state *cliagents.AgentSessionState) *SettingsStore {
+func NewSettingsStore(sess *chat.Session, res *config.Resolved, state *cliagents.AgentSessionState) *SettingsStore {
 	s := &SettingsStore{
+		sess:       sess,
 		res:        res,
 		agentState: state,
 		runs:       make(map[string][]ports.Run),
@@ -50,57 +53,92 @@ func (s *SettingsStore) initFromConfig() {
 		ScreenReader:    false,
 		ReducedMotion:   false,
 	}
+	s.initProvidersFromConfig()
+	s.initAgentsFromConfig()
+}
 
-	if s.res != nil {
-		for _, g := range s.res.ModelCatalog() {
-			var models []ports.ModelView
-			for _, m := range g.Models {
-				var efforts []string
-				for _, eff := range m.ReasoningEfforts {
-					efforts = append(efforts, string(eff))
-				}
-				models = append(models, ports.ModelView{
-					Name:                m.Name,
-					ContextWindowTokens: m.ContextWindowTokens,
-					MaxOutputTokens:     m.MaxOutputTokens,
-					ReasoningEfforts:    efforts,
-					Reasoning:           string(m.Reasoning),
-				})
+func (s *SettingsStore) initProvidersFromConfig() {
+	if s.res == nil {
+		return
+	}
+	catalog := s.res.ModelCatalog()
+	if len(catalog) == 0 && s.res.ProviderName != "" {
+		var models []ports.ModelView
+		if s.res.Model != "" {
+			models = append(models, ports.ModelView{Name: s.res.Model, ContextWindowTokens: 128000})
+		}
+		activeModel := s.res.Model
+		if s.sess != nil && s.sess.CurrentSelection().Model != "" {
+			activeModel = s.sess.CurrentSelection().Model
+		}
+		s.providers = append(s.providers, ports.ProviderView{
+			Name:        s.res.ProviderName,
+			Active:      true,
+			Selectable:  true,
+			Models:      models,
+			ActiveModel: activeModel,
+		})
+	}
+	for _, g := range catalog {
+		var models []ports.ModelView
+		for _, m := range g.Models {
+			var efforts []string
+			for _, eff := range m.ReasoningEfforts {
+				efforts = append(efforts, string(eff))
 			}
-			var activeModel string
+			models = append(models, ports.ModelView{
+				Name:                m.Name,
+				ContextWindowTokens: m.ContextWindowTokens,
+				MaxOutputTokens:     m.MaxOutputTokens,
+				ReasoningEfforts:    efforts,
+				Reasoning:           string(m.Reasoning),
+			})
+		}
+		var activeModel string
+		active := g.Active
+		if s.sess != nil && s.sess.CurrentSelection().ProviderName != "" {
+			active = (s.sess.CurrentSelection().ProviderName == g.Provider)
+			if active {
+				activeModel = s.sess.CurrentSelection().Model
+			}
+		}
+		if activeModel == "" {
 			for _, m := range g.Models {
-				if g.Active && activeModel == "" {
+				if active && activeModel == "" {
 					activeModel = m.Name
 				}
 			}
-			s.providers = append(s.providers, ports.ProviderView{
-				Name:           g.Provider,
-				Active:         g.Active,
-				Selectable:     g.Selectable,
-				DisabledReason: g.DisabledReason,
-				Models:         models,
-				ActiveModel:    activeModel,
-			})
 		}
+		s.providers = append(s.providers, ports.ProviderView{
+			Name:           g.Provider,
+			Active:         active,
+			Selectable:     g.Selectable,
+			DisabledReason: g.DisabledReason,
+			Models:         models,
+			ActiveModel:    activeModel,
+		})
 	}
+}
 
-	if s.agentState != nil && s.agentState.Registry != nil {
-		for _, a := range s.agentState.Registry.List() {
-			var skills []string
-			if a.Skills != nil {
-				skills = *a.Skills
-			}
-			s.agents = append(s.agents, ports.AgentView{
-				Name:              a.Name,
-				Description:       a.Description,
-				Provider:          a.Provider,
-				Model:             a.Model,
-				Tools:             a.EffectiveTools,
-				Skills:            skills,
-				MCPServers:        a.EffectiveMCPServers,
-				SystemPromptChars: len(a.SystemPrompt),
-			})
+func (s *SettingsStore) initAgentsFromConfig() {
+	if s.agentState == nil || s.agentState.Registry == nil {
+		return
+	}
+	for _, a := range s.agentState.Registry.List() {
+		var skills []string
+		if a.Skills != nil {
+			skills = *a.Skills
 		}
+		s.agents = append(s.agents, ports.AgentView{
+			Name:              a.Name,
+			Description:       a.Description,
+			Provider:          a.Provider,
+			Model:             a.Model,
+			Tools:             a.EffectiveTools,
+			Skills:            skills,
+			MCPServers:        a.EffectiveMCPServers,
+			SystemPromptChars: len(a.SystemPrompt),
+		})
 	}
 }
 
@@ -270,6 +308,13 @@ func (s *SettingsStore) applyProvider(e ports.ProviderEdit) error {
 		}
 		if !foundModel {
 			return fmt.Errorf("model %q not found under %q", v.Model, v.Provider)
+		}
+		if s.sess != nil && s.res != nil {
+			if _, err := cliagents.SwitchModelCommand(s.sess, s.res, v.Provider, v.Model); err != nil {
+				return fmt.Errorf("failed to switch model to %q (%s): %w", v.Model, v.Provider, err)
+			}
+			s.res.ProviderName = v.Provider
+			s.res.Model = v.Model
 		}
 		for i := range s.providers {
 			s.providers[i].Active = (i == target)

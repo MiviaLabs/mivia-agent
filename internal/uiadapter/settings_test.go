@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -48,7 +49,7 @@ func setupTestSettings(t *testing.T) ports.Settings {
 		Registry: reg,
 		ToolBase: tools.NewRegistry(),
 	}
-	store := uiadapter.NewSettingsStore(res, state)
+	store := uiadapter.NewSettingsStore(nil, res, state)
 	return store.Settings()
 }
 
@@ -281,4 +282,72 @@ func TestAutomationSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	drainOK(t, h)
+}
+
+func TestProviderSettings_ActivateModelWithSession(t *testing.T) {
+	res := &config.Resolved{
+		ProviderName: "zai",
+		Model:        "glm-5.2",
+	}
+	sess := chat.NewSession(res, nil)
+	sess.SelectModel("glm-5.2")
+
+	reg := agents.NewRegistry()
+	state := &cliagents.AgentSessionState{
+		Registry: reg,
+		ToolBase: tools.NewRegistry(),
+	}
+
+	store := uiadapter.NewSettingsStore(sess, res, state)
+	settings := store.Settings()
+
+	// Initial active model in session and settings
+	providers := settings.Providers.Providers()
+	var zai ports.ProviderView
+	for _, p := range providers {
+		if p.Name == "zai" {
+			zai = p
+			break
+		}
+	}
+	if !zai.Active || zai.ActiveModel != "glm-5.2" {
+		t.Fatalf("expected zai active with glm-5.2, got active=%v, activeModel=%q", zai.Active, zai.ActiveModel)
+	}
+
+	// Add new model under zai and activate it
+	h, err := settings.Providers.Apply(context.Background(), ports.ScopeUser, ports.UpsertModel{
+		Provider: "zai",
+		Model:    ports.ModelView{Name: "glm-4.7", ContextWindowTokens: 128000},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drainOK(t, h)
+
+	h, err = settings.Providers.Apply(context.Background(), ports.ScopeUser, ports.ActivateModel{
+		Provider: "zai",
+		Model:    "glm-4.7",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drainOK(t, h)
+
+	// Verify session model is switched
+	if sess.CurrentModel() != "glm-4.7" {
+		t.Errorf("expected session model 'glm-4.7', got %q", sess.CurrentModel())
+	}
+	if res.Model != "glm-4.7" {
+		t.Errorf("expected res.Model 'glm-4.7', got %q", res.Model)
+	}
+
+	// Verify settings view reflects active model
+	providers = settings.Providers.Providers()
+	for _, p := range providers {
+		if p.Name == "zai" {
+			if !p.Active || p.ActiveModel != "glm-4.7" {
+				t.Errorf("expected zai active with glm-4.7, got active=%v, activeModel=%q", p.Active, p.ActiveModel)
+			}
+		}
+	}
 }

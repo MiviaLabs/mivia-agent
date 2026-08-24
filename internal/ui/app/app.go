@@ -61,6 +61,10 @@ type PushScreenMsg struct{ Screen Screen }
 // screen is never dismissed this way.
 type PopScreenMsg struct{}
 
+// ScreenResumedMsg is sent by the router to the newly exposed top screen
+// after a pushed modal screen is popped from the stack.
+type ScreenResumedMsg struct{}
+
 // ThemeSelectedMsg asks the router to adopt a new app-wide theme by
 // name and pop the screen that offered the choice (the theme picker).
 // Theme identity is app-level state no Screen owns, so the message -
@@ -277,7 +281,13 @@ func (m Model) applyTheme(msg ThemeSelectedMsg) (tea.Model, tea.Cmd) {
 // screen swap is rare, not per-keystroke, so the cost is negligible).
 func (m Model) pop() (tea.Model, tea.Cmd) {
 	m.stack = slices.Clone(m.stack[:len(m.stack)-1])
-	return m, tea.ClearScreen
+	var resumeCmd tea.Cmd
+	if top, ok := m.top(); ok {
+		var next Screen
+		next, resumeCmd = top.Update(ScreenResumedMsg{})
+		m.stack[len(m.stack)-1] = next
+	}
+	return m, tea.Batch(resumeCmd, tea.ClearScreen)
 }
 
 // View renders the top of the stack.
