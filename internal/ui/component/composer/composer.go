@@ -248,6 +248,12 @@ func (m *Model) SetWidth(width int) {
 	m.input.SetWidth(inner)
 }
 
+// Focus focuses the composer input.
+func (m *Model) Focus() { _ = m.input.Focus() }
+
+// Blur blurs the composer input.
+func (m *Model) Blur() { m.input.Blur() }
+
 // Value returns the current input text (may be multi-line).
 func (m Model) Value() string { return m.input.Value() }
 

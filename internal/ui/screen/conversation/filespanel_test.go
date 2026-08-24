@@ -153,23 +153,20 @@ func TestPanelLiveAppendHoldsTheSelection(t *testing.T) {
 	}
 }
 
-// TestPanelFilterSurvivesLiveUpdates: the panel is persistent, so a
-// filter typed into the list must survive the live rebuilds a
+// TestPanelSelectionSurvivesLiveUpdates: the panel is persistent, so a
+// selected row in the list must survive the live rebuilds a
 // background turn causes.
-func TestPanelFilterSurvivesLiveUpdates(t *testing.T) {
+func TestPanelSelectionSurvivesLiveUpdates(t *testing.T) {
 	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 24, sampleDiffs()...))
-	next, _ := s.Update(key("b")) // filter "b": only b.go matches
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyDown}) // move to b.go
 	s = next.(Screen)
-	if f := s.panel.list.Filter(); f != "b" {
-		t.Fatalf("precondition: filter %q, want \"b\"", f)
+	if sel, ok := s.panel.list.Selected(); !ok || !strings.Contains(sel, "b.go") {
+		t.Fatalf("precondition: selected %q, want \"b.go\"", sel)
 	}
 	next, _ = s.Update(diffEvent("c9", "c.go", 1, 0))
 	s = next.(Screen)
-	if f := s.panel.list.Filter(); f != "b" {
-		t.Fatalf("live update wiped the filter to %q", f)
-	}
 	if sel, ok := s.panel.list.Selected(); !ok || !strings.Contains(sel, "b.go") {
-		t.Errorf("after live update selected %q ok=%v, want still b.go through the filter", sel, ok)
+		t.Errorf("after live update selected %q ok=%v, want still b.go", sel, ok)
 	}
 }
 
@@ -597,76 +594,36 @@ func (h scriptedHandle) Cancel()                      {}
 // TestPanelDTypesIntoTheFilterWhileNoDialogShows: the view toggle acts
 // on content, and the only content surface is the dialog - with the
 // dialog closed, 'd' must reach the filter (it is a letter users must
-// be able to type) and must not flip invisible view state.
-func TestPanelDTypesIntoTheFilterWhileNoDialogShows(t *testing.T) {
+func TestPanelDDoesNotFilter(t *testing.T) {
 	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 24, sampleDiffs()...))
 	next, _ := s.Update(key("d"))
 	s = next.(Screen)
-	if got := s.panel.list.Filter(); got != "d" {
-		t.Errorf("d did not reach the filter (got %q): untypeable letter or swallowed state flip", got)
-	}
 	if s.panel.sourceView {
 		t.Error("d flipped sourceView with no dialog on screen to show it")
 	}
-	// Enter still opens the diff view, not a silently-armed source view.
-	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEscape}) // clear the filter first
-	s = next.(Screen)
 	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	s = next.(Screen)
 	if !s.panel.dialog || !strings.Contains(s.View(), "@@") {
-		t.Errorf("enter after d-in-filter did not open the diff dialog:\n%s", s.View())
+		t.Errorf("enter did not open the diff dialog:\n%s", s.View())
 	}
 }
 
-// TestPanelEscPeelsTheFilterBeforeTheFocus: esc clears an active filter
-// while keeping the list focused; the second esc hands focus to the
-// composer.
-func TestPanelEscPeelsTheFilterBeforeTheFocus(t *testing.T) {
+// TestPanelEscDefocusesToComposer: esc hands focus to the composer.
+func TestPanelEscDefocusesToComposer(t *testing.T) {
 	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 24, sampleDiffs()...))
-	next, _ := s.Update(key("b"))
-	s = next.(Screen)
-	if s.panel.list.Filter() != "b" {
-		t.Fatal("precondition: filter armed")
-	}
-	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
-	s = next.(Screen)
-	if s.panel.list.Filter() != "" {
-		t.Error("the first esc must clear the filter")
-	}
-	if !s.panel.focused {
-		t.Error("the first esc must keep the list focused")
-	}
-	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	s = next.(Screen)
 	if s.panel.focused {
-		t.Error("the second esc must hand focus to the composer")
+		t.Error("esc must hand focus to the composer")
 	}
 }
 
-// TestPanelCloseDropsTheFilter: a closed panel must not resurface as an
-// unexplained short list.
-func TestPanelCloseDropsTheFilter(t *testing.T) {
-	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 24, sampleDiffs()...))
-	next, _ := s.Update(key("b"))
-	s = next.(Screen)
-	next, _ = s.Update(ctrl('b')) // defocus
-	s = next.(Screen)
-	next, _ = s.Update(ctrl('b')) // close
-	s = next.(Screen)
-	s = openPanel(t, s) // reopen
-	if got := s.panel.list.Filter(); got != "" {
-		t.Errorf("reopened panel kept the filter %q", got)
-	}
-}
-
-// TestPanelCursorMarkerIsTheFocusSignal: the "> " marker shows only
-// while the list holds focus, so the row the next keystroke acts on is
-// always the marked one - and narrow mode (which has no rule to carry
-// the focus colour) still gets a signal.
+// TestPanelCursorMarkerIsTheFocusSignal: the "> " marker and SIDEBAR focused header
+// show while the list holds focus.
 func TestPanelCursorMarkerIsTheFocusSignal(t *testing.T) {
 	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 24, sampleDiffs()...))
-	if !strings.Contains(s.View(), "> ~ a.go") {
-		t.Errorf("focused list does not mark the selected row:\n%s", s.View())
+	if !strings.Contains(s.View(), "> ~ a.go") || !strings.Contains(s.View(), "SIDEBAR") {
+		t.Errorf("focused list does not mark the selected row or header:\n%s", s.View())
 	}
 	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	s = next.(Screen)
@@ -693,22 +650,6 @@ func TestPanelEnterGatedOnDialogFit(t *testing.T) {
 	s = next.(Screen)
 	if sel, _ := s.panel.list.Selected(); !strings.Contains(sel, "b.go") {
 		t.Errorf("list navigation died under the too-small frame (selected %q)", sel)
-	}
-}
-
-// TestPanelFilterIndicatorSurvivesWindowing: the "/filter" row is the
-// only explanation of a shortened list, so a list longer than its
-// window must still show it.
-func TestPanelFilterIndicatorSurvivesWindowing(t *testing.T) {
-	var diffs []uievent.EventMsg
-	for i := 0; i < 25; i++ {
-		diffs = append(diffs, diffEvent("c", "dir/f"+string(rune('a'+i))+".go", 1, 0, "x"))
-	}
-	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 16, diffs...))
-	next, _ := s.Update(key("f"))
-	s = next.(Screen)
-	if !strings.Contains(s.View(), "/f") {
-		t.Errorf("filter indicator clipped by the windowing:\n%s", s.View())
 	}
 }
 

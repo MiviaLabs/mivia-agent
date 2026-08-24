@@ -600,8 +600,7 @@ func (s Screen) panelAgentRow(a subagentRow, selLabel string, marked bool) strin
 }
 
 func (s Screen) panelRows(inner, maxRows int) []string {
-	needle := strings.ToLower(s.panel.list.Filter())
-	visible, agents := s.panelFilterEntries(needle)
+	visible, agents := s.panelFilterEntries("")
 
 	selLabel, _ := s.panel.list.Selected()
 	subtle := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle)
@@ -609,6 +608,13 @@ func (s Screen) panelRows(inner, maxRows int) []string {
 
 	var rows []string
 	selRow := -1
+
+	if marked {
+		rows = append(rows, render.Role(s.Theme, s.Tier, theme.RoleAccent).Bold(true).Render("● SIDEBAR")+" "+subtle.Render("(focused)"))
+	} else {
+		rows = append(rows, subtle.Render("  SIDEBAR"))
+	}
+
 	rows = append(rows, subtle.Render("files changed ("+strconv.Itoa(len(visible))+")"))
 	for _, e := range visible {
 		if e.rowLabel() == selLabel {
@@ -618,13 +624,13 @@ func (s Screen) panelRows(inner, maxRows int) []string {
 	}
 	rows = append(rows, subtle.Render("subagents ("+strconv.Itoa(len(agents))+")"))
 	for _, a := range agents {
+		if a.rowLabel() == selLabel {
+			selRow = len(rows)
+		}
 		rows = append(rows, s.panelAgentRow(a, selLabel, marked))
 	}
 
-	rows = panelWindowRows(rows, selRow, maxRows, needle != "")
-	if needle != "" {
-		rows = append(rows, subtle.Render("/"+s.panel.list.Filter()))
-	}
+	rows = panelWindowRows(rows, selRow, maxRows, false)
 	return clipRowsToWidth(rows, inner)
 }
 

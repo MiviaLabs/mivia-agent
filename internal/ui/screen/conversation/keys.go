@@ -211,13 +211,6 @@ func (s Screen) handlePanelListKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bo
 	if id, ok := s.keys.Match(keymap.ContextFiles, msg.String()); ok {
 		switch id {
 		case keymap.IDCancel:
-			// Esc peels one layer at a time: a filter first (the
-			// shortened list is explained by "/filter", and the way to
-			// see every file again is this press), then focus.
-			if s.panel.list.Filter() != "" {
-				s.panel.list.ClearFilter()
-				return s, nil, true
-			}
 			s.panelFocus(false)
 			return s, nil, true
 		case keymap.IDPagerRowUp:
@@ -225,17 +218,20 @@ func (s Screen) handlePanelListKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bo
 		case keymap.IDPagerRowDown:
 			msg = tea.KeyPressMsg{Code: tea.KeyDown}
 		}
-		// The view toggle and half-page scrolls act on CONTENT, and the
-		// only content surface is the dialog (panelDialogKey above);
-		// with the dialog closed those keys fall through to the filter,
-		// where 'd' is a letter the user must be able to type.
 	}
-	// Everything else feeds the list: arrows move the selection, typing
-	// filters, and Enter selects. The SelectMsg is consumed here, not
-	// returned as a Cmd - the dialog is this screen's own state, not a
-	// routed message. Enter opens the dialog only where it fits to draw;
-	// a too-small terminal leaves the list usable instead of setting a
-	// flag that swallows keys for a dialog nothing renders.
+	// Sidebar navigation: only arrow/nav keys and Enter act on the list (no search filter)
+	switch msg.Code {
+	case tea.KeyUp, tea.KeyDown, tea.KeyHome, tea.KeyEnd, tea.KeyPgUp, tea.KeyPgDown, tea.KeyEnter:
+		// allowed nav keys
+	default:
+		if msg.String() == "j" {
+			msg = tea.KeyPressMsg{Code: tea.KeyDown}
+		} else if msg.String() == "k" {
+			msg = tea.KeyPressMsg{Code: tea.KeyUp}
+		} else {
+			return s, nil, true
+		}
+	}
 	next, cmd := s.panel.list.Update(msg)
 	s.panel.list = next
 	s.panel.offset = 0 // a moved selection restarts the content at its top
@@ -279,9 +275,16 @@ func (s Screen) panelDialogKey(msg tea.KeyPressMsg) app.Screen {
 		case keymap.IDPagerHalfDown:
 			s.scrollPanel(1)
 			return s
+		case keymap.IDCancel:
+			s.panel.dialog, s.panel.dialogAgent = false, ""
+			s.panel.offset = 0
+			s.closeThread()
+			return s
 		}
 	}
-	s.panel.dialog, s.panel.dialogAgent, s.panel.offset = false, "", 0
+	s.panel.dialog, s.panel.dialogAgent = false, ""
+	s.panel.offset = 0
+	s.closeThread()
 	return s
 }
 
@@ -293,7 +296,12 @@ func (s *Screen) panelFocus(focused bool) {
 	s.panel.focused = focused
 	if focused {
 		s.transcript = s.transcript.ClearFocus()
+		s.composer.Blur()
+		if _, ok := s.panel.list.Selected(); !ok {
+			s.panel.list.MoveTo(0)
+		}
 	} else {
+		s.composer.Focus()
 		s.panel.dialog, s.panel.dialogAgent = false, ""
 	}
 }

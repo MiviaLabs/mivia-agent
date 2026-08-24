@@ -28,6 +28,9 @@ func (s Screen) statusRow() string {
 	var hint string
 	if s.embedded {
 		hint = render.Role(s.Theme, s.Tier, theme.RoleFGSubtle).Render("esc:close dialog")
+	} else if s.panel.open && s.panel.focused {
+		hint = render.Role(s.Theme, s.Tier, theme.RoleAccent).Render("tab:composer") + "  " +
+			render.Role(s.Theme, s.Tier, theme.RoleFGSubtle).Render("↑/↓:select  enter:view  esc:back")
 	} else if s.quitArmed {
 		prefix := s.keys.Hint(keymap.IDHelp, keymap.IDOpenPager, keymap.IDPanelToggle)
 		warn := render.Role(s.Theme, s.Tier, theme.RoleWarning).Render("ctrl+c:press again to quit")
