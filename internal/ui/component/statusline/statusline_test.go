@@ -117,7 +117,7 @@ func TestMarkCarriesItsStateRole(t *testing.T) {
 			m.Start(c.label, time.Now())
 			got := m.View(time.Now())
 			want := render.Role(th, theme.TierTrueColor, c.role)
-			if !strings.Contains(got, want.Render("⬖")) && !strings.Contains(got, want.Render("◈")) && !strings.Contains(got, want.Render("◆")) {
+			if !strings.Contains(got, want.Render("✦")) && !strings.Contains(got, want.Render("⬖")) && !strings.Contains(got, want.Render("◈")) && !strings.Contains(got, want.Render("◆")) {
 				t.Errorf("got %q, want the mark styled with %s", got, c.role)
 			}
 			if subtle := render.Role(th, theme.TierTrueColor, theme.RoleFGSubtle).Render(c.label); !strings.Contains(got, subtle) {

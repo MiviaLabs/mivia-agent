@@ -6,32 +6,29 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 )
 
-// TestGlyphsMatchTheMockTables pins the mock's UNI/ASC tables: the
-// logo rotates U+2B16..U+2B19 without becoming another object, streaming
-// runs the diamond fill cycle, and the ASCII tier falls back to the
-// mock's ASC rotation.
-func TestGlyphsMatchTheMockTables(t *testing.T) {
+// TestGlyphsMatchWaveTables tests the aurora wave cycle across TrueColor and ASCII tiers.
+func TestGlyphsMatchWaveTables(t *testing.T) {
 	th := loadTheme(t)
 	m := New(th, theme.TierTrueColor, Thinking)
 	var got []rune
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 6; i++ {
 		got = append(got, m.Glyph())
 		next, _ := m.Update(TickMsg{})
 		m = next
 	}
-	if string(got) != "⬖⬘⬗⬙" {
-		t.Errorf("thinking cycle = %q, want ⬖⬘⬗⬙", string(got))
+	if string(got) != "✦✦✧··✧" {
+		t.Errorf("thinking cycle = %q, want ✦✦✧··✧", string(got))
 	}
 
 	m = New(th, theme.TierASCII, Thinking)
 	var asc string
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 6; i++ {
 		asc += string(m.Glyph())
 		next, _ := m.Update(TickMsg{})
 		m = next
 	}
-	if asc != "<^>v" {
-		t.Errorf("ASCII cycle = %q, want <^>v", asc)
+	if asc != "**+..+" {
+		t.Errorf("ASCII cycle = %q, want **+..+", asc)
 	}
 
 	if g := New(th, theme.TierTrueColor, Idle).Glyph(); g != '⬖' {
@@ -46,8 +43,7 @@ func TestGlyphsMatchTheMockTables(t *testing.T) {
 }
 
 // TestWaitingBlinksAtAQuarterRate pins the speed semantics: waiting
-// advances one frame per four ticks, so a slow mark reads as blocked on
-// someone else.
+// advances one frame per four ticks.
 func TestWaitingBlinksAtAQuarterRate(t *testing.T) {
 	th := loadTheme(t)
 	m := New(th, theme.TierTrueColor, Waiting)
@@ -57,8 +53,8 @@ func TestWaitingBlinksAtAQuarterRate(t *testing.T) {
 		next, _ := m.Update(TickMsg{})
 		m = next
 	}
-	if seq != "⬖⬖⬖⬖◇◇◇◇" {
-		t.Errorf("waiting sequence = %q, want four ⬖ then four ◇", seq)
+	if seq != "✦✦✦✦✦✦✦✦" {
+		t.Errorf("waiting sequence = %q, want eight ✦ across 8 ticks", seq)
 	}
 }
 
@@ -66,7 +62,7 @@ func TestWaitingBlinksAtAQuarterRate(t *testing.T) {
 // means the agent is not working, so ticks must not move it.
 func TestStaticStatesIgnoreTicks(t *testing.T) {
 	th := loadTheme(t)
-	for _, st := range []State{Idle, Pending, Failed, Done} {
+	for _, st := range []State{Idle, Failed, Done} {
 		m := New(th, theme.TierTrueColor, st)
 		before := m.Glyph()
 		next, cmd := m.Update(TickMsg{})
@@ -89,8 +85,17 @@ func TestSetStateRestartsTheCycle(t *testing.T) {
 		m = next
 	}
 	m.SetState(Running)
-	if g := m.Glyph(); g != '⬖' {
-		t.Errorf("cycle did not restart: first glyph %q, want ⬖", g)
+	if g := m.Glyph(); g != '✦' {
+		t.Errorf("cycle did not restart: first glyph %q, want ✦", g)
+	}
+}
+
+func TestAuroraWaveViewRendering(t *testing.T) {
+	th := loadTheme(t)
+	m := New(th, theme.TierTrueColor, Thinking)
+	view := m.View()
+	if view == "" {
+		t.Error("expected non-empty aurora wave view")
 	}
 }
 

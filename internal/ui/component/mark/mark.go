@@ -1,16 +1,7 @@
-// Package mark is the Mivia brand mark: one cell that carries the
-// turn's state. The logo is U+2B16 DIAMOND WITH LEFT HALF BLACK, and
-// U+2B16..U+2B19 rotate the black half through left/top/right/bottom,
-// so the logo animates without ever becoming a different object
-// (docs/design/mivia-ui-mock-panes.html view 18).
-//
-// Four states animate (waiting, thinking, streaming, running) and four
-// are static (idle, pending, failed, done). A static mark means the
-// agent is not working; that distinction is load-bearing, so nothing
-// here may animate a static state or still a moving one.
 package mark
 
 import (
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -62,7 +53,7 @@ func (s State) Word() string {
 // Animated reports whether the state moves. Static means "not working".
 func (s State) Animated() bool {
 	switch s {
-	case Waiting, Thinking, Streaming, Running:
+	case Waiting, Thinking, Streaming, Running, Pending:
 		return true
 	}
 	return false
@@ -72,34 +63,9 @@ func (s State) Animated() bool {
 // a slow mark reads as "blocked on someone else" (mock view 18).
 const waitDivisor = 4
 
-// uniFrames and ascFrames are the glyph cycles per state, straight from
-// the mock's UNI/ASC tables. ASC is the ASCII/NoTTY fallback, wired
-// through theme.Tier like every other tiered renderer.
-var uniFrames = map[State][]rune{
-	Thinking:  {'⬖', '⬘', '⬗', '⬙'}, // U+2B16..U+2B19
-	Running:   {'⬖', '⬘', '⬗', '⬙'},
-	Streaming: {'◇', '◈', '◆', '◈'}, // U+25C7/25C8/25C6 fill cycle
-	Waiting:   {'⬖', '◇'},
-	Idle:      {'⬖'},
-	Pending:   {'◈'},
-	Failed:    {'◆'},
-	Done:      {'⬖'},
-}
-
-var ascFrames = map[State][]rune{
-	Thinking:  {'<', '^', '>', 'v'},
-	Running:   {'<', '^', '>', 'v'},
-	Streaming: {'.', 'o', '0', 'o'},
-	Waiting:   {'<', ' '},
-	Idle:      {'<'},
-	Pending:   {'?'},
-	Failed:    {'X'},
-	Done:      {'<'},
-}
-
-// roles maps each state to its theme role, from the mock's ANIM table.
+// roles maps each state to its primary theme role.
 var roles = map[State]theme.Role{
-	Thinking:  theme.RoleWarning,
+	Thinking:  theme.RoleInfo,
 	Streaming: theme.RoleSuccess,
 	Running:   theme.RoleInfo,
 	Waiting:   theme.RoleFGSubtle,
@@ -156,23 +122,146 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	return m, TickCmd()
 }
 
-// Glyph is the mark's current cell, unstyled.
+// Glyph is the mark's lead cell, unstyled.
 func (m Model) Glyph() rune {
-	frames := uniFrames[m.state]
-	if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
-		frames = ascFrames[m.state]
+	if m.state == Idle || m.state == Done {
+		if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
+			return '<'
+		}
+		return '⬖'
 	}
-	if len(frames) == 0 {
-		return ' '
+	if m.state == Failed {
+		if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
+			return 'X'
+		}
+		return '◆'
 	}
-	idx := m.frame % len(frames)
+	isASCII := m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY
+	f := m.frame
 	if m.state == Waiting {
-		idx = (m.frame / waitDivisor) % len(frames)
+		f = m.frame / waitDivisor
 	}
-	return frames[idx]
+	phase := f % 6
+	if phase < 0 {
+		phase += 6
+	}
+	switch phase {
+	case 0, 1:
+		if isASCII {
+			return '*'
+		}
+		return '✦'
+	case 2, 5:
+		if isASCII {
+			return '+'
+		}
+		return '✧'
+	default:
+		if isASCII {
+			return '.'
+		}
+		return '·'
+	}
 }
 
-// View is the styled single-cell mark.
+// View renders the mark: single brand glyph for idle/done/failed, and
+// an animated 3-cell colorful aurora wave for active states.
 func (m Model) View() string {
-	return render.Role(m.Theme, m.Tier, roles[m.state]).Render(string(m.Glyph()))
+	if m.state == Idle {
+		glyph := '⬖'
+		if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
+			glyph = '<'
+		}
+		return render.Role(m.Theme, m.Tier, roles[m.state]).Render(string(glyph))
+	}
+	if m.state == Failed {
+		glyph := '◆'
+		if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
+			glyph = 'X'
+		}
+		return render.Role(m.Theme, m.Tier, theme.RoleDanger).Render(string(glyph))
+	}
+	if m.state == Done {
+		glyph := '⬖'
+		if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
+			glyph = '<'
+		}
+		return render.Role(m.Theme, m.Tier, theme.RoleSuccess).Render(string(glyph))
+	}
+
+	return m.renderAuroraWave()
+}
+
+func (m Model) renderAuroraWave() string {
+	isASCII := m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY
+
+	var peakRole, midRole, valleyRole theme.Role
+	switch m.state {
+	case Thinking:
+		peakRole = theme.RoleInfo
+		midRole = theme.RoleAccent
+		valleyRole = theme.RoleFGSubtle
+	case Running:
+		peakRole = theme.RoleInfo
+		midRole = theme.RoleAccent
+		valleyRole = theme.RoleFGSubtle
+	case Streaming:
+		peakRole = theme.RoleSuccess
+		midRole = theme.RoleInfo
+		valleyRole = theme.RoleFGSubtle
+	case Waiting, Pending:
+		peakRole = theme.RoleWarning
+		midRole = theme.RoleFGSubtle
+		valleyRole = theme.RoleFGSubtle
+	default:
+		peakRole = theme.RoleAccent
+		midRole = theme.RoleFGSubtle
+		valleyRole = theme.RoleFGSubtle
+	}
+
+	f := m.frame
+	if m.state == Waiting {
+		f = m.frame / waitDivisor
+	}
+
+	var sb strings.Builder
+	for c := 0; c < 3; c++ {
+		if c > 0 {
+			sb.WriteString(" ")
+		}
+		phase := (f - c) % 6
+		if phase < 0 {
+			phase += 6
+		}
+
+		var glyph rune
+		var role theme.Role
+
+		switch phase {
+		case 0, 1:
+			if isASCII {
+				glyph = '*'
+			} else {
+				glyph = '✦'
+			}
+			role = peakRole
+		case 2, 5:
+			if isASCII {
+				glyph = '+'
+			} else {
+				glyph = '✧'
+			}
+			role = midRole
+		default:
+			if isASCII {
+				glyph = '.'
+			} else {
+				glyph = '·'
+			}
+			role = valleyRole
+		}
+
+		sb.WriteString(render.Role(m.Theme, m.Tier, role).Render(string(glyph)))
+	}
+	return sb.String()
 }

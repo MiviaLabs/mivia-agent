@@ -35,10 +35,6 @@
       "internal/ui/stream",
       "internal/ui/theme"
     ],
-    "cmd/wfprobe": [
-      "internal/storage",
-      "internal/workflows/ledger"
-    ],
     "internal/agent": [
       "internal/contextmgr",
       "internal/contextstate",

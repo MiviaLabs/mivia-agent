@@ -241,7 +241,7 @@ func (sp sessionPicker) sessionMark(s ports.SessionSummary) string {
 			state = mark.Streaming
 		}
 		m := mark.New(sp.Theme, sp.Tier, state)
-		return m.View()
+		return render.Role(sp.Theme, sp.Tier, theme.RoleInfo).Render(string(m.Glyph()))
 	}
 	if s.State == "failed" {
 		return mark.New(sp.Theme, sp.Tier, mark.Failed).View()

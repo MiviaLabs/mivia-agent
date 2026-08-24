@@ -16,6 +16,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/mark"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
+	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
 )
 
 // labelStates maps the turn's activity label to the brand mark's
@@ -53,16 +54,9 @@ type Model struct {
 // TickMsg advances the spinner frame.
 type TickMsg struct{}
 
-// tickCmd sleeps one mark interval and yields THIS package's TickMsg:
-// the screen and its tests speak statusline.TickMsg, while the mark's
-// own tick stays internal to it. Wrapping (rather than returning
-// mark.TickCmd directly) also keeps the Cmd re-callable, which tea.Tick
-// alone is not: its timer channel is one-shot.
+// tickCmd returns the continuous timer Cmd for the spinner clock.
 func tickCmd() tea.Cmd {
-	return func() tea.Msg {
-		mark.TickCmd()()
-		return TickMsg{}
-	}
+	return tea.Tick(time.Second/uikitconfig.SpinnerFPS, func(time.Time) tea.Msg { return TickMsg{} })
 }
 
 // New returns an inactive Model.
@@ -138,9 +132,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 	}
 	m.frame++
-	next, cmd := m.mark.Update(mark.TickMsg{})
+	next, _ := m.mark.Update(mark.TickMsg{})
 	m.mark = next
-	return m, cmd
+	return m, tickCmd()
 }
 
 // View renders the line as of now. now is a parameter rather than
