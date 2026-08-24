@@ -259,7 +259,7 @@ func TestToolDetailIncludesFormattedArgs(t *testing.T) {
 	}})
 	got := next.(Screen)
 	view := got.statusline.View(fixedNow())
-	if !strings.Contains(view, "run_command") || !strings.Contains(view, "command=go test ./...") {
+	if !strings.Contains(view, "run_command") || !strings.Contains(view, "$ go test ./...") {
 		t.Errorf("got %q, want the tool name and its formatted args", view)
 	}
 }

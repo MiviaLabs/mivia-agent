@@ -63,7 +63,7 @@ func (s Screen) statusRow() string {
 // the status line has no separate label/detail columns.
 func toolDetail(name string, args map[string]any) string {
 	detail := name
-	if a := render.FormatArgs(args); a != "" {
+	if a := render.FormatToolDetail(name, args); a != "" {
 		detail += " " + a
 	}
 	return detail

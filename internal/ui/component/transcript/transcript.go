@@ -287,7 +287,7 @@ func (m Model) handleToolPending(b uievent.ToolPendingBody) (Model, tea.Cmd) {
 	return m.pushBlock(Block{
 		Kind: uievent.KindToolPending, CallID: b.ToolCallID,
 		Header: Header{
-			Label: b.Name, Detail: render.FormatArgs(b.Args),
+			Label: b.Name, Detail: render.FormatToolDetail(b.Name, b.Args),
 			State: "pending", Role: theme.RoleWarning,
 		},
 	})
@@ -297,7 +297,7 @@ func (m Model) handleToolStart(b uievent.ToolStartBody) (Model, tea.Cmd) {
 	if ok := m.updateLive(b.ToolCallID, func(blk *Block) {
 		blk.Kind = uievent.KindToolStart
 		blk.Header.State, blk.Header.Role = "running", theme.RoleInfo
-		if d := render.FormatArgs(b.Args); d != "" {
+		if d := render.FormatToolDetail(b.Name, b.Args); d != "" {
 			blk.Header.Detail = d
 		}
 	}); ok {
@@ -306,7 +306,7 @@ func (m Model) handleToolStart(b uievent.ToolStartBody) (Model, tea.Cmd) {
 	return m.pushBlock(Block{
 		Kind: uievent.KindToolStart, CallID: b.ToolCallID,
 		Header: Header{
-			Label: b.Name, Detail: render.FormatArgs(b.Args),
+			Label: b.Name, Detail: render.FormatToolDetail(b.Name, b.Args),
 			State: "running", Role: theme.RoleInfo,
 		},
 	})

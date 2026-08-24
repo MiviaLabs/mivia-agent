@@ -47,7 +47,7 @@ func TestViewShowsPendingRequest(t *testing.T) {
 		t.Fatal("expected Active() after SetRequest")
 	}
 	got := m.View()
-	for _, want := range []string{"run_command", "cmd=ls", "o once", "D deny always"} {
+	for _, want := range []string{"run_command", "$ ls", "o once", "D deny always"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("approval view missing %q:\n%s", want, got)
 		}
@@ -534,7 +534,7 @@ func TestActionRidesInTheBorderLabel(t *testing.T) {
 			Args: map[string]any{"path": "/asdasd"}})
 
 	top := ansi.Strip(rows[0])
-	for _, want := range []string{"Approval Required", "edit_file", "path=/asdasd"} {
+	for _, want := range []string{"Approval Required", "edit_file", "/asdasd"} {
 		if !strings.Contains(top, want) {
 			t.Errorf("the top border is missing %q: %q", want, top)
 		}

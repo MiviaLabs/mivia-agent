@@ -168,7 +168,7 @@ func (m Model) action() string {
 	if m.active == nil {
 		return ""
 	}
-	return strings.TrimSpace(m.active.Name + " " + render.FormatArgs(m.active.Args))
+	return strings.TrimSpace(m.active.Name + " " + render.FormatToolDetail(m.active.Name, m.active.Args))
 }
 
 // borderLabel is the text of the top border row, and whether the action
