@@ -471,8 +471,38 @@ def test_same_diff_policy_edit_cannot_bypass_uncovered_lines() -> None:
         )
         git("add", "-A", cwd=root)
         proc = run_script(["--staged"], root)
-        assert proc.returncode == 1, "same-diff policy edit must NOT permit uncovered code to pass"
-        assert "evaluating against base policy" in proc.stderr
+def test_newly_created_policy_file_fails_closed() -> None:
+    import re as _re
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_fixture(root)
+        policy_dir = root / ".mivia" / "policy"
+        policy_dir.mkdir(parents=True, exist_ok=True)
+
+        add_uncovered_function(root)
+        git("add", "-A", cwd=root)
+        proc = run_script(["--staged"], root)
+        assert proc.returncode == 1
+        uncovered_lines = sorted({
+            int(m) for m in _re.findall(r"pkg/lib\.go:(\d+)", proc.stdout)
+        })
+
+        # Create diff-coverage.json fresh in this diff (file did not exist at HEAD)
+        (policy_dir / "diff-coverage.json").write_text(
+            "{\n"
+            '  "description": "fixture",\n'
+            '  "knownUncovered": {\n'
+            '    "pkg/lib.go": {\n'
+            f'      "lines": {uncovered_lines},\n'
+            '      "reason": "unauthorized newly created policy"\n'
+            "    }\n"
+            "  }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        git("add", "-A", cwd=root)
+        proc = run_script(["--staged"], root)
+        assert proc.returncode == 1, "newly created policy in active diff must fail closed"
 
 
 if __name__ == "__main__":

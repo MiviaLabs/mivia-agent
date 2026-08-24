@@ -1,17 +1,8 @@
 #!/usr/bin/env python3
 """Contract tests for scripts/check_test_quality.py.
-
-Builds isolated git+Go fixture modules and drives the script to verify:
-1. Rejection of empty test bodies
-2. Rejection of zero-assertion test functions (including non-asserting control flow)
-3. Rejection of tautological assertions (assert.True(t, true), assert.Equal(a, a), assert.NoError(t, nil))
-4. Rejection of empty subtest bodies (t.Run)
-5. Rejection of unreviewed t.Skip in git diff even when file already has other allowlisted skips
-6. Acceptance of proper assertions (t.Fatalf, t.Errorf, assert.*, helper calls, subtests)
 """
 from __future__ import annotations
 
-import os
 import subprocess
 import tempfile
 from pathlib import Path
@@ -39,42 +30,31 @@ def init_fixture(root: Path) -> None:
     git("config", "user.name", "Test", cwd=root)
     (root / "go.mod").write_text("module fixturemod\n\ngo 1.21\n", encoding="utf-8")
     pkg = root / "pkg"
-    pkg.mkdir(exist_ok=True)
-    policy_dir = root / ".mivia" / "policy"
-    policy_dir.mkdir(parents=True, exist_ok=True)
-    (policy_dir / "test-skips.json").write_text('{"knownSkips": {}}', encoding="utf-8")
-
-
-def test_valid_test_passes() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        root = Path(td)
-        init_fixture(root)
-        (root / "pkg" / "valid_test.go").write_text(
-            """package pkg
+    pkg.mkdir()
+    (pkg / "lib.go").write_text("package pkg\nfunc Add(a, b int) int { return a + b }\n", encoding="utf-8")
+    (pkg / "lib_test.go").write_text(
+        """package pkg
 import "testing"
-func TestProper(t *testing.T) {
-    if 1 + 1 != 2 {
-        t.Fatal("math broken")
+func TestAdd(t *testing.T) {
+    if Add(1, 2) != 3 {
+        t.Fatal("fail")
     }
 }
 """,
-            encoding="utf-8",
-        )
-        git("add", "-A", cwd=root)
-        r = run_script(["--worktree"], cwd=root)
-        assert r.returncode == 0, f"expected success, got {r.stderr}"
-        assert "OK" in r.stdout
+        encoding="utf-8",
+    )
+    git("add", "-A", cwd=root)
+    git("commit", "-q", "-m", "baseline", cwd=root)
 
 
-def test_empty_test_rejected() -> None:
+def test_empty_test_body_rejected() -> None:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         init_fixture(root)
         (root / "pkg" / "empty_test.go").write_text(
             """package pkg
 import "testing"
-func TestEmpty(t *testing.T) {
-}
+func TestEmpty(t *testing.T) {}
 """,
             encoding="utf-8",
         )
@@ -104,6 +84,29 @@ func TestZero(t *testing.T) {
         assert "zero_assertions" in r.stdout
 
 
+def test_setup_helper_passing_t_rejected_as_zero_assertions() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_fixture(root)
+        (root / "pkg" / "setup_test.go").write_text(
+            """package pkg
+import "testing"
+func setup(t *testing.T) string {
+    return t.TempDir()
+}
+func TestSetupOnly(t *testing.T) {
+    dir := setup(t)
+    _ = dir
+}
+""",
+            encoding="utf-8",
+        )
+        git("add", "-A", cwd=root)
+        r = run_script(["--worktree"], cwd=root)
+        assert r.returncode == 1, f"expected failure for setup helper, got {r.stdout}"
+        assert "zero_assertions" in r.stdout
+
+
 def test_control_flow_only_rejected_as_zero_assertions() -> None:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
@@ -125,6 +128,31 @@ func TestControlOnly(t *testing.T) {
         r = run_script(["--worktree"], cwd=root)
         assert r.returncode == 1, f"expected failure, got {r.stdout}"
         assert "zero_assertions" in r.stdout
+
+
+def test_stdlib_tautological_if_rejected() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_fixture(root)
+        (root / "pkg" / "taut_if_test.go").write_text(
+            """package pkg
+import "testing"
+func TestStdlibTautology(t *testing.T) {
+    got := 1
+    if got == got {
+        t.Fatal("fail")
+    }
+    if false {
+        t.Fatal("dead")
+    }
+}
+""",
+            encoding="utf-8",
+        )
+        git("add", "-A", cwd=root)
+        r = run_script(["--worktree"], cwd=root)
+        assert r.returncode == 1, f"expected failure, got {r.stdout}"
+        assert "tautological_assertion" in r.stdout
 
 
 def test_tautological_assertions_rejected() -> None:
@@ -159,8 +187,7 @@ def test_empty_subtest_rejected() -> None:
             """package pkg
 import "testing"
 func TestSub(t *testing.T) {
-    t.Run("empty_case", func(t *testing.T) {
-    })
+    t.Run("empty", func(t *testing.T) {})
 }
 """,
             encoding="utf-8",
@@ -171,60 +198,92 @@ func TestSub(t *testing.T) {
         assert "empty_subtest" in r.stdout
 
 
-def test_unreviewed_skip_in_diff_rejected_even_with_other_entry() -> None:
+def test_unreviewed_skip_in_diff_rejected() -> None:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         init_fixture(root)
-        (root / ".mivia" / "policy" / "test-skips.json").write_text(
-            """{
-  "knownSkips": {
-    "pkg/skip_test.go": [
-      {
-        "reason": "existing legitimate skip"
-      }
-    ]
-  }
-}
-""",
-            encoding="utf-8",
-        )
         (root / "pkg" / "skip_test.go").write_text(
             """package pkg
 import "testing"
-func TestExisting(t *testing.T) {
-    t.Skip("existing legitimate skip")
-}
-""",
-            encoding="utf-8",
-        )
-        git("add", "-A", cwd=root)
-        git("commit", "-m", "init", cwd=root)
-
-        # Now add a NEW, unreviewed skip to the same file
-        (root / "pkg" / "skip_test.go").write_text(
-            """package pkg
-import "testing"
-func TestExisting(t *testing.T) {
-    t.Skip("existing legitimate skip")
-}
-func TestNewSkipped(t *testing.T) {
-    t.Skip("sneaky unreviewed skip")
+func TestSkipped(t *testing.T) {
+    t.Skip("some unreviewed skip")
+    if 1 != 2 { t.Fatal("fail") }
 }
 """,
             encoding="utf-8",
         )
         git("add", "-A", cwd=root)
         r = run_script(["--staged"], cwd=root)
-        assert r.returncode == 1, f"expected failure, got {r.stdout}"
+        assert r.returncode == 1, f"expected failure for unreviewed skip, got {r.stdout}"
         assert "unreviewed_test_skip" in r.stdout
 
 
-def main() -> None:
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_") and callable(fn):
-            fn()
+def test_same_diff_skip_policy_edit_cannot_bypass() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_fixture(root)
+        policy_dir = root / ".mivia" / "policy"
+        policy_dir.mkdir(parents=True, exist_ok=True)
+        (policy_dir / "test-skips.json").write_text('{\n  "knownSkips": {}\n}\n', encoding="utf-8")
+        git("add", "-A", cwd=root)
+        git("commit", "-q", "-m", "add empty policy", cwd=root)
+
+        # Add skip and try to self-allowlist in same staged commit
+        (root / "pkg" / "skip_test.go").write_text(
+            """package pkg
+import "testing"
+func TestSkipped(t *testing.T) {
+    t.Skip("bypass attempt")
+    if 1 != 2 { t.Fatal("fail") }
+}
+""",
+            encoding="utf-8",
+        )
+        (policy_dir / "test-skips.json").write_text(
+            '{\n  "knownSkips": {\n    "pkg/skip_test.go": [{"reason": "bypass attempt"}]\n  }\n}\n',
+            encoding="utf-8",
+        )
+        git("add", "-A", cwd=root)
+        r = run_script(["--staged"], cwd=root)
+def test_newly_created_skip_policy_file_fails_closed() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_fixture(root)
+        policy_dir = root / ".mivia" / "policy"
+        policy_dir.mkdir(parents=True, exist_ok=True)
+
+        # Introduce skip and newly created test-skips.json (file never existed at base)
+        (root / "pkg" / "skip_test.go").write_text(
+            """package pkg
+import "testing"
+func TestSkipped(t *testing.T) {
+    t.Skip("fresh policy bypass attempt")
+    if 1 != 2 { t.Fatal("fail") }
+}
+""",
+            encoding="utf-8",
+        )
+        (policy_dir / "test-skips.json").write_text(
+            '{\n  "knownSkips": {\n    "pkg/skip_test.go": [{"reason": "fresh policy bypass attempt"}]\n  }\n}\n',
+            encoding="utf-8",
+        )
+        git("add", "-A", cwd=root)
+        r = run_script(["--staged"], cwd=root)
+        assert r.returncode == 1, "newly created skip policy must NOT allow self-approval of skip"
+        assert "unreviewed_test_skip" in r.stdout
+
+
+def main() -> int:
+    tests = [
+        v
+        for k, v in sorted(globals().items())
+        if k.startswith("test_") and callable(v)
+    ]
+    for t in tests:
+        t()
     print("test_check_test_quality: ok")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

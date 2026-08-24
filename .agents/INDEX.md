@@ -117,7 +117,7 @@ human and ADLC-driven workflow. The four standard roles are:
 | `planner` | `.agents/agents/planner.md` | read-only |
 | `plan-reviewer` | `.agents/agents/plan-reviewer.md` | read-only |
 | `builder` | `.agents/agents/builder.md` | read + write + run_command |
-| `reviewer` | `.agents/agents/reviewer.md` | read + run_command |
+| `reviewer` | `.agents/agents/reviewer.md` | read-only |
 
 Frontmatter schema and the loading contract are documented in
 [`.agents/agents/README.md`](agents/README.md). The `mivia` binary and workflow
@@ -140,11 +140,14 @@ Machine-readable hook and agent policy:
 | `.mivia/policy/go-structure.json` | Go file and function LOC limits and file size baselines |
 | `.mivia/policy/import-layers.json` | Allowed Go package import dependencies and layer constraints |
 | `.mivia/policy/required-paths.json` | Mandatory repository directories and configuration paths |
+| `.mivia/policy/invariant-skips.json` | Allowlisted OS-capability skips in invariant tests |
+| `.mivia/policy/test-skips.json` | Allowlisted test skips and unreviewed-skip prevention |
+| `.mivia/policy/mutation/*.json` | Per-package mutation kill-rate floors and audited denylists |
 
 ## Quality
 
 - `.agents/quality/contracts/` - project contract matrices for doctor/audit/runtime gates (populate as product surfaces land).
-- `.agents/quality/defect-taxonomy.md` - the recurring defect classes (`DC-1`..`DC-14`) derived from this repository's `fix` commit history, with a probe list per class and the chain-control sweep. Read the matching classes at ADLC Step 0 and Step 5. `verify-change` gates on it; `secure-change` cites `DC-10` and `DC-13`.
+- `.agents/quality/defect-taxonomy.md` - the recurring defect classes (`DC-1`..`DC-19`) derived from this repository's `fix` commit history, with a probe list per class and the chain-control sweep. Read the matching classes at ADLC Step 0 and Step 5. `verify-change` gates on it; `secure-change` cites `DC-10` and `DC-13`.
 
 ## Runtime Artifacts
 

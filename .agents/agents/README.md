@@ -9,7 +9,7 @@ delivery loop in `AGENTS.md` and `.agents/rules/05-adlc-agentic-development-life
 | `planner.md` | 0-1 (Plan + Breakdown) | yes | no | plan block in context |
 | `plan-reviewer.md` | 0 (challenge) | yes | no | `Block` / `PASS` / `REJECT` |
 | `builder.md` | 5 (implement) | yes | yes | chunk log + `## Done` |
-| `reviewer.md` | 6 (review) | yes | only scratch fixtures under `/tmp` | `Block` / `PASS` / `REJECT` |
+| `reviewer.md` | 6 (review) | yes | no | `Block` / `PASS` / `REJECT` |
 
 ## File schema
 

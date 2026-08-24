@@ -89,30 +89,38 @@ def load_known_uncovered(root: Path, diff_args: list[str] | None = None) -> dict
         return {}
 
     raw_text = ""
+    is_modified_in_diff = False
     if diff_args is not None:
         r = subprocess.run(
             ["git", "diff", *diff_args, "--name-only", "--", ".mivia/policy/diff-coverage.json"],
             cwd=root, capture_output=True, text=True, check=False,
         )
         if r.returncode == 0 and r.stdout.strip():
+            is_modified_in_diff = True
             base_ref = "HEAD"
-            for arg in diff_args:
-                if ".." in arg:
-                    base_ref = arg.split("..")[0]
-                    break
+            if len(diff_args) >= 2 and not diff_args[0].startswith("-"):
+                base_ref = diff_args[0]
+            elif len(diff_args) == 1 and ".." in diff_args[0]:
+                base_ref = diff_args[0].split("..")[0]
+            elif len(diff_args) == 1 and not diff_args[0].startswith("-"):
+                base_ref = diff_args[0]
+
             show_res = subprocess.run(
                 ["git", "show", f"{base_ref}:.mivia/policy/diff-coverage.json"],
                 cwd=root, capture_output=True, text=True, check=False,
             )
+            print(
+                "diff_coverage: .mivia/policy/diff-coverage.json is modified in this diff; "
+                "evaluating against base policy to prevent same-commit bypass",
+                file=sys.stderr,
+            )
             if show_res.returncode == 0 and show_res.stdout.strip():
                 raw_text = show_res.stdout
-                print(
-                    "diff_coverage: .mivia/policy/diff-coverage.json is modified in this diff; "
-                    "evaluating against base policy to prevent same-commit bypass",
-                    file=sys.stderr,
-                )
+            else:
+                # File did not exist at base ref: base policy has zero allowlisted residue
+                return {}
 
-    if not raw_text:
+    if not is_modified_in_diff:
         raw_text = policy_path.read_text(encoding="utf-8")
 
     try:

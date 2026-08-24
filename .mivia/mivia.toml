@@ -537,11 +537,8 @@ write_path_blocklist = [
     "go.work",
 ]
 # write_path_blocklist_remove = [".git", ".mivia/mivia.toml"]  # opt-out example
-# This workspace opts out of the built-in .mivia/mivia.toml protection: a
-# workflow agent may edit the config. The blocklist keys are part of that
-# file, so a workflow agent can also edit them - this is a deliberate trust
-# decision by the workspace owner. .git stays protected by default.
-write_path_blocklist_remove = [".mivia/mivia.toml"]
+# .mivia/mivia.toml and .git remain strictly protected by default.
+write_path_blocklist_remove = []
 
 # Replace the default env var allowlist entirely
 # env_allowlist_only = ["PATH", "HOME", "USER", "PWD"]

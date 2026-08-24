@@ -216,6 +216,17 @@ def workspace_tool_names() -> set[str]:
     return found
 
 
+def check_agents_directory() -> list[Path]:
+    """Ensure .agents/agents exists and contains at least one *.md definition (fail-closed)."""
+    agents_dir = ROOT / ".agents" / "agents"
+    if not agents_dir.is_dir():
+        fail(".agents/agents: directory missing (fail-closed check)")
+    agent_files = [a for a in sorted(agents_dir.glob("*.md")) if a.name != "README.md"]
+    if not agent_files:
+        fail(".agents/agents: expected at least one *.md agent definition")
+    return agent_files
+
+
 def model_facing_prompts() -> list[tuple[str, str]]:
     """Prose the model is instructed by, as (source, text) pairs.
 
@@ -231,19 +242,16 @@ def model_facing_prompts() -> list[tuple[str, str]]:
     out = []
     for literal in re.findall(r"`([^`]*)`", text("internal/clichat/prompt.go")):
         out.append(("internal/clichat/prompt.go", literal))
-    agents_dir = ROOT / ".agents" / "agents"
-    if agents_dir.is_dir():
-        for agent in sorted(agents_dir.glob("*.md")):
-            if agent.name == "README.md":
-                continue
-            body = agent.read_text(encoding="utf-8")
-            rel = str(agent.relative_to(ROOT))
-            if body.startswith("---\n"):
-                end = body.find("\n---\n", 4)
-                if end != -1:
-                    prompt_body = body[end + len("\n---\n"):].strip()
-                    if prompt_body:
-                        out.append((rel, prompt_body))
+    agent_files = check_agents_directory()
+    for agent in agent_files:
+        body = agent.read_text(encoding="utf-8")
+        rel = str(agent.relative_to(ROOT))
+        if body.startswith("---\n"):
+            end = body.find("\n---\n", 4)
+            if end != -1:
+                prompt_body = body[end + len("\n---\n"):].strip()
+                if prompt_body:
+                    out.append((rel, prompt_body))
     return out
 
 
@@ -678,6 +686,7 @@ def main() -> None:
                             f"{skill_path.relative_to(ROOT)}: trigger entry is empty"
                         )
 
+    check_agents_directory()
     check_core_tier_covers_prompted_tools()
 
     print("verify_agent_config: ok")
