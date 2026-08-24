@@ -232,7 +232,7 @@ func TestMultiSession_BackgroundToolEventsUpdateState(t *testing.T) {
 			TurnID: "turn-sess-A",
 			Body: uievent.ToolOutputBody{
 				ToolCallID: "tc-1",
-				Progress:   &uievent.Progress{Status: "indexing", Step: 1, Total: 2},
+				Progress:   &uievent.Progress{Status: "indexing", Step: 1, TotalSteps: 2},
 			},
 		},
 	})
@@ -244,7 +244,7 @@ func TestMultiSession_BackgroundToolEventsUpdateState(t *testing.T) {
 			Kind:   uievent.KindToolEnd,
 			TurnID: "turn-sess-A",
 			Body: uievent.ToolEndBody{
-				Diff: &uievent.DiffStat{Path: "main.go", Added: 2, Removed: 1},
+				Diff: &uievent.Diff{Path: "main.go", Added: 2, Removed: 1},
 			},
 		},
 	})
