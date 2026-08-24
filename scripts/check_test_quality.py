@@ -102,17 +102,17 @@ func formatNode(fset *token.FileSet, node ast.Node) string {
 	return strings.TrimSpace(buf.String())
 }
 
-func isAssertionCall(call *ast.CallExpr) bool {
+func isAssertionCall(call *ast.CallExpr, tbNames map[string]bool) bool {
 	if call == nil {
 		return false
 	}
 	switch fun := call.Fun.(type) {
 	case *ast.SelectorExpr:
 		sel := fun.Sel.Name
-		if sel == "Errorf" || sel == "Fatalf" || sel == "Fatal" || sel == "Error" || sel == "Fail" || sel == "FailNow" {
-			return true
-		}
 		recv := typeStr(fun.X)
+		if sel == "Errorf" || sel == "Fatalf" || sel == "Fatal" || sel == "Error" || sel == "Fail" || sel == "FailNow" {
+			return tbNames[recv]
+		}
 		if recv == "assert" || recv == "require" || recv == "is" || recv == "check" || recv == "testutil" || recv == "checks" {
 			return true
 		}
@@ -182,19 +182,22 @@ func isTautological(fset *token.FileSet, call *ast.CallExpr) (bool, string) {
 	return false, ""
 }
 
-func isSkipCall(call *ast.CallExpr) (bool, string) {
+func isSkipCall(call *ast.CallExpr, tbNames map[string]bool) (bool, string) {
 	if call == nil {
 		return false, ""
 	}
 	if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
 		if sel.Sel.Name == "Skip" || sel.Sel.Name == "Skipf" || sel.Sel.Name == "SkipNow" {
-			reason := ""
-			if len(call.Args) > 0 {
-				if lit, ok := call.Args[0].(*ast.BasicLit); ok {
-					reason = strings.Trim(lit.Value, "\"")
+			recv := typeStr(sel.X)
+			if tbNames[recv] {
+				reason := ""
+				if len(call.Args) > 0 {
+					if lit, ok := call.Args[0].(*ast.BasicLit); ok {
+						reason = strings.Trim(lit.Value, "\"")
+					}
 				}
+				return true, reason
 			}
-			return true, reason
 		}
 	}
 	return false, ""
@@ -219,10 +222,32 @@ func inspectFunc(fset *token.FileSet, filename string, decl *ast.FuncDecl) (Func
 		return summary, issues
 	}
 
+	tbNames := map[string]bool{"t": true, "tb": true, "b": true}
+	if decl.Type.Params != nil {
+		for _, field := range decl.Type.Params.List {
+			ts := typeStr(field.Type)
+			if strings.Contains(ts, "testing.T") || strings.Contains(ts, "testing.TB") || strings.Contains(ts, "testing.B") || strings.Contains(ts, "testing.F") {
+				for _, name := range field.Names {
+					tbNames[name.Name] = true
+				}
+			}
+		}
+	}
+
 	assertions := 0
 	ast.Inspect(decl.Body, func(n ast.Node) bool {
 		if n == nil {
 			return false
+		}
+		if fnLit, ok := n.(*ast.FuncLit); ok && fnLit.Type.Params != nil {
+			for _, field := range fnLit.Type.Params.List {
+				ts := typeStr(field.Type)
+				if strings.Contains(ts, "testing.T") || strings.Contains(ts, "testing.TB") || strings.Contains(ts, "testing.B") || strings.Contains(ts, "testing.F") {
+					for _, name := range field.Names {
+						tbNames[name.Name] = true
+					}
+				}
+			}
 		}
 		if ifStmt, ok := n.(*ast.IfStmt); ok {
 			if isTaut, reason := isTautologicalCondition(fset, ifStmt); isTaut {
@@ -236,7 +261,7 @@ func inspectFunc(fset *token.FileSet, filename string, decl *ast.FuncDecl) (Func
 			}
 		}
 		if call, ok := n.(*ast.CallExpr); ok {
-			if isSkip, reason := isSkipCall(call); isSkip {
+			if isSkip, reason := isSkipCall(call, tbNames); isSkip {
 				summary.HasSkip = true
 				if reason != "" {
 					summary.SkipReasons = append(summary.SkipReasons, reason)
@@ -251,7 +276,7 @@ func inspectFunc(fset *token.FileSet, filename string, decl *ast.FuncDecl) (Func
 					Message:  reason,
 				})
 			}
-			if isAssertionCall(call) {
+			if isAssertionCall(call, tbNames) {
 				assertions++
 			}
 			if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Run" {
@@ -430,13 +455,33 @@ def get_git_diff_added_skips(diff_args: list[str], root: Path) -> list[tuple[str
                 current_line = int(m.group(1))
         elif line.startswith("+") and not line.startswith("+++"):
             content = line[1:].strip()
-            if re.search(r"\bt\.Skip(f|Now)?\(", content):
+            if re.search(r"\b\w+\.Skip(f|Now)?\(", content):
                 added_skips.append((current_file, current_line, content))
             current_line += 1
         elif not line.startswith("-"):
             current_line += 1
 
     return added_skips
+
+
+def get_git_diff_deleted_tests(diff_args: list[str], root: Path) -> list[tuple[str, str]]:
+    cmd = ["git", "diff", "-U0"] + diff_args + ["--", "*_test.go"]
+    res = subprocess.run(cmd, cwd=root, capture_output=True, text=True, check=False)
+    if res.returncode != 0:
+        return []
+
+    deleted_tests: list[tuple[str, str]] = []
+    current_file = ""
+
+    for line in res.stdout.splitlines():
+        if line.startswith("--- a/"):
+            current_file = line[6:]
+        elif line.startswith("-") and not line.startswith("---"):
+            m = re.search(r"^-\s*func\s+(Test\w+)\s*\(", line)
+            if m:
+                deleted_tests.append((current_file, m.group(1)))
+
+    return deleted_tests
 
 
 def check_paths(target_files: list[Path], root: Path, diff_args: list[str] | None = None) -> tuple[list[str], int]:
@@ -462,7 +507,15 @@ def check_paths(target_files: list[Path], root: Path, diff_args: list[str] | Non
                     break
             if not matched:
                 violations.append(
-                    f"{file_path}:{line}: [unreviewed_test_skip] newly added t.Skip in diff without matching entry in .mivia/policy/test-skips.json: {content}"
+                    f"{file_path}:{line}: [unreviewed_test_skip] newly added skip in diff without matching entry in .mivia/policy/test-skips.json: {content}"
+                )
+
+        deleted_tests = get_git_diff_deleted_tests(diff_args, root)
+        allowed_deletions = set(policy.get("allowedDeletions", []))
+        for file_path, test_name in deleted_tests:
+            if test_name not in allowed_deletions:
+                violations.append(
+                    f"{file_path}: [deleted_test_function] test function {test_name} was deleted in diff without allowlist in .mivia/policy/test-skips.json (allowedDeletions)"
                 )
 
     total_funcs = sum(len(r.get("functions") or []) for r in reports)
@@ -495,8 +548,12 @@ def main() -> int:
         res = subprocess.run(["git", "diff", "--name-only", "--cached", "--", "*_test.go"], cwd=root, capture_output=True, text=True, check=False)
         target_files = [root / f for f in res.stdout.splitlines() if f.strip()]
         if not target_files:
-            # Clean staged tree: fallback to checking all repo test files if clean
-            pass
+            # On clean checkout (e.g. CI checkout), inspect HEAD~1..HEAD if available
+            rev_check = subprocess.run(["git", "rev-parse", "HEAD~1"], cwd=root, capture_output=True, text=True, check=False)
+            if rev_check.returncode == 0:
+                diff_args = ["HEAD~1..HEAD"]
+                res = subprocess.run(["git", "diff", "--name-only", "HEAD~1..HEAD", "--", "*_test.go"], cwd=root, capture_output=True, text=True, check=False)
+                target_files = [root / f for f in res.stdout.splitlines() if f.strip()]
     elif args.base:
         diff_args = [f"{args.base}..{args.tip}"]
         res = subprocess.run(["git", "diff", "--name-only", f"{args.base}..{args.tip}", "--", "*_test.go"], cwd=root, capture_output=True, text=True, check=False)

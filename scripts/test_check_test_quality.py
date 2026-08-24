@@ -245,6 +245,76 @@ func TestSkipped(t *testing.T) {
         )
         git("add", "-A", cwd=root)
         r = run_script(["--staged"], cwd=root)
+        assert r.returncode == 1, f"expected failure for same-diff policy edit, got {r.stdout}"
+        assert "unreviewed_test_skip" in r.stdout
+
+
+def test_fmt_errorf_rejected_as_zero_assertions() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_fixture(root)
+        (root / "pkg" / "fmt_test.go").write_text(
+            """package pkg
+import (
+    "fmt"
+    "testing"
+)
+func TestThing(t *testing.T) {
+    got := 123
+    _ = fmt.Errorf("%v", got)
+}
+""",
+            encoding="utf-8",
+        )
+        git("add", "-A", cwd=root)
+        r = run_script(["--worktree"], cwd=root)
+        assert r.returncode == 1, f"expected zero_assertions failure for fmt.Errorf, got {r.stdout}"
+        assert "zero_assertions" in r.stdout
+
+
+def test_subtest_skip_in_diff_rejected() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_fixture(root)
+        (root / "pkg" / "subskip_test.go").write_text(
+            """package pkg
+import "testing"
+func TestSubSkipped(t *testing.T) {
+    t.Run("sub", func(st *testing.T) {
+        st.Skip("subtest skip bypass attempt")
+    })
+}
+""",
+            encoding="utf-8",
+        )
+        git("add", "-A", cwd=root)
+        r = run_script(["--staged"], cwd=root)
+        assert r.returncode == 1, f"expected failure for subtest skip, got {r.stdout}"
+        assert "unreviewed_test_skip" in r.stdout
+
+
+def test_deleted_test_function_in_diff_rejected() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_fixture(root)
+        # lib_test.go has TestAdd from init_fixture
+        (root / "pkg" / "lib_test.go").write_text(
+            """package pkg
+import "testing"
+// TestAdd deleted!
+func TestOther(t *testing.T) {
+    if 1 != 1 { t.Fatal("fail") }
+}
+""",
+            encoding="utf-8",
+        )
+        git("add", "-A", cwd=root)
+        r = run_script(["--staged"], cwd=root)
+        assert r.returncode == 1, f"expected failure for deleted test, got {r.stdout}"
+        assert "deleted_test_function" in r.stdout
+        assert "TestAdd" in r.stdout
+
+
 def test_newly_created_skip_policy_file_fails_closed() -> None:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
