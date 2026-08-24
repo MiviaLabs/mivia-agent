@@ -78,3 +78,18 @@ func TestFormatFileReadOutput(t *testing.T) {
 		t.Errorf("expected more lines notice in:\n%s", plain)
 	}
 }
+
+func TestFormatJSONOutputSorted(t *testing.T) {
+	th := loadTheme(t)
+	raw := `{"zebra": 1, "apple": 2, "mango": 3}`
+	lines := FormatJSONOutput(th, theme.TierTrueColor, raw, 80)
+	if len(lines) != 3 {
+		t.Fatalf("expected 3 lines, got %d", len(lines))
+	}
+	plain0 := ansi.Strip(lines[0])
+	plain1 := ansi.Strip(lines[1])
+	plain2 := ansi.Strip(lines[2])
+	if !strings.HasPrefix(plain0, "apple:") || !strings.HasPrefix(plain1, "mango:") || !strings.HasPrefix(plain2, "zebra:") {
+		t.Errorf("keys not sorted: %v", lines)
+	}
+}

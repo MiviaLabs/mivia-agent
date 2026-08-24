@@ -41,6 +41,11 @@ func TestFormatToolDetail(t *testing.T) {
 			want: `"golang lipgloss split layout"`,
 		},
 		{
+			name: "read_url_content_multibyte",
+			args: map[string]any{"Url": "https://example.com/api/v1/中文路径_test_route_long_endpoint"},
+			want: "[example.com] /api/v1/中文路径_test_route_l…",
+		},
+		{
 			name: "custom_generic_tool",
 			args: map[string]any{"foo": "bar", "count": 42},
 			want: "count=42 foo=bar",

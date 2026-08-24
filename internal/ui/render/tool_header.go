@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 // FormatToolDetail renders a domain-specific, readable detail string for a tool call.
@@ -112,8 +114,8 @@ func formatWebDetail(lower string, args map[string]any) string {
 		if rawURL, ok := args[k].(string); ok && rawURL != "" {
 			if u, err := url.Parse(rawURL); err == nil && u.Host != "" {
 				path := u.Path
-				if len(path) > 30 {
-					path = path[:29] + "…"
+				if ansi.StringWidth(path) > 30 {
+					path = ansi.Truncate(path, 30, "…")
 				}
 				return fmt.Sprintf("[%s] %s", u.Host, path)
 			}

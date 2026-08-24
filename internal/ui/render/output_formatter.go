@@ -3,6 +3,7 @@ package render
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
@@ -176,8 +177,14 @@ func FormatJSONOutput(t theme.Theme, tier theme.Tier, output string, width int) 
 	if err := json.Unmarshal([]byte(strings.TrimSpace(output)), &obj); err == nil {
 		accent := Role(t, tier, theme.RoleAccent)
 		subtle := Role(t, tier, theme.RoleFGSubtle)
+		keys := make([]string, 0, len(obj))
+		for k := range obj {
+			keys = append(keys, k)
+		}
+		slices.Sort(keys)
 		var out []string
-		for k, v := range obj {
+		for _, k := range keys {
+			v := obj[k]
 			valStr := fmt.Sprintf("%v", v)
 			if ansi.StringWidth(valStr) > 40 {
 				valStr = ansi.Truncate(valStr, 40, "…")

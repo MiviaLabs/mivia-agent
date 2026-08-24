@@ -285,9 +285,9 @@ func (p *panel) observeAgent(id string, pr *uievent.Progress) {
 	p.agents = slices.Clone(p.agents)
 	for i, a := range p.agents {
 		if a.ID == id {
-			combinedLog := make([]string, 0, len(pr.Log)+len(a.Log))
-			combinedLog = append(combinedLog, pr.Log...)
+			combinedLog := make([]string, 0, len(a.Log)+len(pr.Log))
 			combinedLog = append(combinedLog, a.Log...)
+			combinedLog = append(combinedLog, pr.Log...)
 			row.Log = combinedLog
 			p.agents[i] = row
 			p.rebindIfOpen()

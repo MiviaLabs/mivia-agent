@@ -738,3 +738,16 @@ func TestPanelWide_SidebarFullHeightAndTopbarInLeftPane(t *testing.T) {
 		t.Fatalf("expected 24 lines, got %d", len(lines))
 	}
 }
+
+func TestObserveAgentChronologicalLogs(t *testing.T) {
+	var p panel
+	p.observeAgent("sub-1", &uievent.Progress{Status: "running", Step: 1, TotalSteps: 3, Log: []string{"start step 1"}})
+	p.observeAgent("sub-1", &uievent.Progress{Status: "running", Step: 2, TotalSteps: 3, Log: []string{"finish step 2"}})
+	if len(p.agents) != 1 {
+		t.Fatalf("expected 1 agent, got %d", len(p.agents))
+	}
+	logs := p.agents[0].Log
+	if len(logs) != 2 || logs[0] != "start step 1" || logs[1] != "finish step 2" {
+		t.Errorf("logs out of chronological order: %v", logs)
+	}
+}
