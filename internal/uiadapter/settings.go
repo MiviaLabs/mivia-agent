@@ -1,0 +1,512 @@
+package uiadapter
+
+import (
+	"context"
+	"fmt"
+	"sync"
+
+	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
+	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
+)
+
+// SettingsStore holds the active configuration and state for settings management.
+type SettingsStore struct {
+	res        *config.Resolved
+	agentState *cliagents.AgentSessionState
+
+	mu sync.Mutex
+
+	general     ports.GeneralView
+	providers   []ports.ProviderView
+	mcp         []ports.MCPServerView
+	agents      []ports.AgentView
+	automations []ports.Automation
+	runs        map[string][]ports.Run
+	watchers    map[string][]chan ports.Run
+
+	saveSeq uint64
+}
+
+// NewSettingsStore builds a SettingsStore populated from the resolved configuration and agent state.
+func NewSettingsStore(res *config.Resolved, state *cliagents.AgentSessionState) *SettingsStore {
+	s := &SettingsStore{
+		res:        res,
+		agentState: state,
+		runs:       make(map[string][]ports.Run),
+		watchers:   make(map[string][]chan ports.Run),
+	}
+	s.initFromConfig()
+	return s
+}
+
+func (s *SettingsStore) initFromConfig() {
+	s.general = ports.GeneralView{
+		Theme:           "mivia-dark",
+		Mouse:           true,
+		ShowReasoning:   true,
+		ScrollLines:     3,
+		ApprovalDefault: "once",
+		ScreenReader:    false,
+		ReducedMotion:   false,
+	}
+
+	if s.res != nil {
+		for _, g := range s.res.ModelCatalog() {
+			var models []ports.ModelView
+			for _, m := range g.Models {
+				var efforts []string
+				for _, eff := range m.ReasoningEfforts {
+					efforts = append(efforts, string(eff))
+				}
+				models = append(models, ports.ModelView{
+					Name:                m.Name,
+					ContextWindowTokens: m.ContextWindowTokens,
+					MaxOutputTokens:     m.MaxOutputTokens,
+					ReasoningEfforts:    efforts,
+					Reasoning:           string(m.Reasoning),
+				})
+			}
+			var activeModel string
+			for _, m := range g.Models {
+				if g.Active && activeModel == "" {
+					activeModel = m.Name
+				}
+			}
+			s.providers = append(s.providers, ports.ProviderView{
+				Name:           g.Provider,
+				Active:         g.Active,
+				Selectable:     g.Selectable,
+				DisabledReason: g.DisabledReason,
+				Models:         models,
+				ActiveModel:    activeModel,
+			})
+		}
+	}
+
+	if s.agentState != nil && s.agentState.Registry != nil {
+		for _, a := range s.agentState.Registry.List() {
+			var skills []string
+			if a.Skills != nil {
+				skills = *a.Skills
+			}
+			s.agents = append(s.agents, ports.AgentView{
+				Name:              a.Name,
+				Description:       a.Description,
+				Provider:          a.Provider,
+				Model:             a.Model,
+				Tools:             a.EffectiveTools,
+				Skills:            skills,
+				MCPServers:        a.EffectiveMCPServers,
+				SystemPromptChars: len(a.SystemPrompt),
+			})
+		}
+	}
+}
+
+// Settings returns the ports.Settings bundle with all section adapters.
+func (s *SettingsStore) Settings() ports.Settings {
+	return ports.Settings{
+		General:     settingsGeneral{s},
+		Providers:   settingsProviders{s},
+		MCP:         settingsMCP{s},
+		Agents:      settingsAgents{s},
+		Automations: settingsAutomations{s},
+	}
+}
+
+type saveHandle struct {
+	id     string
+	events chan ports.SaveEvent
+	cancel func()
+}
+
+func (h *saveHandle) ID() string                     { return h.id }
+func (h *saveHandle) Events() <-chan ports.SaveEvent { return h.events }
+func (h *saveHandle) Cancel()                        { h.cancel() }
+
+func (s *SettingsStore) newSaveHandle(apply func() error) ports.SaveHandle {
+	s.mu.Lock()
+	s.saveSeq++
+	id := fmt.Sprintf("save-%d", s.saveSeq)
+	s.mu.Unlock()
+
+	ch := make(chan ports.SaveEvent, 4)
+	done := make(chan struct{})
+	go func() {
+		ch <- ports.SaveEvent{State: ports.SavePending}
+		select {
+		case <-done:
+			close(ch)
+			return
+		default:
+		}
+		ch <- ports.SaveEvent{State: ports.SaveValidating}
+		s.mu.Lock()
+		err := apply()
+		s.mu.Unlock()
+		if err != nil {
+			ch <- ports.SaveEvent{State: ports.SaveFailed, Message: err.Error()}
+		} else {
+			ch <- ports.SaveEvent{State: ports.SaveSaved}
+		}
+		close(ch)
+	}()
+	return &saveHandle{id: id, events: ch, cancel: func() { close(done) }}
+}
+
+// settingsGeneral
+type settingsGeneral struct{ *SettingsStore }
+
+func (g settingsGeneral) General() ports.GeneralView {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.general
+}
+
+func (g settingsGeneral) Apply(_ context.Context, _ ports.Scope, e ports.GeneralEdit) (ports.SaveHandle, error) {
+	return g.newSaveHandle(func() error { return g.applyGeneral(e) }), nil
+}
+
+func (s *SettingsStore) applyGeneral(e ports.GeneralEdit) error {
+	switch v := e.(type) {
+	case ports.SetTheme:
+		s.general.Theme = v.Name
+	case ports.SetMouse:
+		s.general.Mouse = v.On
+	case ports.SetShowReasoning:
+		s.general.ShowReasoning = v.On
+	case ports.SetScrollLines:
+		if v.N <= 0 {
+			return fmt.Errorf("scroll lines must be positive")
+		}
+		s.general.ScrollLines = v.N
+	case ports.SetApprovalDefault:
+		s.general.ApprovalDefault = v.Mode
+	case ports.SetScreenReader:
+		s.general.ScreenReader = v.On
+	case ports.SetReducedMotion:
+		s.general.ReducedMotion = v.On
+	default:
+		return fmt.Errorf("unknown general edit %T", e)
+	}
+	return nil
+}
+
+// settingsProviders
+type settingsProviders struct{ *SettingsStore }
+
+func (p settingsProviders) Providers() []ports.ProviderView {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := make([]ports.ProviderView, len(p.providers))
+	copy(out, p.providers)
+	return out
+}
+
+func (p settingsProviders) Apply(_ context.Context, _ ports.Scope, e ports.ProviderEdit) (ports.SaveHandle, error) {
+	return p.newSaveHandle(func() error { return p.applyProvider(e) }), nil
+}
+
+func (s *SettingsStore) findProvider(name string) int {
+	for i := range s.providers {
+		if s.providers[i].Name == name {
+			return i
+		}
+	}
+	return -1
+}
+
+func (s *SettingsStore) applyProvider(e ports.ProviderEdit) error {
+	switch v := e.(type) {
+	case ports.UpsertProvider:
+		if i := s.findProvider(v.Provider.Name); i >= 0 {
+			s.providers[i] = v.Provider
+			return nil
+		}
+		s.providers = append(s.providers, v.Provider)
+	case ports.RemoveProvider:
+		i := s.findProvider(v.Name)
+		if i < 0 {
+			return fmt.Errorf("provider %q not found", v.Name)
+		}
+		s.providers = append(s.providers[:i], s.providers[i+1:]...)
+	case ports.UpsertModel:
+		i := s.findProvider(v.Provider)
+		if i < 0 {
+			return fmt.Errorf("provider %q not found", v.Provider)
+		}
+		for j := range s.providers[i].Models {
+			if s.providers[i].Models[j].Name == v.Model.Name {
+				s.providers[i].Models[j] = v.Model
+				return nil
+			}
+		}
+		s.providers[i].Models = append(s.providers[i].Models, v.Model)
+	case ports.RemoveModel:
+		i := s.findProvider(v.Provider)
+		if i < 0 {
+			return fmt.Errorf("provider %q not found", v.Provider)
+		}
+		models := s.providers[i].Models
+		for j := range models {
+			if models[j].Name == v.Model {
+				s.providers[i].Models = append(models[:j], models[j+1:]...)
+				return nil
+			}
+		}
+		return fmt.Errorf("model %q not found under %q", v.Model, v.Provider)
+	case ports.ActivateModel:
+		target := s.findProvider(v.Provider)
+		if target < 0 {
+			return fmt.Errorf("provider %q not found", v.Provider)
+		}
+		foundModel := false
+		for _, m := range s.providers[target].Models {
+			if m.Name == v.Model {
+				foundModel = true
+				break
+			}
+		}
+		if !foundModel {
+			return fmt.Errorf("model %q not found under %q", v.Model, v.Provider)
+		}
+		for i := range s.providers {
+			s.providers[i].Active = (i == target)
+		}
+		s.providers[target].ActiveModel = v.Model
+	default:
+		return fmt.Errorf("unknown provider edit %T", e)
+	}
+	return nil
+}
+
+// settingsMCP
+type settingsMCP struct{ *SettingsStore }
+
+func (m settingsMCP) MCPServers() []ports.MCPServerView {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]ports.MCPServerView, len(m.mcp))
+	copy(out, m.mcp)
+	return out
+}
+
+func (m settingsMCP) Apply(_ context.Context, _ ports.Scope, e ports.MCPEdit) (ports.SaveHandle, error) {
+	return m.newSaveHandle(func() error { return m.applyMCP(e) }), nil
+}
+
+func (s *SettingsStore) findMCPServer(id string) int {
+	for i := range s.mcp {
+		if s.mcp[i].ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+func (s *SettingsStore) applyMCP(e ports.MCPEdit) error {
+	switch v := e.(type) {
+	case ports.UpsertMCPServer:
+		if i := s.findMCPServer(v.Server.ID); i >= 0 {
+			s.mcp[i] = v.Server
+			return nil
+		}
+		s.mcp = append(s.mcp, v.Server)
+	case ports.RemoveMCPServer:
+		i := s.findMCPServer(v.ID)
+		if i < 0 {
+			return fmt.Errorf("mcp server %q not found", v.ID)
+		}
+		s.mcp = append(s.mcp[:i], s.mcp[i+1:]...)
+	case ports.SetMCPServerEnabled:
+		i := s.findMCPServer(v.ID)
+		if i < 0 {
+			return fmt.Errorf("mcp server %q not found", v.ID)
+		}
+		s.mcp[i].Enabled = v.On
+	default:
+		return fmt.Errorf("unknown mcp edit %T", e)
+	}
+	return nil
+}
+
+// settingsAgents
+type settingsAgents struct{ *SettingsStore }
+
+func (a settingsAgents) Agents() []ports.AgentView {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := make([]ports.AgentView, len(a.agents))
+	copy(out, a.agents)
+	return out
+}
+
+func (a settingsAgents) Apply(_ context.Context, _ ports.Scope, e ports.AgentEdit) (ports.SaveHandle, error) {
+	return a.newSaveHandle(func() error { return a.applyAgent(e) }), nil
+}
+
+func (s *SettingsStore) findAgent(name string) int {
+	for i := range s.agents {
+		if s.agents[i].Name == name {
+			return i
+		}
+	}
+	return -1
+}
+
+func (s *SettingsStore) applyAgent(e ports.AgentEdit) error {
+	switch v := e.(type) {
+	case ports.UpsertAgent:
+		if i := s.findAgent(v.Agent.Name); i >= 0 {
+			s.agents[i] = v.Agent
+			return nil
+		}
+		s.agents = append(s.agents, v.Agent)
+	case ports.RemoveAgent:
+		if v.Name == ports.DefaultAgentName {
+			return fmt.Errorf("the default agent %q cannot be removed", ports.DefaultAgentName)
+		}
+		i := s.findAgent(v.Name)
+		if i < 0 {
+			return fmt.Errorf("agent %q not found", v.Name)
+		}
+		s.agents = append(s.agents[:i], s.agents[i+1:]...)
+	default:
+		return fmt.Errorf("unknown agent edit %T", e)
+	}
+	return nil
+}
+
+// settingsAutomations
+type settingsAutomations struct{ *SettingsStore }
+
+func (a settingsAutomations) Automations() []ports.Automation {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := make([]ports.Automation, len(a.automations))
+	copy(out, a.automations)
+	return out
+}
+
+func (a settingsAutomations) Runs(automationID string, limit int) []ports.Run {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	runs := a.runs[automationID]
+	out := make([]ports.Run, len(runs))
+	copy(out, runs)
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
+func (a settingsAutomations) Run(runID string) (ports.Run, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, runs := range a.runs {
+		for _, r := range runs {
+			if r.ID == runID {
+				return r, true
+			}
+		}
+	}
+	return ports.Run{}, false
+}
+
+func (a settingsAutomations) Apply(_ context.Context, _ ports.Scope, e ports.AutomationEdit) (ports.SaveHandle, error) {
+	if trig, ok := e.(ports.TriggerAutomation); ok {
+		return a.newSaveHandle(func() error { return a.startRun(trig.ID) }), nil
+	}
+	return a.newSaveHandle(func() error { return a.applyAutomation(e) }), nil
+}
+
+func (s *SettingsStore) findAutomation(id string) int {
+	for i := range s.automations {
+		if s.automations[i].ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+func (s *SettingsStore) applyAutomation(e ports.AutomationEdit) error {
+	switch v := e.(type) {
+	case ports.UpsertAutomation:
+		if i := s.findAutomation(v.Automation.ID); i >= 0 {
+			s.automations[i] = v.Automation
+			return nil
+		}
+		s.automations = append(s.automations, v.Automation)
+	case ports.RemoveAutomation:
+		i := s.findAutomation(v.ID)
+		if i < 0 {
+			return fmt.Errorf("automation %q not found", v.ID)
+		}
+		s.automations = append(s.automations[:i], s.automations[i+1:]...)
+	case ports.SetAutomationEnabled:
+		i := s.findAutomation(v.ID)
+		if i < 0 {
+			return fmt.Errorf("automation %q not found", v.ID)
+		}
+		s.automations[i].Enabled = v.On
+	default:
+		return fmt.Errorf("unknown automation edit %T", e)
+	}
+	return nil
+}
+
+func (s *SettingsStore) startRun(automationID string) error {
+	i := s.findAutomation(automationID)
+	if i < 0 {
+		return fmt.Errorf("automation %q not found", automationID)
+	}
+	s.saveSeq++
+	run := ports.Run{
+		ID:           fmt.Sprintf("run-%d", s.saveSeq),
+		AutomationID: automationID,
+		Trigger:      ports.TriggerManual,
+		State:        ports.RunPending,
+	}
+	s.runs[automationID] = append(s.runs[automationID], run)
+	summary := ports.RunSummary{ID: run.ID, State: run.State}
+	s.automations[i].LastRun = &summary
+	return nil
+}
+
+type runWatch struct {
+	ch     chan ports.Run
+	cancel func()
+}
+
+func (w *runWatch) Events() <-chan ports.Run { return w.ch }
+func (w *runWatch) Cancel()                  { w.cancel() }
+
+func (a settingsAutomations) Watch(_ context.Context, automationID string) (ports.RunHandle, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.findAutomation(automationID) < 0 {
+		return nil, fmt.Errorf("automation %q not found", automationID)
+	}
+	ch := make(chan ports.Run, 8)
+	a.watchers[automationID] = append(a.watchers[automationID], ch)
+	return &runWatch{
+		ch: ch,
+		cancel: func() {
+			a.mu.Lock()
+			defer a.mu.Unlock()
+			a.removeWatcherLocked(automationID, ch)
+		},
+	}, nil
+}
+
+func (s *SettingsStore) removeWatcherLocked(automationID string, ch chan ports.Run) {
+	watchers := s.watchers[automationID]
+	for i, w := range watchers {
+		if w == ch {
+			s.watchers[automationID] = append(watchers[:i], watchers[i+1:]...)
+			close(ch)
+			return
+		}
+	}
+}

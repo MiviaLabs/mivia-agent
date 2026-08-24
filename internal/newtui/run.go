@@ -27,10 +27,15 @@ func RunTUI(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *
 		}
 	}
 
+	threads := uiadapter.NewSubagentThreads()
+	settingsStore := uiadapter.NewSettingsStore(res, agentState)
+
 	runner := uiadapter.NewCommandRunner(sess, res, agentState)
 	screen := conversation.New(th, theme.TierTrueColor, themes, conv, approver, 80, nil)
 	screen.SetCommands(uiadapter.DefaultCommands())
 	screen.SetCommandRunner(runner)
+	screen.SetSubagentThreads(threads)
+	screen.SetSettings(settingsStore.Settings())
 
 	root := app.New(screen, th, theme.TierTrueColor, themes).WithOptions(app.Options{
 		Mouse: true,
