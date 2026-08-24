@@ -48,7 +48,7 @@ func TestRefOnlyShimSpoolsOversizedResult(t *testing.T) {
 		t.Fatalf("ConvertToolRegistry: %v", err)
 	}
 	spool := remainder.NewSpool(&stubContentStore{})
-	applyRefOnlyShim(sdkReg, nil, []string{"bigtool"}, spool, BatchDegradeFloorBytes, "principal-1")
+	applyRefOnlyShim(sdkReg, nil, []string{"bigtool"}, spool, BatchDegradeFloorBytes, "principal-1", nil)
 	wrapped, ok := sdkReg.Get("bigtool")
 	if !ok {
 		t.Fatal("SDK registry missing bigtool")
@@ -85,7 +85,7 @@ func TestRefOnlyShimPassesThroughSmallResult(t *testing.T) {
 		t.Fatalf("ConvertToolRegistry: %v", err)
 	}
 	spool := remainder.NewSpool(&stubContentStore{})
-	applyRefOnlyShim(sdkReg, nil, []string{"smalltool"}, spool, BatchDegradeFloorBytes, "principal-1")
+	applyRefOnlyShim(sdkReg, nil, []string{"smalltool"}, spool, BatchDegradeFloorBytes, "principal-1", nil)
 	wrapped, _ := sdkReg.Get("smalltool")
 	out, err := wrapped.Run(context.Background(), sdktools.InOut{Value: map[string]any{}})
 	if err != nil {
@@ -109,7 +109,7 @@ func TestRefOnlyShimDoesNotWrapUnnamedTool(t *testing.T) {
 		t.Fatalf("ConvertToolRegistry: %v", err)
 	}
 	spool := remainder.NewSpool(&stubContentStore{})
-	applyRefOnlyShim(sdkReg, nil, []string{"bigtool"}, spool, BatchDegradeFloorBytes, "principal-1")
+	applyRefOnlyShim(sdkReg, nil, []string{"bigtool"}, spool, BatchDegradeFloorBytes, "principal-1", nil)
 	wrapped, _ := sdkReg.Get("passthrough")
 	out, err := wrapped.Run(context.Background(), sdktools.InOut{Value: map[string]any{}})
 	if err != nil {
@@ -135,7 +135,7 @@ func TestRefOnlyShimPlainNoticeOnSpoolFailure(t *testing.T) {
 	}
 	// A nil-store spool returns "" for every Spool call (INV-AG-10).
 	spool := remainder.NewSpool(nil)
-	applyRefOnlyShim(sdkReg, nil, []string{"failspool"}, spool, BatchDegradeFloorBytes, "principal-1")
+	applyRefOnlyShim(sdkReg, nil, []string{"failspool"}, spool, BatchDegradeFloorBytes, "principal-1", nil)
 	wrapped, _ := sdkReg.Get("failspool")
 	out, err := wrapped.Run(context.Background(), sdktools.InOut{Value: map[string]any{}})
 	if err != nil {
@@ -193,7 +193,7 @@ func TestRefOnlyShimPropagatesInnerError(t *testing.T) {
 		t.Fatal(err)
 	}
 	spool, _ := testSpool(t)
-	applyRefOnlyShim(sdkReg, reg, []string{"errtool"}, spool, BatchDegradeFloorBytes, "principal-err")
+	applyRefOnlyShim(sdkReg, reg, []string{"errtool"}, spool, BatchDegradeFloorBytes, "principal-err", nil)
 	tool, ok := sdkReg.Get("errtool")
 	if !ok {
 		t.Fatal("errtool missing")

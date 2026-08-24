@@ -278,10 +278,16 @@ func TestRunAgentLoopOnceTranslatesEvents(t *testing.T) {
 			t.Fatalf("event kinds %v missing %q", kinds, want)
 		}
 	}
-	// The tool events must carry the SDK label, which names the tool.
+	// The tool events carry the legacy queued/running Detail contract:
+	// every tool_start names the tool on Name (Detail is "queued" or
+	// "running", never the tool name), synthesized by the PointPreTool
+	// hook and the dispatcher shim (sdk_tool_events.go).
 	for _, e := range got {
-		if e.Kind == EventToolStart && !strings.Contains(e.Detail, "echo") {
-			t.Fatalf("tool_start Detail = %q, want it to name echo", e.Detail)
+		if e.Kind == EventToolStart && e.Name != "echo" {
+			t.Fatalf("tool_start Name = %q (Detail %q), want echo", e.Name, e.Detail)
+		}
+		if e.Kind == EventToolStart && e.Detail != "queued" && e.Detail != "running" {
+			t.Fatalf("tool_start Detail = %q, want queued or running", e.Detail)
 		}
 	}
 }

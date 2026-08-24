@@ -51,6 +51,10 @@ type refOnlyShim struct {
 	// its body must never be spooled durably (mirrors refOnlyTier's
 	// p.ephemeral skip at shape_batch_refonly.go:26-27).
 	ephemeral bool
+	// turn is the run's turn state; a minted ref-notice overwrites the
+	// recorded tool-event outcome body so tool_end matches the
+	// post-shaping body the model sees (sdk_tool_events.go).
+	turn *sdkTurnState
 }
 
 var _ sdktools.Tool = (*refOnlyShim)(nil)
@@ -88,9 +92,17 @@ func (r *refOnlyShim) Run(ctx context.Context, in sdktools.InOut) (sdktools.Out,
 	if ref == "" {
 		// Plain notice when the spool cannot mint (nil store, empty
 		// principal, or write failure). Mirrors refOnlyTier:36-43.
-		return sdktools.Out{Value: fmt.Sprintf("[tool result for %s elided; original ~%s]", name, refOnlySizeLabel(len(s)))}, nil
+		notice := fmt.Sprintf("[tool result for %s elided; original ~%s]", name, refOnlySizeLabel(len(s)))
+		if r.turn != nil {
+			r.turn.overwriteToolOutcomeBody(notice)
+		}
+		return sdktools.Out{Value: notice}, nil
 	}
-	return sdktools.Out{Value: fmt.Sprintf("[tool result for %s elided to a remainder ref (original ~%s): %s — use read_output to fetch the full body]", name, refOnlySizeLabel(len(s)), ref)}, nil
+	notice := fmt.Sprintf("[tool result for %s elided to a remainder ref (original ~%s): %s — use read_output to fetch the full body]", name, refOnlySizeLabel(len(s)), ref)
+	if r.turn != nil {
+		r.turn.overwriteToolOutcomeBody(notice)
+	}
+	return sdktools.Out{Value: notice}, nil
 }
 
 // refOnlySizeLabel rounds n up to the next power of two and renders
@@ -138,7 +150,7 @@ func refOnlyCeilPowerOfTwo(n int) int {
 // tools implementing tools.EphemeralResultTool, whose bodies must
 // never be spooled durably. A nil spool or empty names returns the
 // registry unchanged.
-func applyRefOnlyShim(sdkReg *sdktools.Registry, cliReg *tools.Registry, names []string, spool *remainder.Spool, floor int, principal string) {
+func applyRefOnlyShim(sdkReg *sdktools.Registry, cliReg *tools.Registry, names []string, spool *remainder.Spool, floor int, principal string, turn *sdkTurnState) {
 	if sdkReg == nil || len(names) == 0 || spool == nil || floor <= 0 || principal == "" {
 		return
 	}
@@ -171,6 +183,7 @@ func applyRefOnlyShim(sdkReg *sdktools.Registry, cliReg *tools.Registry, names [
 			floor:     floor,
 			principal: principal,
 			ephemeral: ephemeral,
+			turn:      turn,
 		}
 		if err := sdkReg.Add(wrapped); err != nil {
 			// Restore the unwrapped tool so the registry stays

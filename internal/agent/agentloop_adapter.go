@@ -183,7 +183,7 @@ func buildSDKToolRegistry(l *Loop, opts Options, cliReg *tools.Registry, turn *s
 		return nil, err
 	}
 	applyDispatcherShim(sdkReg, cliReg, opts, turn)
-	applyRefOnlyShim(sdkReg, cliReg, opts.RefOnlyTools, turn.currentSpool(), BatchDegradeFloorBytes, opts.SessionID)
+	applyRefOnlyShim(sdkReg, cliReg, opts.RefOnlyTools, turn.currentSpool(), BatchDegradeFloorBytes, opts.SessionID, turn)
 	// Host-side turn shaping replaces the SDK's TurnResultBudget: the
 	// CLI contract degrades with an honest notice and never omits a
 	// call, so the SDK's TurnResultBudget stays unset.
@@ -362,27 +362,27 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 	// wired none gets a scoped one over the loop's registry (the
 	// same construction the subagent handler uses), closed with the
 	// run.
-	if opts.Dispatcher == nil && l.Tools != nil {
-		d, derr := runtime.NewToolDispatcher(l.Tools, runtime.Policy{})
-		if derr != nil {
-			return sdkagentloop.Result{}, fmt.Errorf("agent: scoped tool dispatcher: %w", derr)
-		}
-		opts.Dispatcher = d
-		defer d.Close()
+	if closer, err := ensureSDKDispatcher(l, &opts); err != nil {
+		return sdkagentloop.Result{}, err
+	} else {
+		defer closer()
 	}
 	sdkOpts, turn, err := buildAgentLoopOptions(l, opts)
 	if err != nil {
 		return sdkagentloop.Result{}, err
 	}
 	sdkOpts.Trim = sdkPrepareTrim(l, opts)
-	// Legacy not-in-registry denial: see agentloop_tool_error.go.
-	sdkOpts.OnToolCallError = sdkToolCallErrorReporter(opts)
+	// Legacy not-in-registry denial (agentloop_tool_error.go; the
+	// reporter records a failed outcome for its synthesized denials)
+	// and the legacy tool_start/tool_end wire shape (sdk_tool_events.go).
+	sdkOpts.OnToolCallError = sdkToolCallErrorReporter(opts, turn)
+	sdkOpts.Hooks = sdkToolEventHooks(opts, turn)
 	if opts.OnEvent != nil || opts.EventBus != nil || opts.FinalWriter != nil {
 		// The SDK (since mivia-ai-sdk commit c207575) fires the four
 		// lifecycle names whenever Bus is non-nil; the heartbeat ticks
 		// gate separately on HeartbeatInterval, which stays zero here
 		// because the CLI surface drops tick events by design.
-		sdkOpts.Bus = bridgeAgentLoopEvents(opts)
+		sdkOpts.Bus = bridgeAgentLoopEvents(opts, turn)
 	}
 	// Usage rows: the completer's onUsage callback (newSDKTurnCompleter)
 	// runs l.emitTurnUsage per Chat call and writes the one token_usage
@@ -410,6 +410,21 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 		return res, berr
 	}
 	return finishSDKResult(opts, res, msgs)
+}
+
+// ensureSDKDispatcher installs a scoped runtime dispatcher over the
+// loop's registry when the caller wired none (the same construction
+// the subagent handler uses); the returned func closes it.
+func ensureSDKDispatcher(l *Loop, opts *Options) (func(), error) {
+	if opts.Dispatcher != nil || l.Tools == nil {
+		return func() {}, nil
+	}
+	d, err := runtime.NewToolDispatcher(l.Tools, runtime.Policy{})
+	if err != nil {
+		return nil, fmt.Errorf("agent: scoped tool dispatcher: %w", err)
+	}
+	opts.Dispatcher = d
+	return d.Close, nil
 }
 
 // finishSDKTurn applies finalizeSDKTurn with the current turn's user

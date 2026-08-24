@@ -24,11 +24,13 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
+	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
 	sdktools "github.com/MiviaLabs/mivia-ai-sdk/tools"
 )
 
@@ -75,6 +77,15 @@ type sdkTurnState struct {
 	shape      *turnShapeCounter
 	errMu      sync.Mutex
 	bridgeErr  error
+	// Tool-event synthesis state (sdk_tool_events.go): the call
+	// PointPreTool stashed (pendingTool), the executed call's recorded
+	// outcome (toolOutcome), and the once-per-iteration stream-revoke
+	// gate (streamRevoked, armed at the first tool call, reset by the
+	// EventIterationStart bus subscription).
+	toolMu        sync.Mutex
+	pendingTool   *sdkshape.ToolCall
+	toolOutcome   *toolCallOutcome
+	streamRevoked atomic.Bool
 }
 
 func newSDKTurnState() *sdkTurnState { return &sdkTurnState{} }
@@ -203,6 +214,23 @@ func (d *dispatcherShim) DecodeArguments(raw []byte) (sdktools.InOut, error) {
 	return d.schema.DecodeArguments(raw)
 }
 
+// armDispatcherTimeout resolves the per-call timeout like
+// prepareToolTasks (capability timeout, else Options default, a larger
+// model request clamped to the run deadline) and narrows ctx under it.
+// The clock starts here because the SDK runs calls one at a time. A
+// zero resolution leaves ctx untouched.
+func armDispatcherTimeout(ctx context.Context, opts Options, args []byte, capability tools.Capability) (context.Context, context.CancelFunc, time.Duration) {
+	callTimeout := resolveToolCallTimeout(opts.ToolTimeout, capability.Timeout)
+	if requested := requestedToolTimeout(args); requested > callTimeout {
+		callTimeout = clampToDeadline(ctx, requested)
+	}
+	if callTimeout <= 0 {
+		return ctx, func() {}, 0
+	}
+	narrowed, cancel := context.WithTimeout(ctx, callTimeout)
+	return narrowed, cancel, callTimeout
+}
+
 // Run executes one tool call the way the legacy loop does: through the
 // dispatcher when one is wired (hooks, gate, dedup, policy), under the
 // Options.ToolTimeout ceiling, then capped and spooled like
@@ -218,20 +246,8 @@ func (d *dispatcherShim) Run(ctx context.Context, in sdktools.InOut) (sdktools.O
 	if capable, ok := d.cli.(tools.CapableTool); ok {
 		capability = capable.Capability(args)
 	}
-	// Per-call timeout resolution mirrors prepareToolTasks: the tool's
-	// capability timeout is authoritative when set, the Options default
-	// otherwise; the model's own requested timeout (when larger) then
-	// wins, clamped to the run deadline; the clock starts here because
-	// the SDK runs calls one at a time.
-	callTimeout := resolveToolCallTimeout(d.opts.ToolTimeout, capability.Timeout)
-	if requested := requestedToolTimeout(args); requested > callTimeout {
-		callTimeout = clampToDeadline(ctx, requested)
-	}
-	if callTimeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, callTimeout)
-		defer cancel()
-	}
+	ctx, cancelTimeout, callTimeout := armDispatcherTimeout(ctx, d.opts, args, capability)
+	defer cancelTimeout()
 	var result, hookContext string
 	// RunAgentLoopOnce guarantees a non-nil opts.Dispatcher before tools
 	// are wrapped (either the caller wired one or a scoped dispatcher
@@ -249,6 +265,13 @@ func (d *dispatcherShim) Run(ctx context.Context, in sdktools.InOut) (sdktools.O
 		}
 		if live := d.turn.currentSpool(); live != nil {
 			spool = live
+		}
+	}
+	// Legacy "running" tool_start: the analogue of loop_tool_exec.go's
+	// pre-dispatch emission, keyed on the call PointPreTool stashed.
+	if d.turn != nil {
+		if pending := d.turn.currentPendingToolCall(); pending != nil {
+			emit(d.opts, Event{Kind: EventToolStart, ToolCallID: pending.ID, Name: d.inner.Name(), Detail: "running"})
 		}
 	}
 	r := dispatcher.Invoke(ctx, runtime.Request{
@@ -284,7 +307,37 @@ func (d *dispatcherShim) Run(ctx context.Context, in sdktools.InOut) (sdktools.O
 			toolName:     d.inner.Name(),
 		})
 	}
-	return sdktools.Out{Value: appendHookContext(capped, hookContext)}, nil
+	body := appendHookContext(capped, hookContext)
+	d.recordToolEventOutcome(args, body, r.Err, ephemeral)
+	return sdktools.Out{Value: body}, nil
+}
+
+// recordToolEventOutcome records the outcome the EventToolCallEnd
+// handler renders the legacy tool_end from (sdk_tool_events.go): the
+// final model-visible body and the dispatcher's failure flag. An
+// ephemeral tool's marker overrides only the operator preview
+// (loop_tools.go emitToolEnd's rule); a later shim (ref-only notice,
+// turn-shaping re-cut) that rewrites the body overwrites the record so
+// tool_end matches the post-shaping body.
+func (d *dispatcherShim) recordToolEventOutcome(args []byte, body string, dispatchErr error, ephemeral bool) {
+	if d.turn == nil {
+		return
+	}
+	preview := ""
+	if ephemeral {
+		if et, ok := d.cli.(tools.EphemeralResultTool); ok {
+			preview = et.EphemeralResultMarker(args)
+		}
+	}
+	d.turn.recordToolOutcomeWithPreview(callIDOf(d.turn), d.inner.Name(), body, dispatchErr != nil, preview)
+}
+
+// callIDOf returns the pending call's ID, or "" when none is stashed.
+func callIDOf(turn *sdkTurnState) string {
+	if pending := turn.currentPendingToolCall(); pending != nil {
+		return pending.ID
+	}
+	return ""
 }
 
 // store records the newest pass-1 parts.

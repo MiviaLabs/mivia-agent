@@ -124,7 +124,7 @@ func TestApplyRefOnlyShimSkipsNonSchemaTool(t *testing.T) {
 	if err := sdkReg.Add(bare); err != nil {
 		t.Fatal(err)
 	}
-	applyRefOnlyShim(sdkReg, reg, []string{"bare_tool"}, remainder.NewSpool(remainder.NewMemoryStore()), BatchDegradeFloorBytes, "sess")
+	applyRefOnlyShim(sdkReg, reg, []string{"bare_tool"}, remainder.NewSpool(remainder.NewMemoryStore()), BatchDegradeFloorBytes, "sess", nil)
 	got, ok := sdkReg.Get("bare_tool")
 	if !ok {
 		t.Fatal("non-SchemaTool vanished from the registry")

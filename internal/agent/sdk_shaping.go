@@ -128,6 +128,11 @@ func (w *turnShapeWrapper) Run(ctx context.Context, in sdktools.InOut) (sdktools
 	if degraded && w.onDegrade != nil {
 		w.onDegrade(charged, w.budget)
 	}
+	// The re-cut body is what the model sees; the recorded tool-event
+	// outcome follows it so tool_end matches (sdk_tool_events.go).
+	if w.turn != nil {
+		w.turn.overwriteToolOutcomeBody(shaped)
+	}
 	return sdktools.Out{Value: shaped}, nil
 }
 

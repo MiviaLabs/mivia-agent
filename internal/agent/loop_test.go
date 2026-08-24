@@ -264,9 +264,10 @@ func TestLoopNestedReadWriteAndGrep(t *testing.T) {
 		Model:    "m",
 		MaxSteps: 10,
 		OnEvent: func(e Event) {
-			// The SDK bridge emits one EventToolStart per tool call; the
-			// Detail carries the SDK's label payload, not the legacy
-			// "queued"/"running" split, so count every start.
+			// The SDK path synthesizes the legacy two-starts-per-call
+			// wire shape ("queued" from the PointPreTool hook, then
+			// "running" from the dispatcher shim - sdk_tool_events.go),
+			// so 4 calls yield 8 starts.
 			if e.Kind == EventToolStart {
 				mu.Lock()
 				toolStarts = append(toolStarts, e.Detail)
@@ -280,7 +281,7 @@ func TestLoopNestedReadWriteAndGrep(t *testing.T) {
 	if text != "found and noted" {
 		t.Fatalf("text=%q", text)
 	}
-	if len(toolStarts) != 4 {
+	if len(toolStarts) != 8 {
 		t.Fatalf("tool starts=%v", toolStarts)
 	}
 	note, err := reg.Execute(context.Background(), "read_file", json.RawMessage(`{"path":"notes/out.txt"}`))
@@ -400,13 +401,13 @@ func TestLoopParallelToolExecution(t *testing.T) {
 		t.Fatalf("text=%q", text)
 	}
 
-	// The SDK bridge emits one EventToolStart/EventToolEnd pair per call
-	// and runs the batch sequentially (the documented MaxConcurrentTools
-	// gap), so there is no "queued"/"running" split and no
-	// tool_parallel event; count starts, ends, and zero parallel.
+	// The SDK path synthesizes the legacy two-starts-per-call wire
+	// shape ("queued" + "running", sdk_tool_events.go) and runs the
+	// batch sequentially (the documented MaxConcurrentTools gap), so
+	// 3 calls yield 6 starts, 3 ends, and no tool_parallel event.
 	starts, endCount, parallelCount := countToolEvents(events)
-	if starts != 3 {
-		t.Fatalf("expected 3 tool_start events, got %d", starts)
+	if starts != 6 {
+		t.Fatalf("expected 6 tool_start events (3 calls x queued+running), got %d", starts)
 	}
 	if endCount != 3 {
 		t.Fatalf("expected 3 tool_end events, got %d", endCount)

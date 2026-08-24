@@ -37,7 +37,7 @@ import (
 // truncation (BatchResultBudgetBytes / MaxToolResultChars shaping)
 // because the hook replaces the tool-result body before any host
 // shaping wrapper runs; a short fixed denial notice is not shaped.
-func sdkToolCallErrorReporter(opts Options) sdkagentloop.ErrorFunc {
+func sdkToolCallErrorReporter(opts Options, turn *sdkTurnState) sdkagentloop.ErrorFunc {
 	return func(ctx context.Context, call sdkshape.ToolCall, runErr error) (sdkshape.Message, error) {
 		if !(errors.Is(runErr, sdktools.ErrUnknownName) || errors.Is(runErr, sdkagentloop.ErrToolNotOffered)) {
 			return sdkshape.Message{}, nil
@@ -64,6 +64,13 @@ func sdkToolCallErrorReporter(opts Options) sdkagentloop.ErrorFunc {
 		}
 		if msg == "" {
 			msg = fmt.Sprintf("tool %q is not available to this agent", call.Name)
+		}
+		// Record a failed outcome so the tool-event synthesis renders
+		// the denial as the same failed tool_end the legacy path emits
+		// (sdk_tool_events.go); without it the deferred
+		// EventToolCallEnd would find neither outcome nor pending.
+		if turn != nil {
+			turn.recordToolOutcome(call.ID, call.Name, "error: "+msg, true)
 		}
 		return sdkshape.Message{
 			Role:       provider.RoleTool,

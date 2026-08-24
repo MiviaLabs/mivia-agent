@@ -207,7 +207,7 @@ func TestRefOnlyShimKeepsToolInSDKDefinitions(t *testing.T) {
 		t.Fatal(err)
 	}
 	spool, _ := testSpool(t)
-	applyRefOnlyShim(sdkReg, reg, []string{"bigtool"}, spool, BatchDegradeFloorBytes, "principal-defs")
+	applyRefOnlyShim(sdkReg, reg, []string{"bigtool"}, spool, BatchDegradeFloorBytes, "principal-defs", nil)
 	wrapped, ok := sdkReg.Get("bigtool")
 	if !ok {
 		t.Fatal("bigtool missing from SDK registry")
@@ -249,7 +249,7 @@ func TestRefOnlyShimSkipsEphemeralTool(t *testing.T) {
 		t.Fatal(err)
 	}
 	spool, store := testSpool(t)
-	applyRefOnlyShim(sdkReg, reg, []string{"eph_tool"}, spool, BatchDegradeFloorBytes, "principal-eph")
+	applyRefOnlyShim(sdkReg, reg, []string{"eph_tool"}, spool, BatchDegradeFloorBytes, "principal-eph", nil)
 	tool, ok := sdkReg.Get("eph_tool")
 	if !ok {
 		t.Fatal("eph_tool missing from SDK registry")
