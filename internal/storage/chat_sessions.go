@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -146,6 +147,14 @@ func (s *SQLite) LoadSession(ctx context.Context, principal contextstate.Princip
 		// id - never a shadow, never a takeover.
 		return append([]byte(nil), payload...), info, nil
 	}
+	return s.resolveProjection(ctx, principal, catalogSessionID, payload, info)
+}
+
+// resolveProjection decides whether a chat_sessions projection row (name is a
+// live context session's own id) serves its live checkpoint or its snapshot.
+// See snapshotHasMoreMessages for why message count, not recency, is the
+// deciding signal.
+func (s *SQLite) resolveProjection(ctx context.Context, principal contextstate.Principal, catalogSessionID string, payload []byte, info contextstate.SessionCatalogInfo) ([]byte, contextstate.SessionCatalogInfo, error) {
 	live, livePayload, hasLive, err := s.loadLiveContextSession(ctx, principal, catalogSessionID)
 	if err != nil {
 		return nil, contextstate.SessionCatalogInfo{}, err
@@ -154,8 +163,10 @@ func (s *SQLite) LoadSession(ctx context.Context, principal contextstate.Princip
 	// the chat_sessions row is only a catalog projection of that state,
 	// refreshed by SaveAfterTurn on its own schedule. A projection that lags
 	// the checkpoints must not shadow the newer state, so the completed live
-	// payload wins when one exists.
-	if hasLive && len(livePayload) > len(emptyContextPayload) {
+	// payload wins UNLESS the snapshot demonstrably carries more messages than
+	// the checkpoint (a checkpoint commit that failed after a snapshot save
+	// already captured a later turn).
+	if hasLive && len(livePayload) > len(emptyContextPayload) && !snapshotHasMoreMessages(livePayload, payload) {
 		return livePayload, live, nil
 	}
 	if hasLive {
@@ -173,6 +184,37 @@ func (s *SQLite) LoadSession(ctx context.Context, principal contextstate.Princip
 	return append([]byte(nil), payload...), info, nil
 }
 
+// snapshotHasMoreMessages reports whether snapshotPayload decodes to strictly
+// more top-level JSON array elements than livePayload. Both are canonical
+// message-array encodings in real production writes (contextmgr's
+// MarshalCanonical(result.Active) for a checkpoint, catalogMessages(msgs) for
+// a snapshot), so element count is a direct, hard-to-spoof measure of
+// captured conversational content - unlike a timestamp (recency alone can't
+// tell a same-content refresh from real divergence) or chat_sessions'
+// caller-supplied message_count column (recorded, not derived, so it is not
+// authoritative). Either side failing to decode as an array defaults to
+// false so the checkpoint keeps winning, matching today's behavior rather
+// than guessing.
+func snapshotHasMoreMessages(livePayload, snapshotPayload []byte) bool {
+	liveCount, err := jsonArrayLen(livePayload)
+	if err != nil {
+		return false
+	}
+	snapshotCount, err := jsonArrayLen(snapshotPayload)
+	if err != nil {
+		return false
+	}
+	return snapshotCount > liveCount
+}
+
+func jsonArrayLen(data []byte) (int, error) {
+	var elements []json.RawMessage
+	if err := json.Unmarshal(data, &elements); err != nil {
+		return 0, err
+	}
+	return len(elements), nil
+}
+
 // emptyContextPayload is the COALESCE default the live-row query serves when
 // a session row exists but no completed checkpoint backs it. A payload at or
 // below this length carries no messages, so the caller keeps its snapshot.
@@ -182,6 +224,21 @@ var emptyContextPayload = []byte("[]")
 // catalog name. It is the payload source for a live session: the session's
 // turns are durable in its completed checkpoints, and the chat_sessions row
 // named by the session id is only a listing projection of that state.
+//
+// This intentionally does NOT fall back past active_checkpoint_id when it is
+// NULL. An earlier version of this query did, on the premise that a
+// NULL/stale pointer could leave a still-valid, un-superseded checkpoint
+// orphaned behind it. That premise does not hold: every write that touches
+// active_checkpoint_id (Commit's publishContextHead, Advance's
+// advanceActiveCheckpoint in context_store.go) sets the pointer and
+// session_revision/durable_revision together, atomically, in the same UPDATE.
+// The only way to observe NULL here is either a session that has never
+// committed (nothing to fall back to) or /clear's ClearActive path, which
+// sets active_checkpoint_id=NULL *deliberately* while bumping the revision
+// past whatever checkpoint used to be active - a fallback that ignored NULL
+// would resurrect a conversation the user explicitly cleared on the very next
+// resume. Bug audit caught this as a real regression before it shipped; see
+// git history for the reverted fallback and its test coverage.
 const liveContextSessionSQL = `SELECT cs.session_id,COALESCE(cs.title,''),cs.model,cs.provider,COALESCE((SELECT active_context FROM context_checkpoints WHERE checkpoint_id=cs.active_checkpoint_id AND complete=1),?),COALESCE((SELECT MIN(created_at) FROM context_checkpoints WHERE session_id=cs.session_id),CURRENT_TIMESTAMP),COALESCE((SELECT MAX(created_at) FROM context_checkpoints WHERE session_id=cs.session_id),CURRENT_TIMESTAMP),source_sequence,COALESCE(d.dir,''),COALESCE(d.worktree,'') FROM context_sessions cs LEFT JOIN chat_session_dirs d ON d.workspace_id=cs.workspace_id AND d.subject_id=cs.subject_id AND d.name=cs.session_id WHERE cs.workspace_id=? AND cs.subject_id=? AND cs.session_id=? AND cs.tombstoned=0 AND cs.instance_id IS NULL`
 
 // loadLiveContextSession returns the live context session row behind name.

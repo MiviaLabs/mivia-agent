@@ -1,12 +1,14 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
@@ -589,4 +591,123 @@ func mustBinding(t *testing.T) contextstate.BindingRevision {
 		t.Fatal(err)
 	}
 	return binding
+}
+
+// TestLoadSession_ClearedSessionStaysEmptyDespiteOlderCheckpoint locks in the
+// regression a bug audit caught before ship: an earlier version of
+// liveContextSessionSQL fell back to the newest complete checkpoint whenever
+// active_checkpoint_id was NULL, on the mistaken premise that NULL only ever
+// meant "pointer lost track of a still-valid checkpoint." /clear
+// (Advance with ClearActive: true, context_store.go's advanceActiveCheckpoint)
+// also sets active_checkpoint_id=NULL, deliberately, while bumping
+// session_revision/durable_revision past whatever checkpoint used to be
+// active - a fallback that ignores that distinction resurrects a
+// conversation the user explicitly cleared on the very next resume. This
+// pins the correct behavior: after a clear, resume must stay empty even
+// though an older complete checkpoint still exists on disk.
+func TestLoadSession_ClearedSessionStaysEmptyDespiteOlderCheckpoint(t *testing.T) {
+	ctx := context.Background()
+	s, principal := openContextTestStore(t)
+	defer s.Close()
+	binding := contextTestBinding(t)
+	ensureContextSession(t, s, principal, binding)
+	commit := contextCommitRequest(t, principal, contextstate.Revision{}, binding, "commit-1", "sensitive-pre-clear-content")
+	if err := s.Commit(ctx, commit); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	clear := contextstate.AdvanceRequest{
+		OperationID: "clear-1", Principal: principal, SessionID: principal.SessionID,
+		Expected:        contextstate.Revision{Session: commit.NewSession, Durable: commit.NewDurable, Source: commit.NewSourceSequence},
+		ExpectedBinding: binding, NewBinding: binding,
+		NewSession: commit.NewSession + 1, NewDurable: commit.NewDurable + 1, NewSourceSequence: commit.NewSourceSequence,
+		ClearActive: true, Reason: "clear",
+	}
+	if err := s.Advance(ctx, clear); err != nil {
+		t.Fatalf("Advance (clear): %v", err)
+	}
+	payload, _, err := s.LoadSession(ctx, principal, principal.SessionID)
+	if err != nil {
+		t.Fatalf("LoadSession: %v", err)
+	}
+	if strings.Contains(string(payload), "sensitive-pre-clear-content") {
+		t.Fatalf("payload = %s, want the cleared conversation to stay gone, not resurrected from the older checkpoint", payload)
+	}
+}
+
+// TestLoadSession_PrefersSnapshotWithMoreMessagesThanCheckpoint pins the F2
+// fix: when a checkpoint commit fails after a snapshot save already captured
+// more turns (SaveAfterTurn's failed-turn fallback), the snapshot's extra
+// content must not be unconditionally shadowed by the older, smaller,
+// non-empty checkpoint payload.
+func TestLoadSession_PrefersSnapshotWithMoreMessagesThanCheckpoint(t *testing.T) {
+	ctx := context.Background()
+	s, principal := openContextTestStore(t)
+	defer s.Close()
+	binding := contextTestBinding(t)
+	// commitFirstMessageCheckpoint commits a 2-message checkpoint (user+assistant).
+	commitFirstMessageCheckpoint(t, s, principal, binding, "hello")
+	// The snapshot reflects a later, failed turn: the same 2 messages plus one
+	// more the checkpoint never captured - strictly more decoded elements.
+	snapshotPayload := []byte(`[{"role":"user","content":"hello"},{"role":"assistant","content":"ok"},{"role":"user","content":"a follow-up the failed commit never captured"}]`)
+	if err := s.SaveSession(ctx, principal, principal.SessionID, snapshotPayload, binding.Model, binding.Provider, 2, 1, 3, contextstate.SessionSaveOptions{SessionID: principal.SessionID}); err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+	payload, info, err := s.LoadSession(ctx, principal, principal.SessionID)
+	if err != nil {
+		t.Fatalf("LoadSession: %v", err)
+	}
+	if string(payload) != string(snapshotPayload) {
+		t.Fatalf("payload = %s, want the snapshot's extra content", payload)
+	}
+	if info.SessionID != principal.SessionID {
+		t.Fatalf("info.SessionID = %q, want the live identity %q preserved for takeover", info.SessionID, principal.SessionID)
+	}
+}
+
+// TestLoadSession_KeepsCheckpointWhenSnapshotHasNoMoreMessages is the
+// regression guard: a same-or-fewer-message snapshot (an ordinary redundant
+// SaveAfterTurn refresh after a successful commit, the common case) must
+// never shadow the checkpoint - only a snapshot with strictly MORE messages
+// than the checkpoint may override it.
+func TestLoadSession_KeepsCheckpointWhenSnapshotHasNoMoreMessages(t *testing.T) {
+	ctx := context.Background()
+	s, principal := openContextTestStore(t)
+	defer s.Close()
+	binding := contextTestBinding(t)
+	commitFirstMessageCheckpoint(t, s, principal, binding, "hello")
+	snapshotPayload := []byte(`[{"role":"user","content":"stale snapshot"}]`)
+	if err := s.SaveSession(ctx, principal, principal.SessionID, snapshotPayload, binding.Model, binding.Provider, 1, 1, 1, contextstate.SessionSaveOptions{SessionID: principal.SessionID}); err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+	payload, info, err := s.LoadSession(ctx, principal, principal.SessionID)
+	if err != nil {
+		t.Fatalf("LoadSession: %v", err)
+	}
+	if !bytes.Contains(payload, []byte("hello")) {
+		t.Fatalf("payload = %s, want the checkpoint payload (contains \"hello\"), not the smaller snapshot", payload)
+	}
+	if info.SessionID != principal.SessionID {
+		t.Fatalf("info.SessionID = %q, want %q", info.SessionID, principal.SessionID)
+	}
+}
+
+// TestLiveContextSession_NoCompleteCheckpointServesEmptyPayload is the
+// regression guard: with no complete checkpoint at all, resume must still
+// serve the empty-context default exactly as before F1.
+func TestLiveContextSession_NoCompleteCheckpointServesEmptyPayload(t *testing.T) {
+	ctx := context.Background()
+	s, principal := openContextTestStore(t)
+	defer s.Close()
+	binding := contextTestBinding(t)
+	ensureContextSession(t, s, principal, binding)
+	payload, info, err := s.LoadSession(ctx, principal, principal.SessionID)
+	if err != nil {
+		t.Fatalf("LoadSession: %v", err)
+	}
+	if info.SessionID != principal.SessionID {
+		t.Fatalf("info.SessionID = %q, want %q", info.SessionID, principal.SessionID)
+	}
+	if string(payload) != string(emptyContextPayload) {
+		t.Fatalf("payload = %s, want emptyContextPayload", payload)
+	}
 }

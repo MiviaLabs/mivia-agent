@@ -52,15 +52,7 @@ func (s *Session) finishAgentTurn(ctx context.Context, loop *agent.Loop, registr
 func (s *Session) finishContextTurn(ctx context.Context, loop *agent.Loop, userText string, token OperationToken, turn *TurnOptions, contextCfg contextTurnConfig, turnErr error) error {
 	interrupted := isInterruptedTurn(ctx, turnErr)
 	if turnErr != nil && !interrupted {
-		if loop.HasPreparation {
-			contextCfg.manager.PreparationManager.Discard(loop.LastPreparation)
-		}
-		// An errored turn's history is discarded; its staged admission goes
-		// with it (plan tools/05 D7 error path).
-		s.dropPendingAdmissionForTurn(token.TurnID)
-		s.runTurnCleanup(turn)
-		s.clearLiveTurnToken()
-		return nil
+		return s.finishErroredContextTurn(ctx, loop, userText, token, turn, contextCfg, turnErr)
 	}
 	if !loop.HasPreparation {
 		s.dropPendingAdmissionForTurn(token.TurnID)
@@ -84,7 +76,11 @@ func (s *Session) finishContextTurn(ctx context.Context, loop *agent.Loop, userT
 		s.clearLiveTurnToken()
 		return ErrStaleOperation
 	}
-	err := s.commitContextTurn(ctx, loop, userText, token, contextCfg, interrupted)
+	outcome := contextmgr.OutcomeComplete
+	if interrupted {
+		outcome = contextmgr.OutcomeCancelled
+	}
+	err := s.commitContextTurn(ctx, loop, userText, token, contextCfg, outcome)
 	if err != nil {
 		// The durable commit failed: the staging turn never committed, so its
 		// staged admission must not survive to publish at a later boundary
@@ -97,13 +93,97 @@ func (s *Session) finishContextTurn(ctx context.Context, loop *agent.Loop, userT
 	return err
 }
 
+// finishErroredContextTurn handles a turn that ended in a non-interrupted
+// error. It used to discard the whole turn - history, staged admission, and
+// all - unconditionally; this made resume lose the user's prompt and every
+// tool call the turn made whenever a provider error struck, and disagreed
+// with the legacy (non-context) path's commitPreparedTurn, which already
+// persists an errored turn's history and publishes its admission whenever the
+// persistence itself succeeds. This brings the context-store path in line
+// with that existing, shipped behavior instead of preserving an
+// inconsistency between the two backends.
+//
+// The defer runs turn cleanup and clears the live-turn token exactly once, on
+// every branch below, mirroring the discard branch's original contract.
+//
+// Return contract: this function must always return nil or ErrStaleOperation,
+// never turnErr and never the commit's own error. sendAgent (session.go)
+// already surfaces the original turnErr independently of this return value,
+// and only overrides it when finishAgentTurn returns a non-nil, non-stale
+// error - so returning anything else here would either mask turnErr behind an
+// unrelated persistence error, or double-report the same failure.
+func (s *Session) finishErroredContextTurn(ctx context.Context, loop *agent.Loop, userText string, token OperationToken, turn *TurnOptions, contextCfg contextTurnConfig, turnErr error) error {
+	defer func() {
+		s.runTurnCleanup(turn)
+		s.clearLiveTurnToken()
+	}()
+	if errors.Is(turnErr, agent.ErrPromptBudgetExceeded) {
+		// Unreachable via the durable-context path today - a configured
+		// PreparationManager makes sdkPromptBudgetPreflight (the only source of
+		// this error) a no-op - but kept as defense-in-depth rather than
+		// assumed away, at zero cost.
+		if loop.HasPreparation {
+			contextCfg.manager.PreparationManager.Discard(loop.LastPreparation)
+		}
+		s.dropPendingAdmissionForTurn(token.TurnID)
+		return nil
+	}
+	if !loop.HasPreparation {
+		// The turn died before a preparation was ever built: there is nothing
+		// to fingerprint a checkpoint against, so no durable commit is
+		// attempted. Best effort instead: adopt what history exists into the
+		// rolling snapshot, so a later resume has somewhere newer than the
+		// last complete checkpoint to fall back to.
+		s.adoptFailedTurnSnapshot(loop, token)
+		s.dropPendingAdmissionForTurn(token.TurnID)
+		return nil
+	}
+	s.contextPublishMu.Lock()
+	defer s.contextPublishMu.Unlock()
+	s.mu.RLock()
+	current := s.tokenCurrentLocked(token)
+	s.mu.RUnlock()
+	if !current {
+		contextCfg.manager.PreparationManager.Discard(loop.LastPreparation)
+		s.dropPendingAdmissionForTurn(token.TurnID)
+		return ErrStaleOperation
+	}
+	if err := s.commitContextTurn(ctx, loop, userText, token, contextCfg, contextmgr.OutcomeUpstreamErr); err != nil {
+		// The commit itself failed - most commonly BuildCommitRequest's
+		// message-shape validation rejecting a turn that died mid-tool-call
+		// (a dangling tool_use with no paired result). Fall back to the
+		// original discard behavior rather than surfacing a second, unrelated
+		// persistence error on top of turnErr, which the caller already has.
+		s.dropPendingAdmissionForTurn(token.TurnID)
+	}
+	return nil
+}
+
+// adoptFailedTurnSnapshot adopts loop.Messages into the live session state,
+// token-fenced exactly like commitPreparedTurn's legacy adoption, then saves
+// the rolling snapshot so a later resume can see it even with no checkpoint
+// commit to back it.
+func (s *Session) adoptFailedTurnSnapshot(loop *agent.Loop, token OperationToken) {
+	s.mu.Lock()
+	if !s.tokenCurrentLocked(token) {
+		s.mu.Unlock()
+		return
+	}
+	s.Messages = cloneContextMessages(loop.Messages)
+	s.mu.Unlock()
+	s.SaveAfterTurn()
+}
+
 // commitContextTurn performs the durable publication for one context turn and
-// adopts its result in memory. The caller holds contextPublishMu.
-func (s *Session) commitContextTurn(ctx context.Context, loop *agent.Loop, userText string, token OperationToken, contextCfg contextTurnConfig, interrupted bool) error {
+// adopts its result in memory. The caller holds contextPublishMu. outcome is
+// the checkpoint's contextmgr.Outcome* tag - OutcomeComplete for an ordinary
+// successful turn, OutcomeCancelled for an interrupted one, OutcomeUpstreamErr
+// for a non-interrupted error the caller still wants committed.
+func (s *Session) commitContextTurn(ctx context.Context, loop *agent.Loop, userText string, token OperationToken, contextCfg contextTurnConfig, outcome string) error {
 	ordered := contextTurnMessages(loop.Messages, userText)
 	preparation := loop.LastPreparation
 	commitCtx := ctx
-	if interrupted {
+	if outcome == contextmgr.OutcomeCancelled {
 		// The provider context is canceled by force-send, but the durable
 		// history publication must still complete before the next turn starts.
 		commitCtx = context.Background()
@@ -130,8 +210,8 @@ func (s *Session) commitContextTurn(ctx context.Context, loop *agent.Loop, userT
 	if err == nil && haveSummary {
 		result.Active = append(cloneContextMessages(result.Active), summaryMessage)
 	}
-	if err == nil && interrupted {
-		result.Outcome = contextmgr.OutcomeCancelled
+	if err == nil {
+		result.Outcome = outcome
 	}
 	if err == nil {
 		err = contextCfg.manager.Commit(commitCtx, preparation, result)
