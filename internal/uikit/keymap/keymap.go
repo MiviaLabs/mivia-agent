@@ -180,7 +180,7 @@ func Default() []Binding {
 
 		// Composer.
 		{ID: IDSend, Context: ContextComposer, Keys: []string{"enter"}, Help: "send"},
-		{ID: IDNewline, Context: ContextComposer, Keys: []string{"ctrl+j"}, Help: "newline"},
+		{ID: IDNewline, Context: ContextComposer, Keys: []string{"shift+enter", "alt+enter"}, Help: "newline"},
 		{ID: IDClearLine, Context: ContextComposer, Keys: []string{"ctrl+u"}, Help: "clear the line"},
 		{ID: IDHelp, Context: ContextComposer, Keys: []string{"?"}, Help: "show this keymap (empty composer)", Short: "help"},
 		{ID: IDFocusPrev, Context: ContextComposer, Keys: []string{"shift+tab"}, Help: "focus the newest block"},

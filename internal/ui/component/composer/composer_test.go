@@ -88,16 +88,25 @@ func TestSetValueRoundtrips(t *testing.T) {
 
 // ----- Phase 1: multi-line tests -----
 
-func TestCtrlJInsertsNewline(t *testing.T) {
+func TestShiftEnterInsertsNewline(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII, 80)
 	m.SetValue("first line")
-	// ctrl+j should insert a newline inside the textarea.
-	next, _ := m.Update(tea.KeyPressMsg{Text: "\n", Code: 'j', Mod: tea.ModCtrl})
+	// shift+enter should insert a newline inside the textarea.
+	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift})
 	next, _ = next.Update(tea.KeyPressMsg{Text: "s", Code: 's'})
-	next, _ = next.Update(tea.KeyPressMsg{Text: "e", Code: 'e'})
-	next, _ = next.Update(tea.KeyPressMsg{Text: "c", Code: 'c'})
 	if !strings.Contains(next.Value(), "\n") {
-		t.Errorf("ctrl+j should insert a newline; got value %q", next.Value())
+		t.Errorf("shift+enter should insert a newline; got value %q", next.Value())
+	}
+}
+
+func TestAltEnterInsertsNewline(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII, 80)
+	m.SetValue("first line")
+	// alt+enter should insert a newline inside the textarea.
+	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModAlt})
+	next, _ = next.Update(tea.KeyPressMsg{Text: "a", Code: 'a'})
+	if !strings.Contains(next.Value(), "\n") {
+		t.Errorf("alt+enter should insert a newline; got value %q", next.Value())
 	}
 }
 
@@ -425,15 +434,52 @@ func TestRankMentionsEmptyQuery(t *testing.T) {
 
 func TestRankMentionsPrefixBeatsSubstring(t *testing.T) {
 	mentions := []Mention{
-		{Path: "internal/xcomp.go"}, // contains "comp" as substring
-		{Path: "internal/comp.go"},  // "comp" as prefix of basename
+		{Path: "internal/xcomp.go"},    // contains "comp" as substring
+		{Path: "internal/comp.go"},     // "comp" as prefix of basename
+		{Path: "comp/sub/file.go"},     // prefix on full path
+		{Path: "other/xyz/c_o_m_p.go"}, // subsequence
 	}
 	result := rankMentions(mentions, "comp")
-	if len(result) < 2 {
-		t.Fatalf("expected 2 results, got %d", len(result))
+	if len(result) < 4 {
+		t.Fatalf("expected 4 results, got %d", len(result))
 	}
-	// "comp.go" (prefix match on basename) should rank first.
 	if result[0].Path != "internal/comp.go" {
-		t.Errorf("prefix match should rank first; got %q", result[0].Path)
+		t.Errorf("prefix on basename should rank first; got %q", result[0].Path)
+	}
+}
+
+func TestMentionMenuViewAndScrolling(t *testing.T) {
+	m := New(loadTheme(t), theme.TierTrueColor, 80)
+	var mentions []Mention
+	for i := 0; i < 15; i++ {
+		mentions = append(mentions, Mention{Path: "dir/sub/file" + itoa(i) + ".go"})
+	}
+	m.SetMentions(mentions)
+	m.SetValue("@")
+	if !m.MentionMenuActive() {
+		t.Fatal("mention menu should be active")
+	}
+
+	view := m.View()
+	if !strings.Contains(view, "@file0.go") {
+		t.Errorf("view should show first mention; got:\n%s", view)
+	}
+
+	// Move forward past MaxCompletionRows to test offset clamping
+	for i := 0; i < 8; i++ {
+		m = m.MentionMenuNext()
+	}
+	// Move backward to test prev and offset clamping
+	for i := 0; i < 4; i++ {
+		m = m.MentionMenuPrev()
+	}
+
+	if sel, ok := m.mmenu.selected(); !ok || sel.Path == "" {
+		t.Error("selected mention should be non-empty")
+	}
+
+	m = m.AcceptMention()
+	if m.MentionMenuActive() {
+		t.Error("menu should close after accept")
 	}
 }

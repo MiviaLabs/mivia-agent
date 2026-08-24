@@ -994,6 +994,47 @@ func TestTabWithSlashCommandHasCompletionPriority(t *testing.T) {
 	}
 }
 
+func TestConversationScreenMentionMenuKeys(t *testing.T) {
+	s := sized(t, 0)
+	s.SetMentions([]composer.Mention{
+		{Path: "internal/ui/component/composer/composer.go"},
+		{Path: "internal/ui/component/composer/mention.go"},
+	})
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	scr := next.(Screen)
+
+	// Type "@" to open mention menu
+	scr, _ = press(t, scr, key("@"))
+	if !scr.composer.MentionMenuActive() {
+		t.Fatalf("mention menu not active after typing @")
+	}
+
+	// Down arrow moves cursor
+	scr, _ = press(t, scr, tea.KeyPressMsg{Code: tea.KeyDown})
+	// Up arrow moves cursor
+	scr, _ = press(t, scr, tea.KeyPressMsg{Code: tea.KeyUp})
+
+	// Enter accepts the selected mention
+	scr, _ = press(t, scr, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if scr.composer.MentionMenuActive() {
+		t.Errorf("mention menu should be closed after Enter")
+	}
+	if !strings.Contains(scr.composer.Value(), "@internal/ui/component/composer/composer.go") {
+		t.Errorf("expected mention path inserted, got %q", scr.composer.Value())
+	}
+
+	// Test Esc dismisses mention menu
+	scr.composer.Clear()
+	scr, _ = press(t, scr, key("@"))
+	if !scr.composer.MentionMenuActive() {
+		t.Fatalf("mention menu not active")
+	}
+	scr, _ = press(t, scr, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if scr.composer.MentionMenuActive() {
+		t.Errorf("mention menu should be dismissed after Esc")
+	}
+}
+
 // TestGutterClipsAnOverflowingRowWithTheClipMarker pins
 // wireframes-panes.md section 8/14's shared clip glyph: gutter is the
 // screen-edge fallback clip for any row wider than the frame, and it

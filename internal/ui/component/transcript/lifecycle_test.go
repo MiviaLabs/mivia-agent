@@ -239,3 +239,32 @@ func TestProgressWithoutABarStillShowsItsLog(t *testing.T) {
 		t.Errorf("a percentage was drawn with no total to compute it from:\n%s", got)
 	}
 }
+
+// TestNoticeAndUsageDuringStreamingDoesNotDuplicateAssistantText tests the bug
+// where a streaming response interrupted by notice / cache / token usage events
+// would flush the pending stream as a block and then re-add it on TextEndBody.
+func TestNoticeAndUsageDuringStreamingDoesNotDuplicateAssistantText(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 24)
+
+	// Step 1: user input
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindTurnStart, Body: uievent.TurnStartBody{Input: "hi"}})
+	// Step 2: notice iteration 1
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindNotice, Body: uievent.NoticeBody{Text: "iteration 1"}})
+	// Step 3: streaming assistant text deltas
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindTextDelta, Body: uievent.TextDeltaBody{Text: "Hi! I'm ready to help."}})
+	// Step 4: notice prompt cache
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindNotice, Body: uievent.NoticeBody{Text: "prompt cache: 1000/1000"}})
+	// Step 5: notice token usage estimate
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindNotice, Body: uievent.NoticeBody{Text: "estimate 1000 vs actual 1000"}})
+	// Step 6: terminal text.end carrying the complete assistant response
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindTextEnd, Body: uievent.TextEndBody{Text: "Hi! I'm ready to help."}})
+	// Step 7: turn.end completed
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindTurnEnd, Body: uievent.TurnEndBody{Reason: "completed"}})
+
+	dump := ansi.Strip(m.Dump())
+	count := strings.Count(dump, "Hi! I'm ready to help.")
+	if count != 1 {
+		t.Errorf("expected assistant text to appear exactly once, got %d occurrences in dump:\n%s", count, dump)
+	}
+}

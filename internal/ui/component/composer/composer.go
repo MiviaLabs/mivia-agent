@@ -80,13 +80,13 @@ func newTextarea(t theme.Theme, tier theme.Tier) textarea.Model {
 	// its own themed frame via render.BorderedWithHint.
 	ta.SetStyles(noopStyles(ta.Styles()))
 
-	// Rebind InsertNewline to ctrl+j only (ux-rules.md rule 4.2).
-	// "enter" is reserved for IDSend in the keymap; the screen handles it
+	// Rebind InsertNewline to shift+enter and alt+enter.
+	// Plain "enter" is reserved for IDSend in the keymap; the screen handles it
 	// before forwarding events to the composer (see keys.go IDSend).
 	km := ta.KeyMap
 	km.InsertNewline = key.NewBinding(
-		key.WithKeys("ctrl+j"),
-		key.WithHelp("ctrl+j", "newline"),
+		key.WithKeys("shift+enter", "alt+enter"),
+		key.WithHelp("shift+enter", "newline"),
 	)
 	ta.KeyMap = km
 
