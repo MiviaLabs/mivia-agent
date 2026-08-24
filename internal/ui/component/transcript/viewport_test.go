@@ -343,6 +343,51 @@ func TestUpdateLiveGrowsWithoutLosingAnything(t *testing.T) {
 	}
 }
 
+func TestFindLiveMatchesNewestActiveBlock(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 20)
+	// Turn 1 tool call "call-1" starts and ends
+	m, _ = m.HandleEvent(uievent.Event{
+		Kind: uievent.KindToolStart,
+		Body: uievent.ToolStartBody{ToolCallID: "call-1", Name: "memory_search"},
+	})
+	m, _ = m.HandleEvent(uievent.Event{
+		Kind: uievent.KindToolEnd,
+		Body: uievent.ToolEndBody{ToolCallID: "call-1", Name: "memory_search", OK: true, Result: "t1"},
+	})
+	// Turn 2 reuses the same tool call ID "call-1"
+	m, _ = m.HandleEvent(uievent.Event{
+		Kind: uievent.KindToolStart,
+		Body: uievent.ToolStartBody{ToolCallID: "call-1", Name: "memory_search"},
+	})
+	// In flight: block 1 is ok, block 2 is running
+	blocks := m.Blocks()
+	if len(blocks) != 2 {
+		t.Fatalf("got %d blocks, want 2", len(blocks))
+	}
+	if blocks[0].Header.State != "ok" {
+		t.Errorf("block 0 state = %q, want ok", blocks[0].Header.State)
+	}
+	if blocks[1].Header.State != "running" {
+		t.Errorf("block 1 state = %q, want running", blocks[1].Header.State)
+	}
+	// Turn 2 tool call "call-1" ends
+	m, _ = m.HandleEvent(uievent.Event{
+		Kind: uievent.KindToolEnd,
+		Body: uievent.ToolEndBody{ToolCallID: "call-1", Name: "memory_search", OK: true, Result: "t2"},
+	})
+	blocks = m.Blocks()
+	if len(blocks) != 2 {
+		t.Fatalf("got %d blocks, want 2", len(blocks))
+	}
+	if blocks[0].Header.State != "ok" {
+		t.Errorf("block 0 state = %q, want ok", blocks[0].Header.State)
+	}
+	if blocks[1].Header.State != "ok" {
+		t.Errorf("block 1 state = %q, want ok", blocks[1].Header.State)
+	}
+}
+
 func TestWidthAndHeightReportTheViewport(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII)
 	m.SetSize(120, 30)

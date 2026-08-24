@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
 
 // The cockpit owns the whole drawing surface, so the transcript owns the
@@ -282,13 +283,17 @@ func (m Model) PageBy(pages, fraction int) Model {
 }
 
 // findLive returns the index of the block for a tool call, or -1.
+// findLive returns the index of the live (not yet ended) block for a tool call, or -1.
 func (m Model) findLive(callID string) int {
 	if callID == "" {
 		return -1
 	}
-	for i := range m.blocks {
+	for i := len(m.blocks) - 1; i >= 0; i-- {
 		if m.blocks[i].CallID == callID {
-			return i
+			if m.blocks[i].Kind != uievent.KindToolEnd {
+				return i
+			}
+			return -1
 		}
 	}
 	return -1

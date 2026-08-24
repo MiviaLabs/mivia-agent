@@ -601,3 +601,78 @@ func TestPlanExactTriggerCanElide(t *testing.T) {
 		t.Fatalf("ElidedMessages=%d, want 1", plan.ElidedMessages)
 	}
 }
+
+func TestPlanElidesPriorTurnIterationsWithinSameObjective(t *testing.T) {
+	callOld := plannerToolCall("call-old", "read_file", `{}`)
+	callNew := plannerToolCall("call-new", "read_file", `{}`)
+	big := strings.Repeat("a", 5000)
+	messages := []provider.Message{
+		{Role: provider.RoleSystem, Content: "system"},
+		{Role: provider.RoleUser, Content: "active user objective"},
+		// Iteration 1
+		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{callOld}},
+		{Role: provider.RoleTool, ToolCallID: callOld.ID, Name: callOld.Function.Name, Content: big},
+		{Role: provider.RoleAssistant, Content: "intermediate thinking done"},
+		// Iteration 2 (latest tool unit)
+		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{callNew}},
+		{Role: provider.RoleTool, ToolCallID: callNew.ID, Name: callNew.Function.Name, Content: "small output"},
+	}
+	budget := forceCompactBudget(t, messages)
+	plan, err := Plan(PlanInput{Messages: messages, Budget: budget, Force: true})
+	if err != nil {
+		t.Fatalf("plan failed: %v", err)
+	}
+	if !plan.Compacted {
+		t.Fatal("expected compaction")
+	}
+	if plan.ElidedMessages != 1 {
+		t.Fatalf("ElidedMessages=%d, want 1", plan.ElidedMessages)
+	}
+	for _, msg := range plan.Messages {
+		if msg.Role == provider.RoleTool && msg.ToolCallID == "call-old" {
+			if !strings.HasPrefix(msg.Content, "[context elided prior tool result;") {
+				t.Fatalf("prior iteration tool result was not elided: %q", msg.Content)
+			}
+		}
+		if msg.Role == provider.RoleTool && msg.ToolCallID == "call-new" {
+			if msg.Content != "small output" {
+				t.Fatalf("latest tool result was mutated unexpectedly: %q", msg.Content)
+			}
+		}
+	}
+}
+
+func TestPlanEmergencyElisionWhenMandatoryLatestToolResultExceedsBudget(t *testing.T) {
+	call := plannerToolCall("call-huge", "read_file", `{}`)
+	huge := strings.Repeat("x", 50_000)
+	messages := []provider.Message{
+		{Role: provider.RoleSystem, Content: "system"},
+		{Role: provider.RoleUser, Content: "active objective"},
+		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{call}},
+		{Role: provider.RoleTool, ToolCallID: call.ID, Name: call.Function.Name, Content: huge},
+	}
+	// Budget is 2,000 tokens — big enough for system + user + tool notice (~100 tokens), but far too small for 50k chars.
+	budget := 2000
+	plan, err := Plan(PlanInput{Messages: messages, Budget: budget, Force: true})
+	if err != nil {
+		t.Fatalf("expected emergency elision to succeed within budget, got error: %v", err)
+	}
+	if !plan.Compacted {
+		t.Fatal("expected compaction")
+	}
+	if plan.ElidedMessages != 1 {
+		t.Fatalf("ElidedMessages=%d, want 1", plan.ElidedMessages)
+	}
+	var foundElided bool
+	for _, msg := range plan.Messages {
+		if msg.Role == provider.RoleTool && msg.ToolCallID == "call-huge" {
+			foundElided = true
+			if !strings.HasPrefix(msg.Content, "[context elided prior tool result;") {
+				t.Fatalf("huge mandatory tool result was not emergency elided: %q", msg.Content)
+			}
+		}
+	}
+	if !foundElided {
+		t.Fatal("call-huge message missing from retained set")
+	}
+}

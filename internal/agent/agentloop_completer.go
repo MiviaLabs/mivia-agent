@@ -412,8 +412,9 @@ func cliMessageToSDK(m provider.Message) sdkshape.Message {
 // CLI Arguments becomes a nil slice so the SDK's Validate
 // treats it as "no payload yet" rather than "zero-length payload".
 func convertToSDKResponse(r provider.Response) sdkshape.Response {
-	toolCalls := make([]sdkshape.ToolCall, len(r.ToolCalls))
-	for i, tc := range r.ToolCalls {
+	identified := identifiedToolCalls(r.ToolCalls)
+	toolCalls := make([]sdkshape.ToolCall, len(identified))
+	for i, tc := range identified {
 		toolCalls[i] = sdkshape.ToolCall{
 			Index: i,
 			ID:    tc.ID,

@@ -532,3 +532,80 @@ func TestElisionFailedPlanNeverSpools(t *testing.T) {
 		t.Fatalf("failed plan spooled %d bodies; a failed plan must never spool (H-1-RESIDUAL)", store.Len())
 	}
 }
+
+func TestEmergencyElideSpoolsFullBodyAndNamesRef(t *testing.T) {
+	call := plannerToolCall("call-emergency", "read_file", `{}`)
+	huge := strings.Repeat("e", 50_000)
+	messages := []provider.Message{
+		{Role: provider.RoleSystem, Content: "system"},
+		{Role: provider.RoleUser, Content: "active objective"},
+		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{call}},
+		{Role: provider.RoleTool, ToolCallID: call.ID, Name: call.Function.Name, Content: huge},
+	}
+	store := remainder.NewMemoryStore()
+	spool := remainder.NewSpool(store)
+	principal, err := contextstate.NewPrincipal("workspace", "session-a", "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	plan, err := Plan(PlanInput{
+		Messages:  messages,
+		Budget:    2000,
+		Force:     true,
+		Spool:     spool,
+		Principal: principal,
+	})
+	if err != nil {
+		t.Fatalf("emergency plan failed: %v", err)
+	}
+	if plan.ElidedMessages != 1 {
+		t.Fatalf("ElidedMessages=%d, want 1", plan.ElidedMessages)
+	}
+	if store.Len() != 1 {
+		t.Fatalf("store.Len()=%d, want 1", store.Len())
+	}
+	var elidedContent string
+	for _, msg := range plan.Messages {
+		if msg.Role == provider.RoleTool && msg.ToolCallID == "call-emergency" {
+			elidedContent = msg.Content
+		}
+	}
+	if !strings.Contains(elidedContent, "remainder:") {
+		t.Fatalf("elided content %q does not name a remainder ref", elidedContent)
+	}
+	ref := elidedRefFromNotice(t, elidedContent)
+	data, err := spool.Load(context.Background(), principal.SessionID, ref)
+	if err != nil || string(data) != huge {
+		t.Fatalf("spooled body mismatch: got %d bytes, err=%v", len(data), err)
+	}
+}
+
+func TestEmergencyElideSkippedWhenNotCheaper(t *testing.T) {
+	call := plannerToolCall("call-expensive", "read_file", `{}`)
+	huge := strings.Repeat("k", 5000)
+	messages := []provider.Message{
+		{Role: provider.RoleSystem, Content: "system"},
+		{Role: provider.RoleUser, Content: "active objective"},
+		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{call}},
+		{Role: provider.RoleTool, ToolCallID: call.ID, Name: call.Function.Name, Content: huge},
+	}
+	origCost := messageTokenCost
+	defer func() { messageTokenCost = origCost }()
+	// Make notice candidate cost strictly higher so elision skips it
+	messageTokenCost = func(msg provider.Message) int {
+		if strings.HasPrefix(msg.Content, "[context elided") {
+			return 100_000
+		}
+		return 10
+	}
+
+	_, err := Plan(PlanInput{
+		Messages: messages,
+		Budget:   15,
+		Force:    true,
+	})
+	if !errors.Is(err, contextstate.ErrPromptBudgetExceeded) {
+		t.Fatalf("error = %v, want ErrPromptBudgetExceeded when emergency elision cannot reduce cost", err)
+	}
+}

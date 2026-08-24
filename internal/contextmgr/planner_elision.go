@@ -20,7 +20,7 @@ func planCompact(input PlanInput, result PlanResult, rng contextstate.SourceRang
 	// the returned messages. Input.Messages is never mutated.
 	working := cloneMessages(input.Messages)
 	mandatory := mandatoryIndexes(working, objectiveIndex, input.PreserveNames)
-	working, elision, reasoningElision, deferred := elideForCompaction(working, objectiveIndex, mandatory, input.Spool, input.Principal)
+	working, elision, reasoningElision, deferred := elideForCompaction(input, working, objectiveIndex, mandatory, schemaCost)
 	planInput := input
 	planInput.Messages = working
 	retained, retainedIndexes, err := retainMessages(planInput, objective, objectiveIndex, target, schemaCost)
@@ -146,32 +146,70 @@ var (
 // non-empty marker keeps those retained exchanges on the wire.
 const reasoningElisionMarker = "[reasoning elided by context compaction]"
 
-// elideForCompaction runs the two in-place elision passes for one compaction
-// plan: oversized prior tool-result bodies, then stale assistant reasoning.
-// planCompact and the fuzz replica (optionalTailIsSuffix) both call this
-// helper, so the pipelines cannot drift. messages must already be a private
-// clone.
-func elideForCompaction(messages []provider.Message, objectiveIndex int, mandatory map[int]struct{}, spool *remainder.Spool, principal contextstate.Principal) ([]provider.Message, ElisionStats, ElisionStats, []deferredElision) {
-	messages, toolStats, deferred := elideToolResultsWithSpool(messages, objectiveIndex, mandatory, spool, principal)
+// elideForCompaction runs the in-place elision passes for one compaction
+// plan: oversized prior tool-result bodies, stale assistant reasoning, and
+// emergency elision of oversized mandatory tool results when mandatory messages
+// exceed the budget. planCompact and the fuzz replica (optionalTailIsSuffix)
+// both call this helper, so the pipelines cannot drift. messages must already
+// be a private clone.
+func elideForCompaction(input PlanInput, messages []provider.Message, objectiveIndex int, mandatory map[int]struct{}, schemaCost int) ([]provider.Message, ElisionStats, ElisionStats, []deferredElision) {
+	messages, toolStats, deferred := elideToolResultsWithSpool(messages, objectiveIndex, mandatory, input.Spool, input.Principal)
 	reasoningStats := elideStaleReasoning(messages, objectiveIndex, mandatory)
+
+	// If the mandatory set alone exceeds the budget, attempt emergency elision
+	// of oversized tool results that were retained in the mandatory set (e.g.
+	// the latest tool unit).
+	if input.Budget > 0 {
+		mandatoryCost := calibratedCost(messages, mandatory, schemaCost, input.CalibrationRatio, input.ContextAccounting)
+		if mandatoryCost > input.Budget {
+			messages, toolStats, deferred = emergencyElideMandatoryToolResults(messages, mandatory, input.Spool, input.Principal, toolStats, deferred)
+		}
+	}
 	return messages, toolStats, reasoningStats, deferred
+}
+
+// emergencyElideMandatoryToolResults elides oversized tool results in the
+// mandatory set when mandatory cost alone exceeds the prompt budget.
+func emergencyElideMandatoryToolResults(messages []provider.Message, mandatory map[int]struct{}, spool *remainder.Spool, principal contextstate.Principal, stats ElisionStats, deferred []deferredElision) ([]provider.Message, ElisionStats, []deferredElision) {
+	for index := range messages {
+		if messages[index].Role != provider.RoleTool {
+			continue
+		}
+		if _, ok := mandatory[index]; !ok {
+			continue
+		}
+		originalBody := messages[index].Content
+		originalLen := len(originalBody)
+		if originalLen <= elisionContentMinBytes {
+			continue
+		}
+		notice := elisionNotice(originalLen)
+		candidate := messages[index]
+		candidate.Content = notice
+		if messageTokenCost(candidate) >= messageTokenCost(messages[index]) {
+			continue
+		}
+		messages[index].Content = notice
+		stats.Messages++
+		stats.Bytes += originalLen
+		if spool != nil {
+			deferred = append(deferred, deferredElision{index: index, originalLen: originalLen, originalBody: originalBody})
+		}
+	}
+	return messages, stats, deferred
 }
 
 // elideStaleReasoning replaces the ReasoningContent of prior-turn assistant
 // messages with reasoningElisionMarker. messages must already be a private
 // clone; the function mutates ReasoningContent in place and never changes
-// Role, Content, ToolCallID, Name, or ToolCalls. It skips the current
-// objective and later messages, mandatory messages, empty reasoning, and
-// already-marked reasoning (so re-planning is idempotent). A candidate is
-// skipped when the marker is not strictly cheaper by messageTokenCost.
+// Role, Content, ToolCallID, Name, or ToolCalls. It skips mandatory messages,
+// empty reasoning, and already-marked reasoning (so re-planning is idempotent).
+// A candidate is skipped when the marker is not strictly cheaper by messageTokenCost.
 // Bytes is the sum of original ReasoningContent lengths.
 func elideStaleReasoning(messages []provider.Message, objectiveIndex int, mandatory map[int]struct{}) ElisionStats {
 	var stats ElisionStats
 	for index := range messages {
 		if messages[index].Role != provider.RoleAssistant {
-			continue
-		}
-		if index >= objectiveIndex {
 			continue
 		}
 		if _, ok := mandatory[index]; ok {
@@ -216,7 +254,7 @@ type deferredElision struct {
 	originalBody string
 }
 
-// elideToolResultsWithSpool replaces eligible prior-turn oversized tool-result
+// elideToolResultsWithSpool replaces eligible prior oversized tool-result
 // bodies with the plain host-authored notice. messages must already be a
 // private clone; the function mutates Content in place and never changes
 // Role, ToolCallID, Name, or ToolCalls. A candidate is skipped when the notice
@@ -233,9 +271,6 @@ func elideToolResultsWithSpool(messages []provider.Message, objectiveIndex int, 
 	var deferred []deferredElision
 	for index := range messages {
 		if messages[index].Role != provider.RoleTool {
-			continue
-		}
-		if index >= objectiveIndex {
 			continue
 		}
 		if _, ok := mandatory[index]; ok {

@@ -144,7 +144,8 @@ func optionalTailIsSuffix(input PlanInput, plan PlanResult) bool {
 		return true
 	}
 	mandatory := mandatoryIndexes(working, objectiveIndex, input.PreserveNames)
-	working, _, _, _ = elideForCompaction(working, objectiveIndex, mandatory, nil, contextstate.Principal{})
+	schemaCost, _ := estimateToolSchemaCost(input.Tools)
+	working, _, _, _ = elideForCompaction(input, working, objectiveIndex, mandatory, schemaCost)
 	fingerprint := func(message provider.Message) string {
 		b, err := contextstate.MarshalCanonical(plannerMessages([]provider.Message{message}))
 		if err != nil {

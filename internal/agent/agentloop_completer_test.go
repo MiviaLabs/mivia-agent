@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -127,6 +128,40 @@ func TestAgentLoopCompleterChatSurfacesToolCalls(t *testing.T) {
 	}
 	if got.FinishReason != "tool_calls" {
 		t.Fatalf("FinishReason = %q, want %q", got.FinishReason, "tool_calls")
+	}
+}
+
+// TestAgentLoopCompleterChatAssignsIdentifiedIDsWhenEmpty asserts that tool calls
+// missing IDs are given deterministic identifiers so that tool lifecycle events
+// and UI transcript blocks pair correctly.
+func TestAgentLoopCompleterChatAssignsIdentifiedIDsWhenEmpty(t *testing.T) {
+	f := &fakeCompleter{
+		chatTurnOut: &provider.Response{
+			ToolCalls: []provider.ToolCall{
+				{ID: "", Type: "function", Function: struct {
+					Name      string `json:"name"`
+					Arguments string `json:"arguments"`
+				}{Name: "memory_search", Arguments: `{"query":"test"}`}},
+			},
+			FinishReason: "tool_calls",
+		},
+	}
+	w, err := newAgentLoopCompleter(f)
+	if err != nil {
+		t.Fatalf("newAgentLoopCompleter: %v", err)
+	}
+	got, err := w.Chat(context.Background(), sdkshape.Request{})
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if len(got.ToolCalls) != 1 {
+		t.Fatalf("ToolCalls len = %d, want 1", len(got.ToolCalls))
+	}
+	if got.ToolCalls[0].ID == "" {
+		t.Fatal("expected non-empty ID assigned to tool call")
+	}
+	if !strings.HasPrefix(got.ToolCalls[0].ID, "call_") {
+		t.Fatalf("ToolCall.ID = %q, want prefix call_", got.ToolCalls[0].ID)
 	}
 }
 
