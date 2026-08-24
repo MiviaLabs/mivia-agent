@@ -1,15 +1,14 @@
 # SDK backend field mapping (B.2 #8 inner-loop swap)
 
-The CLI `agent.Options` field set splits into three groups on the SDK
-path. The groups are deliberately explicit so a caller knows exactly
-what behavior changes. Since the SDK convergence flip, `Backend: ""`
-(the default) and `Backend: "sdk"` both take the SDK path; the only
-production caller that still depends on a legacy-only option
-(`internal/chat/session.go` for surface rotation) sets
-`Backend: "legacy"` explicitly. `internal/subagents/multi_step.go`
-no longer pins legacy: the parent-mailbox drain rides the SDK's
-Steer injector, and `SoftInterruptCooldown` plus partial-text
-survival are recorded as accepted semantic gaps rather than pins.
+The CLI `agent.Options` field set splits into two groups on the SDK
+path (carried, and accepted semantic gaps below) - a third group,
+fields the SDK path could not carry at all, existed historically but
+is now empty; see §3. Since the SDK convergence flip, `Backend: ""`
+(the default) and `Backend: "sdk"` both take the SDK path.
+`internal/chat/session.go` sets `Backend: "sdk"` explicitly and relies
+on surface rotation bridging (§1's `Surface` row) rather than pinning
+legacy. No production caller sets `Backend: "legacy"` today; only
+test call sites still pin it to exercise `Loop.Run` directly.
 
 ## 1. Carried today
 
@@ -50,6 +49,9 @@ The SDK path consumes these directly:
 | `Surface` | `Options.Surface` bridge | `bridgeSDKBridgeSurface` maps the CLI per-step hook onto the SDK's own per-iteration `Options.Surface` (consulted from the second iteration on, the legacy skip-step-1 rule). The rotation's `Dispatcher`/`RemainderSpool` land in the run's `sdkTurnState` (per-call shim reads), the `Registry` rebuilds through the ONE construction path `buildSDKToolRegistry` (shared shaping counter), and `ToolSpecs` re-advertise as SDK definitions. A conversion failure at a rotation records into the turn state and fails the run after `RunSteerable` returns. Accepted gap: step 1 advertises registry-derived definitions (no `Description`), so the pinned snapshot with descriptions applies from step 2 on; and a call to an advertised-but-unregistered name degrades to the SDK's `[tool-error]` `RoleTool` body instead of the legacy `UnadmittedToolHandler` auto-stage denial (the handler still fires for registered tools). |
 | `BatchResultBudgetBytes < 0` | host-side derivation | `applyTurnShaping` now resolves the negative form via `derivedBatchBudget(opts.MaxContextTokens)` (shared with `effectiveBatchBudget` in `shape_batch.go:493`); constants (`bytesPerToken`, `derivedBudgetShare`, `derivedBatchBudgetFloorBytes`, `maxDerivableTokens`) cannot drift between the legacy and SDK paths. |
 | turn history | `Result.History` | `runOnceSDK` writes the SDK history back onto `Loop.Messages`, including the turn's assistant and tool messages, and falls back to the last assistant text when the final step produced none. The legacy `lastText` contract at `loop.go:143-179` is mirrored on every graceful-cancel path: the steered-stop branch returns the in-scope partial via `sdkSteeredStopPartial`, the cancel branch (errors.Is `context.Canceled`/`context.DeadlineExceeded`) and the graceful-empty fallback both walk history with the same `sdkCurrentTurnStart` Content-match helper. Streamed bytes inside an in-flight cancel are still lost — the SDK cancels `Completer.Chat` wholesale on Trigger — but assistant messages appended to history before the cancel point survive. |
+| `WorkLimits.MaxPromptTokens` / `MaxOutputTokens` / `MaxOutputPerCall` (Item 8) | `Options.WorkBudget` | `newSDKWorkBudget`/`newSDKWorkBudgetHook` (`agentloop_budget.go`) bridge the SDK's Reserve-before-call/Refund-after-outcome hook onto the SAME `workLimitMeter` the legacy loop uses (`work_limits.go`); no policy is forked, only the call points differ |
+| `WorkLimits.MaxToolCalls` | `Options.ToolBudget` | `newSDKToolBudget` (`agentloop_toolbudget.go`) bridges the SDK's per-turn Reserve hook onto the SAME `workLimitMeter`'s `reserveToolBatch`. Accepted approximation: the SDK calls Reserve with the RAW `resp.ToolCalls` count, before per-call malformed-argument filtering or in-turn dedup (both happen later, inside the SDK's own `runToolCalls`), where the legacy `processToolCalls` charged only the validated, batch-cap-clamped count. This can only exhaust the cumulative cap SOONER than exact accounting would, never later. |
+| `PreserveWorkLimits` | shared meter reset rule | `newSDKWorkBudget` applies the same reset rule `runOnceLegacy` did: a nil meter, a non-preserved run, or changed `WorkLimits` rebuilds the meter; the flag now means the same thing on both backends, covering all four reservation fields above |
 
 ## 2. Accepted semantic gaps
 
@@ -127,24 +129,25 @@ caller accepts the difference.
 Every CLI Options field whose semantics the SDK path cannot carry
 returns an error naming the field from `buildAgentLoopOptions`, so a
 caller learns the boundary at the call instead of silently losing
-behavior.
+behavior. As of the `ToolBudget` bridge, nothing in this list remains:
+every `Options` field the legacy loop honored is now carried on the
+SDK path, historical entries kept below for the record.
 
 - **`Surface` rotation** — carried since the SDK grew its own
   per-iteration `Options.Surface`; see the §1 carrier row. (The
   historical fail-closed note — the SDK read `Options.Tools` once at
   `agentloop.New` — no longer applies.)
-- **`WorkLimits` token reservations** — `MaxPromptTokens`,
-  `MaxOutputTokens`, `MaxOutputPerCall`, and `MaxToolCalls`. The CLI's
-  reservation model (refuse to start a turn that would exceed; refund
-  on completion, tracked in `internal/runtime/work_limits.go`) is
-  fundamentally different from the SDK's in-loop cumulative
-  `MaxTotalTokens` cap; mapping one onto the other would change the
-  contract. Callers keep tracking reservations outside the loop and
-  gating the call. `MaxTurns` and `DeadlineAt` are carried (§1).
-  `PreserveWorkLimits` passes: it only preserves those four
-  reservation counters, and each of those already fails closed by
-  name, so with them all zero the flag is inert and rejecting it
-  alone would fail-close a no-op.
+- **`WorkLimits` token and tool-call reservations** — `MaxPromptTokens`,
+  `MaxOutputTokens`, `MaxOutputPerCall`, and `MaxToolCalls` are all
+  carried now; see the §1 rows for `Options.WorkBudget` and
+  `Options.ToolBudget`. (The historical fail-closed note — that the
+  CLI's refuse/refund reservation model was "fundamentally different"
+  from the SDK's cumulative cap — no longer applies: `WorkBudget` and
+  `ToolBudget` are host-callable hooks with no SDK-owned policy, so the
+  legacy `workLimitMeter` methods run unchanged on either backend.)
+  `MaxTurns` and `DeadlineAt` are carried too (§1). `PreserveWorkLimits`
+  passes: it preserves the same meter's cumulative counters across a
+  corrective re-entry, on either backend.
 
 ## See also
 

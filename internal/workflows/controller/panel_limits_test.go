@@ -1,49 +1,65 @@
 package controller
 
-import "testing"
+import (
+	"testing"
+	"time"
 
-func TestPanelWorkLimitSlicesAreFixed(t *testing.T) {
-	// MaxTurns must stay 0 (unlimited) in the base slices: the turn bound is a
-	// per-step workflow knob (definition.Step.MaxTurns, default 0 = unlimited)
-	// applied at build time in buildPanelAttempt/buildPanelSynthesisWork. A
-	// hardcoded cap (historically 16 for members, 8 for synthesis) killed deep
-	// read-only reviews mid-panel with "agent exceeded max_steps (16)".
-	if got, want := panelMemberLimits.MaxTurns, 0; got != want {
-		t.Fatalf("member max turns = %d, want %d (unlimited)", got, want)
+	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
+)
+
+func TestDefaultPanelLimitsMatchHistoricalConstants(t *testing.T) {
+	// MaxOutputPerCall/MaxToolCalls are the only fields PanelLimits carries;
+	// MaxTurns stays a per-step workflow knob (definition.Step.MaxTurns,
+	// default 0 = unlimited) applied at build time in
+	// buildPanelAttempt/buildPanelSynthesisWork, and MaxPromptTokens/
+	// MaxOutputTokens stay 0 (unlimited cumulative) unconditionally - see
+	// PanelLimits' doc comment in panel_attempt.go for why both bogus-bound
+	// classes were removed rather than made configurable.
+	got := DefaultPanelLimits()
+	want := PanelLimits{
+		MemberMaxOutputPerCall:    8192,
+		MemberMaxToolCalls:        64,
+		SynthesisMaxOutputPerCall: 8192,
+		SynthesisMaxToolCalls:     16,
+		MemberDeadlineDefault:     24 * time.Hour,
 	}
-	// MaxPromptTokens must stay 0 (unlimited cumulative): a finite cap killed
-	// deep read-only reviews mid-panel with "work limit exceeded: prompt tokens"
-	// (see panel_attempt.go). Per-call context is window-bounded with compaction.
-	if got, want := panelMemberLimits.MaxPromptTokens, 0; got != want {
-		t.Fatalf("member prompt limit = %d, want %d (unlimited)", got, want)
+	if got != want {
+		t.Fatalf("DefaultPanelLimits() = %+v, want %+v", got, want)
 	}
-	// MaxOutputTokens must stay 0 (unlimited cumulative): with ceiling-charged
-	// accounting a finite cap gives a deep review at most
-	// MaxOutputTokens/MaxOutputPerCall provider calls (131072/8192 = 16) before
-	// "work limit exceeded: output tokens" kills the member mid-panel — the
-	// same bogus bound class as the caps above (observed on live bug-fix runs).
-	if got, want := panelMemberLimits.MaxOutputTokens, 0; got != want {
-		t.Fatalf("member output limit = %d, want %d (unlimited cumulative)", got, want)
+}
+
+// TestNewLinearControllerAppliesDefaultPanelLimits proves a controller
+// built without SetPanelLimits still runs under the compiled defaults -
+// today's behavior for every host that does not set [workflows.panels].
+func TestNewLinearControllerAppliesDefaultPanelLimits(t *testing.T) {
+	ctrl, err := NewLinearController(workflowledger.NewMemoryRepository(), &linearRunner{}, linearWorkflow(t), nil, map[string]any{"task": "build"}, "wfr-panel-limits-default", []byte("snapshot"))
+	if err != nil {
+		t.Fatalf("NewLinearController: %v", err)
 	}
-	if got, want := panelMemberLimits.MaxOutputPerCall, 8192; got != want {
-		t.Fatalf("member output-per-call limit = %d, want %d", got, want)
+	if got, want := ctrl.PanelLimits, DefaultPanelLimits(); got != want {
+		t.Fatalf("PanelLimits = %+v, want the compiled default %+v", got, want)
 	}
-	if got, want := panelMemberLimits.MaxToolCalls, 64; got != want {
-		t.Fatalf("member tool limit = %d, want %d", got, want)
+}
+
+// TestSetPanelLimitsOverridesControllerField proves a host override
+// actually lands on the field buildPanelAttempt/buildPanelSynthesisWork
+// read (c.PanelLimits), not just that SetPanelLimits returns nil.
+func TestSetPanelLimitsOverridesControllerField(t *testing.T) {
+	ctrl, err := NewLinearController(workflowledger.NewMemoryRepository(), &linearRunner{}, linearWorkflow(t), nil, map[string]any{"task": "build"}, "wfr-panel-limits-override", []byte("snapshot"))
+	if err != nil {
+		t.Fatalf("NewLinearController: %v", err)
 	}
-	if got, want := panelSynthesisLimits.MaxTurns, 0; got != want {
-		t.Fatalf("synthesis max turns = %d, want %d (unlimited)", got, want)
+	override := PanelLimits{
+		MemberMaxOutputPerCall:    111,
+		MemberMaxToolCalls:        7,
+		SynthesisMaxOutputPerCall: 222,
+		SynthesisMaxToolCalls:     3,
+		MemberDeadlineDefault:     time.Hour,
 	}
-	if got, want := panelSynthesisLimits.MaxPromptTokens, 0; got != want {
-		t.Fatalf("synthesis prompt limit = %d, want %d (unlimited)", got, want)
+	if err := ctrl.SetPanelLimits(override); err != nil {
+		t.Fatalf("SetPanelLimits: %v", err)
 	}
-	if got, want := panelSynthesisLimits.MaxOutputTokens, 0; got != want {
-		t.Fatalf("synthesis output limit = %d, want %d (unlimited cumulative)", got, want)
-	}
-	if got, want := panelSynthesisLimits.MaxOutputPerCall, 8192; got != want {
-		t.Fatalf("synthesis output-per-call limit = %d, want %d", got, want)
-	}
-	if got, want := panelSynthesisLimits.MaxToolCalls, 16; got != want {
-		t.Fatalf("synthesis tool limit = %d, want %d", got, want)
+	if got := ctrl.PanelLimits; got != override {
+		t.Fatalf("PanelLimits after SetPanelLimits = %+v, want %+v", got, override)
 	}
 }

@@ -81,13 +81,18 @@ type LinearController struct {
 	// fail the run honestly instead of looping it into review.
 	WritePathBlocklist []string
 	PanelLimiter       *PanelActorLimiter
-	progress           ProgressSink
-	admission          Admission
-	forceResume        bool
-	now                func() time.Time
-	started            bool
-	mu                 sync.Mutex
-	heartbeatThrottle  *durableHeartbeatThrottle
+	// PanelLimits bounds every agent_panel step's member and synthesis
+	// children (panel_attempt.go/panel_synthesis.go). Defaults to
+	// DefaultPanelLimits(); a host overrides it via SetPanelLimits
+	// before Start, resolved from [workflows.panels] config.
+	PanelLimits       PanelLimits
+	progress          ProgressSink
+	admission         Admission
+	forceResume       bool
+	now               func() time.Time
+	started           bool
+	mu                sync.Mutex
+	heartbeatThrottle *durableHeartbeatThrottle
 }
 
 // NewLinearController creates a controller for an admitted workflow run.
@@ -108,7 +113,21 @@ func NewLinearController(repo workflowledger.Repository, runner AgentStepRunner,
 	if err != nil {
 		return nil, err
 	}
-	return &LinearController{Repo: repo, Runner: runner, Workflow: admitted, Steps: steps, Inputs: cloneValues(inputs), RunID: runID, Snapshot: append([]byte(nil), snapshot...), Holder: newWorkflowHolder(), now: time.Now, PanelLimiter: NewPanelActorLimiter(), heartbeatThrottle: newDurableHeartbeatThrottle()}, nil
+	return &LinearController{Repo: repo, Runner: runner, Workflow: admitted, Steps: steps, Inputs: cloneValues(inputs), RunID: runID, Snapshot: append([]byte(nil), snapshot...), Holder: newWorkflowHolder(), now: time.Now, PanelLimiter: NewPanelActorLimiter(), PanelLimits: DefaultPanelLimits(), heartbeatThrottle: newDurableHeartbeatThrottle()}, nil
+}
+
+// SetPanelLimits overrides the compiled PanelLimits defaults before
+// Start. A host resolves this from [workflows.panels] config
+// (config.WorkflowsConfig.Panels), falling back to
+// DefaultPanelLimits() for any unset field before calling this.
+func (c *LinearController) SetPanelLimits(limits PanelLimits) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.started {
+		return fmt.Errorf("workflow run already started")
+	}
+	c.PanelLimits = limits
+	return nil
 }
 
 // SetProgressSink sets the workflow progress sink before Start.

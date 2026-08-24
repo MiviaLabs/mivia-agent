@@ -38,41 +38,13 @@ func TestBuildAgentLoopOptionsPassesValidate(t *testing.T) {
 	}
 }
 
-// TestBuildAgentLoopOptionsFailClosed runs one subtest per CLI
-// Options field the SDK path cannot carry. Each subtest asserts the
-// error names the field so an opt-in caller learns the boundary.
-func TestBuildAgentLoopOptionsFailClosed(t *testing.T) {
-	tests := []struct {
-		name string
-		opts Options
-		want string
-	}{
-		// Surface moved to the carried table: bridgeSDKBridgeSurface maps it onto the SDK's own per-iteration Options.Surface (see docs/development/sdk-backend-field-mapping.md §1).
-		// BeforeStep moved to the carried table: RunAgentLoopOnce
-		// installs it as the SDK Steer's pull injector (see
-		// docs/development/sdk-backend-field-mapping.md §1).
-		// PreserveWorkLimits and the three token-reservation fields
-		// (MaxPromptTokens, MaxOutputTokens, MaxOutputPerCall) moved
-		// to the carried table too (Item 8): they ride the WorkBudget
-		// bridge over the same workLimitMeter the legacy path uses.
-		// MaxToolCalls stays fail-closed: the SDK path runs tool calls
-		// through the converted registry, so the legacy
-		// reserveToolBatch has no call point.
-		{"WL.MaxToolCalls", Options{WorkLimits: runtime.WorkLimits{MaxToolCalls: 1}}, "WorkLimits.MaxToolCalls"},
-	}
-	l := &Loop{Completer: &fakeCompleter{name: "test"}, Tools: tools.NewRegistry()}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, _, err := buildAgentLoopOptions(l, tt.opts)
-			if err == nil {
-				t.Fatalf("Options with %s set passed; want fail-closed error", tt.want)
-			}
-			if !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("err = %v, want it to name %q", err, tt.want)
-			}
-		})
-	}
-}
+// No CLI Options field is fail-closed on the SDK path anymore: Surface,
+// BeforeStep, PreserveWorkLimits, and every WorkLimits field (including
+// MaxToolCalls, via the ToolBudget bridge in agentloop_toolbudget.go) all
+// moved to the carried table - see docs/development/sdk-backend-field-mapping.md
+// §1/§3. TestSDKDefaultBackendEnforcesCumulativeMaxToolCalls
+// (agentloop_toolbudget_test.go) is the regression that replaced this
+// table's last row.
 
 // TestTranslateRequestMapsFields asserts the SDK-to-CLI request
 // translator: pass-through scalars, message conversion with tool

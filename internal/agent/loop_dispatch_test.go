@@ -70,23 +70,27 @@ func TestRunOnceDispatchesToSDKBackend(t *testing.T) {
 	}
 }
 
-// TestRunOnceSDKFailClosedSurfacesThroughRun asserts that a CLI
-// Options field the SDK path cannot carry surfaces the fail-closed
-// error through the public Run, so an opt-in caller learns the
-// boundary at the call.
-func TestRunOnceSDKFailClosedSurfacesThroughRun(t *testing.T) {
+// TestRunOnceSDKCarriesMaxToolCallsThroughRun asserts that
+// WorkLimits.MaxToolCalls - once the one CLI Options field the SDK
+// path could not carry - now runs to completion through the public
+// Run under an explicit "sdk" Backend, via the ToolBudget bridge
+// (agentloop_toolbudget.go). See
+// TestSDKDefaultBackendEnforcesCumulativeMaxToolCalls
+// (agentloop_toolbudget_test.go) for the enforcement path on the
+// default (no Backend override) path production callers actually use.
+func TestRunOnceSDKCarriesMaxToolCallsThroughRun(t *testing.T) {
 	loop := &Loop{
-		Completer: &fakeCompleter{name: "fake"},
+		Completer: &fakeCompleter{name: "fake", chatTurnOut: &provider.Response{Content: "sdk-output", FinishReason: "stop"}},
 		Tools:     tools.NewRegistry(),
 	}
 	opts := Options{Model: "m", MaxSteps: 1, Backend: "sdk"}
 	opts.WorkLimits.MaxToolCalls = 1
-	_, err := loop.Run(context.Background(), "hi", opts)
-	if err == nil {
-		t.Fatal("Run with WorkLimits.MaxToolCalls under the sdk backend returned nil error; want fail-closed error")
+	got, err := loop.Run(context.Background(), "hi", opts)
+	if err != nil {
+		t.Fatalf("Run with WorkLimits.MaxToolCalls under the sdk backend: %v, want nil (now carried)", err)
 	}
-	if !strings.Contains(err.Error(), "WorkLimits.MaxToolCalls") {
-		t.Fatalf("err = %v, want it to name WorkLimits.MaxToolCalls", err)
+	if got != "sdk-output" {
+		t.Fatalf("got %q, want %q", got, "sdk-output")
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -117,8 +118,11 @@ func (c *LinearController) buildPanelSynthesisWork(ctx context.Context, run work
 		return workflowledger.PanelTaskSpec{}, context.DeadlineExceeded
 	}
 	runID, taskID := attempt.PanelExecution.SynthesisRunID, attempt.PanelExecution.SynthesisTaskID
-	synthesisLimits := panelSynthesisLimits
-	synthesisLimits.MaxTurns = step.MaxTurns // 0 = unlimited (default)
+	synthesisLimits := runtime.WorkLimits{
+		MaxTurns:         step.MaxTurns, // 0 = unlimited (default)
+		MaxOutputPerCall: c.PanelLimits.SynthesisMaxOutputPerCall,
+		MaxToolCalls:     c.PanelLimits.SynthesisMaxToolCalls,
+	}
 	work, err := c.buildPanelTaskSpec(ctx, panelWorkSpecParams{
 		RunID: runID, TaskID: taskID, AgentName: binding.AgentName, AgentDigest: binding.AgentDigest,
 		Skill: step.Skill, Provider: binding.ProviderName, Model: binding.Model,

@@ -100,9 +100,10 @@ func buildAgentLoopOptions(l *Loop, opts Options) (sdkagentloop.Options, *sdkTur
 	if limit := opts.WorkLimits.MaxTurns; limit > 0 && (opts.MaxSteps <= 0 || limit < opts.MaxSteps) {
 		out.MaxIterations = limit
 	}
-	// MaxToolCalls stays fail-closed: the SDK path runs tool calls
-	// through the converted registry (see rejectUnsupportedSDKBatches).
+	// MaxToolCalls rides the ToolBudget bridge (agentloop_toolbudget.go),
+	// sharing l.workLimits with the WorkBudget bridge above.
 	out.WorkBudget = budgetHook
+	out.ToolBudget = newSDKToolBudget(l)
 	// Surface rotation: the CLI's per-step Surface hook (legacy
 	// applySurfaceHook) bridges onto the SDK's own Options.Surface,
 	// consulted at the top of every iteration from the second one on -
@@ -308,51 +309,16 @@ func cliToolSpecsToSDKDefs(specs []provider.ToolSpec) []sdkshape.ToolDefinition 
 // It passes through to the SDK silently; the CLI caller accepts the
 // difference. MaxConcurrentTools is carried via sdkagentloop.Options.MaxConcurrentTools.
 func rejectUnsupportedSDKBatches(opts Options) error {
-	// Surface is carried via bridgeSDKBridgeSurface (field-mapping doc §1).
-	// BeforeStep is carried via the Steer injector installed in
-	// RunAgentLoopOnce: RunAgentLoopOnce calls opts.BeforeStep on
-	// the loop goroutine at the top of each iteration (after this
-	// reject ran) and at every steered-stop downgrade point, then
-	// converts the returned CLI messages to SDK shape and appends
-	// them to history via agentloop/steer.go's SetInjector; the
-	// carrier cell in sdk-backend-field-mapping.md has the details.
-	// RefOnlyTools and RemainderSpool are carried by the per-call
-	// ref-only shim in the tool-registry converter. The shim mirrors
-	// the legacy CLI's refOnlyTier (internal/agent/shape_batch_refonly.go:25-45)
-	// faithfully: floor check, tool membership, spool, ref-notice text.
-	// Negative BatchResultBudgetBytes derives a budget from
-	// MaxContextTokens in the CLI's shape_batch path; the SDK's
-	// TurnResultBudget is a literal byte budget only, so this
-	// "derived mode" is an accepted semantic gap. A Backend:"sdk"
-	// caller with a negative value sees no batch shaping from this
-	// knob, not the derived one. The positive form still maps in
-	// buildAgentLoopOptions.
-	// MailboxPendingInterrupt is wired in bridgeSteerSignals as a
-	// fast poll (it gates the interrupt branch; the watchdog branch
-	// keeps using MailboxPending).
-	// WorkLimits splits: MaxTurns and DeadlineAt are carried (the
-	// turn clamp in buildAgentLoopOptions and the deadline narrowing
-	// in RunAgentLoopOnce); MaxPromptTokens, MaxOutputTokens, and
-	// MaxOutputPerCall ride the WorkBudget bridge (Item 8); and
-	// MaxToolCalls still fails closed - the SDK path runs tool calls
-	// through the converted registry, so the legacy reserveToolBatch
-	// has no call point here.
-	if opts.WorkLimits.MaxToolCalls > 0 {
-		return unsupportedSDKOption("WorkLimits.MaxToolCalls")
-	}
-	// PreserveWorkLimits passes: the flag preserves the cumulative
-	// token-reservation counters, and those now ride the WorkBudget
-	// bridge (newSDKWorkBudget applies the same reset rule the legacy
-	// runOnceLegacy does), so the flag means the same thing on both
-	// backends.
-	// MaxContextTokens, OnEvent, EventBus, UsageWriter, FinalWriter,
+	// All options are carried on the SDK path: Surface via bridgeSDKBridgeSurface,
+	// BeforeStep via Steer injector, RefOnlyTools and RemainderSpool via ref-only shim,
+	// BatchResultBudgetBytes via TurnResultBudget, MailboxPendingInterrupt via bridgeSteerSignals,
+	// WorkLimits fields via buildAgentLoopOptions/WorkBudget/ToolBudget bridges,
+	// and MaxContextTokens, OnEvent, EventBus, UsageWriter, FinalWriter,
 	// RequireFinalText, SummaryConfig.Summarizer, StagedToolMessage,
-	// UnadmittedToolHandler, ApprovalGate, ApprovalStanding, RefOnlyTools,
-	// RemainderSpool, Dispatcher, MaxToolResultChars, ToolTimeout, Reasoning,
-	// MaxTokens, Temperature, RequestTimeout, DisableProviderReplay, and
-	// MailboxPendingInterrupt are carried. The full carrier table -
-	// placement, ordering, and each field's mechanism - lives in
-	// docs/development/sdk-backend-field-mapping.md §1.
+	// UnadmittedToolHandler, ApprovalGate, ApprovalStanding, Dispatcher,
+	// MaxToolResultChars, ToolTimeout, Reasoning, MaxTokens, Temperature,
+	// RequestTimeout, and DisableProviderReplay.
+	// See docs/development/sdk-backend-field-mapping.md §1 for the full carrier table.
 	return nil
 }
 
