@@ -164,7 +164,7 @@ func (m Model) breadcrumbRow() string {
 	return row
 }
 
-func (m Model) contextBadge(pct int) string {
+func (m Model) contextBadge(pct int, withBar bool) string {
 	border := render.Role(m.Theme, m.Tier, theme.RoleBorder)
 	role := theme.RoleFGSubtle
 	if pct >= 90 {
@@ -174,7 +174,7 @@ func (m Model) contextBadge(pct int) string {
 	}
 	style := render.Role(m.Theme, m.Tier, role)
 
-	if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY || m.width < 70 {
+	if !withBar || m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY || m.width < 70 {
 		return border.Render("[ ") + style.Render(fmt.Sprintf("%d%%", pct)) + border.Render(" ]")
 	}
 
@@ -185,13 +185,13 @@ func (m Model) contextBadge(pct int) string {
 	return border.Render("[ ") + style.Render(fmt.Sprintf("%d%% ", pct)+bar) + border.Render(" ]")
 }
 
-func (m Model) modelCapsule() string {
+func (m Model) modelCapsule(withProvider bool) string {
 	border := render.Role(m.Theme, m.Tier, theme.RoleBorder)
 	subtle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
 	fg := render.Role(m.Theme, m.Tier, theme.RoleFG)
 
 	var label string
-	if m.info.Provider != "" {
+	if withProvider && m.info.Provider != "" {
 		label = subtle.Render(m.info.Provider+"/") + fg.Render(m.info.Name)
 	} else {
 		label = fg.Render(m.info.Name)
@@ -236,22 +236,60 @@ func (m Model) View() string {
 	subtle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
 	fg := render.Role(m.Theme, m.Tier, theme.RoleFG)
 
+	pct, hasPct := m.ContextPercent()
+	withProvider := true
+	withBar := m.width >= 80
+	withActivity := m.width >= 90
+
 	left := m.mark.View() + subtle.Render("  ") + fg.Render(Wordmark)
-	if act := m.activityBadge(); act != "" && (m.width <= 0 || m.width >= 70) {
-		left += " " + act
+	if withActivity {
+		if act := m.activityBadge(); act != "" {
+			left += " " + act
+		}
 	}
-	right := m.modelCapsule()
-	if pct, ok := m.ContextPercent(); ok {
-		right += " " + m.contextBadge(pct)
+
+	buildRight := func(prov, bar bool) string {
+		r := m.modelCapsule(prov)
+		if hasPct {
+			r += " " + m.contextBadge(pct, bar)
+		}
+		return r
 	}
+
+	right := buildRight(withProvider, withBar)
+
+	if m.width > 0 {
+		if ansi.StringWidth(left)+1+ansi.StringWidth(right) > m.width {
+			left = m.mark.View() + subtle.Render("  ") + fg.Render(Wordmark)
+		}
+		if ansi.StringWidth(left)+1+ansi.StringWidth(right) > m.width {
+			withBar = false
+			right = buildRight(withProvider, withBar)
+		}
+		if ansi.StringWidth(left)+1+ansi.StringWidth(right) > m.width {
+			withProvider = false
+			right = buildRight(withProvider, withBar)
+		}
+		availLeft := m.width - ansi.StringWidth(right) - 1
+		if availLeft < ansi.StringWidth(left) {
+			if availLeft > 0 {
+				left = ansi.Truncate(left, availLeft, "")
+			} else {
+				left = ""
+			}
+		}
+	}
+
 	var line string
 	if m.width > 0 {
 		gap := m.width - ansi.StringWidth(left) - ansi.StringWidth(right)
-		if gap < 1 {
-			gap = 1
+		if gap < 0 {
+			gap = 0
 		}
 		line = left + strings.Repeat(" ", gap) + right
-		line = ansi.Truncate(line, m.width, "")
+		if ansi.StringWidth(line) > m.width {
+			line = ansi.Truncate(line, m.width, "")
+		}
 	} else {
 		line = left + " " + right
 	}

@@ -60,6 +60,19 @@ func TestNarrowWidthTruncates(t *testing.T) {
 	}
 }
 
+func TestSplitWidthPreservesModelAndContext(t *testing.T) {
+	m := New(loadTheme(t), theme.TierTrueColor, ports.ModelInfo{
+		Name: "claude-3-7-sonnet", Provider: "anthropic", ContextWindow: 200_000,
+	}, ports.Usage{InputTokens: 20_000, OutputTokens: 4_000}, 60)
+	got := ansi.Strip(m.View())
+	if !strings.Contains(got, "claude-3-7-sonnet") {
+		t.Errorf("expected model name preserved at width 60, got: %q", got)
+	}
+	if !strings.Contains(got, "12%") {
+		t.Errorf("expected context percentage preserved at width 60, got: %q", got)
+	}
+}
+
 func TestEmptyBreadcrumbSingleRow(t *testing.T) {
 	m := New(loadTheme(t), theme.TierTrueColor, ports.ModelInfo{Name: "mivia-fast", Provider: "demo"}, ports.Usage{}, 80)
 	if m.Height() != 1 {
