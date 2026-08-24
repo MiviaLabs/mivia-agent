@@ -482,4 +482,33 @@ func TestMentionMenuViewAndScrolling(t *testing.T) {
 	if m.MentionMenuActive() {
 		t.Error("menu should close after accept")
 	}
+
+	// Menu wraps backward and forward
+	m.SetValue("@")
+	for i := 0; i < 20; i++ {
+		m = m.MentionMenuNext()
+	}
+	for i := 0; i < 20; i++ {
+		m = m.MentionMenuPrev()
+	}
+
+	// Mention with no matches
+	m.SetValue("@nonexistentquerythatmatchesnothing")
+	if m.MentionMenuActive() {
+		t.Error("menu should not be active with no matches")
+	}
+
+	// Test cursor beyond len(text)
+	_, _, ok := mentionTrigger("hello", 100)
+	if ok {
+		t.Error("should handle cursor beyond text")
+	}
+
+	// Test AcceptMention when not active
+	m.Clear()
+	m.SetValue("plain text")
+	m = m.AcceptMention()
+	if m.Value() != "plain text" {
+		t.Errorf("AcceptMention on inactive menu modified text: %q", m.Value())
+	}
 }
