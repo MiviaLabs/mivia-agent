@@ -75,17 +75,51 @@ def load_exclude_globs(root: Path) -> list[str]:
     return policy.get("excludeGlobs") or []
 
 
-def load_known_uncovered(root: Path) -> dict[str, tuple[set[int], str]]:
+def load_known_uncovered(root: Path, diff_args: list[str] | None = None) -> dict[str, tuple[set[int], str]]:
     """Per-line accepted residue from .mivia/policy/diff-coverage.json.
 
     Maps file path -> (line numbers, reason). Lines listed there are
     provably unreachable or not unit-testable; the gate still prints every
     accepted line so the residue stays reviewable, but does not fail on it.
+    If the policy file is modified in the active diff, loads from base ref
+    to prevent same-commit self-approval of uncovered code.
     """
     policy_path = root / ".mivia" / "policy" / "diff-coverage.json"
     if not policy_path.is_file():
         return {}
-    policy = json.loads(policy_path.read_text(encoding="utf-8"))
+
+    raw_text = ""
+    if diff_args is not None:
+        r = subprocess.run(
+            ["git", "diff", *diff_args, "--name-only", "--", ".mivia/policy/diff-coverage.json"],
+            cwd=root, capture_output=True, text=True, check=False,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            base_ref = "HEAD"
+            for arg in diff_args:
+                if ".." in arg:
+                    base_ref = arg.split("..")[0]
+                    break
+            show_res = subprocess.run(
+                ["git", "show", f"{base_ref}:.mivia/policy/diff-coverage.json"],
+                cwd=root, capture_output=True, text=True, check=False,
+            )
+            if show_res.returncode == 0 and show_res.stdout.strip():
+                raw_text = show_res.stdout
+                print(
+                    "diff_coverage: .mivia/policy/diff-coverage.json is modified in this diff; "
+                    "evaluating against base policy to prevent same-commit bypass",
+                    file=sys.stderr,
+                )
+
+    if not raw_text:
+        raw_text = policy_path.read_text(encoding="utf-8")
+
+    try:
+        policy = json.loads(raw_text)
+    except Exception:
+        return {}
+
     out: dict[str, tuple[set[int], str]] = {}
     for path, entry in (policy.get("knownUncovered") or {}).items():
         lines = set(int(n) for n in entry.get("lines", []))
@@ -484,7 +518,7 @@ def main(argv: list[str] | None = None) -> int:
               f"or excluded by a build constraint); nothing to cover")
 
     if total_uncovered:
-        known = load_known_uncovered(root)
+        known = load_known_uncovered(root, diff_args)
         accepted: list[str] = []
         remaining: list[str] = []
         for finding in findings:

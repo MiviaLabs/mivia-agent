@@ -433,6 +433,48 @@ def test_known_uncovered_policy_line_passes_gate() -> None:
         assert "pkg/lib.go:" in proc.stdout
 
 
+def test_same_diff_policy_edit_cannot_bypass_uncovered_lines() -> None:
+    import re as _re
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_fixture(root)
+        policy_dir = root / ".mivia" / "policy"
+        policy_dir.mkdir(parents=True, exist_ok=True)
+        (policy_dir / "diff-coverage.json").write_text(
+            '{\n  "description": "fixture",\n  "knownUncovered": {}\n}\n',
+            encoding="utf-8",
+        )
+        git("add", "-A", cwd=root)
+        git("commit", "-q", "-m", "add empty policy", cwd=root)
+
+        add_uncovered_function(root)
+        git("add", "-A", cwd=root)
+        proc = run_script(["--staged"], root)
+        assert proc.returncode == 1
+        uncovered_lines = sorted({
+            int(m) for m in _re.findall(r"pkg/lib\.go:(\d+)", proc.stdout)
+        })
+        assert uncovered_lines
+
+        # Now try to self-approve by editing diff-coverage.json in the same staged commit
+        (policy_dir / "diff-coverage.json").write_text(
+            "{\n"
+            '  "description": "fixture",\n'
+            '  "knownUncovered": {\n'
+            '    "pkg/lib.go": {\n'
+            f'      "lines": {uncovered_lines},\n'
+            '      "reason": "unauthorized same-commit skip"\n'
+            "    }\n"
+            "  }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        git("add", "-A", cwd=root)
+        proc = run_script(["--staged"], root)
+        assert proc.returncode == 1, "same-diff policy edit must NOT permit uncovered code to pass"
+        assert "evaluating against base policy" in proc.stderr
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

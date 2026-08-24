@@ -2,11 +2,14 @@
 """Validate that all test names referenced in .mivia/invariants.md exist in the codebase
 and do not contain unallowlisted self-disarming t.Skip calls.
 
-Extracts backtick-quoted `Test*` names from the manifest markdown, extracts all
-func Test names from Go test files, checks for missing references, and verifies
-that invariant tests do not self-disarm with unallowlisted skips.
+Modes:
+  (no args)   validate manifest integrity, test presence, and zero unallowlisted skips
+  --regex     print regex selecting all manifest invariant tests
+  --run       run all manifest invariant tests via go test
 """
+from __future__ import annotations
 
+import argparse
 import json
 import re
 import subprocess
@@ -114,8 +117,30 @@ def check_invariant_skips(manifest_refs: set[str], repo: Path = REPO, policy_pat
     return violations
 
 
+def build_invariant_regex(manifest_text: str) -> str:
+    refs = sorted(set(re.findall(r"`(Test\w+)`", manifest_text)))
+    if not refs:
+        return "Test$^"
+    return "^(" + "|".join(refs) + ")$"
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Validate and run invariant tests.")
+    parser.add_argument("--regex", action="store_true", help="Output regex selecting all manifest invariant tests")
+    parser.add_argument("--run", action="store_true", help="Run all manifest invariant tests via go test")
+    args = parser.parse_args()
+
     manifest_text = MANIFEST.read_text(encoding="utf-8")
+    if args.regex:
+        print(build_invariant_regex(manifest_text))
+        return
+
+    if args.run:
+        regex = build_invariant_regex(manifest_text)
+        cmd = ["go", "test", "-run", regex, "./...", "-count=1", "-timeout=180s"]
+        res = subprocess.run(cmd, cwd=REPO)
+        sys.exit(res.returncode)
+
     check_duplicate_ids(manifest_text)
     refs = set(re.findall(r"`(Test\w+)`", manifest_text))
     if not refs:
@@ -144,20 +169,7 @@ def main() -> None:
         print("Fix: invariant tests must not self-disarm by skipping. If the skip is an accepted OS capability limitation, declare it in .mivia/policy/invariant-skips.json.")
         sys.exit(1)
 
-    makefile_text = MAKEFILE.read_text(encoding="utf-8")
-    match = re.search(r"^invariants:.*?^-?\t@go test -run '([^']+)'", makefile_text, re.MULTILINE | re.DOTALL)
-    if not match:
-        print("FAIL: could not find the invariants go test regex in Makefile")
-        sys.exit(1)
-    invariant_regex = re.compile(match.group(1))
-    skipped = {t for t in refs if not invariant_regex.search(t)}
-    if skipped:
-        print("FAIL: invariant test(s) are not selected by Makefile invariants regex:")
-        for test in sorted(skipped):
-            print(f"  - {test}")
-        sys.exit(1)
-
-    print(f"OK: all {len(refs)} referenced tests exist, have no unallowlisted self-disarming skips, and are selected by make invariants")
+    print(f"OK: all {len(refs)} referenced tests exist and have no unallowlisted self-disarming skips")
 
 
 if __name__ == "__main__":
