@@ -1,6 +1,9 @@
 package newtui
 
 import (
+	"io"
+	"log"
+
 	tea "charm.land/bubbletea/v2"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/cli"
@@ -13,6 +16,10 @@ import (
 
 // RunTUI is the alternative launcher that wires the new Mivia UI.
 func RunTUI(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *cli.AgentSessionState, resumeSessionName string) error {
+	prevLogWriter := log.Writer()
+	log.SetOutput(io.Discard)
+	defer log.SetOutput(prevLogWriter)
+
 	conv := uiadapter.NewConversation(sess)
 	approver := uiadapter.NewApprover(sess)
 	themes, err := theme.Embedded()
