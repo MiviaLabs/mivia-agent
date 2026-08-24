@@ -51,6 +51,11 @@ func TestFormatToolDetail(t *testing.T) {
 			want: `"sandbox run_command landlock security" [project]`,
 		},
 		{
+			name: "ledger_read",
+			args: map[string]any{"ref": "ref:output:94f588477ee962db522a4e0b01d0dedf3bd3b85b8dab125d51b07577eab7b21e", "limit": 8192},
+			want: "ref:output:94f58847",
+		},
+		{
 			name: "custom_generic_tool",
 			args: map[string]any{"foo": "bar", "count": 42},
 			want: "count=42 foo=bar",

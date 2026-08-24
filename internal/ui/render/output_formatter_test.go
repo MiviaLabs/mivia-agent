@@ -112,3 +112,52 @@ func TestFormatMemoryOutput(t *testing.T) {
 		t.Errorf("missing tags in:\n%s", plain)
 	}
 }
+
+func TestFormatDiagnosticsOutput(t *testing.T) {
+	th := loadTheme(t)
+	raw := "internal/ui/app.go:10:5: syntax error\ninternal/ui/app.go:15:2: warning: unused variable"
+	lines := FormatDiagnosticsOutput(th, theme.TierTrueColor, raw, 80)
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines, got %d", len(lines))
+	}
+	plain0 := ansi.Strip(lines[0])
+	plain1 := ansi.Strip(lines[1])
+	if !strings.HasPrefix(plain0, "✖ ") {
+		t.Errorf("expected error marker in line 0: %q", plain0)
+	}
+	if !strings.HasPrefix(plain1, "⚠ ") {
+		t.Errorf("expected warning marker in line 1: %q", plain1)
+	}
+}
+
+func TestFormatWorkflowOutput(t *testing.T) {
+	th := loadTheme(t)
+	raw := `{"workflow":"feature-delivery","status":"completed","steps":["plan","build","verify"]}`
+	summary, lines := FormatWorkflowOutput(th, theme.TierTrueColor, raw, 80)
+	if summary != "workflow completed" {
+		t.Errorf("unexpected summary: %q", summary)
+	}
+	plain := ansi.Strip(strings.Join(lines, "\n"))
+	if !strings.Contains(plain, "• workflow: feature-delivery") {
+		t.Errorf("missing workflow header in:\n%s", plain)
+	}
+	if !strings.Contains(plain, "- plan") {
+		t.Errorf("missing step plan in:\n%s", plain)
+	}
+}
+
+func TestFormatLedgerOutput(t *testing.T) {
+	th := loadTheme(t)
+	raw := `{"status":"ok","ref":"ref:output:94f588477ee962db522a4e0b01d0dedf3bd3b85b8dab125d51b07577eab7b21e","kind":"output","bytes":6650,"offset":0,"limit":8192,"content":"{\"output\":\"This review evaluates the OS-enforced sandboxing plan\"}"}`
+	summary, lines := FormatLedgerOutput(th, theme.TierTrueColor, raw, 80)
+	if !strings.Contains(summary, "ref:output:94f58847") || !strings.Contains(summary, "6.5 KB") {
+		t.Errorf("unexpected summary: %q", summary)
+	}
+	plain := ansi.Strip(strings.Join(lines, "\n"))
+	if !strings.Contains(plain, "This review evaluates the OS-enforced sandboxing plan") {
+		t.Errorf("missing unescaped content in:\n%s", plain)
+	}
+	if strings.Contains(plain, "content_is_data") || strings.Contains(plain, "returned_bytes") {
+		t.Errorf("raw envelope metadata leaked into output:\n%s", plain)
+	}
+}

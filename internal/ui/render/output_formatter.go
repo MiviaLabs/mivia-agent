@@ -23,8 +23,17 @@ func FormatToolOutput(t theme.Theme, tier theme.Tier, name, output string, ok bo
 	case isCommandTool(lower):
 		body, collapsible = FormatCommandOutput(t, tier, output, ok, width)
 		return "", body, collapsible
+	case isLedgerTool(lower):
+		summary, body := FormatLedgerOutput(t, tier, output, width)
+		return summary, body, len(body) > 6
+	case isDiagnosticsTool(lower):
+		body = FormatDiagnosticsOutput(t, tier, output, width)
+		return "", body, len(body) > 6
 	case isMemoryTool(lower):
 		summary, body := FormatMemoryOutput(t, tier, output, width)
+		return summary, body, len(body) > 4
+	case isWorkflowTool(lower):
+		summary, body := FormatWorkflowOutput(t, tier, output, width)
 		return summary, body, len(body) > 4
 	case isSearchTool(lower):
 		summary, body := FormatGrepOutput(t, tier, output, width)
@@ -45,8 +54,20 @@ func isCommandTool(lower string) bool {
 	return lower == "run_command" || lower == "bash" || lower == "terminal" || lower == "exec" || lower == "command"
 }
 
+func isLedgerTool(lower string) bool {
+	return strings.Contains(lower, "ledger") || lower == "read_output"
+}
+
+func isDiagnosticsTool(lower string) bool {
+	return strings.Contains(lower, "diagnostic")
+}
+
 func isMemoryTool(lower string) bool {
 	return strings.Contains(lower, "memory")
+}
+
+func isWorkflowTool(lower string) bool {
+	return strings.Contains(lower, "workflow")
 }
 
 func isSearchTool(lower string) bool {
@@ -300,4 +321,104 @@ func FormatJSONOutput(t theme.Theme, tier theme.Tier, output string, width int) 
 	}
 
 	return strings.Split(strings.TrimRight(output, "\n"), "\n")
+}
+
+// FormatDiagnosticsOutput formats compiler / linter diagnostic lines with severity markers.
+func FormatDiagnosticsOutput(t theme.Theme, tier theme.Tier, output string, width int) []string {
+	lines := strings.Split(strings.TrimRight(output, "\n"), "\n")
+	danger := Role(t, tier, theme.RoleDanger)
+	warn := Role(t, tier, theme.RoleWarning)
+
+	var out []string
+	for _, l := range lines {
+		trimmed := strings.TrimSpace(l)
+		if trimmed == "" {
+			continue
+		}
+		lower := strings.ToLower(trimmed)
+		if strings.Contains(lower, "error") || strings.Contains(lower, "syntax error") {
+			out = append(out, danger.Render("✖ ")+l)
+		} else if strings.Contains(lower, "warn") {
+			out = append(out, warn.Render("⚠ ")+l)
+		} else {
+			out = append(out, "  "+l)
+		}
+	}
+	return out
+}
+
+type workflowPayload struct {
+	Workflow string   `json:"workflow"`
+	Status   string   `json:"status"`
+	Steps    []string `json:"steps"`
+}
+
+// FormatWorkflowOutput formats workflow execution results into summary and step items.
+func FormatWorkflowOutput(t theme.Theme, tier theme.Tier, output string, width int) (string, []string) {
+	trimmed := strings.TrimSpace(output)
+	var wf workflowPayload
+	if err := json.Unmarshal([]byte(trimmed), &wf); err != nil || wf.Workflow == "" {
+		return "", strings.Split(strings.TrimRight(output, "\n"), "\n")
+	}
+
+	accent := Role(t, tier, theme.RoleAccent)
+	subtle := Role(t, tier, theme.RoleFGSubtle)
+	fg := Role(t, tier, theme.RoleFG)
+
+	summary := "workflow " + wf.Status
+	var out []string
+	out = append(out, accent.Render("• workflow: ")+fg.Render(wf.Workflow))
+	if wf.Status != "" {
+		out = append(out, subtle.Render("  status: ")+wf.Status)
+	}
+	if len(wf.Steps) > 0 {
+		out = append(out, subtle.Render("  steps:"))
+		for _, s := range wf.Steps {
+			out = append(out, "    - "+s)
+		}
+	}
+	return summary, out
+}
+
+type ledgerEnvelope struct {
+	Status  string `json:"status"`
+	Ref     string `json:"ref"`
+	Kind    string `json:"kind"`
+	Bytes   int64  `json:"bytes"`
+	Offset  int    `json:"offset"`
+	Limit   int    `json:"limit"`
+	Content string `json:"content"`
+}
+
+// FormatLedgerOutput formats ledger/output responses into clean content blocks without envelope metadata.
+func FormatLedgerOutput(t theme.Theme, tier theme.Tier, output string, width int) (string, []string) {
+	trimmed := strings.TrimSpace(output)
+	var env ledgerEnvelope
+	if err := json.Unmarshal([]byte(trimmed), &env); err != nil || env.Ref == "" {
+		return "", strings.Split(strings.TrimRight(output, "\n"), "\n")
+	}
+
+	shortRef := env.Ref
+	parts := strings.Split(env.Ref, ":")
+	if len(parts) >= 3 && len(parts[2]) > 8 {
+		shortRef = fmt.Sprintf("%s:%s:%s", parts[0], parts[1], parts[2][:8])
+	}
+
+	sizeStr := fmt.Sprintf("%d B", env.Bytes)
+	if env.Bytes >= 1024 {
+		sizeStr = fmt.Sprintf("%.1f KB", float64(env.Bytes)/1024.0)
+	}
+
+	summary := fmt.Sprintf("%s (%s)", shortRef, sizeStr)
+
+	content := env.Content
+	var innerObj map[string]any
+	if err := json.Unmarshal([]byte(content), &innerObj); err == nil {
+		if outVal, ok := innerObj["output"].(string); ok && outVal != "" {
+			content = outVal
+		}
+	}
+
+	lines := strings.Split(strings.TrimRight(content, "\n"), "\n")
+	return summary, lines
 }

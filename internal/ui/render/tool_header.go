@@ -20,7 +20,16 @@ func FormatToolDetail(name string, args map[string]any) string {
 	if detail := formatCommandDetail(lower, args); detail != "" {
 		return detail
 	}
+	if detail := formatLedgerDetail(lower, args); detail != "" {
+		return detail
+	}
+	if detail := formatSkillResourceDetail(lower, args); detail != "" {
+		return detail
+	}
 	if detail := formatMemoryDetail(lower, args); detail != "" {
+		return detail
+	}
+	if detail := formatWorkflowDetail(lower, args); detail != "" {
 		return detail
 	}
 	if detail := formatFileDetail(lower, args); detail != "" {
@@ -33,6 +42,56 @@ func FormatToolDetail(name string, args map[string]any) string {
 		return detail
 	}
 	return FormatArgs(args)
+}
+
+func formatLedgerDetail(lower string, args map[string]any) string {
+	if !strings.Contains(lower, "ledger") && lower != "read_output" {
+		return ""
+	}
+	if ref, ok := args["ref"].(string); ok && ref != "" {
+		short := ref
+		parts := strings.Split(ref, ":")
+		if len(parts) >= 3 && len(parts[2]) > 8 {
+			short = fmt.Sprintf("%s:%s:%s", parts[0], parts[1], parts[2][:8])
+		}
+		if offset, ok := args["offset"]; ok {
+			if offNum, ok := offset.(float64); ok && offNum > 0 {
+				return fmt.Sprintf("%s [offset %d]", short, int(offNum))
+			}
+		}
+		return short
+	}
+	return ""
+}
+
+func formatSkillResourceDetail(lower string, args map[string]any) string {
+	if lower != "read_skill_resource" && lower != "skill_resource" {
+		return ""
+	}
+	skill, _ := args["skill"].(string)
+	res, _ := args["resource"].(string)
+	if skill != "" && res != "" {
+		return skill + "/" + res
+	}
+	return ""
+}
+
+func formatWorkflowDetail(lower string, args map[string]any) string {
+	if !strings.Contains(lower, "workflow") {
+		return ""
+	}
+	wf, _ := args["workflow"].(string)
+	runID, _ := args["run_id"].(string)
+	if wf != "" && runID != "" {
+		return fmt.Sprintf("%q (%s)", wf, runID)
+	}
+	if wf != "" {
+		return fmt.Sprintf("%q", wf)
+	}
+	if runID != "" {
+		return runID
+	}
+	return ""
 }
 
 func formatMemoryDetail(lower string, args map[string]any) string {
