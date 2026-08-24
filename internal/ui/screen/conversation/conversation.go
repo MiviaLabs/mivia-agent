@@ -194,6 +194,7 @@ func (s *Screen) resize() {
 // width-only change, so the explicit call is the only reliable trigger.
 func (s *Screen) reflow() {
 	w := s.chatWidth()
+	s.topbar.SetWidth(w)
 	s.composer.SetWidth(w)
 	s.approval.SetWidth(w)
 	s.resize()

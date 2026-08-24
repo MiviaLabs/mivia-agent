@@ -695,10 +695,12 @@ func (s Screen) dialogParts() (title, body, hint string) {
 func (s Screen) panelFrameRows() []string {
 	w := contentWidth(s.width)
 	paneH := max(1, s.height)
-	_, navW := render.SplitWidths(w)
+	readingW, navW := render.SplitWidths(w)
 
 	innerNavW := max(1, navW-3)
 	innerNavH := max(1, paneH-2)
+
+	s.topbar.SetWidth(readingW)
 
 	var frame string
 	switch {
