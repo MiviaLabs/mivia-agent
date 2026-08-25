@@ -330,3 +330,88 @@ func TestMultiSession_SwitchConversationReflowsDimensions(t *testing.T) {
 		t.Errorf("view after switch missing sess-B messages: %s", view)
 	}
 }
+
+func TestMultiSession_BackgroundSubagentTurnEndReconcilesStatus(t *testing.T) {
+	s, _, _, runner := setupTwoSessionScreen(t)
+
+	// Start turn on A
+	s = typeText(t, s, "Task in A")
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	s = next.(Screen)
+
+	// Switch to B
+	next, _ = s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-B"))
+	s = next.(Screen)
+
+	// Emit subagent tool start on Session A in background
+	s2, _ := s.Update(uievent.EventMsg{
+		SessionID: "sess-A",
+		Event: uievent.Event{
+			Kind:   uievent.KindToolStart,
+			TurnID: "turn-sess-A",
+			Body:   uievent.ToolStartBody{ToolCallID: "sa-1", Name: "invoke_subagent"},
+		},
+	})
+	s = s2.(Screen)
+
+	// Turn on Session A ends with cancelled
+	s3, _ := s.Update(uievent.EventMsg{
+		SessionID: "sess-A",
+		Event: uievent.Event{
+			Kind:   uievent.KindTurnEnd,
+			TurnID: "turn-sess-A",
+			Body:   uievent.TurnEndBody{Reason: "cancelled"},
+		},
+	})
+	s = s3.(Screen)
+
+	// Switch back to A and check panel subagents
+	next, _ = s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-A"))
+	s = next.(Screen)
+
+	if len(s.panel.agents) != 1 {
+		t.Fatalf("expected 1 subagent on session A, got %d", len(s.panel.agents))
+	}
+	if s.panel.agents[0].Status != "cancelled" {
+		t.Errorf("expected subagent status 'cancelled', got %q", s.panel.agents[0].Status)
+	}
+}
+
+func TestMultiSession_BackgroundSubagentTurnEndedMsgReconcilesStatus(t *testing.T) {
+	s, _, _, runner := setupTwoSessionScreen(t)
+
+	// Start turn on A
+	s = typeText(t, s, "Task in A")
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	s = next.(Screen)
+
+	// Switch to B
+	next, _ = s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-B"))
+	s = next.(Screen)
+
+	// Emit subagent tool start on Session A in background
+	s2, _ := s.Update(uievent.EventMsg{
+		SessionID: "sess-A",
+		Event: uievent.Event{
+			Kind:   uievent.KindToolStart,
+			TurnID: "turn-sess-A",
+			Body:   uievent.ToolStartBody{ToolCallID: "sa-2", Name: "invoke_subagent"},
+		},
+	})
+	s = s2.(Screen)
+
+	// Channel closes abruptly -> turnEndedMsg dispatched for Session A
+	s3, _ := s.Update(turnEndedMsg{sessionID: "sess-A"})
+	s = s3.(Screen)
+
+	// Switch back to A and check panel subagents
+	next, _ = s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-A"))
+	s = next.(Screen)
+
+	if len(s.panel.agents) != 1 {
+		t.Fatalf("expected 1 subagent on session A, got %d", len(s.panel.agents))
+	}
+	if s.panel.agents[0].Status != "interrupted" {
+		t.Errorf("expected subagent status 'interrupted', got %q", s.panel.agents[0].Status)
+	}
+}

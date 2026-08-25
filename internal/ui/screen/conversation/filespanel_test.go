@@ -751,3 +751,50 @@ func TestObserveAgentChronologicalLogs(t *testing.T) {
 		t.Errorf("logs out of chronological order: %v", logs)
 	}
 }
+
+func TestPanel_ReconcileTerminal_CancelsRunningSubagents(t *testing.T) {
+	var p panel
+	p.observeAgentStart("sub-1", "invoke_subagent")
+	p.observeAgent("sub-2", &uievent.Progress{Status: "running", Step: 1, TotalSteps: 2})
+	p.observeAgent("sub-3", &uievent.Progress{Status: "completed", Step: 2, TotalSteps: 2})
+
+	if p.activeAgentCount() != 2 {
+		t.Fatalf("expected 2 active agents, got %d", p.activeAgentCount())
+	}
+
+	p.reconcileTerminal("cancelled")
+
+	if p.activeAgentCount() != 0 {
+		t.Errorf("expected 0 active agents after reconcile, got %d", p.activeAgentCount())
+	}
+	if p.agents[0].Status != "cancelled" {
+		t.Errorf("sub-1 status = %q, want 'cancelled'", p.agents[0].Status)
+	}
+	if p.agents[1].Status != "cancelled" {
+		t.Errorf("sub-2 status = %q, want 'cancelled'", p.agents[1].Status)
+	}
+	if p.agents[2].Status != "completed" {
+		t.Errorf("sub-3 status = %q, want 'completed'", p.agents[2].Status)
+	}
+}
+
+func TestPanel_ReconcileTerminal_ErrorReasonMarksFailed(t *testing.T) {
+	var p panel
+	p.observeAgentStart("sub-1", "invoke_subagent")
+	p.reconcileTerminal("error")
+	if p.agents[0].Status != "failed" {
+		t.Errorf("sub-1 status = %q, want 'failed'", p.agents[0].Status)
+	}
+}
+
+func TestPanel_ObserveAgentHistory_IdempotentUpsert(t *testing.T) {
+	var p panel
+	p.observeAgentHistory("sub-1", "completed")
+	p.observeAgentHistory("sub-1", "completed")
+	if len(p.agents) != 1 {
+		t.Fatalf("expected 1 agent, got %d", len(p.agents))
+	}
+	if p.agents[0].Status != "completed" {
+		t.Errorf("expected status 'completed', got %q", p.agents[0].Status)
+	}
+}

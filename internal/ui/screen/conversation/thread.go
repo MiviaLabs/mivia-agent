@@ -80,7 +80,8 @@ func parseToolArgs(args string) map[string]any {
 // finished blocks - no streaming, no side effects - so reopening a
 // thread shows the conversation so far.
 func (s *Screen) LoadHistory(msgs []ports.Message) {
-	for _, m := range msgs {
+	for i, m := range msgs {
+		isLastMsg := (i == len(msgs)-1)
 		switch m.Role {
 		case "user":
 			ev := uievent.Event{Kind: uievent.KindTurnStart, Body: uievent.TurnStartBody{Input: m.Text}}
@@ -110,6 +111,13 @@ func (s *Screen) LoadHistory(msgs []ports.Message) {
 						Result:     tc.Output,
 					},
 				})
+				if isSubagentTool(tc.Name) || (s.threads != nil && isThreadRegistered(s.threads, tc.ID)) {
+					status := "completed"
+					if tc.Output == "" && isLastMsg && m.Text == "" {
+						status = "interrupted"
+					}
+					s.panel.observeAgentHistory(tc.ID, status)
+				}
 			}
 			if m.Text != "" {
 				ev := uievent.Event{Kind: uievent.KindTextEnd, Body: uievent.TextEndBody{Text: m.Text}}

@@ -151,6 +151,7 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 		s.statusline.SetCost(b.CostUSD)
 	case uievent.TurnEndBody:
 		s.approval.Clear()
+		s.panel.reconcileTerminal(b.Reason)
 	}
 
 	var readCmd tea.Cmd

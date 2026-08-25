@@ -420,3 +420,59 @@ func TestLoadHistory_RendersToolCallsAndReasoning(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadHistory_HydratesSubagentsWithCompletedStatus(t *testing.T) {
+	conv := &scriptedThread{
+		history: []ports.Message{
+			{Role: "user", Text: "run subagent"},
+			{
+				Role: "assistant",
+				Text: "Task complete",
+				ToolCalls: []ports.ToolCall{
+					{
+						ID:        "sa-1",
+						Name:      "invoke_subagent",
+						Arguments: `{"name": "worker"}`,
+						Output:    `{"done": true}`,
+					},
+				},
+			},
+		},
+	}
+	s := New(loadTheme(t), theme.TierASCII, nil, conv, nil, 80, fixedNow)
+	s.LoadHistory(conv.History())
+	if len(s.panel.agents) != 1 {
+		t.Fatalf("expected 1 subagent hydrated in panel, got %d", len(s.panel.agents))
+	}
+	if s.panel.agents[0].ID != "sa-1" || s.panel.agents[0].Status != "completed" {
+		t.Errorf("got subagent %+v, want ID='sa-1', Status='completed'", s.panel.agents[0])
+	}
+}
+
+func TestLoadHistory_HydratesTrailingEmptySubagentAsInterrupted(t *testing.T) {
+	conv := &scriptedThread{
+		history: []ports.Message{
+			{Role: "user", Text: "start subagent"},
+			{
+				Role: "assistant",
+				Text: "", // empty text, no output -> harness was interrupted mid-execution
+				ToolCalls: []ports.ToolCall{
+					{
+						ID:        "sa-crash",
+						Name:      "invoke_subagent",
+						Arguments: `{"name": "worker"}`,
+						Output:    "",
+					},
+				},
+			},
+		},
+	}
+	s := New(loadTheme(t), theme.TierASCII, nil, conv, nil, 80, fixedNow)
+	s.LoadHistory(conv.History())
+	if len(s.panel.agents) != 1 {
+		t.Fatalf("expected 1 subagent hydrated in panel, got %d", len(s.panel.agents))
+	}
+	if s.panel.agents[0].ID != "sa-crash" || s.panel.agents[0].Status != "interrupted" {
+		t.Errorf("got subagent %+v, want ID='sa-crash', Status='interrupted'", s.panel.agents[0])
+	}
+}

@@ -32,6 +32,9 @@ func (st *sessionState) handleTurnEvent(ev uievent.Event) {
 		st.approval.Clear()
 		st.statusline.SetLabel("running")
 		st.statusline.SetDetail(toolDetail(b.Name, b.Args))
+		if isSubagentTool(b.Name) {
+			st.panel.observeAgentStart(b.ToolCallID, b.Name)
+		}
 	case uievent.ToolOutputBody:
 		if b.Progress != nil {
 			st.panel.observeAgent(b.ToolCallID, b.Progress)
@@ -39,6 +42,7 @@ func (st *sessionState) handleTurnEvent(ev uievent.Event) {
 	case uievent.ToolEndBody:
 		st.approval.Clear()
 		st.statusline.SetLabel("thinking")
+		st.panel.observeAgentEnd(b.ToolCallID, b.OK)
 		if b.Diff != nil {
 			st.panel.appendLive(*b.Diff)
 		}
@@ -46,6 +50,7 @@ func (st *sessionState) handleTurnEvent(ev uievent.Event) {
 		st.statusline.SetCost(b.CostUSD)
 	case uievent.TurnEndBody:
 		st.approval.Clear()
+		st.panel.reconcileTerminal(b.Reason)
 	}
 }
 
@@ -119,12 +124,14 @@ func (s Screen) handleTurnEndedMsg(msg turnEndedMsg) (app.Screen, tea.Cmd) {
 		if st, ok := s.sessions[msg.sessionID]; ok {
 			st.statusline.Stop()
 			st.approval.Clear()
+			st.panel.reconcileTerminal("interrupted")
 			st.active = nil
 		}
 		return s, nil
 	}
 	s.statusline.Stop()
 	s.approval.Clear()
+	s.panel.reconcileTerminal("interrupted")
 	s.active = nil
 	s.refreshTopbar()
 	return s, nil
