@@ -42,6 +42,10 @@ func (s Screen) handleKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
 		return next, cmd
 	}
 
+	if next, cmd, handled := s.handleHistoryKey(msg); handled {
+		return next, cmd
+	}
+
 	// Any key other than a second ctrl+c ends the quit-armed state, so a
 	// stray keystroke cannot leave the session one press from exiting.
 	// The two modal surfaces above (approval, the pickers) return before
@@ -99,9 +103,44 @@ func (s Screen) handleKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
 		}
 	}
 
+	if key == "up" && (s.composer.CursorLine() == 0 || s.composer.IsEmpty()) && s.history.Len() > 0 {
+		s.history.Open()
+		return s, nil
+	}
+
 	next, cmd := s.composer.Update(msg)
 	s.composer = next
 	return s, cmd
+}
+
+// handleHistoryKey routes a key when the message history overlay is active.
+func (s Screen) handleHistoryKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bool) {
+	if !s.history.Active() {
+		return s, nil, false
+	}
+	switch msg.String() {
+	case "up", "k":
+		s.history.Up()
+		return s, nil, true
+	case "down", "j":
+		s.history.Down()
+		return s, nil, true
+	case "enter":
+		if sel := s.history.Selected(); sel != "" {
+			s.composer.SetValue(sel)
+		}
+		s.history.Close()
+		return s, nil, true
+	case "esc":
+		s.history.Close()
+		return s, nil, true
+	case "ctrl+c":
+		s.history.Close()
+		next, cmd, _ := s.quit()
+		return next, cmd, true
+	default:
+		return s, nil, true
+	}
 }
 
 // handleApprovalKey routes a key when the approval prompt is active.

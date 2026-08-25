@@ -15,6 +15,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/approval"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/composer"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/component/history"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/picker"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/statusline"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/topbar"
@@ -77,6 +78,7 @@ type Screen struct {
 	composer   composer.Model
 	statusline statusline.Model
 	approval   approval.Model
+	history    history.Model
 	welcome    welcome.Model
 
 	sessions map[string]*sessionState
@@ -136,12 +138,14 @@ func New(th theme.Theme, tier theme.Tier, themes []theme.Theme, conv ports.Conve
 		composer:   composer.New(th, tier, width),
 		statusline: statusline.New(th, tier),
 		approval:   approval.New(th, tier),
+		history:    history.New(th, tier),
 		welcome:    welcome.New(th, tier),
 		panel:      newPanel(th, tier),
 		keys:       keymap.New(keymap.Default()),
 		now:        now,
 	}
 	s.approval.SetWidth(contentWidth(width))
+	s.history.SetWidth(contentWidth(width))
 	s.transcript.SetSize(contentWidth(width), 24)
 	if conv != nil {
 		s.topbar = topbar.New(th, tier, conv.Model(), conv.ContextUsage(), contentWidth(width))
@@ -261,6 +265,7 @@ func (s *Screen) reflow() {
 	s.topbar.SetWidth(w)
 	s.composer.SetWidth(w)
 	s.approval.SetWidth(w)
+	s.history.SetWidth(w)
 	s.resize()
 	s.refreshTopbar()
 }
@@ -383,6 +388,9 @@ func (s Screen) reservedRows() int {
 	}
 	if s.approval.Active() {
 		rows += s.approval.Height() // bordered box: title, optional diff preview, hint, and the border rows
+	}
+	if s.history.Active() {
+		rows += s.history.Height()
 	}
 	return rows
 }

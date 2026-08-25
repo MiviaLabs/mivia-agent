@@ -49,6 +49,7 @@ func (s Screen) applyTheme(msg app.ThemeChangedMsg) Screen {
 	s.composer.SetTheme(msg.Theme, msg.Tier)
 	s.statusline.SetTheme(msg.Theme, msg.Tier)
 	s.approval.Theme, s.approval.Tier = msg.Theme, msg.Tier
+	s.history.Theme, s.history.Tier = msg.Theme, msg.Tier
 	s.topbar.SetTheme(msg.Theme, msg.Tier)
 	s.panel.list.Theme, s.panel.list.Tier = msg.Theme, msg.Tier
 	s.welcome.SetTheme(msg.Theme, msg.Tier)
@@ -92,6 +93,8 @@ func (s Screen) send() (app.Screen, tea.Cmd) {
 }
 
 func (s Screen) sendText(text string) (app.Screen, tea.Cmd) {
+	s.history.Push(text)
+	s.history.Close()
 	handle, err := s.conv.Send(context.Background(), intent.Send{Text: text})
 	if err != nil {
 		var cmd tea.Cmd

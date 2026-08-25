@@ -84,6 +84,7 @@ func (s *Screen) LoadHistory(msgs []ports.Message) {
 		isLastMsg := (i == len(msgs)-1)
 		switch m.Role {
 		case "user":
+			s.history.Push(m.Text)
 			ev := uievent.Event{Kind: uievent.KindTurnStart, Body: uievent.TurnStartBody{Input: m.Text}}
 			s.transcript, _ = s.transcript.HandleEvent(ev)
 		default:

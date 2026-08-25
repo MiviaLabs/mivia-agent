@@ -281,6 +281,12 @@ func (m *Model) SetValue(s string) {
 	m.mmenu.refresh(s, m.input.Column())
 }
 
+// CursorLine returns the current line index (0-based) of the cursor.
+func (m Model) CursorLine() int { return m.input.Line() }
+
+// IsEmpty reports whether the input has no text or only whitespace.
+func (m Model) IsEmpty() bool { return len(strings.TrimSpace(m.input.Value())) == 0 }
+
 // ClickToColumn places the cursor under a click at display column x of the
 // composer's first row. The prompt occupies the first promptWidth columns.
 func (m *Model) ClickToColumn(x int) {
