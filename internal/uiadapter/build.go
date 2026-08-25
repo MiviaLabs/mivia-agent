@@ -127,6 +127,12 @@ func New(ctx context.Context, in Input) (*Adapter, func(), error) {
 		return nil, nil, fmt.Errorf("uiadapter: build session: %w", err)
 	}
 	conv := NewConversation(sess)
+	if in.Resolved != nil {
+		conv.SetNoticeOptions(TranslateOptions{
+			ShowIterationNotices:   in.Resolved.ShowIterationNotices,
+			ShowPromptCacheNotices: in.Resolved.ShowPromptCacheNotices,
+		})
+	}
 	return &Adapter{
 		Conversation: conv,
 		store:        store,

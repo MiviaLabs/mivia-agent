@@ -12,13 +12,15 @@ import "github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 
 func seedGeneral() ports.GeneralView {
 	return ports.GeneralView{
-		Theme:           "mivia-dark",
-		Mouse:           true,
-		ShowReasoning:   true,
-		ScrollLines:     3,
-		ApprovalDefault: "once",
-		ScreenReader:    false,
-		ReducedMotion:   false,
+		Theme:                  "mivia-dark",
+		Mouse:                  true,
+		ShowReasoning:          true,
+		ShowIterationNotices:   false,
+		ShowPromptCacheNotices: false,
+		ScrollLines:            3,
+		ApprovalDefault:        "once",
+		ScreenReader:           false,
+		ReducedMotion:          false,
 	}
 }
 

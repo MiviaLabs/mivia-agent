@@ -64,13 +64,15 @@ type Settings struct {
 
 // GeneralView is the app-level toggles the General section reads.
 type GeneralView struct {
-	Theme           string
-	Mouse           bool
-	ShowReasoning   bool
-	ScrollLines     int
-	ApprovalDefault string // "once" | "always" | "deny" | "deny_always"
-	ScreenReader    bool
-	ReducedMotion   bool
+	Theme                  string
+	Mouse                  bool
+	ShowReasoning          bool
+	ShowIterationNotices   bool
+	ShowPromptCacheNotices bool
+	ScrollLines            int
+	ApprovalDefault        string // "once" | "always" | "deny" | "deny_always"
+	ScreenReader           bool
+	ReducedMotion          bool
 }
 
 // GeneralEdit is a closed union, one variant per General field: a
@@ -81,18 +83,22 @@ type GeneralEdit interface{ isGeneralEdit() }
 type SetTheme struct{ Name string }
 type SetMouse struct{ On bool }
 type SetShowReasoning struct{ On bool }
+type SetShowIterationNotices struct{ On bool }
+type SetShowPromptCacheNotices struct{ On bool }
 type SetScrollLines struct{ N int }
 type SetApprovalDefault struct{ Mode string }
 type SetScreenReader struct{ On bool }
 type SetReducedMotion struct{ On bool }
 
-func (SetTheme) isGeneralEdit()           {}
-func (SetMouse) isGeneralEdit()           {}
-func (SetShowReasoning) isGeneralEdit()   {}
-func (SetScrollLines) isGeneralEdit()     {}
-func (SetApprovalDefault) isGeneralEdit() {}
-func (SetScreenReader) isGeneralEdit()    {}
-func (SetReducedMotion) isGeneralEdit()   {}
+func (SetTheme) isGeneralEdit()                  {}
+func (SetMouse) isGeneralEdit()                  {}
+func (SetShowReasoning) isGeneralEdit()          {}
+func (SetShowIterationNotices) isGeneralEdit()   {}
+func (SetShowPromptCacheNotices) isGeneralEdit() {}
+func (SetScrollLines) isGeneralEdit()            {}
+func (SetApprovalDefault) isGeneralEdit()        {}
+func (SetScreenReader) isGeneralEdit()           {}
+func (SetReducedMotion) isGeneralEdit()          {}
 
 // GeneralSettings is the General section's read/write surface.
 type GeneralSettings interface {

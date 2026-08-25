@@ -12,6 +12,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/demoharness"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
 
@@ -350,5 +351,27 @@ func TestSmallScreenSettingsNavKeepsCursorVisible(t *testing.T) {
 	lastTitle := s.sections[len(s.sections)-1].Title()
 	if !strings.Contains(view, lastTitle) {
 		t.Errorf("expected last section %q to be visible on small screen when selected:\n%s", lastTitle, view)
+	}
+}
+
+func TestGeneralSectionNoticeToggles(t *testing.T) {
+	th := loadTheme(t)
+	tb := topbar.New(th, theme.TierTrueColor, ports.ModelInfo{Name: "mivia-fast"}, ports.Usage{}, 100)
+	h, err := demoharness.New("smalltalk", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := New(th, theme.TierTrueColor, tb, h.SettingsAdapters(), 0)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	s = next.(Screen)
+	// Focus right pane (General section options)
+	next, _ = s.Update(keySettingsMsg("tab"))
+	s = next.(Screen)
+	view := s.View()
+	if !strings.Contains(view, "iteration notice") {
+		t.Errorf("expected 'iteration notice' in General view, got:\n%s", view)
+	}
+	if !strings.Contains(view, "prompt cache notice") {
+		t.Errorf("expected 'prompt cache notice' in General view, got:\n%s", view)
 	}
 }

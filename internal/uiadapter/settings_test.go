@@ -98,6 +98,24 @@ func TestGeneralSettings(t *testing.T) {
 		t.Errorf("got ScrollLines=%d, want 5", settings.General.General().ScrollLines)
 	}
 
+	hIter, err := settings.General.Apply(context.Background(), ports.ScopeUser, ports.SetShowIterationNotices{On: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drainOK(t, hIter)
+	if !settings.General.General().ShowIterationNotices {
+		t.Error("expected ShowIterationNotices=true")
+	}
+
+	hCache, err := settings.General.Apply(context.Background(), ports.ScopeUser, ports.SetShowPromptCacheNotices{On: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drainOK(t, hCache)
+	if !settings.General.General().ShowPromptCacheNotices {
+		t.Error("expected ShowPromptCacheNotices=true")
+	}
+
 	h4, err := settings.General.Apply(context.Background(), ports.ScopeUser, ports.SetScrollLines{N: -1})
 	if err != nil {
 		t.Fatal(err)

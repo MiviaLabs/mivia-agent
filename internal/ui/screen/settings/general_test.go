@@ -47,7 +47,7 @@ func TestGeneralSectionListsEveryRow(t *testing.T) {
 	s, _ := newHarnessScreen(t, 100, 30)
 	plain := ansi.Strip(s.sections[0].View())
 	for _, want := range []string{
-		"mouse capture", "show reasoning", "scroll lines",
+		"mouse capture", "show reasoning", "iteration notice", "prompt cache notice", "scroll lines",
 		"approval default", "screen reader", "reduced motion",
 	} {
 		if !strings.Contains(plain, want) {

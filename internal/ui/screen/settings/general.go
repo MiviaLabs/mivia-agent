@@ -96,6 +96,12 @@ func (s *generalSection) rebuild() {
 	reasonF := mk("show reasoning")
 	reasonF.SetChoices([]string{"on", "off"}, boolChoice(v.ShowReasoning))
 
+	iterF := mk("iteration notice")
+	iterF.SetChoices([]string{"on", "off"}, boolChoice(v.ShowIterationNotices))
+
+	cacheF := mk("prompt cache notice")
+	cacheF.SetChoices([]string{"on", "off"}, boolChoice(v.ShowPromptCacheNotices))
+
 	scrollF := mk("scroll lines")
 	scrollF.SetChoices(scrollChoices, strconv.Itoa(v.ScrollLines))
 
@@ -111,6 +117,8 @@ func (s *generalSection) rebuild() {
 	s.rows = []generalRow{
 		{mouseF, func(val string) ports.GeneralEdit { return ports.SetMouse{On: val == "on"} }},
 		{reasonF, func(val string) ports.GeneralEdit { return ports.SetShowReasoning{On: val == "on"} }},
+		{iterF, func(val string) ports.GeneralEdit { return ports.SetShowIterationNotices{On: val == "on"} }},
+		{cacheF, func(val string) ports.GeneralEdit { return ports.SetShowPromptCacheNotices{On: val == "on"} }},
 		{scrollF, func(val string) ports.GeneralEdit {
 			n, _ := strconv.Atoi(val) // val is always one of scrollChoices; Atoi cannot fail
 			return ports.SetScrollLines{N: n}

@@ -14,6 +14,7 @@ import (
 // SettingsStore holds the active configuration and state for settings management.
 type SettingsStore struct {
 	sess       *chat.Session
+	conv       *Conversation
 	res        *config.Resolved
 	agentState *cliagents.AgentSessionState
 
@@ -50,15 +51,36 @@ func (s *SettingsStore) SetActiveSession(sess *chat.Session) {
 	s.sess = sess
 }
 
+// SetConversation attaches the active Conversation to receive live notice option updates.
+func (s *SettingsStore) SetConversation(conv *Conversation) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.conv = conv
+	if s.conv != nil {
+		s.conv.SetNoticeOptions(TranslateOptions{
+			ShowIterationNotices:   s.general.ShowIterationNotices,
+			ShowPromptCacheNotices: s.general.ShowPromptCacheNotices,
+		})
+	}
+}
+
 func (s *SettingsStore) initFromConfig() {
+	showIter := false
+	showCache := false
+	if s.res != nil {
+		showIter = s.res.ShowIterationNotices
+		showCache = s.res.ShowPromptCacheNotices
+	}
 	s.general = ports.GeneralView{
-		Theme:           "mivia-dark",
-		Mouse:           true,
-		ShowReasoning:   true,
-		ScrollLines:     3,
-		ApprovalDefault: "once",
-		ScreenReader:    false,
-		ReducedMotion:   false,
+		Theme:                  "mivia-dark",
+		Mouse:                  true,
+		ShowReasoning:          true,
+		ShowIterationNotices:   showIter,
+		ShowPromptCacheNotices: showCache,
+		ScrollLines:            3,
+		ApprovalDefault:        "once",
+		ScreenReader:           false,
+		ReducedMotion:          false,
 	}
 	s.initProvidersFromConfig()
 	s.initAgentsFromConfig()
@@ -229,6 +251,42 @@ func (s *SettingsStore) applyGeneral(e ports.GeneralEdit) error {
 		s.general.Mouse = v.On
 	case ports.SetShowReasoning:
 		s.general.ShowReasoning = v.On
+	case ports.SetShowIterationNotices:
+		s.general.ShowIterationNotices = v.On
+		if s.res != nil {
+			s.res.ShowIterationNotices = v.On
+			cfgPath := s.res.ConfigPath
+			if cfgPath == "" {
+				cfgPath = config.UserConfigPath()
+			}
+			if cfgPath != "" {
+				_ = config.UpdateChatNoticeConfig(cfgPath, s.res.ShowIterationNotices, s.res.ShowPromptCacheNotices)
+			}
+		}
+		if s.conv != nil {
+			s.conv.SetNoticeOptions(TranslateOptions{
+				ShowIterationNotices:   s.general.ShowIterationNotices,
+				ShowPromptCacheNotices: s.general.ShowPromptCacheNotices,
+			})
+		}
+	case ports.SetShowPromptCacheNotices:
+		s.general.ShowPromptCacheNotices = v.On
+		if s.res != nil {
+			s.res.ShowPromptCacheNotices = v.On
+			cfgPath := s.res.ConfigPath
+			if cfgPath == "" {
+				cfgPath = config.UserConfigPath()
+			}
+			if cfgPath != "" {
+				_ = config.UpdateChatNoticeConfig(cfgPath, s.res.ShowIterationNotices, s.res.ShowPromptCacheNotices)
+			}
+		}
+		if s.conv != nil {
+			s.conv.SetNoticeOptions(TranslateOptions{
+				ShowIterationNotices:   s.general.ShowIterationNotices,
+				ShowPromptCacheNotices: s.general.ShowPromptCacheNotices,
+			})
+		}
 	case ports.SetScrollLines:
 		if v.N <= 0 {
 			return fmt.Errorf("scroll lines must be positive")

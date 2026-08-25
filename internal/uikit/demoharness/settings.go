@@ -107,6 +107,10 @@ func (h *Harness) applyGeneral(e ports.GeneralEdit) error {
 		h.settingsGeneral.Mouse = v.On
 	case ports.SetShowReasoning:
 		h.settingsGeneral.ShowReasoning = v.On
+	case ports.SetShowIterationNotices:
+		h.settingsGeneral.ShowIterationNotices = v.On
+	case ports.SetShowPromptCacheNotices:
+		h.settingsGeneral.ShowPromptCacheNotices = v.On
 	case ports.SetScrollLines:
 		if v.N <= 0 {
 			return fmt.Errorf("scroll lines must be positive")

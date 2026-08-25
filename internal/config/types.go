@@ -201,6 +201,12 @@ type ChatConfig struct {
 	// built-in default; 0 means unlimited, which lets a model stuck emitting
 	// tool calls run until the user interrupts it. /steps overrides per session.
 	MaxSteps *int `toml:"max_steps"`
+	// ShowIterationNotices controls whether per-step/iteration notices (e.g. "iteration 1")
+	// are emitted in the TUI chat. Default: false (disabled).
+	ShowIterationNotices *bool `toml:"show_iteration_notices"`
+	// ShowPromptCacheNotices controls whether prompt cache hit/usage notices
+	// are emitted in the TUI chat. Default: false (disabled).
+	ShowPromptCacheNotices *bool `toml:"show_prompt_cache_notices"`
 }
 
 // SubagentConfig holds subagent execution policy and storage configuration.
@@ -339,13 +345,15 @@ type Resolved struct {
 	MaxPromptTokens *int
 	// MaxContextTokens is retained as a compatibility projection of the
 	// selected model's effective prompt budget.
-	MaxContextTokens int
-	Temperature      *float64
-	MaxTokens        *int
-	Subagents        SubagentConfig
-	Worktrees        WorktreeConfig
-	StoreBackend     string
-	StorePath        string
+	MaxContextTokens       int
+	Temperature            *float64
+	MaxTokens              *int
+	ShowIterationNotices   bool
+	ShowPromptCacheNotices bool
+	Subagents              SubagentConfig
+	Worktrees              WorktreeConfig
+	StoreBackend           string
+	StorePath              string
 	// StorePathSet reports whether [subagents].store_path was set in the
 	// selected configuration. It lets repository storage resolve its default
 	// from the repository root instead of the current worktree.

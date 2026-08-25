@@ -50,13 +50,21 @@ func ParseArgsForTest(input string) map[string]any { return parseArgs(input) }
 // keeps the "non-bare detail" branch under cover.
 func ErrFromDetailForTest(detail string, ok bool) string { return errFromDetail(detail, ok) }
 
-// TranslateEvent converts one agent.Event into zero or more uievent.Events.
-// The full per-kind source-of-truth table is documented above the package
-// (event_kind.go) and next to the switch cases below. Drop-list omissions
-// (EventHeartbeat, EventSubagentHeartbeat) are recorded explicitly in
-// droppedKinds. Zero output is a valid result; an unknown EventKind panics
-// rather than vanishing silently.
+// TranslateOptions configures notice visibility and filtering during event translation.
+type TranslateOptions struct {
+	ShowIterationNotices   bool
+	ShowPromptCacheNotices bool
+}
+
+// TranslateEvent converts one agent.Event into zero or more uievent.Events
+// using default translation options (iteration and cache notices disabled).
 func TranslateEvent(ev agent.Event) []uievent.Event {
+	return TranslateEventWithOptions(ev, TranslateOptions{})
+}
+
+// TranslateEventWithOptions converts one agent.Event into zero or more uievent.Events
+// with custom notice visibility options.
+func TranslateEventWithOptions(ev agent.Event, opts TranslateOptions) []uievent.Event {
 	switch ev.Kind {
 	case agent.EventAssistant:
 		return translateAssistant(ev)
@@ -67,6 +75,9 @@ func TranslateEvent(ev agent.Event) []uievent.Event {
 	case agent.EventToolEnd:
 		return translateToolEnd(ev)
 	case agent.EventStep:
+		if !opts.ShowIterationNotices {
+			return nil
+		}
 		return notice(ev.Detail)
 	case agent.EventPrune:
 		return notice(ev.Detail)
@@ -85,6 +96,9 @@ func TranslateEvent(ev agent.Event) []uievent.Event {
 	case agent.EventCompaction:
 		return notice(ev.Detail)
 	case agent.EventCacheUsage:
+		if !opts.ShowPromptCacheNotices {
+			return nil
+		}
 		return notice(ev.Detail)
 	case agent.EventTokenUsage:
 		// Dropped: EventTokenUsage reports single-step prompt tokens, which would

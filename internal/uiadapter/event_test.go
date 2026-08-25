@@ -191,12 +191,9 @@ func TestTranslateEvent_Notice(t *testing.T) {
 	t.Parallel()
 	runMappingCases(t, []mappingCase{
 		{
-			name: "step_uses_detail_as_text",
+			name: "step_dropped_by_default",
 			ev:   agent.Event{Kind: agent.EventStep, Detail: "step 3 of 5"},
-			want: []uievent.Event{{
-				Kind: uievent.KindNotice,
-				Body: uievent.NoticeBody{Text: "step 3 of 5"},
-			}},
+			want: nil,
 		},
 		{
 			name: "prune_carries_retry_message",
@@ -262,15 +259,12 @@ func TestTranslateEvent_NoticeMetrics(t *testing.T) {
 			}},
 		},
 		{
-			name: "cache_usage_hit_rate_is_notice",
+			name: "cache_usage_dropped_by_default",
 			ev: agent.Event{
 				Kind:   agent.EventCacheUsage,
 				Detail: "prompt cache: 800/1000 tokens cached (80%)",
 			},
-			want: []uievent.Event{{
-				Kind: uievent.KindNotice,
-				Body: uievent.NoticeBody{Text: "prompt cache: 800/1000 tokens cached (80%)"},
-			}},
+			want: nil,
 		},
 		{
 			name: "token_usage_is_dropped",
@@ -440,9 +434,9 @@ func TestTranslateEvent_ExhaustiveCoverage(t *testing.T) {
 		ev := contentBearingEvent(k)
 		got := safeTranslate(t, ev)
 		switch k {
-		case agent.EventHeartbeat, agent.EventSubagentHeartbeat, agent.EventTokenUsage:
+		case agent.EventHeartbeat, agent.EventSubagentHeartbeat, agent.EventTokenUsage, agent.EventStep, agent.EventCacheUsage:
 			if len(got) != 0 {
-				t.Errorf("%s must drop (no UI representation); got %d events", k, len(got))
+				t.Errorf("%s must drop by default; got %d events", k, len(got))
 			}
 		default:
 			if len(got) == 0 {
@@ -455,6 +449,29 @@ func TestTranslateEvent_ExhaustiveCoverage(t *testing.T) {
 		if !seen[k] {
 			t.Errorf("kind %q declared but never exercised in coverage loop", k)
 		}
+	}
+}
+
+func TestTranslateEvent_NoticeOptions(t *testing.T) {
+	t.Parallel()
+
+	stepEv := agent.Event{Kind: agent.EventStep, Detail: "iteration 2"}
+	cacheEv := agent.Event{Kind: agent.EventCacheUsage, Detail: "prompt cache: 50%"}
+
+	// When enabled:
+	opts := uiadapter.TranslateOptions{
+		ShowIterationNotices:   true,
+		ShowPromptCacheNotices: true,
+	}
+
+	gotStep := uiadapter.TranslateEventWithOptions(stepEv, opts)
+	if len(gotStep) != 1 || gotStep[0].Kind != uievent.KindNotice || gotStep[0].Body.(uievent.NoticeBody).Text != "iteration 2" {
+		t.Errorf("TranslateEventWithOptions with ShowIterationNotices=true failed: got %+v", gotStep)
+	}
+
+	gotCache := uiadapter.TranslateEventWithOptions(cacheEv, opts)
+	if len(gotCache) != 1 || gotCache[0].Kind != uievent.KindNotice || gotCache[0].Body.(uievent.NoticeBody).Text != "prompt cache: 50%" {
+		t.Errorf("TranslateEventWithOptions with ShowPromptCacheNotices=true failed: got %+v", gotCache)
 	}
 }
 

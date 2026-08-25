@@ -66,6 +66,9 @@ type Conversation struct {
 	lastTitle     string
 	lastSessionID string
 	titleDone     bool
+
+	noticeMu   sync.RWMutex
+	noticeOpts TranslateOptions
 }
 
 // NewConversation wraps an existing chat.Session. The caller owns the
@@ -73,6 +76,26 @@ type Conversation struct {
 // the pointer verbatim and does not retain any other reference.
 func NewConversation(sess *chat.Session) *Conversation {
 	return &Conversation{sess: sess}
+}
+
+// SetNoticeOptions configures notice visibility options for this conversation.
+func (c *Conversation) SetNoticeOptions(opts TranslateOptions) {
+	if c == nil {
+		return
+	}
+	c.noticeMu.Lock()
+	defer c.noticeMu.Unlock()
+	c.noticeOpts = opts
+}
+
+// NoticeOptions returns the current notice visibility options.
+func (c *Conversation) NoticeOptions() TranslateOptions {
+	if c == nil {
+		return TranslateOptions{}
+	}
+	c.noticeMu.RLock()
+	defer c.noticeMu.RUnlock()
+	return c.noticeOpts
 }
 
 // Session returns the wrapped *chat.Session.
@@ -121,7 +144,7 @@ func (c *Conversation) Send(ctx context.Context, in intent.Send) (ports.TurnHand
 	var seq uint64
 	emitSyntheticTurnStart(events, in.Text, &seq)
 
-	handler := newTurnHandler(events, closed, turnIDPtr, &seq, turnCtx)
+	handler := newTurnHandler(events, closed, turnIDPtr, &seq, turnCtx, c.NoticeOptions())
 	previous := c.sess.SwapOnAgentEvent(handler)
 
 	var clearSubagent func()
@@ -164,16 +187,16 @@ func emitSyntheticTurnStart(events chan<- uievent.Event, input string, seq *uint
 
 // newTurnHandler returns the per-turn agent-event handler that runs as
 // the OnAgentEvent tap. It translates each agent.Event via
-// uiadapter.TranslateEvent, stamps the real TurnID once known, and
+// uiadapter.TranslateEventWithOptions, stamps the real TurnID once known, and
 // forwards onto the channel under a closed-check. The select on
 // turnCtx.Done() drops the event rather than blocks the agent loop if
 // the buffer is full and Cancel is mid-flight.
-func newTurnHandler(events chan<- uievent.Event, closed *atomic.Bool, turnIDPtr *atomic.Pointer[string], seq *uint64, turnCtx context.Context) func(agent.Event) {
+func newTurnHandler(events chan<- uievent.Event, closed *atomic.Bool, turnIDPtr *atomic.Pointer[string], seq *uint64, turnCtx context.Context, opts TranslateOptions) func(agent.Event) {
 	return func(ev agent.Event) {
 		if closed.Load() {
 			return
 		}
-		for _, e := range TranslateEvent(ev) {
+		for _, e := range TranslateEventWithOptions(ev, opts) {
 			if closed.Load() {
 				return
 			}
