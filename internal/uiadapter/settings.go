@@ -3,6 +3,7 @@ package uiadapter
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"sync"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
@@ -86,83 +87,256 @@ func (s *SettingsStore) initFromConfig() {
 	s.initProvidersFromConfig()
 	s.initAgentsFromConfig()
 	s.initSkillsFromConfig()
+	s.initMCPFromConfig()
 }
 
 func (s *SettingsStore) initProvidersFromConfig() {
+	s.providers = s.buildProviderViews()
+}
+
+// projectConfigPath resolves the workspace's own .mivia/mivia.toml path
+// from agentState.WorkspaceRoot, or "" when there is no workspace (a nil
+// agentState, or one with an empty WorkspaceRoot - the classic REPL/
+// one-shot path and any test harness that never wired one). Mirrors how
+// settingsSkills.skillsDirectory and agentsDirForScope resolve their own
+// project-scope directories from the same field.
+func (s *SettingsStore) projectConfigPath() string {
+	if s.agentState == nil {
+		return ""
+	}
+	return config.ProjectConfigPath(s.agentState.WorkspaceRoot)
+}
+
+// providerConfigPathForScope resolves which file a provider default-model
+// edit at scope should land in: ScopeUser is the base config
+// (s.configPath(), same file every other provider edit already targets),
+// ScopeProject is the workspace's own .mivia/mivia.toml. Returns "" when
+// that file is not resolvable (no workspace) or is literally the same
+// file as the base config - a project layer that IS the base file has no
+// separate "project override" to write, the same guard loadFile's own
+// workspaceOverlayConfigPath applies before treating a workspace file as
+// an overlay.
+func (s *SettingsStore) providerConfigPathForScope(scope ports.Scope) string {
+	if scope == ports.ScopeUser {
+		return s.configPath()
+	}
+	projectPath := s.projectConfigPath()
+	if projectPath == "" || projectPath == s.configPath() {
+		return ""
+	}
+	return projectPath
+}
+
+// buildProviderViews reads the resolved model catalog (Selectable,
+// Active, Models, context windows - everything NOT scope-split) plus
+// each scope's OWN unmerged default_model keys (config.
+// LoadProviderDefaultOverrides against the base config file and,
+// separately, the project file - see providerConfigPathForScope for why
+// they must be read unmerged rather than off s.res.ModelCatalog()'s
+// already-overlay-merged ProviderModelGroup.DefaultModel) and returns
+// one ScopeUser row per catalog provider plus one additional ScopeProject
+// row for every provider that has its own project override. Called at
+// construction and again after every default-model edit (see
+// applySetDefaultModel and friends) rather than patching fields in
+// place, because a default-model edit can both change a value AND
+// change which scopes exist for a provider (setting a project override
+// where none existed adds a row; clearing the last one removes it) -
+// harder to keep consistent by hand than by re-deriving from the two
+// small on-disk reads. Falls back through mergeUntrackedProviders (see
+// its own doc comment) at every return point so a provider that lives
+// only in s.providers - never in s.res's own catalog - is not silently
+// dropped by this re-derive.
+func (s *SettingsStore) buildProviderViews() []ports.ProviderView {
 	if s.res == nil {
-		return
+		return nil
 	}
 	catalog := s.res.ModelCatalog()
+	baseOverrides, projectOverrides := s.loadProviderDefaultOverrides()
 	if len(catalog) == 0 && s.res.ProviderName != "" {
-		var models []ports.ModelView
-		if len(s.res.ModelProfiles) > 0 {
-			for _, p := range s.res.ModelProfiles {
-				models = append(models, ports.ModelView{Name: p.Name, ContextWindowTokens: p.ContextWindowTokens})
-			}
-		} else if len(s.res.Models) > 0 {
-			for _, m := range s.res.Models {
-				models = append(models, ports.ModelView{Name: m, ContextWindowTokens: 128000})
-			}
-		} else if s.res.Model != "" {
-			models = append(models, ports.ModelView{Name: s.res.Model, ContextWindowTokens: 128000})
+		fresh := []ports.ProviderView{s.buildFallbackProviderView()}
+		return mergeUntrackedProviders(s.providers, fresh, baseOverrides, projectOverrides)
+	}
+
+	var out []ports.ProviderView
+	for _, g := range catalog {
+		out = append(out, s.buildProviderRows(g, baseOverrides, projectOverrides)...)
+	}
+	return mergeUntrackedProviders(s.providers, out, baseOverrides, projectOverrides)
+}
+
+// loadProviderDefaultOverrides reads the two scopes' own unmerged
+// default_model keys (base config file, then the project file when one
+// exists and differs from the base - see providerConfigPathForScope).
+// Shared by both buildProviderViews branches so the fallback (single
+// legacy provider, no catalog) and the normal catalog path read the
+// exact same two files the same way.
+func (s *SettingsStore) loadProviderDefaultOverrides() (base, project map[string]string) {
+	base, _ = config.LoadProviderDefaultOverrides(s.configPath())
+	if projectPath := s.providerConfigPathForScope(ports.ScopeProject); projectPath != "" {
+		project, _ = config.LoadProviderDefaultOverrides(projectPath)
+	}
+	return base, project
+}
+
+// buildFallbackProviderView builds the single ScopeUser row used when
+// s.res has no model catalog but does have a legacy single-provider
+// config (ProviderName plus Model/Models/ModelProfiles).
+func (s *SettingsStore) buildFallbackProviderView() ports.ProviderView {
+	var models []ports.ModelView
+	switch {
+	case len(s.res.ModelProfiles) > 0:
+		for _, p := range s.res.ModelProfiles {
+			models = append(models, ports.ModelView{Name: p.Name, ContextWindowTokens: p.ContextWindowTokens})
 		}
-		activeModel := s.res.Model
-		if s.sess != nil && s.sess.CurrentSelection().Model != "" {
+	case len(s.res.Models) > 0:
+		for _, m := range s.res.Models {
+			models = append(models, ports.ModelView{Name: m, ContextWindowTokens: 128000})
+		}
+	case s.res.Model != "":
+		models = append(models, ports.ModelView{Name: s.res.Model, ContextWindowTokens: 128000})
+	}
+	activeModel := s.res.Model
+	if s.sess != nil && s.sess.CurrentSelection().Model != "" {
+		activeModel = s.sess.CurrentSelection().Model
+	}
+	return ports.ProviderView{
+		Name:                  s.res.ProviderName,
+		Active:                true,
+		Selectable:            true,
+		Models:                models,
+		ActiveModel:           activeModel,
+		DefaultModel:          s.res.Model,
+		Scope:                 ports.ScopeUser,
+		EffectiveDefaultModel: s.res.Model,
+	}
+}
+
+// buildModelViews renders g.Models (context window, output ceiling,
+// reasoning efforts) into the secret-free ports.ModelView shape shared
+// by every row buildProviderRows returns for g.
+func buildModelViews(g config.ProviderModelGroup) []ports.ModelView {
+	var models []ports.ModelView
+	for _, m := range g.Models {
+		var efforts []string
+		for _, eff := range m.ReasoningEfforts {
+			efforts = append(efforts, string(eff))
+		}
+		models = append(models, ports.ModelView{
+			Name:                m.Name,
+			ContextWindowTokens: m.ContextWindowTokens,
+			MaxOutputTokens:     m.MaxOutputTokens,
+			ReasoningEfforts:    efforts,
+			Reasoning:           string(m.Reasoning),
+		})
+	}
+	return models
+}
+
+// buildProviderRows renders one catalog group g into one ScopeUser row
+// plus, when the project scope has its own non-empty override for g,
+// a second ScopeProject row - see buildProviderViews' own doc comment
+// for why both scopes are separate rows rather than one merged view.
+func (s *SettingsStore) buildProviderRows(g config.ProviderModelGroup, baseOverrides, projectOverrides map[string]string) []ports.ProviderView {
+	models := buildModelViews(g)
+	var activeModel string
+	active := g.Active
+	if s.sess != nil && s.sess.CurrentSelection().ProviderName != "" {
+		active = (s.sess.CurrentSelection().ProviderName == g.Provider)
+		if active {
 			activeModel = s.sess.CurrentSelection().Model
 		}
-		s.providers = append(s.providers, ports.ProviderView{
-			Name:         s.res.ProviderName,
-			Active:       true,
-			Selectable:   true,
-			Models:       models,
-			ActiveModel:  activeModel,
-			DefaultModel: s.res.Model,
-		})
 	}
-	for _, g := range catalog {
-		var models []ports.ModelView
+	if activeModel == "" {
 		for _, m := range g.Models {
-			var efforts []string
-			for _, eff := range m.ReasoningEfforts {
-				efforts = append(efforts, string(eff))
-			}
-			models = append(models, ports.ModelView{
-				Name:                m.Name,
-				ContextWindowTokens: m.ContextWindowTokens,
-				MaxOutputTokens:     m.MaxOutputTokens,
-				ReasoningEfforts:    efforts,
-				Reasoning:           string(m.Reasoning),
-			})
-		}
-		var activeModel string
-		active := g.Active
-		if s.sess != nil && s.sess.CurrentSelection().ProviderName != "" {
-			active = (s.sess.CurrentSelection().ProviderName == g.Provider)
-			if active {
-				activeModel = s.sess.CurrentSelection().Model
+			if active && activeModel == "" {
+				activeModel = m.Name
 			}
 		}
-		if activeModel == "" {
-			for _, m := range g.Models {
-				if active && activeModel == "" {
-					activeModel = m.Name
-				}
-			}
-		}
-		defaultModel := g.DefaultModel
-		if defaultModel == "" && len(g.Models) > 0 {
-			defaultModel = g.Models[0].Name
-		}
-		s.providers = append(s.providers, ports.ProviderView{
-			Name:           g.Provider,
-			Active:         active,
-			Selectable:     g.Selectable,
-			DisabledReason: g.DisabledReason,
-			Models:         models,
-			ActiveModel:    activeModel,
-			DefaultModel:   defaultModel,
+	}
+	globalDefault := baseOverrides[g.Provider]
+	if globalDefault == "" && len(g.Models) > 0 {
+		globalDefault = g.Models[0].Name
+	}
+	effectiveDefault := globalDefault
+	projectDefault, hasOverride := projectOverrides[g.Provider]
+	if hasOverride && projectDefault != "" {
+		effectiveDefault = projectDefault
+	}
+	rows := []ports.ProviderView{{
+		Name:                  g.Provider,
+		Active:                active,
+		Selectable:            g.Selectable,
+		DisabledReason:        g.DisabledReason,
+		Models:                models,
+		ActiveModel:           activeModel,
+		DefaultModel:          globalDefault,
+		Scope:                 ports.ScopeUser,
+		HasProjectOverride:    hasOverride && projectDefault != "",
+		EffectiveDefaultModel: effectiveDefault,
+	}}
+	if hasOverride && projectDefault != "" {
+		rows = append(rows, ports.ProviderView{
+			Name:                  g.Provider,
+			Active:                active,
+			Selectable:            g.Selectable,
+			DisabledReason:        g.DisabledReason,
+			Models:                models,
+			ActiveModel:           activeModel,
+			DefaultModel:          projectDefault,
+			Scope:                 ports.ScopeProject,
+			HasProjectOverride:    true,
+			EffectiveDefaultModel: effectiveDefault,
 		})
 	}
+	return rows
+}
+
+// mergeUntrackedProviders appends every entry of existing whose Name does
+// not appear anywhere in fresh, preserving it as-is EXCEPT for its own
+// default-model fields, which are re-derived from baseOverrides/
+// projectOverrides (the same two unmerged reads buildProviderViews just
+// took for every catalog provider) rather than trusted as-is - existing
+// is s.providers as it stood BEFORE this rebuild, so its DefaultModel/
+// EffectiveDefaultModel/HasProjectOverride are a stale snapshot from
+// whenever that row was last built, and a default-model edit landing
+// via mergeUntrackedProviders (a provider never in s.res's own catalog)
+// would otherwise appear to silently no-op: it writes the override file
+// via config.UpdateProviderDefaultModel just fine, then this merge
+// undoes the visible result by resurrecting the OLD row untouched. Only
+// name/base/models/active state are carried over unchanged; either
+// override map may be nil (buildProviderViews' single-provider fallback
+// branch has none loaded), in which case the row's default fields
+// simply fall back to "" the same way a brand-new catalog provider with
+// no default_model key would.
+func mergeUntrackedProviders(existing, fresh []ports.ProviderView, baseOverrides, projectOverrides map[string]string) []ports.ProviderView {
+	known := make(map[string]bool, len(fresh))
+	for _, p := range fresh {
+		known[p.Name] = true
+	}
+	for _, p := range existing {
+		if known[p.Name] {
+			continue
+		}
+		globalDefault := baseOverrides[p.Name]
+		effectiveDefault := globalDefault
+		projectDefault, hasOverride := projectOverrides[p.Name]
+		if hasOverride && projectDefault != "" {
+			effectiveDefault = projectDefault
+		}
+		p.DefaultModel = globalDefault
+		p.HasProjectOverride = hasOverride && projectDefault != ""
+		p.EffectiveDefaultModel = effectiveDefault
+		p.Scope = ports.ScopeUser
+		fresh = append(fresh, p)
+		known[p.Name] = true
+		if hasOverride && projectDefault != "" {
+			proj := p
+			proj.DefaultModel = projectDefault
+			proj.Scope = ports.ScopeProject
+			fresh = append(fresh, proj)
+		}
+	}
+	return fresh
 }
 
 // initAgentsFromConfig is implemented in settings_agents.go
@@ -246,26 +420,6 @@ func generalViewToSettings(v ports.GeneralView) config.GeneralSettings {
 	}
 }
 
-func providerViewToSettings(v ports.ProviderView) config.ProviderSettings {
-	var models []config.ModelSettings
-	for _, m := range v.Models {
-		models = append(models, config.ModelSettings{
-			Name:                m.Name,
-			ContextWindowTokens: m.ContextWindowTokens,
-			MaxOutputTokens:     m.MaxOutputTokens,
-			Reasoning:           m.Reasoning,
-			ReasoningEfforts:    m.ReasoningEfforts,
-		})
-	}
-	return config.ProviderSettings{
-		Name:         v.Name,
-		BaseURL:      v.BaseURL,
-		APIKeyEnv:    v.APIKeyEnv,
-		DefaultModel: v.DefaultModel,
-		Models:       models,
-	}
-}
-
 func mcpServerViewToSettings(v ports.MCPServerView) config.MCPServerSettings {
 	return config.MCPServerSettings{
 		ID:        v.ID,
@@ -337,181 +491,83 @@ func (s *SettingsStore) applyGeneral(e ports.GeneralEdit) error {
 	return nil
 }
 
-// settingsProviders
-type settingsProviders struct{ *SettingsStore }
+func (s *SettingsStore) initMCPFromConfig() {
+	userPath := s.configPath()
+	projectPath := s.projectConfigPath()
 
-func (p settingsProviders) Providers() []ports.ProviderView {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	out := make([]ports.ProviderView, len(p.providers))
-	copy(out, p.providers)
-	return out
-}
+	userServers, projectServers, _ := config.LoadScopeMCPServers(userPath, projectPath)
 
-func (p settingsProviders) Apply(_ context.Context, _ ports.Scope, e ports.ProviderEdit) (ports.SaveHandle, error) {
-	return p.newSaveHandle(func() error { return p.applyProvider(e) }), nil
-}
+	var failures map[string]error
+	if s.agentState != nil && s.agentState.MCPManager != nil {
+		failures = s.agentState.MCPManager.Failures()
+	}
 
-func (s *SettingsStore) findProvider(name string) int {
-	for i := range s.providers {
-		if s.providers[i].Name == name {
-			return i
+	addServer := func(srv config.MCPServerConfig, scope ports.Scope, global bool) {
+		state := ports.MCPStateUnknown
+		failMsg := ""
+		failKind := ports.MCPFailNone
+		if failures != nil {
+			if err, failed := failures[srv.ID]; failed {
+				state = ports.MCPStateFailed
+				failMsg = err.Error()
+			}
+		}
+		var headers map[string]string
+		if len(srv.Headers) > 0 {
+			headers = make(map[string]string, len(srv.Headers))
+			for _, h := range srv.Headers {
+				headers[h.Name] = h.ValueEnv
+			}
+		}
+
+		s.mcp = append(s.mcp, ports.MCPServerView{
+			ID:             srv.ID,
+			Transport:      srv.Transport,
+			Command:        srv.Command,
+			Args:           srv.Args,
+			Endpoint:       urlToEndpoint(srv.URL),
+			EnvNames:       srv.Env,
+			HeaderEnvNames: headers,
+			Enabled:        true,
+			Global:         global,
+			TimeoutSeconds: srv.TimeoutSeconds,
+			Scope:          scope,
+			State:          state,
+			FailKind:       failKind,
+			FailMessage:    failMsg,
+		})
+	}
+
+	for _, srv := range userServers {
+		addServer(srv, ports.ScopeUser, true)
+	}
+	for _, srv := range projectServers {
+		addServer(srv, ports.ScopeProject, false)
+	}
+
+	if len(s.mcp) == 0 && s.res != nil && len(s.res.MCP.Servers) > 0 {
+		for _, srv := range s.res.MCP.Servers {
+			scope := ports.ScopeUser
+			if !srv.Global {
+				scope = ports.ScopeProject
+			}
+			addServer(srv, scope, srv.Global)
 		}
 	}
-	return -1
 }
 
-func (s *SettingsStore) configPath() string {
-	if s.res != nil && s.res.ConfigPath != "" {
-		return s.res.ConfigPath
+func urlToEndpoint(raw string) string {
+	if raw == "" {
+		return ""
 	}
-	return config.UserConfigPath()
-}
-
-func (s *SettingsStore) applyProvider(e ports.ProviderEdit) error {
-	cfgPath := s.configPath()
-	switch v := e.(type) {
-	case ports.UpsertProvider:
-		return s.applyUpsertProvider(v, cfgPath)
-	case ports.RemoveProvider:
-		return s.applyRemoveProvider(v, cfgPath)
-	case ports.UpsertModel:
-		return s.applyUpsertModel(v, cfgPath)
-	case ports.RemoveModel:
-		return s.applyRemoveModel(v, cfgPath)
-	case ports.ActivateModel:
-		return s.applyActivateModel(v)
-	case ports.SetDefaultModel:
-		return s.applySetDefaultModel(v)
-	default:
-		return fmt.Errorf("unknown provider edit %T", e)
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
 	}
-}
-
-func (s *SettingsStore) applyUpsertProvider(v ports.UpsertProvider, cfgPath string) error {
-	if i := s.findProvider(v.Provider.Name); i >= 0 {
-		s.providers[i] = v.Provider
-	} else {
-		s.providers = append(s.providers, v.Provider)
+	if u.Host == "" {
+		return raw
 	}
-	if cfgPath != "" {
-		_ = config.UpdateProviderConfig(cfgPath, providerViewToSettings(v.Provider))
-	}
-	return nil
-}
-
-func (s *SettingsStore) applyRemoveProvider(v ports.RemoveProvider, cfgPath string) error {
-	i := s.findProvider(v.Name)
-	if i < 0 {
-		return fmt.Errorf("provider %q not found", v.Name)
-	}
-	s.providers = append(s.providers[:i], s.providers[i+1:]...)
-	if cfgPath != "" {
-		_ = config.RemoveProviderConfig(cfgPath, v.Name)
-	}
-	return nil
-}
-
-func (s *SettingsStore) applyUpsertModel(v ports.UpsertModel, cfgPath string) error {
-	i := s.findProvider(v.Provider)
-	if i < 0 {
-		return fmt.Errorf("provider %q not found", v.Provider)
-	}
-	found := false
-	for j := range s.providers[i].Models {
-		if s.providers[i].Models[j].Name == v.Model.Name {
-			s.providers[i].Models[j] = v.Model
-			found = true
-			break
-		}
-	}
-	if !found {
-		s.providers[i].Models = append(s.providers[i].Models, v.Model)
-	}
-	if cfgPath != "" {
-		_ = config.UpdateProviderConfig(cfgPath, providerViewToSettings(s.providers[i]))
-	}
-	return nil
-}
-
-func (s *SettingsStore) applyRemoveModel(v ports.RemoveModel, cfgPath string) error {
-	i := s.findProvider(v.Provider)
-	if i < 0 {
-		return fmt.Errorf("provider %q not found", v.Provider)
-	}
-	models := s.providers[i].Models
-	removed := false
-	for j := range models {
-		if models[j].Name == v.Model {
-			s.providers[i].Models = append(models[:j], models[j+1:]...)
-			removed = true
-			break
-		}
-	}
-	if !removed {
-		return fmt.Errorf("model %q not found under %q", v.Model, v.Provider)
-	}
-	if cfgPath != "" {
-		_ = config.UpdateProviderConfig(cfgPath, providerViewToSettings(s.providers[i]))
-	}
-	return nil
-}
-
-func (s *SettingsStore) applyActivateModel(v ports.ActivateModel) error {
-	target := s.findProvider(v.Provider)
-	if target < 0 {
-		return fmt.Errorf("provider %q not found", v.Provider)
-	}
-	foundModel := false
-	for _, m := range s.providers[target].Models {
-		if m.Name == v.Model {
-			foundModel = true
-			break
-		}
-	}
-	if !foundModel {
-		return fmt.Errorf("model %q not found under %q", v.Model, v.Provider)
-	}
-	if s.sess != nil && s.res != nil {
-		if _, err := cliagents.SwitchModelCommand(s.sess, s.res, v.Provider, v.Model); err != nil {
-			return fmt.Errorf("failed to switch model to %q (%s): %w", v.Model, v.Provider, err)
-		}
-		s.res.ProviderName = v.Provider
-		s.res.Model = v.Model
-	}
-	for i := range s.providers {
-		s.providers[i].Active = (i == target)
-	}
-	s.providers[target].ActiveModel = v.Model
-	if cfgPath := s.configPath(); cfgPath != "" {
-		_ = config.UpdateActiveModelConfig(cfgPath, v.Provider, v.Model)
-	}
-	return nil
-}
-
-func (s *SettingsStore) applySetDefaultModel(v ports.SetDefaultModel) error {
-	target := s.findProvider(v.Provider)
-	if target < 0 {
-		return fmt.Errorf("provider %q not found", v.Provider)
-	}
-	foundModel := false
-	for _, m := range s.providers[target].Models {
-		if m.Name == v.Model {
-			foundModel = true
-			break
-		}
-	}
-	if !foundModel {
-		return fmt.Errorf("model %q not found under %q", v.Model, v.Provider)
-	}
-	cfgPath := s.configPath()
-	if cfgPath != "" {
-		if err := config.UpdateProviderDefaultModel(cfgPath, v.Provider, v.Model); err != nil {
-			return fmt.Errorf("failed to persist default model: %w", err)
-		}
-	}
-	s.providers[target].DefaultModel = v.Model
-	return nil
+	return fmt.Sprintf("%s://%s%s", u.Scheme, u.Host, u.Path)
 }
 
 // settingsMCP
@@ -525,8 +581,8 @@ func (m settingsMCP) MCPServers() []ports.MCPServerView {
 	return out
 }
 
-func (m settingsMCP) Apply(_ context.Context, _ ports.Scope, e ports.MCPEdit) (ports.SaveHandle, error) {
-	return m.newSaveHandle(func() error { return m.applyMCP(e) }), nil
+func (m settingsMCP) Apply(_ context.Context, scope ports.Scope, e ports.MCPEdit) (ports.SaveHandle, error) {
+	return m.newSaveHandle(func() error { return m.applyMCP(e, scope) }), nil
 }
 
 func (s *SettingsStore) findMCPServer(id string) int {
@@ -538,8 +594,13 @@ func (s *SettingsStore) findMCPServer(id string) int {
 	return -1
 }
 
-func (s *SettingsStore) applyMCP(e ports.MCPEdit) error {
+func (s *SettingsStore) applyMCP(e ports.MCPEdit, scope ports.Scope) error {
 	cfgPath := s.configPath()
+	if scope == ports.ScopeProject {
+		if p := s.projectConfigPath(); p != "" {
+			cfgPath = p
+		}
+	}
 	switch v := e.(type) {
 	case ports.UpsertMCPServer:
 		if i := s.findMCPServer(v.Server.ID); i >= 0 {

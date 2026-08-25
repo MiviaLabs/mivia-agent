@@ -31,7 +31,7 @@ func waitForEvent(events <-chan uievent.Event) tea.Cmd {
 		if !ok {
 			return turnEndedMsg{}
 		}
-		return uievent.EventMsg{Event: ev}
+		return uievent.EventMsg{Event: ev, Source: events}
 	}
 }
 
@@ -71,7 +71,7 @@ func (s Screen) awaitSessionEvent(sessionID string, events <-chan uievent.Event)
 		if !ok {
 			return turnEndedMsg{sessionID: sessionID}
 		}
-		return uievent.EventMsg{SessionID: sessionID, Event: ev}
+		return uievent.EventMsg{SessionID: sessionID, Event: ev, Source: events}
 	}
 }
 

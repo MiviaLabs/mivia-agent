@@ -112,16 +112,17 @@ func (a *Approver) gate(ctx context.Context, name string, args json.RawMessage) 
 		Args:     parsedArgs,
 	}
 
+	// The publish must NEVER block: the shipped TUI arms its approval prompt
+	// from the tool.pending uievent on TurnHandle.Events() and resolves by
+	// ToolCallID - nothing drains Pending() in live mode. A blocking send
+	// filled the buffer after defaultPendingBuffer gated calls in one session
+	// and every later gated tool call hung here forever, stuck BEFORE the
+	// decision select, so even a correct Resolve could not unblock it. A full
+	// buffer drops the request; the uievent stream remains the prompt's
+	// source of truth and the decision wait below still honors ctx.Done().
 	select {
 	case a.pendingCh <- req:
-	case <-ctx.Done():
-		a.mu.Lock()
-		delete(a.waiting, callID)
-		a.mu.Unlock()
-		return sdkadapter.ApprovalResult{
-			Approved: false,
-			Err:      "canceled",
-		}
+	default:
 	}
 
 	select {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agentmsg"
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
@@ -403,7 +404,7 @@ func registerMessagingTools(d *runtime.Dispatcher, reg *tools.Registry, cfg conf
 		&runMessagesTool{dispatcher: d, cfg: cfg, repo: repo},
 		&sendToTaskTool{dispatcher: d, cfg: cfg, repo: repo},
 	} {
-		if err := registerSessionTool(d, reg, t); err != nil {
+		if err := cliagents.RegisterSessionTool(d, reg, t); err != nil {
 			if _, exists := reg.Get(t.Name()); !exists {
 				return err
 			}

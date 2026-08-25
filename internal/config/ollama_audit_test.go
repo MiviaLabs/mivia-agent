@@ -202,9 +202,16 @@ var ollamaSelectableMatrix = []struct {
 		wantLoadErr: "base_url",
 	},
 	{
-		name:     "deepseek loopback http not relaxed (load error)",
+		// The https requirement itself is relaxed for ANY provider on a
+		// verified loopback base_url now (provider.NewForProvider pins the
+		// dial the same way ollama's own factory already did) - only the
+		// missing-API-key gate, which stays ollama-only by design (keyless
+		// mode is an ollama-specific local-daemon feature), still applies
+		// here, so this becomes the same "not selectable" outcome as its
+		// https sibling below rather than a load error.
+		name:     "deepseek loopback http scheme relaxed, still needs a key",
 		provider: "deepseek", baseURL: "http://127.0.0.1:11434/v1", credVal: "",
-		wantLoadErr: "https",
+		wantSelect: false, wantDisabled: "credential unavailable", wantKeySet: false,
 	},
 	{
 		name:     "deepseek loopback https no key not selectable",

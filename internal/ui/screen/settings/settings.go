@@ -247,6 +247,14 @@ func (s Screen) handleKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
 	// applies to its own quitArmed.
 	s.quitArmed = false
 
+	if s.focus == render.Right {
+		if c, ok := s.sections[s.nav].(inputCapturer); ok && c.CapturingInput() {
+			next, cmd := s.sections[s.nav].Update(msg)
+			s.sections[s.nav] = next
+			return s, cmd
+		}
+	}
+
 	id, ok := s.keys.Match(keymap.ContextSettings, msg.String())
 	if !ok {
 		return s, nil

@@ -105,7 +105,7 @@ test(s) and confirm they pass.
 | INV-MSG-18 | Safety | One-shot delegate prompts do not include the messaging protocol block since one-shot agents have no ask/answer lifecycle | `TestOneshotDelegateDoNotIncludeProtocol` | |
 | INV-MSG-19 | Safety | Root prompts teach parent-level messaging so the top-level agent can post_message to child tasks | `TestRootPromptsTeachParentMessaging` | |
 | INV-MSG-20 | Safety | Root prompt messaging block omits the word "handler" consistent with the subagent protocol prompt | `TestRootPromptMessagingBlockOmitsHandler` | |
-| INV-MSG-21 | Safety | Protocol markers agree across all prompt surfaces — the same structural tags and vocabulary are used everywhere the protocol is taught | `TestProtocolMarkersAgreeAcrossSurfaces` | |
+| INV-MSG-21 | Safety | Protocol markers agree across all prompt surfaces — the same structural tags and vocabulary are used everywhere the protocol is taught | `TestProtocolMarkers` | |
 
 ## Admission invariants
 

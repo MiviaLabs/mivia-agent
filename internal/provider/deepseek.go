@@ -26,6 +26,7 @@ func NewDeepSeek(opts Options) (Completer, error) {
 		Name:                         "deepseek",
 		BaseURL:                      base,
 		APIKey:                       opts.APIKey,
+		DialContext:                  opts.DialContext,
 		CacheUsageEnabled:            opts.CacheUsageEnabled,
 		RequiresReasoningReplay:      true,
 		RejectReasoningLessToolTurns: true,

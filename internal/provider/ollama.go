@@ -29,7 +29,7 @@ func NewOllama(opts Options) (Completer, error) {
 		// closed instead of receiving keyless plaintext (plan §12 item 1).
 		apiKey = ""
 		var err error
-		dialContext, err = newLoopbackDialContext(base)
+		dialContext, err = newLoopbackDialContext("ollama", base)
 		if err != nil {
 			return nil, err
 		}

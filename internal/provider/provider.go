@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"sort"
 	"strings"
 	"sync"
@@ -220,6 +221,13 @@ type Options struct {
 	// speaks a DeepSeek-style thinking dialect that requires the matching
 	// reasoning-replay and reasoning-less-tool-turn-reject wire contract.
 	ReasoningDialect reasoning.Dialect
+	// DialContext, when set, replaces the transport's default dial. Set only
+	// by NewForProvider, only when BaseURL resolved as a verified loopback
+	// address (config.IsOllamaLoopback) - see its own call site for why. A
+	// factory that builds its own pinned DialContext internally (ollama.go)
+	// ignores this field; every other builtin factory forwards it verbatim
+	// into CompatOptions.DialContext.
+	DialContext func(ctx context.Context, network, addr string) (net.Conn, error)
 }
 
 type providerFactory func(Options) (Completer, error)
@@ -352,6 +360,23 @@ func NewForProvider(res *config.Resolved, providerName string) (Completer, error
 		CacheMarkersEnabled: res.PromptCache != "off",
 		ContextWindowTokens: contextWindowTokens,
 		ReasoningDialect:    reasoningDialectFor(runtime.Models, res.Model, providerName),
+	}
+	// ollama pins its own dial (ollama.go, tied to its keyless-mode gate);
+	// every other builtin provider gets the same verified-loopback dial
+	// pinning here, generalizing the protection beyond ollama: a base_url
+	// that validateBaseURL approved as http because it LOOKS loopback
+	// (config.IsOllamaLoopback, a literal hostname check) must still have
+	// its actual dial independently pinned to a resolved loopback address
+	// at construction, or a resolver answering "localhost" with a
+	// non-loopback address could send this provider's Bearer token in
+	// plaintext somewhere the URL string never admitted to. Fails closed:
+	// a loopback claim that doesn't verify never becomes a client.
+	if providerName != "ollama" && config.IsOllamaLoopback(runtime.BaseURL) {
+		dialContext, err := newLoopbackDialContext(providerName, runtime.BaseURL)
+		if err != nil {
+			return nil, err
+		}
+		opts.DialContext = dialContext
 	}
 	factory, ok := builtinFactories.lookup(providerName)
 	if !ok {

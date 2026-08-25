@@ -37,6 +37,7 @@ func NewLLMGateway(opts Options) (Completer, error) {
 		Name:         "llmgateway",
 		BaseURL:      base,
 		APIKey:       opts.APIKey,
+		DialContext:  opts.DialContext,
 		ExtraHeaders: llmgatewayExtraHeaders(thinkingMode),
 		// LLM Gateway injects Anthropic cache_control markers itself using
 		// per-model minimums and TTL ordering, and strips all client markers

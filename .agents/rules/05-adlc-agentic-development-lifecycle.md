@@ -1,10 +1,15 @@
 # ADLC - Agentic Development Lifecycle
 
-**⚠️ THIS IS THE MANDATORY PROCESS FOR ALL WORK IN THIS REPO.**
-Read this file before starting any task. See also `AGENTS.md` ("Mandatory process" section) and `.agents/INDEX.md` ("MANDATORY" section).
+**Canonical definition of the delivery loop.** The [`delivery`](../skills/delivery/SKILL.md)
+skill routes to this rule rather than duplicating it - reach for that skill
+(or this doc directly) for substantial feature work, bug fixes, refactors,
+and cross-package changes where the plan or blast radius is non-obvious.
+Small, well-understood changes do not need it; use judgment. See also
+"Delivery process" in `AGENTS.md`.
 
-**Scope**: All feature work, bug fixes, refactors, and cross-package changes.
-**Override**: This rule governs *how* work is sequenced and verified.
+**Scope**: Feature work, bug fixes, refactors, and cross-package changes that
+warrant the loop.
+**Override**: When in play, this rule governs *how* work is sequenced and verified.
 
 **Storage model**: Zero files. Everything lives in the orchestrator's context (ephemeral) or in the LedgerRepository (SQLite/memory via `spawn_agent`). No `.md` files are written for workflow artifacts.
 

@@ -9,6 +9,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -91,12 +92,12 @@ func TestRunAgentLoopOnce_UnadmittedHandlerFiresForNonRegistryCall(t *testing.T)
 	opts := Options{
 		Model:    "m",
 		MaxSteps: 3,
-		UnadmittedToolHandler: func(ctx context.Context, name string) (string, bool) {
+		UnadmittedToolHandler: func(ctx context.Context, name string, args json.RawMessage) UnadmittedToolResult {
 			ran = true
 			if name == "grep" {
-				return "tool is advertised but not admitted", true
+				return UnadmittedToolResult{Handled: true, Content: "tool is advertised but not admitted"}
 			}
-			return "", false
+			return UnadmittedToolResult{}
 		},
 	}
 	res, err := RunAgentLoopOnce(context.Background(), loop, opts, []provider.Message{{Role: provider.RoleUser, Content: "q"}})

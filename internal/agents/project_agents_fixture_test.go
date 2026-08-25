@@ -22,7 +22,6 @@ func TestProjectAgentDefinitionsResolve(t *testing.T) {
 		"e2e-engineer":       true,
 		"go-engineer":        true,
 		"memory-curator":     true,
-		"mivia":              true,
 		"panel-reviewer":     true,
 		"performance":        true,
 		"plan-reviewer":      true,
@@ -52,24 +51,12 @@ func TestProjectAgentDefinitionsResolve(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertMiviaAgent(t, reg)
+	// No assertMiviaAgent: this repo ships no root-agent override. The root
+	// session runs the compiled fallback prompt, whose skill policy is
+	// unrestricted by construction (no committed definition to restrict it).
 	assertGoEngineerAgent(t, reg)
 	assertSpecialistScopes(t, reg)
 	assertAgentPromptsArePortable(t, inputs)
-}
-
-func assertMiviaAgent(t *testing.T, reg *AgentRegistry) {
-	mivia, ok := reg.Get("mivia")
-	if !ok {
-		t.Fatal("mivia missing")
-	}
-	if len(mivia.EffectiveTools) == 0 {
-		t.Fatal("mivia should have tools")
-	}
-	// Root mivia omits skills → unrestricted (all trusted).
-	if mivia.Skills != nil {
-		t.Fatalf("mivia should omit skills (all trusted), got %#v", mivia.Skills)
-	}
 }
 
 func assertGoEngineerAgent(t *testing.T, reg *AgentRegistry) {
@@ -260,11 +247,11 @@ func committedAgentInputs(t *testing.T) []ResolveInput {
 	t.Helper()
 	cwd, _ := os.Getwd()
 	dir := filepath.Join(cwd, "..", "..", ".agents", "agents")
-	if st, err := os.Stat(filepath.Join(dir, "mivia.md")); err != nil || !st.IsDir() {
+	if st, err := os.Stat(filepath.Join(dir, "planner.md")); err != nil || !st.IsDir() {
 		root, _ := filepath.Abs("../..")
 		dir = filepath.Join(root, ".agents", "agents")
 	}
-	if _, err := os.Stat(filepath.Join(dir, "mivia.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, "planner.md")); err != nil {
 		t.Skip("project agents not present at", dir)
 	}
 	entries, err := os.ReadDir(dir)
@@ -300,8 +287,8 @@ func committedAgentInputs(t *testing.T) []ResolveInput {
 // runtime, then asserts for every explicit agent/skill pairing that the
 // allowlist permits the skill AND the agent's final effective tools cover every
 // static skill requirement. Every committed skill is either in the matrix or
-// deliberately owned by the unrestricted root (mivia). Failures name the exact
-// agent, skill, and missing tool.
+// owned by the unrestricted root session. Failures name the exact agent,
+// skill, and missing tool.
 func TestCommittedRosterSkillCompatibilityMatrix(t *testing.T) {
 	skillReg, warnings, err := skills.LoadMarkdownSources(
 		[]skills.Source{{Dir: committedSkillsDir(t), Origin: skills.OriginProject}},
@@ -345,8 +332,14 @@ func TestCommittedRosterSkillCompatibilityMatrix(t *testing.T) {
 			}
 		}
 	}
-	root, ok := reg.Get("mivia")
-	rootUnrestricted := ok && root.Skills == nil
+	// This repo ships no committed root-agent override: the root session runs
+	// the compiled fallback, whose skill policy is unrestricted by
+	// construction (no definition to restrict it). A committed "mivia"
+	// definition, if one ever returns, must keep Skills nil for that to hold.
+	rootUnrestricted := true
+	if root, ok := reg.Get("mivia"); ok {
+		rootUnrestricted = root.Skills == nil
+	}
 	for _, def := range skillReg.List() {
 		if covered[def.Name] {
 			continue

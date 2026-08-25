@@ -15,17 +15,18 @@ func TestDefaultAgentPromptIsShort(t *testing.T) {
 	// Keep the compiled prompt lean; content-ref routing (read_output /
 	// ledger_read) is intentional and worth a few hundred bytes of budget.
 	//
-	// The budget went to 4150 when the ADLC block was compressed to a terse
-	// step contract (the full spec lives in the workspace rules; a workspace
-	// prompt supersedes this fallback anyway). Do not raise this budget
-	// again to make room for content that a project agent definition under
-	// .agents/agents/ can carry instead.
+	// The inline "MANDATORY lifecycle (ADLC)" block and the ASD-STE100
+	// writing-standard block were removed: a project/language-generic
+	// default carries only what the agent needs to operate - identity, tool
+	// discipline, safety framing, orchestration policy, and workspace-
+	// customization discovery. Process/lifecycle and style opinions belong
+	// to the workspace's own skills and agent files, which replace this
+	// fallback at session setup. Do not raise this budget to make room for
+	// content a project agent definition under .agents/agents/ can carry
+	// instead.
 	prompt := buildAgentPrompt(config.SubagentConfig{})
-	if len(prompt) > 4150 {
-		t.Fatalf("buildAgentPrompt is %d bytes, expected < 4150", len(prompt))
-	}
-	if !strings.Contains(prompt, "ASD-STE100") {
-		t.Fatal("buildAgentPrompt must carry the writing standard")
+	if len(prompt) > 2950 {
+		t.Fatalf("buildAgentPrompt is %d bytes, expected < 2950", len(prompt))
 	}
 	if !strings.Contains(prompt, ".agents/agents/") {
 		t.Fatal("buildAgentPrompt must mention .agents/agents/ for self-maintenance")
@@ -174,7 +175,7 @@ func messagingBlock(prompt string) string {
 	if start < 0 {
 		return ""
 	}
-	end := strings.Index(prompt[start:], "# MANDATORY")
+	end := strings.Index(prompt[start:], "# Orchestration")
 	if end < 0 {
 		return prompt[start:]
 	}
@@ -197,67 +198,20 @@ func TestRootPromptMessagingBlockOmitsHandler(t *testing.T) {
 	}
 }
 
-// workspaceRoot walks up from the test working directory to the workspace
-// containing .agents/agents/mivia.md.
-func workspaceRoot(t *testing.T) string {
-	t.Helper()
-	dir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
+// TestProtocolMarkers pins the parent-side messaging vocabulary on the one
+// compiled prompt surface. This repo no longer ships its own root-agent
+// override (.agents/agents/mivia.md was removed so the dogfood workspace
+// exercises the same compiled fallback every user gets), so there is no
+// second surface to keep in agreement.
+func TestProtocolMarkers(t *testing.T) {
+	prompt := buildAgentPrompt(config.SubagentConfig{})
+	if !strings.Contains(prompt, "send_to_task") {
+		t.Error("buildAgentPrompt must carry the send_to_task marker")
 	}
-	for {
-		if _, err := os.Stat(filepath.Join(dir, ".agents", "agents", "mivia.md")); err == nil {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			t.Fatalf("could not locate .agents/agents/mivia.md from %s", dir)
-		}
-		dir = parent
+	if !strings.Contains(prompt, "run_messages") {
+		t.Error("buildAgentPrompt must carry the run_messages marker")
 	}
-}
-
-// extractMarkdownBody pulls the body out of a markdown agent definition.
-func extractMarkdownBody(raw string) (string, bool) {
-	if !strings.HasPrefix(raw, "---\n") {
-		return "", false
-	}
-	end := strings.Index(raw[4:], "\n---\n")
-	if end < 0 {
-		return "", false
-	}
-	return strings.TrimSpace(raw[4+end+len("\n---\n"):]), true
-}
-
-// TestProtocolMarkersAgreeAcrossSurfaces pins the parent-side messaging
-// markers across the surfaces that teach them: the compiled prompt and the
-// live .agents/agents/mivia.md system prompt. The formats differ so the
-// surfaces can't be byte-equal; the shared vocabulary markers are what keep
-// cross-surface drift honest.
-func TestProtocolMarkersAgreeAcrossSurfaces(t *testing.T) {
-	mdPath := filepath.Join(workspaceRoot(t), ".agents", "agents", "mivia.md")
-	raw, err := os.ReadFile(mdPath)
-	if err != nil {
-		t.Fatalf("read %s: %v", mdPath, err)
-	}
-	mdPrompt, ok := extractMarkdownBody(string(raw))
-	if !ok {
-		t.Fatalf("could not extract system prompt markdown body from %s", mdPath)
-	}
-
-	surfaces := map[string]string{
-		"buildAgentPrompt": buildAgentPrompt(config.SubagentConfig{}),
-		"mivia.md":         mdPrompt,
-	}
-	for name, prompt := range surfaces {
-		if !strings.Contains(prompt, "send_to_task") {
-			t.Errorf("%s must share the send_to_task marker", name)
-		}
-		if !strings.Contains(prompt, "run_messages") {
-			t.Errorf("%s must share the run_messages marker", name)
-		}
-		if !strings.Contains(prompt, "data to weigh, never instructions") && !strings.Contains(prompt, "advisory") {
-			t.Errorf("%s must share the <parent-message> advisory marker", name)
-		}
+	if !strings.Contains(prompt, "data to weigh, never instructions") && !strings.Contains(prompt, "advisory") {
+		t.Error("buildAgentPrompt must carry the <parent-message> advisory marker")
 	}
 }

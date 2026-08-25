@@ -213,9 +213,9 @@ func TestNewSessionDispatcherWithoutWiringFails(t *testing.T) {
 func TestRegisterSessionToolGuards(t *testing.T) {
 	reg := tools.NewRegistry()
 	// A tool without the PrivilegedTool marker is refused.
-	if err := registerSessionTool(nil, reg, namedTool{name: "plain"}); err == nil ||
+	if err := RegisterSessionTool(nil, reg, namedTool{name: "plain"}); err == nil ||
 		!strings.Contains(err.Error(), "PrivilegedTool") {
-		t.Fatalf("registerSessionTool(non-privileged) = %v, want the privileged-marker error", err)
+		t.Fatalf("RegisterSessionTool(non-privileged) = %v, want the privileged-marker error", err)
 	}
 	// A name the dispatcher already holds is refused as a duplicate, even
 	// when the registry itself does not know it yet.
@@ -227,9 +227,9 @@ func TestRegisterSessionToolGuards(t *testing.T) {
 	}
 	defer d.Close()
 	freshReg := tools.NewRegistry()
-	err = registerSessionTool(d, freshReg, privilegedNamed{namedTool{name: "dup"}})
+	err = RegisterSessionTool(d, freshReg, privilegedNamed{namedTool{name: "dup"}})
 	if err == nil || !strings.Contains(err.Error(), "duplicate") {
-		t.Fatalf("registerSessionTool(duplicate dispatcher name) = %v, want a duplicate error", err)
+		t.Fatalf("RegisterSessionTool(duplicate dispatcher name) = %v, want a duplicate error", err)
 	}
 }
 

@@ -18,6 +18,24 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/usage"
 )
 
+// UnadmittedToolResult is returned by Options.UnadmittedToolHandler.
+type UnadmittedToolResult struct {
+	// Handled is false when the handler has no opinion on this tool name at
+	// all (not advertised, a hallucinated name); the caller falls through to
+	// its own generic "not available" denial. True for every other case.
+	Handled bool
+	// Ran is true when the tool was actually executed synchronously and
+	// Content is its real, successful result: the caller must render it
+	// exactly like an ordinary successful tool call - no "error: " prefix,
+	// no failed tool_end, no denial framing anywhere the model or the
+	// operator can see. False means Content is a human-readable denial
+	// reason instead (e.g. staged but could not run synchronously); the
+	// caller applies its own "error: " framing as before.
+	Ran bool
+	// Content is the tool's real result (Ran) or the denial text (!Ran).
+	Content string
+}
+
 // Options is one agent turn's immutable configuration. Every field is read,
 // never written, by the loop, so a turn keeps the settings it started with
 // even if the session changes underneath it.
@@ -105,12 +123,14 @@ type Options struct {
 	// It lets the host recognize a tool that IS advertised (plan
 	// tools-advertising/01: the wire tools[] array now includes every
 	// deferred candidate, not just admitted ones) but not yet admitted for
-	// execution, auto-stage it for publication at the next step boundary, and
-	// return a message explaining the call must be retried after that. False
-	// means the name is not recognized at all (a hallucinated tool), and the
-	// generic denial message is used. Nil disables the check. Must be safe
-	// for concurrent calls.
-	UnadmittedToolHandler func(ctx context.Context, name string) (string, bool)
+	// execution: auto-stage it for native publication at the next step
+	// boundary (so later calls in the turn need no special handling), AND
+	// serve THIS call synchronously against the full authorized tool set
+	// when possible, so the model never sees an error for a call it already
+	// made correctly. Handled=false means the name is not recognized at all
+	// (a hallucinated tool) and the caller falls through to the generic
+	// denial. Nil disables the check. Must be safe for concurrent calls.
+	UnadmittedToolHandler func(ctx context.Context, name string, args json.RawMessage) UnadmittedToolResult
 	// ApprovalGate is the synchronous user-approval bridge for tool calls.
 	// It is invoked by executeToolTask and by the SDK-path approval wrapper
 	// before Dispatcher.Invoke for any tool whose capability.Class >=

@@ -133,7 +133,10 @@ func (t *grepTool) executeGrep(ctx context.Context, args json.RawMessage) (strin
 		view = t.ignore.snapshot()
 	}
 	matches, errs, err := walkGrep(ctx, t.ws, root, re, in, t.maxMatches, t.maxBytes, t.secretPathExceptions, t.secretPathPatterns, view)
-	if err != nil && !errors.Is(err, errMaxMatches) && !errors.Is(err, errMaxBytes) && err != context.Canceled {
+	// A real cancellation (including plain context.Canceled) must discard
+	// matches/errs unread, never fall through: see walkFilteredFiles' doc
+	// comment for why.
+	if err != nil && !errors.Is(err, errMaxMatches) && !errors.Is(err, errMaxBytes) {
 		return "", err
 	}
 	// Apply pagination: offset and limit.
@@ -297,46 +300,76 @@ func walkGrep(ctx context.Context, ws *workspace.Root, root string, re *regexp.R
 // symlinks and other non-regular entries exactly as it did before this
 // traversal was extracted; requireRegular=false skips the check entirely and
 // visit receives a nil info.
+//
+// The walk itself races on a background goroutine against ctx.Done(), the
+// same escape hatch readFileWithContext uses (fs_guard.go): see the doc
+// comment on the goroutine below for why (a real, reported hang, not a
+// theoretical one) and its data-race implication for callers.
 func walkFilteredFiles(ctx context.Context, ws *workspace.Root, root, glob string, secretExceptions, secretPatterns []string, view ignoreView, requireRegular bool, errs *walkErrors, visit func(path, rel string, info os.FileInfo) error) error {
-	return filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			errs.add(path, walkErr)
-			return nil
-		}
-		if ctx != nil {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
+	walk := func() error {
+		return filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				errs.add(path, walkErr)
+				return nil
 			}
-		}
-		rel := ws.Rel(path)
-		if d.IsDir() {
-			// Do not skip the walk root even if it matches ignore (explicit path).
-			if path != root && view.ShouldIgnoreDir(d.Name(), rel) {
-				return filepath.SkipDir
+			if ctx != nil {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				default:
+				}
 			}
-			return nil
-		}
-		if view.ShouldIgnoreFile(d.Name(), rel) {
-			return nil
-		}
-		if glob != "" && !globMatchesCtx(ctx, glob, rel, d.Name()) {
-			return nil
-		}
-		if isSecretPath(rel, secretExceptions, secretPatterns) {
-			return nil
-		}
-		if !requireRegular {
-			return visit(path, rel, nil)
-		}
-		info, err := d.Info()
-		if err != nil || !info.Mode().IsRegular() {
-			errs.add(rel, fmt.Errorf("not a regular file"))
-			return nil
-		}
-		return visit(path, rel, info)
-	})
+			rel := ws.Rel(path)
+			if d.IsDir() {
+				// Do not skip the walk root even if it matches ignore (explicit path).
+				if path != root && view.ShouldIgnoreDir(d.Name(), rel) {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if view.ShouldIgnoreFile(d.Name(), rel) {
+				return nil
+			}
+			if glob != "" && !globMatchesCtx(ctx, glob, rel, d.Name()) {
+				return nil
+			}
+			if isSecretPath(rel, secretExceptions, secretPatterns) {
+				return nil
+			}
+			if !requireRegular {
+				return visit(path, rel, nil)
+			}
+			info, err := d.Info()
+			if err != nil || !info.Mode().IsRegular() {
+				errs.add(rel, fmt.Errorf("not a regular file"))
+				return nil
+			}
+			return visit(path, rel, info)
+		})
+	}
+	if ctx == nil {
+		return walk()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// A single stalled directory syscall (stale NFS/FUSE handle, a directory
+	// removed mid-walk) can block filepath.WalkDir forever with no way for
+	// ctx to interrupt it - a real, reported hang, not a theoretical one.
+	// Racing on a goroutine cannot kill that stuck call (Go has no
+	// primitive for it), but frees the caller the moment ctx cancels. The
+	// walk goroutine is then abandoned, not killed: it may keep running and
+	// keep calling visit/errs.add after this function has returned, so
+	// every caller MUST discard (never read) whatever they accumulated on
+	// a ctx.Done() return - see each caller's own comment for how.
+	done := make(chan error, 1)
+	go func() { done <- walk() }()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case err := <-done:
+		return err
+	}
 }
 
 type globTool struct {

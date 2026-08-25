@@ -246,15 +246,27 @@ func (d *dispatcherShim) DecodeArguments(raw []byte) (sdktools.InOut, error) {
 // armDispatcherTimeout resolves the per-call timeout like
 // prepareToolTasks (capability timeout, else Options default, a larger
 // model request clamped to the run deadline) and narrows ctx under it.
-// The clock starts here because the SDK runs calls one at a time. A
-// zero resolution leaves ctx untouched.
+// The clock starts here because the SDK runs calls one at a time.
+//
+// resolveToolCallTimeout always returns a positive budget (it floors on
+// DefaultToolTimeout), so callTimeout starts strictly positive. A
+// model-requested extension only ever raises it, and clampToDeadline
+// only ever tightens that raise to the parent ctx's remaining time - but
+// when the parent deadline has already passed, or is effectively now,
+// clampToDeadline's result can be <= 0. That must NOT disable the
+// per-call bound entirely (leaving ctx unnarrowed lets a stuck syscall
+// hang forever, past every turn deadline - the exact failure the walk
+// goroutine race in walkFilteredFiles exists to escape, and it has
+// nothing to race against if ctx never gets a deadline in the first
+// place). Falling back to the original resolved budget instead keeps
+// every tool call bounded no matter what the request or the parent
+// deadline look like.
 func armDispatcherTimeout(ctx context.Context, opts Options, args []byte, capability tools.Capability) (context.Context, context.CancelFunc, time.Duration) {
 	callTimeout := resolveToolCallTimeout(opts.ToolTimeout, capability.Timeout)
 	if requested := requestedToolTimeout(args); requested > callTimeout {
-		callTimeout = clampToDeadline(ctx, requested)
-	}
-	if callTimeout <= 0 {
-		return ctx, func() {}, 0
+		if clamped := clampToDeadline(ctx, requested); clamped > 0 {
+			callTimeout = clamped
+		}
 	}
 	narrowed, cancel := context.WithTimeout(ctx, callTimeout)
 	return narrowed, cancel, callTimeout

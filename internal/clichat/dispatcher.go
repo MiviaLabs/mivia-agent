@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/composition"
@@ -144,7 +143,7 @@ func newSessionDispatcherCore(opts SessionDispatcherOpts, repo ledger.LedgerRepo
 			return nil, err
 		}
 	}
-	if err := registerDelegationTools(d, opts.Registry, opts.Config, opts.SkillReg, repo, opts.AgentRegistry, opts.ProviderName, opts.Model); err != nil {
+	if err := registerDelegationTools(d, opts.Registry, opts.Config, repo); err != nil {
 		return nil, err
 	}
 	if err := cliorchestrate.RegisterOrchestrationTools(d, opts.Registry, opts.Config, repo, opts.SkillReg, opts.AgentRegistry, opts.ProviderName, opts.Model); err != nil {
@@ -190,7 +189,7 @@ func registerLoadToolsTool(d *runtime.Dispatcher, opts SessionDispatcherOpts) er
 	if opts.Session == nil {
 		return fmt.Errorf("deferred tools configured without a session to stage against")
 	}
-	return registerSessionTool(d, opts.Registry, cliagents.NewLoadToolsTool(opts.Session, opts.DeferredTools))
+	return cliagents.RegisterSessionTool(d, opts.Registry, cliagents.NewLoadToolsTool(opts.Session, opts.DeferredTools))
 }
 
 func sessionOutputCeiling(opts SessionDispatcherOpts) *int {
@@ -227,31 +226,8 @@ func sessionDialFor(opts SessionDispatcherOpts) sessionDial {
 	return sessionDial{static: sessionReasoning(opts), live: opts.Reasoning}
 }
 
-func registerDelegationTools(d *runtime.Dispatcher, reg *tools.Registry, cfg config.SubagentConfig, skillReg *skills.Registry, repo ledger.LedgerRepository, agentReg *agents.AgentRegistry, providerName, model string) error {
+func registerDelegationTools(d *runtime.Dispatcher, reg *tools.Registry, cfg config.SubagentConfig, repo ledger.LedgerRepository) error {
 	// Register on both the model-visible registry and the dispatcher snapshot.
 	delegate := &delegateTool{dispatcher: d, cfg: cfg, repo: repo}
-	dispatchTasks := cliorchestrate.NewDispatchTasksTool(d, cfg, skillReg, repo, agentReg, providerName, model)
-	if err := registerSessionTool(d, reg, delegate); err != nil {
-		return err
-	}
-	return registerSessionTool(d, reg, dispatchTasks)
-}
-
-// registerSessionTool is the single entry point for session-control tools.
-// Sub-agent registries exclude such tools by the tools.PrivilegedTool marker,
-// which is a runtime assertion - so an unmarked control tool would silently
-// become callable from a nested agent. Rejecting it here fails at startup
-// instead.
-func registerSessionTool(d *runtime.Dispatcher, reg *tools.Registry, tool tools.Tool) error {
-	if _, privileged := tool.(tools.PrivilegedTool); !privileged {
-		return fmt.Errorf("session tool %q must implement tools.PrivilegedTool", tool.Name())
-	}
-	if _, exists := reg.Get(tool.Name()); exists {
-		return fmt.Errorf("session tool %q already registered", tool.Name())
-	}
-	if err := d.RegisterTool(reg, tool); err != nil {
-		return fmt.Errorf("register session tool %q: %w", tool.Name(), err)
-	}
-	reg.Register(tool)
-	return nil
+	return cliagents.RegisterSessionTool(d, reg, delegate)
 }

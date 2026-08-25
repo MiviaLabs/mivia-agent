@@ -58,13 +58,17 @@ func TestModelsBadges_ActiveAndDefault(t *testing.T) {
 	s, _ := newHarnessScreen(t, 100, 30)
 	view := ansi.Strip(modelsSectionOf(s).View())
 
-	// Seed openrouter has claude-opus-5 as active and default
-	if !strings.Contains(view, "active, default") {
-		t.Errorf("expected view to contain 'active, default' badge, got:\n%s", view)
+	// Seed openrouter has claude-opus-5 as active and default. The badge
+	// reads "provider default", not bare "default" (see models_detail.go's
+	// defaultLabel doc comment): a bare "default" next to several
+	// providers' own model rows would read as one overall default,
+	// when default_model is actually independent per provider.
+	if !strings.Contains(view, "active, provider default") {
+		t.Errorf("expected view to contain 'active, provider default' badge, got:\n%s", view)
 	}
 	// Seed ollama has llama3.1 as default (not active)
-	if !strings.Contains(view, "default") {
-		t.Errorf("expected view to contain 'default' badge, got:\n%s", view)
+	if !strings.Contains(view, "provider default") {
+		t.Errorf("expected view to contain 'provider default' badge, got:\n%s", view)
 	}
 }
 
@@ -84,18 +88,56 @@ func TestModelsNeverRendersAKeyValue(t *testing.T) {
 	}
 }
 
+// TestStartsNextSessionBadge_ShadowedProviderOwnsItOnProjectRow pins the
+// answer to "which model loads when I next start mivia here": exactly
+// one row in the whole screen must carry "starts next session", and it
+// must be the row whose OWN scope owns EffectiveDefaultModel - the
+// Project row when a project override shadows the Global default, not
+// the (now-shadowed) Global row, even though the Global row is also
+// under the Active provider and also satisfies isDefault for its own
+// (shadowed) value.
+func TestStartsNextSessionBadge_ShadowedProviderOwnsItOnProjectRow(t *testing.T) {
+	s, _ := newHarnessScreen(t, 100, 30)
+	sec := modelsSectionOf(s)
+	sec.SetTheme(loadTheme(t), theme.TierTrueColor)
+
+	models := []ports.ModelView{{Name: "model-a", ContextWindowTokens: 128_000}, {Name: "model-b", ContextWindowTokens: 128_000}}
+	global := ports.ProviderView{
+		Name: "shadowed-provider", Active: true, Selectable: true,
+		ActiveModel: "model-a", DefaultModel: "model-a",
+		Models: models, Scope: ports.ScopeUser,
+		HasProjectOverride: true, EffectiveDefaultModel: "model-b",
+	}
+	project := global
+	project.DefaultModel = "model-b"
+	project.Scope = ports.ScopeProject
+
+	globalRow := ansi.Strip(strings.Join(sec.renderModelCells(global, models[0]), " "))
+	projectRow := ansi.Strip(strings.Join(sec.renderModelCells(project, models[1]), " "))
+
+	if strings.Contains(globalRow, "starts next session") {
+		t.Errorf("shadowed Global row must NOT claim 'starts next session':\n%s", globalRow)
+	}
+	if !strings.Contains(projectRow, "starts next session") {
+		t.Errorf("Project row owning the effective default must say 'starts next session':\n%s", projectRow)
+	}
+}
+
 func TestActivatingAModelUpdatesTheStore(t *testing.T) {
 	s, h := newHarnessScreen(t, 100, 30)
 	s = focusModels(t, s)
 
-	// Row 0 is the openrouter provider header; row 1 is its first
-	// model (openrouter's default per seedProviders is already
-	// active - move down once more to target its SECOND model).
+	// Entering the section lands the cursor on the first selectable row,
+	// which the group-header skip in moveCursor/rebuild places on the
+	// openrouter provider row (row 0 is now the "Global" group header,
+	// not a cursor stop). One down reaches its first model
+	// (anthropic/claude-opus-5, already active+default per seedProviders);
+	// a second down reaches its SECOND model, the target of this test.
 	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	s = next.(Screen)
 	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	s = next.(Screen)
-	if got := modelsSectionOf(s).rows[modelsSectionOf(s).cursor]; got.isProvider || got.model.Name != "openai/gpt-5" {
+	if got := modelsSectionOf(s).rows[modelsSectionOf(s).cursor]; got.kind != modelsRowModel || got.model.Name != "openai/gpt-5" {
 		t.Fatalf("cursor is on %+v, want the openai/gpt-5 row", got)
 	}
 
@@ -117,8 +159,10 @@ func TestActivatingAModelUpdatesTheStore(t *testing.T) {
 func TestActivatingAProviderHeaderIsRejectedWithANotice(t *testing.T) {
 	s, _ := newHarnessScreen(t, 100, 30)
 	s = focusModels(t, s)
-	if got := modelsSectionOf(s).rows[0]; !got.isProvider {
-		t.Fatal("row 0 is not a provider header")
+	// The section lands the cursor on the first provider row by default
+	// (row 0 is the "Global" group header, never a cursor stop).
+	if got := modelsSectionOf(s).rows[modelsSectionOf(s).cursor]; got.kind != modelsRowProvider {
+		t.Fatalf("cursor is on %+v, want a provider row", got)
 	}
 	next, cmd := s.Update(tea.KeyPressMsg{Text: " ", Code: ' '})
 	s = next.(Screen)
@@ -134,12 +178,14 @@ func TestSetDefaultModelUpdatesTheStore(t *testing.T) {
 	s, h := newHarnessScreen(t, 100, 30)
 	s = focusModels(t, s)
 
-	// Move cursor to openai/gpt-5 under openrouter (row 2)
+	// Move cursor to openai/gpt-5 under openrouter (two downs from the
+	// default provider-row cursor position, same as
+	// TestActivatingAModelUpdatesTheStore).
 	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	s = next.(Screen)
 	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	s = next.(Screen)
-	if got := modelsSectionOf(s).rows[modelsSectionOf(s).cursor]; got.isProvider || got.model.Name != "openai/gpt-5" {
+	if got := modelsSectionOf(s).rows[modelsSectionOf(s).cursor]; got.kind != modelsRowModel || got.model.Name != "openai/gpt-5" {
 		t.Fatalf("cursor is on %+v, want the openai/gpt-5 row", got)
 	}
 
@@ -161,8 +207,8 @@ func TestSetDefaultModelUpdatesTheStore(t *testing.T) {
 func TestSetDefaultOnProviderHeaderIsRejectedWithANotice(t *testing.T) {
 	s, _ := newHarnessScreen(t, 100, 30)
 	s = focusModels(t, s)
-	if got := modelsSectionOf(s).rows[0]; !got.isProvider {
-		t.Fatal("row 0 is not a provider header")
+	if got := modelsSectionOf(s).rows[modelsSectionOf(s).cursor]; got.kind != modelsRowProvider {
+		t.Fatalf("cursor is on %+v, want a provider row", got)
 	}
 	next, cmd := s.Update(tea.KeyPressMsg{Text: "d", Code: 'd'})
 	s = next.(Screen)
@@ -179,7 +225,7 @@ func TestRemovingAModelUpdatesTheStore(t *testing.T) {
 	s = focusModels(t, s)
 	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	s = next.(Screen)
-	if got := modelsSectionOf(s).rows[modelsSectionOf(s).cursor]; got.isProvider {
+	if got := modelsSectionOf(s).rows[modelsSectionOf(s).cursor]; got.kind != modelsRowModel {
 		t.Fatal("expected the cursor on a model row")
 	}
 	target := modelsSectionOf(s).rows[modelsSectionOf(s).cursor]

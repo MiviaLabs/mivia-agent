@@ -127,12 +127,22 @@ const (
 	IDSettingsNew       ID = "settings-new"
 	IDSettingsDelete    ID = "settings-delete"
 	IDSettingsDefault   ID = "settings-default"
-	IDSettingsToggle    ID = "settings-toggle"
-	IDSettingsTrigger   ID = "settings-trigger"
-	IDSettingsFilter    ID = "settings-filter"
-	IDSettingsReveal    ID = "settings-reveal"
-	IDSettingsBack      ID = "settings-back"
-	IDSettingsHelp      ID = "settings-help"
+	// IDSettingsProjectDefault and IDSettingsClearOverride are Models-only
+	// (docs/design/settings-screen.md): a provider's default_model can be
+	// set independently at Global and Project scope (internal/config.
+	// LoadProviderDefaultOverrides), so "set as default" (d, whichever
+	// scope the focused row IS) is not enough to also let a Global row
+	// create a project override, or a Project row's override be
+	// cleared back to the Global value. Harmless no-op on every other
+	// section, the same tolerance IDSettingsTrigger already has.
+	IDSettingsProjectDefault ID = "settings-project-default"
+	IDSettingsClearOverride  ID = "settings-clear-override"
+	IDSettingsToggle         ID = "settings-toggle"
+	IDSettingsTrigger        ID = "settings-trigger"
+	IDSettingsFilter         ID = "settings-filter"
+	IDSettingsReveal         ID = "settings-reveal"
+	IDSettingsBack           ID = "settings-back"
+	IDSettingsHelp           ID = "settings-help"
 
 	// Blackboard & agent messaging center.
 	IDBlackboardDialog ID = "blackboard-dialog"
@@ -247,6 +257,8 @@ func settingsBindings() []Binding {
 		{ID: IDSettingsNew, Context: ContextSettings, Keys: []string{"n"}, Help: "new", Short: "new"},
 		{ID: IDSettingsDelete, Context: ContextSettings, Keys: []string{"x"}, Help: "delete", Short: "delete"},
 		{ID: IDSettingsDefault, Context: ContextSettings, Keys: []string{"d"}, Help: "set as default model", Short: "default"},
+		{ID: IDSettingsProjectDefault, Context: ContextSettings, Keys: []string{"p"}, Help: "make default for this project", Short: "project default"},
+		{ID: IDSettingsClearOverride, Context: ContextSettings, Keys: []string{"c"}, Help: "clear this project's default override", Short: "clear override"},
 		{ID: IDSettingsToggle, Context: ContextSettings, Keys: []string{"space"}, Help: "toggle enabled"},
 		// Automations-only today: fires a manual run and opens a live
 		// watch on it. Harmless no-op on any other section (their

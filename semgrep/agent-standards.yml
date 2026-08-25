@@ -389,10 +389,9 @@ rules:
     languages:
       - go
     severity: ERROR
-    message: mivia-ui is self-contained on mocks and must not import the CLI or the real harness. See docs/design/ui-isolation.md.
+    message: UI packages are self-contained and must not import the CLI or the real harness. See docs/design/ui-isolation.md.
     paths:
       include:
-        - /cmd/mivia-ui/**/*.go
         - /cmd/mivia-ui-demo/**/*.go
         - /internal/ui/**/*.go
         - /internal/uikit/**/*.go

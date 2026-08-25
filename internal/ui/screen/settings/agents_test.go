@@ -70,7 +70,7 @@ func TestRemovingAnAgentUpdatesTheStore(t *testing.T) {
 }
 
 // TestRemovingTheDefaultAgentFailsAndKeepsIt exercises the fake's own
-// guard (demoharness/settings_agents.go) end to end through the
+// guard (mockSettings) end to end through the
 // section: the default agent cannot be removed, and the failure must
 // surface as a notice, not silently vanish it from the list.
 func TestRemovingTheDefaultAgentFailsAndKeepsIt(t *testing.T) {

@@ -21,9 +21,10 @@ func NewZAI(opts Options) (Completer, error) {
 		base = descriptor.DefaultURL
 	}
 	return NewOpenAICompatWithOptions(CompatOptions{
-		Name:    "zai",
-		BaseURL: base,
-		APIKey:  opts.APIKey,
+		Name:        "zai",
+		BaseURL:     base,
+		APIKey:      opts.APIKey,
+		DialContext: opts.DialContext,
 		ExtraHeaders: map[string]string{
 			"Accept-Language": "en-US,en",
 		},

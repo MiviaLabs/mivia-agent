@@ -90,7 +90,15 @@ func (e *inspectEngine) run(ctx context.Context, scopes []inspectScope) ([]inspe
 			}
 		})
 		if walkErr != nil && (errors.Is(walkErr, context.Canceled) || errors.Is(walkErr, context.DeadlineExceeded)) {
-			return collected, truncated, reason, walkErr
+			// Do not return collected here: on a real cancellation reached
+			// via walkFilteredFiles' own goroutine-abandon path (a stuck
+			// syscall, not the cooperative per-file check above), the walk
+			// goroutine is still running and may still be appending to
+			// collected through scanFileMatches - reading it concurrently
+			// would race. glob/grep's callers apply the same discipline
+			// (discard partial results on real cancellation, keep them
+			// only for the errMaxBytes/errMaxMatches stop sentinels).
+			return nil, truncated, reason, walkErr
 		}
 		if errs.count() >= errs.maxErrs {
 			cappedScopes++

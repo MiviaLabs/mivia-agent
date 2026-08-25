@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
@@ -435,21 +436,22 @@ func (t *inspectAgentTool) Capability(args json.RawMessage) tools.Capability {
 // Registration helper
 // ---------------------------------------------------------------------------
 
-// RegisterOrchestrationTools registers the orchestration tools (spawn_agent,
-// inspect_agent, join_run, cancel_run) on both the model-visible registry and
-// the runtime dispatcher. It is called from NewSessionDispatcher.
+// RegisterOrchestrationTools registers the orchestration tools (dispatch_tasks,
+// spawn_agent, inspect_agent, join_run, cancel_run) on both the model-visible
+// registry and the runtime dispatcher. It is called from NewSessionDispatcher.
+// dispatch_tasks is registered first: session_tool_catalog.go documents that
+// the resulting wire order is load-cache-stability-sensitive for
+// OpenAI-compatible providers, so this order must not change.
 func RegisterOrchestrationTools(d *runtime.Dispatcher, reg *tools.Registry, cfg config.SubagentConfig, repo ledger.LedgerRepository, skillReg *skills.Registry, agentReg *agents.AgentRegistry, providerName, model string) error {
-	if SessionToolRegister == nil {
-		return fmt.Errorf("RegisterOrchestrationTools: SessionToolRegister seam not wired")
-	}
 	toolSet := []tools.Tool{
+		&dispatchTasksTool{dispatcher: d, cfg: cfg, skillReg: skillReg, repo: repo, agentReg: agentReg, providerName: providerName, model: model},
 		&spawnAgentTool{dispatcher: d, cfg: cfg, repo: repo, skillReg: skillReg, agentReg: agentReg, providerName: providerName, model: model},
 		&inspectAgentTool{dispatcher: d, cfg: cfg, repo: repo},
 		&joinRunTool{dispatcher: d, cfg: cfg, repo: repo},
 		&cancelRunTool{dispatcher: d, cfg: cfg, repo: repo},
 	}
 	for _, t := range toolSet {
-		if err := SessionToolRegister(d, reg, t); err != nil {
+		if err := cliagents.RegisterSessionTool(d, reg, t); err != nil {
 			return err
 		}
 	}

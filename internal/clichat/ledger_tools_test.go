@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"strings"
 	"testing"
@@ -590,10 +591,10 @@ func TestLedgerToolsAreUnprivilegedAndReachSubAgents(t *testing.T) {
 			t.Fatalf("%s is on the sub-agent denylist", name)
 		}
 	}
-	// registerSessionTool must keep rejecting unprivileged tools; these two
-	// deliberately go through registerLedgerTools instead.
-	if err := registerSessionTool(dispatcher, tools.NewRegistry(), &ledgerReadTool{}); err == nil {
-		t.Fatal("registerSessionTool accepted an unprivileged tool")
+	// cliagents.RegisterSessionTool must keep rejecting unprivileged tools; these
+	// two deliberately go through registerLedgerTools instead.
+	if err := cliagents.RegisterSessionTool(dispatcher, tools.NewRegistry(), &ledgerReadTool{}); err == nil {
+		t.Fatal("cliagents.RegisterSessionTool accepted an unprivileged tool")
 	}
 	// Re-registering must fail rather than shadow an existing name.
 	if _, err := registerLedgerTools(dispatcher, reg, ledger.NewMemoryLedgerRepository(), 0, nil); err == nil {

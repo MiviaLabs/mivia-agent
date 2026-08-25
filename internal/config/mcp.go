@@ -65,6 +65,23 @@ func LoadTrustedMCPConfig(workspaceRoot string) (MCPConfig, []string, error) {
 	return resolveMCPConfig(mergeMCPConfig(user, project))
 }
 
+// LoadScopeMCPServers loads user and project MCP server configurations separately without merging.
+func LoadScopeMCPServers(userPath, projectPath string) (userServers, projectServers []MCPServerConfig, err error) {
+	if userPath != "" {
+		u, err := loadMCPConfigPath(userPath)
+		if err == nil && u.Servers != nil {
+			userServers = u.Servers
+		}
+	}
+	if projectPath != "" && !sameFilePath(userPath, projectPath) {
+		p, err := loadMCPConfigPath(projectPath)
+		if err == nil && p.Servers != nil {
+			projectServers = p.Servers
+		}
+	}
+	return userServers, projectServers, nil
+}
+
 func resolveMCPConfig(input mcpConfigInput) (MCPConfig, []string, error) {
 	resolved := input.resolve(MCPConfig{})
 	if err := validateResolvedMCPConfig(resolved); err != nil {

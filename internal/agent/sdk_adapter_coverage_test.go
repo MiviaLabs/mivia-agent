@@ -427,6 +427,29 @@ func TestDispatcherShimCallTimeoutClampsToDeadline(t *testing.T) {
 	// line 111 (callTimeout > 0) ran; successful or errored.
 }
 
+// TestArmDispatcherTimeoutNeverDisablesBoundOnExpiredParentDeadline pins
+// the bug this test guards against: a model-requested timeout_seconds
+// that exceeds the resolved budget, clamped against an ALREADY-EXPIRED
+// parent deadline, used to make clampToDeadline return <= 0 -
+// and armDispatcherTimeout returned the ctx UN-narrowed in that case,
+// disabling the per-call timeout entirely instead of falling back to
+// the resolved budget. A tool call under that ctx could hang forever
+// on a stuck syscall with nothing to cancel it (the exact failure
+// walkFilteredFiles' ctx-race escape hatch depends on a deadline for).
+func TestArmDispatcherTimeoutNeverDisablesBoundOnExpiredParentDeadline(t *testing.T) {
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	args := json.RawMessage(`{"timeout_seconds":300}`)
+	narrowed, cancelTimeout, callTimeout := armDispatcherTimeout(ctx, Options{ToolTimeout: 50 * time.Millisecond}, args, tools.Capability{})
+	defer cancelTimeout()
+	if callTimeout <= 0 {
+		t.Fatalf("callTimeout = %v, want a positive fallback budget", callTimeout)
+	}
+	if _, ok := narrowed.Deadline(); !ok {
+		t.Fatal("narrowed ctx has no deadline; a stuck tool call under it can never be canceled")
+	}
+}
+
 // TestApplyDispatcherShimWrapsAllToolsAndRestoresOnConflict pins
 // shim:206-207 (the restore-failure path): pre-register a blocker
 // under the same name so wrap-and-add fails, and the unwrapped tool

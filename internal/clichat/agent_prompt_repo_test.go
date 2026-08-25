@@ -3,81 +3,22 @@ package clichat
 import (
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
-	"strings"
 	"testing"
-
-	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
 
-// Locks the product repo's default agent definition (.mivia/agents/mivia.toml):
-// orientation for agents working on mivia-itself - not a living status dump.
-//
-// See docs/development/agent-self-prompt.md
-
-var livingStateSmells = []struct {
-	name string
-	re   *regexp.Regexp
-}{
-	{"test count in parens", regexp.MustCompile(`\(\d+\+?\s*tests?\)`)},
-	{"NEW feature banner", regexp.MustCompile(`(?m)^#{1,3}\s*.*\bNEW\b`)},
-	{"Key Features section", regexp.MustCompile(`(?i)(?m)^#{1,3}\s*key features\b`)},
-	{"Packages inventory section", regexp.MustCompile(`(?i)(?m)^#{1,3}\s*packages\b`)},
-	{"What's implemented", regexp.MustCompile(`(?i)what'?s been implemented`)},
-	{"Next priorities", regexp.MustCompile(`(?i)next priorities`)},
-	{"All commits and what", regexp.MustCompile(`(?i)all commits and what`)},
-	{"130+ tests style", regexp.MustCompile(`\d+\+\s*tests`)},
-}
-
-func repoRoot(t *testing.T) string {
-	t.Helper()
+// This repo deliberately ships NO root-agent override: the dogfood workspace
+// runs on the same compiled fallback prompt (buildAgentPrompt) every user
+// gets, so drift between the two surfaces cannot exist.
+func TestRepoShipsNoRootAgentOverride(t *testing.T) {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("runtime.Caller failed")
 	}
-	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
-}
-
-func TestRepoMiviaAgentIsMetaOrientationNotState(t *testing.T) {
-	path := filepath.Join(repoRoot(t), ".agents", "agents", "mivia.md")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v (this repo must ship the default mivia agent)", path, err)
-	}
-	spec, name, err := config.ParseAgentFileMarkdown(data, "mivia.md")
-	if err != nil {
-		t.Fatalf("parse mivia agent: %v", err)
-	}
-	if name != "mivia" {
-		t.Fatalf("name = %q", name)
-	}
-	if spec.SystemPrompt == nil || strings.TrimSpace(*spec.SystemPrompt) == "" {
-		t.Fatal("mivia agent must define system_prompt")
-	}
-	content := *spec.SystemPrompt
-	lower := strings.ToLower(content)
-
-	needles := []string{
-		"orchestrator",
-		"model-facing",
-		"language-generic",
-		"adlc",
-	}
-	for _, n := range needles {
-		if !strings.Contains(lower, n) {
-			t.Fatalf(".mivia/agents/mivia.toml missing orientation cue %q", n)
-		}
-	}
-
-	var bad []string
-	for _, s := range livingStateSmells {
-		if s.re.MatchString(content) {
-			bad = append(bad, s.name)
-		}
-	}
-	if len(bad) > 0 {
-		t.Fatalf("mivia agent prompt must not hold living project state (got smells: %s)", strings.Join(bad, ", "))
+	root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
+	path := filepath.Join(root, ".agents", "agents", "mivia.md")
+	if _, err := os.Stat(path); err == nil {
+		t.Fatalf("%s exists: this repo must not override the compiled root prompt - keep dogfooding the shipped fallback", path)
 	}
 }
 

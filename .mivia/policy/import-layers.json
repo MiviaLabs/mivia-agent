@@ -11,24 +11,8 @@
   "allow": {
     "cmd/mivia": [
       "internal/cli",
-      "internal/version",
-      "internal/newtui"
-    ],
-    "cmd/mivia-ui": [
-      "internal/config",
-      "internal/provider",
-      "internal/ui/app",
-      "internal/ui/component/composer",
-      "internal/ui/jsonout",
-      "internal/ui/screen/conversation",
-      "internal/ui/stream",
-      "internal/ui/theme",
-      "internal/uiadapter",
-      "internal/uikit/config",
-      "internal/uikit/demoharness",
-      "internal/uikit/termprobe",
-      "internal/workspace",
-      "internal/uikit/uievent"
+      "internal/newtui",
+      "internal/version"
     ],
     "cmd/mivia-ui-demo": [
       "internal/ui/jsonout",
@@ -140,7 +124,6 @@
       "internal/ledger",
       "internal/mcp",
       "internal/memory",
-      "internal/prompts",
       "internal/provider",
       "internal/reasoning",
       "internal/redact",
@@ -275,6 +258,16 @@
     "internal/miviaauth": [
       "internal/config"
     ],
+    "internal/newtui": [
+      "internal/agent",
+      "internal/chat",
+      "internal/cli",
+      "internal/config",
+      "internal/ui/app",
+      "internal/ui/screen/conversation",
+      "internal/ui/theme",
+      "internal/uiadapter"
+    ],
     "internal/provider": [
       "internal/config",
       "internal/providerregistry",
@@ -290,7 +283,6 @@
     ],
     "internal/sdkadapter": [
       "internal/hooks",
-      "internal/ledger",
       "internal/provider",
       "internal/reasoning",
       "internal/skills",
@@ -381,6 +373,7 @@
       "internal/uikit/ports"
     ],
     "internal/ui/component/transcript": [
+      "internal/remainder",
       "internal/ui/render",
       "internal/ui/theme",
       "internal/uikit/config",
@@ -454,7 +447,6 @@
     ],
     "internal/uiadapter": [
       "internal/agent",
-      "internal/agents",
       "internal/chat",
       "internal/cliagents",
       "internal/composition",
@@ -474,13 +466,6 @@
       "internal/uikit/ports",
       "internal/uikit/uievent",
       "internal/workspace"
-    ],
-
-    "internal/uikit/demoharness": [
-      "internal/uikit/config",
-      "internal/uikit/intent",
-      "internal/uikit/ports",
-      "internal/uikit/uievent"
     ],
     "internal/uikit/ports": [
       "internal/uikit/intent",
@@ -552,16 +537,6 @@
       "internal/workflows/delivery",
       "internal/workflows/ledger",
       "internal/workspace"
-    ],
-    "internal/newtui": [
-      "internal/agent",
-      "internal/chat",
-      "internal/cli",
-      "internal/config",
-      "internal/ui/app",
-      "internal/ui/screen/conversation",
-      "internal/ui/theme",
-      "internal/uiadapter"
     ]
   }
 }

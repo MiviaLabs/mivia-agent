@@ -59,9 +59,6 @@ var MessagingDisallowed = messagingDisallowed
 // ParseStackPlanOutput is the exported alias for the parseStackPlanOutput function, for seam wiring.
 var ParseStackPlanOutput = parseStackPlanOutput
 
-// RegisterSessionTool is the exported alias for the registerSessionTool function, for seam wiring.
-var RegisterSessionTool = registerSessionTool
-
 // SeedStackLedger is the exported alias for the seedStackLedger function, for seam wiring.
 var SeedStackLedger = seedStackLedger
 

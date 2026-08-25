@@ -53,6 +53,22 @@ func userPath(name string) string {
 	return workspace.NamespacePath(home, name)
 }
 
+// ProjectConfigPath returns workspaceRoot's own .mivia/mivia.toml path
+// without checking the filesystem, mirroring UserConfigPath's shape for
+// the project layer. Empty workspaceRoot returns "" - there is no
+// project-scoped config to address without a workspace. Callers writing
+// a project-scoped override must additionally check this path differs
+// from whatever base config path is in play (see loadFile's own
+// workspaceOverlayConfigPath guard): when they are the same file, "the
+// project layer" is not a distinct target and treating it as one would
+// silently read a value back as its own override.
+func ProjectConfigPath(workspaceRoot string) string {
+	if strings.TrimSpace(workspaceRoot) == "" {
+		return ""
+	}
+	return workspace.NamespacePath(workspaceRoot, "mivia.toml")
+}
+
 // DefaultConfigCandidates returns config paths in search order.
 func DefaultConfigCandidates() []string {
 	var out []string

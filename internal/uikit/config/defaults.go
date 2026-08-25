@@ -114,33 +114,6 @@ const (
 // need reading before approval.
 const ApprovalDiffPreviewLines = 10
 
-// DemoScenarioPace is the delay between streamed events the demo
-// harness (internal/uikit/demoharness) sends for one turn. It exists so
-// `mivia-ui --demo` shows a readable stream instead of an instant dump,
-// which is what makes the repaint clock and the paused-scroll counter
-// (rule 6.7) observable in a live run. Tests pass 0 to replay as fast
-// as possible.
-const DemoScenarioPace = 45 * time.Millisecond
-
-// DemoCancelFlushTimeout bounds how long the demo harness
-// (internal/uikit/demoharness) waits to deliver the final
-// TurnEndBody{Reason:"cancelled"} event after Cancel. A caller that
-// keeps reading TurnHandle.Events() until it closes (every documented
-// ports.TurnHandle consumer does) receives the event well inside this
-// bound; it exists only so a caller that stops reading early cannot
-// leak the playback goroutine forever.
-const DemoCancelFlushTimeout = 1 * time.Second
-
-// DemoPendingApprovalBuffer bounds how many unresolved approval
-// requests the demo harness (internal/uikit/demoharness) queues on
-// Pending() before a publish blocks. The shipped conversation.Screen
-// wiring reads approval state straight off the tool.pending event on
-// Events(), not off Pending(), so nothing drains Pending() today; the
-// buffer is what lets a publish always succeed without a reader
-// present. 8 is comfortably above the one concurrent approval any
-// scripted scenario raises.
-const DemoPendingApprovalBuffer = 8
-
 // CockpitScrollLines is how many rows one mouse-wheel notch scrolls.
 //
 // Terminals disagree: some send one event per physical notch and some

@@ -220,6 +220,11 @@ func scopeAttachedToolSurface(sess *chat.Session, ctx agentSessionContext, state
 	// tools so switching to a wider agent can regain them.
 	if state != nil {
 		state.ToolBase = sess.Tools.Clone()
+		// A closure, not a snapshot: state.ToolBase can be replaced later
+		// (agent/model switch), and UnadmittedToolHandler (session_turn_surface.go)
+		// must always read the CURRENT full tool set to serve a deferred call
+		// synchronously.
+		sess.ToolBaseResolver = func() *tools.Registry { return state.ToolBase }
 	}
 	plan := cliagents.PlanToolTiers(sess.Tools, ctx.Selected, routing.Resolved)
 	if state != nil {
