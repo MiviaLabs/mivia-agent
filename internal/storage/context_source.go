@@ -24,7 +24,7 @@ func (s *SQLite) appendSourceEvents(ctx context.Context, principal contextstate.
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return err
 	}

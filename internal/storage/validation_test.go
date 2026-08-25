@@ -260,8 +260,16 @@ func TestSQLite_DiskPressureReturnsErrorWithoutSilentLoss(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if _, err := s.db.Exec(`PRAGMA max_page_count=32`); err != nil {
-		t.Fatal(err)
+	// max_page_count is per-connection, so the bound must be set on every
+	// connection that can write. Appends run on the immediate-txlock write
+	// pool (see beginWrite); pin it to one connection so the single Exec
+	// below bounds the connection the appends actually use.
+	s.writeDB.SetMaxOpenConns(1)
+	s.writeDB.SetMaxIdleConns(1)
+	for _, db := range []*sql.DB{s.db, s.writeDB} {
+		if _, err := db.Exec(`PRAGMA max_page_count=32`); err != nil {
+			t.Fatal(err)
+		}
 	}
 	var gotErr error
 	for i := 0; i < 1000; i++ {

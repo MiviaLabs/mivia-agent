@@ -62,7 +62,7 @@ func (s *SQLite) PruneOrphanedContent(ctx context.Context) (removed int, err err
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return 0, err
 	}

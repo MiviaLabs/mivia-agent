@@ -33,7 +33,7 @@ func (s *SQLite) ImportSource(ctx context.Context, principal contextstate.Princi
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return contextstate.ImportResult{}, err
 	}

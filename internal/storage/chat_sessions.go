@@ -424,7 +424,7 @@ func (s *SQLite) deleteSessionSnapshotRow(ctx context.Context, principal context
 // select another session owned by the same subject, so the operation is
 // scoped by the owner tuple rather than the current principal's session ID.
 func (s *SQLite) deleteCatalogContextSession(ctx context.Context, principal contextstate.Principal, sessionID string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return err
 	}
@@ -488,7 +488,7 @@ func (s *SQLite) PruneSessionSnapshots(ctx context.Context, principal contextsta
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return err
 	}

@@ -60,7 +60,7 @@ func (s *SQLite) TakeoverClaim(ctx context.Context, id, h string) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	return retrySQLiteBusy(ctx, func() error {
-		tx, err := s.db.BeginTx(ctx, nil)
+		tx, err := s.beginWrite(ctx)
 		if err != nil {
 			return fmt.Errorf("take over claim %q: %w", id, err)
 		}
@@ -96,7 +96,7 @@ func (s *SQLite) TakeoverClaimFenced(ctx context.Context, id, h string) (Claim, 
 	defer s.writeMu.Unlock()
 	var claim Claim
 	err := retrySQLiteBusy(ctx, func() error {
-		tx, err := s.db.BeginTx(ctx, nil)
+		tx, err := s.beginWrite(ctx)
 		if err != nil {
 			return fmt.Errorf("take over claim %q: %w", id, err)
 		}
@@ -181,7 +181,7 @@ func (s *SQLite) TakeoverExpiredClaimFenced(ctx context.Context, id, h string, m
 	defer s.writeMu.Unlock()
 	var claim Claim
 	err := retrySQLiteBusy(ctx, func() error {
-		tx, err := s.db.BeginTx(ctx, nil)
+		tx, err := s.beginWrite(ctx)
 		if err != nil {
 			return fmt.Errorf("take over expired claim %q: %w", id, err)
 		}
