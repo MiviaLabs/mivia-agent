@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -95,18 +96,78 @@ func (s *SQLite) PruneSessionCheckpoints(ctx context.Context, now time.Time, ret
 	return int(count), nil
 }
 
-// Compact reclaims the free pages a prune leaves behind. SQLite never shrinks
-// a database file on DELETE alone: the pages move to the freelist and the file
-// keeps its size until a VACUUM rewrites it. Retention without this is only a
-// bound on growth, not a reduction.
+// compactPageSize is the page size the rewrite adopts. The default 4096 is a
+// poor fit for this schema: checkpoint and payload blobs average several KiB,
+// and every byte past one page spills onto a chain of overflow pages. 8 KiB
+// keeps far more of a row on its own page while staying well inside the range
+// SQLite reads efficiently.
+const compactPageSize = 8192
+
+// Compact rewrites the database file. It does three things a running store
+// cannot do for itself:
 //
-// VACUUM cannot run inside a transaction and rewrites the whole file, so it
+//   - reclaims the pages a prune freed. SQLite moves deleted pages to the
+//     freelist and never shrinks the file on DELETE alone, so retention
+//     without this bounds growth without reducing size;
+//   - adopts compactPageSize, which is fixed when the file is created and can
+//     only change across a VACUUM;
+//   - switches auto_vacuum to INCREMENTAL, which needs the same full rebuild
+//     because it adds a pointer map to every page.
+//
+// All of it runs on one pinned connection: PRAGMA page_size and auto_vacuum
+// apply per connection, and a pooled VACUUM could otherwise land on a
+// different connection that never saw them. The store leaves WAL mode for the
+// rewrite, because SQLite refuses a page_size change in WAL, and returns to it
+// afterwards.
+//
+// VACUUM cannot run inside a transaction and rewrites the whole file, so this
 // belongs in an explicit maintenance command, never on the open path.
 func (s *SQLite) Compact(ctx context.Context) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	if _, err := s.db.ExecContext(ctx, `VACUUM`); err != nil {
-		return fmt.Errorf("vacuum store: %w", err)
+	// Leaving WAL mode needs every other connection to this file gone: each
+	// one holds a read mark, and SQLite answers PRAGMA journal_mode=DELETE
+	// with SQLITE_BUSY while any survives. Dropping both pools' idle limit to
+	// zero closes their cached connections; the limits are restored below.
+	s.db.SetMaxIdleConns(0)
+	if s.writeDB != nil {
+		s.writeDB.SetMaxIdleConns(0)
 	}
-	return nil
+	defer func() {
+		s.db.SetMaxIdleConns(8)
+		if s.writeDB != nil {
+			s.writeDB.SetMaxIdleConns(4)
+		}
+	}()
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("pin connection for compact: %w", err)
+	}
+	defer conn.Close()
+	var mode string
+	if err := conn.QueryRowContext(ctx, `PRAGMA journal_mode=DELETE`).Scan(&mode); err != nil {
+		return fmt.Errorf("leave WAL for compact: %w", err)
+	}
+	// From here the store is out of WAL mode, so every return path must put it
+	// back before reporting - a store left in DELETE mode would lose the
+	// concurrency the rest of this package assumes.
+	restoreWAL := func() error {
+		var back string
+		if err := conn.QueryRowContext(ctx, `PRAGMA journal_mode=WAL`).Scan(&back); err != nil {
+			return fmt.Errorf("restore WAL after compact: %w", err)
+		}
+		return nil
+	}
+	for _, pragma := range []string{
+		fmt.Sprintf(`PRAGMA page_size=%d`, compactPageSize),
+		`PRAGMA auto_vacuum=INCREMENTAL`,
+	} {
+		if _, err := conn.ExecContext(ctx, pragma); err != nil {
+			return errors.Join(fmt.Errorf("%s: %w", pragma, err), restoreWAL())
+		}
+	}
+	if _, err := conn.ExecContext(ctx, `VACUUM`); err != nil {
+		return errors.Join(fmt.Errorf("vacuum store: %w", err), restoreWAL())
+	}
+	return restoreWAL()
 }
