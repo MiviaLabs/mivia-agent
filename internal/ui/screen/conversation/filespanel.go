@@ -442,11 +442,7 @@ func (s Screen) transcriptHeight() int {
 // panelBodyRows is how many content rows the dialog can show at the
 // current size, for the offset's half-page steps and clamp.
 func (s Screen) panelBodyRows() int {
-	h := s.transcriptHeight()
-	if s.panelIsSplit() {
-		h = s.contentHeight()
-	}
-	return render.DialogNoBackdropBodyRows(h)
+	return render.DialogBodyRows(s.transcriptHeight())
 }
 
 // scrollPanel moves the dialog's body window by half a page, clamped to
@@ -454,11 +450,8 @@ func (s Screen) panelBodyRows() int {
 // go negative (a negative window reads as dead scroll keys).
 func (s *Screen) scrollPanel(dir int) {
 	s.panel.offset += dir * max(1, s.panelBodyRows()/2)
-	frameW := contentWidth(s.width)
-	if s.panelIsSplit() {
-		frameW, _ = render.SplitWidths(frameW)
-	}
-	bodyW := render.DialogNoBackdropBodyWidth(frameW)
+	dw, _ := s.dialogSize()
+	bodyW := render.DialogBodyWidth(dw)
 	rows := len(s.panel.contentRows(s.Theme, s.Tier, bodyW))
 	if max := rows - s.panelBodyRows(); max >= 0 {
 		s.panel.offset = min(s.panel.offset, max)

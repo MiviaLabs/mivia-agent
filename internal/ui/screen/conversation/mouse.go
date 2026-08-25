@@ -119,37 +119,25 @@ func (s Screen) handleModalClick(x, y, topGutter int) (Screen, tea.Cmd, bool) {
 		s.overlay = ""
 		return s, tea.ClearScreen, true
 	}
-	if s.panel.dialog {
-		dw, dh := s.chatWidth(), s.transcriptHeight()
-		localX, localY := x-1, y-(topGutter+s.topbar.Height()+1)
-		if s.panelIsSplit() {
-			dh = s.contentHeight()
-			localY = y - topGutter
-			if localX >= dw {
-				scr, cmd := s.handleNavClick(localY)
-				if conv, ok := scr.(Screen); ok {
-					return conv, cmd, true
-				}
-				return s, cmd, true
-			}
-		}
-		if render.DialogNoBackdropHitsClose(dw, dh, localX, localY) {
-			s.panel.dialog = false
-			s.panel.dialogAgent = ""
-			return s, tea.ClearScreen, true
-		}
-		return s, nil, true
-	}
-	if s.modelPicker != nil || s.agentPicker != nil || s.sessionPicker != nil || s.palettePicker != nil || s.effortPicker != nil {
-		dw, dh := s.chatWidth(), s.transcriptHeight()
+	if s.modelPicker != nil || s.agentPicker != nil || s.sessionPicker != nil || s.palettePicker != nil || s.effortPicker != nil || s.panel.dialog {
+		dw, dh := s.dialogSize()
 		transcriptTop := topGutter + s.topbar.Height() + 1
 		localX, localY := x-1, y-transcriptTop
+		if s.panelIsSplit() && localX >= dw {
+			scr, cmd := s.handleNavClick(y - topGutter)
+			if conv, ok := scr.(Screen); ok {
+				return conv, cmd, true
+			}
+			return s, cmd, true
+		}
 		if render.DialogHitsClose(dw, dh, 10, localX, localY) || render.DialogHitsBackdrop(dw, dh, 10, localX, localY) {
 			s.modelPicker = nil
 			s.agentPicker = nil
 			s.sessionPicker = nil
 			s.palettePicker = nil
 			s.effortPicker = nil
+			s.panel.dialog = false
+			s.panel.dialogAgent = ""
 			return s, tea.ClearScreen, true
 		}
 		return s, nil, true

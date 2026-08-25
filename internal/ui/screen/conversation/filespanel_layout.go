@@ -155,13 +155,11 @@ func (s Screen) panelRows(inner, maxRows int) []string {
 // falls back to the step log the progress events carried. File entries
 // show their windowed diff or source as before.
 func (s Screen) dialogParts() (title, body, hint string) {
+	dw, _ := s.dialogSize()
+	bodyW := render.DialogBodyWidth(dw)
 	if s.panel.dialogAgent != "" {
 		if s.thread != nil && s.threadID == s.panel.dialogAgent {
-			frameW := contentWidth(s.width)
-			if s.panelIsSplit() {
-				frameW, _ = render.SplitWidths(frameW)
-			}
-			s.thread.setSurface(render.DialogNoBackdropBodyWidth(frameW), s.panelBodyRows())
+			s.thread.setSurface(bodyW, s.panelBodyRows())
 			title = "subagent: " + s.panel.dialogAgent
 			return title, s.thread.View(), "esc close"
 		}
@@ -178,11 +176,6 @@ func (s Screen) dialogParts() (title, body, hint string) {
 	if e, ok := s.panel.selected(); ok {
 		title = e.Path
 	}
-	frameW := contentWidth(s.width)
-	if s.panelIsSplit() {
-		frameW, _ = render.SplitWidths(frameW)
-	}
-	bodyW := render.DialogNoBackdropBodyWidth(frameW)
 	rows := s.panel.contentRows(s.Theme, s.Tier, bodyW)
 	fit := s.panelBodyRows()
 	start := min(max(0, s.panel.offset), max(0, len(rows)-fit))
@@ -204,30 +197,20 @@ func (s Screen) panelFrameRows() []string {
 
 	s.topbar.SetWidth(readingW)
 
-	var frame string
-	switch {
-	case s.panel.dialog && s.panelDialogFits():
-		title, body, hint := s.dialogParts()
-		// The list keeps keyboard focus under its dialog ("any key
-		// closes"), so the rule keeps the focused colour.
-		frame = render.SplitDialog(s.Theme, s.Tier, w, paneH, s.panel.focused, title, body, hint,
-			strings.Join(s.panelRows(innerNavW, innerNavH), "\n"))
-	default:
-		focus := render.Left
-		if s.panel.focused {
-			focus = render.Right
-		}
-		var chat []string
-		chat = append(chat, strings.Split(s.topbar.View(), "\n")...)
-		chat = append(chat, "")
-		chat = append(chat, s.centerRows()...)
-		chat = append(chat, s.chatTailRows()...)
-		if len(chat) > paneH {
-			chat = chat[:paneH]
-		}
-		frame = render.Split(s.Theme, s.Tier, w, paneH, focus,
-			strings.Join(chat, "\n"), strings.Join(s.panelRows(innerNavW, innerNavH), "\n"))
+	focus := render.Left
+	if s.panel.focused {
+		focus = render.Right
 	}
+	var chat []string
+	chat = append(chat, strings.Split(s.topbar.View(), "\n")...)
+	chat = append(chat, "")
+	chat = append(chat, s.centerRows()...)
+	chat = append(chat, s.chatTailRows()...)
+	if len(chat) > paneH {
+		chat = chat[:paneH]
+	}
+	frame := render.Split(s.Theme, s.Tier, w, paneH, focus,
+		strings.Join(chat, "\n"), strings.Join(s.panelRows(innerNavW, innerNavH), "\n"))
 	rows := strings.Split(frame, "\n")
 	if len(rows) > paneH {
 		rows = rows[:paneH]
@@ -247,7 +230,8 @@ func (s Screen) narrowPanelRows() []string {
 	w := contentWidth(s.width)
 	if s.panel.dialog && s.panelDialogFits() {
 		title, body, hint := s.dialogParts()
-		return overlayRows(render.DialogNoBackdrop(s.Theme, s.Tier, w, h, title, body, hint), h)
+		dw, dh := s.dialogSize()
+		return overlayRows(render.Dialog(s.Theme, s.Tier, dw, dh, title, body, hint), h)
 	}
 	return overlayRows(strings.Join(s.panelRows(w, h), "\n"), h)
 }
@@ -292,6 +276,10 @@ func (s Screen) centerRows() []string {
 	case s.effortPicker != nil:
 		dw, dh := s.dialogSize()
 		return overlayRows(renderPickerDialog(s.Theme, s.Tier, dw, dh, "select reasoning effort", *s.effortPicker), s.transcriptHeight())
+	case s.panel.dialog && s.panelDialogFits():
+		title, body, hint := s.dialogParts()
+		dw, dh := s.dialogSize()
+		return overlayRows(render.Dialog(s.Theme, s.Tier, dw, dh, title, body, hint), s.transcriptHeight())
 	case s.overlay != "":
 		return overlayRows(s.overlay, s.transcriptHeight())
 	case !s.embedded && s.transcript.Empty():

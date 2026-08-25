@@ -101,7 +101,7 @@ func SplitDialog(t theme.Theme, tier theme.Tier, width, height int, navFocused b
 // whose nav sidebar is not Split's 30%-capped-at-60 share still wants its
 // editor to open as a dialog beside that sidebar rather than full-width.
 func SplitAtDialog(t theme.Theme, tier theme.Tier, width, height, leftWidth int, navFocused bool, title, body, hint, nav string) string {
-	dlg := DialogNoBackdrop(t, tier, leftWidth, height, title, body, hint)
+	dlg := Dialog(t, tier, leftWidth, height, title, body, hint)
 	rightWidth := width - leftWidth - 1
 	if rightWidth < 0 {
 		rightWidth = 0
