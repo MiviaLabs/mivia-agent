@@ -9,29 +9,49 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
 
+type driftTestCase struct {
+	name   string
+	source reflect.Type
+	views  []reflect.Type
+	ignore map[string]string
+}
+
 // TestSettingsPortsCoverConfigFields is the drift guard
-// docs/design/settings-screen.md §7 calls for. internal/uikit/ports
-// re-declares config-shaped types (MCPServerView, ProviderView,
-// ModelView, AgentView) rather than importing internal/config directly
-// - the right call for a secret-free projection, but nothing then
-// notices when internal/config grows a field the settings screen never
-// learns about. This test lives here, not under internal/uikit, so it
-// can import internal/config without dragging that dependency into the
-// UI-isolated packages themselves (internal/cli already depends on
-// internal/config; depending on the leaf internal/uikit/ports package
-// too is one-directional and adds nothing uikit/ui can see).
-//
-// A source field absent from every candidate view name AND absent from
-// the matching ignore list fails the test, naming the field. Renaming
-// or removing a field is a green diff; adding one is red until this
-// test is told about it, which is the whole point.
+// docs/design/settings-screen.md §7 calls for.
 func TestSettingsPortsCoverConfigFields(t *testing.T) {
-	cases := []struct {
-		name   string
-		source reflect.Type
-		views  []reflect.Type
-		ignore map[string]string // field -> why it is deliberately absent
-	}{
+	for _, tc := range driftTestCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			assertFieldsCovered(t, tc)
+		})
+	}
+}
+
+func assertFieldsCovered(t *testing.T, tc driftTestCase) {
+	t.Helper()
+	knownViewFields := make(map[string]bool)
+	for _, v := range tc.views {
+		for i := 0; i < v.NumField(); i++ {
+			knownViewFields[strings.ToLower(v.Field(i).Name)] = true
+		}
+	}
+
+	for i := 0; i < tc.source.NumField(); i++ {
+		sf := tc.source.Field(i)
+		if !sf.IsExported() {
+			continue
+		}
+		if _, ignored := tc.ignore[sf.Name]; ignored {
+			continue
+		}
+		if !knownViewFields[strings.ToLower(sf.Name)] {
+			t.Errorf("source %s has field %q that is not represented in any candidate view %v and not recorded in the test's ignore map; if the settings screen should show it, add it to ports; if deliberately omitted, document why in the ignore map",
+				tc.name, sf.Name, tc.views)
+		}
+	}
+}
+
+func driftTestCases() []driftTestCase {
+	return []driftTestCase{
 		{
 			name:   "MCPServerConfig",
 			source: reflect.TypeOf(config.MCPServerConfig{}),
@@ -66,39 +86,27 @@ func TestSettingsPortsCoverConfigFields(t *testing.T) {
 			source: reflect.TypeOf(config.AgentFileSpec{}),
 			views:  []reflect.Type{reflect.TypeOf(ports.AgentView{})},
 			ignore: map[string]string{
-				"Inherits":        "resolved before the view is built; AgentView carries the resolved Provider/Model/Tools, not the inheritance chain",
-				"AllowEmptyTools": "a validation flag on the source TOML, not a value a settings screen edits",
-				"ToolsAdd":        "resolved into the final Tools list",
-				"ToolsRemove":     "resolved into the final Tools list",
-				"DisallowedTools": "resolved into the final Tools list",
-				"ToolsCore":       "resolved into the final Tools list",
-				"OutputSchema":    "not yet surfaced; no consumer in this screen's v1 scope",
-				"InputSchema":     "not yet surfaced; no consumer in this screen's v1 scope",
-				"TimeoutSeconds":  "not yet surfaced; no consumer in this screen's v1 scope",
-				"MaxTokens":       "not yet surfaced; no consumer in this screen's v1 scope",
+				"Inherits":         "resolved before the view is built; AgentView carries the resolved Provider/Model/Tools, not the inheritance chain",
+				"AllowEmptyTools":  "a validation flag on the source TOML, not a value a settings screen edits",
+				"ToolsAdd":         "resolved before the view is built",
+				"ToolsRemove":      "resolved before the view is built",
+				"SkillsAdd":        "resolved before the view is built",
+				"SkillsRemove":     "resolved before the view is built",
+				"MCPServersAdd":    "resolved before the view is built",
+				"MCPServersRemove": "resolved before the view is built",
+				"DisallowedTools":  "resolved into the final Tools list",
+				"ToolsCore":        "resolved into the final Tools list",
+				"OutputSchema":     "not yet surfaced; no consumer in this screen's v1 scope",
+				"InputSchema":      "not yet surfaced; no consumer in this screen's v1 scope",
+				"TimeoutSeconds":   "not yet surfaced; no consumer in this screen's v1 scope",
+				"MaxTokens":        "not yet surfaced; no consumer in this screen's v1 scope",
 			},
 		},
-	}
-
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			viewFields := map[string]bool{}
-			for _, v := range c.views {
-				for i := 0; i < v.NumField(); i++ {
-					viewFields[strings.ToLower(v.Field(i).Name)] = true
-				}
-			}
-			for i := 0; i < c.source.NumField(); i++ {
-				name := c.source.Field(i).Name
-				if _, ok := c.ignore[name]; ok {
-					continue
-				}
-				if !viewFields[strings.ToLower(name)] {
-					t.Errorf("config.%s.%s has no matching field in %v and no ignore entry - "+
-						"add it to a ports view, or document why it is deliberately absent",
-						c.name, name, c.views)
-				}
-			}
-		})
+		{
+			name:   "ProjectSettings",
+			source: reflect.TypeOf(config.ProjectSettings{}),
+			views:  []reflect.Type{reflect.TypeOf(ports.ProjectView{})},
+			ignore: map[string]string{},
+		},
 	}
 }

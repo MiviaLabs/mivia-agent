@@ -1,8 +1,13 @@
 env_file = '~/.mivia/.env'
 
+[approvals]
+default_mode = 'always'
+
 [chat]
 max_prompt_tokens = 200000
 max_steps = 0
+show_iteration_notices = false
+show_prompt_cache_notices = false
 temperature = 0
 
 [context]
@@ -397,6 +402,14 @@ write_path_blocklist_remove = []
 default = ['go', 'vet', './...']
 fmt = ['make', 'fmt-check']
 structure = ['python3', 'scripts/check_go_structure.py', '--worktree']
+
+[tui]
+mouse = true
+reduced_motion = false
+screen_reader = false
+scroll_lines = 3
+show_reasoning = true
+theme = 'mivia-dark'
 
 [verifiers]
 [verifiers.go-final]
