@@ -58,13 +58,17 @@ func TestModelsBadges_ActiveAndDefault(t *testing.T) {
 	s, _ := newHarnessScreen(t, 100, 30)
 	view := ansi.Strip(modelsSectionOf(s).View())
 
-	// Seed openrouter has claude-opus-5 as active and default
-	if !strings.Contains(view, "active, default") {
-		t.Errorf("expected view to contain 'active, default' badge, got:\n%s", view)
+	// Seed openrouter has claude-opus-5 as active and default. The badge
+	// reads "provider default", not bare "default" (see models_detail.go's
+	// defaultLabel doc comment): a bare "default" next to several
+	// providers' own model rows would read as one overall default,
+	// when default_model is actually independent per provider.
+	if !strings.Contains(view, "active, provider default") {
+		t.Errorf("expected view to contain 'active, provider default' badge, got:\n%s", view)
 	}
 	// Seed ollama has llama3.1 as default (not active)
-	if !strings.Contains(view, "default") {
-		t.Errorf("expected view to contain 'default' badge, got:\n%s", view)
+	if !strings.Contains(view, "provider default") {
+		t.Errorf("expected view to contain 'provider default' badge, got:\n%s", view)
 	}
 }
 

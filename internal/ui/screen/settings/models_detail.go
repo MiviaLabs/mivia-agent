@@ -57,13 +57,22 @@ func (s *modelsSection) renderModelCells(p ports.ProviderView, m ports.ModelView
 	}
 	isActive := p.Active && p.ActiveModel == m.Name
 	isDefault := p.DefaultModel == m.Name
-	// A Global default is shadowed once the project scope overrides
-	// this provider (see the "overridden by project" status flag in
-	// renderProviderCells) - label it accordingly so this row does not
-	// claim to be the effective default when it is not.
-	defaultLabel := "default"
+	// "provider default", not bare "default": every provider has an
+	// independent default_model (one default per provider, not one
+	// default for the whole settings screen or the whole project - see
+	// ports.ProviderView's doc comment), so a bare "default" here would
+	// read as "the one overall default" when several providers can each
+	// show their own at once, right above each other in this same list.
+	// The model row is already indented under its provider's own header
+	// row, so "provider default" disambiguates without repeating the
+	// provider's name on every model line. A Global default is further
+	// shadowed once the project scope overrides this provider (see the
+	// "overridden by project" status flag in renderProviderCells) -
+	// label it accordingly so this row does not claim to be the
+	// effective default when it is not.
+	defaultLabel := "provider default"
 	if p.Scope == ports.ScopeUser && p.HasProjectOverride {
-		defaultLabel = "default here (shadowed)"
+		defaultLabel = "provider default (shadowed by project)"
 	}
 	switch {
 	case isActive && isDefault:
