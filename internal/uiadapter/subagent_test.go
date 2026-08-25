@@ -5,9 +5,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/uiadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
 
 func TestSubagentThreads_RegisterAndLookup(t *testing.T) {
@@ -52,15 +54,21 @@ func TestSubagentThreads_RegisterAndLookup(t *testing.T) {
 	if h.ID() == "" {
 		t.Error("expected non-empty turn ID")
 	}
-	var count int
-	for range h.Events() {
-		count++
+	conv.RecordEvent(uievent.Event{
+		Kind: uievent.KindTextDelta,
+		Body: uievent.TextDeltaBody{Text: "response chunk"},
+	})
+	select {
+	case ev := <-h.Events():
+		if ev.Kind != uievent.KindTextDelta {
+			t.Errorf("got event kind %v, want KindTextDelta", ev.Kind)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Error("timed out waiting for event on listener")
 	}
-	if count == 0 {
-		t.Error("expected stream events on Send")
-	}
-	if len(gotConv.History()) != 3 {
-		t.Errorf("expected 3 history items after send, got %d", len(gotConv.History()))
+	h.Cancel()
+	if len(gotConv.History()) != 4 {
+		t.Errorf("expected 4 history items after send and reply, got %d", len(gotConv.History()))
 	}
 }
 
@@ -68,5 +76,31 @@ func TestSubagentTranscriptConversation_EmptyTitle(t *testing.T) {
 	conv := uiadapter.NewSubagentTranscriptConversation("", ports.ModelInfo{}, nil)
 	if conv.Title() != "Subagent Thread" {
 		t.Errorf("got %q, want 'Subagent Thread'", conv.Title())
+	}
+}
+
+func TestSubagentThreads_LookupByToolCallIDAndTaskID(t *testing.T) {
+	threads := uiadapter.NewSubagentThreads()
+	threads.HandleEvent(agent.Event{
+		Kind:       agent.EventToolStart,
+		ToolCallID: "call_abc",
+		Origin:     agent.EventOrigin{TaskID: "task-123", Agent: "researcher"},
+	}, uiadapter.TranslateOptions{})
+
+	byTask, ok1 := threads.Thread("task-123")
+	byCall, ok2 := threads.Thread("call_abc")
+	byAgent, ok3 := threads.Thread("researcher")
+
+	if !ok1 || byTask == nil {
+		t.Errorf("expected thread found by TaskID")
+	}
+	if !ok2 || byCall == nil {
+		t.Errorf("expected thread found by ToolCallID")
+	}
+	if !ok3 || byAgent == nil {
+		t.Errorf("expected thread found by Agent")
+	}
+	if byTask != byCall || byCall != byAgent {
+		t.Errorf("expected same conversation instance across all lookup keys")
 	}
 }

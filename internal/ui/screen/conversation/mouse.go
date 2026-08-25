@@ -28,7 +28,7 @@ func (s Screen) handleWheel(msg tea.MouseWheelMsg) (app.Screen, tea.Cmd) {
 		return s, nil
 	}
 	if s.panel.dialog {
-		if s.thread != nil {
+		if s.panel.dialogAgent != "" && s.thread != nil && s.threadID == s.panel.dialogAgent {
 			s.thread.transcript = s.thread.transcript.ScrollBy(step)
 			return s, nil
 		}

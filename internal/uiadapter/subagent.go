@@ -52,37 +52,57 @@ func (s *SubagentThreads) HandleEvent(ev agent.Event, opts TranslateOptions) {
 	if ev.Origin.IsZero() {
 		return
 	}
-	key := ev.Origin.TaskID
-	if key == "" {
-		key = ev.Origin.Agent
+	keys := []string{ev.Origin.TaskID, ev.ToolCallID, ev.Origin.Agent}
+	var hasKey bool
+	for _, k := range keys {
+		if k != "" {
+			hasKey = true
+			break
+		}
 	}
-	if key == "" {
-		key = ev.ToolCallID
-	}
-	if key == "" {
+	if !hasKey {
 		return
 	}
 
-	conv := s.getOrCreate(key, ev.Origin.Agent)
+	conv := s.getOrCreate(keys, ev.Origin.Agent)
 	translated := TranslateEventWithOptions(ev, opts)
 	for _, e := range translated {
 		conv.RecordEvent(e)
 	}
 }
 
-func (s *SubagentThreads) getOrCreate(key, title string) *SubagentTranscriptConversation {
+func (s *SubagentThreads) getOrCreate(keys []string, title string) *SubagentTranscriptConversation {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if c, ok := s.threads[key]; ok {
-		if stc, ok := c.(*SubagentTranscriptConversation); ok {
-			return stc
+	for _, k := range keys {
+		if k == "" {
+			continue
+		}
+		if c, ok := s.threads[k]; ok {
+			if stc, ok := c.(*SubagentTranscriptConversation); ok {
+				for _, other := range keys {
+					if other != "" {
+						s.threads[other] = stc
+					}
+				}
+				return stc
+			}
 		}
 	}
 	if title == "" {
-		title = key
+		for _, k := range keys {
+			if k != "" {
+				title = k
+				break
+			}
+		}
 	}
 	stc := NewSubagentTranscriptConversation(title, ports.ModelInfo{Name: title}, nil)
-	s.threads[key] = stc
+	for _, k := range keys {
+		if k != "" {
+			s.threads[k] = stc
+		}
+	}
 	return stc
 }
 
@@ -95,18 +115,21 @@ type SubagentTranscriptConversation struct {
 	listeners []chan uievent.Event
 }
 
-// NewSubagentTranscriptConversation creates a subagent conversation wrapper.
+// NewSubagentTranscriptConversation creates a new thread conversation.
 func NewSubagentTranscriptConversation(title string, model ports.ModelInfo, history []ports.Message) *SubagentTranscriptConversation {
-	outHistory := make([]ports.Message, len(history))
-	copy(outHistory, history)
+	var histCopy []ports.Message
+	if len(history) > 0 {
+		histCopy = make([]ports.Message, len(history))
+		copy(histCopy, history)
+	}
 	return &SubagentTranscriptConversation{
 		title:   title,
 		model:   model,
-		history: outHistory,
+		history: histCopy,
 	}
 }
 
-// RecordEvent processes a translated uievent.Event, updating history and broadcasting to active listeners.
+// RecordEvent records one translated uievent into message history and notifies listeners.
 func (c *SubagentTranscriptConversation) RecordEvent(e uievent.Event) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -167,6 +190,12 @@ func (c *SubagentTranscriptConversation) RecordEvent(e uievent.Event) {
 		default:
 		}
 	}
+	if e.Kind == uievent.KindTurnEnd {
+		for _, ch := range c.listeners {
+			close(ch)
+		}
+		c.listeners = nil
+	}
 }
 
 func (c *SubagentTranscriptConversation) ensureLastAssistantMessage(at time.Time) {
@@ -194,6 +223,7 @@ func (c *SubagentTranscriptConversation) ActiveTurn() (ports.TurnHandle, bool) {
 			for i, l := range c.listeners {
 				if l == ch {
 					c.listeners = append(c.listeners[:i], c.listeners[i+1:]...)
+					close(ch)
 					break
 				}
 			}
@@ -220,6 +250,7 @@ func (c *SubagentTranscriptConversation) Send(_ context.Context, in intent.Send)
 			for i, l := range c.listeners {
 				if l == ch {
 					c.listeners = append(c.listeners[:i], c.listeners[i+1:]...)
+					close(ch)
 					break
 				}
 			}
@@ -264,12 +295,15 @@ type subagentTurnHandle struct {
 	id     string
 	events chan uievent.Event
 	cancel func()
+	once   sync.Once
 }
 
 func (h *subagentTurnHandle) ID() string                   { return h.id }
 func (h *subagentTurnHandle) Events() <-chan uievent.Event { return h.events }
 func (h *subagentTurnHandle) Cancel() {
-	if h.cancel != nil {
-		h.cancel()
-	}
+	h.once.Do(func() {
+		if h.cancel != nil {
+			h.cancel()
+		}
+	})
 }

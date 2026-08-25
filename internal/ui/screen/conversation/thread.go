@@ -161,6 +161,9 @@ func (s *Screen) openThread(callID string) (bool, tea.Cmd) {
 	if s.thread != nil && s.threadID == callID {
 		return true, nil
 	}
+	if s.thread != nil && s.thread.active != nil {
+		s.thread.active.Cancel()
+	}
 	conv, ok := s.threads.Thread(callID)
 	if !ok {
 		return false, nil
@@ -185,6 +188,9 @@ func (s *Screen) openThread(callID string) (bool, tea.Cmd) {
 // the thread Conversation keeps the authoritative history, so a later
 // reopen rebuilds from it without losing anything.
 func (s *Screen) closeThread() {
+	if s.thread != nil && s.thread.active != nil {
+		s.thread.active.Cancel()
+	}
 	s.thread, s.threadID = nil, ""
 }
 
@@ -209,12 +215,12 @@ func (s Screen) threadDialogKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
 			return s, nil
 		}
 	case "home", "ctrl+home":
-		if s.thread != nil {
+		if s.thread != nil && s.thread.composer.Value() == "" {
 			s.thread.transcript = s.thread.transcript.ScrollToTop()
 			return s, nil
 		}
 	case "end", "ctrl+end":
-		if s.thread != nil {
+		if s.thread != nil && s.thread.composer.Value() == "" {
 			s.thread.transcript = s.thread.transcript.ScrollToBottom()
 			return s, nil
 		}

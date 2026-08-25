@@ -22,19 +22,22 @@ import (
 // owns, so the reply stream is fed event by event the way the running
 // program's read continuation would deliver it.
 type scriptedThread struct {
-	events  chan uievent.Event
-	history []ports.Message
-	sent    []string
+	events       chan uievent.Event
+	activeHandle ports.TurnHandle
+	history      []ports.Message
+	sent         []string
 }
 
 func (c *scriptedThread) Send(_ context.Context, in intent.Send) (ports.TurnHandle, error) {
 	c.sent = append(c.sent, in.Text)
-	return scriptedHandle{ch: c.events}, nil
+	h := scriptedHandle{ch: c.events}
+	c.activeHandle = h
+	return h, nil
 }
 func (c *scriptedThread) History() []ports.Message { return c.history }
 func (c *scriptedThread) ActiveTurn() (ports.TurnHandle, bool) {
-	if c.events != nil {
-		return scriptedHandle{ch: c.events}, true
+	if c.activeHandle != nil {
+		return c.activeHandle, true
 	}
 	return nil, false
 }
@@ -515,5 +518,69 @@ func TestSubagentThreadOpensWithoutBackdrop(t *testing.T) {
 	}
 	if !strings.Contains(plain, "subagent ready") {
 		t.Errorf("expected view to contain subagent thread content:\n%s", plain)
+	}
+}
+
+func TestThreadDialog_ScrollingAndHistory(t *testing.T) {
+	thread := &scriptedThread{
+		events: make(chan uievent.Event, 4),
+		history: []ports.Message{
+			{Role: "user", Text: "deep thought query"},
+			{Role: "assistant", Text: "first paragraph of reasoning", Reasoning: "step-by-step thinking", ToolCalls: []ports.ToolCall{
+				{ID: "tc-1", Name: "grep", Arguments: `{"query":"foo"}`, Output: "bar"},
+			}},
+		},
+	}
+	s := threadScreen(t, stubThreads{"sa-1": thread}, false)
+
+	// Open dialog
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	s = next.(Screen)
+
+	// PgUp / PgDown / Home / End / ctrl+u / ctrl+d / Up / Down scrolling
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyPgUp})
+	s = next.(Screen)
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
+	s = next.(Screen)
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyHome})
+	s = next.(Screen)
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEnd})
+	s = next.(Screen)
+	next, _ = s.Update(keyMsg("ctrl+u"))
+	s = next.(Screen)
+	next, _ = s.Update(keyMsg("ctrl+d"))
+	s = next.(Screen)
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyUp})
+	s = next.(Screen)
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	s = next.(Screen)
+
+	if s.thread == nil {
+		t.Fatal("thread must remain open after scroll keys")
+	}
+}
+
+func TestThreadDialog_HomeEndMovesCursorWhenComposerHasText(t *testing.T) {
+	thread := &scriptedThread{
+		events:  make(chan uievent.Event, 4),
+		history: []ports.Message{{Role: "assistant", Text: "ready"}},
+	}
+	s := threadScreen(t, stubThreads{"sa-1": thread}, false)
+
+	// Open subagent dialog
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	s = next.(Screen)
+
+	// Type text into thread composer
+	s = typeText(t, s, "hello world")
+	if s.thread.composer.Value() != "hello world" {
+		t.Fatalf("expected composer text 'hello world', got %q", s.thread.composer.Value())
+	}
+
+	// Home key should navigate composer cursor without scrolling transcript
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyHome})
+	s = next.(Screen)
+	if s.thread.composer.Value() != "hello world" {
+		t.Errorf("expected composer text unchanged after Home, got %q", s.thread.composer.Value())
 	}
 }
