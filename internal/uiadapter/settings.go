@@ -249,6 +249,63 @@ func (g settingsGeneral) Apply(_ context.Context, _ ports.Scope, e ports.General
 	return g.newSaveHandle(func() error { return g.applyGeneral(e) }), nil
 }
 
+func generalViewToSettings(v ports.GeneralView) config.GeneralSettings {
+	return config.GeneralSettings{
+		Theme:                  v.Theme,
+		Mouse:                  v.Mouse,
+		ShowReasoning:          v.ShowReasoning,
+		ShowIterationNotices:   v.ShowIterationNotices,
+		ShowPromptCacheNotices: v.ShowPromptCacheNotices,
+		ScrollLines:            v.ScrollLines,
+		ApprovalDefault:        v.ApprovalDefault,
+		ScreenReader:           v.ScreenReader,
+		ReducedMotion:          v.ReducedMotion,
+	}
+}
+
+func providerViewToSettings(v ports.ProviderView) config.ProviderSettings {
+	var models []config.ModelSettings
+	for _, m := range v.Models {
+		models = append(models, config.ModelSettings{
+			Name:                m.Name,
+			ContextWindowTokens: m.ContextWindowTokens,
+			MaxOutputTokens:     m.MaxOutputTokens,
+			Reasoning:           m.Reasoning,
+			ReasoningEfforts:    m.ReasoningEfforts,
+		})
+	}
+	return config.ProviderSettings{
+		Name:         v.Name,
+		BaseURL:      v.BaseURL,
+		APIKeyEnv:    v.APIKeyEnv,
+		DefaultModel: v.DefaultModel,
+		Models:       models,
+	}
+}
+
+func mcpServerViewToSettings(v ports.MCPServerView) config.MCPServerSettings {
+	return config.MCPServerSettings{
+		ID:        v.ID,
+		Transport: v.Transport,
+		Command:   v.Command,
+		Args:      v.Args,
+		Endpoint:  v.Endpoint,
+		EnvNames:  v.EnvNames,
+	}
+}
+
+func agentViewToSettings(v ports.AgentView) config.AgentFileSettings {
+	return config.AgentFileSettings{
+		Name:        v.Name,
+		Description: v.Description,
+		Provider:    v.Provider,
+		Model:       v.Model,
+		Tools:       v.Tools,
+		Skills:      v.Skills,
+		MCPServers:  v.MCPServers,
+	}
+}
+
 func (s *SettingsStore) applyGeneral(e ports.GeneralEdit) error {
 	switch v := e.(type) {
 	case ports.SetTheme:
@@ -257,17 +314,13 @@ func (s *SettingsStore) applyGeneral(e ports.GeneralEdit) error {
 		s.general.Mouse = v.On
 	case ports.SetShowReasoning:
 		s.general.ShowReasoning = v.On
+		if s.conv != nil {
+			s.conv.SetShowReasoning(v.On)
+		}
 	case ports.SetShowIterationNotices:
 		s.general.ShowIterationNotices = v.On
 		if s.res != nil {
 			s.res.ShowIterationNotices = v.On
-			cfgPath := s.res.ConfigPath
-			if cfgPath == "" {
-				cfgPath = config.UserConfigPath()
-			}
-			if cfgPath != "" {
-				_ = config.UpdateChatNoticeConfig(cfgPath, s.res.ShowIterationNotices, s.res.ShowPromptCacheNotices)
-			}
 		}
 		if s.conv != nil {
 			s.conv.SetNoticeOptions(TranslateOptions{
@@ -279,13 +332,6 @@ func (s *SettingsStore) applyGeneral(e ports.GeneralEdit) error {
 		s.general.ShowPromptCacheNotices = v.On
 		if s.res != nil {
 			s.res.ShowPromptCacheNotices = v.On
-			cfgPath := s.res.ConfigPath
-			if cfgPath == "" {
-				cfgPath = config.UserConfigPath()
-			}
-			if cfgPath != "" {
-				_ = config.UpdateChatNoticeConfig(cfgPath, s.res.ShowIterationNotices, s.res.ShowPromptCacheNotices)
-			}
 		}
 		if s.conv != nil {
 			s.conv.SetNoticeOptions(TranslateOptions{
@@ -298,14 +344,24 @@ func (s *SettingsStore) applyGeneral(e ports.GeneralEdit) error {
 			return fmt.Errorf("scroll lines must be positive")
 		}
 		s.general.ScrollLines = v.N
+		if s.conv != nil {
+			s.conv.SetScrollLines(v.N)
+		}
 	case ports.SetApprovalDefault:
 		s.general.ApprovalDefault = v.Mode
+		if s.res != nil {
+			s.res.Approvals.DefaultMode = v.Mode
+		}
 	case ports.SetScreenReader:
 		s.general.ScreenReader = v.On
 	case ports.SetReducedMotion:
 		s.general.ReducedMotion = v.On
 	default:
 		return fmt.Errorf("unknown general edit %T", e)
+	}
+
+	if cfgPath := s.configPath(); cfgPath != "" {
+		_ = config.UpdateGeneralConfig(cfgPath, generalViewToSettings(s.general))
 	}
 	return nil
 }
@@ -368,7 +424,7 @@ func (s *SettingsStore) applyUpsertProvider(v ports.UpsertProvider, cfgPath stri
 		s.providers = append(s.providers, v.Provider)
 	}
 	if cfgPath != "" {
-		_ = config.UpdateProviderConfig(cfgPath, v.Provider)
+		_ = config.UpdateProviderConfig(cfgPath, providerViewToSettings(v.Provider))
 	}
 	return nil
 }
@@ -402,7 +458,7 @@ func (s *SettingsStore) applyUpsertModel(v ports.UpsertModel, cfgPath string) er
 		s.providers[i].Models = append(s.providers[i].Models, v.Model)
 	}
 	if cfgPath != "" {
-		_ = config.UpdateProviderConfig(cfgPath, s.providers[i])
+		_ = config.UpdateProviderConfig(cfgPath, providerViewToSettings(s.providers[i]))
 	}
 	return nil
 }
@@ -425,7 +481,7 @@ func (s *SettingsStore) applyRemoveModel(v ports.RemoveModel, cfgPath string) er
 		return fmt.Errorf("model %q not found under %q", v.Model, v.Provider)
 	}
 	if cfgPath != "" {
-		_ = config.UpdateProviderConfig(cfgPath, s.providers[i])
+		_ = config.UpdateProviderConfig(cfgPath, providerViewToSettings(s.providers[i]))
 	}
 	return nil
 }
@@ -456,6 +512,9 @@ func (s *SettingsStore) applyActivateModel(v ports.ActivateModel) error {
 		s.providers[i].Active = (i == target)
 	}
 	s.providers[target].ActiveModel = v.Model
+	if cfgPath := s.configPath(); cfgPath != "" {
+		_ = config.UpdateActiveModelConfig(cfgPath, v.Provider, v.Model)
+	}
 	return nil
 }
 
@@ -474,13 +533,7 @@ func (s *SettingsStore) applySetDefaultModel(v ports.SetDefaultModel) error {
 	if !foundModel {
 		return fmt.Errorf("model %q not found under %q", v.Model, v.Provider)
 	}
-	cfgPath := ""
-	if s.res != nil {
-		cfgPath = s.res.ConfigPath
-	}
-	if cfgPath == "" {
-		cfgPath = config.UserConfigPath()
-	}
+	cfgPath := s.configPath()
 	if cfgPath != "" {
 		if err := config.UpdateProviderDefaultModel(cfgPath, v.Provider, v.Model); err != nil {
 			return fmt.Errorf("failed to persist default model: %w", err)
@@ -515,25 +568,35 @@ func (s *SettingsStore) findMCPServer(id string) int {
 }
 
 func (s *SettingsStore) applyMCP(e ports.MCPEdit) error {
+	cfgPath := s.configPath()
 	switch v := e.(type) {
 	case ports.UpsertMCPServer:
 		if i := s.findMCPServer(v.Server.ID); i >= 0 {
 			s.mcp[i] = v.Server
-			return nil
+		} else {
+			s.mcp = append(s.mcp, v.Server)
 		}
-		s.mcp = append(s.mcp, v.Server)
+		if cfgPath != "" {
+			_ = config.UpdateMCPServerConfig(cfgPath, mcpServerViewToSettings(v.Server))
+		}
 	case ports.RemoveMCPServer:
 		i := s.findMCPServer(v.ID)
 		if i < 0 {
 			return fmt.Errorf("mcp server %q not found", v.ID)
 		}
 		s.mcp = append(s.mcp[:i], s.mcp[i+1:]...)
+		if cfgPath != "" {
+			_ = config.RemoveMCPServerConfig(cfgPath, v.ID)
+		}
 	case ports.SetMCPServerEnabled:
 		i := s.findMCPServer(v.ID)
 		if i < 0 {
 			return fmt.Errorf("mcp server %q not found", v.ID)
 		}
 		s.mcp[i].Enabled = v.On
+		if cfgPath != "" {
+			_ = config.UpdateMCPServerConfig(cfgPath, mcpServerViewToSettings(s.mcp[i]))
+		}
 	default:
 		return fmt.Errorf("unknown mcp edit %T", e)
 	}
@@ -565,13 +628,17 @@ func (s *SettingsStore) findAgent(name string) int {
 }
 
 func (s *SettingsStore) applyAgent(e ports.AgentEdit) error {
+	agentsDir := config.WorkspaceAgentsDir("")
 	switch v := e.(type) {
 	case ports.UpsertAgent:
 		if i := s.findAgent(v.Agent.Name); i >= 0 {
 			s.agents[i] = v.Agent
-			return nil
+		} else {
+			s.agents = append(s.agents, v.Agent)
 		}
-		s.agents = append(s.agents, v.Agent)
+		if agentsDir != "" {
+			_ = config.WriteAgentFile(agentsDir, agentViewToSettings(v.Agent), "")
+		}
 	case ports.RemoveAgent:
 		if v.Name == ports.DefaultAgentName {
 			return fmt.Errorf("the default agent %q cannot be removed", ports.DefaultAgentName)
@@ -581,6 +648,9 @@ func (s *SettingsStore) applyAgent(e ports.AgentEdit) error {
 			return fmt.Errorf("agent %q not found", v.Name)
 		}
 		s.agents = append(s.agents[:i], s.agents[i+1:]...)
+		if agentsDir != "" {
+			_ = config.RemoveAgentFile(agentsDir, v.Name)
+		}
 	default:
 		return fmt.Errorf("unknown agent edit %T", e)
 	}

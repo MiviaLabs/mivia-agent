@@ -6,9 +6,60 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 	"github.com/pelletier/go-toml/v2"
 )
+
+// GeneralSettings contains general and TUI settings for config updates.
+type GeneralSettings struct {
+	Theme                  string
+	Mouse                  bool
+	ShowReasoning          bool
+	ShowIterationNotices   bool
+	ShowPromptCacheNotices bool
+	ScrollLines            int
+	ApprovalDefault        string
+	ScreenReader           bool
+	ReducedMotion          bool
+}
+
+// ModelSettings contains model information for config updates.
+type ModelSettings struct {
+	Name                string
+	ContextWindowTokens int
+	MaxOutputTokens     int
+	Reasoning           string
+	ReasoningEfforts    []string
+}
+
+// ProviderSettings contains provider information for config updates.
+type ProviderSettings struct {
+	Name         string
+	BaseURL      string
+	APIKeyEnv    string
+	DefaultModel string
+	Models       []ModelSettings
+}
+
+// MCPServerSettings contains MCP server definition for config updates.
+type MCPServerSettings struct {
+	ID        string
+	Transport string
+	Command   string
+	Args      []string
+	Endpoint  string
+	EnvNames  []string
+}
+
+// AgentFileSettings contains agent definition for markdown file persistence.
+type AgentFileSettings struct {
+	Name        string
+	Description string
+	Provider    string
+	Model       string
+	Tools       []string
+	Skills      []string
+	MCPServers  []string
+}
 
 func readConfigMap(path string) (map[string]any, error) {
 	if path == "" {
@@ -43,7 +94,7 @@ func writeConfigMap(path string, raw map[string]any) error {
 }
 
 // UpdateGeneralConfig persists general and TUI options into the TOML configuration file at path.
-func UpdateGeneralConfig(path string, view ports.GeneralView) error {
+func UpdateGeneralConfig(path string, view GeneralSettings) error {
 	raw, err := readConfigMap(path)
 	if err != nil {
 		return err
@@ -145,7 +196,7 @@ func UpdateActiveModelConfig(path string, provider, model string) error {
 }
 
 // UpdateProviderConfig adds or updates a provider and its models in mivia.toml.
-func UpdateProviderConfig(path string, pv ports.ProviderView) error {
+func UpdateProviderConfig(path string, pv ProviderSettings) error {
 	raw, err := readConfigMap(path)
 	if err != nil {
 		return err
@@ -165,6 +216,9 @@ func UpdateProviderConfig(path string, pv ports.ProviderView) error {
 	}
 	if pv.APIKeyEnv != "" {
 		pEntry["api_key_env"] = pv.APIKeyEnv
+	}
+	if pv.DefaultModel != "" {
+		pEntry["default_model"] = pv.DefaultModel
 	}
 
 	var models []map[string]any
@@ -208,7 +262,7 @@ func RemoveProviderConfig(path string, name string) error {
 }
 
 // UpdateMCPServerConfig inserts or updates an MCP server entry in mivia.toml.
-func UpdateMCPServerConfig(path string, srv ports.MCPServerView) error {
+func UpdateMCPServerConfig(path string, srv MCPServerSettings) error {
 	raw, err := readConfigMap(path)
 	if err != nil {
 		return err
@@ -309,7 +363,7 @@ func RemoveMCPServerConfig(path string, id string) error {
 }
 
 // WriteAgentFile writes an agent definition markdown file with YAML frontmatter.
-func WriteAgentFile(dir string, ag ports.AgentView, systemPrompt string) error {
+func WriteAgentFile(dir string, ag AgentFileSettings, systemPrompt string) error {
 	if dir == "" {
 		return fmt.Errorf("agents directory is empty")
 	}

@@ -572,13 +572,26 @@ func (s Screen) globalAction(id keymap.ID) (app.Screen, tea.Cmd, bool) {
 	return s, nil, false
 }
 
+func (s Screen) scrollStep() int {
+	type scrollProvider interface {
+		ScrollLines() int
+	}
+	if sp, ok := s.conv.(scrollProvider); ok {
+		if lines := sp.ScrollLines(); lines > 0 {
+			return lines
+		}
+	}
+	return 2
+}
+
 func (s Screen) globalScrollAction(id keymap.ID) (app.Screen, tea.Cmd, bool) {
+	step := s.scrollStep()
 	switch id {
 	case keymap.IDScrollUp:
-		s.transcript = s.transcript.PageBy(-1, 2)
+		s.transcript = s.transcript.PageBy(-1, step)
 		return s, nil, true
 	case keymap.IDScrollDown:
-		s.transcript = s.transcript.PageBy(1, 2)
+		s.transcript = s.transcript.PageBy(1, step)
 		return s, nil, true
 	case keymap.IDScrollTop:
 		s.transcript = s.transcript.ScrollToTop()

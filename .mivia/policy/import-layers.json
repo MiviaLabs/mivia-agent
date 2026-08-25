@@ -338,6 +338,10 @@
       "internal/uikit/ports",
       "internal/uikit/uievent"
     ],
+    "internal/ui/component/blackboard": [
+      "internal/ui/render",
+      "internal/ui/theme"
+    ],
     "internal/ui/component/composer": [
       "internal/ui/render",
       "internal/ui/theme",
@@ -347,12 +351,20 @@
       "internal/ui/render",
       "internal/ui/theme"
     ],
+    "internal/ui/component/history": [
+      "internal/ui/render",
+      "internal/ui/theme"
+    ],
     "internal/ui/component/mark": [
       "internal/ui/render",
       "internal/ui/theme",
       "internal/uikit/config"
     ],
     "internal/ui/component/picker": [
+      "internal/ui/render",
+      "internal/ui/theme"
+    ],
+    "internal/ui/component/queue": [
       "internal/ui/render",
       "internal/ui/theme"
     ],
@@ -390,9 +402,12 @@
     "internal/ui/screen/conversation": [
       "internal/ui/app",
       "internal/ui/component/approval",
+      "internal/ui/component/blackboard",
       "internal/ui/component/composer",
+      "internal/ui/component/history",
       "internal/ui/component/mark",
       "internal/ui/component/picker",
+      "internal/ui/component/queue",
       "internal/ui/component/statusline",
       "internal/ui/component/topbar",
       "internal/ui/component/transcript",

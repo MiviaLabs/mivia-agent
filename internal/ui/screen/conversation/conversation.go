@@ -156,6 +156,9 @@ func New(th theme.Theme, tier theme.Tier, themes []theme.Theme, conv ports.Conve
 	s.blackboard.SetWidth(contentWidth(width))
 	s.transcript.SetSize(contentWidth(width), 24)
 	if conv != nil {
+		if rp, ok := conv.(interface{ ShowReasoning() bool }); ok {
+			s.transcript = s.transcript.SetHideReasoning(!rp.ShowReasoning())
+		}
 		s.topbar = topbar.New(th, tier, conv.Model(), conv.ContextUsage(), contentWidth(width))
 		if title := conv.Title(); title != "" {
 			s.topbar.SetBreadcrumb([]string{title})

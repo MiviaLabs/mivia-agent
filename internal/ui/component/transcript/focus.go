@@ -222,3 +222,11 @@ func (m Model) ToggleReasoning() Model {
 
 // ReasoningHidden reports the current state of the reasoning toggle.
 func (m Model) ReasoningHidden() bool { return m.hideReasoning }
+
+// SetHideReasoning explicitly sets whether reasoning blocks are hidden.
+func (m Model) SetHideReasoning(hide bool) Model {
+	if m.hideReasoning == hide {
+		return m
+	}
+	return m.ToggleReasoning()
+}
