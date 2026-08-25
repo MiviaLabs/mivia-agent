@@ -16,6 +16,16 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	// crossproc_test.go's scenarios: a real child process re-execs this
+	// binary with one of these set, and never reaches m.Run() - see that
+	// file for why a same-process second *storage.SQLite handle is not
+	// proven equivalent to a genuine OS process boundary.
+	if os.Getenv("MIVIA_STORAGE_CROSSPROC_WRITER") == "1" {
+		runCrossProcWriterChild()
+	}
+	if os.Getenv("MIVIA_STORAGE_CROSSPROC_FENCE_STALE") == "1" {
+		runCrossProcFenceStaleChild()
+	}
 	if os.Getenv("MIVIA_STORAGE_UNCOMMITTED_CHILD") == "1" {
 		path := os.Getenv("MIVIA_STORAGE_CHILD_DB")
 		db, err := sql.Open("sqlite", path)
