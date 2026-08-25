@@ -81,12 +81,9 @@ func (m *Model) SetBreadcrumb(segments []string) {
 	copy(m.breadcrumb, segments)
 }
 
-// Height is the row count View draws: 2 when a breadcrumb is present,
-// 1 otherwise.
+// Height is the row count View draws: fixed at 1 row to maximize
+// conversation viewport.
 func (m Model) Height() int {
-	if len(m.breadcrumb) > 0 {
-		return 2
-	}
 	return 1
 }
 
@@ -108,65 +105,30 @@ func (m Model) ContextPercent() (int, bool) {
 	return pct, true
 }
 
-func (m Model) breadcrumbRow() string {
-	if len(m.breadcrumb) == 0 {
-		return ""
-	}
-	subtle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
+func (m Model) titleView() string {
 	fg := render.Role(m.Theme, m.Tier, theme.RoleFG)
+	subtle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
+
+	if len(m.breadcrumb) == 0 {
+		return fg.Render(Wordmark)
+	}
+
+	primary := render.Role(m.Theme, m.Tier, theme.RoleFG).Bold(true).Render(m.breadcrumb[0])
+	if len(m.breadcrumb) == 1 {
+		return primary
+	}
 
 	sep := " › "
-	ellipsis := "… "
 	if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
 		sep = " > "
-		ellipsis = "... "
 	}
 
-	buildTrail := func(startIdx int) string {
-		if startIdx >= len(m.breadcrumb) {
-			return ""
-		}
-		var b strings.Builder
-		if startIdx > 0 {
-			b.WriteString(subtle.Render(ellipsis))
-		}
-		for i := startIdx; i < len(m.breadcrumb); i++ {
-			if i > startIdx {
-				b.WriteString(subtle.Render(sep))
-			}
-			if i == len(m.breadcrumb)-1 {
-				b.WriteString(fg.Render(m.breadcrumb[i]))
-			} else {
-				b.WriteString(subtle.Render(m.breadcrumb[i]))
-			}
-		}
-		return b.String()
+	var parts []string
+	parts = append(parts, primary)
+	for i := 1; i < len(m.breadcrumb); i++ {
+		parts = append(parts, subtle.Render(m.breadcrumb[i]))
 	}
-
-	row := buildTrail(0)
-	if m.width <= 0 || ansi.StringWidth(row) <= m.width {
-		return row
-	}
-
-	// Try eliding leading segments one by one so segment boundaries are preserved
-	for start := 1; start < len(m.breadcrumb); start++ {
-		candidate := buildTrail(start)
-		if ansi.StringWidth(candidate) <= m.width {
-			return candidate
-		}
-	}
-
-	// If even the last segment with ellipsis doesn't fit, truncate from the left
-	prefix := subtle.Render(ellipsis)
-	if m.width >= ansi.StringWidth(prefix) {
-		row = ansi.TruncateLeft(row, m.width, prefix)
-	} else {
-		row = ansi.TruncateLeft(row, m.width, "")
-	}
-	if ansi.StringWidth(row) > m.width {
-		row = ansi.Truncate(row, m.width, "")
-	}
-	return row
+	return strings.Join(parts, subtle.Render(sep))
 }
 
 func (m Model) contextBadge(pct int, withBar bool) string {
@@ -233,14 +195,13 @@ func (m Model) activityBadge() string {
 // are present, a second row renders the trail.
 func (m Model) View() string {
 	subtle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
-	fg := render.Role(m.Theme, m.Tier, theme.RoleFG)
 
 	pct, hasPct := m.ContextPercent()
 	withProvider := true
 	withBar := m.width >= 80
 	withActivity := m.width >= 90
 
-	left := m.mark.View() + subtle.Render("  ") + fg.Render(Wordmark)
+	left := m.mark.View() + subtle.Render("  ") + m.titleView()
 	if withActivity {
 		if act := m.activityBadge(); act != "" {
 			left += " " + act
@@ -259,7 +220,7 @@ func (m Model) View() string {
 
 	if m.width > 0 {
 		if ansi.StringWidth(left)+1+ansi.StringWidth(right) > m.width {
-			left = m.mark.View() + subtle.Render("  ") + fg.Render(Wordmark)
+			left = m.mark.View() + subtle.Render("  ") + m.titleView()
 		}
 		if ansi.StringWidth(left)+1+ansi.StringWidth(right) > m.width {
 			withBar = false
@@ -293,9 +254,6 @@ func (m Model) View() string {
 		line = left + " " + right
 	}
 
-	if len(m.breadcrumb) > 0 {
-		return line + "\n" + m.breadcrumbRow()
-	}
 	return line
 }
 
