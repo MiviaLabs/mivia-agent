@@ -16,6 +16,10 @@ func (s *skillsSection) View() string {
 		return render.Role(s.theme, s.tier, theme.RoleFGSubtle).Render("Skills is unavailable.")
 	}
 
+	if s.editing {
+		return s.renderEditor()
+	}
+
 	selectedRowIdx := -1
 	if len(s.skillIndices) > 0 && s.cursor >= 0 && s.cursor < len(s.skillIndices) {
 		selectedRowIdx = s.skillIndices[s.cursor]
@@ -131,4 +135,33 @@ func (s *skillsSection) renderDetail(sk ports.SkillView) []string {
 	}
 
 	return lines
+}
+
+func (s *skillsSection) renderEditor() string {
+	accent := render.Role(s.theme, s.tier, theme.RoleAccent)
+	subtle := render.Role(s.theme, s.tier, theme.RoleFGSubtle)
+
+	title := "Add New Skill"
+	if !s.isNew {
+		title = "Edit Skill: " + s.editOriginalName
+	}
+
+	var lines []string
+	lines = append(lines, accent.Bold(true).Render(title))
+	lines = append(lines, "")
+
+	for _, f := range s.formFields {
+		lines = append(lines, "  "+f.View())
+	}
+
+	lines = append(lines, "")
+	if s.notice != "" {
+		lines = append(lines, "  "+render.Role(s.theme, s.tier, theme.RoleDanger).Render(s.notice))
+		lines = append(lines, "")
+	}
+
+	hint := "[tab/shift+tab] navigate  [space] cycle  [enter] next  [ctrl+s] save  [esc] cancel"
+	lines = append(lines, "  "+subtle.Render(hint))
+
+	return strings.Join(lines, "\n")
 }
