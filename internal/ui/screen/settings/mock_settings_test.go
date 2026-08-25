@@ -656,6 +656,7 @@ func seedMCPServers() []ports.MCPServerView {
 			ID: "filesystem", Transport: "stdio", Command: "npx",
 			Args:    []string{"-y", "@modelcontextprotocol/server-filesystem", "--token=sk-test-not-real-canary"},
 			Enabled: true, TimeoutSeconds: 30, State: ports.MCPStateConnected, ToolCount: 6,
+			Scope: ports.ScopeUser, Global: true,
 		},
 		{
 			ID: "search", Transport: "streamable_http",
@@ -663,6 +664,7 @@ func seedMCPServers() []ports.MCPServerView {
 			EnvNames: []string{"SEARCH_API_KEY"}, Enabled: true, TimeoutSeconds: 15,
 			State: ports.MCPStateFailed, FailKind: ports.MCPFailAuth,
 			FailMessage: "authentication failed", ToolCount: 0,
+			Scope: ports.ScopeProject, Global: false,
 		},
 	}
 }

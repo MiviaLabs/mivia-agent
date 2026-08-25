@@ -109,6 +109,22 @@ func TestRunAgentLoopOnceCompletesOneTurn(t *testing.T) {
 	}
 }
 
+// TestRunAgentLoopOnceEmptyResponseStopsWithStopEmptyResponse asserts
+// that a blank response with no tool calls stops with StopEmptyResponse.
+func TestRunAgentLoopOnceEmptyResponseStopsWithStopEmptyResponse(t *testing.T) {
+	l := &Loop{
+		Completer: &fakeCompleter{name: "fake", chatTurnOut: &provider.Response{Content: "   ", FinishReason: "stop"}},
+		Tools:     tools.NewRegistry(),
+	}
+	res, err := RunAgentLoopOnce(context.Background(), l, Options{Model: "m", MaxSteps: 1}, nil)
+	if err != nil {
+		t.Fatalf("RunAgentLoopOnce: %v", err)
+	}
+	if res.Stop != sdkagentloop.StopEmptyResponse {
+		t.Fatalf("Stop = %q, want %q", res.Stop, sdkagentloop.StopEmptyResponse)
+	}
+}
+
 // TestRunAgentLoopOnceSteerTriggers asserts the steer bridge: a
 // blocking completer plus a fired InterruptCh must let
 // RunAgentLoopOnce return rather than hang. The test wraps the call

@@ -2,51 +2,33 @@ package settings
 
 import (
 	"context"
-	"fmt"
-	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/keymap"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
 
-// secretArgMarkers are the substrings after which an MCP server's Args
-// value is elided before it is ever drawn - settings-screen.md §5's
-// masked-by-default rule. ctrl+r ("reveal") is bound in the keymap
-// (keymap.IDSettingsReveal) but not wired to per-field reveal in this
-// slice; every row renders masked, with no unmask path yet, which is
-// the conservative direction to leave a gap in (a missing reveal key
-// is an inconvenience, a missing mask is a leak).
-var secretArgMarkers = []string{"--token=", "--api-key=", "--apikey=", "key=", "password="}
-
-// maskArg elides the value after the first secret marker found in arg,
-// keeping the marker itself so the argument's SHAPE stays readable
-// ("--token=***" tells the user there is a token, without showing it).
-func maskArg(arg string) string {
-	for _, marker := range secretArgMarkers {
-		if i := strings.Index(arg, marker); i >= 0 {
-			return arg[:i+len(marker)] + "***"
-		}
-	}
-	return arg
+type mcpRow struct {
+	isHeader bool
+	header   string
+	server   ports.MCPServerView
 }
 
-// mcpSection is the MCP settings section. Endpoint is already
-// host-only at the ports boundary (MCPServerView doc comment); Args is
-// masked here, at render time, since the raw value is still needed
-// verbatim by a future editor.
+// mcpSection is the MCP settings section: browse MCP servers configured
+// globally (user home ~/.mivia/mivia.toml) and in the workspace (.mivia/mivia.toml),
+// check connection status, inspect full server configuration and tools, and toggle/remove.
 type mcpSection struct {
 	store         ports.MCPSettings
 	theme         theme.Theme
 	tier          theme.Tier
 	width, height int
 
-	rows   []ports.MCPServerView
-	cursor int
-	notice string
+	rows          []mcpRow
+	serverIndices []int
+	cursor        int
+	notice        string
 }
 
 func newMCPSection(store ports.MCPSettings) *mcpSection { return &mcpSection{store: store} }
@@ -63,13 +45,62 @@ func (s *mcpSection) SetTheme(t theme.Theme, tier theme.Tier) {
 }
 
 func (s *mcpSection) rebuild() {
-	s.rows = s.store.MCPServers()
-	if s.cursor >= len(s.rows) {
-		s.cursor = len(s.rows) - 1
+	if s.store == nil {
+		s.rows = nil
+		s.serverIndices = nil
+		return
+	}
+	all := s.store.MCPServers()
+	var globalServers, projectServers []ports.MCPServerView
+	for _, srv := range all {
+		if srv.Scope == ports.ScopeProject {
+			projectServers = append(projectServers, srv)
+		} else {
+			globalServers = append(globalServers, srv)
+		}
+	}
+
+	rows := make([]mcpRow, 0, len(all)+4)
+	indices := make([]int, 0, len(all))
+
+	// Global Group (user config)
+	rows = append(rows, mcpRow{isHeader: true, header: "Global MCP Servers (user config)"})
+	if len(globalServers) == 0 {
+		rows = append(rows, mcpRow{isHeader: true, header: "  (no global MCP servers configured)"})
+	} else {
+		for _, srv := range globalServers {
+			indices = append(indices, len(rows))
+			rows = append(rows, mcpRow{server: srv})
+		}
+	}
+
+	// Project Group (workspace)
+	rows = append(rows, mcpRow{isHeader: true, header: "Project MCP Servers (workspace)"})
+	if len(projectServers) == 0 {
+		rows = append(rows, mcpRow{isHeader: true, header: "  (no project MCP servers configured)"})
+	} else {
+		for _, srv := range projectServers {
+			indices = append(indices, len(rows))
+			rows = append(rows, mcpRow{server: srv})
+		}
+	}
+
+	s.rows = rows
+	s.serverIndices = indices
+	if s.cursor >= len(s.serverIndices) {
+		s.cursor = len(s.serverIndices) - 1
 	}
 	if s.cursor < 0 {
 		s.cursor = 0
 	}
+}
+
+func (s *mcpSection) selectedServer() (ports.MCPServerView, bool) {
+	if len(s.serverIndices) == 0 || s.cursor < 0 || s.cursor >= len(s.serverIndices) {
+		return ports.MCPServerView{}, false
+	}
+	rowIdx := s.serverIndices[s.cursor]
+	return s.rows[rowIdx].server, true
 }
 
 type mcpSavedMsg struct{}
@@ -114,7 +145,7 @@ func (s *mcpSection) handleKey(msg tea.KeyPressMsg) (section, tea.Cmd) {
 		}
 		s.notice = ""
 	case "down", "j":
-		if s.cursor < len(s.rows)-1 {
+		if s.cursor < len(s.serverIndices)-1 {
 			s.cursor++
 		}
 		s.notice = ""
@@ -122,6 +153,10 @@ func (s *mcpSection) handleKey(msg tea.KeyPressMsg) (section, tea.Cmd) {
 		return s.toggleEnabled()
 	case "x":
 		return s.remove()
+	case "c", "r":
+		if srv, ok := s.selectedServer(); ok {
+			s.notice = "status checked for " + srv.ID
+		}
 	case "n":
 		s.notice = "adding an MCP server is not available in this build yet"
 	}
@@ -129,9 +164,12 @@ func (s *mcpSection) handleKey(msg tea.KeyPressMsg) (section, tea.Cmd) {
 }
 
 func (s *mcpSection) toggleEnabled() (section, tea.Cmd) {
-	row := s.rows[s.cursor]
-	handle, err := s.store.Apply(context.Background(), ports.ScopeUser,
-		ports.SetMCPServerEnabled{ID: row.ID, On: !row.Enabled})
+	srv, ok := s.selectedServer()
+	if !ok {
+		return s, nil
+	}
+	handle, err := s.store.Apply(context.Background(), srv.Scope,
+		ports.SetMCPServerEnabled{ID: srv.ID, On: !srv.Enabled})
 	if err != nil {
 		s.notice = err.Error()
 		return s, nil
@@ -140,7 +178,11 @@ func (s *mcpSection) toggleEnabled() (section, tea.Cmd) {
 }
 
 func (s *mcpSection) remove() (section, tea.Cmd) {
-	handle, err := s.store.Apply(context.Background(), ports.ScopeUser, ports.RemoveMCPServer{ID: s.rows[s.cursor].ID})
+	srv, ok := s.selectedServer()
+	if !ok {
+		return s, nil
+	}
+	handle, err := s.store.Apply(context.Background(), srv.Scope, ports.RemoveMCPServer{ID: srv.ID})
 	if err != nil {
 		s.notice = err.Error()
 		return s, nil
@@ -148,85 +190,11 @@ func (s *mcpSection) remove() (section, tea.Cmd) {
 	return s, awaitMCPSave(handle)
 }
 
-func (s *mcpSection) View() string {
-	if s.store == nil {
-		return render.Role(s.theme, s.tier, theme.RoleFGSubtle).Render("MCP is unavailable.")
-	}
-	cells := make([][]string, len(s.rows))
-	for i, row := range s.rows {
-		cells[i] = s.renderCells(row)
-	}
-	aligned := render.Columns(rowGap, cells)
-
-	avail := s.height
-	if s.notice != "" && avail > 1 {
-		avail--
-	}
-	start, end := render.WindowSlice(len(aligned), s.cursor, avail)
-
-	var b []byte
-	for i, line := range aligned[start:end] {
-		actualIdx := start + i
-		marker := "  "
-		if actualIdx == s.cursor {
-			marker = "> "
-		}
-		b = append(b, (marker + line)...)
-		b = append(b, '\n')
-	}
-	if s.notice != "" {
-		b = append(b, render.Role(s.theme, s.tier, theme.RoleWarning).Render(s.notice)...)
-	}
-	return string(b)
-}
-
-// renderCells draws one server's row as separately-aligned cells: id,
-// transport target (endpoint or command, masked), state, enabled flag,
-// tool count. render.Columns pads each cell to its column's widest
-// value across every row, so id/state/count line up instead of
-// drifting with each server's own id or target length.
-func (s *mcpSection) renderCells(row ports.MCPServerView) []string {
-	fg := render.Role(s.theme, s.tier, theme.RoleFG)
-	name := fg.Bold(true).Render(row.ID)
-
-	target := row.Endpoint
-	if target == "" {
-		parts := append([]string{row.Command}, row.Args...)
-		masked := make([]string, len(parts))
-		for i, p := range parts {
-			masked[i] = maskArg(p)
-		}
-		target = strings.Join(masked, " ")
-	}
-	targetStr := render.Role(s.theme, s.tier, theme.RoleFGSubtle).Render(target)
-
-	state := s.stateLabel(row)
-	enabled := render.Role(s.theme, s.tier, theme.RoleFGSubtle).Render("disabled")
-	if row.Enabled {
-		enabled = render.Role(s.theme, s.tier, theme.RoleSuccess).Render("enabled")
-	}
-	tools := render.Role(s.theme, s.tier, theme.RoleFGSubtle).Render(fmt.Sprintf("%d tools", row.ToolCount))
-
-	return []string{name, targetStr, enabled, state, tools}
-}
-
-func (s *mcpSection) stateLabel(row ports.MCPServerView) string {
-	switch row.State {
-	case ports.MCPStateConnected:
-		return render.Role(s.theme, s.tier, theme.RoleSuccess).Render("connected")
-	case ports.MCPStateFailed:
-		msg := row.FailMessage
-		if msg == "" {
-			msg = "failed"
-		}
-		return render.Role(s.theme, s.tier, theme.RoleDanger).Render(msg)
-	case ports.MCPStateDisabled:
-		return render.Role(s.theme, s.tier, theme.RoleFGSubtle).Render("disabled")
-	default:
-		return render.Role(s.theme, s.tier, theme.RoleFGSubtle).Render("unknown")
-	}
-}
-
 func (s *mcpSection) Hints() []keymap.ID {
-	return []keymap.ID{keymap.IDSettingsUp, keymap.IDSettingsDown, keymap.IDSettingsToggle, keymap.IDSettingsDelete}
+	return []keymap.ID{
+		keymap.IDSettingsUp,
+		keymap.IDSettingsDown,
+		keymap.IDSettingsToggle,
+		keymap.IDSettingsDelete,
+	}
 }

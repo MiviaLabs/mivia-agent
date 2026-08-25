@@ -3,6 +3,7 @@ package uiadapter
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"sync"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
@@ -86,6 +87,7 @@ func (s *SettingsStore) initFromConfig() {
 	s.initProvidersFromConfig()
 	s.initAgentsFromConfig()
 	s.initSkillsFromConfig()
+	s.initMCPFromConfig()
 }
 
 func (s *SettingsStore) initProvidersFromConfig() {
@@ -489,6 +491,85 @@ func (s *SettingsStore) applyGeneral(e ports.GeneralEdit) error {
 	return nil
 }
 
+func (s *SettingsStore) initMCPFromConfig() {
+	userPath := s.configPath()
+	projectPath := s.projectConfigPath()
+
+	userServers, projectServers, _ := config.LoadScopeMCPServers(userPath, projectPath)
+
+	var failures map[string]error
+	if s.agentState != nil && s.agentState.MCPManager != nil {
+		failures = s.agentState.MCPManager.Failures()
+	}
+
+	addServer := func(srv config.MCPServerConfig, scope ports.Scope, global bool) {
+		state := ports.MCPStateUnknown
+		failMsg := ""
+		failKind := ports.MCPFailNone
+		if failures != nil {
+			if err, failed := failures[srv.ID]; failed {
+				state = ports.MCPStateFailed
+				failMsg = err.Error()
+			}
+		}
+		var headers map[string]string
+		if len(srv.Headers) > 0 {
+			headers = make(map[string]string, len(srv.Headers))
+			for _, h := range srv.Headers {
+				headers[h.Name] = h.ValueEnv
+			}
+		}
+
+		s.mcp = append(s.mcp, ports.MCPServerView{
+			ID:             srv.ID,
+			Transport:      srv.Transport,
+			Command:        srv.Command,
+			Args:           srv.Args,
+			Endpoint:       urlToEndpoint(srv.URL),
+			EnvNames:       srv.Env,
+			HeaderEnvNames: headers,
+			Enabled:        true,
+			Global:         global,
+			TimeoutSeconds: srv.TimeoutSeconds,
+			Scope:          scope,
+			State:          state,
+			FailKind:       failKind,
+			FailMessage:    failMsg,
+		})
+	}
+
+	for _, srv := range userServers {
+		addServer(srv, ports.ScopeUser, true)
+	}
+	for _, srv := range projectServers {
+		addServer(srv, ports.ScopeProject, false)
+	}
+
+	if len(s.mcp) == 0 && s.res != nil && len(s.res.MCP.Servers) > 0 {
+		for _, srv := range s.res.MCP.Servers {
+			scope := ports.ScopeUser
+			if !srv.Global {
+				scope = ports.ScopeProject
+			}
+			addServer(srv, scope, srv.Global)
+		}
+	}
+}
+
+func urlToEndpoint(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	if u.Host == "" {
+		return raw
+	}
+	return fmt.Sprintf("%s://%s%s", u.Scheme, u.Host, u.Path)
+}
+
 // settingsMCP
 type settingsMCP struct{ *SettingsStore }
 
@@ -500,8 +581,8 @@ func (m settingsMCP) MCPServers() []ports.MCPServerView {
 	return out
 }
 
-func (m settingsMCP) Apply(_ context.Context, _ ports.Scope, e ports.MCPEdit) (ports.SaveHandle, error) {
-	return m.newSaveHandle(func() error { return m.applyMCP(e) }), nil
+func (m settingsMCP) Apply(_ context.Context, scope ports.Scope, e ports.MCPEdit) (ports.SaveHandle, error) {
+	return m.newSaveHandle(func() error { return m.applyMCP(e, scope) }), nil
 }
 
 func (s *SettingsStore) findMCPServer(id string) int {
@@ -513,8 +594,13 @@ func (s *SettingsStore) findMCPServer(id string) int {
 	return -1
 }
 
-func (s *SettingsStore) applyMCP(e ports.MCPEdit) error {
+func (s *SettingsStore) applyMCP(e ports.MCPEdit, scope ports.Scope) error {
 	cfgPath := s.configPath()
+	if scope == ports.ScopeProject {
+		if p := s.projectConfigPath(); p != "" {
+			cfgPath = p
+		}
+	}
 	switch v := e.(type) {
 	case ports.UpsertMCPServer:
 		if i := s.findMCPServer(v.Server.ID); i >= 0 {

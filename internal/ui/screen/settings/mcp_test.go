@@ -1,6 +1,7 @@
 package settings
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -67,10 +68,66 @@ func TestMCPSectionListsServersMaskedAndEndpointHostOnly(t *testing.T) {
 	}
 }
 
+func TestMCPSection_GroupedByGlobalAndProject(t *testing.T) {
+	s, _ := newHarnessScreen(t, 100, 30)
+	plain := ansi.Strip(mcpSectionOf(s).View())
+
+	for _, want := range []string{
+		"Global MCP Servers (user config)",
+		"Project MCP Servers (workspace)",
+		"filesystem",
+		"search",
+	} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("MCP view is missing %q:\n%s", want, plain)
+		}
+	}
+}
+
+func TestMCPSection_DetailPane(t *testing.T) {
+	s, _ := newHarnessScreen(t, 100, 30)
+	plain := ansi.Strip(mcpSectionOf(s).View())
+
+	// Cursor defaults to first server (filesystem, global)
+	if !strings.Contains(plain, "Global (user:") {
+		t.Errorf("MCP view missing global detail pane label:\n%s", plain)
+	}
+	if !strings.Contains(plain, "Command: npx") {
+		t.Errorf("MCP view missing command in detail pane:\n%s", plain)
+	}
+	if !strings.Contains(plain, "Transport: stdio") {
+		t.Errorf("MCP view missing transport in detail pane:\n%s", plain)
+	}
+}
+
+func TestMCPSection_NavigationChangesDetail(t *testing.T) {
+	s, _ := newHarnessScreen(t, 100, 30)
+	s = focusMCP(t, s)
+
+	// Move cursor down to project server (search)
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	s = next.(Screen)
+
+	plain := ansi.Strip(mcpSectionOf(s).View())
+	if !strings.Contains(plain, "Project (workspace:") {
+		t.Errorf("MCP view missing project detail pane label after nav down:\n%s", plain)
+	}
+	if !strings.Contains(plain, "https://search.example.internal/mcp") {
+		t.Errorf("MCP view missing endpoint in detail pane:\n%s", plain)
+	}
+	if !strings.Contains(plain, "authentication") {
+		t.Errorf("MCP view missing authentication failure in detail pane:\n%s", plain)
+	}
+}
+
 func TestToggleEnabledFlipsAndPersists(t *testing.T) {
 	s, h := newHarnessScreen(t, 100, 30)
 	s = focusMCP(t, s)
-	before := mcpSectionOf(s).rows[0]
+	sec := mcpSectionOf(s)
+	before, ok := sec.selectedServer()
+	if !ok {
+		t.Fatal("no server selected")
+	}
 
 	next, cmd := s.Update(tea.KeyPressMsg{Text: " ", Code: ' '})
 	s = awaitMCPSaveTest(t, next.(Screen), cmd)
@@ -92,14 +149,18 @@ func TestToggleEnabledFlipsAndPersists(t *testing.T) {
 func TestRemovingAnMCPServerUpdatesTheStore(t *testing.T) {
 	s, h := newHarnessScreen(t, 100, 30)
 	s = focusMCP(t, s)
-	target := mcpSectionOf(s).rows[0].ID
+	sec := mcpSectionOf(s)
+	target, ok := sec.selectedServer()
+	if !ok {
+		t.Fatal("no server selected")
+	}
 
 	next, cmd := s.Update(tea.KeyPressMsg{Text: "x", Code: 'x'})
 	s = awaitMCPSaveTest(t, next.(Screen), cmd)
 
 	for _, srv := range h.SettingsAdapters().MCP.MCPServers() {
-		if srv.ID == target {
-			t.Errorf("server %q still present after removal", target)
+		if srv.ID == target.ID {
+			t.Errorf("server %q still present after removal", target.ID)
 		}
 	}
 }
@@ -123,7 +184,7 @@ func TestMCPRowsAlignColumns(t *testing.T) {
 	rows := strings.Split(ansi.Strip(mcpSectionOf(s).View()), "\n")
 	var withTools []string
 	for _, r := range rows {
-		if strings.Contains(r, "tools") {
+		if strings.Contains(r, "tools") && !strings.Contains(r, "registered") {
 			withTools = append(withTools, r)
 		}
 	}
@@ -136,5 +197,48 @@ func TestMCPRowsAlignColumns(t *testing.T) {
 			t.Errorf("row %d: tool-count column at %d, want %d (same as row 0):\n%q\n%q",
 				i+1, got, first, withTools[0], r)
 		}
+	}
+}
+
+type emptyMCPStore struct{}
+
+func (emptyMCPStore) MCPServers() []ports.MCPServerView { return nil }
+func (emptyMCPStore) Apply(_ context.Context, _ ports.Scope, _ ports.MCPEdit) (ports.SaveHandle, error) {
+	return nil, nil
+}
+
+func TestMCPSection_EmptyGroups(t *testing.T) {
+	th := loadTheme(t)
+	sec := newMCPSection(emptyMCPStore{})
+	sec.SetTheme(th, theme.TierTrueColor)
+	sec.SetSize(100, 30)
+
+	plain := ansi.Strip(sec.View())
+	if !strings.Contains(plain, "(no global MCP servers configured)") {
+		t.Errorf("expected empty global group message, got:\n%s", plain)
+	}
+	if !strings.Contains(plain, "(no project MCP servers configured)") {
+		t.Errorf("expected empty project group message, got:\n%s", plain)
+	}
+}
+
+func TestMCPSection_StatusCheckAndNotices(t *testing.T) {
+	s, _ := newHarnessScreen(t, 100, 30)
+	s = focusMCP(t, s)
+
+	// Press 'c' to check status
+	next, _ := s.Update(tea.KeyPressMsg{Code: 'c', Text: "c"})
+	s = next.(Screen)
+	plain := ansi.Strip(mcpSectionOf(s).View())
+	if !strings.Contains(plain, "status checked for filesystem") {
+		t.Errorf("expected status checked notice, got:\n%s", plain)
+	}
+
+	// Press 'n' to trigger add notice
+	next, _ = s.Update(tea.KeyPressMsg{Code: 'n', Text: "n"})
+	s = next.(Screen)
+	plain = ansi.Strip(mcpSectionOf(s).View())
+	if !strings.Contains(plain, "adding an MCP server is not available") {
+		t.Errorf("expected adding notice, got:\n%s", plain)
 	}
 }

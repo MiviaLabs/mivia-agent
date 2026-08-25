@@ -417,9 +417,10 @@ func sdkPruneToBudget(messages []provider.Message, maxContextTokens int, toolSpe
 // finalizeSDKTurn applies the CLI's post-turn Options after a
 // graceful SDK stop. FinalWriter receives the turn's final text: the
 // final message's content, or - when the SDK zeroed Final (its
-// documented behavior on StopMaxIterations, StopHookVeto, and
-// StopSteered) - the last assistant text the turn produced anywhere,
-// matching the legacy "no assistant text ANYWHERE" contract.
+// documented behavior on StopMaxIterations, StopHookVeto,
+// StopEmptyResponse, and StopSteered) - the last assistant text the
+// turn produced anywhere, matching the legacy "no assistant text
+// ANYWHERE" contract.
 // RequireFinalText fails a turn that produced no assistant text in any
 // step of the turn, except a steered stop, which the dispatcher maps
 // to errSteerInterrupt instead.
