@@ -2,66 +2,38 @@ package config
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
-
-	"github.com/pelletier/go-toml/v2"
 )
 
 // UpdateProviderDefaultModel updates or sets the default_model key under
 // [providers.<providerName>] in the TOML config file at path.
-// If the provider section doesn't exist yet, it will be initialized with [providers.<providerName>].
+// If the provider section doesn't exist yet, it will be initialized with
+// [providers.<providerName>]. Locked and atomic (see updateConfigFile in
+// persist_lock.go) so a concurrent default-model edit to the same file
+// from another goroutine cannot silently lose either write.
 func UpdateProviderDefaultModel(path, providerName, modelName string) error {
-	if path == "" {
-		return fmt.Errorf("config path is empty")
-	}
 	if providerName == "" {
 		return fmt.Errorf("provider name is empty")
 	}
 	if modelName == "" {
 		return fmt.Errorf("model name is empty")
 	}
-
-	data, err := os.ReadFile(path)
-	var raw map[string]any
-	if err == nil {
-		if err := toml.Unmarshal(data, &raw); err != nil {
-			return fmt.Errorf("unmarshal config: %w", err)
+	return updateConfigFile(path, func(raw map[string]any) error {
+		providersRaw, ok := raw["providers"].(map[string]any)
+		if !ok || providersRaw == nil {
+			providersRaw = make(map[string]any)
 		}
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("read config: %w", err)
-	}
-	if raw == nil {
-		raw = make(map[string]any)
-	}
 
-	providersRaw, ok := raw["providers"].(map[string]any)
-	if !ok || providersRaw == nil {
-		providersRaw = make(map[string]any)
-	}
-
-	pRaw, ok := providersRaw[providerName].(map[string]any)
-	if !ok || pRaw == nil {
-		pRaw = make(map[string]any)
-	}
-
-	pRaw["default_model"] = modelName
-	providersRaw[providerName] = pRaw
-	raw["providers"] = providersRaw
-
-	out, err := toml.Marshal(raw)
-	if err != nil {
-		return fmt.Errorf("marshal updated config: %w", err)
-	}
-
-	if dir := filepath.Dir(path); dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return fmt.Errorf("create config dir: %w", err)
+		pRaw, ok := providersRaw[providerName].(map[string]any)
+		if !ok || pRaw == nil {
+			pRaw = make(map[string]any)
 		}
-	}
 
-	return os.WriteFile(path, out, 0o600)
+		pRaw["default_model"] = modelName
+		providersRaw[providerName] = pRaw
+		raw["providers"] = providersRaw
+		return nil
+	})
 }
 
 // ClearProviderDefaultModel removes the default_model key from
@@ -72,40 +44,32 @@ func UpdateProviderDefaultModel(path, providerName, modelName string) error {
 // inert [providers.x] table that sets nothing. A path/provider with no
 // default_model key set is not an error: clearing an override that is
 // already absent is a no-op, the same tolerance a repeated command
-// should have.
+// should have. Locked and atomic (see updateConfigFile).
 func ClearProviderDefaultModel(path, providerName string) error {
-	if path == "" {
-		return fmt.Errorf("config path is empty")
-	}
 	if providerName == "" {
 		return fmt.Errorf("provider name is empty")
 	}
-
-	raw, err := readConfigMap(path)
-	if err != nil {
-		return err
-	}
-
-	providersRaw, ok := raw["providers"].(map[string]any)
-	if !ok || providersRaw == nil {
+	return updateConfigFile(path, func(raw map[string]any) error {
+		providersRaw, ok := raw["providers"].(map[string]any)
+		if !ok || providersRaw == nil {
+			return nil
+		}
+		pRaw, ok := providersRaw[providerName].(map[string]any)
+		if !ok || pRaw == nil {
+			return nil
+		}
+		if _, hasKey := pRaw["default_model"]; !hasKey {
+			return nil
+		}
+		delete(pRaw, "default_model")
+		if len(pRaw) == 0 {
+			delete(providersRaw, providerName)
+		} else {
+			providersRaw[providerName] = pRaw
+		}
+		raw["providers"] = providersRaw
 		return nil
-	}
-	pRaw, ok := providersRaw[providerName].(map[string]any)
-	if !ok || pRaw == nil {
-		return nil
-	}
-	if _, hasKey := pRaw["default_model"]; !hasKey {
-		return nil
-	}
-	delete(pRaw, "default_model")
-	if len(pRaw) == 0 {
-		delete(providersRaw, providerName)
-	} else {
-		providersRaw[providerName] = pRaw
-	}
-	raw["providers"] = providersRaw
-
-	return writeConfigMap(path, raw)
+	})
 }
 
 // LoadProviderDefaultOverrides reads path's own [providers.<name>]
@@ -122,7 +86,11 @@ func ClearProviderDefaultModel(path, providerName string) error {
 // must not block the settings screen from opening over a malformed or
 // absent project file the way Load()'s closed-shape decode would.
 // Providers with no default_model key are simply absent from the
-// returned map rather than mapped to "".
+// returned map rather than mapped to "". This is a read, not covered by
+// updateConfigFile's write lock, but readConfigMap's os.ReadFile call is
+// itself atomic with respect to any concurrent writeFileAtomic rename
+// (a reader either sees the file entirely before or entirely after a
+// rename, never a partial write).
 func LoadProviderDefaultOverrides(path string) (map[string]string, error) {
 	out := map[string]string{}
 	if strings.TrimSpace(path) == "" {

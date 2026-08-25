@@ -80,289 +80,268 @@ func readConfigMap(path string) (map[string]any, error) {
 	return raw, nil
 }
 
-func writeConfigMap(path string, raw map[string]any) error {
-	out, err := toml.Marshal(raw)
-	if err != nil {
-		return fmt.Errorf("marshal updated config: %w", err)
-	}
-	if dir := filepath.Dir(path); dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return fmt.Errorf("create config dir: %w", err)
-		}
-	}
-	return os.WriteFile(path, out, 0o600)
-}
-
-// UpdateGeneralConfig persists general and TUI options into the TOML configuration file at path.
+// UpdateGeneralConfig persists general and TUI options into the TOML
+// configuration file at path. Locked and atomic (see updateConfigFile in
+// persist_lock.go) so a concurrent edit to the same file from another
+// goroutine cannot silently lose either write and a crash mid-write
+// cannot corrupt the file.
 func UpdateGeneralConfig(path string, view GeneralSettings) error {
-	raw, err := readConfigMap(path)
-	if err != nil {
-		return err
-	}
-
-	tuiMap, _ := raw["tui"].(map[string]any)
-	if tuiMap == nil {
-		tuiMap = make(map[string]any)
-	}
-	if view.Theme != "" {
-		tuiMap["theme"] = view.Theme
-	}
-	tuiMap["mouse"] = view.Mouse
-	tuiMap["show_reasoning"] = view.ShowReasoning
-	if view.ScrollLines > 0 {
-		tuiMap["scroll_lines"] = view.ScrollLines
-	}
-	tuiMap["screen_reader"] = view.ScreenReader
-	tuiMap["reduced_motion"] = view.ReducedMotion
-	raw["tui"] = tuiMap
-
-	chatMap, _ := raw["chat"].(map[string]any)
-	if chatMap == nil {
-		chatMap = make(map[string]any)
-	}
-	chatMap["show_iteration_notices"] = view.ShowIterationNotices
-	chatMap["show_prompt_cache_notices"] = view.ShowPromptCacheNotices
-	raw["chat"] = chatMap
-
-	if view.ApprovalDefault != "" {
-		apprMap, _ := raw["approvals"].(map[string]any)
-		if apprMap == nil {
-			apprMap = make(map[string]any)
+	return updateConfigFile(path, func(raw map[string]any) error {
+		tuiMap, _ := raw["tui"].(map[string]any)
+		if tuiMap == nil {
+			tuiMap = make(map[string]any)
 		}
-		apprMap["default_mode"] = view.ApprovalDefault
-		raw["approvals"] = apprMap
-	}
+		if view.Theme != "" {
+			tuiMap["theme"] = view.Theme
+		}
+		tuiMap["mouse"] = view.Mouse
+		tuiMap["show_reasoning"] = view.ShowReasoning
+		if view.ScrollLines > 0 {
+			tuiMap["scroll_lines"] = view.ScrollLines
+		}
+		tuiMap["screen_reader"] = view.ScreenReader
+		tuiMap["reduced_motion"] = view.ReducedMotion
+		raw["tui"] = tuiMap
 
-	return writeConfigMap(path, raw)
+		chatMap, _ := raw["chat"].(map[string]any)
+		if chatMap == nil {
+			chatMap = make(map[string]any)
+		}
+		chatMap["show_iteration_notices"] = view.ShowIterationNotices
+		chatMap["show_prompt_cache_notices"] = view.ShowPromptCacheNotices
+		raw["chat"] = chatMap
+
+		if view.ApprovalDefault != "" {
+			apprMap, _ := raw["approvals"].(map[string]any)
+			if apprMap == nil {
+				apprMap = make(map[string]any)
+			}
+			apprMap["default_mode"] = view.ApprovalDefault
+			raw["approvals"] = apprMap
+		}
+		return nil
+	})
 }
 
-// UpdateActiveModelConfig updates the active provider and default model in mivia.toml.
+// UpdateActiveModelConfig updates the active provider and default model in
+// mivia.toml. Locked and atomic (see updateConfigFile).
 func UpdateActiveModelConfig(path string, provider, model string) error {
-	raw, err := readConfigMap(path)
-	if err != nil {
-		return err
-	}
+	return updateConfigFile(path, func(raw map[string]any) error {
+		provMap, _ := raw["provider"].(map[string]any)
+		if provMap == nil {
+			provMap = make(map[string]any)
+		}
+		if provider != "" {
+			provMap["name"] = provider
+		}
+		if model != "" {
+			provMap["default_model"] = model
+		}
+		raw["provider"] = provMap
 
-	provMap, _ := raw["provider"].(map[string]any)
-	if provMap == nil {
-		provMap = make(map[string]any)
-	}
-	if provider != "" {
-		provMap["name"] = provider
-	}
-	if model != "" {
-		provMap["default_model"] = model
-	}
-	raw["provider"] = provMap
+		if provider != "" && model != "" {
+			providersMap, _ := raw["providers"].(map[string]any)
+			if providersMap == nil {
+				providersMap = make(map[string]any)
+			}
+			pEntry, _ := providersMap[provider].(map[string]any)
+			if pEntry == nil {
+				pEntry = make(map[string]any)
+			}
+			pEntry["default_model"] = model
 
-	if provider != "" && model != "" {
+			var models []map[string]any
+			if rawModels, ok := pEntry["models"].([]any); ok {
+				for _, m := range rawModels {
+					if mMap, ok := m.(map[string]any); ok {
+						models = append(models, mMap)
+					}
+				}
+			} else if typedModels, ok := pEntry["models"].([]map[string]any); ok {
+				models = typedModels
+			}
+			foundModel := false
+			for _, m := range models {
+				if m["name"] == model {
+					foundModel = true
+					break
+				}
+			}
+			if !foundModel {
+				models = append(models, map[string]any{"name": model, "context_window_tokens": 128000})
+			}
+			pEntry["models"] = models
+
+			providersMap[provider] = pEntry
+			raw["providers"] = providersMap
+		}
+		return nil
+	})
+}
+
+// UpdateProviderConfig adds or updates a provider and its models in
+// mivia.toml. Locked and atomic (see updateConfigFile).
+func UpdateProviderConfig(path string, pv ProviderSettings) error {
+	return updateConfigFile(path, func(raw map[string]any) error {
 		providersMap, _ := raw["providers"].(map[string]any)
 		if providersMap == nil {
 			providersMap = make(map[string]any)
 		}
-		pEntry, _ := providersMap[provider].(map[string]any)
+
+		pEntry, _ := providersMap[pv.Name].(map[string]any)
 		if pEntry == nil {
 			pEntry = make(map[string]any)
 		}
-		pEntry["default_model"] = model
+		if pv.BaseURL != "" {
+			pEntry["base_url"] = pv.BaseURL
+		}
+		if pv.APIKeyEnv != "" {
+			pEntry["api_key_env"] = pv.APIKeyEnv
+		}
+		if pv.DefaultModel != "" {
+			pEntry["default_model"] = pv.DefaultModel
+		}
 
 		var models []map[string]any
-		if rawModels, ok := pEntry["models"].([]any); ok {
-			for _, m := range rawModels {
-				if mMap, ok := m.(map[string]any); ok {
-					models = append(models, mMap)
-				}
+		for _, m := range pv.Models {
+			mMap := map[string]any{"name": m.Name}
+			if m.ContextWindowTokens > 0 {
+				mMap["context_window_tokens"] = m.ContextWindowTokens
 			}
-		} else if typedModels, ok := pEntry["models"].([]map[string]any); ok {
-			models = typedModels
-		}
-		foundModel := false
-		for _, m := range models {
-			if m["name"] == model {
-				foundModel = true
-				break
+			if m.MaxOutputTokens > 0 {
+				mMap["max_output_tokens"] = m.MaxOutputTokens
 			}
+			if m.Reasoning != "" {
+				mMap["reasoning"] = m.Reasoning
+			}
+			if len(m.ReasoningEfforts) > 0 {
+				mMap["reasoning_efforts"] = m.ReasoningEfforts
+			}
+			models = append(models, mMap)
 		}
-		if !foundModel {
-			models = append(models, map[string]any{"name": model, "context_window_tokens": 128000})
+		if len(models) > 0 {
+			pEntry["models"] = models
 		}
-		pEntry["models"] = models
-
-		providersMap[provider] = pEntry
+		providersMap[pv.Name] = pEntry
 		raw["providers"] = providersMap
-	}
-
-	return writeConfigMap(path, raw)
-}
-
-// UpdateProviderConfig adds or updates a provider and its models in mivia.toml.
-func UpdateProviderConfig(path string, pv ProviderSettings) error {
-	raw, err := readConfigMap(path)
-	if err != nil {
-		return err
-	}
-
-	providersMap, _ := raw["providers"].(map[string]any)
-	if providersMap == nil {
-		providersMap = make(map[string]any)
-	}
-
-	pEntry, _ := providersMap[pv.Name].(map[string]any)
-	if pEntry == nil {
-		pEntry = make(map[string]any)
-	}
-	if pv.BaseURL != "" {
-		pEntry["base_url"] = pv.BaseURL
-	}
-	if pv.APIKeyEnv != "" {
-		pEntry["api_key_env"] = pv.APIKeyEnv
-	}
-	if pv.DefaultModel != "" {
-		pEntry["default_model"] = pv.DefaultModel
-	}
-
-	var models []map[string]any
-	for _, m := range pv.Models {
-		mMap := map[string]any{"name": m.Name}
-		if m.ContextWindowTokens > 0 {
-			mMap["context_window_tokens"] = m.ContextWindowTokens
-		}
-		if m.MaxOutputTokens > 0 {
-			mMap["max_output_tokens"] = m.MaxOutputTokens
-		}
-		if m.Reasoning != "" {
-			mMap["reasoning"] = m.Reasoning
-		}
-		if len(m.ReasoningEfforts) > 0 {
-			mMap["reasoning_efforts"] = m.ReasoningEfforts
-		}
-		models = append(models, mMap)
-	}
-	if len(models) > 0 {
-		pEntry["models"] = models
-	}
-	providersMap[pv.Name] = pEntry
-	raw["providers"] = providersMap
-
-	return writeConfigMap(path, raw)
+		return nil
+	})
 }
 
 // RemoveProviderConfig removes a provider definition from mivia.toml.
+// Locked and atomic (see updateConfigFile).
 func RemoveProviderConfig(path string, name string) error {
-	raw, err := readConfigMap(path)
-	if err != nil {
-		return err
-	}
-	providersMap, ok := raw["providers"].(map[string]any)
-	if ok && providersMap != nil {
-		delete(providersMap, name)
-		raw["providers"] = providersMap
-	}
-	return writeConfigMap(path, raw)
+	return updateConfigFile(path, func(raw map[string]any) error {
+		providersMap, ok := raw["providers"].(map[string]any)
+		if ok && providersMap != nil {
+			delete(providersMap, name)
+			raw["providers"] = providersMap
+		}
+		return nil
+	})
 }
 
-// UpdateMCPServerConfig inserts or updates an MCP server entry in mivia.toml.
+// UpdateMCPServerConfig inserts or updates an MCP server entry in
+// mivia.toml. Locked and atomic (see updateConfigFile).
 func UpdateMCPServerConfig(path string, srv MCPServerSettings) error {
-	raw, err := readConfigMap(path)
-	if err != nil {
-		return err
-	}
-
-	mcpMap, _ := raw["mcp"].(map[string]any)
-	if mcpMap == nil {
-		mcpMap = make(map[string]any)
-	}
-	mcpMap["enabled"] = true
-
-	srvMap := map[string]any{
-		"id": srv.ID,
-	}
-	trans := srv.Transport
-	if trans == "" {
-		if srv.Command != "" {
-			trans = "stdio"
-		} else if srv.Endpoint != "" {
-			trans = "streamable_http"
+	return updateConfigFile(path, func(raw map[string]any) error {
+		mcpMap, _ := raw["mcp"].(map[string]any)
+		if mcpMap == nil {
+			mcpMap = make(map[string]any)
 		}
-	}
-	if trans != "" {
-		srvMap["transport"] = trans
-	}
-	if srv.Command != "" {
-		srvMap["command"] = srv.Command
-	}
-	if srv.Endpoint != "" {
-		srvMap["url"] = srv.Endpoint
-	}
-	if len(srv.Args) > 0 {
-		srvMap["args"] = srv.Args
-	}
-	if len(srv.EnvNames) > 0 {
-		srvMap["env"] = srv.EnvNames
-	}
+		mcpMap["enabled"] = true
 
-	var existing []map[string]any
-	if rawServers, ok := mcpMap["servers"].([]any); ok {
-		for _, s := range rawServers {
-			if sMap, ok := s.(map[string]any); ok {
-				existing = append(existing, sMap)
+		srvMap := map[string]any{
+			"id": srv.ID,
+		}
+		trans := srv.Transport
+		if trans == "" {
+			if srv.Command != "" {
+				trans = "stdio"
+			} else if srv.Endpoint != "" {
+				trans = "streamable_http"
 			}
 		}
-	} else if typedServers, ok := mcpMap["servers"].([]map[string]any); ok {
-		existing = typedServers
-	}
-
-	found := false
-	for i := range existing {
-		if existing[i]["id"] == srv.ID {
-			existing[i] = srvMap
-			found = true
-			break
+		if trans != "" {
+			srvMap["transport"] = trans
 		}
-	}
-	if !found {
-		existing = append(existing, srvMap)
-	}
-	mcpMap["servers"] = existing
-	raw["mcp"] = mcpMap
+		if srv.Command != "" {
+			srvMap["command"] = srv.Command
+		}
+		if srv.Endpoint != "" {
+			srvMap["url"] = srv.Endpoint
+		}
+		if len(srv.Args) > 0 {
+			srvMap["args"] = srv.Args
+		}
+		if len(srv.EnvNames) > 0 {
+			srvMap["env"] = srv.EnvNames
+		}
 
-	return writeConfigMap(path, raw)
-}
-
-// RemoveMCPServerConfig deletes an MCP server entry from mivia.toml.
-func RemoveMCPServerConfig(path string, id string) error {
-	raw, err := readConfigMap(path)
-	if err != nil {
-		return err
-	}
-	mcpMap, ok := raw["mcp"].(map[string]any)
-	if !ok || mcpMap == nil {
-		return nil
-	}
-
-	var existing []map[string]any
-	if rawServers, ok := mcpMap["servers"].([]any); ok {
-		for _, s := range rawServers {
-			if sMap, ok := s.(map[string]any); ok {
-				if sMap["id"] != id {
+		var existing []map[string]any
+		if rawServers, ok := mcpMap["servers"].([]any); ok {
+			for _, s := range rawServers {
+				if sMap, ok := s.(map[string]any); ok {
 					existing = append(existing, sMap)
 				}
 			}
+		} else if typedServers, ok := mcpMap["servers"].([]map[string]any); ok {
+			existing = typedServers
 		}
-	} else if typedServers, ok := mcpMap["servers"].([]map[string]any); ok {
-		for _, s := range typedServers {
-			if s["id"] != id {
-				existing = append(existing, s)
+
+		found := false
+		for i := range existing {
+			if existing[i]["id"] == srv.ID {
+				existing[i] = srvMap
+				found = true
+				break
 			}
 		}
-	}
-	mcpMap["servers"] = existing
-	raw["mcp"] = mcpMap
-
-	return writeConfigMap(path, raw)
+		if !found {
+			existing = append(existing, srvMap)
+		}
+		mcpMap["servers"] = existing
+		raw["mcp"] = mcpMap
+		return nil
+	})
 }
 
-// WriteAgentFile writes an agent definition markdown file with YAML frontmatter.
+// RemoveMCPServerConfig deletes an MCP server entry from mivia.toml.
+// Locked and atomic (see updateConfigFile).
+func RemoveMCPServerConfig(path string, id string) error {
+	return updateConfigFile(path, func(raw map[string]any) error {
+		mcpMap, ok := raw["mcp"].(map[string]any)
+		if !ok || mcpMap == nil {
+			return nil
+		}
+
+		var existing []map[string]any
+		if rawServers, ok := mcpMap["servers"].([]any); ok {
+			for _, s := range rawServers {
+				if sMap, ok := s.(map[string]any); ok {
+					if sMap["id"] != id {
+						existing = append(existing, sMap)
+					}
+				}
+			}
+		} else if typedServers, ok := mcpMap["servers"].([]map[string]any); ok {
+			for _, s := range typedServers {
+				if s["id"] != id {
+					existing = append(existing, s)
+				}
+			}
+		}
+		mcpMap["servers"] = existing
+		raw["mcp"] = mcpMap
+		return nil
+	})
+}
+
+// WriteAgentFile writes an agent definition markdown file with YAML
+// frontmatter. Locked per target path (see lockPersistFile) and written
+// atomically via writeFileAtomic so a concurrent edit to the SAME agent
+// file from another goroutine cannot interleave with this write, and a
+// crash mid-write cannot leave a truncated agent file behind.
 func WriteAgentFile(dir string, ag AgentFileSettings, systemPrompt string) error {
 	if dir == "" {
 		return fmt.Errorf("agents directory is empty")
@@ -411,15 +390,21 @@ func WriteAgentFile(dir string, ag AgentFileSettings, systemPrompt string) error
 	}
 
 	target := filepath.Join(dir, fmt.Sprintf("%s.md", ag.Name))
-	return os.WriteFile(target, []byte(sb.String()), 0o600)
+	unlock := lockPersistFile(target)
+	defer unlock()
+	return writeFileAtomic(target, []byte(sb.String()), 0o600)
 }
 
 // RemoveAgentFile deletes an agent markdown file from the given directory.
+// Locked against a concurrent WriteAgentFile to the same path (see
+// lockPersistFile) so a remove cannot interleave with an in-flight write.
 func RemoveAgentFile(dir string, name string) error {
 	if dir == "" || name == "" {
 		return nil
 	}
 	target := filepath.Join(dir, fmt.Sprintf("%s.md", name))
+	unlock := lockPersistFile(target)
+	defer unlock()
 	err := os.Remove(target)
 	if os.IsNotExist(err) {
 		return nil
