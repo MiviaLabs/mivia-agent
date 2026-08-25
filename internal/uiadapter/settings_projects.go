@@ -20,6 +20,9 @@ func (s *SettingsStore) initProjectsFromConfig() {
 	if cfgPath == "" && wsPath != "" {
 		cfgPath = config.ProjectConfigPath(wsPath)
 	}
+	if cfgPath == "" && s.res != nil && s.res.ConfigPath != "" {
+		cfgPath = s.res.ConfigPath
+	}
 
 	p := ports.ProjectView{
 		WorkspacePath:   wsPath,

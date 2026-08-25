@@ -334,6 +334,101 @@ func TestAutomationSettings(t *testing.T) {
 	drainOK(t, h)
 }
 
+func projectSettingTestCases() []struct {
+	name string
+	edit ports.ProjectEdit
+	chk  func(p ports.ProjectView) bool
+} {
+	return []struct {
+		name string
+		edit ports.ProjectEdit
+		chk  func(p ports.ProjectView) bool
+	}{
+		{
+			name: "env_file",
+			edit: ports.SetProjectEnvFile{Path: ".env.staging"},
+			chk:  func(p ports.ProjectView) bool { return p.EnvFile == ".env.staging" },
+		},
+		{
+			name: "branch_prefix",
+			edit: ports.SetProjectBranchPrefix{Prefix: "task/"},
+			chk:  func(p ports.ProjectView) bool { return p.BranchPrefix == "task/" },
+		},
+		{
+			name: "system_prompt",
+			edit: ports.SetProjectSystemPrompt{Prompt: "Custom prompt"},
+			chk:  func(p ports.ProjectView) bool { return p.SystemPrompt == "Custom prompt" },
+		},
+		{
+			name: "temperature",
+			edit: ports.SetProjectTemperature{Value: "0.9"},
+			chk:  func(p ports.ProjectView) bool { return p.Temperature == "0.9" },
+		},
+		{
+			name: "max_tokens",
+			edit: ports.SetProjectMaxTokens{Value: "4096"},
+			chk:  func(p ports.ProjectView) bool { return p.MaxTokens == "4096" },
+		},
+		{
+			name: "max_prompt_tokens",
+			edit: ports.SetProjectMaxPromptTokens{Value: "8192"},
+			chk:  func(p ports.ProjectView) bool { return p.MaxPromptTokens == "8192" },
+		},
+		{
+			name: "max_steps",
+			edit: ports.SetProjectMaxSteps{Value: "15"},
+			chk:  func(p ports.ProjectView) bool { return p.MaxSteps == "15" },
+		},
+		{
+			name: "run_timeout",
+			edit: ports.SetProjectRunTimeout{Seconds: 300},
+			chk:  func(p ports.ProjectView) bool { return p.RunTimeoutSec == 300 },
+		},
+		{
+			name: "store_backend",
+			edit: ports.SetProjectStoreBackend{Backend: "sqlite"},
+			chk:  func(p ports.ProjectView) bool { return p.StoreBackend == "sqlite" },
+		},
+		{
+			name: "store_path",
+			edit: ports.SetProjectStorePath{Path: ".mivia/test.db"},
+			chk:  func(p ports.ProjectView) bool { return p.StorePath == ".mivia/test.db" },
+		},
+		{
+			name: "sandbox",
+			edit: ports.SetProjectSandbox{On: false},
+			chk:  func(p ports.ProjectView) bool { return !p.Sandbox },
+		},
+		{
+			name: "redact_tool_args",
+			edit: ports.SetProjectRedactToolArgs{On: true},
+			chk:  func(p ports.ProjectView) bool { return p.RedactToolArgs },
+		},
+	}
+}
+
+func TestProjectSettings(t *testing.T) {
+	settings := setupTestSettings(t)
+	proj := settings.Projects.Project()
+	if proj.BranchPrefix == "" {
+		t.Error("expected default branch prefix")
+	}
+
+	for _, tc := range projectSettingTestCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			h, err := settings.Projects.Apply(context.Background(), ports.ScopeProject, tc.edit)
+			if err != nil {
+				t.Fatalf("apply failed: %v", err)
+			}
+			drainOK(t, h)
+			updated := settings.Projects.Project()
+			if !tc.chk(updated) {
+				t.Errorf("edit %s check failed on updated project view: %+v", tc.name, updated)
+			}
+		})
+	}
+}
+
 func TestProviderSettings_ActivateModelWithSession(t *testing.T) {
 	res := &config.Resolved{
 		ProviderName: "zai",
