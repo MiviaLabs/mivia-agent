@@ -392,7 +392,7 @@ func (s Screen) globalAction(id keymap.ID) (app.Screen, tea.Cmd, bool) {
 	// transcript - identical between the two constructions.
 	if s.embedded {
 		switch id {
-		case keymap.IDThemeDialog, keymap.IDOpenPager, keymap.IDPanelToggle, keymap.IDSettingsDialog, keymap.IDPalette:
+		case keymap.IDThemeDialog, keymap.IDOpenPager, keymap.IDPanelToggle, keymap.IDSettingsDialog, keymap.IDPalette, keymap.IDQueueDialog:
 			return s, nil, true
 		}
 	}
@@ -409,6 +409,8 @@ func (s Screen) globalAction(id keymap.ID) (app.Screen, tea.Cmd, bool) {
 	case keymap.IDPalette:
 		next, cmd := s.openCommandPalette()
 		return next, cmd, true
+	case keymap.IDQueueDialog:
+		return s.openQueue(), tea.ClearScreen, true
 	case keymap.IDToggleReason:
 		s.transcript = s.transcript.ToggleReasoning()
 		return s, nil, true

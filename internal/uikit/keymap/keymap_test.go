@@ -257,6 +257,13 @@ func TestComposerAndTranscriptShareTabWithoutCollision(t *testing.T) {
 	}
 }
 
+func TestQueueDialogBinding(t *testing.T) {
+	m := New(Default())
+	if id, ok := m.Match(ContextGlobal, "ctrl+up"); !ok || id != IDQueueDialog {
+		t.Errorf("global ctrl+up = %v/%v, want %v", id, ok, IDQueueDialog)
+	}
+}
+
 // TestHintIsGeneratedFromTheTable pins the compact footer hint: it must
 // come from the same table as the help screen, use each binding's first
 // key, and skip IDs that have no Short label rather than print junk.

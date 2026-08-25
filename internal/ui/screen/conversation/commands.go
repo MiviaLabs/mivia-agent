@@ -62,6 +62,8 @@ func (s Screen) applyCommandOutcome(o ports.CommandOutcome) (app.Screen, tea.Cmd
 		return s.openSettingsScreen(o.SettingsSection)
 	case o.OpenHelp:
 		return s.openHelp(), tea.ClearScreen
+	case o.OpenQueue:
+		return s.openQueue(), tea.ClearScreen
 	case o.ClearTranscript:
 		if o.Conversation != nil {
 			s.switchConversation(o.Conversation)
@@ -172,6 +174,16 @@ func (s Screen) openHelp() Screen {
 	}
 	w, h := s.dialogSize()
 	s.overlay = render.Dialog(s.Theme, s.Tier, w, h, "keys", help, hint)
+	return s
+}
+
+// openQueue draws the queue overlay dialog. Shared by ctrl+up (keys.go's
+// globalAction) and /queue.
+func (s Screen) openQueue() Screen {
+	hint := "any key closes this"
+	body := "No queued messages."
+	w, h := s.dialogSize()
+	s.overlay = render.Dialog(s.Theme, s.Tier, w, h, "queue", body, hint)
 	return s
 }
 

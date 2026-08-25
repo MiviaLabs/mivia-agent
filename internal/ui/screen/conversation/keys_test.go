@@ -342,6 +342,28 @@ func TestHelpOnlyFiresOnAnEmptyComposer(t *testing.T) {
 	}
 }
 
+func TestQueueOverlayBinding(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	s, cmd := press(t, s, tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModCtrl})
+	if s.overlay == "" {
+		t.Fatal("expected the queue overlay on ctrl+up")
+	}
+	if !strings.Contains(s.overlay, "queue") {
+		t.Errorf("got overlay %q, want it to mention queue", s.overlay)
+	}
+	if !hasClearScreen(cmd) {
+		t.Error("expected opening the queue overlay to clear the screen")
+	}
+	// Any key dismisses the overlay.
+	s, cmd = press(t, s, key("x"))
+	if s.overlay != "" {
+		t.Error("the overlay survived a keystroke")
+	}
+	if !hasClearScreen(cmd) {
+		t.Error("expected dismissing the queue overlay to clear the screen")
+	}
+}
+
 // TestCompletionMenuClaimsEnterBeforeSend pins rule 5.3.
 func TestCompletionMenuClaimsEnterBeforeSend(t *testing.T) {
 	s := newScreen(t, replay.New(nil, 0), nil, nil)

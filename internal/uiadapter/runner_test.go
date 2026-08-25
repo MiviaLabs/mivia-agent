@@ -32,6 +32,11 @@ func TestCommandRunner_RunBasicCommands(t *testing.T) {
 		t.Errorf("expected OpenHelp=true, got %+v", out)
 	}
 
+	// Queue
+	if out := runner.Run(context.Background(), "queue", ""); !out.OpenQueue {
+		t.Errorf("expected OpenQueue=true, got %+v", out)
+	}
+
 	// Settings
 	if out := runner.Run(context.Background(), "settings", "models"); !out.OpenSettings || out.SettingsSection != "models" {
 		t.Errorf("expected OpenSettings=true with models section, got %+v", out)

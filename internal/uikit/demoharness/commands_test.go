@@ -33,6 +33,14 @@ func TestRunHelp(t *testing.T) {
 	}
 }
 
+func TestRunQueue(t *testing.T) {
+	h := newHarness(t)
+	got := h.Run(context.Background(), "queue", "")
+	if !got.OpenQueue {
+		t.Errorf("got %+v, want OpenQueue", got)
+	}
+}
+
 func TestRunModelReturnsChoices(t *testing.T) {
 	h := newHarness(t)
 	got := h.Run(context.Background(), "model", "")
