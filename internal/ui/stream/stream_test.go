@@ -264,3 +264,37 @@ func TestRenderSmoke_RealisticOneUserInput(t *testing.T) {
 		t.Errorf("'(turn completed)' occurrence=%d, want 1", c)
 	}
 }
+
+// TestRenderSmoke_IntermediateReasoningAndNoticesDuringStream pins the event deduplication
+// invariant when reasoning deltas and intermediate usage events arrive during live text streaming.
+func TestRenderSmoke_IntermediateReasoningAndNoticesDuringStream(t *testing.T) {
+	at := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
+	events := []uievent.Event{
+		{Kind: uievent.KindTurnStart, Seq: 1, At: at, Body: uievent.TurnStartBody{Input: "summarize"}},
+		{Kind: uievent.KindReasoning, Seq: 2, At: at, Body: uievent.ReasoningDeltaBody{Text: "thinking step 1"}},
+		{Kind: uievent.KindReasoning, Seq: 3, At: at, Body: uievent.ReasoningDeltaBody{WordCount: 15}},
+		{Kind: uievent.KindTextDelta, Seq: 4, At: at, Body: uievent.TextDeltaBody{Text: "Summary complete."}},
+		{Kind: uievent.KindNotice, Seq: 5, At: at, Body: uievent.NoticeBody{Text: "tokens cached: 500"}},
+		{Kind: uievent.KindUsage, Seq: 6, At: at, Body: uievent.UsageBody{InputTokens: 500, OutputTokens: 10, CachedTokens: 500, CostUSD: 0.001}},
+		{Kind: uievent.KindTextEnd, Seq: 7, At: at, Body: uievent.TextEndBody{Text: "Summary complete."}},
+		{Kind: uievent.KindTurnEnd, Seq: 8, At: at, Body: uievent.TurnEndBody{Reason: "completed"}},
+	}
+	var buf bytes.Buffer
+	if err := Render(&buf, events); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	out := buf.String()
+
+	if c := strings.Count(out, "Summary complete."); c != 1 {
+		t.Errorf("assistant text occurrence=%d, want 1 in:\n%s", c, out)
+	}
+	if c := strings.Count(out, "> summarize"); c != 1 {
+		t.Errorf("user input occurrence=%d, want 1", c)
+	}
+	if c := strings.Count(out, "reasoning 15 words hidden"); c != 1 {
+		t.Errorf("reasoning header occurrence=%d, want 1", c)
+	}
+	if c := strings.Count(out, "tokens cached: 500"); c != 1 {
+		t.Errorf("notice occurrence=%d, want 1", c)
+	}
+}

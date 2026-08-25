@@ -268,3 +268,30 @@ func TestNoticeAndUsageDuringStreamingDoesNotDuplicateAssistantText(t *testing.T
 		t.Errorf("expected assistant text to appear exactly once, got %d occurrences in dump:\n%s", count, dump)
 	}
 }
+
+// TestReasoningAndNoticesDuringStreamingDoesNotDuplicate verifies that reasoning
+// and intermediate notices do not cause duplicate blocks or lost content in the transcript.
+func TestReasoningAndNoticesDuringStreamingDoesNotDuplicate(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 24)
+
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindTurnStart, Body: uievent.TurnStartBody{Input: "run query"}})
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindReasoning, Body: uievent.ReasoningDeltaBody{Text: "step 1"}})
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindReasoning, Body: uievent.ReasoningDeltaBody{WordCount: 10}})
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindTextDelta, Body: uievent.TextDeltaBody{Text: "Results found."}})
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindNotice, Body: uievent.NoticeBody{Text: "cached 500"}})
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindUsage, Body: uievent.UsageBody{InputTokens: 500, OutputTokens: 20, CostUSD: 0.002}})
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindTextEnd, Body: uievent.TextEndBody{Text: "Results found."}})
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindTurnEnd, Body: uievent.TurnEndBody{Reason: "completed"}})
+
+	dump := ansi.Strip(m.Dump())
+	if c := strings.Count(dump, "Results found."); c != 1 {
+		t.Errorf("expected text 'Results found.' count=1, got %d in:\n%s", c, dump)
+	}
+	if c := strings.Count(dump, "run query"); c != 1 {
+		t.Errorf("expected user input count=1, got %d", c)
+	}
+	if c := strings.Count(dump, "10 words"); c != 1 {
+		t.Errorf("expected reasoning meta count=1, got %d", c)
+	}
+}
