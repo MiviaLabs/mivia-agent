@@ -336,8 +336,8 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 	// Capture pointer so /agent and model-switch rebuilds see updates.
 	sess.SetBindingFactory(cliagents.ChatBindingFactory(sess, res, wsRoot, agentState))
 	if invocation.session != "" {
-		if err := sess.Load(invocation.session); err != nil {
-			return fmt.Errorf("--session %q: %w (omit --session to start a new session under a system-assigned id)", invocation.session, err)
+		if err := resumeChatSession(sess, res, invocation.session); err != nil {
+			return err
 		}
 	}
 	contextWiring := contextDispatcherFor(sess, res.Subagents)
@@ -350,6 +350,22 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 	}
 	defer cleanup()
 	return dispatchChatSurface(invocation, sess, res, useTools, agentState)
+}
+
+// resumeChatSession loads a saved session and refreshes the summarizer
+// against whatever binding that Load actually publishes. setupChatSessionContext
+// (enableSessionContext) captured the summarizer once, before this runs,
+// against the session's startup binding - a resumed session may carry a
+// different saved provider/model, and without this refresh compaction for
+// the rest of the process keeps summarizing through the pre-resume
+// model/completer. Mirrors what uiadapter/session_pool.go does after its own
+// sess.Load.
+func resumeChatSession(sess *chat.Session, res *config.Resolved, session string) error {
+	if err := sess.Load(session); err != nil {
+		return fmt.Errorf("--session %q: %w (omit --session to start a new session under a system-assigned id)", session, err)
+	}
+	cliagents.RefreshSummarizerAfterModelSwitch(sess, res)
+	return nil
 }
 
 func applySessionApprovalPolicy(sess *chat.Session, invocation chatInvocation, res *config.Resolved) {

@@ -145,13 +145,15 @@ func (s *Session) SetContextManager(manager *contextmgr.ContextManager, principa
 }
 
 // SetSummarizer replaces the context manager's summarizer in place, leaving
-// principal/revision/store untouched. A mid-session model switch
-// (SwitchBinding) publishes a new provider/model/completer but does not
-// rebuild the summarizer on its own - the summarizer was captured once at
-// session setup (see internal/cli's summaryWiring) and otherwise keeps
-// summarizing through the pre-switch model/completer until a fresh session
-// is constructed. Callers that rebuild a *contextmgr.Summarizer against the
-// current binding after a switch use this to publish it; nil clears a
+// principal/revision/store untouched. A mid-session binding change
+// (SwitchBinding, or a resumed session's Load publishing a different saved
+// provider/model) does not rebuild the summarizer on its own - the
+// summarizer was captured once at session setup (see internal/clichat's
+// summaryWiring) and otherwise keeps summarizing through the pre-switch
+// model/completer. Production callers rebuild against the new binding and
+// publish it here after every such change: cliagents.publishModelSwitch
+// (the /model command) and internal/clichat's chat_command.go /
+// internal/uiadapter's session_pool.go (both after sess.Load). nil clears a
 // summarizer that setup could no longer configure for the new binding
 // rather than leaving a stale one in place.
 func (s *Session) SetSummarizer(summarizer *contextmgr.Summarizer) {
