@@ -57,9 +57,32 @@ func sdkToolCallErrorReporter(opts Options, turn *sdkTurnState) sdkagentloop.Err
 				msg = m
 			}
 		}
+		// StagedToolMessage already found a pending stage; the handler below
+		// only runs for a genuinely fresh deferred call, so it is never asked
+		// to synchronously execute a call StagedToolMessage is about to deny.
 		if msg == "" && opts.UnadmittedToolHandler != nil {
-			if m, ok := opts.UnadmittedToolHandler(ctx, call.Name); ok {
-				msg = m
+			result := opts.UnadmittedToolHandler(ctx, call.Name, call.Arguments)
+			if result.Handled && result.Ran {
+				// Served synchronously against the full authorized tool set:
+				// render it exactly like an ordinary successful call - no
+				// "error: " prefix, no failed tool_end, the error text this
+				// change exists to remove.
+				if turn != nil {
+					callKey := call.ID
+					if callKey == "" {
+						callKey = call.Name
+					}
+					turn.recordToolOutcomeWithPreview(callKey, call.Name, result.Content, false, "", false, result.Content)
+				}
+				return sdkshape.Message{
+					Role:       provider.RoleTool,
+					ToolCallID: call.ID,
+					Name:       call.Name,
+					Content:    result.Content,
+				}, nil
+			}
+			if result.Handled {
+				msg = result.Content
 			}
 		}
 		if msg == "" {

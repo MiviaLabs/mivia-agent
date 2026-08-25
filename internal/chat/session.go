@@ -56,6 +56,18 @@ type Session struct {
 	// SessionID is an unguessable principal stable for this session's lifetime.
 	SessionID string
 	MaxSteps  int
+	// ToolBaseResolver, when non-nil, returns the full authorized tool
+	// registry - including tools tiered/deferred out of Tools - that a
+	// deferred-but-advertised tool call can be resolved and executed from
+	// synchronously (wireStepBoundaryAdmission's UnadmittedToolHandler), so
+	// the model gets the real result on the SAME call instead of a denial
+	// and a forced retry next turn. Set once by cliagents at session
+	// construction from AgentSessionState.ToolBase; a closure (not a
+	// snapshot) because ToolBase can be replaced on model switch/agent
+	// switch. Nil in tests/harnesses with no agent state, where a deferred
+	// call falls back to the staged-only denial exactly as before this
+	// field existed.
+	ToolBaseResolver func() *tools.Registry
 	// MaxToolResultChars caps each tool result stored in agent-loop history,
 	// in bytes. 0 means uncapped (per-tool budgets are the bound). Set from
 	// [tools] max_tool_result_bytes by NewSession.

@@ -103,9 +103,9 @@ func TestSDKBuildToolRegistryDoesNotConsultPredicatesForInRegistryTools(t *testi
 		}
 		return "WRONG staged for " + name, true
 	}
-	unadmitted := func(_ context.Context, name string) (string, bool) {
+	unadmitted := func(_ context.Context, name string, _ json.RawMessage) UnadmittedToolResult {
 		t.Errorf("UnadmittedToolHandler called for %q on the SDK path; load_tools is in the registry", name)
-		return "WRONG unadmitted for " + name, true
+		return UnadmittedToolResult{Handled: true, Content: "WRONG unadmitted for " + name}
 	}
 
 	opts := Options{
