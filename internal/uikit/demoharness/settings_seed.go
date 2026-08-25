@@ -103,6 +103,7 @@ func seedSkills() []ports.SkillView {
 			Tools:             []string{"inspect_repository", "read_file"},
 			UserInvocable:     true,
 			InstructionsChars: 850,
+			Instructions:      "# Code Review\nReview changed code for quality, correctness, and security.\nCheck for edge cases and adherence to ADLC.",
 		},
 		{
 			Name:              "test-runner",
@@ -111,6 +112,7 @@ func seedSkills() []ports.SkillView {
 			Tools:             []string{"run_command"},
 			UserInvocable:     true,
 			InstructionsChars: 420,
+			Instructions:      "# Test Runner\nRun fast tests first using `make verify-fast`, then full verification.",
 		},
 	}
 }

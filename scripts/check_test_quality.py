@@ -563,19 +563,19 @@ def main() -> int:
         target_files = [Path(p) for p in args.paths]
     elif args.staged:
         diff_args = ["--cached"]
-        res = subprocess.run(["git", "diff", "--name-only", "--cached", "--", "*_test.go"], cwd=root, capture_output=True, text=True, check=False)
-        target_files = [root / f for f in res.stdout.splitlines() if f.strip()]
+        res = subprocess.run(["git", "diff", "--name-only", "--cached"], cwd=root, capture_output=True, text=True, check=False)
+        target_files = [root / f for f in res.stdout.splitlines() if f.strip().endswith("_test.go")]
         if not target_files:
             # On clean checkout (e.g. CI checkout), inspect HEAD~1..HEAD if available
             rev_check = subprocess.run(["git", "rev-parse", "HEAD~1"], cwd=root, capture_output=True, text=True, check=False)
             if rev_check.returncode == 0:
                 diff_args = ["HEAD~1..HEAD"]
-                res = subprocess.run(["git", "diff", "--name-only", "HEAD~1..HEAD", "--", "*_test.go"], cwd=root, capture_output=True, text=True, check=False)
-                target_files = [root / f for f in res.stdout.splitlines() if f.strip()]
+                res = subprocess.run(["git", "diff", "--name-only", "HEAD~1..HEAD"], cwd=root, capture_output=True, text=True, check=False)
+                target_files = [root / f for f in res.stdout.splitlines() if f.strip().endswith("_test.go")]
     elif args.diff:
         # Check uncommitted diff vs HEAD first
-        res = subprocess.run(["git", "diff", "--name-only", "HEAD", "--", "*_test.go"], cwd=root, capture_output=True, text=True, check=False)
-        target_files = [root / f for f in res.stdout.splitlines() if f.strip()]
+        res = subprocess.run(["git", "diff", "--name-only", "HEAD"], cwd=root, capture_output=True, text=True, check=False)
+        target_files = [root / f for f in res.stdout.splitlines() if f.strip().endswith("_test.go")]
         diff_args = ["HEAD"]
         if not target_files:
             # On clean checkout (CI), resolve merge base against origin/main, main, or HEAD~1
@@ -589,15 +589,15 @@ def main() -> int:
                         break
             if base_ref:
                 diff_args = [f"{base_ref}..HEAD"]
-                res = subprocess.run(["git", "diff", "--name-only", f"{base_ref}..HEAD", "--", "*_test.go"], cwd=root, capture_output=True, text=True, check=False)
-                target_files = [root / f for f in res.stdout.splitlines() if f.strip()]
+                res = subprocess.run(["git", "diff", "--name-only", f"{base_ref}..HEAD"], cwd=root, capture_output=True, text=True, check=False)
+                target_files = [root / f for f in res.stdout.splitlines() if f.strip().endswith("_test.go")]
     elif args.base:
         diff_args = [f"{args.base}..{args.tip}"]
-        res = subprocess.run(["git", "diff", "--name-only", f"{args.base}..{args.tip}", "--", "*_test.go"], cwd=root, capture_output=True, text=True, check=False)
-        target_files = [root / f for f in res.stdout.splitlines() if f.strip()]
+        res = subprocess.run(["git", "diff", "--name-only", f"{args.base}..{args.tip}"], cwd=root, capture_output=True, text=True, check=False)
+        target_files = [root / f for f in res.stdout.splitlines() if f.strip().endswith("_test.go")]
     elif args.worktree:
-        res = subprocess.run(["git", "diff", "--name-only", "HEAD", "--", "*_test.go"], cwd=root, capture_output=True, text=True, check=False)
-        target_files = [root / f for f in res.stdout.splitlines() if f.strip()]
+        res = subprocess.run(["git", "diff", "--name-only", "HEAD"], cwd=root, capture_output=True, text=True, check=False)
+        target_files = [root / f for f in res.stdout.splitlines() if f.strip().endswith("_test.go")]
     elif args.all:
         skip_dirs = {".git", "node_modules", "vendor", "testdata"}
         for p in root.rglob("*_test.go"):
