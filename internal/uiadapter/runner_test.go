@@ -78,6 +78,12 @@ func TestCommandRunner_NilSessionErrors(t *testing.T) {
 	if out := runner.Run(context.Background(), "resume", ""); out.Err == "" {
 		t.Errorf("expected Err on nil session resume, got %+v", out)
 	}
+	if out := runner.Run(context.Background(), "effort", ""); out.Err == "" {
+		t.Errorf("expected Err on nil session effort, got %+v", out)
+	}
+	if out := runner.SelectEffort(context.Background(), "low"); out.Err == "" {
+		t.Errorf("expected Err on nil session SelectEffort, got %+v", out)
+	}
 	if out := runner.Run(context.Background(), "yolo", ""); out.Err == "" {
 		t.Errorf("expected Err on nil session yolo, got %+v", out)
 	}
@@ -381,6 +387,18 @@ func TestCommandRunner_Effort(t *testing.T) {
 	outChoices := runnerWithReasoning.Run(context.Background(), "effort", "")
 	if len(outChoices.EffortChoices) == 0 {
 		t.Fatalf("expected EffortChoices, got %+v", outChoices)
+	}
+
+	// Direct arg with level
+	outDirect := runnerWithReasoning.Run(context.Background(), "effort", "low")
+	if !strings.Contains(outDirect.Notice, "low") {
+		t.Errorf("expected direct arg notice, got %+v", outDirect)
+	}
+
+	// Direct invalid arg
+	outInvalid := runnerWithReasoning.Run(context.Background(), "effort", "super-ultra-high")
+	if outInvalid.Err == "" {
+		t.Errorf("expected error on invalid effort, got %+v", outInvalid)
 	}
 
 	// Apply choice with default marker suffix stripped
