@@ -86,3 +86,60 @@ func (w usageWriter) Record(ctx context.Context, record usage.UsageRecord) error
 	}()
 	return nil
 }
+
+// calibrationSeedRows bounds how far back the seed query looks. Recent rows
+// only: a ratio is a property of the CURRENT tokenizer and prompt shape, and
+// months-old observations for a since-changed system prompt or tool surface
+// are not evidence about today's requests.
+const calibrationSeedRows = 50
+
+// calibrationSeedMinRatio and calibrationSeedMaxRatio mirror the bounds
+// contextmgr.Calibration.Update enforces on live observations. They are
+// duplicated rather than imported because internal/storage must not depend on
+// internal/contextmgr; TestCalibrationSeedClampsToCalibrationBounds pins that
+// they agree.
+const (
+	calibrationSeedMinRatio = 0.2
+	calibrationSeedMaxRatio = 3.0
+)
+
+// CalibrationSeed returns the estimate-vs-actual correction ratio observed
+// for a (provider, model) binding in this workspace, so a freshly started
+// process can plan its FIRST request with the correction it already learned
+// instead of starting blind at 1.0.
+//
+// Without this the ratio was written to token_usage_events on every turn and
+// never read back: every process, every session and every resume began
+// assuming the len(s)/4 estimate was exact. For payloads that are mostly code
+// and JSON tool schemas that estimate runs ~1.7x low, so the first request
+// sailed past the compaction trigger and the next one repaid the whole error
+// at once - the sequence that destroyed a real session's context.
+//
+// The ratio is aggregated (sum of actual over sum of estimated) rather than
+// averaged per row, so large requests - the ones that actually approach the
+// budget and matter for compaction - carry proportionate weight. ok is false
+// when the binding has no usable observation yet; the caller then keeps the
+// uncorrected default.
+func (s *SQLite) CalibrationSeed(ctx context.Context, workspaceID, provider, model string) (float64, bool, error) {
+	var estimated, actual sql.NullFloat64
+	err := s.db.QueryRowContext(ctx, `SELECT SUM(estimated_tokens), SUM(input_tokens) FROM (
+		SELECT estimated_tokens, input_tokens FROM token_usage_events
+		WHERE workspace_id = ? AND provider = ? AND model = ?
+		  AND kind = 'token_usage' AND estimated_tokens > 0 AND input_tokens > 0
+		ORDER BY id DESC LIMIT ?)`,
+		workspaceID, provider, model, calibrationSeedRows).Scan(&estimated, &actual)
+	if err != nil {
+		return 0, false, err
+	}
+	if !estimated.Valid || !actual.Valid || estimated.Float64 <= 0 || actual.Float64 <= 0 {
+		return 0, false, nil
+	}
+	ratio := actual.Float64 / estimated.Float64
+	if ratio < calibrationSeedMinRatio {
+		ratio = calibrationSeedMinRatio
+	}
+	if ratio > calibrationSeedMaxRatio {
+		ratio = calibrationSeedMaxRatio
+	}
+	return ratio, true, nil
+}

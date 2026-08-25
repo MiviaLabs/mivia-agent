@@ -1,6 +1,7 @@
 package composition
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
@@ -153,5 +154,9 @@ func buildSessionCheckpointStore(sess *chat.Session, in SessionInput) (*storage.
 		_ = store.Close()
 		return nil, contextstate.Principal{}, fmt.Errorf("set context store: %w", err)
 	}
+	// Prime the token-estimate correction from what this workspace already
+	// measured for this binding, so the first request is not planned blind.
+	// Best effort by contract: a miss leaves the session uncorrected.
+	sess.SeedCalibration(context.Background(), store, principal.WorkspaceID)
 	return store, principal, nil
 }

@@ -1,6 +1,7 @@
 package clichat
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -138,7 +139,14 @@ func enableSessionContext(sess *chat.Session, root string, store *storage.SQLite
 	if err := setContextManagerForSetup(sess, manager, principal, policy); err != nil {
 		return err
 	}
-	return sess.SetContextStore(store)
+	if err := sess.SetContextStore(store); err != nil {
+		return err
+	}
+	// Prime the token-estimate correction from what this workspace already
+	// measured for this binding, so the first request is not planned blind.
+	// Best effort by contract: a miss leaves the session uncorrected.
+	sess.SeedCalibration(context.Background(), store, principal.WorkspaceID)
+	return nil
 }
 
 func contextDispatcherFor(sess *chat.Session, _ config.SubagentConfig) ContextDispatcherWiring {

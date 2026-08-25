@@ -491,3 +491,54 @@ func (s *Session) runTurnCleanup(turn *TurnOptions) {
 		turn.Cleanup()
 	}
 }
+
+// CalibrationSeeder supplies the estimate-vs-actual correction ratio already
+// observed for a (provider, model) binding. It is a one-method view of the
+// durable usage ledger, declared here so internal/chat stays storage-agnostic
+// - the composition root injects the concrete store.
+type CalibrationSeeder interface {
+	CalibrationSeed(ctx context.Context, workspaceID, provider, model string) (float64, bool, error)
+}
+
+// SeedCalibration primes the token-estimate correction from durable
+// observations of this session's binding, so the FIRST request of a fresh
+// process is planned with the correction the workspace already learned.
+//
+// The ratio was previously written to the usage ledger on every turn and
+// never read back, so every process, session and resume began assuming the
+// len(s)/4 estimate was exact. On payloads that are mostly code and JSON tool
+// schemas it runs ~1.7x low, so the first request slipped past the compaction
+// trigger and the next one repaid the whole error at once - the sequence that
+// destroyed a real session's context.
+//
+// Seeding is a cold-start aid, never an override: a session that has already
+// measured its own binding keeps that measurement, and Samples is set to 1
+// (not the durable row count) so the first live observation outweighs the
+// seed immediately and a stale ratio decays within a turn or two rather than
+// pinning the estimate. Any failure leaves the session uncorrected, exactly
+// as before this seam existed - a missing seed must never be worse than the
+// old unconditional 1.0.
+func (s *Session) SeedCalibration(ctx context.Context, seeder CalibrationSeeder, workspaceID string) {
+	if seeder == nil {
+		return
+	}
+	s.mu.RLock()
+	already := s.Calibration.Samples
+	provider, model := s.binding.ProviderName, s.binding.Model
+	s.mu.RUnlock()
+	if already > 0 || provider == "" || model == "" {
+		return
+	}
+	ratio, ok, err := seeder.CalibrationSeed(ctx, workspaceID, provider, model)
+	if err != nil || !ok || ratio <= 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.Calibration.Samples > 0 {
+		// A turn landed while the query was in flight; live evidence wins.
+		return
+	}
+	s.Calibration.Ratio = ratio
+	s.Calibration.Samples = 1
+}
