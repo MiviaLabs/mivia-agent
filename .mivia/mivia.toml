@@ -38,17 +38,8 @@ enabled = true
 [[mcp.servers]]
 args = ['serve', '--mcp']
 command = '/home/mac/.local/bin/codegraph'
-global = true
 id = 'codegraph'
-timeout_seconds = 30
 transport = 'stdio'
-
-[[mcp.servers]]
-global = true
-id = 'context7'
-timeout_seconds = 30
-transport = 'streamable_http'
-url = 'https://mcp.context7.com/mcp'
 
 [memory]
 block_patterns = ['(?i)sk-[A-Za-z0-9]{16,}', '(?i)ghp_[A-Za-z0-9]{20,}', '(?i)github_pat_[A-Za-z0-9_]{20,}', '(?i)AKIA[0-9A-Z]{16}', '(?is)-----BEGIN [A-Z0-9 ]+PRIVATE KEY-----', '(?i)(?:password|passwd|secret|api[_-]?key|token)[ \t]*[:=][ \t]*[^\s,;}\"]{8,}']
