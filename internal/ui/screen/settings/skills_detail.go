@@ -139,9 +139,9 @@ func (s *skillsSection) renderDetail(sk ports.SkillView) []string {
 	fg := render.Role(s.theme, s.tier, theme.RoleFG)
 	accent := render.Role(s.theme, s.tier, theme.RoleAccent)
 
-	originLabel := "Project (.agents/skills/" + sk.Name + "/SKILL.md)"
+	originLabel := "Project (workspace: " + sk.Name + "/SKILL.md)"
 	if sk.Origin == "user" {
-		originLabel = "Global (~/.mivia/skills/" + sk.Name + "/SKILL.md)"
+		originLabel = "Global (user home: " + sk.Name + "/SKILL.md)"
 	}
 
 	lines := []string{

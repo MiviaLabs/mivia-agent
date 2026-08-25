@@ -40,8 +40,8 @@ func TestSkillsSection_GroupedByGlobalAndProject(t *testing.T) {
 	plain := ansi.Strip(skillsSectionOf(s).View())
 
 	for _, want := range []string{
-		"Global Skills (~/.mivia/skills)",
-		"Project Skills (.agents/skills)",
+		"Global Skills (user home)",
+		"Project Skills (workspace)",
 		"/code-review",
 		"/test-runner",
 		"invocable",
@@ -56,7 +56,7 @@ func TestSkillsSection_DetailPane(t *testing.T) {
 	s, _ := newHarnessScreen(t, 100, 30)
 	plain := ansi.Strip(skillsSectionOf(s).View())
 
-	if !strings.Contains(plain, "Global (~/.mivia/skills/") && !strings.Contains(plain, "Project (.agents/skills/") {
+	if !strings.Contains(plain, "Global (user home:") && !strings.Contains(plain, "Project (workspace:") {
 		t.Errorf("Skills view missing detail pane path:\n%s", plain)
 	}
 }

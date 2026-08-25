@@ -63,7 +63,7 @@ func (s *skillsSection) rebuild() {
 	indices := make([]int, 0, len(all))
 
 	// Global Group (user home)
-	rows = append(rows, skillsRow{isHeader: true, header: "Global Skills (~/.mivia/skills)"})
+	rows = append(rows, skillsRow{isHeader: true, header: "Global Skills (user home)"})
 	if len(globalSkills) == 0 {
 		rows = append(rows, skillsRow{isHeader: true, header: "  (no global skills installed)"})
 	} else {
@@ -74,7 +74,7 @@ func (s *skillsSection) rebuild() {
 	}
 
 	// Project Group (workspace)
-	rows = append(rows, skillsRow{isHeader: true, header: "Project Skills (.agents/skills)"})
+	rows = append(rows, skillsRow{isHeader: true, header: "Project Skills (workspace)"})
 	if len(projectSkills) == 0 {
 		rows = append(rows, skillsRow{isHeader: true, header: "  (no project skills installed)"})
 	} else {
@@ -155,7 +155,7 @@ func (s *skillsSection) handleKey(msg tea.KeyPressMsg) (section, tea.Cmd) {
 	case "e":
 		s.notice = "to edit skill instructions, edit its SKILL.md file directly"
 	case "n":
-		s.notice = "to add a skill, create a directory with SKILL.md under ~/.mivia/skills or .agents/skills"
+		s.notice = "to add a skill, create a directory with SKILL.md under user home or workspace skills directory"
 	}
 	return s, nil
 }
