@@ -74,7 +74,6 @@ func TestSettingsPortsCoverConfigFields(t *testing.T) {
 				"ToolsCore":       "resolved into the final Tools list",
 				"OutputSchema":    "not yet surfaced; no consumer in this screen's v1 scope",
 				"InputSchema":     "not yet surfaced; no consumer in this screen's v1 scope",
-				"SystemPrompt":    "projected as SystemPromptChars (a length, never the text) - settings-screen.md §5",
 				"TimeoutSeconds":  "not yet surfaced; no consumer in this screen's v1 scope",
 				"MaxTokens":       "not yet surfaced; no consumer in this screen's v1 scope",
 			},

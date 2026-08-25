@@ -177,7 +177,10 @@ func (s *skillsSection) handleKey(msg tea.KeyPressMsg) (section, tea.Cmd) {
 		return s.handleEditorKey(msg)
 	}
 
-	if s.store == nil || (len(s.skillIndices) == 0 && !s.editing) {
+	if s.store == nil {
+		return s, nil
+	}
+	if len(s.skillIndices) == 0 && !s.editing {
 		if msg.String() == "n" {
 			s.openEditor(ports.SkillView{Origin: "project", UserInvocable: true}, true)
 			return s, nil

@@ -30,6 +30,7 @@ func (s *SettingsStore) initAgentsFromConfig() {
 			Skills:            skills,
 			MCPServers:        a.EffectiveMCPServers,
 			SystemPromptChars: len(a.SystemPrompt),
+			SystemPrompt:      a.SystemPrompt,
 			Scope:             agentSourceToScope(a.Provenance.Source),
 		})
 	}
@@ -97,13 +98,14 @@ func (s *SettingsStore) applyAgent(scope ports.Scope, e ports.AgentEdit) error {
 	switch v := e.(type) {
 	case ports.UpsertAgent:
 		v.Agent.Scope = scope
+		v.Agent.SystemPromptChars = len(v.Agent.SystemPrompt)
 		if i := s.findAgent(v.Agent.Name); i >= 0 {
 			s.agents[i] = v.Agent
 		} else {
 			s.agents = append(s.agents, v.Agent)
 		}
 		if dir := agentsDirForScope(scope); dir != "" {
-			_ = config.WriteAgentFile(dir, agentViewToSettings(v.Agent), "")
+			_ = config.WriteAgentFile(dir, agentViewToSettings(v.Agent), v.Agent.SystemPrompt)
 		}
 	case ports.RemoveAgent:
 		if v.Name == ports.DefaultAgentName {

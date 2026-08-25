@@ -8,6 +8,11 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/keymap"
 )
 
+const (
+	// rowGap is the default column spacing across aligned settings list views.
+	rowGap = 2
+)
+
 // section is one nav entry's detail pane: General, Models, MCP, Agents,
 // or Automations. One small interface, one file per real
 // implementation, so five sections do not each re-derive the

@@ -348,6 +348,7 @@ func (m *mockSettings) applyAgent(scope ports.Scope, e ports.AgentEdit) error {
 	switch v := e.(type) {
 	case ports.UpsertAgent:
 		v.Agent.Scope = scope
+		v.Agent.SystemPromptChars = len(v.Agent.SystemPrompt)
 		if i := m.findAgent(v.Agent.Name); i >= 0 {
 			m.agents[i] = v.Agent
 			return nil
@@ -671,9 +672,9 @@ func seedMCPServers() []ports.MCPServerView {
 
 func seedAgents() []ports.AgentView {
 	return []ports.AgentView{
-		{Name: ports.DefaultAgentName, Description: "general purpose orchestrator", Provider: "openrouter", Model: "anthropic/claude-opus-5", MaxTurns: 40, SystemPromptChars: 4200, Scope: ports.ScopeUser},
-		{Name: "go-engineer", Description: "implements Go changes", Provider: "openrouter", Model: "anthropic/claude-opus-5", Tools: []string{"edit_file", "run_command"}, MaxTurns: 60, SystemPromptChars: 2100, Scope: ports.ScopeUser},
-		{Name: "reviewer", Description: "reviews changed code for this workspace", Provider: "openrouter", Model: "anthropic/claude-opus-5", Tools: []string{"read_file", "inspect_repository"}, Skills: []string{"code-review"}, MaxTurns: 30, SystemPromptChars: 1800, Scope: ports.ScopeProject},
+		{Name: ports.DefaultAgentName, Description: "general purpose orchestrator", Provider: "openrouter", Model: "anthropic/claude-opus-5", MaxTurns: 40, SystemPromptChars: 4200, SystemPrompt: "You are Mivia, a local CLI coding agent.", Scope: ports.ScopeUser},
+		{Name: "go-engineer", Description: "implements Go changes", Provider: "openrouter", Model: "anthropic/claude-opus-5", Tools: []string{"edit_file", "run_command"}, MaxTurns: 60, SystemPromptChars: 2100, SystemPrompt: "You are a senior Go engineer.", Scope: ports.ScopeUser},
+		{Name: "reviewer", Description: "reviews changed code for this workspace", Provider: "openrouter", Model: "anthropic/claude-opus-5", Tools: []string{"read_file", "inspect_repository"}, Skills: []string{"code-review"}, MaxTurns: 30, SystemPromptChars: 1800, SystemPrompt: "You are a code reviewer focusing on quality and safety.", Scope: ports.ScopeProject},
 	}
 }
 
