@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
@@ -52,14 +53,29 @@ func validateRestoredMessages(messages []provider.Message) error {
 }
 
 // maskMemoryFrameNames returns a shallow clone with the session-owned
-// core-memory frame's Name cleared for pairing validation. Only a user-role
-// message with the sentinel Name is masked; a checkpoint that carries the
-// Name on any other role stays a hard shape error.
+// core-memory frame's Name cleared for pairing validation, alongside the
+// auto-compaction summary's Name (agent.SummaryMessageName). Only a
+// user-role message with one of these two sentinel Names is masked; a
+// checkpoint that carries a Name on any other role, or a non-sentinel Name
+// on a user role, stays a hard shape error.
+//
+// The summary case exists for restore, not commit: commitContextTurn already
+// strips summaryMessage.Name before a checkpoint is ever durably written, so
+// a freshly committed checkpoint never carries it. This mask exists for
+// checkpoints written before that stripping was correct - once named, a
+// summary message's Name is permanent (committed bytes never get
+// retroactively fixed), so without this exemption such a session is
+// permanently unresumable. The Name was always host bookkeeping, never
+// model-authored identity, so masking it on restore is safe and self-heals
+// old data instead of bricking the session forever.
 func maskMemoryFrameNames(messages []provider.Message) []provider.Message {
 	output := make([]provider.Message, len(messages))
 	copy(output, messages)
 	for index := range output {
-		if output[index].Role == provider.RoleUser && output[index].Name == MemoryContextMessageName {
+		if output[index].Role != provider.RoleUser {
+			continue
+		}
+		if output[index].Name == MemoryContextMessageName || output[index].Name == agent.SummaryMessageName {
 			output[index].Name = ""
 		}
 	}

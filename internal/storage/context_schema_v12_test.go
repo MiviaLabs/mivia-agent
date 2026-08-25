@@ -46,12 +46,15 @@ func TestMigrationV12AddsTokenUsageEventsTable(t *testing.T) {
 			if err := migrateContextSchema(db); err != nil {
 				t.Fatalf("migrateContextSchema from %s: %v", test.name, err)
 			}
+			// migrateContextSchema always drives to the latest version, not
+			// just v12 - so this asserts v12's own artifact survived the rest
+			// of the ladder, not that the ladder stopped at 12.
 			var version int
 			if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
 				t.Fatal(err)
 			}
-			if version != 12 {
-				t.Fatalf("user_version = %d after %s, want 12", version, test.name)
+			if version != currentContextSchemaVersion {
+				t.Fatalf("user_version = %d after %s, want %d", version, test.name, currentContextSchemaVersion)
 			}
 			if !contextVersionTablePresent(db, 12) {
 				t.Fatalf("token_usage_events is missing after %s", test.name)

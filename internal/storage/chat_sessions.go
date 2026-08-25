@@ -27,6 +27,33 @@ func worktreeCatalogName(name string, instance contextstate.WorktreeInstance) st
 
 var _ contextstate.SessionCatalog = (*SQLite)(nil)
 
+// resolveSnapshotProjectionIdentity computes the session_id and
+// session_revision a SaveSession write should stamp. sessionID records the
+// live context session this row projects ("id is id, name is name"): a
+// non-empty session_id means the row is a live projection declared by the
+// saving process (opts.SessionID == name) and verified live at write time;
+// empty means a plain snapshot copy. Worktree rows always stay empty; legacy
+// projection rows are backfilled at v11. sessionRevision is only meaningful
+// alongside a stamped sessionID - a plain named copy never reaches
+// resolveProjection, so its revision would never be read anyway.
+func resolveSnapshotProjectionIdentity(ctx context.Context, tx *sql.Tx, principal contextstate.Principal, name string, opts contextstate.SessionSaveOptions) (sessionID string, sessionRevision any, err error) {
+	if opts.WorktreeInstance.IsZero() && opts.SessionID != "" && opts.SessionID == name {
+		var one int
+		err := tx.QueryRowContext(ctx, `SELECT 1 FROM context_sessions WHERE workspace_id=? AND subject_id=? AND session_id=? AND tombstoned=0 AND instance_id IS NULL`, principal.WorkspaceID, principal.SubjectID, opts.SessionID).Scan(&one)
+		if errors.Is(err, sql.ErrNoRows) {
+			sessionID = ""
+		} else if err != nil {
+			return "", nil, err
+		} else {
+			sessionID = opts.SessionID
+		}
+	}
+	if sessionID != "" && opts.SessionRevision != nil {
+		sessionRevision = *opts.SessionRevision
+	}
+	return sessionID, sessionRevision, nil
+}
+
 func (s *SQLite) SaveSession(ctx context.Context, principal contextstate.Principal, name string, messages []byte, model, provider string, turns, tokens, messageCount int, opts contextstate.SessionSaveOptions) error {
 	if err := principal.Validate(); err != nil {
 		return err
@@ -71,25 +98,11 @@ func (s *SQLite) SaveSession(ctx context.Context, principal contextstate.Princip
 					return err
 				}
 			}
-			// sessionID records the live context session this row projects
-			// ("id is id, name is name"). A non-empty session_id means the
-			// row is a live projection declared by the saving process
-			// (opts.SessionID == name) and verified live at write time; NULL
-			// means a plain snapshot copy. Worktree rows always stay NULL;
-			// legacy projection rows are backfilled at v11.
-			sessionID := ""
-			if opts.WorktreeInstance.IsZero() && opts.SessionID != "" && opts.SessionID == name {
-				var one int
-				err := tx.QueryRowContext(ctx, `SELECT 1 FROM context_sessions WHERE workspace_id=? AND subject_id=? AND session_id=? AND tombstoned=0 AND instance_id IS NULL`, principal.WorkspaceID, principal.SubjectID, opts.SessionID).Scan(&one)
-				if errors.Is(err, sql.ErrNoRows) {
-					sessionID = ""
-				} else if err != nil {
-					return err
-				} else {
-					sessionID = opts.SessionID
-				}
+			sessionID, sessionRevision, err := resolveSnapshotProjectionIdentity(ctx, tx, principal, name, opts)
+			if err != nil {
+				return err
 			}
-			result, err := tx.ExecContext(ctx, `INSERT INTO chat_sessions(workspace_id,subject_id,name,model,provider,messages,created_at,updated_at,turn_count,token_count,message_count,instance_id,session_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(workspace_id,subject_id,name) DO UPDATE SET model=excluded.model,provider=excluded.provider,messages=excluded.messages,updated_at=excluded.updated_at,turn_count=excluded.turn_count,token_count=excluded.token_count,message_count=excluded.message_count,session_id=excluded.session_id WHERE chat_sessions.instance_id IS excluded.instance_id`, principal.WorkspaceID, principal.SubjectID, storedName, model, provider, messages, now, now, turns, tokens, messageCount, nullableText(opts.WorktreeInstance.ID), nullableText(sessionID))
+			result, err := tx.ExecContext(ctx, `INSERT INTO chat_sessions(workspace_id,subject_id,name,model,provider,messages,created_at,updated_at,turn_count,token_count,message_count,instance_id,session_id,session_revision) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(workspace_id,subject_id,name) DO UPDATE SET model=excluded.model,provider=excluded.provider,messages=excluded.messages,updated_at=excluded.updated_at,turn_count=excluded.turn_count,token_count=excluded.token_count,message_count=excluded.message_count,session_id=excluded.session_id,session_revision=excluded.session_revision WHERE chat_sessions.instance_id IS excluded.instance_id`, principal.WorkspaceID, principal.SubjectID, storedName, model, provider, messages, now, now, turns, tokens, messageCount, nullableText(opts.WorktreeInstance.ID), nullableText(sessionID), sessionRevision)
 			if err != nil {
 				return err
 			}
@@ -123,12 +136,13 @@ func (s *SQLite) LoadSession(ctx context.Context, principal contextstate.Princip
 	var payload []byte
 	var info contextstate.SessionCatalogInfo
 	var catalogSessionID string
-	err := s.db.QueryRowContext(ctx, `SELECT c.name,c.model,c.provider,c.messages,c.created_at,c.updated_at,c.turn_count,c.token_count,c.message_count,COALESCE(c.session_id,''),COALESCE(d.dir,''),COALESCE(d.worktree,'') FROM chat_sessions c LEFT JOIN chat_session_dirs d ON d.workspace_id=c.workspace_id AND d.subject_id=c.subject_id AND d.name=c.name WHERE c.workspace_id=? AND c.subject_id=? AND c.name=? AND c.instance_id IS NULL`, principal.WorkspaceID, principal.SubjectID, name).Scan(&info.Name, &info.Model, &info.Provider, &payload, &info.CreatedAt, &info.UpdatedAt, &info.TurnCount, &info.TokenCount, &info.MessageCount, &catalogSessionID, &info.Dir, &info.Worktree)
+	var snapshotRevision sql.NullInt64
+	err := s.db.QueryRowContext(ctx, `SELECT c.name,c.model,c.provider,c.messages,c.created_at,c.updated_at,c.turn_count,c.token_count,c.message_count,COALESCE(c.session_id,''),COALESCE(d.dir,''),COALESCE(d.worktree,''),c.session_revision FROM chat_sessions c LEFT JOIN chat_session_dirs d ON d.workspace_id=c.workspace_id AND d.subject_id=c.subject_id AND d.name=c.name WHERE c.workspace_id=? AND c.subject_id=? AND c.name=? AND c.instance_id IS NULL`, principal.WorkspaceID, principal.SubjectID, name).Scan(&info.Name, &info.Model, &info.Provider, &payload, &info.CreatedAt, &info.UpdatedAt, &info.TurnCount, &info.TokenCount, &info.MessageCount, &catalogSessionID, &info.Dir, &info.Worktree, &snapshotRevision)
 	if errors.Is(err, sql.ErrNoRows) {
 		// No snapshot row: the live context session is the only source,
 		// exactly as the arm2/--session fallback served it (empty payload
 		// included).
-		live, livePayload, hasLive, err := s.loadLiveContextSession(ctx, principal, name)
+		live, livePayload, hasLive, _, err := s.loadLiveContextSession(ctx, principal, name)
 		if err != nil {
 			return nil, contextstate.SessionCatalogInfo{}, err
 		}
@@ -146,29 +160,53 @@ func (s *SQLite) LoadSession(ctx context.Context, principal contextstate.Princip
 		// id - never a shadow, never a takeover.
 		return append([]byte(nil), payload...), info, nil
 	}
-	return s.resolveProjection(ctx, principal, catalogSessionID, payload, info)
+	return s.resolveProjection(ctx, principal, catalogSessionID, payload, info, snapshotRevision)
 }
 
 // resolveProjection decides whether a chat_sessions projection row (name is a
 // live context session's own id) serves its live checkpoint or its snapshot.
-func (s *SQLite) resolveProjection(ctx context.Context, principal contextstate.Principal, catalogSessionID string, payload []byte, info contextstate.SessionCatalogInfo) ([]byte, contextstate.SessionCatalogInfo, error) {
-	live, livePayload, hasLive, err := s.loadLiveContextSession(ctx, principal, catalogSessionID)
+//
+// A completed checkpoint is always preferred when one exists: it is
+// fingerprint-validated (validateStoredCheckpoint), unlike chat_sessions'
+// messages column, which carries no integrity check at all.
+//
+// When there is NO completed checkpoint, the choice is not that simple: it
+// covers both "this session was never turned" (empty is correct) and "the
+// only content this session ever had lives in the snapshot, because its one
+// and only turn died before any preparation existed to checkpoint against"
+// (adoptFailedTurnSnapshot, internal/chat/turn_finish.go) - unconditionally
+// preferring empty here silently destroys the second case's only copy.
+// snapshotRevision (stamped at save time) resolves the ambiguity: if the live
+// session's head has not advanced past it, nothing (no /clear, no commit) has
+// happened since the snapshot was taken, so it is not stale and must be
+// served; if the head has advanced past it, a clear or a commit superseded it
+// and the live (possibly empty) state wins. A NULL snapshotRevision (a row
+// saved before this column existed) can't be reasoned about this way, so it
+// keeps today's conservative default: prefer the live state.
+func (s *SQLite) resolveProjection(ctx context.Context, principal contextstate.Principal, catalogSessionID string, payload []byte, info contextstate.SessionCatalogInfo, snapshotRevision sql.NullInt64) ([]byte, contextstate.SessionCatalogInfo, error) {
+	live, livePayload, hasLive, liveRevision, err := s.loadLiveContextSession(ctx, principal, catalogSessionID)
 	if err != nil {
 		return nil, contextstate.SessionCatalogInfo{}, err
 	}
-	// A projection's transcript lives in its completed context checkpoints;
-	// the chat_sessions row is only a catalog projection of that state,
-	// refreshed by SaveAfterTurn on its own schedule. When a live context
-	// session exists (hasLive == true), its live checkpoint state is authoritative:
-	// either a completed checkpoint payload or emptyContextPayload ("[]")
-	// when never turned or explicitly cleared (/clear).
-	if hasLive {
+	if !hasLive {
+		// The live row is gone (tombstoned or deleted): the projection is now
+		// a plain copy.
+		info.SessionID = ""
+		return append([]byte(nil), payload...), info, nil
+	}
+	if len(livePayload) > len(emptyContextPayload) {
 		return livePayload, live, nil
 	}
-	// The live row is gone (tombstoned or deleted): the projection is now a
-	// plain copy.
-	info.SessionID = ""
-	return append([]byte(nil), payload...), info, nil
+	if snapshotRevision.Valid && uint64(snapshotRevision.Int64) >= liveRevision {
+		// Nothing has advanced the head since this snapshot was saved - it is
+		// the only content this session ever had. Preserve the live identity
+		// (id is id) so the caller still recognizes a live session to take
+		// over instead of forking a new one.
+		info.SessionID = catalogSessionID
+		info.Title = live.Title
+		return append([]byte(nil), payload...), info, nil
+	}
+	return livePayload, live, nil
 }
 
 // emptyContextPayload is the COALESCE default the live-row query serves when
@@ -195,29 +233,32 @@ var emptyContextPayload = []byte("[]")
 // would resurrect a conversation the user explicitly cleared on the very next
 // resume. Bug audit caught this as a real regression before it shipped; see
 // git history for the reverted fallback and its test coverage.
-const liveContextSessionSQL = `SELECT cs.session_id,COALESCE(cs.title,''),cs.model,cs.provider,COALESCE((SELECT active_context FROM context_checkpoints WHERE checkpoint_id=cs.active_checkpoint_id AND complete=1),?),COALESCE((SELECT MIN(created_at) FROM context_checkpoints WHERE session_id=cs.session_id),CURRENT_TIMESTAMP),COALESCE((SELECT MAX(created_at) FROM context_checkpoints WHERE session_id=cs.session_id),CURRENT_TIMESTAMP),source_sequence,COALESCE(d.dir,''),COALESCE(d.worktree,'') FROM context_sessions cs LEFT JOIN chat_session_dirs d ON d.workspace_id=cs.workspace_id AND d.subject_id=cs.subject_id AND d.name=cs.session_id WHERE cs.workspace_id=? AND cs.subject_id=? AND cs.session_id=? AND cs.tombstoned=0 AND cs.instance_id IS NULL`
+const liveContextSessionSQL = `SELECT cs.session_id,COALESCE(cs.title,''),cs.model,cs.provider,COALESCE((SELECT active_context FROM context_checkpoints WHERE checkpoint_id=cs.active_checkpoint_id AND complete=1),?),COALESCE((SELECT MIN(created_at) FROM context_checkpoints WHERE session_id=cs.session_id),CURRENT_TIMESTAMP),COALESCE((SELECT MAX(created_at) FROM context_checkpoints WHERE session_id=cs.session_id),CURRENT_TIMESTAMP),source_sequence,COALESCE(d.dir,''),COALESCE(d.worktree,''),cs.session_revision FROM context_sessions cs LEFT JOIN chat_session_dirs d ON d.workspace_id=cs.workspace_id AND d.subject_id=cs.subject_id AND d.name=cs.session_id WHERE cs.workspace_id=? AND cs.subject_id=? AND cs.session_id=? AND cs.tombstoned=0 AND cs.instance_id IS NULL`
 
 // loadLiveContextSession returns the live context session row behind name.
 // found is false when no live row exists (a plain named snapshot, or a session
 // whose live row is tombstoned); the caller then reads the chat_sessions
 // snapshot instead. The payload is emptyContextPayload when the row carries
 // no completed checkpoint, and the caller decides whether that is usable.
-func (s *SQLite) loadLiveContextSession(ctx context.Context, principal contextstate.Principal, name string) (contextstate.SessionCatalogInfo, []byte, bool, error) {
+// revision is the live session's current session_revision, for
+// resolveProjection's staleness comparison.
+func (s *SQLite) loadLiveContextSession(ctx context.Context, principal contextstate.Principal, name string) (contextstate.SessionCatalogInfo, []byte, bool, uint64, error) {
 	var payload []byte
 	var info contextstate.SessionCatalogInfo
 	var sourceCount int
-	err := s.db.QueryRowContext(ctx, liveContextSessionSQL, emptyContextPayload, principal.WorkspaceID, principal.SubjectID, name).Scan(&info.SessionID, &info.Title, &info.Model, &info.Provider, &payload, &info.CreatedAt, &info.UpdatedAt, &sourceCount, &info.Dir, &info.Worktree)
+	var revision uint64
+	err := s.db.QueryRowContext(ctx, liveContextSessionSQL, emptyContextPayload, principal.WorkspaceID, principal.SubjectID, name).Scan(&info.SessionID, &info.Title, &info.Model, &info.Provider, &payload, &info.CreatedAt, &info.UpdatedAt, &sourceCount, &info.Dir, &info.Worktree, &revision)
 	if errors.Is(err, sql.ErrNoRows) {
-		return contextstate.SessionCatalogInfo{}, nil, false, nil
+		return contextstate.SessionCatalogInfo{}, nil, false, 0, nil
 	}
 	if err != nil {
-		return contextstate.SessionCatalogInfo{}, nil, false, err
+		return contextstate.SessionCatalogInfo{}, nil, false, 0, err
 	}
 	info.Name = info.SessionID
 	info.MessageCount = sourceCount
 	info.TurnCount = sourceCount
 	info.TokenCount = 0
-	return info, payload, true, nil
+	return info, payload, true, revision, nil
 }
 
 func (s *SQLite) ListSessions(ctx context.Context, principal contextstate.Principal) ([]contextstate.SessionCatalogInfo, error) {

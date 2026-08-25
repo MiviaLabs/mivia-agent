@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-const currentContextSchemaVersion = 12
+const currentContextSchemaVersion = 13
 
 func migrateContextSchema(db *sql.DB) error {
 	if err := rejectNewerContextSchema(db); err != nil {
@@ -28,7 +28,7 @@ func migrateContextSchema(db *sql.DB) error {
 		return fmt.Errorf("context schema version %d is newer than supported version %d", version, currentContextSchemaVersion)
 	}
 	if version == currentContextSchemaVersion {
-		return ensureContextSchemaV11(db)
+		return ensureContextSchemaV13(db)
 	}
 	return migrateContextSchemaLadder(db, version)
 }
@@ -107,7 +107,13 @@ func migrateContextSchemaLadder(db *sql.DB, version int) error {
 		version = 11
 	}
 	if version == 11 {
-		return applyContextSchemaV12(db)
+		if err := applyContextSchemaV12(db); err != nil {
+			return err
+		}
+		version = 12
+	}
+	if version == 12 {
+		return applyContextSchemaV13(db)
 	}
 	return fmt.Errorf("unsupported context schema version %d", version)
 }
@@ -186,6 +192,11 @@ func repairContextSchema(db *sql.DB) error {
 				return err
 			}
 		}
+		if v == 13 {
+			if err := ensureContextSchemaV13(db); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -260,6 +271,8 @@ func contextVersionTable(v int) string {
 		return "chat_sessions_v11_contract"
 	case 12:
 		return "token_usage_events"
+	case 13:
+		return "chat_sessions_v13_contract"
 	default:
 		return ""
 	}

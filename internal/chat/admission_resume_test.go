@@ -352,12 +352,18 @@ func TestRepublishingTheLiveDispatcherDoesNotCloseIt(t *testing.T) {
 // --- pending-stage ownership -------------------------------------------
 
 // TestAnUnrelatedTurnKeepsAnotherTurnsStage: a deferred stage legitimately
-// outlives its staging turn, so a later turn's failure must not destroy it.
+// outlives its staging turn, so a later turn whose durable COMMIT ITSELF
+// fails (not merely a provider error the commit still durably absorbs - see
+// TestErroredContextTurnPublishesItsStageOnceCommitted) must not destroy it.
+// dropPendingAdmissionForTurn only ever runs on the commit-failure branch now
+// (finishErroredContextTurn's success-commit branch publishes instead, like
+// any other successfully committed turn), so this test drives that branch
+// specifically: the provider error AND the checkpoint commit both fail.
 func TestAnUnrelatedTurnKeepsAnotherTurnsStage(t *testing.T) {
 	sess := agentTurnSession(t, &fakeCompleter{err: errors.New("provider down")})
-	contextSessionManager(t, sess, nil)
+	contextSessionManager(t, sess, errors.New("checkpoint failed"))
 	sess.SetSurfaceWidener(func([]string, AgentSurfacePublication) (bool, error) {
-		t.Error("an errored turn published an admission")
+		t.Error("a failed commit published an admission")
 		return false, nil
 	})
 	// Owned by a turn other than the one about to run and fail.

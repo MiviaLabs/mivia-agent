@@ -5,9 +5,11 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
@@ -129,5 +131,41 @@ func TestCrossProcessProjectionLoadReportsLiveSession(t *testing.T) {
 	}
 	if processB.SessionID != liveID {
 		t.Fatalf("projection load must adopt the live id: got %q, want %q", processB.SessionID, liveID)
+	}
+}
+
+// TestDecodeCatalogMessagesToleratesNamedSummaryFromOlderCheckpoints pins a
+// real resume failure: a session whose auto-compaction summary was durably
+// committed WITH its wire Name still attached (a historical bug in an older
+// build, before the commit path anonymized it - see commitContextTurn's
+// summaryMessage.Name = "" in turn_finish.go) becomes permanently
+// unresumable, since every load runs provider.ValidateToolPairing, which
+// rejects a named user message. A fresh commit never produces this shape
+// anymore, but a session that already carries one from before that fix must
+// still be loadable - the summary's Name is host bookkeeping, never
+// model-authored identity, so masking it on load (exactly like the
+// core-memory frame's Name is already masked) costs nothing and self-heals
+// old data instead of bricking the session forever.
+func TestDecodeCatalogMessagesToleratesNamedSummaryFromOlderCheckpoints(t *testing.T) {
+	msgs := []provider.Message{
+		{Role: provider.RoleSystem, Content: "sys"},
+		{Role: provider.RoleUser, Content: "question"},
+		{Role: provider.RoleAssistant, Content: "answer"},
+		{Role: provider.RoleUser, Name: agent.SummaryMessageName, Content: "[host-injected context summary of the omitted earlier conversation]"},
+		{Role: provider.RoleUser, Content: "next question"},
+	}
+	data, err := contextstate.MarshalCanonical(msgs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := decodeCatalogMessages(data)
+	if err != nil {
+		t.Fatalf("decodeCatalogMessages: %v", err)
+	}
+	if len(decoded) != len(msgs) {
+		t.Fatalf("decoded %d messages, want %d", len(decoded), len(msgs))
+	}
+	if decoded[3].Content != msgs[3].Content {
+		t.Fatalf("summary content = %q, want preserved content %q", decoded[3].Content, msgs[3].Content)
 	}
 }

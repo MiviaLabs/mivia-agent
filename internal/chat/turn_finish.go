@@ -246,12 +246,14 @@ func (s *Session) commitContextTurn(ctx context.Context, loop *agent.Loop, userT
 	s.emitContextCompaction(commitCtx, contextCfg, preparation, token.TurnID, haveSummary)
 	// Durably committed under this turn's own still-valid fence, so the
 	// generation bump below cannot fence the turn out of its own persistence
-	// (plan tools/05 D6 ordering). An errored turn drops its pending admission.
-	if outcome != contextmgr.OutcomeUpstreamErr {
-		s.PublishPendingAdmission()
-	} else {
-		s.dropPendingAdmissionForTurn(token.TurnID)
-	}
+	// (plan tools/05 D6 ordering). Publication happens whenever the commit
+	// succeeded, regardless of outcome (OutcomeUpstreamErr included): if the
+	// turn's history is durably committed, the admission decision made
+	// against that history is committed too. This matches the legacy
+	// (non-context) path's commitPreparedTurn, which already publishes
+	// admission on any successful persistence regardless of turnErr - the two
+	// backends must not disagree on this.
+	s.PublishPendingAdmission()
 	return nil
 }
 

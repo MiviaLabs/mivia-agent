@@ -98,9 +98,15 @@ func (s *Session) saveContextSession(name string, msgs []provider.Message, selec
 	// exist before it persists the id.
 	s.mu.RLock()
 	sessionID := s.SessionID
+	headRevision := s.contextHead.Session
 	s.mu.RUnlock()
 	if name == sessionID {
 		opts.SessionID = sessionID
+		// Stamps this save with the head revision this process believes is
+		// current, so a later LoadSession can tell whether anything (a
+		// /clear, a commit) has advanced the head since - see
+		// resolveProjection (internal/storage/chat_sessions.go).
+		opts.SessionRevision = &headRevision
 	}
 	if err := catalog.SaveSession(context.Background(), principal, name, data, selection.Model, selection.ProviderName, turns, provider.MessagesTokens(msgs, provider.ContextAccountingProfile{}), len(msgs), opts); err != nil {
 		return err

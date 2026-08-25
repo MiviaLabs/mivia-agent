@@ -44,6 +44,15 @@ type SessionSaveOptions struct {
 	// with it only when it matches the catalog name and a live row exists at
 	// write time; every other shape keeps the row a plain snapshot copy.
 	SessionID string
+	// SessionRevision stamps the live session's session_revision as of this
+	// save, so a later LoadSession can tell "nothing has advanced the head
+	// since this snapshot was taken" (safe to serve when there is no
+	// completed checkpoint) apart from "a clear or a commit happened after
+	// this snapshot" (the snapshot is stale). Only stored when SessionID is
+	// also stamped; nil means unknown (e.g. a plain named copy), and the
+	// storage layer then treats the row conservatively, exactly as it did
+	// before this field existed.
+	SessionRevision *uint64
 }
 
 // MaxSessionDirBytes bounds the stored session directory string so a hostile
