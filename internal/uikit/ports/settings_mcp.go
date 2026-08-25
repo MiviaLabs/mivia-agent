@@ -59,6 +59,22 @@ type MCPServerView struct {
 	FailMessage    string
 	ToolCount      int
 	Scope          Scope
+	// OriginLabel names the config file this server came from, ready to
+	// render. The adapter builds it because only that layer may resolve the
+	// namespace directory (internal/workspace); a screen that spelled the
+	// path itself would both duplicate the name and cross a layer boundary.
+	// Empty for a view a screen builds for itself, such as a new-server
+	// editor - see MCPOriginFallback.
+	OriginLabel string
+}
+
+// MCPOriginFallback names the origin of a server view that carries no
+// OriginLabel, so a screen never renders an empty origin.
+func MCPOriginFallback(scope Scope, global bool) string {
+	if scope == ScopeUser || global {
+		return "Global (user)"
+	}
+	return "Project (workspace)"
 }
 
 // MCPEdit is a closed union of MCP server mutations.

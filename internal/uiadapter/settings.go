@@ -535,6 +535,7 @@ func (s *SettingsStore) initMCPFromConfig() {
 			State:          state,
 			FailKind:       failKind,
 			FailMessage:    failMsg,
+			OriginLabel:    mcpOriginLabel(scope, global),
 		})
 	}
 

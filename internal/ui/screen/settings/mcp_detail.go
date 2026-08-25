@@ -142,9 +142,12 @@ func (s *mcpSection) renderDetail(srv ports.MCPServerView) []string {
 	fg := render.Role(s.theme, s.tier, theme.RoleFG)
 	accent := render.Role(s.theme, s.tier, theme.RoleAccent)
 
-	originLabel := "Project (workspace: .mivia/mivia.toml)"
-	if srv.Scope == ports.ScopeUser || srv.Global {
-		originLabel = "Global (user: ~/.mivia/mivia.toml)"
+	// The adapter resolves the config path, because only that layer may
+	// import internal/workspace to name the namespace directory. A view this
+	// screen built for itself carries no label, so fall back to the scope.
+	originLabel := srv.OriginLabel
+	if originLabel == "" {
+		originLabel = ports.MCPOriginFallback(srv.Scope, srv.Global)
 	}
 
 	lines := []string{

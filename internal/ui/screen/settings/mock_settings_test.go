@@ -657,6 +657,10 @@ func seedMCPServers() []ports.MCPServerView {
 			Args:    []string{"-y", "@modelcontextprotocol/server-filesystem", "--token=sk-test-not-real-canary"},
 			Enabled: true, TimeoutSeconds: 30, State: ports.MCPStateConnected, ToolCount: 6,
 			Scope: ports.ScopeUser, Global: true,
+			// Mirrors what the real adapter (internal/uiadapter) supplies,
+			// so these tests exercise the rendered label rather than the
+			// screen's scope-only fallback.
+			OriginLabel: "Global (user: ~/.mivia/mivia.toml)",
 		},
 		{
 			ID: "search", Transport: "streamable_http",
@@ -665,6 +669,7 @@ func seedMCPServers() []ports.MCPServerView {
 			State: ports.MCPStateFailed, FailKind: ports.MCPFailAuth,
 			FailMessage: "authentication failed", ToolCount: 0,
 			Scope: ports.ScopeProject, Global: false,
+			OriginLabel: "Project (workspace: .mivia/mivia.toml)",
 		},
 	}
 }
