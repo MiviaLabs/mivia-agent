@@ -41,9 +41,11 @@ way you read this file.
 
 ### `.agents/agents/`
 
-Markdown subagent role definitions with YAML frontmatter: `mivia.md`,
-`planner.md`, `plan-reviewer.md`, `builder.md`, `reviewer.md`, and specialist
-roles. Format and loading contracts are documented in
+Markdown subagent role definitions with YAML frontmatter: `planner.md`,
+`plan-reviewer.md`, `builder.md`, `reviewer.md`, and specialist roles. There
+is deliberately no `mivia.md` root-agent override: the root session runs the
+compiled fallback prompt the shipped binary carries, so this repo dogfoods
+exactly what users get. Format and loading contracts are documented in
 [`.agents/agents/README.md`](.agents/agents/README.md). Run `make
 agents-check` after editing any role file.
 
