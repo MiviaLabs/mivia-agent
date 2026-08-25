@@ -87,6 +87,15 @@ func TranslateEvent(ev agent.Event) []uievent.Event {
 	case agent.EventCacheUsage:
 		return notice(ev.Detail)
 	case agent.EventTokenUsage:
+		if ev.TokenUsage != nil {
+			return []uievent.Event{{
+				Kind: uievent.KindUsage,
+				Body: uievent.UsageBody{
+					InputTokens:  int64(ev.TokenUsage.InputTokens),
+					OutputTokens: int64(ev.TokenUsage.OutputTokens),
+				},
+			}}
+		}
 		return notice(ev.Detail)
 	case agent.EventWorkLimit:
 		return notice(ev.Detail)

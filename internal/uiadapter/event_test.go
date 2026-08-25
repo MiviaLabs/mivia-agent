@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
+	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/uiadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
@@ -272,7 +273,7 @@ func TestTranslateEvent_NoticeMetrics(t *testing.T) {
 			}},
 		},
 		{
-			name: "token_usage_in_out_is_notice",
+			name: "token_usage_in_out_is_notice_without_struct",
 			ev: agent.Event{
 				Kind:   agent.EventTokenUsage,
 				Detail: "actual 1234 in / 567 out",
@@ -280,6 +281,18 @@ func TestTranslateEvent_NoticeMetrics(t *testing.T) {
 			want: []uievent.Event{{
 				Kind: uievent.KindNotice,
 				Body: uievent.NoticeBody{Text: "actual 1234 in / 567 out"},
+			}},
+		},
+		{
+			name: "token_usage_structured_is_usage_event",
+			ev: agent.Event{
+				Kind:       agent.EventTokenUsage,
+				Detail:     "estimate 1000 vs actual 1200",
+				TokenUsage: &events.TokenUsageEvent{InputTokens: 1200, OutputTokens: 300},
+			},
+			want: []uievent.Event{{
+				Kind: uievent.KindUsage,
+				Body: uievent.UsageBody{InputTokens: 1200, OutputTokens: 300},
 			}},
 		},
 		{

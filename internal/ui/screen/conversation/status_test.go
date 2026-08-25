@@ -7,9 +7,11 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/replay"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
 
 // TestStatusRowShowsStatusTimerAndRightAlignedCancelHintDuringTurn tests
@@ -138,5 +140,47 @@ func TestStatusRowAdaptiveHintsPanelFocused(t *testing.T) {
 	}
 	if !strings.Contains(row, "tab:composer") {
 		t.Errorf("expected tab:composer in panel focused status row, got %q", row)
+	}
+}
+
+func TestHandleTurnEventUsageUpdatesTopbarAndStatusline(t *testing.T) {
+	conv := &scriptedTestConversation{
+		model: ports.ModelInfo{Name: "claude-3-7-sonnet", Provider: "anthropic", ContextWindow: 100_000},
+		usage: ports.Usage{},
+	}
+	dark, _, themes := themePair(t)
+	s := New(dark, theme.TierASCII, themes, conv, nil, 80, nil)
+	s.statusline.Start("thinking", fixedNow())
+
+	// Initial percentage should be 0%
+	pct, ok := s.topbar.ContextPercent()
+	if !ok || pct != 0 {
+		t.Fatalf("expected initial pct 0, got %d (ok=%v)", pct, ok)
+	}
+
+	// Dispatch a mid-turn UsageBody event
+	next, _ := s.handleTurnEvent(uievent.Event{
+		Kind: uievent.KindUsage,
+		Body: uievent.UsageBody{
+			InputTokens:  42_000,
+			OutputTokens: 3_000,
+			CostUSD:      0.08,
+		},
+	})
+	s = next.(Screen)
+
+	// Topbar context percent should immediately reflect 45% (45,000 / 100,000)
+	pct, ok = s.topbar.ContextPercent()
+	if !ok || pct != 45 {
+		t.Errorf("expected updated pct 45, got %d (ok=%v)", pct, ok)
+	}
+
+	// Statusline view should show telemetry pills
+	status := s.statusline.View(fixedNow())
+	if !strings.Contains(status, "[45% ctx]") {
+		t.Errorf("expected statusline to contain [45%% ctx], got %q", status)
+	}
+	if !strings.Contains(status, "$0.08") {
+		t.Errorf("expected statusline to contain $0.08, got %q", status)
 	}
 }

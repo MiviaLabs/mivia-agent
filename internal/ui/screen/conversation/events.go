@@ -141,11 +141,18 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 			// event vocabulary, so only edits and creations record here.
 			s.panel.appendLive(*b.Diff)
 		}
+	case uievent.UsageBody:
+		s.topbar.SetUsage(ports.Usage{
+			InputTokens:  b.InputTokens,
+			OutputTokens: b.OutputTokens,
+			CachedTokens: b.CachedTokens,
+			CostUSD:      b.CostUSD,
+		})
+		pct, hasPct := s.topbar.ContextPercent()
+		s.statusline.SetTelemetry(pct, hasPct, b.CostUSD)
 	case uievent.TurnEndBody:
 		s.approval.Clear()
 	}
-
-	s.refreshTopbar()
 
 	var readCmd tea.Cmd
 	if s.active != nil {
