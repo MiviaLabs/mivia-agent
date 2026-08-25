@@ -227,7 +227,18 @@ func (TurnEndBody) isBody() {}
 
 // EventMsg wraps one Event for message delivery. It satisfies tea.Msg
 // without an import.
+//
+// Source carries the channel this Event was read from. It lets a
+// consumer keep draining the SAME channel purely from the Msg, with no
+// dependency on any session registry still holding a reference to it:
+// a registry lookup that misses (a session not, or no longer, tracked)
+// must not stop the read loop, or the channel fills and its writer -
+// which may be invoked synchronously from the agent loop emitting a
+// tool event - blocks forever. Optional: a producer with no session
+// registry to fall back through (single-session callers) may leave it
+// nil.
 type EventMsg struct {
 	SessionID string
 	Event     Event
+	Source    <-chan Event
 }

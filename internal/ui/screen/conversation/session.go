@@ -140,6 +140,17 @@ func (s Screen) handleEventMsg(msg uievent.EventMsg) (app.Screen, tea.Cmd) {
 			if st.active != nil {
 				return s, s.awaitSessionEvent(msg.SessionID, st.active.Events())
 			}
+			return s, nil
+		}
+		// The session isn't (or is no longer) tracked in s.sessions, so its
+		// transcript/statusline updates have nowhere to go. The channel this
+		// event came from must still be drained: msg.Source is the read
+		// loop's only remaining reference to it, and dropping it here would
+		// permanently stop reading a channel its writer may still be filling
+		// - the writer (the agent loop's synchronous event tap) then blocks
+		// on the next send once the buffer fills, stalling that turn.
+		if msg.Source != nil {
+			return s, s.awaitSessionEvent(msg.SessionID, msg.Source)
 		}
 		return s, nil
 	}
