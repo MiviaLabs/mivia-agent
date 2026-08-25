@@ -64,7 +64,7 @@ func installLocalhostResolverErr(t *testing.T, err error) func(string) ([]net.IP
 // must return a non-nil error (the dialer itself rejects a portless TCP
 // address), never a connection.
 func TestF1PortlessDialAddressUsesUnchangedFallback(t *testing.T) {
-	dial, err := newLoopbackDialContext("http://127.0.0.1:11434/v1")
+	dial, err := newLoopbackDialContext("ollama", "http://127.0.0.1:11434/v1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestF1PortlessDialAddressUsesUnchangedFallback(t *testing.T) {
 func TestF2AMultiIPLoopTriesNextPinnedIP(t *testing.T) {
 	installLocalhostResolverIPs(t, []string{"127.0.0.2", "127.0.0.3"})
 
-	dial, err := newLoopbackDialContext("http://localhost:11434/v1")
+	dial, err := newLoopbackDialContext("ollama", "http://localhost:11434/v1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +152,7 @@ func TestF2AMultiIPLoopTriesNextPinnedIP(t *testing.T) {
 func TestF2BSinglePinnedIPRefusalSurfacesFirstErr(t *testing.T) {
 	installLocalhostResolverIPs(t, []string{"127.0.0.2"})
 
-	dial, err := newLoopbackDialContext("http://localhost:11434/v1")
+	dial, err := newLoopbackDialContext("ollama", "http://localhost:11434/v1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +181,7 @@ func TestF2BSinglePinnedIPRefusalSurfacesFirstErr(t *testing.T) {
 
 // F3: a literal non-loopback address must be refused at construction.
 func TestF3NonLoopbackLiteralAddressRejected(t *testing.T) {
-	_, err := newLoopbackDialContext("http://203.0.113.7:11434/v1")
+	_, err := newLoopbackDialContext("ollama", "http://203.0.113.7:11434/v1")
 	if err == nil {
 		t.Fatal("newLoopbackDialContext must reject a non-loopback literal address")
 	}
@@ -192,7 +192,7 @@ func TestF3NonLoopbackLiteralAddressRejected(t *testing.T) {
 
 // F4: a base URL with no hostname must be refused at construction.
 func TestF4HostlessBaseURLRejected(t *testing.T) {
-	_, err := newLoopbackDialContext("http://:11434/v1")
+	_, err := newLoopbackDialContext("ollama", "http://:11434/v1")
 	if err == nil {
 		t.Fatal("newLoopbackDialContext must reject a hostless base URL")
 	}
@@ -203,7 +203,7 @@ func TestF4HostlessBaseURLRejected(t *testing.T) {
 
 // F5: an unparseable base URL must be refused at construction.
 func TestF5UnparseableBaseURLRejected(t *testing.T) {
-	_, err := newLoopbackDialContext("://bad")
+	_, err := newLoopbackDialContext("ollama", "://bad")
 	if err == nil {
 		t.Fatal("newLoopbackDialContext must reject an unparseable base URL")
 	}
@@ -215,7 +215,7 @@ func TestF5UnparseableBaseURLRejected(t *testing.T) {
 // F6: a failing resolver must fail the keyless gate closed at construction.
 func TestF6ResolverErrorFailsClosed(t *testing.T) {
 	installLocalhostResolverErr(t, errors.New("hostile resolver"))
-	_, err := newLoopbackDialContext("http://localhost:11434/v1")
+	_, err := newLoopbackDialContext("ollama", "http://localhost:11434/v1")
 	if err == nil {
 		t.Fatal("newLoopbackDialContext must fail closed when the resolver errors")
 	}
@@ -228,7 +228,7 @@ func TestF6ResolverErrorFailsClosed(t *testing.T) {
 // construction (nothing to pin).
 func TestF7EmptyResolverResultFailsClosed(t *testing.T) {
 	installLocalhostResolverIPs(t, nil)
-	_, err := newLoopbackDialContext("http://localhost:11434/v1")
+	_, err := newLoopbackDialContext("ollama", "http://localhost:11434/v1")
 	if err == nil {
 		t.Fatal("newLoopbackDialContext must fail closed when the resolver returns no addresses")
 	}
@@ -240,7 +240,7 @@ func TestF7EmptyResolverResultFailsClosed(t *testing.T) {
 // F8: a non-loopback hostname (not localhost, not a literal loopback IP) must
 // be refused at construction.
 func TestF8NonLoopbackHostRejected(t *testing.T) {
-	_, err := newLoopbackDialContext("http://ollama.example.com:11434/v1")
+	_, err := newLoopbackDialContext("ollama", "http://ollama.example.com:11434/v1")
 	if err == nil {
 		t.Fatal("newLoopbackDialContext must reject a non-loopback hostname")
 	}

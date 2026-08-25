@@ -20,6 +20,7 @@ func NewMiniMax(opts Options) (Completer, error) {
 		Name:              "minimax",
 		BaseURL:           base,
 		APIKey:            opts.APIKey,
+		DialContext:       opts.DialContext,
 		CacheUsageEnabled: opts.CacheUsageEnabled,
 	}), nil
 }

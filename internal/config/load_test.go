@@ -662,18 +662,25 @@ func TestValidateBaseURLRejectsHostlessUnit(t *testing.T) {
 
 // TestLoadHTTPBaseURLEnvGate pins the http gate: refused without
 // MIVIA_ALLOW_INSECURE_HTTP=1, accepted with it, never loosening structure.
+//
+// Uses a non-loopback host: a loopback http base_url (127.0.0.1/::1/
+// localhost) is accepted unconditionally regardless of this env var - every
+// builtin provider now gets a verified-loopback dial pin at construction
+// (provider.NewForProvider), not just ollama - so it would not exercise the
+// gate this test pins. See TestValidateBaseURLOllamaLoopbackRelaxation for
+// the loopback exception itself.
 func TestLoadHTTPBaseURLEnvGate(t *testing.T) {
 	t.Setenv("MIVIA_ALLOW_INSECURE_HTTP", "")
-	if _, err := Load(LoadOptions{ConfigPath: writeBaseURLConfig(t, "http://127.0.0.1:9/v1")}); err == nil || !strings.Contains(err.Error(), "base_url") {
+	if _, err := Load(LoadOptions{ConfigPath: writeBaseURLConfig(t, "http://example.com:9/v1")}); err == nil || !strings.Contains(err.Error(), "base_url") {
 		t.Fatalf("http base_url accepted without MIVIA_ALLOW_INSECURE_HTTP=1: %v", err)
 	}
 
 	t.Setenv("MIVIA_ALLOW_INSECURE_HTTP", "1")
-	res, err := Load(LoadOptions{ConfigPath: writeBaseURLConfig(t, "http://127.0.0.1:9/v1")})
+	res, err := Load(LoadOptions{ConfigPath: writeBaseURLConfig(t, "http://example.com:9/v1")})
 	if err != nil {
 		t.Fatalf("http base_url rejected with MIVIA_ALLOW_INSECURE_HTTP=1: %v", err)
 	}
-	if res.BaseURL != "http://127.0.0.1:9/v1" {
+	if res.BaseURL != "http://example.com:9/v1" {
 		t.Fatalf("BaseURL = %q", res.BaseURL)
 	}
 

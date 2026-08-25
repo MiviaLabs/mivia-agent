@@ -18,28 +18,31 @@ var lookupLocalhost = net.LookupIP
 
 // newLoopbackDialContext resolves the base URL host once at construction and
 // returns a DialContext that pins every dial to the resolved loopback
-// addresses. It is the resolve-once half of the keyless ollama loopback gate
-// (plan §12 item 1): config.IsOllamaLoopback approves the literal hostname at
-// config time, and this function turns that approval into a fixed, verified
-// address set, so the per-request dial can never follow a resolver that has
-// since moved "localhost" to a non-loopback address.
+// addresses. It is the resolve-once half of the loopback-http gate (plan
+// §12 item 1, generalized beyond ollama - see NewForProvider):
+// config.IsOllamaLoopback approves the literal hostname at config time, and
+// this function turns that approval into a fixed, verified address set, so
+// the per-request dial can never follow a resolver that has since moved
+// "localhost" to a non-loopback address. providerName only labels error
+// text; the loopback check itself is identical for every caller.
 //
 // The returned DialContext rewrites the dial address host unconditionally.
-// Redirects and proxy dials are pinned too: keyless local traffic must never
-// transit an external proxy. The port always comes from the per-request
-// address, so a pinned dial reaches the same service the caller asked for, on
-// the loopback host verified at construction.
+// Redirects and proxy dials are pinned too: local plaintext traffic must
+// never transit an external proxy. The port always comes from the
+// per-request address, so a pinned dial reaches the same service the caller
+// asked for, on the loopback host verified at construction.
 //
 // Fail closed: a localhost that resolves to any non-loopback address, or to
-// nothing, returns an error here - keyless mode is never constructed.
-func newLoopbackDialContext(baseURL string) (func(ctx context.Context, network, addr string) (net.Conn, error), error) {
+// nothing, returns an error here - a client is never constructed on the
+// strength of an unverified loopback claim.
+func newLoopbackDialContext(providerName, baseURL string) (func(ctx context.Context, network, addr string) (net.Conn, error), error) {
 	u, err := url.Parse(baseURL)
 	if err != nil {
-		return nil, fmt.Errorf("ollama: parse base_url %q: %w", baseURL, err)
+		return nil, fmt.Errorf("%s: parse base_url %q: %w", providerName, baseURL, err)
 	}
 	host := u.Hostname()
 	if host == "" {
-		return nil, fmt.Errorf("ollama: base_url %q has no hostname", baseURL)
+		return nil, fmt.Errorf("%s: base_url %q has no hostname", providerName, baseURL)
 	}
 
 	var pinned []net.IP
@@ -47,25 +50,25 @@ func newLoopbackDialContext(baseURL string) (func(ctx context.Context, network, 
 		// Defense in depth: IsOllamaLoopback already restricts the hostname,
 		// but the dial contract must hold even for direct callers.
 		if !ip.IsLoopback() {
-			return nil, fmt.Errorf("ollama: %s is not a loopback address; refusing keyless local daemon mode (set base_url to http://127.0.0.1:11434/v1)", host)
+			return nil, fmt.Errorf("%s: %s is not a loopback address; refusing plaintext local mode (set base_url to https://, or to a verified http://127.0.0.1 address)", providerName, host)
 		}
 		pinned = []net.IP{ip}
 	} else if strings.EqualFold(host, "localhost") {
 		ips, err := lookupLocalhost(host)
 		if err != nil {
-			return nil, fmt.Errorf("ollama: cannot resolve localhost for local daemon mode: %v (set base_url to http://127.0.0.1:11434/v1)", err)
+			return nil, fmt.Errorf("%s: cannot resolve localhost for local daemon mode: %v (set base_url to http://127.0.0.1:PORT/...)", providerName, err)
 		}
 		for _, ip := range ips {
 			if !ip.IsLoopback() {
-				return nil, fmt.Errorf("ollama: localhost resolves to non-loopback address %s; refusing keyless local daemon mode (set base_url to http://127.0.0.1:11434/v1)", ip)
+				return nil, fmt.Errorf("%s: localhost resolves to non-loopback address %s; refusing plaintext local mode (set base_url to http://127.0.0.1:PORT/...)", providerName, ip)
 			}
 			pinned = append(pinned, ip)
 		}
 		if len(pinned) == 0 {
-			return nil, fmt.Errorf("ollama: localhost resolved to no loopback addresses; refusing keyless local daemon mode (set base_url to http://127.0.0.1:11434/v1)")
+			return nil, fmt.Errorf("%s: localhost resolved to no loopback addresses; refusing plaintext local mode (set base_url to http://127.0.0.1:PORT/...)", providerName)
 		}
 	} else {
-		return nil, fmt.Errorf("ollama: host %q is not a loopback host; refusing keyless local daemon mode (set base_url to http://127.0.0.1:11434/v1)", host)
+		return nil, fmt.Errorf("%s: host %q is not a loopback host; refusing plaintext local mode (set base_url to http://127.0.0.1:PORT/...)", providerName, host)
 	}
 
 	dialer := new(net.Dialer)

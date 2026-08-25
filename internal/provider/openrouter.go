@@ -25,7 +25,7 @@ func NewOpenRouter(opts Options) (Completer, error) {
 		title = "Mivia Agent"
 	}
 	return NewOpenAICompatWithOptions(CompatOptions{
-		Name: "openrouter", BaseURL: base, APIKey: opts.APIKey,
+		Name: "openrouter", BaseURL: base, APIKey: opts.APIKey, DialContext: opts.DialContext,
 		HTTPReferer: referer, XTitle: title, CacheUsageEnabled: opts.CacheUsageEnabled,
 		// OpenRouter forwards Anthropic-style cache_control content markers to
 		// upstream models with explicit caching and documents that models

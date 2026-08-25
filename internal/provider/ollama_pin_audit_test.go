@@ -130,10 +130,13 @@ func TestAuditEveryKeylessConstructionPathInstallsPinnedTransport(t *testing.T) 
 	}
 }
 
-// TestAuditNonOllamaProvidersKeepDefaultTransport pins plan item 3: DialContext
-// is only ever set by NewOllama's keyless branch. Every other provider - and
-// the cloud ollama path - must keep http.DefaultTransport itself (pointer
-// identity), with the dial untouched.
+// TestAuditNonOllamaProvidersKeepDefaultTransport pins plan item 3 for the
+// common (non-loopback) case: a cloud base_url never gets a DialContext,
+// keeping http.DefaultTransport itself (pointer identity). NewForProvider
+// also sets DialContext for a non-ollama provider on a VERIFIED LOOPBACK
+// base_url now (see TestNewForProviderPinsLoopbackDialForNonOllamaProvider) -
+// every case below uses an https/cloud BaseURL specifically so none of them
+// exercise that path.
 func TestAuditNonOllamaProvidersKeepDefaultTransport(t *testing.T) {
 	cases := []struct {
 		name         string
@@ -160,6 +163,37 @@ func TestAuditNonOllamaProvidersKeepDefaultTransport(t *testing.T) {
 				t.Fatal("non-ollama provider no longer uses http.DefaultTransport identity")
 			}
 		})
+	}
+}
+
+// TestNewForProviderPinsLoopbackDialForNonOllamaProvider is the regression
+// test for the generalized loopback protection: a NON-ollama provider (a
+// local llmgateway/OpenAI-compatible server, the reported real-world case)
+// on a verified loopback base_url gets the SAME dial-pinning ollama's own
+// factory has always had, not the default transport. Before this change,
+// only providerName == "ollama" received DialContext; every other provider
+// pointed at 127.0.0.1 silently kept http.DefaultTransport, so a resolver
+// later answering "localhost" with a non-loopback address (DNS rebinding)
+// could route that provider's Bearer token to an address the base_url
+// string never admitted to.
+func TestNewForProviderPinsLoopbackDialForNonOllamaProvider(t *testing.T) {
+	res := &config.Resolved{ProviderRuntimes: map[string]config.ProviderRuntime{
+		"llmgateway": {ProviderName: "llmgateway", BaseURL: "http://127.0.0.1:8317/v1", APIKeySet: true, APIKey: "k"},
+	}}
+	comp, err := NewForProvider(res, "llmgateway")
+	if err != nil {
+		t.Fatalf("NewForProvider: %v", err)
+	}
+	client := comp.(*OpenAICompat)
+	tr, ok := innerTransport(client).(*http.Transport)
+	if !ok {
+		t.Fatalf("inner transport = %T, want *http.Transport", innerTransport(client))
+	}
+	if tr == http.DefaultTransport {
+		t.Fatal("non-ollama provider on a verified loopback base_url kept http.DefaultTransport identity - it must get its own pinned dial, like ollama's factory always has")
+	}
+	if tr.DialContext == nil {
+		t.Fatal("expected a pinned DialContext, got nil")
 	}
 }
 
@@ -341,7 +375,7 @@ func TestAuditLocalhostMultiAddressPinTriesEveryLoopbackIP(t *testing.T) {
 	defer ln6.Close()
 	port := portOf(t, ln6.Addr().String())
 
-	dial, err := newLoopbackDialContext("http://localhost:11434/v1")
+	dial, err := newLoopbackDialContext("ollama", "http://localhost:11434/v1")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -146,7 +146,12 @@ func validateBaseURL(raw, providerName string) error {
 	}
 	switch u.Scheme {
 	case "http":
-		if providerName == "ollama" && IsOllamaLoopback(raw) {
+		// Generalized beyond ollama: every builtin provider now gets the
+		// same verified-loopback dial pinning at construction
+		// (provider.NewForProvider), not just ollama's own factory, so this
+		// check no longer needs to name a specific provider - the
+		// protection this exception depends on is provider-agnostic.
+		if IsOllamaLoopback(raw) {
 			return nil
 		}
 		if os.Getenv("MIVIA_ALLOW_INSECURE_HTTP") == "1" {

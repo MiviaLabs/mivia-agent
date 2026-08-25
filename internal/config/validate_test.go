@@ -157,13 +157,15 @@ func TestValidateHTTPSURL(t *testing.T) {
 	}
 }
 
-// TestValidateBaseURLOllamaLoopbackRelaxation pins the planned ollama
-// loopback relaxation: an http loopback base_url (the default ollama serving
-// address) is accepted for the ollama provider even without
-// MIVIA_ALLOW_INSECURE_HTTP, while the same loopback URL stays gated for
-// other providers and a non-loopback http URL is never relaxed for ollama.
-// The env var is pinned explicitly so the case never depends on the ambient
-// environment (mirroring TestLoadHTTPBaseURLEnvGate's t.Setenv usage).
+// TestValidateBaseURLOllamaLoopbackRelaxation pins the loopback http
+// relaxation: an http loopback base_url (the default ollama serving
+// address) is accepted for ANY provider name without MIVIA_ALLOW_INSECURE_HTTP
+// - every builtin provider now gets a verified-loopback dial pin at
+// construction (provider.NewForProvider), not just ollama's own factory, so
+// this check has no reason to single one out - while a non-loopback http URL
+// is never relaxed regardless of provider. The env var is pinned explicitly
+// so the case never depends on the ambient environment (mirroring
+// TestLoadHTTPBaseURLEnvGate's t.Setenv usage).
 func TestValidateBaseURLOllamaLoopbackRelaxation(t *testing.T) {
 	t.Setenv("MIVIA_ALLOW_INSECURE_HTTP", "")
 	tests := []struct {
@@ -173,9 +175,10 @@ func TestValidateBaseURLOllamaLoopbackRelaxation(t *testing.T) {
 		wantErrContains string
 	}{
 		{"ollama http loopback relaxed without env", "http://127.0.0.1:11434/v1", "ollama", ""},
-		{"non-ollama loopback not relaxed", "http://127.0.0.1:11434/v1", "deepseek", "https"},
+		{"non-ollama loopback also relaxed", "http://127.0.0.1:11434/v1", "deepseek", ""},
 		{"ollama https accepted", "https://ollama.com/v1", "ollama", ""},
 		{"ollama non-loopback http rejected", "http://evil.example", "ollama", "https"},
+		{"non-ollama non-loopback http rejected", "http://evil.example", "deepseek", "https"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
