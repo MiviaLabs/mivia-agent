@@ -73,7 +73,13 @@ func runSessionsGC(args []string, stdout, stderr io.Writer) error {
 	}
 	defer store.Close()
 
-	removed, err := sweepCheckpoints(context.Background(), store, time.Duration(retentionDays)*24*time.Hour, keep)
+	retention := time.Duration(retentionDays) * 24 * time.Hour
+	removed, err := sweepCheckpoints(context.Background(), store, retention, keep)
+	if err != nil {
+		fmt.Fprintf(stderr, "sessions gc: %v\n", err)
+		return fmt.Errorf("sessions gc: %w", err)
+	}
+	instances, routes, err := sweepWorktrees(context.Background(), store, retention)
 	if err != nil {
 		fmt.Fprintf(stderr, "sessions gc: %v\n", err)
 		return fmt.Errorf("sessions gc: %w", err)
@@ -86,13 +92,16 @@ func runSessionsGC(args []string, stdout, stderr io.Writer) error {
 	}
 	if jsonFlag {
 		return writeSessionsJSON(stdout, map[string]any{
-			"removed_checkpoints": removed,
-			"retention_days":      retentionDays,
-			"keep_per_session":    keep,
-			"compacted":           compact,
+			"removed_checkpoints":        removed,
+			"removed_worktree_instances": instances,
+			"removed_worktree_routes":    routes,
+			"retention_days":             retentionDays,
+			"keep_per_session":           keep,
+			"compacted":                  compact,
 		})
 	}
 	fmt.Fprintf(stdout, "removed %d checkpoint(s) older than %d day(s), keeping %d per session\n", removed, retentionDays, keep)
+	fmt.Fprintf(stdout, "removed %d worktree instance(s) and %d route(s)\n", instances, routes)
 	if compact {
 		fmt.Fprintln(stdout, "compacted the database file")
 	}
@@ -111,6 +120,23 @@ func sweepCheckpoints(ctx context.Context, store *storage.SQLite, retention time
 		total += removed
 		if removed < checkpointGCBatch {
 			return total, nil
+		}
+	}
+}
+
+// sweepWorktrees repeats the bounded worktree prune until a pass comes back
+// short, matching sweepCheckpoints.
+func sweepWorktrees(ctx context.Context, store *storage.SQLite, retention time.Duration) (int, int, error) {
+	totalInstances, totalRoutes := 0, 0
+	for {
+		instances, routes, err := store.PruneWorktreeInstances(ctx, time.Now().UTC(), retention, checkpointGCBatch)
+		if err != nil {
+			return totalInstances, totalRoutes, err
+		}
+		totalInstances += instances
+		totalRoutes += routes
+		if instances < checkpointGCBatch {
+			return totalInstances, totalRoutes, nil
 		}
 	}
 }
