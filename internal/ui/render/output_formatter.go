@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -32,6 +33,9 @@ func FormatToolOutputWithContext(t theme.Theme, tier theme.Tier, name string, ar
 		return "", body, collapsible
 	case isLedgerTool(lower):
 		summary, body := FormatLedgerOutput(t, tier, output, width)
+		return summary, body, len(body) > 6
+	case isDispatchTool(lower):
+		summary, body := FormatDispatchTasksOutput(t, tier, output, width)
 		return summary, body, len(body) > 6
 	case isDiagnosticsTool(lower):
 		body = FormatDiagnosticsOutput(t, tier, output, width)
@@ -71,6 +75,10 @@ func isCommandTool(lower string) bool {
 
 func isLedgerTool(lower string) bool {
 	return strings.Contains(lower, "ledger") || lower == "read_output"
+}
+
+func isDispatchTool(lower string) bool {
+	return lower == "dispatch_tasks"
 }
 
 func isDiagnosticsTool(lower string) bool {
@@ -140,8 +148,93 @@ func extractFileReadArgs(args map[string]any, output string) (string, int) {
 
 // FormatCommandOutput formats command stdout/stderr. Long successful logs are tailed;
 // failure logs highlight error/panic lines.
+// unifiedDiffHunkHeader matches a real unified-diff hunk header
+// ("@@ -12,3 +12,4 @@..."). Its presence is the gate for diff-line
+// coloring in FormatCommandOutput: a bare '+'/'-' prefix is far too common
+// in ordinary command output (git log --stat's "file.go | 3 +--", a
+// markdown list, a numeric delta) to color on its own, but this exact
+// shape is specific to a real diff hunk and does not occur by accident.
+var unifiedDiffHunkHeader = regexp.MustCompile(`^@@ -\d+(,\d+)? \+\d+(,\d+)? @@`)
+
+// colorizeUnifiedDiff renders a literal `git diff`-shaped command output
+// (run_command's raw stdout, not a structured uievent.Diff - see diff.go
+// for that path) with the same added/removed styling DiffLines already
+// applies to structured diffs. It returns ok=false, leaving the caller's
+// existing formatting untouched, unless at least one real hunk header is
+// present: only lines AFTER a detected hunk header are treated as
+// add/remove content, so a file header's own "--- a/x"/"+++ b/x" lines
+// (which also start with a diff-shaped prefix) are never miscolored as
+// removed/added content.
+func colorizeUnifiedDiff(t theme.Theme, tier theme.Tier, lines []string) ([]string, bool) {
+	// The gate requires a diff --git / --- / +++ file header directly
+	// preceding the first hunk header, not just a @@ ... @@-shaped
+	// substring anywhere in the output: a hunk header alone is easy to
+	// find inside unrelated text (a log message quoting diff syntax, a
+	// docs excerpt), and coloring an entire unrelated command's output
+	// off one coincidental match is worse than not coloring a genuine
+	// diff that lacks a file header for some reason.
+	hasRealDiffShape := false
+	for i, l := range lines {
+		if !unifiedDiffHunkHeader.MatchString(l) {
+			continue
+		}
+		for j := i - 1; j >= 0 && j >= i-4; j-- {
+			if strings.HasPrefix(lines[j], "diff --git ") || strings.HasPrefix(lines[j], "+++ ") {
+				hasRealDiffShape = true
+				break
+			}
+		}
+		if hasRealDiffShape {
+			break
+		}
+	}
+	if !hasRealDiffShape {
+		return nil, false
+	}
+
+	hunkHdr := Role(t, tier, theme.RoleDiffHunk)
+	fileHdr := Role(t, tier, theme.RoleFGSubtle)
+	addSt := WithBg(Role(t, tier, theme.RoleDiffAddFG), t, tier, theme.RoleDiffAddBG)
+	delSt := WithBg(Role(t, tier, theme.RoleDiffDelFG), t, tier, theme.RoleDiffDelBG)
+
+	// A content line's own first character can legitimately be '-'/'+'
+	// (e.g. removing/adding a line that reads "-- old item"), which
+	// collides with the "--- "/"+++ " file-header prefix. Only treat a
+	// line as a file header when NOT already inside a hunk - a file
+	// header only ever appears BETWEEN hunks/files, never as diff
+	// content - so a real content line is never misread as one.
+	inHunk := false
+	out := make([]string, 0, len(lines))
+	for _, l := range lines {
+		switch {
+		case unifiedDiffHunkHeader.MatchString(l):
+			inHunk = true
+			out = append(out, hunkHdr.Render(l))
+		case !inHunk && (strings.HasPrefix(l, "diff --git ") || strings.HasPrefix(l, "index ") ||
+			strings.HasPrefix(l, "--- ") || strings.HasPrefix(l, "+++ ")):
+			out = append(out, fileHdr.Render(l))
+		case strings.HasPrefix(l, "diff --git "):
+			// A new file's header always ends the previous file's hunk,
+			// even mid-hunk-tracking, so the next hunk header is read
+			// correctly.
+			inHunk = false
+			out = append(out, fileHdr.Render(l))
+		case inHunk && strings.HasPrefix(l, "+"):
+			out = append(out, addSt.Render(l))
+		case inHunk && strings.HasPrefix(l, "-"):
+			out = append(out, delSt.Render(l))
+		default:
+			out = append(out, l)
+		}
+	}
+	return out, true
+}
+
 func FormatCommandOutput(t theme.Theme, tier theme.Tier, output string, ok bool, width int) ([]string, bool) {
 	lines := strings.Split(strings.TrimRight(output, "\n"), "\n")
+	if diffLines, isDiff := colorizeUnifiedDiff(t, tier, lines); isDiff {
+		return diffLines, len(diffLines) > 8
+	}
 	if len(lines) <= 6 {
 		return lines, false
 	}
@@ -534,13 +627,38 @@ func FormatWorkflowOutput(t theme.Theme, tier theme.Tier, output string, width i
 }
 
 type ledgerEnvelope struct {
-	Status  string `json:"status"`
-	Ref     string `json:"ref"`
-	Kind    string `json:"kind"`
-	Bytes   int64  `json:"bytes"`
-	Offset  int    `json:"offset"`
-	Limit   int    `json:"limit"`
-	Content string `json:"content"`
+	Status        string `json:"status"`
+	Ref           string `json:"ref"`
+	Kind          string `json:"kind"`
+	Bytes         int64  `json:"bytes"`
+	Offset        int    `json:"offset"`
+	Limit         int    `json:"limit"`
+	ReturnedBytes int64  `json:"returned_bytes"`
+	NextOffset    *int   `json:"next_offset"`
+	HasMore       bool   `json:"has_more"`
+	Content       string `json:"content"`
+}
+
+// shortenRef shortens a 'kind:sub:digest' content reference (ref:output:...,
+// ref:error:...) to an 8-hex-char digest for display, leaving anything that
+// doesn't match the three-part shape unchanged. Shared by every renderer
+// that displays a content reference, so the shortening rule stays in one
+// place.
+func shortenRef(ref string) string {
+	parts := strings.Split(ref, ":")
+	if len(parts) >= 3 && len(parts[2]) > 8 {
+		return fmt.Sprintf("%s:%s:%s", parts[0], parts[1], parts[2][:8])
+	}
+	return ref
+}
+
+// humanBytes renders a byte count as bytes or kilobytes, matching the
+// precision every content-size display in this package already uses.
+func humanBytes(n int64) string {
+	if n >= 1024 {
+		return fmt.Sprintf("%.1f KB", float64(n)/1024.0)
+	}
+	return fmt.Sprintf("%d B", n)
 }
 
 // FormatLedgerOutput formats ledger/output responses into clean content blocks without envelope metadata.
@@ -551,18 +669,7 @@ func FormatLedgerOutput(t theme.Theme, tier theme.Tier, output string, width int
 		return "", strings.Split(strings.TrimRight(output, "\n"), "\n")
 	}
 
-	shortRef := env.Ref
-	parts := strings.Split(env.Ref, ":")
-	if len(parts) >= 3 && len(parts[2]) > 8 {
-		shortRef = fmt.Sprintf("%s:%s:%s", parts[0], parts[1], parts[2][:8])
-	}
-
-	sizeStr := fmt.Sprintf("%d B", env.Bytes)
-	if env.Bytes >= 1024 {
-		sizeStr = fmt.Sprintf("%.1f KB", float64(env.Bytes)/1024.0)
-	}
-
-	summary := fmt.Sprintf("%s (%s)", shortRef, sizeStr)
+	summary := fmt.Sprintf("%s (%s)", shortenRef(env.Ref), humanBytes(env.Bytes))
 
 	content := env.Content
 	var innerObj map[string]any
@@ -573,5 +680,96 @@ func FormatLedgerOutput(t theme.Theme, tier theme.Tier, output string, width int
 	}
 
 	lines := strings.Split(strings.TrimRight(content, "\n"), "\n")
+	if env.HasMore && env.NextOffset != nil {
+		subtle := Role(t, tier, theme.RoleFGSubtle)
+		lines = append(lines, subtle.Render(fmt.Sprintf("… more remains — call again with offset=%d to continue", *env.NextOffset)))
+	}
 	return summary, lines
+}
+
+// dispatchTaskResultView is the subset of dispatch_tasks' per-task result
+// envelope (internal/cliorchestrate/dispatch.go's dispatchTaskResult) this
+// renderer needs. Kept narrow and independent of that package - the UI
+// layer must not import the orchestration package (mivia-ui isolation,
+// INV-TUI-29) - and tolerant of fields it doesn't recognize.
+type dispatchTaskResultView struct {
+	TaskID    string `json:"task_id"`
+	Status    string `json:"status"`
+	Agent     string `json:"agent"`
+	Elapsed   string `json:"elapsed"`
+	Synopsis  string `json:"synopsis"`
+	Error     string `json:"error"`
+	OutputRef string `json:"output_ref"`
+	ErrorRef  string `json:"error_ref"`
+}
+
+// maxDispatchTaskRows caps how many per-task lines FormatDispatchTasksOutput
+// renders before collapsing the rest into a summary tail, matching the
+// truncate-with-notice idiom FormatCommandOutput already uses for long
+// output.
+const maxDispatchTaskRows = 6
+
+// FormatDispatchTasksOutput formats a dispatch_tasks result (a JSON array of
+// per-task envelopes) into one line per task instead of the raw array a
+// generic JSON dump would otherwise produce.
+func FormatDispatchTasksOutput(t theme.Theme, tier theme.Tier, output string, width int) (string, []string) {
+	trimmed := strings.TrimSpace(output)
+	var tasks []dispatchTaskResultView
+	if err := json.Unmarshal([]byte(trimmed), &tasks); err != nil || len(tasks) == 0 {
+		return "", strings.Split(strings.TrimRight(output, "\n"), "\n")
+	}
+
+	ok, failed := 0, 0
+	for _, task := range tasks {
+		if strings.EqualFold(task.Status, "completed") {
+			ok++
+		} else {
+			failed++
+		}
+	}
+	summary := fmt.Sprintf("%d tasks · %d completed, %d failed", len(tasks), ok, failed)
+
+	success := Role(t, tier, theme.RoleSuccess)
+	danger := Role(t, tier, theme.RoleDanger)
+	subtle := Role(t, tier, theme.RoleFGSubtle)
+	fg := Role(t, tier, theme.RoleFG)
+
+	rows := tasks
+	var tail string
+	if len(rows) > maxDispatchTaskRows {
+		tail = fmt.Sprintf("… %d more tasks", len(rows)-maxDispatchTaskRows)
+		rows = rows[:maxDispatchTaskRows]
+	}
+
+	var out []string
+	for _, task := range rows {
+		icon, iconRole := "✔", success
+		if !strings.EqualFold(task.Status, "completed") {
+			icon, iconRole = "✖", danger
+		}
+		line := iconRole.Render(icon) + " " + fg.Render(task.TaskID)
+		if task.Agent != "" {
+			line += subtle.Render(" agent=" + task.Agent)
+		}
+		if task.Elapsed != "" {
+			line += subtle.Render(" " + task.Elapsed)
+		}
+		snippet := task.Synopsis
+		if snippet == "" {
+			snippet = task.Error
+		}
+		if snippet != "" {
+			line += "  " + ansi.Truncate(snippet, max(width-40, 20), "…")
+		}
+		if ref := task.ErrorRef; ref != "" {
+			line += subtle.Render(" [" + shortenRef(ref) + "]")
+		} else if ref := task.OutputRef; ref != "" {
+			line += subtle.Render(" [" + shortenRef(ref) + "]")
+		}
+		out = append(out, line)
+	}
+	if tail != "" {
+		out = append(out, subtle.Render(tail))
+	}
+	return summary, out
 }

@@ -104,7 +104,12 @@ func redactToolOutput(output string) string { return redactToolOutputForTool("",
 
 func redactToolOutputForTool(name, output string) string {
 	maxBytes := defaultToolPreviewMaxBytes
-	if name == "write_file" || name == "search_replace" || name == "multi_edit" {
+	switch name {
+	case "write_file", "search_replace", "multi_edit",
+		// Structured JSON results: a 512-byte cut lands mid-string, which
+		// breaks the operator UI's JSON parse and forces a raw-envelope
+		// dump instead of a formatted preview (internal/ui/render).
+		"ledger_read", "read_output", "dispatch_tasks":
 		maxBytes = editToolPreviewMaxBytes
 	}
 	return truncatePreview(redact.Text(output), maxBytes)

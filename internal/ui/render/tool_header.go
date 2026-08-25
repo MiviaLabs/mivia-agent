@@ -81,14 +81,10 @@ func formatLedgerDetail(lower string, args map[string]any) string {
 		return ""
 	}
 	if ref, ok := args["ref"].(string); ok && ref != "" {
-		short := ref
-		parts := strings.Split(ref, ":")
-		if len(parts) >= 3 && len(parts[2]) > 8 {
-			short = fmt.Sprintf("%s:%s:%s", parts[0], parts[1], parts[2][:8])
-		}
+		short := shortenRef(ref)
 		if offset, ok := args["offset"]; ok {
 			if offNum, ok := offset.(float64); ok && offNum > 0 {
-				return fmt.Sprintf("%s [offset %d]", short, int(offNum))
+				return fmt.Sprintf("continuing read [offset %d] %s", int(offNum), short)
 			}
 		}
 		return short
