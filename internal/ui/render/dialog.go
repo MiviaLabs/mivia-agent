@@ -40,6 +40,16 @@ func DialogBodyRows(height int) int {
 	return body
 }
 
+// DialogNoBackdropBodyRows is how many body rows a DialogNoBackdrop framed to height
+// can show (height less 2 border rows, 2 padding rows, and 3 title/separator/hint rows).
+func DialogNoBackdropBodyRows(height int) int {
+	body := height - 2 - 2 - 3
+	if body < 1 {
+		return 1
+	}
+	return body
+}
+
 // DialogBodyWidth is the inner width a Dialog framed to width gives its
 // body rows, after the same margin shrinking the clip applies. A caller
 // that renders its own surface INTO the body (an embedded chat, not a
@@ -50,6 +60,15 @@ func DialogBodyWidth(width int) int {
 		marginX--
 	}
 	return width - 2*marginX - 2 - 4
+}
+
+// DialogNoBackdropBodyWidth is the inner width a DialogNoBackdrop framed to width
+// gives its body rows (width less 2 border columns and 4 padding columns).
+func DialogNoBackdropBodyWidth(width int) int {
+	if width <= 6 {
+		return 1
+	}
+	return width - 6
 }
 
 // WindowSlice calculates the [start, end) index range to window total items
@@ -134,6 +153,43 @@ func Dialog(t theme.Theme, tier theme.Tier, width, height int, title, body, hint
 		out = strings.Join(rows[:height], "\n")
 	}
 	return out
+}
+
+// DialogNoBackdrop renders title, body, and hint inside a bordered, inset-filled
+// dialog box that fills the given width x height exactly without any outer margin/backdrop.
+func DialogNoBackdrop(t theme.Theme, tier theme.Tier, width, height int, title, body, hint string) string {
+	if width <= 0 || height <= 0 {
+		return ""
+	}
+	inner := DialogNoBackdropBodyWidth(width)
+	maxRows := height - 4
+	if maxRows < 1 {
+		maxRows = 1
+	}
+	content := dialogContent(t, tier, inner, title, body, hint)
+	rows := strings.Split(strings.Join(content, "\n"), "\n")
+	rows = dialogClip(rows, inner, maxRows)
+
+	for len(rows) < maxRows {
+		rows = append(rows, "")
+	}
+	for i, r := range rows {
+		if pad := inner - ansi.StringWidth(r); pad > 0 {
+			rows[i] = r + strings.Repeat(" ", pad)
+		}
+	}
+
+	box := buildDialogBox(t, tier)
+	framed := box.Render(FillBG(t, tier, theme.RoleBGInset, strings.Join(rows, "\n")))
+
+	lines := strings.Split(framed, "\n")
+	if len(lines) > height {
+		lines = lines[:height]
+	}
+	for len(lines) < height {
+		lines = append(lines, "")
+	}
+	return strings.Join(lines, "\n")
 }
 
 func buildDialogBox(t theme.Theme, tier theme.Tier) lipgloss.Style {
@@ -223,6 +279,18 @@ func DialogHitsClose(width, height, contentRowCount, clickX, clickY int) bool {
 		return true
 	}
 	return false
+}
+
+// DialogNoBackdropHitsClose reports whether a click at (clickX, clickY) lands on
+// the [x] close button of a DialogNoBackdrop box sized to width x height.
+func DialogNoBackdropHitsClose(width, height, clickX, clickY int) bool {
+	if width <= 0 || height <= 0 {
+		return false
+	}
+	inner := DialogNoBackdropBodyWidth(width)
+	boxWidth := inner + 6
+	closeBtnX := 1 + 2 + inner - 3
+	return clickY >= 0 && clickY <= 2 && clickX >= closeBtnX-1 && clickX < boxWidth
 }
 
 // DialogHitsBackdrop reports whether a click at (clickX, clickY) landed

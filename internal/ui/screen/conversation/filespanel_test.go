@@ -835,3 +835,28 @@ func TestPanel_ReconcileTerminal_CustomNonTerminalStatusReconciles(t *testing.T)
 		t.Errorf("sub-waiting status = %q, want 'cancelled'", p.agents[1].Status)
 	}
 }
+
+func TestScrollPanelInSplitMode(t *testing.T) {
+	s := sized(t, 1)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: uikitconfig.BreakpointWide, Height: 30})
+	scr := next.(Screen)
+	hunks := make([]uievent.DiffHunk, 0, 40)
+	for i := 0; i < 40; i++ {
+		hunks = append(hunks, uievent.DiffHunk{Lines: []uievent.DiffLine{{Kind: uievent.DiffLineAdd, Text: "line"}}})
+	}
+	diffEv := uievent.EventMsg{Event: uievent.Event{
+		Kind: uievent.KindToolEnd,
+		Body: uievent.ToolEndBody{
+			ToolCallID: "tc-1",
+			Name:       "write_file",
+			Diff:       &uievent.Diff{Path: "long.go", Added: 40, Hunks: hunks},
+		},
+	}}
+	n, _ := scr.Update(diffEv)
+	scr = n.(Screen)
+	scr = openPanel(t, scr)
+	scr.scrollPanel(1)
+	if scr.panel.offset == 0 && scr.panelBodyRows() > 0 {
+		t.Errorf("expected offset > 0 after scrolling down, got %d", scr.panel.offset)
+	}
+}

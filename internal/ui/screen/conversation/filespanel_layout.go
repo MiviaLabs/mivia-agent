@@ -161,7 +161,7 @@ func (s Screen) dialogParts() (title, body, hint string) {
 			if s.panelIsSplit() {
 				frameW, _ = render.SplitWidths(frameW)
 			}
-			s.thread.setSurface(render.DialogBodyWidth(frameW), s.panelBodyRows())
+			s.thread.setSurface(render.DialogNoBackdropBodyWidth(frameW), s.panelBodyRows())
 			title = "subagent: " + s.panel.dialogAgent
 			return title, s.thread.View(), "esc close"
 		}
@@ -182,7 +182,7 @@ func (s Screen) dialogParts() (title, body, hint string) {
 	if s.panelIsSplit() {
 		frameW, _ = render.SplitWidths(frameW)
 	}
-	bodyW := render.DialogBodyWidth(frameW)
+	bodyW := render.DialogNoBackdropBodyWidth(frameW)
 	rows := s.panel.contentRows(s.Theme, s.Tier, bodyW)
 	fit := s.panelBodyRows()
 	start := min(max(0, s.panel.offset), max(0, len(rows)-fit))
@@ -247,7 +247,7 @@ func (s Screen) narrowPanelRows() []string {
 	w := contentWidth(s.width)
 	if s.panel.dialog && s.panelDialogFits() {
 		title, body, hint := s.dialogParts()
-		return overlayRows(render.Dialog(s.Theme, s.Tier, w, h, title, body, hint), h)
+		return overlayRows(render.DialogNoBackdrop(s.Theme, s.Tier, w, h, title, body, hint), h)
 	}
 	return overlayRows(strings.Join(s.panelRows(w, h), "\n"), h)
 }

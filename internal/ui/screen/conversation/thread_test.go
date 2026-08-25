@@ -476,3 +476,38 @@ func TestLoadHistory_HydratesTrailingEmptySubagentAsInterrupted(t *testing.T) {
 		t.Errorf("got subagent %+v, want ID='sa-crash', Status='interrupted'", s.panel.agents[0])
 	}
 }
+
+func TestSubagentThreadOpensWithoutBackdrop(t *testing.T) {
+	thread := &scriptedThread{
+		events:  make(chan uievent.Event, 4),
+		history: []ports.Message{{Role: "assistant", Text: "subagent ready"}},
+	}
+	s := threadScreen(t, stubThreads{"sa-1": thread}, false)
+
+	// Enter on the subagent row opens the subagent thread view
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	s = next.(Screen)
+
+	if !s.panel.dialog || s.panel.dialogAgent != "sa-1" {
+		t.Fatalf("expected subagent dialog open, got dialog=%v agent=%q", s.panel.dialog, s.panel.dialogAgent)
+	}
+
+	view := s.View()
+	lines := strings.Split(view, "\n")
+	if len(lines) == 0 {
+		t.Fatal("empty view returned")
+	}
+
+	// In wide mode (split), the first content row in the reading pane must start with the top-left border corner "╭"
+	// with no margin padding gaps before it.
+	plain := ansi.Strip(view)
+	if !strings.Contains(plain, "╭") {
+		t.Errorf("expected view to contain top-left border corner without backdrop:\n%s", plain)
+	}
+	if !strings.Contains(plain, "subagent: sa-1") {
+		t.Errorf("expected view to contain subagent title:\n%s", plain)
+	}
+	if !strings.Contains(plain, "subagent ready") {
+		t.Errorf("expected view to contain subagent thread content:\n%s", plain)
+	}
+}

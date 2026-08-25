@@ -111,6 +111,8 @@ func TestSetupReadsKeyFromEnvVar(t *testing.T) {
 }
 
 func TestSetupRequiresKeyWhenNonInteractive(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("OPENROUTER_API_KEY", "")
 	dir := t.TempDir()
 	_, err := runSetupCapture(t, []string{
 		"--env-file", filepath.Join(dir, ".env"),

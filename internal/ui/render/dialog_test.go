@@ -450,3 +450,65 @@ func TestWindowSlice(t *testing.T) {
 		})
 	}
 }
+
+func TestDialogNoBackdrop(t *testing.T) {
+	th := dialogTheme(t)
+	width, height := 60, 16
+	got := DialogNoBackdrop(th, theme.TierTrueColor, width, height, "NoBackdrop Title", "Body row 1\nBody row 2", "esc close")
+	rows := strings.Split(got, "\n")
+	if len(rows) != height {
+		t.Fatalf("DialogNoBackdrop returned %d rows, want %d", len(rows), height)
+	}
+	for i, r := range rows {
+		if w := ansi.StringWidth(r); w != width {
+			t.Errorf("row %d width %d, want %d", i, w, width)
+		}
+	}
+	plain := ansi.Strip(got)
+	if !strings.Contains(plain, "NoBackdrop Title") || !strings.Contains(plain, "Body row 1") || !strings.Contains(plain, "esc close") {
+		t.Errorf("DialogNoBackdrop missing content:\n%s", plain)
+	}
+	// First row should start with the top-left rounded border corner, not margin whitespace.
+	if !strings.HasPrefix(rows[0], "╭") && !strings.Contains(rows[0], "╭") {
+		t.Errorf("expected top row to contain border corner without margin padding:\n%s", rows[0])
+	}
+	// Hit test close button
+	if !DialogNoBackdropHitsClose(width, height, 57, 1) {
+		t.Errorf("expected DialogNoBackdropHitsClose to return true for close button position")
+	}
+	if DialogNoBackdropHitsClose(width, height, 5, 1) {
+		t.Errorf("expected DialogNoBackdropHitsClose to return false for title area")
+	}
+}
+
+func TestDialogNoBackdropBodyGeometry(t *testing.T) {
+	width, height := 60, 20
+	if w := DialogNoBackdropBodyWidth(width); w != 54 {
+		t.Errorf("DialogNoBackdropBodyWidth(%d) = %d, want 54", width, w)
+	}
+	if h := DialogNoBackdropBodyRows(height); h != 13 {
+		t.Errorf("DialogNoBackdropBodyRows(%d) = %d, want 13", height, h)
+	}
+	if w := DialogNoBackdropBodyWidth(4); w != 1 {
+		t.Errorf("DialogNoBackdropBodyWidth(4) = %d, want 1", w)
+	}
+	if h := DialogNoBackdropBodyRows(3); h != 1 {
+		t.Errorf("DialogNoBackdropBodyRows(3) = %d, want 1", h)
+	}
+}
+
+func TestDialogNoBackdropEdgeCases(t *testing.T) {
+	th := dialogTheme(t)
+	if got := DialogNoBackdrop(th, theme.TierTrueColor, 0, 0, "Title", "Body", "Hint"); got != "" {
+		t.Errorf("expected empty string for 0x0, got %q", got)
+	}
+	if got := DialogNoBackdrop(th, theme.TierTrueColor, 20, 2, "Title", "Body", "Hint"); len(strings.Split(got, "\n")) != 2 {
+		t.Errorf("expected 2 rows for height 2, got %d", len(strings.Split(got, "\n")))
+	}
+	if got := DialogNoBackdrop(th, theme.TierTrueColor, 20, 30, "Title", "Body", "Hint"); len(strings.Split(got, "\n")) != 30 {
+		t.Errorf("expected 30 rows for height 30, got %d", len(strings.Split(got, "\n")))
+	}
+	if DialogNoBackdropHitsClose(0, 0, 1, 1) {
+		t.Error("expected DialogNoBackdropHitsClose false for 0x0")
+	}
+}

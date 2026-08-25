@@ -446,7 +446,7 @@ func (s Screen) panelBodyRows() int {
 	if s.panelIsSplit() {
 		h = s.contentHeight()
 	}
-	return render.DialogBodyRows(h)
+	return render.DialogNoBackdropBodyRows(h)
 }
 
 // scrollPanel moves the dialog's body window by half a page, clamped to
@@ -458,7 +458,7 @@ func (s *Screen) scrollPanel(dir int) {
 	if s.panelIsSplit() {
 		frameW, _ = render.SplitWidths(frameW)
 	}
-	bodyW := render.DialogBodyWidth(frameW)
+	bodyW := render.DialogNoBackdropBodyWidth(frameW)
 	rows := len(s.panel.contentRows(s.Theme, s.Tier, bodyW))
 	if max := rows - s.panelBodyRows(); max >= 0 {
 		s.panel.offset = min(s.panel.offset, max)

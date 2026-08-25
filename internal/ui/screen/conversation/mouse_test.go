@@ -9,6 +9,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/composer"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/picker"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
@@ -315,5 +316,40 @@ func TestClickOnDialogCloseButtonOrBackdropDismissesPicker(t *testing.T) {
 	s = next.(Screen)
 	if s.modelPicker != nil {
 		t.Error("click on dialog backdrop must dismiss model picker")
+	}
+}
+
+func TestClickOnPanelDialogCloseButtonDismissesSubagent(t *testing.T) {
+	thread := &scriptedThread{
+		events:  make(chan uievent.Event, 4),
+		history: []ports.Message{{Role: "assistant", Text: "ready"}},
+	}
+	s := threadScreen(t, stubThreads{"sa-1": thread}, false)
+
+	// Enter opens subagent thread
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	s = next.(Screen)
+	if !s.panel.dialog {
+		t.Fatal("precondition: subagent dialog open")
+	}
+
+	// Click on [x] close button in top-right of left pane
+	readingW, _ := render.SplitWidths(contentWidth(s.width))
+	closeX := readingW - 2
+	next, _ = s.Update(leftClick(closeX, 2))
+	s = next.(Screen)
+	if s.panel.dialog {
+		t.Error("click on close button must dismiss subagent dialog")
+	}
+
+	// Reopen subagent dialog
+	s.panel.dialog = true
+	s.panel.dialogAgent = "sa-1"
+
+	// Click on nav pane in right pane (x >= readingW)
+	next, _ = s.Update(leftClick(readingW+5, 3))
+	s = next.(Screen)
+	if !s.panel.focused {
+		t.Error("click on nav pane must focus panel")
 	}
 }
