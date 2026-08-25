@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
 )
@@ -316,5 +317,51 @@ func TestVerticalRailCarriesNoColourAtASCIIOrNoTTY(t *testing.T) {
 		if strings.Contains(rows[1], "\x1b[") {
 			t.Errorf("tier %v: got %q, want no colour escape at a colourless tier", tier, rows[1])
 		}
+	}
+}
+
+func TestBlock_RenderHeader_BoundedOnWideScreens(t *testing.T) {
+	th := loadTheme(t)
+	b := Block{
+		Header: Header{
+			Label:   "search_replace",
+			Detail:  "internal/ui/render/header.go",
+			DiffAdd: 10,
+			DiffDel: 2,
+			Meta:    "15ms",
+			State:   "ok",
+		},
+	}
+	rendered := b.Render(th, theme.TierASCII, 200)
+	headerRow := strings.SplitN(rendered, "\n", 2)[0]
+	// On a 200-column screen, header width should be bounded to around ProseMeasureWide + 16 (<= 108 columns)
+	// rather than stretching all the way across 200 columns.
+	if w := ansi.StringWidth(headerRow); w > 108 {
+		t.Errorf("header width on 200-col screen = %d, want at most 108 columns", w)
+	}
+	if !strings.Contains(headerRow, "+10 -2") || !strings.Contains(headerRow, "ok") {
+		t.Errorf("expected diff and ok status in headerRow, got %q", headerRow)
+	}
+}
+
+func TestBlock_RenderHeader_DiffAddDelColored(t *testing.T) {
+	th := loadTheme(t)
+	b := Block{
+		Header: Header{
+			Label:   "search_replace",
+			Detail:  "foo.go",
+			DiffAdd: 4,
+			DiffDel: 1,
+			Meta:    "10ms",
+			State:   "ok",
+		},
+	}
+	rendered := b.Render(th, theme.TierTrueColor, 80)
+	if !strings.Contains(rendered, "+4") || !strings.Contains(rendered, "-1") {
+		t.Fatalf("expected +4 and -1 in rendered output, got:\n%s", rendered)
+	}
+	addColored := render.Role(th, theme.TierTrueColor, theme.RoleDiffAddFG).Render("+4")
+	if !strings.Contains(rendered, addColored) {
+		t.Errorf("expected colored diff addition in rendered output")
 	}
 }

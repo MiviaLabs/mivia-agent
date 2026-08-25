@@ -286,3 +286,48 @@ func TestClampWidthGivesUpRatherThanOverflow(t *testing.T) {
 		t.Errorf("got %q, want a row no wider than 1 column", got)
 	}
 }
+
+func TestHeaderDiffColoring(t *testing.T) {
+	th := loadTheme(t)
+	got := Header(th, theme.TierTrueColor, 80, HeaderSpec{
+		Marker:  "v",
+		Label:   "search_replace",
+		Detail:  "internal/ui/render/header.go",
+		DiffAdd: 12,
+		DiffDel: 3,
+		Meta:    "14ms",
+		State:   "ok",
+	})
+	if !strings.Contains(got, "+12") || !strings.Contains(got, "-3") {
+		t.Fatalf("expected +12 and -3 in rendered header, got:\n%s", got)
+	}
+	if !strings.Contains(got, "14ms") || !strings.Contains(got, "ok") {
+		t.Fatalf("expected 14ms and ok in rendered header, got:\n%s", got)
+	}
+	// Verify color escape exists around +12
+	addRole := Role(th, theme.TierTrueColor, theme.RoleDiffAddFG).Render("+12")
+	if !strings.Contains(got, addRole) {
+		t.Errorf("expected colored diff addition %q in output:\n%s", addRole, got)
+	}
+	delRole := Role(th, theme.TierTrueColor, theme.RoleDiffDelFG).Render("-3")
+	if !strings.Contains(got, delRole) {
+		t.Errorf("expected colored diff deletion %q in output:\n%s", delRole, got)
+	}
+}
+
+func TestHeaderDiffTierDegradation(t *testing.T) {
+	th := loadTheme(t)
+	got := Header(th, theme.TierASCII, 80, HeaderSpec{
+		Marker:  "v",
+		Label:   "search_replace",
+		Detail:  "main.go",
+		DiffAdd: 5,
+		DiffDel: 2,
+		Meta:    "8ms",
+		State:   "ok",
+	})
+	p := plain(got)
+	if !strings.Contains(p, "+5 -2") {
+		t.Errorf("expected '+5 -2' in ASCII degraded header, got %q", p)
+	}
+}

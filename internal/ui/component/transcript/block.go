@@ -1,6 +1,7 @@
 package transcript
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
@@ -17,10 +18,12 @@ import (
 // renderer itself lands in a later wave; the value is separated now so
 // the block model does not change again to accept it.
 type Header struct {
-	Label  string
-	Detail string
-	Meta   string
-	State  string
+	Label   string
+	Detail  string
+	DiffAdd int
+	DiffDel int
+	Meta    string
+	State   string
 	// Role colours the state word. The word is always present, so
 	// meaning survives with colour removed.
 	Role theme.Role
@@ -192,6 +195,13 @@ func (b Block) collapseMarker() string {
 }
 
 func (b Block) renderHeader(t theme.Theme, tier theme.Tier, width int) string {
+	headerW := width
+	if headerW > uikitconfig.ProseMeasureWide+16 {
+		// Cap right alignment width on ultrawide screens so metadata and status
+		// stay cohesive with the reading column rather than floating to the far edge.
+		headerW = uikitconfig.ProseMeasureWide + 16
+	}
+
 	// A focused header is drawn as one reverse-video run rather than as
 	// styled segments. Reverse inherits the theme's own contrast, so it
 	// stays legible under any palette, and it never nests conflicting
@@ -209,18 +219,22 @@ func (b Block) renderHeader(t theme.Theme, tier theme.Tier, width int) string {
 			Marker:    b.collapseMarker(),
 			Label:     b.Header.Label,
 			Detail:    b.Header.Detail,
+			DiffAdd:   b.Header.DiffAdd,
+			DiffDel:   b.Header.DiffDel,
 			Meta:      b.Header.Meta,
 			State:     b.Header.State,
 			StateRole: b.Header.Role,
 		}
-		plain := ansi.Strip(render.Header(t, tier, width, spec))
+		plain := ansi.Strip(render.Header(t, tier, headerW, spec))
 		return render.Role(t, tier, theme.RoleFG).Reverse(true).Render(plain)
 	}
 
-	return render.Header(t, tier, width, render.HeaderSpec{
+	return render.Header(t, tier, headerW, render.HeaderSpec{
 		Marker:    b.collapseMarker(),
 		Label:     b.Header.Label,
 		Detail:    b.Header.Detail,
+		DiffAdd:   b.Header.DiffAdd,
+		DiffDel:   b.Header.DiffDel,
 		Meta:      b.Header.Meta,
 		State:     b.Header.State,
 		StateRole: b.Header.Role,
@@ -231,15 +245,27 @@ func (b Block) renderHeader(t theme.Theme, tier theme.Tier, width int) string {
 // and for width measurement.
 func (b Block) headerPlain() string {
 	spec := render.SanitizeSpec(render.HeaderSpec{
-		Marker: b.collapseMarker(),
-		Label:  b.Header.Label,
-		Detail: b.Header.Detail,
-		Meta:   b.Header.Meta,
-		State:  b.Header.State,
+		Marker:  b.collapseMarker(),
+		Label:   b.Header.Label,
+		Detail:  b.Header.Detail,
+		DiffAdd: b.Header.DiffAdd,
+		DiffDel: b.Header.DiffDel,
+		Meta:    b.Header.Meta,
+		State:   b.Header.State,
 	})
 	out := spec.Marker + " " + spec.Label
 	if spec.Detail != "" {
 		out += " " + spec.Detail
+	}
+	var diffParts []string
+	if spec.DiffAdd > 0 {
+		diffParts = append(diffParts, fmt.Sprintf("+%d", spec.DiffAdd))
+	}
+	if spec.DiffDel > 0 {
+		diffParts = append(diffParts, fmt.Sprintf("-%d", spec.DiffDel))
+	}
+	if len(diffParts) > 0 {
+		out += "  " + strings.Join(diffParts, " ")
 	}
 	if spec.Meta != "" {
 		out += "  " + spec.Meta

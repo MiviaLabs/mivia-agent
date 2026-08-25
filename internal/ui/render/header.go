@@ -1,6 +1,7 @@
 package render
 
 import (
+	"fmt"
 	"strings"
 	"unicode"
 
@@ -16,11 +17,13 @@ import (
 // a right-aligned state.
 type HeaderSpec struct {
 	// Marker is the collapse glyph, "v", ">" or " ".
-	Marker string
-	Label  string
-	Detail string
-	Meta   string
-	State  string
+	Marker  string
+	Label   string
+	Detail  string
+	DiffAdd int
+	DiffDel int
+	Meta    string
+	State   string
 	// StateRole colours the state word. The word is always rendered, so
 	// meaning never depends on colour alone.
 	StateRole theme.Role
@@ -66,10 +69,28 @@ func clampWidth(s string, width int) string {
 	return ansi.Truncate(s, 1, "")
 }
 
+func diffSummary(add, del int) string {
+	var parts []string
+	if add > 0 {
+		parts = append(parts, fmt.Sprintf("+%d", add))
+	}
+	if del > 0 {
+		parts = append(parts, fmt.Sprintf("-%d", del))
+	}
+	return strings.Join(parts, " ")
+}
+
 func headerRow(t theme.Theme, tier theme.Tier, width int, spec HeaderSpec) string {
 	spec = sanitizeSpec(spec)
 	lead := spec.Marker + " " + spec.Label
-	right := spec.Meta
+	diffText := diffSummary(spec.DiffAdd, spec.DiffDel)
+	right := diffText
+	if spec.Meta != "" {
+		if right != "" {
+			right += "  "
+		}
+		right += spec.Meta
+	}
 	if spec.State != "" {
 		if right != "" {
 			right += "  "
@@ -219,18 +240,29 @@ func styleHeader(t theme.Theme, tier theme.Tier, spec HeaderSpec, lead, detail, 
 		return out
 	}
 	out += gap
-	if spec.Meta != "" {
-		out += Role(t, tier, theme.RoleFGSubtle).Render(spec.Meta)
-		if spec.State != "" {
-			out += "  "
+
+	var rightParts []string
+	if spec.DiffAdd > 0 || spec.DiffDel > 0 {
+		var dParts []string
+		if spec.DiffAdd > 0 {
+			dParts = append(dParts, Role(t, tier, theme.RoleDiffAddFG).Render(fmt.Sprintf("+%d", spec.DiffAdd)))
 		}
+		if spec.DiffDel > 0 {
+			dParts = append(dParts, Role(t, tier, theme.RoleDiffDelFG).Render(fmt.Sprintf("-%d", spec.DiffDel)))
+		}
+		rightParts = append(rightParts, strings.Join(dParts, " "))
+	}
+	if spec.Meta != "" {
+		rightParts = append(rightParts, Role(t, tier, theme.RoleFGSubtle).Render(spec.Meta))
 	}
 	if spec.State != "" {
 		role := spec.StateRole
 		if role == "" {
 			role = theme.RoleFGMuted
 		}
-		out += Role(t, tier, role).Render(spec.State)
+		rightParts = append(rightParts, Role(t, tier, role).Render(spec.State))
 	}
+
+	out += strings.Join(rightParts, "  ")
 	return out
 }

@@ -273,3 +273,31 @@ func TestSyncFocusClampsAStrayIndex(t *testing.T) {
 		t.Errorf("got %d, want a clamp to the newest block", got)
 	}
 }
+
+func TestFocusedText_DiffBlockHeaderPlain(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 40)
+	m, _ = m.pushBlock(Block{
+		Kind: uievent.KindToolEnd,
+		Header: Header{
+			Label:   "search_replace",
+			Detail:  "foo.go",
+			DiffAdd: 5,
+			DiffDel: 2,
+			Meta:    "10ms",
+			State:   "ok",
+		},
+		Body: []string{"line1", "line2"},
+	})
+	m = m.FocusPrev()
+	text, ok := m.FocusedText()
+	if !ok {
+		t.Fatal("expected FocusedText ok=true")
+	}
+	if !strings.Contains(text, "+5 -2") {
+		t.Errorf("expected '+5 -2' in FocusedText(), got %q", text)
+	}
+	if !strings.Contains(text, "search_replace") || !strings.Contains(text, "foo.go") {
+		t.Errorf("expected tool label and detail in FocusedText(), got %q", text)
+	}
+}
