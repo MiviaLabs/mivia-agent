@@ -47,6 +47,8 @@ func (h *Harness) Run(_ context.Context, name, args string) ports.CommandOutcome
 		return ports.CommandOutcome{OpenTheme: true}
 	case "help":
 		return ports.CommandOutcome{OpenHelp: true}
+	case "queue":
+		return ports.CommandOutcome{OpenQueue: true}
 	case "model":
 		return ports.CommandOutcome{
 			ModelChoices: append([]string(nil), demoModels...),

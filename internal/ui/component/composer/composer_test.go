@@ -601,3 +601,23 @@ func TestMenuClickRow(t *testing.T) {
 		t.Error("expected true when clicking valid menu row")
 	}
 }
+
+func TestComposerHintHidesAtFiles(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII, 80)
+	view := m.View()
+	if strings.Contains(view, "@ Files") {
+		t.Errorf("expected view not to contain '@ Files', got:\n%s", view)
+	}
+	if !strings.Contains(view, "/ Commands") {
+		t.Errorf("expected view to contain '/ Commands', got:\n%s", view)
+	}
+
+	mUnicode := New(loadTheme(t), theme.TierTrueColor, 80)
+	viewUnicode := mUnicode.View()
+	if strings.Contains(viewUnicode, "@ Files") {
+		t.Errorf("expected truecolor view not to contain '@ Files', got:\n%s", viewUnicode)
+	}
+	if !strings.Contains(viewUnicode, "/ Commands") {
+		t.Errorf("expected truecolor view to contain '/ Commands', got:\n%s", viewUnicode)
+	}
+}

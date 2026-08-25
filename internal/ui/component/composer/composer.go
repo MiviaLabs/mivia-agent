@@ -393,11 +393,12 @@ func (m Model) View() string {
 	body := m.input.View()
 
 	if m.width >= minFramedWidth {
-		hint := "[ ↵ Send  •  / Commands  •  @ Files ]"
+		hint := "[ ↵ Send  •  / Commands ]"
 		if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
-			hint = "[ Enter: Send  •  / Commands  •  @ Files ]"
+			hint = "[ Enter: Send  •  / Commands ]"
 		}
 		if m.input.Value() != "" {
+
 			lineCount := strings.Count(m.input.Value(), "\n") + 1
 			if lineCount > 1 {
 				hint = "[ " + strconv.Itoa(lineCount) + " lines  •  ↵ Send  •  Esc Cancel ]"

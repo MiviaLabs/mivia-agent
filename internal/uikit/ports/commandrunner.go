@@ -31,6 +31,9 @@ type CommandOutcome struct {
 	// OpenHelp asks the UI to open the existing keymap overlay.
 	OpenHelp bool
 
+	// OpenQueue asks the UI to open the queue manager overlay.
+	OpenQueue bool
+
 	// ClearTranscript asks the UI to empty the transcript view.
 	ClearTranscript bool
 

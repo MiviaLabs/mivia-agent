@@ -87,6 +87,7 @@ func DefaultCommands() []composer.Command {
 		{Name: "effort", Desc: "set reasoning effort level for active model"},
 		{Name: "help", Desc: "show the keymap dialog"},
 		{Name: "model", Desc: "pick or switch model"},
+		{Name: "queue", Desc: "manage queued messages"},
 		{Name: "quit", Desc: "exit mivia"},
 		{Name: "resume", Desc: "resume a previous session"},
 		{Name: "settings", Desc: "open the settings screen"},
@@ -118,6 +119,8 @@ func (r *CommandRunner) Run(ctx context.Context, name, args string) ports.Comman
 		return r.handleEffort(args)
 	case "model":
 		return r.handleModel(args)
+	case "queue":
+		return ports.CommandOutcome{OpenQueue: true}
 	case "agents", "agent":
 		return r.handleAgents(args)
 	case "new":
