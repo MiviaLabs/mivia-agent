@@ -411,8 +411,8 @@ func LoadSessionSkills(root string, allowProject bool) (*skills.Registry, []stri
 	return cliagents.LoadSessionSkills(root, allowProject)
 }
 
-// SkillTurnPreamble is skillTurnPreamble, exported for internal/legacytui.
-const SkillTurnPreamble = skillTurnPreamble
+// SkillTurnPreamble is skills.SkillTurnPreamble, exported for internal/legacytui.
+const SkillTurnPreamble = skills.SkillTurnPreamble
 
 // AnsiBgDiffAdd and AnsiBgDiffDel are ansiBgDiffAdd/ansiBgDiffDel, exported
 // for internal/legacytui.

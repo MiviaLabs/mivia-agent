@@ -72,6 +72,7 @@ func mockCommands() []composer.Command {
 	return []composer.Command{
 		{Name: "agents", Desc: "pick the agent (Mivia is the default orchestrator)"},
 		{Name: "clear", Desc: "clear the transcript"},
+		{Name: "code-review", Desc: "review changed code for quality, correctness, and security"},
 		{Name: "compact", Desc: "compact the context"},
 		{Name: "context", Desc: "show context usage"},
 		{Name: "cost", Desc: "show the session spend"},
@@ -81,6 +82,7 @@ func mockCommands() []composer.Command {
 		{Name: "quit", Desc: "exit mivia-ui"},
 		{Name: "resume", Desc: "resume a previous session"},
 		{Name: "settings", Desc: "open the settings screen"},
+		{Name: "test-runner", Desc: "run workspace test suites and report failures"},
 		{Name: "theme", Desc: "pick a theme"},
 	}
 }
@@ -227,13 +229,17 @@ func runCockpit(ctx context.Context, c cfg, th theme.Theme, tier theme.Tier, the
 	env []string, stdout, stderr io.Writer) int {
 	probe := termprobe.Probe(env, tmuxVersion(env))
 	var (
-		screen conversation.Screen
-		err    error
+		screen  conversation.Screen
+		cleanup func()
+		err     error
 	)
 	if c.demo {
 		screen, err = newDemoScreen(c, th, tier, themes, probe)
 	} else {
-		screen, err = newRealScreen(ctx, c, th, tier, themes)
+		screen, cleanup, err = newRealScreen(ctx, c, th, tier, themes)
+		if cleanup != nil {
+			defer cleanup()
+		}
 	}
 	if err != nil {
 		fmt.Fprintln(stderr, "mivia-ui:", err)
@@ -298,21 +304,21 @@ func newDemoScreen(c cfg, th theme.Theme, tier theme.Tier, themes []theme.Theme,
 // WorkspaceRoot is resolved to an absolute path so the store path is
 // canonical and the SQLite checkpoint file lands at a deterministic
 // location regardless of how the caller invoked mivia-ui.
-func newRealScreen(ctx context.Context, c cfg, th theme.Theme, tier theme.Tier, themes []theme.Theme) (conversation.Screen, error) {
+func newRealScreen(ctx context.Context, c cfg, th theme.Theme, tier theme.Tier, themes []theme.Theme) (conversation.Screen, func(), error) {
 	workspaceRoot, err := filepath.Abs(c.workspace)
 	if err != nil {
-		return conversation.Screen{}, fmt.Errorf("resolve workspace: %w", err)
+		return conversation.Screen{}, nil, fmt.Errorf("resolve workspace: %w", err)
 	}
 	resolved, err := config.Load(config.LoadOptions{
 		WorkspaceRoot:      workspaceRoot,
 		AllowMissingConfig: false,
 	})
 	if err != nil {
-		return conversation.Screen{}, fmt.Errorf("load workspace config: %w", err)
+		return conversation.Screen{}, nil, fmt.Errorf("load workspace config: %w", err)
 	}
 	completer, err := provider.New(resolved)
 	if err != nil {
-		return conversation.Screen{}, fmt.Errorf("build completer: %w", err)
+		return conversation.Screen{}, nil, fmt.Errorf("build completer: %w", err)
 	}
 	storePath := resolved.StorePath
 	if storePath == "" {
@@ -327,11 +333,11 @@ func newRealScreen(ctx context.Context, c cfg, th theme.Theme, tier theme.Tier, 
 		Completer:     completer,
 	})
 	if err != nil {
-		return conversation.Screen{}, fmt.Errorf("build adapter: %w", err)
+		return conversation.Screen{}, nil, fmt.Errorf("build adapter: %w", err)
 	}
 	screen := conversation.New(th, tier, themes, adapter, nil, initialComposerWidth, nil)
 	screen.SetSubagentThreads(adapter)
-	return screen, nil
+	return screen, cleanup, nil
 }
 
 // plainStreamReason names the one reason the cockpit must not start, or

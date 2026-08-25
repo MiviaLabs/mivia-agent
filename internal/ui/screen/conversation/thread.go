@@ -17,6 +17,7 @@ package conversation
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -126,7 +127,26 @@ func (s *Screen) LoadHistory(msgs []ports.Message) {
 					if tc.Output == "" && isLastMsg && m.Text == "" {
 						status = "interrupted"
 					}
-					s.panel.observeAgentHistory(tc.ID, status)
+					if strings.ToLower(tc.Name) == "dispatch_tasks" {
+						var args struct {
+							Tasks []struct {
+								ID string `json:"id"`
+							} `json:"tasks"`
+						}
+						if json.Unmarshal([]byte(tc.Arguments), &args) == nil && len(args.Tasks) > 0 {
+							for i, t := range args.Tasks {
+								tid := t.ID
+								if tid == "" {
+									tid = fmt.Sprintf("%s-%d", tc.ID, i+1)
+								}
+								s.panel.observeAgentHistory(tid, status)
+							}
+						} else {
+							s.panel.observeAgentHistory(tc.ID, status)
+						}
+					} else {
+						s.panel.observeAgentHistory(tc.ID, status)
+					}
 				}
 			}
 			if m.Text != "" {

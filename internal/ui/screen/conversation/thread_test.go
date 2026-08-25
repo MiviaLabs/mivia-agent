@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -582,5 +583,64 @@ func TestThreadDialog_HomeEndMovesCursorWhenComposerHasText(t *testing.T) {
 	s = next.(Screen)
 	if s.thread.composer.Value() != "hello world" {
 		t.Errorf("expected composer text unchanged after Home, got %q", s.thread.composer.Value())
+	}
+}
+
+func TestResumedSession_SubagentHistoryAvailableInDialog(t *testing.T) {
+	subagentConv := &scriptedThread{
+		events: make(chan uievent.Event, 4),
+		history: []ports.Message{
+			{Role: "user", Text: "perform detailed research on memory leaks"},
+			{Role: "assistant", Text: "found 0 leaks across 12 packages"},
+		},
+	}
+	threads := stubThreads{"task-leak-check": subagentConv}
+
+	s := sized(t, 1)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: uikitconfig.BreakpointWide, Height: 30})
+	scr := next.(Screen)
+	scr.SetSubagentThreads(threads)
+
+	// Simulate resuming a session: LoadHistory with a dispatch_tasks call
+	msgs := []ports.Message{
+		{
+			Role: "assistant",
+			At:   time.Now(),
+			ToolCalls: []ports.ToolCall{
+				{
+					ID:        "call_disp_99",
+					Name:      "dispatch_tasks",
+					Arguments: `{"tasks":[{"id":"task-leak-check","prompt":"perform detailed research on memory leaks","agent":"researcher"}]}`,
+					Output:    `{"tasks":[{"id":"task-leak-check","status":"completed","output":"found 0 leaks across 12 packages"}]}`,
+				},
+			},
+		},
+	}
+	scr.LoadHistory(msgs)
+
+	// Open sidebar panel
+	scr = openPanel(t, scr)
+
+	// Focus is on the subagent row in the panel
+	a, isAgent := scr.panel.selectedAgent()
+	if !isAgent || a.ID != "task-leak-check" {
+		t.Fatalf("expected selected subagent 'task-leak-check', got isAgent=%v, id=%s", isAgent, a.ID)
+	}
+
+	// Press Enter to open the subagent dialog
+	next, _ = scr.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	scr = next.(Screen)
+
+	if scr.thread == nil {
+		t.Fatal("expected subagent thread dialog to open")
+	}
+	if scr.panel.dialogAgent != "task-leak-check" {
+		t.Errorf("expected dialogAgent='task-leak-check', got %q", scr.panel.dialogAgent)
+	}
+
+	// Verify history is loaded in the thread dialog
+	rendered := scr.thread.transcript.View()
+	if !strings.Contains(rendered, "perform detailed research") && !strings.Contains(rendered, "found 0 leaks") {
+		t.Errorf("expected rendered thread transcript to contain subagent history, got:\n%s", rendered)
 	}
 }

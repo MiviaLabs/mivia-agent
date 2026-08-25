@@ -385,9 +385,15 @@ func (p panel) selected() (fileEntry, bool) {
 // contentRows is the selected file's content: its diff, or its
 // post-edit source when sourceView is set.
 func (p panel) contentRows(t theme.Theme, tier theme.Tier, width int) []string {
+	if a, isAgent := p.selectedAgent(); isAgent {
+		if len(a.Log) > 0 {
+			return a.Log
+		}
+		return []string{"subagent: " + a.ID + " (" + a.Status + ")", "", "no detailed step log recorded"}
+	}
 	e, ok := p.selected()
 	if !ok {
-		if len(p.entries) == 0 {
+		if len(p.entries) == 0 && len(p.agents) == 0 {
 			return []string{"no files touched yet"}
 		}
 		return nil

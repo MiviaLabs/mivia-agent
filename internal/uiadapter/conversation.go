@@ -95,6 +95,12 @@ func (c *Conversation) SetSubagents(subagents *SubagentThreads) {
 		return
 	}
 	c.subagents = subagents
+	if subagents != nil {
+		msgs := c.History()
+		if len(msgs) > 0 {
+			PopulateFromToolCalls(subagents, msgs)
+		}
+	}
 }
 
 // SetNoticeOptions configures notice visibility options for this conversation.
@@ -423,6 +429,9 @@ func (c *Conversation) History() []ports.Message {
 	}
 	if len(out) == 0 {
 		return nil
+	}
+	if c.subagents != nil {
+		PopulateFromToolCalls(c.subagents, out)
 	}
 	return out
 }

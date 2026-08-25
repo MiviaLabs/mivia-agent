@@ -100,7 +100,88 @@ func TestSubagentThreads_LookupByToolCallIDAndTaskID(t *testing.T) {
 	if !ok3 || byAgent == nil {
 		t.Errorf("expected thread found by Agent")
 	}
+
 	if byTask != byCall || byCall != byAgent {
 		t.Errorf("expected same conversation instance across all lookup keys")
+	}
+}
+
+func TestPopulateFromToolCalls_DispatchedAndDelegatedTasks(t *testing.T) {
+	threads := uiadapter.NewSubagentThreads()
+
+	msgs := []ports.Message{
+		{
+			Role: "assistant",
+			At:   time.Now(),
+			ToolCalls: []ports.ToolCall{
+				{
+					ID:        "call_dispatch_1",
+					Name:      "dispatch_tasks",
+					Arguments: `{"tasks":[{"id":"task-audit","prompt":"check for leaks","agent":"bug-auditor"},{"id":"task-plan","prompt":"design architecture","agent":"planner"}]}`,
+					Output:    `{"tasks":[{"id":"task-audit","status":"completed","output":"no leaks found"},{"id":"task-plan","status":"completed","output":"architecture approved"}]}`,
+				},
+				{
+					ID:        "call_delegate_1",
+					Name:      "delegate",
+					Arguments: `{"task":"research sqlite persistence","agent":"researcher"}`,
+					Output:    `{"status":"completed","output":"sqlite is persistent across restarts"}`,
+				},
+				{
+					ID:        "call_spawn_1",
+					Name:      "spawn_agent",
+					Arguments: `{"prompt":"review security policies","agent":"security-reviewer"}`,
+					Output:    `security verified`,
+				},
+			},
+		},
+	}
+
+	uiadapter.PopulateFromToolCalls(threads, msgs)
+
+	// Verify dispatch_tasks subtasks
+	auditConv, ok := threads.Thread("task-audit")
+	if !ok || auditConv == nil {
+		t.Fatalf("expected thread for task-audit")
+	}
+	if len(auditConv.History()) != 2 {
+		t.Fatalf("expected 2 history messages for task-audit, got %d", len(auditConv.History()))
+	}
+	if auditConv.History()[0].Text != "check for leaks" {
+		t.Errorf("task-audit prompt: got %q, want 'check for leaks'", auditConv.History()[0].Text)
+	}
+	if auditConv.History()[1].Text != "no leaks found" {
+		t.Errorf("task-audit output: got %q, want 'no leaks found'", auditConv.History()[1].Text)
+	}
+
+	planConv, ok := threads.Thread("task-plan")
+	if !ok || planConv == nil {
+		t.Fatalf("expected thread for task-plan")
+	}
+	if planConv.History()[1].Text != "architecture approved" {
+		t.Errorf("task-plan output: got %q, want 'architecture approved'", planConv.History()[1].Text)
+	}
+
+	// Verify delegate
+	delConv, ok := threads.Thread("call_delegate_1")
+	if !ok || delConv == nil {
+		t.Fatalf("expected thread for call_delegate_1")
+	}
+	if delConv.History()[0].Text != "research sqlite persistence" {
+		t.Errorf("delegate prompt mismatch: got %q", delConv.History()[0].Text)
+	}
+	if delConv.History()[1].Text != "sqlite is persistent across restarts" {
+		t.Errorf("delegate output mismatch: got %q", delConv.History()[1].Text)
+	}
+
+	// Verify spawn_agent
+	spawnConv, ok := threads.Thread("call_spawn_1")
+	if !ok || spawnConv == nil {
+		t.Fatalf("expected thread for call_spawn_1")
+	}
+	if spawnConv.History()[0].Text != "review security policies" {
+		t.Errorf("spawn_agent prompt mismatch: got %q", spawnConv.History()[0].Text)
+	}
+	if spawnConv.History()[1].Text != "security verified" {
+		t.Errorf("spawn_agent output mismatch: got %q", spawnConv.History()[1].Text)
 	}
 }
