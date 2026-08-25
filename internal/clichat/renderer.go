@@ -90,6 +90,20 @@ func (r *ChatRenderer) PrintInterim(text string) {
 	r.printDim("%s", text)
 }
 
+// PrintThinking prints model reasoning (chain of thought) before tools (classic REPL).
+func (r *ChatRenderer) PrintThinking(text string) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	r.out.WriteString("\n")
+	for _, line := range strings.Split(text, "\n") {
+		if strings.TrimSpace(line) != "" {
+			r.printDim("thinking: %s", line)
+		}
+	}
+}
+
 // PrintStatusLine prints a Phase-A style empty-speech tool status ("→ Reading…").
 func (r *ChatRenderer) PrintStatusLine(line string) {
 	line = strings.TrimSpace(line)
@@ -219,6 +233,9 @@ func RenderMessageForHistory(msg provider.Message, modelName string, width int) 
 
 	case provider.RoleAssistant:
 		var lines []string
+		if msg.ReasoningContent != "" {
+			lines = append(lines, renderThinkingLines(msg.ReasoningContent, w)...)
+		}
 		// Compact tool-call lines for any ToolCalls in this message.
 		for _, tc := range msg.ToolCalls {
 			args := NewToolRenderItem(tc.Function.Name, tc.Function.Arguments, "", false, false).Summary(80)
@@ -262,6 +279,25 @@ func RenderMessageForHistory(msg provider.Message, modelName string, width int) 
 	}
 }
 
+// renderThinkingLines formats model chain-of-thought into a summary line for history.
+func renderThinkingLines(text string, width int) []string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil
+	}
+	rawLines := strings.Split(text, "\n")
+	n := 0
+	for _, l := range rawLines {
+		if strings.TrimSpace(l) != "" {
+			n++
+		}
+	}
+	if n == 0 {
+		return nil
+	}
+	return []string{TUIThinkingStyle.Render(fmt.Sprintf("  %s thinking · %d lines", GlyphTriR, n))}
+}
+
 // RenderTurn renders a group of messages forming one conversational turn.
 // A turn starts with a user message and includes the assistant reply
 // (possibly with tool calls and results), ending at the next user message
@@ -296,7 +332,7 @@ func RenderTurn(msgs []provider.Message, modelName string, width int) []string {
 	userMsg := msgs[startIdx]
 	result = append(result, formatUserMessageCard(userMsg.Content, w, time.Time{})...)
 
-	toolCallLines, toolResultLines, finalAnswer, hasModelContent := renderTurnBody(msgs[startIdx+1:])
+	toolCallLines, toolResultLines, finalAnswer, hasModelContent := renderTurnBody(msgs[startIdx+1:], w)
 
 	if !hasModelContent {
 		return result
@@ -317,13 +353,17 @@ func RenderTurn(msgs []provider.Message, modelName string, width int) []string {
 	return result
 }
 
-func renderTurnBody(msgs []provider.Message) ([]string, []string, string, bool) {
+func renderTurnBody(msgs []provider.Message, width int) ([]string, []string, string, bool) {
 	var calls, results []string
 	var answer string
 	hasContent := false
 	for _, msg := range msgs {
 		switch msg.Role {
 		case provider.RoleAssistant:
+			if msg.ReasoningContent != "" {
+				calls = append(calls, renderThinkingLines(msg.ReasoningContent, width)...)
+				hasContent = true
+			}
 			calls = append(calls, renderToolCalls(msg.ToolCalls)...)
 			if len(msg.ToolCalls) > 0 || msg.Content != "" {
 				hasContent = true

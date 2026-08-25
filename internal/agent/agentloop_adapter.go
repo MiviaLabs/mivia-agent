@@ -143,6 +143,7 @@ func attachSDKStreamingWriter(out *sdkagentloop.Options, opts Options, turn *sdk
 // it yields no usage response, and the agent loop calls Chat anyway.
 func newSDKTurnCompleter(l *Loop, opts Options, turn *sdkTurnState, clampedMaxTokens *int) (*agentLoopCompleter, error) {
 	onUsage := func(ctx context.Context, cliReq provider.Request, resp *provider.Response) {
+		emitReasoning(opts, resp)
 		estimatedTokens, _ := provider.EstimatePromptCost(cliReq.Messages, cliReq.Tools, l.contextAccounting())
 		l.emitTurnUsage(ctx, opts, cliReq, resp, estimatedTokens)
 	}

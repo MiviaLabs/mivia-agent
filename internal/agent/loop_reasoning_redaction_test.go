@@ -57,7 +57,6 @@ func TestEmitReasoningRedactsEventThinking(t *testing.T) {
 // committed to host history (l.Messages) stays verbatim so the model's next
 // request can replay it. Redaction must never rewrite what the provider said.
 func TestEmitReasoningKeepsHistoryRaw(t *testing.T) {
-	t.Skip("accepted gap, not a regression: legacy EventThinking has no SDK bridge - Event surface gap in docs/development/sdk-backend-field-mapping.md §2.")
 	setTestReasoningRedactionPolicy(t, `(?i)secret-[0-9]+`)
 
 	comp := &recordingCompleter{

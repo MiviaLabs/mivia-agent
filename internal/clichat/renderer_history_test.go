@@ -483,3 +483,40 @@ func TestRenderTurn_ToolCallSummaryFormat(t *testing.T) {
 		t.Fatalf("expected tool result content, got %q", full)
 	}
 }
+
+// TestRenderMessageForHistory_AssistantWithReasoning verifies assistant messages with reasoning render the thinking summary.
+func TestRenderMessageForHistory_AssistantWithReasoning(t *testing.T) {
+	msg := provider.Message{
+		Role:             provider.RoleAssistant,
+		Content:          "final result",
+		ReasoningContent: "step 1: explore\nstep 2: plan\nstep 3: execute",
+	}
+	lines := RenderMessageForHistory(msg, "m", 80)
+	plain := stripANSI(strings.Join(lines, "\n"))
+	if !strings.Contains(plain, "thinking · 3 lines") {
+		t.Fatalf("expected thinking summary in history message, got %q", plain)
+	}
+	if !strings.Contains(plain, "final result") {
+		t.Fatalf("expected final content in history message, got %q", plain)
+	}
+}
+
+// TestRenderTurn_WithReasoning verifies turn rendering includes the thinking summary.
+func TestRenderTurn_WithReasoning(t *testing.T) {
+	msgs := []provider.Message{
+		{Role: provider.RoleUser, Content: "solve problem"},
+		{
+			Role:             provider.RoleAssistant,
+			Content:          "solved it",
+			ReasoningContent: "thinking deeply\nline 2",
+		},
+	}
+	lines := RenderTurn(msgs, "m", 80)
+	plain := stripANSI(strings.Join(lines, "\n"))
+	if !strings.Contains(plain, "thinking · 2 lines") {
+		t.Fatalf("expected thinking summary in turn render, got %q", plain)
+	}
+	if !strings.Contains(plain, "solved it") {
+		t.Fatalf("expected solved it in turn render, got %q", plain)
+	}
+}

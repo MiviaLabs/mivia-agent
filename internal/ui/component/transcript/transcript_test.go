@@ -618,3 +618,57 @@ func TestSetSize_ReflowsProseMarkdownBlocks(t *testing.T) {
 		t.Errorf("expected reflowed markdown to have fewer lines at width 120 (%d) than initial width 20 (%d)", wideLineCount, initialLineCount)
 	}
 }
+
+func TestSingleEventReasoningHydrationPreservesBody(t *testing.T) {
+	th := loadTheme(t)
+	m := New(th, theme.TierTrueColor)
+	m.SetSize(80, 24)
+
+	// Single atomic event as sent by history replay
+	m, _ = m.HandleEvent(uievent.Event{
+		Kind: uievent.KindReasoning,
+		Body: uievent.ReasoningDeltaBody{Text: "step 1: read file\nstep 2: write code", WordCount: 8},
+	})
+
+	if len(m.Blocks()) != 1 {
+		t.Fatalf("expected 1 block, got %d", len(m.Blocks()))
+	}
+	blk := m.Blocks()[0]
+	if blk.Kind != uievent.KindReasoning {
+		t.Fatalf("expected KindReasoning, got %v", blk.Kind)
+	}
+	if len(blk.Body) != 2 {
+		t.Fatalf("expected 2 lines in body, got %d: %v", len(blk.Body), blk.Body)
+	}
+	if blk.Body[0] != "step 1: read file" {
+		t.Errorf("expected line 1 'step 1: read file', got %q", blk.Body[0])
+	}
+}
+
+func TestFlushPendingReasoningCommitsAsReasoningBlock(t *testing.T) {
+	th := loadTheme(t)
+	m := New(th, theme.TierTrueColor)
+	m.SetSize(80, 24)
+
+	// Stream reasoning delta chunk without terminal WordCount event
+	m, _ = m.HandleEvent(uievent.Event{
+		Kind: uievent.KindReasoning,
+		Body: uievent.ReasoningDeltaBody{Text: "pondering solution..."},
+	})
+	// Followed by a tool start which triggers flushPending()
+	m, _ = m.HandleEvent(uievent.Event{
+		Kind: uievent.KindToolStart,
+		Body: uievent.ToolStartBody{ToolCallID: "call_1", Name: "grep"},
+	})
+
+	blocks := m.Blocks()
+	if len(blocks) < 1 {
+		t.Fatalf("expected at least 1 block, got %d", len(blocks))
+	}
+	if blocks[0].Kind != uievent.KindReasoning {
+		t.Fatalf("expected flushed block to be KindReasoning, got %v", blocks[0].Kind)
+	}
+	if len(blocks[0].Body) == 0 || blocks[0].Body[0] != "pondering solution..." {
+		t.Errorf("expected body 'pondering solution...', got %v", blocks[0].Body)
+	}
+}

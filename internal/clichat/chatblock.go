@@ -86,6 +86,17 @@ func HydrateChatBlocks(messages []provider.Message) []ChatBlock {
 		if kind == "" {
 			continue
 		}
+		if msg.Role == provider.RoleAssistant && msg.ReasoningContent != "" {
+			seq++
+			blocks = append(blocks, ChatBlock{
+				ID:        ChatBlockID(turn, seq),
+				TurnID:    turn,
+				Sequence:  seq,
+				Kind:      ChatBlockThinking,
+				Text:      msg.ReasoningContent,
+				Collapsed: true,
+			})
+		}
 		if msg.Content != "" || len(msg.ToolCalls) == 0 {
 			seq++
 			blocks = append(blocks, ChatBlock{

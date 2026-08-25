@@ -177,3 +177,15 @@ func TestClassicUI_LiveMessagesDoNotGlue(t *testing.T) {
 		t.Errorf("consecutive messages glued together:\n%s", got)
 	}
 }
+
+func TestClassicUI_ThinkingPrints(t *testing.T) {
+	t.Parallel()
+	mt := newMockTerminal()
+	r := NewChatRenderer(mt, "m")
+	_, h := newClassicAgentHandler(r)
+	h(agent.Event{Kind: agent.EventThinking, Content: "Analyzing requirements...\nStep 1: check files"})
+	out := stripANSI(mt.String())
+	if !strings.Contains(out, "thinking:") || !strings.Contains(out, "Analyzing requirements") {
+		t.Fatalf("expected thinking printed, got %q", out)
+	}
+}

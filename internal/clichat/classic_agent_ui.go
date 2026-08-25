@@ -133,6 +133,10 @@ func (ui *classicAgentUI) handle(e agent.Event) {
 		ui.onToolStart(e)
 	case agent.EventToolEnd:
 		ui.onToolEnd(e)
+	case agent.EventThinking:
+		if e.Content != "" {
+			ui.r.PrintThinking(e.Content)
+		}
 	}
 }
 

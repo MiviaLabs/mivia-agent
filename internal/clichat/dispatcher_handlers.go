@@ -216,6 +216,8 @@ func OnEventForMultiStep(parentOnEvent func(agent.Event)) func(agent.Event) {
 				Detail: e.Detail,
 				Origin: e.Origin,
 			})
+		case agent.EventThinking:
+			parentOnEvent(e)
 		}
 	}
 }

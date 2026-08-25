@@ -22,7 +22,7 @@ The SDK path consumes these directly:
 | `Temperature` | completer turn defaults | same carrier as `MaxTokens` |
 | `RequestTimeout` | completer turn defaults | fills `Request.Timeout` when the SDK left it zero |
 | `DisableProviderReplay` | completer turn defaults | OR-merged into the request |
-| `Reasoning` | completer turn defaults | the wrapper injects `Options.Reasoning` level and dialect; the SDK's 4-value `ReasoningEffort` vocabulary is never used |
+| `Reasoning` | completer turn defaults | the wrapper injects `Options.Reasoning` level and dialect; the SDK's 4-value `ReasoningEffort` vocabulary is never used; reasoning output is bridged via `emitReasoning` emitting `EventThinking` to `OnEvent`/`EventBus` |
 | `Dispatcher` (tool hooks, gate, dedup) | `applyDispatcherShim` | every converted tool's Run routes through `Options.Dispatcher.Invoke` with `Kind: tool`, `Step` stamped from the shared per-Chat counter, and `SkipDedup` from the tool's capability class, mirroring `loop_tool_exec.go` |
 | `MaxToolResultChars` | `applyDispatcherShim` | the shim applies the legacy pass-1 cap (`effectiveResultCap` + `CapWithSpoolRef`) and records pass-1 parts so the turn shaper's degrade reports the ORIGINAL total and pages the original bytes |
 | `ToolTimeout` | `applyDispatcherShim` | per-call timeout with the tool's own larger request timeout honored, clamped to the deadline |
@@ -130,10 +130,11 @@ caller accepts the difference.
 - **Malformed tool-call repair** — the legacy path synthesizes IDs for
   unidentified calls and records malformed arguments verbatim as a
   paired tool result; the SDK path hard-fails schema-invalid calls.
-- **Event surface** — the legacy `EventThinking`, heartbeat, cache
+- **Event surface** — the legacy heartbeat, cache
   usage, calibration, and tool-input-preview events have no SDK
-  bridge; `EventStep`/`EventToolStart`/`EventToolEnd` carry the SDK's
-  string payload, not the legacy typed details.
+  bridge; `EventThinking` is bridged via `emitReasoning`, while
+  `EventStep`/`EventToolStart`/`EventToolEnd` carry the SDK's string
+  payload, not the legacy typed details.
 
 ## 3. Fail-closed today
 

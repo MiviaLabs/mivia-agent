@@ -225,7 +225,24 @@ func (m Model) flushPending() Model {
 	if partial == "" {
 		return m
 	}
+	kind := m.pendingKind
 	m.clearPending()
+	if kind == uievent.KindReasoning {
+		body := strings.Split(strings.TrimRight(partial, "\n"), "\n")
+		words := len(strings.Fields(partial))
+		m, _ = m.pushBlock(Block{
+			Kind:        uievent.KindReasoning,
+			Collapsible: true,
+			Collapsed:   true,
+			Header: Header{
+				Label: "reasoning",
+				Meta:  fmt.Sprintf("%d words", words),
+				State: "hidden",
+			},
+			Body: body,
+		})
+		return m
+	}
 	m, _ = m.pushBlock(Block{
 		Kind:  uievent.KindTextEnd,
 		Prose: true,
@@ -251,6 +268,9 @@ func (m Model) handleReasoningDelta(b uievent.ReasoningDeltaBody) (Model, tea.Cm
 		return m, m.appendPending(uievent.KindReasoning, b.Text)
 	}
 	raw := m.pending
+	if raw == "" && b.Text != "" {
+		raw = b.Text
+	}
 	m.clearPending()
 	var body []string
 	if raw != "" {
