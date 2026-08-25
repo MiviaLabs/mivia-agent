@@ -15,10 +15,14 @@ func TestDefaultAgentPromptIsShort(t *testing.T) {
 	// Keep the compiled prompt lean; content-ref routing (read_output /
 	// ledger_read) is intentional and worth a few hundred bytes of budget.
 	//
-	// The budget went to 4150 when the ADLC block was compressed to a terse
-	// step contract (the full spec lives in the workspace rules; a workspace
-	// prompt supersedes this fallback anyway). Do not raise this budget
-	// again to make room for content that a project agent definition under
+	// The inline "MANDATORY lifecycle (ADLC)" block was removed entirely: a
+	// project/language-generic default should not force MiviaLabs' own
+	// opinionated delivery process onto every workspace. Substantial work
+	// reaches it via the workspace's own `delivery` skill (see
+	// .agents/rules/05-adlc-agentic-development-lifecycle.md) when the
+	// workspace defines one - this fallback prompt only needs to tell the
+	// model that project skills/agents may exist to discover. Do not raise
+	// this budget to make room for content a project agent definition under
 	// .agents/agents/ can carry instead.
 	prompt := buildAgentPrompt(config.SubagentConfig{})
 	if len(prompt) > 4150 {
@@ -174,7 +178,7 @@ func messagingBlock(prompt string) string {
 	if start < 0 {
 		return ""
 	}
-	end := strings.Index(prompt[start:], "# MANDATORY")
+	end := strings.Index(prompt[start:], "# Orchestration")
 	if end < 0 {
 		return prompt[start:]
 	}

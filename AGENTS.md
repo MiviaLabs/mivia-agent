@@ -47,18 +47,22 @@ roles. Format and loading contracts are documented in
 [`.agents/agents/README.md`](.agents/agents/README.md). Run `make
 agents-check` after editing any role file.
 
-## Mandatory process - read before any work
+## Delivery process
 
-**ADLC (Agentic Development Lifecycle)** is the mandatory engineering process for all feature work, bug fixes, refactors, and cross-package changes in this repo.
+For substantial feature work, bug fixes, refactors, and cross-package
+changes, use the [`delivery`](.agents/skills/delivery/SKILL.md) skill: it
+routes through the ADLC loop (Plan→Breakdown→Validate→Finalize→Implement
+(TDD)→Audit→Commit) and points at the canonical rule
+([`.agents/rules/05-adlc-agentic-development-lifecycle.md`](.agents/rules/05-adlc-agentic-development-lifecycle.md))
+and role files rather than duplicating them. Step 0 there is a hostile
+challenge of the plan before any code is written; Step 5 is a hostile bug
+audit loop until zero bugs found.
 
-Read and follow [`.agents/rules/05-adlc-agentic-development-lifecycle.md`](.agents/rules/05-adlc-agentic-development-lifecycle.md) **before** starting any task.
-
-The ADLC is 7 steps: Plan→Breakdown→Validate→Finalize→Implement (TDD)→Audit→Commit.  
-Step 0 requires hostile challenge of the plan before any code is written.  
-Step 5 requires hostile bug audit loop until zero bugs found.
-
-**Trivial changes** (≤5 lines, single file, no new types) may use the Fast Path (skip Steps 0-3).  
-If unsure whether a change is trivial, use the full ADLC.
+Small, well-understood changes (the Fast Path: ≤5 lines, single file, no new
+types, is always in this bucket) do not need the skill - read the code, make
+the change, verify it, and say what you verified. Use judgment for anything
+larger; when the plan or blast radius is unclear, prefer the skill over
+guessing.
 
 ## Rules
 

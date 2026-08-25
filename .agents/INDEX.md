@@ -8,21 +8,23 @@ Binary: `mivia` (`cmd/mivia/`)
 
 1. `AGENTS.md`
 2. `.agents/INDEX.md` (this file)
-3. **`.agents/rules/05-adlc-agentic-development-lifecycle.md` - MANDATORY process. Read this before any work.**
-4. Relevant other `.agents/rules/*.md` in numeric order when multiple apply
-5. Relevant `.agents/doctrines/*.md`
-6. Relevant `.agents/skills/*/SKILL.md`
-7. Relevant `.mivia/policy/*.json` when hooks, commits, or docs ownership are in play
-8. Tool adapter files only when running that tool: `CLAUDE.md`, `.claude/`, `.codex/`, `.github/copilot-instructions.md`
+3. Relevant `.agents/rules/*.md` in numeric order when multiple apply -
+   `05-adlc-agentic-development-lifecycle.md` governs substantial feature
+   work, bug fixes, refactors, and cross-package changes, reached via the
+   `delivery` skill
+4. Relevant `.agents/doctrines/*.md`
+5. Relevant `.agents/skills/*/SKILL.md`
+6. Relevant `.mivia/policy/*.json` when hooks, commits, or docs ownership are in play
+7. Tool adapter files only when running that tool: `CLAUDE.md`, `.claude/`, `.codex/`, `.github/copilot-instructions.md`
 
 If an adapter conflicts with `AGENTS.md` or `.agents/`, follow `AGENTS.md` / `.agents/` and fix the adapter.
 
 ## Rules
 
-### ⚠️ MANDATORY - read and follow before any work
+### Delivery lifecycle (substantial work)
 
-`.agents/rules/05-adlc-agentic-development-lifecycle.md` - **ADLC protocol: 7-step engineering cycle for all work. Do not skip.**
-See also "Mandatory process" in `AGENTS.md`.
+`.agents/rules/05-adlc-agentic-development-lifecycle.md` - **ADLC protocol: 7-step engineering cycle, reached via the `delivery` skill for substantial feature work, bug fixes, refactors, and cross-package changes.** Small, well-understood changes do not need it.
+See also "Delivery process" in `AGENTS.md`.
 
 ### Reference rules (read when relevant)
 
