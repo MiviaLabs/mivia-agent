@@ -153,6 +153,10 @@ func (s Screen) handleOpenPickerKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, b
 		next, cmd := s.handleSessionPickerKey(msg)
 		return next, cmd, true
 	}
+	if s.palettePicker != nil {
+		next, cmd := s.handlePalettePickerKey(msg)
+		return next, cmd, true
+	}
 	return s, nil, false
 }
 
@@ -384,7 +388,7 @@ func (s Screen) globalAction(id keymap.ID) (app.Screen, tea.Cmd, bool) {
 	// transcript - identical between the two constructions.
 	if s.embedded {
 		switch id {
-		case keymap.IDThemeDialog, keymap.IDOpenPager, keymap.IDPanelToggle, keymap.IDSettingsDialog:
+		case keymap.IDThemeDialog, keymap.IDOpenPager, keymap.IDPanelToggle, keymap.IDSettingsDialog, keymap.IDPalette:
 			return s, nil, true
 		}
 	}
@@ -397,6 +401,9 @@ func (s Screen) globalAction(id keymap.ID) (app.Screen, tea.Cmd, bool) {
 		return s, func() tea.Msg { return app.PushScreenMsg{Screen: next} }, true
 	case keymap.IDSettingsDialog:
 		next, cmd := s.openSettingsScreen("")
+		return next, cmd, true
+	case keymap.IDPalette:
+		next, cmd := s.openCommandPalette()
 		return next, cmd, true
 	case keymap.IDToggleReason:
 		s.transcript = s.transcript.ToggleReasoning()

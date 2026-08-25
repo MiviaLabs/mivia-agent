@@ -621,6 +621,68 @@ func TestRunSlashCommandOpenSettingsUnknownSectionIsAnError(t *testing.T) {
 	}
 }
 
+func TestCommandPaletteGlobalTriggerOpensPalette(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	s.SetCommandRunner(&fakeRunner{})
+
+	next, cmd := s.Update(tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+	s = next.(Screen)
+	if s.palettePicker == nil {
+		t.Fatal("expected ctrl+p to open the universal command palette")
+	}
+	if !hasClearScreen(cmd) {
+		t.Error("expected ctrl+p to return tea.ClearScreen")
+	}
+}
+
+func TestCommandPaletteSelectSlashCommandRunsCommand(t *testing.T) {
+	runner := &fakeRunner{outcome: ports.CommandOutcome{Notice: "cost: $0.05"}}
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	s.SetCommandRunner(runner)
+
+	next, _ := s.Update(tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+	s = next.(Screen)
+	if s.palettePicker == nil {
+		t.Fatal("expected palette to be open")
+	}
+
+	// Select first item (/settings)
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	s = next.(Screen)
+	if s.palettePicker != nil {
+		t.Error("expected palette to close after selection")
+	}
+	if len(runner.calls) != 1 || runner.calls[0] != "settings|" {
+		t.Errorf("got runner.calls %v, want ['settings|']", runner.calls)
+	}
+}
+
+func TestCommandPaletteSelectAgent(t *testing.T) {
+	runner := &fakeRunner{outcome: ports.CommandOutcome{Notice: "agent switched"}}
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	s.SetCommandRunner(runner)
+
+	next, _ := s.Update(tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+	s = next.(Screen)
+	if s.palettePicker == nil {
+		t.Fatal("expected palette to be open")
+	}
+
+	// Filter down to "Plan Reviewer"
+	for _, r := range "plan reviewer" {
+		next, _ = s.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+		s = next.(Screen)
+	}
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	s = next.(Screen)
+	if s.palettePicker != nil {
+		t.Error("expected palette to close after selection")
+	}
+	if len(runner.selectCalls) != 1 || runner.selectCalls[0] != "agent:plan-reviewer" {
+		t.Errorf("got runner.selectCalls %v, want ['agent:plan-reviewer']", runner.selectCalls)
+	}
+}
+
 type fakeCustomConversation struct {
 	history []ports.Message
 	model   ports.ModelInfo

@@ -220,3 +220,29 @@ func TestSetLabelClearsThePreviousDetail(t *testing.T) {
 		t.Errorf("got %q, want the stale detail cleared on label change", got)
 	}
 }
+
+func TestStatusLineSafetyPillsAndTelemetry(t *testing.T) {
+	th := loadTheme(t)
+	m := New(th, theme.TierASCII)
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	m.Start("thinking", start)
+	m.SetSafetyMode("safe")
+	m.SetTelemetry(42, true, 0.05)
+
+	got := m.View(start)
+	if !strings.Contains(got, "[SAFE]") {
+		t.Errorf("got %q, want [SAFE] pill in ASCII mode", got)
+	}
+	if !strings.Contains(got, "[42% ctx]") {
+		t.Errorf("got %q, want [42%% ctx] telemetry in status line", got)
+	}
+	if !strings.Contains(got, "$0.05") {
+		t.Errorf("got %q, want $0.05 cost in status line", got)
+	}
+
+	m.SetSafetyMode("auto")
+	gotAuto := m.View(start)
+	if !strings.Contains(gotAuto, "[AUTO]") {
+		t.Errorf("got %q, want [AUTO] pill in ASCII mode", gotAuto)
+	}
+}

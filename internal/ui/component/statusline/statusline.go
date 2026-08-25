@@ -9,6 +9,7 @@ package statusline
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -43,6 +44,11 @@ type Model struct {
 	started time.Time
 	frame   int
 	mark    mark.Model
+
+	safetyMode string
+	costUSD    float64
+	contextPct int
+	hasContext bool
 
 	// notice is a one-line message shown INSTEAD of the turn line, and
 	// only until the next turn starts. It carries the outcome of an
@@ -113,6 +119,18 @@ func (m *Model) SetTheme(t theme.Theme, tier theme.Tier) {
 	m.mark.Theme, m.mark.Tier = t, tier
 }
 
+// SetSafetyMode updates the active safety policy label ("safe" | "auto").
+func (m *Model) SetSafetyMode(mode string) {
+	m.safetyMode = mode
+}
+
+// SetTelemetry updates the context capacity percentage and spend.
+func (m *Model) SetTelemetry(pct int, hasPct bool, costUSD float64) {
+	m.contextPct = pct
+	m.hasContext = hasPct
+	m.costUSD = costUSD
+}
+
 // Notice shows a one-line message until the next turn starts.
 //
 // A clipboard write is the case that needs it. tea.SetClipboard emits
@@ -152,5 +170,35 @@ func (m Model) View(now time.Time) string {
 	if m.detail != "" {
 		line += subtle.Render("  " + m.detail)
 	}
-	return line + subtle.Render(fmt.Sprintf("  %s", elapsed))
+	line += subtle.Render(fmt.Sprintf("  %s", elapsed))
+
+	// Telemetry & Safety Pill badges
+	var pills []string
+	if m.safetyMode != "" {
+		isAuto := strings.ToLower(m.safetyMode) == "auto" || strings.ToLower(m.safetyMode) == "yolo"
+		if isAuto {
+			label := "⚡ AUTO"
+			if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
+				label = "AUTO"
+			}
+			pills = append(pills, render.Role(m.Theme, m.Tier, theme.RoleWarning).Render("["+label+"]"))
+		} else {
+			label := "🛡️ SAFE"
+			if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
+				label = "SAFE"
+			}
+			pills = append(pills, render.Role(m.Theme, m.Tier, theme.RoleSuccess).Render("["+label+"]"))
+		}
+	}
+	if m.hasContext {
+		pills = append(pills, subtle.Render(fmt.Sprintf("[%d%% ctx]", m.contextPct)))
+	}
+	if m.costUSD > 0.0001 {
+		pills = append(pills, subtle.Render(fmt.Sprintf("$%.2f", m.costUSD)))
+	}
+
+	if len(pills) > 0 {
+		line += "  " + strings.Join(pills, " ")
+	}
+	return line
 }

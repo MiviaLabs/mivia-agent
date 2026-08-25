@@ -119,14 +119,15 @@ func (s Screen) handleModalClick(x, y, topGutter int) (Screen, tea.Cmd, bool) {
 		s.overlay = ""
 		return s, tea.ClearScreen, true
 	}
-	if s.modelPicker != nil || s.agentPicker != nil || s.sessionPicker != nil || s.panel.dialog {
-		dw, dh := contentWidth(s.width), s.transcriptHeight()
+	if s.modelPicker != nil || s.agentPicker != nil || s.sessionPicker != nil || s.palettePicker != nil || s.panel.dialog {
+		dw, dh := s.chatWidth(), s.transcriptHeight()
 		transcriptTop := topGutter + s.topbar.Height() + 1
 		localX, localY := x-1, y-transcriptTop
 		if render.DialogHitsClose(dw, dh, 10, localX, localY) || render.DialogHitsBackdrop(dw, dh, 10, localX, localY) {
 			s.modelPicker = nil
 			s.agentPicker = nil
 			s.sessionPicker = nil
+			s.palettePicker = nil
 			s.panel.dialog = false
 			s.panel.dialogAgent = ""
 			return s, tea.ClearScreen, true
@@ -167,5 +168,5 @@ func abs(n int) int {
 // panel's content dialog. Clicks that hit the area while something else
 // draws there must not act on the transcript hidden behind it.
 func (s Screen) transcriptShown() bool {
-	return s.modelPicker == nil && s.agentPicker == nil && s.sessionPicker == nil && s.overlay == "" && !s.panel.dialog
+	return s.modelPicker == nil && s.agentPicker == nil && s.sessionPicker == nil && s.palettePicker == nil && s.overlay == "" && !s.panel.dialog
 }

@@ -268,6 +268,93 @@ func (s Screen) handleSessionPickerKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd
 	return s, nil
 }
 
+func (s Screen) openCommandPalette() (app.Screen, tea.Cmd) {
+	groups := []picker.Group{
+		{
+			Provider: "Commands",
+			Models: []string{
+				"/settings - configure providers, models, and tools",
+				"/model - switch active model or provider",
+				"/theme - change UI color theme",
+				"/clear - clear conversation history",
+				"/compact - compact current conversation context",
+				"/cost - view session spending and token stats",
+				"/context - check context capacity usage",
+				"/help - show full keymap",
+			},
+		},
+		{
+			Provider: "Agents",
+			Models: []string{
+				"agent: Mivia (General orchestrator)",
+				"agent: Planner (Requirements and task breakdown)",
+				"agent: Plan Reviewer (Adversarial architecture check)",
+				"agent: Builder (TDD code and test implementation)",
+				"agent: Reviewer (Codebase and security reviewer)",
+			},
+		},
+		{
+			Provider: "Settings",
+			Models: []string{
+				"settings: General",
+				"settings: Models",
+				"settings: MCP",
+				"settings: Automations",
+				"settings: Projects",
+			},
+		},
+	}
+	pm := picker.NewGroups(s.Theme, s.Tier, groups)
+	s.palettePicker = &pm
+	return s, tea.ClearScreen
+}
+
+func (s Screen) handlePalettePickerKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
+	if msg.String() == "ctrl+c" {
+		s.palettePicker = nil
+		next, cmd, _ := s.quit()
+		return next, tea.Batch(cmd, tea.ClearScreen)
+	}
+	next, cmd := s.palettePicker.Update(msg)
+	s.palettePicker = &next
+	if cmd == nil {
+		return s, nil
+	}
+	switch m := cmd().(type) {
+	case picker.SelectMsg:
+		s.palettePicker = nil
+		sel := m.Item
+		switch {
+		case strings.HasPrefix(sel, "/"):
+			cmdLine := strings.Split(sel, " - ")[0]
+			return s.runSlashCommand(cmdLine)
+		case strings.HasPrefix(sel, "agent: "):
+			raw := strings.TrimPrefix(sel, "agent: ")
+			// Split before optional description parenthesis e.g. "Plan Reviewer (Adversarial architecture check)"
+			namePart := raw
+			if idx := strings.Index(raw, " ("); idx >= 0 {
+				namePart = raw[:idx]
+			}
+			agentID := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(namePart), " ", "-"))
+			if s.runner == nil {
+				return s.withError("no command runner configured for agents"), tea.ClearScreen
+			}
+			out := s.runner.SelectAgent(context.Background(), agentID)
+			next, outcomeCmd := s.applyCommandOutcome(out)
+			return next, tea.Batch(outcomeCmd, tea.ClearScreen)
+		case strings.HasPrefix(sel, "settings: "):
+			section := strings.ToLower(strings.TrimPrefix(sel, "settings: "))
+			next, outcomeCmd := s.openSettingsScreen(section)
+			return next, tea.Batch(outcomeCmd, tea.ClearScreen)
+		}
+		return s, tea.ClearScreen
+	case picker.CancelMsg:
+		s.palettePicker = nil
+		return s, tea.ClearScreen
+	}
+	return s, nil
+}
+
 // renderPickerDialog draws the /model and /agents pickers as centered
 // dialogs, the same primitive themepicker.Screen uses.
 func renderPickerDialog(t theme.Theme, tier theme.Tier, width, height int, title string, p picker.Model) string {

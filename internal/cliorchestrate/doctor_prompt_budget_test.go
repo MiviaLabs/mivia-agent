@@ -51,11 +51,11 @@ func runDoctorForPromptBudget(t *testing.T, profileWindow, profileOutput int, ma
 }
 
 // TestDoctorPromptBudgetAdvisoryShown: with an unbounded prompt budget
-// (max_prompt_tokens unset, context window 1000000 minus 384000 output
-// reserve = 616000), doctor must print the prompt_budget advisory.
+// (max_prompt_tokens unset, context window 1000000 minus 32768 default output
+// reserve = 967232), doctor must print the prompt_budget advisory.
 func TestDoctorPromptBudgetAdvisoryShown(t *testing.T) {
 	stdout, _ := runDoctorForPromptBudget(t, 1000000, 384000, "")
-	if !strings.Contains(stdout, "prompt_budget: unbounded (616000 tokens)") {
+	if !strings.Contains(stdout, "prompt_budget: unbounded (967232 tokens)") {
 		t.Fatalf("stdout missing unbounded prompt_budget advisory:\n%s", stdout)
 	}
 	if !strings.Contains(stdout, "recommended 200000") {
@@ -73,7 +73,7 @@ func TestDoctorPromptBudgetAdvisoryAbsentWhenCapped(t *testing.T) {
 }
 
 // TestDoctorPromptBudgetAdvisoryAbsentForSmallWindow: an active prompt budget
-// (200000 - 128000 = 72000) at or below 200000 must not print the advisory.
+// (200000 - 32768 = 167232) at or below 200000 must not print the advisory.
 func TestDoctorPromptBudgetAdvisoryAbsentForSmallWindow(t *testing.T) {
 	stdout, _ := runDoctorForPromptBudget(t, 200000, 128000, "")
 	if strings.Contains(stdout, "prompt_budget") {
@@ -82,10 +82,10 @@ func TestDoctorPromptBudgetAdvisoryAbsentForSmallWindow(t *testing.T) {
 }
 
 // TestDoctorPromptBudgetAdvisoryAbsentAtExactCap: a budget of exactly 200000
-// (300000 window minus 100000 reserve) must not print the advisory - the guard
+// (232768 window minus 32768 reserve) must not print the advisory - the guard
 // is '<= cap', not '< cap'.
 func TestDoctorPromptBudgetAdvisoryAbsentAtExactCap(t *testing.T) {
-	stdout, _ := runDoctorForPromptBudget(t, 300000, 100000, "")
+	stdout, _ := runDoctorForPromptBudget(t, 200000+config.DefaultOutputReserveTokens, 100000, "")
 	if strings.Contains(stdout, "prompt_budget") {
 		t.Fatalf("stdout contains prompt_budget advisory at the exact cap:\n%s", stdout)
 	}
