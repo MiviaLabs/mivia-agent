@@ -139,14 +139,14 @@ func TestRetainMessagesChargesTheHoistedSchemaCost(t *testing.T) {
 	// must charge that number rather than silently costing messages only.
 	messages := retentionMessages()
 	input := PlanInput{Messages: messages, Budget: 1_000_000}
-	free, _, err := retainMessages(input, messages[1], 1, 1_000_000, 0)
+	free, _, err := retainMessages(input, messages[1], 1, 1_000_000, 0, nil)
 	if err != nil {
 		t.Fatalf("retainMessages(schemaCost=0): %v", err)
 	}
 	// A schema charge larger than the whole budget must make the mandatory
 	// selection overflow, which is the only way the charge can be observed
 	// from outside.
-	if _, _, err := retainMessages(input, messages[1], 1, 1_000_000, 2_000_000); !errors.Is(err, contextstate.ErrPromptBudgetExceeded) {
+	if _, _, err := retainMessages(input, messages[1], 1, 1_000_000, 2_000_000, nil); !errors.Is(err, contextstate.ErrPromptBudgetExceeded) {
 		t.Fatalf("error = %v, want ErrPromptBudgetExceeded once the schema charge exceeds the budget", err)
 	}
 	if len(free) == 0 {
@@ -262,4 +262,152 @@ func formatSalvagePlan(messages []provider.Message) string {
 		out += fmt.Sprintf("  [%d] %s %q\n", i, m.Role, content)
 	}
 	return out
+}
+
+// TestRetainReflessPlaceholdersDoNotConsumeTailSlots pins the fix for
+// spent elision placeholders consuming retention slots: two 62-byte ref-less
+// placeholders held 2 of 8 slots in production failures, dropping substantive
+// earlier exchanges while carrying zero recoverable information. Ref-less
+// placeholders must not be charged against the RecentTail budget.
+func TestRetainReflessPlaceholdersDoNotConsumeTailSlots(t *testing.T) {
+	// 1 system + 1 task user turn (salvaged)
+	// Substantive exchange 0 (assistant call-0 + tool result-0) -> 2 slots
+	// Placeholder exchange 1 (assistant call-1 + ref-less tool placeholder) -> 1 slot
+	// Placeholder exchange 2 (assistant call-2 + ref-less tool placeholder) -> 1 slot
+	// Substantive exchange 3 (assistant call-3 + tool result-3) -> 2 slots
+	// Substantive exchange 4 (assistant call-4 + tool result-4) -> 2 slots
+	// User: "continue" (current objective) -> mandatory
+	// Substantive exchange 5 (assistant call-5 + tool result-5) -> mandatory latest tool unit
+	//
+	// Total optional slots with fix: 2 + 1 + 1 + 2 + 2 = 8 slots (fits exactly in RecentTail=8).
+	// Without fix: 2 + 2 + 2 + 2 + 2 = 10 slots (exchange 0 would be dropped).
+	messages := []provider.Message{
+		{Role: provider.RoleSystem, Content: "system"},
+		{Role: provider.RoleUser, Content: "ORIGINAL TASK"},
+	}
+
+	call0 := plannerToolCall("call-0", "read_file", `{"path":"0.txt"}`)
+	messages = append(messages,
+		provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{call0}},
+		provider.Message{Role: provider.RoleTool, ToolCallID: call0.ID, Name: "read_file", Content: "substantive result 0"},
+	)
+
+	call1 := plannerToolCall("call-1", "read_file", `{"path":"1.txt"}`)
+	messages = append(messages,
+		provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{call1}},
+		provider.Message{Role: provider.RoleTool, ToolCallID: call1.ID, Name: "read_file", Content: elisionNotice(4096)},
+	)
+
+	call2 := plannerToolCall("call-2", "read_file", `{"path":"2.txt"}`)
+	messages = append(messages,
+		provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{call2}},
+		provider.Message{Role: provider.RoleTool, ToolCallID: call2.ID, Name: "read_file", Content: elisionNotice(4096)},
+	)
+
+	call3 := plannerToolCall("call-3", "read_file", `{"path":"3.txt"}`)
+	messages = append(messages,
+		provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{call3}},
+		provider.Message{Role: provider.RoleTool, ToolCallID: call3.ID, Name: "read_file", Content: "substantive result 3"},
+	)
+
+	call4 := plannerToolCall("call-4", "read_file", `{"path":"4.txt"}`)
+	messages = append(messages,
+		provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{call4}},
+		provider.Message{Role: provider.RoleTool, ToolCallID: call4.ID, Name: "read_file", Content: "substantive result 4"},
+	)
+
+	call5 := plannerToolCall("call-5", "read_file", `{"path":"5.txt"}`)
+	messages = append(messages,
+		provider.Message{Role: provider.RoleUser, Content: "continue"},
+		provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{call5}},
+		provider.Message{Role: provider.RoleTool, ToolCallID: call5.ID, Name: "read_file", Content: "substantive result 5"},
+	)
+
+	cost, err := provider.EstimateRequestCost(messages, nil, 0, provider.ContextAccountingProfile{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := Plan(PlanInput{Messages: messages, Budget: cost * 4, Force: true, RecentTail: 8})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if !plan.Compacted {
+		t.Fatal("plan did not compact")
+	}
+	if !containsPlannerMessage(plan.Messages, provider.RoleTool, "substantive result 0") {
+		t.Fatalf("substantive exchange 0 was dropped because ref-less placeholders consumed tail slots; retained:\n%s", formatSalvagePlan(plan.Messages))
+	}
+	if err := provider.ValidateToolPairing(plan.Messages); err != nil {
+		t.Fatalf("tool pairing violated: %v", err)
+	}
+}
+
+// TestRetainRefBearingPlaceholdersConsumeTailSlots pins that elision notices
+// carrying recoverable remainder references DO charge against the RecentTail
+// budget, because the model can recover their full content via read_output.
+func TestRetainRefBearingPlaceholdersConsumeTailSlots(t *testing.T) {
+	ref1 := "ref:output:0000000000000000000000000000000000000000000000000000000000000001"
+	ref2 := "ref:output:0000000000000000000000000000000000000000000000000000000000000002"
+
+	messages := []provider.Message{
+		{Role: provider.RoleSystem, Content: "system"},
+		{Role: provider.RoleUser, Content: "ORIGINAL TASK"},
+	}
+
+	call0 := plannerToolCall("call-0", "read_file", `{"path":"0.txt"}`)
+	messages = append(messages,
+		provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{call0}},
+		provider.Message{Role: provider.RoleTool, ToolCallID: call0.ID, Name: "read_file", Content: "substantive result 0"},
+	)
+
+	call1 := plannerToolCall("call-1", "read_file", `{"path":"1.txt"}`)
+	messages = append(messages,
+		provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{call1}},
+		provider.Message{Role: provider.RoleTool, ToolCallID: call1.ID, Name: "read_file", Content: elisionNoticeWithRef(4096, ref1)},
+	)
+
+	call2 := plannerToolCall("call-2", "read_file", `{"path":"2.txt"}`)
+	messages = append(messages,
+		provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{call2}},
+		provider.Message{Role: provider.RoleTool, ToolCallID: call2.ID, Name: "read_file", Content: elisionNoticeWithRef(4096, ref2)},
+	)
+
+	call3 := plannerToolCall("call-3", "read_file", `{"path":"3.txt"}`)
+	messages = append(messages,
+		provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{call3}},
+		provider.Message{Role: provider.RoleTool, ToolCallID: call3.ID, Name: "read_file", Content: "substantive result 3"},
+	)
+
+	call4 := plannerToolCall("call-4", "read_file", `{"path":"4.txt"}`)
+	messages = append(messages,
+		provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{call4}},
+		provider.Message{Role: provider.RoleTool, ToolCallID: call4.ID, Name: "read_file", Content: "substantive result 4"},
+	)
+
+	call5 := plannerToolCall("call-5", "read_file", `{"path":"5.txt"}`)
+	messages = append(messages,
+		provider.Message{Role: provider.RoleUser, Content: "continue"},
+		provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{call5}},
+		provider.Message{Role: provider.RoleTool, ToolCallID: call5.ID, Name: "read_file", Content: "substantive result 5"},
+	)
+
+	cost, err := provider.EstimateRequestCost(messages, nil, 0, provider.ContextAccountingProfile{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := Plan(PlanInput{Messages: messages, Budget: cost * 4, Force: true, RecentTail: 8})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if !plan.Compacted {
+		t.Fatal("plan did not compact")
+	}
+	// With ref-bearing placeholders charging 1 slot each, slots for exchanges 1-4 = 2 + 2 + 2 + 2 = 8 slots.
+	// Exchange 0 (which needs 2 more slots) must be dropped at RecentTail=8.
+	if containsPlannerMessage(plan.Messages, provider.RoleTool, "substantive result 0") {
+		t.Fatalf("substantive exchange 0 survived even though ref-bearing placeholders consumed tail slots; retained:\n%s", formatSalvagePlan(plan.Messages))
+	}
+	if err := provider.ValidateToolPairing(plan.Messages); err != nil {
+		t.Fatalf("tool pairing violated: %v", err)
+	}
 }

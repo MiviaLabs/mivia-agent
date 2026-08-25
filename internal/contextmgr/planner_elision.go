@@ -23,7 +23,7 @@ func planCompact(input PlanInput, result PlanResult, rng contextstate.SourceRang
 	working, elision, reasoningElision, deferred := elideForCompaction(input, working, objectiveIndex, mandatory, schemaCost)
 	planInput := input
 	planInput.Messages = working
-	retained, retainedIndexes, err := retainMessages(planInput, objective, objectiveIndex, target, schemaCost)
+	retained, retainedIndexes, err := retainMessages(planInput, objective, objectiveIndex, target, schemaCost, deferred)
 	if err != nil {
 		return PlanResult{}, err
 	}
