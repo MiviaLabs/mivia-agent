@@ -172,14 +172,13 @@ func TestFocusedHeaderUsesReverseVideoAndKeepsTheMarker(t *testing.T) {
 	}
 }
 
-// TestFocusedHeaderRightAlignsMetaAndState pins wireframes-panes.md
+// TestFocusedHeaderMatchesUnfocusedGeometry pins wireframes-panes.md
 // section 5: "the header row is identical in both states" - only the
 // reverse-video treatment may change when a block gains focus. Before
 // this test, the focused path built its plain text with headerPlain,
-// which joins meta and state left-to-right instead of right-aligning
-// them against width like the unfocused path does, so Tab-ing onto a
-// block visibly moved the columns.
-func TestFocusedHeaderRightAlignsMetaAndState(t *testing.T) {
+// which joins meta and state differently than the unfocused path, so
+// Tab-ing onto a block visibly moved the columns.
+func TestFocusedHeaderMatchesUnfocusedGeometry(t *testing.T) {
 	th := loadTheme(t)
 	const width = 60
 	base := Block{
@@ -200,7 +199,7 @@ func TestFocusedHeaderRightAlignsMetaAndState(t *testing.T) {
 		t.Errorf("focus moved the header columns:\nunfocused: %q\nfocused:   %q", unfocusedPlain, focusedPlain)
 	}
 	if !strings.HasSuffix(focusedPlain, "ok") {
-		t.Errorf("got %q, want the state flush to the right edge under focus too", focusedPlain)
+		t.Errorf("got %q, want the state as the last thing on the row under focus too", focusedPlain)
 	}
 }
 

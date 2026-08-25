@@ -14,20 +14,26 @@ import (
 // plain strips styling so assertions test layout, not colour.
 func plain(s string) string { return ansi.Strip(s) }
 
-func TestHeaderRightAlignsMetaAndState(t *testing.T) {
+func TestHeaderPlacesMetaAndStateInline(t *testing.T) {
 	th := loadTheme(t)
 	const width = 60
 	got := Header(th, theme.TierASCII, width, HeaderSpec{
 		Marker: "v", Label: "edit", Detail: "main.go", Meta: "+4 -1", State: "ok",
 	})
-	if w := lipgloss.Width(got); w != width {
-		t.Errorf("got width %d, want exactly %d", w, width)
+	p := plain(got)
+	// Ragged-right: the row ends right after the state, not padded out
+	// to width, so metadata reads close to the content it describes.
+	if w := lipgloss.Width(got); w >= width {
+		t.Errorf("got width %d, want it well short of %d (no fill padding)", w, width)
 	}
-	if !strings.HasSuffix(plain(got), "ok") {
-		t.Errorf("got %q, want the state flush to the right edge", got)
+	if !strings.HasSuffix(p, "ok") {
+		t.Errorf("got %q, want the state as the last thing on the row", got)
 	}
-	if !strings.HasPrefix(plain(got), "v edit") {
+	if !strings.HasPrefix(p, "v edit") {
 		t.Errorf("got %q, want the marker and label at the left", got)
+	}
+	if want := "main.go  +4 -1  ok"; !strings.HasSuffix(p, want) {
+		t.Errorf("got %q, want detail and right columns joined with a fixed gap: %q", p, want)
 	}
 }
 
@@ -49,11 +55,11 @@ func TestHeaderStateWithoutMeta(t *testing.T) {
 	got := Header(th, theme.TierASCII, width, HeaderSpec{
 		Marker: "v", Label: "run", State: "running", StateRole: theme.RoleInfo,
 	})
-	if w := lipgloss.Width(got); w != width {
-		t.Errorf("got width %d, want %d", w, width)
+	if w := lipgloss.Width(got); w >= width {
+		t.Errorf("got width %d, want it well short of %d (no fill padding)", w, width)
 	}
 	if !strings.HasSuffix(plain(got), "running") {
-		t.Errorf("got %q, want the state right-aligned", got)
+		t.Errorf("got %q, want the state as the last thing on the row", got)
 	}
 }
 
@@ -75,8 +81,8 @@ func TestHeaderClipsDetailNotState(t *testing.T) {
 	got := Header(th, theme.TierASCII, width, HeaderSpec{
 		Marker: "v", Label: "edit", Detail: long, Meta: "+4 -1", State: "ok",
 	})
-	if w := lipgloss.Width(got); w != width {
-		t.Errorf("got width %d, want exactly %d:\n%q", w, width, got)
+	if w := lipgloss.Width(got); w > width {
+		t.Errorf("got width %d, want at most %d:\n%q", w, width, got)
 	}
 	if !strings.Contains(plain(got), uikitconfig.ClipMarker) {
 		t.Errorf("got %q, want the clip marker %q", got, uikitconfig.ClipMarker)
@@ -182,9 +188,12 @@ var widthHostileSpecs = []HeaderSpec{
 }
 
 // TestHeaderWidthContract pins the guarantee Block.Height depends on: at
-// a known width the header is EXACTLY that many columns and holds no
-// newline. A header that overflowed would draw two rows while the live
-// window budgeted one, and the transcript would outgrow the terminal.
+// a known width the header is AT MOST that many columns, on one row,
+// with no newline. A header that overflowed would draw two rows while
+// the live window budgeted one, and the transcript would outgrow the
+// terminal. It is no longer exactly width whenever meta/state are
+// present - they sit ragged-right, close after the detail, not padded
+// out to the far edge.
 func TestHeaderWidthContract(t *testing.T) {
 	th := loadTheme(t)
 	for _, width := range []int{1, 2, 3, 5, 8, 12, 20, 40, 80, 200} {
@@ -192,12 +201,6 @@ func TestHeaderWidthContract(t *testing.T) {
 			got := Header(th, theme.TierASCII, width, spec)
 			if w := ansi.StringWidth(got); w > width {
 				t.Errorf("spec %d at width %d: got width %d, want at most %d:\n%q",
-					i, width, w, width, got)
-			}
-			// A right column forces the row to fill: that is what makes
-			// the meta and state right-aligned rather than merely last.
-			if w := ansi.StringWidth(got); (spec.Meta != "" || spec.State != "") && w != width {
-				t.Errorf("spec %d at width %d: got width %d, want exactly %d:\n%q",
 					i, width, w, width, got)
 			}
 			if strings.ContainsAny(plain(got), "\n\r\t") {

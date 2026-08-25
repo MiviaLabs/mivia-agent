@@ -42,7 +42,7 @@ draws boxes because the boxes are the information, not decoration. See section 1
 ## 2. Block anatomy
 
 ```
-label  detail                                              meta   state
+label  detail  meta   state
   body line
   body line
 ```
@@ -51,7 +51,12 @@ label  detail                                              meta   state
 - `label` is the block kind, at column 3. Dim, never bold. A block that cannot
   collapse still starts at column 3, so every header aligns.
 - `detail` is the subject: a path, a command, a subagent name.
-- `meta` and `state` are right-aligned. State is always a word, never only a colour.
+- `meta` and `state` sit inline, immediately after `detail`, separated by a fixed
+  two-column gap - not right-aligned to the pane width. Chat rows vary too widely
+  in `detail` length for a right-aligned column to read as a scannable table; a
+  fixed gap keeps the status close to the content it describes, the way other
+  desktop chat and agent UIs place inline tool metadata. State is always a word,
+  never only a colour.
 - the body is indented 4 columns. Nothing is drawn in columns 1 to 4 of a body line.
   Section 11 and every drawn wireframe use 4. An earlier revision of this section
   said 2, which was wrong.

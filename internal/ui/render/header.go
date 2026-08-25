@@ -13,8 +13,8 @@ import (
 
 // HeaderSpec is the content of a block header row, in four columns.
 // wireframes-panes.md section 2: the collapse marker at column 1, the
-// label at column 3, the detail after it, then a right-aligned meta and
-// a right-aligned state.
+// label at column 3, the detail after it, then meta and state placed
+// inline immediately after the detail, separated by minHeaderGap.
 type HeaderSpec struct {
 	// Marker is the collapse glyph, "v", ">" or " ".
 	Marker  string
@@ -29,20 +29,23 @@ type HeaderSpec struct {
 	StateRole theme.Role
 }
 
-// minHeaderGap keeps at least this much space between the detail and the
-// right-aligned columns, so they never read as one run of text.
+// minHeaderGap is the fixed space between the detail and the meta/state
+// columns, so they never read as one run of text. Unlike a fill pad, it
+// does not grow with the terminal width: meta and state sit close after
+// the content they describe, the way a desktop chat or agent UI places
+// inline tool metadata, rather than floating to the far edge of a wide
+// pane.
 const minHeaderGap = 2
 
-// Header renders a block header, right-aligning meta and state against
-// width. When the columns cannot all fit, the DETAIL is clipped and
-// marked - never the state, which carries meaning, and never the label,
-// which identifies the block.
+// Header renders a block header, placing meta and state inline right
+// after the detail. When the columns cannot all fit, the DETAIL is
+// clipped and marked - never the state, which carries meaning, and never
+// the label, which identifies the block.
 //
 // Contract, relied on by Block.Height: for width > 0 the result is AT
-// MOST width display columns and contains no newline; it is exactly
-// width whenever a meta or a state is present to right-align. A header
-// that overflowed would wrap, and the live window would then budget one
-// row for content that draws two.
+// MOST width display columns, on one row, and contains no newline. A
+// header that overflowed would wrap, and the live window would then
+// budget one row for content that draws two.
 //
 // Pure: input in, string out, no I/O and no package state.
 func Header(t theme.Theme, tier theme.Tier, width int, spec HeaderSpec) string {
@@ -117,8 +120,9 @@ func headerRow(t theme.Theme, tier theme.Tier, width int, spec HeaderSpec) strin
 			word, role = spec.Meta, theme.RoleFGSubtle
 		}
 		word = ansi.Truncate(word, width, "")
-		// Still right-aligned: the survivor keeps the column it had.
-		return pad(width-ansi.StringWidth(word)) + Role(t, tier, role).Render(word)
+		// Nothing else fits, so the survivor is the whole row - no
+		// invented padding to a column it no longer shares with anything.
+		return Role(t, tier, role).Render(word)
 	}
 
 	lead, detail, gap := fit(lead, spec.Detail, right, width)
@@ -126,16 +130,24 @@ func headerRow(t theme.Theme, tier theme.Tier, width int, spec HeaderSpec) strin
 }
 
 // fit solves the column layout at a known width. It returns the lead
-// (marker and label), the detail, and the gap that right-aligns the meta
-// and state. The three plus the right columns always total width.
+// (marker and label), the detail, and the gap before the meta and state.
+// The gap is the fixed minHeaderGap, not a fill: meta and state sit
+// ragged-right, immediately after the detail, rather than flush against
+// width. The detail is clipped only when the row would otherwise
+// overflow width.
 func fit(lead, detail, right string, width int) (string, string, string) {
+	gap := ""
+	if right != "" {
+		gap = pad(minHeaderGap)
+	}
+
 	rightW := ansi.StringWidth(right)
 	avail := width - rightW
 	if right != "" {
 		avail -= minHeaderGap
 	}
 	if avail <= 0 {
-		return "", "", pad(width - rightW)
+		return "", "", gap
 	}
 
 	if ansi.StringWidth(lead) > avail {
@@ -144,13 +156,7 @@ func fit(lead, detail, right string, width int) (string, string, string) {
 	} else {
 		detail = clipDetail(detail, avail-ansi.StringWidth(lead))
 	}
-
-	// Measured whole, not as a sum of parts: see the backstop in Header.
-	left := lead
-	if detail != "" {
-		left += " " + detail
-	}
-	return lead, detail, pad(width - ansi.StringWidth(left) - rightW)
+	return lead, detail, gap
 }
 
 // pad is a run of n spaces, never a negative Repeat. Truncation is not

@@ -14,7 +14,7 @@ import (
 
 // Header is a block's first row, in four columns.
 // wireframes-panes.md section 2: label at column 1, then the detail,
-// then a right-aligned meta and a right-aligned state. The four-column
+// then meta and state placed inline right after it. The four-column
 // renderer itself lands in a later wave; the value is separated now so
 // the block model does not change again to accept it.
 type Header struct {
@@ -198,8 +198,9 @@ func (b Block) collapseMarker() string {
 func (b Block) renderHeader(t theme.Theme, tier theme.Tier, width int) string {
 	headerW := width
 	if headerW > uikitconfig.ProseMeasureWide+16 {
-		// Cap right alignment width on ultrawide screens so metadata and status
-		// stay cohesive with the reading column rather than floating to the far edge.
+		// Cap the width render.Header clips against on ultrawide screens, so a
+		// long detail still gives way at a reading-column-ish point instead of
+		// stretching all the way to the far edge of the terminal.
 		headerW = uikitconfig.ProseMeasureWide + 16
 	}
 
@@ -210,7 +211,8 @@ func (b Block) renderHeader(t theme.Theme, tier theme.Tier, width int) string {
 	// shape as well as by colour (docs/design/ux-rules.md rules 6.3-6.4).
 	if b.Focused {
 		// Reuse render.Header's own column geometry (marker/label at the
-		// left, meta/state right-aligned) and strip its colour, so focus
+		// left, meta/state inline right after the detail) and strip its
+		// colour, so focus
 		// changes ONLY the reverse-video treatment and never moves a
 		// column - wireframes-panes.md section 5: "the header row is
 		// identical in both states." headerPlain is not reused here
