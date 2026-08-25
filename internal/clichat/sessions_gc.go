@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strconv"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/hub"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
@@ -85,9 +87,8 @@ func runSessionsGC(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("sessions gc: %w", err)
 	}
 	if compact {
-		if err := store.Compact(context.Background()); err != nil {
-			fmt.Fprintf(stderr, "sessions gc: %v\n", err)
-			return fmt.Errorf("sessions gc: %w", err)
+		if err := compactWithMaintenanceLock(store, stderr); err != nil {
+			return err
 		}
 	}
 	if jsonFlag {
@@ -104,6 +105,34 @@ func runSessionsGC(args []string, stdout, stderr io.Writer) error {
 	fmt.Fprintf(stdout, "removed %d worktree instance(s) and %d route(s)\n", instances, routes)
 	if compact {
 		fmt.Fprintln(stdout, "compacted the database file")
+	}
+	return nil
+}
+
+// compactWithMaintenanceLock gates store.Compact behind the hub's election
+// lock (internal/hub). Compact cannot detect a concurrent connection by
+// itself - internal/storage may not import internal/hub, so this is the only
+// layer that can check - and running it under a live TUI/REPL/desktop
+// sidecar risks the leave-WAL step colliding indefinitely with a connection
+// that never goes away for the length of a session, unlike the transient
+// contention the retry inside Compact is meant for.
+//
+// This narrows the risk; it does not eliminate it. Acquiring the lock proves
+// no *interactive* process is joined to this workspace's hub - it says
+// nothing about another one-shot `sessions gc` or a bare `mivia chat` single
+// turn running concurrently, since neither calls hub.Join. See
+// hub.TryAcquireMaintenanceLock's doc comment.
+func compactWithMaintenanceLock(store *storage.SQLite, stderr io.Writer) error {
+	release, ok := hub.TryAcquireMaintenanceLock(filepath.Dir(store.Path()))
+	if !ok {
+		err := fmt.Errorf("sessions gc: refusing --compact: another mivia process (chat, TUI, or desktop) is using this workspace - close it and retry")
+		fmt.Fprintln(stderr, err)
+		return err
+	}
+	defer release()
+	if err := store.Compact(context.Background()); err != nil {
+		fmt.Fprintf(stderr, "sessions gc: %v\n", err)
+		return fmt.Errorf("sessions gc: %w", err)
 	}
 	return nil
 }

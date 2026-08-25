@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"time"
@@ -144,30 +145,57 @@ func (s *SQLite) Compact(ctx context.Context) error {
 		return fmt.Errorf("pin connection for compact: %w", err)
 	}
 	defer conn.Close()
-	var mode string
-	if err := conn.QueryRowContext(ctx, `PRAGMA journal_mode=DELETE`).Scan(&mode); err != nil {
+	// Bounded retry, not because leaving WAL usually clears - it fails
+	// unconditionally while ANY other connection to this file exists,
+	// independent of whether that connection holds a transaction - but
+	// because the failure is a proven no-op (nothing has been rewritten yet)
+	// and a sibling process disconnecting mid-retry is a real, if narrow,
+	// window. See compact_contention_test.go for the confirmed lock
+	// semantics this assumes.
+	if err := compactLeaveWAL(ctx, conn); err != nil {
 		return fmt.Errorf("leave WAL for compact: %w", err)
 	}
 	// From here the store is out of WAL mode, so every return path must put it
 	// back before reporting - a store left in DELETE mode would lose the
 	// concurrency the rest of this package assumes.
-	restoreWAL := func() error {
-		var back string
-		if err := conn.QueryRowContext(ctx, `PRAGMA journal_mode=WAL`).Scan(&back); err != nil {
-			return fmt.Errorf("restore WAL after compact: %w", err)
-		}
-		return nil
-	}
 	for _, pragma := range []string{
 		fmt.Sprintf(`PRAGMA page_size=%d`, compactPageSize),
 		`PRAGMA auto_vacuum=INCREMENTAL`,
 	} {
 		if _, err := conn.ExecContext(ctx, pragma); err != nil {
-			return errors.Join(fmt.Errorf("%s: %w", pragma, err), restoreWAL())
+			return errors.Join(fmt.Errorf("%s: %w", pragma, err), compactRestoreWAL(ctx, conn))
 		}
 	}
 	if _, err := conn.ExecContext(ctx, `VACUUM`); err != nil {
-		return errors.Join(fmt.Errorf("vacuum store: %w", err), restoreWAL())
+		return errors.Join(fmt.Errorf("vacuum store: %w", err), compactRestoreWAL(ctx, conn))
 	}
-	return restoreWAL()
+	return compactRestoreWAL(ctx, conn)
+}
+
+// compactLeaveWAL executes the leave-WAL step with the shared busy retry.
+func compactLeaveWAL(ctx context.Context, conn *sql.Conn) error {
+	return retrySQLiteBusy(ctx, func() error {
+		var mode string
+		return conn.QueryRowContext(ctx, `PRAGMA journal_mode=DELETE`).Scan(&mode)
+	})
+}
+
+// compactRestoreWAL returns the store to WAL mode, retried with the same
+// bounded backoff. Unlike compactLeaveWAL, empirical testing against this
+// driver found no realistic contention (an open competitor transaction, even
+// PRAGMA locking_mode=EXCLUSIVE) that makes re-entering WAL fail - so on the
+// rare failure this function does hit (a lost connection, a disk error), the
+// wrapped error says so explicitly and names the manual recovery step,
+// rather than leaving an operator to decode an opaque joined error while the
+// store sits in DELETE mode with none of this package's WAL-mode concurrency
+// assumptions holding.
+func compactRestoreWAL(ctx context.Context, conn *sql.Conn) error {
+	err := retrySQLiteBusy(ctx, func() error {
+		var mode string
+		return conn.QueryRowContext(ctx, `PRAGMA journal_mode=WAL`).Scan(&mode)
+	})
+	if err != nil {
+		return fmt.Errorf("restore WAL after compact: %w (the store is now stuck in DELETE journal mode; run PRAGMA journal_mode=WAL manually to recover)", err)
+	}
+	return nil
 }
