@@ -230,30 +230,28 @@ func TestRunSlashCommandOpenHelp(t *testing.T) {
 
 func TestRunSlashCommandOpenQueue(t *testing.T) {
 	runner := &fakeRunner{outcome: ports.CommandOutcome{OpenQueue: true}}
-	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	s := sized(t, 0)
 	s.SetCommandRunner(runner)
 
-	s, cmd := sendLine(t, s, "/queue")
-	if s.overlay == "" {
-		t.Error("expected /queue to set the overlay")
+	s, _ = sendLine(t, s, "/queue")
+	if !s.queueOverlay.Active() {
+		t.Error("expected /queue to activate queueOverlay")
 	}
-	if !strings.Contains(s.overlay, "queue") {
-		t.Errorf("got overlay %q, want it to mention queue", s.overlay)
-	}
-	if !hasClearScreen(cmd) {
-		t.Error("expected /queue to clear the screen so nothing bleeds through under the overlay")
+	if !strings.Contains(s.queueOverlay.View(), "Queue") {
+		t.Errorf("got view %q, want it to mention Queue", s.queueOverlay.View())
 	}
 }
 
 func TestQueueOverlay_RendersQueuedItems(t *testing.T) {
 	runner := &fakeRunner{outcome: ports.CommandOutcome{OpenQueue: true}}
-	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	s := sized(t, 0)
 	s.SetCommandRunner(runner)
 	s.queue = []string{"first item", "second item"}
 
 	s, _ = sendLine(t, s, "/queue")
-	if !strings.Contains(s.overlay, "[1] first item") || !strings.Contains(s.overlay, "[2] second item") {
-		t.Errorf("got overlay %q, want queued items [1] first item and [2] second item", s.overlay)
+	view := s.queueOverlay.View()
+	if !strings.Contains(view, "first item") || !strings.Contains(view, "second item") {
+		t.Errorf("got view %q, want queued items first item and second item", view)
 	}
 }
 

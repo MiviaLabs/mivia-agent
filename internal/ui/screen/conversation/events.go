@@ -50,6 +50,7 @@ func (s Screen) applyTheme(msg app.ThemeChangedMsg) Screen {
 	s.statusline.SetTheme(msg.Theme, msg.Tier)
 	s.approval.Theme, s.approval.Tier = msg.Theme, msg.Tier
 	s.history.Theme, s.history.Tier = msg.Theme, msg.Tier
+	s.queueOverlay.Theme, s.queueOverlay.Tier = msg.Theme, msg.Tier
 	s.topbar.SetTheme(msg.Theme, msg.Tier)
 	s.panel.list.Theme, s.panel.list.Tier = msg.Theme, msg.Tier
 	s.welcome.SetTheme(msg.Theme, msg.Tier)
@@ -85,6 +86,9 @@ func (s Screen) send() (app.Screen, tea.Cmd) {
 	}
 	if s.active != nil {
 		s.queue = append(s.queue, text)
+		if s.queueOverlay.Active() {
+			s.queueOverlay.SetItems(s.queue)
+		}
 		s.composer.Clear()
 		s.statusline.Notice(fmt.Sprintf("message queued (%d in queue)", len(s.queue)))
 		return s, nil

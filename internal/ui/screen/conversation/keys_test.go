@@ -343,24 +343,19 @@ func TestHelpOnlyFiresOnAnEmptyComposer(t *testing.T) {
 }
 
 func TestQueueOverlayBinding(t *testing.T) {
-	s := newScreen(t, replay.New(nil, 0), nil, nil)
-	s, cmd := press(t, s, tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModCtrl})
-	if s.overlay == "" {
-		t.Fatal("expected the queue overlay on ctrl+up")
+	s := sized(t, 0)
+	s.queue = []string{"queued 1", "queued 2"}
+	s, _ = press(t, s, tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModCtrl})
+	if !s.queueOverlay.Active() {
+		t.Fatal("expected queueOverlay active on ctrl+up")
 	}
-	if !strings.Contains(s.overlay, "queue") {
-		t.Errorf("got overlay %q, want it to mention queue", s.overlay)
+	if !strings.Contains(s.queueOverlay.View(), "Queue") {
+		t.Errorf("got view %q, want it to mention Queue", s.queueOverlay.View())
 	}
-	if !hasClearScreen(cmd) {
-		t.Error("expected opening the queue overlay to clear the screen")
-	}
-	// Any key dismisses the overlay.
-	s, cmd = press(t, s, key("x"))
-	if s.overlay != "" {
-		t.Error("the overlay survived a keystroke")
-	}
-	if !hasClearScreen(cmd) {
-		t.Error("expected dismissing the queue overlay to clear the screen")
+	// Esc dismisses the overlay.
+	s, _ = press(t, s, tea.KeyPressMsg{Code: tea.KeyEsc})
+	if s.queueOverlay.Active() {
+		t.Error("queueOverlay should be closed on esc")
 	}
 }
 

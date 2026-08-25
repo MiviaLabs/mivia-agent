@@ -8,6 +8,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/approval"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/history"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/component/queue"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/statusline"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/transcript"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
@@ -16,15 +17,16 @@ import (
 )
 
 type sessionState struct {
-	conv       ports.Conversation
-	transcript transcript.Model
-	active     ports.TurnHandle
-	statusline statusline.Model
-	approval   approval.Model
-	history    history.Model
-	panel      panel
-	threads    ports.SubagentThreads
-	queue      []string
+	conv         ports.Conversation
+	transcript   transcript.Model
+	active       ports.TurnHandle
+	statusline   statusline.Model
+	approval     approval.Model
+	history      history.Model
+	queueOverlay queue.Model
+	panel        panel
+	threads      ports.SubagentThreads
+	queue        []string
 }
 
 func (st *sessionState) handleTurnEvent(ev uievent.Event) {
@@ -80,15 +82,16 @@ func (s *Screen) switchConversation(newConv ports.Conversation) {
 	if s.conv != nil {
 		oldID := s.convID()
 		s.sessions[oldID] = &sessionState{
-			conv:       s.conv,
-			transcript: s.transcript,
-			active:     s.active,
-			statusline: s.statusline,
-			approval:   s.approval,
-			history:    s.history,
-			panel:      s.panel,
-			threads:    s.threads,
-			queue:      s.queue,
+			conv:         s.conv,
+			transcript:   s.transcript,
+			active:       s.active,
+			statusline:   s.statusline,
+			approval:     s.approval,
+			history:      s.history,
+			queueOverlay: s.queueOverlay,
+			panel:        s.panel,
+			threads:      s.threads,
+			queue:        s.queue,
 		}
 	}
 
@@ -101,6 +104,7 @@ func (s *Screen) switchConversation(newConv ports.Conversation) {
 		s.statusline = st.statusline
 		s.approval = st.approval
 		s.history = st.history
+		s.queueOverlay = st.queueOverlay
 		s.panel = st.panel
 		s.queue = st.queue
 	} else {
@@ -113,6 +117,8 @@ func (s *Screen) switchConversation(newConv ports.Conversation) {
 		s.approval.SetWidth(contentWidth(s.width))
 		s.history = history.New(s.Theme, s.Tier)
 		s.history.SetWidth(contentWidth(s.width))
+		s.queueOverlay = queue.New(s.Theme, s.Tier)
+		s.queueOverlay.SetWidth(contentWidth(s.width))
 		s.panel = newPanel(s.Theme, s.Tier)
 		s.LoadHistory(newConv.History())
 	}
@@ -164,10 +170,16 @@ func (s Screen) handleTurnEndedMsg(msg turnEndedMsg) (app.Screen, tea.Cmd) {
 	if len(s.queue) > 0 {
 		nextText := s.queue[0]
 		s.queue = s.queue[1:]
+		if s.queueOverlay.Active() {
+			s.queueOverlay.SetItems(s.queue)
+		}
 		next, cmd := s.sendText(nextText)
 		sc := next.(Screen)
 		if sc.active == nil {
 			sc.queue = append([]string{nextText}, sc.queue...)
+			if sc.queueOverlay.Active() {
+				sc.queueOverlay.SetItems(sc.queue)
+			}
 		}
 		return sc, cmd
 	}

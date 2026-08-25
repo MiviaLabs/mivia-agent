@@ -2,7 +2,6 @@ package conversation
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -44,7 +43,7 @@ func (s Screen) runSlashCommand(line string) (app.Screen, tea.Cmd) {
 	}
 	if s.runner == nil {
 		if name == "queue" {
-			return s.openQueue(), tea.ClearScreen
+			return s.openQueue(), nil
 		}
 		return s.withError("no command runner configured for /" + name), nil
 	}
@@ -72,7 +71,7 @@ func (s Screen) applyCommandOutcome(o ports.CommandOutcome) (app.Screen, tea.Cmd
 	case o.OpenHelp:
 		return s.openHelp(), tea.ClearScreen
 	case o.OpenQueue:
-		return s.openQueue(), tea.ClearScreen
+		return s.openQueue(), nil
 	case o.ClearTranscript:
 		if o.Conversation != nil {
 			s.switchConversation(o.Conversation)
@@ -189,19 +188,7 @@ func (s Screen) openHelp() Screen {
 // openQueue draws the queue overlay dialog. Shared by ctrl+up (keys.go's
 // globalAction) and /queue.
 func (s Screen) openQueue() Screen {
-	hint := "any key closes this"
-	var body string
-	if len(s.queue) == 0 {
-		body = "No queued messages."
-	} else {
-		var b strings.Builder
-		for i, msg := range s.queue {
-			b.WriteString(fmt.Sprintf("[%d] %s\n", i+1, msg))
-		}
-		body = strings.TrimRight(b.String(), "\n")
-	}
-	w, h := s.dialogSize()
-	s.overlay = render.Dialog(s.Theme, s.Tier, w, h, "queue", body, hint)
+	s.queueOverlay.Open(s.queue)
 	return s
 }
 

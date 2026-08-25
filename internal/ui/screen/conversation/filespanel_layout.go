@@ -262,6 +262,9 @@ func (s Screen) chatTailRows() []string {
 	if v := s.history.View(); v != "" {
 		rows = append(rows, strings.Split(v, "\n")...)
 	}
+	if v := s.queueOverlay.View(); v != "" {
+		rows = append(rows, strings.Split(v, "\n")...)
+	}
 	rows = append(rows, strings.Split(s.composer.View(), "\n")...)
 	rows = append(rows, s.statusRow())
 	return rows

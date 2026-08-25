@@ -34,24 +34,14 @@ import (
 // only from the composer's "?" and /help, both of which require the
 // composer's focus, which the panel's list never has at that moment.
 func (s Screen) handleKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
-	if next, cmd, handled := s.handleApprovalKey(msg); handled {
-		return next, cmd
-	}
-
-	if next, cmd, handled := s.handleOpenPickerKey(msg); handled {
-		return next, cmd
-	}
-
-	if next, cmd, handled := s.handleHistoryKey(msg); handled {
+	if next, cmd, handled := s.handleModalKey(msg); handled {
 		return next, cmd
 	}
 
 	// Any key other than a second ctrl+c ends the quit-armed state, so a
 	// stray keystroke cannot leave the session one press from exiting.
-	// The two modal surfaces above (approval, the pickers) return before
-	// this point and manage the arm themselves through their ctrl+c
-	// flows; every other key path - the panel's list, the overlay, the
-	// composer - runs through this clear.
+	// The modal surfaces above return before this point and manage the arm
+	// themselves; every other key path runs through this clear.
 	if msg.String() != "ctrl+c" {
 		s.quitArmed = false
 	}
@@ -113,6 +103,22 @@ func (s Screen) handleKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
 	return s, cmd
 }
 
+func (s Screen) handleModalKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bool) {
+	if next, cmd, handled := s.handleApprovalKey(msg); handled {
+		return next, cmd, true
+	}
+	if next, cmd, handled := s.handleOpenPickerKey(msg); handled {
+		return next, cmd, true
+	}
+	if next, cmd, handled := s.handleHistoryKey(msg); handled {
+		return next, cmd, true
+	}
+	if next, cmd, handled := s.handleQueueKey(msg); handled {
+		return next, cmd, true
+	}
+	return s, nil, false
+}
+
 // handleHistoryKey routes a key when the message history overlay is active.
 func (s Screen) handleHistoryKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bool) {
 	if !s.history.Active() {
@@ -136,6 +142,43 @@ func (s Screen) handleHistoryKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bool
 		return s, nil, true
 	case "ctrl+c":
 		s.history.Close()
+		next, cmd, _ := s.quit()
+		return next, cmd, true
+	default:
+		return s, nil, true
+	}
+}
+
+// handleQueueKey routes a key when the queued messages overlay is active.
+func (s Screen) handleQueueKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bool) {
+	if !s.queueOverlay.Active() {
+		return s, nil, false
+	}
+	switch msg.String() {
+	case "up", "k":
+		s.queueOverlay.Up()
+		return s, nil, true
+	case "down", "j":
+		s.queueOverlay.Down()
+		return s, nil, true
+	case "d", "x", "backspace", "delete":
+		if _, ok := s.queueOverlay.DeleteSelected(); ok {
+			s.queue = s.queueOverlay.Items()
+			s.statusline.Notice("removed queued message")
+		}
+		return s, nil, true
+	case "enter":
+		if deleted, ok := s.queueOverlay.DeleteSelected(); ok {
+			s.queue = s.queueOverlay.Items()
+			s.composer.SetValue(deleted)
+			s.queueOverlay.Close()
+		}
+		return s, nil, true
+	case "esc":
+		s.queueOverlay.Close()
+		return s, nil, true
+	case "ctrl+c":
+		s.queueOverlay.Close()
 		next, cmd, _ := s.quit()
 		return next, cmd, true
 	default:
@@ -449,7 +492,7 @@ func (s Screen) globalAction(id keymap.ID) (app.Screen, tea.Cmd, bool) {
 		next, cmd := s.openCommandPalette()
 		return next, cmd, true
 	case keymap.IDQueueDialog:
-		return s.openQueue(), tea.ClearScreen, true
+		return s.openQueue(), nil, true
 	case keymap.IDToggleReason:
 		s.transcript = s.transcript.ToggleReasoning()
 		return s, nil, true

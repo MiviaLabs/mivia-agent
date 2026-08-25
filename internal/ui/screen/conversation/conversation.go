@@ -17,6 +17,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/composer"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/history"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/picker"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/component/queue"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/statusline"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/topbar"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/transcript"
@@ -73,13 +74,14 @@ type Screen struct {
 	thread   *Screen
 	threadID string
 
-	topbar     topbar.Model
-	transcript transcript.Model
-	composer   composer.Model
-	statusline statusline.Model
-	approval   approval.Model
-	history    history.Model
-	welcome    welcome.Model
+	topbar       topbar.Model
+	transcript   transcript.Model
+	composer     composer.Model
+	statusline   statusline.Model
+	approval     approval.Model
+	history      history.Model
+	queueOverlay queue.Model
+	welcome      welcome.Model
 
 	sessions map[string]*sessionState
 
@@ -133,19 +135,21 @@ func New(th theme.Theme, tier theme.Tier, themes []theme.Theme, conv ports.Conve
 	s := Screen{
 		Theme: th, Tier: tier, themes: themes,
 		conv: conv, approver: approver,
-		sessions:   make(map[string]*sessionState),
-		transcript: transcript.New(th, tier),
-		composer:   composer.New(th, tier, width),
-		statusline: statusline.New(th, tier),
-		approval:   approval.New(th, tier),
-		history:    history.New(th, tier),
-		welcome:    welcome.New(th, tier),
-		panel:      newPanel(th, tier),
-		keys:       keymap.New(keymap.Default()),
-		now:        now,
+		sessions:     make(map[string]*sessionState),
+		transcript:   transcript.New(th, tier),
+		composer:     composer.New(th, tier, width),
+		statusline:   statusline.New(th, tier),
+		approval:     approval.New(th, tier),
+		history:      history.New(th, tier),
+		queueOverlay: queue.New(th, tier),
+		welcome:      welcome.New(th, tier),
+		panel:        newPanel(th, tier),
+		keys:         keymap.New(keymap.Default()),
+		now:          now,
 	}
 	s.approval.SetWidth(contentWidth(width))
 	s.history.SetWidth(contentWidth(width))
+	s.queueOverlay.SetWidth(contentWidth(width))
 	s.transcript.SetSize(contentWidth(width), 24)
 	if conv != nil {
 		s.topbar = topbar.New(th, tier, conv.Model(), conv.ContextUsage(), contentWidth(width))
@@ -266,6 +270,7 @@ func (s *Screen) reflow() {
 	s.composer.SetWidth(w)
 	s.approval.SetWidth(w)
 	s.history.SetWidth(w)
+	s.queueOverlay.SetWidth(w)
 	s.resize()
 	s.refreshTopbar()
 }
@@ -391,6 +396,9 @@ func (s Screen) reservedRows() int {
 	}
 	if s.history.Active() {
 		rows += s.history.Height()
+	}
+	if s.queueOverlay.Active() {
+		rows += s.queueOverlay.Height()
 	}
 	return rows
 }
