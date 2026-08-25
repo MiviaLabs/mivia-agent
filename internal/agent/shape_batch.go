@@ -90,10 +90,15 @@ const (
 	// each claim a preview and the aggregate bound (F6) would stop being a
 	// small constant - it would scale with batch size. Once the reserve is
 	// spent, later tail results return to a bare notice exactly as before.
-	// 32 KiB at the 2 KiB preview above covers ~16 post-exhaustion results
-	// before falling back - enough for a long-running agent's typical
-	// research burst, and still a small fraction of the 256 KiB budget floor.
-	tailPreviewReserveBytes = 32 << 10
+	// 256 KiB at the 2 KiB preview above covers ~128 post-exhaustion results
+	// before falling back. Raised from the original 32 KiB (~16 results):
+	// a long exploration turn (dozens of grep/read_file calls past the
+	// primary budget) was observed exhausting the 16-call cushion partway
+	// through, after which every remaining call in the turn - however small -
+	// degraded to a bare "kept 0" notice and paid a read_output round trip,
+	// even though each individual result was well within a single preview.
+	// Still a small fraction of the 256 KiB budget floor it rides alongside.
+	tailPreviewReserveBytes = 256 << 10
 )
 
 // resultParts is one tool result in structured form, as the worker produced it

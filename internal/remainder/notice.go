@@ -3,6 +3,8 @@ package remainder
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"strconv"
 	"unicode/utf8"
 )
 
@@ -16,6 +18,41 @@ func TruncationNotice(kept, total int, ref string) string {
 		return fmt.Sprintf("\n... truncated: kept %d of %d bytes (remainder: %s, use read_output)", kept, total, ref)
 	}
 	return fmt.Sprintf("\n... truncated: kept %d of %d bytes", kept, total)
+}
+
+// truncationNoticePattern mirrors TruncationNotice's own format exactly (both
+// the ref and no-ref shapes) so the two can never drift apart: this is the
+// only parser for the string that function is the only producer of. Anchored
+// at the end of the string because the notice is always a trailer appended
+// after content.
+var truncationNoticePattern = regexp.MustCompile(`\n\.\.\. truncated: kept (\d+) of (\d+) bytes(?: \(remainder: (\S+), use read_output\))?$`)
+
+// ParseTruncationNotice recognizes a TruncationNotice trailer at the end of
+// s. It reports the content preceding the trailer (prefix), the kept/total
+// byte counts, the named remainder ref (empty when the notice carried none),
+// and whether s ended with a well-formed notice at all.
+//
+// This exists so a renderer can distinguish "this result was truncated" from
+// "this is just a tool result that happens to contain the word truncated" -
+// parsing the exact format TruncationNotice emits, not guessing from a
+// substring match.
+func ParseTruncationNotice(s string) (prefix string, kept, total int, ref string, ok bool) {
+	loc := truncationNoticePattern.FindStringSubmatchIndex(s)
+	if loc == nil {
+		return "", 0, 0, "", false
+	}
+	keptN, err := strconv.Atoi(s[loc[2]:loc[3]])
+	if err != nil {
+		return "", 0, 0, "", false
+	}
+	totalN, err := strconv.Atoi(s[loc[4]:loc[5]])
+	if err != nil {
+		return "", 0, 0, "", false
+	}
+	if loc[6] >= 0 {
+		ref = s[loc[6]:loc[7]]
+	}
+	return s[:loc[0]], keptN, totalN, ref, true
 }
 
 // CapWithSpool shortens result so the whole return value fits in maxBytes,

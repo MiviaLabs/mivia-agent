@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
@@ -189,10 +190,25 @@ func toolEndBlockValue(t theme.Theme, tier theme.Tier, w int, b uievent.ToolEndB
 		w = 80
 	}
 
+	// A batch/turn-budget degrade (internal/remainder.TruncationNotice)
+	// looks alarming rendered verbatim - "kept 0 of 955 bytes" reads as a
+	// failure to a human even though the model just calls read_output and
+	// moves on. Recognize the exact trailer TruncationNotice emits, strip
+	// it from the content FormatToolOutputWithContext sees, and render a
+	// calm one-line badge instead of raw truncation prose.
+	var noticeLine string
+	if prefix, kept, total, ref, ok := remainder.ParseTruncationNotice(summary); ok {
+		summary = prefix
+		noticeLine = render.Role(t, tier, theme.RoleFGSubtle).Render(truncationBadge(kept, total, ref))
+	}
+
 	detail, body, coll := render.FormatToolOutputWithContext(t, tier, b.Name, args, summary, b.OK, w)
 	if detail == "" {
 		lines := strings.Split(summary, "\n")
 		detail = lines[0]
+	}
+	if noticeLine != "" {
+		body = append(body, noticeLine)
 	}
 
 	blk := Block{
@@ -216,6 +232,24 @@ func toolEndBlockValue(t theme.Theme, tier theme.Tier, w int, b uievent.ToolEndB
 		blk.Body = render.FormatDiffLines(t, tier, w, *b.Diff)
 	}
 	return blk
+}
+
+// truncationBadge renders a degrade notice as a short human-facing line
+// instead of TruncationNotice's model-facing prose. kept/total/ref are
+// exactly what remainder.ParseTruncationNotice recovered from the raw
+// notice, so the three cases below mirror TruncationNotice's own: no ref
+// (store failed / no spool), a full degrade (kept 0, everything moved to
+// the remainder), and a partial degrade (kept some, the rest is behind
+// read_output).
+func truncationBadge(kept, total int, ref string) string {
+	switch {
+	case ref == "":
+		return fmt.Sprintf("· truncated: kept %d of %d B", kept, total)
+	case kept == 0:
+		return fmt.Sprintf("· %d B stored → read_output", total)
+	default:
+		return fmt.Sprintf("· showing %d of %d B → read_output", kept, total)
+	}
 }
 
 func planBlockValue(t theme.Theme, tier theme.Tier, b uievent.PlanBody) Block {
