@@ -305,7 +305,7 @@ func (m Model) handleToolEvent(body uievent.Body) (Model, tea.Cmd) {
 
 func (m Model) handleToolPending(b uievent.ToolPendingBody) (Model, tea.Cmd) {
 	return m.pushBlock(Block{
-		Kind: uievent.KindToolPending, CallID: b.ToolCallID,
+		Kind: uievent.KindToolPending, CallID: b.ToolCallID, Args: b.Args,
 		Header: Header{
 			Label: b.Name, Detail: render.FormatToolDetail(b.Name, b.Args),
 			State: "pending", Role: theme.RoleWarning,
@@ -316,6 +316,9 @@ func (m Model) handleToolPending(b uievent.ToolPendingBody) (Model, tea.Cmd) {
 func (m Model) handleToolStart(b uievent.ToolStartBody) (Model, tea.Cmd) {
 	if ok := m.updateLive(b.ToolCallID, func(blk *Block) {
 		blk.Kind = uievent.KindToolStart
+		if len(b.Args) > 0 {
+			blk.Args = b.Args
+		}
 		blk.Header.State, blk.Header.Role = "running", theme.RoleInfo
 		if d := render.FormatToolDetail(b.Name, b.Args); d != "" {
 			blk.Header.Detail = d
@@ -324,7 +327,7 @@ func (m Model) handleToolStart(b uievent.ToolStartBody) (Model, tea.Cmd) {
 		return m, nil
 	}
 	return m.pushBlock(Block{
-		Kind: uievent.KindToolStart, CallID: b.ToolCallID,
+		Kind: uievent.KindToolStart, CallID: b.ToolCallID, Args: b.Args,
 		Header: Header{
 			Label: b.Name, Detail: render.FormatToolDetail(b.Name, b.Args),
 			State: "running", Role: theme.RoleInfo,
@@ -369,7 +372,14 @@ func (m Model) handleToolEnd(b uievent.ToolEndBody) (Model, tea.Cmd) {
 	if w <= 0 {
 		w = 80
 	}
-	end := toolEndBlockValue(m.Theme, m.Tier, w, b)
+	var existingArgs map[string]any
+	for i := len(m.blocks) - 1; i >= 0; i-- {
+		if m.blocks[i].CallID == b.ToolCallID && len(m.blocks[i].Args) > 0 {
+			existingArgs = m.blocks[i].Args
+			break
+		}
+	}
+	end := toolEndBlockValue(m.Theme, m.Tier, w, b, existingArgs)
 	if ok := m.updateLive(b.ToolCallID, func(blk *Block) {
 		blk.Kind = uievent.KindToolEnd
 		// Carry the raw diff onto the live block, not just its rendered

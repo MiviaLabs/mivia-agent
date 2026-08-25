@@ -1,9 +1,11 @@
 package render
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
@@ -14,6 +16,11 @@ import (
 // FormatToolOutput formats raw tool outputs (commands, grep searches, file reads, JSON payloads)
 // into clean, structured, readable transcript lines styled through theme roles.
 func FormatToolOutput(t theme.Theme, tier theme.Tier, name, output string, ok bool, width int) (detail string, body []string, collapsible bool) {
+	return FormatToolOutputWithContext(t, tier, name, nil, output, ok, width)
+}
+
+// FormatToolOutputWithContext formats raw tool outputs using both tool name and parsed tool arguments.
+func FormatToolOutputWithContext(t theme.Theme, tier theme.Tier, name string, args map[string]any, output string, ok bool, width int) (detail string, body []string, collapsible bool) {
 	if output == "" {
 		return "", nil, false
 	}
@@ -36,10 +43,15 @@ func FormatToolOutput(t theme.Theme, tier theme.Tier, name, output string, ok bo
 		summary, body := FormatWorkflowOutput(t, tier, output, width)
 		return summary, body, len(body) > 4
 	case isSearchTool(lower):
-		summary, body := FormatGrepOutput(t, tier, output, width)
+		query := extractQuery(args)
+		summary, body := FormatGrepOutputWithContext(t, tier, query, output, width)
+		return summary, body, len(body) > 6
+	case isListDirTool(lower):
+		summary, body := FormatListDirOutput(t, tier, output, width)
 		return summary, body, len(body) > 6
 	case isReadTool(lower):
-		body, collapsible = FormatFileReadOutput(t, tier, output, width)
+		filePath, startLine := extractFileReadArgs(args, output)
+		body, collapsible = FormatFileReadOutputWithContext(t, tier, filePath, startLine, output, width)
 		return "", body, collapsible
 	case isJSONPayload(output):
 		body = FormatJSONOutput(t, tier, output, width)
@@ -74,14 +86,53 @@ func isSearchTool(lower string) bool {
 	return strings.Contains(lower, "grep") || strings.Contains(lower, "find") || strings.Contains(lower, "glob") || strings.Contains(lower, "symbol")
 }
 
+func isListDirTool(lower string) bool {
+	return lower == "list_dir"
+}
+
 func isReadTool(lower string) bool {
-	return lower == "read_file" || lower == "view_file" || lower == "list_dir"
+	return lower == "read_file" || lower == "view_file"
 }
 
 func isJSONPayload(s string) bool {
 	trimmed := strings.TrimSpace(s)
 	return (strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}")) ||
 		(strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]"))
+}
+
+func extractQuery(args map[string]any) string {
+	if len(args) == 0 {
+		return ""
+	}
+	for _, k := range []string{"pattern", "query", "Query", "symbol"} {
+		if v, ok := args[k].(string); ok && v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func extractFileReadArgs(args map[string]any, output string) (string, int) {
+	filePath := ""
+	startLine := 1
+
+	if len(args) > 0 {
+		for _, k := range []string{"file_path", "path", "AbsolutePath", "TargetFile", "target_file", "filePath", "filename"} {
+			if v, ok := args[k].(string); ok && v != "" {
+				filePath = v
+				break
+			}
+		}
+		if s, ok := args["StartLine"]; ok {
+			if n, ok := s.(float64); ok && n > 0 {
+				startLine = int(n)
+			} else if n, ok := s.(int); ok && n > 0 {
+				startLine = n
+			}
+		}
+	}
+
+	return filePath, startLine
 }
 
 // FormatCommandOutput formats command stdout/stderr. Long successful logs are tailed;
@@ -96,7 +147,6 @@ func FormatCommandOutput(t theme.Theme, tier theme.Tier, output string, ok bool,
 	danger := Role(t, tier, theme.RoleDanger)
 
 	if !ok {
-		// Highlight failure lines in danger role
 		var out []string
 		for _, l := range lines {
 			lower := strings.ToLower(l)
@@ -109,7 +159,6 @@ func FormatCommandOutput(t theme.Theme, tier theme.Tier, output string, ok bool,
 		return out, true
 	}
 
-	// For successful long output, show first 2 + last 4 lines
 	if len(lines) > 8 {
 		hidden := len(lines) - 5
 		var out []string
@@ -130,16 +179,32 @@ type grepJSONMatch struct {
 
 // FormatGrepOutput groups grep/search results by file.
 func FormatGrepOutput(t theme.Theme, tier theme.Tier, output string, width int) (string, []string) {
+	return FormatGrepOutputWithContext(t, tier, "", output, width)
+}
+
+// FormatGrepOutputWithContext groups grep/search results by file supporting both NDJSON and standard ripgrep output.
+func FormatGrepOutputWithContext(t theme.Theme, tier theme.Tier, query, output string, width int) (string, []string) {
 	lines := strings.Split(strings.TrimRight(output, "\n"), "\n")
 	var matches []grepJSONMatch
 
-	// Try parsing JSON lines format
 	for _, l := range lines {
 		trimmed := strings.TrimSpace(l)
 		if strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}") {
 			var m grepJSONMatch
 			if err := json.Unmarshal([]byte(trimmed), &m); err == nil && m.File != "" {
 				matches = append(matches, m)
+				continue
+			}
+		}
+		// Fallback to path:line:content standard format
+		parts := strings.SplitN(trimmed, ":", 3)
+		if len(parts) >= 3 {
+			if lineNum, err := strconv.Atoi(parts[1]); err == nil && lineNum > 0 {
+				matches = append(matches, grepJSONMatch{
+					File:        parts[0],
+					LineNumber:  lineNum,
+					LineContent: parts[2],
+				})
 			}
 		}
 	}
@@ -164,8 +229,8 @@ func FormatGrepOutput(t theme.Theme, tier theme.Tier, output string, width int) 
 			out = append(out, accent.Render("• "+f)+" "+subtle.Render(fmt.Sprintf("(%d matches)", len(group))))
 			for _, m := range group {
 				content := strings.TrimSpace(m.LineContent)
-				if ansi.StringWidth(content) > width-8 && width > 16 {
-					content = ansi.Truncate(content, width-8, "…")
+				if ansi.StringWidth(content) > width-12 && width > 16 {
+					content = ansi.Truncate(content, width-12, "…")
 				}
 				numStr := fmt.Sprintf("L%-4d", m.LineNumber)
 				out = append(out, "  "+muted.Render(numStr)+" "+content)
@@ -178,23 +243,96 @@ func FormatGrepOutput(t theme.Theme, tier theme.Tier, output string, width int) 
 	return "", lines
 }
 
+// FormatListDirOutput formats directory listings into clean tree rows.
+func FormatListDirOutput(t theme.Theme, tier theme.Tier, output string, width int) (string, []string) {
+	lines := strings.Split(strings.TrimRight(output, "\n"), "\n")
+	if len(lines) == 0 {
+		return "", nil
+	}
+
+	accent := Role(t, tier, theme.RoleAccent)
+	subtle := Role(t, tier, theme.RoleFGSubtle)
+	fg := Role(t, tier, theme.RoleFG)
+
+	var out []string
+	for _, l := range lines {
+		trimmed := strings.TrimSpace(l)
+		if trimmed == "" {
+			continue
+		}
+		if strings.HasSuffix(trimmed, "/") {
+			out = append(out, accent.Render("📁 ")+fg.Render(trimmed))
+		} else {
+			out = append(out, subtle.Render("  • ")+fg.Render(trimmed))
+		}
+	}
+	summary := fmt.Sprintf("%d entries", len(out))
+	return summary, out
+}
+
 // FormatFileReadOutput previews file content with line numbers when long.
 func FormatFileReadOutput(t theme.Theme, tier theme.Tier, output string, width int) ([]string, bool) {
-	lines := strings.Split(strings.TrimRight(output, "\n"), "\n")
-	if len(lines) <= 6 {
-		return lines, false
+	return FormatFileReadOutputWithContext(t, tier, "", 1, output, width)
+}
+
+// FormatFileReadOutputWithContext previews file content with syntax highlighting and line numbers.
+func FormatFileReadOutputWithContext(t theme.Theme, tier theme.Tier, filePath string, startLine int, output string, width int) ([]string, bool) {
+	content := output
+	// Parse window header if present e.g. "[path lines 10-20 of 100]"
+	if strings.HasPrefix(content, "[") && strings.Contains(content, "lines ") {
+		idx := strings.Index(content, "]\n")
+		if idx != -1 {
+			hdr := content[1:idx]
+			content = content[idx+2:]
+			if parts := strings.Split(hdr, " "); len(parts) >= 3 {
+				if filePath == "" {
+					filePath = parts[0]
+				}
+				rangeStr := parts[2]
+				if dash := strings.Index(rangeStr, "-"); dash != -1 {
+					if n, err := strconv.Atoi(rangeStr[:dash]); err == nil {
+						startLine = n
+					}
+				}
+			}
+		}
+	}
+
+	rawLines := strings.Split(strings.TrimRight(content, "\n"), "\n")
+	if len(rawLines) == 0 {
+		return nil, false
+	}
+	if len(rawLines) == 1 && (strings.HasSuffix(rawLines[0], " lines") || strings.HasSuffix(rawLines[0], " line") || strings.HasSuffix(rawLines[0], " bytes")) {
+		return rawLines, false
+	}
+
+	// Apply Chroma syntax highlighting
+	highlighted := HighlightCode(t, tier, filePath, content)
+	if len(highlighted) != len(rawLines) {
+		highlighted = rawLines
 	}
 
 	subtle := Role(t, tier, theme.RoleFGSubtle)
 	muted := Role(t, tier, theme.RoleFGMuted)
 
-	var out []string
-	for i := 0; i < min(4, len(lines)); i++ {
-		num := muted.Render(fmt.Sprintf("%3d │ ", i+1))
-		out = append(out, num+lines[i])
+	if len(highlighted) <= 6 {
+		var out []string
+		for i, line := range highlighted {
+			num := muted.Render(fmt.Sprintf("%4d │ ", startLine+i))
+			out = append(out, num+line)
+		}
+		return out, false
 	}
-	if len(lines) > 4 {
-		out = append(out, subtle.Render(fmt.Sprintf("    │ ... %d more lines ...", len(lines)-4)))
+
+	var out []string
+	limit := min(4, len(highlighted))
+	for i := 0; i < limit; i++ {
+		num := muted.Render(fmt.Sprintf("%3d │ ", startLine+i))
+		out = append(out, num+highlighted[i])
+	}
+	if len(highlighted) > limit {
+		omitted := len(highlighted) - limit
+		out = append(out, subtle.Render(fmt.Sprintf("    │ ... %d more lines ...", omitted)))
 	}
 	return out, true
 }
@@ -268,13 +406,13 @@ func FormatMemoryOutput(t theme.Theme, tier theme.Tier, output string, width int
 	return summary, out
 }
 
-// FormatJSONOutput formats JSON objects or arrays into readable key-value summary lines.
+// FormatJSONOutput formats JSON objects or arrays into readable key-value summary lines or syntax-highlighted json.
 func FormatJSONOutput(t theme.Theme, tier theme.Tier, output string, width int) []string {
 	trimmed := strings.TrimSpace(output)
 	accent := Role(t, tier, theme.RoleAccent)
 	subtle := Role(t, tier, theme.RoleFGSubtle)
 
-	// Object format
+	// Object format (sorted key-values)
 	var obj map[string]any
 	if err := json.Unmarshal([]byte(trimmed), &obj); err == nil {
 		keys := make([]string, 0, len(obj))
@@ -318,6 +456,18 @@ func FormatJSONOutput(t theme.Theme, tier theme.Tier, output string, width int) 
 		if len(out) > 0 {
 			return out
 		}
+	}
+
+	var pretty bytes.Buffer
+	if err := json.Indent(&pretty, []byte(trimmed), "", "  "); err == nil {
+		highlighted := HighlightCode(t, tier, "json", pretty.String())
+		if len(highlighted) <= 8 {
+			return highlighted
+		}
+		var out []string
+		out = append(out, highlighted[:6]...)
+		out = append(out, subtle.Render(fmt.Sprintf("... (+%d lines)", len(highlighted)-6)))
+		return out
 	}
 
 	return strings.Split(strings.TrimRight(output, "\n"), "\n")

@@ -161,3 +161,64 @@ func TestFormatLedgerOutput(t *testing.T) {
 		t.Errorf("raw envelope metadata leaked into output:\n%s", plain)
 	}
 }
+
+func TestFormatFileReadOutputWithContext_SyntaxAndLineNumbers(t *testing.T) {
+	th := loadTheme(t)
+	code := `package main
+
+import "fmt"
+
+func main() {
+	fmt.Println("test")
+}`
+	lines, coll := FormatFileReadOutputWithContext(th, theme.TierTrueColor, "main.go", 10, code, 80)
+	if !coll {
+		t.Error("7 lines should be collapsible")
+	}
+	if len(lines) != 5 {
+		t.Fatalf("expected 5 lines (4 + omitted), got %d", len(lines))
+	}
+	plain0 := ansi.Strip(lines[0])
+	if !strings.Contains(plain0, " 10 │ package main") {
+		t.Errorf("expected line number 10 in line 0: %q", plain0)
+	}
+}
+
+func TestFormatGrepOutput_StandardRipgrep(t *testing.T) {
+	th := loadTheme(t)
+	raw := "internal/ui/app.go:12:func New() Model {\ninternal/ui/app.go:45:return m\ninternal/ui/render/syntax.go:8:func HighlightCode("
+	summary, lines := FormatGrepOutputWithContext(th, theme.TierTrueColor, "func", raw, 80)
+	if !strings.Contains(summary, "3 matches in 2 files") {
+		t.Errorf("unexpected summary: %q", summary)
+	}
+	plain := ansi.Strip(strings.Join(lines, "\n"))
+	if !strings.Contains(plain, "internal/ui/app.go (2 matches)") {
+		t.Errorf("missing group header in:\n%s", plain)
+	}
+	if !strings.Contains(plain, "L12") || !strings.Contains(plain, "L45") {
+		t.Errorf("missing line numbers in:\n%s", plain)
+	}
+}
+
+func TestFormatListDirOutput(t *testing.T) {
+	th := loadTheme(t)
+	raw := "src/\ninternal/\npackage.json\nREADME.md"
+	summary, lines := FormatListDirOutput(th, theme.TierTrueColor, raw, 80)
+	if summary != "4 entries" {
+		t.Errorf("unexpected summary: %q", summary)
+	}
+	plain := ansi.Strip(strings.Join(lines, "\n"))
+	if !strings.Contains(plain, "📁 src/") || !strings.Contains(plain, "• package.json") {
+		t.Errorf("missing directory entries in:\n%s", plain)
+	}
+}
+
+func TestFormatToolOutputWithContext_Dispatch(t *testing.T) {
+	th := loadTheme(t)
+	args := map[string]any{"path": "package.json", "StartLine": 1}
+	code := `{\n  "name": "mivia"\n}`
+	_, body, _ := FormatToolOutputWithContext(th, theme.TierTrueColor, "read_file", args, code, true, 80)
+	if len(body) == 0 {
+		t.Errorf("expected formatted read_file body")
+	}
+}

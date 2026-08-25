@@ -115,7 +115,7 @@ func progressBody(t theme.Theme, tier theme.Tier, p uievent.Progress) []string {
 	return append(body, p.Log...)
 }
 
-func toolEndBlockValue(t theme.Theme, tier theme.Tier, w int, b uievent.ToolEndBody) Block {
+func toolEndBlockValue(t theme.Theme, tier theme.Tier, w int, b uievent.ToolEndBody, args map[string]any) Block {
 	role, status := theme.RoleSuccess, "ok"
 	if !b.OK {
 		role, status = theme.RoleDanger, "failed"
@@ -128,14 +128,16 @@ func toolEndBlockValue(t theme.Theme, tier theme.Tier, w int, b uievent.ToolEndB
 		w = 80
 	}
 
-	detail, body, coll := render.FormatToolOutput(t, tier, b.Name, summary, b.OK, w)
+	detail, body, coll := render.FormatToolOutputWithContext(t, tier, b.Name, args, summary, b.OK, w)
 	if detail == "" {
 		lines := strings.Split(summary, "\n")
 		detail = lines[0]
 	}
 
 	blk := Block{
-		Kind: uievent.KindToolEnd,
+		Kind:   uievent.KindToolEnd,
+		Args:   args,
+		CallID: b.ToolCallID,
 		Header: Header{
 			Label: b.Name, Detail: detail,
 			Meta: fmt.Sprintf("%dms", b.DurationMS), State: status, Role: role,

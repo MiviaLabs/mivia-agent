@@ -40,6 +40,7 @@ type Block struct {
 	// -> running -> ok/failed updates the same header in place instead of
 	// stacking three blocks for one call.
 	CallID string
+	Args   map[string]any
 
 	Header Header
 	Body   []string
