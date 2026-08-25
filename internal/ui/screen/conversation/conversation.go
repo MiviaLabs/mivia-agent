@@ -264,20 +264,28 @@ func (s *Screen) reflow() {
 	s.refreshTopbar()
 }
 
+func (s *Screen) refreshActivity() {
+	if s.panel.open {
+		s.topbar.SetActivity(0, 0)
+	} else {
+		s.topbar.SetActivity(len(s.panel.entries), s.panel.activeAgentCount())
+	}
+}
+
 func (s *Screen) refreshTopbar() {
 	if s.conv != nil {
-		s.topbar.SetSession(s.conv.Model(), s.conv.ContextUsage())
+		u := s.conv.ContextUsage()
+		if (u.InputTokens+u.OutputTokens == 0) && (s.topbar.Usage().InputTokens+s.topbar.Usage().OutputTokens > 0) {
+			u = s.topbar.Usage()
+		}
+		s.topbar.SetSession(s.conv.Model(), u)
 		if title := s.conv.Title(); title != "" {
 			s.topbar.SetBreadcrumb([]string{title})
 		} else {
 			s.topbar.SetBreadcrumb(nil)
 		}
 	}
-	if s.panel.open {
-		s.topbar.SetActivity(0, 0)
-	} else {
-		s.topbar.SetActivity(len(s.panel.entries), s.panel.activeAgentCount())
-	}
+	s.refreshActivity()
 }
 
 func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
@@ -298,10 +306,12 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 		if s.embedded {
 			s.statusline.Stop()
 			s.approval.Clear()
+			s.panel.reconcileTerminal("interrupted")
 			s.active = nil
 			return s, nil
 		}
 		return s.forwardThreadMsg(msg)
+
 	case app.ScreenResumedMsg:
 		s.refreshTopbar()
 		return s, nil

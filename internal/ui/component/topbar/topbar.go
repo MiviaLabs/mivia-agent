@@ -70,6 +70,11 @@ func (m *Model) SetUsage(usage ports.Usage) {
 	m.usage = usage
 }
 
+// Usage returns the current token and cost accounting values.
+func (m Model) Usage() ports.Usage {
+	return m.usage
+}
+
 // SetBreadcrumb records the ordered breadcrumb segments (e.g. [sessionTitle]
 // or [sessionTitle, agentName, taskDesc]).
 func (m *Model) SetBreadcrumb(segments []string) {

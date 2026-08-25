@@ -41,6 +41,29 @@ import (
 type fileKind string
 
 const (
+	statusPending     = "pending"
+	statusRunning     = "running"
+	statusThinking    = "thinking"
+	statusCompleted   = "completed"
+	statusFailed      = "failed"
+	statusCancelled   = "cancelled"
+	statusInterrupted = "interrupted"
+)
+
+func isTerminalStatus(status string) bool {
+	switch status {
+	case "completed", "done", "failed", "error", "interrupted", "cancelled", "canceled":
+		return true
+	default:
+		return false
+	}
+}
+
+func isNonTerminalStatus(status string) bool {
+	return !isTerminalStatus(status)
+}
+
+const (
 	fileEdited  fileKind = "edited"
 	fileCreated fileKind = "created"
 	fileDeleted fileKind = "deleted"
@@ -183,7 +206,7 @@ func (p panel) selectionKey() string {
 		}
 	}
 	for _, a := range p.agents {
-		if a.rowLabel() == label {
+		if a.rowLabel() == label || strings.HasPrefix(label, a.ID+" ") || label == a.ID {
 			return "a:" + a.ID
 		}
 	}
@@ -266,18 +289,19 @@ func (p *panel) observeAgentEnd(id string, ok bool) {
 // reconcileTerminal transitions all non-terminal subagents to a terminal state
 // when a turn ends without explicit tool end events (cancellation, error, interrupt).
 func (p *panel) reconcileTerminal(reason string) {
-	status := "cancelled"
-	if reason == "error" || reason == "failed" {
-		status = "failed"
-	} else if reason == "interrupted" {
-		status = "interrupted"
-	} else if reason == "completed" {
-		status = "completed"
+	status := statusCancelled
+	switch reason {
+	case "error", "failed":
+		status = statusFailed
+	case "interrupted":
+		status = statusInterrupted
+	case "completed":
+		status = statusCompleted
 	}
 	p.agents = slices.Clone(p.agents)
 	changed := false
 	for i, a := range p.agents {
-		if a.Status == "running" || a.Status == "pending" || a.Status == "thinking" || a.Status == "" {
+		if isNonTerminalStatus(a.Status) {
 			p.agents[i].Status = status
 			changed = true
 		}
@@ -292,7 +316,7 @@ func (p *panel) observeAgentHistory(id, status string) {
 	p.agents = slices.Clone(p.agents)
 	for i, a := range p.agents {
 		if a.ID == id {
-			if a.Status == "" || a.Status == "running" || a.Status == "pending" || a.Status == "thinking" {
+			if isNonTerminalStatus(a.Status) {
 				p.agents[i].Status = status
 			}
 			p.rebindIfOpen()
@@ -307,7 +331,7 @@ func (p *panel) observeAgentHistory(id, status string) {
 func (p panel) activeAgentCount() int {
 	count := 0
 	for _, a := range p.agents {
-		if a.Status == "running" || a.Status == "pending" || a.Status == "thinking" || a.Status == "" {
+		if isNonTerminalStatus(a.Status) {
 			count++
 		}
 	}

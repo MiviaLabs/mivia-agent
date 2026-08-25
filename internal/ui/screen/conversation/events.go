@@ -105,9 +105,9 @@ func (s Screen) send() (app.Screen, tea.Cmd) {
 func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 	next, flushCmd := s.transcript.HandleEvent(ev)
 	s.transcript = next
-	s.refreshTopbar()
 
 	switch b := ev.Body.(type) {
+
 	case uievent.ToolPendingBody:
 		s.approval.SetRequest(b)
 		s.statusline.SetLabel("pending")
@@ -154,7 +154,10 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 		s.panel.reconcileTerminal(b.Reason)
 	}
 
+	s.refreshTopbar()
+
 	var readCmd tea.Cmd
+
 	if s.active != nil {
 		readCmd = s.awaitSessionEvent(s.convID(), s.active.Events())
 	}

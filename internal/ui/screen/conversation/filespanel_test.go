@@ -798,3 +798,40 @@ func TestPanel_ObserveAgentHistory_IdempotentUpsert(t *testing.T) {
 		t.Errorf("expected status 'completed', got %q", p.agents[0].Status)
 	}
 }
+
+func TestPanel_SelectionKey_PreservesCursorOnStatusUpdate(t *testing.T) {
+	p := newPanel(theme.Theme{Name: "test"}, theme.TierASCII)
+	p.open = true
+	p.observeAgentStart("sub-1", "invoke_subagent")
+	// Initially highlighted
+	if k := p.selectionKey(); k != "a:sub-1" {
+		t.Errorf("initial selectionKey = %q, want 'a:sub-1'", k)
+	}
+	// Update status via observeAgent (which updates label from running to completed)
+	p.observeAgent("sub-1", &uievent.Progress{Status: "completed", Step: 3, TotalSteps: 3})
+	if k := p.selectionKey(); k != "a:sub-1" {
+		t.Errorf("selectionKey after status update = %q, want 'a:sub-1'", k)
+	}
+}
+
+func TestPanel_ReconcileTerminal_CustomNonTerminalStatusReconciles(t *testing.T) {
+	var p panel
+	p.observeAgent("sub-blocked", &uievent.Progress{Status: "blocked", Step: 1, TotalSteps: 2})
+	p.observeAgent("sub-waiting", &uievent.Progress{Status: "waiting", Step: 1, TotalSteps: 2})
+
+	if p.activeAgentCount() != 2 {
+		t.Errorf("activeAgentCount = %d, want 2", p.activeAgentCount())
+	}
+
+	p.reconcileTerminal("cancelled")
+
+	if p.activeAgentCount() != 0 {
+		t.Errorf("activeAgentCount after reconcile = %d, want 0", p.activeAgentCount())
+	}
+	if p.agents[0].Status != "cancelled" {
+		t.Errorf("sub-blocked status = %q, want 'cancelled'", p.agents[0].Status)
+	}
+	if p.agents[1].Status != "cancelled" {
+		t.Errorf("sub-waiting status = %q, want 'cancelled'", p.agents[1].Status)
+	}
+}

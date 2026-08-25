@@ -18,6 +18,7 @@ type sessionState struct {
 	statusline statusline.Model
 	approval   approval.Model
 	panel      panel
+	threads    ports.SubagentThreads
 }
 
 func (st *sessionState) handleTurnEvent(ev uievent.Event) {
@@ -32,7 +33,7 @@ func (st *sessionState) handleTurnEvent(ev uievent.Event) {
 		st.approval.Clear()
 		st.statusline.SetLabel("running")
 		st.statusline.SetDetail(toolDetail(b.Name, b.Args))
-		if isSubagentTool(b.Name) {
+		if isSubagentTool(b.Name) || (st.threads != nil && isThreadRegistered(st.threads, b.ToolCallID)) {
 			st.panel.observeAgentStart(b.ToolCallID, b.Name)
 		}
 	case uievent.ToolOutputBody:
@@ -79,6 +80,7 @@ func (s *Screen) switchConversation(newConv ports.Conversation) {
 			statusline: s.statusline,
 			approval:   s.approval,
 			panel:      s.panel,
+			threads:    s.threads,
 		}
 	}
 
