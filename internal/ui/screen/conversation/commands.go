@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -120,6 +121,16 @@ func (s Screen) applyCommandOutcome(o ports.CommandOutcome) (app.Screen, tea.Cmd
 		return s, tea.ClearScreen
 	case o.Notice != "":
 		return s.withNotice(o.Notice), nil
+	case o.SubmitPrompt != "":
+		if s.active != nil {
+			s.queue = append(s.queue, o.SubmitPrompt)
+			if s.queueOverlay.Active() {
+				s.queueOverlay.SetItems(s.queue)
+			}
+			s.statusline.Notice(fmt.Sprintf("message queued (%d in queue)", len(s.queue)))
+			return s, nil
+		}
+		return s.sendText(o.SubmitPrompt)
 	}
 	return s, nil
 }

@@ -3,12 +3,14 @@ package uiadapter
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
+	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/composer"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
@@ -75,6 +77,19 @@ func (r *CommandRunner) activeSession() *chat.Session {
 	return r.sess
 }
 
+func (r *CommandRunner) skillRegistry() *skills.Registry {
+	if r == nil {
+		return nil
+	}
+	if r.agentState != nil && r.agentState.SkillRegFull != nil {
+		return r.agentState.SkillRegFull
+	}
+	if r.sess != nil {
+		return r.sess.CurrentBinding().SkillRegistry
+	}
+	return nil
+}
+
 // DefaultCommands returns the list of available slash commands for composer auto-completion.
 func DefaultCommands() []composer.Command {
 	return []composer.Command{
@@ -94,6 +109,62 @@ func DefaultCommands() []composer.Command {
 		{Name: "theme", Desc: "pick a theme"},
 		{Name: "yolo", Desc: "toggle YOLO mode (auto-approve all tool executions)"},
 	}
+}
+
+// SkillCommands returns the slash command candidates for the given skill registry.
+func SkillCommands(reg *skills.Registry) []composer.Command {
+	if reg == nil {
+		return nil
+	}
+	builtins := DefaultCommands()
+	reserved := make(map[string]struct{}, len(builtins))
+	for _, c := range builtins {
+		reserved[c.Name] = struct{}{}
+	}
+
+	var cmds []composer.Command
+	for _, def := range reg.List() {
+		if !def.UserInvocable {
+			continue
+		}
+		rawToken, ok := skills.SlashToken(def.Name)
+		if !ok {
+			continue
+		}
+		name := strings.TrimPrefix(rawToken, "/")
+		if _, collision := reserved[name]; collision {
+			continue
+		}
+		desc := def.ShortDescription
+		if desc == "" {
+			desc = def.Description
+			if cut := strings.IndexAny(desc, ".;:\n"); cut > 0 {
+				desc = desc[:cut]
+			}
+			desc, _ = skills.SanitizeModelFacingText(desc, 60)
+		}
+		cmds = append(cmds, composer.Command{
+			Name: name,
+			Desc: desc,
+		})
+	}
+	sort.Slice(cmds, func(i, j int) bool {
+		return cmds[i].Name < cmds[j].Name
+	})
+	return cmds
+}
+
+// Commands returns all available slash commands, merging builtins with active skills.
+func (r *CommandRunner) Commands() []composer.Command {
+	builtins := DefaultCommands()
+	skillCmds := SkillCommands(r.skillRegistry())
+	if len(skillCmds) == 0 {
+		return builtins
+	}
+	out := make([]composer.Command, 0, len(builtins)+len(skillCmds))
+	out = append(out, builtins...)
+	out = append(out, skillCmds...)
+	return out
 }
 
 // Run executes one slash command by name with arguments.
@@ -130,12 +201,48 @@ func (r *CommandRunner) Run(ctx context.Context, name, args string) ports.Comman
 	case "yolo":
 		return r.handleYolo()
 	default:
+		if outcome, handled := r.handleSkill(name, args); handled {
+			return outcome
+		}
 		label := "/" + name
 		if args != "" {
 			label += " " + args
 		}
 		return ports.CommandOutcome{Err: "unknown command " + label}
 	}
+}
+
+func (r *CommandRunner) handleSkill(name, args string) (ports.CommandOutcome, bool) {
+	reg := r.skillRegistry()
+	if reg == nil {
+		return ports.CommandOutcome{}, false
+	}
+	var target skills.Definition
+	var found bool
+	cleanName := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(name)), "/")
+	for _, def := range reg.List() {
+		token, ok := skills.SlashToken(def.Name)
+		bareToken := strings.TrimPrefix(token, "/")
+		if (ok && bareToken == cleanName) || strings.EqualFold(def.Name, cleanName) {
+			target = def
+			found = true
+			break
+		}
+	}
+	if !found {
+		return ports.CommandOutcome{}, false
+	}
+	if !target.UserInvocable {
+		return ports.CommandOutcome{Err: fmt.Sprintf("skill %q cannot be invoked directly", name)}, true
+	}
+	if r.agentState != nil {
+		scope := r.agentState.SkillScopeSnapshot()
+		if err := scope.CheckSkillDefinition(target); err != nil {
+			return ports.CommandOutcome{Err: fmt.Sprintf("skill %q not permitted: %v", name, err)}, true
+		}
+	}
+	prompt := skills.RenderSkillSlashPrompt(target.Instructions, args)
+	return ports.CommandOutcome{SubmitPrompt: prompt}, true
 }
 
 func (r *CommandRunner) handleClear() ports.CommandOutcome {

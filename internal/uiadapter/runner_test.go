@@ -14,6 +14,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
+	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/uiadapter"
@@ -642,5 +643,75 @@ func TestCommandRunner_SelectModel_ProviderPrefix(t *testing.T) {
 	}
 	if got := sess.CurrentSelection().ProviderName; got != "openrouter" {
 		t.Errorf("got provider name %q, want %q", got, "openrouter")
+	}
+}
+
+func TestCommandRunner_SkillsIntegration(t *testing.T) {
+	skillReg := skills.NewRegistry()
+	_ = skillReg.Register(skills.Definition{
+		Name:             "feature-delivery",
+		ShortDescription: "Deliver an end-to-end feature with tests",
+		UserInvocable:    true,
+		Instructions:     "Follow feature delivery guidelines carefully.",
+	})
+	_ = skillReg.Register(skills.Definition{
+		Name:          "internal-helper",
+		Description:   "internal background skill",
+		UserInvocable: false, // Not user invocable
+		Instructions:  "internal instructions",
+	})
+
+	state := &cliagents.AgentSessionState{
+		SkillRegFull: skillReg,
+	}
+
+	runner := uiadapter.NewCommandRunner(nil, nil, state)
+
+	// 1. Check runner.Commands() includes invocable skill and excludes non-invocable
+	cmds := runner.Commands()
+	var foundFeature, foundInternal bool
+	for _, c := range cmds {
+		if c.Name == "feature-delivery" {
+			foundFeature = true
+			if c.Desc != "Deliver an end-to-end feature with tests" {
+				t.Errorf("got desc %q, want expected short description", c.Desc)
+			}
+		}
+		if c.Name == "internal-helper" {
+			foundInternal = true
+		}
+	}
+	if !foundFeature {
+		t.Error("expected feature-delivery in runner.Commands()")
+	}
+	if foundInternal {
+		t.Error("internal-helper should NOT appear in runner.Commands() because UserInvocable=false")
+	}
+
+	// 2. Execute invocable skill slash command
+	out := runner.Run(context.Background(), "feature-delivery", "add auth module")
+	if out.Err != "" {
+		t.Fatalf("unexpected error for feature-delivery: %v", out.Err)
+	}
+	if out.SubmitPrompt == "" {
+		t.Fatal("expected non-empty SubmitPrompt")
+	}
+	if !strings.Contains(out.SubmitPrompt, "Follow feature delivery guidelines") {
+		t.Errorf("SubmitPrompt missing instructions: %s", out.SubmitPrompt)
+	}
+	if !strings.Contains(out.SubmitPrompt, "add auth module") {
+		t.Errorf("SubmitPrompt missing arguments: %s", out.SubmitPrompt)
+	}
+
+	// 3. Execute non-invocable skill slash command
+	outNonInvocable := runner.Run(context.Background(), "internal-helper", "")
+	if outNonInvocable.Err == "" || !strings.Contains(outNonInvocable.Err, "cannot be invoked directly") {
+		t.Errorf("expected cannot be invoked directly error, got %+v", outNonInvocable)
+	}
+
+	// 4. Execute unknown command
+	outUnknown := runner.Run(context.Background(), "nonexistent-skill", "")
+	if outUnknown.Err == "" || !strings.Contains(outUnknown.Err, "unknown command") {
+		t.Errorf("expected unknown command error, got %+v", outUnknown)
 	}
 }

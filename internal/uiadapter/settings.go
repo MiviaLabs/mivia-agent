@@ -25,6 +25,7 @@ type SettingsStore struct {
 	mcp         []ports.MCPServerView
 	agents      []ports.AgentView
 	automations []ports.Automation
+	skills      []ports.SkillView
 	runs        map[string][]ports.Run
 	watchers    map[string][]chan ports.Run
 
@@ -84,6 +85,7 @@ func (s *SettingsStore) initFromConfig() {
 	}
 	s.initProvidersFromConfig()
 	s.initAgentsFromConfig()
+	s.initSkillsFromConfig()
 }
 
 func (s *SettingsStore) initProvidersFromConfig() {
@@ -193,6 +195,7 @@ func (s *SettingsStore) Settings() ports.Settings {
 		MCP:         settingsMCP{s},
 		Agents:      settingsAgents{s},
 		Automations: settingsAutomations{s},
+		Skills:      settingsSkills{s},
 	}
 }
 
@@ -789,3 +792,5 @@ func (s *SettingsStore) removeWatcherLocked(automationID string, ch chan ports.R
 		}
 	}
 }
+
+// settingsSkills is implemented in settings_skills.go

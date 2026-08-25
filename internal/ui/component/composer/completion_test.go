@@ -344,3 +344,22 @@ func TestOffsetNeverGoesNegative(t *testing.T) {
 		t.Errorf("got offset %d, want it clamped to 0", m.offset)
 	}
 }
+
+func TestComposerFrameHintWhenMenuActive(t *testing.T) {
+	m := typed(t, "/mo")
+	m.SetWidth(80)
+	if !m.MenuActive() {
+		t.Fatal("expected menu active")
+	}
+	view := m.View()
+	if !strings.Contains(view, "navigate") || !strings.Contains(view, "complete") {
+		t.Errorf("expected navigation and completion hint in frame, got view:\n%s", view)
+	}
+
+	// Narrow terminal fallback
+	m.SetWidth(60)
+	viewNarrow := m.View()
+	if !strings.Contains(viewNarrow, "[ / Commands ]") {
+		t.Errorf("expected fallback hint in narrow frame, got view:\n%s", viewNarrow)
+	}
+}

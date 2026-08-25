@@ -403,7 +403,23 @@ func (m Model) View() string {
 		if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
 			hint = "[ Enter: Send  •  / Commands ]"
 		}
-		if m.input.Value() != "" {
+		if m.MenuActive() {
+			hint = "[ ↑/↓: navigate • Tab: complete • Enter: select • Esc: dismiss ]"
+			if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
+				hint = "[ Up/Down: navigate • Tab: complete • Enter: select • Esc: dismiss ]"
+			}
+			if !render.HintFits(m.width, hint) {
+				hint = "[ / Commands ]"
+			}
+		} else if m.MentionMenuActive() {
+			hint = "[ ↑/↓: navigate • Tab/Enter: insert • Esc: dismiss ]"
+			if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
+				hint = "[ Up/Down: navigate • Tab/Enter: insert • Esc: dismiss ]"
+			}
+			if !render.HintFits(m.width, hint) {
+				hint = "[ @ Mentions ]"
+			}
+		} else if m.input.Value() != "" {
 
 			lineCount := strings.Count(m.input.Value(), "\n") + 1
 			if lineCount > 1 {

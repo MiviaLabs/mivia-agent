@@ -23,6 +23,7 @@ func (h *Harness) SettingsAdapters() ports.Settings {
 		MCP:         harnessMCP{h},
 		Agents:      harnessAgents{h},
 		Automations: harnessAutomations{h},
+		Skills:      harnessSkills{h},
 	}
 }
 
@@ -32,6 +33,7 @@ var (
 	_ ports.MCPSettings        = harnessMCP{}
 	_ ports.AgentSettings      = harnessAgents{}
 	_ ports.AutomationSettings = harnessAutomations{}
+	_ ports.SkillSettings      = harnessSkills{}
 )
 
 // saveHandle is the fake ports.SaveHandle: it fires Pending then

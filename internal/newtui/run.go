@@ -65,7 +65,7 @@ func buildApp(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState
 	runner.SetSettingsStore(settingsStore)
 	screen := conversation.New(th, theme.TierTrueColor, themes, conv, approver, 80, nil)
 
-	screen.SetCommands(uiadapter.DefaultCommands())
+	screen.SetCommands(runner.Commands())
 	screen.SetCommandRunner(runner)
 	screen.SetSubagentThreads(threads)
 	screen.SetSettings(settingsStore.Settings())

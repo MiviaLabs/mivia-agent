@@ -57,6 +57,7 @@ type Harness struct {
 	settingsMCP         []ports.MCPServerView
 	settingsAgents      []ports.AgentView
 	settingsAutomations []ports.Automation
+	settingsSkills      []ports.SkillView
 	settingsRuns        map[string][]ports.Run
 	saveSeq             int
 	watchers            map[string][]chan ports.Run
@@ -96,6 +97,7 @@ func New(scenarioName string, pace time.Duration) (*Harness, error) {
 		settingsMCP:         seedMCPServers(),
 		settingsAgents:      seedAgents(),
 		settingsAutomations: seedAutomations(),
+		settingsSkills:      seedSkills(),
 		settingsRuns:        make(map[string][]ports.Run),
 		watchers:            make(map[string][]chan ports.Run),
 	}, nil

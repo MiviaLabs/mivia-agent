@@ -60,6 +60,7 @@ type Settings struct {
 	MCP         MCPSettings
 	Agents      AgentSettings
 	Automations AutomationSettings
+	Skills      SkillSettings
 }
 
 // GeneralView is the app-level toggles the General section reads.

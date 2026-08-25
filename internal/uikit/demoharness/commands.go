@@ -90,6 +90,21 @@ func (h *Harness) Run(_ context.Context, name, args string) ports.CommandOutcome
 	case "quit":
 		return ports.CommandOutcome{Quit: true}
 	default:
+		h.mu.Lock()
+		skills := h.settingsSkills
+		h.mu.Unlock()
+		for _, sk := range skills {
+			if sk.Name == name {
+				if !sk.UserInvocable {
+					return ports.CommandOutcome{Err: fmt.Sprintf("skill %q cannot be invoked directly", name)}
+				}
+				prompt := fmt.Sprintf("Execute skill %q", name)
+				if args != "" {
+					prompt += " with arguments: " + args
+				}
+				return ports.CommandOutcome{SubmitPrompt: prompt}
+			}
+		}
 		label := "/" + name
 		if args != "" {
 			label += " " + args

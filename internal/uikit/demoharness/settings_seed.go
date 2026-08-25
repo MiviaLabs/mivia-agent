@@ -93,3 +93,24 @@ func seedAutomations() []ports.Automation {
 		},
 	}
 }
+
+func seedSkills() []ports.SkillView {
+	return []ports.SkillView{
+		{
+			Name:              "code-review",
+			Description:       "review changed code for quality, correctness, and security",
+			Origin:            "project",
+			Tools:             []string{"inspect_repository", "read_file"},
+			UserInvocable:     true,
+			InstructionsChars: 850,
+		},
+		{
+			Name:              "test-runner",
+			Description:       "run workspace test suites and report failures",
+			Origin:            "user",
+			Tools:             []string{"run_command"},
+			UserInvocable:     true,
+			InstructionsChars: 420,
+		},
+	}
+}

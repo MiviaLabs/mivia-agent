@@ -70,6 +70,10 @@ type CommandOutcome struct {
 	// informational block.
 	Notice string
 
+	// SubmitPrompt, when non-empty, asks the UI to send this prompt
+	// into the active conversation as a user turn.
+	SubmitPrompt string
+
 	// Conversation, when non-nil, asks the UI to switch the active
 	// conversation to this new instance.
 	Conversation Conversation
