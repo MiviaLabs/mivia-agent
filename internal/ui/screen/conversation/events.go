@@ -163,10 +163,14 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 func isSubagentTool(name string) bool {
 	lower := strings.ToLower(name)
 	return strings.HasPrefix(lower, "agent_") ||
-		strings.HasPrefix(lower, "subagent_") ||
+		strings.HasPrefix(lower, "subagent") ||
 		strings.HasPrefix(lower, "delegate") ||
 		strings.HasPrefix(lower, "invoke_") ||
 		strings.HasPrefix(lower, "workflow_") ||
+		strings.HasPrefix(lower, "dispatch_") ||
+		strings.HasPrefix(lower, "spawn_") ||
+		strings.HasPrefix(lower, "send_to_task") ||
+		strings.Contains(lower, "orchestrat") ||
 		strings.Contains(lower, "planner") ||
 		strings.Contains(lower, "builder") ||
 		strings.Contains(lower, "reviewer") ||
