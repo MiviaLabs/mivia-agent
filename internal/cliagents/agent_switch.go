@@ -12,6 +12,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/mcp"
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -476,11 +477,16 @@ func buildSurfaceFromBase(sess *chat.Session, res *config.Resolved, state *Agent
 	// authority; only the model-facing surface reads registry.
 	authority, _ := ScopedRootRegistry(base, selected, state.Global.MandatoryToolDenylistAdditions)
 	// The skill policy is built against the final live authority registry
+	// The skill policy is built against the final live authority registry
 	// (plan 43) and returned for the caller to install on commit.
 	skillScope := SkillScopeFromAgentAndRegistry(selected, authority)
-	dispatcher, err := NewSessionDispatcherVar(dispatcherOptsForSurface(sess, res, state, binding, registry, authority, skillReg, skillScope, plan, root))
-	if err != nil {
-		return nil, fmt.Errorf("dispatcher: %w", err)
+	var dispatcher *runtime.Dispatcher
+	if NewSessionDispatcherVar != nil {
+		var err error
+		dispatcher, err = NewSessionDispatcherVar(dispatcherOptsForSurface(sess, res, state, binding, registry, authority, skillReg, skillScope, plan, root))
+		if err != nil {
+			return nil, fmt.Errorf("dispatcher: %w", err)
+		}
 	}
 	// The advertised union is computed from base (the full pre-scope
 	// registry) and the frozen plan, NOT from registry: registry is scoped to
@@ -516,7 +522,10 @@ func dispatcherOptsForSurface(sess *chat.Session, res *config.Resolved, state *A
 		cfg = res.Subagents
 		modelCatalog = res.ModelCatalog()
 	}
-	contextWiring := ContextDispatcherForVar(sess, cfg)
+	var contextWiring ContextDispatcherWiring
+	if ContextDispatcherForVar != nil {
+		contextWiring = ContextDispatcherForVar(sess, cfg)
+	}
 	return SessionDispatcherOpts{
 		Registry:          registry,
 		AuthorityRegistry: authority,
@@ -555,6 +564,11 @@ func dispatcherOptsForSurface(sess *chat.Session, res *config.Resolved, state *A
 		// This session already handed out truncated-output refs against the
 		// spool the live surface holds. Reuse it so the republication below is
 		// an identity re-publish rather than a revocation.
-		RemainderSpool: RemainderSpoolFromRegistryVar(sess.Tools),
+		RemainderSpool: func() *remainder.Spool {
+			if RemainderSpoolFromRegistryVar != nil {
+				return RemainderSpoolFromRegistryVar(sess.Tools)
+			}
+			return nil
+		}(),
 	}
 }

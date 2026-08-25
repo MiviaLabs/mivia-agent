@@ -287,6 +287,7 @@ func (s Screen) openCommandPalette() (app.Screen, tea.Cmd) {
 				"/model - switch active model or provider",
 				"/effort - set reasoning effort level for active model",
 				"/theme - change UI color theme",
+				"/new - start a fresh session",
 				"/clear - clear conversation history",
 				"/compact - compact current conversation context",
 				"/cost - view session spending and token stats",

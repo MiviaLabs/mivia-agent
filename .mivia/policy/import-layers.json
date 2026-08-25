@@ -448,6 +448,7 @@
       "internal/hooks",
       "internal/mcp",
       "internal/provider",
+      "internal/reasoning",
       "internal/redact",
       "internal/sdkadapter",
       "internal/storage",
@@ -458,6 +459,7 @@
       "internal/uikit/uievent",
       "internal/workspace"
     ],
+
     "internal/uikit/demoharness": [
       "internal/uikit/config",
       "internal/uikit/intent",

@@ -70,6 +70,12 @@ func (h *Harness) Run(_ context.Context, name, args string) ports.CommandOutcome
 		return ports.CommandOutcome{AgentChoices: names}
 	case "resume":
 		return ports.CommandOutcome{SessionChoices: append([]ports.SessionSummary(nil), demoSessions...)}
+	case "new":
+		h.mu.Lock()
+		h.history = nil
+		h.title = "New Session"
+		h.mu.Unlock()
+		return ports.CommandOutcome{ClearTranscript: true, Notice: "New session started."}
 	case "clear":
 		h.mu.Lock()
 		h.history = nil

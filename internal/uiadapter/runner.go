@@ -16,10 +16,11 @@ import (
 // CommandRunner bridges the UI slash-command loop with the backend session,
 // config, and agent state.
 type CommandRunner struct {
-	sess       *chat.Session
-	pool       *SessionPool
-	res        *config.Resolved
-	agentState *cliagents.AgentSessionState
+	sess          *chat.Session
+	pool          *SessionPool
+	res           *config.Resolved
+	agentState    *cliagents.AgentSessionState
+	settingsStore *SettingsStore
 }
 
 // Compile-time check that CommandRunner satisfies ports.CommandRunner.
@@ -50,11 +51,36 @@ func NewCommandRunnerWithPool(sess *chat.Session, pool *SessionPool, res *config
 	}
 }
 
+// SetSettingsStore links a SettingsStore to synchronize active sessions during session switches.
+func (r *CommandRunner) SetSettingsStore(s *SettingsStore) {
+	if r != nil {
+		r.settingsStore = s
+	}
+}
+
+// SetActiveSession updates the active session for subsequent commands.
+func (r *CommandRunner) SetActiveSession(sess *chat.Session) {
+	if r != nil {
+		r.sess = sess
+		if r.settingsStore != nil {
+			r.settingsStore.SetActiveSession(sess)
+		}
+	}
+}
+
+func (r *CommandRunner) activeSession() *chat.Session {
+	if r == nil {
+		return nil
+	}
+	return r.sess
+}
+
 // DefaultCommands returns the list of available slash commands for composer auto-completion.
 func DefaultCommands() []composer.Command {
 	return []composer.Command{
 		{Name: "agents", Desc: "pick or switch agent (Mivia is the default orchestrator)"},
 		{Name: "clear", Desc: "clear conversation transcript"},
+		{Name: "new", Desc: "start a fresh session"},
 		{Name: "compact", Desc: "compact context and history"},
 		{Name: "context", Desc: "show context token usage"},
 		{Name: "cost", Desc: "show current session spend"},
@@ -94,6 +120,8 @@ func (r *CommandRunner) Run(ctx context.Context, name, args string) ports.Comman
 		return r.handleModel(args)
 	case "agents", "agent":
 		return r.handleAgents(args)
+	case "new":
+		return r.handleNew()
 	case "resume", "load":
 		return r.handleResume(args)
 	case "yolo":
@@ -108,49 +136,53 @@ func (r *CommandRunner) Run(ctx context.Context, name, args string) ports.Comman
 }
 
 func (r *CommandRunner) handleClear() ports.CommandOutcome {
-	if r.sess == nil {
+	sess := r.activeSession()
+	if sess == nil {
 		return ports.CommandOutcome{Err: "no active session"}
 	}
-	if err := r.sess.Clear(); err != nil {
+	if err := sess.Clear(); err != nil {
 		return ports.CommandOutcome{Err: "clear failed: " + err.Error()}
 	}
 	return ports.CommandOutcome{ClearTranscript: true}
 }
 
 func (r *CommandRunner) handleCompact(ctx context.Context, focus string) ports.CommandOutcome {
-	if r.sess == nil {
+	sess := r.activeSession()
+	if sess == nil {
 		return ports.CommandOutcome{Err: "no active session"}
 	}
-	if err := r.sess.Compact(ctx, focus); err != nil {
+	if err := sess.Compact(ctx, focus); err != nil {
 		return ports.CommandOutcome{Err: "compact failed: " + err.Error()}
 	}
-	u := r.sess.ContextUsage()
+	u := sess.ContextUsage()
 	notice := fmt.Sprintf("Context compacted (%d%% used, %s/%s prompt).",
 		u.Percent, chat.FormatTokenK(u.UsedTokens), chat.FormatTokenK(u.BudgetTokens))
 	return ports.CommandOutcome{Notice: notice}
 }
 
 func (r *CommandRunner) handleContext() ports.CommandOutcome {
-	if r.sess == nil {
+	sess := r.activeSession()
+	if sess == nil {
 		return ports.CommandOutcome{Err: "no active session"}
 	}
-	u := r.sess.ContextUsage()
+	u := sess.ContextUsage()
 	notice := fmt.Sprintf("Context usage: %s used (%d%% of %s budget, reserve %s).",
 		chat.FormatTokenK(u.UsedTokens), u.Percent, chat.FormatTokenK(u.BudgetTokens), chat.FormatTokenK(u.OutputReserveTokens))
 	return ports.CommandOutcome{Notice: notice}
 }
 
 func (r *CommandRunner) handleCost() ports.CommandOutcome {
-	if r.sess == nil {
+	sess := r.activeSession()
+	if sess == nil {
 		return ports.CommandOutcome{Err: "no active session"}
 	}
-	u := r.sess.ContextUsage()
+	u := sess.ContextUsage()
 	notice := fmt.Sprintf("Context: %d tokens used.", u.UsedTokens)
 	return ports.CommandOutcome{Notice: notice}
 }
 
 func (r *CommandRunner) handleModel(args string) ports.CommandOutcome {
-	if r.sess == nil || r.res == nil {
+	if r.activeSession() == nil || r.res == nil {
 		return ports.CommandOutcome{Err: "session or configuration not initialized"}
 	}
 	if args != "" {
@@ -190,60 +222,90 @@ func (r *CommandRunner) availableModelsByProvider() []ports.ModelChoiceGroup {
 			Models:   names,
 		})
 	}
-	if len(groups) == 0 && r.sess != nil {
-		if cur := r.sess.CurrentModel(); cur != "" {
+	sess := r.activeSession()
+	if len(groups) == 0 && sess != nil {
+		if cur := sess.CurrentModel(); cur != "" {
 			return []ports.ModelChoiceGroup{{Models: []string{cur}}}
 		}
 	}
 	return groups
 }
 
-// SelectModel switches the session's active model.
-func (r *CommandRunner) SelectModel(_ context.Context, name string) ports.CommandOutcome {
-	if r.sess == nil || r.res == nil {
-		return ports.CommandOutcome{Err: "session or configuration not initialized"}
-	}
+func resolveProviderAndModel(res *config.Resolved, selProvider, name string) (string, string) {
 	name = strings.TrimSpace(name)
-	providerName := r.res.ProviderName
-	if sel := r.sess.CurrentSelection(); sel.ProviderName != "" {
-		providerName = sel.ProviderName
+	providerName := res.ProviderName
+	if selProvider != "" {
+		providerName = selProvider
 	}
 
-	// 1. Check if model name has an explicit provider prefix (e.g. "openrouter/anthropic/claude-3.5-sonnet")
-	for _, group := range r.res.ModelCatalog() {
+	// 1. Explicit provider prefix matching a catalog provider
+	for _, group := range res.ModelCatalog() {
 		prefix := group.Provider + "/"
 		if strings.HasPrefix(strings.ToLower(name), prefix) {
-			providerName = group.Provider
-			name = name[len(prefix):]
-			break
+			return group.Provider, name[len(prefix):]
 		}
 	}
 
-	// 2. Check if the model name belongs uniquely to a provider in the catalog
-	foundInCatalog := false
-	for _, group := range r.res.ModelCatalog() {
+	// 1b. Prefix matching a configured provider runtime
+	if res.ProviderRuntimes != nil {
+		for p := range res.ProviderRuntimes {
+			prefix := strings.ToLower(p) + "/"
+			if strings.HasPrefix(strings.ToLower(name), prefix) {
+				return p, name[len(prefix):]
+			}
+		}
+	}
+
+	// 1c. Name containing a slash matching known provider name
+	if p, m, ok := strings.Cut(name, "/"); ok && p != "" && m != "" {
+		for _, group := range res.ModelCatalog() {
+			if strings.EqualFold(group.Provider, p) {
+				return group.Provider, m
+			}
+		}
+		if res.ProviderRuntimes != nil {
+			for rName := range res.ProviderRuntimes {
+				if strings.EqualFold(rName, p) {
+					return rName, m
+				}
+			}
+		}
+	}
+
+	// 2. Search unique provider in catalog
+	for _, group := range res.ModelCatalog() {
 		if !group.Selectable {
 			continue
 		}
 		for _, m := range group.Models {
 			if m.Name == name {
-				providerName = group.Provider
-				foundInCatalog = true
-				break
+				return group.Provider, name
 			}
-		}
-		if foundInCatalog {
-			break
 		}
 	}
 
-	discarded, err := cliagents.SwitchModelCommand(r.sess, r.res, providerName, name)
+	return providerName, name
+}
+
+// SelectModel switches the session's active model.
+func (r *CommandRunner) SelectModel(_ context.Context, name string) ports.CommandOutcome {
+	sess := r.activeSession()
+	if sess == nil || r.res == nil {
+		return ports.CommandOutcome{Err: "session or configuration not initialized"}
+	}
+	selProvider := ""
+	if sel := sess.CurrentSelection(); sel.ProviderName != "" {
+		selProvider = sel.ProviderName
+	}
+	providerName, modelName := resolveProviderAndModel(r.res, selProvider, name)
+
+	discarded, err := cliagents.SwitchModelCommand(sess, r.res, providerName, modelName)
 	if err != nil {
-		return ports.CommandOutcome{Err: fmt.Sprintf("failed to switch model to %q (%s): %v", name, providerName, err)}
+		return ports.CommandOutcome{Err: fmt.Sprintf("failed to switch model to %q (%s): %v", modelName, providerName, err)}
 	}
 	r.res.ProviderName = providerName
-	r.res.Model = name
-	notice := fmt.Sprintf("Model set to %s (%s).", name, providerName)
+	r.res.Model = modelName
+	notice := fmt.Sprintf("Model set to %s (%s).", modelName, providerName)
 	if discarded != "" {
 		notice += fmt.Sprintf(" (Reasoning effort override %q discarded).", discarded)
 	}
@@ -251,17 +313,18 @@ func (r *CommandRunner) SelectModel(_ context.Context, name string) ports.Comman
 }
 
 func (r *CommandRunner) handleEffort(args string) ports.CommandOutcome {
-	if r.sess == nil {
+	sess := r.activeSession()
+	if sess == nil {
 		return ports.CommandOutcome{Err: "no active session"}
 	}
 	if args != "" {
 		return r.SelectEffort(context.Background(), args)
 	}
-	choices := r.sess.ReasoningChoices()
+	choices := sess.ReasoningChoices()
 	if len(choices) == 0 {
-		return ports.CommandOutcome{Notice: fmt.Sprintf("Model %q declares no reasoning efforts.", r.sess.CurrentModel())}
+		return ports.CommandOutcome{Notice: fmt.Sprintf("Model %q declares no reasoning efforts.", sess.CurrentModel())}
 	}
-	defaultEffort := r.sess.ReasoningDefault()
+	defaultEffort := sess.ReasoningDefault()
 	var list []string
 	for _, c := range choices {
 		str := string(c)
@@ -278,7 +341,8 @@ func (r *CommandRunner) handleEffort(args string) ports.CommandOutcome {
 
 // SelectEffort applies a reasoning effort level override.
 func (r *CommandRunner) SelectEffort(_ context.Context, levelStr string) ports.CommandOutcome {
-	if r.sess == nil {
+	sess := r.activeSession()
+	if sess == nil {
 		return ports.CommandOutcome{Err: "no active session"}
 	}
 	levelStr = strings.TrimSpace(levelStr)
@@ -297,12 +361,12 @@ func (r *CommandRunner) SelectEffort(_ context.Context, levelStr string) ports.C
 		level = parsed
 	}
 
-	if err := r.sess.SetReasoningEffort(level); err != nil {
+	if err := sess.SetReasoningEffort(level); err != nil {
 		return ports.CommandOutcome{Err: fmt.Sprintf("failed to set reasoning effort: %v", err)}
 	}
 
-	model := r.sess.CurrentModel()
-	effective := r.sess.ReasoningSetting()
+	model := sess.CurrentModel()
+	effective := sess.ReasoningSetting()
 	if level.Active() {
 		return ports.CommandOutcome{Notice: fmt.Sprintf("Reasoning effort set to %s for %s.", effective.Level, model)}
 	}
@@ -336,13 +400,14 @@ func (r *CommandRunner) availableAgents() []string {
 
 // SelectAgent switches the session's active agent.
 func (r *CommandRunner) SelectAgent(_ context.Context, name string) ports.CommandOutcome {
-	if r.sess == nil || r.agentState == nil {
+	sess := r.activeSession()
+	if sess == nil || r.agentState == nil {
 		return ports.CommandOutcome{Err: "agent switching is not available in this session"}
 	}
 	if name == "" {
 		return ports.CommandOutcome{Err: "agent name is empty"}
 	}
-	err := cliagents.ApplySessionAgent(r.sess, r.res, r.agentState, name, false)
+	err := cliagents.ApplySessionAgent(sess, r.res, r.agentState, name, false)
 	if err != nil {
 		return ports.CommandOutcome{Err: fmt.Sprintf("failed to switch agent to %q: %v", name, err)}
 	}
@@ -350,7 +415,7 @@ func (r *CommandRunner) SelectAgent(_ context.Context, name string) ports.Comman
 }
 
 func (r *CommandRunner) handleResume(args string) ports.CommandOutcome {
-	if r.sess == nil {
+	if r.activeSession() == nil {
 		return ports.CommandOutcome{Err: "no active session"}
 	}
 	if args != "" {
@@ -367,11 +432,15 @@ func (r *CommandRunner) handleResume(args string) ports.CommandOutcome {
 }
 
 func (r *CommandRunner) listSessionSummaries() ([]ports.SessionSummary, error) {
-	infos, err := r.sess.ListSessions()
+	sess := r.activeSession()
+	if sess == nil {
+		return nil, fmt.Errorf("no active session")
+	}
+	infos, err := sess.ListSessions()
 	if err != nil {
 		return nil, err
 	}
-	currID := r.sess.SessionID
+	currID := sess.SessionID
 	var out []ports.SessionSummary
 	for _, info := range infos {
 		id := info.SessionID
@@ -397,7 +466,7 @@ func (r *CommandRunner) listSessionSummaries() ([]ports.SessionSummary, error) {
 
 // SelectSession loads and resumes a saved session.
 func (r *CommandRunner) SelectSession(_ context.Context, id string) ports.CommandOutcome {
-	if r.sess == nil && r.res == nil {
+	if r.activeSession() == nil && r.res == nil {
 		return ports.CommandOutcome{Err: "no active session"}
 	}
 	if id == "" {
@@ -408,30 +477,63 @@ func (r *CommandRunner) SelectSession(_ context.Context, id string) ports.Comman
 		if err != nil {
 			return ports.CommandOutcome{Err: fmt.Sprintf("failed to resume session %q: %v", id, err)}
 		}
+		if c, ok := conv.(*Conversation); ok && c != nil {
+			r.SetActiveSession(c.Session())
+		}
 		return ports.CommandOutcome{
 			Conversation:    conv,
 			ClearTranscript: true,
 			Notice:          fmt.Sprintf("Resumed session %s.", id),
 		}
 	}
-	if r.sess == nil {
+	sess := r.activeSession()
+	if sess == nil {
 		return ports.CommandOutcome{Err: "no active session"}
 	}
-	if err := r.sess.Load(id); err != nil {
+	if err := sess.Load(id); err != nil {
 		return ports.CommandOutcome{Err: fmt.Sprintf("failed to resume session %q: %v", id, err)}
 	}
+	r.SetActiveSession(sess)
 	return ports.CommandOutcome{
-		Conversation:    NewConversation(r.sess),
+		Conversation:    NewConversation(sess),
 		ClearTranscript: true,
 		Notice:          fmt.Sprintf("Resumed session %s.", id),
 	}
 }
 
-func (r *CommandRunner) handleYolo() ports.CommandOutcome {
-	if r.sess == nil {
+func (r *CommandRunner) handleNew() ports.CommandOutcome {
+	sess := r.activeSession()
+	if sess == nil {
 		return ports.CommandOutcome{Err: "no active session"}
 	}
-	enabled, policy := r.sess.ToggleYOLO()
+	// Best-effort save; proceed even on failure.
+	if err := sess.SaveLast(); err != nil {
+		// Non-fatal: log to notice suffix below.
+		_ = err
+	}
+	if r.pool == nil {
+		return ports.CommandOutcome{Err: "no session pool available"}
+	}
+	conv, err := r.pool.CreateFresh()
+	if err != nil {
+		return ports.CommandOutcome{Err: "failed to create new session: " + err.Error()}
+	}
+	if c, ok := conv.(*Conversation); ok && c != nil {
+		r.SetActiveSession(c.Session())
+	}
+	return ports.CommandOutcome{
+		Conversation:    conv,
+		ClearTranscript: true,
+		Notice:          "New session started.",
+	}
+}
+
+func (r *CommandRunner) handleYolo() ports.CommandOutcome {
+	sess := r.activeSession()
+	if sess == nil {
+		return ports.CommandOutcome{Err: "no active session"}
+	}
+	enabled, policy := sess.ToggleYOLO()
 	if enabled {
 		return ports.CommandOutcome{Notice: "YOLO mode enabled: all tool calls auto-approved."}
 	}

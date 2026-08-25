@@ -944,3 +944,87 @@ func TestModel_ContextWindowIsThePromptBudgetNotTheRawWindow(t *testing.T) {
 		t.Fatalf("ContextWindow=%d, want the prompt budget %d (not the raw window 200000)", got, budget)
 	}
 }
+
+func newTestModelSwitchFixture(t *testing.T, comp provider.Completer) (*chat.Session, *config.Resolved, *uiadapter.CommandRunner, *uiadapter.Conversation) {
+	t.Helper()
+	res := &config.Resolved{
+		ProviderName: "ollama",
+		Model:        "model-1",
+		Models:       []string{"model-1", "model-2"},
+		ModelProfiles: []config.ModelSpec{
+			{Name: "model-1", ContextWindowTokens: 128000},
+			{Name: "model-2", ContextWindowTokens: 128000},
+		},
+		ProviderRuntimes: map[string]config.ProviderRuntime{
+			"ollama": {
+				ProviderName: "ollama",
+				BaseURL:      "http://127.0.0.1:11434",
+				Models: []config.ModelSpec{
+					{Name: "model-1", ContextWindowTokens: 128000},
+					{Name: "model-2", ContextWindowTokens: 128000},
+				},
+			},
+		},
+	}
+	res.SetModelCatalogForTest([]config.ProviderModelGroup{
+		{
+			Provider:   "ollama",
+			Selectable: true,
+			Active:     true,
+			Models: []config.ModelSpec{
+				{Name: "model-1", ContextWindowTokens: 128000},
+				{Name: "model-2", ContextWindowTokens: 128000},
+			},
+		},
+	})
+	sess := chat.NewSession(res, comp)
+	sess.UseTools = true
+	sess.Tools = tools.NewRegistry()
+	sess.Tools.Register(noopTool{})
+	runner := uiadapter.NewCommandRunner(sess, res, nil)
+	conv := uiadapter.NewConversation(sess)
+	return sess, res, runner, conv
+}
+
+func TestConversation_ModelSwitchBeforeNextTurn_DispatchesNextTurnWithNewModel(t *testing.T) {
+	comp := &scriptedCompleter{turns: []provider.Response{
+		assistantResponse("turn 1 response"),
+		assistantResponse("turn 2 response"),
+	}}
+	sess, _, runner, conv := newTestModelSwitchFixture(t, comp)
+
+	// Turn 1 with model-1
+	h1, err := conv.Send(context.Background(), intent.Send{Text: "turn 1"})
+	if err != nil {
+		t.Fatalf("Turn 1 Send err=%v", err)
+	}
+	if len(drainUntilClose(t, h1.Events(), 5*time.Second)) == 0 {
+		t.Fatal("no events for Turn 1")
+	}
+	if got := conv.Model().Name; got != "model-1" {
+		t.Errorf("conv model before switch = %q, want 'model-1'", got)
+	}
+
+	// Switch model to model-2
+	if out := runner.SelectModel(context.Background(), "model-2"); out.Err != "" {
+		t.Fatalf("SelectModel error: %v", out.Err)
+	}
+	if got := conv.Model().Name; got != "model-2" {
+		t.Errorf("conv model after switch = %q, want 'model-2'", got)
+	}
+	if got := sess.CurrentModel(); got != "model-2" {
+		t.Errorf("sess model after switch = %q, want 'model-2'", got)
+	}
+
+	// Turn 2 with model-2
+	h2, err := conv.Send(context.Background(), intent.Send{Text: "turn 2"})
+	if err != nil {
+		t.Fatalf("Turn 2 Send err=%v", err)
+	}
+	if len(drainUntilClose(t, h2.Events(), 5*time.Second)) == 0 {
+		t.Fatal("no events for Turn 2")
+	}
+	if got := conv.Model().Name; got != "model-2" {
+		t.Errorf("conv model after Turn 2 = %q, want 'model-2'", got)
+	}
+}

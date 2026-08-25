@@ -43,6 +43,13 @@ func NewSettingsStore(sess *chat.Session, res *config.Resolved, state *cliagents
 	return s
 }
 
+// SetActiveSession updates the active session pointer for SettingsStore.
+func (s *SettingsStore) SetActiveSession(sess *chat.Session) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sess = sess
+}
+
 func (s *SettingsStore) initFromConfig() {
 	s.general = ports.GeneralView{
 		Theme:           "mivia-dark",

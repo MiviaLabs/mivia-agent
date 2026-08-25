@@ -160,3 +160,72 @@ func TestSessionPool_LoadedSessionInheritsTools(t *testing.T) {
 		t.Errorf("got conversation ID %v, want sess-tools-1", conv.ID())
 	}
 }
+
+func TestSessionPool_CreateFresh_ReturnsNewConversation(t *testing.T) {
+	res := &config.Resolved{Model: "test-model"}
+	sess := chat.NewSession(res, nil)
+	sess.SessionID = "initial-session"
+	pool := uiadapter.NewSessionPool(sess, res, nil, false)
+
+	// CreateFresh does not exist yet — this test is RED
+	conv, err := pool.CreateFresh()
+	if err != nil {
+		t.Fatalf("CreateFresh failed: %v", err)
+	}
+	if conv == nil {
+		t.Fatal("CreateFresh returned nil conversation")
+	}
+	if conv.ID() == "initial-session" || conv.ID() == "" {
+		t.Errorf("CreateFresh returned same or empty ID: %q", conv.ID())
+	}
+}
+
+func TestSessionPool_CreateFresh_NilResReturnsError(t *testing.T) {
+	pool := uiadapter.NewSessionPool(nil, nil, nil, false)
+	_, err := pool.CreateFresh()
+	if err == nil {
+		t.Fatal("expected error from CreateFresh with nil config")
+	}
+}
+
+func TestSessionPool_CreateFresh_InheritsSessionDir(t *testing.T) {
+	dir := t.TempDir()
+	res := &config.Resolved{Model: "test-model"}
+	sess := chat.NewSession(res, nil)
+	sess.SessionID = "parent-session"
+	sess.SessionDir = dir
+	pool := uiadapter.NewSessionPool(sess, res, nil, false)
+
+	conv, err := pool.CreateFresh()
+	if err != nil {
+		t.Fatalf("CreateFresh failed: %v", err)
+	}
+	// Verify the fresh conv is registered and distinct
+	if conv.ID() == "parent-session" {
+		t.Errorf("CreateFresh should produce a new session ID, got parent ID")
+	}
+	// Fetch it back from the pool by its new ID
+	conv2, err := pool.GetOrCreate(conv.ID())
+	if err != nil {
+		t.Fatalf("GetOrCreate fresh ID failed: %v", err)
+	}
+	if conv2.ID() != conv.ID() {
+		t.Errorf("pool did not register fresh session: got %q, want %q", conv2.ID(), conv.ID())
+	}
+}
+
+func TestSessionPool_CreateFresh_InheritsToolsFlag(t *testing.T) {
+	res := &config.Resolved{Model: "test-model"}
+	sess := chat.NewSession(res, nil)
+	sess.SessionID = "tools-parent"
+	sess.Tools = tools.NewRegistry()
+	pool := uiadapter.NewSessionPool(sess, res, nil, true)
+
+	conv, err := pool.CreateFresh()
+	if err != nil {
+		t.Fatalf("CreateFresh failed: %v", err)
+	}
+	if conv == nil {
+		t.Fatal("CreateFresh returned nil")
+	}
+}

@@ -92,6 +92,52 @@ func TestCommandRunner_NilSessionErrors(t *testing.T) {
 	}
 }
 
+func TestCommandRunner_New_NilSessionReturnsError(t *testing.T) {
+	runner := uiadapter.NewCommandRunner(nil, nil, nil)
+	out := runner.Run(context.Background(), "new", "")
+	if out.Err == "" {
+		t.Errorf("expected Err on nil session /new, got %+v", out)
+	}
+}
+
+func TestCommandRunner_New_SavesAndReturnsNewConversation(t *testing.T) {
+	dir := t.TempDir()
+	comp := &nullCompleter{}
+	res := &config.Resolved{ProviderName: "test", Model: "m1"}
+	sess := chat.NewSession(res, comp)
+	sess.SessionDir = dir
+	sess.SessionID = "original-sess"
+	runner := uiadapter.NewCommandRunner(sess, res, nil)
+
+	out := runner.Run(context.Background(), "new", "")
+	if out.Err != "" {
+		t.Fatalf("/new returned error: %s", out.Err)
+	}
+	if out.Conversation == nil {
+		t.Fatal("/new must return a non-nil Conversation")
+	}
+	if !out.ClearTranscript {
+		t.Error("/new must set ClearTranscript=true")
+	}
+	if out.Notice == "" {
+		t.Error("/new must set a non-empty Notice")
+	}
+	// The returned conversation must have a different ID from the original
+	if out.Conversation.ID() == "original-sess" || out.Conversation.ID() == "" {
+		t.Errorf("/new conversation ID must be fresh, got %q", out.Conversation.ID())
+	}
+}
+
+func TestCommandRunner_New_InDefaultCommands(t *testing.T) {
+	cmds := uiadapter.DefaultCommands()
+	for _, c := range cmds {
+		if c.Name == "new" {
+			return
+		}
+	}
+	t.Error("/new must appear in DefaultCommands()")
+}
+
 func TestCommandRunner_ClearAndUsage(t *testing.T) {
 	comp := &nullCompleter{}
 	res := &config.Resolved{ProviderName: "test", Model: "m1"}
@@ -119,7 +165,27 @@ func TestCommandRunner_ModelSwitching(t *testing.T) {
 	res := &config.Resolved{
 		ProviderName: "zai",
 		Model:        "glm-5.2",
+		ProviderRuntimes: map[string]config.ProviderRuntime{
+			"zai": {
+				ProviderName: "zai",
+				APIKey:       "test-key",
+				APIKeySet:    true,
+				Models: []config.ModelSpec{
+					{Name: "glm-5.2", ContextWindowTokens: 2000},
+				},
+			},
+		},
 	}
+	res.SetModelCatalogForTest([]config.ProviderModelGroup{
+		{
+			Provider:   "zai",
+			Selectable: true,
+			Active:     true,
+			Models: []config.ModelSpec{
+				{Name: "glm-5.2", ContextWindowTokens: 2000},
+			},
+		},
+	})
 	sess := chat.NewSession(res, comp)
 	sess.SetBindingFactory(func(providerName, model string) (chat.ModelBinding, error) {
 		return chat.ModelBinding{
@@ -444,5 +510,132 @@ func TestCommandRunner_YoloToggle(t *testing.T) {
 	}
 	if sess.ApprovalPolicy != config.ApprovalPolicyWriteOnly {
 		t.Errorf("expected sess.ApprovalPolicy = %q, got %q", config.ApprovalPolicyWriteOnly, sess.ApprovalPolicy)
+	}
+}
+
+func TestCommandRunner_SelectModel_InResumedSession(t *testing.T) {
+	dir := t.TempDir()
+	res := &config.Resolved{
+		ProviderName: "ollama",
+		Model:        "m1",
+		Models:       []string{"m1", "m2"},
+		ModelProfiles: []config.ModelSpec{
+			{Name: "m1", ContextWindowTokens: 128000},
+			{Name: "m2", ContextWindowTokens: 128000},
+		},
+		ProviderRuntimes: map[string]config.ProviderRuntime{
+			"ollama": {
+				ProviderName: "ollama",
+				BaseURL:      "http://127.0.0.1:11434",
+				Models: []config.ModelSpec{
+					{Name: "m1", ContextWindowTokens: 128000},
+					{Name: "m2", ContextWindowTokens: 128000},
+				},
+			},
+		},
+	}
+	res.SetModelCatalogForTest([]config.ProviderModelGroup{
+		{
+			Provider:   "ollama",
+			Selectable: true,
+			Active:     true,
+			Models: []config.ModelSpec{
+				{Name: "m1", ContextWindowTokens: 128000},
+				{Name: "m2", ContextWindowTokens: 128000},
+			},
+		},
+	})
+
+	sess1 := chat.NewSession(res, nil)
+	sess1.SessionDir = dir
+	sess1.SessionID = "session-1"
+
+	sess2 := chat.NewSession(res, nil)
+	sess2.SessionDir = dir
+	sess2.SessionID = "session-2"
+	sess2.Messages = []provider.Message{
+		{Role: provider.RoleUser, Content: "Hello in session 2"},
+	}
+	if err := sess2.Save("session-2"); err != nil {
+		t.Fatalf("failed to save session-2: %v", err)
+	}
+
+	pool := uiadapter.NewSessionPool(sess1, res, nil, false)
+	runner := uiadapter.NewCommandRunnerWithPool(sess1, pool, res, nil)
+
+	// Resume session-2
+	out := runner.SelectSession(context.Background(), "session-2")
+	if out.Err != "" {
+		t.Fatalf("SelectSession error: %v", out.Err)
+	}
+	resumedConv := out.Conversation
+	if resumedConv == nil {
+		t.Fatal("expected non-nil resumed Conversation")
+	}
+
+	// Switch model to m2
+	out = runner.SelectModel(context.Background(), "m2")
+	if out.Err != "" {
+		t.Fatalf("SelectModel error: %v", out.Err)
+	}
+
+	// Verify the resumed conversation's model was updated to m2
+	if got := resumedConv.Model().Name; got != "m2" {
+		t.Errorf("resumed conversation model = %q, want %q", got, "m2")
+	}
+}
+
+func TestCommandRunner_SelectModel_ProviderPrefix(t *testing.T) {
+	res := &config.Resolved{
+		ProviderName: "ollama",
+		Model:        "model-a",
+		ProviderRuntimes: map[string]config.ProviderRuntime{
+			"ollama": {
+				ProviderName: "ollama",
+				BaseURL:      "http://127.0.0.1:11434",
+				Models: []config.ModelSpec{
+					{Name: "model-a"},
+				},
+			},
+			"openrouter": {
+				ProviderName: "openrouter",
+				APIKey:       "sk-or-v1-test",
+				APIKeySet:    true,
+				Models: []config.ModelSpec{
+					{Name: "model-b"},
+				},
+			},
+		},
+	}
+	res.SetModelCatalogForTest([]config.ProviderModelGroup{
+		{
+			Provider:   "ollama",
+			Selectable: true,
+			Active:     true,
+			Models: []config.ModelSpec{
+				{Name: "model-a"},
+			},
+		},
+		{
+			Provider:   "openrouter",
+			Selectable: true,
+			Models: []config.ModelSpec{
+				{Name: "model-b"},
+			},
+		},
+	})
+	sess := chat.NewSession(res, nil)
+	runner := uiadapter.NewCommandRunner(sess, res, nil)
+
+	// Switch with explicit provider prefix
+	out := runner.SelectModel(context.Background(), "openrouter/model-b")
+	if out.Err != "" {
+		t.Fatalf("SelectModel error: %v", out.Err)
+	}
+	if got := sess.CurrentModel(); got != "model-b" {
+		t.Errorf("got current model %q, want %q", got, "model-b")
+	}
+	if got := sess.CurrentSelection().ProviderName; got != "openrouter" {
+		t.Errorf("got provider name %q, want %q", got, "openrouter")
 	}
 }

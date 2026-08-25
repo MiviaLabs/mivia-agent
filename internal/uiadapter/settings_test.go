@@ -374,7 +374,31 @@ func setupIntegrationEnvironment(t *testing.T, initialModel string) (*chat.Sessi
 			{Name: "llama3.3", ContextWindowTokens: 128000},
 			{Name: "qwen2.5", ContextWindowTokens: 128000},
 		},
+		ProviderRuntimes: map[string]config.ProviderRuntime{
+			"ollama": {
+				ProviderName: "ollama",
+				BaseURL:      "http://127.0.0.1:11434",
+				Models: []config.ModelSpec{
+					{Name: "llama3.2", ContextWindowTokens: 128000},
+					{Name: "llama3.3", ContextWindowTokens: 128000},
+					{Name: "qwen2.5", ContextWindowTokens: 128000},
+				},
+			},
+		},
 	}
+	res.SetModelCatalogForTest([]config.ProviderModelGroup{
+		{
+			Provider:   "ollama",
+			Selectable: true,
+			Active:     true,
+			Models: []config.ModelSpec{
+				{Name: "llama3.2", ContextWindowTokens: 128000},
+				{Name: "llama3.3", ContextWindowTokens: 128000},
+				{Name: "qwen2.5", ContextWindowTokens: 128000},
+			},
+		},
+	})
+
 	completer := &scriptedCompleter{
 		turns: []provider.Response{
 			{Content: "Hello from test model", FinishReason: "stop"},
@@ -560,4 +584,32 @@ func loadTestTheme(t *testing.T) theme.Theme {
 	}
 	t.Fatal("mivia-dark theme not found")
 	return theme.Theme{}
+}
+
+func TestSettingsStore_SetActiveSession_SwitchesModelOnActiveSession(t *testing.T) {
+	sess1, res, state := setupIntegrationEnvironment(t, "llama3.2")
+	sess2, _, _ := setupIntegrationEnvironment(t, "llama3.2")
+	sess2.SessionID = "sess-2"
+
+	store := uiadapter.NewSettingsStore(sess1, res, state)
+	// Update active session to sess2
+	store.SetActiveSession(sess2)
+
+	handle, err := store.Settings().Providers.Apply(context.Background(), ports.ScopeUser, ports.ActivateModel{
+		Provider: "ollama",
+		Model:    "llama3.3",
+	})
+	if err != nil {
+		t.Fatalf("Apply ActivateModel error: %v", err)
+	}
+	drainOK(t, handle)
+
+	// sess2 must be updated to llama3.3
+	if got := sess2.CurrentModel(); got != "llama3.3" {
+		t.Errorf("sess2 model = %q, want 'llama3.3'", got)
+	}
+	// sess1 must remain on llama3.2
+	if got := sess1.CurrentModel(); got != "llama3.2" {
+		t.Errorf("sess1 model = %q, want 'llama3.2'", got)
+	}
 }

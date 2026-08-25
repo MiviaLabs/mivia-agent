@@ -62,6 +62,16 @@ func (s *Session) BeginSessionLoad() (func(), error) {
 	}, nil
 }
 
+// IsLoading reports whether Session.Load is currently executing on this session.
+func (s *Session) IsLoading() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.loading
+}
+
 // SetEventIdentityFactory installs the CLI-owned typed identity source used by
 // lifecycle events. The factory is sampled once per turn generation.
 func (s *Session) SetEventIdentityFactory(factory func(uint64) *events.Identity) {

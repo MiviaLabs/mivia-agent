@@ -11,6 +11,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
+	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
@@ -94,10 +95,21 @@ func unscopedModelSurface(sess *chat.Session, res *config.Resolved, root string,
 	// Start from a generation clone of the current (already agent-scoped) tools
 	// so the new dispatcher cannot regain excluded tools.
 	toolGeneration := toolBase.CloneForGenerationExcluding("ledger_read", "list_run_events", "read_output")
-	contextWiring := ContextDispatcherForVar(sess, res.Subagents)
+	var contextWiring ContextDispatcherWiring
+	if ContextDispatcherForVar != nil && res != nil {
+		contextWiring = ContextDispatcherForVar(sess, res.Subagents)
+	}
 	// Rebuild the skill policy against the live generation (plan 43) so a
 	// skill requiring a disabled/denied tool cannot activate after a switch.
 	liveScope := SkillScopeFromAgentAndRegistry(agentCtx.Selected, toolGeneration)
+	if NewSessionDispatcherVar == nil {
+		return &agentSurface{dispatcher: nil}, nil
+	}
+	var spool any
+	if RemainderSpoolFromRegistryVar != nil {
+		spool = RemainderSpoolFromRegistryVar(toolBase)
+	}
+	_ = spool
 	dispatcher, err := NewSessionDispatcherVar(SessionDispatcherOpts{
 		Registry: toolGeneration,
 		// Session-owned; see agentSessionState.LedgerRepo. Nil here is the
@@ -133,8 +145,14 @@ func unscopedModelSurface(sess *chat.Session, res *config.Resolved, root string,
 		// toolBase is the caller's AgentSurfaceSnapshot of Session.Tools: /model
 		// builds its candidate before SwitchBinding refuses on an active turn,
 		// so re-reading the live field here races the turn's publication.
-		RemainderSpool: RemainderSpoolFromRegistryVar(toolBase),
+		RemainderSpool: func() *remainder.Spool {
+			if RemainderSpoolFromRegistryVar != nil {
+				return RemainderSpoolFromRegistryVar(toolBase)
+			}
+			return nil
+		}(),
 	})
+
 	if err != nil {
 		return nil, fmt.Errorf("dispatcher: %w", err)
 	}

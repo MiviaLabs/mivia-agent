@@ -75,6 +75,14 @@ func NewConversation(sess *chat.Session) *Conversation {
 	return &Conversation{sess: sess}
 }
 
+// Session returns the wrapped *chat.Session.
+func (c *Conversation) Session() *chat.Session {
+	if c == nil {
+		return nil
+	}
+	return c.sess
+}
+
 // Send starts one user turn on the wrapped session. The second caller
 // blocks until the first finishes. The per-turn context is derived from
 // ctx; cancelling it cancels the turn and closes the channel.

@@ -128,6 +128,27 @@ func TestSelectSessionSwitchesAndRejectsUnknown(t *testing.T) {
 	}
 }
 
+func TestRunNewStartsFreshSession(t *testing.T) {
+	h := newHarness(t)
+	h.mu.Lock()
+	h.history = append(h.history, ports.Message{Text: "old message"})
+	h.mu.Unlock()
+
+	got := h.Run(context.Background(), "new", "")
+	if !got.ClearTranscript {
+		t.Errorf("got %+v, want ClearTranscript=true", got)
+	}
+	if got.Notice == "" {
+		t.Errorf("got empty Notice, want non-empty")
+	}
+	if len(h.History()) != 0 {
+		t.Errorf("got history %+v, want empty after /new", h.History())
+	}
+	if h.Title() != "New Session" {
+		t.Errorf("got title %q, want %q", h.Title(), "New Session")
+	}
+}
+
 func TestRunClearEmptiesHistoryAndAsksToClearTranscript(t *testing.T) {
 	h := newHarness(t)
 	h.mu.Lock()

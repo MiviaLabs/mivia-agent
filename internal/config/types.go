@@ -470,3 +470,10 @@ func (r *Resolved) ModelCatalog() []ProviderModelGroup {
 	}
 	return out
 }
+
+// SetModelCatalogForTest sets the model catalog on Resolved for testing purposes.
+func (r *Resolved) SetModelCatalogForTest(catalog []ProviderModelGroup) {
+	if r != nil {
+		r.modelCatalog = catalog
+	}
+}
