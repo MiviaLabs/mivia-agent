@@ -166,6 +166,65 @@ func TestStorageResetRefusesWhileHubOwned(t *testing.T) {
 	}
 }
 
+// TestStorageResetOneShotCollisionFailsCleanNoPartialWipe locks in the
+// residual risk this session's review concluded is safe: a one-shot CLI
+// invocation never calls hub.Join, so TryAcquireMaintenanceLock cannot catch
+// it (see maintenance_lock.go's doc comment) - but SQLite itself makes the
+// collision non-corrupting. A competitor connection left open on the
+// per-workspace orchestration store (the second store runStorageReset
+// processes; root/.mivia/context.db, matching storageResetWorkspace's seed)
+// forces that store's Compact to fail its leave-WAL step for the whole retry
+// budget, while never touching the hub lock. The wipe for that store must
+// still have committed - "fails clean" means Compact aborts before any
+// rewrite, not that the whole reset silently loses the wipe that already
+// landed.
+func TestStorageResetOneShotCollisionFailsCleanNoPartialWipe(t *testing.T) {
+	root := storageResetWorkspace(t)
+	orchestrationPath := filepath.Join(root, ".mivia", "context.db")
+
+	competitor, err := storage.OpenSQLite(orchestrationPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer competitor.Close()
+
+	var out, errBuf bytes.Buffer
+	err = runStorageWithIO([]string{"reset", "--workspace", root, "--yes"}, &out, &errBuf)
+	if err == nil {
+		t.Fatal("storage reset --yes succeeded despite a one-shot competitor connection open on the orchestration store")
+	}
+	if !strings.Contains(err.Error(), "safe to retry") {
+		t.Fatalf("error = %q, want it to name the collision as safe to retry, not an opaque failure", err.Error())
+	}
+
+	competitor.Close()
+	reopened, err := storage.OpenSQLite(orchestrationPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	n, err := reopened.Count(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("events count = %d after the wipe step, want 0 - a Compact failure must not roll back a wipe that already committed", n)
+	}
+	// TableRowCounts re-derives from sqlite_master + a real query per table;
+	// a torn or half-rewritten file would fail here rather than reporting a
+	// clean, fully-zeroed set - covers what an integrity_check would, without
+	// needing an exported query seam.
+	counts, err := reopened.TableRowCounts(context.Background())
+	if err != nil {
+		t.Fatalf("TableRowCounts after a failed compact: %v", err)
+	}
+	for table, count := range counts {
+		if count != 0 {
+			t.Fatalf("table %s has %d row(s) after the wipe, want 0", table, count)
+		}
+	}
+}
+
 // TestStorageUnknownSubcommandRejected keeps the dispatch fail-closed.
 func TestStorageUnknownSubcommandRejected(t *testing.T) {
 	var out, errBuf bytes.Buffer

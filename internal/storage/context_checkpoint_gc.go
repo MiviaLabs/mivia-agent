@@ -153,6 +153,15 @@ func (s *SQLite) Compact(ctx context.Context) error {
 	// window. See compact_contention_test.go for the confirmed lock
 	// semantics this assumes.
 	if err := compactLeaveWAL(ctx, conn); err != nil {
+		if isSQLiteBusy(err) {
+			// Distinguish this from a real failure: nothing has been
+			// rewritten (VACUUM never ran), so the store is exactly as it
+			// was before this call. A one-shot CLI invocation racing this
+			// call - the gap hub.TryAcquireMaintenanceLock's caller cannot
+			// close, since a one-shot command never joins the hub - lands
+			// here, not in data loss or a torn file.
+			return fmt.Errorf("leave WAL for compact: another process has this store open; nothing was rewritten, safe to retry: %w", err)
+		}
 		return fmt.Errorf("leave WAL for compact: %w", err)
 	}
 	// From here the store is out of WAL mode, so every return path must put it
