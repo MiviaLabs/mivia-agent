@@ -404,8 +404,9 @@ func (s *Session) buildAgentTurnOptions(snapshot agentTurnSnapshot, userText str
 		opts.UsageWriter = snapshot.context.manager.UsageWriter
 		opts.PreparationInput = input
 		opts.SummaryConfig = agent.SummaryConfig{
-			Summarizer: snapshot.context.summarizer,
-			Redaction:  snapshot.context.redaction,
+			Summarizer:        snapshot.context.summarizer,
+			UnavailableReason: snapshot.context.manager.SummaryUnavailableReason,
+			Redaction:         snapshot.context.redaction,
 		}
 	}
 	if turnDispatcher != nil {

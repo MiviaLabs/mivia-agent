@@ -244,7 +244,8 @@ func (s *Session) commitContextTurn(ctx context.Context, loop *agent.Loop, userT
 	s.contextHead = nextContextRevision(preparation, result)
 	s.mu.Unlock()
 	if !loop.TurnCompactionEmitted() {
-		s.emitContextCompaction(commitCtx, contextCfg, preparation, token.TurnID, haveSummary, loop.SummaryFailureReason())
+		reason := summaryUnavailableReason(contextCfg, haveSummary, loop.SummaryFailureReason())
+		s.emitContextCompaction(commitCtx, contextCfg, preparation, token.TurnID, haveSummary, reason)
 	}
 	// Durably committed under this turn's own still-valid fence, so the
 	// generation bump below cannot fence the turn out of its own persistence

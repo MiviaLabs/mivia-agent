@@ -218,6 +218,9 @@ type SummaryConfig struct {
 	// Summarizer is the captured provider/model/policy binding. Nil disables
 	// summary injection entirely.
 	Summarizer *contextmgr.Summarizer
+	// UnavailableReason names the setup-time failure that prevented a Summarizer
+	// from being wired, when Summarizer is nil.
+	UnavailableReason string
 	// Redaction is the host's compiled redaction policy. It classifies every
 	// envelope field and every provider output before anything reaches the
 	// wire or storage.

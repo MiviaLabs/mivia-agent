@@ -38,7 +38,15 @@ func prepareSDKOnce(ctx context.Context, l *Loop, opts Options, turn *sdkTurnSta
 					if key != "" && key != l.lastEmittedCompactionKey {
 						l.lastEmittedCompactionKey = key
 						_, haveSummary := l.InjectedSummary()
-						EmitCompaction(ctx, opts, fallback, haveSummary, l.SummaryFailureReason())
+						reason := l.SummaryFailureReason()
+						if !haveSummary && reason == "" && opts.SummaryConfig.Summarizer == nil {
+							if opts.SummaryConfig.UnavailableReason != "" {
+								reason = opts.SummaryConfig.UnavailableReason
+							} else {
+								reason = "no summarizer is configured for this session"
+							}
+						}
+						EmitCompaction(ctx, opts, fallback, haveSummary, reason)
 						l.turnCompactionEmitted = true
 					}
 				}
@@ -58,7 +66,15 @@ func prepareSDKOnce(ctx context.Context, l *Loop, opts Options, turn *sdkTurnSta
 		if key != "" && key != l.lastEmittedCompactionKey {
 			l.lastEmittedCompactionKey = key
 			_, haveSummary := l.InjectedSummary()
-			EmitCompaction(ctx, opts, preparation, haveSummary, l.SummaryFailureReason())
+			reason := l.SummaryFailureReason()
+			if !haveSummary && reason == "" && opts.SummaryConfig.Summarizer == nil {
+				if opts.SummaryConfig.UnavailableReason != "" {
+					reason = opts.SummaryConfig.UnavailableReason
+				} else {
+					reason = "no summarizer is configured for this session"
+				}
+			}
+			EmitCompaction(ctx, opts, preparation, haveSummary, reason)
 			l.turnCompactionEmitted = true
 		}
 	}
