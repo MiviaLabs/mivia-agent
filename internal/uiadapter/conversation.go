@@ -73,6 +73,8 @@ type Conversation struct {
 	generalMu     sync.RWMutex
 	scrollLines   int
 	showReasoning bool
+
+	subagents *SubagentThreads
 }
 
 // NewConversation wraps an existing chat.Session. The caller owns the
@@ -84,6 +86,15 @@ func NewConversation(sess *chat.Session) *Conversation {
 		scrollLines:   3,
 		showReasoning: true,
 	}
+}
+
+// SetSubagents connects the SubagentThreads registry for isolating
+// subagent events from the main chat transcript.
+func (c *Conversation) SetSubagents(subagents *SubagentThreads) {
+	if c == nil {
+		return
+	}
+	c.subagents = subagents
 }
 
 // SetNoticeOptions configures notice visibility options for this conversation.
@@ -195,7 +206,7 @@ func (c *Conversation) Send(ctx context.Context, in intent.Send) (ports.TurnHand
 	var seq uint64
 	emitSyntheticTurnStart(events, in.Text, &seq)
 
-	handler := newTurnHandler(events, closed, turnIDPtr, &seq, turnCtx, c.NoticeOptions())
+	handler := newTurnHandler(events, closed, turnIDPtr, &seq, turnCtx, c.NoticeOptions(), c.subagents)
 	previous := c.sess.SwapOnAgentEvent(handler)
 
 	var clearSubagent func()
@@ -239,12 +250,19 @@ func emitSyntheticTurnStart(events chan<- uievent.Event, input string, seq *uint
 // newTurnHandler returns the per-turn agent-event handler that runs as
 // the OnAgentEvent tap. It translates each agent.Event via
 // uiadapter.TranslateEventWithOptions, stamps the real TurnID once known, and
-// forwards onto the channel under a closed-check. The select on
-// turnCtx.Done() drops the event rather than blocks the agent loop if
-// the buffer is full and Cancel is mid-flight.
-func newTurnHandler(events chan<- uievent.Event, closed *atomic.Bool, turnIDPtr *atomic.Pointer[string], seq *uint64, turnCtx context.Context, opts TranslateOptions) func(agent.Event) {
+// forwards onto the channel under a closed-check. Subagent events (non-zero Origin)
+// are routed directly to the SubagentThreads registry and omitted from the
+// root conversation's turn stream. The select on turnCtx.Done() drops the event
+// rather than blocks the agent loop if the buffer is full and Cancel is mid-flight.
+func newTurnHandler(events chan<- uievent.Event, closed *atomic.Bool, turnIDPtr *atomic.Pointer[string], seq *uint64, turnCtx context.Context, opts TranslateOptions, subagents *SubagentThreads) func(agent.Event) {
 	return func(ev agent.Event) {
 		if closed.Load() {
+			return
+		}
+		if !ev.Origin.IsZero() {
+			if subagents != nil {
+				subagents.HandleEvent(ev, opts)
+			}
 			return
 		}
 		for _, e := range TranslateEventWithOptions(ev, opts) {
@@ -562,4 +580,9 @@ func (h *turnHandle) Cancel() {
 			close(h.events)
 		}
 	}
+}
+
+// ActiveTurn returns the current active turn handle, if any.
+func (c *Conversation) ActiveTurn() (ports.TurnHandle, bool) {
+	return nil, false
 }

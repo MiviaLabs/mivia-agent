@@ -14,6 +14,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
@@ -93,6 +94,24 @@ type Adapter struct {
 	// mcp is the MCP manager attached to the registry. Nil when MCP
 	// is disabled in config; cleanup is a no-op in that case.
 	mcp *mcp.Manager
+	// subagents is the active SubagentThreads registry.
+	subagents *SubagentThreads
+}
+
+// Thread satisfies ports.SubagentThreads.
+func (a *Adapter) Thread(callID string) (ports.Conversation, bool) {
+	if a == nil || a.subagents == nil {
+		return nil, false
+	}
+	return a.subagents.Thread(callID)
+}
+
+// SubagentThreads returns the active ports.SubagentThreads registry.
+func (a *Adapter) SubagentThreads() ports.SubagentThreads {
+	if a == nil {
+		return nil
+	}
+	return a.subagents
 }
 
 // New wires every Input field into a real chat.Session and returns it
@@ -126,7 +145,9 @@ func New(ctx context.Context, in Input) (*Adapter, func(), error) {
 		}
 		return nil, nil, fmt.Errorf("uiadapter: build session: %w", err)
 	}
+	subagents := NewSubagentThreads()
 	conv := NewConversation(sess)
+	conv.SetSubagents(subagents)
 	if in.Resolved != nil {
 		conv.SetNoticeOptions(TranslateOptions{
 			ShowIterationNotices:   in.Resolved.ShowIterationNotices,
@@ -137,6 +158,7 @@ func New(ctx context.Context, in Input) (*Adapter, func(), error) {
 		Conversation: conv,
 		store:        store,
 		mcp:          mcpMgr,
+		subagents:    subagents,
 	}, newCleanup(store, mcpMgr, mcpCleanup), nil
 }
 

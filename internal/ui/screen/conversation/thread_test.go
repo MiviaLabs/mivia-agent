@@ -31,7 +31,13 @@ func (c *scriptedThread) Send(_ context.Context, in intent.Send) (ports.TurnHand
 	c.sent = append(c.sent, in.Text)
 	return scriptedHandle{ch: c.events}, nil
 }
-func (c *scriptedThread) History() []ports.Message  { return c.history }
+func (c *scriptedThread) History() []ports.Message { return c.history }
+func (c *scriptedThread) ActiveTurn() (ports.TurnHandle, bool) {
+	if c.events != nil {
+		return scriptedHandle{ch: c.events}, true
+	}
+	return nil, false
+}
 func (c *scriptedThread) Model() ports.ModelInfo    { return ports.ModelInfo{} }
 func (c *scriptedThread) ContextUsage() ports.Usage { return ports.Usage{} }
 func (c *scriptedThread) Title() string             { return "scripted thread" }

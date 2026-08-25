@@ -58,11 +58,12 @@ type errConversation struct{ err error }
 func (e errConversation) Send(context.Context, intent.Send) (ports.TurnHandle, error) {
 	return nil, e.err
 }
-func (errConversation) History() []ports.Message  { return nil }
-func (errConversation) Model() ports.ModelInfo    { return ports.ModelInfo{} }
-func (errConversation) ContextUsage() ports.Usage { return ports.Usage{} }
-func (errConversation) Title() string             { return "error session" }
-func (errConversation) ID() string                { return "err-session" }
+func (errConversation) History() []ports.Message             { return nil }
+func (errConversation) ActiveTurn() (ports.TurnHandle, bool) { return nil, false }
+func (errConversation) Model() ports.ModelInfo               { return ports.ModelInfo{} }
+func (errConversation) ContextUsage() ports.Usage            { return ports.Usage{} }
+func (errConversation) Title() string                        { return "error session" }
+func (errConversation) ID() string                           { return "err-session" }
 
 func typeText(t *testing.T, s Screen, text string) Screen {
 	t.Helper()
@@ -1027,11 +1028,12 @@ type scriptedTestConversation struct {
 func (s *scriptedTestConversation) Send(context.Context, intent.Send) (ports.TurnHandle, error) {
 	return nil, nil
 }
-func (s *scriptedTestConversation) History() []ports.Message  { return s.history }
-func (s *scriptedTestConversation) Model() ports.ModelInfo    { return s.model }
-func (s *scriptedTestConversation) ContextUsage() ports.Usage { return s.usage }
-func (s *scriptedTestConversation) Title() string             { return s.title }
-func (s *scriptedTestConversation) ID() string                { return s.title }
+func (s *scriptedTestConversation) History() []ports.Message             { return s.history }
+func (s *scriptedTestConversation) ActiveTurn() (ports.TurnHandle, bool) { return nil, false }
+func (s *scriptedTestConversation) Model() ports.ModelInfo               { return s.model }
+func (s *scriptedTestConversation) ContextUsage() ports.Usage            { return s.usage }
+func (s *scriptedTestConversation) Title() string                        { return s.title }
+func (s *scriptedTestConversation) ID() string                           { return s.title }
 
 func TestConversationNewLoadsExistingHistory(t *testing.T) {
 	dark, _, themes := themePair(t)

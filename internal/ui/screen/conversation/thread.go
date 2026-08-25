@@ -34,10 +34,15 @@ import (
 // chat's turn vocabulary: without an origin marker the main screen
 // could not tell whose event it is, and the thread's reply would render
 // into the main transcript.
-type threadEventMsg struct{ event uievent.Event }
+type threadEventMsg struct {
+	callID string
+	event  uievent.Event
+}
 
 // threadEndedMsg is the thread counterpart of turnEndedMsg.
-type threadEndedMsg struct{}
+type threadEndedMsg struct {
+	callID string
+}
 
 // NewThread builds the embedded conversation screen for one subagent
 // thread. It is New plus the embedded flag: the same construction, the
@@ -56,12 +61,16 @@ func (s Screen) awaitEvent(events <-chan uievent.Event) tea.Cmd {
 	if !s.embedded {
 		return waitForEvent(events)
 	}
+	callID := s.threadID
+	if callID == "" && s.conv != nil {
+		callID = s.conv.ID()
+	}
 	return func() tea.Msg {
 		ev, ok := <-events
 		if !ok {
-			return threadEndedMsg{}
+			return threadEndedMsg{callID: callID}
 		}
-		return threadEventMsg{event: ev}
+		return threadEventMsg{callID: callID, event: ev}
 	}
 }
 
@@ -143,26 +152,33 @@ func (s *Screen) setSurface(width, height int) {
 // openThread selects callID's thread: reusing the cached Screen when
 // the dialog reopens on the same subagent (its transcript IS the
 // ongoing state), building a fresh one from the thread's History when
-// it does not exist yet. It reports whether a live thread surfaced;
-// false means the caller falls back to the step-log view.
-func (s *Screen) openThread(callID string) bool {
+// it does not exist yet. It reports whether a live thread surfaced and
+// any initial stream command scheduled.
+func (s *Screen) openThread(callID string) (bool, tea.Cmd) {
 	if s.threads == nil {
-		return false
+		return false, nil
 	}
 	if s.thread != nil && s.threadID == callID {
-		return true
+		return true, nil
 	}
 	conv, ok := s.threads.Thread(callID)
 	if !ok {
-		return false
+		return false, nil
 	}
 	thread := NewThread(s.Theme, s.Tier, conv, render.DialogBodyWidth(contentWidth(s.width)), s.now)
 	thread.themes = s.themes
+	thread.threadID = callID
 	thread.SetCommands(s.composer.Commands())
 	thread.SetCommandRunner(s.runner)
 	thread.LoadHistory(conv.History())
 	s.thread, s.threadID = &thread, callID
-	return true
+
+	var cmd tea.Cmd
+	if handle, running := conv.ActiveTurn(); running && handle != nil {
+		s.thread.active = handle
+		cmd = s.thread.awaitEvent(handle.Events())
+	}
+	return true, cmd
 }
 
 // closeThread drops the cached embedded screen when the panel closes:
@@ -182,6 +198,46 @@ func (s Screen) threadDialogKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
 	case "esc", "ctrl+b", "ctrl+c":
 		s.panel.dialog, s.panel.dialogAgent = false, ""
 		return s, tea.ClearScreen
+	case "pgup":
+		if s.thread != nil {
+			s.thread.transcript = s.thread.transcript.ScrollBy(-max(1, s.thread.transcriptHeight()/2))
+			return s, nil
+		}
+	case "pgdown":
+		if s.thread != nil {
+			s.thread.transcript = s.thread.transcript.ScrollBy(max(1, s.thread.transcriptHeight()/2))
+			return s, nil
+		}
+	case "home", "ctrl+home":
+		if s.thread != nil {
+			s.thread.transcript = s.thread.transcript.ScrollToTop()
+			return s, nil
+		}
+	case "end", "ctrl+end":
+		if s.thread != nil {
+			s.thread.transcript = s.thread.transcript.ScrollToBottom()
+			return s, nil
+		}
+	case "ctrl+u":
+		if s.thread != nil {
+			s.thread.transcript = s.thread.transcript.ScrollBy(-max(1, s.thread.transcriptHeight()/2))
+			return s, nil
+		}
+	case "ctrl+d":
+		if s.thread != nil {
+			s.thread.transcript = s.thread.transcript.ScrollBy(max(1, s.thread.transcriptHeight()/2))
+			return s, nil
+		}
+	case "up":
+		if s.thread != nil && s.thread.composer.Value() == "" {
+			s.thread.transcript = s.thread.transcript.ScrollBy(-1)
+			return s, nil
+		}
+	case "down":
+		if s.thread != nil && s.thread.composer.Value() == "" {
+			s.thread.transcript = s.thread.transcript.ScrollBy(1)
+			return s, nil
+		}
 	}
 	if s.thread == nil {
 		return s, nil
@@ -202,6 +258,16 @@ func (s Screen) threadDialogKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
 func (s Screen) forwardThreadMsg(msg tea.Msg) (app.Screen, tea.Cmd) {
 	if s.thread == nil {
 		return s, nil
+	}
+	switch m := msg.(type) {
+	case threadEventMsg:
+		if m.callID != "" && m.callID != s.threadID {
+			return s, nil
+		}
+	case threadEndedMsg:
+		if m.callID != "" && m.callID != s.threadID {
+			return s, nil
+		}
 	}
 	next, cmd := s.thread.Update(msg)
 	// Update returns the model BY VALUE (the tea convention); the cached

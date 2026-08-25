@@ -66,6 +66,7 @@ type Usage struct {
 // agent directly; it sends intents and reads state back.
 type Conversation interface {
 	Send(ctx context.Context, in intent.Send) (TurnHandle, error)
+	ActiveTurn() (TurnHandle, bool)
 	History() []Message
 	Model() ModelInfo
 	ContextUsage() Usage

@@ -87,6 +87,8 @@ func (c *Conversation) Send(ctx context.Context, _ intent.Send) (ports.TurnHandl
 // real conversation state to report.
 func (c *Conversation) History() []ports.Message { return nil }
 
+func (c *Conversation) ActiveTurn() (ports.TurnHandle, bool) { return nil, false }
+
 func (c *Conversation) Model() ports.ModelInfo {
 	return ports.ModelInfo{Name: "replay", Provider: "fixture"}
 }

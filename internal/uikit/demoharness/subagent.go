@@ -68,6 +68,10 @@ func (c *threadConversation) Send(_ context.Context, in intent.Send) (ports.Turn
 	return &turnHandle{id: id, events: ch, cancel: func() {}}, nil
 }
 
+func (c *threadConversation) ActiveTurn() (ports.TurnHandle, bool) {
+	return nil, false
+}
+
 // chunkReply splits a scripted reply into stream-sized pieces, the way
 // the main scripts hand-write their deltas: by sentence.
 func chunkReply(reply string) []string {

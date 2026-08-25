@@ -28,7 +28,8 @@ func (c *backgroundTestConversation) Send(_ context.Context, in intent.Send) (po
 	return &testTurnHandle{id: "turn-" + c.id, events: c.events}, nil
 }
 
-func (c *backgroundTestConversation) History() []ports.Message { return c.history }
+func (c *backgroundTestConversation) History() []ports.Message             { return c.history }
+func (c *backgroundTestConversation) ActiveTurn() (ports.TurnHandle, bool) { return nil, false }
 func (c *backgroundTestConversation) Model() ports.ModelInfo {
 	return ports.ModelInfo{Name: "model-" + c.id}
 }

@@ -154,3 +154,8 @@ func (h *Harness) awaitDecision(tp uievent.ToolPendingBody, turnID string, cance
 		return false, false
 	}
 }
+
+// ActiveTurn returns the current active turn handle, if any.
+func (h *Harness) ActiveTurn() (ports.TurnHandle, bool) {
+	return nil, false
+}

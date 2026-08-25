@@ -34,11 +34,12 @@ func (c *fakeConversation) Send(ctx context.Context, in intent.Send) (TurnHandle
 	close(events)
 	return &fakeTurnHandle{id: "t1", events: events}, nil
 }
-func (c *fakeConversation) History() []Message  { return c.history }
-func (c *fakeConversation) Model() ModelInfo    { return c.model }
-func (c *fakeConversation) ContextUsage() Usage { return c.usage }
-func (c *fakeConversation) Title() string       { return "fake title" }
-func (c *fakeConversation) ID() string          { return "fake-conv" }
+func (c *fakeConversation) History() []Message             { return c.history }
+func (c *fakeConversation) ActiveTurn() (TurnHandle, bool) { return nil, false }
+func (c *fakeConversation) Model() ModelInfo               { return c.model }
+func (c *fakeConversation) ContextUsage() Usage            { return c.usage }
+func (c *fakeConversation) Title() string                  { return "fake title" }
+func (c *fakeConversation) ID() string                     { return "fake-conv" }
 
 var _ Conversation = (*fakeConversation)(nil)
 var _ TurnHandle = (*fakeTurnHandle)(nil)

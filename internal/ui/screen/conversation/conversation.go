@@ -281,6 +281,10 @@ func (s *Screen) reflow() {
 	s.blackboard.SetWidth(w)
 	s.resize()
 	s.refreshTopbar()
+	if s.thread != nil {
+		dw, _ := s.dialogSize()
+		s.thread.setSurface(render.DialogBodyWidth(dw), s.panelBodyRows())
+	}
 }
 
 func (s *Screen) refreshActivity() {

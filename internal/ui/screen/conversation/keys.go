@@ -363,7 +363,9 @@ func (s Screen) handlePanelListKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bo
 			// A file row keeps the diff/source dialog.
 			if a, isAgent := s.panel.selectedAgent(); isAgent {
 				s.panel.dialogAgent = a.ID
-				s.openThread(a.ID)
+				_, openCmd := s.openThread(a.ID)
+				s.panel.dialog, s.panel.offset = true, 0
+				return s, openCmd, true
 			} else {
 				s.panel.dialogAgent = ""
 			}
@@ -382,6 +384,27 @@ func (s Screen) panelDialogKey(msg tea.KeyPressMsg) app.Screen {
 		s.panel.dialog = false
 		next, _, _ := s.quit()
 		return next
+	}
+	switch msg.String() {
+	case "up", "k":
+		s.scrollPanel(-1)
+		return s
+	case "down", "j":
+		s.scrollPanel(1)
+		return s
+	case "pgup":
+		s.scrollPanel(-max(1, s.panelBodyRows()/2))
+		return s
+	case "pgdown":
+		s.scrollPanel(max(1, s.panelBodyRows()/2))
+		return s
+	case "home":
+		s.panel.offset = 0
+		return s
+	case "end":
+		s.panel.offset = 100000
+		s.scrollPanel(0)
+		return s
 	}
 	if id, ok := s.keys.Match(keymap.ContextFiles, msg.String()); ok {
 		switch id {

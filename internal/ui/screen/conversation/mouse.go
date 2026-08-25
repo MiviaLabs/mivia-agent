@@ -27,11 +27,12 @@ func (s Screen) handleWheel(msg tea.MouseWheelMsg) (app.Screen, tea.Cmd) {
 		s.approval = s.approval.ScrollBy(step)
 		return s, nil
 	}
-	// The content dialog covers the chat column; scrolling a transcript
-	// the user cannot see acts on something invisible (the same rule
-	// that dismisses overlays on any key). The dialog scrolls by
-	// keyboard only.
 	if s.panel.dialog {
+		if s.thread != nil {
+			s.thread.transcript = s.thread.transcript.ScrollBy(step)
+			return s, nil
+		}
+		s.scrollPanel(step)
 		return s, nil
 	}
 	s.transcript = s.transcript.ScrollBy(step)

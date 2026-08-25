@@ -329,10 +329,9 @@ func newRealScreen(ctx context.Context, c cfg, th theme.Theme, tier theme.Tier, 
 	if err != nil {
 		return conversation.Screen{}, fmt.Errorf("build adapter: %w", err)
 	}
-	// Cleanup is owned by the program lifetime; Bubble Tea's Run returns
-	// when the user quits, so defer-close on cleanup is the right place.
-	defer cleanup()
-	return conversation.New(th, tier, themes, adapter, nil, initialComposerWidth, nil), nil
+	screen := conversation.New(th, tier, themes, adapter, nil, initialComposerWidth, nil)
+	screen.SetSubagentThreads(adapter)
+	return screen, nil
 }
 
 // plainStreamReason names the one reason the cockpit must not start, or

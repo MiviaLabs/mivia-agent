@@ -2,11 +2,13 @@ package uiadapter
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
@@ -44,12 +46,53 @@ func (s *SubagentThreads) Thread(callID string) (ports.Conversation, bool) {
 	return c, ok
 }
 
+// HandleEvent receives subagent-originated agent.Events, translates them,
+// records their history, and routes them to the matching SubagentTranscriptConversation.
+func (s *SubagentThreads) HandleEvent(ev agent.Event, opts TranslateOptions) {
+	if ev.Origin.IsZero() {
+		return
+	}
+	key := ev.Origin.TaskID
+	if key == "" {
+		key = ev.Origin.Agent
+	}
+	if key == "" {
+		key = ev.ToolCallID
+	}
+	if key == "" {
+		return
+	}
+
+	conv := s.getOrCreate(key, ev.Origin.Agent)
+	translated := TranslateEventWithOptions(ev, opts)
+	for _, e := range translated {
+		conv.RecordEvent(e)
+	}
+}
+
+func (s *SubagentThreads) getOrCreate(key, title string) *SubagentTranscriptConversation {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if c, ok := s.threads[key]; ok {
+		if stc, ok := c.(*SubagentTranscriptConversation); ok {
+			return stc
+		}
+	}
+	if title == "" {
+		title = key
+	}
+	stc := NewSubagentTranscriptConversation(title, ports.ModelInfo{Name: title}, nil)
+	s.threads[key] = stc
+	return stc
+}
+
 // SubagentTranscriptConversation represents a subagent transcript thread.
 type SubagentTranscriptConversation struct {
-	title   string
-	model   ports.ModelInfo
-	mu      sync.Mutex
-	history []ports.Message
+	title     string
+	model     ports.ModelInfo
+	mu        sync.Mutex
+	history   []ports.Message
+	listeners []chan uievent.Event
 }
 
 // NewSubagentTranscriptConversation creates a subagent conversation wrapper.
@@ -63,33 +106,126 @@ func NewSubagentTranscriptConversation(title string, model ports.ModelInfo, hist
 	}
 }
 
+// RecordEvent processes a translated uievent.Event, updating history and broadcasting to active listeners.
+func (c *SubagentTranscriptConversation) RecordEvent(e uievent.Event) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	switch e.Kind {
+	case uievent.KindTurnStart:
+		body, _ := e.Body.(uievent.TurnStartBody)
+		c.history = append(c.history, ports.Message{
+			Role: "user",
+			Text: body.Input,
+			At:   e.At,
+		})
+	case uievent.KindReasoning:
+		body, _ := e.Body.(uievent.ReasoningDeltaBody)
+		c.ensureLastAssistantMessage(e.At)
+		lastIdx := len(c.history) - 1
+		c.history[lastIdx].Reasoning += body.Text
+	case uievent.KindToolStart:
+		body, _ := e.Body.(uievent.ToolStartBody)
+		c.ensureLastAssistantMessage(e.At)
+		lastIdx := len(c.history) - 1
+		argsBytes, _ := json.Marshal(body.Args)
+		c.history[lastIdx].ToolCalls = append(c.history[lastIdx].ToolCalls, ports.ToolCall{
+			ID:        body.ToolCallID,
+			Name:      body.Name,
+			Arguments: string(argsBytes),
+		})
+	case uievent.KindToolEnd:
+		body, _ := e.Body.(uievent.ToolEndBody)
+		c.ensureLastAssistantMessage(e.At)
+		lastIdx := len(c.history) - 1
+		for i := range c.history[lastIdx].ToolCalls {
+			if c.history[lastIdx].ToolCalls[i].ID == body.ToolCallID {
+				c.history[lastIdx].ToolCalls[i].Output = body.Result
+				break
+			}
+		}
+		if body.Diff != nil {
+			c.history[lastIdx].Diffs = append(c.history[lastIdx].Diffs, *body.Diff)
+		}
+	case uievent.KindTextDelta:
+		body, _ := e.Body.(uievent.TextDeltaBody)
+		c.ensureLastAssistantMessage(e.At)
+		lastIdx := len(c.history) - 1
+		c.history[lastIdx].Text += body.Text
+	case uievent.KindTextEnd:
+		body, _ := e.Body.(uievent.TextEndBody)
+		c.ensureLastAssistantMessage(e.At)
+		lastIdx := len(c.history) - 1
+		if c.history[lastIdx].Text == "" {
+			c.history[lastIdx].Text = body.Text
+		}
+	}
+
+	for _, ch := range c.listeners {
+		select {
+		case ch <- e:
+		default:
+		}
+	}
+}
+
+func (c *SubagentTranscriptConversation) ensureLastAssistantMessage(at time.Time) {
+	if len(c.history) == 0 || c.history[len(c.history)-1].Role != "assistant" {
+		c.history = append(c.history, ports.Message{
+			Role: "assistant",
+			At:   at,
+		})
+	}
+}
+
+// ActiveTurn returns a live event subscription for the active subagent.
+func (c *SubagentTranscriptConversation) ActiveTurn() (ports.TurnHandle, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	ch := make(chan uievent.Event, 32)
+	c.listeners = append(c.listeners, ch)
+	id := fmt.Sprintf("%s-live", c.title)
+	h := &subagentTurnHandle{
+		id:     id,
+		events: ch,
+		cancel: func() {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			for i, l := range c.listeners {
+				if l == ch {
+					c.listeners = append(c.listeners[:i], c.listeners[i+1:]...)
+					break
+				}
+			}
+		},
+	}
+	return h, true
+}
+
 // Send records user messages in the thread and emits transcript stream events.
 func (c *SubagentTranscriptConversation) Send(_ context.Context, in intent.Send) (ports.TurnHandle, error) {
 	c.mu.Lock()
 	c.history = append(c.history, ports.Message{Role: "user", Text: in.Text, At: time.Now()})
+	ch := make(chan uievent.Event, 32)
+	c.listeners = append(c.listeners, ch)
 	c.mu.Unlock()
 
 	id := fmt.Sprintf("%s-turn-%d", c.title, len(c.history))
-	ch := make(chan uievent.Event, 4)
-	go func() {
-		defer close(ch)
-		at := time.Now()
-		ch <- uievent.Event{
-			Kind:   uievent.KindTurnStart,
-			TurnID: id,
-			Seq:    1,
-			At:     at,
-			Body:   uievent.TurnStartBody{Input: in.Text},
-		}
-		ch <- uievent.Event{
-			Kind:   uievent.KindTurnEnd,
-			TurnID: id,
-			Seq:    2,
-			At:     at,
-			Body:   uievent.TurnEndBody{Reason: "completed"},
-		}
-	}()
-	return &subagentTurnHandle{id: id, events: ch}, nil
+	h := &subagentTurnHandle{
+		id:     id,
+		events: ch,
+		cancel: func() {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			for i, l := range c.listeners {
+				if l == ch {
+					c.listeners = append(c.listeners[:i], c.listeners[i+1:]...)
+					break
+				}
+			}
+		},
+	}
+	return h, nil
 }
 
 // History returns a copy of the thread history.
@@ -127,8 +263,13 @@ func (c *SubagentTranscriptConversation) ID() string {
 type subagentTurnHandle struct {
 	id     string
 	events chan uievent.Event
+	cancel func()
 }
 
 func (h *subagentTurnHandle) ID() string                   { return h.id }
 func (h *subagentTurnHandle) Events() <-chan uievent.Event { return h.events }
-func (h *subagentTurnHandle) Cancel()                      {}
+func (h *subagentTurnHandle) Cancel() {
+	if h.cancel != nil {
+		h.cancel()
+	}
+}

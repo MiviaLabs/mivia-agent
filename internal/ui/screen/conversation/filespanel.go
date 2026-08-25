@@ -527,17 +527,19 @@ func (p panel) filterEntries(needle string) ([]fileEntry, []subagentRow) {
 }
 
 // openPanelDialogForSelected opens the diff dialog or subagent thread for the selected item.
-func (s *Screen) openPanelDialogForSelected() {
+func (s *Screen) openPanelDialogForSelected() tea.Cmd {
 	if !s.panelDialogFits() {
-		return
+		return nil
 	}
+	var cmd tea.Cmd
 	if a, isAgent := s.panel.selectedAgent(); isAgent {
 		s.panel.dialogAgent = a.ID
-		s.openThread(a.ID)
+		_, cmd = s.openThread(a.ID)
 	} else {
 		s.panel.dialogAgent = ""
 	}
 	s.panel.dialog, s.panel.offset = true, 0
+	return cmd
 }
 
 // handleNavClick routes mouse clicks within the nav sidebar.
