@@ -398,3 +398,35 @@ func TestRebindGroupsKeepsFilterAndClampsCursor(t *testing.T) {
 		t.Errorf("rebind with filter kept did not rebuild the grouped list:\n%s", view)
 	}
 }
+
+func TestViewWindowScrollsWithCursor(t *testing.T) {
+	items := []string{"item0", "item1", "item2", "item3", "item4", "item5", "item6", "item7", "item8", "item9"}
+	m := New(loadTheme(t), theme.TierASCII, items)
+
+	// Top position: items 0..2
+	v0 := ansi.Strip(m.ViewWindow(3))
+	if !strings.Contains(v0, "> item0") || !strings.Contains(v0, "item2") || strings.Contains(v0, "item3") {
+		t.Errorf("expected item0..item2 at top, got:\n%s", v0)
+	}
+
+	// Move cursor down 5 times to item 5
+	for i := 0; i < 5; i++ {
+		m, _ = m.Update(downKey())
+	}
+	v5 := ansi.Strip(m.ViewWindow(3))
+	if !strings.Contains(v5, "> item5") {
+		t.Errorf("expected > item5 visible when cursor is at 5, got:\n%s", v5)
+	}
+	if strings.Contains(v5, "item0") || strings.Contains(v5, "item1") {
+		t.Errorf("item0/item1 should have scrolled off, got:\n%s", v5)
+	}
+
+	// Move to bottom (item 9)
+	for i := 0; i < 10; i++ {
+		m, _ = m.Update(downKey())
+	}
+	v9 := ansi.Strip(m.ViewWindow(3))
+	if !strings.Contains(v9, "> item9") || !strings.Contains(v9, "item7") || strings.Contains(v9, "item6") {
+		t.Errorf("expected item7..item9 at bottom, got:\n%s", v9)
+	}
+}

@@ -481,3 +481,23 @@ func TestMouseClickCloseDismissesThemePicker(t *testing.T) {
 		t.Errorf("got msg %T, want app.PopScreenMsg", msg)
 	}
 }
+
+func TestSmallScreenThemePickerKeepsCursorVisible(t *testing.T) {
+	themes := loadThemes(t)
+	s := New(themes[0], theme.TierASCII, themes)
+	// Small height 14 terminal
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 60, Height: 14})
+	s = next.(Screen)
+
+	// Move cursor down to last theme
+	for range themes {
+		next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+		s = next.(Screen)
+	}
+
+	lastTheme := themes[len(themes)-1].Name
+	view := s.View()
+	if !strings.Contains(view, lastTheme) {
+		t.Errorf("expected last theme %q to be visible on small screen when selected:\n%s", lastTheme, view)
+	}
+}

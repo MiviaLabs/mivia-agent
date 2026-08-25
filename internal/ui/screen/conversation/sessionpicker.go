@@ -250,6 +250,10 @@ func (sp sessionPicker) sessionMark(s ports.SessionSummary) string {
 }
 
 func (sp sessionPicker) View(t theme.Theme, tier theme.Tier, innerWidth int, now time.Time) string {
+	return sp.ViewWindow(t, tier, innerWidth, 0, now)
+}
+
+func (sp sessionPicker) ViewWindow(t theme.Theme, tier theme.Tier, innerWidth, maxRows int, now time.Time) string {
 	vis := sp.visible()
 	if len(vis) == 0 {
 		if sp.filter != "" {
@@ -258,12 +262,20 @@ func (sp sessionPicker) View(t theme.Theme, tier theme.Tier, innerWidth int, now
 		return render.Role(t, tier, theme.RoleFGSubtle).Render("no saved sessions found")
 	}
 
+	avail := maxRows
+	if sp.filter != "" && avail > 1 {
+		avail--
+	}
+	start, end := render.WindowSlice(len(vis), sp.cursor, avail)
+	visSlice := vis[start:end]
+
 	var b strings.Builder
-	for i, s := range vis {
+	for i, s := range visSlice {
+		actualIdx := start + i
 		if i > 0 {
 			b.WriteByte('\n')
 		}
-		selected := i == sp.cursor
+		selected := actualIdx == sp.cursor
 		prefix := "  "
 		if selected {
 			prefix = "> "
@@ -379,6 +391,12 @@ func renderSessionPickerDialog(t theme.Theme, tier theme.Tier, width, height int
 		return render.Dialog(t, tier, width, height, title, sp.PreviewView(t, tier, innerW, bodyRows, now),
 			"[enter] resume  [←/→] list  [↑/↓] scroll  [esc] cancel")
 	}
-	return render.Dialog(t, tier, width, height, "resume session", sp.View(t, tier, innerW, now),
+	var body string
+	if height > 0 {
+		body = sp.ViewWindow(t, tier, innerW, bodyRows, now)
+	} else {
+		body = sp.View(t, tier, innerW, now)
+	}
+	return render.Dialog(t, tier, width, height, "resume session", body,
 		"[enter] resume  [←/→] preview  [esc] cancel  type to filter")
 }

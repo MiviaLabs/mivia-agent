@@ -402,3 +402,51 @@ func TestDialogCloseButtonAndHitTesting(t *testing.T) {
 		t.Errorf("expected DialogHitsBackdrop to return false for click inside dialog")
 	}
 }
+
+func TestWindowSlice(t *testing.T) {
+	tests := []struct {
+		name      string
+		total     int
+		cursor    int
+		maxRows   int
+		wantStart int
+		wantEnd   int
+	}{
+		{"unconstrained maxRows 0", 20, 5, 0, 0, 20},
+		{"negative maxRows", 20, 5, -1, 0, 20},
+		{"empty list", 0, 0, 5, 0, 0},
+		{"total less than maxRows", 3, 1, 5, 0, 3},
+		{"total equals maxRows", 5, 2, 5, 0, 5},
+		{"cursor at top", 20, 0, 5, 0, 5},
+		{"cursor within first page", 20, 3, 5, 0, 5},
+		{"cursor moves past first page", 20, 5, 5, 1, 6},
+		{"cursor in middle", 20, 10, 5, 6, 11},
+		{"cursor at bottom", 20, 19, 5, 15, 20},
+		{"cursor beyond total", 20, 25, 5, 15, 20},
+		{"negative cursor", 20, -5, 5, 0, 5},
+		{"single row window", 10, 4, 1, 4, 5},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotStart, gotEnd := WindowSlice(tt.total, tt.cursor, tt.maxRows)
+			if gotStart != tt.wantStart || gotEnd != tt.wantEnd {
+				t.Errorf("WindowSlice(%d, %d, %d) = (%d, %d), want (%d, %d)",
+					tt.total, tt.cursor, tt.maxRows, gotStart, gotEnd, tt.wantStart, tt.wantEnd)
+			}
+			if tt.total > 0 && tt.maxRows > 0 {
+				effectiveCursor := tt.cursor
+				if effectiveCursor >= tt.total {
+					effectiveCursor = tt.total - 1
+				}
+				if effectiveCursor < 0 {
+					effectiveCursor = 0
+				}
+				if effectiveCursor < gotStart || effectiveCursor >= gotEnd {
+					t.Errorf("WindowSlice(%d, %d, %d): cursor %d outside [%d, %d)",
+						tt.total, tt.cursor, tt.maxRows, effectiveCursor, gotStart, gotEnd)
+				}
+			}
+		})
+	}
+}

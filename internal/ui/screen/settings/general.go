@@ -202,10 +202,16 @@ func (s *generalSection) View() string {
 	if s.store == nil {
 		return render.Role(s.theme, s.tier, theme.RoleFGSubtle).Render("General is unavailable.")
 	}
+	avail := s.height
+	if s.notice != "" && avail > 1 {
+		avail--
+	}
+	start, end := render.WindowSlice(len(s.rows), s.cursor, avail)
 	var b []byte
-	for i, row := range s.rows {
+	for i, row := range s.rows[start:end] {
+		actualIdx := start + i
 		line := row.f.View()
-		if i == s.cursor {
+		if actualIdx == s.cursor {
 			line = "> " + line
 		} else {
 			line = "  " + line

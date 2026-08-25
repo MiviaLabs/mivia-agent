@@ -52,6 +52,35 @@ func DialogBodyWidth(width int) int {
 	return width - 2*marginX - 2 - 4
 }
 
+// WindowSlice calculates the [start, end) index range to window total items
+// within maxRows visible lines such that cursor is guaranteed to be within
+// [start, end). If maxRows <= 0 or total <= maxRows, it returns (0, total).
+func WindowSlice(total, cursor, maxRows int) (start, end int) {
+	if maxRows <= 0 || total <= maxRows {
+		return 0, total
+	}
+	if cursor >= total {
+		cursor = total - 1
+	}
+	if cursor < 0 {
+		cursor = 0
+	}
+	if cursor >= maxRows {
+		start = cursor - maxRows + 1
+	}
+	if start > total-maxRows {
+		start = total - maxRows
+	}
+	if start < 0 {
+		start = 0
+	}
+	end = start + maxRows
+	if end > total {
+		end = total
+	}
+	return start, end
+}
+
 // Dialog renders title, body, and hint inside a bordered, inset-filled
 // box centered on a width x height terminal. It is the one centered
 // dialog primitive: this renderer has no compositing layer, so the

@@ -172,11 +172,17 @@ func (s *modelsSection) View() string {
 		return render.Role(s.theme, s.tier, theme.RoleFGSubtle).Render("Models is unavailable.")
 	}
 	lines := s.alignedRows()
+	avail := s.height
+	if s.notice != "" && avail > 1 {
+		avail--
+	}
+	start, end := render.WindowSlice(len(lines), s.cursor, avail)
 
 	var b []byte
-	for i, line := range lines {
+	for i, line := range lines[start:end] {
+		actualIdx := start + i
 		marker := "  "
-		if i == s.cursor {
+		if actualIdx == s.cursor {
 			marker = "> "
 		}
 		b = append(b, (marker + line)...)

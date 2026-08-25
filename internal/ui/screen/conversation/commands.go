@@ -271,6 +271,12 @@ func (s Screen) handleSessionPickerKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd
 // renderPickerDialog draws the /model and /agents pickers as centered
 // dialogs, the same primitive themepicker.Screen uses.
 func renderPickerDialog(t theme.Theme, tier theme.Tier, width, height int, title string, p picker.Model) string {
-	return render.Dialog(t, tier, width, height, title, p.View(),
+	var body string
+	if height > 0 {
+		body = p.ViewWindow(render.DialogBodyRows(height))
+	} else {
+		body = p.View()
+	}
+	return render.Dialog(t, tier, width, height, title, body,
 		"[enter] select  [esc] cancel  type to filter")
 }

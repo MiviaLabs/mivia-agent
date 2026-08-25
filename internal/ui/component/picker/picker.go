@@ -225,16 +225,32 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	return m, nil
 }
 
+// View returns the full list of items (unwindowed).
 func (m Model) View() string {
+	return m.ViewWindow(0)
+}
+
+// ViewWindow returns a window of items sized to fit within maxRows lines,
+// ensuring the currently selected item (cursor) is always visible.
+// If maxRows <= 0, all items are rendered.
+func (m Model) ViewWindow(maxRows int) string {
+	avail := maxRows
+	if m.filter != "" && avail > 1 {
+		avail--
+	}
+	start, end := render.WindowSlice(len(m.items), m.cursor, avail)
+	visibleItems := m.items[start:end]
+
 	var b strings.Builder
-	for i, it := range m.items {
+	for i, it := range visibleItems {
+		actualIdx := start + i
 		switch it.kind {
 		case itemKindHeader:
 			b.WriteString(render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Render(it.text))
 			b.WriteByte('\n')
 		case itemKindModel:
 			style, prefix := render.Role(m.Theme, m.Tier, theme.RoleFG), "  "
-			if i == m.cursor {
+			if actualIdx == m.cursor {
 				style = render.WithBg(style, m.Theme, m.Tier, theme.RoleBGSelection)
 				prefix = "> "
 			}

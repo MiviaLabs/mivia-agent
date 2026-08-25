@@ -149,7 +149,22 @@ func (s Screen) View() string {
 	pt := s.previewTheme()
 	s.picker.Theme, s.picker.Tier = pt, s.Tier
 	hint := "[enter] select  [esc] cancel  type to filter"
-	body := s.picker.View() + "\n\n" + s.previewView()
+	var body string
+	if s.height > 0 {
+		avail := render.DialogBodyRows(s.height)
+		previewText := s.previewView()
+		previewLines := strings.Count(previewText, "\n") + 1
+		pickerRows := avail - previewLines - 2
+		if pickerRows < 3 {
+			pickerRows = max(3, avail/2)
+		}
+		if pickerRows > avail {
+			pickerRows = avail
+		}
+		body = s.picker.ViewWindow(pickerRows) + "\n\n" + previewText
+	} else {
+		body = s.picker.View() + "\n\n" + s.previewView()
+	}
 	return render.Dialog(pt, s.Tier, s.width, s.height, s.title(), body, hint)
 }
 

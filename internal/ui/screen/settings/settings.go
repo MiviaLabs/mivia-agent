@@ -346,11 +346,14 @@ func (s Screen) View() string {
 // navView draws the tab sidebar list: active tab marked with '>' and
 // highlighted background when the sidebar holds focus, or '•' when detail has focus.
 func (s Screen) navView() string {
+	avail := render.DialogBodyRows(s.height)
+	start, end := render.WindowSlice(len(s.sections), s.nav, avail)
 	var b strings.Builder
-	for i, sec := range s.sections {
+	for i, sec := range s.sections[start:end] {
+		actualIdx := start + i
 		style := render.Role(s.Theme, s.Tier, theme.RoleFG)
 		prefix := "  "
-		if i == s.nav {
+		if actualIdx == s.nav {
 			if s.focus == render.Left {
 				style = render.WithBg(style, s.Theme, s.Tier, theme.RoleBGSelection)
 				prefix = "> "

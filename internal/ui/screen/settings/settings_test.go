@@ -338,3 +338,17 @@ func TestDialogTitleFollowsActiveSection(t *testing.T) {
 		t.Errorf("expected title after Down to contain 'projects', got %q", s.title())
 	}
 }
+
+func TestSmallScreenSettingsNavKeepsCursorVisible(t *testing.T) {
+	s := newScreen(t, 80, 12)
+	// Move down to the last section in nav
+	for i := 0; i < len(s.sections); i++ {
+		next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+		s = next.(Screen)
+	}
+	view := s.View()
+	lastTitle := s.sections[len(s.sections)-1].Title()
+	if !strings.Contains(view, lastTitle) {
+		t.Errorf("expected last section %q to be visible on small screen when selected:\n%s", lastTitle, view)
+	}
+}

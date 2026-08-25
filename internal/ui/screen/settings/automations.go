@@ -235,10 +235,17 @@ func (s *automationsSection) View() string {
 	}
 	aligned := render.Columns(rowGap, cells)
 
+	avail := s.height
+	if s.notice != "" && avail > 1 {
+		avail--
+	}
+	start, end := render.WindowSlice(len(aligned), s.cursor, avail)
+
 	var b []byte
-	for i, line := range aligned {
+	for i, line := range aligned[start:end] {
+		actualIdx := start + i
 		marker := "  "
-		if i == s.cursor {
+		if actualIdx == s.cursor {
 			marker = "> "
 		}
 		b = append(b, (marker + line)...)
