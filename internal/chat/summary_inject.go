@@ -41,17 +41,17 @@ func injectPlainSummary(ctx context.Context, snapshot plainTurnSnapshot, prepara
 		OutputLimit:       agent.SummaryOutputLimitTokens,
 	})
 	if err != nil {
-		return prepared, injectedSummary{}
+		return prepared, injectedSummary{reason: contextmgr.SummaryReasonRequestInvalid}
 	}
 	summary, err := summarizer.Summarize(ctx, request)
 	if err != nil {
-		return prepared, injectedSummary{}
+		return prepared, injectedSummary{reason: contextmgr.ClassifySummaryFailure(err)}
 	}
 	// Render the sealed summary together with the host-side omitted-evidence
 	// diff (request.Input.Evidence), mirroring the agent-loop path.
 	injected := agent.RenderSummaryMessage(summary, request.Input.Evidence)
 	if agent.SummaryOverBudget(preparation.AfterTokens, injected, snapshot.budget) {
-		return prepared, injectedSummary{}
+		return prepared, injectedSummary{reason: contextmgr.SummaryReasonOverBudget}
 	}
 	return agent.InjectSummaryMessage(prepared, injected), injectedSummary{message: injected, present: true}
 }
@@ -61,6 +61,7 @@ func injectPlainSummary(ctx context.Context, snapshot plainTurnSnapshot, prepara
 type injectedSummary struct {
 	message provider.Message
 	present bool
+	reason  string
 }
 
 // appendTo returns messages with the summary appended when there is one. It is

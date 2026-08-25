@@ -59,7 +59,7 @@ func nextContextRevision(preparation contextmgr.Preparation, result contextmgr.T
 	}
 }
 
-func (s *Session) emitContextCompaction(ctx context.Context, cfg contextTurnConfig, preparation contextmgr.Preparation, turnID uint64, summarized bool) {
+func (s *Session) emitContextCompaction(ctx context.Context, cfg contextTurnConfig, preparation contextmgr.Preparation, turnID uint64, summarized bool, failureReason string) {
 	s.mu.RLock()
 	onEvent := s.OnAgentEvent
 	bus := s.EventBus
@@ -79,7 +79,7 @@ func (s *Session) emitContextCompaction(ctx context.Context, cfg contextTurnConf
 		OnEvent: onEvent, EventBus: bus, SessionID: sessionID,
 		TurnID: fmt.Sprintf("turn:%d", turnID), EventIdentity: identity,
 		UsageWriter: usageWriter,
-	}, preparation, summarized, summaryUnavailableReason(cfg, summarized))
+	}, preparation, summarized, summaryUnavailableReason(cfg, summarized, failureReason))
 }
 
 // summaryUnavailableReason classifies why a compaction produced no LLM
@@ -87,12 +87,9 @@ func (s *Session) emitContextCompaction(ctx context.Context, cfg contextTurnConf
 // true. Two tiers: the session never had a summarizer wired at all (the
 // classified setup-time cause captured on cfg.manager.SummaryUnavailableReason
 // - a missing/misconfigured provider, credential, or endpoint), or a
-// summarizer was wired but this particular compaction's call still produced
-// nothing usable (a transient provider/network failure, or the summary was
-// dropped for staying within budget) - the underlying error is discarded by
-// design (see applyCompactSummary/summarizeTurn) since it could carry prompt
-// or response content onto this content-free event.
-func summaryUnavailableReason(cfg contextTurnConfig, summarized bool) string {
+// summarizer was wired and the call failed or was dropped (carrying a classified,
+// content-free failure reason from contextmgr).
+func summaryUnavailableReason(cfg contextTurnConfig, summarized bool, failureReason string) string {
 	if summarized {
 		return ""
 	}
@@ -101,6 +98,9 @@ func summaryUnavailableReason(cfg contextTurnConfig, summarized bool) string {
 			return cfg.manager.SummaryUnavailableReason
 		}
 		return "no summarizer is configured for this session"
+	}
+	if failureReason != "" {
+		return failureReason
 	}
 	return "the summary call failed or produced nothing usable for this compaction"
 }

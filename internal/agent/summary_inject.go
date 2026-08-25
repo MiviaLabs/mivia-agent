@@ -65,6 +65,16 @@ func SummaryOverBudget(afterTokens int, injected provider.Message, budget int) b
 	return afterTokens+provider.EstimateMessageTokens(injected) > budget
 }
 
+// maxSummaryAttemptsPerCompaction bounds deferred summary attempts across
+// step boundaries for a single compaction event.
+const maxSummaryAttemptsPerCompaction = 2
+
+type summaryAttempt struct {
+	ok        bool
+	reason    string
+	retryable bool
+}
+
 // injectSummary renders the validated summary of the compacted preparation
 // into an EPHEMERAL clone of the request messages. On any failure - builder
 // error, summarizer error, policy refusal (ErrSummaryUnavailable), or
@@ -79,18 +89,24 @@ func (l *Loop) injectSummary(ctx context.Context, opts Options) []provider.Messa
 	// One Summarize attempt per compaction event: the memo holds the RENDERED
 	// message, so every later step of the turn injects byte-identical bytes
 	// with no new summarizer request. A different key is a new compaction
-	// event and summarizes again exactly once. A failed attempt is memoized
-	// too, so it is not retried per step.
+	// event and resets attempt counters. A failed attempt is memoized
+	// once it is non-retryable or when maxSummaryAttemptsPerCompaction is reached.
 	key := l.turnCompactionKey
 	if key == "" {
 		key = compactionIdentity(l.LastPreparation.Token)
 	}
 	if !l.summaryMemoValid || l.summaryMemoKey != key {
-		l.summaryMemoKey = key
-		l.summaryMemoValid = true
-		l.summaryMemoHasMsg = false
-		l.summaryMemoMessage = provider.Message{}
-		if summary, request, ok := l.summarizeTurn(ctx, opts); ok {
+		if l.summaryMemoKey != key {
+			l.summaryMemoKey = key
+			l.summaryMemoAttempts = 0
+			l.summaryMemoValid = false
+			l.summaryMemoHasMsg = false
+			l.summaryMemoMessage = provider.Message{}
+			l.summaryMemoReason = ""
+		}
+		l.summaryMemoAttempts++
+		summary, request, attempt := l.summarizeTurn(ctx, opts)
+		if attempt.ok {
 			// Render the provider's sealed summary together with the host-side
 			// omitted-evidence record (request.Input.Evidence): the diff of
 			// what the compaction dropped is the host's own account of what
@@ -98,13 +114,24 @@ func (l *Loop) injectSummary(ctx context.Context, opts Options) []provider.Messa
 			// provider does not echo it.
 			l.summaryMemoMessage = RenderSummaryMessage(summary, request.Input.Evidence)
 			l.summaryMemoHasMsg = true
+			l.summaryMemoValid = true
+			l.summaryMemoReason = ""
+		} else {
+			l.summaryMemoHasMsg = false
+			l.summaryMemoMessage = provider.Message{}
+			l.summaryMemoReason = attempt.reason
+			if !attempt.retryable || l.summaryMemoAttempts >= maxSummaryAttemptsPerCompaction {
+				l.summaryMemoValid = true
+			}
 		}
 	}
 	if !l.summaryMemoHasMsg {
+		l.summaryFailureReason = l.summaryMemoReason
 		return l.Messages
 	}
 	injected := l.summaryMemoMessage
 	if SummaryOverBudget(l.LastPreparation.AfterTokens, injected, opts.MaxContextTokens) {
+		l.summaryFailureReason = contextmgr.SummaryReasonOverBudget
 		return l.Messages
 	}
 	// Record what the model was actually shown so the owning surface can put
@@ -114,6 +141,7 @@ func (l *Loop) injectSummary(ctx context.Context, opts Options) []provider.Messa
 	// would be lost too (see InjectedSummary).
 	l.injectedSummary = injected
 	l.hasInjectedSummary = true
+	l.summaryFailureReason = ""
 	return InjectSummaryMessage(l.Messages, injected)
 }
 
@@ -134,19 +162,24 @@ func (l *Loop) invalidateSummaryMemo() {
 	l.summaryMemoValid = false
 	l.summaryMemoHasMsg = false
 	l.summaryMemoMessage = provider.Message{}
+	l.summaryMemoReason = ""
+	l.summaryMemoAttempts = 0
+	l.summaryFailureReason = ""
 }
 
 // summarizeTurn builds the summary request from real host state - the latest
 // user objective, the run's turn-state snapshot, the preparation's token
 // range, and the Summarizer's captured binding/policy - and runs the bounded
-// provider call. Any failure returns ok=false so the caller falls back
-// structural-only. The validated request rides alongside the summary so the
-// caller can render the host-side omitted-evidence record into the injected
-// message.
-func (l *Loop) summarizeTurn(ctx context.Context, opts Options) (contextmgr.UntrustedSummary, contextmgr.SummaryRequest, bool) {
+// provider call. Any failure returns attempt.ok=false with the classified reason
+// so the caller falls back structural-only. The validated request rides alongside
+// the summary so the caller can render the host-side omitted-evidence record into
+// the injected message.
+func (l *Loop) summarizeTurn(ctx context.Context, opts Options) (contextmgr.UntrustedSummary, contextmgr.SummaryRequest, summaryAttempt) {
 	snapshot, err := l.TurnState.Snapshot()
 	if err != nil {
-		return contextmgr.UntrustedSummary{}, contextmgr.SummaryRequest{}, false
+		return contextmgr.UntrustedSummary{}, contextmgr.SummaryRequest{}, summaryAttempt{
+			ok: false, reason: contextmgr.SummaryReasonHostState, retryable: false,
+		}
 	}
 	summarizer := opts.SummaryConfig.Summarizer
 	request, err := contextmgr.BuildSummaryRequest(contextmgr.SummaryBuildInput{
@@ -169,13 +202,19 @@ func (l *Loop) summarizeTurn(ctx context.Context, opts Options) (contextmgr.Untr
 		OutputLimit:       SummaryOutputLimitTokens,
 	})
 	if err != nil {
-		return contextmgr.UntrustedSummary{}, contextmgr.SummaryRequest{}, false
+		return contextmgr.UntrustedSummary{}, contextmgr.SummaryRequest{}, summaryAttempt{
+			ok: false, reason: contextmgr.SummaryReasonRequestInvalid, retryable: false,
+		}
 	}
 	summary, err := summarizer.Summarize(ctx, request)
 	if err != nil {
-		return contextmgr.UntrustedSummary{}, contextmgr.SummaryRequest{}, false
+		return contextmgr.UntrustedSummary{}, contextmgr.SummaryRequest{}, summaryAttempt{
+			ok:        false,
+			reason:    contextmgr.ClassifySummaryFailure(err),
+			retryable: contextmgr.RetryableSummaryFailure(err),
+		}
 	}
-	return summary, request, true
+	return summary, request, summaryAttempt{ok: true}
 }
 
 // RenderSummaryMessage renders a validated summary as a bounded user-role

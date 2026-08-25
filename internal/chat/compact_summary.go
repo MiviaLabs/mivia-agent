@@ -38,25 +38,28 @@ func buildCompactSummaryRequest(summarizer *contextmgr.Summarizer, redaction con
 // outcomes: bounded durable metadata for the checkpoint candidate, and the
 // rendered context-summary message for the live session history. Any failure
 // - builder error, summarizer error, policy refusal, metadata bound - returns
-// ok=false so the structural compact proceeds unchanged. A summary must never
-// fail a manual compact.
-func applyCompactSummary(ctx context.Context, summarizer *contextmgr.Summarizer, redaction contextstate.RedactionPolicy, budget int, pre, retained []provider.Message, sourceRange contextstate.SourceRange, focus string) ([]byte, provider.Message, bool) {
+// an injectedSummary with present=false and the classified failure reason so the
+// structural compact proceeds unchanged. A summary must never fail a manual compact.
+func applyCompactSummary(ctx context.Context, summarizer *contextmgr.Summarizer, redaction contextstate.RedactionPolicy, budget int, pre, retained []provider.Message, sourceRange contextstate.SourceRange, focus string) ([]byte, injectedSummary) {
 	if summarizer == nil {
-		return nil, provider.Message{}, false
+		return nil, injectedSummary{}
 	}
 	request, err := buildCompactSummaryRequest(summarizer, redaction, budget, pre, retained, sourceRange, focus)
 	if err != nil {
-		return nil, provider.Message{}, false
+		return nil, injectedSummary{reason: contextmgr.SummaryReasonRequestInvalid}
 	}
 	summary, err := summarizer.Summarize(ctx, request)
 	if err != nil {
-		return nil, provider.Message{}, false
+		return nil, injectedSummary{reason: contextmgr.ClassifySummaryFailure(err)}
 	}
 	metadata, err := summary.Metadata(summarizer.Policy.RedactionConfigured)
 	if err != nil {
-		return nil, provider.Message{}, false
+		return nil, injectedSummary{reason: contextmgr.SummaryReasonMetadataTooLarge}
 	}
-	return metadata, agent.RenderSummaryMessage(summary, request.Input.Evidence), true
+	return metadata, injectedSummary{
+		message: agent.RenderSummaryMessage(summary, request.Input.Evidence),
+		present: true,
+	}
 }
 
 // summarizeManualCompact runs the wired summarizer for one manual compact:
@@ -65,16 +68,17 @@ func applyCompactSummary(ctx context.Context, summarizer *contextmgr.Summarizer,
 // is ANONYMOUS: the wire Name marks ephemeral injections, and every restore
 // path runs provider.ValidateToolPairing, which refuses NAMED user messages -
 // a named summary made the session unresumable after one more turn. A nil
-// summarizer or any summary failure changes nothing and reports have=false.
-func summarizeManualCompact(ctx context.Context, cfg contextTurnConfig, input contextmgr.PrepareInput, pre []provider.Message, preparation *contextmgr.Preparation, focus string) (provider.Message, bool) {
+// summarizer or any summary failure changes nothing and reports present=false with
+// the classified failure reason.
+func summarizeManualCompact(ctx context.Context, cfg contextTurnConfig, input contextmgr.PrepareInput, pre []provider.Message, preparation *contextmgr.Preparation, focus string) injectedSummary {
 	if cfg.summarizer == nil {
-		return provider.Message{}, false
+		return injectedSummary{}
 	}
-	metadata, injected, ok := applyCompactSummary(ctx, cfg.summarizer, cfg.redaction, input.Budget, pre, preparation.Messages, preparation.Token.Range, focus)
-	if !ok {
-		return provider.Message{}, false
+	metadata, injected := applyCompactSummary(ctx, cfg.summarizer, cfg.redaction, input.Budget, pre, preparation.Messages, preparation.Token.Range, focus)
+	if !injected.present {
+		return injected
 	}
 	preparation.Candidate.SummaryMetadata = metadata
-	injected.Name = ""
-	return injected, true
+	injected.message.Name = ""
+	return injected
 }

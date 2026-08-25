@@ -246,9 +246,12 @@ func TestApplyCompactSummarySuccess(t *testing.T) {
 		{Role: provider.RoleUser, Content: "old question"},
 		{Role: provider.RoleUser, Content: "latest objective"},
 	}
-	metadata, injected, ok := applyCompactSummary(context.Background(), summarizer, redaction, 0, pre, pre[1:], compactSummaryRange(t), "")
-	if !ok {
+	metadata, injected := applyCompactSummary(context.Background(), summarizer, redaction, 0, pre, pre[1:], compactSummaryRange(t), "")
+	if !injected.present {
 		t.Fatal("applyCompactSummary refused a wired summarizer")
+	}
+	if injected.reason != "" {
+		t.Fatalf("successful summary produced failure reason %q", injected.reason)
 	}
 	if len(fake.requests) != 1 {
 		t.Fatalf("summary provider calls = %d, want 1", len(fake.requests))
@@ -256,24 +259,77 @@ func TestApplyCompactSummarySuccess(t *testing.T) {
 	if !strings.Contains(string(metadata), "host-redacted") {
 		t.Fatalf("metadata = %s, want the host-redacted status", metadata)
 	}
-	if injected.Name != agent.SummaryMessageName {
-		t.Fatalf("injected message name = %q, want %q", injected.Name, agent.SummaryMessageName)
+	if injected.message.Name != agent.SummaryMessageName {
+		t.Fatalf("injected message name = %q, want %q", injected.message.Name, agent.SummaryMessageName)
 	}
-	if !strings.Contains(injected.Content, "[host-injected context summary") {
-		t.Fatalf("injected content = %q, want the host summary frame", injected.Content)
+	if !strings.Contains(injected.message.Content, "[host-injected context summary") {
+		t.Fatalf("injected content = %q, want the host summary frame", injected.message.Content)
 	}
 }
 
 // TestApplyCompactSummaryDegradesOnProviderError pins the never-fail rule at
-// the unit boundary: a provider error returns ok=false with no metadata and
-// no message, so the structural compact continues unchanged.
+// the unit boundary: a provider error returns present=false with no metadata and
+// no message, but carries the classified failure reason.
 func TestApplyCompactSummaryDegradesOnProviderError(t *testing.T) {
 	fake := &chatSummaryProvider{err: context.Canceled}
 	summarizer := plainSummarySummarizer(t, fake)
 	redaction := contextstate.RedactionPolicy{Configured: true, Patterns: []string{"never-match"}}
 	pre := []provider.Message{{Role: provider.RoleUser, Content: "objective"}}
-	metadata, injected, ok := applyCompactSummary(context.Background(), summarizer, redaction, 0, pre, pre, compactSummaryRange(t), "")
-	if ok || metadata != nil || injected.Name != "" {
-		t.Fatalf("provider error produced ok=%v metadata=%d name=%q, want a clean degrade", ok, len(metadata), injected.Name)
+	metadata, injected := applyCompactSummary(context.Background(), summarizer, redaction, 0, pre, pre, compactSummaryRange(t), "")
+	if injected.present || metadata != nil || injected.message.Name != "" {
+		t.Fatalf("provider error produced present=%v metadata=%d name=%q, want a clean degrade", injected.present, len(metadata), injected.message.Name)
+	}
+	if injected.reason != contextmgr.SummaryReasonCancelled {
+		t.Fatalf("expected reason %q, got %q", contextmgr.SummaryReasonCancelled, injected.reason)
+	}
+}
+
+func TestSummarizeManualCompactReportsAClassifiedFailureReason(t *testing.T) {
+	fake := &chatSummaryProvider{err: context.DeadlineExceeded}
+	summarizer := plainSummarySummarizer(t, fake)
+	cfg := contextTurnConfig{
+		summarizer: summarizer,
+		redaction:  contextstate.RedactionPolicy{Configured: true, Patterns: []string{"never-match"}},
+	}
+	pre := []provider.Message{{Role: provider.RoleUser, Content: "objective"}}
+	preparation := &contextmgr.Preparation{
+		Token: contextmgr.CommitToken{Range: compactSummaryRange(t)},
+	}
+	summary := summarizeManualCompact(context.Background(), cfg, contextmgr.PrepareInput{}, pre, preparation, "")
+	if summary.present {
+		t.Fatal("expected summary.present=false on provider timeout")
+	}
+	if summary.reason != contextmgr.SummaryReasonTimeout {
+		t.Fatalf("summary.reason = %q, want %q", summary.reason, contextmgr.SummaryReasonTimeout)
+	}
+}
+
+func TestInjectPlainSummaryReportsAClassifiedFailureReason(t *testing.T) {
+	fake := &chatSummaryProvider{err: contextmgr.ErrSummaryReplyMalformed}
+	summarizer := plainSummarySummarizer(t, fake)
+	snapshot := plainTurnSnapshot{
+		context: contextTurnConfig{
+			summarizer: summarizer,
+			redaction:  contextstate.RedactionPolicy{Configured: true, Patterns: []string{"never-match"}},
+		},
+		messages: []provider.Message{{Role: provider.RoleUser, Content: "user message"}},
+		budget:   1000,
+	}
+	preparation := contextmgr.Preparation{
+		Compacted: true,
+		Token:     contextmgr.CommitToken{Range: compactSummaryRange(t)},
+		Messages:  []provider.Message{{Role: provider.RoleUser, Content: "user message"}},
+	}
+	prepared := []provider.Message{{Role: provider.RoleUser, Content: "user message"}}
+
+	resultMessages, summary := injectPlainSummary(context.Background(), snapshot, preparation, prepared)
+	if summary.present {
+		t.Fatal("expected summary.present = false on malformed reply")
+	}
+	if summary.reason != contextmgr.SummaryReasonReplyMalformed {
+		t.Fatalf("summary.reason = %q, want %q", summary.reason, contextmgr.SummaryReasonReplyMalformed)
+	}
+	if len(resultMessages) != len(prepared) {
+		t.Fatalf("prepared messages mutated on summary failure: len=%d, want %d", len(resultMessages), len(prepared))
 	}
 }

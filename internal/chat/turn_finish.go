@@ -243,7 +243,7 @@ func (s *Session) commitContextTurn(ctx context.Context, loop *agent.Loop, userT
 	reseedMemoryFrameLocked(s)
 	s.contextHead = nextContextRevision(preparation, result)
 	s.mu.Unlock()
-	s.emitContextCompaction(commitCtx, contextCfg, preparation, token.TurnID, haveSummary)
+	s.emitContextCompaction(commitCtx, contextCfg, preparation, token.TurnID, haveSummary, loop.SummaryFailureReason())
 	// Durably committed under this turn's own still-valid fence, so the
 	// generation bump below cannot fence the turn out of its own persistence
 	// (plan tools/05 D6 ordering). Publication happens whenever the commit

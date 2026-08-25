@@ -206,7 +206,9 @@ func (s *Session) compact(ctx context.Context, focus string) (contextmgr.Prepara
 	// the candidate, and append the rendered message to the live history
 	// after the state swap. Any summary failure keeps the structural compact
 	// unchanged; a summary must never fail a manual compact.
-	summaryMessage, haveSummary := summarizeManualCompact(ctx, cfg, input, messages, &preparation, focus)
+	summary := summarizeManualCompact(ctx, cfg, input, messages, &preparation, focus)
+	haveSummary := summary.present
+	summaryMessage := summary.message
 	// The rendered summary joins the committed active context too, not only
 	// the live history: the message is host-generated with no source event of
 	// its own, so the checkpoint is its only durable carrier. Without it, a
@@ -237,7 +239,7 @@ func (s *Session) compact(ctx context.Context, focus string) (contextmgr.Prepara
 	}
 	s.contextHead = nextContextRevision(preparation, result)
 	s.mu.Unlock()
-	s.emitContextCompaction(ctx, cfg, preparation, turnID, haveSummary)
+	s.emitContextCompaction(ctx, cfg, preparation, turnID, haveSummary, summary.reason)
 	return preparation, nil
 }
 

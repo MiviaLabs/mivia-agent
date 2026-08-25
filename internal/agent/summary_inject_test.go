@@ -349,6 +349,7 @@ func TestSummaryInjectionIdempotencyKeyStableAcrossRuns(t *testing.T) {
 // TestSummaryInjectionSummarizerErrorFallsBackStructural pins that a
 // summarizer failure never fails the turn and never injects a message.
 func TestSummaryInjectionSummarizerErrorFallsBackStructural(t *testing.T) {
+	// Note: "provider down" is non-transient under IsTransient, so exactly 1 call is made.
 	provider := &capturingSummaryProvider{err: errors.New("provider down")}
 	summarizer := summaryInjectSummarizer(t, provider)
 	completer := &capturingRequestCompleter{}
@@ -358,6 +359,9 @@ func TestSummaryInjectionSummarizerErrorFallsBackStructural(t *testing.T) {
 	}
 	if anyRequestCarriesSummary(completer.requests) {
 		t.Fatal("summarizer error still injected a summary")
+	}
+	if len(provider.requests) != 1 {
+		t.Fatalf("provider calls = %d, want 1", len(provider.requests))
 	}
 }
 

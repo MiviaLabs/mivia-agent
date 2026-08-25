@@ -43,12 +43,15 @@ type Loop struct {
 	// re-summarizing: a fresh Summarize per step is a fresh LLM request with a
 	// unique prefix (near-zero provider prompt-cache hit) that injects
 	// nondeterministic bytes. summaryMemoValid records that an attempt ran
-	// for summaryMemoKey even when it failed, so a failed attempt is not
-	// retried on every later step of the same compaction.
-	summaryMemoKey     string
-	summaryMemoValid   bool
-	summaryMemoMessage provider.Message
-	summaryMemoHasMsg  bool
+	// for summaryMemoKey and should not be retried across steps (on success,
+	// non-retryable failure, or upon reaching maxSummaryAttemptsPerCompaction).
+	summaryMemoKey       string
+	summaryMemoValid     bool
+	summaryMemoMessage   provider.Message
+	summaryMemoHasMsg    bool
+	summaryMemoReason    string
+	summaryMemoAttempts  int
+	summaryFailureReason string
 	// turnCompactionKey identifies the newest REAL compaction of this turn
 	// (recordPreparation sets it from the raw preparation, before the
 	// turn-level Compacted overlay). A new compaction later in the turn
@@ -165,6 +168,12 @@ func (l *Loop) emitTurnUsage(ctx context.Context, opts Options, req provider.Req
 		l.Calibration.Update(estimatedTokens, resp.TokenUsage.InputTokens)
 	}
 	EmitTokenUsage(ctx, opts, l.Completer.Name(), req.Model, resp.TokenUsage, estimatedTokens, ratio)
+}
+
+// SummaryFailureReason returns the classified reason why this turn produced no context summary,
+// or empty if the summary was successfully injected or no summarizer was configured.
+func (l *Loop) SummaryFailureReason() string {
+	return l.summaryFailureReason
 }
 
 // streamRevoker, revokeStreamWriter, teeWriter, and the model-thinking

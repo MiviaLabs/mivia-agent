@@ -13,6 +13,13 @@ import (
 // envelope; a timeout still degrades to structural-only compaction.
 const summaryTimeout = 20 * time.Second
 
+// summaryRetryTimeout bounds the fresh window for one inline retry attempt.
+// The initial attempt already determined whether the provider endpoint is warm.
+const summaryRetryTimeout = 10 * time.Second
+
+// summaryMaxAttempts bounds the total inline attempts per Summarize call.
+const summaryMaxAttempts = 2
+
 // Summarizer binds one captured provider/model/policy snapshot to a summary
 // request. It has no provider discovery or network fallback path.
 type Summarizer struct {
@@ -32,8 +39,9 @@ func NewSummarizer(provider SummaryProvider, binding contextstate.BindingRevisio
 	return Summarizer{Provider: provider, Binding: binding, Policy: clonePolicy(policy), Timeout: summaryTimeout}, nil
 }
 
-// Summarize executes one bounded provider call and validates its result before
-// returning it. The caller's context remains the outer cancellation authority.
+// Summarize executes a bounded provider call (with one retry on transient failure)
+// and validates its result before returning it. The caller's context remains the outer
+// cancellation authority.
 func (s Summarizer) Summarize(ctx context.Context, request SummaryRequest) (UntrustedSummary, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -44,7 +52,18 @@ func (s Summarizer) Summarize(ctx context.Context, request SummaryRequest) (Untr
 	if err := s.available(request); err != nil {
 		return UntrustedSummary{}, err
 	}
-	callContext, cancel := context.WithTimeout(ctx, s.timeout())
+	summary, err := s.attemptSummarize(ctx, request, s.timeout())
+	if err == nil {
+		return summary, nil
+	}
+	if RetryableSummaryFailure(err) && ctx.Err() == nil {
+		return s.attemptSummarize(ctx, request, s.retryTimeout())
+	}
+	return UntrustedSummary{}, err
+}
+
+func (s Summarizer) attemptSummarize(ctx context.Context, request SummaryRequest, timeout time.Duration) (UntrustedSummary, error) {
+	callContext, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	providerRequest := cloneSummaryRequest(request)
 	// Classifier configuration is host policy, not model input. The provider
@@ -66,6 +85,10 @@ func (s Summarizer) timeout() time.Duration {
 		return summaryTimeout
 	}
 	return s.Timeout
+}
+
+func (s Summarizer) retryTimeout() time.Duration {
+	return min(s.timeout(), summaryRetryTimeout)
 }
 
 func (s Summarizer) available(request SummaryRequest) error {

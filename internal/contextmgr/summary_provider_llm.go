@@ -54,8 +54,8 @@ const summaryReplySkeleton = `{
 // LLMSummaryProvider adapts one provider.Completer to the SummaryProvider
 // contract. It renders a host-authored prompt from the sealed envelope, calls
 // the completer once, and decodes one strict JSON reply. It never logs and
-// never retries. Any error lets the caller degrade to structural-only
-// compaction.
+// never retries (retry policy lives in Summarizer.Summarize). Any error lets
+// the caller degrade to structural-only compaction.
 type LLMSummaryProvider struct {
 	completer provider.Completer
 	// sessionID is the owning chat session's id, threaded onto every summary
@@ -104,17 +104,17 @@ func (p LLMSummaryProvider) Summarize(ctx context.Context, request SummaryReques
 		return Summary{}, fmt.Errorf("summary completer call: %w", err)
 	}
 	if reply == nil {
-		return Summary{}, fmt.Errorf("%w: summary completer returned no response", contextstate.ErrInvalidDTO)
+		return Summary{}, fmt.Errorf("%w: summary completer returned no response", ErrSummaryReplyMalformed)
 	}
 	summary, err := decodeSummaryReply(reply.Content)
 	if err != nil {
 		return Summary{}, err
 	}
 	if summary.Version != request.Input.Version {
-		return Summary{}, fmt.Errorf("%w: summary reply version %d does not echo %d", contextstate.ErrInvalidDTO, summary.Version, request.Input.Version)
+		return Summary{}, fmt.Errorf("%w: summary reply version %d does not echo %d", ErrSummaryEchoMismatch, summary.Version, request.Input.Version)
 	}
 	if summary.SourceRange != request.SourceRange {
-		return Summary{}, fmt.Errorf("%w: summary reply source range does not echo the request source range", contextstate.ErrInvalidDTO)
+		return Summary{}, fmt.Errorf("%w: summary reply source range does not echo the request source range", ErrSummaryEchoMismatch)
 	}
 	return summary, nil
 }
@@ -216,16 +216,16 @@ func writeSourceExcerpts(b *strings.Builder, excerpts []SourceExcerpt) {
 func decodeSummaryReply(content string) (Summary, error) {
 	payload := stripCodeFence(content)
 	if payload == "" {
-		return Summary{}, fmt.Errorf("%w: summary reply is empty", contextstate.ErrInvalidDTO)
+		return Summary{}, fmt.Errorf("%w: summary reply is empty", ErrSummaryReplyMalformed)
 	}
 	decoder := json.NewDecoder(strings.NewReader(payload))
 	decoder.DisallowUnknownFields()
 	var summary Summary
 	if err := decoder.Decode(&summary); err != nil {
-		return Summary{}, fmt.Errorf("%w: summary reply is not valid summary JSON: %v", contextstate.ErrInvalidDTO, err)
+		return Summary{}, fmt.Errorf("%w: summary reply is not valid summary JSON: %v", ErrSummaryReplyMalformed, err)
 	}
 	if _, err := decoder.Token(); err != io.EOF {
-		return Summary{}, fmt.Errorf("%w: summary reply has trailing content", contextstate.ErrInvalidDTO)
+		return Summary{}, fmt.Errorf("%w: summary reply has trailing content", ErrSummaryReplyMalformed)
 	}
 	return summary, nil
 }
