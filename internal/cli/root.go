@@ -39,6 +39,8 @@ func Execute(args []string) error {
 		return cliagents.RunAgents(args[1:])
 	case "sessions":
 		return clichat.RunSessions(args[1:])
+	case "storage":
+		return clichat.RunStorage(args[1:])
 	case "compact":
 		return clichat.RunCompact(args[1:])
 	case "memory":
