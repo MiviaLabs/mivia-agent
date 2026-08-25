@@ -88,14 +88,17 @@ func TestActivatingAModelUpdatesTheStore(t *testing.T) {
 	s, h := newHarnessScreen(t, 100, 30)
 	s = focusModels(t, s)
 
-	// Row 0 is the openrouter provider header; row 1 is its first
-	// model (openrouter's default per seedProviders is already
-	// active - move down once more to target its SECOND model).
+	// Entering the section lands the cursor on the first selectable row,
+	// which the group-header skip in moveCursor/rebuild places on the
+	// openrouter provider row (row 0 is now the "Global" group header,
+	// not a cursor stop). One down reaches its first model
+	// (anthropic/claude-opus-5, already active+default per seedProviders);
+	// a second down reaches its SECOND model, the target of this test.
 	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	s = next.(Screen)
 	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	s = next.(Screen)
-	if got := modelsSectionOf(s).rows[modelsSectionOf(s).cursor]; got.isProvider || got.model.Name != "openai/gpt-5" {
+	if got := modelsSectionOf(s).rows[modelsSectionOf(s).cursor]; got.kind != modelsRowModel || got.model.Name != "openai/gpt-5" {
 		t.Fatalf("cursor is on %+v, want the openai/gpt-5 row", got)
 	}
 
@@ -117,8 +120,10 @@ func TestActivatingAModelUpdatesTheStore(t *testing.T) {
 func TestActivatingAProviderHeaderIsRejectedWithANotice(t *testing.T) {
 	s, _ := newHarnessScreen(t, 100, 30)
 	s = focusModels(t, s)
-	if got := modelsSectionOf(s).rows[0]; !got.isProvider {
-		t.Fatal("row 0 is not a provider header")
+	// The section lands the cursor on the first provider row by default
+	// (row 0 is the "Global" group header, never a cursor stop).
+	if got := modelsSectionOf(s).rows[modelsSectionOf(s).cursor]; got.kind != modelsRowProvider {
+		t.Fatalf("cursor is on %+v, want a provider row", got)
 	}
 	next, cmd := s.Update(tea.KeyPressMsg{Text: " ", Code: ' '})
 	s = next.(Screen)
@@ -134,12 +139,14 @@ func TestSetDefaultModelUpdatesTheStore(t *testing.T) {
 	s, h := newHarnessScreen(t, 100, 30)
 	s = focusModels(t, s)
 
-	// Move cursor to openai/gpt-5 under openrouter (row 2)
+	// Move cursor to openai/gpt-5 under openrouter (two downs from the
+	// default provider-row cursor position, same as
+	// TestActivatingAModelUpdatesTheStore).
 	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	s = next.(Screen)
 	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	s = next.(Screen)
-	if got := modelsSectionOf(s).rows[modelsSectionOf(s).cursor]; got.isProvider || got.model.Name != "openai/gpt-5" {
+	if got := modelsSectionOf(s).rows[modelsSectionOf(s).cursor]; got.kind != modelsRowModel || got.model.Name != "openai/gpt-5" {
 		t.Fatalf("cursor is on %+v, want the openai/gpt-5 row", got)
 	}
 
@@ -161,8 +168,8 @@ func TestSetDefaultModelUpdatesTheStore(t *testing.T) {
 func TestSetDefaultOnProviderHeaderIsRejectedWithANotice(t *testing.T) {
 	s, _ := newHarnessScreen(t, 100, 30)
 	s = focusModels(t, s)
-	if got := modelsSectionOf(s).rows[0]; !got.isProvider {
-		t.Fatal("row 0 is not a provider header")
+	if got := modelsSectionOf(s).rows[modelsSectionOf(s).cursor]; got.kind != modelsRowProvider {
+		t.Fatalf("cursor is on %+v, want a provider row", got)
 	}
 	next, cmd := s.Update(tea.KeyPressMsg{Text: "d", Code: 'd'})
 	s = next.(Screen)
@@ -179,7 +186,7 @@ func TestRemovingAModelUpdatesTheStore(t *testing.T) {
 	s = focusModels(t, s)
 	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	s = next.(Screen)
-	if got := modelsSectionOf(s).rows[modelsSectionOf(s).cursor]; got.isProvider {
+	if got := modelsSectionOf(s).rows[modelsSectionOf(s).cursor]; got.kind != modelsRowModel {
 		t.Fatal("expected the cursor on a model row")
 	}
 	target := modelsSectionOf(s).rows[modelsSectionOf(s).cursor]

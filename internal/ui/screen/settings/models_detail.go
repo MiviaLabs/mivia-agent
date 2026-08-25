@@ -32,6 +32,14 @@ func (s *modelsSection) renderProviderCells(p ports.ProviderView) []string {
 	if !p.Selectable && p.DisabledReason != "" {
 		status += "  " + render.Role(s.theme, s.tier, theme.RoleDanger).Render(p.DisabledReason)
 	}
+	// A Global row for a provider that HAS a project override is
+	// shadowed at runtime by that override (see ProviderView's doc
+	// comment on EffectiveDefaultModel) - flag it here so the row does
+	// not read as "this IS the effective default" next to the Project
+	// group's row for the same provider making the same claim.
+	if p.Scope == ports.ScopeUser && p.HasProjectOverride {
+		status += "  " + render.Role(s.theme, s.tier, theme.RoleFGSubtle).Render("overridden by project")
+	}
 	count := render.Role(s.theme, s.tier, theme.RoleFGSubtle).Render(fmt.Sprintf("%d models", len(p.Models)))
 	return []string{name, status, count}
 }
@@ -49,13 +57,21 @@ func (s *modelsSection) renderModelCells(p ports.ProviderView, m ports.ModelView
 	}
 	isActive := p.Active && p.ActiveModel == m.Name
 	isDefault := p.DefaultModel == m.Name
+	// A Global default is shadowed once the project scope overrides
+	// this provider (see the "overridden by project" status flag in
+	// renderProviderCells) - label it accordingly so this row does not
+	// claim to be the effective default when it is not.
+	defaultLabel := "default"
+	if p.Scope == ports.ScopeUser && p.HasProjectOverride {
+		defaultLabel = "default here (shadowed)"
+	}
 	switch {
 	case isActive && isDefault:
-		cells = append(cells, render.Role(s.theme, s.tier, theme.RoleAccent).Render("active, default"))
+		cells = append(cells, render.Role(s.theme, s.tier, theme.RoleAccent).Render("active, "+defaultLabel))
 	case isActive:
 		cells = append(cells, render.Role(s.theme, s.tier, theme.RoleAccent).Render("active"))
 	case isDefault:
-		cells = append(cells, render.Role(s.theme, s.tier, theme.RoleSuccess).Render("default"))
+		cells = append(cells, render.Role(s.theme, s.tier, theme.RoleSuccess).Render(defaultLabel))
 	}
 	return cells
 }

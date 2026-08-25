@@ -89,80 +89,252 @@ func (s *SettingsStore) initFromConfig() {
 }
 
 func (s *SettingsStore) initProvidersFromConfig() {
+	s.providers = s.buildProviderViews()
+}
+
+// projectConfigPath resolves the workspace's own .mivia/mivia.toml path
+// from agentState.WorkspaceRoot, or "" when there is no workspace (a nil
+// agentState, or one with an empty WorkspaceRoot - the classic REPL/
+// one-shot path and any test harness that never wired one). Mirrors how
+// settingsSkills.skillsDirectory and agentsDirForScope resolve their own
+// project-scope directories from the same field.
+func (s *SettingsStore) projectConfigPath() string {
+	if s.agentState == nil {
+		return ""
+	}
+	return config.ProjectConfigPath(s.agentState.WorkspaceRoot)
+}
+
+// providerConfigPathForScope resolves which file a provider default-model
+// edit at scope should land in: ScopeUser is the base config
+// (s.configPath(), same file every other provider edit already targets),
+// ScopeProject is the workspace's own .mivia/mivia.toml. Returns "" when
+// that file is not resolvable (no workspace) or is literally the same
+// file as the base config - a project layer that IS the base file has no
+// separate "project override" to write, the same guard loadFile's own
+// workspaceOverlayConfigPath applies before treating a workspace file as
+// an overlay.
+func (s *SettingsStore) providerConfigPathForScope(scope ports.Scope) string {
+	if scope == ports.ScopeUser {
+		return s.configPath()
+	}
+	projectPath := s.projectConfigPath()
+	if projectPath == "" || projectPath == s.configPath() {
+		return ""
+	}
+	return projectPath
+}
+
+// buildProviderViews reads the resolved model catalog (Selectable,
+// Active, Models, context windows - everything NOT scope-split) plus
+// each scope's OWN unmerged default_model keys (config.
+// LoadProviderDefaultOverrides against the base config file and,
+// separately, the project file - see providerConfigPathForScope for why
+// they must be read unmerged rather than off s.res.ModelCatalog()'s
+// already-overlay-merged ProviderModelGroup.DefaultModel) and returns
+// one ScopeUser row per catalog provider plus one additional ScopeProject
+// row for every provider that has its own project override. Called at
+// construction and again after every default-model edit (see
+// applySetDefaultModel and friends) rather than patching fields in
+// place, because a default-model edit can both change a value AND
+// change which scopes exist for a provider (setting a project override
+// where none existed adds a row; clearing the last one removes it) -
+// harder to keep consistent by hand than by re-deriving from the two
+// small on-disk reads. Falls back through mergeUntrackedProviders (see
+// its own doc comment) at every return point so a provider that lives
+// only in s.providers - never in s.res's own catalog - is not silently
+// dropped by this re-derive.
+func (s *SettingsStore) buildProviderViews() []ports.ProviderView {
 	if s.res == nil {
-		return
+		return nil
 	}
 	catalog := s.res.ModelCatalog()
+	baseOverrides, projectOverrides := s.loadProviderDefaultOverrides()
 	if len(catalog) == 0 && s.res.ProviderName != "" {
-		var models []ports.ModelView
-		if len(s.res.ModelProfiles) > 0 {
-			for _, p := range s.res.ModelProfiles {
-				models = append(models, ports.ModelView{Name: p.Name, ContextWindowTokens: p.ContextWindowTokens})
-			}
-		} else if len(s.res.Models) > 0 {
-			for _, m := range s.res.Models {
-				models = append(models, ports.ModelView{Name: m, ContextWindowTokens: 128000})
-			}
-		} else if s.res.Model != "" {
-			models = append(models, ports.ModelView{Name: s.res.Model, ContextWindowTokens: 128000})
+		fresh := []ports.ProviderView{s.buildFallbackProviderView()}
+		return mergeUntrackedProviders(s.providers, fresh, baseOverrides, projectOverrides)
+	}
+
+	var out []ports.ProviderView
+	for _, g := range catalog {
+		out = append(out, s.buildProviderRows(g, baseOverrides, projectOverrides)...)
+	}
+	return mergeUntrackedProviders(s.providers, out, baseOverrides, projectOverrides)
+}
+
+// loadProviderDefaultOverrides reads the two scopes' own unmerged
+// default_model keys (base config file, then the project file when one
+// exists and differs from the base - see providerConfigPathForScope).
+// Shared by both buildProviderViews branches so the fallback (single
+// legacy provider, no catalog) and the normal catalog path read the
+// exact same two files the same way.
+func (s *SettingsStore) loadProviderDefaultOverrides() (base, project map[string]string) {
+	base, _ = config.LoadProviderDefaultOverrides(s.configPath())
+	if projectPath := s.providerConfigPathForScope(ports.ScopeProject); projectPath != "" {
+		project, _ = config.LoadProviderDefaultOverrides(projectPath)
+	}
+	return base, project
+}
+
+// buildFallbackProviderView builds the single ScopeUser row used when
+// s.res has no model catalog but does have a legacy single-provider
+// config (ProviderName plus Model/Models/ModelProfiles).
+func (s *SettingsStore) buildFallbackProviderView() ports.ProviderView {
+	var models []ports.ModelView
+	switch {
+	case len(s.res.ModelProfiles) > 0:
+		for _, p := range s.res.ModelProfiles {
+			models = append(models, ports.ModelView{Name: p.Name, ContextWindowTokens: p.ContextWindowTokens})
 		}
-		activeModel := s.res.Model
-		if s.sess != nil && s.sess.CurrentSelection().Model != "" {
+	case len(s.res.Models) > 0:
+		for _, m := range s.res.Models {
+			models = append(models, ports.ModelView{Name: m, ContextWindowTokens: 128000})
+		}
+	case s.res.Model != "":
+		models = append(models, ports.ModelView{Name: s.res.Model, ContextWindowTokens: 128000})
+	}
+	activeModel := s.res.Model
+	if s.sess != nil && s.sess.CurrentSelection().Model != "" {
+		activeModel = s.sess.CurrentSelection().Model
+	}
+	return ports.ProviderView{
+		Name:                  s.res.ProviderName,
+		Active:                true,
+		Selectable:            true,
+		Models:                models,
+		ActiveModel:           activeModel,
+		DefaultModel:          s.res.Model,
+		Scope:                 ports.ScopeUser,
+		EffectiveDefaultModel: s.res.Model,
+	}
+}
+
+// buildModelViews renders g.Models (context window, output ceiling,
+// reasoning efforts) into the secret-free ports.ModelView shape shared
+// by every row buildProviderRows returns for g.
+func buildModelViews(g config.ProviderModelGroup) []ports.ModelView {
+	var models []ports.ModelView
+	for _, m := range g.Models {
+		var efforts []string
+		for _, eff := range m.ReasoningEfforts {
+			efforts = append(efforts, string(eff))
+		}
+		models = append(models, ports.ModelView{
+			Name:                m.Name,
+			ContextWindowTokens: m.ContextWindowTokens,
+			MaxOutputTokens:     m.MaxOutputTokens,
+			ReasoningEfforts:    efforts,
+			Reasoning:           string(m.Reasoning),
+		})
+	}
+	return models
+}
+
+// buildProviderRows renders one catalog group g into one ScopeUser row
+// plus, when the project scope has its own non-empty override for g,
+// a second ScopeProject row - see buildProviderViews' own doc comment
+// for why both scopes are separate rows rather than one merged view.
+func (s *SettingsStore) buildProviderRows(g config.ProviderModelGroup, baseOverrides, projectOverrides map[string]string) []ports.ProviderView {
+	models := buildModelViews(g)
+	var activeModel string
+	active := g.Active
+	if s.sess != nil && s.sess.CurrentSelection().ProviderName != "" {
+		active = (s.sess.CurrentSelection().ProviderName == g.Provider)
+		if active {
 			activeModel = s.sess.CurrentSelection().Model
 		}
-		s.providers = append(s.providers, ports.ProviderView{
-			Name:         s.res.ProviderName,
-			Active:       true,
-			Selectable:   true,
-			Models:       models,
-			ActiveModel:  activeModel,
-			DefaultModel: s.res.Model,
-		})
 	}
-	for _, g := range catalog {
-		var models []ports.ModelView
+	if activeModel == "" {
 		for _, m := range g.Models {
-			var efforts []string
-			for _, eff := range m.ReasoningEfforts {
-				efforts = append(efforts, string(eff))
-			}
-			models = append(models, ports.ModelView{
-				Name:                m.Name,
-				ContextWindowTokens: m.ContextWindowTokens,
-				MaxOutputTokens:     m.MaxOutputTokens,
-				ReasoningEfforts:    efforts,
-				Reasoning:           string(m.Reasoning),
-			})
-		}
-		var activeModel string
-		active := g.Active
-		if s.sess != nil && s.sess.CurrentSelection().ProviderName != "" {
-			active = (s.sess.CurrentSelection().ProviderName == g.Provider)
-			if active {
-				activeModel = s.sess.CurrentSelection().Model
+			if active && activeModel == "" {
+				activeModel = m.Name
 			}
 		}
-		if activeModel == "" {
-			for _, m := range g.Models {
-				if active && activeModel == "" {
-					activeModel = m.Name
-				}
-			}
-		}
-		defaultModel := g.DefaultModel
-		if defaultModel == "" && len(g.Models) > 0 {
-			defaultModel = g.Models[0].Name
-		}
-		s.providers = append(s.providers, ports.ProviderView{
-			Name:           g.Provider,
-			Active:         active,
-			Selectable:     g.Selectable,
-			DisabledReason: g.DisabledReason,
-			Models:         models,
-			ActiveModel:    activeModel,
-			DefaultModel:   defaultModel,
+	}
+	globalDefault := baseOverrides[g.Provider]
+	if globalDefault == "" && len(g.Models) > 0 {
+		globalDefault = g.Models[0].Name
+	}
+	effectiveDefault := globalDefault
+	projectDefault, hasOverride := projectOverrides[g.Provider]
+	if hasOverride && projectDefault != "" {
+		effectiveDefault = projectDefault
+	}
+	rows := []ports.ProviderView{{
+		Name:                  g.Provider,
+		Active:                active,
+		Selectable:            g.Selectable,
+		DisabledReason:        g.DisabledReason,
+		Models:                models,
+		ActiveModel:           activeModel,
+		DefaultModel:          globalDefault,
+		Scope:                 ports.ScopeUser,
+		HasProjectOverride:    hasOverride && projectDefault != "",
+		EffectiveDefaultModel: effectiveDefault,
+	}}
+	if hasOverride && projectDefault != "" {
+		rows = append(rows, ports.ProviderView{
+			Name:                  g.Provider,
+			Active:                active,
+			Selectable:            g.Selectable,
+			DisabledReason:        g.DisabledReason,
+			Models:                models,
+			ActiveModel:           activeModel,
+			DefaultModel:          projectDefault,
+			Scope:                 ports.ScopeProject,
+			HasProjectOverride:    true,
+			EffectiveDefaultModel: effectiveDefault,
 		})
 	}
+	return rows
+}
+
+// mergeUntrackedProviders appends every entry of existing whose Name does
+// not appear anywhere in fresh, preserving it as-is EXCEPT for its own
+// default-model fields, which are re-derived from baseOverrides/
+// projectOverrides (the same two unmerged reads buildProviderViews just
+// took for every catalog provider) rather than trusted as-is - existing
+// is s.providers as it stood BEFORE this rebuild, so its DefaultModel/
+// EffectiveDefaultModel/HasProjectOverride are a stale snapshot from
+// whenever that row was last built, and a default-model edit landing
+// via mergeUntrackedProviders (a provider never in s.res's own catalog)
+// would otherwise appear to silently no-op: it writes the override file
+// via config.UpdateProviderDefaultModel just fine, then this merge
+// undoes the visible result by resurrecting the OLD row untouched. Only
+// name/base/models/active state are carried over unchanged; either
+// override map may be nil (buildProviderViews' single-provider fallback
+// branch has none loaded), in which case the row's default fields
+// simply fall back to "" the same way a brand-new catalog provider with
+// no default_model key would.
+func mergeUntrackedProviders(existing, fresh []ports.ProviderView, baseOverrides, projectOverrides map[string]string) []ports.ProviderView {
+	known := make(map[string]bool, len(fresh))
+	for _, p := range fresh {
+		known[p.Name] = true
+	}
+	for _, p := range existing {
+		if known[p.Name] {
+			continue
+		}
+		globalDefault := baseOverrides[p.Name]
+		effectiveDefault := globalDefault
+		projectDefault, hasOverride := projectOverrides[p.Name]
+		if hasOverride && projectDefault != "" {
+			effectiveDefault = projectDefault
+		}
+		p.DefaultModel = globalDefault
+		p.HasProjectOverride = hasOverride && projectDefault != ""
+		p.EffectiveDefaultModel = effectiveDefault
+		p.Scope = ports.ScopeUser
+		fresh = append(fresh, p)
+		known[p.Name] = true
+		if hasOverride && projectDefault != "" {
+			proj := p
+			proj.DefaultModel = projectDefault
+			proj.Scope = ports.ScopeProject
+			fresh = append(fresh, proj)
+		}
+	}
+	return fresh
 }
 
 // initAgentsFromConfig is implemented in settings_agents.go
