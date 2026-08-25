@@ -7,12 +7,25 @@ import (
 	"strings"
 )
 
+func validateSkillPath(dir, name string) (string, error) {
+	if dir == "" {
+		return "", fmt.Errorf("target directory is required")
+	}
+	if name == "" {
+		return "", fmt.Errorf("skill name is required")
+	}
+	if strings.Contains(name, "/") || strings.Contains(name, "\\") || strings.Contains(name, "..") {
+		return "", fmt.Errorf("invalid skill name %q", name)
+	}
+	return filepath.Join(dir, name), nil
+}
+
 // WriteSkillMarkdown serializes a skill definition with YAML frontmatter to <dir>/<name>/SKILL.md.
 func WriteSkillMarkdown(dir string, def Definition) error {
-	if def.Name == "" {
-		return fmt.Errorf("skill name is required")
+	skillDir, err := validateSkillPath(dir, def.Name)
+	if err != nil {
+		return err
 	}
-	skillDir := filepath.Join(dir, def.Name)
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {
 		return fmt.Errorf("create skill directory: %w", err)
 	}
@@ -63,10 +76,10 @@ func WriteSkillMarkdown(dir string, def Definition) error {
 
 // RemoveSkillDirectory removes <dir>/<name> from disk.
 func RemoveSkillDirectory(dir, name string) error {
-	if name == "" {
-		return fmt.Errorf("skill name is required")
+	skillDir, err := validateSkillPath(dir, name)
+	if err != nil {
+		return err
 	}
-	skillDir := filepath.Join(dir, name)
 	if err := os.RemoveAll(skillDir); err != nil {
 		return fmt.Errorf("remove skill directory: %w", err)
 	}
@@ -75,7 +88,11 @@ func RemoveSkillDirectory(dir, name string) error {
 
 // UpdateSkillUserInvocable toggles the user-invocable frontmatter flag in <dir>/<name>/SKILL.md.
 func UpdateSkillUserInvocable(dir, name string, userInvocable bool) error {
-	skillFile := filepath.Join(dir, name, "SKILL.md")
+	skillDir, err := validateSkillPath(dir, name)
+	if err != nil {
+		return err
+	}
+	skillFile := filepath.Join(skillDir, "SKILL.md")
 	data, err := os.ReadFile(skillFile)
 	if err != nil {
 		return fmt.Errorf("read SKILL.md: %w", err)

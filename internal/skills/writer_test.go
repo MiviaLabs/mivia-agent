@@ -85,3 +85,25 @@ func TestWriteSkillMarkdown_EdgeCases(t *testing.T) {
 		t.Error("expected error updating non-existent skill")
 	}
 }
+
+func TestWriteSkillMarkdown_Validation(t *testing.T) {
+	tmp := t.TempDir()
+
+	// Empty dir
+	if err := WriteSkillMarkdown("", Definition{Name: "valid-name"}); err == nil {
+		t.Error("expected error for empty dir")
+	}
+	if err := RemoveSkillDirectory("", "valid-name"); err == nil {
+		t.Error("expected error for empty dir in remove")
+	}
+
+	// Path traversal
+	for _, bad := range []string{"../escape", "sub/dir", "back\\slash"} {
+		if err := WriteSkillMarkdown(tmp, Definition{Name: bad}); err == nil {
+			t.Errorf("expected error for bad name %q", bad)
+		}
+		if err := RemoveSkillDirectory(tmp, bad); err == nil {
+			t.Errorf("expected error for bad name in remove %q", bad)
+		}
+	}
+}
