@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
@@ -439,9 +440,6 @@ func (t *inspectAgentTool) Capability(args json.RawMessage) tools.Capability {
 // inspect_agent, join_run, cancel_run) on both the model-visible registry and
 // the runtime dispatcher. It is called from NewSessionDispatcher.
 func RegisterOrchestrationTools(d *runtime.Dispatcher, reg *tools.Registry, cfg config.SubagentConfig, repo ledger.LedgerRepository, skillReg *skills.Registry, agentReg *agents.AgentRegistry, providerName, model string) error {
-	if SessionToolRegister == nil {
-		return fmt.Errorf("RegisterOrchestrationTools: SessionToolRegister seam not wired")
-	}
 	toolSet := []tools.Tool{
 		&spawnAgentTool{dispatcher: d, cfg: cfg, repo: repo, skillReg: skillReg, agentReg: agentReg, providerName: providerName, model: model},
 		&inspectAgentTool{dispatcher: d, cfg: cfg, repo: repo},
@@ -449,7 +447,7 @@ func RegisterOrchestrationTools(d *runtime.Dispatcher, reg *tools.Registry, cfg 
 		&cancelRunTool{dispatcher: d, cfg: cfg, repo: repo},
 	}
 	for _, t := range toolSet {
-		if err := SessionToolRegister(d, reg, t); err != nil {
+		if err := cliagents.RegisterSessionTool(d, reg, t); err != nil {
 			return err
 		}
 	}

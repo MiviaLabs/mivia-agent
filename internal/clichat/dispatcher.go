@@ -190,7 +190,7 @@ func registerLoadToolsTool(d *runtime.Dispatcher, opts SessionDispatcherOpts) er
 	if opts.Session == nil {
 		return fmt.Errorf("deferred tools configured without a session to stage against")
 	}
-	return registerSessionTool(d, opts.Registry, cliagents.NewLoadToolsTool(opts.Session, opts.DeferredTools))
+	return cliagents.RegisterSessionTool(d, opts.Registry, cliagents.NewLoadToolsTool(opts.Session, opts.DeferredTools))
 }
 
 func sessionOutputCeiling(opts SessionDispatcherOpts) *int {
@@ -231,27 +231,8 @@ func registerDelegationTools(d *runtime.Dispatcher, reg *tools.Registry, cfg con
 	// Register on both the model-visible registry and the dispatcher snapshot.
 	delegate := &delegateTool{dispatcher: d, cfg: cfg, repo: repo}
 	dispatchTasks := cliorchestrate.NewDispatchTasksTool(d, cfg, skillReg, repo, agentReg, providerName, model)
-	if err := registerSessionTool(d, reg, delegate); err != nil {
+	if err := cliagents.RegisterSessionTool(d, reg, delegate); err != nil {
 		return err
 	}
-	return registerSessionTool(d, reg, dispatchTasks)
-}
-
-// registerSessionTool is the single entry point for session-control tools.
-// Sub-agent registries exclude such tools by the tools.PrivilegedTool marker,
-// which is a runtime assertion - so an unmarked control tool would silently
-// become callable from a nested agent. Rejecting it here fails at startup
-// instead.
-func registerSessionTool(d *runtime.Dispatcher, reg *tools.Registry, tool tools.Tool) error {
-	if _, privileged := tool.(tools.PrivilegedTool); !privileged {
-		return fmt.Errorf("session tool %q must implement tools.PrivilegedTool", tool.Name())
-	}
-	if _, exists := reg.Get(tool.Name()); exists {
-		return fmt.Errorf("session tool %q already registered", tool.Name())
-	}
-	if err := d.RegisterTool(reg, tool); err != nil {
-		return fmt.Errorf("register session tool %q: %w", tool.Name(), err)
-	}
-	reg.Register(tool)
-	return nil
+	return cliagents.RegisterSessionTool(d, reg, dispatchTasks)
 }

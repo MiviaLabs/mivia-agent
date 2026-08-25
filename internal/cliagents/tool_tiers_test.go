@@ -467,7 +467,7 @@ func TestAgentSwitchToAnInertAgentDisarmsTheWidener(t *testing.T) {
 func TestRegisterLoadToolsToolPropagatesARegistrationFailure(t *testing.T) {
 	sess := chat.NewSession(&config.Resolved{Model: "m", ProviderName: "p"}, stubAgentCompleter{})
 	reg := tierRegistry("read_file")
-	// A name already taken makes registerSessionTool refuse, and that refusal
+	// A name already taken makes RegisterSessionTool refuse, and that refusal
 	// must reach the dispatcher constructor rather than being swallowed.
 	reg.Register(privilegedNamed{namedTool{name: tools.LoadToolsToolName}})
 	err := registerLoadToolsTool(nil, SessionDispatcherOpts{

@@ -3,6 +3,7 @@ package clichat
 import (
 	"context"
 	"encoding/json"
+	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"strings"
@@ -44,7 +45,7 @@ func TestRegisterSessionToolRejectsUnmarkedTool(t *testing.T) {
 	d := newPrivilegeTestDispatcher(t)
 	reg := tools.NewRegistry()
 
-	err := registerSessionTool(d, reg, unmarkedControlTool{})
+	err := cliagents.RegisterSessionTool(d, reg, unmarkedControlTool{})
 	if err == nil {
 		t.Fatal("registering an unmarked session tool must fail")
 	}
@@ -60,7 +61,7 @@ func TestRegisterSessionToolAcceptsMarkedTool(t *testing.T) {
 	d := newPrivilegeTestDispatcher(t)
 	reg := tools.NewRegistry()
 
-	if err := registerSessionTool(d, reg, markedControlTool{}); err != nil {
+	if err := cliagents.RegisterSessionTool(d, reg, markedControlTool{}); err != nil {
 		t.Fatalf("marked session tool must register: %v", err)
 	}
 	if _, exists := reg.Get("future_control"); !exists {

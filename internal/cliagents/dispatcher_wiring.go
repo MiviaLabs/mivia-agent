@@ -60,10 +60,10 @@ func NewSessionDispatcher(opts SessionDispatcherOpts) (*runtime.Dispatcher, erro
 	return NewSessionDispatcherVar(opts)
 }
 
-// registerSessionTool registers a privileged session-owned tool on both the
+// RegisterSessionTool registers a privileged session-owned tool on both the
 // dispatcher and the tool registry. It fails fast if the tool name is already
 // present so registration conflicts surface at startup rather than at runtime.
-func registerSessionTool(d *runtime.Dispatcher, reg *tools.Registry, tool tools.Tool) error {
+func RegisterSessionTool(d *runtime.Dispatcher, reg *tools.Registry, tool tools.Tool) error {
 	if _, privileged := tool.(tools.PrivilegedTool); !privileged {
 		return fmt.Errorf("session tool %q must implement tools.PrivilegedTool", tool.Name())
 	}
@@ -89,5 +89,5 @@ func registerLoadToolsTool(d *runtime.Dispatcher, opts SessionDispatcherOpts) er
 	if opts.Session == nil {
 		return fmt.Errorf("deferred tools configured without a session to stage against")
 	}
-	return registerSessionTool(d, opts.Registry, NewLoadToolsTool(opts.Session, opts.DeferredTools))
+	return RegisterSessionTool(d, opts.Registry, NewLoadToolsTool(opts.Session, opts.DeferredTools))
 }

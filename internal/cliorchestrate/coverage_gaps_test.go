@@ -18,6 +18,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
+	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
 func TestRunDoctorRejectsUnknownFlag(t *testing.T) {
@@ -66,12 +67,22 @@ func TestWriteDoctorHumanEnvFileNotLoaded(t *testing.T) {
 	}
 }
 
-func TestRegisterOrchestrationToolsRequiresRegisterSeam(t *testing.T) {
-	original := SessionToolRegister
-	SessionToolRegister = nil
-	t.Cleanup(func() { SessionToolRegister = original })
-	if err := RegisterOrchestrationTools(&runtime.Dispatcher{}, nil, config.SubagentConfig{}, nil, nil, nil, "", ""); err == nil {
-		t.Fatal("RegisterOrchestrationTools without the register seam must fail")
+// TestRegisterOrchestrationToolsFailsOnDuplicateName proves the fails-fast-at-
+// startup-on-conflict property survived the removal of the SessionToolRegister
+// seam: registering the orchestration tool set twice on the same registry must
+// error, since the second pass finds each tool name already present.
+func TestRegisterOrchestrationToolsFailsOnDuplicateName(t *testing.T) {
+	d, err := runtime.NewToolDispatcher(tools.NewRegistry(), runtime.Policy{})
+	if err != nil {
+		t.Fatalf("dispatcher: %v", err)
+	}
+	t.Cleanup(d.Close)
+	reg := tools.NewRegistry()
+	if err := RegisterOrchestrationTools(d, reg, config.SubagentConfig{}, nil, nil, nil, "", ""); err != nil {
+		t.Fatalf("first RegisterOrchestrationTools call: %v", err)
+	}
+	if err := RegisterOrchestrationTools(d, reg, config.SubagentConfig{}, nil, nil, nil, "", ""); err == nil {
+		t.Fatal("RegisterOrchestrationTools must fail on a duplicate tool name")
 	}
 }
 

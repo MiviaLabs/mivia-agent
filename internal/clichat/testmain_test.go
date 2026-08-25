@@ -95,7 +95,6 @@ func TestMain(m *testing.M) {
 	FlagVarFunc = flagVarLocal
 	wireMemorySeams()
 	wireHookSeams()
-	wireOrchestrationSeams()
 	wireCliagentsSeams()
 	wireWorkflowSeams()
 	wireCliworkflowSeams()
@@ -133,11 +132,6 @@ func wireHookSeams() {
 	HookSessionConfiguredFunc = func() bool { return false }
 	CurrentHookSessionFunc = func() HookSessionState { return emptyHookSession{} }
 	InstallHookSessionFunc = func(string, bool, bool) (func(), error) { return func() {}, nil }
-}
-
-// wireOrchestrationSeams wires the cliorchestrate tool registration seam.
-func wireOrchestrationSeams() {
-	cliorchestrate.SessionToolRegister = RegisterSessionTool
 }
 
 // wireCliagentsSeams wires the cliagents seam vars that production wiring
