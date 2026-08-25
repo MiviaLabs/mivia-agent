@@ -276,6 +276,34 @@ func TestRunSlashCommandClearTranscript(t *testing.T) {
 	}
 }
 
+func TestRunSlashCommandNew(t *testing.T) {
+	fakeConv := &fakeCustomConversation{
+		title: "Brand New Session",
+	}
+	runner := &fakeRunner{
+		outcome: ports.CommandOutcome{
+			Conversation:    fakeConv,
+			ClearTranscript: true,
+			Notice:          "New session started.",
+		},
+	}
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	s.SetCommandRunner(runner)
+	s.Notice("leftover content")
+
+	s, _ = sendLine(t, s, "/new")
+
+	if len(runner.calls) != 1 || runner.calls[0] != "new|" {
+		t.Fatalf("expected 1 call to Run(\"new\", \"\"), got %v", runner.calls)
+	}
+	if s.conv != fakeConv {
+		t.Errorf("expected screen conversation to be switched to fakeConv, got %v", s.conv)
+	}
+	if got := lastErrorDetail(t, s); got != "New session started." {
+		t.Errorf("got notice detail %q, want %q", got, "New session started.")
+	}
+}
+
 func TestRunSlashCommandNotice(t *testing.T) {
 	runner := &fakeRunner{outcome: ports.CommandOutcome{Notice: "context usage: 10%"}}
 	s := newScreen(t, replay.New(nil, 0), nil, nil)

@@ -43,7 +43,7 @@ func builtInSlashCommands() []SlashCommand {
 	return []SlashCommand{
 		{Name: "/help", Aliases: []string{"/h", "/?"}, Description: "Show help", Surface: slashSurfaceBoth, Kind: SlashKindBuiltin, AutoExecute: true},
 		{Name: "/clear", Description: "Clear chat history", Surface: slashSurfaceBoth, Kind: SlashKindBuiltin, AutoExecute: true},
-		{Name: "/new", Description: "Start a new session", Surface: slashSurfaceBoth, Kind: SlashKindBuiltin, AutoExecute: true},
+		{Name: "/new", Description: "Start a new session", Surface: SlashSurfaceTUI, Kind: SlashKindBuiltin, AutoExecute: true},
 		{Name: "/status", Description: "Show session status", Surface: slashSurfaceBoth, Kind: SlashKindBuiltin, AutoExecute: true},
 		{Name: "/worktrees", Description: "Manage git worktrees", Surface: SlashSurfaceTUI, Kind: SlashKindBuiltin, AutoExecute: true},
 		{Name: "/sessions", Description: "Manage saved sessions", Surface: SlashSurfaceTUI, Kind: SlashKindBuiltin, AutoExecute: true},
