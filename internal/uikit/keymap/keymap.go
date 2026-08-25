@@ -109,6 +109,9 @@ const (
 	IDFileToggleView ID = "file-toggle-view"
 	IDFileOpen       ID = "file-open"
 
+	// Universal Command Palette (Ctrl+P / Ctrl+X).
+	IDPalette ID = "command-palette"
+
 	// Settings screen. IDSettingsDialog is the global key that opens it
 	// (f2 - see docs/design/settings-screen.md §6 for why not ctrl+g);
 	// the rest are ContextSettings-scoped.
@@ -159,6 +162,7 @@ func Default() []Binding {
 		{ID: IDThemeDialog, Context: ContextGlobal, Keys: []string{"ctrl+t"}, Help: "theme"},
 		{ID: IDOpenPager, Context: ContextGlobal, Keys: []string{"ctrl+o"}, Help: "open the pager", Short: "transcript"},
 		{ID: IDToggleReason, Context: ContextGlobal, Keys: []string{"ctrl+r"}, Help: "show or hide reasoning"},
+		{ID: IDPalette, Context: ContextGlobal, Keys: []string{"ctrl+p", "ctrl+x"}, Help: "command palette", Short: "palette"},
 		// ctrl+b drives the files panel: open it focused, hand focus
 		// back to the composer, close it.
 		{ID: IDPanelToggle, Context: ContextGlobal, Keys: []string{"ctrl+b"}, Help: "open, focus, or close the sidebar", Short: "sidebar"},
