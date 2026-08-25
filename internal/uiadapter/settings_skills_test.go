@@ -108,3 +108,39 @@ func TestSettingsSkills_SaveAndRemove(t *testing.T) {
 		t.Errorf("expected user-lint directory to be deleted")
 	}
 }
+
+func TestSettingsSkills_Errors(t *testing.T) {
+	_, store := setupSkillsTestEnv(t)
+
+	// Remove non-existent
+	h1, err := store.Settings().Skills.Apply(context.Background(), ports.ScopeUser, ports.RemoveSkill{
+		Name:   "non-existent",
+		Origin: "user",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var last ports.SaveEvent
+	for ev := range h1.Events() {
+		last = ev
+	}
+	if last.State != ports.SaveFailed {
+		t.Errorf("expected SaveFailed, got %v", last.State)
+	}
+
+	// Toggle non-existent
+	h2, err := store.Settings().Skills.Apply(context.Background(), ports.ScopeUser, ports.SetSkillUserInvocable{
+		Name:   "non-existent",
+		Origin: "user",
+		On:     true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for ev := range h2.Events() {
+		last = ev
+	}
+	if last.State != ports.SaveFailed {
+		t.Errorf("expected SaveFailed, got %v", last.State)
+	}
+}

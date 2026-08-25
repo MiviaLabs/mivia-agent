@@ -10,12 +10,12 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
 
-// skillsSectionOf reaches the Skills section (nav index 4).
-func skillsSectionOf(s Screen) *skillsSection { return s.sections[4].(*skillsSection) }
+// skillsSectionOf reaches the Skills section (nav index 3).
+func skillsSectionOf(s Screen) *skillsSection { return s.sections[3].(*skillsSection) }
 
 func focusSkills(t *testing.T, s Screen) Screen {
 	t.Helper()
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 3; i++ {
 		next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 		s = next.(Screen)
 	}
@@ -142,5 +142,35 @@ func TestSkillsSection_NilStore(t *testing.T) {
 	sec := newSkillsSection(nil)
 	if got := sec.View(); !strings.Contains(got, "unavailable") {
 		t.Errorf("expected unavailable view on nil store, got %q", got)
+	}
+}
+
+func TestSkillsSection_HintsAndNotices(t *testing.T) {
+	s, _ := newHarnessScreen(t, 100, 30)
+	s = focusSkills(t, s)
+
+	sec := skillsSectionOf(s)
+	if hints := sec.Hints(); len(hints) == 0 {
+		t.Error("expected non-empty Hints()")
+	}
+
+	// 'n' key notice
+	next, _ := sec.Update(tea.KeyPressMsg{Text: "n", Code: 'n'})
+	sec = next.(*skillsSection)
+	if !strings.Contains(sec.notice, "to add a skill") {
+		t.Errorf("expected notice for 'n' key, got %q", sec.notice)
+	}
+
+	// 'e' key notice
+	next2, _ := sec.Update(tea.KeyPressMsg{Text: "e", Code: 'e'})
+	sec = next2.(*skillsSection)
+	if !strings.Contains(sec.notice, "to edit skill instructions") {
+		t.Errorf("expected notice for 'e' key, got %q", sec.notice)
+	}
+
+	// SetSize
+	sec.SetSize(120, 40)
+	if sec.width != 120 || sec.height != 40 {
+		t.Errorf("SetSize failed, got %dx%d", sec.width, sec.height)
 	}
 }

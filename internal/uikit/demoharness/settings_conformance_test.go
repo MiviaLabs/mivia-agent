@@ -167,3 +167,72 @@ func TestAutomationTriggerProducesAWatchableRun(t *testing.T) {
 		t.Errorf("Run(%q) = %+v, %v", last.ID, got, ok)
 	}
 }
+
+func TestSkillsApplyRoundTrips(t *testing.T) {
+	settings := newTestHarness(t).SettingsAdapters()
+	initialSkills := settings.Skills.Skills()
+	if len(initialSkills) == 0 {
+		t.Fatal("no seeded skills")
+	}
+
+	// 1. Toggle UserInvocable
+	target := initialSkills[0]
+	h1, err := settings.Skills.Apply(context.Background(), ports.ScopeUser, ports.SetSkillUserInvocable{
+		Name:   target.Name,
+		Origin: target.Origin,
+		On:     !target.UserInvocable,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drainOK(t, h1)
+
+	// 2. SaveSkill (create new)
+	h2, err := settings.Skills.Apply(context.Background(), ports.ScopeUser, ports.SaveSkill{
+		Name:          "new-skill",
+		Description:   "brand new skill",
+		Origin:        "user",
+		UserInvocable: true,
+		Instructions:  "# New\nDo new stuff",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drainOK(t, h2)
+
+	// 3. SaveSkill (update existing)
+	h3, err := settings.Skills.Apply(context.Background(), ports.ScopeUser, ports.SaveSkill{
+		Name:          "new-skill",
+		Description:   "updated brand new skill",
+		Origin:        "user",
+		UserInvocable: true,
+		Instructions:  "# New Updated\nDo new stuff updated",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drainOK(t, h3)
+
+	// 4. RemoveSkill
+	h4, err := settings.Skills.Apply(context.Background(), ports.ScopeUser, ports.RemoveSkill{
+		Name:   "new-skill",
+		Origin: "user",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drainOK(t, h4)
+
+	// 5. Remove non-existent skill fails
+	h5, err := settings.Skills.Apply(context.Background(), ports.ScopeUser, ports.RemoveSkill{
+		Name:   "non-existent-xyz",
+		Origin: "user",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	states := drainWithFailure(h5)
+	if states[len(states)-1] != ports.SaveFailed {
+		t.Errorf("expected SaveFailed for non-existent skill, got %v", states)
+	}
+}

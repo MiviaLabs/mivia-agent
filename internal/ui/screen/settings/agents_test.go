@@ -12,12 +12,12 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
 
-// agentsSectionOf reaches the Agents section (nav index 3).
-func agentsSectionOf(s Screen) *agentsSection { return s.sections[3].(*agentsSection) }
+// agentsSectionOf reaches the Agents section (nav index 2).
+func agentsSectionOf(s Screen) *agentsSection { return s.sections[2].(*agentsSection) }
 
 func focusAgents(t *testing.T, s Screen) Screen {
 	t.Helper()
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 2; i++ {
 		next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 		s = next.(Screen)
 	}

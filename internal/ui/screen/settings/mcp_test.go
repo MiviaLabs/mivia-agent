@@ -12,12 +12,12 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
 
-// mcpSectionOf reaches the MCP section (nav index 6, the last entry).
-func mcpSectionOf(s Screen) *mcpSection { return s.sections[6].(*mcpSection) }
+// mcpSectionOf reaches the MCP section (nav index 5, the last entry).
+func mcpSectionOf(s Screen) *mcpSection { return s.sections[5].(*mcpSection) }
 
 func focusMCP(t *testing.T, s Screen) Screen {
 	t.Helper()
-	for i := 0; i < 6; i++ {
+	for i := 0; i < 5; i++ {
 		next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 		s = next.(Screen)
 	}

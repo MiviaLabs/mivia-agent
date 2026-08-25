@@ -62,3 +62,26 @@ func TestWriteSkillMarkdownAndLoad(t *testing.T) {
 		t.Errorf("expected skill directory to be deleted")
 	}
 }
+
+func TestWriteSkillMarkdown_EdgeCases(t *testing.T) {
+	tmp := t.TempDir()
+
+	// Empty name
+	if err := WriteSkillMarkdown(tmp, Definition{}); err == nil {
+		t.Error("expected error for empty name")
+	}
+	if err := RemoveSkillDirectory(tmp, ""); err == nil {
+		t.Error("expected error for empty name in remove")
+	}
+
+	// Empty instructions and no tools/triggers
+	def := Definition{Name: "minimal-skill", UserInvocable: false}
+	if err := WriteSkillMarkdown(tmp, def); err != nil {
+		t.Fatalf("WriteSkillMarkdown failed: %v", err)
+	}
+
+	// Update on non-existent skill
+	if err := UpdateSkillUserInvocable(tmp, "non-existent", true); err == nil {
+		t.Error("expected error updating non-existent skill")
+	}
+}

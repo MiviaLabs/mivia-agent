@@ -102,22 +102,26 @@ func (s *SettingsStore) skillsDirectory(origin string, scope ports.Scope) string
 func (s *SettingsStore) applySkill(scope ports.Scope, e ports.SkillEdit) error {
 	switch v := e.(type) {
 	case ports.RemoveSkill:
+		i := s.findSkill(v.Name)
+		if i < 0 {
+			return fmt.Errorf("skill %q not found", v.Name)
+		}
 		dir := s.skillsDirectory(v.Origin, scope)
 		if err := skills.RemoveSkillDirectory(dir, v.Name); err != nil {
 			return err
 		}
-		if i := s.findSkill(v.Name); i >= 0 {
-			s.skills = append(s.skills[:i], s.skills[i+1:]...)
-		}
+		s.skills = append(s.skills[:i], s.skills[i+1:]...)
 		s.reloadSkillRegistry()
 	case ports.SetSkillUserInvocable:
+		i := s.findSkill(v.Name)
+		if i < 0 {
+			return fmt.Errorf("skill %q not found", v.Name)
+		}
 		dir := s.skillsDirectory(v.Origin, scope)
 		if err := skills.UpdateSkillUserInvocable(dir, v.Name, v.On); err != nil {
 			return err
 		}
-		if i := s.findSkill(v.Name); i >= 0 {
-			s.skills[i].UserInvocable = v.On
-		}
+		s.skills[i].UserInvocable = v.On
 		s.reloadSkillRegistry()
 	case ports.SaveSkill:
 		dir := s.skillsDirectory(v.Origin, scope)

@@ -12,10 +12,10 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
 
-// modelsSectionOf reaches the Models section (index 5 - General,
-// Projects, Automations, Agents, Skills, Models, MCP) as its concrete
+// modelsSectionOf reaches the Models section (index 4 - General,
+// Projects, Agents, Skills, Models, MCP) as its concrete
 // type for direct cursor/row assertions.
-func modelsSectionOf(s Screen) *modelsSection { return s.sections[5].(*modelsSection) }
+func modelsSectionOf(s Screen) *modelsSection { return s.sections[4].(*modelsSection) }
 
 func awaitModelsSaveTest(t *testing.T, s Screen, cmd tea.Cmd) Screen {
 	t.Helper()
@@ -28,16 +28,14 @@ func awaitModelsSaveTest(t *testing.T, s Screen, cmd tea.Cmd) Screen {
 
 func focusModels(t *testing.T, s Screen) Screen {
 	t.Helper()
-	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyDown}) // General -> Projects
-	s = next.(Screen)
 	for i := 0; i < 4; i++ {
-		next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+		next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 		s = next.(Screen)
 	}
 	if got := s.sections[s.nav].Title(); got != "Models" {
 		t.Fatalf("nav landed on %q, want Models", got)
 	}
-	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyRight})
 	return next.(Screen)
 }
 

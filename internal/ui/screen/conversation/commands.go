@@ -349,7 +349,6 @@ func (s Screen) openCommandPalette() (app.Screen, tea.Cmd) {
 				"settings: General",
 				"settings: Models",
 				"settings: MCP",
-				"settings: Automations",
 				"settings: Projects",
 			},
 		},

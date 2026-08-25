@@ -23,11 +23,11 @@ import (
 var _ app.Screen = Screen{}
 
 // sectionCount is the fixed number of nav entries: General, Projects,
-// Automations, Agents, Skills, Models, MCP, in that order everywhere
+// Agents, Skills, Models, MCP, in that order everywhere
 // (nav, breadcrumb, sectionNames, the theme-walk fixture). A slice
 // length rather than a named const per section would let the two
 // drift.
-const sectionCount = 7
+const sectionCount = 6
 
 // Screen is the settings modal. It owns the frame (top bar, nav,
 // status row); each section owns only its own detail body.
@@ -70,7 +70,7 @@ var _ app.OwnsQuit = Screen{}
 // (no domain model has been scoped for either, the same state Automations
 // was in before settings-screen.md §12 defined one) - they are
 // placeholders like every other nil-backed section until one lands.
-var sectionNames = []string{"general", "projects", "automations", "agents", "skills", "models", "mcp"}
+var sectionNames = []string{"general", "projects", "agents", "skills", "models", "mcp"}
 
 // SectionIndex resolves a deep-link section name (as "/settings models"
 // or CommandOutcome.SettingsSection would carry) to its nav index,
@@ -110,7 +110,6 @@ func New(t theme.Theme, tier theme.Tier, top topbar.Model, store ports.Settings,
 		sections: []section{
 			newGeneralSection(store.General),
 			newPlaceholderSection("Projects"),
-			newAutomationsSection(store.Automations),
 			newAgentsSection(store.Agents),
 			newSkillsSection(store.Skills),
 			newModelsSection(store.Providers),

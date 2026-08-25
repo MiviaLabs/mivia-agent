@@ -578,18 +578,11 @@ def main() -> int:
         target_files = [root / f for f in res.stdout.splitlines() if f.strip().endswith("_test.go")]
         diff_args = ["HEAD"]
         if not target_files:
-            # On clean checkout (CI), resolve merge base against origin/main, main, or HEAD~1
-            base_ref = None
-            for candidate in ["origin/main", "main", "HEAD~1"]:
-                check = subprocess.run(["git", "rev-parse", "--verify", candidate], cwd=root, capture_output=True, text=True, check=False)
-                if check.returncode == 0:
-                    mb = subprocess.run(["git", "merge-base", "HEAD", candidate], cwd=root, capture_output=True, text=True, check=False)
-                    if mb.returncode == 0 and mb.stdout.strip():
-                        base_ref = mb.stdout.strip()
-                        break
-            if base_ref:
-                diff_args = [f"{base_ref}..HEAD"]
-                res = subprocess.run(["git", "diff", "--name-only", f"{base_ref}..HEAD"], cwd=root, capture_output=True, text=True, check=False)
+            # On clean working tree, inspect HEAD~1..HEAD if available
+            rev_check = subprocess.run(["git", "rev-parse", "HEAD~1"], cwd=root, capture_output=True, text=True, check=False)
+            if rev_check.returncode == 0:
+                diff_args = ["HEAD~1..HEAD"]
+                res = subprocess.run(["git", "diff", "--name-only", "HEAD~1..HEAD"], cwd=root, capture_output=True, text=True, check=False)
                 target_files = [root / f for f in res.stdout.splitlines() if f.strip().endswith("_test.go")]
     elif args.base:
         diff_args = [f"{args.base}..{args.tip}"]

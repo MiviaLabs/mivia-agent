@@ -75,7 +75,7 @@ func TestViewEmitsExactlyHeightRowsNoneOverWidth(t *testing.T) {
 func TestNavListsEveryTitle(t *testing.T) {
 	s := newScreen(t, 100, 30)
 	plain := ansi.Strip(s.View())
-	for _, want := range []string{"General", "Projects", "Automations", "Agents", "Skills", "Models", "MCP"} {
+	for _, want := range []string{"General", "Projects", "Agents", "Skills", "Models", "MCP"} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("nav is missing %q:\n%s", want, plain)
 		}
@@ -177,14 +177,17 @@ func TestUnavailableSectionsSayUnavailable(t *testing.T) {
 
 func TestSectionIndexResolvesNamesCaseInsensitively(t *testing.T) {
 	cases := map[string]int{
-		"": 0, "general": 0, "General": 0, "projects": 1, "automations": 2,
-		"agents": 3, "skills": 4, "MODELS": 5, "mcp": 6,
+		"": 0, "general": 0, "General": 0, "projects": 1,
+		"agents": 2, "skills": 3, "MODELS": 4, "mcp": 5,
 	}
 	for name, want := range cases {
 		got, ok := SectionIndex(name)
 		if !ok || got != want {
 			t.Errorf("SectionIndex(%q) = %d, %v; want %d, true", name, got, ok, want)
 		}
+	}
+	if _, ok := SectionIndex("automations"); ok {
+		t.Error("expected automations section name to resolve false while hidden")
 	}
 	if _, ok := SectionIndex("nope"); ok {
 		t.Error("expected an unknown section name to resolve false")
