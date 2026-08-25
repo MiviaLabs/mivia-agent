@@ -91,7 +91,7 @@ func runSessions(args []string) error {
 
 func runSessionsWithIO(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("sessions: expected list, show, usage, rename, or delete")
+		return fmt.Errorf("sessions: expected list, show, usage, rename, delete, or gc")
 	}
 	subcommand, rest := args[0], args[1:]
 	switch subcommand {
@@ -105,6 +105,8 @@ func runSessionsWithIO(args []string, stdout, stderr io.Writer) error {
 		return runSessionsRename(rest, stdout, stderr)
 	case "delete":
 		return runSessionsDelete(rest, stdout, stderr)
+	case "gc":
+		return runSessionsGC(rest, stdout, stderr)
 	default:
 		return fmt.Errorf("sessions: unknown subcommand %q", cliagents.SafeCatalogText(subcommand, 80))
 	}
