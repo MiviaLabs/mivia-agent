@@ -57,28 +57,31 @@ func (s *modelsSection) renderModelCells(p ports.ProviderView, m ports.ModelView
 	}
 	isActive := p.Active && p.ActiveModel == m.Name
 	isDefault := p.DefaultModel == m.Name
-	// "provider default", not bare "default": every provider has an
-	// independent default_model (one default per provider, not one
-	// default for the whole settings screen or the whole project - see
-	// ports.ProviderView's doc comment), so a bare "default" here would
-	// read as "the one overall default" when several providers can each
-	// show their own at once, right above each other in this same list.
-	// The model row is already indented under its provider's own header
-	// row, so "provider default" disambiguates without repeating the
-	// provider's name on every model line. A Global default is further
-	// shadowed once the project scope overrides this provider (see the
-	// "overridden by project" status flag in renderProviderCells) -
-	// label it accordingly so this row does not claim to be the
-	// effective default when it is not.
 	defaultLabel := "provider default"
 	if p.Scope == ports.ScopeUser && p.HasProjectOverride {
 		defaultLabel = "provider default (shadowed by project)"
 	}
+	// startsNextSession is true on exactly ONE row in the whole screen:
+	// the model that config.Load will actually pick as Resolved.Model
+	// next time mivia starts in this workspace - the active provider's
+	// EffectiveDefaultModel, rendered only on the row whose own scope
+	// owns that value (the Project row when HasProjectOverride, else
+	// the Global row), so it never doubles up on both of a provider's
+	// rows. This is the direct answer to "which model loads on start",
+	// distinct from "active" (this session's live pick, which can
+	// diverge via /model) and "provider default" (this row's own scope
+	// value, which can be the shadowed one).
+	ownsEffective := p.Scope == ports.ScopeProject || !p.HasProjectOverride
+	startsNextSession := p.Active && ownsEffective && m.Name == p.EffectiveDefaultModel
 	switch {
+	case isActive && startsNextSession:
+		cells = append(cells, render.Role(s.theme, s.tier, theme.RoleAccent).Render("active, starts next session"))
 	case isActive && isDefault:
 		cells = append(cells, render.Role(s.theme, s.tier, theme.RoleAccent).Render("active, "+defaultLabel))
 	case isActive:
 		cells = append(cells, render.Role(s.theme, s.tier, theme.RoleAccent).Render("active"))
+	case startsNextSession:
+		cells = append(cells, render.Role(s.theme, s.tier, theme.RoleSuccess).Render("starts next session"))
 	case isDefault:
 		cells = append(cells, render.Role(s.theme, s.tier, theme.RoleSuccess).Render(defaultLabel))
 	}

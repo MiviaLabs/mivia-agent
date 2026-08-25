@@ -88,6 +88,41 @@ func TestModelsNeverRendersAKeyValue(t *testing.T) {
 	}
 }
 
+// TestStartsNextSessionBadge_ShadowedProviderOwnsItOnProjectRow pins the
+// answer to "which model loads when I next start mivia here": exactly
+// one row in the whole screen must carry "starts next session", and it
+// must be the row whose OWN scope owns EffectiveDefaultModel - the
+// Project row when a project override shadows the Global default, not
+// the (now-shadowed) Global row, even though the Global row is also
+// under the Active provider and also satisfies isDefault for its own
+// (shadowed) value.
+func TestStartsNextSessionBadge_ShadowedProviderOwnsItOnProjectRow(t *testing.T) {
+	s, _ := newHarnessScreen(t, 100, 30)
+	sec := modelsSectionOf(s)
+	sec.SetTheme(loadTheme(t), theme.TierTrueColor)
+
+	models := []ports.ModelView{{Name: "model-a", ContextWindowTokens: 128_000}, {Name: "model-b", ContextWindowTokens: 128_000}}
+	global := ports.ProviderView{
+		Name: "shadowed-provider", Active: true, Selectable: true,
+		ActiveModel: "model-a", DefaultModel: "model-a",
+		Models: models, Scope: ports.ScopeUser,
+		HasProjectOverride: true, EffectiveDefaultModel: "model-b",
+	}
+	project := global
+	project.DefaultModel = "model-b"
+	project.Scope = ports.ScopeProject
+
+	globalRow := ansi.Strip(strings.Join(sec.renderModelCells(global, models[0]), " "))
+	projectRow := ansi.Strip(strings.Join(sec.renderModelCells(project, models[1]), " "))
+
+	if strings.Contains(globalRow, "starts next session") {
+		t.Errorf("shadowed Global row must NOT claim 'starts next session':\n%s", globalRow)
+	}
+	if !strings.Contains(projectRow, "starts next session") {
+		t.Errorf("Project row owning the effective default must say 'starts next session':\n%s", projectRow)
+	}
+}
+
 func TestActivatingAModelUpdatesTheStore(t *testing.T) {
 	s, h := newHarnessScreen(t, 100, 30)
 	s = focusModels(t, s)
