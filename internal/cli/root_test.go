@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/clichat"
 	"github.com/MiviaLabs/mivia-agent/internal/version"
 )
 
@@ -237,5 +238,28 @@ func TestExecuteVerifyDispatchesToRunVerify(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "a verification code is required") {
 		t.Fatalf("error = %v, want contains 'a verification code is required'", err)
+	}
+}
+
+// TestUsageTextChatCommandsMatchPlainCatalog verifies that every slash command
+// listed in usageText()'s "Chat: ..." line is valid for the plain chat surface.
+func TestUsageTextChatCommandsMatchPlainCatalog(t *testing.T) {
+	text := usageText()
+	plainCmds := clichat.SlashCommands(clichat.SlashSurfacePlain, nil)
+	valid := make(map[string]bool, len(plainCmds))
+	for _, cmd := range plainCmds {
+		valid[cmd.Name] = true
+	}
+
+	for _, line := range strings.Split(text, "\n") {
+		if !strings.HasPrefix(line, "Chat: ") {
+			continue
+		}
+		tokens := strings.Fields(line[len("Chat: "):])
+		for _, token := range tokens {
+			if strings.HasPrefix(token, "/") && !valid[token] {
+				t.Errorf("usageText() lists slash command %q not available on plain surface", token)
+			}
+		}
 	}
 }

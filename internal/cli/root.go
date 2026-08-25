@@ -147,7 +147,7 @@ Agent tools: read_file list_dir grep glob write_file search_replace multi_edit r
   --allow-env-var  add env var to subprocess allowlist (repeatable)
   --deny-env-var   remove env var from subprocess allowlist (repeatable)
 
-Chat: /help /tools /hooks /exit /clear /new /model /status
+Chat: /help /tools /hooks /exit /clear /model /status
   Ctrl-C at prompt exits; Ctrl-C during a reply cancels generation.
 
 Config: $MIVIA_CONFIG | ./.mivia/mivia.toml | ~/.mivia/mivia.toml
