@@ -87,16 +87,9 @@ func TranslateEvent(ev agent.Event) []uievent.Event {
 	case agent.EventCacheUsage:
 		return notice(ev.Detail)
 	case agent.EventTokenUsage:
-		if ev.TokenUsage != nil {
-			return []uievent.Event{{
-				Kind: uievent.KindUsage,
-				Body: uievent.UsageBody{
-					InputTokens:  int64(ev.TokenUsage.InputTokens),
-					OutputTokens: int64(ev.TokenUsage.OutputTokens),
-				},
-			}}
-		}
-		return notice(ev.Detail)
+		// Dropped: EventTokenUsage reports single-step prompt tokens, which would
+		// overwrite the session's cumulative context tokens and corrupt the topbar gauge.
+		return nil
 	case agent.EventWorkLimit:
 		return notice(ev.Detail)
 	case agent.EventHeartbeat, agent.EventSubagentHeartbeat:

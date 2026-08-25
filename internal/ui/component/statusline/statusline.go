@@ -47,8 +47,6 @@ type Model struct {
 
 	safetyMode string
 	costUSD    float64
-	contextPct int
-	hasContext bool
 
 	// notice is a one-line message shown INSTEAD of the turn line, and
 	// only until the next turn starts. It carries the outcome of an
@@ -124,10 +122,8 @@ func (m *Model) SetSafetyMode(mode string) {
 	m.safetyMode = mode
 }
 
-// SetTelemetry updates the context capacity percentage and spend.
-func (m *Model) SetTelemetry(pct int, hasPct bool, costUSD float64) {
-	m.contextPct = pct
-	m.hasContext = hasPct
+// SetCost updates the session spend displayed in the status line.
+func (m *Model) SetCost(costUSD float64) {
 	m.costUSD = costUSD
 }
 
@@ -189,10 +185,6 @@ func (m Model) View(now time.Time) string {
 			}
 			pills = append(pills, render.Role(m.Theme, m.Tier, theme.RoleSuccess).Render("["+label+"]"))
 		}
-	}
-	if m.hasContext {
-		ctxStyle := render.Role(m.Theme, m.Tier, render.ContextRole(m.contextPct))
-		pills = append(pills, ctxStyle.Render(fmt.Sprintf("[%d%% ctx]", m.contextPct)))
 	}
 	if m.costUSD > 0.0001 {
 		pills = append(pills, subtle.Render(fmt.Sprintf("$%.2f", m.costUSD)))

@@ -175,10 +175,10 @@ func TestHandleTurnEventUsageUpdatesTopbarAndStatusline(t *testing.T) {
 		t.Errorf("expected updated pct 45, got %d (ok=%v)", pct, ok)
 	}
 
-	// Statusline view should show telemetry pills
+	// Statusline view should show cost but NO ctx pill
 	status := s.statusline.View(fixedNow())
-	if !strings.Contains(status, "[45% ctx]") {
-		t.Errorf("expected statusline to contain [45%% ctx], got %q", status)
+	if strings.Contains(status, "ctx") {
+		t.Errorf("expected statusline to NOT contain ctx pill, got %q", status)
 	}
 	if !strings.Contains(status, "$0.08") {
 		t.Errorf("expected statusline to contain $0.08, got %q", status)

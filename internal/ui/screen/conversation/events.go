@@ -148,8 +148,7 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 			CachedTokens: b.CachedTokens,
 			CostUSD:      b.CostUSD,
 		})
-		pct, hasPct := s.topbar.ContextPercent()
-		s.statusline.SetTelemetry(pct, hasPct, b.CostUSD)
+		s.statusline.SetCost(b.CostUSD)
 	case uievent.TurnEndBody:
 		s.approval.Clear()
 	}

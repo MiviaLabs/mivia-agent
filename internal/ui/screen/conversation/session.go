@@ -43,14 +43,7 @@ func (st *sessionState) handleTurnEvent(ev uievent.Event) {
 			st.panel.appendLive(*b.Diff)
 		}
 	case uievent.UsageBody:
-		if st.conv != nil {
-			budget := st.conv.Model().ContextWindow
-			if budget > 0 {
-				used := b.InputTokens + b.OutputTokens
-				pct := int(100 * used / budget)
-				st.statusline.SetTelemetry(pct, true, b.CostUSD)
-			}
-		}
+		st.statusline.SetCost(b.CostUSD)
 	case uievent.TurnEndBody:
 		st.approval.Clear()
 	}

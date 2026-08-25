@@ -273,27 +273,13 @@ func TestTranslateEvent_NoticeMetrics(t *testing.T) {
 			}},
 		},
 		{
-			name: "token_usage_in_out_is_notice_without_struct",
-			ev: agent.Event{
-				Kind:   agent.EventTokenUsage,
-				Detail: "actual 1234 in / 567 out",
-			},
-			want: []uievent.Event{{
-				Kind: uievent.KindNotice,
-				Body: uievent.NoticeBody{Text: "actual 1234 in / 567 out"},
-			}},
-		},
-		{
-			name: "token_usage_structured_is_usage_event",
+			name: "token_usage_is_dropped",
 			ev: agent.Event{
 				Kind:       agent.EventTokenUsage,
 				Detail:     "estimate 1000 vs actual 1200",
 				TokenUsage: &events.TokenUsageEvent{InputTokens: 1200, OutputTokens: 300},
 			},
-			want: []uievent.Event{{
-				Kind: uievent.KindUsage,
-				Body: uievent.UsageBody{InputTokens: 1200, OutputTokens: 300},
-			}},
+			want: nil,
 		},
 		{
 			name: "work_limit_is_notice",
@@ -454,7 +440,7 @@ func TestTranslateEvent_ExhaustiveCoverage(t *testing.T) {
 		ev := contentBearingEvent(k)
 		got := safeTranslate(t, ev)
 		switch k {
-		case agent.EventHeartbeat, agent.EventSubagentHeartbeat:
+		case agent.EventHeartbeat, agent.EventSubagentHeartbeat, agent.EventTokenUsage:
 			if len(got) != 0 {
 				t.Errorf("%s must drop (no UI representation); got %d events", k, len(got))
 			}
