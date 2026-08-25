@@ -17,6 +17,7 @@ type AgentView struct {
 	MCPServers        []string
 	MaxTurns          int
 	SystemPromptChars int
+	SystemPrompt      string
 	// Scope is the trust origin the definition file loaded from:
 	// ScopeUser for ~/.mivia/agents/<name>.md, ScopeProject for
 	// <workspace>/.agents/agents/<name>.md. Populated from the resolved

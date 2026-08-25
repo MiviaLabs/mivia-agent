@@ -22,6 +22,7 @@ type SettingsStore struct {
 	mu sync.Mutex
 
 	general     ports.GeneralView
+	project     ports.ProjectView
 	providers   []ports.ProviderView
 	mcp         []ports.MCPServerView
 	agents      []ports.AgentView
@@ -84,6 +85,7 @@ func (s *SettingsStore) initFromConfig() {
 		ScreenReader:           false,
 		ReducedMotion:          false,
 	}
+	s.initProjectsFromConfig()
 	s.initProvidersFromConfig()
 	s.initAgentsFromConfig()
 	s.initSkillsFromConfig()
@@ -345,6 +347,7 @@ func mergeUntrackedProviders(existing, fresh []ports.ProviderView, baseOverrides
 func (s *SettingsStore) Settings() ports.Settings {
 	return ports.Settings{
 		General:     settingsGeneral{s},
+		Projects:    settingsProjects{s},
 		Providers:   settingsProviders{s},
 		MCP:         settingsMCP{s},
 		Agents:      settingsAgents{s},

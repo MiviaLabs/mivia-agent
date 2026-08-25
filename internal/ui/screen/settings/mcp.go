@@ -361,7 +361,7 @@ func (s *mcpSection) handleEditorKey(msg tea.KeyPressMsg) (section, tea.Cmd) {
 	isChoice := (s.formFocus == 0 || s.formFocus == 2 || s.formFocus == 7)
 	if isChoice {
 		switch msg.String() {
-		case " ", "enter", "right", "l":
+		case " ", "space", "enter", "right", "l":
 			s.formFields[s.formFocus].Cycle(1)
 			return s, nil
 		case "left", "h":

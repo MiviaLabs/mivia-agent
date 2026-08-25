@@ -15,6 +15,7 @@ type mockSettings struct {
 	mu          sync.Mutex
 	saveSeq     int
 	general     ports.GeneralView
+	project     ports.ProjectView
 	providers   []ports.ProviderView
 	mcp         []ports.MCPServerView
 	agents      []ports.AgentView
@@ -27,6 +28,7 @@ type mockSettings struct {
 func newMockSettings() *mockSettings {
 	return &mockSettings{
 		general:     seedGeneral(),
+		project:     seedProject(),
 		providers:   seedProviders(),
 		mcp:         seedMCPServers(),
 		agents:      seedAgents(),
@@ -40,6 +42,7 @@ func newMockSettings() *mockSettings {
 func (m *mockSettings) SettingsAdapters() ports.Settings {
 	return ports.Settings{
 		General:     mockGeneral{m},
+		Projects:    mockProjects{m},
 		Providers:   mockProviders{m},
 		MCP:         mockMCP{m},
 		Agents:      mockAgents{m},
@@ -50,6 +53,7 @@ func (m *mockSettings) SettingsAdapters() ports.Settings {
 
 var (
 	_ ports.GeneralSettings    = mockGeneral{}
+	_ ports.ProjectSettings    = mockProjects{}
 	_ ports.ProviderSettings   = mockProviders{}
 	_ ports.MCPSettings        = mockMCP{}
 	_ ports.AgentSettings      = mockAgents{}
@@ -138,6 +142,52 @@ func (m *mockSettings) applyGeneral(e ports.GeneralEdit) error {
 		m.general.ReducedMotion = v.On
 	default:
 		return fmt.Errorf("unknown general edit %T", e)
+	}
+	return nil
+}
+
+// --- Projects ---
+
+type mockProjects struct{ *mockSettings }
+
+func (p mockProjects) Project() ports.ProjectView {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.project
+}
+
+func (p mockProjects) Apply(_ context.Context, _ ports.Scope, e ports.ProjectEdit) (ports.SaveHandle, error) {
+	return p.newSaveHandle(func() error { return p.applyProject(e) }), nil
+}
+
+func (m *mockSettings) applyProject(e ports.ProjectEdit) error {
+	switch v := e.(type) {
+	case ports.SetProjectEnvFile:
+		m.project.EnvFile = v.Path
+	case ports.SetProjectBranchPrefix:
+		m.project.BranchPrefix = v.Prefix
+	case ports.SetProjectSystemPrompt:
+		m.project.SystemPrompt = v.Prompt
+	case ports.SetProjectTemperature:
+		m.project.Temperature = v.Value
+	case ports.SetProjectMaxTokens:
+		m.project.MaxTokens = v.Value
+	case ports.SetProjectMaxPromptTokens:
+		m.project.MaxPromptTokens = v.Value
+	case ports.SetProjectMaxSteps:
+		m.project.MaxSteps = v.Value
+	case ports.SetProjectRunTimeout:
+		m.project.RunTimeoutSec = v.Seconds
+	case ports.SetProjectStoreBackend:
+		m.project.StoreBackend = v.Backend
+	case ports.SetProjectStorePath:
+		m.project.StorePath = v.Path
+	case ports.SetProjectSandbox:
+		m.project.Sandbox = v.On
+	case ports.SetProjectRedactToolArgs:
+		m.project.RedactToolArgs = v.On
+	default:
+		return fmt.Errorf("unknown project edit %T", e)
 	}
 	return nil
 }
@@ -348,6 +398,7 @@ func (m *mockSettings) applyAgent(scope ports.Scope, e ports.AgentEdit) error {
 	switch v := e.(type) {
 	case ports.UpsertAgent:
 		v.Agent.Scope = scope
+		v.Agent.SystemPromptChars = len(v.Agent.SystemPrompt)
 		if i := m.findAgent(v.Agent.Name); i >= 0 {
 			m.agents[i] = v.Agent
 			return nil
@@ -676,9 +727,9 @@ func seedMCPServers() []ports.MCPServerView {
 
 func seedAgents() []ports.AgentView {
 	return []ports.AgentView{
-		{Name: ports.DefaultAgentName, Description: "general purpose orchestrator", Provider: "openrouter", Model: "anthropic/claude-opus-5", MaxTurns: 40, SystemPromptChars: 4200, Scope: ports.ScopeUser},
-		{Name: "go-engineer", Description: "implements Go changes", Provider: "openrouter", Model: "anthropic/claude-opus-5", Tools: []string{"edit_file", "run_command"}, MaxTurns: 60, SystemPromptChars: 2100, Scope: ports.ScopeUser},
-		{Name: "reviewer", Description: "reviews changed code for this workspace", Provider: "openrouter", Model: "anthropic/claude-opus-5", Tools: []string{"read_file", "inspect_repository"}, Skills: []string{"code-review"}, MaxTurns: 30, SystemPromptChars: 1800, Scope: ports.ScopeProject},
+		{Name: ports.DefaultAgentName, Description: "general purpose orchestrator", Provider: "openrouter", Model: "anthropic/claude-opus-5", MaxTurns: 40, SystemPromptChars: 4200, SystemPrompt: "You are Mivia, a local CLI coding agent.", Scope: ports.ScopeUser},
+		{Name: "go-engineer", Description: "implements Go changes", Provider: "openrouter", Model: "anthropic/claude-opus-5", Tools: []string{"edit_file", "run_command"}, MaxTurns: 60, SystemPromptChars: 2100, SystemPrompt: "You are a senior Go engineer.", Scope: ports.ScopeUser},
+		{Name: "reviewer", Description: "reviews changed code for this workspace", Provider: "openrouter", Model: "anthropic/claude-opus-5", Tools: []string{"read_file", "inspect_repository"}, Skills: []string{"code-review"}, MaxTurns: 30, SystemPromptChars: 1800, SystemPrompt: "You are a code reviewer focusing on quality and safety.", Scope: ports.ScopeProject},
 	}
 }
 
@@ -721,5 +772,24 @@ func seedSkills() []ports.SkillView {
 			InstructionsChars: 420,
 			Instructions:      "# Test Runner\nRun fast tests first using `make verify-fast`, then full verification.",
 		},
+	}
+}
+
+func seedProject() ports.ProjectView {
+	return ports.ProjectView{
+		WorkspacePath:   "/home/mac/projects/mivia-agent",
+		ConfigPath:      "/home/mac/projects/mivia-agent/.mivia/mivia.toml",
+		EnvFile:         "./.env",
+		BranchPrefix:    "mivia/",
+		SystemPrompt:    "You are mivia, a local CLI coding agent.",
+		Temperature:     "default",
+		MaxTokens:       "16384",
+		MaxPromptTokens: "200000",
+		MaxSteps:        "100",
+		RunTimeoutSec:   900,
+		StoreBackend:    "sqlite",
+		StorePath:       "",
+		Sandbox:         true,
+		RedactToolArgs:  false,
 	}
 }

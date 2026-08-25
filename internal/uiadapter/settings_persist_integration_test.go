@@ -2,8 +2,11 @@ package uiadapter_test
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/pelletier/go-toml/v2"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
@@ -169,4 +172,129 @@ func TestSettingsStore_ApplyAgent_Persist(t *testing.T) {
 		t.Fatal(err)
 	}
 	drainOK(t, h)
+}
+
+func TestSettingsStore_ApplyProject_Persist(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "mivia.toml")
+
+	res := &config.Resolved{
+		ConfigPath:   cfgPath,
+		ProviderName: "ollama",
+		Model:        "llama3.3",
+	}
+	state := &cliagents.AgentSessionState{
+		Registry:      agents.NewRegistry(),
+		WorkspaceRoot: tmpDir,
+	}
+	store := uiadapter.NewSettingsStore(nil, res, state)
+
+	applyProjectTestEdits(t, store)
+
+	// 1. Check in-memory store
+	p := store.Settings().Projects.Project()
+	assertInMemoryProjectView(t, p)
+
+	// 2. Read back from disk to verify TOML persistence
+	writtenPath := p.ConfigPath
+	if writtenPath == "" {
+		writtenPath = cfgPath
+	}
+	assertPersistedProjectTOML(t, writtenPath)
+}
+
+func applyProjectTestEdits(t *testing.T, store *uiadapter.SettingsStore) {
+	t.Helper()
+	edits := []ports.ProjectEdit{
+		ports.SetProjectEnvFile{Path: ".env.production"},
+		ports.SetProjectBranchPrefix{Prefix: "feat/persist-"},
+		ports.SetProjectSystemPrompt{Prompt: "Persisted project instructions"},
+		ports.SetProjectTemperature{Value: "0.4"},
+		ports.SetProjectMaxTokens{Value: "16384"},
+		ports.SetProjectMaxPromptTokens{Value: "32768"},
+		ports.SetProjectMaxSteps{Value: "50"},
+		ports.SetProjectRunTimeout{Seconds: 1800},
+		ports.SetProjectStoreBackend{Backend: "sqlite"},
+		ports.SetProjectStorePath{Path: ".mivia/custom_store.db"},
+		ports.SetProjectSandbox{On: false},
+		ports.SetProjectRedactToolArgs{On: true},
+	}
+	for _, edit := range edits {
+		h, err := store.Settings().Projects.Apply(context.Background(), ports.ScopeProject, edit)
+		if err != nil {
+			t.Fatalf("failed to apply edit %T: %v", edit, err)
+		}
+		drainOK(t, h)
+	}
+}
+
+func assertInMemoryProjectView(t *testing.T, p ports.ProjectView) {
+	t.Helper()
+	if p.EnvFile != ".env.production" || p.BranchPrefix != "feat/persist-" {
+		t.Errorf("env/branch mismatch: %+v", p)
+	}
+	if p.SystemPrompt != "Persisted project instructions" || p.Temperature != "0.4" {
+		t.Errorf("prompt/temp mismatch: %+v", p)
+	}
+	if p.MaxTokens != "16384" || p.MaxPromptTokens != "32768" || p.MaxSteps != "50" {
+		t.Errorf("token/step limits mismatch: %+v", p)
+	}
+	if p.RunTimeoutSec != 1800 || p.StoreBackend != "sqlite" || p.StorePath != ".mivia/custom_store.db" {
+		t.Errorf("store/timeout mismatch: %+v", p)
+	}
+	if p.Sandbox || !p.RedactToolArgs {
+		t.Errorf("flags mismatch: %+v", p)
+	}
+}
+
+func assertPersistedProjectTOML(t *testing.T, path string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read persisted TOML from %q: %v", path, err)
+	}
+	var raw struct {
+		EnvFile   string `toml:"env_file"`
+		Worktrees struct {
+			BranchPrefix string `toml:"branch_prefix"`
+		} `toml:"worktrees"`
+		Chat struct {
+			SystemPrompt    string  `toml:"system_prompt"`
+			Temperature     float64 `toml:"temperature"`
+			MaxTokens       int     `toml:"max_tokens"`
+			MaxPromptTokens int     `toml:"max_prompt_tokens"`
+			MaxSteps        int     `toml:"max_steps"`
+		} `toml:"chat"`
+		Tools struct {
+			RunTimeoutSec int `toml:"run_timeout_seconds"`
+		} `toml:"tools"`
+		Subagents struct {
+			StoreBackend string `toml:"store_backend"`
+			StorePath    string `toml:"store_path"`
+		} `toml:"subagents"`
+		Harness struct {
+			Sandbox bool `toml:"sandbox"`
+		} `toml:"harness"`
+		Privacy struct {
+			RedactToolArgs bool `toml:"redact_tool_args"`
+		} `toml:"privacy"`
+	}
+	if err := toml.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("failed to unmarshal persisted TOML: %v\ncontent: %s", err, string(data))
+	}
+	if raw.EnvFile != ".env.production" || raw.Worktrees.BranchPrefix != "feat/persist-" {
+		t.Errorf("TOML env/branch mismatch: %+v", raw)
+	}
+	if raw.Chat.SystemPrompt != "Persisted project instructions" || raw.Chat.Temperature != 0.4 {
+		t.Errorf("TOML prompt/temp mismatch: %+v", raw.Chat)
+	}
+	if raw.Chat.MaxTokens != 16384 || raw.Chat.MaxPromptTokens != 32768 || raw.Chat.MaxSteps != 50 {
+		t.Errorf("TOML limits mismatch: %+v", raw.Chat)
+	}
+	if raw.Tools.RunTimeoutSec != 1800 || raw.Subagents.StoreBackend != "sqlite" {
+		t.Errorf("TOML tools/subagents mismatch: %+v", raw)
+	}
+	if raw.Subagents.StorePath != ".mivia/custom_store.db" || raw.Harness.Sandbox || !raw.Privacy.RedactToolArgs {
+		t.Errorf("TOML flags mismatch: %+v", raw)
+	}
 }

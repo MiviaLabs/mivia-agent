@@ -56,6 +56,7 @@ type SaveHandle interface {
 // "unavailable" instead of the screen failing to build.
 type Settings struct {
 	General     GeneralSettings
+	Projects    ProjectSettings
 	Providers   ProviderSettings
 	MCP         MCPSettings
 	Agents      AgentSettings

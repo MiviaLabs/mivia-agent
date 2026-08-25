@@ -109,7 +109,7 @@ func New(t theme.Theme, tier theme.Tier, top topbar.Model, store ports.Settings,
 		keys: keymap.New(keymap.Default()),
 		sections: []section{
 			newGeneralSection(store.General),
-			newPlaceholderSection("Projects"),
+			newProjectsSection(store.Projects),
 			newAgentsSection(store.Agents),
 			newSkillsSection(store.Skills),
 			newModelsSection(store.Providers),
