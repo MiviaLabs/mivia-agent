@@ -1,6 +1,7 @@
 package statusline
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -244,5 +245,39 @@ func TestStatusLineSafetyPillsAndTelemetry(t *testing.T) {
 	gotAuto := m.View(start)
 	if !strings.Contains(gotAuto, "[AUTO]") {
 		t.Errorf("got %q, want [AUTO] pill in ASCII mode", gotAuto)
+	}
+}
+
+// TestContextPillColorStops pins the ctx pill's color stops to
+// render.ContextRole: subtle below 50, info at 50, warning at 70,
+// danger at 90 (comparison-based, so pct > 100 is still danger).
+// statusline.View() currently renders the pill in the line's own
+// subtle style at every fill level, so pct=50 expecting RoleInfo
+// fails until View() consults ContextRole.
+func TestContextPillColorStops(t *testing.T) {
+	th := loadTheme(t)
+	cases := []struct {
+		pct  int
+		role theme.Role
+	}{
+		{49, theme.RoleFGSubtle},
+		{50, theme.RoleInfo},
+		{69, theme.RoleInfo},
+		{70, theme.RoleWarning},
+		{89, theme.RoleWarning},
+		{90, theme.RoleDanger},
+		{999, theme.RoleDanger},
+	}
+	for _, c := range cases {
+		t.Run(fmt.Sprintf("pct=%d", c.pct), func(t *testing.T) {
+			m := New(th, theme.TierTrueColor)
+			m.SetTelemetry(c.pct, true, 0)
+			m.Start("thinking", time.Now())
+			got := m.View(time.Now())
+			want := render.Role(th, theme.TierTrueColor, c.role).Render(fmt.Sprintf("[%d%% ctx]", c.pct))
+			if !strings.Contains(got, want) {
+				t.Errorf("got %q, want the ctx pill styled with %s: %q", got, c.role, want)
+			}
+		})
 	}
 }

@@ -1,11 +1,13 @@
 package topbar
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
@@ -215,6 +217,43 @@ func TestHitsModel(t *testing.T) {
 	// After capsule (in context badge)
 	if m.HitsModel(end + 1) {
 		t.Errorf("expected HitsModel to return false after capsule")
+	}
+}
+
+// TestContextBadgeColorStops verifies the context badge follows the
+// shared ContextRole color stops: subtle < 50, info 50-69, warning
+// 70-89, danger >= 90. Each subtest renders the badge through View()
+// and checks the raw ANSI output carries the expected role's styled
+// pct string. Width 60 keeps the badge in its bar-less form so the
+// styled pct string appears verbatim in the output.
+func TestContextBadgeColorStops(t *testing.T) {
+	th := loadTheme(t)
+	info := ports.ModelInfo{Name: "x", Provider: "p", ContextWindow: 1000}
+
+	tests := []struct {
+		name string
+		pct  int
+		want theme.Role
+	}{
+		{"subtle-below-50", 49, theme.RoleFGSubtle},
+		{"info-at-50", 50, theme.RoleInfo},
+		{"info-below-70", 69, theme.RoleInfo},
+		{"warning-at-70", 70, theme.RoleWarning},
+		{"warning-below-90", 89, theme.RoleWarning},
+		{"danger-at-90", 90, theme.RoleDanger},
+		{"danger-overfull", 999, theme.RoleDanger},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := New(th, theme.TierTrueColor, info, ports.Usage{}, 60)
+			m.SetSession(info, ports.Usage{InputTokens: int64(tc.pct * 10), OutputTokens: 0})
+
+			styled := render.Role(th, theme.TierTrueColor, tc.want).Render(fmt.Sprintf("%d%%", tc.pct))
+			if view := m.View(); !strings.Contains(view, styled) {
+				t.Errorf("pct=%d: expected badge in role %q, view missing styled %q:\n%s",
+					tc.pct, tc.want, styled, view)
+			}
+		})
 	}
 }
 

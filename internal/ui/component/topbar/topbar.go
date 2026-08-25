@@ -65,6 +65,11 @@ func (m *Model) SetSession(info ports.ModelInfo, usage ports.Usage) {
 	m.info, m.usage = info, usage
 }
 
+// SetUsage updates the token and cost accounting values incrementally.
+func (m *Model) SetUsage(usage ports.Usage) {
+	m.usage = usage
+}
+
 // SetBreadcrumb records the ordered breadcrumb segments (e.g. [sessionTitle]
 // or [sessionTitle, agentName, taskDesc]).
 func (m *Model) SetBreadcrumb(segments []string) {
@@ -166,13 +171,7 @@ func (m Model) breadcrumbRow() string {
 
 func (m Model) contextBadge(pct int, withBar bool) string {
 	border := render.Role(m.Theme, m.Tier, theme.RoleBorder)
-	role := theme.RoleFGSubtle
-	if pct >= 90 {
-		role = theme.RoleDanger
-	} else if pct >= 70 {
-		role = theme.RoleWarning
-	}
-	style := render.Role(m.Theme, m.Tier, role)
+	style := render.Role(m.Theme, m.Tier, render.ContextRole(pct))
 
 	if !withBar || m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY || m.width < 70 {
 		return border.Render("[ ") + style.Render(fmt.Sprintf("%d%%", pct)) + border.Render(" ]")

@@ -191,7 +191,8 @@ func (m Model) View(now time.Time) string {
 		}
 	}
 	if m.hasContext {
-		pills = append(pills, subtle.Render(fmt.Sprintf("[%d%% ctx]", m.contextPct)))
+		ctxStyle := render.Role(m.Theme, m.Tier, render.ContextRole(m.contextPct))
+		pills = append(pills, ctxStyle.Render(fmt.Sprintf("[%d%% ctx]", m.contextPct)))
 	}
 	if m.costUSD > 0.0001 {
 		pills = append(pills, subtle.Render(fmt.Sprintf("$%.2f", m.costUSD)))
