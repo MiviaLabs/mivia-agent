@@ -269,6 +269,36 @@ func TestDoubleClickOnTopBarModelOpensModelPicker(t *testing.T) {
 	}
 }
 
+func TestDoubleClickOnTopBarActivityOpensSidebar(t *testing.T) {
+	s := sized(t, 0)
+	s.width = 100
+	s.height = 24
+	s.topbar.SetWidth(s.chatWidth())
+	s.topbar.SetSession(ports.ModelInfo{Name: "claude-3-7-sonnet", Provider: "anthropic"}, ports.Usage{})
+	s.topbar.SetActivity(1, 1)
+	s.panel.open = false
+
+	start, end, ok := s.topbar.ActivityBounds()
+	if !ok {
+		t.Fatal("expected ActivityBounds ok")
+	}
+	activityCol := 1 + (start+end)/2 // 1 for gutter
+
+	// First click: does not open sidebar
+	next, _ := s.Update(leftClick(activityCol, 1))
+	s = next.(Screen)
+	if s.panel.open {
+		t.Error("single click should not open sidebar")
+	}
+
+	// Second click within 500ms at same spot: opens sidebar
+	next, _ = s.Update(leftClick(activityCol, 1))
+	s = next.(Screen)
+	if !s.panel.open {
+		t.Error("double click on top bar activity badge must open sidebar")
+	}
+}
+
 func TestClickOnDialogCloseButtonOrBackdropDismissesPicker(t *testing.T) {
 	s := sized(t, 0)
 	s.width = 80

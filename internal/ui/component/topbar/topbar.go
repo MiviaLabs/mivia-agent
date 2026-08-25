@@ -365,3 +365,35 @@ func (m Model) HitsModel(clickCol int) bool {
 	}
 	return clickCol >= startCol && clickCol < endCol
 }
+
+// ActivityBounds returns the 0-indexed column range [startCol, endCol) of the
+// activity badge (files/agents) in the top bar within the content width.
+// Returns ok = false if no activity badge is displayed.
+func (m Model) ActivityBounds() (startCol, endCol int, ok bool) {
+	withActivity := m.width >= 90
+	if !withActivity {
+		return 0, 0, false
+	}
+	act := m.activityBadge()
+	if act == "" {
+		return 0, 0, false
+	}
+
+	subtle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
+	fg := render.Role(m.Theme, m.Tier, theme.RoleFG)
+	brand := m.mark.View() + subtle.Render("  ") + fg.Render(Wordmark)
+	brandWidth := ansi.StringWidth(brand)
+
+	startCol = brandWidth + 1
+	endCol = startCol + ansi.StringWidth(act)
+	return startCol, endCol, true
+}
+
+// HitsActivity reports whether clickCol falls within the activity badge.
+func (m Model) HitsActivity(clickCol int) bool {
+	startCol, endCol, ok := m.ActivityBounds()
+	if !ok {
+		return false
+	}
+	return clickCol >= startCol && clickCol < endCol
+}

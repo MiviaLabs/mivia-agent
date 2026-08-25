@@ -217,3 +217,36 @@ func TestHitsModel(t *testing.T) {
 		t.Errorf("expected HitsModel to return false after capsule")
 	}
 }
+
+func TestHitsActivity(t *testing.T) {
+	m := New(loadTheme(t), theme.TierTrueColor, ports.ModelInfo{
+		Name: "claude-3-7-sonnet", Provider: "anthropic", ContextWindow: 200_000,
+	}, ports.Usage{InputTokens: 20_000, OutputTokens: 4_000}, 100)
+
+	// No activity badge
+	if m.HitsActivity(10) {
+		t.Error("expected HitsActivity to return false when no files or agents")
+	}
+
+	m.SetActivity(2, 1)
+	start, end, ok := m.ActivityBounds()
+	if !ok {
+		t.Fatal("expected ok = true for ActivityBounds with counts set")
+	}
+	if start <= 0 || end <= start {
+		t.Fatalf("unexpected activity bounds [%d, %d)", start, end)
+	}
+
+	// Inside activity badge
+	if !m.HitsActivity((start + end) / 2) {
+		t.Errorf("expected HitsActivity true inside badge at %d", (start+end)/2)
+	}
+	// Before badge
+	if m.HitsActivity(start - 1) {
+		t.Error("expected HitsActivity false before badge")
+	}
+	// After badge
+	if m.HitsActivity(end + 1) {
+		t.Error("expected HitsActivity false after badge")
+	}
+}

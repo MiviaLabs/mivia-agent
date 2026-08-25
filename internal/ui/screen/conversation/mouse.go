@@ -138,9 +138,17 @@ func (s Screen) handleModalClick(x, y, topGutter int) (Screen, tea.Cmd, bool) {
 }
 
 func (s Screen) handleTopbarDoubleClick(x, y, topGutter int) (Screen, tea.Cmd, bool) {
-	if y != topGutter || !s.topbar.HitsModel(x-1) {
+	if y != topGutter {
 		return s, nil, false
 	}
+	clickCol := x - 1
+	hitsModel := s.topbar.HitsModel(clickCol)
+	hitsActivity := s.topbar.HitsActivity(clickCol)
+
+	if !hitsModel && !hitsActivity {
+		return s, nil, false
+	}
+
 	now := time.Now()
 	if s.now != nil {
 		now = s.now()
@@ -150,8 +158,18 @@ func (s Screen) handleTopbarDoubleClick(x, y, topGutter int) (Screen, tea.Cmd, b
 	s.lastClickX = x
 	s.lastClickY = y
 	if isDoubleClick {
-		scr, cmd := s.runSlashCommand("/model")
-		return scr.(Screen), cmd, true
+		if hitsModel {
+			scr, cmd := s.runSlashCommand("/model")
+			return scr.(Screen), cmd, true
+		}
+		if hitsActivity {
+			if !s.panel.open {
+				s.panel.openPanel()
+				s.transcript = s.transcript.ClearFocus()
+				s.reflow()
+				return s, tea.ClearScreen, true
+			}
+		}
 	}
 	return s, nil, true
 }
