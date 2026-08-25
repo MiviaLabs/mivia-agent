@@ -60,7 +60,7 @@ their public API. It exercises the real architecture boundaries declared in
 Check for cross-package coverage explicitly. In this repository, key boundaries include:
 
 - `cmd/mivia` connects CLI entrypoints to `internal/agent`, `internal/cli*`, and `internal/workflows`.
-- `cmd/mivia-ui` connects to `internal/uiadapter` and `internal/uikit` without importing CLI or coordinator packages.
+- `internal/newtui` connects `internal/ui` to `internal/uiadapter` and `internal/uikit` without importing CLI or coordinator packages.
 - `internal/workflows` connects `controller`, `compiler`, `ledger`, and `storage`.
 - `internal/hooks` executes lifecycle gates independently and never imports `internal/runtime` or `internal/tools`.
 - `internal/ui` and `internal/uikit` connect through `internal/uikit/ports` and `internal/uikit/uievent`.

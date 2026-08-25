@@ -1,8 +1,0 @@
-{
-  "before": [
-    {"kind":"turn.start","turn_id":"t","seq":1,"at":"2026-08-20T09:06:00Z","body":{"input":"summarize the session cost"}},
-    {"kind":"text.end","turn_id":"t","seq":2,"at":"2026-08-20T09:06:00.1Z","body":{"text":"Here is the usage for this session."}},
-    {"kind":"usage","turn_id":"t","seq":3,"at":"2026-08-20T09:06:00.2Z","body":{"input_tokens":5200,"output_tokens":1800,"cached_tokens":900,"cost_usd":0.084,"elapsed_seconds":42.5}},
-    {"kind":"turn.end","turn_id":"t","seq":4,"at":"2026-08-20T09:06:00.3Z","body":{"reason":"completed"}}
-  ]
-}

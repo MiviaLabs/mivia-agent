@@ -11,20 +11,15 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/topbar"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/demoharness"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
 
-// newHarnessScreen builds a settings screen wired to a real
-// demoharness.Harness, the same fake production wiring uses - end to
-// end through the ports interfaces, not a hand-rolled mock.
-func newHarnessScreen(t *testing.T, width, height int) (Screen, *demoharness.Harness) {
+// newHarnessScreen builds a settings screen wired to mockSettings - end to
+// end through the ports interfaces.
+func newHarnessScreen(t *testing.T, width, height int) (Screen, *mockSettings) {
 	t.Helper()
 	th := loadTheme(t)
-	h, err := demoharness.New("smalltalk", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	h := newMockSettings()
 	tb := topbar.New(th, theme.TierTrueColor, ports.ModelInfo{}, ports.Usage{}, width)
 	s := New(th, theme.TierTrueColor, tb, h.SettingsAdapters(), 0)
 	next, _ := s.Update(tea.WindowSizeMsg{Width: width, Height: height})

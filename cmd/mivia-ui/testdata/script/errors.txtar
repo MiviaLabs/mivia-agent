@@ -1,9 +1,0 @@
-# Unknown --theme fails closed with a clear stderr message.
-
-! exec mivia-ui --theme does-not-exist --output json
-stderr 'unknown --theme "does-not-exist"'
-
-# Unknown flag fails with exit code 2 (flag.ContinueOnError's own exit
-# convention, matched by run's flag-parse-error path).
-
-! exec mivia-ui --bogus

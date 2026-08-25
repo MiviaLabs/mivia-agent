@@ -12,7 +12,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/demoharness"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
 
@@ -360,10 +359,7 @@ func TestSmallScreenSettingsNavKeepsCursorVisible(t *testing.T) {
 func TestGeneralSectionNoticeToggles(t *testing.T) {
 	th := loadTheme(t)
 	tb := topbar.New(th, theme.TierTrueColor, ports.ModelInfo{Name: "mivia-fast"}, ports.Usage{}, 100)
-	h, err := demoharness.New("smalltalk", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	h := newMockSettings()
 	s := New(th, theme.TierTrueColor, tb, h.SettingsAdapters(), 0)
 	next, _ := s.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	s = next.(Screen)

@@ -9,7 +9,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/demoharness"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
 
@@ -32,10 +31,7 @@ func awaitAutomationsSaveTest(t *testing.T, sec *automationsSection, cmd tea.Cmd
 }
 
 func TestAutomationsSectionListsEveryAutomation(t *testing.T) {
-	h, err := demoharness.New("smalltalk", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	h := newMockSettings()
 	sec := newTestAutomationsSection(t, h.SettingsAdapters().Automations)
 	plain := ansi.Strip(sec.View())
 	for _, want := range []string{"Nightly bug audit", "Release checklist", "manual", "scheduled"} {
@@ -46,10 +42,7 @@ func TestAutomationsSectionListsEveryAutomation(t *testing.T) {
 }
 
 func TestAutomationsDetailShowsScheduleAndNoRunsYet(t *testing.T) {
-	h, err := demoharness.New("smalltalk", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	h := newMockSettings()
 	sec := newTestAutomationsSection(t, h.SettingsAdapters().Automations)
 	plain := ansi.Strip(sec.View())
 	if !strings.Contains(plain, "trigger:") {
@@ -61,10 +54,7 @@ func TestAutomationsDetailShowsScheduleAndNoRunsYet(t *testing.T) {
 }
 
 func TestTogglingAutomationEnabledPersists(t *testing.T) {
-	h, err := demoharness.New("smalltalk", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	h := newMockSettings()
 	sec := newTestAutomationsSection(t, h.SettingsAdapters().Automations)
 	before := sec.rows[0]
 
@@ -83,10 +73,7 @@ func TestTogglingAutomationEnabledPersists(t *testing.T) {
 }
 
 func TestRemovingAnAutomationUpdatesTheStore(t *testing.T) {
-	h, err := demoharness.New("smalltalk", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	h := newMockSettings()
 	sec := newTestAutomationsSection(t, h.SettingsAdapters().Automations)
 	target := sec.rows[0].ID
 
@@ -108,10 +95,7 @@ func TestRemovingAnAutomationUpdatesTheStore(t *testing.T) {
 // watch-derived chain (the section re-arms watchNext itself after each
 // Pending/Running delivery) until the run reaches a terminal state.
 func TestTriggerStreamsALiveRunToSuccess(t *testing.T) {
-	h, err := demoharness.New("smalltalk", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	h := newMockSettings()
 	sec := newTestAutomationsSection(t, h.SettingsAdapters().Automations)
 
 	next, cmd := sec.Update(tea.KeyPressMsg{Text: "t", Code: 't'})
@@ -164,10 +148,7 @@ func TestTriggerStreamsALiveRunToSuccess(t *testing.T) {
 }
 
 func TestCursorMoveRefreshesHistoryAndDropsTheLiveRun(t *testing.T) {
-	h, err := demoharness.New("smalltalk", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	h := newMockSettings()
 	sec := newTestAutomationsSection(t, h.SettingsAdapters().Automations)
 	sec.liveRun = &ports.Run{State: ports.RunRunning}
 
@@ -189,10 +170,7 @@ func TestUnavailableAutomationsSectionSaysSo(t *testing.T) {
 // aligned layout: every automation row's enabled/disabled column must
 // start at the same screen position regardless of its own name length.
 func TestAutomationsRowsAlignColumns(t *testing.T) {
-	h, err := demoharness.New("smalltalk", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	h := newMockSettings()
 	sec := newTestAutomationsSection(t, h.SettingsAdapters().Automations)
 	rows := strings.Split(ansi.Strip(sec.View()), "\n")
 	var withStatus []string

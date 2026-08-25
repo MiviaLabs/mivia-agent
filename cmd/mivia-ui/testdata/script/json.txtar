@@ -1,7 +1,0 @@
-# --output json prints the raw NDJSON event stream, one uievent.Event
-# per line, no interpretation.
-
-exec mivia-ui --output json
-stdout '"kind":"turn.start"'
-stdout '"kind":"tool.end"'
-stdout '"kind":"turn.end"'
