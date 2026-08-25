@@ -162,6 +162,97 @@ func TestFormatLedgerOutput(t *testing.T) {
 	}
 }
 
+func TestFormatLedgerOutput_NotFound(t *testing.T) {
+	th := loadTheme(t)
+	raw := `{"status":"not_found","ref":"ref:output:deadbeefcafefeed"}`
+	summary, lines := FormatLedgerOutput(th, theme.TierTrueColor, raw, 80)
+	if !strings.Contains(summary, "not found") {
+		t.Errorf("unexpected summary: %q", summary)
+	}
+	plain := ansi.Strip(strings.Join(lines, "\n"))
+	if !strings.Contains(plain, "ref:output:deadbeef") {
+		t.Errorf("expected shortened ref in body:\n%s", plain)
+	}
+}
+
+func TestFormatLedgerOutput_ErrorKind(t *testing.T) {
+	th := loadTheme(t)
+	raw := `{"status":"ok","ref":"ref:error:94f588477ee962db522a4e0b01d0dedf3bd3b85b8dab125d51b07577eab7b21e","kind":"error","bytes":42,"content":"boom: something failed"}`
+	summary, lines := FormatLedgerOutput(th, theme.TierTrueColor, raw, 80)
+	plainSummary := ansi.Strip(summary)
+	if !strings.Contains(plainSummary, "recorded error") {
+		t.Errorf("expected error-kind label in summary: %q", plainSummary)
+	}
+	plain := ansi.Strip(strings.Join(lines, "\n"))
+	if !strings.Contains(plain, "boom: something failed") {
+		t.Errorf("missing content in:\n%s", plain)
+	}
+}
+
+func TestFormatLedgerOutput_MalformedRefShape(t *testing.T) {
+	th := loadTheme(t)
+	raw := `{"error":"malformed reference","detail":"expected kind:sub:digest"}`
+	summary, lines := FormatLedgerOutput(th, theme.TierTrueColor, raw, 80)
+	plainSummary := ansi.Strip(summary)
+	if !strings.Contains(plainSummary, "malformed reference") {
+		t.Errorf("unexpected summary: %q", plainSummary)
+	}
+	plain := ansi.Strip(strings.Join(lines, "\n"))
+	if !strings.Contains(plain, "expected kind:sub:digest") {
+		t.Errorf("missing detail in:\n%s", plain)
+	}
+}
+
+func TestFormatLedgerOutput_MissingRefParam(t *testing.T) {
+	th := loadTheme(t)
+	raw := `{"error":"ref is required"}`
+	summary, _ := FormatLedgerOutput(th, theme.TierTrueColor, raw, 80)
+	if !strings.Contains(ansi.Strip(summary), "ref is required") {
+		t.Errorf("unexpected summary: %q", summary)
+	}
+}
+
+func TestFormatLedgerOutput_NestedStructuredJSON(t *testing.T) {
+	th := loadTheme(t)
+	raw := `{"status":"ok","ref":"ref:output:94f588477ee962db522a4e0b01d0dedf3bd3b85b8dab125d51b07577eab7b21e","kind":"output","bytes":50,"content":"{\"output\":\"{\\\"summary\\\":\\\"ok\\\",\\\"count\\\":3}\"}"}`
+	_, lines := FormatLedgerOutput(th, theme.TierTrueColor, raw, 80)
+	plain := ansi.Strip(strings.Join(lines, "\n"))
+	if !strings.Contains(plain, `"summary"`) || !strings.Contains(plain, `"count"`) {
+		t.Errorf("expected pretty-printed nested JSON in:\n%s", plain)
+	}
+}
+
+func TestFormatLedgerOutput_TruncatedTailSalvaged(t *testing.T) {
+	th := loadTheme(t)
+	full := `{"status":"ok","ref":"ref:output:94f588477ee962db522a4e0b01d0dedf3bd3b85b8dab125d51b07577eab7b21e","kind":"output","bytes":6650,"offset":0,"limit":8192,"has_more":false,"content":"{\"output\":\"This review evaluates the OS-enforced sandboxing plan in detail across every subsystem\"}"}`
+	// Simulate a byte-level cap slicing the envelope mid-content, as
+	// capToolResult/remainder.CapWithSpoolRef would.
+	cut := full[:len(full)-30]
+	summary, lines := FormatLedgerOutput(th, theme.TierTrueColor, cut, 80)
+	if !strings.Contains(summary, "ref:output:94f58847") {
+		t.Errorf("expected salvaged ref in summary: %q", summary)
+	}
+	plain := ansi.Strip(strings.Join(lines, "\n"))
+	if !strings.Contains(plain, "This review evaluates the OS-enforced sandboxing plan") {
+		t.Errorf("expected partial content salvaged in:\n%s", plain)
+	}
+	if !strings.Contains(plain, "truncated") {
+		t.Errorf("expected truncation notice in:\n%s", plain)
+	}
+}
+
+func TestFormatLedgerOutput_UnrecoverableGarbageStillFallsBackRaw(t *testing.T) {
+	th := loadTheme(t)
+	raw := "not json at all, just noise"
+	summary, lines := FormatLedgerOutput(th, theme.TierTrueColor, raw, 80)
+	if summary != "" {
+		t.Errorf("expected empty summary for unrecoverable input, got %q", summary)
+	}
+	if len(lines) != 1 || lines[0] != raw {
+		t.Errorf("expected raw passthrough, got %v", lines)
+	}
+}
+
 func TestFormatFileReadOutputWithContext_SyntaxAndLineNumbers(t *testing.T) {
 	th := loadTheme(t)
 	code := `package main

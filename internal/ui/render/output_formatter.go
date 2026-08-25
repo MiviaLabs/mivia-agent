@@ -626,19 +626,6 @@ func FormatWorkflowOutput(t theme.Theme, tier theme.Tier, output string, width i
 	return summary, out
 }
 
-type ledgerEnvelope struct {
-	Status        string `json:"status"`
-	Ref           string `json:"ref"`
-	Kind          string `json:"kind"`
-	Bytes         int64  `json:"bytes"`
-	Offset        int    `json:"offset"`
-	Limit         int    `json:"limit"`
-	ReturnedBytes int64  `json:"returned_bytes"`
-	NextOffset    *int   `json:"next_offset"`
-	HasMore       bool   `json:"has_more"`
-	Content       string `json:"content"`
-}
-
 // shortenRef shortens a 'kind:sub:digest' content reference (ref:output:...,
 // ref:error:...) to an 8-hex-char digest for display, leaving anything that
 // doesn't match the three-part shape unchanged. Shared by every renderer
@@ -659,32 +646,6 @@ func humanBytes(n int64) string {
 		return fmt.Sprintf("%.1f KB", float64(n)/1024.0)
 	}
 	return fmt.Sprintf("%d B", n)
-}
-
-// FormatLedgerOutput formats ledger/output responses into clean content blocks without envelope metadata.
-func FormatLedgerOutput(t theme.Theme, tier theme.Tier, output string, width int) (string, []string) {
-	trimmed := strings.TrimSpace(output)
-	var env ledgerEnvelope
-	if err := json.Unmarshal([]byte(trimmed), &env); err != nil || env.Ref == "" {
-		return "", strings.Split(strings.TrimRight(output, "\n"), "\n")
-	}
-
-	summary := fmt.Sprintf("%s (%s)", shortenRef(env.Ref), humanBytes(env.Bytes))
-
-	content := env.Content
-	var innerObj map[string]any
-	if err := json.Unmarshal([]byte(content), &innerObj); err == nil {
-		if outVal, ok := innerObj["output"].(string); ok && outVal != "" {
-			content = outVal
-		}
-	}
-
-	lines := strings.Split(strings.TrimRight(content, "\n"), "\n")
-	if env.HasMore && env.NextOffset != nil {
-		subtle := Role(t, tier, theme.RoleFGSubtle)
-		lines = append(lines, subtle.Render(fmt.Sprintf("… more remains — call again with offset=%d to continue", *env.NextOffset)))
-	}
-	return summary, lines
 }
 
 // dispatchTaskResultView is the subset of dispatch_tasks' per-task result
