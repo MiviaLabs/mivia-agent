@@ -22,7 +22,15 @@ const SummaryMessageName = "context-summary"
 
 // SummaryOutputLimitTokens is the default token cap for one summary request.
 // OutputLimit is bounded above by 2048 in the summary validators.
-const SummaryOutputLimitTokens = 512
+//
+// 512 was too tight for the summary this host's own prompt asks for: a reply
+// populating every envelope field at the sizes the skeleton requests
+// re-encodes to roughly 2KB - about 514 estimated tokens - so realistic
+// summaries were rejected just past the bound and compaction silently
+// degraded to structural-only, destroying the dropped context's only record.
+// 1024 leaves real headroom while staying well under the validators' 2048
+// ceiling.
+const SummaryOutputLimitTokens = 1024
 
 // defaultSummaryRequestBudget is the request budget used when the session
 // defines no context budget (unbounded structural retention). It only needs to

@@ -145,8 +145,15 @@ func TestLLMSummaryProviderHappyPath(t *testing.T) {
 	if sent.Temperature == nil || *sent.Temperature != 0 {
 		t.Fatalf("temperature = %v, want a pointer to 0", sent.Temperature)
 	}
-	if sent.MaxTokens == nil || *sent.MaxTokens != request.OutputLimit+summaryOutputHeadroomTokens {
-		t.Fatalf("max tokens = %v, want %d", sent.MaxTokens, request.OutputLimit+summaryOutputHeadroomTokens)
+	// The wire cap is the OutputLimit itself, NOT OutputLimit+headroom. The
+	// headroom now pads the ACCEPT bound instead: asking for more than
+	// ValidateSummary would accept meant paying for a compliant reply and
+	// then discarding it, which cost a real session its whole task context.
+	if sent.MaxTokens == nil || *sent.MaxTokens != summaryWireCap(request.OutputLimit) {
+		t.Fatalf("max tokens = %v, want %d", sent.MaxTokens, summaryWireCap(request.OutputLimit))
+	}
+	if summaryAcceptBound(request.OutputLimit) < *sent.MaxTokens {
+		t.Fatalf("accept bound %d is below the wire cap %d", summaryAcceptBound(request.OutputLimit), *sent.MaxTokens)
 	}
 	if len(sent.Messages) != 2 ||
 		sent.Messages[0].Role != provider.RoleSystem ||

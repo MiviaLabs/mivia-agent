@@ -171,3 +171,62 @@ func TestSummaryMetadataEnvelopeRejection(t *testing.T) {
 		t.Fatalf("envelope rejected under raised operator ceiling: %v", err)
 	}
 }
+
+// TestSummaryAcceptBoundIsNeverBelowTheWireCap pins the fix for a confirmed
+// production failure: the host asked the model for OutputLimit+256 tokens on
+// the wire but ValidateSummary rejected anything over OutputLimit, so a
+// compliant reply that used the budget it was given was paid for and then
+// silently discarded. A real claude-sonnet-5 session lost its entire task
+// context this way - compaction reported "structural only, no summary" while
+// the model had in fact answered.
+//
+// The bound the host ACCEPTS must never be tighter than the budget it ASKS
+// for: the model cannot emit more than the wire cap, so everything it can
+// produce within that cap has to be acceptable.
+func TestSummaryAcceptBoundIsNeverBelowTheWireCap(t *testing.T) {
+	for _, outputLimit := range []int{1, 128, 512, 1024, 2048} {
+		wire := summaryWireCap(outputLimit)
+		accept := summaryAcceptBound(outputLimit)
+		if accept < wire {
+			t.Fatalf("outputLimit=%d: accept bound %d is below the wire cap %d - a compliant reply would be discarded", outputLimit, accept, wire)
+		}
+	}
+}
+
+// TestValidateSummaryAcceptsRealisticFullyPopulatedSummary is the regression
+// pin measured from the real failure: a summary with every field populated at
+// the sizes the host's own prompt asks the model to produce must validate.
+// Under the old 512-token bound this exact shape was rejected at 2058 bytes.
+func TestValidateSummaryAcceptsRealisticFullyPopulatedSummary(t *testing.T) {
+	request := summaryTestRequest(t)
+	// The caller-side default (agent.SummaryOutputLimitTokens); referenced by
+	// value because internal/agent imports this package.
+	request.OutputLimit = 1024
+	summary := Summary{
+		Version:     1,
+		Objective:   strings.Repeat("o", 130),
+		State:       strings.Repeat("s", 160),
+		SourceRange: request.SourceRange,
+	}
+	for i := 0; i < 4; i++ {
+		summary.Decisions = append(summary.Decisions, fmt.Sprintf("decision %d %s", i, strings.Repeat("d", 100)))
+		summary.Evidence = append(summary.Evidence, fmt.Sprintf("evidence %d %s", i, strings.Repeat("e", 100)))
+		summary.ChangedSurfaces = append(summary.ChangedSurfaces, fmt.Sprintf("surface %d %s", i, strings.Repeat("c", 60)))
+	}
+	for i := 0; i < 3; i++ {
+		summary.OpenWork = append(summary.OpenWork, fmt.Sprintf("open %d %s", i, strings.Repeat("w", 80)))
+	}
+	for i := 0; i < 2; i++ {
+		summary.Risks = append(summary.Risks, fmt.Sprintf("risk %d %s", i, strings.Repeat("r", 90)))
+	}
+	encoded, err := contextstate.MarshalCanonical(summary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(encoded) < 2000 {
+		t.Fatalf("fixture is not representative: %d canonical bytes, want a realistic ~2KB summary", len(encoded))
+	}
+	if _, err := ValidateSummary(summary, request); err != nil {
+		t.Fatalf("realistic summary (%d canonical bytes) rejected: %v", len(encoded), err)
+	}
+}

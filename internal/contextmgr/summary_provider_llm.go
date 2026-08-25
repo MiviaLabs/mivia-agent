@@ -12,12 +12,30 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
 
-// summaryOutputHeadroomTokens pads the wire output cap over OutputLimit.
-// ValidateSummary measures the summary bytes after the call and enforces
-// OutputLimit itself. JSON field names, brackets, and one code fence add
-// model tokens but no summary bytes. A small fixed pad stops a bounded
-// summary from truncation at the transport. The pad never raises the bound.
+// summaryOutputHeadroomTokens is the slack between what the host ASKS the
+// model to produce and what it will ACCEPT afterwards. JSON field names,
+// brackets, and one code fence cost model tokens but carry no summary bytes,
+// so a reply that spends its whole wire budget on content re-encodes to
+// slightly fewer canonical bytes than it emitted. The pad absorbs that
+// difference.
+//
+// The pad is applied to the ACCEPT bound, never to the wire cap. It used to
+// be the other way round - the wire asked for OutputLimit+pad while
+// ValidateSummary rejected anything over OutputLimit - which meant a model
+// that used the budget it was handed had its reply paid for and then thrown
+// away. A real session lost its entire task context to that gap: compaction
+// reported "structural only, no summary" while the model had answered
+// correctly, 10 bytes over the hidden bound. See summaryAcceptBound.
 const summaryOutputHeadroomTokens = 256
+
+// summaryWireCap is the max_tokens the host asks for on the summary call.
+func summaryWireCap(outputLimit int) int { return outputLimit }
+
+// summaryAcceptBound is the largest summary ValidateSummary will accept. It
+// is deliberately >= summaryWireCap: the model cannot emit more than the wire
+// cap allows, so everything it can legitimately produce must be acceptable.
+// TestSummaryAcceptBoundIsNeverBelowTheWireCap pins that ordering.
+func summaryAcceptBound(outputLimit int) int { return outputLimit + summaryOutputHeadroomTokens }
 
 // summaryReplySkeleton is the literal reply schema shown to the model. The
 // field names are the wire contract: the model must echo them and add none.
@@ -76,7 +94,7 @@ func (p LLMSummaryProvider) Summarize(ctx context.Context, request SummaryReques
 		return Summary{}, err
 	}
 	temperature := 0.0
-	outputCap := request.OutputLimit + summaryOutputHeadroomTokens
+	outputCap := summaryWireCap(request.OutputLimit)
 	reply, err := p.completer.ChatTurn(ctx, provider.Request{
 		Model: request.Model, Messages: summaryMessages(request),
 		Temperature: &temperature, MaxTokens: &outputCap, Stream: false,

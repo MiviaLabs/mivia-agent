@@ -1,17 +1,47 @@
 package config
 
-// EffectiveOutputTokens returns the tighter positive model/session response
-// ceiling. A nil result means neither layer configured a ceiling.
+// EffectiveOutputTokens returns the response allowance for one request: the
+// completion size asked for on the wire, and the reserve subtracted from the
+// context window to derive the prompt budget. Those two must stay in lockstep
+// - providers validate input_tokens + max_tokens <= context_window - so this
+// is the single place both are decided. A nil result means no ceiling applies.
+//
+// An EXPLICIT request ([chat] max_tokens) is authoritative up to the model's
+// own ceiling. An UNSET request falls back to the model ceiling capped at
+// DefaultOutputReserveTokens, because a model's max_output_tokens is a
+// per-response maximum rather than a sensible per-request default; see that
+// constant for the prompt-budget damage the uncapped fallback caused.
 func EffectiveOutputTokens(profile ModelSpec, requested *int) *int {
-	limit := profile.MaxOutputTokens
-	if limit < 0 {
-		limit = 0
+	ceiling := profile.MaxOutputTokens
+	if ceiling < 0 {
+		ceiling = 0
 	}
-	if requested != nil && *requested > 0 && (limit == 0 || *requested < limit) {
-		limit = *requested
+	if requested != nil && *requested > 0 {
+		limit := *requested
+		if ceiling > 0 && limit > ceiling {
+			limit = ceiling
+		}
+		return clampReserveToWindow(profile, limit)
 	}
-	if limit <= 0 {
+	if ceiling <= 0 {
 		return nil
+	}
+	limit := ceiling
+	if limit > DefaultOutputReserveTokens {
+		limit = DefaultOutputReserveTokens
+	}
+	return clampReserveToWindow(profile, limit)
+}
+
+// clampReserveToWindow keeps the response allowance inside the declared
+// context window. A reserve larger than the whole window is unsatisfiable:
+// providers validate input_tokens + max_tokens <= context_window, so such a
+// request is rejected outright rather than merely leaving no prompt room.
+// Validated config never reaches this (load rejects windows at or below the
+// reserve), so this guards hand-built profiles and explicit operator requests.
+func clampReserveToWindow(profile ModelSpec, limit int) *int {
+	if profile.ContextWindowTokens > 0 && limit > profile.ContextWindowTokens {
+		limit = profile.ContextWindowTokens
 	}
 	return &limit
 }

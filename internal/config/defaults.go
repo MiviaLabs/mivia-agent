@@ -21,6 +21,26 @@ const DefaultOrchestrationTimeoutSec = 12 * 60 * 60 // 12 hours
 // window-derived budget.
 const DefaultPromptCapTokens = 200_000
 
+// DefaultOutputReserveTokens is the completion allowance assumed when the
+// operator has NOT set [chat] max_tokens.
+//
+// A model's max_output_tokens is a per-response CEILING, not a typical
+// response size. Using it as the default reserve did two harmful things at
+// once: it asked the provider for that much output on EVERY request, and -
+// because the reserve is subtracted from the context window to derive the
+// prompt budget - it permanently removed that much prompt capacity. On a
+// 200k-window model declaring a 128k ceiling (every Claude and GLM entry in
+// the shipped config) that left only 72k of usable prompt and compacted
+// history at 57.6k, under a third of the window the user believed they had.
+//
+// The reserve itself is not optional: providers validate
+// input_tokens + max_tokens <= context_window and reject the request
+// outright, so the subtracted reserve and the wire max_tokens must stay in
+// lockstep. Only the DEFAULT value changes here. An operator who genuinely
+// wants long responses sets [chat] max_tokens explicitly, which is
+// authoritative up to the model ceiling.
+const DefaultOutputReserveTokens = 32_768
+
 // MaxTimeoutSeconds is the overflow-safety ceiling for every timeout that
 // EffectiveTimeoutSec returns. It is NOT a policy cap: raise-only semantics
 // let a model push any effective timeout up to 10 years, far beyond any real

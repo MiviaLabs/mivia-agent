@@ -64,8 +64,8 @@ func ValidateSummary(summary Summary, request SummaryRequest) (UntrustedSummary,
 	if err != nil {
 		return UntrustedSummary{}, err
 	}
-	if summaryTokenEstimate(len(encoded)) > request.OutputLimit {
-		return UntrustedSummary{}, fmt.Errorf("%w: summary output exceeds %d tokens", contextstate.ErrInvalidDTO, request.OutputLimit)
+	if accept := summaryAcceptBound(request.OutputLimit); summaryTokenEstimate(len(encoded)) > accept {
+		return UntrustedSummary{}, fmt.Errorf("%w: summary output exceeds %d tokens", contextstate.ErrInvalidDTO, accept)
 	}
 	return UntrustedSummary{value: cloneSummary(summary), sealed: true}, nil
 }
