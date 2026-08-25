@@ -17,6 +17,10 @@ const (
 	compactionAlgorithm       = "context-compact-v1"
 	defaultRecentTailMessages = 8
 	maxRecentTailMessages     = 64
+	// salvageUserTurns bounds how many otherwise-dropped user messages the
+	// salvage pass may re-admit. See salvageUserMessages for why the pass
+	// exists; the bound keeps compaction's output size predictable.
+	salvageUserTurns = 4
 )
 
 // PlanInput contains only immutable inputs to the structural planner. The
@@ -249,11 +253,79 @@ func retainMessages(input PlanInput, objective provider.Message, objectiveIndex,
 		runningCost = candidateCost
 		tailCount += len(unit)
 	}
+	salvageUserMessages(input, selected, runningCost, target)
 	retained := messagesFromIndexes(input.Messages, selected)
 	if err := validateMessageShape(retained); err != nil {
 		return nil, nil, err
 	}
 	return retained, indexesFromSelection(selected), nil
+}
+
+// salvageUserMessages re-admits up to salvageUserTurns user messages the tail
+// walk left behind, newest first, plus the OLDEST unselected one.
+//
+// The tail walk is a contiguous suffix capped by a MESSAGE COUNT, and the
+// objective anchor is only ever the newest user message. After a resume that
+// newest message is typically a bare continuation ("continue", "go on"), so
+// every earlier user turn is optional and competes for tail slots against
+// tool traffic that is orders of magnitude bulkier. A real session lost its
+// entire task statement this way while three of eight slots went to a
+// 10-byte "no matches" and two spent elision placeholders - and the token
+// target was nowhere near exhausted, so the message cap alone destroyed the
+// task. A user turn is not derived content: it is the premise the rest of the
+// transcript is evidence for, and it is almost always the cheapest message in
+// the history.
+//
+// The oldest unselected turn gets a reserved slot because a long session's
+// opening message is usually the task statement, and it is the one message
+// whose loss cannot be reconstructed from anything else that survived.
+//
+// This cannot overflow: it respects the same token target the tail walk uses
+// and never touches the mandatory set, so the budget check above still
+// governs. It cannot break tool pairing either - selection is emitted in
+// ascending original index order, so a salvaged message lands exactly where
+// it sat and can never be spliced between an assistant tool call and its
+// results.
+func salvageUserMessages(input PlanInput, selected map[int]struct{}, runningCost, target int) {
+	candidates := make([]int, 0, salvageUserTurns+1)
+	for index := len(input.Messages) - 1; index >= 0; index-- {
+		if input.Messages[index].Role != provider.RoleUser {
+			continue
+		}
+		// A NAMED user message is a host frame - the core-memory block, a
+		// rendered context summary - not something the user typed. Those have
+		// their own retention mechanism (PreserveNames) and their own
+		// lifecycle; salvage speaks only for genuine user turns, so claiming
+		// them here would silently override the caller's preservation policy.
+		if input.Messages[index].Name != "" {
+			continue
+		}
+		if _, ok := selected[index]; ok {
+			continue
+		}
+		candidates = append(candidates, index)
+	}
+	if len(candidates) == 0 {
+		return
+	}
+	// candidates is newest-first; keep that order for the bounded head and
+	// append the oldest turn so it is considered even in a long history.
+	oldest := candidates[len(candidates)-1]
+	if len(candidates) > salvageUserTurns {
+		candidates = candidates[:salvageUserTurns]
+		candidates = append(candidates, oldest)
+	}
+	for _, index := range candidates {
+		if _, ok := selected[index]; ok {
+			continue
+		}
+		tokens := applyCalibration(provider.EstimateMessageTokensAt(input.Messages, index, input.ContextAccounting), input.CalibrationRatio)
+		if runningCost+tokens > target {
+			continue
+		}
+		selected[index] = struct{}{}
+		runningCost += tokens
+	}
 }
 
 type messageUnit []int
