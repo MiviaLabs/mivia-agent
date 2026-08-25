@@ -163,6 +163,27 @@ func TestProviderSettings(t *testing.T) {
 	}
 	drainOK(t, h)
 
+	// Set default model
+	h, err = settings.Providers.Apply(context.Background(), ports.ScopeUser, ports.SetDefaultModel{
+		Provider: "ollama",
+		Model:    "llama3.3",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drainOK(t, h)
+
+	providersList := settings.Providers.Providers()
+	foundDefault := false
+	for _, p := range providersList {
+		if p.Name == "ollama" && p.DefaultModel == "llama3.3" {
+			foundDefault = true
+		}
+	}
+	if !foundDefault {
+		t.Errorf("expected ollama default_model to be llama3.3, got: %+v", providersList)
+	}
+
 	// Remove model
 	h, err = settings.Providers.Apply(context.Background(), ports.ScopeUser, ports.RemoveModel{
 		Provider: "ollama",

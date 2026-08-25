@@ -24,6 +24,7 @@ type File struct {
 	Memory       MemoryConfig              `toml:"memory"`
 	Harness      HarnessConfig             `toml:"harness"`
 	Approvals    ApprovalsConfig           `toml:"approvals"`
+	TUI          TUIConfig                 `toml:"tui"`
 	Workflows    WorkflowsConfig           `toml:"workflows"`
 	// Verifiers is populated by LoadWorkspaceVerifiers from the WORKSPACE'S
 	// own .mivia/mivia.toml only (loadFile), never by the tolerant struct
@@ -290,6 +291,16 @@ type WorktreeConfig struct {
 	BranchPrefix string `toml:"branch_prefix"`
 }
 
+// TUIConfig controls terminal user interface preferences.
+type TUIConfig struct {
+	Theme         string `toml:"theme"`
+	Mouse         *bool  `toml:"mouse"`
+	ShowReasoning *bool  `toml:"show_reasoning"`
+	ScrollLines   *int   `toml:"scroll_lines"`
+	ScreenReader  *bool  `toml:"screen_reader"`
+	ReducedMotion *bool  `toml:"reduced_motion"`
+}
+
 // WorkflowsConfig holds workflow-engine defaults.
 type WorkflowsConfig struct {
 	Panels WorkflowPanelLimits `toml:"panels"`
@@ -374,6 +385,8 @@ type Resolved struct {
 	Harness HarnessConfig
 	// Approvals is the resolved [approvals] configuration.
 	Approvals ApprovalsConfig
+	// TUI is the resolved [tui] configuration.
+	TUI TUIConfig
 	// Workflows is the resolved [workflows] configuration.
 	Workflows WorkflowsConfig
 	// Verifiers is the workspace-declared verifier profile set from the
@@ -407,6 +420,7 @@ type ProviderRuntime struct {
 // ProviderModelGroup is a secret-free provider group for the model picker.
 type ProviderModelGroup struct {
 	Provider       string
+	DefaultModel   string
 	Models         []ModelSpec
 	Active         bool
 	Selectable     bool

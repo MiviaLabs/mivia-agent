@@ -59,6 +59,8 @@ func (h *Harness) applyProvider(e ports.ProviderEdit) error {
 		return h.removeModel(i, v.Model)
 	case ports.ActivateModel:
 		return h.activateModel(v.Provider, v.Model)
+	case ports.SetDefaultModel:
+		return h.setDefaultModel(v.Provider, v.Model)
 	default:
 		return fmt.Errorf("unknown provider edit %T", e)
 	}
@@ -110,5 +112,24 @@ func (h *Harness) activateModel(provider, model string) error {
 		h.settingsProviders[j].Active = j == i
 	}
 	h.settingsProviders[i].ActiveModel = model
+	return nil
+}
+
+func (h *Harness) setDefaultModel(provider, model string) error {
+	i := h.findProvider(provider)
+	if i < 0 {
+		return fmt.Errorf("provider %q not found", provider)
+	}
+	found := false
+	for _, m := range h.settingsProviders[i].Models {
+		if m.Name == model {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("model %q not found under provider %q", model, provider)
+	}
+	h.settingsProviders[i].DefaultModel = model
 	return nil
 }

@@ -27,6 +27,7 @@ type ProviderView struct {
 	APIKeySet      bool
 	Models         []ModelView
 	ActiveModel    string
+	DefaultModel   string
 	Active         bool
 	Selectable     bool
 	DisabledReason string
@@ -52,11 +53,15 @@ type RemoveModel struct{ Provider, Model string }
 // does not pretend the switch is instant.
 type ActivateModel struct{ Provider, Model string }
 
-func (UpsertProvider) isProviderEdit() {}
-func (RemoveProvider) isProviderEdit() {}
-func (UpsertModel) isProviderEdit()    {}
-func (RemoveModel) isProviderEdit()    {}
-func (ActivateModel) isProviderEdit()  {}
+// SetDefaultModel sets the persisted default model for a provider in config.
+type SetDefaultModel struct{ Provider, Model string }
+
+func (UpsertProvider) isProviderEdit()  {}
+func (RemoveProvider) isProviderEdit()  {}
+func (UpsertModel) isProviderEdit()     {}
+func (RemoveModel) isProviderEdit()     {}
+func (ActivateModel) isProviderEdit()   {}
+func (SetDefaultModel) isProviderEdit() {}
 
 // ProviderSettings is the Models section's read/write surface.
 type ProviderSettings interface {

@@ -36,7 +36,8 @@ func IsAlwaysPolicy(raw string) bool {
 
 // ApprovalsConfig controls tool execution approval policies.
 type ApprovalsConfig struct {
-	Policy string `toml:"policy"`
+	Policy      string `toml:"policy"`
+	DefaultMode string `toml:"default_mode"`
 }
 
 // ApprovalPolicy returns the normalized approval policy ("write-only", "auto", or "always").

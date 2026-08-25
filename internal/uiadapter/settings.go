@@ -109,11 +109,12 @@ func (s *SettingsStore) initProvidersFromConfig() {
 			activeModel = s.sess.CurrentSelection().Model
 		}
 		s.providers = append(s.providers, ports.ProviderView{
-			Name:        s.res.ProviderName,
-			Active:      true,
-			Selectable:  true,
-			Models:      models,
-			ActiveModel: activeModel,
+			Name:         s.res.ProviderName,
+			Active:       true,
+			Selectable:   true,
+			Models:       models,
+			ActiveModel:  activeModel,
+			DefaultModel: s.res.Model,
 		})
 	}
 	for _, g := range catalog {
@@ -146,6 +147,10 @@ func (s *SettingsStore) initProvidersFromConfig() {
 				}
 			}
 		}
+		defaultModel := g.DefaultModel
+		if defaultModel == "" && len(g.Models) > 0 {
+			defaultModel = g.Models[0].Name
+		}
 		s.providers = append(s.providers, ports.ProviderView{
 			Name:           g.Provider,
 			Active:         active,
@@ -153,6 +158,7 @@ func (s *SettingsStore) initProvidersFromConfig() {
 			DisabledReason: g.DisabledReason,
 			Models:         models,
 			ActiveModel:    activeModel,
+			DefaultModel:   defaultModel,
 		})
 	}
 }
@@ -328,74 +334,159 @@ func (s *SettingsStore) findProvider(name string) int {
 	return -1
 }
 
+func (s *SettingsStore) configPath() string {
+	if s.res != nil && s.res.ConfigPath != "" {
+		return s.res.ConfigPath
+	}
+	return config.UserConfigPath()
+}
+
 func (s *SettingsStore) applyProvider(e ports.ProviderEdit) error {
+	cfgPath := s.configPath()
 	switch v := e.(type) {
 	case ports.UpsertProvider:
-		if i := s.findProvider(v.Provider.Name); i >= 0 {
-			s.providers[i] = v.Provider
-			return nil
-		}
-		s.providers = append(s.providers, v.Provider)
+		return s.applyUpsertProvider(v, cfgPath)
 	case ports.RemoveProvider:
-		i := s.findProvider(v.Name)
-		if i < 0 {
-			return fmt.Errorf("provider %q not found", v.Name)
-		}
-		s.providers = append(s.providers[:i], s.providers[i+1:]...)
+		return s.applyRemoveProvider(v, cfgPath)
 	case ports.UpsertModel:
-		i := s.findProvider(v.Provider)
-		if i < 0 {
-			return fmt.Errorf("provider %q not found", v.Provider)
-		}
-		for j := range s.providers[i].Models {
-			if s.providers[i].Models[j].Name == v.Model.Name {
-				s.providers[i].Models[j] = v.Model
-				return nil
-			}
-		}
-		s.providers[i].Models = append(s.providers[i].Models, v.Model)
+		return s.applyUpsertModel(v, cfgPath)
 	case ports.RemoveModel:
-		i := s.findProvider(v.Provider)
-		if i < 0 {
-			return fmt.Errorf("provider %q not found", v.Provider)
-		}
-		models := s.providers[i].Models
-		for j := range models {
-			if models[j].Name == v.Model {
-				s.providers[i].Models = append(models[:j], models[j+1:]...)
-				return nil
-			}
-		}
-		return fmt.Errorf("model %q not found under %q", v.Model, v.Provider)
+		return s.applyRemoveModel(v, cfgPath)
 	case ports.ActivateModel:
-		target := s.findProvider(v.Provider)
-		if target < 0 {
-			return fmt.Errorf("provider %q not found", v.Provider)
-		}
-		foundModel := false
-		for _, m := range s.providers[target].Models {
-			if m.Name == v.Model {
-				foundModel = true
-				break
-			}
-		}
-		if !foundModel {
-			return fmt.Errorf("model %q not found under %q", v.Model, v.Provider)
-		}
-		if s.sess != nil && s.res != nil {
-			if _, err := cliagents.SwitchModelCommand(s.sess, s.res, v.Provider, v.Model); err != nil {
-				return fmt.Errorf("failed to switch model to %q (%s): %w", v.Model, v.Provider, err)
-			}
-			s.res.ProviderName = v.Provider
-			s.res.Model = v.Model
-		}
-		for i := range s.providers {
-			s.providers[i].Active = (i == target)
-		}
-		s.providers[target].ActiveModel = v.Model
+		return s.applyActivateModel(v)
+	case ports.SetDefaultModel:
+		return s.applySetDefaultModel(v)
 	default:
 		return fmt.Errorf("unknown provider edit %T", e)
 	}
+}
+
+func (s *SettingsStore) applyUpsertProvider(v ports.UpsertProvider, cfgPath string) error {
+	if i := s.findProvider(v.Provider.Name); i >= 0 {
+		s.providers[i] = v.Provider
+	} else {
+		s.providers = append(s.providers, v.Provider)
+	}
+	if cfgPath != "" {
+		_ = config.UpdateProviderConfig(cfgPath, v.Provider)
+	}
+	return nil
+}
+
+func (s *SettingsStore) applyRemoveProvider(v ports.RemoveProvider, cfgPath string) error {
+	i := s.findProvider(v.Name)
+	if i < 0 {
+		return fmt.Errorf("provider %q not found", v.Name)
+	}
+	s.providers = append(s.providers[:i], s.providers[i+1:]...)
+	if cfgPath != "" {
+		_ = config.RemoveProviderConfig(cfgPath, v.Name)
+	}
+	return nil
+}
+
+func (s *SettingsStore) applyUpsertModel(v ports.UpsertModel, cfgPath string) error {
+	i := s.findProvider(v.Provider)
+	if i < 0 {
+		return fmt.Errorf("provider %q not found", v.Provider)
+	}
+	found := false
+	for j := range s.providers[i].Models {
+		if s.providers[i].Models[j].Name == v.Model.Name {
+			s.providers[i].Models[j] = v.Model
+			found = true
+			break
+		}
+	}
+	if !found {
+		s.providers[i].Models = append(s.providers[i].Models, v.Model)
+	}
+	if cfgPath != "" {
+		_ = config.UpdateProviderConfig(cfgPath, s.providers[i])
+	}
+	return nil
+}
+
+func (s *SettingsStore) applyRemoveModel(v ports.RemoveModel, cfgPath string) error {
+	i := s.findProvider(v.Provider)
+	if i < 0 {
+		return fmt.Errorf("provider %q not found", v.Provider)
+	}
+	models := s.providers[i].Models
+	removed := false
+	for j := range models {
+		if models[j].Name == v.Model {
+			s.providers[i].Models = append(models[:j], models[j+1:]...)
+			removed = true
+			break
+		}
+	}
+	if !removed {
+		return fmt.Errorf("model %q not found under %q", v.Model, v.Provider)
+	}
+	if cfgPath != "" {
+		_ = config.UpdateProviderConfig(cfgPath, s.providers[i])
+	}
+	return nil
+}
+
+func (s *SettingsStore) applyActivateModel(v ports.ActivateModel) error {
+	target := s.findProvider(v.Provider)
+	if target < 0 {
+		return fmt.Errorf("provider %q not found", v.Provider)
+	}
+	foundModel := false
+	for _, m := range s.providers[target].Models {
+		if m.Name == v.Model {
+			foundModel = true
+			break
+		}
+	}
+	if !foundModel {
+		return fmt.Errorf("model %q not found under %q", v.Model, v.Provider)
+	}
+	if s.sess != nil && s.res != nil {
+		if _, err := cliagents.SwitchModelCommand(s.sess, s.res, v.Provider, v.Model); err != nil {
+			return fmt.Errorf("failed to switch model to %q (%s): %w", v.Model, v.Provider, err)
+		}
+		s.res.ProviderName = v.Provider
+		s.res.Model = v.Model
+	}
+	for i := range s.providers {
+		s.providers[i].Active = (i == target)
+	}
+	s.providers[target].ActiveModel = v.Model
+	return nil
+}
+
+func (s *SettingsStore) applySetDefaultModel(v ports.SetDefaultModel) error {
+	target := s.findProvider(v.Provider)
+	if target < 0 {
+		return fmt.Errorf("provider %q not found", v.Provider)
+	}
+	foundModel := false
+	for _, m := range s.providers[target].Models {
+		if m.Name == v.Model {
+			foundModel = true
+			break
+		}
+	}
+	if !foundModel {
+		return fmt.Errorf("model %q not found under %q", v.Model, v.Provider)
+	}
+	cfgPath := ""
+	if s.res != nil {
+		cfgPath = s.res.ConfigPath
+	}
+	if cfgPath == "" {
+		cfgPath = config.UserConfigPath()
+	}
+	if cfgPath != "" {
+		if err := config.UpdateProviderDefaultModel(cfgPath, v.Provider, v.Model); err != nil {
+			return fmt.Errorf("failed to persist default model: %w", err)
+		}
+	}
+	s.providers[target].DefaultModel = v.Model
 	return nil
 }
 

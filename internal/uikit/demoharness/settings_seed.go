@@ -29,7 +29,7 @@ func seedProviders() []ports.ProviderView {
 		{
 			Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1",
 			APIKeyEnv: "OPENROUTER_API_KEY", APIKeySet: true,
-			Active: true, Selectable: true, ActiveModel: "anthropic/claude-opus-5",
+			Active: true, Selectable: true, ActiveModel: "anthropic/claude-opus-5", DefaultModel: "anthropic/claude-opus-5",
 			Models: []ports.ModelView{
 				{Name: "anthropic/claude-opus-5", ContextWindowTokens: 200_000, ReasoningEfforts: []string{"low", "high"}, Reasoning: "high"},
 				{Name: "openai/gpt-5", ContextWindowTokens: 128_000},
@@ -37,7 +37,7 @@ func seedProviders() []ports.ProviderView {
 		},
 		{
 			Name: "ollama", BaseURL: "http://localhost:11434",
-			APIKeyEnv: "", APIKeySet: false, Selectable: true,
+			APIKeyEnv: "", APIKeySet: false, Selectable: true, DefaultModel: "llama3.1",
 			Models: []ports.ModelView{
 				{Name: "llama3.1", ContextWindowTokens: 128_000},
 			},

@@ -38,9 +38,7 @@ func (s *modelsSection) renderProviderCells(p ports.ProviderView) []string {
 
 // renderModelCells draws one model line under its provider as
 // separately-aligned cells: name, context window, an optional
-// reasoning-effort label, and whether it is the provider's active
-// selection. The last two are appended only when present, which
-// render.Columns handles as a ragged row.
+// reasoning-effort label, and whether it is active/default.
 func (s *modelsSection) renderModelCells(p ports.ProviderView, m ports.ModelView) []string {
 	fg := render.Role(s.theme, s.tier, theme.RoleFG)
 	name := "  " + fg.Render(m.Name)
@@ -49,8 +47,15 @@ func (s *modelsSection) renderModelCells(p ports.ProviderView, m ports.ModelView
 	if m.Reasoning != "" {
 		cells = append(cells, render.Role(s.theme, s.tier, theme.RoleFGSubtle).Render(m.Reasoning))
 	}
-	if p.Active && p.ActiveModel == m.Name {
+	isActive := p.Active && p.ActiveModel == m.Name
+	isDefault := p.DefaultModel == m.Name
+	switch {
+	case isActive && isDefault:
+		cells = append(cells, render.Role(s.theme, s.tier, theme.RoleAccent).Render("active, default"))
+	case isActive:
 		cells = append(cells, render.Role(s.theme, s.tier, theme.RoleAccent).Render("active"))
+	case isDefault:
+		cells = append(cells, render.Role(s.theme, s.tier, theme.RoleSuccess).Render("default"))
 	}
 	return cells
 }

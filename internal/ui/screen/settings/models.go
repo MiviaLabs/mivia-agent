@@ -128,6 +128,8 @@ func (s *modelsSection) handleKey(msg tea.KeyPressMsg) (section, tea.Cmd) {
 		s.notice = ""
 	case "enter", "space":
 		return s.activate()
+	case "d":
+		return s.setDefault()
 	case "x":
 		return s.remove()
 	case "n":
@@ -144,6 +146,21 @@ func (s *modelsSection) activate() (section, tea.Cmd) {
 	}
 	handle, err := s.store.Apply(context.Background(), ports.ScopeUser,
 		ports.ActivateModel{Provider: row.provider.Name, Model: row.model.Name})
+	if err != nil {
+		s.notice = err.Error()
+		return s, nil
+	}
+	return s, awaitModelsSave(handle)
+}
+
+func (s *modelsSection) setDefault() (section, tea.Cmd) {
+	row := s.rows[s.cursor]
+	if row.isProvider {
+		s.notice = "select a model under " + row.provider.Name + " to set it as default"
+		return s, nil
+	}
+	handle, err := s.store.Apply(context.Background(), ports.ScopeUser,
+		ports.SetDefaultModel{Provider: row.provider.Name, Model: row.model.Name})
 	if err != nil {
 		s.notice = err.Error()
 		return s, nil
@@ -227,5 +244,5 @@ func (s *modelsSection) alignedRows() []string {
 }
 
 func (s *modelsSection) Hints() []keymap.ID {
-	return []keymap.ID{keymap.IDSettingsUp, keymap.IDSettingsDown, keymap.IDSettingsSelect, keymap.IDSettingsDelete}
+	return []keymap.ID{keymap.IDSettingsUp, keymap.IDSettingsDown, keymap.IDSettingsSelect, keymap.IDSettingsDefault, keymap.IDSettingsDelete}
 }

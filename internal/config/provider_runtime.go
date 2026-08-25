@@ -29,7 +29,7 @@ func resolveProviderRuntimes(file File, envMap map[string]string, active string)
 			APIKeySet: keySetNonBlank, APIKey: key, HTTPReferer: pc.HTTPReferer,
 			XTitle: pc.XTitle, Models: cloneModelSpecs(pc.Models),
 		}
-		group := ProviderModelGroup{Provider: name, Models: cloneModelSpecs(pc.Models), Active: name == active}
+		group := ProviderModelGroup{Provider: name, DefaultModel: pc.DefaultModel, Models: cloneModelSpecs(pc.Models), Active: name == active}
 		group.Selectable = len(pc.Models) > 0 && (keySetNonBlank || ollamaLoopback)
 		switch {
 		case len(pc.Models) == 0:

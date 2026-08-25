@@ -56,6 +56,25 @@ func TestModelsSectionListsProvidersAndModels(t *testing.T) {
 // one: APIKeySet is a bool, so there is no field to accidentally print,
 // but pin it anyway so a future refactor that adds a raw key field
 // trips this test before it trips a security review.
+func TestModelsBadges_ActiveAndDefault(t *testing.T) {
+	s, _ := newHarnessScreen(t, 100, 30)
+	view := ansi.Strip(modelsSectionOf(s).View())
+
+	// Seed openrouter has claude-opus-5 as active and default
+	if !strings.Contains(view, "active, default") {
+		t.Errorf("expected view to contain 'active, default' badge, got:\n%s", view)
+	}
+	// Seed ollama has llama3.1 as default (not active)
+	if !strings.Contains(view, "default") {
+		t.Errorf("expected view to contain 'default' badge, got:\n%s", view)
+	}
+}
+
+// TestModelsNeverRendersAKeyValue is the containment rule
+// (settings-screen.md §5) at the one place this section could leak
+// one: APIKeySet is a bool, so there is no field to accidentally print,
+// but pin it anyway so a future refactor that adds a raw key field
+// trips this test before it trips a security review.
 func TestModelsNeverRendersAKeyValue(t *testing.T) {
 	s, _ := newHarnessScreen(t, 100, 30)
 	plain := ansi.Strip(modelsSectionOf(s).View())
@@ -110,6 +129,50 @@ func TestActivatingAProviderHeaderIsRejectedWithANotice(t *testing.T) {
 	}
 	if modelsSectionOf(s).notice == "" {
 		t.Error("expected a notice explaining a provider header cannot be activated directly")
+	}
+}
+
+func TestSetDefaultModelUpdatesTheStore(t *testing.T) {
+	s, h := newHarnessScreen(t, 100, 30)
+	s = focusModels(t, s)
+
+	// Move cursor to openai/gpt-5 under openrouter (row 2)
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	s = next.(Screen)
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	s = next.(Screen)
+	if got := modelsSectionOf(s).rows[modelsSectionOf(s).cursor]; got.isProvider || got.model.Name != "openai/gpt-5" {
+		t.Fatalf("cursor is on %+v, want the openai/gpt-5 row", got)
+	}
+
+	next, cmd := s.Update(tea.KeyPressMsg{Text: "d", Code: 'd'})
+	s = awaitModelsSaveTest(t, next.(Screen), cmd)
+
+	got := h.SettingsAdapters().Providers.Providers()
+	found := false
+	for _, p := range got {
+		if p.Name == "openrouter" && p.DefaultModel == "openai/gpt-5" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("openrouter default_model was not set to openai/gpt-5: %+v", got)
+	}
+}
+
+func TestSetDefaultOnProviderHeaderIsRejectedWithANotice(t *testing.T) {
+	s, _ := newHarnessScreen(t, 100, 30)
+	s = focusModels(t, s)
+	if got := modelsSectionOf(s).rows[0]; !got.isProvider {
+		t.Fatal("row 0 is not a provider header")
+	}
+	next, cmd := s.Update(tea.KeyPressMsg{Text: "d", Code: 'd'})
+	s = next.(Screen)
+	if cmd != nil {
+		t.Fatal("setting default on provider header must not start an async save")
+	}
+	if modelsSectionOf(s).notice == "" {
+		t.Error("expected a notice explaining a provider header cannot be set as default directly")
 	}
 }
 

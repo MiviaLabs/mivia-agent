@@ -69,13 +69,21 @@ type Conversation struct {
 
 	noticeMu   sync.RWMutex
 	noticeOpts TranslateOptions
+
+	generalMu     sync.RWMutex
+	scrollLines   int
+	showReasoning bool
 }
 
 // NewConversation wraps an existing chat.Session. The caller owns the
 // session and is responsible for its lifecycle; NewConversation stores
 // the pointer verbatim and does not retain any other reference.
 func NewConversation(sess *chat.Session) *Conversation {
-	return &Conversation{sess: sess}
+	return &Conversation{
+		sess:          sess,
+		scrollLines:   3,
+		showReasoning: true,
+	}
 }
 
 // SetNoticeOptions configures notice visibility options for this conversation.
@@ -96,6 +104,49 @@ func (c *Conversation) NoticeOptions() TranslateOptions {
 	c.noticeMu.RLock()
 	defer c.noticeMu.RUnlock()
 	return c.noticeOpts
+}
+
+// SetScrollLines updates the viewport scroll step for this conversation.
+func (c *Conversation) SetScrollLines(n int) {
+	if c == nil || n <= 0 {
+		return
+	}
+	c.generalMu.Lock()
+	defer c.generalMu.Unlock()
+	c.scrollLines = n
+}
+
+// ScrollLines returns the configured viewport scroll step.
+func (c *Conversation) ScrollLines() int {
+	if c == nil {
+		return 3
+	}
+	c.generalMu.RLock()
+	defer c.generalMu.RUnlock()
+	if c.scrollLines <= 0 {
+		return 3
+	}
+	return c.scrollLines
+}
+
+// SetShowReasoning updates the default reasoning visibility for this conversation.
+func (c *Conversation) SetShowReasoning(show bool) {
+	if c == nil {
+		return
+	}
+	c.generalMu.Lock()
+	defer c.generalMu.Unlock()
+	c.showReasoning = show
+}
+
+// ShowReasoning returns the default reasoning visibility.
+func (c *Conversation) ShowReasoning() bool {
+	if c == nil {
+		return true
+	}
+	c.generalMu.RLock()
+	defer c.generalMu.RUnlock()
+	return c.showReasoning
 }
 
 // Session returns the wrapped *chat.Session.

@@ -126,6 +126,7 @@ const (
 	IDSettingsSelect    ID = "settings-select"
 	IDSettingsNew       ID = "settings-new"
 	IDSettingsDelete    ID = "settings-delete"
+	IDSettingsDefault   ID = "settings-default"
 	IDSettingsToggle    ID = "settings-toggle"
 	IDSettingsTrigger   ID = "settings-trigger"
 	IDSettingsFilter    ID = "settings-filter"
@@ -245,6 +246,7 @@ func settingsBindings() []Binding {
 		{ID: IDSettingsSelect, Context: ContextSettings, Keys: []string{"enter"}, Help: "open or edit", Short: "edit"},
 		{ID: IDSettingsNew, Context: ContextSettings, Keys: []string{"n"}, Help: "new", Short: "new"},
 		{ID: IDSettingsDelete, Context: ContextSettings, Keys: []string{"x"}, Help: "delete", Short: "delete"},
+		{ID: IDSettingsDefault, Context: ContextSettings, Keys: []string{"d"}, Help: "set as default model", Short: "default"},
 		{ID: IDSettingsToggle, Context: ContextSettings, Keys: []string{"space"}, Help: "toggle enabled"},
 		// Automations-only today: fires a manual run and opens a live
 		// watch on it. Harmless no-op on any other section (their

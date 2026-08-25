@@ -47,11 +47,10 @@ func TestSettingsPortsCoverConfigFields(t *testing.T) {
 			source: reflect.TypeOf(config.ProviderConfig{}),
 			views:  []reflect.Type{reflect.TypeOf(ports.ProviderView{})},
 			ignore: map[string]string{
-				"Models":       "projected as []ModelView, checked separately below",
-				"DefaultModel": "projected as ActiveModel",
-				"LegacyModel":  "decode-time sentinel for a rejected legacy TOML key; not runtime state",
-				"HTTPReferer":  "provider-specific request header, not a setting a user edits here",
-				"XTitle":       "provider-specific request header, not a setting a user edits here",
+				"Models":      "projected as []ModelView, checked separately below",
+				"LegacyModel": "decode-time sentinel for a rejected legacy TOML key; not runtime state",
+				"HTTPReferer": "provider-specific request header, not a setting a user edits here",
+				"XTitle":      "provider-specific request header, not a setting a user edits here",
 			},
 		},
 		{
