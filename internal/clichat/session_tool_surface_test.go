@@ -92,7 +92,7 @@ func collectSessionToolText(t *testing.T, skillReg *skills.Registry) map[string]
 	}
 	// Collect all model-facing text from the dispatcher's tools.
 	// We iterate the registry (which includes session tools via
-	// registerSessionTool) and flatten descriptions + schema descriptions.
+	// cliagents.RegisterSessionTool) and flatten descriptions + schema descriptions.
 	out := make(map[string]string)
 	for _, tool := range reg.List() {
 		var parts []string

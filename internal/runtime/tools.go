@@ -56,7 +56,7 @@ func (d *Dispatcher) RegisterTool(r *tools.Registry, t tools.Tool) error {
 	// The installed handler executes r.Execute(name, ...) - that is, whatever
 	// tool the REGISTRY resolves for this name. Derive the ceiling from that
 	// same object so a tool can never be bound by a budget it did not declare.
-	// registerSessionTool and registerLedgerTools deliberately call RegisterTool
+	// cliagents.RegisterSessionTool and registerLedgerTools deliberately call RegisterTool
 	// BEFORE reg.Register, so a miss here is normal and t is the tool that will
 	// be resolved a moment later.
 	source := t

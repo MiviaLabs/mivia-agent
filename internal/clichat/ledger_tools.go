@@ -397,7 +397,7 @@ var (
 
 // registerLedgerTools registers the read-only execution-history tools and the
 // truncated-result reader on both the model-visible registry and the
-// dispatcher. Unlike registerSessionTool these are deliberately unprivileged,
+// dispatcher. Unlike cliagents.RegisterSessionTool these are deliberately unprivileged,
 // so sub-agents can call them (ScopeRoot and ScopeSpawned both keep them).
 //
 // The returned spool is the process-local grant map for read_output; callers
