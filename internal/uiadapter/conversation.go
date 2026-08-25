@@ -327,17 +327,30 @@ func (c *Conversation) History() []ports.Message {
 	return out
 }
 
-// Model reports the bound provider/model and its context window.
+// Model reports the bound provider/model and its usable prompt budget.
+//
+// ContextWindow carries the PROMPT BUDGET, not the model's raw context
+// window: its only consumer is the top bar's context percentage, and the
+// agent compacts against the budget (the window minus the output reserve).
+// Reporting the raw window made that gauge read about two thirds at the
+// exact moment compaction fired, and left it unable to reach 100% at all -
+// the surface users watch to decide whether to intervene showed slack that
+// did not exist. Falls back to the window when no budget is derived, so a
+// binding without a profile still shows something rather than nothing.
 func (c *Conversation) Model() ports.ModelInfo {
 	if c.sess == nil {
 		return ports.ModelInfo{}
 	}
 	selection := c.sess.CurrentSelection()
 	binding := c.sess.CurrentBinding()
+	budget := c.sess.ContextUsage().BudgetTokens
+	if budget <= 0 {
+		budget = binding.Profile.ContextWindowTokens
+	}
 	return ports.ModelInfo{
 		Name:          selection.Model,
 		Provider:      selection.ProviderName,
-		ContextWindow: int64(binding.Profile.ContextWindowTokens),
+		ContextWindow: int64(budget),
 	}
 }
 

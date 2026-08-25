@@ -907,3 +907,40 @@ func TestSend_SubagentProgressForwarded(t *testing.T) {
 		t.Errorf("events stream missing subagent tool.end, events=%+v", events)
 	}
 }
+
+// TestModel_ContextWindowIsThePromptBudgetNotTheRawWindow pins the fix for a
+// dishonest gauge. ports.ModelInfo.ContextWindow has exactly one consumer -
+// the top bar's context percentage - and it was populated from the model's
+// FULL context window while the agent actually compacts against the prompt
+// budget, which is the window minus the output reserve. On a 200k-window
+// model reserving 32k the bar read ~66% at the very moment compaction fired
+// and could never exceed ~84%, so the surface users watch to decide whether
+// to intervene showed a third of the window free while the agent was
+// discarding their context.
+func TestModel_ContextWindowIsThePromptBudgetNotTheRawWindow(t *testing.T) {
+	comp := &scriptedCompleter{turns: []provider.Response{assistantResponse("r")}}
+	res := &config.Resolved{
+		Model:        "test-model",
+		SystemPrompt: "sys",
+		ModelProfiles: []config.ModelSpec{{
+			Name:                "test-model",
+			ContextWindowTokens: 200000,
+			MaxOutputTokens:     128000,
+		}},
+	}
+	sess := chat.NewSession(res, comp)
+	sess.UseTools = true
+	sess.Tools = tools.NewRegistry()
+	c := uiadapter.NewConversation(sess)
+
+	budget := sess.ContextUsage().BudgetTokens
+	if budget <= 0 {
+		t.Fatalf("fixture has no prompt budget: %d", budget)
+	}
+	if budget == 200000 {
+		t.Fatal("fixture is not discriminating: budget equals the raw window")
+	}
+	if got := c.Model().ContextWindow; got != int64(budget) {
+		t.Fatalf("ContextWindow=%d, want the prompt budget %d (not the raw window 200000)", got, budget)
+	}
+}

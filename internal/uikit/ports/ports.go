@@ -42,9 +42,12 @@ type Message struct {
 }
 
 // ModelInfo names the model and provider currently bound to a session.
-// ContextWindow is the model's context-window size in tokens; 0 means
-// unknown, and callers must show no context percentage rather than
-// divide by it.
+// ContextWindow is the session's USABLE PROMPT BUDGET in tokens - the
+// model's context window minus its output reserve - because that is what
+// history is actually measured and compacted against. A percentage taken
+// against the raw window instead reads far below the real fill level and
+// can never reach 100%. 0 means unknown, and callers must show no context
+// percentage rather than divide by it.
 type ModelInfo struct {
 	Name          string
 	Provider      string
