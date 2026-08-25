@@ -116,6 +116,9 @@ func (s Screen) handleModalKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bool) 
 	if next, cmd, handled := s.handleQueueKey(msg); handled {
 		return next, cmd, true
 	}
+	if next, cmd, handled := s.handleBlackboardKey(msg); handled {
+		return next, cmd, true
+	}
 	return s, nil, false
 }
 
@@ -179,6 +182,33 @@ func (s Screen) handleQueueKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bool) 
 		return s, nil, true
 	case "ctrl+c":
 		s.queueOverlay.Close()
+		next, cmd, _ := s.quit()
+		return next, cmd, true
+	default:
+		return s, nil, true
+	}
+}
+
+// handleBlackboardKey routes a key when the blackboard & messaging overlay is active.
+func (s Screen) handleBlackboardKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bool) {
+	if !s.blackboard.Active() {
+		return s, nil, false
+	}
+	switch msg.String() {
+	case "up", "k":
+		s.blackboard.Up()
+		return s, nil, true
+	case "down", "j":
+		s.blackboard.Down()
+		return s, nil, true
+	case "tab":
+		s.blackboard.ToggleTab()
+		return s, nil, true
+	case "esc":
+		s.blackboard.Close()
+		return s, nil, true
+	case "ctrl+c":
+		s.blackboard.Close()
 		next, cmd, _ := s.quit()
 		return next, cmd, true
 	default:
@@ -474,7 +504,7 @@ func (s Screen) globalAction(id keymap.ID) (app.Screen, tea.Cmd, bool) {
 	// transcript - identical between the two constructions.
 	if s.embedded {
 		switch id {
-		case keymap.IDThemeDialog, keymap.IDOpenPager, keymap.IDPanelToggle, keymap.IDSettingsDialog, keymap.IDPalette, keymap.IDQueueDialog:
+		case keymap.IDThemeDialog, keymap.IDOpenPager, keymap.IDPanelToggle, keymap.IDSettingsDialog, keymap.IDPalette, keymap.IDQueueDialog, keymap.IDBlackboardDialog:
 			return s, nil, true
 		}
 	}
@@ -493,21 +523,17 @@ func (s Screen) globalAction(id keymap.ID) (app.Screen, tea.Cmd, bool) {
 		return next, cmd, true
 	case keymap.IDQueueDialog:
 		return s.openQueue(), nil, true
+	case keymap.IDBlackboardDialog:
+		return s.openBlackboard(), nil, true
 	case keymap.IDToggleReason:
 		s.transcript = s.transcript.ToggleReasoning()
 		return s, nil, true
-	case keymap.IDScrollUp:
-		s.transcript = s.transcript.PageBy(-1, 2)
-		return s, nil, true
-	case keymap.IDScrollDown:
-		s.transcript = s.transcript.PageBy(1, 2)
-		return s, nil, true
-	case keymap.IDScrollTop:
-		s.transcript = s.transcript.ScrollToTop()
-		return s, nil, true
-	case keymap.IDScrollBottom:
-		s.transcript = s.transcript.ScrollToBottom()
-		return s, nil, true
+	default:
+		if next, cmd, handled := s.globalScrollAction(id); handled {
+			return next, cmd, true
+		}
+	}
+	switch id {
 	case keymap.IDPanelToggle:
 		// ctrl+b drives the panel's three states. This site handles the
 		// two the global context can see: closed opens the panel focused
@@ -542,6 +568,24 @@ func (s Screen) globalAction(id keymap.ID) (app.Screen, tea.Cmd, bool) {
 		return s.cancelTurn()
 	case keymap.IDQuit:
 		return s.quit()
+	}
+	return s, nil, false
+}
+
+func (s Screen) globalScrollAction(id keymap.ID) (app.Screen, tea.Cmd, bool) {
+	switch id {
+	case keymap.IDScrollUp:
+		s.transcript = s.transcript.PageBy(-1, 2)
+		return s, nil, true
+	case keymap.IDScrollDown:
+		s.transcript = s.transcript.PageBy(1, 2)
+		return s, nil, true
+	case keymap.IDScrollTop:
+		s.transcript = s.transcript.ScrollToTop()
+		return s, nil, true
+	case keymap.IDScrollBottom:
+		s.transcript = s.transcript.ScrollToBottom()
+		return s, nil, true
 	}
 	return s, nil, false
 }

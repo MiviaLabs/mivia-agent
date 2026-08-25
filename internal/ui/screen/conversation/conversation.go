@@ -14,6 +14,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/approval"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/component/blackboard"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/composer"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/history"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/picker"
@@ -81,6 +82,7 @@ type Screen struct {
 	approval     approval.Model
 	history      history.Model
 	queueOverlay queue.Model
+	blackboard   blackboard.Model
 	welcome      welcome.Model
 
 	sessions map[string]*sessionState
@@ -142,6 +144,7 @@ func New(th theme.Theme, tier theme.Tier, themes []theme.Theme, conv ports.Conve
 		approval:     approval.New(th, tier),
 		history:      history.New(th, tier),
 		queueOverlay: queue.New(th, tier),
+		blackboard:   blackboard.New(th, tier),
 		welcome:      welcome.New(th, tier),
 		panel:        newPanel(th, tier),
 		keys:         keymap.New(keymap.Default()),
@@ -150,6 +153,7 @@ func New(th theme.Theme, tier theme.Tier, themes []theme.Theme, conv ports.Conve
 	s.approval.SetWidth(contentWidth(width))
 	s.history.SetWidth(contentWidth(width))
 	s.queueOverlay.SetWidth(contentWidth(width))
+	s.blackboard.SetWidth(contentWidth(width))
 	s.transcript.SetSize(contentWidth(width), 24)
 	if conv != nil {
 		s.topbar = topbar.New(th, tier, conv.Model(), conv.ContextUsage(), contentWidth(width))
@@ -271,6 +275,7 @@ func (s *Screen) reflow() {
 	s.approval.SetWidth(w)
 	s.history.SetWidth(w)
 	s.queueOverlay.SetWidth(w)
+	s.blackboard.SetWidth(w)
 	s.resize()
 	s.refreshTopbar()
 }
@@ -399,6 +404,9 @@ func (s Screen) reservedRows() int {
 	}
 	if s.queueOverlay.Active() {
 		rows += s.queueOverlay.Height()
+	}
+	if s.blackboard.Active() {
+		rows += s.blackboard.Height()
 	}
 	return rows
 }

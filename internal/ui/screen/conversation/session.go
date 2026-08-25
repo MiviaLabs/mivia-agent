@@ -7,6 +7,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/approval"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/component/blackboard"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/history"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/queue"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/statusline"
@@ -24,6 +25,7 @@ type sessionState struct {
 	approval     approval.Model
 	history      history.Model
 	queueOverlay queue.Model
+	blackboard   blackboard.Model
 	panel        panel
 	threads      ports.SubagentThreads
 	queue        []string
@@ -89,6 +91,7 @@ func (s *Screen) switchConversation(newConv ports.Conversation) {
 			approval:     s.approval,
 			history:      s.history,
 			queueOverlay: s.queueOverlay,
+			blackboard:   s.blackboard,
 			panel:        s.panel,
 			threads:      s.threads,
 			queue:        s.queue,
@@ -105,6 +108,7 @@ func (s *Screen) switchConversation(newConv ports.Conversation) {
 		s.approval = st.approval
 		s.history = st.history
 		s.queueOverlay = st.queueOverlay
+		s.blackboard = st.blackboard
 		s.panel = st.panel
 		s.queue = st.queue
 	} else {
@@ -119,6 +123,8 @@ func (s *Screen) switchConversation(newConv ports.Conversation) {
 		s.history.SetWidth(contentWidth(s.width))
 		s.queueOverlay = queue.New(s.Theme, s.Tier)
 		s.queueOverlay.SetWidth(contentWidth(s.width))
+		s.blackboard = blackboard.New(s.Theme, s.Tier)
+		s.blackboard.SetWidth(contentWidth(s.width))
 		s.panel = newPanel(s.Theme, s.Tier)
 		s.LoadHistory(newConv.History())
 	}

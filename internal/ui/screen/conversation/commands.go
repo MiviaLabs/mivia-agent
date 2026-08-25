@@ -41,6 +41,9 @@ func (s Screen) runSlashCommand(line string) (app.Screen, tea.Cmd) {
 		s.statusline.Notice("queue cleared")
 		return s, nil
 	}
+	if name == "blackboard" || name == "messages" {
+		return s.openBlackboard(), nil
+	}
 	if s.runner == nil {
 		if name == "queue" {
 			return s.openQueue(), nil
@@ -189,6 +192,13 @@ func (s Screen) openHelp() Screen {
 // globalAction) and /queue.
 func (s Screen) openQueue() Screen {
 	s.queueOverlay.Open(s.queue)
+	return s
+}
+
+// openBlackboard opens the blackboard & messaging overlay. Shared by f3
+// (keys.go's globalAction) and /blackboard or /messages.
+func (s Screen) openBlackboard() Screen {
+	s.blackboard.Open()
 	return s
 }
 

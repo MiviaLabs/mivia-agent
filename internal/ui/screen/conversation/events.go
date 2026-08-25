@@ -51,6 +51,7 @@ func (s Screen) applyTheme(msg app.ThemeChangedMsg) Screen {
 	s.approval.Theme, s.approval.Tier = msg.Theme, msg.Tier
 	s.history.Theme, s.history.Tier = msg.Theme, msg.Tier
 	s.queueOverlay.Theme, s.queueOverlay.Tier = msg.Theme, msg.Tier
+	s.blackboard.Theme, s.blackboard.Tier = msg.Theme, msg.Tier
 	s.topbar.SetTheme(msg.Theme, msg.Tier)
 	s.panel.list.Theme, s.panel.list.Tier = msg.Theme, msg.Tier
 	s.welcome.SetTheme(msg.Theme, msg.Tier)
@@ -141,6 +142,7 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 		if isSubagentTool(b.Name) || (s.threads != nil && isThreadRegistered(s.threads, b.ToolCallID)) {
 			s.panel.observeAgentStart(b.ToolCallID, b.Name)
 		}
+		s.recordBlackboardTool(b.Name, b.Args)
 	case uievent.ToolOutputBody:
 		// A progress-bearing output is a subagent status update (see
 		// uievent.ToolOutputBody): the panel's subagents section feeds
@@ -205,4 +207,66 @@ func isThreadRegistered(threads ports.SubagentThreads, callID string) bool {
 	}
 	_, ok := threads.Thread(callID)
 	return ok
+}
+
+func (s *Screen) recordBlackboardTool(name string, args map[string]any) {
+	if len(args) == 0 {
+		return
+	}
+	lower := strings.ToLower(name)
+	switch lower {
+	case "post_message":
+		kind := strings.ToLower(getStringVal(args, "kind"))
+		body := getStringVal(args, "body")
+		if kind == "finding" {
+			var refs []string
+			if rList, ok := args["refs"].([]any); ok {
+				for _, r := range rList {
+					refs = append(refs, fmt.Sprint(r))
+				}
+			}
+			s.blackboard.AddFinding("subagent", body, refs)
+		} else if kind != "" && body != "" {
+			toRole := getStringVal(args, "to_role")
+			if toRole == "" {
+				toRole = "orchestrator"
+			}
+			s.blackboard.AddMessage("subagent", toRole, kind, body)
+		}
+	case "send_to_task":
+		action := getStringVal(args, "action")
+		taskID := getStringVal(args, "task_id")
+		body := getStringVal(args, "body")
+		if action == "" {
+			action = "steer"
+		}
+		if body != "" {
+			s.blackboard.AddMessage("orchestrator", taskID, action, body)
+		}
+	case "send_message":
+		recipient := getStringVal(args, "Recipient")
+		if recipient == "" {
+			recipient = getStringVal(args, "recipient")
+		}
+		msg := getStringVal(args, "Message")
+		if msg == "" {
+			msg = getStringVal(args, "message")
+		}
+		if msg != "" {
+			s.blackboard.AddMessage("orchestrator", recipient, "message", msg)
+		}
+	}
+}
+
+func getStringVal(m map[string]any, key string) string {
+	if m == nil {
+		return ""
+	}
+	if v, ok := m[key]; ok {
+		if str, ok := v.(string); ok {
+			return str
+		}
+		return fmt.Sprint(v)
+	}
+	return ""
 }

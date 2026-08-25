@@ -41,7 +41,39 @@ func FormatToolDetail(name string, args map[string]any) string {
 	if detail := formatWebDetail(lower, args); detail != "" {
 		return detail
 	}
+	if detail := formatMessagingDetail(lower, args); detail != "" {
+		return detail
+	}
 	return FormatArgs(args)
+}
+
+func formatMessagingDetail(lower string, args map[string]any) string {
+	switch lower {
+	case "post_message":
+		kind := getString(args, "kind")
+		toRole := getString(args, "to_role")
+		if kind == "ask" && toRole != "" {
+			return "ask → @" + toRole
+		}
+		if kind != "" {
+			return "kind=" + kind
+		}
+	case "send_to_task":
+		action := getString(args, "action")
+		taskID := getString(args, "task_id")
+		if action != "" && taskID != "" {
+			return action + " → " + taskID
+		}
+	case "send_message":
+		recipient := getString(args, "Recipient")
+		if recipient == "" {
+			recipient = getString(args, "recipient")
+		}
+		if recipient != "" {
+			return "→ @" + recipient
+		}
+	}
+	return ""
 }
 
 func formatLedgerDetail(lower string, args map[string]any) string {

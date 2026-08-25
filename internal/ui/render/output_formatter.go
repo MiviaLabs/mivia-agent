@@ -53,6 +53,9 @@ func FormatToolOutputWithContext(t theme.Theme, tier theme.Tier, name string, ar
 		filePath, startLine := extractFileReadArgs(args, output)
 		body, collapsible = FormatFileReadOutputWithContext(t, tier, filePath, startLine, output, width)
 		return "", body, collapsible
+	case isMessagingTool(lower):
+		summary, body, collapsible := FormatMessagingOutput(t, tier, name, args, output, width)
+		return summary, body, collapsible
 	case isJSONPayload(output):
 		body = FormatJSONOutput(t, tier, output, width)
 		return "", body, len(body) > 6

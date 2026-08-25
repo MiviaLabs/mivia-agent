@@ -132,6 +132,9 @@ const (
 	IDSettingsReveal    ID = "settings-reveal"
 	IDSettingsBack      ID = "settings-back"
 	IDSettingsHelp      ID = "settings-help"
+
+	// Blackboard & agent messaging center.
+	IDBlackboardDialog ID = "blackboard-dialog"
 )
 
 // Binding is one row of the table.
@@ -175,6 +178,7 @@ func Default() []Binding {
 		// 1.4 forbids a hint that is not true in every state); f2 is
 		// unbound everywhere and rule 1.1 permits function keys.
 		{ID: IDSettingsDialog, Context: ContextGlobal, Keys: []string{"f2"}, Help: "settings", Short: "settings"},
+		{ID: IDBlackboardDialog, Context: ContextGlobal, Keys: []string{"f3"}, Help: "blackboard & agent messages", Short: "blackboard"},
 
 		// Scrolling. The cockpit owns the surface, so the application
 		// scrolls: the terminal has no scrollback of its own to offer
