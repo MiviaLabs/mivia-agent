@@ -99,6 +99,24 @@ const (
 	// even though each individual result was well within a single preview.
 	// Still a small fraction of the 256 KiB budget floor it rides alongside.
 	tailPreviewReserveBytes = 256 << 10
+
+	// finalPreviewFloorBytes is the last-resort content floor once BOTH the
+	// primary turn budget and tailPreviewReserveBytes are spent. Without it,
+	// every further result in the turn - no matter how small - fell straight
+	// to a bare "kept 0 of N bytes" notice: zero visible content, and a
+	// forced read_output round trip even for a result an operator would call
+	// trivially small. Unlike tailPreviewReserveBytes this is NOT pooled: it
+	// is a fixed, small ceiling applied PER RESULT, not charged against any
+	// shared counter, so one result taking the floor can never reduce what
+	// the next result gets - it cannot reproduce the "large bodies starve
+	// small ones" failure a pooled floor would. The per-item bound keeps the
+	// aggregate exposure small in practice (any one turn reaching this tier
+	// has already spent the primary budget plus the full preview reserve),
+	// and mirrors the same "some bytes ride outside the accounting" stance
+	// the unconditional 2*minNotice free pass above already takes - just at
+	// a size that actually covers a short grep match or read_file window
+	// instead of only a handful of bytes.
+	finalPreviewFloorBytes = 512
 )
 
 // resultParts is one tool result in structured form, as the worker produced it
@@ -210,7 +228,9 @@ func (e shapeEnv) load(ref string) (string, bool) {
 //
 // previewReserve is the reserve pool left for the zero-budget preview tier
 // (see tailPreviewReserveBytes); the fourth return value is how much of it
-// this call spent, which is always 0 unless that tier fired.
+// this call spent, which is always 0 unless that tier fired - including when
+// the final-floor tier (finalPreviewFloorBytes) fires instead, since that
+// tier is unpooled and never draws from previewReserve.
 func shapeOne(p resultParts, remaining, previewReserve int, env shapeEnv) (string, degradeState, bool, int) {
 	// Ref-only tier (plan tools/06): a tool opted out of inlining is elided
 	// before the budget tiers see it. The notice is carried in fallback so
@@ -252,6 +272,15 @@ func shapeOne(p resultParts, remaining, previewReserve int, env shapeEnv) (strin
 			target = previewReserve
 		}
 		previewUsed = target
+	default:
+		// Both the primary budget and the reserve are spent. Fall back to
+		// the small unpooled floor (see finalPreviewFloorBytes) instead of a
+		// bare notice - previewUsed stays 0, since this tier draws from
+		// neither reserve.
+		target = finalPreviewFloorBytes
+		if p.effectiveCap > 0 && target > p.effectiveCap {
+			target = p.effectiveCap
+		}
 	}
 	state := resolveDegrade(p, target, env)
 	body := composeDegraded(state, "")
