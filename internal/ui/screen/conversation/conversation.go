@@ -82,6 +82,7 @@ type Screen struct {
 	sessions map[string]*sessionState
 
 	active ports.TurnHandle
+	queue  []string
 	now    func() time.Time
 
 	// keys is the one dispatch table. See keys.go for the context order.

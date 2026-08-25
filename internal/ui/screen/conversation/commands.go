@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -36,7 +37,15 @@ func splitCommand(line string) (name, args string) {
 func (s Screen) runSlashCommand(line string) (app.Screen, tea.Cmd) {
 	name, args := splitCommand(line)
 	s.composer.Clear()
+	if name == "queue" && (args == "clear" || args == "clean") {
+		s.queue = nil
+		s.statusline.Notice("queue cleared")
+		return s, nil
+	}
 	if s.runner == nil {
+		if name == "queue" {
+			return s.openQueue(), tea.ClearScreen
+		}
 		return s.withError("no command runner configured for /" + name), nil
 	}
 	outcome := s.runner.Run(context.Background(), name, args)
@@ -181,7 +190,16 @@ func (s Screen) openHelp() Screen {
 // globalAction) and /queue.
 func (s Screen) openQueue() Screen {
 	hint := "any key closes this"
-	body := "No queued messages."
+	var body string
+	if len(s.queue) == 0 {
+		body = "No queued messages."
+	} else {
+		var b strings.Builder
+		for i, msg := range s.queue {
+			b.WriteString(fmt.Sprintf("[%d] %s\n", i+1, msg))
+		}
+		body = strings.TrimRight(b.String(), "\n")
+	}
 	w, h := s.dialogSize()
 	s.overlay = render.Dialog(s.Theme, s.Tier, w, h, "queue", body, hint)
 	return s

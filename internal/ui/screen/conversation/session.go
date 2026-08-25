@@ -1,12 +1,15 @@
 package conversation
 
 import (
+	"context"
+
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/approval"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/statusline"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/transcript"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
@@ -19,6 +22,7 @@ type sessionState struct {
 	approval   approval.Model
 	panel      panel
 	threads    ports.SubagentThreads
+	queue      []string
 }
 
 func (st *sessionState) handleTurnEvent(ev uievent.Event) {
@@ -81,6 +85,7 @@ func (s *Screen) switchConversation(newConv ports.Conversation) {
 			approval:   s.approval,
 			panel:      s.panel,
 			threads:    s.threads,
+			queue:      s.queue,
 		}
 	}
 
@@ -93,10 +98,12 @@ func (s *Screen) switchConversation(newConv ports.Conversation) {
 		s.statusline = st.statusline
 		s.approval = st.approval
 		s.panel = st.panel
+		s.queue = st.queue
 	} else {
 		s.transcript = transcript.New(s.Theme, s.Tier)
 		s.transcript.SetSize(s.chatWidth(), s.transcriptHeight())
 		s.active = nil
+		s.queue = nil
 		s.statusline = statusline.New(s.Theme, s.Tier)
 		s.approval = approval.New(s.Theme, s.Tier)
 		s.approval.SetWidth(contentWidth(s.width))
@@ -128,6 +135,17 @@ func (s Screen) handleTurnEndedMsg(msg turnEndedMsg) (app.Screen, tea.Cmd) {
 			st.approval.Clear()
 			st.panel.reconcileTerminal("interrupted")
 			st.active = nil
+			if len(st.queue) > 0 {
+				nextText := st.queue[0]
+				st.queue = st.queue[1:]
+				handle, err := st.conv.Send(context.Background(), intent.Send{Text: nextText})
+				if err == nil {
+					st.active = handle
+					st.statusline.Start("thinking", s.now())
+					return s, s.awaitSessionEvent(msg.sessionID, handle.Events())
+				}
+				st.queue = append([]string{nextText}, st.queue...)
+			}
 		}
 		return s, nil
 	}
@@ -136,5 +154,17 @@ func (s Screen) handleTurnEndedMsg(msg turnEndedMsg) (app.Screen, tea.Cmd) {
 	s.panel.reconcileTerminal("interrupted")
 	s.active = nil
 	s.refreshTopbar()
+
+	if len(s.queue) > 0 {
+		nextText := s.queue[0]
+		s.queue = s.queue[1:]
+		next, cmd := s.sendText(nextText)
+		sc := next.(Screen)
+		if sc.active == nil {
+			sc.queue = append([]string{nextText}, sc.queue...)
+		}
+		return sc, cmd
+	}
+
 	return s, nil
 }

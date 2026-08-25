@@ -109,25 +109,6 @@ func TestEnterStartsTurnAndArmsStatusline(t *testing.T) {
 	}
 }
 
-func TestEnterWhileTurnActiveIsNoOp(t *testing.T) {
-	events := []uievent.Event{{Kind: uievent.KindTurnStart, Body: uievent.TurnStartBody{Input: "hi"}}}
-	s := newScreen(t, replay.New(events, time.Hour), nil, nil)
-	s = typeText(t, s, "hi")
-	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	s = next.(Screen)
-	firstActive := s.active
-
-	s = typeText(t, s, "again")
-	next, cmd := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	got := next.(Screen)
-	if cmd != nil {
-		t.Error("expected no Cmd: a turn is already active")
-	}
-	if got.active != firstActive {
-		t.Error("expected the active handle to be unchanged while a turn is in flight")
-	}
-}
-
 func TestSendErrorAppendsErrorBlockNotActive(t *testing.T) {
 	s := newScreen(t, errConversation{err: context.DeadlineExceeded}, nil, nil)
 	s = typeText(t, s, "hi")

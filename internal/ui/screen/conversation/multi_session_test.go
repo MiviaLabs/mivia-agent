@@ -465,3 +465,37 @@ func TestMultiSession_TurnEndBodyThenTurnEndedMsgPreservesStatus(t *testing.T) {
 		t.Errorf("expected subagent status 'completed', got %q", s.panel.agents[0].Status)
 	}
 }
+
+func TestMultiSession_QueueIsolationAcrossSessions(t *testing.T) {
+	s, _, _, runner := setupTwoSessionScreen(t)
+
+	// Start active turn on A
+	s = typeText(t, s, "Turn A")
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	s = next.(Screen)
+
+	// Queue message on A
+	s = typeText(t, s, "Queued on A")
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	s = next.(Screen)
+
+	if len(s.queue) != 1 || s.queue[0] != "Queued on A" {
+		t.Fatalf("expected queue on A = [\"Queued on A\"], got %v", s.queue)
+	}
+
+	// Switch to Session B
+	next, _ = s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-B"))
+	s = next.(Screen)
+
+	if len(s.queue) != 0 {
+		t.Errorf("expected empty queue on fresh Session B, got %v", s.queue)
+	}
+
+	// Switch back to Session A
+	next, _ = s.applyCommandOutcome(runner.SelectSession(context.Background(), "sess-A"))
+	s = next.(Screen)
+
+	if len(s.queue) != 1 || s.queue[0] != "Queued on A" {
+		t.Errorf("expected restored queue on Session A = [\"Queued on A\"], got %v", s.queue)
+	}
+}

@@ -245,6 +245,28 @@ func TestRunSlashCommandOpenQueue(t *testing.T) {
 	}
 }
 
+func TestQueueOverlay_RendersQueuedItems(t *testing.T) {
+	runner := &fakeRunner{outcome: ports.CommandOutcome{OpenQueue: true}}
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	s.SetCommandRunner(runner)
+	s.queue = []string{"first item", "second item"}
+
+	s, _ = sendLine(t, s, "/queue")
+	if !strings.Contains(s.overlay, "[1] first item") || !strings.Contains(s.overlay, "[2] second item") {
+		t.Errorf("got overlay %q, want queued items [1] first item and [2] second item", s.overlay)
+	}
+}
+
+func TestQueueClearCommand_EmptiesQueue(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	s.queue = []string{"item1", "item2"}
+
+	s, _ = sendLine(t, s, "/queue clear")
+	if len(s.queue) != 0 {
+		t.Errorf("expected empty queue after /queue clear, got %v", s.queue)
+	}
+}
+
 // TestRunSlashCommandOpenHelpAppendsMouseHint pins the branch that adds
 // the terminal's mouse-override hint (rule 6.5) to the /help overlay
 // when one was recorded via SetMouseOverrideHint.

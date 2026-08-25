@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -71,16 +72,26 @@ func (s Screen) awaitSessionEvent(sessionID string, events <-chan uievent.Event)
 	}
 }
 
-// send submits the composer's text to ports.Conversation and arms the
-// turn. Empty text and an already-active turn both return no-op so a
-// stray Enter cannot desync the visible draft from what was actually
-// sent. The provider error path appends to the transcript (where the
-// user is looking) rather than failing silently.
+// send submits the composer's text to ports.Conversation and arms the turn.
+// If a turn is currently active, the text is enqueued into s.queue and the
+// composer is cleared; queued messages are automatically sent in order as each
+// active turn completes. Empty text returns no-op. The provider error path
+// appends to the transcript (where the user is looking) rather than failing silently.
 func (s Screen) send() (app.Screen, tea.Cmd) {
 	text := s.composer.SubmitText()
-	if text == "" || s.active != nil {
+	if text == "" {
 		return s, nil
 	}
+	if s.active != nil {
+		s.queue = append(s.queue, text)
+		s.composer.Clear()
+		s.statusline.Notice(fmt.Sprintf("message queued (%d in queue)", len(s.queue)))
+		return s, nil
+	}
+	return s.sendText(text)
+}
+
+func (s Screen) sendText(text string) (app.Screen, tea.Cmd) {
 	handle, err := s.conv.Send(context.Background(), intent.Send{Text: text})
 	if err != nil {
 		var cmd tea.Cmd
