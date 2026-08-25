@@ -456,8 +456,9 @@ func terminationReason(r subagents.Result) string {
 	}
 }
 
-// NewDispatchTasksTool creates a dispatch_tasks tool. Called by cli's
-// registerDelegationTools to pair with the delegate tool.
+// NewDispatchTasksTool creates a dispatch_tasks tool. RegisterOrchestrationTools
+// builds the dispatchTasksTool struct directly instead of calling this
+// constructor; it is kept for other callers that need a standalone instance.
 func NewDispatchTasksTool(d *runtime.Dispatcher, cfg config.SubagentConfig, skillReg *skills.Registry, repo ledger.LedgerRepository, agentReg *agents.AgentRegistry, providerName, model string) tools.Tool {
 	return &dispatchTasksTool{
 		dispatcher:   d,

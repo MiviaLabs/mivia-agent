@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/composition"
@@ -144,7 +143,7 @@ func newSessionDispatcherCore(opts SessionDispatcherOpts, repo ledger.LedgerRepo
 			return nil, err
 		}
 	}
-	if err := registerDelegationTools(d, opts.Registry, opts.Config, opts.SkillReg, repo, opts.AgentRegistry, opts.ProviderName, opts.Model); err != nil {
+	if err := registerDelegationTools(d, opts.Registry, opts.Config, repo); err != nil {
 		return nil, err
 	}
 	if err := cliorchestrate.RegisterOrchestrationTools(d, opts.Registry, opts.Config, repo, opts.SkillReg, opts.AgentRegistry, opts.ProviderName, opts.Model); err != nil {
@@ -227,12 +226,8 @@ func sessionDialFor(opts SessionDispatcherOpts) sessionDial {
 	return sessionDial{static: sessionReasoning(opts), live: opts.Reasoning}
 }
 
-func registerDelegationTools(d *runtime.Dispatcher, reg *tools.Registry, cfg config.SubagentConfig, skillReg *skills.Registry, repo ledger.LedgerRepository, agentReg *agents.AgentRegistry, providerName, model string) error {
+func registerDelegationTools(d *runtime.Dispatcher, reg *tools.Registry, cfg config.SubagentConfig, repo ledger.LedgerRepository) error {
 	// Register on both the model-visible registry and the dispatcher snapshot.
 	delegate := &delegateTool{dispatcher: d, cfg: cfg, repo: repo}
-	dispatchTasks := cliorchestrate.NewDispatchTasksTool(d, cfg, skillReg, repo, agentReg, providerName, model)
-	if err := cliagents.RegisterSessionTool(d, reg, delegate); err != nil {
-		return err
-	}
-	return cliagents.RegisterSessionTool(d, reg, dispatchTasks)
+	return cliagents.RegisterSessionTool(d, reg, delegate)
 }
