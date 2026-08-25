@@ -58,6 +58,7 @@ func (m *Model) SetWidth(w int) {
 
 // Push appends a new message to history, deduplicating consecutive identical entries.
 func (m *Model) Push(msg string) {
+	msg = cleanHistoryPrompt(msg)
 	trimmed := strings.TrimSpace(msg)
 	if trimmed == "" {
 		return
@@ -66,6 +67,54 @@ func (m *Model) Push(msg string) {
 		return
 	}
 	m.items = append(m.items, msg)
+}
+
+func cleanHistoryPrompt(msg string) string {
+	if !strings.Contains(msg, "<skill-instructions") || !strings.Contains(msg, "</skill-instructions>") {
+		return msg
+	}
+	var skillName, args string
+	startTagIdx := strings.Index(msg, "<skill-instructions")
+	endTagIdx := strings.Index(msg[startTagIdx:], ">")
+	if endTagIdx != -1 {
+		tagContent := msg[startTagIdx : startTagIdx+endTagIdx+1]
+		if nameIdx := strings.Index(tagContent, "name="); nameIdx != -1 {
+			val := strings.Trim(tagContent[nameIdx+5:], " >\"'")
+			if cut := strings.IndexAny(val, " >\"'"); cut != -1 {
+				val = val[:cut]
+			}
+			skillName = strings.TrimSpace(val)
+		}
+	}
+	if skillName == "" {
+		instStart := msg[startTagIdx:]
+		if closeIdx := strings.Index(instStart, ">"); closeIdx != -1 {
+			instBody := instStart[closeIdx+1:]
+			if endClose := strings.Index(instBody, "</skill-instructions>"); endClose != -1 {
+				instBody = instBody[:endClose]
+				for _, line := range strings.Split(instBody, "\n") {
+					line = strings.TrimSpace(line)
+					if strings.HasPrefix(line, "# ") {
+						skillName = strings.TrimSpace(strings.TrimPrefix(line, "# "))
+						break
+					}
+				}
+			}
+		}
+	}
+	if argIdx := strings.Index(msg, "\n\nArguments:\n"); argIdx != -1 {
+		args = strings.TrimSpace(msg[argIdx+len("\n\nArguments:\n"):])
+	} else if argIdx := strings.Index(msg, "Arguments:\n"); argIdx != -1 {
+		args = strings.TrimSpace(msg[argIdx+len("Arguments:\n"):])
+	}
+	if skillName == "" {
+		skillName = "skill"
+	}
+	cmd := "/" + strings.TrimPrefix(skillName, "/")
+	if args != "" {
+		return cmd + " " + args
+	}
+	return cmd
 }
 
 // SetHistory loads prior messages from conversation history.

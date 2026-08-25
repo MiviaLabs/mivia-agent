@@ -699,6 +699,9 @@ func TestCommandRunner_SkillsIntegration(t *testing.T) {
 	if !strings.Contains(out.SubmitPrompt, "Follow feature delivery guidelines") {
 		t.Errorf("SubmitPrompt missing instructions: %s", out.SubmitPrompt)
 	}
+	if !strings.Contains(out.SubmitPrompt, `name="feature-delivery"`) {
+		t.Errorf("SubmitPrompt missing skill name tag: %s", out.SubmitPrompt)
+	}
 	if !strings.Contains(out.SubmitPrompt, "add auth module") {
 		t.Errorf("SubmitPrompt missing arguments: %s", out.SubmitPrompt)
 	}

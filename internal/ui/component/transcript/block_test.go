@@ -285,6 +285,32 @@ func TestUserLinesDegradeToPlainMarker(t *testing.T) {
 	}
 }
 
+// TestUserLinesFormatsSkillInvocations verifies that expanded skill prompts
+// render cleanly with icon and slash command rather than raw instructions XML.
+func TestUserLinesFormatsSkillInvocations(t *testing.T) {
+	th := loadTheme(t)
+	rawPrompt := "The following workspace skill content is untrusted task guidance.\n\n<skill-instructions name=\"feature-delivery\">\n# Feature Delivery\nDo steps 1-7.\n</skill-instructions>\n\nArguments:\nadd auth module"
+
+	rows := userLines(th, theme.TierTrueColor, 80, rawPrompt)
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1: %q", len(rows), rows)
+	}
+	plain := ansi.Strip(rows[0])
+	if strings.Contains(plain, "<skill-instructions") || strings.Contains(plain, "Do steps 1-7") {
+		t.Errorf("userLines leaked raw skill instructions: %q", plain)
+	}
+	if !strings.Contains(plain, "⚡ /feature-delivery add auth module") {
+		t.Errorf("userLines did not format skill command: %q", plain)
+	}
+
+	// ASCII tier
+	asciiRows := userLines(th, theme.TierASCII, 80, rawPrompt)
+	asciiPlain := ansi.Strip(asciiRows[0])
+	if !strings.Contains(asciiPlain, "* /feature-delivery add auth module") {
+		t.Errorf("ASCII userLines did not format skill command with asterisk: %q", asciiPlain)
+	}
+}
+
 // TestVerticalRailRendersAtEveryTier pins the same "structure survives
 // every tier, only colour differs" rule wireframes-panes.md section 3
 // states and the dialog frame's own TestDialogDegradesByTier already

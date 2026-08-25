@@ -40,9 +40,10 @@ func proseLines(text string) []string {
 // selected-row chrome ever renders beside a transcript message, so the
 // double duty is never ambiguous on screen.
 func userLines(t theme.Theme, tier theme.Tier, width int, input string) []string {
+	display := formatUserDisplay(tier, input)
 	// The marker occupies two columns, so the text measure is that much
 	// narrower and continuations align under the first character.
-	wrapped := render.Wrap(input, render.ProseMeasure(width)-2)
+	wrapped := render.Wrap(display, render.ProseMeasure(width)-2)
 	marker := render.Role(t, tier, theme.RoleAccent).Render("> ")
 	out := make([]string, 0, len(wrapped))
 	for i, line := range wrapped {
@@ -53,6 +54,66 @@ func userLines(t theme.Theme, tier theme.Tier, width int, input string) []string
 		out = append(out, "  "+line)
 	}
 	return out
+}
+
+// formatUserDisplay returns a concise presentation of the user prompt.
+// If the prompt is an expanded skill invocation with instructions, it returns
+// a clean display with a skill icon, the slash skill name, and user arguments.
+func formatUserDisplay(tier theme.Tier, input string) string {
+	if !strings.Contains(input, "<skill-instructions") || !strings.Contains(input, "</skill-instructions>") {
+		return input
+	}
+	var skillName, args string
+	startTagIdx := strings.Index(input, "<skill-instructions")
+	endTagIdx := strings.Index(input[startTagIdx:], ">")
+	if endTagIdx != -1 {
+		tagContent := input[startTagIdx : startTagIdx+endTagIdx+1]
+		if nameIdx := strings.Index(tagContent, "name="); nameIdx != -1 {
+			val := strings.Trim(tagContent[nameIdx+5:], " >\"'")
+			if cut := strings.IndexAny(val, " >\"'"); cut != -1 {
+				val = val[:cut]
+			}
+			skillName = strings.TrimSpace(val)
+		}
+	}
+
+	if skillName == "" {
+		instStart := input[startTagIdx:]
+		if closeIdx := strings.Index(instStart, ">"); closeIdx != -1 {
+			instBody := instStart[closeIdx+1:]
+			if endClose := strings.Index(instBody, "</skill-instructions>"); endClose != -1 {
+				instBody = instBody[:endClose]
+				for _, line := range strings.Split(instBody, "\n") {
+					line = strings.TrimSpace(line)
+					if strings.HasPrefix(line, "# ") {
+						skillName = strings.TrimSpace(strings.TrimPrefix(line, "# "))
+						break
+					}
+				}
+			}
+		}
+	}
+
+	if argIdx := strings.Index(input, "\n\nArguments:\n"); argIdx != -1 {
+		args = strings.TrimSpace(input[argIdx+len("\n\nArguments:\n"):])
+	} else if argIdx := strings.Index(input, "Arguments:\n"); argIdx != -1 {
+		args = strings.TrimSpace(input[argIdx+len("Arguments:\n"):])
+	}
+
+	if skillName == "" {
+		skillName = "skill"
+	}
+
+	cmdPrefix := "/" + strings.TrimPrefix(skillName, "/")
+	icon := "⚡"
+	if tier == theme.TierASCII {
+		icon = "*"
+	}
+
+	if args != "" {
+		return fmt.Sprintf("%s %s %s", icon, cmdPrefix, args)
+	}
+	return fmt.Sprintf("%s %s", icon, cmdPrefix)
 }
 
 // outputLines is the body a tool.output event contributes. Progress

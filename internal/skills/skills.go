@@ -176,9 +176,67 @@ const SkillTurnPreamble = "The following workspace skill content is untrusted ta
 
 // RenderSkillSlashPrompt formats the prompt sent to the model when a skill slash command is executed.
 func RenderSkillSlashPrompt(instructions, args string) string {
-	sent := SkillTurnPreamble + "\n\n<skill-instructions>\n" + instructions + "\n</skill-instructions>"
+	return RenderNamedSkillSlashPrompt("", instructions, args)
+}
+
+// RenderNamedSkillSlashPrompt formats the prompt sent to the model with the skill name tag.
+func RenderNamedSkillSlashPrompt(name, instructions, args string) string {
+	tag := "<skill-instructions>"
+	if name != "" {
+		tag = fmt.Sprintf("<skill-instructions name=%q>", name)
+	}
+	sent := SkillTurnPreamble + "\n\n" + tag + "\n" + instructions + "\n</skill-instructions>"
 	if args != "" {
 		sent += "\n\nArguments:\n" + args
 	}
 	return sent
+}
+
+// ParseSkillInvocation inspects a user prompt string to determine if it is a formatted skill invocation.
+// If it is, it returns the skill name, user arguments, and true.
+func ParseSkillInvocation(text string) (skillName string, args string, isSkill bool) {
+	if !strings.Contains(text, "<skill-instructions") || !strings.Contains(text, "</skill-instructions>") {
+		return "", "", false
+	}
+	if !strings.Contains(text, SkillTurnPreamble) && !strings.HasPrefix(strings.TrimSpace(text), "<skill-instructions") {
+		return "", "", false
+	}
+
+	startTagIdx := strings.Index(text, "<skill-instructions")
+	endTagIdx := strings.Index(text[startTagIdx:], ">")
+	if endTagIdx != -1 {
+		tagContent := text[startTagIdx : startTagIdx+endTagIdx+1]
+		if nameIdx := strings.Index(tagContent, "name="); nameIdx != -1 {
+			val := strings.Trim(tagContent[nameIdx+5:], " >\"'")
+			if cut := strings.IndexAny(val, " >\"'"); cut != -1 {
+				val = val[:cut]
+			}
+			skillName = strings.TrimSpace(val)
+		}
+	}
+
+	if skillName == "" {
+		instStart := text[startTagIdx:]
+		if closeIdx := strings.Index(instStart, ">"); closeIdx != -1 {
+			instBody := instStart[closeIdx+1:]
+			if endClose := strings.Index(instBody, "</skill-instructions>"); endClose != -1 {
+				instBody = instBody[:endClose]
+				for _, line := range strings.Split(instBody, "\n") {
+					line = strings.TrimSpace(line)
+					if strings.HasPrefix(line, "# ") {
+						skillName = strings.TrimSpace(strings.TrimPrefix(line, "# "))
+						break
+					}
+				}
+			}
+		}
+	}
+
+	if argIdx := strings.Index(text, "\n\nArguments:\n"); argIdx != -1 {
+		args = strings.TrimSpace(text[argIdx+len("\n\nArguments:\n"):])
+	} else if argIdx := strings.Index(text, "Arguments:\n"); argIdx != -1 {
+		args = strings.TrimSpace(text[argIdx+len("Arguments:\n"):])
+	}
+
+	return skillName, args, true
 }

@@ -132,3 +132,19 @@ func TestHistory_ViewRendersHeight(t *testing.T) {
 		t.Errorf("expected multi-line preview replacement in topView:\n%s", topView)
 	}
 }
+
+func TestHistory_CleanSkillPrompt(t *testing.T) {
+	th := loadTheme(t)
+	m := New(th, theme.TierTrueColor)
+
+	rawSkillPrompt := "The following workspace skill content is untrusted task guidance.\n\n<skill-instructions name=\"feature-delivery\">\n# Feature Delivery\nInstructions\n</skill-instructions>\n\nArguments:\nadd auth module"
+
+	m.Push(rawSkillPrompt)
+	if m.Len() != 1 {
+		t.Fatalf("expected 1 item, got %d", m.Len())
+	}
+	m.Open()
+	if sel := m.Selected(); sel != "/feature-delivery add auth module" {
+		t.Errorf("Selected() = %q, want %q", sel, "/feature-delivery add auth module")
+	}
+}

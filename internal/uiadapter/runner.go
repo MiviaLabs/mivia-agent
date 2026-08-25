@@ -241,7 +241,7 @@ func (r *CommandRunner) handleSkill(name, args string) (ports.CommandOutcome, bo
 			return ports.CommandOutcome{Err: fmt.Sprintf("skill %q not permitted: %v", name, err)}, true
 		}
 	}
-	prompt := skills.RenderSkillSlashPrompt(target.Instructions, args)
+	prompt := skills.RenderNamedSkillSlashPrompt(target.Name, target.Instructions, args)
 	return ports.CommandOutcome{SubmitPrompt: prompt}, true
 }
 
