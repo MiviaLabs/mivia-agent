@@ -27,59 +27,11 @@ func (s *skillsSection) View() string {
 		detailLines = s.renderDetail(sk)
 	}
 
-	avail := s.height
-	if s.notice != "" && avail > 1 {
-		avail--
-	}
-
-	detailHeight := 0
-	if len(detailLines) > 0 && avail > 4 {
-		needed := len(listLines)
-		if needed > avail-4 {
-			needed = avail - 4
-		}
-		if needed < 2 {
-			needed = 2
-		}
-		detailHeight = avail - needed
-		if detailHeight > len(detailLines)+1 {
-			detailHeight = len(detailLines) + 1
-		}
-	}
-	listHeight := avail - detailHeight
-	if listHeight < 1 {
-		listHeight = 1
-	}
-
-	targetCursorLine := selectedRowIdx
-	if targetCursorLine < 0 {
-		targetCursorLine = 0
-	}
-	start, end := render.WindowSlice(len(listLines), targetCursorLine, listHeight)
-
-	var b []byte
-	for _, line := range listLines[start:end] {
-		b = append(b, line...)
-		b = append(b, '\n')
-	}
-
-	if detailHeight > 0 && len(detailLines) > 0 {
-		b = append(b, '\n')
-		maxDetailLines := detailHeight - 1
-		if maxDetailLines > len(detailLines) {
-			maxDetailLines = len(detailLines)
-		}
-		for _, dl := range detailLines[:maxDetailLines] {
-			b = append(b, dl...)
-			b = append(b, '\n')
-		}
-	}
-
+	notice := ""
 	if s.notice != "" {
-		b = append(b, render.Role(s.theme, s.tier, theme.RoleWarning).Render(s.notice)...)
+		notice = render.Role(s.theme, s.tier, theme.RoleWarning).Render(s.notice)
 	}
-
-	return strings.TrimRight(string(b), "\n")
+	return render.SplitListDetail(listLines, detailLines, selectedRowIdx, s.height, notice)
 }
 
 func (s *skillsSection) renderListLines(selectedRowIdx int) []string {

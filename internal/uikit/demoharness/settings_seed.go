@@ -70,8 +70,9 @@ func seedMCPServers() []ports.MCPServerView {
 
 func seedAgents() []ports.AgentView {
 	return []ports.AgentView{
-		{Name: ports.DefaultAgentName, Description: "general purpose orchestrator", Provider: "openrouter", Model: "anthropic/claude-opus-5", MaxTurns: 40, SystemPromptChars: 4200},
-		{Name: "go-engineer", Description: "implements Go changes", Provider: "openrouter", Model: "anthropic/claude-opus-5", Tools: []string{"edit_file", "run_command"}, MaxTurns: 60, SystemPromptChars: 2100},
+		{Name: ports.DefaultAgentName, Description: "general purpose orchestrator", Provider: "openrouter", Model: "anthropic/claude-opus-5", MaxTurns: 40, SystemPromptChars: 4200, Scope: ports.ScopeUser},
+		{Name: "go-engineer", Description: "implements Go changes", Provider: "openrouter", Model: "anthropic/claude-opus-5", Tools: []string{"edit_file", "run_command"}, MaxTurns: 60, SystemPromptChars: 2100, Scope: ports.ScopeUser},
+		{Name: "reviewer", Description: "reviews changed code for this workspace", Provider: "openrouter", Model: "anthropic/claude-opus-5", Tools: []string{"read_file", "inspect_repository"}, Skills: []string{"code-review"}, MaxTurns: 30, SystemPromptChars: 1800, Scope: ports.ScopeProject},
 	}
 }
 

@@ -18,8 +18,8 @@ func (a harnessAgents) Agents() []ports.AgentView {
 	return out
 }
 
-func (a harnessAgents) Apply(_ context.Context, _ ports.Scope, e ports.AgentEdit) (ports.SaveHandle, error) {
-	return a.newSaveHandle(func() error { return a.applyAgent(e) }), nil
+func (a harnessAgents) Apply(_ context.Context, scope ports.Scope, e ports.AgentEdit) (ports.SaveHandle, error) {
+	return a.newSaveHandle(func() error { return a.applyAgent(scope, e) }), nil
 }
 
 func (h *Harness) findAgent(name string) int {
@@ -31,9 +31,10 @@ func (h *Harness) findAgent(name string) int {
 	return -1
 }
 
-func (h *Harness) applyAgent(e ports.AgentEdit) error {
+func (h *Harness) applyAgent(scope ports.Scope, e ports.AgentEdit) error {
 	switch v := e.(type) {
 	case ports.UpsertAgent:
+		v.Agent.Scope = scope
 		if i := h.findAgent(v.Agent.Name); i >= 0 {
 			h.settingsAgents[i] = v.Agent
 			return nil

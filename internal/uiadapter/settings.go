@@ -165,27 +165,7 @@ func (s *SettingsStore) initProvidersFromConfig() {
 	}
 }
 
-func (s *SettingsStore) initAgentsFromConfig() {
-	if s.agentState == nil || s.agentState.Registry == nil {
-		return
-	}
-	for _, a := range s.agentState.Registry.List() {
-		var skills []string
-		if a.Skills != nil {
-			skills = *a.Skills
-		}
-		s.agents = append(s.agents, ports.AgentView{
-			Name:              a.Name,
-			Description:       a.Description,
-			Provider:          a.Provider,
-			Model:             a.Model,
-			Tools:             a.EffectiveTools,
-			Skills:            skills,
-			MCPServers:        a.EffectiveMCPServers,
-			SystemPromptChars: len(a.SystemPrompt),
-		})
-	}
-}
+// initAgentsFromConfig is implemented in settings_agents.go
 
 // Settings returns the ports.Settings bundle with all section adapters.
 func (s *SettingsStore) Settings() ports.Settings {
@@ -294,18 +274,6 @@ func mcpServerViewToSettings(v ports.MCPServerView) config.MCPServerSettings {
 		Args:      v.Args,
 		Endpoint:  v.Endpoint,
 		EnvNames:  v.EnvNames,
-	}
-}
-
-func agentViewToSettings(v ports.AgentView) config.AgentFileSettings {
-	return config.AgentFileSettings{
-		Name:        v.Name,
-		Description: v.Description,
-		Provider:    v.Provider,
-		Model:       v.Model,
-		Tools:       v.Tools,
-		Skills:      v.Skills,
-		MCPServers:  v.MCPServers,
 	}
 }
 
@@ -606,59 +574,7 @@ func (s *SettingsStore) applyMCP(e ports.MCPEdit) error {
 	return nil
 }
 
-// settingsAgents
-type settingsAgents struct{ *SettingsStore }
-
-func (a settingsAgents) Agents() []ports.AgentView {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	out := make([]ports.AgentView, len(a.agents))
-	copy(out, a.agents)
-	return out
-}
-
-func (a settingsAgents) Apply(_ context.Context, _ ports.Scope, e ports.AgentEdit) (ports.SaveHandle, error) {
-	return a.newSaveHandle(func() error { return a.applyAgent(e) }), nil
-}
-
-func (s *SettingsStore) findAgent(name string) int {
-	for i := range s.agents {
-		if s.agents[i].Name == name {
-			return i
-		}
-	}
-	return -1
-}
-
-func (s *SettingsStore) applyAgent(e ports.AgentEdit) error {
-	agentsDir := config.WorkspaceAgentsDir("")
-	switch v := e.(type) {
-	case ports.UpsertAgent:
-		if i := s.findAgent(v.Agent.Name); i >= 0 {
-			s.agents[i] = v.Agent
-		} else {
-			s.agents = append(s.agents, v.Agent)
-		}
-		if agentsDir != "" {
-			_ = config.WriteAgentFile(agentsDir, agentViewToSettings(v.Agent), "")
-		}
-	case ports.RemoveAgent:
-		if v.Name == ports.DefaultAgentName {
-			return fmt.Errorf("the default agent %q cannot be removed", ports.DefaultAgentName)
-		}
-		i := s.findAgent(v.Name)
-		if i < 0 {
-			return fmt.Errorf("agent %q not found", v.Name)
-		}
-		s.agents = append(s.agents[:i], s.agents[i+1:]...)
-		if agentsDir != "" {
-			_ = config.RemoveAgentFile(agentsDir, v.Name)
-		}
-	default:
-		return fmt.Errorf("unknown agent edit %T", e)
-	}
-	return nil
-}
+// settingsAgents is implemented in settings_agents.go
 
 // settingsAutomations
 type settingsAutomations struct{ *SettingsStore }
