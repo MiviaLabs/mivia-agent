@@ -3,10 +3,10 @@
 # =============================================================================
 # Secrets (API keys) go in an env file or process environment - never here.
 #   ~/.mivia/.env:
-#     DEEPSEEK_API_KEY=sk-...
-#     OPENROUTER_API_KEY=or-...
-#     MINIMAX_API_KEY=...
-#     TAVILY_API_KEY=tvly-...
+#     DEEPSEEK_[redacted]
+#     OPENROUTER_[redacted]
+#     MINIMAX_[redacted]
+#     TAVILY_[redacted]
 # =============================================================================
 
 # ---------------------------------------------------------------------------
@@ -727,13 +727,13 @@ redact_tool_args = false
 # startup error, never a silently dropped rule.
 redaction_patterns = [
   # Quotes are optional around key and value so this also matches JSON tool
-  # argv ("token":"…"), which reaches the default preview as raw text.
+  # argv ([redacted]"), which reaches the default preview as raw text.
   # The (?:bearer\s+)? is load-bearing: without it this pattern consumes
-  # "Authorization: Bearer" and stops, leaving the credential for a later
+  # [redacted]" and stops, leaving the credential for a later
   # pattern that no longer matches. With it, order does not matter.
   '(?i)"?(?:password|passwd|token|secret|api[_-]?key|authorization)"?\s*[:=]\s*"?(?:bearer\s+)?[^"\s,;}]+',
   '(?i)bearer\s+[A-Za-z0-9._~+/=-]+',
-  '(?:sk-ant-|sk-|ghp_|github_pat_|xox[baprs]-)[A-Za-z0-9._~-]+',
+  '(?:[redacted]|sk-|ghp_|github_pat_|xox[baprs]-)[A-Za-z0-9._~-]+',
   '(?is)-----BEGIN [A-Z0-9 ]+PRIVATE KEY-----.*?(?:-----END [A-Z0-9 ]+PRIVATE KEY-----|$)',
 ]
 
