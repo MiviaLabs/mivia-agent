@@ -26,6 +26,12 @@ type section interface {
 	Hints() []keymap.ID
 }
 
+// inputCapturer is an optional interface a section can implement when it has
+// an active text editor (such as MCP add/edit form) that needs raw keypresses.
+type inputCapturer interface {
+	CapturingInput() bool
+}
+
 // placeholderSection renders "unavailable" for a nav slot whose adapter
 // is nil - the same nil-safe default the nil ports.CommandRunner uses
 // (settings-screen.md §4), and what every slot is until its own slice
