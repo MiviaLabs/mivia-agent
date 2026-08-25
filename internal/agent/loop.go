@@ -77,11 +77,13 @@ type Loop struct {
 	// Turn-level compaction accounting. A mid-turn step may elide enough to
 	// fit before the final step that commits; emit uses the first compacting
 	// BeforeTokens, the last compacting AfterTokens, and summed elision.
-	turnCompacted      bool
-	turnBeforeTokens   int
-	turnAfterTokens    int
-	turnElidedMessages int
-	turnElidedBytes    int
+	turnCompacted            bool
+	turnCompactionEmitted    bool
+	lastEmittedCompactionKey string
+	turnBeforeTokens         int
+	turnAfterTokens          int
+	turnElidedMessages       int
+	turnElidedBytes          int
 	// turnElidedReasoningMessages/Bytes mirror the tool-result pair for the
 	// reasoning-elision counters, so a later non-compacting step cannot
 	// erase an earlier step's reasoning accounting.
@@ -174,6 +176,11 @@ func (l *Loop) emitTurnUsage(ctx context.Context, opts Options, req provider.Req
 // or empty if the summary was successfully injected or no summarizer was configured.
 func (l *Loop) SummaryFailureReason() string {
 	return l.summaryFailureReason
+}
+
+// TurnCompactionEmitted reports whether compaction was emitted mid-turn during step preparation.
+func (l *Loop) TurnCompactionEmitted() bool {
+	return l.turnCompactionEmitted
 }
 
 // streamRevoker, revokeStreamWriter, teeWriter, and the model-thinking

@@ -206,3 +206,33 @@ func assertCheckpointRowExists(t *testing.T, store *storage.SQLite, principal co
 		t.Fatalf("no active checkpoint content for session %q: %+v", sessionID, snapshot)
 	}
 }
+
+// TestBuildSession_WiresSummarizer asserts that BuildSession installs a non-nil
+// context summarizer when [context.summary] is enabled.
+func TestBuildSession_WiresSummarizer(t *testing.T) {
+	stub := newSessionStubServer(sseTextTurn("ok"))
+	res := buildSessionInputConfig(stub.start(t))
+	comp, err := provider.New(res)
+	if err != nil {
+		t.Fatalf("provider.New: %v", err)
+	}
+	storePath := filepath.Join(t.TempDir(), "context.db")
+	sess, store, _, err := BuildSession(SessionInput{
+		Config:      res,
+		Completer:   comp,
+		StorePath:   storePath,
+		WorkspaceID: "test-workspace",
+	})
+	if err != nil {
+		t.Fatalf("BuildSession: %v", err)
+	}
+	defer store.Close()
+
+	binding, ok := sess.CurrentSummarizerBinding()
+	if !ok {
+		t.Fatal("expected summarizer binding to be configured, got none")
+	}
+	if binding.Provider != res.ProviderName || binding.Model != res.Model {
+		t.Fatalf("summarizer binding = %+v, want %s/%s", binding, res.ProviderName, res.Model)
+	}
+}

@@ -32,7 +32,17 @@ func prepareSDKOnce(ctx context.Context, l *Loop, opts Options, turn *sdkTurnSta
 				l.recordPreparation(fallback)
 				l.captureOmittedEvidence(input, fallback)
 				l.PreparationErr = nil
-				return clonePreparedMessages(injectSummaryAfterPrepare(l, ctx, opts, fallback.Messages)), nil
+				preparedWithSummary := injectSummaryAfterPrepare(l, ctx, opts, fallback.Messages)
+				if fallback.Compacted {
+					key := compactionIdentity(fallback.Token)
+					if key != "" && key != l.lastEmittedCompactionKey {
+						l.lastEmittedCompactionKey = key
+						_, haveSummary := l.InjectedSummary()
+						EmitCompaction(ctx, opts, fallback, haveSummary, l.SummaryFailureReason())
+						l.turnCompactionEmitted = true
+					}
+				}
+				return clonePreparedMessages(preparedWithSummary), nil
 			} else {
 				l.PreparationErr = ferr
 				return nil, ferr
@@ -42,7 +52,17 @@ func prepareSDKOnce(ctx context.Context, l *Loop, opts Options, turn *sdkTurnSta
 	}
 	l.recordPreparation(preparation)
 	l.captureOmittedEvidence(input, preparation)
-	return clonePreparedMessages(injectSummaryAfterPrepare(l, ctx, opts, preparation.Messages)), nil
+	preparedWithSummary := injectSummaryAfterPrepare(l, ctx, opts, preparation.Messages)
+	if preparation.Compacted {
+		key := compactionIdentity(preparation.Token)
+		if key != "" && key != l.lastEmittedCompactionKey {
+			l.lastEmittedCompactionKey = key
+			_, haveSummary := l.InjectedSummary()
+			EmitCompaction(ctx, opts, preparation, haveSummary, l.SummaryFailureReason())
+			l.turnCompactionEmitted = true
+		}
+	}
+	return clonePreparedMessages(preparedWithSummary), nil
 }
 
 // sdkPrepareTrim builds the SDK Options.Trim closure that runs the

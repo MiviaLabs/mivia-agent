@@ -2,7 +2,11 @@ package composition
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -146,10 +150,16 @@ func buildSessionCheckpointStore(sess *chat.Session, in SessionInput) (*storage.
 		Enabled:             true,
 		UsageWriter:         storage.NewUsageWriter(store, principal.WorkspaceID),
 	}
-	if err := sess.SetContextManager(manager, principal); err != nil {
+	policy := contextstate.PolicySnapshot{}
+	if summarizer, snapshot, ok := buildSessionSummarizer(sess, in); ok {
+		manager.Summarizer = summarizer
+		policy = snapshot
+	}
+	if err := sess.SetContextManager(manager, principal, policy); err != nil {
 		_ = store.Close()
 		return nil, contextstate.Principal{}, fmt.Errorf("set context manager: %w", err)
 	}
+	sess.SetContextRedactionPolicy(contextRedactionPolicy(in.Config))
 	if err := sess.SetContextStore(store); err != nil {
 		_ = store.Close()
 		return nil, contextstate.Principal{}, fmt.Errorf("set context store: %w", err)
@@ -159,4 +169,76 @@ func buildSessionCheckpointStore(sess *chat.Session, in SessionInput) (*storage.
 	// Best effort by contract: a miss leaves the session uncorrected.
 	sess.SeedCalibration(context.Background(), store, principal.WorkspaceID)
 	return store, principal, nil
+}
+
+func buildSessionSummarizer(sess *chat.Session, in SessionInput) (*contextmgr.Summarizer, contextstate.PolicySnapshot, bool) {
+	if sess == nil || in.Config == nil || !in.Config.Context.Summary.SummaryEnabled() {
+		return nil, contextstate.PolicySnapshot{}, false
+	}
+	endpoint := strings.TrimSpace(in.Config.BaseURL)
+	if endpoint == "" {
+		return nil, contextstate.PolicySnapshot{}, false
+	}
+	completer := in.Completer
+	if completer == nil {
+		return nil, contextstate.PolicySnapshot{}, false
+	}
+	providerName := in.Config.ProviderName
+	model := in.Config.Model
+	if providerName == "" || model == "" {
+		return nil, contextstate.PolicySnapshot{}, false
+	}
+	redaction := contextRedactionPolicy(in.Config)
+	policy := contextstate.PolicySnapshot{
+		SummaryEnabled: true, RedactionConfigured: redaction.Configured, NetworkEnabled: true,
+		Provider: providerName, Model: model,
+		CredentialScope:   "env-api-key",
+		EndpointAllowlist: []string{endpoint},
+		PolicyDigest: summaryPolicyDigest(providerName, model, endpoint,
+			in.Config.Privacy.RedactionPatterns, in.Config.Privacy.RedactionKeyNames),
+	}
+	adapter, err := contextmgr.NewLLMSummaryProvider(completer, sess.SessionID)
+	if err != nil {
+		return nil, contextstate.PolicySnapshot{}, false
+	}
+	generation := uint64(1)
+	if binding := sess.CurrentBinding(); binding.ModelGeneration > 0 {
+		generation = binding.ModelGeneration
+	}
+	summarizer, err := contextmgr.NewSummarizer(adapter, contextstate.BindingRevision{
+		Provider: providerName, Model: model, Generation: generation,
+	}, policy)
+	if err != nil {
+		return nil, contextstate.PolicySnapshot{}, false
+	}
+	return &summarizer, policy, true
+}
+
+func contextRedactionPolicy(res *config.Resolved) contextstate.RedactionPolicy {
+	if res == nil || res.RedactionPolicy == nil {
+		return contextstate.RedactionPolicy{}
+	}
+	patterns := res.Privacy.RedactionPatterns
+	keyNames := res.Privacy.RedactionKeyNames
+	if len(patterns) == 0 && len(keyNames) == 0 {
+		return contextstate.RedactionPolicy{}
+	}
+	policy := res.RedactionPolicy
+	return contextstate.RedactionPolicy{
+		Configured: true, Patterns: patterns, KeyNames: keyNames,
+		Redactor: func(data []byte) []byte { return []byte(policy.Text(string(data))) },
+	}
+}
+
+func summaryPolicyDigest(providerName, model, endpoint string, patterns, keyNames []string) string {
+	parts := make([]string, 0, 5)
+	parts = append(parts, providerName, model, endpoint,
+		strings.Join(patterns, "\x00"), strings.Join(keyNames, "\x00"))
+	digest := sha256.New()
+	for _, part := range parts {
+		digest.Write([]byte(strconv.Itoa(len(part))))
+		digest.Write([]byte(":"))
+		digest.Write([]byte(part))
+	}
+	return hex.EncodeToString(digest.Sum(nil))
 }

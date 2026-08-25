@@ -466,6 +466,7 @@
       "internal/reasoning",
       "internal/redact",
       "internal/sdkadapter",
+      "internal/skills",
       "internal/storage",
       "internal/tools",
       "internal/ui/component/composer",

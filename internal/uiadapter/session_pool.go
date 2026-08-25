@@ -214,10 +214,12 @@ func (p *SessionPool) GetOrCreate(sessionID string) (ports.Conversation, error) 
 			if origPrincipal.IsBound() {
 				newPrincipal, err := contextstate.NewPrincipal(origPrincipal.WorkspaceID, sess.SessionID, origPrincipal.SubjectID)
 				if err == nil {
-					_ = sess.SetContextManager(mgr, newPrincipal)
+					policy := existing.ContextPolicy()
+					_ = sess.SetContextManager(mgr, newPrincipal, policy)
 				}
 			}
 		}
+		sess.SetContextRedactionPolicy(existing.ContextRedactionPolicy())
 		if store := existing.ContextStore(); store != nil {
 			_ = sess.SetContextStore(store)
 		}
@@ -232,6 +234,7 @@ func (p *SessionPool) GetOrCreate(sessionID string) (ports.Conversation, error) 
 	if err := sess.Load(sessionID); err != nil {
 		return nil, err
 	}
+	cliagents.RefreshSummarizerAfterModelSwitch(sess, p.res)
 
 	conv := NewConversation(sess)
 	p.sessions[sessionID] = sess

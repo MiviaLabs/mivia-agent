@@ -87,6 +87,8 @@ func (l *Loop) recordPreparation(preparation contextmgr.Preparation) {
 
 func (l *Loop) resetTurnCompaction() {
 	l.turnCompacted = false
+	l.turnCompactionEmitted = false
+	l.lastEmittedCompactionKey = ""
 	l.turnBeforeTokens = 0
 	l.turnAfterTokens = 0
 	l.turnElidedMessages = 0

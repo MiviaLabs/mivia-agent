@@ -162,6 +162,9 @@ func (s *Session) SetSummarizer(summarizer *contextmgr.Summarizer) {
 	}
 	manager := *s.contextManager
 	manager.Summarizer = summarizer
+	if summarizer != nil {
+		s.contextPolicy = summarizer.Policy
+	}
 	s.contextManager = &manager
 }
 
@@ -178,6 +181,20 @@ func (s *Session) CurrentSummarizerBinding() (contextstate.BindingRevision, bool
 		return contextstate.BindingRevision{}, false
 	}
 	return s.contextManager.Summarizer.Binding, true
+}
+
+// ContextPolicy returns the session's active context policy snapshot.
+func (s *Session) ContextPolicy() contextstate.PolicySnapshot {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.contextPolicy
+}
+
+// ContextRedactionPolicy returns the session's active context redaction policy.
+func (s *Session) ContextRedactionPolicy() contextstate.RedactionPolicy {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.contextRedaction
 }
 
 func (s *Session) SetContextRedactionPolicy(policy contextstate.RedactionPolicy) {
