@@ -58,6 +58,10 @@ func (h *Harness) Run(_ context.Context, name, args string) ports.CommandOutcome
 		return ports.CommandOutcome{Notice: formatContext(h.ContextUsage())}
 	case "cost":
 		return ports.CommandOutcome{Notice: formatCost(h.ContextUsage())}
+	case "effort":
+		return ports.CommandOutcome{
+			EffortChoices: []string{"minimal", "low", "medium (default)", "high", "max", "unset"},
+		}
 	case "agents":
 		names := make([]string, 0, len(demoAgents))
 		for _, a := range demoAgents {
@@ -193,6 +197,11 @@ func (h *Harness) SelectAgent(_ context.Context, name string) ports.CommandOutco
 		}
 	}
 	return ports.CommandOutcome{Err: "unknown agent " + name}
+}
+
+// SelectEffort applies a /effort choice in demo harness.
+func (h *Harness) SelectEffort(_ context.Context, level string) ports.CommandOutcome {
+	return ports.CommandOutcome{Notice: "reasoning effort set to " + level}
 }
 
 // compact halves - by compactRatio - the recorded token counts and

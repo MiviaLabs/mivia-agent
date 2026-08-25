@@ -58,6 +58,11 @@ type CommandOutcome struct {
 	// CommandRunner.SelectSession.
 	SessionChoices []SessionSummary
 
+	// EffortChoices, when non-empty, asks the UI to open a reasoning effort
+	// picker over these effort levels. The chosen level comes back through
+	// CommandRunner.SelectEffort.
+	EffortChoices []string
+
 	// Notice, when non-empty, is appended to the transcript as an
 	// informational block.
 	Notice string
@@ -106,6 +111,10 @@ type CommandRunner interface {
 	// SelectSession applies a session choice returned by a SessionChoices
 	// picker: switch/resume the selected session and report the outcome.
 	SelectSession(ctx context.Context, id string) CommandOutcome
+
+	// SelectEffort applies a reasoning effort choice returned by an EffortChoices
+	// picker and reports a CommandOutcome, typically a confirmation Notice.
+	SelectEffort(ctx context.Context, level string) CommandOutcome
 }
 
 // DefaultAgentName is the session's default agent: Mivia, the general

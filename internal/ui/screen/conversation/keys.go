@@ -157,6 +157,10 @@ func (s Screen) handleOpenPickerKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, b
 		next, cmd := s.handlePalettePickerKey(msg)
 		return next, cmd, true
 	}
+	if s.effortPicker != nil {
+		next, cmd := s.handleEffortPickerKey(msg)
+		return next, cmd, true
+	}
 	return s, nil, false
 }
 

@@ -75,6 +75,7 @@ func mockCommands() []composer.Command {
 		{Name: "compact", Desc: "compact the context"},
 		{Name: "context", Desc: "show context usage"},
 		{Name: "cost", Desc: "show the session spend"},
+		{Name: "effort", Desc: "set reasoning effort level for active model"},
 		{Name: "help", Desc: "show the keymap"},
 		{Name: "model", Desc: "pick the model"},
 		{Name: "quit", Desc: "exit mivia-ui"},

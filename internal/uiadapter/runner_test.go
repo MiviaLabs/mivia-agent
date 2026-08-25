@@ -13,6 +13,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/uiadapter"
@@ -328,7 +329,7 @@ func TestDefaultCommands(t *testing.T) {
 	if len(cmds) == 0 {
 		t.Fatal("expected non-empty DefaultCommands")
 	}
-	var foundModel, foundAgents, foundResume bool
+	var foundModel, foundAgents, foundResume, foundEffort bool
 	for _, c := range cmds {
 		switch c.Name {
 		case "model":
@@ -337,10 +338,61 @@ func TestDefaultCommands(t *testing.T) {
 			foundAgents = true
 		case "resume":
 			foundResume = true
+		case "effort":
+			foundEffort = true
 		}
 	}
-	if !foundModel || !foundAgents || !foundResume {
+	if !foundModel || !foundAgents || !foundResume || !foundEffort {
 		t.Errorf("missing core commands in DefaultCommands: %+v", cmds)
+	}
+}
+
+func TestCommandRunner_Effort(t *testing.T) {
+	// Model without reasoning
+	resNoReasoning := &config.Resolved{
+		ProviderName: "test",
+		Model:        "basic-model",
+	}
+	sessNoReasoning := chat.NewSession(resNoReasoning, nil)
+	runnerNoReasoning := uiadapter.NewCommandRunner(sessNoReasoning, resNoReasoning, nil)
+
+	out := runnerNoReasoning.Run(context.Background(), "effort", "")
+	if !strings.Contains(out.Notice, "declares no reasoning efforts") {
+		t.Errorf("expected no reasoning efforts notice, got %+v", out)
+	}
+
+	// Model with reasoning
+	resWithReasoning := &config.Resolved{
+		ProviderName: "anthropic",
+		Model:        "claude-3-7-sonnet",
+		Models:       []string{"claude-3-7-sonnet"},
+		ModelProfiles: []config.ModelSpec{
+			{
+				Name:             "claude-3-7-sonnet",
+				ReasoningEfforts: []reasoning.Level{"low", "medium", "high", "max"},
+				Reasoning:        "medium",
+			},
+		},
+	}
+	sessWithReasoning := chat.NewSession(resWithReasoning, nil)
+	runnerWithReasoning := uiadapter.NewCommandRunner(sessWithReasoning, resWithReasoning, nil)
+
+	// List choices
+	outChoices := runnerWithReasoning.Run(context.Background(), "effort", "")
+	if len(outChoices.EffortChoices) == 0 {
+		t.Fatalf("expected EffortChoices, got %+v", outChoices)
+	}
+
+	// Apply choice with default marker suffix stripped
+	outSet := runnerWithReasoning.SelectEffort(context.Background(), "high")
+	if !strings.Contains(outSet.Notice, "high") {
+		t.Errorf("expected high notice, got %+v", outSet)
+	}
+
+	// Apply unset
+	outUnset := runnerWithReasoning.SelectEffort(context.Background(), "unset")
+	if !strings.Contains(outUnset.Notice, "cleared") {
+		t.Errorf("expected cleared notice, got %+v", outUnset)
 	}
 }
 

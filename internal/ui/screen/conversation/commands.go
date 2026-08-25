@@ -101,6 +101,10 @@ func (s Screen) applyCommandOutcome(o ports.CommandOutcome) (app.Screen, tea.Cmd
 		sp := newSessionPicker(s.Theme, s.Tier, o.SessionChoices)
 		s.sessionPicker = &sp
 		return s, tea.ClearScreen
+	case len(o.EffortChoices) > 0:
+		ep := picker.New(s.Theme, s.Tier, o.EffortChoices)
+		s.effortPicker = &ep
+		return s, tea.ClearScreen
 	case o.Notice != "":
 		return s.withNotice(o.Notice), nil
 	}
@@ -197,7 +201,7 @@ func (s Screen) handlePickerKey(msg tea.KeyPressMsg, which *picker.Model, cmdNam
 	// press).
 	if msg.String() == "ctrl+c" {
 		*which = picker.Model{}
-		s.modelPicker, s.agentPicker, s.sessionPicker = nil, nil, nil
+		s.modelPicker, s.agentPicker, s.sessionPicker, s.palettePicker, s.effortPicker = nil, nil, nil, nil, nil
 		next, cmd, _ := s.quit()
 		return next, tea.Batch(cmd, tea.ClearScreen)
 	}
@@ -210,7 +214,7 @@ func (s Screen) handlePickerKey(msg tea.KeyPressMsg, which *picker.Model, cmdNam
 	// (SelectMsg) or "esc" (CancelMsg) - see internal/ui/component/picker.
 	switch m := cmd().(type) {
 	case picker.SelectMsg:
-		s.modelPicker, s.agentPicker, s.sessionPicker = nil, nil, nil
+		s.modelPicker, s.agentPicker, s.sessionPicker, s.palettePicker, s.effortPicker = nil, nil, nil, nil, nil
 		if s.runner == nil {
 			return s.withError("no command runner configured for /" + cmdName), tea.ClearScreen
 		}
@@ -221,14 +225,14 @@ func (s Screen) handlePickerKey(msg tea.KeyPressMsg, which *picker.Model, cmdNam
 		next, outcomeCmd := s.applyCommandOutcome(out)
 		return next, tea.Batch(outcomeCmd, tea.ClearScreen)
 	case picker.CancelMsg:
-		s.modelPicker, s.agentPicker, s.sessionPicker = nil, nil, nil
+		s.modelPicker, s.agentPicker, s.sessionPicker, s.palettePicker, s.effortPicker = nil, nil, nil, nil, nil
 		return s, tea.ClearScreen
 	}
 	return s, nil
 }
 
-// handleModelPickerKey and handleAgentPickerKey adapt handlePickerKey
-// to the two pickers, so call sites stay one line.
+// handleModelPickerKey, handleAgentPickerKey, and handleEffortPickerKey adapt
+// handlePickerKey to the specific pickers, so call sites stay one line.
 func (s Screen) handleModelPickerKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
 	return s.handlePickerKey(msg, s.modelPicker, "model", func(name string) ports.CommandOutcome {
 		return s.runner.SelectModel(context.Background(), name)
@@ -238,6 +242,12 @@ func (s Screen) handleModelPickerKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) 
 func (s Screen) handleAgentPickerKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
 	return s.handlePickerKey(msg, s.agentPicker, "agents", func(name string) ports.CommandOutcome {
 		return s.runner.SelectAgent(context.Background(), name)
+	})
+}
+
+func (s Screen) handleEffortPickerKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
+	return s.handlePickerKey(msg, s.effortPicker, "effort", func(level string) ports.CommandOutcome {
+		return s.runner.SelectEffort(context.Background(), level)
 	})
 }
 
@@ -275,6 +285,7 @@ func (s Screen) openCommandPalette() (app.Screen, tea.Cmd) {
 			Models: []string{
 				"/settings - configure providers, models, and tools",
 				"/model - switch active model or provider",
+				"/effort - set reasoning effort level for active model",
 				"/theme - change UI color theme",
 				"/clear - clear conversation history",
 				"/compact - compact current conversation context",

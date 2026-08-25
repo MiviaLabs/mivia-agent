@@ -46,6 +46,7 @@ type Screen struct {
 	agentPicker   *picker.Model       // non-nil while the /agents picker is open
 	sessionPicker *sessionPicker      // non-nil while the /resume picker is open
 	palettePicker *picker.Model       // non-nil while the universal command palette is open
+	effortPicker  *picker.Model       // non-nil while the /effort picker is open
 
 	// threads resolves a dispatched subagent's conversation for the
 	// panel's thread dialog; nil is valid (every entry then falls back
@@ -398,7 +399,7 @@ func (s Screen) View() string {
 			lines = append(lines, "")
 		}
 		switch {
-		case s.modelPicker != nil || s.agentPicker != nil || s.sessionPicker != nil || s.palettePicker != nil || s.overlay != "":
+		case s.modelPicker != nil || s.agentPicker != nil || s.sessionPicker != nil || s.palettePicker != nil || s.effortPicker != nil || s.overlay != "":
 			lines = append(lines, s.centerRows()...)
 		case !s.embedded && s.panel.open:
 			lines = append(lines, s.narrowPanelRows()...)

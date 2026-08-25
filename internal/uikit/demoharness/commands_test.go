@@ -48,6 +48,18 @@ func TestRunModelReturnsChoices(t *testing.T) {
 	}
 }
 
+func TestRunEffortReturnsChoices(t *testing.T) {
+	h := newHarness(t)
+	got := h.Run(context.Background(), "effort", "")
+	if len(got.EffortChoices) == 0 {
+		t.Fatalf("got no effort choices, want at least one: %+v", got)
+	}
+	sel := h.SelectEffort(context.Background(), "high")
+	if !strings.Contains(sel.Notice, "high") {
+		t.Errorf("got notice %q, want it to contain 'high'", sel.Notice)
+	}
+}
+
 func TestRunContext(t *testing.T) {
 	h := newHarness(t)
 	got := h.Run(context.Background(), "context", "")

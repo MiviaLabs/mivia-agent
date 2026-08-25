@@ -8,6 +8,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/composer"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
@@ -57,6 +58,7 @@ func DefaultCommands() []composer.Command {
 		{Name: "compact", Desc: "compact context and history"},
 		{Name: "context", Desc: "show context token usage"},
 		{Name: "cost", Desc: "show current session spend"},
+		{Name: "effort", Desc: "set reasoning effort level for active model"},
 		{Name: "help", Desc: "show the keymap dialog"},
 		{Name: "model", Desc: "pick or switch model"},
 		{Name: "quit", Desc: "exit mivia"},
@@ -86,6 +88,8 @@ func (r *CommandRunner) Run(ctx context.Context, name, args string) ports.Comman
 		return r.handleContext()
 	case "cost":
 		return r.handleCost()
+	case "effort":
+		return r.handleEffort(args)
 	case "model":
 		return r.handleModel(args)
 	case "agents", "agent":
@@ -244,6 +248,68 @@ func (r *CommandRunner) SelectModel(_ context.Context, name string) ports.Comman
 		notice += fmt.Sprintf(" (Reasoning effort override %q discarded).", discarded)
 	}
 	return ports.CommandOutcome{Notice: notice}
+}
+
+func (r *CommandRunner) handleEffort(args string) ports.CommandOutcome {
+	if r.sess == nil {
+		return ports.CommandOutcome{Err: "no active session"}
+	}
+	if args != "" {
+		return r.SelectEffort(context.Background(), args)
+	}
+	choices := r.sess.ReasoningChoices()
+	if len(choices) == 0 {
+		return ports.CommandOutcome{Notice: fmt.Sprintf("Model %q declares no reasoning efforts.", r.sess.CurrentModel())}
+	}
+	defaultEffort := r.sess.ReasoningDefault()
+	var list []string
+	for _, c := range choices {
+		str := string(c)
+		if c == defaultEffort {
+			str += " (default)"
+		}
+		list = append(list, str)
+	}
+	if !defaultEffort.Active() {
+		list = append(list, "unset")
+	}
+	return ports.CommandOutcome{EffortChoices: list}
+}
+
+// SelectEffort applies a reasoning effort level override.
+func (r *CommandRunner) SelectEffort(_ context.Context, levelStr string) ports.CommandOutcome {
+	if r.sess == nil {
+		return ports.CommandOutcome{Err: "no active session"}
+	}
+	levelStr = strings.TrimSpace(levelStr)
+	// Strip optional " (default)" marker if present
+	if idx := strings.Index(levelStr, " ("); idx >= 0 {
+		levelStr = levelStr[:idx]
+	}
+	var level reasoning.Level
+	if levelStr == "unset" || levelStr == "" {
+		level = ""
+	} else {
+		parsed, err := reasoning.ParseLevel(levelStr)
+		if err != nil {
+			return ports.CommandOutcome{Err: fmt.Sprintf("invalid reasoning effort %q: %v", levelStr, err)}
+		}
+		level = parsed
+	}
+
+	if err := r.sess.SetReasoningEffort(level); err != nil {
+		return ports.CommandOutcome{Err: fmt.Sprintf("failed to set reasoning effort: %v", err)}
+	}
+
+	model := r.sess.CurrentModel()
+	effective := r.sess.ReasoningSetting()
+	if level.Active() {
+		return ports.CommandOutcome{Notice: fmt.Sprintf("Reasoning effort set to %s for %s.", effective.Level, model)}
+	}
+	if effective.Active() {
+		return ports.CommandOutcome{Notice: fmt.Sprintf("Reasoning effort choice cleared for %s: %s (model default) is in force.", model, effective.Level)}
+	}
+	return ports.CommandOutcome{Notice: fmt.Sprintf("Reasoning effort unset for %s: no reasoning field is sent.", model)}
 }
 
 func (r *CommandRunner) handleAgents(args string) ports.CommandOutcome {

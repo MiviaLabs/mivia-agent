@@ -81,6 +81,11 @@ func (f *fakeRunner) SelectSession(_ context.Context, id string) ports.CommandOu
 	return f.selectOutcome
 }
 
+func (f *fakeRunner) SelectEffort(_ context.Context, level string) ports.CommandOutcome {
+	f.selectCalls = append(f.selectCalls, "effort:"+level)
+	return f.selectOutcome
+}
+
 // sendLine types text into the composer and presses Enter once. Every
 // test in this file constructs its Screen with no SetCommands call, so
 // the completion menu never opens and one Enter reaches composerAction
@@ -778,5 +783,52 @@ func TestRunSlashCommandResumeDirectLoadsHistoryAndNotice(t *testing.T) {
 	}
 	if !strings.Contains(view, "Resumed session saved-123.") {
 		t.Errorf("view missing resume notice:\n%s", view)
+	}
+}
+
+func TestRunSlashCommandEffortOpensPickerAndSelects(t *testing.T) {
+	runner := &fakeRunner{
+		outcome: ports.CommandOutcome{
+			EffortChoices: []string{"low", "medium", "high", "max"},
+		},
+		selectOutcome: ports.CommandOutcome{
+			Notice: "Reasoning effort set to high for claude-3-7-sonnet.",
+		},
+	}
+	s := newScreen(t, nil, nil, nil)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	s = next.(Screen)
+	s.SetCommandRunner(runner)
+
+	s, cmd := sendLine(t, s, "/effort")
+	if !hasClearScreen(cmd) {
+		t.Errorf("expected ClearScreen on opening effort picker")
+	}
+	if s.effortPicker == nil {
+		t.Fatalf("expected effortPicker to be open")
+	}
+
+	// Navigate down twice to select "high" (index 2)
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	s = next.(Screen)
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	s = next.(Screen)
+
+	// Press enter
+	next, cmd = s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	s = next.(Screen)
+
+	if !hasClearScreen(cmd) {
+		t.Errorf("expected ClearScreen on closing effort picker")
+	}
+	if s.effortPicker != nil {
+		t.Errorf("expected effortPicker to be closed")
+	}
+	if len(runner.selectCalls) != 1 || runner.selectCalls[0] != "effort:high" {
+		t.Errorf("expected selectCalls to have 'effort:high', got %+v", runner.selectCalls)
+	}
+	view := s.View()
+	if !strings.Contains(view, "Reasoning effort set to high") {
+		t.Errorf("view missing effort notice:\n%s", view)
 	}
 }

@@ -58,6 +58,9 @@ func (r *testMultiSessionRunner) SelectModel(context.Context, string) ports.Comm
 func (r *testMultiSessionRunner) SelectAgent(context.Context, string) ports.CommandOutcome {
 	return ports.CommandOutcome{}
 }
+func (r *testMultiSessionRunner) SelectEffort(context.Context, string) ports.CommandOutcome {
+	return ports.CommandOutcome{}
+}
 func (r *testMultiSessionRunner) SelectSession(_ context.Context, id string) ports.CommandOutcome {
 	conv, ok := r.convs[id]
 	if !ok {

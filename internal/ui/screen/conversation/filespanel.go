@@ -780,6 +780,9 @@ func (s Screen) centerRows() []string {
 	case s.palettePicker != nil:
 		dw, dh := s.dialogSize()
 		return overlayRows(renderPickerDialog(s.Theme, s.Tier, dw, dh, "command palette", *s.palettePicker), s.transcriptHeight())
+	case s.effortPicker != nil:
+		dw, dh := s.dialogSize()
+		return overlayRows(renderPickerDialog(s.Theme, s.Tier, dw, dh, "select reasoning effort", *s.effortPicker), s.transcriptHeight())
 	case s.overlay != "":
 		return overlayRows(s.overlay, s.transcriptHeight())
 	case !s.embedded && s.transcript.Empty():
