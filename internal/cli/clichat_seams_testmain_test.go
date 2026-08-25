@@ -12,10 +12,20 @@ import (
 	clichat "github.com/MiviaLabs/mivia-agent/internal/clichat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
+	"github.com/MiviaLabs/mivia-agent/internal/testenv"
 )
 
 // TestMain wires seam defaults before running the package tests.
 func TestMain(m *testing.M) {
+	// See internal/testenv: without this, chat-path tests here resolve
+	// through workspace.GlobalContextStorePath and write into the
+	// developer's real ~/.mivia/context.db.
+	restoreHome, err := testenv.IsolateHome()
+	if err != nil {
+		// Continuing unprotected would write into the real home.
+		fmt.Fprintf(os.Stderr, "testenv: %v\n", err)
+		os.Exit(1)
+	}
 	clichat.FlagValueFunc = flagValue
 	clichat.FlagVarFunc = flagVar
 	clichat.InstallHookSessionFunc = installHookSession
@@ -46,5 +56,8 @@ func TestMain(m *testing.M) {
 		}
 		return rest[0], stackFlag, rest[1:], nil
 	}
-	os.Exit(m.Run())
+	// os.Exit skips deferred calls, so restore explicitly.
+	code := m.Run()
+	restoreHome()
+	os.Exit(code)
 }

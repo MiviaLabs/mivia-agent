@@ -10,6 +10,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/hooks"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
+	"github.com/MiviaLabs/mivia-agent/internal/testenv"
 
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
@@ -91,6 +92,17 @@ func flagVarLocal(args []string, names ...string) ([]string, []string, bool, err
 
 // TestMain wires seam defaults before running the package tests.
 func TestMain(m *testing.M) {
+	// Isolate the home directory first. Several paths here resolve through
+	// workspace.GlobalContextStorePath, which without this writes test
+	// sessions, checkpoints, and worktree rows into the developer's real
+	// ~/.mivia/context.db - permanently, and indistinguishably from real
+	// sessions. See internal/testenv.
+	restoreHome, err := testenv.IsolateHome()
+	if err != nil {
+		// Continuing unprotected would write into the real home.
+		fmt.Fprintf(os.Stderr, "testenv: %v\n", err)
+		os.Exit(1)
+	}
 	FlagValueFunc = flagValueLocal
 	FlagVarFunc = flagVarLocal
 	wireMemorySeams()
@@ -100,7 +112,11 @@ func TestMain(m *testing.M) {
 	wireWorkflowSeams()
 	wireCliworkflowSeams()
 	wireStackSeams()
-	os.Exit(m.Run())
+	// os.Exit skips deferred calls, so restore the environment explicitly
+	// before exiting with the suite's own status.
+	code := m.Run()
+	restoreHome()
+	os.Exit(code)
 }
 
 // wireMemorySeams wires the memory seam vars with the faithful cli logic.
