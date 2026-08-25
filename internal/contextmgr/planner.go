@@ -202,7 +202,7 @@ func currentObjective(messages []provider.Message, explicit string) (provider.Me
 	return provider.Message{}, -1, fmt.Errorf("%w: planner current objective is missing", contextstate.ErrPromptBudgetExceeded)
 }
 
-func retainMessages(input PlanInput, objective provider.Message, objectiveIndex, target, schemaCost int) ([]provider.Message, []int, error) {
+func retainMessages(input PlanInput, objective provider.Message, objectiveIndex, target, schemaCost int, deferred []deferredElision) ([]provider.Message, []int, error) {
 	units := messageUnits(input.Messages)
 	mandatory := mandatoryIndexes(input.Messages, objectiveIndex, input.PreserveNames)
 
@@ -221,6 +221,13 @@ func retainMessages(input PlanInput, objective provider.Message, objectiveIndex,
 	if tailLimit < 0 || tailLimit > maxRecentTailMessages {
 		return nil, nil, invalidPlan("recent_tail", fmt.Sprintf("must be between 0 and %d", maxRecentTailMessages))
 	}
+	var deferredMap map[int]struct{}
+	if len(deferred) > 0 {
+		deferredMap = make(map[int]struct{}, len(deferred))
+		for _, d := range deferred {
+			deferredMap[d.index] = struct{}{}
+		}
+	}
 	runningCost := selectedCost
 	tailCount := 0
 	for unitIndex := len(units) - 1; unitIndex >= 0; unitIndex-- {
@@ -231,10 +238,10 @@ func retainMessages(input PlanInput, objective provider.Message, objectiveIndex,
 		// The recent-tail cap stops the newest-to-oldest walk: an optional
 		// unit that would exceed the cap is dropped along with everything
 		// older, so the retained optional tail stays a contiguous suffix of
-		// the newest messages (DC-6). Continuing here skipped past the
-		// oversized unit and then filled OLDER units, leaving a hole in the
-		// retained tail.
-		if tailCount+len(unit) > tailLimit {
+		// the newest messages (DC-6). Ref-less elision placeholders carry
+		// zero recoverable information and do not consume tail slots.
+		unitSlots := unitTailSlots(input.Messages, unit, deferredMap)
+		if tailCount+unitSlots > tailLimit {
 			break
 		}
 		// Estimate cost incrementally: only compute the marginal cost of
@@ -251,9 +258,9 @@ func retainMessages(input PlanInput, objective provider.Message, objectiveIndex,
 			selected[index] = struct{}{}
 		}
 		runningCost = candidateCost
-		tailCount += len(unit)
+		tailCount += unitSlots
 	}
-	salvageUserMessages(input, selected, runningCost, target)
+	salvageUserMessages(input, selected, objectiveIndex, runningCost, target)
 	retained := messagesFromIndexes(input.Messages, selected)
 	if err := validateMessageShape(retained); err != nil {
 		return nil, nil, err
@@ -261,32 +268,69 @@ func retainMessages(input PlanInput, objective provider.Message, objectiveIndex,
 	return retained, indexesFromSelection(selected), nil
 }
 
-// salvageUserMessages re-admits up to salvageUserTurns user messages the tail
-// walk left behind, newest first, plus the OLDEST unselected one.
+// isReflessElisionPlaceholder reports whether a message is a tool-result
+// elision notice carrying no remainder reference and not scheduled to receive
+// one. Such notices carry zero recoverable information and must not consume
+// recent-tail retention slots.
+func isReflessElisionPlaceholder(msg provider.Message, isDeferred bool) bool {
+	if msg.Role != provider.RoleTool {
+		return false
+	}
+	if !strings.HasPrefix(msg.Content, elisionNoticePrefix) {
+		return false
+	}
+	if strings.Contains(msg.Content, "; remainder: ") {
+		return false
+	}
+	if isDeferred {
+		return false
+	}
+	return true
+}
+
+// unitTailSlots computes how many retention slots unit charges against
+// RecentTail. Ref-less elision placeholders carry zero recoverable
+// information and are not charged (cost 0 slots); every other message
+// in the unit costs 1 slot.
+func unitTailSlots(messages []provider.Message, unit messageUnit, deferred map[int]struct{}) int {
+	slots := 0
+	for _, index := range unit {
+		isDeferred := false
+		if deferred != nil {
+			_, isDeferred = deferred[index]
+		}
+		if isReflessElisionPlaceholder(messages[index], isDeferred) {
+			continue
+		}
+		slots++
+	}
+	return slots
+}
+
+// salvageUserMessages rescues user turns from a compaction that would
+// otherwise leave the model with no statement of the task at all. It is a
+// RESCUE, not a retention policy - see retainsUserContext for the narrow
+// trigger - so a user-heavy transcript that already retains task context
+// through the ordinary tail walk is untouched and /compact still shrinks it.
 //
-// The tail walk is a contiguous suffix capped by a MESSAGE COUNT, and the
-// objective anchor is only ever the newest user message. After a resume that
-// newest message is typically a bare continuation ("continue", "go on"), so
-// every earlier user turn is optional and competes for tail slots against
-// tool traffic that is orders of magnitude bulkier. A real session lost its
-// entire task statement this way while three of eight slots went to a
-// 10-byte "no matches" and two spent elision placeholders - and the token
-// target was nowhere near exhausted, so the message cap alone destroyed the
-// task. A user turn is not derived content: it is the premise the rest of the
-// transcript is evidence for, and it is almost always the cheapest message in
-// the history.
+// Why the rescue exists: the objective anchor is only ever the newest user
+// message, typically a bare "continue" after a resume, so every earlier user
+// turn is optional and competes for recent-tail slots against tool traffic
+// orders of magnitude bulkier. A real session lost its entire task statement
+// this way. A user turn is not derived content - it is the premise the rest
+// of the transcript is evidence for - and it is almost always the cheapest
+// message in the history. The oldest unselected turn gets a reserved slot
+// because a long session's opening message is usually the task statement,
+// the one message nothing else surviving can reconstruct.
 //
-// The oldest unselected turn gets a reserved slot because a long session's
-// opening message is usually the task statement, and it is the one message
-// whose loss cannot be reconstructed from anything else that survived.
-//
-// This cannot overflow: it respects the same token target the tail walk uses
-// and never touches the mandatory set, so the budget check above still
-// governs. It cannot break tool pairing either - selection is emitted in
+// Cannot overflow (respects the tail walk's own token target, never touches
+// the mandatory set) and cannot break tool pairing (selection is emitted in
 // ascending original index order, so a salvaged message lands exactly where
-// it sat and can never be spliced between an assistant tool call and its
-// results.
-func salvageUserMessages(input PlanInput, selected map[int]struct{}, runningCost, target int) {
+// it sat).
+func salvageUserMessages(input PlanInput, selected map[int]struct{}, objectiveIndex, runningCost, target int) {
+	if retainsUserContext(input, selected, objectiveIndex) {
+		return
+	}
 	candidates := make([]int, 0, salvageUserTurns+1)
 	for index := len(input.Messages) - 1; index >= 0; index-- {
 		if input.Messages[index].Role != provider.RoleUser {
@@ -326,6 +370,24 @@ func salvageUserMessages(input PlanInput, selected map[int]struct{}, runningCost
 		selected[index] = struct{}{}
 		runningCost += tokens
 	}
+}
+
+// retainsUserContext reports whether the retained set already carries a
+// genuine (unnamed) user turn beyond the objective anchor itself. The
+// objective is always the newest user message and is retained regardless -
+// what this checks is whether the model would otherwise see ANY earlier
+// statement of what it is working on.
+func retainsUserContext(input PlanInput, selected map[int]struct{}, objectiveIndex int) bool {
+	for index := range selected {
+		if index == objectiveIndex {
+			continue
+		}
+		message := input.Messages[index]
+		if message.Role == provider.RoleUser && message.Name == "" {
+			return true
+		}
+	}
+	return false
 }
 
 type messageUnit []int
