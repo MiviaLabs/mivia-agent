@@ -50,12 +50,8 @@ func populateToolCall(threads *SubagentThreads, tc ports.ToolCall, at time.Time)
 	}
 
 	lower := strings.ToLower(tc.Name)
-	if lower == "dispatch_tasks" {
+	if lower == "dispatch_tasks" || lower == "spawn_agent" {
 		populateDispatchTasks(threads, tc, at)
-		return
-	}
-	if lower == "spawn_agent" {
-		populateSpawnAgentTasks(threads, tc, at)
 		return
 	}
 
@@ -201,38 +197,20 @@ func populateDispatchTasks(threads *SubagentThreads, tc ports.ToolCall, at time.
 	}
 	_ = json.Unmarshal([]byte(tc.Arguments), &args)
 
-	// dispatchTasksTool.encodeResults marshals a bare JSON array, not
-	// {"tasks":[...]} - see internal/cliorchestrate/dispatch.go:268-278.
+	// dispatch_tasks may emit either a bare JSON array (wait="run", default)
+	// or a wrapped JSON envelope {"run_id":..., "status":..., "task_results":[...]}
+	// (wait="none" or wait="task", and legacy spawn_agent output).
 	var results []encodedTaskResult
-	_ = json.Unmarshal([]byte(tc.Output), &results)
+	if err := json.Unmarshal([]byte(tc.Output), &results); err != nil || len(results) == 0 {
+		var out struct {
+			TaskResults []encodedTaskResult `json:"task_results"`
+		}
+		if errWrap := json.Unmarshal([]byte(tc.Output), &out); errWrap == nil && len(out.TaskResults) > 0 {
+			results = out.TaskResults
+		}
+	}
 
 	outputs := matchTaskOutputs(results, args.Tasks, tc.Output)
-	for i, task := range args.Tasks {
-		registerDispatchedTask(threads, tc.ID, i, task, outputs[i], at)
-	}
-
-	if len(args.Tasks) == 0 {
-		registerFallbackDispatchedThread(threads, tc, at)
-	}
-}
-
-// populateSpawnAgentTasks reconstructs spawn_agent's dispatched tasks.
-// spawn_agent's Arguments share dispatch_tasks' per-task field names (id,
-// prompt, agent, skill - parsedDispatchTask covers both), but its Output is
-// wrapped in {"task_results":[...]} rather than a bare array
-// (spawnResultPayload, internal/cliorchestrate/orchestrate.go:174-235).
-func populateSpawnAgentTasks(threads *SubagentThreads, tc ports.ToolCall, at time.Time) {
-	var args struct {
-		Tasks []parsedDispatchTask `json:"tasks"`
-	}
-	_ = json.Unmarshal([]byte(tc.Arguments), &args)
-
-	var out struct {
-		TaskResults []encodedTaskResult `json:"task_results"`
-	}
-	_ = json.Unmarshal([]byte(tc.Output), &out)
-
-	outputs := matchTaskOutputs(out.TaskResults, args.Tasks, tc.Output)
 	for i, task := range args.Tasks {
 		registerDispatchedTask(threads, tc.ID, i, task, outputs[i], at)
 	}

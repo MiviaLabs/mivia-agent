@@ -324,3 +324,42 @@ func TestPopulateFromToolCalls_DispatchTasksRunLevelErrorMultiTask(t *testing.T)
 		}
 	}
 }
+
+// TestPopulateFromToolCalls_DispatchTasksWrappedEnvelope verifies that
+// dispatch_tasks tool calls returning the async wrapped envelope
+// ({"run_id":"r1","status":"completed","task_results":[{"task_id":"task-async","status":"completed","output":"async done"}]})
+// correctly reconstruct subagent tasks in threads.
+func TestPopulateFromToolCalls_DispatchTasksWrappedEnvelope(t *testing.T) {
+	threads := uiadapter.NewSubagentThreads()
+	msgs := []ports.Message{
+		{
+			Role: "assistant",
+			At:   time.Now(),
+			ToolCalls: []ports.ToolCall{
+				{
+					ID:        "call_dispatch_wrapped",
+					Name:      "dispatch_tasks",
+					Arguments: `{"tasks":[{"id":"task-async","prompt":"execute async work","agent":"worker"}],"wait":"task","wait_task_id":"task-async"}`,
+					Output:    `{"run_id":"r1","status":"completed","task_results":[{"task_id":"task-async","status":"completed","output":"async done"}]}`,
+				},
+			},
+		},
+	}
+
+	uiadapter.PopulateFromToolCalls(threads, msgs)
+
+	conv, ok := threads.Thread("task-async")
+	if !ok || conv == nil {
+		t.Fatalf("expected thread for task-async")
+	}
+	hist := conv.History()
+	if len(hist) != 2 {
+		t.Fatalf("expected 2 history items, got %d (history=%+v)", len(hist), hist)
+	}
+	if hist[0].Text != "execute async work" {
+		t.Errorf("prompt mismatch: got %q", hist[0].Text)
+	}
+	if hist[1].Text != "async done" {
+		t.Errorf("output mismatch: got %q", hist[1].Text)
+	}
+}
