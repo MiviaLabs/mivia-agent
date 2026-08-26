@@ -485,6 +485,11 @@ func WorkflowConfigPath(root, explicit string) string {
 // workspace, not process-cwd notation: anchor it to the resolved root too,
 // so every surface that loads config through here opens one store per
 // workspace instead of one per working directory.
+//
+// A leading ~ expands before relativity is classified: "~/..." names the
+// user-global store shared across workspaces (docs/product/config.md), so
+// it never lands under <root>/~/. Expansion is tilde-only; $VAR text stays
+// literal.
 func ApplyWorkflowStoreRoot(res *config.Resolved, root string) {
 	if res == nil {
 		return
@@ -493,7 +498,11 @@ func ApplyWorkflowStoreRoot(res *config.Resolved, root string) {
 		res.Subagents.StorePath = workspace.ContextStorePath(root)
 		return
 	}
-	if p := res.Subagents.StorePath; p != "" && root != "" && !filepath.IsAbs(p) {
-		res.Subagents.StorePath = filepath.Join(root, p)
+	if p := res.Subagents.StorePath; p != "" {
+		p = config.ExpandPath(p)
+		res.Subagents.StorePath = p
+		if root != "" && !filepath.IsAbs(p) {
+			res.Subagents.StorePath = filepath.Join(root, p)
+		}
 	}
 }

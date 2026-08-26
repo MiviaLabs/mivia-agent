@@ -292,6 +292,84 @@ func TestWorkflowCommandAndConfigHelpers(t *testing.T) {
 	}
 }
 
+// TestApplyWorkflowStoreRootPathClasses pins how ApplyWorkflowStoreRoot
+// classifies an explicit store_path. A leading ~ expands first, so the
+// documented user-global form ("~/.mivia/...") never lands under <root>/~/.
+func TestApplyWorkflowStoreRootPathClasses(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root := t.TempDir()
+	if root == home {
+		t.Fatal("HOME and workspace root collided; the tilde assertions are then vacuous")
+	}
+	tests := []struct {
+		name   string
+		set    bool
+		stored string
+		want   string
+	}{
+		{
+			name:   "tilde resolves to the user-global store",
+			set:    true,
+			stored: "~/.mivia/x.db",
+			want:   filepath.Join(home, ".mivia", "x.db"),
+		},
+		{
+			name:   "relative anchors to the workspace root",
+			set:    true,
+			stored: "runs.db",
+			want:   filepath.Join(root, "runs.db"),
+		},
+		{
+			name:   "absolute stays verbatim",
+			set:    true,
+			stored: "/abs/x.db",
+			want:   "/abs/x.db",
+		},
+		{
+			name:   "empty stays empty",
+			set:    true,
+			stored: "",
+			want:   "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res := &config.Resolved{StorePathSet: tt.set}
+			res.Subagents.StorePath = tt.stored
+			ApplyWorkflowStoreRoot(res, root)
+			if res.Subagents.StorePath != tt.want {
+				t.Fatalf("ApplyWorkflowStoreRoot() store path = %q, want %q", res.Subagents.StorePath, tt.want)
+			}
+			if strings.HasPrefix(tt.stored, "~") && res.Subagents.StorePath == filepath.Join(root, "~", ".mivia", "x.db") {
+				t.Fatalf("tilde store path landed under the workspace root: %q", res.Subagents.StorePath)
+			}
+		})
+	}
+
+	t.Run("re-application is idempotent", func(t *testing.T) {
+		for _, stored := range []string{"~/.mivia/x.db", "runs.db"} {
+			res := &config.Resolved{StorePathSet: true}
+			res.Subagents.StorePath = stored
+			ApplyWorkflowStoreRoot(res, root)
+			first := res.Subagents.StorePath
+			ApplyWorkflowStoreRoot(res, root)
+			if res.Subagents.StorePath != first {
+				t.Fatalf("second apply moved store path %q -> %q for input %q", first, res.Subagents.StorePath, stored)
+			}
+		}
+	})
+
+	t.Run("unset store_path still pins the workspace default", func(t *testing.T) {
+		res := &config.Resolved{}
+		res.Subagents.StorePath = filepath.Join(root, "loader-default", "context.db")
+		ApplyWorkflowStoreRoot(res, root)
+		if want := workspace.ContextStorePath(root); res.Subagents.StorePath != want {
+			t.Fatalf("store path = %q, want pinned %q", res.Subagents.StorePath, want)
+		}
+	})
+}
+
 func TestParseWorkflowInputsRejectsInvalidValues(t *testing.T) {
 	defs := map[string]definition.InputDef{
 		"count": {Type: "integer", Required: true, MaxBytes: 2},
