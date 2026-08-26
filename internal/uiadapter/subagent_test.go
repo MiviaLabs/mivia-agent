@@ -73,6 +73,49 @@ func TestSubagentThreads_RegisterAndLookup(t *testing.T) {
 	}
 }
 
+func TestSubagentTranscriptConversation_ActiveTurn(t *testing.T) {
+	conv := uiadapter.NewSubagentTranscriptConversation("worker", ports.ModelInfo{}, nil)
+
+	// Initially inactive
+	if _, active := conv.ActiveTurn(); active {
+		t.Fatal("expected ActiveTurn=false before any events")
+	}
+
+	// Active on receiving an event
+	conv.RecordEvent(uievent.Event{
+		Kind: uievent.KindReasoning,
+		Body: uievent.ReasoningDeltaBody{Text: "thinking..."},
+	})
+	h, active := conv.ActiveTurn()
+	if !active || h == nil {
+		t.Fatal("expected ActiveTurn=true while streaming")
+	}
+
+	// Receives streamed events
+	conv.RecordEvent(uievent.Event{
+		Kind: uievent.KindTextDelta,
+		Body: uievent.TextDeltaBody{Text: "hello from worker"},
+	})
+	select {
+	case ev := <-h.Events():
+		if ev.Kind != uievent.KindTextDelta {
+			t.Errorf("got %v, want KindTextDelta", ev.Kind)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("timeout waiting for text delta")
+	}
+
+	// Completed via subagent done notice
+	conv.RecordEvent(uievent.Event{
+		Kind: uievent.KindNotice,
+		Body: uievent.NoticeBody{Text: "subagent done: worker"},
+	})
+
+	if _, active := conv.ActiveTurn(); active {
+		t.Error("expected ActiveTurn=false after subagent done notice")
+	}
+}
+
 func TestSubagentTranscriptConversation_EmptyTitle(t *testing.T) {
 	conv := uiadapter.NewSubagentTranscriptConversation("", ports.ModelInfo{}, nil)
 	if conv.Title() != "Subagent Thread" {
