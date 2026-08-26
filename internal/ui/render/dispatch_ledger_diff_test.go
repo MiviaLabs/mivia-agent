@@ -70,6 +70,24 @@ func TestFormatDispatchTasksOutput_CapsLargeBatches(t *testing.T) {
 	}
 }
 
+// TestFormatDispatchTasksOutput_WrappedEnvelope guards dispatch_tasks'
+// async result shape (wait="none"/"task": {"run_id":...,"task_results":[...]}),
+// not just the bare array wait="run" returns. Before this, the wrapped
+// envelope failed FormatDispatchTasksOutput's array-only unmarshal and fell
+// through to a raw JSON dump in the live transcript.
+func TestFormatDispatchTasksOutput_WrappedEnvelope(t *testing.T) {
+	th := loadTheme(t)
+	raw := `{"run_id":"run-abc123","status":"completed","task_results":[{"task_id":"task-async","status":"completed","agent":"worker","synopsis":"async done"}]}`
+	summary, body := FormatDispatchTasksOutput(th, theme.TierTrueColor, raw, 80)
+	if !strings.Contains(summary, "run-abc123") && !strings.Contains(summary, "completed") {
+		t.Errorf("unexpected summary: %q", summary)
+	}
+	plain := ansi.Strip(strings.Join(body, "\n"))
+	if !strings.Contains(plain, "task-async") || !strings.Contains(plain, "worker") || !strings.Contains(plain, "async done") {
+		t.Errorf("body missing expected task fields, got:\n%s", plain)
+	}
+}
+
 func TestFormatDispatchTasksOutput_FallsBackOnNonArray(t *testing.T) {
 	th := loadTheme(t)
 	summary, body := FormatDispatchTasksOutput(th, theme.TierTrueColor, "not json", 80)

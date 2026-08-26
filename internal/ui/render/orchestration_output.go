@@ -53,6 +53,20 @@ type orchestrationErrorEnvelope struct {
 // truncate-with-notice idiom.
 const maxOrchestrationTaskRows = 8
 
+// tryFormatAsOrchestrationRun formats trimmed as an orchestration run
+// envelope ({"run_id":...,"task_results":[...]}) via
+// FormatOrchestrationRunOutput, reporting ok=false when trimmed does not
+// actually parse as one (no run_id) - the caller falls back to a raw dump
+// in that case rather than rendering an empty/misleading summary.
+func tryFormatAsOrchestrationRun(t theme.Theme, tier theme.Tier, trimmed string, width int) (string, []string, bool) {
+	var env orchestrationRunEnvelope
+	if json.Unmarshal([]byte(trimmed), &env) != nil || env.RunID == "" {
+		return "", nil, false
+	}
+	summary, body := FormatOrchestrationRunOutput(t, tier, trimmed, width)
+	return summary, body, true
+}
+
 // FormatOrchestrationRunOutput formats an inspect_agents/spawn_agent/
 // join_run result into a run summary, a per-task status list, and any
 // pending parked questions, instead of a raw JSON dump.

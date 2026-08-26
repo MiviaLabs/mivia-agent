@@ -692,13 +692,20 @@ type dispatchTaskResultView struct {
 // output.
 const maxDispatchTaskRows = 6
 
-// FormatDispatchTasksOutput formats a dispatch_tasks result (a JSON array of
-// per-task envelopes) into one line per task instead of the raw array a
-// generic JSON dump would otherwise produce.
+// FormatDispatchTasksOutput formats a dispatch_tasks result into one line
+// per task instead of the raw JSON a generic dump would otherwise produce.
+// dispatch_tasks returns one of two shapes depending on "wait": the default
+// wait="run" blocks for the batch and returns a bare JSON array of per-task
+// envelopes (handled here); wait="none"/"task" returns immediately with the
+// same {"run_id":...,"task_results":[...]} envelope inspect_agents/join_run
+// use, delegated to FormatOrchestrationRunOutput rather than duplicated.
 func FormatDispatchTasksOutput(t theme.Theme, tier theme.Tier, output string, width int) (string, []string) {
 	trimmed := strings.TrimSpace(output)
 	var tasks []dispatchTaskResultView
 	if err := json.Unmarshal([]byte(trimmed), &tasks); err != nil || len(tasks) == 0 {
+		if summary, body, ok := tryFormatAsOrchestrationRun(t, tier, trimmed, width); ok {
+			return summary, body
+		}
 		return "", strings.Split(strings.TrimRight(output, "\n"), "\n")
 	}
 
