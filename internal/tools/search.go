@@ -194,74 +194,80 @@ type grepInput struct {
 	Limit            int    `json:"limit,omitempty"`
 }
 
+// appendMatchEntry appends entry to matches if it fits the byte budget,
+// returning errMaxBytes/errMaxMatches on the same terms scanFile's two match
+// sites (files-with-matches vs full match line) both need.
+func appendMatchEntry(entry string, matches *[]string, total *int, budget, maxMatches int) error {
+	need := len(entry)
+	if len(*matches) > 0 {
+		need++ // joining newline
+	}
+	if budget > 0 && *total+need > budget {
+		return errMaxBytes
+	}
+	*matches = append(*matches, entry)
+	*total += need
+	if maxMatches > 0 && len(*matches) >= maxMatches {
+		return errMaxMatches
+	}
+	return nil
+}
+
 // scanFile opens a regular file, scans it for regex matches, and appends
-// matching entries to matches. It returns the number of matches added.
-// If filesWithMatches is true, it stops after the first match and returns
-// the file path as a bare name.
+// matching entries to matches. If filesWithMatches is true, it stops after
+// the first match and returns the file path as a bare name. Line scanning is
+// delegated to scanLinesWithContext (fs_guard.go), which owns f's lifecycle
+// and honors ctx during a blocking Scan() itself, not just between lines; a
+// scan error (sc.Err()) surfaces as scanLinesWithContext's return value and
+// is recorded into errs here, same as the old post-loop sc.Err() check did -
+// not propagated as scanFile's own return value.
 func scanFile(ctx context.Context, path, rel string, re *regexp.Regexp, in grepInput, matches *[]string, total *int, budget, maxMatches int, errs *walkErrors) error {
 	f, _, err := openRegularFile(path)
 	if err != nil {
 		errs.add(rel, err)
 		return nil
 	}
-	defer f.Close()
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	lineNo := 0
 	matched := false
-	for sc.Scan() {
-		if lineNo&0xff == 0 {
-			if ctx != nil {
-				if err := ctx.Err(); err != nil {
-					return err
-				}
-			}
-		}
+	consume := func(line string) (bool, error) {
 		lineNo++
-		line := sc.Text()
-		if re.MatchString(line) {
-			if in.FilesWithMatches {
-				if matched {
-					continue
-				}
-				matched = true
-				entry := rel
-				need := len(entry)
-				if len(*matches) > 0 {
-					need++
-				}
-				if budget > 0 && *total+need > budget {
-					return errMaxBytes
-				}
-				*matches = append(*matches, entry)
-				*total += need
-				if maxMatches > 0 && len(*matches) >= maxMatches {
-					return errMaxMatches
-				}
-				continue
-			}
-			if len(line) > 200 {
-				line = truncateUTF8(line, 200) + "..."
-			}
-			entry := fmt.Sprintf("%s:%d:%s", rel, lineNo, line)
-			need := len(entry)
-			if len(*matches) > 0 {
-				need++ // joining newline
-			}
-			if budget > 0 && *total+need > budget {
-				return errMaxBytes
-			}
-			*matches = append(*matches, entry)
-			*total += need
-			if maxMatches > 0 && len(*matches) >= maxMatches {
-				return errMaxMatches
-			}
+		if !re.MatchString(line) {
+			return false, nil
 		}
+		if in.FilesWithMatches {
+			if matched {
+				return false, nil
+			}
+			matched = true
+			return false, appendMatchEntry(rel, matches, total, budget, maxMatches)
+		}
+		if len(line) > 200 {
+			line = truncateUTF8(line, 200) + "..."
+		}
+		entry := fmt.Sprintf("%s:%d:%s", rel, lineNo, line)
+		return false, appendMatchEntry(entry, matches, total, budget, maxMatches)
 	}
-	if err := sc.Err(); err != nil {
-		errs.add(rel, err)
+	// scanFile is called with a nil ctx directly in tests (and permitted by
+	// walkFilteredFiles/walkGrep, which both treat nil as "no cancellation"),
+	// but scanLinesWithContext requires a non-nil ctx - substitute Background
+	// so nil-ctx callers keep their old never-canceled behavior.
+	scanCtx := ctx
+	if scanCtx == nil {
+		scanCtx = context.Background()
 	}
-	return nil
+	scanErr := scanLinesWithContext(scanCtx, sc, f, consume)
+	switch {
+	case scanErr == nil:
+		return nil
+	case errors.Is(scanErr, errMaxMatches), errors.Is(scanErr, errMaxBytes),
+		errors.Is(scanErr, context.Canceled), errors.Is(scanErr, context.DeadlineExceeded):
+		return scanErr
+	default:
+		errs.add(rel, scanErr)
+		return nil
+	}
 }
 
 func walkGrep(ctx context.Context, ws *workspace.Root, root string, re *regexp.Regexp, in grepInput, maxMatches, maxBytes int, secretExceptions, secretPatterns []string, view ignoreView) ([]string, *walkErrors, error) {
