@@ -63,37 +63,44 @@ func (c *coordinator) spawnReportingNew(ctx context.Context, tasks []subagents.T
 	if err := c.validateTasks(tasks); err != nil {
 		return nil, false, err
 	}
-	h, err := c.createAndStartRun(ctx, tasks, key, fingerprint, policy)
-	return h, err == nil, err
+	h, created, err := c.createAndStartRun(ctx, tasks, key, fingerprint, policy)
+	return h, created, err
 }
 
-func (c *coordinator) createAndStartRun(ctx context.Context, tasks []subagents.Task, key, fingerprint string, policy ledger.RunPolicy) (*RunHandle, error) {
+func (c *coordinator) createAndStartRun(ctx context.Context, tasks []subagents.Task, key, fingerprint string, policy ledger.RunPolicy) (*RunHandle, bool, error) {
 	return c.createAndStartRunWithID(ctx, newRunID(), tasks, key, fingerprint, policy, true)
 }
 
-func (c *coordinator) createAndStartRunWithID(ctx context.Context, runID string, tasks []subagents.Task, key, fingerprint string, policy ledger.RunPolicy, recoverDuplicate bool, opts ...runHandleOption) (*RunHandle, error) {
+func (c *coordinator) createAndStartRunWithID(ctx context.Context, runID string, tasks []subagents.Task, key, fingerprint string, policy ledger.RunPolicy, recoverDuplicate bool, opts ...runHandleOption) (*RunHandle, bool, error) {
 	now := c.nowLocked()
 	run := ledger.RunSnapshot{RunID: runID, DisplayName: c.names.Generate("run"), Status: ledger.RunStatusCreated, RequestFingerprint: fingerprint, CreatedAt: now, Labels: map[string]string{}, Tasks: make([]ledger.TaskSnapshot, 0, len(tasks)), Policy: policy}
 	if err := c.repo.CreateRun(ctx, key, run); err != nil {
 		if errors.Is(err, ledger.ErrDuplicate) && key != "" && recoverDuplicate {
 			h, found, lookupErr := c.recoverIdempotentWithRetry(ctx, key, fingerprint)
 			if lookupErr != nil {
-				return nil, lookupErr
+				return nil, false, lookupErr
 			}
 			if found {
-				return h, nil
+				// created mirrors the decision behind this branch: true means
+				// THIS call created a fresh run; false means recovery handed
+				// back another caller's committed run. SpawnNew turns created
+				// into its isNew signal, so callers never treat a recovered
+				// duplicate as their own fresh creation. Do not infer this
+				// flag from err == nil; err is also nil when the run was
+				// recovered.
+				return h, false, nil
 			}
 		}
-		return nil, fmt.Errorf("create run: %w", err)
+		return nil, false, fmt.Errorf("create run: %w", err)
 	}
 
 	// Acquire an exclusive execution claim on this run before any further
 	// mutations. If another executor already holds a claim, refuse.
 	if err := c.repo.ClaimRun(ctx, runID, c.holderID); err != nil {
 		if errors.Is(err, ledger.ErrClaimHeld) {
-			return nil, ErrRunHeldByAnotherExecutor
+			return nil, false, ErrRunHeldByAnotherExecutor
 		}
-		return nil, fmt.Errorf("claim run %q: %w", runID, err)
+		return nil, false, fmt.Errorf("claim run %q: %w", runID, err)
 	}
 
 	// run_created has no single task in hand, so SessionID is deliberately left
@@ -101,13 +108,13 @@ func (c *coordinator) createAndStartRunWithID(ctx context.Context, runID string,
 	event := ledger.LifecycleEvent{ID: newEventID(), RunID: runID, Kind: "run_created"}
 	if err := c.repo.AppendEvent(ctx, event); err != nil {
 		c.releaseAndDeleteRun(ctx, runID)
-		return nil, fmt.Errorf("append run_created event: %w", err)
+		return nil, false, fmt.Errorf("append run_created event: %w", err)
 	}
 	c.emitLifecycleEvent(event)
 	named, err := c.createTasks(ctx, runID, tasks, now)
 	if err != nil {
 		c.releaseAndDeleteRun(ctx, runID)
-		return nil, fmt.Errorf("create tasks: %w", err)
+		return nil, false, fmt.Errorf("create tasks: %w", err)
 	}
 	attempts := make(map[string]string, len(named))
 	ledgerTasks := make([]subagents.Task, len(named))
@@ -127,7 +134,7 @@ func (c *coordinator) createAndStartRunWithID(ctx context.Context, runID string,
 	h.poolCtx = contextWithRunExec(h.poolCtx, runID, ledgerTasks, h.mailboxes, h.toolCalls)
 	h.mu.Unlock()
 	go c.executeRun(h, ledgerTasks)
-	return h, nil
+	return h, true, nil
 }
 
 var ErrIdempotencyConflict = errors.New("idempotency key already used for a different request")

@@ -49,7 +49,7 @@ func (c *coordinator) EnsureRun(ctx context.Context, req EnsureRunRequest) (*Run
 
 	snap, err := c.repo.GetRunByIdempotencyKey(ctx, key)
 	if errors.Is(err, ledger.ErrNotFound) {
-		h, createErr := c.createAndStartRunWithID(ctx, req.RunID, req.Tasks, key, fingerprint, req.Policy, false, nonInteractiveRunOpts(req)...)
+		h, _, createErr := c.createAndStartRunWithID(ctx, req.RunID, req.Tasks, key, fingerprint, req.Policy, false, nonInteractiveRunOpts(req)...)
 		if createErr == nil {
 			return h, nil
 		}
