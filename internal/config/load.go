@@ -24,6 +24,26 @@ type LoadOptions struct {
 	ProviderOverride   string
 	ModelOverride      string
 	AllowMissingConfig bool
+	// AutoBootstrapUserConfig silently writes a minimal default config to
+	// UserConfigPath() (DefaultUserConfigTOML) when the normal search
+	// (opts.ConfigPath, then DefaultConfigCandidates()) finds no config file
+	// anywhere. It only fires when opts.ConfigPath was left empty - an
+	// explicit --config/$MIVIA_CONFIG miss stays a real error (or, for
+	// $MIVIA_CONFIG, falls through to the remaining candidates, unchanged
+	// pre-existing behavior) rather than being silently papered over. It
+	// does not require AllowMissingConfig to also be set, but callers should
+	// normally set both: if HOME cannot be resolved (UserConfigPath() is
+	// ""), bootstrap is a no-op and AllowMissingConfig alone then decides
+	// whether that is a hard error or a found=false load.
+	//
+	// Defaults to false (zero value) for every existing caller; wire it to
+	// true only where a config-file-writing side effect on a missing config
+	// is actually wanted (currently: `mivia chat` only - see
+	// internal/clichat/chat_command.go's runChat and
+	// docs/plans/first-run-onboarding-plan.md). Every read-only/internal/
+	// test caller of config.Load keeps today's found=false behavior
+	// unchanged.
+	AutoBootstrapUserConfig bool
 }
 
 // Load resolves config + env credentials.
@@ -366,6 +386,13 @@ func loadFile(opts LoadOptions) (File, string, bool, error) {
 	path := ExpandPath(opts.ConfigPath)
 	if path == "" {
 		path, _ = FirstExisting(DefaultConfigCandidates())
+	}
+	if path == "" && opts.AutoBootstrapUserConfig && strings.TrimSpace(opts.ConfigPath) == "" {
+		bootstrapped, err := autoBootstrapUserConfig()
+		if err != nil {
+			return File{}, "", false, err
+		}
+		path = bootstrapped
 	}
 	if path == "" {
 		if !opts.AllowMissingConfig {

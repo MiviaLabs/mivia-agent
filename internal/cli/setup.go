@@ -1,30 +1,14 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"io"
 	"os"
-	"path/filepath"
-	"sort"
 	"strings"
 
-	"golang.org/x/term"
-
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	sdkenvfile "github.com/MiviaLabs/mivia-ai-sdk/envfile"
 )
-
-// setupDefaultConfig is the minimal config written when no config exists and
-// the provider is the shipped default (openrouter). Other providers need
-// their own [providers.<name>] block; setup writes only the API key for them.
-const setupDefaultConfig = `[provider]
-name = "openrouter"
-
-[providers.openrouter]
-models = [{ name = "openai/gpt-5.6-luna", context_window_tokens = 400000 }]
-`
 
 // setupOptions holds the parsed `mivia setup` flags.
 type setupOptions struct {
@@ -75,16 +59,12 @@ func runSetupWithIO(args []string, stdout io.Writer, stdin io.Reader) error {
 			key = strings.TrimSpace(v)
 		}
 	}
-	if key == "" {
-		if f, ok := stdin.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
-			fmt.Fprintf(stdout, "Enter the API key for provider %q (%s): ", provider, keyEnv)
-			raw, err := term.ReadPassword(int(f.Fd()))
-			fmt.Fprintln(stdout)
-			if err != nil {
-				return fmt.Errorf("setup: read the API key: %w", err)
-			}
-			key = strings.TrimSpace(string(raw))
+	if key == "" && config.IsInteractiveTTY(stdin) {
+		prompted, err := config.PromptAPIKey(stdout, stdin, provider, keyEnv)
+		if err != nil {
+			return fmt.Errorf("setup: %w", err)
 		}
+		key = prompted
 	}
 	keylessOllama := key == "" && provider == "ollama"
 	if key == "" && !keylessOllama {
@@ -141,56 +121,22 @@ func defaultSetupProvider() string {
 }
 
 // writeSetupEnvFile writes key=value into path, preserving existing keys.
-// It writes atomically with 0600 permissions so the key never appears in a
-// world-readable file.
+// Delegates to config.WriteUserEnvKey, the same writer mivia chat's
+// first-run key prompt uses, so there is one place that knows how a key
+// gets persisted to disk (docs/plans/first-run-onboarding-plan.md section
+// 2.4).
 func writeSetupEnvFile(path, key, value string) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("setup: create %s: %w", dir, err)
-	}
-	entries := map[string]string{}
-	if existing, err := sdkenvfile.Load(path); err == nil {
-		entries = existing
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("setup: read %s: %w", path, err)
-	}
-	entries[key] = value
-
-	keys := make([]string, 0, len(entries))
-	for k := range entries {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	var body strings.Builder
-	for _, k := range keys {
-		fmt.Fprintf(&body, "%s=%s\n", k, entries[k])
-	}
-
-	tmp, err := os.CreateTemp(dir, ".mivia-setup-*")
-	if err != nil {
-		return fmt.Errorf("setup: create a temp env file: %w", err)
-	}
-	defer os.Remove(tmp.Name())
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("setup: set env file permissions: %w", err)
-	}
-	if _, err := tmp.WriteString(body.String()); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("setup: write the env file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("setup: close the env file: %w", err)
-	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
-		return fmt.Errorf("setup: install the env file: %w", err)
+	if err := config.WriteUserEnvKey(path, key, value); err != nil {
+		return fmt.Errorf("setup: %w", err)
 	}
 	return nil
 }
 
 // writeSetupConfigIfMissing writes the minimal default config when no config
 // exists and the provider is the shipped default. It reports whether it wrote
-// a file. Other providers keep their configs untouched.
+// a file. Other providers keep their configs untouched. Delegates the actual
+// write to config.WriteDefaultUserConfig, the same writer mivia chat's
+// silent auto-bootstrap uses.
 func writeSetupConfigIfMissing(path, provider string) (bool, error) {
 	if provider != config.DefaultProvider {
 		return false, nil
@@ -200,12 +146,8 @@ func writeSetupConfigIfMissing(path, provider string) (bool, error) {
 	} else if !os.IsNotExist(err) {
 		return false, fmt.Errorf("setup: stat %s: %w", path, err)
 	}
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return false, fmt.Errorf("setup: create %s: %w", dir, err)
-	}
-	if err := os.WriteFile(path, []byte(setupDefaultConfig), 0o644); err != nil {
-		return false, fmt.Errorf("setup: write %s: %w", path, err)
+	if err := config.WriteDefaultUserConfig(path); err != nil {
+		return false, fmt.Errorf("setup: %w", err)
 	}
 	return true, nil
 }

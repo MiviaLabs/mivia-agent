@@ -346,7 +346,15 @@ func NewForProvider(res *config.Resolved, providerName string) (Completer, error
 	}
 	if !runtime.APIKeySet || strings.TrimSpace(runtime.APIKey) == "" {
 		if !(providerName == "ollama" && config.IsOllamaLoopback(runtime.BaseURL)) {
-			return nil, fmt.Errorf("missing API key for provider %q", providerName)
+			// Deliberately does not name the env var here (see
+			// TestNewForProviderLLMGatewayFailsClosedWithoutKey /
+			// TestNewForProviderOllamaCloudFailsClosedWithoutKey): this is a
+			// low-level construction error reached from more than one
+			// provider, so `mivia setup` is the one fix that is always
+			// correct regardless of which provider is in play. Callers that
+			// know the specific env var (chat_command.go's prepareChatStartup,
+			// mivia chat's first-run key prompt) report it themselves.
+			return nil, fmt.Errorf("missing API key for provider %q; run \"mivia setup\" to configure it", providerName)
 		}
 	}
 	contextWindowTokens := contextWindowTokensFor(runtime.Models, res.Model)

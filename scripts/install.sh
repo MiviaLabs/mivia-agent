@@ -233,3 +233,5 @@ else
   shell_name=${SHELL:-sh}
   printf 'run this command, then open a new shell: %s\n' "$(path_command "${shell_name##*/}")" >&2
 fi
+
+printf 'Run `mivia chat` to get started - it configures your first provider on first use.\n'

@@ -70,6 +70,19 @@ make build              # produces ./mivia
 ### First run
 
 ```bash
+mivia chat
+```
+
+`mivia chat` configures itself on first use: it writes a minimal config to
+`~/.mivia/mivia.toml` (the shipped default provider, openrouter) and, if no
+API key is set yet, prompts for one once and writes it to `~/.mivia/.env`
+(0600). Answer the prompt and you land in a working chat session - no other
+command needed.
+
+For scripted or non-interactive setup (CI, no TTY), run `mivia setup` first
+so `mivia chat` finds a key already in place:
+
+```bash
 mivia setup             # writes your provider API key to ~/.mivia/.env (0600)
 mivia doctor            # verify the key is visible; never prints it
 mivia chat

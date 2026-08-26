@@ -93,10 +93,16 @@ func runChat(args []string) error {
 	if err != nil {
 		return err
 	}
-	res, err := config.Load(config.LoadOptions{
+	loadOpts := config.LoadOptions{
 		ConfigPath: invocation.configPath, ProviderOverride: invocation.provider,
-		ModelOverride: invocation.model, WorkspaceRoot: workspaceRoot, AllowMissingConfig: true,
-	})
+		ModelOverride: invocation.model, WorkspaceRoot: workspaceRoot,
+		AllowMissingConfig: true, AutoBootstrapUserConfig: true,
+	}
+	res, err := config.Load(loadOpts)
+	if err != nil {
+		return err
+	}
+	res, err = ensureChatAPIKey(res, loadOpts, os.Stdout, os.Stdin)
 	if err != nil {
 		return err
 	}
