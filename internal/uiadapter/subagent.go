@@ -113,6 +113,7 @@ type SubagentTranscriptConversation struct {
 	mu        sync.Mutex
 	history   []ports.Message
 	listeners []chan uievent.Event
+	active    bool
 }
 
 // NewSubagentTranscriptConversation creates a new thread conversation.
@@ -129,11 +130,21 @@ func NewSubagentTranscriptConversation(title string, model ports.ModelInfo, hist
 	}
 }
 
+func isDoneNotice(e uievent.Event) bool {
+	if e.Kind == uievent.KindNotice {
+		if b, ok := e.Body.(uievent.NoticeBody); ok {
+			return strings.HasPrefix(b.Text, "subagent done")
+		}
+	}
+	return false
+}
+
 // RecordEvent records one translated uievent into message history and notifies listeners.
 func (c *SubagentTranscriptConversation) RecordEvent(e uievent.Event) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	c.active = true
 	switch e.Kind {
 	case uievent.KindTurnStart:
 		body, _ := e.Body.(uievent.TurnStartBody)
@@ -190,7 +201,8 @@ func (c *SubagentTranscriptConversation) RecordEvent(e uievent.Event) {
 		default:
 		}
 	}
-	if e.Kind == uievent.KindTurnEnd {
+	if e.Kind == uievent.KindTurnEnd || isDoneNotice(e) {
+		c.active = false
 		for _, ch := range c.listeners {
 			close(ch)
 		}

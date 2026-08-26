@@ -624,7 +624,8 @@ func (s *Screen) handleNavClick(clickRow int) (app.Screen, tea.Cmd) {
 	}
 	s.panel.focused = true
 	if s.panel.selectNavRow(clickRow) {
-		s.openPanelDialogForSelected()
+		cmd := s.openPanelDialogForSelected()
+		return *s, cmd
 	}
 	return *s, nil
 }
