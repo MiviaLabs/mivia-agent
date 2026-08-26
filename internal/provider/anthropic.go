@@ -52,6 +52,12 @@ type AnthropicCompleter struct {
 	// internal/reasoning so config validation and this client agree on the
 	// same value). A request naming its own ReasoningDialect overrides it.
 	reasoning reasoning.Dialect
+	// cacheMarkers enables explicit cache_control breakpoints on the stable
+	// request prefix. Anthropic caches ONLY on request, never implicitly, so
+	// with this off the client re-bills the entire history on every step of
+	// every tool loop. Off leaves the request body byte-identical to the
+	// pre-marker layout, which is what [provider] prompt_cache = "off" buys.
+	cacheMarkers bool
 }
 
 // NewAnthropic returns a native Anthropic Messages API completer.
@@ -64,7 +70,7 @@ func NewAnthropic(opts Options) (Completer, error) {
 		}
 		base = descriptor.DefaultURL
 	}
-	return newAnthropicCompleter("anthropic", base, opts.APIKey, opts.DialContext), nil
+	return newAnthropicCompleter("anthropic", base, opts.APIKey, opts.DialContext, opts.CacheMarkersEnabled), nil
 }
 
 // newAnthropicCompleter builds an AnthropicCompleter against an arbitrary
@@ -84,7 +90,7 @@ func NewAnthropic(opts Options) (Completer, error) {
 // send OpenAI-shaped reasoning fields into a client that marshals an
 // Anthropic-shaped request body, which is not a dialect mismatch a wire
 // encoder can recover from.
-func newAnthropicCompleter(name, baseURL, apiKey string, dialContext func(ctx context.Context, network, addr string) (net.Conn, error)) *AnthropicCompleter {
+func newAnthropicCompleter(name, baseURL, apiKey string, dialContext func(ctx context.Context, network, addr string) (net.Conn, error), cacheMarkers bool) *AnthropicCompleter {
 	retry := defaultRetryOptions()
 	return &AnthropicCompleter{
 		name:    name,
@@ -95,7 +101,8 @@ func newAnthropicCompleter(name, baseURL, apiKey string, dialContext func(ctx co
 			Transport:     newRetryRoundTripper(compatBaseRoundTripper(dialContext), retry),
 			CheckRedirect: checkNoReplayRedirect,
 		},
-		reasoning: reasoning.DialectAnthropicAdaptive,
+		reasoning:    reasoning.DialectAnthropicAdaptive,
+		cacheMarkers: cacheMarkers,
 	}
 }
 
@@ -217,7 +224,7 @@ func (c *AnthropicCompleter) buildRequestBody(req Request) (map[string]any, erro
 	// An orphaned tool_use/tool_result pair (a torn session write) is the
 	// same class of poisoned-history shape and gets the same treatment.
 	msgs := RepairToolPairing(DropEmptyAssistantTurns(req.Messages))
-	system, messages := anthropicSystemAndMessages(msgs)
+	system, messages, anchors := anthropicSystemAndMessages(msgs)
 	if len(messages) == 0 {
 		return nil, fmt.Errorf("no messages to send")
 	}
@@ -260,7 +267,86 @@ func (c *AnthropicCompleter) buildRequestBody(req Request) (map[string]any, erro
 	for k, v := range reasoningBodyFields(resolved.Dialect, resolved.Level) {
 		body[k] = v
 	}
+	// Marking runs last so it sees the final system/messages values. When the
+	// option is off nothing is touched and the body stays byte-identical to
+	// the pre-marker layout.
+	if c.cacheMarkers {
+		markAnthropicCachePrefix(body, messages, anchors)
+	}
 	return body, nil
+}
+
+// markAnthropicCachePrefix places explicit cache_control breakpoints on the
+// stable request prefix.
+//
+// Anthropic never caches implicitly: a request with no cache_control block is
+// billed in full every time. In a multi-step tool loop that means re-paying
+// for the entire transcript on every step, which is both the dominant cost of
+// a long turn and the reason the per-step usage line reports no cache at all.
+//
+// Three of Anthropic's four permitted breakpoints are used, matching the
+// policy the OpenAI-compatible client already applies through
+// markStablePrefixCacheControl - one policy, two wire shapes, deliberately
+// kept in step:
+//
+//   - the system prompt, which never changes within a session;
+//   - the first user message, pinning the conversation's fixed head;
+//   - a ROLLING breakpoint on the newest stable user turn, so the
+//     append-only transcript behind it is cached instead of re-billed each
+//     step. Moving the marker forward between steps is safe - cache_control
+//     placement is excluded from prefix matching upstream.
+//
+// Assistant turns are never anchored: reasoning replay rewrites them, so they
+// are not stable. Neither are host-injected ephemeral trailers, which is what
+// the anchors slice tracks - see anthropicPendingTurn.stable.
+func markAnthropicCachePrefix(body map[string]any, messages []map[string]any, anchors []int) {
+	if system, ok := body["system"].(string); ok && system != "" {
+		body["system"] = []any{map[string]any{
+			"type":          "text",
+			"text":          system,
+			"cache_control": anthropicEphemeralCacheControl(),
+		}}
+	}
+	firstUser := -1
+	for i, msg := range messages {
+		if msg["role"] == "user" {
+			firstUser = i
+			break
+		}
+	}
+	if firstUser >= 0 {
+		markAnthropicBlock(messages, anchors, firstUser)
+	}
+	for i := len(messages) - 1; i > firstUser; i-- {
+		if messages[i]["role"] != "user" {
+			continue
+		}
+		markAnthropicBlock(messages, anchors, i)
+		return
+	}
+}
+
+// markAnthropicBlock stamps the cache marker on message index's anchor block -
+// the last block that will still be there, unchanged, next step. An index with
+// no stable block (anchor < 0, a turn made only of ephemeral host text) is
+// skipped rather than anchored on content that cannot cache.
+func markAnthropicBlock(messages []map[string]any, anchors []int, index int) {
+	if index < 0 || index >= len(anchors) {
+		return
+	}
+	anchor := anchors[index]
+	if anchor < 0 {
+		return
+	}
+	blocks, ok := messages[index]["content"].([]map[string]any)
+	if !ok || anchor >= len(blocks) {
+		return
+	}
+	blocks[anchor]["cache_control"] = anthropicEphemeralCacheControl()
+}
+
+func anthropicEphemeralCacheControl() map[string]any {
+	return map[string]any{"type": "ephemeral"}
 }
 
 // anthropicMaxTokens picks the wire max_tokens: the caller's explicit value
@@ -346,6 +432,13 @@ func anthropicToolChoice(choice string) map[string]any {
 type anthropicPendingTurn struct {
 	role    string
 	content []map[string]any
+	// stable is the number of leading content blocks that are safe to anchor
+	// a cache breakpoint on: every block contributed by a source message that
+	// will still be present, unchanged, in the next request. Host-injected
+	// ephemeral trailers (a named user message - the context summary or a
+	// conclude nudge) do not recur, so a breakpoint placed on one is a
+	// guaranteed miss on the following step. See anthropicCacheAnchor.
+	stable int
 }
 
 // anthropicSystemAndMessages translates an OpenAI-shaped message history into
@@ -367,12 +460,13 @@ type anthropicPendingTurn struct {
 // consecutive Messages that map to the same Anthropic role into one wire
 // message with multiple content blocks, in original order - not just
 // consecutive RoleTool runs.
-func anthropicSystemAndMessages(msgs []Message) (system string, out []map[string]any) {
+func anthropicSystemAndMessages(msgs []Message) (system string, out []map[string]any, anchors []int) {
 	var systemParts []string
 	var cur *anthropicPendingTurn
 	flush := func() {
 		if cur != nil && len(cur.content) > 0 {
 			out = append(out, map[string]any{"role": cur.role, "content": cur.content})
+			anchors = append(anchors, cur.stable-1)
 		}
 		cur = nil
 	}
@@ -396,10 +490,14 @@ func anthropicSystemAndMessages(msgs []Message) (system string, out []map[string
 				"tool_use_id": m.ToolCallID,
 				"content":     m.Content,
 			})
+			cur.stable = len(cur.content)
 		case RoleUser:
 			openTurn("user")
 			if strings.TrimSpace(m.Content) != "" {
 				cur.content = append(cur.content, map[string]any{"type": "text", "text": m.Content})
+				if m.Name == "" {
+					cur.stable = len(cur.content)
+				}
 			}
 		case RoleAssistant:
 			openTurn("assistant")
@@ -430,7 +528,7 @@ func anthropicSystemAndMessages(msgs []Message) (system string, out []map[string
 		}
 	}
 	flush()
-	return strings.Join(systemParts, "\n\n"), out
+	return strings.Join(systemParts, "\n\n"), out, anchors
 }
 
 // anthropicToolUseBlock builds one tool_use content block from an
@@ -513,6 +611,41 @@ type anthropicUsage struct {
 	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 }
 
+// promptTokens is the TRUE size of the prompt Anthropic priced, which is what
+// token accounting and the context gauge mean by "input tokens".
+//
+// Anthropic's input_tokens counts only the UNCACHED remainder: tokens served
+// from the cache are reported separately in cache_read_input_tokens, and
+// tokens written to it in cache_creation_input_tokens. Reading input_tokens
+// alone was correct only while this client sent no cache_control markers. The
+// moment caching is on, a well-cached step reports a few percent of its real
+// prompt, and internal/agent's Loop.Calibration - which divides that reported
+// count by the host's own estimate - collapses toward its 0.2 floor and scales
+// every future compaction estimate down with it, silently disabling the
+// auto-compaction trigger. Summing the three fields keeps the count equal to
+// the prompt actually sent, cached or not.
+func (u anthropicUsage) promptTokens() int {
+	return nonNegative(u.InputTokens) + nonNegative(u.CacheReadInputTokens) + nonNegative(u.CacheCreationInputTokens)
+}
+
+// cacheUsage reports this turn's prompt-cache accounting. Anthropic always
+// speaks the explicit (marker) style, and a response is treated as reporting
+// cache usage only when it actually carried one of the cache fields, so a
+// non-cached deployment keeps the zero value and EmitCacheUsage stays silent
+// rather than announcing "0% cached" on every turn.
+func (u anthropicUsage) cacheUsage() CacheUsage {
+	if u.CacheReadInputTokens == 0 && u.CacheCreationInputTokens == 0 {
+		return CacheUsage{}
+	}
+	return CacheUsage{
+		Reported:          true,
+		Style:             CacheStyleExplicit,
+		InputTokens:       u.promptTokens(),
+		CachedInputTokens: nonNegative(u.CacheReadInputTokens),
+		CacheWriteTokens:  nonNegative(u.CacheCreationInputTokens),
+	}
+}
+
 // anthropicBlockType peeks a content block's discriminator field without
 // committing to its full shape - every Anthropic content block type carries
 // "type", nothing else is guaranteed present.
@@ -576,9 +709,10 @@ func anthropicResponseToProvider(wire anthropicResponse) *Response {
 		FinishReason:     anthropicFinishReason(wire.StopReason),
 		TokenUsage: TokenUsage{
 			Reported:     true,
-			InputTokens:  wire.Usage.InputTokens,
-			OutputTokens: wire.Usage.OutputTokens,
+			InputTokens:  wire.Usage.promptTokens(),
+			OutputTokens: nonNegative(wire.Usage.OutputTokens),
 		},
+		CacheUsage: wire.Usage.cacheUsage(),
 	}
 }
 

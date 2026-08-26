@@ -86,7 +86,7 @@ func decodeAnthropicStream(body io.Reader, w io.Writer) (*Response, error) {
 	blocks := map[int]*anthropicStreamBlock{}
 	var blockOrder []int
 	var stopReason string
-	usage := TokenUsage{}
+	usage := anthropicStreamUsage{}
 
 	var eventName string
 	for scanner.Scan() {
@@ -132,7 +132,7 @@ type anthropicStreamEventEnvelope struct {
 // accumulators. Returns done=true once message_stop is seen (or an
 // in-band "error" event arrives, which is surfaced as err rather than
 // silently ending the stream).
-func applyAnthropicStreamEvent(eventName string, data []byte, blocks map[int]*anthropicStreamBlock, blockOrder *[]int, stopReason *string, usage *TokenUsage, w io.Writer) (done bool, err error) {
+func applyAnthropicStreamEvent(eventName string, data []byte, blocks map[int]*anthropicStreamBlock, blockOrder *[]int, stopReason *string, usage *anthropicStreamUsage, w io.Writer) (done bool, err error) {
 	var head anthropicStreamEventEnvelope
 	if err := json.Unmarshal(data, &head); err != nil {
 		return false, fmt.Errorf("decode event: %w", err)
@@ -166,15 +166,42 @@ func applyAnthropicStreamEvent(eventName string, data []byte, blocks map[int]*an
 	}
 }
 
-func applyAnthropicMessageStart(data []byte, usage *TokenUsage) error {
+// anthropicStreamUsage accumulates one streamed message's usage across the
+// two events that carry it: message_start supplies every prompt-side field
+// (including the cache counters), message_delta supplies output_tokens. The
+// raw wire struct is kept rather than a pre-summed TokenUsage so the cache
+// counters survive to finishAnthropicStream, which needs them for both the
+// true prompt total and the CacheUsage report - the non-stream path derives
+// both from the same anthropicUsage methods.
+type anthropicStreamUsage struct {
+	wire     anthropicUsage
+	reported bool
+}
+
+func (u anthropicStreamUsage) tokenUsage() TokenUsage {
+	if !u.reported {
+		return TokenUsage{}
+	}
+	return TokenUsage{
+		Reported:     true,
+		InputTokens:  u.wire.promptTokens(),
+		OutputTokens: nonNegative(u.wire.OutputTokens),
+	}
+}
+
+func applyAnthropicMessageStart(data []byte, usage *anthropicStreamUsage) error {
 	var msg struct {
 		Message struct {
 			Usage anthropicUsage `json:"usage"`
 		} `json:"message"`
 	}
 	if json.Unmarshal(data, &msg) == nil {
-		usage.InputTokens = msg.Message.Usage.InputTokens
-		usage.Reported = true
+		// output_tokens is not final at message_start; message_delta
+		// overwrites it below. Every other field is prompt-side and set once.
+		outputSoFar := usage.wire.OutputTokens
+		usage.wire = msg.Message.Usage
+		usage.wire.OutputTokens = outputSoFar
+		usage.reported = true
 	}
 	return nil
 }
@@ -234,7 +261,7 @@ func applyAnthropicContentBlockDelta(data []byte, blocks map[int]*anthropicStrea
 	return nil
 }
 
-func applyAnthropicMessageDelta(data []byte, stopReason *string, usage *TokenUsage) error {
+func applyAnthropicMessageDelta(data []byte, stopReason *string, usage *anthropicStreamUsage) error {
 	var ev struct {
 		Delta struct {
 			StopReason string `json:"stop_reason"`
@@ -249,8 +276,8 @@ func applyAnthropicMessageDelta(data []byte, stopReason *string, usage *TokenUsa
 	if ev.Delta.StopReason != "" {
 		*stopReason = ev.Delta.StopReason
 	}
-	usage.OutputTokens = ev.Usage.OutputTokens
-	usage.Reported = true
+	usage.wire.OutputTokens = ev.Usage.OutputTokens
+	usage.reported = true
 	return nil
 }
 
@@ -271,7 +298,7 @@ func anthropicInBandStreamError(data []byte) error {
 // per-block state, in the order blocks were opened - the same shape
 // anthropicResponseToProvider produces for the non-stream path, so a caller
 // cannot tell which path served a given turn from the Response alone.
-func finishAnthropicStream(blocks map[int]*anthropicStreamBlock, order []int, stopReason string, usage TokenUsage) *Response {
+func finishAnthropicStream(blocks map[int]*anthropicStreamBlock, order []int, stopReason string, usage anthropicStreamUsage) *Response {
 	var textParts []string
 	var toolCalls []ToolCall
 	var thinkingBlocks []json.RawMessage
@@ -306,7 +333,8 @@ func finishAnthropicStream(blocks map[int]*anthropicStreamBlock, order []int, st
 		ReasoningContent: anthropicThinkingDisplayText(thinkingBlocks),
 		ToolCalls:        toolCalls,
 		FinishReason:     anthropicFinishReason(stopReason),
-		TokenUsage:       usage,
+		TokenUsage:       usage.tokenUsage(),
+		CacheUsage:       usage.wire.cacheUsage(),
 	}
 }
 

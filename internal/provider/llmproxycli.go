@@ -50,7 +50,7 @@ func NewLLMProxyCLI(opts Options) (Completer, error) {
 		// behavior for every existing config, byte-for-byte.
 		return compat, nil
 	}
-	native := newAnthropicCompleter("llmproxycli", base, opts.APIKey, opts.DialContext)
+	native := newAnthropicCompleter("llmproxycli", base, opts.APIKey, opts.DialContext, opts.CacheMarkersEnabled)
 	nativeModels := make(map[string]bool, len(opts.AnthropicNativeModels))
 	for _, name := range opts.AnthropicNativeModels {
 		nativeModels[name] = true
