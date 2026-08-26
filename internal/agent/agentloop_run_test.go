@@ -82,3 +82,33 @@ func TestRunOnceSkipsEmptyResponseRetryWhenProviderReplayDisabled(t *testing.T) 
 		t.Fatalf("completer called %d times, want exactly 1 (no retry when DisableProviderReplay is set)", calls)
 	}
 }
+
+// TestRunOnceNeverRetriesAfterATurnAlreadyMadeAToolCall pins the
+// tool-call guard in retryOnEmptyResponse's shouldRetry (sdkTurnMadeToolCalls,
+// agentloop_run.go): sdkagentloop.StopEmptyResponse only guarantees the
+// TRIGGERING response made zero tool calls, not that the whole attempt did.
+// A turn that calls a tool on iteration 1 and comes back empty on iteration
+// 2 must NOT be retried - retrying replays the whole turn from
+// preparedMsgs, discarding the record that the tool already ran, and the
+// model can and does reissue it, silently duplicating a non-idempotent
+// side effect. The registry's read_file tool is idempotent, so this test
+// cannot observe a duplicated *effect* directly, but it can and does
+// observe the mechanism: the tool call count and the completer call count
+// must both stay at exactly what one attempt produces, proving no retry
+// happened at all.
+func TestRunOnceNeverRetriesAfterATurnAlreadyMadeAToolCall(t *testing.T) {
+	comp := &scriptCompleter{steps: []provider.Response{
+		{Content: "", FinishReason: "tool_calls",
+			ToolCalls: []provider.ToolCall{tc("1", "read_file", `{"path":"x"}`)}},
+		{Content: "", FinishReason: "stop"},
+	}}
+	loop := &Loop{Completer: comp, Tools: silentTurnRegistry(t)}
+	opts := Options{Model: "m", MaxSteps: 10, RequireFinalText: true}
+	_, err := loop.Run(context.Background(), "go", opts)
+	if err == nil || !strings.Contains(err.Error(), "no assistant text") {
+		t.Fatalf("Run error = %v, want a 'no assistant text' failure with no retry", err)
+	}
+	if comp.calls != 2 {
+		t.Fatalf("completer called %d times, want exactly 2 (the tool-call step and the empty step - a retry would have called it a 3rd time and reissued the tool call)", comp.calls)
+	}
+}
