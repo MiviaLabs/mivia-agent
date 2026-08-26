@@ -55,7 +55,7 @@ GOOD_README = '''\
 | LLM Gateway | `deepseek-v4-pro` | `https://api.llmgateway.io/v1` |
 '''
 
-GOOD_ARCH = "Every built-in provider (DeepSeek, OpenRouter, ZAI, Ollama, LLM Gateway) is an `OpenAICompat` client."
+GOOD_ARCH = "Every OpenAICompat provider (DeepSeek, OpenRouter, ZAI, Ollama, LLM Gateway) shares one retry boundary."
 
 
 def expect_ok(registry: str, readme: str, arch: str) -> None:
@@ -75,8 +75,12 @@ def expect_ok(registry: str, readme: str, arch: str) -> None:
             problems.append("url mismatch")
     if sorted(row_keys) != expected:
         problems.append("set mismatch")
-    if sorted({cp.display_to_key(n) or n for n in names}) != expected:
+    arch_expected = sorted(set(expected) - cp.NATIVE_PROVIDERS)
+    if sorted({cp.display_to_key(n) or n for n in names}) != arch_expected:
         problems.append("arch list mismatch")
+    for key in sorted(cp.NATIVE_PROVIDERS & set(expected)):
+        if not cp.native_provider_mentioned(key, arch):
+            problems.append(f"native provider {key!r} not mentioned in arch text")
     assert not problems, problems
 
 
@@ -140,9 +144,9 @@ def test_detects_arch_list_drift() -> None:
     err = expect_fail(
         GOOD_REGISTRY,
         GOOD_README,
-        "Every built-in provider (DeepSeek) is an `OpenAICompat` client.",
+        "Every OpenAICompat provider (DeepSeek) shares one retry boundary.",
     )
-    assert "architecture overview provider list" in err
+    assert "architecture overview OpenAICompat provider list" in err
 
 
 def test_detects_missing_section() -> None:

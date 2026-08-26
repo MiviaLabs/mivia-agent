@@ -63,10 +63,17 @@ prompts, tool sets, and content stay outside that event identity.
 
 ## Provider transport retry
 
-Every built-in provider (DeepSeek, OpenRouter, z.ai, Ollama, LLM Gateway, LLM Proxy CLI, MiniMax) is an `OpenAICompat`
+Every OpenAICompat provider (DeepSeek, OpenRouter, z.ai, Ollama, LLM Gateway, LLM Proxy CLI, MiniMax) is an `OpenAICompat`
 client, and all of them share one retry boundary: `retryRoundTripper` in
 `internal/provider`. There is no retry logic in the CLI, session, agent loop, or
 any provider factory, and retry is not user-configurable.
+
+Anthropic is not an `OpenAICompat` client - its native Messages API request and
+response shapes are structurally different from the OpenAI-compatible chat/
+completions shape the providers above share, so `internal/provider/anthropic.go`
+implements `Completer` directly rather than wrapping `OpenAICompat`. It still
+shares the same `retryRoundTripper` transport and the same five-attempt budget
+described below; only the request/response encoding differs.
 
 The budget is **five attempts per outbound transport exchange**: one request
 plus four retries. It is scoped to a single `RoundTrip`. A stream fallback,

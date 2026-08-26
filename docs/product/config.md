@@ -45,6 +45,7 @@ The workspace `.env` stays beside the project files at `./.env`. Tools such as d
 | ZAI example | `glm-5.2` (declare it under `providers.zai`) |
 | Ollama example | `gpt-oss:120b` (declare it under `providers.ollama`) |
 | MiniMax example | `MiniMax-M3` (declare it under `providers.minimax`) |
+| Anthropic example | `claude-sonnet-5` (declare it under `providers.anthropic`) |
 
 ## Set up a provider
 
@@ -180,9 +181,37 @@ reasoning = "high"
 reasoning_efforts = ["low", "medium", "high", "max"]
 ```
 
+### Anthropic
+
+The `anthropic` provider speaks Anthropic's native Messages API
+(`https://api.anthropic.com/v1`) directly - unlike every other built-in
+provider, it does not go through the OpenAI-compatible transport, because
+Anthropic's request and response shapes are structurally different (system
+prompt at the top level, content blocks instead of a flat message string,
+thinking blocks instead of a `reasoning_content` field).
+
+```toml
+[providers.anthropic]
+models = [
+  { name = "claude-sonnet-5", context_window_tokens = 1000000, max_output_tokens = 128000, reasoning_efforts = ["low", "medium", "high", "xhigh", "max"], reasoning = "high" },
+]
+default_model = "claude-sonnet-5"
+api_key_env = "ANTHROPIC_API_KEY"
+base_url = "https://api.anthropic.com/v1"
+```
+
+Reasoning works differently here than on every other provider: Anthropic's
+`claude-sonnet-5` rejects the manual `budget_tokens` thinking shape outright
+(HTTP 400). mivia sends `thinking: {"type": "adaptive"}` plus a graded
+`output_config.effort` instead - Claude decides how much to think per turn,
+and `effort` (`low` through `max`) is the depth dial. A refusal (Anthropic's
+safety classifiers declining a request) is not an error: it surfaces as an
+ordinary turn whose finish reason is `refusal`, with empty or partial
+content depending on whether the decline happened before or during output.
+
 ## Provider support
 
-mivia currently supports `deepseek`, `openrouter`, `zai`, `ollama`, `llmgateway`, `llmproxycli`, and `minimax`. Do not add an
+mivia currently supports `anthropic`, `deepseek`, `openrouter`, `zai`, `ollama`, `llmgateway`, `llmproxycli`, and `minimax`. Do not add an
 arbitrary OpenAI-compatible provider name. The provider registry rejects names
 that it does not support.
 

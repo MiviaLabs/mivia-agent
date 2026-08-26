@@ -101,11 +101,12 @@ Shell completions: `mivia completion bash|zsh|fish` prints a completion script f
 ## Supported providers
 
 mivia is a local-first agent: prompts and selected context go to exactly one
-configured AI provider. Seven providers are built in:
+configured AI provider. Eight providers are built in:
 
 | Provider | Default model | Default API base URL |
 |----------|---------------|-----------------------|
 | OpenRouter (default) | `openai/gpt-5.6-luna` | `https://openrouter.ai/api/v1` |
+| Anthropic | `claude-sonnet-5` | `https://api.anthropic.com/v1` |
 | DeepSeek | `deepseek-v4-flash` | `https://api.deepseek.com/v1` |
 | ZAI (z.ai) | `glm-5.2` | `https://api.z.ai/api/paas/v4` |
 | Ollama | `gpt-oss:120b` | `https://ollama.com/v1` |
