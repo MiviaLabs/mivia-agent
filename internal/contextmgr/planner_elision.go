@@ -20,7 +20,7 @@ func planCompact(input PlanInput, result PlanResult, rng contextstate.SourceRang
 	// the returned messages. Input.Messages is never mutated.
 	working := cloneMessages(input.Messages)
 	mandatory := mandatoryIndexes(working, objectiveIndex, input.PreserveNames)
-	working, elision, reasoningElision, deferred := elideForCompaction(input, working, objectiveIndex, mandatory, schemaCost)
+	working, elision, reasoningElision, deferred := elideForCompaction(input, working, objectiveIndex, mandatory, schemaCost, target)
 	planInput := input
 	planInput.Messages = working
 	retained, retainedIndexes, err := retainMessages(planInput, objective, objectiveIndex, target, schemaCost, deferred)
@@ -148,20 +148,32 @@ const reasoningElisionMarker = "[reasoning elided by context compaction]"
 
 // elideForCompaction runs the in-place elision passes for one compaction
 // plan: oversized prior tool-result bodies, stale assistant reasoning, and
-// emergency elision of oversized mandatory tool results when mandatory messages
-// exceed the budget. planCompact and the fuzz replica (optionalTailIsSuffix)
-// both call this helper, so the pipelines cannot drift. messages must already
-// be a private clone.
-func elideForCompaction(input PlanInput, messages []provider.Message, objectiveIndex int, mandatory map[int]struct{}, schemaCost int) ([]provider.Message, ElisionStats, ElisionStats, []deferredElision) {
+// emergency elision of oversized mandatory tool results when mandatory
+// messages exceed the TARGET (half the budget - the level compaction is
+// actually trying to reach), not only the full budget. planCompact and the
+// fuzz replica (optionalTailIsSuffix) both call this helper, so the pipelines
+// cannot drift. messages must already be a private clone.
+//
+// Gating on target rather than Budget used to leave a real, reachable gap:
+// mandatoryIndexes always keeps the entire latest assistant+tool-call unit
+// whole, and ordinary elision (elideToolResultsWithSpool) explicitly skips
+// anything in the mandatory set - emergency elision was the ONLY path that
+// could ever shrink an oversized mandatory tool result, and it only fired
+// once the mandatory set alone exceeded 100% of budget. A mandatory set
+// landing anywhere between target (50%) and Budget (100% - plausible from a
+// single verbose run_command or a couple of read_file calls in the latest
+// step, since tool-result byte caps default to effectively uncapped) was
+// retained in full, unelided, on every compaction pass: AfterTokens settled
+// at the mandatory floor instead of target, often much closer to the 80%
+// trigger than the 50% target, so compaction ran on nearly every turn and
+// barely reduced anything each time.
+func elideForCompaction(input PlanInput, messages []provider.Message, objectiveIndex int, mandatory map[int]struct{}, schemaCost, target int) ([]provider.Message, ElisionStats, ElisionStats, []deferredElision) {
 	messages, toolStats, deferred := elideToolResultsWithSpool(messages, objectiveIndex, mandatory, input.Spool, input.Principal)
 	reasoningStats := elideStaleReasoning(messages, objectiveIndex, mandatory)
 
-	// If the mandatory set alone exceeds the budget, attempt emergency elision
-	// of oversized tool results that were retained in the mandatory set (e.g.
-	// the latest tool unit).
-	if input.Budget > 0 {
+	if target > 0 {
 		mandatoryCost := calibratedCost(messages, mandatory, schemaCost, input.CalibrationRatio, input.ContextAccounting)
-		if mandatoryCost > input.Budget {
+		if mandatoryCost > target {
 			messages, toolStats, deferred = emergencyElideMandatoryToolResults(messages, mandatory, input.Spool, input.Principal, toolStats, deferred)
 		}
 	}
