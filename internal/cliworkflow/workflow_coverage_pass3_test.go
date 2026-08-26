@@ -13,6 +13,7 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -36,6 +37,7 @@ type faultRepo struct {
 	getRunTerminalFrom int
 	// getRunFailCanceled fails GetRun when the stored status is canceled.
 	getRunFailCanceled bool
+	mu                 sync.Mutex
 	getRunCalls        int
 }
 
@@ -54,7 +56,10 @@ func (f *faultRepo) ListStepAttempts(ctx context.Context, runID string) ([]workf
 }
 
 func (f *faultRepo) GetRun(ctx context.Context, runID string) (workflowledger.RunSnapshot, error) {
+	f.mu.Lock()
 	f.getRunCalls++
+	calls := f.getRunCalls
+	f.mu.Unlock()
 	snap, err := f.Repository.GetRun(ctx, runID)
 	if err != nil {
 		return snap, err
@@ -62,10 +67,10 @@ func (f *faultRepo) GetRun(ctx context.Context, runID string) (workflowledger.Ru
 	if f.getRunFailCanceled && snap.Status == workflowledger.RunStatusCanceled {
 		return workflowledger.RunSnapshot{}, errors.New("scripted canceled-run read failure")
 	}
-	if f.getRunFailFrom > 0 && f.getRunCalls >= f.getRunFailFrom {
+	if f.getRunFailFrom > 0 && calls >= f.getRunFailFrom {
 		return workflowledger.RunSnapshot{}, errors.New("scripted get-run failure")
 	}
-	if f.getRunTerminalFrom > 0 && f.getRunCalls >= f.getRunTerminalFrom {
+	if f.getRunTerminalFrom > 0 && calls >= f.getRunTerminalFrom {
 		snap.Status = workflowledger.RunStatusSucceeded
 	}
 	return snap, nil
