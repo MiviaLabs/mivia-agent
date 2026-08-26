@@ -192,10 +192,18 @@ func resultText(r encodedTaskResult) string {
 }
 
 // matchTaskOutputs pairs each dispatched task with its result text, by
-// task ID first, falling back to positional matching when IDs are absent
-// but the counts agree, and finally to the run-level error envelope (or raw
-// payload) when there are zero per-task results parsed at all - e.g. the
-// whole run failed before producing any.
+// task ID first, falling back to positional matching when the ID is ABSENT
+// from the results but the counts agree, and finally to the run-level error
+// envelope (or raw payload) when there are zero per-task results parsed at
+// all - e.g. the whole run failed before producing any.
+//
+// The ID-present rule (not empty-text) deliberately matches
+// matchTaskToolCalls: an ID match whose text is empty means the task
+// genuinely produced no text, not that a positional row is a better source.
+// The original empty-text fallback (2b5426a9) was part of the generic
+// positional fallback, not a fix for a real empty-text case, and it let a
+// task render ANOTHER task's output text above its own tool calls whenever
+// results arrived out of order.
 func matchTaskOutputs(results []encodedTaskResult, tasks []parsedDispatchTask, rawOutput string) []string {
 	byID := make(map[string]string, len(results))
 	for _, r := range results {
@@ -206,8 +214,8 @@ func matchTaskOutputs(results []encodedTaskResult, tasks []parsedDispatchTask, r
 	}
 	out := make([]string, len(tasks))
 	for i, task := range tasks {
-		text := byID[task.ID]
-		if text == "" && len(results) == len(tasks) {
+		text, ok := byID[task.ID]
+		if !ok && len(results) == len(tasks) {
 			text = resultText(results[i])
 		}
 		if text == "" && len(results) == 0 {

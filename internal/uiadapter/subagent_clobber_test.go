@@ -176,3 +176,66 @@ func TestPopulateFromToolCalls_ResumeStillRegistersAndRefreshes(t *testing.T) {
 		t.Errorf("expected refreshed reconstruction with the final output, got %+v", hist)
 	}
 }
+
+// TestPopulateFromToolCalls_OutputAndToolCallsPairFromSameRow guards the
+// pairing rule shared by matchTaskOutputs and matchTaskToolCalls: when a
+// task's ID matches a result row, BOTH its output text and its tool calls
+// must come from that row - even when the ID-matched row's text is empty
+// (an ID match with empty text means the task genuinely produced no text,
+// not that a positional row is a better source). Before the fix,
+// matchTaskOutputs fell back positionally on empty TEXT while
+// matchTaskToolCalls fell back only on an ABSENT id, so t1 could render
+// t2's output text above t1's own tool calls.
+func TestPopulateFromToolCalls_OutputAndToolCallsPairFromSameRow(t *testing.T) {
+	threads := uiadapter.NewSubagentThreads()
+	msgs := []ports.Message{
+		{
+			Role: "assistant",
+			At:   time.Now(),
+			ToolCalls: []ports.ToolCall{
+				{
+					ID:        "call_pair",
+					Name:      "dispatch_tasks",
+					Arguments: `{"tasks":[{"id":"t1","prompt":"first","agent":"a"},{"id":"t2","prompt":"second","agent":"b"}]}`,
+					// Results arrive out of order: position 0 is t2's row
+					// (with text and tool calls), t1's own row has an ID
+					// match but empty output text plus its own tool calls.
+					Output: `[` +
+						`{"task_id":"t2","status":"completed","output":"t2 text","tool_calls":[{"tool_call_id":"tc-t2","name":"grep","output":"t2 grep"}]},` +
+						`{"task_id":"t1","status":"completed","output":"","tool_calls":[{"tool_call_id":"tc-t1","name":"read","output":"t1 read"}]}` +
+						`]`,
+				},
+			},
+		},
+	}
+
+	uiadapter.PopulateFromToolCalls(threads, msgs)
+
+	conv, ok := threads.Thread("t1")
+	if !ok || conv == nil {
+		t.Fatalf("expected thread for t1")
+	}
+	hist := conv.History()
+	if len(hist) != 2 {
+		t.Fatalf("expected prompt + assistant message for t1, got %+v", hist)
+	}
+	out := hist[1]
+	if out.Text != "" {
+		t.Errorf("t1 text must come from its ID-matched row (empty), got %q", out.Text)
+	}
+	if len(out.ToolCalls) != 1 || out.ToolCalls[0].ID != "tc-t1" {
+		t.Errorf("t1 tool calls must come from its ID-matched row, got %+v", out.ToolCalls)
+	}
+
+	conv2, ok := threads.Thread("t2")
+	if !ok || conv2 == nil {
+		t.Fatalf("expected thread for t2")
+	}
+	hist2 := conv2.History()
+	if len(hist2) != 2 || hist2[1].Text != "t2 text" {
+		t.Errorf("t2 must keep its own ID-matched text, got %+v", hist2)
+	}
+	if len(hist2[1].ToolCalls) != 1 || hist2[1].ToolCalls[0].ID != "tc-t2" {
+		t.Errorf("t2 tool calls mismatch: %+v", hist2[1].ToolCalls)
+	}
+}
