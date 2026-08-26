@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="https://github.com/MiviaLabs/mivia-agent/actions/workflows/ci.yml"><img src="https://github.com/MiviaLabs/mivia-agent/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL%20v3-blue.svg" alt="License: AGPL v3"></a>
   <img src="https://img.shields.io/badge/Go-1.25%2B-00ADD8.svg" alt="Go 1.25+">
 </p>
 
@@ -180,4 +180,4 @@ Most work under `mivia chat` runs locally; the provider, web search, MCP, hooks,
 
 ## License
 
-[MIT](LICENSE)
+[GNU AGPL-3.0](LICENSE)
