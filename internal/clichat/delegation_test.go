@@ -3,9 +3,6 @@ package clichat
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"io"
 	"os"
 	"path/filepath"
@@ -15,8 +12,8 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
+	"github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
@@ -74,62 +71,6 @@ func (m *mockDelegateCompleter) Chat(ctx context.Context, req provider.Request) 
 	}
 	return m.response, nil
 }
-
-func TestDelegateToolRepeatedCallsUseIndependentInvocationKeys(t *testing.T) {
-	comp := &mockDelegateCompleter{name: "test", response: "independent"}
-	d := newTestDelegateDispatcher(comp)
-	tool := &delegateTool{dispatcher: d, cfg: config.DefaultSubagentConfig}
-	for _, task := range []string{"first", "second"} {
-		if _, err := tool.Execute(context.Background(), json.RawMessage(fmt.Sprintf(`{"task":%q}`, task))); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if got := comp.calls.Load(); got != 2 {
-		t.Fatalf("subagent calls=%d, want 2", got)
-	}
-}
-
-// TestDelegateToolRepeatedCallsUseIndependentTaskIDs guards against a
-// regression to the fixed "d1" Task.ID delegateTool.Execute used to assign
-// on every call - a consumer that keys off Origin.TaskID (see
-// agent.EventOrigin's doc comment - the desktop app's chat transcript is
-// exactly this) would merge two concurrent delegate calls' subagent runs
-// into one. InvocationKey was already unique (see the sibling test above);
-// this checks the task ID actually persisted to the ledger, which is what
-// Origin.TaskID is stamped from.
-func TestDelegateToolRepeatedCallsUseIndependentTaskIDs(t *testing.T) {
-	repo := ledger.NewMemoryLedgerRepository()
-	comp := &mockDelegateCompleter{name: "test", response: "independent"}
-	d := newTestDelegateDispatcher(comp)
-	tool := &delegateTool{dispatcher: d, cfg: config.DefaultSubagentConfig, repo: repo}
-	for _, task := range []string{"first", "second"} {
-		if _, err := tool.Execute(context.Background(), json.RawMessage(fmt.Sprintf(`{"task":%q}`, task))); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	runs, err := repo.ListRuns(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(runs) != 2 {
-		t.Fatalf("got %d runs, want 2", len(runs))
-	}
-	seen := map[string]bool{}
-	for _, run := range runs {
-		if len(run.Tasks) != 1 {
-			t.Fatalf("run %s has %d tasks, want 1", run.RunID, len(run.Tasks))
-		}
-		id := run.Tasks[0].TaskID
-		if id == "d1" {
-			t.Fatalf("task id is the old fixed placeholder %q, want a per-call unique id", id)
-		}
-		if seen[id] {
-			t.Fatalf("task id %q reused across two delegate calls in the same session", id)
-		}
-		seen[id] = true
-	}
-}
 func (m *mockDelegateCompleter) ChatStream(ctx context.Context, req provider.Request, w io.Writer) (string, error) {
 	return m.Chat(ctx, req)
 }
@@ -156,97 +97,10 @@ func newTestDelegateDispatcher(completer provider.Completer) *runtime.Dispatcher
 	return d
 }
 
-func TestDelegateToolValid(t *testing.T) {
-	d := newTestDelegateDispatcher(&mockDelegateCompleter{
-		name:     "test",
-		response: "Analysis: the auth module uses JWT tokens with 1h expiry.",
-	})
-	tool := &delegateTool{dispatcher: d, cfg: config.DefaultSubagentConfig}
-
-	result, err := tool.Execute(context.Background(), json.RawMessage(`{"task":"analyze auth module"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(result) == 0 {
-		t.Fatal("expected non-empty result")
-	}
-	var parsed map[string]any
-	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
-		t.Fatalf("result is not valid JSON: %v\nresult: %s", err, result)
-	}
-	output, ok := parsed["output_ref"].(string)
-	if !ok || output == "" {
-		t.Fatalf("result missing 'output_ref' field: %s", result)
-	}
-	if !strings.HasPrefix(output, "ref:output:") {
-		t.Fatalf("output reference has unexpected format: %s", output)
-	}
-	structured, ok := parsed["output"].(map[string]any)
-	if !ok {
-		t.Fatalf("result missing structured output: %s", result)
-	}
-	if structured["output"] != "Analysis: the auth module uses JWT tokens with 1h expiry." {
-		t.Fatalf("structured output=%v, want subagent reply", structured)
-	}
-}
-
-func TestDelegateToolEmptyTask(t *testing.T) {
-	d := newTestDelegateDispatcher(&mockDelegateCompleter{
-		name: "test", response: "ok",
-	})
-	tool := &delegateTool{dispatcher: d, cfg: config.DefaultSubagentConfig}
-
-	_, err := tool.Execute(context.Background(), json.RawMessage(`{"task":""}`))
-	if err == nil {
-		t.Fatal("expected error for empty task")
-	}
-}
-
-func TestDelegateToolMissingTask(t *testing.T) {
-	d := newTestDelegateDispatcher(&mockDelegateCompleter{
-		name: "test", response: "ok",
-	})
-	tool := &delegateTool{dispatcher: d, cfg: config.DefaultSubagentConfig}
-
-	_, err := tool.Execute(context.Background(), json.RawMessage(`{}`))
-	if err == nil {
-		t.Fatal("expected error for missing task")
-	}
-}
-
-func TestDelegateToolCanceledContext(t *testing.T) {
-	d := newTestDelegateDispatcher(&mockDelegateCompleter{
-		name: "test", response: "should not be reached",
-	})
-	tool := &delegateTool{dispatcher: d, cfg: config.DefaultSubagentConfig}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	// Model-visible body with cancel status; nil transport error so the agent
-	// loop does not wipe the payload to a bare "error: …" string.
-	body, err := tool.Execute(ctx, json.RawMessage(`{"task":"test"}`))
-	if err != nil {
-		t.Fatalf("transport err should be nil, got %v", err)
-	}
-	if !strings.Contains(body, "cancel") && !strings.Contains(body, "error") {
-		t.Fatalf("expected cancel/error in body, got %q", body)
-	}
-}
-
-func TestDelegateAndDispatchCapabilityExtendsBeyondDefaultToolTimeout(t *testing.T) {
+func TestDispatchTasksCapabilityExtendsBeyondDefaultToolTimeout(t *testing.T) {
 	d := newTestDelegateDispatcher(&mockDelegateCompleter{name: "test", response: "ok"})
 	cfg := config.DefaultSubagentConfig // DefaultTimeout 0 → safety ceiling
-	delegate := &delegateTool{dispatcher: d, cfg: cfg}
 	dispatch := cliorchestrate.NewDispatchTasksToolConfigured(d, cfg, nil, nil)
-
-	dCap := delegate.Capability(json.RawMessage(`{"task":"x"}`))
-	if dCap.Timeout < time.Hour {
-		t.Fatalf("delegate capability timeout %s too short for multi-step work", dCap.Timeout)
-	}
-	wantDelegate := time.Duration(config.DefaultOrchestrationTimeoutSec+cliorchestrate.DispatchOrchestrationSlackSec) * time.Second
-	if dCap.Timeout != wantDelegate {
-		t.Fatalf("delegate capability=%s want %s ceiling", dCap.Timeout, wantDelegate)
-	}
 
 	// Explicit timeout_seconds must raise the parent tool budget above the
 	// effective default, and the call budget must OUTLIVE the longest task
@@ -285,14 +139,8 @@ func TestDispatchTasksTimeoutReturnsStructuredStatus(t *testing.T) {
 			return nil, ctx.Err()
 		}
 	}))
-	// Use a 1s default so the per-task budget is finite and the timeout is
-	// observable within the test window. (Before the fix, the raise-only floor
-	// meant a 1s override could not shrink the 12h default; the tool was given
-	// a 1s default to compensate. The fix honors explicit overrides, so the 1s
-	// default + 1s override still yields a tight ~16s budget here.)
 	tool := cliorchestrate.NewDispatchTasksToolConfigured(d, config.SubagentConfig{DefaultTimeout: 1, InlineOutputBytes: config.DefaultSubagentConfig.InlineOutputBytes}, nil, testAgentRegistry(t, "oneshot"))
 	start := time.Now()
-	// timeout_seconds is integer seconds; use 1s budget vs 5s work.
 	body, err := tool.Execute(context.Background(), json.RawMessage(`{
 		"timeout_seconds": 1,
 		"tasks": [{"id":"t1","agent":"oneshot","prompt":"block","timeout_seconds":1}]
@@ -315,7 +163,6 @@ func TestDispatchTasksTimeoutReturnsStructuredStatus(t *testing.T) {
 	}
 }
 
-// handlerFunc adapts a function to runtime.Handler for tests in this package.
 func TestDispatchTasksToolValid(t *testing.T) {
 	d := newTestDelegateDispatcher(&mockDelegateCompleter{
 		name:     "test",
@@ -407,7 +254,6 @@ func TestDispatchTasksToolCanceled(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	// Structured body + nil transport err (agent loop keeps the payload).
 	body, err := tool.Execute(ctx, json.RawMessage(`{
 		"tasks": [{"id": "t1", "agent":"oneshot", "prompt": "test"}]
 	}`))
@@ -419,17 +265,9 @@ func TestDispatchTasksToolCanceled(t *testing.T) {
 	}
 }
 
-// TestDispatchTasksErrorEnvelopeOmitsUnstoredReference guards INV-AG-10 on the
-// run-level failure path: a validation error is never a task's recorded error,
-// so no content is ever stored under its digest. The envelope must therefore
-// carry the error text inline and no error_ref at all, rather than a reference
-// that resolves to nothing.
-//
-// Regression: INV-AG-10
 func TestDispatchTasksErrorEnvelopeOmitsUnstoredReference(t *testing.T) {
 	tool := cliorchestrate.NewDispatchTasksToolConfigured(runtime.New(runtime.Policy{}), config.DefaultSubagentConfig, nil, testAgentRegistry(t, "worker"))
 	out, err := tool.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"t1","agent":"worker","prompt":"x","depends_on":["missing"]}]}`))
-	// Missing dependency: empty results + model-visible JSON envelope, nil transport err.
 	if err != nil {
 		t.Fatalf("transport err should be nil, got %v", err)
 	}
@@ -451,76 +289,7 @@ func TestDispatchTasksErrorEnvelopeOmitsUnstoredReference(t *testing.T) {
 	}
 }
 
-// contentStoreFailingRepo is a ledger repository whose content writes always
-// fail. Everything else behaves like the in-memory repository.
-type contentStoreFailingRepo struct {
-	*ledger.MemoryLedgerRepository
-}
-
-func (contentStoreFailingRepo) StoreContent(_ context.Context, _ string, _ []byte) error {
-	return errors.New("content store unavailable")
-}
-
-// TestDelegateReturnsOutputWhenContentStoreFails pins the rule that a
-// persistence failure must not destroy a result the sub-agent actually
-// produced. The task completes; only the content write fails, which the
-// coordinator joins into the run error. delegate must still report the output
-// and a non-failed status, and must omit the output_ref that was never stored.
-func TestDelegateReturnsOutputWhenContentStoreFails(t *testing.T) {
-	repo := contentStoreFailingRepo{MemoryLedgerRepository: ledger.NewMemoryLedgerRepository()}
-	d := newTestDelegateDispatcher(&mockDelegateCompleter{name: "test", response: "sub-agent findings"})
-	tool := &delegateTool{dispatcher: d, cfg: config.DefaultSubagentConfig, repo: repo}
-
-	out, err := tool.Execute(context.Background(), json.RawMessage(`{"task":"analyze"}`))
-	if err != nil {
-		t.Fatalf("transport err should be nil, got %v", err)
-	}
-	var parsed map[string]any
-	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
-		t.Fatalf("result is not valid JSON: %v\nresult: %s", err, out)
-	}
-	if parsed["status"] == "failed" {
-		t.Fatalf("successful task reported as failed because content persistence failed: %s", out)
-	}
-	if parsed["output"] == nil {
-		t.Fatalf("sub-agent output discarded on content store failure: %s", out)
-	}
-	if !strings.Contains(out, "sub-agent findings") {
-		t.Fatalf("sub-agent output text missing: %s", out)
-	}
-	if ref, ok := parsed["output_ref"]; ok {
-		t.Fatalf("output_ref=%v handed to the model despite the failed content write: %s", ref, out)
-	}
-}
-
-func TestDelegateToolReturnsSubagentErrorToCaller(t *testing.T) {
-	d := newTestDelegateDispatcher(&mockDelegateCompleter{
-		name: "test",
-		err:  errors.New("subagent tool failed: unique_tool is unavailable"),
-	})
-	tool := &delegateTool{dispatcher: d, cfg: config.DefaultSubagentConfig}
-	out, err := tool.Execute(context.Background(), json.RawMessage(`{"task":"run the subtask"}`))
-	if err != nil {
-		t.Fatalf("transport err should be nil, got %v", err)
-	}
-	var parsed map[string]any
-	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
-		t.Fatal(err)
-	}
-	errorText, ok := parsed["error"].(string)
-	if !ok || !strings.Contains(errorText, "subagent tool failed: unique_tool is unavailable") {
-		t.Fatalf("error=%q, want full subagent error: %q", parsed["error"], out)
-	}
-	errorRef, ok := parsed["error_ref"].(string)
-	if !ok || !strings.HasPrefix(errorRef, "ref:error:") {
-		t.Fatalf("error_ref=%q, want reference", parsed["error_ref"])
-	}
-	if _, ok := parsed["output"].(map[string]any); !ok {
-		t.Fatalf("output=%v, want structured failure payload", parsed["output"])
-	}
-}
-
-func TestNewSessionDispatcherRegistersDelegationTools(t *testing.T) {
+func TestNewSessionDispatcherRegistersDispatchTasksTool(t *testing.T) {
 	ws, err := workspace.Open(".")
 	if err != nil {
 		t.Fatal(err)
@@ -533,31 +302,17 @@ func TestNewSessionDispatcherRegistersDelegationTools(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, ok := reg.Get("delegate"); !ok {
-		t.Fatal("delegate tool not registered in registry")
-	}
 	if _, ok := reg.Get("dispatch_tasks"); !ok {
 		t.Fatal("dispatch_tasks tool not registered in registry")
 	}
-	if !d.Has(runtime.Tool, "delegate") || !d.Has(runtime.Tool, "dispatch_tasks") {
-		t.Fatal("delegation tools are not executable in dispatcher")
-	}
-	result := d.Invoke(context.Background(), runtime.Request{
-		ID:    "tool-delegate-1",
-		Kind:  runtime.Tool,
-		Name:  "delegate",
-		Input: json.RawMessage(`{"task":"test"}`),
-	})
-	if result.Err != nil {
-		t.Fatalf("dispatcher did not invoke registered delegate tool: %v", result.Err)
+	if !d.Has(runtime.Tool, "dispatch_tasks") {
+		t.Fatal("dispatch_tasks is not executable in dispatcher")
 	}
 }
 
 func TestSessionToolsImplementPrivilegedTool(t *testing.T) {
 	for _, tool := range []tools.Tool{
-		&delegateTool{},
 		cliorchestrate.NewDispatchTasksToolZero(),
-		cliorchestrate.NewSpawnAgentToolZero(),
 		cliorchestrate.NewInspectAgentsToolZero(),
 		cliorchestrate.NewJoinRunToolZero(),
 		cliorchestrate.NewCancelRunToolZero(),
@@ -594,61 +349,6 @@ func TestSessionDispatcherDelegationThroughAgentLoop(t *testing.T) {
 	}
 }
 
-func TestDelegateToolMultiStepFalse(t *testing.T) {
-	// When multi_step is false (default), delegate uses the one-shot handler.
-	d := newTestDelegateDispatcher(&mockDelegateCompleter{
-		name:     "test",
-		response: `{"output":"one-shot result"}`,
-	})
-	tool := &delegateTool{dispatcher: d, cfg: config.DefaultSubagentConfig}
-
-	result, err := tool.Execute(context.Background(), json.RawMessage(`{"task":"test","multi_step":false}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(result) == 0 {
-		t.Fatal("expected result")
-	}
-	var parsed map[string]any
-	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
-		t.Fatalf("invalid JSON: %v", err)
-	}
-}
-
-func TestDelegateToolMultiStepTrue(t *testing.T) {
-	// When multi_step is true, delegate routes to the multi_step handler in the dispatcher.
-	// We need a dispatcher that has both "delegate" (one-shot) and "multi_step" handlers.
-	policy := runtime.Policy{MaxDepth: 3}
-	d := runtime.New(policy)
-	// Register one-shot handler for "delegate"
-	_ = d.Register(runtime.Subagent, "delegate", &subagents.OneShotHandler{
-		Completer:    &mockDelegateCompleter{name: "test", response: "one-shot"},
-		Model:        "test-model",
-		SystemPrompt: "Test.",
-	})
-	// Register multi-step handler for "multi_step"
-	ws, _ := workspace.Open(".")
-	reg := tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws})
-	_ = d.Register(runtime.Subagent, "multi_step", &subagents.MultiStepHandler{
-		Completer:    &mockDelegateCompleter{name: "test", response: `{"output":"multi-step result","status":"completed"}`},
-		FullRegistry: reg,
-		Model:        "test-model",
-		MaxSteps:     3,
-		MaxTokens:    1024,
-	})
-
-	tool := &delegateTool{dispatcher: d, cfg: config.DefaultSubagentConfig}
-
-	result, err := tool.Execute(context.Background(), json.RawMessage(`{"task":"test","multi_step":true}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var parsed map[string]any
-	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
-		t.Fatalf("invalid JSON: %v\nresult: %s", err, result)
-	}
-}
-
 func TestNewSessionDispatcherRegistersMultiStepHandler(t *testing.T) {
 	ws, err := workspace.Open(".")
 	if err != nil {
@@ -662,15 +362,8 @@ func TestNewSessionDispatcherRegistersMultiStepHandler(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Verify multi_step handler is registered in the dispatcher.
-	// We can verify indirectly by calling delegate with multi_step=true.
-	tool := &delegateTool{dispatcher: d, cfg: config.DefaultSubagentConfig}
-	result, err := tool.Execute(context.Background(), json.RawMessage(`{"task":"test analysis","multi_step":true}`))
-	if err != nil {
-		t.Fatalf("multi_step delegate failed: %v", err)
-	}
-	if len(result) == 0 {
-		t.Fatal("expected non-empty result")
+	if !d.Has(runtime.Subagent, cliorchestrate.HandlerMultiStep) {
+		t.Fatal("multi_step handler not registered in dispatcher")
 	}
 }
 

@@ -68,14 +68,6 @@ func TestSkillCannotBypassAgentSelection(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "may not invoke") {
 		t.Fatalf("skill selection must not bypass allowlist, got %v", err)
 	}
-
-	spawn := cliorchestrate.NewSpawnAgentToolForSkillPolicy(skillReg, reg, config.DefaultSubagentConfig)
-	_, err = spawn.BuildSpawnTasksForTest([]cliorchestrate.SpawnTaskParamsForTest{{
-		ID: "t1", Agent: "locked", Skill: "bug-audit", Prompt: "audit",
-	}}, runtime.Caller{})
-	if err == nil || !strings.Contains(err.Error(), "may not invoke") {
-		t.Fatalf("spawn name skill selection must not bypass allowlist, got %v", err)
-	}
 }
 
 func TestResumeRechecksAgentAccess(t *testing.T) {

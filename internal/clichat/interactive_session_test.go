@@ -235,7 +235,7 @@ func TestInteractiveAgentSession_ParentCancelDoesNotHang(t *testing.T) {
 func TestInteractiveAgentSession_DefaultWiringRegistersDelegation(t *testing.T) {
 	// Pure configureChatWorkspace + attachSessionDispatcher (identical to runChat).
 	root := t.TempDir()
-	comp := &interactiveScriptCompleter{toolName: "delegate", toolArgs: `{"task":"ping"}`}
+	comp := &interactiveScriptCompleter{toolName: "dispatch_tasks", toolArgs: `{"tasks":[{"id":"t1","prompt":"ping"}]}`}
 	res := &config.Resolved{Model: "test-model", SystemPrompt: "sys", Subagents: config.DefaultSubagentConfig}
 	sess := chat.NewSession(res, comp)
 	sess.UseTools = true
@@ -250,18 +250,18 @@ func TestInteractiveAgentSession_DefaultWiringRegistersDelegation(t *testing.T) 
 	defer func() { cleanup(); memClose() }()
 
 	start := time.Now()
-	reply, err := sess.SendUser(context.Background(), "delegate ping", io.Discard)
+	reply, err := sess.SendUser(context.Background(), "dispatch ping", io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
-		t.Fatalf("delegate hang: %s", elapsed)
+		t.Fatalf("dispatch hang: %s", elapsed)
 	}
 	if reply != "session-done" {
 		t.Fatalf("reply=%q", reply)
 	}
 	// One-shot completer returns "subagent-ok" with blockChat=false.
 	if !toolResultsContain(sess, "subagent-ok") && !toolResultsContain(sess, "output") {
-		t.Fatalf("expected delegate result in history, msgs=%+v", sess.MessagesCopy())
+		t.Fatalf("expected dispatch_tasks result in history, msgs=%+v", sess.MessagesCopy())
 	}
 }

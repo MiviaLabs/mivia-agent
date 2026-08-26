@@ -15,13 +15,15 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
-// collideWithDelegate makes the next surface build fail at the delegation-tool
-// registration, which happens well after the new binding's tier plan and skill
-// registry would have been computed. That is the only interesting failure
-// point: an /agent switch that dies here must leave nothing of the new agent
-// behind.
-func collideWithDelegate(state *AgentSessionState) {
-	state.ToolBase.Register(namedTool{name: "delegate"})
+// collideWithDispatchTasks makes the next surface build fail at the
+// delegation-tool registration, which happens well after the new binding's
+// tier plan and skill registry would have been computed. That is the only
+// interesting failure point: an /agent switch that dies here must leave
+// nothing of the new agent behind. dispatch_tasks is the collision target
+// (not delegate, deleted when dispatch_tasks absorbed it) because it is the
+// one delegation tool still unconditionally re-registered per surface build.
+func collideWithDispatchTasks(state *AgentSessionState) {
+	state.ToolBase.Register(namedTool{name: "dispatch_tasks"})
 }
 
 // TestFailedAgentSwitchLeavesNoTraceOfTheNewAgent pins the authority-escalation
@@ -30,11 +32,11 @@ func collideWithDelegate(state *AgentSessionState) {
 func TestFailedAgentSwitchLeavesNoTraceOfTheNewAgent(t *testing.T) {
 	completer := &scriptedCompleter{turns: []provider.Response{{Content: "done"}}}
 	fixture := newDeferredFixture(t, completer, []string{"read_file"}, []string{"read_file", "grep"})
-	collideWithDelegate(fixture.state)
+	collideWithDispatchTasks(fixture.state)
 	writer := agents.ResolvedAgent{
 		Name: "writer", SystemPrompt: "W",
-		EffectiveTools: []string{"read_file", "write_file", "delegate"},
-		CoreTools:      corePtr("write_file", "delegate"),
+		EffectiveTools: []string{"read_file", "write_file", "dispatch_tasks"},
+		CoreTools:      corePtr("write_file", "dispatch_tasks"),
 	}
 	if err := fixture.state.Registry.Publish(writer); err != nil {
 		t.Fatal(err)

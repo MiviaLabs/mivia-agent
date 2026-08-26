@@ -79,90 +79,8 @@ func RunThroughCoordinator(ctx context.Context, d *runtime.Dispatcher, cfg confi
 }
 
 // ---------------------------------------------------------------------------
-// spawn_agent
+// spawn and wait helpers
 // ---------------------------------------------------------------------------
-
-type spawnAgentTool struct {
-	dispatcher   *runtime.Dispatcher
-	cfg          config.SubagentConfig
-	repo         ledger.LedgerRepository
-	skillReg     *skills.Registry
-	agentReg     *agents.AgentRegistry
-	providerName string
-	model        string
-}
-
-func (t *spawnAgentTool) Name() string { return ToolSpawnAgent }
-func (t *spawnAgentTool) Privileged()  {}
-
-func (t *spawnAgentTool) Description() string {
-	desc := "Spawn a new orchestration run with one or more agent tasks. " +
-		"Tasks can declare dependencies (depends_on) for DAG-based execution. " +
-		"Use spawn_agent when you need sequential execution waves (implement Wave 1, " +
-		"wait for gate, then Wave 2). For parallel independent tasks, use dispatch_tasks. " +
-		"Sets wait to control whether the call returns immediately (none), waits for " +
-		"one task (task), or waits for the full run (run). " +
-		"When wait=run, returns the completed tasks' structured results. For large results, output_ref is returned instead of inline output; use ledger_read to fetch the full body. " +
-		"Otherwise returns run_id, display_name, status, and task list for subsequent " +
-		"inspection (inspect_agents), joining (join_run), or cancellation (cancel_run)."
-	return desc
-}
-
-func (t *spawnAgentTool) Parameters() map[string]any {
-	result := map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"tasks": map[string]any{
-				"type": "array", "items": taskItemSchema(t.agentReg, false),
-				"description": "Array of 1+ tasks forming a DAG via depends_on",
-			},
-			"idempotency_key": map[string]any{
-				"type":        "string",
-				"description": "Optional key to deduplicate identical run creation for the same caller",
-			},
-			"wait": map[string]any{
-				"type": "string", "enum": []string{"none", "task", "run"},
-				"description": "Wait mode: none returns immediately; task waits for the requested task; run waits for the full run",
-			},
-			"wait_task_id": map[string]any{
-				"type": "string", "description": "Required when wait=task",
-			},
-		},
-		"required":             []string{"tasks"},
-		"additionalProperties": false,
-	}
-
-	return result
-}
-
-func (t *spawnAgentTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	caller, _ := runtime.CallerFrom(ctx)
-	var params struct {
-		Tasks          []spawnTaskParams `json:"tasks"`
-		IdempotencyKey string            `json:"idempotency_key,omitempty"`
-		Wait           string            `json:"wait,omitempty"`
-		WaitTaskID     string            `json:"wait_task_id,omitempty"`
-	}
-	if err := decodeStrictTaskJSON(args, &params); err != nil {
-		return "", fmt.Errorf("spawn_agent: %w", err)
-	}
-	if len(params.Tasks) == 0 {
-		return `{"error":"at least one task is required"}`, nil
-	}
-	wait, err := normalizedSpawnWait(params.Wait, params.WaitTaskID)
-	if err != nil {
-		return `{"error":"` + err.Error() + `"}`, nil
-	}
-	subTasks, err := t.buildSpawnTasks(params.Tasks, caller)
-	if err != nil {
-		return "", fmt.Errorf("spawn_agent: %w", err)
-	}
-	snap, completed, err := spawnAndWait(ctx, t.dispatcher, t.cfg, t.repo, subTasks, params.IdempotencyKey, wait, params.WaitTaskID)
-	if err != nil {
-		return "", fmt.Errorf("spawn_agent: %w", err)
-	}
-	return spawnResultPayload(snap, completed, t.cfg.InlineOutputBytes, EffectiveOrchestrationRepo(t.repo)), nil
-}
 
 // spawnAndWait spawns tasks through the coordinator, stamps caller identity
 // (depth/session/turn/role - the same stamping RunThroughCoordinator applies
@@ -275,42 +193,6 @@ func waitForSpawn(ctx context.Context, c coordinator.Coordinator, handle *coordi
 		return ledger.RunSnapshot{}, fmt.Errorf("wait for task: %w", err)
 	}
 	return c.Inspect(ctx, handle)
-}
-
-// Ensure spawnAgentTool implements required interfaces at compile time.
-var _ tools.Tool = (*spawnAgentTool)(nil)
-
-func (t *spawnAgentTool) Capability(args json.RawMessage) tools.Capability {
-	var params struct {
-		Tasks []struct {
-			TimeoutSeconds int `json:"timeout_seconds"`
-		} `json:"tasks"`
-	}
-	_ = json.Unmarshal(args, &params)
-	// Each task resolves its own timeout: an explicit > 0 timeout_seconds IS
-	// the actual budget; 0 falls back to the configured default. The whole-call
-	// budget is the max resolved task timeout. Crucially, when every task has an
-	// explicit timeout, the call budget is bounded by the largest one — NOT
-	// floored to the 12h default. (Before the fix, maxBudget was pre-seeded with
-	// EffectiveTimeoutSec, making every spawn_agent call run with a 12h budget
-	// even when all tasks asked for 5 minutes, which caused stuck runs.)
-	maxBudget := 0
-	for _, task := range params.Tasks {
-		taskBudget := task.TimeoutSeconds
-		if taskBudget <= 0 {
-			taskBudget = config.EffectiveTimeoutSec(t.cfg.DefaultTimeout)
-		}
-		if taskBudget > maxBudget {
-			maxBudget = taskBudget
-		}
-	}
-	if maxBudget == 0 { // no tasks, or all zero
-		maxBudget = config.EffectiveTimeoutSec(t.cfg.DefaultTimeout)
-	}
-	return tools.Capability{
-		Class:   tools.ExecutionExternal,
-		Timeout: time.Duration(maxBudget+DispatchOrchestrationSlackSec) * time.Second,
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -460,7 +342,7 @@ func (t *inspectAgentTool) Capability(args json.RawMessage) tools.Capability {
 // ---------------------------------------------------------------------------
 
 // RegisterOrchestrationTools registers the orchestration tools (dispatch_tasks,
-// spawn_agent, inspect_agent, join_run, cancel_run) on both the model-visible
+// inspect_agent, join_run, cancel_run) on both the model-visible
 // registry and the runtime dispatcher. It is called from NewSessionDispatcher.
 // dispatch_tasks is registered first: session_tool_catalog.go documents that
 // the resulting wire order is load-cache-stability-sensitive for
@@ -468,7 +350,6 @@ func (t *inspectAgentTool) Capability(args json.RawMessage) tools.Capability {
 func RegisterOrchestrationTools(d *runtime.Dispatcher, reg *tools.Registry, cfg config.SubagentConfig, repo ledger.LedgerRepository, skillReg *skills.Registry, agentReg *agents.AgentRegistry, providerName, model string) error {
 	toolSet := []tools.Tool{
 		&dispatchTasksTool{dispatcher: d, cfg: cfg, skillReg: skillReg, repo: repo, agentReg: agentReg, providerName: providerName, model: model},
-		&spawnAgentTool{dispatcher: d, cfg: cfg, repo: repo, skillReg: skillReg, agentReg: agentReg, providerName: providerName, model: model},
 		&inspectAgentTool{dispatcher: d, cfg: cfg, repo: repo},
 		&joinRunTool{dispatcher: d, cfg: cfg, repo: repo},
 		&cancelRunTool{dispatcher: d, cfg: cfg, repo: repo},

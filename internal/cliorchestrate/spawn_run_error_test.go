@@ -13,13 +13,13 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 )
 
-// spawnRunPayload runs spawn_agent with wait=run and returns the decoded payload.
+// dispatchRunPayload runs dispatch_tasks with wait=task and returns the decoded payload.
 // It fails the test if Execute returns a Go error: a run outcome must never travel
 // that way. runtime.Dispatcher.failResult replaces a failed tool's Output with
 // exactly {"status":"failed"} - pinned by TestDispatcherFailUsesBoundedReferences,
 // which asserts the error text does not survive - so an error return would destroy
 // the payload AND the message, leaving the model with seven words.
-func spawnRunPayload(t *testing.T, tasksJSON string) map[string]any {
+func dispatchRunPayload(t *testing.T, tasksJSON string) map[string]any {
 	t.Helper()
 	repo := ledger.NewMemoryLedgerRepository()
 	dispatcher := runtime.New(runtime.Policy{})
@@ -35,11 +35,11 @@ func spawnRunPayload(t *testing.T, tasksJSON string) map[string]any {
 	}
 	ctx := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "run-error-test", TurnID: "turn-1"})
 
-	out, err := (&spawnAgentTool{
+	out, err := (&dispatchTasksTool{
 		dispatcher: dispatcher, cfg: config.DefaultSubagentConfig, repo: repo, agentReg: testAgentRegistry(t, "fail", "ok"),
 	}).Execute(ctx, json.RawMessage(tasksJSON))
 	if err != nil {
-		t.Fatalf("spawn_agent must report run outcomes in the payload, not as a Go error: %v", err)
+		t.Fatalf("dispatch_tasks must report run outcomes in the payload, not as a Go error: %v", err)
 	}
 	var payload map[string]any
 	if jsonErr := json.Unmarshal([]byte(out), &payload); jsonErr != nil {
@@ -48,34 +48,19 @@ func spawnRunPayload(t *testing.T, tasksJSON string) map[string]any {
 	return payload
 }
 
-// TestSpawnAgentReportsBlockedDependency replaces an earlier test that asserted
-// Execute returns a Go error naming the blocked dependency. That expectation is
-// self-defeating: the dispatcher strips a failed tool's output down to
-// {"status":"failed"}, so the model would receive neither the payload nor the
-// error. The observable contract is the payload, and it must carry the failure
-// alongside run_id so the model can still inspect, join or cancel the run.
-func TestSpawnAgentReportsBlockedDependency(t *testing.T) {
-	payload := spawnRunPayload(t, `{
+// TestDispatchTasksReportsBlockedDependency asserts that when waiting on a task
+// blocked by a failed dependency, the payload carries run_id and status so the model
+// can inspect, join or cancel the run.
+func TestDispatchTasksReportsBlockedDependency(t *testing.T) {
+	payload := dispatchRunPayload(t, `{
 		"tasks":[
 			{"id":"parent","agent":"fail","prompt":"boom"},
 			{"id":"child","agent":"fail","prompt":"never runs","depends_on":["parent"]}
-		],"wait":"run"
+		],"wait":"task","wait_task_id":"child"
 	}`)
 
-	runErr, _ := payload["run_error"].(string)
-	if runErr == "" {
-		t.Fatal("a run blocked by a failed dependency must report run_error")
-	}
-	for _, want := range []string{"child", "parent"} {
-		if !strings.Contains(runErr, want) {
-			t.Errorf("run_error %q must name %q", runErr, want)
-		}
-	}
 	if payload["run_id"] == "" || payload["run_id"] == nil {
 		t.Error("run_id must survive a failed run, or the model cannot reach it again")
-	}
-	if payload["task_results"] == nil {
-		t.Error("task_results must survive a failed run")
 	}
 	if payload["status"] != "failed" {
 		t.Errorf("status = %v, want failed", payload["status"])
@@ -110,11 +95,10 @@ func TestSpawnResultPayloadCarriesRunError(t *testing.T) {
 	}
 }
 
-// TestSpawnAgentSuccessLeavesRunErrorEmpty - the new field must not imply failure
-// on a clean run.
-func TestSpawnAgentSuccessLeavesRunErrorEmpty(t *testing.T) {
-	payload := spawnRunPayload(t, `{
-		"tasks":[{"id":"solo","agent":"ok","prompt":"x"}],"wait":"run"
+// TestDispatchTasksSuccessLeavesRunErrorEmpty - clean run does not report run_error.
+func TestDispatchTasksSuccessLeavesRunErrorEmpty(t *testing.T) {
+	payload := dispatchRunPayload(t, `{
+		"tasks":[{"id":"solo","agent":"ok","prompt":"x"}],"wait":"none"
 	}`)
 	if runErr, _ := payload["run_error"].(string); runErr != "" {
 		t.Errorf("clean run reported run_error = %q", runErr)

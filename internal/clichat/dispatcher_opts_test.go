@@ -42,8 +42,8 @@ func TestNewSessionDispatcherOptsBuildsDispatcher(t *testing.T) {
 	if !d.Has(runtime.Subagent, cliorchestrate.HandlerDelegate) {
 		t.Fatal("delegate handler not registered")
 	}
-	if !d.Has(runtime.Tool, "delegate") || !d.Has(runtime.Tool, "dispatch_tasks") {
-		t.Fatal("delegation tools not registered")
+	if !d.Has(runtime.Tool, "dispatch_tasks") {
+		t.Fatal("dispatch_tasks tool not registered")
 	}
 
 	if err := sess.SetPromptBudget(20); err != nil {

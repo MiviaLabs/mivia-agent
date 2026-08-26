@@ -17,36 +17,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
-func TestSpawnAgentWaitRunReturnsTaskOutput(t *testing.T) {
-	repo := ledger.NewMemoryLedgerRepository()
-	dispatcher := runtime.New(runtime.Policy{})
-	if err := dispatcher.Register(runtime.Subagent, "oneshot", handlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) {
-		return json.RawMessage(`{"output":"completed analysis"}`), nil
-	})); err != nil {
-		t.Fatal(err)
-	}
-
-	ctx := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "session-spawn", TurnID: "turn-1"})
-	out, err := (&spawnAgentTool{dispatcher: dispatcher, cfg: config.DefaultSubagentConfig, repo: repo, skillReg: nil, agentReg: testAgentRegistry(t, "oneshot")}).Execute(ctx, json.RawMessage(`{
-		"tasks":[{"id":"t1","agent":"oneshot","prompt":"analyze"}],"wait":"run"
-	}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var response struct {
-		TaskResults []struct {
-			TaskID string         `json:"task_id"`
-			Output map[string]any `json:"output"`
-		} `json:"task_results"`
-	}
-	if err := json.Unmarshal([]byte(out), &response); err != nil {
-		t.Fatal(err)
-	}
-	if len(response.TaskResults) != 1 || response.TaskResults[0].TaskID != "t1" || response.TaskResults[0].Output["output"] != "completed analysis" {
-		t.Fatalf("task_results=%+v, want completed task output", response.TaskResults)
-	}
-}
-
 // TestModelVisibleRefsUseCanonicalMinter guards the invariant that a reference
 // handed to the model is the canonical, resolvable form: every model-visible ref
 // must be byte-identical to what ledger.Reference mints, and must parse back via
@@ -327,8 +297,8 @@ func TestCancelRunCannotCancelForeignRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	ownerCtx := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "owner"})
-	spawn := &spawnAgentTool{dispatcher: dispatcher, cfg: config.DefaultSubagentConfig, repo: repo, skillReg: nil, agentReg: testAgentRegistry(t, "oneshot")}
-	out, err := spawn.Execute(ownerCtx, json.RawMessage(`{"tasks":[{"id":"t1","agent":"oneshot","prompt":"work"}]}`))
+	tool := NewDispatchTasksToolConfigured(dispatcher, config.DefaultSubagentConfig, repo, testAgentRegistry(t, "oneshot"))
+	out, err := tool.Execute(ownerCtx, json.RawMessage(`{"tasks":[{"id":"t1","agent":"oneshot","prompt":"work"}],"wait":"none"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -517,44 +487,12 @@ func TestTaskDepthPropagates(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "depth-session", TurnID: "turn-1", Depth: 1})
-	_, err := (&spawnAgentTool{dispatcher: dispatcher, cfg: config.DefaultSubagentConfig, repo: repo, skillReg: nil, agentReg: testAgentRegistry(t, "oneshot")}).Execute(ctx, json.RawMessage(`{"tasks":[{"id":"t1","agent":"oneshot","prompt":"work"}],"wait":"run"}`))
+	_, err := NewDispatchTasksToolConfigured(dispatcher, config.DefaultSubagentConfig, repo, testAgentRegistry(t, "oneshot")).Execute(ctx, json.RawMessage(`{"tasks":[{"id":"t1","agent":"oneshot","prompt":"work"}],"wait":"run"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if depth := <-depths; depth != 2 {
 		t.Fatalf("task depth = %d, want 2", depth)
-	}
-}
-
-func TestSpawnAgentIdempotencyKeyDedupesAcrossTurns(t *testing.T) {
-	repo := ledger.NewMemoryLedgerRepository()
-	dispatcher := runtime.New(runtime.Policy{})
-	if err := dispatcher.Register(runtime.Subagent, "worker", handlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) {
-		return json.RawMessage(`{"ok":true}`), nil
-	})); err != nil {
-		t.Fatal(err)
-	}
-	tool := &spawnAgentTool{dispatcher: dispatcher, cfg: config.DefaultSubagentConfig, repo: repo, agentReg: testAgentRegistry(t, "worker")}
-	args := json.RawMessage(`{"tasks":[{"id":"task-1","agent":"worker","prompt":"requested work"}],"idempotency_key":"key"}`)
-	first, err := tool.Execute(runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "session", TurnID: "turn:1"}), args)
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := tool.Execute(runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "session", TurnID: "turn:2"}), args)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var firstResult, secondResult struct {
-		RunID string `json:"run_id"`
-	}
-	if err := json.Unmarshal([]byte(first), &firstResult); err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal([]byte(second), &secondResult); err != nil {
-		t.Fatal(err)
-	}
-	if firstResult.RunID == "" || secondResult.RunID != firstResult.RunID {
-		t.Fatalf("run IDs = %q, %q; want one non-empty reused run ID", firstResult.RunID, secondResult.RunID)
 	}
 }
 

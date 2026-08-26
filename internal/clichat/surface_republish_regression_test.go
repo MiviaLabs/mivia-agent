@@ -403,7 +403,7 @@ func TestModelSwitchWithoutAnAgentSurfaceReportsAFailure(t *testing.T) {
 	// A plain tool already holding a session-tool name makes registration
 	// refuse, which is the only way this path can fail.
 	base := tierRegistry("read_file")
-	base.Register(namedTool{name: "delegate"})
+	base.Register(namedTool{name: "dispatch_tasks"})
 	sess.Tools = base
 	sess.UseTools = true
 	if _, err := buildModelBinding(sess, res, dir, res.ProviderName, res.Model, nil); err == nil {

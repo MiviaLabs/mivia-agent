@@ -317,7 +317,7 @@ func TestAdmittedToolIsAppendedAsATail(t *testing.T) {
 	}
 	// The core block keeps its position and order; the privileged session
 	// tools the dispatcher registers sit behind the appended tail.
-	coreLen := slices.Index(before, "delegate")
+	coreLen := slices.Index(before, "dispatch_tasks")
 	if coreLen <= 0 {
 		t.Fatalf("privileged session tools do not follow the core block: %v", before)
 	}

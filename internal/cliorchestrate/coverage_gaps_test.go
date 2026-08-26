@@ -90,10 +90,11 @@ func TestRegisterOrchestrationToolsFailsOnDuplicateName(t *testing.T) {
 // registration order inside RegisterOrchestrationTools now that dispatch_tasks
 // construction moved here from clichat's registerDelegationTools.
 // session_tool_catalog.go documents that the resulting wire order
-// [delegate, dispatch_tasks, spawn_agent, inspect_agents, join_run,
-// cancel_run, ...] is load-cache-stability-sensitive for OpenAI-compatible
-// providers, so dispatch_tasks landing first (ahead of spawn_agent) is the one
-// assertion that must not be loosened.
+// [dispatch_tasks, inspect_agents, join_run, cancel_run, ...] is
+// load-cache-stability-sensitive for OpenAI-compatible providers, so
+// dispatch_tasks landing first is the one assertion that must not be
+// loosened. spawn_agent and delegate no longer exist as separate tools -
+// dispatch_tasks absorbed both (agent-optional tasks, wait/idempotency_key).
 func TestRegisterOrchestrationToolsOrderMatchesCatalog(t *testing.T) {
 	d, err := runtime.NewToolDispatcher(tools.NewRegistry(), runtime.Policy{})
 	if err != nil {
@@ -104,7 +105,7 @@ func TestRegisterOrchestrationToolsOrderMatchesCatalog(t *testing.T) {
 	if err := RegisterOrchestrationTools(d, reg, config.SubagentConfig{}, nil, nil, nil, "", ""); err != nil {
 		t.Fatalf("RegisterOrchestrationTools: %v", err)
 	}
-	want := []string{"dispatch_tasks", "spawn_agent", "inspect_agents", "join_run", "cancel_run"}
+	want := []string{"dispatch_tasks", "inspect_agents", "join_run", "cancel_run"}
 	got := make([]string, 0, len(want))
 	for _, tool := range reg.List() {
 		got = append(got, tool.Name())

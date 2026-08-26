@@ -7,7 +7,6 @@ package clichat
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -17,17 +16,13 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
-	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	cliworkflow "github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
-	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
-	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
-	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 
@@ -191,40 +186,6 @@ func TestDiffCov2WorkGroupWindowNarrowWidthAndAppendBlock(t *testing.T) {
 	appendRenderedBlock(r, ChatBlock{Kind: ChatBlockSystem, Text: "note"}, "m", 60, false)
 	if len(r.Lines) == 0 {
 		t.Fatal("appendRenderedBlock produced no lines")
-	}
-}
-
-// --- delegate.go ---
-
-// diffCov2Coordinator serves delegate's coordinator seam with a run that
-// resolves to a task-level error result.
-type diffCov2Coordinator struct {
-	coordinator.Coordinator
-}
-
-func (diffCov2Coordinator) Spawn(context.Context, []subagents.Task, string) (*coordinator.RunHandle, error) {
-	return &coordinator.RunHandle{}, nil
-}
-
-func (diffCov2Coordinator) Inspect(context.Context, *coordinator.RunHandle) (ledger.RunSnapshot, error) {
-	return ledger.RunSnapshot{RunID: "diffcov2-run"}, nil
-}
-
-func (diffCov2Coordinator) Join(context.Context, *coordinator.RunHandle) (*coordinator.RunResult, error) {
-	return &coordinator.RunResult{Err: errors.New("task exploded")}, nil
-}
-
-func TestDiffCov2DelegateTaskErrResult(t *testing.T) {
-	d := runtime.New(runtime.Policy{})
-	cleanup := cliorchestrate.StoreTestCoordinator(d, diffCov2Coordinator{}, ledger.NewMemoryLedgerRepository())
-	t.Cleanup(cleanup)
-	tool := &delegateTool{dispatcher: d, cfg: config.DefaultSubagentConfig}
-	body, err := tool.Execute(context.Background(), json.RawMessage(`{"task":"t"}`))
-	if err != nil {
-		t.Fatalf("Execute err = %v", err)
-	}
-	if !strings.Contains(body, `"error"`) || !strings.Contains(body, `"status"`) {
-		t.Fatalf("Execute body missing error envelope: %q", body)
 	}
 }
 

@@ -27,7 +27,7 @@ func routingAgentRegistry(t *testing.T) *agents.AgentRegistry {
 	return reg
 }
 
-func routingTools(t *testing.T) (*dispatchTasksTool, *spawnAgentTool) {
+func routingTools(t *testing.T) *dispatchTasksTool {
 	t.Helper()
 	d := runtime.New(runtime.Policy{})
 	for _, name := range []string{"researcher", "writer"} {
@@ -44,8 +44,7 @@ func routingTools(t *testing.T) (*dispatchTasksTool, *spawnAgentTool) {
 	}
 	reg := routingAgentRegistry(t)
 	repo := ledger.NewMemoryLedgerRepository()
-	return &dispatchTasksTool{dispatcher: d, cfg: config.DefaultSubagentConfig, repo: repo, agentReg: reg},
-		&spawnAgentTool{dispatcher: d, cfg: config.DefaultSubagentConfig, repo: repo, agentReg: reg}
+	return &dispatchTasksTool{dispatcher: d, cfg: config.DefaultSubagentConfig, repo: repo, agentReg: reg}
 }
 
 // TestAgentFieldOptionalRunsOneshot guards the agent-less task case end to
@@ -53,38 +52,25 @@ func routingTools(t *testing.T) (*dispatchTasksTool, *spawnAgentTool) {
 // required") - it runs as a bare one-shot call routed to
 // cliorchestrate.HandlerOneshot, not through a named agent's handler.
 func TestAgentFieldOptionalRunsOneshot(t *testing.T) {
-	dispatch, spawn := routingTools(t)
-	spawnCtx := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "routing-test"})
-	for name, invoke := range map[string]func() (string, error){
-		"dispatch": func() (string, error) {
-			return dispatch.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"x","prompt":"work"}]}`))
-		},
-		"spawn": func() (string, error) {
-			return spawn.Execute(spawnCtx, json.RawMessage(`{"tasks":[{"id":"x","prompt":"work"}],"wait":"run"}`))
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			out, err := invoke()
-			if err != nil {
-				t.Fatalf("Execute error = %v, want nil", err)
-			}
-			if !strings.Contains(out, "oneshot-ok") {
-				t.Fatalf("Execute output = %q, want the oneshot handler's result", out)
-			}
-		})
+	dispatch := routingTools(t)
+	out, err := dispatch.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"x","prompt":"work"}]}`))
+	if err != nil {
+		t.Fatalf("Execute error = %v, want nil", err)
+	}
+	if !strings.Contains(out, "oneshot-ok") {
+		t.Fatalf("Execute output = %q, want the oneshot handler's result", out)
 	}
 }
 
 func TestHandlerAndNameSelectorsRejected(t *testing.T) {
-	dispatch, spawn := routingTools(t)
-	spawnCtx := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "routing-test"})
+	dispatch := routingTools(t)
 	cases := []struct {
 		name string
 		tool func(json.RawMessage) error
 		args string
 	}{
 		{"dispatch handler", func(a json.RawMessage) error { _, err := dispatch.Execute(context.Background(), a); return err }, `{"tasks":[{"id":"x","agent":"researcher","prompt":"work","handler":"multi_step"}]}`},
-		{"spawn name", func(a json.RawMessage) error { _, err := spawn.Execute(spawnCtx, a); return err }, `{"tasks":[{"id":"x","agent":"researcher","prompt":"work","name":"oneshot"}]}`},
+		{"dispatch name", func(a json.RawMessage) error { _, err := dispatch.Execute(context.Background(), a); return err }, `{"tasks":[{"id":"x","agent":"researcher","prompt":"work","name":"oneshot"}]}`},
 		{"dispatch role", func(a json.RawMessage) error { _, err := dispatch.Execute(context.Background(), a); return err }, `{"tasks":[{"id":"x","agent":"researcher","prompt":"work","role":"reviewer"}]}`},
 	}
 	for _, tc := range cases {
@@ -97,7 +83,7 @@ func TestHandlerAndNameSelectorsRejected(t *testing.T) {
 }
 
 func TestBuiltInRunnerCannotSelectAgent(t *testing.T) {
-	dispatch, _ := routingTools(t)
+	dispatch := routingTools(t)
 	_, err := dispatch.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"x","agent":"multi_step","prompt":"work"}]}`))
 	if err == nil || !strings.Contains(err.Error(), "unknown agent") {
 		t.Fatalf("error = %v, want unknown agent", err)
@@ -105,31 +91,23 @@ func TestBuiltInRunnerCannotSelectAgent(t *testing.T) {
 }
 
 func TestAgentEnumInParameters(t *testing.T) {
-	dispatch, spawn := routingTools(t)
-	for name, parameters := range map[string]map[string]any{"dispatch": dispatch.Parameters(), "spawn": spawn.Parameters()} {
-		t.Run(name, func(t *testing.T) {
-			items := parameters["properties"].(map[string]any)["tasks"].(map[string]any)["items"].(map[string]any)
-			props := items["properties"].(map[string]any)
-			if _, found := props["handler"]; found {
-				t.Fatal("handler leaked into model schema")
-			}
-			if _, found := props["name"]; found {
-				t.Fatal("name leaked into model schema")
-			}
-			agent := props["agent"].(map[string]any)
-			if got := agent["enum"].([]string); len(got) != 2 || got[0] != "researcher" || got[1] != "writer" {
-				t.Fatalf("agent enum = %#v", got)
-			}
-			// The roster prose ships once per request: dispatch_tasks carries
-			// it, spawn_agent keeps only the enum (see taskItemSchema).
-			hasRoster := strings.Contains(agent["description"].(string), "researcher: Research evidence")
-			if name == "dispatch" && !hasRoster {
-				t.Fatalf("agent routing hint = %q", agent["description"])
-			}
-			if name == "spawn" && hasRoster {
-				t.Fatalf("spawn_agent must not duplicate the roster: %q", agent["description"])
-			}
-		})
+	dispatch := routingTools(t)
+	parameters := dispatch.Parameters()
+	items := parameters["properties"].(map[string]any)["tasks"].(map[string]any)["items"].(map[string]any)
+	props := items["properties"].(map[string]any)
+	if _, found := props["handler"]; found {
+		t.Fatal("handler leaked into model schema")
+	}
+	if _, found := props["name"]; found {
+		t.Fatal("name leaked into model schema")
+	}
+	agent := props["agent"].(map[string]any)
+	if got := agent["enum"].([]string); len(got) != 2 || got[0] != "researcher" || got[1] != "writer" {
+		t.Fatalf("agent enum = %#v", got)
+	}
+	hasRoster := strings.Contains(agent["description"].(string), "researcher: Research evidence")
+	if !hasRoster {
+		t.Fatalf("agent routing hint = %q", agent["description"])
 	}
 }
 
@@ -137,35 +115,30 @@ func TestAgentEnumInParameters(t *testing.T) {
 // "agent" must not be in the required array (an omitted agent is valid -
 // see ResolveTaskRoute's Oneshot route), only "id" and "prompt" are.
 func TestTaskItemSchemaAgentIsOptional(t *testing.T) {
-	dispatch, spawn := routingTools(t)
-	for name, parameters := range map[string]map[string]any{"dispatch": dispatch.Parameters(), "spawn": spawn.Parameters()} {
-		t.Run(name, func(t *testing.T) {
-			items := parameters["properties"].(map[string]any)["tasks"].(map[string]any)["items"].(map[string]any)
-			required := items["required"].([]string)
-			for _, r := range required {
-				if r == "agent" {
-					t.Fatalf("%s: agent must not be required, got required=%v", name, required)
-				}
-			}
-			want := []string{"id", "prompt"}
-			if len(required) != len(want) {
-				t.Fatalf("%s: required=%v, want %v", name, required, want)
-			}
-			for i, w := range want {
-				if required[i] != w {
-					t.Fatalf("%s: required=%v, want %v", name, required, want)
-				}
-			}
-		})
+	dispatch := routingTools(t)
+	parameters := dispatch.Parameters()
+	items := parameters["properties"].(map[string]any)["tasks"].(map[string]any)["items"].(map[string]any)
+	required := items["required"].([]string)
+	for _, r := range required {
+		if r == "agent" {
+			t.Fatalf("agent must not be required, got required=%v", required)
+		}
+	}
+	want := []string{"id", "prompt"}
+	if len(required) != len(want) {
+		t.Fatalf("required=%v, want %v", required, want)
+	}
+	for i, w := range want {
+		if required[i] != w {
+			t.Fatalf("required=%v, want %v", required, want)
+		}
 	}
 }
 
 func TestAgentEnumOmittedWhenRegistryEmpty(t *testing.T) {
 	for name, parameters := range map[string]map[string]any{
 		"dispatch nil":   (&dispatchTasksTool{}).Parameters(),
-		"spawn nil":      (&spawnAgentTool{}).Parameters(),
 		"dispatch empty": (&dispatchTasksTool{agentReg: agents.NewRegistry()}).Parameters(),
-		"spawn empty":    (&spawnAgentTool{agentReg: agents.NewRegistry()}).Parameters(),
 	} {
 		t.Run(name, func(t *testing.T) {
 			items := parameters["properties"].(map[string]any)["tasks"].(map[string]any)["items"].(map[string]any)
@@ -192,15 +165,6 @@ func TestTaskBuildersRecordResolvedBinding(t *testing.T) {
 	}
 	if got := dispatchTasks[0]; got.ProviderName != "deepseek" || got.Model != "deepseek-v4-flash" {
 		t.Fatalf("dispatch task binding = %s/%s, want deepseek/deepseek-v4-flash", got.ProviderName, got.Model)
-	}
-
-	spawn := &spawnAgentTool{agentReg: reg, providerName: "zai", model: "glm-5.2"}
-	spawnTasks, err := spawn.buildSpawnTasks([]spawnTaskParams{{ID: "s1", Agent: "researcher", Prompt: "work"}}, runtime.Caller{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := spawnTasks[0]; got.ProviderName != "deepseek" || got.Model != "deepseek-v4-flash" {
-		t.Fatalf("spawn task binding = %s/%s, want deepseek/deepseek-v4-flash", got.ProviderName, got.Model)
 	}
 }
 

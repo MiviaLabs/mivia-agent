@@ -43,7 +43,7 @@ func TestAgentSkillAllowlist_PerInstance(t *testing.T) {
 }
 
 // TestSkillCannotBypassAgentSelection is in internal/cli/skill_policy_cli_test.go
-// (it needs cli-internal types dispatchTasksTool and spawnAgentTool).
+// (it needs cli-internal type dispatchTasksTool).
 
 func TestSkillToolsSubsetOfAgentTools(t *testing.T) {
 	allowed := []string{"audit"}

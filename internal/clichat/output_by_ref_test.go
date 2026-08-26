@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
@@ -345,83 +344,6 @@ func TestErrorAboveThreshold(t *testing.T) {
 	}
 	if decoded[0]["error_ref"] != ref {
 		t.Fatalf("error_ref = %v, want %q", decoded[0]["error_ref"], ref)
-	}
-}
-
-// TestDelegateResultPayloadAboveThreshold covers delegate's own encoder rather
-// than dispatch's: delegate builds map-based payloads through
-// mergeOutputFields, so its above-threshold branches are not exercised by any
-// encodeResults test.
-func TestDelegateResultPayloadAboveThreshold(t *testing.T) {
-	outputRef := "ref:output:delegate"
-	errorRef := "ref:error:delegate"
-	large := json.RawMessage(strings.Repeat("q", 500))
-	longErr := fmt.Errorf("%s", strings.Repeat("e", 300))
-
-	result := &coordinator.RunResult{
-		Snapshot: ledger.RunSnapshot{
-			Tasks: []ledger.TaskSnapshot{{TaskID: "d1", OutputRef: outputRef, ErrorRef: errorRef}},
-		},
-		Results: []subagents.Result{
-			{TaskID: "d1", Status: "failed", Output: large, Err: longErr},
-		},
-	}
-	body, ok := delegateResultPayload(result, 100)
-	if !ok {
-		t.Fatal("expected a payload")
-	}
-	var decoded map[string]any
-	if err := json.Unmarshal([]byte(body), &decoded); err != nil {
-		t.Fatalf("unmarshal %q: %v", body, err)
-	}
-	if _, inlined := decoded["error"]; inlined {
-		t.Error("error above threshold must not be inlined")
-	}
-	if decoded["error_ref"] != errorRef {
-		t.Errorf("error_ref = %v, want %q", decoded["error_ref"], errorRef)
-	}
-	if _, inlined := decoded["output"]; inlined {
-		t.Error("output above threshold must not be inlined")
-	}
-	if decoded["output_ref"] != outputRef {
-		t.Errorf("output_ref = %v, want %q", decoded["output_ref"], outputRef)
-	}
-	if decoded["output_bytes"] != float64(len(large)) {
-		t.Errorf("output_bytes = %v, want %d", decoded["output_bytes"], len(large))
-	}
-	if decoded["synopsis"] == nil {
-		t.Error("above-threshold output must carry a synopsis")
-	}
-	if decoded["read_hint"] == nil {
-		t.Error("above-threshold output must carry a read_hint")
-	}
-}
-
-// A successful delegate result above the threshold takes the same reference
-// path through the non-error branch.
-func TestDelegateResultPayloadSuccessAboveThreshold(t *testing.T) {
-	outputRef := "ref:output:ok"
-	result := &coordinator.RunResult{
-		Snapshot: ledger.RunSnapshot{
-			Tasks: []ledger.TaskSnapshot{{TaskID: "d1", OutputRef: outputRef}},
-		},
-		Results: []subagents.Result{
-			{TaskID: "d1", Status: "completed", Output: json.RawMessage(strings.Repeat("z", 400))},
-		},
-	}
-	body, ok := delegateResultPayload(result, 50)
-	if !ok {
-		t.Fatal("expected a payload")
-	}
-	var decoded map[string]any
-	if err := json.Unmarshal([]byte(body), &decoded); err != nil {
-		t.Fatalf("unmarshal %q: %v", body, err)
-	}
-	if _, inlined := decoded["output"]; inlined {
-		t.Error("output above threshold must not be inlined")
-	}
-	if decoded["output_ref"] != outputRef {
-		t.Errorf("output_ref = %v, want %q", decoded["output_ref"], outputRef)
 	}
 }
 

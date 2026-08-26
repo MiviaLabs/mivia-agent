@@ -74,9 +74,7 @@ func TestRegisterSessionToolAcceptsMarkedTool(t *testing.T) {
 func TestOrchestrationToolsAreMarkedPrivileged(t *testing.T) {
 	d := newPrivilegeTestDispatcher(t)
 	shipped := []tools.Tool{
-		&delegateTool{dispatcher: d},
 		cliorchestrate.NewDispatchTasksToolConfigured(d, config.DefaultSubagentConfig, nil, nil),
-		cliorchestrate.NewSpawnAgentToolConfigured(d, config.DefaultSubagentConfig, nil, nil),
 		cliorchestrate.NewInspectAgentToolConfigured(d),
 		cliorchestrate.NewJoinRunToolConfigured(d),
 		cliorchestrate.NewCancelRunToolConfigured(d),

@@ -143,9 +143,6 @@ func newSessionDispatcherCore(opts SessionDispatcherOpts, repo ledger.LedgerRepo
 			return nil, err
 		}
 	}
-	if err := registerDelegationTools(d, opts.Registry, opts.Config, repo); err != nil {
-		return nil, err
-	}
 	if err := cliorchestrate.RegisterOrchestrationTools(d, opts.Registry, opts.Config, repo, opts.SkillReg, opts.AgentRegistry, opts.ProviderName, opts.Model); err != nil {
 		return nil, err
 	}
@@ -224,10 +221,4 @@ type sessionDial struct {
 
 func sessionDialFor(opts SessionDispatcherOpts) sessionDial {
 	return sessionDial{static: sessionReasoning(opts), live: opts.Reasoning}
-}
-
-func registerDelegationTools(d *runtime.Dispatcher, reg *tools.Registry, cfg config.SubagentConfig, repo ledger.LedgerRepository) error {
-	// Register on both the model-visible registry and the dispatcher snapshot.
-	delegate := &delegateTool{dispatcher: d, cfg: cfg, repo: repo}
-	return cliagents.RegisterSessionTool(d, reg, delegate)
 }

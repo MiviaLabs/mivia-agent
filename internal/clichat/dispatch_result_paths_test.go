@@ -56,23 +56,3 @@ func TestEncodeDispatchResultAlwaysCarriesASchemaVerdict(t *testing.T) {
 		t.Fatalf("schema = %q, want violation", tr.Schema)
 	}
 }
-
-func TestMergeOutputFieldsSurfacesTheSchemaStatus(t *testing.T) {
-	payload := map[string]any{}
-	mergeOutputFields(payload, []byte(`{"schema":"ok","result":{"a":1}}`), "", 0)
-	if payload["schema"] != "ok" {
-		t.Fatalf("schema = %v, want the envelope's status", payload["schema"])
-	}
-
-	// A payload that is not a schema envelope contributes no schema field.
-	plain := map[string]any{}
-	mergeOutputFields(plain, []byte(`{"result":{"a":1}}`), "", 0)
-	if _, ok := plain["schema"]; ok {
-		t.Fatalf("a plain envelope invented a schema field: %v", plain)
-	}
-	nonJSON := map[string]any{}
-	mergeOutputFields(nonJSON, []byte("plain text"), "", 0)
-	if _, ok := nonJSON["schema"]; ok {
-		t.Fatalf("non-JSON output invented a schema field: %v", nonJSON)
-	}
-}

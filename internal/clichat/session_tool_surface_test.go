@@ -124,12 +124,9 @@ func flattenSchemaDescriptions(v any) []string {
 
 func TestSessionToolSurfaceIsProjectAndLanguageGeneric(t *testing.T) {
 	texts := collectSessionToolText(t, nil)
-	// Should include dispatch_tasks and spawn_agent.
+	// Should include dispatch_tasks.
 	if _, ok := texts["dispatch_tasks"]; !ok {
 		t.Fatal("session tools: missing dispatch_tasks")
-	}
-	if _, ok := texts["spawn_agent"]; !ok {
-		t.Fatal("session tools: missing spawn_agent")
 	}
 	// The read-only execution-history tools are registered on this same path, so
 	// their descriptions are scanned below. Requiring them by name keeps that

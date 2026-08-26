@@ -43,9 +43,7 @@ type sessionToolSpec struct {
 // activation (InjectSkillResourceTool) into a skill-scoped clone, not
 // registered by the session dispatcher, so no root binding advertises it.
 var sessionToolCatalog = []sessionToolSpec{
-	{Name: "delegate", New: func() tools.Tool { return &delegateTool{} }},
 	{Name: "dispatch_tasks", New: func() tools.Tool { return cliorchestrate.NewDispatchTasksToolZero() }},
-	{Name: "spawn_agent", New: func() tools.Tool { return cliorchestrate.NewSpawnAgentToolZero() }},
 	{Name: "inspect_agents", New: func() tools.Tool { return cliorchestrate.NewInspectAgentsToolZero() }},
 	{Name: "join_run", New: func() tools.Tool { return cliorchestrate.NewJoinRunToolZero() }},
 	{Name: "cancel_run", New: func() tools.Tool { return cliorchestrate.NewCancelRunToolZero() }},

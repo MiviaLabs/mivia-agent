@@ -21,7 +21,6 @@ func TestNewZeroTools(t *testing.T) {
 	// Each Zero constructor returns a non-nil tool instance.
 	for name, tool := range map[string]tools.Tool{
 		"dispatch_tasks": NewDispatchTasksToolZero(),
-		"spawn_agent":    NewSpawnAgentToolZero(),
 		"inspect_agents": NewInspectAgentsToolZero(),
 		"join_run":       NewJoinRunToolZero(),
 		"cancel_run":     NewCancelRunToolZero(),
@@ -41,16 +40,10 @@ func TestNewToolVariants(t *testing.T) {
 	if got := NewDispatchTasksToolForCatalog(reg, "", ""); got == nil {
 		t.Fatal("NewDispatchTasksToolForCatalog returned nil")
 	}
-	if got := NewSpawnAgentToolForCatalog(reg, "", ""); got == nil {
-		t.Fatal("NewSpawnAgentToolForCatalog returned nil")
-	}
 	// Skill-policy variants.
 	skillReg := skills.NewRegistry()
 	if got := NewDispatchTasksToolForSkillPolicy(skillReg, reg, cfg); got == nil {
 		t.Fatal("NewDispatchTasksToolForSkillPolicy returned nil")
-	}
-	if got := NewSpawnAgentToolForSkillPolicy(skillReg, reg, cfg); got == nil {
-		t.Fatal("NewSpawnAgentToolForSkillPolicy returned nil")
 	}
 	// WithCfg variant.
 	if got := NewDispatchTasksToolWithCfg(cfg); got == nil {

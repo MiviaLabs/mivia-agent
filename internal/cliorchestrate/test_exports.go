@@ -88,10 +88,6 @@ func ClearAllCoordinators() {
 // cli session tool catalog (schema advertising only; no runtime state).
 func NewDispatchTasksToolZero() tools.Tool { return &dispatchTasksTool{} }
 
-// NewSpawnAgentToolZero returns a zero-value spawn_agent tool for the cli
-// session tool catalog (schema advertising only; no runtime state).
-func NewSpawnAgentToolZero() tools.Tool { return &spawnAgentTool{} }
-
 // NewInspectAgentsToolZero returns a zero-value inspect_agents tool for the
 // cli session tool catalog (schema advertising only; no runtime state).
 func NewInspectAgentsToolZero() tools.Tool { return &inspectAgentTool{} }
@@ -108,25 +104,9 @@ func NewCancelRunToolZero() tools.Tool { return &cancelRunTool{} }
 // Use for type assertions in cli tests that receive a tools.Tool interface.
 type DispatchTasksToolForTest = dispatchTasksTool
 
-// SpawnAgentToolForTest is the exported type alias for spawnAgentTool.
-type SpawnAgentToolForTest = spawnAgentTool
-
 // ModelTaskResultForTest is the exported type alias for modelTaskResult.
 // Use in cli tests that call ModelTaskResults and need to name the element type.
 type ModelTaskResultForTest = modelTaskResult
-
-// NewSpawnAgentToolConfigured builds a spawn_agent tool bound to a dispatcher,
-// config, repository, and agent registry. It serves cli tests that construct
-// the tool directly.
-func NewSpawnAgentToolConfigured(d *runtime.Dispatcher, cfg config.SubagentConfig, repo ledger.LedgerRepository, agentReg *agents.AgentRegistry) *spawnAgentTool {
-	return &spawnAgentTool{dispatcher: d, cfg: cfg, repo: repo, agentReg: agentReg}
-}
-
-// NewSpawnAgentToolForCatalog builds a spawn_agent tool with only the catalog
-// fields set (agent registry, provider, model). It serves schema-level tests.
-func NewSpawnAgentToolForCatalog(agentReg *agents.AgentRegistry, providerName, model string) *spawnAgentTool {
-	return &spawnAgentTool{agentReg: agentReg, providerName: providerName, model: model}
-}
 
 // NewDispatchTasksToolConfigured builds a dispatch_tasks tool bound to a
 // dispatcher, config, repository, and agent registry. It serves cli tests
@@ -167,12 +147,6 @@ var CoordinatorReposForTest = &coordinatorRepos
 // skill registry, agent registry, and config a skill-policy test sets.
 func NewDispatchTasksToolForSkillPolicy(skillReg *skills.Registry, agentReg *agents.AgentRegistry, cfg config.SubagentConfig) *dispatchTasksTool {
 	return &dispatchTasksTool{skillReg: skillReg, agentReg: agentReg, cfg: cfg}
-}
-
-// NewSpawnAgentToolForSkillPolicy builds a spawn_agent tool with the skill
-// registry, agent registry, and config a skill-policy test sets.
-func NewSpawnAgentToolForSkillPolicy(skillReg *skills.Registry, agentReg *agents.AgentRegistry, cfg config.SubagentConfig) *spawnAgentTool {
-	return &spawnAgentTool{skillReg: skillReg, agentReg: agentReg, cfg: cfg}
 }
 
 // CoordinatorOfHandle returns the handle record's coordinator. It serves cli
@@ -257,15 +231,6 @@ func (t *dispatchTasksTool) BuildTasksForTest(params []dispatchTaskParam, defaul
 	return t.buildTasks(params, defaultTimeoutSec)
 }
 
-// BuildSpawnTasksForTest exposes the spawn tool's task builder.
-func (t *spawnAgentTool) BuildSpawnTasksForTest(params []spawnTaskParams, caller runtime.Caller) ([]subagents.Task, error) {
-	return t.buildSpawnTasks(params, caller)
-}
-
 // DispatchTaskParamForTest is the exported alias of the dispatch tool's task
 // parameter type.
 type DispatchTaskParamForTest = dispatchTaskParam
-
-// SpawnTaskParamsForTest is the exported alias of the spawn tool's task
-// parameter type.
-type SpawnTaskParamsForTest = spawnTaskParams
