@@ -143,10 +143,10 @@ func (m Model) HandleEvent(ev uievent.Event) (Model, tea.Cmd) {
 		m = m.flushPending()
 		return m.pushBlock(planBlockValue(m.Theme, m.Tier, b))
 	case uievent.NoticeBody:
-		return m.pushBlock(Block{
-			Kind:   uievent.KindNotice,
-			Header: Header{Label: "notice", Detail: b.Text, Role: theme.RoleInfo},
-		})
+		return m.pushBlock(noticeBlockValue(b))
+	case uievent.HookBody:
+		m = m.flushPending()
+		return m.pushBlock(hookBlockValue(b))
 	case uievent.ErrorBody:
 		m = m.flushPending()
 		return m.pushBlock(errorBlockValue(b))

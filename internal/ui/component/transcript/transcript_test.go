@@ -113,6 +113,7 @@ func TestHandleEventEveryKind(t *testing.T) {
 		{Kind: uievent.KindToolEnd, Body: uievent.ToolEndBody{Name: "edit", OK: false, Err: "boom"}},
 		{Kind: uievent.KindPlan, Body: uievent.PlanBody{Items: []uievent.PlanItem{{Text: "step 1", Done: true}, {Text: "step 2"}}, Done: 1, Total: 2}},
 		{Kind: uievent.KindNotice, Body: uievent.NoticeBody{Text: "context 80% full"}},
+		{Kind: uievent.KindHook, Body: uievent.HookBody{Event: "PostToolUse", Program: "fmt.sh", Tool: "write_file"}},
 		{Kind: uievent.KindError, Body: uievent.ErrorBody{Text: "failed", Fatal: true}},
 		{Kind: uievent.KindUsage, Body: uievent.UsageBody{InputTokens: 10, OutputTokens: 5}},
 		{Kind: uievent.KindTurnEnd, Body: uievent.TurnEndBody{Reason: "completed"}},
@@ -120,7 +121,7 @@ func TestHandleEventEveryKind(t *testing.T) {
 	m.SetSize(80, 200)
 	m = drain(t, m, events)
 	got := ansi.Strip(m.Dump())
-	for _, want := range []string{"hi", "full reply", "3 words", "hidden", "run_command", "output line", "1 of 2", "done", "boom", "step 1", "step 2", "context 80% full", "failed", "10 in"} {
+	for _, want := range []string{"hi", "full reply", "3 words", "hidden", "run_command", "output line", "1 of 2", "done", "boom", "step 1", "step 2", "context 80% full", "fmt.sh", "failed", "10 in"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the transcript is missing %q:\n%s", want, got)
 		}

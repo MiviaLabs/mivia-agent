@@ -9,6 +9,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/hooksession"
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/composer"
@@ -101,6 +102,7 @@ func DefaultCommands() []composer.Command {
 		{Name: "cost", Desc: "show current session spend"},
 		{Name: "effort", Desc: "set reasoning effort level for active model"},
 		{Name: "help", Desc: "show the keymap dialog"},
+		{Name: "hooks", Desc: "list armed lifecycle hooks"},
 		{Name: "model", Desc: "pick or switch model"},
 		{Name: "queue", Desc: "manage queued messages"},
 		{Name: "quit", Desc: "exit mivia"},
@@ -174,6 +176,8 @@ func (r *CommandRunner) Run(ctx context.Context, name, args string) ports.Comman
 		return ports.CommandOutcome{OpenTheme: true}
 	case "help":
 		return ports.CommandOutcome{OpenHelp: true}
+	case "hooks":
+		return r.handleHooks(args)
 	case "settings":
 		return ports.CommandOutcome{OpenSettings: true, SettingsSection: args}
 	case "quit", "exit":
@@ -268,6 +272,15 @@ func (r *CommandRunner) handleCompact(ctx context.Context, focus string) ports.C
 	notice := fmt.Sprintf("Context compacted (%d%% used, %s/%s prompt).",
 		u.Percent, chat.FormatTokenK(u.UsedTokens), chat.FormatTokenK(u.BudgetTokens))
 	return ports.CommandOutcome{Notice: notice}
+}
+
+// handleHooks serves /hooks on the new TUI. It reaches internal/hooksession
+// directly rather than through internal/cli: hooksession is a leaf package
+// (imports only internal/config and internal/hooks), so this does not
+// reintroduce the CLI dependency internal/uiadapter must stay free of.
+func (r *CommandRunner) handleHooks(args string) ports.CommandOutcome {
+	fields := append([]string{"/hooks"}, strings.Fields(args)...)
+	return ports.CommandOutcome{Notice: hooksession.SlashOutput(fields)}
 }
 
 func (r *CommandRunner) handleContext() ports.CommandOutcome {

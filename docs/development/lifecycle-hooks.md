@@ -372,12 +372,17 @@ a file, and inventing a path for one is not the same as having one.
 ## Seeing your hooks run
 
 A hook that runs invisibly is the part that is hard to defend, so every
-execution produces a transcript row:
+execution produces a row, on both the interactive TUI and the plain
+(`--output json` / non-TTY) renderer:
 
 ```text
-hook PostToolUse  fmt.sh ran: gofmt rewrote 2 files
-hook PostToolUse  lint.sh ran, no output
-hook PreToolUse   guard.sh blocked the call: policy forbids this argv
+hook PostToolUse  fmt.sh (PostToolUse) -> write_file
+  in:  {"path":"a.go"}
+  out: gofmt rewrote 2 files
+hook PostToolUse  lint.sh (PostToolUse) -> write_file, no output
+hook PreToolUse   guard.sh (PreToolUse) -> run_command  blocked
+  in:  {"argv":["rm","-rf","/"]}
+  out: policy forbids this argv
 ```
 
 The silent row is deliberate. "Did my formatter fire?" cannot honestly be
@@ -387,6 +392,15 @@ nothing looks exactly like a working hook until the row exists.
 Diagnostics appear here too: a hook that timed out, crashed, or could not start
 shows its warning on the row. Those never reach the model - they are about your
 script, not about the tool call - and `/hooks` keeps the recent ones.
+
+`/hooks` and hook-run visibility work identically on the new TUI
+(`internal/newtui`) and the old `--plain` REPL: both read from
+`internal/hooksession`, the leaf package that owns hook-session state
+(discovery, arming, the `/hooks` listing text) so neither surface depends on
+the other's package. A hook's input and output are bounded and redacted
+before display, the same as a tool's own input/output preview - a hook script
+that echoes an environment variable or a command's stderr does not bypass the
+workspace's redaction policy.
 
 ## Common patterns
 
@@ -538,8 +552,16 @@ script above stores the payload whole rather than picking fields out of it.
 > exactly one publish site, the root TUI turn goroutine. The `--plain` REPL and
 > the `-p` one-shot never publish it, so this hook is silent there and the log
 > will simply have no rows from those runs. That is a seam gap rather than a
-> decision - see `internal/cli/hooks_runner.go` - and it is worth knowing before
-> you build billing or audit on top of it.
+> decision - see `internal/hooksession.RunStopEvent` (moved from the former
+> `internal/cli/hooks_runner.go`) - and it is worth knowing before you build
+> billing or audit on top of it.
+>
+> **Limitation: a deferred tool served synchronously produces no hook row.**
+> `internal/chat.Session.runDeferredToolNow` still runs `PreToolUse`/
+> `PostToolUse` against the call - the policy lives on the dispatcher, not on
+> this path - but discards `result.HookRuns` rather than emitting them, so a
+> hook that fires for a deferred tool served this way is silent on both
+> surfaces. A known gap, recorded rather than silently widened.
 
 `Stop` also fires once per user-visible turn and never per subagent turn. A
 per-subagent `Stop` would run N times with "the assistant is done" semantics

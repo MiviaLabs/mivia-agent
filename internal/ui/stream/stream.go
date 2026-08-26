@@ -60,6 +60,8 @@ func renderOne(w io.Writer, ev uievent.Event) error {
 	case uievent.NoticeBody:
 		_, err := fmt.Fprintf(w, "  notice  %s\n", b.Text)
 		return err
+	case uievent.HookBody:
+		return renderHook(w, b)
 	case uievent.ErrorBody:
 		return renderError(w, b)
 	case uievent.UsageBody:
@@ -105,6 +107,39 @@ func renderError(w io.Writer, b uievent.ErrorBody) error {
 	}
 	for _, line := range lines[1:] {
 		if _, err := fmt.Fprintf(w, "          %s\n", line); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// renderHook prints one lifecycle-hook execution: which program fired, for
+// which tool and event, and what it said - the plain-text mirror of
+// transcript's hookBlockValue. A denied run is marked so a piped log still
+// shows why a call was blocked.
+func renderHook(w io.Writer, b uievent.HookBody) error {
+	program := b.Program
+	if program == "" {
+		program = "(unnamed hook)"
+	}
+	tool := b.Tool
+	if tool == "" {
+		tool = "(no tool)"
+	}
+	status := ""
+	if b.Denied {
+		status = "blocked"
+	}
+	if _, err := fmt.Fprintf(w, "  hook    %s (%s) -> %s %s\n", program, b.Event, tool, status); err != nil {
+		return err
+	}
+	if b.Input != "" {
+		if _, err := fmt.Fprintf(w, "          in:  %s\n", b.Input); err != nil {
+			return err
+		}
+	}
+	if b.Output != "" {
+		if _, err := fmt.Fprintf(w, "          out: %s\n", b.Output); err != nil {
 			return err
 		}
 	}

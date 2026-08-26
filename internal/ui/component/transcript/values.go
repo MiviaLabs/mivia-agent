@@ -275,6 +275,62 @@ func planBlockValue(t theme.Theme, tier theme.Tier, b uievent.PlanBody) Block {
 	}
 }
 
+// noticeBlockValue renders a free-text advisory line. A multi-line notice
+// (e.g. /hooks' listing) keeps its header to the first line and carries the
+// rest as a collapsible body - previously every line past the first was
+// silently dropped, since the block had no Body at all.
+func noticeBlockValue(b uievent.NoticeBody) Block {
+	lines := strings.SplitN(b.Text, "\n", 2)
+	block := Block{
+		Kind:   uievent.KindNotice,
+		Header: Header{Label: "notice", Detail: lines[0], Role: theme.RoleInfo},
+	}
+	if len(lines) > 1 {
+		block.Body = strings.Split(lines[1], "\n")
+		block.Collapsible = true
+	}
+	return block
+}
+
+// hookBlockValue renders one lifecycle-hook execution: which program fired,
+// for which tool and event, and its bounded/redacted input and output. A
+// denied run stays uncollapsed (the operator needs to see why a call was
+// blocked without an extra keypress); an advisory run collapses to its
+// header, matching the reasoning block's "worth knowing it happened, not
+// worth taking up space by default" contract.
+func hookBlockValue(b uievent.HookBody) Block {
+	program := b.Program
+	if program == "" {
+		program = "(unnamed hook)"
+	}
+	tool := b.Tool
+	if tool == "" {
+		tool = "(no tool)"
+	}
+	state, role := "ok", theme.RoleInfo
+	if b.Denied {
+		state, role = "blocked", theme.RoleDanger
+	}
+	var body []string
+	if b.Input != "" {
+		body = append(body, "in:  "+b.Input)
+	}
+	if b.Output != "" {
+		body = append(body, "out: "+b.Output)
+	}
+	return Block{
+		Kind: uievent.KindHook,
+		Header: Header{
+			Label:  "hook",
+			Detail: fmt.Sprintf("%s (%s) -> %s", program, b.Event, tool),
+			State:  state, Role: role,
+		},
+		Body:        body,
+		Collapsible: true,
+		Collapsed:   !b.Denied,
+	}
+}
+
 func errorBlockValue(b uievent.ErrorBody) Block {
 	lines := strings.Split(b.Text, "\n")
 	state := ""

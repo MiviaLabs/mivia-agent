@@ -12,6 +12,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/hooksession"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
@@ -407,7 +408,7 @@ func TestDefaultCommands(t *testing.T) {
 	if len(cmds) == 0 {
 		t.Fatal("expected non-empty DefaultCommands")
 	}
-	var foundModel, foundAgents, foundResume, foundEffort bool
+	var foundModel, foundAgents, foundResume, foundEffort, foundHooks bool
 	for _, c := range cmds {
 		switch c.Name {
 		case "model":
@@ -418,10 +419,65 @@ func TestDefaultCommands(t *testing.T) {
 			foundResume = true
 		case "effort":
 			foundEffort = true
+		case "hooks":
+			foundHooks = true
 		}
 	}
-	if !foundModel || !foundAgents || !foundResume || !foundEffort {
+	if !foundModel || !foundAgents || !foundResume || !foundEffort || !foundHooks {
 		t.Errorf("missing core commands in DefaultCommands: %+v", cmds)
+	}
+}
+
+// /hooks must be reachable from the new TUI without a session configured -
+// unwired is exactly the failure mode this command exists to fix (a
+// silent, unrouted "unknown command").
+func TestCommandRunner_HooksWithNoneConfigured(t *testing.T) {
+	runner := uiadapter.NewCommandRunner(nil, nil, nil)
+	out := runner.Run(context.Background(), "hooks", "")
+	if out.Err != "" {
+		t.Fatalf("hooks: unexpected error %q", out.Err)
+	}
+	if !strings.Contains(strings.ToLower(out.Notice), "no lifecycle hooks") {
+		t.Fatalf("expected a no-hooks-configured notice, got %+v", out)
+	}
+}
+
+// /hooks must reflect a real installed session, so the listing an operator
+// sees is what the dispatcher actually runs - not a static help string.
+func TestCommandRunner_HooksListsArmedHooks(t *testing.T) {
+	ws := t.TempDir()
+	if err := os.MkdirAll(ws+"/.mivia", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ws+"/.mivia/mivia.toml", []byte(`[[hooks]]
+event = "PostToolUse"
+
+  [[hooks.handlers]]
+  type = "command"
+  argv = ["./fmt.sh"]
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	session, err := hooksession.Load(ws)
+	if err != nil {
+		t.Fatalf("hooksession.Load: %v", err)
+	}
+	t.Cleanup(hooksession.SetForTest(session))
+
+	runner := uiadapter.NewCommandRunner(nil, nil, nil)
+	out := runner.Run(context.Background(), "hooks", "")
+	if !strings.Contains(out.Notice, "fmt.sh") {
+		t.Fatalf("expected the armed hook in the listing, got %+v", out)
+	}
+}
+
+// /hooks trust must still answer with the removal notice on the new TUI,
+// matching the old clichat surface.
+func TestCommandRunner_HooksTrustArgument(t *testing.T) {
+	runner := uiadapter.NewCommandRunner(nil, nil, nil)
+	out := runner.Run(context.Background(), "hooks", "trust 1")
+	if !strings.Contains(strings.ToLower(out.Notice), "removed") {
+		t.Fatalf("expected the trust-removed notice, got %+v", out)
 	}
 }
 
