@@ -233,6 +233,20 @@ type Options struct {
 	// speaks a DeepSeek-style thinking dialect that requires the matching
 	// reasoning-replay and reasoning-less-tool-turn-reject wire contract.
 	ReasoningDialect reasoning.Dialect
+	// AnthropicNativeModels lists the names, among this provider's declared
+	// model catalog, whose resolved reasoning dialect is
+	// reasoning.DialectAnthropicAdaptive - i.e. every model entry that
+	// explicitly sets reasoning_dialect = "anthropic_adaptive" (this is never
+	// a provider default outside "anthropic" itself; see
+	// reasoning.CanCarryDialect, which config validation already uses to
+	// reject the dialect on any provider not in its allow-list). Only
+	// llmproxycli's factory reads this: it builds a per-model dispatcher
+	// (llmProxyDispatchCompleter) that routes these specific models through a
+	// native Anthropic Messages API completer, reusing this provider's own
+	// BaseURL/APIKey, while every other model keeps going through
+	// OpenAICompat unchanged. Every other factory ignores this field, the
+	// same way llmgateway is the only reader of ReasoningDialect today.
+	AnthropicNativeModels []string
 	// DialContext, when set, replaces the transport's default dial. Set only
 	// by NewForProvider, only when BaseURL resolved as a verified loopback
 	// address (config.IsOllamaLoopback) - see its own call site for why. A
@@ -372,16 +386,17 @@ func NewForProvider(res *config.Resolved, providerName string) (Completer, error
 	}
 	contextWindowTokens := contextWindowTokensFor(runtime.Models, res.Model)
 	opts := Options{
-		Name:                runtime.ProviderName,
-		BaseURL:             runtime.BaseURL,
-		APIKey:              runtime.APIKey,
-		Model:               res.Model,
-		HTTPReferer:         runtime.HTTPReferer,
-		XTitle:              runtime.XTitle,
-		CacheUsageEnabled:   res.PromptCache != "off",
-		CacheMarkersEnabled: res.PromptCache != "off",
-		ContextWindowTokens: contextWindowTokens,
-		ReasoningDialect:    reasoningDialectFor(runtime.Models, res.Model, providerName),
+		Name:                  runtime.ProviderName,
+		BaseURL:               runtime.BaseURL,
+		APIKey:                runtime.APIKey,
+		Model:                 res.Model,
+		HTTPReferer:           runtime.HTTPReferer,
+		XTitle:                runtime.XTitle,
+		CacheUsageEnabled:     res.PromptCache != "off",
+		CacheMarkersEnabled:   res.PromptCache != "off",
+		ContextWindowTokens:   contextWindowTokens,
+		ReasoningDialect:      reasoningDialectFor(runtime.Models, res.Model, providerName),
+		AnthropicNativeModels: anthropicNativeModelsFor(runtime.Models, providerName),
 	}
 	// ollama pins its own dial (ollama.go, tied to its keyless-mode gate);
 	// every other builtin provider gets the same verified-loopback dial
@@ -419,6 +434,26 @@ func reasoningDialectFor(models []config.ModelSpec, name, providerName string) r
 		}
 	}
 	return reasoning.Resolve(providerName, reasoning.Setting{}).Dialect
+}
+
+// anthropicNativeModelsFor returns every model name in models whose resolved
+// reasoning dialect is reasoning.DialectAnthropicAdaptive under providerName
+// - see Options.AnthropicNativeModels for what consumes this. Unlike
+// reasoningDialectFor (resolved for one selected model), this scans the
+// WHOLE catalog: llmproxycli's dispatcher needs to recognize every opted-in
+// model across a session, not just whichever one is currently selected,
+// because a same-provider subagent delegation can hand a later Request a
+// different model name than the one this Options was built for (Completers
+// are provider-scoped, not model-scoped - the model comes from each
+// request).
+func anthropicNativeModelsFor(models []config.ModelSpec, providerName string) []string {
+	var out []string
+	for _, model := range models {
+		if reasoning.Resolve(providerName, reasoning.Setting{Dialect: model.ReasoningDialect}).Dialect == reasoning.DialectAnthropicAdaptive {
+			out = append(out, model.Name)
+		}
+	}
+	return out
 }
 
 // contextWindowTokensFor returns the declared context capacity of the model

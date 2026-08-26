@@ -450,3 +450,40 @@ func TestResolveSequencesAnthropicDefault(t *testing.T) {
 		})
 	}
 }
+
+// Every dialect but DialectAnthropicAdaptive is always carryable - only that
+// one dialect's wire shape is structurally different enough that a provider
+// needs an explicit adapter for it.
+func TestCanCarryDialectIsUnrestrictedForEveryOtherDialect(t *testing.T) {
+	for _, dialect := range []Dialect{DialectOpenAI, DialectOpenRouter, DialectOpenRouterOnOff, DialectThinking, DialectThinkingEffort, DialectThinkingPreserved, DialectNone, ""} {
+		for _, provider := range []string{"deepseek", "openrouter", "zai", "made-up-provider", ""} {
+			if !CanCarryDialect(provider, dialect) {
+				t.Fatalf("CanCarryDialect(%q, %q) = false, want true (only DialectAnthropicAdaptive is restricted)", provider, dialect)
+			}
+		}
+	}
+}
+
+func TestCanCarryDialectRestrictsAnthropicAdaptiveToTheAllowList(t *testing.T) {
+	cases := []struct {
+		provider string
+		want     bool
+	}{
+		{"anthropic", true},
+		{"llmproxycli", true},
+		{"ANTHROPIC", true}, // provider names are matched case-insensitively
+		{" llmproxycli ", true},
+		{"deepseek", false},
+		{"openrouter", false},
+		{"zai", false},
+		{"ollama", false},
+		{"llmgateway", false},
+		{"minimax", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		if got := CanCarryDialect(tc.provider, DialectAnthropicAdaptive); got != tc.want {
+			t.Fatalf("CanCarryDialect(%q, DialectAnthropicAdaptive) = %v, want %v", tc.provider, got, tc.want)
+		}
+	}
+}

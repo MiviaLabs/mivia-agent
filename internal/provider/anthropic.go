@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 
@@ -62,18 +63,39 @@ func NewAnthropic(opts Options) (Completer, error) {
 		}
 		base = descriptor.DefaultURL
 	}
+	return newAnthropicCompleter("anthropic", base, opts.APIKey, opts.DialContext), nil
+}
+
+// newAnthropicCompleter builds an AnthropicCompleter against an arbitrary
+// base URL and API key - no providerregistry lookup, no fallback. This is
+// the constructor NewAnthropic itself uses, and the one
+// internal/provider/llmproxycli.go uses to speak native Anthropic wire
+// format through a LOCAL PROXY's own base_url/api_key_env (llmproxycli
+// dispatches per-model to a completer built this way for any model whose
+// config entry sets reasoning_dialect = "anthropic_adaptive" - see
+// llmproxycli.go's llmProxyDispatchCompleter).
+//
+// reasoning is unconditionally DialectAnthropicAdaptive, never derived from
+// name via defaultReasoningDialect: this type speaks exactly one wire shape
+// regardless of which provider name constructed it. A caller building one
+// under a different provider name (llmproxycli) must not silently get
+// llmproxycli's own default dialect (DialectOpenAI) instead - that would
+// send OpenAI-shaped reasoning fields into a client that marshals an
+// Anthropic-shaped request body, which is not a dialect mismatch a wire
+// encoder can recover from.
+func newAnthropicCompleter(name, baseURL, apiKey string, dialContext func(ctx context.Context, network, addr string) (net.Conn, error)) *AnthropicCompleter {
 	retry := defaultRetryOptions()
 	return &AnthropicCompleter{
-		name:    "anthropic",
-		baseURL: strings.TrimRight(base, "/"),
-		apiKey:  opts.APIKey,
+		name:    name,
+		baseURL: strings.TrimRight(baseURL, "/"),
+		apiKey:  apiKey,
 		httpClient: &http.Client{
 			Timeout:       DefaultHTTPTimeout,
-			Transport:     newRetryRoundTripper(compatBaseRoundTripper(opts.DialContext), retry),
+			Transport:     newRetryRoundTripper(compatBaseRoundTripper(dialContext), retry),
 			CheckRedirect: checkNoReplayRedirect,
 		},
-		reasoning: defaultReasoningDialect("anthropic"),
-	}, nil
+		reasoning: reasoning.DialectAnthropicAdaptive,
+	}
 }
 
 // Name implements Completer.
@@ -218,13 +240,22 @@ func (c *AnthropicCompleter) buildRequestBody(req Request) (map[string]any, erro
 	if choice := anthropicToolChoice(req.ToolChoice); choice != nil {
 		body["tool_choice"] = choice
 	}
-	// Only a caller-supplied non-default temperature is sent: Anthropic
-	// accepts the parameter only at its default value on claude-sonnet-5, and
-	// omitting it entirely is always safe (matches reasoningBodyFields'
-	// "only ever ADDS keys" convention just above in reasoning.go).
-	if req.Temperature != nil {
-		body["temperature"] = *req.Temperature
-	}
+	// req.Temperature is deliberately NEVER forwarded, unlike every other
+	// dialect's request builder. Anthropic's claude-sonnet-5 (and the rest
+	// of the current model generation) rejects a non-default temperature
+	// outright - HTTP 400 - and this code has no way to tell "the caller's
+	// value happens to equal Anthropic's default" from "the caller wants a
+	// different value": Request.Temperature is a bare *float64 carrying
+	// whatever a session/model-wide [chat] setting resolved to, not a
+	// signal of intent specific to this provider. Omitting the field is
+	// always safe (Anthropic runs at its own default) and is Anthropic's
+	// own documented recommendation for steering behavior on models where
+	// sampling parameters are removed - use effort/prompting instead. Step-5
+	// bug audit caught an earlier version of this that forwarded the value
+	// verbatim: with a config carrying a non-default temperature (e.g. the
+	// bug report this feature exists to fix, [chat] temperature = 0.0),
+	// every request 400s exactly as before, silently defeating the whole
+	// native-Anthropic-routing fix.
 	for k, v := range reasoningBodyFields(resolved.Dialect, resolved.Level) {
 		body[k] = v
 	}

@@ -414,6 +414,34 @@ func TestAnthropicRequestCarriesResolvedReasoningFields(t *testing.T) {
 	}
 }
 
+// Request.Temperature is never forwarded, at any value, with or without
+// active reasoning: Anthropic rejects a non-default temperature outright,
+// and this code has no way to distinguish "happens to equal the default"
+// from "caller wants something else." Confirmed bug from Step-5 bug audit:
+// an earlier version of this code forwarded the value verbatim, silently
+// reproducing the exact 400 the native-Anthropic-routing feature exists to
+// avoid for callers with a non-default [chat] temperature configured.
+func TestAnthropicNeverForwardsTemperature(t *testing.T) {
+	var gotBody map[string]any
+	client := newTestAnthropicClient(t, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{}}`))
+	})
+	temp := 0.0
+	req := Request{
+		Model:          "claude-sonnet-5",
+		Messages:       []Message{{Role: RoleUser, Content: "hi"}},
+		Temperature:    &temp,
+		ReasoningLevel: reasoning.Medium,
+	}
+	if _, err := client.ChatTurn(context.Background(), req); err != nil {
+		t.Fatalf("ChatTurn: %v", err)
+	}
+	if _, present := gotBody["temperature"]; present {
+		t.Fatalf("request body carries temperature = %v, want the field omitted entirely", gotBody["temperature"])
+	}
+}
+
 // max_tokens is always sent (Anthropic requires it): a caller-set value
 // wins, otherwise the effort-scaled floor applies.
 func TestAnthropicMaxTokensDefaultsWhenUnset(t *testing.T) {

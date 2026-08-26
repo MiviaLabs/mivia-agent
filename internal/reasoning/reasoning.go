@@ -161,6 +161,49 @@ func DefaultDialect(provider string) (Dialect, bool) {
 	return dialect, ok
 }
 
+// anthropicNativeCapableProviders lists provider names whose client can
+// actually speak Anthropic's native wire format when a model entry sets
+// reasoning_dialect = "anthropic_adaptive": the anthropic provider itself,
+// and llmproxycli, whose factory (internal/provider/llmproxycli.go) builds a
+// per-model dispatcher for any model that opts in, reusing llmproxycli's own
+// base_url/api_key_env rather than requiring a separate [providers.anthropic]
+// block. This is a capability allow-list, not a provider default:
+// DialectAnthropicAdaptive is never llmproxycli's own default dialect
+// (defaultDialects keeps that as DialectOpenAI) - only an explicit
+// reasoning_dialect on one model entry opts that one model in.
+//
+// Every dialect other than DialectAnthropicAdaptive validates purely through
+// ParseDialect/CanGrade; this one is gated separately because its wire shape
+// is not just a different field on the same request body (like every other
+// dialect here) but a structurally different request entirely - system
+// prompt at the top level, content blocks instead of a flat message string,
+// no OpenAI-compatible envelope at all. A provider whose client has no
+// adapter for that shape cannot deliver it no matter what the config says,
+// the same "looks applied, does nothing" failure
+// checkReasoningIsDeliverable's own doc comment already guards against for
+// every other dialect - except here, absent this gate, the failure mode was
+// worse: not "sends nothing" but "sends a malformed request."
+var anthropicNativeCapableProviders = map[string]struct{}{
+	"anthropic":   {},
+	"llmproxycli": {},
+}
+
+// CanCarryDialect reports whether provider's client can actually deliver
+// dialect's wire shape. Every dialect but DialectAnthropicAdaptive always
+// returns true here - see anthropicNativeCapableProviders for why that one
+// is different. internal/config's checkReasoningIsDeliverable calls this
+// after resolving the dialect, so a model entry naming a dialect its
+// provider's client cannot speak is rejected at config-load time instead of
+// reaching a provider client that would marshal something the wire never
+// defined.
+func CanCarryDialect(provider string, dialect Dialect) bool {
+	if dialect != DialectAnthropicAdaptive {
+		return true
+	}
+	_, ok := anthropicNativeCapableProviders[strings.ToLower(strings.TrimSpace(provider))]
+	return ok
+}
+
 // Setting is one model's resolved reasoning configuration, carried together so
 // the many request paths thread one value instead of two parallel fields that
 // can drift apart.
