@@ -113,6 +113,43 @@ func TestRunToolCallBufferByteCap(t *testing.T) {
 	}
 }
 
+// TestRunToolCallBufferByteCapBoundaryValues verifies the byte cap at exact
+// boundary totals: a single step whose Input size is bufferMaxBytesPerTask-1,
+// bufferMaxBytesPerTask, or bufferMaxBytesPerTask+1 bytes is kept only when
+// it does not exceed the cap ("+stepBytes > bufferMaxBytesPerTask" in
+// sinkFor is a strict greater-than, so a step landing exactly on the cap is
+// kept). This complements TestRunToolCallBufferStepCap's already-covered
+// step-count boundaries (0/1/cap-1/cap/cap+1) with the analogous set for the
+// independent byte-total cap, which chunk 4's TestRunToolCallBufferByteCap
+// exercised only via a fits/overflow scenario, not these exact totals.
+func TestRunToolCallBufferByteCapBoundaryValues(t *testing.T) {
+	cases := []struct {
+		name  string
+		bytes int
+		kept  bool
+	}{
+		{"zero", 0, true},
+		{"one", 1, true},
+		{"cap-1", bufferMaxBytesPerTask - 1, true},
+		{"cap", bufferMaxBytesPerTask, true},
+		{"cap+1", bufferMaxBytesPerTask + 1, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b := newRunToolCallBuffer()
+			sink := b.sinkFor("t")
+			sink(subagents.ToolCallStep{ToolCallID: "s", Input: strings.Repeat("x", tc.bytes)})
+			got := b.flush("t")
+			if tc.kept && len(got) != 1 {
+				t.Fatalf("bytes=%d: flush returned %d steps, want 1 (kept)", tc.bytes, len(got))
+			}
+			if !tc.kept && len(got) != 0 {
+				t.Fatalf("bytes=%d: flush returned %d steps, want 0 (dropped)", tc.bytes, len(got))
+			}
+		})
+	}
+}
+
 // TestRunToolCallBufferFlushNilSafe verifies flush is nil-safe.
 func TestRunToolCallBufferFlushNilSafe(t *testing.T) {
 	var b *runToolCallBuffer

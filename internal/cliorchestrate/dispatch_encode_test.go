@@ -2,6 +2,7 @@ package cliorchestrate
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -130,6 +131,142 @@ func TestEncodeResultsCapsToolCallsToCompletePairs(t *testing.T) {
 	for _, c := range calls {
 		if c.Incomplete {
 			t.Fatalf("call %+v is Incomplete, want all-complete: the cap must never fragment a pair", c)
+		}
+	}
+}
+
+// completedToolCallSteps builds n distinct, fully completed (start+end)
+// ToolCallStep pairs with unique ToolCallIDs, for use by the envelope-layer
+// boundary tests below.
+func completedToolCallSteps(n int) []subagents.ToolCallStep {
+	steps := make([]subagents.ToolCallStep, 0, n*2)
+	for i := 0; i < n; i++ {
+		id := fmt.Sprintf("call-%04d", i)
+		steps = append(steps,
+			subagents.ToolCallStep{ToolCallID: id, Name: "tool", Kind: "start", Input: "in"},
+			subagents.ToolCallStep{ToolCallID: id, Name: "tool", Kind: "end", Output: "out"},
+		)
+	}
+	return steps
+}
+
+// TestLoadToolCallSummariesPairCountBoundaries covers the envelope cap's
+// exact boundary values with GENUINELY COMPLETE calls: 0, 1,
+// envelopeMaxToolCallPairs-1, envelopeMaxToolCallPairs, and
+// envelopeMaxToolCallPairs+1. Chunk 5 already proved the cap engages (25
+// calls -> 20 rows); this fills in the untested boundary points, in
+// particular exactly-at-cap (must not drop or fabricate) and cap-1 (must
+// not over-cap).
+func TestLoadToolCallSummariesPairCountBoundaries(t *testing.T) {
+	cases := []int{0, 1, envelopeMaxToolCallPairs - 1, envelopeMaxToolCallPairs, envelopeMaxToolCallPairs + 1}
+	for _, n := range cases {
+		t.Run(fmt.Sprintf("complete=%d", n), func(t *testing.T) {
+			repo := ledger.NewMemoryLedgerRepository()
+			ref := storeToolCallSteps(t, repo, completedToolCallSteps(n))
+			got := loadToolCallSummaries(t.Context(), repo, ref)
+
+			want := n
+			if want > envelopeMaxToolCallPairs {
+				want = envelopeMaxToolCallPairs
+			}
+			if len(got) != want {
+				t.Fatalf("complete=%d: got %d summaries, want %d", n, len(got), want)
+			}
+			for _, c := range got {
+				if c.Incomplete {
+					t.Fatalf("complete=%d: summary %+v is Incomplete, want false", n, c)
+				}
+			}
+		})
+	}
+}
+
+// TestLoadToolCallSummariesNeverFragmentsPairAtCap is the required
+// regression test for this session's round-2 architecture-review finding on
+// the tool-call history envelope design: an earlier draft capped RAW
+// (unmerged) ledger entries before merging start+end pairs into summaries,
+// which could split a genuinely completed call across the cap boundary and
+// fabricate a false Incomplete=true for what was actually a complete call
+// whose "end" event simply fell past the raw cap. The accepted design
+// (dispatch_encode.go's loadToolCallSummaries) merges FIRST, by ToolCallID,
+// and only then truncates the merged list to envelopeMaxToolCallPairs - so
+// capping can only ever drop whole trailing calls, never fragment one.
+//
+// This test constructs exactly envelopeMaxToolCallPairs+1 (21, given the
+// current constant) genuinely, fully completed calls - each with both a
+// start and an end event under a distinct ToolCallID - comfortably under
+// the coordinator buffer layer's 200-raw-event cap (42 raw events here), so
+// all 42 events survive to the ledger unmodified and this test exercises
+// only the envelope layer's own capping logic. It asserts exactly
+// envelopeMaxToolCallPairs summaries come back, and - the load-bearing
+// assertion - every single one reports Incomplete=false. A regression to
+// the rejected raw-capping design would either return a fragmented pair, or
+// flip the last surfaced summary's Incomplete to true.
+//
+// loadToolCallSummaries is the single shared helper behind both dispatch-
+// result producers (dispatchTaskResult here via encodeResults, and
+// modelTaskResult in orchestrate_lifecycle.go via ModelTaskResultsWithRepo /
+// RunTaskResultsWithRepo) - see dispatch_encode.go's toolCallSummary doc
+// comment - so exercising it directly here is sufficient; it is not
+// producer-specific logic that would need duplicating per producer.
+func TestLoadToolCallSummariesNeverFragmentsPairAtCap(t *testing.T) {
+	const totalCalls = envelopeMaxToolCallPairs + 1 // 21
+	steps := completedToolCallSteps(totalCalls)
+	if len(steps) != totalCalls*2 {
+		t.Fatalf("setup: got %d raw steps, want %d (2 per call)", len(steps), totalCalls*2)
+	}
+
+	repo := ledger.NewMemoryLedgerRepository()
+	ref := storeToolCallSteps(t, repo, steps)
+	got := loadToolCallSummaries(t.Context(), repo, ref)
+
+	if len(got) != envelopeMaxToolCallPairs {
+		t.Fatalf("got %d summaries, want exactly %d (21st call dropped whole)", len(got), envelopeMaxToolCallPairs)
+	}
+	for i, c := range got {
+		if c.Incomplete {
+			t.Fatalf("summary[%d] = %+v is Incomplete=true; the cap must never fabricate a false incomplete by fragmenting a completed pair", i, c)
+		}
+		if c.Output == "" {
+			t.Fatalf("summary[%d] = %+v has empty Output despite being a genuinely completed call", i, c)
+		}
+	}
+}
+
+// TestLoadToolCallSummariesPreservesGenuineIncompleteNearCap proves a
+// REAL incomplete call (missing "end" event, e.g. from buffer-level
+// truncation or a task cut off mid-call) sitting at the very last slot
+// before the cap is preserved as Incomplete=true, and is not dropped,
+// miscounted, or confused with a cap artifact. This distinguishes "a real
+// incomplete call that happens to be near the boundary" (expected,
+// meaningful signal) from "the cap fragmented a pair" (the bug chunk 8
+// guards against above) - the two must never be conflated.
+func TestLoadToolCallSummariesPreservesGenuineIncompleteNearCap(t *testing.T) {
+	const completeCalls = envelopeMaxToolCallPairs - 1 // 19 complete...
+	steps := completedToolCallSteps(completeCalls)
+	// ...plus one genuinely incomplete call (start only, no end) appended
+	// last, bringing the total to exactly envelopeMaxToolCallPairs (20).
+	steps = append(steps, subagents.ToolCallStep{
+		ToolCallID: "call-incomplete", Name: "tool", Kind: "start", Input: "in",
+	})
+
+	repo := ledger.NewMemoryLedgerRepository()
+	ref := storeToolCallSteps(t, repo, steps)
+	got := loadToolCallSummaries(t.Context(), repo, ref)
+
+	if len(got) != envelopeMaxToolCallPairs {
+		t.Fatalf("got %d summaries, want %d (all calls fit under the cap, none dropped)", len(got), envelopeMaxToolCallPairs)
+	}
+	last := got[len(got)-1]
+	if last.ToolCallID != "call-incomplete" {
+		t.Fatalf("last summary = %+v, want ToolCallID=call-incomplete (insertion order preserved)", last)
+	}
+	if !last.Incomplete {
+		t.Fatal("last summary Incomplete = false, want true (genuinely missing its end event)")
+	}
+	for i, c := range got[:len(got)-1] {
+		if c.Incomplete {
+			t.Fatalf("summary[%d] = %+v is Incomplete=true, want false (a genuinely complete call)", i, c)
 		}
 	}
 }

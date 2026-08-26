@@ -11,7 +11,8 @@ import (
 // merging into one-row-per-call happens later, at envelope-encode time,
 // not here). It is ledger-only content, never handed to the model or UI
 // directly, so its caps are generous relative to the model/UI-visible
-// envelope layer that will be added in a later chunk.
+// envelope layer's cliorchestrate.envelopeMaxToolCallPairs (20 complete,
+// merged calls) - see loadToolCallSummaries in dispatch_encode.go.
 type runToolCallBuffer struct {
 	mu    sync.Mutex
 	steps map[string][]subagents.ToolCallStep // taskID -> raw steps
@@ -24,9 +25,13 @@ const (
 	// wholesale (never a half-written event).
 	//
 	// bufferMaxStepsPerTask and bufferMaxBytesPerTask are kept comfortably
-	// larger than 2x the envelope layer's per-task complete-call cap (added
-	// in a later chunk) so the chunk-8 boundary regression test has real
-	// margin; if you lower either, check that test.
+	// larger than 2x envelopeMaxToolCallPairs (20, so >40 raw start+end
+	// events for a full complement of complete calls) so the buffer layer's
+	// cap remains the real headroom, not the envelope layer's, and so the
+	// chunk-8 boundary regression tests (TestLoadToolCallSummaries*, in
+	// internal/cliorchestrate/dispatch_encode_test.go) have real margin - if
+	// you lower either constant, or envelopeMaxToolCallPairs, re-check those
+	// tests.
 	bufferMaxStepsPerTask = 200
 	// bufferMaxBytesPerTask caps total Input+Output bytes retained per
 	// task. Ledger storage is cheap and this content is never model- or
