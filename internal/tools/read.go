@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 	"unicode/utf8"
 
@@ -129,7 +130,12 @@ func (t *readFileTool) readLineWindow(ctx context.Context, abs string, offset, l
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
+	// Ownership of f passes to collectWindowLines below, which closes it
+	// exactly once via scanLinesWithContext's producer goroutine - no defer
+	// here, matching scanLinesWithContext's documented closer contract
+	// (fs_guard.go): closing a file out from under an in-flight blocking
+	// Read on another goroutine is a close-during-read + fd-reuse hazard, so
+	// the closer must be owned by whichever goroutine actually runs Scan().
 
 	sc := bufio.NewScanner(f)
 	buf := make([]byte, 0, 64*1024)
@@ -144,7 +150,7 @@ func (t *readFileTool) readLineWindow(ctx context.Context, abs string, offset, l
 	}
 	sc.Buffer(buf, scannerMax)
 
-	lines, totalLines, err := t.collectWindowLines(ctx, sc, offset, limit)
+	lines, totalLines, err := t.collectWindowLines(ctx, sc, f, offset, limit)
 	if err != nil {
 		if err == bufio.ErrTooLong {
 			// The scanner enforces the larger of max and cap(buf)
@@ -181,27 +187,36 @@ func (t *readFileTool) readLineWindow(ctx context.Context, abs string, offset, l
 // stays honest for the "… lines X–Y of Z" header. Peak collection is bounded
 // by maxBytes plus one line (≤ the scanner's enforced max token size),
 // independent of file size. maxBytes<=0 (uncapped) is untouched.
-func (t *readFileTool) collectWindowLines(ctx context.Context, sc *bufio.Scanner, offset, limit int) ([]string, int, error) {
+//
+// The scan itself runs through scanLinesWithContext (fs_guard.go) rather
+// than a bare `for sc.Scan()` loop: sc.Scan() blocks on the underlying Read
+// with no way to interrupt it from outside, so a stalled or slow read could
+// previously hang past ctx cancellation (ctx.Err() was only checked between
+// completed Scan() calls). closer is the file handle backing sc; ownership
+// passes fully into scanLinesWithContext here, which closes it exactly once
+// from its producer goroutine after the scan ends - callers of
+// collectWindowLines must not also close it.
+func (t *readFileTool) collectWindowLines(ctx context.Context, sc *bufio.Scanner, closer io.Closer, offset, limit int) ([]string, int, error) {
 	var windowLines []string
 	collectedBytes := 0
 	budgetExhausted := false
 	lineNo := 0
-	for sc.Scan() {
-		if err := ctx.Err(); err != nil {
-			return nil, lineNo, err
-		}
+	err := scanLinesWithContext(ctx, sc, closer, func(line string) (bool, error) {
 		lineNo++
 		if lineNo >= offset && (limit <= 0 || len(windowLines) < limit) {
 			if t.maxBytes > 0 && budgetExhausted {
-				continue
+				return false, nil
 			}
-			line := sc.Text()
 			windowLines = append(windowLines, line)
 			collectedBytes += len(line)
 			if t.maxBytes > 0 && collectedBytes > t.maxBytes {
 				budgetExhausted = true
 			}
 		}
+		return false, nil
+	})
+	if err != nil {
+		return nil, lineNo, err
 	}
 	return windowLines, lineNo, sc.Err()
 }

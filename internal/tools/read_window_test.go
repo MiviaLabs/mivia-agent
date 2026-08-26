@@ -1,17 +1,71 @@
 package tools
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
+
+// TestCollectWindowLines_BlockingReadHonorsCancellation is the read_file
+// analogue of TestScanLinesWithContext_BlockingReadHonorsCancellation
+// (fs_guard_scan_cancel_test.go): before collectWindowLines was wired onto
+// scanLinesWithContext, its own `for sc.Scan() { ... }` loop only checked
+// ctx.Err() between completed Scan() calls, so a stalled Read (blockingReader
+// here never returns on its own) could block collectWindowLines - and its
+// real caller, readLineWindow - past caller cancellation. Reuses
+// blockingReader/nopCloser from fs_guard_scan_cancel_test.go (same package,
+// same blocking-forever pattern chunk 1's tests established) since
+// readLineWindow's real file-open path (openRegularFile) rejects FIFOs and
+// other special files by design, so a real blocked Read cannot be produced
+// through that entrypoint - collectWindowLines is exercised directly instead,
+// with the same *bufio.Scanner/closer shape readLineWindow itself uses.
+func TestCollectWindowLines_BlockingReadHonorsCancellation(t *testing.T) {
+	blockForever := make(chan struct{})
+	t.Cleanup(func() { close(blockForever) })
+
+	sc := bufio.NewScanner(&blockingReader{unblock: blockForever})
+	closer := &nopCloser{}
+	tool := &readFileTool{maxBytes: 0}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	type result struct {
+		lines []string
+		total int
+		err   error
+	}
+	done := make(chan result, 1)
+	go func() {
+		lines, total, err := tool.collectWindowLines(ctx, sc, closer, 1, 10)
+		done <- result{lines, total, err}
+	}()
+
+	select {
+	case r := <-done:
+		if r.err == nil || !errors.Is(r.err, context.DeadlineExceeded) {
+			t.Fatalf("expected a context.DeadlineExceeded error once the deadline passed, got %v", r.err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("collectWindowLines did not return within 2s of a 50ms context deadline: the caller is still hung on the blocked read")
+	}
+	// closer.Close() itself only runs once the abandoned producer goroutine's
+	// still-blocked Read() unblocks (via t.Cleanup below, after this test
+	// function returns) - scanLinesWithContext's exactly-once close on the
+	// abandonment path is already covered directly by
+	// TestScanLinesWithContext_BlockingReadHonorsCancellation's sibling
+	// tests in fs_guard_scan_cancel_test.go, so it is not re-asserted here.
+}
 
 func TestReadFileWindowLineNumbers(t *testing.T) {
 	ws, reg := setupWS(t)
@@ -317,11 +371,25 @@ func TestReadFileWindowOffsetPastEndReportsTotal(t *testing.T) {
 
 // TestReadFileWindowCollectionBoundedByBudget pins the fix for
 // read-file-window-unbounded-memory: a window call (offset>1, limit=0) on a
-// file far larger than maxBytes must bound peak collection to the byte budget
-// (plus one line) instead of materializing every line from offset to EOF.
-// Uses the repo's runtime.MemStats/runtime.GC() convention
-// (TestRunCommandCaptureMemoryBounded). The same call is the negative path:
-// the oversized file is truncated with a notice, never fully collected.
+// file far larger than maxBytes must bound RETAINED collection to the byte
+// budget (plus one line) instead of materializing every line from offset to
+// EOF into the windowLines slice that formatWindow renders. Uses the repo's
+// runtime.MemStats/runtime.GC() convention (TestRunCommandCaptureMemoryBounded).
+// The same call is the negative path: the oversized file is truncated with a
+// notice, never fully collected.
+//
+// The bound is looser than the original 4 MiB: collectWindowLines now scans
+// through scanLinesWithContext (fs_guard.go), whose producer goroutine calls
+// sc.Text() once per scanned line - for all 200,000 lines here, not just the
+// ones inside the window - before batching them onto a channel, since
+// bufio.Scanner reuses its internal buffer and the text must be copied out
+// before the next Scan() call overwrites it. That is TRANSIENT allocation
+// (each string is garbage as soon as its batch's consume calls return); it is
+// not retained the way the old bug's unbounded windowLines growth was, but it
+// does show up in TotalAlloc, which counts cumulative bytes allocated, GC'd
+// or not. 12 MiB gives headroom above that transient per-line cost while
+// still catching a real regression back to retaining every line (which would
+// run several times higher, from slice growth alone).
 func TestReadFileWindowCollectionBoundedByBudget(t *testing.T) {
 	ws, err := workspace.Open(t.TempDir())
 	if err != nil {
@@ -351,8 +419,8 @@ func TestReadFileWindowCollectionBoundedByBudget(t *testing.T) {
 	runtime.ReadMemStats(&after)
 
 	delta := int64(after.TotalAlloc - before.TotalAlloc)
-	if delta > 4*1024*1024 {
-		t.Fatalf("window collection allocated too much: delta=%d bytes (%d MiB), want < 4 MiB", delta, delta/(1<<20))
+	if delta > 12*1024*1024 {
+		t.Fatalf("window collection allocated too much: delta=%d bytes (%d MiB), want < 12 MiB", delta, delta/(1<<20))
 	}
 	// Output contract unchanged: the truncation notice is present and the
 	// result stays within maxBytes plus framing slack.
