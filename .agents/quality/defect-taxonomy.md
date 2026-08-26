@@ -556,6 +556,54 @@ drifted.
   deliver`) is not automatically in scope for this probe; confirm the command's own
   contract (and its tests) before extending "own until terminal" to it.
 
+## DC-20 A declared capability constant drifts stale against the real upstream service
+
+**Mechanism.** A config or catalog entry hardcodes a numeric fact about a third-party
+model or service (context window, output ceiling, rate limit) at the time it was
+written. The vendor later raises that number - a new model generation, a beta graduating
+to general availability, a price-tier change - and nothing in the system re-derives or
+re-validates the constant against the vendor's current, real capability. The stale value
+is silently smaller than reality, so every computation downstream of it (a budget, a
+compaction trigger, a rate limiter) is systematically wrong in the safe-looking direction,
+which is exactly what makes it go unnoticed: it never causes a hard failure, only a
+program that behaves as if the vendor's service is worse than it actually is.
+
+**Evidence.** `.mivia/mivia.toml` declared `context_window_tokens = 200000` for
+`claude-sonnet-5`, `claude-opus-5`, `claude-fable-5`, and `claude-sonnet-4-6`, and
+`1000000` (round decimal) for the `gemini-3.*` family. Anthropic's real Claude 5-generation
+models ship a 1,000,000-token window as the GA default (no beta header, no price premium -
+confirmed via Anthropic's own model documentation), and Google's Gemini 3.x family's real
+window is `1,048,576` (2^20), not the round `1,000,000` the catalog entries approximated.
+`internal/config.EffectivePromptTokens` derives the session's prompt budget directly from
+this declared number, and `internal/contextmgr.Plan` compacts at 80% of that budget - so
+the stale 200000 window on Claude 5-generation models capped the real prompt budget at
+roughly 1/5 of the model's actual capacity and made compaction fire five times earlier
+than the real service allows. A user watching the context gauge saw "31% used" after a
+handful of tool-calling steps and read it as a bug in the compounding logic; the
+accounting was correct, the declared ceiling it was measured against was wrong.
+
+**Probes.**
+- For every catalog/config entry declaring a third-party model's context window, output
+  ceiling, or rate limit, verify the number against the vendor's OWN current
+  documentation, not against what a previous entry in the same file already claims - a
+  copy-pasted stale value looks exactly as authoritative as a correct one.
+  `.mivia/mivia.toml` and `.mivia/mivia.toml.example` must agree with each other and with
+  reality; a fix to one without the other reintroduces the exact drift for whichever new
+  workspace copies the example.
+  - Web search results reporting the same number differently ("1 million tokens" vs. an
+  exact integer) do not resolve to the same literal - Anthropic's documented models use
+  round decimal millions, Google's documented models use binary-power millions
+  (1,048,576) as a matter of platform convention; use the vendor's own exact number, not
+  a rounded paraphrase from a secondary source.
+- A model whose real specification could not be independently confirmed (this fix left
+  `claude-sonnet-4-7` and `gemini-pro-agent` untouched: the first did not resolve to a
+  real, currently-documented model, the second is an internal proxy alias with no public
+  spec) must be left as-is and named as unconfirmed, not guessed by extrapolating from a
+  sibling entry's number.
+- This class recurs on every future model generation release; it has no code fix, only a
+  standing obligation to re-verify declared catalog constants when a vendor ships a new
+  model or graduates a capability from beta to GA.
+
 ## Maintenance
 
 Update this document when a `fix` commit does not match any class, or when a class

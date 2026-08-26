@@ -175,7 +175,7 @@ base_url = "http://127.0.0.1:8317/v1"
 
 [[providers.llmproxycli.models]]
 name = "claude-sonnet-5"
-context_window_tokens = 200000
+context_window_tokens = 1000000
 max_output_tokens = 128000
 reasoning = "high"
 reasoning_efforts = ["low", "medium", "high", "max"]
@@ -195,7 +195,7 @@ format instead - reusing this provider's own `base_url` and
 ```toml
 [[providers.llmproxycli.models]]
 name = "claude-sonnet-5"
-context_window_tokens = 200000
+context_window_tokens = 1000000
 max_output_tokens = 128000
 reasoning = "high"
 reasoning_efforts = ["low", "medium", "high", "xhigh", "max"]

@@ -116,7 +116,7 @@ base_url = 'http://127.0.0.1:8317/v1'
 default_model = 'gemini-3.7-flash-high'
 
 [[providers.llmproxycli.models]]
-context_window_tokens = 200000
+context_window_tokens = 1000000
 max_output_tokens = 128000
 name = 'claude-sonnet-5'
 reasoning = 'high'
@@ -132,7 +132,7 @@ reasoning_dialect = 'anthropic_adaptive'
 reasoning_efforts = ['low', 'medium', 'high', 'max']
 
 [[providers.llmproxycli.models]]
-context_window_tokens = 200000
+context_window_tokens = 1000000
 max_output_tokens = 128000
 name = 'claude-sonnet-4-6'
 reasoning = 'high'
@@ -140,7 +140,7 @@ reasoning_dialect = 'anthropic_adaptive'
 reasoning_efforts = ['low', 'medium', 'high', 'max']
 
 [[providers.llmproxycli.models]]
-context_window_tokens = 200000
+context_window_tokens = 1000000
 max_output_tokens = 128000
 name = 'claude-opus-5'
 reasoning = 'low'
@@ -148,7 +148,7 @@ reasoning_dialect = 'anthropic_adaptive'
 reasoning_efforts = ['low', 'medium', 'high', 'max']
 
 [[providers.llmproxycli.models]]
-context_window_tokens = 200000
+context_window_tokens = 1000000
 max_output_tokens = 128000
 name = 'claude-opus-4-7'
 reasoning = 'high'
@@ -156,7 +156,7 @@ reasoning_dialect = 'anthropic_adaptive'
 reasoning_efforts = ['low', 'medium', 'high', 'max']
 
 [[providers.llmproxycli.models]]
-context_window_tokens = 200000
+context_window_tokens = 1000000
 max_output_tokens = 128000
 name = 'claude-fable-5'
 reasoning = 'high'
@@ -164,7 +164,7 @@ reasoning_dialect = 'anthropic_adaptive'
 reasoning_efforts = ['low', 'medium', 'high', 'max']
 
 [[providers.llmproxycli.models]]
-context_window_tokens = 1000000
+context_window_tokens = 1048576
 max_output_tokens = 65536
 name = 'gemini-3.1-pro-low'
 reasoning = 'high'
@@ -178,21 +178,21 @@ reasoning = 'high'
 reasoning_efforts = ['low', 'medium', 'high']
 
 [[providers.llmproxycli.models]]
-context_window_tokens = 1000000
+context_window_tokens = 1048576
 max_output_tokens = 65536
 name = 'gemini-3.7-flash-high'
 reasoning = 'high'
 reasoning_efforts = ['low', 'medium', 'high']
 
 [[providers.llmproxycli.models]]
-context_window_tokens = 1000000
+context_window_tokens = 1048576
 max_output_tokens = 65536
 name = 'gemini-3.6-flash-high'
 reasoning = 'high'
 reasoning_efforts = ['low', 'medium', 'high']
 
 [[providers.llmproxycli.models]]
-context_window_tokens = 1000000
+context_window_tokens = 1048576
 max_output_tokens = 65536
 name = 'gemini-3-flash'
 reasoning = 'high'
@@ -263,7 +263,7 @@ base_url = 'https://openrouter.ai/api/v1'
 default_model = 'tencent/hy3-preview'
 
 [[providers.openrouter.models]]
-context_window_tokens = 200000
+context_window_tokens = 1000000
 max_output_tokens = 128000
 name = 'anthropic/claude-opus-5'
 reasoning = 'high'
@@ -271,7 +271,7 @@ reasoning_dialect = 'openrouter'
 reasoning_efforts = ['low', 'medium', 'high', 'max']
 
 [[providers.openrouter.models]]
-context_window_tokens = 200000
+context_window_tokens = 1000000
 max_output_tokens = 128000
 name = 'anthropic/claude-sonnet-5'
 reasoning = 'high'
@@ -287,7 +287,7 @@ reasoning_dialect = 'openrouter'
 reasoning_efforts = ['low', 'medium', 'high', 'max']
 
 [[providers.openrouter.models]]
-context_window_tokens = 200000
+context_window_tokens = 1000000
 max_output_tokens = 128000
 name = 'anthropic/claude-fable-5'
 reasoning = 'high'
@@ -295,7 +295,7 @@ reasoning_dialect = 'openrouter'
 reasoning_efforts = ['low', 'medium', 'high', 'max']
 
 [[providers.openrouter.models]]
-context_window_tokens = 1000000
+context_window_tokens = 1048576
 max_output_tokens = 65536
 name = 'google/gemini-3.1-pro'
 reasoning = 'high'
@@ -303,7 +303,7 @@ reasoning_dialect = 'openrouter'
 reasoning_efforts = ['low', 'medium', 'high']
 
 [[providers.openrouter.models]]
-context_window_tokens = 1000000
+context_window_tokens = 1048576
 max_output_tokens = 65536
 name = 'google/gemini-3.7-flash'
 reasoning = 'high'
@@ -311,7 +311,7 @@ reasoning_dialect = 'openrouter'
 reasoning_efforts = ['low', 'medium', 'high']
 
 [[providers.openrouter.models]]
-context_window_tokens = 1000000
+context_window_tokens = 1048576
 max_output_tokens = 65536
 name = 'google/gemini-3-flash'
 reasoning = 'high'
