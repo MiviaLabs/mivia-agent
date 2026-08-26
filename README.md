@@ -16,6 +16,8 @@ mivia reads, searches, and edits files in your project. It runs commands, such a
 
 Your files stay on your machine by default. mivia sends prompts and selected context to the AI provider you configure. Web search, configured MCP servers, lifecycle hooks, and workflow delivery can also contact external services or run configured local programs. Review those settings before use. See [Integrations](docs/product/integrations.md) for the full list.
 
+mivia is built on [mivia-ai-sdk](https://github.com/MiviaLabs/mivia-ai-sdk), our open-source, product-agnostic Go SDK for AI providers, tools, workflows, and hooks. Building your own agent? Start there.
+
 <p align="center">
   <img src="docs/mivia-agent-showcase.gif" alt="mivia TUI showcase" width="100%">
 </p>
