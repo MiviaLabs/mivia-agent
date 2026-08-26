@@ -31,6 +31,12 @@ import (
 // the turn's own ctx so a cancellation is recorded rather than silently
 // skipped (hooksession.RunStopForTurn), and a detached goroutine cannot honor
 // that without its own synchronization back to this call.
+//
+// This is a direct import of internal/hooksession, not the injected-seam
+// pattern used elsewhere for hook state (internal/runtime's dispatcher takes
+// a HookGroups func, internal/clichat a CurrentHookSessionFunc). No seam is
+// needed: sessionID/turnID are already call parameters, so this is
+// multi-session-safe on its own, and hooksession is a leaf (no cycle risk).
 func (s *Session) fireRootTurnEndHook(ctx context.Context, sessionID string, myTurn uint64) {
 	if !hooksession.Configured() {
 		return
