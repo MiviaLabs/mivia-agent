@@ -316,25 +316,28 @@ env_allow_keyword_blocklist = ["SECRET", "TOKEN", "PASSWORD", "API_KEY"]
 
 # ---- Write-path blocklist (workflow agent steps) ----
 # Workflow agent write tools (write_file, search_replace, multi_edit,
-# delete_file) refuse these workspace-relative paths or directories. Two paths
-# are blocked by default and cannot be removed unless you explicitly opt out:
-# .git and .mivia/mivia.toml. This key ADDS to that default set;
-# write_path_blocklist_remove REMOVES entries from it (the defaults or an
-# addition).
+# delete_file) refuse these workspace-relative paths or directories. Nothing
+# is blocked by default (protection is opt-in, not opt-out) - this key names
+# what you want protected; write_path_blocklist_remove removes an entry you
+# (or a project layered on top of yours) added here.
 #
 # Recommended starting values: the set below keeps workflow agents away from
 # agent definitions, hook-policy gates, rules, skills, the workflow definition
-# they run under, and Go module metadata. A project that omits this key leaves
-# all of these writable by workflow agents, including its own workflow
-# definition - choose deliberately.
+# they run under, Go module metadata, and - explicitly re-added below, since
+# there is no compiled-in default - Git metadata and this config file. A
+# project that omits this key leaves ALL of these writable by workflow
+# agents, including .git and its own workflow definition - choose
+# deliberately.
 #
-# Removing a default entry is a trust decision. .mivia/mivia.toml carries this
-# very blocklist: an agent that can edit it can remove its own restrictions,
-# including the entries below. .git carries commit history and hooks: an agent
-# that can edit it can rewrite history or plant hooks that bypass the host
-# hook-policy gates. Keep both blocked unless a host-owned step genuinely
-# needs the path. An entry in BOTH keys is a load error.
+# .mivia/mivia.toml carries this very blocklist: an agent that can edit it
+# can remove its own restrictions, including the entries below. .git carries
+# commit history and hooks: an agent that can edit it can rewrite history or
+# plant hooks that bypass the host hook-policy gates. Keep both listed here
+# unless a host-owned step genuinely needs the path. An entry in BOTH this
+# key and write_path_blocklist_remove is a load error.
 write_path_blocklist = [
+    ".git",              # commit history and hooks
+    ".mivia/mivia.toml", # this config, including this very blocklist
     ".agents/agents",   # agent definitions
     ".mivia/agents",    # agent definitions (legacy path)
     ".mivia/policy",    # hook-policy gates
@@ -346,7 +349,7 @@ write_path_blocklist = [
     "go.sum",
     "go.work",
 ]
-# write_path_blocklist_remove = [".git", ".mivia/mivia.toml"]  # opt-out example
+# write_path_blocklist_remove = [".git", ".mivia/mivia.toml"]  # opt-out example, against the list above
 
 # Timeouts (seconds).
 run_timeout_seconds = 900

@@ -74,18 +74,37 @@ func TestPrepareWorkflowRunRefusesTaskDemandingBlocklistedEdit(t *testing.T) {
 	}
 }
 
-// TestPrepareWorkflowRunRefusesTaskDemandingDefaultBlockedPath covers the
-// built-in blocklist (.git, .mivia/mivia.toml) with no configured additions.
-func TestPrepareWorkflowRunRefusesTaskDemandingDefaultBlockedPath(t *testing.T) {
-	root := writeWorkflowTestWorkspace(t, nil)
+// TestPrepareWorkflowRunRefusesTaskDemandingConfiguredMiviaTomlEdit covers
+// .mivia/mivia.toml protection when a project explicitly configures it -
+// there is no compiled-in default for this path anymore
+// (config.DefaultWritePathBlocklist is empty), so the guard only fires when
+// [tools] write_path_blocklist names it.
+func TestPrepareWorkflowRunRefusesTaskDemandingConfiguredMiviaTomlEdit(t *testing.T) {
+	root := writeWorkflowTestWorkspace(t, []string{".mivia/mivia.toml"})
 	_, err := PrepareWorkflowRun("demo", root, filepath.Join(root, "mivia.toml"), []string{
 		"task=edit .mivia/mivia.toml and enable delivery",
 	})
 	if err == nil {
-		t.Fatal("PrepareWorkflowRun() error = nil for a task demanding a default-blocked-path edit")
+		t.Fatal("PrepareWorkflowRun() error = nil for a task demanding a configured-blocked-path edit")
 	}
 	if !strings.Contains(err.Error(), "write-blocklisted") {
 		t.Fatalf("PrepareWorkflowRun() error = %v, want a write-blocklisted diagnostic", err)
+	}
+}
+
+// TestPrepareWorkflowRunAdmitsMiviaTomlEditWithNoConfiguredBlocklist proves
+// .mivia/mivia.toml is not blocked unless a project opts in: with no
+// [tools] write_path_blocklist configured, admission does not refuse it.
+func TestPrepareWorkflowRunAdmitsMiviaTomlEditWithNoConfiguredBlocklist(t *testing.T) {
+	root := writeWorkflowTestWorkspace(t, nil)
+	prepared, err := PrepareWorkflowRun("demo", root, filepath.Join(root, "mivia.toml"), []string{
+		"task=edit .mivia/mivia.toml and enable delivery",
+	})
+	if err != nil {
+		t.Fatalf("PrepareWorkflowRun() error = %v, want admission with no configured blocklist", err)
+	}
+	if prepared == nil {
+		t.Fatal("PrepareWorkflowRun() returned nil prepared run")
 	}
 }
 

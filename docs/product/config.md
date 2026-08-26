@@ -342,11 +342,11 @@ Recommended values ship in `.mivia/mivia.toml.example`. Copy it and trim it to w
 
 `[tools].write_path_blocklist` names workspace-relative paths or directories that the write tools of workflow agent steps (`write_file`, `search_replace`, `multi_edit`, `delete_file`) refuse to change. It applies to workflow runs only, not to the interactive session.
 
-Two paths are blocked by default: `.git` and `.mivia/mivia.toml`. The key adds to that default set. `[tools].write_path_blocklist_remove` removes entries from the effective set — a default entry or an addition — and is the only way to unblock the two defaults. Removing a default is a trust decision: `.mivia/mivia.toml` carries this very blocklist, so an agent that can edit it can remove its own restrictions, and `.git` carries commit history and hooks that a workflow agent could rewrite or bypass. An entry in both keys is a config error.
+Nothing is blocked by default: protection is opt-in, not a built-in set a project must opt out of. `[tools].write_path_blocklist_remove` removes an entry from the effective set — an entry a project (or a layer above it) added, never a compiled-in default, since there is none. An entry in both keys is a config error.
 
 Entries use forward slashes. At load, mivia trims whitespace and cleans each entry, so `" go.mod/ "` becomes `"go.mod"`. An entry that is empty, that resolves to the workspace root, or that is absolute is a config error: mivia refuses to start rather than silently ignore a blocklist entry that can never match.
 
-This key is a project decision. A project that omits it leaves paths such as `.agents/agents`, `.mivia/policy`, `.mivia/skills`, `.agents/rules`, `.agents/skills`, `.mivia/workflows`, `go.mod`, `go.sum`, and `go.work` writable by workflow agents. That includes the workflow definition the run executes. Recommended starting values ship in `.mivia/mivia.toml.example` and in this repository's own `.mivia/mivia.toml`.
+This key is a project decision. A project that omits it leaves every path writable by workflow agents, including `.git` (commit history and hooks a workflow agent could rewrite or bypass), `.mivia/mivia.toml` (this very blocklist — an agent that can edit it can remove its own restrictions), `.agents/agents`, `.mivia/policy`, `.mivia/skills`, `.agents/rules`, `.agents/skills`, `.mivia/workflows`, `go.mod`, `go.sum`, `go.work`, and the workflow definition the run executes. Recommended starting values, including `.git` and `.mivia/mivia.toml`, ship in `.mivia/mivia.toml.example` and in this repository's own `.mivia/mivia.toml`.
 
 ## Redaction and persisted orchestration history
 

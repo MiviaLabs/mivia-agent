@@ -103,10 +103,11 @@ type ToolsConfig struct {
 	// SearchIgnorePatterns adds directory/file names to skip during grep/glob walks.
 	// Extends the built-in defaults (.git, node_modules, vendor). Does not replace them.
 	SearchIgnorePatterns []string `toml:"search_ignore_patterns,omitempty"`
-	// WritePathBlocklist adds workspace-relative paths or directories whose
-	// write tools refuse to change. It extends the built-in defaults
-	// (DefaultWritePathBlocklist: .git, .mivia/mivia.toml); removal is via
-	// WritePathBlocklistRemove. Entries use forward slashes and are normalized
+	// WritePathBlocklist names workspace-relative paths or directories whose
+	// write tools refuse to change. There is no compiled-in default
+	// (DefaultWritePathBlocklist is empty); protection is opt-in. Removal of
+	// an entry named here is via WritePathBlocklistRemove. Entries use
+	// forward slashes and are normalized
 	// (trimmed, cleaned) at load; an entry that is empty, ".", or absolute is
 	// a load error.
 	// The blocklist applies to workflow agent steps, whose write tools

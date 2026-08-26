@@ -17,13 +17,12 @@ import (
 )
 
 // effectiveWorkflowWriteDenylist is the write-path blocklist for workflow
-// agent steps: the built-in defaults (config.DefaultWritePathBlocklist: .git
-// and .mivia/mivia.toml) plus the project's [tools] write_path_blocklist
-// additions, minus the project's [tools] write_path_blocklist_remove
-// removals. The defaults are removable only by explicit opt-out, because
-// unblocking .git or .mivia/mivia.toml is a trust decision: the config file
-// carries the blocklist itself, and Git metadata carries history and hooks.
-// Composing here (instead of in resolveToolsConfig) guarantees the defaults
+// agent steps: config.DefaultWritePathBlocklist (empty by default) plus the
+// project's [tools] write_path_blocklist additions, minus the project's
+// [tools] write_path_blocklist_remove removals. Protecting .git or
+// .mivia/mivia.toml is opt-in, not a default a project must opt out of - see
+// .mivia/mivia.toml.example for why a project would still want to add them.
+// Composing here (instead of in resolveToolsConfig) keeps this in one place
 // even for a directly-constructed config.Resolved; duplicate entries are
 // harmless because the matcher is membership-based.
 func effectiveWorkflowWriteDenylist(res *config.Resolved) []string {

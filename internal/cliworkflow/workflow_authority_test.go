@@ -14,11 +14,11 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 )
 
-// workflowDefaultProtectedPaths are concrete files under the built-in write
-// protections for workflow agent steps (DefaultWritePathBlocklist in
-// internal/config). ".git/config" is NOT a separate default: it is a file
-// inside the ".git" default directory, blocked by prefix match.
-func workflowDefaultProtectedPaths() []string {
+// workflowFormerDefaultProtectedPaths are the two paths that used to be
+// blocked by DefaultWritePathBlocklist (internal/config) before it became
+// empty by default. ".git/config" is NOT a separate entry: it is a file
+// inside a ".git" directory entry, blocked by prefix match when configured.
+func workflowFormerDefaultProtectedPaths() []string {
 	return []string{".mivia/mivia.toml", ".git/config"}
 }
 
@@ -94,14 +94,35 @@ func writablePath(t *testing.T, registry interface {
 	}
 }
 
-func TestWorkflowRegistryBlocksDefaultProtectedWrites(t *testing.T) {
+// TestWorkflowRegistryDefaultAllowsFormerlyProtectedWrites proves
+// DefaultWritePathBlocklist is empty: with no [tools] write_path_blocklist
+// configured, .git and .mivia/mivia.toml are writable by workflow agent
+// steps. Protection is opt-in via config (see
+// TestWorkflowRegistryConfiguredBlocklistProtectsGitAndConfig), not a
+// built-in default.
+func TestWorkflowRegistryDefaultAllowsFormerlyProtectedWrites(t *testing.T) {
 	root := t.TempDir()
 	registry, err := workflowDefaultRegistry(root, &config.Resolved{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	blockedPaths(t, registry, root, workflowDefaultProtectedPaths())
-	// Normalized inputs that clean into a default-protected path stay blocked.
+	for _, path := range workflowFormerDefaultProtectedPaths() {
+		writablePath(t, registry, root, path)
+	}
+}
+
+// TestWorkflowRegistryConfiguredBlocklistProtectsGitAndConfig proves the
+// old default protection level is still available, now as an explicit
+// [tools] write_path_blocklist entry rather than a compiled-in default.
+func TestWorkflowRegistryConfiguredBlocklistProtectsGitAndConfig(t *testing.T) {
+	root := t.TempDir()
+	res := &config.Resolved{Tools: config.ToolsConfig{WritePathBlocklist: []string{".git", ".mivia/mivia.toml"}}}
+	registry, err := workflowDefaultRegistry(root, res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blockedPaths(t, registry, root, workflowFormerDefaultProtectedPaths())
+	// Normalized inputs that clean into a configured-protected path stay blocked.
 	for _, path := range []string{
 		filepath.Join(root, ".mivia", "mivia.toml"),
 		".mivia/agents/../mivia.toml",
@@ -132,9 +153,12 @@ func TestWorkflowRegistryHonorsConfiguredWritePathBlocklist(t *testing.T) {
 		".mivia/agents/worker.toml",
 		".mivia/policy/commit-message.json",
 	})
-	// The built-in defaults stay blocked even with additions; ".git/config"
-	// exercises the directory-prefix match against the ".git" default.
-	blockedPaths(t, registry, root, workflowDefaultProtectedPaths())
+	// The former defaults are NOT blocked unless configured: they are not
+	// among res.Tools.WritePathBlocklist here, and there is no compiled-in
+	// default to fall back on.
+	for _, path := range workflowFormerDefaultProtectedPaths() {
+		writablePath(t, registry, root, path)
+	}
 	// An input that cleans into a configured entry is blocked.
 	for _, path := range []string{
 		".mivia/x/../workflows/feature-delivery.toml",
@@ -147,8 +171,8 @@ func TestWorkflowRegistryHonorsConfiguredWritePathBlocklist(t *testing.T) {
 			}
 		})
 	}
-	// Paths outside the effective blocklist remain writable: the default set
-	// is only .git and .mivia/mivia.toml, and a project controls the rest.
+	// Paths outside the effective blocklist remain writable: there is no
+	// compiled-in default, so a project controls the whole set.
 	writablePath(t, registry, root, ".mivia/workflows/other.toml")
 	writablePath(t, registry, root, "internal/foo.go")
 	writablePath(t, registry, root, "go.work")
@@ -156,26 +180,26 @@ func TestWorkflowRegistryHonorsConfiguredWritePathBlocklist(t *testing.T) {
 
 func TestEffectiveWorkflowWriteDenylistRemovals(t *testing.T) {
 	res := &config.Resolved{Tools: config.ToolsConfig{
-		WritePathBlocklist:       []string{".mivia/workflows", "go.mod"},
+		WritePathBlocklist:       []string{".git", ".mivia/mivia.toml", ".mivia/workflows", "go.mod"},
 		WritePathBlocklistRemove: []string{".git", ".mivia/mivia.toml"},
 	}}
 	got := effectiveWorkflowWriteDenylist(res)
 	if slices.Contains(got, ".git") || slices.Contains(got, ".mivia/mivia.toml") {
-		t.Fatalf("denylist = %v, want the defaults removed by explicit opt-out", got)
+		t.Fatalf("denylist = %v, want the explicitly-added-then-removed entries gone", got)
 	}
 	if !slices.Contains(got, ".mivia/workflows") || !slices.Contains(got, "go.mod") {
-		t.Fatalf("denylist = %v, want the additions kept", got)
+		t.Fatalf("denylist = %v, want the non-removed additions kept", got)
 	}
 }
 
 // TestWorkflowRegistryHonorsWritePathBlocklistRemove covers the explicit
-// opt-out end to end: write_path_blocklist_remove unblocks a default entry
-// (.git, .mivia/mivia.toml) and a project addition for workflow agent steps,
-// while a non-removed addition stays blocked.
+// opt-out end to end: write_path_blocklist_remove unblocks an entry a
+// project explicitly added to write_path_blocklist (there is no compiled-in
+// default left to remove), while a non-removed addition stays blocked.
 func TestWorkflowRegistryHonorsWritePathBlocklistRemove(t *testing.T) {
 	root := t.TempDir()
 	res := &config.Resolved{Tools: config.ToolsConfig{
-		WritePathBlocklist:       []string{".mivia/workflows/feature-delivery.toml", "go.mod"},
+		WritePathBlocklist:       []string{".git", ".mivia/mivia.toml", ".mivia/workflows/feature-delivery.toml", "go.mod"},
 		WritePathBlocklistRemove: []string{".git", ".mivia/mivia.toml", ".mivia/workflows/feature-delivery.toml"},
 	}}
 	registry, err := workflowDefaultRegistry(root, res)

@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-
-	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 // DefaultOrchestrationTimeoutSec is the finite parent-tool / batch budget used
@@ -140,15 +138,14 @@ var DefaultSubagentConfig = SubagentConfig{
 	Messaging:         DefaultMessagingConfig,
 }
 
-// DefaultWritePathBlocklist is the built-in set of workspace paths that write
-// tools always refuse for workflow agent steps. A project extends it with
-// [tools] write_path_blocklist and may remove entries (including these two)
-// with [tools] write_path_blocklist_remove. The config file itself (inside
-// the workspace namespace) and the Git metadata stay protected unless a
-// project explicitly opts out - unblocking them is a trust decision because
-// the config file carries this blocklist and Git metadata carries history and
-// hooks.
-var DefaultWritePathBlocklist = []string{".git", workspace.Namespace + "/mivia.toml"}
+// DefaultWritePathBlocklist is the built-in set of workspace paths that
+// workflow agent write tools refuse. It ships empty: protection is opt-in
+// via [tools] write_path_blocklist, not a compiled-in default a project must
+// opt out of. A project that wants .git and .mivia/mivia.toml protected
+// again (recommended - see .mivia/mivia.toml.example) adds them explicitly;
+// [tools] write_path_blocklist_remove still works against whatever a project
+// adds, in case a future built-in entry is reintroduced.
+var DefaultWritePathBlocklist = []string{}
 
 // DefaultToolsConfig defines the built-in tool policy defaults.
 var DefaultToolsConfig = ToolsConfig{

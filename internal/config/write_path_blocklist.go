@@ -62,8 +62,8 @@ func validateBlocklistEntries(key string, entries []string) error {
 // normalizeWritePathBlocklist normalizes both blocklist keys so the write
 // tools compare exact workspace-relative paths: trim whitespace, collapse
 // separators, use forward slashes. Defaults are NOT injected here; the
-// workflow registry composes DefaultWritePathBlocklist + additions - removals
-// at build time.
+// workflow registry composes DefaultWritePathBlocklist (empty by default) +
+// additions - removals at build time.
 func normalizeWritePathBlocklist(tc ToolsConfig) ToolsConfig {
 	if len(tc.WritePathBlocklist) > 0 {
 		norm := make([]string, 0, len(tc.WritePathBlocklist))
