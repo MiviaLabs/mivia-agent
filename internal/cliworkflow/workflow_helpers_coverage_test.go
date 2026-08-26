@@ -281,8 +281,14 @@ func TestWorkflowCommandAndConfigHelpers(t *testing.T) {
 	resolved.StorePathSet = true
 	resolved.Subagents.StorePath = "kept.db"
 	ApplyWorkflowStoreRoot(resolved, root)
-	if resolved.Subagents.StorePath != "kept.db" {
-		t.Fatalf("explicit store path = %q", resolved.Subagents.StorePath)
+	if want := filepath.Join(root, "kept.db"); resolved.Subagents.StorePath != want {
+		t.Fatalf("relative explicit store path = %q, want %q", resolved.Subagents.StorePath, want)
+	}
+	absolute := filepath.Join(root, "abs.db")
+	resolved.Subagents.StorePath = absolute
+	ApplyWorkflowStoreRoot(resolved, root)
+	if resolved.Subagents.StorePath != absolute {
+		t.Fatalf("absolute explicit store path = %q", resolved.Subagents.StorePath)
 	}
 }
 

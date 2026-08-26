@@ -480,8 +480,20 @@ func WorkflowConfigPath(root, explicit string) string {
 // locks are not namespaced across projects the way chat sessions are (see
 // contextWorkspaceID), so letting them fall back to the shared global store
 // would let unrelated workflow runs in different repos collide.
+//
+// An explicitly set RELATIVE store_path is .mivia namespace notation for the
+// workspace, not process-cwd notation: anchor it to the resolved root too,
+// so every surface that loads config through here opens one store per
+// workspace instead of one per working directory.
 func ApplyWorkflowStoreRoot(res *config.Resolved, root string) {
-	if res != nil && !res.StorePathSet {
+	if res == nil {
+		return
+	}
+	if !res.StorePathSet {
 		res.Subagents.StorePath = workspace.ContextStorePath(root)
+		return
+	}
+	if p := res.Subagents.StorePath; p != "" && root != "" && !filepath.IsAbs(p) {
+		res.Subagents.StorePath = filepath.Join(root, p)
 	}
 }

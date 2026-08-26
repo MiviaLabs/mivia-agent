@@ -519,8 +519,13 @@ func TestSessionAutoDeliveryTransientFailureRecordedNotDiscarded(t *testing.T) {
 // TestSessionDeliverRoutesThroughCLIExecute proves allow_publish deliver
 // calls executeWorkflowDeliver (CLI path) rather than localengine root deliver.
 // A missing run fails before git; the recording runner must stay idle.
+//
+// The empty configPath deliberately falls back to the ambient user config,
+// whose store_path may be relative - so Chdir pins that resolution inside a
+// managed temp dir instead of leaking .mivia/ into the package directory.
 func TestSessionDeliverRoutesThroughCLIExecute(t *testing.T) {
 	root := t.TempDir()
+	t.Chdir(root)
 	e := NewSessionWorkflowEngine(root, "")
 	prevGit := WorkflowDeliverGit
 	rec := &recordingDeliverGit{}
