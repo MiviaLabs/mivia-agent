@@ -75,7 +75,7 @@ func (t *dispatchTasksTool) Parameters() map[string]any {
 		"type": "object",
 		"properties": map[string]any{
 			"tasks": map[string]any{
-				"type": "array", "items": taskItemSchema(t.agentReg, false, true),
+				"type": "array", "items": taskItemSchema(t.agentReg, true),
 				"description": "Array of 1-16 tasks. Tasks without depends_on run concurrently.",
 			},
 			"timeout_seconds": map[string]any{
@@ -187,9 +187,10 @@ type dispatchTaskParam struct {
 	ID             string         `json:"id"`
 	Prompt         string         `json:"prompt"`
 	DependsOn      []string       `json:"depends_on,omitempty"`
-	Agent          string         `json:"agent"`
+	Agent          string         `json:"agent,omitempty"`
 	Skill          string         `json:"skill,omitempty"`
 	TimeoutSeconds int            `json:"timeout_seconds,omitempty"`
+	Budget         int            `json:"budget,omitempty"`
 	OutputSchema   map[string]any `json:"output_schema,omitempty"`
 	InputSchema    map[string]any `json:"input_schema,omitempty"`
 }
@@ -209,7 +210,7 @@ func (t *dispatchTasksTool) buildTasks(params []dispatchTaskParam, batchTimeout 
 		// MaxTimeoutSeconds clamp stops a huge model-supplied timeout_seconds
 		// from wrapping time.Duration negative (R2B-1).
 		taskTimeout := config.EffectiveTimeoutSec(batchTimeout, pt.TimeoutSeconds)
-		providerName, model := resolvedTaskBinding(route, t.providerName, t.model)
+		name, agentName, digest, providerName, model := routedTaskIdentity(route, t.providerName, t.model)
 		outSchema, inSchema, err := resolveTaskSchemas(pt.OutputSchema, pt.InputSchema, route, t.skillReg)
 		if err != nil {
 			return nil, fmt.Errorf("dispatch_tasks: task %q: %w", pt.ID, err)
@@ -221,11 +222,12 @@ func (t *dispatchTasksTool) buildTasks(params []dispatchTaskParam, batchTimeout 
 		}
 		tasks[i] = subagents.Task{
 			ID: pt.ID, InvocationKey: batchID + ":" + pt.ID,
-			Name: route.agent.Name, AgentName: route.agent.Name, AgentDigest: route.digest,
+			Name: name, AgentName: agentName, AgentDigest: digest,
 			Skill: route.skill, Owner: DefaultToolOwner,
 			ProviderName: providerName, Model: model,
 			Input: input, DependsOn: pt.DependsOn,
 			Timeout:      time.Duration(taskTimeout) * time.Second,
+			Budget:       pt.Budget,
 			OutputSchema: outSchema, InputSchema: inSchema,
 		}
 	}

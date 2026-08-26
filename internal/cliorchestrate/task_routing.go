@@ -14,14 +14,39 @@ import (
 
 // TaskRoute is the result of resolving the sole model-facing agent
 // selector. It is copied into both execution and persisted work metadata.
+// A route with oneshot set is the agent-less case: the task runs a bare
+// LLM call on the calling session's own model and completer
+// (cliorchestrate.HandlerOneshot), with no tools and no agent policy -
+// agent/digest/skill all stay zero.
 type TaskRoute struct {
-	agent  agents.ResolvedAgent
-	digest string
-	skill  string
+	agent   agents.ResolvedAgent
+	digest  string
+	skill   string
+	oneshot bool
 }
 
-// Digest returns the agent definition digest for this route.
+// Digest returns the agent definition digest for this route. Empty for a
+// Oneshot route.
 func (r TaskRoute) Digest() string { return r.digest }
+
+// Oneshot reports whether this route is the agent-less case: no named
+// agent, no tools, dispatched to cliorchestrate.HandlerOneshot instead of a
+// per-agent handler.
+func (r TaskRoute) Oneshot() bool { return r.oneshot }
+
+// routedTaskIdentity resolves a route into the dispatch Name and the
+// AgentName/AgentDigest/ProviderName/Model fields for a subagents.Task. A
+// Oneshot route dispatches to cliorchestrate.HandlerOneshot with everything
+// else left zero: the already-registered OneShotHandler carries its own
+// session-bound Completer/Model from dispatcher construction, not a
+// per-task override (mirrors delegate's prior one-shot path).
+func routedTaskIdentity(route TaskRoute, sessionProvider, sessionModel string) (name, agentName, digest, providerName, model string) {
+	if route.oneshot {
+		return HandlerOneshot, "", "", "", ""
+	}
+	providerName, model = resolvedTaskBinding(route, sessionProvider, sessionModel)
+	return route.agent.Name, route.agent.Name, route.digest, providerName, model
+}
 
 func resolvedTaskBinding(route TaskRoute, sessionProvider, sessionModel string) (string, string) {
 	providerName := route.agent.Provider
@@ -51,12 +76,26 @@ func decodeStrictTaskJSON(args json.RawMessage, target any) error {
 	return nil
 }
 
-// ResolveTaskRoute resolves an agent name and optional skill into a TaskRoute.
+// ResolveTaskRoute resolves an agent name and optional skill into a
+// TaskRoute. This is the ONE production resolver for every dispatched
+// task - dispatch_tasks, spawn_agent, and referral/messaging spawning all
+// call this function, not a package-local duplicate, so agent/skill policy
+// can never drift between callers.
+//
+// An empty agentName is valid: it resolves to the Oneshot route (a bare
+// LLM call on the caller's own model, no tools, no policy). A skill
+// requires an agent's policy scope to check against, so skillName set with
+// an empty agentName is refused.
+//
 // See agents.Select and cliagents.SkillScopeFromAgent for validation rules.
 func ResolveTaskRoute(reg *agents.AgentRegistry, skillReg *skills.Registry, agentName, skillName string) (TaskRoute, error) {
 	agentName = strings.TrimSpace(agentName)
+	skillName = strings.TrimSpace(skillName)
 	if agentName == "" {
-		return TaskRoute{}, fmt.Errorf("task agent is required")
+		if skillName != "" {
+			return TaskRoute{}, fmt.Errorf("skill %q requires an agent; an agent-less task runs a bare one-shot call with no tools", skillName)
+		}
+		return TaskRoute{oneshot: true}, nil
 	}
 	agent, err := agents.Select(reg, agentName)
 	if err != nil {
@@ -66,7 +105,6 @@ func ResolveTaskRoute(reg *agents.AgentRegistry, skillReg *skills.Registry, agen
 	if err != nil {
 		return TaskRoute{}, err
 	}
-	skillName = strings.TrimSpace(skillName)
 	if skillName != "" {
 		if skillReg == nil {
 			return TaskRoute{}, fmt.Errorf("agent %q may not invoke skill %q", agent.Name, skillName)
@@ -87,7 +125,11 @@ func ResolveTaskRoute(reg *agents.AgentRegistry, skillReg *skills.Registry, agen
 // dispatch_tasks and spawn_agent both embed this schema in every request, so
 // the roster ships once - in dispatch_tasks, the primary router the compiled
 // prompt orders - and spawn_agent keeps only the enum for validation.
-func taskItemSchema(reg *agents.AgentRegistry, includeBudget, includeRoster bool) map[string]any {
+//
+// "agent" is optional: an omitted agent runs the task as a bare one-shot
+// LLM call on the calling session's own model, with no tools (see
+// ResolveTaskRoute's Oneshot route). Only "id" and "prompt" are required.
+func taskItemSchema(reg *agents.AgentRegistry, includeRoster bool) map[string]any {
 	agentDescription := agentRoutingDescription(nil)
 	if includeRoster {
 		agentDescription = agentRoutingDescription(reg)
@@ -102,10 +144,11 @@ func taskItemSchema(reg *agents.AgentRegistry, includeBudget, includeRoster bool
 	properties := map[string]any{
 		"id":              map[string]any{"type": "string", "description": "Unique task identifier within this run"},
 		"agent":           agentProp,
-		"skill":           map[string]any{"type": "string", "description": "Optional skill invoked under the selected agent's policy"},
+		"skill":           map[string]any{"type": "string", "description": "Optional skill invoked under the selected agent's policy; requires agent"},
 		"depends_on":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Task IDs that must complete first"},
-		"prompt":          map[string]any{"type": "string", "description": "Natural language task description for the selected agent"},
+		"prompt":          map[string]any{"type": "string", "description": "Natural language task description for the selected agent, or the bare prompt for an agent-less one-shot call"},
 		"timeout_seconds": map[string]any{"type": "integer", "description": "Per-task timeout override in seconds. " + TimeoutHint()},
+		"budget":          map[string]any{"type": "integer", "minimum": 0, "description": "Budget for this task"},
 		"output_schema": map[string]any{
 			"type":        "object",
 			"description": "Optional JSON Schema the agent's final reply must satisfy. Validated before the task completes; prefer this over re-parsing free prose",
@@ -115,10 +158,7 @@ func taskItemSchema(reg *agents.AgentRegistry, includeBudget, includeRoster bool
 			"description": "Optional JSON Schema validating this task's input at admission",
 		},
 	}
-	if includeBudget {
-		properties["budget"] = map[string]any{"type": "integer", "minimum": 0, "description": "Budget for this task"}
-	}
-	return map[string]any{"type": "object", "properties": properties, "required": []string{"id", "agent", "prompt"}, "additionalProperties": false}
+	return map[string]any{"type": "object", "properties": properties, "required": []string{"id", "prompt"}, "additionalProperties": false}
 }
 
 func agentNames(reg *agents.AgentRegistry) []string {

@@ -182,6 +182,58 @@ func TestResolveTaskRouteSkillBranches(t *testing.T) {
 	}
 }
 
+// TestResolveTaskRouteUnknownAgentErrors and
+// TestResolveTaskRouteSuccessReturnsAgent migrate the coverage that used to
+// live in internal/cliagents' now-deleted duplicate ResolveTaskRoute: there
+// is exactly one production resolver, this one.
+func TestResolveTaskRouteUnknownAgentErrors(t *testing.T) {
+	reg := testAgentRegistry(t, "coder")
+	if _, err := ResolveTaskRoute(reg, nil, "ghost", ""); err == nil {
+		t.Fatal("ResolveTaskRoute(unknown agent) must error")
+	}
+}
+
+func TestResolveTaskRouteSuccessReturnsAgent(t *testing.T) {
+	reg := testAgentRegistry(t, "coder")
+	route, err := ResolveTaskRoute(reg, nil, "coder", "")
+	if err != nil {
+		t.Fatalf("ResolveTaskRoute = %v, want nil", err)
+	}
+	if route.Oneshot() {
+		t.Fatal("ResolveTaskRoute(named agent) must not be Oneshot")
+	}
+	if route.agent.Name != "coder" {
+		t.Fatalf("ResolveTaskRoute returned agent %q, want coder", route.agent.Name)
+	}
+}
+
+// TestResolveTaskRouteEmptyAgentIsOneshot guards the agent-less task case: a
+// dispatch_tasks/spawn_agent task that omits "agent" runs a bare one-shot
+// call on the calling session's own model (cliorchestrate.HandlerOneshot),
+// not a named-agent route.
+func TestResolveTaskRouteEmptyAgentIsOneshot(t *testing.T) {
+	reg := testAgentRegistry(t, "coder")
+	route, err := ResolveTaskRoute(reg, nil, "", "")
+	if err != nil {
+		t.Fatalf("ResolveTaskRoute(empty agent) = %v, want nil", err)
+	}
+	if !route.Oneshot() {
+		t.Fatal("ResolveTaskRoute(empty agent) must be Oneshot")
+	}
+	if route.Digest() != "" {
+		t.Fatalf("ResolveTaskRoute(empty agent) digest = %q, want empty", route.Digest())
+	}
+}
+
+// TestResolveTaskRouteEmptyAgentWithSkillErrors guards against a task
+// declaring a skill with no agent: skill policy is scoped to an agent's
+// allowlist, so there is no policy to check without one.
+func TestResolveTaskRouteEmptyAgentWithSkillErrors(t *testing.T) {
+	if _, err := ResolveTaskRoute(nil, nil, "", "review"); err == nil {
+		t.Fatal("ResolveTaskRoute(empty agent, skill set) must error")
+	}
+}
+
 func TestDispatchRunLevelErrorWithoutResults(t *testing.T) {
 	// A dead caller context fails RunThroughCoordinator before any run
 	// exists: the tool must still answer with a JSON envelope, never a Go

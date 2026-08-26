@@ -113,7 +113,7 @@ func (t *spawnAgentTool) Parameters() map[string]any {
 		"type": "object",
 		"properties": map[string]any{
 			"tasks": map[string]any{
-				"type": "array", "items": taskItemSchema(t.agentReg, true, false),
+				"type": "array", "items": taskItemSchema(t.agentReg, false),
 				"description": "Array of 1+ tasks forming a DAG via depends_on",
 			},
 			"idempotency_key": map[string]any{

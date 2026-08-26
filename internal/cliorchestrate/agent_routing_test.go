@@ -37,29 +37,39 @@ func routingTools(t *testing.T) (*dispatchTasksTool, *spawnAgentTool) {
 			t.Fatal(err)
 		}
 	}
+	if err := d.Register(runtime.Subagent, HandlerOneshot, handlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) {
+		return json.RawMessage(`{"output":"oneshot-ok"}`), nil
+	})); err != nil {
+		t.Fatal(err)
+	}
 	reg := routingAgentRegistry(t)
 	repo := ledger.NewMemoryLedgerRepository()
 	return &dispatchTasksTool{dispatcher: d, cfg: config.DefaultSubagentConfig, repo: repo, agentReg: reg},
 		&spawnAgentTool{dispatcher: d, cfg: config.DefaultSubagentConfig, repo: repo, agentReg: reg}
 }
 
-func TestAgentFieldRequired(t *testing.T) {
+// TestAgentFieldOptionalRunsOneshot guards the agent-less task case end to
+// end: omitting "agent" must not error (it used to, "task agent is
+// required") - it runs as a bare one-shot call routed to
+// cliorchestrate.HandlerOneshot, not through a named agent's handler.
+func TestAgentFieldOptionalRunsOneshot(t *testing.T) {
 	dispatch, spawn := routingTools(t)
 	spawnCtx := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "routing-test"})
-	for name, invoke := range map[string]func() error{
-		"dispatch": func() error {
-			_, err := dispatch.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"x","prompt":"work"}]}`))
-			return err
+	for name, invoke := range map[string]func() (string, error){
+		"dispatch": func() (string, error) {
+			return dispatch.Execute(context.Background(), json.RawMessage(`{"tasks":[{"id":"x","prompt":"work"}]}`))
 		},
-		"spawn": func() error {
-			_, err := spawn.Execute(spawnCtx, json.RawMessage(`{"tasks":[{"id":"x","prompt":"work"}]}`))
-			return err
+		"spawn": func() (string, error) {
+			return spawn.Execute(spawnCtx, json.RawMessage(`{"tasks":[{"id":"x","prompt":"work"}],"wait":"run"}`))
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			err := invoke()
-			if err == nil || !strings.Contains(err.Error(), "agent is required") {
-				t.Fatalf("error = %v, want required agent", err)
+			out, err := invoke()
+			if err != nil {
+				t.Fatalf("Execute error = %v, want nil", err)
+			}
+			if !strings.Contains(out, "oneshot-ok") {
+				t.Fatalf("Execute output = %q, want the oneshot handler's result", out)
 			}
 		})
 	}
@@ -118,6 +128,33 @@ func TestAgentEnumInParameters(t *testing.T) {
 			}
 			if name == "spawn" && hasRoster {
 				t.Fatalf("spawn_agent must not duplicate the roster: %q", agent["description"])
+			}
+		})
+	}
+}
+
+// TestTaskItemSchemaAgentIsOptional guards the agent-less oneshot task case:
+// "agent" must not be in the required array (an omitted agent is valid -
+// see ResolveTaskRoute's Oneshot route), only "id" and "prompt" are.
+func TestTaskItemSchemaAgentIsOptional(t *testing.T) {
+	dispatch, spawn := routingTools(t)
+	for name, parameters := range map[string]map[string]any{"dispatch": dispatch.Parameters(), "spawn": spawn.Parameters()} {
+		t.Run(name, func(t *testing.T) {
+			items := parameters["properties"].(map[string]any)["tasks"].(map[string]any)["items"].(map[string]any)
+			required := items["required"].([]string)
+			for _, r := range required {
+				if r == "agent" {
+					t.Fatalf("%s: agent must not be required, got required=%v", name, required)
+				}
+			}
+			want := []string{"id", "prompt"}
+			if len(required) != len(want) {
+				t.Fatalf("%s: required=%v, want %v", name, required, want)
+			}
+			for i, w := range want {
+				if required[i] != w {
+					t.Fatalf("%s: required=%v, want %v", name, required, want)
+				}
 			}
 		})
 	}

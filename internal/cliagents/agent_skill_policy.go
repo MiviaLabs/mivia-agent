@@ -176,30 +176,6 @@ func FilterSkillsForScope(reg *skills.Registry, scope AgentSkillScope) *skills.R
 	return out
 }
 
-// ResolveTaskRoute checks that the named agent exists and, when skillName is
-// set, that the agent's policy permits the skill. It returns the first error
-// encountered. Callers that only need the validation error may discard the
-// result with _.
-func ResolveTaskRoute(reg *agents.AgentRegistry, skillReg *skills.Registry, agentName, skillName string) (agents.ResolvedAgent, error) {
-	agent, err := agents.Select(reg, agentName)
-	if err != nil {
-		return agents.ResolvedAgent{}, err
-	}
-	if skillName != "" {
-		if skillReg == nil {
-			return agents.ResolvedAgent{}, fmt.Errorf("agent %q may not invoke skill %q", agent.Name, skillName)
-		}
-		skill, ok := skillReg.Get(skillName)
-		if !ok {
-			return agents.ResolvedAgent{}, fmt.Errorf("unknown skill %q", skillName)
-		}
-		if err := SkillScopeFromAgent(&agent).CheckSkillDefinition(skill); err != nil {
-			return agents.ResolvedAgent{}, err
-		}
-	}
-	return agent, nil
-}
-
 // skillAllowlistPtr returns the ListModelFacing allowlist pointer for the scope.
 // nil = all; &empty = none; &names = those names.
 func skillAllowlistPtr(scope AgentSkillScope) *[]string {

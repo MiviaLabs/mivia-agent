@@ -45,7 +45,7 @@ func (t *spawnAgentTool) buildSpawnTasks(params []spawnTaskParams, caller runtim
 		if err != nil {
 			return nil, fmt.Errorf("spawn_agent: %w", err)
 		}
-		providerName, model := resolvedTaskBinding(route, t.providerName, t.model)
+		name, agentName, digest, providerName, model := routedTaskIdentity(route, t.providerName, t.model)
 		outSchema, inSchema, err := resolveTaskSchemas(pt.OutputSchema, pt.InputSchema, route, t.skillReg)
 		if err != nil {
 			return nil, fmt.Errorf("spawn_agent: task %q: %w", pt.ID, err)
@@ -57,9 +57,9 @@ func (t *spawnAgentTool) buildSpawnTasks(params []spawnTaskParams, caller runtim
 		}
 		subTasks[i] = subagents.Task{
 			ID:           pt.ID,
-			Name:         route.agent.Name,
-			AgentName:    route.agent.Name,
-			AgentDigest:  route.digest,
+			Name:         name,
+			AgentName:    agentName,
+			AgentDigest:  digest,
 			ProviderName: providerName,
 			Model:        model,
 			Skill:        route.skill,

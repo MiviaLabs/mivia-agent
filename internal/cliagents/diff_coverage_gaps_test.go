@@ -17,7 +17,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
-	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 )
@@ -78,44 +77,13 @@ func TestLoadAgentCatalogRejectsBrokenWorkspaceConfig(t *testing.T) {
 }
 
 // --- agent_skill_policy.go -------------------------------------------------
-
-func TestResolveTaskRouteErrorBranches(t *testing.T) {
-	reg := agents.NewRegistry()
-	if err := reg.Publish(agents.ResolvedAgent{Name: "worker", EffectiveTools: []string{"read_file"}}); err != nil {
-		t.Fatal(err)
-	}
-	// Unknown agent: agents.Select fails first.
-	if _, err := ResolveTaskRoute(reg, nil, "ghost", ""); err == nil {
-		t.Fatal("ResolveTaskRoute(unknown agent) must error")
-	}
-	// Known agent, skill requested, but no skill registry at all.
-	if _, err := ResolveTaskRoute(reg, nil, "worker", "deploy"); err == nil {
-		t.Fatal("ResolveTaskRoute(nil skill registry) must error")
-	}
-	// Known agent, skill registry without the named skill.
-	empty := skills.NewRegistry()
-	if _, err := ResolveTaskRoute(reg, empty, "worker", "deploy"); err == nil {
-		t.Fatal("ResolveTaskRoute(unknown skill) must error")
-	}
-}
-
-func TestResolveTaskRouteSuccessReturnsAgent(t *testing.T) {
-	reg := agents.NewRegistry()
-	if err := reg.Publish(agents.ResolvedAgent{Name: "worker", EffectiveTools: []string{"read_file"}}); err != nil {
-		t.Fatal(err)
-	}
-	skillReg := skills.NewRegistry()
-	if err := skillReg.Register(skills.Definition{Name: "deploy", Version: "1", Origin: skills.OriginUser}); err != nil {
-		t.Fatal(err)
-	}
-	agent, err := ResolveTaskRoute(reg, skillReg, "worker", "deploy")
-	if err != nil {
-		t.Fatalf("ResolveTaskRoute = %v, want nil", err)
-	}
-	if agent.Name != "worker" {
-		t.Fatalf("ResolveTaskRoute returned agent %q, want worker", agent.Name)
-	}
-}
+//
+// ResolveTaskRoute's error-branch and success-path coverage lives in
+// internal/cliorchestrate (TestResolveTaskRouteSkillBranches and friends):
+// this package's own ResolveTaskRoute was a duplicate with zero production
+// callers (dispatch_tasks/spawn_agent/referral spawning all call
+// cliorchestrate.ResolveTaskRoute) and was deleted so there is exactly one
+// agent/skill-route resolver, not two that can silently drift.
 
 func TestSkillAllowlistPtrBothScopes(t *testing.T) {
 	if got := skillAllowlistPtr(AgentSkillScope{}); got != nil {

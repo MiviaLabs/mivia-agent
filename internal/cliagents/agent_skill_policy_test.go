@@ -318,24 +318,16 @@ func TestSkillScopeOriginCheckSkipsUnboundSkills(t *testing.T) {
 // (it needs cli-internal type agentTaskHandler).
 
 // Plan 43 phase 2: a project skill silently shadowing a user-bound allowlist
-// entry fails closed at execution (origin mismatch), for both routed tasks and
-// the shared scope.
+// entry fails closed at execution (origin mismatch). Routed-task coverage of
+// the same policy engine (via cliorchestrate.ResolveTaskRoute, the one
+// production resolver) lives in internal/cliorchestrate; this test covers
+// the shared AgentSkillScope mechanism both resolvers delegate to.
 func TestOriginFailClosedAtExecution(t *testing.T) {
 	allowed := []string{"shared"}
-	reg := agents.NewRegistry()
-	if err := reg.Publish(agents.ResolvedAgent{
-		Name: "a", Description: "A", EffectiveTools: []string{"read_file"},
-		Skills: &allowed, SkillOrigins: map[string]string{"shared": "user"},
-	}); err != nil {
-		t.Fatal(err)
-	}
 	skillReg := skills.NewRegistry()
 	_ = skillReg.Register(skills.Definition{
 		Name: "shared", Origin: skills.OriginProject, Tools: []string{"read_file"},
 	})
-	if _, err := ResolveTaskRoute(reg, skillReg, "a", "shared"); err == nil || !strings.Contains(err.Error(), "origin mismatch") {
-		t.Fatalf("routed task must fail closed on origin mismatch, got %v", err)
-	}
 	scope := SkillScopeFromAgent(&agents.ResolvedAgent{
 		Name: "a", EffectiveTools: []string{"read_file"},
 		Skills: &allowed, SkillOrigins: map[string]string{"shared": "user"},
