@@ -34,6 +34,15 @@ type UnadmittedToolResult struct {
 	Ran bool
 	// Content is the tool's real result (Ran) or the denial text (!Ran).
 	Content string
+	// HookRuns are the lifecycle hooks that executed for this call, for the
+	// OPERATOR's view. Set on the Ran path AND on a !Ran path whose cause
+	// was a PreToolUse block - the case an operator most needs to see, since
+	// it is the run that stopped the call. It must be nil for a dedup-served
+	// duplicate: a duplicate is answered with the OWNER's runs (DC-9), which
+	// did not execute for THIS call, so reporting them would show a hook
+	// firing that never fired here. Nil when the handler never reached the
+	// dispatcher at all.
+	HookRuns []runtime.HookRun
 }
 
 // Options is one agent turn's immutable configuration. Every field is read,

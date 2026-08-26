@@ -556,12 +556,22 @@ script above stores the payload whole rather than picking fields out of it.
 > `internal/cli/hooks_runner.go`) - and it is worth knowing before you build
 > billing or audit on top of it.
 >
-> **Limitation: a deferred tool served synchronously produces no hook row.**
-> `internal/chat.Session.runDeferredToolNow` still runs `PreToolUse`/
-> `PostToolUse` against the call - the policy lives on the dispatcher, not on
-> this path - but discards `result.HookRuns` rather than emitting them, so a
-> hook that fires for a deferred tool served this way is silent on both
-> surfaces. A known gap, recorded rather than silently widened.
+> **Limitation: a `PostToolUse` hook's advisory text never reaches the MODEL
+> for a deferred tool.** `internal/chat.Session.runDeferredToolNow` serves a
+> deferred-but-authorized tool call synchronously and does run `PreToolUse`/
+> `PostToolUse` against it - the policy lives on the dispatcher, not on this
+> path - and the operator now sees the resulting row like any other call. But
+> `result.HookContext` (the text a hook hands the MODEL) is still discarded
+> here, unlike the normal `dispatcherShim.Run` path. A known gap, recorded
+> rather than silently widened.
+>
+> A `PreToolUse` block on this path also leaves one contradiction for a
+> single step: the operator's transcript shows the denying hook's row, but
+> the MODEL is still told the generic "queued to load... retry on your next
+> step" message, not the hook's actual reason. The model retries next step,
+> reaches the now-admitted path, and gets the real reason there - so this
+> self-corrects in one step, but it is a deliberate half-fix, not an
+> oversight.
 
 `Stop` also fires once per user-visible turn and never per subagent turn. A
 per-subagent `Stop` would run N times with "the assistant is done" semantics

@@ -311,12 +311,25 @@ func hookBlockValue(b uievent.HookBody) Block {
 	if b.Denied {
 		state, role = "blocked", theme.RoleDanger
 	}
+	// Split on "\n": hookRunOutput joins output and warning with a newline,
+	// so a hook that both prints and warns produces multi-line Output
+	// unconditionally, and Block.Body is one logical row per element -
+	// an unsplit multi-line string under-counts Height() against what
+	// actually renders (the same bug noticeBlockValue fixes above).
 	var body []string
 	if b.Input != "" {
-		body = append(body, "in:  "+b.Input)
+		lines := strings.Split(b.Input, "\n")
+		body = append(body, "in:  "+lines[0])
+		for _, line := range lines[1:] {
+			body = append(body, "     "+line)
+		}
 	}
 	if b.Output != "" {
-		body = append(body, "out: "+b.Output)
+		lines := strings.Split(b.Output, "\n")
+		body = append(body, "out: "+lines[0])
+		for _, line := range lines[1:] {
+			body = append(body, "     "+line)
+		}
 	}
 	return Block{
 		Kind: uievent.KindHook,

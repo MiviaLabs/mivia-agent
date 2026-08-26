@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -205,6 +206,134 @@ func TestUnadmittedToolHandlerServesTheCallSynchronously(t *testing.T) {
 	}
 }
 
+// A same-turn duplicate must not re-execute the tool (proven by a call
+// counter, not by content equality - the earlier assertion would pass
+// identically for a genuine re-run of a fixed-body tool) and must not
+// report a hook run for a hook that did not fire on this call: a
+// dedup-served duplicate is answered with the OWNER's HookRuns (DC-9), so
+// reporting them here would show a hook firing that never fired.
+func TestDeferredToolSuppressesHookRunsOnDuplicate(t *testing.T) {
+	s := prefixResetSession(t)
+	tool := &countingTool{name: "grep"}
+	full := tools.NewRegistry()
+	full.Register(tool)
+	s.PublishAgentSurface("p", 0, full, nil, nil, "", full.OpenAITools())
+
+	pre := func(context.Context, runtime.Request) runtime.HookVerdict {
+		return runtime.HookVerdict{Runs: []runtime.HookRun{{Event: "PreToolUse", Program: "guard.sh"}}}
+	}
+	dispatcher := runtime.New(runtime.Policy{PreInvokeHook: pre})
+	t.Cleanup(dispatcher.Close)
+	s.SetDispatcher(dispatcher)
+	s.ToolBaseResolver = func() *tools.Registry { return full }
+	s.mu.Lock()
+	s.turnID = 7
+	s.mu.Unlock()
+
+	var opts agent.Options
+	s.wireStepBoundaryAdmission(&opts, nil)
+
+	first := opts.UnadmittedToolHandler(context.Background(), "grep", json.RawMessage(`{}`))
+	if !first.Ran || len(first.HookRuns) != 1 {
+		t.Fatalf("owner call: Ran=%v HookRuns=%+v, want Ran=true and 1 hook run", first.Ran, first.HookRuns)
+	}
+
+	second := opts.UnadmittedToolHandler(context.Background(), "grep", json.RawMessage(`{}`))
+	if !second.Ran || second.Content != first.Content {
+		t.Fatalf("second identical call = %+v, want the same successful result via dedup", second)
+	}
+	if calls := tool.runs.Load(); calls != 1 {
+		t.Fatalf("the tool executed %d times, want exactly 1 (the duplicate must not re-run it)", calls)
+	}
+	if len(second.HookRuns) != 0 {
+		t.Fatalf("a dedup-served duplicate must report no hook runs, got %+v", second.HookRuns)
+	}
+}
+
+// A PreToolUse block is the case an operator most needs to see: the call
+// never ran, but the denying hook did. Today's model-facing text on this
+// path is unchanged (the generic "queued to load... retry" message) - see
+// runDeferredToolNow's doc comment for why that is a deliberate half-fix.
+func TestDeferredToolReportsAPreToolUseBlock(t *testing.T) {
+	s := prefixResetSession(t)
+	full := tools.NewRegistry()
+	full.Register(fixedBodyTool{name: "grep", body: "should never run"})
+	s.PublishAgentSurface("p", 0, full, nil, nil, "", full.OpenAITools())
+
+	pre := func(context.Context, runtime.Request) runtime.HookVerdict {
+		return runtime.HookVerdict{Denied: true, Reason: "policy forbids this", Runs: []runtime.HookRun{
+			{Event: "PreToolUse", Program: "guard.sh", Denied: true, Output: "policy forbids this"},
+		}}
+	}
+	dispatcher := runtime.New(runtime.Policy{PreInvokeHook: pre})
+	t.Cleanup(dispatcher.Close)
+	s.SetDispatcher(dispatcher)
+	s.ToolBaseResolver = func() *tools.Registry { return full }
+	s.mu.Lock()
+	s.turnID = 7
+	s.mu.Unlock()
+
+	var opts agent.Options
+	s.wireStepBoundaryAdmission(&opts, nil)
+
+	result := opts.UnadmittedToolHandler(context.Background(), "grep", json.RawMessage(`{}`))
+	if result.Ran {
+		t.Fatalf("a PreToolUse block must not report Ran, got %+v", result)
+	}
+	if len(result.HookRuns) != 1 || !result.HookRuns[0].Denied {
+		t.Fatalf("the blocking run must still be reported: %+v", result.HookRuns)
+	}
+	if !strings.Contains(result.Content, "next step") {
+		t.Fatalf("the model-facing text on this path is unchanged (deliberate half-fix), got %q", result.Content)
+	}
+}
+
+// A hook can fire successfully while the TOOL's own execution still fails -
+// a distinct case from a PreToolUse block (which never reaches the tool at
+// all). The hook run must still be reported even though ok=false.
+func TestDeferredToolReportsHookRunsWhenToolItselfFails(t *testing.T) {
+	s := prefixResetSession(t)
+	full := tools.NewRegistry()
+	full.Register(failingTool{name: "grep"})
+	s.PublishAgentSurface("p", 0, full, nil, nil, "", full.OpenAITools())
+
+	pre := func(context.Context, runtime.Request) runtime.HookVerdict {
+		return runtime.HookVerdict{Runs: []runtime.HookRun{{Event: "PreToolUse", Program: "guard.sh"}}}
+	}
+	dispatcher := runtime.New(runtime.Policy{PreInvokeHook: pre})
+	t.Cleanup(dispatcher.Close)
+	s.SetDispatcher(dispatcher)
+	s.ToolBaseResolver = func() *tools.Registry { return full }
+	s.mu.Lock()
+	s.turnID = 7
+	s.mu.Unlock()
+
+	var opts agent.Options
+	s.wireStepBoundaryAdmission(&opts, nil)
+
+	result := opts.UnadmittedToolHandler(context.Background(), "grep", json.RawMessage(`{}`))
+	if result.Ran {
+		t.Fatalf("a failing tool execution must not report Ran, got %+v", result)
+	}
+	if len(result.HookRuns) != 1 {
+		t.Fatalf("the hook that DID run before the tool failed must still be reported, got %+v", result.HookRuns)
+	}
+}
+
+// failingTool always errors, to exercise the "hook ran, tool itself
+// failed" path distinctly from a PreToolUse block.
+type failingTool struct{ name string }
+
+func (t failingTool) Name() string               { return t.name }
+func (t failingTool) Description() string        { return "always fails" }
+func (t failingTool) Parameters() map[string]any { return map[string]any{"type": "object"} }
+func (t failingTool) Capability(json.RawMessage) tools.Capability {
+	return tools.Capability{Class: tools.ExecutionRead}
+}
+func (t failingTool) Execute(context.Context, json.RawMessage) (string, error) {
+	return "", errors.New("always fails")
+}
+
 // TestUnadmittedToolHandlerFallsBackWithoutWiring pins the degrade path: no
 // dispatcher or no resolver wired (a test harness, or a session with no
 // agent state) must never panic and must fall back to the staged-only
@@ -228,6 +357,9 @@ func TestUnadmittedToolHandlerFallsBackWithoutWiring(t *testing.T) {
 	}
 	if !strings.Contains(result.Content, "next step") {
 		t.Fatalf("expected the staged-denial fallback text, got %q", result.Content)
+	}
+	if len(result.HookRuns) != 0 {
+		t.Fatalf("nothing dispatched, so there must be no hook runs to report, got %+v", result.HookRuns)
 	}
 }
 

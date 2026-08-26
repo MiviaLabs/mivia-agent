@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/hooks"
@@ -146,22 +147,87 @@ func hookRunsFor(outcome hooks.Outcome, toolInput json.RawMessage) []runtime.Hoo
 
 // boundedRedactedInput redacts secret-shaped values out of a tool input and
 // truncates it to maxHookRunInputBytes before it is ever retained.
+//
+// Redaction must run BEFORE truncation, not after: truncating a JSON string
+// at a byte bound produces a string that is no longer valid JSON, which
+// forces redactedHookInput's own decode step (and, downstream, any
+// JSON-aware redactor) onto its pattern-only fallback - silently downgrading
+// the strict tools.RedactToolArgs() opt-in to bare pattern matching for
+// every input over the bound. Do the real redaction on the full string
+// first; only the FINAL text gets cut.
 func boundedRedactedInput(input json.RawMessage) string {
 	if len(input) == 0 {
 		return ""
 	}
-	redacted := redact.Text(string(input))
+	redacted := redactedHookInput(string(input))
 	if len(redacted) <= maxHookRunInputBytes {
 		return redacted
 	}
 	truncated := redacted[:maxHookRunInputBytes]
-	// Repair a cut that landed mid-rune: redact.Text may have grown or
-	// shrunk byte offsets relative to input, so re-validate at the bound
-	// rather than assume the original string's rune boundaries still apply.
+	// Repair a cut that landed mid-rune: redaction may have grown or shrunk
+	// byte offsets relative to input, so re-validate at the bound rather
+	// than assume the original string's rune boundaries still apply.
 	for !utf8.ValidString(truncated) && len(truncated) > 0 {
 		truncated = truncated[:len(truncated)-1]
 	}
 	return truncated + "...(truncated)"
+}
+
+// redactedHookInput mirrors internal/agent's redactToolInput (the tool-input
+// preview every other operator-facing surface uses): with
+// tools.RedactToolArgs() off, only the workspace's pattern policy applies
+// (redact.Text, a no-op with no policy configured - see
+// .agents/rules/10-security-privacy.md). With it on, the input is decoded,
+// content bodies are reduced to a byte count, key-name elision and pattern
+// scrubbing run on the decoded tree, and the result is re-encoded - a
+// superset of the default path, so a credential in an innocuously named
+// field is still caught. Unencodable or undecodable input falls back to the
+// pattern-only pass, matching redactToolInput's own fallback.
+func redactedHookInput(raw string) string {
+	if !tools.RedactToolArgs() {
+		return redact.Text(raw)
+	}
+	var value any
+	if json.Unmarshal([]byte(raw), &value) != nil {
+		return redact.Text(raw)
+	}
+	encoded, err := json.Marshal(redact.JSONValue(elideHookContentPreviews(value, 0)))
+	if err != nil {
+		return redact.Text(raw)
+	}
+	return string(encoded)
+}
+
+// hookContentElisionMaxDepth bounds recursion so deeply nested or crafted
+// input cannot overflow the stack.
+const hookContentElisionMaxDepth = 64
+
+// elideHookContentPreviews replaces a string value under a "content" key
+// with its size, mirroring internal/agent's elideContentPreviews. Content
+// elision is preview-size control, not credential redaction, so it applies
+// whether or not tools.RedactToolArgs() would otherwise have anything to do
+// - it is what keeps a whole file body out of every hook-run record.
+func elideHookContentPreviews(value any, depth int) any {
+	if depth > hookContentElisionMaxDepth {
+		return value
+	}
+	switch current := value.(type) {
+	case map[string]any:
+		for key, nested := range current {
+			if strings.ToLower(key) == "content" {
+				if text, ok := nested.(string); ok {
+					current[key] = fmt.Sprintf("[content %d bytes]", len(text))
+					continue
+				}
+			}
+			current[key] = elideHookContentPreviews(nested, depth+1)
+		}
+	case []any:
+		for i, nested := range current {
+			current[i] = elideHookContentPreviews(nested, depth+1)
+		}
+	}
+	return value
 }
 
 // runHookEvent runs one lifecycle event's hook groups, read fresh from

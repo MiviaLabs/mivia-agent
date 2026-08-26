@@ -74,10 +74,14 @@ func (s *Session) wireStepBoundaryAdmission(opts *agent.Options, turn *TurnOptio
 		if _, err := s.StageToolAdmission([]string{name}, turnID); err != nil {
 			return agent.UnadmittedToolResult{Handled: true, Content: err.Error()}
 		}
-		if content, ok := s.runDeferredToolNow(ctx, dispatcher, resolver, sessionID, turnID, name, args); ok {
-			return agent.UnadmittedToolResult{Handled: true, Ran: true, Content: content}
+		content, hookRuns, ok := s.runDeferredToolNow(ctx, dispatcher, resolver, sessionID, turnID, name, args)
+		if ok {
+			return agent.UnadmittedToolResult{Handled: true, Ran: true, Content: content, HookRuns: hookRuns}
 		}
-		return agent.UnadmittedToolResult{Handled: true, Content: fmt.Sprintf("tool %q is authorized but was not yet loaded. It has been queued to load automatically; publication happens at the next step boundary and can be deferred - retry the call on your next step", name)}
+		return agent.UnadmittedToolResult{
+			Handled: true, HookRuns: hookRuns,
+			Content: fmt.Sprintf("tool %q is authorized but was not yet loaded. It has been queued to load automatically; publication happens at the next step boundary and can be deferred - retry the call on your next step", name),
+		}
 	}
 	opts.Surface = func() agent.Surface {
 		if turn == nil {
@@ -138,28 +142,26 @@ func (s *Session) isAdvertisedToolName(name string) bool {
 // This is deliberately NOT full parity with an already-admitted call's
 // dispatcherShim.Run path (internal/agent/sdk_dispatcher_shim.go): no
 // per-call timeout re-arming, no hook-context append, no pass1/turn-shaping
-// bookkeeping, and no hook-run visibility event either - result.HookRuns is
-// discarded here rather than passed to emitHookRuns, so a hook that fires
-// for a deferred tool produces no transcript row. A known seam gap, stated
-// once rather than silently widened; see docs/development/lifecycle-hooks.md.
-// It DOES apply the same session-level result cap and remainder-spool
-// behavior that path applies (s.MaxToolResultChars, the tool's own declared
-// Capability.MaxResultBytes if any, s.RemainderSpool) - an operator's
-// configured budget must bound this path exactly like every other tool call.
-func (s *Session) runDeferredToolNow(ctx context.Context, dispatcher *runtime.Dispatcher, resolver func() *tools.Registry, sessionID string, turnID uint64, name string, args json.RawMessage) (string, bool) {
+// bookkeeping. Hook-run VISIBILITY (the operator's transcript row) IS
+// wired below, including on a PreToolUse block (ok=false, hookRuns
+// non-nil) - but the MODEL-facing text on a block is left unchanged, and
+// this path's dedup bucket differs from the shim's (ParentID/Step left
+// zero). See docs/development/lifecycle-hooks.md's "Limitation" notes for
+// what remains open and why.
+func (s *Session) runDeferredToolNow(ctx context.Context, dispatcher *runtime.Dispatcher, resolver func() *tools.Registry, sessionID string, turnID uint64, name string, args json.RawMessage) (content string, hookRuns []runtime.HookRun, ok bool) {
 	if dispatcher == nil || resolver == nil {
-		return "", false
+		return "", nil, false
 	}
 	base := resolver()
 	if base == nil {
-		return "", false
+		return "", nil, false
 	}
-	tool, ok := base.Get(name)
-	if !ok {
-		return "", false
+	tool, found := base.Get(name)
+	if !found {
+		return "", nil, false
 	}
 	if err := dispatcher.RegisterTool(base, tool); err != nil && !dispatcher.Has(runtime.Tool, name) {
-		return "", false
+		return "", nil, false
 	}
 	result := dispatcher.Invoke(ctx, runtime.Request{
 		TurnID:    fmt.Sprintf("turn:%d", turnID),
@@ -168,8 +170,19 @@ func (s *Session) runDeferredToolNow(ctx context.Context, dispatcher *runtime.Di
 		Name:      name,
 		Input:     args,
 	})
+	// A dedup-served duplicate is answered with the OWNER's HookRuns (DC-9
+	// fidelity, internal/runtime/dispatcher.go), which did not run for THIS
+	// call - reporting them would show a hook firing that never fired here.
+	// Mirrors dispatcherShim.Run's !r.IsDuplicate() guard.
+	if !result.IsDuplicate() {
+		hookRuns = result.HookRuns
+	}
 	if result.Err != nil {
-		return "", false
+		// Includes a PreToolUse block: the denying run is still in
+		// hookRuns, so the caller can show it even though the call itself
+		// did not happen. See the doc comment above for what does and does
+		// not change on the model-facing side of a block.
+		return "", hookRuns, false
 	}
 	s.mu.RLock()
 	maxChars, spool := s.MaxToolResultChars, s.RemainderSpool
@@ -183,7 +196,7 @@ func (s *Session) runDeferredToolNow(ctx context.Context, dispatcher *runtime.Di
 		maxResult = capabilityMaxBytes
 	}
 	capped, _, _ := remainder.CapWithSpoolRef(spool, sessionID, string(result.Output), maxResult)
-	return capped, true
+	return capped, hookRuns, true
 }
 
 // commitTurnToken returns the token a step-boundary publication re-captured

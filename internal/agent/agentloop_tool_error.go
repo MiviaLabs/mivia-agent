@@ -51,6 +51,10 @@ func sdkToolCallErrorReporter(opts Options, turn *sdkTurnState) sdkagentloop.Err
 		if strings.TrimSpace(string(call.Arguments)) != "" && !json.Valid(call.Arguments) {
 			return sdkshape.Message{}, nil
 		}
+		callKey := call.ID
+		if callKey == "" {
+			callKey = call.Name
+		}
 		msg := ""
 		if opts.StagedToolMessage != nil {
 			if m, ok := opts.StagedToolMessage(call.Name); ok {
@@ -62,16 +66,22 @@ func sdkToolCallErrorReporter(opts Options, turn *sdkTurnState) sdkagentloop.Err
 		// to synchronously execute a call StagedToolMessage is about to deny.
 		if msg == "" && opts.UnadmittedToolHandler != nil {
 			result := opts.UnadmittedToolHandler(ctx, call.Name, call.Arguments)
+			// The deferred-tool analogue of dispatcherShim.Run's emitHookRuns:
+			// this path reaches the dispatcher too (Policy lives on the
+			// Dispatcher, not on the caller), so its hooks really ran. Covers
+			// both branches below - a served call AND a PreToolUse-blocked
+			// one, which is exactly the run an operator needs to see. The
+			// callKey guard mirrors sdk_dispatcher_shim.go's; HookRuns is
+			// already nil for a dedup-served duplicate (runDeferredToolNow).
+			if callKey != "" {
+				emitHookRuns(opts, callKey, result.HookRuns)
+			}
 			if result.Handled && result.Ran {
 				// Served synchronously against the full authorized tool set:
 				// render it exactly like an ordinary successful call - no
 				// "error: " prefix, no failed tool_end, the error text this
 				// change exists to remove.
 				if turn != nil {
-					callKey := call.ID
-					if callKey == "" {
-						callKey = call.Name
-					}
 					turn.recordToolOutcomeWithPreview(callKey, call.Name, result.Content, false, "", false, result.Content)
 				}
 				return sdkshape.Message{
@@ -97,10 +107,6 @@ func sdkToolCallErrorReporter(opts Options, turn *sdkTurnState) sdkagentloop.Err
 		// against; in practice a denial never has a prior duplicate to
 		// pair with).
 		if turn != nil {
-			callKey := call.ID
-			if callKey == "" {
-				callKey = call.Name
-			}
 			turn.recordToolOutcomeWithPreview(callKey, call.Name, "error: "+msg, true, "", false, "")
 		}
 		return sdkshape.Message{

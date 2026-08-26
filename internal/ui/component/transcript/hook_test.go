@@ -74,6 +74,38 @@ func TestHookSilentRunStillRendersARow(t *testing.T) {
 	}
 }
 
+// A hook that both prints and warns produces multi-line Output
+// unconditionally (hookRunOutput joins them with "\n"). Each line must
+// become its own Body element - an unsplit multi-line string under-counts
+// Height() against what actually renders, corrupting scroll offsets and
+// eviction budgeting.
+func TestHookBlockValueSplitsMultiLineOutput(t *testing.T) {
+	blk := hookBlockValue(uievent.HookBody{
+		Event: "PreToolUse", Program: "guard.sh", Tool: "run_command", Denied: true,
+		Output: "reformatted a.go\nreformatted b.go\nreformatted c.go",
+	})
+	if len(blk.Body) != 3 {
+		t.Fatalf("want 3 body lines, got %d: %+v", len(blk.Body), blk.Body)
+	}
+	// A denied run stays uncollapsed, so Height must count every body line
+	// it actually renders: header + 3 body rows + the trailing blank
+	// separator every block gets.
+	if got, want := blk.Height(80), 5; got != want {
+		t.Fatalf("Height(80) = %d, want %d (header + 3 body rows + separator)", got, want)
+	}
+}
+
+// Same fix, for Input.
+func TestHookBlockValueSplitsMultiLineInput(t *testing.T) {
+	blk := hookBlockValue(uievent.HookBody{
+		Event: "PreToolUse", Program: "guard.sh", Tool: "run_command", Denied: true,
+		Input: "line one\nline two",
+	})
+	if len(blk.Body) != 2 {
+		t.Fatalf("want 2 body lines, got %d: %+v", len(blk.Body), blk.Body)
+	}
+}
+
 // A multi-line notice (e.g. the /hooks listing) must keep every line, not
 // just the first - previously everything past the first line was silently
 // dropped because the block carried no Body at all.
