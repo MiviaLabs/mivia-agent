@@ -15,9 +15,9 @@ var defaultIgnorePatterns = []string{".git", "node_modules", "vendor"}
 
 // DefaultOptions configures built-in tools.
 type DefaultOptions struct {
-	Workspace                                                                  *workspace.Root
-	RunAllowlist, RunAllowlistOnly, RunBlocklist, DisableTools                 []string
-	RunTimeoutSec, MaxReadBytes, MaxOutputBytes, MaxWriteKB, MaxListDirEntries int
+	Workspace                                                                                    *workspace.Root
+	RunAllowlist, RunAllowlistOnly, RunBlocklist, DisableTools                                   []string
+	RunTimeoutSec, MaxReadBytes, MaxEditFileBytes, MaxOutputBytes, MaxWriteKB, MaxListDirEntries int
 	// MaxToolResultBytes is the agent-loop tool-result ceiling
 	// ([tools] max_tool_result_bytes). 0 = uncapped. When set, tools whose
 	// honest output framing depends on not being tail-cut by the loop
@@ -218,7 +218,7 @@ func disabledToolNames(names []string) map[string]bool {
 //     unified diff, so the compiled-in bound holds unless the operator's
 //     result cap is tighter still.
 func registerEditTools(register func(Tool), opts DefaultOptions, ws *workspace.Root, patterns, exceptions, writeDenylist []string) {
-	maxFileBytes := opts.MaxReadBytes
+	maxFileBytes := opts.MaxEditFileBytes
 	if maxFileBytes <= 0 {
 		maxFileBytes = effectiveMemoryBackstop(opts)
 	}
@@ -360,7 +360,7 @@ func registerWebTools(register func(Tool), opts DefaultOptions, ws *workspace.Ro
 	// operator value preserved). No default lives here any more - a 0 that
 	// reaches this point via direct DefaultOptions construction means
 	// unlimited, which fetch_url itself handles.
-	register(&fetchURLTool{ws: ws, maxLocalBytes: opts.MaxReadBytes, maxFetchKB: opts.MaxFetchKB, httpClient: &http.Client{}, fetchClient: newSafeFetchHTTPClient()})
+	register(&fetchURLTool{ws: ws, maxLocalBytes: opts.MaxEditFileBytes, maxFetchKB: opts.MaxFetchKB, httpClient: &http.Client{}, fetchClient: newSafeFetchHTTPClient()})
 	// extract has no free-engine fallback, so a keyless tool could never
 	// succeed - and a tool is advertised only if it can succeed. Register it
 	// solely when a provider key is configured (conditional registration): the

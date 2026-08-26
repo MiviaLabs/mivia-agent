@@ -46,6 +46,7 @@ func drainWithFailure(h ports.SaveHandle) []ports.SaveState {
 
 func setupTestSettings(t *testing.T) ports.Settings {
 	t.Helper()
+	t.Setenv("HOME", t.TempDir())
 	res := &config.Resolved{
 		ProviderName: "zai",
 		Model:        "glm-5.2",

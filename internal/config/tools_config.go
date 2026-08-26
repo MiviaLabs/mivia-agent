@@ -36,6 +36,9 @@ type ToolsConfig struct {
 	RunTimeoutSec int `toml:"run_timeout_seconds"`
 	// MaxReadBytes caps read_file output (bytes).
 	MaxReadBytes int `toml:"max_read_bytes"`
+	// MaxEditFileBytes caps the file size editable in place by search_replace and multi_edit (bytes).
+	// 0 means uncapped today; expected to become an explicit opt-out once the derived budget profile ships.
+	MaxEditFileBytes int `toml:"max_edit_file_bytes"`
 	// MaxWriteKB caps write_file content (KiB).
 	MaxWriteKB int `toml:"max_write_kb"`
 	// MaxOutputBytes caps run_command output (bytes).
@@ -297,7 +300,11 @@ func allowlisted(bin string, allowlist []string) bool {
 // normalization live in write_path_blocklist.go.
 
 func resolveToolsConfig(tc ToolsConfig) ToolsConfig {
+	explicitMaxReadBytes := tc.MaxReadBytes
 	tc = resolveToolsDefaults(tc)
+	if tc.MaxEditFileBytes <= 0 && explicitMaxReadBytes > 0 {
+		tc.MaxEditFileBytes = explicitMaxReadBytes
+	}
 	// No defaulting: 0 means uncapped. Negative is normalized to 0 so every
 	// consumer can treat <=0 uniformly as "no cap".
 	if tc.MaxToolResultBytes < 0 {
@@ -313,6 +320,9 @@ func resolveToolsConfig(tc ToolsConfig) ToolsConfig {
 	// OOM guard: 0 / negative must not disable the backstop.
 	if tc.MemoryBackstopMB <= 0 {
 		tc.MemoryBackstopMB = DefaultMemoryBackstopMB
+	}
+	if tc.MaxEditFileBytes <= 0 {
+		tc.MaxEditFileBytes = MemoryBackstopBytes(tc.MemoryBackstopMB)
 	}
 	// B7: RunAllowlist + RunAllowlistOnly are mutually exclusive - prefer RunAllowlistOnly
 	if len(tc.RunAllowlist) > 0 && len(tc.RunAllowlistOnly) > 0 {

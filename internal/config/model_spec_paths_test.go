@@ -80,3 +80,28 @@ max_tokens = 8192
 		t.Fatalf("error = %v, want an invalid-object rejection", err)
 	}
 }
+
+func TestResolveModelProfile(t *testing.T) {
+	profiles := []ModelSpec{
+		{Name: "known", ContextWindowTokens: 200000},
+	}
+	spec, found := ResolveModelProfile(profiles, "known")
+	if !found || spec.ContextWindowTokens != 200000 {
+		t.Fatalf("ResolveModelProfile(known) = %+v, %v; want 200000, true", spec, found)
+	}
+
+	unknownSpec, found := ResolveModelProfile(profiles, "unknown")
+	if found || unknownSpec.ContextWindowTokens != UnknownContextWindowTokens {
+		t.Fatalf("ResolveModelProfile(unknown) = %+v, %v; want %d, false", unknownSpec, found, UnknownContextWindowTokens)
+	}
+}
+
+func TestActiveModelProfileFallsBackTo128kForUnrecognizedModel(t *testing.T) {
+	pc := ProviderConfig{
+		Models: []ModelSpec{{Name: "m1", ContextWindowTokens: 64000}},
+	}
+	spec := activeModelProfile(pc, "unrecognized")
+	if spec.ContextWindowTokens != UnknownContextWindowTokens {
+		t.Fatalf("activeModelProfile = %d, want %d", spec.ContextWindowTokens, UnknownContextWindowTokens)
+	}
+}

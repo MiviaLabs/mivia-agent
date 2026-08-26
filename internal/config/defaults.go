@@ -191,6 +191,11 @@ const (
 // unset or non-positive (cannot be accidentally disabled via 0).
 const DefaultMemoryBackstopMB = 256
 
+// MemoryBackstopBytes converts a memory backstop in megabytes to bytes.
+func MemoryBackstopBytes(memoryBackstopMB int) int {
+	return memoryBackstopMB << 20
+}
+
 // UsefulToolResultRequestBytes is a practical upper bound for a single
 // provider-request tool-result carry size. A nonzero max_tool_result_bytes
 // above this is accepted but warned (never clamped).

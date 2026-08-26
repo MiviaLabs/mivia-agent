@@ -64,14 +64,14 @@ func promptCap(value *int) int {
 // reserve - so 0 only surfaces for hand-constructed profiles in tests and
 // runtime bindings.
 //
-// A non-positive ContextWindowTokens is the legacy "no declared window"
-// default: it falls back to maxContextWindowTokens (10M). Validated config
+// A non-positive ContextWindowTokens is the undeclared/unrecognized window
+// fallback: it fails closed at UnknownContextWindowTokens (128k). Validated config
 // also never reaches that branch (load rejects windows below 1024); it exists
-// so profiles built without a declared window keep their historical capacity.
+// for hand-constructed profiles in tests and legacy runtime bindings.
 func EffectivePromptTokens(profile ModelSpec, maxTokens *int, operatorCap, requested int) int {
 	capacity := profile.ContextWindowTokens
 	if capacity <= 0 {
-		capacity = maxContextWindowTokens
+		capacity = UnknownContextWindowTokens
 	}
 	if reserve := EffectiveOutputTokens(profile, maxTokens); reserve != nil {
 		capacity -= *reserve

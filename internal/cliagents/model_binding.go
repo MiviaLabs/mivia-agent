@@ -35,7 +35,7 @@ func BuildModelBinding(sess *chat.Session, res *config.Resolved, root, providerN
 	if err != nil {
 		return chat.ModelBinding{}, err
 	}
-	profile, selectable := ConfiguredProfile(res, providerName, model)
+	profile, selectable, isFallback := configuredProfile(res, providerName, model)
 	if !selectable {
 		return chat.ModelBinding{}, fmt.Errorf("model is not selectable for provider %s", providerName)
 	}
@@ -43,7 +43,7 @@ func BuildModelBinding(sess *chat.Session, res *config.Resolved, root, providerN
 	if err != nil {
 		return chat.ModelBinding{}, err
 	}
-	binding := chat.ModelBinding{ProviderName: providerName, Model: model, Completer: comp, Profile: profile}
+	binding := chat.ModelBinding{ProviderName: providerName, Model: model, Completer: comp, Profile: profile, FallbackProfile: isFallback}
 	binding.PromptBudgetTokens = sess.PromptBudgetFor(profile)
 	if root == "" {
 		root = "."
@@ -271,22 +271,27 @@ func WarnSkillLoad(warnings []string) {
 }
 
 func ConfiguredProfile(res *config.Resolved, providerName, model string) (config.ModelSpec, bool) {
+	spec, selectable, _ := configuredProfile(res, providerName, model)
+	return spec, selectable
+}
+
+func configuredProfile(res *config.Resolved, providerName, model string) (config.ModelSpec, bool, bool) {
 	for _, group := range res.ModelCatalog() {
 		if group.Provider != providerName || !group.Selectable {
 			continue
 		}
 		for _, profile := range group.Models {
 			if profile.Name == model {
-				return profile, true
+				return profile, true, false
 			}
 		}
 	}
 	// Hand-built test configurations predate the catalog. Keep the active
 	// provider projection usable while production-loaded configs stay strict.
 	if providerName == res.ProviderName && res.AllowsModel(model) {
-		return config.ModelSpec{Name: model, ContextWindowTokens: chat.DefaultMaxContextTokens}, true
+		return config.ModelSpec{Name: model, ContextWindowTokens: config.UnknownContextWindowTokens}, true, true
 	}
-	return config.ModelSpec{}, false
+	return config.ModelSpec{}, false, false
 }
 
 // SwitchModelCommand publishes a model generation and reports the /effort
@@ -383,7 +388,8 @@ func publishModelSwitchBinding(sess *chat.Session, res *config.Resolved, provide
 		// model. RenameModel is the single door every in-place rename uses.
 		binding.RenameModel(model)
 		if binding.Profile.ContextWindowTokens <= 0 {
-			binding.Profile.ContextWindowTokens = chat.DefaultMaxContextTokens
+			binding.Profile.ContextWindowTokens = config.UnknownContextWindowTokens
+			binding.FallbackProfile = true
 		}
 		return sess.SwitchBinding(binding)
 	}

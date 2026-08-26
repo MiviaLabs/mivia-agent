@@ -136,6 +136,7 @@ type Session struct {
 	catalog                []config.ProviderModelGroup
 	bindingFactory         func(providerName, model string) (ModelBinding, error)
 	switchGuard            func() error
+	warnedUnknownModels    map[string]struct{}
 	// admittedTools, pendingAdmission and the admission counters are the
 	// deferred-tool-loading state for the CURRENT agent binding (plan
 	// tools/05). ResetAdmissions clears them on an /agent switch.

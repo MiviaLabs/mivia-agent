@@ -2,11 +2,29 @@ package clichat
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
+
+// writeMinimalLoadableConfig writes a config with a declared provider and
+// model but no [tools] section, so every tools knob resolves from defaults -
+// exercising the real resolveToolsConfig path a hand-constructed
+// config.ToolsConfig{} literal never goes through.
+func writeMinimalLoadableConfig(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "mivia.toml")
+	body := "[provider]\nname = \"deepseek\"\n\n[providers.deepseek]\n" +
+		"models = [{name=\"deepseek-v4-flash\", context_window_tokens=128000}]\n"
+	if err := os.WriteFile(cfg, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return cfg
+}
 
 func TestFormatEffectiveLimitsSummaryUnlimited(t *testing.T) {
 	res := &config.Resolved{
@@ -38,8 +56,33 @@ func TestFormatEffectiveLimitsSummaryBounded(t *testing.T) {
 	if strings.Contains(line, "unlimited") {
 		t.Fatalf("bounded config should not say unlimited: %q", line)
 	}
-	if !strings.Contains(line, "max_read_bytes=1024") || !strings.Contains(line, "memory_backstop_mb=128") {
+	if !strings.Contains(line, "max_read_bytes=1024") || !strings.Contains(line, "max_edit_file_bytes=0") || !strings.Contains(line, "memory_backstop_mb=128") {
 		t.Fatalf("summary = %q", line)
+	}
+}
+
+// TestFormatEffectiveLimitsSummaryUnlimitedSurvivesResolution pins the actual
+// regression: MaxEditFileBytes is a memory bound that resolveToolsConfig
+// always fills to a positive value, so a literal-constructed ToolsConfig (as
+// the other tests here use) can never exhibit the bug where folding it into
+// volUnlimited's all-must-be-zero check makes "tool volume caps unlimited"
+// permanently unreachable for any config that went through Load(). This
+// loads a real config with every context cap left unset and asserts the
+// unlimited phrase still appears despite MaxEditFileBytes resolving nonzero.
+func TestFormatEffectiveLimitsSummaryUnlimitedSurvivesResolution(t *testing.T) {
+	res, err := config.Load(config.LoadOptions{ConfigPath: writeMinimalLoadableConfig(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Tools.MaxEditFileBytes <= 0 {
+		t.Fatalf("MaxEditFileBytes = %d, want a resolved positive memory bound", res.Tools.MaxEditFileBytes)
+	}
+	line := formatEffectiveLimitsSummary(res)
+	if !strings.Contains(line, "tool volume caps unlimited") {
+		t.Fatalf("expected unlimited phrase despite a resolved MaxEditFileBytes: %q", line)
+	}
+	if !strings.Contains(line, "max_edit_file_bytes=") {
+		t.Fatalf("expected max_edit_file_bytes to still be reported: %q", line)
 	}
 }
 

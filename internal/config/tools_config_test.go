@@ -42,3 +42,34 @@ func TestRefOnlyToolsWhitespaceOnlyDropped(t *testing.T) {
 		t.Fatalf("whitespace-only ref_only_tools resolved to %q, want empty", res.Tools.RefOnlyTools)
 	}
 }
+
+func TestMaxEditFileBytesMigratesFromMaxReadBytesWhenUnset(t *testing.T) {
+	res, err := Load(LoadOptions{ConfigPath: writeToolResultCapConfig(t,
+		`max_read_bytes = 65536`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Tools.MaxEditFileBytes != 65536 {
+		t.Fatalf("MaxEditFileBytes = %d, want 65536 migrated from max_read_bytes", res.Tools.MaxEditFileBytes)
+	}
+
+	// Explicit max_edit_file_bytes takes precedence over max_read_bytes
+	res2, err := Load(LoadOptions{ConfigPath: writeToolResultCapConfig(t,
+		"max_read_bytes = 65536\nmax_edit_file_bytes = 131072")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res2.Tools.MaxEditFileBytes != 131072 {
+		t.Fatalf("MaxEditFileBytes = %d, want explicit 131072", res2.Tools.MaxEditFileBytes)
+	}
+
+	// Neither set falls back to memory backstop bytes
+	res3, err := Load(LoadOptions{ConfigPath: writeToolResultCapConfig(t, "")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantDefault := DefaultMemoryBackstopMB << 20
+	if res3.Tools.MaxEditFileBytes != wantDefault {
+		t.Fatalf("MaxEditFileBytes = %d, want backstop default %d", res3.Tools.MaxEditFileBytes, wantDefault)
+	}
+}

@@ -67,6 +67,12 @@ func Load(opts LoadOptions) (*Resolved, error) {
 	if file.Chat.MaxPromptTokens != nil && (*file.Chat.MaxPromptTokens <= 0 || *file.Chat.MaxPromptTokens > maxContextWindowTokens) {
 		return nil, fmt.Errorf("[chat]: max_prompt_tokens is out of range")
 	}
+	if file.Tools.MaxOutputBytes < 0 {
+		return nil, fmt.Errorf("[tools]: max_output_bytes must not be negative")
+	}
+	if file.Tools.MaxListDirEntries < 0 {
+		return nil, fmt.Errorf("[tools]: max_list_dir_entries must not be negative")
+	}
 	if err := normalizeProviderConfigs(&file, maxTokens); err != nil {
 		return nil, err
 	}

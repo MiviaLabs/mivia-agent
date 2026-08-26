@@ -156,18 +156,6 @@ type promptBudgetCase struct {
 	want        int
 }
 
-func runPromptBudgetCases(t *testing.T, tests []promptBudgetCase) {
-	t.Helper()
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := EffectivePromptTokens(tt.profile, tt.maxTokens, tt.operatorCap, tt.requested)
-			if got != tt.want {
-				t.Fatalf("EffectivePromptTokens() = %d, want %d", got, tt.want)
-			}
-		})
-	}
-}
-
 // TestEffectivePromptTokensFailsClosed covers the never-negative contract: a
 // completion reserve at or above the window leaves no prompt capacity and
 // must yield 0, never a negative budget (it used to return -256000).
@@ -176,7 +164,7 @@ func runPromptBudgetCases(t *testing.T, tests []promptBudgetCase) {
 // now capped at DefaultOutputReserveTokens and can no longer reach the
 // window - explicit intent is the only path that still reaches these bounds.
 func TestEffectivePromptTokensFailsClosed(t *testing.T) {
-	runPromptBudgetCases(t, []promptBudgetCase{
+	tests := []promptBudgetCase{
 		{
 			name:      "reserve exceeds window is zero not negative",
 			profile:   ModelSpec{ContextWindowTokens: 128000, MaxOutputTokens: 384000},
@@ -192,9 +180,9 @@ func TestEffectivePromptTokensFailsClosed(t *testing.T) {
 		{
 			// No declared window means no clamp target, so the explicit
 			// request stands and consumes the whole fallback capacity.
-			name:      "reserve above legacy fallback is zero not negative",
-			profile:   ModelSpec{ContextWindowTokens: 0, MaxOutputTokens: maxContextWindowTokens + 1},
-			maxTokens: ptr(maxContextWindowTokens + 1),
+			name:      "reserve above unknown fallback is zero not negative",
+			profile:   ModelSpec{ContextWindowTokens: 0, MaxOutputTokens: UnknownContextWindowTokens + 1},
+			maxTokens: ptr(UnknownContextWindowTokens + 1),
 			want:      0,
 		},
 		{
@@ -204,14 +192,22 @@ func TestEffectivePromptTokensFailsClosed(t *testing.T) {
 			profile: ModelSpec{ContextWindowTokens: 5, MaxOutputTokens: 10},
 			want:    0,
 		},
-	})
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := EffectivePromptTokens(tt.profile, tt.maxTokens, tt.operatorCap, tt.requested)
+			if got != tt.want {
+				t.Fatalf("EffectivePromptTokens() = %d, want %d", got, tt.want)
+			}
+		})
+	}
 }
 
 // TestEffectivePromptTokensDerivesAndCaps covers the ordinary arithmetic:
-// window minus reserve, the legacy no-declared-window fallback, and the two
+// window minus reserve, the undeclared-window fallback, and the two
 // caps (operator and session-requested) that override the derived budget.
 func TestEffectivePromptTokensDerivesAndCaps(t *testing.T) {
-	runPromptBudgetCases(t, []promptBudgetCase{
+	tests := []promptBudgetCase{
 		{
 			// Window minus reserve for an explicit operator request; the
 			// unset case is TestEffectivePromptTokensClaudeShapedProfile.
@@ -223,9 +219,9 @@ func TestEffectivePromptTokensDerivesAndCaps(t *testing.T) {
 		{
 			// Validated config never reaches this: load rejects windows
 			// below 1024.
-			name:    "no declared window falls back to legacy default",
+			name:    "no declared window falls back to 128k default",
 			profile: ModelSpec{ContextWindowTokens: 0},
-			want:    maxContextWindowTokens,
+			want:    UnknownContextWindowTokens,
 		},
 		{
 			name:        "operator cap tighter than derived",
@@ -239,5 +235,13 @@ func TestEffectivePromptTokensDerivesAndCaps(t *testing.T) {
 			requested: 30000,
 			want:      30000,
 		},
-	})
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := EffectivePromptTokens(tt.profile, tt.maxTokens, tt.operatorCap, tt.requested)
+			if got != tt.want {
+				t.Fatalf("EffectivePromptTokens() = %d, want %d", got, tt.want)
+			}
+		})
+	}
 }

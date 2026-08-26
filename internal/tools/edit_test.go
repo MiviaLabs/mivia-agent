@@ -106,7 +106,7 @@ func TestMultiEditPreservesFileMode(t *testing.T) {
 // with no bound at all. The refusal must state the real size and name a way
 // forward, or the model just retries the identical call.
 func TestEditToolsRefuseFileAboveReadBound(t *testing.T) {
-	ws, reg := setupWSWithOpts(t, DefaultOptions{MaxReadBytes: 1024})
+	ws, reg := setupWSWithOpts(t, DefaultOptions{MaxEditFileBytes: 1024})
 	big := strings.Repeat("padding line\n", 500) // ~6.5 KiB
 	writeEditFixture(t, ws.Abs, "big.txt", big, 0o644)
 
@@ -159,19 +159,43 @@ func TestEditToolsUncappedStillEditOrdinaryFiles(t *testing.T) {
 	}
 }
 
-// TestEditToolFileGuardComesFromMaxReadBytes pins the wiring: the guard tracks
-// max_read_bytes (or the memory backstop when unset) and is NOT clamped by
-// max_tool_result_bytes, which bounds the diff the tool returns rather than
-// the file it may load.
+// TestEditToolFileGuardComesFromMaxReadBytes proves max_read_bytes alone no longer alters the edit file guard.
 func TestEditToolFileGuardComesFromMaxReadBytes(t *testing.T) {
+	opts := DefaultOptions{
+		Workspace:    budgetWorkspace(t),
+		MaxReadBytes: 1 << 20,
+	}
+	reg := NewDefaultRegistry(opts)
+	sr, ok := reg.Get("search_replace")
+	if !ok {
+		t.Fatal("search_replace not registered")
+	}
+	if got := sr.(*searchReplaceTool).maxFileBytes; got != 256<<20 {
+		t.Errorf("search_replace.maxFileBytes = %d, want default backstop 256MB", got)
+	}
+	me, ok := reg.Get("multi_edit")
+	if !ok {
+		t.Fatal("multi_edit not registered")
+	}
+	if got := me.(*multiEditTool).maxFileBytes; got != 256<<20 {
+		t.Errorf("multi_edit.maxFileBytes = %d, want default backstop 256MB", got)
+	}
+}
+
+// TestEditToolFileGuardComesFromMaxEditFileBytes pins the wiring: the guard tracks
+// max_edit_file_bytes (or the memory backstop when unset) and is NOT clamped by
+// max_tool_result_bytes, which bounds the diff the tool returns rather than
+// the file it may load. It also proves max_read_bytes alone no longer changes the guard.
+func TestEditToolFileGuardComesFromMaxEditFileBytes(t *testing.T) {
 	cases := []struct {
 		name string
 		opts DefaultOptions
 		want int
 	}{
 		{"default (memory backstop)", DefaultOptions{}, 256 << 20},
-		{"explicit max_read_bytes", DefaultOptions{MaxReadBytes: 1 << 20}, 1 << 20},
-		{"result cap does not shrink it", DefaultOptions{MaxReadBytes: 1 << 20, MaxToolResultBytes: 4096}, 1 << 20},
+		{"explicit max_edit_file_bytes", DefaultOptions{MaxEditFileBytes: 1 << 20}, 1 << 20},
+		{"max_read_bytes alone does not alter edit guard", DefaultOptions{MaxReadBytes: 1 << 20}, 256 << 20},
+		{"result cap does not shrink it", DefaultOptions{MaxEditFileBytes: 1 << 20, MaxToolResultBytes: 4096}, 1 << 20},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

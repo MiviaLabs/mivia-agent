@@ -16,8 +16,8 @@ import (
 type RegistryInput struct {
 	Workspace *workspace.Root
 
-	RunAllowlist, RunAllowlistOnly, RunBlocklist, DisableTools                 []string
-	RunTimeoutSec, MaxReadBytes, MaxOutputBytes, MaxWriteKB, MaxListDirEntries int
+	RunAllowlist, RunAllowlistOnly, RunBlocklist, DisableTools                                   []string
+	RunTimeoutSec, MaxReadBytes, MaxEditFileBytes, MaxOutputBytes, MaxWriteKB, MaxListDirEntries int
 
 	MaxToolResultBytes                           int
 	MaxTavilyResponseBytes                       int
@@ -55,6 +55,7 @@ func BuildRegistry(in RegistryInput) (*tools.Registry, error) {
 		DisableTools:              in.DisableTools,
 		RunTimeoutSec:             in.RunTimeoutSec,
 		MaxReadBytes:              in.MaxReadBytes,
+		MaxEditFileBytes:          in.MaxEditFileBytes,
 		MaxOutputBytes:            in.MaxOutputBytes,
 		MaxWriteKB:                in.MaxWriteKB,
 		MaxListDirEntries:         in.MaxListDirEntries,

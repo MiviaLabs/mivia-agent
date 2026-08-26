@@ -107,3 +107,37 @@ func TestSwitchModelInPlaceReportsAChoiceThatMatchedTheDefault(t *testing.T) {
 		t.Fatalf("renamed selection still carries effort %q", got)
 	}
 }
+
+func TestConfiguredProfile_UnknownModelFallsBackTo128k(t *testing.T) {
+	res := &config.Resolved{
+		ProviderName: "zai",
+		Models:       []string{"unlisted-model"},
+	}
+	spec, ok := ConfiguredProfile(res, "zai", "unlisted-model")
+	if !ok {
+		t.Fatal("expected ok=true for allowed model")
+	}
+	if spec.ContextWindowTokens != config.UnknownContextWindowTokens {
+		t.Fatalf("spec.ContextWindowTokens = %d, want %d", spec.ContextWindowTokens, config.UnknownContextWindowTokens)
+	}
+}
+
+func TestSwitchModelInPlace_ZeroWindowClampsTo128k(t *testing.T) {
+	res := &config.Resolved{
+		ProviderName: "zai",
+		Model:        "zero-win",
+		Models:       []string{"zero-win", "zero-win-2"},
+		ModelProfiles: []config.ModelSpec{
+			{Name: "zero-win", ContextWindowTokens: 0},
+			{Name: "zero-win-2", ContextWindowTokens: 0},
+		},
+	}
+	sess := chat.NewSession(res, welcomeStubCompleter{})
+	if _, err := SwitchModelCommand(sess, res, "zai", "zero-win-2"); err != nil {
+		t.Fatal(err)
+	}
+	binding := sess.CurrentBinding()
+	if binding.Profile.ContextWindowTokens != config.UnknownContextWindowTokens {
+		t.Fatalf("binding.Profile.ContextWindowTokens = %d, want %d", binding.Profile.ContextWindowTokens, config.UnknownContextWindowTokens)
+	}
+}

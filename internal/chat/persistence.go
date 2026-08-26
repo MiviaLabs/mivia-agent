@@ -408,7 +408,11 @@ func (s *Session) publishLoadedSession(token OperationToken, binding ModelBindin
 	incoming := s.capturePrefixIdentityLocked()
 	s.prefixIdentity = incoming
 	reset := s.buildPrefixResetLocked(outgoing, incoming, false)
+	warn := s.checkWarnUnknownModelLocked(binding.Model, binding.FallbackProfile)
 	s.mu.Unlock()
+	if warn && WarnUnknownContextWindow != nil {
+		WarnUnknownContextWindow(binding.Model)
+	}
 	if old.Dispatcher != nil && old.Dispatcher != binding.Dispatcher {
 		old.Dispatcher.Close()
 	}
