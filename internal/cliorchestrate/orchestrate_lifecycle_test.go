@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -554,5 +555,98 @@ func TestSpawnAgentIdempotencyKeyDedupesAcrossTurns(t *testing.T) {
 	}
 	if firstResult.RunID == "" || secondResult.RunID != firstResult.RunID {
 		t.Fatalf("run IDs = %q, %q; want one non-empty reused run ID", firstResult.RunID, secondResult.RunID)
+	}
+}
+
+// TestDispatchTasksWaitNoneReturnsRunID guards dispatch_tasks absorbing
+// spawn_agent's async wait modes: wait="none" must return immediately with
+// a run_id/status envelope, not block for the run to finish.
+func TestDispatchTasksWaitNoneReturnsRunID(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	dispatcher := runtime.New(runtime.Policy{})
+	block := make(chan struct{})
+	if err := dispatcher.Register(runtime.Subagent, "worker", handlerFunc(func(ctx context.Context, req runtime.Request) (json.RawMessage, error) {
+		<-block
+		return json.RawMessage(`{"ok":true}`), nil
+	})); err != nil {
+		t.Fatal(err)
+	}
+	defer close(block)
+	tool := NewDispatchTasksToolConfigured(dispatcher, config.DefaultSubagentConfig, repo, testAgentRegistry(t, "worker"))
+	ctx := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "session-wait-none"})
+	out, err := tool.Execute(ctx, json.RawMessage(`{"tasks":[{"id":"t1","agent":"worker","prompt":"work"}],"wait":"none"}`))
+	if err != nil {
+		t.Fatalf("Execute error = %v, want nil (must not block on the still-running task)", err)
+	}
+	var resp struct {
+		RunID string `json:"run_id"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("Execute output %q did not decode: %v", out, err)
+	}
+	if resp.RunID == "" {
+		t.Fatalf("Execute output %q missing run_id", out)
+	}
+}
+
+// TestDispatchTasksIdempotencyKeyDedupesAcrossTurns mirrors
+// TestSpawnAgentIdempotencyKeyDedupesAcrossTurns: dispatch_tasks absorbs
+// spawn_agent's idempotency_key dedup, not just its wait modes.
+func TestDispatchTasksIdempotencyKeyDedupesAcrossTurns(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	dispatcher := runtime.New(runtime.Policy{})
+	var calls atomic.Int32
+	if err := dispatcher.Register(runtime.Subagent, "worker", handlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) {
+		calls.Add(1)
+		return json.RawMessage(`{"ok":true}`), nil
+	})); err != nil {
+		t.Fatal(err)
+	}
+	tool := NewDispatchTasksToolConfigured(dispatcher, config.DefaultSubagentConfig, repo, testAgentRegistry(t, "worker"))
+	args := json.RawMessage(`{"tasks":[{"id":"task-1","agent":"worker","prompt":"requested work"}],"idempotency_key":"dispatch-key","wait":"run"}`)
+	first, err := tool.Execute(runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "session", TurnID: "turn:1"}), args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := tool.Execute(runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "session", TurnID: "turn:2"}), args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("worker invoked %d times, want 1 (second call must reuse the run)", calls.Load())
+	}
+	if first != second {
+		t.Fatalf("first = %q, second = %q; want the reused run's result both times", first, second)
+	}
+}
+
+// TestDispatchTasksDefaultWaitIsRunBareArray guards backward compatibility:
+// omitting "wait" must still behave like today - block for the full batch
+// and return the bare per-task array (the shape
+// internal/uiadapter/subagent_reconstruct.go parses), not the async
+// run_id/task_results envelope.
+func TestDispatchTasksDefaultWaitIsRunBareArray(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	dispatcher := runtime.New(runtime.Policy{})
+	if err := dispatcher.Register(runtime.Subagent, "worker", handlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) {
+		return json.RawMessage(`{"output":"done"}`), nil
+	})); err != nil {
+		t.Fatal(err)
+	}
+	tool := NewDispatchTasksToolConfigured(dispatcher, config.DefaultSubagentConfig, repo, testAgentRegistry(t, "worker"))
+	ctx := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "session-default-wait"})
+	out, err := tool.Execute(ctx, json.RawMessage(`{"tasks":[{"id":"t1","agent":"worker","prompt":"work"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var results []struct {
+		TaskID string `json:"task_id"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal([]byte(out), &results); err != nil {
+		t.Fatalf("Execute output %q is not a bare array: %v", out, err)
+	}
+	if len(results) != 1 || results[0].TaskID != "t1" || results[0].Status != "completed" {
+		t.Fatalf("results = %+v, want one completed task-1 result", results)
 	}
 }

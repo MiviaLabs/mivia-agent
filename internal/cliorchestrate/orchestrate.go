@@ -136,12 +136,7 @@ func (t *spawnAgentTool) Parameters() map[string]any {
 }
 
 func (t *spawnAgentTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	principal, ok := principalFromContext(ctx)
-	if !ok {
-		return "", fmt.Errorf("spawn_agent: missing caller identity")
-	}
 	caller, _ := runtime.CallerFrom(ctx)
-	c := InitCoordinator(t.dispatcher, t.cfg, t.repo)
 	var params struct {
 		Tasks          []spawnTaskParams `json:"tasks"`
 		IdempotencyKey string            `json:"idempotency_key,omitempty"`
@@ -158,29 +153,46 @@ func (t *spawnAgentTool) Execute(ctx context.Context, args json.RawMessage) (str
 	if err != nil {
 		return `{"error":"` + err.Error() + `"}`, nil
 	}
-	params.Wait = wait
 	subTasks, err := t.buildSpawnTasks(params.Tasks, caller)
 	if err != nil {
 		return "", fmt.Errorf("spawn_agent: %w", err)
 	}
-	handle, err := c.Spawn(ctx, subTasks, params.IdempotencyKey)
-	if err != nil {
-		return "", fmt.Errorf("spawn_agent: %w", err)
-	}
-	snap, err := c.Inspect(ctx, handle)
-	if err != nil {
-		return "", fmt.Errorf("spawn_agent: %w", err)
-	}
-
-	storeOrchestrationHandle(snap.RunID, &orchestrationHandle{
-		coord: c, handle: handle, repo: EffectiveOrchestrationRepo(t.repo), dispatcher: t.dispatcher, principal: principal, retention: orchestrationHandleRetention(t.cfg),
-	})
-
-	snap, completed, err := waitForSpawnResult(ctx, c, handle, params.Wait, params.WaitTaskID, snap)
+	snap, completed, err := spawnAndWait(ctx, t.dispatcher, t.cfg, t.repo, subTasks, params.IdempotencyKey, wait, params.WaitTaskID)
 	if err != nil {
 		return "", fmt.Errorf("spawn_agent: %w", err)
 	}
 	return spawnResultPayload(snap, completed, t.cfg.InlineOutputBytes, EffectiveOrchestrationRepo(t.repo)), nil
+}
+
+// spawnAndWait spawns tasks through the coordinator, stamps caller identity
+// (depth/session/turn/role - the same stamping RunThroughCoordinator applies
+// for the synchronous wait=run path, needed here too since not every task
+// builder stamps it itself), registers the run handle so
+// inspect_agents/join_run/cancel_run can find it, and waits per mode. Shared
+// by spawn_agent and dispatch_tasks's async (wait != "run") path - there is
+// exactly one place that spawns and waits, not two.
+func spawnAndWait(ctx context.Context, d *runtime.Dispatcher, cfg config.SubagentConfig, repo ledger.LedgerRepository, tasks []subagents.Task, idempotencyKey, wait, waitTaskID string) (ledger.RunSnapshot, *coordinator.RunResult, error) {
+	caller, _ := runtime.CallerFrom(ctx)
+	for i := range tasks {
+		tasks[i].Depth = caller.Depth + 1
+		tasks[i].SessionID = caller.SessionID
+		tasks[i].TurnID = caller.TurnID
+		tasks[i].Role = caller.Role
+	}
+	principal, _ := principalFromContext(ctx)
+	c := InitCoordinator(d, cfg, repo)
+	handle, err := c.Spawn(ctx, tasks, idempotencyKey)
+	if err != nil {
+		return ledger.RunSnapshot{}, nil, err
+	}
+	snap, err := c.Inspect(ctx, handle)
+	if err != nil {
+		return ledger.RunSnapshot{}, nil, err
+	}
+	storeOrchestrationHandle(snap.RunID, &orchestrationHandle{
+		coord: c, handle: handle, repo: EffectiveOrchestrationRepo(repo), dispatcher: d, principal: principal, retention: orchestrationHandleRetention(cfg),
+	})
+	return waitForSpawnResult(ctx, c, handle, wait, waitTaskID, snap)
 }
 
 func spawnResultPayload(snap ledger.RunSnapshot, completed *coordinator.RunResult, threshold int, repo ledger.LedgerRepository) string {
@@ -226,6 +238,17 @@ func normalizedSpawnWait(mode, taskID string) (string, error) {
 		return "", fmt.Errorf("wait_task_id is required when wait=task")
 	}
 	return mode, nil
+}
+
+// normalizedDispatchWait is normalizedSpawnWait with dispatch_tasks' default:
+// an omitted wait blocks for the whole batch (mode "run"), matching
+// dispatch_tasks' original always-synchronous contract, instead of
+// spawn_agent's "none" default.
+func normalizedDispatchWait(mode, taskID string) (string, error) {
+	if mode == "" {
+		mode = "run"
+	}
+	return normalizedSpawnWait(mode, taskID)
 }
 
 func waitForSpawnResult(ctx context.Context, c coordinator.Coordinator, handle *coordinator.RunHandle, mode, taskID string, initial ledger.RunSnapshot) (ledger.RunSnapshot, *coordinator.RunResult, error) {

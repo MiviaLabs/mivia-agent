@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
-	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
@@ -82,6 +81,17 @@ func (t *dispatchTasksTool) Parameters() map[string]any {
 				"type":        "integer",
 				"description": "Per-task timeout budget in seconds. " + TimeoutHint(),
 			},
+			"wait": map[string]any{
+				"type": "string", "enum": []string{"none", "task", "run"},
+				"description": "Wait mode: run (default) blocks until the whole batch finishes and returns each task's result; none returns immediately with a run_id to inspect/join/cancel; task waits for the requested wait_task_id only",
+			},
+			"wait_task_id": map[string]any{
+				"type": "string", "description": "Required when wait=task",
+			},
+			"idempotency_key": map[string]any{
+				"type":        "string",
+				"description": "Optional key to deduplicate identical batch dispatch for the same caller",
+			},
 		},
 		"required":             []string{"tasks"},
 		"additionalProperties": false,
@@ -94,12 +104,19 @@ func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 	var params struct {
 		Tasks          []dispatchTaskParam `json:"tasks"`
 		TimeoutSeconds int                 `json:"timeout_seconds,omitempty"`
+		IdempotencyKey string              `json:"idempotency_key,omitempty"`
+		Wait           string              `json:"wait,omitempty"`
+		WaitTaskID     string              `json:"wait_task_id,omitempty"`
 	}
 	if err := decodeStrictTaskJSON(args, &params); err != nil {
 		return "", fmt.Errorf("dispatch_tasks: %w", err)
 	}
 	if len(params.Tasks) == 0 {
 		return `{"tasks":[]}`, nil
+	}
+	wait, err := normalizedDispatchWait(params.Wait, params.WaitTaskID)
+	if err != nil {
+		return `{"error":"` + err.Error() + `"}`, nil
 	}
 
 	// Always resolve a positive batch timeout so multi_step / pool work is
@@ -119,45 +136,57 @@ func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 		return "", err
 	}
 
-	_, runResult, err := RunThroughCoordinator(ctx, t.dispatcher, t.cfg, tasks, "", t.repo)
+	// wait != "run" (async): the same spawn+register+wait path spawn_agent
+	// uses, and the same {"run_id":...,"task_results":[...]} envelope - a
+	// caller that asked NOT to block for the batch gets a run to inspect/
+	// join/cancel, not a per-task array that would misleadingly imply the
+	// batch already finished.
+	if wait != "run" {
+		snap, completed, err := spawnAndWait(ctx, t.dispatcher, t.cfg, t.repo, tasks, params.IdempotencyKey, wait, params.WaitTaskID)
+		if err != nil {
+			return "", fmt.Errorf("dispatch_tasks: %w", err)
+		}
+		return spawnResultPayload(snap, completed, t.cfg.InlineOutputBytes, EffectiveOrchestrationRepo(t.repo)), nil
+	}
+
+	_, runResult, err := RunThroughCoordinator(ctx, t.dispatcher, t.cfg, tasks, params.IdempotencyKey, t.repo)
+	return t.encodeSyncRunResult(runResult, err), nil
+}
+
+// encodeSyncRunResult builds the wait="run" response body: the bare per-task
+// array whenever any result exists (a failed or blocked task is already
+// visible per task, and run_error/status would only explain the run
+// itself), falling back to a run-level error envelope only when there is no
+// task result to report at all. Never returns a Go error: the agent loop
+// wipes an empty body to a bare "error: …" string, so every path here must
+// answer with a model-visible JSON body.
+func (t *dispatchTasksTool) encodeSyncRunResult(runResult *coordinator.RunResult, runErr error) string {
 	var results []subagents.Result
 	if runResult != nil {
 		results = runResult.Results
 	}
+	if len(results) > 0 {
+		return t.encodeResults(snapshotTasks(runResult), results)
+	}
+	// No error_ref on either branch below: a run-level failure (spawn,
+	// validation, join, timeout) is never a task's recorded error, so
+	// nothing was ever stored under its digest. The full text is inline in
+	// "error" instead.
 	if runResult != nil && runResult.Err != nil {
-		// Return whatever ran, always. Each result carries its own status, so a
-		// failed or blocked task is already visible per task, and run_error/status
-		// below explain the run itself. finalizeDAG emits one result per task
-		// (filling "missing" when absent), so this branch is the one always taken
-		// and it is identical to the success branch below - kept separate only so
-		// the empty-results fallback underneath stays reachable.
-		if len(results) > 0 {
-			return t.encodeResults(snapshotTasks(runResult), results), nil
-		}
-		// No error_ref: a run-level failure (spawn, validation, join, timeout) is
-		// never a task's recorded error, so nothing was ever stored under its
-		// digest. The full text is inline in "error" instead.
 		payload, _ := json.Marshal(map[string]string{
 			"error":  runResult.Err.Error(),
 			"status": StatusFromErr(runResult.Err),
 		})
-		return string(payload), nil
+		return string(payload)
 	}
-	// Always return a model-visible body. Transport errors would be wiped to
-	// a bare "error: …" string by the agent loop when the body is empty.
-	if len(results) > 0 {
-		return t.encodeResults(snapshotTasks(runResult), results), nil
-	}
-	if err != nil {
-		// Same reasoning as above: this is a run-level error with no stored
-		// content, so it is reported inline only.
+	if runErr != nil {
 		payload, _ := json.Marshal(map[string]string{
-			"error":  err.Error(),
-			"status": StatusFromErr(err),
+			"error":  runErr.Error(),
+			"status": StatusFromErr(runErr),
 		})
-		return string(payload), nil
+		return string(payload)
 	}
-	return `{"tasks":[]}`, nil
+	return `{"tasks":[]}`
 }
 
 // StatusFromErr maps a Go error to the matching ledger task status string.
@@ -232,230 +261,6 @@ func (t *dispatchTasksTool) buildTasks(params []dispatchTaskParam, batchTimeout 
 		}
 	}
 	return tasks, nil
-}
-
-// dispatchTaskResult is the per-task result envelope for dispatch_tasks model
-// consumption. Fields added by the output-by-reference change (Synopsis,
-// OutputBytes) use omitempty so they only appear when the result is above the
-// inline threshold, preserving backward compatibility for small results.
-type dispatchTaskResult struct {
-	TaskID      string `json:"task_id"`
-	Status      string `json:"status"`
-	Output      any    `json:"output,omitempty"`
-	OutputRef   string `json:"output_ref,omitempty"`
-	OutputBytes int    `json:"output_bytes,omitempty"`
-	Synopsis    string `json:"synopsis,omitempty"`
-	ReadHint    string `json:"read_hint,omitempty"`
-	ErrorRef    string `json:"error_ref,omitempty"`
-	Error       string `json:"error,omitempty"`
-	Steps       int    `json:"steps,omitempty"`
-	Elapsed     string `json:"elapsed,omitempty"`
-	StepCount   int64  `json:"step_count,omitempty"`
-	// Schema is ok|violation when a schema was in force; omitted when none.
-	Schema string `json:"schema,omitempty"`
-	// Agent is the routed definition that produced this result. Parallel
-	// research aggregates results from several agents, and without
-	// provenance a caller cannot tell whose evidence it is holding.
-	Agent string `json:"agent,omitempty"`
-	// Reason is the typed termination cause. Status alone collapses
-	// distinct outcomes - an operator cancel, a task deadline, an agent's
-	// own ceiling, and a dependency that never ran all look alike - which
-	// is exactly what a partially failed fan-out needs to distinguish.
-	Reason string `json:"reason,omitempty"`
-	// Messages are synopsis-only findings/questions posted during the task.
-	// Bodies stay behind content_ref via run_messages.
-	Messages []messageSynopsis `json:"messages,omitempty"`
-}
-
-func (t *dispatchTasksTool) encodeResults(tasks []ledger.TaskSnapshot, results []subagents.Result) string {
-	threshold := t.cfg.InlineOutputBytes
-	msgIndex := TaskMessageIndex(context.Background(), t.repo, tasks)
-	out := make([]dispatchTaskResult, len(results))
-	for i, r := range results {
-		out[i] = EncodeOneDispatchResult(r, tasks, threshold)
-		out[i].Messages = msgIndex[r.TaskID]
-	}
-	outJSON, _ := json.Marshal(out)
-	return string(outJSON)
-}
-
-// EncodeOneDispatchResult builds a single dispatchTaskResult from a subagent
-// result, applying the inline-by-reference threshold for both output and error.
-func EncodeOneDispatchResult(r subagents.Result, tasks []ledger.TaskSnapshot, threshold int) dispatchTaskResult {
-	tr := dispatchTaskResult{
-		TaskID: r.TaskID,
-		Status: r.Status,
-		Agent:  agentForTask(tasks, r.TaskID),
-		Reason: terminationReason(r),
-	}
-	// Only an unerrored result defaults to completed. Defaulting first and
-	// unconditionally would label a failed task "completed" whenever the
-	// subagent returned an error without setting Status, and would leave
-	// setErrorFields' own failed-status fallback permanently dead.
-	if tr.Status == "" && r.Err == nil {
-		tr.Status = string(ledger.TaskStatusCompleted)
-	}
-	outputRef, errorRef := StoredResultRefs(tasks, r)
-
-	if r.Err != nil {
-		setErrorFields(&tr, r.Err.Error(), r.Output, outputRef, errorRef, threshold)
-		if tr.Reason == "schema_violation" && tr.Schema == "" {
-			tr.Schema = "violation"
-		}
-	} else if len(r.Output) > 0 {
-		setOutputFields(&tr, r.Output, outputRef, threshold)
-		unpackElapsed(&tr, r.Output)
-	}
-	return tr
-}
-
-// TaskMessageIndex loads synopsis-only findings/questions per task for result
-// envelopes. Best-effort: a missing repo or events yields an empty map.
-func TaskMessageIndex(ctx context.Context, repo ledger.LedgerRepository, tasks []ledger.TaskSnapshot) map[string][]messageSynopsis {
-	out := map[string][]messageSynopsis{}
-	if repo == nil || len(tasks) == 0 {
-		return out
-	}
-	runID := tasks[0].RunID
-	if runID == "" {
-		return out
-	}
-	events, err := repo.ListEvents(ctx, runID)
-	if err != nil {
-		return out
-	}
-	for _, e := range events {
-		if e.Kind != coordinator.LifecycleKindTaskMessage {
-			continue
-		}
-		var p struct {
-			MessageID string `json:"message_id"`
-			Kind      string `json:"kind"`
-			Synopsis  string `json:"synopsis"`
-		}
-		if len(e.Payload) > 0 {
-			_ = json.Unmarshal(e.Payload, &p)
-		}
-		// Findings are the primary envelope attachment; questions appear too
-		// so a parked/timeout path remains visible on the result.
-		if p.Kind != "finding" && p.Kind != "question" {
-			continue
-		}
-		out[e.TaskID] = append(out[e.TaskID], messageSynopsis{
-			MessageID: p.MessageID, Kind: p.Kind, Synopsis: p.Synopsis,
-		})
-	}
-	return out
-}
-
-// setOutputFields applies the inline-by-reference threshold to a result's
-// output field, populating the dispatchTaskResult accordingly.
-func setOutputFields(tr *dispatchTaskResult, output []byte, outputRef string, threshold int) {
-	if BelowInlineThreshold(output, threshold, outputRef) {
-		tr.Output = ModelVisibleOutput(output)
-		if outputRef != "" {
-			tr.OutputRef = outputRef
-		}
-	} else {
-		tr.OutputRef = outputRef
-		tr.OutputBytes = len(output)
-		tr.Synopsis = Synopsize(output)
-		tr.ReadHint = ReadHint(threshold, len(output), outputRef)
-	}
-}
-
-// setErrorFields applies the inline-by-reference threshold to both the error
-// and (optionally) output fields of a failed task result.
-func setErrorFields(tr *dispatchTaskResult, errMsg string, output []byte, outputRef, errorRef string, threshold int) {
-	tr.ErrorRef = errorRef
-	if BelowInlineThreshold([]byte(errMsg), threshold, errorRef) {
-		tr.Error = errMsg
-	} else {
-		tr.ErrorRef = errorRef
-	}
-	// Schema violations must not inline a known-malformed body; only the
-	// envelope metadata and error_ref/path may surface.
-	if tr.Reason == "schema_violation" || tr.Schema == "violation" {
-		if len(output) > 0 {
-			// Prefer ref path only; never put the body on tr.Output.
-			if outputRef != "" {
-				tr.OutputRef = outputRef
-				tr.OutputBytes = len(output)
-			}
-			unpackElapsed(tr, output)
-			if tr.Schema == "" {
-				tr.Schema = "violation"
-			}
-		}
-	} else if len(output) > 0 {
-		setOutputFields(tr, output, outputRef, threshold)
-	}
-	if tr.Status == "" {
-		tr.Status = string(ledger.TaskStatusFailed)
-	}
-}
-
-// unpackElapsed extracts elapsed/steps/step_count/schema from structured JSON output.
-func unpackElapsed(tr *dispatchTaskResult, output []byte) {
-	var parsed map[string]any
-	if err := json.Unmarshal(output, &parsed); err != nil {
-		return
-	}
-	if s, ok := parsed["elapsed"].(string); ok {
-		tr.Elapsed = s
-	}
-	if s, ok := parsed["steps"].(float64); ok {
-		tr.Steps = int(s)
-	}
-	if s, ok := parsed["step_count"].(float64); ok {
-		tr.StepCount = int64(s)
-	}
-	if s, ok := parsed["schema"].(string); ok {
-		tr.Schema = s
-	}
-}
-
-// agentForTask reports which routed definition owned a task. It reads the
-// persisted routing snapshot rather than the request, so the answer is the
-// definition the run was actually authorized against.
-func agentForTask(tasks []ledger.TaskSnapshot, taskID string) string {
-	for _, snap := range tasks {
-		if snap.TaskID == taskID {
-			return snap.AgentName
-		}
-	}
-	return ""
-}
-
-// terminationReason classifies why a task stopped. It reports only a fixed
-// vocabulary derived from the error's type, never the error text: this value
-// is model-visible and aggregated across a fan-out, so it must not become a
-// second channel for prompt or payload content.
-func terminationReason(r subagents.Result) string {
-	switch {
-	case r.Status == "missing":
-		return "never_started"
-	case r.Err == nil:
-		return ""
-	case errors.Is(r.Err, subagents.ErrSchemaViolation):
-		return "schema_violation"
-	case errors.Is(r.Err, cliagents.ErrAgentWallClockExceeded):
-		return "agent_wall_clock_exceeded"
-	case errors.Is(r.Err, context.DeadlineExceeded):
-		return "deadline_exceeded"
-	case errors.Is(r.Err, context.Canceled):
-		return "canceled"
-	}
-	// Fall back to the coarse status mapping, which already normalizes the
-	// provider and transport error shapes this layer cannot type-assert on.
-	switch StatusFromErr(r.Err) {
-	case string(ledger.TaskStatusTimedOut):
-		return "deadline_exceeded"
-	case string(ledger.TaskStatusCanceled):
-		return "canceled"
-	default:
-		return "failed"
-	}
 }
 
 // NewDispatchTasksTool creates a dispatch_tasks tool. RegisterOrchestrationTools
