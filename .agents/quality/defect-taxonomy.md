@@ -279,7 +279,14 @@ different route than its declaration allows.
 **Evidence.** `b982c2f` aligned workflow agent authority. `153409d` added restricted
 workflow engineers. `ed07bc9` scoped the registry before the dispatcher. `2089538`
 enforced the source boundary and root-scope denials. `101e3d1` routed session workflow
-deliver and cancel through the CLI paths instead of a parallel path.
+deliver and cancel through the CLI paths instead of a parallel path. `0378ac65` found
+two independent implementations of `/model <name>` resolution - classic REPL
+(`internal/clichat`) and the new TUI (`internal/uiadapter`) - that had diverged: the
+TUI's `resolveProviderAndModel` silently picked the first provider whose catalog
+happened to contain a requested model name, with no ambiguity check, while the REPL
+path never searched other providers at all. Neither path routed through a shared
+lookup. Fixed by introducing one shared `(*config.Resolved).OtherProvidersWithModel`
+both surfaces now call.
 
 **Probes.**
 - Scope the registry before the dispatcher reads it, never after.
