@@ -238,8 +238,12 @@ func TestTerminalSlashSinkWritesPrefixedLines(t *testing.T) {
 }
 
 func TestSlashSharedHasNoSurfaceImports(t *testing.T) {
+	t.Parallel()
 	// Structural guard: pure helpers live in slash_shared.go and must stay
 	// free of terminal/tui coupling beyond the small slashSink interface.
 	// The production symbols under test above are the real entry points.
-	_ = slashSink(terminalSlashSink{})
+	var sink slashSink = terminalSlashSink{}
+	if sink == nil {
+		t.Fatal("terminalSlashSink must satisfy slashSink")
+	}
 }
