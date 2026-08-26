@@ -166,7 +166,7 @@ func sdkToolEventHooks(opts Options, turn *sdkTurnState) *sdkhooks.Registry {
 			ToolCallID: call.ID,
 			Name:       call.Name,
 			Detail:     "queued",
-			Input:      redactToolInput(string(call.Arguments)),
+			Input:      redactToolInputForTool(call.Name, string(call.Arguments)),
 		})
 		return true, nil
 	})

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -258,6 +259,55 @@ func TestToolPreviewRedactionAndUTF8Bounds(t *testing.T) {
 	}
 	if !utf8.ValidString(output) || len(output) > 512 {
 		t.Fatalf("output preview invalid/beyond cap: valid=%v len=%d", utf8.ValidString(output), len(output))
+	}
+}
+
+// TestRedactToolInputForTool_DispatchTasksGetsTheWiderCap guards the fix for
+// dispatch_tasks' live per-task fan-out in the TUI (internal/ui/screen/
+// conversation/events.go's dispatchTaskIDs): that logic parses the task list
+// back out of agent.Event.Input, but the default 256-byte input preview cap
+// truncates a multi-task batch mid-JSON, so json.Unmarshal fails and the fan-
+// out silently falls back to one aggregate row. redactToolOutputForTool
+// already special-cases dispatch_tasks for the identical reason ("a 512-byte
+// cut lands mid-string, which breaks the operator UI's JSON parse") - the
+// input side needs the same allowance.
+func TestRedactToolInputForTool_DispatchTasksGetsTheWiderCap(t *testing.T) {
+	redact.SetPolicy(nil)
+	t.Cleanup(func() { redact.SetPolicy(nil) })
+	tools.SetRedactToolArgs(false)
+	t.Cleanup(func() { tools.SetRedactToolArgs(false) })
+
+	var b strings.Builder
+	b.WriteString(`{"tasks":[`)
+	for i := 0; i < 4; i++ {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		b.WriteString(`{"id":"task-` + strings.Repeat("x", i+1) + `","prompt":"` + strings.Repeat("deep dive prompt text. ", 20) + `","agent":"auditor"}`)
+	}
+	b.WriteString(`]}`)
+	raw := b.String()
+	if len(raw) <= 256 {
+		t.Fatalf("test fixture must exceed the default 256-byte cap to exercise the widened one, got %d bytes", len(raw))
+	}
+
+	got := redactToolInputForTool("dispatch_tasks", raw)
+	if got != raw {
+		t.Fatalf("expected dispatch_tasks' full task list to survive uncut, got %d of %d bytes", len(got), len(raw))
+	}
+
+	var decoded struct {
+		Tasks []struct {
+			ID string `json:"id"`
+		} `json:"tasks"`
+	}
+	if err := json.Unmarshal([]byte(got), &decoded); err != nil || len(decoded.Tasks) != 4 {
+		t.Fatalf("expected the preview to still parse as the full 4-task list, err=%v decoded=%+v", err, decoded)
+	}
+
+	// An ordinary tool keeps the default, narrower cap.
+	if other := redactToolInputForTool("read_file", raw); len(other) > 256 {
+		t.Fatalf("expected an unrelated tool to keep the default 256-byte cap, got %d bytes", len(other))
 	}
 }
 
