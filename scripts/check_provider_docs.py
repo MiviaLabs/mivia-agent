@@ -41,6 +41,7 @@ DISPLAY_TO_KEY = {
     "ZAI": "zai",
     "Ollama": "ollama",
     "LLM Gateway": "llmgateway",
+    "LLM Proxy CLI": "llmproxycli",
     "MiniMax": "minimax",
 }
 
@@ -52,6 +53,7 @@ KEY_TO_DISPLAYS = {
     "zai": ["ZAI", "z.ai"],
     "ollama": ["Ollama"],
     "llmgateway": ["LLM Gateway"],
+    "llmproxycli": ["LLM Proxy CLI", "llmproxycli"],
     "minimax": ["MiniMax"],
 }
 

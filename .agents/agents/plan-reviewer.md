@@ -10,6 +10,8 @@ tools:
 - grep
 - glob
 - find_references
+provider: llmproxycli
+model: claude-sonnet-5
 ---
 
 # Plan Reviewer

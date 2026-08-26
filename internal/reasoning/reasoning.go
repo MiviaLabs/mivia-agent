@@ -133,10 +133,11 @@ func (d Dialect) CanGrade() bool {
 // top-level reasoning_effort shorthand and never downgrades effort tiers
 // (https://docs.llmgateway.io/features/reasoning).
 var defaultDialects = map[string]Dialect{
-	"zai":        DialectThinking,
-	"openrouter": DialectOpenAI,
-	"deepseek":   DialectThinkingEffort,
-	"llmgateway": DialectOpenAI,
+	"zai":         DialectThinking,
+	"openrouter":  DialectOpenAI,
+	"deepseek":    DialectThinkingEffort,
+	"llmgateway":  DialectOpenAI,
+	"llmproxycli": DialectOpenAI,
 }
 
 // DefaultDialect returns the vetted wire dialect for a built-in provider.

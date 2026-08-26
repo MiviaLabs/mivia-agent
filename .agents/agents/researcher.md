@@ -17,8 +17,8 @@ skills:
 - bug-audit
 - concurrency-review
 - secure-change
-provider: openrouter
-model: inclusionai/ling-3.0-flash
+provider: llmproxycli
+model: gemini-3.7-flash-high
 max_turns: 0
 ---
 

@@ -63,7 +63,7 @@ prompts, tool sets, and content stay outside that event identity.
 
 ## Provider transport retry
 
-Every built-in provider (DeepSeek, OpenRouter, z.ai, Ollama, LLM Gateway, MiniMax) is an `OpenAICompat`
+Every built-in provider (DeepSeek, OpenRouter, z.ai, Ollama, LLM Gateway, LLM Proxy CLI, MiniMax) is an `OpenAICompat`
 client, and all of them share one retry boundary: `retryRoundTripper` in
 `internal/provider`. There is no retry logic in the CLI, session, agent loop, or
 any provider factory, and retry is not user-configurable.

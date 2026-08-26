@@ -18,8 +18,8 @@ skills:
   - concurrency-review
   - secure-change
   - simplification-review
-provider: openrouter
-model: tencent/hy3-preview
+provider: llmproxycli
+model: claude-sonnet-5
 max_turns: 0
 ---
 

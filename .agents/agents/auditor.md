@@ -18,8 +18,8 @@ skills:
 - bug-audit
 - concurrency-review
 - fast-bug-audit
-provider: deepseek
-model: deepseek-v4-flash
+provider: llmproxycli
+model: claude-sonnet-5
 max_turns: 0
 ---
 

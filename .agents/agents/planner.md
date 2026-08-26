@@ -11,6 +11,8 @@ tools:
 - grep
 - glob
 - find_references
+provider: llmproxycli
+model: claude-opus-5
 ---
 
 # Planner

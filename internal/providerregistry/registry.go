@@ -23,6 +23,10 @@ var descriptors = map[string]Descriptor{
 		Name: "llmgateway", DefaultModel: "deepseek-v4-pro",
 		DefaultURL: "https://api.llmgateway.io/v1", DefaultAPIKeyEnv: "LLMGATEWAY_API_KEY",
 	},
+	"llmproxycli": {
+		Name: "llmproxycli", DefaultModel: "claude-sonnet-5",
+		DefaultURL: "http://127.0.0.1:8317/v1", DefaultAPIKeyEnv: "CLIPROXY_API_KEY",
+	},
 	"minimax": {
 		Name: "minimax", DefaultModel: "MiniMax-M3",
 		DefaultURL: "https://api.minimax.io/v1", DefaultAPIKeyEnv: "MINIMAX_API_KEY",

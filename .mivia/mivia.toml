@@ -67,7 +67,7 @@ redaction_placeholder = '[redacted]'
 
 [provider]
 default_model = 'gemini-3.7-flash-high'
-name = 'llmgateway'
+name = 'llmproxycli'
 
 [providers]
 [providers.deepseek]
@@ -92,88 +92,107 @@ reasoning_dialect = 'thinking_effort'
 reasoning_efforts = ['high', 'max']
 
 [providers.llmgateway]
+api_key_env = 'LLMGATEWAY_API_KEY'
+base_url = 'https://api.llmgateway.io/v1'
+default_model = 'deepseek-v4-pro'
+
+[[providers.llmgateway.models]]
+context_window_tokens = 1100000
+name = 'deepseek-v4-pro'
+reasoning = 'high'
+reasoning_efforts = ['low', 'medium', 'high', 'max']
+
+[[providers.llmgateway.models]]
+context_window_tokens = 1000000
+name = 'muse-spark-1.2'
+
+[[providers.llmgateway.models]]
+context_window_tokens = 1000000
+name = 'glm-5.2'
+
+[providers.llmproxycli]
 api_key_env = 'CLIPROXY_API_KEY'
 base_url = 'http://127.0.0.1:8317/v1'
 default_model = 'gemini-3.7-flash-high'
 
-[[providers.llmgateway.models]]
+[[providers.llmproxycli.models]]
 context_window_tokens = 200000
 max_output_tokens = 128000
 name = 'claude-sonnet-5'
 reasoning = 'high'
 reasoning_efforts = ['low', 'medium', 'high', 'max']
 
-[[providers.llmgateway.models]]
+[[providers.llmproxycli.models]]
 context_window_tokens = 200000
 max_output_tokens = 128000
 name = 'claude-sonnet-4-7'
 reasoning = 'high'
 reasoning_efforts = ['low', 'medium', 'high', 'max']
 
-[[providers.llmgateway.models]]
+[[providers.llmproxycli.models]]
 context_window_tokens = 200000
 max_output_tokens = 128000
 name = 'claude-sonnet-4-6'
 reasoning = 'high'
 reasoning_efforts = ['low', 'medium', 'high', 'max']
 
-[[providers.llmgateway.models]]
+[[providers.llmproxycli.models]]
 context_window_tokens = 200000
 max_output_tokens = 128000
 name = 'claude-opus-5'
-reasoning = 'high'
+reasoning = 'low'
 reasoning_efforts = ['low', 'medium', 'high', 'max']
 
-[[providers.llmgateway.models]]
+[[providers.llmproxycli.models]]
 context_window_tokens = 200000
 max_output_tokens = 128000
 name = 'claude-opus-4-7'
 reasoning = 'high'
 reasoning_efforts = ['low', 'medium', 'high', 'max']
 
-[[providers.llmgateway.models]]
+[[providers.llmproxycli.models]]
 context_window_tokens = 200000
 max_output_tokens = 128000
 name = 'claude-fable-5'
 reasoning = 'high'
 reasoning_efforts = ['low', 'medium', 'high', 'max']
 
-[[providers.llmgateway.models]]
+[[providers.llmproxycli.models]]
 context_window_tokens = 1000000
 max_output_tokens = 65536
 name = 'gemini-3.1-pro-low'
 reasoning = 'high'
 reasoning_efforts = ['low', 'medium', 'high']
 
-[[providers.llmgateway.models]]
+[[providers.llmproxycli.models]]
 context_window_tokens = 1000000
 max_output_tokens = 65536
 name = 'gemini-pro-agent'
 reasoning = 'high'
 reasoning_efforts = ['low', 'medium', 'high']
 
-[[providers.llmgateway.models]]
+[[providers.llmproxycli.models]]
 context_window_tokens = 1000000
 max_output_tokens = 65536
 name = 'gemini-3.7-flash-high'
 reasoning = 'high'
 reasoning_efforts = ['low', 'medium', 'high']
 
-[[providers.llmgateway.models]]
+[[providers.llmproxycli.models]]
 context_window_tokens = 1000000
 max_output_tokens = 65536
 name = 'gemini-3.6-flash-high'
 reasoning = 'high'
 reasoning_efforts = ['low', 'medium', 'high']
 
-[[providers.llmgateway.models]]
+[[providers.llmproxycli.models]]
 context_window_tokens = 1000000
 max_output_tokens = 65536
 name = 'gemini-3-flash'
 reasoning = 'high'
 reasoning_efforts = ['low', 'medium', 'high']
 
-[[providers.llmgateway.models]]
+[[providers.llmproxycli.models]]
 context_window_tokens = 1000000
 max_output_tokens = 384000
 name = 'runware/deepseek-v4-flash'
@@ -181,7 +200,7 @@ reasoning = 'high'
 reasoning_dialect = 'thinking_effort'
 reasoning_efforts = ['high', 'max']
 
-[[providers.llmgateway.models]]
+[[providers.llmproxycli.models]]
 context_window_tokens = 131072
 max_output_tokens = 32768
 name = 'runware/gpt-oss-120b'

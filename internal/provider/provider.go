@@ -285,6 +285,7 @@ var builtins = []builtinEntry{
 	{"zai", NewZAI},
 	{"ollama", NewOllama},
 	{"llmgateway", NewLLMGateway},
+	{"llmproxycli", NewLLMProxyCLI},
 	{"minimax", NewMiniMax},
 }
 

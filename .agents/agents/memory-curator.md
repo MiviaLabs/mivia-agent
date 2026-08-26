@@ -18,8 +18,8 @@ skills:
 - memory-housekeeping
 - capture
 - housekeeping
-provider: deepseek
-model: deepseek-v4-flash
+provider: llmproxycli
+model: gemini-3.7-flash-high
 max_turns: 0
 ---
 

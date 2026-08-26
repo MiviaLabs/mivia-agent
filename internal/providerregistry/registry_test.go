@@ -21,8 +21,13 @@ func TestLookupAndNamesAreStable(t *testing.T) {
 		minimax.DefaultURL != "https://api.minimax.io/v1" || minimax.DefaultAPIKeyEnv != "MINIMAX_API_KEY" {
 		t.Fatalf("minimax descriptor=%+v ok=%v", minimax, ok)
 	}
+	llmproxy, ok := Lookup("llmproxycli")
+	if !ok || llmproxy.Name != "llmproxycli" || llmproxy.DefaultModel != "claude-sonnet-5" ||
+		llmproxy.DefaultURL != "http://127.0.0.1:8317/v1" || llmproxy.DefaultAPIKeyEnv != "CLIPROXY_API_KEY" {
+		t.Fatalf("llmproxycli descriptor=%+v ok=%v", llmproxy, ok)
+	}
 	names := Names()
-	if len(names) != 6 || names[0] != "deepseek" || names[1] != "llmgateway" || names[2] != "minimax" || names[3] != "ollama" || names[4] != "openrouter" || names[5] != "zai" {
+	if len(names) != 7 || names[0] != "deepseek" || names[1] != "llmgateway" || names[2] != "llmproxycli" || names[3] != "minimax" || names[4] != "ollama" || names[5] != "openrouter" || names[6] != "zai" {
 		t.Fatalf("names=%v", names)
 	}
 	names[0] = "mutated"

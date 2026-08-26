@@ -9,4 +9,6 @@ tools:
 - find_references
 disallowed_tools:
 - post_message
+provider: llmproxycli
+model: claude-sonnet-5
 ---

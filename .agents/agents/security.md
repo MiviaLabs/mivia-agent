@@ -15,8 +15,8 @@ tools:
 skills:
 - secure-change
 - bug-audit
-provider: openrouter
-model: inclusionai/ling-3.0-flash
+provider: llmproxycli
+model: claude-sonnet-5
 max_turns: 0
 ---
 

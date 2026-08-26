@@ -16,8 +16,8 @@ tools:
 - fetch_url
 - extract
 - workflow_inspect
-provider: deepseek
-model: deepseek-v4-flash
+provider: llmproxycli
+model: gemini-3.7-flash-high
 max_turns: 0
 ---
 

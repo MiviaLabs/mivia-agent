@@ -7,7 +7,7 @@
 
 [provider]
 # Default provider: openrouter. Default model: openai/gpt-5.6-luna.
-# Other providers: deepseek, zai, ollama, llmgateway, minimax.
+# Other providers: deepseek, zai, ollama, llmgateway, llmproxycli, minimax.
 name = "openrouter"
 # "auto" (default) captures and publishes provider-reported prompt-cache
 # usage accounting (cache hit/miss token counts) when a response reports it.
@@ -38,7 +38,7 @@ name = "openrouter"
 # the set it does accept.
 #
 # `reasoning_dialect` is the wire shape. zai (thinking object), deepseek
-# (thinking_effort), and openrouter and llmgateway (openai) have vetted
+# (thinking_effort), and openrouter, llmgateway, and llmproxycli (openai) have vetted
 # defaults; any other provider must name it, and mivia refuses to load a
 # config that sets `reasoning` where no dialect can be resolved rather than
 # silently sending nothing.
@@ -174,6 +174,17 @@ models = [
 default_model = "deepseek-v4-pro"
 api_key_env = "LLMGATEWAY_API_KEY"
 base_url = "https://api.llmgateway.io/v1"
+
+[providers.llmproxycli]
+# LLM Proxy CLI connects to a local proxy instance (default http://127.0.0.1:8317/v1).
+# Supports reasoning dialects, Anthropic cache markers, and OpenAI-compatible completions.
+models = [
+  { name = "claude-sonnet-5", context_window_tokens = 200000, max_output_tokens = 128000, reasoning_efforts = ["low", "medium", "high", "max"], reasoning = "high" },
+  { name = "gemini-3.7-flash-high", context_window_tokens = 1000000, max_output_tokens = 65536, reasoning_efforts = ["low", "medium", "high"], reasoning = "high" },
+]
+default_model = "claude-sonnet-5"
+api_key_env = "CLIPROXY_API_KEY"
+base_url = "http://127.0.0.1:8317/v1"
 
 [chat]
 system_prompt = "You are mivia, a local CLI coding agent."

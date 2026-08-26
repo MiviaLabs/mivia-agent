@@ -7,7 +7,7 @@ use.
 
 ## AI providers
 
-mivia sends prompts and selected context to one configured AI provider. Six
+mivia sends prompts and selected context to one configured AI provider. Seven
 providers are built in today:
 
 | Provider | Default model | Default API base URL |
@@ -17,6 +17,7 @@ providers are built in today:
 | ZAI (z.ai) | declare under `providers.zai` | `https://api.z.ai/api/paas/v4` |
 | Ollama | declare under `providers.ollama` | `https://ollama.com/v1` |
 | LLM Gateway | declare under `providers.llmgateway` | `https://api.llmgateway.io/v1` |
+| LLM Proxy CLI | declare under `providers.llmproxycli` | `http://127.0.0.1:8317/v1` |
 | MiniMax | declare under `providers.minimax` | `https://api.minimax.io/v1` |
 
 mivia does not accept an arbitrary OpenAI-compatible provider name. See

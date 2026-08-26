@@ -12,6 +12,8 @@ tools:
 - write_file
 - search_replace
 - run_command
+provider: llmproxycli
+model: claude-sonnet-5
 ---
 
 # Builder

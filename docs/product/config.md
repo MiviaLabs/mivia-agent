@@ -162,9 +162,27 @@ entry may set `reasoning_dialect` to override this default.
 The gateway adds its own cache markers on the request. mivia does not send
 its own cache markers to this provider.
 
+### LLM Proxy CLI
+
+The `llmproxycli` provider connects to a local CLI proxy server (such as `llm-proxy-cli` or LiteLLM) running on localhost (default `http://127.0.0.1:8317/v1`). It supports standard OpenAI-compatible completions and reasoning dialects.
+
+```toml
+[providers.llmproxycli]
+default_model = "claude-sonnet-5"
+api_key_env = "CLIPROXY_API_KEY"
+base_url = "http://127.0.0.1:8317/v1"
+
+[[providers.llmproxycli.models]]
+name = "claude-sonnet-5"
+context_window_tokens = 200000
+max_output_tokens = 128000
+reasoning = "high"
+reasoning_efforts = ["low", "medium", "high", "max"]
+```
+
 ## Provider support
 
-mivia currently supports `deepseek`, `openrouter`, `zai`, `ollama`, and `llmgateway`. Do not add an
+mivia currently supports `deepseek`, `openrouter`, `zai`, `ollama`, `llmgateway`, `llmproxycli`, and `minimax`. Do not add an
 arbitrary OpenAI-compatible provider name. The provider registry rejects names
 that it does not support.
 
