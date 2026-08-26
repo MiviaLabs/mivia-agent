@@ -223,6 +223,9 @@ func (c *SubagentTranscriptConversation) ensureLastAssistantMessage(at time.Time
 func (c *SubagentTranscriptConversation) ActiveTurn() (ports.TurnHandle, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if !c.active {
+		return nil, false
+	}
 	ch := make(chan uievent.Event, 32)
 	c.listeners = append(c.listeners, ch)
 	id := fmt.Sprintf("%s-live", c.title)
