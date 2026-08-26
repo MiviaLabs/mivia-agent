@@ -69,18 +69,19 @@ func TestBuildRegistry_MatchesLegacyShape(t *testing.T) {
 	}
 }
 
-// TestBuildRegistry_RunCommandAbsentWithoutAllowlist mirrors
+// TestBuildRegistry_RunCommandPresentByDefault mirrors
 // internal/tools/default_registry.go's registerDefaultTools: run_command is
-// advertised only when the allowlist is non-empty.
-func TestBuildRegistry_RunCommandAbsentWithoutAllowlist(t *testing.T) {
+// advertised by default via config.DefaultRunAllowlist, even with no
+// [tools] run_allowlist configured.
+func TestBuildRegistry_RunCommandPresentByDefault(t *testing.T) {
 	ws := openTestWorkspace(t)
 	built, err := BuildRegistry(RegistryInput{Workspace: ws})
 	if err != nil {
 		t.Fatalf("BuildRegistry: %v", err)
 	}
 	names := toolNames(t, built)
-	if slices.Contains(names, tools.RunCommandToolName) {
-		t.Fatalf("expected %q absent with an empty allowlist, got %v", tools.RunCommandToolName, names)
+	if !slices.Contains(names, tools.RunCommandToolName) {
+		t.Fatalf("expected %q present via the built-in allowlist, got %v", tools.RunCommandToolName, names)
 	}
 }
 

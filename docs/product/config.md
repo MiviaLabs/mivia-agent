@@ -330,11 +330,15 @@ Every MCP tool description sent to the model states the remote tool name and the
 
 This guards against accidental exposure, not against a determined agent. `run_command` can build a path at runtime and reach the file anyway. With these patterns unset, no paths are filtered.
 
-## Allowlists are configuration-only
+## Allowlists
 
-Neither the `run_command` program allowlist nor the child-process environment allowlist is compiled into the binary. `[tools].run_allowlist` and `[tools].env_allowlist` are the only sources. With them unset, `run_command` executes nothing and child processes inherit no environment.
+The `run_command` program allowlist has a built-in default; the child-process environment allowlist does not.
 
-Recommended values ship in `.mivia/mivia.toml.example`. Copy it and trim it to what your project needs. The example includes powerful programs, including shells and network clients. Remove anything your workspace does not need. In `env_allowlist`, a trailing `*` declares a prefix rule (for example, `"GIT_*"`). Because there is no built-in list to extend or replace, `run_allowlist_only` and `env_allowlist_only` behave identically to their plain counterparts.
+`run_command` can already execute a curated built-in list with `[tools].run_allowlist` unset: common compilers/interpreters, their package managers, git, and read-only Unix utilities. It deliberately excludes shells (`sh`, `bash` — unrestricted execution defeats the allowlist), file-mutating programs (`rm`, `cp`, `mv`, `mkdir`, and similar — `run_command` is not gated by the write-path blocklist, so a mutating program here would bypass it entirely), `find` (its `-exec`/`-delete` flags run arbitrary commands and delete files), and networking/container/infra tools (`curl`, `wget`, `ssh`, `docker`, `kubectl`, `terraform`). `[tools].run_allowlist` extends the built-in list; `[tools].run_allowlist_only` replaces it entirely, for a closed allowlist.
+
+The child-process environment allowlist has no compiled default: `[tools].env_allowlist` is the only source, and with it unset, child processes inherit no environment.
+
+A fuller, opt-in `run_allowlist` (including shells and network clients, extending the built-in list) and a starting `env_allowlist` ship in `.mivia/mivia.toml.example`. Copy it and trim it to what your project needs. In `env_allowlist`, a trailing `*` declares a prefix rule (for example, `"GIT_*"`). Because there is no built-in environment list to extend or replace, `env_allowlist_only` behaves identically to `env_allowlist`; `run_allowlist_only` differs from `run_allowlist` in that it replaces the built-in `run_command` default instead of extending it.
 
 `[tools].env_allow_keyword_blocklist` is the companion subtractive filter. A variable admitted by a `*` prefix rule is dropped when its name contains any listed substring. The example lists `SECRET`, `TOKEN`, `PASSWORD`, and `API_KEY`. Exact `env_allowlist` entries are never dropped, so a build that needs `FOO_TOKEN` names it outright. Unset means prefix rules admit everything they match.
 

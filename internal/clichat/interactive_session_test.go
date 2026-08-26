@@ -95,11 +95,10 @@ func openInteractiveAgentSession(t *testing.T, root string, comp provider.Comple
 		opts.Workspace = ws
 		sess.Tools = tools.NewDefaultRegistry(opts)
 	} else {
-		// configureChatWorkspace reads the RunAllowlist from config, and
-		// run_command is registered only when the allowlist is non-empty (an
-		// empty allowlist means no program may run, so the tool is absent).
-		// Supply one so the default path mirrors a workspace that can run
-		// programs and the helper's registry includes run_command.
+		// configureChatWorkspace reads RunAllowlist from config and extends
+		// it onto config.DefaultRunAllowlist (run_command is registered by
+		// default; the built-in list excludes shells). Supply "sh" so tests
+		// using this helper's default path can run shell commands.
 		res.Tools.RunAllowlist = []string{"sh"}
 		var err error
 		memClose, err = configureChatWorkspace(sess, root, true, res, nil, false, false, false)

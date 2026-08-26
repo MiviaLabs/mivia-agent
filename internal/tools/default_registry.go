@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/codeintel"
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
@@ -141,13 +142,14 @@ func searchToolBudget(opts DefaultOptions) int {
 	return resolveWebResponseBudget(opts.MaxTavilyResponseBytes)
 }
 
-// The run_command program allowlist is configuration-only. No binary list is
-// compiled in: which programs a workspace may run is that workspace's policy,
-// and a list baked into the agent is both too permissive for locked-down repos
-// and too narrow for unusual toolchains.
-//
-// A recommended multi-ecosystem list ships in .mivia/mivia.toml.example under
-// [tools].run_allowlist. With it unset, run_command executes nothing.
+// The run_command program allowlist is open by default: with no [tools]
+// run_allowlist configured, run_command may still execute
+// config.DefaultRunAllowlist's built-in programs (see that var's doc comment
+// for what is and is not included, and why). [tools].run_allowlist extends
+// the built-in list; [tools].run_allowlist_only replaces it entirely. A
+// fuller, opt-in multi-ecosystem list (including shells, networking, and
+// container tools the built-in list deliberately omits) ships in
+// .mivia/mivia.toml.example under [tools].run_allowlist.
 
 // NewDefaultRegistry registers all v1 tools.
 func NewDefaultRegistry(opts DefaultOptions) *Registry {
@@ -172,15 +174,19 @@ func configuredSecretPaths(opts DefaultOptions) ([]string, []string) {
 }
 
 func configuredRunAllowlist(opts DefaultOptions) []string {
-	// With no compiled-in list there is nothing to extend or replace, so
-	// run_allowlist_only and run_allowlist differ only in name; both are
-	// honoured so existing configs keep working.
-	allowlist := opts.RunAllowlistOnly
-	normalized := make([]string, 0, len(allowlist)+len(opts.RunAllowlist))
-	for _, program := range allowlist {
-		normalized = append(normalized, strings.ToLower(program))
+	// run_allowlist_only REPLACES config.DefaultRunAllowlist entirely (a
+	// project that wants a closed allowlist does not also inherit the
+	// built-in open one). Unset, run_allowlist EXTENDS the built-in list.
+	var base []string
+	if len(opts.RunAllowlistOnly) > 0 {
+		base = opts.RunAllowlistOnly
+	} else {
+		base = make([]string, 0, len(config.DefaultRunAllowlist)+len(opts.RunAllowlist))
+		base = append(base, config.DefaultRunAllowlist...)
+		base = append(base, opts.RunAllowlist...)
 	}
-	for _, program := range opts.RunAllowlist {
+	normalized := make([]string, 0, len(base))
+	for _, program := range base {
 		normalized = append(normalized, strings.ToLower(program))
 	}
 	blocked := disabledToolNames(opts.RunBlocklist)

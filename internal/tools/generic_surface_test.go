@@ -154,15 +154,16 @@ func TestExampleAllowlistIsMultiEcosystem(t *testing.T) {
 // No allowlist compiled in means an unconfigured workspace runs nothing and
 // does not advertise run_command at all. That is the documented posture; assert
 // it so it cannot regress into a built-in.
-func TestUnconfiguredAllowlistRunsNothing(t *testing.T) {
+func TestUnconfiguredWorkspaceAdvertisesRunCommandWithBuiltinAllowlist(t *testing.T) {
 	ws, err := workspace.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	reg := NewDefaultRegistry(DefaultOptions{Workspace: ws})
-	// With an empty allowlist, run_command must not be registered at all.
-	if _, ok := reg.Get("run_command"); ok {
-		t.Fatal("unconfigured workspace must not advertise run_command")
+	// With no [tools] run_allowlist configured, run_command is still
+	// registered - config.DefaultRunAllowlist makes it open by default.
+	if _, ok := reg.Get("run_command"); !ok {
+		t.Fatal("unconfigured workspace must advertise run_command (built-in allowlist)")
 	}
 }
 

@@ -49,9 +49,14 @@ func TestDeriveOutputCeilingRaisedRunBudget(t *testing.T) {
 	}
 }
 
-// TestDeriveOutputCeilingRaisedReadBudget: same for max_read_bytes.
+// TestDeriveOutputCeilingRaisedReadBudget: same for max_read_bytes. Isolates
+// read_file/grep/glob's own budget by disabling run_command - since
+// config.DefaultRunAllowlist made run_command open by default, its own
+// uncapped (256 MiB memory-backstop-bounded) budget would otherwise dominate
+// this max_read_bytes=2MB case, which TestDeriveOutputCeilingRaisedRunBudget
+// already covers on its own terms.
 func TestDeriveOutputCeilingRaisedReadBudget(t *testing.T) {
-	reg := newCeilingRegistry(t, tools.DefaultOptions{MaxReadBytes: 2 << 20})
+	reg := newCeilingRegistry(t, tools.DefaultOptions{MaxReadBytes: 2 << 20, DisableTools: []string{"run_command"}})
 	got := DeriveOutputCeiling(reg, 0)
 	if want := (2 << 20) + inputAllowance + outputCeilingSlack; got != want {
 		t.Fatalf("DeriveOutputCeiling(max_read_bytes=2MB) = %d, want %d", got, want)

@@ -223,12 +223,16 @@ branch_prefix = "mivia/"
 
 [tools]
 # ---- run_command program allowlist ----
-# Nothing is compiled into the binary: with this unset, run_command executes
-# no program at all. The list below is a recommended multi-ecosystem default;
-# trim it to what your project actually needs.
+# Open by default: with this unset, run_command can already execute the
+# built-in list (compilers/interpreters, their package managers, git, and
+# read-only Unix utilities - see config.DefaultRunAllowlist's doc comment for
+# the exact set and why shells, mutating programs, and networking/container
+# tools are excluded from it). The list below is a fuller, opt-in
+# multi-ecosystem default that EXTENDS the built-in list, including programs
+# deliberately left out of it; trim it to what your project actually needs.
 #
-# run_allowlist_only is accepted as a synonym — with no built-in list there is
-# nothing to "replace", so the two keys behave identically.
+# run_allowlist_only REPLACES the built-in list entirely instead of
+# extending it - use it for a closed allowlist.
 run_allowlist = [
   "git", "make", "cmake", "ninja", "sh", "bash", "go", "gofmt",
   "govulncheck", "python", "python3", "pip", "pip3", "pytest", "uv", "nox",

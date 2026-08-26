@@ -19,13 +19,10 @@ MCP server definitions contain only environment variable names. mivia passes onl
 
 MCP tool descriptions, schemas, errors, and results are untrusted server data. mivia bounds metadata and results before it sends them to the model. It exposes text result content only. It does not treat MCP data as local instructions.
 
-## Deny by default
+## Allowlists: one open by default, one closed
 
-Powerful tools stay off until you configure them.
-
-- `run_command`, the tool that runs other programs, executes nothing until `[tools].run_allowlist` names the programs.
-- Child processes inherit no environment until `[tools].env_allowlist` names the variables.
-- These allowlists are configuration-only. There is no built-in list to extend or replace.
+- `run_command`, the tool that runs other programs, can already execute a curated built-in list with no configuration: common compilers/interpreters, their package managers, git, and read-only Unix utilities. It excludes shells, file-mutating programs, `find`, and networking/container/infra tools by default — see `[tools].run_allowlist` in [Configuration](../product/config.md#allowlists) for the full list and rationale. `[tools].run_allowlist` extends it; `[tools].run_allowlist_only` replaces it for a closed allowlist.
+- Child processes inherit no environment until `[tools].env_allowlist` names the variables. This allowlist is configuration-only — there is no built-in list to extend or replace.
 
 With nothing configured, nothing is filtered and nothing is redacted. The user then sees tool previews, `run_command` output, event bodies, and audit metadata intact.
 

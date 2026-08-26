@@ -412,19 +412,67 @@ func TestRunCommandParentCancelReportsCanceled(t *testing.T) {
 	}
 }
 
-func TestRunCommandNotRegisteredWithEmptyAllowlist(t *testing.T) {
+// TestRunCommandRegisteredWithBuiltinAllowlistByDefault proves run_command
+// is open by default: with no [tools] run_allowlist configured, it is still
+// registered and can run a program from config.DefaultRunAllowlist (e.g.
+// "echo"). See config.DefaultRunAllowlist's doc comment for what is (and is
+// not) included by default.
+func TestRunCommandRegisteredWithBuiltinAllowlistByDefault(t *testing.T) {
 	ws := setupTestWSRun(t)
 	reg := NewDefaultRegistry(DefaultOptions{Workspace: ws})
-	if _, ok := reg.Get(RunCommandToolName); ok {
-		t.Error("run_command should not be registered when allowlist is empty")
+	if _, ok := reg.Get(RunCommandToolName); !ok {
+		t.Fatal("run_command should be registered by default (built-in allowlist)")
 	}
-	// Execute should report unknown tool, not a registered-but-erroring tool.
-	_, err := reg.Execute(context.Background(), RunCommandToolName, json.RawMessage(`{"argv":["echo","hi"]}`))
-	if err == nil {
-		t.Fatal("expected unknown tool error")
+	out, err := reg.Execute(context.Background(), RunCommandToolName, json.RawMessage(`{"argv":["echo","hi"]}`))
+	if err != nil {
+		t.Fatalf("Execute(echo) error = %v, want success from the built-in allowlist", err)
 	}
-	if !strings.Contains(err.Error(), "unknown tool") {
-		t.Fatalf("expected 'unknown tool', got: %v", err)
+	if !strings.Contains(out, "hi") {
+		t.Fatalf("out=%q, want it to contain echo's output", out)
+	}
+}
+
+// TestRunCommandBuiltinAllowlistExcludesShellsAndMutatingTools proves the
+// built-in default deliberately omits shells (unrestricted execution) and
+// file-mutating programs (run_command is not gated by the write-path
+// blocklist, so a mutating program here would bypass it entirely).
+func TestRunCommandBuiltinAllowlistExcludesShellsAndMutatingTools(t *testing.T) {
+	ws := setupTestWSRun(t)
+	reg := NewDefaultRegistry(DefaultOptions{Workspace: ws})
+	for _, program := range []string{"sh", "bash", "rm", "cp", "mv", "chmod", "find", "curl", "docker"} {
+		_, err := reg.Execute(context.Background(), RunCommandToolName, json.RawMessage(fmt.Sprintf(`{"argv":[%q]}`, program)))
+		if err == nil {
+			t.Errorf("Execute(%s) error = nil, want an allowlist rejection (not in the built-in default)", program)
+		}
+	}
+}
+
+// TestRunCommandAllowlistOnlyReplacesBuiltin proves run_allowlist_only
+// replaces config.DefaultRunAllowlist entirely rather than extending it: a
+// program from the built-in default that is not in the configured
+// run_allowlist_only is refused.
+func TestRunCommandAllowlistOnlyReplacesBuiltin(t *testing.T) {
+	ws := setupTestWSRun(t)
+	reg := NewDefaultRegistry(DefaultOptions{Workspace: ws, RunAllowlistOnly: []string{"git"}})
+	if _, err := reg.Execute(context.Background(), RunCommandToolName, json.RawMessage(`{"argv":["echo","hi"]}`)); err == nil {
+		t.Error("Execute(echo) error = nil, want rejection: run_allowlist_only replaces the built-in default")
+	}
+	if _, err := reg.Execute(context.Background(), RunCommandToolName, json.RawMessage(`{"argv":["git","--version"]}`)); err != nil {
+		t.Errorf("Execute(git) error = %v, want success: git is in run_allowlist_only", err)
+	}
+}
+
+// TestRunCommandRunBlocklistRemovesBuiltinEntry proves run_blocklist can
+// remove a program from the built-in default, not only from configured
+// run_allowlist entries.
+func TestRunCommandRunBlocklistRemovesBuiltinEntry(t *testing.T) {
+	ws := setupTestWSRun(t)
+	reg := NewDefaultRegistry(DefaultOptions{Workspace: ws, RunBlocklist: []string{"echo"}})
+	if _, err := reg.Execute(context.Background(), RunCommandToolName, json.RawMessage(`{"argv":["echo","hi"]}`)); err == nil {
+		t.Error("Execute(echo) error = nil, want rejection: echo is run_blocklist-ed")
+	}
+	if _, err := reg.Execute(context.Background(), RunCommandToolName, json.RawMessage(`{"argv":["git","--version"]}`)); err != nil {
+		t.Errorf("Execute(git) error = %v, want success: only echo was blocklisted", err)
 	}
 }
 
