@@ -90,6 +90,11 @@ type Session struct {
 	// bounded and surfaced by /hooks rather than printed: a tool call runs
 	// while the TUI owns the terminal.
 	runWarnings []string
+	// workspaceRoot is the directory hook argv[0] paths resolve against. Set
+	// once at Load and never mutated, so RunStopForTurn can read it without
+	// taking mu - it is the one field every caller already knows at Install
+	// time and none needs to pass again per call.
+	workspaceRoot string
 }
 
 // maxRunWarnings bounds retained run-time diagnostics. A hook that warns on
@@ -188,7 +193,7 @@ func Load(workspaceRoot string) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	session := &Session{warnings: append([]string{}, source.Warnings...)}
+	session := &Session{warnings: append([]string{}, source.Warnings...), workspaceRoot: workspaceRoot}
 	for _, file := range source.Files {
 		groups, err := hooks.Parse(file.Data, file.Path)
 		if err != nil {

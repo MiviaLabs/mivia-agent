@@ -335,7 +335,10 @@ func (s *Session) sendPlain(ctx context.Context, userText, persistedText string,
 	if err != nil {
 		return "", err
 	}
-	defer done()
+	defer func() {
+		done()
+		s.fireRootTurnEndHook(ctx, snapshot.sessionID, snapshot.myTurn)
+	}()
 	if snapshot.context.manager != nil {
 		return s.sendPlainContext(ctx, persistedText, w, snapshot)
 	}
@@ -347,7 +350,10 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 	if err != nil {
 		return "", err
 	}
-	defer done()
+	defer func() {
+		done()
+		s.fireRootTurnEndHook(ctx, snapshot.sessionID, snapshot.myTurn)
+	}()
 	// Publish any stage an earlier boundary could not at the earliest safe
 	// point of this turn, and take the surface the loop must run on. The
 	// returned token is re-captured after the start-of-turn publication so the

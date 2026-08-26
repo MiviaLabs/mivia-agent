@@ -548,20 +548,29 @@ There is **no `MIVIA_TURN_ID`**. The environment carries `MIVIA_HOOK_EVENT`,
 nothing else; the turn id is in the stdin JSON as `turn_id`, which is why the
 script above stores the payload whole rather than picking fields out of it.
 
-> **Limitation: `Stop` has no production caller on any surface today.**
-> `internal/hooksession.RunStopEvent` exists, is tested, and is wired to
-> nothing: no code path calls it, on the TUI or `--plain` or `-p`. An earlier
-> version of this note claimed it fired in the interactive TUI; that was
-> already false by the time it was written (the publish site it named,
-> `internal/cli/tui_events.go`, had already been removed). `PreToolUse` and
-> `PostToolUse` are unaffected - they run through the dispatcher's `Policy`,
-> not through this seam. Wiring `Stop` to a real per-turn call site on every
-> surface is tracked as a separate, larger change: it needs a real turn
-> identifier at the call site (the obvious candidate, `Session.sendUserWithTurn`'s
-> return value, is the assistant's reply text, not a turn id) and a design for
-> reaching every session a process can run, including pooled TUI sessions -
-> not just a single global.
->
+`Stop` fires once per completed root turn on every surface - `-p`, `--plain`,
+line mode, and the TUI - because all four funnel through
+`internal/chat.Session.sendUserWithTurn` (`internal/hooksession.RunStopForTurn`
+is its one call site). The turn identifier is the same `turn:N` value
+`PreToolUse`/`PostToolUse` carry, not the assistant's reply text. A turn that
+began fires `Stop` on every outcome - success, a provider error, or a canceled
+context - because the call is wrapped around the same `done()` callback that
+already runs on every post-begin return path; a turn that never began (a
+session mid-switch or mid-load) fires nothing, since there is no turn to
+report as done. `Stop`'s output reaches the same `EventHook` channel
+`PreToolUse`/`PostToolUse` runs use, so it renders the same way on any surface
+that already draws a hook row.
+
+Firing is **synchronous** on the turn's own critical path on all four
+surfaces: a slow `Stop` handler delays that surface's return by up to its
+configured timeout (5s by default, `on_timeout` in `internal/hooks/config.go`)
+before the turn is considered complete. This is deliberate, not an oversight -
+`Stop`'s own contract is that a canceled turn's hook run is recorded rather
+than silently skipped, which requires running under the turn's own
+(possibly-canceled) context rather than a detached one; a fire-and-forget
+goroutine cannot honor that without its own synchronization back to the
+caller.
+
 > A `PreToolUse` block on the deferred-tool path (`internal/chat.Session.runDeferredToolNow`)
 > leaves one contradiction for a single step: the operator's transcript shows
 > the denying hook's row, but the MODEL is still told the generic "queued to
@@ -591,8 +600,11 @@ silently dropping the call.
 - Hooks **propagate to subagents**. A gate a subagent escapes is not a gate.
 - Hooks never re-enter mivia's dispatcher, so a `PreToolUse` hook matching
   `run_command` cannot dispatch `run_command` and recurse.
-- `Stop` currently fires on no surface - see the "Limitation" note above.
-  `PreToolUse` and `PostToolUse` fire on every surface.
+- `Stop`, `PreToolUse`, and `PostToolUse` all fire on every surface (`-p`,
+  `--plain`, line mode, the TUI). `Stop` fires once per root turn only, never
+  for a subagent turn or a workflow run - no `internal/cliworkflow` path
+  drives an `internal/chat.Session` turn, so a workflow's own tool calls still
+  fire `PreToolUse`/`PostToolUse` but never `Stop`.
 - `SKILL.md` frontmatter hooks, `http`/`mcp_tool`/`prompt`/`agent` handler
   types, an operator tier, and a global kill switch are all out of v1.
   "Disable everything" is deleting the `[[hooks]]` tables, which is the same

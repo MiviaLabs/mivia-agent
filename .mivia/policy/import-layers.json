@@ -48,6 +48,7 @@
       "internal/contextmgr",
       "internal/contextstate",
       "internal/events",
+      "internal/hooksession",
       "internal/provider",
       "internal/reasoning",
       "internal/redact",

@@ -30,6 +30,7 @@ type contextTurnConfig struct {
 
 type plainTurnSnapshot struct {
 	myTurn      uint64
+	sessionID   string
 	messages    []provider.Message
 	binding     ModelBinding
 	token       OperationToken
@@ -409,7 +410,7 @@ func (s *Session) beginPlainTurn(userText string) (plainTurnSnapshot, func(), er
 		budget = s.MaxContextTokens
 	}
 	snapshot := plainTurnSnapshot{
-		myTurn: myTurn, messages: messages, binding: binding, token: token,
+		myTurn: myTurn, sessionID: s.SessionID, messages: messages, binding: binding, token: token,
 		context: s.captureContextLocked(), budget: budget,
 		temperature: s.Temperature, maxTokens: config.EffectiveOutputTokens(binding.Profile, s.MaxTokens), tools: s.Tools,
 	}
