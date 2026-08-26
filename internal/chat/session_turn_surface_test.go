@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
@@ -290,11 +291,16 @@ func TestDeferredToolReportsAPreToolUseBlock(t *testing.T) {
 
 // A hook can fire successfully while the TOOL's own execution still fails -
 // a distinct case from a PreToolUse block (which never reaches the tool at
-// all). The hook run must still be reported even though ok=false.
+// all). The hook run must still be reported even though ok=false. Proven by
+// an execution-reached flag (not just an error path, which any
+// pre-execute dispatcher failure would also satisfy) and by asserting
+// Denied==false on the reported run (a PreToolUse block's run IS denied -
+// this is the one cheap assertion that separates the two cases).
 func TestDeferredToolReportsHookRunsWhenToolItselfFails(t *testing.T) {
 	s := prefixResetSession(t)
+	tool := &failingTool{name: "grep"}
 	full := tools.NewRegistry()
-	full.Register(failingTool{name: "grep"})
+	full.Register(tool)
 	s.PublishAgentSurface("p", 0, full, nil, nil, "", full.OpenAITools())
 
 	pre := func(context.Context, runtime.Request) runtime.HookVerdict {
@@ -315,22 +321,31 @@ func TestDeferredToolReportsHookRunsWhenToolItselfFails(t *testing.T) {
 	if result.Ran {
 		t.Fatalf("a failing tool execution must not report Ran, got %+v", result)
 	}
-	if len(result.HookRuns) != 1 {
-		t.Fatalf("the hook that DID run before the tool failed must still be reported, got %+v", result.HookRuns)
+	if !tool.reached.Load() {
+		t.Fatal("the tool's own Execute was never reached - this test would also pass for a pre-execute dispatcher failure, which is not what it claims to cover")
+	}
+	if len(result.HookRuns) != 1 || result.HookRuns[0].Denied {
+		t.Fatalf("the hook that DID run before the tool failed must be reported and NOT marked Denied (that would mean a PreToolUse block, a different case), got %+v", result.HookRuns)
 	}
 }
 
 // failingTool always errors, to exercise the "hook ran, tool itself
-// failed" path distinctly from a PreToolUse block.
-type failingTool struct{ name string }
+// failed" path distinctly from a PreToolUse block. reached proves Execute
+// was actually called, ruling out a pre-execute dispatcher failure
+// satisfying the same assertions for the wrong reason.
+type failingTool struct {
+	name    string
+	reached atomic.Bool
+}
 
-func (t failingTool) Name() string               { return t.name }
-func (t failingTool) Description() string        { return "always fails" }
-func (t failingTool) Parameters() map[string]any { return map[string]any{"type": "object"} }
-func (t failingTool) Capability(json.RawMessage) tools.Capability {
+func (t *failingTool) Name() string               { return t.name }
+func (t *failingTool) Description() string        { return "always fails" }
+func (t *failingTool) Parameters() map[string]any { return map[string]any{"type": "object"} }
+func (t *failingTool) Capability(json.RawMessage) tools.Capability {
 	return tools.Capability{Class: tools.ExecutionRead}
 }
-func (t failingTool) Execute(context.Context, json.RawMessage) (string, error) {
+func (t *failingTool) Execute(context.Context, json.RawMessage) (string, error) {
+	t.reached.Store(true)
 	return "", errors.New("always fails")
 }
 

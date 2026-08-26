@@ -204,9 +204,13 @@ const hookContentElisionMaxDepth = 64
 
 // elideHookContentPreviews replaces a string value under a "content" key
 // with its size, mirroring internal/agent's elideContentPreviews. Content
-// elision is preview-size control, not credential redaction, so it applies
-// whether or not tools.RedactToolArgs() would otherwise have anything to do
-// - it is what keeps a whole file body out of every hook-run record.
+// elision is preview-size control, not credential redaction, so within the
+// tools.RedactToolArgs() opt-in it applies whether or not the workspace
+// configured any redaction PATTERNS - it is what keeps a whole file body out
+// of a hook-run record once that stricter mode is on. It does not run at
+// all in the default mode (RedactToolArgs() false, redactedHookInput's
+// early return above): only the pattern policy applies there, matching
+// every other tool-input preview in this codebase.
 func elideHookContentPreviews(value any, depth int) any {
 	if depth > hookContentElisionMaxDepth {
 		return value

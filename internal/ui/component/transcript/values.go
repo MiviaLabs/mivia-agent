@@ -317,8 +317,11 @@ func hookBlockValue(b uievent.HookBody) Block {
 	// an unsplit multi-line string under-counts Height() against what
 	// actually renders (the same bug noticeBlockValue fixes above).
 	var body []string
-	if b.Input != "" {
-		lines := strings.Split(b.Input, "\n")
+	// TrimRight before splitting: redactToolInput (unlike hookRunOutput)
+	// does not trim its input, so a trailing newline in pretty-printed JSON
+	// would otherwise become a padding-only "     " row.
+	if input := strings.TrimRight(b.Input, "\n"); input != "" {
+		lines := strings.Split(input, "\n")
 		body = append(body, "in:  "+lines[0])
 		for _, line := range lines[1:] {
 			body = append(body, "     "+line)

@@ -106,6 +106,22 @@ func TestHookBlockValueSplitsMultiLineInput(t *testing.T) {
 	}
 }
 
+// redactToolInput (unlike hookRunOutput) does not trim its output, so a
+// trailing newline in pretty-printed JSON input must not become a
+// padding-only body row.
+func TestHookBlockValueTrimsTrailingNewlineFromInput(t *testing.T) {
+	blk := hookBlockValue(uievent.HookBody{
+		Event: "PreToolUse", Program: "guard.sh", Tool: "run_command",
+		Input: "{\"argv\":[\"ls\"]}\n",
+	})
+	if len(blk.Body) != 1 {
+		t.Fatalf("want 1 body line, got %d: %+v", len(blk.Body), blk.Body)
+	}
+	if strings.TrimSpace(blk.Body[0]) == "" {
+		t.Fatalf("the body line must not be padding-only, got %q", blk.Body[0])
+	}
+}
+
 // A multi-line notice (e.g. the /hooks listing) must keep every line, not
 // just the first - previously everything past the first line was silently
 // dropped because the block carried no Body at all.
