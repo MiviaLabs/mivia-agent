@@ -106,31 +106,21 @@ func TestSubagentThreads_LookupByToolCallIDAndTaskID(t *testing.T) {
 	}
 }
 
-func TestPopulateFromToolCalls_DispatchedAndDelegatedTasks(t *testing.T) {
+func TestPopulateFromToolCalls_DispatchTasks(t *testing.T) {
 	threads := uiadapter.NewSubagentThreads()
-
 	msgs := []ports.Message{
 		{
 			Role: "assistant",
 			At:   time.Now(),
 			ToolCalls: []ports.ToolCall{
 				{
+					// Real wire shape from dispatchTasksTool.encodeResults
+					// (internal/cliorchestrate/dispatch.go): a bare JSON array
+					// keyed "task_id", not {"tasks":[{"id":...}]}.
 					ID:        "call_dispatch_1",
 					Name:      "dispatch_tasks",
 					Arguments: `{"tasks":[{"id":"task-audit","prompt":"check for leaks","agent":"bug-auditor"},{"id":"task-plan","prompt":"design architecture","agent":"planner"}]}`,
-					Output:    `{"tasks":[{"id":"task-audit","status":"completed","output":"no leaks found"},{"id":"task-plan","status":"completed","output":"architecture approved"}]}`,
-				},
-				{
-					ID:        "call_delegate_1",
-					Name:      "delegate",
-					Arguments: `{"task":"research sqlite persistence","agent":"researcher"}`,
-					Output:    `{"status":"completed","output":"sqlite is persistent across restarts"}`,
-				},
-				{
-					ID:        "call_spawn_1",
-					Name:      "spawn_agent",
-					Arguments: `{"prompt":"review security policies","agent":"security-reviewer"}`,
-					Output:    `security verified`,
+					Output:    `[{"task_id":"task-audit","status":"completed","output":"no leaks found"},{"task_id":"task-plan","status":"completed","output":"architecture approved"}]`,
 				},
 			},
 		},
@@ -138,7 +128,6 @@ func TestPopulateFromToolCalls_DispatchedAndDelegatedTasks(t *testing.T) {
 
 	uiadapter.PopulateFromToolCalls(threads, msgs)
 
-	// Verify dispatch_tasks subtasks
 	auditConv, ok := threads.Thread("task-audit")
 	if !ok || auditConv == nil {
 		t.Fatalf("expected thread for task-audit")
@@ -160,8 +149,27 @@ func TestPopulateFromToolCalls_DispatchedAndDelegatedTasks(t *testing.T) {
 	if planConv.History()[1].Text != "architecture approved" {
 		t.Errorf("task-plan output: got %q, want 'architecture approved'", planConv.History()[1].Text)
 	}
+}
 
-	// Verify delegate
+func TestPopulateFromToolCalls_Delegate(t *testing.T) {
+	threads := uiadapter.NewSubagentThreads()
+	msgs := []ports.Message{
+		{
+			Role: "assistant",
+			At:   time.Now(),
+			ToolCalls: []ports.ToolCall{
+				{
+					ID:        "call_delegate_1",
+					Name:      "delegate",
+					Arguments: `{"task":"research sqlite persistence","agent":"researcher"}`,
+					Output:    `{"status":"completed","output":"sqlite is persistent across restarts"}`,
+				},
+			},
+		},
+	}
+
+	uiadapter.PopulateFromToolCalls(threads, msgs)
+
 	delConv, ok := threads.Thread("call_delegate_1")
 	if !ok || delConv == nil {
 		t.Fatalf("expected thread for call_delegate_1")
@@ -172,16 +180,147 @@ func TestPopulateFromToolCalls_DispatchedAndDelegatedTasks(t *testing.T) {
 	if delConv.History()[1].Text != "sqlite is persistent across restarts" {
 		t.Errorf("delegate output mismatch: got %q", delConv.History()[1].Text)
 	}
+}
 
-	// Verify spawn_agent
-	spawnConv, ok := threads.Thread("call_spawn_1")
+func TestPopulateFromToolCalls_SpawnAgent(t *testing.T) {
+	threads := uiadapter.NewSubagentThreads()
+	msgs := []ports.Message{
+		{
+			Role: "assistant",
+			At:   time.Now(),
+			ToolCalls: []ports.ToolCall{
+				{
+					// Real wire shape from spawnAgentTool.Execute
+					// (internal/cliorchestrate/orchestrate.go): "tasks" array
+					// in, {"task_results":[{"task_id":...,"output":...}]} out.
+					ID:        "call_spawn_1",
+					Name:      "spawn_agent",
+					Arguments: `{"tasks":[{"id":"task-security","prompt":"review security policies","agent":"security-reviewer"}],"wait":"run"}`,
+					Output:    `{"run_id":"r1","status":"completed","task_results":[{"task_id":"task-security","status":"completed","output":"security verified"}]}`,
+				},
+			},
+		},
+	}
+
+	uiadapter.PopulateFromToolCalls(threads, msgs)
+
+	spawnConv, ok := threads.Thread("task-security")
 	if !ok || spawnConv == nil {
-		t.Fatalf("expected thread for call_spawn_1")
+		t.Fatalf("expected thread for task-security")
 	}
 	if spawnConv.History()[0].Text != "review security policies" {
 		t.Errorf("spawn_agent prompt mismatch: got %q", spawnConv.History()[0].Text)
 	}
 	if spawnConv.History()[1].Text != "security verified" {
 		t.Errorf("spawn_agent output mismatch: got %q", spawnConv.History()[1].Text)
+	}
+}
+
+// TestPopulateFromToolCalls_DispatchTasksNestedObjectOutput guards a
+// dispatch_tasks task whose own raw output is itself a JSON object (a common
+// shape: ModelVisibleOutput in internal/cliorchestrate/synopsis.go embeds
+// the subagent's raw bytes as-is when they are valid JSON) rather than a
+// plain string - the reconstruction must unwrap the nested "output" key
+// instead of stringifying the whole object or losing the text.
+func TestPopulateFromToolCalls_DispatchTasksNestedObjectOutput(t *testing.T) {
+	threads := uiadapter.NewSubagentThreads()
+	msgs := []ports.Message{
+		{
+			Role: "assistant",
+			At:   time.Now(),
+			ToolCalls: []ports.ToolCall{
+				{
+					ID:        "call_dispatch_nested",
+					Name:      "dispatch_tasks",
+					Arguments: `{"tasks":[{"id":"plan-review-1","prompt":"review the plan","agent":"reviewer"}]}`,
+					Output:    `[{"task_id":"plan-review-1","status":"completed","output":{"output":"## Plan\n\n1. Do the thing"}}]`,
+				},
+			},
+		},
+	}
+
+	uiadapter.PopulateFromToolCalls(threads, msgs)
+
+	conv, ok := threads.Thread("plan-review-1")
+	if !ok || conv == nil {
+		t.Fatalf("expected thread for plan-review-1")
+	}
+	hist := conv.History()
+	if len(hist) != 2 || hist[1].Text != "## Plan\n\n1. Do the thing" {
+		t.Errorf("expected the nested output text to be unwrapped, got history=%+v", hist)
+	}
+}
+
+// TestPopulateFromToolCalls_DispatchTasksRunLevelError guards the
+// run-level-failure envelope dispatchTasksTool.Execute returns when the
+// whole run errors before any per-task result exists
+// ({"error":...,"status":...}, no "tasks"/array shape at all): the
+// reconstruction must surface a readable status, not a raw JSON dump, and
+// must not silently produce an empty/missing thread.
+func TestPopulateFromToolCalls_DispatchTasksRunLevelError(t *testing.T) {
+	threads := uiadapter.NewSubagentThreads()
+	msgs := []ports.Message{
+		{
+			Role: "assistant",
+			At:   time.Now(),
+			ToolCalls: []ports.ToolCall{
+				{
+					ID:        "call_dispatch_err",
+					Name:      "dispatch_tasks",
+					Arguments: `{"tasks":[{"id":"plan-review-1","prompt":"review the plan","agent":"reviewer"}]}`,
+					Output:    `{"error":"context canceled","status":"canceled"}`,
+				},
+			},
+		},
+	}
+
+	uiadapter.PopulateFromToolCalls(threads, msgs)
+
+	conv, ok := threads.Thread("plan-review-1")
+	if !ok || conv == nil {
+		t.Fatalf("expected thread for plan-review-1")
+	}
+	hist := conv.History()
+	if len(hist) != 2 || hist[1].Text != "context canceled (status: canceled)" {
+		t.Errorf("expected a readable run-level error message, got history=%+v", hist)
+	}
+}
+
+// TestPopulateFromToolCalls_DispatchTasksRunLevelErrorMultiTask guards the
+// same run-level-failure envelope as the single-task case above, but for a
+// multi-task dispatch: dispatchTasksTool.Execute returns the bare
+// {"error":...,"status":...} envelope whenever the run fails before
+// finalizeDAG produces any per-task result, regardless of how many tasks
+// were dispatched (internal/cliorchestrate/dispatch.go's own comment: "the
+// empty-results fallback underneath stays reachable"). Every dispatched
+// task must still get the readable error text, not silent empty output.
+func TestPopulateFromToolCalls_DispatchTasksRunLevelErrorMultiTask(t *testing.T) {
+	threads := uiadapter.NewSubagentThreads()
+	msgs := []ports.Message{
+		{
+			Role: "assistant",
+			At:   time.Now(),
+			ToolCalls: []ports.ToolCall{
+				{
+					ID:        "call_dispatch_err2",
+					Name:      "dispatch_tasks",
+					Arguments: `{"tasks":[{"id":"task-a","prompt":"do a","agent":"a"},{"id":"task-b","prompt":"do b","agent":"b"}]}`,
+					Output:    `{"error":"context canceled","status":"canceled"}`,
+				},
+			},
+		},
+	}
+
+	uiadapter.PopulateFromToolCalls(threads, msgs)
+
+	for _, id := range []string{"task-a", "task-b"} {
+		conv, ok := threads.Thread(id)
+		if !ok || conv == nil {
+			t.Fatalf("expected thread for %s", id)
+		}
+		hist := conv.History()
+		if len(hist) != 2 || hist[1].Text != "context canceled (status: canceled)" {
+			t.Errorf("%s: expected a readable run-level error message, got history=%+v", id, hist)
+		}
 	}
 }
