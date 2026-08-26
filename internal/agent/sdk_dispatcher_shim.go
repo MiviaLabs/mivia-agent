@@ -240,9 +240,26 @@ func (d *dispatcherShim) Name() string { return d.inner.Name() }
 // resolver consults only the OUTERMOST registered value and Go
 // interface wrappers silently strip optional interfaces, so every
 // shim layer forwards explicitly; without this the SDK backstop
-// would cap a 12h-budget tool at its own registry default.
+// would cap a 12h-budget tool at its own registry default
+// (dispatch_tasks killed at the SDK's hardcoded 10 minutes).
+//
+// A declared positive Capability.Timeout is published as TimeoutNone,
+// not verbatim: THIS shim already arms the declared budget (plus any
+// model-requested timeout_seconds raise) as a real context deadline
+// in armDispatcherTimeout and renders expiry as the tool's graceful
+// bounded envelope (run_command's "exit=timeout" + truncated output).
+// A verbatim SDK bound would expire at the same instant and win the
+// race, replacing that envelope with a bare ErrRunTimeout - and a
+// static profile can never see a per-call raise, so it would also
+// kill budgets the shim legitimately extended. An undeclared (zero)
+// Timeout passes through, so the [tools] tool_run_timeout_seconds
+// registry default still backstops profile-less tools.
 func (d *dispatcherShim) ExecutionProfile() sdktools.ExecutionProfile {
-	return sdktools.ExecutionProfileOf(d.inner)
+	p := sdktools.ExecutionProfileOf(d.inner)
+	if p.Timeout > 0 {
+		p.Timeout = sdktools.TimeoutNone
+	}
+	return p
 }
 
 // ParameterSchema and DecodeArguments delegate to the inner tool: the
