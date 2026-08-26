@@ -97,6 +97,7 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 	// runs l.emitTurnUsage per Chat call and writes the one token_usage
 	// row the legacy loop writes; an Audit bridge would duplicate it.
 	res, err := runSDKPromptTooLongRecoverable(ctx, l, sdkOpts, opts, preparedMsgs, turn)
+	res, err = retryOnEmptyResponse(ctx, l, sdkOpts, opts, preparedMsgs, turn, lastUserText(msgs), res, err)
 	stampSDKToolMessageNames(res.History)
 	if err != nil {
 		return handleSDKRunError(ctx, l, opts, turn, res, err)
@@ -131,14 +132,22 @@ func ensureSDKDispatcher(l *Loop, opts *Options) (func(), error) {
 // text (the last message of the starting history) as the content-match
 // boundary.
 func finishSDKResult(opts Options, res sdkagentloop.Result, msgs []provider.Message) (sdkagentloop.Result, error) {
-	turnUser := ""
-	if n := len(msgs); n > 0 && msgs[n-1].Role == provider.RoleUser {
-		turnUser = msgs[n-1].Content
-	}
-	if err := finalizeSDKTurn(opts, res, turnUser); err != nil {
+	if err := finalizeSDKTurn(opts, res, lastUserText(msgs)); err != nil {
 		return res, err
 	}
 	return res, nil
+}
+
+// lastUserText returns the content of msgs' final message when it is a user
+// turn, else "". This is the content-match boundary sdkCurrentTurnStart uses
+// to locate where the current turn begins in a Result's History - shared by
+// finishSDKResult and retryOnEmptyResponse so both agree on the same turn
+// boundary.
+func lastUserText(msgs []provider.Message) string {
+	if n := len(msgs); n > 0 && msgs[n-1].Role == provider.RoleUser {
+		return msgs[n-1].Content
+	}
+	return ""
 }
 
 // recordSDKCanceledStreamPartial keeps the streamed partial a canceled
@@ -207,6 +216,55 @@ func runSDKPromptTooLongRecoverable(ctx context.Context, l *Loop, sdkOpts sdkage
 		return res, err
 	}
 	return run(sdkCompactAfterPromptTooLong(l, opts, preparedMsgs))
+}
+
+// maxEmptyResponseRetries bounds how many times retryOnEmptyResponse
+// silently re-runs the SDK loop after a genuinely empty provider response
+// (sdkagentloop.StopEmptyResponse: no text, no tool calls) before giving up
+// and letting finalizeSDKTurn's RequireFinalText surface "agent: turn
+// produced no assistant text" to the caller. An empty response is a known,
+// often-transient provider failure mode (the server reports success with
+// nothing generated) rather than a deterministic rejection, so a small
+// bounded retry resolves the common case without the user needing to
+// manually retype "continue" - which, before this retry existed, is also
+// how a poisoned empty-assistant message could enter and re-poison history
+// on every subsequent turn (see provider.DropEmptyAssistantTurns and
+// chat.adoptFailedTurnSnapshot's validation guard for the persistence-side
+// half of this fix).
+const maxEmptyResponseRetries = 2
+
+// retryOnEmptyResponse re-runs the SDK loop from the same preparedMsgs, up
+// to maxEmptyResponseRetries times, but ONLY when the attempt would
+// otherwise become a hard "no assistant text" failure: res.Stop must be
+// exactly StopEmptyResponse (not StopMaxIterations or any other stop -
+// those are different failure categories a whole-turn replay would not
+// meaningfully recover from) AND opts.RequireFinalText must be set (a
+// caller that tolerates an empty turn, e.g. a sub-agent, already has its
+// own fallback contract and must not pay for a retry it never asked for)
+// AND sdkResolvedFinalText must be genuinely empty - a turn whose FINAL
+// step came back empty but which produced usable text earlier (e.g. a
+// tool-call step's assistant content) is NOT retried, since a retry
+// replays the whole turn from scratch and would discard that earlier text
+// for no benefit.
+//
+// preparedMsgs is never mutated by a run - agentloop.Loop.run defensively
+// copies its input before appending anything - so retrying against the
+// same slice cannot double up or corrupt history; each attempt starts
+// fresh from the turn's original starting point. DisableProviderReplay
+// suppresses the retry for the same reason it suppresses the
+// prompt-too-long one: the retry IS a provider replay of the rejected call.
+func retryOnEmptyResponse(ctx context.Context, l *Loop, sdkOpts sdkagentloop.Options, opts Options, preparedMsgs []sdkshape.Message, turn *sdkTurnState, turnUserText string, res sdkagentloop.Result, err error) (sdkagentloop.Result, error) {
+	if !opts.RequireFinalText || opts.DisableProviderReplay {
+		return res, err
+	}
+	shouldRetry := func() bool {
+		return err == nil && res.Stop == sdkagentloop.StopEmptyResponse &&
+			strings.TrimSpace(sdkResolvedFinalText(res, turnUserText)) == ""
+	}
+	for attempt := 0; attempt < maxEmptyResponseRetries && shouldRetry(); attempt++ {
+		res, err = runSDKPromptTooLongRecoverable(ctx, l, sdkOpts, opts, preparedMsgs, turn)
+	}
+	return res, err
 }
 
 // promptTooLongCompactNotice is the model-visible notice appended to
@@ -425,20 +483,7 @@ func sdkPruneToBudget(messages []provider.Message, maxContextTokens int, toolSpe
 // step of the turn, except a steered stop, which the dispatcher maps
 // to errSteerInterrupt instead.
 func finalizeSDKTurn(opts Options, res sdkagentloop.Result, turnUserText string) error {
-	text := res.Final.Content
-	if strings.TrimSpace(text) == "" {
-		// Content-match boundary, not an index bound: per-iteration
-		// Trim compaction can shrink res.History below the turn's
-		// starting length, so the backward scan starts at the current
-		// turn's user message (sdkCurrentTurnStart's pattern) instead.
-		startIdx := sdkCurrentTurnStart(res.History, turnUserText)
-		for i := len(res.History) - 1; i >= startIdx; i-- {
-			if m := res.History[i]; m.Role == sdkshape.RoleAssistant && strings.TrimSpace(m.Content) != "" {
-				text = m.Content
-				break
-			}
-		}
-	}
+	text := sdkResolvedFinalText(res, turnUserText)
 	// A non-empty res.Final streamed live to a FinalWriter through
 	// the SDK StreamingWriter tee (see buildAgentLoopOptions), the
 	// same rule the legacy commitFinalAnswer follows: rewriting it
@@ -463,6 +508,32 @@ func finalizeSDKTurn(opts Options, res sdkagentloop.Result, turnUserText string)
 		emit(opts, Event{Kind: EventAssistant, Content: text})
 	}
 	return nil
+}
+
+// sdkResolvedFinalText returns res.Final.Content when non-blank, else the
+// most recent non-blank assistant message in res.History for the current
+// turn (the same "no text ANYWHERE in the turn" fallback finalizeSDKTurn's
+// RequireFinalText check enforces). Shared with retryOnEmptyResponse so a
+// retry decision and the eventual pass/fail check agree on the exact same
+// definition of "this turn produced nothing" - in particular, a turn whose
+// FINAL step came back empty but which produced usable text earlier (a
+// tool-call step's assistant content) must never be retried, since retrying
+// discards that earlier text and replays the whole turn from scratch.
+func sdkResolvedFinalText(res sdkagentloop.Result, turnUserText string) string {
+	if text := strings.TrimSpace(res.Final.Content); text != "" {
+		return res.Final.Content
+	}
+	// Content-match boundary, not an index bound: per-iteration Trim
+	// compaction can shrink res.History below the turn's starting length,
+	// so the backward scan starts at the current turn's user message
+	// (sdkCurrentTurnStart's pattern) instead.
+	startIdx := sdkCurrentTurnStart(res.History, turnUserText)
+	for i := len(res.History) - 1; i >= startIdx; i-- {
+		if m := res.History[i]; m.Role == sdkshape.RoleAssistant && strings.TrimSpace(m.Content) != "" {
+			return m.Content
+		}
+	}
+	return ""
 }
 
 // RunAgentLoop drives the SDK's agentloop.Loop for one Options. It

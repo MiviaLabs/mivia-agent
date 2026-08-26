@@ -50,7 +50,17 @@ func TestNoMessageLossEmptyTurnFailsLoudly(t *testing.T) {
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			loop := &Loop{Completer: &scriptCompleter{steps: tt.steps}, Tools: silentTurnRegistry(t)}
+			// retryOnEmptyResponse (agentloop_run.go) replays the whole turn
+			// from scratch up to maxEmptyResponseRetries times when it stays
+			// empty, so the scripted step sequence must repeat that many
+			// times too - otherwise scriptCompleter falls back to its own
+			// "done" default partway through and this test would no longer
+			// pin the "no text ANYWHERE" contract it exists to lock.
+			steps := make([]provider.Response, 0, len(tt.steps)*(1+maxEmptyResponseRetries))
+			for i := 0; i < 1+maxEmptyResponseRetries; i++ {
+				steps = append(steps, tt.steps...)
+			}
+			loop := &Loop{Completer: &scriptCompleter{steps: steps}, Tools: silentTurnRegistry(t)}
 			_, err := loop.Run(context.Background(), "go", Options{Model: "m", MaxSteps: 10, RequireFinalText: true})
 			if err == nil {
 				t.Fatal("a turn that produced no text anywhere must not report success")

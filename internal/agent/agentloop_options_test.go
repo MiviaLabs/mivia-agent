@@ -339,11 +339,19 @@ func TestRunAgentLoopOnceWritesFinalText(t *testing.T) {
 // TestRunAgentLoopOnceRequireFinalTextFailsEmpty asserts the
 // empty-turn refusal: RequireFinalText with a turn that produced no
 // assistant text anywhere returns an error, matching the legacy
-// surface's loud-failure contract.
+// surface's loud-failure contract. The completer must stay empty across
+// retryOnEmptyResponse's bounded retries (agentloop_run.go) - each retry
+// replays the whole turn from scratch, so scriptCompleter's single
+// scripted step is repeated 1+maxEmptyResponseRetries times; without
+// enough steps it would fall back to its own "done" default and mask the
+// refusal this test exists to pin.
 func TestRunAgentLoopOnceRequireFinalTextFailsEmpty(t *testing.T) {
-	comp := &scriptCompleter{steps: []provider.Response{
-		{Content: "", FinishReason: "stop"},
-	}}
+	empty := provider.Response{Content: "", FinishReason: "stop"}
+	steps := make([]provider.Response, 0, 1+maxEmptyResponseRetries)
+	for i := 0; i < 1+maxEmptyResponseRetries; i++ {
+		steps = append(steps, empty)
+	}
+	comp := &scriptCompleter{steps: steps}
 	l := &Loop{Completer: comp, Tools: tools.NewRegistry()}
 	_, err := l.Run(context.Background(), "hi", Options{
 		Model: "m", MaxSteps: 1, RequireFinalText: true,

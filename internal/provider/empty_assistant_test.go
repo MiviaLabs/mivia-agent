@@ -154,3 +154,75 @@ func TestNewRequestKeepsEmptyToolResultContent(t *testing.T) {
 		t.Fatalf("tool message must always carry a content field: %v", last)
 	}
 }
+
+// DropEmptyAssistantTurns is the same repair as the wire-layer drop above
+// (toAPIMessages), applied to the message list itself so the shape never
+// reaches persisted history or provider.ValidateToolPairing in the first
+// place - not just the outgoing request.
+func TestDropEmptyAssistantTurns_DropsContentlessNoToolCallMessage(t *testing.T) {
+	msgs := []Message{
+		{Role: RoleSystem, Content: "sys"},
+		{Role: RoleUser, Content: "hi"},
+		{Role: RoleAssistant}, // poisoned turn
+		{Role: RoleUser, Content: "still there?"},
+	}
+	out := DropEmptyAssistantTurns(msgs)
+	if len(out) != 3 {
+		t.Fatalf("expected the poisoned message dropped, got %d: %v", len(out), out)
+	}
+	for _, m := range out {
+		if m.Role == RoleAssistant {
+			t.Fatalf("empty assistant message survived: %v", out)
+		}
+	}
+}
+
+// Whitespace-only content is equivalent to empty here too.
+func TestDropEmptyAssistantTurns_DropsWhitespaceOnlyMessage(t *testing.T) {
+	msgs := []Message{
+		{Role: RoleUser, Content: "hi"},
+		{Role: RoleAssistant, Content: "   \n"},
+		{Role: RoleUser, Content: "again"},
+	}
+	out := DropEmptyAssistantTurns(msgs)
+	if len(out) != 2 {
+		t.Fatalf("expected whitespace-only assistant dropped, got %d: %v", len(out), out)
+	}
+}
+
+// A tool-calling assistant turn with no content is legitimate: dropping it
+// would orphan the tool result that references its tool_call_id.
+func TestDropEmptyAssistantTurns_KeepsToolCallAssistantWithoutContent(t *testing.T) {
+	var call ToolCall
+	call.ID = "c1"
+	call.Type = "function"
+	call.Function.Name = "read_file"
+	call.Function.Arguments = "{}"
+
+	msgs := []Message{
+		{Role: RoleUser, Content: "read it"},
+		{Role: RoleAssistant, ToolCalls: []ToolCall{call}},
+		{Role: RoleTool, ToolCallID: "c1", Name: "read_file", Content: "data"},
+	}
+	out := DropEmptyAssistantTurns(msgs)
+	if len(out) != 3 {
+		t.Fatalf("tool-calling turn must survive, got %d: %v", len(out), out)
+	}
+}
+
+// A message list with nothing to drop must be returned unchanged (same
+// slice, not a needless copy) - callers rely on this to avoid mutating
+// history on every turn adoption when nothing is actually wrong.
+func TestDropEmptyAssistantTurns_NoOpReturnsSameSlice(t *testing.T) {
+	msgs := []Message{
+		{Role: RoleUser, Content: "hi"},
+		{Role: RoleAssistant, Content: "hello"},
+	}
+	out := DropEmptyAssistantTurns(msgs)
+	if len(out) != len(msgs) {
+		t.Fatalf("expected no messages dropped, got %d want %d", len(out), len(msgs))
+	}
+	if &out[0] != &msgs[0] {
+		t.Fatal("expected the identical backing slice on a no-op")
+	}
+}

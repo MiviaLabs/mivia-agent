@@ -31,6 +31,16 @@ func (s *Session) finishAgentTurn(ctx context.Context, loop *agent.Loop, registr
 	if policy := provider.ReasoningPolicyFor(loop.Completer); policy.RejectReasoningLess {
 		loop.Messages = provider.RepairReasoningLessToolExchanges(loop.Messages)
 	}
+	// Drop any assistant turn carrying neither content nor tool calls - the
+	// shape a provider's genuinely empty response leaves behind. Unlike the
+	// reasoning-less repair above, this is unconditional: every provider can
+	// return an empty response, and provider.ValidateToolPairing (which
+	// gates every later Prepare()/commit through contextmgr's planner) hard-
+	// rejects this exact shape rather than silently dropping it the way
+	// toAPIMessages does at the wire layer. Left in persisted history, it
+	// poisons every subsequent turn's context preparation, not just the one
+	// that produced it. See provider.DropEmptyAssistantTurns.
+	loop.Messages = provider.DropEmptyAssistantTurns(loop.Messages)
 	replaceNewestUserText(loop.Messages, userText, persistedText)
 	if contextCfg.manager != nil {
 		return s.finishContextTurn(ctx, loop, userText, token, turn, contextCfg, turnErr)
@@ -163,13 +173,39 @@ func (s *Session) finishErroredContextTurn(ctx context.Context, loop *agent.Loop
 // token-fenced exactly like commitPreparedTurn's legacy adoption, then saves
 // the rolling snapshot so a later resume can see it even with no checkpoint
 // commit to back it.
+//
+// This is the one place in the errored-turn path that writes durably without
+// going through commitContextTurn's own validateMessageShape/ValidateToolPairing
+// gate (buildContextTurnResult -> the commit-request build), so it must run
+// the same check itself: a preparation can fail validation because its
+// input history is already shape-invalid, and adopting that candidate
+// unchecked would durably persist the corruption - poisoning every later
+// turn's Prepare() call on this session, since Prepare validates the same
+// way. On a failed validation this behaves like commitContextTurn's own
+// "discard" branch: the turn is dropped, s.Messages and the durable snapshot
+// are left untouched.
+//
+// The trailing-empty-assistant-message shape this guard was originally
+// written against (a provider's empty response) is no longer reachable via
+// the real call path: finishAgentTurn now strips it unconditionally, on
+// every turn, via provider.DropEmptyAssistantTurns, before either branch of
+// finishErroredContextTurn ever sees loop.Messages. This guard's remaining
+// value is defense-in-depth against every OTHER shape ValidateToolPairing
+// rejects (a dangling tool_use, an orphan tool result, a duplicate call
+// ID) - none of which DropEmptyAssistantTurns touches - plus protection for
+// any future caller that reaches this function without going through
+// finishAgentTurn's repair first.
 func (s *Session) adoptFailedTurnSnapshot(loop *agent.Loop, token OperationToken) {
+	candidate := cloneContextMessages(loop.Messages)
+	if err := validateRestoredMessages(candidate); err != nil {
+		return
+	}
 	s.mu.Lock()
 	if !s.tokenCurrentLocked(token) {
 		s.mu.Unlock()
 		return
 	}
-	s.Messages = cloneContextMessages(loop.Messages)
+	s.Messages = candidate
 	s.mu.Unlock()
 	s.SaveAfterTurn()
 }

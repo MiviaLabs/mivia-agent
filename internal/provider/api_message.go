@@ -55,7 +55,7 @@ func toAPIMessages(msgs []Message, replayReasoning, rejectReasoningLess bool) []
 	}
 	out := make([]apiMessage, 0, len(msgs))
 	for _, m := range msgs {
-		if m.Role == RoleAssistant && len(m.ToolCalls) == 0 && strings.TrimSpace(m.Content) == "" {
+		if isEmptyAssistantTurn(m) {
 			continue
 		}
 		am := apiMessage{
@@ -132,6 +132,49 @@ func RepairReasoningLessToolExchanges(msgs []Message) []Message {
 			if _, drop := dropIDs[m.ToolCallID]; drop {
 				continue
 			}
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
+// isEmptyAssistantTurn reports whether m is an assistant message carrying
+// neither content nor tool calls - the shape a provider's genuinely empty
+// response leaves behind. Shared by toAPIMessages (the wire-layer drop) and
+// DropEmptyAssistantTurns (the message-list-layer drop) so the two
+// definitions cannot silently drift apart.
+func isEmptyAssistantTurn(m Message) bool {
+	return m.Role == RoleAssistant && len(m.ToolCalls) == 0 && strings.TrimSpace(m.Content) == ""
+}
+
+// DropEmptyAssistantTurns removes assistant messages that carry neither
+// content nor tool calls - the shape a provider's genuinely empty response
+// leaves behind. toAPIMessages already drops this shape at the wire layer
+// (its own doc comment: such a message "makes a session permanently
+// unusable" once persisted, because it is replayed on every later turn and
+// OpenAI-compatible APIs 400 on it) - but that repair only protects the
+// provider request, not the message list itself. ValidateToolPairing (used
+// by contextmgr's planner to gate every Prepare()/commit) hard-rejects the
+// identical shape instead of silently dropping it, so a persisted session
+// carrying this message fails EVERY subsequent turn's context preparation,
+// not just the wire request. This is the same repair, applied to the
+// message list itself so the shape is gone before it is ever validated or
+// persisted, not just before it is serialized.
+func DropEmptyAssistantTurns(msgs []Message) []Message {
+	needsWork := false
+	for _, m := range msgs {
+		if isEmptyAssistantTurn(m) {
+			needsWork = true
+			break
+		}
+	}
+	if !needsWork {
+		return msgs
+	}
+	out := make([]Message, 0, len(msgs))
+	for _, m := range msgs {
+		if isEmptyAssistantTurn(m) {
+			continue
 		}
 		out = append(out, m)
 	}
