@@ -252,7 +252,9 @@ func (s Screen) chatTailRows() []string {
 	if v := s.blackboard.View(); v != "" {
 		rows = append(rows, strings.Split(v, "\n")...)
 	}
-	rows = append(rows, strings.Split(s.composer.View(), "\n")...)
+	if !s.hideComposer {
+		rows = append(rows, strings.Split(s.composer.View(), "\n")...)
+	}
 	rows = append(rows, s.statusRow())
 	return rows
 }

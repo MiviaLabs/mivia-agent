@@ -643,4 +643,194 @@ func TestResumedSession_SubagentHistoryAvailableInDialog(t *testing.T) {
 	if !strings.Contains(rendered, "perform detailed research") && !strings.Contains(rendered, "found 0 leaks") {
 		t.Errorf("expected rendered thread transcript to contain subagent history, got:\n%s", rendered)
 	}
+
+	// When viewing subagent history, composer must be hidden.
+	if !scr.thread.hideComposer {
+		t.Errorf("expected hideComposer=true when viewing subagent history in dialog, got false")
+	}
+	tailRows := scr.thread.chatTailRows()
+	if len(tailRows) != 1 {
+		t.Errorf("expected 1 chat tail row (status line only) when composer is hidden, got %d rows: %v", len(tailRows), tailRows)
+	}
+}
+
+func TestSubagentHistoryDialog_HidesComposerOnlyForHistory(t *testing.T) {
+	subCompleted := &scriptedThread{
+		events: make(chan uievent.Event, 4),
+		history: []ports.Message{
+			{Role: "user", Text: "audit dependencies"},
+			{Role: "assistant", Text: "all dependencies up to date"},
+		},
+	}
+	subRunning := &scriptedThread{
+		events: make(chan uievent.Event, 4),
+		history: []ports.Message{
+			{Role: "user", Text: "run security scan"},
+		},
+	}
+	threads := stubThreads{
+		"sa-done": subCompleted,
+		"sa-live": subRunning,
+	}
+
+	s := sized(t, 1)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: uikitconfig.BreakpointWide, Height: 30})
+	scr := next.(Screen)
+	scr.SetSubagentThreads(threads)
+
+	// Register sa-done as completed (history) and sa-live as running (active)
+	scr.panel.observeAgentHistory("sa-done", "completed")
+	n, _ := scr.Update(agentEvent("sa-live", "running", 1, 2, "scanning"))
+	scr = n.(Screen)
+
+	// 1. Verify main conversation screen retains composer
+	if scr.hideComposer {
+		t.Errorf("main conversation screen must not have hideComposer=true")
+	}
+	mainTail := scr.chatTailRows()
+	if len(mainTail) < 2 {
+		t.Errorf("expected main conversation tail rows to include composer and status row, got %d rows: %v", len(mainTail), mainTail)
+	}
+
+	// 2. Open sidebar and select sa-done (history)
+	scr = openPanel(t, scr)
+	scr.panel.list.MoveTo(0) // sa-done is first row
+	next, _ = scr.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	scr = next.(Screen)
+
+	if scr.thread == nil || scr.panel.dialogAgent != "sa-done" {
+		t.Fatalf("expected sa-done thread dialog open, got dialogAgent=%q", scr.panel.dialogAgent)
+	}
+	if !scr.thread.hideComposer {
+		t.Errorf("expected hideComposer=true for completed subagent history dialog, got false")
+	}
+	doneTail := scr.thread.chatTailRows()
+	if len(doneTail) != 1 {
+		t.Errorf("expected 1 chat tail row (status line only) for completed subagent, got %d rows: %v", len(doneTail), doneTail)
+	}
+
+	// Esc to close dialog back to list
+	next, _ = scr.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	scr = next.(Screen)
+
+	// 3. Select sa-live (running subagent)
+	scr.panel.list.MoveTo(1) // sa-live is second row
+	next, _ = scr.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	scr = next.(Screen)
+
+	if scr.thread == nil || scr.panel.dialogAgent != "sa-live" {
+		t.Fatalf("expected sa-live thread dialog open, got dialogAgent=%q", scr.panel.dialogAgent)
+	}
+	if scr.thread.hideComposer {
+		t.Errorf("expected hideComposer=false for running subagent dialog, got true")
+	}
+	liveTail := scr.thread.chatTailRows()
+	if len(liveTail) < 2 {
+		t.Errorf("expected running subagent tail rows to include composer, got %d rows: %v", len(liveTail), liveTail)
+	}
+}
+
+func TestSubagentHistoryDialog_ScrollingAndKeyHandlingWhenComposerHidden(t *testing.T) {
+	subCompleted := &scriptedThread{
+		events: make(chan uievent.Event, 4),
+		history: []ports.Message{
+			{Role: "user", Text: "deep analysis line 1"},
+			{Role: "assistant", Text: "response paragraph 1"},
+			{Role: "user", Text: "deep analysis line 2"},
+			{Role: "assistant", Text: "response paragraph 2"},
+		},
+	}
+	threads := stubThreads{"sa-hist": subCompleted}
+
+	s := sized(t, 1)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: uikitconfig.BreakpointWide, Height: 30})
+	scr := next.(Screen)
+	scr.SetSubagentThreads(threads)
+	scr.panel.observeAgentHistory("sa-hist", "completed")
+
+	// Open dialog for history subagent
+	scr = openPanel(t, scr)
+	next, _ = scr.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	scr = next.(Screen)
+
+	if !scr.thread.hideComposer {
+		t.Fatal("expected hideComposer=true for history subagent")
+	}
+
+	// 1. Arrow / j / k / pgup / pgdown / home / end navigation keys should not error and scroll
+	scrollKeys := []tea.KeyPressMsg{
+		{Code: tea.KeyDown},
+		{Code: tea.KeyUp},
+		{Text: "j"},
+		{Text: "k"},
+		{Code: tea.KeyPgDown},
+		{Code: tea.KeyPgUp},
+		{Code: tea.KeyHome},
+		{Code: tea.KeyEnd},
+	}
+	for _, k := range scrollKeys {
+		next, _ = scr.Update(k)
+		scr = next.(Screen)
+	}
+
+	// 2. Typing regular characters should not leak into hidden composer
+	next, _ = scr.Update(keyMsg("a"))
+	scr = next.(Screen)
+	if got := scr.thread.composer.Value(); got != "" {
+		t.Errorf("expected thread composer value empty, got %q", got)
+	}
+	if got := scr.composer.Value(); got != "" {
+		t.Errorf("expected main composer value empty, got %q", got)
+	}
+}
+
+func TestSubagentHistoryDialog_LiveCompletionHidesComposer(t *testing.T) {
+	subRunning := &scriptedThread{
+		events: make(chan uievent.Event, 4),
+		history: []ports.Message{
+			{Role: "user", Text: "build binary"},
+		},
+	}
+	threads := stubThreads{"sa-task": subRunning}
+
+	s := sized(t, 1)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: uikitconfig.BreakpointWide, Height: 30})
+	scr := next.(Screen)
+	scr.SetSubagentThreads(threads)
+
+	// Subagent starts running
+	n, _ := scr.Update(agentEvent("sa-task", "running", 1, 3, "compiling"))
+	scr = n.(Screen)
+
+	// Open subagent dialog while running
+	scr = openPanel(t, scr)
+	next, _ = scr.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	scr = next.(Screen)
+
+	if scr.thread.hideComposer {
+		t.Fatal("expected hideComposer=false while subagent is running")
+	}
+
+	// Subagent tool call ends (completed)
+	n, _ = scr.Update(uievent.EventMsg{Event: uievent.Event{
+		Kind: uievent.KindToolEnd,
+		Body: uievent.ToolEndBody{
+			ToolCallID: "sa-task",
+			Name:       "invoke_subagent",
+			OK:         true,
+			Result:     `{"status":"completed"}`,
+		},
+	}})
+	scr = n.(Screen)
+
+	// Reopen the cached thread directly
+	ok, _ := scr.openThread("sa-task")
+	if !ok || !scr.thread.hideComposer {
+		t.Errorf("expected reopening cached completed thread to keep hideComposer=true, got ok=%v, hideComposer=%v", ok, scr.thread.hideComposer)
+	}
+
+	// Unknown subagent ID should report false for isSubagentHistory
+	if scr.isSubagentHistory("unknown-agent") {
+		t.Errorf("expected isSubagentHistory to return false for unknown agent, got true")
+	}
 }

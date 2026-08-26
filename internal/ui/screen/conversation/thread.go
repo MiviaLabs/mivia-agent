@@ -169,6 +169,15 @@ func (s *Screen) setSurface(width, height int) {
 	s.reflow()
 }
 
+func (s Screen) isSubagentHistory(callID string) bool {
+	for _, a := range s.panel.agents {
+		if a.ID == callID {
+			return isTerminalStatus(a.Status)
+		}
+	}
+	return false
+}
+
 // openThread selects callID's thread: reusing the cached Screen when
 // the dialog reopens on the same subagent (its transcript IS the
 // ongoing state), building a fresh one from the thread's History when
@@ -179,6 +188,7 @@ func (s *Screen) openThread(callID string) (bool, tea.Cmd) {
 		return false, nil
 	}
 	if s.thread != nil && s.threadID == callID {
+		s.thread.SetHideComposer(s.isSubagentHistory(callID))
 		return true, nil
 	}
 	if s.thread != nil && s.thread.active != nil {
@@ -194,6 +204,9 @@ func (s *Screen) openThread(callID string) (bool, tea.Cmd) {
 	thread.SetCommands(s.composer.Commands())
 	thread.SetCommandRunner(s.runner)
 	thread.LoadHistory(conv.History())
+	if s.isSubagentHistory(callID) {
+		thread.SetHideComposer(true)
+	}
 	s.thread, s.threadID = &thread, callID
 
 	var cmd tea.Cmd
@@ -235,12 +248,12 @@ func (s Screen) threadDialogKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
 			return s, nil
 		}
 	case "home", "ctrl+home":
-		if s.thread != nil && s.thread.composer.Value() == "" {
+		if s.thread != nil && (s.thread.hideComposer || s.thread.composer.Value() == "") {
 			s.thread.transcript = s.thread.transcript.ScrollToTop()
 			return s, nil
 		}
 	case "end", "ctrl+end":
-		if s.thread != nil && s.thread.composer.Value() == "" {
+		if s.thread != nil && (s.thread.hideComposer || s.thread.composer.Value() == "") {
 			s.thread.transcript = s.thread.transcript.ScrollToBottom()
 			return s, nil
 		}
@@ -254,18 +267,21 @@ func (s Screen) threadDialogKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
 			s.thread.transcript = s.thread.transcript.ScrollBy(max(1, s.thread.transcriptHeight()/2))
 			return s, nil
 		}
-	case "up":
-		if s.thread != nil && s.thread.composer.Value() == "" {
+	case "up", "k":
+		if s.thread != nil && (s.thread.hideComposer || s.thread.composer.Value() == "") {
 			s.thread.transcript = s.thread.transcript.ScrollBy(-1)
 			return s, nil
 		}
-	case "down":
-		if s.thread != nil && s.thread.composer.Value() == "" {
+	case "down", "j":
+		if s.thread != nil && (s.thread.hideComposer || s.thread.composer.Value() == "") {
 			s.thread.transcript = s.thread.transcript.ScrollBy(1)
 			return s, nil
 		}
 	}
 	if s.thread == nil {
+		return s, nil
+	}
+	if s.thread.hideComposer {
 		return s, nil
 	}
 	next, cmd := s.thread.Update(msg)

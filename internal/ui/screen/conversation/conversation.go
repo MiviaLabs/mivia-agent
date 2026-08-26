@@ -69,6 +69,10 @@ type Screen struct {
 	// thread.go.
 	embedded bool
 
+	// hideComposer omits the composer row from layout and rendering (e.g.
+	// when viewing subagent history).
+	hideComposer bool
+
 	// thread is the open subagent thread's embedded Screen (cached per
 	// callID so reopening continues the same transcript); threadID is
 	// the call it belongs to. See thread.go.
@@ -428,7 +432,10 @@ func (s Screen) reservedRows() int {
 	// edge, the composer and its menu, and the status row. The embedded
 	// subagent-thread construction has no top bar: the dialog frame it
 	// renders inside is the chrome above it.
-	rows := s.composer.Height() + 1
+	rows := 1
+	if !s.hideComposer {
+		rows += s.composer.Height()
+	}
 	if !s.embedded {
 		rows += s.topbar.Height() + 1
 	}
@@ -562,6 +569,17 @@ func (s *Screen) SetSubagentThreads(t ports.SubagentThreads) { s.threads = t }
 // value (the default before this is ever called) still opens the
 // screen with every section reading "unavailable".
 func (s *Screen) SetSettings(store ports.Settings) { s.settings = store }
+
+// SetHideComposer toggles visibility of the composer. When true, the
+// composer is omitted from layout and rendering (e.g. for subagent
+// history inspection).
+func (s *Screen) SetHideComposer(hide bool) {
+	s.hideComposer = hide
+	if hide {
+		s.composer.Blur()
+	}
+	s.resize()
+}
 
 // ObserveAgent records a subagent progress update in the activity panel.
 func (s *Screen) ObserveAgent(id string, pr *uievent.Progress) {

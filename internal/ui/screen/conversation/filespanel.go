@@ -498,17 +498,18 @@ func (s Screen) chatWidth() int {
 // chrome's claim. The split draws no horizontal frame, so the claim is
 // the same with the panel open as without it.
 func (s Screen) transcriptHeight() int {
-	if s.height <= 0 {
+	h := s.height
+	if h <= 0 {
+		h = 24
+	}
+	th := h - s.reservedRows()
+	if h >= 3 && !s.embedded {
+		th = h - 2 - s.reservedRows()
+	}
+	if th < 0 {
 		return 0
 	}
-	h := s.height - s.reservedRows()
-	if s.height >= 3 && !s.embedded {
-		h = s.height - 2 - s.reservedRows()
-	}
-	if h < 0 {
-		return 0
-	}
-	return h
+	return th
 }
 
 // panelBodyRows is how many content rows the dialog can show at the
