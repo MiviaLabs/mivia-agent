@@ -54,6 +54,36 @@ func TestContextStorePathExpandsTilde(t *testing.T) {
 	}
 }
 
+// TestContextStorePathAnchorsRelativeStorePathToRoot pins the fix for a
+// relative [subagents].store_path (e.g. the dogfooded ".mivia/context.db")
+// resolving against the process's current working directory instead of the
+// workspace root. repositorySessionStorePath (chat_repository_binding.go)
+// already joins a relative store_path against root; ContextStorePath used to
+// return config.ExpandPath's output untouched, so the two resolvers
+// disagreed on where the exact same relative store_path pointed - splitting
+// sessions and workflow runs across two different SQLite files depending on
+// which resolver a caller used and what directory the process launched from.
+func TestContextStorePathAnchorsRelativeStorePathToRoot(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.SubagentConfig{StoreBackend: "sqlite", StorePath: filepath.Join(".mivia", "context.db")}
+	got := ContextStorePath(root, cfg)
+	want := filepath.Join(root, ".mivia", "context.db")
+	if got != want {
+		t.Fatalf("ContextStorePath() = %q, want workspace-rooted %q", got, want)
+	}
+}
+
+// TestContextStorePathKeepsAbsoluteStorePath pins the companion contract: an
+// already-absolute store_path (the common case - most configs never set a
+// relative one) must pass through unchanged, not get double-joined with root.
+func TestContextStorePathKeepsAbsoluteStorePath(t *testing.T) {
+	abs := filepath.Join(t.TempDir(), "context.db")
+	cfg := config.SubagentConfig{StoreBackend: "sqlite", StorePath: abs}
+	if got := ContextStorePath(t.TempDir(), cfg); got != abs {
+		t.Fatalf("ContextStorePath() = %q, want unchanged absolute %q", got, abs)
+	}
+}
+
 func TestContextSetupCoverageConfigureErrorsAndZeroPolicy(t *testing.T) {
 	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
 	if err != nil {

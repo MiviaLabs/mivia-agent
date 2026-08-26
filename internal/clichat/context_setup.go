@@ -2,6 +2,7 @@ package clichat
 
 import (
 	"fmt"
+	"path/filepath"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
@@ -25,7 +26,22 @@ import (
 // needs it externally; the other two do not).
 func ContextStorePath(root string, cfg config.SubagentConfig) string {
 	if cfg.StorePath != "" {
-		return config.ExpandPath(cfg.StorePath)
+		path := config.ExpandPath(cfg.StorePath)
+		// A relative store_path (e.g. the dogfooded ".mivia/context.db") must
+		// resolve against the workspace root, not the process's current
+		// working directory - the same rule repositorySessionStorePath
+		// already applies (chat_repository_binding.go). Without this, every
+		// direct ContextStorePath caller (workflow admission/resume/reconcile
+		// in internal/cliworkflow, stack_admit.go, stack_drive.go) opens a
+		// different on-disk database than the one a live chat session
+		// resolved through repositorySessionStorePath, silently forking
+		// sessions and workflow runs across two SQLite files depending on
+		// which resolver a given call site used and where the process
+		// happened to be launched from.
+		if !filepath.IsAbs(path) {
+			return filepath.Join(root, path)
+		}
+		return path
 	}
 	return workspace.GlobalContextStorePath(root)
 }
