@@ -47,11 +47,11 @@ Protected actions: commit (policy-gated), push, open PR, deploy, release, live s
 
 ## Tool Approval Policies And YOLO Mode
 
-The runtime supports three tool approval policies: `write-only` (default), `always`, and `auto` (`yolo`).
+The runtime supports three tool approval policies, set via `[approvals] default_mode` (the TUI settings screen's "approval default" row): `always` (default), `once`, and `deny`.
 
-- `write-only`: requires interactive confirmation for mutating file and command tools.
-- `always`: requires interactive confirmation for all tool calls.
-- `auto` / `yolo`: auto-approves tool calls without interactive confirmation (`--yolo` flag or `[approvals] policy = "auto"`).
+- `always` / `auto` / `yolo`: auto-approves tool calls without interactive confirmation (`--yolo` flag, `--approval-policy auto`, or `[approvals] default_mode = "always"` - the shipped default). This is the out-of-box behavior; a fresh `mivia.toml` with no `[approvals]` section also resolves to `always`.
+- `once` (formerly `write-only`): requires interactive confirmation for mutating file and command tools.
+- `deny`: auto-rejects every gated tool call without interactive confirmation - the inverse of `always`, useful for a read-only/audit session.
 
 **YOLO security boundary:**
 - Auto-approval skips only interactive confirmation prompts.

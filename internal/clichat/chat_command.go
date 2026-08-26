@@ -374,12 +374,22 @@ func resumeChatSession(sess *chat.Session, res *config.Resolved, session string)
 	return nil
 }
 
+// applySessionApprovalPolicy resolves the session's initial approval policy,
+// highest precedence first: an explicit --yolo flag, an explicit
+// --approval-policy flag, then the persisted [approvals] config
+// (DefaultMode, the TUI settings screen's single source of truth, with
+// legacy Policy as a fallback alias - see ApprovalsConfig.ApprovalPolicy).
+// This runs on every session construction, including session resume
+// (runConfiguredChatOnce rebuilds res from the on-disk config before
+// calling this), so a persisted "always"/"deny" choice is honored both on
+// a fresh start and after --session/resume, not just for a brand-new chat.
 func applySessionApprovalPolicy(sess *chat.Session, invocation chatInvocation, res *config.Resolved) {
-	if invocation.yolo {
+	switch {
+	case invocation.yolo:
 		sess.ApprovalPolicy = config.ApprovalPolicyAuto
-	} else if invocation.approvalPolicy != "" {
+	case invocation.approvalPolicy != "":
 		sess.ApprovalPolicy = config.ApprovalsConfig{Policy: invocation.approvalPolicy}.ApprovalPolicy()
-	} else if res != nil && res.Approvals.Policy != "" {
+	case res != nil:
 		sess.ApprovalPolicy = res.Approvals.ApprovalPolicy()
 	}
 }

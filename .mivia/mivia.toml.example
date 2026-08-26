@@ -5,6 +5,16 @@
 # Optional explicit env file for credentials:
 # env_file = "./.env"
 
+# Tool call approvals. default_mode is the single source of truth for the
+# TUI settings screen's "approval default" row and for the CLI's initial
+# approval policy (including on --session resume). One of:
+#   "always" (default) - accept every tool call automatically, no prompts.
+#   "once"             - prompt for every write/external tool call.
+#   "deny"             - auto-reject every gated tool call, no prompts.
+# Leaving this section out entirely also defaults to "always".
+[approvals]
+default_mode = "always"
+
 [provider]
 # Default provider: openrouter. Default model: openai/gpt-5.6-luna.
 # Other providers: deepseek, zai, ollama, llmgateway, llmproxycli, minimax.

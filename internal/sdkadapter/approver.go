@@ -99,6 +99,18 @@ func IsAlwaysApproval(policy string) bool {
 	}
 }
 
+// IsDenyApproval reports whether the policy represents auto-deny: every
+// gated tool call is rejected without a prompt (the "deny" settings-screen
+// choice, config.ApprovalPolicyDeny).
+func IsDenyApproval(policy string) bool {
+	switch strings.ToLower(strings.TrimSpace(policy)) {
+	case "deny", "deny_always", "never-approve":
+		return true
+	default:
+		return false
+	}
+}
+
 func (a *approvalGatedToolAdapter) Run(ctx context.Context, in sdktools.InOut) (sdktools.Out, error) {
 	if IsAutoApproval(a.policy) {
 		return a.inner.Run(ctx, in)
@@ -112,8 +124,13 @@ func (a *approvalGatedToolAdapter) Run(ctx context.Context, in sdktools.InOut) (
 	// Read-class and Unclassified tools bypass the gate unless policy is "always".
 	// Mirror the legacy executeToolTask threshold.
 	cap := a.getCapabilities(args)
-	if !IsAlwaysApproval(a.policy) && cap.Class < tools.ExecutionWrite {
+	if !IsAlwaysApproval(a.policy) && !IsDenyApproval(a.policy) && cap.Class < tools.ExecutionWrite {
 		return a.inner.Run(ctx, in)
+	}
+	// Deny policy short-circuits the gate the same way auto-approval does,
+	// just in the opposite direction: no pending prompt is ever emitted.
+	if IsDenyApproval(a.policy) {
+		return sdktools.Out{Value: "tool call denied by user: auto-denied (approval policy is \"deny\")"}, nil
 	}
 	// Standing decisions short-circuit the gate.
 	if a.standing != nil {

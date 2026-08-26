@@ -33,13 +33,13 @@ With nothing configured, nothing is filtered and nothing is redacted. The user t
 
 ## Tool approval policies and YOLO mode
 
-Tool approval is policy-gated:
+Tool approval is policy-gated (`[approvals] default_mode`, formerly `policy`):
 
-- `write-only` (default): requests interactive confirmation for mutating file and command tools.
-- `always`: requests interactive confirmation for all tool calls.
-- `auto` (`yolo`): executes tool calls without interactive confirmation.
+- `always` (default): executes tool calls without interactive confirmation.
+- `once` (formerly `write-only`): requests interactive confirmation for mutating file and command tools.
+- `deny`: auto-rejects every gated tool call without interactive confirmation.
 
-YOLO mode (`--yolo` or `[approvals].policy = "auto"`) disables interactive prompts only. It does not bypass path boundaries, Git hook guards, command allowlists, secret redaction, or verifier sandboxes.
+YOLO mode (`--yolo`, `--approval-policy auto`, or `[approvals] default_mode = "always"` - the shipped default) disables interactive prompts only. It does not bypass path boundaries, Git hook guards, command allowlists, secret redaction, or verifier sandboxes.
 
 ## Secret path filtering
 

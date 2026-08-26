@@ -72,10 +72,34 @@ func (a *Approver) Resolve(id string, decision ports.Decision) {
 	}
 }
 
+// standingPolicyResult reports the session's persistent auto-approve/
+// auto-deny policy verdict, if any, so gate can short-circuit before ever
+// arming a prompt. The second return is false when the policy is neither
+// (i.e. "once"/write-only), meaning gate must fall through to the
+// interactive prompt below.
+func (a *Approver) standingPolicyResult() (sdkadapter.ApprovalResult, bool) {
+	if a.sess == nil {
+		return sdkadapter.ApprovalResult{}, false
+	}
+	policy := a.sess.ApprovalPolicyValue()
+	if sdkadapter.IsAutoApproval(policy) {
+		return sdkadapter.ApprovalResult{Approved: true}, true
+	}
+	// "deny" policy denies every gated call without ever arming a prompt,
+	// symmetric with the "always approve" short-circuit above. The SDK
+	// tool-registry path already short-circuits before reaching this gate
+	// (internal/sdkadapter/approver.go's approvalGatedToolAdapter.Run), but
+	// direct/legacy callers of ApprovalGate must see the same behavior.
+	if sdkadapter.IsDenyApproval(policy) {
+		return sdkadapter.ApprovalResult{Approved: false, Err: "auto-denied (approval policy is \"deny\")"}, true
+	}
+	return sdkadapter.ApprovalResult{}, false
+}
+
 // gate is installed as chat.Session.ApprovalGate.
 func (a *Approver) gate(ctx context.Context, name string, args json.RawMessage) sdkadapter.ApprovalResult {
-	if a.sess != nil && sdkadapter.IsAutoApproval(a.sess.ApprovalPolicyValue()) {
-		return sdkadapter.ApprovalResult{Approved: true}
+	if res, short := a.standingPolicyResult(); short {
+		return res
 	}
 	// The waiting map's key must be the id the UI will Resolve with.
 	// The new TUI arms its approval prompt from the tool.pending

@@ -72,7 +72,7 @@ type GeneralView struct {
 	ShowIterationNotices   bool
 	ShowPromptCacheNotices bool
 	ScrollLines            int
-	ApprovalDefault        string // "once" | "always" | "deny" | "deny_always"
+	ApprovalDefault        string // "once" | "always" | "deny"
 	ScreenReader           bool
 	ReducedMotion          bool
 }

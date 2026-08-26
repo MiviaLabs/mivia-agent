@@ -106,7 +106,7 @@ func (s *generalSection) rebuild() {
 	scrollF.SetChoices(scrollChoices, strconv.Itoa(v.ScrollLines))
 
 	approvalF := mk("approval default")
-	approvalF.SetChoices([]string{"once", "always", "deny", "deny_always"}, v.ApprovalDefault)
+	approvalF.SetChoices([]string{"once", "always", "deny"}, v.ApprovalDefault)
 
 	srF := mk("screen reader")
 	srF.SetChoices([]string{"on", "off"}, boolChoice(v.ScreenReader))

@@ -70,9 +70,11 @@ func (s *SettingsStore) SetConversation(conv *Conversation) {
 func (s *SettingsStore) initFromConfig() {
 	showIter := false
 	showCache := false
+	approvalDefault := "always"
 	if s.res != nil {
 		showIter = s.res.ShowIterationNotices
 		showCache = s.res.ShowPromptCacheNotices
+		approvalDefault = approvalModeToView(s.res.Approvals.ApprovalPolicy())
 	}
 	s.general = ports.GeneralView{
 		Theme:                  "mivia-dark",
@@ -81,7 +83,7 @@ func (s *SettingsStore) initFromConfig() {
 		ShowIterationNotices:   showIter,
 		ShowPromptCacheNotices: showCache,
 		ScrollLines:            3,
-		ApprovalDefault:        "once",
+		ApprovalDefault:        approvalDefault,
 		ScreenReader:           false,
 		ReducedMotion:          false,
 	}
@@ -91,6 +93,9 @@ func (s *SettingsStore) initFromConfig() {
 	s.initSkillsFromConfig()
 	s.initMCPFromConfig()
 }
+
+// approvalModeToView (settings_approval.go) maps a resolved
+// config.ApprovalPolicy* value back to the settings-screen choice.
 
 func (s *SettingsStore) initProvidersFromConfig() {
 	s.providers = s.buildProviderViews()
@@ -479,6 +484,13 @@ func (s *SettingsStore) applyGeneral(e ports.GeneralEdit) error {
 		s.general.ApprovalDefault = v.Mode
 		if s.res != nil {
 			s.res.Approvals.DefaultMode = v.Mode
+		}
+		// Apply immediately to the live session so "accept always" (and
+		// "deny") take effect without a restart - this is the runtime half
+		// of the setting; UpdateGeneralConfig below only persists it for
+		// the next launch/resume.
+		if s.sess != nil {
+			s.sess.SetApprovalPolicy(config.NormalizeDefaultMode(v.Mode))
 		}
 	case ports.SetScreenReader:
 		s.general.ScreenReader = v.On

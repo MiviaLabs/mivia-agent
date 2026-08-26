@@ -260,10 +260,22 @@ func TestApplySessionApprovalPolicy(t *testing.T) {
 			want: config.ApprovalPolicyAuto,
 		},
 		{
-			name: "default",
+			name: "default (unset config accepts all tools)",
 			inv:  chatInvocation{},
 			res:  &config.Resolved{},
-			want: "",
+			want: config.ApprovalPolicyAuto,
+		},
+		{
+			name: "resolved config default_mode deny",
+			inv:  chatInvocation{},
+			res:  &config.Resolved{Approvals: config.ApprovalsConfig{DefaultMode: "deny"}},
+			want: config.ApprovalPolicyDeny,
+		},
+		{
+			name: "resolved config default_mode wins over legacy policy",
+			inv:  chatInvocation{},
+			res:  &config.Resolved{Approvals: config.ApprovalsConfig{Policy: "auto", DefaultMode: "once"}},
+			want: config.ApprovalPolicyWriteOnly,
 		},
 	}
 

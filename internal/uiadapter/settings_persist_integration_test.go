@@ -9,6 +9,7 @@ import (
 	"github.com/pelletier/go-toml/v2"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/uiadapter"
@@ -66,6 +67,77 @@ func TestSettingsStore_ApplyGeneral_LiveSyncAndPersist(t *testing.T) {
 
 	if got := store.Settings().General.General().ApprovalDefault; got != "always" {
 		t.Errorf("approval default = %q, want always", got)
+	}
+}
+
+// TestSettingsStore_ApprovalDefault_ReloadsFromConfig closes the loop this
+// bug report was about: a persisted default_mode must survive a fresh
+// SettingsStore built over the reloaded config (the CLI-restart /
+// session-resume case), not just the in-memory store that wrote it.
+// initFromConfig previously hardcoded "once" regardless of what config.Load
+// had already resolved into Resolved.Approvals.
+func TestSettingsStore_ApprovalDefault_ReloadsFromConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "mivia.toml")
+
+	res := &config.Resolved{ConfigPath: cfgPath, ProviderName: "ollama", Model: "llama3.3"}
+	state := &cliagents.AgentSessionState{Registry: agents.NewRegistry()}
+	store := uiadapter.NewSettingsStore(nil, res, state)
+
+	h, err := store.Settings().General.Apply(context.Background(), ports.ScopeProject, ports.SetApprovalDefault{Mode: "always"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drainOK(t, h)
+
+	// Confirm the file itself carries the persisted value...
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("read persisted config: %v", err)
+	}
+	var raw struct {
+		Approvals config.ApprovalsConfig `toml:"approvals"`
+	}
+	if err := toml.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal persisted config: %v", err)
+	}
+	if raw.Approvals.DefaultMode != "always" {
+		t.Fatalf("persisted default_mode = %q, want %q", raw.Approvals.DefaultMode, "always")
+	}
+
+	// ...and that a brand-new store built over a Resolved carrying that same
+	// reloaded value (what a restart/resume produces via config.Load)
+	// reflects it in the settings view instead of resetting to "once".
+	reloadedRes := &config.Resolved{ConfigPath: cfgPath, ProviderName: "ollama", Model: "llama3.3", Approvals: raw.Approvals}
+	fresh := uiadapter.NewSettingsStore(nil, reloadedRes, state)
+	if got := fresh.Settings().General.General().ApprovalDefault; got != "always" {
+		t.Errorf("reloaded approval default = %q, want %q (must not reset to \"once\" on restart)", got, "always")
+	}
+}
+
+// TestSettingsStore_ApprovalDefault_AppliesLiveToSession asserts that
+// changing the setting takes effect in the running session immediately,
+// not only on the next restart.
+func TestSettingsStore_ApprovalDefault_AppliesLiveToSession(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "mivia.toml")
+
+	res := &config.Resolved{ConfigPath: cfgPath, ProviderName: "ollama", Model: "llama3.3"}
+	state := &cliagents.AgentSessionState{Registry: agents.NewRegistry()}
+	sess := chat.NewSession(res, nil)
+	sess.ApprovalPolicy = config.ApprovalPolicyWriteOnly
+
+	store := uiadapter.NewSettingsStore(nil, res, state)
+	store.SetActiveSession(sess)
+
+	h, err := store.Settings().General.Apply(context.Background(), ports.ScopeProject, ports.SetApprovalDefault{Mode: "always"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drainOK(t, h)
+
+	if got := sess.ApprovalPolicyValue(); got != config.ApprovalPolicyAuto {
+		t.Errorf("live session ApprovalPolicyValue() = %q, want %q (setting must apply without restart)", got, config.ApprovalPolicyAuto)
 	}
 }
 
