@@ -21,6 +21,7 @@ const (
 	KindToolEnd     Kind = "tool.end"
 	KindPlan        Kind = "plan"   // to-do/plan checklist update
 	KindNotice      Kind = "notice" // free-text advisory line, e.g. context-usage warning
+	KindHook        Kind = "hook"   // a lifecycle hook fired for a tool call
 	KindUsage       Kind = "usage"
 	KindError       Kind = "error"
 	KindTurnEnd     Kind = "turn.end"
@@ -195,6 +196,29 @@ type NoticeBody struct {
 }
 
 func (NoticeBody) isBody() {}
+
+// HookBody is the Body for KindHook: one lifecycle hook execution for a
+// tool call, with its program, event, tool, and the bounded/redacted input
+// and output the operator is shown. Structured rather than folded into
+// NoticeBody so a renderer can show input/output distinctly and collapse
+// the row - a bare Text string cannot carry that shape.
+type HookBody struct {
+	// Event is PreToolUse, PostToolUse, or Stop.
+	Event string `json:"event"`
+	// Program is the hook script's name (not its path).
+	Program string `json:"program"`
+	// Tool is the tool this hook fired for.
+	Tool string `json:"tool"`
+	// Input is the bounded, redacted tool input the hook saw.
+	Input string `json:"input,omitempty"`
+	// Output is what the hook said: advisory text, or the block reason.
+	// Empty means it ran silently, which is normal and still worth showing.
+	Output string `json:"output,omitempty"`
+	// Denied is true for the PreToolUse run that blocked the call.
+	Denied bool `json:"denied,omitempty"`
+}
+
+func (HookBody) isBody() {}
 
 // UsageBody is the Body for KindUsage: token and cost accounting for the
 // turn so far.

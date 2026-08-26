@@ -216,23 +216,40 @@ func TestTranslateEvent_Notice(t *testing.T) {
 				Body: uievent.NoticeBody{Text: "3 tools: a, b, c"},
 			}},
 		},
+	})
+}
+
+// TestTranslateEvent_Hook covers EventHook's own body: it carries the
+// program, tool, input, output, and denial state a HookBody needs, rather
+// than collapsing to a NoticeBody's bare text (which would silently drop
+// Output, as the notice(hookText(ev)) path once did).
+func TestTranslateEvent_Hook(t *testing.T) {
+	t.Parallel()
+	runMappingCases(t, []mappingCase{
 		{
-			name: "hook_with_detail_uses_detail",
+			name: "hook_denied_carries_full_shape",
 			ev: agent.Event{
 				Kind: agent.EventHook, Name: "PreToolUse",
-				Detail: "prettier blocked the call",
+				Program: "guard.sh", Tool: "run_command", Denied: true,
+				Input: `{"argv":["rm","-rf","/"]}`, Output: "policy forbids this argv",
 			},
 			want: []uievent.Event{{
-				Kind: uievent.KindNotice,
-				Body: uievent.NoticeBody{Text: "prettier blocked the call"},
+				Kind: uievent.KindHook,
+				Body: uievent.HookBody{
+					Event: "PreToolUse", Program: "guard.sh", Tool: "run_command",
+					Input: `{"argv":["rm","-rf","/"]}`, Output: "policy forbids this argv", Denied: true,
+				},
 			}},
 		},
 		{
-			name: "hook_without_detail_falls_back_to_name",
-			ev:   agent.Event{Kind: agent.EventHook, Name: "PostToolUse"},
+			name: "hook_silent_run_still_carries_program_and_tool",
+			ev: agent.Event{
+				Kind: agent.EventHook, Name: "PostToolUse",
+				Program: "fmt.sh", Tool: "write_file",
+			},
 			want: []uievent.Event{{
-				Kind: uievent.KindNotice,
-				Body: uievent.NoticeBody{Text: "PostToolUse"},
+				Kind: uievent.KindHook,
+				Body: uievent.HookBody{Event: "PostToolUse", Program: "fmt.sh", Tool: "write_file"},
 			}},
 		},
 	})
@@ -598,6 +615,9 @@ func bodyTypeDiffers(a, b uievent.Body) bool {
 		return !ok
 	case uievent.NoticeBody:
 		_, ok := b.(uievent.NoticeBody)
+		return !ok
+	case uievent.HookBody:
+		_, ok := b.(uievent.HookBody)
 		return !ok
 	case uievent.UsageBody:
 		_, ok := b.(uievent.UsageBody)

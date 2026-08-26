@@ -92,7 +92,7 @@ func TranslateEventWithOptions(ev agent.Event, opts TranslateOptions) []uievent.
 	case agent.EventThinking:
 		return translateThinking(ev)
 	case agent.EventHook:
-		return notice(hookText(ev))
+		return translateHook(ev)
 	case agent.EventCompaction:
 		return notice(ev.Detail)
 	case agent.EventCacheUsage:

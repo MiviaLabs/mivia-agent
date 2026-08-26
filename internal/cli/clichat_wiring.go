@@ -8,26 +8,17 @@ package cli
 import (
 	clichat "github.com/MiviaLabs/mivia-agent/internal/clichat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/hooks"
+	"github.com/MiviaLabs/mivia-agent/internal/hooksession"
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
 )
-
-// hookSessionStateAdapter exposes the cli hook session's read surface.
-type hookSessionStateAdapter struct{ s *hookSession }
-
-// RunnableGroups returns the hook groups that tool calls may run.
-func (a hookSessionStateAdapter) RunnableGroups() []hooks.Group { return a.s.runnable() }
-
-// NoteRunWarnings records bounded diagnostics from executed hooks.
-func (a hookSessionStateAdapter) NoteRunWarnings(w []string) { a.s.noteRunWarnings(w) }
 
 func init() {
 	clichat.FlagValueFunc = flagValue
 	clichat.FlagVarFunc = flagVar
 	clichat.InstallHookSessionFunc = installHookSession
-	clichat.CurrentHookSessionFunc = func() clichat.HookSessionState {
-		return hookSessionStateAdapter{currentHookSession()}
-	}
+	// hooksession.Session already implements clichat.HookSessionState
+	// (RunnableGroups, NoteRunWarnings), so no adapter type is needed here.
+	clichat.CurrentHookSessionFunc = func() clichat.HookSessionState { return hooksession.Current() }
 	clichat.HookSessionConfiguredFunc = hookSessionConfigured
 	clichat.HandleSlashHooksFunc = handleSlashHooks
 	clichat.MemoryOfFunc = func(state *AgentSessionState) memory.Store { return memoryOf(state) }

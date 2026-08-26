@@ -138,12 +138,14 @@ func (s *Session) isAdvertisedToolName(name string) bool {
 // This is deliberately NOT full parity with an already-admitted call's
 // dispatcherShim.Run path (internal/agent/sdk_dispatcher_shim.go): no
 // per-call timeout re-arming, no hook-context append, no pass1/turn-shaping
-// bookkeeping. It DOES apply the same session-level result cap and
-// remainder-spool behavior that path applies (s.MaxToolResultChars, the
-// tool's own declared Capability.MaxResultBytes if any, s.RemainderSpool) -
-// an operator's configured budget must bound this path exactly like every
-// other tool call, not just the dispatcher's own much larger safety-floor
-// ceiling that Invoke enforces regardless of caller.
+// bookkeeping, and no hook-run visibility event either - result.HookRuns is
+// discarded here rather than passed to emitHookRuns, so a hook that fires
+// for a deferred tool produces no transcript row. A known seam gap, stated
+// once rather than silently widened; see docs/development/lifecycle-hooks.md.
+// It DOES apply the same session-level result cap and remainder-spool
+// behavior that path applies (s.MaxToolResultChars, the tool's own declared
+// Capability.MaxResultBytes if any, s.RemainderSpool) - an operator's
+// configured budget must bound this path exactly like every other tool call.
 func (s *Session) runDeferredToolNow(ctx context.Context, dispatcher *runtime.Dispatcher, resolver func() *tools.Registry, sessionID string, turnID uint64, name string, args json.RawMessage) (string, bool) {
 	if dispatcher == nil || resolver == nil {
 		return "", false

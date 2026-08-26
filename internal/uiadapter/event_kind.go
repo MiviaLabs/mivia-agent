@@ -24,7 +24,7 @@ import (
 //	EventSubagentHeartbeat -> dropped
 //	EventSubagentDone     -> notice
 //	EventThinking         -> reasoning.delta
-//	EventHook             -> notice
+//	EventHook             -> hook
 //	EventCompaction       -> notice
 //	EventCacheUsage       -> notice
 //	EventTokenUsage       -> notice
@@ -143,13 +143,17 @@ func subagentDoneText(ev agent.Event) string {
 	return "subagent done"
 }
 
-// hookText picks the most informative label available on a hook event:
-// Detail carries the one-line summary (the agent loop's hookRunDetail),
-// and a hook fired with no Detail falls back to the hook event name
-// (PreToolUse / PostToolUse) so a row has something to display.
-func hookText(ev agent.Event) string {
-	if ev.Detail != "" {
-		return ev.Detail
-	}
-	return ev.Name
+// translateHook maps EventHook to a hook uievent carrying the program, tool,
+// input, and output an operator needs to answer "did my hook fire, and what
+// did it do" - a bare notice string cannot carry that shape (Output was
+// silently dropped when this case fell through to notice(hookText(ev))).
+func translateHook(ev agent.Event) []uievent.Event {
+	return []uievent.Event{{Kind: uievent.KindHook, Body: uievent.HookBody{
+		Event:   ev.Name,
+		Program: ev.Program,
+		Tool:    ev.Tool,
+		Input:   ev.Input,
+		Output:  ev.Output,
+		Denied:  ev.Denied,
+	}}}
 }

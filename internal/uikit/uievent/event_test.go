@@ -6,7 +6,7 @@ import "testing"
 // implementation. It does not assert exhaustiveness against the Kind
 // enum: a second hand-maintained list in this file could drift from
 // event.go's real Kind consts without either list catching the other.
-// TestEventJSONRoundTrip's 13-case coverage is what pins exhaustiveness,
+// TestEventJSONRoundTrip's per-Kind coverage is what pins exhaustiveness,
 // since it round-trips through unmarshalBody's real production switch.
 func TestAllBodyTypesSatisfyBody(t *testing.T) {
 	bodies := []Body{
@@ -20,6 +20,7 @@ func TestAllBodyTypesSatisfyBody(t *testing.T) {
 		ToolEndBody{},
 		PlanBody{},
 		NoticeBody{},
+		HookBody{},
 		UsageBody{},
 		ErrorBody{},
 		TurnEndBody{},

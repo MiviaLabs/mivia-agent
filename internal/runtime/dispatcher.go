@@ -77,6 +77,17 @@ type HookRun struct {
 	// Program is the hook script's name, not its path: this reaches a screen,
 	// and the absolute path runs through the operator's home directory.
 	Program string
+	// Tool is the tool this hook fired for.
+	Tool string
+	// Input is the tool input this handler saw, bounded and redacted before
+	// it is set (internal/composition's hookRunsFor): it is retained in the
+	// dispatcher's dedup completed map for the life of the turn, not just at
+	// display time, so it must already be safe to hold and to show.
+	//
+	// A plain string, not json.RawMessage: HookRun is compared with != in
+	// the ID-keyed dedup regression tests, and a slice-backed field would
+	// make the struct non-comparable.
+	Input string
 	// Denied is true for the PreToolUse run that blocked the call.
 	Denied bool
 	// Output is what this hook said - advisory text, or the block reason.

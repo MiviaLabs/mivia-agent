@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/hooks"
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -97,35 +99,69 @@ func HookPolicyFuncs(in DispatcherInput) (
 			Denied:  outcome.Denied,
 			Reason:  outcome.Reason,
 			Context: outcome.Context,
-			Runs:    hookRunsFor(outcome),
+			Runs:    hookRunsFor(outcome, req.Input),
 		}
 	}
 	post := func(ctx context.Context, req runtime.Request, _ runtime.Result) runtime.HookResult {
 		outcome := runHookEvent(ctx, runner, hooks.EventPostToolUse, req, in.HookGroups, in.NoteHookWarnings)
-		return runtime.HookResult{Context: outcome.Context, Runs: hookRunsFor(outcome)}
+		return runtime.HookResult{Context: outcome.Context, Runs: hookRunsFor(outcome, req.Input)}
 	}
 	return pre, post
 }
+
+// maxHookRunInputBytes bounds the tool input recorded onto a HookRun. It is
+// retained in the dispatcher's dedup completed map for the life of the turn,
+// not just at display time, so it must already be bounded and redacted
+// before it is set - not only when a renderer later reads it.
+const maxHookRunInputBytes = 512
 
 // hookRunsFor translates the hook layer's execution records into the
 // runtime's display type. The two are separate types on purpose:
 // internal/runtime imports internal/hooks nowhere, and a shared struct
 // would be the import that starts.
-func hookRunsFor(outcome hooks.Outcome) []runtime.HookRun {
+//
+// toolInput is the tool call's own input (identical for every run in one
+// outcome, since they all fired for the same call); it is bounded and
+// redacted here rather than at emit time, because the unredacted value must
+// never be held at all, even before anything renders it.
+func hookRunsFor(outcome hooks.Outcome, toolInput json.RawMessage) []runtime.HookRun {
 	if len(outcome.Runs) == 0 {
 		return nil
 	}
+	input := boundedRedactedInput(toolInput)
 	runs := make([]runtime.HookRun, 0, len(outcome.Runs))
 	for _, run := range outcome.Runs {
 		runs = append(runs, runtime.HookRun{
 			Event:   string(run.Event),
 			Program: run.Program,
+			Tool:    run.Tool,
+			Input:   input,
 			Denied:  run.Denied,
 			Output:  run.Output,
 			Warning: run.Warning,
 		})
 	}
 	return runs
+}
+
+// boundedRedactedInput redacts secret-shaped values out of a tool input and
+// truncates it to maxHookRunInputBytes before it is ever retained.
+func boundedRedactedInput(input json.RawMessage) string {
+	if len(input) == 0 {
+		return ""
+	}
+	redacted := redact.Text(string(input))
+	if len(redacted) <= maxHookRunInputBytes {
+		return redacted
+	}
+	truncated := redacted[:maxHookRunInputBytes]
+	// Repair a cut that landed mid-rune: redact.Text may have grown or
+	// shrunk byte offsets relative to input, so re-validate at the bound
+	// rather than assume the original string's rune boundaries still apply.
+	for !utf8.ValidString(truncated) && len(truncated) > 0 {
+		truncated = truncated[:len(truncated)-1]
+	}
+	return truncated + "...(truncated)"
 }
 
 // runHookEvent runs one lifecycle event's hook groups, read fresh from

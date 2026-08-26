@@ -303,6 +303,14 @@ func (d *dispatcherShim) Run(ctx context.Context, in sdktools.InOut) (sdktools.O
 		Kind: runtime.Tool, Name: d.inner.Name(), Input: args, Timeout: callTimeout,
 		Step: d.turn.currentStep(), SkipDedup: !capability.Dedups(),
 	})
+	// A dedup-served duplicate is answered with the OWNER's HookRuns (DC-9
+	// fidelity, runtime/dispatcher.go), which did not run for THIS call - so
+	// emitting them here would show a hook firing that never happened for
+	// this invocation. Only the owner's own Run reaches this branch with
+	// IsDuplicate() false.
+	if callKey != "" && !r.IsDuplicate() {
+		emitHookRuns(d.opts, callKey, r.HookRuns)
+	}
 	// A duplicate never re-ran: the model's result is the suppression
 	// notice, but the OWNER's pre-rewrite body is what failed-duplicate
 	// detection must scan (a run_command duplicate reports its non-zero

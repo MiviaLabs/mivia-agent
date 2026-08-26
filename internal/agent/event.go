@@ -87,6 +87,15 @@ type Event struct {
 	Content    string
 	Input      string // bounded, redacted tool input preview
 	Output     string // bounded, redacted tool output preview
+	// Denied is set only for EventHook: true when this run blocked its tool
+	// call (a PreToolUse hook that denied). Renderers use it to give a
+	// blocking run a distinct visual treatment from an advisory one.
+	Denied bool
+	// Program and Tool are set only for EventHook: the hook script's name
+	// (not its path) and the tool it fired for. Name already carries the
+	// hook's own event (PreToolUse/PostToolUse/Stop) for this kind, so these
+	// are separate fields rather than an overload of an existing one.
+	Program, Tool string
 	// Origin attributes the event to the producing agent (zero = root loop).
 	Origin EventOrigin
 	// Identity is an optional typed runtime identity supplied by a routed
