@@ -346,6 +346,69 @@ func TestRunSlashCommandNew(t *testing.T) {
 	}
 }
 
+// capturingConversation delegates to a real replay.Conversation (so Send
+// returns a genuinely working TurnHandle the screen can drive to
+// completion) while recording the last intent.Send it received, closing a
+// coverage gap an adversarial review found after e58149f1 (skill-invocation
+// history bloat fix): nothing in this package tested that
+// CommandOutcome.SubmitPersistedText actually reaches intent.Send.PersistedText
+// through applyCommandOutcome/sendTextWithPersisted - coverage of that field
+// stopped one layer down, in internal/uiadapter.
+type capturingConversation struct {
+	*replay.Conversation
+	lastSend intent.Send
+}
+
+func (c *capturingConversation) Send(ctx context.Context, in intent.Send) (ports.TurnHandle, error) {
+	c.lastSend = in
+	return c.Conversation.Send(ctx, in)
+}
+
+// TestRunSlashCommandSubmitPromptThreadsPersistedText pins the fix for a
+// real context-bloat bug at the layer that had no direct coverage of it: a
+// command outcome that sets both SubmitPrompt (the full text to send) and
+// SubmitPersistedText (the short form to keep in history) must reach
+// intent.Send with both fields populated distinctly, not collapsed to one.
+func TestRunSlashCommandSubmitPromptThreadsPersistedText(t *testing.T) {
+	conv := &capturingConversation{Conversation: replay.New(nil, 0)}
+	runner := &fakeRunner{outcome: ports.CommandOutcome{
+		SubmitPrompt:        "<skill-instructions>full body</skill-instructions>",
+		SubmitPersistedText: "/bug-audit",
+	}}
+	s := newScreen(t, conv, nil, nil)
+	s.SetCommandRunner(runner)
+
+	sendLine(t, s, "/bug-audit")
+
+	if conv.lastSend.Text != "<skill-instructions>full body</skill-instructions>" {
+		t.Errorf("intent.Send.Text = %q, want the full SubmitPrompt", conv.lastSend.Text)
+	}
+	if conv.lastSend.PersistedText != "/bug-audit" {
+		t.Errorf("intent.Send.PersistedText = %q, want the short SubmitPersistedText", conv.lastSend.PersistedText)
+	}
+}
+
+// TestRunSlashCommandSubmitPromptWithNoPersistedTextLeavesItEmpty covers the
+// ordinary (non-skill) case every ports.CommandOutcome producer relied on
+// before SubmitPersistedText existed: an outcome that never sets it must
+// reach intent.Send with PersistedText empty, matching intent.Send's own
+// documented "empty means the two are identical" contract.
+func TestRunSlashCommandSubmitPromptWithNoPersistedTextLeavesItEmpty(t *testing.T) {
+	conv := &capturingConversation{Conversation: replay.New(nil, 0)}
+	runner := &fakeRunner{outcome: ports.CommandOutcome{SubmitPrompt: "plain prompt"}}
+	s := newScreen(t, conv, nil, nil)
+	s.SetCommandRunner(runner)
+
+	sendLine(t, s, "/ordinary")
+
+	if conv.lastSend.Text != "plain prompt" {
+		t.Errorf("intent.Send.Text = %q, want %q", conv.lastSend.Text, "plain prompt")
+	}
+	if conv.lastSend.PersistedText != "" {
+		t.Errorf("intent.Send.PersistedText = %q, want empty when the outcome never sets it", conv.lastSend.PersistedText)
+	}
+}
+
 func TestRunSlashCommandNotice(t *testing.T) {
 	runner := &fakeRunner{outcome: ports.CommandOutcome{Notice: "context usage: 10%"}}
 	s := newScreen(t, replay.New(nil, 0), nil, nil)
