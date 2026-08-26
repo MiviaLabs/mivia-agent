@@ -135,3 +135,28 @@ func TestResolveGitDirAbsoluteAndNonGitdir(t *testing.T) {
 		t.Errorf("resolveGitDir(.. pointer) = %q, want %q", got, want)
 	}
 }
+
+// TestResolveGitDirExported pins that the exported ResolveGitDir wrapper
+// delegates to the unexported resolveGitDir unchanged, so external
+// no-exec callers (internal/ui/component/welcome) get the identical
+// gitdir-pointer resolution this package uses internally.
+func TestResolveGitDirExported(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "actual-git")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitFile := filepath.Join(dir, ".git")
+	if err := os.WriteFile(gitFile, []byte("gitdir: actual-git\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := ResolveGitDir(gitFile)
+	want := resolveGitDir(gitFile)
+	if got != want {
+		t.Errorf("ResolveGitDir(%q) = %q, want %q (parity with resolveGitDir)", gitFile, got, want)
+	}
+	if got != target {
+		t.Errorf("ResolveGitDir(%q) = %q, want %q", gitFile, got, target)
+	}
+}

@@ -2,6 +2,7 @@
 package welcome
 
 import (
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
@@ -10,16 +11,30 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 )
 
+// hintLine is the fixed hint row shown under the identity/workspace lines
+// on every tier: no gradient, no animation, one line of static text.
+const hintLine = "type a prompt, or / for commands   ·   ctrl+b sidebar"
+
 // Model is the start screen welcome banner component.
 type Model struct {
 	Theme theme.Theme
 	Tier  theme.Tier
 	frame int
+
+	workspaceRepo   string
+	workspaceBranch string
+	workspaceOK     bool
 }
 
-// New returns an initialized welcome Model.
+// New returns an initialized welcome Model. It detects the current
+// workspace (repo name and branch) once via no-exec .git inspection so
+// the banner can show a workspace line without shelling out to git.
 func New(t theme.Theme, tier theme.Tier) Model {
-	return Model{Theme: t, Tier: tier}
+	m := Model{Theme: t, Tier: tier}
+	if cwd, err := os.Getwd(); err == nil {
+		m.workspaceRepo, m.workspaceBranch, m.workspaceOK = detectWorkspace(cwd)
+	}
+	return m
 }
 
 // SetTheme updates the theme and tier of the welcome component.
@@ -33,55 +48,50 @@ func (m Model) UpdateFrame() Model {
 	return m
 }
 
-func (m Model) renderLegend() string {
+// identityLine returns the minimal static identity row: an accent-role
+// glyph plus "mivia". ASCII/no-tty tiers use a plain "<>" mark; both tiers
+// render as a single flat color, with no gradient and no animation.
+func (m Model) identityLine() string {
+	accent := render.Role(m.Theme, m.Tier, theme.RoleAccent)
+	mark := "⬖"
 	if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
-		return render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Render("states: < idle   ^ thinking   > running   . writing")
+		mark = "<>"
 	}
-	idle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Render("⬖ idle")
-	thinking := render.Role(m.Theme, m.Tier, theme.RoleWarning).Render("⬘ thinking")
-	running := render.Role(m.Theme, m.Tier, theme.RoleInfo).Render("◈ running")
-	streaming := render.Role(m.Theme, m.Tier, theme.RoleSuccess).Render("◇ writing")
-	sep := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle).Render("   ")
-	return idle + sep + thinking + sep + running + sep + streaming
+	return accent.Render(mark + " mivia")
+}
+
+// workspaceLine composes the "repoName · branch" text in RoleFGSubtle.
+// It returns an empty string when repo is empty, so callers can omit the
+// workspace row entirely (not render a blank line) when no repo was
+// detected.
+func (m Model) workspaceLine(repo, branch string) string {
+	if repo == "" {
+		return ""
+	}
+	subtle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
+	return subtle.Render(repo + " · " + branch)
 }
 
 func (m Model) bannerLines() []string {
-	var lines []string
-	accent := render.Role(m.Theme, m.Tier, theme.RoleAccent)
 	subtle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
 
-	logoMark := "⬖"
-	// Fullwidth Latin letters render ~2x wider per cell on every modern
-	// terminal, so the title visibly grows without a multi-line figlet.
-	// ASCII/no-tty tiers fall back to spaced regular caps because
-	// fullwidth glyphs do not round-trip through the smallest emulators.
-	bigTitle := "Ｍ Ｉ Ｖ Ｉ Ａ"
-	if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
-		logoMark = "<>"
-		bigTitle = "M    I    V    I    A"
+	lines := []string{m.identityLine(), ""}
+	if m.workspaceOK {
+		if line := m.workspaceLine(m.workspaceRepo, m.workspaceBranch); line != "" {
+			lines = append(lines, line, "")
+		}
 	}
-
-	lines = append(lines, accent.Render(logoMark))
-	lines = append(lines, "")
-	lines = append(lines, "")
-	lines = append(lines, accent.Render(bigTitle))
-	lines = append(lines, "")
-	lines = append(lines, m.renderLegend())
-	lines = append(lines, "")
-	lines = append(lines, subtle.Render("type a prompt or / for commands  •  ctrl+b:sidebar  •  ctrl+c:quit"))
+	lines = append(lines, subtle.Render(hintLine))
 	return lines
 }
 
+// compactLines stays Zen-A-only: identity line plus hint line, never a
+// workspace line, matching the compact variant's existing minimalism.
 func (m Model) compactLines() []string {
-	accent := render.Role(m.Theme, m.Tier, theme.RoleAccent)
 	subtle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
-	markGlyph := "⬖ "
-	if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
-		markGlyph = "< "
-	}
 	return []string{
-		accent.Render(markGlyph + "Mivia"),
-		subtle.Render("type a prompt or / for commands  •  ctrl+b:sidebar  •  ctrl+c:quit"),
+		m.identityLine(),
+		subtle.Render(hintLine),
 	}
 }
 
