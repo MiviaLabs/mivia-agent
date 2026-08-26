@@ -19,10 +19,9 @@ const runHistoryLimit = 5
 
 // automationsSection is the Automations settings section: the only
 // section with a second-level detail (schedule, trigger, run history)
-// and a streaming live-run view, per docs/design/settings-screen.md
-// §12-13. Creating a new automation needs the same kind of multi-field
-// entry Models' provider creation does and is the same documented gap:
-// "n" reports a notice, not a silent no-op.
+// and a streaming live-run view. Creating a new automation needs the
+// same kind of multi-field entry Models' provider creation does and is
+// the same documented gap: "n" reports a notice, not a silent no-op.
 type automationsSection struct {
 	store         ports.AutomationSettings
 	theme         theme.Theme

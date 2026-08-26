@@ -12,7 +12,7 @@
 | In-flight LLM calls | 8–40 (provider quota) |
 | Shell workers | 4–16 |
 
-These ranges are design targets, not fixed constants read from a single config knob; the shipped tool scheduler's own default limit (`internal/agent/loop_scheduler.go`) is 4, at the low end of the shell-worker range above. Treat this table as a planning budget, not a promise that a `LogicalAgents`/`InFlight` setting exists with these exact bounds.
+These ranges are design targets, not fixed constants read from a single config knob. The real, live concurrency knob is `[subagents] max_workers` (`internal/subagents/subagents.go`, `Pool.Workers`), which defaults to `0` (unlimited — one worker per task). Treat this table as a planning budget, not a promise that a `LogicalAgents`/`InFlight` setting exists with these exact bounds.
 
 ## Async orchestration model
 
@@ -50,7 +50,7 @@ Spawn requests carry an idempotency key so a duplicate `dispatch_tasks` call for
 ## Required mechanisms
 
 - `context.Context` cancellation trees
-- A generic tool-scheduler concurrency limit, not distinct per-resource-class semaphores — one shared limit channel (`internal/agent/loop_scheduler.go`) bounds tool-call concurrency; there is no separate LLM-call semaphore and shell-worker semaphore
+- A generic tool-call concurrency limit, not distinct per-resource-class semaphores — `MaxConcurrentTools` (`internal/agent/options.go`) bounds parallel tool dispatch for one agent loop; there is no separate LLM-call semaphore and shell-worker semaphore
 - Bounded mailboxes and tool output size
 - Shared token/RPM budgets
 - Race tests for concurrent packages (`make race`)

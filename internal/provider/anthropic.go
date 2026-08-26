@@ -28,20 +28,21 @@ const anthropicAPIVersion = "2023-06-01"
 // OpenAI-compatible chat/completions shape the other clients share, so it has
 // nothing to inherit from that type.
 //
-// See docs/plans/anthropic-provider-and-reasoning-plan.md for the researched
-// wire format, the required headers, and a residual open question this
+// anthropicMaxTokensFloor encodes a residual open question this
 // implementation defends against rather than resolves (no live API access in
 // this environment to resolve it empirically): the right max_tokens floor
-// for adaptive thinking at each effort level (anthropicMaxTokensFloor). This
-// is a conservative, tunable heuristic, not a documented Anthropic invariant.
+// for adaptive thinking at each effort level. This is a conservative,
+// tunable heuristic, not a documented Anthropic invariant.
 //
 // Thinking blocks are NOT replayed byte-for-byte across turns - only their
 // plain display text survives into Response.ReasoningContent, since the
 // rest of the codebase (the reasoning panel, session persistence) treats
 // that field as plain text to render, not a structured payload. See
 // anthropicThinkingDisplayText and anthropicSystemAndMessages' RoleAssistant
-// case for the full rationale and an UNVERIFIED open question this leaves
-// (docs/plans/anthropic-provider-and-reasoning-plan.md §7 item 1).
+// case for the full rationale and an UNVERIFIED open question this leaves:
+// whether omitting the thinking block is safe on a turn that also carries
+// ToolCalls followed by a RoleTool message, since that shape has not been
+// checked against a live Anthropic endpoint from this codebase.
 type AnthropicCompleter struct {
 	name       string
 	baseURL    string

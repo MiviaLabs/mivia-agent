@@ -17,7 +17,7 @@ const (
 // or Automations. One small interface, one file per real
 // implementation, so five sections do not each re-derive the
 // list/detail/keys plumbing the Screen already owns (frame, nav,
-// focus, notice, save state - see docs/design/settings-screen.md §8).
+// focus, notice, save state).
 //
 // Sections are held as pointers in Screen.sections: SetSize/SetTheme
 // mutate in place rather than returning a copy, so Update's pointer
@@ -38,9 +38,9 @@ type inputCapturer interface {
 }
 
 // placeholderSection renders "unavailable" for a nav slot whose adapter
-// is nil - the same nil-safe default the nil ports.CommandRunner uses
-// (settings-screen.md §4), and what every slot is until its own slice
-// (S4-S7) replaces it with a real section.
+// is nil - the same nil-safe default the nil ports.CommandRunner uses,
+// and what every slot is until its own slice (S4-S7) replaces it with a
+// real section.
 type placeholderSection struct {
 	title         string
 	theme         theme.Theme

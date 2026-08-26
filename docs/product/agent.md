@@ -54,7 +54,7 @@ mivia can read, search, and edit files with these tools:
 
 `run_command` runs one program with a fixed argv list. There is no shell: no `;`, `&&`, or `$(...)` expansion.
 
-`run_command` is disabled until configuration or a CLI override supplies a program allowlist. The recommended configuration is broad and includes shells and network clients. Trim it to the least permission your workspace needs. Child-process environment variables are also controlled by an explicit allowlist. See [Configuration](config.md) for the persistent policy.
+`run_command` runs a curated built-in program allowlist out of the box: common compilers/interpreters, their package managers, git, and read-only Unix utilities. Configuration or a CLI override can extend or replace that allowlist. The recommended broader configuration includes shells and network clients — trim it to the least permission your workspace needs. Child-process environment variables are controlled by a separate, empty-by-default allowlist. See [Configuration](config.md) for the persistent policy.
 
 The `get_diagnostics` tool runs a workspace-declared diagnostics command and returns a normalized JSON envelope of findings, each with `file`, `line`, `severity`, and `message` fields. It is configured through `[tools] diagnostics_commands`, a map of command names to argv: for example `vet = ["go", "vet", "./..."]`, `lint = ["npm", "run", "lint"]`, or `check = ["pytest", "--output", "json"]`. The agent selects one command with the `command` argument. When the argument is omitted, the tool runs the entry named `default`, or the sole entry when only one exists. With several commands and no `default`, an omitted `command` is refused with an explanatory envelope error; an unknown command name is refused the same way. The envelope names the command that ran (`command_name`) and the exact argv (`command`). The v1 key `[tools] diagnostics_command` still loads: it is a deprecated alias that folds into the `default` entry. Setting both keys is a configuration error.
 
@@ -293,6 +293,8 @@ Slash commands work inside the chat. Type `/` followed by the command name.
 | `/load <name>` | Load session |
 | `/delete <name>` | Delete session |
 | `/resume [run-id]` | Resume an interrupted run |
+| `/queue` | Manage queued messages |
+| `/search` | Search the web |
 | `/workflows` | Show workflow runs (TUI) |
 | `/exit`, `/quit`, `/q` | Exit (classic terminal) |
 | `/provider` | Show provider (classic terminal) |

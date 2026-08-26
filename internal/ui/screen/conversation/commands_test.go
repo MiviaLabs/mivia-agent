@@ -834,9 +834,9 @@ func TestRunSlashCommandOpenSettingsWithSection(t *testing.T) {
 	}
 }
 
-// TestRunSlashCommandOpenSettingsUnknownSectionIsAnError pins
-// settings-screen.md §6: an unresolved deep-link section name must be
-// a transcript error, never a silent fall-back to the first section.
+// TestRunSlashCommandOpenSettingsUnknownSectionIsAnError pins the rule
+// that an unresolved deep-link section name must be a transcript error,
+// never a silent fall-back to the first section.
 func TestRunSlashCommandOpenSettingsUnknownSectionIsAnError(t *testing.T) {
 	runner := &fakeRunner{outcome: ports.CommandOutcome{OpenSettings: true, SettingsSection: "nope"}}
 	s := newScreen(t, replay.New(nil, 0), nil, nil)

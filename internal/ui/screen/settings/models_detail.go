@@ -10,9 +10,9 @@ import (
 
 // renderProviderCells draws one provider header as separately-aligned
 // cells: name, active/selectable state, the API key's PRESENCE only -
-// never its value (settings-screen.md §5; ProviderView.APIKeySet is a
-// bool by construction, so there is nothing here that could leak one) -
-// and its model count. render.Columns pads each cell to its column's
+// never its value (ProviderView.APIKeySet is a bool by construction, so
+// there is nothing here that could leak one) - and its model count.
+// render.Columns pads each cell to its column's
 // widest value across every PROVIDER row (renderRows in models.go
 // aligns providers and models as two separate groups, since the two
 // kinds carry different columns).

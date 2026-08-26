@@ -5,12 +5,11 @@ import "strings"
 // SplitListDetail lays out a scrollable row list above an optional
 // collapsible detail preview, sharing one height budget, with a pinned
 // notice line at the bottom when present. It is the shared geometry the
-// settings screen's grouped sections need (docs/design/settings-screen.md
-// section 1): a header/row list on top, window-scrolled to keep the
-// selection visible, and a preview of the selected row beneath it,
-// extracted from the Skills section so the Agents section (and any
-// future grouped section) can present the same layout without
-// re-deriving the same height math.
+// settings screen's grouped sections need: a header/row list on top,
+// window-scrolled to keep the selection visible, and a preview of the
+// selected row beneath it, extracted from the Skills section so the
+// Agents section (and any future grouped section) can present the same
+// layout without re-deriving the same height math.
 //
 // listLines is every list row already rendered (including any group
 // headers) in display order. detailLines is the selected item's

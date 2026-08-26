@@ -17,7 +17,7 @@ const (
 
 // MCPFailKind classifies a connection failure without echoing the
 // transport's raw error text, which can carry a URL's query string or
-// a header value. See docs/design/settings-screen.md §5.
+// a header value.
 type MCPFailKind int
 
 const (
@@ -41,8 +41,7 @@ const (
 // They are not masked here because the editor needs the true value to
 // edit it - the mask is a render-time concern in internal/ui - but any
 // caller that logs, prints, or writes these to a golden file without
-// masking first is the bug docs/design/settings-screen.md §5 exists to
-// prevent.
+// masking first leaks a secret.
 type MCPServerView struct {
 	ID             string
 	Transport      string
@@ -93,8 +92,7 @@ func (SetMCPServerEnabled) isMCPEdit() {}
 
 // MCPSettings is the MCP section's read/write surface. internal/mcp has
 // no runtime enable/disable/restart API today, so SetMCPServerEnabled
-// is honoured by the fake and is the real adapter's first job to grow;
-// see docs/design/settings-screen.md §11.
+// is honoured by the fake and is the real adapter's first job to grow.
 type MCPSettings interface {
 	MCPServers() []MCPServerView
 	Apply(ctx context.Context, scope Scope, e MCPEdit) (SaveHandle, error)

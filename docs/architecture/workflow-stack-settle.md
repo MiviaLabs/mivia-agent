@@ -1,10 +1,13 @@
-# Workflow stack settle: autonomous completion and failure propagation
+# Workflow stack settle: known gaps
 
 ## Status
 
-This document is a plan. It describes changes that are not implemented yet.
+This document lists gaps in stack-settle automation that are not fixed yet.
+The drive-before-delivery ordering itself is shipped — see
+[Workflow architecture: Stacking](workflows.md#stacking-small-pr-delivery)
+for what already runs. Everything below this point is still open.
 
-The plan follows a live incident on 2026-08-17. A stacked plan run parked at
+A live incident on 2026-08-17 surfaced the gaps: a stacked plan run parked at
 `delivery_pending` for more than one hour after all its chunk PRs merged. A
 host `workflow deliver` call settled the run only after a retry. The lock was
 not the cause. The cause was the absence of any automatic completion path.

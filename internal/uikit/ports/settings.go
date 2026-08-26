@@ -34,7 +34,7 @@ const (
 
 // SaveEvent is one step of a save's progress. Message is always
 // adapter-authored text naming what happened to a FIELD; it must never
-// echo the value that field held; see docs/design/settings-screen.md §5.
+// echo the value that field held, to avoid leaking a secret field's value.
 type SaveEvent struct {
 	State   SaveState
 	Field   string

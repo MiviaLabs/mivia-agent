@@ -1,8 +1,8 @@
 # Mivia terminal UI - wireframes, variant D "Panes"
 
-Status: Phase 0, iteration 2. Not implemented.
+Status: shipped. This is the visual specification for the current terminal UI (`internal/ui/*`).
 Supersedes the recommendation in `wireframes.md`. That file stays as the record of
-variants A, B and C. This file specifies the direction chosen after review.
+variants A, B and C. This file specifies the direction that shipped.
 Companions: `research-panes.md` (new evidence), `mivia-ui-mock-panes.html` (colour, disposable).
 
 All frames are 80 columns. Section 14 states what changes at 120.

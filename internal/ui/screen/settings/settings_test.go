@@ -50,9 +50,9 @@ func TestViewFlagsHoldsAltScreen(t *testing.T) {
 	}
 }
 
-// TestViewEmitsExactlyHeightRowsNoneOverWidth is the frame's contract
-// (settings-screen.md §2): every View() call returns exactly height
-// rows, and no row exceeds width, across a size sweep.
+// TestViewEmitsExactlyHeightRowsNoneOverWidth is the frame's contract:
+// every View() call returns exactly height rows, and no row exceeds
+// width, across a size sweep.
 func TestViewEmitsExactlyHeightRowsNoneOverWidth(t *testing.T) {
 	for _, dims := range [][2]int{{80, 24}, {100, 30}, {120, 36}, {40, 12}, {200, 50}} {
 		width, height := dims[0], dims[1]
@@ -163,7 +163,7 @@ func TestHelpOverlayOpensAndAnyKeyClears(t *testing.T) {
 
 // TestUnavailableSectionsSayUnavailable: with no store wired (the zero
 // ports.Settings, every field nil), every section must say so rather
-// than panic or render nothing (settings-screen.md §4).
+// than panic or render nothing.
 func TestUnavailableSectionsSayUnavailable(t *testing.T) {
 	s := newScreen(t, 100, 30)
 	for i := range s.sections {

@@ -87,8 +87,9 @@ See [Workflows](workflows.md) and the [Workflow guide](workflows-guide.md).
 ## Security and privacy
 
 Your API key stays in the process environment or an env file. It does not go
-in the TOML settings file. Powerful tools (`run_command`, secret-path
-filtering, redaction) are off until you configure them.
+in the TOML settings file. `run_command` runs a curated built-in program
+allowlist out of the box; secret-path filtering and redaction are off until
+you configure them.
 
 See [Security and privacy](../security/overview.md).
 

@@ -123,8 +123,7 @@ func defaultSetupProvider() string {
 // writeSetupEnvFile writes key=value into path, preserving existing keys.
 // Delegates to config.WriteUserEnvKey, the same writer mivia chat's
 // first-run key prompt uses, so there is one place that knows how a key
-// gets persisted to disk (docs/plans/first-run-onboarding-plan.md section
-// 2.4).
+// gets persisted to disk.
 func writeSetupEnvFile(path, key, value string) error {
 	if err := config.WriteUserEnvKey(path, key, value); err != nil {
 		return fmt.Errorf("setup: %w", err)

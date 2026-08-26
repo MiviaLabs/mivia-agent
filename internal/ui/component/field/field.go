@@ -1,10 +1,9 @@
 // Package field is one editable settings row: a label plus either free
 // text (KindText, wrapping bubbles/textinput) or a cycled value from a
 // closed set (KindChoice, no textinput at all - so an invalid value is
-// unreachable, not merely rejected). See
-// docs/design/settings-screen.md §7: this is the only editing
-// primitive the settings screen has; there is no separate multi-field
-// form type until a second section needs one.
+// unreachable, not merely rejected). This is the only editing primitive
+// the settings screen has; there is no separate multi-field form type
+// until a second section needs one.
 package field
 
 import (
@@ -86,9 +85,9 @@ func (m *Model) SetWidth(w int) {
 }
 
 // SetValidate injects the field's validation rule. A KindEnvName-style
-// variant is not a separate Kind (settings-screen.md §7's cut): the
-// POSIX env-var check, the positive-int check, and every other rule
-// this screen needs are a few lines each, injected here.
+// variant is not a separate Kind: the POSIX env-var check, the
+// positive-int check, and every other rule this screen needs are a few
+// lines each, injected here.
 func (m *Model) SetValidate(f func(string) error) { m.validate = f }
 
 // SetChoices sets a KindChoice field's closed value set and starts the

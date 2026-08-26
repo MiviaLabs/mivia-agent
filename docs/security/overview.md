@@ -3,7 +3,7 @@
 Four rules cover almost everything:
 
 1. Your API key lives in the process environment or an env file. Keep env files out of git.
-2. Tools that can run other programs are off until you turn them on.
+2. `run_command` runs a curated built-in program allowlist out of the box; you extend or replace it.
 3. Secret filtering and redaction are off until you configure them.
 4. Treat a project you did not write like untrusted code.
 
@@ -146,6 +146,13 @@ another agent.
 the gate closed. A member or the synthesizer cannot approve a change by claiming success; the host
 verdict is derived from bounded, strictly-decoded member reports, never trusted from free-form
 model text.
+
+## Policy files
+
+`.mivia/policy/` holds the machine-enforced policy backing several rules
+above: commit-message and PR-title format, destructive-command detection,
+Go structure limits, docs ownership, and agent-hook-bypass rules. See
+[Git hooks](../development/hooks.md) for how these gate a commit.
 
 ## Personal data
 

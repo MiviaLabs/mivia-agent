@@ -8,10 +8,11 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
 
-// ensureChatAPIKey is the first-chat auto-setup gate
-// (docs/plans/first-run-onboarding-plan.md section 2.2). When res already
-// carries a usable API key (or is a keyless ollama loopback, mirroring
-// prepareChatStartup's own exemption), it returns res unchanged.
+// ensureChatAPIKey is the first-chat auto-setup gate: it makes sure a
+// resolved config actually has a usable API key before the chat loop starts,
+// prompting or bootstrapping one if not. When res already carries a usable
+// API key (or is a keyless ollama loopback, mirroring prepareChatStartup's
+// own exemption), it returns res unchanged.
 //
 // Otherwise:
 //   - Interactive (stdin AND stdout are both a TTY): prompts for the key

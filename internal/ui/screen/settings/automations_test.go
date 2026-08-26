@@ -166,9 +166,9 @@ func TestUnavailableAutomationsSectionSaysSo(t *testing.T) {
 	}
 }
 
-// TestAutomationsRowsAlignColumns pins settings-screen.md section 1's
-// aligned layout: every automation row's enabled/disabled column must
-// start at the same screen position regardless of its own name length.
+// TestAutomationsRowsAlignColumns pins the settings screen's aligned
+// layout: every automation row's enabled/disabled column must start at
+// the same screen position regardless of its own name length.
 func TestAutomationsRowsAlignColumns(t *testing.T) {
 	h := newMockSettings()
 	sec := newTestAutomationsSection(t, h.SettingsAdapters().Automations)

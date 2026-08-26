@@ -41,7 +41,7 @@ const (
 	// ContextSettings applies inside the full-screen settings modal. It
 	// does not cascade from ContextGlobal - like ContextPager, the
 	// settings screen is a self-contained modal that consults only its
-	// own context (docs/design/settings-screen.md §6).
+	// own context.
 	ContextSettings Context = "settings"
 )
 
@@ -116,8 +116,8 @@ const (
 	IDQueueDialog ID = "queue-dialog"
 
 	// Settings screen. IDSettingsDialog is the global key that opens it
-	// (f2 - see docs/design/settings-screen.md §6 for why not ctrl+g);
-	// the rest are ContextSettings-scoped.
+	// (f2, not ctrl+g - see its binding below for why); the rest are
+	// ContextSettings-scoped.
 	IDSettingsDialog    ID = "settings-dialog"
 	IDSettingsUp        ID = "settings-up"
 	IDSettingsDown      ID = "settings-down"
@@ -127,8 +127,8 @@ const (
 	IDSettingsNew       ID = "settings-new"
 	IDSettingsDelete    ID = "settings-delete"
 	IDSettingsDefault   ID = "settings-default"
-	// IDSettingsProjectDefault and IDSettingsClearOverride are Models-only
-	// (docs/design/settings-screen.md): a provider's default_model can be
+	// IDSettingsProjectDefault and IDSettingsClearOverride are Models-only:
+	// a provider's default_model can be
 	// set independently at Global and Project scope (internal/config.
 	// LoadProviderDefaultOverrides), so "set as default" (d, whichever
 	// scope the focused row IS) is not enough to also let a Global row

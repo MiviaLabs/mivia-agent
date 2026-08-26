@@ -50,7 +50,7 @@ func TestModelsSectionListsProvidersAndModels(t *testing.T) {
 }
 
 // TestModelsNeverRendersAKeyValue is the containment rule
-// (settings-screen.md §5) at the one place this section could leak
+// at the one place this section could leak
 // one: APIKeySet is a bool, so there is no field to accidentally print,
 // but pin it anyway so a future refactor that adds a raw key field
 // trips this test before it trips a security review.
@@ -73,7 +73,7 @@ func TestModelsBadges_ActiveAndDefault(t *testing.T) {
 }
 
 // TestModelsNeverRendersAKeyValue is the containment rule
-// (settings-screen.md §5) at the one place this section could leak
+// at the one place this section could leak
 // one: APIKeySet is a bool, so there is no field to accidentally print,
 // but pin it anyway so a future refactor that adds a raw key field
 // trips this test before it trips a security review.
@@ -269,8 +269,8 @@ func TestUnavailableModelsSectionSaysSo(t *testing.T) {
 	}
 }
 
-// TestModelsProviderRowsAlignColumns pins settings-screen.md section 1's
-// aligned layout for the provider group: every provider row's
+// TestModelsProviderRowsAlignColumns pins the settings screen's aligned
+// layout for the provider group: every provider row's
 // model-count column must start at the same screen position regardless
 // of its own provider name length. Provider and model rows align in
 // separate groups (they carry different columns), so this checks only

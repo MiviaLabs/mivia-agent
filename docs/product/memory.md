@@ -28,6 +28,7 @@ solution in one repo and another agent finds it in the next repo.
 |------|---------|
 | `memory_save` | Save one memory entry |
 | `memory_search` | Find entries by keyword |
+| `memory_delete` | Delete one saved memory by id |
 
 Both tools are available to the root session and to subagents. The tools
 honor `disable_tools` in `[tools]`.
@@ -73,6 +74,9 @@ tag must not itself contain a comma.
 feed and tab) or content that matches a `block_patterns` regex. It also
 refuses org-scope saves when no org identity is configured.
 
+`memory_delete` takes the `id` returned by `memory_save` or `memory_search`
+and permanently removes that entry. Use `memory_search` first to find the id.
+
 ## Configuration
 
 ```toml
@@ -85,7 +89,15 @@ max_entry_bytes = 8192      # per-entry cap
 max_entries = 500           # row cap per store file
 max_search_results = 8      # memory_search result cap
 block_patterns = []         # regexes; matching content is refused
+inject_core = false         # default false; see below
 ```
+
+`inject_core` auto-injects a bounded "core" memory tier into the system
+prompt at session start. It defaults to `false` because it changes every
+session's prompt composition and can weaken tool-approval gating for an
+operator who allowlists the mivia binary itself in
+`[tools].run_allowlist`. Turning it on is a deliberate, per-repository
+choice, not a default an upgrade should hand you silently.
 
 `store_backend = "memory"` keeps memories in the process only. It is useful
 for tests and for sessions that must not persist. `"sqlite"` is the durable

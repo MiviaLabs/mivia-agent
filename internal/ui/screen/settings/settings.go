@@ -1,8 +1,6 @@
 // Package settings is the full-screen /settings modal: a left nav
 // sidebar (General, Models, MCP, Agents, Automations) beside a detail
-// pane, keeping the top bar and a status row. See
-// docs/design/settings-screen.md for the design this package
-// implements.
+// pane, keeping the top bar and a status row.
 package settings
 
 import (
@@ -68,8 +66,8 @@ var _ app.OwnsQuit = Screen{}
 // against, in nav order. Lowercase, matching SectionIndex's own
 // case-folding. Projects and Skills have no ports-backed section yet
 // (no domain model has been scoped for either, the same state Automations
-// was in before settings-screen.md §12 defined one) - they are
-// placeholders like every other nil-backed section until one lands.
+// was in before it gained one) - they are placeholders like every other
+// nil-backed section until one lands.
 var sectionNames = []string{"general", "projects", "agents", "skills", "models", "mcp"}
 
 // SectionIndex resolves a deep-link section name (as "/settings models"
@@ -79,7 +77,7 @@ var sectionNames = []string{"general", "projects", "agents", "skills", "models",
 // The caller - not this package - decides what an unresolved name
 // means; commands.go's openSettingsScreen turns a false ok into a
 // Notice rather than silently opening on General, so a typo'd deep
-// link is never mistaken for "no argument was given" (settings-screen.md §6).
+// link is never mistaken for "no argument was given".
 func SectionIndex(name string) (int, bool) {
 	if name == "" {
 		return 0, true
@@ -97,7 +95,7 @@ func SectionIndex(name string) (int, bool) {
 // initialNav (clamped into range - callers resolve a name to an index
 // with SectionIndex first). Every store field may be nil; a nil
 // field's section renders "unavailable" rather than the screen failing
-// to build (settings-screen.md §4).
+// to build.
 //
 // Sections are constructed EAGERLY, not lazily on first navigation: the
 // app-wide theme walk (TestSelectingThemeLeavesNoValueOnTheOldTheme)
@@ -138,7 +136,7 @@ func (s Screen) ViewFlags() app.ViewFlags { return app.ViewFlags{AltScreen: true
 
 // reservedRows is every row the frame claims for itself: the top bar
 // plus its margin, and the status row. Whatever remains is the body's
-// exact height (settings-screen.md §2).
+// exact height.
 func (s Screen) reservedRows() int {
 	return s.top.Height() + 1 + 1
 }

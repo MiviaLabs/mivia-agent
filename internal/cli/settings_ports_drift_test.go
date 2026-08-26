@@ -16,8 +16,10 @@ type driftTestCase struct {
 	ignore map[string]string
 }
 
-// TestSettingsPortsCoverConfigFields is the drift guard
-// docs/design/settings-screen.md §7 calls for.
+// TestSettingsPortsCoverConfigFields is the drift guard that catches a
+// config field silently missing from the settings screen's view types: any
+// exported source field must either appear in a candidate view or be
+// recorded in the test's ignore map with a reason.
 func TestSettingsPortsCoverConfigFields(t *testing.T) {
 	for _, tc := range driftTestCases() {
 		t.Run(tc.name, func(t *testing.T) {
@@ -57,7 +59,7 @@ func driftTestCases() []driftTestCase {
 			source: reflect.TypeOf(config.MCPServerConfig{}),
 			views:  []reflect.Type{reflect.TypeOf(ports.MCPServerView{})},
 			ignore: map[string]string{
-				"URL":     "splits into MCPServerView.Endpoint (host-only) at projection; the full URL can carry userinfo/query secrets - settings-screen.md §5",
+				"URL":     "splits into MCPServerView.Endpoint (host-only) at projection; the full URL can carry userinfo/query secrets",
 				"Env":     "projected as EnvNames (env var NAMES only, never values)",
 				"Headers": "projected as HeaderEnvNames (env var NAMES only, never values)",
 			},

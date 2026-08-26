@@ -11,8 +11,8 @@ import (
 )
 
 // secretArgMarkers are the substrings after which an MCP server's Args
-// value is elided before it is ever drawn - settings-screen.md §5's
-// masked-by-default rule.
+// value is elided before it is ever drawn - a secret must be masked by
+// default, never rendered in the clear.
 var secretArgMarkers = []string{"--token=", "--api-key=", "--apikey=", "key=", "password="}
 
 // maskArg elides the value after the first secret marker found in arg,

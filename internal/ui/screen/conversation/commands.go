@@ -176,7 +176,7 @@ func (s Screen) openThemePicker() (app.Screen, tea.Cmd) {
 // deep-linked to one section. Shared by f2 (keys.go's globalAction) and
 // /settings, so both paths open the exact same screen. An unresolved
 // section name is a transcript error, not a silent fall-back to
-// General - settings-screen.md §6.
+// General.
 func (s Screen) openSettingsScreen(section string) (app.Screen, tea.Cmd) {
 	idx, ok := settingsscreen.SectionIndex(section)
 	if !ok {

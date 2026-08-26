@@ -8,7 +8,7 @@ import (
 // TriggerKind names how an automation starts. Only two exist today,
 // deliberately: mivia-ai-sdk/trigger has no kind enum at all (it ships
 // name-keyed condition/action pairs), and this screen is the first
-// caller to scope one. See docs/design/settings-screen.md §12.
+// caller to scope one.
 type TriggerKind int
 
 const (
@@ -18,8 +18,7 @@ const (
 
 // ScheduleKind selects which of mivia-ai-sdk/scheduler's two schedule
 // primitives - or the cross-platform recurring schedule this repo adds
-// in internal/cronschedule (settings-screen.md §14) - an automation
-// uses.
+// in internal/cronschedule - an automation uses.
 type ScheduleKind int
 
 const (
@@ -80,7 +79,7 @@ const (
 // RunFailKind classifies a failed run without echoing the SDK's raw
 // error text: scheduler.JobFailedEvent's Data is an unparsed
 // fmt.Sprintf string with no structure, which is tainted under the
-// same rule MCPFailKind follows. See settings-screen.md §12.5.
+// same rule MCPFailKind follows.
 type RunFailKind int
 
 const (
@@ -113,7 +112,7 @@ type Run struct {
 // Automation is one user-defined automation. mivia-ai-sdk's scheduler
 // has no entity like this at all (scheduler.Job is a bare closure with
 // only a string id) - this type and its store are the domain model this
-// screen defines; see settings-screen.md §12.
+// screen defines.
 type Automation struct {
 	ID          string
 	Name        string

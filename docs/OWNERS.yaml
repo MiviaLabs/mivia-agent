@@ -125,7 +125,7 @@ topics:
   token-usage-ledger:
     path: docs/architecture/token-usage-ledger.md
     owner: architecture
-    description: Token usage ledger design - durable per-event usage recording
+    description: Token usage ledger architecture - durable per-event usage recording, calibration feedback, and known gaps
 
   session-analysis:
     path: docs/architecture/session-analysis.md
@@ -135,7 +135,7 @@ topics:
   workflow-stack-settle:
     path: docs/architecture/workflow-stack-settle.md
     owner: architecture
-    description: Plan for autonomous stack settle - completion sweep, failure propagation, failed_pr_policy knob, lock hygiene
+    description: Known gaps in autonomous stack settle - completion sweep, failure propagation, failed_pr_policy knob, lock hygiene
 
   debug-cut:
     path: docs/development/debug-cut.md

@@ -141,7 +141,7 @@ Start a new run or resume an interrupted run.
 |-----------|------|----------|-------------|
 | `workflow` | string | yes (new run) | Workflow name from `.mivia/workflows/` |
 | `inputs` | object | varies | Key-value map matching the workflow's input contract |
-| `allow_publish` | boolean | no | Allow publishing (default: `false`) |
+| `allow_publish` | boolean | no | Accepted for compatibility; not a gate here. Publishing is a separate `workflow_deliver` step. |
 | `resume` | boolean | no | Resume from durable snapshot (default: `false`) |
 | `run_id` | string | yes (resume) | Existing run ID to resume |
 | `force` | boolean | no | Clear a stale execution claim when resuming |

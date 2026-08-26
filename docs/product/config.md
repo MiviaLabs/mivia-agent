@@ -22,6 +22,10 @@ mivia reads the first existing settings file it finds, in this order:
 2. `./.mivia/mivia.toml` (the project folder).
 3. `~/.mivia/mivia.toml` (your home folder).
 
+When no settings file exists, mivia bootstraps `~/.mivia/mivia.toml`
+automatically on first run. It never auto-creates a project-level
+`./.mivia/mivia.toml` — that file is always an explicit, deliberate choice.
+
 ## Where mivia looks for the API key
 
 API keys live in an env file (`NAME=value` lines) or in the process environment. Search order:
@@ -330,6 +334,16 @@ Every MCP tool description sent to the model states the remote tool name and the
 
 This guards against accidental exposure, not against a determined agent. `run_command` can build a path at runtime and reach the file anyway. With these patterns unset, no paths are filtered.
 
+## Approval mode
+
+`[approvals] default_mode` sets how mivia handles tool-call approval. The
+default is `"always"`: mivia accepts every tool call automatically, with no
+prompt. Set it to `"once"` to prompt for every write or external tool call,
+or `"deny"` to auto-deny every gated tool call. This key controls the TUI
+settings screen's approval choice; the CLI flag and legacy `[approvals]
+policy` key use a separate write-only/auto/always/deny vocabulary for the
+same underlying policies.
+
 ## Allowlists
 
 The `run_command` program allowlist has a built-in default; the child-process environment allowlist does not.
@@ -385,7 +399,7 @@ When the knob is unset and the active budget exceeds `200000`, `mivia doctor` an
 
 Set a positive value (minimum 1024; smaller positive values are a config error) when running small-context models. When a cap is set, `read_file` pre-clamps its own byte budget below it, and the code-navigation tools (`find_references`, `list_symbols`, `go_to_definition`) tighten their JSON budgets to fit.
 
-Rollback: `max_tool_result_bytes = 4000` restores the previous hardcoded interactive-loop ceiling.
+Set it to `4000` to match the fixed ceiling small-context models need.
 
 ## Per-batch tool result budget
 
@@ -443,7 +457,7 @@ When `max_output_bytes` is a positive bound, stdout and stderr capture keeps rou
 
 ## LLM compaction summaries
 
-`[context.summary] enabled` (default `false`) turns on the bounded provider call that summarizes what context compaction dropped. The call uses the session's provider and model. On auto compaction, the validated summary is injected into the next request as a host-authored `context-summary` message. A manual `/compact` requests the same summary: the reply is appended to the live session history as the `context-summary` message, and a bounded form is stored on the durable checkpoint. A session resumed from storage replays the structural history; the stored summary is not re-rendered on load.
+`[context.summary] enabled` (default `true`) turns on the bounded provider call that summarizes what context compaction dropped. The call uses the session's provider and model. On auto compaction, the validated summary is injected into the next request as a host-authored `context-summary` message. A manual `/compact` requests the same summary: the reply is appended to the live session history as the `context-summary` message, and a bounded form is stored on the durable checkpoint. A session resumed from storage replays the structural history; the stored summary is not re-rendered on load.
 
 Two more conditions must hold, or the summary stays off: a configured `[privacy]` redaction policy, and a resolved provider endpoint. A summary the redaction policy refuses is dropped, never sent or stored.
 

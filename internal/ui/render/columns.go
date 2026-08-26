@@ -10,8 +10,7 @@ import (
 // is padded to the widest cell that occupies it across the whole row
 // set, so status/count fields land in the same screen column on every
 // row instead of drifting with each row's own content width (the
-// settings sections' failure mode this replaces - see
-// docs/design/settings-screen.md section 1's aligned layout).
+// settings sections' failure mode this replaces).
 //
 // gap is the number of plain spaces between one column's padded content
 // and the next. Rows may carry a different number of cells (a "ragged"

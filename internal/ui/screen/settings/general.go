@@ -20,8 +20,8 @@ import (
 // applies it in the same key press, matching the plan's "space:
 // toggle" for the common boolean case and extending it uniformly to
 // every row rather than special-casing text input for one field
-// (settings-screen.md §7 keeps KindText for a section that actually
-// needs free text, e.g. Models' base_url in a later slice).
+// (KindText stays reserved for a section that actually needs free
+// text, e.g. Models' base_url in a later slice).
 type generalRow struct {
 	f     field.Model
 	apply func(value string) ports.GeneralEdit
@@ -141,9 +141,8 @@ type generalFailedMsg struct{ message string }
 
 // awaitSave blocks the returned Cmd on handle's channel until it
 // closes, then reports the last event's outcome. A SaveHandle's
-// contract guarantees a terminal Saved or Failed event before close
-// (settings-screen.md §4), so the loop always has a last state to
-// report.
+// contract guarantees a terminal Saved or Failed event before close,
+// so the loop always has a last state to report.
 func awaitSave(handle ports.SaveHandle) tea.Cmd {
 	return func() tea.Msg {
 		var last ports.SaveEvent

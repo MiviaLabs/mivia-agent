@@ -565,9 +565,9 @@ func (s *Screen) SetCommandRunner(r ports.CommandRunner) {
 func (s *Screen) SetSubagentThreads(t ports.SubagentThreads) { s.threads = t }
 
 // SetSettings supplies the /settings screen's dependency knob. Every
-// field of store may itself be nil (settings-screen.md §4); the zero
-// value (the default before this is ever called) still opens the
-// screen with every section reading "unavailable".
+// field of store may itself be nil; the zero value (the default before
+// this is ever called) still opens the screen with every section
+// reading "unavailable".
 func (s *Screen) SetSettings(store ports.Settings) { s.settings = store }
 
 // SetHideComposer toggles visibility of the composer. When true, the

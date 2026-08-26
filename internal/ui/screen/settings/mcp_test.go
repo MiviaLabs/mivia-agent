@@ -353,9 +353,9 @@ func TestUnavailableMCPSectionSaysSo(t *testing.T) {
 	}
 }
 
-// TestMCPRowsAlignColumns pins settings-screen.md section 1's aligned
-// layout: every server row's tool-count column must start at the same
-// screen position regardless of how long its own id or target is.
+// TestMCPRowsAlignColumns pins the settings screen's aligned layout:
+// every server row's tool-count column must start at the same screen
+// position regardless of how long its own id or target is.
 func TestMCPRowsAlignColumns(t *testing.T) {
 	s, _ := newHarnessScreen(t, 120, 30)
 	rows := strings.Split(ansi.Strip(mcpSectionOf(s).View()), "\n")

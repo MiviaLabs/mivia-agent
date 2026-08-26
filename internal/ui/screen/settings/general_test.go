@@ -144,8 +144,8 @@ func TestScrollLinesCyclesThroughThePresetOnly(t *testing.T) {
 }
 
 // TestFailedApplyKeepsTheOldValue: the fake rejects a non-positive
-// scroll-lines value (settings-screen.md §12's "reject non-positive
-// intervals" rule, extended here to General's own numeric field) and
+// scroll-lines value (the "reject non-positive intervals" rule
+// Automations follows, extended here to General's own numeric field) and
 // the read-back value must be unaffected by the rejected write.
 func TestFailedApplyKeepsTheOldValue(t *testing.T) {
 	_, h := newHarnessScreen(t, 100, 30)

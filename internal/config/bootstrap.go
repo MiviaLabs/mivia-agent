@@ -20,7 +20,7 @@ import (
 // explicit `mivia setup` command) and loadFile's silent auto-bootstrap path
 // (LoadOptions.AutoBootstrapUserConfig) both write this exact content, so
 // there is one source of truth for "what a brand-new user's config looks
-// like" - see docs/plans/first-run-onboarding-plan.md section 2.1.
+// like".
 //
 // It intentionally omits an [approvals] section: config.ApprovalsConfig's
 // zero value already resolves to ApprovalPolicyAuto (accept every tool
