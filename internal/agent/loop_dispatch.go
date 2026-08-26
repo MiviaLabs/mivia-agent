@@ -122,9 +122,42 @@ func (l *Loop) writeBackSDKHistory(res sdkagentloop.Result, preLen int) {
 	preLen = min(preLen, len(l.Messages))
 	extras := append([]provider.Message(nil), l.Messages[preLen:]...)
 	if len(res.History) > 0 {
-		l.Messages = restoreSDKHistoryTimestamps(sdkMessagesToCLI(res.History), l.Messages[:preLen])
+		fresh := restoreSDKHistoryTimestamps(sdkMessagesToCLI(res.History), l.Messages[:preLen])
+		l.Messages = stripInjectedSummaryFrames(fresh)
 	}
 	l.Messages = append(l.Messages, extras...)
+}
+
+// stripInjectedSummaryFrames removes every context-summary frame from a
+// converted SDK history before it becomes the loop's carried l.Messages.
+//
+// injectSummary's own contract is that the summary lives only in the
+// ephemeral per-request slice returned from Trim - "It never mutates
+// l.Messages... which must stay structural so planning, idempotency,
+// BaseDigest, and checkpoint bytes are unaffected." The SDK's own contract
+// disagrees: agentloop/run.go treats Trim's return as the run's real carried
+// history (*history = trimmed), so every summary-injected Trim call leaks its
+// frame into res.History. Left unfiltered, writeBackSDKHistory would copy
+// that leaked frame straight into l.Messages, making it a second, permanent
+// copy on top of the one commitContextTurn separately appends (with its Name
+// stripped) for the durable checkpoint - the exact duplication tracked in
+// docs/development/sdk-backend-field-mapping.md §4. Filtering here restores
+// the documented invariant at the one seam that actually violates it, without
+// reaching into the external SDK package.
+//
+// Run AFTER restoreSDKHistoryTimestamps, not before: that function aligns
+// timestamps positionally against the pre-turn prefix, and the leaked frame
+// can sit anywhere in the interior of a multi-step history, not only at the
+// tail - removing it first would shift every later index out of alignment.
+func stripInjectedSummaryFrames(messages []provider.Message) []provider.Message {
+	out := messages[:0]
+	for _, m := range messages {
+		if m.Name == SummaryMessageName {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
 }
 
 // sdkCurrentTurnStart returns the index in `history` of the first

@@ -227,7 +227,6 @@ func TestSummaryInjectionSentRequestCarriesSummary(t *testing.T) {
 // Summarizer, one without - leave loop.Messages, LastPreparation.Messages, the
 // idempotency key, and the committed request bytes identical.
 func TestSummaryInjectionDoesNotTouchDurableState(t *testing.T) {
-	t.Skip("known bug, not a regression: the SDK's Trim return becomes the run's real carried history (agentloop/run.go's *history = trimmed) and gets written back onto l.Messages, so the ephemeral summary injection leaks into durable state - tracked in docs/development/sdk-backend-field-mapping.md §4.")
 	run := func(withSummary bool) (*Loop, contextstate.CommitRequest) {
 		var summarizer *contextmgr.Summarizer
 		if withSummary {
@@ -582,7 +581,7 @@ func (p *stepKeyedCompactingProbe) Discard(contextmgr.Preparation) {}
 // sees the accumulated facts (a repeat of the SAME compaction event would be
 // served from the memo instead).
 func TestSummaryInjectionToolFactsReachLaterRequest(t *testing.T) {
-	t.Skip("known bug, not a regression: the SDK's Trim return becomes the run's real carried history, so the leaked summary frame corrupts later-step evidence tracking - tracked in docs/development/sdk-backend-field-mapping.md §4.")
+	t.Skip("separate, newly-found gap, not the SDK Trim/write-back leak this test was originally skipped for (that part now passes): contextmgr.TurnState.AddChangedSurface has no production caller anywhere outside its own file, so a real tool call never lands in a compaction summary's ChangedSurfaces - the write-class-tool tracking this test exercises does not exist yet. Wiring it requires threading TurnState into the tool-dispatch path, a separate feature-sized change, not a one-line fix.")
 	provider := &capturingSummaryProvider{}
 	summarizer := summaryInjectSummarizer(t, provider)
 	completer := &capturingRequestCompleter{toolStep: true}
@@ -600,7 +599,10 @@ func TestSummaryInjectionToolFactsReachLaterRequest(t *testing.T) {
 		t.Fatalf("provider requests=%d, want two", len(provider.requests))
 	}
 	last := provider.requests[len(provider.requests)-1].Input
-	if !slices.Contains(last.Evidence, "write_file") {
+	// Evidence items are content-free by design (INV-AG-40): a tool result
+	// renders as "tool <name> result (~size)", never the bare tool name, so
+	// this checks for that formatted entry rather than an exact-string match.
+	if !slices.ContainsFunc(last.Evidence, func(item string) bool { return strings.Contains(item, "write_file") }) {
 		t.Fatalf("tool name missing from evidence: %v", last.Evidence)
 	}
 	if !slices.Contains(last.ChangedSurfaces, "write_file") {

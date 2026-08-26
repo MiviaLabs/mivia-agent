@@ -171,25 +171,40 @@ regression from removing legacy) - they were simply never exercised by
 a test that could catch them until the legacy path stopped being an
 option.
 
-- **Summary injection is not ephemeral on the SDK path** — the legacy
-  `injectSummary` builds a request-only clone that never touches
-  `l.Messages`. On the SDK path, `sdkPrepareTrim`'s `Trim` closure
-  (`sdk_prepare.go`) returns the summary-injected slice, and the SDK's
-  own `run.go` (`*history = trimmed`, `agentloop/run.go:142`) adopts
-  that return value AS the run's carried history, which becomes
-  `Result.History` and gets written back onto `l.Messages` wholesale
-  (`runOnceSDK`'s write-back rule, §1's "turn history" row). The
-  injected summary frame leaks into durable history and corrupts
-  later-step evidence tracking that reads from it. Confirmed by
-  `TestSummaryInjectionDoesNotTouchDurableState`,
-  `TestSummaryInjectionToolFactsReachLaterRequest`, and
+- ~~**Summary injection is not ephemeral on the SDK path**~~ — **fixed.**
+  The legacy `injectSummary` builds a request-only clone that never
+  touches `l.Messages`; on the SDK path, `sdkPrepareTrim`'s `Trim`
+  closure (`sdk_prepare.go`) returned the summary-injected slice, and
+  the SDK's own `run.go` (`*history = trimmed`, `agentloop/run.go:142`)
+  adopted that return value AS the run's carried history, which became
+  `Result.History` and got written back onto `l.Messages` wholesale
+  (`runOnceSDK`'s write-back rule, §1's "turn history" row) - the
+  injected summary frame leaked into durable history, and
+  `commitContextTurn` then appended a SECOND copy on top (it assumed
+  the first would have vanished). On a multi-step turn each further
+  step's `Trim` call re-injected on top of the still-leaked prior copy
+  with no dedup, so an N-step post-compaction turn could carry N+1
+  duplicate copies of the same summary text before the turn even ended.
+  Fixed at the two seams that actually needed it, per the fix sketch
+  this section used to carry: `InjectSummaryMessage`
+  (`summary_inject.go`) now drops any message already carrying
+  `SummaryMessageName` before appending the fresh one, making injection
+  idempotent per request instead of accumulating across steps; and
+  `writeBackSDKHistory` (`loop_dispatch.go`) now runs
+  `stripInjectedSummaryFrames` on the converted `res.History` before it
+  becomes `l.Messages`, restoring "the loop itself never writes it into
+  l.Messages" at the one seam the SDK's `Trim` contract violated,
+  without reaching into the external SDK package. Confirmed by
+  `TestSummaryInjectionDoesNotTouchDurableState` and
   `TestSummaryInjectionOneSummarizePerCompactionAcrossSteps`
-  (`internal/agent`, currently skipped pending a fix). Fix sketch: stop
-  routing the ephemeral injection through `Trim` (whose contract is
-  "this becomes the real history"); inject per-request only, mirroring
-  how `newAgentLoopCompleterWithDefaults` already does per-call
-  injection for other fields, or strip the injected frame from
-  `res.History` before write-back.
+  (`internal/agent`), both un-skipped and passing.
+  `TestSummaryInjectionToolFactsReachLaterRequest` stays skipped for a
+  separate, newly-found gap this fix uncovered rather than caused:
+  `contextmgr.TurnState.AddChangedSurface` has no production caller
+  anywhere outside its own file, so a real tool call never lands in a
+  compaction summary's `ChangedSurfaces` - wiring that is a
+  feature-sized change (threading `TurnState` into the tool-dispatch
+  path), tracked separately, not part of this fix.
 - **A steer that fires during a prompt-too-long retry does not resume
   the run afterward** — `runSDKPromptTooLongRecoverable` implements
   the retry as a second, independent `sdkagentloop.New` +

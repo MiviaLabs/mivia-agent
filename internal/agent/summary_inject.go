@@ -278,9 +278,27 @@ func writeSummaryList(b *strings.Builder, label string, items []string) {
 // mid-history insert would invalidate every cached block from the insertion
 // point; see markStablePrefixCacheControl in internal/provider). The caller
 // must never write the result back into loop history.
+// InjectSummaryMessage appends injected as the last message, first dropping
+// any message already carrying SummaryMessageName.
+//
+// The drop makes injection idempotent per call, which matters specifically on
+// the SDK backend: sdkPrepareTrim's Trim closure re-injects on every step of a
+// multi-step turn, and the SDK's own run.go treats each Trim return as the
+// run's real carried history (*history = trimmed) - so without this, a stale
+// summary frame from an earlier step survives into a later step's messages as
+// ordinary content, and this function would append a second, fresher copy
+// beside it rather than replacing it, compounding by one frame per step for
+// the rest of the turn. Injection is a single per-request frame by contract
+// (findSummaryMessage/anyRequestCarriesSummary assume at most one); this
+// keeps that true regardless of what the caller's slice already carries.
 func InjectSummaryMessage(messages []provider.Message, injected provider.Message) []provider.Message {
 	out := make([]provider.Message, 0, len(messages)+1)
-	out = append(out, messages...)
+	for _, m := range messages {
+		if m.Name == SummaryMessageName {
+			continue
+		}
+		out = append(out, m)
+	}
 	return append(out, injected)
 }
 

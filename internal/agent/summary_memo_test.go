@@ -61,7 +61,6 @@ func summaryMessagesPerRequest(t *testing.T, requests []provider.Request) []prov
 // summarizer LLM request and injected freshly re-rendered nondeterministic
 // bytes.
 func TestSummaryInjectionOneSummarizePerCompactionAcrossSteps(t *testing.T) {
-	t.Skip("known bug, not a regression: the SDK's Trim return becomes the run's real carried history, so the leaked summary frame corrupts the memoized-message comparison across steps - tracked in docs/development/sdk-backend-field-mapping.md §4.")
 	summ := &capturingSummaryProvider{}
 	summarizer := summaryInjectSummarizer(t, summ)
 	completer := &nToolStepsCompleter{n: 3}
@@ -90,9 +89,26 @@ func TestSummaryInjectionOneSummarizePerCompactionAcrossSteps(t *testing.T) {
 	if !ok {
 		t.Fatal("InjectedSummary reports no summary after an injected turn")
 	}
-	if !reflect.DeepEqual(committed, injected[0]) {
+	// injected[0] round-tripped through the SDK's message conversion on its
+	// way to the captured wire request; committed did not. That round trip is
+	// the ONLY source of divergence a bare DeepEqual would catch here (a nil
+	// ToolCalls becomes a non-nil empty slice), so both sides are normalized
+	// before comparing rather than asserting on an artifact of the SDK shape
+	// bridge.
+	if !reflect.DeepEqual(normalizeToolCalls(committed), normalizeToolCalls(injected[0])) {
 		t.Fatal("InjectedSummary differs from the injected memoized message")
 	}
+}
+
+// normalizeToolCalls returns a copy of m with a zero-length ToolCalls forced
+// to nil, so a nil-vs-empty-slice artifact of round-tripping a message
+// through the SDK's shape conversion does not fail a DeepEqual comparison
+// that only cares about the message's real content.
+func normalizeToolCalls(m provider.Message) provider.Message {
+	if len(m.ToolCalls) == 0 {
+		m.ToolCalls = nil
+	}
+	return m
 }
 
 // TestSummaryInjectionSecondCompactionResummarizesOnce pins the memo key: a
