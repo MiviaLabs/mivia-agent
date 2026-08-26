@@ -150,6 +150,44 @@ func TestRunToolCallBufferByteCapBoundaryValues(t *testing.T) {
 	}
 }
 
+// TestRunToolCallBufferByteCapPoisonsOrphanedEnd is a RED test for Finding 2
+// of the Part B hostile bug audit: the byte cap drops a step purely on its
+// own marginal size, with no atomicity between a call's start and end. A
+// large "start" can be dropped near the budget ceiling while a later, small
+// "end" for the SAME ToolCallID still fits under the (now higher, post-drop)
+// remaining budget and gets kept — producing a merged summary downstream
+// with a real Output but empty Name/Input and Incomplete=false: a "false
+// completeness" artifact. The fix must poison a ToolCallID once any of its
+// raw events are capped, so a call is always fully present, fully absent, or
+// correctly start-only (never end-only) in the buffer.
+func TestRunToolCallBufferByteCapPoisonsOrphanedEnd(t *testing.T) {
+	b := newRunToolCallBuffer()
+	sink := b.sinkFor("t")
+
+	// Fill to just under the cap so the next (large) step is dropped by the
+	// byte cap.
+	filler := strings.Repeat("x", bufferMaxBytesPerTask-10)
+	sink(subagents.ToolCallStep{ToolCallID: "filler", Input: filler})
+
+	// A large "start" for call "x" is dropped by the byte cap (only 10 bytes
+	// of budget remain).
+	sink(subagents.ToolCallStep{ToolCallID: "x", Kind: "start", Input: strings.Repeat("s", 50)})
+
+	// A small "end" for the SAME call "x" would fit under the cap on its own
+	// marginal size, but must be dropped too now that "x" is poisoned.
+	sink(subagents.ToolCallStep{ToolCallID: "x", Kind: "end", Output: "y"})
+
+	got := b.flush("t")
+	for _, step := range got {
+		if step.ToolCallID == "x" {
+			t.Fatalf("flush(t) contains a step for poisoned call %q: %+v; the orphaned end must be dropped alongside its capped start", "x", step)
+		}
+	}
+	if len(got) != 1 || got[0].ToolCallID != "filler" {
+		t.Fatalf("flush(t) = %+v, want only the filler step", got)
+	}
+}
+
 // TestRunToolCallBufferFlushNilSafe verifies flush is nil-safe.
 func TestRunToolCallBufferFlushNilSafe(t *testing.T) {
 	var b *runToolCallBuffer

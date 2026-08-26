@@ -72,6 +72,15 @@ func contextForTask(ctx context.Context, taskID string) context.Context {
 		})
 	}
 	if ok && info.toolCalls != nil {
+		// Clear any leftover buffered steps for this task before installing
+		// the sink for this dispatch attempt. contextForTask runs fresh on
+		// every attempt including retry redispatches (dag.go's
+		// processResults -> flushRetries -> pool.Run path reuses the same
+		// runID's *runToolCallBuffer, keyed only by taskID), so without this
+		// reset a retried task's discarded prior-attempt steps would bleed
+		// into the final persisted trace (Finding 1, Part B hostile bug
+		// audit). A no-op for a task's first attempt.
+		info.toolCalls.reset(taskID)
 		ctx = subagents.ContextWithToolCallSink(ctx, info.toolCalls.sinkFor(taskID))
 	}
 	return ctx

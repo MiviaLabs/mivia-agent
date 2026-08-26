@@ -37,6 +37,52 @@ func TestContextForTaskInstallsToolCallSink(t *testing.T) {
 	}
 }
 
+// TestContextForTaskResetsToolCallBufferOnRedispatch is a RED test for
+// Finding 1 of the Part B hostile bug audit: runToolCallBuffer is keyed only
+// by taskID and flushed only on the terminal result, so a task's discarded
+// first-attempt tool-call steps must not survive into a retry's redispatch.
+// contextForTask is confirmed (task_context.go, dag.go's retry-requeue path
+// through pool.Run -> Pool.executeOne -> ContextForTask) to run fresh on
+// every dispatch attempt including retries, so it is the right place to
+// clear any leftover buffered steps for that taskID before installing the
+// sink for the new attempt. This simulates: attempt 1 buffers steps (never
+// flushed, because the failed attempt never reaches recordTaskResult), then
+// contextForTask runs again for the retry redispatch and attempt 2 buffers
+// its own steps; the final flush must contain ONLY attempt 2's steps.
+func TestContextForTaskResetsToolCallBufferOnRedispatch(t *testing.T) {
+	tasks := []subagents.Task{{ID: "t1"}}
+	toolCalls := newRunToolCallBuffer()
+	ctx := contextWithRunExec(context.Background(), "run-1", tasks, nil, toolCalls)
+
+	// Attempt 1: contextForTask installs a sink, the attempt emits a step,
+	// then fails without ever calling recordTaskResult/flush (the buffer is
+	// never cleared for a retryable failure — see dag.go processResults).
+	attempt1Ctx := contextForTask(ctx, "t1")
+	sink1, ok := subagents.ToolCallSinkFrom(attempt1Ctx)
+	if !ok {
+		t.Fatal("ToolCallSinkFrom(attempt1Ctx) not ok")
+	}
+	sink1(subagents.ToolCallStep{ToolCallID: "attempt1-call", Name: "attempt1_tool", Kind: "start"})
+
+	// Retry redispatch: contextForTask runs again for the same taskID.
+	attempt2Ctx := contextForTask(ctx, "t1")
+	sink2, ok := subagents.ToolCallSinkFrom(attempt2Ctx)
+	if !ok {
+		t.Fatal("ToolCallSinkFrom(attempt2Ctx) not ok")
+	}
+	sink2(subagents.ToolCallStep{ToolCallID: "attempt2-call", Name: "attempt2_tool", Kind: "start"})
+
+	got := toolCalls.flush("t1")
+	for _, step := range got {
+		if step.ToolCallID == "attempt1-call" {
+			t.Fatalf("flush(t1) contains discarded attempt-1 step %+v; retry must not bleed into the final trace", step)
+		}
+	}
+	if len(got) != 1 || got[0].ToolCallID != "attempt2-call" {
+		t.Fatalf("flush(t1) = %+v, want only attempt2-call", got)
+	}
+}
+
 // TestContextForTaskStampsMailboxAccess verifies that contextForTask stamps
 // the run's shared mailbox access (plan 54, W2c validation): Drain, Interrupt,
 // and Pending hooks are wired to the run mailboxes for the task's ID, and a
