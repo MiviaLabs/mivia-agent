@@ -114,7 +114,7 @@ func (s Screen) applyCommandOutcome(o ports.CommandOutcome) (app.Screen, tea.Cmd
 	case len(o.SessionChoices) > 0:
 		sp := newSessionPicker(s.Theme, s.Tier, o.SessionChoices)
 		s.sessionPicker = &sp
-		return s, tea.ClearScreen
+		return s, tea.Batch(tea.ClearScreen, sessionPickerTickCmd())
 	case len(o.EffortChoices) > 0:
 		ep := picker.New(s.Theme, s.Tier, o.EffortChoices)
 		s.effortPicker = &ep

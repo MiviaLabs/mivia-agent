@@ -122,6 +122,12 @@ type CommandRunner interface {
 	// SelectEffort applies a reasoning effort choice returned by an EffortChoices
 	// picker and reports a CommandOutcome, typically a confirmation Notice.
 	SelectEffort(ctx context.Context, level string) CommandOutcome
+
+	// SessionActive reports whether the session with the given ID
+	// currently has a turn in flight. It is a cheap, in-memory check (no
+	// DB access) the open /resume picker polls to keep its status dots
+	// live without re-fetching the session list.
+	SessionActive(id string) bool
 }
 
 // DefaultAgentName is the session's default agent: Mivia, the general

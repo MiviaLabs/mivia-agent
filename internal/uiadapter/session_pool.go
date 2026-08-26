@@ -248,6 +248,11 @@ func (p *SessionPool) GetOrCreate(sessionID string) (ports.Conversation, error) 
 		return nil, err
 	}
 	cliagents.RefreshSummarizerAfterModelSwitch(sess, p.res)
+	// Same reasoning as the summarizer refresh above: enableSessionContext
+	// seeded token-estimate calibration once, before Load published this
+	// session's real saved binding. See RefreshCalibrationAfterModelSwitch's
+	// doc comment for what a stale seed does to the context gauge.
+	sess.RefreshCalibrationAfterModelSwitch(context.Background())
 
 	conv := NewConversation(sess)
 	p.sessions[sessionID] = sess

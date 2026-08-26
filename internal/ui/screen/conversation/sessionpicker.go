@@ -60,6 +60,45 @@ func (sp sessionPicker) Selected() (ports.SessionSummary, bool) {
 	return vis[sp.cursor], true
 }
 
+// sessionPickerTickMsg drives the /resume picker's live-refresh loop:
+// while the dialog stays open, each tick re-derives Active/State from
+// the session pool so a background session's status dot moves without
+// the user closing and reopening the picker.
+type sessionPickerTickMsg struct{}
+
+// sessionPickerTickCmd returns the one-shot Cmd for the next refresh
+// tick. The screen re-arms it after every tick it handles (see
+// conversation.go's sessionPickerTickMsg case) and lets it lapse once
+// the picker closes, the same self-terminating shape as
+// statusline.tickCmd.
+func sessionPickerTickCmd() tea.Cmd {
+	return tea.Tick(uikitconfig.SessionPickerRefreshInterval, func(time.Time) tea.Msg { return sessionPickerTickMsg{} })
+}
+
+// refresh re-derives Active/State for every row from active, a cheap
+// per-session liveness check (SessionPool.IsActive via
+// CommandRunner.SessionActive - a map lookup and an atomic load, no
+// I/O). It never re-queries the session store: Title, Turns,
+// ContextTokens, and IsCurrent are a snapshot from when the picker
+// opened and stay as they were. A nil active (a runner that predates
+// SessionActive) is a no-op rather than a panic.
+func (sp sessionPicker) refresh(active func(id string) bool) sessionPicker {
+	if active == nil {
+		return sp
+	}
+	sessions := make([]ports.SessionSummary, len(sp.sessions))
+	for i, s := range sp.sessions {
+		s.Active = active(s.ID)
+		s.State = "done"
+		if s.Active {
+			s.State = "running"
+		}
+		sessions[i] = s
+	}
+	sp.sessions = sessions
+	return sp
+}
+
 func (sp sessionPicker) Update(msg tea.Msg) (sessionPicker, tea.Cmd) {
 	switch msg := msg.(type) {
 	case mark.TickMsg:

@@ -1,6 +1,7 @@
 package conversation
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -284,6 +285,62 @@ func TestSessionPickerShowsTurnCountAndContextSize(t *testing.T) {
 	}
 	if !strings.Contains(plain, "41k ctx") {
 		t.Errorf("missing context size in view:\n%s", plain)
+	}
+}
+
+// TestSessionPickerRefresh_UpdatesActiveAndStateFromLiveCheck pins the
+// live-refresh contract: refresh re-derives Active/State per row from
+// the supplied liveness check, keyed by session ID, and touches nothing
+// else on the row (Title/Turns/ContextTokens/IsCurrent are a snapshot
+// from when the picker opened, not re-queried on every tick).
+func TestSessionPickerRefresh_UpdatesActiveAndStateFromLiveCheck(t *testing.T) {
+	th := loadTheme(t)
+	sessions := []ports.SessionSummary{
+		{ID: "s-1", Title: "Was idle, now running", Active: false, State: "done", Turns: 3},
+		{ID: "s-2", Title: "Was running, now idle", Active: true, State: "running", Turns: 7},
+	}
+	sp := newSessionPicker(th, theme.TierASCII, sessions)
+
+	live := map[string]bool{"s-1": true, "s-2": false}
+	sp = sp.refresh(func(id string) bool { return live[id] })
+
+	if !sp.sessions[0].Active || sp.sessions[0].State != "running" {
+		t.Errorf("s-1 = %+v, want Active=true State=running", sp.sessions[0])
+	}
+	if sp.sessions[0].Title != "Was idle, now running" || sp.sessions[0].Turns != 3 {
+		t.Errorf("s-1 unrelated fields changed: %+v", sp.sessions[0])
+	}
+	if sp.sessions[1].Active || sp.sessions[1].State != "done" {
+		t.Errorf("s-2 = %+v, want Active=false State=done", sp.sessions[1])
+	}
+}
+
+// TestSessionPickerRefresh_NilActiveCheckIsNoOp guards the defensive nil
+// check: a picker refreshed with no liveness function (e.g. a runner
+// that predates SessionActive) must return its rows unchanged rather
+// than panic.
+func TestSessionPickerRefresh_NilActiveCheckIsNoOp(t *testing.T) {
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	th := loadTheme(t)
+	sp := newSessionPicker(th, theme.TierASCII, sampleSessions(now))
+
+	got := sp.refresh(nil)
+	if !reflect.DeepEqual(got.sessions, sp.sessions) {
+		t.Errorf("refresh(nil) changed sessions: got %+v, want unchanged %+v", got.sessions, sp.sessions)
+	}
+}
+
+// TestSessionPickerTickCmd_EmitsSessionPickerTickMsg pins the tick
+// primitive itself: it must fire a sessionPickerTickMsg, the type the
+// screen's Update loop keys the live-refresh case on.
+func TestSessionPickerTickCmd_EmitsSessionPickerTickMsg(t *testing.T) {
+	cmd := sessionPickerTickCmd()
+	if cmd == nil {
+		t.Fatal("sessionPickerTickCmd returned a nil Cmd")
+	}
+	msg := cmd()
+	if _, ok := msg.(sessionPickerTickMsg); !ok {
+		t.Errorf("got %T, want sessionPickerTickMsg", msg)
 	}
 }
 

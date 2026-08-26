@@ -578,6 +578,14 @@ func (r *CommandRunner) handleResume(args string) ports.CommandOutcome {
 	return ports.CommandOutcome{SessionChoices: summaries}
 }
 
+// SessionActive reports whether a pooled session currently has a turn
+// in flight: a map lookup and an atomic load, no I/O. It is safe to
+// call on every /resume picker refresh tick, unlike listSessionSummaries
+// which re-queries the session store.
+func (r *CommandRunner) SessionActive(id string) bool {
+	return r.pool != nil && r.pool.IsActive(id)
+}
+
 func (r *CommandRunner) listSessionSummaries() ([]ports.SessionSummary, error) {
 	sess := r.activeSession()
 	if sess == nil {
@@ -598,7 +606,7 @@ func (r *CommandRunner) listSessionSummaries() ([]ports.SessionSummary, error) {
 		if title == "" {
 			title = info.Name
 		}
-		active := r.pool != nil && r.pool.IsActive(id)
+		active := r.SessionActive(id)
 		state := "done"
 		if active {
 			state = "running"
@@ -618,7 +626,7 @@ func (r *CommandRunner) listSessionSummaries() ([]ports.SessionSummary, error) {
 }
 
 // SelectSession loads and resumes a saved session.
-func (r *CommandRunner) SelectSession(_ context.Context, id string) ports.CommandOutcome {
+func (r *CommandRunner) SelectSession(ctx context.Context, id string) ports.CommandOutcome {
 	if r.activeSession() == nil && r.res == nil {
 		return ports.CommandOutcome{Err: "no active session"}
 	}
@@ -646,6 +654,14 @@ func (r *CommandRunner) SelectSession(_ context.Context, id string) ports.Comman
 	if err := sess.Load(id); err != nil {
 		return ports.CommandOutcome{Err: fmt.Sprintf("failed to resume session %q: %v", id, err)}
 	}
+	// This fallback (no session pool) reuses the active Session object across
+	// resumes rather than building a fresh one, so both the summarizer and the
+	// token-estimate calibration are still bound to whatever session Load just
+	// replaced - the same staleness session_pool.go's own resume path guards
+	// against. See chat.Session.RefreshCalibrationAfterModelSwitch's doc
+	// comment for what a stale calibration seed does to the context gauge.
+	cliagents.RefreshSummarizerAfterModelSwitch(sess, r.res)
+	sess.RefreshCalibrationAfterModelSwitch(ctx)
 	r.SetActiveSession(sess)
 	return ports.CommandOutcome{
 		Conversation:    NewConversation(sess),

@@ -12,6 +12,9 @@ func TestDefaults(t *testing.T) {
 	if SpinnerFPS <= 0 {
 		t.Errorf("SpinnerFPS must be positive, got %d", SpinnerFPS)
 	}
+	if SessionPickerRefreshInterval <= 0 {
+		t.Errorf("SessionPickerRefreshInterval must be positive, got %v", SessionPickerRefreshInterval)
+	}
 	if MaxTranscriptLines <= 0 {
 		t.Errorf("MaxTranscriptLines must be positive, got %d", MaxTranscriptLines)
 	}

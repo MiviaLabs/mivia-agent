@@ -59,6 +59,7 @@ type fakeRunner struct {
 	selectOutcome ports.CommandOutcome
 	calls         []string
 	selectCalls   []string
+	activeIDs     map[string]bool
 }
 
 func (f *fakeRunner) Run(_ context.Context, name, args string) ports.CommandOutcome {
@@ -84,6 +85,10 @@ func (f *fakeRunner) SelectSession(_ context.Context, id string) ports.CommandOu
 func (f *fakeRunner) SelectEffort(_ context.Context, level string) ports.CommandOutcome {
 	f.selectCalls = append(f.selectCalls, "effort:"+level)
 	return f.selectOutcome
+}
+
+func (f *fakeRunner) SessionActive(id string) bool {
+	return f.activeIDs[id]
 }
 
 // sendLine types text into the composer and presses Enter once. Every
@@ -619,6 +624,100 @@ func TestSessionPickerSelectionAppliesThroughTheRunner(t *testing.T) {
 	}
 	if got := lastErrorDetail(t, s); !strings.Contains(got, "resumed session: Refactor Storage Engine") {
 		t.Errorf("notice detail %q, want the SelectSession outcome's Notice", got)
+	}
+}
+
+// TestResumeCommandStartsLiveRefreshTick pins the fix for the /resume
+// status dots going stale while the dialog stays open: opening the
+// picker must also arm the refresh tick, not just draw a one-shot
+// snapshot.
+func TestResumeCommandStartsLiveRefreshTick(t *testing.T) {
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	runner := &fakeRunner{outcome: ports.CommandOutcome{SessionChoices: sampleSessions(now)}}
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	s.SetCommandRunner(runner)
+	s.width, s.height = 60, 24
+	_, cmd := sendLine(t, s, "/resume")
+
+	if cmd == nil {
+		t.Fatal("expected a non-nil Cmd opening the session picker")
+	}
+	msg := cmd()
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("got %T, want tea.BatchMsg carrying the refresh tick", msg)
+	}
+	sawTick := false
+	for _, c := range batch {
+		if c == nil {
+			continue
+		}
+		if _, ok := c().(sessionPickerTickMsg); ok {
+			sawTick = true
+		}
+	}
+	if !sawTick {
+		t.Error("opening /resume did not arm the live-refresh tick")
+	}
+}
+
+// TestSessionPickerTick_RefreshesActiveStateAndReArms drives the tick
+// case in the screen's Update loop directly: it must re-derive each
+// row's Active/State from the runner's SessionActive and return a Cmd
+// that re-arms the next tick, so a background session's dot moves
+// while the dialog stays open.
+func TestSessionPickerTick_RefreshesActiveStateAndReArms(t *testing.T) {
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	runner := &fakeRunner{
+		outcome:   ports.CommandOutcome{SessionChoices: sampleSessions(now)},
+		activeIDs: map[string]bool{"s-2": true},
+	}
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	s.SetCommandRunner(runner)
+	s.width, s.height = 60, 24
+	s, _ = sendLine(t, s, "/resume")
+	if s.sessionPicker == nil {
+		t.Fatal("/resume did not open the session picker")
+	}
+
+	next, cmd := s.Update(sessionPickerTickMsg{})
+	s = next.(Screen)
+	if s.sessionPicker == nil {
+		t.Fatal("tick unexpectedly closed the session picker")
+	}
+	if cmd == nil {
+		t.Fatal("expected the tick to re-arm itself")
+	}
+	if _, ok := cmd().(sessionPickerTickMsg); !ok {
+		t.Errorf("re-armed cmd yields %T, want sessionPickerTickMsg", cmd())
+	}
+
+	var got ports.SessionSummary
+	for _, row := range s.sessionPicker.sessions {
+		if row.ID == "s-2" {
+			got = row
+		}
+	}
+	if !got.Active || got.State != "running" {
+		t.Errorf("s-2 after tick = %+v, want Active=true State=running (fakeRunner reports it active)", got)
+	}
+}
+
+// TestSessionPickerTick_NoOpAfterPickerCloses guards the loop's
+// termination: once the picker has closed (sessionPicker == nil), a
+// stray in-flight tick must not panic and must not re-arm another one.
+func TestSessionPickerTick_NoOpAfterPickerCloses(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	s.SetCommandRunner(&fakeRunner{})
+	s.width, s.height = 60, 24
+
+	next, cmd := s.Update(sessionPickerTickMsg{})
+	s = next.(Screen)
+	if s.sessionPicker != nil {
+		t.Error("tick with no picker open created one")
+	}
+	if cmd != nil {
+		t.Error("tick with no picker open should not re-arm")
 	}
 }
 

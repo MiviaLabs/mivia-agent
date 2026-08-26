@@ -371,6 +371,16 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 		// one is cached) gets its own copy.
 		s.forwardSharedMsg(msg)
 		return s, cmd
+	case sessionPickerTickMsg:
+		// A stray in-flight tick after the picker closed (or with no
+		// runner to ask) is a silent no-op: returning a nil Cmd lets the
+		// self-re-arming loop lapse instead of ticking forever.
+		if s.sessionPicker == nil || s.runner == nil {
+			return s, nil
+		}
+		next := s.sessionPicker.refresh(s.runner.SessionActive)
+		s.sessionPicker = &next
+		return s, sessionPickerTickCmd()
 	case transcript.FlushMsg:
 		next, cmd := s.transcript.Update(msg)
 		s.transcript = next

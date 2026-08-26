@@ -336,6 +336,22 @@ func setupSessionStoreFixture(t *testing.T) (*chat.Session, *config.Resolved, *s
 // session as Active ("LIVE" regardless of whether anything is running),
 // and must still mark it as IsCurrent so the picker can distinguish "this
 // is where you are" from "this session has a turn running".
+// TestCommandRunner_SessionActive proves the method the /resume picker's
+// live-refresh loop polls: cheap, per-session, backed directly by the
+// pool - no DB access, no dependency on listSessionSummaries.
+func TestCommandRunner_SessionActive(t *testing.T) {
+	sess, res, _, cleanup := setupSessionStoreFixture(t)
+	defer cleanup()
+	runner := uiadapter.NewCommandRunner(sess, res, nil)
+
+	if runner.SessionActive(sess.SessionID) {
+		t.Error("SessionActive=true with no turn in flight")
+	}
+	if runner.SessionActive("never-loaded") {
+		t.Error("SessionActive=true for an ID the pool never loaded")
+	}
+}
+
 func TestCommandRunner_ResumeSession_ReflectsRealActivity(t *testing.T) {
 	sess, res, _, cleanup := setupSessionStoreFixture(t)
 	defer cleanup()

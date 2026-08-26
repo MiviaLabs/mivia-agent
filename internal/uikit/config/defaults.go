@@ -12,6 +12,12 @@ const TextDeltaFlushInterval = 40 * time.Millisecond
 // SpinnerFPS bounds the activity-indicator repaint rate.
 const SpinnerFPS = 10
 
+// SessionPickerRefreshInterval is how often an open /resume dialog
+// re-derives each row's Active/State from the session pool (a cheap
+// in-memory check, no DB access), so a background session's status dot
+// moves without the user closing and reopening the picker.
+const SessionPickerRefreshInterval = 750 * time.Millisecond
+
 // MaxTranscriptLines bounds the in-model view window; full history stays
 // in the session, only this many lines are held for repaint.
 const MaxTranscriptLines = 2000
