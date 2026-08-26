@@ -30,6 +30,9 @@ type modelTaskResult struct {
 	ErrorRef    string `json:"error_ref,omitempty"`
 	// Messages are synopsis-only findings/questions posted during the task.
 	Messages []messageSynopsis `json:"messages,omitempty"`
+	// ToolCalls are bounded, pre-merged tool-call summaries; see
+	// loadToolCallSummaries in dispatch_encode.go (same package, shared type).
+	ToolCalls []toolCallSummary `json:"tool_calls,omitempty"`
 }
 
 // ModelTaskResults returns live orchestration results for model consumption.
@@ -87,6 +90,7 @@ func ModelTaskResultsWithRepo(repo ledger.LedgerRepository, tasks []ledger.TaskS
 			}
 		}
 		out[i].Messages = msgIndex[result.TaskID]
+		out[i].ToolCalls = loadToolCallSummaries(context.Background(), repo, toolCallsRefFor(tasks, result.TaskID))
 	}
 	return out
 }
@@ -142,6 +146,7 @@ func RunTaskResultsWithRepo(repo ledger.LedgerRepository, result *coordinator.Ru
 			msgIndex := TaskMessageIndex(context.Background(), repo, result.Snapshot.Tasks)
 			for i := range out {
 				out[i].Messages = msgIndex[out[i].TaskID]
+				out[i].ToolCalls = loadToolCallSummaries(context.Background(), repo, toolCallsRefFor(result.Snapshot.Tasks, out[i].TaskID))
 			}
 		}
 		return out

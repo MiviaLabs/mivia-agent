@@ -149,6 +149,91 @@ func TestRunTaskResultsWithRepoAttachesMessages(t *testing.T) {
 	}
 }
 
+// TestRunTaskResultsWithRepoMergesToolCallsByID mirrors
+// TestEncodeResultsMergesToolCallsByID against the OTHER (default, wait=none)
+// result producer: modelTaskResult via RunTaskResultsWithRepo's live-results
+// branch (ModelTaskResultsWithRepo). Both producers must independently merge
+// by ToolCallID (not Name) and mark only the call missing its "end" event
+// Incomplete.
+func TestRunTaskResultsWithRepoMergesToolCallsByID(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	steps := []subagents.ToolCallStep{
+		{ToolCallID: "call-1", Name: "read_file", Kind: "start", Input: "path=a.go"},
+		{ToolCallID: "call-2", Name: "read_file", Kind: "start", Input: "path=b.go"},
+		{ToolCallID: "call-1", Name: "read_file", Kind: "end", Output: "contents-of-a"},
+		{ToolCallID: "call-2", Name: "read_file", Kind: "end", Output: "contents-of-b"},
+		{ToolCallID: "call-3", Name: "run_command", Kind: "start", Input: "ls"},
+	}
+	ref := storeToolCallSteps(t, repo, steps)
+	result := &coordinator.RunResult{
+		Snapshot: ledger.RunSnapshot{RunID: "r1", Tasks: []ledger.TaskSnapshot{
+			{RunID: "r1", TaskID: "t1", Status: "completed", ToolCallsRef: ref},
+		}},
+		Results: []subagents.Result{{TaskID: "t1", Status: "completed"}},
+	}
+
+	got := RunTaskResultsWithRepo(repo, result, 4096)
+	if len(got) != 1 {
+		t.Fatalf("got len = %d, want 1", len(got))
+	}
+	calls := got[0].ToolCalls
+	if len(calls) != 3 {
+		t.Fatalf("tool_calls len = %d, want 3: %+v", len(calls), calls)
+	}
+	byID := map[string]toolCallSummary{}
+	for _, c := range calls {
+		byID[c.ToolCallID] = c
+	}
+	c1, c2, c3 := byID["call-1"], byID["call-2"], byID["call-3"]
+	if c1.Input != "path=a.go" || c1.Output != "contents-of-a" || c1.Incomplete {
+		t.Fatalf("call-1 = %+v", c1)
+	}
+	if c2.Input != "path=b.go" || c2.Output != "contents-of-b" || c2.Incomplete {
+		t.Fatalf("call-2 = %+v", c2)
+	}
+	if !c3.Incomplete || c3.Output != "" {
+		t.Fatalf("call-3 = %+v, want Incomplete=true Output=\"\"", c3)
+	}
+}
+
+// TestRunTaskResultsWithRepoCapsToolCallsToCompletePairs mirrors
+// TestEncodeResultsCapsToolCallsToCompletePairs against modelTaskResult:
+// merge strictly precedes the envelopeMaxToolCallPairs cap, so 25 complete
+// calls yield exactly 20 rows, all complete.
+func TestRunTaskResultsWithRepoCapsToolCallsToCompletePairs(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	var steps []subagents.ToolCallStep
+	const totalCalls = 25
+	for i := 0; i < totalCalls; i++ {
+		id := "call-" + time.Now().Add(time.Duration(i)*time.Nanosecond).Format("150405.000000000") + "-" + string(rune('a'+i%26))
+		steps = append(steps,
+			subagents.ToolCallStep{ToolCallID: id, Name: "tool", Kind: "start", Input: "in"},
+			subagents.ToolCallStep{ToolCallID: id, Name: "tool", Kind: "end", Output: "out"},
+		)
+	}
+	ref := storeToolCallSteps(t, repo, steps)
+	result := &coordinator.RunResult{
+		Snapshot: ledger.RunSnapshot{RunID: "r1", Tasks: []ledger.TaskSnapshot{
+			{RunID: "r1", TaskID: "t1", Status: "completed", ToolCallsRef: ref},
+		}},
+		Results: []subagents.Result{{TaskID: "t1", Status: "completed"}},
+	}
+
+	got := RunTaskResultsWithRepo(repo, result, 4096)
+	if len(got) != 1 {
+		t.Fatalf("got len = %d, want 1", len(got))
+	}
+	calls := got[0].ToolCalls
+	if len(calls) != envelopeMaxToolCallPairs {
+		t.Fatalf("tool_calls len = %d, want %d", len(calls), envelopeMaxToolCallPairs)
+	}
+	for _, c := range calls {
+		if c.Incomplete {
+			t.Fatalf("call %+v is Incomplete, want all-complete", c)
+		}
+	}
+}
+
 func TestJoinRunTool_RecoveredRunUsesPersistedTaskResults(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	const runID = "cli-recovered-run"
