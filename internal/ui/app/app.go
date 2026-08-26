@@ -115,6 +115,10 @@ type Model struct {
 	Height int
 
 	stack []Screen
+
+	// sel is the mouse drag-select state (mouse_select.go). It only
+	// does anything while Opts.Mouse is true - see updateMouseSelect.
+	sel selection
 }
 
 // New returns a router with base as the only (non-poppable) screen.
@@ -172,6 +176,16 @@ func isInputMsg(msg tea.Msg) bool {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.Opts.Mouse {
+		// Drag-select intercepts motion and a drag's release outright;
+		// an ordinary click and its release, and any non-mouse Msg,
+		// fall through unchanged (handled=false) to the switch below.
+		next, cmd, handled := m.updateMouseSelect(msg)
+		if handled {
+			return next, cmd
+		}
+		m = next
+	}
 	switch msg := msg.(type) {
 	case PushScreenMsg:
 		sc := msg.Screen
@@ -208,6 +222,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// it - and still ask to close itself by returning PopScreenMsg.
 	case tea.WindowSizeMsg:
 		m.Width, m.Height = msg.Width, msg.Height
+		// A resize invalidates the frame the selection's coordinates were
+		// measured against.
+		m.sel = selection{}
 	}
 
 	if isInputMsg(msg) {
@@ -314,7 +331,11 @@ func (m Model) View() tea.View {
 	if !ok {
 		return tea.NewView("")
 	}
-	v := tea.NewView(top.View())
+	content := top.View()
+	if m.Opts.Mouse && m.sel.dragging {
+		content = highlightSelection(content, m.sel.anchorX, m.sel.anchorY, m.sel.curX, m.sel.curY)
+	}
+	v := tea.NewView(content)
 	flags := top.ViewFlags()
 	v.AltScreen = flags.AltScreen
 	if flags.AltScreen && m.Opts.Mouse {
