@@ -365,6 +365,71 @@ func TestPopulateFromToolCalls_DispatchTasksWrappedEnvelope(t *testing.T) {
 	}
 }
 
+// TestPopulateFromToolCalls_DispatchTasksToolCallsReconstructed guards the
+// Part B wiring: dispatch_tasks result envelopes now carry a pre-merged,
+// one-row-per-call "tool_calls" array (cliorchestrate's loadToolCallSummaries,
+// chunk 5) alongside the usual "output". Reconstruction must attach those
+// rows onto the SAME output message's ToolCalls slice (matching the shape
+// subagent.go's KindToolStart/KindToolEnd build for a live session), leaving
+// the message's Text (from resultText/synopsis) untouched. A call marked
+// "incomplete" (a genuinely unfinished tool call, never a cap artifact per
+// chunk 5) must reconstruct with an empty Output - not be dropped or
+// special-cased.
+func TestPopulateFromToolCalls_DispatchTasksToolCallsReconstructed(t *testing.T) {
+	threads := uiadapter.NewSubagentThreads()
+	msgs := []ports.Message{
+		{
+			Role: "assistant",
+			At:   time.Now(),
+			ToolCalls: []ports.ToolCall{
+				{
+					ID:        "call_dispatch_tc",
+					Name:      "dispatch_tasks",
+					Arguments: `{"tasks":[{"id":"task-tc","prompt":"grep and read","agent":"researcher"}]}`,
+					Output: `[{"task_id":"task-tc","status":"completed","output":"done grepping","tool_calls":[` +
+						`{"tool_call_id":"tc1","name":"grep","input":"{\"pattern\":\"foo\"}","output":"3 matches"},` +
+						`{"tool_call_id":"tc2","name":"read","input":"{\"path\":\"a.go\"}","output":"file contents"},` +
+						`{"tool_call_id":"tc3","name":"bash","input":"{\"cmd\":\"go build\"}","incomplete":true}` +
+						`]}]`,
+				},
+			},
+		},
+	}
+
+	uiadapter.PopulateFromToolCalls(threads, msgs)
+
+	conv, ok := threads.Thread("task-tc")
+	if !ok || conv == nil {
+		t.Fatalf("expected thread for task-tc")
+	}
+	hist := conv.History()
+	if len(hist) != 2 {
+		t.Fatalf("expected 2 history messages (prompt + output), got %d: %+v", len(hist), hist)
+	}
+	if hist[0].Text != "grep and read" {
+		t.Errorf("prompt mismatch: got %q", hist[0].Text)
+	}
+	out := hist[1]
+	if out.Text != "done grepping" {
+		t.Errorf("output text mismatch: got %q, want %q (must be unchanged by tool_calls presence)", out.Text, "done grepping")
+	}
+	if len(out.ToolCalls) != 3 {
+		t.Fatalf("expected 3 reconstructed tool calls, got %d: %+v", len(out.ToolCalls), out.ToolCalls)
+	}
+
+	want := []ports.ToolCall{
+		{ID: "tc1", Name: "grep", Arguments: `{"pattern":"foo"}`, Output: "3 matches"},
+		{ID: "tc2", Name: "read", Arguments: `{"path":"a.go"}`, Output: "file contents"},
+		{ID: "tc3", Name: "bash", Arguments: `{"cmd":"go build"}`, Output: ""},
+	}
+	for i, w := range want {
+		got := out.ToolCalls[i]
+		if got.ID != w.ID || got.Name != w.Name || got.Arguments != w.Arguments || got.Output != w.Output {
+			t.Errorf("tool call %d mismatch: got %+v, want %+v", i, got, w)
+		}
+	}
+}
+
 // TestPopulateFromToolCalls_DispatchTasksByReferenceOutput guards
 // dispatch_tasks' output-by-reference result shape
 // (internal/cliorchestrate/dispatch_encode.go's setOutputFields): once a

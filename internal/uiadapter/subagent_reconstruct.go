@@ -107,13 +107,29 @@ type parsedDispatchTask struct {
 // exactly the common case for a substantial subagent answer - and rendered
 // the dispatched prompt with nothing after it.
 type encodedTaskResult struct {
-	TaskID    string          `json:"task_id"`
-	Status    string          `json:"status"`
-	Output    json.RawMessage `json:"output"`
-	Synopsis  string          `json:"synopsis"`
-	OutputRef string          `json:"output_ref"`
-	Error     string          `json:"error"`
-	Agent     string          `json:"agent"`
+	TaskID    string            `json:"task_id"`
+	Status    string            `json:"status"`
+	Output    json.RawMessage   `json:"output"`
+	Synopsis  string            `json:"synopsis"`
+	OutputRef string            `json:"output_ref"`
+	Error     string            `json:"error"`
+	Agent     string            `json:"agent"`
+	ToolCalls []toolCallSummary `json:"tool_calls"`
+}
+
+// toolCallSummary mirrors cliorchestrate's wire shape exactly (JSON tags
+// must match byte-for-byte since one produces this JSON, the other decodes
+// it back out of persisted chat history). Already merged one-row-per-call
+// upstream (see cliorchestrate's loadToolCallSummaries) - Incomplete is
+// true only for a genuinely unfinished call, never an envelope-cap
+// artifact, so this package can trust it directly with no further pairing
+// logic.
+type toolCallSummary struct {
+	ToolCallID string `json:"tool_call_id"`
+	Name       string `json:"name"`
+	Input      string `json:"input,omitempty"`
+	Output     string `json:"output,omitempty"`
+	Incomplete bool   `json:"incomplete,omitempty"`
 }
 
 // stringifyTaskOutput renders one task's raw Output field as display text.
@@ -209,6 +225,29 @@ func matchTaskOutputs(results []encodedTaskResult, tasks []parsedDispatchTask, r
 	return out
 }
 
+// matchTaskToolCalls pairs each dispatched task with its already-merged
+// tool-call summaries (see toolCallSummary), by task ID first and falling
+// back to positional matching when IDs are absent but the counts agree -
+// mirroring matchTaskOutputs' own pairing rules exactly so a task's output
+// text and its tool calls always come from the same result row.
+func matchTaskToolCalls(results []encodedTaskResult, tasks []parsedDispatchTask) [][]toolCallSummary {
+	byID := make(map[string][]toolCallSummary, len(results))
+	for _, r := range results {
+		if r.TaskID != "" {
+			byID[r.TaskID] = r.ToolCalls
+		}
+	}
+	out := make([][]toolCallSummary, len(tasks))
+	for i, task := range tasks {
+		calls, ok := byID[task.ID]
+		if !ok && len(results) == len(tasks) {
+			calls = results[i].ToolCalls
+		}
+		out[i] = calls
+	}
+	return out
+}
+
 func populateDispatchTasks(threads *SubagentThreads, tc ports.ToolCall, at time.Time) {
 	var args struct {
 		Tasks []parsedDispatchTask `json:"tasks"`
@@ -229,8 +268,9 @@ func populateDispatchTasks(threads *SubagentThreads, tc ports.ToolCall, at time.
 	}
 
 	outputs := matchTaskOutputs(results, args.Tasks, tc.Output)
+	toolCalls := matchTaskToolCalls(results, args.Tasks)
 	for i, task := range args.Tasks {
-		registerDispatchedTask(threads, tc.ID, i, task, outputs[i], at)
+		registerDispatchedTask(threads, tc.ID, i, task, outputs[i], toolCalls[i], at)
 	}
 
 	if len(args.Tasks) == 0 {
@@ -238,7 +278,7 @@ func populateDispatchTasks(threads *SubagentThreads, tc ports.ToolCall, at time.
 	}
 }
 
-func registerDispatchedTask(threads *SubagentThreads, callID string, idx int, task parsedDispatchTask, outputText string, at time.Time) {
+func registerDispatchedTask(threads *SubagentThreads, callID string, idx int, task parsedDispatchTask, outputText string, toolCalls []toolCallSummary, at time.Time) {
 	taskID := task.ID
 	if taskID == "" {
 		taskID = fmt.Sprintf("%s-%d", callID, idx+1)
@@ -259,8 +299,20 @@ func registerDispatchedTask(threads *SubagentThreads, callID string, idx int, ta
 	if prompt != "" {
 		history = append(history, ports.Message{Role: "user", Text: prompt, At: at})
 	}
-	if outputText != "" {
-		history = append(history, ports.Message{Role: "assistant", Text: outputText, At: at})
+	if outputText != "" || len(toolCalls) > 0 {
+		msg := ports.Message{Role: "assistant", Text: outputText, At: at}
+		if len(toolCalls) > 0 {
+			msg.ToolCalls = make([]ports.ToolCall, len(toolCalls))
+			for i, s := range toolCalls {
+				msg.ToolCalls[i] = ports.ToolCall{
+					ID:        s.ToolCallID,
+					Name:      s.Name,
+					Arguments: s.Input,
+					Output:    s.Output,
+				}
+			}
+		}
+		history = append(history, msg)
 	}
 
 	conv := NewSubagentTranscriptConversation(agentName, ports.ModelInfo{Name: agentName}, history)
