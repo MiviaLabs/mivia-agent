@@ -259,50 +259,117 @@ func TestAnthropicChatTurnToolUse(t *testing.T) {
 // A thinking block round-trips as raw JSON in ReasoningContent (the
 // signature-preservation strategy for the open question in the design doc),
 // and replays byte-identical on the next turn's outbound translation.
-func TestAnthropicThinkingBlockRoundTrips(t *testing.T) {
-	var secondRequestBody map[string]any
-	callCount := 0
+// A thinking block's plain text (not its raw JSON, not its signature) lands
+// in ReasoningContent - this is what internal/agent's emitReasoning and
+// every downstream UI consumer render verbatim as display text, the same
+// contract every other provider's ReasoningContent already follows. Step-5
+// bug audit (caught after this shipped, from real usage) found an earlier
+// version stored the raw JSON-encoded block including the signature here,
+// which the reasoning panel then rendered as an opaque blob instead of
+// prose.
+func TestAnthropicReasoningContentIsPlainDisplayText(t *testing.T) {
 	client := newTestAnthropicClient(t, func(w http.ResponseWriter, r *http.Request) {
-		callCount++
-		if callCount == 1 {
-			_, _ = w.Write([]byte(`{"content":[{"type":"thinking","thinking":"considering the file","signature":"sig-abc"},{"type":"text","text":"done"}],"stop_reason":"end_turn","usage":{}}`))
-			return
-		}
-		_ = json.NewDecoder(r.Body).Decode(&secondRequestBody)
+		_, _ = w.Write([]byte(`{"content":[{"type":"thinking","thinking":"considering the file","signature":"sig-abc"},{"type":"text","text":"done"}],"stop_reason":"end_turn","usage":{}}`))
+	})
+	resp, err := client.ChatTurn(context.Background(), Request{Model: "claude-sonnet-5", Messages: []Message{{Role: RoleUser, Content: "hi"}}})
+	if err != nil {
+		t.Fatalf("ChatTurn: %v", err)
+	}
+	if resp.ReasoningContent != "considering the file" {
+		t.Fatalf("ReasoningContent = %q, want the plain thinking text with no JSON envelope and no signature", resp.ReasoningContent)
+	}
+}
+
+// Replaying an assistant turn that carries ReasoningContent must NOT emit a
+// thinking content block at all: this codebase has nowhere display-safe to
+// keep the original signature, and Anthropic rejects a thinking block whose
+// signature doesn't match its (reconstructed, unsigned) content - it does
+// not reject a continued conversation with no thinking block on the
+// replayed turn. The turn's text/tool_use content must still reach the
+// wire.
+func TestAnthropicReplayNeverReconstructsAThinkingBlock(t *testing.T) {
+	var gotBody map[string]any
+	client := newTestAnthropicClient(t, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
 		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{}}`))
 	})
-
-	first, err := client.ChatTurn(context.Background(), Request{Model: "claude-sonnet-5", Messages: []Message{{Role: RoleUser, Content: "hi"}}})
-	if err != nil {
-		t.Fatalf("first ChatTurn: %v", err)
-	}
-	if first.ReasoningContent == "" || !strings.Contains(first.ReasoningContent, "sig-abc") {
-		t.Fatalf("ReasoningContent = %q, want it to carry the raw thinking block including the signature", first.ReasoningContent)
-	}
-
-	// Replay: the assistant message from turn one, carrying the captured
-	// ReasoningContent, goes back out on turn two exactly as history would
-	// build it.
-	req2 := Request{
+	req := Request{
 		Model: "claude-sonnet-5",
 		Messages: []Message{
 			{Role: RoleUser, Content: "hi"},
-			{Role: RoleAssistant, Content: first.Content, ReasoningContent: first.ReasoningContent},
+			{Role: RoleAssistant, Content: "done", ReasoningContent: "considering the file"},
 			{Role: RoleUser, Content: "continue"},
 		},
 	}
-	if _, err := client.ChatTurn(context.Background(), req2); err != nil {
-		t.Fatalf("second ChatTurn: %v", err)
+	if _, err := client.ChatTurn(context.Background(), req); err != nil {
+		t.Fatalf("ChatTurn: %v", err)
 	}
-	msgs, _ := secondRequestBody["messages"].([]any)
+	msgs, _ := gotBody["messages"].([]any)
 	assistant, _ := msgs[1].(map[string]any)
 	content, _ := assistant["content"].([]any)
-	if len(content) == 0 {
-		t.Fatal("replayed assistant message has no content blocks")
+	for _, c := range content {
+		block, _ := c.(map[string]any)
+		if block["type"] == "thinking" {
+			t.Fatalf("replayed assistant content = %#v, must not contain a reconstructed thinking block", content)
+		}
 	}
-	thinkingBlock, _ := content[0].(map[string]any)
-	if thinkingBlock["type"] != "thinking" || thinkingBlock["signature"] != "sig-abc" {
-		t.Fatalf("content[0] = %#v, want the replayed thinking block with its signature intact", thinkingBlock)
+	if len(content) != 1 {
+		t.Fatalf("replayed assistant content = %#v, want exactly the text block", content)
+	}
+	if block, _ := content[0].(map[string]any); block["type"] != "text" || block["text"] != "done" {
+		t.Fatalf("content[0] = %#v, want the text block", block)
+	}
+}
+
+// TestAnthropicReplayOfToolCallTurnWithReasoning locks in current behavior
+// for the common agentic shape - a turn that made a tool call AND carried
+// reasoning, immediately continued by that call's tool_result - rather than
+// asserting it is correct. This is the UNVERIFIED case flagged in
+// anthropicSystemAndMessages' RoleAssistant case and the package doc
+// comment: whether Anthropic accepts a continued conversation with no
+// thinking block on THIS specific shape (as opposed to a plain text turn)
+// has not been checked against a live endpoint from this codebase. If a
+// live check later shows Anthropic rejects this shape, this test is the one
+// to update alongside the fix - it exists so that change is deliberate, not
+// a silent behavior drift.
+func TestAnthropicReplayOfToolCallTurnWithReasoning(t *testing.T) {
+	var gotBody map[string]any
+	client := newTestAnthropicClient(t, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{}}`))
+	})
+	req := Request{
+		Model: "claude-sonnet-5",
+		Messages: []Message{
+			{Role: RoleUser, Content: "read the file and summarize it"},
+			{
+				Role:             RoleAssistant,
+				ReasoningContent: "I should read the file first",
+				ToolCalls:        []ToolCall{newToolCall("toolu_1", "read_file", `{"path":"a.go"}`)},
+			},
+			{Role: RoleTool, ToolCallID: "toolu_1", Content: "package a"},
+		},
+	}
+	if _, err := client.ChatTurn(context.Background(), req); err != nil {
+		t.Fatalf("ChatTurn: %v", err)
+	}
+	msgs, _ := gotBody["messages"].([]any)
+	if len(msgs) != 3 {
+		t.Fatalf("messages = %d entries, want 3 (user, assistant-with-tool-call, tool-result user); got %#v", len(msgs), gotBody["messages"])
+	}
+	assistant, _ := msgs[1].(map[string]any)
+	content, _ := assistant["content"].([]any)
+	for _, c := range content {
+		block, _ := c.(map[string]any)
+		if block["type"] == "thinking" {
+			t.Fatalf("assistant content = %#v - current (unverified) behavior omits the thinking block even on a tool-call turn; if this now fails, a live-API check found Anthropic requires one here, and this test's expectation should change alongside the fix", content)
+		}
+	}
+	if len(content) != 1 {
+		t.Fatalf("assistant content = %#v, want exactly the tool_use block", content)
+	}
+	if block, _ := content[0].(map[string]any); block["type"] != "tool_use" || block["id"] != "toolu_1" {
+		t.Fatalf("content[0] = %#v, want the tool_use block", block)
 	}
 }
 

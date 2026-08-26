@@ -303,7 +303,7 @@ func finishAnthropicStream(blocks map[int]*anthropicStreamBlock, order []int, st
 	}
 	return &Response{
 		Content:          strings.Join(textParts, ""),
-		ReasoningContent: anthropicThinkingBlocksToReasoningContent(thinkingBlocks),
+		ReasoningContent: anthropicThinkingDisplayText(thinkingBlocks),
 		ToolCalls:        toolCalls,
 		FinishReason:     anthropicFinishReason(stopReason),
 		TokenUsage:       usage,
@@ -313,10 +313,11 @@ func finishAnthropicStream(blocks map[int]*anthropicStreamBlock, order []int, st
 // anthropicThinkingBlockJSON re-serializes one streamed thinking block into
 // the same {"type":"thinking","thinking":"...","signature":"..."} shape the
 // non-stream path would have received directly, so
-// anthropicThinkingBlocksToReasoningContent's storage format is identical
-// regardless of which path produced it. The signature field is omitted when
-// empty (see the open question in anthropic.go's doc comment: unconfirmed
-// whether adaptive-thinking blocks carry one at all).
+// anthropicThinkingDisplayText (which only reads the "thinking" field) sees
+// an identical shape regardless of which path produced it. The signature
+// field is included when present, even though nothing currently reads it
+// back out - see anthropic.go's package doc comment on why thinking blocks
+// are not replayed byte-for-byte.
 func anthropicThinkingBlockJSON(block *anthropicStreamBlock) json.RawMessage {
 	obj := map[string]any{"type": "thinking", "thinking": block.text.String()}
 	if sig := block.signature.String(); sig != "" {

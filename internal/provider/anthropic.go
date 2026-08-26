@@ -29,18 +29,19 @@ const anthropicAPIVersion = "2023-06-01"
 // nothing to inherit from that type.
 //
 // See docs/plans/anthropic-provider-and-reasoning-plan.md for the researched
-// wire format, the required headers, and two residual open questions this
+// wire format, the required headers, and a residual open question this
 // implementation defends against rather than resolves (no live API access in
-// this environment to resolve them empirically):
-//   - whether an adaptive-thinking block carries a "signature" field the way
-//     pre-4.6 manual-thinking blocks did. Mitigation: thinking blocks are
-//     round-tripped as raw JSON (see anthropicThinkingBlocksToReasoningContent
-//     / anthropicThinkingBlocksFromReasoningContent) rather than parsed field
-//     by field, so whatever Anthropic actually sends survives replay
-//     unmodified regardless of its exact schema.
-//   - the right max_tokens floor for adaptive thinking at each effort level
-//     (anthropicMaxTokensFloor). This is a conservative, tunable heuristic,
-//     not a documented Anthropic invariant.
+// this environment to resolve it empirically): the right max_tokens floor
+// for adaptive thinking at each effort level (anthropicMaxTokensFloor). This
+// is a conservative, tunable heuristic, not a documented Anthropic invariant.
+//
+// Thinking blocks are NOT replayed byte-for-byte across turns - only their
+// plain display text survives into Response.ReasoningContent, since the
+// rest of the codebase (the reasoning panel, session persistence) treats
+// that field as plain text to render, not a structured payload. See
+// anthropicThinkingDisplayText and anthropicSystemAndMessages' RoleAssistant
+// case for the full rationale and an UNVERIFIED open question this leaves
+// (docs/plans/anthropic-provider-and-reasoning-plan.md §7 item 1).
 type AnthropicCompleter struct {
 	name       string
 	baseURL    string
@@ -402,7 +403,24 @@ func anthropicSystemAndMessages(msgs []Message) (system string, out []map[string
 			}
 		case RoleAssistant:
 			openTurn("assistant")
-			cur.content = append(cur.content, anthropicThinkingBlocksFromReasoningContent(m.ReasoningContent)...)
+			// No thinking block is replayed here - see
+			// anthropicThinkingDisplayText's doc comment for why history
+			// only carries display text, not the signed block Anthropic
+			// would need to replay it unmodified. UNVERIFIED: whether
+			// omitting the thinking block is actually safe on a turn that
+			// also carries ToolCalls, immediately followed by a RoleTool
+			// message (the common agentic shape - reasoning + tool call in
+			// one turn, continued by its tool_result) has not been checked
+			// against a live Anthropic endpoint from this codebase. The
+			// design doc's §3.5 example shows a thinking block replayed
+			// alongside tool_use as the normative shape; this code takes
+			// the opposite path (omit rather than reconstruct-unsigned)
+			// because sending a signature that doesn't match reconstructed
+			// content is the failure mode Anthropic is documented to
+			// reject, but "omit entirely" on THIS specific shape
+			// (tool_use immediately continued by tool_result, not a plain
+			// text turn) is a new assumption of its own, not a confirmed
+			// one - see TestAnthropicReplayOfToolCallTurnWithReasoning.
 			if strings.TrimSpace(m.Content) != "" {
 				cur.content = append(cur.content, map[string]any{"type": "text", "text": m.Content})
 			}
@@ -438,40 +456,43 @@ func anthropicToolUseBlock(tc ToolCall) map[string]any {
 	}
 }
 
-// anthropicThinkingBlocksFromReasoningContent reconstructs the raw thinking
-// content block(s) previously stored verbatim in Message.ReasoningContent
-// (see anthropicThinkingBlocksToReasoningContent) so they replay to Anthropic
-// byte-identical to how they were received - including any field (e.g. a
-// signature) this codebase does not itself interpret. Empty or
-// unparseable input returns nil: a Message from history predating this
-// provider, or a plain non-thinking turn, carries no thinking block, and a
-// corrupted value degrades to "send no thinking block" rather than failing
-// the whole turn.
-func anthropicThinkingBlocksFromReasoningContent(reasoningContent string) []map[string]any {
-	if strings.TrimSpace(reasoningContent) == "" {
-		return nil
-	}
-	var blocks []map[string]any
-	if err := json.Unmarshal([]byte(reasoningContent), &blocks); err != nil {
-		return nil
-	}
-	return blocks
-}
-
-// anthropicThinkingBlocksToReasoningContent is the inverse: it JSON-encodes
-// the raw thinking blocks from a response verbatim for storage in
-// Response.ReasoningContent / the next turn's Message.ReasoningContent. Empty
-// input returns "" (no thinking happened, or display was omitted with an
-// empty thinking block - either way, nothing to replay).
-func anthropicThinkingBlocksToReasoningContent(blocks []json.RawMessage) string {
+// anthropicThinkingDisplayText extracts and concatenates the plain
+// human-readable "thinking" field from each raw thinking content block, for
+// storage in Response.ReasoningContent / Message.ReasoningContent. Empty
+// input, or every block's thinking field being empty (Anthropic's default
+// "omitted" display setting - see reasoningBodyFields' DialectAnthropicAdaptive
+// case, which requests "summarized" instead precisely so this is non-empty),
+// returns "".
+//
+// This field is NOT provider-specific in the rest of the codebase:
+// internal/agent's emitReasoning (loop_step.go) and every downstream UI
+// consumer (internal/uiadapter, internal/ui/component/transcript) treat
+// ReasoningContent as plain display text to render verbatim, with zero
+// parsing - the same assumption DeepSeek/z.ai's reasoning_content already
+// relies on. An earlier version of this code instead stored the raw
+// JSON-encoded thinking block (including Anthropic's opaque signature field)
+// here for replay purposes; that broke the reasoning panel, which rendered
+// the JSON envelope as if it were prose. Fixed by extracting display text
+// here and NOT attempting byte-perfect thinking-block replay at all (see
+// anthropicSystemAndMessages' RoleAssistant case) - Anthropic tolerates a
+// continued conversation with no thinking block on the replayed turn; it
+// does not tolerate one whose signature no longer matches its content, which
+// is the only alternative once the signature itself isn't stored anywhere
+// display-safe.
+func anthropicThinkingDisplayText(blocks []json.RawMessage) string {
 	if len(blocks) == 0 {
 		return ""
 	}
-	encoded, err := json.Marshal(blocks)
-	if err != nil {
-		return ""
+	var parts []string
+	for _, raw := range blocks {
+		var block struct {
+			Thinking string `json:"thinking"`
+		}
+		if json.Unmarshal(raw, &block) == nil && block.Thinking != "" {
+			parts = append(parts, block.Thinking)
+		}
 	}
-	return string(encoded)
+	return strings.Join(parts, "\n\n")
 }
 
 // anthropicResponse is the subset of Anthropic's non-stream Messages API
@@ -550,7 +571,7 @@ func anthropicResponseToProvider(wire anthropicResponse) *Response {
 	}
 	return &Response{
 		Content:          strings.Join(textParts, ""),
-		ReasoningContent: anthropicThinkingBlocksToReasoningContent(thinkingBlocks),
+		ReasoningContent: anthropicThinkingDisplayText(thinkingBlocks),
 		ToolCalls:        toolCalls,
 		FinishReason:     anthropicFinishReason(wire.StopReason),
 		TokenUsage: TokenUsage{

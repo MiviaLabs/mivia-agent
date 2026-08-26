@@ -156,12 +156,11 @@ func TestAnthropicChatTurnStreamThinkingBlock(t *testing.T) {
 	if resp.Content != "done" {
 		t.Fatalf("Content = %q, want %q", resp.Content, "done")
 	}
-	var blocks []map[string]any
-	if err := json.Unmarshal([]byte(resp.ReasoningContent), &blocks); err != nil {
-		t.Fatalf("ReasoningContent did not decode as a JSON array: %v (%q)", err, resp.ReasoningContent)
-	}
-	if len(blocks) != 1 || blocks[0]["thinking"] != "considering the request" || blocks[0]["signature"] != "sig-xyz" {
-		t.Fatalf("blocks = %#v, want one reassembled thinking block with its signature", blocks)
+	// ReasoningContent is the plain reassembled thinking text - no JSON
+	// envelope, no signature (nothing downstream can safely display or
+	// replay a signature; see anthropicThinkingDisplayText's doc comment).
+	if resp.ReasoningContent != "considering the request" {
+		t.Fatalf("ReasoningContent = %q, want the plain reassembled thinking text", resp.ReasoningContent)
 	}
 }
 

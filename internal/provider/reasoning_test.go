@@ -53,27 +53,27 @@ func TestDialectBodyFields(t *testing.T) {
 		{"anthropic_adaptive unset", reasoning.DialectAnthropicAdaptive, "", nil},
 		{"anthropic_adaptive off", reasoning.DialectAnthropicAdaptive, reasoning.Off, map[string]any{"thinking": map[string]any{"type": "disabled"}}},
 		{"anthropic_adaptive minimal folds onto low", reasoning.DialectAnthropicAdaptive, reasoning.Minimal, map[string]any{
-			"thinking":      map[string]any{"type": "adaptive"},
+			"thinking":      map[string]any{"type": "adaptive", "display": "summarized"},
 			"output_config": map[string]any{"effort": "low"},
 		}},
 		{"anthropic_adaptive low", reasoning.DialectAnthropicAdaptive, reasoning.Low, map[string]any{
-			"thinking":      map[string]any{"type": "adaptive"},
+			"thinking":      map[string]any{"type": "adaptive", "display": "summarized"},
 			"output_config": map[string]any{"effort": "low"},
 		}},
 		{"anthropic_adaptive medium", reasoning.DialectAnthropicAdaptive, reasoning.Medium, map[string]any{
-			"thinking":      map[string]any{"type": "adaptive"},
+			"thinking":      map[string]any{"type": "adaptive", "display": "summarized"},
 			"output_config": map[string]any{"effort": "medium"},
 		}},
 		{"anthropic_adaptive high", reasoning.DialectAnthropicAdaptive, reasoning.High, map[string]any{
-			"thinking":      map[string]any{"type": "adaptive"},
+			"thinking":      map[string]any{"type": "adaptive", "display": "summarized"},
 			"output_config": map[string]any{"effort": "high"},
 		}},
 		{"anthropic_adaptive xhigh", reasoning.DialectAnthropicAdaptive, reasoning.XHigh, map[string]any{
-			"thinking":      map[string]any{"type": "adaptive"},
+			"thinking":      map[string]any{"type": "adaptive", "display": "summarized"},
 			"output_config": map[string]any{"effort": "xhigh"},
 		}},
 		{"anthropic_adaptive max", reasoning.DialectAnthropicAdaptive, reasoning.Max, map[string]any{
-			"thinking":      map[string]any{"type": "adaptive"},
+			"thinking":      map[string]any{"type": "adaptive", "display": "summarized"},
 			"output_config": map[string]any{"effort": "max"},
 		}},
 

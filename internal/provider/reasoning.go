@@ -73,8 +73,13 @@ func reasoningBodyFields(dialect reasoning.Dialect, level reasoning.Level) map[s
 		if level == reasoning.Off {
 			return map[string]any{"thinking": map[string]any{"type": "disabled"}}
 		}
+		// display: "summarized" is required to get readable thinking text
+		// back at all - Anthropic's default ("omitted") streams thinking
+		// blocks with an empty text field. Without this, mivia's reasoning
+		// panel (internal/ui/component/transcript) has nothing to show
+		// regardless of how ReasoningContent is populated downstream.
 		return map[string]any{
-			"thinking":      map[string]any{"type": "adaptive"},
+			"thinking":      map[string]any{"type": "adaptive", "display": "summarized"},
 			"output_config": map[string]any{"effort": anthropicEffortForLevel(level)},
 		}
 	default:
