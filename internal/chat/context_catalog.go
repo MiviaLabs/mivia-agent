@@ -3,7 +3,6 @@ package chat
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
@@ -43,8 +42,12 @@ func decodeCatalogMessages(data []byte) ([]provider.Message, error) {
 }
 
 func sessionInfoFromCatalog(info contextstate.SessionCatalogInfo) SessionInfo {
-	created, _ := time.Parse(time.RFC3339Nano, info.CreatedAt)
-	updated, _ := time.Parse(time.RFC3339Nano, info.UpdatedAt)
+	// ParseCatalogTimestamp, not time.Parse(time.RFC3339Nano, ...): catalog
+	// rows mix that layout with SQLite's CURRENT_TIMESTAMP layout (see its
+	// doc comment), and a bare RFC3339 parse silently zeroes every
+	// checkpoint-derived live session's CreatedAt/UpdatedAt.
+	created := contextstate.ParseCatalogTimestamp(info.CreatedAt)
+	updated := contextstate.ParseCatalogTimestamp(info.UpdatedAt)
 	return SessionInfo{SessionID: info.SessionID, Title: info.Title, Name: info.Name, Model: info.Model, Provider: info.Provider,
 		CreatedAt: created, UpdatedAt: updated, TurnCount: info.TurnCount,
 		TokenCount: info.TokenCount, MessageCount: info.MessageCount, ChunkCount: 1,

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -272,7 +273,7 @@ func (s *SQLite) ListSessions(ctx context.Context, principal contextstate.Princi
 	// never re-joins it to a same-named live session, which re-created the
 	// alias/duplicate bug. Legacy projection rows are stamped by the v11
 	// backfill.
-	rows, err := s.db.QueryContext(ctx, `SELECT c.name,COALESCE(s.title,''),c.model,c.provider,COALESCE(s.session_id,''),c.created_at,c.updated_at,c.turn_count,c.token_count,c.message_count,COALESCE(d.dir,''),COALESCE(d.worktree,''),0,'' FROM chat_sessions c LEFT JOIN context_sessions s ON s.workspace_id=c.workspace_id AND s.subject_id=c.subject_id AND s.session_id=c.session_id AND s.tombstoned=0 AND s.instance_id IS NULL LEFT JOIN chat_session_dirs d ON d.workspace_id=c.workspace_id AND d.subject_id=c.subject_id AND d.name=c.name WHERE c.workspace_id=? AND c.subject_id=? AND c.instance_id IS NULL UNION ALL SELECT t.session_id,t.title,t.model,t.provider,t.session_id,t.created,t.updated,t.source_sequence,0,t.source_sequence,COALESCE(d.dir,''),COALESCE(d.worktree,''),0,'' FROM (SELECT cs.workspace_id,cs.subject_id,cs.session_id,cs.title,cs.model,cs.provider,cs.source_sequence,COALESCE(MIN(cc.created_at),CURRENT_TIMESTAMP) AS created,COALESCE(MAX(cc.created_at),CURRENT_TIMESTAMP) AS updated FROM context_sessions cs LEFT JOIN context_checkpoints cc ON cc.session_id=cs.session_id AND cc.workspace_id=cs.workspace_id AND cc.subject_id=cs.subject_id AND cc.complete=1 WHERE cs.workspace_id=? AND cs.subject_id=? AND cs.tombstoned=0 AND (cs.source_sequence>0 OR cs.title IS NOT NULL) AND cs.instance_id IS NULL AND NOT EXISTS (SELECT 1 FROM chat_sessions c WHERE c.workspace_id=cs.workspace_id AND c.subject_id=cs.subject_id AND c.name=cs.session_id) GROUP BY cs.workspace_id,cs.subject_id,cs.session_id,cs.title,cs.model,cs.provider,cs.source_sequence) t LEFT JOIN chat_session_dirs d ON d.workspace_id=t.workspace_id AND d.subject_id=t.subject_id AND d.name=t.session_id UNION ALL SELECT 'worktree:' || r.worktree,'','','', '',r.created_at,r.updated_at,0,0,0,r.dir,r.worktree,1,COALESCE(r.instance_id,'') FROM worktree_routes r WHERE r.workspace_id=? AND r.subject_id=? AND (r.instance_id IS NULL OR EXISTS (SELECT 1 FROM worktree_instances wi WHERE wi.workspace_id=r.workspace_id AND wi.worktree=r.worktree AND wi.instance_id=r.instance_id AND wi.state='active')) ORDER BY 7 DESC,1`, principal.WorkspaceID, principal.SubjectID, principal.WorkspaceID, principal.SubjectID, principal.WorkspaceID, principal.SubjectID)
+	rows, err := s.db.QueryContext(ctx, `SELECT c.name,COALESCE(s.title,''),c.model,c.provider,COALESCE(s.session_id,''),c.created_at,c.updated_at,c.turn_count,c.token_count,c.message_count,COALESCE(d.dir,''),COALESCE(d.worktree,''),0,'' FROM chat_sessions c LEFT JOIN context_sessions s ON s.workspace_id=c.workspace_id AND s.subject_id=c.subject_id AND s.session_id=c.session_id AND s.tombstoned=0 AND s.instance_id IS NULL LEFT JOIN chat_session_dirs d ON d.workspace_id=c.workspace_id AND d.subject_id=c.subject_id AND d.name=c.name WHERE c.workspace_id=? AND c.subject_id=? AND c.instance_id IS NULL UNION ALL SELECT t.session_id,t.title,t.model,t.provider,t.session_id,t.created,t.updated,t.source_sequence,0,t.source_sequence,COALESCE(d.dir,''),COALESCE(d.worktree,''),0,'' FROM (SELECT cs.workspace_id,cs.subject_id,cs.session_id,cs.title,cs.model,cs.provider,cs.source_sequence,COALESCE(MIN(cc.created_at),CURRENT_TIMESTAMP) AS created,COALESCE(MAX(cc.created_at),CURRENT_TIMESTAMP) AS updated FROM context_sessions cs LEFT JOIN context_checkpoints cc ON cc.session_id=cs.session_id AND cc.workspace_id=cs.workspace_id AND cc.subject_id=cs.subject_id AND cc.complete=1 WHERE cs.workspace_id=? AND cs.subject_id=? AND cs.tombstoned=0 AND (cs.source_sequence>0 OR cs.title IS NOT NULL) AND cs.instance_id IS NULL AND NOT EXISTS (SELECT 1 FROM chat_sessions c WHERE c.workspace_id=cs.workspace_id AND c.subject_id=cs.subject_id AND c.name=cs.session_id) GROUP BY cs.workspace_id,cs.subject_id,cs.session_id,cs.title,cs.model,cs.provider,cs.source_sequence) t LEFT JOIN chat_session_dirs d ON d.workspace_id=t.workspace_id AND d.subject_id=t.subject_id AND d.name=t.session_id UNION ALL SELECT 'worktree:' || r.worktree,'','','', '',r.created_at,r.updated_at,0,0,0,r.dir,r.worktree,1,COALESCE(r.instance_id,'') FROM worktree_routes r WHERE r.workspace_id=? AND r.subject_id=? AND (r.instance_id IS NULL OR EXISTS (SELECT 1 FROM worktree_instances wi WHERE wi.workspace_id=r.workspace_id AND wi.worktree=r.worktree AND wi.instance_id=r.instance_id AND wi.state='active'))`, principal.WorkspaceID, principal.SubjectID, principal.WorkspaceID, principal.SubjectID, principal.WorkspaceID, principal.SubjectID)
 	if err != nil {
 		return nil, err
 	}
@@ -294,7 +295,29 @@ func (s *SQLite) ListSessions(ctx context.Context, principal contextstate.Princi
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	sortSessionCatalogInfos(out)
 	return hideCoveredWorktreeRoutes(out), nil
+}
+
+// sortSessionCatalogInfos orders rows most-recently-updated first, tie-broken
+// by name ascending - the ordering the removed `ORDER BY 7 DESC,1` SQL clause
+// used to provide. That clause compared UpdatedAt as a raw string across a
+// UNION whose arms write two different timestamp layouts (RFC3339Nano for
+// chat_sessions/worktree_routes, SQLite's CURRENT_TIMESTAMP layout for the
+// context_checkpoints-derived arm - see contextstate.ParseCatalogTimestamp),
+// so a live session with no completed checkpoint yet could rank below a
+// stale RFC3339-timestamped row from months ago, or a genuinely newer live
+// session could sort below an older named snapshot, regardless of actual
+// recency. Sorting parsed times in Go avoids comparing across layouts.
+func sortSessionCatalogInfos(out []contextstate.SessionCatalogInfo) {
+	sort.SliceStable(out, func(i, j int) bool {
+		ti := contextstate.ParseCatalogTimestamp(out[i].UpdatedAt)
+		tj := contextstate.ParseCatalogTimestamp(out[j].UpdatedAt)
+		if !ti.Equal(tj) {
+			return ti.After(tj)
+		}
+		return out[i].Name < out[j].Name
+	})
 }
 
 func (s *SQLite) DeleteSessionSnapshot(ctx context.Context, principal contextstate.Principal, name string) error {

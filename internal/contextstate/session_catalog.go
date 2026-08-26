@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -74,6 +75,31 @@ func NormalizeSessionTitle(title string) (string, error) {
 		}
 	}
 	return title, nil
+}
+
+// sqliteDefaultTimestampLayout is the shape SQLite's CURRENT_TIMESTAMP column
+// default writes ("2026-08-15 01:56:49", UTC, no zone) - still used by
+// context_checkpoints.created_at (storage.sqliteTimestampLayout). Session
+// catalog rows mix that layout with Go-written RFC3339Nano timestamps
+// (chat_sessions, worktree_routes), so any reader comparing or sorting
+// SessionCatalogInfo.CreatedAt/UpdatedAt must parse both, not just one -
+// comparing the two layouts as raw strings is invalid (RFC3339's 'T' sorts
+// above ' ', so an RFC3339 row always ranks above a same-day SQLite-layout
+// row regardless of actual time).
+const sqliteDefaultTimestampLayout = "2006-01-02 15:04:05"
+
+// ParseCatalogTimestamp parses a SessionCatalogInfo timestamp written by
+// either producer (see sqliteDefaultTimestampLayout). It returns the zero
+// time when s does not match either layout, mirroring time.Parse's error
+// contract for callers that already treat a parse failure as "unknown".
+func ParseCatalogTimestamp(s string) time.Time {
+	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+		return t
+	}
+	if t, err := time.ParseInLocation(sqliteDefaultTimestampLayout, s, time.UTC); err == nil {
+		return t
+	}
+	return time.Time{}
 }
 
 // ValidSessionDir reports whether dir is safe to persist: no NUL bytes and
