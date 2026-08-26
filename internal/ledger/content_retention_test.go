@@ -102,7 +102,7 @@ func seedRunTaskWithContent(t *testing.T, ctx context.Context, repo LedgerReposi
 	if err := repo.StoreContent(ctx, ref, content); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.SetTaskOutput(ctx, runID, taskID, ref, ""); err != nil {
+	if err := repo.SetTaskOutput(ctx, runID, taskID, ref, "", ""); err != nil {
 		t.Fatal(err)
 	}
 }

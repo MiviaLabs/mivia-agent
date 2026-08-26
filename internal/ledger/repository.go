@@ -67,9 +67,11 @@ type LedgerRepository interface {
 	CompareAndSetTaskStatus(ctx context.Context, runID, taskID string,
 		expectedVersion uint64, newStatus string) error
 
-	// SetTaskOutput stores a bounded redacted output/error reference for a task.
+	// SetTaskOutput stores a bounded redacted output/error/tool-calls
+	// reference for a task. toolCallsRef is "" when the task made no tool
+	// calls or none were recorded.
 	SetTaskOutput(ctx context.Context, runID, taskID string,
-		outputRef, errorRef string) error
+		outputRef, errorRef, toolCallsRef string) error
 
 	// SetTaskAttempt records the terminal state of one persisted attempt.
 	// An attempt ID that is not yet present starts a new attempt rather than

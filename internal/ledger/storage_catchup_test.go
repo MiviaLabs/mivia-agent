@@ -274,7 +274,7 @@ func TestProjectionCatchUpPreservesOrdering(t *testing.T) {
 	if err := b.CompareAndSetTaskStatus(ctx, "run-1", "t1", 1, string(TaskStatusCompleted)); err != nil {
 		t.Fatalf("B CAS t1 completed: %v", err)
 	}
-	if err := a.SetTaskOutput(ctx, "run-1", "t1", "ref:out-1", ""); err != nil {
+	if err := a.SetTaskOutput(ctx, "run-1", "t1", "ref:out-1", "", ""); err != nil {
 		t.Fatalf("A SetTaskOutput: %v", err)
 	}
 	if err := b.SetTaskAttempt(ctx, "run-1", "t2", "att-1", string(TaskStatusRunning), nil); err != nil {

@@ -183,7 +183,7 @@ func (s *StorageLedgerRepository) applyTaskEventLocked(ctx context.Context, evt 
 		s.mem.mu.Unlock()
 
 	case storageKindTaskOutputSet:
-		taskID, outputRef, errorRef, err := unmarshalOutputRefs(evt.Payload)
+		taskID, outputRef, errorRef, toolCallsRef, err := unmarshalOutputRefs(evt.Payload)
 		if err != nil {
 			return err
 		}
@@ -191,6 +191,7 @@ func (s *StorageLedgerRepository) applyTaskEventLocked(ctx context.Context, evt 
 		if trec := s.memTaskLocked(evt.RunID, taskID); trec != nil {
 			trec.snapshot.OutputRef = normalizeReference(outputRef)
 			trec.snapshot.ErrorRef = normalizeReference(errorRef)
+			trec.snapshot.ToolCallsRef = normalizeReference(toolCallsRef)
 		}
 		s.mem.mu.Unlock()
 

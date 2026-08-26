@@ -82,26 +82,32 @@ func unmarshalStatusChange(data []byte) (taskID, status string, version uint64, 
 }
 
 // taskOutputSetPayload is the JSON shape for task_output_set events.
+// ToolCallsRef is additive (omitempty): a row written before this field
+// existed has no "tool_calls_ref" key at all, and decodes with
+// ToolCallsRef == "" like any other missing optional JSON field - no
+// defensive handling needed for that backward-compatibility case.
 type taskOutputSetPayload struct {
-	TaskID    string `json:"task_id"`
-	OutputRef string `json:"output_ref"`
-	ErrorRef  string `json:"error_ref"`
+	TaskID       string `json:"task_id"`
+	OutputRef    string `json:"output_ref"`
+	ErrorRef     string `json:"error_ref"`
+	ToolCallsRef string `json:"tool_calls_ref,omitempty"`
 }
 
-func marshalOutputRefs(taskID, outputRef, errorRef string) ([]byte, error) {
+func marshalOutputRefs(taskID, outputRef, errorRef, toolCallsRef string) ([]byte, error) {
 	return json.Marshal(taskOutputSetPayload{
-		TaskID:    taskID,
-		OutputRef: outputRef,
-		ErrorRef:  errorRef,
+		TaskID:       taskID,
+		OutputRef:    outputRef,
+		ErrorRef:     errorRef,
+		ToolCallsRef: toolCallsRef,
 	})
 }
 
-func unmarshalOutputRefs(data []byte) (taskID, outputRef, errorRef string, err error) {
+func unmarshalOutputRefs(data []byte) (taskID, outputRef, errorRef, toolCallsRef string, err error) {
 	var p taskOutputSetPayload
 	if err := json.Unmarshal(data, &p); err != nil {
-		return "", "", "", err
+		return "", "", "", "", err
 	}
-	return p.TaskID, p.OutputRef, p.ErrorRef, nil
+	return p.TaskID, p.OutputRef, p.ErrorRef, p.ToolCallsRef, nil
 }
 
 // taskAttemptPayload is the JSON shape for task_attempt events.
@@ -288,7 +294,7 @@ func applyRebuiltTaskCreated(tasksMap map[string]TaskSnapshot, payload []byte) e
 // applyRebuiltTaskOutputSet applies a task_output_set event to the rebuilt
 // task map.
 func applyRebuiltTaskOutputSet(tasksMap map[string]TaskSnapshot, runID string, payload []byte) error {
-	taskID, outputRef, errorRef, err := unmarshalOutputRefs(payload)
+	taskID, outputRef, errorRef, toolCallsRef, err := unmarshalOutputRefs(payload)
 	if err != nil {
 		return err
 	}
@@ -298,6 +304,7 @@ func applyRebuiltTaskOutputSet(tasksMap map[string]TaskSnapshot, runID string, p
 	}
 	task.OutputRef = outputRef
 	task.ErrorRef = errorRef
+	task.ToolCallsRef = toolCallsRef
 	tasksMap[taskID] = task
 	return nil
 }

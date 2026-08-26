@@ -92,7 +92,9 @@ func (c *coordinator) recordTaskResult(h *RunHandle, t subagents.Task, r subagen
 		}
 		outputRef, errorRef := resultReferences(r)
 		outputRef, errorRef = c.persistResultContent(persistCtx, outputRef, errorRef, r, runErr)
-		if err := c.repo.SetTaskOutput(persistCtx, h.runID, t.ID, outputRef, errorRef); err != nil {
+		// toolCallsRef is wired in a later chunk (the per-task tool-call
+		// buffer flush); "" here matches today's no-recorded-trace behavior.
+		if err := c.repo.SetTaskOutput(persistCtx, h.runID, t.ID, outputRef, errorRef, ""); err != nil {
 			*runErr = joinError(*runErr, fmt.Errorf("store task %q output: %w", t.ID, err))
 		}
 

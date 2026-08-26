@@ -547,12 +547,15 @@ func TestMemory_SetTaskOutput(t *testing.T) {
 	_ = repo.CreateRun(ctx, "", RunSnapshot{RunID: "r1", Status: RunStatusCreated})
 	_ = repo.CreateTask(ctx, TaskSnapshot{RunID: "r1", TaskID: "t1", Status: string(TaskStatusQueued), Version: 1})
 
-	if err := repo.SetTaskOutput(ctx, "r1", "t1", "output:42", ""); err != nil {
+	if err := repo.SetTaskOutput(ctx, "r1", "t1", "output:42", "", "tool_calls:7"); err != nil {
 		t.Fatal(err)
 	}
 	task, _ := repo.GetTask(ctx, "r1", "t1")
 	if task.OutputRef != "output:42" {
 		t.Fatalf("expected output:42, got %q", task.OutputRef)
+	}
+	if task.ToolCallsRef != "tool_calls:7" {
+		t.Fatalf("expected tool_calls:7, got %q", task.ToolCallsRef)
 	}
 }
 

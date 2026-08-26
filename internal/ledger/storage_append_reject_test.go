@@ -168,10 +168,10 @@ func TestSetTaskOutputMissingRunOrTaskLeavesNoStoreRow(t *testing.T) {
 	repo, store := newRejectTestRepo(t)
 	mustCreateRunWithTask(t, repo, "run-1", "t1")
 
-	if err := repo.SetTaskOutput(ctx, "run-missing", "t1", "ref:o", ""); !errors.Is(err, ErrNotFound) {
+	if err := repo.SetTaskOutput(ctx, "run-missing", "t1", "ref:o", "", ""); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("SetTaskOutput on missing run: err = %v, want ErrNotFound", err)
 	}
-	if err := repo.SetTaskOutput(ctx, "run-1", "t-missing", "ref:o", ""); !errors.Is(err, ErrNotFound) {
+	if err := repo.SetTaskOutput(ctx, "run-1", "t-missing", "ref:o", "", ""); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("SetTaskOutput on missing task: err = %v, want ErrNotFound", err)
 	}
 	if n := countKind(t, store, "run-1", storageKindTaskOutputSet); n != 0 {

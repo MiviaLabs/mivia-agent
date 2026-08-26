@@ -123,6 +123,12 @@ type TaskSnapshot struct {
 	CompletedAt  *time.Time
 	OutputRef    string // bounded redacted reference; empty until completion
 	ErrorRef     string // bounded redacted reference; empty unless failed
+	// ToolCallsRef is a bounded, redacted reference to this task's recorded
+	// tool-call step trace (subagent tool name/input/output pairs),
+	// operator-facing only. Empty when the task made no tool calls, or for
+	// any task recorded before this field existed. Set once at task
+	// completion, on the same SetTaskOutput call as OutputRef/ErrorRef.
+	ToolCallsRef string `json:"tool_calls_ref,omitempty"`
 	Version      uint64 // per-task monotonic version for compare-and-set
 	// HandlerName is the registered handler name for the sub-agent task.
 	// Stored so ResumeInterruptedRun can rebuild the task config.
@@ -176,6 +182,7 @@ func (s TaskSnapshot) Clone() TaskSnapshot {
 		CompletedAt:           nil,
 		OutputRef:             s.OutputRef,
 		ErrorRef:              s.ErrorRef,
+		ToolCallsRef:          s.ToolCallsRef,
 		Version:               s.Version,
 		HandlerName:           s.HandlerName,
 		AgentName:             s.AgentName,

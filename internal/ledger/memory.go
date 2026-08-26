@@ -274,7 +274,7 @@ func (m *MemoryLedgerRepository) CompareAndSetTaskStatus(_ context.Context, runI
 	return nil
 }
 
-func (m *MemoryLedgerRepository) SetTaskOutput(_ context.Context, runID, taskID string, outputRef, errorRef string) error {
+func (m *MemoryLedgerRepository) SetTaskOutput(_ context.Context, runID, taskID string, outputRef, errorRef, toolCallsRef string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	rec, ok := m.runs[runID]
@@ -290,6 +290,7 @@ func (m *MemoryLedgerRepository) SetTaskOutput(_ context.Context, runID, taskID 
 	}
 	trec.snapshot.OutputRef = normalizeReference(outputRef)
 	trec.snapshot.ErrorRef = normalizeReference(errorRef)
+	trec.snapshot.ToolCallsRef = normalizeReference(toolCallsRef)
 	return nil
 }
 

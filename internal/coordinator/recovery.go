@@ -231,7 +231,7 @@ func (c *coordinator) markInterruptedTasks(ctx context.Context, runID string, ta
 		if c.repo.CompareAndSetTaskStatus(ctx, runID, task.TaskID, task.Version, status) != nil {
 			continue
 		}
-		_ = c.repo.SetTaskOutput(ctx, runID, task.TaskID, "", "interrupted_unrecoverable")
+		_ = c.repo.SetTaskOutput(ctx, runID, task.TaskID, "", "interrupted_unrecoverable", "")
 		finished := c.nowLocked()
 		if attemptID, ok := attempts[task.TaskID]; ok {
 			_ = c.repo.SetTaskAttempt(ctx, runID, task.TaskID, attemptID, status, &finished)

@@ -269,16 +269,16 @@ func (s *StorageLedgerRepository) CompareAndSetTaskStatus(ctx context.Context, r
 	return nil
 }
 
-func (s *StorageLedgerRepository) SetTaskOutput(ctx context.Context, runID, taskID string, outputRef, errorRef string) error {
+func (s *StorageLedgerRepository) SetTaskOutput(ctx context.Context, runID, taskID string, outputRef, errorRef, toolCallsRef string) error {
 	if err := s.ensureBuilt(ctx); err != nil {
 		return err
 	}
 	// Validate in the projection first: an unknown run or task never reaches
 	// the store; a failed append rebuilds it.
-	if err := s.mem.SetTaskOutput(ctx, runID, taskID, outputRef, errorRef); err != nil {
+	if err := s.mem.SetTaskOutput(ctx, runID, taskID, outputRef, errorRef, toolCallsRef); err != nil {
 		return err
 	}
-	payload, err := marshalOutputRefs(taskID, outputRef, errorRef)
+	payload, err := marshalOutputRefs(taskID, outputRef, errorRef, toolCallsRef)
 	if err != nil {
 		_ = s.rebuildRunProjection(ctx, runID)
 		return fmt.Errorf("marshal output refs: %w", err)
