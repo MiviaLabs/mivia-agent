@@ -315,6 +315,36 @@ func TestCancel_AfterTurnIsNoOp(t *testing.T) {
 	}
 }
 
+// TestIsActive_TrueDuringTurnFalseAfter verifies IsActive tracks a turn's
+// real lifetime: false before Send, true while the completer is blocked
+// mid-turn, false again once the turn goroutine has fully finished.
+func TestIsActive_TrueDuringTurnFalseAfter(t *testing.T) {
+	comp := &scriptedCompleter{turns: []provider.Response{assistantResponse("done")}, block: make(chan struct{})}
+	conv := newTestConversation(t, comp)
+	if conv.IsActive() {
+		t.Fatal("IsActive=true before Send")
+	}
+	h, err := conv.Send(context.Background(), intent.Send{Text: "x"})
+	if err != nil {
+		t.Fatalf("Send err=%v", err)
+	}
+	if !conv.IsActive() {
+		t.Fatal("IsActive=false while turn is blocked mid-flight")
+	}
+	close(comp.block)
+	drainUntilClose(t, h.Events(), 5*time.Second)
+	// h.Events() closes before the goroutine's deferred chain (which
+	// includes the active flag) has necessarily returned, so poll rather
+	// than asserting immediately after drain.
+	deadline := time.Now().Add(5 * time.Second)
+	for conv.IsActive() {
+		if time.Now().After(deadline) {
+			t.Fatal("IsActive stayed true after the turn completed")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 // TestSend_ConcurrentSerializes verifies that two concurrent Sends are
 // serialized by turnMu and their terminal events arrive in handle order.
 func TestSend_ConcurrentSerializes(t *testing.T) {

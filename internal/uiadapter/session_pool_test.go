@@ -1,14 +1,68 @@
 package uiadapter_test
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/uiadapter"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
 )
+
+// TestSessionPool_IsActive verifies the pool reports a session's real
+// turn-in-flight status via its pooled Conversation, and reports false
+// for an ID it has never loaded (no live Conversation to ask).
+func TestSessionPool_IsActive(t *testing.T) {
+	res := &config.Resolved{Model: "test-model"}
+	comp := &scriptedCompleter{turns: []provider.Response{assistantResponse("done")}, block: make(chan struct{})}
+	sess := chat.NewSession(res, comp)
+	sess.SessionID = "session-1"
+
+	pool := uiadapter.NewSessionPool(sess, res, nil, false)
+
+	if pool.IsActive("session-1") {
+		t.Fatal("IsActive=true before any Send")
+	}
+	if pool.IsActive("never-loaded") {
+		t.Fatal("IsActive=true for a session ID the pool never loaded")
+	}
+
+	conv, err := pool.GetOrCreate("session-1")
+	if err != nil {
+		t.Fatalf("GetOrCreate: %v", err)
+	}
+	h, err := conv.Send(context.Background(), intent.Send{Text: "x"})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if !pool.IsActive("session-1") {
+		t.Fatal("IsActive=false while the pooled session's turn is blocked mid-flight")
+	}
+
+	close(comp.block)
+	for {
+		select {
+		case _, ok := <-h.Events():
+			if !ok {
+				goto drained
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out draining turn events")
+		}
+	}
+drained:
+	deadline := time.Now().Add(5 * time.Second)
+	for pool.IsActive("session-1") {
+		if time.Now().After(deadline) {
+			t.Fatal("IsActive stayed true after the turn completed")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
 
 func TestSessionPool_GetOrCreateInitial(t *testing.T) {
 	res := &config.Resolved{Model: "test-model"}

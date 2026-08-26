@@ -74,6 +74,12 @@ type Conversation struct {
 	scrollLines   int
 	showReasoning bool
 
+	// active reports whether a turn is currently in flight, for the
+	// duration bracketed by turnMu (set true after Lock in Send, false
+	// in the turn goroutine's defer alongside Unlock). Session pickers
+	// read this across sessions to show real per-session activity.
+	active atomic.Bool
+
 	subagents *SubagentThreads
 }
 
@@ -195,6 +201,7 @@ func (c *Conversation) Send(ctx context.Context, in intent.Send) (ports.TurnHand
 		return nil, errors.New("uiadapter: Conversation.Send on nil session")
 	}
 	c.turnMu.Lock()
+	c.active.Store(true)
 	turnCtx, cancelTurn := context.WithCancel(ctx)
 	events := make(chan uievent.Event, turnBufferSize)
 	// closed is the single source of truth for "events is closed". All
@@ -326,6 +333,7 @@ func (c *Conversation) runTurnGoroutine(turnCtx context.Context, in intent.Send,
 		// Release turnMu only after the goroutine has fully finished so
 		// the next Send waits for this turn to complete end-to-end.
 		defer c.turnMu.Unlock()
+		defer c.active.Store(false)
 		if waiter != nil {
 			defer waiter.Done()
 		}
@@ -594,4 +602,11 @@ func (h *turnHandle) Cancel() {
 // ActiveTurn returns the current active turn handle, if any.
 func (c *Conversation) ActiveTurn() (ports.TurnHandle, bool) {
 	return nil, false
+}
+
+// IsActive reports whether a turn is currently in flight on this
+// conversation. It is the liveness signal session pickers use to show
+// which background sessions are actually doing something.
+func (c *Conversation) IsActive() bool {
+	return c.active.Load()
 }

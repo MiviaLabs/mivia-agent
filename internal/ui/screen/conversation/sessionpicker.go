@@ -192,6 +192,9 @@ func sessionMeta(s ports.SessionSummary) string {
 	if s.ContextTokens > 0 {
 		parts = append(parts, fmt.Sprintf("%dk ctx", s.ContextTokens/1000))
 	}
+	if s.IsCurrent {
+		parts = append(parts, "current")
+	}
 	return strings.Join(parts, "  ")
 }
 

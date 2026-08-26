@@ -127,6 +127,11 @@ type SessionSummary struct {
 	State     string   // e.g. "idle", "thinking", "running", "streaming", "done"
 	Lines     []string // recent transcript or activity lines for preview
 
+	// IsCurrent marks the session the picker was opened from. It is
+	// independent of Active/State: the current session is not
+	// necessarily the one with a turn running.
+	IsCurrent bool
+
 	// Turns is the number of completed conversation turns in the
 	// session, and ContextTokens is its context usage in raw tokens
 	// (rendered as "Nk ctx", the same convention ModelView's context

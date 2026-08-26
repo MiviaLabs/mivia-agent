@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
 // ToolsConfig configures tool execution policies.
@@ -241,18 +243,18 @@ func validateDiagnosticsCommandEntry(name string, argv []string, effectiveAllowl
 
 // effectiveDiagnosticsAllowlist mirrors internal/tools/default_registry.go
 // configuredRunAllowlist: run_allowlist_only when set (resolveToolsConfig's B7
-// rule has already cleared RunAllowlist) replaces DefaultRunAllowlist
-// entirely; unset, DefaultRunAllowlist + run_allowlist, MINUS run_blocklist.
-// The blocklist subtraction case-folds both sides exactly like the tools
-// layer's disabledToolNames, so "SH" blocks "sh" the same way the
+// rule has already cleared RunAllowlist) replaces tools.DefaultRunAllowlist
+// entirely; unset, tools.DefaultRunAllowlist + run_allowlist, MINUS
+// run_blocklist. The blocklist subtraction case-folds both sides exactly like
+// the tools layer's disabledToolNames, so "SH" blocks "sh" the same way the
 // run_command registry would refuse it.
 func effectiveDiagnosticsAllowlist(tc ToolsConfig) []string {
 	var allowlist []string
 	if len(tc.RunAllowlistOnly) > 0 {
 		allowlist = tc.RunAllowlistOnly
 	} else {
-		allowlist = make([]string, 0, len(DefaultRunAllowlist)+len(tc.RunAllowlist))
-		allowlist = append(allowlist, DefaultRunAllowlist...)
+		allowlist = make([]string, 0, len(tools.DefaultRunAllowlist)+len(tc.RunAllowlist))
+		allowlist = append(allowlist, tools.DefaultRunAllowlist...)
 		allowlist = append(allowlist, tc.RunAllowlist...)
 	}
 	if len(tc.RunBlocklist) == 0 {

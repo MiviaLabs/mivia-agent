@@ -85,7 +85,7 @@ diagnostics_command = [`+tt.tomlArgv0+`, "-c", "echo hi"]
 // diagnostics command that could never run must be a load error, not a
 // silently absent tool.
 func TestDiagnosticsConfigArgv0NotInRunAllowlistIsValidationError(t *testing.T) {
-	// "docker" is deliberately absent from config.DefaultRunAllowlist (see
+	// "docker" is deliberately absent from tools.DefaultRunAllowlist (see
 	// its doc comment), so it stays a genuine not-allowlisted case even
 	// though the built-in default now makes run_command open by default.
 	path := writeMinimalConfig(t, `[tools]

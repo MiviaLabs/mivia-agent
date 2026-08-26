@@ -51,7 +51,7 @@ func TestDeriveOutputCeilingRaisedRunBudget(t *testing.T) {
 
 // TestDeriveOutputCeilingRaisedReadBudget: same for max_read_bytes. Isolates
 // read_file/grep/glob's own budget by disabling run_command - since
-// config.DefaultRunAllowlist made run_command open by default, its own
+// tools.DefaultRunAllowlist made run_command open by default, its own
 // uncapped (256 MiB memory-backstop-bounded) budget would otherwise dominate
 // this max_read_bytes=2MB case, which TestDeriveOutputCeilingRaisedRunBudget
 // already covers on its own terms.

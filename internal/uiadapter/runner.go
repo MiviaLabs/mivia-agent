@@ -598,12 +598,18 @@ func (r *CommandRunner) listSessionSummaries() ([]ports.SessionSummary, error) {
 		if title == "" {
 			title = info.Name
 		}
+		active := r.pool != nil && r.pool.IsActive(id)
+		state := "done"
+		if active {
+			state = "running"
+		}
 		out = append(out, ports.SessionSummary{
 			ID:            id,
 			Title:         title,
 			UpdatedAt:     info.UpdatedAt,
-			Active:        id == currID,
-			State:         "done",
+			Active:        active,
+			State:         state,
+			IsCurrent:     id == currID,
 			Turns:         info.TurnCount,
 			ContextTokens: info.TokenCount,
 		})

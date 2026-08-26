@@ -161,7 +161,7 @@ func TestUnconfiguredWorkspaceAdvertisesRunCommandWithBuiltinAllowlist(t *testin
 	}
 	reg := NewDefaultRegistry(DefaultOptions{Workspace: ws})
 	// With no [tools] run_allowlist configured, run_command is still
-	// registered - config.DefaultRunAllowlist makes it open by default.
+	// registered - DefaultRunAllowlist makes it open by default.
 	if _, ok := reg.Get("run_command"); !ok {
 		t.Fatal("unconfigured workspace must advertise run_command (built-in allowlist)")
 	}

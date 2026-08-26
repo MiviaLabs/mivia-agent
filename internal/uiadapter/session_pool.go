@@ -89,6 +89,19 @@ func (p *SessionPool) Session(id string) *chat.Session {
 	return p.sessions[id]
 }
 
+// IsActive reports whether the session with the given ID has a turn
+// currently in flight. A session this process has never loaded into the
+// pool cannot be active from here, so it reports false.
+func (p *SessionPool) IsActive(id string) bool {
+	p.mu.Lock()
+	conv, ok := p.convs[id]
+	p.mu.Unlock()
+	if !ok {
+		return false
+	}
+	return conv.IsActive()
+}
+
 // NewSessionPool constructs a SessionPool seeded with the initial session.
 func NewSessionPool(initialSess *chat.Session, res *config.Resolved, agentState *cliagents.AgentSessionState, toolsOn bool) *SessionPool {
 	pool := &SessionPool{

@@ -414,8 +414,8 @@ func TestRunCommandParentCancelReportsCanceled(t *testing.T) {
 
 // TestRunCommandRegisteredWithBuiltinAllowlistByDefault proves run_command
 // is open by default: with no [tools] run_allowlist configured, it is still
-// registered and can run a program from config.DefaultRunAllowlist (e.g.
-// "echo"). See config.DefaultRunAllowlist's doc comment for what is (and is
+// registered and can run a program from DefaultRunAllowlist (e.g.
+// "echo"). See DefaultRunAllowlist's doc comment for what is (and is
 // not) included by default.
 func TestRunCommandRegisteredWithBuiltinAllowlistByDefault(t *testing.T) {
 	ws := setupTestWSRun(t)
@@ -448,7 +448,7 @@ func TestRunCommandBuiltinAllowlistExcludesShellsAndMutatingTools(t *testing.T) 
 }
 
 // TestRunCommandAllowlistOnlyReplacesBuiltin proves run_allowlist_only
-// replaces config.DefaultRunAllowlist entirely rather than extending it: a
+// replaces DefaultRunAllowlist entirely rather than extending it: a
 // program from the built-in default that is not in the configured
 // run_allowlist_only is refused.
 func TestRunCommandAllowlistOnlyReplacesBuiltin(t *testing.T) {

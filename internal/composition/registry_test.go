@@ -71,7 +71,7 @@ func TestBuildRegistry_MatchesLegacyShape(t *testing.T) {
 
 // TestBuildRegistry_RunCommandPresentByDefault mirrors
 // internal/tools/default_registry.go's registerDefaultTools: run_command is
-// advertised by default via config.DefaultRunAllowlist, even with no
+// advertised by default via tools.DefaultRunAllowlist, even with no
 // [tools] run_allowlist configured.
 func TestBuildRegistry_RunCommandPresentByDefault(t *testing.T) {
 	ws := openTestWorkspace(t)

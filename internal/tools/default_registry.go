@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/codeintel"
-	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
@@ -144,7 +143,7 @@ func searchToolBudget(opts DefaultOptions) int {
 
 // The run_command program allowlist is open by default: with no [tools]
 // run_allowlist configured, run_command may still execute
-// config.DefaultRunAllowlist's built-in programs (see that var's doc comment
+// DefaultRunAllowlist's built-in programs (see that var's doc comment
 // for what is and is not included, and why). [tools].run_allowlist extends
 // the built-in list; [tools].run_allowlist_only replaces it entirely. A
 // fuller, opt-in multi-ecosystem list (including shells, networking, and
@@ -174,15 +173,15 @@ func configuredSecretPaths(opts DefaultOptions) ([]string, []string) {
 }
 
 func configuredRunAllowlist(opts DefaultOptions) []string {
-	// run_allowlist_only REPLACES config.DefaultRunAllowlist entirely (a
+	// run_allowlist_only REPLACES DefaultRunAllowlist entirely (a
 	// project that wants a closed allowlist does not also inherit the
 	// built-in open one). Unset, run_allowlist EXTENDS the built-in list.
 	var base []string
 	if len(opts.RunAllowlistOnly) > 0 {
 		base = opts.RunAllowlistOnly
 	} else {
-		base = make([]string, 0, len(config.DefaultRunAllowlist)+len(opts.RunAllowlist))
-		base = append(base, config.DefaultRunAllowlist...)
+		base = make([]string, 0, len(DefaultRunAllowlist)+len(opts.RunAllowlist))
+		base = append(base, DefaultRunAllowlist...)
 		base = append(base, opts.RunAllowlist...)
 	}
 	normalized := make([]string, 0, len(base))

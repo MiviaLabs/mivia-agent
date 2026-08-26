@@ -331,6 +331,52 @@ func setupSessionStoreFixture(t *testing.T) (*chat.Session, *config.Resolved, *s
 	return sess, res, store, cleanup
 }
 
+// TestCommandRunner_ResumeSession_ReflectsRealActivity guards the fix for
+// the /resume status dot: SessionChoices must not hardcode the current
+// session as Active ("LIVE" regardless of whether anything is running),
+// and must still mark it as IsCurrent so the picker can distinguish "this
+// is where you are" from "this session has a turn running".
+func TestCommandRunner_ResumeSession_ReflectsRealActivity(t *testing.T) {
+	sess, res, _, cleanup := setupSessionStoreFixture(t)
+	defer cleanup()
+	runner := uiadapter.NewCommandRunner(sess, res, nil)
+
+	if err := sess.Save("saved-1"); err != nil {
+		t.Fatalf("failed to save session: %v", err)
+	}
+	// Saving under the session's own ID is the live-projection path
+	// (context_catalog.go: "a save under the live session's own id ...
+	// names the live context session it projects") - it is what makes
+	// ListSessions surface a row whose SessionID equals sess.SessionID,
+	// which is what IsCurrent keys off.
+	if err := sess.Save(sess.SessionID); err != nil {
+		t.Fatalf("failed to save live session: %v", err)
+	}
+
+	out := runner.Run(context.Background(), "resume", "")
+	if len(out.SessionChoices) == 0 {
+		t.Fatalf("expected SessionChoices, got %+v", out)
+	}
+
+	sawCurrent := false
+	for _, c := range out.SessionChoices {
+		if c.Active {
+			t.Errorf("session %q reported Active=true with no turn in flight", c.ID)
+		}
+		if c.ID == sess.SessionID {
+			sawCurrent = true
+			if !c.IsCurrent {
+				t.Errorf("current session %q reported IsCurrent=false", c.ID)
+			}
+		} else if c.IsCurrent {
+			t.Errorf("non-current session %q reported IsCurrent=true", c.ID)
+		}
+	}
+	if !sawCurrent {
+		t.Fatalf("current session %q not found in SessionChoices: %+v", sess.SessionID, out.SessionChoices)
+	}
+}
+
 func TestCommandRunner_ResumeSession(t *testing.T) {
 	sess, res, _, cleanup := setupSessionStoreFixture(t)
 	defer cleanup()
