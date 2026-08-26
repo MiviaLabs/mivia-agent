@@ -62,7 +62,7 @@ func TestBuildApp_SubagentHistoryVisibleInDialog(t *testing.T) {
 		{
 			Role:       provider.RoleTool,
 			ToolCallID: "call_disp_1",
-			Content:    `{"tasks":[{"id":"task-leak-check","status":"completed","output":"found 0 leaks across 12 packages"}]}`,
+			Content:    `[{"task_id":"task-leak-check","status":"completed","output":"found 0 leaks across 12 packages"}]`,
 		},
 	}
 	agentState := &cli.AgentSessionState{}

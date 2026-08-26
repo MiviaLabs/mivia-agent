@@ -32,7 +32,7 @@ Two distinct agent concepts, both covered below:
   selected for a session - system prompt, tool scope, model, skill allowlist.
   See [Agent definition pipeline](#agent-definition-pipeline).
 - **Sub-agents** are concurrent DAG tasks the root agent spawns and manages
-  through the coordinator - `spawn_agent`, `inspect_agents`, `join_run`,
+  through the coordinator - `dispatch_tasks`, `inspect_agents`, `join_run`,
   `cancel_run`. They run as in-process goroutines, not OS processes. See
   [Subagent Orchestration](#subagent-orchestration).
 
@@ -180,7 +180,7 @@ The Coordinator interface is larger than a Spawn/Inspect/Join/Cancel summary sug
 ```mermaid
 flowchart TD
     subgraph Model["Model (LLM)"]
-        model_ops["spawn_agent / inspect_agents / join_run / cancel"]
+        model_ops["dispatch_tasks / inspect_agents / join_run / cancel_run"]
     end
 
     subgraph Coordinator["Coordinator (interface)"]

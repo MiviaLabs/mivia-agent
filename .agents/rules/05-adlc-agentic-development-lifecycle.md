@@ -11,7 +11,7 @@ Small, well-understood changes do not need it; use judgment. See also
 warrant the loop.
 **Override**: When in play, this rule governs *how* work is sequenced and verified.
 
-**Storage model**: Zero files. Everything lives in the orchestrator's context (ephemeral) or in the LedgerRepository (SQLite/memory via `spawn_agent`). No `.md` files are written for workflow artifacts.
+**Storage model**: Zero files. Everything lives in the orchestrator's context (ephemeral) or in the LedgerRepository (SQLite/memory via `dispatch_tasks`). No `.md` files are written for workflow artifacts.
 
 **Fast Path**: Trivial changes (≤5 lines, single file, no new types) may skip Steps 0-3 and go directly to Step 4.
 
@@ -110,18 +110,18 @@ Every ADLC step maps to specific built-in tools. Do not use `write_file`, `mkdir
 |-----------|------|-------|
 | **Step 0** - Challenge plan | `dispatch_tasks` | 2-4 parallel hostile reviews: `agent: "reviewer"` + `skill: "architecture-review"` for structure, `agent: "auditor"` for correctness. Route each task by `agent` (+ optional `skill`); no `handler` field |
 | **Step 2** - Validate tasks | `dispatch_tasks` | 1 validator per wave: `agent: "verifier"` + `skill: "verify-code-change"`. Route each task by `agent` (+ optional `skill`); no `handler` field |
-| **Step 4** - Implement | `spawn_agent` (waves with deps) / `dispatch_tasks` (parallel within wave) | `agent: "go-engineer"`, `wait: "run"` for sequential waves |
+| **Step 4** - Implement | `dispatch_tasks` (tasks with `depends_on` or sequential waves) | `agent: "go-engineer"`, `wait: "run"` |
 | **Step 4** - Sub-agent stuck | `inspect_agents` → `cancel_run` | Check status, abort if >2min stuck |
 | **Step 5** - Bug audit | `dispatch_tasks` | 3-4 auditors: `agent: "auditor"` + `skill: "bug-audit"`. Add one `agent: "performance"` + `skill: "performance-review"` when the change touches a hot path. Route each task by `agent` (+ optional `skill`); no `handler` field |
-| **Step 5** - Fix bug | `delegate` | Single focused fix: `multi_step: true`, `timeout_seconds: 60` |
+| **Step 5** - Fix bug | `dispatch_tasks` | Single focused fix: `agent: "go-engineer"`, `timeout_seconds: 60` |
 | **Step 6** - Verify | Direct execution, or `dispatch_tasks` with `agent: "verifier"` + `skill: "verify-change"` | `go build ./... && go vet ./... && go test -race ./...` |
 
 ### Decision Tree
 
 ```
 Need parallel independent work?     → dispatch_tasks
-Need sequential waves with deps?    → spawn_agent + join_run
-Need a single focused task?         → delegate
+Need sequential waves with deps?    → dispatch_tasks (depends_on, or wait="none" + join_run)
+Need a single focused task?         → dispatch_tasks (single task)
 Need to check status of work?       → inspect_agents
 Need to cancel stuck work?          → cancel_run
 Need to run build/test commands?    → Direct execution (not a tool)
@@ -129,9 +129,7 @@ Need to run build/test commands?    → Direct execution (not a tool)
 
 ### Handler Types - Critical
 
-`dispatch_tasks` and `spawn_agent` tasks have **no `handler` field** - do not pass one. The strict task schema rejects unknown fields, so a stray `handler: "multi_step"` on a `dispatch_tasks` task fails the **whole** batch with `json: unknown field "handler"`. The routed agent definition - selected by `agent` plus an optional `skill` - determines the loop and tools: every defined agent/skill runs a multi-step loop with tool access scoped to its definition.
-
-`delegate` is the only tool with a `multi_step` boolean. Set `multi_step: true` on `delegate` for a single focused sub-agent with full tool access; the default (false) is one LLM call with no tools.
+`dispatch_tasks` tasks have **no `handler` field** - do not pass one. The strict task schema rejects unknown fields, so a stray `handler: "multi_step"` on a `dispatch_tasks` task fails the **whole** batch with `json: unknown field "handler"`. The routed agent definition - selected by `agent` plus an optional `skill` - determines the loop and tools: every defined agent/skill runs a multi-step loop with tool access scoped to its definition. Omitting `agent` runs a bare one-shot LLM call on the caller's model with no tools.
 
 **One agent timing out or hanging never costs you the others.** Every task reports
 its own result and status, so a challenge or audit round returns what the surviving
@@ -251,7 +249,7 @@ All artifacts are ephemeral - held in the orchestrator's context or passed as su
 
 ### Step 4 - Orchestrate Implementation (TDD)
 
-**Who**: Orchestrator + sub-agents via `spawn_agent` / `dispatch_tasks`.
+**Who**: Orchestrator + sub-agents via `dispatch_tasks`.
 
 **Per micro-task: RED → GREEN → handoff (all in context, no files)**
 
@@ -269,7 +267,7 @@ All artifacts are ephemeral - held in the orchestrator's context or passed as su
 
 **Wave execution:**
 
-1. Execute waves **in order** using `spawn_agent` with `wait: "run"`. Wave N never starts until Wave N-1 gates pass.
+1. Execute waves **in order** using `dispatch_tasks` with `wait: "run"` (or `depends_on` across tasks). Wave N never starts until Wave N-1 gates pass.
 2. Within a wave, dispatch parallel tasks via `dispatch_tasks`.
 3. **Reviewer tasks** in Wave N read Wave N-1 code via tool output. REJECT blocks the wave - orchestrator must fix before proceeding.
 4. Sub-agents BLOCKED >2 min → inspect with `inspect_agents`, cancel with `cancel_run`.

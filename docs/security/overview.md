@@ -88,7 +88,7 @@ A workspace-declared `provider` or `model` selection in an agent definition is i
 
 ## Agent skill allowlists
 
-Agent definitions may restrict skill invocation with `skills = [...]`. Omit = all trusted skills. `[]` = none. The allowlist is enforced at the selected task-agent boundary (`dispatch_tasks`, `spawn_agent`, skill resume). It is not enforced by trusting skill Markdown. See [Skill System Architecture](../architecture/skills.md#agent-skill-binding).
+Agent definitions may restrict skill invocation with `skills = [...]`. Omit = all trusted skills. `[]` = none. The allowlist is enforced at the selected task-agent boundary (`dispatch_tasks`, skill resume). It is not enforced by trusting skill Markdown. See [Skill System Architecture](../architecture/skills.md#agent-skill-binding).
 
 ## Runtime identity
 

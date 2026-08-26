@@ -42,8 +42,8 @@ A skill is a reusable task template (`SKILL.md`) an agent can invoke - things
 like `bug-audit`, `architecture-review`, or `feature-delivery` ship with the
 repository.
 
-mivia can run several sub-agents concurrently as tasks with dependencies: `spawn_agent`,
-`dispatch_tasks`, `inspect_agents`, `join_run`, and `cancel_run` give the
+mivia can run several sub-agents concurrently as tasks with dependencies: `dispatch_tasks`,
+`inspect_agents`, `join_run`, and `cancel_run` give the
 model orchestration control over a batch of tasks with dependencies, one
 result per task, and idempotent retries.
 

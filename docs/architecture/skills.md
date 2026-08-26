@@ -89,7 +89,6 @@ skills = ["bug-audit", "verify-change"]
 Enforcement is root fan-out only (v1):
 
 - `dispatch_tasks` when an explicit task `skill` is present
-- `spawn_agent` when an explicit task `skill` is present
 - Skill handler invoke on resume/retry (rechecks the selected agent snapshot)
 
 Nested `multi_step` agents do not receive privileged orchestration tools, so
