@@ -164,11 +164,23 @@ func TestWorkflowGCHappyPathAndArgRefusal(t *testing.T) {
 
 // TestRunWorkflowDispatchGC covers the 'gc' dispatch arm of the workflow
 // command router through the public RunWorkflowWithIO entry point.
+//
+// --config must be passed explicitly: openEventsFixtureWithRun writes its
+// config to <root>/config.toml, not the namespaced <root>/.mivia/mivia.toml
+// WorkflowConfigPath auto-discovers, so an omitted --config here falls
+// through to config.Load's system-wide DefaultConfigCandidates search
+// (env var, ./.mivia/mivia.toml relative to the test binary's working
+// directory, then ~/.mivia/mivia.toml) instead of staying inside the
+// fixture - on a machine whose real ~/.mivia/mivia.toml sets an env_file
+// that doesn't happen to exist, that leaks out as an unrelated load
+// failure. Every sibling test using this fixture already passes the
+// config path explicitly; this one only omitted it because gc's dispatch
+// doesn't take a positional workflow name to remind you.
 func TestRunWorkflowDispatchGC(t *testing.T) {
 	root, _, _, closeFn, _, _ := openEventsFixtureWithRun(t, "wfr-dispatch-gc-unrelated")
 	closeFn()
 	var stdout, stderr strings.Builder
-	if err := RunWorkflowWithIO([]string{"gc", "--workspace", root}, &stdout, &stderr); err != nil {
+	if err := RunWorkflowWithIO([]string{"gc", "--workspace", root, "--config", filepath.Join(root, "config.toml")}, &stdout, &stderr); err != nil {
 		t.Fatalf("RunWorkflowWithIO(gc) error = %v", err)
 	}
 	if !strings.Contains(stdout.String(), "removed 0 orphaned content row(s)") {
