@@ -181,6 +181,33 @@ reasoning = "high"
 reasoning_efforts = ["low", "medium", "high", "max"]
 ```
 
+A proxy that translates OpenAI-compatible requests to Anthropic's real API
+cannot always deliver Anthropic's own request-shape constraints - most
+commonly, Anthropic rejects a non-default `temperature` outright, which
+bites any config with a global `[chat] temperature` set alongside an active
+reasoning level. If your proxy also exposes Anthropic's native Messages API
+(`POST /v1/messages`, same host) alongside its OpenAI-compatible endpoint,
+add `reasoning_dialect = "anthropic_adaptive"` to a Claude model entry to
+route that specific model's requests through mivia's native Anthropic wire
+format instead - reusing this provider's own `base_url` and
+`CLIPROXY_API_KEY`, no separate `[providers.anthropic]` block needed:
+
+```toml
+[[providers.llmproxycli.models]]
+name = "claude-sonnet-5"
+context_window_tokens = 200000
+max_output_tokens = 128000
+reasoning = "high"
+reasoning_efforts = ["low", "medium", "high", "xhigh", "max"]
+reasoning_dialect = "anthropic_adaptive"
+```
+
+Every other model on `llmproxycli` (and this same model if you omit the
+override) keeps speaking OpenAI-compatible chat/completions unchanged.
+`reasoning_dialect = "anthropic_adaptive"` is rejected at config-load time
+on any provider that cannot actually deliver it (only `anthropic` and
+`llmproxycli` can today).
+
 ### Anthropic
 
 The `anthropic` provider speaks Anthropic's native Messages API

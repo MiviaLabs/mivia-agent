@@ -286,7 +286,14 @@ TUI's `resolveProviderAndModel` silently picked the first provider whose catalog
 happened to contain a requested model name, with no ambiguity check, while the REPL
 path never searched other providers at all. Neither path routed through a shared
 lookup. Fixed by introducing one shared `(*config.Resolved).OtherProvidersWithModel`
-both surfaces now call.
+both surfaces now call. `34cfac2f` found `reasoning_dialect = "anthropic_adaptive"` -
+Anthropic's native wire format, a request shape only two provider clients can
+actually deliver - reachable from config validation on ANY provider, with no
+capability gate; a model entry naming it on a provider whose client only speaks
+OpenAI-compatible chat/completions would have loaded successfully and then sent a
+malformed request at runtime. Fixed with `reasoning.CanCarryDialect`, an explicit
+allow-list `internal/config`'s `checkReasoningIsDeliverable` now consults before
+accepting the dialect.
 
 **Probes.**
 - Scope the registry before the dispatcher reads it, never after.
