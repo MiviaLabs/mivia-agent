@@ -341,14 +341,7 @@ func (d *Dispatcher) Invoke(ctx context.Context, req Request) (result Result) {
 	}
 	verdict := d.preInvoke(ctx, req)
 	if verdict.Denied {
-		blocked := d.blockedResult(req, meta, started, verdict.Reason)
-		blocked.HookRuns = verdict.Runs
-		// Resolve in-flight waiters with the block, but do NOT record it: an
-		// admission verdict can change mid-turn and must be re-evaluated.
-		d.mu.Lock()
-		d.completeTurnInFlight(req, blocked)
-		d.mu.Unlock()
-		result = blocked
+		result = d.deliverBlockedResult(req, meta, started, verdict)
 		return
 	}
 	result = d.execute(ctx, req, res, started, meta, fail)

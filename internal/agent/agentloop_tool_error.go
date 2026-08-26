@@ -21,6 +21,26 @@ import (
 	sdktools "github.com/MiviaLabs/mivia-ai-sdk/tools"
 )
 
+// servedUnadmittedToolMessage builds the RoleTool message for a deferred
+// call UnadmittedToolHandler served synchronously: rendered exactly like an
+// ordinary successful call - no "error: " prefix, no failed tool_end, the
+// error text this path exists to remove. appendHookContext gives the model
+// the same framed, tag-neutralized advisory text dispatcherShim.Run gives
+// it for an admitted call - the recorded outcome and the returned message
+// carry the SAME body, exactly like the shim's capped+appended body.
+func servedUnadmittedToolMessage(turn *sdkTurnState, callKey string, call sdkshape.ToolCall, result UnadmittedToolResult) sdkshape.Message {
+	body := appendHookContext(result.Content, result.HookContext)
+	if turn != nil {
+		turn.recordToolOutcomeWithPreview(callKey, call.Name, body, false, "", false, body)
+	}
+	return sdkshape.Message{
+		Role:       provider.RoleTool,
+		ToolCallID: call.ID,
+		Name:       call.Name,
+		Content:    body,
+	}
+}
+
 // sdkToolCallErrorReporter returns the Options.OnToolCallError hook
 // that mirrors the legacy executeToolTask not-in-registry branch:
 // when the SDK failed the call because the tool is unknown or was
@@ -77,19 +97,7 @@ func sdkToolCallErrorReporter(opts Options, turn *sdkTurnState) sdkagentloop.Err
 				emitHookRuns(opts, callKey, result.HookRuns)
 			}
 			if result.Handled && result.Ran {
-				// Served synchronously against the full authorized tool set:
-				// render it exactly like an ordinary successful call - no
-				// "error: " prefix, no failed tool_end, the error text this
-				// change exists to remove.
-				if turn != nil {
-					turn.recordToolOutcomeWithPreview(callKey, call.Name, result.Content, false, "", false, result.Content)
-				}
-				return sdkshape.Message{
-					Role:       provider.RoleTool,
-					ToolCallID: call.ID,
-					Name:       call.Name,
-					Content:    result.Content,
-				}, nil
+				return servedUnadmittedToolMessage(turn, callKey, call, result), nil
 			}
 			if result.Handled {
 				msg = result.Content

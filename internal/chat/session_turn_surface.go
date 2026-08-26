@@ -74,12 +74,12 @@ func (s *Session) wireStepBoundaryAdmission(opts *agent.Options, turn *TurnOptio
 		if _, err := s.StageToolAdmission([]string{name}, turnID); err != nil {
 			return agent.UnadmittedToolResult{Handled: true, Content: err.Error()}
 		}
-		content, hookRuns, ok := s.runDeferredToolNow(ctx, dispatcher, resolver, sessionID, turnID, name, args)
+		content, hookContext, hookRuns, ok := s.runDeferredToolNow(ctx, dispatcher, resolver, sessionID, turnID, name, args)
 		if ok {
-			return agent.UnadmittedToolResult{Handled: true, Ran: true, Content: content, HookRuns: hookRuns}
+			return agent.UnadmittedToolResult{Handled: true, Ran: true, Content: content, HookContext: hookContext, HookRuns: hookRuns}
 		}
 		return agent.UnadmittedToolResult{
-			Handled: true, HookRuns: hookRuns,
+			Handled: true, HookContext: hookContext, HookRuns: hookRuns,
 			Content: fmt.Sprintf("tool %q is authorized but was not yet loaded. It has been queued to load automatically; publication happens at the next step boundary and can be deferred - retry the call on your next step", name),
 		}
 	}
@@ -141,27 +141,30 @@ func (s *Session) isAdvertisedToolName(name string) bool {
 //
 // This is deliberately NOT full parity with an already-admitted call's
 // dispatcherShim.Run path (internal/agent/sdk_dispatcher_shim.go): no
-// per-call timeout re-arming, no hook-context append, no pass1/turn-shaping
-// bookkeeping. Hook-run VISIBILITY (the operator's transcript row) IS
-// wired below, including on a PreToolUse block (ok=false, hookRuns
-// non-nil) - but the MODEL-facing text on a block is left unchanged, and
-// this path's dedup bucket differs from the shim's (ParentID/Step left
-// zero). See docs/development/lifecycle-hooks.md's "Limitation" notes for
-// what remains open and why.
-func (s *Session) runDeferredToolNow(ctx context.Context, dispatcher *runtime.Dispatcher, resolver func() *tools.Registry, sessionID string, turnID uint64, name string, args json.RawMessage) (content string, hookRuns []runtime.HookRun, ok bool) {
+// per-call timeout re-arming, no pass1/turn-shaping bookkeeping. Hook-run
+// VISIBILITY (the operator's transcript row) and hook CONTEXT (the
+// advisory text a PostToolUse hook hands the MODEL) are both threaded
+// below, on the Ran path. A PreToolUse block (ok=false) still returns
+// hookRuns and hookContext, but the caller does not append hookContext to
+// the model-facing denial text this wave - only the Ran path's caller
+// (agentloop_tool_error.go) appends it. This path's dedup bucket also
+// differs from the shim's (ParentID/Step left zero). See
+// docs/development/lifecycle-hooks.md's "Limitation" notes for what
+// remains open and why.
+func (s *Session) runDeferredToolNow(ctx context.Context, dispatcher *runtime.Dispatcher, resolver func() *tools.Registry, sessionID string, turnID uint64, name string, args json.RawMessage) (content string, hookContext string, hookRuns []runtime.HookRun, ok bool) {
 	if dispatcher == nil || resolver == nil {
-		return "", nil, false
+		return "", "", nil, false
 	}
 	base := resolver()
 	if base == nil {
-		return "", nil, false
+		return "", "", nil, false
 	}
 	tool, found := base.Get(name)
 	if !found {
-		return "", nil, false
+		return "", "", nil, false
 	}
 	if err := dispatcher.RegisterTool(base, tool); err != nil && !dispatcher.Has(runtime.Tool, name) {
-		return "", nil, false
+		return "", "", nil, false
 	}
 	result := dispatcher.Invoke(ctx, runtime.Request{
 		TurnID:    fmt.Sprintf("turn:%d", turnID),
@@ -170,10 +173,19 @@ func (s *Session) runDeferredToolNow(ctx context.Context, dispatcher *runtime.Di
 		Name:      name,
 		Input:     args,
 	})
+	// HookContext is set unconditionally, including for a dedup-served
+	// duplicate: DC-9 (internal/runtime/dispatcher.go) answers a duplicate
+	// with the OWNER's post-hook Result, and the owner's HookContext is
+	// exactly what dispatcherShim.Run appends for its own duplicates too.
+	hookContext = result.HookContext
 	// A dedup-served duplicate is answered with the OWNER's HookRuns (DC-9
-	// fidelity, internal/runtime/dispatcher.go), which did not run for THIS
-	// call - reporting them would show a hook firing that never fired here.
-	// Mirrors dispatcherShim.Run's !r.IsDuplicate() guard.
+	// fidelity), which did not run for THIS call - reporting them would
+	// show a hook firing that never fired here. Mirrors dispatcherShim.Run's
+	// !r.IsDuplicate() guard. HookRuns (the operator's transcript row) and
+	// HookContext (the model's advisory text) have different duplicate
+	// contracts on purpose: a duplicate call's hook did not run, but the
+	// owner's post-hook advisory text is still valid content to hand the
+	// model again, same as the owner's tool Output is.
 	if !result.IsDuplicate() {
 		hookRuns = result.HookRuns
 	}
@@ -182,7 +194,7 @@ func (s *Session) runDeferredToolNow(ctx context.Context, dispatcher *runtime.Di
 		// hookRuns, so the caller can show it even though the call itself
 		// did not happen. See the doc comment above for what does and does
 		// not change on the model-facing side of a block.
-		return "", hookRuns, false
+		return "", hookContext, hookRuns, false
 	}
 	s.mu.RLock()
 	maxChars, spool := s.MaxToolResultChars, s.RemainderSpool
@@ -196,7 +208,7 @@ func (s *Session) runDeferredToolNow(ctx context.Context, dispatcher *runtime.Di
 		maxResult = capabilityMaxBytes
 	}
 	capped, _, _ := remainder.CapWithSpoolRef(spool, sessionID, string(result.Output), maxResult)
-	return capped, hookRuns, true
+	return capped, hookContext, hookRuns, true
 }
 
 // commitTurnToken returns the token a step-boundary publication re-captured

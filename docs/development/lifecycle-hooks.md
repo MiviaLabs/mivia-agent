@@ -548,30 +548,27 @@ There is **no `MIVIA_TURN_ID`**. The environment carries `MIVIA_HOOK_EVENT`,
 nothing else; the turn id is in the stdin JSON as `turn_id`, which is why the
 script above stores the payload whole rather than picking fields out of it.
 
-> **Limitation: `Stop` fires in the interactive TUI only.** `KindTurnEnd` has
-> exactly one publish site, the root TUI turn goroutine. The `--plain` REPL and
-> the `-p` one-shot never publish it, so this hook is silent there and the log
-> will simply have no rows from those runs. That is a seam gap rather than a
-> decision - see `internal/hooksession.RunStopEvent` (moved from the former
-> `internal/cli/hooks_runner.go`) - and it is worth knowing before you build
-> billing or audit on top of it.
+> **Limitation: `Stop` has no production caller on any surface today.**
+> `internal/hooksession.RunStopEvent` exists, is tested, and is wired to
+> nothing: no code path calls it, on the TUI or `--plain` or `-p`. An earlier
+> version of this note claimed it fired in the interactive TUI; that was
+> already false by the time it was written (the publish site it named,
+> `internal/cli/tui_events.go`, had already been removed). `PreToolUse` and
+> `PostToolUse` are unaffected - they run through the dispatcher's `Policy`,
+> not through this seam. Wiring `Stop` to a real per-turn call site on every
+> surface is tracked as a separate, larger change: it needs a real turn
+> identifier at the call site (the obvious candidate, `Session.sendUserWithTurn`'s
+> return value, is the assistant's reply text, not a turn id) and a design for
+> reaching every session a process can run, including pooled TUI sessions -
+> not just a single global.
 >
-> **Limitation: a `PostToolUse` hook's advisory text never reaches the MODEL
-> for a deferred tool.** `internal/chat.Session.runDeferredToolNow` serves a
-> deferred-but-authorized tool call synchronously and does run `PreToolUse`/
-> `PostToolUse` against it - the policy lives on the dispatcher, not on this
-> path - and the operator now sees the resulting row like any other call. But
-> `result.HookContext` (the text a hook hands the MODEL) is still discarded
-> here, unlike the normal `dispatcherShim.Run` path. A known gap, recorded
-> rather than silently widened.
->
-> A `PreToolUse` block on this path also leaves one contradiction for a
-> single step: the operator's transcript shows the denying hook's row, but
-> the MODEL is still told the generic "queued to load... retry on your next
-> step" message, not the hook's actual reason. The model retries next step,
-> reaches the now-admitted path, and gets the real reason there - so this
-> self-corrects in one step, but it is a deliberate half-fix, not an
-> oversight.
+> A `PreToolUse` block on the deferred-tool path (`internal/chat.Session.runDeferredToolNow`)
+> leaves one contradiction for a single step: the operator's transcript shows
+> the denying hook's row, but the MODEL is still told the generic "queued to
+> load... retry on your next step" message, not the hook's actual reason. The
+> model retries next step, reaches the now-admitted path, and gets the real
+> reason there - so this self-corrects in one step, but it is a deliberate
+> half-fix, not an oversight.
 
 `Stop` also fires once per user-visible turn and never per subagent turn. A
 per-subagent `Stop` would run N times with "the assistant is done" semantics
@@ -594,8 +591,7 @@ silently dropping the call.
 - Hooks **propagate to subagents**. A gate a subagent escapes is not a gate.
 - Hooks never re-enter mivia's dispatcher, so a `PreToolUse` hook matching
   `run_command` cannot dispatch `run_command` and recurse.
-- `Stop` currently fires in the interactive TUI only. The classic `--plain` REPL
-  and the `-p` one-shot have no turn-end publish point for it to hang from.
+- `Stop` currently fires on no surface - see the "Limitation" note above.
   `PreToolUse` and `PostToolUse` fire on every surface.
 - `SKILL.md` frontmatter hooks, `http`/`mcp_tool`/`prompt`/`agent` handler
   types, an operator tier, and a global kill switch are all out of v1.

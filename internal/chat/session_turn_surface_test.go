@@ -251,6 +251,82 @@ func TestDeferredToolSuppressesHookRunsOnDuplicate(t *testing.T) {
 	}
 }
 
+// A PostToolUse hook's advisory text must reach the model, not just the
+// operator's transcript - parity with dispatcherShim.Run's hookContext
+// threading. runDeferredToolNow returns it unframed; framing happens at
+// the internal/agent call site that has appendHookContext in scope.
+func TestDeferredToolReturnsHookContextForTheModel(t *testing.T) {
+	s := prefixResetSession(t)
+	full := tools.NewRegistry()
+	full.Register(fixedBodyTool{name: "grep", body: "main.go:1:package main"})
+	s.PublishAgentSurface("p", 0, full, nil, nil, "", full.OpenAITools())
+
+	post := func(context.Context, runtime.Request, runtime.Result) runtime.HookResult {
+		return runtime.HookResult{Context: "gofmt rewrote 2 files"}
+	}
+	dispatcher := runtime.New(runtime.Policy{PostInvokeHook: post})
+	t.Cleanup(dispatcher.Close)
+	s.SetDispatcher(dispatcher)
+	s.ToolBaseResolver = func() *tools.Registry { return full }
+	s.mu.Lock()
+	s.turnID = 7
+	s.mu.Unlock()
+
+	var opts agent.Options
+	s.wireStepBoundaryAdmission(&opts, nil)
+	result := opts.UnadmittedToolHandler(context.Background(), "grep", json.RawMessage(`{}`))
+
+	if !result.Ran {
+		t.Fatalf("expected the call to be served, got denial: %q", result.Content)
+	}
+	if result.HookContext != "gofmt rewrote 2 files" {
+		t.Fatalf("HookContext = %q, want the PostToolUse hook's advisory text", result.HookContext)
+	}
+	if result.Content != "main.go:1:package main" {
+		t.Fatalf("Content = %q, want the unframed tool result - framing happens at the agent call site", result.Content)
+	}
+}
+
+// A dedup-served duplicate's HookRuns must be nil (the hook did not run for
+// THIS call), but its HookContext is still the owner's real advisory text -
+// DC-9 answers a duplicate with the owner's post-hook Result, and
+// dispatcherShim.Run appends that same context for its own duplicates.
+func TestDeferredToolReportsHookContextForADuplicate(t *testing.T) {
+	s := prefixResetSession(t)
+	full := tools.NewRegistry()
+	full.Register(fixedBodyTool{name: "grep", body: "ok"})
+	s.PublishAgentSurface("p", 0, full, nil, nil, "", full.OpenAITools())
+
+	post := func(context.Context, runtime.Request, runtime.Result) runtime.HookResult {
+		return runtime.HookResult{Context: "fmt.sh ran"}
+	}
+	dispatcher := runtime.New(runtime.Policy{PostInvokeHook: post})
+	t.Cleanup(dispatcher.Close)
+	s.SetDispatcher(dispatcher)
+	s.ToolBaseResolver = func() *tools.Registry { return full }
+	s.mu.Lock()
+	s.turnID = 7
+	s.mu.Unlock()
+
+	var opts agent.Options
+	s.wireStepBoundaryAdmission(&opts, nil)
+
+	first := opts.UnadmittedToolHandler(context.Background(), "grep", json.RawMessage(`{}`))
+	if !first.Ran || first.HookContext != "fmt.sh ran" {
+		t.Fatalf("owner call: Ran=%v HookContext=%q", first.Ran, first.HookContext)
+	}
+	second := opts.UnadmittedToolHandler(context.Background(), "grep", json.RawMessage(`{}`))
+	if !second.Ran {
+		t.Fatalf("second identical call = %+v, want served via dedup", second)
+	}
+	if len(second.HookRuns) != 0 {
+		t.Fatalf("a dedup-served duplicate must report no hook RUNS, got %+v", second.HookRuns)
+	}
+	if second.HookContext != "fmt.sh ran" {
+		t.Fatalf("a dedup-served duplicate must still carry the owner's hook CONTEXT, got %q", second.HookContext)
+	}
+}
+
 // A PreToolUse block is the case an operator most needs to see: the call
 // never ran, but the denying hook did. Today's model-facing text on this
 // path is unchanged (the generic "queued to load... retry" message) - see

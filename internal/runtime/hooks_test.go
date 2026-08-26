@@ -442,6 +442,38 @@ func TestABlockedCallCarriesItsHookRuns(t *testing.T) {
 	}
 }
 
+// An earlier ALLOWING handler in a PreToolUse group can leave advisory
+// Context before a LATER handler in the same group denies the call
+// (Runner.Run appends context per handler before checking its verdict).
+// That advisory text is real model-facing content and must not be dropped
+// just because the call ends up blocked - the deny reason itself reaches
+// the model through a separate channel (the JSON status envelope).
+func TestBlockedResultKeepsAnEarlierHandlersAdvisoryContext(t *testing.T) {
+	policy := Policy{PreInvokeHook: func(context.Context, Request) HookVerdict {
+		return HookVerdict{
+			Denied:  true,
+			Reason:  "policy forbids this",
+			Context: "the workspace is mid-rebase",
+			Runs: []HookRun{
+				{Event: "PreToolUse", Program: "advise.sh", Output: "the workspace is mid-rebase"},
+				{Event: "PreToolUse", Program: "guard.sh", Denied: true, Output: "policy forbids this"},
+			},
+		}
+	}}
+	d := toolDispatcher(t, policy, okHandler(`{"ok":true}`))
+
+	result := d.Invoke(context.Background(), toolRequest("a"))
+	if result.Metadata.Status != "blocked" {
+		t.Fatalf("status = %q, want blocked", result.Metadata.Status)
+	}
+	if !strings.Contains(result.HookContext, "mid-rebase") {
+		t.Fatalf("a blocked call must keep an earlier handler's advisory context, got %q", result.HookContext)
+	}
+	if strings.Contains(string(result.Output), "mid-rebase") {
+		t.Fatal("the advisory context must travel on HookContext, not be spliced into the tool's Output envelope")
+	}
+}
+
 // A block reason is hook-authored text — untrusted, like any other hook
 // output. It must be neutralized for tag-shaped content before reaching the
 // model, the same as advisory context inside the framed block.

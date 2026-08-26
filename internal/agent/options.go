@@ -43,6 +43,16 @@ type UnadmittedToolResult struct {
 	// firing that never fired here. Nil when the handler never reached the
 	// dispatcher at all.
 	HookRuns []runtime.HookRun
+	// HookContext is the advisory text lifecycle hooks produced for this
+	// call, for the MODEL. The caller frames it through appendHookContext,
+	// so it gets the same delimiting and tag-neutralization the ordinary
+	// dispatcherShim.Run path applies. Unlike HookRuns it IS set for a
+	// dedup-served duplicate: DC-9 answers a duplicate with the owner's
+	// post-hook Result, and the shim appends that context too. Set but
+	// currently unused on a !Ran (denial) result: the denial text is left
+	// unchanged until a PreToolUse block's own advisory context is threaded
+	// too (see runDeferredToolNow's doc comment).
+	HookContext string
 }
 
 // Options is one agent turn's immutable configuration. Every field is read,

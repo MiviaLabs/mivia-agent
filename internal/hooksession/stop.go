@@ -12,15 +12,13 @@ import (
 // Stop is pure observation: it has no denial channel at all, so a Stop hook can
 // log a turn's cost and can never affect whether the turn ended.
 //
-// Scope, stated rather than assumed: KindTurnEnd's only publish site is the
-// root TUI turn goroutine (internal/cli/tui_events.go), so Stop fires once per
-// user-visible turn and never per subagent turn - a per-subagent Stop would run
-// N times and its "the assistant is done" semantics would be false every time
-// but the last. The same fact bounds the feature: the classic --plain REPL and
-// the -p one-shot never publish KindTurnEnd, so Stop does not fire there. That
-// is a seam gap, not a design choice, and it is recorded here rather than
-// papered over. PreToolUse and PostToolUse do fire on those surfaces; Stop is
-// the one event a -p run silently does without.
+// Scope, stated rather than assumed: this function has NO production caller
+// on any surface today (TUI included) - see
+// docs/development/lifecycle-hooks.md's "Limitation" note. Wiring it needs a
+// real per-turn call site with a genuine turn identifier and a design that
+// reaches every session a process can run, not just one; that is future
+// work, tracked separately. PreToolUse and PostToolUse are unaffected: they
+// run through the dispatcher's Policy, not through this seam.
 //
 // The context is the turn's own, deliberately not a detached one. A canceled
 // turn therefore does not run its Stop hook, and the run is RECORDED rather

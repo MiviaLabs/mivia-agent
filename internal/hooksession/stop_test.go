@@ -125,8 +125,10 @@ func TestStopHookWithNoConfiguredHooksReturnsNothing(t *testing.T) {
 
 // Stop means "the assistant is done", which is true once per user-visible turn.
 // A Stop hook that fired per subagent turn would run N times and its semantics
-// would be false every time but the last. The guarantee is structural: exactly
-// one production site names the event, and it is the root turn path.
+// would be false every time but the last. Today RunStopEvent has no production
+// caller at all (see its doc comment) - this test only guards that the event
+// constant itself is named in exactly one file, so a future wiring attempt
+// cannot accidentally duplicate the call site while adding one.
 func TestStopEventIsFiredFromExactlyOneProductionSite(t *testing.T) {
 	var sites []string
 	for _, dir := range []string{".", "../cli", "../agent", "../subagents", "../runtime", "../coordinator"} {

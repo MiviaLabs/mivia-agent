@@ -72,6 +72,25 @@ func (d *Dispatcher) blockedResult(req Request, meta Metadata, started time.Time
 	return d.deliverTerminal(req, meta, blockedError, reason)
 }
 
+// deliverBlockedResult builds the blocked Result for a denied HookVerdict,
+// attaches its hook runs and any advisory context an earlier ALLOWING
+// handler in the same group left before a later handler denied (Runner.Run
+// appends context per handler before checking its verdict - that text is
+// real model-facing content and must not be dropped just because the call
+// ends up blocked; the deny reason itself reaches the model through a
+// separate channel, the JSON status envelope), and resolves in-flight
+// waiters with the block WITHOUT recording it: an admission verdict can
+// change mid-turn and must be re-evaluated on the next identical call.
+func (d *Dispatcher) deliverBlockedResult(req Request, meta Metadata, started time.Time, verdict HookVerdict) Result {
+	blocked := d.blockedResult(req, meta, started, verdict.Reason)
+	blocked.HookRuns = verdict.Runs
+	blocked.HookContext = boundHookContext(verdict.Context)
+	d.mu.Lock()
+	d.completeTurnInFlight(req, blocked)
+	d.mu.Unlock()
+	return blocked
+}
+
 // deliverTerminal builds the bounded status envelope, emits the audit record,
 // and returns the terminal Result. ID-keyed waiter delivery does NOT happen
 // here: it happens at completeIDKeyed (the success tail, after postInvoke
