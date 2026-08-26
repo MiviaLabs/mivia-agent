@@ -62,6 +62,26 @@ func titleFromFirstMessage(msg string) string {
 	return string(runes)
 }
 
+// markFirstUserTurn best-effort persists a display title as soon as a
+// session's first user message is sent, instead of waiting for the whole
+// turn (user message + assistant reply) to commit. Without this, a
+// just-created session has no context_sessions title and source_sequence=0,
+// so it is invisible to ListSessions/resume until the first round trip
+// finishes - a user who opens /resume while their first message is still in
+// flight (or interrupts it) sees no trace of the session they are in.
+// Gated on UserTurns()==0 so it fires exactly once per session; errors are
+// ignored, since this is display metadata, not turn correctness.
+func (s *Session) markFirstUserTurn(userText string) {
+	if s.UserTurns() != 0 {
+		return
+	}
+	title := titleFromFirstMessage(userText)
+	if title == "" {
+		title = "Untitled session"
+	}
+	_ = s.SetContextSessionTitle(s.SessionID, title)
+}
+
 // fillSessionTitles back-fills a display title for every untitled live context
 // session in out. The title is the session's first user message, resolved
 // through the store when it implements SessionFirstMessageSource. Named

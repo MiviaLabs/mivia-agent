@@ -327,6 +327,7 @@ func (s *Session) sendUserWithTurn(ctx context.Context, userText, persistedText 
 		previous := s.SwapOnAgentEvent(onEvent)
 		defer s.SwapOnAgentEvent(previous)
 	}
+	s.markFirstUserTurn(persistedText)
 	if s.AgentTurnEnabled() {
 		reply, err := s.sendAgent(ctx, userText, persistedText, w, onEvent, turn)
 		s.compactAfterTurn(ctx, err)
