@@ -837,6 +837,79 @@ func TestPanel_ReconcileTerminal_CustomNonTerminalStatusReconciles(t *testing.T)
 	}
 }
 
+// TestObserveAgentGroupStart_FansOutOneRowPerTask pins the fix for a
+// dispatch_tasks call surfacing as one aggregate "subagents (1)" row
+// instead of one row per dispatched task: the outer tool call carries a
+// single ToolCallID, so observeAgentGroupStart must register each task's
+// own id as its own running row.
+func TestObserveAgentGroupStart_FansOutOneRowPerTask(t *testing.T) {
+	var p panel
+	p.observeAgentGroupStart("call-1", []string{"task-a", "task-b", "task-c", "task-d"})
+
+	if len(p.agents) != 4 {
+		t.Fatalf("expected 4 agent rows, got %d: %+v", len(p.agents), p.agents)
+	}
+	if p.activeAgentCount() != 4 {
+		t.Errorf("activeAgentCount = %d, want 4", p.activeAgentCount())
+	}
+	for _, id := range []string{"task-a", "task-b", "task-c", "task-d"} {
+		found := false
+		for _, a := range p.agents {
+			if a.ID == id {
+				found = true
+				if a.Status != "running" {
+					t.Errorf("%s status = %q, want running", id, a.Status)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("expected a row for %s", id)
+		}
+	}
+	if !p.isDispatchGroup("call-1") {
+		t.Error("expected call-1 to be tracked as a dispatch group")
+	}
+}
+
+// TestObserveAgentGroupEnd_ResolvesPerTaskStatuses pins the per-task
+// terminal-status fan-out: a mixed-outcome dispatch_tasks batch must not
+// collapse every task to the same aggregate ok/failed status.
+func TestObserveAgentGroupEnd_ResolvesPerTaskStatuses(t *testing.T) {
+	var p panel
+	p.observeAgentGroupStart("call-1", []string{"task-a", "task-b", "task-c"})
+
+	p.observeAgentGroupEnd("call-1", map[string]string{
+		"task-a": "completed",
+		"task-b": "failed",
+		// task-c has no per-task status: falls back to the aggregate ok.
+	}, true)
+
+	want := map[string]string{"task-a": "completed", "task-b": "failed", "task-c": "completed"}
+	for _, a := range p.agents {
+		if got := want[a.ID]; got != a.Status {
+			t.Errorf("%s status = %q, want %q", a.ID, a.Status, got)
+		}
+	}
+	if p.isDispatchGroup("call-1") {
+		t.Error("expected call-1 to be forgotten once the group ends")
+	}
+	if p.activeAgentCount() != 0 {
+		t.Errorf("activeAgentCount = %d, want 0 after group end", p.activeAgentCount())
+	}
+}
+
+// TestObserveAgentGroupEnd_UnknownCallIsNoOp guards the fallback path:
+// ending a call that was never registered as a group (an ordinary
+// single-row subagent tool) must not panic or fabricate rows.
+func TestObserveAgentGroupEnd_UnknownCallIsNoOp(t *testing.T) {
+	var p panel
+	p.observeAgentStart("solo-1", "invoke_subagent")
+	p.observeAgentGroupEnd("solo-1", nil, true)
+	if len(p.agents) != 1 || p.agents[0].Status != "running" {
+		t.Errorf("expected the untouched solo row to remain running, got %+v", p.agents)
+	}
+}
+
 func TestScrollPanelInSplitMode(t *testing.T) {
 	s := sized(t, 1)
 	next, _ := s.Update(tea.WindowSizeMsg{Width: uikitconfig.BreakpointWide, Height: 30})

@@ -224,6 +224,75 @@ func TestStatuslineLabelTracksTurnActivity(t *testing.T) {
 	}
 }
 
+// TestDispatchTasksToolStartFansOutPanelRowsPerTask is the end-to-end
+// regression for the "subagents (1)" bug: a live dispatch_tasks call fires
+// ONE uievent.ToolStartBody for the whole batch, but the panel must show
+// one row per dispatched task (matching what openThread and the top-bar
+// agent count need), not a single aggregate row keyed by the outer call's
+// own tool-call id.
+func TestDispatchTasksToolStartFansOutPanelRowsPerTask(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	s.active = fakeHandle{id: "t1"}
+
+	next, _ := s.Update(uievent.EventMsg{Event: uievent.Event{
+		Kind: uievent.KindToolStart,
+		Body: uievent.ToolStartBody{
+			ToolCallID: "dispatch_tasks-call-1",
+			Name:       "dispatch_tasks",
+			Args: map[string]any{
+				"tasks": []any{
+					map[string]any{"id": "task-a", "prompt": "a"},
+					map[string]any{"id": "task-b", "prompt": "b"},
+					map[string]any{"id": "task-c", "prompt": "c"},
+					map[string]any{"id": "task-d", "prompt": "d"},
+				},
+			},
+		},
+	}})
+	got := next.(Screen)
+
+	if n := len(got.panel.agents); n != 4 {
+		t.Fatalf("expected 4 panel rows for 4 dispatched tasks, got %d: %+v", n, got.panel.agents)
+	}
+	if n := got.panel.activeAgentCount(); n != 4 {
+		t.Errorf("activeAgentCount = %d, want 4", n)
+	}
+
+	// The outer call's own id (what the transcript's tool.start/tool.end
+	// carries) must NOT itself become a row - only the fanned-out tasks.
+	for _, a := range got.panel.agents {
+		if a.ID == "dispatch_tasks-call-1" {
+			t.Errorf("unexpected aggregate row for the outer call id: %+v", a)
+		}
+	}
+
+	next, _ = got.Update(uievent.EventMsg{Event: uievent.Event{
+		Kind: uievent.KindToolEnd,
+		Body: uievent.ToolEndBody{
+			ToolCallID: "dispatch_tasks-call-1",
+			Name:       "dispatch_tasks",
+			OK:         true,
+			Result: `[
+				{"task_id":"task-a","status":"completed"},
+				{"task_id":"task-b","status":"failed"},
+				{"task_id":"task-c","status":"completed"},
+				{"task_id":"task-d","status":"completed"}
+			]`,
+		},
+	}})
+	ended := next.(Screen)
+
+	want := map[string]string{"task-a": "completed", "task-b": "failed", "task-c": "completed", "task-d": "completed"}
+	for _, a := range ended.panel.agents {
+		if got := want[a.ID]; got != a.Status {
+			t.Errorf("%s status = %q, want %q", a.ID, a.Status, got)
+		}
+	}
+	if n := ended.panel.activeAgentCount(); n != 0 {
+		t.Errorf("activeAgentCount after end = %d, want 0", n)
+	}
+}
+
 // TestToolDetailIncludesFormattedArgs pins the rest of
 // wireframes-panes.md section 9's "<detail>" field: a tool call with
 // arguments shows them, the same render.FormatArgs shape the

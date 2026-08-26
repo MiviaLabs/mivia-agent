@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -147,9 +148,7 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 		s.approval.Clear()
 		s.statusline.SetLabel("running")
 		s.statusline.SetDetail(toolDetail(b.Name, b.Args))
-		if isSubagentTool(b.Name) || (s.threads != nil && isThreadRegistered(s.threads, b.ToolCallID)) {
-			s.panel.observeAgentStart(b.ToolCallID, b.Name)
-		}
+		s.observeToolStart(b)
 		s.recordBlackboardTool(b.Name, b.Args)
 	case uievent.ToolOutputBody:
 		// A progress-bearing output is a subagent status update (see
@@ -161,14 +160,7 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 	case uievent.ToolEndBody:
 		s.approval.Clear()
 		s.statusline.SetLabel("thinking")
-		s.panel.observeAgentEnd(b.ToolCallID, b.OK)
-		if b.Diff != nil {
-			// The panel's data, fed live: every completed edit appears
-			// as a touched file the moment it happens, exactly as the
-			// transcript renders it. Deletions carry no diff in the
-			// event vocabulary, so only edits and creations record here.
-			s.panel.appendLive(*b.Diff)
-		}
+		s.observeToolEnd(b)
 	case uievent.UsageBody:
 		// InputTokens is the whole prepared history the provider just
 		// priced, so this is the context FILL LEVEL, not an increment.
@@ -205,6 +197,41 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 	return s, tea.Batch(flushCmd, readCmd)
 }
 
+// observeToolStart folds one ToolStartBody into the activity panel. A
+// dispatch_tasks call fires ONE tool.start for the whole batch, so it fans
+// out into one row per dispatched task instead of a single aggregate row -
+// otherwise the panel and the top-bar agent count would only ever show the
+// call, not the subagents it dispatched.
+func (s *Screen) observeToolStart(b uievent.ToolStartBody) {
+	if !isSubagentTool(b.Name) && !(s.threads != nil && isThreadRegistered(s.threads, b.ToolCallID)) {
+		return
+	}
+	if ids := dispatchTaskIDs(b.ToolCallID, b.Name, b.Args); len(ids) > 0 {
+		s.panel.observeAgentGroupStart(b.ToolCallID, ids)
+	} else {
+		s.panel.observeAgentStart(b.ToolCallID, b.Name)
+	}
+}
+
+// observeToolEnd folds one ToolEndBody into the activity panel and the
+// touched-files list: a tracked dispatch_tasks group resolves each
+// dispatched task's own terminal status from the call's JSON result,
+// instead of collapsing every task to the same aggregate ok/failed value.
+func (s *Screen) observeToolEnd(b uievent.ToolEndBody) {
+	if s.panel.isDispatchGroup(b.ToolCallID) {
+		s.panel.observeAgentGroupEnd(b.ToolCallID, parseDispatchTaskStatuses(b.Result), b.OK)
+	} else {
+		s.panel.observeAgentEnd(b.ToolCallID, b.OK)
+	}
+	if b.Diff != nil {
+		// The panel's data, fed live: every completed edit appears as a
+		// touched file the moment it happens, exactly as the transcript
+		// renders it. Deletions carry no diff in the event vocabulary, so
+		// only edits and creations record here.
+		s.panel.appendLive(*b.Diff)
+	}
+}
+
 func isSubagentTool(name string) bool {
 	lower := strings.ToLower(name)
 	return strings.HasPrefix(lower, "agent_") ||
@@ -228,6 +255,72 @@ func isThreadRegistered(threads ports.SubagentThreads, callID string) bool {
 	}
 	_, ok := threads.Thread(callID)
 	return ok
+}
+
+// dispatchTaskIDs extracts per-task ids from a dispatch_tasks call's own
+// arguments, mirroring thread.go's LoadHistory reconstruction of a
+// resumed session's dispatch_tasks entries - so a LIVE dispatch_tasks run
+// fans out into one panel row per dispatched task, keyed the same way,
+// instead of one aggregate row for the whole call. Returns nil for every
+// other tool name, or when no task list can be parsed, leaving the
+// caller's existing single-row behavior unchanged.
+func dispatchTaskIDs(callID, name string, args map[string]any) []string {
+	if strings.ToLower(name) != "dispatch_tasks" {
+		return nil
+	}
+	rawTasks, ok := args["tasks"].([]any)
+	if !ok || len(rawTasks) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(rawTasks))
+	for i, rt := range rawTasks {
+		id := ""
+		if m, ok := rt.(map[string]any); ok {
+			if s, ok := m["id"].(string); ok {
+				id = s
+			}
+		}
+		if id == "" {
+			id = fmt.Sprintf("%s-%d", callID, i+1)
+		}
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+// parseDispatchTaskStatuses decodes a dispatch_tasks call's own JSON result
+// into a task id -> status map, accepting either the bare-array shape
+// (wait="run") or the wrapped {"task_results":[...]} envelope (wait="none"/
+// "task") - render/output_formatter.go and uiadapter/subagent_reconstruct.go
+// handle the same duality for the transcript and the resumed-session
+// reconstruction paths respectively. Returns nil when result matches
+// neither shape, so the caller falls back to the aggregate ok flag.
+func parseDispatchTaskStatuses(result string) map[string]string {
+	trimmed := strings.TrimSpace(result)
+	if trimmed == "" {
+		return nil
+	}
+	type row struct {
+		TaskID string `json:"task_id"`
+		Status string `json:"status"`
+	}
+	var rows []row
+	if err := json.Unmarshal([]byte(trimmed), &rows); err != nil || len(rows) == 0 {
+		var wrapped struct {
+			TaskResults []row `json:"task_results"`
+		}
+		if err := json.Unmarshal([]byte(trimmed), &wrapped); err != nil || len(wrapped.TaskResults) == 0 {
+			return nil
+		}
+		rows = wrapped.TaskResults
+	}
+	out := make(map[string]string, len(rows))
+	for _, r := range rows {
+		if r.TaskID != "" {
+			out[r.TaskID] = r.Status
+		}
+	}
+	return out
 }
 
 func (s *Screen) recordBlackboardTool(name string, args map[string]any) {

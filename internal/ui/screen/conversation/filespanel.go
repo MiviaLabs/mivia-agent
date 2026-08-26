@@ -139,6 +139,16 @@ type panel struct {
 	list        picker.Model
 	dialogAgent string
 
+	// dispatchGroups maps a dispatch_tasks call's own tool-call id to the
+	// per-task subagent row ids it fanned out into (see
+	// observeAgentGroupStart). Live per-task thread registration
+	// (uiadapter.SubagentThreads.HandleEvent) keys only by each nested
+	// subagent's own Origin.TaskID, never by the outer dispatch_tasks
+	// call's id, so the panel must track one row per dispatched task -
+	// not one aggregate row for the whole call - for openThread and the
+	// top-bar agent count to see every dispatched subagent.
+	dispatchGroups map[string][]string
+
 	// sourceView flips the content dialog between the diff (default)
 	// and the full post-edit source.
 	sourceView bool
@@ -154,7 +164,7 @@ type panel struct {
 // newPanel builds the panel's zero state; entries arrive live from
 // handleTurnEvent.
 func newPanel(t theme.Theme, tier theme.Tier) panel {
-	return panel{list: picker.New(t, tier, nil)}
+	return panel{list: picker.New(t, tier, nil), dispatchGroups: map[string][]string{}}
 }
 
 // appendLive folds one more observed diff into the entries, latest per
@@ -284,6 +294,62 @@ func (p *panel) observeAgentEnd(id string, ok bool) {
 			return
 		}
 	}
+}
+
+// observeAgentGroupStart registers a dispatch_tasks call's fanned-out
+// per-task ids as one running row each - instead of observeAgentStart's
+// single row for the whole call - and remembers the group under callID so
+// observeAgentGroupEnd can resolve every member's terminal status when the
+// outer call completes.
+func (p *panel) observeAgentGroupStart(callID string, ids []string) {
+	if p.dispatchGroups == nil {
+		p.dispatchGroups = map[string][]string{}
+	}
+	p.dispatchGroups[callID] = ids
+	for _, id := range ids {
+		p.observeAgentStart(id, "")
+	}
+}
+
+// observeAgentGroupEnd resolves a dispatch_tasks group's per-task terminal
+// status from statuses (task id -> status, parsed from the tool's own JSON
+// result), falling back to ok for any member statuses does not cover. A
+// no-op when callID names no tracked group (the ordinary single-row path
+// handles it instead).
+func (p *panel) observeAgentGroupEnd(callID string, statuses map[string]string, ok bool) {
+	ids, found := p.dispatchGroups[callID]
+	if !found {
+		return
+	}
+	delete(p.dispatchGroups, callID)
+	for _, id := range ids {
+		if status := statuses[id]; status != "" {
+			p.setAgentStatus(id, status)
+			continue
+		}
+		p.observeAgentEnd(id, ok)
+	}
+}
+
+// setAgentStatus overwrites one tracked subagent's status verbatim - unlike
+// observeAgentEnd, which only ever writes "completed" or "failed".
+func (p *panel) setAgentStatus(id, status string) {
+	p.agents = slices.Clone(p.agents)
+	for i, a := range p.agents {
+		if a.ID == id {
+			p.agents[i].Status = status
+			p.rebindIfOpen()
+			return
+		}
+	}
+}
+
+// isDispatchGroup reports whether callID names a tracked dispatch_tasks
+// group, so the caller can choose the group-aware end path over the
+// ordinary single-row one.
+func (p panel) isDispatchGroup(callID string) bool {
+	_, found := p.dispatchGroups[callID]
+	return found
 }
 
 // reconcileTerminal transitions all non-terminal subagents to a terminal state
