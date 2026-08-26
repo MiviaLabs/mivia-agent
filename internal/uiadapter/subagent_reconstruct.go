@@ -77,11 +77,9 @@ func populateToolCall(threads *SubagentThreads, tc ports.ToolCall, at time.Time)
 		})
 	}
 
-	conv := NewSubagentTranscriptConversation(agentName, ports.ModelInfo{Name: agentName}, history)
-	threads.RegisterThread(tc.ID, conv)
-	if agentName != "" {
-		threads.RegisterThread(agentName, conv)
-	}
+	conv := newReconstructedConversation(agentName, ports.ModelInfo{Name: agentName}, history)
+	threads.registerReconstructed(tc.ID, conv)
+	threads.registerReconstructed(agentName, conv)
 }
 
 type parsedDispatchTask struct {
@@ -315,12 +313,13 @@ func registerDispatchedTask(threads *SubagentThreads, callID string, idx int, ta
 		history = append(history, msg)
 	}
 
-	conv := NewSubagentTranscriptConversation(agentName, ports.ModelInfo{Name: agentName}, history)
-	threads.RegisterThread(taskID, conv)
-	threads.RegisterThread(callID, conv)
-	if agentName != "" {
-		threads.RegisterThread(agentName, conv)
-	}
+	// Register non-destructively under every key: task ids, the call id,
+	// and the (non-unique) agent name may each already point at a live
+	// streaming conversation, which must survive any History() replay.
+	conv := newReconstructedConversation(agentName, ports.ModelInfo{Name: agentName}, history)
+	threads.registerReconstructed(taskID, conv)
+	threads.registerReconstructed(callID, conv)
+	threads.registerReconstructed(agentName, conv)
 }
 
 func registerFallbackDispatchedThread(threads *SubagentThreads, tc ports.ToolCall, at time.Time) {
@@ -335,8 +334,8 @@ func registerFallbackDispatchedThread(threads *SubagentThreads, tc ports.ToolCal
 	if name == "" {
 		name = "dispatch_tasks"
 	}
-	conv := NewSubagentTranscriptConversation(name, ports.ModelInfo{Name: name}, history)
-	threads.RegisterThread(tc.ID, conv)
+	conv := newReconstructedConversation(name, ports.ModelInfo{Name: name}, history)
+	threads.registerReconstructed(tc.ID, conv)
 }
 
 func extractPromptAndAgent(argsJSON string) (prompt, agentName string) {

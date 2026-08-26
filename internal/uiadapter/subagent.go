@@ -38,6 +38,30 @@ func (s *SubagentThreads) RegisterThread(callID string, conv ports.Conversation)
 	s.threads[callID] = conv
 }
 
+// registerReconstructed registers a reconstruction under key, but never at
+// the cost of richer live state: an existing registration that is not
+// itself a reconstruction (a live streaming conversation, or any foreign
+// ports.Conversation) always wins and the reconstruction is dropped for
+// that key. Replacing an older reconstruction with a fresh one is an
+// idempotent refresh and is allowed. This is what keeps a History() replay
+// (screen construction, session switch, transcript reset) from displacing
+// an in-flight or fully-streamed subagent thread with a prompt+summary
+// stub built from persisted tool-call JSON.
+func (s *SubagentThreads) registerReconstructed(key string, conv *SubagentTranscriptConversation) {
+	if key == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if existing, ok := s.threads[key]; ok {
+		stc, isTranscript := existing.(*SubagentTranscriptConversation)
+		if !isTranscript || !stc.isReconstructed() {
+			return
+		}
+	}
+	s.threads[key] = conv
+}
+
 // Thread retrieves the conversation thread for a given tool call ID.
 func (s *SubagentThreads) Thread(callID string) (ports.Conversation, bool) {
 	s.mu.Lock()
@@ -114,6 +138,13 @@ type SubagentTranscriptConversation struct {
 	history   []ports.Message
 	listeners []chan uievent.Event
 	active    bool
+	// reconstructed marks a conversation built from persisted tool-call
+	// JSON (subagent_reconstruct.go) rather than from live events. Only
+	// reconstructed conversations may be replaced by a later
+	// reconstruction (registerReconstructed); a live event landing on a
+	// reconstructed conversation clears the flag, because from then on it
+	// carries state no replay can rebuild.
+	reconstructed bool
 }
 
 // NewSubagentTranscriptConversation creates a new thread conversation.
@@ -128,6 +159,21 @@ func NewSubagentTranscriptConversation(title string, model ports.ModelInfo, hist
 		model:   model,
 		history: histCopy,
 	}
+}
+
+// newReconstructedConversation creates a thread conversation rebuilt from
+// persisted tool-call JSON, marked so the registry knows it may be
+// refreshed by a later replay but must never displace live state.
+func newReconstructedConversation(title string, model ports.ModelInfo, history []ports.Message) *SubagentTranscriptConversation {
+	c := NewSubagentTranscriptConversation(title, model, history)
+	c.reconstructed = true
+	return c
+}
+
+func (c *SubagentTranscriptConversation) isReconstructed() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.reconstructed
 }
 
 func isDoneNotice(e uievent.Event) bool {
@@ -145,6 +191,10 @@ func (c *SubagentTranscriptConversation) RecordEvent(e uievent.Event) {
 	defer c.mu.Unlock()
 
 	c.active = true
+	// A live event is evidence this conversation now carries state a
+	// persisted-history replay cannot rebuild; stop treating it as a
+	// replaceable reconstruction.
+	c.reconstructed = false
 	switch e.Kind {
 	case uievent.KindTurnStart:
 		body, _ := e.Body.(uievent.TurnStartBody)
