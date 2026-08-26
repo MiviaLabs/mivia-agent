@@ -435,7 +435,7 @@ max_workers = 0
 nested_steps = 0
 schema_retry_max = 5
 store_backend = 'sqlite'
-store_path = '/home/mac/projects/mivialabs/mivia-agent/.mivia/context.db'
+store_path = '.mivia/context.db'
 
 [tools]
 batch_result_budget_bytes = -1
