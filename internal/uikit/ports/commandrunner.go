@@ -74,6 +74,15 @@ type CommandOutcome struct {
 	// into the active conversation as a user turn.
 	SubmitPrompt string
 
+	// SubmitPersistedText, when non-empty, is what enters conversation
+	// history in place of SubmitPrompt - see intent.Send.PersistedText. A
+	// command that expands a short user action into a much larger prompt
+	// (a slash skill's full instructions) sets this to the short form, so
+	// the expansion is not replayed on every later turn for the rest of
+	// the session. Empty means SubmitPrompt is persisted verbatim, the
+	// existing behavior every other command keeps.
+	SubmitPersistedText string
+
 	// Conversation, when non-nil, asks the UI to switch the active
 	// conversation to this new instance.
 	Conversation Conversation

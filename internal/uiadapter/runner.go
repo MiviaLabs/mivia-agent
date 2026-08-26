@@ -246,7 +246,27 @@ func (r *CommandRunner) handleSkill(name, args string) (ports.CommandOutcome, bo
 		}
 	}
 	prompt := skills.RenderNamedSkillSlashPrompt(target.Name, target.Instructions, args)
-	return ports.CommandOutcome{SubmitPrompt: prompt}, true
+	return ports.CommandOutcome{SubmitPrompt: prompt, SubmitPersistedText: skillInvocationText(target.Name, args)}, true
+}
+
+// skillInvocationText is what a skill invocation persists into conversation
+// history in place of its full expanded prompt: the short command the user
+// actually typed. RenderNamedSkillSlashPrompt's output is thousands of tokens
+// (the whole SKILL.md body) and belongs in the one request that needs it, not
+// replayed on every later turn for the rest of the session - see
+// intent.Send.PersistedText. Falls back to the raw name when it does not
+// resolve to a valid slash token (SlashToken rejects anything outside
+// lowercase/digits/hyphen after normalization), which is defensive only:
+// every definition reaching here was already matched by name/token above.
+func skillInvocationText(name, args string) string {
+	token, ok := skills.SlashToken(name)
+	if !ok {
+		token = "/" + name
+	}
+	if args != "" {
+		return token + " " + args
+	}
+	return token
 }
 
 func (r *CommandRunner) handleClear() ports.CommandOutcome {

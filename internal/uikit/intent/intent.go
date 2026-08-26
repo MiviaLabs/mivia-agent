@@ -7,4 +7,12 @@ package intent
 // Send is a user's chat submission.
 type Send struct {
 	Text string
+
+	// PersistedText, when non-empty, is what enters conversation history and
+	// gets replayed on every later turn - Text is what the provider sees for
+	// THIS request only. Empty means the two are identical (the ordinary
+	// case). Exists for UI-only expansions such as slash skills, whose full
+	// instruction body (thousands of tokens) belongs in the one request that
+	// needs it, not in a permanent history entry replayed forever after.
+	PersistedText string
 }

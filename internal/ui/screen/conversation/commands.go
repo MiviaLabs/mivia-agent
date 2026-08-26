@@ -123,6 +123,14 @@ func (s Screen) applyCommandOutcome(o ports.CommandOutcome) (app.Screen, tea.Cmd
 		return s.withNotice(o.Notice), nil
 	case o.SubmitPrompt != "":
 		if s.active != nil {
+			// Queued-while-busy accepted gap: s.queue is a plain []string
+			// (also the queue overlay's, session snapshot's, and restore's
+			// shape), so a prompt queued here loses any SubmitPersistedText
+			// distinction and is persisted in full once it is eventually
+			// sent - the same behavior every submission had before
+			// SubmitPersistedText existed. Only the direct-send path below
+			// (the common case: invoking a skill on an idle conversation)
+			// gets the short persisted form.
 			s.queue = append(s.queue, o.SubmitPrompt)
 			if s.queueOverlay.Active() {
 				s.queueOverlay.SetItems(s.queue)
@@ -130,7 +138,7 @@ func (s Screen) applyCommandOutcome(o ports.CommandOutcome) (app.Screen, tea.Cmd
 			s.statusline.Notice(fmt.Sprintf("message queued (%d in queue)", len(s.queue)))
 			return s, nil
 		}
-		return s.sendText(o.SubmitPrompt)
+		return s.sendTextWithPersisted(o.SubmitPrompt, o.SubmitPersistedText)
 	}
 	return s, nil
 }

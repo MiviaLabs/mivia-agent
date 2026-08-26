@@ -939,3 +939,30 @@ func TestCommandRunner_SkillsIntegration(t *testing.T) {
 		t.Errorf("expected unknown command error, got %+v", outUnknown)
 	}
 }
+
+// TestCommandRunner_SkillInvocationPersistsTheShortForm pins the fix for a
+// real context-bloat bug: a skill invocation must persist the short command
+// the user typed, not the full expanded instructions body - see
+// intent.Send.PersistedText's doc comment for why (the full body is
+// thousands of tokens replayed on every later turn otherwise).
+func TestCommandRunner_SkillInvocationPersistsTheShortForm(t *testing.T) {
+	skillReg := skills.NewRegistry()
+	_ = skillReg.Register(skills.Definition{
+		Name:             "feature-delivery",
+		ShortDescription: "Deliver an end-to-end feature with tests",
+		UserInvocable:    true,
+		Instructions:     "Follow feature delivery guidelines carefully.",
+	})
+	runner := uiadapter.NewCommandRunner(nil, nil, &cliagents.AgentSessionState{SkillRegFull: skillReg})
+
+	out := runner.Run(context.Background(), "feature-delivery", "add auth module")
+	if out.Err != "" {
+		t.Fatalf("unexpected error: %v", out.Err)
+	}
+	if out.SubmitPersistedText != "/feature-delivery add auth module" {
+		t.Errorf("SubmitPersistedText = %q, want the short slash-command form", out.SubmitPersistedText)
+	}
+	if strings.Contains(out.SubmitPersistedText, "Follow feature delivery guidelines") {
+		t.Error("SubmitPersistedText leaked the full instructions body")
+	}
+}

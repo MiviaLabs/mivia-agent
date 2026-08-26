@@ -217,7 +217,14 @@ func (c *Conversation) Send(ctx context.Context, in intent.Send) (ports.TurnHand
 	// seq is the per-turn event sequence number; the synthetic turn.start
 	// gets Seq=1; subsequent events are atomic-incremented.
 	var seq uint64
-	emitSyntheticTurnStart(events, in.Text, &seq)
+	// The transcript shows what the user's history actually carries, not the
+	// expanded provider-only text - a skill invocation renders as the short
+	// command the user typed, not its full instructions body.
+	displayText := in.Text
+	if in.PersistedText != "" {
+		displayText = in.PersistedText
+	}
+	emitSyntheticTurnStart(events, displayText, &seq)
 
 	handler := newTurnHandler(events, closed, turnIDPtr, &seq, turnCtx, c.NoticeOptions(), c.subagents)
 	previous := c.sess.SwapOnAgentEvent(handler)
@@ -337,7 +344,11 @@ func (c *Conversation) runTurnGoroutine(turnCtx context.Context, in intent.Send,
 		if waiter != nil {
 			defer waiter.Done()
 		}
-		turnID, err := c.sess.SendUserWithEvent(turnCtx, in.Text, io.Discard, nil)
+		persistedText := in.Text
+		if in.PersistedText != "" {
+			persistedText = in.PersistedText
+		}
+		turnID, err := c.sess.SendUserWithEventAndPersistedText(turnCtx, in.Text, persistedText, io.Discard, nil)
 		h.idAtomic.Store(&turnID)
 		turnIDPtr.Store(&turnID)
 		c.emitTurnEndIfWinner(h, closed, seq, turnID, err)

@@ -98,9 +98,17 @@ func (s Screen) send() (app.Screen, tea.Cmd) {
 }
 
 func (s Screen) sendText(text string) (app.Screen, tea.Cmd) {
+	return s.sendTextWithPersisted(text, "")
+}
+
+// sendTextWithPersisted submits text as the provider-facing turn while
+// persisted (when non-empty) replaces it in conversation history - see
+// intent.Send.PersistedText. An empty persisted keeps sendText's existing
+// behavior: the sent text is what gets persisted too.
+func (s Screen) sendTextWithPersisted(text, persisted string) (app.Screen, tea.Cmd) {
 	s.history.Push(text)
 	s.history.Close()
-	handle, err := s.conv.Send(context.Background(), intent.Send{Text: text})
+	handle, err := s.conv.Send(context.Background(), intent.Send{Text: text, PersistedText: persisted})
 	if err != nil {
 		var cmd tea.Cmd
 		s.transcript, cmd = s.transcript.HandleEvent(uievent.Event{
