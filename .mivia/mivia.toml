@@ -388,7 +388,19 @@ name = 'minimax/minimax-01'
 [providers.zai]
 api_key_env = 'ZAI_API_KEY'
 base_url = 'https://api.z.ai/api/coding/paas/v4'
-default_model = 'glm-5-turbo'
+default_model = 'glm-5.3-flash'
+
+# z.ai documents GLM-5.3-family thinking as always on: thinking.type accepts
+# only "enabled", so no "off" effort is declared. Efforts are low/high/max -
+# medium is not offered by GLM-5.3+. Flash carries a 1M window; output cap
+# 131072 per OpenRouter's spec sheet (z.ai's page states only "1M context").
+[[providers.zai.models]]
+context_window_tokens = 1048576
+max_output_tokens = 131072
+name = 'glm-5.3-flash'
+reasoning = 'max'
+reasoning_dialect = 'thinking_preserved'
+reasoning_efforts = ['low', 'high', 'max']
 
 [[providers.zai.models]]
 context_window_tokens = 200000
