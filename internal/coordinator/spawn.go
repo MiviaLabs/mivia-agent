@@ -13,34 +13,58 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
 
+// Spawn creates or reuses a run for tasks under idempotencyKey. It does not
+// report whether THIS call created the run or hit an existing one via the
+// idempotency-key lookup - callers that need that distinction (deciding
+// whether they are the run's sole owner before doing anything ownership-
+// scoped, like canceling it on their own context dying) use SpawnNew
+// instead. Spawn's signature is unchanged so its 140+ existing callers
+// across this package's own tests are untouched.
 func (c *coordinator) Spawn(ctx context.Context, tasks []subagents.Task, idempotencyKey string) (*RunHandle, error) {
+	h, _, err := c.spawnReportingNew(ctx, tasks, idempotencyKey)
+	return h, err
+}
+
+// SpawnNew is Spawn plus an isNew signal: true only when this call actually
+// created the run (fresh CreateRun + task admission), false when the
+// idempotency-key lookup (either the in-memory handle cache or a durable
+// recovery read) returned an ALREADY-EXISTING run some other caller
+// started. A caller that gets isNew=false must not treat itself as the
+// run's owner for any purpose the run's actual creator did not agree to
+// (e.g. canceling it when its own unrelated wait times out).
+func (c *coordinator) SpawnNew(ctx context.Context, tasks []subagents.Task, idempotencyKey string) (*RunHandle, bool, error) {
+	return c.spawnReportingNew(ctx, tasks, idempotencyKey)
+}
+
+func (c *coordinator) spawnReportingNew(ctx context.Context, tasks []subagents.Task, idempotencyKey string) (*RunHandle, bool, error) {
 	c.spawnMu.Lock()
 	defer c.spawnMu.Unlock()
 	policy := policyWithRetry(ledger.RunPolicy{}, c.retryPolicyLocked())
 	fingerprint, err := requestFingerprintWithPolicy(tasks, policy)
 	if err != nil {
-		return nil, fmt.Errorf("fingerprint spawn request: %w", err)
+		return nil, false, fmt.Errorf("fingerprint spawn request: %w", err)
 	}
 	key := scopedKey(ctx, idempotencyKey)
 	if h := c.lookupHandle(key); h != nil {
 		if h.requestFingerprint != fingerprint {
-			return nil, ErrIdempotencyConflict
+			return nil, false, ErrIdempotencyConflict
 		}
-		return h, nil
+		return h, false, nil
 	}
 	if key != "" {
 		h, found, err := c.recoverIdempotentWithRetry(ctx, key, fingerprint)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		if found {
-			return h, nil
+			return h, false, nil
 		}
 	}
 	if err := c.validateTasks(tasks); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return c.createAndStartRun(ctx, tasks, key, fingerprint, policy)
+	h, err := c.createAndStartRun(ctx, tasks, key, fingerprint, policy)
+	return h, err == nil, err
 }
 
 func (c *coordinator) createAndStartRun(ctx context.Context, tasks []subagents.Task, key, fingerprint string, policy ledger.RunPolicy) (*RunHandle, error) {

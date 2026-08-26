@@ -47,7 +47,7 @@ func RunThroughCoordinator(ctx context.Context, d *runtime.Dispatcher, cfg confi
 		tasks[i].Role = caller.Role
 	}
 	c := InitCoordinator(d, cfg, repos...)
-	handle, err := c.Spawn(ctx, tasks, key)
+	handle, isNew, err := c.SpawnNew(ctx, tasks, key)
 	if err != nil {
 		return ledger.RunSnapshot{}, nil, err
 	}
@@ -73,11 +73,21 @@ func RunThroughCoordinator(ctx context.Context, d *runtime.Dispatcher, cfg confi
 		// wait=none dispatches never reach this function: they return
 		// immediately after Spawn and are joined later, independently, via
 		// the join_run tool, so this cannot cancel a run the model
-		// deliberately detached. Fire-and-forget: the run's own graceful
-		// cancellation (the same path cancel_run uses) needs its own
-		// context, since ctx is already dead, and RunThroughCoordinator's
-		// caller has already given up waiting - it must not block on this.
-		go cancelOrphanedRun(c, handle)
+		// deliberately detached.
+		//
+		// isNew guards a narrower case the same reasoning misses: Spawn's
+		// idempotency-key lookup can hand a DIFFERENT concurrent caller
+		// (e.g. an async wait=none dispatch reusing the same
+		// idempotency_key) this exact same *RunHandle. Canceling it then
+		// would stop a run that caller is still relying on. Only cancel a
+		// run this call actually created. Fire-and-forget: the run's own
+		// graceful cancellation (the same path cancel_run uses) needs its
+		// own context, since ctx is already dead, and
+		// RunThroughCoordinator's caller has already given up waiting - it
+		// must not block on this.
+		if isNew {
+			go cancelOrphanedRun(c, handle)
+		}
 		// Join returns ctx.Err() and never sets a result, so reporting the
 		// error alone discards every task that had already finished - the
 		// loss INV-AG-21 forbids. The work is in the ledger, so read it

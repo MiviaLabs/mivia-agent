@@ -135,6 +135,11 @@ type LifecycleSubscriber func(event ledger.LifecycleEvent)
 
 type Coordinator interface {
 	Spawn(context.Context, []subagents.Task, string) (*RunHandle, error)
+	// SpawnNew is Spawn plus an isNew signal: false when the idempotency-key
+	// lookup returned an existing run some other caller started, so a
+	// caller can tell whether it is safe to treat itself as the run's sole
+	// owner (e.g. before canceling it on its own unrelated context dying).
+	SpawnNew(context.Context, []subagents.Task, string) (*RunHandle, bool, error)
 	EnsureRun(context.Context, EnsureRunRequest) (*RunHandle, error)
 	EnsureSingleTaskRun(context.Context, EnsureRunRequest) (*RunHandle, error)
 	EnsureTerminalSingleTaskRun(context.Context, EnsureRunRequest, ledger.TaskStatus) (*RunHandle, error)
