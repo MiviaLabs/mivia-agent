@@ -196,18 +196,36 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 	taskStart := time.Now()
 	defer heartbeatStop()
 	go emitHeartbeat(heartbeatCtx, stamped, &stepCount)
-	opts.OnEvent = func(e agent.Event) {
+	opts.OnEvent = h.stepOnEvent(ctx, stamped, &stepCount)
+
+	reply, structured, runErr := h.runValidatedReply(callCtx, loop, opts, taskPrompt, compiled, steps, &stepCount)
+	h.discardPreparation(loop)
+	return finishRun(loop, reply, structured, time.Since(taskStart), stepCount.Load(), runErr)
+}
+
+// stepOnEvent builds the nested loop's OnEvent callback: it counts steps,
+// forwards tool_start/tool_end events to a ToolCallSink installed on the
+// ORIGINAL request context (reqCtx - not the timeout-derived callCtx, which
+// never carries values the coordinator didn't put there) when one is
+// present, and always forwards to the origin-stamped live/TUI sink. The
+// sink forwarding is additive: it records the same events the stamped
+// forwarding already sees, for later persistence, without altering what
+// stamped receives or when.
+func (h *MultiStepHandler) stepOnEvent(reqCtx context.Context, stamped func(agent.Event), stepCount *atomic.Int64) func(agent.Event) {
+	sink, hasSink := ToolCallSinkFrom(reqCtx)
+	return func(e agent.Event) {
 		if e.Kind == agent.EventStep {
 			stepCount.Add(1)
+		}
+		if hasSink {
+			if step, ok := toolCallStepFromEvent(e, time.Now()); ok {
+				sink(step)
+			}
 		}
 		if stamped != nil {
 			stamped(e)
 		}
 	}
-
-	reply, structured, runErr := h.runValidatedReply(callCtx, loop, opts, taskPrompt, compiled, steps, &stepCount)
-	h.discardPreparation(loop)
-	return finishRun(loop, reply, structured, time.Since(taskStart), stepCount.Load(), runErr)
 }
 
 // loopOptions builds the nested loop's options. OnEvent is left to the caller,
