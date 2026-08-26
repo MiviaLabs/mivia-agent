@@ -93,17 +93,27 @@ type parsedDispatchTask struct {
 }
 
 // encodedTaskResult is one dispatched task's persisted result, matching both
-// dispatchTaskResult (internal/cliorchestrate/dispatch.go) and
+// dispatchTaskResult (internal/cliorchestrate/dispatch_encode.go) and
 // modelTaskResult (internal/cliorchestrate/orchestrate_lifecycle.go) - the
 // two producers share this wire shape, keyed "task_id" (not "id"), with
 // Output as raw JSON since a subagent's own output may itself be a JSON
 // object rather than a plain string.
+//
+// Synopsis and OutputRef mirror dispatchTaskResult's output-by-reference
+// fields: once a task's real output exceeds the inline threshold
+// (setOutputFields), Output is omitted entirely and only Synopsis/OutputRef
+// are set. Without these, a resumed session's reconstruction had no output
+// text to fall back to for any task whose result went by-reference -
+// exactly the common case for a substantial subagent answer - and rendered
+// the dispatched prompt with nothing after it.
 type encodedTaskResult struct {
-	TaskID string          `json:"task_id"`
-	Status string          `json:"status"`
-	Output json.RawMessage `json:"output"`
-	Error  string          `json:"error"`
-	Agent  string          `json:"agent"`
+	TaskID    string          `json:"task_id"`
+	Status    string          `json:"status"`
+	Output    json.RawMessage `json:"output"`
+	Synopsis  string          `json:"synopsis"`
+	OutputRef string          `json:"output_ref"`
+	Error     string          `json:"error"`
+	Agent     string          `json:"agent"`
 }
 
 // stringifyTaskOutput renders one task's raw Output field as display text.
@@ -153,6 +163,20 @@ func rawErrorEnvelopeText(raw string) string {
 	return raw
 }
 
+// resultText renders one task's display text: the real inline Output when
+// present, else the synopsis dispatch_tasks reports for an above-threshold
+// result that went by-reference (setOutputFields in
+// internal/cliorchestrate/dispatch_encode.go), else the task's error.
+func resultText(r encodedTaskResult) string {
+	if text := stringifyTaskOutput(r.Output); text != "" {
+		return text
+	}
+	if r.Synopsis != "" {
+		return r.Synopsis
+	}
+	return r.Error
+}
+
 // matchTaskOutputs pairs each dispatched task with its result text, by
 // task ID first, falling back to positional matching when IDs are absent
 // but the counts agree, and finally to the run-level error envelope (or raw
@@ -161,10 +185,7 @@ func rawErrorEnvelopeText(raw string) string {
 func matchTaskOutputs(results []encodedTaskResult, tasks []parsedDispatchTask, rawOutput string) []string {
 	byID := make(map[string]string, len(results))
 	for _, r := range results {
-		text := stringifyTaskOutput(r.Output)
-		if text == "" {
-			text = r.Error
-		}
+		text := resultText(r)
 		if r.TaskID != "" {
 			byID[r.TaskID] = text
 		}
@@ -173,10 +194,7 @@ func matchTaskOutputs(results []encodedTaskResult, tasks []parsedDispatchTask, r
 	for i, task := range tasks {
 		text := byID[task.ID]
 		if text == "" && len(results) == len(tasks) {
-			text = stringifyTaskOutput(results[i].Output)
-			if text == "" {
-				text = results[i].Error
-			}
+			text = resultText(results[i])
 		}
 		if text == "" && len(results) == 0 {
 			// A whole-run failure (spawn/validation/join error) returns the

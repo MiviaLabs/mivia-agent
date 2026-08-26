@@ -2,6 +2,7 @@ package uiadapter_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -361,5 +362,49 @@ func TestPopulateFromToolCalls_DispatchTasksWrappedEnvelope(t *testing.T) {
 	}
 	if hist[1].Text != "async done" {
 		t.Errorf("output mismatch: got %q", hist[1].Text)
+	}
+}
+
+// TestPopulateFromToolCalls_DispatchTasksByReferenceOutput guards
+// dispatch_tasks' output-by-reference result shape
+// (internal/cliorchestrate/dispatch_encode.go's setOutputFields): once a
+// task's real output exceeds the inline threshold, the tool omits "output"
+// entirely and reports "synopsis"/"output_ref" instead. Before this,
+// stringifyTaskOutput only ever looked at "output", so any task whose
+// result went by-reference reconstructed with NO assistant message at
+// all - a resumed session showed the dispatched prompt and nothing else,
+// as if the subagent produced no output.
+func TestPopulateFromToolCalls_DispatchTasksByReferenceOutput(t *testing.T) {
+	threads := uiadapter.NewSubagentThreads()
+	msgs := []ports.Message{
+		{
+			Role: "assistant",
+			At:   time.Now(),
+			ToolCalls: []ports.ToolCall{
+				{
+					ID:        "call_dispatch_ref",
+					Name:      "dispatch_tasks",
+					Arguments: `{"tasks":[{"id":"deepdive-security","prompt":"deep dive into security","agent":"auditor"}]}`,
+					Output:    `[{"task_id":"deepdive-security","status":"completed","synopsis":"Reviewed secretpath, redact, miviaauth; no findings.","output_ref":"ref:output:abc123def456"}]`,
+				},
+			},
+		},
+	}
+
+	uiadapter.PopulateFromToolCalls(threads, msgs)
+
+	conv, ok := threads.Thread("deepdive-security")
+	if !ok || conv == nil {
+		t.Fatalf("expected thread for deepdive-security")
+	}
+	hist := conv.History()
+	if len(hist) != 2 {
+		t.Fatalf("expected 2 history items (prompt + synopsis), got %d (history=%+v)", len(hist), hist)
+	}
+	if hist[0].Text != "deep dive into security" {
+		t.Errorf("prompt mismatch: got %q", hist[0].Text)
+	}
+	if !strings.Contains(hist[1].Text, "Reviewed secretpath, redact, miviaauth; no findings.") {
+		t.Errorf("expected the synopsis text, got %q", hist[1].Text)
 	}
 }
