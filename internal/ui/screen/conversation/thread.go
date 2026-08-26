@@ -169,26 +169,25 @@ func (s *Screen) setSurface(width, height int) {
 	s.reflow()
 }
 
-func (s Screen) isSubagentHistory(callID string) bool {
-	for _, a := range s.panel.agents {
-		if a.ID == callID {
-			return isTerminalStatus(a.Status)
-		}
-	}
-	return false
-}
-
 // openThread selects callID's thread: reusing the cached Screen when
 // the dialog reopens on the same subagent (its transcript IS the
 // ongoing state), building a fresh one from the thread's History when
 // it does not exist yet. It reports whether a live thread surfaced and
 // any initial stream command scheduled.
+//
+// The composer is always hidden: a subagent thread dialog is a
+// read-only view onto another agent's conversation for the operator,
+// running or finished. SubagentTranscriptConversation.Send (see
+// uiadapter/subagent.go) has no route to the real running subagent
+// either - text typed there would only ever land in a dead-end
+// transcript - so gating visibility on terminal status (as an earlier
+// version did) offered interactivity that did nothing.
 func (s *Screen) openThread(callID string) (bool, tea.Cmd) {
 	if s.threads == nil {
 		return false, nil
 	}
 	if s.thread != nil && s.threadID == callID {
-		s.thread.SetHideComposer(s.isSubagentHistory(callID))
+		s.thread.SetHideComposer(true)
 		return true, nil
 	}
 	if s.thread != nil && s.thread.active != nil {
@@ -204,9 +203,7 @@ func (s *Screen) openThread(callID string) (bool, tea.Cmd) {
 	thread.SetCommands(s.composer.Commands())
 	thread.SetCommandRunner(s.runner)
 	thread.LoadHistory(conv.History())
-	if s.isSubagentHistory(callID) {
-		thread.SetHideComposer(true)
-	}
+	thread.SetHideComposer(true)
 	s.thread, s.threadID = &thread, callID
 
 	var cmd tea.Cmd

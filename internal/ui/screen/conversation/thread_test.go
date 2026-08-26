@@ -85,12 +85,12 @@ func threadScreen(t *testing.T, threads ports.SubagentThreads, withFile bool) Sc
 // TestSubagentThreadDialogReusesConversationScreen is the
 // centralisation proof. It asserts the TYPE-level facts - the dialog's
 // thread IS a *conversation.Screen in embedded mode, wired to the
-// subagent's own ports.Conversation - and then exercises the SAME
-// send/turn-event path the main chat uses: typing lands in the thread's
-// composer (not the main one), Enter runs Screen.send (a TurnHandle
-// goes active), and the thread's streamed reply renders through
-// handleTurnEvent into the thread's transcript without leaking into the
-// main transcript.
+// subagent's own ports.Conversation - and that it is strictly
+// read-only: no composer, no key routes into it or sends anything. A
+// live subagent's stream still renders through the shared
+// handleTurnEvent path into the thread's own transcript, picked up
+// automatically from the conversation's ActiveTurn rather than from
+// anything the operator typed (see openThread).
 func TestSubagentThreadDialogReusesConversationScreen(t *testing.T) {
 	thread := &scriptedThread{
 		events: make(chan uievent.Event, 8),
@@ -99,6 +99,7 @@ func TestSubagentThreadDialogReusesConversationScreen(t *testing.T) {
 			{Role: "assistant", Text: "I read defaults.go end to end."},
 		},
 	}
+	thread.activeHandle = scriptedHandle{ch: thread.events}
 	s := threadScreen(t, stubThreads{"sa-1": thread}, false)
 
 	// Enter on the subagent row opens the thread dialog.
@@ -113,39 +114,40 @@ func TestSubagentThreadDialogReusesConversationScreen(t *testing.T) {
 	if s.thread.conv != ports.Conversation(thread) {
 		t.Fatal("the embedded screen is not wired to the subagent's own Conversation")
 	}
-
-	assertThreadDialogViewAndTyping(t, s, thread)
-}
-
-func assertThreadDialogViewAndTyping(t *testing.T, s Screen, thread *scriptedThread) {
-	t.Helper()
-	dialog := s.View()
-	for _, want := range []string{"scout the config constants", "> ", "esc close"} {
-		if !strings.Contains(ansi.Strip(dialog), want) {
-			t.Errorf("thread dialog missing %q:\n%s", want, dialog)
-		}
+	if s.thread.active == nil {
+		t.Fatal("opening a live subagent's dialog did not pick up its ActiveTurn")
 	}
 
-	// Typing goes to the THREAD's composer, never the main one.
+	assertThreadDialogIsReadOnly(t, s, thread)
+}
+
+func assertThreadDialogIsReadOnly(t *testing.T, s Screen, thread *scriptedThread) {
+	t.Helper()
+	if !s.thread.hideComposer {
+		t.Fatal("a subagent thread dialog must always hide its composer")
+	}
+	dialog := s.View()
+	stripped := ansi.Strip(dialog)
+	if !strings.Contains(stripped, "scout the config constants") || !strings.Contains(stripped, "esc close") {
+		t.Errorf("thread dialog missing its transcript or close hint:\n%s", dialog)
+	}
+	if tail := s.thread.chatTailRows(); len(tail) != 1 {
+		t.Errorf("expected 1 chat tail row (status line only, no composer), got %d rows: %v", len(tail), tail)
+	}
+
+	// Typing must not reach the thread's composer, the main composer, or
+	// send anything: the operator has no channel into a subagent's own
+	// conversation, running or finished.
 	s = typeText(t, s, "go deeper")
-	if got := s.thread.composer.Value(); got != "go deeper" {
-		t.Fatalf("typed text %q did not reach the thread composer", got)
+	if got := s.thread.composer.Value(); got != "" {
+		t.Fatalf("typing reached the read-only thread composer: %q", got)
 	}
 	if got := s.composer.Value(); got != "" {
 		t.Fatalf("typed text leaked into the main composer: %q", got)
 	}
-
-	// Enter sends through the SAME Screen.send path: a TurnHandle goes
-	// active on the embedded screen, the main screen's stays idle.
 	s, _ = press(t, s, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if s.thread.active == nil {
-		t.Fatal("enter did not run the shared send path on the thread screen")
-	}
-	if s.active != nil {
-		t.Fatal("the thread's send armed the MAIN screen's turn")
-	}
-	if len(thread.sent) != 1 || thread.sent[0] != "go deeper" {
-		t.Fatalf("the thread conversation saw %v, want [go deeper]", thread.sent)
+	if len(thread.sent) != 0 {
+		t.Fatalf("enter sent a message into a read-only subagent thread: %v", thread.sent)
 	}
 
 	assertThreadStreamingAndEnd(t, s)
@@ -167,9 +169,6 @@ func assertThreadStreamingAndEnd(t *testing.T, s Screen) {
 	}
 	if strings.Contains(ansi.Strip(s.transcript.View()), "constants are thresholds") {
 		t.Error("the thread's reply leaked into the MAIN transcript")
-	}
-	if got := s.thread.composer.Value(); got != "" {
-		t.Errorf("thread composer kept %q after send", got)
 	}
 
 	next, _ = s.Update(threadEndedMsg{})
@@ -312,7 +311,12 @@ func TestSubagentThreadCtrlCClosesDialogWithoutQuitting(t *testing.T) {
 	}
 }
 
-func TestSubagentThreadSlashCommandExecution(t *testing.T) {
+// TestSubagentThreadDialogIsReadOnlyForSlashCommands: a subagent
+// dialog's composer is always hidden (see openThread), so keys that
+// would type a slash command must be swallowed rather than routed to a
+// command runner - there is no "thread command" affordance left to
+// exercise.
+func TestSubagentThreadDialogIsReadOnlyForSlashCommands(t *testing.T) {
 	runner := &fakeRunner{outcome: ports.CommandOutcome{Notice: "thread command ran"}}
 	s := threadScreen(t, stubThreads{"sa-1": &scriptedThread{events: make(chan uievent.Event, 4)}}, false)
 	s.SetCommands([]composer.Command{{Name: "help", Desc: "show help"}})
@@ -325,23 +329,21 @@ func TestSubagentThreadSlashCommandExecution(t *testing.T) {
 		t.Fatal("thread is nil after opening dialog")
 	}
 
-	// Type /help into thread composer
+	// Typing /help must not reach the (hidden) thread composer.
 	for _, ch := range "/help" {
 		next, _ = s.Update(tea.KeyPressMsg{Text: string(ch)})
 		s = next.(Screen)
 	}
-	// First Enter accepts completion, second Enter runs the slash command
 	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	s = next.(Screen)
 	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	s = next.(Screen)
 
-	if len(runner.calls) != 1 || runner.calls[0] != "help|" {
-		t.Errorf("runner calls = %v, want [\"help|\"]", runner.calls)
+	if len(runner.calls) != 0 {
+		t.Errorf("runner calls = %v, want none: a read-only subagent dialog must not run commands", runner.calls)
 	}
-	dialogView := ansi.Strip(s.View())
-	if !strings.Contains(dialogView, "thread command ran") {
-		t.Errorf("dialog view missing command outcome notice:\n%s", dialogView)
+	if got := s.thread.composer.Value(); got != "" {
+		t.Errorf("thread composer kept %q; a read-only dialog must never accept input", got)
 	}
 }
 
@@ -561,7 +563,12 @@ func TestThreadDialog_ScrollingAndHistory(t *testing.T) {
 	}
 }
 
-func TestThreadDialog_HomeEndMovesCursorWhenComposerHasText(t *testing.T) {
+// TestThreadDialog_HomeEndAlwaysScrollsTranscript: a subagent dialog's
+// composer is always hidden and never has text to protect a cursor
+// for, so Home/End always scroll the transcript - unlike the main
+// screen's composer, which still needs the Home/End-moves-cursor
+// carve-out.
+func TestThreadDialog_HomeEndAlwaysScrollsTranscript(t *testing.T) {
 	thread := &scriptedThread{
 		events:  make(chan uievent.Event, 4),
 		history: []ports.Message{{Role: "assistant", Text: "ready"}},
@@ -572,17 +579,17 @@ func TestThreadDialog_HomeEndMovesCursorWhenComposerHasText(t *testing.T) {
 	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	s = next.(Screen)
 
-	// Type text into thread composer
+	// Typing must not reach the hidden thread composer.
 	s = typeText(t, s, "hello world")
-	if s.thread.composer.Value() != "hello world" {
-		t.Fatalf("expected composer text 'hello world', got %q", s.thread.composer.Value())
+	if got := s.thread.composer.Value(); got != "" {
+		t.Fatalf("expected the read-only thread composer to stay empty, got %q", got)
 	}
 
-	// Home key should navigate composer cursor without scrolling transcript
+	// Home key scrolls the transcript rather than moving a (nonexistent) cursor.
 	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyHome})
 	s = next.(Screen)
-	if s.thread.composer.Value() != "hello world" {
-		t.Errorf("expected composer text unchanged after Home, got %q", s.thread.composer.Value())
+	if got := s.thread.composer.Value(); got != "" {
+		t.Errorf("expected composer to remain empty after Home, got %q", got)
 	}
 }
 
@@ -654,7 +661,7 @@ func TestResumedSession_SubagentHistoryAvailableInDialog(t *testing.T) {
 	}
 }
 
-func TestSubagentHistoryDialog_HidesComposerOnlyForHistory(t *testing.T) {
+func TestSubagentHistoryDialog_AlwaysHidesComposer(t *testing.T) {
 	subCompleted := &scriptedThread{
 		events: make(chan uievent.Event, 4),
 		history: []ports.Message{
@@ -713,7 +720,9 @@ func TestSubagentHistoryDialog_HidesComposerOnlyForHistory(t *testing.T) {
 	next, _ = scr.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	scr = next.(Screen)
 
-	// 3. Select sa-live (running subagent)
+	// 3. Select sa-live (running subagent) - the composer stays hidden
+	// even though the subagent has not reached a terminal status: the
+	// operator has no real channel to it either way (see openThread).
 	scr.panel.list.MoveTo(1) // sa-live is second row
 	next, _ = scr.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	scr = next.(Screen)
@@ -721,12 +730,12 @@ func TestSubagentHistoryDialog_HidesComposerOnlyForHistory(t *testing.T) {
 	if scr.thread == nil || scr.panel.dialogAgent != "sa-live" {
 		t.Fatalf("expected sa-live thread dialog open, got dialogAgent=%q", scr.panel.dialogAgent)
 	}
-	if scr.thread.hideComposer {
-		t.Errorf("expected hideComposer=false for running subagent dialog, got true")
+	if !scr.thread.hideComposer {
+		t.Errorf("expected hideComposer=true for running subagent dialog, got false")
 	}
 	liveTail := scr.thread.chatTailRows()
-	if len(liveTail) < 2 {
-		t.Errorf("expected running subagent tail rows to include composer, got %d rows: %v", len(liveTail), liveTail)
+	if len(liveTail) != 1 {
+		t.Errorf("expected 1 chat tail row (status line only) for running subagent, got %d rows: %v", len(liveTail), liveTail)
 	}
 }
 
@@ -748,13 +757,13 @@ func TestSubagentHistoryDialog_LiveCompletionHidesComposer(t *testing.T) {
 	n, _ := scr.Update(agentEvent("sa-task", "running", 1, 3, "compiling"))
 	scr = n.(Screen)
 
-	// Open subagent dialog while running
+	// Open subagent dialog while running: still read-only.
 	scr = openPanel(t, scr)
 	next, _ = scr.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	scr = next.(Screen)
 
-	if scr.thread.hideComposer {
-		t.Fatal("expected hideComposer=false while subagent is running")
+	if !scr.thread.hideComposer {
+		t.Fatal("expected hideComposer=true while subagent is running")
 	}
 
 	// Subagent tool call ends (completed)
@@ -773,10 +782,5 @@ func TestSubagentHistoryDialog_LiveCompletionHidesComposer(t *testing.T) {
 	ok, _ := scr.openThread("sa-task")
 	if !ok || !scr.thread.hideComposer {
 		t.Errorf("expected reopening cached completed thread to keep hideComposer=true, got ok=%v, hideComposer=%v", ok, scr.thread.hideComposer)
-	}
-
-	// Unknown subagent ID should report false for isSubagentHistory
-	if scr.isSubagentHistory("unknown-agent") {
-		t.Errorf("expected isSubagentHistory to return false for unknown agent, got true")
 	}
 }

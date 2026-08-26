@@ -223,9 +223,6 @@ func (s *Screen) observeToolEnd(b uievent.ToolEndBody) {
 	} else {
 		s.panel.observeAgentEnd(b.ToolCallID, b.OK)
 	}
-	if s.thread != nil && s.threadID != "" && s.isSubagentHistory(s.threadID) {
-		s.thread.SetHideComposer(true)
-	}
 	if b.Diff != nil {
 		// The panel's data, fed live: every completed edit appears as a
 		// touched file the moment it happens, exactly as the transcript

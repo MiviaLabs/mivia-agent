@@ -26,24 +26,25 @@ func longThreadHistory(turns int) []ports.Message {
 	return msgs
 }
 
-// TestSubagentThreadDialogKeys_VisibleEmptyComposerRoutesJKToComposer
-// pins the routing rule behind the j/k case split: when the thread
-// dialog's composer is live and EMPTY, j/k are typeable keys and must
-// reach composer.Value(), while the arrow keys keep scrolling the
-// transcript. Before the split, "just rerun tests" went out as
-// "ust rerun tests".
-func TestSubagentThreadDialogKeys_VisibleEmptyComposerRoutesJKToComposer(t *testing.T) {
+// TestSubagentThreadDialogKeys_RunningSubagentIsReadOnlyToo pins the
+// same read-only contract for a subagent still RUNNING (non-terminal
+// status) as TestSubagentHistoryDialog_ScrollingAndKeyHandlingWhenComposerHidden
+// pins for a finished one: the composer is hidden from the moment the
+// dialog opens (see openThread), j/k/arrows scroll the transcript one
+// line per press, and no key ever reaches the composer. There is no
+// "visible, live composer" state left to route keys into - the operator
+// has no channel to a subagent's own conversation either way.
+func TestSubagentThreadDialogKeys_RunningSubagentIsReadOnlyToo(t *testing.T) {
 	thread := &scriptedThread{
 		events:  make(chan uievent.Event, 4),
 		history: longThreadHistory(12),
 	}
 	s := threadScreen(t, stubThreads{"sa-1": thread}, false)
 
-	// Enter on the subagent row opens the live (composer visible) dialog.
 	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	s = next.(Screen)
-	if s.thread == nil || s.thread.hideComposer {
-		t.Fatalf("expected a live dialog with a visible composer: present=%v hideComposer=%v",
+	if s.thread == nil || !s.thread.hideComposer {
+		t.Fatalf("expected a read-only dialog with a hidden composer: present=%v hideComposer=%v",
 			s.thread != nil, s.thread != nil && s.thread.hideComposer)
 	}
 
@@ -52,132 +53,26 @@ func TestSubagentThreadDialogKeys_VisibleEmptyComposerRoutesJKToComposer(t *test
 		t.Fatalf("the test needs an overflowing transcript; got offset %d", bottom)
 	}
 
-	// The arrows still scroll a visible but empty composer.
-	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyUp})
-	s = next.(Screen)
-	if got, want := s.thread.transcript.Offset(), bottom-1; got != want {
-		t.Errorf("KeyUp moved the transcript offset to %d, want %d", got, want)
+	for _, k := range []tea.KeyPressMsg{keyMsg("k"), keyMsg("j"), {Code: tea.KeyUp}, {Code: tea.KeyDown}} {
+		next, _ = s.Update(k)
+		s = next.(Screen)
 	}
-	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
-	s = next.(Screen)
 	if got := s.thread.transcript.Offset(); got != bottom {
-		t.Errorf("KeyDown moved the transcript offset to %d, want %d", got, bottom)
+		t.Errorf("scroll keys ended at offset %d, want back at %d", got, bottom)
+	}
+	if s.thread.history.Active() {
+		t.Error("up/down opened the prompt-history overlay over a read-only thread dialog")
+	}
+	if got := s.thread.composer.Value(); got != "" {
+		t.Errorf("j/k/arrows reached the hidden thread composer: %q", got)
 	}
 
-	// j/u/s/t type the word; the transcript must not move.
 	for _, ch := range "just" {
 		next, _ = s.Update(keyMsg(string(ch)))
 		s = next.(Screen)
 	}
-	if got := s.thread.transcript.Offset(); got != bottom {
-		t.Errorf("typing \"just\" moved the transcript offset to %d, want %d", got, bottom)
-	}
-	if got := s.thread.composer.Value(); got != "just" {
-		t.Errorf("thread composer holds %q, want \"just\"", got)
-	}
-}
-
-// TestSubagentThreadDialogKeys_VisibleNonEmptyComposerKeepsAllFourKeys
-// pins the other half of the rule: once the visible composer HOLDS
-// text, none of up/down/j/k may scroll the transcript at THIS routing
-// layer. j/k insert into the composer; the arrows fall through to the
-// embedded screen's own handling and never carry text.
-func TestSubagentThreadDialogKeys_VisibleNonEmptyComposerKeepsAllFourKeys(t *testing.T) {
-	thread := &scriptedThread{
-		events:  make(chan uievent.Event, 4),
-		history: longThreadHistory(12),
-	}
-	s := threadScreen(t, stubThreads{"sa-1": thread}, false)
-
-	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	s = next.(Screen)
-	if s.thread == nil || s.thread.hideComposer {
-		t.Fatalf("expected a live dialog with a visible composer: present=%v hideComposer=%v",
-			s.thread != nil, s.thread != nil && s.thread.hideComposer)
-	}
-
-	s = typeText(t, s, "hel")
-	bottom := s.thread.transcript.Offset()
-	if bottom <= 0 {
-		t.Fatalf("the test needs an overflowing transcript; got offset %d", bottom)
-	}
-
-	next, _ = s.Update(keyMsg("k"))
-	s = next.(Screen)
-	if got := s.thread.transcript.Offset(); got != bottom {
-		t.Errorf("k scrolled the transcript to offset %d, want %d", got, bottom)
-	}
-	if got := s.thread.composer.Value(); got != "helk" {
-		t.Errorf("k did not reach the composer; value is %q, want \"helk\"", got)
-	}
-
-	next, _ = s.Update(keyMsg("j"))
-	s = next.(Screen)
-	if got := s.thread.transcript.Offset(); got != bottom {
-		t.Errorf("j scrolled the transcript to offset %d, want %d", got, bottom)
-	}
-	if got := s.thread.composer.Value(); got != "helkj" {
-		t.Errorf("j did not reach the composer; value is %q, want \"helkj\"", got)
-	}
-
-	for _, code := range []rune{tea.KeyUp, tea.KeyDown} {
-		next, _ = s.Update(tea.KeyPressMsg{Code: code})
-		s = next.(Screen)
-		if got := s.thread.composer.Value(); got != "helkj" {
-			t.Errorf("an arrow key changed the composer text to %q, want \"helkj\"", got)
-		}
-	}
-}
-
-// TestSubagentThreadDialogKeys_VisibleNonEmptyArrowsDoNotOpenHistoryOverlay
-// pins the modal half of the arrow rule: inside an open thread dialog,
-// up and down with a visible, non-empty composer are caret keys. They
-// must not reach the embedded screen's key table, whose prompt-recall
-// branch opens the message-history overlay - an overlay must never grow
-// over a live modal dialog, and its reserved rows must not shift the
-// dialog's transcript layout.
-func TestSubagentThreadDialogKeys_VisibleNonEmptyArrowsDoNotOpenHistoryOverlay(t *testing.T) {
-	thread := &scriptedThread{
-		events:  make(chan uievent.Event, 4),
-		history: longThreadHistory(12),
-	}
-	s := threadScreen(t, stubThreads{"sa-1": thread}, false)
-
-	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	s = next.(Screen)
-	if s.thread == nil || s.thread.hideComposer {
-		t.Fatalf("expected a live dialog with a visible composer: present=%v hideComposer=%v",
-			s.thread != nil, s.thread != nil && s.thread.hideComposer)
-	}
-
-	s = typeText(t, s, "hel")
-	bottom := s.thread.transcript.Offset()
-	if bottom <= 0 {
-		t.Fatalf("the test needs an overflowing transcript; got offset %d", bottom)
-	}
-
-	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyUp})
-	s = next.(Screen)
-	if s.thread.history.Active() {
-		t.Error("up opened the prompt-history overlay over the thread dialog")
-	}
-	if got := s.thread.composer.Value(); got != "hel" {
-		t.Errorf("up changed the composer text to %q, want \"hel\"", got)
-	}
-	if got := s.thread.transcript.Offset(); got != bottom {
-		t.Errorf("up shifted the transcript offset to %d, want %d", got, bottom)
-	}
-
-	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
-	s = next.(Screen)
-	if s.thread.history.Active() {
-		t.Error("down left the prompt-history overlay over the thread dialog")
-	}
-	if got := s.thread.composer.Value(); got != "hel" {
-		t.Errorf("down changed the composer text to %q, want \"hel\"", got)
-	}
-	if got := s.thread.transcript.Offset(); got != bottom {
-		t.Errorf("down shifted the transcript offset to %d, want %d", got, bottom)
+	if got := s.thread.composer.Value(); got != "" {
+		t.Errorf("typing \"just\" reached the hidden thread composer: %q", got)
 	}
 }
 
