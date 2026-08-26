@@ -167,6 +167,44 @@ func TestAnthropicCoalescesToolResultFollowedByUserNotice(t *testing.T) {
 	}
 }
 
+// A genuinely empty assistant turn (no content, no tool calls - the shape a
+// provider's empty response leaves behind) between two user-mapped messages
+// must not cause two adjacent Anthropic "user" messages. Confirmed bug from
+// the Step-5 hostile audit: anthropicSystemAndMessages opened an "assistant"
+// pending turn for the empty message, contributed zero content blocks to it
+// (silently dropped by flush's len>0 guard), but the role-transition state
+// still advanced - so the next user message started a NEW "user" turn
+// instead of extending the one before the empty assistant message.
+func TestAnthropicSkipsEmptyAssistantTurnWithoutBreakingAlternation(t *testing.T) {
+	var gotBody map[string]any
+	client := newTestAnthropicClient(t, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{}}`))
+	})
+	req := Request{
+		Model: "claude-sonnet-5",
+		Messages: []Message{
+			{Role: RoleUser, Content: "hi"},
+			{Role: RoleAssistant, Content: "", ToolCalls: nil, ReasoningContent: ""}, // genuinely empty
+			{Role: RoleUser, Content: "still there?"},
+		},
+	}
+	if _, err := client.ChatTurn(context.Background(), req); err != nil {
+		t.Fatalf("ChatTurn: %v", err)
+	}
+	msgs, _ := gotBody["messages"].([]any)
+	roles := make([]string, len(msgs))
+	for i, m := range msgs {
+		entry, _ := m.(map[string]any)
+		roles[i], _ = entry["role"].(string)
+	}
+	for i := 1; i < len(roles); i++ {
+		if roles[i] == roles[i-1] {
+			t.Fatalf("messages roles = %v, want strict alternation (no two adjacent %q)", roles, roles[i])
+		}
+	}
+}
+
 // A tool_use block's ID must reach the wire unchanged so a later
 // tool_result.tool_use_id exactly matches - Anthropic rejects a mismatch.
 func TestAnthropicToolUseIDRoundTrips(t *testing.T) {

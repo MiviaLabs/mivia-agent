@@ -7,12 +7,13 @@ use.
 
 ## AI providers
 
-mivia sends prompts and selected context to one configured AI provider. Seven
+mivia sends prompts and selected context to one configured AI provider. Eight
 providers are built in today:
 
 | Provider | Default model | Default API base URL |
 |----------|---------------|-----------------------|
 | DeepSeek (default) | `deepseek-v4-flash` | `https://api.deepseek.com/v1` |
+| Anthropic | declare under `providers.anthropic` | `https://api.anthropic.com/v1` |
 | OpenRouter | declare under `providers.openrouter` | `https://openrouter.ai/api/v1` |
 | ZAI (z.ai) | declare under `providers.zai` | `https://api.z.ai/api/paas/v4` |
 | Ollama | declare under `providers.ollama` | `https://ollama.com/v1` |

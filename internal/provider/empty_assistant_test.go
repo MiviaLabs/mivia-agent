@@ -210,6 +210,24 @@ func TestDropEmptyAssistantTurns_KeepsToolCallAssistantWithoutContent(t *testing
 	}
 }
 
+// A turn whose only content is reasoning (Content and ToolCalls both empty,
+// ReasoningContent non-empty) is legitimate and must survive: the native
+// Anthropic client can produce exactly this shape when a turn's max_tokens
+// budget runs out mid-thought (stop_reason "max_tokens") before any text or
+// tool_use block starts, and dropping it would silently lose the model's
+// reasoning trace. Confirmed bug from Step-5 bug audit.
+func TestDropEmptyAssistantTurns_KeepsReasoningOnlyAssistantTurn(t *testing.T) {
+	msgs := []Message{
+		{Role: RoleUser, Content: "think about it"},
+		{Role: RoleAssistant, ReasoningContent: `[{"type":"thinking","thinking":"considering..."}]`},
+		{Role: RoleUser, Content: "continue"},
+	}
+	out := DropEmptyAssistantTurns(msgs)
+	if len(out) != 3 {
+		t.Fatalf("reasoning-only turn must survive, got %d: %v", len(out), out)
+	}
+}
+
 // A message list with nothing to drop must be returned unchanged (same
 // slice, not a needless copy) - callers rely on this to avoid mutating
 // history on every turn adoption when nothing is actually wrong.

@@ -139,12 +139,25 @@ func RepairReasoningLessToolExchanges(msgs []Message) []Message {
 }
 
 // isEmptyAssistantTurn reports whether m is an assistant message carrying
-// neither content nor tool calls - the shape a provider's genuinely empty
-// response leaves behind. Shared by toAPIMessages (the wire-layer drop) and
-// DropEmptyAssistantTurns (the message-list-layer drop) so the two
-// definitions cannot silently drift apart.
+// neither content, tool calls, nor reasoning content - the shape a
+// provider's genuinely empty response leaves behind. Shared by
+// toAPIMessages (the wire-layer drop) and DropEmptyAssistantTurns (the
+// message-list-layer drop) so the two definitions cannot silently drift
+// apart.
+//
+// ReasoningContent is checked because it is not always a replay-only
+// passenger riding alongside real Content or ToolCalls: the native Anthropic
+// client (anthropic.go) can produce a Response whose only content is a
+// thinking block - Content and ToolCalls both empty, ReasoningContent
+// carrying the raw thinking-block JSON - when a turn's max_tokens budget
+// runs out mid-thought (stop_reason "max_tokens") before any text or
+// tool_use block starts. Treating that shape as "empty" would silently drop
+// a legitimate assistant turn (and the model's reasoning trace with it) the
+// same way an actually-empty response should be dropped - a correctness bug
+// found in Step-5 bug audit, not a hypothetical.
 func isEmptyAssistantTurn(m Message) bool {
-	return m.Role == RoleAssistant && len(m.ToolCalls) == 0 && strings.TrimSpace(m.Content) == ""
+	return m.Role == RoleAssistant && len(m.ToolCalls) == 0 &&
+		strings.TrimSpace(m.Content) == "" && strings.TrimSpace(m.ReasoningContent) == ""
 }
 
 // DropEmptyAssistantTurns removes assistant messages that carry neither

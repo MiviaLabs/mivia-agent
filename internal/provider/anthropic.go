@@ -180,7 +180,21 @@ func (c *AnthropicCompleter) setHeaders(httpReq *http.Request) {
 // top-level thinking object plus a nested output_config.effort - is just
 // another case in that switch, not a separate encoder).
 func (c *AnthropicCompleter) buildRequestBody(req Request) (map[string]any, error) {
-	system, messages := anthropicSystemAndMessages(req.Messages)
+	// Every OpenAI-compatible provider gets these two repairs for free via
+	// toAPIMessages (api_message.go), which this native client does not call
+	// (it builds Anthropic's own wire shape directly, not an OpenAI-style
+	// body). Applying them here closes the same gap: an empty assistant turn
+	// (no content, no tool calls - the shape a genuinely empty provider
+	// response leaves behind) would otherwise still open an "assistant"
+	// pending turn in anthropicSystemAndMessages and then contribute zero
+	// content blocks, silently causing the NEXT user/tool message to start a
+	// fresh "user" turn instead of extending the one before the empty
+	// assistant message - two adjacent Anthropic "user" messages, which 400s
+	// on role alternation the same way the uncoalesced-tool-results bug did.
+	// An orphaned tool_use/tool_result pair (a torn session write) is the
+	// same class of poisoned-history shape and gets the same treatment.
+	msgs := RepairToolPairing(DropEmptyAssistantTurns(req.Messages))
+	system, messages := anthropicSystemAndMessages(msgs)
 	if len(messages) == 0 {
 		return nil, fmt.Errorf("no messages to send")
 	}
