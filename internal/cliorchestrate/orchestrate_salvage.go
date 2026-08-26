@@ -18,10 +18,14 @@ const salvageReadTimeout = 5 * time.Second
 // still reported. Returns nil when there is nothing to salvage, leaving the caller
 // to report the bare error.
 //
-// The run itself is not cancelled: its pool context is rooted in Background, so it
-// keeps going and stays reachable through inspect_agents and join_run on the handle
-// registered above. Cancelling here would destroy in-flight work to tidy up a
-// budget the caller had already spent.
+// Whether the run itself stops is decided by the caller above, not here. If
+// this call created the run, RunThroughCoordinator fires a detached
+// cancelOrphanedRun before it salvages, so this read runs alongside that
+// graceful cancellation and keeps only what already reached an outcome;
+// unfinished tasks land in canceled through the cancel_run path. A reused
+// handle (isNew=false) belongs to another caller and keeps running there.
+// The handle registered above stays reachable through inspect_agents,
+// join_run, and cancel_run in both cases.
 func salvageUnjoinedRun(c coordinator.Coordinator, handle *coordinator.RunHandle, joinErr error) *coordinator.RunResult {
 	if !errors.Is(joinErr, context.DeadlineExceeded) && !errors.Is(joinErr, context.Canceled) {
 		return nil
