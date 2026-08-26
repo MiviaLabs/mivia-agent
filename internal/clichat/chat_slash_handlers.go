@@ -139,7 +139,11 @@ func handleSlashInfo(cmd string, fields []string, sess *chat.Session, res *confi
 		}
 		discarded, err := cliagents.SwitchModelCommand(sess, res, providerName, modelName)
 		if err != nil {
-			sink.Error(FormatModelUnavailable(providerName, choices))
+			var others []string
+			if res != nil {
+				others = res.OtherProvidersWithModel(providerName, modelName)
+			}
+			sink.Error(FormatModelUnavailable(providerName, choices, modelName, others))
 			return true, false, nil
 		}
 		sink.Info(FormatModelSet(sess.CurrentSelection().ProviderName, sess.CurrentModel(), discarded))

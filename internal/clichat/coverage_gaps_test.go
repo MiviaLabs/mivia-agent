@@ -436,6 +436,43 @@ func TestHandleSlashInfoBranches(t *testing.T) {
 	}
 }
 
+// TestHandleSlashInfoModelUnavailableNamesOtherProvider reproduces the
+// original user-reported confusion end-to-end through handleSlashInfo:
+// active provider "llmproxycli" does not have "claude-sonnet-5" in its own
+// catalog, but a differently-configured "anthropic" provider does. The
+// terminal output must name the other provider and the exact command to
+// switch, not just say "not available" with no next step.
+func TestHandleSlashInfoModelUnavailableNamesOtherProvider(t *testing.T) {
+	res := &config.Resolved{ProviderName: "llmproxycli", Model: "gemini-3.7-flash-high"}
+	res.SetModelCatalogForTest([]config.ProviderModelGroup{
+		{
+			Provider:   "llmproxycli",
+			Selectable: true,
+			Models:     []config.ModelSpec{{Name: "gemini-3.7-flash-high"}},
+		},
+		{
+			Provider:   "anthropic",
+			Selectable: true,
+			Models:     []config.ModelSpec{{Name: "claude-sonnet-5"}},
+		},
+	})
+	sess := chat.NewSession(res, nullCompleter{})
+	buf := &bytes.Buffer{}
+	term := NewTestTerminal(buf)
+
+	ok, exit, err := handleSlashInfo("/model", []string{"/model", "claude-sonnet-5"}, sess, res, false, term)
+	if !ok || exit || err != nil {
+		t.Fatalf("handleSlashInfo(/model claude-sonnet-5) = (%v, %v, %v)", ok, exit, err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "found under provider anthropic") {
+		t.Fatalf("output missing the found-elsewhere hint: %q", out)
+	}
+	if !strings.Contains(out, "/model anthropic claude-sonnet-5") {
+		t.Fatalf("output missing the exact switch command: %q", out)
+	}
+}
+
 func TestHandleSlashLimitsAndBudgetBranches(t *testing.T) {
 	sess := chat.NewSession(&config.Resolved{ProviderName: "p", Model: "m"}, nullCompleter{})
 	term := NewTestTerminal(&bytes.Buffer{})

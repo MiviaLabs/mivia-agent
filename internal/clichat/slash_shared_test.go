@@ -194,11 +194,33 @@ func TestModelMessageFormatters(t *testing.T) {
 	if got, want := FormatModelSet("openai", "gpt-4o", ""), "(model set to openai/gpt-4o)"; got != want {
 		t.Fatalf("FormatModelSet() = %q, want %q", got, want)
 	}
-	if got, want := FormatModelUnavailable("openai", "gpt-4o, mini"), "model is not available for provider openai\navailable: gpt-4o, mini"; got != want {
-		t.Fatalf("FormatModelUnavailable with choices = %q, want %q", got, want)
+	if got, want := FormatModelUnavailable("openai", "gpt-4o, mini", "gpt-5", nil), "model is not available for provider openai\navailable: gpt-4o, mini"; got != want {
+		t.Fatalf("FormatModelUnavailable with choices, no hint = %q, want %q", got, want)
 	}
-	if got, want := FormatModelUnavailable("openai", ""), "model name is invalid"; got != want {
-		t.Fatalf("FormatModelUnavailable without choices = %q, want %q", got, want)
+	if got, want := FormatModelUnavailable("openai", "", "gpt-5", nil), "model name is invalid"; got != want {
+		t.Fatalf("FormatModelUnavailable without choices, no hint = %q, want %q", got, want)
+	}
+}
+
+// FormatModelUnavailable's found-elsewhere hint: the three shapes
+// (not found anywhere, found in exactly one other provider, found in two or
+// more), for both the choices-nonempty and choices-empty ("model name is
+// invalid" - the active provider itself has no selectable catalog) branches.
+// The requested model name must appear verbatim in the suggested command -
+// Step-5 bug audit caught an earlier version that printed the literal
+// placeholder text "<model-name>" instead.
+func TestFormatModelUnavailableNamesOtherProviders(t *testing.T) {
+	if got, want := FormatModelUnavailable("llmproxycli", "gemini-3.7-flash-high", "claude-sonnet-5", []string{"anthropic"}),
+		"model is not available for provider llmproxycli\navailable: gemini-3.7-flash-high (found under provider anthropic - run /model anthropic claude-sonnet-5 to switch)"; got != want {
+		t.Fatalf("FormatModelUnavailable one other provider = %q, want %q", got, want)
+	}
+	if got, want := FormatModelUnavailable("llmproxycli", "gemini-3.7-flash-high", "claude-sonnet-5", []string{"anthropic", "openrouter"}),
+		"model is not available for provider llmproxycli\navailable: gemini-3.7-flash-high (found under providers: anthropic, openrouter - run /model <provider> claude-sonnet-5 to switch)"; got != want {
+		t.Fatalf("FormatModelUnavailable two other providers = %q, want %q", got, want)
+	}
+	if got, want := FormatModelUnavailable("llmproxycli", "", "claude-sonnet-5", []string{"anthropic"}),
+		"model name is invalid (found under provider anthropic - run /model anthropic claude-sonnet-5 to switch)"; got != want {
+		t.Fatalf("FormatModelUnavailable empty choices with hint = %q, want %q", got, want)
 	}
 }
 

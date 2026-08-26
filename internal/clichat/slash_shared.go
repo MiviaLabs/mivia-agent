@@ -162,10 +162,31 @@ func EffortDiscardedSuffix(discarded reasoning.Level) string {
 	return fmt.Sprintf(" · effort %s discarded", discarded)
 }
 
-// FormatModelUnavailable implements format model unavailable.
-func FormatModelUnavailable(providerName, choices string) string {
-	if choices != "" {
-		return fmt.Sprintf("model is not available for provider %s\navailable: %s", providerName, choices)
+// FormatModelUnavailable reports a /model failure, naming any OTHER
+// configured provider that does have the requested name so the user gets an
+// actionable next step instead of a dead end. otherProviders is the result
+// of (*config.Resolved).OtherProvidersWithModel for the same lookup - nil or
+// empty when the name exists nowhere else, in which case the message is
+// unchanged from before this hint existed. name is the model name the user
+// requested, interpolated into the suggested command - Step-5 bug audit
+// caught an earlier version of this that printed the literal placeholder
+// text "<model-name>" instead, which then failed the same way if a user
+// copy-pasted it verbatim.
+//
+// The choices == "" branch ("model name is invalid") means the active
+// provider itself has no selectable catalog (misconfigured or no API key) -
+// otherProviders is still consulted and named there too, since "this
+// provider is broken, but the model you asked for exists under provider X"
+// is exactly the situation this hint exists for.
+func FormatModelUnavailable(providerName, choices, name string, otherProviders []string) string {
+	hint := ""
+	if len(otherProviders) == 1 {
+		hint = fmt.Sprintf(" (found under provider %s - run /model %s %s to switch)", otherProviders[0], otherProviders[0], name)
+	} else if len(otherProviders) > 1 {
+		hint = fmt.Sprintf(" (found under providers: %s - run /model <provider> %s to switch)", strings.Join(otherProviders, ", "), name)
 	}
-	return "model name is invalid"
+	if choices != "" {
+		return fmt.Sprintf("model is not available for provider %s\navailable: %s%s", providerName, choices, hint)
+	}
+	return "model name is invalid" + hint
 }

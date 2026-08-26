@@ -395,16 +395,34 @@ func resolveProviderAndModel(res *config.Resolved, selProvider, name string) (st
 		}
 	}
 
-	// 2. Search unique provider in catalog
+	// 2. Search unique provider in catalog. A name matching more than one
+	// Selectable provider is NOT resolved here - silently picking the first
+	// catalog-order match would be an unannounced provider switch (different
+	// auth, base URL, and wire behavior) on nothing but name coincidence,
+	// the exact class of surprise a same-named model across providers (e.g.
+	// "claude-sonnet-5" under both an OpenAI-compatible proxy and the native
+	// anthropic provider) causes. Falling through here leaves providerName
+	// as today's default (current selection), and SwitchModelCommand's
+	// resulting "not available" error carries the ambiguity via
+	// res.OtherProvidersWithModel in SelectModel's error path below - naming
+	// every match so the user picks explicitly with /model <provider> <name>
+	// rather than the tool guessing for them.
+	var matchedProvider string
+	matches := 0
 	for _, group := range res.ModelCatalog() {
 		if !group.Selectable {
 			continue
 		}
 		for _, m := range group.Models {
 			if m.Name == name {
-				return group.Provider, name
+				matchedProvider = group.Provider
+				matches++
+				break
 			}
 		}
+	}
+	if matches == 1 {
+		return matchedProvider, name
 	}
 
 	return providerName, name
@@ -424,7 +442,13 @@ func (r *CommandRunner) SelectModel(_ context.Context, name string) ports.Comman
 
 	discarded, err := cliagents.SwitchModelCommand(sess, r.res, providerName, modelName)
 	if err != nil {
-		return ports.CommandOutcome{Err: fmt.Sprintf("failed to switch model to %q (%s): %v", modelName, providerName, err)}
+		msg := fmt.Sprintf("failed to switch model to %q (%s): %v", modelName, providerName, err)
+		if others := r.res.OtherProvidersWithModel(providerName, modelName); len(others) == 1 {
+			msg += fmt.Sprintf(" (found under provider %s - run /model %s %s to switch)", others[0], others[0], modelName)
+		} else if len(others) > 1 {
+			msg += fmt.Sprintf(" (found under providers: %s - run /model <provider> %s to switch)", strings.Join(others, ", "), modelName)
+		}
+		return ports.CommandOutcome{Err: msg}
 	}
 	r.res.ProviderName = providerName
 	r.res.Model = modelName

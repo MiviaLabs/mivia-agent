@@ -647,6 +647,109 @@ func TestCommandRunner_SelectModel_InResumedSession(t *testing.T) {
 	}
 }
 
+// TestCommandRunner_SelectModel_AmbiguousNameAcrossProvidersRefuses pins the
+// fix for a confirmed bug: resolveProviderAndModel's cross-provider search
+// used to return the FIRST provider whose catalog happened to contain the
+// requested name, in catalog order, with no check for a second match - a
+// silent, order-dependent provider switch (different auth, base URL, and
+// wire behavior) on nothing but a name coincidence. This reproduces the
+// real-world collision (a model name, e.g. "claude-sonnet-5", declared
+// under two different providers) and asserts SelectModel refuses rather
+// than guessing, naming both providers so the user can pick explicitly.
+func TestCommandRunner_SelectModel_AmbiguousNameAcrossProvidersRefuses(t *testing.T) {
+	res := &config.Resolved{
+		ProviderName: "ollama",
+		Model:        "model-a",
+		ProviderRuntimes: map[string]config.ProviderRuntime{
+			"ollama": {
+				ProviderName: "ollama",
+				BaseURL:      "http://127.0.0.1:11434",
+				Models:       []config.ModelSpec{{Name: "model-a"}},
+			},
+			"llmproxycli": {
+				ProviderName: "llmproxycli",
+				APIKey:       "test-key",
+				APIKeySet:    true,
+				Models:       []config.ModelSpec{{Name: "claude-sonnet-5"}},
+			},
+			"anthropic": {
+				ProviderName: "anthropic",
+				APIKey:       "sk-ant-test",
+				APIKeySet:    true,
+				Models:       []config.ModelSpec{{Name: "claude-sonnet-5"}},
+			},
+		},
+	}
+	res.SetModelCatalogForTest([]config.ProviderModelGroup{
+		{Provider: "ollama", Selectable: true, Active: true, Models: []config.ModelSpec{{Name: "model-a"}}},
+		{Provider: "llmproxycli", Selectable: true, Models: []config.ModelSpec{{Name: "claude-sonnet-5"}}},
+		{Provider: "anthropic", Selectable: true, Models: []config.ModelSpec{{Name: "claude-sonnet-5"}}},
+	})
+	sess := chat.NewSession(res, nil)
+	runner := uiadapter.NewCommandRunner(sess, res, nil)
+
+	out := runner.SelectModel(context.Background(), "claude-sonnet-5")
+
+	if out.Err == "" {
+		t.Fatalf("SelectModel(ambiguous name) must refuse, got a successful switch: %+v", out)
+	}
+	if sess.CurrentSelection().ProviderName == "llmproxycli" || sess.CurrentSelection().ProviderName == "anthropic" {
+		t.Fatalf("SelectModel must not silently switch to either ambiguous provider, session provider = %q", sess.CurrentSelection().ProviderName)
+	}
+	if !strings.Contains(out.Err, "llmproxycli") || !strings.Contains(out.Err, "anthropic") {
+		t.Fatalf("error must name both ambiguous providers, got %q", out.Err)
+	}
+	if !strings.Contains(out.Err, "/model <provider> claude-sonnet-5") {
+		t.Fatalf("error must give the exact disambiguating command, got %q", out.Err)
+	}
+}
+
+// TestCommandRunner_SelectModel_UniqueNameAcrossProvidersStillSwitches
+// confirms the fix doesn't regress the working case: a name found in
+// exactly one Selectable provider still resolves and switches normally.
+func TestCommandRunner_SelectModel_UniqueNameAcrossProvidersStillSwitches(t *testing.T) {
+	res := &config.Resolved{
+		ProviderName: "ollama",
+		Model:        "model-a",
+		ProviderRuntimes: map[string]config.ProviderRuntime{
+			"ollama": {
+				ProviderName: "ollama",
+				BaseURL:      "http://127.0.0.1:11434",
+				Models:       []config.ModelSpec{{Name: "model-a"}},
+			},
+			"anthropic": {
+				ProviderName: "anthropic",
+				APIKey:       "sk-ant-test",
+				APIKeySet:    true,
+				Models:       []config.ModelSpec{{Name: "claude-sonnet-5"}},
+			},
+		},
+	}
+	res.SetModelCatalogForTest([]config.ProviderModelGroup{
+		{Provider: "ollama", Selectable: true, Active: true, Models: []config.ModelSpec{{Name: "model-a"}}},
+		{Provider: "anthropic", Selectable: true, Models: []config.ModelSpec{{Name: "claude-sonnet-5"}}},
+	})
+	sess := chat.NewSession(res, nil)
+	sess.SetBindingFactory(func(providerName, model string) (chat.ModelBinding, error) {
+		return chat.ModelBinding{
+			ProviderName: providerName,
+			Model:        model,
+			Completer:    &nullCompleter{},
+			Profile:      config.ModelSpec{Name: model},
+		}, nil
+	})
+	runner := uiadapter.NewCommandRunner(sess, res, nil)
+
+	out := runner.SelectModel(context.Background(), "claude-sonnet-5")
+
+	if out.Err != "" {
+		t.Fatalf("SelectModel(unique name) must succeed, got error: %v", out.Err)
+	}
+	if got := sess.CurrentSelection().ProviderName; got != "anthropic" {
+		t.Fatalf("session provider = %q, want anthropic", got)
+	}
+}
+
 func TestCommandRunner_SelectModel_ProviderPrefix(t *testing.T) {
 	res := &config.Resolved{
 		ProviderName: "ollama",

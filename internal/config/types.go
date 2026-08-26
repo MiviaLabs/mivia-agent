@@ -475,6 +475,45 @@ func (r *Resolved) ModelChoicesFor(providerName string) string {
 	return ""
 }
 
+// OtherProvidersWithModel returns the provider names, in ModelCatalog order,
+// of every Selectable provider (other than exclude) whose catalog contains a
+// model named exactly name. Matching is exact (case-sensitive, trimmed),
+// matching AllowsModel's and the model picker's own comparison - model names
+// are provider-declared identifiers, not free text, so this does not
+// normalize case the way a user-facing search would.
+//
+// This is the single cross-provider model lookup for BOTH the classic REPL
+// (internal/clichat) and the new TUI (internal/uiadapter): those two
+// packages do not import each other, so the shared logic lives here, one
+// level below both, rather than being duplicated (or worse, silently
+// diverging - see the pre-existing bug this fixes: internal/uiadapter's
+// resolveProviderAndModel used to return the FIRST provider whose catalog
+// happened to contain the name, in catalog order, with no check for a second
+// match - a silent, order-dependent provider switch on any name collision).
+// Only Selectable providers are considered: a provider with no API key set
+// is not a switch that would actually work, so it must not appear in a
+// "found under provider X" hint that tells the user to try it.
+func (r *Resolved) OtherProvidersWithModel(exclude, name string) []string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	exclude = strings.ToLower(strings.TrimSpace(exclude))
+	var found []string
+	for _, group := range r.ModelCatalog() {
+		if !group.Selectable || strings.ToLower(group.Provider) == exclude {
+			continue
+		}
+		for _, m := range group.Models {
+			if m.Name == name {
+				found = append(found, group.Provider)
+				break
+			}
+		}
+	}
+	return found
+}
+
 // ModelCatalog returns a deep copy of the secret-free provider catalog.
 // ReasoningEfforts is cloned per model because cloning the []ModelSpec alone
 // would leave every caller sharing one backing array with the stored catalog.
