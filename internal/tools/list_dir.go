@@ -365,6 +365,12 @@ func (t *listDirTool) emitDir(ctx context.Context, st *treeWalkState, parentAbs,
 		childAbs := filepath.Join(parentAbs, name)
 		kids, err := readDirWithContext(ctx, childAbs)
 		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				// Cancellation, not a filesystem error: propagate so the walk
+				// stops immediately instead of miscounting it as an
+				// unreadable directory and reporting a truncated success.
+				return ctxErr
+			}
 			if !errors.Is(err, os.ErrNotExist) {
 				st.unreadable++
 			}
