@@ -284,12 +284,37 @@ func TestTranslateEvent_NoticeMetrics(t *testing.T) {
 			want: nil,
 		},
 		{
-			name: "token_usage_is_dropped",
+			// The root loop's prompt tokens ARE the session's context fill
+			// level, so they drive the gauge; see translateTokenUsage.
+			name: "root_token_usage_is_the_context_fill_level",
 			ev: agent.Event{
 				Kind:       agent.EventTokenUsage,
 				Detail:     "estimate 1000 vs actual 1200",
 				TokenUsage: &events.TokenUsageEvent{InputTokens: 1200, OutputTokens: 300},
 			},
+			want: []uievent.Event{{
+				Kind: uievent.KindUsage,
+				Body: uievent.UsageBody{InputTokens: 1200, OutputTokens: 300},
+			}},
+		},
+		{
+			// A dispatched agent's private history says nothing about how
+			// full the ROOT session's context is; letting it through would
+			// swing the gauge to an unrelated conversation's size.
+			name: "subagent_token_usage_does_not_move_the_gauge",
+			ev: agent.Event{
+				Kind:       agent.EventTokenUsage,
+				Detail:     "estimate 1000 vs actual 1200",
+				TokenUsage: &events.TokenUsageEvent{InputTokens: 1200, OutputTokens: 300},
+				Origin:     agent.EventOrigin{TaskID: "task-1", Agent: "builder", Depth: 1},
+			},
+			want: nil,
+		},
+		{
+			// EmitTokenUsage only fires on a reported usage, but a nil
+			// payload must not panic the translator.
+			name: "token_usage_without_a_payload_is_dropped",
+			ev:   agent.Event{Kind: agent.EventTokenUsage, Detail: "actual 5 in / 2 out"},
 			want: nil,
 		},
 		{

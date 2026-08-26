@@ -169,10 +169,12 @@ func TestHandleTurnEventUsageUpdatesTopbarAndStatusline(t *testing.T) {
 	})
 	s = next.(Screen)
 
-	// Topbar context percent should immediately reflect 45% (45,000 / 100,000)
+	// The gauge tracks the PROMPT the provider just priced: 42,000 of a
+	// 100,000 budget. The 3,000 output tokens are not part of that prompt and
+	// are counted once, as history, in the next request's own input.
 	pct, ok = s.topbar.ContextPercent()
-	if !ok || pct != 45 {
-		t.Errorf("expected updated pct 45, got %d (ok=%v)", pct, ok)
+	if !ok || pct != 42 {
+		t.Errorf("expected updated pct 42, got %d (ok=%v)", pct, ok)
 	}
 
 	// Statusline view should show cost but NO ctx pill

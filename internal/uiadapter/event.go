@@ -101,9 +101,7 @@ func TranslateEventWithOptions(ev agent.Event, opts TranslateOptions) []uievent.
 		}
 		return notice(ev.Detail)
 	case agent.EventTokenUsage:
-		// Dropped: EventTokenUsage reports single-step prompt tokens, which would
-		// overwrite the session's cumulative context tokens and corrupt the topbar gauge.
-		return nil
+		return translateTokenUsage(ev)
 	case agent.EventWorkLimit:
 		return notice(ev.Detail)
 	case agent.EventHeartbeat, agent.EventSubagentHeartbeat:
@@ -122,6 +120,36 @@ func TranslateEventWithOptions(ev agent.Event, opts TranslateOptions) []uievent.
 	// which still exercises the production helper directly.
 	log.Printf("uiadapter: TranslateEvent has no case for agent.EventKind %q; dropping", string(ev.Kind))
 	return nil
+}
+
+// translateTokenUsage turns the ROOT loop's per-request token accounting into
+// the usage body the context gauge reads.
+//
+// The prompt tokens of the newest request are the session's context FILL
+// LEVEL, not an increment to accumulate: each request carries the whole
+// prepared history, so the latest count is the current answer and replacing
+// the previous one is correct. This is also the only ground truth available
+// mid-turn - chat.Session.ContextUsage measures s.Messages, which the session
+// does not adopt until the turn commits, so without this the gauge froze at
+// the turn's STARTING history and only jumped once the turn ended.
+//
+// Subagent usage is dropped. Nested loops publish through the same sink with
+// a stamped Origin (subagents.StampEventOrigin), and a subagent's private
+// history has nothing to do with how full the root session's context is;
+// letting it through would make the gauge lurch to an unrelated conversation's
+// size for the length of every dispatched agent. Only the zero Origin - the
+// root loop - moves the gauge.
+func translateTokenUsage(ev agent.Event) []uievent.Event {
+	if !ev.Origin.IsZero() || ev.TokenUsage == nil {
+		return nil
+	}
+	return []uievent.Event{{
+		Kind: uievent.KindUsage,
+		Body: uievent.UsageBody{
+			InputTokens:  int64(ev.TokenUsage.InputTokens),
+			OutputTokens: int64(ev.TokenUsage.OutputTokens),
+		},
+	}}
 }
 
 // notice returns the typed notice body; the trailing nil return is so each

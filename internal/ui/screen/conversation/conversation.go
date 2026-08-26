@@ -122,6 +122,16 @@ type Screen struct {
 	width  int
 	height int
 
+	// liveUsage is the newest provider-reported token accounting for the
+	// running turn, or nil when no turn has reported yet. It supersedes
+	// the session's own estimate for as long as it is set: mid-turn the
+	// session still measures the history it STARTED with (it adopts the
+	// turn's messages only at commit), so the estimate is stale exactly
+	// while a turn is growing the context. Cleared at the turn boundary,
+	// where the committed - and possibly compacted - estimate becomes the
+	// current answer again.
+	liveUsage *ports.Usage
+
 	lastClickTime time.Time
 	lastClickX    int
 	lastClickY    int
@@ -298,7 +308,16 @@ func (s *Screen) refreshActivity() {
 func (s *Screen) refreshTopbar() {
 	if s.conv != nil {
 		u := s.conv.ContextUsage()
-		if (u.InputTokens+u.OutputTokens == 0) && (s.topbar.Usage().InputTokens+s.topbar.Usage().OutputTokens > 0) {
+		// A live provider-reported reading wins over the session estimate
+		// while it is set. It is both more accurate (real prompt tokens,
+		// not the len/4 heuristic) and more current (the session has not
+		// adopted the running turn's messages yet). Without this the
+		// refresh that follows every event handled overwrote the reading
+		// the same event had just installed, which is what left the
+		// gauge frozen at turn-start history for the whole turn.
+		if s.liveUsage != nil {
+			u = *s.liveUsage
+		} else if (u.InputTokens+u.OutputTokens == 0) && (s.topbar.Usage().InputTokens+s.topbar.Usage().OutputTokens > 0) {
 			u = s.topbar.Usage()
 		}
 		s.topbar.SetSession(s.conv.Model(), u)

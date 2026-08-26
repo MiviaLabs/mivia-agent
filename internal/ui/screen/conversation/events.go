@@ -162,16 +162,29 @@ func (s Screen) handleTurnEvent(ev uievent.Event) (app.Screen, tea.Cmd) {
 			s.panel.appendLive(*b.Diff)
 		}
 	case uievent.UsageBody:
-		s.topbar.SetUsage(ports.Usage{
+		// InputTokens is the whole prepared history the provider just
+		// priced, so this is the context FILL LEVEL, not an increment.
+		// OutputTokens is deliberately not folded into the gauge: the
+		// reply is not part of the prompt that produced it, and the next
+		// request's own InputTokens already counts it once it becomes
+		// history. Adding it here would count it twice.
+		live := ports.Usage{
 			InputTokens:  b.InputTokens,
-			OutputTokens: b.OutputTokens,
 			CachedTokens: b.CachedTokens,
 			CostUSD:      b.CostUSD,
-		})
+		}
+		s.liveUsage = &live
+		s.topbar.SetUsage(live)
 		s.statusline.SetCost(b.CostUSD)
 	case uievent.TurnEndBody:
 		s.approval.Clear()
 		s.panel.reconcileTerminal(b.Reason)
+		// The turn committed (and may have compacted at the boundary), so
+		// the session's own estimate is authoritative again. Dropping the
+		// live reading here is what lets a boundary compaction show up as
+		// the gauge falling instead of staying pinned at the pre-compaction
+		// high-water mark for the rest of the session.
+		s.liveUsage = nil
 	}
 
 	s.refreshTopbar()
