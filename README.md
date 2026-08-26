@@ -127,11 +127,7 @@ Full dev setup (hooks, tests, verify gates): see [Contributing](docs/contributin
 Successful workflow runs stop at `delivery_pending` until you pass the explicit `--allow-publish` flag. See the [Workflow guide](docs/product/workflows-guide.md).
 
 <p align="center">
-  <img src="docs/mivia-welcome.png" alt="mivia TUI welcome screen" width="32%">
-  <img src="docs/mivia-help.png" alt="mivia TUI help dialog" width="32%">
-  <img src="docs/mivia-models.png" alt="mivia TUI model selection dialog" width="32%">
-  <img src="docs/mivia-sessions-workflows.png" alt="mivia TUI sessions and workflows view" width="32%">
-  <img src="docs/mivia-workflow-details.png" alt="mivia TUI workflow details view" width="32%">
+  <img src="docs/mivia-agent-showcase.gif" alt="mivia TUI showcase" width="100%">
 </p>
 
 ## What it does

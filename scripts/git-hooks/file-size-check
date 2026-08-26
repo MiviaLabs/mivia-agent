@@ -11,6 +11,11 @@ Modes:
 Skips vendor/, .git/, node_modules/, go.sum, and binary database files
 (*.db, *.sqlite, *.sqlite3): databases are single opaque blobs that cannot
 be split, so the size gate never applies to them.
+
+ALLOWLIST holds exact repo-relative paths for other undividable binary
+assets (e.g. a demo GIF) that are approved to exceed the limit. Add entries
+sparingly and only for assets that cannot be meaningfully split or
+compressed further without losing their purpose.
 """
 from __future__ import annotations
 
@@ -23,6 +28,9 @@ from pathlib import Path
 MAX_BYTES = 500 * 1024  # 500 KiB
 SKIP_PREFIXES = ("vendor/", ".git/", "node_modules/", "go.sum")
 SKIP_SUFFIXES = (".db", ".sqlite", ".sqlite3")
+ALLOWLIST = {
+    "docs/mivia-agent-showcase.gif",  # README demo clip; not further compressible without losing legibility
+}
 
 
 def get_staged_files() -> list[str]:
@@ -60,6 +68,8 @@ def get_dir_files(base: Path) -> list[str]:
 def check_file_sizes(files: list[str], base: str) -> int:
     failures = 0
     for f in files:
+        if f in ALLOWLIST:
+            continue
         skip = False
         for prefix in SKIP_PREFIXES:
             if f.startswith(prefix) or f == prefix.rstrip("/"):
