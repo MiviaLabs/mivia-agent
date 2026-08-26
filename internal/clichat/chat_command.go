@@ -1,6 +1,7 @@
 package clichat
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -379,6 +380,11 @@ func resumeChatSession(sess *chat.Session, res *config.Resolved, session string)
 		return fmt.Errorf("--session %q: %w (omit --session to start a new session under a system-assigned id)", session, err)
 	}
 	cliagents.RefreshSummarizerAfterModelSwitch(sess, res)
+	// Same reasoning as the summarizer refresh above: enableSessionContext
+	// seeded token-estimate calibration once, before Load published this
+	// session's real saved binding. See RefreshCalibrationAfterModelSwitch's
+	// doc comment for what a stale seed does to the context gauge.
+	sess.RefreshCalibrationAfterModelSwitch(context.Background())
 	return nil
 }
 

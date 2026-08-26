@@ -256,6 +256,12 @@ func handleSlashSessions(cmd, line string, sess *chat.Session, term *Terminal) (
 			sink.Info(fmt.Sprintf("load error: %v", err))
 			return true, false, nil
 		}
+		// Same staleness resumeChatSession's own refresh guards against: this
+		// handler has no *config.Resolved in scope to also refresh the
+		// summarizer (a pre-existing, separate gap left unfixed here rather
+		// than widening this function's signature for it), but the
+		// calibration refresh needs nothing beyond the session itself.
+		sess.RefreshCalibrationAfterModelSwitch(context.Background())
 		if sess.LoadedContextSession() {
 			sink.Info(LoadContextSessionResult(name, len(sess.Messages), sess.UserTurns()) + "\n")
 		} else {

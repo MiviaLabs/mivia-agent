@@ -40,6 +40,15 @@ func runCompactWithIO(args []string, stdout io.Writer) error {
 	if err := sess.Load(session); err != nil {
 		return fmt.Errorf("compact: %w", err)
 	}
+	// newCatalogSessionAt's setupChatSessionContext seeded calibration against
+	// the config's default binding, before this Load published the target
+	// session's real saved one - the same staleness resumeChatSession's own
+	// refresh guards against. The forced compact below scales its before/after
+	// estimates by whatever ratio is in effect, so a stale seed here would
+	// report a miscalibrated before/after pair to the caller even though the
+	// forced plan's own retain/discard decision (unaffected by a uniform
+	// scale) would still be correct.
+	sess.RefreshCalibrationAfterModelSwitch(context.Background())
 	// runRecoverySweep=false (F14): a standalone compaction is not a session
 	// start and must not push branches, publish PRs, or drive stacks.
 	cleanup, err := cliagents.ConfigureChatWorkspace(sess, root, true, res, &AgentSessionState{}, true, false, false)

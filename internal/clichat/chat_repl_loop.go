@@ -1,11 +1,13 @@
 package clichat
 
 import (
+	"context"
 	"os"
 	"os/signal"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
 
@@ -69,6 +71,12 @@ func (r *replRuntime) restore() {
 	if latest == "" || r.sess.Load(latest) != nil || r.sess.UserTurns() == 0 {
 		return
 	}
+	// Same staleness resumeChatSession's own refresh guards against: this
+	// auto-restore reuses the REPL's already-constructed Session, so both the
+	// summarizer and the token-estimate calibration are still bound to
+	// whatever session Load just replaced.
+	cliagents.RefreshSummarizerAfterModelSwitch(r.sess, r.config)
+	r.sess.RefreshCalibrationAfterModelSwitch(context.Background())
 	r.renderer.PrintDim("Restored previous session (%d messages, %d turns)", len(r.sess.Messages), r.sess.UserTurns())
 	if saved, current, ok := r.sess.ModelRestoreNotice(); ok {
 		r.renderer.PrintDim("%s", ModelRestoreNoticeText(saved, current))

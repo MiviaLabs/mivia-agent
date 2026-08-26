@@ -589,3 +589,41 @@ func (s *Session) SeedCalibration(ctx context.Context, seeder CalibrationSeeder,
 	s.Calibration.Ratio = ratio
 	s.Calibration.Samples = 1
 }
+
+// RefreshCalibrationAfterModelSwitch discards whatever token-estimate
+// calibration this session carries and re-seeds it from the durable usage
+// ledger for the session's CURRENT (provider, model) binding.
+//
+// Mirrors cliagents.RefreshSummarizerAfterModelSwitch, called at the same two
+// sites (resumeChatSession, uiadapter/session_pool.go's own resume) for the
+// identical reason: enableSessionContext's SeedCalibration call runs once, at
+// session construction, against whatever binding the process started with -
+// the config's default model, not yet the resumed session's saved one. A
+// resumed session almost always carries a DIFFERENT provider/model, so the
+// seed it started with is keyed to the wrong binding entirely: either no
+// durable observations exist for the startup model (leaving Samples at 0,
+// i.e. ratio 1.0, no correction) or a real ratio exists but describes a
+// different model's estimator bias. Either way the first post-resume request
+// is planned on a wrong-or-missing correction, which is exactly the "first
+// request slipped past the compaction trigger, the next one repaid the whole
+// error at once" sequence SeedCalibration's own doc comment says it exists to
+// prevent - resume just reaches the same failure through a different path,
+// by seeding at the wrong moment rather than not seeding at all.
+//
+// SeedCalibration on its own cannot fix this on a second call: its guard
+// (already > 0) exists to protect a session's own LIVE measurement from being
+// clobbered by a stale seed, but here what it is protecting is a seed for the
+// wrong binding, not a live measurement - so this resets to the zero value
+// first, exactly as a session that had never seeded at all would look, then
+// lets SeedCalibration run its normal lookup against the binding Load just
+// published.
+func (s *Session) RefreshCalibrationAfterModelSwitch(ctx context.Context) {
+	seeder, ok := s.ContextStore().(CalibrationSeeder)
+	if !ok {
+		return
+	}
+	s.mu.Lock()
+	s.Calibration = contextmgr.Calibration{}
+	s.mu.Unlock()
+	s.SeedCalibration(ctx, seeder, s.ContextPrincipal().WorkspaceID)
+}
