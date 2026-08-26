@@ -51,7 +51,7 @@ func TestNewDispatchesBuiltinsAndRejectsUnknown(t *testing.T) {
 	}
 	res.ProviderName = "unknown"
 	_, err = New(res)
-	if err == nil || !strings.Contains(err.Error(), "available: deepseek, llmgateway, llmproxycli, minimax, ollama, openrouter, zai") {
+	if err == nil || !strings.Contains(err.Error(), "available: anthropic, deepseek, llmgateway, llmproxycli, minimax, ollama, openrouter, zai") {
 		t.Fatalf("err=%v", err)
 	}
 }

@@ -64,10 +64,45 @@ func reasoningBodyFields(dialect reasoning.Dialect, level reasoning.Level) map[s
 			"thinking":         thinkingObject(level, true),
 			"reasoning_effort": string(level),
 		}
+	case reasoning.DialectAnthropicAdaptive:
+		// Anthropic's native shape: a top-level thinking object whose "on"
+		// type is "adaptive" (not "enabled" - thinkingObject's shape does not
+		// apply here), paired with output_config.effort carrying the graded
+		// level. Off sends thinking:disabled alone; effort is never sent
+		// without an active level, matching every other graded dialect above.
+		if level == reasoning.Off {
+			return map[string]any{"thinking": map[string]any{"type": "disabled"}}
+		}
+		return map[string]any{
+			"thinking":      map[string]any{"type": "adaptive"},
+			"output_config": map[string]any{"effort": anthropicEffortForLevel(level)},
+		}
 	default:
 		// reasoning.DialectNone, and any dialect this client does not know:
 		// fail closed rather than guess a wire shape.
 		return nil
+	}
+}
+
+// anthropicEffortForLevel maps a provider-neutral Level onto Anthropic's
+// output_config.effort vocabulary (low, medium, high, xhigh, max - no
+// "minimal" or "off": Minimal folds onto the same "low" tier as Low, since
+// Anthropic's effort ladder has no finer step below it, and Off never reaches
+// this function (reasoningBodyFields returns before calling it for Off).
+func anthropicEffortForLevel(level reasoning.Level) string {
+	switch level {
+	case reasoning.Minimal, reasoning.Low:
+		return "low"
+	case reasoning.Medium:
+		return "medium"
+	case reasoning.High:
+		return "high"
+	case reasoning.XHigh:
+		return "xhigh"
+	case reasoning.Max:
+		return "max"
+	default:
+		return ""
 	}
 }
 

@@ -61,6 +61,33 @@ func TestRunOnceGivesUpAfterExhaustingEmptyResponseRetries(t *testing.T) {
 	}
 }
 
+// TestRunOnceNeverRetriesOnRefusal pins the fix for the confirmed bug the
+// correctness-review agent found before internal/provider/anthropic.go
+// existed: a provider refusal (Anthropic: HTTP 200, stop_reason "refusal",
+// empty content) looks identical to "the provider returned nothing" at the
+// sdkagentloop.StopEmptyResponse classification layer, which only inspects
+// ToolCalls and Content length - never FinishReason. Without the
+// l.LastFinishReason guard in retryOnEmptyResponse, this would retry the
+// identical prompt against the same safety classifier maxEmptyResponseRetries
+// times, wasting cost and latency on a request that refuses the same way
+// every time. The completer must be called exactly once.
+func TestRunOnceNeverRetriesOnRefusal(t *testing.T) {
+	calls := 0
+	f := &fakeCompleter{
+		name:        "fake",
+		chatTurnOut: &provider.Response{Content: "", FinishReason: provider.FinishReasonRefusal},
+	}
+	f.onChatTurn = func() { calls++ }
+	loop := &Loop{Completer: f, Tools: tools.NewRegistry()}
+	_, err := loop.Run(context.Background(), "hi", Options{Model: "m", MaxSteps: 3, RequireFinalText: true})
+	if err == nil {
+		t.Fatal("Run: want an error surfacing the refusal, got nil")
+	}
+	if calls != 1 {
+		t.Fatalf("completer called %d times, want exactly 1 (a refusal is never retried)", calls)
+	}
+}
+
 // TestRunOnceSkipsEmptyResponseRetryWhenProviderReplayDisabled confirms
 // DisableProviderReplay suppresses the retry the same way it already
 // suppresses the prompt-too-long retry, since both replay the same

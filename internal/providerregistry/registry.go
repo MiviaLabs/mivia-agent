@@ -15,6 +15,10 @@ type Descriptor struct {
 }
 
 var descriptors = map[string]Descriptor{
+	"anthropic": {
+		Name: "anthropic", DefaultModel: "claude-sonnet-5",
+		DefaultURL: "https://api.anthropic.com/v1", DefaultAPIKeyEnv: "ANTHROPIC_API_KEY",
+	},
 	"deepseek": {
 		Name: "deepseek", DefaultModel: "deepseek-v4-flash",
 		DefaultURL: "https://api.deepseek.com/v1", DefaultAPIKeyEnv: "DEEPSEEK_API_KEY",

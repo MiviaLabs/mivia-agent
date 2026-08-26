@@ -81,12 +81,23 @@ const (
 	// DialectNone declares that this model has no reasoning surface. It is
 	// distinct from unset: it is a deliberate statement, not a missing key.
 	DialectNone Dialect = "none"
+	// DialectAnthropicAdaptive sends Anthropic's native adaptive-thinking
+	// shape: a top-level thinking object (type "adaptive", or "disabled" for
+	// Off) plus output_config.effort carrying the graded level. Distinct from
+	// DialectThinking (whose thinking object only ever toggles on/off) and
+	// from DialectThinkingEffort (whose effort rides a top-level
+	// reasoning_effort field): Anthropic's effort is nested under
+	// output_config, and its "on" thinking type is "adaptive", not
+	// "enabled". See internal/provider/reasoning.go's reasoningBodyFields,
+	// which this dialect's wire shape is encoded in alongside every other
+	// dialect - there is one encoder, not a second one to keep in step.
+	DialectAnthropicAdaptive Dialect = "anthropic_adaptive"
 )
 
 var dialects = map[Dialect]struct{}{
 	DialectOpenAI: {}, DialectOpenRouter: {}, DialectOpenRouterOnOff: {},
 	DialectThinking: {}, DialectThinkingEffort: {}, DialectThinkingPreserved: {},
-	DialectNone: {},
+	DialectNone: {}, DialectAnthropicAdaptive: {},
 }
 
 // ParseDialect validates a configured dialect. The empty string is accepted
@@ -97,7 +108,7 @@ func ParseDialect(s string) (Dialect, error) {
 	}
 	dialect := Dialect(s)
 	if _, ok := dialects[dialect]; !ok {
-		return "", fmt.Errorf("unknown reasoning dialect %q (want openai, openrouter, openrouter_onoff, thinking, thinking_effort, thinking_preserved, or none)", s)
+		return "", fmt.Errorf("unknown reasoning dialect %q (want openai, openrouter, openrouter_onoff, thinking, thinking_effort, thinking_preserved, anthropic_adaptive, or none)", s)
 	}
 	return dialect, nil
 }
@@ -116,7 +127,7 @@ func ParseDialect(s string) (Dialect, error) {
 // provider.reasoningBodyFields.
 func (d Dialect) CanGrade() bool {
 	switch d {
-	case DialectOpenAI, DialectOpenRouter, DialectThinkingEffort, DialectThinkingPreserved:
+	case DialectOpenAI, DialectOpenRouter, DialectThinkingEffort, DialectThinkingPreserved, DialectAnthropicAdaptive:
 		return true
 	case DialectOpenRouterOnOff:
 		return false
@@ -138,6 +149,7 @@ var defaultDialects = map[string]Dialect{
 	"deepseek":    DialectThinkingEffort,
 	"llmgateway":  DialectOpenAI,
 	"llmproxycli": DialectOpenAI,
+	"anthropic":   DialectAnthropicAdaptive,
 }
 
 // DefaultDialect returns the vetted wire dialect for a built-in provider.

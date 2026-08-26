@@ -50,6 +50,33 @@ func TestDialectBodyFields(t *testing.T) {
 			"reasoning_effort": "high",
 		}},
 
+		{"anthropic_adaptive unset", reasoning.DialectAnthropicAdaptive, "", nil},
+		{"anthropic_adaptive off", reasoning.DialectAnthropicAdaptive, reasoning.Off, map[string]any{"thinking": map[string]any{"type": "disabled"}}},
+		{"anthropic_adaptive minimal folds onto low", reasoning.DialectAnthropicAdaptive, reasoning.Minimal, map[string]any{
+			"thinking":      map[string]any{"type": "adaptive"},
+			"output_config": map[string]any{"effort": "low"},
+		}},
+		{"anthropic_adaptive low", reasoning.DialectAnthropicAdaptive, reasoning.Low, map[string]any{
+			"thinking":      map[string]any{"type": "adaptive"},
+			"output_config": map[string]any{"effort": "low"},
+		}},
+		{"anthropic_adaptive medium", reasoning.DialectAnthropicAdaptive, reasoning.Medium, map[string]any{
+			"thinking":      map[string]any{"type": "adaptive"},
+			"output_config": map[string]any{"effort": "medium"},
+		}},
+		{"anthropic_adaptive high", reasoning.DialectAnthropicAdaptive, reasoning.High, map[string]any{
+			"thinking":      map[string]any{"type": "adaptive"},
+			"output_config": map[string]any{"effort": "high"},
+		}},
+		{"anthropic_adaptive xhigh", reasoning.DialectAnthropicAdaptive, reasoning.XHigh, map[string]any{
+			"thinking":      map[string]any{"type": "adaptive"},
+			"output_config": map[string]any{"effort": "xhigh"},
+		}},
+		{"anthropic_adaptive max", reasoning.DialectAnthropicAdaptive, reasoning.Max, map[string]any{
+			"thinking":      map[string]any{"type": "adaptive"},
+			"output_config": map[string]any{"effort": "max"},
+		}},
+
 		{"none never emits", reasoning.DialectNone, reasoning.High, nil},
 		{"unset dialect never emits", "", reasoning.High, nil},
 	}
@@ -308,12 +335,21 @@ func TestConstructorDefaultsMatchTheConfigFacingTable(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
-		client, ok := comp.(*OpenAICompat)
-		if !ok {
-			t.Fatalf("%s did not return an OpenAICompat", name)
-		}
-		if client.reasoning != want {
-			t.Fatalf("%s client dialect %q disagrees with DefaultDialect %q", name, client.reasoning, want)
+		// Every builtin wraps OpenAICompat except the native Anthropic
+		// client, which speaks Anthropic's own Messages API wire format
+		// directly and carries its resolved dialect in its own field of the
+		// same name and meaning.
+		switch client := comp.(type) {
+		case *OpenAICompat:
+			if client.reasoning != want {
+				t.Fatalf("%s client dialect %q disagrees with DefaultDialect %q", name, client.reasoning, want)
+			}
+		case *AnthropicCompleter:
+			if client.reasoning != want {
+				t.Fatalf("%s client dialect %q disagrees with DefaultDialect %q", name, client.reasoning, want)
+			}
+		default:
+			t.Fatalf("%s: unrecognized completer type %T", name, comp)
 		}
 	}
 }

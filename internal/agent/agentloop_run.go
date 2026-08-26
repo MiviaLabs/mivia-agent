@@ -239,11 +239,16 @@ const maxEmptyResponseRetries = 2
 // opts.RequireFinalText is set (a tolerant caller, e.g. a sub-agent, must
 // not pay for a retry it never asked for); sdkResolvedFinalText is
 // genuinely empty (a turn with usable earlier text, e.g. from a tool-call
-// step, is never retried - that would discard it for no benefit); and
+// step, is never retried - that would discard it for no benefit);
 // sdkTurnMadeToolCalls is false for the whole failed attempt, not just the
-// triggering response.
+// triggering response; and l.LastFinishReason is not
+// provider.FinishReasonRefusal - a refusal (Anthropic: HTTP 200, empty
+// content) is structurally identical to "returned nothing" at the
+// StopEmptyResponse layer, which never inspects FinishReason, so without
+// this guard a refusal would retry against the same safety classifier for
+// no benefit. See provider.FinishReasonRefusal's doc comment for why.
 //
-// That last check is load-bearing, not defense-in-depth: StopEmptyResponse
+// The tool-call check above is load-bearing, not defense-in-depth: StopEmptyResponse
 // only guarantees the triggering response made zero tool calls, not that
 // the whole multi-iteration attempt did. A retry replays the ENTIRE turn
 // from preparedMsgs (the pre-turn history), discarding any record that an
@@ -263,7 +268,8 @@ func retryOnEmptyResponse(ctx context.Context, l *Loop, sdkOpts sdkagentloop.Opt
 	shouldRetry := func() bool {
 		return err == nil && res.Stop == sdkagentloop.StopEmptyResponse &&
 			strings.TrimSpace(sdkResolvedFinalText(res, turnUserText)) == "" &&
-			!sdkTurnMadeToolCalls(res.History, turnUserText)
+			!sdkTurnMadeToolCalls(res.History, turnUserText) &&
+			l.LastFinishReason != provider.FinishReasonRefusal
 	}
 	for attempt := 0; attempt < maxEmptyResponseRetries && shouldRetry(); attempt++ {
 		// Defense-in-depth for a narrow streaming edge case: the empty-response

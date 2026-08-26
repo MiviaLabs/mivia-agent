@@ -25,6 +25,18 @@ const (
 	RoleTool      = "tool"
 )
 
+// FinishReasonRefusal marks a turn a provider's safety classifier declined
+// rather than completed (Anthropic's stop_reason: "refusal" - an HTTP 200,
+// not an error; Response.Content may be empty or a partial, already-billed
+// prefix). It is not a finish reason any OpenAI-compatible provider in this
+// tree can produce today. internal/agent's empty-response retry
+// (retryOnEmptyResponse in agentloop_run.go) checks for this exact value
+// before retrying a StopEmptyResponse turn: a policy refusal will refuse an
+// identical retry the same way, so retrying only wastes latency and cost
+// against a request that cannot succeed. Keep both sides of that comparison
+// pointed at this constant rather than a duplicated string literal.
+const FinishReasonRefusal = "refusal"
+
 // Message is a chat turn (supports tool calls and tool results).
 type Message struct {
 	Role       string     `json:"role"`
@@ -280,6 +292,7 @@ type builtinEntry struct {
 }
 
 var builtins = []builtinEntry{
+	{"anthropic", NewAnthropic},
 	{"deepseek", NewDeepSeek},
 	{"openrouter", NewOpenRouter},
 	{"zai", NewZAI},
