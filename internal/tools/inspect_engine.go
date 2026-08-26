@@ -187,12 +187,16 @@ func (c *matchCollector) emit(m inspectResult) (bool, error) {
 // different, random-access use case). The scan stops the moment a cap trips,
 // returning errMaxBytes or errMaxMatches; run() maps those sentinels to the
 // same truncation reasons as before.
+//
+// Line scanning is delegated to scanLinesWithContext (fs_guard.go), which
+// owns f's lifecycle and honors ctx during a blocking Scan() itself, not just
+// between lines (the 256-line poll this replaced could still block past
+// caller cancellation between polls, and fully block during one).
 func (e *inspectEngine) scanFileMatches(ctx context.Context, path, rel string, collected *[]inspectResult, used *int, budget int, seen map[string]bool) error {
 	f, _, err := openRegularFile(path)
 	if err != nil {
 		return nil
 	}
-	defer f.Close()
 
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
@@ -201,16 +205,27 @@ func (e *inspectEngine) scanFileMatches(ctx context.Context, path, rel string, c
 	var before []string
 	var queue []pendingMatch
 	lineNo := 0
-
-	for sc.Scan() {
-		if lineNo&0xff == 0 && ctx != nil && ctx.Err() != nil {
-			break
-		}
+	consume := func(line string) (bool, error) {
 		lineNo++
-		if err := e.advanceLine(sc.Text(), lineNo, rel, &before, &queue, c); err != nil {
-			return err
+		if err := e.advanceLine(line, lineNo, rel, &before, &queue, c); err != nil {
+			return false, err
 		}
+		return false, nil
 	}
+
+	// scanFileMatches' only callers (production and both existing tests)
+	// pass a non-nil ctx today, but scanLinesWithContext requires one and
+	// panics on nil - substitute Background defensively, matching scanFile's
+	// (search.go) guard for the same call shape, so a future nil-ctx caller
+	// degrades to "no cancellation" instead of panicking.
+	scanCtx := ctx
+	if scanCtx == nil {
+		scanCtx = context.Background()
+	}
+	if err := scanLinesWithContext(scanCtx, sc, f, consume); err != nil {
+		return err
+	}
+
 	for _, p := range queue {
 		if err := c.flush(p, rel); err != nil {
 			return err
