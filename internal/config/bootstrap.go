@@ -21,7 +21,21 @@ import (
 // (LoadOptions.AutoBootstrapUserConfig) both write this exact content, so
 // there is one source of truth for "what a brand-new user's config looks
 // like" - see docs/plans/first-run-onboarding-plan.md section 2.1.
-const DefaultUserConfigTOML = `[provider]
+//
+// It intentionally omits an [approvals] section: config.ApprovalsConfig's
+// zero value already resolves to ApprovalPolicyAuto (accept every tool
+// call, no prompts) via ApprovalsConfig.ApprovalPolicy() - see
+// internal/config/approvals_config.go - so an absent section and an
+// explicit `default_mode = "always"` behave identically. The commented
+// section below only documents that default for a reader of their own
+// generated file, mirroring .mivia/mivia.toml.example's comment.
+const DefaultUserConfigTOML = `# Tool call approvals default to "always" (accept every tool call, no
+# prompts) even with no [approvals] section. Uncomment to change it, or set
+# it explicitly to "once" (prompt for writes) or "deny" (auto-reject).
+# [approvals]
+# default_mode = "always"
+
+[provider]
 name = "openrouter"
 
 [providers.openrouter]

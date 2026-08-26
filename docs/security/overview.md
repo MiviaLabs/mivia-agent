@@ -41,6 +41,8 @@ Tool approval is policy-gated (`[approvals] default_mode`, formerly `policy`):
 
 YOLO mode (`--yolo`, `--approval-policy auto`, or `[approvals] default_mode = "always"` - the shipped default) disables interactive prompts only. It does not bypass path boundaries, Git hook guards, command allowlists, secret redaction, or verifier sandboxes.
 
+**`--approval-policy` uses a different vocabulary than `default_mode`.** The CLI flag accepts the legacy `write-only` / `auto` / `always` values, where `always` means "prompt for every call, including reads" (paranoid mode) - the opposite of the config/TUI `always` above, which means "accept every call". Use `--yolo` or `--approval-policy auto` (not `--approval-policy always`) to accept everything from the command line.
+
 ## Secret path filtering
 
 `[tools].secret_path_patterns` and `[tools].secret_path_exceptions` are the only source of the file-tool secret filter. Recommended values ship in `.mivia/mivia.toml.example`. With neither configured, no paths are filtered.

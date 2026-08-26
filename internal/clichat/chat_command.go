@@ -160,6 +160,14 @@ func parseChatInvocation(args []string) (chatInvocation, error) {
 	if err != nil {
 		return chatInvocation{}, err
 	}
+	// --approval-policy speaks the LEGACY write-only/auto/always vocabulary
+	// (config.NormalizeApprovalPolicy), not the TUI settings screen's
+	// once/always/deny vocabulary (config.NormalizeDefaultMode) - "always"
+	// means opposite things in the two: here it means "prompt for every
+	// call, including reads" (paranoid mode); in the TUI it means "accept
+	// every call". See internal/config/approvals_config.go's package
+	// comment for the full collision rationale. Use --yolo or
+	// --approval-policy auto for "accept everything" from the CLI.
 	invocation.approvalPolicy, args, _, err = FlagValueFunc(args, "--approval-policy")
 	if err != nil {
 		return chatInvocation{}, err
@@ -383,15 +391,31 @@ func resumeChatSession(sess *chat.Session, res *config.Resolved, session string)
 // (runConfiguredChatOnce rebuilds res from the on-disk config before
 // calling this), so a persisted "always"/"deny" choice is honored both on
 // a fresh start and after --session/resume, not just for a brand-new chat.
+//
+// It goes through Session.SetBaseApprovalPolicy (not a direct field write)
+// so BaseApprovalPolicy is seeded from the SAME resolved value as
+// ApprovalPolicy. Session.ToggleYOLO ("/yolo") restores BaseApprovalPolicy
+// when the user disables YOLO mode; leaving it unseeded here meant a
+// direct sess.ApprovalPolicy write (once the intentional --yolo/
+// --approval-policy overrides no longer apply mid-session) always fell
+// back to ToggleYOLO's own hardcoded write-only default on toggle-off,
+// silently discarding the persisted config policy (e.g. the new "auto"
+// shipped default, or an explicit "deny") the very first time a user
+// toggled YOLO off.
 func applySessionApprovalPolicy(sess *chat.Session, invocation chatInvocation, res *config.Resolved) {
+	var policy string
 	switch {
 	case invocation.yolo:
-		sess.ApprovalPolicy = config.ApprovalPolicyAuto
+		policy = config.ApprovalPolicyAuto
 	case invocation.approvalPolicy != "":
-		sess.ApprovalPolicy = config.ApprovalsConfig{Policy: invocation.approvalPolicy}.ApprovalPolicy()
+		policy = config.ApprovalsConfig{Policy: invocation.approvalPolicy}.ApprovalPolicy()
 	case res != nil:
-		sess.ApprovalPolicy = res.Approvals.ApprovalPolicy()
+		policy = res.Approvals.ApprovalPolicy()
+	default:
+		return
 	}
+	sess.SetBaseApprovalPolicy(policy)
+	sess.SetApprovalPolicy(policy)
 }
 
 // dispatchChatSurface picks and runs the surface (one-shot, classic REPL, or

@@ -277,6 +277,22 @@ func TestApplySessionApprovalPolicy(t *testing.T) {
 			res:  &config.Resolved{Approvals: config.ApprovalsConfig{Policy: "auto", DefaultMode: "once"}},
 			want: config.ApprovalPolicyWriteOnly,
 		},
+		{
+			// Flag precedence over a persisted "deny" default: --yolo and
+			// --approval-policy must still win, proving the switch's case
+			// order in applySessionApprovalPolicy is not accidentally
+			// short-circuited by a restrictive persisted config.
+			name: "yolo flag overrides persisted deny default",
+			inv:  chatInvocation{yolo: true},
+			res:  &config.Resolved{Approvals: config.ApprovalsConfig{DefaultMode: "deny"}},
+			want: config.ApprovalPolicyAuto,
+		},
+		{
+			name: "approval policy flag overrides persisted deny default",
+			inv:  chatInvocation{approvalPolicy: "auto"},
+			res:  &config.Resolved{Approvals: config.ApprovalsConfig{DefaultMode: "deny"}},
+			want: config.ApprovalPolicyAuto,
+		},
 	}
 
 	for _, tc := range tests {
@@ -287,5 +303,32 @@ func TestApplySessionApprovalPolicy(t *testing.T) {
 				t.Errorf("sess.ApprovalPolicy = %q, want %q", sess.ApprovalPolicy, tc.want)
 			}
 		})
+	}
+}
+
+// TestApplySessionApprovalPolicy_SeedsBasePolicy guards against the
+// resolved policy silently disappearing the first time a user toggles
+// YOLO off: applySessionApprovalPolicy must seed BaseApprovalPolicy (via
+// Session.SetBaseApprovalPolicy), not just ApprovalPolicy, or
+// Session.ToggleYOLO's toggle-off path falls back to its own hardcoded
+// write-only default instead of restoring the resolved config policy.
+func TestApplySessionApprovalPolicy_SeedsBasePolicy(t *testing.T) {
+	res := &config.Resolved{Approvals: config.ApprovalsConfig{DefaultMode: "deny"}}
+	sess := chat.NewSession(res, nil)
+	applySessionApprovalPolicy(sess, chatInvocation{}, res)
+
+	if got := sess.BaseApprovalPolicyValue(); got != config.ApprovalPolicyDeny {
+		t.Fatalf("BaseApprovalPolicyValue() = %q, want %q (base must be seeded from resolved config, not left empty)", got, config.ApprovalPolicyDeny)
+	}
+
+	// Toggle YOLO on, then off: toggling off must restore the resolved
+	// "deny" policy, not silently downgrade to write-only.
+	enabled, policy := sess.ToggleYOLO()
+	if !enabled || policy != config.ApprovalPolicyAuto {
+		t.Fatalf("ToggleYOLO() on = (%v, %q), want (true, %q)", enabled, policy, config.ApprovalPolicyAuto)
+	}
+	enabled, policy = sess.ToggleYOLO()
+	if enabled || policy != config.ApprovalPolicyDeny {
+		t.Fatalf("ToggleYOLO() off = (%v, %q), want (false, %q) - base policy was not preserved", enabled, policy, config.ApprovalPolicyDeny)
 	}
 }
