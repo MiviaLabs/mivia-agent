@@ -9,6 +9,34 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
 
+// TestContextForTaskInstallsToolCallSink verifies that contextForTask wires
+// the run's per-task tool-call sink onto the task's context (plan Part B,
+// chunk 4): when runExecInfo.toolCalls is non-nil, ToolCallSinkFrom on the
+// returned context reports ok=true, and invoking the sink buffers the step
+// under the task's own ID for later flush.
+func TestContextForTaskInstallsToolCallSink(t *testing.T) {
+	tasks := []subagents.Task{{ID: "t1"}}
+	toolCalls := newRunToolCallBuffer()
+	ctx := contextWithRunExec(context.Background(), "run-1", tasks, nil, toolCalls)
+
+	childCtx := contextForTask(ctx, "t1")
+
+	sink, ok := subagents.ToolCallSinkFrom(childCtx)
+	if !ok {
+		t.Fatal("ToolCallSinkFrom(childCtx) not ok")
+	}
+	step := subagents.ToolCallStep{ToolCallID: "call-1", Name: "read_file", Kind: "start"}
+	sink(step)
+
+	got := toolCalls.flush("t1")
+	if len(got) != 1 {
+		t.Fatalf("flush(t1) returned %d steps, want 1", len(got))
+	}
+	if got[0].ToolCallID != "call-1" || got[0].Name != "read_file" {
+		t.Fatalf("flush(t1)[0] = %+v, want ToolCallID=call-1 Name=read_file", got[0])
+	}
+}
+
 // TestContextForTaskStampsMailboxAccess verifies that contextForTask stamps
 // the run's shared mailbox access (plan 54, W2c validation): Drain, Interrupt,
 // and Pending hooks are wired to the run mailboxes for the task's ID, and a
@@ -16,7 +44,7 @@ import (
 func TestContextForTaskStampsMailboxAccess(t *testing.T) {
 	tasks := []subagents.Task{{ID: "t1"}}
 	mailboxes := newRunMailboxes(8)
-	ctx := contextWithRunExec(context.Background(), "run-1", tasks, mailboxes)
+	ctx := contextWithRunExec(context.Background(), "run-1", tasks, mailboxes, nil)
 
 	childCtx := contextForTask(ctx, "t1")
 

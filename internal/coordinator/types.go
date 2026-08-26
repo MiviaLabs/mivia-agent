@@ -42,6 +42,10 @@ type RunHandle struct {
 	// mailboxes is parent→child delivery (plan 53.03). Context-only; never
 	// fingerprinted. Guarded by its own mutex (mailboxes.mu), not h.mu.
 	mailboxes *runMailboxes
+	// toolCalls buffers per-task raw tool-call lifecycle steps for ledger
+	// persistence at task finalize (Part B, chunk 4). Context-only; never
+	// fingerprinted.
+	toolCalls *runToolCallBuffer
 	// referrals tracks in-flight referral-as-spawn tasks (plan 53.04).
 	referrals *referralTracker
 }

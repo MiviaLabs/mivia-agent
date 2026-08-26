@@ -124,7 +124,7 @@ func (c *coordinator) createAndStartRunWithID(ctx context.Context, runID string,
 	// Stamp pool context before starting the run goroutine so concurrent
 	// referral spawns never race the first poolCtx write (plan 53.04).
 	h.mu.Lock()
-	h.poolCtx = contextWithRunExec(h.poolCtx, runID, ledgerTasks, h.mailboxes)
+	h.poolCtx = contextWithRunExec(h.poolCtx, runID, ledgerTasks, h.mailboxes, h.toolCalls)
 	h.mu.Unlock()
 	go c.executeRun(h, ledgerTasks)
 	return h, nil
@@ -309,6 +309,7 @@ func (c *coordinator) newRunHandle(runID, key string, attempts map[string]string
 		retryPolicy: c.retryPolicyLocked(),
 		cancelDone:  make(chan struct{}), owner: c,
 		mailboxes: newRunMailboxes(c.mailboxCapacity),
+		toolCalls: newRunToolCallBuffer(),
 	}
 	for _, opt := range opts {
 		opt(h)

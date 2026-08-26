@@ -2,6 +2,7 @@ package coordinator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"time"
@@ -92,9 +93,8 @@ func (c *coordinator) recordTaskResult(h *RunHandle, t subagents.Task, r subagen
 		}
 		outputRef, errorRef := resultReferences(r)
 		outputRef, errorRef = c.persistResultContent(persistCtx, outputRef, errorRef, r, runErr)
-		// toolCallsRef is wired in a later chunk (the per-task tool-call
-		// buffer flush); "" here matches today's no-recorded-trace behavior.
-		if err := c.repo.SetTaskOutput(persistCtx, h.runID, t.ID, outputRef, errorRef, ""); err != nil {
+		toolCallsRef := c.persistToolCalls(persistCtx, h, t.ID)
+		if err := c.repo.SetTaskOutput(persistCtx, h.runID, t.ID, outputRef, errorRef, toolCallsRef); err != nil {
 			*runErr = joinError(*runErr, fmt.Errorf("store task %q output: %w", t.ID, err))
 		}
 
@@ -144,6 +144,28 @@ func (c *coordinator) persistResultContent(ctx context.Context, outputRef, error
 		}
 	}
 	return outputRef, errorRef
+}
+
+// persistToolCalls flushes the task's buffered raw tool-call steps (Part B,
+// chunk 4) and stores them as one content-addressed blob, mirroring
+// persistResultContent's contract: a store failure drops the ref rather than
+// recording an unresolvable one, and an empty/absent buffer yields "" so
+// SetTaskOutput's toolCallsRef argument matches today's no-recorded-trace
+// behavior for tasks that emitted no tool calls.
+func (c *coordinator) persistToolCalls(ctx context.Context, h *RunHandle, taskID string) string {
+	steps := h.toolCalls.flush(taskID)
+	if len(steps) == 0 {
+		return ""
+	}
+	data, err := json.Marshal(steps)
+	if err != nil {
+		return ""
+	}
+	ref := ledger.Reference(ledger.RefKindToolCalls, data)
+	if err := c.repo.StoreContent(ctx, ref, data); err != nil {
+		return ""
+	}
+	return ref
 }
 
 // tryTaskStatusCAS attempts a compare-and-set on a task's status, handling

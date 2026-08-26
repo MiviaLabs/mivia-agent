@@ -1,0 +1,122 @@
+package coordinator
+
+import (
+	"fmt"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/MiviaLabs/mivia-agent/internal/subagents"
+)
+
+// TestRunToolCallBufferPerTaskIsolation verifies that sinkFor/flush demux
+// concurrently-written steps per taskID with zero cross-contamination, under
+// -race.
+func TestRunToolCallBufferPerTaskIsolation(t *testing.T) {
+	b := newRunToolCallBuffer()
+	sinkA := b.sinkFor("a")
+	sinkB := b.sinkFor("b")
+
+	const n = 20
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < n; i++ {
+			sinkA(subagents.ToolCallStep{ToolCallID: fmt.Sprintf("a-%d", i), Name: "toolA"})
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < n; i++ {
+			sinkB(subagents.ToolCallStep{ToolCallID: fmt.Sprintf("b-%d", i), Name: "toolB"})
+		}
+	}()
+	wg.Wait()
+
+	gotA := b.flush("a")
+	gotB := b.flush("b")
+
+	if len(gotA) != n {
+		t.Fatalf("flush(a) len = %d, want %d", len(gotA), n)
+	}
+	if len(gotB) != n {
+		t.Fatalf("flush(b) len = %d, want %d", len(gotB), n)
+	}
+	for i, s := range gotA {
+		if s.ToolCallID != fmt.Sprintf("a-%d", i) || s.Name != "toolA" {
+			t.Fatalf("gotA[%d] = %+v, want ToolCallID=a-%d Name=toolA", i, s, i)
+		}
+	}
+	for i, s := range gotB {
+		if s.ToolCallID != fmt.Sprintf("b-%d", i) || s.Name != "toolB" {
+			t.Fatalf("gotB[%d] = %+v, want ToolCallID=b-%d Name=toolB", i, s, i)
+		}
+		if strings.HasPrefix(s.ToolCallID, "a-") {
+			t.Fatalf("gotB contains an A step: %+v", s)
+		}
+	}
+
+	// A second flush must return empty (buffer cleared).
+	if got := b.flush("a"); len(got) != 0 {
+		t.Fatalf("second flush(a) = %v, want empty", got)
+	}
+}
+
+// TestRunToolCallBufferStepCap verifies boundary behavior around
+// bufferMaxStepsPerTask: pushing 0, 1, cap-1, cap, and cap+1 steps yields
+// min(pushed, cap) steps back from flush.
+func TestRunToolCallBufferStepCap(t *testing.T) {
+	cases := []int{0, 1, bufferMaxStepsPerTask - 1, bufferMaxStepsPerTask, bufferMaxStepsPerTask + 1}
+	for _, pushed := range cases {
+		t.Run(fmt.Sprintf("pushed=%d", pushed), func(t *testing.T) {
+			b := newRunToolCallBuffer()
+			sink := b.sinkFor("t")
+			for i := 0; i < pushed; i++ {
+				sink(subagents.ToolCallStep{ToolCallID: fmt.Sprintf("s-%d", i)})
+			}
+			want := pushed
+			if want > bufferMaxStepsPerTask {
+				want = bufferMaxStepsPerTask
+			}
+			got := b.flush("t")
+			if len(got) != want {
+				t.Fatalf("pushed=%d: flush returned %d steps, want %d", pushed, len(got), want)
+			}
+		})
+	}
+}
+
+// TestRunToolCallBufferByteCap verifies that steps whose cumulative
+// Input+Output size would exceed bufferMaxBytesPerTask are dropped, while
+// steps that keep the running total at or under the cap are kept.
+func TestRunToolCallBufferByteCap(t *testing.T) {
+	b := newRunToolCallBuffer()
+	sink := b.sinkFor("t")
+
+	// Fill to just under the cap with one big step.
+	big := strings.Repeat("x", bufferMaxBytesPerTask-10)
+	sink(subagents.ToolCallStep{ToolCallID: "big", Input: big})
+
+	// A step that fits within the remaining 10 bytes is kept.
+	sink(subagents.ToolCallStep{ToolCallID: "fits", Input: strings.Repeat("y", 10)})
+
+	// A step that would push the total over the cap is dropped.
+	sink(subagents.ToolCallStep{ToolCallID: "overflow", Input: "z"})
+
+	got := b.flush("t")
+	if len(got) != 2 {
+		t.Fatalf("flush returned %d steps, want 2 (big, fits); got %+v", len(got), got)
+	}
+	if got[0].ToolCallID != "big" || got[1].ToolCallID != "fits" {
+		t.Fatalf("unexpected steps: %+v", got)
+	}
+}
+
+// TestRunToolCallBufferFlushNilSafe verifies flush is nil-safe.
+func TestRunToolCallBufferFlushNilSafe(t *testing.T) {
+	var b *runToolCallBuffer
+	if got := b.flush("anything"); got != nil {
+		t.Fatalf("nil buffer flush = %v, want nil", got)
+	}
+}

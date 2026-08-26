@@ -13,12 +13,13 @@ type runExecKey struct{}
 
 type runExecInfo struct {
 	runID     string
-	agents    map[string]string // taskID → agent name
-	mailboxes *runMailboxes     // shared with RunHandle (plan 53.03)
+	agents    map[string]string  // taskID → agent name
+	mailboxes *runMailboxes      // shared with RunHandle (plan 53.03)
+	toolCalls *runToolCallBuffer // shared with RunHandle (Part B, chunk 4)
 }
 
 // contextWithRunExec stamps run coordination metadata onto ctx.
-func contextWithRunExec(ctx context.Context, runID string, tasks []subagents.Task, mailboxes *runMailboxes) context.Context {
+func contextWithRunExec(ctx context.Context, runID string, tasks []subagents.Task, mailboxes *runMailboxes, toolCalls *runToolCallBuffer) context.Context {
 	agents := make(map[string]string, len(tasks))
 	for _, t := range tasks {
 		name := t.AgentName
@@ -27,7 +28,7 @@ func contextWithRunExec(ctx context.Context, runID string, tasks []subagents.Tas
 		}
 		agents[t.ID] = name
 	}
-	return context.WithValue(ctx, runExecKey{}, runExecInfo{runID: runID, agents: agents, mailboxes: mailboxes})
+	return context.WithValue(ctx, runExecKey{}, runExecInfo{runID: runID, agents: agents, mailboxes: mailboxes, toolCalls: toolCalls})
 }
 
 func runExecFrom(ctx context.Context) (runExecInfo, bool) {
@@ -69,6 +70,9 @@ func contextForTask(ctx context.Context, taskID string) context.Context {
 				return mb.PendingInterrupt(tid)
 			},
 		})
+	}
+	if ok && info.toolCalls != nil {
+		ctx = subagents.ContextWithToolCallSink(ctx, info.toolCalls.sinkFor(taskID))
 	}
 	return ctx
 }

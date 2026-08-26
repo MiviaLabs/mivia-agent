@@ -158,7 +158,7 @@ func (c *coordinator) runReferralTask(h *RunHandle, task subagents.Task, baseCtx
 	if baseCtx == nil {
 		baseCtx = context.Background()
 	}
-	execCtx := contextWithRunExec(baseCtx, h.runID, []subagents.Task{task}, h.mailboxes)
+	execCtx := contextWithRunExec(baseCtx, h.runID, []subagents.Task{task}, h.mailboxes, h.toolCalls)
 	results, _ := c.pool.Run(execCtx, []subagents.Task{task})
 	result := subagents.Result{TaskID: task.ID, Status: "failed", Err: fmt.Errorf("missing referral result")}
 	if len(results) > 0 {
