@@ -32,6 +32,15 @@ func FormatTokenK(n int) string {
 
 // ContextUsage returns a prompt-cost estimate including tool schemas. The
 // prompt budget already excludes the configured output reserve.
+//
+// The estimate is CALIBRATED through the session's rolling correction ratio,
+// because the compaction trigger is (contextmgr.Plan scores a calibrated cost
+// against 80% of the same budget). Reporting the raw estimate here made the
+// gauge and the trigger disagree by up to the calibration clamp - a session
+// whose estimator over-counts showed well past 100% while the planner
+// correctly measured the same history below the threshold and never
+// compacted. Both numbers now come from contextmgr.Calibration.Apply, so the
+// gauge cannot pass 100% without the trigger having fired on that history.
 func (s *Session) ContextUsage() ContextUsage {
 	s.mu.RLock()
 	messages := cloneContextMessages(s.Messages)
@@ -49,11 +58,13 @@ func (s *Session) ContextUsage() ContextUsage {
 		toolSpecs = s.Tools.OpenAITools()
 	}
 	profile := provider.ContextAccountingFor(s.binding.Completer)
+	calibration := s.Calibration
 	s.mu.RUnlock()
 	used, err := provider.EstimatePromptCost(messages, toolSpecs, profile)
 	if err != nil {
 		used = provider.MessagesTokens(messages, profile)
 	}
+	used = calibration.Apply(used)
 	percent := 0
 	if budget > 0 {
 		percent = used * 100 / budget
@@ -107,7 +118,7 @@ func (s *Session) SwapOnAgentEvent(handler func(agent.Event)) func(agent.Event) 
 // instructions>`, Claude Code parity) telling the summarizer what to
 // prioritize; empty is the existing, unbiased behavior.
 func (s *Session) Compact(ctx context.Context, focus string) error {
-	_, err := s.compact(ctx, focus)
+	_, err := s.compact(ctx, focus, true)
 	return err
 }
 
@@ -115,7 +126,35 @@ func (s *Session) Compact(ctx context.Context, focus string) error {
 // contextmgr.Preparation the compaction produced, for callers (e.g. the
 // `mivia compact` CLI command) that need to report before/after numbers.
 func (s *Session) CompactWithResult(ctx context.Context, focus string) (contextmgr.Preparation, error) {
-	return s.compact(ctx, focus)
+	return s.compact(ctx, focus, true)
+}
+
+// CompactIfNeeded runs one NON-forced compaction pass over the committed
+// history and reports whether it compacted. Below the planner's trigger it is
+// a no-op, so callers may invoke it unconditionally.
+//
+// This is the turn-boundary half of auto-compaction. Mid-turn compaction
+// already runs before every provider call (the host preparation installed as
+// the SDK's Trim closure), but whatever the FINAL step appends - the closing
+// assistant message, and the whole last tool-result batch when a turn ends on
+// a step ceiling, a work limit, or an interrupt - is committed with no
+// preparation pass over it at all. Nothing else runs between turns, so that
+// history stayed over budget until the next turn's first Trim, leaving the
+// committed checkpoint and the user's context gauge above the threshold with
+// no compaction in sight. Running the same non-forced plan here closes the
+// turn at or below the trigger instead of leaving it for the next one.
+//
+// Best-effort by contract: the turn it follows has already committed
+// successfully, and the next turn's Trim still compacts before any request is
+// sent, so a failure here costs a delay rather than correctness. Callers
+// report the error if they have somewhere to report it and otherwise drop it,
+// rather than failing a turn that succeeded.
+func (s *Session) CompactIfNeeded(ctx context.Context) (bool, error) {
+	preparation, err := s.compact(ctx, "", false)
+	if err != nil {
+		return false, err
+	}
+	return preparation.Compacted, nil
 }
 
 // compactLoadSnapshot loads the durable snapshot for the bound session,
@@ -136,12 +175,13 @@ func (s *Session) compactLoadSnapshot(ctx context.Context, cfg contextTurnConfig
 }
 
 type manualCompactState struct {
-	cfg       contextTurnConfig
-	store     contextstate.Store
-	messages  []provider.Message
-	binding   ModelBinding
-	turnID    uint64
-	toolSpecs []provider.ToolSpec
+	cfg         contextTurnConfig
+	store       contextstate.Store
+	messages    []provider.Message
+	binding     ModelBinding
+	turnID      uint64
+	toolSpecs   []provider.ToolSpec
+	calibration contextmgr.Calibration
 }
 
 func (s *Session) captureManualCompactState() (manualCompactState, error) {
@@ -166,40 +206,92 @@ func (s *Session) captureManualCompactState() (manualCompactState, error) {
 	return manualCompactState{
 		cfg: cfg, store: store, messages: messages,
 		binding: s.binding, turnID: turnID, toolSpecs: toolSpecs,
+		calibration: s.Calibration,
 	}, nil
 }
 
-func (s *Session) compact(ctx context.Context, focus string) (contextmgr.Preparation, error) {
+// compact runs one compaction and durably publishes it. force selects which
+// of the two callers' contracts applies: manual /compact forces a plan
+// regardless of fill level and treats "no reduction" as the error the user
+// needs to see, while the turn-boundary pass (CompactIfNeeded) lets the
+// planner's own trigger decide and reports a history below it as an ordinary
+// non-compacting outcome. Everything after the decision - summary, commit,
+// state swap, event - is one shared path, so the two callers cannot drift.
+func (s *Session) compact(ctx context.Context, focus string, force bool) (contextmgr.Preparation, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	s.contextPublishMu.Lock()
 	defer s.contextPublishMu.Unlock()
 
-	st, err := s.captureManualCompactState()
-	if err != nil {
+	st, input, preparation, ok, err := s.planCompaction(ctx, force)
+	if err != nil || !ok {
 		return contextmgr.Preparation{}, err
 	}
+	return s.commitCompaction(ctx, focus, st, input, preparation)
+}
+
+// planCompaction captures the session state, builds the plan input, and runs
+// the planner. ok reports whether the returned preparation is worth
+// committing; a false ok with a nil error is the non-forced pass declining,
+// and the preparation has already been discarded.
+func (s *Session) planCompaction(ctx context.Context, force bool) (manualCompactState, contextmgr.PrepareInput, contextmgr.Preparation, bool, error) {
+	var noInput contextmgr.PrepareInput
+	st, err := s.captureManualCompactState()
+	if err != nil {
+		return st, noInput, contextmgr.Preparation{}, false, err
+	}
 	if st.cfg.manager == nil || st.store == nil {
-		return contextmgr.Preparation{}, fmt.Errorf("context compaction is not configured")
+		return st, noInput, contextmgr.Preparation{}, false, fmt.Errorf("context compaction is not configured")
 	}
 	input := prepareInputForContext(st.messages, s.MaxContextTokens, s.MaxTokens, st.binding, st.cfg.principal, st.cfg.policy, st.cfg.worktree)
 	input.Revision = st.cfg.revision
-	input.Force = true
+	input.Force = force
 	input.Tools = st.toolSpecs
-	if err := s.compactLoadSnapshot(ctx, st.cfg, st.store, &input); err != nil {
-		return contextmgr.Preparation{}, err
+	// The trigger is scored against a CALIBRATED cost (contextmgr.Plan), so a
+	// non-forced pass must carry the same correction the turn's own steps ran
+	// under. Without it this pass measures the history with a different ruler
+	// than every mid-turn Trim did and would compact histories the loop had
+	// just correctly left alone (or skip ones it had compacted).
+	if st.calibration.Samples > 0 {
+		input.CalibrationRatio = st.calibration.Ratio
 	}
-	cfg, store, messages, turnID := st.cfg, st.store, st.messages, st.turnID
-	_ = store
-	preparation, err := cfg.manager.PreparationManager.Prepare(ctx, input)
+	if err := s.compactLoadSnapshot(ctx, st.cfg, st.store, &input); err != nil {
+		return st, noInput, contextmgr.Preparation{}, false, err
+	}
+	preparation, err := st.cfg.manager.PreparationManager.Prepare(ctx, input)
 	if err != nil {
-		return contextmgr.Preparation{}, err
+		return st, noInput, contextmgr.Preparation{}, false, err
 	}
 	if !preparation.Compacted {
-		cfg.manager.PreparationManager.Discard(preparation)
-		return contextmgr.Preparation{}, fmt.Errorf("context compaction made no reduction")
+		st.cfg.manager.PreparationManager.Discard(preparation)
+		if !force {
+			// Below the trigger: the planner decided there is nothing to do,
+			// which is the expected outcome for most turn boundaries.
+			return st, noInput, contextmgr.Preparation{}, false, nil
+		}
+		return st, noInput, contextmgr.Preparation{}, false, fmt.Errorf("context compaction made no reduction")
 	}
+	// Compacted reports that the planner RAN, not that it achieved anything.
+	// A history already at the planner's floor - its mandatory set alone
+	// (system, core-memory frame, current objective, latest tool unit) costing
+	// more than the target - crosses the trigger on every pass and retains the
+	// same messages every time. Committing that at each turn boundary would
+	// announce a compaction, burn a summarizer call, and bump the revision
+	// forever without ever freeing a token. Manual /compact keeps committing
+	// it: the user asked, and the summary it produces is the point.
+	if !force && preparation.AfterTokens >= preparation.BeforeTokens {
+		st.cfg.manager.PreparationManager.Discard(preparation)
+		return st, noInput, contextmgr.Preparation{}, false, nil
+	}
+	return st, input, preparation, true, nil
+}
+
+// commitCompaction summarizes, durably publishes, and adopts a preparation the
+// planner has already accepted. The caller holds contextPublishMu.
+func (s *Session) commitCompaction(ctx context.Context, focus string, st manualCompactState, input contextmgr.PrepareInput, preparation contextmgr.Preparation) (contextmgr.Preparation, error) {
+	cfg, messages, turnID := st.cfg, st.messages, st.turnID
+	var err error
 	preparedMessages := cloneContextMessages(preparation.Messages)
 	// Manual-compact summary: run the LLM summary before the durable commit
 	// (the same order CommitPreparation uses), stamp the bounded metadata on

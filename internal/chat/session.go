@@ -322,12 +322,40 @@ func (s *Session) sendUserWithTurn(ctx context.Context, userText, persistedText 
 		defer s.SwapOnAgentEvent(previous)
 	}
 	if s.AgentTurnEnabled() {
-		return s.sendAgent(ctx, userText, persistedText, w, onEvent, turn)
+		reply, err := s.sendAgent(ctx, userText, persistedText, w, onEvent, turn)
+		s.compactAfterTurn(ctx, err)
+		return reply, err
 	}
 	if turn != nil && turn.Cleanup != nil {
 		defer turn.Cleanup()
 	}
-	return s.sendPlain(ctx, userText, persistedText, w)
+	reply, err := s.sendPlain(ctx, userText, persistedText, w)
+	s.compactAfterTurn(ctx, err)
+	return reply, err
+}
+
+// compactAfterTurn runs the turn-boundary auto-compaction pass once the turn
+// has fully released - the send functions decrement activeTurns in their own
+// defers, and CompactIfNeeded refuses to run beside a live turn - and while
+// this turn's event callback is still published, so the compaction announces
+// itself on the same surface an automatic mid-turn one would (INV-AG-41).
+//
+// A failed turn is skipped deliberately. An interrupted turn's ctx is already
+// canceled, and the summarizer call a compaction may make must not be
+// resurrected onto context.Background() behind a user who just pressed
+// Ctrl-C; a turn that errored may also have left history the next turn's own
+// preparation is better placed to judge. Neither case loses anything: the
+// next turn's first Trim compacts before any request reaches the provider.
+//
+// The error is dropped rather than returned. The turn it follows already
+// committed, and returning a maintenance failure here would report a
+// successful turn as failed - the exact inversion the errored-turn commit
+// path documents at finishErroredContextTurn.
+func (s *Session) compactAfterTurn(ctx context.Context, turnErr error) {
+	if turnErr != nil || !s.contextEnabled() {
+		return
+	}
+	_, _ = s.CompactIfNeeded(ctx)
 }
 
 func (s *Session) sendPlain(ctx context.Context, userText, persistedText string, w io.Writer) (string, error) {

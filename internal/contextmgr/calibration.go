@@ -29,8 +29,9 @@ type Calibration struct {
 	// react faster to changes. Defaults to 0.2.
 	Alpha float64
 	// Ratio is the current correction factor: reported/estimated.
-	// Bounded to [0.5, 3.0] once samples exist. The zero value is 0.0,
-	// which means no correction (treated as 1.0 everywhere it is applied).
+	// Bounded to [calibrationMinRatio, calibrationMaxRatio] once samples
+	// exist. The zero value is 0.0, which means no correction (treated as
+	// 1.0 everywhere it is applied).
 	Ratio float64
 	// Samples is the number of updates applied.
 	Samples int
@@ -59,6 +60,29 @@ func (c *Calibration) Update(estimated, reported int) {
 	}
 	c.Ratio = math.Max(calibrationMinRatio, math.Min(calibrationMaxRatio, alpha*ratio+(1-alpha)*c.Ratio))
 	c.Samples++
+}
+
+// Apply scales an estimated token count by this calibration's correction
+// ratio, exactly as the planner does when it scores a history against the
+// compaction trigger.
+//
+// Every surface that reports "how full is the context" must go through this
+// method. The planner compares a CALIBRATED cost against the trigger
+// (planner.go's Plan), so a gauge that divides an UNCALIBRATED estimate by
+// the same budget is measuring the same history with a different ruler: with
+// a ratio below 1.0 the displayed percentage runs ahead of the trigger and
+// can sit far above 100% while the planner correctly sees a history below
+// the threshold and never compacts. That disagreement is what this method
+// exists to make impossible.
+//
+// A calibration with no samples applies no correction, matching
+// PlanInput.CalibrationRatio, which callers leave unset until the first
+// estimate-vs-actual observation lands.
+func (c Calibration) Apply(estimated int) int {
+	if c.Samples == 0 {
+		return estimated
+	}
+	return applyCalibration(estimated, c.Ratio)
 }
 
 // applyCalibration scales an estimated token count by the calibration ratio.

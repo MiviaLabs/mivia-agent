@@ -335,6 +335,14 @@ func loadBoundContextStore(ctx context.Context, store contextstate.Store, princi
 	return store.Load(ctx, principal, sessionID)
 }
 
+// contextEnabled is the lock-taking form of contextEnabledLocked, for callers
+// outside any turn (the turn-boundary compaction pass) that hold no lock.
+func (s *Session) contextEnabled() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.contextEnabledLocked()
+}
+
 func (s *Session) contextEnabledLocked() bool {
 	return s.contextManager != nil && s.contextManager.Enabled &&
 		s.contextManager.PreparationManager != nil && s.contextManager.CheckpointPublisher != nil &&
