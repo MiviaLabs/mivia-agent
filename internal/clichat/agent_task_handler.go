@@ -15,6 +15,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/jschema"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
@@ -281,11 +282,7 @@ func (h *agentTaskHandler) newMultiStepHandler(binding agentBinding, registry *t
 		SteerWatchdog:             time.Duration(h.opts.Config.Messaging.SteerWatchdogSecondsResolved()) * time.Second,
 		ContextPreparationManager: h.opts.ContextPreparationManager,
 		ContextPreparationInput:   h.opts.ContextPreparationInput,
-		OnEvent: OnEventForMultiStep(func(e agent.Event) {
-			e.Identity = identity
-			e.Origin.TaskID = instanceID
-			emitSubagentProgress(e)
-		}),
+		OnEvent:                   OnEventForMultiStep(stampRoutedOrigin(identity, instanceID, emitSubagentProgress)),
 	}
 }
 
@@ -448,3 +445,32 @@ func (h *agentTaskHandler) ValidateRequest(req runtime.Request) error {
 }
 
 var _ runtime.Handler = (*agentTaskHandler)(nil)
+
+// stampRoutedOrigin decorates a routed agent's event sink with the routed
+// invocation's identity, and supplies instanceID as the origin task id ONLY
+// when the event does not already carry one.
+//
+// An event that reaches here from a coordinator-dispatched task already
+// carries the coordinator's canonical task id, stamped by
+// subagents.MultiStepHandler from runtime.TaskIdentityFrom(ctx) - the
+// model-authored dispatch_tasks task id (or a workflow's wft-... attempt id).
+// That id is the CORRELATION KEY every downstream consumer looks work up by:
+// uiadapter.SubagentThreads files the live thread under it, the TUI sidebar
+// row is keyed by it, controller.NoteStepHeartbeat counts liveness against
+// it, and the event bus/NDJSON writer attribute to it. Overwriting it with a
+// freshly minted opaque runtime.NewSessionID() filed every live thread under
+// a key nothing could look up, so the subagent dialog never resolved a thread
+// and always fell back to an empty step log.
+//
+// instanceID remains the fallback for a non-coordinator invocation, which has
+// no correlation id of its own, and the invocation identity itself is
+// unaffected either way: it travels on e.Identity.
+func stampRoutedOrigin(identity *events.Identity, instanceID string, sink func(agent.Event)) func(agent.Event) {
+	return func(e agent.Event) {
+		e.Identity = identity
+		if e.Origin.TaskID == "" {
+			e.Origin.TaskID = instanceID
+		}
+		sink(e)
+	}
+}
