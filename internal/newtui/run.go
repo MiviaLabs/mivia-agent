@@ -1,6 +1,7 @@
 package newtui
 
 import (
+	"fmt"
 	"io"
 	"log"
 
@@ -43,7 +44,6 @@ func RunTUI(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *
 
 func buildApp(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *cli.AgentSessionState, resumeSessionName string) (tea.Model, error) {
 	registerSubagentProgress()
-	conv := uiadapter.NewConversation(sess)
 	approver := uiadapter.NewApprover(sess)
 	themes, err := theme.Embedded()
 	if err != nil {
@@ -57,12 +57,26 @@ func buildApp(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState
 		}
 	}
 
-	threads := uiadapter.NewSubagentThreads()
-	conv.SetSubagents(threads)
+	// runner owns the one SessionPool for this process; sourcing conv and
+	// threads FROM it (rather than constructing a separate Conversation
+	// and SubagentThreads registry here) keeps every later session switch
+	// (/resume, /new) wired to the same registry the screen holds. Two
+	// separately-built Conversation objects for the same initial session
+	// used to leave the pooled twin unwired - see SessionPool tests.
+	runner := uiadapter.NewCommandRunner(sess, res, agentState)
+	pool := runner.Pool()
+	threads := pool.Threads()
+	convPort, err := pool.GetOrCreate(sess.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	conv, ok := convPort.(*uiadapter.Conversation)
+	if !ok {
+		return nil, fmt.Errorf("newtui: pool returned unexpected conversation type %T", convPort)
+	}
+
 	settingsStore := uiadapter.NewSettingsStore(sess, res, agentState)
 	settingsStore.SetConversation(conv)
-
-	runner := uiadapter.NewCommandRunner(sess, res, agentState)
 	runner.SetSettingsStore(settingsStore)
 	screen := conversation.New(th, theme.TierTrueColor, themes, conv, approver, 80, nil)
 

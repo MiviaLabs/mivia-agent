@@ -21,6 +21,36 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/uiadapter"
 )
 
+// TestCommandRunner_PoolExposesSameSubagentThreadsWiredToInitialConversation
+// guards the buildApp wiring bug where the screen's SubagentThreads
+// registry and the CommandRunner's own pooled Conversation for the same
+// session were two different, separately-constructed objects: the pool
+// must be reachable from the runner, and its initial Conversation must
+// already be wired to pool.Threads() (see SessionPool tests for the
+// deeper History()-driven regression coverage).
+func TestCommandRunner_PoolExposesSameSubagentThreadsWiredToInitialConversation(t *testing.T) {
+	res := &config.Resolved{Model: "test-model"}
+	sess := chat.NewSession(res, nil)
+	sess.SessionID = "session-1"
+
+	runner := uiadapter.NewCommandRunner(sess, res, nil)
+
+	pool := runner.Pool()
+	if pool == nil {
+		t.Fatal("expected runner.Pool() to be non-nil")
+	}
+	conv, err := pool.GetOrCreate("session-1")
+	if err != nil {
+		t.Fatalf("GetOrCreate: %v", err)
+	}
+	if conv == nil {
+		t.Fatal("expected a pooled conversation for the initial session")
+	}
+	if pool.Threads() == nil {
+		t.Fatal("expected pool.Threads() to be non-nil")
+	}
+}
+
 func TestCommandRunner_RunBasicCommands(t *testing.T) {
 	runner := uiadapter.NewCommandRunner(nil, nil, nil)
 

@@ -44,6 +44,16 @@ func NewCommandRunner(sess *chat.Session, res *config.Resolved, state *cliagents
 	}
 }
 
+// Pool returns the SessionPool backing this runner's session switches
+// (/resume, /new). Callers building the UI use it to source the initial
+// Conversation and its SubagentThreads registry from the SAME pool that
+// SelectSession and handleNew hand out on later switches, so the
+// activity panel's thread dialog is wired to whichever session is
+// actually active rather than a separately-constructed twin.
+func (r *CommandRunner) Pool() *SessionPool {
+	return r.pool
+}
+
 // NewCommandRunnerWithPool constructs a CommandRunner with an explicit SessionPool.
 func NewCommandRunnerWithPool(sess *chat.Session, pool *SessionPool, res *config.Resolved, state *cliagents.AgentSessionState) *CommandRunner {
 	return &CommandRunner{

@@ -24,6 +24,22 @@ type SessionPool struct {
 	res        *config.Resolved
 	agentState *cliagents.AgentSessionState
 	toolsOn    bool
+	// threads is the one SubagentThreads registry shared by every
+	// Conversation the pool creates or resumes, so the activity panel's
+	// thread dialog (wired once, at startup, to this same instance) can
+	// resolve any pooled session's dispatched subagents - past history via
+	// SetSubagents' PopulateFromToolCalls and live events via Send's
+	// newTurnHandler. A Conversation the pool never wires to this registry
+	// is invisible to the dialog: see Threads.
+	threads *SubagentThreads
+}
+
+// Threads returns the SubagentThreads registry every pooled Conversation is
+// wired to. Callers building the UI (internal/newtui) pass this same
+// instance to Screen.SetSubagentThreads so the dialog resolves whichever
+// session is currently active, including one reached by /resume or /new.
+func (p *SessionPool) Threads() *SubagentThreads {
+	return p.threads
 }
 
 type fallbackCompleter struct {
@@ -110,14 +126,17 @@ func NewSessionPool(initialSess *chat.Session, res *config.Resolved, agentState 
 		res:        res,
 		agentState: agentState,
 		toolsOn:    toolsOn,
+		threads:    NewSubagentThreads(),
 	}
 	if initialSess != nil {
 		if res != nil {
 			initialSess.SetBindingFactory(sessionBindingFactory(initialSess, res, agentState))
 		}
 		id := initialSess.SessionID
+		conv := NewConversation(initialSess)
+		conv.SetSubagents(pool.threads)
 		pool.sessions[id] = initialSess
-		pool.convs[id] = NewConversation(initialSess)
+		pool.convs[id] = conv
 	}
 	return pool
 }
@@ -179,6 +198,7 @@ func (p *SessionPool) CreateFresh() (ports.Conversation, error) {
 	sess.SetBindingFactory(sessionBindingFactory(sess, p.res, p.agentState))
 
 	conv := NewConversation(sess)
+	conv.SetSubagents(p.threads)
 	id := sess.SessionID
 	p.sessions[id] = sess
 	p.convs[id] = conv
@@ -255,6 +275,7 @@ func (p *SessionPool) GetOrCreate(sessionID string) (ports.Conversation, error) 
 	sess.RefreshCalibrationAfterModelSwitch(context.Background())
 
 	conv := NewConversation(sess)
+	conv.SetSubagents(p.threads)
 	p.sessions[sessionID] = sess
 	p.convs[sessionID] = conv
 	if sess.SessionID != "" && sess.SessionID != sessionID {

@@ -283,3 +283,111 @@ func TestSessionPool_CreateFresh_InheritsToolsFlag(t *testing.T) {
 		t.Fatal("CreateFresh returned nil")
 	}
 }
+
+// dispatchTasksMessages builds a session history shaped like a completed
+// dispatch_tasks call, the same shape PopulateFromToolCalls parses.
+func dispatchTasksMessages(taskID string) []provider.Message {
+	return []provider.Message{
+		{
+			Role: provider.RoleAssistant,
+			ToolCalls: []provider.ToolCall{
+				{
+					ID: "call_disp_1",
+					Function: struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					}{
+						Name:      "dispatch_tasks",
+						Arguments: `{"tasks":[{"id":"` + taskID + `","prompt":"investigate memory leak","agent":"researcher"}]}`,
+					},
+				},
+			},
+		},
+		{
+			Role:       provider.RoleTool,
+			ToolCallID: "call_disp_1",
+			Content:    `{"tasks":[{"id":"` + taskID + `","status":"completed","output":"found nothing"}]}`,
+		},
+	}
+}
+
+// TestSessionPool_InitialConversationWiredToSubagentThreads guards against
+// the resumed-session regression where the subagent-thread dialog showed no
+// past chat: the pool's own initial Conversation (the one GetOrCreate hands
+// back for the session it was constructed with) must be wired to the same
+// SubagentThreads registry pool.Threads() exposes, so History() seeds it.
+func TestSessionPool_InitialConversationWiredToSubagentThreads(t *testing.T) {
+	res := &config.Resolved{Model: "test-model"}
+	sess := chat.NewSession(res, nil)
+	sess.SessionID = "session-1"
+	sess.Messages = dispatchTasksMessages("task-leak-check")
+
+	pool := uiadapter.NewSessionPool(sess, res, nil, false)
+	conv, err := pool.GetOrCreate("session-1")
+	if err != nil {
+		t.Fatalf("GetOrCreate: %v", err)
+	}
+	_ = conv.History()
+
+	if _, ok := pool.Threads().Thread("task-leak-check"); !ok {
+		t.Fatal("expected pool.Threads() to resolve the dispatched subagent after History()")
+	}
+}
+
+// TestSessionPool_GetOrCreateWiresSubagentThreadsOnResume guards the
+// /resume path: a session loaded fresh from disk via GetOrCreate must also
+// be wired to pool.Threads(), not just the pool's initial member.
+func TestSessionPool_GetOrCreateWiresSubagentThreadsOnResume(t *testing.T) {
+	dir := t.TempDir()
+	res := &config.Resolved{Model: "test-model"}
+
+	initial := chat.NewSession(res, nil)
+	initial.SessionDir = dir
+	initial.SessionID = "sess-initial"
+
+	resumed := chat.NewSession(res, nil)
+	resumed.SessionDir = dir
+	resumed.SessionID = "sess-resumed"
+	resumed.Messages = dispatchTasksMessages("task-resumed-check")
+	if err := resumed.Save("sess-resumed"); err != nil {
+		t.Fatalf("saving resumed session: %v", err)
+	}
+
+	pool := uiadapter.NewSessionPool(initial, res, nil, false)
+	conv, err := pool.GetOrCreate("sess-resumed")
+	if err != nil {
+		t.Fatalf("GetOrCreate: %v", err)
+	}
+	_ = conv.History()
+
+	if _, ok := pool.Threads().Thread("task-resumed-check"); !ok {
+		t.Fatal("expected pool.Threads() to resolve the resumed session's dispatched subagent after History()")
+	}
+}
+
+// TestSessionPool_CreateFreshWiresSubagentThreads guards the /new path: a
+// freshly created session's Conversation must also be wired to
+// pool.Threads(), proven by seeding a subagent tool call into the live
+// session after creation (a fresh session starts with empty history) and
+// confirming History() reaches the shared registry.
+func TestSessionPool_CreateFreshWiresSubagentThreads(t *testing.T) {
+	res := &config.Resolved{Model: "test-model"}
+	sess := chat.NewSession(res, nil)
+	sess.SessionID = "parent-session"
+	pool := uiadapter.NewSessionPool(sess, res, nil, false)
+
+	convPort, err := pool.CreateFresh()
+	if err != nil {
+		t.Fatalf("CreateFresh: %v", err)
+	}
+	conv, ok := convPort.(*uiadapter.Conversation)
+	if !ok || conv == nil {
+		t.Fatalf("CreateFresh did not return *uiadapter.Conversation: %T", convPort)
+	}
+	conv.Session().Messages = dispatchTasksMessages("task-fresh-check")
+	_ = conv.History()
+
+	if _, ok := pool.Threads().Thread("task-fresh-check"); !ok {
+		t.Fatal("expected pool.Threads() to resolve the fresh session's dispatched subagent after History()")
+	}
+}
