@@ -154,3 +154,41 @@ func TestStopEventIsFiredFromExactlyOneProductionSite(t *testing.T) {
 		t.Fatalf("hooks.EventStop must be named by exactly one production file (the root turn path); found %v", sites)
 	}
 }
+
+// RunStopEvent has no production caller anywhere today (see its doc
+// comment) - a wider scan than the constant-uniqueness check above, since
+// internal/sdkadapter already references the hooks.EventStop CONSTANT
+// (isReactive's comparison, not a firing site) without calling the
+// function, and that reference would wrongly trip the narrower check if
+// its directory were added there. This assertion will need updating the
+// day a real call site is wired in; it exists so that day is a deliberate,
+// visible edit here, not a silent gap the way the original "TUI only" claim
+// was.
+func TestRunStopEventHasNoProductionCallerYet(t *testing.T) {
+	var callers []string
+	for _, dir := range []string{".", "../cli", "../agent", "../subagents", "../runtime", "../coordinator", "../chat", "../clichat", "../uiadapter", "../sdkadapter"} {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			name := entry.Name()
+			if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+				continue
+			}
+			if dir == "." && name == "stop.go" {
+				continue // the definition itself
+			}
+			data, err := os.ReadFile(filepath.Join(dir, name))
+			if err != nil {
+				t.Fatalf("read: %v", err)
+			}
+			if strings.Contains(string(data), "RunStopEvent(") {
+				callers = append(callers, filepath.Join(dir, name))
+			}
+		}
+	}
+	if len(callers) != 0 {
+		t.Fatalf("RunStopEvent is documented as having no production caller; found %v - update this test and the doc comments together", callers)
+	}
+}

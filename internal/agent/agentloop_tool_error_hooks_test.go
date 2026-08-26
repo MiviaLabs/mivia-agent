@@ -146,6 +146,33 @@ func TestDeferredToolDenialCarriesNoHookContext(t *testing.T) {
 	}
 }
 
+// The recorded turn outcome and the returned message must carry the SAME
+// framed body - a mutation that recorded result.Content while returning the
+// hook-context-appended body (or vice versa) would pass every other test in
+// this file, since collectHookEventsFromToolError discards the turn state.
+func TestServedUnadmittedToolResultRecordsTheSameBodyItReturns(t *testing.T) {
+	turn := newSDKTurnState()
+	opts := Options{UnadmittedToolHandler: func(context.Context, string, json.RawMessage) UnadmittedToolResult {
+		return UnadmittedToolResult{Handled: true, Ran: true, Content: `{"ok":true}`, HookContext: "gofmt rewrote 2 files"}
+	}}
+	reporter := sdkToolCallErrorReporter(opts, turn)
+	msg, err := reporter(context.Background(), sdkshape.ToolCall{ID: "call1", Name: "write_file"}, sdktools.ErrUnknownName)
+	if err != nil {
+		t.Fatalf("reporter: %v", err)
+	}
+
+	outcome, ok := turn.toolOutcomes["call1"]
+	if !ok {
+		t.Fatal("no recorded outcome for call1")
+	}
+	if outcome.body != msg.Content {
+		t.Fatalf("recorded outcome body %q must equal the returned message content %q", outcome.body, msg.Content)
+	}
+	if outcome.failed {
+		t.Fatalf("a served call must not be recorded as failed, got %+v", outcome)
+	}
+}
+
 // An ID-less call falls back to the tool name for correlation, matching
 // recordToolOutcomeWithPreview's own fallback.
 func TestUnadmittedHandlerHookRunsFallBackToNameForCorrelation(t *testing.T) {

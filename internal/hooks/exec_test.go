@@ -665,6 +665,34 @@ func TestEventSelectsWhichGroupsRun(t *testing.T) {
 
 // A gate that already denied must not keep running handlers: the call is not
 // happening, and the remaining scripts have side effects.
+// An earlier ALLOWING handler's additionalContext survives even when a
+// LATER handler in the same group denies the call - real, end-to-end proof
+// (not a fabricated verdict) that Outcome{Denied:true, Context:non-empty}
+// is a shape production code can actually produce. This is what makes
+// internal/runtime/dispatcher.go's block-path HookContext threading a
+// narrow fix rather than one that surfaces every deny with advisory text:
+// only a prior non-denying sibling can populate Context on a deny.
+func TestAnAllowingHandlersContextSurvivesALaterDeny(t *testing.T) {
+	requirePOSIX(t)
+	dir := hookDir(t)
+	script(t, dir, "advise.sh",
+		`printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"},"additionalContext":"the workspace is mid-rebase"}'`+"\nexit 0\n")
+	script(t, dir, "guard.sh", "printf 'policy forbids this' >&2\nexit 2\n")
+	body := "[[hooks]]\nevent = \"PreToolUse\"\n\n  [[hooks.handlers]]\n  type = \"command\"\n  argv = [\"./advise.sh\"]\n\n  [[hooks.handlers]]\n  type = \"command\"\n  argv = [\"./guard.sh\"]\n"
+	groups := group(t, dir, body)
+
+	out := runHooks(t, dir, groups, Payload{Event: EventPreToolUse, Tool: "x"})
+	if !out.Denied {
+		t.Fatal("want deny")
+	}
+	if !strings.Contains(out.Context, "mid-rebase") {
+		t.Fatalf("an earlier allowing handler's advisory context must survive a later deny, got %q", out.Context)
+	}
+	if strings.Contains(out.Reason, "mid-rebase") {
+		t.Fatalf("the advisory context must travel on Context, not be spliced into the deny Reason, got %q", out.Reason)
+	}
+}
+
 func TestPreToolUseShortCircuitsOnFirstDeny(t *testing.T) {
 	requirePOSIX(t)
 	dir := hookDir(t)
