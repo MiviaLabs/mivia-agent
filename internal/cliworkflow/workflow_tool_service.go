@@ -13,10 +13,18 @@ import (
 // workflowToolSubagentConfig resolves the store config used by workflow tools.
 // It matches CLI workflow commands: prefer the session Resolved config, else
 // load the workspace config, then apply the workspace store-root default.
+//
+// The session config is cloned before ApplyWorkflowStoreRoot runs. That helper
+// writes an expanded absolute StorePath back into the struct it receives. The
+// session Resolved is shared with unrelated surfaces, so a mutation there would
+// leak a home path into settings persistence and reveal the user name. Write
+// through a copy instead; this mirrors orchestrationStorePathFor in
+// internal/clichat/storage_reset.go.
 func workflowToolSubagentConfig(root string, res *config.Resolved) config.SubagentConfig {
 	if res != nil {
-		ApplyWorkflowStoreRoot(res, root)
-		return res.Subagents
+		clone := *res
+		ApplyWorkflowStoreRoot(&clone, root)
+		return clone.Subagents
 	}
 	configPath := SessionEngineConfigPath(root, nil)
 	loaded, err := config.Load(config.LoadOptions{ConfigPath: configPath, WorkspaceRoot: root, AllowMissingConfig: true})
