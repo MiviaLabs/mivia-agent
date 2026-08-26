@@ -267,13 +267,24 @@ func (s Screen) threadDialogKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
 			s.thread.transcript = s.thread.transcript.ScrollBy(max(1, s.thread.transcriptHeight()/2))
 			return s, nil
 		}
-	case "up", "k":
+	case "up":
 		if s.thread != nil && (s.thread.hideComposer || s.thread.composer.Value() == "") {
 			s.thread.transcript = s.thread.transcript.ScrollBy(-1)
 			return s, nil
 		}
-	case "down", "j":
+	case "down":
 		if s.thread != nil && (s.thread.hideComposer || s.thread.composer.Value() == "") {
+			s.thread.transcript = s.thread.transcript.ScrollBy(1)
+			return s, nil
+		}
+	// Typeable keys belong to any composer that can take input; j and k scroll only hidden-composer dialogs.
+	case "k":
+		if s.thread != nil && s.thread.hideComposer {
+			s.thread.transcript = s.thread.transcript.ScrollBy(-1)
+			return s, nil
+		}
+	case "j":
+		if s.thread != nil && s.thread.hideComposer {
 			s.thread.transcript = s.thread.transcript.ScrollBy(1)
 			return s, nil
 		}
