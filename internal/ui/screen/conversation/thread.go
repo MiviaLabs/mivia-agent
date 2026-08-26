@@ -230,6 +230,8 @@ func (s *Screen) closeThread() {
 // threadDialogKey routes a key into the open subagent-thread dialog.
 // Esc, ctrl+b, and ctrl+c close the dialog back to the list (the thread
 // keeps streaming in the background and reopens with its state).
+// Arrows over a visible, non-empty composer are caret keys and stop at
+// that composer - they must never reach the prompt-history overlay.
 // Everything else goes to the embedded screen's OWN Update - its composer,
 // its completion menu, its transcript - never the main chat's.
 func (s Screen) threadDialogKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
@@ -295,6 +297,9 @@ func (s Screen) threadDialogKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
 	if s.thread.hideComposer {
 		return s, nil
 	}
+	if next, cmd, handled := s.routeThreadDialogArrows(msg); handled {
+		return next, cmd
+	}
 	next, cmd := s.thread.Update(msg)
 	// Update returns the model BY VALUE (the tea convention); the cached
 	// pointer must point at the fresh copy or every routed key mutates a
@@ -303,6 +308,27 @@ func (s Screen) threadDialogKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd) {
 		s.thread = &t
 	}
 	return s, cmd
+}
+
+// routeThreadDialogArrows turns up and down over a visible, non-empty
+// composer into caret keys. They go straight to the composer here, not
+// through the embedded screen's key table: that table answers "up" on
+// line 0 by opening the prompt-history overlay, and an overlay must never
+// grow over a live modal dialog (its reserved rows also shift the dialog's
+// transcript layout). An open completion or mention menu keeps the full
+// route - those keys belong to menu navigation there. Reports whether the
+// key was handled.
+func (s Screen) routeThreadDialogArrows(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bool) {
+	if key := msg.String(); key == "up" || key == "down" {
+		if s.thread.composer.Value() != "" &&
+			!s.thread.composer.MenuActive() &&
+			!s.thread.composer.MentionMenuActive() {
+			next, cmd := s.thread.composer.Update(msg)
+			s.thread.composer = next
+			return s, cmd, true
+		}
+	}
+	return s, nil, false
 }
 
 // forwardThreadMsg hands one of the wrapped thread Msgs to the cached
