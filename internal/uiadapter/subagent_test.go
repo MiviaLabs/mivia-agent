@@ -473,3 +473,81 @@ func TestPopulateFromToolCalls_DispatchTasksByReferenceOutput(t *testing.T) {
 		t.Errorf("expected the synopsis text, got %q", hist[1].Text)
 	}
 }
+
+// TestPopulateFromToolCalls_PreFeatureJSONShapeFallsBackCleanly guards the
+// compatibility case chunk 6 (the ToolCalls reconstruction, see
+// TestPopulateFromToolCalls_DispatchTasksToolCallsReconstructed above) must
+// never regress: every session persisted before the tool-call-history
+// feature shipped has a dispatch_tasks output JSON with NO "tool_calls" key
+// at all (the pre-chunk-5 dispatchTaskResult/modelTaskResult wire shape).
+// json.Unmarshal leaves that struct field as a nil slice, indistinguishable
+// in Go from an explicit "tool_calls":[] - this test proves both shapes
+// reconstruct byte-for-byte identically to today's pre-feature behavior: a
+// prompt message plus one output message carrying only .Text, no
+// reconstructed .ToolCalls entries, no panic.
+func TestPopulateFromToolCalls_PreFeatureJSONShapeFallsBackCleanly(t *testing.T) {
+	buildMsgs := func(output string) []ports.Message {
+		return []ports.Message{
+			{
+				Role: "assistant",
+				At:   time.Now(),
+				ToolCalls: []ports.ToolCall{
+					{
+						ID:        "call_dispatch_legacy",
+						Name:      "dispatch_tasks",
+						Arguments: `{"tasks":[{"id":"task-legacy","prompt":"legacy prompt","agent":"researcher"}]}`,
+						Output:    output,
+					},
+				},
+			},
+		}
+	}
+
+	reconstruct := func(t *testing.T, output string) ports.Message {
+		t.Helper()
+		threads := uiadapter.NewSubagentThreads()
+		uiadapter.PopulateFromToolCalls(threads, buildMsgs(output))
+
+		conv, ok := threads.Thread("task-legacy")
+		if !ok || conv == nil {
+			t.Fatalf("expected thread for task-legacy")
+		}
+		hist := conv.History()
+		if len(hist) != 2 {
+			t.Fatalf("expected 2 history messages (prompt + output), got %d: %+v", len(hist), hist)
+		}
+		if hist[0].Text != "legacy prompt" {
+			t.Errorf("prompt mismatch: got %q", hist[0].Text)
+		}
+		return hist[1]
+	}
+
+	t.Run("key absent (pre-feature wire shape)", func(t *testing.T) {
+		out := reconstruct(t, `[{"task_id":"task-legacy","status":"completed","output":"legacy output"}]`)
+		if out.Text != "legacy output" {
+			t.Errorf("output text mismatch: got %q, want %q", out.Text, "legacy output")
+		}
+		if len(out.ToolCalls) != 0 {
+			t.Errorf("expected no reconstructed tool calls, got %+v", out.ToolCalls)
+		}
+	})
+
+	t.Run("key present but empty array", func(t *testing.T) {
+		out := reconstruct(t, `[{"task_id":"task-legacy","status":"completed","output":"legacy output","tool_calls":[]}]`)
+		if out.Text != "legacy output" {
+			t.Errorf("output text mismatch: got %q, want %q", out.Text, "legacy output")
+		}
+		if len(out.ToolCalls) != 0 {
+			t.Errorf("expected no reconstructed tool calls, got %+v", out.ToolCalls)
+		}
+	})
+
+	absent := reconstruct(t, `[{"task_id":"task-legacy","status":"completed","output":"legacy output"}]`)
+	empty := reconstruct(t, `[{"task_id":"task-legacy","status":"completed","output":"legacy output","tool_calls":[]}]`)
+	if absent.Text != empty.Text {
+		t.Errorf("key-absent and explicit-empty-array Text differ: %q vs %q", absent.Text, empty.Text)
+	}
+	if len(absent.ToolCalls) != len(empty.ToolCalls) {
+		t.Errorf("key-absent and explicit-empty-array ToolCalls length differ: %d vs %d", len(absent.ToolCalls), len(empty.ToolCalls))
+	}
+}
