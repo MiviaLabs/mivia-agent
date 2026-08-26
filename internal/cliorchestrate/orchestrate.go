@@ -209,10 +209,10 @@ func (t *inspectAgentTool) Name() string { return ToolInspectAgents }
 func (t *inspectAgentTool) Privileged()  {}
 
 func (t *inspectAgentTool) Description() string {
-	return "Inspect a previously spawned orchestration run. " +
+	return "Inspect a previously dispatched orchestration run. " +
 		"Returns the current run snapshot including status, task states, " +
 		"timestamps, and any output/error references. " +
-		"Use after spawn_agent to check progress or after join_run to see final state."
+		"Use after dispatch_tasks (with wait=\"none\" or wait=\"task\") to check progress or after join_run to see final state."
 }
 
 func (t *inspectAgentTool) Parameters() map[string]any {
@@ -221,7 +221,7 @@ func (t *inspectAgentTool) Parameters() map[string]any {
 		"properties": map[string]any{
 			"run_id": map[string]any{
 				"type":        "string",
-				"description": "Run ID returned by spawn_agent",
+				"description": "Run ID returned by dispatch_tasks",
 			},
 		},
 		"required":             []string{"run_id"},

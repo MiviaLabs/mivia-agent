@@ -194,7 +194,7 @@ func (t *joinRunTool) Parameters() map[string]any {
 		"properties": map[string]any{
 			"run_id": map[string]any{
 				"type":        "string",
-				"description": "Run ID returned by spawn_agent",
+				"description": "Run ID returned by dispatch_tasks",
 			},
 		},
 		"required":             []string{"run_id"},
@@ -273,7 +273,7 @@ func (t *cancelRunTool) Parameters() map[string]any {
 		"properties": map[string]any{
 			"run_id": map[string]any{
 				"type":        "string",
-				"description": "Run ID returned by spawn_agent",
+				"description": "Run ID returned by dispatch_tasks",
 			},
 		},
 		"required":             []string{"run_id"},
