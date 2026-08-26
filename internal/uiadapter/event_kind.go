@@ -22,7 +22,7 @@ import (
 //	EventSubagentStart    -> tool.start
 //	EventSubagentEnd      -> tool.end
 //	EventSubagentHeartbeat -> dropped
-//	EventSubagentDone     -> notice
+//	EventSubagentDone     -> notice + tool.output progress (when Origin.TaskID is set)
 //	EventThinking         -> reasoning.delta
 //	EventHook             -> hook
 //	EventCompaction       -> notice
@@ -127,6 +127,40 @@ func translateThinking(ev agent.Event) []uievent.Event {
 	return []uievent.Event{{Kind: uievent.KindReasoning, Body: uievent.ReasoningDeltaBody{
 		Text: ev.Content,
 	}}}
+}
+
+// translateSubagentDone maps EventSubagentDone to its notice advisory
+// line, plus - when Origin.TaskID identifies the producing subagent - a
+// tool.output progress update carrying a terminal Status for that
+// subagent's OWN row (keyed the same way conversation/events.go's
+// dispatchTaskIDs keys a dispatch_tasks fan-out's per-task rows).
+//
+// Without this, a subagent's row only ever left "running" via the
+// ENCLOSING tool call's own tool.end (observeToolEnd), and a dispatch_tasks
+// call blocks until every dispatched task finishes - so a batch of rows
+// all flipped to their terminal status at once, only after the slowest
+// subagent finished, however long the fastest one had already been done.
+//
+// Status is optimistic: this deferred emit site (see
+// subagents.MultiStepHandler.run) fires on every exit - success, error, or
+// panic - with no ok/err signal to report, so it always reports
+// "completed". The authoritative ok/failed status still lands moments
+// later from the enclosing call's own tool.end / per-task JSON result and
+// overwrites this unconditionally (panel.setAgentStatus /
+// observeAgentGroupEnd), so the optimism never survives past that
+// settlement - it only closes the live gap before it.
+func translateSubagentDone(ev agent.Event) []uievent.Event {
+	out := notice(subagentDoneText(ev))
+	if ev.Origin.TaskID == "" {
+		return out
+	}
+	return append(out, uievent.Event{
+		Kind: uievent.KindToolOutput,
+		Body: uievent.ToolOutputBody{
+			ToolCallID: ev.Origin.TaskID,
+			Progress:   &uievent.Progress{Status: "completed"},
+		},
+	})
 }
 
 // subagentDoneText picks the most informative label available on the

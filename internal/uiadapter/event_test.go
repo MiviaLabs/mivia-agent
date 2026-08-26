@@ -328,12 +328,12 @@ func TestTranslateEvent_NoticeMetrics(t *testing.T) {
 	})
 }
 
-// TestTranslateEvent_Subagent covers the subagent lifecycle kinds.
-// EventSubagentStart/End reuse the tool.start/tool.end body shape so the
-// UI shows the row alongside other tool calls (attribution rides on the
-// input Origin); EventSubagentHeartbeat is dropped because subagent
-// progress rides Progress on tool.output later; EventSubagentDone is a
-// notice carrying the most informative label from Origin.
+// TestTranslateEvent_Subagent covers the subagent start/end/heartbeat
+// kinds. EventSubagentStart/End reuse the tool.start/tool.end body shape
+// so the UI shows the row alongside other tool calls (attribution rides
+// on the input Origin); EventSubagentHeartbeat is dropped because
+// subagent progress rides Progress on tool.output later. EventSubagentDone
+// has its own test below.
 func TestTranslateEvent_Subagent(t *testing.T) {
 	t.Parallel()
 	runMappingCases(t, []mappingCase{
@@ -374,6 +374,16 @@ func TestTranslateEvent_Subagent(t *testing.T) {
 			ev:   agent.Event{Kind: agent.EventSubagentHeartbeat, Detail: "elapsed=30s steps=2"},
 			want: nil,
 		},
+	})
+}
+
+// TestTranslateEvent_SubagentDone covers EventSubagentDone: a notice
+// carrying the most informative label from Origin, plus (when
+// Origin.TaskID is set) a tool.output progress update that closes out
+// that subagent's own sidebar row live - see translateSubagentDone.
+func TestTranslateEvent_SubagentDone(t *testing.T) {
+	t.Parallel()
+	runMappingCases(t, []mappingCase{
 		{
 			name: "subagent_done_carries_task_description",
 			ev: agent.Event{
@@ -383,10 +393,19 @@ func TestTranslateEvent_Subagent(t *testing.T) {
 					TaskDescription: "audit the diff",
 				},
 			},
-			want: []uievent.Event{{
-				Kind: uievent.KindNotice,
-				Body: uievent.NoticeBody{Text: "subagent done: audit the diff"},
-			}},
+			want: []uievent.Event{
+				{
+					Kind: uievent.KindNotice,
+					Body: uievent.NoticeBody{Text: "subagent done: audit the diff"},
+				},
+				{
+					Kind: uievent.KindToolOutput,
+					Body: uievent.ToolOutputBody{
+						ToolCallID: "wft-1",
+						Progress:   &uievent.Progress{Status: "completed"},
+					},
+				},
+			},
 		},
 		{
 			name: "subagent_done_falls_back_to_agent",
@@ -394,13 +413,22 @@ func TestTranslateEvent_Subagent(t *testing.T) {
 				Kind:   agent.EventSubagentDone,
 				Origin: agent.EventOrigin{TaskID: "wft-1", Agent: "audit"},
 			},
-			want: []uievent.Event{{
-				Kind: uievent.KindNotice,
-				Body: uievent.NoticeBody{Text: "subagent done: audit"},
-			}},
+			want: []uievent.Event{
+				{
+					Kind: uievent.KindNotice,
+					Body: uievent.NoticeBody{Text: "subagent done: audit"},
+				},
+				{
+					Kind: uievent.KindToolOutput,
+					Body: uievent.ToolOutputBody{
+						ToolCallID: "wft-1",
+						Progress:   &uievent.Progress{Status: "completed"},
+					},
+				},
+			},
 		},
 		{
-			name: "subagent_done_with_no_origin_bare_text",
+			name: "subagent_done_with_no_origin_bare_text_and_no_progress",
 			ev:   agent.Event{Kind: agent.EventSubagentDone},
 			want: []uievent.Event{{
 				Kind: uievent.KindNotice,
