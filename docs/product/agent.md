@@ -125,7 +125,7 @@ skills = ["bug-audit", "verify-change", "architecture-review"]
 - Skill names are validated against the loaded skill catalog.
 - Workspace agent files always load. The user-owned `load_workspace_config` gate defaults to enabled. It controls only workspace prompt and project-skill surfaces. Set it to `false` to exclude project skills and workspace `[chat]`/`[subagents]` prompts from runtime activation.
 
-Every `dispatch_tasks` and `spawn_agent` task selects a required named `agent` and an optional separate `skill`. mivia rejects the call if that agent's tool list does not allow the skill. Nested agents cannot dispatch tasks; extra tools are removed. See [Skill System Architecture](../architecture/skills.md#agent-skill-binding).
+Every `dispatch_tasks` and `spawn_agent` task may select a named `agent` and an optional separate `skill`. Omitting `agent` runs the task as a bare one-shot LLM call on the caller's own model, with no tools; setting `skill` without `agent` is rejected. mivia rejects the call if a selected agent's tool list does not allow the skill. Nested agents cannot dispatch tasks; extra tools are removed. See [Skill System Architecture](../architecture/skills.md#agent-skill-binding).
 
 The task agent setting is separate from direct user-invoked skill slash handlers and prompt turns.
 
@@ -170,7 +170,7 @@ Look at the arrows out of `spawn_agent`. One run can hold many tasks. `join_run`
 | `join_run` | Block until a run completes; returns per-task results |
 | `cancel_run` | Cancel a running orchestration run, in two phases |
 | `delegate` | One sub-agent task, one-shot or multi-step with full tool access |
-| `dispatch_tasks` | Parallel sub-tasks with optional dependencies; always returns one result per task |
+| `dispatch_tasks` | Parallel sub-tasks with optional dependencies. Supports `idempotency_key`, `wait` (default `run`), and `wait_task_id`; with the default `wait=run` it blocks for the whole batch and returns one result per task |
 
 The root agent's workspace-tool allowlist is not the complete permission model. Root coordination and run-record tools remain available by design. Spawned instances lose delegation tools. Coordination tools are removed from nested agents. `run_command` has a separate program and environment allowlist. Naming it in an agent file does not authorize arbitrary process execution.
 
@@ -185,7 +185,7 @@ Tasks can declare `depends_on` for dependency ordering. The scheduler:
 
 #### Idempotency
 
-Pass `idempotency_key` to `spawn_agent` to make the call repeatable without side effects:
+Pass `idempotency_key` to `spawn_agent` or `dispatch_tasks` to make the call repeatable without side effects:
 
 - A key applies only to the same caller. Another caller using the same key starts a new run.
 - The same caller and identical work reuse a completed run's results or an in-flight run's handle.
@@ -195,7 +195,7 @@ Pass `idempotency_key` to `spawn_agent` to make the call repeatable without side
 
 Orchestration returns one result per task. Each result has its own status: `completed`, `failed`, `timed_out`, `canceled`, or `blocked`. One task failing or hanging never costs you the others.
 
-`spawn_agent` (`wait=run`) and `join_run` also carry a `run_error` field for a problem with the run itself. `dispatch_tasks` returns the per-task array only.
+`spawn_agent`, `join_run`, and `dispatch_tasks` called with `wait` set to `none` or `task` return the `run_id`/`task_results` envelope, which carries a `run_error` field for a problem with the run itself. `dispatch_tasks` with the default `wait=run` returns the bare per-task array only, with no `run_error` field.
 
 If the call's context expires before the run resolves, the results are read back from the recorded execution history. The run is not cancelled. It keeps going and stays reachable through `inspect_agents` and `join_run` on its `run_id`.
 
