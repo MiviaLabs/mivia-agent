@@ -546,6 +546,7 @@ func dispatcherOptsForSurface(sess *chat.Session, res *config.Resolved, state *A
 		CompleterFactory:          NewProviderCompleterFactory(res),
 		Config:                    cfg,
 		ToolResultCapBytes:        sess.MaxToolResultChars,
+		ToolRunTimeout:            sess.ToolRunTimeout,
 		BatchResultBudgetBytes:    sess.BatchResultBudgetBytes,
 		RefOnlyTools:              sess.RefOnlyTools,
 		WorkspaceRoot:             root,

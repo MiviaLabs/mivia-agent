@@ -107,6 +107,11 @@ type Session struct {
 	// Long tools (run_command, dispatch_tasks, delegate) still extend via
 	// Capability.Timeout regardless of this value.
 	ToolTimeout time.Duration
+	// ToolRunTimeout is the [tools] tool_run_timeout_seconds knob: the SDK
+	// tool-registry's registry-wide run backstop for tools with no declared
+	// Capability.Timeout. <= 0 (the default) means no registry-wide cap
+	// (mapped to the SDK's TimeoutNone); see agent.Options.ToolRunTimeout.
+	ToolRunTimeout time.Duration
 	// SessionDir is the directory where sessions are persisted
 	// (e.g., <workspace>/.mivia/sessions/). When set, enables
 	// save/load/list/delete operations and auto-save on exit.
@@ -430,6 +435,7 @@ func (s *Session) buildAgentTurnOptions(snapshot agentTurnSnapshot, userText str
 		RemainderSpool:         snapshot.remainderSpool,
 		RequestTimeout:         DefaultRequestTimeout,
 		ToolTimeout:            snapshot.toolTimeout,
+		ToolRunTimeout:         snapshot.toolRunTimeout,
 		ParentID:               "session",
 		TurnID:                 fmt.Sprintf("turn:%d", snapshot.myTurn), SessionID: snapshot.sessionID,
 		ApprovalGate:     snapshot.approvalGate,

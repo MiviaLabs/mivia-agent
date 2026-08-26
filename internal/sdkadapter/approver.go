@@ -51,11 +51,20 @@ type approvalGatedToolAdapter struct {
 	getCapabilities func(json.RawMessage) tools.Capability
 }
 
-// Compile-time assertions: the adapter satisfies both SDK interfaces.
+// Compile-time assertions: the adapter satisfies the SDK interfaces.
 var _ sdktools.Tool = (*approvalGatedToolAdapter)(nil)
 var _ sdktools.SchemaTool = (*approvalGatedToolAdapter)(nil)
+var _ sdktools.ProfiledTool = (*approvalGatedToolAdapter)(nil)
 
 func (a *approvalGatedToolAdapter) Name() string { return a.cliName }
+
+// ExecutionProfile forwards the inner tool's profile so the SDK's
+// run-timeout resolver, which consults only the outermost registered
+// value, still sees the CLI tool's declared Capability.Timeout through
+// the approval layer.
+func (a *approvalGatedToolAdapter) ExecutionProfile() sdktools.ExecutionProfile {
+	return sdktools.ExecutionProfileOf(a.inner)
+}
 
 // ParameterSchema forwards to the inner schema-publishing tool when
 // the underlying adapter is a SchemaTool; the SDK's Definitions helper

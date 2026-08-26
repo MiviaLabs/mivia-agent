@@ -112,8 +112,16 @@ type turnShapeWrapper struct {
 
 var _ sdktools.Tool = (*turnShapeWrapper)(nil)
 var _ sdktools.SchemaTool = (*turnShapeWrapper)(nil)
+var _ sdktools.ProfiledTool = (*turnShapeWrapper)(nil)
 
 func (w *turnShapeWrapper) Name() string { return w.inner.Name() }
+
+// ExecutionProfile forwards the inner tool's profile: the SDK's
+// run-timeout resolver consults only the outermost registered value,
+// so every shim layer forwards explicitly (see dispatcherShim).
+func (w *turnShapeWrapper) ExecutionProfile() sdktools.ExecutionProfile {
+	return sdktools.ExecutionProfileOf(w.inner)
+}
 
 func (w *turnShapeWrapper) ParameterSchema() []byte {
 	if st, ok := w.inner.(sdktools.SchemaTool); ok {

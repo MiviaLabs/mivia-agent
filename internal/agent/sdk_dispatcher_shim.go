@@ -231,8 +231,19 @@ type dispatcherShim struct {
 
 var _ sdktools.Tool = (*dispatcherShim)(nil)
 var _ sdktools.SchemaTool = (*dispatcherShim)(nil)
+var _ sdktools.ProfiledTool = (*dispatcherShim)(nil)
 
 func (d *dispatcherShim) Name() string { return d.inner.Name() }
+
+// ExecutionProfile forwards the inner adapter's profile (the
+// sdkToolAdapter's CLI Capability bridge). The SDK's run-timeout
+// resolver consults only the OUTERMOST registered value and Go
+// interface wrappers silently strip optional interfaces, so every
+// shim layer forwards explicitly; without this the SDK backstop
+// would cap a 12h-budget tool at its own registry default.
+func (d *dispatcherShim) ExecutionProfile() sdktools.ExecutionProfile {
+	return sdktools.ExecutionProfileOf(d.inner)
+}
 
 // ParameterSchema and DecodeArguments delegate to the inner tool: the
 // SDK's Definitions skips tools that do not implement SchemaTool, so

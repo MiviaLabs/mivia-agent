@@ -99,6 +99,7 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 		MCP:                       cliagents.SessionMCPConfig(routing.Resolved),
 		EnsureMCPTools:            cliagents.EnsureMCPServerTools(surface.authority, mcpManager),
 		ToolResultCapBytes:        sess.MaxToolResultChars,
+		ToolRunTimeout:            sess.ToolRunTimeout,
 		BatchResultBudgetBytes:    sess.BatchResultBudgetBytes,
 		RefOnlyTools:              sess.RefOnlyTools,
 		WorkspaceRoot:             root,

@@ -138,6 +138,9 @@ func NewSession(res *config.Resolved, c provider.Completer) *Session {
 		// 0 = uncapped; config.Load already normalized negatives and enforced
 		// the 1024-byte floor for positive values.
 		MaxToolResultChars: res.Tools.MaxToolResultBytes,
+		// 0 = no registry-wide SDK run backstop; config.Load already
+		// normalized negatives to 0.
+		ToolRunTimeout: time.Duration(res.Tools.ToolRunTimeoutSec) * time.Second,
 		// 0 = off; config.Load already normalized negatives to the derived
 		// sentinel and rejected positive values under the degrade floor.
 		BatchResultBudgetBytes: batchResultBudget(res),

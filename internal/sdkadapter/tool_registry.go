@@ -102,8 +102,18 @@ type admissionCheckedToolAdapter struct {
 
 var _ sdktools.Tool = (*admissionCheckedToolAdapter)(nil)
 var _ sdktools.SchemaTool = (*admissionCheckedToolAdapter)(nil)
+var _ sdktools.ProfiledTool = (*admissionCheckedToolAdapter)(nil)
 
 func (a *admissionCheckedToolAdapter) Name() string { return a.cliName }
+
+// ExecutionProfile forwards the inner tool's profile. The SDK's
+// run-timeout resolver consults only the OUTERMOST registered value,
+// and Go interface wrappers silently strip optional interfaces, so
+// every wrapper layer forwards explicitly; a profile-less inner yields
+// the zero profile ("undeclared": the registry default applies).
+func (a *admissionCheckedToolAdapter) ExecutionProfile() sdktools.ExecutionProfile {
+	return sdktools.ExecutionProfileOf(a.inner)
+}
 
 func (a *admissionCheckedToolAdapter) Run(ctx context.Context, in sdktools.InOut) (sdktools.Out, error) {
 	name := a.cliName
@@ -198,14 +208,17 @@ func WrapRegistryWithAdmission(sdkReg *sdktools.Registry, cliReg *tools.Registry
 // unadmitted) run first; if those pass, the approval gate runs
 // before the inner CLI tool. Layering order matters - a staged
 // tool never reaches the approval gate.
-func ConvertToolRegistryWithAdmission(cliReg *tools.Registry, pred AdmissionPredicates) (*sdktools.Registry, error) {
+// regOpts (for example sdktools.WithDefaultRunTimeout) are forwarded
+// verbatim to the SDK's New, so the registry-wide run-timeout backstop
+// is the caller's choice rather than the SDK's hardcoded default.
+func ConvertToolRegistryWithAdmission(cliReg *tools.Registry, pred AdmissionPredicates, regOpts ...sdktools.Option) (*sdktools.Registry, error) {
 	if cliReg == nil {
 		return nil, nil
 	}
 	if pred.StagedMessage == nil && pred.UnadmittedHandler == nil && pred.ApprovalGate == nil {
-		return ConvertToolRegistry(cliReg)
+		return ConvertToolRegistry(cliReg, regOpts...)
 	}
-	sdkReg := sdktools.New()
+	sdkReg := sdktools.New(regOpts...)
 	for _, t := range cliReg.List() {
 		inner, err := newSDKToolAdapter(t)
 		if err != nil {
@@ -228,9 +241,26 @@ type sdkToolAdapter struct {
 	schema []byte
 }
 
-// Compile-time assertions: the adapter satisfies both SDK interfaces.
+// Compile-time assertions: the adapter satisfies the SDK interfaces.
 var _ sdktools.Tool = (*sdkToolAdapter)(nil)
 var _ sdktools.SchemaTool = (*sdkToolAdapter)(nil)
+var _ sdktools.ProfiledTool = (*sdkToolAdapter)(nil)
+
+// ExecutionProfile publishes the CLI tool's Capability as the SDK
+// ExecutionProfile, so the SDK's run-timeout backstop honors a
+// declared Capability.Timeout (dispatch_tasks' 12h orchestration
+// budget) instead of killing the run at its own registry default. A
+// CLI tool without a Capability yields the zero profile, whose zero
+// Timeout means "undeclared" in the SDK's resolution table: the
+// registry-wide default (from CLI config) applies. The nil args
+// mirror capableToolBridge: the SDK interface is static, so the
+// bridge reads the zero-payload capability shape.
+func (s *sdkToolAdapter) ExecutionProfile() sdktools.ExecutionProfile {
+	if capable, ok := s.cli.(tools.CapableTool); ok {
+		return CapabilityToExecutionProfile(capable.Capability(nil))
+	}
+	return sdktools.ExecutionProfile{}
+}
 
 // newSDKToolAdapter wraps one CLI tool, publishing its parameter
 // schema. A Parameters() map that fails to marshal is a programmer
@@ -314,11 +344,18 @@ func (s *sdkToolAdapter) DecodeArguments(raw []byte) (sdktools.InOut, error) {
 // ErrNoTools for the nil registry, which names the real problem. Add
 // errors (blank name, duplicate name) wrap with the offending tool's
 // name so the operator can find the duplicate.
-func ConvertToolRegistry(cliReg *tools.Registry) (*sdktools.Registry, error) {
+//
+// regOpts (for example sdktools.WithDefaultRunTimeout) are forwarded
+// verbatim to the SDK's New. Without an explicit run-timeout option the
+// SDK bounds every no-profile tool at its hardcoded DefaultRunTimeout
+// (10 minutes); callers that arm their own per-call deadlines pass
+// sdktools.WithDefaultRunTimeout(sdktools.TimeoutNone) to keep the SDK
+// backstop from being tighter than their declared budgets.
+func ConvertToolRegistry(cliReg *tools.Registry, regOpts ...sdktools.Option) (*sdktools.Registry, error) {
 	if cliReg == nil {
 		return nil, nil
 	}
-	sdkReg := sdktools.New()
+	sdkReg := sdktools.New(regOpts...)
 	for _, t := range cliReg.List() {
 		wrapped, err := newSDKToolAdapter(t)
 		if err != nil {

@@ -118,12 +118,20 @@ type Options struct {
 	MaxToolCallsPerBatch int
 	MaxConcurrentTools   int
 	ToolTimeout          time.Duration
-	RequestTimeout       time.Duration
-	ParentID             string
-	TurnID               string
-	SessionID            string
-	Role                 string
-	Depth                int
+	// ToolRunTimeout is the SDK tool-registry's registry-wide run-timeout
+	// backstop for tools that declare no Capability.Timeout (the [tools]
+	// tool_run_timeout_seconds knob). <= 0 (the default) maps to the SDK's
+	// TimeoutNone: no registry-wide cap, because the dispatcher shim
+	// already arms every call's Capability.Timeout / ToolTimeout as a real
+	// deadline and the SDK backstop must never be tighter than those
+	// declared budgets. Positive is the literal bound.
+	ToolRunTimeout time.Duration
+	RequestTimeout time.Duration
+	ParentID       string
+	TurnID         string
+	SessionID      string
+	Role           string
+	Depth          int
 	// Step is the loop's 1-based model-step index, stamped per step on the
 	// loop's own Options copy before tool calls are dispatched (plan:
 	// step-scoped tool dedup). 0 means unset/legacy.

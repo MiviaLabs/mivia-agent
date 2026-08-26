@@ -3,6 +3,7 @@ package clichat
 import (
 	"fmt"
 	"os"
+	"time"
 
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
@@ -26,13 +27,18 @@ type resultBudgets struct {
 	perBatch int
 	// refOnlyTools names tools whose results are always spooled as refs.
 	refOnlyTools []string
+	// toolRunTimeout is the [tools] tool_run_timeout_seconds knob: the SDK
+	// registry-wide run backstop for tools with no declared
+	// Capability.Timeout. It travels with the budgets because it bounds the
+	// same nested loops. <= 0 = no registry-wide cap.
+	toolRunTimeout time.Duration
 }
 
 // sessionResultBudgets extracts the result budget values from opts.
 // Replaces the former (o SessionDispatcherOpts) resultBudgets() method,
 // which cannot be defined here since SessionDispatcherOpts is in cliagents.
 func sessionResultBudgets(opts SessionDispatcherOpts) resultBudgets {
-	return resultBudgets{perCall: opts.ToolResultCapBytes, perBatch: opts.BatchResultBudgetBytes, refOnlyTools: opts.RefOnlyTools}
+	return resultBudgets{perCall: opts.ToolResultCapBytes, perBatch: opts.BatchResultBudgetBytes, refOnlyTools: opts.RefOnlyTools, toolRunTimeout: opts.ToolRunTimeout}
 }
 
 // selectableModel wraps cliagents.SelectableModel for local use.

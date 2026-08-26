@@ -69,6 +69,11 @@ type MultiStepHandler struct {
 	DisableProviderReplay bool
 	// ToolTimeout is the per-tool-call timeout.
 	ToolTimeout time.Duration
+	// ToolRunTimeout is the [tools] tool_run_timeout_seconds knob: the SDK
+	// tool-registry's registry-wide run backstop for tools with no declared
+	// Capability.Timeout. <= 0 (the default) means no registry-wide cap
+	// (mapped to the SDK's TimeoutNone); see agent.Options.ToolRunTimeout.
+	ToolRunTimeout time.Duration
 	// RequestTimeout is the per-LLM-request timeout for each turn inside the
 	// sub-agent. When zero, the agent loop falls back to the parent context
 	// deadline, which may be hours for a long-running root session. A hung LLM
@@ -252,6 +257,7 @@ func (h *MultiStepHandler) loopOptions(scoped *scopedLoop, steps int, maxTokens 
 		RefOnlyTools:           h.RefOnlyTools,
 		RemainderSpool:         h.RemainderSpool,
 		ToolTimeout:            toolTimeout,
+		ToolRunTimeout:         h.ToolRunTimeout,
 		RequestTimeout:         h.RequestTimeout,
 		Dispatcher:             scoped.dispatcher,
 		ParentID:               req.ID,

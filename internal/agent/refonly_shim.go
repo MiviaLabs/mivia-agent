@@ -58,6 +58,15 @@ type refOnlyShim struct {
 }
 
 var _ sdktools.Tool = (*refOnlyShim)(nil)
+var _ sdktools.ProfiledTool = (*refOnlyShim)(nil)
+
+// ExecutionProfile forwards the inner tool's profile: the SDK's
+// run-timeout resolver consults only the outermost registered value,
+// so every shim layer forwards explicitly (see dispatcherShim).
+func (s *refOnlyShim) ExecutionProfile() sdktools.ExecutionProfile {
+	return sdktools.ExecutionProfileOf(s.inner)
+}
+
 var _ sdktools.SchemaTool = (*refOnlyShim)(nil)
 
 func (r *refOnlyShim) Name() string { return r.inner.Name() }

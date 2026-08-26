@@ -34,6 +34,19 @@ type ToolsConfig struct {
 	EnvAllowKeywordBlocklist []string `toml:"env_allow_keyword_blocklist"`
 	// RunTimeoutSec is the default timeout for run_command (seconds).
 	RunTimeoutSec int `toml:"run_timeout_seconds"`
+	// ToolRunTimeoutSec is the registry-wide default run timeout (seconds)
+	// the SDK tool-registry backstop applies to tools that declare no
+	// Capability.Timeout. Positive = that bound. 0 (default) or negative =
+	// no registry-wide cap (the agent layer maps it to the SDK's
+	// TimeoutNone). Uncapped is the correct default: the CLI's own
+	// dispatcher already arms every tool call's Capability.Timeout (or the
+	// [subagents] default_timeout_seconds fallback) as a real context
+	// deadline, so the SDK backstop is a second, redundant enforcement
+	// layer that must never be tighter than the CLI's declared budgets
+	// unless the operator explicitly asks for it. Without this mapping the
+	// SDK's hardcoded 10-minute default silently killed long-budget tools
+	// (dispatch_tasks' 12h orchestration window).
+	ToolRunTimeoutSec int `toml:"tool_run_timeout_seconds"`
 	// MaxReadBytes caps read_file output (bytes).
 	MaxReadBytes int `toml:"max_read_bytes"`
 	// MaxEditFileBytes caps the file size editable in place by search_replace and multi_edit (bytes).
@@ -309,6 +322,11 @@ func resolveToolsConfig(tc ToolsConfig) ToolsConfig {
 	// consumer can treat <=0 uniformly as "no cap".
 	if tc.MaxToolResultBytes < 0 {
 		tc.MaxToolResultBytes = 0
+	}
+	// Same rule for the SDK registry run backstop: 0 means no registry-wide
+	// cap, and an explicit negative is the same uncapped intent.
+	if tc.ToolRunTimeoutSec < 0 {
+		tc.ToolRunTimeoutSec = 0
 	}
 	// Absent resolves to derived (-1) so an operator who configures nothing
 	// gets the derived batch budget; explicit 0 is off; negative is derived;

@@ -171,7 +171,16 @@ func newSDKTurnCompleter(l *Loop, opts Options, turn *sdkTurnState, clampedMaxTo
 // contract and shares the turn state (shaping counter, live
 // dispatcher/spool).
 func buildSDKToolRegistry(l *Loop, opts Options, cliReg *tools.Registry, turn *sdkTurnState) (*sdktools.Registry, error) {
-	sdkReg, err := sdkadapter.ConvertToolRegistry(cliReg)
+	// Registry-wide run backstop: a positive Options.ToolRunTimeout is
+	// the configured bound for tools with no declared Capability.Timeout;
+	// <= 0 maps to TimeoutNone (no cap) so the SDK's hardcoded 10-minute
+	// DefaultRunTimeout can never undercut the CLI dispatcher's own
+	// per-call deadlines (armDispatcherTimeout).
+	runTimeout := sdktools.TimeoutNone
+	if opts.ToolRunTimeout > 0 {
+		runTimeout = opts.ToolRunTimeout
+	}
+	sdkReg, err := sdkadapter.ConvertToolRegistry(cliReg, sdktools.WithDefaultRunTimeout(runTimeout))
 	if err != nil {
 		return nil, err
 	}
@@ -313,7 +322,7 @@ func rejectUnsupportedSDKBatches(opts Options) error {
 	// and MaxContextTokens, OnEvent, EventBus, UsageWriter, FinalWriter,
 	// RequireFinalText, SummaryConfig.Summarizer, StagedToolMessage,
 	// UnadmittedToolHandler, ApprovalGate, ApprovalStanding, Dispatcher,
-	// MaxToolResultChars, ToolTimeout, Reasoning, MaxTokens, Temperature,
+	// MaxToolResultChars, ToolTimeout, ToolRunTimeout, Reasoning, MaxTokens, Temperature,
 	// RequestTimeout, and DisableProviderReplay.
 	// See docs/development/sdk-backend-field-mapping.md §1 for the full carrier table.
 	return nil

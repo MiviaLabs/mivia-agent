@@ -1,6 +1,8 @@
 package cliagents
 
 import (
+	"time"
+
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -59,6 +61,11 @@ type SessionDispatcherOpts struct {
 	// The session owns the manager and registry that this callback uses.
 	EnsureMCPTools     func([]string) error
 	ToolResultCapBytes int
+	// ToolRunTimeout is the [tools] tool_run_timeout_seconds knob applied to
+	// every nested sub-agent loop's SDK tool registry: the registry-wide run
+	// backstop for tools with no declared Capability.Timeout. <= 0 = no
+	// registry-wide cap (the SDK's TimeoutNone).
+	ToolRunTimeout time.Duration
 	// BatchResultBudgetBytes is the [tools] batch_result_budget_bytes knob,
 	// applied to every nested sub-agent loop the same way it applies to the
 	// session loop. 0 = off.
