@@ -16,6 +16,10 @@ mivia reads, searches, and edits files in your project. It runs commands, such a
 
 Your files stay on your machine by default. mivia sends prompts and selected context to the AI provider you configure. Web search, configured MCP servers, lifecycle hooks, and workflow delivery can also contact external services or run configured local programs. Review those settings before use. See [Integrations](docs/product/integrations.md) for the full list.
 
+<p align="center">
+  <img src="docs/mivia-agent-showcase.gif" alt="mivia TUI showcase" width="100%">
+</p>
+
 ## Quick start
 
 Requires Go 1.25+ to build from source, or use a prebuilt binary. You also need an API key for a supported provider. See [Supported providers](#supported-providers) below.
@@ -125,10 +129,6 @@ Default provider: OpenRouter, model `openai/gpt-5.6-luna`; switch with
 
 Full dev setup (hooks, tests, verify gates): see [Contributing](docs/contributing.md). Provider and config options: see [Configuration](docs/product/config.md).
 Successful workflow runs stop at `delivery_pending` until you pass the explicit `--allow-publish` flag. See the [Workflow guide](docs/product/workflows-guide.md).
-
-<p align="center">
-  <img src="docs/mivia-agent-showcase.gif" alt="mivia TUI showcase" width="100%">
-</p>
 
 ## What it does
 
