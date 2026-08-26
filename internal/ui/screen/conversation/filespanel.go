@@ -265,11 +265,22 @@ func (p panel) selectedAgent() (subagentRow, bool) {
 }
 
 // observeAgentStart registers an agent or delegation immediately upon launch.
+//
+// A start event also resets a row stuck in a TERMINAL status: LoadHistory
+// seeds resumed sessions' rows "completed", and models reuse short task
+// ids ("task-1", "audit") across dispatches, so a terminal row plus a new
+// start means a NEW task under an old id - not history. Leaving it
+// terminal made isSubagentHistory hide the live thread's composer and
+// threadDialogKey swallow every key (a frozen read-only dialog). Start
+// events carry no group/call identity that could distinguish a genuinely
+// out-of-order start arriving after its own dispatch's end; resetting is
+// the lesser evil - worst case a finished row briefly shows running until
+// its end event re-terminates it.
 func (p *panel) observeAgentStart(id, name string) {
 	p.agents = slices.Clone(p.agents)
 	for i, a := range p.agents {
 		if a.ID == id {
-			if a.Status == "" || a.Status == "pending" {
+			if a.Status == "" || a.Status == "pending" || isTerminalStatus(a.Status) {
 				p.agents[i].Status = "running"
 			}
 			p.rebindIfOpen()

@@ -934,3 +934,39 @@ func TestScrollPanelInSplitMode(t *testing.T) {
 		t.Errorf("expected offset > 0 after scrolling down, got %d", scr.panel.offset)
 	}
 }
+
+// TestObserveAgentStart_ResetsStaleTerminalRow guards a reused task id: a
+// resumed session's LoadHistory seeds rows "completed", and models reuse
+// short ids ("task-1", "audit") across dispatches. A NEW agent-start on an
+// id whose row is stuck terminal must reset it to running - otherwise
+// isSubagentHistory misclassifies the live thread as history, openThread
+// hides the composer, and threadDialogKey swallows every key: a frozen
+// read-only dialog over a live subagent.
+func TestObserveAgentStart_ResetsStaleTerminalRow(t *testing.T) {
+	var p panel
+	p.observeAgentHistory("task-1", "completed")
+	p.observeAgentStart("task-1", "invoke_subagent")
+	if len(p.agents) != 1 {
+		t.Fatalf("expected 1 agent row, got %d", len(p.agents))
+	}
+	if got := p.agents[0].Status; got != "running" {
+		t.Errorf("expected the reused-id row reset to 'running', got %q", got)
+	}
+
+	s := Screen{}
+	s.panel = p
+	if s.isSubagentHistory("task-1") {
+		t.Errorf("expected isSubagentHistory=false after a fresh agent start, got true")
+	}
+}
+
+// TestObserveAgentStart_DoesNotDisturbRunningRow pins the counterpart: a
+// duplicate start on an already-running row stays running (idempotent).
+func TestObserveAgentStart_DoesNotDisturbRunningRow(t *testing.T) {
+	var p panel
+	p.observeAgentStart("task-1", "invoke_subagent")
+	p.observeAgentStart("task-1", "invoke_subagent")
+	if len(p.agents) != 1 || p.agents[0].Status != "running" {
+		t.Errorf("expected one running row, got %+v", p.agents)
+	}
+}
