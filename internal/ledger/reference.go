@@ -13,9 +13,10 @@ import "github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 
 // Reference kinds for content-addressed task results and agent messages.
 const (
-	RefKindOutput  = sdkadapter.KindOutput
-	RefKindError   = sdkadapter.KindError
-	RefKindMessage = sdkadapter.KindMessage
+	RefKindOutput    = sdkadapter.KindOutput
+	RefKindError     = sdkadapter.KindError
+	RefKindMessage   = sdkadapter.KindMessage
+	RefKindToolCalls = sdkadapter.KindToolCalls
 )
 
 // ErrMalformedReference reports a reference that is not in canonical form.

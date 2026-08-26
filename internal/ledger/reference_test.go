@@ -32,6 +32,9 @@ func TestLedgerReferenceKindsMatchCanonicalKinds(t *testing.T) {
 	if RefKindError != sdkadapter.KindError {
 		t.Fatalf("RefKindError = %q, want %q", RefKindError, sdkadapter.KindError)
 	}
+	if RefKindToolCalls != sdkadapter.KindToolCalls {
+		t.Fatalf("RefKindToolCalls = %q, want %q", RefKindToolCalls, sdkadapter.KindToolCalls)
+	}
 }
 
 // ErrMalformedReference must be the same sentinel the minter returns,

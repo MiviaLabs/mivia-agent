@@ -122,6 +122,12 @@ func TestKindConstantsMatchVocabulary(t *testing.T) {
 	if KindMessage != "message" {
 		t.Fatalf("KindMessage = %q, want %q", KindMessage, "message")
 	}
+	// KindToolCalls tags a subagent's recorded tool-call step trace
+	// (internal/ledger's TaskSnapshot.ToolCallsRef), the fourth kind of
+	// content-addressed reference the bridge mints and recognises.
+	if KindToolCalls != "tool_calls" {
+		t.Fatalf("KindToolCalls = %q, want %q", KindToolCalls, "tool_calls")
+	}
 }
 
 // TestMintCLIEmptyDataYieldsEmptyRef pins the empty-data contract the
@@ -154,7 +160,7 @@ func TestMintUnknownKindYieldsEmptyRef(t *testing.T) {
 // identically. This is the bridge's correctness contract: the same
 // data the model handed to Mint must round-trip through Parse.
 func TestParseAndMintRoundTripCLI(t *testing.T) {
-	for _, kind := range []string{KindOutput, KindError, KindMessage} {
+	for _, kind := range []string{KindOutput, KindError, KindMessage, KindToolCalls} {
 		data := []byte("payload for " + kind)
 		ref := Mint(kind, data)
 		if ref == "" {
@@ -228,7 +234,7 @@ func TestMintEmitsFullSHA256Digest(t *testing.T) {
 		"multi-byte UTF-8": []byte("héllo wörld — 你好"),
 		"binary":           {0x00, 0x01, 0xff, 0xfe, 0x80, 0x7f},
 	}
-	for _, kind := range []string{KindOutput, KindError, KindMessage} {
+	for _, kind := range []string{KindOutput, KindError, KindMessage, KindToolCalls} {
 		for name, data := range payloads {
 			sum := sha256.Sum256(data)
 			want := "ref:" + kind + ":" + hex.EncodeToString(sum[:])
