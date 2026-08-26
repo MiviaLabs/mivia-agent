@@ -66,10 +66,22 @@ func RunThroughCoordinator(ctx context.Context, d *runtime.Dispatcher, cfg confi
 	})
 	result, err := c.Join(ctx, handle)
 	if err != nil {
-		// The caller's context died before the run resolved. Join returns ctx.Err()
-		// and never sets a result, so reporting the error alone discards every task
-		// that had already finished - the loss INV-AG-21 forbids. The work is in the
-		// ledger, so read it back rather than throwing it away.
+		// The caller's context died before the run resolved. This is the
+		// SYNCHRONOUS (wait=run) path - the caller is blocked waiting for
+		// this exact run and has no other way to reach it - so treat the
+		// caller's cancellation as an implicit request to stop the run too.
+		// wait=none dispatches never reach this function: they return
+		// immediately after Spawn and are joined later, independently, via
+		// the join_run tool, so this cannot cancel a run the model
+		// deliberately detached. Fire-and-forget: the run's own graceful
+		// cancellation (the same path cancel_run uses) needs its own
+		// context, since ctx is already dead, and RunThroughCoordinator's
+		// caller has already given up waiting - it must not block on this.
+		go cancelOrphanedRun(c, handle)
+		// Join returns ctx.Err() and never sets a result, so reporting the
+		// error alone discards every task that had already finished - the
+		// loss INV-AG-21 forbids. The work is in the ledger, so read it
+		// back rather than throwing it away.
 		if salvaged := salvageUnjoinedRun(c, handle, err); salvaged != nil {
 			return salvaged.Snapshot, salvaged, nil
 		}
@@ -77,6 +89,26 @@ func RunThroughCoordinator(ctx context.Context, d *runtime.Dispatcher, cfg confi
 	}
 	return result.Snapshot, result, nil
 }
+
+// cancelOrphanedRun propagates a synchronous dispatch's caller-cancellation
+// into the run itself, through the same graceful path the cancel_run tool
+// uses (coordinator.Cancel: records cancel_requested, cancels the run's
+// pool context, and finalizes each task as canceled via CAS). Runs in its
+// own goroutine with its own bounded, Background()-rooted context, since
+// the caller's own context is already dead and RunThroughCoordinator has
+// already returned to a caller that stopped waiting.
+func cancelOrphanedRun(c coordinator.Coordinator, handle *coordinator.RunHandle) {
+	ctx, cancel := context.WithTimeout(context.Background(), orphanedRunCancelTimeout)
+	defer cancel()
+	_ = c.Cancel(ctx, handle)
+}
+
+// orphanedRunCancelTimeout bounds cancelOrphanedRun's own wait for the
+// run's graceful cancellation to settle. Generous: this runs detached from
+// any caller, so there is no latency budget to protect - only a ceiling so
+// a run stuck in a way even Cancel cannot resolve does not leak the
+// goroutine forever.
+const orphanedRunCancelTimeout = 30 * time.Second
 
 // ---------------------------------------------------------------------------
 // spawn and wait helpers
