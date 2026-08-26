@@ -150,6 +150,11 @@ func TestReadFileRejectsDirectory(t *testing.T) {
 	}
 }
 
+// TestReadFileTooLarge covers the one over-cap shape that still cannot be
+// served: a file that is a single line wider than the whole budget. There is
+// no narrower window to fall back to, so the refusal stands - but it must name
+// the escape hatch. Multi-line over-cap files paginate instead; see
+// TestReadFileLargeWithoutWindowPaginates.
 func TestReadFileTooLarge(t *testing.T) {
 	const limit = 1024
 	ws, reg := setupWSWithOpts(t, DefaultOptions{MaxReadBytes: limit})
@@ -159,10 +164,13 @@ func TestReadFileTooLarge(t *testing.T) {
 	}
 	_, err := reg.Execute(context.Background(), "read_file", json.RawMessage(`{"path":"big.txt"}`))
 	if err == nil {
-		t.Fatal("expected too large error")
+		t.Fatal("expected an unsplittable-line refusal")
 	}
-	if !strings.Contains(err.Error(), "too large") {
+	if !strings.Contains(err.Error(), "exceeds max read size") {
 		t.Fatalf("err=%v", err)
+	}
+	if !strings.Contains(err.Error(), "grep") {
+		t.Fatalf("refusal does not name the escape hatch: %v", err)
 	}
 
 	// Exactly at limit is allowed.
@@ -192,8 +200,9 @@ func TestReadFileExplicitMax256KiB(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(ws.Abs, "huge.txt"), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// One 256 KiB+1 line with no newline: unsplittable, so still a refusal.
 	_, err := reg.Execute(context.Background(), "read_file", json.RawMessage(`{"path":"huge.txt"}`))
-	if err == nil || !strings.Contains(err.Error(), "too large") {
+	if err == nil || !strings.Contains(err.Error(), "exceeds max read size") {
 		t.Fatalf("err=%v", err)
 	}
 }
@@ -232,10 +241,13 @@ func TestReadFileOffsetLimitWindow(t *testing.T) {
 	}
 }
 
-func TestReadFileLargeWithOffsetSucceeds(t *testing.T) {
+// TestReadFileLargeWithoutWindowPaginates pins the recovery contract for an
+// over-cap file the agent asked for whole: it gets the first page plus the
+// continuation offset, not a refusal. Refusing cost a round trip the agent
+// could only answer by re-calling with the offset this path supplies itself.
+func TestReadFileLargeWithoutWindowPaginates(t *testing.T) {
 	const limit = 100
 	ws, reg := setupWSWithOpts(t, DefaultOptions{MaxReadBytes: limit})
-	// File larger than maxBytes; full read fails, window succeeds.
 	lines := make([]string, 0, 50)
 	for i := 1; i <= 50; i++ {
 		lines = append(lines, fmt.Sprintf("line-%02d", i))
@@ -244,9 +256,18 @@ func TestReadFileLargeWithOffsetSucceeds(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(ws.Abs, "biglines.txt"), []byte(big), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := reg.Execute(context.Background(), "read_file", json.RawMessage(`{"path":"biglines.txt"}`))
-	if err == nil || !strings.Contains(err.Error(), "too large") {
-		t.Fatalf("expected too large without window, err=%v", err)
+	page, err := reg.Execute(context.Background(), "read_file", json.RawMessage(`{"path":"biglines.txt"}`))
+	if err != nil {
+		t.Fatalf("over-cap full read must paginate, not fail: %v", err)
+	}
+	if !strings.Contains(page, "line-01") {
+		t.Fatalf("first page missing the first line: %q", page)
+	}
+	if !strings.Contains(page, "truncated at max read size") || !strings.Contains(page, "offset=") {
+		t.Fatalf("first page does not name the continuation call: %q", page)
+	}
+	if strings.Contains(page, "line-50") {
+		t.Fatalf("first page was not bounded by the cap: %q", page)
 	}
 	out, err := reg.Execute(context.Background(), "read_file", json.RawMessage(`{"path":"biglines.txt","offset":1,"limit":3}`))
 	if err != nil {

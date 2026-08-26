@@ -80,10 +80,19 @@ func (t *readFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		return "", dropIfGone(abs, err)
 	}
 
-	// Full-file path: small files only.
+	// Full-file path: whole content when it fits the budget. An oversized
+	// file is paginated, not refused. The window path already emits an
+	// honest "lines X–Y of Z" header and a continuation offset, so the agent
+	// gets usable content plus the exact next call. Refusing instead cost a
+	// round trip the agent could only answer by re-calling with the offset
+	// and limit this branch can supply itself.
 	if in.Offset <= 1 && in.Limit <= 0 {
 		if t.maxBytes > 0 && st.Size() > int64(t.maxBytes) {
-			return "", fmt.Errorf("file too large (%d bytes; max %d). Re-call with offset and limit to read a line window", st.Size(), t.maxBytes)
+			out, err := t.readLineWindow(ctx, abs, 1, 0)
+			if err == nil {
+				refreshFileObservation(abs)
+			}
+			return out, dropIfGone(abs, err)
 		}
 		data, err := readFileWithContext(ctx, abs)
 		if err != nil {
@@ -216,7 +225,10 @@ func (t *readFileTool) formatWindow(lines []string, offset, totalLines int) (str
 		need := len(prefix) + len(line) + 1
 		if t.maxBytes > 0 && totalBytes+need > t.maxBytes {
 			if b.Len() == 0 {
-				return "", fmt.Errorf("line %d exceeds max read size (%d bytes)", num, t.maxBytes)
+				// A single line wider than the whole budget cannot be paged:
+				// there is no smaller window to fall back to. Name the escape
+				// hatch instead of just refusing.
+				return "", fmt.Errorf("line %d exceeds max read size (%d bytes); read a narrower window with limit, or search the file with grep", num, t.maxBytes)
 			}
 			lastNum := offset + formatted - 1
 			nextOffset := offset + formatted
