@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
@@ -36,6 +37,15 @@ func FormatToolOutputWithContext(t theme.Theme, tier theme.Tier, name string, ar
 		return summary, body, len(body) > 6
 	case isDispatchTool(lower):
 		summary, body := FormatDispatchTasksOutput(t, tier, output, width)
+		return summary, body, len(body) > 6
+	case isRunEventsTool(lower):
+		summary, body := FormatRunEventsOutput(t, tier, output, width)
+		return summary, body, len(body) > 6
+	case isOrchestrationRunTool(lower):
+		summary, body := FormatOrchestrationRunOutput(t, tier, output, width)
+		return summary, body, len(body) > 6
+	case isInspectRepositoryTool(lower):
+		summary, body := FormatInspectRepositoryOutput(t, tier, output, width)
 		return summary, body, len(body) > 6
 	case isDiagnosticsTool(lower):
 		body = FormatDiagnosticsOutput(t, tier, output, width)
@@ -79,6 +89,18 @@ func isLedgerTool(lower string) bool {
 
 func isDispatchTool(lower string) bool {
 	return lower == "dispatch_tasks"
+}
+
+func isRunEventsTool(lower string) bool {
+	return lower == "list_run_events"
+}
+
+func isOrchestrationRunTool(lower string) bool {
+	return lower == "inspect_agents" || lower == "spawn_agent" || lower == "join_run"
+}
+
+func isInspectRepositoryTool(lower string) bool {
+	return lower == "inspect_repository"
 }
 
 func isDiagnosticsTool(lower string) bool {
@@ -689,25 +711,48 @@ func FormatDispatchTasksOutput(t theme.Theme, tier theme.Tier, output string, wi
 		}
 	}
 	summary := fmt.Sprintf("%d tasks · %d completed, %d failed", len(tasks), ok, failed)
+	return summary, renderTaskResultRows(t, tier, tasks, width, maxDispatchTaskRows, "more tasks")
+}
 
-	success := Role(t, tier, theme.RoleSuccess)
-	danger := Role(t, tier, theme.RoleDanger)
+// renderTaskResultRows renders one line per task-result-shaped entry
+// (task_id, status, agent/elapsed if present, a synopsis/error snippet,
+// and a shortened output/error ref), capping at maxRows and collapsing the
+// rest into a "… N <tailNoun>" line. Shared by FormatDispatchTasksOutput
+// and the orchestration run formatter (inspect_agents/spawn_agent/
+// join_run), whose task_results entries use the same field names.
+// taskResultRowStatusIcon maps a task-result status to an icon/role. Beyond
+// dispatch_tasks' own completed/failed vocabulary, the orchestration family
+// (inspect_agents/spawn_agent/join_run) reuses this with ledger.TaskStatus*
+// values (running, blocked, timed_out, canceled, ...), so in-progress
+// states get a neutral warning marker instead of being lumped in with
+// failures.
+func taskResultRowStatusIcon(t theme.Theme, tier theme.Tier, status string) (string, lipgloss.Style) {
+	switch strings.ToLower(status) {
+	case "completed":
+		return "✔", Role(t, tier, theme.RoleSuccess)
+	case "failed", "timed_out", "canceled", "interrupted_unrecoverable":
+		return "✖", Role(t, tier, theme.RoleDanger)
+	case "running", "blocked", "pending", "queued", "retry_pending", "retry_queued", "cancel_requested":
+		return "⋯", Role(t, tier, theme.RoleWarning)
+	default:
+		return "✖", Role(t, tier, theme.RoleDanger)
+	}
+}
+
+func renderTaskResultRows(t theme.Theme, tier theme.Tier, tasks []dispatchTaskResultView, width, maxRows int, tailNoun string) []string {
 	subtle := Role(t, tier, theme.RoleFGSubtle)
 	fg := Role(t, tier, theme.RoleFG)
 
 	rows := tasks
 	var tail string
-	if len(rows) > maxDispatchTaskRows {
-		tail = fmt.Sprintf("… %d more tasks", len(rows)-maxDispatchTaskRows)
-		rows = rows[:maxDispatchTaskRows]
+	if len(rows) > maxRows {
+		tail = fmt.Sprintf("… %d %s", len(rows)-maxRows, tailNoun)
+		rows = rows[:maxRows]
 	}
 
 	var out []string
 	for _, task := range rows {
-		icon, iconRole := "✔", success
-		if !strings.EqualFold(task.Status, "completed") {
-			icon, iconRole = "✖", danger
-		}
+		icon, iconRole := taskResultRowStatusIcon(t, tier, task.Status)
 		line := iconRole.Render(icon) + " " + fg.Render(task.TaskID)
 		if task.Agent != "" {
 			line += subtle.Render(" agent=" + task.Agent)
@@ -732,5 +777,5 @@ func FormatDispatchTasksOutput(t theme.Theme, tier theme.Tier, output string, wi
 	if tail != "" {
 		out = append(out, subtle.Render(tail))
 	}
-	return summary, out
+	return out
 }
