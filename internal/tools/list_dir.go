@@ -103,7 +103,7 @@ func (t *listDirTool) Execute(ctx context.Context, args json.RawMessage) (string
 	// Depth-1 without sizes preserves the historical flat listing byte-for-byte
 	// when include_size is unset (golden invariant).
 	if in.Depth == 1 && !includeSize {
-		entries, err := os.ReadDir(abs)
+		entries, err := readDirWithContext(ctx, abs)
 		if err != nil {
 			return "", err
 		}
@@ -304,7 +304,7 @@ func (t *listDirTool) walkTree(ctx context.Context, st *treeWalkState, abs, rel 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	entries, err := os.ReadDir(abs)
+	entries, err := readDirWithContext(ctx, abs)
 	if err != nil {
 		return err
 	}
@@ -363,7 +363,7 @@ func (t *listDirTool) emitDir(ctx context.Context, st *treeWalkState, parentAbs,
 			return nil
 		}
 		childAbs := filepath.Join(parentAbs, name)
-		kids, err := os.ReadDir(childAbs)
+		kids, err := readDirWithContext(ctx, childAbs)
 		if err != nil {
 			if !errors.Is(err, os.ErrNotExist) {
 				st.unreadable++

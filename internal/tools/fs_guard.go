@@ -7,6 +7,42 @@ import (
 	"os"
 )
 
+// readDirWithContext lists a directory's entries, honoring ctx: os.ReadDir
+// itself accepts no context and cannot be interrupted, so a stalled syscall
+// (stale NFS/FUSE handle, a degraded mount) previously hung list_dir forever
+// regardless of any timeout wrapped around it from the outside. Races the
+// read in a goroutine against ctx.Done(), the same escape mechanism
+// readFileWithContext (above) and walkFilteredFiles (search.go) already use.
+func readDirWithContext(ctx context.Context, abs string) ([]os.DirEntry, error) {
+	return readDirWithContextFn(ctx, abs, os.ReadDir)
+}
+
+// readDirWithContextFn is readDirWithContext with the underlying read
+// injectable for testing: a real stuck syscall cannot be forced portably in
+// a test, so tests substitute a slow fake here instead.
+func readDirWithContextFn(ctx context.Context, abs string, readDir func(string) ([]os.DirEntry, error)) ([]os.DirEntry, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	type outcome struct {
+		entries []os.DirEntry
+		err     error
+	}
+	ch := make(chan outcome, 1)
+	go func() {
+		entries, err := readDir(abs)
+		ch <- outcome{entries, err}
+	}()
+	select {
+	case <-ctx.Done():
+		// Abandon the in-flight read; its goroutine finishes independently
+		// and is discarded (os.DirEntry values carry no fd to leak).
+		return nil, ctx.Err()
+	case r := <-ch:
+		return r.entries, r.err
+	}
+}
+
 // requireRegularFile rejects directories and special files (FIFO, device, socket,
 // symlink-to-special after Stat) so tools cannot block forever on open/read.
 // Prefer openRegularFile for TOCTOU-safe open+fstat; this Stat helper remains
