@@ -120,6 +120,7 @@ context_window_tokens = 200000
 max_output_tokens = 128000
 name = 'claude-sonnet-5'
 reasoning = 'high'
+reasoning_dialect = 'anthropic_adaptive'
 reasoning_efforts = ['low', 'medium', 'high', 'max']
 
 [[providers.llmproxycli.models]]
@@ -127,6 +128,7 @@ context_window_tokens = 200000
 max_output_tokens = 128000
 name = 'claude-sonnet-4-7'
 reasoning = 'high'
+reasoning_dialect = 'anthropic_adaptive'
 reasoning_efforts = ['low', 'medium', 'high', 'max']
 
 [[providers.llmproxycli.models]]
@@ -134,6 +136,7 @@ context_window_tokens = 200000
 max_output_tokens = 128000
 name = 'claude-sonnet-4-6'
 reasoning = 'high'
+reasoning_dialect = 'anthropic_adaptive'
 reasoning_efforts = ['low', 'medium', 'high', 'max']
 
 [[providers.llmproxycli.models]]
@@ -141,6 +144,7 @@ context_window_tokens = 200000
 max_output_tokens = 128000
 name = 'claude-opus-5'
 reasoning = 'low'
+reasoning_dialect = 'anthropic_adaptive'
 reasoning_efforts = ['low', 'medium', 'high', 'max']
 
 [[providers.llmproxycli.models]]
@@ -148,6 +152,7 @@ context_window_tokens = 200000
 max_output_tokens = 128000
 name = 'claude-opus-4-7'
 reasoning = 'high'
+reasoning_dialect = 'anthropic_adaptive'
 reasoning_efforts = ['low', 'medium', 'high', 'max']
 
 [[providers.llmproxycli.models]]
@@ -155,6 +160,7 @@ context_window_tokens = 200000
 max_output_tokens = 128000
 name = 'claude-fable-5'
 reasoning = 'high'
+reasoning_dialect = 'anthropic_adaptive'
 reasoning_efforts = ['low', 'medium', 'high', 'max']
 
 [[providers.llmproxycli.models]]
