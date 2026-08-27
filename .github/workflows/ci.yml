@@ -169,11 +169,16 @@ jobs:
       # never see it.
       - name: Set GOPRIVATE for MiviaLabs modules
         run: go env -w GOPRIVATE=github.com/MiviaLabs/*
-      - name: Test, vet, and build
-        run: |
-          go test ./... -count=1
-          go vet ./...
-          go build ./...
+      # Three separate steps, not one pwsh run block: a multi-line pwsh
+      # block only fails the step on the LAST command's exit code, which let
+      # a failing `go test` hide behind a passing `go build` (go build skips
+      # _test.go files, so test-only compile errors never reach it).
+      - name: Test
+        run: go test ./... -count=1
+      - name: Vet
+        run: go vet ./...
+      - name: Build
+        run: go build ./...
       - name: Validate PowerShell installer syntax
         shell: pwsh
         run: |
