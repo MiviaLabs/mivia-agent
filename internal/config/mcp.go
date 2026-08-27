@@ -133,6 +133,10 @@ func loadMCPConfigPath(path string) (mcpConfigInput, error) {
 		return mcpConfigInput{}, nil
 	}
 	for i := range document.MCP.Servers {
+		// A committed config is shared across machines; ~ expands to the
+		// current user's home so a stdio command stays a real absolute path
+		// per-machine instead of hardcoding one contributor's home directory.
+		document.MCP.Servers[i].Command = ExpandPath(document.MCP.Servers[i].Command)
 		if err := validateMCPServer(document.MCP.Servers[i]); err != nil {
 			return mcpConfigInput{}, fmt.Errorf("MCP config %s: server %d: %w", path, i, err)
 		}

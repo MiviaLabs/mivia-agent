@@ -1,4 +1,4 @@
-env_file = '/home/mac/.mivia/.env'
+env_file = '~/.mivia/.env'
 
 [approvals]
 default_mode = 'always'
@@ -56,7 +56,7 @@ enabled = true
 
 [[mcp.servers]]
 args = ['serve', '--mcp']
-command = '/home/mac/.local/bin/codegraph'
+command = '~/.local/bin/codegraph'
 id = 'codegraph'
 transport = 'stdio'
 
