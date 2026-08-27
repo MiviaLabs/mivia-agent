@@ -9,43 +9,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
 
-func (l *Loop) prepareStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts Options) error {
-	// Parent-message inject (plan 53.03): before prune so injected frames are
-	// part of a complete turn for PruneMessagesKeepTurns.
-	if opts.BeforeStep != nil {
-		if injected := opts.BeforeStep(); len(injected) > 0 {
-			l.Messages = append(l.Messages, injected...)
-		}
-	}
-	if opts.PreparationManager == nil {
-		l.pruneHistory(opts, toolSpecs)
-		return promptBudgetErrorWithTools(l.Messages, opts.MaxContextTokens, toolSpecs, l.contextAccounting())
-	}
-	input := l.buildPrepareInput(toolSpecs, opts)
-	preparation, err := opts.PreparationManager.Prepare(ctx, input)
-	if err != nil {
-		l.PreparationErr = err
-		if !l.HasPreparation && opts.WorkLimits.DeadlineAt.IsZero() && interruptedContext(ctx, err) {
-			preparation, fallbackErr := opts.PreparationManager.Prepare(context.Background(), input)
-			if fallbackErr == nil {
-				l.recordPreparation(preparation)
-				l.captureOmittedEvidence(input, preparation)
-				l.Messages = clonePreparedMessages(preparation.Messages)
-				l.PreparationErr = nil
-			} else {
-				l.PreparationErr = fallbackErr
-			}
-		}
-		return err
-	}
-	l.discardPreparation(opts)
-	l.recordPreparation(preparation)
-	l.PreparationErr = nil
-	l.captureOmittedEvidence(input, preparation)
-	l.Messages = clonePreparedMessages(l.LastPreparation.Messages)
-	return nil
-}
-
 // captureOmittedEvidence folds the content-free diff of the pre-compaction
 // history against the retained preparation into the run's TurnState BEFORE
 // l.Messages is overwritten, and stashes the pre-compaction history so the
@@ -66,10 +29,9 @@ func (l *Loop) captureOmittedEvidence(input contextmgr.PrepareInput, preparation
 	}
 }
 
-// buildPrepareInput assembles the manager input shared by prepareStep and the
-// prompt-too-long retry re-preparation (refreshPreparationAfterRetry), so both
-// call sites price the SAME history, budget, tools, reserve, objective, and
-// calibration. It mirrors the caller-supplied PrepareInput, overlaying the
+// buildPrepareInput assembles the manager input for step preparation so all
+// preparation calls price the SAME history, budget, tools, reserve, objective,
+// and calibration. It mirrors the caller-supplied PrepareInput, overlaying the
 // loop's live state.
 func (l *Loop) buildPrepareInput(toolSpecs []provider.ToolSpec, opts Options) contextmgr.PrepareInput {
 	input := opts.PreparationInput
@@ -88,33 +50,6 @@ func (l *Loop) buildPrepareInput(toolSpecs []provider.ToolSpec, opts Options) co
 		input.CalibrationRatio = l.Calibration.Ratio
 	}
 	return input
-}
-
-// refreshPreparationAfterRetry re-synchronizes the recorded preparation with
-// the history a prompt-too-long retry actually sent. retryAfterPromptTooLong
-// pruned l.Messages in place and appended the compaction notice, leaving
-// LastPreparation pointing at the rejected (never-sent) history; committing
-// that stale preparation would fingerprint a BaseDigest over bytes the
-// checkpoint does not hold. Discard it and re-Prepare on the pruned history so
-// commit and checkpoint agree. A re-Prepare failure fails the turn honestly:
-// a checkpoint built from a preparation that could not be produced is worse
-// than none. With no manager configured, discarding is enough - nothing stale
-// can be committed.
-func (l *Loop) refreshPreparationAfterRetry(ctx context.Context, req provider.Request, opts Options) error {
-	l.discardPreparation(opts)
-	if opts.PreparationManager == nil {
-		return nil
-	}
-	input := l.buildPrepareInput(req.Tools, opts)
-	preparation, err := opts.PreparationManager.Prepare(ctx, input)
-	if err != nil {
-		l.PreparationErr = err
-		return err
-	}
-	l.recordPreparation(preparation)
-	l.PreparationErr = nil
-	l.Messages = clonePreparedMessages(l.LastPreparation.Messages)
-	return nil
 }
 
 // recordPreparation stores the step preparation and overlays turn-level
@@ -152,6 +87,8 @@ func (l *Loop) recordPreparation(preparation contextmgr.Preparation) {
 
 func (l *Loop) resetTurnCompaction() {
 	l.turnCompacted = false
+	l.turnCompactionEmitted = false
+	l.lastEmittedCompactionKey = ""
 	l.turnBeforeTokens = 0
 	l.turnAfterTokens = 0
 	l.turnElidedMessages = 0

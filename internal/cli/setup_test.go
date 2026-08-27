@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/envfile"
+	sdkenvfile "github.com/MiviaLabs/mivia-ai-sdk/envfile"
 )
 
 // runSetupCapture runs setup with controlled IO and returns the summary text.
@@ -24,7 +24,7 @@ func TestSetupWritesKeyToNewEnvFile(t *testing.T) {
 	envPath := filepath.Join(dir, ".env")
 	cfgPath := filepath.Join(dir, "mivia.toml")
 	out, err := runSetupCapture(t, []string{
-		"--provider", "deepseek",
+		"--provider", "openrouter",
 		"--key", "sk-test-0000",
 		"--env-file", envPath,
 		"--config", cfgPath,
@@ -33,15 +33,15 @@ func TestSetupWritesKeyToNewEnvFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setup error = %v", err)
 	}
-	if !strings.Contains(out, "provider:   deepseek") {
+	if !strings.Contains(out, "provider:   openrouter") {
 		t.Fatalf("setup summary lacks the provider: %q", out)
 	}
-	entries, err := envfile.Load(envPath)
+	entries, err := sdkenvfile.Load(envPath)
 	if err != nil {
 		t.Fatalf("load written env file: %v", err)
 	}
-	if entries["DEEPSEEK_API_KEY"] != "sk-test-0000" {
-		t.Fatalf("env key = %q, want sk-test-0000", entries["DEEPSEEK_API_KEY"])
+	if entries["OPENROUTER_API_KEY"] != "sk-test-0000" {
+		t.Fatalf("env key = %q, want sk-test-0000", entries["OPENROUTER_API_KEY"])
 	}
 	st, err := os.Stat(envPath)
 	if err != nil {
@@ -55,7 +55,7 @@ func TestSetupWritesKeyToNewEnvFile(t *testing.T) {
 	if _, err := os.Stat(cfgPath); err != nil {
 		t.Fatalf("default config was not written: %v", err)
 	}
-	if raw, _ := os.ReadFile(cfgPath); !strings.Contains(string(raw), "deepseek-v4-flash") {
+	if raw, _ := os.ReadFile(cfgPath); !strings.Contains(string(raw), "openai/gpt-5.6-luna") {
 		t.Fatalf("default config lacks the shipped model: %q", raw)
 	}
 }
@@ -76,21 +76,21 @@ func TestSetupPreservesExistingEnvKeys(t *testing.T) {
 	}, ""); err != nil {
 		t.Fatalf("setup error = %v", err)
 	}
-	entries, err := envfile.Load(envPath)
+	entries, err := sdkenvfile.Load(envPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if entries["OTHER_KEY"] != "keep-me" {
 		t.Fatalf("existing key lost: %#v", entries)
 	}
-	if entries["DEEPSEEK_API_KEY"] != "sk-test-0001" {
+	if entries["OPENROUTER_API_KEY"] != "sk-test-0001" {
 		t.Fatalf("new key missing: %#v", entries)
 	}
 }
 
 func TestSetupReadsKeyFromEnvVar(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	t.Setenv("DEEPSEEK_API_KEY", "sk-test-0002")
+	t.Setenv("OPENROUTER_API_KEY", "sk-test-0002")
 	dir := t.TempDir()
 	envPath := filepath.Join(dir, ".env")
 	cfgPath := filepath.Join(dir, "mivia.toml")
@@ -101,16 +101,18 @@ func TestSetupReadsKeyFromEnvVar(t *testing.T) {
 	}, ""); err != nil {
 		t.Fatalf("setup error = %v", err)
 	}
-	entries, err := envfile.Load(envPath)
+	entries, err := sdkenvfile.Load(envPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if entries["DEEPSEEK_API_KEY"] != "sk-test-0002" {
+	if entries["OPENROUTER_API_KEY"] != "sk-test-0002" {
 		t.Fatalf("env-var key not written: %#v", entries)
 	}
 }
 
 func TestSetupRequiresKeyWhenNonInteractive(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("OPENROUTER_API_KEY", "")
 	dir := t.TempDir()
 	_, err := runSetupCapture(t, []string{
 		"--env-file", filepath.Join(dir, ".env"),
@@ -130,7 +132,7 @@ func TestSetupSkipsConfigForOtherProvider(t *testing.T) {
 	envPath := filepath.Join(dir, ".env")
 	cfgPath := filepath.Join(dir, "mivia.toml")
 	out, err := runSetupCapture(t, []string{
-		"--provider", "openrouter",
+		"--provider", "zai",
 		"--key", "sk-test-0003",
 		"--env-file", envPath,
 		"--config", cfgPath,
@@ -142,7 +144,7 @@ func TestSetupSkipsConfigForOtherProvider(t *testing.T) {
 	if _, statErr := os.Stat(cfgPath); !os.IsNotExist(statErr) {
 		t.Fatalf("config written for a non-default provider (err=%v)", statErr)
 	}
-	if !strings.Contains(out, "[providers.openrouter]") {
+	if !strings.Contains(out, "[providers.zai]") {
 		t.Fatalf("summary lacks the provider guidance: %q", out)
 	}
 }
@@ -247,7 +249,7 @@ func TestSetupOllamaWithKeyWritesEnvFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setup error = %v", err)
 	}
-	entries, err := envfile.Load(envPath)
+	entries, err := sdkenvfile.Load(envPath)
 	if err != nil {
 		t.Fatalf("load written env file: %v", err)
 	}
@@ -396,7 +398,7 @@ func TestSetupTrimsPaddedKeyValue(t *testing.T) {
 	if string(raw) != "OPENROUTER_API_KEY=sk-test\n" {
 		t.Fatalf("env file = %q, want exactly %q", raw, "OPENROUTER_API_KEY=sk-test\n")
 	}
-	entries, err := envfile.Load(envPath)
+	entries, err := sdkenvfile.Load(envPath)
 	if err != nil {
 		t.Fatal(err)
 	}

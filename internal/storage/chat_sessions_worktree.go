@@ -27,7 +27,7 @@ func (s *SQLite) ListWorktreeSessions(ctx context.Context, principal contextstat
 	if err := requireActiveWorktreeTx(ctx, tx, principal, instance); err != nil {
 		return nil, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT c.name,c.model,c.provider,c.created_at,c.updated_at,c.turn_count,c.token_count,c.message_count,COALESCE(d.dir,''),COALESCE(d.worktree,'') FROM chat_sessions c LEFT JOIN chat_session_dirs d ON d.workspace_id=c.workspace_id AND d.subject_id=c.subject_id AND d.name=c.name WHERE c.workspace_id=? AND c.subject_id=? AND c.instance_id=? ORDER BY c.updated_at DESC`, principal.WorkspaceID, principal.SubjectID, instance.ID)
+	rows, err := tx.QueryContext(ctx, `SELECT c.name,c.model,c.provider,c.created_at,c.updated_at,c.turn_count,c.token_count,c.message_count,COALESCE(d.dir,''),COALESCE(d.worktree,'') FROM chat_sessions c LEFT JOIN chat_session_dirs d ON d.workspace_id=c.workspace_id AND d.subject_id=c.subject_id AND d.name=c.name WHERE c.workspace_id=? AND c.subject_id=? AND c.instance_id=?`, principal.WorkspaceID, principal.SubjectID, instance.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -48,7 +48,7 @@ func (s *SQLite) ListWorktreeSessions(ctx context.Context, principal contextstat
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	liveRows, err := tx.QueryContext(ctx, `SELECT cs.session_id,cs.title,cs.model,cs.provider,COALESCE(MIN(cc.created_at),CURRENT_TIMESTAMP),COALESCE(MAX(cc.created_at),CURRENT_TIMESTAMP),cs.source_sequence,COALESCE(d.dir,''),COALESCE(d.worktree,'') FROM context_sessions cs LEFT JOIN context_checkpoints cc ON cc.workspace_id=cs.workspace_id AND cc.subject_id=cs.subject_id AND cc.session_id=cs.session_id AND cc.complete=1 LEFT JOIN chat_session_dirs d ON d.workspace_id=cs.workspace_id AND d.subject_id=cs.subject_id AND d.name=cs.session_id WHERE cs.workspace_id=? AND cs.subject_id=? AND cs.instance_id=? AND cs.tombstoned=0 AND cs.source_sequence>0 GROUP BY cs.workspace_id,cs.subject_id,cs.session_id,cs.title,cs.model,cs.provider,cs.source_sequence,d.dir,d.worktree`, principal.WorkspaceID, principal.SubjectID, instance.ID)
+	liveRows, err := tx.QueryContext(ctx, `SELECT cs.session_id,cs.title,cs.model,cs.provider,COALESCE(MIN(cc.created_at),CURRENT_TIMESTAMP),COALESCE(MAX(cc.created_at),CURRENT_TIMESTAMP),cs.source_sequence,COALESCE(d.dir,''),COALESCE(d.worktree,'') FROM context_sessions cs LEFT JOIN context_checkpoints cc ON cc.workspace_id=cs.workspace_id AND cc.subject_id=cs.subject_id AND cc.session_id=cs.session_id AND cc.complete=1 LEFT JOIN chat_session_dirs d ON d.workspace_id=cs.workspace_id AND d.subject_id=cs.subject_id AND d.name=cs.session_id WHERE cs.workspace_id=? AND cs.subject_id=? AND cs.instance_id=? AND cs.tombstoned=0 AND (cs.source_sequence>0 OR cs.title IS NOT NULL) GROUP BY cs.workspace_id,cs.subject_id,cs.session_id,cs.title,cs.model,cs.provider,cs.source_sequence,d.dir,d.worktree`, principal.WorkspaceID, principal.SubjectID, instance.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -68,6 +68,13 @@ func (s *SQLite) ListWorktreeSessions(ctx context.Context, principal contextstat
 	if err := liveRows.Err(); err != nil {
 		return nil, err
 	}
+	// Both arms above used to rely on the first arm's own SQL `ORDER BY
+	// c.updated_at DESC`, leaving the second (live-session) arm unordered
+	// and appended after it - and that first arm's ordering itself compared
+	// only its own RFC3339Nano timestamps, never accounting for the second
+	// arm's SQLite-CURRENT_TIMESTAMP-layout rows once merged. Sort the
+	// combined slice the same tolerant way ListSessions does.
+	sortSessionCatalogInfos(out)
 	return out, tx.Commit()
 }
 

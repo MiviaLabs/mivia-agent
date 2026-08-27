@@ -6,12 +6,13 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/envfile"
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
 	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
+	sdkenvfile "github.com/MiviaLabs/mivia-ai-sdk/envfile"
 	"github.com/pelletier/go-toml/v2"
 )
 
@@ -24,6 +25,25 @@ type LoadOptions struct {
 	ProviderOverride   string
 	ModelOverride      string
 	AllowMissingConfig bool
+	// AutoBootstrapUserConfig silently writes a minimal default config to
+	// UserConfigPath() (DefaultUserConfigTOML) when the normal search
+	// (opts.ConfigPath, then DefaultConfigCandidates()) finds no config file
+	// anywhere. It only fires when opts.ConfigPath was left empty - an
+	// explicit --config/$MIVIA_CONFIG miss stays a real error (or, for
+	// $MIVIA_CONFIG, falls through to the remaining candidates, unchanged
+	// pre-existing behavior) rather than being silently papered over. It
+	// does not require AllowMissingConfig to also be set, but callers should
+	// normally set both: if HOME cannot be resolved (UserConfigPath() is
+	// ""), bootstrap is a no-op and AllowMissingConfig alone then decides
+	// whether that is a hard error or a found=false load.
+	//
+	// Defaults to false (zero value) for every existing caller; wire it to
+	// true only where a config-file-writing side effect on a missing config
+	// is actually wanted (currently: `mivia chat` only - see
+	// internal/clichat/chat_command.go's runChat). Every read-only/internal/
+	// test caller of config.Load keeps today's found=false behavior
+	// unchanged.
+	AutoBootstrapUserConfig bool
 }
 
 // Load resolves config + env credentials.
@@ -46,6 +66,12 @@ func Load(opts LoadOptions) (*Resolved, error) {
 	}
 	if file.Chat.MaxPromptTokens != nil && (*file.Chat.MaxPromptTokens <= 0 || *file.Chat.MaxPromptTokens > maxContextWindowTokens) {
 		return nil, fmt.Errorf("[chat]: max_prompt_tokens is out of range")
+	}
+	if file.Tools.MaxOutputBytes < 0 {
+		return nil, fmt.Errorf("[tools]: max_output_bytes must not be negative")
+	}
+	if file.Tools.MaxListDirEntries < 0 {
+		return nil, fmt.Errorf("[tools]: max_list_dir_entries must not be negative")
 	}
 	if err := normalizeProviderConfigs(&file, maxTokens); err != nil {
 		return nil, err
@@ -70,7 +96,7 @@ func resolveLoaded(file File, configPath string, found bool, opts LoadOptions, m
 	if err != nil {
 		return nil, err
 	}
-	key, keySet := envfile.Lookup(pc.APIKeyEnv, envMap)
+	key, keySet := Lookup(pc.APIKeyEnv, envMap)
 	activeProfile := activeModelProfile(pc, model)
 	activePromptBudget := EffectivePromptTokens(activeProfile, file.Chat.MaxTokens, promptCap(file.Chat.MaxPromptTokens), 0)
 	subagentCfg, storePath, err := resolveSubagentStoreBackend(resolveSubagentConfig(file.Subagents), configPath)
@@ -87,41 +113,47 @@ func resolveLoaded(file File, configPath string, found bool, opts LoadOptions, m
 		return nil, fmt.Errorf("config %s: [privacy]: %w", configPath, err)
 	}
 	res := &Resolved{
-		RedactionPolicy:  redactionPolicy,
-		MaxSteps:         file.Chat.MaxSteps,
-		ConfigPath:       configPath,
-		EnvFilePath:      envPath,
-		EnvFileUsed:      envUsed,
-		ProviderName:     providerName,
-		Model:            model,
-		Models:           modelNames(pc.Models),
-		ModelProfiles:    cloneModelSpecs(pc.Models),
-		BaseURL:          strings.TrimRight(pc.BaseURL, "/"),
-		APIKeyEnv:        pc.APIKeyEnv,
-		APIKeySet:        keySet && strings.TrimSpace(key) != "",
-		APIKey:           key,
-		HTTPReferer:      pc.HTTPReferer,
-		XTitle:           pc.XTitle,
-		SystemPrompt:     file.Chat.SystemPrompt,
-		MaxPromptTokens:  file.Chat.MaxPromptTokens,
-		MaxContextTokens: activePromptBudget,
-		Temperature:      file.Chat.Temperature,
-		MaxTokens:        file.Chat.MaxTokens,
-		Subagents:        subagentCfg,
-		Worktrees:        file.Worktrees,
-		StoreBackend:     storeBackend,
-		StorePath:        storePath,
-		StorePathSet:     file.Subagents.StorePath != "",
-		Privacy:          resolvePrivacyConfig(file.Privacy),
-		Context:          resolveContextConfig(file.Context),
-		Tools:            resolveToolsConfig(file.Tools),
-		Memory:           memCfg,
-		Harness:          file.Harness,
-		Verifiers:        cloneVerifierProfiles(file.Verifiers),
-		MCP:              mcpConfig,
-		MCPWarnings:      append([]string(nil), mcpWarnings...),
-		TavilyAPIKey:     resolveTavilyAPIKey(file.Integrations.Tavily, envMap),
-		PromptCache:      resolvePromptCache(file.Provider.PromptCache),
+		RedactionPolicy:        redactionPolicy,
+		MaxSteps:               file.Chat.MaxSteps,
+		ConfigPath:             configPath,
+		EnvFilePath:            envPath,
+		EnvFileUsed:            envUsed,
+		ProviderName:           providerName,
+		Model:                  model,
+		Models:                 modelNames(pc.Models),
+		ModelProfiles:          cloneModelSpecs(pc.Models),
+		BaseURL:                strings.TrimRight(pc.BaseURL, "/"),
+		APIKeyEnv:              pc.APIKeyEnv,
+		APIKeySet:              keySet && strings.TrimSpace(key) != "",
+		APIKey:                 key,
+		HTTPReferer:            pc.HTTPReferer,
+		XTitle:                 pc.XTitle,
+		SystemPrompt:           file.Chat.SystemPrompt,
+		MaxPromptTokens:        file.Chat.MaxPromptTokens,
+		MaxContextTokens:       activePromptBudget,
+		Temperature:            file.Chat.Temperature,
+		MaxTokens:              file.Chat.MaxTokens,
+		ShowIterationNotices:   file.Chat.ShowIterationNotices != nil && *file.Chat.ShowIterationNotices,
+		ShowPromptCacheNotices: file.Chat.ShowPromptCacheNotices != nil && *file.Chat.ShowPromptCacheNotices,
+		Subagents:              subagentCfg,
+		Worktrees:              file.Worktrees,
+		StoreBackend:           storeBackend,
+		StorePath:              storePath,
+		StorePathSet:           file.Subagents.StorePath != "",
+		Privacy:                resolvePrivacyConfig(file.Privacy),
+		Context:                resolveContextConfig(file.Context),
+		Tools:                  resolveToolsConfig(file.Tools),
+		Memory:                 memCfg,
+		Harness:                file.Harness,
+		Approvals:              file.Approvals,
+		Workflows:              file.Workflows,
+		Verifiers:              cloneVerifierProfiles(file.Verifiers),
+		MCP:                    mcpConfig,
+		MCPWarnings:            append([]string(nil), mcpWarnings...),
+		TavilyAPIKey:           resolveTavilyAPIKey(file.Integrations.Tavily, envMap),
+		PromptCache:            resolvePromptCache(file.Provider.PromptCache),
+		StreamIdleTimeout:      resolveTimeoutSeconds(file.Provider.StreamIdleTimeoutSeconds, DefaultStreamIdleTimeoutSeconds),
+		StreamFirstByteTimeout: resolveTimeoutSeconds(file.Provider.StreamFirstByteTimeoutSeconds, DefaultStreamFirstByteTimeoutSeconds),
 	}
 	if !found {
 		return nil, fmt.Errorf("no configured provider models available")
@@ -178,7 +210,7 @@ func resolveTavilyAPIKey(tc TavilyConfig, envMap map[string]string) string {
 	if tc.Disable {
 		return ""
 	}
-	key, ok := envfile.Lookup(envName, envMap)
+	key, ok := Lookup(envName, envMap)
 	if ok && strings.TrimSpace(key) != "" {
 		return strings.TrimSpace(key)
 	}
@@ -193,6 +225,26 @@ func resolvePromptCache(raw string) string {
 		return "auto"
 	}
 	return raw
+}
+
+// DefaultStreamIdleTimeoutSeconds and DefaultStreamFirstByteTimeoutSeconds
+// mirror internal/provider's own watchdog defaults (provider.
+// DefaultStreamIdleTimeout / DefaultStreamFirstByteTimeout). Duplicated
+// rather than imported: internal/provider already imports internal/config
+// (ollama.go, provider.go), so config importing provider back would cycle.
+const (
+	DefaultStreamIdleTimeoutSeconds      = 100
+	DefaultStreamFirstByteTimeoutSeconds = 240
+)
+
+// resolveTimeoutSeconds defaults an unset (nil) [provider] timeout knob to
+// def seconds, converting the resolved value to a time.Duration once so
+// Resolved carries a ready-to-use bound instead of a raw *int.
+func resolveTimeoutSeconds(raw *int, def int) time.Duration {
+	if raw == nil || *raw <= 0 {
+		return time.Duration(def) * time.Second
+	}
+	return time.Duration(*raw) * time.Second
 }
 
 const (
@@ -314,7 +366,9 @@ func cloneModelSpecs(models []ModelSpec) []ModelSpec {
 // later layer's explicit keys win over an earlier layer's the same way a
 // second Decode call already would - the probes must follow that same
 // per-layer, later-wins order to stay consistent with the struct fields
-// they annotate.
+// they annotate. Like the struct decode, a probe never clears a presence
+// flag an earlier layer set when this layer omits the key: absence
+// preserves, an explicit later key wins.
 func decodeConfigInto(data []byte, path string, file *File) error {
 	dec := toml.NewDecoder(bytes.NewReader(data)).EnableUnmarshalerInterface()
 	if err := dec.Decode(file); err != nil {
@@ -360,6 +414,13 @@ func loadFile(opts LoadOptions) (File, string, bool, error) {
 	path := ExpandPath(opts.ConfigPath)
 	if path == "" {
 		path, _ = FirstExisting(DefaultConfigCandidates())
+	}
+	if path == "" && opts.AutoBootstrapUserConfig && strings.TrimSpace(opts.ConfigPath) == "" {
+		bootstrapped, err := autoBootstrapUserConfig()
+		if err != nil {
+			return File{}, "", false, err
+		}
+		path = bootstrapped
 	}
 	if path == "" {
 		if !opts.AllowMissingConfig {
@@ -425,10 +486,15 @@ func workspaceOverlayConfigPath(workspaceRoot, basePath string) (string, bool) {
 // probeInlineOutputBytes re-parses data for an explicit [subagents]
 // inline_output_bytes key and records its presence on file.Subagents. A *int
 // field keeps presence (nil = absent) distinct from value (0 is a real
-// "always use refs" configuration). The main decode already accepted data
-// into the superset File struct, so re-unmarshalling the same bytes into this
-// narrower probe struct cannot fail; the error is discarded rather than
-// plumbed through as an untestable path.
+// "always use refs" configuration). Presence is monotonic across the base
+// and overlay layers: an explicit key in a layer (the later layer winning on
+// value, matching the struct decode) sets inlineOutputBytesSet; a layer that
+// omits the key leaves the flag as it was, so an operator-set 0 in the base
+// config survives a workspace overlay that does not mention the key. The
+// main decode already accepted data into the superset File struct, so
+// re-unmarshalling the same bytes into this narrower probe struct cannot
+// fail; the error is discarded rather than plumbed through as an untestable
+// path.
 func probeInlineOutputBytes(data []byte, file *File) {
 	var probe struct {
 		Subagents struct {
@@ -436,7 +502,9 @@ func probeInlineOutputBytes(data []byte, file *File) {
 		} `toml:"subagents"`
 	}
 	_ = toml.Unmarshal(data, &probe)
-	file.Subagents.inlineOutputBytesSet = probe.Subagents.InlineOutputBytes != nil
+	if probe.Subagents.InlineOutputBytes != nil {
+		file.Subagents.inlineOutputBytesSet = true
+	}
 }
 
 // loadSelectedWorktreeConfig reads the selected config file again to preserve
@@ -451,14 +519,14 @@ func loadSelectedWorktreeConfig(path string, found bool) (WorktreeConfig, error)
 func loadEnvMap(explicit string) (map[string]string, string, bool, error) {
 	if explicit != "" {
 		path := ExpandPath(explicit)
-		m, err := envfile.Load(path)
+		m, err := sdkenvfile.Load(path)
 		if err != nil {
 			return nil, path, false, fmt.Errorf("load env_file %s: %w", path, err)
 		}
 		return m, path, true, nil
 	}
 	if p, ok := FirstExisting(DefaultEnvCandidates()); ok {
-		m, err := envfile.Load(p)
+		m, err := sdkenvfile.Load(p)
 		if err != nil {
 			return nil, p, false, fmt.Errorf("load env file %s: %w", p, err)
 		}

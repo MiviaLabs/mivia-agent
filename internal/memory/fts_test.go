@@ -468,3 +468,237 @@ func TestFTSMatchFromParsed(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// M-1: FTS MATCH fast path must never diverge from the LIKE path
+// ---------------------------------------------------------------------------
+
+// TestFTSGateAllPlainTokens unit-tests the ftsPartsAllPlainTokens gate that
+// routes prefix and phrase queries away from the FTS5 MATCH path: only a
+// non-empty list of plain bare tokens may take the MATCH path; a prefix part
+// ('run*'), a phrase part ('"cache invalidation"'), a mixed list, or an empty
+// list must be false.
+func TestFTSGateAllPlainTokens(t *testing.T) {
+	cases := []struct {
+		name  string
+		parts []ftsPart
+		want  bool
+	}{
+		{"empty", nil, false},
+		{"single plain token", []ftsPart{{kind: ftsPartToken, text: "cache"}}, true},
+		{"all plain tokens", []ftsPart{{kind: ftsPartToken, text: "cache"}, {kind: ftsPartToken, text: "key"}}, true},
+		{"prefix", []ftsPart{{kind: ftsPartPrefix, text: "run*"}}, false},
+		{"phrase", []ftsPart{{kind: ftsPartPhrase, text: "cache invalidation"}}, false},
+		{"token then phrase", []ftsPart{{kind: ftsPartToken, text: "more"}, {kind: ftsPartPhrase, text: "exact phrase"}}, false},
+		{"phrase then token", []ftsPart{{kind: ftsPartPhrase, text: "exact phrase"}, {kind: ftsPartToken, text: "more"}}, false},
+		{"token then prefix", []ftsPart{{kind: ftsPartToken, text: "cache"}, {kind: ftsPartPrefix, text: "run*"}}, false},
+	}
+	for _, tc := range cases {
+		if got := ftsPartsAllPlainTokens(tc.parts); got != tc.want {
+			t.Errorf("%s: ftsPartsAllPlainTokens(%+v) = %v, want %v", tc.name, tc.parts, got, tc.want)
+		}
+	}
+}
+
+// parityStore opens a store for the M-1 backend-parity tests: the sqlite and
+// in-memory backends share this config so the three paths answer identical
+// queries over identical corpora.
+func parityStore(t *testing.T, backend string) Store {
+	t.Helper()
+	dir := t.TempDir()
+	s, err := Open(Config{
+		Backend:          backend,
+		ProjectPath:      filepath.Join(dir, "project.db"),
+		OrgPath:          filepath.Join(dir, "org.db"),
+		MaxEntryBytes:    8192,
+		MaxEntries:       10,
+		MaxSearchResults: 8,
+	})
+	if err != nil {
+		t.Fatalf("Open(%s): %v", backend, err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	return s
+}
+
+// saveParityFixtures writes the M-1 parity corpus into s, one project-scoped
+// entry per title.
+func saveParityFixtures(ctx context.Context, t *testing.T, s Store, fixtures []string) {
+	t.Helper()
+	for _, title := range fixtures {
+		e := testEntry(title, ScopeProject)
+		e.Summary = "fixture " + title
+		if _, err := s.Save(ctx, e); err != nil {
+			t.Fatalf("save %q: %v", title, err)
+		}
+	}
+}
+
+// searchParityQueries runs the M-1 parity query set against s and returns the
+// ordered result titles per query.
+func searchParityQueries(ctx context.Context, t *testing.T, s Store, queries []string) map[string][]string {
+	t.Helper()
+	out := make(map[string][]string, len(queries))
+	for _, q := range queries {
+		got, err := s.Search(ctx, Query{Text: q, Scope: ScopeProject})
+		if err != nil {
+			t.Fatalf("search %q: %v", q, err)
+		}
+		titles := make([]string, len(got))
+		for i, r := range got {
+			titles[i] = r.Title
+		}
+		out[q] = titles
+	}
+	return out
+}
+
+// TestFTSPrefixAndPhraseParityWithLikePath is the regression test for M-1:
+// the FTS5 MATCH fast path and the Phase-1 LIKE path returned different
+// results for prefix and phrase queries. FTS5 'run*' matches only tokens that
+// START with 'run' (so 'rerun' misses), while LIKE '%run%' matches any
+// substring; FTS5 '"cache invalidation"' matches contiguous tokens (so
+// 'cache-invalidation' hits), while LIKE requires the verbatim substring
+// 'cache invalidation'. Before the fix the FTS-enabled path therefore
+// disagreed with the FTS-disabled and in-memory paths for both queries. The
+// fix routes every query whose parsed FTS parts are not all plain tokens
+// through the authoritative LIKE path, so all three paths return identical
+// ordered results. The corpus also carries malformed (unbalanced quote) and
+// oversized (65+ char token) entries that must never spuriously match, and
+// the negative path is a phrase with zero hits on every path.
+func TestFTSPrefixAndPhraseParityWithLikePath(t *testing.T) {
+	ctx := context.Background()
+	fixtures := []string{
+		"rerun the build",            // 'run' appears only as a substring: 'run*' must NOT hit
+		"runbook steps",              // a token that starts with 'run': 'run*' must hit on every path
+		"cache-invalidation",         // FTS5 contiguous tokens 'cache' 'invalidation'; no verbatim phrase substring
+		"cache invalidation is hard", // verbatim phrase: must hit on every path
+		`malformed "quote`,           // malformed corpus entry (unbalanced quote)
+		strings.Repeat("z", 65),      // oversized corpus entry (65+ char token)
+		"DeepSeek v4-flash: transient HTTP 400 escalation",
+		"the of day",
+	}
+	queries := []string{"run*", `"cache invalidation"`, `"definitely absent phrase"`}
+	want := map[string][]string{
+		"run*":                       {"rerun the build", "runbook steps"},
+		`"cache invalidation"`:       {"cache invalidation is hard"},
+		`"definitely absent phrase"`: nil,
+	}
+
+	// Path 1: sqlite with the FTS MATCH path active (the pre-fix default).
+	ftsOn := parityStore(t, BackendSQLite)
+	saveParityFixtures(ctx, t, ftsOn, fixtures)
+	// Path 2: sqlite with the FTS MATCH path disabled (LIKE only).
+	ftsOff := parityStore(t, BackendSQLite)
+	ftsOff.(*sqliteStore).fts = false
+	saveParityFixtures(ctx, t, ftsOff, fixtures)
+	// Path 3: the in-memory backend.
+	mem := parityStore(t, BackendMemory)
+	saveParityFixtures(ctx, t, mem, fixtures)
+
+	enabled := searchParityQueries(ctx, t, ftsOn, queries)
+	disabled := searchParityQueries(ctx, t, ftsOff, queries)
+	memoryResults := searchParityQueries(ctx, t, mem, queries)
+	for _, q := range queries {
+		if !equalStrings(enabled[q], disabled[q]) {
+			t.Errorf("query %q: FTS-enabled %v != FTS-disabled %v: prefix/phrase queries must run the same LIKE path on every backend", q, enabled[q], disabled[q])
+		}
+		if !equalStrings(enabled[q], memoryResults[q]) {
+			t.Errorf("query %q: FTS-enabled %v != memory %v: prefix/phrase queries must run the same LIKE path on every backend", q, enabled[q], memoryResults[q])
+		}
+		if !equalStrings(enabled[q], want[q]) {
+			t.Errorf("query %q = %v, want %v", q, enabled[q], want[q])
+		}
+	}
+}
+
+// fuzzParityFixtures are the corpus titles for FuzzMemorySearchParity: the
+// same parity surface as TestFTSPrefixAndPhraseParityWithLikePath, so the
+// fuzzer mutates queries on top of content that provokes the prefix and
+// phrase divergences M-1 fixed.
+func fuzzParityFixtures() []string {
+	return []string{
+		"rerun the build",
+		"runbook steps",
+		"cache-invalidation",
+		"cache invalidation is hard",
+		`malformed "quote`,
+		strings.Repeat("z", 65),
+		"DeepSeek v4-flash: transient HTTP 400 escalation",
+		"the of day",
+	}
+}
+
+// FuzzMemorySearchParity asserts the backend-parity invariant on every query:
+// the FTS-enabled sqlite path, the FTS-disabled (LIKE) path, and the
+// in-memory backend must return identical ordered results. Before the M-1 fix
+// a prefix query ('run*': FTS5 token-prefix vs LIKE substring) or a phrase
+// query ('"cache invalidation"': FTS5 contiguous tokens vs LIKE verbatim
+// substring) diverged. Empty queries are refused by Search (not a parity
+// violation) and are skipped; the query is bounded to 256 bytes and the
+// tokenizer caps tokens and token count, so each iteration stays small.
+func FuzzMemorySearchParity(f *testing.F) {
+	fixtures := fuzzParityFixtures()
+	for _, seed := range []string{
+		"run*",
+		`"cache invalidation"`,
+		"cache invalidation",
+		"DeepSeek 400",
+		"the of",
+		"-",
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, q string) {
+		if strings.TrimSpace(q) == "" {
+			return // Search refuses empty queries on every backend; not a parity violation
+		}
+		if len(q) > 256 {
+			q = q[:256]
+		}
+		run := func(backend string, disableFTS bool) []string {
+			t.Helper()
+			dir := t.TempDir()
+			s, err := Open(Config{
+				Backend:          backend,
+				ProjectPath:      filepath.Join(dir, "project.db"),
+				OrgPath:          filepath.Join(dir, "org.db"),
+				MaxEntryBytes:    8192,
+				MaxEntries:       10,
+				MaxSearchResults: 8,
+			})
+			if err != nil {
+				t.Fatalf("Open(%s): %v", backend, err)
+			}
+			defer s.Close()
+			if disableFTS {
+				s.(*sqliteStore).fts = false
+			}
+			for _, title := range fixtures {
+				e := testEntry(title, ScopeProject)
+				e.Summary = "fixture " + title
+				if _, err := s.Save(context.Background(), e); err != nil {
+					t.Fatalf("save %q: %v", title, err)
+				}
+			}
+			got, err := s.Search(context.Background(), Query{Text: q, Scope: ScopeProject})
+			if err != nil {
+				t.Fatalf("search %q: %v", q, err)
+			}
+			titles := make([]string, len(got))
+			for i, r := range got {
+				titles[i] = r.Title
+			}
+			return titles
+		}
+		enabled := run(BackendSQLite, false)
+		disabled := run(BackendSQLite, true)
+		mem := run(BackendMemory, false)
+		if !equalStrings(enabled, disabled) {
+			t.Fatalf("query %q: FTS-enabled %v != FTS-disabled %v", q, enabled, disabled)
+		}
+		if !equalStrings(enabled, mem) {
+			t.Fatalf("query %q: sqlite %v != memory %v", q, enabled, mem)
+		}
+	})
+}

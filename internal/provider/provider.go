@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"sort"
 	"strings"
 	"sync"
@@ -13,6 +14,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
+	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
 )
 
 // Role message roles.
@@ -22,6 +24,18 @@ const (
 	RoleAssistant = "assistant"
 	RoleTool      = "tool"
 )
+
+// FinishReasonRefusal marks a turn a provider's safety classifier declined
+// rather than completed (Anthropic's stop_reason: "refusal" - an HTTP 200,
+// not an error; Response.Content may be empty or a partial, already-billed
+// prefix). It is not a finish reason any OpenAI-compatible provider in this
+// tree can produce today. internal/agent's empty-response retry
+// (retryOnEmptyResponse in agentloop_run.go) checks for this exact value
+// before retrying a StopEmptyResponse turn: a policy refusal will refuse an
+// identical retry the same way, so retrying only wastes latency and cost
+// against a request that cannot succeed. Keep both sides of that comparison
+// pointed at this constant rather than a duplicated string literal.
+const FinishReasonRefusal = "refusal"
 
 // Message is a chat turn (supports tool calls and tool results).
 type Message struct {
@@ -81,6 +95,12 @@ type Request struct {
 	// request. Empty falls back to the client default; when neither resolves,
 	// nothing is sent rather than a guessed wire shape.
 	ReasoningDialect reasoning.Dialect
+	// SDKReasoningEffort is the SDK-shaped reasoning effort for one request,
+	// produced by sdkadapter.LevelToReasoningEffort(ReasoningLevel). Empty
+	// string means "no SDK surface" (the user picked a level the SDK cannot
+	// carry on the wire, or the request is unset). Currently unused by any
+	// consumer in the tree; reserved for B.2 #8's SDK-backed inner loop.
+	SDKReasoningEffort sdkshape.ReasoningEffort `json:"sdk_reasoning_effort,omitempty"`
 	// SessionID is the caller's session/run identifier, threaded through
 	// unchanged from whatever principal issued this turn (chat session,
 	// delegated subagent, workflow step). Empty means unknown - only a
@@ -213,6 +233,27 @@ type Options struct {
 	// speaks a DeepSeek-style thinking dialect that requires the matching
 	// reasoning-replay and reasoning-less-tool-turn-reject wire contract.
 	ReasoningDialect reasoning.Dialect
+	// AnthropicNativeModels lists the names, among this provider's declared
+	// model catalog, whose resolved reasoning dialect is
+	// reasoning.DialectAnthropicAdaptive - i.e. every model entry that
+	// explicitly sets reasoning_dialect = "anthropic_adaptive" (this is never
+	// a provider default outside "anthropic" itself; see
+	// reasoning.CanCarryDialect, which config validation already uses to
+	// reject the dialect on any provider not in its allow-list). Only
+	// llmproxycli's factory reads this: it builds a per-model dispatcher
+	// (llmProxyDispatchCompleter) that routes these specific models through a
+	// native Anthropic Messages API completer, reusing this provider's own
+	// BaseURL/APIKey, while every other model keeps going through
+	// OpenAICompat unchanged. Every other factory ignores this field, the
+	// same way llmgateway is the only reader of ReasoningDialect today.
+	AnthropicNativeModels []string
+	// DialContext, when set, replaces the transport's default dial. Set only
+	// by NewForProvider, only when BaseURL resolved as a verified loopback
+	// address (config.IsOllamaLoopback) - see its own call site for why. A
+	// factory that builds its own pinned DialContext internally (ollama.go)
+	// ignores this field; every other builtin factory forwards it verbatim
+	// into CompatOptions.DialContext.
+	DialContext func(ctx context.Context, network, addr string) (net.Conn, error)
 }
 
 type providerFactory func(Options) (Completer, error)
@@ -265,11 +306,14 @@ type builtinEntry struct {
 }
 
 var builtins = []builtinEntry{
+	{"anthropic", NewAnthropic},
 	{"deepseek", NewDeepSeek},
 	{"openrouter", NewOpenRouter},
 	{"zai", NewZAI},
 	{"ollama", NewOllama},
 	{"llmgateway", NewLLMGateway},
+	{"llmproxycli", NewLLMProxyCLI},
+	{"minimax", NewMiniMax},
 }
 
 // registerAll registers each entry in order, stopping at the first error.
@@ -312,6 +356,7 @@ func NewForProvider(res *config.Resolved, providerName string) (Completer, error
 	if err := registerBuiltins(); err != nil {
 		return nil, err
 	}
+	SetStreamWatchdogTimeouts(res.StreamIdleTimeout, res.StreamFirstByteTimeout)
 	runtime, ok := res.ProviderRuntimes[providerName]
 	if !ok && providerName == strings.ToLower(strings.TrimSpace(res.ProviderName)) {
 		runtime = config.ProviderRuntime{
@@ -329,21 +374,47 @@ func NewForProvider(res *config.Resolved, providerName string) (Completer, error
 	}
 	if !runtime.APIKeySet || strings.TrimSpace(runtime.APIKey) == "" {
 		if !(providerName == "ollama" && config.IsOllamaLoopback(runtime.BaseURL)) {
-			return nil, fmt.Errorf("missing API key for provider %q", providerName)
+			// Deliberately does not name the env var here (see
+			// TestNewForProviderLLMGatewayFailsClosedWithoutKey /
+			// TestNewForProviderOllamaCloudFailsClosedWithoutKey): this is a
+			// low-level construction error reached from more than one
+			// provider, so `mivia setup` is the one fix that is always
+			// correct regardless of which provider is in play. Callers that
+			// know the specific env var (chat_command.go's prepareChatStartup,
+			// mivia chat's first-run key prompt) report it themselves.
+			return nil, fmt.Errorf("missing API key for provider %q; run \"mivia setup\" to configure it", providerName)
 		}
 	}
 	contextWindowTokens := contextWindowTokensFor(runtime.Models, res.Model)
 	opts := Options{
-		Name:                runtime.ProviderName,
-		BaseURL:             runtime.BaseURL,
-		APIKey:              runtime.APIKey,
-		Model:               res.Model,
-		HTTPReferer:         runtime.HTTPReferer,
-		XTitle:              runtime.XTitle,
-		CacheUsageEnabled:   res.PromptCache != "off",
-		CacheMarkersEnabled: res.PromptCache != "off",
-		ContextWindowTokens: contextWindowTokens,
-		ReasoningDialect:    reasoningDialectFor(runtime.Models, res.Model, providerName),
+		Name:                  runtime.ProviderName,
+		BaseURL:               runtime.BaseURL,
+		APIKey:                runtime.APIKey,
+		Model:                 res.Model,
+		HTTPReferer:           runtime.HTTPReferer,
+		XTitle:                runtime.XTitle,
+		CacheUsageEnabled:     res.PromptCache != "off",
+		CacheMarkersEnabled:   res.PromptCache != "off",
+		ContextWindowTokens:   contextWindowTokens,
+		ReasoningDialect:      reasoningDialectFor(runtime.Models, res.Model, providerName),
+		AnthropicNativeModels: anthropicNativeModelsFor(runtime.Models, providerName),
+	}
+	// ollama pins its own dial (ollama.go, tied to its keyless-mode gate);
+	// every other builtin provider gets the same verified-loopback dial
+	// pinning here, generalizing the protection beyond ollama: a base_url
+	// that validateBaseURL approved as http because it LOOKS loopback
+	// (config.IsOllamaLoopback, a literal hostname check) must still have
+	// its actual dial independently pinned to a resolved loopback address
+	// at construction, or a resolver answering "localhost" with a
+	// non-loopback address could send this provider's Bearer token in
+	// plaintext somewhere the URL string never admitted to. Fails closed:
+	// a loopback claim that doesn't verify never becomes a client.
+	if providerName != "ollama" && config.IsOllamaLoopback(runtime.BaseURL) {
+		dialContext, err := newLoopbackDialContext(providerName, runtime.BaseURL)
+		if err != nil {
+			return nil, err
+		}
+		opts.DialContext = dialContext
 	}
 	factory, ok := builtinFactories.lookup(providerName)
 	if !ok {
@@ -364,6 +435,26 @@ func reasoningDialectFor(models []config.ModelSpec, name, providerName string) r
 		}
 	}
 	return reasoning.Resolve(providerName, reasoning.Setting{}).Dialect
+}
+
+// anthropicNativeModelsFor returns every model name in models whose resolved
+// reasoning dialect is reasoning.DialectAnthropicAdaptive under providerName
+// - see Options.AnthropicNativeModels for what consumes this. Unlike
+// reasoningDialectFor (resolved for one selected model), this scans the
+// WHOLE catalog: llmproxycli's dispatcher needs to recognize every opted-in
+// model across a session, not just whichever one is currently selected,
+// because a same-provider subagent delegation can hand a later Request a
+// different model name than the one this Options was built for (Completers
+// are provider-scoped, not model-scoped - the model comes from each
+// request).
+func anthropicNativeModelsFor(models []config.ModelSpec, providerName string) []string {
+	var out []string
+	for _, model := range models {
+		if reasoning.Resolve(providerName, reasoning.Setting{Dialect: model.ReasoningDialect}).Dialect == reasoning.DialectAnthropicAdaptive {
+			out = append(out, model.Name)
+		}
+	}
+	return out
 }
 
 // contextWindowTokensFor returns the declared context capacity of the model

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -17,7 +18,20 @@ import (
 // readTurnStream's payload gate so the no-tools path never re-bills a
 // reasoning-only stream non-streamed.
 func deltaCountsAsReceived(content, reasoningContent, reasoning, finishReason string, details []reasoningDetailWire, usage *usageWire) bool {
-	return content != "" || reasoningContent != "" || reasoning != "" || len(details) > 0 || finishReason != "" || usage != nil
+	if content != "" || reasoningContent != "" || reasoning != "" || finishReason != "" || usage != nil {
+		return true
+	}
+	// A reasoning_details entry counts only when it carries text or summary.
+	// captureReasoningDetails folds exactly those entries into the reasoning
+	// builder that gates readTurnStream's received flag, so an entry with
+	// neither must not suppress the non-streaming fallback here either (R0-1):
+	// the two stream paths must agree on the same wire shape.
+	for _, d := range details {
+		if d.Text != "" || d.Summary != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // chatTurnStream runs a streaming chat.completions request, forwarding text
@@ -31,27 +45,25 @@ func (c *OpenAICompat) chatTurnStream(ctx context.Context, req Request) (*Respon
 	defer cancel()
 
 	req.Stream = true
-	httpReq, err := c.newRequest(callCtx, req)
+	resp, req, err := c.doChatRequest(callCtx, req)
 	if err != nil {
-		return nil, err
-	}
-	resp, err := c.client.Do(httpReq)
-	if err != nil {
-		err = markTransientReadDeadline(callCtx, req.Timeout, err)
-		return nil, asTransient(fmt.Errorf("%s: request failed: %w", c.name, err))
+		return nil, asTransient(err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.httpError(resp)
-	}
 
-	content, reasoning, webSearch, toolCalls, finishReason, received, usage, err := c.readTurnStream(callCtx, resp.Body, req.StreamWriter, req.Timeout)
+	content, reasoning, webSearch, toolCalls, finishReason, received, usage, err := c.readTurnStream(callCtx, c.wrapWithIdleWatchdog(resp.Body), req.StreamWriter, req.Timeout)
 	if err != nil {
 		// A transient 200-in-band provider error delivered nothing. Re-ask the
 		// turn once non-streamed instead of surfacing it as a terminal failure,
 		// unless replay is disabled or content already reached the writer. The
 		// re-ask stays bounded to a single attempt.
 		if IsTransient(err) && !received && !req.DisableProviderReplay {
+			if errors.Is(err, ErrStreamIdle) {
+				// Visible-on-recovery: previously this fallback fired silently,
+				// so a stalled stream that self-healed via non-streaming retry
+				// left no trace an operator could see.
+				log.Printf("%s: stream stalled (idle timeout, bound %s); recovering via non-streaming retry", c.name, streamIdleTimeout())
+			}
 			retried, rerr := c.retryWithoutStreaming(callCtx, req, req.StreamWriter)
 			if rerr != nil {
 				return nil, rerr
@@ -233,6 +245,17 @@ func (c *OpenAICompat) applyStreamChunk(
 	if chunk.Usage != nil {
 		*usage = chunk.Usage
 	}
+	// A provider may attach search results at the chunk top level (the wire
+	// struct decodes body.WebSearch, and the non-stream path honors it first).
+	// Capture them before the choices-length guard below would otherwise drop
+	// them along with an empty-choices chunk - mirroring the trailing-usage
+	// capture above, so top-level web_search survives on both choices-bearing
+	// and empty-choices chunks. len(webSearch)>0 already counts as payload in
+	// readTurnStream, so a sole-signal web_search chunk is a completion signal
+	// and never re-bills the turn non-streamed.
+	if len(chunk.WebSearch) > 0 {
+		*webSearch = append(*webSearch, chunk.WebSearch...)
+	}
 	if len(chunk.Choices) == 0 {
 		return nil
 	}
@@ -257,26 +280,31 @@ func (c *OpenAICompat) applyStreamChunk(
 	if delta := ch.Delta.Reasoning; delta != "" {
 		reasoning.WriteString(delta)
 	}
-	// reasoning_details entries contribute their payload when the chunk carries
-	// no canonical reasoning_content. Every payload-bearing entry contributes,
-	// whatever its type tag: the reasoning builder doubles as the completion
-	// signal in readTurnStream (reasoning.Len() > 0 gates re-billing), and the
-	// non-stream resolveReasoningContent concatenates every entry's text (or
-	// summary when text is absent) with no type gate. An entry with neither
-	// text nor summary contributes nothing, so an empty details array still
-	// does not count as received (R0-1).
-	if ch.Delta.ReasoningContent == "" && len(ch.Delta.ReasoningDetails) > 0 {
-		for _, d := range ch.Delta.ReasoningDetails {
-			if d.Text != "" {
-				reasoning.WriteString(d.Text)
-			} else if d.Summary != "" {
-				reasoning.WriteString(d.Summary)
-			}
-		}
-	}
+	captureReasoningDetails(reasoning, ch.Delta.ReasoningContent, ch.Delta.ReasoningDetails)
 	*webSearch = append(*webSearch, ch.Delta.WebSearch...)
 	mergeToolCallDeltas(toolsByIdx, ch.Delta.ToolCalls)
 	return nil
+}
+
+// captureReasoningDetails folds reasoning_details entries into the reasoning
+// builder when the chunk carries no canonical reasoning_content. Every
+// payload-bearing entry contributes, whatever its type tag: the reasoning
+// builder doubles as the completion signal in readTurnStream (reasoning.Len()
+// > 0 gates re-billing), and the non-stream resolveReasoningContent
+// concatenates every entry's text (or summary when text is absent) with no
+// type gate. An entry with neither text nor summary contributes nothing, so
+// an empty details array still does not count as received (R0-1).
+func captureReasoningDetails(reasoning *strings.Builder, deltaContent string, details []reasoningDetailWire) {
+	if deltaContent != "" || len(details) == 0 {
+		return
+	}
+	for _, d := range details {
+		if d.Text != "" {
+			reasoning.WriteString(d.Text)
+		} else if d.Summary != "" {
+			reasoning.WriteString(d.Summary)
+		}
+	}
 }
 
 func mergeToolCallDeltas(toolsByIdx map[int]*ToolCall, deltas []streamToolCallDelta) {

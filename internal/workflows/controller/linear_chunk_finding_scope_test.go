@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
@@ -16,7 +15,7 @@ import (
 // chunk-mode reserved inputs are legal and the chunk finding-scope filter can
 // arm. plan_step and implement_step both name "implement", the only producer
 // step in this graph.
-func chunkScopeWorkflow(t *testing.T, maxLoop int) *compiler.CompiledWorkflow {
+func chunkScopeWorkflow(t *testing.T, maxLoop int) *definition.CompiledWorkflow {
 	t.Helper()
 	wf := &definition.WorkflowFile{
 		Version: 1, Name: "chunk-repair", InitialStep: "implement",
@@ -34,7 +33,7 @@ func chunkScopeWorkflow(t *testing.T, maxLoop int) *compiler.CompiledWorkflow {
 		},
 		Stacking: &definition.Stacking{PlanStep: "implement", ImplementStep: "implement"},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -505,7 +504,7 @@ func TestChunkFindingScopeDropsCrossTreeSiblingViaPlan(t *testing.T) {
 // the filter.
 func TestChunkFindingScopeUndecodableSiblingFilesFallsBack(t *testing.T) {
 	ctrl := &LinearController{
-		Workflow: &compiler.CompiledWorkflow{Stacking: &definition.StackingConfig{HardLines: 400}},
+		Workflow: &definition.CompiledWorkflow{Stacking: &definition.StackingConfig{HardLines: 400}},
 		Inputs: func() map[string]any {
 			in := chunkModeInputs(runeutilPlan)
 			in["sibling_files"] = "not json"

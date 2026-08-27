@@ -10,7 +10,6 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/matcher"
 )
 
 // selectRoute chooses the next step from closed structural match criteria.
@@ -21,7 +20,7 @@ func (c *LinearController) selectRoute(ctx context.Context, step definition.Step
 	if status != workflowledger.AttemptStatusSucceeded {
 		return failureRoute(step), nil
 	}
-	decision, err := matcher.Match(step.ID, "succeeded", output, c.Workflow.Transitions)
+	decision, err := definition.Match(step.ID, "succeeded", output, c.Workflow.Transitions)
 	if err != nil {
 		route := RouteDecision{
 			ToStepID:        failureTarget(step),
@@ -52,7 +51,7 @@ func (c *LinearController) selectRoute(ctx context.Context, step definition.Step
 // error. That result is repairable only when the workflow declares one exact
 // failed transition. Missing or ambiguous transitions fail closed.
 func (c *LinearController) selectEvidenceFailureRoute(ctx context.Context, step definition.Step, output map[string]any) (RouteDecision, error) {
-	decision, err := matcher.Match(step.ID, "failed", output, c.Workflow.Transitions)
+	decision, err := definition.Match(step.ID, "failed", output, c.Workflow.Transitions)
 	if err != nil {
 		route := RouteDecision{
 			ToStepID:        failureTarget(step),
@@ -88,7 +87,7 @@ func failureRoute(step definition.Step) RouteDecision {
 // bound as evidence, and the exhausted attempt is persisted with that route.
 // Without a partial_target (or without salvage) the route is the terminal
 // failureTarget and the error carries the salvage hint.
-func (c *LinearController) loopExhaustionRoute(ctx context.Context, step definition.Step, decision matcher.Decision, exhausted error) (RouteDecision, error) {
+func (c *LinearController) loopExhaustionRoute(ctx context.Context, step definition.Step, decision definition.Decision, exhausted error) (RouteDecision, error) {
 	route := RouteDecision{
 		ToStepID:        failureTarget(step),
 		TransitionIndex: decision.TransitionIndex,
@@ -118,6 +117,7 @@ func (c *LinearController) loopExhaustedRouteError(ctx context.Context, err erro
 		loopErr.StepID = stepID
 		if salvaged, salErr := c.salvageLoopSuccesses(ctx); salErr == nil {
 			loopErr.Salvage = salvaged
+			loopErr.Findings = c.decodeSalvagedFindings(ctx, salvaged)
 		}
 		return loopErr
 	}
@@ -175,12 +175,21 @@ func (c *LinearController) salvageLoopSuccesses(ctx context.Context) ([]Salvaged
 // iterations spent, and the step whose route was refused, so a human or a
 // resumed run can recover the verified work without re-reading the whole
 // ledger (R2 Phase 1: the routing stays terminal, the evidence is enriched).
+//
+// Findings carries the last review verdict(s) decoded from the salvaged
+// attempts, when any salvaged output is a panel member or synthesis report
+// (verdict/host_verdict field present). Without this, an exhausted
+// review_repair loop is undiagnosable after the fact: the terminal error
+// named only content-addressed refs, and the run's worktree may already be
+// reused by the time a human investigates, so the last rejection reason was
+// otherwise unrecoverable.
 type loopExhaustedError struct {
 	LoopName      string
 	Iterations    int
 	MaxIterations int
 	StepID        string
 	Salvage       []SalvagedAttempt
+	Findings      []string
 }
 
 func (e *loopExhaustedError) Error() string {
@@ -197,7 +206,68 @@ func (e *loopExhaustedError) Error() string {
 		}
 		parts = append(parts, fmt.Sprintf("%s#%d:%s", s.StepID, s.AttemptNo, ref))
 	}
-	return msg + fmt.Sprintf(" (salvaged: %s)", strings.Join(parts, ", "))
+	msg += fmt.Sprintf(" (salvaged: %s)", strings.Join(parts, ", "))
+	if len(e.Findings) > 0 {
+		msg += fmt.Sprintf(" (last review verdicts: %s)", strings.Join(e.Findings, "; "))
+	}
+	return msg
+}
+
+// decodeSalvagedFindings best-effort decodes each salvaged attempt's stored
+// output as a panel synthesis report (host_verdict) or a panel member report
+// (verdict), and renders a short, human-readable summary line per decodable
+// attempt. A salvaged output that decodes as neither (an ordinary step, not a
+// review step) is silently skipped - this is diagnostic enrichment, never a
+// reason to fail the exhaustion path itself.
+func (c *LinearController) decodeSalvagedFindings(ctx context.Context, salvaged []SalvagedAttempt) []string {
+	var lines []string
+	for _, s := range salvaged {
+		if s.OutputRef == "" {
+			continue
+		}
+		raw, err := c.Repo.LoadContent(ctx, s.OutputRef)
+		if err != nil {
+			continue
+		}
+		if line, ok := renderPanelFinalReportLine(s, raw); ok {
+			lines = append(lines, line)
+			continue
+		}
+		if line, ok := renderPanelMemberReportLine(s, raw); ok {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+func renderPanelFinalReportLine(s SalvagedAttempt, raw []byte) (string, bool) {
+	var final PanelFinalReport
+	if err := json.Unmarshal(raw, &final); err != nil || final.HostVerdict == "" {
+		return "", false
+	}
+	included := 0
+	for _, d := range final.Dispositions {
+		if d.Disposition == PanelDispositionIncluded {
+			included++
+		}
+	}
+	return fmt.Sprintf("%s#%d:%s (%d/%d findings included)", s.StepID, s.AttemptNo, final.HostVerdict, included, len(final.Dispositions)), true
+}
+
+func renderPanelMemberReportLine(s SalvagedAttempt, raw []byte) (string, bool) {
+	var member PanelMemberReport
+	if err := json.Unmarshal(raw, &member); err != nil || member.Verdict == "" {
+		return "", false
+	}
+	if len(member.Findings) == 0 {
+		return fmt.Sprintf("%s#%d:%s", s.StepID, s.AttemptNo, member.Verdict), true
+	}
+	f := member.Findings[0]
+	more := ""
+	if len(member.Findings) > 1 {
+		more = fmt.Sprintf(" +%d more", len(member.Findings)-1)
+	}
+	return fmt.Sprintf("%s#%d:%s [%s] %s%s", s.StepID, s.AttemptNo, member.Verdict, f.Severity, f.Title, more), true
 }
 
 // checkLoopCap refuses a back-edge when the durable counter already hit the cap.

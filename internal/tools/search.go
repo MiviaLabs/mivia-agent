@@ -87,18 +87,17 @@ func (t *grepTool) ResultBudgetBytes() int { return t.maxBytes }
 
 func (t *grepTool) Name() string { return "grep" }
 func (t *grepTool) Description() string {
-	return "Search file contents with a regex. Params: pattern (required); optional path (default \".\"), optional glob (e.g. *.md, *.py, *.ts), optional case_insensitive, optional files_with_matches, optional offset/limit for pagination. " +
-		"Returns path:line:text. Prefer this over shell grep/rg via run_command."
+	return "Search file contents with a regex. Returns path:line:text. Paginate with offset/limit."
 }
 func (t *grepTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{
-		"pattern":            map[string]any{"type": "string", "description": "Regular expression pattern"},
+		"pattern":            map[string]any{"type": "string", "description": "Regular expression"},
 		"path":               map[string]any{"type": "string", "description": "Relative file or directory to search (default \".\")"},
-		"glob":               map[string]any{"type": "string", "description": "Optional filename glob filter (e.g. *.py, *.ts, *.md)"},
-		"case_insensitive":   map[string]any{"type": "boolean", "description": "Match without regard to case (default false)"},
-		"files_with_matches": map[string]any{"type": "boolean", "description": "Show only matching file paths, not match lines (default false)"},
-		"offset":             map[string]any{"type": "integer", "description": "Optional 0-based match index to skip (for pagination)"},
-		"limit":              map[string]any{"type": "integer", "description": "Optional max matches to return"},
+		"glob":               map[string]any{"type": "string", "description": "Filename glob filter (e.g. *.py, *.ts)"},
+		"case_insensitive":   map[string]any{"type": "boolean", "description": "Match ignoring case (default false)"},
+		"files_with_matches": map[string]any{"type": "boolean", "description": "Return only matching file paths (default false)"},
+		"offset":             map[string]any{"type": "integer", "description": "0-based match index to skip (pagination)"},
+		"limit":              map[string]any{"type": "integer", "description": "Max matches to return"},
 	}, []string{"pattern"})
 }
 
@@ -134,7 +133,10 @@ func (t *grepTool) executeGrep(ctx context.Context, args json.RawMessage) (strin
 		view = t.ignore.snapshot()
 	}
 	matches, errs, err := walkGrep(ctx, t.ws, root, re, in, t.maxMatches, t.maxBytes, t.secretPathExceptions, t.secretPathPatterns, view)
-	if err != nil && !errors.Is(err, errMaxMatches) && !errors.Is(err, errMaxBytes) && err != context.Canceled {
+	// A real cancellation (including plain context.Canceled) must discard
+	// matches/errs unread, never fall through: see walkFilteredFiles' doc
+	// comment for why.
+	if err != nil && !errors.Is(err, errMaxMatches) && !errors.Is(err, errMaxBytes) {
 		return "", err
 	}
 	// Apply pagination: offset and limit.
@@ -192,74 +194,80 @@ type grepInput struct {
 	Limit            int    `json:"limit,omitempty"`
 }
 
+// appendMatchEntry appends entry to matches if it fits the byte budget,
+// returning errMaxBytes/errMaxMatches on the same terms scanFile's two match
+// sites (files-with-matches vs full match line) both need.
+func appendMatchEntry(entry string, matches *[]string, total *int, budget, maxMatches int) error {
+	need := len(entry)
+	if len(*matches) > 0 {
+		need++ // joining newline
+	}
+	if budget > 0 && *total+need > budget {
+		return errMaxBytes
+	}
+	*matches = append(*matches, entry)
+	*total += need
+	if maxMatches > 0 && len(*matches) >= maxMatches {
+		return errMaxMatches
+	}
+	return nil
+}
+
 // scanFile opens a regular file, scans it for regex matches, and appends
-// matching entries to matches. It returns the number of matches added.
-// If filesWithMatches is true, it stops after the first match and returns
-// the file path as a bare name.
+// matching entries to matches. If filesWithMatches is true, it stops after
+// the first match and returns the file path as a bare name. Line scanning is
+// delegated to scanLinesWithContext (fs_guard.go), which owns f's lifecycle
+// and honors ctx during a blocking Scan() itself, not just between lines; a
+// scan error (sc.Err()) surfaces as scanLinesWithContext's return value and
+// is recorded into errs here, same as the old post-loop sc.Err() check did -
+// not propagated as scanFile's own return value.
 func scanFile(ctx context.Context, path, rel string, re *regexp.Regexp, in grepInput, matches *[]string, total *int, budget, maxMatches int, errs *walkErrors) error {
 	f, _, err := openRegularFile(path)
 	if err != nil {
 		errs.add(rel, err)
 		return nil
 	}
-	defer f.Close()
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	lineNo := 0
 	matched := false
-	for sc.Scan() {
-		if lineNo&0xff == 0 {
-			if ctx != nil {
-				if err := ctx.Err(); err != nil {
-					return err
-				}
-			}
-		}
+	consume := func(line string) (bool, error) {
 		lineNo++
-		line := sc.Text()
-		if re.MatchString(line) {
-			if in.FilesWithMatches {
-				if matched {
-					continue
-				}
-				matched = true
-				entry := rel
-				need := len(entry)
-				if len(*matches) > 0 {
-					need++
-				}
-				if budget > 0 && *total+need > budget {
-					return errMaxBytes
-				}
-				*matches = append(*matches, entry)
-				*total += need
-				if maxMatches > 0 && len(*matches) >= maxMatches {
-					return errMaxMatches
-				}
-				continue
-			}
-			if len(line) > 200 {
-				line = truncateUTF8(line, 200) + "..."
-			}
-			entry := fmt.Sprintf("%s:%d:%s", rel, lineNo, line)
-			need := len(entry)
-			if len(*matches) > 0 {
-				need++ // joining newline
-			}
-			if budget > 0 && *total+need > budget {
-				return errMaxBytes
-			}
-			*matches = append(*matches, entry)
-			*total += need
-			if maxMatches > 0 && len(*matches) >= maxMatches {
-				return errMaxMatches
-			}
+		if !re.MatchString(line) {
+			return false, nil
 		}
+		if in.FilesWithMatches {
+			if matched {
+				return false, nil
+			}
+			matched = true
+			return false, appendMatchEntry(rel, matches, total, budget, maxMatches)
+		}
+		if len(line) > 200 {
+			line = truncateUTF8(line, 200) + "..."
+		}
+		entry := fmt.Sprintf("%s:%d:%s", rel, lineNo, line)
+		return false, appendMatchEntry(entry, matches, total, budget, maxMatches)
 	}
-	if err := sc.Err(); err != nil {
-		errs.add(rel, err)
+	// scanFile is called with a nil ctx directly in tests (and permitted by
+	// walkFilteredFiles/walkGrep, which both treat nil as "no cancellation"),
+	// but scanLinesWithContext requires a non-nil ctx - substitute Background
+	// so nil-ctx callers keep their old never-canceled behavior.
+	scanCtx := ctx
+	if scanCtx == nil {
+		scanCtx = context.Background()
 	}
-	return nil
+	scanErr := scanLinesWithContext(scanCtx, sc, f, consume)
+	switch {
+	case scanErr == nil:
+		return nil
+	case errors.Is(scanErr, errMaxMatches), errors.Is(scanErr, errMaxBytes),
+		errors.Is(scanErr, context.Canceled), errors.Is(scanErr, context.DeadlineExceeded):
+		return scanErr
+	default:
+		errs.add(rel, scanErr)
+		return nil
+	}
 }
 
 func walkGrep(ctx context.Context, ws *workspace.Root, root string, re *regexp.Regexp, in grepInput, maxMatches, maxBytes int, secretExceptions, secretPatterns []string, view ignoreView) ([]string, *walkErrors, error) {
@@ -298,46 +306,76 @@ func walkGrep(ctx context.Context, ws *workspace.Root, root string, re *regexp.R
 // symlinks and other non-regular entries exactly as it did before this
 // traversal was extracted; requireRegular=false skips the check entirely and
 // visit receives a nil info.
+//
+// The walk itself races on a background goroutine against ctx.Done(), the
+// same escape hatch readFileWithContext uses (fs_guard.go): see the doc
+// comment on the goroutine below for why (a real, reported hang, not a
+// theoretical one) and its data-race implication for callers.
 func walkFilteredFiles(ctx context.Context, ws *workspace.Root, root, glob string, secretExceptions, secretPatterns []string, view ignoreView, requireRegular bool, errs *walkErrors, visit func(path, rel string, info os.FileInfo) error) error {
-	return filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			errs.add(path, walkErr)
-			return nil
-		}
-		if ctx != nil {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
+	walk := func() error {
+		return filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				errs.add(path, walkErr)
+				return nil
 			}
-		}
-		rel := ws.Rel(path)
-		if d.IsDir() {
-			// Do not skip the walk root even if it matches ignore (explicit path).
-			if path != root && view.ShouldIgnoreDir(d.Name(), rel) {
-				return filepath.SkipDir
+			if ctx != nil {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				default:
+				}
 			}
-			return nil
-		}
-		if view.ShouldIgnoreFile(d.Name(), rel) {
-			return nil
-		}
-		if glob != "" && !globMatchesCtx(ctx, glob, rel, d.Name()) {
-			return nil
-		}
-		if isSecretPath(rel, secretExceptions, secretPatterns) {
-			return nil
-		}
-		if !requireRegular {
-			return visit(path, rel, nil)
-		}
-		info, err := d.Info()
-		if err != nil || !info.Mode().IsRegular() {
-			errs.add(rel, fmt.Errorf("not a regular file"))
-			return nil
-		}
-		return visit(path, rel, info)
-	})
+			rel := ws.Rel(path)
+			if d.IsDir() {
+				// Do not skip the walk root even if it matches ignore (explicit path).
+				if path != root && view.ShouldIgnoreDir(d.Name(), rel) {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if view.ShouldIgnoreFile(d.Name(), rel) {
+				return nil
+			}
+			if glob != "" && !globMatchesCtx(ctx, glob, rel, d.Name()) {
+				return nil
+			}
+			if isSecretPath(rel, secretExceptions, secretPatterns) {
+				return nil
+			}
+			if !requireRegular {
+				return visit(path, rel, nil)
+			}
+			info, err := d.Info()
+			if err != nil || !info.Mode().IsRegular() {
+				errs.add(rel, fmt.Errorf("not a regular file"))
+				return nil
+			}
+			return visit(path, rel, info)
+		})
+	}
+	if ctx == nil {
+		return walk()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// A single stalled directory syscall (stale NFS/FUSE handle, a directory
+	// removed mid-walk) can block filepath.WalkDir forever with no way for
+	// ctx to interrupt it - a real, reported hang, not a theoretical one.
+	// Racing on a goroutine cannot kill that stuck call (Go has no
+	// primitive for it), but frees the caller the moment ctx cancels. The
+	// walk goroutine is then abandoned, not killed: it may keep running and
+	// keep calling visit/errs.add after this function has returned, so
+	// every caller MUST discard (never read) whatever they accumulated on
+	// a ctx.Done() return - see each caller's own comment for how.
+	done := make(chan error, 1)
+	go func() { done <- walk() }()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case err := <-done:
+		return err
+	}
 }
 
 type globTool struct {
@@ -363,14 +401,14 @@ func (t *globTool) ResultBudgetBytes() int { return t.maxBytes }
 
 func (t *globTool) Name() string { return "glob" }
 func (t *globTool) Description() string {
-	return "Find file paths by glob pattern. Params: pattern (required), e.g. **/*.md or src/**/*.ts. Optional path (default \".\"). Prefer over shell find."
+	return "Find file paths by glob pattern (e.g. **/*.md, src/**/*.ts)."
 }
 func (t *globTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{
 		"pattern": map[string]any{"type": "string", "description": "Glob pattern"},
 		"path":    map[string]any{"type": "string", "description": "Relative directory to search (default \".\")"},
-		"offset":  map[string]any{"type": "integer", "description": "Optional 0-based path index to skip (for pagination)"},
-		"limit":   map[string]any{"type": "integer", "description": "Optional max paths to return"},
+		"offset":  map[string]any{"type": "integer", "description": "0-based path index to skip (pagination)"},
+		"limit":   map[string]any{"type": "integer", "description": "Max paths to return"},
 	}, []string{"pattern"})
 }
 

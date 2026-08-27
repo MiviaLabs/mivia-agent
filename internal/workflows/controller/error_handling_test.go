@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
@@ -33,7 +32,7 @@ func (r *errorRunner) RunStep(_ context.Context, req AgentStepRequest) (AgentSte
 	return AgentStepResult{CoordinatorRunID: req.CoordinatorRunID, TaskID: req.TaskID}, r.errors[req.StepID]
 }
 
-func errorWorkflow(t *testing.T) *compiler.CompiledWorkflow {
+func errorWorkflow(t *testing.T) *definition.CompiledWorkflow {
 	t.Helper()
 	wf := &definition.WorkflowFile{
 		Version: 1, Name: "errorflow", InitialStep: "one",
@@ -47,7 +46,7 @@ func errorWorkflow(t *testing.T) *compiler.CompiledWorkflow {
 			{From: "one", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}

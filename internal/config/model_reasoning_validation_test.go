@@ -124,6 +124,50 @@ models = [{ name = "poolside/laguna-s-2.1", context_window_tokens = 1048576, max
 	}
 }
 
+// anthropic_adaptive is Anthropic's native wire dialect - only a provider
+// whose client can actually speak that shape may declare it (see
+// reasoning.CanCarryDialect). deepseek is not in that allow-list: its client
+// only ever speaks OpenAI-compatible chat/completions, so a model entry
+// naming this dialect there would otherwise reach the wire as a malformed
+// request rather than "declares a capability that sends nothing" (the
+// failure mode the deliverability check exists to catch for every other
+// dialect).
+func TestAnthropicAdaptiveDialectRejectedOnANonCapableProvider(t *testing.T) {
+	_, err := loadReasoningCatalog(t, `[provider]
+name = "deepseek"
+
+[providers.deepseek]
+models = [{ name = "deepseek-v4-flash", context_window_tokens = 1000000, reasoning_efforts = ["low", "high"], reasoning = "low", reasoning_dialect = "anthropic_adaptive" }]
+`)
+	if err == nil {
+		t.Fatal("anthropic_adaptive on a non-capable provider must fail to load")
+	}
+	for _, want := range []string{"deepseek-v4-flash", "anthropic_adaptive", "deepseek"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error must name %q so the fix is obvious, got: %v", want, err)
+		}
+	}
+}
+
+// llmproxycli IS in the capability allow-list (its factory builds a
+// per-model dispatcher to a native Anthropic completer for exactly this
+// dialect - internal/provider/llmproxycli.go), so the same declaration that
+// fails on deepseek above must succeed here.
+func TestAnthropicAdaptiveDialectAcceptedOnLLMProxyCLI(t *testing.T) {
+	path := writeCatalogConfig(t, `[provider]
+name = "llmproxycli"
+
+[providers.llmproxycli]
+models = [{ name = "claude-sonnet-5", context_window_tokens = 200000, reasoning_efforts = ["low", "medium", "high", "max"], reasoning = "high", reasoning_dialect = "anthropic_adaptive" }]
+
+[chat]
+max_tokens = 8192
+`, "CLIPROXY_API_KEY=ck\n")
+	if _, err := Load(LoadOptions{ConfigPath: path}); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+}
+
 // The graded set is deliverable once the dialect can express it.
 func TestGradedEffortsAcceptedOnThinkingEffort(t *testing.T) {
 	if _, err := loadReasoningCatalog(t, `[provider]

@@ -9,7 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contentref"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 )
 
 func fixedTime() time.Time {
@@ -65,7 +65,7 @@ func TestNewMessageValidKinds(t *testing.T) {
 func TestValidateTable(t *testing.T) {
 	base := validFinding(t)
 	hex64 := strings.Repeat("a", 64)
-	goodRef := contentref.Reference(contentref.KindOutput, []byte("payload"))
+	goodRef := sdkadapter.Mint(sdkadapter.KindOutput, []byte("payload"))
 	if goodRef == "" {
 		t.Fatal("expected non-empty good ref")
 	}
@@ -91,7 +91,7 @@ func TestValidateTable(t *testing.T) {
 		{"unknown ref kind", func(m *Message) { m.Refs = []string{"ref:sha256:" + hex64} }, DefaultMaxBodyBytes, true},
 		{"good output ref", func(m *Message) { m.Refs = []string{goodRef} }, DefaultMaxBodyBytes, false},
 		{"good message ref", func(m *Message) {
-			ref := contentref.Reference(contentref.KindMessage, []byte("m"))
+			ref := sdkadapter.Mint(sdkadapter.KindMessage, []byte("m"))
 			m.Refs = []string{ref}
 		}, DefaultMaxBodyBytes, false},
 		{"empty ref entry", func(m *Message) { m.Refs = []string{""} }, DefaultMaxBodyBytes, true},
@@ -191,14 +191,14 @@ func TestLifecyclePayloadNeverContainsBody(t *testing.T) {
 
 func TestContentRefUsesMessageKind(t *testing.T) {
 	ref := ContentRef("hello")
-	kind, _, err := contentref.Parse(ref)
+	kind, _, err := sdkadapter.Parse(ref)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if kind != contentref.KindMessage {
-		t.Fatalf("kind = %q, want %q", kind, contentref.KindMessage)
+	if kind != sdkadapter.KindMessage {
+		t.Fatalf("kind = %q, want %q", kind, sdkadapter.KindMessage)
 	}
-	// Empty body → empty ref (contentref contract).
+	// Empty body → empty ref (sdkadapter contract).
 	if ContentRef("") != "" {
 		t.Fatal("empty body should yield empty ref")
 	}
@@ -275,7 +275,7 @@ func TestSynopsisDefaultMaxAndMidRune(t *testing.T) {
 }
 
 func TestNewMessageClonesRefs(t *testing.T) {
-	ref := contentref.Reference(contentref.KindOutput, []byte("x"))
+	ref := sdkadapter.Mint(sdkadapter.KindOutput, []byte("x"))
 	refs := []string{ref}
 	msg, err := NewMessage("run-1", KindFinding,
 		Party{TaskID: "t"}, Party{}, "body", refs,

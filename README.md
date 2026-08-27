@@ -8,13 +8,19 @@
 
 <p align="center">
   <a href="https://github.com/MiviaLabs/mivia-agent/actions/workflows/ci.yml"><img src="https://github.com/MiviaLabs/mivia-agent/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL%20v3-blue.svg" alt="License: AGPL v3"></a>
   <img src="https://img.shields.io/badge/Go-1.25%2B-00ADD8.svg" alt="Go 1.25+">
 </p>
 
 mivia reads, searches, and edits files in your project. It runs commands, such as your test suite. It can also run multi-step workflows in an isolated worktree, with a durable run record for every step.
 
 Your files stay on your machine by default. mivia sends prompts and selected context to the AI provider you configure. Web search, configured MCP servers, lifecycle hooks, and workflow delivery can also contact external services or run configured local programs. Review those settings before use. See [Integrations](docs/product/integrations.md) for the full list.
+
+mivia is built on [mivia-ai-sdk](https://github.com/MiviaLabs/mivia-ai-sdk), our open-source, product-agnostic Go SDK for AI providers, tools, workflows, and hooks. Building your own agent? Start there.
+
+<p align="center">
+  <img src="docs/mivia-agent-showcase.gif" alt="mivia TUI showcase" width="100%">
+</p>
 
 ## Quick start
 
@@ -23,6 +29,14 @@ Requires Go 1.25+ to build from source, or use a prebuilt binary. You also need 
 ### Install
 
 Tagged [GitHub Releases](https://github.com/MiviaLabs/mivia-agent/releases) provide archives for Linux, macOS, and Windows. Each release supports amd64 and arm64. See the [release guide](docs/development/release.md) for release checks and pinned installs.
+
+Piping a script into `bash` runs it with your shell's privileges. Inspect it first, or pin an exact tag, with:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MiviaLabs/mivia-agent/v0.1.0/scripts/install.sh -o /tmp/mivia-install.sh
+sed -n '1,240p' /tmp/mivia-install.sh
+sh /tmp/mivia-install.sh v0.1.0
+```
 
 Install the latest stable release on Linux or macOS:
 
@@ -40,14 +54,6 @@ mivia --version
 ```
 
 The installers verify the archive checksum before extraction. They use a user-owned directory and do not require administrator rights. Unix installs update a shell profile. A child `bash` process cannot update the parent shell, so open a new shell or source the reported profile. PowerShell also updates the current process when it can.
-
-For a pinned release, inspect the script before you run it:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/MiviaLabs/mivia-agent/v0.1.0/scripts/install.sh -o /tmp/mivia-install.sh
-sed -n '1,240p' /tmp/mivia-install.sh
-sh /tmp/mivia-install.sh v0.1.0
-```
 
 Use `MIVIA_NO_PATH_UPDATE=1` on Unix or `-NoPathUpdate` in PowerShell to skip PATH changes. Latest installation requires at least one published stable release. Pre-release tags require an explicit version.
 
@@ -70,6 +76,19 @@ make build              # produces ./mivia
 ### First run
 
 ```bash
+mivia chat
+```
+
+`mivia chat` configures itself on first use: it writes a minimal config to
+`~/.mivia/mivia.toml` (the shipped default provider, openrouter) and, if no
+API key is set yet, prompts for one once and writes it to `~/.mivia/.env`
+(0600). Answer the prompt and you land in a working chat session - no other
+command needed.
+
+For scripted or non-interactive setup (CI, no TTY), run `mivia setup` first
+so `mivia chat` finds a key already in place:
+
+```bash
 mivia setup             # writes your provider API key to ~/.mivia/.env (0600)
 mivia doctor            # verify the key is visible; never prints it
 mivia chat
@@ -88,15 +107,18 @@ Shell completions: `mivia completion bash|zsh|fish` prints a completion script f
 ## Supported providers
 
 mivia is a local-first agent: prompts and selected context go to exactly one
-configured AI provider. Five providers are built in:
+configured AI provider. Eight providers are built in:
 
 | Provider | Default model | Default API base URL |
 |----------|---------------|-----------------------|
-| DeepSeek (default) | `deepseek-v4-flash` | `https://api.deepseek.com/v1` |
-| OpenRouter | `openai/gpt-4o-mini` | `https://openrouter.ai/api/v1` |
+| OpenRouter (default) | `openai/gpt-5.6-luna` | `https://openrouter.ai/api/v1` |
+| Anthropic | `claude-sonnet-5` | `https://api.anthropic.com/v1` |
+| DeepSeek | `deepseek-v4-flash` | `https://api.deepseek.com/v1` |
 | ZAI (z.ai) | `glm-5.2` | `https://api.z.ai/api/paas/v4` |
 | Ollama | `gpt-oss:120b` | `https://ollama.com/v1` |
 | LLM Gateway | `deepseek-v4-pro` | `https://api.llmgateway.io/v1` |
+| LLM Proxy CLI | `claude-sonnet-5` | `http://127.0.0.1:8317/v1` |
+| MiniMax | `MiniMax-M3` | `https://api.minimax.io/v1` |
 
 mivia does not accept an arbitrary OpenAI-compatible provider name: the
 provider registry rejects names it does not support, and every provider must
@@ -104,19 +126,11 @@ declare its model catalog in the settings file (there is no remote model
 discovery). Configure a provider and its API key under
 [Configuration](docs/product/config.md#provider-support); see
 [Integrations](docs/product/integrations.md) for the external-service picture.
-Default provider: DeepSeek, model `deepseek-v4-flash`; switch with
+Default provider: OpenRouter, model `openai/gpt-5.6-luna`; switch with
 `--provider` or in `[provider] name = ...`.
 
 Full dev setup (hooks, tests, verify gates): see [Contributing](docs/contributing.md). Provider and config options: see [Configuration](docs/product/config.md).
 Successful workflow runs stop at `delivery_pending` until you pass the explicit `--allow-publish` flag. See the [Workflow guide](docs/product/workflows-guide.md).
-
-<p align="center">
-  <img src="docs/mivia-welcome.png" alt="mivia TUI welcome screen" width="32%">
-  <img src="docs/mivia-help.png" alt="mivia TUI help dialog" width="32%">
-  <img src="docs/mivia-models.png" alt="mivia TUI model selection dialog" width="32%">
-  <img src="docs/mivia-sessions-workflows.png" alt="mivia TUI sessions and workflows view" width="32%">
-  <img src="docs/mivia-workflow-details.png" alt="mivia TUI workflow details view" width="32%">
-</p>
 
 ## What it does
 
@@ -144,7 +158,7 @@ flowchart LR
     Chat --> Provider["AI provider"]
 ```
 
-Most work under `mivia chat` runs locally. The provider, web search, configured MCP servers, lifecycle hooks, and workflow delivery are separate data or execution paths. Review their settings before use.
+Most work under `mivia chat` runs locally; the provider, web search, MCP, hooks, and delivery paths above are the exceptions.
 
 ## Docs
 
@@ -164,4 +178,4 @@ Most work under `mivia chat` runs locally. The provider, web search, configured 
 
 ## License
 
-[MIT](LICENSE)
+[GNU AGPL-3.0](LICENSE)

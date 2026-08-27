@@ -75,6 +75,7 @@ func writeDeliveryWorkspace(t *testing.T) string {
 	originDir := filepath.Join(t.TempDir(), "origin.git")
 	runGitT(t, filepath.Dir(originDir), "init", "-q", "--bare", filepath.Base(originDir))
 	runGitT(t, root, "remote", "add", "origin", originDir)
+	runGitT(t, root, "push", "-u", "origin", "main")
 	wfRoot := filepath.Join(root, ".mivia", "workflows")
 	if err := os.MkdirAll(wfRoot, 0o700); err != nil {
 		t.Fatal(err)

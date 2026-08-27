@@ -2,20 +2,21 @@ package ledger
 
 import (
 	"context"
-	"errors"
 	"time"
+
+	"github.com/MiviaLabs/mivia-agent/internal/ledgercore"
 )
 
 // Sentinel errors returned by Repository methods.
 var (
-	ErrDuplicate         = errors.New("duplicate record")
-	ErrNotFound          = errors.New("not found")
-	ErrConflict          = errors.New("state conflict")
-	ErrInvalidTransition = errors.New("invalid state transition")
-	ErrClaimHeld         = errors.New("run claim held by another executor")
-	ErrClaimNotHeld      = errors.New("run claim not held by this executor")
-	ErrClosed            = errors.New("repository is closed")
-	ErrContentNotFound   = errors.New("content not found")
+	ErrDuplicate         = ledgercore.ErrDuplicate
+	ErrNotFound          = ledgercore.ErrNotFound
+	ErrConflict          = ledgercore.ErrConflict
+	ErrInvalidTransition = ledgercore.ErrInvalidTransition
+	ErrClaimHeld         = ledgercore.ErrClaimHeld
+	ErrClaimNotHeld      = ledgercore.ErrClaimNotHeld
+	ErrClosed            = ledgercore.ErrClosed
+	ErrContentNotFound   = ledgercore.ErrContentNotFound
 )
 
 // RecoveredRun summarises one workflow run for the startup recovery report.
@@ -175,6 +176,13 @@ type Repository interface {
 	// ClaimRun acquires the exclusive execution claim on a run. Returns
 	// ErrClaimHeld if another holder owns it. Same-holder refresh succeeds.
 	ClaimRun(ctx context.Context, runID, holder string) error
+
+	// RefreshRunClaim refreshes the claim's acquired_at ONLY when holder
+	// already owns the claim row. It never inserts a missing row: a holder
+	// whose claim is gone returns ErrClaimNotHeld. Run execution heartbeats
+	// use this so a displaced or expired holder is treated as lost instead of
+	// reclaiming itself (F2).
+	RefreshRunClaim(ctx context.Context, runID, holder string) error
 
 	// TakeoverRunClaim atomically replaces any existing claim with holder.
 	TakeoverRunClaim(ctx context.Context, runID, holder string) error

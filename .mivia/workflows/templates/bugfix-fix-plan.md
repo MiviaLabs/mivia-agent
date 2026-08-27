@@ -28,7 +28,7 @@ fails before the fix. Keep the change minimal. Do not widen into refactoring or 
 Scope discipline:
 - The declared scope is {{ inputs.scope }}.
 - When scope names a production path: edit production code, tests, and owned docs only. Never
-  touch scripts/, semgrep/, Makefile, .githooks/, .mivia/hooks/, or .mivia/quality/.
+  touch scripts/, semgrep/, Makefile, .githooks/, .mivia/hooks/, or .agents/quality/.
 - When scope names the harness (scripts/, semgrep/, Makefile): fix its performance or logic
   bugs only. Never add checks, thresholds, or rules that reject more code. Do NOT make the
   verification harness more strict.

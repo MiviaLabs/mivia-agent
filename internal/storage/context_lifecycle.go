@@ -19,7 +19,7 @@ func (s *SQLite) DeleteSession(ctx context.Context, principal contextstate.Princ
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return contextstate.DeleteResult{}, err
 	}
@@ -68,7 +68,7 @@ func (s *SQLite) ExportSession(ctx context.Context, principal contextstate.Princ
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return contextstate.ExportResult{}, err
 	}
@@ -260,7 +260,7 @@ func (s *SQLite) PruneContextPayloads(ctx context.Context, now time.Time, limit 
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return 0, err
 	}

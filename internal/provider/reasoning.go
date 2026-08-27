@@ -1,6 +1,9 @@
 package provider
 
-import "github.com/MiviaLabs/mivia-agent/internal/reasoning"
+import (
+	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
+	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
+)
 
 // reasoningBodyFields maps one provider-neutral level onto the wire fields a
 // dialect expects. A nil result means "send nothing", which is the shape every
@@ -61,10 +64,50 @@ func reasoningBodyFields(dialect reasoning.Dialect, level reasoning.Level) map[s
 			"thinking":         thinkingObject(level, true),
 			"reasoning_effort": string(level),
 		}
+	case reasoning.DialectAnthropicAdaptive:
+		// Anthropic's native shape: a top-level thinking object whose "on"
+		// type is "adaptive" (not "enabled" - thinkingObject's shape does not
+		// apply here), paired with output_config.effort carrying the graded
+		// level. Off sends thinking:disabled alone; effort is never sent
+		// without an active level, matching every other graded dialect above.
+		if level == reasoning.Off {
+			return map[string]any{"thinking": map[string]any{"type": "disabled"}}
+		}
+		// display: "summarized" is required to get readable thinking text
+		// back at all - Anthropic's default ("omitted") streams thinking
+		// blocks with an empty text field. Without this, mivia's reasoning
+		// panel (internal/ui/component/transcript) has nothing to show
+		// regardless of how ReasoningContent is populated downstream.
+		return map[string]any{
+			"thinking":      map[string]any{"type": "adaptive", "display": "summarized"},
+			"output_config": map[string]any{"effort": anthropicEffortForLevel(level)},
+		}
 	default:
 		// reasoning.DialectNone, and any dialect this client does not know:
 		// fail closed rather than guess a wire shape.
 		return nil
+	}
+}
+
+// anthropicEffortForLevel maps a provider-neutral Level onto Anthropic's
+// output_config.effort vocabulary (low, medium, high, xhigh, max - no
+// "minimal" or "off": Minimal folds onto the same "low" tier as Low, since
+// Anthropic's effort ladder has no finer step below it, and Off never reaches
+// this function (reasoningBodyFields returns before calling it for Off).
+func anthropicEffortForLevel(level reasoning.Level) string {
+	switch level {
+	case reasoning.Minimal, reasoning.Low:
+		return "low"
+	case reasoning.Medium:
+		return "medium"
+	case reasoning.High:
+		return "high"
+	case reasoning.XHigh:
+		return "xhigh"
+	case reasoning.Max:
+		return "max"
+	default:
+		return ""
 	}
 }
 
@@ -92,11 +135,54 @@ func defaultReasoningDialect(provider string) reasoning.Dialect {
 // entry can name a wire shape its provider does not default to; the fall to the
 // provider's vetted table is reasoning.Resolve's, so a client constructed
 // without a default still encodes what config validated.
-func (c *OpenAICompat) reasoningFields(req Request) map[string]any {
+//
+// The request is taken by pointer so the encoder can populate the SDK-shaped
+// SDKReasoningEffort as a side effect; a value parameter would lose that
+// side effect to the caller's copy, and the SDK adapter that consumes the
+// request would never see the bridge's level->effort projection.
+func (c *OpenAICompat) reasoningFields(req *Request) map[string]any {
 	dialect := req.ReasoningDialect
 	if dialect == "" {
 		dialect = c.reasoning
 	}
 	resolved := reasoning.Resolve(c.name, reasoning.Setting{Level: req.ReasoningLevel, Dialect: dialect})
+	req.SDKReasoningEffort = levelToSDKReasoningEffort(resolved.Level)
 	return reasoningBodyFields(resolved.Dialect, resolved.Level)
+}
+
+// ReasoningFields is the exported wrapper around reasoningFields. It
+// runs the same encoding path marshalBody uses, and is exposed for
+// tests and callers that need the resolved wire shape without
+// performing an HTTP round-trip. The side effect of populating
+// req.SDKReasoningEffort is identical: a call here is one more
+// place the SDK-shaped effort is set on the request.
+func (c *OpenAICompat) ReasoningFields(req *Request) map[string]any {
+	return c.reasoningFields(req)
+}
+
+// levelToSDKReasoningEffort maps one resolved Level onto the SDK's
+// ReasoningEffort vocabulary. The mapping mirrors
+// internal/sdkadapter.LevelToReasoningEffort so the SDK-shaped request
+// field carries the same wire value the bridge would return; the inline
+// duplication avoids a new internal/provider -> internal/sdkadapter
+// in-prefix edge (the bridge is the only package that may import both
+// shapes, and provider is locked to in-prefix peers only by policy).
+//
+// An empty or unknown Level maps to the empty SDK effort, which the SDK
+// reads as "send no reasoning field". Levels the SDK has no constant
+// for (minimal, xhigh, max) also map to empty: the user picked a level
+// the SDK cannot carry, and the wire should not invent a value.
+func levelToSDKReasoningEffort(l reasoning.Level) sdkshape.ReasoningEffort {
+	switch l {
+	case reasoning.Off:
+		return sdkshape.ReasoningEffortNone
+	case reasoning.Low:
+		return sdkshape.ReasoningEffortLow
+	case reasoning.Medium:
+		return sdkshape.ReasoningEffortMedium
+	case reasoning.High:
+		return sdkshape.ReasoningEffortHigh
+	default:
+		return ""
+	}
 }

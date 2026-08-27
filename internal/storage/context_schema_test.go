@@ -479,8 +479,8 @@ func TestMigrationV11ConvergesFromEveryPriorVersion(t *testing.T) {
 			if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
 				t.Fatal(err)
 			}
-			if version != 11 {
-				t.Fatalf("user_version = %d after %s, want 11", version, test.name)
+			if version != currentContextSchemaVersion {
+				t.Fatalf("user_version = %d after %s, want %d", version, test.name, currentContextSchemaVersion)
 			}
 			found := false
 			rows, err := db.Query(`PRAGMA table_info(chat_sessions)`)
@@ -512,6 +512,44 @@ func TestMigrationV11ConvergesFromEveryPriorVersion(t *testing.T) {
 				t.Fatalf("chat_sessions_v11_contract is missing after %s", test.name)
 			}
 		})
+	}
+}
+
+// TestMigrationV11ApplyFailureAtV10 pins the new v10->v11 fall-through's
+// error path (added when v12 turned the old bare `return applyContextSchemaV11(db)`
+// terminal into a fall-through that must propagate a v11 apply failure
+// instead of silently continuing to v12). Same failure-injection shape as
+// TestMigrationV3ApplyFailure: a CHECK on the migrations table makes v11's
+// own INSERT OR REPLACE fail.
+func TestMigrationV11ApplyFailureAtV10(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "v11_apply_failure.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	if _, err := db.Exec(`CREATE TABLE context_schema_migrations(version INTEGER PRIMARY KEY, dirty INTEGER NOT NULL CHECK(dirty IN (0,1)), CHECK(version < 11))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`PRAGMA user_version = 10`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := migrateContextSchema(db); err == nil {
+		t.Fatal("migrateContextSchema at v10 with failing v11 apply unexpectedly succeeded")
+	}
+
+	var version int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != 10 {
+		t.Fatalf("user_version = %d, want 10 after failed v11 apply", version)
+	}
+	if contextVersionTablePresent(db, 12) {
+		t.Fatal("token_usage_events must not exist: v11 never committed, so the fall-through to v12 must never have run")
 	}
 }
 

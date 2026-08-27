@@ -54,7 +54,7 @@ mivia can read, search, and edit files with these tools:
 
 `run_command` runs one program with a fixed argv list. There is no shell: no `;`, `&&`, or `$(...)` expansion.
 
-`run_command` is disabled until configuration or a CLI override supplies a program allowlist. The recommended configuration is broad and includes shells and network clients. Trim it to the least permission your workspace needs. Child-process environment variables are also controlled by an explicit allowlist. See [Configuration](config.md) for the persistent policy.
+`run_command` runs a curated built-in program allowlist out of the box: common compilers/interpreters, their package managers, git, and read-only Unix utilities. Configuration or a CLI override can extend or replace that allowlist. The recommended broader configuration includes shells and network clients — trim it to the least permission your workspace needs. Child-process environment variables are controlled by a separate, empty-by-default allowlist. See [Configuration](config.md) for the persistent policy.
 
 The `get_diagnostics` tool runs a workspace-declared diagnostics command and returns a normalized JSON envelope of findings, each with `file`, `line`, `severity`, and `message` fields. It is configured through `[tools] diagnostics_commands`, a map of command names to argv: for example `vet = ["go", "vet", "./..."]`, `lint = ["npm", "run", "lint"]`, or `check = ["pytest", "--output", "json"]`. The agent selects one command with the `command` argument. When the argument is omitted, the tool runs the entry named `default`, or the sole entry when only one exists. With several commands and no `default`, an omitted `command` is refused with an explanatory envelope error; an unknown command name is refused the same way. The envelope names the command that ran (`command_name`) and the exact argv (`command`). The v1 key `[tools] diagnostics_command` still loads: it is a deprecated alias that folds into the `default` entry. Setting both keys is a configuration error.
 
@@ -78,7 +78,7 @@ Tool names, descriptions, and schemas are project- and language-generic. mivia w
 
 ## Deferred tool loading
 
-Every advertised tool costs schema bytes on every request, whether the model uses it or not. `[tools] core` (or per-agent `tools_core`) names the tools that stay advertised. The rest of the agent's authorized set is deferred. A deferred tool's schema is withheld. The model instead sees a one-line index of what is available. A `load_tools` tool pulls the ones it needs.
+Every advertised tool costs schema bytes on every request, whether the model uses it or not. `[tools] core` (or per-agent `tools_core`) names the tools that stay advertised. The rest of the agent's authorized set is deferred. A deferred tool's advertised description is shortened to a one-line summary; its parameter schema still ships in full, since that is what the model needs to invoke it correctly once loaded. The same one-liner also appears in a one-line index injected into the prompt. The full description is sent once, when the tool is actually admitted, as the result of the `load_tools` call that loads it.
 
 - Unset is the default and is fully inert. Every authorized tool is core. No `load_tools` tool is registered.
 - Loading takes effect on the model's next turn. The current turn's tool list was already sent to the provider.
@@ -90,8 +90,8 @@ Every advertised tool costs schema bytes on every request, whether the model use
 
 Named agents are file-backed definitions. They live in two places:
 
-- user definitions: `~/.mivia/agents/<name>.toml`
-- workspace definitions: `<workspace>/.mivia/agents/<name>.toml`
+- user definitions: `~/.agents/agents/<name>.md`
+- workspace definitions: `<workspace>/.agents/agents/<name>.md`
 
 Select an agent with `mivia chat --agent <name>` or `/agent <name>`. If a file-backed `mivia` definition exists, it is selected as the root session when no agent is specified. Otherwise mivia uses a built-in default agent. The built-in default is not a file-backed definition and cannot be selected with `--agent`.
 
@@ -125,7 +125,7 @@ skills = ["bug-audit", "verify-change", "architecture-review"]
 - Skill names are validated against the loaded skill catalog.
 - Workspace agent files always load. The user-owned `load_workspace_config` gate defaults to enabled. It controls only workspace prompt and project-skill surfaces. Set it to `false` to exclude project skills and workspace `[chat]`/`[subagents]` prompts from runtime activation.
 
-Every `dispatch_tasks` and `spawn_agent` task selects a required named `agent` and an optional separate `skill`. mivia rejects the call if that agent's tool list does not allow the skill. Nested agents cannot dispatch tasks; extra tools are removed. See [Skill System Architecture](../architecture/skills.md#agent-skill-binding).
+Every `dispatch_tasks` task may select a named `agent` and an optional separate `skill`. Omitting `agent` runs the task as a bare one-shot LLM call on the caller's own model, with no tools; setting `skill` without `agent` is rejected. mivia rejects the call if a selected agent's tool list does not allow the skill. Nested agents cannot dispatch tasks; extra tools are removed. See [Skill System Architecture](../architecture/skills.md#agent-skill-binding).
 
 The task agent setting is separate from direct user-invoked skill slash handlers and prompt turns.
 
@@ -154,23 +154,21 @@ For the workflow agent tools (`workflow_run`, `workflow_status`, `workflow_event
 
 ```mermaid
 flowchart LR
-    spawn_agent -->|"tasks with dependencies"| run_handle["run handle"]
+    dispatch_tasks -->|"tasks with dependencies"| run_handle["run handle"]
     inspect_agents --> run_snapshot["run snapshot"]
     join_run --> block_until["block until done"]
     block_until --> results["results"]
     cancel_run --> two_phase["two-phase cancel"]
 ```
 
-Look at the arrows out of `spawn_agent`. One run can hold many tasks. `join_run` waits until all tasks finish.
+Look at the arrows out of `dispatch_tasks`. One run can hold many tasks. `join_run` waits until all tasks finish.
 
 | Tool | Purpose |
 |------|---------|
-| `spawn_agent` | Create a new orchestration run with a set of tasks. Supports `idempotency_key`, `wait`, `wait_task_id`, and per-task `timeout_seconds`/`budget` |
+| `dispatch_tasks` | Dispatch sub-tasks with optional dependencies. Supports `idempotency_key`, `wait` (`run`/`none`/`task`, default `run`), `wait_task_id`, and per-task `timeout_seconds`/`output_schema`. With `wait=run` it blocks for the whole batch and returns one result per task |
 | `inspect_agents` | Returns a snapshot of a run: status, task states, display name, timestamps |
 | `join_run` | Block until a run completes; returns per-task results |
 | `cancel_run` | Cancel a running orchestration run, in two phases |
-| `delegate` | One sub-agent task, one-shot or multi-step with full tool access |
-| `dispatch_tasks` | Parallel sub-tasks with optional dependencies; always returns one result per task |
 
 The root agent's workspace-tool allowlist is not the complete permission model. Root coordination and run-record tools remain available by design. Spawned instances lose delegation tools. Coordination tools are removed from nested agents. `run_command` has a separate program and environment allowlist. Naming it in an agent file does not authorize arbitrary process execution.
 
@@ -185,7 +183,7 @@ Tasks can declare `depends_on` for dependency ordering. The scheduler:
 
 #### Idempotency
 
-Pass `idempotency_key` to `spawn_agent` to make the call repeatable without side effects:
+Pass `idempotency_key` to `dispatch_tasks` to make the call repeatable without side effects:
 
 - A key applies only to the same caller. Another caller using the same key starts a new run.
 - The same caller and identical work reuse a completed run's results or an in-flight run's handle.
@@ -195,7 +193,7 @@ Pass `idempotency_key` to `spawn_agent` to make the call repeatable without side
 
 Orchestration returns one result per task. Each result has its own status: `completed`, `failed`, `timed_out`, `canceled`, or `blocked`. One task failing or hanging never costs you the others.
 
-`spawn_agent` (`wait=run`) and `join_run` also carry a `run_error` field for a problem with the run itself. `dispatch_tasks` returns the per-task array only.
+`join_run` and `dispatch_tasks` called with `wait` set to `none` or `task` return the `run_id`/`task_results` envelope, which carries a `run_error` field for a problem with the run itself. `dispatch_tasks` with the default `wait=run` returns the bare per-task array only, with no `run_error` field.
 
 If the call's context expires before the run resolves, the results are read back from the recorded execution history. The run is not cancelled. It keeps going and stays reachable through `inspect_agents` and `join_run` on its `run_id`.
 
@@ -295,6 +293,8 @@ Slash commands work inside the chat. Type `/` followed by the command name.
 | `/load <name>` | Load session |
 | `/delete <name>` | Delete session |
 | `/resume [run-id]` | Resume an interrupted run |
+| `/queue` | Manage queued messages |
+| `/search` | Search the web |
 | `/workflows` | Show workflow runs (TUI) |
 | `/exit`, `/quit`, `/q` | Exit (classic terminal) |
 | `/provider` | Show provider (classic terminal) |

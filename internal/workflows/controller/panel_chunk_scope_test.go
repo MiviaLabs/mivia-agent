@@ -3,7 +3,6 @@ package controller
 import (
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 )
 
@@ -12,7 +11,7 @@ import (
 // run harness is needed at builder level.
 func chunkScopeController(inputs map[string]any) *LinearController {
 	return &LinearController{
-		Workflow: &compiler.CompiledWorkflow{Stacking: &definition.StackingConfig{HardLines: 400}},
+		Workflow: &definition.CompiledWorkflow{Stacking: &definition.StackingConfig{HardLines: 400}},
 		Inputs:   inputs,
 	}
 }

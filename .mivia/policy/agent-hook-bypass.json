@@ -6,12 +6,20 @@
     "--no-verify",
     "-n",
     "--no-gpg-sign",
-    "--no-signoff"
+    "--no-signoff",
+    "--no-invariants",
+    "--skip-invariants",
+    "--no-verify-fast",
+    "--no-test-quality"
   ],
   "blockedFlagPatterns": [
     "(?i)--no-verify\\b",
     "(?i)\\bgit\\s+commit\\b[\\s\\S]*\\s-n\\b",
-    "(?i)--no-gpg-sign\\b"
+    "(?i)--no-gpg-sign\\b",
+    "(?i)--no-invariants\\b",
+    "(?i)--skip-invariants\\b",
+    "(?i)--no-verify-fast\\b",
+    "(?i)--no-test-quality\\b"
   ],
   "blockedEnv": {
     "HUSKY": "0",

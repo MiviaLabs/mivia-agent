@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -44,6 +45,15 @@ type SessionSaveOptions struct {
 	// with it only when it matches the catalog name and a live row exists at
 	// write time; every other shape keeps the row a plain snapshot copy.
 	SessionID string
+	// SessionRevision stamps the live session's session_revision as of this
+	// save, so a later LoadSession can tell "nothing has advanced the head
+	// since this snapshot was taken" (safe to serve when there is no
+	// completed checkpoint) apart from "a clear or a commit happened after
+	// this snapshot" (the snapshot is stale). Only stored when SessionID is
+	// also stamped; nil means unknown (e.g. a plain named copy), and the
+	// storage layer then treats the row conservatively, exactly as it did
+	// before this field existed.
+	SessionRevision *uint64
 }
 
 // MaxSessionDirBytes bounds the stored session directory string so a hostile
@@ -65,6 +75,31 @@ func NormalizeSessionTitle(title string) (string, error) {
 		}
 	}
 	return title, nil
+}
+
+// sqliteDefaultTimestampLayout is the shape SQLite's CURRENT_TIMESTAMP column
+// default writes ("2026-08-15 01:56:49", UTC, no zone) - still used by
+// context_checkpoints.created_at (storage.sqliteTimestampLayout). Session
+// catalog rows mix that layout with Go-written RFC3339Nano timestamps
+// (chat_sessions, worktree_routes), so any reader comparing or sorting
+// SessionCatalogInfo.CreatedAt/UpdatedAt must parse both, not just one -
+// comparing the two layouts as raw strings is invalid (RFC3339's 'T' sorts
+// above ' ', so an RFC3339 row always ranks above a same-day SQLite-layout
+// row regardless of actual time).
+const sqliteDefaultTimestampLayout = "2006-01-02 15:04:05"
+
+// ParseCatalogTimestamp parses a SessionCatalogInfo timestamp written by
+// either producer (see sqliteDefaultTimestampLayout). It returns the zero
+// time when s does not match either layout, mirroring time.Parse's error
+// contract for callers that already treat a parse failure as "unknown".
+func ParseCatalogTimestamp(s string) time.Time {
+	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+		return t
+	}
+	if t, err := time.ParseInLocation(sqliteDefaultTimestampLayout, s, time.UTC); err == nil {
+		return t
+	}
+	return time.Time{}
 }
 
 // ValidSessionDir reports whether dir is safe to persist: no NUL bytes and

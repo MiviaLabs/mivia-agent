@@ -3,6 +3,7 @@ package hooks
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -568,6 +569,40 @@ func TestModelVisibleReasonDoesNotCarryTheFilesystemPath(t *testing.T) {
 	}
 }
 
+// A PreToolUse gate that cannot start must still deliver a BOUNDED reason.
+// execute()'s could-not-start branch builds the reason from the OS start error,
+// which for a cmd.Start() failure is an *os.PathError whose message embeds the
+// FULL resolved program path. validate.go imposes no argv[0] length cap, so an
+// argv0 longer than maxReasonBytes makes Start fail (ENAMETOOLONG/ENOENT) and
+// produces a reason well over 4 KiB; noVerdictOutcome used to hand that reason
+// to the model verbatim, unlike every other deny path which applies bound().
+// Fails before the fix: the reason is the whole ~9 KB start error (H-1).
+func TestNoVerdictDenyReasonIsBounded(t *testing.T) {
+	requirePOSIX(t)
+	dir := hookDir(t)
+	// An absolute argv[0] longer than maxReasonBytes pointing at a file that
+	// does not exist: cmd.Start() fails and the PathError message carries the
+	// full path into the noVerdict reason. The long part is a directory
+	// component so the basename (which the reason names first) stays intact.
+	long := filepath.Join(dir, strings.Repeat("d", maxReasonBytes), "gate.sh")
+	groups := group(t, hookDir(t), preToolUse(`["`+long+`"]`, ""))
+
+	out := runHooks(t, dir, groups, Payload{Event: EventPreToolUse, Tool: "x"})
+	if !out.Denied {
+		t.Fatal("a PreToolUse hook whose program cannot start must deny, not allow")
+	}
+	notice := fmt.Sprintf("\n... truncated at %d bytes", maxReasonBytes)
+	if len(out.Reason) > maxReasonBytes+len(notice) {
+		t.Fatalf("noVerdict deny reason = %d bytes, must stay within the bound plus its notice", len(out.Reason))
+	}
+	if !strings.Contains(out.Reason, notice) {
+		t.Fatalf("the over-budget reason must carry the truncation notice, got %q", out.Reason)
+	}
+	if !strings.Contains(out.Reason, "could not start") {
+		t.Fatalf("the deny reason must still explain the failure, got %q", out.Reason)
+	}
+}
+
 func TestOperatorWarningKeepsTheFullPath(t *testing.T) {
 	requirePOSIX(t)
 	dir := hookDir(t)
@@ -630,6 +665,34 @@ func TestEventSelectsWhichGroupsRun(t *testing.T) {
 
 // A gate that already denied must not keep running handlers: the call is not
 // happening, and the remaining scripts have side effects.
+// An earlier ALLOWING handler's additionalContext survives even when a
+// LATER handler in the same group denies the call - real, end-to-end proof
+// (not a fabricated verdict) that Outcome{Denied:true, Context:non-empty}
+// is a shape production code can actually produce. This is what makes
+// internal/runtime/dispatcher.go's block-path HookContext threading a
+// narrow fix rather than one that surfaces every deny with advisory text:
+// only a prior non-denying sibling can populate Context on a deny.
+func TestAnAllowingHandlersContextSurvivesALaterDeny(t *testing.T) {
+	requirePOSIX(t)
+	dir := hookDir(t)
+	script(t, dir, "advise.sh",
+		`printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"},"additionalContext":"the workspace is mid-rebase"}'`+"\nexit 0\n")
+	script(t, dir, "guard.sh", "printf 'policy forbids this' >&2\nexit 2\n")
+	body := "[[hooks]]\nevent = \"PreToolUse\"\n\n  [[hooks.handlers]]\n  type = \"command\"\n  argv = [\"./advise.sh\"]\n\n  [[hooks.handlers]]\n  type = \"command\"\n  argv = [\"./guard.sh\"]\n"
+	groups := group(t, dir, body)
+
+	out := runHooks(t, dir, groups, Payload{Event: EventPreToolUse, Tool: "x"})
+	if !out.Denied {
+		t.Fatal("want deny")
+	}
+	if !strings.Contains(out.Context, "mid-rebase") {
+		t.Fatalf("an earlier allowing handler's advisory context must survive a later deny, got %q", out.Context)
+	}
+	if strings.Contains(out.Reason, "mid-rebase") {
+		t.Fatalf("the advisory context must travel on Context, not be spliced into the deny Reason, got %q", out.Reason)
+	}
+}
+
 func TestPreToolUseShortCircuitsOnFirstDeny(t *testing.T) {
 	requirePOSIX(t)
 	dir := hookDir(t)

@@ -62,6 +62,14 @@ func (s *deleteHookStore) ReleaseClaimFenced(ctx context.Context, claim storage.
 	return s.Store.(storage.FencedLeaseStore).ReleaseClaimFenced(ctx, claim)
 }
 
+func (s *deleteHookStore) TakeoverClaimFenced(ctx context.Context, runID, holder string) (storage.Claim, error) {
+	return s.Store.(storage.FencedLeaseStore).TakeoverClaimFenced(ctx, runID, holder)
+}
+
+func (s *deleteHookStore) RefreshClaimFenced(ctx context.Context, runID, holder string) (storage.Claim, error) {
+	return s.Store.(storage.FencedLeaseStore).RefreshClaimFenced(ctx, runID, holder)
+}
+
 func TestDeleteRunCleansClaimsWhenCatchUpDroppedRunFirst(t *testing.T) {
 	ctx := context.Background()
 	runID := "run-race-delete"
@@ -100,11 +108,9 @@ func runDeleteCatchUpRace(t *testing.T, ctx context.Context, repo *StorageLedger
 		t.Fatalf("DeleteRun after catch-up folded tombstone first: %v, want nil", err)
 	}
 
-	repo.mu.RLock()
-	_, claimPresent := repo.claimedRuns[runID]
-	_, appliedPresent := repo.applied[runID]
-	_, allocatedPresent := repo.allocated[runID]
-	repo.mu.RUnlock()
+	_, claimPresent := repo.claims.GetClaim(runID)
+	appliedPresent := repo.engine.Watermarks().Applied(runID) != 0
+	allocatedPresent := repo.engine.Watermarks().Allocated(runID) != 0
 	if claimPresent {
 		t.Fatal("claimedRuns still holds a stale fenced claim after DeleteRun")
 	}

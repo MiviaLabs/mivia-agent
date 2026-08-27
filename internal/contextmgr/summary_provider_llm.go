@@ -12,12 +12,30 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
 
-// summaryOutputHeadroomTokens pads the wire output cap over OutputLimit.
-// ValidateSummary measures the summary bytes after the call and enforces
-// OutputLimit itself. JSON field names, brackets, and one code fence add
-// model tokens but no summary bytes. A small fixed pad stops a bounded
-// summary from truncation at the transport. The pad never raises the bound.
+// summaryOutputHeadroomTokens is the slack between what the host ASKS the
+// model to produce and what it will ACCEPT afterwards. JSON field names,
+// brackets, and one code fence cost model tokens but carry no summary bytes,
+// so a reply that spends its whole wire budget on content re-encodes to
+// slightly fewer canonical bytes than it emitted. The pad absorbs that
+// difference.
+//
+// The pad is applied to the ACCEPT bound, never to the wire cap. It used to
+// be the other way round - the wire asked for OutputLimit+pad while
+// ValidateSummary rejected anything over OutputLimit - which meant a model
+// that used the budget it was handed had its reply paid for and then thrown
+// away. A real session lost its entire task context to that gap: compaction
+// reported "structural only, no summary" while the model had answered
+// correctly, 10 bytes over the hidden bound. See summaryAcceptBound.
 const summaryOutputHeadroomTokens = 256
+
+// summaryWireCap is the max_tokens the host asks for on the summary call.
+func summaryWireCap(outputLimit int) int { return outputLimit }
+
+// summaryAcceptBound is the largest summary ValidateSummary will accept. It
+// is deliberately >= summaryWireCap: the model cannot emit more than the wire
+// cap allows, so everything it can legitimately produce must be acceptable.
+// TestSummaryAcceptBoundIsNeverBelowTheWireCap pins that ordering.
+func summaryAcceptBound(outputLimit int) int { return outputLimit + summaryOutputHeadroomTokens }
 
 // summaryReplySkeleton is the literal reply schema shown to the model. The
 // field names are the wire contract: the model must echo them and add none.
@@ -36,8 +54,8 @@ const summaryReplySkeleton = `{
 // LLMSummaryProvider adapts one provider.Completer to the SummaryProvider
 // contract. It renders a host-authored prompt from the sealed envelope, calls
 // the completer once, and decodes one strict JSON reply. It never logs and
-// never retries. Any error lets the caller degrade to structural-only
-// compaction.
+// never retries (retry policy lives in Summarizer.Summarize). Any error lets
+// the caller degrade to structural-only compaction.
 type LLMSummaryProvider struct {
 	completer provider.Completer
 	// sessionID is the owning chat session's id, threaded onto every summary
@@ -76,7 +94,7 @@ func (p LLMSummaryProvider) Summarize(ctx context.Context, request SummaryReques
 		return Summary{}, err
 	}
 	temperature := 0.0
-	outputCap := request.OutputLimit + summaryOutputHeadroomTokens
+	outputCap := summaryWireCap(request.OutputLimit)
 	reply, err := p.completer.ChatTurn(ctx, provider.Request{
 		Model: request.Model, Messages: summaryMessages(request),
 		Temperature: &temperature, MaxTokens: &outputCap, Stream: false,
@@ -86,17 +104,17 @@ func (p LLMSummaryProvider) Summarize(ctx context.Context, request SummaryReques
 		return Summary{}, fmt.Errorf("summary completer call: %w", err)
 	}
 	if reply == nil {
-		return Summary{}, fmt.Errorf("%w: summary completer returned no response", contextstate.ErrInvalidDTO)
+		return Summary{}, fmt.Errorf("%w: summary completer returned no response", ErrSummaryReplyMalformed)
 	}
 	summary, err := decodeSummaryReply(reply.Content)
 	if err != nil {
 		return Summary{}, err
 	}
 	if summary.Version != request.Input.Version {
-		return Summary{}, fmt.Errorf("%w: summary reply version %d does not echo %d", contextstate.ErrInvalidDTO, summary.Version, request.Input.Version)
+		return Summary{}, fmt.Errorf("%w: summary reply version %d does not echo %d", ErrSummaryEchoMismatch, summary.Version, request.Input.Version)
 	}
 	if summary.SourceRange != request.SourceRange {
-		return Summary{}, fmt.Errorf("%w: summary reply source range does not echo the request source range", contextstate.ErrInvalidDTO)
+		return Summary{}, fmt.Errorf("%w: summary reply source range does not echo the request source range", ErrSummaryEchoMismatch)
 	}
 	return summary, nil
 }
@@ -198,16 +216,16 @@ func writeSourceExcerpts(b *strings.Builder, excerpts []SourceExcerpt) {
 func decodeSummaryReply(content string) (Summary, error) {
 	payload := stripCodeFence(content)
 	if payload == "" {
-		return Summary{}, fmt.Errorf("%w: summary reply is empty", contextstate.ErrInvalidDTO)
+		return Summary{}, fmt.Errorf("%w: summary reply is empty", ErrSummaryReplyMalformed)
 	}
 	decoder := json.NewDecoder(strings.NewReader(payload))
 	decoder.DisallowUnknownFields()
 	var summary Summary
 	if err := decoder.Decode(&summary); err != nil {
-		return Summary{}, fmt.Errorf("%w: summary reply is not valid summary JSON: %v", contextstate.ErrInvalidDTO, err)
+		return Summary{}, fmt.Errorf("%w: summary reply is not valid summary JSON: %v", ErrSummaryReplyMalformed, err)
 	}
 	if _, err := decoder.Token(); err != io.EOF {
-		return Summary{}, fmt.Errorf("%w: summary reply has trailing content", contextstate.ErrInvalidDTO)
+		return Summary{}, fmt.Errorf("%w: summary reply has trailing content", ErrSummaryReplyMalformed)
 	}
 	return summary, nil
 }

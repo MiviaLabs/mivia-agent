@@ -41,6 +41,79 @@ func (h *neverSettlingHandler) count() int {
 	return h.invoked
 }
 
+// TestWatchJoinLivenessStopJoinsInFlightEmit pins the F16 fix: stop() must
+// BLOCK until the watchdog goroutine has fully exited, so a heartbeat emit
+// already in flight when stop is called can never still be running (and so
+// never still be writing to the ledger) after the caller observes stop
+// returning. Before the fix, stop() only closed a channel and returned
+// immediately, leaving a window where an in-flight emit (mid persistDurable
+// Heartbeat ledger write) could complete after joinWithCancellation, and
+// therefore Run(), had already returned to its caller.
+func TestWatchJoinLivenessStopJoinsInFlightEmit(t *testing.T) {
+	ResetStepHeartbeats()
+	defer ResetStepHeartbeats()
+
+	const taskID = "task-stop-joins-emit"
+	releaseEmit := make(chan struct{})
+	emitStarted := make(chan struct{}, 1)
+	var emitInFlight, emitFinished atomicBool
+
+	emit := func(ProgressEvent) {
+		emitInFlight.set(true)
+		select {
+		case emitStarted <- struct{}{}:
+		default:
+		}
+		<-releaseEmit
+		emitFinished.set(true)
+		emitInFlight.set(false)
+	}
+
+	joinCtx, joinCancel := context.WithCancel(context.Background())
+	defer joinCancel()
+	stop := watchJoinLiveness(joinCtx, joinCancel, taskID, 20*time.Millisecond, emit)
+
+	<-emitStarted // the watchdog tick is now blocked inside emit()
+
+	stopReturned := make(chan struct{})
+	go func() {
+		close(releaseEmit) // let the in-flight emit proceed to completion
+		stop()
+		close(stopReturned)
+	}()
+
+	select {
+	case <-stopReturned:
+	case <-time.After(3 * time.Second):
+		t.Fatal("stop() did not return after the in-flight emit was released")
+	}
+	if !emitFinished.get() {
+		t.Fatal("stop() returned before the in-flight emit finished; want stop to join the goroutine")
+	}
+	if emitInFlight.get() {
+		t.Fatal("emit still marked in-flight after stop() returned")
+	}
+}
+
+// atomicBool is a tiny mutex-guarded bool for the test above; avoids sync/
+// atomic.Bool version constraints and keeps the assertion readable.
+type atomicBool struct {
+	mu sync.Mutex
+	v  bool
+}
+
+func (b *atomicBool) set(v bool) {
+	b.mu.Lock()
+	b.v = v
+	b.mu.Unlock()
+}
+
+func (b *atomicBool) get() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.v
+}
+
 // TestJoinBoundHonorsTaskTimeoutOverWatchdog pins that the 10-minute join
 // watchdog is a last-resort bound ONLY when nothing else bounds the join: a
 // long task timeout (e.g. one derived from a 24h run deadline) must be

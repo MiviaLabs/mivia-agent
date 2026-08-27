@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	coordledger "github.com/MiviaLabs/mivia-agent/internal/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/ledgercore"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 )
 
@@ -73,7 +73,7 @@ func (s PanelTaskSpec) workFingerprint() string {
 		Timeout                                                            time.Duration
 		DeadlineAt                                                         time.Time
 		WorkLimits                                                         PanelWorkLimits
-		Policy                                                             coordledger.RunPolicy
+		Policy                                                             ledgercore.RunPolicy
 		CoordinatorRequestFingerprint                                      string
 	}
 	value, _ := json.Marshal(work{
@@ -160,27 +160,27 @@ type PanelWorkLimits = runtime.WorkLimits
 
 // PanelTaskSpec records exact, non-authority data for one admitted child task.
 type PanelTaskSpec struct {
-	TaskName                      string                `json:"task_name"`
-	DependsOn                     []string              `json:"depends_on"`
-	InputRef                      string                `json:"input_ref"`
-	InputDigest                   string                `json:"input_digest"`
-	InputSchemaRef                string                `json:"input_schema_ref"`
-	InputSchemaDigest             string                `json:"input_schema_digest"`
-	Budget                        int                   `json:"budget"`
-	Scope                         string                `json:"scope"`
-	AgentName                     string                `json:"agent_name"`
-	AgentDigest                   string                `json:"agent_digest"`
-	Skill                         string                `json:"skill"`
-	Provider                      string                `json:"provider"`
-	Model                         string                `json:"model"`
-	OutputSchemaDigest            string                `json:"output_schema_digest"`
-	OutputSchemaRef               string                `json:"output_schema_ref"`
-	Timeout                       time.Duration         `json:"timeout"`
-	DeadlineAt                    time.Time             `json:"deadline_at"`
-	WorkLimits                    PanelWorkLimits       `json:"work_limits"`
-	Policy                        coordledger.RunPolicy `json:"policy"`
-	WorkFingerprint               string                `json:"work_fingerprint"`
-	CoordinatorRequestFingerprint string                `json:"coordinator_request_fingerprint"`
+	TaskName                      string               `json:"task_name"`
+	DependsOn                     []string             `json:"depends_on"`
+	InputRef                      string               `json:"input_ref"`
+	InputDigest                   string               `json:"input_digest"`
+	InputSchemaRef                string               `json:"input_schema_ref"`
+	InputSchemaDigest             string               `json:"input_schema_digest"`
+	Budget                        int                  `json:"budget"`
+	Scope                         string               `json:"scope"`
+	AgentName                     string               `json:"agent_name"`
+	AgentDigest                   string               `json:"agent_digest"`
+	Skill                         string               `json:"skill"`
+	Provider                      string               `json:"provider"`
+	Model                         string               `json:"model"`
+	OutputSchemaDigest            string               `json:"output_schema_digest"`
+	OutputSchemaRef               string               `json:"output_schema_ref"`
+	Timeout                       time.Duration        `json:"timeout"`
+	DeadlineAt                    time.Time            `json:"deadline_at"`
+	WorkLimits                    PanelWorkLimits      `json:"work_limits"`
+	Policy                        ledgercore.RunPolicy `json:"policy"`
+	WorkFingerprint               string               `json:"work_fingerprint"`
+	CoordinatorRequestFingerprint string               `json:"coordinator_request_fingerprint"`
 }
 
 func (s PanelTaskSpec) clone() PanelTaskSpec {

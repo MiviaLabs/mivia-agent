@@ -12,27 +12,36 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
+	workflowdelivery "github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	workflowtemplate "github.com/MiviaLabs/mivia-agent/internal/workflows/template"
 )
 
-func buildStepRuntimes(wf *compiler.CompiledWorkflow, base string) (map[string]controller.StepRuntime, error) {
+func buildStepRuntimes(wf *definition.CompiledWorkflow, base string) (map[string]controller.StepRuntime, error) {
 	schemas, err := loadOutputSchemas(base, wf)
 	if err != nil {
 		return nil, err
 	}
-	return buildStepRuntimesFromSnapshot(wf, schemas)
+	templates, err := loadStepTemplates(base, wf)
+	if err != nil {
+		return nil, err
+	}
+	return buildStepRuntimesFromSnapshot(wf, schemas, templates, nil)
 }
 
 // buildStepRuntimesFromSnapshot builds agent step runtimes exclusively from
-// the admitted snapshot's schema bytes: no filesystem access. Resume uses this
-// so a changed, deleted, or renamed schema file cannot alter an admitted run
-// (CLI parity with loadStepReferences' prior-snapshot path). Fail closed when
-// a step's output_schema is missing from the snapshot or its digest is invalid.
-func buildStepRuntimesFromSnapshot(wf *compiler.CompiledWorkflow, schemas map[string]workflowledger.RefSnapshot) (map[string]controller.StepRuntime, error) {
+// the admitted snapshot's pinned bytes: no filesystem access. Resume uses this
+// so a changed, deleted, or renamed reference cannot alter an admitted run
+// (CLI parity with loadStepReferences' prior-snapshot path). A present pin
+// with a missing or invalid digest fails closed.
+//
+// templates and agentPins may be incomplete for runs admitted before template
+// and agent pinning existed: the whole-snapshot digest proves an absent pin is
+// admission truth, not tampering, so a missing template pin degrades to the
+// admitted (template-less) dispatch and nil agentPins keep the legacy
+// synthetic digest the run was admitted with.
+func buildStepRuntimesFromSnapshot(wf *definition.CompiledWorkflow, schemas, templates map[string]workflowledger.RefSnapshot, agentPins map[string]workflowledger.AgentSnapshot) (map[string]controller.StepRuntime, error) {
 	steps := make(map[string]controller.StepRuntime, len(wf.Steps))
 	for _, step := range wf.Steps {
 		if step.Kind != "agent" && step.Kind != "agent_gate" {
@@ -41,6 +50,34 @@ func buildStepRuntimesFromSnapshot(wf *compiler.CompiledWorkflow, schemas map[st
 		runtime := controller.StepRuntime{
 			Agent:  agents.ResolvedAgent{Name: step.Agent},
 			Digest: "sha256:agent-" + step.Agent,
+		}
+		if agentPins != nil {
+			pin, ok := agentPins[step.Agent]
+			if !ok || pin.Digest == "" {
+				return nil, fmt.Errorf("step %q: snapshot agent %q admission is incomplete", step.ID, step.Agent)
+			}
+			runtime.Digest = pin.Digest
+			runtime.ProviderName = pin.ProviderName
+			runtime.Model = pin.Model
+		}
+		if step.Template != "" {
+			ref, ok := templates[step.Template]
+			if !ok {
+				// The admission generation that pins agents also pins agent-step
+				// templates. A missing pin with agent pins present is therefore a
+				// snapshot integrity gap, not a legacy run. Older snapshots that
+				// predate template pinning degrade to the admitted template-less
+				// dispatch (the whole-snapshot digest proves the absence is admission
+				// truth).
+				if agentPins != nil {
+					return nil, fmt.Errorf("step %q: template %q: missing from the run snapshot", step.ID, step.Template)
+				}
+			} else {
+				if ref.Digest == "" || digestRefBytes(ref.Bytes) != ref.Digest {
+					return nil, fmt.Errorf("step %q: template %q: snapshot digest is invalid", step.ID, step.Template)
+				}
+				runtime.Template = string(ref.Bytes)
+			}
 		}
 		if step.OutputSchema != "" {
 			ref, ok := schemas[step.OutputSchema]
@@ -66,7 +103,7 @@ func buildStepRuntimesFromSnapshot(wf *compiler.CompiledWorkflow, schemas map[st
 // into the run snapshot. This is the admission read: startNew MUST read from
 // the workspace here (that IS admission), and resume must never call it.
 // Guards mirror loadOutputSchemaBytes (path traversal + size cap).
-func loadOutputSchemas(base string, wf *compiler.CompiledWorkflow) (map[string]workflowledger.RefSnapshot, error) {
+func loadOutputSchemas(base string, wf *definition.CompiledWorkflow) (map[string]workflowledger.RefSnapshot, error) {
 	schemas := make(map[string]workflowledger.RefSnapshot)
 	for _, step := range wf.Steps {
 		refs := []string{step.OutputSchema}
@@ -92,7 +129,96 @@ func loadOutputSchemas(base string, wf *compiler.CompiledWorkflow) (map[string]w
 	return schemas, nil
 }
 
-func loadPanelSnapshotAssets(base string, wf *compiler.CompiledWorkflow, schemas map[string]workflowledger.RefSnapshot, registry *agents.AgentRegistry) (map[string]workflowledger.RefSnapshot, map[string]workflowledger.PanelBindingSnapshot, error) {
+// loadStepTemplates reads every template referenced by an agent or agent_gate
+// step from the workspace and pins each one's raw bytes and content digest
+// into the run snapshot (CLI parity with loadWorkflowRuntimes). This is an
+// admission read: startNew MUST read from the workspace here, and resume must
+// never call it. Guards mirror loadOutputSchemas (path traversal + size cap).
+func loadStepTemplates(base string, wf *definition.CompiledWorkflow) (map[string]workflowledger.RefSnapshot, error) {
+	templates := make(map[string]workflowledger.RefSnapshot)
+	for _, step := range wf.Steps {
+		if step.Kind != "agent" && step.Kind != "agent_gate" {
+			continue
+		}
+		if step.Template == "" {
+			continue
+		}
+		if _, ok := templates[step.Template]; ok {
+			continue
+		}
+		data, err := loadTemplateBytes(base, step.Template)
+		if err != nil {
+			return nil, fmt.Errorf("step %q: template %q: %w", step.ID, step.Template, err)
+		}
+		templates[step.Template] = workflowledger.RefSnapshot{Digest: digestRefBytes(data), Bytes: append([]byte(nil), data...)}
+	}
+	return templates, nil
+}
+
+// resolveStepAgents resolves every agent-bearing step's definition at
+// admission and pins its routing snapshot (definition digest plus the
+// definition-declared provider/model binding) into the run snapshot, so
+// dispatch and resume verify against the admitted definition instead of a
+// synthetic digest (CLI parity with workflowAgent).
+func resolveStepAgents(wf *definition.CompiledWorkflow, registry *agents.AgentRegistry) (map[string]workflowledger.AgentSnapshot, error) {
+	pins := make(map[string]workflowledger.AgentSnapshot)
+	for _, step := range wf.Steps {
+		if step.Kind != "agent" && step.Kind != "agent_gate" {
+			continue
+		}
+		if _, ok := pins[step.Agent]; ok {
+			continue
+		}
+		agent, ok := registry.Get(step.Agent)
+		if !ok {
+			return nil, fmt.Errorf("step %q references unknown agent %q", step.ID, step.Agent)
+		}
+		digest, err := agent.DefinitionDigest()
+		if err != nil {
+			return nil, fmt.Errorf("step %q agent digest: %w", step.ID, err)
+		}
+		pin := workflowledger.AgentSnapshot{Digest: digest}
+		// Pin the provider/model binding only as a complete pair: the engine
+		// has no session provider to resolve a model-only declaration against,
+		// and a half-pair would fail the dispatcher's binding completeness
+		// check. An empty pair keeps session-following behavior.
+		if agent.Provider != "" && agent.Model != "" {
+			pin.ProviderName, pin.Model = agent.Provider, agent.Model
+		}
+		pins[step.Agent] = pin
+	}
+	return pins, nil
+}
+
+// verifyStepAgents re-resolves every pinned agent at resume and fails closed
+// when the live definition digest no longer matches the admitted pin (CLI
+// parity with workflowAgent's prior check). Provider/model stay pinned: they
+// are admission data, not live policy.
+func verifyStepAgents(wf *definition.CompiledWorkflow, registry *agents.AgentRegistry, pinned map[string]workflowledger.AgentSnapshot) error {
+	for _, step := range wf.Steps {
+		if step.Kind != "agent" && step.Kind != "agent_gate" {
+			continue
+		}
+		pin, ok := pinned[step.Agent]
+		if !ok || pin.Digest == "" {
+			return fmt.Errorf("step %q: snapshot agent %q admission is incomplete", step.ID, step.Agent)
+		}
+		agent, ok := registry.Get(step.Agent)
+		if !ok {
+			return fmt.Errorf("step %q references unknown agent %q", step.ID, step.Agent)
+		}
+		digest, err := agent.DefinitionDigest()
+		if err != nil {
+			return fmt.Errorf("step %q agent digest: %w", step.ID, err)
+		}
+		if digest != pin.Digest {
+			return fmt.Errorf("agent %q changed since workflow admission; recover with: restore the agent definition to its admitted content or start a fresh run", step.Agent)
+		}
+	}
+	return nil
+}
+
+func loadPanelSnapshotAssets(base string, wf *definition.CompiledWorkflow, schemas map[string]workflowledger.RefSnapshot, registry *agents.AgentRegistry) (map[string]workflowledger.RefSnapshot, map[string]workflowledger.PanelBindingSnapshot, error) {
 	templates := make(map[string]workflowledger.RefSnapshot)
 	bindings := make(map[string]workflowledger.PanelBindingSnapshot)
 	for _, step := range wf.Steps {
@@ -149,7 +275,7 @@ func loadOutputSchemaBytes(base, ref string) ([]byte, error) {
 }
 
 func loadTemplateBytes(base, ref string) ([]byte, error) {
-	return loadBoundedReferenceBytes(base, ref, workflowtemplate.MaxTemplateBytes)
+	return loadBoundedReferenceBytes(base, ref, workflowdelivery.MaxTemplateBytes)
 }
 
 func loadBoundedReferenceBytes(base, ref string, maxBytes int) ([]byte, error) {

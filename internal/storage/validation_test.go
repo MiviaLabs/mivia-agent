@@ -16,6 +16,16 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	// crossproc_test.go's scenarios: a real child process re-execs this
+	// binary with one of these set, and never reaches m.Run() - see that
+	// file for why a same-process second *storage.SQLite handle is not
+	// proven equivalent to a genuine OS process boundary.
+	if os.Getenv("MIVIA_STORAGE_CROSSPROC_WRITER") == "1" {
+		runCrossProcWriterChild()
+	}
+	if os.Getenv("MIVIA_STORAGE_CROSSPROC_FENCE_STALE") == "1" {
+		runCrossProcFenceStaleChild()
+	}
 	if os.Getenv("MIVIA_STORAGE_UNCOMMITTED_CHILD") == "1" {
 		path := os.Getenv("MIVIA_STORAGE_CHILD_DB")
 		db, err := sql.Open("sqlite", path)
@@ -260,8 +270,16 @@ func TestSQLite_DiskPressureReturnsErrorWithoutSilentLoss(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if _, err := s.db.Exec(`PRAGMA max_page_count=32`); err != nil {
-		t.Fatal(err)
+	// max_page_count is per-connection, so the bound must be set on every
+	// connection that can write. Appends run on the immediate-txlock write
+	// pool (see beginWrite); pin it to one connection so the single Exec
+	// below bounds the connection the appends actually use.
+	s.writeDB.SetMaxOpenConns(1)
+	s.writeDB.SetMaxIdleConns(1)
+	for _, db := range []*sql.DB{s.db, s.writeDB} {
+		if _, err := db.Exec(`PRAGMA max_page_count=32`); err != nil {
+			t.Fatal(err)
+		}
 	}
 	var gotErr error
 	for i := 0; i < 1000; i++ {

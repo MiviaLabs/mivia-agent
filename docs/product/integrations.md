@@ -7,18 +7,24 @@ use.
 
 ## AI providers
 
-mivia sends prompts and selected context to one configured AI provider. Five
+mivia sends prompts and selected context to one configured AI provider. Eight
 providers are built in today:
 
 | Provider | Default model | Default API base URL |
 |----------|---------------|-----------------------|
 | DeepSeek (default) | `deepseek-v4-flash` | `https://api.deepseek.com/v1` |
-| OpenRouter | declare under `providers.openrouter` | `https://openrouter.ai/api/v1` |
-| ZAI (z.ai) | declare under `providers.zai` | `https://api.z.ai/api/paas/v4` |
-| Ollama | declare under `providers.ollama` | `https://ollama.com/v1` |
-| LLM Gateway | declare under `providers.llmgateway` | `https://api.llmgateway.io/v1` |
+| Anthropic | `claude-sonnet-5` | `https://api.anthropic.com/v1` |
+| OpenRouter | `openai/gpt-5.6-luna` | `https://openrouter.ai/api/v1` |
+| ZAI (z.ai) | `glm-5.2` | `https://api.z.ai/api/paas/v4` |
+| Ollama | `gpt-oss:120b` | `https://ollama.com/v1` |
+| LLM Gateway | `deepseek-v4-pro` | `https://api.llmgateway.io/v1` |
+| LLM Proxy CLI | `claude-sonnet-5` | `http://127.0.0.1:8317/v1` |
+| MiniMax | `MiniMax-M3` | `https://api.minimax.io/v1` |
 
-mivia does not accept an arbitrary OpenAI-compatible provider name. See
+Every provider ships with the default model shown above. Selecting a
+provider under `[providers.<name>]` in `mivia.toml` is what activates it;
+until then, DeepSeek is the active default. mivia does not accept an
+arbitrary OpenAI-compatible provider name. See
 [Configuration](config.md#provider-support) for the full provider list, key
 setup, and the model catalog rule.
 

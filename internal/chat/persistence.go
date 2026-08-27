@@ -195,13 +195,11 @@ func (s *Session) saveToSessionDir(name string, msgs []provider.Message, selecti
 		return err
 	}
 
-	// Count user turns (actual conversational turns).
-	turnCount := 0
-	for _, m := range msgs {
-		if m.Role == provider.RoleUser {
-			turnCount++
-		}
-	}
+	// Count real conversational turns. The session-owned core-memory frame is
+	// a user-role message that must not count as a turn (see
+	// conversationalTurnCount); pre-fix, every memory-enabled session's
+	// meta.json read realTurns+1.
+	turnCount := conversationalTurnCount(msgs)
 
 	// Build metadata. Preserve original CreatedAt if this is a re-save.
 	createdAt := time.Now()
@@ -410,7 +408,11 @@ func (s *Session) publishLoadedSession(token OperationToken, binding ModelBindin
 	incoming := s.capturePrefixIdentityLocked()
 	s.prefixIdentity = incoming
 	reset := s.buildPrefixResetLocked(outgoing, incoming, false)
+	warn := s.checkWarnUnknownModelLocked(binding.Model, binding.FallbackProfile)
 	s.mu.Unlock()
+	if warn && WarnUnknownContextWindow != nil {
+		WarnUnknownContextWindow(binding.Model)
+	}
 	if old.Dispatcher != nil && old.Dispatcher != binding.Dispatcher {
 		old.Dispatcher.Close()
 	}

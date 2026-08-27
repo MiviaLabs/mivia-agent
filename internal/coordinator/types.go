@@ -42,6 +42,10 @@ type RunHandle struct {
 	// mailboxes is parent→child delivery (plan 53.03). Context-only; never
 	// fingerprinted. Guarded by its own mutex (mailboxes.mu), not h.mu.
 	mailboxes *runMailboxes
+	// toolCalls buffers per-task raw tool-call lifecycle steps for ledger
+	// persistence at task finalize (Part B, chunk 4). Context-only; never
+	// fingerprinted.
+	toolCalls *runToolCallBuffer
 	// referrals tracks in-flight referral-as-spawn tasks (plan 53.04).
 	referrals *referralTracker
 }
@@ -135,6 +139,11 @@ type LifecycleSubscriber func(event ledger.LifecycleEvent)
 
 type Coordinator interface {
 	Spawn(context.Context, []subagents.Task, string) (*RunHandle, error)
+	// SpawnNew is Spawn plus an isNew signal: false when the idempotency-key
+	// lookup returned an existing run some other caller started, so a
+	// caller can tell whether it is safe to treat itself as the run's sole
+	// owner (e.g. before canceling it on its own unrelated context dying).
+	SpawnNew(context.Context, []subagents.Task, string) (*RunHandle, bool, error)
 	EnsureRun(context.Context, EnsureRunRequest) (*RunHandle, error)
 	EnsureSingleTaskRun(context.Context, EnsureRunRequest) (*RunHandle, error)
 	EnsureTerminalSingleTaskRun(context.Context, EnsureRunRequest, ledger.TaskStatus) (*RunHandle, error)

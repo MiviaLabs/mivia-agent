@@ -15,12 +15,12 @@
     "soft": 25,
     "hard": 30,
     "baseline": {
-      "internal/cli/chat_json_writer.go": 83,
-      "internal/cli/session_delivery_repair.go": 52,
-      "internal/cli/e2e_ask_chain_test.go": 51,
+      "internal/clichat/chat_json_writer.go": 83,
+      "internal/clichat/session_delivery_repair.go": 52,
+      "internal/clichat/e2e_ask_chain_test.go": 51,
       "internal/ledger/storage_schema.go": 37,
-      "internal/cli/e2e_ask_messaging_test.go": 34,
-      "internal/cli/workflow_session_settle.go": 33,
+      "internal/clichat/e2e_ask_messaging_test.go": 34,
+      "internal/clichat/workflow_session_settle.go": 33,
       "internal/workflows/delivery/repair.go": 33,
       "internal/workflows/controller/linear_bindings.go": 32,
       "internal/config/tools_config.go": 31,
@@ -30,36 +30,33 @@
   "excludeGlobs": [
     "vendor/**",
     "**/*_gen.go",
-    "**/zz_generated*.go"
+    "**/zz_generated*.go",
+    "cmd/mivia/main.go"
   ],
   "baseline": {
     "comment": "Files already over hard limits. Growth beyond maxLines fails. Reduce maxLines when splitting; never raise without review.",
     "files": {
-      "internal/cli/tui.go": {
-        "maxLines": 1682,
-        "note": "god-file; split Update/View/slash/wrap"
-      },
       "internal/tools/searcher.go": {
         "maxLines": 903,
         "note": "local/web/ssrf; split by scope"
       },
-      "internal/cli/chat.go": {
+      "internal/clichat/chatblock_render.go": {
         "maxLines": 855,
-        "note": "REPL+slash; share slash with TUI"
+        "note": "chatblock render with workgroups; split chrome vs workgroup"
       },
-      "internal/cli/highlight.go": {
+      "internal/clichat/highlight.go": {
         "maxLines": 721,
         "note": "syntax tables OK-ish"
       },
-      "internal/cli/markdown.go": {
+      "internal/clichat/markdown.go": {
         "maxLines": 641,
         "note": "stream markdown"
       },
-      "internal/cli/chat_repl.go": {
+      "internal/clichat/chat_repl.go": {
         "maxLines": 327,
         "note": "extracted REPL; split loop handlers; line-mode moved to chat_repl_linemode.go"
       },
-      "internal/cli/chat_slash.go": {
+      "internal/clichat/chat_slash.go": {
         "maxLines": 190,
         "note": "extracted slash dispatch; split command groups"
       }

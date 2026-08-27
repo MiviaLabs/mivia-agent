@@ -2,11 +2,10 @@ package agent
 
 import (
 	"context"
-	"fmt"
 	"math"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contentref"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 )
 
 // Aggregate per-batch tool-result budget (plan tools/06).
@@ -58,6 +57,66 @@ const (
 	derivedBudgetShare   = 4 // 25%
 	maxDerivableTokens   = math.MaxInt / bytesPerToken
 	unlimitedBatchBudget = 0
+
+	// readOutputToolName is the model-facing reader for remainder refs
+	// (internal/clichat.readOutputTool). It is already a bounded, paginated
+	// reader over content the batch/turn shaper itself spooled (32 KiB page /
+	// 256 KiB result cap - see internal/clichat/read_output.go), so it is
+	// exempt from the degrade tiers below: re-truncating it into ANOTHER
+	// remainder ref would send the model chasing a ref through its own
+	// recovery tool, which is the "ref-to-ref" failure this constant exists
+	// to prevent. agent cannot import clichat (clichat depends on agent), so
+	// the name is duplicated here rather than shared.
+	readOutputToolName = "read_output"
+
+	// zeroBudgetPreviewBytes is the small per-result preview a tail result
+	// gets once the batch/turn budget itself is fully spent (remaining <= 0).
+	// Without it, EVERY result after the one straddling result degrades to a
+	// bare "kept 0" notice - even a result whose whole body was a few KB -
+	// forcing a read_output round trip for content that would have fit
+	// trivially. Funded from tailPreviewReserveBytes, not from the primary
+	// budget, so this never changes the primary budget's own bound.
+	// Sized to match the common case observed in practice: a long-running
+	// agent's batches/turns commonly carry a dozen-plus small results (greps,
+	// small file reads, inspect_repository/read_output pages in the few-KB
+	// range) after the one straddler pays the floor. 512 B was too thin to
+	// be worth reading on its own; 2 KiB mirrors the preview size other
+	// coding-agent harnesses use for an over-budget tool result.
+	zeroBudgetPreviewBytes = 2 << 10
+
+	// tailPreviewReserveBytes bounds the TOTAL bytes zeroBudgetPreviewBytes
+	// may spend across one entire batch/turn, independent of how many results
+	// degrade to zero. Without this cap, a batch of many tiny results would
+	// each claim a preview and the aggregate bound (F6) would stop being a
+	// small constant - it would scale with batch size. Once the reserve is
+	// spent, later tail results return to a bare notice exactly as before.
+	// 256 KiB at the 2 KiB preview above covers ~128 post-exhaustion results
+	// before falling back. Raised from the original 32 KiB (~16 results):
+	// a long exploration turn (dozens of grep/read_file calls past the
+	// primary budget) was observed exhausting the 16-call cushion partway
+	// through, after which every remaining call in the turn - however small -
+	// degraded to a bare "kept 0" notice and paid a read_output round trip,
+	// even though each individual result was well within a single preview.
+	// Still a small fraction of the 256 KiB budget floor it rides alongside.
+	tailPreviewReserveBytes = 256 << 10
+
+	// finalPreviewFloorBytes is the last-resort content floor once BOTH the
+	// primary turn budget and tailPreviewReserveBytes are spent. Without it,
+	// every further result in the turn - no matter how small - fell straight
+	// to a bare "kept 0 of N bytes" notice: zero visible content, and a
+	// forced read_output round trip even for a result an operator would call
+	// trivially small. Unlike tailPreviewReserveBytes this is NOT pooled: it
+	// is a fixed, small ceiling applied PER RESULT, not charged against any
+	// shared counter, so one result taking the floor can never reduce what
+	// the next result gets - it cannot reproduce the "large bodies starve
+	// small ones" failure a pooled floor would. The per-item bound keeps the
+	// aggregate exposure small in practice (any one turn reaching this tier
+	// has already spent the primary budget plus the full preview reserve),
+	// and mirrors the same "some bytes ride outside the accounting" stance
+	// the unconditional 2*minNotice free pass above already takes - just at
+	// a size that actually covers a short grep match or read_file window
+	// instead of only a handful of bytes.
+	finalPreviewFloorBytes = 512
 )
 
 // resultParts is one tool result in structured form, as the worker produced it
@@ -155,151 +214,6 @@ func (e shapeEnv) load(ref string) (string, bool) {
 	return string(data), true
 }
 
-// shapeReport is the content-free accounting for one shaped batch.
-type shapeReport struct {
-	budget    int // the budget the batch was charged against
-	charged   int // body bytes emitted into history (excludes hook context)
-	degraded  int // results whose body was re-cut or replaced by a notice
-	remaining int // unspent budget after the batch
-	results   int // batch size
-}
-
-// shapeBatchResults applies the aggregate per-batch budget to the ordered
-// results and returns the body each one contributes to history.
-//
-// Charging happens HERE, after the sort, and not in the workers: workers
-// finish in scheduling order, which is not deterministic, so a budget spent
-// concurrently would hand identical batches different results. The ordered
-// append loop is the only place where "first N bytes of this batch" means the
-// same thing on every run (D1).
-//
-// With the batch budget off (BatchResultBudgetBytes <= 0, the default) the
-// batch is a byte-identical passthrough of pass-1 bodies: MaxToolResultChars
-// == 0 is the documented "no cap (use full result)" contract, and pass 1
-// already applied every per-tool Capability.MaxResultBytes budget. Bounding a
-// single oversized result against the prompt budget is the batch budget's job,
-// armed explicitly via BatchResultBudgetBytes > 0 or the derived form
-// (BatchResultBudgetBytes < 0).
-func shapeBatchResults(results []toolExecResult, opts Options) []string {
-	bodies := make([]string, len(results))
-	budget := effectiveBatchBudget(opts)
-	if budget <= 0 || len(results) == 0 {
-		// The default. No shaping, no allocation beyond this slice, and the
-		// bytes are the ones pass 1 already built.
-		for i, r := range results {
-			bodies[i] = r.result
-		}
-		return bodies
-	}
-	parts := make([]resultParts, len(results))
-	for i, r := range results {
-		parts[i] = r.parts
-		// The ref-only tier decides on the TOOL, not the bytes, so the name
-		// is stamped here from the call that produced this result.
-		parts[i].toolName = r.toolCall.Function.Name
-	}
-	env := newShapeEnv(opts.RemainderSpool, opts.SessionID)
-	env.refOnlyTools = opts.RefOnlyTools
-	shaped, report := shapeBatch(parts, budget, env)
-	for i := range shaped {
-		// Hook context is re-attached AFTER shaping and outside the budget
-		// check: it is framing, bounded by runtime.MaxHookContextBytes, and
-		// cutting a formatter's advice to make room for it in a tool's own
-		// byte budget was never the trade this layer is here to make (F5).
-		bodies[i] = appendHookContext(shaped[i], parts[i].hookContext)
-	}
-	emitBatchShaping(opts, report)
-	return bodies
-}
-
-// emitBatchShaping reports what the budget did. Content-free by construction:
-// counts and byte totals only, never a fragment of a result.
-//
-// Silent when nothing degraded - a per-batch row on every step would bury the
-// tool rows it sits among, and "the budget did nothing" is not news.
-func emitBatchShaping(opts Options, report shapeReport) {
-	if report.degraded == 0 {
-		return
-	}
-	emit(opts, Event{
-		Kind: EventHeartbeat,
-		Detail: fmt.Sprintf("tool batch budget: %d of %d results degraded · %d/%d bytes charged",
-			report.degraded, report.results, report.charged, report.budget),
-	})
-}
-
-// shapeBatch charges a batch's results against budget in issue order and
-// returns the shaped bodies (D6: pure but for spool I/O through env).
-//
-// Three tiers, in order of preference:
-//
-//  1. the result fits the remaining budget - emitted unchanged;
-//  2. it does not, and budget remains - the ORIGINAL body is re-cut to
-//     min(effectiveCap, max(remaining, floor)) with one coherent notice
-//     naming the remainder and reporting the true total;
-//  3. it does not, and the budget is spent - the body is replaced by that
-//     notice alone (~100 bytes).
-//
-// Because a tier-2 re-cut always charges at least the remaining budget, at
-// most ONE result per batch straddles the boundary and pays the floor; every
-// result after it takes tier 3. Bytes entering history are therefore bounded
-// by budget + floor + framing regardless of how many calls the batch held
-// (F6) - the bound does not depend on MaxToolCallsPerBatch being set.
-func shapeBatch(parts []resultParts, budget int, env shapeEnv) ([]string, shapeReport) {
-	shaped := make([]string, len(parts))
-	report := shapeReport{budget: budget, results: len(parts)}
-	if budget <= 0 {
-		// Defensive: callers gate on the budget, so this path costs the hot
-		// path nothing. Charging an unlimited budget must still be a no-op.
-		for i, p := range parts {
-			shaped[i] = p.cappedBody
-			report.charged += len(p.cappedBody)
-		}
-		report.remaining = 0
-		return shaped, report
-	}
-
-	remaining := budget
-	lastDegraded := -1
-	var lastState degradeState
-	for i, p := range parts {
-		body, state, degraded := shapeOne(p, remaining, env)
-		shaped[i] = body
-		if !degraded {
-			remaining -= len(body)
-			if remaining < 0 {
-				remaining = 0
-			}
-			continue
-		}
-		// A degrade always spends the rest of the budget, even when the built
-		// envelope came in a few bytes under its target: the target was
-		// already >= remaining, so what is left is notice-sized slack, not
-		// budget. Carrying that slack forward would let the NEXT result claim
-		// the floor as well, and "at most one straddling result pays the
-		// floor" (F6) is the whole reason the bound is finite.
-		remaining = 0
-		report.degraded++
-		lastDegraded, lastState = i, state
-	}
-
-	// D8: the status line is composed INTO the last degraded result's
-	// envelope, never inserted into an already-built body. Recomposition is
-	// pure - resolveDegrade did the I/O - so this costs no second spool round
-	// trip and cannot change any other result's charge: everything after the
-	// first degrade is already tier 3.
-	if lastDegraded >= 0 {
-		shaped[lastDegraded] = composeDegraded(lastState,
-			statusLine(report.degraded, len(parts), remaining, budget))
-	}
-	report.charged = 0
-	for _, body := range shaped {
-		report.charged += len(body)
-	}
-	report.remaining = remaining
-	return shaped, report
-}
-
 // shapeOne decides one result's fate against the budget left. It reports the
 // body to emit, the resolved degrade behind it (so the caller can recompose
 // that body with the status line without repeating the I/O), and whether the
@@ -311,25 +225,62 @@ func shapeBatch(parts []resultParts, budget int, env shapeEnv) ([]string, shapeR
 // model loses a whole result - and short bodies are exactly where the failure
 // explanations live ("error: no such file"). Requiring the saving to cover the
 // notice itself is the threshold.
-func shapeOne(p resultParts, remaining int, env shapeEnv) (string, degradeState, bool) {
+//
+// previewReserve is the reserve pool left for the zero-budget preview tier
+// (see tailPreviewReserveBytes); the fourth return value is how much of it
+// this call spent, which is always 0 unless that tier fired - including when
+// the final-floor tier (finalPreviewFloorBytes) fires instead, since that
+// tier is unpooled and never draws from previewReserve.
+func shapeOne(p resultParts, remaining, previewReserve int, env shapeEnv) (string, degradeState, bool, int) {
 	// Ref-only tier (plan tools/06): a tool opted out of inlining is elided
 	// before the budget tiers see it. The notice is carried in fallback so
-	// the D8 status-line recomposition returns it verbatim.
+	// the D8 status-line recomposition returns it verbatim, and refOnly marks
+	// the elision so shapeBatch charges its notice's bytes instead of
+	// spending the rest of the budget on it.
 	if notice, ok := refOnlyTier(env, p, p.toolName); ok {
-		return notice, degradeState{fallback: notice}, true
+		return notice, degradeState{fallback: notice, refOnly: true}, true, 0
+	}
+	// read_output is the model's own recovery path for a degraded result
+	// (see readOutputToolName). Degrading ITS result would hand the model a
+	// ref to a ref instead of the page it asked for, so it is charged like
+	// any tier-1 result that fits and never re-cut.
+	if p.toolName == readOutputToolName {
+		return p.cappedBody, degradeState{}, false, 0
 	}
 	if len(p.cappedBody) <= remaining {
-		return p.cappedBody, degradeState{}, false
+		return p.cappedBody, degradeState{}, false, 0
 	}
 	// The pre-check skips the spool round trip for bodies that cannot possibly
 	// clear the threshold.
 	minNotice := degradeMinSize(p)
 	if len(p.cappedBody) <= 2*minNotice {
-		return p.cappedBody, degradeState{}, false
+		return p.cappedBody, degradeState{}, false, 0
 	}
 	target := 0
-	if remaining > 0 {
+	previewUsed := 0
+	switch {
+	case remaining > 0:
 		target = recutTarget(p, remaining)
+	case previewReserve > 0:
+		// The primary budget is spent, but a small reserve remains: keep a
+		// short preview instead of collapsing straight to a bare notice.
+		target = zeroBudgetPreviewBytes
+		if p.effectiveCap > 0 && target > p.effectiveCap {
+			target = p.effectiveCap
+		}
+		if target > previewReserve {
+			target = previewReserve
+		}
+		previewUsed = target
+	default:
+		// Both the primary budget and the reserve are spent. Fall back to
+		// the small unpooled floor (see finalPreviewFloorBytes) instead of a
+		// bare notice - previewUsed stays 0, since this tier draws from
+		// neither reserve.
+		target = finalPreviewFloorBytes
+		if p.effectiveCap > 0 && target > p.effectiveCap {
+			target = p.effectiveCap
+		}
 	}
 	state := resolveDegrade(p, target, env)
 	body := composeDegraded(state, "")
@@ -337,16 +288,16 @@ func shapeOne(p resultParts, remaining int, env shapeEnv) (string, degradeState,
 		// Same threshold, decided against the body that was actually built: a
 		// re-cut whose target lands on the per-call cap reproduces pass 1 byte
 		// for byte, and paying a second notice for that is pure loss.
-		return p.cappedBody, degradeState{}, false
+		return p.cappedBody, degradeState{}, false, 0
 	}
-	return body, state, true
+	return body, state, true, previewUsed
 }
 
 // refPlaceholder sizes a notice for a body that has not been spooled yet.
-// Minted through contentref rather than assembled from a literal - references
+// Minted through sdkadapter rather than assembled from a literal - references
 // have exactly one minter, and every reference is the same length, so a real
 // one over throwaway bytes measures the notice exactly.
-var refPlaceholder = contentref.Reference(contentref.KindOutput, []byte("size probe"))
+var refPlaceholder = sdkadapter.Mint(sdkadapter.KindOutput, []byte("size probe"))
 
 // degradeMinSize is the smallest body a degrade of p could produce: the
 // truncation notice alone, sized for the ref that degrade would name.
@@ -391,6 +342,12 @@ type degradeState struct {
 	// the C1 failure class - it would clip the ref embedded in its own notice
 	// - so the artifact is kept intact and charged as-is instead.
 	fallback string
+	// refOnly marks a degrade that came from the ref-only tier (plan
+	// tools/06): the whole body was already spooled before the budget tiers
+	// saw it, and the notice's bytes are the only charge. It is not a
+	// budget-tier straddle, so it does not spend the rest of the budget:
+	// results that fit after it are still emitted unchanged (tier 1).
+	refOnly bool
 }
 
 func resolveDegrade(p resultParts, target int, env shapeEnv) degradeState {
@@ -443,28 +400,6 @@ func composeDegraded(state degradeState, trailer string) string {
 		return trailer + remainder.TruncationNotice(0, state.total, state.ref)
 	}
 	return remainder.Fit(state.original, state.total, state.target, state.ref, trailer)
-}
-
-// statusLine reports what the batch budget did, in one bounded line the model
-// can act on: it is the only signal that paging a ref would cost it nothing it
-// has not already been charged for.
-func statusLine(degraded, results, remaining, budget int) string {
-	return fmt.Sprintf(
-		"\n[batch result budget: %d of %d results degraded; %d of %d bytes remaining]",
-		degraded, results, remaining, budget)
-}
-
-// effectiveBatchBudget resolves the operator knob for one batch: positive is
-// literal, negative selects the derived budget, zero disables the mechanism.
-func effectiveBatchBudget(opts Options) int {
-	switch {
-	case opts.BatchResultBudgetBytes > 0:
-		return opts.BatchResultBudgetBytes
-	case opts.BatchResultBudgetBytes < 0:
-		return derivedBatchBudget(opts.MaxContextTokens)
-	default:
-		return unlimitedBatchBudget
-	}
 }
 
 // derivedBatchBudget turns a prompt budget into a batch byte budget.

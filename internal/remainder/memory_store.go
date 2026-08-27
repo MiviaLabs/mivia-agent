@@ -8,7 +8,7 @@ import (
 
 // MemoryStore is an in-process ContentStore for tests and host wiring that
 // does not share the ledger repository. It is keyed by content reference:
-// the same body always mints the same ref (contentref.Reference is
+// the same body always mints the same ref (sdkadapter.Mint is
 // deterministic), so re-storing a duplicate lands on the same key and never
 // grows the store.
 type MemoryStore struct {

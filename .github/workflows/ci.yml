@@ -113,6 +113,11 @@ jobs:
           mkdir -p "$test_home" "$test_tmp" "$test_home/.mivia" "$test_home/go/pkg"
           : > "$test_home/.mivia/.env"
           ln -s "$module_cache" "$test_home/go/pkg/mod"
+      # Runs AFTER the isolated test home swaps HOME, since `go env -w`
+      # writes to a HOME-keyed config file: written before the swap, the
+      # later build/test step (running under the new HOME) would never see it.
+      - name: Set GOPRIVATE for MiviaLabs modules
+        run: go env -w GOPRIVATE=github.com/MiviaLabs/*
       - name: Test, vet, and build
         run: |
           go test ./... -count=1
@@ -158,6 +163,12 @@ jobs:
           $gocache = & go env GOCACHE
           "GOMODCACHE=$gomodcache" | Out-File -FilePath $env:GITHUB_ENV -Append
           "GOCACHE=$gocache" | Out-File -FilePath $env:GITHUB_ENV -Append
+      # Runs AFTER the isolated test home swaps HOME/USERPROFILE, since
+      # `go env -w` writes to a HOME-keyed config file: written before the
+      # swap, the later build/test step (running under the new HOME) would
+      # never see it.
+      - name: Set GOPRIVATE for MiviaLabs modules
+        run: go env -w GOPRIVATE=github.com/MiviaLabs/*
       - name: Test, vet, and build
         run: |
           go test ./... -count=1
@@ -187,6 +198,8 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: "1.25.x"
+      - name: Set GOPRIVATE for MiviaLabs modules
+        run: go env -w GOPRIVATE=github.com/MiviaLabs/*
       - name: Compile release targets
         shell: bash
         run: |

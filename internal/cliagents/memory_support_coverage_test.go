@@ -1,0 +1,69 @@
+package cliagents
+
+// memory_support_coverage_test.go covers the small memory-state
+// accessors in memory_support.go that legacytui consumes only through
+// the dispatch wiring.
+
+import (
+	"testing"
+
+	"github.com/MiviaLabs/mivia-agent/internal/config"
+)
+
+func TestMemoryOfAndMemoryConfigOfNilSafe(t *testing.T) {
+	if got := MemoryOf(nil); got != nil {
+		t.Errorf("MemoryOf(nil) = %v, want nil", got)
+	}
+	if got := MemoryConfigOf(nil); got.InjectCore {
+		t.Errorf("MemoryConfigOf(nil).InjectCore must be false, got %v", got.InjectCore)
+	}
+}
+
+func TestCoreMemoryBlockForStateAndOpts(t *testing.T) {
+	// Both helpers must not panic on nil state/opts.
+	if got := CoreMemoryBlockForState(nil); got != "" {
+		t.Errorf("CoreMemoryBlockForState(nil) = %q, want empty", got)
+	}
+	if got := CoreMemoryBlockForOpts(SessionDispatcherOpts{}); got != "" {
+		t.Errorf("CoreMemoryBlockForOpts(empty) = %q, want empty", got)
+	}
+}
+
+func TestOpenMemoryStoreRejectsMissingPath(t *testing.T) {
+	// OpenMemoryStore with an empty path must not panic.
+	_, _ = OpenMemoryStoreWithReadOnly("", config.MemoryConfig{}, false)
+	// And with a temp dir but invalid backend must error.
+	_, err := OpenMemoryStoreWithReadOnly(t.TempDir(), config.MemoryConfig{StoreBackend: "garbage"}, false)
+	if err == nil {
+		t.Fatal("OpenMemoryStoreWithReadOnly(garbage backend) must error")
+	}
+}
+
+func TestOpenMemoryStoreWithReadOnlyPathEscape(t *testing.T) {
+	// A relative store_path escaping the workspace root must be
+	// rejected (lines 27-29).
+	_, err := OpenMemoryStoreWithReadOnly(t.TempDir(), config.MemoryConfig{StorePath: "../escape"}, false)
+	if err == nil {
+		t.Fatal("OpenMemoryStoreWithReadOnly(../escape) must error")
+	}
+	// A relative store_path inside the root is joined to the root
+	// and opened (the backend may then fail; we only exercise the
+	// join branch, line 30).
+	_, _ = OpenMemoryStoreWithReadOnly(t.TempDir(), config.MemoryConfig{StorePath: "inside.db"}, true)
+}
+
+func TestAgentSessionStateDisplayHelpers(t *testing.T) {
+	// DisplaySource and CurrentAgentName on nil and on a selected
+	// agent: nil-safe reads that the TUI dialog renders.
+	var nilState *AgentSessionState
+	if got := nilState.DisplaySource(); got != "compiled" {
+		t.Errorf("DisplaySource(nil) = %q", got)
+	}
+	state := &AgentSessionState{}
+	if got := state.DisplaySource(); got != "compiled" {
+		t.Errorf("DisplaySource(no selection) = %q, want compiled", got)
+	}
+	if got := state.DisplayName(); got != "root fallback" {
+		t.Errorf("DisplayName(no selection) = %q, want root fallback", got)
+	}
+}

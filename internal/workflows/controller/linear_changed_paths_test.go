@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
@@ -225,11 +225,11 @@ func TestLinearControllerPersistsBindingFailure(t *testing.T) {
 func TestLinearControllerPersistsBindingLimitAndRouteFailures(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
-		mutate func(*compiler.CompiledWorkflow)
+		mutate func(*definition.CompiledWorkflow)
 		want   string
 	}{
-		{name: "binding limit", mutate: func(wf *compiler.CompiledWorkflow) { wf.Steps[0].Context[0].MaxBytes = 1 }, want: "exceeds 1 bytes"},
-		{name: "missing route", mutate: func(wf *compiler.CompiledWorkflow) { wf.Transitions = wf.Transitions[1:] }, want: "no matching transition"},
+		{name: "binding limit", mutate: func(wf *definition.CompiledWorkflow) { wf.Steps[0].Context[0].MaxBytes = 1 }, want: "exceeds 1 bytes"},
+		{name: "missing route", mutate: func(wf *definition.CompiledWorkflow) { wf.Transitions = wf.Transitions[1:] }, want: "no matching transition"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			wf := linearWorkflow(t)

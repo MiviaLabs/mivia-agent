@@ -27,7 +27,7 @@ func (s *StorageRepository) DeleteRun(ctx context.Context, runID string) error {
 	s.mu.Unlock()
 
 	seq := s.nextSequence(runID)
-	payload, err := marshalRunDeleted(runDeletedPayload{RunID: runID, DeletedAt: s.now()})
+	payload, err := marshalRunDeleted(runDeletedPayload{RunID: runID, DeletedAt: s.engine.Now()})
 	if err != nil {
 		s.mu.Lock()
 		s.proj[runID] = prev
@@ -35,24 +35,21 @@ func (s *StorageRepository) DeleteRun(ctx context.Context, runID string) error {
 		return err
 	}
 	tombstone := storage.Event{ID: EventID(runID, eventKindRunDeleted, fmt.Sprintf("%d", seq)), RunID: runID, Sequence: int(seq), Kind: eventKindRunDeleted, Payload: payload}
-	holder, bound := claimHolderFromContext(ctx)
-	if !bound {
-		s.mu.RLock()
-		holder = s.claimedRuns[runID]
-		s.mu.RUnlock()
+	claim, _ := s.engine.Claims().GetClaim(runID)
+	if holder, bound := claimHolderFromContext(ctx); bound {
+		claim.Holder = holder
 	}
-	if err := s.store.AppendAndDeleteRun(ctx, tombstone, storage.Claim{RunID: runID, Holder: holder}); err != nil {
+	if err := s.engine.Store().AppendAndDeleteRun(ctx, tombstone, claim); err != nil {
 		s.rollbackAndRebuild(ctx, runID, func() { s.proj[runID] = prev })
 		if errors.Is(err, storage.ErrClaimHeld) {
 			return ErrClaimHeld
 		}
 		return fmt.Errorf("store delete run %q: %w", runID, err)
 	}
+	s.engine.Claims().DropClaim(runID)
 	s.mu.Lock()
 	delete(s.proj, runID)
-	delete(s.applied, runID)
-	delete(s.allocated, runID)
-	delete(s.claimedRuns, runID)
+	s.engine.Watermarks().DeleteRun(runID)
 	for key := range s.deliverySeqs {
 		if key.runID == runID {
 			delete(s.deliverySeqs, key)

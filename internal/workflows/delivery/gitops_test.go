@@ -97,6 +97,38 @@ func TestRealGitPinsCommitIdentity(t *testing.T) {
 	}
 }
 
+// TestPinnedEnvPinsLocale pins F-3: a localized git process translates its
+// stderr, so the delivery package's English-message classification of fetch
+// failures ("couldn't find remote ref") would misfire and a permanently
+// deleted base would be treated as recoverable. pinnedEnv must strip every
+// caller locale variable and append exactly one LC_ALL=C, so git always
+// speaks English.
+func TestPinnedEnvPinsLocale(t *testing.T) {
+	t.Setenv("LC_ALL", "de_DE.UTF-8")
+	t.Setenv("LANG", "fr_FR")
+	t.Setenv("LC_MESSAGES", "es_ES")
+	t.Setenv("LANGUAGE", "de_DE.UTF-8")
+
+	env := pinnedEnv(GitContext{Dir: "/repo", GitDir: "/repo/.git"})
+
+	var lcAll []string
+	for _, kv := range env {
+		switch {
+		case strings.HasPrefix(kv, "LC_ALL="):
+			lcAll = append(lcAll, kv)
+		case strings.HasPrefix(kv, "LANG="):
+			t.Errorf("pinnedEnv leaked the caller LANG: %q", kv)
+		case strings.HasPrefix(kv, "LC_MESSAGES="):
+			t.Errorf("pinnedEnv leaked the caller LC_MESSAGES: %q", kv)
+		case strings.HasPrefix(kv, "LANGUAGE="):
+			t.Errorf("pinnedEnv leaked the caller LANGUAGE: %q", kv)
+		}
+	}
+	if len(lcAll) != 1 || lcAll[0] != "LC_ALL=C" {
+		t.Errorf("pinnedEnv LC_ALL entries = %v, want exactly [LC_ALL=C]", lcAll)
+	}
+}
+
 func TestVerifyGitDir(t *testing.T) {
 	t.Run("valid worktree", func(t *testing.T) {
 		mainRoot, name, worktreeDir := addWorktree(t)

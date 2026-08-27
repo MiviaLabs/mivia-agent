@@ -4,19 +4,21 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/MiviaLabs/mivia-agent/internal/ledgercore"
 )
 
 // Sentinel errors returned by LedgerRepository methods.
 var (
-	ErrDuplicate         = errors.New("duplicate record")
-	ErrNotFound          = errors.New("not found")
-	ErrInvalidTransition = errors.New("invalid state transition")
-	ErrConflict          = errors.New("version conflict")
-	ErrClosed            = errors.New("run is closed")
+	ErrDuplicate         = ledgercore.ErrDuplicate
+	ErrNotFound          = ledgercore.ErrNotFound
+	ErrInvalidTransition = ledgercore.ErrInvalidTransition
+	ErrConflict          = ledgercore.ErrConflict
+	ErrClosed            = ledgercore.ErrClosed
 	ErrInvalidReference  = errors.New("invalid ledger reference")
-	ErrClaimHeld         = errors.New("run claim held by another executor")
-	ErrClaimNotHeld      = errors.New("run claim not held by this executor")
-	ErrContentNotFound   = errors.New("content not found")
+	ErrClaimHeld         = ledgercore.ErrClaimHeld
+	ErrClaimNotHeld      = ledgercore.ErrClaimNotHeld
+	ErrContentNotFound   = ledgercore.ErrContentNotFound
 )
 
 // LedgerRepository is the narrow storage boundary for the coordinator.
@@ -65,9 +67,11 @@ type LedgerRepository interface {
 	CompareAndSetTaskStatus(ctx context.Context, runID, taskID string,
 		expectedVersion uint64, newStatus string) error
 
-	// SetTaskOutput stores a bounded redacted output/error reference for a task.
+	// SetTaskOutput stores a bounded redacted output/error/tool-calls
+	// reference for a task. toolCallsRef is "" when the task made no tool
+	// calls or none were recorded.
 	SetTaskOutput(ctx context.Context, runID, taskID string,
-		outputRef, errorRef string) error
+		outputRef, errorRef, toolCallsRef string) error
 
 	// SetTaskAttempt records the terminal state of one persisted attempt.
 	// An attempt ID that is not yet present starts a new attempt rather than

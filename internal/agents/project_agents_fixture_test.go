@@ -11,37 +11,21 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
-// Ensures the committed repo agent definitions under .mivia/agents/ still parse
+// Ensures the committed repo agent definitions under .agents/agents/ still parse
 // and resolve. Skips if the workspace is not the mivia-agent tree.
 func TestProjectAgentDefinitionsResolve(t *testing.T) {
-	root, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Prefer module root via go.mod walk from cwd
-	cwd, _ := os.Getwd()
-	// test runs with package dir as cwd for relative; use repo-relative from this file
-	dir := filepath.Join(cwd, "..", "..", ".mivia", "agents")
-	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
-		// Try from module root when tests run with -C or different cwd
-		dir = filepath.Join(root, ".mivia", "agents")
-	}
-	if _, err := os.Stat(filepath.Join(dir, "mivia.toml")); err != nil {
-		t.Skip("project agents not present at", dir)
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	inputs := committedAgentInputs(t)
 	wantNames := map[string]bool{
 		"auditor":            true,
+		"builder":            true,
 		"docs":               true,
 		"e2e-engineer":       true,
 		"go-engineer":        true,
 		"memory-curator":     true,
-		"mivia":              true,
 		"panel-reviewer":     true,
 		"performance":        true,
+		"plan-reviewer":      true,
+		"planner":            true,
 		"researcher":         true,
 		"review-synthesizer": true,
 		"reviewer":           true,
@@ -49,35 +33,16 @@ func TestProjectAgentDefinitionsResolve(t *testing.T) {
 		"verifier":           true,
 		"workflow-engineer":  true,
 	}
-	var inputs []ResolveInput
-	seen := make(map[string]bool, len(entries))
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".toml" {
-			continue
-		}
-		name := entry.Name()
-		data, err := os.ReadFile(filepath.Join(dir, name))
-		if err != nil {
-			t.Fatal(err)
-		}
-		spec, canonical, err := config.ParseAgentFileTOML(data, name)
-		if err != nil {
-			t.Fatalf("%s: %v", name, err)
-		}
-		seen[canonical] = true
-		inputs = append(inputs, ResolveInput{
-			Name:   canonical,
-			Source: config.AgentSourceWorkspace,
-			Path:   filepath.Join(dir, name),
-			Spec:   spec,
-		})
+	seen := make(map[string]bool, len(inputs))
+	for _, input := range inputs {
+		seen[input.Name] = true
 	}
 	if len(seen) != len(wantNames) {
 		t.Fatalf("agent roster names = %v, want exactly %v", seen, wantNames)
 	}
 	for name := range wantNames {
 		if !seen[name] {
-			t.Fatalf("required agent %q is missing from %s", name, dir)
+			t.Fatalf("required agent %q is missing from roster", name)
 		}
 	}
 	reg, _, err := ResolveAll(inputs, ResolveOptions{
@@ -86,24 +51,12 @@ func TestProjectAgentDefinitionsResolve(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertMiviaAgent(t, reg)
+	// No assertMiviaAgent: this repo ships no root-agent override. The root
+	// session runs the compiled fallback prompt, whose skill policy is
+	// unrestricted by construction (no committed definition to restrict it).
 	assertGoEngineerAgent(t, reg)
 	assertSpecialistScopes(t, reg)
 	assertAgentPromptsArePortable(t, inputs)
-}
-
-func assertMiviaAgent(t *testing.T, reg *AgentRegistry) {
-	mivia, ok := reg.Get("mivia")
-	if !ok {
-		t.Fatal("mivia missing")
-	}
-	if len(mivia.EffectiveTools) == 0 {
-		t.Fatal("mivia should have tools")
-	}
-	// Root mivia omits skills → unrestricted (all trusted).
-	if mivia.Skills != nil {
-		t.Fatalf("mivia should omit skills (all trusted), got %#v", mivia.Skills)
-	}
 }
 
 func assertGoEngineerAgent(t *testing.T, reg *AgentRegistry) {
@@ -209,7 +162,7 @@ func assertAgentPromptsArePortable(t *testing.T, inputs []ResolveInput) {
 }
 
 // TestCommittedSkillsDeclareValidTools pins plan 43 phase 1: every checked-in
-// skill under .mivia/skills must declare explicit, minimal static tool
+// skill under .agents/skills must declare explicit, minimal static tool
 // requirements, and every declared name must be in the declared-tool catalogue
 // (which excludes the activation-only read_skill_resource). This is what makes
 // the agent/skill tools-superset contract non-vacuous. The committed catalogue
@@ -228,13 +181,17 @@ func TestCommittedSkillsDeclareValidTools(t *testing.T) {
 		t.Fatalf("committed skills must load without warnings, got: %v", warnings)
 	}
 	wantNames := []string{
-		"architecture-review", "bug-audit", "concurrency-review",
-		"docs-update", "feature-delivery",
+		"architecture-review", "bug-audit", "capture", "concurrency-review",
+		"delivery",
+		"docs-maintenance", "docs-update", "fast-bug-audit", "feature-delivery",
+		"housekeeping",
+		"logic-review",
 		"memory-housekeeping", "panel-architecture-review",
 		"panel-bug-audit", "panel-secure-change", "performance-review",
+		"review",
 		"review-synthesis",
 		"secure-change", "simplification-review",
-		"session-analysis",
+		"session-analysis", "test-review",
 		"verify-change", "verify-code-change", "workflow-feature-delivery",
 		"workflow-runs-analysis",
 	}
@@ -270,33 +227,31 @@ func TestCommittedSkillsDeclareValidTools(t *testing.T) {
 	}
 }
 
-// committedSkillsDir locates the repo's .mivia/skills directory from the test
-// working directory, mirroring TestProjectAgentDefinitionsResolve.
+// committedSkillsDir locates the repo's .agents/skills directory from the test
+// working directory, mirroring TestProjectAgentDefinitionsResolve. Project
+// skills live as real directories under .agents/skills/ and are read
+// directly by the loader's os.Root sandbox (which does not follow symlinks).
 func committedSkillsDir(t *testing.T) string {
 	t.Helper()
 	cwd, _ := os.Getwd()
-	dir := filepath.Join(cwd, "..", "..", ".mivia", "skills")
-	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
-		root, _ := filepath.Abs("../..")
-		dir = filepath.Join(root, ".mivia", "skills")
-	}
+	dir := filepath.Join(cwd, "..", "..", ".agents", "skills")
 	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
 		t.Skip("committed skills not present at", dir)
 	}
 	return dir
 }
 
-// committedAgentInputs discovers the committed .mivia/agents TOML files into
+// committedAgentInputs discovers the committed .agents/agents Markdown files into
 // ResolveInputs, mirroring TestProjectAgentDefinitionsResolve's discovery.
 func committedAgentInputs(t *testing.T) []ResolveInput {
 	t.Helper()
 	cwd, _ := os.Getwd()
-	dir := filepath.Join(cwd, "..", "..", ".mivia", "agents")
-	if st, err := os.Stat(filepath.Join(dir, "mivia.toml")); err != nil || !st.IsDir() {
+	dir := filepath.Join(cwd, "..", "..", ".agents", "agents")
+	if st, err := os.Stat(filepath.Join(dir, "planner.md")); err != nil || !st.IsDir() {
 		root, _ := filepath.Abs("../..")
-		dir = filepath.Join(root, ".mivia", "agents")
+		dir = filepath.Join(root, ".agents", "agents")
 	}
-	if _, err := os.Stat(filepath.Join(dir, "mivia.toml")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, "planner.md")); err != nil {
 		t.Skip("project agents not present at", dir)
 	}
 	entries, err := os.ReadDir(dir)
@@ -305,14 +260,14 @@ func committedAgentInputs(t *testing.T) []ResolveInput {
 	}
 	var inputs []ResolveInput
 	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".toml" {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".md" || strings.EqualFold(entry.Name(), "readme.md") {
 			continue
 		}
 		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
 		if err != nil {
 			t.Fatal(err)
 		}
-		spec, canonical, err := config.ParseAgentFileTOML(data, entry.Name())
+		spec, canonical, err := config.ParseAgentFileMarkdown(data, entry.Name())
 		if err != nil {
 			t.Fatalf("%s: %v", entry.Name(), err)
 		}
@@ -332,8 +287,8 @@ func committedAgentInputs(t *testing.T) []ResolveInput {
 // runtime, then asserts for every explicit agent/skill pairing that the
 // allowlist permits the skill AND the agent's final effective tools cover every
 // static skill requirement. Every committed skill is either in the matrix or
-// deliberately owned by the unrestricted root (mivia). Failures name the exact
-// agent, skill, and missing tool.
+// owned by the unrestricted root session. Failures name the exact agent,
+// skill, and missing tool.
 func TestCommittedRosterSkillCompatibilityMatrix(t *testing.T) {
 	skillReg, warnings, err := skills.LoadMarkdownSources(
 		[]skills.Source{{Dir: committedSkillsDir(t), Origin: skills.OriginProject}},
@@ -377,8 +332,14 @@ func TestCommittedRosterSkillCompatibilityMatrix(t *testing.T) {
 			}
 		}
 	}
-	root, ok := reg.Get("mivia")
-	rootUnrestricted := ok && root.Skills == nil
+	// This repo ships no committed root-agent override: the root session runs
+	// the compiled fallback, whose skill policy is unrestricted by
+	// construction (no definition to restrict it). A committed "mivia"
+	// definition, if one ever returns, must keep Skills nil for that to hold.
+	rootUnrestricted := true
+	if root, ok := reg.Get("mivia"); ok {
+		rootUnrestricted = root.Skills == nil
+	}
 	for _, def := range skillReg.List() {
 		if covered[def.Name] {
 			continue

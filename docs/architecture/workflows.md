@@ -242,10 +242,20 @@ Delivery honors the reserved stacking inputs when present:
   validates the branch name (allowed characters, length ≤ 100, no `..` or
   leading `-`). Invalid values are repairable `PRMetadataError`s.
 - `stack_part` (canonical `k/N` form) is validated for shape. The host
-  appends a `Stack-Part: k/N` trailer to the PR title after sanitization
-  and policy validation. The agent-controlled title stays intact; the host
-  adds the marker. An invalid `stack_part` or an over-limit result is a
-  repairable `PRMetadataError`.
+  appends a single-line `[stack k/N]` tag to the PR title after
+  sanitization and policy validation — the same bracket-affix convention
+  a deferred/split follow-up PR's title uses, since both are the same
+  "this PR's base is another PR's branch" relationship. The
+  agent-controlled title stays intact as the leading words; the host adds
+  the tag. An invalid `stack_part` shape is a repairable `PRMetadataError`.
+  A tagged title over GitHub's 256-character ceiling is silently
+  truncated, never a repairable error — the overflow is caused by the
+  host's own tag, not anything the agent did wrong, and the agent's title
+  already passed its own length check alone before the tag existed. The
+  tag is a pull-request-only affix: the delivery commit's subject is the
+  agent's own untagged title, so the workspace commit-message policy's
+  `maxSubjectLength` and the repo's commit-msg hook measure the title the
+  agent authored — the tag never consumes that budget.
 - The actual diff size is checked against `hard_lines` after staging. The
   measurement is the added+deleted line count of `git diff --cached`
   (`--find-renames`, `--ignore-all-space`). A diff exceeding the hard limit
@@ -256,6 +266,28 @@ Delivery honors the reserved stacking inputs when present:
   exhausted repair cycle settles the run terminal (`delivery_failed`).
   Without a stacking configuration the gate is off and single-PR delivery
   is unchanged.
+- With `[stacking] split_deferred = true`, an over-limit diff is first
+  offered to a host-computed automatic split: the host measures the actual
+  per-file diff size (`git diff --cached --numstat`, largest files first)
+  and defers files to a follow-up PR until the kept diff fits, writing the
+  decision into the reserved `deferred_files` input that
+  `freshDeliveryCommitSplit` then executes. The split is refused - a plain
+  `DiffSizeError` - when it would separate a file from its same-directory
+  test companion (`*_test`, `*.test`, `*_spec`, `*.spec`, `test_*`,
+  `Test*`): a delivered commit that ships code without its tests (or tests
+  without their code) can fail the repository's own pre-push hook for
+  reasons the evidence gates never saw. The same guard rejects a repair
+  agent's own `deferred_files` declaration before any commit, so a file and
+  its tests always ship in the same commit (both delivered or both
+  deferred).
+- When a pre-push hook rejects the delivered commit, the recorded failure
+  is led by a delivery-commit inventory: the delivered-commit files
+  (`base..HEAD`), the deferred files, and the worktree changes the
+  delivered commit does not carry. The hint states that the hook verified
+  the DELIVERED COMMIT tree, not the worktree, so a repair agent can tell
+  "the hook rejected the code" from "the hook tested a stale or partial
+  tree" instead of reverting production code to satisfy the delivered
+  commit's stale test expectations.
 - `on_diff_size_failure` names the step that repairs an over-limit diff,
   exactly like `on_failure` names the generic repair step; an empty value
   falls back to `on_failure`, so existing stacking workflows keep their
@@ -349,18 +381,21 @@ after a restart returns the same run — no duplicate runs, no lost tasks.
 The reconciliation is derived from durable state only (task ledger, run
 ledger, git merge state).
 
+**Drive-before-delivery settle.** `internal/workflows/localengine/engine_stack_settle.go`
+gates delivery on a completed drive: `waitForIntegrationSettle` and
+`settlePlanRun` do not mark a plan run deliverable until
+`stackDriveCompleted` is true, so the integration run always settles before
+the plan run does. This ordering holds for both the API-admitted path and
+the CLI `stack drive` path.
+
+This settle logic is not fully autonomous yet. Merging a stack's chunk PRs
+out of band, with no live `stack drive` or `workflow deliver` process
+watching, does not settle the plan run — nothing polls for that merge.
+See [Workflow stack settle: known gaps](workflow-stack-settle.md) for the
+specific gaps and their evidence.
+
 ## See also
 
 - [Workflow user guide](../product/workflows-guide.md)
 - [Workflow product overview](../product/workflows.md)
 - [Security and privacy](../security/overview.md)
-
-## Phase ordering
-
-1. Contract, docs, schemas, and fixtures.
-2. Strict discovery, parser, compiler, and read-only CLI.
-3. Durable ledger and isolated worktree lifecycle.
-4. Coordinator adapter and agent steps.
-5. Typed transitions, bounded loops, and gates.
-6. GitHub delivery.
-7. Failure injection, race/fuzz coverage, and operator documentation.

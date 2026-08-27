@@ -153,11 +153,14 @@ func loadAgentDirReport(dir string, source AgentSource) ([]LoadedAgentFile, []Ag
 	var rows []AgentFileDiagnostic
 	for _, entry := range entries {
 		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".toml") {
+		if entry.IsDir() || strings.HasPrefix(name, ".") || strings.EqualFold(name, "readme.md") {
+			continue
+		}
+		if !strings.HasSuffix(name, ".md") && !strings.HasSuffix(name, ".toml") {
 			continue
 		}
 		path := filepath.Join(dir, name)
-		row := AgentFileDiagnostic{Name: strings.TrimSuffix(name, ".toml"), Source: source, Path: path}
+		row := AgentFileDiagnostic{Name: canonicalNameForDiagnostic(name), Source: source, Path: path}
 		data, readErr := readRegularAgent(root, name)
 		if readErr != nil {
 			row.State = AgentFileUnreadable
@@ -169,7 +172,14 @@ func loadAgentDirReport(dir string, source AgentSource) ([]LoadedAgentFile, []Ag
 			rows = append(rows, row)
 			continue
 		}
-		spec, canonical, parseErr := ParseAgentFileTOML(data, name)
+		var spec AgentFileSpec
+		var canonical string
+		var parseErr error
+		if strings.HasSuffix(name, ".md") {
+			spec, canonical, parseErr = ParseAgentFileMarkdown(data, name)
+		} else {
+			spec, canonical, parseErr = ParseAgentFileTOML(data, name)
+		}
 		if parseErr != nil {
 			row.Name = canonicalNameForDiagnostic(name)
 			row.State = AgentFileMalformed
@@ -185,7 +195,11 @@ func loadAgentDirReport(dir string, source AgentSource) ([]LoadedAgentFile, []Ag
 }
 
 func canonicalNameForDiagnostic(name string) string {
-	return strings.TrimSuffix(filepath.Base(name), ".toml")
+	base := filepath.Base(name)
+	if strings.HasSuffix(base, ".md") {
+		return strings.TrimSuffix(base, ".md")
+	}
+	return strings.TrimSuffix(base, ".toml")
 }
 
 func sortAgentDiscoveryReport(report AgentDiscoveryReport) AgentDiscoveryReport {

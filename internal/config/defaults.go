@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-
-	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 // DefaultOrchestrationTimeoutSec is the finite parent-tool / batch budget used
@@ -20,6 +18,26 @@ const DefaultOrchestrationTimeoutSec = 12 * 60 * 60 // 12 hours
 // recommendation, not a compiled default: an unset knob keeps the
 // window-derived budget.
 const DefaultPromptCapTokens = 200_000
+
+// DefaultOutputReserveTokens is the completion allowance assumed when the
+// operator has NOT set [chat] max_tokens.
+//
+// A model's max_output_tokens is a per-response CEILING, not a typical
+// response size. Using it as the default reserve did two harmful things at
+// once: it asked the provider for that much output on EVERY request, and -
+// because the reserve is subtracted from the context window to derive the
+// prompt budget - it permanently removed that much prompt capacity. On a
+// 200k-window model declaring a 128k ceiling (every Claude and GLM entry in
+// the shipped config) that left only 72k of usable prompt and compacted
+// history at 57.6k, under a third of the window the user believed they had.
+//
+// The reserve itself is not optional: providers validate
+// input_tokens + max_tokens <= context_window and reject the request
+// outright, so the subtracted reserve and the wire max_tokens must stay in
+// lockstep. Only the DEFAULT value changes here. An operator who genuinely
+// wants long responses sets [chat] max_tokens explicitly, which is
+// authoritative up to the model ceiling.
+const DefaultOutputReserveTokens = 32_768
 
 // MaxTimeoutSeconds is the overflow-safety ceiling for every timeout that
 // EffectiveTimeoutSec returns. It is NOT a policy cap: raise-only semantics
@@ -120,15 +138,14 @@ var DefaultSubagentConfig = SubagentConfig{
 	Messaging:         DefaultMessagingConfig,
 }
 
-// DefaultWritePathBlocklist is the built-in set of workspace paths that write
-// tools always refuse for workflow agent steps. A project extends it with
-// [tools] write_path_blocklist and may remove entries (including these two)
-// with [tools] write_path_blocklist_remove. The config file itself (inside
-// the workspace namespace) and the Git metadata stay protected unless a
-// project explicitly opts out - unblocking them is a trust decision because
-// the config file carries this blocklist and Git metadata carries history and
-// hooks.
-var DefaultWritePathBlocklist = []string{".git", workspace.Namespace + "/mivia.toml"}
+// DefaultWritePathBlocklist is the built-in set of workspace paths that
+// workflow agent write tools refuse. It ships empty: protection is opt-in
+// via [tools] write_path_blocklist, not a compiled-in default a project must
+// opt out of. A project that wants .git and .mivia/mivia.toml protected
+// again (recommended - see .mivia/mivia.toml.example) adds them explicitly;
+// [tools] write_path_blocklist_remove still works against whatever a project
+// adds, in case a future built-in entry is reintroduced.
+var DefaultWritePathBlocklist = []string{}
 
 // DefaultToolsConfig defines the built-in tool policy defaults.
 var DefaultToolsConfig = ToolsConfig{
@@ -173,6 +190,11 @@ const (
 // DefaultMemoryBackstopMB is the shipped OOM guard when memory_backstop_mb is
 // unset or non-positive (cannot be accidentally disabled via 0).
 const DefaultMemoryBackstopMB = 256
+
+// MemoryBackstopBytes converts a memory backstop in megabytes to bytes.
+func MemoryBackstopBytes(memoryBackstopMB int) int {
+	return memoryBackstopMB << 20
+}
 
 // UsefulToolResultRequestBytes is a practical upper bound for a single
 // provider-request tool-result carry size. A nonzero max_tool_result_bytes
@@ -267,7 +289,7 @@ func RequestedTimeoutSec(configured int, explicit int, taskOverrides ...int) int
 
 // Built-in provider defaults.
 const (
-	DefaultProvider  = "deepseek"
+	DefaultProvider  = "openrouter"
 	DeepSeekProModel = "deepseek-v4-pro"
 )
 

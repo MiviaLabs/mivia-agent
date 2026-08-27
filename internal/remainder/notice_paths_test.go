@@ -7,6 +7,7 @@ package remainder
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCapWithSpoolLeavesShortResultsAlone(t *testing.T) {
@@ -180,5 +181,94 @@ func TestTrimPartialRuneDropsOnlyTheBrokenTail(t *testing.T) {
 	}
 	if got := trimPartialRune(broken); got != broken {
 		t.Fatalf("a valid prefix was trimmed: %q", got)
+	}
+}
+
+func TestCapWithSpoolTrimsLargeInvalidBodyInLinearTime(t *testing.T) {
+	// P-1 regression: trimPartialRune re-validated the whole string on every
+	// one-byte chop. utf8.ValidString short-circuits at the first invalid
+	// byte, so the old loop's per-chop cost is bounded by the invalid byte's
+	// *position*, not by how much tail remains - a test with the invalid
+	// byte near the start (as an earlier draft of this test had it) stays
+	// fast even on the buggy code and proves nothing. To actually exercise
+	// the O(n^2) blowup, the invalid byte must sit deep in the string, so
+	// each of the many chops needed re-scans a large valid prefix. The fix
+	// walks runes forward exactly once, so cost here must stay linear
+	// regardless of where the invalid byte sits.
+	const prefixLen = 300_000
+	const tailLen = 300_000
+	body := strings.Repeat("a", prefixLen) + "\xff" + strings.Repeat("b", tailLen)
+	// The cap is inclusive (len(result) <= maxBytes returns untruncated), so
+	// the cap must sit strictly below the body length for the body to be
+	// over-cap and actually exercise the trim path.
+	maxBytes := len(body) - 1
+	start := time.Now()
+	out, truncated := CapWithSpool(nil, "p", body, maxBytes)
+	elapsed := time.Since(start)
+
+	if !truncated {
+		t.Fatalf("over-cap body was not truncated")
+	}
+	if !strings.HasPrefix(out, strings.Repeat("a", prefixLen)) {
+		t.Fatalf("kept prefix lost: %q…", out[:min(len(out), 40)])
+	}
+	if strings.Contains(out, "\xff") {
+		t.Fatalf("invalid byte survived trimming")
+	}
+	if len(out) > maxBytes {
+		t.Fatalf("len(out)=%d > cap=%d", len(out), maxBytes)
+	}
+	if elapsed > 200*time.Millisecond {
+		t.Fatalf("linear trim took %v; O(n^2) chop re-scan regression", elapsed)
+	}
+}
+
+// TestParseTruncationNoticeRoundTrips pins ParseTruncationNotice as the exact
+// inverse of TruncationNotice: whatever the formatter emits, the parser must
+// recover byte-for-byte, for both the ref and no-ref shapes. The two must
+// never drift apart - the renderer depends on this to distinguish "this
+// result was truncated" from a tool result that merely mentions the word.
+func TestParseTruncationNoticeRoundTrips(t *testing.T) {
+	cases := []struct {
+		name  string
+		kept  int
+		total int
+		ref   string
+	}{
+		{"with ref", 0, 955, "ref:output:abc123"},
+		{"partial with ref", 17, 4000, "ref:output:def456"},
+		{"kept equals total", 955, 955, "ref:output:ghi789"},
+		{"no ref", 0, 955, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			for _, prefix := range []string{"", "some content\nmore content"} {
+				full := prefix + TruncationNotice(c.kept, c.total, c.ref)
+				gotPrefix, gotKept, gotTotal, gotRef, ok := ParseTruncationNotice(full)
+				if !ok {
+					t.Fatalf("ParseTruncationNotice(%q) ok=false, want true", full)
+				}
+				if gotPrefix != prefix || gotKept != c.kept || gotTotal != c.total || gotRef != c.ref {
+					t.Errorf("ParseTruncationNotice(%q) = (%q, %d, %d, %q), want (%q, %d, %d, %q)",
+						full, gotPrefix, gotKept, gotTotal, gotRef, prefix, c.kept, c.total, c.ref)
+				}
+			}
+		})
+	}
+}
+
+// TestParseTruncationNoticeRejectsNonNotices confirms the parser does not
+// false-positive on ordinary tool output that happens to mention truncation
+// in passing, or on empty input.
+func TestParseTruncationNoticeRejectsNonNotices(t *testing.T) {
+	for _, s := range []string{
+		"",
+		"no notice here",
+		"the file was truncated by the editor",
+		"... truncated: kept abc of 955 bytes",
+	} {
+		if _, _, _, _, ok := ParseTruncationNotice(s); ok {
+			t.Errorf("ParseTruncationNotice(%q) ok=true, want false", s)
+		}
 	}
 }

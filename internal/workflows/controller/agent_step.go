@@ -4,14 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agentmsg"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
+	"github.com/MiviaLabs/mivia-agent/internal/evidencecheck"
 	"github.com/MiviaLabs/mivia-agent/internal/jschema"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/template"
 )
 
 // AgentStepRunner executes one workflow agent step through the coordinator.
@@ -257,7 +260,7 @@ func (r *CoordinatorRunner) RunStep(ctx context.Context, spec AgentStepRequest) 
 		prompt = spec.Prompt
 	} else {
 		var err error
-		prompt, err = template.Render(spec.Template, spec.Inputs, spec.Evidence, spec.MaxBindingBytes, spec.MaxContextBytes)
+		prompt, err = delivery.Render(spec.Template, spec.Inputs, spec.Evidence, spec.MaxBindingBytes, spec.MaxContextBytes)
 		if err != nil {
 			return AgentStepResult{}, err
 		}
@@ -389,7 +392,59 @@ func (r *CoordinatorRunner) finish(ctx context.Context, spec AgentStepRequest, h
 	if err != nil {
 		return AgentStepResult{CoordinatorRunID: run.RunID, TaskID: actualTaskID, Output: output, EvidenceJSON: evidenceJSON, Status: result.Status}, err
 	}
+	reportText := extractReportText(output)
+	if reportText != "" && strings.Contains(reportText, "mivia-report/v1") {
+		history, histErr := r.fetchToolExecutionHistory(ctx, run.RunID, actualTaskID)
+		if histErr != nil {
+			return AgentStepResult{CoordinatorRunID: run.RunID, TaskID: actualTaskID, Output: output, EvidenceJSON: evidenceJSON, Status: result.Status}, histErr
+		}
+		if err := ValidateReportEvidence(reportText, history); err != nil {
+			return AgentStepResult{CoordinatorRunID: run.RunID, TaskID: actualTaskID, Output: output, EvidenceJSON: evidenceJSON, Status: result.Status}, &SchemaValidationError{StepID: spec.StepID, Err: err}
+		}
+	}
 	return AgentStepResult{CoordinatorRunID: run.RunID, TaskID: actualTaskID, Output: output, ValidatedOutput: validated, EvidenceJSON: evidenceJSON, Status: result.Status}, nil
+}
+
+func (r *CoordinatorRunner) fetchToolExecutionHistory(ctx context.Context, runID, taskID string) ([]evidencecheck.ToolExecutionRecord, error) {
+	if r.Coordinator == nil {
+		return nil, nil
+	}
+	summaries, err := r.Coordinator.ListRunMessages(ctx, runID, taskID)
+	if err != nil {
+		return nil, err
+	}
+	var history []evidencecheck.ToolExecutionRecord
+	for _, s := range summaries {
+		if s.Kind == agentmsg.KindFinding || s.Kind == "tool_execution" {
+			msg, err := r.Coordinator.LoadMessageBody(ctx, s.ContentRef)
+			if err != nil {
+				continue
+			}
+			var rec evidencecheck.ToolExecutionRecord
+			if err := json.Unmarshal([]byte(msg.Body), &rec); err == nil && (rec.ToolName != "" || len(rec.Argv) > 0 || rec.CommandLine != "") {
+				history = append(history, rec)
+				continue
+			}
+			if strings.HasPrefix(s.Synopsis, "run_command:") {
+				cmd := strings.TrimSpace(strings.TrimPrefix(s.Synopsis, "run_command:"))
+				history = append(history, evidencecheck.ToolExecutionRecord{
+					ToolName:    "run_command",
+					CommandLine: cmd,
+					Argv:        strings.Fields(cmd),
+					ExitCode:    0,
+				})
+			} else if strings.HasPrefix(msg.Body, "run_command:") {
+				cmd := strings.TrimSpace(strings.TrimPrefix(msg.Body, "run_command:"))
+				history = append(history, evidencecheck.ToolExecutionRecord{
+					ToolName:    "run_command",
+					CommandLine: cmd,
+					Argv:        strings.Fields(cmd),
+					ExitCode:    0,
+				})
+			}
+		}
+	}
+	return history, nil
 }
 
 // applyChildResult copies the child task's terminal status and output onto a
@@ -462,6 +517,9 @@ func validateOutput(stepID string, raw json.RawMessage, schema map[string]any) (
 	if len(raw) == 0 {
 		return nil, &SchemaValidationError{StepID: stepID, Err: jschema.ErrValidation}
 	}
+	if err := validateEvidenceClaims(stepID, raw); err != nil {
+		return nil, &SchemaValidationError{StepID: stepID, Err: err}
+	}
 	if schema == nil {
 		var value any
 		if err := json.Unmarshal(raw, &value); err != nil {
@@ -478,6 +536,59 @@ func validateOutput(stepID string, raw json.RawMessage, schema map[string]any) (
 		return nil, &SchemaValidationError{StepID: stepID, Err: err}
 	}
 	return value, nil
+}
+
+// ValidateReportEvidence cross-checks report claims against recorded tool executions.
+func ValidateReportEvidence(reportText string, history []evidencecheck.ToolExecutionRecord) error {
+	claims := evidencecheck.ParseClaims(reportText)
+	if len(claims) == 0 {
+		return nil
+	}
+	rep := evidencecheck.Validate(claims, history)
+	return rep.Error()
+}
+
+func validateEvidenceClaims(stepID string, raw json.RawMessage) error {
+	text := extractReportText(raw)
+	if text == "" || !strings.Contains(text, "mivia-report/v1") {
+		return nil
+	}
+	lines := strings.Split(text, "\n")
+	inEvidence := false
+	for _, l := range lines {
+		trimmed := strings.TrimSpace(l)
+		lower := strings.ToLower(trimmed)
+		if strings.HasPrefix(lower, "evidence:") || strings.HasPrefix(lower, "## evidence") {
+			inEvidence = true
+			continue
+		}
+		if inEvidence && strings.HasPrefix(lower, "#") {
+			inEvidence = false
+		}
+		if inEvidence && (strings.Contains(trimmed, "PASS") || strings.Contains(trimmed, "FAIL")) {
+			if strings.HasPrefix(trimmed, "- :") || strings.HasPrefix(trimmed, "* :") || strings.HasPrefix(trimmed, "- PASS") || strings.HasPrefix(trimmed, "* PASS") {
+				return fmt.Errorf("step %q report contains malformed evidence line %q", stepID, trimmed)
+			}
+		}
+	}
+	return nil
+}
+
+func extractReportText(raw json.RawMessage) string {
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		return text
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err == nil {
+		if report, ok := m["report"].(string); ok {
+			return report
+		}
+		if output, ok := m["output"].(string); ok {
+			return output
+		}
+	}
+	return ""
 }
 
 func findResult(results []subagents.Result, taskID string) (subagents.Result, error) {

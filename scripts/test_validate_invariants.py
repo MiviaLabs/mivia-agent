@@ -6,6 +6,7 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import io
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -69,6 +70,87 @@ def test_real_manifest_has_no_duplicates() -> None:
     m = load_module()
     manifest = (ROOT / ".mivia" / "invariants.md").read_text(encoding="utf-8")
     assert not reports_duplicate(m, manifest), ".mivia/invariants.md has a duplicate id"
+
+
+def test_unallowlisted_invariant_skip_is_rejected() -> None:
+    import tempfile
+    import json
+    m = load_module()
+    with tempfile.TemporaryDirectory() as td:
+        tmp_repo = Path(td)
+        policy_path = tmp_repo / "invariant-skips.json"
+        policy_path.write_text(json.dumps({"allowlistedSkips": {}}), encoding="utf-8")
+
+        test_file = tmp_repo / "inv_test.go"
+        test_file.write_text(
+            'package foo\nimport "testing"\nfunc TestInv(t *testing.T) {\n\tt.Skip("self disarming")\n}\n',
+            encoding="utf-8",
+        )
+        violations = m.check_invariant_skips({"TestInv"}, repo=tmp_repo, policy_path=policy_path)
+        assert len(violations) == 1
+        assert "TestInv" in violations[0]
+
+
+def test_allowlisted_invariant_skip_is_accepted() -> None:
+    import tempfile
+    import json
+    m = load_module()
+    with tempfile.TemporaryDirectory() as td:
+        tmp_repo = Path(td)
+        policy_path = tmp_repo / "invariant-skips.json"
+        policy_path.write_text(
+            json.dumps({"allowlistedSkips": {"TestInv": {"reason": "ok"}}}),
+            encoding="utf-8",
+        )
+
+        test_file = tmp_repo / "inv_test.go"
+        test_file.write_text(
+            'package foo\nimport "testing"\nfunc TestInv(t *testing.T) {\n\tt.Skip("accepted os limitation")\n}\n',
+            encoding="utf-8",
+        )
+        violations = m.check_invariant_skips({"TestInv"}, repo=tmp_repo, policy_path=policy_path)
+        assert len(violations) == 0
+
+
+def test_same_commit_bypass_prevention_on_invariant_skips() -> None:
+    import json
+    import subprocess
+    import tempfile
+    m = load_module()
+    with tempfile.TemporaryDirectory() as td:
+        tmp_repo = Path(td)
+        subprocess.run(["git", "init"], cwd=tmp_repo, capture_output=True, check=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_repo, capture_output=True, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_repo, capture_output=True, check=True)
+
+        policy_dir = tmp_repo / ".mivia" / "policy"
+        policy_dir.mkdir(parents=True)
+        policy_path = policy_dir / "invariant-skips.json"
+        policy_path.write_text(json.dumps({"allowlistedSkips": {}}), encoding="utf-8")
+
+        test_file = tmp_repo / "inv_test.go"
+        test_file.write_text(
+            'package foo\nimport "testing"\nfunc TestInv(t *testing.T) {\n\t// no skip\n}\n',
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "add", "."], cwd=tmp_repo, capture_output=True, check=True)
+        subprocess.run(["git", "commit", "-m", "initial"], cwd=tmp_repo, capture_output=True, check=True)
+
+        # Agent introduces t.Skip and tries to add allowlist entry in same diff
+        test_file.write_text(
+            'package foo\nimport "testing"\nfunc TestInv(t *testing.T) {\n\tt.Skip("sneaky skip")\n}\n',
+            encoding="utf-8",
+        )
+        policy_path.write_text(
+            json.dumps({"allowlistedSkips": {"TestInv": {"reason": "sneaky"}}}),
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "add", "."], cwd=tmp_repo, capture_output=True, check=True)
+
+        # Evaluating skips in staged diff must catch the bypass
+        violations = m.check_invariant_skips({"TestInv"}, repo=tmp_repo, policy_path=policy_path, diff_args=["--cached"])
+        assert len(violations) == 1
+        assert "TestInv" in violations[0]
 
 
 def main() -> None:

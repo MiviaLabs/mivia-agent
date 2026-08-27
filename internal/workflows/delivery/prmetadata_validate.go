@@ -80,14 +80,18 @@ func deliveryFooter(runID, workflowDigest, stackPart string) string {
 // validatePRMetadata resolves the agent-provided PR metadata (title and
 // summary) from the run's change-summary output, or falls back to the legacy
 // title_template render, then validates the final title against the OPTIONAL
-// workspace PR-title policy. It returns the title and body the PR creation
-// will use. A metadata defect is a PRMetadataError; a policy-file defect is a
+// workspace PR-title policy. It returns the title the PR creation will use
+// (carrying the host-owned "[stack k/N]" tag when stack_part is set), the
+// UNTAGGED resolved title (the agent's own pr_title - the commit subject,
+// which the workspace commit-message policy and the repo's commit-msg hook
+// measure; the host's own tag must never consume that budget), and the body.
+// A metadata defect is a PRMetadataError; a policy-file defect is a
 // RefusalError. The stage runs BEFORE any commit or push, so a metadata
 // defect writes no delivery record.
-func validatePRMetadata(ctx context.Context, repo ledger.Repository, req Request) (title, body string, err error) {
+func validatePRMetadata(ctx context.Context, repo ledger.Repository, req Request) (title, commitSubject, body string, err error) {
 	summary, err := ResolveLatestChangeSummary(ctx, repo, req.RunID)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	agentTitle, _ := summary["pr_title"].(string)
 	agentSummary, _ := summary["pr_summary"].(string)
@@ -95,7 +99,7 @@ func validatePRMetadata(ctx context.Context, repo ledger.Repository, req Request
 	case strings.TrimSpace(agentTitle) != "":
 		title, err = sanitizeAgentTitle(agentTitle)
 		if err != nil {
-			return "", "", err
+			return "", "", "", err
 		}
 	case req.Policy.TitleTemplate == "":
 		// An empty template is legal and renders no title.
@@ -103,7 +107,7 @@ func validatePRMetadata(ctx context.Context, repo ledger.Repository, req Request
 	default:
 		title, err = req.Policy.RenderTitle(req.Inputs)
 		if err != nil {
-			return "", "", err
+			return "", "", "", err
 		}
 	}
 	// Sanitize the agent summary BEFORE policy validation and body assembly,
@@ -112,25 +116,32 @@ func validatePRMetadata(ctx context.Context, repo ledger.Repository, req Request
 	// summary is redacted. An empty summary passes through unchanged.
 	agentSummary, err = sanitizeAgentSummary(agentSummary)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	pol, err := LoadPRTitlePolicy(req.GitCtx.Dir, req.Policy.PRTitlePolicyPath)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	if pol != nil {
 		if verr := pol.Validate(title, agentSummary); verr != nil {
-			return "", "", verr
+			return "", "", "", verr
 		}
 	}
-	// Append the host-owned Stack-Part trailer AFTER sanitization and policy
+	// The commit subject is the resolved title BEFORE the host's tag: the
+	// workspace commit-message policy and the repo's commit-msg hook measure
+	// the subject the agent actually authored, and the agent cannot see or
+	// control the tag.
+	commitSubject = title
+	// Append the host-owned "[stack k/N]" tag AFTER sanitization and policy
 	// validation, mirroring how the body footer is appended after validation:
 	// the agent-controlled title that passed validation stays intact and the
-	// host adds the stack marker. An invalid stack_part or an over-limit
-	// result is a repairable PRMetadataError.
+	// host adds the stack marker. An invalid stack_part SHAPE is a
+	// repairable PRMetadataError; a tagged title over the length ceiling is
+	// silently truncated instead (appendStackPartTitle's own doc comment
+	// has the reasoning) - never an error the agent must repair.
 	title, err = appendStackPartTitle(title, req.Inputs[InputStackPart])
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	footer := deliveryFooter(req.RunID, req.WorkflowDigest, req.Inputs[InputStackPart])
 	if strings.TrimSpace(agentSummary) != "" {
@@ -138,7 +149,7 @@ func validatePRMetadata(ctx context.Context, repo ledger.Repository, req Request
 	} else {
 		body = footer
 	}
-	return title, body, nil
+	return title, commitSubject, body, nil
 }
 
 // sanitizeAgentSummary makes an agent-provided summary safe for the PR body.
@@ -172,8 +183,9 @@ func sanitizeAgentTitle(title string) (string, error) {
 			return "", &PRMetadataError{Reason: fmt.Sprintf("delivery: pr_title contains control character %q; fix the agent-provided title", r)}
 		}
 	}
-	if n := utf8.RuneCountInString(title); n > MaxTitleRunes {
+	out := redact.Text(foldToSingleLine(title))
+	if n := utf8.RuneCountInString(out); n > MaxTitleRunes {
 		return "", &PRMetadataError{Reason: fmt.Sprintf("delivery: pr_title has %d characters, exceeding GitHub's %d-character limit; fix the agent-provided title", n, MaxTitleRunes)}
 	}
-	return redact.Text(foldToSingleLine(title)), nil
+	return out, nil
 }

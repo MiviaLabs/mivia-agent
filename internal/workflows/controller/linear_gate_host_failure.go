@@ -96,6 +96,23 @@ func (c *LinearController) settleHostFailure(ctx context.Context, run workflowle
 	return settleAfterRoute(ctx, c, run, route)
 }
 
+// settleBlockedGateFailure records a gate failure that names one or more
+// write-blocklisted paths and fails the run immediately: unlike
+// settleHostFailure, this is never repairable, because no workflow agent can
+// satisfy the demand regardless of what step.OnFailure names. blockedCause
+// (used post-hoc, after a repair agent's own output admits the same thing)
+// documents the same host-policy boundary this pre-checks before the repair
+// step is ever dispatched.
+func (c *LinearController) settleBlockedGateFailure(ctx context.Context, run workflowledger.RunSnapshot, attempt workflowledger.StepAttempt, step definition.Step, output []byte, blocked []string) (workflowledger.RunSnapshot, bool, error) {
+	blockedErr := fmt.Errorf("workflow blocked: gate %q failure names write path(s) %s, write-blocklisted for workflow agents (host policy); the run cannot proceed - route this change through the root session or a host-owned process", step.ID, strings.Join(blocked, ", "))
+	result := AgentStepResult{Output: output, ErrorRef: storeErrorText(ctx, c.Repo, blockedErr)}
+	if err := CompleteExistingStepResult(ctx, c.Repo, attempt, result, workflowledger.AttemptStatusFailed, RouteDecision{ToStepID: "failure"}); err != nil {
+		return c.fail(ctx, run, err)
+	}
+	c.emitStepCompleted(step, attempt, string(workflowledger.AttemptStatusFailed))
+	return c.fail(ctx, run, blockedErr)
+}
+
 // hostFailureRepairable reports whether this host failure may re-enter the
 // graph: the step must name a non-terminal target, and the step must not have
 // spent its re-entry budget.

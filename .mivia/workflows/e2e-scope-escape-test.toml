@@ -1,6 +1,6 @@
 version = 1
 name = "e2e-scope-escape-test"
-description = "LIVE TEST ONLY - never run without explicit human approval (see AGENTS.md 'Live e2e test workflow'). Pushes a real branch and opens a real draft PR against MiviaLabs/mivia-agent. Run in chunk mode with an explicit chunk_plan input. The implement step deliberately writes one file OUTSIDE the declared chunk slice, proving the chunk-scope guard: guardChunkScope refuses the delivery naming the out-of-scope file, the repair step reads the hint, deletes the file, and delivery succeeds on retry."
+description = "LIVE TEST ONLY - never run without explicit human approval (see docs/development/agent-workflow.md 'Live e2e test workflows'). Pushes a real branch and opens a real draft PR against MiviaLabs/mivia-agent. Run in chunk mode with an explicit chunk_plan input. The implement step deliberately writes one file OUTSIDE the declared chunk slice, proving the chunk-scope guard: guardChunkScope refuses the delivery naming the out-of-scope file, the repair step reads the hint, deletes the file, and delivery succeeds on retry."
 initial_step = "plan"
 
 [inputs.task]

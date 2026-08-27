@@ -387,22 +387,16 @@ func (c *OpenAICompat) ChatStream(ctx context.Context, req Request, w io.Writer)
 		return resp.Content, nil
 	}
 	req.Stream = true
-	httpReq, err := c.newRequest(callCtx, req)
+	resp, req, err := c.doChatRequest(callCtx, req)
 	if err != nil {
-		return "", err
-	}
-	resp, err := c.client.Do(httpReq)
-	if err != nil {
-		err = markTransientReadDeadline(callCtx, req.Timeout, err)
-		return "", fmt.Errorf("%s: request failed: %w", c.name, err)
+		// asTransient mirrors the tools branch (ChatTurn -> chatTurnStream)
+		// and the doChatRequest contract: each call site applies its own
+		// transient decision. It is a no-op for permanent errors.
+		return "", asTransient(err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return "", c.httpError(resp)
-	}
-
-	return c.readStream(callCtx, req, resp.Body, w)
+	return c.readStream(callCtx, req, c.wrapWithIdleWatchdog(resp.Body), w)
 }
 
 func (c *OpenAICompat) readStream(ctx context.Context, req Request, body io.Reader, w io.Writer) (string, error) {
@@ -442,16 +436,21 @@ func (c *OpenAICompat) readStream(ctx context.Context, req Request, body io.Read
 			continue
 		}
 		if len(chunk.Choices) == 0 {
-			// A usage-only chunk is a completion signal. Do not replay the turn.
-			if chunk.Usage != nil {
+			// A usage-only chunk, or one carrying top-level web_search, is a
+			// completion signal. Do not replay the turn.
+			if chunk.Usage != nil || len(chunk.WebSearch) > 0 {
 				received = true
 			}
 			continue
 		}
 		delta := chunk.Choices[0].Delta.Content
 		streamDelta := chunk.Choices[0].Delta
-		// Any delivered wire shape (content/reasoning/finish/usage) must not re-bill.
-		if deltaCountsAsReceived(delta, streamDelta.ReasoningContent, streamDelta.Reasoning, chunk.Choices[0].FinishReason, streamDelta.ReasoningDetails, chunk.Usage) {
+		// Any delivered wire shape (content/reasoning/finish/usage) must not
+		// re-bill. Top-level web_search is also a delivered shape: readStream
+		// cannot surface the entries (it returns content only), but the signal
+		// must count as received so a web_search-only turn is not re-asked
+		// non-streamed (mirrors readTurnStream's len(webSearch)>0 payload gate).
+		if deltaCountsAsReceived(delta, streamDelta.ReasoningContent, streamDelta.Reasoning, chunk.Choices[0].FinishReason, streamDelta.ReasoningDetails, chunk.Usage) || len(chunk.WebSearch) > 0 {
 			received = true
 		}
 		if delta == "" {

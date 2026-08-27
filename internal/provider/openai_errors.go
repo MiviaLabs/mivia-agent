@@ -56,16 +56,18 @@ func openaiErrorParser(statusCode int, body []byte) error {
 	// An error field is present — report it as a provider error with only the
 	// status code and, if available, the error type (a classification string,
 	// not request content). The message is deliberately excluded: it is read
-	// only to classify a prompt-too-long rejection (attaching the
-	// ErrPromptTooLong sentinel for the agent loop's compact-and-retry), and
-	// its text never appears in the surfaced error.
+	// only to classify a prompt-too-long rejection (ErrPromptTooLong) or a
+	// max-tokens-cap rejection (ErrMaxTokensExceeded), and its text never
+	// appears in the surfaced error.
 	errType := ""
 	promptTooLong := false
+	maxTokensCap := false
 	if envelope.Error != nil {
 		if envelope.Error.Type != "" {
 			errType = ", type " + envelope.Error.Type
 		}
 		promptTooLong = isPromptTooLongMessage(envelope.Error.Message)
+		maxTokensCap = isMaxTokensCapMessage(envelope.Error.Message)
 	}
 
 	switch {
@@ -79,9 +81,17 @@ func openaiErrorParser(statusCode int, body []byte) error {
 		// the type is empty) so the coordinator step-retry layer knows whether
 		// to retry: transient-class faults (server/api/timeout/upstream errors,
 		// overload, rate limit) are retried, while permanent and unknown
-		// classes fail closed and stay non-transient.
+		// classes fail closed and stay non-transient. A max-tokens-cap wording
+		// attaches the clamp sentinel only for a NON-transient in-band
+		// rejection; a transient-typed envelope keeps its pre-existing
+		// transient classification, because a step retry is the recovery a
+		// server fault earns (the clamp is a cap correction, not a fault
+		// retry).
 		if openai200ErrorTransient(envelope.Error.Type, envelope.Error.Code) {
 			return &TransientError{Err: err}
+		}
+		if maxTokensCap {
+			return fmt.Errorf("%s: provider error (HTTP 200%s): %w", "openai", errType, ErrMaxTokensExceeded)
 		}
 		return markPermanent(err)
 	case statusCode == http.StatusTooManyRequests:
@@ -91,6 +101,9 @@ func openaiErrorParser(statusCode int, body []byte) error {
 	default:
 		if promptTooLong {
 			return fmt.Errorf("%s: provider error (HTTP %d%s): %w", "openai", statusCode, errType, ErrPromptTooLong)
+		}
+		if maxTokensCap {
+			return fmt.Errorf("%s: provider error (HTTP %d%s): %w", "openai", statusCode, errType, ErrMaxTokensExceeded)
 		}
 		return fmt.Errorf("%s: provider error (HTTP %d%s)", "openai", statusCode, errType)
 	}

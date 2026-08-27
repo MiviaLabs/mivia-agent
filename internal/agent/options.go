@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"time"
 
@@ -12,8 +13,47 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
+	"github.com/MiviaLabs/mivia-agent/internal/usage"
 )
+
+// UnadmittedToolResult is returned by Options.UnadmittedToolHandler.
+type UnadmittedToolResult struct {
+	// Handled is false when the handler has no opinion on this tool name at
+	// all (not advertised, a hallucinated name); the caller falls through to
+	// its own generic "not available" denial. True for every other case.
+	Handled bool
+	// Ran is true when the tool was actually executed synchronously and
+	// Content is its real, successful result: the caller must render it
+	// exactly like an ordinary successful tool call - no "error: " prefix,
+	// no failed tool_end, no denial framing anywhere the model or the
+	// operator can see. False means Content is a human-readable denial
+	// reason instead (e.g. staged but could not run synchronously); the
+	// caller applies its own "error: " framing as before.
+	Ran bool
+	// Content is the tool's real result (Ran) or the denial text (!Ran).
+	Content string
+	// HookRuns are the lifecycle hooks that executed for this call, for the
+	// OPERATOR's view. Set on the Ran path AND on a !Ran path whose cause
+	// was a PreToolUse block - the case an operator most needs to see, since
+	// it is the run that stopped the call. It must be nil for a dedup-served
+	// duplicate: a duplicate is answered with the OWNER's runs (DC-9), which
+	// did not execute for THIS call, so reporting them would show a hook
+	// firing that never fired here. Nil when the handler never reached the
+	// dispatcher at all.
+	HookRuns []runtime.HookRun
+	// HookContext is the advisory text lifecycle hooks produced for this
+	// call, for the MODEL. The caller frames it through appendHookContext,
+	// so it gets the same delimiting and tag-neutralization the ordinary
+	// dispatcherShim.Run path applies. Unlike HookRuns it IS set for a
+	// dedup-served duplicate: DC-9 answers a duplicate with the owner's
+	// post-hook Result, and the shim appends that context too. Set but
+	// currently unused on a !Ran (denial) result: the denial text is left
+	// unchanged until a PreToolUse block's own advisory context is threaded
+	// too (see runDeferredToolNow's doc comment).
+	HookContext string
+}
 
 // Options is one agent turn's immutable configuration. Every field is read,
 // never written, by the loop, so a turn keeps the settings it started with
@@ -78,12 +118,20 @@ type Options struct {
 	MaxToolCallsPerBatch int
 	MaxConcurrentTools   int
 	ToolTimeout          time.Duration
-	RequestTimeout       time.Duration
-	ParentID             string
-	TurnID               string
-	SessionID            string
-	Role                 string
-	Depth                int
+	// ToolRunTimeout is the SDK tool-registry's registry-wide run-timeout
+	// backstop for tools that declare no Capability.Timeout (the [tools]
+	// tool_run_timeout_seconds knob). <= 0 (the default) maps to the SDK's
+	// TimeoutNone: no registry-wide cap, because the dispatcher shim
+	// already arms every call's Capability.Timeout / ToolTimeout as a real
+	// deadline and the SDK backstop must never be tighter than those
+	// declared budgets. Positive is the literal bound.
+	ToolRunTimeout time.Duration
+	RequestTimeout time.Duration
+	ParentID       string
+	TurnID         string
+	SessionID      string
+	Role           string
+	Depth          int
 	// Step is the loop's 1-based model-step index, stamped per step on the
 	// loop's own Options copy before tool calls are dispatched (plan:
 	// step-scoped tool dedup). 0 means unset/legacy.
@@ -102,12 +150,33 @@ type Options struct {
 	// It lets the host recognize a tool that IS advertised (plan
 	// tools-advertising/01: the wire tools[] array now includes every
 	// deferred candidate, not just admitted ones) but not yet admitted for
-	// execution, auto-stage it for publication at the next step boundary, and
-	// return a message explaining the call must be retried after that. False
-	// means the name is not recognized at all (a hallucinated tool), and the
-	// generic denial message is used. Nil disables the check. Must be safe
-	// for concurrent calls.
-	UnadmittedToolHandler func(ctx context.Context, name string) (string, bool)
+	// execution: auto-stage it for native publication at the next step
+	// boundary (so later calls in the turn need no special handling), AND
+	// serve THIS call synchronously against the full authorized tool set
+	// when possible, so the model never sees an error for a call it already
+	// made correctly. Handled=false means the name is not recognized at all
+	// (a hallucinated tool) and the caller falls through to the generic
+	// denial. Nil disables the check. Must be safe for concurrent calls.
+	UnadmittedToolHandler func(ctx context.Context, name string, args json.RawMessage) UnadmittedToolResult
+	// ApprovalGate is the synchronous user-approval bridge for tool calls.
+	// It is invoked by executeToolTask and by the SDK-path approval wrapper
+	// before Dispatcher.Invoke for any tool whose capability.Class >=
+	// tools.ExecutionWrite; tools of class ExecutionRead or Unclassified
+	// skip the call. The function MUST be safe to call concurrently from
+	// multiple goroutines (parallel tool batches). A nil gate is equivalent
+	// to "approve every call": the loop runs as if there were no approval
+	// surface at all, matching pre-Phase-4 behavior.
+	ApprovalGate func(ctx context.Context, name string, args json.RawMessage) sdkadapter.ApprovalResult
+	// ApprovalStanding is consulted BEFORE ApprovalGate to honor "always"
+	// decisions ("a always" / "D deny always"). It is keyed on tool name
+	// and carries a verdict (approved or denied) plus a class tag so the
+	// same call short-circuits the gate for the rest of the session.
+	// Nil is safe: every call falls through to ApprovalGate. The same
+	// instance backs the SDK-path wrapper so a "always" decision persists
+	// across legacy and SDK turns within one session.
+	ApprovalStanding *sdkadapter.ApprovalStanding
+	// ApprovalPolicy controls tool execution approval policy ("write-only", "auto" / "never" [yolo], "always").
+	ApprovalPolicy string
 	// RemainderSpool, when non-nil, stores truncated tool-result bodies under
 	// content refs so the model can page them via read_output. Nil means
 	// truncation notices omit refs (legacy plain notices).
@@ -116,7 +185,12 @@ type Options struct {
 	EventBus       *events.Bus // publishes agent events to extensible delivery
 	// EventIdentity is a validated public identity snapshot for this turn.
 	EventIdentity *events.Identity
-	FinalWriter   io.Writer
+	// UsageWriter, when non-nil, durably records token/cache/compaction usage
+	// measurements alongside the existing EventBus publish. Nil keeps usage
+	// events exactly as ephemeral as they are today (subagent/workflow-engine
+	// loops that never set this field are unaffected).
+	UsageWriter usage.UsageWriter
+	FinalWriter io.Writer
 	// RequireFinalText fails a turn that produced no assistant text anywhere
 	// instead of reporting an empty success. Interactive surfaces set it: a turn
 	// that renders as "done" with no answer is indistinguishable from the agent
@@ -191,8 +265,15 @@ type SummaryConfig struct {
 	// Summarizer is the captured provider/model/policy binding. Nil disables
 	// summary injection entirely.
 	Summarizer *contextmgr.Summarizer
+	// UnavailableReason names the setup-time failure that prevented a Summarizer
+	// from being wired, when Summarizer is nil.
+	UnavailableReason string
 	// Redaction is the host's compiled redaction policy. It classifies every
 	// envelope field and every provider output before anything reaches the
 	// wire or storage.
 	Redaction contextstate.RedactionPolicy
 }
+
+// Approval types live in internal/sdkadapter so the SDK-path wrapper can
+// use them without creating an import cycle (internal/sdkadapter already
+// imports nothing from internal/agent).

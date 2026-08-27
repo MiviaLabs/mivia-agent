@@ -15,9 +15,9 @@ var defaultIgnorePatterns = []string{".git", "node_modules", "vendor"}
 
 // DefaultOptions configures built-in tools.
 type DefaultOptions struct {
-	Workspace                                                                  *workspace.Root
-	RunAllowlist, RunAllowlistOnly, RunBlocklist, DisableTools                 []string
-	RunTimeoutSec, MaxReadBytes, MaxOutputBytes, MaxWriteKB, MaxListDirEntries int
+	Workspace                                                                                    *workspace.Root
+	RunAllowlist, RunAllowlistOnly, RunBlocklist, DisableTools                                   []string
+	RunTimeoutSec, MaxReadBytes, MaxEditFileBytes, MaxOutputBytes, MaxWriteKB, MaxListDirEntries int
 	// MaxToolResultBytes is the agent-loop tool-result ceiling
 	// ([tools] max_tool_result_bytes). 0 = uncapped. When set, tools whose
 	// honest output framing depends on not being tail-cut by the loop
@@ -141,13 +141,14 @@ func searchToolBudget(opts DefaultOptions) int {
 	return resolveWebResponseBudget(opts.MaxTavilyResponseBytes)
 }
 
-// The run_command program allowlist is configuration-only. No binary list is
-// compiled in: which programs a workspace may run is that workspace's policy,
-// and a list baked into the agent is both too permissive for locked-down repos
-// and too narrow for unusual toolchains.
-//
-// A recommended multi-ecosystem list ships in .mivia/mivia.toml.example under
-// [tools].run_allowlist. With it unset, run_command executes nothing.
+// The run_command program allowlist is open by default: with no [tools]
+// run_allowlist configured, run_command may still execute
+// DefaultRunAllowlist's built-in programs (see that var's doc comment
+// for what is and is not included, and why). [tools].run_allowlist extends
+// the built-in list; [tools].run_allowlist_only replaces it entirely. A
+// fuller, opt-in multi-ecosystem list (including shells, networking, and
+// container tools the built-in list deliberately omits) ships in
+// .mivia/mivia.toml.example under [tools].run_allowlist.
 
 // NewDefaultRegistry registers all v1 tools.
 func NewDefaultRegistry(opts DefaultOptions) *Registry {
@@ -172,15 +173,19 @@ func configuredSecretPaths(opts DefaultOptions) ([]string, []string) {
 }
 
 func configuredRunAllowlist(opts DefaultOptions) []string {
-	// With no compiled-in list there is nothing to extend or replace, so
-	// run_allowlist_only and run_allowlist differ only in name; both are
-	// honoured so existing configs keep working.
-	allowlist := opts.RunAllowlistOnly
-	normalized := make([]string, 0, len(allowlist)+len(opts.RunAllowlist))
-	for _, program := range allowlist {
-		normalized = append(normalized, strings.ToLower(program))
+	// run_allowlist_only REPLACES DefaultRunAllowlist entirely (a
+	// project that wants a closed allowlist does not also inherit the
+	// built-in open one). Unset, run_allowlist EXTENDS the built-in list.
+	var base []string
+	if len(opts.RunAllowlistOnly) > 0 {
+		base = opts.RunAllowlistOnly
+	} else {
+		base = make([]string, 0, len(DefaultRunAllowlist)+len(opts.RunAllowlist))
+		base = append(base, DefaultRunAllowlist...)
+		base = append(base, opts.RunAllowlist...)
 	}
-	for _, program := range opts.RunAllowlist {
+	normalized := make([]string, 0, len(base))
+	for _, program := range base {
 		normalized = append(normalized, strings.ToLower(program))
 	}
 	blocked := disabledToolNames(opts.RunBlocklist)
@@ -213,7 +218,7 @@ func disabledToolNames(names []string) map[string]bool {
 //     unified diff, so the compiled-in bound holds unless the operator's
 //     result cap is tighter still.
 func registerEditTools(register func(Tool), opts DefaultOptions, ws *workspace.Root, patterns, exceptions, writeDenylist []string) {
-	maxFileBytes := opts.MaxReadBytes
+	maxFileBytes := opts.MaxEditFileBytes
 	if maxFileBytes <= 0 {
 		maxFileBytes = effectiveMemoryBackstop(opts)
 	}
@@ -355,7 +360,7 @@ func registerWebTools(register func(Tool), opts DefaultOptions, ws *workspace.Ro
 	// operator value preserved). No default lives here any more - a 0 that
 	// reaches this point via direct DefaultOptions construction means
 	// unlimited, which fetch_url itself handles.
-	register(&fetchURLTool{ws: ws, maxLocalBytes: opts.MaxReadBytes, maxFetchKB: opts.MaxFetchKB, httpClient: &http.Client{}, fetchClient: newSafeFetchHTTPClient()})
+	register(&fetchURLTool{ws: ws, maxLocalBytes: opts.MaxEditFileBytes, maxFetchKB: opts.MaxFetchKB, httpClient: &http.Client{}, fetchClient: newSafeFetchHTTPClient()})
 	// extract has no free-engine fallback, so a keyless tool could never
 	// succeed - and a tool is advertised only if it can succeed. Register it
 	// solely when a provider key is configured (conditional registration): the

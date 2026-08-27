@@ -85,13 +85,26 @@ func TestReadFileWindowHeaderHonestUnderResultCap(t *testing.T) {
 				t.Fatalf("header claims %d lines (%d–%d) but %d were delivered", got, first, last, delivered)
 			}
 
-			// Full-file read of an over-cap file must refuse honestly.
-			_, err = tool.Execute(context.Background(), json.RawMessage(`{"path":"`+path+`"}`))
-			if err == nil {
-				t.Fatal("full read of an over-cap file succeeded; want file-too-large error")
+			// Full-file read of an over-cap file paginates instead of
+			// refusing: a refusal cost a round trip the agent could only
+			// answer by re-calling with the offset this branch supplies
+			// itself. The delivered page must stay under the cap and name
+			// the continuation call.
+			full, err := tool.Execute(context.Background(), json.RawMessage(`{"path":"`+path+`"}`))
+			if err != nil {
+				t.Fatalf("full read of an over-cap file must paginate, not fail: %v", err)
 			}
-			if !strings.Contains(err.Error(), "file too large") || !strings.Contains(err.Error(), "offset and limit") {
-				t.Fatalf("error %q does not direct the model to offset/limit windowing", err)
+			if len(full) >= capBytes {
+				t.Fatalf("paginated full read is %d bytes, not under cap %d", len(full), capBytes)
+			}
+			if !strings.Contains(full, "truncated at max read size") {
+				t.Fatalf("paginated full read lost its truncation notice:\n%s", full)
+			}
+			if !strings.Contains(full, "offset=") {
+				t.Fatalf("paginated full read does not name the continuation offset:\n%s", full)
+			}
+			if firstFull, _, totalFull := parseWindowHeader(t, full); firstFull != 1 || totalFull != 200 {
+				t.Fatalf("paginated full read header starts at %d of %d; want line 1 of 200", firstFull, totalFull)
 			}
 		})
 	}

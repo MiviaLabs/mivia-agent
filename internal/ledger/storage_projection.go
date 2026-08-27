@@ -2,11 +2,10 @@ package ledger
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"sort"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/ledgercore"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
@@ -28,72 +27,7 @@ import (
 // the projection. Store I/O happens without s.mu held; only the application of
 // an already-read tail takes the write lock.
 func (s *StorageLedgerRepository) catchUp(ctx context.Context) error {
-	s.mu.RLock()
-	cursor := s.cursor
-	s.mu.RUnlock()
-
-	maxSequences, newCursor, err := s.store.Changes(ctx, cursor)
-	if err != nil {
-		return fmt.Errorf("read store changes: %w", err)
-	}
-
-	s.mu.RLock()
-	var behind []string
-	for runID, maxSeq := range maxSequences {
-		if uint64(maxSeq) > s.applied[runID] {
-			behind = append(behind, runID)
-		}
-	}
-	s.mu.RUnlock()
-
-	if len(behind) == 0 {
-		// Nothing to apply: the changes the probe covered were this instance's
-		// own writes, already in the projection.
-		s.advanceCursor(newCursor)
-		return nil
-	}
-	sort.Strings(behind)
-
-	// Read the tail of every run that moved, then fold the union ONCE in global
-	// append order. Each per-run read stays bounded by that run's watermark,
-	// but folding run-by-run (runID-sorted) let a reused idempotency key apply
-	// the new run_created before the old run's run_deleted tombstone, swallow
-	// the new run as a duplicate, and lose it forever. Merging and sorting by
-	// the store's rowid restores the true append order: the tombstone always
-	// lands before a later reused-key run_created.
-	var pending []storage.Event
-	for _, runID := range behind {
-		s.mu.RLock()
-		from := s.applied[runID]
-		s.mu.RUnlock()
-
-		events, err := s.store.EventsSince(ctx, runID, int(from))
-		if err != nil {
-			return fmt.Errorf("read events for %s: %w", runID, err)
-		}
-		pending = append(pending, events...)
-	}
-	if len(pending) == 0 {
-		s.advanceCursor(newCursor)
-		return nil
-	}
-	if err := s.applyTail(ctx, pending); err != nil {
-		return err
-	}
-	// Only advance once every run the probe reported has been applied; a
-	// failure leaves the cursor where it was so the next call retries.
-	s.advanceCursor(newCursor)
-	return nil
-}
-
-// advanceCursor moves the store cursor forward. It never rewinds, so a slow
-// concurrent catch-up cannot undo a newer one.
-func (s *StorageLedgerRepository) advanceCursor(cursor uint64) {
-	s.mu.Lock()
-	if cursor > s.cursor {
-		s.cursor = cursor
-	}
-	s.mu.Unlock()
+	return s.engine.CatchUpSince(ctx, nil, s.applyTail)
 }
 
 // applyTail folds an ordered set of store events into the projection under the
@@ -107,17 +41,12 @@ func (s *StorageLedgerRepository) advanceCursor(cursor uint64) {
 // was read starting at a watermark snapshot, skipping already-applied prefixes
 // cannot open a gap.
 func (s *StorageLedgerRepository) applyTail(ctx context.Context, events []storage.Event) error {
-	sort.SliceStable(events, func(i, j int) bool {
-		if events[i].RowID != events[j].RowID {
-			return events[i].RowID < events[j].RowID
-		}
-		return events[i].Sequence < events[j].Sequence
-	})
+	ledgercore.SortEventsStable(events)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, evt := range events {
-		if uint64(evt.Sequence) <= s.applied[evt.RunID] ||
+		if uint64(evt.Sequence) <= s.engine.Watermarks().Applied(evt.RunID) ||
 			s.isInflightLocked(evt.RunID, uint64(evt.Sequence)) {
 			continue
 		}
@@ -127,7 +56,7 @@ func (s *StorageLedgerRepository) applyTail(ctx context.Context, events []storag
 		if evt.Kind == storageKindRunDeleted {
 			continue
 		}
-		s.applied[evt.RunID] = uint64(evt.Sequence)
+		s.engine.Watermarks().SetApplied(evt.RunID, uint64(evt.Sequence))
 		// Keep new event IDs from colliding with replayed ones after a restart.
 		advanceStorageEventIDCounter(parseSuffixNum(evt.ID, "se-"))
 	}
@@ -146,8 +75,7 @@ func (s *StorageLedgerRepository) applyStoreEventLocked(ctx context.Context, evt
 		if err := s.mem.DeleteRun(ctx, evt.RunID); err != nil && err != ErrNotFound {
 			return err
 		}
-		delete(s.applied, evt.RunID)
-		delete(s.allocated, evt.RunID)
+		s.engine.Watermarks().DeleteRun(evt.RunID)
 		for key := range s.inflight {
 			if key.runID == evt.RunID {
 				delete(s.inflight, key)
@@ -255,7 +183,7 @@ func (s *StorageLedgerRepository) applyTaskEventLocked(ctx context.Context, evt 
 		s.mem.mu.Unlock()
 
 	case storageKindTaskOutputSet:
-		taskID, outputRef, errorRef, err := unmarshalOutputRefs(evt.Payload)
+		taskID, outputRef, errorRef, toolCallsRef, err := unmarshalOutputRefs(evt.Payload)
 		if err != nil {
 			return err
 		}
@@ -263,6 +191,7 @@ func (s *StorageLedgerRepository) applyTaskEventLocked(ctx context.Context, evt 
 		if trec := s.memTaskLocked(evt.RunID, taskID); trec != nil {
 			trec.snapshot.OutputRef = normalizeReference(outputRef)
 			trec.snapshot.ErrorRef = normalizeReference(errorRef)
+			trec.snapshot.ToolCallsRef = normalizeReference(toolCallsRef)
 		}
 		s.mem.mu.Unlock()
 
@@ -338,24 +267,18 @@ func applyAttempt(trec *taskRecord, runID, taskID, attemptID, status string, fin
 // catch-up still sees rows appended after this read. Lock order matches
 // applyTail: s.mu, then mem.mu inside applyStoreEventLocked.
 func (s *StorageLedgerRepository) rebuildRunProjection(ctx context.Context, runID string) error {
-	events, err := s.store.Events(ctx, runID)
+	events, err := s.engine.Store().Events(ctx, runID)
 	if err != nil {
 		return fmt.Errorf("read events for %s: %w", runID, err)
 	}
-	sort.SliceStable(events, func(i, j int) bool {
-		if events[i].RowID != events[j].RowID {
-			return events[i].RowID < events[j].RowID
-		}
-		return events[i].Sequence < events[j].Sequence
-	})
+	ledgercore.SortEventsStable(events)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.mem.DeleteRun(ctx, runID); err != nil && err != ErrNotFound {
 		return err
 	}
-	delete(s.applied, runID)
-	delete(s.allocated, runID)
+	s.engine.Watermarks().DeleteRun(runID)
 	for key := range s.inflight {
 		if key.runID == runID {
 			delete(s.inflight, key)
@@ -368,7 +291,7 @@ func (s *StorageLedgerRepository) rebuildRunProjection(ctx context.Context, runI
 		if evt.Kind == storageKindRunDeleted {
 			continue
 		}
-		s.applied[evt.RunID] = uint64(evt.Sequence)
+		s.engine.Watermarks().SetApplied(evt.RunID, uint64(evt.Sequence))
 		// Keep new event IDs from colliding with replayed ones after a
 		// restart, exactly as applyTail does.
 		advanceStorageEventIDCounter(parseSuffixNum(evt.ID, "se-"))
@@ -399,18 +322,10 @@ func (s *StorageLedgerRepository) appendStoreEventOrRebuild(ctx context.Context,
 // store is known to hold) and this instance's own previous allocations.
 // Must NOT be called under s.mu (to avoid deadlock).
 func (s *StorageLedgerRepository) nextSequence(runID string) uint64 {
+	next := s.engine.NextSequence(runID)
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	next := s.applied[runID]
-	if s.allocated[runID] > next {
-		next = s.allocated[runID]
-	}
-	next++
-	s.allocated[runID] = next
-	// Claim the sequence for this writer until the append resolves. Catch-up
-	// must not apply an event the writer is still publishing itself, or the
-	// writer's own projection update comes back as a spurious duplicate.
 	s.inflight[inflightKey{runID: runID, sequence: next}] = struct{}{}
+	s.mu.Unlock()
 	return next
 }
 
@@ -442,41 +357,11 @@ func (s *StorageLedgerRepository) isInflightLocked(runID string, sequence uint64
 // appendStoreEvent writes an event to the store and, on success, advances the
 // applied watermark past it so catch-up never re-reads this instance's own
 // writes. The caller updates the in-memory projection itself.
-//
-// The write is CLAIM-FENCED (store.AppendClaimed) with this instance's holder
-// for the run, mirroring the workflows ledger: once another host clears this
-// instance's claim (force-resume) and takes it, a stale executor's mutations
-// fail with ErrClaimHeld instead of corrupting the run's event history while
-// two hosts execute the same run. A fresh run has no claim row, so the
-// unclaimed create path (empty holder) still appends.
-//
-// The watermark advance and the release of the writer's in-flight claim happen
-// in one critical section, which is the same lock catch-up holds while it
-// applies events. Between the store append and that section the claim keeps
-// catch-up off the event; after it, the watermark does. There is no instant at
-// which both this writer and a catch-up would apply the same event.
 func (s *StorageLedgerRepository) appendStoreEvent(ctx context.Context, evt storage.Event) error {
-	s.mu.Lock()
-	claim := s.claimedRuns[evt.RunID]
-	s.mu.Unlock()
-	var err error
-	if fenced, ok := s.store.(storage.FencedLeaseStore); ok && claim.Fence != 0 {
-		err = fenced.AppendClaimedFenced(ctx, evt, claim)
-	} else {
-		err = s.store.AppendClaimed(ctx, evt, claim.Holder)
-	}
-	if errors.Is(err, storage.ErrClaimHeld) {
-		err = ErrClaimHeld
-	}
-
-	s.mu.Lock()
-	if err == nil && uint64(evt.Sequence) > s.applied[evt.RunID] {
-		s.applied[evt.RunID] = uint64(evt.Sequence)
-	}
-	// On failure the claim is released without advancing the watermark, so if
-	// the sequence was lost to another writer, catch-up will still apply it.
-	s.releaseInflightLocked(evt.RunID, uint64(evt.Sequence))
-	s.mu.Unlock()
-
-	return err
+	defer func() {
+		s.mu.Lock()
+		s.releaseInflightLocked(evt.RunID, uint64(evt.Sequence))
+		s.mu.Unlock()
+	}()
+	return s.engine.AppendEvent(ctx, evt, ledgercore.AppendOptions{})
 }

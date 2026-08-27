@@ -1,6 +1,6 @@
 version = 1
 name = "e2e-split-test"
-description = "LIVE TEST ONLY - never run without explicit human approval (see AGENTS.md 'Live e2e test workflow'). Pushes real branches and opens real draft PRs against MiviaLabs/mivia-agent. Exercises the automatic oversized-diff split (checkChunkDiffSize's host-computed defer + auto follow-up PR) end to end against real GitHub."
+description = "LIVE TEST ONLY - never run without explicit human approval (see docs/development/agent-workflow.md 'Live e2e test workflows'). Pushes real branches and opens real draft PRs against MiviaLabs/mivia-agent. Exercises the automatic oversized-diff split (checkChunkDiffSize's host-computed defer + auto follow-up PR) end to end against real GitHub."
 initial_step = "plan"
 
 [inputs.task]

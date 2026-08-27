@@ -47,8 +47,8 @@ func TestSummarizerUsesCapturedProviderAndTimeout(t *testing.T) {
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("timeout error = %v, want deadline exceeded", err)
 	}
-	if calls.Load() != 1 {
-		t.Fatalf("provider calls = %d, want one", calls.Load())
+	if calls.Load() != 2 {
+		t.Fatalf("provider calls = %d, want 2 (initial attempt + retry on transient timeout)", calls.Load())
 	}
 }
 

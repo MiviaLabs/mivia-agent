@@ -61,8 +61,11 @@ def test_policy_exists_and_thresholds() -> None:
     assert p["funcLines"]["hard"] == 120
     assert p["commentBlockLines"]["soft"] == 25
     assert p["commentBlockLines"]["hard"] == 30
-    assert "internal/cli/chat_json_writer.go" in p["commentBlockLines"]["baseline"]
-    assert "internal/cli/tui.go" in p["baseline"]["files"]
+    # Baselines are pinned to current file locations after the cli split;
+    # chat_json_writer moved from internal/cli to internal/clichat, and the
+    # TUI god-file moved from internal/cli/tui.go to internal/legacytui/tui.go.
+    assert "internal/clichat/chat_json_writer.go" in p["commentBlockLines"]["baseline"]
+    assert "internal/legacytui/tui.go" in p["baseline"]["files"]
 
 
 def test_small_file_ok() -> None:
@@ -172,7 +175,13 @@ def test_all_repo_exits_zero_today() -> None:
     wt_proc = run(["python3", str(CHECK), "--strict", "--worktree"])
     assert wt_proc.returncode == 0, wt_proc.stderr
 
-def test_strict_mode_promotes_warning() -> None:
+def test_file_loc_warning_never_strict_promotes() -> None:
+    # File-LOC soft warnings never strict-promote (unlike function-LOC and
+    # comment-block-hard, which are unconditional gates): an unrelated file
+    # drifting past its soft line count must never hard-fail a run whose
+    # only real violation is elsewhere, and must never turn an otherwise
+    # repairable failure into one that also demands editing a file the
+    # workflow agent cannot write.
     with tempfile.TemporaryDirectory() as td:
         f = Path(td) / "warn.go"
         # Filler must not be `//` comment lines: a run this long would also
@@ -183,6 +192,20 @@ def test_strict_mode_promotes_warning() -> None:
         warning_proc = run(["python3", str(CHECK), str(f)])
         assert warning_proc.returncode == 0, warning_proc.stderr
         assert "WARN file LOC" in warning_proc.stderr
+
+        strict_proc = run(["python3", str(CHECK), "--strict", str(f)])
+        assert strict_proc.returncode == 0, strict_proc.stderr
+        assert "never strict-promote" in strict_proc.stderr
+
+
+def test_strict_mode_promotes_function_warning() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        f = Path(td) / "warn.go"
+        body = "\n".join(f"\t_ = {i}" for i in range(81))
+        f.write_text(f"package p\n\nfunc Warn() {{\n{body}\n}}\n", encoding="utf-8")
+        warning_proc = run(["python3", str(CHECK), str(f)])
+        assert warning_proc.returncode == 0, warning_proc.stderr
+        assert "WARN function LOC" in warning_proc.stderr
 
         strict_proc = run(["python3", str(CHECK), "--strict", str(f)])
         assert strict_proc.returncode == 1, strict_proc.stderr
@@ -264,7 +287,8 @@ def main() -> None:
     test_comment_block_baseline_grandfathers_real_outlier()
     test_baseline_growth_fails()
     test_all_repo_exits_zero_today()
-    test_strict_mode_promotes_warning()
+    test_file_loc_warning_never_strict_promotes()
+    test_strict_mode_promotes_function_warning()
     test_generated_exclusions_are_applied()
     test_worktree_mode_catches_untracked_violation()
     test_worktree_vs_all_on_empty_index()

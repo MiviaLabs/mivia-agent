@@ -1,0 +1,404 @@
+package uiadapter
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/MiviaLabs/mivia-agent/internal/agent"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
+)
+
+// SubagentThreads implements ports.SubagentThreads by dynamically resolving
+// threads registered during runtime subagent executions.
+type SubagentThreads struct {
+	mu      sync.Mutex
+	threads map[string]ports.Conversation
+}
+
+// Compile-time check that SubagentThreads satisfies ports.SubagentThreads.
+var _ ports.SubagentThreads = (*SubagentThreads)(nil)
+
+// NewSubagentThreads creates a new SubagentThreads registry.
+func NewSubagentThreads() *SubagentThreads {
+	return &SubagentThreads{
+		threads: make(map[string]ports.Conversation),
+	}
+}
+
+// RegisterThread adds or replaces an active conversation thread for a tool call ID.
+func (s *SubagentThreads) RegisterThread(callID string, conv ports.Conversation) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.threads[callID] = conv
+}
+
+// registerReconstructed registers a reconstruction under key, but never at
+// the cost of richer live state: an existing registration that is not
+// itself a reconstruction (a live streaming conversation, or any foreign
+// ports.Conversation) always wins and the reconstruction is dropped for
+// that key. Replacing an older reconstruction with a fresh one is an
+// idempotent refresh and is allowed. This is what keeps a History() replay
+// (screen construction, session switch, transcript reset) from displacing
+// an in-flight or fully-streamed subagent thread with a prompt+summary
+// stub built from persisted tool-call JSON.
+func (s *SubagentThreads) registerReconstructed(key string, conv *SubagentTranscriptConversation) {
+	if key == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if existing, ok := s.threads[key]; ok {
+		stc, isTranscript := existing.(*SubagentTranscriptConversation)
+		if !isTranscript || !stc.isReconstructed() {
+			return
+		}
+	}
+	s.threads[key] = conv
+}
+
+// Thread retrieves the conversation thread for a given tool call ID.
+func (s *SubagentThreads) Thread(callID string) (ports.Conversation, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.threads[callID]
+	return c, ok
+}
+
+// HandleEvent receives subagent-originated agent.Events, translates them,
+// records their history, and routes them to the matching SubagentTranscriptConversation.
+func (s *SubagentThreads) HandleEvent(ev agent.Event, opts TranslateOptions) {
+	if ev.Origin.IsZero() {
+		return
+	}
+	keys := []string{ev.Origin.TaskID, ev.ToolCallID, ev.Origin.Agent}
+	var hasKey bool
+	for _, k := range keys {
+		if k != "" {
+			hasKey = true
+			break
+		}
+	}
+	if !hasKey {
+		return
+	}
+
+	conv := s.getOrCreate(keys, ev.Origin.Agent)
+	translated := TranslateEventWithOptions(ev, opts)
+	for _, e := range translated {
+		conv.RecordEvent(e)
+	}
+}
+
+func (s *SubagentThreads) getOrCreate(keys []string, title string) *SubagentTranscriptConversation {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, k := range keys {
+		if k == "" {
+			continue
+		}
+		if c, ok := s.threads[k]; ok {
+			if stc, ok := c.(*SubagentTranscriptConversation); ok {
+				for _, other := range keys {
+					if other != "" {
+						s.threads[other] = stc
+					}
+				}
+				return stc
+			}
+		}
+	}
+	if title == "" {
+		for _, k := range keys {
+			if k != "" {
+				title = k
+				break
+			}
+		}
+	}
+	stc := NewSubagentTranscriptConversation(title, ports.ModelInfo{Name: title}, nil)
+	for _, k := range keys {
+		if k != "" {
+			s.threads[k] = stc
+		}
+	}
+	return stc
+}
+
+// SubagentTranscriptConversation represents a subagent transcript thread.
+type SubagentTranscriptConversation struct {
+	title     string
+	model     ports.ModelInfo
+	mu        sync.Mutex
+	history   []ports.Message
+	listeners []chan uievent.Event
+	active    bool
+	// done marks that this thread's own terminal event (KindTurnEnd or a
+	// "subagent done" notice) has already fired. It guards the top of
+	// RecordEvent from letting a straggler event (a late tool_end, a
+	// delayed forwarded delta arriving from a salvage/cleanup window)
+	// resurrect active on a thread that will never produce another
+	// terminal event. A genuine new KindTurnStart on a reused conversation
+	// object (see getOrCreate) clears it again, matching a real restart.
+	done bool
+	// reconstructed marks a conversation built from persisted tool-call
+	// JSON (subagent_reconstruct.go) rather than from live events. Only
+	// reconstructed conversations may be replaced by a later
+	// reconstruction (registerReconstructed); a live event landing on a
+	// reconstructed conversation clears the flag, because from then on it
+	// carries state no replay can rebuild.
+	reconstructed bool
+}
+
+// NewSubagentTranscriptConversation creates a new thread conversation.
+func NewSubagentTranscriptConversation(title string, model ports.ModelInfo, history []ports.Message) *SubagentTranscriptConversation {
+	var histCopy []ports.Message
+	if len(history) > 0 {
+		histCopy = make([]ports.Message, len(history))
+		copy(histCopy, history)
+	}
+	return &SubagentTranscriptConversation{
+		title:   title,
+		model:   model,
+		history: histCopy,
+	}
+}
+
+// newReconstructedConversation creates a thread conversation rebuilt from
+// persisted tool-call JSON, marked so the registry knows it may be
+// refreshed by a later replay but must never displace live state.
+func newReconstructedConversation(title string, model ports.ModelInfo, history []ports.Message) *SubagentTranscriptConversation {
+	c := NewSubagentTranscriptConversation(title, model, history)
+	c.reconstructed = true
+	return c
+}
+
+func (c *SubagentTranscriptConversation) isReconstructed() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.reconstructed
+}
+
+func isDoneNotice(e uievent.Event) bool {
+	if e.Kind == uievent.KindNotice {
+		if b, ok := e.Body.(uievent.NoticeBody); ok {
+			return strings.HasPrefix(b.Text, "subagent done")
+		}
+	}
+	return false
+}
+
+// RecordEvent records one translated uievent into message history and notifies listeners.
+func (c *SubagentTranscriptConversation) RecordEvent(e uievent.Event) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if !c.done {
+		c.active = true
+	}
+	// A live event is evidence this conversation now carries state a
+	// persisted-history replay cannot rebuild; stop treating it as a
+	// replaceable reconstruction.
+	c.reconstructed = false
+	c.applyEvent(e)
+	c.notifyListeners(e)
+}
+
+// applyEvent folds one translated uievent into message history.
+func (c *SubagentTranscriptConversation) applyEvent(e uievent.Event) {
+	switch e.Kind {
+	case uievent.KindTurnStart:
+		// A genuine new turn on a reused conversation object (getOrCreate
+		// can hand the same object back for a later event sharing any
+		// registration key) is a real restart, not a straggler - reset
+		// done so RecordEvent starts setting active again.
+		c.done = false
+		c.active = true
+		body, _ := e.Body.(uievent.TurnStartBody)
+		c.history = append(c.history, ports.Message{
+			Role: "user",
+			Text: body.Input,
+			At:   e.At,
+		})
+	case uievent.KindReasoning:
+		body, _ := e.Body.(uievent.ReasoningDeltaBody)
+		c.ensureLastAssistantMessage(e.At)
+		lastIdx := len(c.history) - 1
+		c.history[lastIdx].Reasoning += body.Text
+	case uievent.KindToolStart:
+		body, _ := e.Body.(uievent.ToolStartBody)
+		c.ensureLastAssistantMessage(e.At)
+		lastIdx := len(c.history) - 1
+		argsBytes, _ := json.Marshal(body.Args)
+		c.history[lastIdx].ToolCalls = append(c.history[lastIdx].ToolCalls, ports.ToolCall{
+			ID:        body.ToolCallID,
+			Name:      body.Name,
+			Arguments: string(argsBytes),
+		})
+	case uievent.KindToolEnd:
+		body, _ := e.Body.(uievent.ToolEndBody)
+		c.ensureLastAssistantMessage(e.At)
+		lastIdx := len(c.history) - 1
+		for i := range c.history[lastIdx].ToolCalls {
+			if c.history[lastIdx].ToolCalls[i].ID == body.ToolCallID {
+				c.history[lastIdx].ToolCalls[i].Output = body.Result
+				break
+			}
+		}
+		if body.Diff != nil {
+			c.history[lastIdx].Diffs = append(c.history[lastIdx].Diffs, *body.Diff)
+		}
+	case uievent.KindTextDelta:
+		body, _ := e.Body.(uievent.TextDeltaBody)
+		c.ensureLastAssistantMessage(e.At)
+		lastIdx := len(c.history) - 1
+		c.history[lastIdx].Text += body.Text
+	case uievent.KindTextEnd:
+		body, _ := e.Body.(uievent.TextEndBody)
+		c.ensureLastAssistantMessage(e.At)
+		lastIdx := len(c.history) - 1
+		if c.history[lastIdx].Text == "" {
+			c.history[lastIdx].Text = body.Text
+		}
+	}
+}
+
+// notifyListeners fans e out to active listeners, then - on this thread's own
+// terminal event - marks it done and closes every listener so ActiveTurn()
+// callers see the channel close as the done signal. A straggler event
+// arriving after this point is handled by applyEvent/RecordEvent's !c.done
+// guard, not here: it must not reopen this terminal state.
+func (c *SubagentTranscriptConversation) notifyListeners(e uievent.Event) {
+	for _, ch := range c.listeners {
+		select {
+		case ch <- e:
+		default:
+		}
+	}
+	if e.Kind == uievent.KindTurnEnd || isDoneNotice(e) {
+		c.active = false
+		c.done = true
+		for _, ch := range c.listeners {
+			close(ch)
+		}
+		c.listeners = nil
+	}
+}
+
+func (c *SubagentTranscriptConversation) ensureLastAssistantMessage(at time.Time) {
+	if len(c.history) == 0 || c.history[len(c.history)-1].Role != "assistant" {
+		c.history = append(c.history, ports.Message{
+			Role: "assistant",
+			At:   at,
+		})
+	}
+}
+
+// ActiveTurn returns a live event subscription for the active subagent.
+func (c *SubagentTranscriptConversation) ActiveTurn() (ports.TurnHandle, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.active {
+		return nil, false
+	}
+	ch := make(chan uievent.Event, 32)
+	c.listeners = append(c.listeners, ch)
+	id := fmt.Sprintf("%s-live", c.title)
+	h := &subagentTurnHandle{
+		id:     id,
+		events: ch,
+		cancel: func() {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			for i, l := range c.listeners {
+				if l == ch {
+					c.listeners = append(c.listeners[:i], c.listeners[i+1:]...)
+					close(ch)
+					break
+				}
+			}
+		},
+	}
+	return h, true
+}
+
+// Send records user messages in the thread and emits transcript stream events.
+func (c *SubagentTranscriptConversation) Send(_ context.Context, in intent.Send) (ports.TurnHandle, error) {
+	c.mu.Lock()
+	c.history = append(c.history, ports.Message{Role: "user", Text: in.Text, At: time.Now()})
+	ch := make(chan uievent.Event, 32)
+	c.listeners = append(c.listeners, ch)
+	c.mu.Unlock()
+
+	id := fmt.Sprintf("%s-turn-%d", c.title, len(c.history))
+	h := &subagentTurnHandle{
+		id:     id,
+		events: ch,
+		cancel: func() {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			for i, l := range c.listeners {
+				if l == ch {
+					c.listeners = append(c.listeners[:i], c.listeners[i+1:]...)
+					close(ch)
+					break
+				}
+			}
+		},
+	}
+	return h, nil
+}
+
+// History returns a copy of the thread history.
+func (c *SubagentTranscriptConversation) History() []ports.Message {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]ports.Message, len(c.history))
+	copy(out, c.history)
+	return out
+}
+
+// Model returns the subagent model information.
+func (c *SubagentTranscriptConversation) Model() ports.ModelInfo {
+	return c.model
+}
+
+// ContextUsage returns token usage for the subagent thread.
+func (c *SubagentTranscriptConversation) ContextUsage() ports.Usage {
+	return ports.Usage{}
+}
+
+// Title returns the title of the subagent thread.
+func (c *SubagentTranscriptConversation) Title() string {
+	if strings.TrimSpace(c.title) == "" {
+		return "Subagent Thread"
+	}
+	return c.title
+}
+
+// ID returns the subagent thread ID.
+func (c *SubagentTranscriptConversation) ID() string {
+	return c.title
+}
+
+type subagentTurnHandle struct {
+	id     string
+	events chan uievent.Event
+	cancel func()
+	once   sync.Once
+}
+
+func (h *subagentTurnHandle) ID() string                   { return h.id }
+func (h *subagentTurnHandle) Events() <-chan uievent.Event { return h.events }
+func (h *subagentTurnHandle) Cancel() {
+	h.once.Do(func() {
+		if h.cancel != nil {
+			h.cancel()
+		}
+	})
+}

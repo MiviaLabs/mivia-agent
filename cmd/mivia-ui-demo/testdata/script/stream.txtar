@@ -1,0 +1,17 @@
+# Plain non-TTY renderer replays the recorded conversation with no ANSI
+# escapes and no network/API key. Every block type from the fixture appears.
+
+exec mivia-ui-demo stream
+stdout 'Add retry with exponential backoff to the S3 uploader'
+stdout 'reasoning 84 words hidden'
+stdout 'read_file'
+stdout 'edit'
+stdout '\+4 -1'
+stdout 'subagent'
+stdout 'run_command'
+stdout 'plan    2 of 4'
+stdout 'error   transport refused after 3 attempts'
+stdout 'notice  context 62%'
+stdout 'usage   1284 in'
+stdout '\(turn completed\)'
+! stdout '\x1b\['

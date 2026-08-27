@@ -129,6 +129,16 @@ type ClaimReader interface {
 type FencedLeaseStore interface {
 	ClaimRunFenced(context.Context, string, string) (Claim, error)
 	TakeoverExpiredClaimFenced(context.Context, string, string, time.Duration) (Claim, error)
+	// TakeoverClaimFenced atomically replaces any existing claim with holder,
+	// bumping the claim fence so a prior holder's captured fence no longer
+	// authorizes writes, and returning the new claim.
+	TakeoverClaimFenced(context.Context, string, string) (Claim, error)
+	// RefreshClaimFenced refreshes the claim's acquired_at ONLY when holder
+	// already owns the claim row, returning that claim. It never inserts a
+	// missing row: a holder whose claim is gone is reported as
+	// ErrClaimNotHeld, so a displaced/expired holder cannot reclaim itself
+	// through the heartbeat.
+	RefreshClaimFenced(context.Context, string, string) (Claim, error)
 	AppendClaimedFenced(context.Context, Event, Claim) error
 	ReleaseClaimFenced(context.Context, Claim) error
 }

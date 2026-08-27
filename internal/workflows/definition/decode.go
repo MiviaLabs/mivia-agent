@@ -7,7 +7,6 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/verifier"
 	"github.com/pelletier/go-toml/v2"
 )
 
@@ -143,7 +142,7 @@ func validateStep(index int, s *Step) error {
 			if strings.TrimSpace(s.Command.Check) == "" {
 				return fmt.Errorf("step %q: command.check is required", s.ID)
 			}
-			if !verifier.IsBareProgramName(s.Command.Program) {
+			if !IsBareProgramName(s.Command.Program) {
 				return fmt.Errorf("step %q: command.program %q must be a bare executable name", s.ID, s.Command.Program)
 			}
 		}

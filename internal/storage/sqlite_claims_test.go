@@ -7,6 +7,8 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -99,6 +101,19 @@ func TestSQLiteClaimSuccessAndGuardBranches(t *testing.T) {
 	}
 	if err := store.TakeoverClaim(ctx, "run-1", "h2"); err != nil {
 		t.Fatalf("TakeoverClaim: %v", err)
+	}
+	taken, err := store.GetClaim(ctx, "run-1")
+	if err != nil {
+		t.Fatalf("GetClaim after takeover: %v", err)
+	}
+	if taken.Holder != "h2" {
+		t.Fatalf("holder after takeover = %q, want h2", taken.Holder)
+	}
+	if taken.Fence <= 1 {
+		t.Fatalf("fence after takeover = %d, want > 1", taken.Fence)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, taken.AcquiredAt); err != nil {
+		t.Fatalf("acquired_at %q is not RFC3339 nano: %v", taken.AcquiredAt, err)
 	}
 
 	if err := store.TakeoverExpiredClaim(ctx, "run-1", "", time.Hour); !errors.Is(err, ErrClaimNotHeld) {
@@ -220,4 +235,162 @@ func TestSQLiteCloseErrorBranches(t *testing.T) {
 			t.Fatal("Close must surface the driver close error")
 		}
 	})
+}
+
+// TestSQLiteFenceGenerationMigration_Fresh pins the fresh-DB shape that
+// backs IsRunHeld and IsRunTokenFenced: a fresh DB exposes the
+// fence_generation column on run_claims AND the fenced_tokens table.
+func TestSQLiteFenceGenerationMigration_Fresh(t *testing.T) {
+	ctx := context.Background()
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "fresh.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	var columnCount int
+	if err := store.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM pragma_table_info('run_claims') WHERE name = 'fence_generation'`,
+	).Scan(&columnCount); err != nil {
+		t.Fatalf("pragma_table_info: %v", err)
+	}
+	if columnCount != 1 {
+		t.Fatalf("fresh DB fence_generation columns = %d, want 1", columnCount)
+	}
+
+	var tableCount int
+	if err := store.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='fenced_tokens'`,
+	).Scan(&tableCount); err != nil {
+		t.Fatalf("sqlite_master: %v", err)
+	}
+	if tableCount != 1 {
+		t.Fatalf("fresh DB fenced_tokens tables = %d, want 1", tableCount)
+	}
+}
+
+// TestSQLiteFenceGenerationMigration_LegacyDefaultsToZero pins the
+// pre-existing-DB migration: a database without fence_generation reopens
+// idempotently with the new column defaulting to 0, and reopening a second
+// time remains a no-op.
+func TestSQLiteFenceGenerationMigration_LegacyDefaultsToZero(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	// Seed a legacy database using raw SQL: the legacy run_claims has only
+	// the four columns the original migration produced. A hand-built schema
+	// that omits fence_generation is the realistic pre-migration shape.
+	raw, err := sql.Open("sqlite", sqliteDSN(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacySchema := `CREATE TABLE run_claims (run_id TEXT PRIMARY KEY, holder TEXT NOT NULL, acquired_at TEXT NOT NULL, fence INTEGER NOT NULL DEFAULT 1)`
+	if _, err := raw.ExecContext(ctx, legacySchema); err != nil {
+		t.Fatalf("seed legacy schema: %v", err)
+	}
+	if _, err := raw.ExecContext(ctx, `INSERT INTO run_claims(run_id, holder, acquired_at) VALUES(?, ?, ?)`,
+		"legacy-run", "legacy-holder", "2026-01-01T00:00:00Z"); err != nil {
+		t.Fatalf("seed legacy row: %v", err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatalf("close legacy raw: %v", err)
+	}
+
+	// Reopen with the current schema; the fence_generation migration must
+	// apply idempotently and default to 0 for the existing row.
+	store, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("reopen with migrations: %v", err)
+	}
+	var fenceGen int64
+	if err := store.db.QueryRowContext(ctx,
+		`SELECT fence_generation FROM run_claims WHERE run_id = ?`,
+		"legacy-run",
+	).Scan(&fenceGen); err != nil {
+		t.Fatalf("read fence_generation: %v", err)
+	}
+	if fenceGen != 0 {
+		t.Fatalf("legacy row fence_generation = %d, want 0", fenceGen)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close after read: %v", err)
+	}
+
+	// Reopening a second time must remain a no-op: the migration guard
+	// clause "duplicate column" is the contract that keeps it so.
+	reopened, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("second reopen: %v", err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+}
+
+// TestTakeoverClaimConcurrentMutateSurvivesSQLiteBusy reproduces the SDK
+// CheckTakeoverFencesConcurrentMutate contention pattern at the storage
+// level: a goroutine spins AppendClaimedFenced (the single Exec the SDK's
+// Mutate calls) while the main goroutine runs TakeoverClaimFenced. Before
+// the retry wrapper, the Takeover's BeginTx could fail with SQLITE_BUSY
+// (snapshot-level, not lock-wait-level) and busy_timeout could not clear
+// it; the retry now clears it on a fresh snapshot. The test is not
+// deterministic across machines (CI may have different timings), so it
+// is gated behind testing.Short and uses a generous deadline.
+func TestTakeoverClaimConcurrentMutateSurvivesSQLiteBusy(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping contention test in short mode")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "busy.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	const runID = "run-busy"
+	ownerClaim, err := store.ClaimRunFenced(ctx, runID, "owner")
+	if err != nil {
+		t.Fatalf("ClaimRunFenced: %v", err)
+	}
+
+	var stopSpinning atomic.Bool
+	var spinErr atomic.Pointer[error]
+	var wg sync.WaitGroup
+	const spinners = 8
+	for i := 0; i < spinners; i++ {
+		wg.Add(1)
+		go func(slot int) {
+			defer wg.Done()
+			seq := 1
+			for !stopSpinning.Load() {
+				event := Event{ID: "spin", RunID: runID, Sequence: seq, Kind: "spin", Payload: []byte("x")}
+				if err := store.AppendClaimedFenced(ctx, event, ownerClaim); err != nil && !errors.Is(err, ErrClaimHeld) && !errors.Is(err, ErrDuplicate) {
+					e := err
+					spinErr.Store(&e)
+					return
+				}
+				seq++
+				if seq > 10000 {
+					seq = 1
+				}
+			}
+		}(i)
+	}
+
+	if _, err := store.TakeoverClaimFenced(ctx, runID, "new-owner"); err != nil {
+		stopSpinning.Store(true)
+		wg.Wait()
+		t.Fatalf("TakeoverClaimFenced under contention: %v", err)
+	}
+	stopSpinning.Store(true)
+	wg.Wait()
+	if ptr := spinErr.Load(); ptr != nil {
+		t.Fatalf("spinner goroutine failed: %v", *ptr)
+	}
+
+	fenced, err := store.IsRunTokenFenced(ctx, runID, "owner")
+	if err != nil {
+		t.Fatalf("IsRunTokenFenced: %v", err)
+	}
+	if !fenced {
+		t.Fatal("IsRunTokenFenced(owner) = false, want true after Takeover")
+	}
 }

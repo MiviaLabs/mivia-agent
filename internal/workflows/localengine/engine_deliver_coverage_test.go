@@ -134,6 +134,10 @@ func (r *coverageRecordingPR) FindByHead(context.Context, string, string) (*deli
 	return nil, nil
 }
 
+func (r *coverageRecordingPR) IsMerged(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+
 func (r *coverageRecordingPR) Create(_ context.Context, _ string, in delivery.PRInput) (delivery.PRRef, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -703,7 +707,7 @@ func coverageDeliveryRepo(t *testing.T) (repoRoot, originURL string) {
 
 // coverageSeededPendingRun seeds one delivery_pending run with a real git
 // worktree at <root>/.mivia/worktrees/wt-test on branch wf/wt-test (the CLI
-// layout workflowspace.Resolve accepts) and an uncommitted change, so
+// layout Resolve accepts) and an uncommitted change, so
 // Engine.Deliver runs the real pinned-git path end to end.
 func coverageSeededPendingRun(t *testing.T, repoRoot, originURL string, repo workflowledger.Repository) workflowledger.RunSnapshot {
 	t.Helper()

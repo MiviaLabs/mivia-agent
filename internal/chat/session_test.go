@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -97,7 +98,13 @@ func (c *sessionToolCompleter) ChatTurn(ctx context.Context, req provider.Reques
 			FinishReason: "tool_calls",
 		}, nil
 	}
-	return &provider.Response{Content: "done", FinishReason: "stop"}, nil
+	resp := &provider.Response{Content: "done", FinishReason: "stop"}
+	// Mirror the production streaming contract: content deltas land on
+	// the request's StreamWriter when the loop streams.
+	if req.Stream && req.StreamWriter != nil {
+		_, _ = io.WriteString(req.StreamWriter, resp.Content)
+	}
+	return resp, nil
 }
 
 // sessionUsageCompleter returns a fixed response carrying the configured token
@@ -369,8 +376,13 @@ func TestSessionAgentLoopStopsAtConfiguredMaxSteps(t *testing.T) {
 
 	select {
 	case err := <-done:
-		if err == nil || !strings.Contains(err.Error(), "max_steps") {
-			t.Fatalf("expected a max_steps error, got %v", err)
+		// The legacy backend stops with "agent exceeded max_steps (N)";
+		// the SDK backend's finalizeSDKTurn runs before the dispatcher's
+		// max-steps branch, so the same stop surfaces as the
+		// RequireFinalText refusal. Both identities mean the cap fired.
+		if err == nil || (!strings.Contains(err.Error(), "max_steps") &&
+			!strings.Contains(err.Error(), "no assistant text")) {
+			t.Fatalf("expected a max-steps stop error, got %v", err)
 		}
 	case <-time.After(30 * time.Second):
 		t.Fatal("agent loop never terminated: configured max_steps not enforced")
@@ -399,19 +411,24 @@ func TestClearAndUserTurns(t *testing.T) {
 	}
 }
 
-func TestFailedSendDropsUserTurn(t *testing.T) {
+// TestFailedSendPreservesUserTurnButSurfacesTheError pins the corrected
+// contract: a non-interrupted provider failure must still surface to the
+// caller exactly as before (no quiet success), but the user's question is no
+// longer a phantom lost to history - adoptErroredPlainTurn now persists it
+// (see TestNoMessageLossErroredPlainLegacyTurnIsPersisted), the same fix
+// finishErroredContextTurn already applies on the agent/tools path. This
+// test previously asserted the opposite (UserTurns() == 0, "must not leave a
+// phantom user turn"), which was the bug: losing the question on every
+// provider error is exactly what made resume drop history.
+func TestFailedSendPreservesUserTurnButSurfacesTheError(t *testing.T) {
 	res := &config.Resolved{Model: "m", SystemPrompt: "sys"}
-	// A non-interrupted provider failure must not leave a phantom user turn in
-	// history. (context.Canceled is deliberately not used: an interrupted turn
-	// now preserves the user's message and partial answer, see
-	// TestNoMessageLossInterruptedPlainLegacyTurnIsPersisted.)
 	s := NewSession(res, &fakeCompleter{err: errors.New("provider failure")})
 	_, err := s.SendUser(context.Background(), "hi", io.Discard)
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if s.UserTurns() != 0 {
-		t.Fatalf("user turn should be dropped, turns=%d", s.UserTurns())
+	if s.UserTurns() != 1 {
+		t.Fatalf("user turn should be preserved despite the error, turns=%d", s.UserTurns())
 	}
 }
 
@@ -606,12 +623,21 @@ func TestSessionAgentPublishesToEventBus(t *testing.T) {
 		mu.Unlock()
 	}))
 
-	reply, err := s.SendUser(context.Background(), "go", io.Discard)
+	// On the SDK backend, assistant text reaches the bus only through
+	// the FinalWriter tee (commit 09554845), so the test passes a real
+	// writer instead of io.Discard: the tee's deltas publish
+	// KindAssistant while tool_start/tool_end come from the events
+	// bridge.
+	var stream bytes.Buffer
+	reply, err := s.SendUser(context.Background(), "go", &stream)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if reply != "done" {
 		t.Fatalf("reply=%q", reply)
+	}
+	if stream.String() != "done" {
+		t.Fatalf("stream=%q, want the streamed final answer", stream.String())
 	}
 	bus.Flush()
 	mu.Lock()

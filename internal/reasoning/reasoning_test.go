@@ -83,7 +83,7 @@ func TestActiveIsTrueForEveryNamedLevel(t *testing.T) {
 }
 
 func TestParseDialectAcceptsEveryNamedDialect(t *testing.T) {
-	for _, want := range []Dialect{DialectOpenAI, DialectOpenRouter, DialectOpenRouterOnOff, DialectThinking, DialectThinkingEffort, DialectThinkingPreserved, DialectNone} {
+	for _, want := range []Dialect{DialectOpenAI, DialectOpenRouter, DialectOpenRouterOnOff, DialectThinking, DialectThinkingEffort, DialectThinkingPreserved, DialectNone, DialectAnthropicAdaptive} {
 		got, err := ParseDialect(string(want))
 		if err != nil {
 			t.Fatalf("ParseDialect(%q): unexpected error: %v", want, err)
@@ -170,6 +170,8 @@ func TestDefaultDialectCoversVettedProvidersOnly(t *testing.T) {
 		{"openrouter", DialectOpenAI, true},
 		{"deepseek", DialectThinkingEffort, true},
 		{"llmgateway", DialectOpenAI, true},
+		{"llmproxycli", DialectOpenAI, true},
+		{"anthropic", DialectAnthropicAdaptive, true},
 		{"kimi", "", false},
 		{"", "", false},
 	}
@@ -268,7 +270,7 @@ func TestCanGradeOpenRouterOnOff(t *testing.T) {
 // depth. Every other named dialect either sends a level string or pairs one
 // with the thinking object.
 func TestCanGrade(t *testing.T) {
-	for _, dialect := range []Dialect{DialectOpenAI, DialectOpenRouter, DialectThinkingEffort, DialectThinkingPreserved} {
+	for _, dialect := range []Dialect{DialectOpenAI, DialectOpenRouter, DialectThinkingEffort, DialectThinkingPreserved, DialectAnthropicAdaptive} {
 		if !dialect.CanGrade() {
 			t.Fatalf("%q carries a level on the wire and must grade", dialect)
 		}
@@ -332,7 +334,7 @@ func TestResolveFillsTheDialectFromTheVettedDefault(t *testing.T) {
 func TestDefaultDialectCoversTheClientsThatDependOnIt(t *testing.T) {
 	for provider, want := range map[string]Dialect{
 		"zai": DialectThinking, "openrouter": DialectOpenAI, "deepseek": DialectThinkingEffort,
-		"llmgateway": DialectOpenAI,
+		"llmgateway": DialectOpenAI, "llmproxycli": DialectOpenAI, "anthropic": DialectAnthropicAdaptive,
 	} {
 		got, ok := DefaultDialect(provider)
 		if !ok {
@@ -401,5 +403,87 @@ func TestResolveExplicitNoneWinsOverProviderDefault(t *testing.T) {
 	in := Setting{Level: High, Dialect: DialectNone}
 	if got := Resolve("deepseek", in); got != in {
 		t.Fatalf("Resolve(\"deepseek\", {high, none}) = %+v, want the explicit none kept", got)
+	}
+}
+
+// Anthropic's default is adaptive thinking + graded effort - the newest
+// dialect in the table, added for the native anthropic provider. This pins
+// it the same way TestDefaultDialectVetsDeepSeek pins deepseek's.
+func TestDefaultDialectVetsAnthropic(t *testing.T) {
+	got, ok := DefaultDialect("anthropic")
+	if !ok {
+		t.Fatal("anthropic must have a vetted default dialect")
+	}
+	if got != DialectAnthropicAdaptive {
+		t.Fatalf("DefaultDialect(\"anthropic\") = %q, want %q", got, DialectAnthropicAdaptive)
+	}
+	parsed, err := ParseDialect(string(DialectAnthropicAdaptive))
+	if err != nil {
+		t.Fatalf("ParseDialect(%q): unexpected error: %v", DialectAnthropicAdaptive, err)
+	}
+	if parsed != DialectAnthropicAdaptive {
+		t.Fatalf("ParseDialect(%q) = %q, want a round trip", DialectAnthropicAdaptive, parsed)
+	}
+	if !DialectAnthropicAdaptive.CanGrade() {
+		t.Fatal("DialectAnthropicAdaptive carries a graded effort on the wire and must grade")
+	}
+}
+
+// Resolve sequences anthropic's vetted default the same three ways deepseek's
+// is pinned: an unconfigured level fills in the default, an explicit dialect
+// wins, and an inactive level still resolves its dialect.
+func TestResolveSequencesAnthropicDefault(t *testing.T) {
+	cases := []struct {
+		label string
+		in    Setting
+		want  Setting
+	}{
+		{"an active level resolves the vetted default", Setting{Level: High}, Setting{Level: High, Dialect: DialectAnthropicAdaptive}},
+		{"a configured dialect wins", Setting{Level: High, Dialect: DialectOpenAI}, Setting{Level: High, Dialect: DialectOpenAI}},
+		{"an inactive level still resolves its dialect", Setting{}, Setting{Dialect: DialectAnthropicAdaptive}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			if got := Resolve("anthropic", tc.in); got != tc.want {
+				t.Fatalf("Resolve(\"anthropic\", %+v) = %+v, want %+v", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// Every dialect but DialectAnthropicAdaptive is always carryable - only that
+// one dialect's wire shape is structurally different enough that a provider
+// needs an explicit adapter for it.
+func TestCanCarryDialectIsUnrestrictedForEveryOtherDialect(t *testing.T) {
+	for _, dialect := range []Dialect{DialectOpenAI, DialectOpenRouter, DialectOpenRouterOnOff, DialectThinking, DialectThinkingEffort, DialectThinkingPreserved, DialectNone, ""} {
+		for _, provider := range []string{"deepseek", "openrouter", "zai", "made-up-provider", ""} {
+			if !CanCarryDialect(provider, dialect) {
+				t.Fatalf("CanCarryDialect(%q, %q) = false, want true (only DialectAnthropicAdaptive is restricted)", provider, dialect)
+			}
+		}
+	}
+}
+
+func TestCanCarryDialectRestrictsAnthropicAdaptiveToTheAllowList(t *testing.T) {
+	cases := []struct {
+		provider string
+		want     bool
+	}{
+		{"anthropic", true},
+		{"llmproxycli", true},
+		{"ANTHROPIC", true}, // provider names are matched case-insensitively
+		{" llmproxycli ", true},
+		{"deepseek", false},
+		{"openrouter", false},
+		{"zai", false},
+		{"ollama", false},
+		{"llmgateway", false},
+		{"minimax", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		if got := CanCarryDialect(tc.provider, DialectAnthropicAdaptive); got != tc.want {
+			t.Fatalf("CanCarryDialect(%q, DialectAnthropicAdaptive) = %v, want %v", tc.provider, got, tc.want)
+		}
 	}
 }

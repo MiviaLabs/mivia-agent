@@ -4,10 +4,18 @@
 Modes:
   (default)  staged files only - pre-commit
   --tracked  all git-tracked files - pre-push / make structure-check
+  --dir DIR  every file under DIR, no git - a git-archive-extracted staged
+             tree (no .git present) already contains only what would be
+             committed, so a plain walk is equivalent to --staged there
 
 Skips vendor/, .git/, node_modules/, go.sum, and binary database files
 (*.db, *.sqlite, *.sqlite3): databases are single opaque blobs that cannot
 be split, so the size gate never applies to them.
+
+ALLOWLIST holds exact repo-relative paths for other undividable binary
+assets (e.g. a demo GIF) that are approved to exceed the limit. Add entries
+sparingly and only for assets that cannot be meaningfully split or
+compressed further without losing their purpose.
 """
 from __future__ import annotations
 
@@ -15,10 +23,14 @@ import argparse
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 MAX_BYTES = 500 * 1024  # 500 KiB
 SKIP_PREFIXES = ("vendor/", ".git/", "node_modules/", "go.sum")
 SKIP_SUFFIXES = (".db", ".sqlite", ".sqlite3")
+ALLOWLIST = {
+    "docs/mivia-agent-showcase.gif",  # README demo clip; not further compressible without losing legibility
+}
 
 
 def get_staged_files() -> list[str]:
@@ -45,10 +57,19 @@ def get_tracked_files() -> list[str]:
     return [f for f in result.stdout.strip("\0").split("\0") if f]
 
 
-def check_file_sizes(files: list[str]) -> int:
+def get_dir_files(base: Path) -> list[str]:
+    return [
+        str(p.relative_to(base).as_posix())
+        for p in base.rglob("*")
+        if p.is_file() and not p.is_symlink()
+    ]
+
+
+def check_file_sizes(files: list[str], base: str) -> int:
     failures = 0
-    cwd = os.getcwd()
     for f in files:
+        if f in ALLOWLIST:
+            continue
         skip = False
         for prefix in SKIP_PREFIXES:
             if f.startswith(prefix) or f == prefix.rstrip("/"):
@@ -57,7 +78,7 @@ def check_file_sizes(files: list[str]) -> int:
         if skip:
             continue
 
-        path = os.path.join(cwd, f)
+        path = os.path.join(base, f)
         if path.endswith(SKIP_SUFFIXES):
             continue
         try:
@@ -78,17 +99,27 @@ def check_file_sizes(files: list[str]) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument(
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument(
         "--tracked",
         action="store_true",
         help="Check all git-tracked files (pre-push / verify)",
     )
+    mode.add_argument(
+        "--dir",
+        help="Check every file under DIR, no git required",
+    )
     args = ap.parse_args()
-    files = get_tracked_files() if args.tracked else get_staged_files()
+    if args.dir:
+        base = Path(args.dir).resolve()
+        files = get_dir_files(base)
+    else:
+        base = Path.cwd()
+        files = get_tracked_files() if args.tracked else get_staged_files()
     if not files:
         return 0
 
-    failures = check_file_sizes(files)
+    failures = check_file_sizes(files, str(base))
     if failures:
         print(
             f"\nfile-size-check: {failures} file(s) exceed {MAX_BYTES // 1024} KiB limit. "

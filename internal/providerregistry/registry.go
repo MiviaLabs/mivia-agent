@@ -15,6 +15,10 @@ type Descriptor struct {
 }
 
 var descriptors = map[string]Descriptor{
+	"anthropic": {
+		Name: "anthropic", DefaultModel: "claude-sonnet-5",
+		DefaultURL: "https://api.anthropic.com/v1", DefaultAPIKeyEnv: "ANTHROPIC_API_KEY",
+	},
 	"deepseek": {
 		Name: "deepseek", DefaultModel: "deepseek-v4-flash",
 		DefaultURL: "https://api.deepseek.com/v1", DefaultAPIKeyEnv: "DEEPSEEK_API_KEY",
@@ -23,12 +27,20 @@ var descriptors = map[string]Descriptor{
 		Name: "llmgateway", DefaultModel: "deepseek-v4-pro",
 		DefaultURL: "https://api.llmgateway.io/v1", DefaultAPIKeyEnv: "LLMGATEWAY_API_KEY",
 	},
+	"llmproxycli": {
+		Name: "llmproxycli", DefaultModel: "claude-sonnet-5",
+		DefaultURL: "http://127.0.0.1:8317/v1", DefaultAPIKeyEnv: "CLIPROXY_API_KEY",
+	},
+	"minimax": {
+		Name: "minimax", DefaultModel: "MiniMax-M3",
+		DefaultURL: "https://api.minimax.io/v1", DefaultAPIKeyEnv: "MINIMAX_API_KEY",
+	},
 	"ollama": {
 		Name: "ollama", DefaultModel: "gpt-oss:120b",
 		DefaultURL: "https://ollama.com/v1", DefaultAPIKeyEnv: "OLLAMA_API_KEY",
 	},
 	"openrouter": {
-		Name: "openrouter", DefaultModel: "openai/gpt-4o-mini",
+		Name: "openrouter", DefaultModel: "openai/gpt-5.6-luna",
 		DefaultURL: "https://openrouter.ai/api/v1", DefaultAPIKeyEnv: "OPENROUTER_API_KEY",
 	},
 	"zai": {

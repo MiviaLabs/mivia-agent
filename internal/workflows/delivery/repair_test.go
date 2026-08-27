@@ -357,6 +357,10 @@ func TestRepairHintClassifies(t *testing.T) {
 			[]string{"delivered diff is too large", "automatic file split", "hard limit"}},
 		{"permanent refusal", &RefusalError{Reason: "origin remote changed since admission"},
 			[]string{"permanently refused publication", "origin remote changed"}},
+		{"commit message rejection", errors.New("git commit --allow-empty-message -m fix(agent): x: exit status 128: commit-msg: error: fix commits require a Regression: line in the body"),
+			[]string{"commit MESSAGE, not the code", "pr_title", "commit_message_template", "rejection output:", "Regression"}},
+		{"commit-msg mentioned but no git failure stays generic", errors.New("gate: commit-msg contract test failed"),
+			[]string{"the delivery gate rejected the change", "commit-msg contract test failed"}},
 		{"nil cause", nil, []string{"without a recorded cause"}},
 	}
 	for _, tc := range cases {
@@ -368,6 +372,33 @@ func TestRepairHintClassifies(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// IsCommitMessageRejection must fire on a git commit failure whose output
+// carries the workspace commit-msg hook diagnostics, and must stay silent
+// when the text merely mentions a commit-msg hook without a failed commit
+// (a gate or policy text is not evidence of a message rejection).
+func TestIsCommitMessageRejection(t *testing.T) {
+	positive := []error{
+		errors.New("git commit --allow-empty-message -m fix(agent): x: exit status 128: commit-msg: error: fix commits require a Regression: line in the body"),
+		errors.New("cannot commit deferred_files: git commit --allow-empty-message -m fix(agent): x (exit status 128) - commit-msg: error: subject too long"),
+	}
+	for _, err := range positive {
+		if !IsCommitMessageRejection(err) {
+			t.Errorf("IsCommitMessageRejection(%v) = false, want true", err)
+		}
+	}
+	negative := []error{
+		nil,
+		errors.New("gate: commit-msg contract test failed"),
+		errors.New("git commit --allow-empty-message -m fix(agent): x: exit status 128: pre-commit: check_go_structure: 1 hard violation(s)"),
+		errors.New("delivery: pr_title \"x\" does not satisfy requireScope"),
+	}
+	for _, err := range negative {
+		if IsCommitMessageRejection(err) {
+			t.Errorf("IsCommitMessageRejection(%v) = true, want false", err)
+		}
 	}
 }
 
@@ -437,5 +468,23 @@ func TestRepairTarget(t *testing.T) {
 				t.Fatalf("RepairTarget() = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestRepairTargetAncestryUnverifiableYieldsNoRepairRoute pins repair routing
+// for a delivery-time git object failure (exit 128, a missing or corrupt
+// object): an agent cannot repair a git object failure, so RepairTarget must
+// yield NO step even when the workflow declares on_failure. The run then stays
+// delivery_pending with a recorded cause and a later attempt retries, instead
+// of being reopened for a repair that cannot fix it and settling delivery_failed
+// after the repair budget is spent.
+func TestRepairTargetAncestryUnverifiableYieldsNoRepairRoute(t *testing.T) {
+	pol := Policy{OnFailure: "repair_generic", OnPRMetadataFailure: "repair_meta", OnDiffSizeFailure: "repair_size"}
+	err := &AncestryUnverifiableError{Reason: "cannot verify remote delivery base \"main\" ancestry (fetch and retry): git merge-base: exit status 128"}
+	if got := RepairTarget(err, pol); got != "" {
+		t.Fatalf("RepairTarget(AncestryUnverifiableError) = %q, want \"\" (no repair route for a git object failure)", got)
+	}
+	if got := RepairTarget(fmt.Errorf("deliver: %w", err), pol); got != "" {
+		t.Fatalf("RepairTarget(wrapped AncestryUnverifiableError) = %q, want \"\"", got)
 	}
 }

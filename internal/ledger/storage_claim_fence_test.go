@@ -58,7 +58,7 @@ func TestStorageLedgerClaimFencesMutations(t *testing.T) {
 	if err := repoA.CompareAndSetTaskStatus(ctx, runID, "t1", snap.Version, "running"); err != nil {
 		t.Fatalf("repoA CAS under own claim: %v", err)
 	}
-	if err := repoA.SetTaskOutput(ctx, runID, "t1", "ref:out:x", ""); err != nil {
+	if err := repoA.SetTaskOutput(ctx, runID, "t1", "ref:out:x", "", ""); err != nil {
 		t.Fatalf("repoA SetTaskOutput under own claim: %v", err)
 	}
 
@@ -74,7 +74,7 @@ func TestStorageLedgerClaimFencesMutations(t *testing.T) {
 	if err := repoB.CompareAndSetTaskStatus(ctx, runID, "t1", 1, "failed"); !errors.Is(err, ErrClaimHeld) {
 		t.Fatalf("repoB CAS on claimed run: err = %v, want ErrClaimHeld", err)
 	}
-	if err := repoB.SetTaskOutput(ctx, runID, "t1", "ref:out:b", ""); !errors.Is(err, ErrClaimHeld) {
+	if err := repoB.SetTaskOutput(ctx, runID, "t1", "ref:out:b", "", ""); !errors.Is(err, ErrClaimHeld) {
 		t.Fatalf("repoB SetTaskOutput on claimed run: err = %v, want ErrClaimHeld", err)
 	}
 

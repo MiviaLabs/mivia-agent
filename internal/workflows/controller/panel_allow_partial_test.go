@@ -9,7 +9,6 @@ import (
 	coordledger "github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
@@ -61,7 +60,7 @@ func panelAllowPartialFixture(t *testing.T, runID string, policy string, memberH
 	coordLedger := coordledger.NewMemoryLedgerRepository()
 	coord := coordinator.New(coordLedger, subagents.New(dispatcher, subagents.Policy{Workers: 4}))
 	repo := workflowledger.NewMemoryRepository()
-	wf := &compiler.CompiledWorkflow{
+	wf := &definition.CompiledWorkflow{
 		Name: "panel-allow-partial", InitialStep: step.ID, Steps: []definition.Step{step},
 		Limits: definition.Limits{MaxStepAttempts: 16},
 		Transitions: []definition.Transition{

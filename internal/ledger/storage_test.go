@@ -178,7 +178,7 @@ func TestStorageLedger_SetTaskOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := repo.SetTaskOutput(ctx, "run-1", "t1", "ref:output:abc", "ref:error:def"); err != nil {
+	if err := repo.SetTaskOutput(ctx, "run-1", "t1", "ref:output:abc", "ref:error:def", "ref:tool_calls:ghi"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -191,6 +191,61 @@ func TestStorageLedger_SetTaskOutput(t *testing.T) {
 	}
 	if task.ErrorRef != "ref:error:def" {
 		t.Fatalf("error ref = %q, want %q", task.ErrorRef, "ref:error:def")
+	}
+	if task.ToolCallsRef != "ref:tool_calls:ghi" {
+		t.Fatalf("tool calls ref = %q, want %q", task.ToolCallsRef, "ref:tool_calls:ghi")
+	}
+}
+
+// TestStorageLedger_SetTaskOutput_ToolCallsRefSurvivesProjectionRebuild pins
+// the backward-compatible field addition to taskOutputSetPayload: a
+// task_output_set event carrying tool_calls_ref must decode correctly on a
+// FRESH repo replaying from the same underlying store (simulating restart),
+// not just from the in-process memory mirror SetTaskOutput/GetTask already
+// covers above.
+func TestStorageLedger_SetTaskOutput_ToolCallsRefSurvivesProjectionRebuild(t *testing.T) {
+	store := storage.NewMemory()
+	ctx := context.Background()
+
+	repo1 := NewStorageLedgerRepository(store)
+	if err := repo1.CreateRun(ctx, "", RunSnapshot{RunID: "run-1", Status: RunStatusCreated}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo1.CreateTask(ctx, TaskSnapshot{RunID: "run-1", TaskID: "t1", Status: string(TaskStatusRunning)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo1.SetTaskOutput(ctx, "run-1", "t1", "ref:output:abc", "", "ref:tool_calls:ghi"); err != nil {
+		t.Fatal(err)
+	}
+
+	repo2 := NewStorageLedgerRepository(store)
+	task, err := repo2.GetTask(ctx, "run-1", "t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.ToolCallsRef != "ref:tool_calls:ghi" {
+		t.Fatalf("rebuilt tool calls ref = %q, want %q", task.ToolCallsRef, "ref:tool_calls:ghi")
+	}
+	if task.OutputRef != "ref:output:abc" {
+		t.Fatalf("rebuilt output ref = %q, want %q", task.OutputRef, "ref:output:abc")
+	}
+}
+
+// TestUnmarshalOutputRefs_PreToolCallsRefPayloadDecodesEmpty is the
+// backward-compatibility regression guard for extending taskOutputSetPayload:
+// a task_output_set row written before this field existed (no "tool_calls_ref"
+// key in its JSON at all) must still decode cleanly, with ToolCallsRef=="".
+func TestUnmarshalOutputRefs_PreToolCallsRefPayloadDecodesEmpty(t *testing.T) {
+	legacy := []byte(`{"task_id":"t1","output_ref":"ref:output:abc","error_ref":"ref:error:def"}`)
+	taskID, outputRef, errorRef, toolCallsRef, err := unmarshalOutputRefs(legacy)
+	if err != nil {
+		t.Fatalf("unmarshal legacy payload: %v", err)
+	}
+	if taskID != "t1" || outputRef != "ref:output:abc" || errorRef != "ref:error:def" {
+		t.Fatalf("legacy fields mismatch: taskID=%q outputRef=%q errorRef=%q", taskID, outputRef, errorRef)
+	}
+	if toolCallsRef != "" {
+		t.Fatalf("toolCallsRef = %q, want empty for a pre-field legacy payload", toolCallsRef)
 	}
 }
 

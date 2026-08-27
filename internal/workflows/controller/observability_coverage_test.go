@@ -19,10 +19,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/verifier"
 )
 
 // ---------------------------------------------------------------------------
@@ -93,7 +91,7 @@ func TestCoverageFailAttemptFallsBackToStepID(t *testing.T) {
 	ctx := context.Background()
 	repo := workflowledger.NewMemoryRepository()
 	t.Cleanup(func() { _ = repo.Close() })
-	wf := &compiler.CompiledWorkflow{Name: "cov-fail-attempt", InitialStep: "real", Steps: []definition.Step{{ID: "real", Kind: "agent"}}}
+	wf := &definition.CompiledWorkflow{Name: "cov-fail-attempt", InitialStep: "real", Steps: []definition.Step{{ID: "real", Kind: "agent"}}}
 	ctrl, err := NewLinearController(repo, &linearRunner{}, wf, nil, nil, "wfr-cov-fail-attempt", []byte("snap"))
 	if err != nil {
 		t.Fatal(err)
@@ -393,7 +391,7 @@ func TestCoverageDeadlineHumanGateCompleteFailureStillTimesOut(t *testing.T) {
 // failure completion event (80), succeeded-route persist failure (89).
 // ---------------------------------------------------------------------------
 
-func coverageEvidenceGateWorkflow(t *testing.T, step definition.Step, transitions []definition.Transition) *compiler.CompiledWorkflow {
+func coverageEvidenceGateWorkflow(t *testing.T, step definition.Step, transitions []definition.Transition) *definition.CompiledWorkflow {
 	t.Helper()
 	wf := &definition.WorkflowFile{
 		Version: 1, Name: "cov-gate", InitialStep: step.ID,
@@ -402,7 +400,7 @@ func coverageEvidenceGateWorkflow(t *testing.T, step definition.Step, transition
 		Steps:       []definition.Step{step},
 		Transitions: transitions,
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -457,8 +455,8 @@ func TestCoverageEvidenceGateRouteSelectionFailureFailsRun(t *testing.T) {
 	wf := coverageEvidenceGateWorkflow(t, step, []definition.Transition{
 		{From: "verify", To: "success", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"status": "approved"}}},
 	})
-	cat := verifier.NewCatalogue()
-	if err := cat.Register(fixedVerifierProfile{name: "always-passes", result: verifier.Result{Status: "passed"}}); err != nil {
+	cat := definition.NewCatalogue()
+	if err := cat.Register(fixedVerifierProfile{name: "always-passes", result: definition.Result{Status: "passed"}}); err != nil {
 		t.Fatal(err)
 	}
 	repo := workflowledger.NewMemoryRepository()
@@ -509,8 +507,8 @@ func TestCoverageEvidenceGateSucceededRoutePersistFailureFailsRun(t *testing.T) 
 	wf := coverageEvidenceGateWorkflow(t, step, []definition.Transition{
 		{From: "verify", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}},
 	})
-	cat := verifier.NewCatalogue()
-	if err := cat.Register(fixedVerifierProfile{name: "always-passes", result: verifier.Result{Status: "passed"}}); err != nil {
+	cat := definition.NewCatalogue()
+	if err := cat.Register(fixedVerifierProfile{name: "always-passes", result: definition.Result{Status: "passed"}}); err != nil {
 		t.Fatal(err)
 	}
 	base := workflowledger.NewMemoryRepository()
@@ -577,7 +575,7 @@ func TestCoveragePanelStepGetStoredAttemptFailure(t *testing.T) {
 	}
 	base := workflowledger.NewMemoryRepository()
 	repo := &coveragePanelGetStepAttemptFailRepo{Repository: base, failAttemptID: "wfa-review-1"}
-	wf := &compiler.CompiledWorkflow{Name: "cov-panel", InitialStep: "review", Steps: []definition.Step{step}}
+	wf := &definition.CompiledWorkflow{Name: "cov-panel", InitialStep: "review", Steps: []definition.Step{step}}
 	ctrl, err := NewLinearController(repo, &linearRunner{}, wf, nil, map[string]any{"task": "change"}, "wfr-cov-panel-get-fail", snapshot)
 	if err != nil {
 		t.Fatal(err)

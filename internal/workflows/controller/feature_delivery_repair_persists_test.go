@@ -8,11 +8,9 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/verifier"
 )
 
 // repairChangeSummarySchema is the change-summary-v1 shape the implement and
@@ -53,7 +51,7 @@ func repairChangeSummaryJSON(title, summary string) json.RawMessage {
 // repair_pr_metadata, whose success re-enters review_panel — the exact chain
 // the shipped feature-delivery.toml re-executes between a metadata repair and
 // the next delivery attempt.
-func featureDeliveryRepairChain(t *testing.T) *compiler.CompiledWorkflow {
+func featureDeliveryRepairChain(t *testing.T) *definition.CompiledWorkflow {
 	t.Helper()
 	wf := &definition.WorkflowFile{
 		Version: 1, Name: "feature-delivery-repair-chain", InitialStep: "implement",
@@ -87,7 +85,7 @@ func featureDeliveryRepairChain(t *testing.T) *compiler.CompiledWorkflow {
 			MaxRepairs:          5,
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,8 +152,8 @@ func repairChainController(t *testing.T, repo workflowledger.Repository) (*Linea
 	if err != nil {
 		t.Fatal(err)
 	}
-	cat := verifier.NewCatalogue()
-	if err := cat.Register(stubVerifierProfile{name: "go-default", checks: []verifier.Check{{Name: "workspace-dir", Status: "passed"}}}); err != nil {
+	cat := definition.NewCatalogue()
+	if err := cat.Register(stubVerifierProfile{name: "go-default", checks: []definition.Check{{Name: "workspace-dir", Status: "passed"}}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := ctrl.SetVerifiers(cat); err != nil {
@@ -261,7 +259,7 @@ func (discardWriter) Write(p []byte) (int, error) { return len(p), nil }
 // per step and restarts at 1 for repair_pr_metadata), which is exactly the
 // real-run shape that shadowed a metadata repair's fixed title under the old
 // highest-AttemptNo resolution.
-func featureDeliveryRepairChainWithReviewLoop(t *testing.T) *compiler.CompiledWorkflow {
+func featureDeliveryRepairChainWithReviewLoop(t *testing.T) *definition.CompiledWorkflow {
 	t.Helper()
 	wf := &definition.WorkflowFile{
 		Version: 1, Name: "feature-delivery-repair-chain-review-loop", InitialStep: "implement",
@@ -296,7 +294,7 @@ func featureDeliveryRepairChainWithReviewLoop(t *testing.T) *compiler.CompiledWo
 			MaxRepairs:          5,
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -437,8 +435,8 @@ func runPRMetadataRepairSurvivesImplementReviewReentry(t *testing.T, repo workfl
 	if err != nil {
 		t.Fatal(err)
 	}
-	cat := verifier.NewCatalogue()
-	if err := cat.Register(stubVerifierProfile{name: "go-default", checks: []verifier.Check{{Name: "workspace-dir", Status: "passed"}}}); err != nil {
+	cat := definition.NewCatalogue()
+	if err := cat.Register(stubVerifierProfile{name: "go-default", checks: []definition.Check{{Name: "workspace-dir", Status: "passed"}}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := ctrl.SetVerifiers(cat); err != nil {

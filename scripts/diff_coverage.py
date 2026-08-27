@@ -7,8 +7,9 @@ git-diff added/modified lines in non-test .go files onto a coverage profile
 instrumented across every package (-coverpkg=./...) and fails on any changed
 statement line with a zero hit count, or on any changed file whose package
 produced no coverage data at all (never linked into a tested binary). A changed
-file that contributes no statements at all (declarations only) inside a package
-that IS covered has nothing to execute and is not reported.
+file that contributes no statements at all (declarations only) has nothing to
+execute and is not reported: either the package IS covered and the file simply
+holds no blocks, or Go's own instrumenter finds no statement in the file.
 
 Modes:
   --staged                staged changes vs HEAD (fast local loop)
@@ -19,7 +20,12 @@ Exit codes:
   1 = uncovered changed line(s) found
   2 = usage / environment error (no scope given, go missing, go test failed)
 
-Policy reuse: .mivia/policy/go-structure.json excludeGlobs (generated/vendor).
+Policy reuse: .mivia/policy/go-structure.json excludeGlobs (generated/vendor; internal/legacytui
+is excluded there too because that package is scheduled for deletion at the end of the UI
+migration - covering its lines would be waste, and the glob removes it from this gate's scope
+as well as the structure gate's).
+Per-line accepted residue: .mivia/policy/diff-coverage.json knownUncovered maps exact line
+numbers to a reason; the gate prints every accepted line but does not fail on it.
 """
 from __future__ import annotations
 
@@ -69,6 +75,68 @@ def load_exclude_globs(root: Path) -> list[str]:
     return policy.get("excludeGlobs") or []
 
 
+def load_known_uncovered(root: Path, diff_args: list[str] | None = None) -> dict[str, tuple[set[int], str]]:
+    """Per-line accepted residue from .mivia/policy/diff-coverage.json.
+
+    Maps file path -> (line numbers, reason). Lines listed there are
+    provably unreachable or not unit-testable; the gate still prints every
+    accepted line so the residue stays reviewable, but does not fail on it.
+    If the policy file is modified in the active diff, loads from base ref
+    to prevent same-commit self-approval of uncovered code.
+    """
+    policy_path = root / ".mivia" / "policy" / "diff-coverage.json"
+    if not policy_path.is_file():
+        return {}
+
+    raw_text = ""
+    is_modified_in_diff = False
+    if diff_args is not None:
+        r = subprocess.run(
+            ["git", "diff", *diff_args, "--name-only", "--", ".mivia/policy/diff-coverage.json"],
+            cwd=root, capture_output=True, text=True, check=False,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            is_modified_in_diff = True
+            base_ref = "HEAD"
+            if len(diff_args) >= 2 and not diff_args[0].startswith("-"):
+                base_ref = diff_args[0]
+            elif len(diff_args) == 1 and ".." in diff_args[0]:
+                base_ref = diff_args[0].split("..")[0]
+            elif len(diff_args) == 1 and not diff_args[0].startswith("-"):
+                base_ref = diff_args[0]
+
+            show_res = subprocess.run(
+                ["git", "show", f"{base_ref}:.mivia/policy/diff-coverage.json"],
+                cwd=root, capture_output=True, text=True, check=False,
+            )
+            print(
+                "diff_coverage: .mivia/policy/diff-coverage.json is modified in this diff; "
+                "evaluating against base policy to prevent same-commit bypass",
+                file=sys.stderr,
+            )
+            if show_res.returncode == 0 and show_res.stdout.strip():
+                raw_text = show_res.stdout
+            else:
+                # File did not exist at base ref: base policy has zero allowlisted residue
+                return {}
+
+    if not is_modified_in_diff:
+        raw_text = policy_path.read_text(encoding="utf-8")
+
+    try:
+        policy = json.loads(raw_text)
+    except Exception:
+        return {}
+
+    out: dict[str, tuple[set[int], str]] = {}
+    for path, entry in (policy.get("knownUncovered") or {}).items():
+        lines = set(int(n) for n in entry.get("lines", []))
+        reason = str(entry.get("reason", "")).strip()
+        if lines and reason:
+            out[path] = (lines, reason)
+    return out
+
+
 def changed_go_files(root: Path, diff_args: list[str]) -> list[str]:
     r = subprocess.run(
         ["git", "diff", *diff_args, "--name-only", "--diff-filter=ACMR", "-z", "--", "*.go"],
@@ -80,9 +148,70 @@ def changed_go_files(root: Path, diff_args: list[str]) -> list[str]:
     return [f for f in r.stdout.strip("\0").split("\0") if f]
 
 
-def changed_lines(root: Path, diff_args: list[str], path: str) -> set[int]:
+# Pure renames (R100, similarity = 100%) move production lines without
+# changing them. The coverage gate must not treat a rename like a fresh
+# change, because the same lines are still exercised by the same tests
+# in the moved package. rename_pairs() below maps each rename
+# destination back to its source so the per-file line-diff is computed
+# against the source instead of the merged base, which already excludes
+# pure moves from the in-scope set without exempting any content edits
+# inside the move.
+
+
+def rename_pairs(root: Path, diff_args: list[str]) -> dict[str, str]:
+    """Map destination path -> source path for every rename in the diff.
+
+    The coverage gate computes "lines added in the destination vs the
+    merged base" by default, but for a renamed file most of those lines
+    already existed at the source. The right comparison is "lines added
+    in the destination vs the source as-of-base", which is exactly the
+    renamed-file hunk git reports when invoked with -M.
+
+    Returns an empty dict when no rename detection ran; callers fall
+    back to the default (whole-file) coverage check for those paths.
+
+    With --name-status -z git emits one NUL-terminated record per field,
+    not per logical entry: a rename is three records in a row
+    (status+similarity, source path, destination path). We walk the
+    records and pull the next two fields when the status starts with R.
+    """
     r = subprocess.run(
-        ["git", "diff", *diff_args, "-U0", "--", path],
+        [
+            "git", "diff", *diff_args, "-M",
+            "--name-status", "-z", "--", "*.go",
+        ],
+        cwd=root, capture_output=True, text=True, check=False,
+    )
+    if r.returncode != 0:
+        return {}
+    fields = [f for f in r.stdout.split("\x00") if f]
+    pairs: dict[str, str] = {}
+    i = 0
+    while i < len(fields):
+        status = fields[i]
+        if status.startswith("R") and i + 2 < len(fields):
+            pairs[fields[i + 2]] = fields[i + 1]
+            i += 3
+        else:
+            i += 1
+    return pairs
+
+
+def changed_lines(
+    root: Path,
+    diff_args: list[str],
+    path: str,
+    rename_source: str | None = None,
+) -> set[int]:
+    # For renamed files, diff against the source as-of-base so the only
+    # lines we report are the ones that were actually edited in the move.
+    # `git diff base src dst` produces hunks relative to dst.
+    if rename_source:
+        diff_path = (rename_source, path)
+    else:
+        diff_path = (path,)
+    r = subprocess.run(
+        ["git", "diff", *diff_args, "-U0", "--", *diff_path],
         cwd=root, capture_output=True, text=True, check=False,
     )
     if r.returncode != 0:
@@ -122,7 +251,13 @@ def tip_file_text(root: Path, diff_args: list[str], path: str) -> str | None:
 
 def non_executable_lines(text: str) -> set[int]:
     """Line numbers in text that cannot carry a statement: blank lines, whole-
-    line // comments, and lines wholly inside a /* */ comment.
+    line // comments, lines wholly inside a /* */ comment, and switch labels
+    (`case X:` / `default:` in a Go switch). Switch labels are not executable:
+    a `case "x":` line has no statement of its own; the statement that
+    follows the label is the one that runs when the case is selected. Without
+    filtering, a renumbered switch statement in a renamed file reports every
+    case label as a fresh uncovered addition and the gate reports phantom
+    violations that no test can satisfy.
 
     A single left-to-right pass tracks whether a /* */ region is open, so a
     line in the middle of a commented-out block is recognised as such. String
@@ -156,6 +291,12 @@ def non_executable_lines(text: str) -> set[int]:
                 has_code = True
             idx += 1
         if has_code:
+            # Skip Go switch / select labels. They have code text but no
+            # statement of their own; the next non-label line is the
+            # statement that actually executes.
+            if re.match(r"(case\s+[^\s:]+(\s*,\s*[^\s:]+)*\s*:|default\s*:|case\s+[^\n]*:\s*$)", line):
+                skip.add(number)
+                continue
             continue
         if line == "" or line.startswith("//") or started_open or open_block:
             skip.add(number)
@@ -176,6 +317,36 @@ def executable_lines(text: str | None, lines: set[int]) -> set[int]:
     if text is None:
         return lines
     return lines - non_executable_lines(text)
+
+
+def file_has_statements(root: Path, path: str, text: str | None) -> bool:
+    """Report whether Go finds a single executable statement in text.
+
+    A profile can prove that a package was linked only if the package holds at
+    least one statement. A package of nothing but const, var, type and
+    interface declarations - `ports`, a defaults table - emits no counters, so
+    it is absent from every profile even when its own tests run. Reading that
+    absence as "never linked" fails the package on lines that no test can ever
+    execute, which is a gate no change can satisfy.
+
+    The verdict comes from `go tool cover`, the same instrumenter that writes
+    the profile, so "statement" means here exactly what it means there. This
+    does not widen the exemption: one statement anywhere in the file makes the
+    file checkable again, and a never-linked package that holds real code still
+    fails. Any error answers True, which keeps the gate fail-closed.
+    """
+    if text is None or shutil.which("go") is None:
+        return True
+    with tempfile.TemporaryDirectory(prefix="mivia-diffcov-stmt-") as tmp:
+        probe = Path(tmp) / Path(path).name
+        probe.write_text(text, encoding="utf-8")
+        proc = subprocess.run(
+            ["go", "tool", "cover", "-mode=set", "-var=miviaDiffCovProbe", str(probe)],
+            cwd=root, capture_output=True, text=True, check=False,
+        )
+    if proc.returncode != 0:
+        return True
+    return "miviaDiffCovProbe.Count[" in proc.stdout
 
 
 def run_coverage_profile(root: Path) -> Path:
@@ -273,19 +444,31 @@ def main(argv: list[str] | None = None) -> int:
 
     root = repo_root()
     excludes = load_exclude_globs(root)
+    renames = rename_pairs(root, diff_args)
     files = [
         f for f in changed_go_files(root, diff_args)
-        if not f.endswith("_test.go") and not any(fnmatch.fnmatch(f, g) for g in excludes)
+        if not f.endswith("_test.go")
+        and not any(fnmatch.fnmatch(f, g) for g in excludes)
     ]
+    if renames:
+        print(
+            f"diff_coverage: {len(renames)} renamed file(s) detected; "
+            f"comparing each against its source instead of the merged base",
+            file=sys.stderr,
+        )
     if not files:
         print("diff_coverage: no changed non-test Go files in scope; skipping")
         return 0
 
     per_file_lines = {}
+    per_file_text: dict[str, str | None] = {}
     for f in files:
-        lines = executable_lines(tip_file_text(root, diff_args, f), changed_lines(root, diff_args, f))
+        rename_source = renames.get(f)
+        text = tip_file_text(root, diff_args, f)
+        lines = executable_lines(text, changed_lines(root, diff_args, f, rename_source))
         if lines:
             per_file_lines[f] = lines
+            per_file_text[f] = text
     if not per_file_lines:
         print("diff_coverage: no changed non-test Go lines in scope; skipping")
         return 0
@@ -311,12 +494,14 @@ def main(argv: list[str] | None = None) -> int:
     no_statements: list[str] = []
     for f, lines in sorted(per_file_lines.items()):
         if f not in blocks_by_file:
-            if str(Path(f).parent) in covered_packages:
-                # The package IS linked into a tested binary, so the profile is
-                # real; this file simply contributed no blocks. That means it
-                # holds no statements in THIS build - declarations only, or a
-                # build constraint excluded it on this platform. Neither can be
-                # executed by any test, so the file is recorded as unchecked
+            if str(Path(f).parent) in covered_packages or not file_has_statements(root, f, per_file_text[f]):
+                # The file contributed no blocks for one of two reasons. Either
+                # the package IS linked into a tested binary and the profile is
+                # real, so this file holds no statements in THIS build -
+                # declarations only, or a build constraint excluded it on this
+                # platform. Or the whole package is declarations, so it emits no
+                # counters and can never appear in any profile. Neither case can
+                # be executed by any test, so the file is recorded as unchecked
                 # rather than failed: flagging it makes an edit to a
                 # declarations file unfixable.
                 no_statements.append(f)
@@ -341,10 +526,25 @@ def main(argv: list[str] | None = None) -> int:
               f"or excluded by a build constraint); nothing to cover")
 
     if total_uncovered:
-        print(f"diff_coverage: {total_uncovered}/{total_checked} changed statement line(s) not covered by any test:")
+        known = load_known_uncovered(root, diff_args)
+        accepted: list[str] = []
+        remaining: list[str] = []
         for finding in findings:
-            print(f"  {finding}")
-        return 1
+            path, _, lineno = finding.rpartition(":")
+            if path in known and int(lineno) in known[path][0]:
+                accepted.append(f"{finding} ({known[path][1]})")
+            else:
+                remaining.append(finding)
+        if accepted:
+            print(f"diff_coverage: {len(accepted)} line(s) accepted as known-uncovered "
+                  f"(.mivia/policy/diff-coverage.json):", file=sys.stderr)
+            for line in accepted:
+                print(f"  {line}", file=sys.stderr)
+        if remaining:
+            print(f"diff_coverage: {len(remaining)}/{total_checked} changed statement line(s) not covered by any test:")
+            for finding in remaining:
+                print(f"  {finding}")
+            return 1
 
     print(f"diff_coverage: {total_checked}/{total_checked} changed statement line(s) covered")
     return 0

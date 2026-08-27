@@ -72,10 +72,34 @@ func (d *Dispatcher) blockedResult(req Request, meta Metadata, started time.Time
 	return d.deliverTerminal(req, meta, blockedError, reason)
 }
 
+// deliverBlockedResult builds the blocked Result for a denied HookVerdict,
+// attaches its hook runs and any advisory context an earlier ALLOWING
+// handler in the same group left before a later handler denied (Runner.Run
+// appends context per handler before checking its verdict - that text is
+// real model-facing content and must not be dropped just because the call
+// ends up blocked; the deny reason itself reaches the model through a
+// separate channel, the JSON status envelope), and resolves in-flight
+// waiters with the block WITHOUT recording it: an admission verdict can
+// change mid-turn and must be re-evaluated on the next identical call.
+func (d *Dispatcher) deliverBlockedResult(req Request, meta Metadata, started time.Time, verdict HookVerdict) Result {
+	blocked := d.blockedResult(req, meta, started, verdict.Reason)
+	blocked.HookRuns = verdict.Runs
+	blocked.HookContext = boundHookContext(verdict.Context)
+	d.mu.Lock()
+	d.completeTurnInFlight(req, blocked)
+	d.mu.Unlock()
+	return blocked
+}
+
 // deliverTerminal builds the bounded status envelope, emits the audit record,
-// and releases any waiter. The payload carries the reason verbatim because the
-// model needs it - a blocked call the model cannot explain to itself is one it
-// will simply retry.
+// and returns the terminal Result. ID-keyed waiter delivery does NOT happen
+// here: it happens at completeIDKeyed (the success tail, after postInvoke
+// attaches HookContext/HookRuns) and at the owner's deferred releaseIDKeyed
+// (block/fail/cancel, reading the final named return), so every ID-keyed
+// waiter is answered with the same POST-hook result as the owner (DC-9 dedup
+// fidelity). The payload carries the reason verbatim because the model needs
+// it - a blocked call the model cannot explain to itself is one it will simply
+// retry.
 //
 // Hook-authored text is neutralized for tag-shaped content before it enters
 // the envelope: a block reason comes from a hook script's stderr, which is
@@ -91,20 +115,11 @@ func (d *Dispatcher) deliverTerminal(req Request, meta Metadata, err error, reas
 	if marshalErr != nil {
 		safeOutput = []byte(`{"status":"failed"}`)
 	}
-	result := Result{
+	return Result{
 		ID: req.ID, Name: req.Name, Kind: req.Kind,
 		Output: json.RawMessage(safeOutput),
 		Err:    err, Metadata: meta,
 	}
-	d.mu.Lock()
-	// A SkipDedup call never registered a waiter and must not read or delete
-	// ID-keyed waiter state, even on its failure/block/cancel paths: stealing
-	// the channel would strand the true owner's waiter.
-	if !req.SkipDedup {
-		d.deliverIDWaitersLocked(req.ID, result)
-	}
-	d.mu.Unlock()
-	return result
 }
 
 func (d *Dispatcher) emit(m Metadata) {

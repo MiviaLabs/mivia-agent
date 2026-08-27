@@ -322,12 +322,10 @@ func TestDeleteRunClearsProjectionWatermarks(t *testing.T) {
 	if err := repo.DeleteRun(ctx, "deleted"); err != nil {
 		t.Fatal(err)
 	}
-	repo.mu.RLock()
-	defer repo.mu.RUnlock()
-	if _, ok := repo.applied["deleted"]; ok {
+	if repo.engine.Watermarks().Applied("deleted") != 0 {
 		t.Fatal("applied watermark retained deleted run")
 	}
-	if _, ok := repo.allocated["deleted"]; ok {
+	if repo.engine.Watermarks().Allocated("deleted") != 0 {
 		t.Fatal("allocated watermark retained deleted run")
 	}
 	for key := range repo.inflight {

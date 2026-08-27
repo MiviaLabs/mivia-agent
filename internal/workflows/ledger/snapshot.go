@@ -159,8 +159,16 @@ func DigestHex(data []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// refDigestHex returns the canonical content digest for a RefSnapshot. The
+// wire format matches the CLI and localengine pin helpers: "sha256:" plus the
+// lowercase hex SHA-256 of the bytes.
+func refDigestHex(data []byte) string {
+	return "sha256:" + DigestHex(data)
+}
+
 // Validate checks the snapshot for admission invariants: schema version
-// supported, non-empty definition bytes, and non-empty definition digest.
+// supported, non-empty definition bytes and digest, and digest/bytes
+// consistency for every populated schema, template, skill, and verifier ref.
 func (s Snapshot) Validate() error {
 	if s.SchemaVersion != SnapshotSchemaVersion {
 		return fmt.Errorf("unsupported snapshot schema version %d (want %d)", s.SchemaVersion, SnapshotSchemaVersion)
@@ -170,6 +178,47 @@ func (s Snapshot) Validate() error {
 	}
 	if s.DefinitionDigest == "" {
 		return fmt.Errorf("snapshot definition digest is empty")
+	}
+	for name, ref := range s.Schemas {
+		if err := validateRefSnapshot("schema", name, ref); err != nil {
+			return err
+		}
+	}
+	for name, ref := range s.Templates {
+		if err := validateRefSnapshot("template", name, ref); err != nil {
+			return err
+		}
+	}
+	for name, ref := range s.Skills {
+		if err := validateRefSnapshot("skill", name, ref); err != nil {
+			return err
+		}
+	}
+	for name, ref := range s.Verifiers {
+		if err := validateRefSnapshot("verifier", name, ref); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateRefSnapshot(kind, name string, ref RefSnapshot) error {
+	if ref.Digest == "" {
+		return fmt.Errorf("snapshot %s %q digest is empty", kind, name)
+	}
+	// Empty content is a legitimate pin (an empty template file is admissible)
+	// when the digest proves the admission pinned empty bytes deliberately.
+	// The JSON round-trip drops empty Bytes (omitempty), so the digest is the
+	// only durable signal; reject empty bytes whose digest is anything else.
+	if len(ref.Bytes) == 0 {
+		if ref.Digest != refDigestHex(nil) {
+			return fmt.Errorf("snapshot %s %q bytes are empty but digest %q is not the empty-content digest", kind, name, ref.Digest)
+		}
+		return nil
+	}
+	want := refDigestHex(ref.Bytes)
+	if ref.Digest != want {
+		return fmt.Errorf("snapshot %s %q digest %q does not match bytes (want %q)", kind, name, ref.Digest, want)
 	}
 	return nil
 }

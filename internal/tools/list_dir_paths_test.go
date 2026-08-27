@@ -243,6 +243,36 @@ func TestEmitDirCountsAnUnreadableDepthCutChild(t *testing.T) {
 	}
 }
 
+// TestEmitDirPropagatesCancellationDuringDepthCutPeek pins the beyond-depth
+// child peek in emitDir (readDirWithContext(ctx, childAbs) at the depth-cut
+// branch): a context canceled DURING that peek must surface as a cancellation
+// error, not get folded into the "unreadable" notice alongside genuine
+// filesystem errors (permission denied, races). errors.Is(err, os.ErrNotExist)
+// is false for both context.Canceled and a real unreadable directory, so
+// without an explicit context check the two are indistinguishable - a caller
+// whose deadline expired mid-walk would see a truncated-but-successful
+// result instead of the timeout that actually cut it short.
+func TestEmitDirPropagatesCancellationDuringDepthCutPeek(t *testing.T) {
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{"sub/child.txt": "x"})
+	tool := listDirToolFor(t, dir)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already canceled: readDirWithContext's fast-path returns ctx.Err()
+
+	st := &treeWalkState{}
+	err := tool.emitDir(ctx, st, dir, "sub", "sub", "", 1, 1)
+	if err == nil {
+		t.Fatal("emitDir swallowed a context cancellation during the depth-cut peek and returned nil")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("emitDir error = %v, want context.Canceled", err)
+	}
+	if st.unreadable != 0 {
+		t.Fatalf("cancellation miscounted as unreadable: %d", st.unreadable)
+	}
+}
+
 func TestEmitFileHandlesEntriesItCannotStat(t *testing.T) {
 	tool := listDirToolFor(t, t.TempDir())
 

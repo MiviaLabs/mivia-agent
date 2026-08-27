@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
 // ToolsConfig configures tool execution policies.
@@ -32,8 +34,24 @@ type ToolsConfig struct {
 	EnvAllowKeywordBlocklist []string `toml:"env_allow_keyword_blocklist"`
 	// RunTimeoutSec is the default timeout for run_command (seconds).
 	RunTimeoutSec int `toml:"run_timeout_seconds"`
+	// ToolRunTimeoutSec is the registry-wide default run timeout (seconds)
+	// the SDK tool-registry backstop applies to tools that declare no
+	// Capability.Timeout. Positive = that bound. 0 (default) or negative =
+	// no registry-wide cap (the agent layer maps it to the SDK's
+	// TimeoutNone). Uncapped is the correct default: the CLI's own
+	// dispatcher already arms every tool call's Capability.Timeout (or the
+	// [subagents] default_timeout_seconds fallback) as a real context
+	// deadline, so the SDK backstop is a second, redundant enforcement
+	// layer that must never be tighter than the CLI's declared budgets
+	// unless the operator explicitly asks for it. Without this mapping the
+	// SDK's hardcoded 10-minute default silently killed long-budget tools
+	// (dispatch_tasks' 12h orchestration window).
+	ToolRunTimeoutSec int `toml:"tool_run_timeout_seconds"`
 	// MaxReadBytes caps read_file output (bytes).
 	MaxReadBytes int `toml:"max_read_bytes"`
+	// MaxEditFileBytes caps the file size editable in place by search_replace and multi_edit (bytes).
+	// 0 means uncapped today; expected to become an explicit opt-out once the derived budget profile ships.
+	MaxEditFileBytes int `toml:"max_edit_file_bytes"`
 	// MaxWriteKB caps write_file content (KiB).
 	MaxWriteKB int `toml:"max_write_kb"`
 	// MaxOutputBytes caps run_command output (bytes).
@@ -103,10 +121,11 @@ type ToolsConfig struct {
 	// SearchIgnorePatterns adds directory/file names to skip during grep/glob walks.
 	// Extends the built-in defaults (.git, node_modules, vendor). Does not replace them.
 	SearchIgnorePatterns []string `toml:"search_ignore_patterns,omitempty"`
-	// WritePathBlocklist adds workspace-relative paths or directories whose
-	// write tools refuse to change. It extends the built-in defaults
-	// (DefaultWritePathBlocklist: .git, .mivia/mivia.toml); removal is via
-	// WritePathBlocklistRemove. Entries use forward slashes and are normalized
+	// WritePathBlocklist names workspace-relative paths or directories whose
+	// write tools refuse to change. There is no compiled-in default
+	// (DefaultWritePathBlocklist is empty); protection is opt-in. Removal of
+	// an entry named here is via WritePathBlocklistRemove. Entries use
+	// forward slashes and are normalized
 	// (trimmed, cleaned) at load; an entry that is empty, ".", or absolute is
 	// a load error.
 	// The blocklist applies to workflow agent steps, whose write tools
@@ -120,8 +139,8 @@ type ToolsConfig struct {
 	// it is the only way to unblock those two defaults. Unblocking a path is a
 	// trust decision: .mivia/mivia.toml carries this very blocklist, so an
 	// agent that can edit it can remove its own restrictions (including
-	// .mivia/agents, .mivia/policy, .mivia/rules, .mivia/skills,
-	// .mivia/workflows, go.mod, go.sum, and go.work), and .git carries commit
+	// .mivia/agents, .mivia/policy, .mivia/workflows, go.mod, go.sum, and
+	// go.work), and .git carries commit
 	// history and hooks, so an agent that can edit it can rewrite history or
 	// plant hooks that bypass the host hook-policy gates. Keep the defaults
 	// blocked unless a host-owned step genuinely needs the path. Entries use
@@ -240,14 +259,19 @@ func validateDiagnosticsCommandEntry(name string, argv []string, effectiveAllowl
 
 // effectiveDiagnosticsAllowlist mirrors internal/tools/default_registry.go
 // configuredRunAllowlist: run_allowlist_only when set (resolveToolsConfig's B7
-// rule has already cleared RunAllowlist), else run_allowlist, MINUS
+// rule has already cleared RunAllowlist) replaces tools.DefaultRunAllowlist
+// entirely; unset, tools.DefaultRunAllowlist + run_allowlist, MINUS
 // run_blocklist. The blocklist subtraction case-folds both sides exactly like
 // the tools layer's disabledToolNames, so "SH" blocks "sh" the same way the
 // run_command registry would refuse it.
 func effectiveDiagnosticsAllowlist(tc ToolsConfig) []string {
-	allowlist := tc.RunAllowlistOnly
-	if len(allowlist) == 0 {
-		allowlist = tc.RunAllowlist
+	var allowlist []string
+	if len(tc.RunAllowlistOnly) > 0 {
+		allowlist = tc.RunAllowlistOnly
+	} else {
+		allowlist = make([]string, 0, len(tools.DefaultRunAllowlist)+len(tc.RunAllowlist))
+		allowlist = append(allowlist, tools.DefaultRunAllowlist...)
+		allowlist = append(allowlist, tc.RunAllowlist...)
 	}
 	if len(tc.RunBlocklist) == 0 {
 		return allowlist
@@ -289,11 +313,20 @@ func allowlisted(bin string, allowlist []string) bool {
 // normalization live in write_path_blocklist.go.
 
 func resolveToolsConfig(tc ToolsConfig) ToolsConfig {
+	explicitMaxReadBytes := tc.MaxReadBytes
 	tc = resolveToolsDefaults(tc)
+	if tc.MaxEditFileBytes <= 0 && explicitMaxReadBytes > 0 {
+		tc.MaxEditFileBytes = explicitMaxReadBytes
+	}
 	// No defaulting: 0 means uncapped. Negative is normalized to 0 so every
 	// consumer can treat <=0 uniformly as "no cap".
 	if tc.MaxToolResultBytes < 0 {
 		tc.MaxToolResultBytes = 0
+	}
+	// Same rule for the SDK registry run backstop: 0 means no registry-wide
+	// cap, and an explicit negative is the same uncapped intent.
+	if tc.ToolRunTimeoutSec < 0 {
+		tc.ToolRunTimeoutSec = 0
 	}
 	// Absent resolves to derived (-1) so an operator who configures nothing
 	// gets the derived batch budget; explicit 0 is off; negative is derived;
@@ -305,6 +338,9 @@ func resolveToolsConfig(tc ToolsConfig) ToolsConfig {
 	// OOM guard: 0 / negative must not disable the backstop.
 	if tc.MemoryBackstopMB <= 0 {
 		tc.MemoryBackstopMB = DefaultMemoryBackstopMB
+	}
+	if tc.MaxEditFileBytes <= 0 {
+		tc.MaxEditFileBytes = MemoryBackstopBytes(tc.MemoryBackstopMB)
 	}
 	// B7: RunAllowlist + RunAllowlistOnly are mutually exclusive - prefer RunAllowlistOnly
 	if len(tc.RunAllowlist) > 0 && len(tc.RunAllowlistOnly) > 0 {

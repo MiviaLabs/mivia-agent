@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""LIVE TEST ONLY - never run without explicit human approval (see AGENTS.md
-"Live e2e test workflow"). Every scenario here pushes real branches and opens
+"""LIVE TEST ONLY - never run without explicit human approval (see
+docs/development/agent-workflow.md "Live e2e test workflows"). Every scenario
+here pushes real branches and opens
 real PRs against MiviaLabs/mivia-agent. This script is a tool the user or the
 agent invokes deliberately in a session that has already been asked for a
 live e2e check; it must never be wired into make verify, CI, or any
@@ -454,9 +455,9 @@ def cmd_kill(args: argparse.Namespace) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="LIVE TEST ONLY - see AGENTS.md 'Live e2e test workflow'. "
-                     "Never invoke this script without the user explicitly asking for a "
-                     "live e2e check in this session.",
+        description="LIVE TEST ONLY - see docs/development/agent-workflow.md "
+                     "'Live e2e test workflows'. Never invoke this script without the "
+                     "user explicitly asking for a live e2e check in this session.",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 

@@ -8,7 +8,7 @@
 // [privacy] in mivia.toml, recommended values ship in mivia.toml.example, and a
 // workspace that configures nothing redacts nothing.
 //
-// That fails open by design. See .mivia/rules/10-security-privacy.md.
+// That fails open by design. See .agents/rules/10-security-privacy.md.
 package redact
 
 import (
@@ -69,12 +69,20 @@ func (p *Policy) empty() bool {
 }
 
 // Text replaces every pattern match with the placeholder.
+//
+// The placeholder is substituted verbatim (ReplaceAllLiteralString), never
+// through regexp template expansion: the placeholder is operator-chosen
+// text, and Go's Expand semantics would silently corrupt it - $0 re-emits
+// the matched secret itself (the redaction echoing the exact text it exists
+// to hide), while $1/${name} expand to empty or absent groups. JSONValue's
+// key-elision path inserts the same placeholder literally, so both paths
+// must agree on a literal placeholder.
 func (p *Policy) Text(s string) string {
 	if p == nil || len(p.patterns) == 0 || s == "" {
 		return s
 	}
 	for _, re := range p.patterns {
-		s = re.ReplaceAllString(s, p.placeholder)
+		s = re.ReplaceAllLiteralString(s, p.placeholder)
 	}
 	return s
 }

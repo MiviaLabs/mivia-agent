@@ -3,15 +3,12 @@ package agent
 import (
 	"context"
 	"errors"
-	"fmt"
-	"io"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
-	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -46,12 +43,15 @@ type Loop struct {
 	// re-summarizing: a fresh Summarize per step is a fresh LLM request with a
 	// unique prefix (near-zero provider prompt-cache hit) that injects
 	// nondeterministic bytes. summaryMemoValid records that an attempt ran
-	// for summaryMemoKey even when it failed, so a failed attempt is not
-	// retried on every later step of the same compaction.
-	summaryMemoKey     string
-	summaryMemoValid   bool
-	summaryMemoMessage provider.Message
-	summaryMemoHasMsg  bool
+	// for summaryMemoKey and should not be retried across steps (on success,
+	// non-retryable failure, or upon reaching maxSummaryAttemptsPerCompaction).
+	summaryMemoKey       string
+	summaryMemoValid     bool
+	summaryMemoMessage   provider.Message
+	summaryMemoHasMsg    bool
+	summaryMemoReason    string
+	summaryMemoAttempts  int
+	summaryFailureReason string
 	// turnCompactionKey identifies the newest REAL compaction of this turn
 	// (recordPreparation sets it from the raw preparation, before the
 	// turn-level Compacted overlay). A new compaction later in the turn
@@ -77,11 +77,13 @@ type Loop struct {
 	// Turn-level compaction accounting. A mid-turn step may elide enough to
 	// fit before the final step that commits; emit uses the first compacting
 	// BeforeTokens, the last compacting AfterTokens, and summed elision.
-	turnCompacted      bool
-	turnBeforeTokens   int
-	turnAfterTokens    int
-	turnElidedMessages int
-	turnElidedBytes    int
+	turnCompacted            bool
+	turnCompactionEmitted    bool
+	lastEmittedCompactionKey string
+	turnBeforeTokens         int
+	turnAfterTokens          int
+	turnElidedMessages       int
+	turnElidedBytes          int
 	// turnElidedReasoningMessages/Bytes mirror the tool-result pair for the
 	// reasoning-elision counters, so a later non-compacting step cannot
 	// erase an earlier step's reasoning accounting.
@@ -102,175 +104,31 @@ type Loop struct {
 }
 
 func (l *Loop) Run(ctx context.Context, userText string, opts Options) (string, error) {
-	if l.Completer == nil {
-		return "", fmt.Errorf("nil completer")
-	}
-	if l.Tools == nil {
-		return "", fmt.Errorf("nil tools")
-	}
-	l.discardPreparation(opts)
-	l.resetTurnCompaction()
-	l.TurnState = contextmgr.NewTurnState()
-	if l.workLimits == nil || !opts.PreserveWorkLimits || l.workLimits.limits != opts.WorkLimits {
-		l.workLimits = &workLimitMeter{limits: opts.WorkLimits}
-	}
-	if limit := opts.WorkLimits.MaxTurns; limit > 0 && (opts.MaxSteps <= 0 || limit < opts.MaxSteps) {
-		opts.MaxSteps = limit
-	}
-	if deadline := opts.WorkLimits.DeadlineAt; !deadline.IsZero() {
-		if parent, ok := ctx.Deadline(); !ok || deadline.Before(parent) {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithDeadline(ctx, deadline)
-			defer cancel()
-		}
-	}
-	if opts.SessionID == "" {
-		opts.SessionID = runtime.NewSessionID()
-	}
-	// Each Run owns its finish-reason report: a previous run's reason must
-	// never leak into the next caller's read.
-	l.LastFinishReason = ""
-	l.Messages = append(l.Messages, provider.Message{
-		Role:      provider.RoleUser,
-		Content:   userText,
-		CreatedAt: time.Now(),
-	})
-	toolSpecs := l.initialToolSpecs(opts)
-	var lastText string
-	for step := 1; ; step++ {
-		if opts.MaxSteps > 0 && step > opts.MaxSteps {
-			l.discardPreparation(opts)
-			return lastText, fmt.Errorf("agent exceeded max_steps (%d)", opts.MaxSteps)
-		}
-		// The surface hook is the host's mid-turn publication point: it runs at
-		// the top of every step after the first and may replace this step's
-		// registry, dispatcher, specs, and spool (applySurfaceHook).
-		l.applySurfaceHook(&opts, &toolSpecs, step)
-		l.emitStep(opts, step)
-
-		out, err := l.runStep(ctx, toolSpecs, opts, step)
-		if err != nil {
-			return lastText, err
-		}
-		// The final completed step's reason is what the caller reads: every
-		// successful step overwrites the field, so a tool_calls step followed
-		// by the closing text step reports the closing step's reason.
-		if out.finishReason != "" {
-			l.LastFinishReason = out.finishReason
-		}
-		if out.done {
-			if out.text == "" {
-				// A turn that produced no text anywhere is not a completed turn.
-				// Reporting success here rendered as "done" with no answer, which
-				// is indistinguishable from the agent stopping for no reason.
-				if lastText == "" && opts.RequireFinalText {
-					l.discardPreparation(opts)
-					return "", fmt.Errorf("model returned no content (finish_reason=%q, step=%d)", out.finishReason, step)
-				}
-				out.text = lastText
-			}
-			return out.text, nil
-		}
-		if out.text != "" {
-			lastText = out.text
-		}
-	}
+	return l.runOnce(ctx, userText, opts)
 }
 
-// Step emission (emitReasoning, emitStep) and the per-step surface refresh
-// (applySurfaceHook) live in loop_step.go.
-
-// pruneHistory trims history to the context budget and reports what went.
-//
-// Safe only where tool pairing is complete. runStep calls it before building a
-// request, when history ends with the previous step's tool results, so dropping
-// an assistant tool_call takes its results with it. Pruning while a tool_call
-// is still awaiting results would drop the call and orphan the results appended
-// afterwards: the request would stay valid (RepairToolPairing discards them)
-// but the model would silently lose the output it asked for.
 // contextAccounting returns l.Completer's declared context-billing profile
 // (provider.ContextAccountingFor's conservative zero value when the
 // Completer does not declare one), so every accounting call this loop makes
-// - pruning, budget rejection, and the calibration estimate in loop_request.go
-// - prices context the same way.
+// prices context the same way.
 func (l *Loop) contextAccounting() provider.ContextAccountingProfile {
 	return provider.ContextAccountingFor(l.Completer)
 }
 
-func (l *Loop) pruneHistory(opts Options, toolSpecs []provider.ToolSpec) {
-	profile := l.contextAccounting()
-	beforeTokens := provider.MessagesTokens(l.Messages, profile)
-	if opts.MaxContextTokens > 0 {
-		schemaCost := 0
-		if len(toolSpecs) > 0 {
-			if cost, err := provider.EstimateToolSchemaCost(toolSpecs); err == nil {
-				schemaCost = cost
-			}
-		}
-		// Hysteresis mirrors contextmgr.Plan (trigger 80%, target 50% of the
-		// budget): pruning only once the estimated request cost crosses the
-		// trigger, and down past it to the target when it does, means the
-		// front-dropped prefix - and the provider prompt-cache miss it costs -
-		// happens once per many steps instead of once per step at the boundary.
-		trigger := contextmgr.PercentFloor(opts.MaxContextTokens, 4, 5)
-		totalCost := provider.EstimateMessagesPromptCost(l.Messages, schemaCost, profile)
-		if totalCost >= trigger {
-			budget := contextmgr.PercentFloor(opts.MaxContextTokens, 1, 2)
-			// The rejection check (promptBudgetErrorWithTools) prices content,
-			// message frames, and tool schemas, while PruneMessagesKeepTurns
-			// accounts content only. Prune with the same accounting so a history
-			// at the boundary is trimmed instead of rejected: pass 1 drops old
-			// turns by content minus schema cost, pass 2 trims to the exact
-			// frame- and schema-aware target of the remaining set.
-			pass1 := budget - schemaCost
-			if pass1 < 1 {
-				pass1 = 1
-			}
-			l.Messages = provider.PruneMessagesKeepTurns(l.Messages, pass1, profile)
-			overhead := provider.EstimateMessagesPromptCost(l.Messages, 0, profile) - provider.MessagesTokens(l.Messages, profile)
-			target := budget - schemaCost - overhead
-			if target < 1 {
-				target = 1
-			}
-			if provider.MessagesTokens(l.Messages, profile) > target {
-				l.Messages = provider.PruneMessagesKeepTurns(l.Messages, target, profile)
-			}
-		}
-	}
-	afterTokens := provider.MessagesTokens(l.Messages, profile)
-	if afterTokens >= beforeTokens {
-		return
-	}
-	emit(opts, Event{
-		Kind:   EventPrune,
-		Detail: fmt.Sprintf("pruned ~%d tokens (before=%d after=%d budget=%d)", beforeTokens-afterTokens, beforeTokens, afterTokens, opts.MaxContextTokens),
-	})
-}
-
 // teeWriter forwards live stream bytes to the real writer while keeping a copy,
-// so an interrupted step can recover the text the user already saw. Writes come
-// from the synchronous provider call on runStep's own goroutine, so no locking.
+// so an interrupted call can recover the text the user already saw.
 //
 // It also republishes each delta to opts.EventBus (Detail="delta") as it
-// streams, not just the one aggregate EventAssistant commitFinalAnswer emits
-// once the whole response is ready. That aggregate is the only signal a
-// cross-process observer (internal/hub's relay, mivia-agent-desktop) ever
-// saw, so an external view of a plain-text reply showed nothing until the
-// entire answer was already done, then the whole thing at once - "thinking"
-// forever, never "streaming". Existing EventBus consumers are unaffected:
-// agentEventBridgeCallback's own EventAssistant case only acts on
-// Detail=="interim" (see its comment - the TUI's own display already gets
-// live text via this same FinalWriter, not through the bus), and
-// jsonTurnEventCallback has no EventAssistant case at all.
-// stepOutcome is one agent step's result. text is the assistant prose the step
-// produced, empty when the model said nothing renderable; finishReason is the
-// upstream's own account of why it stopped, which is the only way to tell a
-// deliberate empty answer from an exhausted output budget.
-type stepOutcome struct {
-	text         string
-	done         bool
-	finishReason string
-}
+// streams, not just the one aggregate EventAssistant the SDK completer
+// wrapper emits once the whole response is ready. That aggregate is the
+// only signal a cross-process observer (internal/hub's relay,
+// mivia-agent-desktop) ever saw, so an external view of a plain-text reply
+// showed nothing until the entire answer was already done, then the whole
+// thing at once - "thinking" forever, never "streaming". Existing EventBus
+// consumers are unaffected: agentEventBridgeCallback's own EventAssistant
+// case only acts on Detail=="interim" (see its comment - the TUI's own
+// display already gets live text via this same FinalWriter, not through
+// the bus), and jsonTurnEventCallback has no EventAssistant case at all.
 
 // recordInterruptedPartial keeps, in history, the text an interrupted step had
 // already streamed to the screen. Dropping it desynchronises the transcript from
@@ -295,144 +153,6 @@ func (l *Loop) recordInterruptedPartial(live *teeWriter) {
 	})
 }
 
-// commitFinalAnswer records and surfaces a turn's closing answer. trimmed is the
-// caller's emptiness predicate; the stored and written bytes stay verbatim.
-//
-// An assistant turn with no content and no tool calls cannot be sent back: it
-// encodes to a bare {"role":"assistant"} and the API rejects the whole request.
-// Never let one into history.
-func (l *Loop) commitFinalAnswer(resp *provider.Response, trimmed string, stream bool, opts Options) {
-	if trimmed == "" {
-		return
-	}
-	l.Messages = append(l.Messages, provider.Message{
-		Role:             provider.RoleAssistant,
-		Content:          resp.Content,
-		ReasoningContent: resp.ReasoningContent,
-		CreatedAt:        time.Now(),
-	})
-	l.recordAssistantState(resp.Content)
-	// When streaming, FinalWriter already received deltas - do not rewrite.
-	if !stream && opts.FinalWriter != nil {
-		_, _ = io.WriteString(opts.FinalWriter, resp.Content)
-	}
-	emit(opts, Event{Kind: EventAssistant, Content: resp.Content})
-}
-
-func (l *Loop) runStep(ctx context.Context, toolSpecs []provider.ToolSpec, opts Options, step int) (stepOutcome, error) {
-	// Stamp the step on the loop's own copy before any tool call is
-	// dispatched: the caller's Options is never mutated, and the runtime
-	// dispatcher keys per-turn dedup by (TurnID, ParentID, Step) so an
-	// identical call re-issued in a LATER step re-runs (step-scoped dedup).
-	opts.Step = step
-	if err := l.prepareStep(ctx, toolSpecs, opts); err != nil {
-		return stepOutcome{}, err
-	}
-
-	// Stream when a FinalWriter is attached so TUI can show tokens live.
-	// Content deltas go to FinalWriter; tool_calls are still assembled fully.
-	stream := opts.FinalWriter != nil
-	// Tee the live stream so an interrupted turn can retain displayed text.
-	var live *teeWriter
-	streamWriter := opts.FinalWriter
-	if stream {
-		live = &teeWriter{w: opts.FinalWriter, opts: opts}
-		streamWriter = live
-	}
-	req, err := l.stepRequest(ctx, toolSpecs, opts, stream, streamWriter)
-	if err != nil {
-		return stepOutcome{}, err
-	}
-	resp, err := l.requestStep(ctx, req, opts)
-	if err != nil {
-		if out, soft := l.steerInterruptOutcome(err, live, ctx); soft {
-			return out, nil
-		}
-		// The sentinel with the turn ctx already canceled is a hard cancel
-		// racing the steer fire: surface the real cause, never the sentinel.
-		if errors.Is(err, errSteerInterrupt) {
-			return stepOutcome{}, ctx.Err()
-		}
-		interrupted := errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded)
-		if interrupted {
-			l.recordInterruptedPartial(live)
-		} else {
-			l.discardPreparation(opts)
-		}
-		return stepOutcome{}, err
-	}
-	// trimmed is a predicate only: it answers "did the model say anything
-	// renderable". Every surface stores and writes resp.Content verbatim, because
-	// trimming would strip the indentation off an answer that opens with a code
-	// block and stop it rendering as one.
-	emitReasoning(opts, resp)
-
-	trimmed := strings.TrimSpace(resp.Content)
-	out := stepOutcome{finishReason: resp.FinishReason}
-	if trimmed != "" {
-		out.text = resp.Content
-	}
-
-	if len(resp.ToolCalls) == 0 {
-		out.done = true
-		l.commitFinalAnswer(resp, trimmed, stream, opts)
-		return out, nil
-	}
-
-	// Content-then-tools: clear optimistic final-stream tokens, then re-emit
-	// speech as an intermediate assistant bubble (Detail=interim).
-	if stream {
-		revokeStreamWriter(opts.FinalWriter)
-	}
-
-	return l.processToolCalls(ctx, resp, trimmed, opts)
-}
-
-func (l *Loop) stepRequest(ctx context.Context, toolSpecs []provider.ToolSpec, opts Options, stream bool, streamWriter io.Writer) (provider.Request, error) {
-	maxTokens, err := l.workLimits.outputCap(opts.MaxTokens)
-	if err != nil {
-		return provider.Request{}, err
-	}
-	messages := l.Messages
-	// Phase 2 summary injection: when the current preparation compacted and a
-	// Summarizer is wired, build the request from an EPHEMERAL clone carrying
-	// the validated summary APPENDED after the latest user objective, so the
-	// structural messages keep their indices and the provider prompt-cache
-	// prefix stays valid (append extends the prefix; a mid-history insert
-	// splits it). l.Messages stays
-	// structural, so planning, idempotency, BaseDigest, and checkpoint bytes
-	// are untouched. On any failure the request falls back structural-only.
-	if opts.SummaryConfig.Summarizer != nil && l.HasPreparation && l.LastPreparation.Compacted {
-		messages = l.injectSummary(ctx, opts)
-	}
-	// Soft conclude: when a work bound (deadline, output budget, tool-call
-	// budget) is close, tell the model to wrap up so it returns its best valid
-	// result instead of the bound hard-aborting the run mid-work. The
-	// instruction is appended to an EPHEMERAL copy — never to l.Messages — so
-	// history, checkpoints, and replays stay untouched. Order is pinned:
-	// structural messages, then the injected summary, then this nudge last.
-	if conclude := l.concludeInstruction(ctx); conclude != "" {
-		cp := make([]provider.Message, 0, len(messages)+1)
-		cp = append(cp, messages...)
-		// The Name marks this as a host injection: the DeepSeek reject gate
-		// (internal/provider terminalToolExchange) trims trailing NAMED user
-		// messages before it decides whether the current tool exchange is
-		// terminal, so this nudge cannot cause the exchange and its tool
-		// results to be dropped from the wire.
-		cp = append(cp, provider.Message{Role: provider.RoleUser, Content: conclude, Name: ConcludeNudgeMessageName, CreatedAt: time.Now()})
-		messages = cp
-		emit(opts, Event{Kind: EventWorkLimit, Detail: "conclude: approaching a work bound"})
-	}
-	return provider.Request{
-		Model: opts.Model, Messages: messages, Temperature: opts.Temperature,
-		MaxTokens: maxTokens, Tools: toolSpecs, ToolChoice: "auto", Stream: stream,
-		StreamWriter: streamWriter, Timeout: opts.RequestTimeout,
-		ReasoningLevel: opts.Reasoning.Level, ReasoningDialect: opts.Reasoning.Dialect,
-		DisableProviderReplay: opts.DisableProviderReplay,
-		SessionID:             opts.SessionID,
-	}, nil
-}
-
 // emitTurnUsage surfaces the cache hit and token drift of a completed
 // provider call. The ratio emitted with this turn's drift must be the
 // calibration in effect for THIS turn (what the planner budgeted against),
@@ -440,8 +160,8 @@ func (l *Loop) stepRequest(ctx context.Context, toolSpecs []provider.ToolSpec, o
 // reads "estimate X vs actual Y (ratio R)" with R the applied correction -
 // the raw per-turn ratio is Y/X. A zero ratio is the zero-value calibrator
 // meaning unity, so display it as 1.00 rather than a misleading 0.00.
-func (l *Loop) emitTurnUsage(opts Options, req provider.Request, resp *provider.Response, estimatedTokens int) {
-	EmitCacheUsage(opts, l.Completer.Name(), req.Model, resp.CacheUsage)
+func (l *Loop) emitTurnUsage(ctx context.Context, opts Options, req provider.Request, resp *provider.Response, estimatedTokens int) {
+	EmitCacheUsage(ctx, opts, l.Completer.Name(), req.Model, resp.CacheUsage)
 	ratio := l.Calibration.Ratio
 	if ratio <= 0 {
 		ratio = 1
@@ -449,7 +169,18 @@ func (l *Loop) emitTurnUsage(opts Options, req provider.Request, resp *provider.
 	if resp.TokenUsage.Reported && estimatedTokens > 0 && resp.TokenUsage.InputTokens > 0 {
 		l.Calibration.Update(estimatedTokens, resp.TokenUsage.InputTokens)
 	}
-	EmitTokenUsage(opts, l.Completer.Name(), req.Model, resp.TokenUsage, estimatedTokens, ratio)
+	EmitTokenUsage(ctx, opts, l.Completer.Name(), req.Model, resp.TokenUsage, estimatedTokens, ratio)
+}
+
+// SummaryFailureReason returns the classified reason why this turn produced no context summary,
+// or empty if the summary was successfully injected or no summarizer was configured.
+func (l *Loop) SummaryFailureReason() string {
+	return l.summaryFailureReason
+}
+
+// TurnCompactionEmitted reports whether compaction was emitted mid-turn during step preparation.
+func (l *Loop) TurnCompactionEmitted() bool {
+	return l.turnCompactionEmitted
 }
 
 // streamRevoker, revokeStreamWriter, teeWriter, and the model-thinking

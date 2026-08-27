@@ -101,3 +101,36 @@ func TestLoadMarkdownUnexported(t *testing.T) {
 		t.Fatal("skill not loaded via LoadMarkdownSources")
 	}
 }
+
+func TestRenderNamedSkillSlashPromptAndParse(t *testing.T) {
+	prompt := RenderNamedSkillSlashPrompt("feature-delivery", "# Feature Delivery\nDeliver a feature.", "add auth module")
+	name, args, isSkill := ParseSkillInvocation(prompt)
+	if !isSkill {
+		t.Fatal("expected isSkill to be true")
+	}
+	if name != "feature-delivery" {
+		t.Fatalf("name = %q, want feature-delivery", name)
+	}
+	if args != "add auth module" {
+		t.Fatalf("args = %q, want 'add auth module'", args)
+	}
+
+	// Legacy prompt without name attr, with heading
+	legacy := RenderSkillSlashPrompt("# Bug Audit\nHunt bugs.", "internal/agent")
+	name2, args2, isSkill2 := ParseSkillInvocation(legacy)
+	if !isSkill2 {
+		t.Fatal("expected isSkill2 to be true")
+	}
+	if name2 != "Bug Audit" {
+		t.Fatalf("name2 = %q, want 'Bug Audit'", name2)
+	}
+	if args2 != "internal/agent" {
+		t.Fatalf("args2 = %q, want 'internal/agent'", args2)
+	}
+
+	// Non-skill prompt
+	name3, args3, isSkill3 := ParseSkillInvocation("Just regular user text")
+	if isSkill3 {
+		t.Fatalf("expected isSkill3 to be false, got name=%q args=%q", name3, args3)
+	}
+}

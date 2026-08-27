@@ -5,10 +5,20 @@
 # Optional explicit env file for credentials:
 # env_file = "./.env"
 
+# Tool call approvals. default_mode is the single source of truth for the
+# TUI settings screen's "approval default" row and for the CLI's initial
+# approval policy (including on --session resume). One of:
+#   "always" (default) - accept every tool call automatically, no prompts.
+#   "once"             - prompt for every write/external tool call.
+#   "deny"             - auto-reject every gated tool call, no prompts.
+# Leaving this section out entirely also defaults to "always".
+[approvals]
+default_mode = "always"
+
 [provider]
-# Default provider: deepseek. Default model: deepseek-v4-flash.
-# Other providers: openrouter, zai, llmgateway.
-name = "deepseek"
+# Default provider: openrouter. Default model: openai/gpt-5.6-luna.
+# Other providers: deepseek, zai, ollama, llmgateway, llmproxycli, minimax.
+name = "openrouter"
 # "auto" (default) captures and publishes provider-reported prompt-cache
 # usage accounting (cache hit/miss token counts) when a response reports it.
 # "off" disables capture only - it cannot disable a provider's own automatic
@@ -38,7 +48,7 @@ name = "deepseek"
 # the set it does accept.
 #
 # `reasoning_dialect` is the wire shape. zai (thinking object), deepseek
-# (thinking_effort), and openrouter and llmgateway (openai) have vetted
+# (thinking_effort), and openrouter, llmgateway, and llmproxycli (openai) have vetted
 # defaults; any other provider must name it, and mivia refuses to load a
 # config that sets `reasoning` where no dialect can be resolved rather than
 # silently sending nothing.
@@ -92,11 +102,13 @@ base_url = "https://ollama.com/v1"
 # base_url = "http://127.0.0.1:11434/v1"
 
 [providers.openrouter]
-# Override CLI provider with --provider openrouter
+# Shipped default provider. Override with --provider <name>.
 # OpenRouter normalizes reasoning_effort per upstream model, so it needs no
 # reasoning_dialect either. Use reasoning_dialect = "openrouter" for the
 # canonical nested reasoning object.
 models = [
+  { name = "openai/gpt-5.6-luna", context_window_tokens = 400000, max_output_tokens = 128000, reasoning_efforts = ["low", "medium", "high", "xhigh", "max"], reasoning = "medium", reasoning_dialect = "openrouter" },
+  # A smaller, cheaper alternative for quick turns:
   { name = "openai/gpt-4o-mini", context_window_tokens = 128000 },
   # On/off reasoning only (no graded effort): "high" = thinking on. Tool
   # calling supported; no structured outputs (response_format unsupported).
@@ -110,10 +122,28 @@ models = [
   # The :free variant trains on your inputs - use the paid endpoint (retains
   # prompts 90 days, trains nothing).
   { name = "poolside/laguna-s-2.1", context_window_tokens = 1048576, max_output_tokens = 131072, reasoning_efforts = ["off", "max"], reasoning = "max", reasoning_dialect = "openrouter_onoff" },
+  # MiniMax-M3: frontier multimodal foundation model for coding and agentic workflows.
+  { name = "minimax/minimax-m3", context_window_tokens = 1000000, max_output_tokens = 131072 },
+  # MiniMax-01: high-context model.
+  { name = "minimax/minimax-01", context_window_tokens = 1000192, max_output_tokens = 131072 },
 ]
-default_model = "openai/gpt-4o-mini"
+default_model = "openai/gpt-5.6-luna"
 api_key_env = "OPENROUTER_API_KEY"
 base_url = "https://openrouter.ai/api/v1"
+
+[providers.minimax]
+# Override CLI provider with --provider minimax
+# MiniMax's OpenAI-compatible endpoint (https://api.minimax.io/v1).
+# MiniMax-M3 is the latest flagship multimodal model with 1M context window.
+models = [
+  { name = "MiniMax-M3", context_window_tokens = 1000000, max_output_tokens = 131072 },
+  { name = "MiniMax-Text-01", context_window_tokens = 1000000, max_output_tokens = 131072 },
+  { name = "MiniMax-M2.7", context_window_tokens = 204800, max_output_tokens = 131072 },
+  { name = "MiniMax-M2.5", context_window_tokens = 204800, max_output_tokens = 131072 },
+]
+default_model = "MiniMax-M3"
+api_key_env = "MINIMAX_API_KEY"
+base_url = "https://api.minimax.io/v1"
 
 [providers.zai]
 # Override CLI provider with --provider zai
@@ -155,6 +185,17 @@ default_model = "deepseek-v4-pro"
 api_key_env = "LLMGATEWAY_API_KEY"
 base_url = "https://api.llmgateway.io/v1"
 
+[providers.llmproxycli]
+# LLM Proxy CLI connects to a local proxy instance (default http://127.0.0.1:8317/v1).
+# Supports reasoning dialects, Anthropic cache markers, and OpenAI-compatible completions.
+models = [
+  { name = "claude-sonnet-5", context_window_tokens = 1000000, max_output_tokens = 128000, reasoning_efforts = ["low", "medium", "high", "max"], reasoning = "high" },
+  { name = "gemini-3.7-flash-high", context_window_tokens = 1048576, max_output_tokens = 65536, reasoning_efforts = ["low", "medium", "high"], reasoning = "high" },
+]
+default_model = "claude-sonnet-5"
+api_key_env = "CLIPROXY_API_KEY"
+base_url = "http://127.0.0.1:8317/v1"
+
 [chat]
 system_prompt = "You are mivia, a local CLI coding agent."
 temperature = 0
@@ -182,12 +223,16 @@ branch_prefix = "mivia/"
 
 [tools]
 # ---- run_command program allowlist ----
-# Nothing is compiled into the binary: with this unset, run_command executes
-# no program at all. The list below is a recommended multi-ecosystem default;
-# trim it to what your project actually needs.
+# Open by default: with this unset, run_command can already execute the
+# built-in list (compilers/interpreters, their package managers, git, and
+# read-only Unix utilities - see config.DefaultRunAllowlist's doc comment for
+# the exact set and why shells, mutating programs, and networking/container
+# tools are excluded from it). The list below is a fuller, opt-in
+# multi-ecosystem default that EXTENDS the built-in list, including programs
+# deliberately left out of it; trim it to what your project actually needs.
 #
-# run_allowlist_only is accepted as a synonym — with no built-in list there is
-# nothing to "replace", so the two keys behave identically.
+# run_allowlist_only REPLACES the built-in list entirely instead of
+# extending it - use it for a closed allowlist.
 run_allowlist = [
   "git", "make", "cmake", "ninja", "sh", "bash", "go", "gofmt",
   "govulncheck", "python", "python3", "pip", "pip3", "pytest", "uv", "nox",
@@ -275,35 +320,40 @@ env_allow_keyword_blocklist = ["SECRET", "TOKEN", "PASSWORD", "API_KEY"]
 
 # ---- Write-path blocklist (workflow agent steps) ----
 # Workflow agent write tools (write_file, search_replace, multi_edit,
-# delete_file) refuse these workspace-relative paths or directories. Two paths
-# are blocked by default and cannot be removed unless you explicitly opt out:
-# .git and .mivia/mivia.toml. This key ADDS to that default set;
-# write_path_blocklist_remove REMOVES entries from it (the defaults or an
-# addition).
+# delete_file) refuse these workspace-relative paths or directories. Nothing
+# is blocked by default (protection is opt-in, not opt-out) - this key names
+# what you want protected; write_path_blocklist_remove removes an entry you
+# (or a project layered on top of yours) added here.
 #
 # Recommended starting values: the set below keeps workflow agents away from
 # agent definitions, hook-policy gates, rules, skills, the workflow definition
-# they run under, and Go module metadata. A project that omits this key leaves
-# all of these writable by workflow agents, including its own workflow
-# definition - choose deliberately.
+# they run under, Go module metadata, and - explicitly re-added below, since
+# there is no compiled-in default - Git metadata and this config file. A
+# project that omits this key leaves ALL of these writable by workflow
+# agents, including .git and its own workflow definition - choose
+# deliberately.
 #
-# Removing a default entry is a trust decision. .mivia/mivia.toml carries this
-# very blocklist: an agent that can edit it can remove its own restrictions,
-# including the entries below. .git carries commit history and hooks: an agent
-# that can edit it can rewrite history or plant hooks that bypass the host
-# hook-policy gates. Keep both blocked unless a host-owned step genuinely
-# needs the path. An entry in BOTH keys is a load error.
+# .mivia/mivia.toml carries this very blocklist: an agent that can edit it
+# can remove its own restrictions, including the entries below. .git carries
+# commit history and hooks: an agent that can edit it can rewrite history or
+# plant hooks that bypass the host hook-policy gates. Keep both listed here
+# unless a host-owned step genuinely needs the path. An entry in BOTH this
+# key and write_path_blocklist_remove is a load error.
 write_path_blocklist = [
-    ".mivia/agents",    # agent definitions
+    ".git",              # commit history and hooks
+    ".mivia/mivia.toml", # this config, including this very blocklist
+    ".agents/agents",   # agent definitions
+    ".mivia/agents",    # agent definitions (legacy path)
     ".mivia/policy",    # hook-policy gates
-    ".mivia/rules",     # durable rules
-    ".mivia/skills",    # skill definitions
+    ".mivia/skills",    # skill definitions (mivia binary's own load path)
+    ".agents/rules",    # durable rules
+    ".agents/skills",   # skill definitions (shared cross-tool mirror)
     ".mivia/workflows", # workflow definitions and templates
     "go.mod",
     "go.sum",
     "go.work",
 ]
-# write_path_blocklist_remove = [".git", ".mivia/mivia.toml"]  # opt-out example
+# write_path_blocklist_remove = [".git", ".mivia/mivia.toml"]  # opt-out example, against the list above
 
 # Timeouts (seconds).
 run_timeout_seconds = 900
@@ -613,7 +663,7 @@ redaction_placeholder = "[redacted]"
 # sandbox: an isolated filesystem and network namespace, so a command a
 # workflow or repair agent runs cannot touch the real host filesystem,
 # network, or credentials. This is a security boundary, not a convenience --
-# see .mivia/rules/10-security-privacy.md before turning it off.
+# see .agents/rules/10-security-privacy.md before turning it off.
 #
 # bwrap requires unprivileged user namespaces, which some hosts do not have
 # enabled (kernel/AppArmor restrictions, or bwrap not installed). Setting

@@ -20,7 +20,7 @@ var credentialKeyword = regexp.MustCompile(`(?i)bearer|api[_-]?key|passwd|passwo
 //
 // This walks the shipped sources and fails on any regexp literal that tries to
 // recognise a credential outside this package. Redaction is configuration; a
-// pattern in Go is a defect. See .mivia/rules/10-security-privacy.md.
+// pattern in Go is a defect. See .agents/rules/10-security-privacy.md.
 // isNestedCheckout reports whether dir is the root of a second checkout of this
 // module - a git worktree or a vendored clone - which carries a full copy of
 // every file here. A worktree root is marked by a .git entry.

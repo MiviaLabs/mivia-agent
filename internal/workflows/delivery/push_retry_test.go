@@ -11,14 +11,23 @@ import (
 )
 
 // countingGit fails the first failCount Run calls, then succeeds, and counts
-// every call.
+// every call. pushCalls counts only the branch-push calls, so assertions stay
+// exact even when the failure path runs additional diagnostic git calls (the
+// delivery commit inventory hint).
 type countingGit struct {
 	failCount int
 	calls     int
+	pushCalls int
 }
 
 func (g *countingGit) Run(ctx context.Context, gc GitContext, args ...string) (string, error) {
 	g.calls++
+	for _, a := range args {
+		if a == "push" {
+			g.pushCalls++
+			break
+		}
+	}
 	if g.calls <= g.failCount {
 		return "", errors.New("signal: killed: pre-push hook")
 	}
@@ -49,6 +58,9 @@ func TestPushDeliveryBranchRetriesTransientFailure(t *testing.T) {
 	if git.calls != maxPushAttempts {
 		t.Fatalf("git.Run calls = %d, want %d", git.calls, maxPushAttempts)
 	}
+	if git.pushCalls != maxPushAttempts {
+		t.Fatalf("push attempts = %d, want %d", git.pushCalls, maxPushAttempts)
+	}
 	rec, getErr := repo.GetDeliveryByIdempotencyKey(ctx, "key")
 	if getErr != nil || rec.Status != "pushed" {
 		t.Fatalf("record status = %q (err %v), want pushed", rec.Status, getErr)
@@ -68,8 +80,8 @@ func TestPushDeliveryBranchFailsAfterMaxAttempts(t *testing.T) {
 	if err := pushDeliveryBranch(ctx, repo, git, req, "key", "deadbeef", "tree", "diff", workflowledger.DeliveryRecord{}); err == nil {
 		t.Fatal("expected error after max attempts")
 	}
-	if git.calls != maxPushAttempts {
-		t.Fatalf("git.Run calls = %d, want %d", git.calls, maxPushAttempts)
+	if git.pushCalls != maxPushAttempts {
+		t.Fatalf("push attempts = %d, want %d", git.pushCalls, maxPushAttempts)
 	}
 	rec, getErr := repo.GetDeliveryByIdempotencyKey(ctx, "key")
 	if getErr != nil || rec.Status != "failed" {

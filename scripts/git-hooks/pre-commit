@@ -67,18 +67,6 @@ else
   GOFMT_SUMMARY="gofmt skipped"
 fi
 
-# Plan 76 (D6): keep a reviewable JSONL export in sync with the committed
-# sqlite memory database, in the same commit as any change to it, so the
-# size gate below sees the freshly staged export too. `go run` avoids a
-# dependency on a prebuilt ./mivia binary (pre-commit has no existing
-# mivia-build step to reuse).
-#
-# Dumps the STAGED blob (`git show :.mivia/memory.db`), not the working-tree
-# file - found in Step 5 hostile review: dumping the working-tree copy
-# directly would let a concurrent write to memory.db (another mivia session
-# saving a memory between `git add` and `git commit`, without re-staging)
-# produce a jsonl that describes content never actually staged, diverging
-# silently from the committed .db blob.
 # Auto-stage a modified .mivia/memory.db that the caller forgot to `git add`,
 # so every commit picks up the latest memory store instead of silently
 # leaving it behind. Only a working-tree modification to a tracked file is
@@ -88,38 +76,39 @@ if git diff --name-only --diff-filter=M -- .mivia/memory.db | grep -qx '\.mivia/
   git add -- .mivia/memory.db
 fi
 
-if git diff --cached --name-only --diff-filter=ACMR -z | tr '\0' '\n' | grep -qx '\.mivia/memory\.db'; then
-  DUMP_TMP="$(mktemp -d "${TMPDIR:-/tmp}/mivia-memory-dump.XXXXXX")"
-  # A self-contained trap: the later TMP_GATE_DIR cleanup() / trap (below)
-  # isn't defined yet at this point in the script, so this must not depend
-  # on it. Fires on any exit from this block, including `fail`'s exit 1.
-  trap 'rm -rf "$DUMP_TMP"' EXIT
-  mkdir -p "$DUMP_TMP/.mivia"
-  if ! git show ":.mivia/memory.db" >"$DUMP_TMP/.mivia/memory.db"; then
-    fail "could not read the staged .mivia/memory.db blob"
-  fi
-  if ! (cd "$ROOT" && go run ./cmd/mivia memory dump --workspace "$DUMP_TMP" >"$ROOT/.mivia/memory.jsonl"); then
-    fail "memory dump failed while staging .mivia/memory.db"
-  fi
-  rm -rf "$DUMP_TMP"
-  trap - EXIT
-  git add "$ROOT/.mivia/memory.jsonl"
+# Materialize the STAGED tree into a real directory and run every gate that
+# reads file content (as opposed to just a staged file LIST) against that
+# copy, not the live working tree. Several gates below (structure, size,
+# docs-ownership) read file bytes straight off disk by path even in their
+# "staged" mode - only the path LIST came from the index, the content came
+# from the working tree. A file with staged changes plus additional UNSTAGED
+# edits on top would silently be checked against content that was never
+# staged and will not be in the commit. Computed once here and reused for
+# the summary tree below - the index does not change again after this point.
+TREE="$(git write-tree)"
+STAGED_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/mivia-precommit-staged.XXXXXX")"
+if ! git archive "$TREE" | tar -x -C "$STAGED_ROOT"; then
+  rm -rf "$STAGED_ROOT"
+  fail "could not materialize the staged tree for isolated gates"
 fi
 
 # Independent read-only gates run together; wait preserves every diagnostic and
 # fails only after all results are collected, reducing serial gate latency.
 TMP_GATE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/mivia-precommit.XXXXXX")"
-cleanup() { rm -rf "$TMP_GATE_DIR"; }
+cleanup() { rm -rf "$TMP_GATE_DIR" "$STAGED_ROOT"; }
 trap cleanup EXIT
 run_gate() {
   local name="$1"; shift
   run_verify "$@" >"$TMP_GATE_DIR/$name.out" 2>&1 &
   printf '%s:%s\n' "$name" "$!" >>"$TMP_GATE_DIR/pids"
 }
-run_gate config python3 scripts/verify_agent_config.py
+run_gate config python3 "$STAGED_ROOT/scripts/verify_agent_config.py"
+# secret_scan.py --staged already reads staged blobs via `git show :path`, not
+# working-tree content, so it runs against the real repo unchanged - no
+# isolation copy needed for this one.
 run_gate secrets python3 scripts/secret_scan.py --staged
-run_gate size python3 scripts/git-hooks/file-size-check
-run_gate structure python3 scripts/check_go_structure.py --strict --staged
+run_gate size python3 scripts/git-hooks/file-size-check --dir "$STAGED_ROOT"
+run_gate structure python3 "$STAGED_ROOT/scripts/check_go_structure.py" --strict --worktree
 gate_status=0
 while IFS=: read -r name pid; do
   if ! wait "$pid"; then
@@ -135,7 +124,7 @@ mapfile -d '' STAGED_DOCS < <(
   git diff --cached --name-only --diff-filter=ACMR -z | tr '\0' '\n' | grep -E '^docs/' | tr '\n' '\0' || true
 )
 if ((${#STAGED_DOCS[@]})); then
-  run_verify python3 scripts/check_docs_ownership.py --staged
+  run_verify python3 "$STAGED_ROOT/scripts/check_docs_ownership.py"
 fi
 
 SEMGREP_SUMMARY="semgrep skipped (not installed)"
@@ -149,30 +138,28 @@ semgrep_engine_failure() {
   grep -qE 'semgrep-core exited with|Uncaught exn in Core_scan\.scan|engine was killed|Cannot allocate memory io_uring_queue_init' "$1"
 }
 if command -v semgrep >/dev/null 2>&1; then
-  if [[ -f semgrep/agent-standards.yml ]]; then
+  if [[ -f "$STAGED_ROOT/semgrep/agent-standards.yml" ]]; then
     SEMGREP_LOG="$TMP_GATE_DIR/semgrep.out"
-    if run_verify semgrep --validate --config semgrep/agent-standards.yml -j 1 >"$SEMGREP_LOG" 2>&1; then
-      mapfile -d '' STAGED_FILES < <(
-        git diff --cached --name-only --diff-filter=ACMR -z -- ':!semgrep/agent-standards.yml'
-      )
-      if ((${#STAGED_FILES[@]})); then
-        # -j 2 bounds semgrep-core's worker domains: on hosts with a low
-        # RLIMIT_MEMLOCK (containers, sandboxes) the default per-CPU worker
-        # count fails io_uring_queue_init with ENOMEM. Two workers scan any
-        # staged set reliably and the whole tree at an acceptable pace.
-        if run_verify semgrep --config semgrep/agent-standards.yml \
-            --error --skip-unknown-extensions --metrics off --disable-nosem -j 2 \
-            "${STAGED_FILES[@]}" >"$SEMGREP_LOG" 2>&1; then
-          SEMGREP_SUMMARY="staged semgrep 0 findings"
-        elif semgrep_engine_failure "$SEMGREP_LOG"; then
-          printf 'pre-commit: ⚠ semgrep engine unavailable (%s); staged scan skipped\n' "$(sed -n '1p' "$SEMGREP_LOG")" >&2
-          SEMGREP_SUMMARY="semgrep skipped (engine unavailable)"
-        else
-          cat "$SEMGREP_LOG" >&2
-          fail "semgrep scan failed (findings or error)"
-        fi
+    if run_verify semgrep --validate --config "$STAGED_ROOT/semgrep/agent-standards.yml" -j 1 >"$SEMGREP_LOG" 2>&1; then
+      # Scan the whole isolated staged-tree directory rather than an
+      # explicit file list: semgrep's own directory walk skips symlinks on
+      # its own (no manual filtering needed, unlike passing a symlink path
+      # directly), and every path in this directory is exactly what would
+      # be committed - no staged/unstaged distinction left to get wrong.
+      # -j 2 bounds semgrep-core's worker domains: on hosts with a low
+      # RLIMIT_MEMLOCK (containers, sandboxes) the default per-CPU worker
+      # count fails io_uring_queue_init with ENOMEM.
+      if run_verify semgrep --config "$STAGED_ROOT/semgrep/agent-standards.yml" \
+          --error --skip-unknown-extensions --metrics off --disable-nosem -j 2 \
+          --exclude semgrep/agent-standards.yml \
+          "$STAGED_ROOT" >"$SEMGREP_LOG" 2>&1; then
+        SEMGREP_SUMMARY="staged semgrep 0 findings"
+      elif semgrep_engine_failure "$SEMGREP_LOG"; then
+        printf 'pre-commit: ⚠ semgrep engine unavailable (%s); staged scan skipped\n' "$(sed -n '1p' "$SEMGREP_LOG")" >&2
+        SEMGREP_SUMMARY="semgrep skipped (engine unavailable)"
       else
-        SEMGREP_SUMMARY="semgrep validated (no staged scan targets)"
+        cat "$SEMGREP_LOG" >&2
+        fail "semgrep scan failed (findings or error)"
       fi
     elif semgrep_engine_failure "$SEMGREP_LOG"; then
       printf 'pre-commit: ⚠ semgrep engine unavailable (%s); validate skipped\n' "$(sed -n '1p' "$SEMGREP_LOG")" >&2
@@ -188,31 +175,34 @@ else
   printf 'pre-commit: semgrep not installed; staged scan skipped (pre-push requires it when config exists)\n' >&2
 fi
 
-# Invariant auto-detect: run area-specific tests for staged files.
-# Only runs if 'go' is available and at least one invariant area is staged.
+# Invariant auto-detect: run area-specific tests for staged files, against
+# the isolated staged tree (not the working tree) so an unstaged edit under
+# one of these packages cannot make a compiled/tested binary diverge from
+# what is actually being committed. Only runs if 'go' is available and at
+# least one invariant area is staged.
 INVARIANT_SUMMARY="invariants skipped"
 if command -v go >/dev/null 2>&1; then
   STAGED="$(git diff --cached --name-only --diff-filter=ACM)"
   INV_FAIL=0
   if echo "$STAGED" | grep -qE '^internal/cli/'; then
     echo " → Running TUI invariant tests..."
-    run_verify go test -run 'TestBridgePath|TestPollCmd|TestBridgeDrain|TestUIEventMsg|TestFinishStream|TestTUISmoke' ./internal/cli/ -count=1 -timeout=120s || INV_FAIL=1
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestBridgePath|TestPollCmd|TestBridgeDrain|TestUIEventMsg|TestFinishStream|TestTUISmoke' ./internal/cli/ -count=1 -timeout=120s) || INV_FAIL=1
   fi
   if echo "$STAGED" | grep -qE '^internal/tools/'; then
     echo " → Running tool invariant tests..."
-    run_verify go test -run 'TestToolSurface|TestRedactToolInput|TestSearchLocalSkips|TestSearchOpenAI' ./internal/tools/ -count=1 -timeout=60s || INV_FAIL=1
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestToolSurface|TestRedactToolInput|TestSearchLocalSkips|TestSearchOpenAI' ./internal/tools/ -count=1 -timeout=60s) || INV_FAIL=1
   fi
   if echo "$STAGED" | grep -qE '^internal/agent/'; then
     echo " → Running agent invariant tests..."
-    run_verify go test -run 'TestRedactToolInput|TestDelegateToolMultiStep|TestMultiStepHandler' ./internal/agent/ -count=1 -timeout=60s || INV_FAIL=1
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestRedactToolInput|TestDelegateToolMultiStep|TestMultiStepHandler' ./internal/agent/ -count=1 -timeout=60s) || INV_FAIL=1
   fi
   if echo "$STAGED" | grep -qE '^internal/chat/'; then
     echo " → Running chat invariant tests..."
-    run_verify go test -run 'TestSessionMessages' ./internal/chat/ -count=1 -timeout=60s || INV_FAIL=1
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestSessionMessages' ./internal/chat/ -count=1 -timeout=60s) || INV_FAIL=1
   fi
   if echo "$STAGED" | grep -qE '^internal/config/'; then
     echo " → Running config invariant tests..."
-    run_verify go test -run 'TestPrivacyRedact' ./internal/config/ -count=1 -timeout=60s || INV_FAIL=1
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestPrivacyRedact' ./internal/config/ -count=1 -timeout=60s) || INV_FAIL=1
   fi
   if ((INV_FAIL)); then
     fail "one or more invariant tests failed"
@@ -220,7 +210,6 @@ if command -v go >/dev/null 2>&1; then
   INVARIANT_SUMMARY="invariants ok"
 fi
 
-TREE="$(git write-tree)"
 printf 'tree=%s\nsummary=%s\n' \
   "$TREE" \
   "Quality: pre-commit passed (agent config, secret scan, docs when staged, whitespace, contract tests, ${SEMGREP_SUMMARY}; ${GOFMT_SUMMARY}; ${INVARIANT_SUMMARY})" \

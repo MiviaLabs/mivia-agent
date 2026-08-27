@@ -2,11 +2,13 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"reflect"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -87,9 +89,26 @@ func TestSummaryInjectionOneSummarizePerCompactionAcrossSteps(t *testing.T) {
 	if !ok {
 		t.Fatal("InjectedSummary reports no summary after an injected turn")
 	}
-	if !reflect.DeepEqual(committed, injected[0]) {
+	// injected[0] round-tripped through the SDK's message conversion on its
+	// way to the captured wire request; committed did not. That round trip is
+	// the ONLY source of divergence a bare DeepEqual would catch here (a nil
+	// ToolCalls becomes a non-nil empty slice), so both sides are normalized
+	// before comparing rather than asserting on an artifact of the SDK shape
+	// bridge.
+	if !reflect.DeepEqual(normalizeToolCalls(committed), normalizeToolCalls(injected[0])) {
 		t.Fatal("InjectedSummary differs from the injected memoized message")
 	}
+}
+
+// normalizeToolCalls returns a copy of m with a zero-length ToolCalls forced
+// to nil, so a nil-vs-empty-slice artifact of round-tripping a message
+// through the SDK's shape conversion does not fail a DeepEqual comparison
+// that only cares about the message's real content.
+func normalizeToolCalls(m provider.Message) provider.Message {
+	if len(m.ToolCalls) == 0 {
+		m.ToolCalls = nil
+	}
+	return m
 }
 
 // TestSummaryInjectionSecondCompactionResummarizesOnce pins the memo key: a
@@ -119,5 +138,164 @@ func TestSummaryInjectionSecondCompactionResummarizesOnce(t *testing.T) {
 	}
 	if !reflect.DeepEqual(injected[3], injected[2]) {
 		t.Fatal("step 4 summary differs from the second compaction's memoized message")
+	}
+}
+
+type sequenceSummaryProvider struct {
+	requests []contextmgr.SummaryRequest
+	errs     []error
+}
+
+func (p *sequenceSummaryProvider) Summarize(_ context.Context, request contextmgr.SummaryRequest) (contextmgr.Summary, error) {
+	idx := len(p.requests)
+	p.requests = append(p.requests, request)
+	if idx < len(p.errs) && p.errs[idx] != nil {
+		return contextmgr.Summary{}, p.errs[idx]
+	}
+	return contextmgr.Summary{
+		Version:     request.Input.Version,
+		Objective:   "summarized objective",
+		State:       request.Input.State,
+		SourceRange: request.SourceRange,
+	}, nil
+}
+
+func TestSummaryTransientFailureRetriesAcrossStepsThenStopsAtTheCap(t *testing.T) {
+	transient := &provider.TransientError{Err: errors.New("connection reset")}
+	summ := &capturingSummaryProvider{err: transient}
+	summarizer := summaryInjectSummarizer(t, summ)
+	completer := &nToolStepsCompleter{n: 3}
+	reg := tools.NewRegistry()
+	reg.Register(&writeFakeTool{name: "write_file"})
+	loop := &Loop{Completer: completer, Tools: reg}
+	probe := &stepKeyedCompactingProbe{compactOn: map[int]bool{1: true}}
+	if _, err := loop.Run(context.Background(), "question", summaryProbeOptions(t, &summarizer, probe, 100_000)); err != nil {
+		t.Fatal(err)
+	}
+	if len(completer.requests) != 4 {
+		t.Fatalf("requests=%d, want 4", len(completer.requests))
+	}
+	if len(summ.requests) != 4 {
+		t.Fatalf("Summarize calls=%d, want exactly 4 (2 deferred step attempts x 2 inline attempts)", len(summ.requests))
+	}
+	if anyRequestCarriesSummary(completer.requests) {
+		t.Fatal("transient-failed compaction still injected a summary")
+	}
+	if loop.SummaryFailureReason() != contextmgr.SummaryReasonTransport {
+		t.Fatalf("SummaryFailureReason = %q, want %q", loop.SummaryFailureReason(), contextmgr.SummaryReasonTransport)
+	}
+}
+
+func TestSummaryTransientFailureRecoversOnTheNextStep(t *testing.T) {
+	transient := &provider.TransientError{Err: errors.New("connection reset")}
+	summ := &sequenceSummaryProvider{
+		errs: []error{transient, transient},
+	}
+	summarizer := summaryInjectSummarizer(t, summ)
+	completer := &nToolStepsCompleter{n: 3}
+	reg := tools.NewRegistry()
+	reg.Register(&writeFakeTool{name: "write_file"})
+	loop := &Loop{Completer: completer, Tools: reg}
+	probe := &stepKeyedCompactingProbe{compactOn: map[int]bool{1: true}}
+	if _, err := loop.Run(context.Background(), "question", summaryProbeOptions(t, &summarizer, probe, 100_000)); err != nil {
+		t.Fatal(err)
+	}
+	if len(completer.requests) != 4 {
+		t.Fatalf("requests=%d, want 4", len(completer.requests))
+	}
+	if len(summ.requests) != 3 {
+		t.Fatalf("Summarize calls=%d, want exactly 3 (2 failed inline + 1 successful recovery)", len(summ.requests))
+	}
+	// Request 0 carried no summary; requests 1, 2, and 3 did.
+	if _, ok := findSummaryMessage(completer.requests[0].Messages); ok {
+		t.Fatal("request 0 unexpectedly carried a summary")
+	}
+	msg1, ok := findSummaryMessage(completer.requests[1].Messages)
+	if !ok {
+		t.Fatal("request 1 did not carry recovered summary")
+	}
+	msg2, ok := findSummaryMessage(completer.requests[2].Messages)
+	if !ok {
+		t.Fatal("request 2 did not carry recovered summary")
+	}
+	msg3, ok := findSummaryMessage(completer.requests[3].Messages)
+	if !ok {
+		t.Fatal("request 3 did not carry recovered summary")
+	}
+	if !reflect.DeepEqual(msg2, msg1) {
+		t.Fatal("request 2 summary differs from recovered memoized message")
+	}
+	if !reflect.DeepEqual(msg3, msg1) {
+		t.Fatal("request 3 summary differs from recovered memoized message")
+	}
+	if loop.SummaryFailureReason() != "" {
+		t.Fatalf("SummaryFailureReason = %q, want empty on recovery", loop.SummaryFailureReason())
+	}
+	if _, has := loop.InjectedSummary(); !has {
+		t.Fatal("InjectedSummary reported false after successful recovery")
+	}
+}
+
+func TestSummaryNonRetryableFailureIsNotReattemptedAcrossSteps(t *testing.T) {
+	malformed := fmt.Errorf("%w: bad json", contextmgr.ErrSummaryReplyMalformed)
+	summ := &capturingSummaryProvider{err: malformed}
+	summarizer := summaryInjectSummarizer(t, summ)
+	completer := &nToolStepsCompleter{n: 3}
+	reg := tools.NewRegistry()
+	reg.Register(&writeFakeTool{name: "write_file"})
+	loop := &Loop{Completer: completer, Tools: reg}
+	probe := &stepKeyedCompactingProbe{compactOn: map[int]bool{1: true}}
+	if _, err := loop.Run(context.Background(), "question", summaryProbeOptions(t, &summarizer, probe, 100_000)); err != nil {
+		t.Fatal(err)
+	}
+	if len(completer.requests) != 4 {
+		t.Fatalf("requests=%d, want 4", len(completer.requests))
+	}
+	if len(summ.requests) != 1 {
+		t.Fatalf("Summarize calls=%d, want exactly 1 for non-retryable error", len(summ.requests))
+	}
+	if loop.SummaryFailureReason() != contextmgr.SummaryReasonReplyMalformed {
+		t.Fatalf("SummaryFailureReason = %q, want %q", loop.SummaryFailureReason(), contextmgr.SummaryReasonReplyMalformed)
+	}
+}
+
+func TestSummaryOverBudgetDropReportsItsOwnReason(t *testing.T) {
+	summ := &capturingSummaryProvider{}
+	summarizer := summaryInjectSummarizer(t, summ)
+	completer := &capturingRequestCompleter{}
+	loop := &Loop{Completer: completer, Tools: tools.NewRegistry()}
+	if _, err := loop.Run(context.Background(), "question", summaryProbeOptions(t, &summarizer, &compactingPreparationProbe{compacted: true}, 400)); err != nil {
+		t.Fatal(err)
+	}
+	if anyRequestCarriesSummary(completer.requests) {
+		t.Fatal("over-budget summary was injected")
+	}
+	if loop.SummaryFailureReason() != contextmgr.SummaryReasonOverBudget {
+		t.Fatalf("SummaryFailureReason = %q, want %q", loop.SummaryFailureReason(), contextmgr.SummaryReasonOverBudget)
+	}
+}
+
+func TestSummaryFailureReasonClearsAfterALaterSuccessfulCompaction(t *testing.T) {
+	malformed := fmt.Errorf("%w: bad json", contextmgr.ErrSummaryReplyMalformed)
+	summ := &sequenceSummaryProvider{
+		errs: []error{malformed},
+	}
+	summarizer := summaryInjectSummarizer(t, summ)
+	completer := &nToolStepsCompleter{n: 3}
+	reg := tools.NewRegistry()
+	reg.Register(&writeFakeTool{name: "write_file"})
+	loop := &Loop{Completer: completer, Tools: reg}
+	probe := &stepKeyedCompactingProbe{compactOn: map[int]bool{1: true, 3: true}}
+	if _, err := loop.Run(context.Background(), "question", summaryProbeOptions(t, &summarizer, probe, 100_000)); err != nil {
+		t.Fatal(err)
+	}
+	if len(completer.requests) != 4 {
+		t.Fatalf("requests=%d, want 4", len(completer.requests))
+	}
+	if len(summ.requests) != 2 {
+		t.Fatalf("Summarize calls=%d, want 2 (1 failed on compaction 1, 1 succeeded on compaction 2)", len(summ.requests))
+	}
+	if loop.SummaryFailureReason() != "" {
+		t.Fatalf("SummaryFailureReason = %q, want empty after second compaction succeeded", loop.SummaryFailureReason())
 	}
 }

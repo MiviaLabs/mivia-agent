@@ -2,7 +2,7 @@
 """Verify the mivia agent control surface (lean, fail closed).
 
 Required:
-  AGENTS.md, .mivia/INDEX.md, rules, policies, hooks, semgrep, docs/OWNERS.yaml,
+  AGENTS.md, .agents/INDEX.md, rules, policies, hooks, semgrep, docs/OWNERS.yaml,
   Makefile targets referenced by AGENTS.md / install flow.
 """
 
@@ -152,7 +152,7 @@ def check_hook_events() -> None:
                 )
 
 
-# The session-tool catalog in internal/cli/session_tool_catalog.go is the
+# The session-tool catalog in internal/clichat/session_tool_catalog.go is the
 # single source of truth for the dispatcher-owned tools every root binding
 # advertises: the pinned wire tools[] array (advertisedToolSpecs) ships the
 # catalog as a tail after the core block, with load_tools gated on the binding
@@ -164,13 +164,13 @@ def check_hook_events() -> None:
 # session tool in the catalog automatically updates the exemption, and a
 # catalog that stops parsing fails closed instead of passing silently.
 def session_tool_catalog_names() -> set[str]:
-    path = ROOT / "internal" / "cli" / "session_tool_catalog.go"
+    path = ROOT / "internal" / "clichat" / "session_tool_catalog.go"
     if not path.is_file():
-        fail("missing internal/cli/session_tool_catalog.go")
+        fail("missing internal/clichat/session_tool_catalog.go")
     body = path.read_text(encoding="utf-8")
     block = re.search(r"sessionToolCatalog\s*=\s*\[\]sessionToolSpec\{(.*?)\n\}", body, re.S)
     if not block:
-        fail("could not parse sessionToolCatalog in internal/cli/session_tool_catalog.go")
+        fail("could not parse sessionToolCatalog in internal/clichat/session_tool_catalog.go")
     names = set(re.findall(r'Name:\s*"([a-z_]+)"', block.group(1)))
     if not names:
         fail("sessionToolCatalog parsed to an empty name set")
@@ -179,7 +179,7 @@ def session_tool_catalog_names() -> set[str]:
 
 # read_skill_resource is exempt alongside the catalog: it is injected per
 # skill activation (injectSkillResourceTool in
-# internal/cli/skill_resource_tool.go) into a skill-scoped clone, outside any
+# internal/clichat/skill_resource_tool.go) into a skill-scoped clone, outside any
 # core/deferred decision the tier split makes, so no root binding can defer it
 # either.
 NON_DEFERRABLE_TOOLS = session_tool_catalog_names() | {"read_skill_resource"}
@@ -216,6 +216,17 @@ def workspace_tool_names() -> set[str]:
     return found
 
 
+def check_agents_directory() -> list[Path]:
+    """Ensure .agents/agents exists and contains at least one *.md definition (fail-closed)."""
+    agents_dir = ROOT / ".agents" / "agents"
+    if not agents_dir.is_dir():
+        fail(".agents/agents: directory missing (fail-closed check)")
+    agent_files = [a for a in sorted(agents_dir.glob("*.md")) if a.name != "README.md"]
+    if not agent_files:
+        fail(".agents/agents: expected at least one *.md agent definition")
+    return agent_files
+
+
 def model_facing_prompts() -> list[tuple[str, str]]:
     """Prose the model is instructed by, as (source, text) pairs.
 
@@ -229,15 +240,18 @@ def model_facing_prompts() -> list[tuple[str, str]]:
     supersedes the compiled default for the session it binds.
     """
     out = []
-    for literal in re.findall(r"`([^`]*)`", text("internal/cli/prompt.go")):
-        out.append(("internal/cli/prompt.go", literal))
-    agents_dir = ROOT / ".mivia" / "agents"
-    if agents_dir.is_dir():
-        for agent in sorted(agents_dir.glob("*.toml")):
-            body = agent.read_text(encoding="utf-8")
-            rel = str(agent.relative_to(ROOT))
-            for literal in re.findall(r'system_prompt\s*=\s*"""(.*?)"""', body, re.S):
-                out.append((rel, literal))
+    for literal in re.findall(r"`([^`]*)`", text("internal/clichat/prompt.go")):
+        out.append(("internal/clichat/prompt.go", literal))
+    agent_files = check_agents_directory()
+    for agent in agent_files:
+        body = agent.read_text(encoding="utf-8")
+        rel = str(agent.relative_to(ROOT))
+        if body.startswith("---\n"):
+            end = body.find("\n---\n", 4)
+            if end != -1:
+                prompt_body = body[end + len("\n---\n"):].strip()
+                if prompt_body:
+                    out.append((rel, prompt_body))
     return out
 
 
@@ -309,7 +323,7 @@ def main() -> None:
     else:
         for rel in [
             "AGENTS.md",
-            ".mivia/INDEX.md",
+            ".agents/INDEX.md",
             ".mivia/policy/commit-message.json",
             ".mivia/policy/agent-hook-bypass.json",
             "docs/OWNERS.yaml",
@@ -336,9 +350,9 @@ def main() -> None:
             require_file(rel)
 
     # Rules surface
-    rules = list((ROOT / ".mivia" / "rules").glob("*.md")) if (ROOT / ".mivia" / "rules").is_dir() else []
+    rules = list((ROOT / ".agents" / "rules").glob("*.md")) if (ROOT / ".agents" / "rules").is_dir() else []
     if not rules:
-        fail(".mivia/rules: expected at least one *.md rule file")
+        fail(".agents/rules: expected at least one *.md rule file")
 
     # Executable hooks
     for rel in [
@@ -375,11 +389,11 @@ def main() -> None:
         fail("AGENTS.md must not set product binary to mivia-agent")
 
     # INDEX.md hooks/surface pointers
-    if (ROOT / ".mivia" / "INDEX.md").is_file():
-        index = text(".mivia/INDEX.md")
+    if (ROOT / ".agents" / "INDEX.md").is_file():
+        index = text(".agents/INDEX.md")
         for needle in [".githooks", "semgrep", "docs/OWNERS.yaml", "scripts/"]:
             if needle not in index:
-                fail(f".mivia/INDEX.md: missing {needle}")
+                fail(f".agents/INDEX.md: missing {needle}")
 
     # Policies
     commit = json.loads(text(".mivia/policy/commit-message.json"))
@@ -438,6 +452,43 @@ def main() -> None:
     for scope in pr_scopes:
         if not isinstance(scope, str) or not scope.strip():
             fail(f".mivia/policy/pr-title.toml: title.scopes must contain only non-empty strings, got {scope!r}")
+    # pr-title.toml's own header says it "mirrors the repo's own commit
+    # convention" - enforce that literally, not just by prose. A scope valid
+    # for a commit but rejected for its PR title (or vice versa) sends a
+    # repair loop into an unwinnable retry: this is the live bug that burned
+    # run wfr-W55NJLGNPF4HVM63's whole delivery-repair budget on scope
+    # "events", which commit-message.json allowed and pr-title.toml did not.
+    pr_scope_set = set(pr_scopes)
+    commit_scope_set = set(scopes)
+    if pr_scope_set != commit_scope_set:
+        missing = sorted(commit_scope_set - pr_scope_set)
+        extra = sorted(pr_scope_set - commit_scope_set)
+        detail = []
+        if missing:
+            detail.append(f"missing from pr-title.toml: {missing}")
+        if extra:
+            detail.append(f"present in pr-title.toml but not commit-message.json: {extra}")
+        fail(
+            "pr-title.toml title.scopes must match commit-message.json scopes exactly "
+            f"({'; '.join(detail)})"
+        )
+    pr_types_match = re.search(r"\(\?P<type>([^)]+)\)", pattern)
+    if not pr_types_match:
+        fail(".mivia/policy/pr-title.toml: title.pattern must name a (?P<type>...) group")
+    pr_types = pr_types_match.group(1).split("|")
+    commit_types = commit.get("types") or []
+    if set(pr_types) != set(commit_types):
+        missing = sorted(set(commit_types) - set(pr_types))
+        extra = sorted(set(pr_types) - set(commit_types))
+        detail = []
+        if missing:
+            detail.append(f"missing from pr-title.toml pattern: {missing}")
+        if extra:
+            detail.append(f"present in pr-title.toml pattern but not commit-message.json: {extra}")
+        fail(
+            "pr-title.toml title.pattern's type group must match commit-message.json types exactly "
+            f"({'; '.join(detail)})"
+        )
     # Positive-integer bounds with min <= max, when present. The delivery
     # engine treats an absent (or zero/negative) bound as UNLIMITED, so a
     # policy may omit a field; a present value must be a sane positive
@@ -551,9 +602,12 @@ def main() -> None:
             if rule_id not in sg:
                 fail(f"semgrep/agent-standards.yml: missing {rule_id}")
 
-    # Skill frontmatter when skills exist
-    skills_dir = ROOT / ".mivia" / "skills"
-    if skills_dir.is_dir():
+    # Skill frontmatter when skills exist. .agents/skills is the shared
+    # cross-tool mirror; .mivia/skills is the copy the compiled mivia binary
+    # itself loads at runtime (internal/workspace.SkillsDir). Both are checked
+    # so the two mirrors cannot silently diverge.
+    skill_dirs = [d for d in (ROOT / ".agents" / "skills", ROOT / ".mivia" / "skills") if d.is_dir()]
+    for skills_dir in skill_dirs:
         for skill_path in sorted(skills_dir.glob("*/SKILL.md")):
             body = skill_path.read_text(encoding="utf-8")
             name = skill_path.parent.name
@@ -632,6 +686,7 @@ def main() -> None:
                             f"{skill_path.relative_to(ROOT)}: trigger entry is empty"
                         )
 
+    check_agents_directory()
     check_core_tier_covers_prompted_tools()
 
     print("verify_agent_config: ok")

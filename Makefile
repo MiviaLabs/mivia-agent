@@ -19,8 +19,9 @@ VERSION_LDFLAGS := -X $(VERSION_PKG).Commit=$(COMMIT) -X $(VERSION_PKG).Dirty=$(
 
 .PHONY: help install-hooks hooks verify verify-agent pre-commit pre-push \
 	secret-scan docs-check semgrep semgrep-validate semgrep-test \
-	hook-test agent-hook-test structure-check commit-check go-check verify-go test test-changed race vet build tidy fmt fmt-check \
-	validate-invariants invariants mutation-coverage diff-coverage verifier-integration smoke release release-test
+	hook-test agent-hook-test test-quality structure-check import-layers-check commit-check go-check verify-go test test-changed race vet build tidy fmt fmt-check \
+	validate-invariants invariants mutation diff-coverage verifier-integration smoke release release-test \
+	prose-check ui-demo ui-demo-json ui-themes
 
 help:
 	@printf '%s\n' \
@@ -28,6 +29,7 @@ help:
 		'  make install-hooks     Install repo Git hooks for this clone' \
 		'  make verify            Run all offline local quality gates' \
 		'  make verify-agent      Validate agent adapter surface' \
+		'  make test-quality      Inspect Go test quality and anti-fake-work gates' \
 		'  make validate-invariants  Verify all test refs in .mivia/invariants.md exist' \
 		'  make invariants        Run all invariant tests (TUI, agent, security)' \
 		'  make pre-commit        Run the committed pre-commit hook' \
@@ -35,6 +37,7 @@ help:
 		'  make secret-scan       Scan working tree for secrets (offline)' \
 		'  make docs-check        Check adapter/docs ownership' \
 		'  make structure-check   Go LOC/function limits + 500 KiB file-size' \
+		'  make import-layers-check  Internal import-edge policy (allow/deny/cap)' \
 		'  make semgrep           Run repo Semgrep policy scan (if installed)' \
 		'  make semgrep-validate  Validate Semgrep config (if installed)' \
 		'  make semgrep-test      Run Semgrep rule contract tests' \
@@ -44,7 +47,8 @@ help:
 		'  make verify-go         go-check + diff-coverage over ONE instrumented suite run' \
 		'  make test              go test ./...' \
 		'  make invariants        Run invariant tests (TUI, agent, security)' \
-		'  make mutation-coverage Explore mutation test readiness for core packages' \
+		'  make mutation           Run a real mutation sweep (PKG=internal/... required)' \
+		'  make prose-check        Scan for leaked audit labels, banned names, and prose gates (informational)' \
 		'  make diff-coverage    Self-test the gate, then fail if changed Go lines are untested' \
 		'  make race              go test -race ./...' \
 		'  make vet               go vet ./...' \
@@ -53,7 +57,10 @@ help:
 		'  make release-test      Check release and installer contracts' \
 		'  make tidy              go mod tidy' \
 		'  make fmt               gofmt -w tracked Go files' \
-		'  make smoke             Fast workflow-engine smoke suite'
+		'  make smoke             Fast workflow-engine smoke suite' \
+		'  make ui-demo           Replay the new-UI testdata fixture through the plain renderer' \
+		'  make ui-demo-json      Same fixture through the --output json renderer' \
+		'  make ui-themes         Print every theme: roles, a diff pair, the status set, at truecolor/256/16/no-colour'
 
 install-hooks hooks:
 	@scripts/install_git_hooks.sh
@@ -69,11 +76,18 @@ install-hooks hooks:
 # still runs on main and macOS in CI, and standalone via `make
 # verifier-integration`.
 verify: verify-agent docs-check release-test secret-scan structure-check \
-	semgrep-validate semgrep-test hook-test agent-hook-test \
-	validate-invariants semgrep verify-go
+	import-layers-check semgrep-validate semgrep-test hook-test agent-hook-test \
+	test-quality validate-invariants semgrep verify-go
+	@python3 scripts/check_mutation.py --probe
+	@python3 scripts/check_mutation.py --staged
 
-verify-agent:
+verify-agent: agents-check
 	@python3 scripts/verify_agent_config.py
+
+test-quality:
+	@echo "Checking test quality and fake-test prevention..."
+	@python3 scripts/test_check_test_quality.py
+	@python3 scripts/check_test_quality.py --diff
 
 validate-invariants:
 	@echo "Validating invariant test references in .mivia/invariants.md..."
@@ -89,6 +103,9 @@ secret-scan:
 structure-check:
 	@python3 scripts/git-hooks/file-size-check --tracked
 	@python3 scripts/check_go_structure.py --strict --all
+
+import-layers-check:
+	@python3 scripts/check_import_layers.py
 
 commit-check:
 	@python3 scripts/git-hooks/check-commit-subject "$(MSG)"
@@ -112,6 +129,7 @@ semgrep-validate:
 
 semgrep-test:
 	@python3 scripts/test_semgrep_rules.py
+	@python3 scripts/check_semgrep_probes.py
 
 # Bound worker domains because default per-CPU workers can fail with
 # io_uring_queue_init (ENOMEM) under a low RLIMIT_MEMLOCK.
@@ -136,6 +154,11 @@ agent-hook-test:
 	@python3 scripts/test_docs_ownership.py
 	@python3 scripts/test_check_provider_docs.py
 	@python3 scripts/test_secret_scan.py
+	@python3 scripts/test_check_mutation.py
+	@python3 scripts/test_check_labels.py
+	@python3 scripts/test_check_names.py
+	@python3 scripts/test_check_prose.py
+	@python3 scripts/test_import_layers.py
 
 pre-commit:
 	@.githooks/pre-commit
@@ -144,13 +167,13 @@ pre-push:
 	@.githooks/pre-push
 
 fmt:
-	@files=(); while IFS= read -r file; do files+=("$$file"); done < <(git ls-files '*.go' 2>/dev/null || true); \
-	if (($${#files[@]}==0)); then while IFS= read -r file; do files+=("$$file"); done < <(find cmd internal -name '*.go' 2>/dev/null || true); fi; \
+	@files=(); while IFS= read -r file; do [[ -f "$$file" ]] && files+=("$$file"); done < <(git ls-files '*.go' 2>/dev/null || true); \
+	if (($${#files[@]}==0)); then while IFS= read -r file; do [[ -f "$$file" ]] && files+=("$$file"); done < <(find cmd internal -name '*.go' 2>/dev/null || true); fi; \
 	if (($${#files[@]})); then gofmt -w "$${files[@]}"; fi
 
 fmt-check:
-	@files=(); while IFS= read -r file; do files+=("$$file"); done < <(git ls-files '*.go' 2>/dev/null || true); \
-	if (($${#files[@]}==0)); then while IFS= read -r file; do files+=("$$file"); done < <(find cmd internal -name '*.go' 2>/dev/null || true); fi; \
+	@files=(); while IFS= read -r file; do [[ -f "$$file" ]] && files+=("$$file"); done < <(git ls-files '*.go' 2>/dev/null || true); \
+	if (($${#files[@]}==0)); then while IFS= read -r file; do [[ -f "$$file" ]] && files+=("$$file"); done < <(find cmd internal -name '*.go' 2>/dev/null || true); fi; \
 	if (($${#files[@]})); then \
 		unformatted="$$(gofmt -l "$${files[@]}")"; \
 		if [[ -n "$$unformatted" ]]; then \
@@ -159,10 +182,48 @@ fmt-check:
 		fi; \
 	fi
 
+
 go-check: fmt-check
 	@go test ./...
 	@go vet ./...
 	@go build -ldflags "$(VERSION_LDFLAGS)" -o $(BINARY) $(CMD_PKG)
+
+# verify-fast is the Go-only subset of verify: gofmt + vet + tests + build +
+# diff-coverage, without the agent-config / docs / secrets / structure /
+# import-layers / semgrep / hook-test gates. Use it for tight iteration when
+# the only thing that changed is Go code; the full `make verify` still runs
+# on every push.
+verify-fast: verify-go
+
+# agents-check validates the four subagent role files under
+# .agents/agents/: required frontmatter keys, name matches filename, tools
+# list non-empty, and a Disallowed operations section is present. The
+# script is stdlib-only and exits non-zero with the exact failure list.
+agents-check:
+	@python3 scripts/check_agents.py
+
+# skills-move is a one-time migration target: when the canonical skill
+# home moves (today from .mivia/skills/ to .agents/skills/), this target
+# performs the copy, verifies the destination, and removes the source.
+# It is idempotent: running it twice when the source is already gone is
+# a clean no-op. After the migration lands, this target stays as the
+# documented procedure if the home ever has to move again.
+skills-move:
+	@src=.mivia/skills; dst=.agents/skills; claude_dst=.claude/skills; \
+	if [ ! -d "$$src" ]; then \
+		echo "skills-move: $$src already absent, nothing to do"; \
+	else \
+		mkdir -p "$$dst" "$$claude_dst"; \
+		for d in "$$src"/*/; do \
+			[ -d "$$d" ] || continue; \
+			name=$$(basename "$$d"); \
+			rm -rf "$$dst/$$name" "$$claude_dst/$$name"; \
+			cp -r "$$d" "$$dst/$$name"; \
+			cp -r "$$d" "$$claude_dst/$$name"; \
+		done; \
+		rm -rf "$$src"; \
+		echo "skills-move: copied $$(ls $$dst | wc -l) skill(s) to $$dst and $$claude_dst"; \
+	fi
 
 # verify-go is go-check plus the diff-coverage gate over ONE instrumented run
 # of the suite. The two used to be separate full runs of the same tests: an
@@ -194,14 +255,35 @@ verifier-integration:
 	@go test -tags=integration ./internal/workflows/verifier
 
 invariants:
-	@echo "Running all invariant tests..."
-	@go test -run '.*' ./... -count=1 -timeout=180s
-	@go test -run 'TestHelpReflowsAfterResize|TestStatusAndFleetSnapshotPolicy|TestDialog|TestBlockOverlayPreservesLongLines|TestSessionsDialogUsesAvailableRows|TestStatusDialogOverflowPolicy|TestModal|TestAsyncPasteDroppedWhileModalOpens|TestBridge|TestTuiTickMsg|TestFinishStream|TestPollCmd|TestUIEventMsg|TestTUISmoke|TestStreamBridge|TestSearchOpenAI|TestToolSurface|TestDelegateToolMultiStep|TestRedactToolInput|TestMultiStepHandler|TestLoopRejectsDispatcherToolMissingFromVisibleRegistry|TestSearchLocalSkips|TestGrepNestedAndGlob|TestIsSecretPath|TestBlockEnvRead|TestSessionMessages|TestPrivacyRedact|TestPromptGeneric|TestGenericSurface|TestTuiTickMsgStress|TestStreamBridgeConcurrent|TestBridgeConcurrent|TestEmptyContentTools|TestShortInterim|TestInterimAssistantBecomesChatBubble|TestCancelKeeps|TestCancelBefore|TestInterimRejected|TestInterimAccepted|TestPushInterimGates|TestShouldFollow|TestAwaitingFirst|TestToolStatusLine|TestToolVerbMap|TestFollowPreserves|TestNoteUserScrolled|TestJumpToLatest|TestCancelThenTurnEnd|TestReconstructStatus|TestClassicUI|TestWorkGroup|TestFindWorkGroups|TestScrollAccept|TestScrollProg|TestScrollPTY|TestMouseAvailable|TestNewTUIModel_Mouse|TestScrollIndicator_Glyph|TestPaintRaster|TestRunHandle|TestResumeRefusesRunHeldByAnotherExecutor|TestResumeReleasesClaimOnError|TestClaimReleasedOnRunCompletion|TestClaimReleasedAfterHolderClose|TestSpawn|TestMemoryBackendClaimIsExclusive|TestCancelRunCannotCancelForeignRun|TestUnauthorizedAndUnknownAreIndistinguishable|TestTaskDepthPropagates|TestRunID|TestModelVisibleOutputRefResolves|TestModelVisibleErrorRefResolves|TestReferenceHasSingleMinter|TestStoreContentFailureBlocksRef|TestResultReferencesUseCanonicalFullDigest|TestLedgerRead|TestListRunEvents|TestLedgerToolsAreUnprivilegedAndReachSubAgents|TestListEventsRestoresKindAfterProjectionRebuild|TestSessionToolSurface|TestLedgerReference|TestLedgerParseReference|TestLedgerMalformedReference|TestModelVisibleRefsOmittedWhenContentWriteFailed|TestModelVisibleRefsUseCanonicalFullDigest|TestStoredResultRefsFallsBackToCanonicalMinting|TestDispatcherFailureOmitsUnstoredRefs|TestDispatchTasksErrorEnvelopeOmitsUnstoredReference|TestDelegateReturnsOutputWhenContentStoreFails|TestRecoveredFailedTaskWithoutRefStillReportsError|TestListEventsToleratesUndecodablePayload|TestListEventsPreserveOriginalTimestampAcrossRebuild|TestAppendEventStampsBeforeMarshalling|TestListEventsOrderedBySequenceUnderTiedTimestamps|TestLegacyRowWithoutTimestampFallsBackToReadInstant|TestMemoryCreateRunPreservesSuppliedCreatedAt|TestMemoryCreateRunStampsWhenUnstamped|TestMemoryAppendEventStampsOnlyUnstampedEvents|TestProjectionStateIncludesTimestampsAcrossRebuild|TestDeletedRunDoesNotResurrectInNextProcess|TestDeleteRunKeepsChangesCursorMonotonic|TestDeleteRunConvergesInASecondReader|TestDeleteRunAllowsSameIDToBeRecreatedAndCaughtUp|TestDeleteRunLeavesContentUntouched|TestDeleteRunOnMemoryBackend|TestRecoverDoesNotReportDeletedRunAsInterrupted|TestSharedContentRefSurvivesOneRunDeletion|TestContentStoreIsNeverReclaimed|TestTruncateUTF8|TestLoadMarkdown|TestPromptRendersFromDefinitionTriggers|TestNoHardcodedLegacyNamespace|TestNamespaceNameSingleSourced|TestResume|TestNoMessageLoss|TestLoopFallsBack|TestWelcomeJKNav|TestWelcomeCtrlD|TestToolPanel|TestSlashHelp|TestCtrlMDoesNotToggleMouse|TestPaste|TestMultilinePaste|TestClipboardRead|TestCtrlVFailure|TestCopyAck|TestCopyLargeText|TestCopyRightClickAck|TestYankKeyCopies|TestCtrlCCopiesOnly|TestRightClickCopies|TestOSC52|TestCtrlCCopies|TestCtrlCClears|TestCtrlCArms|TestCtrlCArm|TestCtrlCDuring|TestCtrlCCancelsWith|TestCtrlQQuitsFrom|TestSelectMode|TestCtrlEIsLineEnd|TestSelectSlash|TestWelcomeCtrlQ|TestIntegration_QuitAfterCancel|TestKeyRegistry|TestHelpIsGenerated|TestRegisteredChatKeys|TestForbiddenKeys|TestEveryBoundKeyIsRegistered|TestQueuedSelect|TestWelcomeSelect|TestCopyFallsBack|TestCopyDuringTurn|TestArmNotice|TestEndMovesCaret|TestRunDashboard|TestInterruptedRunReport|TestFormatListedRuns|TestRecoverClassifies|TestDispatcherFail|TestDispatchTasksHangingTask|TestDispatchOrchestrationBudget|TestPoolCancelStillReports|TestPoolRecordsBlockedTask|TestAnalyzer|TestReferences|TestFindReferences|TestSameObject|TestZAIError|TestEveryDefaultToolHasARecordedResultSizeDecision|TestWorstCaseWorkspaceToolOutputStaysWithinBudget|TestDeclaredBudgetsAreCoveredByTheDerivedCeiling|TestRegression_ListDir|TestRegression_Glob|TestRegression_WriteFile|TestIntegration_Large|TestReadClass|TestRegression_Tavily|TestSearchRefuses|TestSearchReturnsUnderBound|TestExtractRefuses|TestExtractReturnsUnderBound|TestSearchBudgetRefusal|TestKeylessRegistry|TestKeyedRegistry|TestTavilyResponseBudgetDefault|TestMaxTavilyResponseBytes|TestWireBound|TestSearchFreeEngine|TestExtractEmptyContentPath|TestSearchResultContentSurvives|TestFreeEngineSnippet|TestPerToolCeiling|TestUndeclaredToolGetsFloorDerivedCeiling|TestExplicitPolicyCapsEveryPerToolCeiling|TestNonToolKindsUseThePolicyCeiling|TestBareRegisterKeepsThePolicyCeiling|TestConcurrentRegisterToolAndInvoke|TestOutputCeilingFailureNamesTheToolAndTheCeiling|TestRegisteredToolCeilingMatchesTheRegistryResolvedTool|TestScopedDispatcherDerivesPerToolCeilings|TestScopedDispatcherWithoutParentDerivesPerToolCeilings|TestSessionToolCeilingsAreFloorDerived|TestModelCatalog|TestIntegrationModelBinding|TestIntegrationLoadBuildsBindingBeforeHistory|TestIntegrationPlainTurn|TestIntegrationAgentPreflight|TestOneShotHandlerPreflight|TestMultiStepHandlerCarries|TestWorkspaceAgentsAlwaysLoad|TestDefaultAgentIsMiviaWhenPresent|TestWorkspaceGlobalSettingsIgnored|TestGateKeepsUserMeaningWhenWorkspaceIsHome|TestWorkspaceAgentsRefusedWhenWorkspaceIsHome|TestAgentSkillsKeyParsed|TestSkillToolsParsedAndPublished|TestSkillToolsEmptyListIsNonNilEmpty|TestAgentSkillAllowlist_OmittedAllowsAll|TestAgentSkillAllowlist_EmptyAllowsNone|TestAgentSkillsInherited|TestUnknownSkillRejected|TestWorkspaceSkillCannotShadowUserBinding|TestWorkspaceGateRequired|TestUserSkillSurvivesProjectShadowWhenWorkspaceGateOff|TestAgentSkillAllowlist_PerInstance|TestSkillCannotBypassAgentSelection|TestSkillToolsSubsetOfAgentTools|TestConcurrentAgentSkillInstances|TestAgentSkillBindingSurvivesModelSwitch|TestResumeRechecksAgentAccess|TestSkillToolsSubsetNonVacuousFixture|TestNewSessionDispatcher_SkillScopeGatesRegistration|TestAgentSymlinkFileRefused|TestAgentHardlinkRefused|TestAgentResolve_ToolsAddExtendsParent|TestResolve_EvalOrder|TestValidateAgainstCatalogue_UnknownToolName|TestAgentResolve_EmptyToolsetRefused|TestWorkspaceAgentCannotShadowUserAgent|TestUserGuardrailsCannotBeLoosenedByWorkspaceAgent|TestAgentDescriptionSanitized|TestAllToolNamesMatchesFullRegistry|TestScopedRegistry|TestMandatoryDenylistMatchesPrivilegedMarker|TestMandatoryDenylist_RootExempt_SpawnedFiltered|TestWorkspaceSystemPromptStrippedWhenGateOff|TestUserConfigSystemPromptAlwaysLoaded|TestWorkspaceSkillHandlersNotRegisteredWhenGateOff|TestWorkspaceSkillHandlersRegisteredWhenGateOn|TestRootSession_AgentFlag|TestRootScopedRegistry_AfterAttach|TestAgentScopedLoopCannotWriteFile|TestAgentNameCollidesWithSkill|TestIntegrationModelDialog|TestDispatcherAgreesWithSessionRegistryAfterAttach|TestDeliverRemoteBaseForwardAdvanced|TestDeliverRemoteBaseRewrittenRefused|TestDeliverDeliveryFailedReentry|TestWorkflowDeliverReopensDeliveryFailed|TestStorageRepository_TakeoverFencesBoundOldWriter|TestIntegrationClaimFencesWorkflowMutation|TestWorkflowDeliverClaimFencing|TestMemoryBackendClaimIsExclusive|TestInvocationKeyAdmitsOneRunAcrossSQLiteRepositories|TestDispatcherAgreesAfterAgentSwitch|TestPrefixIdentity|TestSwitchBindingEmitsPrefixReset|TestPublishAgentSurfaceEmitsPrefixReset|TestPrefixReset|TestDeferredIndexUnchangedAcrossAdmissions|TestRenderStepPrompt|TestChatTurnRequestBody|TestOpenSQLite' ./... -count=1 -timeout=180s
+	@echo "Running all invariant tests dynamically from .mivia/invariants.md..."
+	@python3 scripts/validate_invariants.py --run
 	@echo ""
 	@python3 scripts/invariant_coverage.py
 
-mutation-coverage:
-	@python3 scripts/mutation_coverage.py
+# Real mutation sweep against one package (slow: builds+tests a mutant per
+# site). PKG is required, e.g. `make mutation PKG=internal/agent`. Exploratory
+# by default (no floor); `--all-core` sweeps the default CORE_PACKAGES set.
+# The fast self-test (planted fixtures, no real sweep) runs in `make verify`
+# via `check_mutation.py --probe`.
+mutation:
+	@python3 scripts/check_mutation.py --pkg $(PKG)
+
+mutation-check:
+	@echo "Checking mutation kill-rate floors across configured packages in .mivia/policy/mutation/..."
+	@python3 scripts/check_mutation.py --check-floors
+
+
+# Informational, not part of `make verify`: check_labels.py and check_prose.py
+# currently flag pre-existing content (this repo's docs legitimately embed
+# durable correction/decision-reference IDs like C1/S3/INV-AG-12, and several
+# docs exceed the 25-word sentence cap), and check_names.py flags legitimate
+# domain vocabulary (PanelPhase, Backup(), versioned schema files) alongside
+# real hits. Run standalone to see current findings; wiring into verify is
+# blocked on a cleanup pass and tighter false-positive scoping.
+prose-check:
+	@python3 scripts/check_labels.py
+	@python3 scripts/check_names.py
+	@python3 scripts/check_prose.py
 
 # DIFF_COVERAGE_PROFILE lets a caller that already ran the instrumented suite
 # (verify-go) hand its profile over instead of paying for a second full run.
@@ -234,6 +316,20 @@ vet:
 
 build:
 	@go build -ldflags "$(VERSION_LDFLAGS)" -o $(BINARY) $(CMD_PKG)
+
+# ui-demo/ui-demo-json/ui-themes drive cmd/mivia-ui-demo, the throwaway
+# Phase 1 demo binary for the new terminal UI (internal/uikit, internal/ui):
+# offline, no API key, no network, no harness - replays testdata/ fixtures.
+# Not part of `make verify`; these are for a human to look at.
+# NO_COLOR=1 / TERM=dumb: prefix the invocation, e.g. `NO_COLOR=1 make ui-themes`.
+ui-demo:
+	@go run ./cmd/mivia-ui-demo stream
+
+ui-demo-json:
+	@go run ./cmd/mivia-ui-demo json
+
+ui-themes:
+	@go run ./cmd/mivia-ui-demo themes $(if $(THEME),--theme $(THEME)) $(if $(TIER),--tier $(TIER))
 
 release:
 	@scripts/release.sh

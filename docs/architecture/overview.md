@@ -28,11 +28,11 @@ Config: TOML + env file for secrets. See `docs/product/config.md`.
 
 Two distinct agent concepts, both covered below:
 
-- **The root agent** is one file-backed definition (`.mivia/agents/*.toml`)
+- **The root agent** is one file-backed definition (`.agents/agents/*.md`)
   selected for a session - system prompt, tool scope, model, skill allowlist.
   See [Agent definition pipeline](#agent-definition-pipeline).
 - **Sub-agents** are concurrent DAG tasks the root agent spawns and manages
-  through the coordinator - `spawn_agent`, `inspect_agents`, `join_run`,
+  through the coordinator - `dispatch_tasks`, `inspect_agents`, `join_run`,
   `cancel_run`. They run as in-process goroutines, not OS processes. See
   [Subagent Orchestration](#subagent-orchestration).
 
@@ -41,8 +41,8 @@ Two distinct agent concepts, both covered below:
 File-backed agent configuration follows a bounded four-stage path:
 
 1. The config layer reads the trusted user `[agents]` controls and parses one
-   strict TOML definition per file from `~/.mivia/agents/` and
-   `<workspace>/.mivia/agents/`.
+   strict TOML definition per file from `~/.agents/agents/` and
+   `<workspace>/.agents/agents/`.
 2. Discovery attaches user/workspace provenance, gives same-name user files
    precedence, and always discovers workspace agent files. The user gate is
    applied later to workspace prompts and project skill handlers.
@@ -63,10 +63,17 @@ prompts, tool sets, and content stay outside that event identity.
 
 ## Provider transport retry
 
-Every built-in provider (DeepSeek, OpenRouter, z.ai, Ollama, LLM Gateway) is an `OpenAICompat`
+Every OpenAICompat provider (DeepSeek, OpenRouter, z.ai, Ollama, LLM Gateway, LLM Proxy CLI, MiniMax) is an `OpenAICompat`
 client, and all of them share one retry boundary: `retryRoundTripper` in
 `internal/provider`. There is no retry logic in the CLI, session, agent loop, or
 any provider factory, and retry is not user-configurable.
+
+Anthropic is not an `OpenAICompat` client - its native Messages API request and
+response shapes are structurally different from the OpenAI-compatible chat/
+completions shape the providers above share, so `internal/provider/anthropic.go`
+implements `Completer` directly rather than wrapping `OpenAICompat`. It still
+shares the same `retryRoundTripper` transport and the same five-attempt budget
+described below; only the request/response encoding differs.
 
 The budget is **five attempts per outbound transport exchange**: one request
 plus four retries. It is scoped to a single `RoundTrip`. A stream fallback,
@@ -173,7 +180,7 @@ The Coordinator interface is larger than a Spawn/Inspect/Join/Cancel summary sug
 ```mermaid
 flowchart TD
     subgraph Model["Model (LLM)"]
-        model_ops["spawn_agent / inspect_agents / join_run / cancel"]
+        model_ops["dispatch_tasks / inspect_agents / join_run / cancel_run"]
     end
 
     subgraph Coordinator["Coordinator (interface)"]
@@ -202,6 +209,7 @@ flowchart TD
 |-----------|---------|------|
 | `Coordinator` interface | `internal/coordinator` | Public API: Spawn/Inspect/Join/Cancel, retry policy, lifecycle subscriptions |
 | `RunHandle` | `internal/coordinator` | Opaque handle to an active run; safe for concurrent use |
+| `Engine` / `ClaimsTracker` | `internal/ledgercore` | Shared ledger coordination core: claim tracking, watermarks, sequencing, concurrency locks |
 | `LedgerRepository` interface | `internal/ledger` | Storage boundary: 20 methods for run/task/event CRUD with CAS, including run-claim leasing (`ClaimRun`, `ReleaseRun`, `ClearRunClaim`) |
 | `LeaseRepository` interface | `internal/ledger` | Separate, narrower storage boundary holding only `TakeoverExpiredRunClaim` |
 | `MemoryLedgerRepository` | `internal/ledger` | In-memory backend with RWMutex, defensive copies - default for ephemeral sessions |
@@ -209,6 +217,8 @@ flowchart TD
 | `DisplayNameGenerator` | `internal/ledger` | Unique human-readable agent names (e.g. "agent-7"), collision-safe |
 | `MetricsAdapter` | `internal/events` | Per-kind event counts and handler timing |
 | `Diagnostics` | `internal/cli` | ListRuns, ActiveHandles, MetricsSnapshot (privacy-safe operator views) |
+| `OutputFormatter` | `internal/ui/render` | Formats raw tool outputs (commands, search, files, ledger, JSON) into structured transcript lines |
+| `SettingsScreen` | `internal/ui/screen/settings` | Settings modal for provider, automation, agent, and MCP configuration via `ports.Settings` |
 
 ### Lifecycle
 

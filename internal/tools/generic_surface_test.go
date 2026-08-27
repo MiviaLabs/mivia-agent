@@ -16,7 +16,7 @@ import (
 // mivia is a host coding agent used in any repo; the tool surface must not
 // teach models that this product is Go-only (or any single ecosystem).
 //
-// Rule: .mivia/rules/60-tools-project-language-generic.md
+// Rule: .agents/rules/60-tools-project-language-generic.md
 
 // languageBiasPatterns are substrings/regexes that encode a preferred
 // host language or this product's own stack in tool schemas/descriptions.
@@ -106,7 +106,7 @@ func assertNoLanguageBias(t *testing.T, texts map[string]string) {
 		}
 	}
 	if len(failures) > 0 {
-		t.Fatalf("tool surface must be project/language-generic (see .mivia/rules/60-tools-project-language-generic.md):\n  %s",
+		t.Fatalf("tool surface must be project/language-generic (see .agents/rules/60-tools-project-language-generic.md):\n  %s",
 			strings.Join(failures, "\n  "))
 	}
 }
@@ -154,15 +154,16 @@ func TestExampleAllowlistIsMultiEcosystem(t *testing.T) {
 // No allowlist compiled in means an unconfigured workspace runs nothing and
 // does not advertise run_command at all. That is the documented posture; assert
 // it so it cannot regress into a built-in.
-func TestUnconfiguredAllowlistRunsNothing(t *testing.T) {
+func TestUnconfiguredWorkspaceAdvertisesRunCommandWithBuiltinAllowlist(t *testing.T) {
 	ws, err := workspace.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	reg := NewDefaultRegistry(DefaultOptions{Workspace: ws})
-	// With an empty allowlist, run_command must not be registered at all.
-	if _, ok := reg.Get("run_command"); ok {
-		t.Fatal("unconfigured workspace must not advertise run_command")
+	// With no [tools] run_allowlist configured, run_command is still
+	// registered - DefaultRunAllowlist makes it open by default.
+	if _, ok := reg.Get("run_command"); !ok {
+		t.Fatal("unconfigured workspace must advertise run_command (built-in allowlist)")
 	}
 }
 

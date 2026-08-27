@@ -63,6 +63,11 @@ func checkReasoningIsDeliverable(provider string, model ModelSpec) error {
 			"model %q declares reasoning_efforts but its reasoning_dialect is %q, which sends nothing",
 			model.Name, reasoning.DialectNone)
 	}
+	if !reasoning.CanCarryDialect(provider, dialect) {
+		return fmt.Errorf(
+			"model %q sets reasoning_dialect %q but provider %q has no native transport for it",
+			model.Name, dialect, provider)
+	}
 	return checkDialectCanGradeTheSet(model, dialect)
 }
 

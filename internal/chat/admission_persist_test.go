@@ -292,21 +292,39 @@ func stageForCurrentTurn(t *testing.T, sess *Session, names ...string) {
 	}
 }
 
-// TestErroredContextTurnDropsItsStage: a turn whose history is discarded must
-// not leave an admission behind that the user never saw take effect.
-func TestErroredContextTurnDropsItsStage(t *testing.T) {
+// TestErroredContextTurnPublishesItsStageOnceCommitted: an errored turn whose
+// history still commits durably (finishErroredContextTurn's
+// OutcomeUpstreamErr path) publishes its pending admission exactly like a
+// successful turn does - if the history is durably committed, the admission
+// decision made against that history is committed too. This matches the
+// legacy (non-context) path's commitPreparedTurn, which already publishes on
+// any successful persistence regardless of turnErr. This test previously
+// asserted the opposite (admission must never publish on an errored turn),
+// which reintroduced a cross-backend inconsistency the context path had
+// already fixed once (commit 9fd44789) and then silently regressed.
+func TestErroredContextTurnPublishesItsStageOnceCommitted(t *testing.T) {
 	sess := agentTurnSession(t, &fakeCompleter{err: errors.New("provider down")})
 	contextSessionManager(t, sess, nil)
-	sess.SetSurfaceWidener(func([]string, AgentSurfacePublication) (bool, error) {
-		t.Error("an errored turn published an admission")
-		return false, nil
+	widened := false
+	sess.SetSurfaceWidener(func(names []string, _ AgentSurfacePublication) (bool, error) {
+		widened = true
+		if len(names) != 1 || names[0] != "grep" {
+			t.Fatalf("widened names = %v, want [grep]", names)
+		}
+		return true, nil
 	})
 	stageForNextTurn(t, sess, "grep")
 	if _, err := sess.SendUser(context.Background(), "question", io.Discard); err == nil {
 		t.Fatal("expected the provider error to surface")
 	}
+	if !widened {
+		t.Fatal("errored-but-committed turn did not publish its staged admission")
+	}
 	if _, ok := sess.PendingAdmission(); ok {
-		t.Fatal("an errored turn left its stage pending")
+		t.Fatal("a published stage must not still be pending")
+	}
+	if got := sess.AdmittedTools(); len(got) != 1 || got[0] != "grep" {
+		t.Fatalf("admitted = %v, want [grep]", got)
 	}
 }
 

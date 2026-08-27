@@ -100,3 +100,5 @@ $base = "https://github.com/MiviaLabs/mivia-agent/releases/download/$Version"
 finally {
   Remove-Item -Recurse -Force -Path $temp -ErrorAction SilentlyContinue
 }
+
+Write-Output 'Run `mivia chat` to get started - it configures your first provider on first use.'

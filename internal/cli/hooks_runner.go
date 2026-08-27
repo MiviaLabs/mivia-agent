@@ -2,141 +2,26 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 
+	"github.com/MiviaLabs/mivia-agent/internal/composition"
 	"github.com/MiviaLabs/mivia-agent/internal/hooks"
+	"github.com/MiviaLabs/mivia-agent/internal/hooksession"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 )
 
-// hookPolicyFuncs returns the dispatcher's lifecycle-hook fields, or nils when
-// no hook is configured at all.
-//
-// Nil is not an optimisation, it is the contract: with no hooks configured the
-// dispatcher does one nil compare per invocation and behaves exactly as it did
-// before this layer existed. The funcs read the session at call time rather than
-// closing over the groups, so what /hooks lists is what the next tool call runs
-// without a dispatcher rebuild.
+// hookPolicyFuncs delegates to composition.HookPolicyFuncs, wiring in this
+// session's live hook state. Thin wrapper only: the hook-execution logic
+// (nil-when-unconfigured contract, verdict parsing, run recording) lives in
+// internal/composition/dispatcher.go now; this func only supplies the
+// session accessors composition needs and holds no logic of its own.
 func hookPolicyFuncs(workspaceRoot string) (
 	func(context.Context, runtime.Request) runtime.HookVerdict,
 	func(context.Context, runtime.Request, runtime.Result) runtime.HookResult,
 ) {
-	if workspaceRoot == "" || !hookSessionConfigured() {
-		return nil, nil
-	}
-	runner := hooks.Runner{WorkspaceRoot: workspaceRoot}
-	pre := func(ctx context.Context, req runtime.Request) runtime.HookVerdict {
-		outcome := runHookEvent(ctx, runner, hooks.EventPreToolUse, req)
-		return runtime.HookVerdict{
-			Denied:  outcome.Denied,
-			Reason:  outcome.Reason,
-			Context: outcome.Context,
-			Runs:    hookRunsFor(outcome),
-		}
-	}
-	post := func(ctx context.Context, req runtime.Request, _ runtime.Result) runtime.HookResult {
-		outcome := runHookEvent(ctx, runner, hooks.EventPostToolUse, req)
-		return runtime.HookResult{Context: outcome.Context, Runs: hookRunsFor(outcome)}
-	}
-	return pre, post
-}
-
-// hookRunsFor translates the hook layer's execution records into the runtime's
-// display type. The two are separate types on purpose: internal/runtime imports
-// internal/hooks nowhere, and a shared struct would be the import that starts.
-func hookRunsFor(outcome hooks.Outcome) []runtime.HookRun {
-	if len(outcome.Runs) == 0 {
-		return nil
-	}
-	runs := make([]runtime.HookRun, 0, len(outcome.Runs))
-	for _, run := range outcome.Runs {
-		runs = append(runs, runtime.HookRun{
-			Event:   string(run.Event),
-			Program: run.Program,
-			Denied:  run.Denied,
-			Output:  run.Output,
-			Warning: run.Warning,
-		})
-	}
-	return runs
-}
-
-// runStopHookEvent fires Stop hooks for a completed ROOT turn and returns their
-// output as an attributed continuation prompt.
-//
-// Stop is pure observation: it has no denial channel at all, so a Stop hook can
-// log a turn's cost and can never affect whether the turn ended.
-//
-// Scope, stated rather than assumed: KindTurnEnd's only publish site is the
-// root TUI turn goroutine (internal/cli/tui_events.go), so Stop fires once per
-// user-visible turn and never per subagent turn - a per-subagent Stop would run
-// N times and its "the assistant is done" semantics would be false every time
-// but the last. The same fact bounds the feature: the classic --plain REPL and
-// the -p one-shot never publish KindTurnEnd, so Stop does not fire there. That
-// is a seam gap, not a design choice, and it is recorded here rather than
-// papered over. PreToolUse and PostToolUse do fire on those surfaces; Stop is
-// the one event a -p run silently does without.
-//
-// The context is the turn's own, deliberately not a detached one. A canceled
-// turn therefore does not run its Stop hook, and the run is RECORDED rather
-// than skipped silently - detaching would make Ctrl-C wait out the hook's
-// timeout before the cancelled footer appeared.
-func runStopHookEvent(ctx context.Context, workspaceRoot, sessionID, turnID string) string {
-	session := currentHookSession()
-	groups := session.runnable()
-	if len(groups) == 0 {
-		return ""
-	}
-	outcome := hooks.Runner{WorkspaceRoot: workspaceRoot}.Run(ctx, groups, hooks.Payload{
-		Event:     hooks.EventStop,
-		SessionID: sessionID,
-		TurnID:    turnID,
+	return composition.HookPolicyFuncs(composition.DispatcherInput{
+		WorkspaceRoot:    workspaceRoot,
+		HooksConfigured:  hooksession.Configured(),
+		HookGroups:       func() []hooks.Group { return hooksession.Current().RunnableGroups() },
+		NoteHookWarnings: func(w []string) { hooksession.Current().NoteRunWarnings(w) },
 	})
-	session.noteRunWarnings(outcome.Warnings)
-	return outcome.Context
 }
-
-func runHookEvent(ctx context.Context, runner hooks.Runner, event hooks.Event, req runtime.Request) hooks.Outcome {
-	session := currentHookSession()
-	groups := session.runnable()
-	if len(groups) == 0 {
-		return hooks.Outcome{}
-	}
-	outcome := runner.Run(ctx, groups, hooks.Payload{
-		Event:      event,
-		Tool:       req.Name,
-		Input:      req.Input,
-		SessionID:  req.SessionID,
-		TurnID:     req.TurnID,
-		ToolCallID: req.ID,
-		File:       hookFileFromInput(req.Input),
-	})
-	// Warnings are recorded rather than printed. A tool call runs on its own
-	// goroutine while the TUI owns the terminal, so writing to stderr here would
-	// garble the screen mid-render; /hooks reports them instead.
-	session.noteRunWarnings(outcome.Warnings)
-	return outcome
-}
-
-// hookFileFromInput extracts the path a tool is acting on, for MIVIA_FILE.
-//
-// It reads a top-level string "path" and nothing else - deliberately not a
-// search through nested structures. The value is exported through the
-// environment and never spliced into an argv, so a filename containing shell
-// syntax is inert either way; a narrow, predictable rule is what lets a hook
-// author reason about when the variable is set.
-func hookFileFromInput(input json.RawMessage) string {
-	if len(input) == 0 {
-		return ""
-	}
-	var fields struct {
-		Path string `json:"path"`
-	}
-	if err := json.Unmarshal(input, &fields); err != nil {
-		return ""
-	}
-	return fields.Path
-}
-
-// warnHookLoad surfaces startup-time hook diagnostics.
-func formatHookWarning(warning string) string { return fmt.Sprintf("warning: %s", warning) }

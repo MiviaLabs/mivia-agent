@@ -98,8 +98,13 @@ func Join(storeDir string, sess *chat.Session, sink Sink) *Handle {
 	return &Handle{cancel: cancel}
 }
 
+// lockFilePath is the single source for the hub's election lock path -
+// shared with TryAcquireMaintenanceLock (maintenance_lock.go) so ordinary hub
+// ownership and maintenance exclusivity can never target different files.
+func lockFilePath(storeDir string) string { return filepath.Join(storeDir, "hub.lock") }
+
 func membershipLoop(ctx context.Context, storeDir string, sess *chat.Session, sink Sink) {
-	lockPath := filepath.Join(storeDir, "hub.lock")
+	lockPath := lockFilePath(storeDir)
 	for ctx.Err() == nil {
 		if lock, ok := tryAcquireLock(lockPath); ok {
 			runAsOwner(ctx, storeDir, lock, sess, sink)

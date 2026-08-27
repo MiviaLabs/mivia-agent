@@ -12,11 +12,20 @@ import (
 // split delivery: the SAME subject that just passed both the PR-title and
 // commit-message policy checks (a host-invented subject is not guaranteed to
 // satisfy an arbitrary workspace's commit-msg hook - wrong type/scope shape,
-// too long), plus a body naming the deferred follow-up. This commit is never
-// pushed on the delivered branch, so it never goes through
-// validateDeliveryCommitSubject itself.
-func deferredCommitMessage(title string, deferredCount int) string {
-	return buildCommitMessage(title, fmt.Sprintf("deferred: %d file(s) split from this chunk's delivery (automatic follow-up)", deferredCount))
+// too long), plus a body naming the deferred follow-up and the SAME
+// policy-rendered body the delivered commit carries. The rendered body is
+// load-bearing: a subject type that requires trailers (for example a fix
+// commit in a workspace whose commit-msg hook demands Regression/Class/Sweep
+// lines) must still pass the hook on this follow-up commit, and the body is
+// the only place the trailers can come from. This commit is never pushed on
+// the delivered branch, so it never goes through validateDeliveryCommitSubject
+// itself.
+func deferredCommitMessage(title, body string, deferredCount int) string {
+	note := fmt.Sprintf("deferred: %d file(s) split from this chunk's delivery (automatic follow-up)", deferredCount)
+	if strings.TrimSpace(body) == "" {
+		return buildCommitMessage(title, note)
+	}
+	return buildCommitMessage(title, note+"\n\n"+strings.TrimSpace(body))
 }
 
 // freshDeliveryCommitSplit stages and commits everything EXCEPT deferred,
@@ -29,6 +38,12 @@ func deferredCommitMessage(title string, deferredCount int) string {
 func freshDeliveryCommitSplit(ctx context.Context, repo ledger.Repository, git GitRunner, req Request, key, diffRef string, deferred []string, title, body string) (string, string, error) {
 	if _, err := git.Run(ctx, req.GitCtx, "-c", "core.fsmonitor=false", "add", "-A"); err != nil {
 		markFailed(ctx, repo, key, req, err)
+		return "", "", err
+	}
+	// Guard: a deferred-file split must never separate a file from its test
+	// companion - the repair agent declared this split, so refuse it before
+	// any commit (see guardDeferredSplitConsistency).
+	if err := guardDeferredSplitConsistency(ctx, git, req, deferred); err != nil {
 		return "", "", err
 	}
 	resetArgs := append([]string{"reset", "--"}, deferred...)
@@ -69,10 +84,23 @@ func freshDeliveryCommitSplit(ctx context.Context, repo ledger.Repository, git G
 	}
 
 	// Second commit: deferred_files only, child of the delivered commit.
+	// Pass bodyText (already resolved with the empty-render fallback above)
+	// so the follow-up body matches the delivered commit body.
+	if err := commitDeferredFollowUp(ctx, git, req, deferred, title, head, bodyText); err != nil {
+		markFailed(ctx, repo, key, req, err)
+		return "", "", err
+	}
+	return head, adoptedTree, nil
+}
+
+// commitDeferredFollowUp commits the deferred files as a SECOND commit on the
+// delivered branch, saves that commit under the deferred branch name, and
+// resets the worktree back to the delivered commit - so deferred's content is
+// preserved but never reachable from the branch that gets pushed next.
+func commitDeferredFollowUp(ctx context.Context, git GitRunner, req Request, deferred []string, title, head, body string) error {
 	addArgs := append([]string{"-c", "core.fsmonitor=false", "add", "--"}, deferred...)
 	if _, err := git.Run(ctx, req.GitCtx, addArgs...); err != nil {
-		markFailed(ctx, repo, key, req, err)
-		return "", "", fmt.Errorf("cannot stage deferred_files for the follow-up commit: %w", err)
+		return fmt.Errorf("cannot stage deferred_files for the follow-up commit: %w", err)
 	}
 	// Reuse the SAME subject that just passed both the PR-title and
 	// commit-message policy checks above - a host-invented subject (for
@@ -82,25 +110,31 @@ func freshDeliveryCommitSplit(ctx context.Context, repo ledger.Repository, git G
 	// validateDeliveryCommitSubject itself since it is never pushed on the
 	// delivered branch. Reusing title sidesteps that entirely: it is
 	// proven-valid, and per-workspace commit-msg hooks generally do not
-	// reject a repeated subject.
-	deferredMsg := deferredCommitMessage(title, len(deferred))
+	// reject a repeated subject. The BODY is the same policy-rendered body
+	// the delivered commit used, so trailers the hook demands (for example
+	// Regression/Class/Sweep on a fix commit) are present here too.
+	bodyText, err := req.Policy.RenderCommitMessage(req.Inputs)
+	if err != nil {
+		return fmt.Errorf("cannot render commit message for the deferred follow-up: %w", err)
+	}
+	if strings.TrimSpace(bodyText) == "" {
+		bodyText = body
+	}
+	deferredMsg := deferredCommitMessage(title, bodyText, len(deferred))
 	if _, err := git.Run(ctx, req.GitCtx, "-c", "core.fsmonitor=false",
 		"-c", "user.name="+mviaCommitAuthorName, "-c", "user.email="+mviaCommitAuthorEmail,
 		"commit", "--allow-empty-message", "-m", deferredMsg); err != nil {
-		markFailed(ctx, repo, key, req, err)
-		return "", "", fmt.Errorf("cannot commit deferred_files: %w", err)
+		return fmt.Errorf("cannot commit deferred_files: %w", err)
 	}
 	// Save the deferred commit under its own branch, then reset the current
 	// worktree back to the delivered commit: the branch about to be pushed
 	// must never carry deferred_files.
 	branch := DeferredBranchName(req.Branch)
 	if _, err := git.Run(ctx, req.GitCtx, "branch", "-f", branch, "HEAD"); err != nil {
-		markFailed(ctx, repo, key, req, err)
-		return "", "", fmt.Errorf("cannot save the deferred follow-up branch: %w", err)
+		return fmt.Errorf("cannot save the deferred follow-up branch: %w", err)
 	}
 	if _, err := git.Run(ctx, req.GitCtx, "reset", "--hard", head); err != nil {
-		markFailed(ctx, repo, key, req, err)
-		return "", "", fmt.Errorf("cannot restore the worktree to the delivered commit: %w", err)
+		return fmt.Errorf("cannot restore the worktree to the delivered commit: %w", err)
 	}
-	return head, adoptedTree, nil
+	return nil
 }

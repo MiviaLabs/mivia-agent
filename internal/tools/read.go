@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 	"unicode/utf8"
 
@@ -33,23 +34,21 @@ func (t *readFileTool) ResultBudgetBytes() int { return t.maxBytes }
 func (t *readFileTool) Name() string { return "read_file" }
 func (t *readFileTool) Description() string {
 	return "Read a text file by relative workspace path. " +
-		"Params: path (required), optional offset (1-based start line), optional limit (max lines). " +
-		"Use offset+limit for large files or excerpts. Do not pass file content, encoding, or other agent-style fields. " +
-		"Prefer this over run_command for reading files."
+		"Use offset+limit for large files or excerpts. Do not pass extra fields (content, encoding, etc.)."
 }
 func (t *readFileTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{
 		"path": map[string]any{
 			"type":        "string",
-			"description": "Relative path to the file (required)",
+			"description": "Relative path to the file",
 		},
 		"offset": map[string]any{
 			"type":        "integer",
-			"description": "1-based line number to start reading (default 1). Use with limit for large files.",
+			"description": "1-based line number to start reading (default 1)",
 		},
 		"limit": map[string]any{
 			"type":        "integer",
-			"description": "Maximum number of lines to return (default: all, capped by max read size).",
+			"description": "Max lines to return (default: all, capped by max read size)",
 		},
 	}, []string{"path"})
 }
@@ -82,10 +81,19 @@ func (t *readFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		return "", dropIfGone(abs, err)
 	}
 
-	// Full-file path: small files only.
+	// Full-file path: whole content when it fits the budget. An oversized
+	// file is paginated, not refused. The window path already emits an
+	// honest "lines X–Y of Z" header and a continuation offset, so the agent
+	// gets usable content plus the exact next call. Refusing instead cost a
+	// round trip the agent could only answer by re-calling with the offset
+	// and limit this branch can supply itself.
 	if in.Offset <= 1 && in.Limit <= 0 {
 		if t.maxBytes > 0 && st.Size() > int64(t.maxBytes) {
-			return "", fmt.Errorf("file too large (%d bytes; max %d). Re-call with offset and limit to read a line window", st.Size(), t.maxBytes)
+			out, err := t.readLineWindow(ctx, abs, 1, 0)
+			if err == nil {
+				refreshFileObservation(abs)
+			}
+			return out, dropIfGone(abs, err)
 		}
 		data, err := readFileWithContext(ctx, abs)
 		if err != nil {
@@ -122,7 +130,12 @@ func (t *readFileTool) readLineWindow(ctx context.Context, abs string, offset, l
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
+	// Ownership of f passes to collectWindowLines below, which closes it
+	// exactly once via scanLinesWithContext's producer goroutine - no defer
+	// here, matching scanLinesWithContext's documented closer contract
+	// (fs_guard.go): closing a file out from under an in-flight blocking
+	// Read on another goroutine is a close-during-read + fd-reuse hazard, so
+	// the closer must be owned by whichever goroutine actually runs Scan().
 
 	sc := bufio.NewScanner(f)
 	buf := make([]byte, 0, 64*1024)
@@ -137,7 +150,7 @@ func (t *readFileTool) readLineWindow(ctx context.Context, abs string, offset, l
 	}
 	sc.Buffer(buf, scannerMax)
 
-	lines, totalLines, err := t.collectWindowLines(ctx, sc, offset, limit)
+	lines, totalLines, err := t.collectWindowLines(ctx, sc, f, offset, limit)
 	if err != nil {
 		if err == bufio.ErrTooLong {
 			// The scanner enforces the larger of max and cap(buf)
@@ -174,27 +187,36 @@ func (t *readFileTool) readLineWindow(ctx context.Context, abs string, offset, l
 // stays honest for the "… lines X–Y of Z" header. Peak collection is bounded
 // by maxBytes plus one line (≤ the scanner's enforced max token size),
 // independent of file size. maxBytes<=0 (uncapped) is untouched.
-func (t *readFileTool) collectWindowLines(ctx context.Context, sc *bufio.Scanner, offset, limit int) ([]string, int, error) {
+//
+// The scan itself runs through scanLinesWithContext (fs_guard.go) rather
+// than a bare `for sc.Scan()` loop: sc.Scan() blocks on the underlying Read
+// with no way to interrupt it from outside, so a stalled or slow read could
+// previously hang past ctx cancellation (ctx.Err() was only checked between
+// completed Scan() calls). closer is the file handle backing sc; ownership
+// passes fully into scanLinesWithContext here, which closes it exactly once
+// from its producer goroutine after the scan ends - callers of
+// collectWindowLines must not also close it.
+func (t *readFileTool) collectWindowLines(ctx context.Context, sc *bufio.Scanner, closer io.Closer, offset, limit int) ([]string, int, error) {
 	var windowLines []string
 	collectedBytes := 0
 	budgetExhausted := false
 	lineNo := 0
-	for sc.Scan() {
-		if err := ctx.Err(); err != nil {
-			return nil, lineNo, err
-		}
+	err := scanLinesWithContext(ctx, sc, closer, func(line string) (bool, error) {
 		lineNo++
 		if lineNo >= offset && (limit <= 0 || len(windowLines) < limit) {
 			if t.maxBytes > 0 && budgetExhausted {
-				continue
+				return false, nil
 			}
-			line := sc.Text()
 			windowLines = append(windowLines, line)
 			collectedBytes += len(line)
 			if t.maxBytes > 0 && collectedBytes > t.maxBytes {
 				budgetExhausted = true
 			}
 		}
+		return false, nil
+	})
+	if err != nil {
+		return nil, lineNo, err
 	}
 	return windowLines, lineNo, sc.Err()
 }
@@ -218,9 +240,14 @@ func (t *readFileTool) formatWindow(lines []string, offset, totalLines int) (str
 		need := len(prefix) + len(line) + 1
 		if t.maxBytes > 0 && totalBytes+need > t.maxBytes {
 			if b.Len() == 0 {
-				return "", fmt.Errorf("line %d exceeds max read size (%d bytes)", num, t.maxBytes)
+				// A single line wider than the whole budget cannot be paged:
+				// there is no smaller window to fall back to. Name the escape
+				// hatch instead of just refusing.
+				return "", fmt.Errorf("line %d exceeds max read size (%d bytes); read a narrower window with limit, or search the file with grep", num, t.maxBytes)
 			}
-			fmt.Fprintf(&b, "\n... truncated at max read size (%d bytes)", t.maxBytes)
+			lastNum := offset + formatted - 1
+			nextOffset := offset + formatted
+			fmt.Fprintf(&b, "\n... truncated at max read size (%d bytes; line %d of %d). Call read_file with offset=%d to read the next window", t.maxBytes, lastNum, totalLines, nextOffset)
 			break
 		}
 		if b.Len() > 0 {

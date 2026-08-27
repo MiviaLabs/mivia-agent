@@ -2,10 +2,10 @@ package ledger
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/ledgercore"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
@@ -83,12 +83,7 @@ type rebuildState struct {
 func RebuildProjection(events []storage.Event) (Projection, error) {
 	ordered := make([]storage.Event, len(events))
 	copy(ordered, events)
-	sort.Slice(ordered, func(i, j int) bool {
-		if ordered[i].RowID != ordered[j].RowID {
-			return ordered[i].RowID < ordered[j].RowID
-		}
-		return ordered[i].Sequence < ordered[j].Sequence
-	})
+	ledgercore.SortEvents(ordered)
 
 	var proj Projection
 	st := &rebuildState{

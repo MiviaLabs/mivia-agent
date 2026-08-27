@@ -299,3 +299,97 @@ func FuzzTruncateMiddleProperties(f *testing.F) {
 		}
 	})
 }
+
+// TestTruncateMiddlePrefixAndSuffixAreDisjoint pins the audited "overlap"
+// edge for middle-ellipsis placement: when truncation happens, the head and
+// tail must come from DISJOINT byte ranges of the input, so TruncateMiddle
+// never duplicates content. The check is independent of the implementation's
+// split arithmetic - it compares byte offsets in the original string, asserts
+// the head is a prefix and the tail a suffix, and verifies the result fills
+// maxLen runes exactly with the marker.
+func TestTruncateMiddlePrefixAndSuffixAreDisjoint(t *testing.T) {
+	inputs := []string{
+		"abcdefghij",
+		"héllo wörld",
+		"日本語テキスト",
+		"a🙂b🙂c🙂d",
+	}
+	for _, s := range inputs {
+		n := utf8.RuneCountInString(s)
+		for maxLen := 3; maxLen < n; maxLen++ {
+			got := TruncateMiddle(s, maxLen)
+			head, tail, ok := strings.Cut(got, middleMarker)
+			if !ok {
+				t.Fatalf("TruncateMiddle(%q, %d) = %q, missing marker", s, maxLen, got)
+			}
+			if !strings.HasPrefix(s, head) || !strings.HasSuffix(s, tail) {
+				t.Fatalf("TruncateMiddle(%q, %d) = %q, head %q is not a prefix or tail %q is not a suffix of the input",
+					s, maxLen, got, head, tail)
+			}
+			headEnd := len(head)
+			tailStart := len(s) - len(tail)
+			if headEnd > tailStart {
+				t.Fatalf("TruncateMiddle(%q, %d) = %q, head [0,%d) overlaps tail [%d,%d): content duplicated",
+					s, maxLen, got, headEnd, tailStart, len(s))
+			}
+			if utf8.RuneCountInString(got) != maxLen {
+				t.Fatalf("TruncateMiddle(%q, %d) = %q, rune count %d != maxLen",
+					s, maxLen, got, utf8.RuneCountInString(got))
+			}
+			if !utf8.ValidString(got) {
+				t.Fatalf("TruncateMiddle(%q, %d) = %q, not valid UTF-8", s, maxLen, got)
+			}
+		}
+	}
+}
+
+// TestTruncateMiddleZeroAndOneRuneBudgets pins the zero/one-char budget edge:
+// maxLen 0, 1 and 2 never emit the marker, keep only leading runes, and never
+// split a multi-byte rune.
+func TestTruncateMiddleZeroAndOneRuneBudgets(t *testing.T) {
+	cases := []struct {
+		s      string
+		maxLen int
+		want   string
+	}{
+		{"日本語", 0, ""},
+		{"日本語", 1, "日"},
+		{"日本語", 2, "日本"},
+		{"a🙂b", 1, "a"},
+		{"a🙂b", 2, "a🙂"},
+		{"éa🙂b", 1, "é"},
+		{"éa🙂b", 2, "éa"},
+	}
+	for _, c := range cases {
+		got := TruncateMiddle(c.s, c.maxLen)
+		if got != c.want {
+			t.Errorf("TruncateMiddle(%q, %d) = %q, want %q", c.s, c.maxLen, got, c.want)
+		}
+		if strings.Contains(got, middleMarker) {
+			t.Errorf("TruncateMiddle(%q, %d) = %q, must not contain the marker below 3 runes", c.s, c.maxLen, got)
+		}
+		if !utf8.ValidString(got) {
+			t.Errorf("TruncateMiddle(%q, %d) = %q, not valid UTF-8", c.s, c.maxLen, got)
+		}
+	}
+}
+
+// TestTruncateMiddleMultiByteNeverSplit pins the multi-byte edge across every
+// rune budget: cuts between 2-, 3- and 4-byte runes never produce invalid
+// UTF-8 and never exceed the rune budget.
+func TestTruncateMiddleMultiByteNeverSplit(t *testing.T) {
+	inputs := []string{"🙂é日a", "é🙂日b", "日é🙂c"}
+	for _, s := range inputs {
+		n := utf8.RuneCountInString(s)
+		for maxLen := 1; maxLen <= n; maxLen++ {
+			got := TruncateMiddle(s, maxLen)
+			if !utf8.ValidString(got) {
+				t.Fatalf("TruncateMiddle(%q, %d) = %q, not valid UTF-8", s, maxLen, got)
+			}
+			if utf8.RuneCountInString(got) > maxLen {
+				t.Fatalf("TruncateMiddle(%q, %d) = %q, rune count %d exceeds budget",
+					s, maxLen, got, utf8.RuneCountInString(got))
+			}
+		}
+	}
+}

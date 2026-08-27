@@ -11,15 +11,13 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/verifier"
 )
 
-func deadlineWorkflow(t *testing.T) *compiler.CompiledWorkflow {
+func deadlineWorkflow(t *testing.T) *definition.CompiledWorkflow {
 	t.Helper()
-	wf, err := compiler.Compile(&definition.WorkflowFile{
+	wf, err := definition.Compile(&definition.WorkflowFile{
 		Version: 1, Name: "deadline", InitialStep: "work",
 		Steps:       []definition.Step{{ID: "work", Kind: "agent", Agent: "worker"}},
 		Transitions: []definition.Transition{{From: "work", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}}},
@@ -314,12 +312,12 @@ type blockingContextVerifier struct {
 
 func (v *blockingContextVerifier) Name() string { return "blocking-context" }
 
-func (v *blockingContextVerifier) Verify(ctx context.Context, _ verifier.Request) (verifier.Result, error) {
+func (v *blockingContextVerifier) Verify(ctx context.Context, _ definition.Request) (definition.Result, error) {
 	close(v.started)
 	<-ctx.Done()
-	return verifier.Result{
+	return definition.Result{
 		Status: "failed",
-		Checks: []verifier.Check{{Name: "sandbox", Status: "failed", Class: "host", Detail: "host verifier setup failed"}},
+		Checks: []definition.Check{{Name: "sandbox", Status: "failed", Class: "host", Detail: "host verifier setup failed"}},
 	}, fmt.Errorf("host verifier setup failed: %w", ctx.Err())
 }
 
@@ -334,11 +332,11 @@ func TestEvidenceGateVerifierHostFailureFromContextErrorTimesOut(t *testing.T) {
 		Steps:       []definition.Step{{ID: "verify", Kind: "evidence_gate", Verifier: "blocking-context", OnFailure: "failure"}},
 		Transitions: []definition.Transition{{From: "verify", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}}},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cat := verifier.NewCatalogue()
+	cat := definition.NewCatalogue()
 	v := &blockingContextVerifier{started: make(chan struct{})}
 	if err := cat.Register(v); err != nil {
 		t.Fatal(err)
@@ -425,14 +423,14 @@ func TestEvidenceGateLoopTransitionUsesDetachedContext(t *testing.T) {
 			{From: "verify", To: "success", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"status": "approved"}}},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cat := verifier.NewCatalogue()
+	cat := definition.NewCatalogue()
 	if err := cat.Register(fixedVerifierProfile{
 		name:   "always-passes",
-		result: verifier.Result{Status: "passed", Checks: []verifier.Check{{Name: "test", Status: "passed"}}},
+		result: definition.Result{Status: "passed", Checks: []definition.Check{{Name: "test", Status: "passed"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}

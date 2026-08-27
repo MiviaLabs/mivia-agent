@@ -24,12 +24,16 @@ func TestSessionTitlePersistsAndClears(t *testing.T) {
 	if err := store.SetSessionTitle(context.Background(), principal, principal.SessionID, "  A title  ", contextstate.WorktreeInstance{}); err != nil {
 		t.Fatal(err)
 	}
+	// A titled session is listed immediately, even with zero committed turns
+	// (source_sequence=0): the resume picker must show a session as soon as
+	// its first user message sets a title, not only after a full turn
+	// commits (see markFirstUserTurn, internal/chat/session_title.go).
 	infos, err := store.ListSessions(context.Background(), principal)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(infos) != 0 {
-		t.Fatalf("empty context session listed: %+v", infos)
+	if len(infos) != 1 || infos[0].SessionID != principal.SessionID || infos[0].Title != "A title" {
+		t.Fatalf("infos = %+v", infos)
 	}
 	if _, err := store.db.Exec(`UPDATE context_sessions SET source_sequence=1 WHERE workspace_id=? AND session_id=?`, principal.WorkspaceID, principal.SessionID); err != nil {
 		t.Fatal(err)

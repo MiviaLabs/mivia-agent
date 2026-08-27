@@ -42,7 +42,7 @@ func FuzzFitTruncation(f *testing.F) {
 		}
 		// ref is printed verbatim inside the notice, so an invalid-UTF-8 ref
 		// would also break UTF-8 validity without exercising the fix. Real
-		// callers only pass contentref-minted ASCII refs.
+		// callers only pass sdkadapter-minted ASCII refs.
 		if !utf8.ValidString(ref) {
 			t.Skip()
 		}

@@ -49,12 +49,7 @@ func recoverOrphanedSession(dir string) bool {
 		return false
 	}
 
-	turnCount := 0
-	for _, m := range msgs {
-		if m.Role == provider.RoleUser {
-			turnCount++
-		}
-	}
+	turnCount := conversationalTurnCount(msgs)
 
 	meta := sessionMeta{
 		Name:         filepath.Base(dir),

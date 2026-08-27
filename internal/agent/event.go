@@ -8,9 +8,17 @@ type EventKind string
 
 const (
 	EventAssistant EventKind = "assistant"
-	EventToolStart EventKind = "tool_start"
-	EventToolEnd   EventKind = "tool_end"
-	EventStep      EventKind = "step"
+	// EventToolPending is emitted BEFORE EventToolStart when a tool call
+	// needs user approval. It is the only "pre-start" event: the loop
+	// gates Dispatcher.Invoke on ApprovalGate when Emit returns, and
+	// the resulting decision (approve / deny) determines whether
+	// EventToolStart follows. Detail carries the execution class as
+	// its string name so downstream consumers can route without
+	// re-deriving from the registry.
+	EventToolPending EventKind = "tool_pending"
+	EventToolStart   EventKind = "tool_start"
+	EventToolEnd     EventKind = "tool_end"
+	EventStep        EventKind = "step"
 	// EventHeartbeat is a wall-clock progress tick (model thinking, tool
 	// batch, batch shaping). It is NOT a step: only real loop steps emitted
 	// by emitStep may be EventStep, so consumers that budget or count steps
@@ -48,6 +56,28 @@ const (
 	// budget) is close. It is observability only; the injected instruction
 	// itself travels inside the provider request.
 	EventWorkLimit EventKind = "work_limit"
+	// EventSchemaRetry reports a subagent schema-validation corrective
+	// re-entry that is ABOUT to happen: the previous reply failed schema
+	// validation and runValidatedReply (internal/subagents/multi_step_schema.go)
+	// is about to send a corrective turn and run a full new LLM turn. Without
+	// this, a schema-repair retry ran with zero observable signal between the
+	// first attempt's visible output and the retry's eventual completion -
+	// indistinguishable from a stalled task. Detail carries a human-readable
+	// "attempt N/M" message. Observability only: it does not count as
+	// EventStep (must not inflate a schema-retry step budget) and must never
+	// be confused with EventSubagentDone.
+	EventSchemaRetry EventKind = "schema_retry"
+	// EventEmptyResponseRetry reports a bounded empty-response retry that is
+	// ABOUT to happen: the provider returned a genuinely empty response (no
+	// text, no tool calls) and retryOnEmptyResponse
+	// (internal/agent/agentloop_run.go) is about to re-run the whole SDK
+	// completion loop from the same preparedMsgs. Without this, an
+	// empty-response retry ran with zero observable signal - indistinguishable
+	// from a stalled turn, the same silent-retry shape EventSchemaRetry fixes
+	// for the subagent schema-repair retry. Detail carries a human-readable
+	// "attempt N/M" message. Observability only: it does not count as
+	// EventStep and does not alter retry control flow.
+	EventEmptyResponseRetry EventKind = "empty_response_retry"
 )
 
 // EventOrigin identifies the agent that produced an event. The zero value
@@ -79,6 +109,15 @@ type Event struct {
 	Content    string
 	Input      string // bounded, redacted tool input preview
 	Output     string // bounded, redacted tool output preview
+	// Denied is set only for EventHook: true when this run blocked its tool
+	// call (a PreToolUse hook that denied). Renderers use it to give a
+	// blocking run a distinct visual treatment from an advisory one.
+	Denied bool
+	// Program and Tool are set only for EventHook: the hook script's name
+	// (not its path) and the tool it fired for. Name already carries the
+	// hook's own event (PreToolUse/PostToolUse/Stop) for this kind, so these
+	// are separate fields rather than an overload of an existing one.
+	Program, Tool string
 	// Origin attributes the event to the producing agent (zero = root loop).
 	Origin EventOrigin
 	// Identity is an optional typed runtime identity supplied by a routed

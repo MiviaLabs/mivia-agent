@@ -72,12 +72,12 @@ func (s *StorageRepository) CompareAndSetPanelPhase(ctx context.Context, runID s
 }
 
 func (s *StorageRepository) appendPanelPhase(ctx context.Context, runID, attemptID, holder string, to PanelPhase, synthesis *PanelSynthesisExecution, next StepAttempt, idx int) error {
-	payload, err := marshalPanelPhase(panelPhasePayload{AttemptID: attemptID, Version: next.Version, Phase: to, Synthesis: synthesis.clone(), CreatedAt: s.now()})
+	payload, err := marshalPanelPhase(panelPhasePayload{AttemptID: attemptID, Version: next.Version, Phase: to, Synthesis: synthesis.clone(), CreatedAt: s.engine.Now()})
 	if err != nil {
 		return fmt.Errorf("marshal %s payload: %w", eventKindPanelPhaseSet, err)
 	}
 	evt := storage.Event{ID: EventID(runID, eventKindPanelPhaseSet, attemptID, strconv.FormatUint(next.Version, 10)), RunID: runID, Sequence: int(s.nextSequence(runID)), Kind: eventKindPanelPhaseSet, Payload: payload}
-	appender, ok := s.store.(storage.ExistingClaimAppender)
+	appender, ok := s.engine.Store().(storage.ExistingClaimAppender)
 	if !ok {
 		return fmt.Errorf("store does not support existing claim append")
 	}
@@ -100,7 +100,7 @@ func (s *StorageRepository) appendPanelPhase(ctx context.Context, runID, attempt
 		if cerr := s.catchUpRunLocked(ctx, runID); cerr != nil {
 			return fmt.Errorf("catch up after duplicate: %w", cerr)
 		}
-		events, rerr := s.store.Events(ctx, runID)
+		events, rerr := s.engine.Store().Events(ctx, runID)
 		if rerr != nil {
 			return fmt.Errorf("read events after duplicate: %w", rerr)
 		}
@@ -127,9 +127,7 @@ func (s *StorageRepository) appendPanelPhase(ctx context.Context, runID, attempt
 		p.Attempts[idx] = next
 		s.proj[runID] = p
 	}
-	if uint64(evt.Sequence) > s.applied[runID] {
-		s.applied[runID] = uint64(evt.Sequence)
-	}
+	s.engine.Watermarks().SetApplied(runID, uint64(evt.Sequence))
 	s.mu.Unlock()
 	return nil
 }

@@ -51,8 +51,16 @@ func TestNewDispatchesBuiltinsAndRejectsUnknown(t *testing.T) {
 	}
 	res.ProviderName = "unknown"
 	_, err = New(res)
-	if err == nil || !strings.Contains(err.Error(), "available: deepseek, llmgateway, ollama, openrouter, zai") {
+	if err == nil || !strings.Contains(err.Error(), "available: anthropic, deepseek, llmgateway, llmproxycli, minimax, ollama, openrouter, zai") {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestNewDispatchesMiniMax(t *testing.T) {
+	res := &config.Resolved{ProviderName: "minimax", BaseURL: "https://api.minimax.io/v1", APIKey: "fake", APIKeySet: true}
+	comp, err := New(res)
+	if err != nil || comp.Name() != "minimax" {
+		t.Fatalf("comp=%T err=%v", comp, err)
 	}
 }
 

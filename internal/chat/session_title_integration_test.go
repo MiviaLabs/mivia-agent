@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
@@ -68,6 +69,57 @@ func TestIntegrationListSessionsTitlesForkedContinuation(t *testing.T) {
 			t.Fatalf("session %q title = %q, want the conversation opener %q", sid, info.Title, opener)
 		}
 	}
+}
+
+// TestIntegrationListSessionsShowsSessionBeforeTurnCommits is the
+// resume-picker regression: a brand-new session must appear in
+// ListSessions/`/resume` as soon as its first user message is sent, not only
+// after the whole turn (round trip to the provider) commits. Before
+// markFirstUserTurn (internal/chat/session_title.go), a session with
+// source_sequence=0 and no chat_sessions snapshot was invisible to
+// ListSessions for as long as its first reply was in flight.
+func TestIntegrationListSessionsShowsSessionBeforeTurnCommits(t *testing.T) {
+	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	res := &config.Resolved{ProviderName: "fake", Model: "model", Models: []string{"model"}}
+	comp := &blockingCompleter{name: "fake", start: make(chan struct{}, 1), allow: make(chan struct{})}
+	run := NewSession(res, comp)
+	setupTitleSessionContext(t, run, store)
+
+	const opener = "please help me plan the launch"
+	done := make(chan error, 1)
+	go func() {
+		_, sendErr := run.SendUser(t.Context(), opener, io.Discard)
+		done <- sendErr
+	}()
+
+	select {
+	case <-comp.start:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for the in-flight turn to reach the provider")
+	}
+
+	infos, err := run.ListSessions()
+	if err != nil {
+		close(comp.allow)
+		t.Fatal(err)
+	}
+	assertSessionTitle(t, infos, run.SessionID, opener)
+
+	close(comp.allow)
+	if sendErr := <-done; sendErr != nil {
+		t.Fatalf("SendUser: %v", sendErr)
+	}
+
+	infos, err = run.ListSessions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSessionTitle(t, infos, run.SessionID, opener)
 }
 
 // TestIntegrationSetContextSessionTitle pins that an explicit rename

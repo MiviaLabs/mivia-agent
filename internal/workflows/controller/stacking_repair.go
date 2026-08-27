@@ -5,14 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/matcher"
 )
 
 // stackingRepairLoopMax reads the repair loop's max_iterations from the
 // synthesized graph so the controller stays in sync with the compiler.
-func stackingRepairLoopMax(wf *compiler.CompiledWorkflow) int {
+func stackingRepairLoopMax(wf *definition.CompiledWorkflow) int {
 	if wf == nil {
 		return 0
 	}
@@ -94,7 +92,7 @@ func (c *LinearController) chunkPlanRepairRoute(ctx context.Context, step defini
 func (c *LinearController) decomposeRepairRoute(ctx context.Context, step definition.Step, route RouteDecision) (RouteDecision, bool, error) {
 	maxRepairs := stackingRepairLoopMax(c.Workflow)
 	if err := c.checkLoopCap(ctx, stackingRepairLoopName, maxRepairs); err != nil {
-		decision := matcher.Decision{
+		decision := definition.Decision{
 			TransitionIndex: route.TransitionIndex,
 			ToStepID:        route.ToStepID,
 			MatchDigest:     route.MatchDigest,

@@ -2,11 +2,14 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
+	"github.com/MiviaLabs/mivia-agent/internal/runtime"
+	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
 // wireStepBoundaryAdmission installs the mid-turn admission publication hook
@@ -33,21 +36,24 @@ func (s *Session) wireStepBoundaryAdmission(opts *agent.Options, turn *TurnOptio
 	// UnadmittedToolHandler covers the model-behavior risk that advertising
 	// the whole admissible union (plan tools-advertising/01) introduces: a
 	// deferred tool now LOOKS callable (its schema is on the wire) even
-	// before load_tools ever ran for it. Rather than a bare "not available"
-	// denial, recognize any advertised name and auto-stage it through the
-	// same load_tools machinery, so the model recovers in exactly one extra
-	// step instead of having to learn to call load_tools first. Root turns
-	// only (turn == nil): a scoped skill turn does not own the session's
-	// admission state, matching the Surface hook's own turn == nil gate.
-	opts.UnadmittedToolHandler = func(ctx context.Context, name string) (string, bool) {
+	// before load_tools ever ran for it. Recognize any advertised name,
+	// auto-stage it through the same load_tools machinery so it becomes
+	// NATIVELY admitted at the next step boundary (later calls in the turn
+	// need no special handling), AND serve THIS call synchronously against
+	// the full authorized tool set (s.ToolBaseResolver) when possible - the
+	// model must never see an error for a call it already made correctly.
+	// Root turns only (turn == nil): a scoped skill turn does not own the
+	// session's admission state, matching the Surface hook's own turn == nil
+	// gate; it still gets a denial, never a synchronous execution.
+	opts.UnadmittedToolHandler = func(ctx context.Context, name string, args json.RawMessage) agent.UnadmittedToolResult {
 		if !s.isAdvertisedToolName(name) {
-			return "", false
+			return agent.UnadmittedToolResult{}
 		}
 		if turn != nil {
-			return fmt.Sprintf("tool %q is authorized but not currently loaded for this scoped run; ask the root agent to load it first", name), true
+			return agent.UnadmittedToolResult{Handled: true, Content: fmt.Sprintf("tool %q is authorized but not currently loaded for this scoped run; ask the root agent to load it first", name)}
 		}
 		if err := s.ChargeAdmissionAttempt(); err != nil {
-			return err.Error(), true
+			return agent.UnadmittedToolResult{Handled: true, Content: err.Error()}
 		}
 		// TurnIDFromContext reads a dispatcher-stamped caller frame
 		// (runtime.ContextWithCaller) that only exists inside
@@ -61,11 +67,21 @@ func (s *Session) wireStepBoundaryAdmission(opts *agent.Options, turn *TurnOptio
 		// synchronously inside that turn's own loop.Run call.
 		s.mu.RLock()
 		turnID := s.turnID
+		dispatcher := s.binding.Dispatcher
+		resolver := s.ToolBaseResolver
+		sessionID := s.SessionID
 		s.mu.RUnlock()
 		if _, err := s.StageToolAdmission([]string{name}, turnID); err != nil {
-			return err.Error(), true
+			return agent.UnadmittedToolResult{Handled: true, Content: err.Error()}
 		}
-		return fmt.Sprintf("tool %q is authorized but was not yet loaded. It has been queued to load automatically; publication happens at the next step boundary and can be deferred - retry the call on your next step", name), true
+		content, hookContext, hookRuns, ok := s.runDeferredToolNow(ctx, dispatcher, resolver, sessionID, turnID, name, args)
+		if ok {
+			return agent.UnadmittedToolResult{Handled: true, Ran: true, Content: content, HookContext: hookContext, HookRuns: hookRuns}
+		}
+		return agent.UnadmittedToolResult{
+			Handled: true, HookContext: hookContext, HookRuns: hookRuns,
+			Content: fmt.Sprintf("tool %q is authorized but was not yet loaded. It has been queued to load automatically; publication happens at the next step boundary and can be deferred - retry the call on your next step", name),
+		}
 	}
 	opts.Surface = func() agent.Surface {
 		if turn == nil {
@@ -105,6 +121,94 @@ func (s *Session) isAdvertisedToolName(name string) bool {
 		}
 	}
 	return false
+}
+
+// runDeferredToolNow serves ONE deferred-but-authorized tool call synchronously
+// against the full authorized tool set, so the model gets the real result
+// instead of a denial telling it to retry next turn. ok=false on any of
+// several benign reasons (no dispatcher, no resolver wired, the resolver
+// returns nil, the name is absent even from the full set) - the caller
+// falls back to the staged-only denial message exactly as before this
+// existed; it is not an error path.
+//
+// The tool is registered into dispatcher against base (the FULL registry,
+// not s.Tools): the installed handler executes via base.Execute, so the
+// call succeeds even though s.Tools itself is not widened until the
+// step-boundary publish runs - no live-surface mutation is needed just to
+// serve this one call. RegisterTool's "duplicate handler" error is treated
+// as success (dispatcher.Has confirms it), not failure: a sibling call for
+// the same deferred tool in the same step may have already won the race.
+//
+// This is deliberately NOT full parity with an already-admitted call's
+// dispatcherShim.Run path (internal/agent/sdk_dispatcher_shim.go): no
+// per-call timeout re-arming, no pass1/turn-shaping bookkeeping. Hook-run
+// VISIBILITY (the operator's transcript row) and hook CONTEXT (the
+// advisory text a PostToolUse hook hands the MODEL) are both threaded
+// below, on the Ran path. A PreToolUse block (ok=false) still returns
+// hookRuns and hookContext, but the caller does not append hookContext to
+// the model-facing denial text this wave - only the Ran path's caller
+// (agentloop_tool_error.go) appends it. This path's dedup bucket also
+// differs from the shim's (ParentID/Step left zero). See
+// docs/development/lifecycle-hooks.md's "Limitation" notes for what
+// remains open and why.
+func (s *Session) runDeferredToolNow(ctx context.Context, dispatcher *runtime.Dispatcher, resolver func() *tools.Registry, sessionID string, turnID uint64, name string, args json.RawMessage) (content string, hookContext string, hookRuns []runtime.HookRun, ok bool) {
+	if dispatcher == nil || resolver == nil {
+		return "", "", nil, false
+	}
+	base := resolver()
+	if base == nil {
+		return "", "", nil, false
+	}
+	tool, found := base.Get(name)
+	if !found {
+		return "", "", nil, false
+	}
+	if err := dispatcher.RegisterTool(base, tool); err != nil && !dispatcher.Has(runtime.Tool, name) {
+		return "", "", nil, false
+	}
+	result := dispatcher.Invoke(ctx, runtime.Request{
+		TurnID:    fmt.Sprintf("turn:%d", turnID),
+		SessionID: sessionID,
+		Kind:      runtime.Tool,
+		Name:      name,
+		Input:     args,
+	})
+	// HookContext is set unconditionally, including for a dedup-served
+	// duplicate: DC-9 (internal/runtime/dispatcher.go) answers a duplicate
+	// with the OWNER's post-hook Result, and the owner's HookContext is
+	// exactly what dispatcherShim.Run appends for its own duplicates too.
+	hookContext = result.HookContext
+	// A dedup-served duplicate is answered with the OWNER's HookRuns (DC-9
+	// fidelity), which did not run for THIS call - reporting them would
+	// show a hook firing that never fired here. Mirrors dispatcherShim.Run's
+	// !r.IsDuplicate() guard. HookRuns (the operator's transcript row) and
+	// HookContext (the model's advisory text) have different duplicate
+	// contracts on purpose: a duplicate call's hook did not run, but the
+	// owner's post-hook advisory text is still valid content to hand the
+	// model again, same as the owner's tool Output is.
+	if !result.IsDuplicate() {
+		hookRuns = result.HookRuns
+	}
+	if result.Err != nil {
+		// Includes a PreToolUse block: the denying run is still in
+		// hookRuns, so the caller can show it even though the call itself
+		// did not happen. See the doc comment above for what does and does
+		// not change on the model-facing side of a block.
+		return "", hookContext, hookRuns, false
+	}
+	s.mu.RLock()
+	maxChars, spool := s.MaxToolResultChars, s.RemainderSpool
+	s.mu.RUnlock()
+	capabilityMaxBytes := 0
+	if capable, ok := tool.(tools.CapableTool); ok {
+		capabilityMaxBytes = capable.Capability(args).MaxResultBytes
+	}
+	maxResult := maxChars
+	if capabilityMaxBytes > 0 && (maxResult <= 0 || capabilityMaxBytes < maxResult) {
+		maxResult = capabilityMaxBytes
+	}
+	capped, _, _ := remainder.CapWithSpoolRef(spool, sessionID, string(result.Output), maxResult)
+	return capped, hookContext, hookRuns, true
 }
 
 // commitTurnToken returns the token a step-boundary publication re-captured

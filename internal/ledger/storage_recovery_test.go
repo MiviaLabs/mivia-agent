@@ -192,7 +192,7 @@ func applyEventSequence(repo LedgerRepository, now time.Time) error {
 			return err
 		}
 		// Set output
-		if err := repo.SetTaskOutput(ctx, "run-1", tid, "ref:output:10", ""); err != nil {
+		if err := repo.SetTaskOutput(ctx, "run-1", tid, "ref:output:10", "", ""); err != nil {
 			return err
 		}
 		// Record attempt

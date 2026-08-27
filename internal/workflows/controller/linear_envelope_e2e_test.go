@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
@@ -17,7 +16,7 @@ import (
 // bindings are envelope_only with a 4096 cap — large enough for the
 // production-sized reference envelope skeleton, small enough to prove the
 // findings payload itself is never inlined.
-func envelopeRepairWorkflow(t *testing.T) *compiler.CompiledWorkflow {
+func envelopeRepairWorkflow(t *testing.T) *definition.CompiledWorkflow {
 	t.Helper()
 	wf := &definition.WorkflowFile{
 		Version: 1, Name: "envelope-repair", InitialStep: "plan",
@@ -42,7 +41,7 @@ func envelopeRepairWorkflow(t *testing.T) *compiler.CompiledWorkflow {
 			{From: "plan_review", To: "plan", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"verdict": "changes_requested"}}, Loop: "plan_review_repair", MaxIterations: 4},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}

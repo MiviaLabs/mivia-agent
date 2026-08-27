@@ -14,9 +14,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/textutil"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/template"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
@@ -97,7 +95,7 @@ func clampMax(v, def int) int {
 
 // FromCompiled returns the delivery policy of a compiled workflow and whether
 // publication is required (kind=pull_request and mode in draft|ready).
-func FromCompiled(wf *compiler.CompiledWorkflow) (Policy, bool) {
+func FromCompiled(wf *definition.CompiledWorkflow) (Policy, bool) {
 	if wf == nil || !wf.DeliveryActive() {
 		return Policy{}, false
 	}
@@ -206,11 +204,11 @@ func renderTemplate(src string, inputs map[string]string, maxBytes int, allowNew
 	// individual binding sizes never cause premature rejection. The overall
 	// maxBytes is enforced after rendering via truncation.
 	const unboundedBinding = 1 << 20 // 1 MiB per binding
-	rendered, err := template.Render(src, anyInputs, nil, unboundedBinding, maxBytes)
+	rendered, err := Render(src, anyInputs, nil, unboundedBinding, maxBytes)
 	if err != nil {
-		// The rendered-output cap inside template.Render is strict. Retry with
+		// The rendered-output cap inside Render is strict. Retry with
 		// the high binding cap and truncate ourselves.
-		rendered, err = template.Render(src, anyInputs, nil, unboundedBinding, unboundedBinding)
+		rendered, err = Render(src, anyInputs, nil, unboundedBinding, unboundedBinding)
 		if err != nil {
 			return "", err
 		}
@@ -255,7 +253,7 @@ func foldToSingleLine(s string) string {
 	b.Grow(len(s))
 	space := false
 	for _, r := range s {
-		if r == '\n' || r == '\r' || r == '\t' || r == ' ' {
+		if r == '\n' || r == '\r' || r == '\t' || r == ' ' || r == '\u2028' || r == '\u2029' {
 			space = true
 			continue
 		}
@@ -279,22 +277,22 @@ func truncateRendered(rendered string, maxBytes int, allowNewline bool) (string,
 		return rendered, nil
 	}
 	if allowNewline {
-		// Commit-message truncation, rune-safe so a multi-byte rune at the
-		// cut is never split. The "..." marker bytes are reserved BEFORE the
-		// rune-safe cut: carving them out of the END of the prefix with a raw
-		// slice could strip 3 bytes off a 4-byte rune that ended exactly at
-		// maxBytes, leaving a dangling lead byte in the value that reaches
+		// Commit-message truncation, rune- and grapheme-safe so a multi-byte
+		// rune, or a base character plus its combining mark, at the cut is
+		// never split. The "..." marker bytes are reserved BEFORE the cut:
+		// carving them out of the END of the prefix with a raw slice could
+		// strip 3 bytes off a 4-byte rune that ended exactly at maxBytes,
+		// leaving a dangling lead byte in the value that reaches
 		// `git commit -m` (E1, DC-6).
 		if maxBytes > 3 {
-			return textutil.TruncateRuneSafe(rendered, maxBytes-3) + "...", nil
+			return truncateBytesGraphemeSafe(rendered, maxBytes-3) + "...", nil
 		}
-		// The marker cannot fit; truncate rune-safely at the raw cap. The
-		// caller still learns truncation happened because the input exceeded
-		// maxBytes.
-		return textutil.TruncateRuneSafe(rendered, maxBytes), nil
+		// The marker cannot fit; truncate at the raw cap. The caller still
+		// learns truncation happened because the input exceeded maxBytes.
+		return truncateBytesGraphemeSafe(rendered, maxBytes), nil
 	}
 	// Word-boundary truncation for titles. A space is one byte, so cutting at
-	// a space is always a rune boundary.
+	// a space is always a rune (and grapheme) boundary.
 	cut := maxBytes
 	if cut > len(rendered) {
 		cut = len(rendered)
@@ -302,15 +300,44 @@ func truncateRendered(rendered string, maxBytes int, allowNewline bool) (string,
 	if lastSpace := findLastSpace(rendered, cut-1); lastSpace > 0 {
 		return rendered[:lastSpace], nil
 	}
-	// No space boundary (a long unbroken token or CJK text): truncate
-	// rune-safely so the cut never splits a multi-byte rune, which would
-	// otherwise publish invalid UTF-8 in the PR title.
-	return textutil.TruncateRuneSafe(rendered, maxBytes), nil
+	// No space boundary (a long unbroken token, CJK text, or decomposed
+	// combining-mark text): truncate rune- and grapheme-safely so the cut
+	// never splits a multi-byte rune (publishing invalid UTF-8) or strands a
+	// base character without its combining mark (publishing valid but
+	// visibly wrong text).
+	return truncateBytesGraphemeSafe(rendered, maxBytes), nil
 }
 
-// truncateRunes caps s to at most maxRunes runes, never splitting a rune. The
-// cut is the byte length of the first maxRunes runes, applied through
-// textutil.TruncateRuneSafe so the byte ceiling and the rune ceiling agree.
+// truncateBytesGraphemeSafe truncates s to at most maxBytes bytes, first
+// snapping the cut to a rune boundary (textutil.TruncateRuneSafe's existing
+// guarantee), then backing it up further via backUntilGraphemeBoundary -
+// the SAME grapheme-boundary logic truncateRunes uses (both operate on byte
+// offsets into s), so a byte-capped truncation gets the identical guarantee
+// a rune-capped one does: the result never strands a base character without
+// its combining mark.
+func truncateBytesGraphemeSafe(s string, maxBytes int) string {
+	cut := len(textutil.TruncateRuneSafe(s, maxBytes))
+	return s[:backUntilGraphemeBoundary(s, cut)]
+}
+
+// truncateRunes caps s to at most maxRunes runes, never splitting a rune, and
+// never splitting a base character from a COMBINING MARK that renders as
+// part of it (Unicode category Mn/Mc/Me, e.g. 'e' (U+0065) + COMBINING ACUTE
+// ACCENT (U+0301), together "é"). Scoped deliberately to that one grapheme
+// mechanism, not full Unicode grapheme-cluster segmentation (UAX #29): a
+// ZWJ-joined emoji sequence or a regional-indicator flag pair is also a
+// multi-rune grapheme but is NOT formed via a combining mark, so a cut can
+// still split one of those. A rune boundary is not a combining-mark
+// boundary: the initial cut is the byte length of the first maxRunes runes
+// (agreeing with textutil.TruncateRuneSafe's rune-safety), but if the very
+// next rune just past that cut is a combining mark, the cut split a
+// character from its diacritic - keeping only the bare base character and
+// silently dropping the mark(s), which is valid UTF-8 but visibly wrong text
+// (worse for scripts where combining marks are semantically essential, not
+// merely decorative). backUntilGraphemeBoundary backs the cut up past that
+// base character (and any it stacks with) until the excluded remainder no
+// longer starts with a mark, so the kept prefix always ends on a complete
+// base+mark(s) grapheme, one character shorter rather than one mangled.
 func truncateRunes(s string, maxRunes int) string {
 	if maxRunes <= 0 {
 		return ""
@@ -323,7 +350,38 @@ func truncateRunes(s string, maxRunes int) string {
 		_, size := utf8.DecodeRuneInString(s[end:])
 		end += size
 	}
-	return textutil.TruncateRuneSafe(s, end)
+	return textutil.TruncateRuneSafe(s, backUntilGraphemeBoundary(s, end))
+}
+
+// backUntilGraphemeBoundary backs a rune-safe cut point up, one rune at a
+// time, while the rune immediately past it is a combining mark (Unicode
+// category Mn/Mc/Me) - i.e. while cutting there would strand that mark's
+// base character without it. A character can carry more than one combining
+// mark (stacked diacritics), so this backs up however many base characters
+// that requires, not just one.
+//
+// If the entire prefix up to end is combining marks with no base character
+// at all (malformed/unusual input: a leading run of marks), the naive
+// backup would reach 0 and collapse a non-empty request into an EMPTY
+// result - a behavior change from "truncate to at most N runes" to
+// "silently return nothing" that the caller's own maxRunes>0 guard does not
+// anticipate. There is no base character to back up TO in that case, so
+// this returns the ORIGINAL end instead: a grapheme-unsafe cut is still
+// strictly better than truncating a non-empty request down to nothing.
+func backUntilGraphemeBoundary(s string, end int) int {
+	original := end
+	for end > 0 {
+		next, nsize := utf8.DecodeRuneInString(s[end:])
+		if nsize == 0 || !unicode.In(next, unicode.Mn, unicode.Mc, unicode.Me) {
+			return end
+		}
+		_, lsize := utf8.DecodeLastRuneInString(s[:end])
+		if lsize == 0 {
+			return end
+		}
+		end -= lsize
+	}
+	return original
 }
 
 // findLastSpace returns the index of the last space character within the first

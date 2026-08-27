@@ -268,3 +268,96 @@ func FuzzContainsFoldASCII(f *testing.F) {
 		}
 	})
 }
+
+// TestContainsFoldMidRuneWindows pins the byte-exact contract at rune
+// boundaries: ContainsFold is a byte-window scan, so a window that starts
+// inside a multi-byte rune still compares byte-for-byte, and ASCII folding
+// still applies to ASCII bytes inside such a window. Non-ASCII bytes never
+// fold, even when they sit next to an ASCII letter in the same window.
+func TestContainsFoldMidRuneWindows(t *testing.T) {
+	cases := []struct {
+		s, substr string
+		want      bool
+	}{
+		// Window at offset 1 inside the é rune (0xC3 0xA9): continuation
+		// byte + 'a'. The 0x41 folds to 'a', the continuation byte never does.
+		{"\u00e9a", "\xa9a", true},
+		{"\u00e9A", "\xa9a", true},
+		{"\u00e9A", "\xa9b", false},
+		{"\u00e9a", "\xa9A", true},
+
+		// Window at offset 1, at the very end of the string.
+		{"a\u00e9", "\xa9", true},
+
+		// Window crossing the rune boundary between two multi-byte runes.
+		{"\u00e9\u00e9", "\xa9\xc3", true},
+		{"\u00e9\u00c9", "\xa9\xc3", true},
+
+		// Malformed lead byte is byte-exact, not decoded.
+		{"\x80ab", "\x80a", true},
+
+		// Windows starting at a rune start and covering whole runes.
+		{"a\u00e9", "\x61\xc3", true},
+		{"a\u00e9", "\xc3\xa9", true},
+
+		// Full-string match; only the ASCII byte folds.
+		{"\u00e9A", "\xc3\xa9a", true},
+		{"\u00e9A", "\xc3\xa9b", false},
+	}
+	for _, c := range cases {
+		if got := ContainsFold(c.s, c.substr); got != c.want {
+			t.Errorf("ContainsFold(%q, %q) = %v, want %v", c.s, c.substr, got, c.want)
+		}
+	}
+}
+
+// TestContainsFoldLastWindowOffset checks that the scan reaches the final
+// window start i == len(s)-len(substr) and never scans past it: a match only
+// available at the last window is found, and a near-match that would only
+// succeed past the last window is not.
+func TestContainsFoldLastWindowOffset(t *testing.T) {
+	cases := []struct {
+		s, substr string
+		want      bool
+	}{
+		// Only the last window (offset 2) matches, with both bytes folded.
+		{"abcd", "CD", true},
+		{"xyzzy", "zy", true},
+		{"xyzzy", "yy", false},
+		{"hello", "LO", true},
+		{"hello", "LX", false},
+		{"ab", "B", true},
+		{"ab", "c", false},
+	}
+	for _, c := range cases {
+		if got := ContainsFold(c.s, c.substr); got != c.want {
+			t.Errorf("ContainsFold(%q, %q) = %v, want %v", c.s, c.substr, got, c.want)
+		}
+	}
+}
+
+// TestContainsFoldASCIIFoldBoundary checks that only 'A'-'Z' and 'a'-'z'
+// fold: the bytes immediately outside the letter ranges (0x40 '@', 0x5B '[',
+// 0x60 '`', 0x7B '{') and DEL (0x7F) never fold, in either direction.
+func TestContainsFoldASCIIFoldBoundary(t *testing.T) {
+	cases := []struct {
+		s, substr string
+		want      bool
+	}{
+		{"@", "a", false},
+		{"a", "@", false},
+		{"[", "b", false},
+		{"b", "[", false},
+		{"`", "A", false},
+		{"A", "`", false},
+		{"{", "z", false},
+		{"z", "{", false},
+		{"\x7f", "A", false},
+		{"A", "\x7f", false},
+	}
+	for _, c := range cases {
+		if got := ContainsFold(c.s, c.substr); got != c.want {
+			t.Errorf("ContainsFold(%q, %q) = %v, want %v", c.s, c.substr, got, c.want)
+		}
+	}
+}

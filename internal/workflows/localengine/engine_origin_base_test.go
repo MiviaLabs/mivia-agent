@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/localengine"
@@ -39,7 +38,7 @@ func TestEngineAdmissionRecordsOriginBaseCommit(t *testing.T) {
 		},
 		NewRunID: func() string { return "wfr-origin-base" },
 	}
-	started, err := engine.Start(context.Background(), agenttools.StartRequest{
+	started, err := engine.Start(context.Background(), workflowledger.StartRequest{
 		Workflow: "two-step", Inputs: map[string]any{"task": "x"},
 	})
 	if err != nil {
@@ -93,7 +92,7 @@ func TestEngineResumePreservesOriginBaseCommit(t *testing.T) {
 		},
 		NewRunID: func() string { return "wfr-origin-base-resume" },
 	}
-	started, err := engine.Start(context.Background(), agenttools.StartRequest{
+	started, err := engine.Start(context.Background(), workflowledger.StartRequest{
 		Workflow: "two-step", Inputs: map[string]any{"task": "x"},
 	})
 	if err != nil {
@@ -109,7 +108,7 @@ func TestEngineResumePreservesOriginBaseCommit(t *testing.T) {
 	}
 	close(block)
 
-	resumed, err := engine.Start(context.Background(), agenttools.StartRequest{
+	resumed, err := engine.Start(context.Background(), workflowledger.StartRequest{
 		Resume: true, RunID: started.RunID, Force: true,
 	})
 	if err != nil {

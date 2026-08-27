@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contentref"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
@@ -225,7 +225,7 @@ func integrationDispatchAndComplete(t *testing.T, ctx context.Context, repo *Sto
 		t.Fatalf("CreateStepAttempt(wfa-2): %v", err)
 	}
 	evidence := []byte(`{"plan":"...","summary":"..."}`)
-	ref := contentref.Reference(contentref.KindOutput, evidence)
+	ref := sdkadapter.Mint(sdkadapter.KindOutput, evidence)
 	if err := repo.StoreContent(ctx, ref, evidence); err != nil {
 		t.Fatalf("StoreContent: %v", err)
 	}

@@ -5,13 +5,13 @@ privacy, and orchestration limits. Two inputs: a settings file (`mivia.toml`)
 and an API key, kept out of the settings file, in your environment.
 
 ```bash
-export DEEPSEEK_API_KEY=sk-REPLACE-ME
+export OPENROUTER_API_KEY=sk-REPLACE-ME
 mivia doctor   # confirms mivia can find the key; never prints it
 mivia chat
 ```
 
-Default provider: DeepSeek, model `deepseek-v4-flash`. Run `mivia setup` or
-copy the example settings file before `doctor` or `chat`; an API key alone
+Default provider: OpenRouter, model `openai/gpt-5.6-luna`. Run `mivia setup`
+or copy the example settings file before `doctor` or `chat`; an API key alone
 does not create the required model catalog.
 
 ## Where mivia looks for settings
@@ -21,6 +21,10 @@ mivia reads the first existing settings file it finds, in this order:
 1. The file named by `$MIVIA_CONFIG`.
 2. `./.mivia/mivia.toml` (the project folder).
 3. `~/.mivia/mivia.toml` (your home folder).
+
+When no settings file exists, mivia bootstraps `~/.mivia/mivia.toml`
+automatically on first run. It never auto-creates a project-level
+`./.mivia/mivia.toml` — that file is always an explicit, deliberate choice.
 
 ## Where mivia looks for the API key
 
@@ -37,19 +41,22 @@ The workspace `.env` stays beside the project files at `./.env`. Tools such as d
 
 | Setting | Default |
 |---------|---------|
-| Provider | `deepseek` |
-| DeepSeek example model | `deepseek-v4-flash` (declare it in your settings) |
+| Provider | `openrouter` |
+| OpenRouter model | `openai/gpt-5.6-luna` (declare it under `providers.openrouter`) |
+| OpenRouter cheaper alternative | `openai/gpt-4o-mini` (declare it under `providers.openrouter`) |
+| DeepSeek example model | `deepseek-v4-flash` (declare it under `providers.deepseek`) |
 | DeepSeek advanced example | `deepseek-v4-pro` (declare it, then set `default_model` or use `--model`) |
-| OpenRouter example | `openai/gpt-4o-mini` (declare it under `providers.openrouter`) |
 | ZAI example | `glm-5.2` (declare it under `providers.zai`) |
 | Ollama example | `gpt-oss:120b` (declare it under `providers.ollama`) |
+| MiniMax example | `MiniMax-M3` (declare it under `providers.minimax`) |
+| Anthropic example | `claude-sonnet-5` (declare it under `providers.anthropic`) |
 
 ## Set up a provider
 
 Set the provider API key in the process environment or an env file. Then run `mivia doctor` to confirm that mivia can find it.
 
 ```bash
-export DEEPSEEK_API_KEY=sk-REPLACE-ME
+export OPENROUTER_API_KEY=sk-REPLACE-ME
 mivia doctor
 mivia chat -p "hi"
 ```
@@ -67,7 +74,14 @@ cp .env.example .env
 env_file = "./.env"
 
 [provider]
-name = "deepseek"
+name = "openrouter"
+
+[providers.openrouter]
+models = [
+  { name = "openai/gpt-5.6-luna", context_window_tokens = 400000, max_output_tokens = 128000 },
+  { name = "openai/gpt-4o-mini", context_window_tokens = 128000 },
+]
+default_model = "openai/gpt-5.6-luna"
 
 [providers.deepseek]
 models = [
@@ -77,10 +91,6 @@ models = [
 default_model = "deepseek-v4-flash"
 # For harder tasks:
 # default_model = "deepseek-v4-pro"
-
-[providers.openrouter]
-models = [{ name = "openai/gpt-4o-mini", context_window_tokens = 128000 }]
-default_model = "openai/gpt-4o-mini"
 
 [providers.zai]
 models = [{ name = "glm-5.2", context_window_tokens = 200000, max_output_tokens = 128000 }]
@@ -157,9 +167,82 @@ entry may set `reasoning_dialect` to override this default.
 The gateway adds its own cache markers on the request. mivia does not send
 its own cache markers to this provider.
 
+### LLM Proxy CLI
+
+The `llmproxycli` provider connects to a local CLI proxy server (such as `llm-proxy-cli` or LiteLLM) running on localhost (default `http://127.0.0.1:8317/v1`). It supports standard OpenAI-compatible completions and reasoning dialects.
+
+```toml
+[providers.llmproxycli]
+default_model = "claude-sonnet-5"
+api_key_env = "CLIPROXY_API_KEY"
+base_url = "http://127.0.0.1:8317/v1"
+
+[[providers.llmproxycli.models]]
+name = "claude-sonnet-5"
+context_window_tokens = 1000000
+max_output_tokens = 128000
+reasoning = "high"
+reasoning_efforts = ["low", "medium", "high", "max"]
+```
+
+A proxy that translates OpenAI-compatible requests to Anthropic's real API
+cannot always deliver Anthropic's own request-shape constraints - most
+commonly, Anthropic rejects a non-default `temperature` outright, which
+bites any config with a global `[chat] temperature` set alongside an active
+reasoning level. If your proxy also exposes Anthropic's native Messages API
+(`POST /v1/messages`, same host) alongside its OpenAI-compatible endpoint,
+add `reasoning_dialect = "anthropic_adaptive"` to a Claude model entry to
+route that specific model's requests through mivia's native Anthropic wire
+format instead - reusing this provider's own `base_url` and
+`CLIPROXY_API_KEY`, no separate `[providers.anthropic]` block needed:
+
+```toml
+[[providers.llmproxycli.models]]
+name = "claude-sonnet-5"
+context_window_tokens = 1000000
+max_output_tokens = 128000
+reasoning = "high"
+reasoning_efforts = ["low", "medium", "high", "xhigh", "max"]
+reasoning_dialect = "anthropic_adaptive"
+```
+
+Every other model on `llmproxycli` (and this same model if you omit the
+override) keeps speaking OpenAI-compatible chat/completions unchanged.
+`reasoning_dialect = "anthropic_adaptive"` is rejected at config-load time
+on any provider that cannot actually deliver it (only `anthropic` and
+`llmproxycli` can today).
+
+### Anthropic
+
+The `anthropic` provider speaks Anthropic's native Messages API
+(`https://api.anthropic.com/v1`) directly - unlike every other built-in
+provider, it does not go through the OpenAI-compatible transport, because
+Anthropic's request and response shapes are structurally different (system
+prompt at the top level, content blocks instead of a flat message string,
+thinking blocks instead of a `reasoning_content` field).
+
+```toml
+[providers.anthropic]
+models = [
+  { name = "claude-sonnet-5", context_window_tokens = 1000000, max_output_tokens = 128000, reasoning_efforts = ["low", "medium", "high", "xhigh", "max"], reasoning = "high" },
+]
+default_model = "claude-sonnet-5"
+api_key_env = "ANTHROPIC_API_KEY"
+base_url = "https://api.anthropic.com/v1"
+```
+
+Reasoning works differently here than on every other provider: Anthropic's
+`claude-sonnet-5` rejects the manual `budget_tokens` thinking shape outright
+(HTTP 400). mivia sends `thinking: {"type": "adaptive"}` plus a graded
+`output_config.effort` instead - Claude decides how much to think per turn,
+and `effort` (`low` through `max`) is the depth dial. A refusal (Anthropic's
+safety classifiers declining a request) is not an error: it surfaces as an
+ordinary turn whose finish reason is `refusal`, with empty or partial
+content depending on whether the decline happened before or during output.
+
 ## Provider support
 
-mivia currently supports `deepseek`, `openrouter`, `zai`, `ollama`, and `llmgateway`. Do not add an
+mivia currently supports `anthropic`, `deepseek`, `openrouter`, `zai`, `ollama`, `llmgateway`, `llmproxycli`, and `minimax`. Do not add an
 arbitrary OpenAI-compatible provider name. The provider registry rejects names
 that it does not support.
 
@@ -203,7 +286,7 @@ If you change the prefix, branches with the old prefix remain. Remove them manua
 
 ## Named agents
 
-Named agents are separate TOML files, one definition per file. User-owned definitions live in `~/.mivia/agents/<name>.toml`. Workspace definitions live in `<workspace>/.mivia/agents/<name>.toml`. Create those two directories as needed. The filename is canonical: `<name>.toml` must contain the same lowercase `name`. Agent files are not inline `[agents]` configuration. Read [Coding agent mode](agent.md#named-agents-and-skill-binding) for the full schema.
+Named agents are separate TOML files, one definition per file. User-owned definitions live in `~/.agents/agents/<name>.md`. Workspace definitions live in `<workspace>/.agents/agents/<name>.md`. Create those two directories as needed. The filename is canonical: `<name>.toml` must contain the same lowercase `name`. Agent files are not inline `[agents]` configuration. Read [Coding agent mode](agent.md#named-agents-and-skill-binding) for the full schema.
 
 ## MCP servers
 
@@ -251,11 +334,25 @@ Every MCP tool description sent to the model states the remote tool name and the
 
 This guards against accidental exposure, not against a determined agent. `run_command` can build a path at runtime and reach the file anyway. With these patterns unset, no paths are filtered.
 
-## Allowlists are configuration-only
+## Approval mode
 
-Neither the `run_command` program allowlist nor the child-process environment allowlist is compiled into the binary. `[tools].run_allowlist` and `[tools].env_allowlist` are the only sources. With them unset, `run_command` executes nothing and child processes inherit no environment.
+`[approvals] default_mode` sets how mivia handles tool-call approval. The
+default is `"always"`: mivia accepts every tool call automatically, with no
+prompt. Set it to `"once"` to prompt for every write or external tool call,
+or `"deny"` to auto-deny every gated tool call. This key controls the TUI
+settings screen's approval choice; the CLI flag and legacy `[approvals]
+policy` key use a separate write-only/auto/always/deny vocabulary for the
+same underlying policies.
 
-Recommended values ship in `.mivia/mivia.toml.example`. Copy it and trim it to what your project needs. The example includes powerful programs, including shells and network clients. Remove anything your workspace does not need. In `env_allowlist`, a trailing `*` declares a prefix rule (for example, `"GIT_*"`). Because there is no built-in list to extend or replace, `run_allowlist_only` and `env_allowlist_only` behave identically to their plain counterparts.
+## Allowlists
+
+The `run_command` program allowlist has a built-in default; the child-process environment allowlist does not.
+
+`run_command` can already execute a curated built-in list with `[tools].run_allowlist` unset: common compilers/interpreters, their package managers, git, and read-only Unix utilities. It deliberately excludes shells (`sh`, `bash` — unrestricted execution defeats the allowlist), file-mutating programs (`rm`, `cp`, `mv`, `mkdir`, and similar — `run_command` is not gated by the write-path blocklist, so a mutating program here would bypass it entirely), `find` (its `-exec`/`-delete` flags run arbitrary commands and delete files), and networking/container/infra tools (`curl`, `wget`, `ssh`, `docker`, `kubectl`, `terraform`). `[tools].run_allowlist` extends the built-in list; `[tools].run_allowlist_only` replaces it entirely, for a closed allowlist.
+
+The child-process environment allowlist has no compiled default: `[tools].env_allowlist` is the only source, and with it unset, child processes inherit no environment.
+
+A fuller, opt-in `run_allowlist` (including shells and network clients, extending the built-in list) and a starting `env_allowlist` ship in `.mivia/mivia.toml.example`. Copy it and trim it to what your project needs. In `env_allowlist`, a trailing `*` declares a prefix rule (for example, `"GIT_*"`). Because there is no built-in environment list to extend or replace, `env_allowlist_only` behaves identically to `env_allowlist`; `run_allowlist_only` differs from `run_allowlist` in that it replaces the built-in `run_command` default instead of extending it.
 
 `[tools].env_allow_keyword_blocklist` is the companion subtractive filter. A variable admitted by a `*` prefix rule is dropped when its name contains any listed substring. The example lists `SECRET`, `TOKEN`, `PASSWORD`, and `API_KEY`. Exact `env_allowlist` entries are never dropped, so a build that needs `FOO_TOKEN` names it outright. Unset means prefix rules admit everything they match.
 
@@ -263,11 +360,11 @@ Recommended values ship in `.mivia/mivia.toml.example`. Copy it and trim it to w
 
 `[tools].write_path_blocklist` names workspace-relative paths or directories that the write tools of workflow agent steps (`write_file`, `search_replace`, `multi_edit`, `delete_file`) refuse to change. It applies to workflow runs only, not to the interactive session.
 
-Two paths are blocked by default: `.git` and `.mivia/mivia.toml`. The key adds to that default set. `[tools].write_path_blocklist_remove` removes entries from the effective set — a default entry or an addition — and is the only way to unblock the two defaults. Removing a default is a trust decision: `.mivia/mivia.toml` carries this very blocklist, so an agent that can edit it can remove its own restrictions, and `.git` carries commit history and hooks that a workflow agent could rewrite or bypass. An entry in both keys is a config error.
+Nothing is blocked by default: protection is opt-in, not a built-in set a project must opt out of. `[tools].write_path_blocklist_remove` removes an entry from the effective set — an entry a project (or a layer above it) added, never a compiled-in default, since there is none. An entry in both keys is a config error.
 
 Entries use forward slashes. At load, mivia trims whitespace and cleans each entry, so `" go.mod/ "` becomes `"go.mod"`. An entry that is empty, that resolves to the workspace root, or that is absolute is a config error: mivia refuses to start rather than silently ignore a blocklist entry that can never match.
 
-This key is a project decision. A project that omits it leaves paths such as `.mivia/agents`, `.mivia/policy`, `.mivia/rules`, `.mivia/skills`, `.mivia/workflows`, `go.mod`, `go.sum`, and `go.work` writable by workflow agents. That includes the workflow definition the run executes. Recommended starting values ship in `.mivia/mivia.toml.example` and in this repository's own `.mivia/mivia.toml`.
+This key is a project decision. A project that omits it leaves every path writable by workflow agents, including `.git` (commit history and hooks a workflow agent could rewrite or bypass), `.mivia/mivia.toml` (this very blocklist — an agent that can edit it can remove its own restrictions), `.agents/agents`, `.mivia/policy`, `.mivia/skills`, `.agents/rules`, `.agents/skills`, `.mivia/workflows`, `go.mod`, `go.sum`, `go.work`, and the workflow definition the run executes. Recommended starting values, including `.git` and `.mivia/mivia.toml`, ship in `.mivia/mivia.toml.example` and in this repository's own `.mivia/mivia.toml`.
 
 ## Redaction and persisted orchestration history
 
@@ -302,7 +399,7 @@ When the knob is unset and the active budget exceeds `200000`, `mivia doctor` an
 
 Set a positive value (minimum 1024; smaller positive values are a config error) when running small-context models. When a cap is set, `read_file` pre-clamps its own byte budget below it, and the code-navigation tools (`find_references`, `list_symbols`, `go_to_definition`) tighten their JSON budgets to fit.
 
-Rollback: `max_tool_result_bytes = 4000` restores the previous hardcoded interactive-loop ceiling.
+Set it to `4000` to match the fixed ceiling small-context models need.
 
 ## Per-batch tool result budget
 
@@ -360,7 +457,7 @@ When `max_output_bytes` is a positive bound, stdout and stderr capture keeps rou
 
 ## LLM compaction summaries
 
-`[context.summary] enabled` (default `false`) turns on the bounded provider call that summarizes what context compaction dropped. The call uses the session's provider and model. On auto compaction, the validated summary is injected into the next request as a host-authored `context-summary` message. A manual `/compact` requests the same summary: the reply is appended to the live session history as the `context-summary` message, and a bounded form is stored on the durable checkpoint. A session resumed from storage replays the structural history; the stored summary is not re-rendered on load.
+`[context.summary] enabled` (default `true`) turns on the bounded provider call that summarizes what context compaction dropped. The call uses the session's provider and model. On auto compaction, the validated summary is injected into the next request as a host-authored `context-summary` message. A manual `/compact` requests the same summary: the reply is appended to the live session history as the `context-summary` message, and a bounded form is stored on the durable checkpoint. A session resumed from storage replays the structural history; the stored summary is not re-rendered on load.
 
 Two more conditions must hold, or the summary stays off: a configured `[privacy]` redaction policy, and a resolved provider endpoint. A summary the redaction policy refuses is dropped, never sent or stored.
 
@@ -383,6 +480,34 @@ The summarize request carries bounded quotes of the dropped messages' real conte
 | `store_path` | string | `~/.mivia/context.db` (chat); platform cache dir (non-chat orchestration) | One SQLite file for chat sessions, context, worktree routes, and runs |
 
 For `mivia chat`, mivia uses one SQLite file for all durable chat state: sessions, context, worktree routes, and runs. When `store_path` is unset, mivia uses the shared global path `~/.mivia/context.db`, so every workspace on the machine has the same chat history by default. Sessions stay isolated inside that shared file by workspace ID: two projects never see each other's sessions even though they share one file. A worktree never creates another chat database. Set `store_path` to give one workspace its own separate file instead of the shared default.
+
+## Workflow panel limits
+
+`[workflows.panels]` overrides the per-child-agent bounds every `agent_panel`
+step's member and synthesis children run under. Each key is optional; an
+unset key keeps mivia's compiled default, so an empty or absent
+`[workflows.panels]` table reproduces today's behavior exactly.
+
+| Key | Type | Default | Meaning |
+|-----|------|---------|---------|
+| `member_max_output_per_call` | int | `8192` | Output-token ceiling for one panel member's provider call |
+| `member_max_tool_calls` | int | `64` | Cumulative tool calls one panel member may make |
+| `synthesis_max_output_per_call` | int | `8192` | Output-token ceiling for one synthesis child's provider call |
+| `synthesis_max_tool_calls` | int | `16` | Cumulative tool calls the synthesis child may make |
+| `member_deadline_default_seconds` | int | `86400` (24h) | Wall-clock default for a panel member attempt when the workflow declares no run deadline (`max_duration_seconds = 0`); a workflow's own deadline always wins when it is earlier |
+
+A step's own `max_turns` (see the workflow definition's step syntax, not this
+file) always bounds turns per child; it is not part of `[workflows.panels]`
+because it is a per-step knob, not a host-wide default. Cumulative prompt and
+output token totals are deliberately unbounded for panel children regardless
+of this table - only the per-call ceiling and the cumulative tool-call count
+are host-configurable.
+
+```toml
+[workflows.panels]
+member_max_tool_calls = 128
+member_deadline_default_seconds = 43200
+```
 
 ## Live cross-process relay
 

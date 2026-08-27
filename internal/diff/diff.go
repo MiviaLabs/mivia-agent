@@ -237,15 +237,16 @@ func contextHunks(ops []Op, context, oldStart, newStart int) []diffHunk {
 	if len(intervals) == 0 {
 		return []diffHunk{{ops: flat, oldStart: oldStart, newStart: newStart}}
 	}
-	oldBefore, newBefore := 0, 0
 	firstOld, firstNew := -1, -1
-	// The first hunk's leading context belongs to the file region before the
-	// first change, so its length is a constant for every hunk. Each later
-	// hunk's own leading context is already the first ops inside its interval;
-	// subtracting it again over-shifts the start toward zero.
+	// The first hunk's leading context is a constant for every hunk: it is the
+	// file region before the first change. oldBefore/newBefore must be
+	// re-counted from the top of the flattened ops per interval; a running
+	// total accumulates earlier intervals and pushes later hunk starts past
+	// EOF (e.g. "@@ -23,7" for a 22-line file).
 	firstLeadingOld, firstLeadingNew := 0, 0
 	result := make([]diffHunk, 0, len(intervals))
 	for _, interval := range intervals {
+		oldBefore, newBefore := 0, 0
 		for i := 0; i < interval[0]; i++ {
 			if flat[i].Kind != Insert {
 				oldBefore++
@@ -334,13 +335,27 @@ func minInt(a, b int) int {
 	return b
 }
 func expired(deadline time.Time) bool { return !deadline.IsZero() && time.Now().After(deadline) }
+
+// TruncateUTF8 returns the longest prefix of s that is valid UTF-8 and at most
+// maxBytes long; a non-positive maxBytes is treated as no limit, so a valid s
+// is returned whole. It walks the window forward with utf8.DecodeRuneInString,
+// so a long valid prefix followed by an invalid byte costs O(n) instead of the
+// O(n^2) rescans of the previous trim-one-byte loop. A decoded U+FFFD with
+// size 3 is a genuine replacement character and does not stop the walk; only
+// RuneError with size 1 (an invalid or truncated sequence) does. The walk runs
+// even when s already fits maxBytes, so a short input containing an invalid
+// byte is cut back to its longest valid prefix rather than returned whole.
 func TruncateUTF8(s string, maxBytes int) string {
-	if maxBytes <= 0 || len(s) <= maxBytes {
-		return s
+	if maxBytes > 0 && len(s) > maxBytes {
+		s = s[:maxBytes]
 	}
-	s = s[:maxBytes]
-	for len(s) > 0 && !utf8.ValidString(s) {
-		s = s[:len(s)-1]
+	i := 0
+	for i < len(s) {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && size == 1 {
+			break
+		}
+		i += size
 	}
-	return s
+	return s[:i]
 }

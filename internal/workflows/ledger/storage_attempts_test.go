@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contentref"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 )
 
 // ---------------------------------------------------------------------------
@@ -135,7 +135,7 @@ func completionOutcome() AttemptOutcome {
 	evidence := []byte("evidence")
 	return AttemptOutcome{
 		Status:          AttemptStatusSucceeded,
-		OutputRef:       contentref.Reference(contentref.KindOutput, evidence),
+		OutputRef:       sdkadapter.Mint(sdkadapter.KindOutput, evidence),
 		OutputDigest:    DigestHex(evidence),
 		ToStepID:        "implement",
 		TransitionIndex: 0,

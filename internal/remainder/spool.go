@@ -18,7 +18,7 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contentref"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 )
 
 // Sentinel load failures. The read_output tool maps each to a distinct
@@ -82,7 +82,7 @@ type grant struct {
 // mintReference is a test seam. Reference cannot return "" for non-empty data
 // under a known kind, but INV-AG-10 says a mint that produced nothing must not
 // become a ref, so the check stays and is exercised through the seam.
-var mintReference = contentref.Reference
+var mintReference = sdkadapter.Mint
 
 // NewSpool returns a principal-scoped remainder spool over store.
 // A nil store is allowed: Spool then never mints refs (degrades to plain notices).
@@ -101,7 +101,7 @@ func (s *Spool) Spool(ctx context.Context, principal string, data []byte) string
 	if s == nil || s.store == nil || principal == "" || len(data) == 0 {
 		return ""
 	}
-	ref := mintReference(contentref.KindOutput, data)
+	ref := mintReference(sdkadapter.KindOutput, data)
 	if ref == "" {
 		return ""
 	}

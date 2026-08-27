@@ -54,9 +54,27 @@ How mivia is built. Owner: `architecture`.
 | [Skills and resources](architecture/skills.md) | Skill discovery, activation, and scoped resource architecture |
 | [Embedded persistence](architecture/embedded-persistence.md) | Embedded persistence recommendation for sessions, events, and context |
 | [Workflows architecture](architecture/workflows.md) | Workflow contract schemas and templates architecture |
+| [Workflow stack settle](architecture/workflow-stack-settle.md) | Plan for autonomous stack settle: completion sweep, failure propagation, `failed_pr_policy`, lock hygiene |
 
 Architecture decisions live in these canonical docs, not in separate ADR
 files. ADRs are not used in this repository.
+
+## Design
+
+The new terminal UI. Owner: `architecture`.
+
+| Doc | Covers |
+|-----|--------|
+| [UX rules](design/ux-rules.md) | Binding interaction rules: reserved keys, repaint, inline against cockpit, composer, focus, mouse, clipboard, accessibility |
+| [Cockpit research](design/cockpit-research.md) | Evidence for the full-screen renderer: what the alternate screen removes, the mitigation for each, terminal hazards, and the correction to UX rules section 3 |
+| [Wireframes, variant D](design/wireframes-panes.md) | The chosen visual specification: block anatomy, every block type, dialogs, keymap |
+| [Research, variant D](design/research-panes.md) | Colour, contrast and colour-vision evidence behind the shipped themes |
+| [Wireframes, variants A-C](design/wireframes.md) | Record of the three rejected directions |
+| [Research, iteration 1](design/research.md) | Record of the first research pass |
+
+[UX rules](design/ux-rules.md) wins on interaction and mechanics.
+[Wireframes, variant D](design/wireframes-panes.md) wins on layout and visual
+form. Section 10 of the rules lists the points it overturns.
 
 ## Development
 

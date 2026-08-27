@@ -33,6 +33,18 @@ var transportFaultPhrases = []string{
 	"failed to connect",        // gh: connect failure
 }
 
+// permanentMergePhrases identify gh merge errors that will never resolve by
+// retrying: the PR is in a state that no amount of polling can fix.
+var permanentMergePhrases = []string{
+	"pull request is closed", // PR was closed, not merged
+	"pull request not found", // PR or repo deleted
+	"not authorized",         // token revoked or permission lost
+	"permission denied",      // insufficient repo permissions
+	"branch not found",       // branch was deleted out-of-band
+	"merge conflict",         // content conflict (may be fixable but needs human action)
+	"required status check",  // branch protection blocking (misconfigured or stuck)
+}
+
 // IsTransportFault reports whether err is a git/gh transport fault: a
 // wrapped net/syscall error of the connection-death kinds, or an error whose
 // text carries one of the transport fault phrases. It never matches a bare
@@ -54,6 +66,24 @@ func IsTransportFault(err error) bool {
 	}
 	msg := strings.ToLower(err.Error())
 	for _, phrase := range transportFaultPhrases {
+		if strings.Contains(msg, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsPermanentMergeError reports whether err from MergePullRequest represents
+// a failure that retrying will never fix: the PR is closed, auth is broken,
+// a branch was deleted, or a merge conflict exists. Retriable conditions
+// (pending CI, review requirements, transient gh errors) return false so
+// the caller can keep polling.
+func IsPermanentMergeError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, phrase := range permanentMergePhrases {
 		if strings.Contains(msg, phrase) {
 			return true
 		}

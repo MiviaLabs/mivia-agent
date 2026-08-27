@@ -41,9 +41,7 @@ func TestCatchUpAdvancesCursorWhenTailReadIsEmpty(t *testing.T) {
 	}
 	// Even though no events were applied, the empty tail must still move the
 	// cursor so the next probe does not re-read the same ghost run.
-	repo.mu.RLock()
-	cursor := repo.cursor
-	repo.mu.RUnlock()
+	cursor := repo.engine.Watermarks().Cursor()
 	if cursor != uint64(store.maxSeq) {
 		t.Fatalf("cursor = %d, want %d (an empty tail must still advance)", cursor, store.maxSeq)
 	}

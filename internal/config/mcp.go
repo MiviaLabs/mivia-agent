@@ -65,6 +65,23 @@ func LoadTrustedMCPConfig(workspaceRoot string) (MCPConfig, []string, error) {
 	return resolveMCPConfig(mergeMCPConfig(user, project))
 }
 
+// LoadScopeMCPServers loads user and project MCP server configurations separately without merging.
+func LoadScopeMCPServers(userPath, projectPath string) (userServers, projectServers []MCPServerConfig, err error) {
+	if userPath != "" {
+		u, err := loadMCPConfigPath(userPath)
+		if err == nil && u.Servers != nil {
+			userServers = u.Servers
+		}
+	}
+	if projectPath != "" && !sameFilePath(userPath, projectPath) {
+		p, err := loadMCPConfigPath(projectPath)
+		if err == nil && p.Servers != nil {
+			projectServers = p.Servers
+		}
+	}
+	return userServers, projectServers, nil
+}
+
 func resolveMCPConfig(input mcpConfigInput) (MCPConfig, []string, error) {
 	resolved := input.resolve(MCPConfig{})
 	if err := validateResolvedMCPConfig(resolved); err != nil {
@@ -116,6 +133,10 @@ func loadMCPConfigPath(path string) (mcpConfigInput, error) {
 		return mcpConfigInput{}, nil
 	}
 	for i := range document.MCP.Servers {
+		// A committed config is shared across machines; ~ expands to the
+		// current user's home so a stdio command stays a real absolute path
+		// per-machine instead of hardcoding one contributor's home directory.
+		document.MCP.Servers[i].Command = ExpandPath(document.MCP.Servers[i].Command)
 		if err := validateMCPServer(document.MCP.Servers[i]); err != nil {
 			return mcpConfigInput{}, fmt.Errorf("MCP config %s: server %d: %w", path, i, err)
 		}

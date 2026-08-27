@@ -141,7 +141,7 @@ Start a new run or resume an interrupted run.
 |-----------|------|----------|-------------|
 | `workflow` | string | yes (new run) | Workflow name from `.mivia/workflows/` |
 | `inputs` | object | varies | Key-value map matching the workflow's input contract |
-| `allow_publish` | boolean | no | Allow publishing (default: `false`) |
+| `allow_publish` | boolean | no | Accepted for compatibility; not a gate here. Publishing is a separate `workflow_deliver` step. |
 | `resume` | boolean | no | Resume from durable snapshot (default: `false`) |
 | `run_id` | string | yes (resume) | Existing run ID to resume |
 | `force` | boolean | no | Clear a stale execution claim when resuming |
@@ -238,7 +238,7 @@ While a workflow step runs, three clocks keep it observable:
 Evidence gates and human gates are not on the heartbeat clock: they emit
 `gate_started` (evidence gates) or `approval_requested` (human gates) at start
 and `step_completed` at completion, never `step_heartbeat`. The full protocol
-is documented in `.mivia/rules/70-long-running-heartbeat.md`.
+is documented in `.agents/rules/70-long-running-heartbeat.md`.
 
 ## The shipped workflow: feature-delivery
 
@@ -324,8 +324,8 @@ Use this map when you need to inspect or change the shipped workflow.
 | Step order, routes, limits, and delivery policy | [`.mivia/workflows/feature-delivery.toml`](../../.mivia/workflows/feature-delivery.toml) | This file is the workflow contract. It cannot grant provider, tool, or publish permission. |
 | Agent prompts | [`.mivia/workflows/templates/`](../../.mivia/workflows/templates/) | Each template defines the task for one workflow step. |
 | Structured step results | [`.mivia/workflows/schemas/`](../../.mivia/workflows/schemas/) | Routes use these validated fields, not free-form prose. |
-| Implementation agent | [`.mivia/agents/workflow-engineer.toml`](../../.mivia/agents/workflow-engineer.toml) | This agent can edit its isolated worktree. It cannot run commands or publish. |
-| Review agent | [`.mivia/agents/reviewer.toml`](../../.mivia/agents/reviewer.toml) | This agent is read-only. It returns review evidence. |
+| Implementation agent | [`.agents/agents/workflow-engineer.md`](../../.agents/agents/workflow-engineer.md) | This agent can edit its isolated worktree. It cannot run commands or publish. |
+| Review agent | [`.agents/agents/reviewer.md`](../../.agents/agents/reviewer.md) | This agent is read-only. It returns review evidence. |
 | Provider catalog, credentials, worktrees, and subagent limits | [`.mivia/mivia.toml`](../../.mivia/mivia.toml) | Keep API keys in the environment or env file, never in this file. |
 
 ### Agent models
@@ -623,7 +623,7 @@ commit_message_template = "feat(agent): workflow delivery\n\nDelivers: {{ inputs
 | `on_failure` | Step to return to when delivery fails for a repairable reason |
 | `pr_title_policy` | Relative path to the project PR-title policy file (optional; default: `.mivia/policy/pr-title.toml`) |
 | `on_pr_metadata_failure` | Step to return to when the agent PR title or summary fails the policy check (optional; default: `on_failure`) |
-| `on_diff_size_failure` | Step to return to when the delivered diff exceeds the stacking `hard_lines` limit (optional; default: `on_failure`). The step shrinks or splits the chunk so the diff fits; the run is never failed for size alone |
+| `on_diff_size_failure` | Step to return to when the delivered diff exceeds the stacking `hard_lines` limit (optional; default: `on_failure`). The step shrinks or splits the chunk so the diff fits; the run is never failed for size alone. With `split_deferred = true` the host first tries its own automatic file split; a split that would separate a file from its tests is refused so the file and its tests always ship in the same commit |
 | `deliver_plan_run` | Publish a stacking plan run's own PR after its chunk stack has been driven. Default `false`: the plan run settles `succeeded` and nothing is published for it — the chunk PRs carry the work, and the plan and its artifacts stay recorded in the ledger |
 
 Publication requires the invoking user to grant `--allow-publish`. Without the grant, an eligible run finishes as `delivery_pending`.
@@ -738,7 +738,7 @@ invocation.
 
 A reviewer must return schema-valid structured evidence. Prose is never a routing signal. See [Workflows](workflows.md#trust-what-a-workflow-file-can-and-cannot-do) for the full model.
 
-Workflow agent steps run inside an isolated worktree with a restricted tool surface. Their write tools honor the project write-path blocklist (`[tools].write_path_blocklist` in the config that started the run). Two paths are blocked by default: `.git` and `.mivia/mivia.toml`. The blocklist key adds more; `[tools].write_path_blocklist_remove` removes entries, including the two defaults, which is a trust decision (an agent that can edit the config or Git metadata can remove its own restrictions or bypass hook gates). A project that omits the key leaves `.mivia/agents`, `.mivia/policy`, `.mivia/rules`, `.mivia/skills`, `.mivia/workflows`, and Go module files writable by workflow agents, including the workflow definition itself. The interactive session is not bound by the blocklist. See [Configuration](config.md#write-path-blocklist).
+Workflow agent steps run inside an isolated worktree with a restricted tool surface. Their write tools honor the project write-path blocklist (`[tools].write_path_blocklist` in the config that started the run). Nothing is blocked by default — protection is opt-in. A project names what it wants protected, including `.git` and `.mivia/mivia.toml` if it wants them back (recommended: an agent that can edit the config or Git metadata can remove its own restrictions or bypass hook gates); `[tools].write_path_blocklist_remove` removes an entry it (or a layer above it) added. A project that omits the key leaves `.git`, `.mivia/mivia.toml`, `.agents/agents`, `.mivia/policy`, `.mivia/skills`, `.agents/rules`, `.agents/skills`, `.mivia/workflows`, and Go module files all writable by workflow agents, including the workflow definition itself. The interactive session is not bound by the blocklist. See [Configuration](config.md#write-path-blocklist).
 
 ### Blocked writes are a host problem, never a review failure
 
@@ -794,7 +794,10 @@ merge_policy = "approve" # "approve" (default) or "auto"
 max_total_chunks = 200        # default 200; ceiling across all decompose waves of one plan
 max_wave_chunks = 12          # default 12; ceiling per single decompose call
 max_concurrent_chunks = 4     # default 4; chunk runs the driver admits and drives at once
+split_deferred = true         # default false; host auto-splits an over-limit diff
 ```
+
+`split_deferred = true` lets the host split an over-limit chunk itself: it measures the actual per-file diff size and defers the largest files to a follow-up PR until the delivered diff fits, with no repair round trip. The split never separates a file from its same-directory test companion (`*_test`, `*.test`, `*_spec`, `*.spec`, `test_*`, `Test*`): a delivered commit that ships code without its tests can fail the repository's own test gate, so such a split is refused with a clear reason and the chunk still goes to the diff-size repair step to shrink. The same rule applies to a repair agent's own `deferred_files` declaration: a file and its tests ship in the same commit (both delivered or both deferred).
 
 The section is validated at compile time: an enabled section without explicit `plan_step` and `implement_step` is rejected, as are unknown step references, out-of-range thresholds, and invalid merge policies. Resume recompiles the admitted snapshot definition under the same rule, so a run keeps its compiled shape across interrupts.
 
@@ -852,6 +855,24 @@ Any chunk that fails terminally (exhausted retry budget) halts the stack. The dr
 ### Recovery on restart
 
 Every `stack drive` start runs idempotent reconciliation: it loads chunk tasks from the task ledger, reconciles each non-terminal task against its run and git merge state, and schedules the next admission wave. Stable admission keys (`<stack-id>:<chunk-id>`) ensure that re-admission after a restart returns the same run — no duplicate runs, no lost tasks. Reconciliation is derived from durable state only (task ledger, run ledger, git merge state).
+
+### Recognizing and recovering a parked stack
+
+Driving a multi-chunk stack normally happens in the background inside whichever process started or resumed the plan run (the CLI foreground path, or the `workflow_run`/`workflow_resume` agent tools — both drive identically). If that process exits, is killed, or restarts before the drive reaches a durable checkpoint, the plan run is left parked at `delivery_pending` with none of its chunks admitted. Nothing re-drives it automatically: there is no separate background scheduler for this today, so a parked stack stays parked until an operator intervenes.
+
+Signs a plan run is parked, not just normally pending:
+
+- `mivia workflow status <plan-run-id>` prints a `stack: UNDRIVEN` line naming the chunk count and pointing at the recovery commands below.
+- `mivia workflow deliver <plan-run-id> --allow-publish` refuses with an error naming the stack, instead of publishing — this is the drive-before-delivery guard (see `deliver_plan_run` above) refusing to let the plan run settle `succeeded` while its chunks were never driven.
+- `mivia stack status <workflow> --stack <plan-run-id>` shows every chunk still in its initial (non-admitted) state well after the plan run itself finished.
+
+To recover, first confirm no other process still owns the run (a live executor's claim must not be double-driven — check `mivia workflow status` for a fresh delivery claim before proceeding), then drive it directly:
+
+```bash
+mivia stack drive <workflow> --stack <plan-run-id>
+```
+
+This reuses the same idempotent reconciliation described above, so it is safe to run against a stack that partially drove before the owning process died.
 
 ## See also
 

@@ -69,6 +69,11 @@ type MultiStepHandler struct {
 	DisableProviderReplay bool
 	// ToolTimeout is the per-tool-call timeout.
 	ToolTimeout time.Duration
+	// ToolRunTimeout is the [tools] tool_run_timeout_seconds knob: the SDK
+	// tool-registry's registry-wide run backstop for tools with no declared
+	// Capability.Timeout. <= 0 (the default) means no registry-wide cap
+	// (mapped to the SDK's TimeoutNone); see agent.Options.ToolRunTimeout.
+	ToolRunTimeout time.Duration
 	// RequestTimeout is the per-LLM-request timeout for each turn inside the
 	// sub-agent. When zero, the agent loop falls back to the parent context
 	// deadline, which may be hours for a long-running root session. A hung LLM
@@ -196,24 +201,51 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 	taskStart := time.Now()
 	defer heartbeatStop()
 	go emitHeartbeat(heartbeatCtx, stamped, &stepCount)
-	opts.OnEvent = func(e agent.Event) {
-		if e.Kind == agent.EventStep {
-			stepCount.Add(1)
-		}
-		if stamped != nil {
-			stamped(e)
-		}
-	}
+	opts.OnEvent = h.stepOnEvent(ctx, stamped, &stepCount)
 
 	reply, structured, runErr := h.runValidatedReply(callCtx, loop, opts, taskPrompt, compiled, steps, &stepCount)
 	h.discardPreparation(loop)
 	return finishRun(loop, reply, structured, time.Since(taskStart), stepCount.Load(), runErr)
 }
 
+// stepOnEvent builds the nested loop's OnEvent callback: it counts steps,
+// forwards tool_start/tool_end events to a ToolCallSink installed on the
+// ORIGINAL request context (reqCtx - not the timeout-derived callCtx, which
+// never carries values the coordinator didn't put there) when one is
+// present, and always forwards to the origin-stamped live/TUI sink. The
+// sink forwarding is additive: it records the same events the stamped
+// forwarding already sees, for later persistence, without altering what
+// stamped receives or when.
+func (h *MultiStepHandler) stepOnEvent(reqCtx context.Context, stamped func(agent.Event), stepCount *atomic.Int64) func(agent.Event) {
+	sink, hasSink := ToolCallSinkFrom(reqCtx)
+	return func(e agent.Event) {
+		if e.Kind == agent.EventStep {
+			stepCount.Add(1)
+		}
+		if hasSink {
+			if step, ok := toolCallStepFromEvent(e, time.Now()); ok {
+				sink(step)
+			}
+		}
+		if stamped != nil {
+			stamped(e)
+		}
+	}
+}
+
 // loopOptions builds the nested loop's options. OnEvent is left to the caller,
 // which owns the step counter and the origin-stamped sink.
 func (h *MultiStepHandler) loopOptions(scoped *scopedLoop, steps int, maxTokens *int, toolTimeout time.Duration, req runtime.Request, taskPrompt string) agent.Options {
 	opts := agent.Options{
+		// The nested loop wires a BeforeStep mailbox drain
+		// (applyMailboxAccess). It maps onto the SDK path through the
+		// Steer injector installed in RunAgentLoopOnce: the SDK
+		// drains the injector at the top of every iteration and at
+		// every steered-stop downgrade point, growing history with
+		// the framed parent message and downgrading a pending
+		// StopSteered when the drain is non-empty. No Backend override
+		// here: the SDK is the default and the BeforeStep carrier
+		// lives there now.
 		Model:            h.Model,
 		Reasoning:        h.dial(),
 		MaxSteps:         steps,
@@ -225,6 +257,7 @@ func (h *MultiStepHandler) loopOptions(scoped *scopedLoop, steps int, maxTokens 
 		RefOnlyTools:           h.RefOnlyTools,
 		RemainderSpool:         h.RemainderSpool,
 		ToolTimeout:            toolTimeout,
+		ToolRunTimeout:         h.ToolRunTimeout,
 		RequestTimeout:         h.RequestTimeout,
 		Dispatcher:             scoped.dispatcher,
 		ParentID:               req.ID,

@@ -72,7 +72,7 @@ func TestOllamaKeylessLocalhostFailClosedOnNonLoopbackResolution(t *testing.T) {
 func TestOllamaKeylessLocalhostDialPinnedToConstructionResolution(t *testing.T) {
 	orig := installLocalhostResolver(t, "127.0.0.2")
 
-	dial, err := newLoopbackDialContext("http://localhost:11434/v1")
+	dial, err := newLoopbackDialContext("ollama", "http://localhost:11434/v1")
 	if err != nil {
 		t.Fatal(err)
 	}

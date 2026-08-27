@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
+	"github.com/MiviaLabs/mivia-agent/internal/hooksession"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 )
 
@@ -45,10 +46,11 @@ func armHooks(t *testing.T, config string) string {
 	home, ws := hookHome(t, config)
 	dir := filepath.Join(home, ".mivia")
 
-	session := loadHooksIn(t, ws)
-	previous := sessionHookState.Load()
-	sessionHookState.Store(session)
-	t.Cleanup(func() { sessionHookState.Store(previous) })
+	session, err := hooksession.Load(ws)
+	if err != nil {
+		t.Fatalf("hooksession.Load: %v", err)
+	}
+	t.Cleanup(hooksession.SetForTest(session))
 	return dir
 }
 
@@ -246,10 +248,11 @@ func TestIntegrationProjectHookRunsFromTheWorkspace(t *testing.T) {
 	writeWorkspaceHooks(t, ws, postToolUseConfig)
 	hookScript(t, filepath.Join(ws, ".mivia"), "fmt.sh", "printf 'project hook ran'\nexit 0\n")
 
-	session := loadHooksIn(t, ws)
-	previous := sessionHookState.Load()
-	sessionHookState.Store(session)
-	t.Cleanup(func() { sessionHookState.Store(previous) })
+	session, err := hooksession.Load(ws)
+	if err != nil {
+		t.Fatalf("hooksession.Load: %v", err)
+	}
+	t.Cleanup(hooksession.SetForTest(session))
 
 	result := dispatchWith(t, ws, okTool(`{"ok":true}`))
 	if !strings.Contains(result.HookContext, "project hook ran") {
@@ -277,10 +280,11 @@ event = "PostToolUse"
 `)
 	hookScript(t, filepath.Join(ws, ".mivia"), "project.sh", "printf 'project hook'\nexit 0\n")
 
-	session := loadHooksIn(t, ws)
-	previous := sessionHookState.Load()
-	sessionHookState.Store(session)
-	t.Cleanup(func() { sessionHookState.Store(previous) })
+	session, err := hooksession.Load(ws)
+	if err != nil {
+		t.Fatalf("hooksession.Load: %v", err)
+	}
+	t.Cleanup(hooksession.SetForTest(session))
 
 	result := dispatchWith(t, ws, okTool(`{"ok":true}`))
 	if !strings.Contains(result.HookContext, "user hook") || !strings.Contains(result.HookContext, "project hook") {
@@ -310,10 +314,11 @@ event = "PreToolUse"
 `)
 	hookScript(t, filepath.Join(ws, ".mivia"), "guard.sh", "printf 'this project forbids that\\n' >&2\nexit 2\n")
 
-	session := loadHooksIn(t, ws)
-	previous := sessionHookState.Load()
-	sessionHookState.Store(session)
-	t.Cleanup(func() { sessionHookState.Store(previous) })
+	session, err := hooksession.Load(ws)
+	if err != nil {
+		t.Fatalf("hooksession.Load: %v", err)
+	}
+	t.Cleanup(hooksession.SetForTest(session))
 
 	var ran bool
 	result := dispatchWith(t, ws, toolHandler(func(context.Context, runtime.Request) (json.RawMessage, error) {

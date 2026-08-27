@@ -84,7 +84,7 @@ func TestIntegration_WideWindowReadNotDestroyedByDispatcherCeiling(t *testing.T)
 	// The tool's own honest framing must arrive intact: its truncation notice
 	// closes the window, and the loop must not have tail-cut the result (its
 	// marker is "... (truncated N bytes)").
-	if !strings.HasSuffix(body, "... truncated at max read size (262144 bytes)") {
+	if !strings.Contains(body, "... truncated at max read size (262144 bytes") || !strings.Contains(body, "Call read_file with offset=") {
 		tail := body
 		if len(tail) > 120 {
 			tail = tail[len(tail)-120:]

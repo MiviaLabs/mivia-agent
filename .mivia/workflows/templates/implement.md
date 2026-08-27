@@ -17,13 +17,8 @@ Prior review findings (present on repair iterations only):
 When review findings are present, address each OPEN finding (by its id) before you resubmit.
 Do not repeat a change the reviewer rejected. Implement each required change exactly.
 
-Integration review findings (present on integration-repair iterations only):
+<!-- CUT (fast debug path): "Integration review findings" section (evidence binding integration_findings); restore alongside the review_integration step and its binding in feature-delivery.toml -->
 
-{{ evidence.integration_findings }}
-
-When integration review findings are present, address each finding that is still open (by its
-id) before you resubmit. Do not repeat a change the integration reviewer rejected. Implement
-each required change exactly.
 In your output, set addressed_findings to the ids of every prior finding you addressed. Use an
 empty array when you addressed none.
 

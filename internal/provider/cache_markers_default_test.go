@@ -58,6 +58,7 @@ func TestImplicitCacheFactoriesIgnoreCacheMarkersOption(t *testing.T) {
 	factories := map[string]func(Options) (Completer, error){
 		"deepseek": NewDeepSeek,
 		"zai":      NewZAI,
+		"minimax":  NewMiniMax,
 	}
 	for name, factory := range factories {
 		completer, err := factory(Options{APIKey: "k", CacheMarkersEnabled: true})

@@ -371,3 +371,139 @@ func TestModelGenerationMonotonicAcrossSuccessfulSwitches(t *testing.T) {
 		t.Fatalf("generation after switch-back = %d, want 3", got)
 	}
 }
+
+func TestUnknownContextWindowNoticeFiresOncePerModel(t *testing.T) {
+	origWarn := WarnUnknownContextWindow
+	defer func() { WarnUnknownContextWindow = origWarn }()
+
+	var warned []string
+	WarnUnknownContextWindow = func(model string) {
+		warned = append(warned, model)
+	}
+
+	comp := &blockingCompleter{name: "p", allow: make(chan struct{})}
+	// Initial session with unrecognized model (absent from ModelProfiles)
+	s := NewSession(&config.Resolved{ProviderName: "p", Model: "unknown-init", Models: []string{"unknown-init", "unknown-switch"}}, comp)
+
+	if len(warned) != 1 || warned[0] != "unknown-init" {
+		t.Fatalf("warned on NewSession = %v, want [unknown-init]", warned)
+	}
+
+	// Switch to another unknown model
+	if err := s.SwitchBinding(ModelBinding{
+		ProviderName:    "p",
+		Model:           "unknown-switch",
+		Completer:       comp,
+		Profile:         config.ModelSpec{Name: "unknown-switch", ContextWindowTokens: config.UnknownContextWindowTokens},
+		FallbackProfile: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(warned) != 2 || warned[1] != "unknown-switch" {
+		t.Fatalf("warned on switch = %v, want [unknown-init unknown-switch]", warned)
+	}
+
+	// Switch back to unknown-init: must not warn again
+	if err := s.SwitchBinding(ModelBinding{
+		ProviderName:    "p",
+		Model:           "unknown-init",
+		Completer:       comp,
+		Profile:         config.ModelSpec{Name: "unknown-init", ContextWindowTokens: config.UnknownContextWindowTokens},
+		FallbackProfile: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(warned) != 2 {
+		t.Fatalf("warned after repeat switch = %v, want exactly 2 warnings", warned)
+	}
+}
+
+// TestUnknownContextWindowNoticeFiresOnSessionResume pins the third publish
+// path: loading a saved session whose binding factory resolves the saved
+// provider/model to an unrecognized profile goes through
+// publishLoadedSession, not NewSession or SwitchBinding. That third path
+// must warn too - a session saved against a model since renamed or removed
+// from the catalog is exactly the config-drift case this fallback exists
+// for, and it must not silently 128k-fallback with no notice.
+func TestUnknownContextWindowNoticeFiresOnSessionResume(t *testing.T) {
+	origWarn := WarnUnknownContextWindow
+	defer func() { WarnUnknownContextWindow = origWarn }()
+
+	var warned []string
+	WarnUnknownContextWindow = func(model string) {
+		warned = append(warned, model)
+	}
+
+	dir := t.TempDir()
+	store, err := NewFileSessionStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := []provider.Message{{Role: provider.RoleUser, Content: "saved"}}
+	if err := store.Save("exact", saved, "removed-model", "p"); err != nil {
+		t.Fatal(err)
+	}
+
+	comp := &blockingCompleter{name: "p", allow: make(chan struct{})}
+	s := NewSession(&config.Resolved{ProviderName: "p", Model: "known", Models: []string{"known", "removed-model"},
+		ModelProfiles: []config.ModelSpec{{Name: "known", ContextWindowTokens: 200_000}}}, comp)
+	if len(warned) != 0 {
+		t.Fatalf("warned during setup with a recognized model: %v", warned)
+	}
+	s.SetSessionStore(store, nil)
+
+	newComp := &blockingCompleter{name: "new", allow: make(chan struct{})}
+	s.SetBindingFactory(func(providerName, model string) (ModelBinding, error) {
+		// removed-model is absent from ModelProfiles, mirroring a model
+		// that was renamed or dropped from the catalog since the session
+		// was saved - the factory still resolves a usable binding (per
+		// ConfiguredProfile's contract), just with the unknown-window
+		// fallback profile.
+		return ModelBinding{ProviderName: providerName, Model: model, Completer: newComp,
+			Profile: config.ModelSpec{Name: model, ContextWindowTokens: config.UnknownContextWindowTokens}, FallbackProfile: true}, nil
+	})
+
+	if err := s.Load("exact"); err != nil {
+		t.Fatal(err)
+	}
+	if len(warned) != 1 || warned[0] != "removed-model" {
+		t.Fatalf("warned after resume = %v, want [removed-model]", warned)
+	}
+
+	// Reloading the same session must not warn a second time.
+	if err := s.Load("exact"); err != nil {
+		t.Fatal(err)
+	}
+	if len(warned) != 1 {
+		t.Fatalf("warned after repeat resume = %v, want exactly 1 warning", warned)
+	}
+}
+
+// TestRecognized128kModelDoesNotTriggerUnknownContextWindowWarning proves that
+// explicitly configuring a model with context_window_tokens = 128,000 does NOT
+// trigger the unknown-window notice.
+func TestRecognized128kModelDoesNotTriggerUnknownContextWindowWarning(t *testing.T) {
+	orig := WarnUnknownContextWindow
+	t.Cleanup(func() { WarnUnknownContextWindow = orig })
+
+	var warned []string
+	WarnUnknownContextWindow = func(model string) {
+		warned = append(warned, model)
+	}
+
+	comp := &blockingCompleter{name: "p", allow: make(chan struct{})}
+	res := &config.Resolved{
+		ProviderName: "p",
+		Model:        "llama3.3",
+		Models:       []string{"llama3.3"},
+		ModelProfiles: []config.ModelSpec{
+			{Name: "llama3.3", ContextWindowTokens: 128_000},
+		},
+	}
+	_ = NewSession(res, comp)
+	if len(warned) != 0 {
+		t.Fatalf("expected 0 warnings for recognized 128k model, got %v", warned)
+	}
+}

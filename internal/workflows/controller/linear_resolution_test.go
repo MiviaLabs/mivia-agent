@@ -7,14 +7,13 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
 // twoGateWorkflow compiles gate_a (human) -> mid (agent) -> gate_b (human)
 // -> success, for the stale-approval replay regression.
-func twoGateWorkflow(t *testing.T) *compiler.CompiledWorkflow {
+func twoGateWorkflow(t *testing.T) *definition.CompiledWorkflow {
 	t.Helper()
 	wf := &definition.WorkflowFile{
 		Version: 1, Name: "two-gate", InitialStep: "gate_a",
@@ -31,7 +30,7 @@ func twoGateWorkflow(t *testing.T) *compiler.CompiledWorkflow {
 			{From: "gate_b", To: "success", Match: definition.MatchCriteria{Status: "succeeded", Output: map[string]string{"decision": "approved"}}},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +124,7 @@ func TestResolutionControllerReject(t *testing.T) {
 // through failureRoute, never the matcher); it exists only because the
 // compiler's reachability check requires every step to be reachable through
 // transitions, mirroring onFailureRepairWorkflow.
-func humanGateRejectionWorkflow(t *testing.T) *compiler.CompiledWorkflow {
+func humanGateRejectionWorkflow(t *testing.T) *definition.CompiledWorkflow {
 	t.Helper()
 	wf := &definition.WorkflowFile{
 		Version: 1, Name: "human-reject-nonterminal", InitialStep: "approve_me",
@@ -141,7 +140,7 @@ func humanGateRejectionWorkflow(t *testing.T) *compiler.CompiledWorkflow {
 			{From: "fix", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}

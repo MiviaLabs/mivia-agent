@@ -56,6 +56,63 @@ func TestStorageRepository_SetStepAttemptHeartbeat(t *testing.T) {
 	}
 }
 
+// TestStorageRepository_SetStepAttemptHeartbeatIgnoresTerminalAttempt pins the
+// defense-in-depth guard: a heartbeat that lands after the attempt already
+// settled (e.g. a watchdog tick racing the run's terminal transition, F16) is
+// a silent no-op — it must never overwrite LastHeartbeatAt or append a
+// wf_attempt_heartbeat event onto a closed attempt's audit trail.
+func TestStorageRepository_SetStepAttemptHeartbeatIgnoresTerminalAttempt(t *testing.T) {
+	ctx := context.Background()
+	for name, repo := range repos(t) {
+		t.Run(name, func(t *testing.T) {
+			run := runID(t)
+			snap, json := newRun(t, run)
+			requireErr(t, repo.CreateRun(ctx, snap, json), nil, "CreateRun")
+			requireErr(t, repo.CreateStepAttempt(ctx, StepAttempt{AttemptID: "att-1", RunID: run, StepID: "plan", AttemptNo: 1}), nil, "create attempt")
+
+			t1 := fixedClock
+			requireErr(t, repo.SetStepAttemptHeartbeat(ctx, run, "att-1", t1), nil, "heartbeat before terminal")
+
+			created, err := repo.GetStepAttempt(ctx, run, "att-1")
+			if err != nil {
+				t.Fatalf("GetStepAttempt before settle: %v", err)
+			}
+			outcome := AttemptOutcome{Status: AttemptStatusSucceeded}
+			requireErr(t, repo.CompleteStepAttempt(ctx, run, "att-1", created.Version, outcome), nil, "settle terminal")
+
+			before, err := repo.GetStepAttempt(ctx, run, "att-1")
+			if err != nil {
+				t.Fatalf("GetStepAttempt: %v", err)
+			}
+
+			// A late heartbeat after the attempt settled must be a silent no-op.
+			late := t1.Add(time.Hour)
+			requireErr(t, repo.SetStepAttemptHeartbeat(ctx, run, "att-1", late), nil, "late heartbeat on terminal attempt")
+
+			after, err := repo.GetStepAttempt(ctx, run, "att-1")
+			if err != nil {
+				t.Fatalf("GetStepAttempt: %v", err)
+			}
+			if !after.LastHeartbeatAt.Equal(before.LastHeartbeatAt) {
+				t.Fatalf("LastHeartbeatAt = %v after late heartbeat on terminal attempt, want unchanged %v", after.LastHeartbeatAt, before.LastHeartbeatAt)
+			}
+			if after.Status != AttemptStatusSucceeded {
+				t.Fatalf("Status = %q after late heartbeat, want succeeded (unchanged)", after.Status)
+			}
+
+			events, err := repo.ListEvents(ctx, run, 0, 0)
+			if err != nil {
+				t.Fatalf("ListEvents: %v", err)
+			}
+			for _, ev := range events {
+				if ev.Kind == eventKindAttemptHeartbeat && strings.Contains(ev.Summary, late.UTC().Format(time.RFC3339Nano)) {
+					t.Fatalf("late heartbeat on terminal attempt appended an event: %+v", ev)
+				}
+			}
+		})
+	}
+}
+
 // TestStorageRepository_SetStepAttemptHeartbeatAuditTrail pins the durable
 // audit trail: successive ticks append DISTINCT events with distinct IDs,
 // same-timestamp retries dedupe, summaries name the attempt and stay bounded,

@@ -64,6 +64,17 @@ func IsWorktree() bool {
 	return abs != repoGitDir
 }
 
+// ResolveGitDir follows a .git file's gitdir: pointer to the actual git
+// directory. Returns the path unchanged if it is a directory, a plain
+// file that is not a valid gitdir pointer, or cannot be read. It performs
+// no process execution, so callers outside this package (for example a
+// no-exec workspace/branch detector) can reuse the same resolution logic
+// this package already uses for worktree detection instead of
+// reimplementing gitdir-pointer parsing.
+func ResolveGitDir(path string) string {
+	return resolveGitDir(path)
+}
+
 // resolveGitDir follows a .git file's gitdir: pointer to the actual git
 // directory. Returns the path unchanged if it is a directory or the file
 // cannot be read.

@@ -77,7 +77,9 @@ func TestWriteEntity(t *testing.T) {
 		{code: "quot", want: "\""},
 		{code: "nbsp", want: " "},
 		{code: "#169", want: "©"},
-		{code: "#0", want: ""},
+		// "#0" is out of range for a valid code point (0 < n < 0x10FFFF): it
+		// must be emitted as literal text, not silently dropped.
+		{code: "#0", want: "&#0;"},
 		{code: "unknown", want: "&unknown;"},
 	}
 	for _, tc := range cases {

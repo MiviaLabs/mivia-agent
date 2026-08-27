@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 )
 
@@ -83,5 +84,50 @@ func TestAWarningRunSurfacesTheDiagnostic(t *testing.T) {
 func TestNoHookRunsEmitNothing(t *testing.T) {
 	if got := collectHookEvents(nil, "call-1"); len(got) != 0 {
 		t.Fatalf("emitted %d hook events with no runs", len(got))
+	}
+}
+
+// The row must say which tool the hook fired for, not just which script ran -
+// a session with several hooks and several tools in flight is unreadable
+// without it.
+func TestHookRunDetailNamesTheTool(t *testing.T) {
+	got := collectHookEvents([]runtime.HookRun{
+		{Event: "PreToolUse", Program: "guard.sh", Tool: "run_command"},
+	}, "call-1")
+	if !strings.Contains(got[0].Detail, "run_command") {
+		t.Fatalf("the row must name the tool the hook fired for, got %q", got[0].Detail)
+	}
+}
+
+// The tool input a hook saw must reach the row, so an operator can see what
+// triggered it - and it must go through the same redaction path tool-input
+// previews use everywhere else in the transcript.
+func TestHookRunInputReachesTheEventRedacted(t *testing.T) {
+	got := collectHookEvents([]runtime.HookRun{
+		{Event: "PreToolUse", Program: "guard.sh", Tool: "run_command", Input: `{"argv":["git","status"]}`},
+	}, "call-1")
+	if !strings.Contains(got[0].Input, "git") {
+		t.Fatalf("the hook's tool input must reach the row, got %q", got[0].Input)
+	}
+}
+
+// Hook stdout can echo back environment values or a command's own output
+// verbatim. It is a transcript row every viewer of the session sees, so it
+// must go through the workspace's redaction policy exactly like a
+// tool-output preview, not bypass it.
+func TestHookRunOutputIsRedacted(t *testing.T) {
+	old := redact.Current()
+	policy, err := redact.Compile([]string{`secret-shaped-[A-Za-z0-9]+`}, nil, "[redacted]")
+	if err != nil {
+		t.Fatalf("compile policy: %v", err)
+	}
+	redact.SetPolicy(policy)
+	t.Cleanup(func() { redact.SetPolicy(old) })
+
+	got := collectHookEvents([]runtime.HookRun{
+		{Event: "PostToolUse", Program: "fmt.sh", Output: "token: secret-shaped-ABC123value"},
+	}, "call-1")
+	if strings.Contains(got[0].Output, "secret-shaped-ABC123value") {
+		t.Fatalf("a secret-shaped hook output must be redacted per the active policy, got %q", got[0].Output)
 	}
 }

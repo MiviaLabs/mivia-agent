@@ -2,10 +2,10 @@
 # convention type(scope): subject. Consulted by the delivery engine before any
 # push or PR create; validated by scripts/verify_agent_config.py.
 [title]
-pattern = '^(?P<type>feat|fix|docs|chore|refactor|test)(\((?P<scope>[a-z0-9-]+)\))?!?: .+$'
+pattern = '^(?P<type>feat|hardening|fix|docs|chore|test|refactor|build|ci|perf|style|revert|security)(\((?P<scope>[a-z0-9-]+)\))?!?: .+$'
 min_chars = 10
 max_chars = 100
-scopes = ["cli", "agent", "mcp", "hooks", "ai", "docs", "security", "quality", "build", "ci", "test", "deps", "release"]
+scopes = ["cli", "agent", "mcp", "hooks", "ai", "docs", "security", "quality", "build", "ci", "test", "deps", "release", "events", "provider", "workflows", "tools"]
 
 [summary]
 required = true

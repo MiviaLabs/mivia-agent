@@ -27,6 +27,7 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -195,12 +196,27 @@ func parsePositionedRow(file, lineStr, colStr, rest, workspaceRoot string, requi
 	if msg == "" {
 		return diagnosticsRow{}, false
 	}
+	line, lineOK := parsePositionNumber(lineStr)
+	if !lineOK {
+		// A digits-only position that does not fit int would degrade to a
+		// fabricated line of 0 the producer never emitted (finding PC-1):
+		// demote to a raw row, matching the JSON path's demotion rule.
+		return diagnosticsRow{}, false
+	}
+	column := 0
+	if colStr != "" {
+		var colOK bool
+		column, colOK = parsePositionNumber(colStr)
+		if !colOK {
+			return diagnosticsRow{}, false
+		}
+	}
 	return diagnosticsRow{
 		Severity: severity,
 		Message:  stripControlChars(msg),
 		File:     relativizeDiagnosticsPath(file, workspaceRoot),
-		Line:     parsePositionNumber(lineStr),
-		Column:   parsePositionNumber(colStr),
+		Line:     line,
+		Column:   column,
 	}, true
 }
 
@@ -259,7 +275,7 @@ func jsonRowsArray(obj map[string]any) ([]any, bool) {
 
 // parseJSONRow builds one row from one JSON element. An element without a
 // usable message, or with a present-but-unusable position field, becomes a raw
-// row that echoes the element (audit findings P2).
+// row that echoes the element (audit finding P2).
 func parseJSONRow(item any, workspaceRoot string) diagnosticsRow {
 	obj, ok := item.(map[string]any)
 	if !ok {
@@ -319,20 +335,56 @@ func jsonStringField(obj map[string]any, aliases ...string) (string, bool) {
 	return "", false
 }
 
-// jsonIntField returns the first usable numeric value among the aliases. ok
+// jsonIntField returns the first usable position number among the aliases. ok
 // reports that a usable value was found; seen reports that at least one alias
-// was present. A present-but-unusable position is the caller's signal to
-// demote the element to a raw row (audit finding P2).
+// was present. A present-but-unusable position (wrong type, or a number that
+// is negative, fractional, non-finite, or too large for int) is skipped so a
+// usable lower-priority alias still wins (audit finding P3); when no alias
+// yields a usable value, seen stays true and ok false, which is the caller's
+// signal to demote the element to a raw row (audit finding P2).
 func jsonIntField(obj map[string]any, aliases ...string) (val int, ok, seen bool) {
 	for _, alias := range aliases {
 		if v, present := jsonField(obj, alias); present {
 			seen = true
-			if f, ok := v.(float64); ok {
+			if f, isNum := v.(float64); isNum && usablePositionNumber(f) {
 				return int(f), true, true
 			}
 		}
 	}
 	return 0, false, seen
+}
+
+// maxInt is the largest value int can hold on this platform: 2^63-1 on
+// 64-bit int targets, 2^31-1 on 32-bit targets.
+const maxInt = int(^uint(0) >> 1)
+
+// usablePositionNumber reports whether a JSON number is a position the parser
+// can trust: finite, non-negative, integral (no silent float->int truncation),
+// and exactly representable as int (no overflow). Anything else - 1.5, -3, or
+// 1e20 - would corrupt line/column into a value the producer never emitted
+// (int(1e20) is implementation-defined overflow garbage), so the caller
+// demotes the element to a raw row.
+func usablePositionNumber(f float64) bool {
+	if math.IsNaN(f) || math.IsInf(f, 0) || f < 0 {
+		return false
+	}
+	if f != math.Trunc(f) {
+		return false
+	}
+	// Reject the int boundary before converting. On targets whose float->int
+	// conversion saturates (arm64, arm), int(2^63) is MaxInt64 and
+	// float64(MaxInt64) rounds back to 2^63, so the round-trip check alone
+	// passes for f == 2^63 (resp. 2^31 on 32-bit) and fabricates a position
+	// the producer never emitted (finding C2-1). float64(maxInt)+1 is the
+	// first float64 that overflows int, so this comparison demotes identically
+	// on every platform.
+	if f >= float64(maxInt)+1 {
+		return false
+	}
+	// f is non-negative, integral, and below the int boundary. The round-trip
+	// check is the final guard against silent truncation for any value the
+	// platform converts non-exactly.
+	return float64(int(f)) == f
 }
 
 // marshalJSON renders v compactly for a raw row echo.
@@ -386,13 +438,19 @@ func knownSeverityToken(token string) bool {
 }
 
 // parsePositionNumber parses a position number. The caller's regex guarantees
-// digits; a malformed value degrades to zero.
-func parsePositionNumber(s string) int {
+// digits; ok is false when the digits do not fit in int, which would
+// otherwise fabricate a line/column of 0 the producer never emitted (finding
+// PC-1). The empty string is the vet shape's absent column, so it parses to 0
+// with ok true rather than being a malformed value.
+func parsePositionNumber(s string) (int, bool) {
+	if s == "" {
+		return 0, true
+	}
 	n, err := strconv.Atoi(s)
 	if err != nil {
-		return 0
+		return 0, false
 	}
-	return n
+	return n, true
 }
 
 // relativizeDiagnosticsPath rewrites an absolute path under the workspace root

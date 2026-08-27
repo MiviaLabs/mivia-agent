@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
@@ -28,6 +30,7 @@ type contextTurnConfig struct {
 
 type plainTurnSnapshot struct {
 	myTurn      uint64
+	sessionID   string
 	messages    []provider.Message
 	binding     ModelBinding
 	token       OperationToken
@@ -51,9 +54,13 @@ type agentTurnSnapshot struct {
 	maxToolResult     int
 	batchResultBudget int
 	refOnlyTools      []string
+	approvalGate      func(context.Context, string, json.RawMessage) sdkadapter.ApprovalResult
+	approvalStanding  *sdkadapter.ApprovalStanding
+	approvalPolicy    string
 	onEvent           func(agent.Event)
 	toolRegistry      *tools.Registry
 	toolTimeout       time.Duration
+	toolRunTimeout    time.Duration
 	remainderSpool    *remainder.Spool
 	sessionID         string
 	eventBus          *events.Bus
@@ -140,13 +147,15 @@ func (s *Session) SetContextManager(manager *contextmgr.ContextManager, principa
 }
 
 // SetSummarizer replaces the context manager's summarizer in place, leaving
-// principal/revision/store untouched. A mid-session model switch
-// (SwitchBinding) publishes a new provider/model/completer but does not
-// rebuild the summarizer on its own - the summarizer was captured once at
-// session setup (see internal/cli's summaryWiring) and otherwise keeps
-// summarizing through the pre-switch model/completer until a fresh session
-// is constructed. Callers that rebuild a *contextmgr.Summarizer against the
-// current binding after a switch use this to publish it; nil clears a
+// principal/revision/store untouched. A mid-session binding change
+// (SwitchBinding, or a resumed session's Load publishing a different saved
+// provider/model) does not rebuild the summarizer on its own - the
+// summarizer was captured once at session setup (see internal/clichat's
+// summaryWiring) and otherwise keeps summarizing through the pre-switch
+// model/completer. Production callers rebuild against the new binding and
+// publish it here after every such change: cliagents.publishModelSwitch
+// (the /model command) and internal/clichat's chat_command.go /
+// internal/uiadapter's session_pool.go (both after sess.Load). nil clears a
 // summarizer that setup could no longer configure for the new binding
 // rather than leaving a stale one in place.
 func (s *Session) SetSummarizer(summarizer *contextmgr.Summarizer) {
@@ -157,6 +166,9 @@ func (s *Session) SetSummarizer(summarizer *contextmgr.Summarizer) {
 	}
 	manager := *s.contextManager
 	manager.Summarizer = summarizer
+	if summarizer != nil {
+		s.contextPolicy = summarizer.Policy
+	}
 	s.contextManager = &manager
 }
 
@@ -173,6 +185,20 @@ func (s *Session) CurrentSummarizerBinding() (contextstate.BindingRevision, bool
 		return contextstate.BindingRevision{}, false
 	}
 	return s.contextManager.Summarizer.Binding, true
+}
+
+// ContextPolicy returns the session's active context policy snapshot.
+func (s *Session) ContextPolicy() contextstate.PolicySnapshot {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.contextPolicy
+}
+
+// ContextRedactionPolicy returns the session's active context redaction policy.
+func (s *Session) ContextRedactionPolicy() contextstate.RedactionPolicy {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.contextRedaction
 }
 
 func (s *Session) SetContextRedactionPolicy(policy contextstate.RedactionPolicy) {
@@ -310,6 +336,14 @@ func loadBoundContextStore(ctx context.Context, store contextstate.Store, princi
 	return store.Load(ctx, principal, sessionID)
 }
 
+// contextEnabled is the lock-taking form of contextEnabledLocked, for callers
+// outside any turn (the turn-boundary compaction pass) that hold no lock.
+func (s *Session) contextEnabled() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.contextEnabledLocked()
+}
+
 func (s *Session) contextEnabledLocked() bool {
 	return s.contextManager != nil && s.contextManager.Enabled &&
 		s.contextManager.PreparationManager != nil && s.contextManager.CheckpointPublisher != nil &&
@@ -385,7 +419,7 @@ func (s *Session) beginPlainTurn(userText string) (plainTurnSnapshot, func(), er
 		budget = s.MaxContextTokens
 	}
 	snapshot := plainTurnSnapshot{
-		myTurn: myTurn, messages: messages, binding: binding, token: token,
+		myTurn: myTurn, sessionID: s.SessionID, messages: messages, binding: binding, token: token,
 		context: s.captureContextLocked(), budget: budget,
 		temperature: s.Temperature, maxTokens: config.EffectiveOutputTokens(binding.Profile, s.MaxTokens), tools: s.Tools,
 	}
@@ -429,8 +463,12 @@ func (s *Session) beginAgentTurn(userText string, eventOverride func(agent.Event
 		context: s.captureContextLocked(), contextBudget: budget,
 		temperature: s.Temperature, maxTokens: config.EffectiveOutputTokens(binding.Profile, s.MaxTokens),
 		maxSteps: s.MaxSteps, maxToolResult: s.MaxToolResultChars,
-		batchResultBudget: s.BatchResultBudgetBytes, refOnlyTools: s.RefOnlyTools, onEvent: onEvent,
-		toolRegistry: s.Tools, toolTimeout: s.ToolTimeout, sessionID: s.SessionID,
+		batchResultBudget: s.BatchResultBudgetBytes, refOnlyTools: s.RefOnlyTools,
+		approvalGate: s.ApprovalGate, approvalStanding: s.ApprovalStanding,
+		approvalPolicy: s.ApprovalPolicy,
+		onEvent:        onEvent,
+		toolRegistry:   s.Tools, toolTimeout: s.ToolTimeout, toolRunTimeout: s.ToolRunTimeout,
+		sessionID: s.SessionID,
 		// Captured under the lock: the host republishes the spool after a
 		// surface publication, concurrently with turns starting.
 		remainderSpool: s.RemainderSpool,

@@ -27,8 +27,7 @@ func TestLoopRealPrepKeepsElisionAcrossNonCompactingStep(t *testing.T) {
 	prepCalls := 0
 	counting := &countingStructuralPrep{inner: contextmgr.StructuralPreparationManager{}, calls: &prepCalls}
 	loop := &Loop{Completer: &twoStepCompleter{}, Tools: reg, Messages: history}
-	_, err := loop.Run(context.Background(), nextUser, Options{
-		Model: "model", MaxContextTokens: cost, MaxSteps: 5,
+	_, err := loop.Run(context.Background(), nextUser, Options{Model: "model", MaxContextTokens: cost, MaxSteps: 5,
 		PreparationManager: counting,
 		PreparationInput: contextmgr.PrepareInput{
 			Budget: cost, Principal: principal, Binding: binding,

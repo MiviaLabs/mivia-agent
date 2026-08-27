@@ -1,22 +1,22 @@
 package agent
 
 import (
-	"context"
 	"strings"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
 
-// TestPrepareStepPrunesToSchemaAwareBudget pins that the fallback prune path
-// (no context preparation manager, i.e. workflow agent loops) trims history
-// with the same accounting the rejection check uses. The rejection prices
-// content plus message frames plus tool schemas; pruning accounted content
-// only, so a history near the budget was pruned "successfully" and then
-// rejected with ErrPromptBudgetExceeded once schema cost was added — the
-// exact failure recorded in workflow runs ("prompt exceeds model budget
+// TestSDKPromptBudgetPreflightPrunesToSchemaAwareBudget pins that the
+// fallback prune path (no context preparation manager, i.e. workflow
+// agent loops) trims history with the same accounting the rejection
+// check uses. The rejection prices content plus message frames plus
+// tool schemas; pruning accounted content only, so a history near the
+// budget was pruned "successfully" and then rejected with
+// ErrPromptBudgetExceeded once schema cost was added — the exact
+// failure recorded in workflow runs ("prompt exceeds model budget
 // (72xxx > 72000 tokens)").
-func TestPrepareStepPrunesToSchemaAwareBudget(t *testing.T) {
+func TestSDKPromptBudgetPreflightPrunesToSchemaAwareBudget(t *testing.T) {
 	toolSpecs := []provider.ToolSpec{
 		{"type": "function", "function": map[string]any{"name": "read_file", "description": strings.Repeat("d", 400)}},
 		{"type": "function", "function": map[string]any{"name": "grep", "description": strings.Repeat("d", 400)}},
@@ -47,26 +47,31 @@ func TestPrepareStepPrunesToSchemaAwareBudget(t *testing.T) {
 	budget := contentTokens + schemaCost/2
 
 	l := &Loop{Messages: append([]provider.Message(nil), msgs...)}
-	if err := l.prepareStep(context.Background(), toolSpecs, Options{MaxContextTokens: budget}); err != nil {
-		t.Fatalf("prepareStep must prune to a schema-aware budget, got: %v", err)
+	opts := Options{MaxContextTokens: budget, AdvertisedToolSpecs: toolSpecs}
+	pruned, err := sdkPromptBudgetPreflight(l, opts, msgs)
+	if err != nil {
+		t.Fatalf("sdkPromptBudgetPreflight must prune to a schema-aware budget, got: %v", err)
 	}
-	got, err := provider.EstimatePromptCost(l.Messages, toolSpecs, provider.ContextAccountingProfile{})
+	got, err := provider.EstimatePromptCost(pruned, toolSpecs, provider.ContextAccountingProfile{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got > budget {
 		t.Fatalf("estimate %d tokens still exceeds budget %d after schema-aware prune", got, budget)
 	}
-	if len(l.Messages) >= len(msgs) {
+	if len(pruned) >= len(msgs) {
 		t.Fatal("schema-aware prune did not drop the oversized old turn")
+	}
+	if len(l.Messages) != len(pruned) {
+		t.Fatal("pruned history must be written back onto l.Messages")
 	}
 }
 
-// TestPrepareStepStillFailsClosedWhenIrreducible pins that the fallback path
-// still rejects a prompt whose mandatory set (system + current objective)
-// alone exceeds the schema-aware budget. Pruning must never silently ship an
-// over-budget request.
-func TestPrepareStepStillFailsClosedWhenIrreducible(t *testing.T) {
+// TestSDKPromptBudgetPreflightStillFailsClosedWhenIrreducible pins that the
+// fallback path still rejects a prompt whose mandatory set (system + current
+// objective) alone exceeds the schema-aware budget. Pruning must never
+// silently ship an over-budget request.
+func TestSDKPromptBudgetPreflightStillFailsClosedWhenIrreducible(t *testing.T) {
 	toolSpecs := []provider.ToolSpec{
 		{"type": "function", "function": map[string]any{"name": "read_file", "description": strings.Repeat("d", 400)}},
 	}
@@ -80,8 +85,8 @@ func TestPrepareStepStillFailsClosedWhenIrreducible(t *testing.T) {
 	budget := 200
 
 	l := &Loop{Messages: append([]provider.Message(nil), msgs...)}
-	err := l.prepareStep(context.Background(), toolSpecs, Options{MaxContextTokens: budget})
-	if err == nil {
-		t.Fatal("prepareStep must fail closed when the mandatory set cannot fit the budget")
+	opts := Options{MaxContextTokens: budget, AdvertisedToolSpecs: toolSpecs}
+	if _, err := sdkPromptBudgetPreflight(l, opts, msgs); err == nil {
+		t.Fatal("sdkPromptBudgetPreflight must fail closed when the mandatory set cannot fit the budget")
 	}
 }

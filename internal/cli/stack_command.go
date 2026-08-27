@@ -8,16 +8,14 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	clichat "github.com/MiviaLabs/mivia-agent/internal/clichat"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
 	"io"
 	"os"
 	"sort"
 	"strings"
-	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/config"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/tasks"
-	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 // runStack dispatches `mivia stack plan|drive|status`.
@@ -48,7 +46,7 @@ func runStackWithIO(args []string, stdout, stderr io.Writer) error {
 	case "plan":
 		return runStackPlan(args[1:], workspaceRoot, configPath, stdout, stderr)
 	case "drive":
-		return runStackDrive(args[1:], workspaceRoot, configPath, stdout, stderr)
+		return clichat.RunStackDrive(args[1:], workspaceRoot, configPath, stdout, stderr)
 	case "status":
 		return runStackStatus(args[1:], workspaceRoot, configPath, stdout, stderr)
 	default:
@@ -58,7 +56,7 @@ func runStackWithIO(args []string, stdout, stderr io.Writer) error {
 
 // runStackPlan admits a plan-mode run for a stacking-enabled workflow using
 // the exact engine admission path the workflow CLI already uses
-// (executeWorkflowRun). A run started WITHOUT stack_mode IS plan mode (step
+// (cliworkflow.ExecuteWorkflowRun). A run started WITHOUT stack_mode IS plan mode (step
 // 0): the workflow's planning steps plus the engine-injected decompose step
 // end with a chunk plan. The plan run id becomes the stack id.
 func runStackPlan(args []string, workspaceRoot, configPath string, stdout, stderr io.Writer) error {
@@ -68,19 +66,40 @@ func runStackPlan(args []string, workspaceRoot, configPath string, stdout, stder
 	name := args[0]
 	var buf bytes.Buffer
 	out := io.MultiWriter(stdout, &buf)
-	if err := executeWorkflowRun(name, workspaceRoot, configPath, nil, false, out, stderr); err != nil {
+	if err := cliworkflow.ExecuteWorkflowRun(name, workspaceRoot, configPath, nil, false, out, stderr); err != nil {
 		return fmt.Errorf("stack plan: %w", err)
 	}
 	runID, status := parseRunLine(buf.String())
 	if runID == "" {
 		return fmt.Errorf("stack plan: could not read the plan run id from the run output")
 	}
-	if status != string(workflowledger.RunStatusSucceeded) {
-		return fmt.Errorf("stack plan: plan run %s did not succeed (status=%s); fix the plan and re-run", runID, status)
+	line, err := stackPlanOutcomeLine(runID, status)
+	if err != nil {
+		return err
 	}
-	fmt.Fprintf(stdout, "stack=%s plan_run=%s status=%s\n", runID, runID, status)
+	fmt.Fprint(stdout, line)
 	fmt.Fprintf(stdout, "drive the stack with: mivia stack drive %s --stack %s\n", name, runID)
 	return nil
+}
+
+// stackPlanOutcomeLine reports the status line `runStackPlan` prints for a
+// finished plan run, or an error when the run did not reach a state that can
+// be driven. A multi-chunk plan under a non-auto merge_policy pauses at
+// delivery_pending by design (errStackAwaitsGrant, see
+// stack_grant_pause.go): the plan itself succeeded, but the stack awaits its
+// first drive. Reporting that as a plan failure misdiagnosed the designed
+// pause (F11); a merge_policy=auto stack either finishes here or blocks
+// inside cliworkflow.ExecuteWorkflowRun until it does (never returns delivery_pending to
+// this point), so seeing delivery_pending here is unambiguously the pause.
+func stackPlanOutcomeLine(runID, status string) (string, error) {
+	switch status {
+	case string(workflowledger.RunStatusSucceeded):
+		return fmt.Sprintf("stack=%s plan_run=%s status=%s\n", runID, runID, status), nil
+	case string(workflowledger.RunStatusDeliveryPending):
+		return fmt.Sprintf("stack=%s plan_run=%s status=%s (awaiting first drive)\n", runID, runID, status), nil
+	default:
+		return "", fmt.Errorf("stack plan: plan run %s did not succeed (status=%s); fix the plan and re-run", runID, status)
+	}
 }
 
 // parseRunLine extracts the run_id and status values from a workflow run's
@@ -111,23 +130,23 @@ func parseRunLine(out string) (runID, status string) {
 // joined from the run ledger by the chunk's stable invocation key (task
 // fields are immutable once created; the run ledger is the durable source).
 func runStackStatus(args []string, workspaceRoot, configPath string, stdout, stderr io.Writer) error {
-	name, stackFlag, rest, err := parseStackWorkflowArgs(args)
+	name, stackFlag, rest, err := clichat.ParseStackWorkflowArgsFunc(args)
 	if err != nil {
 		return err
 	}
 	if len(rest) != 0 {
 		return fmt.Errorf("stack status: unexpected argument %q", rest[0])
 	}
-	ledger, repo, closeFn, err := openStackLedger(workspaceRoot, configPath)
+	ledger, repo, closeFn, err := clichat.OpenStackLedgerFunc(workspaceRoot, configPath)
 	if err != nil {
 		return err
 	}
 	defer closeFn()
-	stackID, err := resolveStackID(repo, name, stackFlag)
+	stackID, err := clichat.ResolveStackIDFunc(repo, name, stackFlag)
 	if err != nil {
 		return err
 	}
-	list, err := ledger.ListTasksByScope(stackScope(stackID))
+	list, err := ledger.ListTasksByScope(clichat.StackScope(stackID))
 	if err != nil {
 		return err
 	}
@@ -143,8 +162,8 @@ func runStackStatus(args []string, workspaceRoot, configPath string, stdout, std
 	}
 	// Reviewed chunks wait on a human publish grant: print the exact
 	// command per chunk so status and the drive's pause guidance agree.
-	for _, line := range stackGrantHintLines(list, func(chunkID string) string {
-		run, found, err := stackRunRef(repo, stackID, chunkID)
+	for _, line := range clichat.StackGrantHintLines(list, func(chunkID string) string {
+		run, found, err := clichat.StackRunRefExport(repo, stackID, chunkID)
 		if err != nil || !found {
 			return ""
 		}
@@ -158,106 +177,17 @@ func runStackStatus(args []string, workspaceRoot, configPath string, stdout, std
 // stackRunDisplay joins a chunk task with its latest run (by invocation key)
 // and the run's PR number, for status output.
 func stackRunDisplay(repo workflowledger.Repository, stackID, chunkID string) (runRef, pr string) {
-	run, found, err := stackRunRef(repo, stackID, chunkID)
+	run, found, err := clichat.StackRunRefExport(repo, stackID, chunkID)
 	if err != nil || !found {
 		return "-", "-"
 	}
 	pr = "-"
 	deliveries, err := repo.ListDeliveries(context.Background(), run.RunID)
 	if err == nil && len(deliveries) > 0 {
-		pr = stackPRNumber(deliveries[len(deliveries)-1].URL)
+		pr = clichat.StackPRNumber(deliveries[len(deliveries)-1].URL)
 		if pr == "" {
 			pr = "published"
 		}
 	}
 	return run.RunID, pr
-}
-
-// parseStackWorkflowArgs parses `stack <sub> <workflow> [--stack <id>]`,
-// returning the workflow name, the optional explicit stack id, and the
-// remaining args. The --stack flag pins the stack to one plan run; without
-// it the latest plan-mode run of the workflow is used.
-func parseStackWorkflowArgs(args []string) (name, stackFlag string, rest []string, err error) {
-	stackFlag, rest, _, err = flagValue(args, "--stack")
-	if err != nil {
-		return "", "", nil, err
-	}
-	if len(rest) != 1 {
-		if len(rest) == 0 {
-			return "", "", nil, fmt.Errorf("stack: expected a workflow name (or --stack <id> with a workflow name)")
-		}
-		return "", "", nil, fmt.Errorf("stack: unexpected argument %q", rest[0])
-	}
-	return rest[0], stackFlag, rest[1:], nil
-}
-
-// resolveStackID returns the plan run id of the stack: the explicit --stack
-// value when given, else the most recent plan-mode run of the workflow (a
-// run whose attempts include a succeeded decompose step).
-func resolveStackID(repo workflowledger.Repository, workflowName, stackFlag string) (string, error) {
-	if strings.TrimSpace(stackFlag) != "" {
-		return stackFlag, nil
-	}
-	runs, err := repo.ListRuns(context.Background())
-	if err != nil {
-		return "", err
-	}
-	best := ""
-	bestStarted := time.Time{}
-	for _, r := range runs {
-		if r.WorkflowName != workflowName || r.InvocationKey != "" {
-			continue
-		}
-		if !isStackPlanRun(repo, r) {
-			continue
-		}
-		if best == "" || r.StartedAt.After(bestStarted) {
-			best = r.RunID
-			bestStarted = r.StartedAt
-		}
-	}
-	if best == "" {
-		return "", fmt.Errorf("no plan-mode run found for workflow %q; run `mivia stack plan %s` first", workflowName, workflowName)
-	}
-	return best, nil
-}
-
-// isStackPlanRun reports whether a run is a plan-mode run: it carries a
-// succeeded decompose step, the engine-synthesized planning step.
-func isStackPlanRun(repo workflowledger.Repository, r workflowledger.RunSnapshot) bool {
-	attempts, err := repo.ListStepAttempts(context.Background(), r.RunID)
-	if err != nil {
-		return false
-	}
-	for _, a := range attempts {
-		if a.StepID == stackDecomposeStepID && a.Status == workflowledger.AttemptStatusSucceeded {
-			return true
-		}
-	}
-	return false
-}
-
-// openStackLedger opens the workspace, config, workflow store, and the task
-// ledger (D8: the task ledger is the durable stack state). Non-owning: the
-// returned close function closes the shared store.
-func openStackLedger(root, configPath string) (*tasks.Store, workflowledger.Repository, func(), error) {
-	if strings.TrimSpace(root) == "" {
-		root = "."
-	}
-	work, err := workspace.Open(root)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	configPath = workflowConfigPath(work.Abs, configPath)
-	res, err := config.Load(config.LoadOptions{ConfigPath: configPath, WorkspaceRoot: work.Abs, AllowMissingConfig: true})
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	applyPrivacyPolicy(res)
-	applyWorkflowStoreRoot(res, work.Abs)
-	store, repo, closeFn, err := openWorkflowStore(work.Abs, res.Subagents)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	return tasks.NewStore(store), repo, closeFn, nil
 }

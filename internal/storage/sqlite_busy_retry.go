@@ -8,8 +8,22 @@ import (
 // sqliteBusyRetryDelays is the backoff for retrySQLiteBusy. It mirrors the
 // busy-retry cadence of internal/chat/session_title.go: a write lock another
 // process holds is normally gone within milliseconds, so a short backoff
-// clears a transient SQLITE_BUSY collision.
-var sqliteBusyRetryDelays = []time.Duration{150 * time.Millisecond, 400 * time.Millisecond}
+// clears a transient SQLITE_BUSY collision. The tail covers the
+// connection-pool-saturation case (a saturating AppendClaimedFenced loop
+// can hold the WAL write lock for the full duration of the contention
+// burst, so the takeover must retry long enough to outlast the burst).
+// Total budget ~18s across 21 retries; a longer sustained burst than this
+// is a real conflict, not a transient, and the takeover should surface the
+// failure.
+var sqliteBusyRetryDelays = []time.Duration{
+	100 * time.Millisecond, 200 * time.Millisecond, 400 * time.Millisecond,
+	600 * time.Millisecond, 800 * time.Millisecond, 1000 * time.Millisecond,
+	1000 * time.Millisecond, 1000 * time.Millisecond, 1000 * time.Millisecond,
+	1000 * time.Millisecond, 1000 * time.Millisecond, 1000 * time.Millisecond,
+	1000 * time.Millisecond, 1000 * time.Millisecond, 1000 * time.Millisecond,
+	1000 * time.Millisecond, 1000 * time.Millisecond, 1000 * time.Millisecond,
+	800 * time.Millisecond, 600 * time.Millisecond, 400 * time.Millisecond,
+}
 
 // retrySQLiteBusy repeats op while SQLite reports a transient busy or locked
 // condition. Pass an operation that runs one full transaction: a failed

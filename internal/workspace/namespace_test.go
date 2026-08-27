@@ -12,7 +12,7 @@ import (
 
 func TestNamespaceResolvesMivia(t *testing.T) {
 	root := "/w"
-	if got, want := SkillsDir(root), filepath.Join("/w", ".mivia", "skills"); got != want {
+	if got, want := SkillsDir(root), filepath.Join("/w", ".agents", "skills"); got != want {
 		t.Errorf("SkillsDir: got %q want %q", got, want)
 	}
 	if got, want := SessionsDir(root), filepath.Join("/w", ".mivia", "sessions"); got != want {
@@ -28,7 +28,7 @@ func TestWorktreesDir(t *testing.T) {
 }
 
 func TestNamespaceEmptyRootIsWorkingDirectory(t *testing.T) {
-	if got, want := SkillsDir(""), filepath.Join(".mivia", "skills"); got != want {
+	if got, want := SkillsDir(""), filepath.Join(".agents", "skills"); got != want {
 		t.Errorf("got %q want %q", got, want)
 	}
 }
@@ -126,15 +126,17 @@ func TestNoHardcodedLegacyNamespace(t *testing.T) {
 // grows back one call site at a time. This is the mechanical mirror of
 // TestNoHardcodedLegacyNamespace for the CURRENT name (INV-AG-37).
 var namespaceAllowlist = map[string]string{
-	"internal/cli/chat_slash_handlers.go\x00sink.Info(\"no agents loaded (add .mivia/agents/<name>.toml)\")":                                                                                                "user-facing /agent log line that tells the operator where to add agent definitions",
-	"internal/cli/hooks_command.go\x00const hookProjectNotice = \"hooks marked [project] came from this workspace's .mivia/mivia.toml, not from your \" +":                                                  "user-facing /hooks notice naming the workspace hook config file",
-	"internal/cli/hooks_command.go\x00\"workspace's .mivia/mivia.toml runs. Delete or comment out the [[hooks]] entry to stop one.\"":                                                                       "user-facing /hooks trust explanation naming the workspace hook config file",
-	"internal/cli/hooks_command.go\x00\"a hook declared in ~/.mivia/mivia.toml runs without confirmation.\")":                                                                                               "user-facing --bypass-hook-trust notice naming the user hook config file",
-	"internal/cli/hooks_command.go\x00return \"no lifecycle hooks configured (they load from ~/.mivia/mivia.toml and <workspace>/.mivia/mivia.toml)\"":                                                      "user-facing /hooks empty listing naming both hook config surfaces",
-	"internal/cli/prompt.go\x00Project agents (if present): .mivia/agents/<name>.toml - default root agent is \"mivia\".":                                                                                   "defaultAgentPrompt self-maintenance text (pinned by TestPromptSelfMaintenance): the model must know where project agents live",
-	"internal/cli/root.go\x00--agent selects a named agent definition from ~/.mivia/agents/ or <workspace>/.mivia/agents/.":                                                                                 "user-facing CLI help for --agent",
+	"internal/hooksession/session.go\x00const hookProjectNotice = \"hooks marked [project] came from this workspace's .mivia/mivia.toml, not from your \" +":                                                "user-facing /hooks notice naming the workspace hook config file",
+	"internal/hooksession/session.go\x00\"workspace's .mivia/mivia.toml runs. Delete or comment out the [[hooks]] entry to stop one.\"":                                                                     "user-facing /hooks trust explanation naming the workspace hook config file",
+	"internal/hooksession/session.go\x00\"a hook declared in ~/.mivia/mivia.toml runs without confirmation.\")":                                                                                             "user-facing --bypass-hook-trust notice naming the user hook config file",
+	"internal/hooksession/session.go\x00return \"no lifecycle hooks configured (they load from ~/.mivia/mivia.toml and <workspace>/.mivia/mivia.toml)\"":                                                    "user-facing /hooks empty listing naming both hook config surfaces",
+	"internal/cli/root.go\x00--agent selects a named agent definition from ~/.mivia/agents/ or <workspace>/.agents/agents/.":                                                                                "user-facing CLI help for --agent",
 	"internal/cli/root.go\x00Config: $MIVIA_CONFIG | ./.mivia/mivia.toml | ~/.mivia/mivia.toml":                                                                                                             "user-facing CLI help listing the config search path",
 	"internal/config/load.go\x00return File{}, \"\", false, fmt.Errorf(\"no config file found (tried %s); set MIVIA_CONFIG or create .mivia/mivia.toml\", strings.Join(DefaultConfigCandidates(), \", \"))": "user-facing config error that tells the operator what to create",
+	"internal/ui/screen/settings/agents_detail.go\x00originLabel = \"Global (user home: ~/.mivia/agents/\" + ag.Name + \".md)\"":                                                                            "user-facing agent detail origin label naming user home agent path",
+	"internal/ui/screen/settings/projects.go\x00description: \"Project configuration file path (.mivia/mivia.toml).\",":                                                                                     "user-facing project setting description naming project config path",
+	"internal/ui/screen/settings/projects.go\x00description: \"SQLite database file path (leave empty to use default .mivia/context.db).\",":                                                                "user-facing project setting description naming default storage path",
+	"internal/ui/screen/settings/projects_detail.go\x00scopeLabel := \"Project (.mivia/mivia.toml)\"":                                                                                                       "user-facing project setting detail scope label naming project config file",
 }
 
 // TestNamespaceNameSingleSourced is the mechanical enforcement of the

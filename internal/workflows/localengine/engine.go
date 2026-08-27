@@ -13,14 +13,10 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/processservices"
-	workflowspace "github.com/MiviaLabs/mivia-agent/internal/workflows/workspace"
 )
 
 // Engine runs workflows in-process against a shared ledger repository.
@@ -29,11 +25,20 @@ type Engine struct {
 	WorkspaceRoot string
 	// Repo is the shared workflow ledger. Required.
 	Repo workflowledger.Repository
+	// Store is the shared SQLite store backing the stack task ledger
+	// (workflowledger.NewStore). Required to drive (or verify the drive of) a
+	// multi-chunk stacking plan run; a nil Store degrades the engine to the
+	// operator drive (`mivia stack drive`) and refuses delivery of an
+	// undriven plan run instead of publishing it.
+	Store storage.Store
 	// NewRunner builds the agent-step runner for one admitted run.
 	// Required for agent steps; a nil NewRunner fails closed (no fake success).
 	NewRunner func() controller.AgentStepRunner
-	// AgentRegistry supplies immutable agent definitions for panel admission.
-	// Panel work fails closed when the registry cannot resolve a member.
+	// AgentRegistry supplies immutable agent definitions for panel admission
+	// and for agent-step routing pins. Panel work fails closed when the
+	// registry cannot resolve a member. Agent steps pin and re-verify their
+	// definition digests when the registry is set, and keep the legacy
+	// synthetic-digest mode when it is nil.
 	AgentRegistry *agents.AgentRegistry
 	// NewRunID mints run IDs. Nil uses a secure random wfr- id.
 	NewRunID func() string
@@ -56,7 +61,7 @@ type Engine struct {
 	// MainRoot + admission pins), so delivery can pin GitCtx to the run's real
 	// git directory instead of the caller checkout. Recorded at start and
 	// resume; delivery falls back to resolving from the durable run record.
-	worktrees map[string]workflowspace.Identity
+	worktrees map[string]Identity
 	// delivering tracks in-process deliveries per run so two concurrent
 	// workflow_deliver tool calls on the same run cannot both publish to the
 	// shared git workspace (a live claim must never be force-cleared by a
@@ -89,13 +94,13 @@ func (e *Engine) panelLimiter() *controller.PanelActorLimiter {
 	if e.PanelLimiter != nil {
 		return e.PanelLimiter
 	}
-	return processservices.PanelLimiter()
+	return PanelLimiter()
 }
 
-// Start implements agenttools.Engine.
-func (e *Engine) Start(ctx context.Context, req agenttools.StartRequest) (agenttools.StartResult, error) {
+// Start implements workflowledger.Engine.
+func (e *Engine) Start(ctx context.Context, req workflowledger.StartRequest) (workflowledger.StartResult, error) {
 	if e == nil || e.Repo == nil {
-		return agenttools.StartResult{}, fmt.Errorf("workflow engine is incomplete")
+		return workflowledger.StartResult{}, fmt.Errorf("workflow engine is incomplete")
 	}
 	if req.Resume {
 		return e.resume(ctx, req)
@@ -108,71 +113,85 @@ func (e *Engine) Start(ctx context.Context, req agenttools.StartRequest) (agentt
 // this call as the run's sole starter. done=true means startNew must return
 // (result, err) immediately; otherwise runID is ready and finish must be
 // deferred by the caller to release invocation admission.
-func (e *Engine) admitInvocation(ctx context.Context, req agenttools.StartRequest) (runID string, result agenttools.StartResult, done bool, err error, finish func()) {
+func (e *Engine) admitInvocation(ctx context.Context, req workflowledger.StartRequest) (runID string, result workflowledger.StartResult, done bool, err error, finish func()) {
 	noop := func() {}
 	key := strings.TrimSpace(req.InvocationKey)
 	if key == "" {
-		return e.newRunID(), agenttools.StartResult{}, false, nil, noop
+		return e.newRunID(), workflowledger.StartResult{}, false, nil, noop
 	}
-	runID = agenttools.InvocationRunID(key)
+	runID = workflowledger.InvocationRunID(key)
 	existing, getErr := e.Repo.GetRun(ctx, runID)
 	if getErr == nil {
 		if result, resumed, resumeErr := e.resumeExistingInvocation(ctx, existing, req); resumed || resumeErr != nil {
 			return runID, result, true, resumeErr, noop
 		}
-		return runID, agenttools.StartResult{RunID: runID, Status: string(existing.Status), Workflow: existing.WorkflowName}, true, nil, noop
+		return runID, workflowledger.StartResult{RunID: runID, Status: string(existing.Status), Workflow: existing.WorkflowName}, true, nil, noop
 	} else if !errors.Is(getErr, workflowledger.ErrNotFound) {
-		return runID, agenttools.StartResult{}, false, getErr, noop
+		return runID, workflowledger.StartResult{}, false, getErr, noop
 	}
 	owner, release := e.beginInvocationAdmission(runID)
 	if !owner {
 		select {
 		case <-release:
 		case <-ctx.Done():
-			return runID, agenttools.StartResult{}, false, ctx.Err(), noop
+			return runID, workflowledger.StartResult{}, false, ctx.Err(), noop
 		}
 		existing, getErr := e.Repo.GetRun(ctx, runID)
 		if getErr != nil {
-			return runID, agenttools.StartResult{}, false, fmt.Errorf("invocation %q did not admit run %q: %w", key, runID, getErr), noop
+			return runID, workflowledger.StartResult{}, false, fmt.Errorf("invocation %q did not admit run %q: %w", key, runID, getErr), noop
 		}
-		return runID, agenttools.StartResult{RunID: runID, Status: string(existing.Status), Workflow: existing.WorkflowName}, true, nil, noop
+		return runID, workflowledger.StartResult{RunID: runID, Status: string(existing.Status), Workflow: existing.WorkflowName}, true, nil, noop
 	}
-	return runID, agenttools.StartResult{}, false, nil, func() { e.finishInvocationAdmission(runID, release) }
+	return runID, workflowledger.StartResult{}, false, nil, func() { e.finishInvocationAdmission(runID, release) }
 }
 
-func (e *Engine) startNew(ctx context.Context, req agenttools.StartRequest) (agenttools.StartResult, error) {
+func (e *Engine) startNew(ctx context.Context, req workflowledger.StartRequest) (workflowledger.StartResult, error) {
 	compiled, raw, baseDir, inputs, inputSnapshot, err := e.loadAndValidateWorkflow(req)
 	if err != nil {
-		return agenttools.StartResult{}, err
+		return workflowledger.StartResult{}, err
 	}
 	runID, admitResult, done, admitErr, finish := e.admitInvocation(ctx, req)
 	if done {
 		return admitResult, admitErr
 	}
 	if admitErr != nil {
-		return agenttools.StartResult{}, admitErr
+		return workflowledger.StartResult{}, admitErr
 	}
 	defer finish()
 	ctrl, admission, err := e.newRunController(compiled, raw, baseDir, inputs, inputSnapshot, runID, req.InvocationKey)
 	if err != nil {
-		return agenttools.StartResult{}, err
+		return workflowledger.StartResult{}, err
 	}
-	if err := e.pinNewRunIdentity(ctx, ctrl, compiled, &admission, runID); err != nil {
-		return agenttools.StartResult{}, err
+	cleanup, err := e.pinNewRunIdentity(ctx, ctrl, compiled, &admission, runID, inputSnapshot)
+	if err != nil {
+		return workflowledger.StartResult{}, err
 	}
+	// A fresh admission created the run worktree before control returns to us.
+	// If a later admission step fails - SetAdmission or StartNew - the worktree
+	// must still be removed so the pre-created worktree does not leak (mirrors
+	// the CLI's admitted flag + built.Cleanup() pair in workflow_run.go). Once
+	// StartNew succeeds the worktree belongs to the run, so the cleanup is
+	// disarmed.
+	disarmCleanup := cleanup == nil
+	defer func() {
+		if !disarmCleanup {
+			cleanup()
+		}
+	}()
 	if err := ctrl.SetAdmission(admission); err != nil {
-		return agenttools.StartResult{}, err
+		return workflowledger.StartResult{}, err
 	}
 	created, err := ctrl.StartNew(ctx)
 	if err != nil {
-		return agenttools.StartResult{}, err
+		return workflowledger.StartResult{}, err
 	}
+	disarmCleanup = true
 	if !created {
 		existing, getErr := e.Repo.GetRun(ctx, runID)
 		if getErr != nil {
-			return agenttools.StartResult{}, getErr
+			return workflowledger.StartResult{}, getErr
 		}
-		return agenttools.StartResult{RunID: runID, Status: string(existing.Status), Workflow: existing.WorkflowName}, nil
+		return workflowledger.StartResult{RunID: runID, Status: string(existing.Status), Workflow: existing.WorkflowName}, nil
 	}
 	_ = req.AllowPublish // publication is a separate deliver step for tools
 	// Durable local trace: create .mivia/runs + admission summary; fail-soft.
@@ -180,50 +199,13 @@ func (e *Engine) startNew(ctx context.Context, req agenttools.StartRequest) (age
 	e.launch(ctrl)
 	run, err := e.Repo.GetRun(ctx, runID)
 	if err != nil {
-		return agenttools.StartResult{}, err
+		return workflowledger.StartResult{}, err
 	}
-	return agenttools.StartResult{RunID: runID, Status: string(run.Status), Workflow: compiled.Name}, nil
+	return workflowledger.StartResult{RunID: runID, Status: string(run.Status), Workflow: compiled.Name}, nil
 }
 
-// pinNewRunIdentity resolves the fresh run's real base ref/commit and pins it
-// on admission, preferring a git worktree and falling back to the local
-// workspace's checked-out identity. It fails closed (returns an error)
-// instead of leaving newRunController's placeholder Admission (BaseRef
-// "main", BaseCommit "test-base") baked into the durable admission record
-// when neither source can resolve a real base.
-func (e *Engine) pinNewRunIdentity(ctx context.Context, ctrl *controller.LinearController, compiled *compiler.CompiledWorkflow, admission *controller.Admission, runID string) error {
-	// Create (or validate) the run's git worktree and record the identity on
-	// the engine so workflow_deliver resolves the run's real git directory.
-	if identity, ok := e.ensureRunWorktree(ctx, runID, nil); ok {
-		admission.BaseRef, admission.BaseCommit, admission.OriginBaseCommit, admission.WorktreeName = identity.BaseRef, identity.BaseCommit, identity.OriginBaseCommit, identity.WorktreeName
-		if compiled.Delivery != nil && compiled.DeliveryActive() {
-			url, uerr := resolveOriginURL(ctx, identity, compiled.Delivery.Base)
-			if uerr != nil {
-				return fmt.Errorf("resolve delivery origin: %w", uerr)
-			}
-			admission.RemoteURL = url
-		}
-		// Pin the run's git context for the fail-fast diff-size gate. This is
-		// the FRESH-start path: stacking chunk runs are fresh engine starts,
-		// so without it the gate would never fire for them.
-		if serr := ctrl.WireGitContext(identity.MainRoot, identity.WorktreeName, identity.Root); serr != nil {
-			return serr
-		}
-		return nil
-	}
-	if base, commit, wt, rerr := resolveLocalIdentity(e.WorkspaceRoot, runID); rerr == nil {
-		admission.BaseRef, admission.BaseCommit, admission.WorktreeName = base, commit, wt
-		return nil
-	} else {
-		// Neither the worktree path nor the local-identity fallback could
-		// resolve a real base ref/commit: admitting the run now would bake
-		// the newRunController placeholder into the durable admission
-		// record. Fail closed instead of starting a run pinned to a
-		// fabricated base.
-		return fmt.Errorf("resolve workflow base identity: %w", rerr)
-	}
-}
-
+// beginInvocationAdmission acquires the invocation-key admission slot for
+// runID, returning owner=true for the sole starter.
 func (e *Engine) beginInvocationAdmission(runID string) (bool, chan struct{}) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -247,176 +229,6 @@ func (e *Engine) finishInvocationAdmission(runID string, done chan struct{}) {
 	e.mu.Unlock()
 }
 
-func (e *Engine) resume(ctx context.Context, req agenttools.StartRequest) (agenttools.StartResult, error) {
-	resumeDone, err := e.reserveResume(req.RunID)
-	if err != nil {
-		return agenttools.StartResult{}, err
-	}
-	defer e.finishResume(req.RunID, resumeDone)
-	run, err := e.Repo.GetRun(ctx, req.RunID)
-	if err != nil {
-		if errors.Is(err, workflowledger.ErrNotFound) {
-			return agenttools.StartResult{}, fmt.Errorf("workflow run %q not found", req.RunID)
-		}
-		return agenttools.StartResult{}, err
-	}
-	if run.Status == workflowledger.RunStatusDeliveryPending {
-		return agenttools.StartResult{}, fmt.Errorf("workflow run %q is waiting for delivery; call workflow_deliver", req.RunID)
-	}
-	if workflowledger.IsTerminalRunStatus(run.Status) {
-		// Terminal runs are not resumed. Callers must start a new run or deliver.
-		return agenttools.StartResult{}, fmt.Errorf("workflow run %q is terminal (status %s); resume requires a non-terminal run", req.RunID, run.Status)
-	}
-	if !workflowledger.IsResumableRunStatus(run.Status) {
-		return agenttools.StartResult{}, fmt.Errorf("workflow run %q status %s is not resumable", req.RunID, run.Status)
-	}
-	if err := e.prepareResumeWorktree(ctx, run); err != nil {
-		return agenttools.StartResult{}, err
-	}
-	raw, err := e.Repo.GetRunSnapshot(ctx, req.RunID)
-	if err != nil {
-		return agenttools.StartResult{}, err
-	}
-	ctrl, err := e.buildResumeController(ctx, req, run, raw)
-	if err != nil {
-		return agenttools.StartResult{}, err
-	}
-	// Claim-liveness probe: the run may be executing on ANOTHER host even
-	// though this engine is not its executor. Per-step claims mean the claim
-	// is only held while a step runs, so this probe is the resume-time
-	// exclusion check (see probeResumeClaim).
-	if err := e.probeResumeClaim(ctx, req.RunID, ctrl.Holder, req.Force); err != nil {
-		return agenttools.StartResult{}, err
-	}
-	// The probe claim uses the controller's own holder and is deliberately
-	// kept: the first Advance refreshes it (same-holder refresh), so the run
-	// stays exclusively ours across the Start handoff. If Start fails, the
-	// claim is released so the run is not left claimed by a dead attempt.
-	if err := ctrl.Start(ctx); err != nil {
-		_ = e.Repo.ReleaseRun(context.Background(), req.RunID, ctrl.Holder)
-		return agenttools.StartResult{}, err
-	}
-	e.launch(ctrl)
-	// Durable local trace for the resumed run (see startNew).
-	e.writeRunTrace(req.RunID)
-	fresh, err := e.Repo.GetRun(ctx, req.RunID)
-	if err != nil {
-		return agenttools.StartResult{}, err
-	}
-	return agenttools.StartResult{RunID: req.RunID, Status: string(fresh.Status), Workflow: run.WorkflowName, Resumed: true}, nil
-}
-
-// probeResumeClaim acquires the run claim for resume with the controller's own
-// holder. Non-force resumes refuse a claimed run; force-resume clears only a
-// claim that is actually held, and only once - a second ErrClaimHeld means
-// another executor is mid-step right now, so it refuses too. A blind clear
-// would let two hosts execute the same run and duplicate every agent step.
-func (e *Engine) probeResumeClaim(ctx context.Context, runID, holder string, force bool) error {
-	if err := e.Repo.ClaimRun(ctx, runID, holder); err != nil {
-		if errors.Is(err, workflowledger.ErrClaimHeld) && force {
-			// force-resume must actually force: unconditionally replace the
-			// held claim rather than only clear it if the lease already
-			// expired. TakeoverExpiredRunClaim here would make force a no-op
-			// against a live (non-expired) claim.
-			return e.Repo.TakeoverRunClaim(ctx, runID, holder)
-		} else if errors.Is(err, workflowledger.ErrClaimHeld) {
-			if takeoverErr := e.Repo.TakeoverExpiredRunClaim(ctx, runID, holder, runClaimLease); takeoverErr == nil {
-				return nil
-			} else if errors.Is(takeoverErr, workflowledger.ErrClaimNotHeld) {
-				return e.Repo.ClaimRun(ctx, runID, holder)
-			}
-			return fmt.Errorf("workflow run %q is executing on another host; wait for its lease to expire or force-resume", runID)
-		} else {
-			return err
-		}
-	}
-	return nil
-}
-
-// buildResumeController rebuilds a fresh controller for an interrupted run
-// from its durable snapshot: parse + compile the stored definition, restore
-// the admitted inputs, clear the abandon fence so the new controller may
-// write again after Interrupt, and re-apply the run's admission pins.
-func (e *Engine) buildResumeController(ctx context.Context, req agenttools.StartRequest, run workflowledger.RunSnapshot, raw []byte) (*controller.LinearController, error) {
-	snapshot, err := workflowledger.UnmarshalSnapshot(raw)
-	if err != nil {
-		return nil, err
-	}
-	if run.SnapshotDigest == "" || run.SnapshotDigest != workflowledger.SnapshotDigest(raw) {
-		return nil, fmt.Errorf("workflow snapshot digest does not match the admitted snapshot")
-	}
-	wf, _, err := definition.ParseWorkflowTOML(snapshot.DefinitionTOML, run.WorkflowName+".toml")
-	if err != nil {
-		return nil, err
-	}
-	compiled, err := compiler.CompileForResume(&wf)
-	if err != nil {
-		return nil, err
-	}
-	// A stacking run EXECUTES the synthesized graph; rebuild it here so the
-	// resumed runtimes carry the engine-synthesized steps (decompose,
-	// chunk_plan_validate) and admission re-validates them with their pinned
-	// routing snapshots instead of refusing a digest-less step.
-	compiled, err = compiler.SynthesizeStacking(compiled)
-	if err != nil {
-		return nil, err
-	}
-	if snapshot.DefinitionDigest != run.WorkflowDigest {
-		return nil, fmt.Errorf("workflow definition digest does not match the admitted definition")
-	}
-	inputs := make(map[string]any, len(snapshot.Inputs))
-	for k, v := range snapshot.Inputs {
-		inputs[k] = v
-	}
-	// Clear abandon fence so a fresh controller may write again after Interrupt.
-	// Must use clearAbandon (holds fence.mu); bare delete races with isAbandoned.
-	_ = e.ctrlRepo()
-	e.mu.Lock()
-	if e.fence != nil {
-		e.fence.clearAbandon(req.RunID)
-	}
-	e.mu.Unlock()
-	// Step schemas are pinned in the admitted snapshot (SchemaVersion 1 carries
-	// them as snapshot.Schemas); rebuild the runtimes from those bytes so a
-	// resumed run enforces the output_schema admitted at start, never a schema
-	// changed, deleted, or renamed on disk after admission (CLI parity with
-	// loadStepReferences' prior-snapshot path). No filesystem reads on resume.
-	steps, err := buildStepRuntimesFromSnapshot(compiled, snapshot.Schemas)
-	if err != nil {
-		return nil, err
-	}
-	ctrl, err := controller.NewLinearController(e.ctrlRepo(), e.runner(), compiled, steps, inputs, req.RunID, raw)
-	if err != nil {
-		return nil, err
-	}
-	if err := ctrl.SetPanelLimiter(e.panelLimiter()); err != nil {
-		return nil, err
-	}
-	// Pin the run's git context for the fail-fast diff-size gate (best-effort).
-	if ident, ok := e.worktreeIdentity(req.RunID); ok {
-		if serr := ctrl.WireGitContext(ident.MainRoot, ident.WorktreeName, ident.Root); serr != nil {
-			return nil, serr
-		}
-	}
-	// Every field sameAdmission compares comes from the record. The invocation
-	// key and the workflow digest were missing, so a run started with a key,
-	// or admitted before the definition types gained a field, could not resume.
-	admission := controller.Admission{
-		BaseRef: run.BaseRef, BaseCommit: run.BaseCommit, OriginBaseCommit: run.OriginBaseCommit,
-		WorktreeName: run.WorktreeName, InputDigest: run.InputDigest, DeadlineAt: run.DeadlineAt, RemoteURL: run.RemoteURL,
-		InvocationKey: run.InvocationKey, WorkflowDigest: run.WorkflowDigest,
-	}
-	if err := ctrl.SetAdmission(admission); err != nil {
-		return nil, err
-	}
-	if req.Force {
-		if err := ctrl.SetForceResume(true); err != nil {
-			return nil, err
-		}
-	}
-	return ctrl, nil
-}
-
 func (e *Engine) launch(ctrl *controller.LinearController) {
 	runCtx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -435,7 +247,7 @@ func (e *Engine) launch(ctrl *controller.LinearController) {
 	}
 	go func() {
 		defer close(done)
-		_, runErr := controller.RunWithCancelReconciliationRetry(runCtx, ctrl.Run)
+		snap, runErr := controller.RunWithCancelReconciliationRetry(runCtx, ctrl.Run)
 		if runErr != nil && !errors.Is(runErr, context.Canceled) && !errors.Is(runErr, controller.ErrPanelMembersComplete) && !errors.Is(runErr, controller.ErrCancelReconciliationPending) {
 			// Surface the failure instead of silently dropping it: a
 			// claim-contention or step error that stops the run must not
@@ -444,6 +256,24 @@ func (e *Engine) launch(ctrl *controller.LinearController) {
 			// act on.
 			e.settleRunFailure(ctrl.RunID, runErr)
 		}
+		// Drive-before-delivery: a stacking plan run that parks at its
+		// delivery_pending success terminal must drive its chunk stack
+		// automatically (the CLI path drives in executeWorkflowRun, the
+		// session path in sessionAutoDeliveryRepairLoop; the agent-tools
+		// engine drives here - see engine_stack.go). The drive runs in its
+		// own goroutine so the run's launch handle (and Wait) return when
+		// the controller parks, but it keeps the run registered in e.active
+		// for its whole lifetime - it defers cancel() and calls
+		// releaseActiveRun on exit - so Interrupt and a re-launch can cancel
+		// the drive; the drive is bounded by runCtx for its lifetime.
+		driveSpawned := runErr == nil && snap.Status == workflowledger.RunStatusDeliveryPending
+		if driveSpawned {
+			go func() {
+				defer cancel()
+				defer e.releaseActiveRun(ctrl.RunID, done)
+				e.stackDriveAfterPark(runCtx, ctrl.RunID)
+			}()
+		}
 		// Release the resume probe claim if it is still held (e.g. Run
 		// exited before the first Advance could claim/refresh it). No-op
 		// when the last Advance already released it or another host took
@@ -451,12 +281,23 @@ func (e *Engine) launch(ctrl *controller.LinearController) {
 		_ = e.Repo.ReleaseRun(context.Background(), ctrl.RunID, ctrl.Holder)
 		// Final durable trace with the terminal status and delivery hints.
 		e.writeRunTrace(ctrl.RunID)
-		e.mu.Lock()
-		if cur, ok := e.active[ctrl.RunID]; ok && cur.done == done {
-			delete(e.active, ctrl.RunID)
+		if !driveSpawned {
+			e.releaseActiveRun(ctrl.RunID, done)
 		}
-		e.mu.Unlock()
 	}()
+}
+
+// releaseActiveRun removes the run's active handle when it still points at
+// the given done channel. A re-launch may have replaced the handle while the
+// previous controller or drive goroutine was still finishing up
+// (cur.done != done): only the handle that owns this done channel is
+// released, so the newer handle is never stripped.
+func (e *Engine) releaseActiveRun(runID string, done chan struct{}) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if cur, ok := e.active[runID]; ok && cur.done == done {
+		delete(e.active, runID)
+	}
 }
 
 // Wait blocks until the background run for runID exits or ctx is done.
@@ -475,5 +316,5 @@ func (e *Engine) Wait(ctx context.Context, runID string) error {
 	}
 }
 
-// Ensure Engine implements agenttools.Engine.
-var _ agenttools.Engine = (*Engine)(nil)
+// Ensure Engine implements workflowledger.Engine.
+var _ workflowledger.Engine = (*Engine)(nil)

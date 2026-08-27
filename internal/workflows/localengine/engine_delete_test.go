@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	workflowspace "github.com/MiviaLabs/mivia-agent/internal/workflows/workspace"
 )
 
 // newSettledEngine returns an engine over a fresh memory repo with one run
@@ -67,7 +66,7 @@ func TestEngineDeleteSettledRun(t *testing.T) {
 // leaked one entry per run forever.
 func TestEngineDeleteForgetsWorktree(t *testing.T) {
 	engine, _, runID := newSettledEngine(t, workflowledger.RunStatusSucceeded)
-	engine.recordWorktree(runID, workflowspace.Identity{Root: "/tmp/wt", WorktreeName: "workflow-" + runID})
+	engine.recordWorktree(runID, Identity{Root: "/tmp/wt", WorktreeName: "workflow-" + runID})
 	if _, ok := engine.worktreeIdentity(runID); !ok {
 		t.Fatal("recordWorktree did not record the identity")
 	}

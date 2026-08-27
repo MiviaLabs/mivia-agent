@@ -49,7 +49,7 @@ func (c *coordinator) JoinAsRecovered(ctx context.Context, req EnsureRunRequest)
 	if err != nil {
 		return nil, fmt.Errorf("join as recovered: list tasks: %w", err)
 	}
-	if len(tasks) != 1 || !sameStoredWork(req.Tasks[0], tasks[0]) {
+	if !anyStoredTaskMatches(req.Tasks[0], tasks) {
 		return nil, ErrIdempotencyConflict
 	}
 	h := c.newRunHandle(run.RunID, key, latestAttempts(tasks), fingerprint, true, nonInteractiveRunOpts(req)...)

@@ -33,7 +33,7 @@ The loader scans two optional roots:
 | Origin | Root | Precedence |
 |---|---|---|
 | User | `~/.mivia/skills/<name>/` | Lower |
-| Project | `<workspace>/.mivia/skills/<name>/` | Higher |
+| Project | `<workspace>/.agents/skills/<name>/` | Higher |
 
 Each child directory is considered a skill only when it contains a regular
 `SKILL.md`. Project definitions replace user definitions with the same skill
@@ -74,7 +74,7 @@ second tool registration path.
 
 ## Agent–skill binding
 
-Named agents (`.mivia/agents/*.toml` / `~/.mivia/agents/*.toml`) may set:
+Named agents (`.agents/agents/*.md` / `~/.agents/agents/*.md`) may set:
 
 ```toml
 skills = ["bug-audit", "verify-change"]
@@ -89,7 +89,6 @@ skills = ["bug-audit", "verify-change"]
 Enforcement is root fan-out only (v1):
 
 - `dispatch_tasks` when an explicit task `skill` is present
-- `spawn_agent` when an explicit task `skill` is present
 - Skill handler invoke on resume/retry (rechecks the selected agent snapshot)
 
 Nested `multi_step` agents do not receive privileged orchestration tools, so
@@ -110,7 +109,7 @@ When the gate is off, project skill sources are not loaded at all, so a
 workspace skill cannot erase a user skill of the same name.
 
 This gate is deliberately narrower than agent discovery. Workspace
-`.mivia/agents/*.toml` files always load and retain workspace provenance; the
+`.agents/agents/*.md` files always load and retain workspace provenance; the
 gate only controls workspace `[chat]`/`[subagents]` prompt surfaces and project
 skill handlers. A workspace agent cannot inherit from a user agent, and a
 workspace-only skill cannot enter an agent allowlist while the gate is off.
@@ -120,11 +119,16 @@ task-agent `agent` + optional `skill` binding enforced by the root dispatcher.
 ## Skill directory contract
 
 ```text
-.mivia/skills/<skill-name>/
+.agents/skills/<skill-name>/
 ├── SKILL.md                 # required untrusted instructions
 ├── resources.toml           # optional resource catalogue
 └── report-template.md       # local convention for report-producing skills
 ```
+
+Project skills live under `.agents/skills/`, not `.mivia/`; `.mivia/` is
+scoped to product runtime config and state. A `.claude/skills/` tree, if
+present, is a separate copy maintained for Claude Code tool discovery — the
+mivia skill loader never reads it.
 
 `report-template.md` is a repository convention enforced by the control-surface
 checks for report-producing skills. It is not a host-level semantic required of
@@ -244,7 +248,7 @@ multi-step skill invocation, and persistence scrubbing.
 
 `python3 scripts/test_semgrep_rules.py` validates every report-producing skill's
 manifest and local template. It also byte-checks the `secure-change` and
-`verify-change` copies against `.mivia/templates/agent-report-v1.md` to catch
+`verify-change` copies against `.agents/templates/agent-report-v1.md` to catch
 template drift. Local copies remain deliberate: resource access is confined to
 the selected skill directory rather than allowing a model to read arbitrary
 workspace files.
@@ -255,4 +259,4 @@ workspace files.
 - [Agent tools and safety](../product/agent.md)
 - [Agent workflow](../development/agent-workflow.md)
 - [Concurrency model](concurrency.md)
-- `.mivia/skills/*/resources.toml` and `.mivia/skills/*/report-template.md`
+- `.agents/skills/*/resources.toml` and `.agents/skills/*/report-template.md`

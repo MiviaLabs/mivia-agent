@@ -53,7 +53,7 @@ Check that:
 1. The fix resolves every retained finding (by id) with the smallest correct change.
 2. The regression tests fail before the fix and pass after, and cover the negative path.
 3. The change stays within scope. Flag any edit to scripts/, semgrep/, Makefile, .githooks/,
-   .mivia/hooks/, or .mivia/quality/ as a scope violation unless the declared scope is the
+   .mivia/hooks/, or .agents/quality/ as a scope violation unless the declared scope is the
    harness itself. Flag ANY change that adds checks, thresholds, or rules to gates as a
    violation, even in harness scope.
 4. Security, privacy, safe paths, fail-closed behavior, and hook policy hold.

@@ -629,12 +629,11 @@ func TestDiscoverAgentFilesTolerantSymlinkedWorkspaceAgentsDir(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	realDir := t.TempDir()
-	writeAgentFile(t, realDir, "a.toml", "name = \"a\"\ndescription = \"d\"\n")
-	ns := filepath.Join(ws, ".mivia")
-	if err := os.MkdirAll(ns, 0o700); err != nil {
+	agentsDir := WorkspaceAgentsDir(ws)
+	if err := os.MkdirAll(filepath.Dir(agentsDir), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(realDir, filepath.Join(ns, "agents")); err != nil {
+	if err := os.Symlink(realDir, agentsDir); err != nil {
 		t.Fatal(err)
 	}
 
@@ -650,4 +649,76 @@ func TestDiscoverAgentFilesTolerantSymlinkedWorkspaceAgentsDir(t *testing.T) {
 		t.Fatalf("warnings = %q, want a class-only skip notice for the agents dir", joined)
 	}
 	_ = files // nil-or-partial is acceptable; the invariant is no error + warning
+}
+
+func TestParseAgentFileMarkdown(t *testing.T) {
+	doc := []byte(`---
+name: planner
+description: ADLC Planner
+tools:
+  - read_file
+  - list_dir
+---
+
+# Planner Role
+
+You plan the work.
+`)
+	spec, canonical, err := ParseAgentFileMarkdown(doc, "planner.md")
+	if err != nil {
+		t.Fatalf("ParseAgentFileMarkdown: %v", err)
+	}
+	if canonical != "planner" {
+		t.Errorf("canonical = %q, want planner", canonical)
+	}
+	if spec.Name == nil || *spec.Name != "planner" {
+		t.Errorf("spec.Name = %v, want planner", spec.Name)
+	}
+	if spec.Description == nil || *spec.Description != "ADLC Planner" {
+		t.Errorf("spec.Description = %v, want ADLC Planner", spec.Description)
+	}
+	if spec.Tools == nil || len(*spec.Tools) != 2 || (*spec.Tools)[0] != "read_file" {
+		t.Errorf("spec.Tools = %#v", spec.Tools)
+	}
+	if spec.SystemPrompt == nil || !strings.Contains(*spec.SystemPrompt, "# Planner Role") {
+		t.Errorf("spec.SystemPrompt = %v, want body prompt", spec.SystemPrompt)
+	}
+
+	// Unknown frontmatter key rejected
+	unknown := []byte(`---
+name: planner
+bogus_key: 123
+---
+Prompt
+`)
+	if _, _, err := ParseAgentFileMarkdown(unknown, "planner.md"); err == nil {
+		t.Fatal("unknown frontmatter key must fail")
+	}
+
+	// Name mismatch rejected
+	mismatch := []byte(`---
+name: other
+description: desc
+---
+Prompt
+`)
+	if _, _, err := ParseAgentFileMarkdown(mismatch, "planner.md"); err == nil {
+		t.Fatal("name mismatch must fail")
+	}
+
+	// Empty body yields nil SystemPrompt
+	emptyBody := []byte(`---
+name: planner
+description: desc
+tools:
+  - read_file
+---
+`)
+	spec, _, err = ParseAgentFileMarkdown(emptyBody, "planner.md")
+	if err != nil {
+		t.Fatalf("empty body: %v", err)
+	}
+	if spec.SystemPrompt != nil {
+		t.Errorf("spec.SystemPrompt = %v, want nil", spec.SystemPrompt)
+	}
 }

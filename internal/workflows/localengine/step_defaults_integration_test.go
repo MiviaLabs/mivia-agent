@@ -15,8 +15,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -75,7 +73,7 @@ func writeSugaredTwoStepWorkspace(t *testing.T) string {
 	return root
 }
 
-func newStepDefaultsEngine(t *testing.T) (*localengine.Engine, *agenttools.Service, workflowledger.Repository) {
+func newStepDefaultsEngine(t *testing.T) (*localengine.Engine, *workflowledger.Service, workflowledger.Repository) {
 	t.Helper()
 	root := writeSugaredTwoStepWorkspace(t)
 	repo := workflowledger.NewMemoryRepository()
@@ -152,7 +150,7 @@ func TestIntegrationStepDefaultsSnapshotRoundTrip(t *testing.T) {
 
 	// The resume compile must reproduce the admitted digest, or resume would
 	// reject the snapshot as drifted.
-	resumed, err := compiler.CompileForResume(&first)
+	resumed, err := definition.CompileForResume(&first)
 	if err != nil {
 		t.Fatalf("CompileForResume: %v", err)
 	}

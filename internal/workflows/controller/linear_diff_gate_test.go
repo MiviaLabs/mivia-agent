@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -23,7 +22,7 @@ import (
 // target to reroute an oversized implement to. Delivery stays inactive
 // (kind ""), so the run settles at its success terminal instead of
 // delivery_pending; only the gate's OnDiffSizeFailure knob is exercised.
-func stackingGateFixture(t *testing.T, repairContext []definition.ContextBinding) *compiler.CompiledWorkflow {
+func stackingGateFixture(t *testing.T, repairContext []definition.ContextBinding) *definition.CompiledWorkflow {
 	t.Helper()
 	enabled := true
 	wf := &definition.WorkflowFile{
@@ -54,7 +53,7 @@ func stackingGateFixture(t *testing.T, repairContext []definition.ContextBinding
 			{From: "repair_size", To: "verify", Match: definition.MatchCriteria{Status: "succeeded"}},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +120,7 @@ func gateRuntimes() map[string]StepRuntime {
 
 // gateController wires a stacking controller with the run's pinned git
 // context, exactly like the CLI and the local engine do for production runs.
-func gateController(t *testing.T, runner AgentStepRunner, wf *compiler.CompiledWorkflow, inputs map[string]any, dir string) (*LinearController, error) {
+func gateController(t *testing.T, runner AgentStepRunner, wf *definition.CompiledWorkflow, inputs map[string]any, dir string) (*LinearController, error) {
 	t.Helper()
 	ctrl, err := NewLinearController(workflowledger.NewMemoryRepository(), runner, wf, gateRuntimes(), inputs, "wfr-stacking", []byte("snap"))
 	if err != nil {

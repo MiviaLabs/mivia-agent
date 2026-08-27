@@ -5,17 +5,22 @@ import (
 	"fmt"
 )
 
-// applyContextMigration runs one DDL statement as a migration: schema in the
-// first transaction, version bump and dirty clear in the second, matching the
-// crash-recovery contract repairContextSchema depends on. A crash between the
-// two leaves the schema committed and the dirty flag set, which is exactly what
-// repairContextSchema knows how to recover.
-func applyContextMigration(db *sql.DB, version int, ddl string) error {
+// applyContextMigration runs one or more DDL statements as a migration:
+// schema in the first transaction, version bump and dirty clear in the
+// second, matching the crash-recovery contract repairContextSchema depends
+// on. A crash between the two leaves the schema committed and the dirty flag
+// set, which is exactly what repairContextSchema knows how to recover.
+// Variadic so a migration that needs a table plus its indexes (each its own
+// statement - database/sql does not reliably support multiple statements
+// joined in one string) can still land as a single apply phase.
+func applyContextMigration(db *sql.DB, version int, ddl ...string) error {
 	if err := inMigrationTx(db, version, "apply", func(tx *sql.Tx) error {
-		return execAll(tx,
-			migrationStatement{sql: ddl},
-			migrationStatement{sql: `INSERT OR REPLACE INTO context_schema_migrations(version, dirty) VALUES(?, 1)`, args: []any{version}},
-		)
+		statements := make([]migrationStatement, 0, len(ddl)+1)
+		for _, stmt := range ddl {
+			statements = append(statements, migrationStatement{sql: stmt})
+		}
+		statements = append(statements, migrationStatement{sql: `INSERT OR REPLACE INTO context_schema_migrations(version, dirty) VALUES(?, 1)`, args: []any{version}})
+		return execAll(tx, statements...)
 	}); err != nil {
 		return err
 	}

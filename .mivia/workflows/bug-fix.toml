@@ -3,6 +3,29 @@ name = "bug-fix"
 description = "Hunt for at most 2 confirmed reachable performance or logic bugs in a scope, triage the findings, fix them with regression tests, and deliver a pull request."
 initial_step = "hunt"
 
+# This is the SLOW, exhaustive hunt (bug-audit skill: invariant-first,
+# mandatory same-class sweep per finding). When speed matters more than
+# exhaustive coverage, dispatch bug-fix-fast.toml instead - same shape,
+# same delivery, only the hunt step's skill/template differ (fast-bug-audit,
+# templates/bugfix-hunt-fast.md). Picking this file by habit when
+# bug-fix-fast would serve better is the exact failure mode both files'
+# headers exist to prevent.
+
+# ============================================================================
+# TEMPORARY FAST DEBUG PATH (comment-out cut, NOT the canonical shape).
+# Disabled to shorten runs while debugging/testing:
+#   - review_panel (agent_panel): the 3-member panel + synthesis
+#   - review (agent_gate): the post-panel review gate
+#   - perf_verify (agent_gate): the conditional perf measurement gate
+# implement now goes straight to test_validate, and every repair step loops
+# back to test_validate instead of review_panel. The implement feedback
+# bindings (steps.review.output, steps.review_panel.output) are removed.
+# RESTORE: uncomment the marked step blocks and transitions below, restore
+# implement -> review_panel -> review routing, restore the repair ->
+# review_panel back-edges, restore implement's feedback bindings, and
+# re-enable the panel assertions in internal/cli/bug_fix_panel_contract_test.go.
+# ============================================================================
+
 # bug-fix workflow design notes
 # -----------------------------
 # hunt   : read-only hostile hunt (auditor + bug-audit skill, run_command for
@@ -57,17 +80,23 @@ max_duration_seconds = 0
 max_on_failure_reentries = 3
 
 # Stacking is opt-in: this table (with the required plan_step/implement_step)
-# puts the workflow in the stacking engine. merge_policy=auto matches
-# feature-delivery.toml: a bug-fix run's PR merges itself once CI is green,
-# same as any other stacked delivery - a confirmed, regression-tested fix is
-# not held for a human publish grant by default. All other knobs use the
-# engine's global defaults (max_chunks=12, soft_lines=200, hard_lines=400,
-# max_files=5).
+# puts the workflow in the stacking engine. max_chunks=20 (raised from the
+# engine default 12 so large plans may split into up to 20 chunks).
+# soft_lines=350 (raised from the engine default 200 so medium changes stay
+# one chunk/PR; hard_lines keeps the engine default 400 as the hard ceiling).
+# max_files uses the engine default 5. merge_policy=approve (changed from
+# auto on 2026-08-18 to match feature-delivery.toml's 2026-08-17 fix: a
+# merged chunk PR must never land without a human merging it, including for a
+# bug-fix run - a confirmed, regression-tested fix is still not exempt from
+# human publish grant). merge_policy="auto" would let the run merge each
+# chunk PR itself; revert only deliberately.
 [stacking]
 plan_step = "fix_plan"
 implement_step = "implement"
 split_deferred = true
-merge_policy = "auto"
+merge_policy = "approve"
+max_chunks = 20
+soft_lines = 350
 
 # [step_defaults] desugars at decode time into every step whose own field is
 # empty: kind, agent, skill, output_schema, and on_failure below fill the
@@ -95,6 +124,14 @@ context = [
   { from = "inputs.scope", as = "scope", max_bytes = 16000 },
   { from = "steps.triage.output", as = "prior_findings", max_bytes = 4096, optional = true, envelope_only = true },
 ]
+# A schema violation re-enters hunt instead of going terminal; re-entries
+# are bounded by [limits] max_on_failure_reentries (= 3), same self-loop
+# pattern as review_panel elsewhere in this workflow family. Before this,
+# hunt inherited [step_defaults]'s terminal on_failure = "failure", so one
+# schema-repair failure killed the whole run even though the loop and the
+# reentry budget both had room left (bug-fix-fast.toml carried the same
+# gap, observed on run wfr-3OU756MYKYKOSMQ4, 2026-08-17).
+on_failure = "hunt"
 
 # ---- Triage: independent confirmation of each finding ----
 [[steps]]
@@ -132,100 +169,107 @@ context = [
   { from = "inputs.scope", as = "scope", max_bytes = 16000 },
   { from = "steps.fix_plan.output", as = "plan", max_bytes = 24000 },
   { from = "steps.triage.output", as = "findings", max_bytes = 32768 },
-  { from = "steps.review.output", as = "review_findings", max_bytes = 4096, optional = true, envelope_only = true },
-  { from = "steps.review_panel.output", as = "panel_findings", max_bytes = 4096, optional = true, envelope_only = true },
+  # --- CUT (fast debug path): review_findings from review ---
+  # { from = "steps.review.output", as = "review_findings", max_bytes = 4096, optional = true, envelope_only = true },
+  # --- CUT (fast debug path): panel_findings from review_panel ---
+  # { from = "steps.review_panel.output", as = "panel_findings", max_bytes = 4096, optional = true, envelope_only = true },
 ]
 
 # ---- Panel review: 3 independent members + synthesis; the code-review gate ----
-[[steps]]
-id = "review_panel"
-kind = "agent_panel"
-agent = "review-synthesizer"
-skill = "review-synthesis"
-template = "templates/review-panel-synthesis.md"
-output_schema = "schemas/review-panel-v1.json"
-context = [
-  { from = "inputs.task", as = "task", max_bytes = 16000 },
-  { from = "inputs.scope", as = "scope", max_bytes = 4096 },
-  { from = "steps.fix_plan.output", as = "plan", max_bytes = 24000 },
-  { from = "steps.triage.output", as = "findings", max_bytes = 16384 },
-  { from = "steps.implement.output", as = "implementation", max_bytes = 16000 },
-  { from = "implement.touched_files", as = "touched_files", max_bytes = 4096, optional = true },
-  { from = "steps.review_panel.output", as = "prior_findings", max_bytes = 4096, optional = true, envelope_only = true },
-]
+# --- CUT (fast debug path): review_panel agent_panel ---
+# [[steps]]
+# id = "review_panel"
+# kind = "agent_panel"
+# agent = "review-synthesizer"
+# skill = "review-synthesis"
+# template = "templates/review-panel-synthesis.md"
+# output_schema = "schemas/review-panel-v1.json"
+# context = [
+#   { from = "inputs.task", as = "task", max_bytes = 16000 },
+#   { from = "inputs.scope", as = "scope", max_bytes = 4096 },
+#   { from = "steps.fix_plan.output", as = "plan", max_bytes = 24000 },
+#   { from = "steps.triage.output", as = "findings", max_bytes = 16384 },
+#   { from = "steps.implement.output", as = "implementation", max_bytes = 16000 },
+#   { from = "implement.touched_files", as = "touched_files", max_bytes = 4096, optional = true },
+#   { from = "steps.review_panel.output", as = "prior_findings", max_bytes = 4096, optional = true, envelope_only = true },
+# ]
 # A member or synthesis failure re-enters the panel; the number of re-entries
 # is bounded by [limits] max_on_failure_reentries (= 3).
-on_failure = "review_panel"
-
-[steps.panel]
+# on_failure = "review_panel"
+#
+# [steps.panel]
 # allow_partial means a single panel member failure does not fail the whole
 # panel when other reviewers succeeded — the failed member is noted and the
 # panel proceeds to synthesis with the successful members; the attempt fails
 # only if all members fail.
-failure_policy = "allow_partial"
-require_distinct_bindings = true
-
-[[steps.panel.members]]
-id = "correctness"
-agent = "panel-reviewer"
-provider = "deepseek"
-model = "deepseek-v4-flash"
-skill = "panel-bug-audit"
-template = "templates/bugfix-panel-correctness.md"
-output_schema = "schemas/panel-review-v1.json"
-
-[[steps.panel.members]]
-id = "security"
-agent = "panel-reviewer"
-provider = "openrouter"
-model = "tencent/hy3-preview"
-skill = "panel-secure-change"
-template = "templates/bugfix-panel-security.md"
-output_schema = "schemas/panel-review-v1.json"
-
-[[steps.panel.members]]
-id = "integration"
-agent = "panel-reviewer"
-provider = "zai"
-model = "glm-5-turbo"
-skill = "panel-architecture-review"
-template = "templates/bugfix-panel-integration.md"
-output_schema = "schemas/panel-review-v1.json"
+# failure_policy = "allow_partial"
+# require_distinct_bindings = true
+#
+# [[steps.panel.members]]
+# id = "correctness"
+# agent = "panel-reviewer"
+# provider = "deepseek"
+# model = "deepseek-v4-flash"
+# skill = "panel-bug-audit"
+# template = "templates/bugfix-panel-correctness.md"
+# output_schema = "schemas/panel-review-v1.json"
+#
+# [[steps.panel.members]]
+# id = "security"
+# agent = "panel-reviewer"
+# provider = "openrouter"
+# model = "tencent/hy3-preview"
+# skill = "panel-secure-change"
+# template = "templates/bugfix-panel-security.md"
+# output_schema = "schemas/panel-review-v1.json"
+#
+# The "integration" member is the GLM reviewer (zai / glm-5-turbo) - the
+# panel's third, architecture-review lens.
+# [[steps.panel.members]]
+# id = "integration"
+# agent = "panel-reviewer"
+# provider = "zai"
+# model = "glm-5-turbo"
+# skill = "panel-architecture-review"
+# template = "templates/bugfix-panel-integration.md"
+# output_schema = "schemas/panel-review-v1.json"
 
 # ---- Review: post-panel gate + diff-scope check; echoes has_perf ----
-[[steps]]
-id = "review"
-kind = "agent_gate"
-agent = "reviewer"
-skill = "secure-change"
-template = "templates/bugfix-review.md"
-output_schema = "schemas/review-fix-v1.json"
-context = [
-  { from = "inputs.task", as = "task", max_bytes = 16000 },
-  { from = "inputs.scope", as = "scope", max_bytes = 4096 },
-  { from = "steps.fix_plan.output", as = "plan", max_bytes = 24000 },
-  { from = "steps.triage.output", as = "findings", max_bytes = 16384 },
-  { from = "steps.implement.output", as = "implementation", max_bytes = 16000 },
-  { from = "steps.review_panel.output", as = "review", max_bytes = 16000, optional = true },
-  { from = "steps.review.output", as = "prior_findings", max_bytes = 4096, optional = true, envelope_only = true },
-]
-on_failure = "failure"
+# --- CUT (fast debug path): review agent_gate ---
+# [[steps]]
+# id = "review"
+# kind = "agent_gate"
+# agent = "reviewer"
+# skill = "secure-change"
+# template = "templates/bugfix-review.md"
+# output_schema = "schemas/review-fix-v1.json"
+# context = [
+#   { from = "inputs.task", as = "task", max_bytes = 16000 },
+#   { from = "inputs.scope", as = "scope", max_bytes = 4096 },
+#   { from = "steps.fix_plan.output", as = "plan", max_bytes = 24000 },
+#   { from = "steps.triage.output", as = "findings", max_bytes = 16384 },
+#   { from = "steps.implement.output", as = "implementation", max_bytes = 16000 },
+#   { from = "steps.review_panel.output", as = "review", max_bytes = 16000, optional = true },
+#   { from = "steps.review.output", as = "prior_findings", max_bytes = 4096, optional = true, envelope_only = true },
+# ]
+# on_failure = "failure"
 
 # ---- Perf verification: measurement gate, only for perf-class findings ----
-[[steps]]
-id = "perf_verify"
-kind = "agent_gate"
-agent = "performance"
-skill = "performance-review"
-template = "templates/bugfix-perf-verify.md"
-output_schema = "schemas/perf-v1.json"
-context = [
-  { from = "inputs.task", as = "task", max_bytes = 16000 },
-  { from = "inputs.scope", as = "scope", max_bytes = 16000 },
-  { from = "steps.implement.output", as = "implementation", max_bytes = 16000 },
-  { from = "steps.triage.output", as = "findings", max_bytes = 32768 },
-]
-on_failure = "failure"
+# --- CUT (fast debug path): perf_verify agent_gate ---
+# [[steps]]
+# id = "perf_verify"
+# kind = "agent_gate"
+# agent = "performance"
+# skill = "performance-review"
+# template = "templates/bugfix-perf-verify.md"
+# output_schema = "schemas/perf-v1.json"
+# context = [
+#   { from = "inputs.task", as = "task", max_bytes = 16000 },
+#   { from = "inputs.scope", as = "scope", max_bytes = 16000 },
+#   { from = "steps.implement.output", as = "implementation", max_bytes = 16000 },
+#   { from = "steps.triage.output", as = "findings", max_bytes = 32768 },
+# ]
+# on_failure = "failure"
 
 # ---- Host evidence gates (the repo's own gates, unchanged) ----
 [[steps]]
@@ -329,13 +373,19 @@ context = [
 
 # repair_pr_metadata fixes only the PR title and summary when the host rejects
 # the change-summary metadata. It is the delivery.on_pr_metadata_failure target
-# and must bind delivery.failure.
+# and must bind delivery.failure. It also binds steps.implement.output as
+# prior_metadata so the repair agent can see the actual pr_title/pr_summary it
+# must shorten/adjust - without it, the agent has no reference for what it is
+# repairing and can fabricate an unrelated pr_title/pr_summary pair (seen
+# live on wfr-4UA7AUXKJBHUN3AY / PR #233, where the repaired title and body
+# described work that was never implemented).
 [[steps]]
 id = "repair_pr_metadata"
 template = "templates/bugfix-repair-metadata.md"
 context = [
   { from = "inputs.task", as = "task", max_bytes = 16000 },
   { from = "inputs.scope", as = "scope", max_bytes = 16000 },
+  { from = "steps.implement.output", as = "prior_metadata", max_bytes = 4096 },
   { from = "delivery.failure", as = "delivery_hint", max_bytes = 8192, optional = true },
 ]
 
@@ -371,58 +421,59 @@ from = "fix_plan"
 to = "implement"
 match = { status = "succeeded" }
 
-# implement → review_panel (implementation + tests ready for panel review)
+# implement → test_validate (fast debug path: review_panel/review gates commented out below)
 [[transitions]]
 from = "implement"
-to = "review_panel"
+to = "test_validate"
 match = { status = "succeeded" }
 
-# review_panel approved → the post-panel review gate (echoes has_perf)
-[[transitions]]
-from = "review_panel"
-to = "review"
-match = { status = "succeeded", output = { host_verdict = "approved" } }
+# --- CUT (fast debug path): review_panel → review ---
+# [[transitions]]
+# from = "review_panel"
+# to = "review"
+# match = { status = "succeeded", output = { host_verdict = "approved" } }
 
-# review_panel changes_requested → rework the fix (bounded loop)
-[[transitions]]
-from = "review_panel"
-to = "implement"
-match = { status = "succeeded", output = { host_verdict = "changes_requested" } }
-loop = "panel_repair"
-max_iterations = 8
+# --- CUT (fast debug path): review_panel → implement loop ---
+# [[transitions]]
+# from = "review_panel"
+# to = "implement"
+# match = { status = "succeeded", output = { host_verdict = "changes_requested" } }
+# loop = "panel_repair"
+# max_iterations = 8
 
-# review approved with a perf finding -> measurement gate
-[[transitions]]
-from = "review"
-to = "perf_verify"
-match = { status = "succeeded", output = { verdict = "approved", has_perf = "true" } }
+# --- CUT (fast debug path): review → perf_verify ---
+# [[transitions]]
+# from = "review"
+# to = "perf_verify"
+# match = { status = "succeeded", output = { verdict = "approved", has_perf = "true" } }
 
-# review approved without a perf finding -> straight to the gates
-[[transitions]]
-from = "review"
-to = "test_validate"
-match = { status = "succeeded", output = { verdict = "approved", has_perf = "false" } }
+# --- CUT (fast debug path): superseded by implement → test_validate ---
+# [[transitions]]
+# from = "review"
+# to = "test_validate"
+# match = { status = "succeeded", output = { verdict = "approved", has_perf = "false" } }
 
-# review changes_requested -> rework the fix (bounded loop)
-[[transitions]]
-from = "review"
-to = "implement"
-match = { status = "succeeded", output = { verdict = "changes_requested" } }
-loop = "review_repair"
-max_iterations = 8
+# --- CUT (fast debug path): review → implement loop ---
+# [[transitions]]
+# from = "review"
+# to = "implement"
+# match = { status = "succeeded", output = { verdict = "changes_requested" } }
+# loop = "review_repair"
+# max_iterations = 8
 
-# perf measurement approved -> gates; changes_requested -> rework (bounded loop)
-[[transitions]]
-from = "perf_verify"
-to = "test_validate"
-match = { status = "succeeded", output = { verdict = "approved" } }
+# --- CUT (fast debug path): perf_verify → test_validate ---
+# [[transitions]]
+# from = "perf_verify"
+# to = "test_validate"
+# match = { status = "succeeded", output = { verdict = "approved" } }
 
-[[transitions]]
-from = "perf_verify"
-to = "implement"
-match = { status = "succeeded", output = { verdict = "changes_requested" } }
-loop = "perf_repair"
-max_iterations = 4
+# --- CUT (fast debug path): perf_verify → implement loop ---
+# [[transitions]]
+# from = "perf_verify"
+# to = "implement"
+# match = { status = "succeeded", output = { verdict = "changes_requested" } }
+# loop = "perf_repair"
+# max_iterations = 4
 
 # test_validate -> verify, with repair loop
 [[transitions]]
@@ -437,9 +488,11 @@ match = { status = "failed" }
 loop = "test_repair"
 max_iterations = 5
 
+# Fast debug path: repair back-edges target the first evidence gate
+# (test_validate) instead of the commented-out review_panel.
 [[transitions]]
 from = "repair_tests"
-to = "review_panel"
+to = "test_validate"
 match = { status = "succeeded" }
 
 # verify -> code_validate, with repair loop
@@ -455,9 +508,10 @@ match = { status = "failed" }
 loop = "verify_repair"
 max_iterations = 5
 
+# Fast debug path: repair back-edge → test_validate (review_panel cut).
 [[transitions]]
 from = "repair_verify"
-to = "review_panel"
+to = "test_validate"
 match = { status = "succeeded" }
 
 # code_validate -> preflight_validate, with repair loop
@@ -473,9 +527,10 @@ match = { status = "failed" }
 loop = "final_repair"
 max_iterations = 5
 
+# Fast debug path: repair back-edge → test_validate (review_panel cut).
 [[transitions]]
 from = "repair_final"
-to = "review_panel"
+to = "test_validate"
 match = { status = "succeeded" }
 
 # preflight_validate -> preflight_structure, with repair loop
@@ -491,9 +546,10 @@ match = { status = "failed" }
 loop = "preflight_repair"
 max_iterations = 5
 
+# Fast debug path: repair back-edge → test_validate (review_panel cut).
 [[transitions]]
 from = "repair_preflight"
-to = "review_panel"
+to = "test_validate"
 match = { status = "succeeded" }
 
 # preflight_structure -> success, with repair loop
@@ -509,14 +565,16 @@ match = { status = "failed" }
 loop = "preflight_structure_repair"
 max_iterations = 5
 
+# Fast debug path: repair back-edge → test_validate (review_panel cut).
 [[transitions]]
 from = "repair_preflight_structure"
-to = "review_panel"
+to = "test_validate"
 match = { status = "succeeded" }
 
+# Fast debug path: repair back-edge → test_validate (review_panel cut).
 [[transitions]]
 from = "repair_pr_metadata"
-to = "review_panel"
+to = "test_validate"
 match = { status = "succeeded" }
 
 # ---- Delivery ----
@@ -524,7 +582,7 @@ match = { status = "succeeded" }
 kind = "pull_request"
 mode = "draft"
 provider = "github"
-base = "main"
+base = "dev"
 title_template = "fix: bug-fix delivery"
 pr_title_policy = ".mivia/policy/pr-title.toml"
 # A delivery rejection (the common commit-hook refusal) routes here via

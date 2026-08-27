@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/localengine"
@@ -51,7 +50,7 @@ func TestStartWithEmptyWorkspaceRootFailsClosed(t *testing.T) {
 		},
 		NewRunID: func() string { return "wfr-no-workspace" },
 	}
-	_, err = engine.Start(context.Background(), agenttools.StartRequest{
+	_, err = engine.Start(context.Background(), workflowledger.StartRequest{
 		Workflow: "two-step", Inputs: map[string]any{"task": "x"},
 	})
 	if err == nil {
@@ -95,7 +94,7 @@ func TestStartResumeForceTakesOverLiveClaim(t *testing.T) {
 		},
 		NewRunID: func() string { return "wfr-force-live-claim" },
 	}
-	started, err := engine.Start(context.Background(), agenttools.StartRequest{
+	started, err := engine.Start(context.Background(), workflowledger.StartRequest{
 		Workflow: "two-step", Inputs: map[string]any{"task": "x"},
 	})
 	if err != nil {
@@ -117,7 +116,7 @@ func TestStartResumeForceTakesOverLiveClaim(t *testing.T) {
 		t.Fatalf("seed live claim: %v", err)
 	}
 
-	resumed, err := engine.Start(context.Background(), agenttools.StartRequest{
+	resumed, err := engine.Start(context.Background(), workflowledger.StartRequest{
 		Resume: true, RunID: started.RunID, Force: true,
 	})
 	if err != nil {

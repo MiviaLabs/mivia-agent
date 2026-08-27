@@ -268,6 +268,26 @@ func TestFilterEnv_DropsSecretsKeepsSafe(t *testing.T) {
 	}
 }
 
+// TestFilterEnvEmptyAllowlistReturnsNonNil pins the fail-closed contract of
+// the shared environment filter: a zero-valued tool - the default
+// configuration, where [tools].env_allowlist is unset - must return an EMPTY,
+// NON-NIL slice. Assigning nil to exec.Cmd.Env makes os/exec inherit the
+// parent's FULL environment (os/exec.Cmd.Env documentation), leaking operator
+// secrets to allowlisted child programs; the empty non-nil slice gives the
+// child NO environment, matching env.go's documented contract "With it unset,
+// child processes inherit no environment". The len==0 assertion is the
+// negative path proving fail-closed even when the child env is empty.
+func TestFilterEnvEmptyAllowlistReturnsNonNil(t *testing.T) {
+	tool := &runCommandTool{}
+	got := tool.filterEnv([]string{"PATH=/usr/bin:/bin", "SECRET=supersekret", "HOME=/root"})
+	if got == nil {
+		t.Fatal("empty allowlist must yield an empty NON-NIL slice; nil cmd.Env inherits the parent's full environment")
+	}
+	if len(got) != 0 {
+		t.Fatalf("empty allowlist must pass nothing through, got %v", got)
+	}
+}
+
 // useRedactionPolicy installs a process-wide policy for the duration of a test.
 // Redaction is configuration, so every assertion that a credential disappears
 // has to say which configuration made it disappear.
@@ -392,19 +412,67 @@ func TestRunCommandParentCancelReportsCanceled(t *testing.T) {
 	}
 }
 
-func TestRunCommandNotRegisteredWithEmptyAllowlist(t *testing.T) {
+// TestRunCommandRegisteredWithBuiltinAllowlistByDefault proves run_command
+// is open by default: with no [tools] run_allowlist configured, it is still
+// registered and can run a program from DefaultRunAllowlist (e.g.
+// "echo"). See DefaultRunAllowlist's doc comment for what is (and is
+// not) included by default.
+func TestRunCommandRegisteredWithBuiltinAllowlistByDefault(t *testing.T) {
 	ws := setupTestWSRun(t)
 	reg := NewDefaultRegistry(DefaultOptions{Workspace: ws})
-	if _, ok := reg.Get(RunCommandToolName); ok {
-		t.Error("run_command should not be registered when allowlist is empty")
+	if _, ok := reg.Get(RunCommandToolName); !ok {
+		t.Fatal("run_command should be registered by default (built-in allowlist)")
 	}
-	// Execute should report unknown tool, not a registered-but-erroring tool.
-	_, err := reg.Execute(context.Background(), RunCommandToolName, json.RawMessage(`{"argv":["echo","hi"]}`))
-	if err == nil {
-		t.Fatal("expected unknown tool error")
+	out, err := reg.Execute(context.Background(), RunCommandToolName, json.RawMessage(`{"argv":["echo","hi"]}`))
+	if err != nil {
+		t.Fatalf("Execute(echo) error = %v, want success from the built-in allowlist", err)
 	}
-	if !strings.Contains(err.Error(), "unknown tool") {
-		t.Fatalf("expected 'unknown tool', got: %v", err)
+	if !strings.Contains(out, "hi") {
+		t.Fatalf("out=%q, want it to contain echo's output", out)
+	}
+}
+
+// TestRunCommandBuiltinAllowlistExcludesShellsAndMutatingTools proves the
+// built-in default deliberately omits shells (unrestricted execution) and
+// file-mutating programs (run_command is not gated by the write-path
+// blocklist, so a mutating program here would bypass it entirely).
+func TestRunCommandBuiltinAllowlistExcludesShellsAndMutatingTools(t *testing.T) {
+	ws := setupTestWSRun(t)
+	reg := NewDefaultRegistry(DefaultOptions{Workspace: ws})
+	for _, program := range []string{"sh", "bash", "rm", "cp", "mv", "chmod", "find", "curl", "docker"} {
+		_, err := reg.Execute(context.Background(), RunCommandToolName, json.RawMessage(fmt.Sprintf(`{"argv":[%q]}`, program)))
+		if err == nil {
+			t.Errorf("Execute(%s) error = nil, want an allowlist rejection (not in the built-in default)", program)
+		}
+	}
+}
+
+// TestRunCommandAllowlistOnlyReplacesBuiltin proves run_allowlist_only
+// replaces DefaultRunAllowlist entirely rather than extending it: a
+// program from the built-in default that is not in the configured
+// run_allowlist_only is refused.
+func TestRunCommandAllowlistOnlyReplacesBuiltin(t *testing.T) {
+	ws := setupTestWSRun(t)
+	reg := NewDefaultRegistry(DefaultOptions{Workspace: ws, RunAllowlistOnly: []string{"git"}})
+	if _, err := reg.Execute(context.Background(), RunCommandToolName, json.RawMessage(`{"argv":["echo","hi"]}`)); err == nil {
+		t.Error("Execute(echo) error = nil, want rejection: run_allowlist_only replaces the built-in default")
+	}
+	if _, err := reg.Execute(context.Background(), RunCommandToolName, json.RawMessage(`{"argv":["git","--version"]}`)); err != nil {
+		t.Errorf("Execute(git) error = %v, want success: git is in run_allowlist_only", err)
+	}
+}
+
+// TestRunCommandRunBlocklistRemovesBuiltinEntry proves run_blocklist can
+// remove a program from the built-in default, not only from configured
+// run_allowlist entries.
+func TestRunCommandRunBlocklistRemovesBuiltinEntry(t *testing.T) {
+	ws := setupTestWSRun(t)
+	reg := NewDefaultRegistry(DefaultOptions{Workspace: ws, RunBlocklist: []string{"echo"}})
+	if _, err := reg.Execute(context.Background(), RunCommandToolName, json.RawMessage(`{"argv":["echo","hi"]}`)); err == nil {
+		t.Error("Execute(echo) error = nil, want rejection: echo is run_blocklist-ed")
+	}
+	if _, err := reg.Execute(context.Background(), RunCommandToolName, json.RawMessage(`{"argv":["git","--version"]}`)); err != nil {
+		t.Errorf("Execute(git) error = %v, want success: only echo was blocklisted", err)
 	}
 }
 

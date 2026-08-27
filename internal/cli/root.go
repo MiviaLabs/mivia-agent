@@ -3,9 +3,14 @@ package cli
 
 import (
 	"fmt"
+	clichat "github.com/MiviaLabs/mivia-agent/internal/clichat"
 	"os"
 	"strings"
 
+	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
+	"github.com/MiviaLabs/mivia-agent/internal/cliworktree"
 	"github.com/MiviaLabs/mivia-agent/internal/version"
 )
 
@@ -25,27 +30,29 @@ func Execute(args []string) error {
 		printUsage(os.Stdout)
 		return nil
 	case "chat":
-		return runChat(args[1:])
+		return clichat.RunChat(args[1:])
 	case "config":
 		return runConfig(args[1:])
 	case "doctor":
-		return runDoctor(args[1:])
+		return cliorchestrate.RunDoctor(args[1:])
 	case "agents":
-		return runAgents(args[1:])
+		return cliagents.RunAgents(args[1:])
 	case "sessions":
-		return runSessions(args[1:])
+		return clichat.RunSessions(args[1:])
+	case "storage":
+		return clichat.RunStorage(args[1:])
 	case "compact":
-		return runCompact(args[1:])
+		return clichat.RunCompact(args[1:])
 	case "memory":
 		return runMemory(args[1:])
 	case "workflows":
-		return runWorkflows(args[1:])
+		return cliworkflow.RunWorkflows(args[1:])
 	case "workflow":
-		return runWorkflow(args[1:])
+		return cliworkflow.RunWorkflow(args[1:])
 	case "stack":
 		return runStack(args[1:])
 	case "worktree":
-		return runWorktree(args[1:])
+		return cliworktree.RunWorktree(args[1:])
 	case "completion":
 		return runCompletion(args[1:])
 	case "setup":
@@ -111,7 +118,7 @@ Usage:
   %s workflow run <name> [--workspace dir] [--config path] [--input name=value]... [--allow-publish]
   %s workflow runs [--status name] [--limit n] [--watch] [--workspace dir] [--config path]
   %s workflow deliver <run-id> --allow-publish [--workspace dir] [--config path]
-  %s workflow resume <run-id> [--workspace dir] [--config path] [--force] [--accept-verifier-change]
+  %s workflow resume <run-id> [--workspace dir] [--config path] [--force] [--allow-publish] [--accept-verifier-change] [--accept-skill-change]
   %s stack plan <workflow> [--workspace dir] [--config path]
   %s stack drive <workflow> [--stack <plan-run-id>] [--workspace dir] [--config path]
   %s stack status <workflow> [--stack <plan-run-id>] [--workspace dir] [--config path]
@@ -127,11 +134,11 @@ Usage:
   %s version [--json]
   %s help
 
-Defaults: provider deepseek, model deepseek-v4-flash, tools ON (coding agent)
-Advanced DeepSeek model: deepseek-v4-pro (via --model, config, or /model in chat)
+Defaults: provider openrouter, model openai/gpt-5.6-luna, tools ON (coding agent)
+Switch providers or models via --provider, --model, config, or /model in chat
 
 Agent tools: read_file list_dir grep glob write_file search_replace multi_edit run_command
-  --agent selects a named agent definition from ~/.mivia/agents/ or <workspace>/.mivia/agents/.
+  --agent selects a named agent definition from ~/.mivia/agents/ or <workspace>/.agents/agents/.
   --session resumes a saved session by the name/id "mivia sessions list" reports; fails if it does not exist.
   --no-tools disables tools (pure chat). --workspace confines file/command tools.
   --plain uses classic terminal UI (if Bubble Tea misbehaves).
@@ -142,7 +149,7 @@ Agent tools: read_file list_dir grep glob write_file search_replace multi_edit r
   --allow-env-var  add env var to subprocess allowlist (repeatable)
   --deny-env-var   remove env var from subprocess allowlist (repeatable)
 
-Chat: /help /tools /hooks /exit /clear /new /model /status
+Chat: /help /tools /hooks /exit /clear /model /status
   Ctrl-C at prompt exits; Ctrl-C during a reply cancels generation.
 
 Config: $MIVIA_CONFIG | ./.mivia/mivia.toml | ~/.mivia/mivia.toml

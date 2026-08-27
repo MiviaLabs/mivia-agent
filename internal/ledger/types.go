@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/ledgercore"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 )
 
@@ -69,17 +70,7 @@ type RunSnapshot struct {
 }
 
 // RunPolicy describes fixed recovery behaviour for one admitted run.
-type RunPolicy struct {
-	NoRetry         bool `json:"no_retry"`
-	FailInterrupted bool `json:"fail_interrupted"`
-	// Retry fields are the immutable scheduler policy captured at admission.
-	// They are work policy, not caller authority.
-	RetryMaxRetries     int           `json:"retry_max_retries"`
-	RetryBaseBackoff    time.Duration `json:"retry_base_backoff"`
-	RetryMaxBackoff     time.Duration `json:"retry_max_backoff"`
-	RetryBackoffFactor  float64       `json:"retry_backoff_factor"`
-	RetryJitterFraction float64       `json:"retry_jitter_fraction"`
-}
+type RunPolicy = ledgercore.RunPolicy
 
 // SingleTaskAdmission is the complete durable tuple for one child run.
 type SingleTaskAdmission struct {
@@ -132,6 +123,12 @@ type TaskSnapshot struct {
 	CompletedAt  *time.Time
 	OutputRef    string // bounded redacted reference; empty until completion
 	ErrorRef     string // bounded redacted reference; empty unless failed
+	// ToolCallsRef is a bounded, redacted reference to this task's recorded
+	// tool-call step trace (subagent tool name/input/output pairs),
+	// operator-facing only. Empty when the task made no tool calls, or for
+	// any task recorded before this field existed. Set once at task
+	// completion, on the same SetTaskOutput call as OutputRef/ErrorRef.
+	ToolCallsRef string `json:"tool_calls_ref,omitempty"`
 	Version      uint64 // per-task monotonic version for compare-and-set
 	// HandlerName is the registered handler name for the sub-agent task.
 	// Stored so ResumeInterruptedRun can rebuild the task config.
@@ -185,6 +182,7 @@ func (s TaskSnapshot) Clone() TaskSnapshot {
 		CompletedAt:           nil,
 		OutputRef:             s.OutputRef,
 		ErrorRef:              s.ErrorRef,
+		ToolCallsRef:          s.ToolCallsRef,
 		Version:               s.Version,
 		HandlerName:           s.HandlerName,
 		AgentName:             s.AgentName,

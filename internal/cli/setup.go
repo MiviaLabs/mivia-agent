@@ -2,27 +2,13 @@ package cli
 
 import (
 	"fmt"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"io"
 	"os"
-	"path/filepath"
-	"sort"
 	"strings"
 
-	"golang.org/x/term"
-
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/envfile"
 )
-
-// setupDefaultConfig is the minimal config written when no config exists and
-// the provider is the shipped default (deepseek). Other providers need their
-// own [providers.<name>] block; setup writes only the API key for them.
-const setupDefaultConfig = `[provider]
-name = "deepseek"
-
-[providers.deepseek]
-models = [{ name = "deepseek-v4-flash", context_window_tokens = 128000 }]
-`
 
 // setupOptions holds the parsed `mivia setup` flags.
 type setupOptions struct {
@@ -73,16 +59,12 @@ func runSetupWithIO(args []string, stdout io.Writer, stdin io.Reader) error {
 			key = strings.TrimSpace(v)
 		}
 	}
-	if key == "" {
-		if f, ok := stdin.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
-			fmt.Fprintf(stdout, "Enter the API key for provider %q (%s): ", provider, keyEnv)
-			raw, err := term.ReadPassword(int(f.Fd()))
-			fmt.Fprintln(stdout)
-			if err != nil {
-				return fmt.Errorf("setup: read the API key: %w", err)
-			}
-			key = strings.TrimSpace(string(raw))
+	if key == "" && config.IsInteractiveTTY(stdin) {
+		prompted, err := config.PromptAPIKey(stdout, stdin, provider, keyEnv)
+		if err != nil {
+			return fmt.Errorf("setup: %w", err)
 		}
+		key = prompted
 	}
 	keylessOllama := key == "" && provider == "ollama"
 	if key == "" && !keylessOllama {
@@ -111,14 +93,14 @@ func printSetupSummary(stdout io.Writer, provider, keyEnv, envPath, cfgPath stri
 		fmt.Fprintln(stdout, "  mode:       local daemon - no API key needed (set base_url to http://127.0.0.1:11434/v1 in [providers.ollama])")
 		fmt.Fprintf(stdout, "  mode:       Ollama Cloud - needs the key (default base_url https://ollama.com/v1); pass --key or set %s\n", keyEnv)
 	} else {
-		fmt.Fprintf(stdout, "  key file:   %s (written)\n", displayPath(envPath))
+		fmt.Fprintf(stdout, "  key file:   %s (written)\n", cliorchestrate.DisplayPath(envPath))
 	}
 	if cfgWritten {
-		fmt.Fprintf(stdout, "  config:     %s (written)\n", displayPath(cfgPath))
+		fmt.Fprintf(stdout, "  config:     %s (written)\n", cliorchestrate.DisplayPath(cfgPath))
 	} else if provider != config.DefaultProvider {
-		fmt.Fprintf(stdout, "  config:     %s (untouched; add a [providers.%s] block to select it)\n", displayPath(cfgPath), provider)
+		fmt.Fprintf(stdout, "  config:     %s (untouched; add a [providers.%s] block to select it)\n", cliorchestrate.DisplayPath(cfgPath), provider)
 	} else {
-		fmt.Fprintf(stdout, "  config:     %s (existing)\n", displayPath(cfgPath))
+		fmt.Fprintf(stdout, "  config:     %s (existing)\n", cliorchestrate.DisplayPath(cfgPath))
 	}
 	if keylessOllama {
 		fmt.Fprintln(stdout, "  next:       add a [providers.ollama] block to your config, then run mivia doctor")
@@ -139,56 +121,21 @@ func defaultSetupProvider() string {
 }
 
 // writeSetupEnvFile writes key=value into path, preserving existing keys.
-// It writes atomically with 0600 permissions so the key never appears in a
-// world-readable file.
+// Delegates to config.WriteUserEnvKey, the same writer mivia chat's
+// first-run key prompt uses, so there is one place that knows how a key
+// gets persisted to disk.
 func writeSetupEnvFile(path, key, value string) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("setup: create %s: %w", dir, err)
-	}
-	entries := map[string]string{}
-	if existing, err := envfile.Load(path); err == nil {
-		entries = existing
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("setup: read %s: %w", path, err)
-	}
-	entries[key] = value
-
-	keys := make([]string, 0, len(entries))
-	for k := range entries {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	var body strings.Builder
-	for _, k := range keys {
-		fmt.Fprintf(&body, "%s=%s\n", k, entries[k])
-	}
-
-	tmp, err := os.CreateTemp(dir, ".mivia-setup-*")
-	if err != nil {
-		return fmt.Errorf("setup: create a temp env file: %w", err)
-	}
-	defer os.Remove(tmp.Name())
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("setup: set env file permissions: %w", err)
-	}
-	if _, err := tmp.WriteString(body.String()); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("setup: write the env file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("setup: close the env file: %w", err)
-	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
-		return fmt.Errorf("setup: install the env file: %w", err)
+	if err := config.WriteUserEnvKey(path, key, value); err != nil {
+		return fmt.Errorf("setup: %w", err)
 	}
 	return nil
 }
 
 // writeSetupConfigIfMissing writes the minimal default config when no config
 // exists and the provider is the shipped default. It reports whether it wrote
-// a file. Other providers keep their configs untouched.
+// a file. Other providers keep their configs untouched. Delegates the actual
+// write to config.WriteDefaultUserConfig, the same writer mivia chat's
+// silent auto-bootstrap uses.
 func writeSetupConfigIfMissing(path, provider string) (bool, error) {
 	if provider != config.DefaultProvider {
 		return false, nil
@@ -198,12 +145,8 @@ func writeSetupConfigIfMissing(path, provider string) (bool, error) {
 	} else if !os.IsNotExist(err) {
 		return false, fmt.Errorf("setup: stat %s: %w", path, err)
 	}
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return false, fmt.Errorf("setup: create %s: %w", dir, err)
-	}
-	if err := os.WriteFile(path, []byte(setupDefaultConfig), 0o644); err != nil {
-		return false, fmt.Errorf("setup: write %s: %w", path, err)
+	if err := config.WriteDefaultUserConfig(path); err != nil {
+		return false, fmt.Errorf("setup: %w", err)
 	}
 	return true, nil
 }

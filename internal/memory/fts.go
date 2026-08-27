@@ -61,9 +61,11 @@ func probeFTS5(db *sql.DB) bool {
 }
 
 // ensureFTSIndex creates the memories_fts index (if missing) and backfills it
-// idempotently. It reports whether the index is usable for search
-// acceleration; a build without FTS5, or any index-level failure, degrades
-// the store to the Phase-1 LIKE path with identical results and no error.
+// idempotently. It reports whether the index is available so Save and
+// consolidation keep it in sync; a build without FTS5, or any index-level
+// failure, skips the sync and search still works (Search runs the
+// authoritative LIKE path on every build - see the search execution note
+// below).
 func ensureFTSIndex(db *sql.DB) bool {
 	if !probeFTS5(db) {
 		return false
@@ -195,6 +197,26 @@ func parseFTSQuery(q string) ([]ftsPart, bool) {
 	return parts, true
 }
 
+// ftsPartsAllPlainTokens reports whether every parsed FTS5 query part is a
+// plain bare token. Prefix and phrase parts are excluded: FTS5 MATCH
+// semantics for 'run*' (token prefix) and '"cache invalidation"' (contiguous
+// token sequence) differ from the LIKE path's substring semantics, so a query
+// with such a part must always run the authoritative LIKE path to keep
+// FTS-enabled and FTS-disabled results identical (the ensureFTSIndex
+// contract). Empty input is false: the MATCH gate needs at least one plain
+// part to be taken.
+func ftsPartsAllPlainTokens(parts []ftsPart) bool {
+	if len(parts) == 0 {
+		return false
+	}
+	for _, part := range parts {
+		if part.kind != ftsPartToken {
+			return false
+		}
+	}
+	return true
+}
+
 // buildFTSMatch renders clean FTS5 query parts into a MATCH string. Bare
 // stopword terms are dropped so the FTS candidate set stays aligned with the
 // shared tokenizer's token-AND (the tokenizer drops the same stopwords);
@@ -254,7 +276,7 @@ func ftsMatchFromParsed(p parsedQuery) string {
 }
 
 // ---------------------------------------------------------------------------
-// Search SQL builders (shared by the LIKE and FTS paths)
+// Search SQL builders (LIKE path)
 // ---------------------------------------------------------------------------
 
 // likeWhereSQL builds the WHERE clause for the token-AND LIKE path. Every
@@ -283,13 +305,6 @@ func likeWhereSQL(p parsedQuery, scope Scope, org, text string) (string, []any) 
 		args = append(args, contains, contains, contains)
 	}
 	return b.String(), args
-}
-
-// ftsWhereSQL builds the FTS candidate WHERE: scope/org plus the memories
-// rowid in the memories_fts MATCH result. match is the bound MATCH string.
-func ftsWhereSQL(match string, scope Scope, org string) (string, []any) {
-	where := "WHERE scope = ? AND org = ? AND rowid IN (SELECT rowid FROM memories_fts WHERE memories_fts MATCH ?)"
-	return where, []any{string(scope), org, match}
 }
 
 // rankCaseSQL builds the ORDER BY rank CASE fragment and its bound arguments.
@@ -370,42 +385,13 @@ func (s *sqliteStore) searchLike(ctx context.Context, db *sql.DB, scope Scope, o
 	return s.querySearch(ctx, db, query, args)
 }
 
-// searchFTS runs the FTS MATCH candidate search. The MATCH string is bound as
-// one parameter; the final ORDER BY is the rank CASE (identical to the LIKE
-// path), so ordering pins hold on both paths.
-func (s *sqliteStore) searchFTS(ctx context.Context, db *sql.DB, scope Scope, org, text, match string, p parsedQuery, limit int) ([]Result, error) {
-	where, args := ftsWhereSQL(match, scope, org)
-	rank, rankArgs := rankCaseSQL(p, text)
-	query := "SELECT id, scope, org, title, verdict, tags, created, summary FROM memories\n" +
-		where + "\nORDER BY " + rank + "\nLIMIT ?"
-	args = append(args, rankArgs...)
-	args = append(args, limit)
-	return s.querySearch(ctx, db, query, args)
-}
-
-// searchTokens runs one token-AND search for the parsed query p. On a build
-// with FTS5 it prefers the FTS MATCH path for clean queries and falls back to
-// the LIKE path when the index is missing or the query is not clean. The full
-// FTS parts (prefix tokens, phrases) are used only for the unrelaxed query
-// (drop == 0); a relaxed search rebuilds the MATCH from the reduced token set
-// so the FTS candidate set stays aligned with the LIKE token-AND.
-func (s *sqliteStore) searchTokens(ctx context.Context, db *sql.DB, scope Scope, org, text string, p parsedQuery, parts []ftsPart, clean bool, drop int, limit int) ([]Result, error) {
-	if s.fts && clean && len(p.tokens) > 0 && len(parts) > 0 {
-		var match string
-		if drop == 0 {
-			match = buildFTSMatch(parts)
-		} else {
-			match = ftsMatchFromParsed(p)
-		}
-		if match != "" {
-			res, err := s.searchFTS(ctx, db, scope, org, text, match, p, limit)
-			if err == nil {
-				return res, nil
-			}
-			// The index is missing or unusable (e.g. a manually dropped
-			// memories_fts): fail closed to the LIKE path below, correct results
-			// and no error.
-		}
-	}
-	return s.searchLike(ctx, db, scope, org, text, p, limit)
-}
+// Search executes only the authoritative LIKE path (searchLike). The FTS5
+// MATCH fast path was removed because FTS5 token matching cannot express the
+// LIKE substring contract: the porter tokenizer stems index and query terms
+// (MATCH 'cache' also matched a stored 'caching', since both stem to 'cach'),
+// and a MATCH term only ever matches a whole token, so a term inside a longer
+// stored token ('cache' in 'memcache') is invisible to the index. No MATCH
+// query can be a superset of the LIKE match set, so the fast path could never
+// keep FTS-enabled and FTS-disabled results identical. The memories_fts index
+// is still created, backfilled, and kept in sync by Save, consolidation, and
+// Delete, but Search never consults it.

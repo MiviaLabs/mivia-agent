@@ -33,6 +33,14 @@ func (s *blockedFencedClaimStore) TakeoverExpiredClaimFenced(ctx context.Context
 	return s.Store.(storage.FencedLeaseStore).TakeoverExpiredClaimFenced(ctx, runID, holder, maxAge)
 }
 
+func (s *blockedFencedClaimStore) TakeoverClaimFenced(ctx context.Context, runID, holder string) (storage.Claim, error) {
+	return s.Store.(storage.FencedLeaseStore).TakeoverClaimFenced(ctx, runID, holder)
+}
+
+func (s *blockedFencedClaimStore) RefreshClaimFenced(ctx context.Context, runID, holder string) (storage.Claim, error) {
+	return s.Store.(storage.FencedLeaseStore).RefreshClaimFenced(ctx, runID, holder)
+}
+
 func (s *blockedFencedClaimStore) AppendClaimedFenced(ctx context.Context, event storage.Event, claim storage.Claim) error {
 	return s.Store.(storage.FencedLeaseStore).AppendClaimedFenced(ctx, event, claim)
 }

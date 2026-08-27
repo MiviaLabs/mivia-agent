@@ -32,7 +32,7 @@ const (
 // ValidRunTransition reports whether a run may move from one status to another.
 // Edges: pending->running; running->waiting_approval|delivery_pending|succeeded|failed|canceled|timed_out;
 // waiting_approval->running|failed|canceled|timed_out;
-// delivery_pending->succeeded|delivery_failed|running.
+// delivery_pending->succeeded|delivery_failed|failed|running.
 // Repair edges: delivery_pending->running and delivery_failed->running return a
 // run whose delivery failed for a repairable reason to the step the workflow
 // names in delivery.on_failure. Delivery runs after the success terminal,
@@ -69,7 +69,7 @@ func ValidRunTransition(from, to RunStatus) bool {
 		// the run to the graph at the step the workflow names in
 		// delivery.on_failure. The run then repairs, reaches success again,
 		// and delivers again.
-		return to == RunStatusSucceeded || to == RunStatusDeliveryFailed || to == RunStatusRunning
+		return to == RunStatusSucceeded || to == RunStatusDeliveryFailed || to == RunStatusFailed || to == RunStatusRunning
 	case RunStatusDeliveryFailed:
 		// Recovery carve-out only; see the doc comment above. Running is the
 		// same repair edge, for a run that already settled as failed.

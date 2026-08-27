@@ -36,22 +36,36 @@ ARCH_OVERVIEW = ROOT / "docs" / "architecture" / "overview.md"
 # README display name -> registry key. Only branding differs; the registry key
 # is the canonical identifier. Add a row here when a provider gains a README row.
 DISPLAY_TO_KEY = {
+    "Anthropic": "anthropic",
     "DeepSeek": "deepseek",
     "OpenRouter": "openrouter",
     "ZAI": "zai",
     "Ollama": "ollama",
     "LLM Gateway": "llmgateway",
+    "LLM Proxy CLI": "llmproxycli",
+    "MiniMax": "minimax",
 }
 
 # Reverse: registry key -> the display names the docs may use for it. The arch
 # overview writes z.ai (dot), the README writes ZAI (z.ai); both mean zai.
 KEY_TO_DISPLAYS = {
+    "anthropic": ["Anthropic"],
     "deepseek": ["DeepSeek"],
     "openrouter": ["OpenRouter"],
     "zai": ["ZAI", "z.ai"],
     "ollama": ["Ollama"],
     "llmgateway": ["LLM Gateway"],
+    "llmproxycli": ["LLM Proxy CLI", "llmproxycli"],
+    "minimax": ["MiniMax"],
 }
+
+# NATIVE_PROVIDERS are registry keys that do NOT wrap OpenAICompat and so must
+# be excluded from the architecture overview's "Every OpenAICompat provider
+# (...)" list - naming one there would assert something false about its
+# transport. Each native provider must still be named somewhere else in the
+# architecture overview text (see the native-provider-mentioned check below)
+# so removing it from that one list doesn't let it go undocumented entirely.
+NATIVE_PROVIDERS = {"anthropic"}
 
 
 def normalize_display(name: str) -> str:
@@ -159,16 +173,29 @@ def parse_readme_table(text: str) -> list[dict[str, str]]:
 
 
 def parse_arch_overview(text: str) -> list[str]:
-    """Parse the provider list in the architecture overview retry section."""
+    """Parse the provider list in the architecture overview retry section.
+
+    This list is deliberately the OpenAICompat-wrapping providers only, not
+    every registry provider - a native provider (see NATIVE_PROVIDERS) does
+    not wrap OpenAICompat and naming it here would be false. The caller
+    checks native providers separately via native_provider_mentioned.
+    """
     m = re.search(
-        r"Every built-in provider \(([^)]+)\) is an `OpenAICompat`",
+        r"Every OpenAICompat provider \(([^)]+)\)",
         text,
     )
     if not m:
         raise ProviderDocsError(
-            "docs/architecture/overview.md has no 'Every built-in provider (...)' list"
+            "docs/architecture/overview.md has no 'Every OpenAICompat provider (...)' list"
         )
     return [p.strip() for p in m.group(1).split(",")]
+
+
+def native_provider_mentioned(key: str, text: str) -> bool:
+    """Report whether a native provider's canonical display name appears
+    anywhere in the architecture overview text, so excluding it from the
+    OpenAICompat list (it is not one) doesn't let it go undocumented."""
+    return any(display in text for display in KEY_TO_DISPLAYS.get(key, []))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -217,10 +244,18 @@ def main(argv: list[str] | None = None) -> int:
                 f"README provider set {sorted(row_keys)} != registry {expected_keys}"
             )
         arch_keys = sorted({display_to_key(n) or n for n in arch_names})
-        if arch_keys != expected_keys:
+        arch_expected_keys = sorted(set(expected_keys) - NATIVE_PROVIDERS)
+        if arch_keys != arch_expected_keys:
             problems.append(
-                f"architecture overview provider list {arch_keys} != registry {expected_keys}"
+                f"architecture overview OpenAICompat provider list {arch_keys} != "
+                f"registry minus native providers {arch_expected_keys}"
             )
+        for key in sorted(NATIVE_PROVIDERS & set(expected_keys)):
+            if not native_provider_mentioned(key, argv[3]):
+                problems.append(
+                    f"architecture overview never mentions native provider {key!r} "
+                    f"by its display name {KEY_TO_DISPLAYS.get(key)!r}"
+                )
         if problems:
             print("check_provider_docs: provider docs drift:\n  " + "\n  ".join(problems), file=sys.stderr)
             return 1
@@ -275,12 +310,22 @@ def main(argv: list[str] | None = None) -> int:
             f"README provider set {sorted(row_keys)} != registry {expected_keys}"
         )
 
-    # 2. Architecture overview must name every provider.
+    # 2. Architecture overview must name every OpenAICompat provider in its
+    # retry-boundary list, and every native provider by display name
+    # elsewhere in the doc (never both - a native provider is not one).
     arch_keys = sorted({display_to_key(n) or n for n in arch_names})
-    if arch_keys != expected_keys:
+    arch_expected_keys = sorted(set(expected_keys) - NATIVE_PROVIDERS)
+    if arch_keys != arch_expected_keys:
         problems.append(
-            f"architecture overview provider list {arch_keys} != registry {expected_keys}"
+            f"architecture overview OpenAICompat provider list {arch_keys} != "
+            f"registry minus native providers {arch_expected_keys}"
         )
+    for key in sorted(NATIVE_PROVIDERS & set(expected_keys)):
+        if not native_provider_mentioned(key, arch_text):
+            problems.append(
+                f"architecture overview never mentions native provider {key!r} "
+                f"by its display name {KEY_TO_DISPLAYS.get(key)!r}"
+            )
 
     if problems:
         fail("provider docs drift from internal/providerregistry/registry.go:\n  "

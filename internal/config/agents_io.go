@@ -29,7 +29,10 @@ func loadAgentDir(dir string, source AgentSource) ([]LoadedAgentFile, error) {
 	var out []LoadedAgentFile
 	for _, entry := range entries {
 		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".toml") {
+		if entry.IsDir() || strings.HasPrefix(name, ".") || strings.EqualFold(name, "readme.md") {
+			continue
+		}
+		if !strings.HasSuffix(name, ".md") && !strings.HasSuffix(name, ".toml") {
 			continue
 		}
 		data, err := readRegularAgent(root, name)
@@ -39,7 +42,13 @@ func loadAgentDir(dir string, source AgentSource) ([]LoadedAgentFile, error) {
 		if len(data) > maxAgentFileBytes {
 			return nil, fmt.Errorf("agent file %s exceeds %d bytes", filepath.Join(dir, name), maxAgentFileBytes)
 		}
-		spec, canonical, err := ParseAgentFileTOML(data, name)
+		var spec AgentFileSpec
+		var canonical string
+		if strings.HasSuffix(name, ".md") {
+			spec, canonical, err = ParseAgentFileMarkdown(data, name)
+		} else {
+			spec, canonical, err = ParseAgentFileTOML(data, name)
+		}
 		if err != nil {
 			return nil, err
 		}

@@ -50,3 +50,9 @@ runs:
         mkdir -p "$test_home" "$test_tmp" "$test_home/.mivia" "$test_home/go/pkg"
         : > "$test_home/.mivia/.env"
         ln -s "$module_cache" "$test_home/go/pkg/mod"
+    # Runs AFTER the isolated test home swaps HOME, since `go env -w` writes
+    # to a HOME-keyed config file: written before the swap, the later verify
+    # step (running under the new HOME) would never see it.
+    - name: Set GOPRIVATE for MiviaLabs modules
+      shell: bash
+      run: go env -w GOPRIVATE=github.com/MiviaLabs/*

@@ -9,17 +9,16 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
 func TestInvocationRunIDIsStableAndKeyScoped(t *testing.T) {
-	first := agenttools.InvocationRunID("request-1")
-	if first != agenttools.InvocationRunID("request-1") {
+	first := workflowledger.InvocationRunID("request-1")
+	if first != workflowledger.InvocationRunID("request-1") {
 		t.Fatal("same invocation key produced different run IDs")
 	}
-	if first == agenttools.InvocationRunID("request-2") {
+	if first == workflowledger.InvocationRunID("request-2") {
 		t.Fatal("different invocation keys produced the same run ID")
 	}
 	if len(first) < len("wfr-inv-")+32 || first[:len("wfr-inv-")] != "wfr-inv-" {
@@ -71,7 +70,7 @@ status = "succeeded"
 			return &StaticStepRunner{Output: json.RawMessage(`{"ok":true}`)}
 		},
 	}
-	result, err := engine.Start(context.Background(), agenttools.StartRequest{
+	result, err := engine.Start(context.Background(), workflowledger.StartRequest{
 		Workflow: "inv-admit", InvocationKey: "request-1",
 	})
 	if err != nil {

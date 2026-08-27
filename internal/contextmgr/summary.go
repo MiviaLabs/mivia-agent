@@ -49,10 +49,10 @@ func ValidateSummary(summary Summary, request SummaryRequest) (UntrustedSummary,
 		return UntrustedSummary{}, err
 	}
 	if summary.Version != request.Input.Version {
-		return UntrustedSummary{}, fmt.Errorf("%w: summary schema version differs from request", contextstate.ErrInvalidDTO)
+		return UntrustedSummary{}, fmt.Errorf("%w: summary schema version differs from request", ErrSummaryEchoMismatch)
 	}
 	if summary.SourceRange != request.SourceRange {
-		return UntrustedSummary{}, fmt.Errorf("%w: summary source range differs from request", contextstate.ErrInvalidDTO)
+		return UntrustedSummary{}, fmt.Errorf("%w: summary source range differs from request", ErrSummaryEchoMismatch)
 	}
 	if err := validateSummaryValue(summary, request.SourceRange); err != nil {
 		return UntrustedSummary{}, err
@@ -64,8 +64,8 @@ func ValidateSummary(summary Summary, request SummaryRequest) (UntrustedSummary,
 	if err != nil {
 		return UntrustedSummary{}, err
 	}
-	if summaryTokenEstimate(len(encoded)) > request.OutputLimit {
-		return UntrustedSummary{}, fmt.Errorf("%w: summary output exceeds %d tokens", contextstate.ErrInvalidDTO, request.OutputLimit)
+	if accept := summaryAcceptBound(request.OutputLimit); summaryTokenEstimate(len(encoded)) > accept {
+		return UntrustedSummary{}, fmt.Errorf("%w: summary output exceeds %d tokens", ErrSummaryOutputTooLarge, accept)
 	}
 	return UntrustedSummary{value: cloneSummary(summary), sealed: true}, nil
 }
@@ -92,7 +92,7 @@ func validateSummaryPolicy(summary Summary, policy contextstate.RedactionPolicy)
 	values = append(values, summary.Risks...)
 	for _, value := range values {
 		if err := policy.Classify([]byte(value)); err != nil {
-			return fmt.Errorf("%w: summary output rejected by redaction policy", contextstate.ErrInvalidDTO)
+			return fmt.Errorf("%w: summary output rejected by redaction policy", ErrSummaryRedactionRefused)
 		}
 	}
 	return nil
@@ -106,7 +106,7 @@ func validateSummaryValue(summary Summary, sourceRange contextstate.SourceRange)
 		return err
 	}
 	if summary.SourceRange != sourceRange {
-		return fmt.Errorf("%w: summary source range mismatch", contextstate.ErrInvalidDTO)
+		return fmt.Errorf("%w: summary source range mismatch", ErrSummaryEchoMismatch)
 	}
 	if err := validateSummaryText("objective", summary.Objective, true); err != nil {
 		return err
@@ -130,7 +130,7 @@ func validateSummaryValue(summary Summary, sourceRange contextstate.SourceRange)
 		return err
 	}
 	if len(encoded) > contextstate.EffectiveSummaryMetadataLimit() {
-		return fmt.Errorf("%w: summary metadata exceeds %d bytes", contextstate.ErrInvalidDTO, contextstate.EffectiveSummaryMetadataLimit())
+		return fmt.Errorf("%w: summary metadata exceeds %d bytes", ErrSummaryOutputTooLarge, contextstate.EffectiveSummaryMetadataLimit())
 	}
 	return nil
 }
@@ -148,14 +148,14 @@ func summaryTokenEstimate(bytes int) int {
 
 func validateSummaryText(field, value string, allowEmpty bool) error {
 	if !utf8.ValidString(value) || len(value) > MaxSummaryFieldBytes {
-		return fmt.Errorf("%w: summary %s is invalid or oversized", contextstate.ErrInvalidDTO, field)
+		return fmt.Errorf("%w: summary %s is invalid or oversized", ErrSummaryReplyMalformed, field)
 	}
 	if !allowEmpty && strings.TrimSpace(value) == "" {
-		return fmt.Errorf("%w: summary %s is empty", contextstate.ErrInvalidDTO, field)
+		return fmt.Errorf("%w: summary %s is empty", ErrSummaryReplyMalformed, field)
 	}
 	for _, r := range value {
 		if unicode.IsControl(r) {
-			return fmt.Errorf("%w: summary %s contains control characters", contextstate.ErrInvalidDTO, field)
+			return fmt.Errorf("%w: summary %s contains control characters", ErrSummaryReplyMalformed, field)
 		}
 	}
 	return nil
@@ -163,7 +163,7 @@ func validateSummaryText(field, value string, allowEmpty bool) error {
 
 func validateSummaryList(field string, values []string) error {
 	if len(values) > MaxSummaryItems {
-		return fmt.Errorf("%w: summary %s has too many items", contextstate.ErrInvalidDTO, field)
+		return fmt.Errorf("%w: summary %s has too many items", ErrSummaryReplyMalformed, field)
 	}
 	seen := make(map[string]struct{}, len(values))
 	for _, value := range values {
@@ -171,7 +171,7 @@ func validateSummaryList(field string, values []string) error {
 			return err
 		}
 		if _, exists := seen[value]; exists {
-			return fmt.Errorf("%w: summary %s contains duplicate items", contextstate.ErrInvalidDTO, field)
+			return fmt.Errorf("%w: summary %s contains duplicate items", ErrSummaryReplyMalformed, field)
 		}
 		seen[value] = struct{}{}
 	}
@@ -221,7 +221,7 @@ func (s UntrustedSummary) Metadata(redactionConfigured bool) ([]byte, error) {
 		return nil, err
 	}
 	if len(encoded) > contextstate.EffectiveSummaryMetadataLimit() {
-		return nil, fmt.Errorf("%w: persisted summary metadata exceeds limit", contextstate.ErrInvalidDTO)
+		return nil, fmt.Errorf("%w: persisted summary metadata exceeds limit", ErrSummaryOutputTooLarge)
 	}
 	return encoded, nil
 }

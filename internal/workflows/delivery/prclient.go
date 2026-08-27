@@ -18,6 +18,7 @@ import (
 type PRRef struct {
 	RemoteID   string
 	URL        string
+	Title      string
 	Draft      bool
 	BaseRefOID string // the PR's current base commit (gh baseRefOid)
 }
@@ -37,6 +38,9 @@ type PRInput struct {
 type PRClient interface {
 	FindByHead(ctx context.Context, repo, headBranch string) (*PRRef, error)
 	Create(ctx context.Context, repo string, in PRInput) (PRRef, error)
+	// IsMerged reports whether a pull request for headBranch has been merged
+	// on the remote host. A missing PR or a non-merged state returns false.
+	IsMerged(ctx context.Context, repo, headBranch string) (bool, error)
 }
 
 // GitHubCLI drives the operator's gh binary with fixed argv and --repo.
@@ -79,7 +83,7 @@ func (GitHubCLI) FindByHead(ctx context.Context, repo, headBranch string) (*PRRe
 		"--repo", repo,
 		"--head", headBranch,
 		"--state", "open",
-		"--json", "number,url,isDraft,headRepositoryOwner",
+		"--json", "number,url,title,isDraft,headRepositoryOwner",
 	}
 	out, err := runGH(ctx, "pr list", args...)
 	if err != nil {
@@ -88,6 +92,7 @@ func (GitHubCLI) FindByHead(ctx context.Context, repo, headBranch string) (*PRRe
 	var prs []struct {
 		Number        int    `json:"number"`
 		URL           string `json:"url"`
+		Title         string `json:"title"`
 		Draft         bool   `json:"isDraft"`
 		HeadRepoOwner struct {
 			Login string `json:"login"`
@@ -111,7 +116,7 @@ func (GitHubCLI) FindByHead(ctx context.Context, repo, headBranch string) (*PRRe
 		if err != nil {
 			return nil, err
 		}
-		return &PRRef{RemoteID: number, URL: pr.URL, Draft: pr.Draft, BaseRefOID: baseOID}, nil
+		return &PRRef{RemoteID: number, URL: pr.URL, Title: pr.Title, Draft: pr.Draft, BaseRefOID: baseOID}, nil
 	}
 	return nil, nil
 }
@@ -153,6 +158,44 @@ func (GitHubCLI) Create(ctx context.Context, repo string, in PRInput) (PRRef, er
 		return PRRef{}, err
 	}
 	return ref, nil
+}
+
+// IsMerged reports whether a pull request for headBranch has been merged.
+// It queries all PR states, so squash/rebase merges are detected even when
+// the original commit is no longer an ancestor of the base branch.
+func (GitHubCLI) IsMerged(ctx context.Context, repo, headBranch string) (bool, error) {
+	args := []string{
+		"pr", "list",
+		"--repo", repo,
+		"--head", headBranch,
+		"--state", "all",
+		"--json", "state,mergedAt,headRepositoryOwner",
+	}
+	out, err := runGH(ctx, "pr list all", args...)
+	if err != nil {
+		return false, err
+	}
+	var prs []struct {
+		State         string `json:"state"`
+		HeadRepoOwner struct {
+			Login string `json:"login"`
+		} `json:"headRepositoryOwner"`
+	}
+	if err := json.Unmarshal(out, &prs); err != nil {
+		return false, fmt.Errorf("gh pr list all: parse output: %w", err)
+	}
+	owner, _, ok := strings.Cut(repo, "/")
+	if !ok {
+		return false, fmt.Errorf("gh pr list all: repo %q is not owner/repo", repo)
+	}
+	for _, pr := range prs {
+		// Fork PRs with the same branch name are not this repo's PR.
+		if !strings.EqualFold(pr.HeadRepoOwner.Login, owner) {
+			continue
+		}
+		return strings.EqualFold(pr.State, "MERGED"), nil
+	}
+	return false, nil
 }
 
 // baseRefOID resolves a PR's current base commit via the REST API.

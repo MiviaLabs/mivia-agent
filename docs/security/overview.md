@@ -3,7 +3,7 @@
 Four rules cover almost everything:
 
 1. Your API key lives in the process environment or an env file. Keep env files out of git.
-2. Tools that can run other programs are off until you turn them on.
+2. `run_command` runs a curated built-in program allowlist out of the box; you extend or replace it.
 3. Secret filtering and redaction are off until you configure them.
 4. Treat a project you did not write like untrusted code.
 
@@ -19,17 +19,26 @@ MCP server definitions contain only environment variable names. mivia passes onl
 
 MCP tool descriptions, schemas, errors, and results are untrusted server data. mivia bounds metadata and results before it sends them to the model. It exposes text result content only. It does not treat MCP data as local instructions.
 
-## Deny by default
+## Allowlists: one open by default, one closed
 
-Powerful tools stay off until you configure them.
-
-- `run_command`, the tool that runs other programs, executes nothing until `[tools].run_allowlist` names the programs.
-- Child processes inherit no environment until `[tools].env_allowlist` names the variables.
-- These allowlists are configuration-only. There is no built-in list to extend or replace.
+- `run_command`, the tool that runs other programs, can already execute a curated built-in list with no configuration: common compilers/interpreters, their package managers, git, and read-only Unix utilities. It excludes shells, file-mutating programs, `find`, and networking/container/infra tools by default — see `[tools].run_allowlist` in [Configuration](../product/config.md#allowlists) for the full list and rationale. `[tools].run_allowlist` extends it; `[tools].run_allowlist_only` replaces it for a closed allowlist.
+- Child processes inherit no environment until `[tools].env_allowlist` names the variables. This allowlist is configuration-only — there is no built-in list to extend or replace.
 
 With nothing configured, nothing is filtered and nothing is redacted. The user then sees tool previews, `run_command` output, event bodies, and audit metadata intact.
 
 `prompt` and `reasoning` are never redacted. They are the agent's own instructions and deliberation, not the user's secrets. Eliding them made audit metadata useless for reconstructing agent behavior while protecting nothing.
+
+## Tool approval policies and YOLO mode
+
+Tool approval is policy-gated (`[approvals] default_mode`, formerly `policy`):
+
+- `always` (default): executes tool calls without interactive confirmation.
+- `once` (formerly `write-only`): requests interactive confirmation for mutating file and command tools.
+- `deny`: auto-rejects every gated tool call without interactive confirmation.
+
+YOLO mode (`--yolo`, `--approval-policy auto`, or `[approvals] default_mode = "always"` - the shipped default) disables interactive prompts only. It does not bypass path boundaries, Git hook guards, command allowlists, secret redaction, or verifier sandboxes.
+
+**`--approval-policy` uses a different vocabulary than `default_mode`.** The CLI flag accepts the legacy `write-only` / `auto` / `always` values, where `always` means "prompt for every call, including reads" (paranoid mode) - the opposite of the config/TUI `always` above, which means "accept every call". Use `--yolo` or `--approval-policy auto` (not `--approval-policy always`) to accept everything from the command line.
 
 ## Secret path filtering
 
@@ -39,7 +48,12 @@ The filter keeps credentials out of model context by accident. It is not a secur
 
 ## Redaction
 
-Redaction is configuration-only and off by default. `[privacy].redaction_patterns` and `[privacy].redaction_key_names` are the sole source. Recommended values ship in `.mivia/mivia.toml.example`. A workspace that configures neither redacts nothing.
+Redaction is configuration-only and off by default. `[privacy].redaction_patterns` and `[privacy].redaction_key_names` are the sole source. Recommended values ship in `.mivia/mivia.toml.example`. A workspace that configures neither redacts nothing. This fails open by design. What counts as a secret is a property of a workspace. Four compiled lists guessing on the user's behalf drifted apart and were wrong in both directions.
+
+- **One engine.** New code that needs redaction calls `internal/redact`; it does not write its own regex. A `regexp.MustCompile` containing a credential keyword outside `internal/redact` is a defect, and `TestNoCompiledRedactionPatterns` fails the build for it.
+- **No runtime backstop.** Redaction is off unless the workspace configures it. The authoring rules (do not log secrets, keep error messages scrubbed, keep excerpts short) are the first line of defence, not the second. Write as though nothing downstream will clean up after you, because by default nothing will.
+- **`run_command` output is model-visible.** Its body is the tool result. The policy decides what the model reads, not only what an operator reads.
+- Redaction protects what a third party learns about the user. Limiting what a reader learns about mivia is a different problem. Do not solve it here.
 
 Tool argument redaction is opt-in. Set `[privacy] redact_tool_args = true` in TOML or `MIVIA_REDACT_TOOL_ARGS=1` in the environment. When off, `run_command` shows argv and event previews keep argument bodies, still size-capped.
 
@@ -51,13 +65,13 @@ Permissions, scopes, roles, and caller identity are deliberately not stored. The
 
 ## Workspace agent files load unconditionally
 
-`.mivia/agents/*.toml` files always load as agent definitions. When a definition named `mivia` exists, it is auto-selected as the root session, prompt and tool allowlist included. User files with the same name take precedence over workspace files. The workspace file remains a diagnostic shadow row. Malformed files, unsafe paths, unknown fields, and cross-origin inheritance fail closed and do not become selectable agents.
+`.agents/agents/*.md` files always load as agent definitions. When a definition named `mivia` exists, it is auto-selected as the root session, prompt and tool allowlist included. User files with the same name take precedence over workspace files. The workspace file remains a diagnostic shadow row. Malformed files, unsafe paths, unknown fields, and cross-origin inheritance fail closed and do not become selectable agents.
 
 Consequence: cloning a repository and running `mivia chat` in it hands that repository authorship of your root agent's system prompt and tool scope. A hostile agent file shapes every turn of that session. Agent files must not contain credentials, provider catalogs, raw secrets, or environment-specific absolute paths.
 
 Two mitigations are yours to apply:
 
-- Treat an unfamiliar repository the way you would treat any untrusted code. Read `.mivia/agents/` before running `mivia chat` in it.
+- Treat an unfamiliar repository the way you would treat any untrusted code. Read `.agents/agents/` before running `mivia chat` in it.
 - `mivia chat --no-tools` limits what a hostile prompt can direct. The tool surface is what turns prompt influence into filesystem or command access.
 
 ## The config file is workspace-sourced in a checkout
@@ -74,7 +88,7 @@ A workspace-declared `provider` or `model` selection in an agent definition is i
 
 ## Agent skill allowlists
 
-Agent definitions may restrict skill invocation with `skills = [...]`. Omit = all trusted skills. `[]` = none. The allowlist is enforced at the selected task-agent boundary (`dispatch_tasks`, `spawn_agent`, skill resume). It is not enforced by trusting skill Markdown. See [Skill System Architecture](../architecture/skills.md#agent-skill-binding).
+Agent definitions may restrict skill invocation with `skills = [...]`. Omit = all trusted skills. `[]` = none. The allowlist is enforced at the selected task-agent boundary (`dispatch_tasks`, skill resume). It is not enforced by trusting skill Markdown. See [Skill System Architecture](../architecture/skills.md#agent-skill-binding).
 
 ## Runtime identity
 
@@ -132,6 +146,13 @@ another agent.
 the gate closed. A member or the synthesizer cannot approve a change by claiming success; the host
 verdict is derived from bounded, strictly-decoded member reports, never trusted from free-form
 model text.
+
+## Policy files
+
+`.mivia/policy/` holds the machine-enforced policy backing several rules
+above: commit-message and PR-title format, destructive-command detection,
+Go structure limits, docs ownership, and agent-hook-bypass rules. See
+[Git hooks](../development/hooks.md) for how these gate a commit.
 
 ## Personal data
 

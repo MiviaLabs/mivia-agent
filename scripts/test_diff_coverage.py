@@ -265,6 +265,54 @@ def test_declarations_only_file_in_a_covered_package_passes() -> None:
         assert "no statements" in proc.stdout, proc.stdout
 
 
+def test_declarations_only_package_passes() -> None:
+    """False positive #4: a package of pure declarations emits no counters.
+
+    An interface or constants package appears in NO coverage profile, however
+    well tested, because it holds no statement to instrument. Reading that
+    absence as "never linked into a tested binary" failed every line of the
+    package on a gate no test could satisfy.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_fixture(root)
+        decl = root / "ports"
+        decl.mkdir()
+        (decl / "ports.go").write_text(
+            "package ports\n\n"
+            "// Store is a declaration; there is nothing here to execute.\n"
+            "type Store interface {\n\tGet(key string) (string, bool)\n}\n\n"
+            "const DefaultWidth = 80\n",
+            encoding="utf-8",
+        )
+        git("add", "-A", cwd=root)
+        proc = run_script(["--staged"], root)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert "no statements" in proc.stdout, proc.stdout
+
+
+def test_one_statement_in_an_untested_package_still_fails() -> None:
+    """Guard on the exemption above: it must key on "no statements", not on
+    "package missing from the profile". The same package plus a single
+    executable function is checkable again, and untested, so it must fail."""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_fixture(root)
+        decl = root / "ports"
+        decl.mkdir()
+        (decl / "ports.go").write_text(
+            "package ports\n\n"
+            "type Store interface {\n\tGet(key string) (string, bool)\n}\n\n"
+            "const DefaultWidth = 80\n\n"
+            "func Widen(n int) int {\n\treturn n + DefaultWidth\n}\n",
+            encoding="utf-8",
+        )
+        git("add", "-A", cwd=root)
+        proc = run_script(["--staged"], root)
+        assert proc.returncode == 1, proc.stdout + proc.stderr
+        assert "ports/ports.go" in proc.stdout
+
+
 def test_coverage_profile_run_disables_the_test_cache() -> None:
     """False positive #3: a cached test result replays STALE block coordinates.
 
@@ -332,6 +380,129 @@ def test_missing_supplied_profile_is_a_usage_error() -> None:
         proc = run_script(["--staged", "--profile", str(root / "absent.out")], root)
         assert proc.returncode == 2, proc.stdout + proc.stderr
         assert "does not exist" in proc.stderr
+
+
+def test_known_uncovered_policy_line_passes_gate() -> None:
+    """A line listed in .mivia/policy/diff-coverage.json with a reason is
+    reported as accepted (stderr) and does not fail the gate; an unlisted
+    uncovered line still fails it."""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_fixture(root)
+        add_uncovered_function(root)
+        git("add", "-A", cwd=root)
+        # First run without the policy: must fail and name the line.
+        proc = run_script(["--staged"], root)
+        assert proc.returncode == 1, proc.stdout + proc.stderr
+        assert "pkg/lib.go:" in proc.stdout
+        # Write the policy accepting every line the first run reported.
+        import re as _re
+        uncovered_lines = sorted({
+            int(m) for m in _re.findall(r"pkg/lib\.go:(\d+)", proc.stdout)
+        })
+        assert uncovered_lines, proc.stdout
+        policy_dir = root / ".mivia" / "policy"
+        policy_dir.mkdir(parents=True)
+        (policy_dir / "diff-coverage.json").write_text(
+            "{\n"
+            '  "description": "fixture",\n'
+            '  "knownUncovered": {\n'
+            '    "pkg/lib.go": {\n'
+            f'      "lines": {uncovered_lines},\n'
+            '      "reason": "fixture: branch unreachable by construction"\n'
+            "    }\n"
+            "  }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        proc = run_script(["--staged"], root)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert "accepted as known-uncovered" in proc.stderr
+        assert f"pkg/lib.go:{uncovered_lines[0]}" in proc.stderr
+        assert "branch unreachable by construction" in proc.stderr
+        # A second uncovered line NOT in the policy must still fail.
+        lib = root / "pkg" / "lib.go"
+        lib.write_text(
+            lib.read_text(encoding="utf-8") + "\nfunc AlsoUncovered() int {\n\treturn 4\n}\n",
+            encoding="utf-8",
+        )
+        git("add", "-A", cwd=root)
+        proc = run_script(["--staged"], root)
+        assert proc.returncode == 1, proc.stdout + proc.stderr
+        assert "AlsoUncovered" not in proc.stdout  # findings are line numbers only
+        assert "pkg/lib.go:" in proc.stdout
+
+
+def test_same_diff_policy_edit_cannot_bypass_uncovered_lines() -> None:
+    import re as _re
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_fixture(root)
+        policy_dir = root / ".mivia" / "policy"
+        policy_dir.mkdir(parents=True, exist_ok=True)
+        (policy_dir / "diff-coverage.json").write_text(
+            '{\n  "description": "fixture",\n  "knownUncovered": {}\n}\n',
+            encoding="utf-8",
+        )
+        git("add", "-A", cwd=root)
+        git("commit", "-q", "-m", "add empty policy", cwd=root)
+
+        add_uncovered_function(root)
+        git("add", "-A", cwd=root)
+        proc = run_script(["--staged"], root)
+        assert proc.returncode == 1
+        uncovered_lines = sorted({
+            int(m) for m in _re.findall(r"pkg/lib\.go:(\d+)", proc.stdout)
+        })
+        assert uncovered_lines
+
+        # Now try to self-approve by editing diff-coverage.json in the same staged commit
+        (policy_dir / "diff-coverage.json").write_text(
+            "{\n"
+            '  "description": "fixture",\n'
+            '  "knownUncovered": {\n'
+            '    "pkg/lib.go": {\n'
+            f'      "lines": {uncovered_lines},\n'
+            '      "reason": "unauthorized same-commit skip"\n'
+            "    }\n"
+            "  }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        git("add", "-A", cwd=root)
+        proc = run_script(["--staged"], root)
+def test_newly_created_policy_file_fails_closed() -> None:
+    import re as _re
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_fixture(root)
+        policy_dir = root / ".mivia" / "policy"
+        policy_dir.mkdir(parents=True, exist_ok=True)
+
+        add_uncovered_function(root)
+        git("add", "-A", cwd=root)
+        proc = run_script(["--staged"], root)
+        assert proc.returncode == 1
+        uncovered_lines = sorted({
+            int(m) for m in _re.findall(r"pkg/lib\.go:(\d+)", proc.stdout)
+        })
+
+        # Create diff-coverage.json fresh in this diff (file did not exist at HEAD)
+        (policy_dir / "diff-coverage.json").write_text(
+            "{\n"
+            '  "description": "fixture",\n'
+            '  "knownUncovered": {\n'
+            '    "pkg/lib.go": {\n'
+            f'      "lines": {uncovered_lines},\n'
+            '      "reason": "unauthorized newly created policy"\n'
+            "    }\n"
+            "  }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        git("add", "-A", cwd=root)
+        proc = run_script(["--staged"], root)
+        assert proc.returncode == 1, "newly created policy in active diff must fail closed"
 
 
 if __name__ == "__main__":

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contentref"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 )
 
 func TestSpoolRoundTripAndVisibility(t *testing.T) {
@@ -19,7 +19,7 @@ func TestSpoolRoundTripAndVisibility(t *testing.T) {
 	if ref == "" {
 		t.Fatal("expected non-empty ref after successful spool")
 	}
-	if _, _, err := contentref.Parse(ref); err != nil {
+	if _, _, err := sdkadapter.Parse(ref); err != nil {
 		t.Fatalf("minted ref not canonical: %v", err)
 	}
 	if !strings.HasPrefix(ref, "ref:output:") {
@@ -113,7 +113,7 @@ func TestCapWithSpoolRefNamesARefThatFitsExactly(t *testing.T) {
 	const principal = "session-a"
 	body := strings.Repeat("x", 200)
 
-	expectedRef := contentref.Reference(contentref.KindOutput, []byte(body))
+	expectedRef := sdkadapter.Mint(sdkadapter.KindOutput, []byte(body))
 	if expectedRef == "" {
 		t.Fatal("expected a non-empty minted ref")
 	}

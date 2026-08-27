@@ -11,8 +11,10 @@ import (
 )
 
 // TestDeferredIndexRendersEveryShippedToolIntact walks the live default
-// registry because the index one-liner is the only description the model ever
-// sees for a deferred tool. Cutting at the first period truncated list_dir
+// registry because the prompt index and the shortened advertised description
+// (internal/cli's shortDescTool) are the two places a deferred tool's raw
+// description gets machine-truncated to one line - a truncation bug here
+// would surface in both. Cutting at the first period truncated list_dir
 // inside its own quoted default, leaving an unbalanced quote and dropping every
 // parameter.
 func TestDeferredIndexRendersEveryShippedToolIntact(t *testing.T) {

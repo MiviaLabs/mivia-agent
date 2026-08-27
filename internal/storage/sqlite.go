@@ -15,13 +15,24 @@ import (
 )
 
 type SQLite struct {
-	db                 *sql.DB
+	db *sql.DB
+	// writeDB is the immediate-txlock pool behind beginWrite. It addresses the
+	// same file as db; only its DSN differs (writeTxDSNParams).
+	writeDB            *sql.DB
 	path               string
 	writeMu            sync.Mutex
 	failureMu          sync.Mutex
 	contextFailureStep string
 	closeOnce          sync.Once
 	closeErr           error
+	// usageWriteWG tracks in-flight fire-and-forget usage-event writes
+	// (usageWriter.Record dispatches these off its caller's goroutine so a
+	// contended write never extends a caller-held lock - see usage_events.go).
+	// Close waits for it before checkpointing/closing the underlying db, so a
+	// one-shot process (mivia compact, a single non-interactive chat turn)
+	// cannot exit - and a test cannot remove its TempDir - while one of these
+	// writes is still in flight or hasn't started running yet.
+	usageWriteWG sync.WaitGroup
 }
 
 func OpenSQLite(path string) (*SQLite, error) {
@@ -63,11 +74,57 @@ func OpenSQLite(path string) (*SQLite, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate run claim fence: %w", err)
 	}
+	if _, err = db.Exec(`ALTER TABLE run_claims ADD COLUMN fence_generation INTEGER NOT NULL DEFAULT 0`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		db.Close()
+		return nil, fmt.Errorf("migrate run claim fence_generation: %w", err)
+	}
+	if _, err = db.Exec(`CREATE TABLE IF NOT EXISTS fenced_tokens (run_id TEXT NOT NULL, token TEXT NOT NULL, fenced_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(run_id, token))`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("create fenced_tokens: %w", err)
+	}
 	if err := migrateContextSchema(db); err != nil {
 		db.Close()
 		return nil, err
 	}
-	return &SQLite{db: db, path: path}, nil
+	// The write pool addresses the same file and needs no schema work: the
+	// migration above already ran, and every PRAGMA below is per-connection.
+	writeDB, err := sql.Open("sqlite", sqliteWriteDSN(path))
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	writeDB.SetMaxOpenConns(4)
+	writeDB.SetMaxIdleConns(4)
+	for _, p := range []string{"PRAGMA synchronous=NORMAL", "PRAGMA foreign_keys=ON", "PRAGMA busy_timeout=5000"} {
+		if _, err = writeDB.Exec(p); err != nil {
+			writeDB.Close()
+			db.Close()
+			return nil, fmt.Errorf("write pool %s: %w", p, err)
+		}
+	}
+	return &SQLite{db: db, writeDB: writeDB, path: path}, nil
+}
+
+// beginWrite starts a write transaction that holds SQLite's write lock for its
+// whole body, so a read it performs cannot be invalidated by another process
+// before its first write. Use it for every write transaction whose correctness
+// does not depend on detecting such an invalidation.
+//
+// Do NOT use it for the worktree-fenced mutations (requireActiveWorktreeTx).
+// Those read the instance state, act on it, and rely on the deferred write
+// upgrade failing when a concurrent deletion invalidates that read; the
+// retrySQLiteBusy wrapper then re-reads and returns the durable
+// ErrWorktreeDeleted sentinel. Taking the write lock up front would serialize
+// the deletion behind the stale mutation and let the stale write land. Those
+// call sites stay on s.db.BeginTx deliberately.
+func (s *SQLite) beginWrite(ctx context.Context) (*sql.Tx, error) {
+	// Unit tests construct &SQLite{db: db} directly against a raw handle and
+	// never open a write pool. Those stores are single-connection and cannot
+	// race a sibling process, so the deferred pool is the correct fallback.
+	if s.writeDB == nil {
+		return s.db.BeginTx(ctx, nil)
+	}
+	return s.writeDB.BeginTx(ctx, nil)
 }
 
 // Path returns the database file path this store was opened with - e.g. for
@@ -86,7 +143,7 @@ func (s *SQLite) Append(ctx context.Context, e Event) error {
 func (s *SQLite) AppendBatch(ctx context.Context, events []Event) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return err
 	}
@@ -123,7 +180,7 @@ func (s *SQLite) AppendBatchForNewRun(ctx context.Context, runID string, events 
 }
 
 func (s *SQLite) appendBatchForNewRun(ctx context.Context, runID string, events []Event) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return err
 	}
@@ -179,7 +236,7 @@ func (s *SQLite) AppendWithExistingClaim(ctx context.Context, e Event, holder st
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return err
 	}
@@ -208,7 +265,7 @@ func (s *SQLite) append(ctx context.Context, e Event, holder string, claimed boo
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return err
 	}
@@ -244,7 +301,7 @@ func (s *SQLite) EventsSince(ctx context.Context, id string, after int) ([]Event
 func (s *SQLite) DeleteRun(ctx context.Context, id string, through int) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return err
 	}
@@ -267,7 +324,7 @@ func (s *SQLite) AppendAndDeleteRun(ctx context.Context, tombstone Event, claim 
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginWrite(ctx)
 	if err != nil {
 		return err
 	}
@@ -365,6 +422,10 @@ func (s *SQLite) ListRunIDs(ctx context.Context) ([]string, error) {
 // inTx runs body in one transaction. A body failure and a commit failure are
 // the same outcome - nothing landed - so they share one return path rather than
 // two that cannot both be exercised.
+// inTx is the shared helper for the worktree-fenced mutations. It stays on the
+// deferred pool on purpose: those bodies call requireActiveWorktreeTx and rely
+// on the write upgrade failing when a concurrent deletion invalidates the read
+// - see beginWrite.
 func (s *SQLite) inTx(ctx context.Context, body func(*sql.Tx) error) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -387,6 +448,20 @@ func (s *SQLite) inTx(ctx context.Context, body func(*sql.Tx) error) error {
 // a "database is closed" error from re-running the checkpoint query.
 func (s *SQLite) Close() error {
 	s.closeOnce.Do(func() {
+		// Wait outside the Once body's mutation of closeErr: every write this
+		// store dispatched asynchronously must land (or fail) before the
+		// checkpoint below, or the checkpoint can run concurrently with (or
+		// before) an in-flight INSERT, and the caller's later os.RemoveAll of
+		// this store's directory can race a write that hasn't started yet.
+		s.usageWriteWG.Wait()
+		// Close the write pool before the checkpoint: a live connection there
+		// holds a WAL read mark and would make wal_checkpoint(TRUNCATE) a
+		// no-op, leaving the -wal file behind for the caller to trip over.
+		if s.writeDB != nil {
+			if err := s.writeDB.Close(); err != nil {
+				s.closeErr = err
+			}
+		}
 		var busy, log, checkpointed int
 		if err := s.db.QueryRow("PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &log, &checkpointed); err != nil {
 			s.closeErr = err

@@ -17,23 +17,36 @@ import (
 // boundary, and a different size budget from the model-visible bodies the rest
 // of the loop deals with.
 
-func redactToolInput(raw string) string {
+func redactToolInput(raw string) string { return redactToolInputForTool("", raw) }
+
+// redactToolInputForTool is redactToolInput with a per-tool preview cap,
+// mirroring redactToolOutputForTool below. dispatch_tasks gets the wider cap
+// for the identical reason that function documents: its input is the
+// model-authored task list, and the operator-facing UI's live per-task
+// fan-out (internal/ui/screen/conversation/events.go's dispatchTaskIDs)
+// re-parses that same preview as JSON - a cut mid-object silently breaks the
+// parse and collapses a multi-task batch back into one aggregate row.
+func redactToolInputForTool(name, raw string) string {
 	if strings.TrimSpace(raw) == "" {
 		return "{}"
 	}
+	maxBytes := 256
+	if name == "dispatch_tasks" {
+		maxBytes = editToolPreviewMaxBytes
+	}
 	// Default: operator-visible args, bounded and passed through the workspace
 	// redaction policy. With no policy configured that policy redacts nothing -
-	// see .mivia/rules/10-security-privacy.md. RedactToolArgs opts into the
+	// see .agents/rules/10-security-privacy.md. RedactToolArgs opts into the
 	// stricter whole-field elision below; it is a separate control from the
 	// patterns and stays meaningful when no policy is set.
 	if !tools.RedactToolArgs() {
-		return truncatePreview(redact.Text(raw), 256)
+		return truncatePreview(redact.Text(raw), maxBytes)
 	}
 	var value any
 	if json.Unmarshal([]byte(raw), &value) != nil {
-		return truncatePreview(redact.Text(raw), 256)
+		return truncatePreview(redact.Text(raw), maxBytes)
 	}
-	return truncatePreview(encodeRedactedPreview(value, raw), 256)
+	return truncatePreview(encodeRedactedPreview(value, raw), maxBytes)
 }
 
 // encodeRedactedPreview redacts a decoded argument tree and re-encodes it,
@@ -104,7 +117,12 @@ func redactToolOutput(output string) string { return redactToolOutputForTool("",
 
 func redactToolOutputForTool(name, output string) string {
 	maxBytes := defaultToolPreviewMaxBytes
-	if name == "write_file" || name == "search_replace" || name == "multi_edit" {
+	switch name {
+	case "write_file", "search_replace", "multi_edit",
+		// Structured JSON results: a 512-byte cut lands mid-string, which
+		// breaks the operator UI's JSON parse and forces a raw-envelope
+		// dump instead of a formatted preview (internal/ui/render).
+		"ledger_read", "read_output", "dispatch_tasks":
 		maxBytes = editToolPreviewMaxBytes
 	}
 	return truncatePreview(redact.Text(output), maxBytes)

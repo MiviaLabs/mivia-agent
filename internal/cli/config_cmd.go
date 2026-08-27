@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
 
@@ -117,12 +118,12 @@ func writeConfigShowJSON(w io.Writer, res *config.Resolved) error {
 func formatConfigShow(res *config.Resolved) string {
 	var out strings.Builder
 	fmt.Fprintf(&out, "config_path=%s\n", res.ConfigPath)
-	fmt.Fprintf(&out, "env_file=%s\n", displayPath(res.EnvFilePath))
+	fmt.Fprintf(&out, "env_file=%s\n", cliorchestrate.DisplayPath(res.EnvFilePath))
 	fmt.Fprintf(&out, "env_file_loaded=%v\n", res.EnvFileUsed)
 	fmt.Fprintf(&out, "provider=%s\n", res.ProviderName)
 	fmt.Fprintf(&out, "model=%s\n", res.Model)
 	if catalog := res.ModelCatalog(); len(catalog) > 0 {
-		fmt.Fprintf(&out, "model_catalog=%s\n", formatModelCatalog(catalog, ",", ";"))
+		fmt.Fprintf(&out, "model_catalog=%s\n", cliorchestrate.FormatModelCatalog(catalog, ",", ";"))
 		fmt.Fprintln(&out, "model_policy=explicit-catalog")
 		fmt.Fprintf(&out, "active_prompt_budget=%d\n", res.MaxContextTokens)
 	} else {
@@ -135,7 +136,7 @@ func formatConfigShow(res *config.Resolved) string {
 		}
 		fmt.Fprintf(&out, "model_policy=%s\n", policy)
 	}
-	if advisory := promptBudgetAdvisory(res); advisory != "" {
+	if advisory := cliorchestrate.PromptBudgetAdvisory(res); advisory != "" {
 		fmt.Fprintf(&out, "prompt_budget_advisory=%s\n", advisory)
 	}
 	fmt.Fprintf(&out, "base_url=%s\n", res.BaseURL)

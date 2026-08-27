@@ -7,6 +7,11 @@ import (
 )
 
 func TestLookupAndNamesAreStable(t *testing.T) {
+	anthropic, ok := Lookup("anthropic")
+	if !ok || anthropic.Name != "anthropic" || anthropic.DefaultModel != "claude-sonnet-5" ||
+		anthropic.DefaultURL != "https://api.anthropic.com/v1" || anthropic.DefaultAPIKeyEnv != "ANTHROPIC_API_KEY" {
+		t.Fatalf("anthropic descriptor=%+v ok=%v", anthropic, ok)
+	}
 	d, ok := Lookup("DeepSeek")
 	if !ok || d.DefaultModel != "deepseek-v4-flash" || d.DefaultAPIKeyEnv != "DEEPSEEK_API_KEY" {
 		t.Fatalf("descriptor=%+v ok=%v", d, ok)
@@ -16,12 +21,22 @@ func TestLookupAndNamesAreStable(t *testing.T) {
 		ollama.DefaultURL != "https://ollama.com/v1" || ollama.DefaultAPIKeyEnv != "OLLAMA_API_KEY" {
 		t.Fatalf("ollama descriptor=%+v ok=%v", ollama, ok)
 	}
+	minimax, ok := Lookup("minimax")
+	if !ok || minimax.Name != "minimax" || minimax.DefaultModel != "MiniMax-M3" ||
+		minimax.DefaultURL != "https://api.minimax.io/v1" || minimax.DefaultAPIKeyEnv != "MINIMAX_API_KEY" {
+		t.Fatalf("minimax descriptor=%+v ok=%v", minimax, ok)
+	}
+	llmproxy, ok := Lookup("llmproxycli")
+	if !ok || llmproxy.Name != "llmproxycli" || llmproxy.DefaultModel != "claude-sonnet-5" ||
+		llmproxy.DefaultURL != "http://127.0.0.1:8317/v1" || llmproxy.DefaultAPIKeyEnv != "CLIPROXY_API_KEY" {
+		t.Fatalf("llmproxycli descriptor=%+v ok=%v", llmproxy, ok)
+	}
 	names := Names()
-	if len(names) != 5 || names[0] != "deepseek" || names[1] != "llmgateway" || names[2] != "ollama" || names[3] != "openrouter" || names[4] != "zai" {
+	if len(names) != 8 || names[0] != "anthropic" || names[1] != "deepseek" || names[2] != "llmgateway" || names[3] != "llmproxycli" || names[4] != "minimax" || names[5] != "ollama" || names[6] != "openrouter" || names[7] != "zai" {
 		t.Fatalf("names=%v", names)
 	}
 	names[0] = "mutated"
-	if next := Names(); next[0] != "deepseek" {
+	if next := Names(); next[0] != "anthropic" {
 		t.Fatalf("Names returned aliased storage: %v", next)
 	}
 	zai, ok := Lookup("ZAI")
@@ -74,7 +89,7 @@ func TestLookupRejectsUnknownEmptyAndOversized(t *testing.T) {
 		"",
 		"   ",
 		"\t\n",
-		"anthropic",
+		"gemini",                  // plausible but unsupported: rejected like any other unknown name
 		"DEEP SEEK",               // interior space survives trim; not a canonical name
 		strings.Repeat("x", 8192), // oversized: no panic, no allocation blow-up
 	}

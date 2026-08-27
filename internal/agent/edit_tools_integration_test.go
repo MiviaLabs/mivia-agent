@@ -136,7 +136,7 @@ func TestIntegration_EditToolsRefuseOversizeFileWithGuidance(t *testing.T) {
 				`{"path":"huge.log","old_string":"ERROR","new_string":"WARN","replace_all":true}`)},
 		},
 		{content: "edit refused"},
-	}, tools.DefaultOptions{MaxReadBytes: 2048})
+	}, tools.DefaultOptions{MaxEditFileBytes: 2048})
 	big := strings.Repeat("ERROR something went wrong\n", 500) // ~13 KiB
 	abs := writeWorkspaceFile(t, h.ws.Abs, "huge.log", big, 0o644)
 

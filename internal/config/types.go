@@ -4,6 +4,7 @@ package config
 import (
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 )
@@ -23,6 +24,9 @@ type File struct {
 	MCP          MCPConfig                 `toml:"mcp"`
 	Memory       MemoryConfig              `toml:"memory"`
 	Harness      HarnessConfig             `toml:"harness"`
+	Approvals    ApprovalsConfig           `toml:"approvals"`
+	TUI          TUIConfig                 `toml:"tui"`
+	Workflows    WorkflowsConfig           `toml:"workflows"`
 	// Verifiers is populated by LoadWorkspaceVerifiers from the WORKSPACE'S
 	// own .mivia/mivia.toml only (loadFile), never by the tolerant struct
 	// decode and never from a user-level base layer: a verifier table with an
@@ -168,6 +172,16 @@ type ProviderSection struct {
 	// on the stable prefix. "off" disables both. It cannot disable a
 	// provider's own automatic server-side caching.
 	PromptCache string `toml:"prompt_cache"`
+	// StreamIdleTimeoutSeconds bounds the gap between successive bytes on any
+	// provider read (streaming or non-streaming), once the first byte has
+	// arrived. Unset (nil) resolves to DefaultStreamIdleTimeoutSeconds
+	// (100s). This is a process-wide setting, not per-provider: mivia runs
+	// one active provider configuration per process.
+	StreamIdleTimeoutSeconds *int `toml:"stream_idle_timeout_seconds"`
+	// StreamFirstByteTimeoutSeconds bounds the wait for the first byte of a
+	// provider read, from request-issued. Unset (nil) resolves to
+	// DefaultStreamFirstByteTimeoutSeconds (240s).
+	StreamFirstByteTimeoutSeconds *int `toml:"stream_first_byte_timeout_seconds"`
 }
 
 // ProviderConfig holds non-secret provider settings.
@@ -199,6 +213,12 @@ type ChatConfig struct {
 	// built-in default; 0 means unlimited, which lets a model stuck emitting
 	// tool calls run until the user interrupts it. /steps overrides per session.
 	MaxSteps *int `toml:"max_steps"`
+	// ShowIterationNotices controls whether per-step/iteration notices (e.g. "iteration 1")
+	// are emitted in the TUI chat. Default: false (disabled).
+	ShowIterationNotices *bool `toml:"show_iteration_notices"`
+	// ShowPromptCacheNotices controls whether prompt cache hit/usage notices
+	// are emitted in the TUI chat. Default: false (disabled).
+	ShowPromptCacheNotices *bool `toml:"show_prompt_cache_notices"`
 }
 
 // SubagentConfig holds subagent execution policy and storage configuration.
@@ -282,6 +302,40 @@ type WorktreeConfig struct {
 	BranchPrefix string `toml:"branch_prefix"`
 }
 
+// TUIConfig controls terminal user interface preferences.
+type TUIConfig struct {
+	Theme         string `toml:"theme"`
+	Mouse         *bool  `toml:"mouse"`
+	ShowReasoning *bool  `toml:"show_reasoning"`
+	ScrollLines   *int   `toml:"scroll_lines"`
+	ScreenReader  *bool  `toml:"screen_reader"`
+	ReducedMotion *bool  `toml:"reduced_motion"`
+}
+
+// WorkflowsConfig holds workflow-engine defaults.
+type WorkflowsConfig struct {
+	Panels WorkflowPanelLimits `toml:"panels"`
+}
+
+// WorkflowPanelLimits overrides the compiled defaults every agent_panel
+// step's member and synthesis children run under
+// (internal/workflows/controller.DefaultPanelLimits, applied in
+// buildPanelAttempt/buildPanelSynthesisWork). A nil field keeps the
+// compiled default; this mirrors the [chat] max_steps *int
+// nil-means-default pattern (ChatConfig.MaxSteps above), not a new
+// convention.
+type WorkflowPanelLimits struct {
+	MemberMaxOutputPerCall    *int `toml:"member_max_output_per_call"`
+	MemberMaxToolCalls        *int `toml:"member_max_tool_calls"`
+	SynthesisMaxOutputPerCall *int `toml:"synthesis_max_output_per_call"`
+	SynthesisMaxToolCalls     *int `toml:"synthesis_max_tool_calls"`
+	// MemberDeadlineDefaultSeconds overrides the wall-clock default a
+	// panel member attempt gets when the workflow declares no run
+	// deadline (max_duration_seconds = 0). Seconds, matching
+	// definition.Limits.MaxDurationSeconds' unit.
+	MemberDeadlineDefaultSeconds *int `toml:"member_deadline_default_seconds"`
+}
+
 // Resolved is the fully resolved runtime config used by the CLI.
 type Resolved struct {
 	// RedactionPolicy is compiled during Load so an invalid pattern fails at
@@ -313,13 +367,15 @@ type Resolved struct {
 	MaxPromptTokens *int
 	// MaxContextTokens is retained as a compatibility projection of the
 	// selected model's effective prompt budget.
-	MaxContextTokens int
-	Temperature      *float64
-	MaxTokens        *int
-	Subagents        SubagentConfig
-	Worktrees        WorktreeConfig
-	StoreBackend     string
-	StorePath        string
+	MaxContextTokens       int
+	Temperature            *float64
+	MaxTokens              *int
+	ShowIterationNotices   bool
+	ShowPromptCacheNotices bool
+	Subagents              SubagentConfig
+	Worktrees              WorktreeConfig
+	StoreBackend           string
+	StorePath              string
 	// StorePathSet reports whether [subagents].store_path was set in the
 	// selected configuration. It lets repository storage resolve its default
 	// from the repository root instead of the current worktree.
@@ -338,6 +394,12 @@ type Resolved struct {
 	Memory MemoryConfig
 	// Harness is the resolved [harness] configuration.
 	Harness HarnessConfig
+	// Approvals is the resolved [approvals] configuration.
+	Approvals ApprovalsConfig
+	// TUI is the resolved [tui] configuration.
+	TUI TUIConfig
+	// Workflows is the resolved [workflows] configuration.
+	Workflows WorkflowsConfig
 	// Verifiers is the workspace-declared verifier profile set from the
 	// [verifiers.<name>] tables. The host ships no built-in profiles.
 	Verifiers map[string]VerifierProfile
@@ -345,6 +407,13 @@ type Resolved struct {
 	// TavilyAPIKey is the Tavily web search API key (set via TAVILY_API_KEY env).
 	// When set, the search tool uses Tavily as the primary web search engine.
 	TavilyAPIKey string
+	// StreamIdleTimeout is the resolved [provider] stream_idle_timeout_seconds,
+	// defaulted when unset. See ProviderSection.StreamIdleTimeoutSeconds.
+	StreamIdleTimeout time.Duration
+	// StreamFirstByteTimeout is the resolved [provider]
+	// stream_first_byte_timeout_seconds, defaulted when unset. See
+	// ProviderSection.StreamFirstByteTimeoutSeconds.
+	StreamFirstByteTimeout time.Duration
 
 	// PromptCache is the resolved "auto" or "off" policy for prompt-cache
 	// usage capture and explicit cache_control markers. Always one of those
@@ -369,6 +438,7 @@ type ProviderRuntime struct {
 // ProviderModelGroup is a secret-free provider group for the model picker.
 type ProviderModelGroup struct {
 	Provider       string
+	DefaultModel   string
 	Models         []ModelSpec
 	Active         bool
 	Selectable     bool
@@ -423,6 +493,45 @@ func (r *Resolved) ModelChoicesFor(providerName string) string {
 	return ""
 }
 
+// OtherProvidersWithModel returns the provider names, in ModelCatalog order,
+// of every Selectable provider (other than exclude) whose catalog contains a
+// model named exactly name. Matching is exact (case-sensitive, trimmed),
+// matching AllowsModel's and the model picker's own comparison - model names
+// are provider-declared identifiers, not free text, so this does not
+// normalize case the way a user-facing search would.
+//
+// This is the single cross-provider model lookup for BOTH the classic REPL
+// (internal/clichat) and the new TUI (internal/uiadapter): those two
+// packages do not import each other, so the shared logic lives here, one
+// level below both, rather than being duplicated (or worse, silently
+// diverging - see the pre-existing bug this fixes: internal/uiadapter's
+// resolveProviderAndModel used to return the FIRST provider whose catalog
+// happened to contain the name, in catalog order, with no check for a second
+// match - a silent, order-dependent provider switch on any name collision).
+// Only Selectable providers are considered: a provider with no API key set
+// is not a switch that would actually work, so it must not appear in a
+// "found under provider X" hint that tells the user to try it.
+func (r *Resolved) OtherProvidersWithModel(exclude, name string) []string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	exclude = strings.ToLower(strings.TrimSpace(exclude))
+	var found []string
+	for _, group := range r.ModelCatalog() {
+		if !group.Selectable || strings.ToLower(group.Provider) == exclude {
+			continue
+		}
+		for _, m := range group.Models {
+			if m.Name == name {
+				found = append(found, group.Provider)
+				break
+			}
+		}
+	}
+	return found
+}
+
 // ModelCatalog returns a deep copy of the secret-free provider catalog.
 // ReasoningEfforts is cloned per model because cloning the []ModelSpec alone
 // would leave every caller sharing one backing array with the stored catalog.
@@ -439,4 +548,11 @@ func (r *Resolved) ModelCatalog() []ProviderModelGroup {
 		}
 	}
 	return out
+}
+
+// SetModelCatalogForTest sets the model catalog on Resolved for testing purposes.
+func (r *Resolved) SetModelCatalogForTest(catalog []ProviderModelGroup) {
+	if r != nil {
+		r.modelCatalog = catalog
+	}
 }

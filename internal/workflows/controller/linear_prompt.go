@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
+	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/template"
 )
 
 // renderStepPrompt produces the fully bounded step prompt in the controller
@@ -32,17 +32,17 @@ func (c *LinearController) renderStepPrompt(ctx context.Context, attempt workflo
 	// INV-68-6: the evidence-refs block renders FIRST so the fixed
 	// "Evidence refs:" header (the run ID is constant per run) is a
 	// byte-identical prefix of every step prompt in a run, which is what a
-	// provider-implicit prompt cache can reuse across steps. template.Render
+	// provider-implicit prompt cache can reuse across steps. delivery.Render
 	// still bounds the body at maxStepContextBytes and the defense-in-depth
 	// check below keeps the FINAL prompt at the cap, exactly as before the
 	// reorder (single-file revert per site).
 	block := evidenceRefsBlock(c.RunID, refs)
-	prompt, err := template.Render(runtime.Template, stepInputs, evidence, maxBinding(step), maxStepContextBytes)
+	prompt, err := delivery.Render(runtime.Template, stepInputs, evidence, maxBinding(step), maxStepContextBytes)
 	if err != nil {
 		return "", err
 	}
 	prompt = block + prompt
-	// Defense-in-depth: template.Render already bounded the rendered body at
+	// Defense-in-depth: delivery.Render already bounded the rendered body at
 	// maxStepContextBytes; the prepended evidence-refs block is the only thing
 	// that can push the final prompt over the cap.
 	if len(prompt) > maxStepContextBytes {

@@ -36,7 +36,7 @@ func (c *coordinator) executeResumedRun(h *RunHandle, tasks []subagents.Task, se
 	// Ensure identity stamp is present (createAndStartRun stamps eagerly;
 	// resume paths may still need the rewrite under lock).
 	h.mu.Lock()
-	h.poolCtx = contextWithRunExec(h.poolCtx, h.runID, tasks, h.mailboxes)
+	h.poolCtx = contextWithRunExec(h.poolCtx, h.runID, tasks, h.mailboxes, h.toolCalls)
 	h.mu.Unlock()
 	results, runErr := c.runDAGSeeded(h, tasks, seed)
 	// Wait for referral-as-spawn tasks so Join does not race claim release.

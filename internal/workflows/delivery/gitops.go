@@ -56,13 +56,26 @@ var gitEnvRemoved = map[string]struct{}{
 	"GIT_COMMITTER_NAME":  {},
 	"GIT_COMMITTER_EMAIL": {},
 	"GIT_COMMITTER_DATE":  {},
+	// Locale: a translated git message ("konnte ... nicht finden") would
+	// break the delivery package's English-message classification of fetch
+	// failures ("couldn't find remote ref"), so a permanently deleted base
+	// would be treated as recoverable. LANGUAGE is stripped too: GNU gettext
+	// gives a non-empty LANGUAGE priority over LC_ALL (glibc short-circuits it
+	// at the C locale, non-glibc libintl does not), so a caller's LANGUAGE
+	// could still translate git's messages. Locale is pinned with LC_ALL=C in
+	// pinnedEnv; these strips make that appended entry the only one left.
+	"LC_ALL":      {},
+	"LC_MESSAGES": {},
+	"LANG":        {},
+	"LANGUAGE":    {},
 }
 
 // pinnedEnv returns the environment for a pinned git command: the caller
 // environment minus all git-affecting variables, plus the pinned context
-// variables that force git to use gc.Dir and gc.GitDir.
+// variables that force git to use gc.Dir and gc.GitDir and the locale pin
+// that forces English git messages.
 func pinnedEnv(gc GitContext) []string {
-	env := make([]string, 0, len(os.Environ())+5)
+	env := make([]string, 0, len(os.Environ())+6)
 	for _, kv := range os.Environ() {
 		name, _, found := strings.Cut(kv, "=")
 		if !found {
@@ -79,6 +92,7 @@ func pinnedEnv(gc GitContext) []string {
 		"GIT_TERMINAL_PROMPT=0",
 		"GIT_CONFIG_NOSYSTEM=1",
 		"GIT_CONFIG_GLOBAL=/dev/null",
+		"LC_ALL=C",
 	)
 }
 

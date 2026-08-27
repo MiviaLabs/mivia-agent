@@ -10,6 +10,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
 	"github.com/pelletier/go-toml/v2"
+	"gopkg.in/yaml.v3"
 )
 
 // ParseAgentFileTOML parses a single agent definition body with unknown-key
@@ -37,6 +38,116 @@ func ParseAgentFileTOML(data []byte, filename string) (AgentFileSpec, string, er
 		return AgentFileSpec{}, "", fmt.Errorf("agent %q: %w", canonical, err)
 	}
 	return spec, canonical, nil
+}
+
+// ParseAgentFileMarkdown parses a single Markdown agent definition with YAML
+// frontmatter and assigns the Markdown body to SystemPrompt.
+func ParseAgentFileMarkdown(data []byte, filename string) (AgentFileSpec, string, error) {
+	canonical, err := agentNameFromFilename(filename)
+	if err != nil {
+		return AgentFileSpec{}, "", err
+	}
+	frontBytes, bodyBytes, ok := extractFrontmatter(data)
+	if !ok {
+		return AgentFileSpec{}, "", fmt.Errorf("agent %q: missing YAML frontmatter", canonical)
+	}
+	var raw agentFileYAML
+	dec := yaml.NewDecoder(bytes.NewReader(frontBytes))
+	dec.KnownFields(true)
+	if err := dec.Decode(&raw); err != nil {
+		return AgentFileSpec{}, "", fmt.Errorf("agent %q: %w", canonical, err)
+	}
+	spec := raw.toSpec()
+	if spec.Name == nil || strings.TrimSpace(*spec.Name) == "" {
+		return AgentFileSpec{}, "", fmt.Errorf("agent %q: name is required", canonical)
+	}
+	if *spec.Name != canonical {
+		return AgentFileSpec{}, "", fmt.Errorf(
+			"agent %q: in-file name %q does not match filename", canonical, *spec.Name)
+	}
+	body := strings.TrimSpace(string(bodyBytes))
+	if body != "" {
+		spec.SystemPrompt = &body
+	}
+	if err := validateAgentFileSpec(spec); err != nil {
+		return AgentFileSpec{}, "", fmt.Errorf("agent %q: %w", canonical, err)
+	}
+	return spec, canonical, nil
+}
+
+func extractFrontmatter(data []byte) (front []byte, body []byte, ok bool) {
+	s := string(data)
+	if !strings.HasPrefix(s, "---") {
+		return nil, nil, false
+	}
+	rest := s[3:]
+	if strings.HasPrefix(rest, "\r\n") {
+		rest = rest[2:]
+	} else if strings.HasPrefix(rest, "\n") {
+		rest = rest[1:]
+	} else {
+		return nil, nil, false
+	}
+	idx := strings.Index(rest, "\n---")
+	if idx == -1 {
+		return nil, nil, false
+	}
+	front = []byte(rest[:idx])
+	closingRest := rest[idx+4:]
+	if strings.HasPrefix(closingRest, "\r\n") {
+		body = []byte(closingRest[2:])
+	} else if strings.HasPrefix(closingRest, "\n") {
+		body = []byte(closingRest[1:])
+	} else if len(closingRest) == 0 {
+		body = nil
+	} else {
+		return nil, nil, false
+	}
+	return front, body, true
+}
+
+type agentFileYAML struct {
+	Name            *string         `yaml:"name"`
+	Description     *string         `yaml:"description"`
+	Inherits        *string         `yaml:"inherits"`
+	Tools           *[]string       `yaml:"tools"`
+	AllowEmptyTools *bool           `yaml:"allow_empty_tools"`
+	ToolsAdd        *[]string       `yaml:"tools_add"`
+	ToolsRemove     *[]string       `yaml:"tools_remove"`
+	DisallowedTools *[]string       `yaml:"disallowed_tools"`
+	ToolsCore       *[]string       `yaml:"tools_core"`
+	Skills          *[]string       `yaml:"skills"`
+	MCPServers      *[]string       `yaml:"mcp_servers"`
+	Provider        *string         `yaml:"provider"`
+	Model           *string         `yaml:"model"`
+	MaxTurns        *int            `yaml:"max_turns"`
+	TimeoutSeconds  *int            `yaml:"timeout_seconds"`
+	MaxTokens       *int            `yaml:"max_tokens"`
+	OutputSchema    *map[string]any `yaml:"output_schema"`
+	InputSchema     *map[string]any `yaml:"input_schema"`
+}
+
+func (r agentFileYAML) toSpec() AgentFileSpec {
+	return AgentFileSpec{
+		Name:            r.Name,
+		Description:     r.Description,
+		Inherits:        r.Inherits,
+		Tools:           r.Tools,
+		AllowEmptyTools: r.AllowEmptyTools,
+		ToolsAdd:        r.ToolsAdd,
+		ToolsRemove:     r.ToolsRemove,
+		DisallowedTools: r.DisallowedTools,
+		ToolsCore:       r.ToolsCore,
+		Skills:          r.Skills,
+		MCPServers:      r.MCPServers,
+		Provider:        normalizeProviderRef(r.Provider),
+		Model:           r.Model,
+		MaxTurns:        r.MaxTurns,
+		TimeoutSeconds:  r.TimeoutSeconds,
+		MaxTokens:       r.MaxTokens,
+		OutputSchema:    r.OutputSchema,
+		InputSchema:     r.InputSchema,
+	}
 }
 
 // agentFileTOML is the on-disk shape. skills is the invocation allowlist
@@ -188,10 +299,14 @@ func validateAgentProvider(spec AgentFileSpec) error {
 
 func agentNameFromFilename(filename string) (string, error) {
 	base := filepath.Base(filename)
-	if !strings.HasSuffix(base, ".toml") {
-		return "", fmt.Errorf("agent file %q must end in .toml", base)
+	var name string
+	if strings.HasSuffix(base, ".md") {
+		name = strings.TrimSuffix(base, ".md")
+	} else if strings.HasSuffix(base, ".toml") {
+		name = strings.TrimSuffix(base, ".toml")
+	} else {
+		return "", fmt.Errorf("agent file %q must end in .md or .toml", base)
 	}
-	name := strings.TrimSuffix(base, ".toml")
 	if err := validateAgentName(name); err != nil {
 		return "", err
 	}

@@ -58,7 +58,7 @@ func (s *StorageRepository) ListEvents(ctx context.Context, runID string, limit,
 	}
 	s.mu.RUnlock()
 
-	events, err := s.store.Events(ctx, runID)
+	events, err := s.engine.Store().Events(ctx, runID)
 	if err != nil {
 		return nil, fmt.Errorf("read workflow events for %s: %w", runID, err)
 	}

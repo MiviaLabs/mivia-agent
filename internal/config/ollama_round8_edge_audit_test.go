@@ -14,7 +14,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/MiviaLabs/mivia-agent/internal/envfile"
+	sdkenvfile "github.com/MiviaLabs/mivia-ai-sdk/envfile"
 )
 
 func TestRound8IsOllamaLoopbackEdgeInputs(t *testing.T) {
@@ -65,7 +65,15 @@ func TestRound8IsOllamaLoopbackEdgeInputs(t *testing.T) {
 	}
 }
 
-func TestRound8ValidateBaseURLNeverApprovesKeylessForNonOllama(t *testing.T) {
+// TestRound8ValidateBaseURLLoopbackRelaxationIsProviderAgnostic pins
+// validateBaseURL's OWN contract only: the https requirement relaxes for
+// ANY provider name on a verified loopback base_url, not just "ollama" -
+// every builtin provider now gets the same dial-pinning protection at
+// construction (provider.NewForProvider), so this check no longer has a
+// reason to single one out. This function was never about keyless-ness
+// (that is a separate, still ollama-only gate in provider.NewForProvider);
+// the prior name overstated its scope.
+func TestRound8ValidateBaseURLLoopbackRelaxationIsProviderAgnostic(t *testing.T) {
 	cases := []struct {
 		raw        string
 		name       string
@@ -81,10 +89,12 @@ func TestRound8ValidateBaseURLNeverApprovesKeylessForNonOllama(t *testing.T) {
 		// Userinfo is rejected earlier by URL validation ("base_url is
 		// invalid") - still fail-closed, just a different message.
 		{"http://u@127.0.0.1:11434/v1", "ollama", errInsecureHTTP, "invalid"},
-		{"http://127.0.0.1:11434/v1", "deepseek", errInsecureHTTP, "https"},
-		{"http://127.0.0.1:11434/v1", "openrouter", errInsecureHTTP, "https"},
-		{"http://127.0.0.1:11434/v1", "zai", errInsecureHTTP, "https"},
-		{"http://127.0.0.1:11434/v1", "OLLAMA", errInsecureHTTP, "https"}, // case is normalized before this point
+		{"http://127.0.0.1:11434/v1", "deepseek", nil, ""},
+		{"http://127.0.0.1:11434/v1", "openrouter", nil, ""},
+		{"http://127.0.0.1:11434/v1", "zai", nil, ""},
+		{"http://127.0.0.1:11434/v1", "OLLAMA", nil, ""}, // case is normalized before this point
+		// A non-loopback host still needs https regardless of provider name.
+		{"http://example.com:11434/v1", "deepseek", errInsecureHTTP, "https"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name+"_"+tc.raw, func(t *testing.T) {
@@ -122,7 +132,7 @@ func TestRound8ExampleConfigsLoad(t *testing.T) {
 	t.Setenv("ZAI_API_KEY", "")
 	root := repoRoot(t)
 	// .env.example must parse and leave every key unset (blank values).
-	if _, err := envfile.Load(root + "/.env.example"); err != nil {
+	if _, err := sdkenvfile.Load(root + "/.env.example"); err != nil {
 		t.Fatalf(".env.example load: %v", err)
 	}
 	exampleCfg := root + "/.mivia/mivia.toml.example"

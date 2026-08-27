@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/vcs"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/agenttools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -190,7 +189,7 @@ func TestEngineStartCreatesRunWorktreeAndDelivers(t *testing.T) {
 		NewRunID: func() string { return "wfr-test" },
 		PR:       pr,
 	}
-	started, err := engine.Start(context.Background(), agenttools.StartRequest{
+	started, err := engine.Start(context.Background(), workflowledger.StartRequest{
 		Workflow: "deliver-me", Inputs: map[string]any{"task": "build"},
 	})
 	if err != nil {
@@ -262,7 +261,7 @@ func TestEngineStartRejectsDeliveryWithoutOrigin(t *testing.T) {
 		},
 		NewRunID: func() string { return "wfr-no-origin" },
 	}
-	_, err := engine.Start(context.Background(), agenttools.StartRequest{
+	_, err := engine.Start(context.Background(), workflowledger.StartRequest{
 		Workflow: "deliver-me", Inputs: map[string]any{"task": "build"},
 	})
 	if err == nil {
@@ -302,7 +301,7 @@ func TestEngineResumeRefusesMissingRunWorktree(t *testing.T) {
 		},
 		NewRunID: func() string { return "wfr-test" },
 	}
-	started, err := engine.Start(context.Background(), agenttools.StartRequest{
+	started, err := engine.Start(context.Background(), workflowledger.StartRequest{
 		Workflow: "two-step", Inputs: map[string]any{"task": "x"},
 	})
 	if err != nil {
@@ -326,7 +325,7 @@ func TestEngineResumeRefusesMissingRunWorktree(t *testing.T) {
 	if err := vcs.RemoveWithPrefix(context.Background(), repoRoot, "workflow-wfr-test", "wf/"); err != nil {
 		t.Fatal(err)
 	}
-	_, err = engine.Start(context.Background(), agenttools.StartRequest{
+	_, err = engine.Start(context.Background(), workflowledger.StartRequest{
 		Resume: true, RunID: started.RunID, Force: true,
 	})
 	if err == nil || !strings.Contains(err.Error(), "unfinished edits cannot be recovered") {
@@ -407,7 +406,7 @@ func newRealDeliveryRepo(t *testing.T) (repoRoot, originURL string) {
 // newSeededDeliveryFixture builds the delivery-package-style real-git fixture
 // for one delivery_pending run: main repo + origin, a run worktree at
 // <main>/.mivia/worktrees/wt-test on branch wf/wt-test (the CLI layout that
-// workflowspace.Resolve accepts), an uncommitted change, and a ledger run in
+// Resolve accepts), an uncommitted change, and a ledger run in
 // delivery_pending state.
 func newSeededDeliveryFixture(t *testing.T) (repoRoot, originURL string, run workflowledger.RunSnapshot, repo workflowledger.Repository) {
 	t.Helper()
@@ -487,6 +486,10 @@ func (r *recordingPR) FindByHead(context.Context, string, string) (*delivery.PRR
 	return nil, nil
 }
 
+func (r *recordingPR) IsMerged(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+
 func (r *recordingPR) Create(_ context.Context, _ string, in delivery.PRInput) (delivery.PRRef, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -510,6 +513,10 @@ type failingCreatePR struct{}
 
 func (failingCreatePR) FindByHead(context.Context, string, string) (*delivery.PRRef, error) {
 	return nil, nil
+}
+
+func (failingCreatePR) IsMerged(context.Context, string, string) (bool, error) {
+	return false, nil
 }
 
 func (failingCreatePR) Create(context.Context, string, delivery.PRInput) (delivery.PRRef, error) {

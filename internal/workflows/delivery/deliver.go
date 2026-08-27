@@ -134,14 +134,15 @@ func Deliver(ctx context.Context, repo ledger.Repository, git GitRunner, pr PRCl
 	// legacy title_template render, then validate the final title against the
 	// OPTIONAL workspace PR-title policy. This runs BEFORE any commit or push,
 	// so a metadata defect writes no record and travels to the classifier.
-	title, body, err := validatePRMetadata(ctx, repo, req)
+	// title is tagged (PR creation); commitSubject is untagged (the commit).
+	title, commitSubject, body, err := validatePRMetadata(ctx, repo, req)
 	if err != nil {
 		return Result{}, err
 	}
 
-	// 10b. Optional workspace commit-message policy: validate title (the
-	// commit subject) only when a commit will actually be created.
-	if err := validateDeliveryCommitSubject(req, title); err != nil {
+	// 10b. Optional workspace commit-message policy: validate the untagged
+	// commit subject only when a commit will actually be created.
+	if err := validateDeliveryCommitSubject(req, commitSubject); err != nil {
 		return Result{}, err
 	}
 
@@ -149,7 +150,7 @@ func Deliver(ctx context.Context, repo ledger.Repository, git GitRunner, pr PRCl
 	// delivery commit (retry). All retry-path verification happens BEFORE
 	// any record write in this attempt.
 	req.stage("commit", "commit the intended change or resume the delivery commit")
-	head, treeSHA, err := commitOrResume(ctx, repo, git, req, key, existing, head, porcelainEmpty, diffRef, title, body)
+	head, treeSHA, err := commitOrResume(ctx, repo, git, req, key, existing, head, porcelainEmpty, diffRef, commitSubject, body)
 	if err != nil {
 		return Result{}, err
 	}
@@ -202,20 +203,23 @@ func deliveryRunGuard(ctx context.Context, repo ledger.Repository, req Request) 
 	return run, nil
 }
 
-// validateDeliveryCommitSubject checks title (the agent's own pr_title,
-// already resolved by validatePRMetadata) against the optional workspace
-// commit-message policy, since title becomes the commit subject
-// (buildCommitMessage in deliver_stage.go). It runs only when a commit will
-// actually be created (a diff exists, so the repo's commit-msg hook would
-// fire): a no_diff run never fires the hook, so a present policy must not
-// reject it. The check stays BEFORE commitOrResume, so a subject the hook
-// would reject mid-flight is caught here instead: a non-conforming subject
-// is a repairable PRMetadataError (fix pr_title), an unreadable or malformed
-// policy file is a permanent RefusalError (a workspace config defect no
-// agent edit can fix) - either way nothing is written, committed, or pushed
-// before this check runs.
-func validateDeliveryCommitSubject(req Request, title string) error {
-	return req.Policy.ValidateCommitSubject(req.GitCtx.Dir, title)
+// validateDeliveryCommitSubject checks the commit subject (the agent's own
+// pr_title, resolved by validatePRMetadata WITHOUT the host-owned
+// "[stack k/N]" tag) against the optional workspace commit-message policy,
+// since that untagged title is what buildCommitMessage uses as the commit
+// subject (deliver_stage.go). The tag is a pull-request-only affix: the
+// agent cannot see or control it, so it must never consume the agent's
+// maxSubjectLength budget or turn an already-valid title into a repairable
+// rejection. The check runs only when a commit will actually be created (a
+// diff exists, so the repo's commit-msg hook would fire): a no_diff run never
+// fires the hook, so a present policy must not reject it. The check stays
+// BEFORE commitOrResume, so a subject the hook would reject mid-flight is
+// caught here instead: a non-conforming subject is a repairable
+// PRMetadataError (fix pr_title), an unreadable or malformed policy file is a
+// permanent RefusalError (a workspace config defect no agent edit can fix) -
+// either way nothing is written, committed, or pushed before this check runs.
+func validateDeliveryCommitSubject(req Request, subject string) error {
+	return req.Policy.ValidateCommitSubject(req.GitCtx.Dir, subject)
 }
 
 // promoteToDeliveryPending is the single enforcing re-eligibility transition
@@ -255,7 +259,23 @@ func verifyRemoteBaseAncestry(ctx context.Context, git GitRunner, req Request, o
 		return fmt.Errorf("cannot resolve fetched remote delivery base %q: %w", req.Policy.Base, err)
 	}
 	fetchedBase := strings.TrimSpace(out)
-	if _, err := git.Run(ctx, req.GitCtx, "merge-base", "--is-ancestor", originBase, fetchedBase); err != nil {
+	// Only a genuine exit-1 verdict (the fetched base does NOT contain the
+	// admitted commit) is a permanent rewrite refusal. A real git failure
+	// (exit 128, a missing or corrupt object) is recoverable: the typed
+	// AncestryUnverifiableError makes RepairTarget yield no repair step, so
+	// the run stays delivery_pending and a later attempt retries, instead of
+	// being reopened for a repair an agent cannot perform.
+	contains, err := mergeBaseIsAncestor(ctx, git, req.GitCtx, originBase, fetchedBase)
+	if err != nil {
+		// Keep the human-readable text in Error() AND preserve the underlying
+		// git failure in the cause chain: a wrapped connect fault still
+		// classifies as transient through IsTransportFault's errors.Is walk.
+		return &AncestryUnverifiableError{
+			Reason: fmt.Sprintf("cannot verify remote delivery base %q ancestry (fetch and retry): %v", req.Policy.Base, err),
+			cause:  err,
+		}
+	}
+	if !contains {
 		return &RefusalError{Reason: fmt.Sprintf("remote delivery base %q was rewritten since admission: it no longer contains the admitted commit %s", req.Policy.Base, originBase)}
 	}
 	return nil

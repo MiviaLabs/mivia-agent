@@ -7,33 +7,94 @@ Predecessor: `mivia-agentkit` MVP (legacy CLI name mivia-agent; patterns reused,
 
 ## Canonical surfaces
 
-1. This file (`AGENTS.md`) - short overview and non-negotiables
-2. `.mivia/INDEX.md` - control-surface index
-3. `.mivia/doctrines/*` - evidence and verification doctrines
-4. `.mivia/rules/*` - durable policy
-5. `.mivia/skills/*` - workflows
+1. This file (`AGENTS.md`) - short overview, non-negotiables, and the rules/doctrines index below
+2. `.agents/INDEX.md` - fuller control-surface index (skills, policy, quality, hooks, semgrep)
+3. `.agents/doctrines/*` - evidence and verification doctrines
+4. `.agents/rules/*` - durable policy (linked by title below)
+5. `.agents/skills/*` - real-directory skills under the development surface; the `mivia` binary's loader (`internal/workspace.SkillsDir`) reads from this path. `.claude/skills/` mirrors each skill as a real directory for tool discovery
 6. `docs/OWNERS.yaml` - doc ownership map; ADRs are prohibited
-7. Thin adapters only: `CLAUDE.md`, `.claude/`, `.codex/`, `.agents/`, `.github/`
+7. Thin adapters only: `CLAUDE.md`, `.claude/`, `.codex/`, `.github/`
 
-Do not fork policy into adapters. Fix `.mivia/` or this file instead.
+Do not fork policy into adapters. Fix `.agents/` or this file instead.
 
-## Mandatory process - read before any work
+`.mivia/` is scoped to the product's own runtime config and state, not agent
+instructions: `mivia.toml` (this repo's own dogfooded config), `workflows/*`
+(the workflow engine's definitions, read at runtime by
+`internal/tools/workflow_tools.go`), `hooks/` (this repo's lifecycle hook
+scripts), `policy/*` (commit-message, pr-title, go-structure, docs-ownership,
+agent-hook-bypass - all read by compiled Go code or scripts at a hardcoded
+`.mivia/policy/` path), and `skills/` (a required mirror - see point 5). Never
+move those; they are functional, not instructional.
 
-**ADLC (Agentic Development Lifecycle)** is the mandatory engineering process for all feature work, bug fixes, refactors, and cross-package changes in this repo.
+### `.agents/memories/`
 
-Read and follow `.mivia/rules/05-adlc-agentic-development-lifecycle.md` **before** starting any task.
+`.agents/memories/*.md` is team-shared, cross-tool operational memory - facts
+and corrected preferences about how to work in THIS repo, not policy -
+following the open `.agents` protocol (https://dotagentsprotocol.com/). Format
+and conventions live in [`.agents/memories/README.md`](.agents/memories/README.md).
+It is git-committed, so it is not a substitute for `.agents/rules/*` (durable
+policy) or a private per-machine agent memory store; a fact that becomes a
+hard rule belongs in `.agents/rules/`, not here.
 
-The ADLC is 7 steps: Plan→Breakdown→Validate→Finalize→Implement (TDD)→Audit→Commit.  
-Step 0 requires hostile challenge of the plan before any code is written.  
-Step 5 requires hostile bug audit loop until zero bugs found.
+Read every file under `.agents/memories/` at the start of a task, the same
+way you read this file.
 
-**Trivial changes** (≤5 lines, single file, no new types) may use the Fast Path (skip Steps 0-3).  
-If unsure whether a change is trivial, use the full ADLC.
+### `.agents/agents/`
+
+Markdown subagent role definitions with YAML frontmatter: `planner.md`,
+`plan-reviewer.md`, `builder.md`, `reviewer.md`, and specialist roles. There
+is deliberately no `mivia.md` root-agent override: the root session runs the
+compiled fallback prompt the shipped binary carries, so this repo dogfoods
+exactly what users get. Format and loading contracts are documented in
+[`.agents/agents/README.md`](.agents/agents/README.md). Run `make
+agents-check` after editing any role file.
+
+## Delivery process
+
+For substantial feature work, bug fixes, refactors, and cross-package
+changes, use the [`delivery`](.agents/skills/delivery/SKILL.md) skill: it
+routes through the ADLC loop (Plan→Breakdown→Validate→Finalize→Implement
+(TDD)→Audit→Commit) and points at the canonical rule
+([`.agents/rules/05-adlc-agentic-development-lifecycle.md`](.agents/rules/05-adlc-agentic-development-lifecycle.md))
+and role files rather than duplicating them. Step 0 there is a hostile
+challenge of the plan before any code is written; Step 5 is a hostile bug
+audit loop until zero bugs found.
+
+Small, well-understood changes (the Fast Path: ≤5 lines, single file, no new
+types, is always in this bucket) do not need the skill - read the code, make
+the change, verify it, and say what you verified. Use judgment for anything
+larger; when the plan or blast radius is unclear, prefer the skill over
+guessing.
+
+## Rules
+
+| Rule | Covers |
+|------|--------|
+| [00-operating-doctrine](.agents/rules/00-operating-doctrine.md) | Scope control, docs-first work, idempotency, verification contracts |
+| [01-output-budget](.agents/rules/01-output-budget.md) | Terse status, final-answer shape, task slicing |
+| [05-adlc-agentic-development-lifecycle](.agents/rules/05-adlc-agentic-development-lifecycle.md) | The mandatory 7-step engineering cycle (see above) |
+| [10-security-privacy](.agents/rules/10-security-privacy.md) | Secrets, network, hooks, PII, YOLO mode, fail-closed protected actions |
+| [20-agent-quality](.agents/rules/20-agent-quality.md) | Tests, mutation proofs, review gates, contract coverage |
+| [30-go-standards](.agents/rules/30-go-standards.md) | Go layout for `cmd/mivia` + `internal/`, errors, naming, embed |
+| [40-docs-ownership](.agents/rules/40-docs-ownership.md) | Single source of truth per topic; no parallel docs; `docs/OWNERS.yaml` |
+| [50-concurrency-subagents](.agents/rules/50-concurrency-subagents.md) | Subagents as tasks/goroutines; shared MCP; caps; no process farm |
+| [60-tools-project-language-generic](.agents/rules/60-tools-project-language-generic.md) | Generic model-facing tools, default prompts, portable review skill |
+| [70-long-running-heartbeat](.agents/rules/70-long-running-heartbeat.md) | Heartbeat protocol for long-running tasks |
+| [80-commit-message](.agents/rules/80-commit-message.md) | Conventional commit format |
+| [90-writing-standard-ste100](.agents/rules/90-writing-standard-ste100.md) | ASD-STE100 Simplified Technical English for all agent-authored prose |
+
+## Doctrines
+
+| Doctrine | Covers |
+|----------|--------|
+| [engineering-working-contract](.agents/doctrines/engineering-working-contract.md) | Standing engineering contract |
+| [evidence-before-claims](.agents/doctrines/evidence-before-claims.md) | Never claim a check passed unless it ran |
+| [verification-is-part-of-delivery](.agents/doctrines/verification-is-part-of-delivery.md) | Verification is not optional cleanup after delivery |
 
 ## Source-of-truth order
 
 1. System / tool instructions
-2. `.mivia/`
+2. `.agents/` (rules, doctrines, skills) and `.mivia/` (product runtime config/state)
 3. `AGENTS.md`
 4. Task prompt
 
@@ -49,14 +110,18 @@ If unsure whether a change is trivial, use the full ADLC.
 - Subagents are **tasks/goroutines** with shared pools - not process-per-agent by default
 - Update **owned docs only** (`docs/OWNERS.yaml`); no parallel policy docs
 - Never claim a check passed unless it was executed
-- All agent-authored prose must use ASD-STE100 Simplified Technical English (STE). See the Writing standard section.
+- All agent-authored prose must use ASD-STE100 Simplified Technical English (STE). See [90-writing-standard-ste100](.agents/rules/90-writing-standard-ste100.md).
 - Ship binary name is `mivia` only
-- **Model-facing tools + compiled default prompts are project/language-generic** (any user workspace). Host code may be Go; do not bake Go/`cmd/mivia` into tool `Description()` or `defaultAgentPrompt`. Rule: `.mivia/rules/60-tools-project-language-generic.md`. Enforced by `internal/tools/generic_surface_test.go` and `internal/cli/prompt_generic_test.go`.
+- **UI packages are self-contained:** `internal/ui/**` and
+  `internal/uikit/**` must not import `internal/cli*`, `internal/chat`,
+  `internal/agent`, `internal/coordinator`, or `internal/hub`. `internal/ui/**` and
+  `internal/uikit/**` connect only through `internal/uikit/ports` and the
+  `internal/uikit/uievent` vocabulary. `internal/uiadapter` is the sole integration
+  bridge, isolated from UI packages and CLI entrypoints per INV-TUI-29. Enforced by Go tests in
+  `internal/uiadapter/` and `scripts/check_import_layers.py`; policy:
+  [docs/design/ui-isolation.md](docs/design/ui-isolation.md).
+- **Model-facing tools + compiled default prompts are project/language-generic** (any user workspace). Host code may be Go; do not bake Go/`cmd/mivia` into tool `Description()` or `defaultAgentPrompt`. Rule: [60-tools-project-language-generic](.agents/rules/60-tools-project-language-generic.md). Enforced by `internal/tools/generic_surface_test.go` and `internal/clichat/prompt_generic_test.go`.
 - **No spaghetti growth:** prefer files ≤500 LOC and functions ≤80 LOC (hard 800 / 120). Staged files ≤500 KiB. Policy `.mivia/policy/go-structure.json`; gate `scripts/check_go_structure.py` + `file-size-check`. Do not raise baselines to silence failures - split code.
-
-## Writing standard (ASD-STE100)
-
-All agent-authored prose (reports, findings, docs, prompts, agent messages, commit messages, code comments) must use ASD-STE100 Simplified Technical English. Rules: `.mivia/rules/90-writing-standard-ste100.md`.
 
 ## Local commands
 
@@ -74,158 +139,26 @@ make semgrep
 
 ## Workflow runs
 
-Start every `feature-delivery` run with this script:
+Start every `feature-delivery` run with `scripts/run-delivery-workflow.sh <label>`; the script sets `--allow-publish` and starts the run in the background. It prints the log path.
 
-```bash
-scripts/run-delivery-workflow.sh <label> <<'TASK'
-...task text, any length, any number of lines...
-TASK
-```
-
-The script sets `--allow-publish` and starts the run in the background. It
-prints the log path, so you can start several runs and watch them together.
-
-Do not call `mivia workflow run feature-delivery` directly. Without
-`--allow-publish` the run does all the work, reaches its success terminal, then
-stops at `delivery_pending` and opens no pull request.
-
-### Live e2e test workflows (`e2e-split-test`, `e2e-pr-metadata-test`, `e2e-scope-escape-test`)
-
-`.mivia/workflows/e2e-split-test.toml`, `.mivia/workflows/e2e-pr-metadata-test.toml`,
-and `.mivia/workflows/e2e-scope-escape-test.toml`
-(plus `.mivia/agents/e2e-engineer.toml` and `.mivia/workflows/templates/e2e-*.md`)
-are real, checked-in workflows that exercise the delivery engine's repair
-paths against the ACTUAL `MiviaLabs/mivia-agent` GitHub repo: real branches
-pushed, real draft PRs opened, real `gh` and DeepSeek API calls.
-
-- `e2e-split-test`: the diff-size gate and automatic split
-  (`[stacking] split_deferred = true`) - its repair template deliberately
-  never shrinks the diff, so the host's own split (and, when the run isn't
-  part of a multi-chunk stack, delivery.EnsureFollowUpPublished) must do
-  all the work.
-- `e2e-pr-metadata-test`: the commit-subject repair path - implement
-  deliberately emits an invalid `pr_title` on its first attempt, proving
-  ValidateCommitSubject's rejection routes to repair and the agent's fix
-  (reading the hint) succeeds on retry.
-- `e2e-scope-escape-test`: the chunk-scope guard repair path - run in chunk
-  mode with an explicit `chunk_plan` input, implement deliberately writes one
-  file outside the declared slice, proving guardChunkScope's refusal routes
-  to repair and the agent's fix (deleting the file per the hint) succeeds on
-  retry.
-
-**Never run either without the user explicitly asking for it in that
-session.** Neither is part of `make verify`, CI, or any other automated
-path, and that must stay true. Each workflow's `description` field repeats
-this warning.
-
-When the user does ask for a live delivery-engine smoke test:
-
-```bash
-./mivia workflow run e2e-split-test --input task="short description" --allow-publish
-./mivia workflow run e2e-pr-metadata-test --input task="short description" --allow-publish
-./mivia workflow run e2e-scope-escape-test --input task="short description" \
-  --input stack_mode=chunk --input chunk=c1 --input pr_base=main --input stack_part=1/1 \
-  --input chunk_plan='{"id":"c1","title":"scope smoke","files":["testdata/e2e-smoke/scope-ok.md"]}' \
-  --allow-publish
-mivia stack drive e2e-split-test   # only if decompose produced a multi-chunk plan
-```
-
-Keep the `task` input short (the rendered PR title/commit subject must pass
-this repo's own `.mivia/policy/commit-message.json`, ≤72 chars, `type(scope):
-subject` shape). After the run settles, close and delete-branch any PR it
-opened - the workflow's own PR body already says "Safe to close/delete."
-Never merge one.
-
-### e2e suite runner (`scripts/e2e_suite.py`)
-
-`scripts/e2e_suite.py` is a small, versioned suite over live e2e scenarios,
-so a live delivery-engine check does not mean inventing a fresh ad hoc task
-prompt every time. Same never-run-without-explicit-ask rule as above; it
-never runs itself and is not part of `make verify`/CI. Three scenario
-kinds: **topology** (drives the real `feature-delivery` workflow with a
-task engineered to force a known chunk-dependency shape - independent
-chunks, a DAG diamond, a wide fan-in, a linear chain, a single-package
-run), **scripted** (the checked-in `e2e-*.toml` workflows above), and
-**bug-fix** (a real `bug-fix.toml` run, scope narrowed to a bug-dense area,
-told to fix only the first confirmed bug rather than hunt exhaustively -
-small and bounded, not an open-ended audit).
-
-```bash
-scripts/e2e_suite.py list                 # see every scenario
-scripts/e2e_suite.py run independent-3    # launch one, backgrounded
-scripts/e2e_suite.py run --all            # launch the whole suite in parallel
-scripts/e2e_suite.py status               # summarize every launched run
-scripts/e2e_suite.py kill --all           # stop every launched driver process
-```
-
-Logs land in `.mivia/run-logs/e2e-suite/`, one file per scenario name, with
-a `manifest.json` tracking pid/log/start time so `status`/`kill` work in a
-later session too. As with the checked-in workflows above: close and
-delete-branch any PR a run opens; never merge one.
-
-### Context-compaction e2e (`scripts/e2e_context_compaction.py`)
-
-Drives the real `mivia` binary through automatic compaction, manual
-`/compact`, the tool-enabled agent loop, and the summary-gate-off path.
-Every assertion reads a surface a user or host app observes - the NDJSON
-wire and the durable SQLite checkpoint - so a regression that unit tests
-pass by construction still fails here.
-
-```bash
-scripts/e2e_context_compaction.py                  # hermetic, no credentials
-scripts/e2e_context_compaction.py --provider real  # real API calls, costs money
-```
-
-The default `stub` backend runs its own local OpenAI-compatible server, so
-it needs no key and is safe anywhere. `--provider real` uses
-`DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`, `ZAI_API_KEY`, or
-`OLLAMA_API_KEY` from the environment.
-
-Same rule as every other e2e above: never part of `make verify` or CI, and
-never run `--provider real` without the user asking for it in that session.
+**Never run a live e2e workflow** (`e2e-split-test`, `e2e-pr-metadata-test`, `e2e-scope-escape-test`), the e2e suite runner, or the context-compaction e2e **without the user explicitly asking for it in that session.** They are not part of `make verify`, CI, or any automated path. Runbook and commands: `docs/development/agent-workflow.md`.
 
 ## Layout
 
 ```text
 cmd/mivia/           CLI entrypoint -> binary mivia
+cmd/mivia-ui-demo/   Theme and render demo, development only
 internal/            Go packages
-.mivia/                 Canonical agent control surface
+internal/ui/         New terminal UI: app, screens, components, render, theme
+internal/uikit/      UI data with no bubbletea import: config, keymap, ports
+.agents/             Canonical agent control surface (rules, doctrines, skills, quality, templates, agents/*.md)
+.mivia/              Product runtime config/state: mivia.toml, workflows/, hooks/, policy/*
 .mivia/hooks/        This repo's own mivia lifecycle hook scripts (project-scoped)
 docs/                Human docs (OWNERS enforced)
 scripts/             Guards, hooks, scans, contract tests
 semgrep/             Agent-standards static rules
 .githooks/           core.hooksPath entrypoints
 ```
-
-## Skills (use when relevant)
-
-| Skill | Role |
-|-------|------|
-| `verify-code-change` | Evidence ladder after code/config changes |
-| `bug-audit` | Adversarial confirmed-bug hunt only (no false positives) |
-
-Repo-native:
-
-| Skill | Role |
-|-------|------|
-| `verify-change` | Mechanical gates + `mivia-report/v1` for scoped changes |
-| `docs-update` | OWNERS-safe documentation edits |
-| `secure-change` | Auth/secrets/network/tooling review |
-| `simplification-review` | Landed-code over-engineering and pattern-fitness review |
-| `performance-review` | Measurement-driven profiling and benchmark review |
-| `concurrency-review` | Fan-out, pools, cancel, race |
-| `architecture-review` | Boundaries, abstraction level, over-engineering (ADLC Step 0) |
-| `feature-delivery` | Bounded feature slice delivery |
-| `workflow-runs-analysis` | Read-only validated analysis of workflow-run ledger; process-quality findings |
-| `session-analysis` | Read-only validated analysis of chat sessions in the durable chat ledger; metadata-only, process-quality findings |
-
-Workflow panel (read-only, JSON-only; used by the `feature-delivery` `review_panel` members):
-
-| Skill | Role |
-|-------|------|
-| `panel-bug-audit` | Correctness member: reachable bugs, concurrency, persistence, reliability |
-| `panel-secure-change` | Security member: authz, secrets, injection, SSRF, prompt injection |
-| `panel-architecture-review` | Integration member: boundary fitness, dependency direction, abstraction cost |
 
 ## Workflows
 
@@ -236,12 +169,6 @@ tools by default. `workflow_run` admits and starts a named workflow.
 delivery-pending run, but only with `allow_publish=true`. `workflow_cancel`
 stops a run. Use the workflow engine when a task fits an existing workflow
 definition.
-
-## Doctrines
-
-- `.mivia/doctrines/engineering-working-contract.md` - standing engineering contract
-- `.mivia/doctrines/evidence-before-claims.md`
-- `.mivia/doctrines/verification-is-part-of-delivery.md`
 
 ## Git commits
 
@@ -259,7 +186,7 @@ Policy SoT: `.mivia/policy/commit-message.json`
 | `agent` | orchestrator, subagents, runtime |
 | `mcp` | MCP tools/gateway |
 | `hooks` | Git + agent tool hooks |
-| `ai` | `.mivia/` rules, skills, doctrines, policy |
+| `ai` | `.agents/` rules, skills, doctrines; `.mivia/` policy and workflow config |
 | `docs` | `docs/**`, OWNERS |
 | `security` | secrets, privacy, authz |
 | `quality` | verify scripts, Semgrep, contract tests |
@@ -275,19 +202,4 @@ On commit-msg failure the hook prints **allowed types and scopes first**, then t
 
 ## Completion report
 
-- Outcome
-- Changed files
-- Verification (commands + results)
-- Residual risk / blockers
-
-Formal audits: `.mivia/templates/agent-report-v1.md` (`mivia-report/v1`).
-Bug-audit: skill-specific finding format only.
-
-## Better than agentkit MVP
-
-| Keep | Improve |
-|------|---------|
-| Hooks + Semgrep + commit policy | Fewer always-on gates that always run |
-| Hook-bypass guard | Docs ownership machine-enforced |
-| Conventional commits | Production skills from mivia-agent-skills |
-| Control surface under `.mivia/` | Binary/product name `mivia`; no skill forks |
+The report shape (Outcome, Changed files, Verification, Residual risk) is defined in [01-output-budget](.agents/rules/01-output-budget.md). Formal audits: `.agents/templates/agent-report-v1.md` (`mivia-report/v1`). Bug-audit: skill-specific finding format only.

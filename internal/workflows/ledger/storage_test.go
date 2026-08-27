@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/contentref"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
@@ -418,9 +418,9 @@ func TestStorageRepository_Content(t *testing.T) {
 	for name, repo := range repos(t) {
 		t.Run(name, func(t *testing.T) {
 			data := []byte("evidence payload")
-			ref := contentref.Reference(contentref.KindOutput, data)
+			ref := sdkadapter.Mint(sdkadapter.KindOutput, data)
 			if ref == "" {
-				t.Fatalf("contentref.Reference returned empty ref")
+				t.Fatalf("sdkadapter.Mint returned empty ref")
 			}
 
 			// Round-trip.
@@ -450,7 +450,7 @@ func TestStorageRepository_Content(t *testing.T) {
 // fix: LoadContent verifies sha256(data) against the ref's hex digest when the
 // ref carries the "sha256:" prefix, so a bare ref lookup can no longer return
 // bytes that do not hash to the ref (content corruption or ref mix-ups fail
-// loudly). Other ref shapes (e.g. contentref "ref:output:<hex>") skip digest
+// loudly). Other ref shapes (e.g. sdkadapter CLI "ref:output:<hex>") skip digest
 // verification and load verbatim.
 func TestStorageRepository_LoadContentVerifiesSha256Digest(t *testing.T) {
 	ctx := context.Background()
@@ -486,10 +486,10 @@ func TestStorageRepository_LoadContentVerifiesSha256Digest(t *testing.T) {
 				t.Fatalf("corruption error = %v, want a digest-mismatch message", err)
 			}
 
-			// Non-sha256 ref shapes (contentref) skip digest verification: bytes
+			// Non-sha256 ref shapes (CLI) skip digest verification: bytes
 			// that do not hash to the ref's hex still load verbatim.
 			plainRef := "ref:output:" + strings.Repeat("0", 64)
-			requireErr(t, repo.StoreContent(ctx, plainRef, data), nil, "store content under a contentref shape")
+			requireErr(t, repo.StoreContent(ctx, plainRef, data), nil, "store content under a CLI ref shape")
 			got, err = repo.LoadContent(ctx, plainRef)
 			if err != nil {
 				t.Fatalf("LoadContent of a non-sha256 ref must skip verification: %v", err)
@@ -578,7 +578,7 @@ func TestStorageRepository_CatchUpAcrossRepositories(t *testing.T) {
 	evidence := []byte("evidence")
 	outcome := AttemptOutcome{
 		Status:          AttemptStatusSucceeded,
-		OutputRef:       contentref.Reference(contentref.KindOutput, evidence),
+		OutputRef:       sdkadapter.Mint(sdkadapter.KindOutput, evidence),
 		OutputDigest:    DigestHex(evidence),
 		ToStepID:        "implement",
 		TransitionIndex: 0,

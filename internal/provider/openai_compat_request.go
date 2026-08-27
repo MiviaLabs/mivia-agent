@@ -98,7 +98,7 @@ func (c *OpenAICompat) marshalBody(req Request) ([]byte, error) {
 	for key, value := range c.extraBody {
 		body[key] = value
 	}
-	for key, value := range c.reasoningFields(req) {
+	for key, value := range c.reasoningFields(&req) {
 		body[key] = value
 	}
 	// A client opted into session-keyed routing sends a stable hash of the

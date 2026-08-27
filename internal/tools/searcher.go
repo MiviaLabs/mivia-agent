@@ -35,7 +35,7 @@ func (t *webSearchTool) ResultBudgetBytes() int { return resolveWebResponseBudge
 
 func (t *webSearchTool) Name() string { return "search" }
 func (t *webSearchTool) Description() string {
-	return "Search the web for information. Uses Tavily API when TAVILY_API_KEY is configured (with optional search_depth, topic, time_range, include_answer, include_domains, exclude_domains parameters), with fallback to free search engines."
+	return "Search the web. Uses Tavily when TAVILY_API_KEY is set, else falls back to free search engines."
 }
 func (t *webSearchTool) Parameters() map[string]any {
 	return schemaObject(map[string]any{
@@ -50,32 +50,32 @@ func (t *webSearchTool) Parameters() map[string]any {
 		"search_depth": map[string]any{
 			"type":        "string",
 			"enum":        []string{"basic", "advanced", "fast", "ultra-fast"},
-			"description": "Search depth for Tavily web search: basic (balanced), advanced (highest relevance), fast (low latency), ultra-fast (lowest latency). Default basic.",
+			"description": "Tavily search depth: basic (balanced, default), advanced (highest relevance), fast (low latency), ultra-fast (lowest latency).",
 		},
 		"topic": map[string]any{
 			"type":        "string",
 			"enum":        []string{"general", "news", "finance"},
-			"description": "Topic category for Tavily web search. Default general.",
+			"description": "Tavily topic category. Default general.",
 		},
 		"time_range": map[string]any{
 			"type":        "string",
 			"enum":        []string{"day", "week", "month", "year"},
-			"description": "Time range filter for Tavily search results.",
+			"description": "Tavily time range filter.",
 		},
 		"include_answer": map[string]any{
 			"type":        "string",
 			"enum":        []string{"basic", "advanced"},
-			"description": "Include an LLM-generated answer summary in Tavily results. Omit or leave empty to skip.",
+			"description": "Include LLM-generated answer summary. Omit to skip.",
 		},
 		"include_domains": map[string]any{
 			"type":        "array",
 			"items":       map[string]any{"type": "string"},
-			"description": "List of domains to include in Tavily web search results.",
+			"description": "Domains to include.",
 		},
 		"exclude_domains": map[string]any{
 			"type":        "array",
 			"items":       map[string]any{"type": "string"},
-			"description": "List of domains to exclude from Tavily web search results.",
+			"description": "Domains to exclude.",
 		},
 	}, []string{"query"})
 }

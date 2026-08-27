@@ -235,7 +235,7 @@ func TestGitHubCLIFindByHead(t *testing.T) {
 		if got.RemoteID != "12" || got.URL != "https://github.com/o/r/pull/12" || !got.Draft || got.BaseRefOID != "aaa111" {
 			t.Errorf("FindByHead = %+v, want RemoteID 12 with PR url, Draft=true, BaseRefOID aaa111", got)
 		}
-		want := []string{"pr", "list", "--repo", "owner/repo", "--head", "feature/x", "--state", "open", "--json", "number,url,isDraft,headRepositoryOwner"}
+		want := []string{"pr", "list", "--repo", "owner/repo", "--head", "feature/x", "--state", "open", "--json", "number,url,title,isDraft,headRepositoryOwner"}
 		if gotArgs := readRecordedArgs(t); !slices.Equal(gotArgs, want) {
 			t.Errorf("argv = %q, want %q", gotArgs, want)
 		}
@@ -366,6 +366,80 @@ func TestGitHubCLIFindByHeadCaseInsensitiveOwner(t *testing.T) {
 	if got.RemoteID != "12" || got.URL != "https://github.com/MiviaLabs/mivia-agent/pull/12" {
 		t.Errorf("FindByHead = %+v, want RemoteID 12 with PR url", got)
 	}
+}
+
+func TestGitHubCLIIsMerged(t *testing.T) {
+	writeFakeGH(t)
+	t.Setenv("GH_ARGS_FILE", filepath.Join(t.TempDir(), "args.txt"))
+	t.Setenv("GH_ENV_FILE", filepath.Join(t.TempDir(), "env.txt"))
+
+	t.Run("merged", func(t *testing.T) {
+		t.Setenv("GH_STDOUT", `[{"state":"MERGED","mergedAt":"2026-08-16T12:00:00Z","headRepositoryOwner":{"login":"owner"}}]`)
+		merged, err := (GitHubCLI{}).IsMerged(context.Background(), "owner/repo", "feature/x")
+		if err != nil {
+			t.Fatalf("IsMerged error: %v", err)
+		}
+		if !merged {
+			t.Fatal("IsMerged = false, want true")
+		}
+		want := []string{"pr", "list", "--repo", "owner/repo", "--head", "feature/x", "--state", "all", "--json", "state,mergedAt,headRepositoryOwner"}
+		if got := readRecordedArgs(t); !slices.Equal(got, want) {
+			t.Errorf("argv = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("closed", func(t *testing.T) {
+		t.Setenv("GH_STDOUT", `[{"state":"CLOSED","headRepositoryOwner":{"login":"owner"}}]`)
+		merged, err := (GitHubCLI{}).IsMerged(context.Background(), "owner/repo", "feature/x")
+		if err != nil {
+			t.Fatalf("IsMerged error: %v", err)
+		}
+		if merged {
+			t.Fatal("IsMerged = true, want false for closed PR")
+		}
+	})
+
+	t.Run("open", func(t *testing.T) {
+		t.Setenv("GH_STDOUT", `[{"state":"OPEN","headRepositoryOwner":{"login":"owner"}}]`)
+		merged, err := (GitHubCLI{}).IsMerged(context.Background(), "owner/repo", "feature/x")
+		if err != nil {
+			t.Fatalf("IsMerged error: %v", err)
+		}
+		if merged {
+			t.Fatal("IsMerged = true, want false for open PR")
+		}
+	})
+
+	t.Run("fork PR skipped", func(t *testing.T) {
+		t.Setenv("GH_STDOUT", `[{"state":"MERGED","headRepositoryOwner":{"login":"other"}}]`)
+		merged, err := (GitHubCLI{}).IsMerged(context.Background(), "owner/repo", "feature/x")
+		if err != nil {
+			t.Fatalf("IsMerged error: %v", err)
+		}
+		if merged {
+			t.Fatal("IsMerged = true, want false for fork PR")
+		}
+	})
+
+	t.Run("no PR", func(t *testing.T) {
+		t.Setenv("GH_STDOUT", `[]`)
+		merged, err := (GitHubCLI{}).IsMerged(context.Background(), "owner/repo", "feature/x")
+		if err != nil {
+			t.Fatalf("IsMerged error: %v", err)
+		}
+		if merged {
+			t.Fatal("IsMerged = true, want false when no PR exists")
+		}
+	})
+
+	t.Run("gh error", func(t *testing.T) {
+		t.Setenv("GH_EXIT", "1")
+		t.Setenv("GH_EXIT_MSG", "api rate limited")
+		_, err := (GitHubCLI{}).IsMerged(context.Background(), "owner/repo", "feature/x")
+		if err == nil {
+			t.Fatal("IsMerged error = nil, want gh failure")
+		}
+	})
 }
 
 func TestGitHubCLICreate(t *testing.T) {

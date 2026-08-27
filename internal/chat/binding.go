@@ -3,6 +3,7 @@ package chat
 import (
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -14,6 +15,25 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
+
+// WarnUnknownContextWindow writes a warning when a model's context window is unknown.
+var WarnUnknownContextWindow = func(model string) {
+	fmt.Fprintf(os.Stderr, "warning: model %q context window is unknown; defaulting to %d tokens\n", model, config.UnknownContextWindowTokens)
+}
+
+func (s *Session) checkWarnUnknownModelLocked(model string, isFallback bool) bool {
+	if !isFallback {
+		return false
+	}
+	if s.warnedUnknownModels == nil {
+		s.warnedUnknownModels = make(map[string]struct{})
+	}
+	if _, seen := s.warnedUnknownModels[model]; seen {
+		return false
+	}
+	s.warnedUnknownModels[model] = struct{}{}
+	return true
+}
 
 // ModelBinding is one immutable provider/model/backend generation.
 type ModelBinding struct {
@@ -36,6 +56,9 @@ type ModelBinding struct {
 	Profile               config.ModelSpec
 	RequestedPromptTokens int
 	PromptBudgetTokens    int
+	// FallbackProfile indicates the model's profile was synthesized because
+	// the model's context window was undeclared in the configured catalog.
+	FallbackProfile bool
 	// ModelGeneration is a session-local monotonic binding identity. It is
 	// captured with a turn and increments on every successful publication.
 	ModelGeneration uint64
@@ -91,13 +114,7 @@ func NewSession(res *config.Resolved, c provider.Completer) *Session {
 	if providerName == "" && c != nil {
 		providerName = c.Name()
 	}
-	profile := config.ModelSpec{Name: res.Model, ContextWindowTokens: DefaultMaxContextTokens}
-	for _, candidate := range res.ModelProfiles {
-		if candidate.Name == res.Model {
-			profile = candidate
-			break
-		}
-	}
+	profile, found := config.ResolveModelProfile(res.ModelProfiles, res.Model)
 	operatorCap := 0
 	if res.MaxPromptTokens != nil {
 		operatorCap = *res.MaxPromptTokens
@@ -121,6 +138,9 @@ func NewSession(res *config.Resolved, c provider.Completer) *Session {
 		// 0 = uncapped; config.Load already normalized negatives and enforced
 		// the 1024-byte floor for positive values.
 		MaxToolResultChars: res.Tools.MaxToolResultBytes,
+		// 0 = no registry-wide SDK run backstop; config.Load already
+		// normalized negatives to 0.
+		ToolRunTimeout: time.Duration(res.Tools.ToolRunTimeoutSec) * time.Second,
 		// 0 = off; config.Load already normalized negatives to the derived
 		// sentinel and rejected positive values under the degrade floor.
 		BatchResultBudgetBytes: batchResultBudget(res),
@@ -130,14 +150,18 @@ func NewSession(res *config.Resolved, c provider.Completer) *Session {
 	s.agentSurfaceGeneration = 1
 	s.operatorPromptCap = operatorCap
 	s.catalog = res.ModelCatalog()
-	s.binding = ModelBinding{ProviderName: providerName, Model: res.Model, Completer: c, Profile: profile, PromptBudgetTokens: ctxBudget, ModelGeneration: 1}
+	s.binding = ModelBinding{ProviderName: providerName, Model: res.Model, Completer: c, Profile: profile, PromptBudgetTokens: ctxBudget, ModelGeneration: 1, FallbackProfile: !found}
 	s.resetSystem()
 	// NewSession is one of the four identity-capture triggers (INV-68-8): the
 	// cache must be primed before any switch or publication can compare
 	// against it.
 	s.mu.Lock()
+	warn := s.checkWarnUnknownModelLocked(profile.Name, !found)
 	s.refreshPrefixIdentityLocked()
 	s.mu.Unlock()
+	if warn && WarnUnknownContextWindow != nil {
+		WarnUnknownContextWindow(profile.Name)
+	}
 	return s
 }
 
@@ -256,8 +280,12 @@ func (s *Session) SwitchBinding(binding ModelBinding) error {
 	incoming := s.capturePrefixIdentityLocked()
 	s.prefixIdentity = incoming
 	reset := s.buildPrefixResetLocked(outgoing, incoming, false)
+	warn := s.checkWarnUnknownModelLocked(binding.Model, binding.FallbackProfile)
 	bus := s.EventBus
 	s.mu.Unlock()
+	if warn && WarnUnknownContextWindow != nil {
+		WarnUnknownContextWindow(binding.Model)
+	}
 	publishPrefixResetEvent(bus, s.SessionID, reset)
 	if old.Dispatcher != nil && old.Dispatcher != binding.Dispatcher {
 		old.Dispatcher.Close()

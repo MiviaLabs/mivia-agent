@@ -225,7 +225,7 @@ gofmt rewrote 2 files
 Two edges, not one prefix. A label says where hook text *begins*; it never says
 where it ends, so text shaped like a new section simply reads as one. The block
 also states its own status, because a workspace agent definition under
-`.mivia/agents/` replaces the compiled system prompt wholesale - a frame that
+`.agents/agents/` replaces the compiled system prompt wholesale - a frame that
 leaned on that prompt for its meaning would be a frame any workspace could
 silently unframe.
 
@@ -372,12 +372,17 @@ a file, and inventing a path for one is not the same as having one.
 ## Seeing your hooks run
 
 A hook that runs invisibly is the part that is hard to defend, so every
-execution produces a transcript row:
+execution produces a row, on both the interactive TUI and the plain
+(`--output json` / non-TTY) renderer:
 
 ```text
-hook PostToolUse  fmt.sh ran: gofmt rewrote 2 files
-hook PostToolUse  lint.sh ran, no output
-hook PreToolUse   guard.sh blocked the call: policy forbids this argv
+hook PostToolUse  fmt.sh (PostToolUse) -> write_file
+  in:  {"path":"a.go"}
+  out: gofmt rewrote 2 files
+hook PostToolUse  lint.sh (PostToolUse) -> write_file, no output
+hook PreToolUse   guard.sh (PreToolUse) -> run_command  blocked
+  in:  {"argv":["rm","-rf","/"]}
+  out: policy forbids this argv
 ```
 
 The silent row is deliberate. "Did my formatter fire?" cannot honestly be
@@ -387,6 +392,15 @@ nothing looks exactly like a working hook until the row exists.
 Diagnostics appear here too: a hook that timed out, crashed, or could not start
 shows its warning on the row. Those never reach the model - they are about your
 script, not about the tool call - and `/hooks` keeps the recent ones.
+
+`/hooks` and hook-run visibility work identically on the new TUI
+(`internal/newtui`) and the old `--plain` REPL: both read from
+`internal/hooksession`, the leaf package that owns hook-session state
+(discovery, arming, the `/hooks` listing text) so neither surface depends on
+the other's package. A hook's input and output are bounded and redacted
+before display, the same as a tool's own input/output preview - a hook script
+that echoes an environment variable or a command's stderr does not bypass the
+workspace's redaction policy.
 
 ## Common patterns
 
@@ -534,12 +548,36 @@ There is **no `MIVIA_TURN_ID`**. The environment carries `MIVIA_HOOK_EVENT`,
 nothing else; the turn id is in the stdin JSON as `turn_id`, which is why the
 script above stores the payload whole rather than picking fields out of it.
 
-> **Limitation: `Stop` fires in the interactive TUI only.** `KindTurnEnd` has
-> exactly one publish site, the root TUI turn goroutine. The `--plain` REPL and
-> the `-p` one-shot never publish it, so this hook is silent there and the log
-> will simply have no rows from those runs. That is a seam gap rather than a
-> decision - see `internal/cli/hooks_runner.go` - and it is worth knowing before
-> you build billing or audit on top of it.
+`Stop` fires once per completed root turn on every surface - `-p`, `--plain`,
+line mode, and the TUI - because all four funnel through
+`internal/chat.Session.sendUserWithTurn` (`internal/hooksession.RunStopForTurn`
+is its one call site). The turn identifier is the same `turn:N` value
+`PreToolUse`/`PostToolUse` carry, not the assistant's reply text. A turn that
+began fires `Stop` on every outcome - success, a provider error, or a canceled
+context - because the call is wrapped around the same `done()` callback that
+already runs on every post-begin return path; a turn that never began (a
+session mid-switch or mid-load) fires nothing, since there is no turn to
+report as done. `Stop`'s output reaches the same `EventHook` channel
+`PreToolUse`/`PostToolUse` runs use, so it renders the same way on any surface
+that already draws a hook row.
+
+Firing is **synchronous** on the turn's own critical path on all four
+surfaces: a slow `Stop` handler delays that surface's return by up to its
+configured timeout (5s by default, `on_timeout` in `internal/hooks/config.go`)
+before the turn is considered complete. This is deliberate, not an oversight -
+`Stop`'s own contract is that a canceled turn's hook run is recorded rather
+than silently skipped, which requires running under the turn's own
+(possibly-canceled) context rather than a detached one; a fire-and-forget
+goroutine cannot honor that without its own synchronization back to the
+caller.
+
+> A `PreToolUse` block on the deferred-tool path (`internal/chat.Session.runDeferredToolNow`)
+> leaves one contradiction for a single step: the operator's transcript shows
+> the denying hook's row, but the MODEL is still told the generic "queued to
+> load... retry on your next step" message, not the hook's actual reason. The
+> model retries next step, reaches the now-admitted path, and gets the real
+> reason there - so this self-corrects in one step, but it is a deliberate
+> half-fix, not an oversight.
 
 `Stop` also fires once per user-visible turn and never per subagent turn. A
 per-subagent `Stop` would run N times with "the assistant is done" semantics
@@ -562,9 +600,11 @@ silently dropping the call.
 - Hooks **propagate to subagents**. A gate a subagent escapes is not a gate.
 - Hooks never re-enter mivia's dispatcher, so a `PreToolUse` hook matching
   `run_command` cannot dispatch `run_command` and recurse.
-- `Stop` currently fires in the interactive TUI only. The classic `--plain` REPL
-  and the `-p` one-shot have no turn-end publish point for it to hang from.
-  `PreToolUse` and `PostToolUse` fire on every surface.
+- `Stop`, `PreToolUse`, and `PostToolUse` all fire on every surface (`-p`,
+  `--plain`, line mode, the TUI). `Stop` fires once per root turn only, never
+  for a subagent turn or a workflow run - no `internal/cliworkflow` path
+  drives an `internal/chat.Session` turn, so a workflow's own tool calls still
+  fire `PreToolUse`/`PostToolUse` but never `Stop`.
 - `SKILL.md` frontmatter hooks, `http`/`mcp_tool`/`prompt`/`agent` handler
   types, an operator tier, and a global kill switch are all out of v1.
   "Disable everything" is deleting the `[[hooks]]` tables, which is the same

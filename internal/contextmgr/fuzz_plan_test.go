@@ -144,13 +144,25 @@ func optionalTailIsSuffix(input PlanInput, plan PlanResult) bool {
 		return true
 	}
 	mandatory := mandatoryIndexes(working, objectiveIndex, input.PreserveNames)
-	working, _, _, _ = elideForCompaction(working, objectiveIndex, mandatory, nil, contextstate.Principal{})
+	schemaCost, _ := estimateToolSchemaCost(input.Tools)
+	target := PercentFloor(input.Budget, 1, 2)
+	working, _, _, _ = elideForCompaction(input, working, objectiveIndex, mandatory, schemaCost, target)
 	fingerprint := func(message provider.Message) string {
 		b, err := contextstate.MarshalCanonical(plannerMessages([]provider.Message{message}))
 		if err != nil {
 			return ""
 		}
 		return string(b)
+	}
+	// Unnamed user turns are excluded from the contiguity contract on both
+	// sides: salvageUserMessages deliberately re-admits them out of the
+	// suffix, because a user turn is the premise rather than derived content
+	// (see that function). DC-6 - never presenting an answer without the tool
+	// results that produced it - concerns derived content only, so the
+	// invariant is asserted over everything EXCEPT those turns and is
+	// therefore unweakened for the messages it was written to protect.
+	salvageable := func(message provider.Message) bool {
+		return message.Role == provider.RoleUser && message.Name == ""
 	}
 	mandatoryFP := make(map[string]struct{}, len(mandatory))
 	origOptional := make([]string, 0, len(working))
@@ -160,12 +172,18 @@ func optionalTailIsSuffix(input PlanInput, plan PlanResult) bool {
 			mandatoryFP[fp] = struct{}{}
 			continue
 		}
+		if salvageable(message) {
+			continue
+		}
 		origOptional = append(origOptional, fp)
 	}
 	retainedOptional := make([]string, 0, len(plan.Messages))
 	for _, message := range plan.Messages {
 		fp := fingerprint(message)
 		if _, ok := mandatoryFP[fp]; ok {
+			continue
+		}
+		if salvageable(message) {
 			continue
 		}
 		retainedOptional = append(retainedOptional, fp)

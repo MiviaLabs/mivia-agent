@@ -9,7 +9,7 @@ type HarnessConfig struct {
 	// omitted) means enabled, so existing configs load unchanged. Disabling
 	// it runs those commands directly on the host with no filesystem,
 	// network, or environment isolation from the workflow - see
-	// .mivia/rules/10-security-privacy.md before turning this off.
+	// .agents/rules/10-security-privacy.md before turning this off.
 	Sandbox *bool `toml:"sandbox"`
 }
 

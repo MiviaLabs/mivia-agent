@@ -2,10 +2,11 @@ package delivery
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 )
 
@@ -14,7 +15,7 @@ import (
 // the policy for a stacking-enabled run. hard is the resolved HardLines value.
 func stackedPolicy(t *testing.T, hard int) Policy {
 	t.Helper()
-	cw := &compiler.CompiledWorkflow{
+	cw := &definition.CompiledWorkflow{
 		Delivery: &definition.Delivery{
 			Kind:                  "pull_request",
 			Mode:                  "draft",
@@ -79,18 +80,24 @@ func TestParseStackPart(t *testing.T) {
 	}
 }
 
-// TestAppendStackPartTitle pins the host-appended Stack-Part trailer: the
-// trailer follows the repo's "Label: value" trailer convention after a blank
-// line, an absent stack_part changes nothing, an invalid value is a
-// PRMetadataError, and a result over GitHub's 256-rune ceiling is a
-// PRMetadataError too (the agent must shorten the title).
+// TestAppendStackPartTitle pins the host-appended "[stack k/N]" tag: a
+// single-line bracket suffix (the same deriveTitle convention
+// EnsureFollowUpPublished uses for a deferred/split PR), an absent
+// stack_part changes nothing, an invalid stack_part SHAPE is still a
+// PRMetadataError (a genuinely malformed reserved input, not a length
+// issue), and a result over GitHub's 256-rune ceiling is silently truncated
+// - never a repairable error - because by this point title already passed
+// its own length check alone (sanitizeAgentTitle); an overflow here is
+// caused entirely by the host's own affix, not anything the agent did
+// wrong, so rejecting it into a repair loop would be confusing and would
+// burn an attempt on a purely cosmetic issue instead of making progress.
 func TestAppendStackPartTitle(t *testing.T) {
-	t.Run("appends the trailer after a blank line", func(t *testing.T) {
+	t.Run("appends a single-line bracket tag", func(t *testing.T) {
 		got, err := appendStackPartTitle("feat(agent): chunk three", "3/12")
 		if err != nil {
 			t.Fatalf("appendStackPartTitle: %v", err)
 		}
-		want := "feat(agent): chunk three\n\nStack-Part: 3/12"
+		want := "feat(agent): chunk three [stack 3/12]"
 		if got != want {
 			t.Fatalf("title = %q, want %q", got, want)
 		}
@@ -109,13 +116,16 @@ func TestAppendStackPartTitle(t *testing.T) {
 			t.Fatalf("appendStackPartTitle err = %v, want a repairable PRMetadataError", err)
 		}
 	})
-	t.Run("over the 256-rune ceiling is a repairable metadata error", func(t *testing.T) {
-		_, err := appendStackPartTitle(strings.Repeat("a", MaxTitleRunes-1), "3/12")
-		if err == nil || !IsPRMetadataError(err) {
-			t.Fatalf("appendStackPartTitle err = %v, want a repairable PRMetadataError", err)
+	t.Run("over the 256-rune ceiling is silently truncated, not a repairable error", func(t *testing.T) {
+		got, err := appendStackPartTitle(strings.Repeat("a", MaxTitleRunes-1), "3/12")
+		if err != nil {
+			t.Fatalf("appendStackPartTitle err = %v, want nil (truncate, don't reject, an overflow the host's own affix caused)", err)
 		}
-		if !strings.Contains(err.Error(), "Stack-Part") {
-			t.Fatalf("appendStackPartTitle err = %q, want a hint naming the trailer", err)
+		if n := utf8.RuneCountInString(got); n > MaxTitleRunes {
+			t.Fatalf("title is %d runes, want <= %d", n, MaxTitleRunes)
+		}
+		if !strings.HasSuffix(got, "[stack 3/12]") {
+			t.Fatalf("title = %q, want it to end with the full, untruncated tag", got)
 		}
 	})
 }
@@ -261,11 +271,11 @@ func TestStackingContractPRBaseInvalid(t *testing.T) {
 	}
 }
 
-// TestStackingContractStackPartTrailer: a stack_part input appends the
-// "Stack-Part: k/N" trailer to the PR title for both the agent-provided title
-// and the legacy template fallback.
+// TestStackingContractStackPartTrailer: a stack_part input appends a
+// "[stack k/N]" tag to the PR title for both the agent-provided title and the
+// legacy template fallback.
 func TestStackingContractStackPartTrailer(t *testing.T) {
-	t.Run("agent title carries the trailer", func(t *testing.T) {
+	t.Run("agent title carries the tag", func(t *testing.T) {
 		ctx := context.Background()
 		_, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
 		writeWorktreeFile(t, worktreeRoot, "b.txt", "change\n")
@@ -282,12 +292,12 @@ func TestStackingContractStackPartTrailer(t *testing.T) {
 		if n := pr.createdCount(); n != 1 {
 			t.Fatalf("Create calls = %d, want 1", n)
 		}
-		want := "feat(agent): chunk three\n\nStack-Part: 3/12"
+		want := "feat(agent): chunk three [stack 3/12]"
 		if got := pr.created[0].Title; got != want {
 			t.Fatalf("Title = %q, want %q", got, want)
 		}
 	})
-	t.Run("legacy template title carries the trailer", func(t *testing.T) {
+	t.Run("legacy template title carries the tag", func(t *testing.T) {
 		ctx := context.Background()
 		_, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
 		writeWorktreeFile(t, worktreeRoot, "b.txt", "change\n")
@@ -300,11 +310,86 @@ func TestStackingContractStackPartTrailer(t *testing.T) {
 		if res.Status != "succeeded" {
 			t.Fatalf("Result = %+v, want succeeded", res)
 		}
-		want := "feat: x\n\nStack-Part: 1/1"
+		want := "feat: x [stack 1/1]"
 		if got := pr.created[0].Title; got != want {
 			t.Fatalf("Title = %q, want %q", got, want)
 		}
 	})
+	// TestAppendStackPartTitle's overflow subtest calls appendStackPartTitle
+	// directly with a synthetic title - it doesn't prove sanitizeAgentTitle
+	// ran first. This subtest proves the FULL scenario motivating the
+	// truncate-not-reject design: an agent title that is valid ALONE
+	// (passes sanitizeAgentTitle's own length check) but overflows once the
+	// host's tag is appended must still succeed end to end through Deliver,
+	// never route to a repair step over an overflow the agent's own title
+	// didn't cause.
+	t.Run("a title valid alone but overflowing with the tag still succeeds", func(t *testing.T) {
+		ctx := context.Background()
+		_, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
+		writeWorktreeFile(t, worktreeRoot, "b.txt", "change\n")
+		nearCeilingTitle := "feat(agent): " + strings.Repeat("a", MaxTitleRunes-utf8.RuneCountInString("feat(agent): "))
+		if n := utf8.RuneCountInString(nearCeilingTitle); n != MaxTitleRunes {
+			t.Fatalf("fixture title has %d runes, want exactly %d (valid alone, at the ceiling)", n, MaxTitleRunes)
+		}
+		seedChangeSummary(t, repo, run, "implement", 1, fmt.Sprintf(`{"pr_title": %q, "pr_summary": "Adds the chunk."}`, nearCeilingTitle))
+		pr := &fakePRClient{}
+		req := newRequest(run, gc, baseCommit, originURL, defaultPolicy("draft"), map[string]string{"task": "x", "stack_part": "3/12"})
+		res, err := Deliver(ctx, repo, RealGit{}, pr, req)
+		if err != nil {
+			t.Fatalf("Deliver must succeed (truncate, not reject) when only the host's own tag causes the overflow: %v", err)
+		}
+		if res.Status != "succeeded" {
+			t.Fatalf("Result = %+v, want succeeded", res)
+		}
+		got := pr.created[0].Title
+		if n := utf8.RuneCountInString(got); n > MaxTitleRunes {
+			t.Fatalf("created title has %d runes, want <= %d", n, MaxTitleRunes)
+		}
+		if !strings.HasSuffix(got, "[stack 3/12]") {
+			t.Fatalf("created title = %q, want it to end with the full, untruncated tag", got)
+		}
+	})
+}
+
+// TestStackPartTagStaysOutOfCommitSubject pins the boundary between the PR
+// title and the commit subject: the host-owned "[stack k/N]" tag is a
+// pull-request concern only. The commit subject is the agent's own resolved
+// pr_title, untagged - so the workspace commit-message policy's
+// maxSubjectLength (and the repo's own commit-msg hook, which fires on the
+// delivery commit) measures the title the agent actually authored, never a
+// subject inflated by an affix the agent cannot see or control. A title that
+// is valid alone must deliver successfully even when the tagged PR title
+// would exceed the workspace's subject cap: the overflow is caused by the
+// host's own tag, so it must never become a repairable "shorten pr_title"
+// rejection (the same truncate-don't-reject reasoning as the GitHub 256-rune
+// ceiling).
+func TestStackPartTagStaysOutOfCommitSubject(t *testing.T) {
+	ctx := context.Background()
+	repoRoot, worktreeRoot, gc, baseCommit, originURL, run, repo := newDeliveryFixture(t)
+	writeWorkspacePolicy(t, repoRoot, worktreeRoot, `{"version": 1, "requireScope": true, "maxSubjectLength": 72}`)
+	writeWorktreeFile(t, worktreeRoot, "b.txt", "change\n")
+	// 62 runes: conforms to the 72-rune subject cap on its own, but
+	// 62 + len(" [stack 3/12]") = 75 would exceed it if the tag counted.
+	agentTitle := "feat(agent): " + strings.Repeat("a", 49)
+	if n := utf8.RuneCountInString(agentTitle + " [stack 3/12]"); n <= 72 {
+		t.Fatalf("fixture title + tag = %d runes, want > 72 so the tag decides the outcome", n)
+	}
+	seedChangeSummary(t, repo, run, "implement", 1, `{"pr_title": "`+agentTitle+`", "pr_summary": "Adds the chunk."}`)
+	pr := &fakePRClient{}
+	req := newRequest(run, gc, baseCommit, originURL, defaultPolicy("draft"), map[string]string{"task": "x", "stack_part": "3/12"})
+	res, err := Deliver(ctx, repo, RealGit{}, pr, req)
+	if err != nil {
+		t.Fatalf("Deliver must succeed: the host's own tag must not consume the agent's commit-subject budget: %v", err)
+	}
+	if res.Status != "succeeded" {
+		t.Fatalf("Result = %+v, want succeeded", res)
+	}
+	if want := agentTitle + " [stack 3/12]"; pr.created[0].Title != want {
+		t.Fatalf("PR title = %q, want %q (tag on the pull request)", pr.created[0].Title, want)
+	}
+	if msg := runGitOut(t, worktreeRoot, "log", "-1", "--format=%s"); msg != agentTitle {
+		t.Fatalf("commit subject = %q, want the agent's own untagged title %q", msg, agentTitle)
+	}
 }
 
 // TestStackingContractStackPartInvalid: a malformed stack_part is rejected

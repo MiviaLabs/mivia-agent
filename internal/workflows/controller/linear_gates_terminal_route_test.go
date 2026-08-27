@@ -6,10 +6,8 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/verifier"
 )
 
 // evidenceGateNonTerminalRouteWorkflow builds the evidence-gate fixture: the
@@ -17,7 +15,7 @@ import (
 // succeeded transition zero-matches at runtime, selectRoute's error branch
 // returns failureTarget(step) = "implement" — the crash-resume hazard the fix
 // forces to the "failure" terminal.
-func evidenceGateNonTerminalRouteWorkflow(t *testing.T) *compiler.CompiledWorkflow {
+func evidenceGateNonTerminalRouteWorkflow(t *testing.T) *definition.CompiledWorkflow {
 	t.Helper()
 	wf := &definition.WorkflowFile{
 		Version: 1, Name: "evidence-nonterminal-route", InitialStep: "verify",
@@ -41,7 +39,7 @@ func evidenceGateNonTerminalRouteWorkflow(t *testing.T) *compiler.CompiledWorkfl
 			{From: "implement", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,10 +66,10 @@ func TestEvidenceGateSucceededZeroMatchPersistsTerminalRoute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cat := verifier.NewCatalogue()
+	cat := definition.NewCatalogue()
 	if err := cat.Register(fixedVerifierProfile{
 		name:   "always-pass",
-		result: verifier.Result{Status: "succeeded", Checks: []verifier.Check{{Name: "test", Status: "passed"}}},
+		result: definition.Result{Status: "succeeded", Checks: []definition.Check{{Name: "test", Status: "passed"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +130,7 @@ func TestEvidenceGateSucceededZeroMatchPersistsTerminalRoute(t *testing.T) {
 // approved succeeded transition zero-matches at runtime, selectRoute's error
 // branch returns failureTarget(step) = "implement" — the crash-resume hazard
 // the fix forces to the "failure" terminal.
-func humanApproveNonTerminalRouteWorkflow(t *testing.T) *compiler.CompiledWorkflow {
+func humanApproveNonTerminalRouteWorkflow(t *testing.T) *definition.CompiledWorkflow {
 	t.Helper()
 	wf := &definition.WorkflowFile{
 		Version: 1, Name: "human-approve-nonterminal-route", InitialStep: "approve_me",
@@ -154,7 +152,7 @@ func humanApproveNonTerminalRouteWorkflow(t *testing.T) *compiler.CompiledWorkfl
 			{From: "implement", To: "success", Match: definition.MatchCriteria{Status: "succeeded"}},
 		},
 	}
-	compiled, err := compiler.Compile(wf)
+	compiled, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}

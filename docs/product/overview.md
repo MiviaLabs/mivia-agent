@@ -34,16 +34,16 @@ See [Coding agent mode](agent.md) for the full tool list and slash commands.
 
 ## Agents and skills
 
-A named agent is a file-backed definition (`.mivia/agents/<name>.toml` or
-`~/.mivia/agents/`) that scopes tools, skills, model, and system prompt.
+A named agent is a file-backed definition (`.agents/agents/<name>.md` or
+`~/.agents/agents/`) that scopes tools, skills, model, and system prompt.
 Select one with `--agent <name>` or `/agent <name>`.
 
 A skill is a reusable task template (`SKILL.md`) an agent can invoke - things
 like `bug-audit`, `architecture-review`, or `feature-delivery` ship with the
 repository.
 
-mivia can run several sub-agents concurrently as tasks with dependencies: `spawn_agent`,
-`dispatch_tasks`, `inspect_agents`, `join_run`, and `cancel_run` give the
+mivia can run several sub-agents concurrently as tasks with dependencies: `dispatch_tasks`,
+`inspect_agents`, `join_run`, and `cancel_run` give the
 model orchestration control over a batch of tasks with dependencies, one
 result per task, and idempotent retries.
 
@@ -87,8 +87,9 @@ See [Workflows](workflows.md) and the [Workflow guide](workflows-guide.md).
 ## Security and privacy
 
 Your API key stays in the process environment or an env file. It does not go
-in the TOML settings file. Powerful tools (`run_command`, secret-path
-filtering, redaction) are off until you configure them.
+in the TOML settings file. `run_command` runs a curated built-in program
+allowlist out of the box; secret-path filtering and redaction are off until
+you configure them.
 
 See [Security and privacy](../security/overview.md).
 

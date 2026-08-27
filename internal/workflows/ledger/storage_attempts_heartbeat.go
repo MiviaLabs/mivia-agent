@@ -46,6 +46,14 @@ func (s *StorageRepository) SetStepAttemptHeartbeat(ctx context.Context, runID, 
 		s.mu.Unlock()
 		return ErrNotFound
 	}
+	if IsTerminalAttemptStatus(p.Attempts[idx].Status) {
+		// A heartbeat can arrive after the attempt already settled (e.g. a
+		// watchdog tick racing the run's terminal transition). Silently drop
+		// it: writing liveness data onto a closed attempt would corrupt its
+		// audit trail for no benefit.
+		s.mu.Unlock()
+		return nil
+	}
 	prev := p.Attempts[idx].LastHeartbeatAt
 	if p.Attempts[idx].LastHeartbeatAt.IsZero() || !heartbeatAt.Before(p.Attempts[idx].LastHeartbeatAt) {
 		p.Attempts[idx].LastHeartbeatAt = heartbeatAt

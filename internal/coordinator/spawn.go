@@ -13,63 +13,94 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
 
+// Spawn creates or reuses a run for tasks under idempotencyKey. It does not
+// report whether THIS call created the run or hit an existing one via the
+// idempotency-key lookup - callers that need that distinction (deciding
+// whether they are the run's sole owner before doing anything ownership-
+// scoped, like canceling it on their own context dying) use SpawnNew
+// instead. Spawn's signature is unchanged so its 140+ existing callers
+// across this package's own tests are untouched.
 func (c *coordinator) Spawn(ctx context.Context, tasks []subagents.Task, idempotencyKey string) (*RunHandle, error) {
+	h, _, err := c.spawnReportingNew(ctx, tasks, idempotencyKey)
+	return h, err
+}
+
+// SpawnNew is Spawn plus an isNew signal: true only when this call actually
+// created the run (fresh CreateRun + task admission), false when the
+// idempotency-key lookup (either the in-memory handle cache or a durable
+// recovery read) returned an ALREADY-EXISTING run some other caller
+// started. A caller that gets isNew=false must not treat itself as the
+// run's owner for any purpose the run's actual creator did not agree to
+// (e.g. canceling it when its own unrelated wait times out).
+func (c *coordinator) SpawnNew(ctx context.Context, tasks []subagents.Task, idempotencyKey string) (*RunHandle, bool, error) {
+	return c.spawnReportingNew(ctx, tasks, idempotencyKey)
+}
+
+func (c *coordinator) spawnReportingNew(ctx context.Context, tasks []subagents.Task, idempotencyKey string) (*RunHandle, bool, error) {
 	c.spawnMu.Lock()
 	defer c.spawnMu.Unlock()
 	policy := policyWithRetry(ledger.RunPolicy{}, c.retryPolicyLocked())
 	fingerprint, err := requestFingerprintWithPolicy(tasks, policy)
 	if err != nil {
-		return nil, fmt.Errorf("fingerprint spawn request: %w", err)
+		return nil, false, fmt.Errorf("fingerprint spawn request: %w", err)
 	}
 	key := scopedKey(ctx, idempotencyKey)
 	if h := c.lookupHandle(key); h != nil {
 		if h.requestFingerprint != fingerprint {
-			return nil, ErrIdempotencyConflict
+			return nil, false, ErrIdempotencyConflict
 		}
-		return h, nil
+		return h, false, nil
 	}
 	if key != "" {
 		h, found, err := c.recoverIdempotentWithRetry(ctx, key, fingerprint)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		if found {
-			return h, nil
+			return h, false, nil
 		}
 	}
 	if err := c.validateTasks(tasks); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return c.createAndStartRun(ctx, tasks, key, fingerprint, policy)
+	h, created, err := c.createAndStartRun(ctx, tasks, key, fingerprint, policy)
+	return h, created, err
 }
 
-func (c *coordinator) createAndStartRun(ctx context.Context, tasks []subagents.Task, key, fingerprint string, policy ledger.RunPolicy) (*RunHandle, error) {
+func (c *coordinator) createAndStartRun(ctx context.Context, tasks []subagents.Task, key, fingerprint string, policy ledger.RunPolicy) (*RunHandle, bool, error) {
 	return c.createAndStartRunWithID(ctx, newRunID(), tasks, key, fingerprint, policy, true)
 }
 
-func (c *coordinator) createAndStartRunWithID(ctx context.Context, runID string, tasks []subagents.Task, key, fingerprint string, policy ledger.RunPolicy, recoverDuplicate bool, opts ...runHandleOption) (*RunHandle, error) {
+func (c *coordinator) createAndStartRunWithID(ctx context.Context, runID string, tasks []subagents.Task, key, fingerprint string, policy ledger.RunPolicy, recoverDuplicate bool, opts ...runHandleOption) (*RunHandle, bool, error) {
 	now := c.nowLocked()
 	run := ledger.RunSnapshot{RunID: runID, DisplayName: c.names.Generate("run"), Status: ledger.RunStatusCreated, RequestFingerprint: fingerprint, CreatedAt: now, Labels: map[string]string{}, Tasks: make([]ledger.TaskSnapshot, 0, len(tasks)), Policy: policy}
 	if err := c.repo.CreateRun(ctx, key, run); err != nil {
 		if errors.Is(err, ledger.ErrDuplicate) && key != "" && recoverDuplicate {
 			h, found, lookupErr := c.recoverIdempotentWithRetry(ctx, key, fingerprint)
 			if lookupErr != nil {
-				return nil, lookupErr
+				return nil, false, lookupErr
 			}
 			if found {
-				return h, nil
+				// created mirrors the decision behind this branch: true means
+				// THIS call created a fresh run; false means recovery handed
+				// back another caller's committed run. SpawnNew turns created
+				// into its isNew signal, so callers never treat a recovered
+				// duplicate as their own fresh creation. Do not infer this
+				// flag from err == nil; err is also nil when the run was
+				// recovered.
+				return h, false, nil
 			}
 		}
-		return nil, fmt.Errorf("create run: %w", err)
+		return nil, false, fmt.Errorf("create run: %w", err)
 	}
 
 	// Acquire an exclusive execution claim on this run before any further
 	// mutations. If another executor already holds a claim, refuse.
 	if err := c.repo.ClaimRun(ctx, runID, c.holderID); err != nil {
 		if errors.Is(err, ledger.ErrClaimHeld) {
-			return nil, ErrRunHeldByAnotherExecutor
+			return nil, false, ErrRunHeldByAnotherExecutor
 		}
-		return nil, fmt.Errorf("claim run %q: %w", runID, err)
+		return nil, false, fmt.Errorf("claim run %q: %w", runID, err)
 	}
 
 	// run_created has no single task in hand, so SessionID is deliberately left
@@ -77,13 +108,13 @@ func (c *coordinator) createAndStartRunWithID(ctx context.Context, runID string,
 	event := ledger.LifecycleEvent{ID: newEventID(), RunID: runID, Kind: "run_created"}
 	if err := c.repo.AppendEvent(ctx, event); err != nil {
 		c.releaseAndDeleteRun(ctx, runID)
-		return nil, fmt.Errorf("append run_created event: %w", err)
+		return nil, false, fmt.Errorf("append run_created event: %w", err)
 	}
 	c.emitLifecycleEvent(event)
 	named, err := c.createTasks(ctx, runID, tasks, now)
 	if err != nil {
 		c.releaseAndDeleteRun(ctx, runID)
-		return nil, fmt.Errorf("create tasks: %w", err)
+		return nil, false, fmt.Errorf("create tasks: %w", err)
 	}
 	attempts := make(map[string]string, len(named))
 	ledgerTasks := make([]subagents.Task, len(named))
@@ -100,10 +131,10 @@ func (c *coordinator) createAndStartRunWithID(ctx context.Context, runID string,
 	// Stamp pool context before starting the run goroutine so concurrent
 	// referral spawns never race the first poolCtx write (plan 53.04).
 	h.mu.Lock()
-	h.poolCtx = contextWithRunExec(h.poolCtx, runID, ledgerTasks, h.mailboxes)
+	h.poolCtx = contextWithRunExec(h.poolCtx, runID, ledgerTasks, h.mailboxes, h.toolCalls)
 	h.mu.Unlock()
 	go c.executeRun(h, ledgerTasks)
-	return h, nil
+	return h, true, nil
 }
 
 var ErrIdempotencyConflict = errors.New("idempotency key already used for a different request")
@@ -285,6 +316,7 @@ func (c *coordinator) newRunHandle(runID, key string, attempts map[string]string
 		retryPolicy: c.retryPolicyLocked(),
 		cancelDone:  make(chan struct{}), owner: c,
 		mailboxes: newRunMailboxes(c.mailboxCapacity),
+		toolCalls: newRunToolCallBuffer(),
 	}
 	for _, opt := range opts {
 		opt(h)

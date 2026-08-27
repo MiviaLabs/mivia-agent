@@ -126,6 +126,20 @@ func (h *MultiStepHandler) runValidatedReply(
 		if attempt >= retryMax {
 			return "", nil, schemaRepairExhaustedError(loop.LastFinishReason, vErr)
 		}
+		// A retry is about to run a full new LLM turn. Announce it through the
+		// same event pipeline the nested loop already reports steps/tools on
+		// (opts.OnEvent -> h.stepOnEvent -> stamped -> h.OnEvent), BEFORE
+		// building the corrective turn and re-entering the loop, so the UI
+		// never sits silent while a second (or third) potentially multi-minute
+		// LLM call runs behind what looked like a finished report. This is
+		// purely observability: it is not EventStep (does not touch stepCount)
+		// and does not alter control flow below.
+		if opts.OnEvent != nil {
+			opts.OnEvent(agent.Event{
+				Kind:   agent.EventSchemaRetry,
+				Detail: fmt.Sprintf("schema validation failed on attempt %d/%d, retrying...", attempt+1, retryMax+1),
+			})
+		}
 		userTurn = schemaRepairCorrectiveTurn(loop.LastFinishReason, vErr, compiled.Raw())
 	}
 }

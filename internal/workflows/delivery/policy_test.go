@@ -9,13 +9,12 @@ import (
 	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
-	"github.com/MiviaLabs/mivia-agent/internal/workflows/compiler"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 )
 
 // newCompiledPRWorkflow builds a minimal admitted workflow with a
 // pull_request delivery section, mirroring the compiler test fixtures.
-func newCompiledPRWorkflow(t *testing.T, mode string) *compiler.CompiledWorkflow {
+func newCompiledPRWorkflow(t *testing.T, mode string) *definition.CompiledWorkflow {
 	t.Helper()
 	wf := &definition.WorkflowFile{
 		Name:        "delivery-policy-test",
@@ -37,7 +36,7 @@ func newCompiledPRWorkflow(t *testing.T, mode string) *compiler.CompiledWorkflow
 			CommitMessageTemplate: "feat: {{ inputs.task }}\n\nBody.",
 		},
 	}
-	cw, err := compiler.Compile(wf)
+	cw, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatalf("compiling fixture workflow: %v", err)
 	}
@@ -46,10 +45,10 @@ func newCompiledPRWorkflow(t *testing.T, mode string) *compiler.CompiledWorkflow
 
 func TestFromCompiled(t *testing.T) {
 	testFromCompiledRejects(t, "nil workflow", nil)
-	testFromCompiledRejects(t, "nil delivery", &compiler.CompiledWorkflow{Delivery: nil})
-	testFromCompiledRejects(t, "empty kind", &compiler.CompiledWorkflow{Delivery: &definition.Delivery{Kind: "", Mode: "draft"}})
-	testFromCompiledRejects(t, "mode none", &compiler.CompiledWorkflow{Delivery: &definition.Delivery{Kind: "pull_request", Mode: "none"}})
-	testFromCompiledRejects(t, "empty mode", &compiler.CompiledWorkflow{Delivery: &definition.Delivery{Kind: "pull_request", Mode: ""}})
+	testFromCompiledRejects(t, "nil delivery", &definition.CompiledWorkflow{Delivery: nil})
+	testFromCompiledRejects(t, "empty kind", &definition.CompiledWorkflow{Delivery: &definition.Delivery{Kind: "", Mode: "draft"}})
+	testFromCompiledRejects(t, "mode none", &definition.CompiledWorkflow{Delivery: &definition.Delivery{Kind: "pull_request", Mode: "none"}})
+	testFromCompiledRejects(t, "empty mode", &definition.CompiledWorkflow{Delivery: &definition.Delivery{Kind: "pull_request", Mode: ""}})
 
 	t.Run("mode draft snapshots policy", func(t *testing.T) {
 		cw := newCompiledPRWorkflow(t, "draft")
@@ -144,7 +143,7 @@ func TestFromCompiledMaxRepairs(t *testing.T) {
 
 // testFromCompiledRejects is a table-driven helper that verifies FromCompiled
 // returns ok=false for degenerate workflow inputs.
-func testFromCompiledRejects(t *testing.T, name string, wf *compiler.CompiledWorkflow) {
+func testFromCompiledRejects(t *testing.T, name string, wf *definition.CompiledWorkflow) {
 	t.Helper()
 	t.Run(name, func(t *testing.T) {
 		if _, ok := FromCompiled(wf); ok {
@@ -153,7 +152,7 @@ func testFromCompiledRejects(t *testing.T, name string, wf *compiler.CompiledWor
 	})
 }
 
-func newCompiledWithLimits(t *testing.T, maxTitle, maxMsg int) *compiler.CompiledWorkflow {
+func newCompiledWithLimits(t *testing.T, maxTitle, maxMsg int) *definition.CompiledWorkflow {
 	t.Helper()
 	wf := &definition.WorkflowFile{
 		Name: "custom-limits", Version: 1, InitialStep: "plan",
@@ -168,7 +167,7 @@ func newCompiledWithLimits(t *testing.T, maxTitle, maxMsg int) *compiler.Compile
 			MaxTitleBytes: maxTitle, MaxCommitMessageBytes: maxMsg,
 		},
 	}
-	cw, err := compiler.Compile(wf)
+	cw, err := definition.Compile(wf)
 	if err != nil {
 		t.Fatalf("compiling: %v", err)
 	}
@@ -530,6 +529,100 @@ func TestRenderTitleGitHubRuneCeiling(t *testing.T) {
 			t.Errorf("title is not valid UTF-8: %q", got)
 		}
 	})
+}
+
+// TestTruncateRunesNeverSplitsAGrapheme pins a real gap an adversarial review
+// pass caught: truncateRunes was rune-safe (never splits a multi-byte UTF-8
+// sequence) but not GRAPHEME-safe. A base character followed by a combining
+// mark - e.g. 'e' (U+0065) + COMBINING ACUTE ACCENT (U+0301), which together
+// render as "é" but are two separate runes - could get split exactly between
+// them: the truncated result kept the bare base character and silently
+// dropped its diacritic, which is valid UTF-8 but visibly wrong text.
+func TestTruncateRunesNeverSplitsAGrapheme(t *testing.T) {
+	// 150 decomposed "e"+combining-acute-accent pairs (300 runes). A cut at
+	// exactly 243 runes (the affix "[stack 22/3]" is 12 runes, room =
+	// 256-12-1 = 243) used to land after the 122nd pair's base character but
+	// before its combining mark.
+	base := strings.Repeat("é", 150)
+	affix := "[stack 22/3]"
+	title := deriveTitle(base, affix, MaxTitleRunes)
+	if !strings.HasSuffix(title, " "+affix) {
+		t.Fatalf("title = %q, want it to end with the untruncated affix %q", title, affix)
+	}
+	baseTrunc := strings.TrimSuffix(title, " "+affix)
+	runes := []rune(baseTrunc)
+	if len(runes)%2 != 0 {
+		t.Fatalf("truncated base has %d runes (odd) - an odd count means the cut landed on a lone base character missing its combining mark; base=%q", len(runes), baseTrunc)
+	}
+	// The last rune of a complete "e"+combining-acute-accent run must be the
+	// mark itself (U+0301) - proof the cut ended on a whole pair, not a bare
+	// base character.
+	if len(runes) > 0 && runes[len(runes)-1] != '́' {
+		t.Fatalf("truncated base ends with %U, want the combining mark U+0301 (a complete pair)", runes[len(runes)-1])
+	}
+	if !utf8.ValidString(title) {
+		t.Fatalf("title is not valid UTF-8: %q", title)
+	}
+}
+
+// TestRenderTitleByteCapFallbackNeverSplitsAGrapheme closes a gap an
+// adversarial review pass caught in the FIRST grapheme-safety fix:
+// truncateRunes was made grapheme-safe, but RenderTitle's word-boundary
+// truncation (truncateRendered, MaxTitleBytes) has its own separate
+// no-space-boundary fallback that used to call textutil.TruncateRuneSafe
+// directly - bypassing truncateRunes/backUntilGraphemeBoundary entirely.
+// truncateRunes' later pass over the ALREADY byte-truncated result was a
+// no-op (its rune count was already under MaxTitleRunes), so the
+// grapheme-mangling byte cut survived untouched. This is the byte-cap path,
+// not the rune-cap path TestTruncateRunesNeverSplitsAGrapheme covers.
+func TestRenderTitleByteCapFallbackNeverSplitsAGrapheme(t *testing.T) {
+	// 200 decomposed "e"+combining-acute-accent pairs, no spaces (a single
+	// unbroken token), so RenderTitle's word-boundary search finds nothing
+	// and falls through to the byte-cap-only path.
+	// Built via explicit escape (not a typed "é" literal): a decomposed pair
+	// must be 'e' (U+0065) + COMBINING ACUTE ACCENT (U+0301) as two distinct
+	// runes, and different editors/encodings can silently normalize a typed
+	// "é" to the PRECOMPOSED U+00E9 (one rune) instead - which would make
+	// this test pass trivially without ever exercising the bug.
+	decomposedE := "é"
+	p := Policy{TitleTemplate: "{{ inputs.title }}", MaxTitleBytes: 50}
+	got, err := p.RenderTitle(map[string]string{"title": strings.Repeat(decomposedE, 200)})
+	if err != nil {
+		t.Fatalf("RenderTitle: %v", err)
+	}
+	runes := []rune(got)
+	if len(runes)%2 != 0 {
+		t.Fatalf("title has %d runes (odd) - an odd count means the byte-cap cut landed on a lone base character missing its combining mark; title=%q", len(runes), got)
+	}
+	if len(runes) > 0 && runes[len(runes)-1] != '́' {
+		t.Fatalf("title ends with %U, want the combining mark U+0301 (a complete pair); title=%q", runes[len(runes)-1], got)
+	}
+	if !utf8.ValidString(got) {
+		t.Fatalf("title is not valid UTF-8: %q", got)
+	}
+}
+
+// TestBackUntilGraphemeBoundaryDegenerateAllMarksFallsBack pins a second gap
+// the same review pass caught: backUntilGraphemeBoundary's backup loop, given
+// a prefix that is ENTIRELY combining marks with no base character at all
+// (malformed/unusual input - marks conventionally never lead), backs `end`
+// all the way to 0 and collapses a non-empty, maxRunes>0 request into an
+// EMPTY result - a silent "return nothing" truncateRunes' own early-return
+// guards (maxRunes<=0, RuneCountInString(s)<=maxRunes) do not anticipate or
+// prevent. There is no base character to back up TO in that case, so
+// backUntilGraphemeBoundary must fall back to the original (grapheme-unsafe
+// but non-empty) cut instead of emptying the result.
+func TestBackUntilGraphemeBoundaryDegenerateAllMarksFallsBack(t *testing.T) {
+	got := truncateRunes(strings.Repeat("́", 10), 3)
+	if got == "" {
+		t.Fatal(`truncateRunes(all-combining-marks, 3) = "", want a non-empty fallback (3 marks, grapheme-unsafe but not silently emptied)`)
+	}
+	if n := utf8.RuneCountInString(got); n != 3 {
+		t.Fatalf("truncateRunes(all-combining-marks, 3) has %d runes, want 3", n)
+	}
+	if !utf8.ValidString(got) {
+		t.Fatalf("result is not valid UTF-8: %q", got)
+	}
 }
 
 // TestRenderTemplateAppliesRedaction pins that renderTemplate applies the

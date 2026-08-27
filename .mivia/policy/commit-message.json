@@ -33,24 +33,28 @@
     "deps",
     "release",
     "events",
-    "provider"
+    "provider",
+    "workflows",
+    "tools"
   ],
   "scopeGuide": {
     "cli": "cmd/mivia, flags, TUI, user-facing CLI behavior",
-    "agent": "orchestrator, agent loop, subagents, runtime concurrency",
+    "agent": "orchestrator, agent loop, subagents, runtime concurrency; also internal/agentmsg, internal/agents, internal/chat, internal/coordinator, internal/hub, internal/memory, internal/prompts, internal/contextmgr, internal/contextstate, internal/contentref, internal/codeintel, internal/config",
     "mcp": "MCP client/server, tool gateway, capability servers",
-    "hooks": "Git hooks (.githooks, scripts/git-hooks) and agent tool hooks",
-    "ai": ".mivia/ control surface: rules, skills, doctrines, policy JSON",
+    "hooks": "Git hooks (.githooks, scripts/git-hooks) and agent tool hooks (internal/hooks)",
+    "ai": ".mivia/ control surface: rules, skills, doctrines, policy JSON; also internal/skills",
     "docs": "docs/** and docs/OWNERS.yaml (not AGENTS.md - use ai)",
-    "security": "secrets, privacy, authz, secret_scan, secure-change paths",
+    "security": "secrets, privacy, authz, secret_scan, secure-change paths; also internal/miviaauth, internal/secretpath, internal/envfile, internal/redact",
     "quality": "verify scripts, Semgrep, contract tests, make verify gates",
     "build": "Makefile, go.mod layout, packaging, binary build wiring",
     "ci": ".github/workflows and CI-only config",
     "test": "tests and test helpers only",
     "deps": "dependency version bumps only",
-    "release": "versioning, release notes, tag/release process",
+    "release": "versioning, release notes, tag/release process; also internal/version",
     "events": "event bus, subscriptions, adapters, event serialization",
-    "provider": "provider clients, streaming, usage and calibration capture"
+    "provider": "provider clients, streaming, usage and calibration capture; also internal/providerregistry, internal/reasoning",
+    "workflows": "internal/workflows/** (controller, delivery, compiler, localengine, stacking, ledger, definition, tasks, template, verifier, matcher, agenttools, presentation), and its infra: internal/ledger, internal/storage, internal/durablefence, internal/remainder, internal/jschema, internal/vcs, internal/workspace",
+    "tools": "internal/tools - model-facing tool implementations (write, edit, search_replace, delete, find_symbol_context, etc.), distinct from the agent orchestrator loop and the CLI/TUI"
   },
   "subjectRules": [
     "Format: type(scope): imperative subject",
@@ -69,12 +73,12 @@
   },
   "trailerHints": {
     "Regression": "add \"Regression: Test<Name>\" or \"Regression: none (<reason>)\"",
-    "Class": "add \"Class: DC-n\" from .mivia/quality/defect-taxonomy.md, or \"Class: none (<reason>)\" when no class fits",
-    "Sweep": "add \"Sweep: searched <what>, found <n> further sites\" - the same-class sweep from .mivia/quality/defect-taxonomy.md"
+    "Class": "add \"Class: DC-n\" from .agents/quality/defect-taxonomy.md, or \"Class: none (<reason>)\" when no class fits",
+    "Sweep": "add \"Sweep: searched <what>, found <n> further sites\" - the same-class sweep from .agents/quality/defect-taxonomy.md"
   },
   "trailerGuide": {
     "Regression": "Test that fails before the fix and passes after it.",
-    "Class": "Recurring defect class from .mivia/quality/defect-taxonomy.md. A fix with no matching class must say so and the class should be added to that document.",
+    "Class": "Recurring defect class from .agents/quality/defect-taxonomy.md. A fix with no matching class must say so and the class should be added to that document.",
     "Sweep": "Result of the same-class sweep: what you searched for other sites of the class, and how many you found. This is the gate that stops one class producing a chain of repeat fixes."
   },
   "examples": [
@@ -86,7 +90,9 @@
     "security(quality): tighten secret scan patterns",
     "test(hooks): cover invalid scope error output",
     "chore(deps): bump golang.org/x/sys",
-    "ci(ci): run make verify on pull requests"
+    "ci(ci): run make verify on pull requests",
+    "fix(workflows): stop a repairable delivery rejection from parking the run",
+    "fix(tools): anchor write_file overwrite diff at the first changed line"
   ],
   "binaryName": "mivia",
   "brand": "MiviaLabs"

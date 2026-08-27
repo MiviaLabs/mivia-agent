@@ -277,3 +277,48 @@ func TestBlockedImplementWithEmptyBlocklistStillFails(t *testing.T) {
 		t.Fatalf("run status = %v, want failed", got.Status)
 	}
 }
+
+// TestBlockedPathsSelfReportOutsideBlocklistIsIgnored is the regression for
+// the false-self-report bug: a step can self-report blocked_paths for a file
+// that is NOT actually in the controller's write blocklist - by conflating
+// "out of my task scope" with "the host refused this write", or by
+// hallucinating a refusal that never happened at the tool-call boundary.
+// With a real blocklist configured, that false claim must not be trusted: the
+// run must proceed normally instead of terminating as host-blocked over a
+// path the host never blocked.
+func TestBlockedPathsSelfReportOutsideBlocklistIsIgnored(t *testing.T) {
+	runner := &scriptedRunner{outputsByStepCall: map[string]json.RawMessage{
+		"implement#1": json.RawMessage(`{"summary":"implemented","files_changed":["a.go"],"inspected":["a.go"],"addressed_findings":[],"pr_title":"fix","pr_summary":"fixes the bug","blocked_paths":["internal/cli/workflow_deliver.go"]}`),
+		"review#1":    reviewJSON("approved"),
+	}}
+	ctrl := blockedController(t, runner, "wfr-blocked-falsereport")
+	got, err := ctrl.Run(context.Background())
+	if err != nil && strings.Contains(err.Error(), "workflow blocked") {
+		t.Fatalf("run error = %v, must not treat an out-of-blocklist self-report as a blocked cause", err)
+	}
+	if err != nil {
+		t.Fatalf("run error = %v, want success", err)
+	}
+	if got.Status != workflowledger.RunStatusSucceeded {
+		t.Fatalf("run status = %v, want succeeded", got.Status)
+	}
+}
+
+// TestBlockedPathsSelfReportInsideBlocklistStillFails pins the companion
+// case: a self-reported path that DOES fall under the configured blocklist
+// must still fail the run, exactly like TestBlockedImplementWithEmptyBlocklistStillFails
+// pins the empty-blocklist case. The fix must validate false claims away
+// without weakening a genuine one.
+func TestBlockedPathsSelfReportInsideBlocklistStillFails(t *testing.T) {
+	runner := &scriptedRunner{outputsByStepCall: map[string]json.RawMessage{
+		"implement#1": json.RawMessage(`{"summary":"implemented","files_changed":["a.go"],"inspected":["a.go"],"addressed_findings":[],"pr_title":"fix","pr_summary":"fixes the bug","blocked_paths":[".mivia/workflows/bug-fix.toml"]}`),
+	}}
+	ctrl := blockedController(t, runner, "wfr-blocked-realreport")
+	got, err := ctrl.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "workflow blocked") {
+		t.Fatalf("run error = %v, want a blocked cause from the recorded blocked_paths", err)
+	}
+	if got.Status != workflowledger.RunStatusFailed {
+		t.Fatalf("run status = %v, want failed", got.Status)
+	}
+}

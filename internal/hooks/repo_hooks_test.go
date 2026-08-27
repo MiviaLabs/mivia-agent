@@ -90,7 +90,7 @@ func TestRepoPreToolUseGateBlocksOnNoVerdict(t *testing.T) {
 		}
 	}
 	if gates == 0 {
-		t.Skip("this repository declares no PreToolUse gate")
+		t.Fatal("expected at least one PreToolUse gate configured in .mivia/mivia.toml for INV-AG-34")
 	}
 }
 

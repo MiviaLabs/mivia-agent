@@ -85,9 +85,12 @@ diagnostics_command = [`+tt.tomlArgv0+`, "-c", "echo hi"]
 // diagnostics command that could never run must be a load error, not a
 // silently absent tool.
 func TestDiagnosticsConfigArgv0NotInRunAllowlistIsValidationError(t *testing.T) {
+	// "docker" is deliberately absent from tools.DefaultRunAllowlist (see
+	// its doc comment), so it stays a genuine not-allowlisted case even
+	// though the built-in default now makes run_command open by default.
 	path := writeMinimalConfig(t, `[tools]
-run_allowlist = ["git"]
-diagnostics_command = ["node", "--version"]
+run_allowlist_only = ["git"]
+diagnostics_command = ["docker", "--version"]
 `)
 	if _, err := Load(LoadOptions{ConfigPath: path}); err == nil {
 		t.Fatal("Load accepted a diagnostics_command whose argv[0] is not in run_allowlist; want a validation error")
@@ -258,8 +261,8 @@ run_allowlist = ["sh"]
 diagnostics_commands = { lint = ["/bin/sh", "-c", "true"] }
 `},
 		{name: "argv[0] not on run_allowlist", toml: `[tools]
-run_allowlist = ["git"]
-diagnostics_commands = { lint = ["node", "--version"] }
+run_allowlist_only = ["git"]
+diagnostics_commands = { lint = ["docker", "--version"] }
 `},
 		{name: "argv[0] on run_allowlist and run_blocklist", toml: `[tools]
 run_allowlist = ["sh"]

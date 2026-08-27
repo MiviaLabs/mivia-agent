@@ -50,16 +50,16 @@ func TestReferencesDedupsTestVariants(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	// contentref.Reference is defined once; test file variants should not
+	// sdkadapter.Mint is defined once; test file variants should not
 	// produce duplicate definition locations.
-	result, err := a.References(ctx, "contentref.Reference", []Role{RoleDefinition}, 50)
+	result, err := a.References(ctx, "sdkadapter.Mint", []Role{RoleDefinition}, 50)
 	if err != nil {
-		t.Fatalf("References(contentref.Reference, definition): %v", err)
+		t.Fatalf("References(sdkadapter.Mint, definition): %v", err)
 	}
 	// There should be exactly one definition across all packages
 	// (production + test variant), not two.
 	if len(result.Locations) == 0 {
-		t.Fatal("expected at least one definition for contentref.Reference")
+		t.Fatal("expected at least one definition for sdkadapter.Mint")
 	}
 	var defs int
 	for _, loc := range result.Locations {
@@ -101,12 +101,12 @@ func TestReferencesClassifiesErrorsIsAsComparison(t *testing.T) {
 		if loc.Role != RoleComparison {
 			t.Errorf("query filtered to roles=[comparison] returned a %s location", loc.Role)
 		}
-		if strings.Contains(loc.Path, "storage_claims.go") {
+		if strings.Contains(loc.Path, "storage_claims.go") || strings.Contains(loc.Path, "ledgercore/errors.go") || strings.Contains(loc.Path, "ledgercore/claims.go") {
 			foundStorageClaims = true
 		}
 	}
 	if !foundStorageClaims {
-		t.Errorf("expected internal/ledger/storage_claims.go's errors.Is(err, storage.ErrClaimHeld) among comparison locations, got: %+v", result.Locations)
+		t.Errorf("expected errors.Is(err, storage.ErrClaimHeld) among comparison locations, got: %+v", result.Locations)
 	}
 }
 
@@ -175,15 +175,15 @@ func TestFindImplementationsOnNonInterfaceReturnsEmpty(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	// contentref.Reference is a function, not an interface.
+	// sdkadapter.Mint is a function, not an interface.
 	// Querying with RoleImplementation should return zero implementation locations.
-	result, err := a.References(ctx, "contentref.Reference", []Role{RoleImplementation}, 50)
+	result, err := a.References(ctx, "sdkadapter.Mint", []Role{RoleImplementation}, 50)
 	if err != nil {
-		t.Fatalf("References(contentref.Reference, implementation): %v", err)
+		t.Fatalf("References(sdkadapter.Mint, implementation): %v", err)
 	}
 	for _, loc := range result.Locations {
 		if loc.Role == RoleImplementation {
-			t.Errorf("expected no implementations for non-interface contentref.Reference, got %s at %s:%d", loc.Symbol, loc.Path, loc.Line)
+			t.Errorf("expected no implementations for non-interface sdkadapter.Mint, got %s at %s:%d", loc.Symbol, loc.Path, loc.Line)
 		}
 	}
 }
