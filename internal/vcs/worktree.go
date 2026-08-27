@@ -92,12 +92,7 @@ func CreateWithPrefixLease(ctx context.Context, repoRoot string, name string, ba
 	if err != nil {
 		return nil, err
 	}
-	args := []string{"worktree", "add", targetPath}
-	if branchExists {
-		args = append(args, branchName)
-	} else {
-		args = append(args, "-b", branchName, ref)
-	}
+	args := worktreeAddArgs(branchExists, branchName, ref, targetPath)
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = root
 	cmd.Env = pinnedEnv()
@@ -113,6 +108,29 @@ func CreateWithPrefixLease(ctx context.Context, repoRoot string, name string, ba
 		Path:   targetPath,
 		Branch: actualBranch,
 	}, nil
+}
+
+// worktreeAddArgs builds the `git worktree add` invocation for a new run
+// tree.
+//
+// The leading core.autocrlf=false is byte-faithful-checkout policy, not
+// style: pinnedEnv deliberately keeps the user's global git config, and on
+// windows-latest that sets core.autocrlf=true - so every newline-bearing
+// tracked file materializes CRLF. Delivery later reads these trees
+// byte-for-byte under GIT_CONFIG_GLOBAL=/dev/null (delivery.GitContext),
+// where no conversion applies; a converted tree then differs from its
+// committed blobs and every staged-diff guard reports phantom edits of
+// untouched files (run 33052537404: chunk scope refused seeded fixture files
+// as out-of-slice). Pin conversion off at the one place mivia creates a
+// working tree.
+func worktreeAddArgs(branchExists bool, branchName, ref, targetPath string) []string {
+	args := []string{"-c", "core.autocrlf=false", "worktree", "add", targetPath}
+	if branchExists {
+		args = append(args, branchName)
+	} else {
+		args = append(args, "-b", branchName, ref)
+	}
+	return args
 }
 
 // localBranchExists reports whether branchName is an exact local branch.
