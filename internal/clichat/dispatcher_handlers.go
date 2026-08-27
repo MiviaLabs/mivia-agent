@@ -50,7 +50,10 @@ func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp p
 	multiSysPrompt = withMessagingProtocol(multiSysPrompt)
 	// When DefaultTimeout is 0, leave ToolTimeout 0 (handler defaults per-tool
 	// to the long-command ceiling). TotalTimeout stays 0 so req.Timeout from
-	// the pool is the bound, including explicit per-task overrides.
+	// the pool is the bound, including explicit per-task overrides. The
+	// default_total_timeout_seconds knob deliberately does NOT apply here:
+	// this construction is only the plain multi_step surface, whose tasks
+	// always carry the pool's per-task budget.
 	toolTO := time.Duration(cfg.DefaultTimeout) * time.Second
 	totalTO := time.Duration(0)
 	// Per-request LLM timeout for subagent turns. Falls back to
@@ -87,6 +90,82 @@ func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp p
 	return nil
 }
 
+// skillHandlerDeps groups the session-scoped dependencies every skill
+// handler shares. One group keeps newSkillMultiStepHandler's signature
+// short and lets tests build a real handler without a whole session.
+type skillHandlerDeps struct {
+	d                *runtime.Dispatcher
+	reg              *tools.Registry
+	comp             provider.Completer
+	model            string
+	dial             sessionDial
+	budgets          resultBudgets
+	maxContextTokens int
+	maxTokens        *int
+	budget           func() int
+	preparation      contextmgr.PreparationManager
+	preparationInput contextmgr.PrepareInput
+	spool            *remainder.Spool
+}
+
+// newSkillMultiStepHandler builds one skill's multi-step handler. It
+// carries the same bounds the routed-agent handlers carry, including the
+// default_total_timeout_seconds total budget: a skill run with no
+// per-task timeout otherwise has no handler-level wall clock.
+func newSkillMultiStepHandler(deps skillHandlerDeps, cfg config.SubagentConfig, skill skills.Definition) *subagents.MultiStepHandler {
+	toolTO := time.Duration(cfg.DefaultTimeout) * time.Second
+	// Per-request LLM timeout for skill subagent turns. Same 30-minute
+	// default as registerMultiStepHandler above.
+	requestTO := requestTimeout(cfg.DefaultRequestTimeoutSec)
+	sysPrompt := skill.Instructions
+	if sysPrompt == "" {
+		sysPrompt = "You are a helpful assistant executing a workspace skill task."
+	}
+	if skill.Description != "" {
+		sysPrompt = skill.Description + "\n\n" + sysPrompt
+	}
+	// A registered skill subagent is a tool-bearing surface (post_message
+	// included via ScopeSpawned + adoptSessionTools), so its final prompt
+	// carries the shared child-side messaging protocol block exactly once,
+	// like the routed-agent and plain multi_step surfaces. The resource-skill
+	// variant replaces this prompt in activatedSkillHandler.Invoke and
+	// re-applies the block there.
+	sysPrompt = withMessagingProtocol(sysPrompt)
+	h := &subagents.MultiStepHandler{
+		Completer:      deps.comp,
+		FullRegistry:   deps.reg,
+		Dispatcher:     deps.d,
+		Model:          deps.model,
+		Reasoning:      deps.dial.static,
+		ReasoningFunc:  deps.dial.live,
+		SystemPrompt:   sysPrompt,
+		MaxSteps:       cfg.NestedSteps,
+		ToolTimeout:    toolTO,
+		ToolRunTimeout: deps.budgets.toolRunTimeout,
+		RequestTimeout: requestTO,
+		// Total budget from default_total_timeout_seconds (the same
+		// bound the routed-agent handlers carry): see newSkillMultiStepHandler.
+		TotalTimeout:              totalTaskTimeout(cfg.DefaultTotalTimeoutSec),
+		SteerWatchdog:             time.Duration(cfg.Messaging.SteerWatchdogSecondsResolved()) * time.Second,
+		MaxTokens:                 cliorchestrate.DefaultMaxTokens,
+		MaxContextTokens:          deps.maxContextTokens,
+		MaxContextTokensFunc:      deps.budget,
+		MaxToolResultChars:        deps.budgets.perCall,
+		BatchResultBudgetBytes:    deps.budgets.perBatch,
+		RefOnlyTools:              deps.budgets.refOnlyTools,
+		RemainderSpool:            deps.spool,
+		OutputSchema:              skill.OutputSchema,
+		SchemaRetryMax:            cfg.SchemaRetryMax,
+		ContextPreparationManager: deps.preparation,
+		ContextPreparationInput:   deps.preparationInput,
+		OnEvent:                   OnEventForMultiStep(emitSubagentProgress),
+	}
+	if deps.maxTokens != nil && *deps.maxTokens > 0 {
+		h.MaxTokens = *deps.maxTokens
+	}
+	return h
+}
+
 func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp provider.Completer, model string, dial sessionDial, cfg config.SubagentConfig, budgets resultBudgets, maxContextTokens int, maxTokens *int, budget func() int, skillReg *skills.Registry, scope AgentSkillScope, preparation contextmgr.PreparationManager, preparationInput contextmgr.PrepareInput, spool *remainder.Spool) error {
 	if skillReg == nil {
 		return nil
@@ -97,59 +176,18 @@ func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp prov
 	// restricted tool registry (no delegation tools) and runs the skill
 	// instructions as the system prompt. Disallowed skills are not registered
 	// and gatedSkillHandler re-checks on every invoke (resume/retry).
-	toolTO := time.Duration(cfg.DefaultTimeout) * time.Second
-	// Per-request LLM timeout for skill subagent turns. Same 30-minute
-	// default as registerMultiStepHandler above.
-	requestTO := requestTimeout(cfg.DefaultRequestTimeoutSec)
+	deps := skillHandlerDeps{
+		d: d, reg: reg, comp: comp, model: model, dial: dial, budgets: budgets,
+		maxContextTokens: maxContextTokens, maxTokens: maxTokens, budget: budget,
+		preparation: preparation, preparationInput: preparationInput, spool: spool,
+	}
 	for _, skill := range skillReg.List() {
 		if err := scope.CheckSkillDefinition(skill); err != nil {
 			// Skip registration for skills the selected agent may not invoke.
 			// Task-build paths also reject so the model gets a clear error.
 			continue
 		}
-		sysPrompt := skill.Instructions
-		if sysPrompt == "" {
-			sysPrompt = "You are a helpful assistant executing a workspace skill task."
-		}
-		if skill.Description != "" {
-			sysPrompt = skill.Description + "\n\n" + sysPrompt
-		}
-		// A registered skill subagent is a tool-bearing surface (post_message
-		// included via ScopeSpawned + adoptSessionTools), so its final prompt
-		// carries the shared child-side messaging protocol block exactly once,
-		// like the routed-agent and plain multi_step surfaces. The resource-skill
-		// variant replaces this prompt in activatedSkillHandler.Invoke and
-		// re-applies the block there.
-		sysPrompt = withMessagingProtocol(sysPrompt)
-		h := &subagents.MultiStepHandler{
-			Completer:                 comp,
-			FullRegistry:              reg,
-			Dispatcher:                d,
-			Model:                     model,
-			Reasoning:                 dial.static,
-			ReasoningFunc:             dial.live,
-			SystemPrompt:              sysPrompt,
-			MaxSteps:                  cfg.NestedSteps,
-			ToolTimeout:               toolTO,
-			ToolRunTimeout:            budgets.toolRunTimeout,
-			RequestTimeout:            requestTO,
-			SteerWatchdog:             time.Duration(cfg.Messaging.SteerWatchdogSecondsResolved()) * time.Second,
-			MaxTokens:                 cliorchestrate.DefaultMaxTokens,
-			MaxContextTokens:          maxContextTokens,
-			MaxContextTokensFunc:      budget,
-			MaxToolResultChars:        budgets.perCall,
-			BatchResultBudgetBytes:    budgets.perBatch,
-			RefOnlyTools:              budgets.refOnlyTools,
-			RemainderSpool:            spool,
-			OutputSchema:              skill.OutputSchema,
-			SchemaRetryMax:            cfg.SchemaRetryMax,
-			ContextPreparationManager: preparation,
-			ContextPreparationInput:   preparationInput,
-			OnEvent:                   OnEventForMultiStep(emitSubagentProgress),
-		}
-		if maxTokens != nil && *maxTokens > 0 {
-			h.MaxTokens = *maxTokens
-		}
+		h := newSkillMultiStepHandler(deps, cfg, skill)
 		var handler runtime.Handler = h
 		if len(skill.Resources) > 0 {
 			handler = &activatedSkillHandler{definition: skill, template: *h}

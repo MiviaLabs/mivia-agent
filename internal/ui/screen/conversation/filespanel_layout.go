@@ -91,10 +91,13 @@ func (s Screen) panelAgentRow(a subagentRow, selLabel string, marked bool) strin
 		fg = render.WithBg(fg, s.Theme, s.Tier, theme.RoleBGSelection)
 	}
 	border := render.Role(s.Theme, s.Tier, theme.RoleBorder)
+	// displayStatus derives "stalled" at render time from the row's stall
+	// clock (agent_stall.go); the stored status itself never changes.
+	status := s.panel.displayStatus(a)
 	var statusBadge string
-	if a.Status != "" {
+	if status != "" {
 		role := theme.RoleInfo
-		switch a.Status {
+		switch status {
 		case "completed", "done":
 			role = theme.RoleSuccess
 		case "failed", "error", "interrupted":
@@ -103,9 +106,11 @@ func (s Screen) panelAgentRow(a subagentRow, selLabel string, marked bool) strin
 			role = theme.RoleFGSubtle
 		case "thinking":
 			role = theme.RoleWarning
+		case statusStalled:
+			role = theme.RoleWarning
 		}
 		statusStyle := render.Role(s.Theme, s.Tier, role)
-		statusBadge = " " + border.Render("[") + statusStyle.Render(a.Status) + border.Render("]")
+		statusBadge = " " + border.Render("[") + statusStyle.Render(status) + border.Render("]")
 	}
 	var stepBadge string
 	if a.Total > 0 {

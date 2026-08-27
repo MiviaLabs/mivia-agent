@@ -1,6 +1,7 @@
 package uiadapter
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
@@ -21,7 +22,7 @@ import (
 //	EventToolParallel     -> notice
 //	EventSubagentStart    -> tool.start
 //	EventSubagentEnd      -> tool.end
-//	EventSubagentHeartbeat -> dropped
+//	EventSubagentHeartbeat -> tool.output progress (Step parsed from Detail)
 //	EventSubagentDone     -> notice + tool.output progress (when Origin.TaskID is set)
 //	EventThinking         -> reasoning.delta
 //	EventHook             -> hook
@@ -180,6 +181,13 @@ func translateSubagentDone(ev agent.Event) []uievent.Event {
 // state; emitting one event per heartbeat is intentional and bounded by the
 // heartbeat cadence.
 //
+// Step carries the steps=N count parsed from the heartbeat Detail
+// ("elapsed=Xs steps=N", written by subagents.emitHeartbeat). The files
+// panel keys its stall clock on that count: heartbeats whose step count is
+// frozen are liveness without forward motion, so they must not refresh a
+// "still working" clock. Detail text the parser cannot read leaves Step 0,
+// and a Step of 0 never counts as progress downstream.
+//
 // Heartbeats without a TaskID cannot be attributed to any row and are
 // dropped rather than guessed at. Status is always "running": a heartbeat is
 // definitionally pre-terminal; the terminal transition still arrives via
@@ -198,10 +206,27 @@ func translateSubagentHeartbeat(ev agent.Event) []uievent.Event {
 			ToolCallID: ev.Origin.TaskID,
 			Progress: &uievent.Progress{
 				Status: "running",
+				Step:   heartbeatStep(ev.Detail),
 				Log:    log,
 			},
 		},
 	}}
+}
+
+// heartbeatStep parses the steps=N tail of a heartbeat Detail line. Any
+// detail without a parseable count - raw loop EventStep remaps, plain
+// prose - returns 0, which downstream code treats as "no progress
+// information", never as step 0 of real work.
+func heartbeatStep(detail string) int {
+	_, count, ok := strings.Cut(detail, "steps=")
+	if !ok {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(count))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
 }
 
 // subagentDoneText picks the most informative label available on the

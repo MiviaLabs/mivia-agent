@@ -338,21 +338,31 @@ func (h *MultiStepHandler) contextBudget() int {
 	return h.MaxContextTokens
 }
 
+// budgetContext derives a context bounded by the tightest of total (the
+// whole-run budget), reqTimeout (the per-task timeout, which wins when
+// tighter), and the parent deadline. A value <= 0 adds no bound. The parent
+// deadline is never extended - the caller above owns the outer bound.
+// Returns the derived context and a cleanup func (caller must defer it).
+// Shared by MultiStepHandler.timeoutContext and OneShotHandler.Invoke so both
+// handler families apply one identical clamp.
+func budgetContext(ctx context.Context, total, reqTimeout time.Duration) (context.Context, func()) {
+	if reqTimeout > 0 && (total <= 0 || reqTimeout < total) {
+		total = reqTimeout
+	}
+	if total > 0 {
+		if parentDeadline, ok := ctx.Deadline(); !ok || total < time.Until(parentDeadline) {
+			return context.WithTimeout(ctx, total)
+		}
+	}
+	return ctx, func() {}
+}
+
 // timeoutContext derives a context with timeout, but only if the requested
 // timeout is tighter than the parent's remaining deadline. Never extends
 // beyond parent - the orchestrator controls the outer bound.
 // Returns the derived context and a cleanup func (caller must defer it).
 func (h *MultiStepHandler) timeoutContext(ctx context.Context, req runtime.Request) (context.Context, func()) {
-	timeout := h.TotalTimeout
-	if req.Timeout > 0 && (timeout <= 0 || req.Timeout < timeout) {
-		timeout = req.Timeout
-	}
-	if timeout > 0 {
-		if parentDeadline, ok := ctx.Deadline(); !ok || timeout < time.Until(parentDeadline) {
-			return context.WithTimeout(ctx, timeout)
-		}
-	}
-	return ctx, func() {}
+	return budgetContext(ctx, h.TotalTimeout, req.Timeout)
 }
 
 // emitHeartbeat runs in a goroutine, emitting periodic heartbeat events

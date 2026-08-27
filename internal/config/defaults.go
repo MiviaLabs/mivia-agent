@@ -19,6 +19,15 @@ const DefaultOrchestrationTimeoutSec = 12 * 60 * 60 // 12 hours
 // hard per-attempt bound under it.
 const DefaultSubagentRequestTimeoutSec = 1800 // 30 minutes
 
+// DefaultSubagentTotalTimeoutSec is the whole-subagent wall-clock budget
+// applied when default_total_timeout_seconds is 0 (or omitted). Product
+// decision: 20 minutes. Unlike the per-request deadline above, this bounds
+// the ENTIRE run - every request, tool call, and wait added together - so a
+// provider that trickles bytes forever still ends inside a finite window.
+// It is the last-resort termination guarantee; a smaller per-task timeout
+// from the caller wins when it is tighter.
+const DefaultSubagentTotalTimeoutSec = 1200 // 20 minutes
+
 // DefaultPromptCapTokens is the recommended [chat] max_prompt_tokens value.
 // It bounds the per-request prompt budget for models with large context
 // windows. The planner compacts history at 80% of the budget. It is a

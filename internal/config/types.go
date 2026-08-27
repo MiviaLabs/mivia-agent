@@ -237,10 +237,19 @@ type SubagentConfig struct {
 	// (1800s, 30 minutes) as the per-request context deadline. The 15-minute
 	// http.Client wall stays the hard per-attempt bound; the 12-hour
 	// orchestration default no longer feeds individual subagent requests.
-	DefaultRequestTimeoutSec int    `toml:"default_request_timeout_seconds"`
-	DefaultBudget            int    `toml:"default_budget"`
-	SystemPrompt             string `toml:"system_prompt"`
-	NestedSteps              int    `toml:"nested_steps"`
+	DefaultRequestTimeoutSec int `toml:"default_request_timeout_seconds"`
+	// DefaultTotalTimeoutSec is the whole-subagent wall-clock budget
+	// (seconds). 0 = unset = DefaultSubagentTotalTimeoutSec (1200s, 20
+	// minutes). Negative = off: a direct spawn with no per-task timeout then
+	// has no handler-level bound at all, and workflow or panel steps whose
+	// own timeout is unset stay bounded only by workflow policy - this is an
+	// explicit operator opt-out of the last-resort termination guarantee. A
+	// positive value is the budget itself; a tighter per-task timeout from
+	// the caller still wins.
+	DefaultTotalTimeoutSec int    `toml:"default_total_timeout_seconds"`
+	DefaultBudget          int    `toml:"default_budget"`
+	SystemPrompt           string `toml:"system_prompt"`
+	NestedSteps            int    `toml:"nested_steps"`
 
 	// StoreBackend selects the ledger storage backend: "memory" (default) or "sqlite".
 	StoreBackend string `toml:"store_backend"`

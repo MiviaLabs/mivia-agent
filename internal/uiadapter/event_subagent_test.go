@@ -11,14 +11,11 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
 
-// TestTranslateEvent_Subagent covers the subagent start/end/heartbeat
+// TestTranslateEvent_SubagentLifecycle covers the subagent start/end
 // kinds. EventSubagentStart/End reuse the tool.start/tool.end body shape
 // so the UI shows the row alongside other tool calls (attribution rides
-// on the input Origin); EventSubagentHeartbeat maps to a keyed tool.output
-// progress update so blocking dispatch_tasks rows show live liveness -
-// heartbeats WITHOUT a TaskID stay dropped because no row owns them.
-// EventSubagentDone has its own test below.
-func TestTranslateEvent_Subagent(t *testing.T) {
+// on the input Origin). EventSubagentDone has its own test below.
+func TestTranslateEvent_SubagentLifecycle(t *testing.T) {
 	t.Parallel()
 	runMappingCases(t, []mappingCase{
 		{
@@ -53,6 +50,16 @@ func TestTranslateEvent_Subagent(t *testing.T) {
 				},
 			}},
 		},
+	})
+}
+
+// TestTranslateEvent_SubagentHeartbeat covers EventSubagentHeartbeat: it
+// maps to a keyed tool.output progress update so blocking dispatch_tasks
+// rows show live liveness, and the parsed step count rides Progress.Step.
+// Heartbeats WITHOUT a TaskID stay dropped because no row owns them.
+func TestTranslateEvent_SubagentHeartbeat(t *testing.T) {
+	t.Parallel()
+	runMappingCases(t, []mappingCase{
 		{
 			name: "subagent_heartbeat_maps_to_keyed_progress",
 			ev: agent.Event{
@@ -63,7 +70,41 @@ func TestTranslateEvent_Subagent(t *testing.T) {
 				Kind: uievent.KindToolOutput,
 				Body: uievent.ToolOutputBody{
 					ToolCallID: "task-hb",
-					Progress:   &uievent.Progress{Status: "running", Log: []string{"elapsed=30s steps=2"}},
+					Progress: &uievent.Progress{
+						Status: "running", Step: 2,
+						Log: []string{"elapsed=30s steps=2"},
+					},
+				},
+			}},
+		},
+		{
+			name: "subagent_heartbeat_without_parseable_steps_leaves_step_zero",
+			ev: agent.Event{
+				Kind: agent.EventSubagentHeartbeat, Detail: "raw loop step remap",
+				Origin: agent.EventOrigin{TaskID: "task-hb", Agent: "auditor"},
+			},
+			want: []uievent.Event{{
+				Kind: uievent.KindToolOutput,
+				Body: uievent.ToolOutputBody{
+					ToolCallID: "task-hb",
+					Progress: &uievent.Progress{
+						Status: "running", Step: 0,
+						Log: []string{"raw loop step remap"},
+					},
+				},
+			}},
+		},
+		{
+			name: "subagent_heartbeat_with_empty_detail_has_no_log",
+			ev: agent.Event{
+				Kind:   agent.EventSubagentHeartbeat,
+				Origin: agent.EventOrigin{TaskID: "task-hb", Agent: "auditor"},
+			},
+			want: []uievent.Event{{
+				Kind: uievent.KindToolOutput,
+				Body: uievent.ToolOutputBody{
+					ToolCallID: "task-hb",
+					Progress:   &uievent.Progress{Status: "running"},
 				},
 			}},
 		},

@@ -59,6 +59,11 @@ func requestTimeout(configured int) time.Duration {
 	return config.DefaultSubagentRequestTimeoutSec * time.Second
 }
 
+// The whole-run counterpart of requestTimeout lives in subagent_budget.go:
+// totalTaskTimeout resolves default_total_timeout_seconds into the
+// MultiStepHandler TotalTimeout. This file sat at the 500-line structure
+// soft cap, so the helper got its own small file instead of a berth here.
+
 func registerAgentHandlers(d *runtime.Dispatcher, opts SessionDispatcherOpts) error {
 	if opts.AgentRegistry == nil {
 		return nil
@@ -284,7 +289,11 @@ func (h *agentTaskHandler) newMultiStepHandler(binding agentBinding, registry *t
 		RefOnlyTools:           h.opts.RefOnlyTools,
 		RemainderSpool:         cliagents.RemainderSpoolFromRegistryVar(registry),
 		OutputSchema:           outSchema, SchemaRetryMax: h.opts.Config.SchemaRetryMax,
-		RequestTimeout:            requestTimeout(h.opts.Config.DefaultRequestTimeoutSec),
+		RequestTimeout: requestTimeout(h.opts.Config.DefaultRequestTimeoutSec),
+		// Total budget from default_total_timeout_seconds: the incident gap
+		// was exactly this construction running with no TotalTimeout, so a
+		// trickling provider pinned the run past every idle watchdog.
+		TotalTimeout:              totalTaskTimeout(h.opts.Config.DefaultTotalTimeoutSec),
 		SteerWatchdog:             time.Duration(h.opts.Config.Messaging.SteerWatchdogSecondsResolved()) * time.Second,
 		ContextPreparationManager: h.opts.ContextPreparationManager,
 		ContextPreparationInput:   h.opts.ContextPreparationInput,

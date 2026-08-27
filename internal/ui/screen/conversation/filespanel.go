@@ -26,6 +26,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -113,12 +114,20 @@ func (e fileEntry) rowLabel() string {
 
 // subagentRow is one dispatched subagent the session is tracking, fed
 // by the subagent-progress events (ToolOutputBody.Progress).
+//
+// LastProgress is the wall-clock time of the row's last forward motion:
+// a heartbeat with a CHANGED step count, any non-heartbeat progress, or
+// any tool event. Heartbeats whose step count is frozen are liveness, not
+// motion, and leave it alone - see progressAdvances and agent_stall.go's
+// displayStatus, which derives the "stalled" badge from it at render time.
 type subagentRow struct {
 	ID     string
 	Status string
 	Step   int
 	Total  int
 	Log    []string
+
+	LastProgress time.Time
 }
 
 func (a subagentRow) rowLabel() string {
@@ -155,6 +164,12 @@ type panel struct {
 	// and the full post-edit source.
 	sourceView bool
 
+	// stallThreshold is the no-forward-motion window after which a
+	// non-terminal subagent row renders "stalled" (see agent_stall.go).
+	// Seeded from uiStallThreshold; tests shrink it. 0 or less turns the
+	// derivation off.
+	stallThreshold time.Duration
+
 	// offset windows the dialog's body; the list windows itself.
 	offset int
 
@@ -166,7 +181,11 @@ type panel struct {
 // newPanel builds the panel's zero state; entries arrive live from
 // handleTurnEvent.
 func newPanel(t theme.Theme, tier theme.Tier) panel {
-	return panel{list: picker.New(t, tier, nil), dispatchGroups: map[string][]string{}}
+	return panel{
+		list:           picker.New(t, tier, nil),
+		dispatchGroups: map[string][]string{},
+		stallThreshold: uiStallThreshold,
+	}
 }
 
 // appendLive folds one more observed diff into the entries, latest per
@@ -283,12 +302,16 @@ func (p *panel) observeAgentStart(id, name string) {
 		if a.ID == id {
 			if a.Status == "" || a.Status == "pending" || isTerminalStatus(a.Status) {
 				p.agents[i].Status = "running"
+				// A (re)created row is a NEW run under a reused id: anchor
+				// its stall clock now, so the fresh row never renders
+				// instantly "stalled" from the prior run's timestamp.
+				p.agents[i].LastProgress = time.Now()
 			}
 			p.rebindIfOpen()
 			return
 		}
 	}
-	p.agents = append(p.agents, subagentRow{ID: id, Status: "running"})
+	p.agents = append(p.agents, subagentRow{ID: id, Status: "running", LastProgress: time.Now()})
 	p.rebindIfOpen()
 }
 
@@ -302,6 +325,7 @@ func (p *panel) observeAgentEnd(id string, ok bool) {
 	for i, a := range p.agents {
 		if a.ID == id {
 			p.agents[i].Status = status
+			p.agents[i].LastProgress = time.Now()
 			p.rebindIfOpen()
 			return
 		}
@@ -350,6 +374,7 @@ func (p *panel) setAgentStatus(id, status string) {
 	for i, a := range p.agents {
 		if a.ID == id {
 			p.agents[i].Status = status
+			p.agents[i].LastProgress = time.Now()
 			p.rebindIfOpen()
 			return
 		}
@@ -381,6 +406,7 @@ func (p *panel) reconcileTerminal(reason string) {
 	for i, a := range p.agents {
 		if isNonTerminalStatus(a.Status) {
 			p.agents[i].Status = status
+			p.agents[i].LastProgress = time.Now()
 			changed = true
 		}
 	}
@@ -420,6 +446,12 @@ func (p panel) activeAgentCount() int {
 // section, latest per subagent - the same fold files use. The step log
 // rides along: it is the fallback content when no thread Conversation
 // exists for the call.
+//
+// The stall clock only moves on forward motion (progressAdvances): a
+// heartbeat whose step count is frozen leaves LastProgress - and the
+// stored step - untouched, so a trickling provider cannot keep a row
+// looking healthy. A row with no prior step count keeps the last known
+// one when an update carries no parseable count.
 func (p *panel) observeAgent(id string, pr *uievent.Progress) {
 	log := slices.Clone(pr.Log)
 	row := subagentRow{ID: id, Status: pr.Status, Step: pr.Step, Total: pr.TotalSteps, Log: log}
@@ -430,11 +462,20 @@ func (p *panel) observeAgent(id string, pr *uievent.Progress) {
 			combinedLog = append(combinedLog, a.Log...)
 			combinedLog = append(combinedLog, pr.Log...)
 			row.Log = combinedLog
+			if progressAdvances(a, row) {
+				row.LastProgress = time.Now()
+			} else {
+				row.LastProgress = a.LastProgress
+				if row.Step == 0 {
+					row.Step = a.Step
+				}
+			}
 			p.agents[i] = row
 			p.rebindIfOpen()
 			return
 		}
 	}
+	row.LastProgress = time.Now()
 	p.agents = append(p.agents, row)
 	p.rebindIfOpen()
 }
