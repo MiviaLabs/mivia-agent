@@ -331,14 +331,19 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 	agentState.BaselineMaxSteps = sess.MaxStepsValue()
 	agentState.BaselineCaptured = true
 	cliorchestrate.SetActiveSessionCaller(runtime.Caller{SessionID: sess.SessionID})
+	// Adopt the session ledger store before the tool wiring (see
+	// adoptSessionRepoForTools): child runs stamp this instance.
+	adoptSessionRepoForTools(sess, useTools, res, agentState)
 	memClose, err := cliagents.ConfigureChatWorkspace(sess, wsRoot, useTools, res, agentState, invocation.quiet, invocation.fullDisk, true)
 	if err != nil {
+		releaseSessionLedgerRepo(agentState)
 		return err
 	}
 	defer memClose()
 	cliagents.ApplySelectedAgentPrompt(sess, res, agentState.Selected, agentState)
 	contextStore, err := setupChatSessionContext(sess, wsRoot, invocation, res)
 	if err != nil {
+		releaseSessionLedgerRepo(agentState)
 		return err
 	}
 	defer contextStore.Close()
@@ -346,6 +351,7 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 	sess.SetBindingFactory(cliagents.ChatBindingFactory(sess, res, wsRoot, agentState))
 	if invocation.session != "" {
 		if err := resumeChatSession(sess, res, invocation.session); err != nil {
+			releaseSessionLedgerRepo(agentState)
 			return err
 		}
 	}
@@ -523,4 +529,15 @@ func applyChatToolOverrides(res *config.Resolved, allow, deny, disable, allowEnv
 	res.Tools.DisableTools = append(res.Tools.DisableTools, disable...)
 	res.Tools.EnvAllowlist = append(res.Tools.EnvAllowlist, allowEnv...)
 	res.Tools.EnvBlocklist = append(res.Tools.EnvBlocklist, denyEnv...)
+}
+
+// adoptSessionRepoForTools adopts the session ledger store before the tool
+// wiring when tools are on: the workflow engine stamps this instance on
+// child runs, and the attach reuses it. Tools off means the attach never
+// adopts either, so adopting here would open a store nothing ever closes.
+func adoptSessionRepoForTools(sess *chat.Session, useTools bool, res *config.Resolved, agentState *AgentSessionState) {
+	if !useTools {
+		return
+	}
+	adoptSessionLedgerRepo(sess, res.Subagents, agentState, sessionRouting{Context: contextDispatcherFor(sess, res.Subagents), Resolved: res})
 }
