@@ -64,6 +64,6 @@ When monitoring a `wait:"none"` run:
 ## 4. Answers to Design & Review Questions
 
 1. **Cancellation Trigger Heuristic**: Fixed at **90 seconds on Step 1** with 0 tool calls emitted, or **2x the estimated task duration**.
-2. **Prompt Hygiene Placement**: Recorded as durable policy in `.agents/rules/50-concurrency-subagents.md` (Dispatch Hygiene For Batch Fan-Out) and in the shared memory entry. Compile-time prompt text in `internal/subagents/prompts.go` is unchanged.
+2. **Prompt Hygiene Placement**: Recorded as durable policy in `.agents/rules/50-concurrency-subagents.md` (Dispatch Hygiene For Batch Fan-Out), in the shared memory entry, AND in the compiled `MessagingProtocolPrompt` (`internal/subagents/prompts.go`): the kind="question" bullet now instructs children to reserve questions for true blockers and decide small doubts themselves.
 3. **Event Polling Scope**: Polling checks both `task_blocked` and terminal states (`task_completed`, `task_failed`, `task_timed_out`).
 4. **Cost & Noise Management**: Backoff intervals scale from 5s up to 60s, keeping event querying minimal.
