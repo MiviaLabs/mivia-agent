@@ -501,7 +501,13 @@ func ApplyWorkflowStoreRoot(res *config.Resolved, root string) {
 	if p := res.Subagents.StorePath; p != "" {
 		p = config.ExpandPath(p)
 		res.Subagents.StorePath = p
-		if root != "" && !filepath.IsAbs(p) {
+		// A separator-rooted path ("/abs/x.db") carries no volume letter, so
+		// filepath.IsAbs reports false for it on Windows. A user who wrote a
+		// rooted path means an anchored location; joining it under the store
+		// root would silently turn it into "<root>/abs/x.db". Unix behavior
+		// is unchanged: IsAbs already covers rooted paths there.
+		rooted := strings.HasPrefix(p, "/") || strings.HasPrefix(p, "\\")
+		if root != "" && !filepath.IsAbs(p) && !rooted {
 			res.Subagents.StorePath = filepath.Join(root, p)
 		}
 	}
