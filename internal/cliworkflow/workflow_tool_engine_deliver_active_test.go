@@ -41,20 +41,35 @@ func TestSessionDeliverWaitsForActiveDoneThenProceeds(t *testing.T) {
 	timer := time.AfterFunc(20*time.Millisecond, func() { close(done) })
 	defer timer.Stop()
 
-	start := time.Now()
+	// Observe the active.done gate's own resolution time directly, not total
+	// Deliver duration: the latter also includes executeWorkflowDeliver's
+	// ledger/git I/O, which is unbounded under a loaded machine and previously
+	// made this assertion flaky (observed 1.27s in CI against a 400ms bound)
+	// for a reason unrelated to the gate behavior being tested.
+	waitCh := make(chan time.Duration, 1)
+	previousObserved := sessionDeliverActiveWaitObserved
+	sessionDeliverActiveWaitObserved = func(d time.Duration) { waitCh <- d }
+	t.Cleanup(func() { sessionDeliverActiveWaitObserved = previousObserved })
+
 	if _, err := e.Deliver(context.Background(), runID, true); err != nil {
 		t.Fatalf("Deliver = %v", err)
 	}
-	elapsed := time.Since(start)
+
+	var gateWait time.Duration
+	select {
+	case gateWait = <-waitCh:
+	default:
+		t.Fatal("active.done gate was never observed; want Deliver to select on active.done")
+	}
 
 	// A lower bound too: this pins that Deliver genuinely waited on active.done
 	// (closed after 20ms) rather than skipping the wait entirely and racing
 	// straight into the lock.
-	if elapsed < 15*time.Millisecond {
-		t.Fatalf("elapsed = %s, want Deliver to have actually waited on active.done (closed after ~20ms), not skipped the wait", elapsed)
+	if gateWait < 15*time.Millisecond {
+		t.Fatalf("gate wait = %s, want Deliver to have actually waited on active.done (closed after ~20ms), not skipped the wait", gateWait)
 	}
-	if elapsed >= wait {
-		t.Fatalf("elapsed = %s, want Deliver to proceed once active.done closed, well under the %s wait bound", elapsed, wait)
+	if gateWait >= wait {
+		t.Fatalf("gate wait = %s, want Deliver to proceed once active.done closed, well under the %s wait bound", gateWait, wait)
 	}
 }
 

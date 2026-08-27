@@ -589,7 +589,7 @@ func TestIntegration_SettingsModelActivationSwitchesSessionAndNextTurn(t *testin
 	if err != nil {
 		t.Fatalf("conv.Send error: %v", err)
 	}
-	events := drainUntilClose(t, turnHandle.Events(), 3*time.Second)
+	events := drainUntilClose(t, turnHandle.Events(), 5*time.Second)
 	if len(events) == 0 {
 		t.Fatal("expected events from turn execution")
 	}

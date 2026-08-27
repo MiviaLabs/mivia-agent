@@ -27,6 +27,14 @@ var SessionDeleteRunFunc = func(ctx context.Context, repo workflowledger.Reposit
 // a successful delivery.
 var SessionDeliverLedgerReopenFunc = OpenWorkflowReportContext
 
+// sessionDeliverActiveWaitObserved is the test seam over the active.done
+// gate's resolution time: it fires the instant the select in Deliver picks a
+// branch, before executeWorkflowDeliver's ledger/git I/O runs. Tests assert
+// timing bounds against this value instead of total Deliver duration, which
+// also includes that I/O and is not bounded under load - see
+// TestSessionDeliverWaitsForActiveDoneThenProceeds.
+var sessionDeliverActiveWaitObserved = func(time.Duration) {}
+
 // Cancel implements workflowledger.Engine.
 // Refusal gates first (a lock-free status read): a terminal run is an
 // idempotent no-op and a delivery_pending run is refused, both without
@@ -256,10 +264,12 @@ func (e *sessionWorkflowEngine) Deliver(ctx context.Context, runID string, allow
 		active := e.active[runID]
 		e.mu.Unlock()
 		if active != nil {
+			waitStart := time.Now()
 			select {
 			case <-active.done:
 			case <-time.After(WorkflowResolutionLockWait):
 			}
+			sessionDeliverActiveWaitObserved(time.Since(waitStart))
 		}
 	}
 	if err := executeWorkflowDeliver(ctx, runID, e.root, e.configPath, allowPublish, false, &stdout, &stderr); err != nil {
