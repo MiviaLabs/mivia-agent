@@ -223,6 +223,13 @@ name = 'runware/gpt-oss-120b'
 reasoning = 'high'
 reasoning_efforts = ['low', 'medium', 'high']
 
+[[providers.llmproxycli.models]]
+context_window_tokens = 1000000
+max_output_tokens = 128000
+name = 'qwen3.8-flash'
+reasoning = 'high'
+reasoning_efforts = ['low', 'medium', 'high']
+
 [providers.minimax]
 api_key_env = 'MINIMAX_API_KEY'
 base_url = 'https://api.minimax.io/v1'
