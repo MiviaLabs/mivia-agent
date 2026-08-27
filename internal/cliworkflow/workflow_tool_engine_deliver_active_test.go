@@ -55,6 +55,13 @@ func TestSessionDeliverWaitsForActiveDoneThenProceeds(t *testing.T) {
 		t.Fatalf("Deliver = %v", err)
 	}
 
+	// waitCh receiving a value at all is the proof that Deliver actually
+	// entered the select on active.done rather than skipping the gate
+	// entirely - that does not need a duration bound. A duration lower bound
+	// was tried and removed: the 20ms close(done) timer starts at test setup,
+	// before Deliver's preceding ledger read, so under load that read alone
+	// can consume most of the 20ms budget before the select is even entered
+	// (observed 7.28ms remaining in CI) without the gate having been skipped.
 	var gateWait time.Duration
 	select {
 	case gateWait = <-waitCh:
@@ -62,12 +69,9 @@ func TestSessionDeliverWaitsForActiveDoneThenProceeds(t *testing.T) {
 		t.Fatal("active.done gate was never observed; want Deliver to select on active.done")
 	}
 
-	// A lower bound too: this pins that Deliver genuinely waited on active.done
-	// (closed after 20ms) rather than skipping the wait entirely and racing
-	// straight into the lock.
-	if gateWait < 15*time.Millisecond {
-		t.Fatalf("gate wait = %s, want Deliver to have actually waited on active.done (closed after ~20ms), not skipped the wait", gateWait)
-	}
+	// The upper bound is still meaningful: it distinguishes "reacted to
+	// active.done closing" from "fell through the full wait timeout" (the
+	// scenario TestSessionDeliverFallsThroughAfterActiveDoneTimeout covers).
 	if gateWait >= wait {
 		t.Fatalf("gate wait = %s, want Deliver to proceed once active.done closed, well under the %s wait bound", gateWait, wait)
 	}
