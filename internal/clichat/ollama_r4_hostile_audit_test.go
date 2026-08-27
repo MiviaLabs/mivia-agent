@@ -58,7 +58,7 @@ func TestR4ChatOnceClosedPort127SurfacesDialError(t *testing.T) {
 	if strings.Contains(err.Error(), "missing API key") {
 		t.Fatalf("key gate fired for keyless loopback: %v", err)
 	}
-	if !strings.Contains(err.Error(), "connection refused") {
+	if !wantDialRefused(err) {
 		t.Fatalf("error = %q, want a connection-refused provider/dial error", err)
 	}
 	if elapsed > 60*time.Second {
@@ -86,7 +86,7 @@ func TestR4ChatOnceClosedPortLocalhostSurfacesDialError(t *testing.T) {
 	if strings.Contains(err.Error(), "missing API key") {
 		t.Fatalf("key gate fired for keyless localhost: %v", err)
 	}
-	if !strings.Contains(err.Error(), "connection refused") {
+	if !wantDialRefused(err) {
 		t.Fatalf("error = %q, want a connection-refused provider/dial error", err)
 	}
 	if elapsed > 60*time.Second {

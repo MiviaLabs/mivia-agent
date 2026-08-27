@@ -4,10 +4,42 @@ import (
 	"context"
 	"errors"
 	"net"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
 )
+
+// wsaECONNREFUSED is the Winsock error number for a refused connection
+// (WSAECONNREFUSED). On Windows syscall.ECONNREFUSED is an invented
+// APPLICATION_ERROR constant, not the Winsock value, and syscall.Errno.Is
+// there has no refusal mapping, so errors.Is never matches a real refused
+// dial on that platform. Any Windows code path must compare the unwrapped
+// errno against this number; keep the comparison GOOS-gated, because 10061
+// is a different errno on Unix.
+const wsaECONNREFUSED = 10061
+
+// IsConnectionRefused reports whether err is a connection-refused dial
+// failure on this platform: errors.Is(err, syscall.ECONNREFUSED) covers
+// Unix, and on Windows the unwrapped errno is compared against
+// WSAECONNREFUSED. Match on errno values rather than message text:
+// Winsock wording ("connectex: ... actively refused it") differs from the
+// Unix phrase and is locale-dependent.
+func IsConnectionRefused(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return true
+	}
+	if runtime.GOOS == "windows" {
+		var errno syscall.Errno
+		if errors.As(err, &errno) {
+			return int(errno) == wsaECONNREFUSED
+		}
+	}
+	return false
+}
 
 // TransientError marks a failure where the call never delivered an answer.
 //
@@ -108,7 +140,7 @@ func IsTransient(err error) bool {
 	// The provider layer already wraps its OWN cut bodies and torn streams as
 	// TransientError at the point of the read, where the difference is known,
 	// so the type test above still covers every real transport fault.
-	if errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNREFUSED) ||
+	if IsConnectionRefused(err) || errors.Is(err, syscall.ECONNRESET) ||
 		errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ETIMEDOUT) {
 		return true
 	}

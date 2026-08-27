@@ -182,7 +182,7 @@ func TestAuditOllamaLoopbackConnectionRefusedBounded(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a connection error, got nil")
 	}
-	if !strings.Contains(err.Error(), "connection refused") {
+	if !wantDialRefused(err) {
 		t.Fatalf("error = %q, want a connection-refused error", err)
 	}
 	if got := attempts.Load(); got != 5 {

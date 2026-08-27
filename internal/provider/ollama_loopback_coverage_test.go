@@ -174,7 +174,7 @@ func TestF2BSinglePinnedIPRefusalSurfacesFirstErr(t *testing.T) {
 		}
 		t.Fatal("dial to a closed pinned port must fail")
 	}
-	if !strings.Contains(err.Error(), "connection refused") {
+	if !wantDialRefused(err) {
 		t.Fatalf("error = %q, want it to contain \"connection refused\"", err)
 	}
 }

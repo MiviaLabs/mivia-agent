@@ -179,7 +179,7 @@ func TestChatOnceSessionFlagResumesKnownSession(t *testing.T) {
 	if strings.Contains(err.Error(), "--session") {
 		t.Fatalf("err = %v: the resume step itself failed instead of proceeding to the dial", err)
 	}
-	if !strings.Contains(err.Error(), "connection refused") {
+	if !wantDialRefused(err) {
 		t.Fatalf("err = %v, want a connection-refused provider/dial error (resume should have succeeded)", err)
 	}
 }

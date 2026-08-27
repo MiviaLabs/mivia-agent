@@ -387,6 +387,9 @@ func isRetryableTransportError(err error) bool {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
+	if IsConnectionRefused(err) {
+		return true
+	}
 	errStr := err.Error()
 	// Connection refused, no such host, timeout, TLS handshake, etc.
 	retryablePhrases := []string{
