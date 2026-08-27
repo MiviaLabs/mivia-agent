@@ -272,6 +272,16 @@ func retryOnEmptyResponse(ctx context.Context, l *Loop, sdkOpts sdkagentloop.Opt
 			l.LastFinishReason != provider.FinishReasonRefusal
 	}
 	for attempt := 0; attempt < maxEmptyResponseRetries && shouldRetry(); attempt++ {
+		// Announce the retry that is ABOUT to happen through the same emit
+		// seam sdkPromptBudgetPreflight uses above, BEFORE re-running the
+		// whole SDK loop, so a caller watching events never sits silent
+		// while a second (or third) potentially multi-minute LLM call runs
+		// behind what looked like a finished (if empty) turn. Purely
+		// observability: it does not touch shouldRetry or the loop bound.
+		emit(opts, Event{
+			Kind:   EventEmptyResponseRetry,
+			Detail: fmt.Sprintf("empty response on attempt %d/%d, retrying...", attempt+1, maxEmptyResponseRetries+1),
+		})
 		// Defense-in-depth for a narrow streaming edge case: the empty-response
 		// case normally streams zero bytes (there is no content to forward),
 		// but a provider that streams whitespace-only content before the

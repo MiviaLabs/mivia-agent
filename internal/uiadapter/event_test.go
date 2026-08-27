@@ -39,6 +39,7 @@ func allEventKinds() []agent.EventKind {
 		agent.EventTokenUsage,
 		agent.EventWorkLimit,
 		agent.EventSchemaRetry,
+		agent.EventEmptyResponseRetry,
 	}
 }
 
@@ -226,6 +227,17 @@ func TestTranslateEvent_Notice(t *testing.T) {
 			want: []uievent.Event{{
 				Kind: uievent.KindNotice,
 				Body: uievent.NoticeBody{Text: "schema validation failed on attempt 1/3, retrying..."},
+			}},
+		},
+		{
+			name: "empty_response_retry_carries_attempt_message",
+			ev: agent.Event{
+				Kind:   agent.EventEmptyResponseRetry,
+				Detail: "empty response on attempt 1/3, retrying...",
+			},
+			want: []uievent.Event{{
+				Kind: uievent.KindNotice,
+				Body: uievent.NoticeBody{Text: "empty response on attempt 1/3, retrying..."},
 			}},
 		},
 	})

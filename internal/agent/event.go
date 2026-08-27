@@ -67,6 +67,17 @@ const (
 	// EventStep (must not inflate a schema-retry step budget) and must never
 	// be confused with EventSubagentDone.
 	EventSchemaRetry EventKind = "schema_retry"
+	// EventEmptyResponseRetry reports a bounded empty-response retry that is
+	// ABOUT to happen: the provider returned a genuinely empty response (no
+	// text, no tool calls) and retryOnEmptyResponse
+	// (internal/agent/agentloop_run.go) is about to re-run the whole SDK
+	// completion loop from the same preparedMsgs. Without this, an
+	// empty-response retry ran with zero observable signal - indistinguishable
+	// from a stalled turn, the same silent-retry shape EventSchemaRetry fixes
+	// for the subagent schema-repair retry. Detail carries a human-readable
+	// "attempt N/M" message. Observability only: it does not count as
+	// EventStep and does not alter retry control flow.
+	EventEmptyResponseRetry EventKind = "empty_response_retry"
 )
 
 // EventOrigin identifies the agent that produced an event. The zero value
