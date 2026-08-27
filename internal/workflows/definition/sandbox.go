@@ -134,7 +134,17 @@ func rejectHostHomePath(path string) error {
 		return fmt.Errorf("resolve verifier host home: %w", err)
 	}
 	rel, err := filepath.Rel(resolvedHome, resolvedPath)
-	if err != nil || rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))) {
+	if err != nil {
+		// filepath.Rel fails for two absolute paths that share no ancestor -
+		// on Windows, paths on different drive volumes ("can't make C:\go
+		// relative to D:\home"). No common ancestor means the Go root cannot
+		// be inside the host home, so it is allowed. Treating the error as
+		// containment misfires whenever CI provisions the toolchain on a
+		// different volume than USERPROFILE. On Unix absolute paths always
+		// share "/", so Rel never errors here and behavior is unchanged.
+		return nil
+	}
+	if rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))) {
 		return fmt.Errorf("verifier Go root must not be inside the host home")
 	}
 	return nil
