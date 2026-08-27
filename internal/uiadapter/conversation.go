@@ -267,25 +267,39 @@ func emitSyntheticTurnStart(events chan<- uievent.Event, input string, seq *uint
 	}
 }
 
+// subagentForwardKinds lists the uievent.Kind values a non-zero-Origin
+// (subagent-authored) agent.Event may still reach the root turn stream
+// as, despite the general divert to SubagentThreads.HandleEvent below.
+// Only status/lifecycle signals that drive the sidebar panel's row state
+// belong here - transcript CONTENT (assistant text, reasoning, nested
+// tool-call deltas) must stay diverted to the subagent's own thread,
+// which is the whole point of the Origin-based routing newTurnHandler
+// does. Today the only producer is translateSubagentDone's tool.output
+// entry (event_kind.go), which carries the Progress that
+// filespanel.observeAgent keys a subagent's row status on - without it,
+// a task's row only ever left "running" via the ENCLOSING dispatch_tasks
+// call's own tool.end, so a fast subagent that finished long ago still
+// looked stalled until the whole batch resolved. A reviewer must sign
+// off before adding another Kind here, the same discipline
+// droppedKinds in event.go already requires for the translate switch
+// itself.
+var subagentForwardKinds = map[uievent.Kind]bool{
+	uievent.KindToolOutput: true,
+}
+
 // newTurnHandler returns the per-turn agent-event handler that runs as
 // the OnAgentEvent tap. It translates each agent.Event via
 // uiadapter.TranslateEventWithOptions, stamps the real TurnID once known, and
-// forwards onto the channel under a closed-check. Subagent events (non-zero Origin)
-// are routed directly to the SubagentThreads registry and omitted from the
-// root conversation's turn stream. The select on turnCtx.Done() drops the event
-// rather than blocks the agent loop if the buffer is full and Cancel is mid-flight.
+// forwards onto the channel under a closed-check. Subagent events (non-zero
+// Origin) are routed to the SubagentThreads registry as before, AND -
+// additively - filtered through subagentForwardKinds and forwarded onto the
+// root conversation's turn stream too, so the sidebar panel sees a
+// subagent's own completion live instead of only when the whole enclosing
+// batch finishes. The select on turnCtx.Done() drops the event rather than
+// blocks the agent loop if the buffer is full and Cancel is mid-flight.
 func newTurnHandler(events chan<- uievent.Event, closed *atomic.Bool, turnIDPtr *atomic.Pointer[string], seq *uint64, turnCtx context.Context, opts TranslateOptions, subagents *SubagentThreads) func(agent.Event) {
-	return func(ev agent.Event) {
-		if closed.Load() {
-			return
-		}
-		if !ev.Origin.IsZero() {
-			if subagents != nil {
-				subagents.HandleEvent(ev, opts)
-			}
-			return
-		}
-		for _, e := range TranslateEventWithOptions(ev, opts) {
+	forward := func(translated []uievent.Event) {
+		for _, e := range translated {
 			if closed.Load() {
 				return
 			}
@@ -302,6 +316,37 @@ func newTurnHandler(events chan<- uievent.Event, closed *atomic.Bool, turnIDPtr 
 			}
 		}
 	}
+	return func(ev agent.Event) {
+		if closed.Load() {
+			return
+		}
+		if !ev.Origin.IsZero() {
+			if subagents != nil {
+				subagents.HandleEvent(ev, opts)
+			}
+			forward(filterSubagentForward(TranslateEventWithOptions(ev, opts)))
+			return
+		}
+		forward(TranslateEventWithOptions(ev, opts))
+	}
+}
+
+// filterSubagentForward keeps only the status/lifecycle uievent Kinds a
+// subagent-origin event is allowed to reach the root turn stream as (see
+// subagentForwardKinds). Everything else - transcript content - is
+// dropped here so it stays confined to the subagent's own thread, which
+// already recorded it via SubagentThreads.HandleEvent.
+func filterSubagentForward(translated []uievent.Event) []uievent.Event {
+	if len(translated) == 0 {
+		return nil
+	}
+	out := make([]uievent.Event, 0, len(translated))
+	for _, e := range translated {
+		if subagentForwardKinds[e.Kind] {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // newTurnHandle constructs the handle returned to the caller of Send.
