@@ -112,9 +112,20 @@ func verifierGoToolchain() (string, string, error) {
 	if err := rejectHostHomePath(root); err != nil {
 		return "", "", err
 	}
-	goPath := filepath.Join(root, "bin", "go")
+	// Windows ships the binary as go.exe and Stat reports no execute bit
+	// there, so both the name probe and the x-bit check must be GOOS-aware;
+	// a plain "bin/go" lookup fails on every Windows host.
+	goName := "go"
+	if runtime.GOOS == "windows" {
+		goName = "go.exe"
+	}
+	goPath := filepath.Join(root, "bin", goName)
 	info, err := os.Stat(goPath)
-	if err != nil || !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
+	executable := info.Mode().IsRegular() && info.Mode()&0o111 != 0
+	if runtime.GOOS == "windows" {
+		executable = err == nil && info.Mode().IsRegular()
+	}
+	if err != nil || !executable {
 		return "", "", fmt.Errorf("resolve verifier Go executable")
 	}
 	return goPath, root, nil
