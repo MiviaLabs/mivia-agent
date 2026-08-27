@@ -355,9 +355,10 @@ func TestTranslateEvent_NoticeMetrics(t *testing.T) {
 // TestTranslateEvent_Subagent covers the subagent start/end/heartbeat
 // kinds. EventSubagentStart/End reuse the tool.start/tool.end body shape
 // so the UI shows the row alongside other tool calls (attribution rides
-// on the input Origin); EventSubagentHeartbeat is dropped because
-// subagent progress rides Progress on tool.output later. EventSubagentDone
-// has its own test below.
+// on the input Origin); EventSubagentHeartbeat maps to a keyed tool.output
+// progress update so blocking dispatch_tasks rows show live liveness -
+// heartbeats WITHOUT a TaskID stay dropped because no row owns them.
+// EventSubagentDone has its own test below.
 func TestTranslateEvent_Subagent(t *testing.T) {
 	t.Parallel()
 	runMappingCases(t, []mappingCase{
@@ -394,8 +395,22 @@ func TestTranslateEvent_Subagent(t *testing.T) {
 			}},
 		},
 		{
-			name: "subagent_heartbeat_dropped",
-			ev:   agent.Event{Kind: agent.EventSubagentHeartbeat, Detail: "elapsed=30s steps=2"},
+			name: "subagent_heartbeat_maps_to_keyed_progress",
+			ev: agent.Event{
+				Kind: agent.EventSubagentHeartbeat, Detail: "elapsed=30s steps=2",
+				Origin: agent.EventOrigin{TaskID: "task-hb", Agent: "auditor"},
+			},
+			want: []uievent.Event{{
+				Kind: uievent.KindToolOutput,
+				Body: uievent.ToolOutputBody{
+					ToolCallID: "task-hb",
+					Progress:   &uievent.Progress{Status: "running", Log: []string{"elapsed=30s steps=2"}},
+				},
+			}},
+		},
+		{
+			name: "subagent_heartbeat_without_taskid_dropped",
+			ev:   agent.Event{Kind: agent.EventSubagentHeartbeat, Detail: "tick without owner"},
 			want: nil,
 		},
 	})
@@ -528,7 +543,7 @@ func TestTranslateEvent_ExhaustiveCoverage(t *testing.T) {
 		ev := contentBearingEvent(k)
 		got := safeTranslate(t, ev)
 		switch k {
-		case agent.EventHeartbeat, agent.EventSubagentHeartbeat, agent.EventTokenUsage, agent.EventStep, agent.EventCacheUsage:
+		case agent.EventHeartbeat, agent.EventTokenUsage, agent.EventStep, agent.EventCacheUsage:
 			if len(got) != 0 {
 				t.Errorf("%s must drop by default; got %d events", k, len(got))
 			}

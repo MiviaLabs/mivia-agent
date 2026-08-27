@@ -103,18 +103,14 @@ func TestNewTurnHandler_SubagentDone_ForwardsProgressToTurnStream(t *testing.T) 
 	}
 }
 
-// TestNewTurnHandler_SubagentHeartbeat_ProducesNoTurnStreamEvent is RED
-// test B, adjusted to the codebase's actual, independently tested
-// contract: EventSubagentHeartbeat is an explicit droppedKinds entry
-// (event.go) - TranslateEventWithOptions returns nil for it today (see
-// event_test.go's "subagent_heartbeat_dropped" case), so there is no
-// heartbeat-translated uievent for this fix to forward. This test pins
-// that a heartbeat with a non-zero Origin still produces zero events on
-// the turn stream after the fix (no accidental new leak), matching
-// pre-fix behavior exactly - forwarding stays a pure filter over
-// whatever TranslateEventWithOptions already produces, it does not
-// invent new translation output.
-func TestNewTurnHandler_SubagentHeartbeat_ProducesNoTurnStreamEvent(t *testing.T) {
+// TestNewTurnHandler_SubagentHeartbeat_ProducesKeyedProgressOnTurnStream
+// pins the post-fix contract: a heartbeat with a TaskID translates to
+// exactly one keyed tool.output progress event on the turn stream (that is
+// the channel dispatch-task rows consume to show live liveness), carrying
+// NO notice/text content - the root stream must still stay free of subagent
+// transcript content, only keyed progress rides it. Heartbeats without an
+// owning TaskID must produce nothing at all.
+func TestNewTurnHandler_SubagentHeartbeat_ProducesKeyedProgressOnTurnStream(t *testing.T) {
 	handle, sess, _, unblock := startBlockedSubagentTurn(t)
 
 	sess.OnAgentEvent(agent.Event{
@@ -122,13 +118,39 @@ func TestNewTurnHandler_SubagentHeartbeat_ProducesNoTurnStreamEvent(t *testing.T
 		Detail: "elapsed=30s steps=2",
 		Origin: agent.EventOrigin{TaskID: "task-hb", Agent: "auditor"},
 	})
+	sess.OnAgentEvent(agent.Event{
+		Kind:   agent.EventSubagentHeartbeat,
+		Detail: "ownerless tick",
+	})
 	unblock()
 
 	events := drainUntilClose(t, handle.Events(), 5*time.Second)
+	progress := 0
 	for _, e := range events {
-		if e.Kind != uievent.KindTurnStart && e.Kind != uievent.KindTextEnd && e.Kind != uievent.KindTurnEnd {
-			t.Errorf("unexpected event on turn stream from a dropped-kind subagent event: %+v", e)
+		switch {
+		case e.Kind == uievent.KindToolOutput:
+			progress++
+			b, ok := e.Body.(uievent.ToolOutputBody)
+			if !ok {
+				t.Fatalf("tool.output body type = %T, want ToolOutputBody", e.Body)
+			}
+			if b.ToolCallID != "task-hb" {
+				t.Errorf("progress ToolCallID = %q, want task-hb (keyed by Origin.TaskID)", b.ToolCallID)
+			}
+			if b.Progress == nil || b.Progress.Status != "running" || len(b.Progress.Log) != 1 || b.Progress.Log[0] != "elapsed=30s steps=2" {
+				t.Errorf("progress payload = %+v, want running + last detail", b.Progress)
+			}
+		case e.Kind == uievent.KindTurnStart, e.Kind == uievent.KindTextEnd, e.Kind == uievent.KindTurnEnd:
+			// expected turn lifecycle events
+		default:
+			t.Errorf("unexpected %s on turn stream from a subagent heartbeat: %+v", e.Kind, e)
 		}
+		if b, ok := e.Body.(uievent.NoticeBody); ok && strings.Contains(b.Text, "tick") {
+			t.Errorf("heartbeat detail leaked as a notice line: %+v", e)
+		}
+	}
+	if progress != 1 {
+		t.Errorf("got %d keyed progress events, want exactly 1 (TaskID-less heartbeat must not emit)", progress)
 	}
 }
 

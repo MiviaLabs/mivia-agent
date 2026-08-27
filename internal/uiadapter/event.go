@@ -33,8 +33,14 @@ import (
 // reviewer to sign off; the list lives next to the switch so the omission is
 // obvious rather than discovered by a missing case.
 var droppedKinds = []agent.EventKind{
-	agent.EventHeartbeat,         // wall-clock progress tick; renderers are not silenced by phase 1
-	agent.EventSubagentHeartbeat, // subagent tick; progress travels on Progress in tool.output later
+	// EventHeartbeat is the ROOT loop's wall-clock tick. It has no natural
+	// owner row to attach liveness to (the turn spinner already covers root
+	// turn activity), so it stays dropped.
+	agent.EventHeartbeat,
+	// EventSubagentHeartbeat is NO LONGER dropped: during a blocking
+	// dispatch_tasks the user otherwise stares at silent "running" rows for
+	// minutes - exactly the black hole that made long batches unobservable
+	// in phase 1 (see translateSubagentHeartbeat).
 }
 
 // ParseArgsForTest is the test-export wrapper for parseArgs. The body
@@ -108,11 +114,13 @@ func TranslateEventWithOptions(ev agent.Event, opts TranslateOptions) []uievent.
 		return notice(ev.Detail)
 	case agent.EventEmptyResponseRetry:
 		return notice(ev.Detail)
-	case agent.EventHeartbeat, agent.EventSubagentHeartbeat:
-		// Explicit drop; one of the two progress-tick kinds has no UI
-		// representation in phase 1. The drop is recorded in droppedKinds
-		// so reviewers can audit it alongside the switch.
+	case agent.EventHeartbeat:
+		// Root-loop wall-clock tick: intentionally no UI representation. See
+		// droppedKinds. The exhaustive-switch guard below does not fire
+		// because this is an explicit case, not a fallthrough.
 		return nil
+	case agent.EventSubagentHeartbeat:
+		return translateSubagentHeartbeat(ev)
 	}
 	// No default case. If a new agent.EventKind is added without an entry
 	// here, the compile-time exhaustiveness check on the switch fails

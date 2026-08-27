@@ -165,6 +165,39 @@ func translateSubagentDone(ev agent.Event) []uievent.Event {
 	})
 }
 
+// translateSubagentHeartbeat maps EventSubagentHeartbeat to a tool.output
+// progress update for that subagent's OWN row (keyed by Origin.TaskID, the
+// same key translateSubagentDone and conversation/events.go's
+// dispatchTaskIDs use), so a blocking dispatch_tasks shows live per-task
+// liveness - latest detail per row - instead of silent "running" rows until
+// the whole batch settles. Renderers coalesce by replacing the row's progress
+// state; emitting one event per heartbeat is intentional and bounded by the
+// heartbeat cadence.
+//
+// Heartbeats without a TaskID cannot be attributed to any row and are
+// dropped rather than guessed at. Status is always "running": a heartbeat is
+// definitionally pre-terminal; the terminal transition still arrives via
+// translateSubagentDone / the enclosing tool.end exactly as before.
+func translateSubagentHeartbeat(ev agent.Event) []uievent.Event {
+	if ev.Origin.TaskID == "" {
+		return nil
+	}
+	var log []string
+	if ev.Detail != "" {
+		log = []string{ev.Detail}
+	}
+	return []uievent.Event{{
+		Kind: uievent.KindToolOutput,
+		Body: uievent.ToolOutputBody{
+			ToolCallID: ev.Origin.TaskID,
+			Progress: &uievent.Progress{
+				Status: "running",
+				Log:    log,
+			},
+		},
+	}}
+}
+
 // subagentDoneText picks the most informative label available on the
 // subagent's Origin for a terminal "subagent done" advisory line:
 // TaskDescription first (it says what the subagent was doing), then Agent
