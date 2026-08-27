@@ -456,18 +456,41 @@ func parsePositionNumber(s string) (int, bool) {
 // relativizeDiagnosticsPath rewrites an absolute path under the workspace root
 // to a workspace-relative path. An empty root, a relative path, or a path
 // outside the root stays verbatim.
+//
+// The prefix comparison runs on slash-normalized forms: captured output and
+// fixtures may carry POSIX-style synthetic roots ("/home/me/proj") even on
+// Windows hosts, where filepath.IsAbs("/x") is false and filepath.Rel would
+// refuse, silently skipping the rewrite for every row. Relative results use
+// forward slashes uniformly.
 func relativizeDiagnosticsPath(p, workspaceRoot string) string {
-	if p == "" || workspaceRoot == "" || !filepath.IsAbs(p) {
+	if p == "" || workspaceRoot == "" {
 		return p
 	}
-	rel, err := filepath.Rel(workspaceRoot, p)
-	if err != nil {
+	slashPath := filepath.ToSlash(p)
+	slashRoot := strings.TrimRight(filepath.ToSlash(workspaceRoot), "/")
+	if slashPath == "" || slashRoot == "" {
 		return p
 	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	// A root is usable when it is POSIX-rooted ("/x") or carries a Windows
+	// volume ("C:/x"); anything else stays verbatim.
+	rooted := strings.HasPrefix(slashRoot, "/") ||
+		(len(slashRoot) >= 2 && slashRoot[1] == ':')
+	if !rooted {
 		return p
 	}
-	return rel
+	absLike := strings.HasPrefix(slashPath, "/") ||
+		(len(slashPath) >= 2 && slashPath[1] == ':')
+	if !absLike {
+		return p
+	}
+	switch {
+	case slashPath == slashRoot:
+		return "."
+	case strings.HasPrefix(slashPath, slashRoot+"/"):
+		return slashPath[len(slashRoot)+1:]
+	default:
+		return p
+	}
 }
 
 // stripControlChars removes C0 control characters (tab preserved) so hostile
