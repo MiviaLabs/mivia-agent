@@ -182,10 +182,23 @@ func agentNames(reg *agents.AgentRegistry) []string {
 	return []string{}
 }
 
+// agentRoutingBaseDescription states the contract of the task "agent" field
+// without a roster. The field is OPTIONAL: omitting it runs a tool-less
+// one-shot call. The "always available" clause for the compiled built-in is
+// appended by agentRoutingDescription only when the built-in actually
+// resolved into the registry (a same-name skill collision can skip it), so
+// the prose never promises a target the enum lacks.
+const agentRoutingBaseDescription = "Optional authorized agent for this task: " +
+	"name a listed agent, or omit the field for a tool-less one-shot call on " +
+	"the calling model."
+
 func agentRoutingDescription(reg *agents.AgentRegistry) string {
-	description := "Required authorized agent definition for this task"
+	description := agentRoutingBaseDescription
 	if reg == nil {
 		return description
+	}
+	if _, ok := reg.Get(agents.BuiltInGeneralPurposeName); ok {
+		description += " Built-in general-purpose is always available."
 	}
 	var hints []string
 	for _, agent := range reg.List() {
@@ -198,5 +211,7 @@ func agentRoutingDescription(reg *agents.AgentRegistry) string {
 	if len(hints) == 0 {
 		return description
 	}
-	return description + ". Available agents: " + strings.Join(hints, "; ")
+	// The claim clause above already ends with a period; trim it so the
+	// roster join does not double the punctuation.
+	return strings.TrimSuffix(description, ".") + ". Available agents: " + strings.Join(hints, "; ")
 }

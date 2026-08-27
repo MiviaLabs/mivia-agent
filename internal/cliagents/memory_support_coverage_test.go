@@ -56,14 +56,14 @@ func TestAgentSessionStateDisplayHelpers(t *testing.T) {
 	// DisplaySource and CurrentAgentName on nil and on a selected
 	// agent: nil-safe reads that the TUI dialog renders.
 	var nilState *AgentSessionState
-	if got := nilState.DisplaySource(); got != "compiled" {
+	if got := nilState.DisplaySource(); got != string(config.AgentSourceBuiltIn) {
 		t.Errorf("DisplaySource(nil) = %q", got)
 	}
 	state := &AgentSessionState{}
-	if got := state.DisplaySource(); got != "compiled" {
-		t.Errorf("DisplaySource(no selection) = %q, want compiled", got)
+	if got := state.DisplaySource(); got != string(config.AgentSourceBuiltIn) {
+		t.Errorf("DisplaySource(no selection) = %q, want %q", got, string(config.AgentSourceBuiltIn))
 	}
-	if got := state.DisplayName(); got != "root fallback" {
-		t.Errorf("DisplayName(no selection) = %q, want root fallback", got)
+	if got := state.DisplayName(); got != config.RootAgentName {
+		t.Errorf("DisplayName(no selection) = %q, want %q", got, config.RootAgentName)
 	}
 }

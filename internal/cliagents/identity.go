@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 )
 
@@ -21,7 +22,7 @@ func SessionIdentity(sess *chat.Session, state *AgentSessionState, generation ui
 	if sess == nil || generation == 0 {
 		return nil
 	}
-	name, source := "root fallback", "compiled"
+	name, source := config.RootAgentName, string(config.AgentSourceBuiltIn)
 	if state != nil {
 		state.mu.Lock()
 		defer state.mu.Unlock()

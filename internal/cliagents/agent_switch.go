@@ -86,12 +86,12 @@ type AgentSessionState struct {
 // dialog rendering, which cannot lock the unexported mu field directly.
 func (s *AgentSessionState) DisplayName() string {
 	if s == nil {
-		return "root fallback"
+		return config.RootAgentName
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.Selected == nil {
-		return "root fallback"
+		return config.RootAgentName
 	}
 	return s.Selected.Name
 }
@@ -102,12 +102,12 @@ func (s *AgentSessionState) DisplayName() string {
 // field directly.
 func (s *AgentSessionState) DisplaySource() string {
 	if s == nil {
-		return "compiled"
+		return string(config.AgentSourceBuiltIn)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.Selected == nil {
-		return "compiled"
+		return string(config.AgentSourceBuiltIn)
 	}
 	return string(s.Selected.Provenance.Source)
 }
@@ -236,6 +236,42 @@ type AgentListRow struct {
 	Current     bool
 }
 
+// restoreRootSurface switches the session back to the compiled root surface:
+// no selected definition, the baseline prompt and step budget, and a tool
+// surface rebuilt from the pre-scope base through the same build path a named
+// switch uses (with no selected definition). Callers hold state.mu via
+// ApplySessionAgent.
+func restoreRootSurface(sess *chat.Session, res *config.Resolved, state *AgentSessionState) error {
+	if !state.BaselineCaptured {
+		// The session never left the root surface.
+		state.Selected = nil
+		return nil
+	}
+	var candidate *agentSurface
+	var err error
+	if sess.Tools != nil && state.ToolBase != nil {
+		candidate, err = buildAgentScopedSurface(sess, res, state, nil)
+		if err != nil {
+			return fmt.Errorf("root surface: %w", err)
+		}
+	}
+	state.Selected = nil
+	if candidate == nil {
+		if res != nil {
+			res.SystemPrompt = state.BaselinePrompt
+		}
+		sess.SetAgentSettings(state.BaselinePrompt, state.BaselineMaxSteps, CoreMemoryBlockForState(state))
+		return nil
+	}
+	candidate.commitTo(state)
+	prompt := promptWithDeferredIndex(state.BaselinePrompt, state.TierPlan)
+	if res != nil {
+		res.SystemPrompt = prompt
+	}
+	commitAgentSwitchSurface(sess, res, state, candidate, config.RootAgentName, prompt, state.BaselineMaxSteps)
+	return nil
+}
+
 // ApplySessionAgent switches the root agent for the idle session. busy is the
 // TUI waiting flag; active turns and switch guards are checked on sess.
 // It reuses ToolBase for re-scope and rebuilds the dispatcher like model switch.
@@ -262,6 +298,11 @@ func ApplySessionAgent(sess *chat.Session, res *config.Resolved, state *AgentSes
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return fmt.Errorf("agent name is empty")
+	}
+	if name == config.RootAgentName {
+		// The root identity is compiled and never a registry member: this
+		// restores the root surface instead of going through Select.
+		return restoreRootSurface(sess, res, state)
 	}
 	if state.Registry == nil {
 		return fmt.Errorf("no agents loaded")

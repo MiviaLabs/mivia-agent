@@ -143,8 +143,8 @@ func TestAgentPromptsNeverSetHandlerField(t *testing.T) {
 		t.Error("buildAgentPrompt still instructs setting a handler field; the strict task schema rejects it and fails the whole call")
 	}
 	// Failure recovery must point at the real selector.
-	if !strings.Contains(prompt, "verify every task names a valid agent") {
-		t.Error("buildAgentPrompt failure-recovery text must tell the model to verify every task names a valid agent (and skill if needed)")
+	if !strings.Contains(prompt, "keep only valid agent names") {
+		t.Error("buildAgentPrompt failure-recovery text must tell the model to keep only valid agent names (and skills if needed)")
 	}
 }
 

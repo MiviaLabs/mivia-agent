@@ -565,12 +565,17 @@ func (r *CommandRunner) handleAgents(args string) ports.CommandOutcome {
 }
 
 func (r *CommandRunner) availableAgents() []string {
-	var choices []string
+	// The compiled root agent is always offered first, so switching back
+	// never needs recalling the name; registry members follow, deduped
+	// against it (a workspace cannot register the reserved root name, but
+	// the dedup keeps the contract local).
+	choices := []string{ports.DefaultAgentName}
 	if r.agentState != nil && r.agentState.Registry != nil {
-		choices = r.agentState.Registry.Names()
-	}
-	if len(choices) == 0 {
-		choices = append(choices, ports.DefaultAgentName)
+		for _, name := range r.agentState.Registry.Names() {
+			if name != ports.DefaultAgentName {
+				choices = append(choices, name)
+			}
+		}
 	}
 	return choices
 }

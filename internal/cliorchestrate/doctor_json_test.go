@@ -23,15 +23,16 @@ const goldenHumanOutputOK = `mivia doctor
   api_key_env:DEEPSEEK_API_KEY
 agents:
   collection: not present
-  name: (none)
-  source: (none)
-  state: no definitions
-  tools: (none)
-  model: (none)
-  turns: (none)
-  name: root fallback
-  source: compiled
-  state: fallback (not selectable)
+  name: general-purpose
+  source: builtin
+  state: selectable
+  tools: delete_file,extract,fetch_url,find_references,find_symbol_context,get_diagnostics,glob,go_to_definition,grep,inspect_repository,list_dir,list_symbols,memory_delete,memory_save,memory_search,multi_edit,read_file,run_command,search,search_replace,workflow_cancel,workflow_delete,workflow_deliver,workflow_events,workflow_inspect,workflow_list_runs,workflow_run,workflow_status,write_file
+  model: (inherit session)
+  turns: (inherit session)
+  limits: (inherit session)
+  name: general-orchestrator
+  source: builtin
+  state: built-in (selectable)
   tools: session defaults
   model: session binding
   turns: session default
@@ -53,15 +54,16 @@ const goldenHumanOutputMissingAPIKey = `mivia doctor
   api_key_env:DEEPSEEK_API_KEY
 agents:
   collection: not present
-  name: (none)
-  source: (none)
-  state: no definitions
-  tools: (none)
-  model: (none)
-  turns: (none)
-  name: root fallback
-  source: compiled
-  state: fallback (not selectable)
+  name: general-purpose
+  source: builtin
+  state: selectable
+  tools: delete_file,extract,fetch_url,find_references,find_symbol_context,get_diagnostics,glob,go_to_definition,grep,inspect_repository,list_dir,list_symbols,memory_delete,memory_save,memory_search,multi_edit,read_file,run_command,search,search_replace,workflow_cancel,workflow_delete,workflow_deliver,workflow_events,workflow_inspect,workflow_list_runs,workflow_run,workflow_status,write_file
+  model: (inherit session)
+  turns: (inherit session)
+  limits: (inherit session)
+  name: general-orchestrator
+  source: builtin
+  state: built-in (selectable)
   tools: session defaults
   model: session binding
   turns: session default
@@ -410,8 +412,9 @@ func TestDoctorJSONEmptyAgentCatalog(t *testing.T) {
 	if dj.AgentCatalog == nil {
 		t.Error("agent_catalog should be empty array, not nil")
 	}
-	if len(dj.AgentCatalog) != 0 {
-		t.Errorf("agent_catalog len=%d, want 0", len(dj.AgentCatalog))
+	// A workspace with no agent files still catalogs the compiled built-in.
+	if len(dj.AgentCatalog) != 1 || dj.AgentCatalog[0].Name != "general-purpose" {
+		t.Errorf("agent_catalog = %+v, want exactly the built-in general-purpose entry", dj.AgentCatalog)
 	}
 }
 

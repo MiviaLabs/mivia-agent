@@ -16,8 +16,13 @@ const (
 	// AgentSourceUser is a trusted definition under ~/.mivia/agents/.
 	AgentSourceUser AgentSource = "user"
 	// AgentSourceWorkspace is an untrusted, gated definition under
-	// <workspace>/.mivia/agents/.
+	// <workspace>/.agents/agents/.
 	AgentSourceWorkspace AgentSource = "workspace"
+	// AgentSourceBuiltIn is a compiled definition shipped inside the mivia
+	// binary. Built-ins are product content, not workspace input: they load
+	// regardless of the load_workspace_config gate and always follow the
+	// session provider binding.
+	AgentSourceBuiltIn AgentSource = "builtin"
 )
 
 const maxAgentFileBytes = 256 << 10
@@ -173,6 +178,14 @@ func LoadAgentsGlobal(workspaceRoot string) (AgentsGlobal, error) {
 // DefaultAgentName is the root-session agent selected when --agent is omitted
 // and a definition with this name is available.
 const DefaultAgentName = "mivia"
+
+// RootAgentName is the compiled identity of the main (root) session agent.
+// The root surface is never a registry member, so this name must stay
+// reserved: file-backed definitions may not use it, and selecting it (flag,
+// /agent, picker) restores the root surface. Constraint for future built-ins:
+// no compiled built-in may carry this name either - the reservation in
+// checkNameCollisions rejects it for every input, by design.
+const RootAgentName = "general-orchestrator"
 
 // DiscoverAgentFiles loads user agent files and workspace agent files.
 //

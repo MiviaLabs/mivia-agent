@@ -130,9 +130,9 @@ func WriteAgentCatalog(w io.Writer, view AgentCatalogView, diagnostics io.Writer
 			writeAgentRow(w, row)
 		}
 	}
-	fmt.Fprintln(w, "  name: root fallback")
-	fmt.Fprintln(w, "  source: compiled")
-	fmt.Fprintln(w, "  state: fallback (not selectable)")
+	fmt.Fprintln(w, "  name: "+config.RootAgentName)
+	fmt.Fprintln(w, "  source: "+string(config.AgentSourceBuiltIn))
+	fmt.Fprintln(w, "  state: built-in (selectable)")
 	fmt.Fprintln(w, "  tools: session defaults")
 	fmt.Fprintln(w, "  model: session binding")
 	fmt.Fprintln(w, "  turns: session default")

@@ -397,6 +397,9 @@ func (m *mockSettings) findAgent(name string) int {
 func (m *mockSettings) applyAgent(scope ports.Scope, e ports.AgentEdit) error {
 	switch v := e.(type) {
 	case ports.UpsertAgent:
+		if scope == ports.ScopeBuiltin {
+			return fmt.Errorf("built-in agents are read-only; create a same-name definition to override one")
+		}
 		v.Agent.Scope = scope
 		v.Agent.SystemPromptChars = len(v.Agent.SystemPrompt)
 		if i := m.findAgent(v.Agent.Name); i >= 0 {
@@ -405,12 +408,12 @@ func (m *mockSettings) applyAgent(scope ports.Scope, e ports.AgentEdit) error {
 		}
 		m.agents = append(m.agents, v.Agent)
 	case ports.RemoveAgent:
-		if v.Name == ports.DefaultAgentName {
-			return fmt.Errorf("the default agent %q cannot be removed", ports.DefaultAgentName)
-		}
 		i := m.findAgent(v.Name)
 		if i < 0 {
 			return fmt.Errorf("agent %q not found", v.Name)
+		}
+		if m.agents[i].Scope == ports.ScopeBuiltin {
+			return fmt.Errorf("built-in agent %q cannot be removed", v.Name)
 		}
 		m.agents = append(m.agents[:i], m.agents[i+1:]...)
 	default:
@@ -727,7 +730,7 @@ func seedMCPServers() []ports.MCPServerView {
 
 func seedAgents() []ports.AgentView {
 	return []ports.AgentView{
-		{Name: ports.DefaultAgentName, Description: "general purpose orchestrator", Provider: "openrouter", Model: "anthropic/claude-opus-5", MaxTurns: 40, SystemPromptChars: 4200, SystemPrompt: "You are Mivia, a local CLI coding agent.", Scope: ports.ScopeUser},
+		{Name: "general-purpose", Description: "built-in general-purpose agent", Provider: "", Model: "", MaxTurns: 0, SystemPromptChars: 900, SystemPrompt: "You are the built-in general-purpose agent.", Scope: ports.ScopeBuiltin},
 		{Name: "go-engineer", Description: "implements Go changes", Provider: "openrouter", Model: "anthropic/claude-opus-5", Tools: []string{"edit_file", "run_command"}, MaxTurns: 60, SystemPromptChars: 2100, SystemPrompt: "You are a senior Go engineer.", Scope: ports.ScopeUser},
 		{Name: "reviewer", Description: "reviews changed code for this workspace", Provider: "openrouter", Model: "anthropic/claude-opus-5", Tools: []string{"read_file", "inspect_repository"}, Skills: []string{"code-review"}, MaxTurns: 30, SystemPromptChars: 1800, SystemPrompt: "You are a code reviewer focusing on quality and safety.", Scope: ports.ScopeProject},
 	}

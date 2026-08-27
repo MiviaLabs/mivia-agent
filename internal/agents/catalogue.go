@@ -45,6 +45,7 @@ func LoadAndResolveOpts(workspaceRoot string, o LoadResolveOptions) (*AgentRegis
 			Spec:   f.Spec,
 		})
 	}
+	inputs, builtinWarnings := appendBuiltInInputs(inputs)
 	allowProject := global.LoadWorkspaceConfig
 	if o.SkillCatalogue != nil {
 		// Explicit catalogue path: caller owns the gate decision.
@@ -65,8 +66,31 @@ func LoadAndResolveOpts(workspaceRoot string, o LoadResolveOptions) (*AgentRegis
 		return nil, global, nil, err
 	}
 	warnings := append(append([]string{}, global.Warnings...), discWarnings...)
+	warnings = append(warnings, builtinWarnings...)
 	warnings = append(warnings, resolveWarnings...)
 	return reg, global, warnings, nil
+}
+
+// appendBuiltInInputs merges the compiled built-in definitions behind every
+// same-name file-backed definition (user > workspace > built-in, D4 of the
+// built-in agents plan), with a warning when a file shadows a built-in.
+func appendBuiltInInputs(inputs []ResolveInput) ([]ResolveInput, []string) {
+	var warnings []string
+	out := inputs
+	for _, builtin := range builtInInputs() {
+		shadowed := false
+		for _, in := range inputs {
+			if in.Name == builtin.Name {
+				shadowed = true
+				warnings = append(warnings, fmt.Sprintf("built-in agent %q overridden by %s definition", builtin.Name, in.Source))
+				break
+			}
+		}
+		if !shadowed {
+			out = append(out, builtin)
+		}
+	}
+	return out, warnings
 }
 
 // Select returns the named agent or an error listing available names.

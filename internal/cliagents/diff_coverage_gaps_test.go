@@ -103,10 +103,10 @@ func TestSkillAllowlistPtrBothScopes(t *testing.T) {
 
 func TestAgentSessionStateDisplayAndLedgerHelpers(t *testing.T) {
 	var nilState *AgentSessionState
-	if got := nilState.DisplayName(); got != "root fallback" {
+	if got := nilState.DisplayName(); got != config.RootAgentName {
 		t.Fatalf("DisplayName(nil) = %q", got)
 	}
-	if got := nilState.DisplaySource(); got != "compiled" {
+	if got := nilState.DisplaySource(); got != string(config.AgentSourceBuiltIn) {
 		t.Fatalf("DisplaySource(nil) = %q", got)
 	}
 	if got := nilState.OwnedLedgerStore(); got != nil {
