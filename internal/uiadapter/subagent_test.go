@@ -116,6 +116,97 @@ func TestSubagentTranscriptConversation_ActiveTurn(t *testing.T) {
 	}
 }
 
+// TestSubagentTranscriptConversation_StragglerAfterDoneStaysInactive guards
+// against a straggler event (a late tool_end, a delayed forwarded delta from
+// a salvage/cleanup window) arriving after a thread's own terminal event has
+// already fired. RecordEvent used to set active=true unconditionally at the
+// top for every event, with no check for a prior terminal state, so the
+// straggler resurrected active on a thread that will never produce another
+// terminal event - ActiveTurn() would then hand out a live subscription that
+// never closes, and any UI code waiting on it as the done signal hangs
+// forever.
+func TestSubagentTranscriptConversation_StragglerAfterDoneStaysInactive(t *testing.T) {
+	conv := uiadapter.NewSubagentTranscriptConversation("worker", ports.ModelInfo{}, nil)
+
+	conv.RecordEvent(uievent.Event{
+		Kind: uievent.KindNotice,
+		Body: uievent.NoticeBody{Text: "subagent done: worker"},
+	})
+	if _, active := conv.ActiveTurn(); active {
+		t.Fatal("expected ActiveTurn=false immediately after subagent done notice")
+	}
+
+	// Straggler: a tool_end arriving after the thread's own terminal event.
+	conv.RecordEvent(uievent.Event{
+		Kind: uievent.KindToolEnd,
+		Body: uievent.ToolEndBody{ToolCallID: "late-1", Result: "late result"},
+	})
+
+	if _, active := conv.ActiveTurn(); active {
+		t.Error("expected ActiveTurn=false to stay false after a straggler event post-done")
+	}
+}
+
+// TestSubagentTranscriptConversation_StragglerHistoryStillAppended is a
+// regression check: guarding active=false against stragglers must not change
+// the existing history-append side effect of a straggler event - its content
+// still lands in history the same as before this fix.
+func TestSubagentTranscriptConversation_StragglerHistoryStillAppended(t *testing.T) {
+	conv := uiadapter.NewSubagentTranscriptConversation("worker", ports.ModelInfo{}, nil)
+
+	conv.RecordEvent(uievent.Event{
+		Kind: uievent.KindReasoning,
+		Body: uievent.ReasoningDeltaBody{Text: "thinking..."},
+	})
+	conv.RecordEvent(uievent.Event{
+		Kind: uievent.KindNotice,
+		Body: uievent.NoticeBody{Text: "subagent done: worker"},
+	})
+
+	before := len(conv.History())
+
+	conv.RecordEvent(uievent.Event{
+		Kind: uievent.KindTextDelta,
+		Body: uievent.TextDeltaBody{Text: "straggler text"},
+	})
+
+	hist := conv.History()
+	if len(hist) != before {
+		t.Fatalf("expected straggler to append into existing assistant message, history len got %d, want %d", len(hist), before)
+	}
+	if !strings.Contains(hist[len(hist)-1].Text, "straggler text") {
+		t.Errorf("expected straggler content to still be appended to history, got %+v", hist[len(hist)-1])
+	}
+}
+
+// TestSubagentTranscriptConversation_NewTurnAfterDoneResetsDone guards the
+// object-reuse path: getOrCreate (internal/uiadapter/subagent.go) returns the
+// SAME *SubagentTranscriptConversation for a later event sharing any of its
+// registration keys (TaskID, ToolCallID, or bare Agent name), so a genuine
+// new turn can legitimately land on an already-done conversation object. A
+// KindTurnStart in that situation is a real restart, not a straggler, and
+// must reactivate the thread.
+func TestSubagentTranscriptConversation_NewTurnAfterDoneResetsDone(t *testing.T) {
+	conv := uiadapter.NewSubagentTranscriptConversation("worker", ports.ModelInfo{}, nil)
+
+	conv.RecordEvent(uievent.Event{
+		Kind: uievent.KindNotice,
+		Body: uievent.NoticeBody{Text: "subagent done: worker"},
+	})
+	if _, active := conv.ActiveTurn(); active {
+		t.Fatal("expected ActiveTurn=false after subagent done notice")
+	}
+
+	conv.RecordEvent(uievent.Event{
+		Kind: uievent.KindTurnStart,
+		Body: uievent.TurnStartBody{Input: "second run"},
+	})
+
+	if _, active := conv.ActiveTurn(); !active {
+		t.Error("expected a genuine new KindTurnStart to reactivate a done thread")
+	}
+}
+
 func TestSubagentTranscriptConversation_EmptyTitle(t *testing.T) {
 	conv := uiadapter.NewSubagentTranscriptConversation("", ports.ModelInfo{}, nil)
 	if conv.Title() != "Subagent Thread" {

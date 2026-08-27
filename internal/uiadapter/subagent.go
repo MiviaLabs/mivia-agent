@@ -138,6 +138,14 @@ type SubagentTranscriptConversation struct {
 	history   []ports.Message
 	listeners []chan uievent.Event
 	active    bool
+	// done marks that this thread's own terminal event (KindTurnEnd or a
+	// "subagent done" notice) has already fired. It guards the top of
+	// RecordEvent from letting a straggler event (a late tool_end, a
+	// delayed forwarded delta arriving from a salvage/cleanup window)
+	// resurrect active on a thread that will never produce another
+	// terminal event. A genuine new KindTurnStart on a reused conversation
+	// object (see getOrCreate) clears it again, matching a real restart.
+	done bool
 	// reconstructed marks a conversation built from persisted tool-call
 	// JSON (subagent_reconstruct.go) rather than from live events. Only
 	// reconstructed conversations may be replaced by a later
@@ -190,13 +198,27 @@ func (c *SubagentTranscriptConversation) RecordEvent(e uievent.Event) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.active = true
+	if !c.done {
+		c.active = true
+	}
 	// A live event is evidence this conversation now carries state a
 	// persisted-history replay cannot rebuild; stop treating it as a
 	// replaceable reconstruction.
 	c.reconstructed = false
+	c.applyEvent(e)
+	c.notifyListeners(e)
+}
+
+// applyEvent folds one translated uievent into message history.
+func (c *SubagentTranscriptConversation) applyEvent(e uievent.Event) {
 	switch e.Kind {
 	case uievent.KindTurnStart:
+		// A genuine new turn on a reused conversation object (getOrCreate
+		// can hand the same object back for a later event sharing any
+		// registration key) is a real restart, not a straggler - reset
+		// done so RecordEvent starts setting active again.
+		c.done = false
+		c.active = true
 		body, _ := e.Body.(uievent.TurnStartBody)
 		c.history = append(c.history, ports.Message{
 			Role: "user",
@@ -244,7 +266,14 @@ func (c *SubagentTranscriptConversation) RecordEvent(e uievent.Event) {
 			c.history[lastIdx].Text = body.Text
 		}
 	}
+}
 
+// notifyListeners fans e out to active listeners, then - on this thread's own
+// terminal event - marks it done and closes every listener so ActiveTurn()
+// callers see the channel close as the done signal. A straggler event
+// arriving after this point is handled by applyEvent/RecordEvent's !c.done
+// guard, not here: it must not reopen this terminal state.
+func (c *SubagentTranscriptConversation) notifyListeners(e uievent.Event) {
 	for _, ch := range c.listeners {
 		select {
 		case ch <- e:
@@ -253,6 +282,7 @@ func (c *SubagentTranscriptConversation) RecordEvent(e uievent.Event) {
 	}
 	if e.Kind == uievent.KindTurnEnd || isDoneNotice(e) {
 		c.active = false
+		c.done = true
 		for _, ch := range c.listeners {
 			close(ch)
 		}
