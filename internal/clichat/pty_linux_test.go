@@ -11,14 +11,12 @@ import (
 
 // openTestPTY opens a pty pair and returns both ends as *os.File, opened
 // O_RDWR so the slave works as both a readable stdin and a writable stdout
-// for term.IsTerminal checks - mirroring diffcov2_test.go's withPtyStdin,
-// but returning the files instead of swapping the global os.Stdin, since
-// ensureChatAPIKey takes stdin/stdout as explicit parameters. Skips (not
-// fails) when the host has no /dev/ptmx, matching withPtyStdin's own
-// portability posture. The TIOCSPTLCK/TIOCGPTN ioctls exist only in the
-// Linux build of golang.org/x/sys/unix, so this helper lives behind a
-// linux build tag and every non-Linux host takes the pty_other_test.go
-// skip stub.
+// for term.IsTerminal checks. Callers: autosetup_test.go passes the pair as
+// explicit stdin/stdout parameters to ensureChatAPIKey; diffcov2_test.go's
+// withPtyStdin swaps os.Stdin for the slave. Skips (not fails) when the host
+// has no usable /dev/ptmx. The TIOCSPTLCK/TIOCGPTN ioctls exist only in the
+// Linux build of golang.org/x/sys/unix, so this helper lives behind a linux
+// build tag; every other GOOS takes the pty_other_test.go skip stub.
 func openTestPTY(t *testing.T) (master, slave *os.File) {
 	t.Helper()
 	m, err := unix.Open("/dev/ptmx", unix.O_RDWR|unix.O_NOCTTY, 0)
