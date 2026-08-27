@@ -205,7 +205,7 @@ func (t shortDescTool) Description() string { return tools.FirstLine(t.Tool.Desc
 // that is what the model needs to invoke it correctly once admitted. Returns
 // the dropped-name count so callers can log a truncation instead of silently
 // shipping fewer tools than the plan authorizes.
-func advertisedToolSpecs(base *tools.Registry, plan ToolTierPlan) ([]provider.ToolSpec, int) {
+func advertisedToolSpecs(base *tools.Registry, plan ToolTierPlan, agentReg *agents.AgentRegistry) ([]provider.ToolSpec, int) {
 	if base == nil {
 		return nil, 0
 	}
@@ -217,7 +217,7 @@ func advertisedToolSpecs(base *tools.Registry, plan ToolTierPlan) ([]provider.To
 	// silently producing a 129th).
 	var tail []provider.ToolSpec
 	if AdvertisedSessionToolSpecsVar != nil {
-		tail = AdvertisedSessionToolSpecsVar(plan)
+		tail = AdvertisedSessionToolSpecsVar(plan, agentReg)
 	}
 	names, dropped := tools.AdvertisedNames(plan.Tiers.Core, plan.Tiers.Deferred, len(tail))
 	deferredSet := make(map[string]struct{}, len(plan.Tiers.Deferred))
@@ -241,17 +241,19 @@ func advertisedToolSpecs(base *tools.Registry, plan ToolTierPlan) ([]provider.To
 
 // AdvertisedToolSpecs is the exported view of advertisedToolSpecs for callers
 // outside cliagents (tests, session catalog introspection).
-func AdvertisedToolSpecs(base *tools.Registry, plan ToolTierPlan) ([]provider.ToolSpec, int) {
-	return advertisedToolSpecs(base, plan)
+func AdvertisedToolSpecs(base *tools.Registry, plan ToolTierPlan, agentReg *agents.AgentRegistry) ([]provider.ToolSpec, int) {
+	return advertisedToolSpecs(base, plan, agentReg)
 }
 
 // pinAttachAdvertisedToolSpecs computes and pins the initial-attach binding's
 // advertised union BEFORE sess.Tools is narrowed to its core-tier execution
 // registry: the union must be built from the full pre-scope base (plan
 // tools-advertising/01), same as buildSurfaceFromBase does for /agent and
-// /model. Must be called before sess.Tools is reassigned.
-func PinAttachAdvertisedToolSpecs(sess *chat.Session, selected *agents.ResolvedAgent, plan ToolTierPlan) {
-	advertised, dropped := advertisedToolSpecs(sess.Tools, plan)
+// /model. agentReg is the session's immutable resolved registry snapshot,
+// threaded into the advertised session-tool schemas. Must be called before
+// sess.Tools is reassigned.
+func PinAttachAdvertisedToolSpecs(sess *chat.Session, selected *agents.ResolvedAgent, plan ToolTierPlan, agentReg *agents.AgentRegistry) {
+	advertised, dropped := advertisedToolSpecs(sess.Tools, plan, agentReg)
 	warnAdvertisedToolsTruncated(selected, dropped)
 	sess.SetAdvertisedToolSpecs(advertised)
 }

@@ -342,7 +342,7 @@ func buildFixtureState(t *testing.T, dir string, sess *chat.Session, selected *a
 	state.SkillRegFull = skillReg
 	authority, _ := ScopedRootRegistry(sess.Tools, selected, nil)
 	WarnDisabledAgentTools(selected, DisabledForAgent(selected, sess.Tools))
-	PinAttachAdvertisedToolSpecs(sess, selected, plan)
+	PinAttachAdvertisedToolSpecs(sess, selected, plan, nil)
 	sess.Tools = TieredRootRegistry(sess.Tools, selected, nil, plan, nil)
 	ApplyDeferredToolPrompt(sess, res, plan, state)
 	liveScope := SkillScopeFromAgentAndRegistry(selected, authority)

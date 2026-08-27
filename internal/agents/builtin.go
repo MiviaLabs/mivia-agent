@@ -12,7 +12,7 @@ const BuiltInGeneralPurposeName = "general-purpose"
 
 // BuiltInGeneralPurposeDescription is the roster-facing description of the
 // built-in. It stays project- and language-generic (rule 60).
-const BuiltInGeneralPurposeDescription = "General-purpose agent with the default toolset; use for research, audits, reviews, and multi-step tasks that need tools"
+const BuiltInGeneralPurposeDescription = "General-purpose agent with the default toolset; use for research, audits, reviews, and multi-step tasks that need tools."
 
 // BuiltInGeneralPurposePrompt is the compiled system prompt of the built-in
 // general-purpose agent. It stays project- and language-generic (rule 60).
@@ -55,13 +55,14 @@ const BuiltInOrchestratorPrompt = `You are mivia, a local CLI coding agent by Mi
 
 # Orchestration
 - dispatch_tasks for audits, reviews, research, parallel batches, and sequential waves with depends_on (wait:"run" blocks and returns final results directly; use join_run only after a wait:"none"/"task" dispatch, not after wait:"run").
-- Name an agent when one fits; built-in general-purpose is always valid. No agent means a tool-less one-shot call.
+- Name an agent when one fits; no agent means a tool-less one-shot call.
 - A sub-agent with no progress signal well past what the task's own timeout allows: inspect_agents, cancel_run, dispatch a replacement. Do not assume a fixed short deadline - a legitimately slow task (full test suite, large build) is not stuck.
 - If dispatch_tasks fails: retry with fewer tasks; keep only valid agent names (and skills). NEVER fall back to sequential manual work; if all tools fail persistently, report the error.
 - Truncated remainder: read_output (ref:output:…) or ledger_read (output_ref/error_ref) - see their own descriptions for the exact contract. Never re-run tools for tails.
 
 # Workspace customization
-- The workspace may define agents (.agents/agents/<name>.md) and skills (.agents/skills/<name>/SKILL.md). Load a skill when its description matches the task; a workspace's own lifecycle/delivery skill, if defined, governs process details there.
+- Subagents are listed under # Subagents and in dispatch_tasks' agent enum: already loaded - never search the tree for them.
+- .agents/agents/ and .agents/skills/ files load at startup. Load a skill when its description matches the task; a workspace lifecycle skill governs details.
 - Agent files are durable orientation only; no living state. Keep tool usage language-generic.`
 
 // builtInInputs returns the synthetic resolve inputs for the compiled agents.

@@ -127,3 +127,49 @@ func TestRoutingProseSinglePeriod(t *testing.T) {
 		t.Fatalf("doubled period in schema prose: %q", description)
 	}
 }
+
+// TestDispatchDescriptionStopsDemandingAnAgent pins D1 of the roster plan:
+// the primary router text must not order "each task must explicitly select
+// one authorized agent" (that sentence sent models hunting for agents that
+// were never visible). Kill mutation: restore the old opening sentences.
+func TestDispatchDescriptionStopsDemandingAnAgent(t *testing.T) {
+	desc := (&dispatchTasksTool{}).Description()
+	if strings.Contains(desc, "must explicitly select one authorized agent") {
+		t.Fatalf("description still demands a named agent: %q", desc)
+	}
+	lower := strings.ToLower(desc)
+	for _, want := range []string{"optional"} {
+		if !strings.Contains(lower, want) {
+			t.Fatalf("description missing %q: %q", want, desc)
+		}
+	}
+}
+
+// TestDispatchDescriptionGatesBuiltInClaim pins the prose/enum invariant on
+// the TOP-LEVEL description: the always-available claim appears only when the
+// built-in actually resolved into the registry. Kill mutation: hardcode the
+// claim regardless of t.agentReg.
+func TestDispatchDescriptionGatesBuiltInClaim(t *testing.T) {
+	home, ws := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+
+	with, _, _, err := agents.LoadAndResolve(ws, nil)
+	if err != nil {
+		t.Fatalf("LoadAndResolve error = %v", err)
+	}
+	without, _, _, err := agents.LoadAndResolve(ws, map[string]struct{}{"general-purpose": {}})
+	if err != nil {
+		t.Fatalf("LoadAndResolve (collision) error = %v", err)
+	}
+	if _, ok := without.Get("general-purpose"); ok {
+		t.Fatal("precondition failed: collision load still has the built-in")
+	}
+
+	if got := (&dispatchTasksTool{agentReg: with}).Description(); !strings.Contains(got, "always available") {
+		t.Fatalf("description must claim availability when the built-in resolved: %q", got)
+	}
+	got := (&dispatchTasksTool{agentReg: without}).Description()
+	if strings.Contains(got, "always available") || strings.Contains(got, "general-purpose") {
+		t.Fatalf("description must not promise the skipped built-in: %q", got)
+	}
+}

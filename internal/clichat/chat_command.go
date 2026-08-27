@@ -314,13 +314,7 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 	if useTools {
 		cliagents.LogDiagnosticsCommandsOnce(os.Stderr, res.Tools, invocation.quiet)
 	}
-	if strings.TrimSpace(res.SystemPrompt) == "" {
-		if useTools {
-			res.SystemPrompt = buildAgentPrompt(res.Subagents)
-		} else {
-			res.SystemPrompt = defaultSystemPrompt
-		}
-	}
+	res.SystemPrompt = rootPromptForSession(useTools, res, agentState.Registry)
 	comp, err := provider.New(res)
 	if err != nil {
 		return err

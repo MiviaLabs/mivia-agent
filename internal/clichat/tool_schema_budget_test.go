@@ -109,7 +109,7 @@ func budgetSpecs(t *testing.T) (core, deferred, session []provider.ToolSpec) {
 	coreNames := loadRepoCoreTier(t)
 	res := &config.Resolved{Tools: config.ToolsConfig{Core: &coreNames}}
 	plan := planToolTiers(base, nil, res)
-	advertised, dropped := advertisedToolSpecs(base, plan)
+	advertised, dropped := advertisedToolSpecs(base, plan, nil)
 	if dropped != 0 {
 		t.Fatalf("advertisedToolSpecs dropped %d tools", dropped)
 	}
@@ -214,6 +214,20 @@ func TestCoreToolSchemaCostBreakdown(t *testing.T) {
 		totalParams += paramBytes
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].tokens > rows[j].tokens })
+	// Real assertions, not just the printed table: the breakdown is only
+	// meaningful if it covers the core tier and reports a sorted, nonzero
+	// budget distribution.
+	if len(rows) == 0 {
+		t.Fatal("core-tier breakdown produced no rows")
+	}
+	for i := 1; i < len(rows); i++ {
+		if rows[i-1].tokens < rows[i].tokens {
+			t.Fatalf("breakdown not sorted by cost descending at row %d (%d < %d)", i, rows[i-1].tokens, rows[i].tokens)
+		}
+	}
+	if totalTokens == 0 || totalDesc+totalParams == 0 {
+		t.Fatalf("degenerate schema costs: %d tokens, %d desc bytes, %d param bytes", totalTokens, totalDesc, totalParams)
+	}
 	for _, r := range rows {
 		t.Logf("%-20s %5d tok  desc %5d B  params %5d B", r.name, r.tokens, r.descBytes, r.paramBytes)
 	}

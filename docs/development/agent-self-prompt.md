@@ -24,6 +24,21 @@ Two compiled agents ship inside the binary and need no files:
   session, so `dispatch_tasks` works on a clean workspace. A same-name file
   overrides it (user over workspace over built-in).
 
+### Where the model sees agents
+
+The orchestrator learns the roster at its first turn, without searching:
+
+1. The root system prompt carries a `# Subagents` section (one line per
+   agent, capped, appended additively - also on customized
+   `[chat].system_prompt`).
+2. The advertised `dispatch_tasks` schema carries the real `agent` enum plus
+   optional-field prose from the resolved registry.
+3. Selecting an unknown name errors with `(available: ...)` naming the
+   roster.
+
+Anything that changes what agents exist flows to all three surfaces at the
+next session start (or `/agent` switch).
+
 ## How it works
 
 On launch, `runChat`:

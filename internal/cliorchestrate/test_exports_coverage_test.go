@@ -20,7 +20,7 @@ import (
 func TestNewZeroTools(t *testing.T) {
 	// Each Zero constructor returns a non-nil tool instance.
 	for name, tool := range map[string]tools.Tool{
-		"dispatch_tasks": NewDispatchTasksToolZero(),
+		"dispatch_tasks": NewDispatchTasksToolForAdvertising(nil),
 		"inspect_agents": NewInspectAgentsToolZero(),
 		"join_run":       NewJoinRunToolZero(),
 		"cancel_run":     NewCancelRunToolZero(),

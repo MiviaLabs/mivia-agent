@@ -538,7 +538,7 @@ func buildSurfaceFromBase(sess *chat.Session, res *config.Resolved, state *Agent
 	var advertised []provider.ToolSpec
 	var advertisedDropped int
 	if !req.skipAdvertised {
-		advertised, advertisedDropped = advertisedToolSpecs(base, plan)
+		advertised, advertisedDropped = advertisedToolSpecs(base, plan, state.Registry)
 	}
 	return &agentSurface{
 		registry:          registry,

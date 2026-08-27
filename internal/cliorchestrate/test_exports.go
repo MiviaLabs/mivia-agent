@@ -84,9 +84,14 @@ func ClearAllCoordinators() {
 	})
 }
 
-// NewDispatchTasksToolZero returns a zero-value dispatch_tasks tool for the
-// cli session tool catalog (schema advertising only; no runtime state).
-func NewDispatchTasksToolZero() tools.Tool { return &dispatchTasksTool{} }
+// NewDispatchTasksToolForAdvertising returns a dispatch_tasks tool for the
+// cli session tool catalog (schema advertising only). agentReg feeds the
+// agent enum and roster prose in Parameters(); nil keeps the degraded
+// historical shape (empty enum, roster-free prose), and every method still
+// reads no runtime state beyond that immutable snapshot.
+func NewDispatchTasksToolForAdvertising(agentReg *agents.AgentRegistry) tools.Tool {
+	return &dispatchTasksTool{agentReg: agentReg}
+}
 
 // NewInspectAgentsToolZero returns a zero-value inspect_agents tool for the
 // cli session tool catalog (schema advertising only; no runtime state).

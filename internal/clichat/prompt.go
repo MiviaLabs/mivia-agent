@@ -2,7 +2,10 @@
 package clichat
 
 import (
+	"strings"
+
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
 
@@ -23,4 +26,25 @@ When unsure, say what is unverified. Do not invent files or test results.`
 func buildAgentPrompt(cfg config.SubagentConfig) string {
 	_ = cfg
 	return agents.BuiltInOrchestratorPrompt
+}
+
+// rootPromptForSession composes the INITIAL root system prompt: the compiled
+// fallback - or a customized [chat].system_prompt, which skips the fallback
+// entirely - plus, for tool-bearing sessions only, the additive subagent
+// roster. The roster is environment fact and must reach customized prompts
+// too. Never fold this into buildAgentPrompt: that function stays
+// registry-free so its language-genericity test and byte budget stay pure.
+func rootPromptForSession(useTools bool, res *config.Resolved, registry *agents.AgentRegistry) string {
+	prompt := res.SystemPrompt
+	if strings.TrimSpace(prompt) == "" {
+		if useTools {
+			prompt = buildAgentPrompt(res.Subagents)
+		} else {
+			prompt = defaultSystemPrompt
+		}
+	}
+	if !useTools {
+		return prompt
+	}
+	return cliagents.RootSystemPromptWithRoster(prompt, registry)
 }

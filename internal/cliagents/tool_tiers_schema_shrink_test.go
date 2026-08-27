@@ -30,7 +30,7 @@ func TestAdvertisedToolSpecsShortensADeferredDescription(t *testing.T) {
 		Candidates: []tools.TierCandidate{{Name: "grep", Description: longDescTool{}.Description()}},
 	}
 
-	specs, _ := advertisedToolSpecs(base, plan)
+	specs, _ := advertisedToolSpecs(base, plan, nil)
 	byName := make(map[string]map[string]any, len(specs))
 	for _, spec := range specs {
 		fn, _ := spec["function"].(map[string]any)
@@ -95,7 +95,7 @@ func TestAdvertisedToolSpecsShortensRealToolDescriptionsIntact(t *testing.T) {
 	}
 	plan := toolTierPlan{Tiers: tools.Tiers{Deferred: deferredNames}}
 
-	specs, dropped := advertisedToolSpecs(base, plan)
+	specs, dropped := advertisedToolSpecs(base, plan, nil)
 	if dropped != 0 {
 		t.Fatalf("dropped = %d, want every real tool advertised", dropped)
 	}
@@ -142,8 +142,8 @@ func TestAdvertisedToolSpecsIsDeterministic(t *testing.T) {
 		Candidates: []tools.TierCandidate{{Name: "grep", Description: longDescTool{}.Description()}},
 	}
 
-	first, _ := advertisedToolSpecs(base, plan)
-	second, _ := advertisedToolSpecs(base, plan)
+	first, _ := advertisedToolSpecs(base, plan, nil)
+	second, _ := advertisedToolSpecs(base, plan, nil)
 	firstJSON, err := json.Marshal(first)
 	if err != nil {
 		t.Fatal(err)
@@ -169,7 +169,7 @@ func TestMeasureSchemaMassLockedTokensPricesTheShortenedDescription(t *testing.T
 		Tiers:      tools.Tiers{Core: []string{"read_file"}, Deferred: []string{"grep"}},
 		Candidates: []tools.TierCandidate{{Name: "grep", Description: longDescTool{}.Description()}},
 	}
-	advertised, _ := advertisedToolSpecs(base, plan)
+	advertised, _ := advertisedToolSpecs(base, plan, nil)
 
 	mass := measureSchemaMass(advertised, base, plan, nil, "reader", "attach")
 	fullCost, err := provider.EstimateToolSchemaCost([]provider.ToolSpec{{

@@ -55,9 +55,19 @@ func (t *dispatchTasksTool) Name() string { return ToolDispatchTasks }
 func (t *dispatchTasksTool) Privileged()  {}
 func (t *dispatchTasksTool) Description() string {
 	desc := "Execute multiple sub-tasks in PARALLEL. Use this for ALL research, code reviews, " +
-		"bug audits, and any work that can be split - never do N sequential passes. " +
-		"Each task must explicitly select one authorized agent and may optionally select a skill under that agent's policy. " +
-		"Tasks without dependencies (depends_on) run concurrently. " +
+		"bug audits, and any work that can be split - never do N sequential passes. "
+	// Same invariant as agentRoutingDescription: the always-available claim
+	// only appears when the built-in actually resolved into the registry (a
+	// same-name skill collision can skip it), so the prose never promises a
+	// target the enum lacks.
+	if _, ok := t.agentReg.Get(agents.BuiltInGeneralPurposeName); ok {
+		desc += "The agent field is optional: the built-in general-purpose agent is always available and carries " +
+			"the default toolset; omitting agent runs a tool-less one-shot call, so name an agent for any task that needs tools. "
+	} else {
+		desc += "The agent field is optional: name a listed agent for any task that needs tools; " +
+			"omitting agent runs a tool-less one-shot call. "
+	}
+	desc += "Tasks without dependencies (depends_on) run concurrently. " +
 		"Every task always reports its own result and status, so one failure never " +
 		"costs you the others. " +
 		"Recommended: 2-4 tasks at once. " +

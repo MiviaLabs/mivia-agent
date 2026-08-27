@@ -422,9 +422,9 @@ func (s *agentsSection) validateAndBuildAgent() (ports.AgentView, ports.Scope, e
 		return ports.AgentView{}, scope, fmt.Errorf("Invalid agent name %q", name)
 	}
 
-	if !s.isNew && s.editOriginalScope == ports.ScopeBuiltin {
-		return ports.AgentView{}, scope, fmt.Errorf("built-in agent %q is read-only; create a same-name definition to override it", s.editOriginalName)
-	}
+	// Builtin rows never reach this editor: the enter/e handler refuses them
+	// before openEditor, so no scope guard lives here (dead defense would be
+	// untestable code).
 
 	if s.isNew || s.editOriginalName != name || s.editOriginalScope != scope {
 		for _, row := range s.rows {
