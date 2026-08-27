@@ -76,8 +76,8 @@ redaction_patterns = ['(?i)"?(?:password|passwd|token|secret|api[_-]?key|authori
 redaction_placeholder = '[redacted]'
 
 [provider]
-default_model = 'gemini-3.7-flash-high'
-name = 'llmproxycli'
+default_model = 'glm-5.3-flash'
+name = 'zai'
 
 [providers]
 [providers.deepseek]
