@@ -196,11 +196,16 @@ func (e *Engine) startNew(ctx context.Context, req workflowledger.StartRequest) 
 	_ = req.AllowPublish // publication is a separate deliver step for tools
 	// Durable local trace: create .mivia/runs + admission summary; fail-soft.
 	e.writeRunTrace(runID)
-	e.launch(ctrl)
+	// Read the response BEFORE launching the drive goroutine: the launched
+	// loop also issues GetRuns, so a post-launch read races it and makes
+	// both this error contract and any injected-failure ordering
+	// nondeterministic under load (TestGapStartFinalGetRunError flaked in CI
+	// exactly that way).
 	run, err := e.Repo.GetRun(ctx, runID)
 	if err != nil {
 		return workflowledger.StartResult{}, err
 	}
+	e.launch(ctrl)
 	return workflowledger.StartResult{RunID: runID, Status: string(run.Status), Workflow: compiled.Name}, nil
 }
 
