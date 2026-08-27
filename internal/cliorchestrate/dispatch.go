@@ -63,6 +63,9 @@ func (t *dispatchTasksTool) Description() string {
 		"Recommended: 2-4 tasks at once. " +
 		"If dispatch_tasks fails, retry with fewer tasks. " +
 		"Use timeout_seconds to set a per-batch budget. " +
+		"The batch budget is clamped to this session's remaining turn deadline - a batch you cannot wait for fails fast instead of dying mid-wait. " +
+		"In interactive sessions prefer wait:\"none\" and poll inspect_agents instead of long blocking waits. " +
+		"Error envelopes include run_id, so a canceled or timed-out batch stays reachable via inspect_agents/cancel_run. " +
 		"Results include each task's structured output, correlation reference, status (completed/failed/timed_out/canceled), elapsed, steps, and step_count. " +
 		"For large results, output_ref is returned instead of inline output; use ledger_read to fetch the full body. " +
 		"Heartbeat/progress events appear in the UI during long-running tasks."
@@ -131,6 +134,31 @@ func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 	}
 	batchTimeout := config.RequestedTimeoutSec(t.cfg.DefaultTimeout, params.TimeoutSeconds, overrides...)
 
+	// Clamp the batch budget to the caller's remaining context deadline
+	// (BUG-B fix): RequestedTimeoutSec above considers only config and the
+	// caller's requested budgets, so a dispatch inside a shorter-lived turn
+	// could ask workers to run far past the moment the parent context dies.
+	// The pool would then cancel every task as orphaned (see
+	// RunThroughCoordinator's Join-error path) after the parent already sat
+	// silently waiting for work that could never be reported. Mirrors the
+	// parked-wait clamping in internal/clichat/messaging_tools.go.
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline)
+		switch {
+		case remaining <= 0:
+			// Caller is already dead: fail fast with a structured, actionable
+			// body rather than spawning side-effecting subagents nothing can
+			// ever consume (same fail-closed reasoning as RunThroughCoordinator).
+			payload, _ := json.Marshal(map[string]string{
+				"error":  "caller context already expired; no tasks were started",
+				"status": string(ledger.TaskStatusCanceled),
+			})
+			return string(payload), nil
+		case int(remaining.Seconds()) < batchTimeout:
+			batchTimeout = max(1, int(remaining.Seconds()))
+		}
+	}
+
 	tasks, err := t.buildTasks(params.Tasks, batchTimeout)
 	if err != nil {
 		return "", err
@@ -149,8 +177,8 @@ func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 		return spawnResultPayload(snap, completed, t.cfg.InlineOutputBytes, EffectiveOrchestrationRepo(t.repo)), nil
 	}
 
-	_, runResult, err := RunThroughCoordinator(ctx, t.dispatcher, t.cfg, tasks, params.IdempotencyKey, t.repo)
-	return t.encodeSyncRunResult(runResult, err), nil
+	snap, runResult, err := RunThroughCoordinator(ctx, t.dispatcher, t.cfg, tasks, params.IdempotencyKey, t.repo)
+	return t.encodeSyncRunResult(snap, runResult, err), nil
 }
 
 // encodeSyncRunResult builds the wait="run" response body: the bare per-task
@@ -160,7 +188,12 @@ func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 // task result to report at all. Never returns a Go error: the agent loop
 // wipes an empty body to a bare "error: …" string, so every path here must
 // answer with a model-visible JSON body.
-func (t *dispatchTasksTool) encodeSyncRunResult(runResult *coordinator.RunResult, runErr error) string {
+//
+// BUG-C fix: every error branch carries snap.RunID (the orchestration handle
+// was registered before Join - see storeOrchestrationHandle) plus a hint,
+// so a caller whose batch died on cancel/timeout can still reach the run via
+// inspect_agents / cancel_run instead of losing the only pointer to it.
+func (t *dispatchTasksTool) encodeSyncRunResult(snap ledger.RunSnapshot, runResult *coordinator.RunResult, runErr error) string {
 	var results []subagents.Result
 	if runResult != nil {
 		results = runResult.Results
@@ -176,6 +209,8 @@ func (t *dispatchTasksTool) encodeSyncRunResult(runResult *coordinator.RunResult
 		payload, _ := json.Marshal(map[string]string{
 			"error":  runResult.Err.Error(),
 			"status": StatusFromErr(runResult.Err),
+			"run_id": snap.RunID,
+			"hint":   "inspect_agents or cancel_run can reach this run by run_id",
 		})
 		return string(payload)
 	}
@@ -183,6 +218,8 @@ func (t *dispatchTasksTool) encodeSyncRunResult(runResult *coordinator.RunResult
 		payload, _ := json.Marshal(map[string]string{
 			"error":  runErr.Error(),
 			"status": StatusFromErr(runErr),
+			"run_id": snap.RunID,
+			"hint":   "inspect_agents or cancel_run can reach this run by run_id",
 		})
 		return string(payload)
 	}

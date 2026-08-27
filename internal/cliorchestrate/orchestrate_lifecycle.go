@@ -3,6 +3,7 @@ package cliorchestrate
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -189,8 +190,9 @@ func (t *joinRunTool) Description() string {
 	return "Join (block until) a previously spawned orchestration run completes. " +
 		"Returns the final live run result including per-task structured output, status, " +
 		"correlation references, and any errors. For large task results, output_ref is returned instead of inline output; use ledger_read to fetch the full body. " +
-		"Recovered historical runs expose references only. Blocks until the run finishes or the " +
-		"calling context is canceled."
+		"Recovered historical runs expose references only. Blocks until the run finishes, " +
+		"timeout_seconds elapses (default " + joinDefaultSeconds(t.cfg) + "s, cap 3600), or the calling context is canceled. " +
+		"On join timeout the run is gracefully canceled and the response says so - never retry a wedged join blindly."
 }
 
 func (t *joinRunTool) Parameters() map[string]any {
@@ -201,15 +203,53 @@ func (t *joinRunTool) Parameters() map[string]any {
 				"type":        "string",
 				"description": "Run ID returned by dispatch_tasks",
 			},
+			"timeout_seconds": map[string]any{
+				"type":        "integer",
+				"description": "Max seconds to block waiting for the run. Default " + joinDefaultSeconds(t.cfg) + ", hard cap 3600. On expiry the run is gracefully canceled and a join_timeout envelope is returned.",
+			},
 		},
 		"required":             []string{"run_id"},
 		"additionalProperties": false,
 	}
 }
 
+// joinDefaultSeconds reports the model-visible default join budget:
+// RequestedTimeoutSec floor semantics applied to DefaultTimeout (0 -> 600).
+func joinDefaultSeconds(cfg config.SubagentConfig) string {
+	if cfg.DefaultTimeout > 0 && cfg.DefaultTimeout < 3600 {
+		return fmt.Sprint(cfg.DefaultTimeout)
+	}
+	return "600"
+}
+
+// joinTimeout bounds one join call (BUG-D fix): coordinator.Join blocks
+// purely on h.done or caller-ctx death, so a WEDGED run (task stuck running
+// past its declared budget - e.g. an upstream HTTP call that ignores its
+// context) used to trap join_run callers until their whole turn died with no
+// diagnostic and no cleanup. The wrapper guarantees escape; on expiry we
+// propagate graceful cancellation through the same path cancel_run uses so
+// the wedged run finalizes instead of leaking.
+func joinTimeout(ctx context.Context, cfg config.SubagentConfig, requested int) (context.Context, context.CancelFunc) {
+	eff := 0
+	if cfg.DefaultTimeout > 0 {
+		eff = cfg.DefaultTimeout
+	}
+	if requested > 0 {
+		eff = requested
+	}
+	if eff <= 0 || eff > 3600 {
+		eff = 600
+	}
+	if eff > 3600 {
+		eff = 3600
+	}
+	return context.WithTimeout(ctx, time.Duration(eff)*time.Second)
+}
+
 func (t *joinRunTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var params struct {
-		RunID string `json:"run_id"`
+		RunID          string `json:"run_id"`
+		TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
 	}
 	if err := json.Unmarshal(args, &params); err != nil {
 		return "", fmt.Errorf("join_run: %w", err)
@@ -220,8 +260,42 @@ func (t *joinRunTool) Execute(ctx context.Context, args json.RawMessage) (string
 	}
 	handle := record.handle
 
-	result, err := record.coord.Join(ctx, handle)
+	joinCtx, cancel := joinTimeout(ctx, t.cfg, params.TimeoutSeconds)
+	defer cancel()
+	result, err := record.coord.Join(joinCtx, handle)
 	if err != nil {
+		// BUG-D: never leave the caller trapped on a run that may be wedged,
+		// and never discard work that already finished (same INV-AG-21 shape
+		// as RunThroughCoordinator): salvage whatever task records exist.
+		if salvaged := salvageUnjoinedRun(record.coord, handle, err); salvaged != nil {
+			out, _ := json.Marshal(map[string]any{
+				"run_id":       salvaged.Snapshot.RunID,
+				"display_name": salvaged.Snapshot.DisplayName,
+				"status":       salvaged.Snapshot.Status,
+				"run_error":    salvageErrorText(err),
+				"task_results": persistedTaskResults(salvaged.Snapshot.Tasks),
+			})
+			return string(out), nil
+		}
+		snap := latestSnapshot(record.coord, handle, ctx)
+		status := "unknown"
+		if snap.Status != "" {
+			status = string(snap.Status)
+		}
+		if errors.Is(err, context.DeadlineExceeded) || (errors.Is(err, context.Canceled) && ctx.Err() == nil) {
+			// Join timed out but the caller is alive: fire-and-forget graceful
+			// cancel of the likely-wedged run (own Background context - the
+			// pattern is cancelOrphanedRun's), then answer with the run_id so
+			// the caller can inspect/cancel/join again later.
+			go cancelWedgedRun(record.coord, handle)
+			payload, _ := json.Marshal(map[string]string{
+				"error":  "join_timeout: run did not finish within the join budget; graceful cancel dispatched",
+				"status": status,
+				"run_id": params.RunID,
+				"hint":   "inspect_agents later for final state; re-join with a larger timeout_seconds if desired",
+			})
+			return string(payload), nil
+		}
 		return "", fmt.Errorf("join_run: %w", err)
 	}
 
@@ -318,6 +392,42 @@ func (t *cancelRunTool) Execute(ctx context.Context, args json.RawMessage) (stri
 
 // Ensure cancelRunTool implements required interfaces at compile time.
 var _ tools.Tool = (*cancelRunTool)(nil)
+
+// cancelWedgedRun propagates a join-timeout into the likely-wedged run via
+// the same graceful path cancel_run uses (Cancel: records cancel_requested,
+// cancels the run pool, CAS-finalizes each task). Runs detached with its own
+// bounded Background context - the join caller must not block on it - with
+// orphanedRunCancelTimeout as the ceiling so even an unresponsive Cancel
+// cannot leak the goroutine forever.
+func cancelWedgedRun(c coordinator.Coordinator, h *coordinator.RunHandle) {
+	ctx, cancel := context.WithTimeout(context.Background(), orphanedRunCancelTimeout)
+	defer cancel()
+	_ = c.Cancel(ctx, h)
+}
+
+// latestSnapshot is a best-effort status read for error envelopes. A wedged
+// or canceled run may not answer Inspect within the short budget; callers
+// treat the zero snapshot as "status unknown" and say so instead of
+// guessing.
+func latestSnapshot(c coordinator.Coordinator, h *coordinator.RunHandle, ctx context.Context) ledger.RunSnapshot {
+	qctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	snap, err := c.Inspect(qctx, h)
+	if err != nil {
+		return ledger.RunSnapshot{}
+	}
+	return snap
+}
+
+// salvageErrorText labels partial results returned by salvageUnjoinedRun on
+// a failed/timeout join: everything below IS real recorded work, but it is
+// not a clean completion and the caller should know why the envelope exists.
+func salvageErrorText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return "joined after failure: " + err.Error()
+}
 
 func (t *cancelRunTool) Capability(args json.RawMessage) tools.Capability {
 	return tools.Capability{
