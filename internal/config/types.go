@@ -4,6 +4,7 @@ package config
 import (
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 )
@@ -171,6 +172,16 @@ type ProviderSection struct {
 	// on the stable prefix. "off" disables both. It cannot disable a
 	// provider's own automatic server-side caching.
 	PromptCache string `toml:"prompt_cache"`
+	// StreamIdleTimeoutSeconds bounds the gap between successive bytes on any
+	// provider read (streaming or non-streaming), once the first byte has
+	// arrived. Unset (nil) resolves to DefaultStreamIdleTimeoutSeconds
+	// (100s). This is a process-wide setting, not per-provider: mivia runs
+	// one active provider configuration per process.
+	StreamIdleTimeoutSeconds *int `toml:"stream_idle_timeout_seconds"`
+	// StreamFirstByteTimeoutSeconds bounds the wait for the first byte of a
+	// provider read, from request-issued. Unset (nil) resolves to
+	// DefaultStreamFirstByteTimeoutSeconds (240s).
+	StreamFirstByteTimeoutSeconds *int `toml:"stream_first_byte_timeout_seconds"`
 }
 
 // ProviderConfig holds non-secret provider settings.
@@ -396,6 +407,13 @@ type Resolved struct {
 	// TavilyAPIKey is the Tavily web search API key (set via TAVILY_API_KEY env).
 	// When set, the search tool uses Tavily as the primary web search engine.
 	TavilyAPIKey string
+	// StreamIdleTimeout is the resolved [provider] stream_idle_timeout_seconds,
+	// defaulted when unset. See ProviderSection.StreamIdleTimeoutSeconds.
+	StreamIdleTimeout time.Duration
+	// StreamFirstByteTimeout is the resolved [provider]
+	// stream_first_byte_timeout_seconds, defaulted when unset. See
+	// ProviderSection.StreamFirstByteTimeoutSeconds.
+	StreamFirstByteTimeout time.Duration
 
 	// PromptCache is the resolved "auto" or "off" policy for prompt-cache
 	// usage capture and explicit cache_control markers. Always one of those

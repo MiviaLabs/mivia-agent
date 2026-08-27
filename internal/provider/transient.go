@@ -80,6 +80,14 @@ func IsTransient(err error) bool {
 	if errors.As(err, &transient) {
 		return true
 	}
+	// A stream/read that went idle past its configured bound never delivered
+	// an answer either - the connection stalled, it was not told to stop. See
+	// idle_watchdog.go: distinct from context.DeadlineExceeded on purpose, so
+	// this check must run independently of (and before) the context-deadline
+	// test below, which deliberately reports false.
+	if errors.Is(err, ErrStreamIdle) {
+		return true
+	}
 	// A cancelled or expired context is NOT transient. The caller stopped the
 	// call, or its deadline ran out; repeating it works against that decision
 	// and, for an expired deadline, fails again at once.

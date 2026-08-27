@@ -6,6 +6,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
 	"github.com/MiviaLabs/mivia-agent/internal/providerregistry"
@@ -151,6 +152,8 @@ func resolveLoaded(file File, configPath string, found bool, opts LoadOptions, m
 		MCPWarnings:            append([]string(nil), mcpWarnings...),
 		TavilyAPIKey:           resolveTavilyAPIKey(file.Integrations.Tavily, envMap),
 		PromptCache:            resolvePromptCache(file.Provider.PromptCache),
+		StreamIdleTimeout:      resolveTimeoutSeconds(file.Provider.StreamIdleTimeoutSeconds, DefaultStreamIdleTimeoutSeconds),
+		StreamFirstByteTimeout: resolveTimeoutSeconds(file.Provider.StreamFirstByteTimeoutSeconds, DefaultStreamFirstByteTimeoutSeconds),
 	}
 	if !found {
 		return nil, fmt.Errorf("no configured provider models available")
@@ -222,6 +225,26 @@ func resolvePromptCache(raw string) string {
 		return "auto"
 	}
 	return raw
+}
+
+// DefaultStreamIdleTimeoutSeconds and DefaultStreamFirstByteTimeoutSeconds
+// mirror internal/provider's own watchdog defaults (provider.
+// DefaultStreamIdleTimeout / DefaultStreamFirstByteTimeout). Duplicated
+// rather than imported: internal/provider already imports internal/config
+// (ollama.go, provider.go), so config importing provider back would cycle.
+const (
+	DefaultStreamIdleTimeoutSeconds      = 100
+	DefaultStreamFirstByteTimeoutSeconds = 240
+)
+
+// resolveTimeoutSeconds defaults an unset (nil) [provider] timeout knob to
+// def seconds, converting the resolved value to a time.Duration once so
+// Resolved carries a ready-to-use bound instead of a raw *int.
+func resolveTimeoutSeconds(raw *int, def int) time.Duration {
+	if raw == nil || *raw <= 0 {
+		return time.Duration(def) * time.Second
+	}
+	return time.Duration(*raw) * time.Second
 }
 
 const (

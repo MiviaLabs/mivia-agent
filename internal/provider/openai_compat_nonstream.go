@@ -26,7 +26,12 @@ func (c *OpenAICompat) doJSONOnce(ctx context.Context, req Request) (*chatRespon
 		return nil, asTransient(err)
 	}
 	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxJSONResponseBytes+1))
+	// The non-streaming read is the operationally common path: nested/subagent
+	// turns never stream (MultiStepHandler never sets FinalWriter), so every
+	// subagent-context turn lands here. Without the watchdog, a dead-but-open
+	// connection sat silent for up to the transport's absolute 15-minute
+	// backstop with no observable signal.
+	raw, err := io.ReadAll(io.LimitReader(c.wrapWithIdleWatchdog(resp.Body), maxJSONResponseBytes+1))
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			return nil, asTransient(fmt.Errorf("%s: read response: %w (request deadline %s)", c.name, markTransientReadDeadline(ctx, req.Timeout, err), deadlineLabel(req.Timeout)))

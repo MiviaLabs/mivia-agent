@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -50,13 +51,19 @@ func (c *OpenAICompat) chatTurnStream(ctx context.Context, req Request) (*Respon
 	}
 	defer resp.Body.Close()
 
-	content, reasoning, webSearch, toolCalls, finishReason, received, usage, err := c.readTurnStream(callCtx, resp.Body, req.StreamWriter, req.Timeout)
+	content, reasoning, webSearch, toolCalls, finishReason, received, usage, err := c.readTurnStream(callCtx, c.wrapWithIdleWatchdog(resp.Body), req.StreamWriter, req.Timeout)
 	if err != nil {
 		// A transient 200-in-band provider error delivered nothing. Re-ask the
 		// turn once non-streamed instead of surfacing it as a terminal failure,
 		// unless replay is disabled or content already reached the writer. The
 		// re-ask stays bounded to a single attempt.
 		if IsTransient(err) && !received && !req.DisableProviderReplay {
+			if errors.Is(err, ErrStreamIdle) {
+				// Visible-on-recovery: previously this fallback fired silently,
+				// so a stalled stream that self-healed via non-streaming retry
+				// left no trace an operator could see.
+				log.Printf("%s: stream stalled (idle timeout, bound %s); recovering via non-streaming retry", c.name, streamIdleTimeout())
+			}
 			retried, rerr := c.retryWithoutStreaming(callCtx, req, req.StreamWriter)
 			if rerr != nil {
 				return nil, rerr

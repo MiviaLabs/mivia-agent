@@ -396,7 +396,7 @@ func (c *OpenAICompat) ChatStream(ctx context.Context, req Request, w io.Writer)
 	}
 	defer resp.Body.Close()
 
-	return c.readStream(callCtx, req, resp.Body, w)
+	return c.readStream(callCtx, req, c.wrapWithIdleWatchdog(resp.Body), w)
 }
 
 func (c *OpenAICompat) readStream(ctx context.Context, req Request, body io.Reader, w io.Writer) (string, error) {

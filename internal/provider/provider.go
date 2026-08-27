@@ -356,6 +356,7 @@ func NewForProvider(res *config.Resolved, providerName string) (Completer, error
 	if err := registerBuiltins(); err != nil {
 		return nil, err
 	}
+	SetStreamWatchdogTimeouts(res.StreamIdleTimeout, res.StreamFirstByteTimeout)
 	runtime, ok := res.ProviderRuntimes[providerName]
 	if !ok && providerName == strings.ToLower(strings.TrimSpace(res.ProviderName)) {
 		runtime = config.ProviderRuntime{
