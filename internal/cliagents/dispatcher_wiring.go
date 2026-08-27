@@ -10,6 +10,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -34,8 +35,10 @@ var RemainderSpoolFromRegistryVar func(*tools.Registry) *remainder.Spool
 // WireWorkflowToolOptionsVar is wired at process start by
 // internal/cli/cliagents_wiring.go to cli's wireWorkflowToolOptions.
 // chat_workspace.go (moving) calls this to wire the workflow-engine event bus
-// without importing cli.
-var WireWorkflowToolOptionsVar func(*tools.DefaultOptions, string, *config.Resolved, func() *events.Bus, bool)
+// without importing cli. The ledger repository is the owning session's
+// orchestration repo (AgentSessionState.LedgerRepo); nil keeps child-run
+// registration skipped.
+var WireWorkflowToolOptionsVar func(*tools.DefaultOptions, string, *config.Resolved, func() *events.Bus, bool, ledger.LedgerRepository)
 
 // BuiltInSlashTokensVar is wired by internal/cli/cliagents_wiring.go to return
 // the set of reserved slash tokens from cli's builtInSlashCommands. Used by

@@ -340,7 +340,7 @@ func TestBuildWorkflowControllerSynthesisFailure(t *testing.T) {
 		StepIDs:  map[string]bool{"gate": true, "impl": true},
 		Steps:    []definition.Step{{ID: "gate", Kind: "human_gate"}, {ID: "impl", Kind: "agent", Agent: "one"}},
 	}
-	_, err := buildWorkflowController(t.TempDir(), &config.Resolved{}, nil, repo, wf, "", nil, nil, nil, "wfr-cov-synth-fail", nil, nil, nil, nil, nil)
+	_, err := buildWorkflowController(t.TempDir(), &config.Resolved{}, nil, repo, wf, "", nil, nil, nil, "wfr-cov-synth-fail", nil, nil, nil, nil, nil, "", nil)
 	if err == nil || !strings.Contains(err.Error(), "synthesize stacking run graph") {
 		t.Fatalf("buildWorkflowController() error = %v, want the wrapped synthesis error", err)
 	}
@@ -376,7 +376,7 @@ func TestBuildAndStartStartNewFailure(t *testing.T) {
 	e, prepared := newEngineCoveragePrepared(t)
 	realRepo := prepared.Repo
 	prepared.Repo = &faultRepo{Repository: realRepo, failCreateRun: true}
-	_, err := e.buildAndStart(context.Background(), prepared, workflowledger.StartRequest{Workflow: "two-step"}, "wfr-cov-startnew-fail")
+	_, err := e.buildAndStart(context.Background(), prepared, workflowledger.StartRequest{Workflow: "two-step"}, "wfr-cov-startnew-fail", "", nil)
 	if err == nil || !strings.Contains(err.Error(), "scripted create-run failure") {
 		t.Fatalf("buildAndStart() error = %v, want the scripted create-run failure", err)
 	}
@@ -390,7 +390,7 @@ func TestBuildAndStartExistingRunReadFailure(t *testing.T) {
 	runID := "wfr-cov-existing-read-fail"
 	ctx := context.Background()
 
-	built, err := WorkflowRunBuild(prepared.Root, prepared.Res, prepared.Store, prepared.Repo, prepared.Compiled, prepared.RefBase, prepared.Inputs, prepared.InputSnapshot, prepared.Raw, runID, nil, nil, nil, nil, nil)
+	built, err := WorkflowRunBuild(prepared.Root, prepared.Res, prepared.Store, prepared.Repo, prepared.Compiled, prepared.RefBase, prepared.Inputs, prepared.InputSnapshot, prepared.Raw, runID, nil, nil, nil, nil, nil, "", nil)
 	if err != nil {
 		t.Fatalf("WorkflowRunBuild() error = %v", err)
 	}
@@ -405,7 +405,7 @@ func TestBuildAndStartExistingRunReadFailure(t *testing.T) {
 
 	realRepo := prepared.Repo
 	prepared.Repo = &faultRepo{Repository: realRepo, getRunFailFrom: 2}
-	_, err = e.buildAndStart(ctx, prepared, workflowledger.StartRequest{Workflow: "two-step"}, runID)
+	_, err = e.buildAndStart(ctx, prepared, workflowledger.StartRequest{Workflow: "two-step"}, runID, "", nil)
 	if err == nil || !strings.Contains(err.Error(), "scripted get-run failure") {
 		t.Fatalf("buildAndStart() error = %v, want the scripted re-read failure", err)
 	}
@@ -418,7 +418,7 @@ func TestLaunchStartedWorkflowReadFailure(t *testing.T) {
 	runID := "wfr-cov-launch-read-fail"
 	ctx := context.Background()
 
-	built, err := WorkflowRunBuild(prepared.Root, prepared.Res, prepared.Store, prepared.Repo, prepared.Compiled, prepared.RefBase, prepared.Inputs, prepared.InputSnapshot, prepared.Raw, runID, nil, nil, nil, nil, nil)
+	built, err := WorkflowRunBuild(prepared.Root, prepared.Res, prepared.Store, prepared.Repo, prepared.Compiled, prepared.RefBase, prepared.Inputs, prepared.InputSnapshot, prepared.Raw, runID, nil, nil, nil, nil, nil, "", nil)
 	if err != nil {
 		t.Fatalf("WorkflowRunBuild() error = %v", err)
 	}

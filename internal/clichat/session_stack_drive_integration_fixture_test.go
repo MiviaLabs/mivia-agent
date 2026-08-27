@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"io"
 	"log"
 	"os"
@@ -439,7 +440,7 @@ func (it *stackDriveIT) installDriveSeams() {
 // runtimes the production build path would, in the run's per-run worktree
 // (the isolation cliworkflow.SelectWorkflowWorkspace provides), so the controller sees a
 // faithful build result without invoking real tool runs.
-func (it *stackDriveIT) buildStub(buildRoot string, _ *config.Resolved, _ *storage.SQLite, repo workflowledger.Repository, compiled *definition.CompiledWorkflow, _ string, _ map[string]any, inputSnapshot map[string]string, _ []byte, id string, _ *workflowledger.Snapshot, _ []byte, _ *workflowledger.RunSnapshot, _ map[string]bool, _ *skills.Registry) (cliworkflow.WorkflowControllerBuild, error) {
+func (it *stackDriveIT) buildStub(buildRoot string, _ *config.Resolved, _ *storage.SQLite, repo workflowledger.Repository, compiled *definition.CompiledWorkflow, _ string, _ map[string]any, inputSnapshot map[string]string, _ []byte, id string, _ *workflowledger.Snapshot, _ []byte, _ *workflowledger.RunSnapshot, _ map[string]bool, _ *skills.Registry, _ string, _ ledger.LedgerRepository) (cliworkflow.WorkflowControllerBuild, error) {
 	identity, cleanup, err := cliworkflow.SelectWorkflowWorkspace(context.Background(), buildRoot, id, true, nil)
 	if err != nil {
 		return cliworkflow.WorkflowControllerBuild{}, err
@@ -509,7 +510,7 @@ func (it *stackDriveIT) startPlanRun(bound time.Duration) string {
 		t.Fatal(err)
 	}
 	runID := cliworkflow.NewCLIWorkflowRunID()
-	built, err := cliworkflow.WorkflowRunBuild(prepared.Root, prepared.Res, prepared.Store, prepared.Repo, prepared.Compiled, prepared.RefBase, prepared.Inputs, prepared.InputSnapshot, prepared.Raw, runID, nil, nil, nil, nil, nil)
+	built, err := cliworkflow.WorkflowRunBuild(prepared.Root, prepared.Res, prepared.Store, prepared.Repo, prepared.Compiled, prepared.RefBase, prepared.Inputs, prepared.InputSnapshot, prepared.Raw, runID, nil, nil, nil, nil, nil, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

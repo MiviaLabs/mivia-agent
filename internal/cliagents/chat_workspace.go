@@ -10,6 +10,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/composition"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
@@ -104,7 +105,15 @@ func ConfigureChatWorkspace(sess *chat.Session, root string, useTools bool, res 
 	if runRecoverySweep {
 		busProvider = func() *events.Bus { return sess.EventBus }
 	}
-	WireWorkflowToolOptionsVar(opts, opts.Workspace.Abs, res, busProvider, quiet)
+	// The session's ledger repo is the same value NewSessionDispatcher will
+	// receive, so the workflow engine stamps exactly the instance the
+	// session's orchestration tools carry. Nil (state without an adopted
+	// repo) keeps child-run registration skipped.
+	var sessionRepo ledger.LedgerRepository
+	if state != nil {
+		sessionRepo = state.LedgerRepo
+	}
+	WireWorkflowToolOptionsVar(opts, opts.Workspace.Abs, res, busProvider, quiet, sessionRepo)
 	if err := WireSessionMemory(opts, root, res); err != nil {
 		return func() {}, err
 	}

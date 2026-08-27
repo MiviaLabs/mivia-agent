@@ -163,6 +163,13 @@ func adoptSessionLedgerRepo(sess *chat.Session, cfg config.SubagentConfig, state
 	if contextDispatcherFor(sess, cfg).SharedSQLite != nil {
 		return
 	}
+	if state.LedgerRepo != nil {
+		// Adopted earlier in this startup (before the workflow tool wiring, so
+		// the workflow engine sees the session's repo instance). Keep it: every
+		// surface rebuild must hand the dispatcher the SAME repo, and the
+		// workflow child-run registration stamps exactly this instance.
+		return
+	}
 	repo, owned := cliorchestrate.OpenDurableLedgerRepo(cfg, os.Stderr)
 	state.AdoptLedgerRepo(repo, owned)
 }

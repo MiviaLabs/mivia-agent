@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
@@ -96,7 +97,7 @@ func TestExecuteWorkflowResumeSettlesRunFailureBeforeFirstAdvance(t *testing.T) 
 	WorkflowResumeOpenStore = func(string, config.SubagentConfig) (*storage.SQLite, workflowledger.Repository, func(), error) {
 		return nil, repo, func() {}, nil
 	}
-	workflowResumeBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *definition.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, []byte, *workflowledger.RunSnapshot, map[string]bool, *skills.Registry) (WorkflowControllerBuild, error) {
+	workflowResumeBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *definition.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, []byte, *workflowledger.RunSnapshot, map[string]bool, *skills.Registry, string, ledger.LedgerRepository) (WorkflowControllerBuild, error) {
 		return WorkflowControllerBuild{
 			Controller: ctrl,
 			Dispatcher: workflowTestDispatcher{},
@@ -142,7 +143,7 @@ func TestExecuteWorkflowRunSettlesStorageFault(t *testing.T) {
 	var runID string
 	originalBuild := WorkflowRunBuild
 	t.Cleanup(func() { WorkflowRunBuild = originalBuild })
-	WorkflowRunBuild = func(_ string, _ *config.Resolved, _ *storage.SQLite, repo workflowledger.Repository, _ *definition.CompiledWorkflow, _ string, _ map[string]any, _ map[string]string, _ []byte, id string, _ *workflowledger.Snapshot, _ []byte, _ *workflowledger.RunSnapshot, _ map[string]bool, _ *skills.Registry) (WorkflowControllerBuild, error) {
+	WorkflowRunBuild = func(_ string, _ *config.Resolved, _ *storage.SQLite, repo workflowledger.Repository, _ *definition.CompiledWorkflow, _ string, _ map[string]any, _ map[string]string, _ []byte, id string, _ *workflowledger.Snapshot, _ []byte, _ *workflowledger.RunSnapshot, _ map[string]bool, _ *skills.Registry, _ string, _ ledger.LedgerRepository) (WorkflowControllerBuild, error) {
 		runID = id
 		fault := &failWhenRunningRepository{Repository: repo, err: sentinel}
 		ctrl, err := controller.NewLinearController(fault, &workflowResumeJoinRunner{}, compiled, nil, map[string]any{"task": "test"}, id, rawSnapshot)

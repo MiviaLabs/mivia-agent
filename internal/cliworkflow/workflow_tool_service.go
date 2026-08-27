@@ -6,6 +6,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
@@ -51,7 +52,7 @@ func SessionEngineConfigPath(root string, res *config.Resolved) string {
 // falls back to the workspace project config. Returns nil when the workspace
 // has no .mivia/workflows/ or the service cannot be built.
 func workflowToolService(root string, res *config.Resolved) *workflowledger.Service {
-	return WorkflowToolServiceWithBus(root, res, nil, false)
+	return WorkflowToolServiceWithBus(root, res, nil, false, nil)
 }
 
 // WorkflowToolServiceWithBus builds the service like workflowToolService and
@@ -63,7 +64,13 @@ func workflowToolService(root string, res *config.Resolved) *workflowledger.Serv
 // passes a non-nil provider. quiet (--quiet) suppresses the session-start
 // recovery sweep's per-run skip/failure logs, the same way it suppresses the
 // other startup notices.
-func WorkflowToolServiceWithBus(root string, res *config.Resolved, provider func() *events.Bus, quiet bool) *workflowledger.Service {
+//
+// sessionRepo is the owning chat session's ledger repository - the same value
+// handed to NewSessionDispatcher, so the session's orchestration tools carry
+// the instance the access gate compares. The engine stamps it on every child
+// run it registers. Nil (no session wiring) keeps child-run registration
+// skipped: fail-closed, one notice.
+func WorkflowToolServiceWithBus(root string, res *config.Resolved, provider func() *events.Bus, quiet bool, sessionRepo ledger.LedgerRepository) *workflowledger.Service {
 	if !workflowledger.HasWorkflows(root) {
 		return nil
 	}
@@ -74,6 +81,7 @@ func WorkflowToolServiceWithBus(root string, res *config.Resolved, provider func
 		return repo, closeFn, err
 	}
 	engine := NewSessionWorkflowEngine(root, configPath)
+	engine.orchestrationRepo = sessionRepo
 	engine.SetEventBusProvider(provider)
 	// A workflow that declares a [delivery] policy grants publication: the
 	// harness must honor it always, without flags or manual overrides. When
@@ -112,11 +120,11 @@ func WorkflowToolServiceWithBus(root string, res *config.Resolved, provider func
 // The parked-delivery sweep (see WorkflowToolServiceWithBus) already runs when
 // provider != nil, so no sweep is launched here. quiet (--quiet) is forwarded
 // to that sweep so the session-start recovery notices honor it.
-func WireWorkflowToolOptions(opts *tools.DefaultOptions, root string, res *config.Resolved, provider func() *events.Bus, quiet bool) {
+func WireWorkflowToolOptions(opts *tools.DefaultOptions, root string, res *config.Resolved, provider func() *events.Bus, quiet bool, sessionRepo ledger.LedgerRepository) {
 	if opts == nil {
 		return
 	}
-	svc := WorkflowToolServiceWithBus(root, res, provider, quiet)
+	svc := WorkflowToolServiceWithBus(root, res, provider, quiet, sessionRepo)
 	if svc == nil {
 		return
 	}

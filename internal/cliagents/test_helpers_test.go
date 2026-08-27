@@ -16,6 +16,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/composition"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -32,7 +33,7 @@ func TestMain(m *testing.M) {
 	// WireWorkflowToolOptionsVar is called by ConfigureChatWorkspace. A no-op
 	// is sufficient for tests that call ConfigureChatWorkspace without needing
 	// workflow tool wiring.
-	WireWorkflowToolOptionsVar = func(_ *tools.DefaultOptions, _ string, _ *config.Resolved, _ func() *events.Bus, _ bool) {
+	WireWorkflowToolOptionsVar = func(_ *tools.DefaultOptions, _ string, _ *config.Resolved, _ func() *events.Bus, _ bool, _ ledger.LedgerRepository) {
 	}
 	// RemainderSpoolFromRegistryVar is wired to a no-op; the tests do not need
 	// real read_output spool tracking.

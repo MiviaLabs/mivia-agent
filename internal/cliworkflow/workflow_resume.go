@@ -87,7 +87,9 @@ func ExecuteWorkflowResume(runID, root, configPath string, force, allowPublish, 
 		return err
 	}
 	defer uninstallHooks()
-	built, err := workflowResumeBuild(work.Abs, res, store, repo, compiled, "", inputs, snapshot.Inputs, snapshot.DefinitionTOML, runID, &snapshot, priorRaw, &run, remaining, skillsReg)
+	// No owning session on the operator CLI resume path: child run
+	// registration is skipped (one notice), like the CLI run path.
+	built, err := workflowResumeBuild(work.Abs, res, store, repo, compiled, "", inputs, snapshot.Inputs, snapshot.DefinitionTOML, runID, &snapshot, priorRaw, &run, remaining, skillsReg, "", nil)
 	if err != nil {
 		return err
 	}

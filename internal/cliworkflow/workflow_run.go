@@ -128,7 +128,8 @@ func ExecuteWorkflowRun(name, root, configPath string, rawInputs []string, allow
 		return err
 	}
 	defer releaseExecution()
-	built, err := WorkflowRunBuild(prepared.Root, prepared.Res, prepared.Store, prepared.Repo, prepared.Compiled, prepared.RefBase, prepared.Inputs, prepared.InputSnapshot, prepared.Raw, runID, nil, nil, nil, nil, nil)
+	// Empty owner (no session on the CLI path): registration is skipped.
+	built, err := WorkflowRunBuild(prepared.Root, prepared.Res, prepared.Store, prepared.Repo, prepared.Compiled, prepared.RefBase, prepared.Inputs, prepared.InputSnapshot, prepared.Raw, runID, nil, nil, nil, nil, nil, "", nil)
 	if err != nil {
 		return err
 	}

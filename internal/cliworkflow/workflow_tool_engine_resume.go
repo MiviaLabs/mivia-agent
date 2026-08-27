@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
@@ -31,15 +32,22 @@ type resumePrepared struct {
 }
 
 // resumeCLI resumes through the same durable preflight as the command path.
+// The owner session comes off the admission ctx here - the only frame where
+// the session caller exists - and threads down as an explicit parameter. The
+// workflow ledger records no owner, so the resuming session is the principal
+// the re-ensured children register under; the common same-session resume
+// re-registers under its own session, and an idempotent re-registration keeps
+// the original owner while the old record survives.
 func (e *sessionWorkflowEngine) resumeCLI(ctx context.Context, req workflowledger.StartRequest) (workflowledger.StartResult, error) {
-	prepared, err := e.prepareResume(ctx, req)
+	ownerSessionID := workflowOwnerSessionID(ctx)
+	prepared, err := e.prepareResume(ctx, req, ownerSessionID, e.orchestrationRepo)
 	if err != nil {
 		return workflowledger.StartResult{}, err
 	}
 	return e.launchResume(ctx, prepared)
 }
 
-func (e *sessionWorkflowEngine) prepareResume(ctx context.Context, req workflowledger.StartRequest) (resumePrepared, error) {
+func (e *sessionWorkflowEngine) prepareResume(ctx context.Context, req workflowledger.StartRequest, ownerSessionID string, sessionRepo ledger.LedgerRepository) (resumePrepared, error) {
 	if strings.TrimSpace(req.RunID) == "" {
 		return resumePrepared{}, fmt.Errorf("resume requires run_id")
 	}
@@ -58,7 +66,7 @@ func (e *sessionWorkflowEngine) prepareResume(ctx context.Context, req workflowl
 		closeFn()
 		return resumePrepared{}, err
 	}
-	built, err := workflowResumeBuild(workForResume(e, req), res, store, repo, compiled, "", inputs, snapshot.Inputs, snapshot.DefinitionTOML, req.RunID, &snapshot, priorRaw, &run, remaining, nil)
+	built, err := workflowResumeBuild(workForResume(e, req), res, store, repo, compiled, "", inputs, snapshot.Inputs, snapshot.DefinitionTOML, req.RunID, &snapshot, priorRaw, &run, remaining, nil, ownerSessionID, sessionRepo)
 	if err != nil {
 		finishExecution()
 		closeFn()

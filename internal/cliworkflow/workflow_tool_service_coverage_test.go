@@ -9,5 +9,5 @@ import (
 // service build, even when the workspace and provider are supplied.
 func TestWireWorkflowToolOptionsNilOptionsNoop(t *testing.T) {
 	root := t.TempDir()
-	WireWorkflowToolOptions(nil, root, nil, nil, false)
+	WireWorkflowToolOptions(nil, root, nil, nil, false, nil)
 }
