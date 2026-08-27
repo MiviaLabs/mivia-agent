@@ -604,6 +604,73 @@ accounting was correct, the declared ceiling it was measured against was wrong.
   standing obligation to re-verify declared catalog constants when a vendor ships a new
   model or graduates a capability from beta to GA.
 
+## DC-21 A platform-specific symbol escapes its platform guard
+
+**Mechanism.** Code imports a portable-looking package (typically
+`golang.org/x/sys/unix`) and calls a symbol that only some GOOS builds define -
+an ioctl constant, a flag, a struct field. The author's own OS carries the
+symbol, so local builds, `go vet`, and unit tests all pass; the first cross-OS
+build to touch that file fails to compile. Because it is usually a _test_
+helper that breaks, most jobs keep passing and the failure surface is one OS
+job - or zero, if the runner shell masks it (see evidence). The class is about
+the escape, not the symbol: any per-GOOS API reached from an untagged file
+qualifies.
+
+**Evidence.** Two commits four days apart each introduced an unguarded pty test
+helper in `internal/clichat` calling `unix.TIOCSPTLCK`/`TIOCGPTN` (Linux-only):
+`db580256` (`withPtyStdin`) and `6daa46ae` (`openTestPTY`). The darwin job went
+red on both (`verify-macos`, run 33040674276); windows showed the same compile
+errors yet concluded green because its multi-line pwsh run block only fails on
+the last command's exit code - the mask turned one class into a second silent
+site. Fixed as a guarded pair in `d5946852`; the pwsh mask fixed separately in
+`66bb81f4`.
+
+**Probes.**
+- Grep for platform-suspect imports (`golang.org/x/sys/unix`, `syscall`) in
+  files with no `//go:build` line. Any hit whose symbols are not defined for
+  every GOOS the repo ships (linux, darwin, windows) is this defect.
+- Cross-compilation catches the class offline: `GOOS=darwin go vet ./...` and
+  `GOOS=windows go vet ./...` type-check every build-tag variant of the touched
+  packages without needing runners. Run it whenever a change touches a
+  platform-specific import.
+- When quarantining such code behind a `<name>_<goos>.go` / `<name>_other.go`
+  pair, both halves must share one signature contract, and the non-native half
+  must skip with the same posture the capability-missing case already uses -
+  never fail.
+- CI honesty is a precondition: if a runner shell only propagates the last
+  command's exit status (pwsh run blocks), a compile break in this class hides
+  entirely. Split such blocks into single-command steps first.
+
+## DC-22 A refactor moves code but leaves its non-Go wiring pointing at the old path
+
+**Mechanism.** A package or directory moves, merges, or is deleted. Go-level
+references get rewritten mechanically because the compiler enforces them - but
+references outside the compile graph survive untouched: Makefile targets,
+`.github/workflows` run commands, scripts, docs snippets, release tooling. They
+rot invisibly until the next invocation either fails loudly (`directory not
+found`) or quietly runs less than intended (a `-run` filter that matches no
+renamed test is still green).
+
+**Evidence.** `491c7789` collapsed five `internal/workflows` subpackages into
+`internal/workflows/definition` and rewrote 119 Go call sites, but left the
+Makefile target `verifier-integration` pointing at the deleted
+`./internal/workflows/verifier`. The dedicated CI job
+`verify-main-verifier-integration` then failed with `[setup failed] directory
+not found` on every main push (runs 33036787729, 33040674276) until fixed by
+`86e7fe1d`.
+
+**Probes.**
+- Any diff that renames, merges, or deletes a directory must grep the whole
+  tree for the old path string restricted to non-`*.go` files (Makefile,
+  `.github/`, `scripts/`, `docs/`) and reconcile every hit in the same change.
+- Prefer targeting whole packages over name-based `-run` filters in gates that
+  exist for one specific test; a filter that silently matches nothing after a
+  rename turns the gate vacuous instead of loud. If a filter is unavoidable,
+  assert match-count > 0 before trusting the result.
+- After any path-affecting refactor, verify every package path referenced by a
+  Makefile target resolves on disk (one pass over `\./(internal|cmd)...`
+  occurrences suffices today).
+
 ## Maintenance
 
 Update this document when a `fix` commit does not match any class, or when a class
