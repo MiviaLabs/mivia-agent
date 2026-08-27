@@ -101,7 +101,11 @@ func TestReferencesClassifiesErrorsIsAsComparison(t *testing.T) {
 		if loc.Role != RoleComparison {
 			t.Errorf("query filtered to roles=[comparison] returned a %s location", loc.Role)
 		}
-		if strings.Contains(loc.Path, "storage_claims.go") || strings.Contains(loc.Path, "ledgercore/errors.go") || strings.Contains(loc.Path, "ledgercore/claims.go") {
+		// Location.Path uses native separators ("\internal\..." on Windows);
+		// compare against slash-normalized paths or the slashed needles never
+		// match there.
+		norm := filepath.ToSlash(loc.Path)
+		if strings.Contains(norm, "storage_claims.go") || strings.Contains(norm, "ledgercore/errors.go") || strings.Contains(norm, "ledgercore/claims.go") {
 			foundStorageClaims = true
 		}
 	}

@@ -28,7 +28,7 @@ import (
 func TestSessionSweepDrivesParkedStackAfterAbortedDrive(t *testing.T) {
 	it := newStackDriveIT(t, "", "")
 	it.merges.enabled.Store(false) // the in-session drive can never merge: it must abort on its bound
-	planRunID := it.startPlanRun(8 * time.Second)
+	planRunID := it.startPlanRun(ciDeadline(8 * time.Second))
 
 	// --- The wedge, exactly as reported: ---
 	if got := it.runStatus(planRunID); got != workflowledger.RunStatusDeliveryPending {
@@ -108,7 +108,7 @@ func TestSessionSweepDrivesParkedStackAfterAbortedDrive(t *testing.T) {
 func TestSessionSweepDrivesChunkRetryAfterTransientFailure(t *testing.T) {
 	it := newStackDriveIT(t, "", "")
 	it.runner.failFirstImplement = 1
-	planRunID := it.startPlanRun(60 * time.Second)
+	planRunID := it.startPlanRun(ciDeadline(60 * time.Second))
 
 	// The injected failure fails the first c1 run; the in-session drive
 	// reopens the chunk (attempt 2 of 3) and stops, leaving the plan run
@@ -181,7 +181,7 @@ func TestSessionSweepDrivesChunkRetryAfterTransientFailure(t *testing.T) {
 // drives them through delivery + merge before the integration run.
 func TestSessionSweepDrivesIncrementalDecomposeWaves(t *testing.T) {
 	it := newStackDriveIT(t, "", hasMorePlanOutput)
-	planRunID := it.startPlanRun(60 * time.Second)
+	planRunID := it.startPlanRun(ciDeadline(60 * time.Second))
 
 	if got := it.runStatus(planRunID); got != workflowledger.RunStatusSucceeded {
 		t.Fatalf("plan run status = %q, want succeeded after both waves drove", got)
@@ -213,7 +213,7 @@ func TestSessionSweepDrivesIncrementalDecomposeWaves(t *testing.T) {
 // was admitted, the plan run settles succeeded under the grant default.
 func TestSessionSweepGrantPolicyPausesAndResumes(t *testing.T) {
 	it := newStackDriveIT(t, "approve", "")
-	planRunID := it.startPlanRun(3 * time.Second)
+	planRunID := it.startPlanRun(ciDeadline(3 * time.Second))
 
 	// Tick 1: c1 admitted and reviewed; the stack waits for the grant.
 	if got := it.runStatus(planRunID); got != workflowledger.RunStatusDeliveryPending {
@@ -291,7 +291,7 @@ func TestSessionSweepGrantPolicyPausesAndResumes(t *testing.T) {
 // succeeded - with zero chunk tasks and zero chunk PRs.
 func TestSessionSingleModePlanPublishesOwnPR(t *testing.T) {
 	it := newStackDriveIT(t, "", singlePlanOutput)
-	planRunID := it.startPlanRun(60 * time.Second)
+	planRunID := it.startPlanRun(ciDeadline(60 * time.Second))
 
 	if got := it.runStatus(planRunID); got != workflowledger.RunStatusSucceeded {
 		t.Fatalf("plan run status = %q, want succeeded (its own PR was delivered)", got)

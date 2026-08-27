@@ -3,6 +3,7 @@ package tools_test
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"testing"
 
@@ -10,6 +11,17 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
+
+// diagProg returns a portable allowlist program: echo is a Windows shell
+// builtin with no executable, and the registration gate resolves argv[0]
+// against the allowlist (and PATH at run time), so tests that need a
+// resolvable program use "go" there.
+func diagProg() string {
+	if runtime.GOOS == "windows" {
+		return "go"
+	}
+	return "echo"
+}
 
 func TestAllToolNamesMatchesFullRegistry(t *testing.T) {
 	dir := t.TempDir()
@@ -35,15 +47,15 @@ func TestAllToolNamesMatchesFullRegistry(t *testing.T) {
 	reg := tools.NewDefaultRegistry(tools.DefaultOptions{
 		Workspace:    ws,
 		TavilyAPIKey: "test-key-not-real",
-		RunAllowlist: []string{"echo"}, // run_command is conditional on non-empty allowlist
-		Memory:       store,            // memory tools are conditional on a wired store
+		RunAllowlist: []string{diagProg()}, // run_command is conditional on non-empty allowlist
+		Memory:       store,                // memory tools are conditional on a wired store
 		// get_diagnostics is conditional on a configured DiagnosticsCommands
 		// map whose default entry's argv[0] is on the effective run_command
-		// allowlist. "echo" is on the harness allowlist, so the tool registers
-		// and the catalogue ↔ registry contract below holds for it in both
-		// directions.
+		// allowlist. diagProg() is on the harness allowlist, so the tool
+		// registers and the catalogue ↔ registry contract below holds for it
+		// in both directions.
 		DiagnosticsCommands: map[string][]string{
-			"default": {"echo", "diagnostics"},
+			"default": {diagProg(), "diagnostics"},
 		},
 	})
 	// Also register skill resource which default registry may not include.
@@ -102,26 +114,26 @@ func TestGetDiagnosticsRegistrationConditions(t *testing.T) {
 	}
 
 	// Unconfigured: no DiagnosticsCommands → the tool is not registered.
-	if hasDiagnostics(newReg(nil, []string{"echo"})) {
+	if hasDiagnostics(newReg(nil, []string{diagProg()})) {
 		t.Errorf("get_diagnostics must not register when DiagnosticsCommands is unset")
 	}
 
 	// Configured but the default argv[0] NOT on the allowlist → the tool is
 	// not registered. The allowlist membership check precedes PATH resolution,
 	// so this is deterministic regardless of whether the program exists.
-	if hasDiagnostics(newReg(map[string][]string{"default": {"not_an_allowlisted_program", "diagnostics"}}, []string{"echo"})) {
+	if hasDiagnostics(newReg(map[string][]string{"default": {"not_an_allowlisted_program", "diagnostics"}}, []string{diagProg()})) {
 		t.Errorf("get_diagnostics must not register when the default argv[0] is not allowlisted")
 	}
 
 	// Configured with a "default" entry whose argv[0] is allowlisted (and
 	// resolvable on PATH) → registered.
-	if !hasDiagnostics(newReg(map[string][]string{"default": {"echo", "diagnostics"}}, []string{"echo"})) {
+	if !hasDiagnostics(newReg(map[string][]string{"default": {diagProg(), "diagnostics"}}, []string{diagProg()})) {
 		t.Errorf("get_diagnostics must register when DiagnosticsCommands has an allowlisted default entry")
 	}
 
 	// A sole non-"default" command is its own default (the v2 defaultName
 	// rule) and gates registration the same way.
-	if !hasDiagnostics(newReg(map[string][]string{"check": {"echo", "diagnostics"}}, []string{"echo"})) {
+	if !hasDiagnostics(newReg(map[string][]string{"check": {diagProg(), "diagnostics"}}, []string{diagProg()})) {
 		t.Errorf("get_diagnostics must register with a sole non-default command name as the default")
 	}
 }

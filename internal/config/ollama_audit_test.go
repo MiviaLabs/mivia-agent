@@ -18,7 +18,10 @@ func writeOllamaAuditConfig(t *testing.T, providerName, baseURL, modelName, cred
 	path := filepath.Join(dir, "mivia.toml")
 	var b strings.Builder
 	if envFilePath != "" {
-		b.WriteString("env_file = \"" + envFilePath + "\"\n")
+		// Windows temp paths carry backslashes; a raw backslash inside a TOML
+		// basic string parses as an escape ("\a" is invalid). Double them so
+		// the value survives parsing verbatim.
+		b.WriteString("env_file = \"" + strings.ReplaceAll(envFilePath, `\`, `\\`) + "\"\n")
 	}
 	b.WriteString("[provider]\nname = \"" + providerName + "\"\n\n")
 	b.WriteString("[providers." + providerName + "]\n")
@@ -294,6 +297,11 @@ func TestAuditShippedExampleLoads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A windows-latest checkout materializes this LF file as CRLF
+	// (core.autocrlf=true); every exact-line rewrite below keys on "\n", so
+	// normalize before those transformations or they silently no-op and the
+	// case-(d) loopback rewrite never lands.
+	raw = bytes.ReplaceAll(raw, []byte("\r\n"), []byte("\n"))
 	os.Unsetenv("OLLAMA_API_KEY")
 	t.Setenv("HOME", t.TempDir())
 	writeCfg := func(data []byte) string {

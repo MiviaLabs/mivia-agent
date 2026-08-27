@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -200,6 +201,17 @@ func stackDriveEngineNoStore(t *testing.T) (*localengine.Engine, *workflowledger
 
 // waitPlanRunStatus polls a run until its status matches want or the deadline
 // passes.
+// ciDeadline scales a wall-clock test budget for the platform it runs on:
+// windows-latest CI runners execute the real git and SQLite steps in the
+// stack-drive suites an order of magnitude slower than the Linux baseline
+// these constants were measured on. Non-Windows budgets stay tight.
+func ciDeadline(d time.Duration) time.Duration {
+	if runtime.GOOS == "windows" {
+		return 3 * d
+	}
+	return d
+}
+
 func waitPlanRunStatus(t *testing.T, svc *workflowledger.Service, runID, want string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -244,7 +256,7 @@ func TestEngineStackAutoDrivesAfterPark(t *testing.T) {
 	started := startStackingRunFor(t, svc, "stack-drive-me", nil)
 	waitRun(t, engine, started.RunID)
 	// The automatic drive settles the parked plan run.
-	waitPlanRunStatus(t, svc, started.RunID, "succeeded", 60*time.Second)
+	waitPlanRunStatus(t, svc, started.RunID, "succeeded", ciDeadline(60*time.Second))
 
 	runs, err := engine.Repo.ListRuns(context.Background())
 	if err != nil {
@@ -305,7 +317,7 @@ func TestEngineStackApproveParksChunksAndGateRefusesUndrivenPublish(t *testing.T
 	waitRun(t, engine, started.RunID)
 
 	ledger := workflowledger.NewStore(db)
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := time.Now().Add(ciDeadline(30 * time.Second))
 	for {
 		byID, err := delivery.TaskMap(context.Background(), ledger, started.RunID)
 		if err != nil {
@@ -346,14 +358,14 @@ func TestEngineStackGateAllowsPublishAfterDrive(t *testing.T) {
 
 	// The drive completes the stack but leaves the plan run parked for its
 	// own explicit deliver.
-	waitPlanRunStatus(t, svc, started.RunID, "delivery_pending", 60*time.Second)
+	waitPlanRunStatus(t, svc, started.RunID, "delivery_pending", ciDeadline(60*time.Second))
 
 	// Wait for the ledger to show the stack drove to completion: every chunk
 	// merged AND the integration run settled (stackDriveCompleted requires
 	// both; the chunks-merged wait alone races the drive's final
 	// integration-run settle).
 	ledger := workflowledger.NewStore(db)
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := time.Now().Add(ciDeadline(30 * time.Second))
 	for {
 		byID, err := delivery.TaskMap(context.Background(), ledger, started.RunID)
 		if err != nil {
@@ -381,7 +393,7 @@ func TestEngineStackGateAllowsPublishAfterDrive(t *testing.T) {
 	if res.Status != "succeeded" {
 		t.Fatalf("deliver result = %+v, want succeeded", res)
 	}
-	waitPlanRunStatus(t, svc, started.RunID, "succeeded", 30*time.Second)
+	waitPlanRunStatus(t, svc, started.RunID, "succeeded", ciDeadline(30*time.Second))
 }
 
 // TestEngineStackNoStoreDegradesToOperatorDrive pins the safe degradation
@@ -399,7 +411,7 @@ func TestEngineStackNoStoreDegradesToOperatorDrive(t *testing.T) {
 		t.Fatalf("plan run status = %q, want delivery_pending", view.Status)
 	}
 	// Give any (wrong) drive a few poll intervals to act; it must not.
-	<-time.After(4 * time.Second)
+	<-time.After(ciDeadline(4 * time.Second))
 	view = stackStatusView(t, svc, started.RunID)
 	if view.Status != "delivery_pending" {
 		t.Fatalf("plan run status without a store = %q, want delivery_pending (the operator drive owns it)", view.Status)
@@ -515,7 +527,7 @@ func TestStackDriveRefusedDeliveryDoesNotMarkPublished(t *testing.T) {
 	// STACK-2: a delivery_failed chunk is never blindly re-delivered - the
 	// drive halts instead of burning a delivery attempt every poll tick.
 	after := git.attempts()
-	<-time.After(2500 * time.Millisecond)
+	<-time.After(ciDeadline(2500 * time.Millisecond))
 	if got := git.attempts(); got != after {
 		t.Fatalf("delivery attempts grew after the refusal: %d -> %d; a delivery_failed chunk must not be re-delivered", after, got)
 	}
@@ -532,7 +544,7 @@ func TestStackDriveRefusedDeliveryDoesNotMarkPublished(t *testing.T) {
 // marked published (STACK-1) or if the deadline passes.
 func waitChunkReopened(t *testing.T, ledger *workflowledger.Store, stackID string) {
 	t.Helper()
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := time.Now().Add(ciDeadline(30 * time.Second))
 	for {
 		byID, err := delivery.TaskMap(context.Background(), ledger, stackID)
 		if err != nil {
@@ -610,7 +622,7 @@ func TestStackDriveTransientFaultBackoffBoundsRetries(t *testing.T) {
 
 	// Attempts land at ~t0, t0+2s, t0+6s under the backoff schedule; a
 	// pre-fix drive retried every 2s.
-	deadline := time.Now().Add(15 * time.Second)
+	deadline := time.Now().Add(ciDeadline(15 * time.Second))
 	for {
 		if len(git.timestamps()) >= 3 {
 			break
@@ -683,7 +695,7 @@ func TestStackDriveIntegrationFaultBackoffBoundsRetries(t *testing.T) {
 	runID := waitIntegrationRun(t, engine, started.RunID)
 	git.setFailDir(filepath.Join(root, ".mivia", "worktrees", "workflow-"+runID))
 
-	deadline := time.Now().Add(20 * time.Second)
+	deadline := time.Now().Add(ciDeadline(20 * time.Second))
 	for {
 		if len(git.timestamps()) >= 3 {
 			break
@@ -706,7 +718,7 @@ func TestStackDriveIntegrationFaultBackoffBoundsRetries(t *testing.T) {
 func waitIntegrationRun(t *testing.T, engine *localengine.Engine, stackID string) string {
 	t.Helper()
 	want := stackID + ":" + delivery.IntegrationChunkID
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := time.Now().Add(ciDeadline(30 * time.Second))
 	for {
 		runs, err := engine.Repo.ListRuns(context.Background())
 		if err != nil {
@@ -1101,7 +1113,7 @@ func TestEngineStackDriveAfterParkInterruptible(t *testing.T) {
 	}
 	// Let any in-flight pass observe the cancellation, then verify the poll
 	// truly stopped (the pre-fix leak kept polling forever).
-	<-time.After(2500 * time.Millisecond)
+	<-time.After(ciDeadline(2500 * time.Millisecond))
 	before := oracle.findCount()
 	<-time.After(3500 * time.Millisecond) // more than one 2s poll interval
 	if got := oracle.findCount(); got != before {

@@ -6,6 +6,7 @@ package composition
 // manager.
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -13,10 +14,14 @@ import (
 )
 
 func TestAttachMCPServersManagerConstructionFailure(t *testing.T) {
+	// os.Args[0] is an existing executable regular file on every GOOS, so
+	// ValidateServerConfig passes on entry #1 and the loop reaches entry #2,
+	// where the duplicate-id check fires. "/bin/echo" only exists on Unix.
+	dupCmd := os.Args[0]
 	cfg := config.MCPConfig{
 		Enabled: true,
 		Servers: []config.MCPServerConfig{
-			{ID: "dup", Transport: "stdio", Command: "/bin/echo"}, {ID: "dup", Transport: "stdio", Command: "/bin/echo"},
+			{ID: "dup", Transport: "stdio", Command: dupCmd}, {ID: "dup", Transport: "stdio", Command: dupCmd},
 		},
 	}
 	manager, cleanup, err := AttachMCPServers(nil, cfg, nil, nil)

@@ -47,7 +47,12 @@ func TestOpenAPITypesFreshness(t *testing.T) {
 		t.Fatalf("read generated output %s: %v", outPath, err)
 	}
 
-	if !bytes.Equal(got, want) {
+	// Compare EOL-normalized content: the generator always writes LF, while
+	// a windows-latest checkout may materialize the checked-in file as CRLF
+	// (core.autocrlf=true). Real drift still fails; checkout-mangled line
+	// endings must not.
+	if !bytes.Equal(bytes.ReplaceAll(got, []byte("\r\n"), []byte("\n")),
+		bytes.ReplaceAll(want, []byte("\r\n"), []byte("\n"))) {
 		t.Fatalf(
 			"internal/miviaauth/openapi_types.gen.go is stale relative to api/openapi/auth.v2.yaml.\n\n"+
 				"Regenerate and commit with:\n  go generate ./internal/miviaauth/...\n\n"+

@@ -41,7 +41,10 @@ func TestRenderGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if buf.String() != string(want) {
+	// EOL-normalized: a windows-latest checkout can materialize the LF
+	// golden as CRLF (core.autocrlf=true); the renderer itself always
+	// writes LF.
+	if got := strings.ReplaceAll(buf.String(), "\r\n", "\n"); got != strings.ReplaceAll(string(want), "\r\n", "\n") {
 		t.Errorf("output does not match golden %s\n--- got ---\n%s\n--- want ---\n%s", goldenPath, buf.String(), want)
 	}
 }

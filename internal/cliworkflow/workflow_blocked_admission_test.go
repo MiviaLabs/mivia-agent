@@ -106,6 +106,10 @@ func TestPrepareWorkflowRunAdmitsMiviaTomlEditWithNoConfiguredBlocklist(t *testi
 	if prepared == nil {
 		t.Fatal("PrepareWorkflowRun() returned nil prepared run")
 	}
+	// Release the admitted run's open store before t.TempDir removal: POSIX
+	// unlinks open files, but Windows RemoveAll fails with
+	// ERROR_SHARING_VIOLATION while the SQLite handle is live.
+	t.Cleanup(prepared.CloseFn)
 }
 
 // TestPrepareWorkflowRunAdmitsBlockedPathMention is the false-positive guard:
@@ -121,6 +125,10 @@ func TestPrepareWorkflowRunAdmitsBlockedPathMention(t *testing.T) {
 	if prepared == nil {
 		t.Fatal("PrepareWorkflowRun() returned nil prepared run")
 	}
+	// Release the admitted run's open store before t.TempDir removal: POSIX
+	// unlinks open files, but Windows RemoveAll fails with
+	// ERROR_SHARING_VIOLATION while the SQLite handle is live.
+	t.Cleanup(prepared.CloseFn)
 }
 
 // TestPrepareWorkflowRunAdmitsUnrelatedTask ensures ordinary tasks are
@@ -136,4 +144,8 @@ func TestPrepareWorkflowRunAdmitsUnrelatedTask(t *testing.T) {
 	if prepared == nil {
 		t.Fatal("PrepareWorkflowRun() returned nil prepared run")
 	}
+	// Release the admitted run's open store before t.TempDir removal: POSIX
+	// unlinks open files, but Windows RemoveAll fails with
+	// ERROR_SHARING_VIOLATION while the SQLite handle is live.
+	t.Cleanup(prepared.CloseFn)
 }

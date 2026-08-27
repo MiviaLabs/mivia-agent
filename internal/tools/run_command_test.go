@@ -415,7 +415,7 @@ func TestRunCommandParentCancelReportsCanceled(t *testing.T) {
 // TestRunCommandRegisteredWithBuiltinAllowlistByDefault proves run_command
 // is open by default: with no [tools] run_allowlist configured, it is still
 // registered and can run a program from DefaultRunAllowlist (e.g.
-// "echo"). See DefaultRunAllowlist's doc comment for what is (and is
+// "git"). See DefaultRunAllowlist's doc comment for what is (and is
 // not) included by default.
 func TestRunCommandRegisteredWithBuiltinAllowlistByDefault(t *testing.T) {
 	ws := setupTestWSRun(t)
@@ -423,12 +423,16 @@ func TestRunCommandRegisteredWithBuiltinAllowlistByDefault(t *testing.T) {
 	if _, ok := reg.Get(RunCommandToolName); !ok {
 		t.Fatal("run_command should be registered by default (built-in allowlist)")
 	}
-	out, err := reg.Execute(context.Background(), RunCommandToolName, json.RawMessage(`{"argv":["echo","hi"]}`))
+	// git stands in as the portable allowlisted program: echo is a shell
+	// builtin on Windows with no executable, and resolveAllowedCommand
+	// refuses it there by contract (see run_gate_test.go's Windows
+	// shell-builtin pin).
+	out, err := reg.Execute(context.Background(), RunCommandToolName, json.RawMessage(`{"argv":["git","--version"]}`))
 	if err != nil {
-		t.Fatalf("Execute(echo) error = %v, want success from the built-in allowlist", err)
+		t.Fatalf("Execute(git) error = %v, want success from the built-in allowlist", err)
 	}
-	if !strings.Contains(out, "hi") {
-		t.Fatalf("out=%q, want it to contain echo's output", out)
+	if !strings.Contains(out, "git version") {
+		t.Fatalf("out=%q, want it to contain git's output", out)
 	}
 }
 

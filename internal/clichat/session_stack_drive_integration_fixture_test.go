@@ -30,6 +30,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -485,6 +486,17 @@ func (it *stackDriveIT) buildStub(buildRoot string, _ *config.Resolved, _ *stora
 // production admits synchronously first. It returns when the engine's
 // goroutine has fully exited (idle), so the caller observes the durable end
 // state of the drive attempt.
+// ciDeadline scales a wall-clock test budget for the platform it runs on:
+// windows-latest CI runners execute the underlying git and SQLite steps an
+// order of magnitude slower than the Linux baseline these constants were
+// measured on. Non-Windows budgets stay tight.
+func ciDeadline(d time.Duration) time.Duration {
+	if runtime.GOOS == "windows" {
+		return 3 * d
+	}
+	return d
+}
+
 func (it *stackDriveIT) startPlanRun(bound time.Duration) string {
 	t := it.t
 	t.Helper()

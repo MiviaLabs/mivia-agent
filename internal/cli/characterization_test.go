@@ -239,12 +239,14 @@ func assertFieldSet(t *testing.T, l charLine, wantKeys ...string) {
 // --- flow 1: one tool call, then a final assistant message --------------
 
 func TestCharacterization_ToolCallRoundTrip(t *testing.T) {
+	// git stands in for the portable run_command exercise: echo is a shell
+	// builtin on Windows and run_command's gate refuses it there by contract.
 	stub := newStubServer(
-		sseToolCallTurn("call_1", "run_command", `{"argv":["echo","ok"]}`),
+		sseToolCallTurn("call_1", "run_command", `{"argv":["git","--version"]}`),
 		sseTextTurn("done"),
 	)
 	ws := t.TempDir()
-	lines := runChatJSON(t, stub, ws, []string{"run echo ok"})
+	lines := runChatJSON(t, stub, ws, []string{"run git --version"})
 	decoded := decodeCharLines(t, lines)
 
 	// Two tool_start lines per call is current, real behavior, not a test
@@ -265,7 +267,7 @@ func TestCharacterization_ToolCallRoundTrip(t *testing.T) {
 			t.Fatalf("tool_start name = %v, want run_command", s.fields["name"])
 		}
 	}
-	if starts[0].fields["input"] != `{"argv":["echo","ok"]}` {
+	if starts[0].fields["input"] != `{"argv":["git","--version"]}` {
 		t.Fatalf("queued tool_start input = %v, want the argument preview", starts[0].fields["input"])
 	}
 	if starts[1].fields["input"] != "running" {
@@ -281,7 +283,7 @@ func TestCharacterization_ToolCallRoundTrip(t *testing.T) {
 		t.Fatalf("tool_end name = %v, want run_command", ends[0].fields["name"])
 	}
 	if ends[0].fields["status"] != "ok" {
-		t.Fatalf("tool_end status = %v, want ok (echo must succeed): %v", ends[0].fields["status"], lines)
+		t.Fatalf("tool_end status = %v, want ok (git must succeed): %v", ends[0].fields["status"], lines)
 	}
 
 	assertFinalAssistantMessage(t, decoded, "done")

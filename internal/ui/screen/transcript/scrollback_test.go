@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io/fs"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -138,7 +139,10 @@ func TestEditorCommandCreatesPrivateFileWithDump(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := info.Mode().Perm(); got != 0o600 {
+	// Mode bits are POSIX semantics: Windows Stat reports 0666 (chmod keeps
+	// only the read-only attribute); privacy there rides on %TEMP% ACL
+	// inheritance. The 0600 contract itself stays pinned on Unix.
+	if got := info.Mode().Perm(); runtime.GOOS != "windows" && got != 0o600 {
 		t.Errorf("transcript file mode is %o, want 0600 (never world-readable)", got)
 	}
 	got, err := os.ReadFile(path)
@@ -266,8 +270,10 @@ func TestEditorCommandFailsWhenTempAreaUnwritable(t *testing.T) {
 
 	// CreateTemp succeeds, then WriteFile must fail: the directory is
 	// read-only for the write step. Root ignores directory permissions,
-	// so skip under root.
-	if os.Geteuid() != 0 {
+	// so skip under root. Windows needs the extra guard: Geteuid() is -1
+	// there (so the root skip never fires), and chmod 0500 does not revoke
+	// NTFS write access in the first place.
+	if os.Geteuid() != 0 && runtime.GOOS != "windows" {
 		dir := t.TempDir()
 		f, err := os.CreateTemp(dir, "probe-*")
 		if err != nil {

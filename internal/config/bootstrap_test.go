@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -137,7 +138,10 @@ func TestWriteUserEnvKeyPreservesExistingKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat: %v", err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	// Exact mode bits are POSIX semantics: on Windows chmod keeps only the
+	// read-only attribute and Stat reports 0666. The privacy guarantee there
+	// rides on profile/%TEMP% ACL inheritance, not on mode bits.
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("perm = %v, want 0600", info.Mode().Perm())
 	}
 }

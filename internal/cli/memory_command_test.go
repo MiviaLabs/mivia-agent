@@ -288,6 +288,12 @@ func TestMemorySearchResolveWorkspaceError(t *testing.T) {
 	if runtime.GOOS == "darwin" {
 		t.Skip("macOS getcwd does not fail after the cwd directory is removed; this test needs the Linux stale-cwd quirk")
 	}
+	if runtime.GOOS == "windows" {
+		// Windows refuses to remove a directory that is the process's own
+		// working directory (ERROR_SHARING_VIOLATION), so the stale-cwd
+		// precondition below cannot be constructed outside POSIX kernels.
+		t.Skip("windows never releases its own cwd directory handle; the stale-cwd precondition is POSIX-only")
+	}
 	origWD, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)

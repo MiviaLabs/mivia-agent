@@ -92,7 +92,11 @@ func compareGolden(t *testing.T, path, got string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != string(want) {
+	// EOL-normalized: a windows-latest checkout can materialize the LF
+	// golden as CRLF (core.autocrlf=true); the model itself writes LF.
+	gotNorm := strings.ReplaceAll(got, "\r\n", "\n")
+	wantNorm := strings.ReplaceAll(string(want), "\r\n", "\n")
+	if gotNorm != wantNorm {
 		t.Errorf("output does not match golden %s\n--- got ---\n%s\n--- want ---\n%s", path, got, want)
 	}
 }
