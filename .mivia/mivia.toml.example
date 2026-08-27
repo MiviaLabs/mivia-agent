@@ -562,7 +562,7 @@ spawn_stagger_ms = 150
 # default is visible and a smaller value never slips in silently. Batches and
 # tasks may still raise it per call; they never lower it below this floor.
 default_timeout_seconds = 43200
-# default_request_timeout_seconds = 0  # per-LLM-request timeout (seconds); 0 = fall back to the effective orchestration default (default_timeout_seconds when positive, otherwise the 12-hour safety bound); internal 15-minute HTTP transport timeout is the hard per-request ceiling regardless
+# default_request_timeout_seconds = 600  # per-LLM-request timeout (seconds); 0 = fall back to the effective orchestration default (default_timeout_seconds when positive, otherwise the 12-hour safety bound); internal 15-minute HTTP transport timeout is the hard per-request ceiling regardless. A finite value (e.g. 600) fails a stalled or proxy-queued call inside one step instead of pinning the subagent for hours.
 # default_budget = 0           # 0 = unlimited
 # max_audit_rounds = 0         # 0 = unlimited
 
