@@ -1097,7 +1097,7 @@ func TestEngineStackDriveAfterParkInterruptible(t *testing.T) {
 
 	// The drive delivers the first wave with a real diff, opens a PR, and
 	// then polls the oracle waiting for a merge that never comes.
-	deadline := time.Now().Add(60 * time.Second)
+	deadline := time.Now().Add(ciDeadline(60 * time.Second))
 	for oracle.findCount() == 0 {
 		if time.Now().After(deadline) {
 			t.Fatalf("the drive never polled the merge oracle; the stack did not reach the published-never-merged state")

@@ -487,9 +487,13 @@ func TestPathEscapeViaTools_Unrestricted(t *testing.T) {
 
 	// Read outside file should succeed.
 	ctx := context.Background()
-	out, err := reg.Execute(ctx, "read_file", json.RawMessage(
-		fmt.Sprintf(`{"path":"%s"}`, outsideFile),
-	))
+	// json.Marshal instead of string interpolation: a Windows temp path's
+	// backslashes are invalid JSON escapes when Sprintf'd in raw.
+	readArgs, merr := json.Marshal(map[string]string{"path": outsideFile})
+	if merr != nil {
+		t.Fatal(merr)
+	}
+	out, err := reg.Execute(ctx, "read_file", readArgs)
 	if err != nil {
 		t.Fatalf("unrestricted read outside: %v", err)
 	}
@@ -499,9 +503,11 @@ func TestPathEscapeViaTools_Unrestricted(t *testing.T) {
 
 	// Write outside file should succeed.
 	outsideWrite := filepath.Join(outside, "write-test.txt")
-	out, err = reg.Execute(ctx, "write_file", json.RawMessage(
-		fmt.Sprintf(`{"path":"%s","content":"written-outside"}`, outsideWrite),
-	))
+	writeArgs, merr := json.Marshal(map[string]string{"path": outsideWrite, "content": "written-outside"})
+	if merr != nil {
+		t.Fatal(merr)
+	}
+	out, err = reg.Execute(ctx, "write_file", writeArgs)
 	if err != nil {
 		t.Fatalf("unrestricted write outside: %v", err)
 	}
@@ -548,9 +554,11 @@ func TestWriteDenylistOutsideRoot_Unrestricted(t *testing.T) {
 		t.Fatal(err)
 	}
 	outsideFile := filepath.Join(gitDir, "config")
-	_, err = reg.Execute(context.Background(), "write_file", json.RawMessage(
-		fmt.Sprintf(`{"path":"%s","content":"test"}`, outsideFile),
-	))
+	gitArgs, merr := json.Marshal(map[string]string{"path": outsideFile, "content": "test"})
+	if merr != nil {
+		t.Fatal(merr)
+	}
+	_, err = reg.Execute(context.Background(), "write_file", gitArgs)
 	if err != nil {
 		t.Fatalf("write to outside .git dir should succeed in unrestricted mode: %v", err)
 	}

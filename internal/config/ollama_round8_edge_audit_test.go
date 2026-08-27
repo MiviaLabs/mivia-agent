@@ -11,6 +11,7 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -132,10 +133,10 @@ func TestRound8ExampleConfigsLoad(t *testing.T) {
 	t.Setenv("ZAI_API_KEY", "")
 	root := repoRoot(t)
 	// .env.example must parse and leave every key unset (blank values).
-	if _, err := sdkenvfile.Load(root + "/.env.example"); err != nil {
+	if _, err := sdkenvfile.Load(filepath.Join(root, ".env.example")); err != nil {
 		t.Fatalf(".env.example load: %v", err)
 	}
-	exampleCfg := root + "/.mivia/mivia.toml.example"
+	exampleCfg := filepath.Join(root, ".mivia", "mivia.toml.example")
 	res, err := Load(LoadOptions{ConfigPath: exampleCfg})
 	if err != nil {
 		t.Fatalf("load shipped example config: %v", err)
@@ -193,11 +194,19 @@ func repoRoot(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Test CWD is the package dir (internal/config). Climb to the repo root.
-	for d := wd; d != "/" && d != ""; d = d[:strings.LastIndex(d, "/")] {
-		if _, err := os.Stat(d + "/.mivia/mivia.toml.example"); err == nil {
+	// Test CWD is the package dir (internal/config). Climb to the repo root
+	// with filepath semantics: a hardcoded "/" walk panics on Windows, whose
+	// paths use backslashes (LastIndex returns -1 -> slice [:-1]).
+	marker := filepath.Join(".mivia", "mivia.toml.example")
+	for d := filepath.Clean(wd); ; {
+		if _, err := os.Stat(filepath.Join(d, marker)); err == nil {
 			return d
 		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			break
+		}
+		d = parent
 	}
 	t.Fatal("cannot locate repo root")
 	return ""

@@ -58,10 +58,14 @@ func (c *claimsErrorConn) ExecContext(ctx context.Context, query string, args []
 }
 
 func (c *claimsErrorConn) Close() error {
+	// Close the real driver conn even when the injected error fires, or the
+	// underlying file handle leaks and Windows TempDir cleanup fails with
+	// ERROR_SHARING_VIOLATION; Close still surfaces the injected error.
+	err := c.Conn.Close()
 	if c.closeErr != nil {
 		return c.closeErr
 	}
-	return c.Conn.Close()
+	return err
 }
 
 func openClaimsErrorStore(t *testing.T, path, failSubstr string, closeErr error) *SQLite {

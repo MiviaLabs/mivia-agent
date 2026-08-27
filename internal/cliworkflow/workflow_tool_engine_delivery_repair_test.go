@@ -43,12 +43,19 @@ func newSessionAutoDeliveryRepairFixture(t *testing.T) (*sessionWorkflowEngine, 
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Deterministic release: the execution lock holds an open lock file plus
+	// dir handles until released, and Windows TempDir removal fails with
+	// ERROR_SHARING_VIOLATION while they live. Once-guarded so a launchResume
+	// path that releases normally cannot double-fire.
+	var finishOnce sync.Once
+	runFinish := func() { finishOnce.Do(finish) }
+	t.Cleanup(runFinish)
 	e := NewSessionWorkflowEngine(root, configPath)
 	p := resumePrepared{
 		runID: runID, workflow: "two-step", root: root,
 		built:      WorkflowControllerBuild{Dispatcher: workflowTestDispatcher{}},
 		closeFn:    func() {},
-		finishExec: finish,
+		finishExec: runFinish,
 		repo:       engineRepo,
 		store:      store,
 		res:        res,

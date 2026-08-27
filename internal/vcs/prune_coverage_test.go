@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -169,6 +170,12 @@ func TestPrunePreservesOversizedPointer(t *testing.T) {
 func TestCreateWithPrefixLeaseSurfacesPruneFailure(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("permission-based test does not apply to root")
+	}
+	if runtime.GOOS == "windows" {
+		// The precondition denies write access with chmod 0o555, which does
+		// not revoke NTFS directory-write rights; the prune then SUCCEEDS on
+		// Windows and the failure this test pins never arises.
+		t.Skip("chmod-based prune-failure injection is POSIX-only; windows cannot make the registration dir unwritable")
 	}
 	root := initTestRepo(t)
 	ctx := context.Background()

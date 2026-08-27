@@ -140,6 +140,7 @@ func TestDurabilityAcrossSQLiteRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopen sqlite: %v", err)
 	}
+	t.Cleanup(func() { _ = store2.Close() })
 	s2 := NewStore(store2)
 	gotPlan, err := s2.ReadBackPlan(ref)
 	requireErr(t, err, nil, "ReadBackPlan after sqlite restart")
