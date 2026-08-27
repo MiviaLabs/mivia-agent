@@ -175,26 +175,30 @@ func TestDispatchOrchestrationSecHonorsExplicitTimeout(t *testing.T) {
 	}
 }
 
+// TestRequestTimeout pins the per-LLM-request deadline selection for
+// subagent turns: an explicit default_request_timeout_seconds wins; an
+// unset or negative knob selects DefaultSubagentRequestTimeoutSec (30
+// minutes). The old 12-hour orchestration fallback is gone - a subagent
+// request must never inherit the whole-task budget again.
 func TestRequestTimeout(t *testing.T) {
-	effectiveDefault := time.Duration(config.DefaultOrchestrationTimeoutSec) * time.Second
-	// configured = 0 (default) and fallback = 0: effective orchestration default.
-	if got := requestTimeout(0, 0); got != effectiveDefault {
-		t.Errorf("requestTimeout(0, 0) = %v, want %v", got, effectiveDefault)
+	defaultTO := time.Duration(config.DefaultSubagentRequestTimeoutSec) * time.Second
+	cases := []struct {
+		name       string
+		configured int
+		want       time.Duration
+	}{
+		{"unset_uses_30m_default", 0, defaultTO},
+		{"explicit_value_wins", 60, 60 * time.Second},
+		{"negative_treated_as_unset", -1, defaultTO},
 	}
-	// configured > 0 wins over the fallback.
-	if got := requestTimeout(60, 0); got != 60*time.Second {
-		t.Errorf("requestTimeout(60, 0) = %v, want 60s", got)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := requestTimeout(tc.configured); got != tc.want {
+				t.Errorf("requestTimeout(%d) = %v, want %v", tc.configured, got, tc.want)
+			}
+		})
 	}
-	// negative configured treated as zero; fallback applies.
-	if got := requestTimeout(-1, 0); got != effectiveDefault {
-		t.Errorf("requestTimeout(-1, 0) = %v, want %v (negative treated as zero)", got, effectiveDefault)
-	}
-	// configured = 0 falls back to the supplied fallback.
-	if got := requestTimeout(0, 45); got != 45*time.Second {
-		t.Errorf("requestTimeout(0, 45) = %v, want 45s", got)
-	}
-	// configured = 0 and non-positive fallback: effective orchestration default.
-	if got := requestTimeout(0, -1); got != effectiveDefault {
-		t.Errorf("requestTimeout(0, -1) = %v, want %v", got, effectiveDefault)
+	if defaultTO != 1800*time.Second {
+		t.Errorf("DefaultSubagentRequestTimeoutSec = %v, want 1800s (product-locked default)", defaultTO)
 	}
 }

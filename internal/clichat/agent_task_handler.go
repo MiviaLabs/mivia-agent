@@ -40,18 +40,23 @@ type agentTaskHandler struct {
 }
 
 // requestTimeout returns the per-LLM-request timeout for subagent turns.
-// configured wins when positive; otherwise fallback applies, and when both
-// are 0 (unlimited), EffectiveTimeoutSec(fallback) is used - the same
-// 12-hour default that bounds orchestration - so the model-facing
-// timeout_seconds knob feeds every subagent request. The 15-minute
-// http.Client transport backstop remains the real per-request ceiling, so
-// a single hung provider call still cannot block the entire subagent.
-// This mirrors registerMultiStepHandler in dispatcher.go.
-func requestTimeout(configured, fallback int) time.Duration {
+// A positive configured value (default_request_timeout_seconds) is the
+// deadline; otherwise DefaultSubagentRequestTimeoutSec (1800s, 30 minutes)
+// applies. That 1800s is the per-request context deadline. The 15-minute
+// http.Client.Timeout stays the hard per-attempt wire wall, so a single hung
+// provider call still cannot block the entire subagent.
+//
+// Behavior change: the old code fed default_timeout_seconds into every
+// subagent request through EffectiveTimeoutSec, so an unset
+// default_request_timeout_seconds inherited the 12-hour orchestration
+// default. Operators who relied on that must now set
+// default_request_timeout_seconds explicitly. This mirrors
+// registerMultiStepHandler in dispatcher_handlers.go.
+func requestTimeout(configured int) time.Duration {
 	if configured > 0 {
 		return time.Duration(configured) * time.Second
 	}
-	return time.Duration(config.EffectiveTimeoutSec(fallback)) * time.Second
+	return config.DefaultSubagentRequestTimeoutSec * time.Second
 }
 
 func registerAgentHandlers(d *runtime.Dispatcher, opts SessionDispatcherOpts) error {
@@ -279,7 +284,7 @@ func (h *agentTaskHandler) newMultiStepHandler(binding agentBinding, registry *t
 		RefOnlyTools:           h.opts.RefOnlyTools,
 		RemainderSpool:         cliagents.RemainderSpoolFromRegistryVar(registry),
 		OutputSchema:           outSchema, SchemaRetryMax: h.opts.Config.SchemaRetryMax,
-		RequestTimeout:            requestTimeout(h.opts.Config.DefaultRequestTimeoutSec, h.opts.Config.DefaultTimeout),
+		RequestTimeout:            requestTimeout(h.opts.Config.DefaultRequestTimeoutSec),
 		SteerWatchdog:             time.Duration(h.opts.Config.Messaging.SteerWatchdogSecondsResolved()) * time.Second,
 		ContextPreparationManager: h.opts.ContextPreparationManager,
 		ContextPreparationInput:   h.opts.ContextPreparationInput,

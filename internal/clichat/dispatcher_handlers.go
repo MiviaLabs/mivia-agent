@@ -53,11 +53,12 @@ func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp p
 	// the pool is the bound, including explicit per-task overrides.
 	toolTO := time.Duration(cfg.DefaultTimeout) * time.Second
 	totalTO := time.Duration(0)
-	// Per-request LLM timeout for subagent turns. Falls back to the
-	// effective orchestration default (12h) when DefaultTimeout is 0,
-	// matching requestTimeout() in agent_task_handler.go; the http.Client
-	// transport backstop still bounds any single provider call.
-	requestTO := requestTimeout(cfg.DefaultRequestTimeoutSec, cfg.DefaultTimeout)
+	// Per-request LLM timeout for subagent turns. Falls back to
+	// DefaultSubagentRequestTimeoutSec (30 minutes) when
+	// default_request_timeout_seconds is unset, matching requestTimeout()
+	// in agent_task_handler.go; the http.Client transport wall still
+	// bounds any single provider attempt.
+	requestTO := requestTimeout(cfg.DefaultRequestTimeoutSec)
 	h := &subagents.MultiStepHandler{
 		Completer: comp, FullRegistry: reg, Dispatcher: d, Model: model,
 		Reasoning: dial.static, ReasoningFunc: dial.live,
@@ -97,9 +98,9 @@ func registerSkillHandlers(d *runtime.Dispatcher, reg *tools.Registry, comp prov
 	// instructions as the system prompt. Disallowed skills are not registered
 	// and gatedSkillHandler re-checks on every invoke (resume/retry).
 	toolTO := time.Duration(cfg.DefaultTimeout) * time.Second
-	// Per-request LLM timeout for skill subagent turns. Same fallback
-	// logic as registerMultiStepHandler above.
-	requestTO := requestTimeout(cfg.DefaultRequestTimeoutSec, cfg.DefaultTimeout)
+	// Per-request LLM timeout for skill subagent turns. Same 30-minute
+	// default as registerMultiStepHandler above.
+	requestTO := requestTimeout(cfg.DefaultRequestTimeoutSec)
 	for _, skill := range skillReg.List() {
 		if err := scope.CheckSkillDefinition(skill); err != nil {
 			// Skip registration for skills the selected agent may not invoke.

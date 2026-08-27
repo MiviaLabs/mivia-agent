@@ -474,7 +474,7 @@ The summarize request carries bounded quotes of the dropped messages' real conte
 | `max_fanout` | int | `0` (unlimited) | Parallel sub-tasks per level |
 | `nested_steps` | int | `0` (unlimited) | Sub-agent loop steps per turn |
 | `default_timeout_seconds` | int | `0` | Per-task orchestration timeout; `0` = safety bound (12 hours) |
-| `default_request_timeout_seconds` | int | `0` | Per-LLM-request timeout for subagent turns; `0` = fall back to the effective orchestration default |
+| `default_request_timeout_seconds` | int | `0` | Per-LLM-request timeout for subagent turns; `0` = built-in 30-minute default (1800s). The 15-minute HTTP transport timeout stays the hard per-attempt ceiling |
 | `default_budget` | int | `0` (unlimited) | Per-task token budget |
 | `store_backend` | string | `"memory"` | Outside chat: `"memory"` (ephemeral) or `"sqlite"` (durable) |
 | `store_path` | string | `~/.mivia/context.db` (chat); platform cache dir (non-chat orchestration) | One SQLite file for chat sessions, context, worktree routes, and runs |

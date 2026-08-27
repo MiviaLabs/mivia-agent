@@ -12,6 +12,13 @@ import (
 // subagent work; never unbounded so cancel/timeout always surfaces.
 const DefaultOrchestrationTimeoutSec = 12 * 60 * 60 // 12 hours
 
+// DefaultSubagentRequestTimeoutSec is the per-LLM-request context deadline for
+// a subagent turn when default_request_timeout_seconds is 0 (or omitted).
+// Product decision: 30 minutes. It bounds one provider request, not the whole
+// task. The 15-minute http.Client wire wall (DefaultHTTPTimeout) stays the
+// hard per-attempt bound under it.
+const DefaultSubagentRequestTimeoutSec = 1800 // 30 minutes
+
 // DefaultPromptCapTokens is the recommended [chat] max_prompt_tokens value.
 // It bounds the per-request prompt budget for models with large context
 // windows. The planner compacts history at 80% of the budget. It is a
