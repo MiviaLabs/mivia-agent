@@ -252,7 +252,7 @@ smoke:
 	@go test ./internal/workflows/... -count=1 && go test ./internal/cli -run 'Workflow' -count=1
 
 verifier-integration:
-	@go test -tags=integration ./internal/workflows/verifier
+	@go test -tags=integration ./internal/workflows/definition
 
 invariants:
 	@echo "Running all invariant tests dynamically from .mivia/invariants.md..."
