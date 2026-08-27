@@ -910,6 +910,59 @@ func TestObserveAgentGroupEnd_UnknownCallIsNoOp(t *testing.T) {
 	}
 }
 
+// TestObserveAgentGroupEnd_LastTaskCompletionSurvivesBackToBackTurnEnd
+// reproduces the live-ledger-forensics sequence: the LAST dispatched task's
+// own live completion (a ToolOutputBody Progress carrying "completed",
+// forwarded per subagentForwardKinds in uiadapter/conversation.go) lands,
+// then the enclosing dispatch_tasks call's own ToolEnd resolves every
+// task's authoritative status from its JSON result, then the whole turn's
+// TurnEnd fires reconcileTerminal - all essentially back-to-back, as they
+// do for a wait=run batch where the tool blocks until every task is done.
+// After all of it settles, every row - including the one that finished
+// last - must read "completed", never "running" or any other status: the
+// data model must not lose or downgrade a terminal status once the live
+// event or the group-end JSON result has resolved it.
+func TestObserveAgentGroupEnd_LastTaskCompletionSurvivesBackToBackTurnEnd(t *testing.T) {
+	var p panel
+
+	// dispatch_tasks starts a two-task batch.
+	p.observeAgentGroupStart("call-1", []string{"task-a", "task-b"})
+
+	// task-a finished a while ago; task-b is the LAST task and its own
+	// live completion (translateSubagentDone's tool.output Progress)
+	// arrives right before the batch as a whole resolves.
+	p.observeAgent("task-a", &uievent.Progress{Status: "completed"})
+	p.observeAgent("task-b", &uievent.Progress{Status: "completed"})
+
+	// The enclosing dispatch_tasks call's own ToolEnd fires immediately
+	// after, carrying the authoritative per-task JSON result.
+	p.observeAgentGroupEnd("call-1", map[string]string{
+		"task-a": "completed",
+		"task-b": "completed",
+	}, true)
+
+	// The whole turn ends in the same beat.
+	p.reconcileTerminal("completed")
+
+	for _, id := range []string{"task-a", "task-b"} {
+		found := false
+		for _, a := range p.agents {
+			if a.ID == id {
+				found = true
+				if a.Status != "completed" {
+					t.Errorf("%s status = %q after settling, want completed", id, a.Status)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("expected a settled row for %s", id)
+		}
+	}
+	if p.activeAgentCount() != 0 {
+		t.Errorf("activeAgentCount = %d after settling, want 0", p.activeAgentCount())
+	}
+}
+
 func TestScrollPanelInSplitMode(t *testing.T) {
 	s := sized(t, 1)
 	next, _ := s.Update(tea.WindowSizeMsg{Width: uikitconfig.BreakpointWide, Height: 30})
