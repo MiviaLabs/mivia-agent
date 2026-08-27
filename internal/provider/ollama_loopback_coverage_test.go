@@ -316,14 +316,35 @@ func TestF9DialContextThreadsIntoRetryRoundTripper(t *testing.T) {
 	})
 }
 
-// F10: compatBaseRoundTripper(nil) must return http.DefaultTransport by
-// pointer identity (no clone, no wrapper); compatBaseRoundTripper(rec) must
-// return a *http.Transport clone - distinct from DefaultTransport - whose
-// DialContext is rec (spot-checked identity) and whose other fields match the
-// DefaultTransport defaults.
+// F10: compatBaseRoundTripper always returns a FRESH *http.Transport clone -
+// distinct from http.DefaultTransport and from every other clone - never the
+// global by identity. A nil dial (cloud client) keeps the DEFAULT dialer; a
+// non-nil dial carries the given function (spot-checked identity). Both
+// clones carry the DefaultResponseHeaderTimeout bound and keep the
+// DefaultTransport field defaults.
 func TestF10CompatBaseRoundTripperNilAndClone(t *testing.T) {
-	if got := compatBaseRoundTripper(nil); got != http.DefaultTransport {
-		t.Fatalf("compatBaseRoundTripper(nil) = %T, want http.DefaultTransport identity", got)
+	dflt := http.DefaultTransport.(*http.Transport)
+
+	unpinned := compatBaseRoundTripper(nil)
+	unpinnedTr, ok := unpinned.(*http.Transport)
+	if !ok {
+		t.Fatalf("compatBaseRoundTripper(nil) = %T, want *http.Transport", unpinned)
+	}
+	if unpinnedTr == dflt {
+		t.Fatal("compatBaseRoundTripper(nil) must return a fresh clone, not http.DefaultTransport itself")
+	}
+	if unpinnedTr.DialContext == nil || reflect.ValueOf(unpinnedTr.DialContext).Pointer() != reflect.ValueOf(dflt.DialContext).Pointer() {
+		t.Fatal("unpinned (cloud) clone must keep the DEFAULT dialer")
+	}
+	if unpinnedTr.ResponseHeaderTimeout != DefaultResponseHeaderTimeout {
+		t.Fatalf("unpinned clone ResponseHeaderTimeout = %v, want %v", unpinnedTr.ResponseHeaderTimeout, DefaultResponseHeaderTimeout)
+	}
+	// Spot-check that the clone keeps the DefaultTransport field defaults.
+	if unpinnedTr.MaxIdleConns != dflt.MaxIdleConns {
+		t.Fatalf("clone.MaxIdleConns = %d, want default %d", unpinnedTr.MaxIdleConns, dflt.MaxIdleConns)
+	}
+	if unpinnedTr.IdleConnTimeout != dflt.IdleConnTimeout {
+		t.Fatalf("clone.IdleConnTimeout = %v, want default %v", unpinnedTr.IdleConnTimeout, dflt.IdleConnTimeout)
 	}
 
 	var (
@@ -342,9 +363,8 @@ func TestF10CompatBaseRoundTripperNilAndClone(t *testing.T) {
 	if !ok {
 		t.Fatalf("compatBaseRoundTripper(rec) = %T, want *http.Transport", got)
 	}
-	dflt := http.DefaultTransport.(*http.Transport)
-	if clone == dflt {
-		t.Fatal("compatBaseRoundTripper(rec) must return a clone, not http.DefaultTransport itself")
+	if clone == dflt || clone == unpinned {
+		t.Fatal("compatBaseRoundTripper(rec) must return a fresh clone, not a shared transport")
 	}
 	if clone.DialContext == nil {
 		t.Fatal("clone DialContext is nil")
@@ -352,7 +372,9 @@ func TestF10CompatBaseRoundTripperNilAndClone(t *testing.T) {
 	if reflect.ValueOf(clone.DialContext).Pointer() != reflect.ValueOf(rec).Pointer() {
 		t.Fatal("clone DialContext is not the provided dial func")
 	}
-	// Spot-check that the clone keeps the DefaultTransport field defaults.
+	if clone.ResponseHeaderTimeout != DefaultResponseHeaderTimeout {
+		t.Fatalf("pinned clone ResponseHeaderTimeout = %v, want %v", clone.ResponseHeaderTimeout, DefaultResponseHeaderTimeout)
+	}
 	if clone.MaxIdleConns != dflt.MaxIdleConns {
 		t.Fatalf("clone.MaxIdleConns = %d, want default %d", clone.MaxIdleConns, dflt.MaxIdleConns)
 	}

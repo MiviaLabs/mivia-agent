@@ -24,6 +24,16 @@ type retryOptions struct {
 	BaseDelay time.Duration
 	// MaxDelay is the maximum backoff delay cap.
 	MaxDelay time.Duration
+	// TotalBudget is a retry-GRANT gate measured from RoundTrip start. It
+	// includes the connect and header time of every attempt already made.
+	// Once elapsed time reaches it, no further retry is granted. It never
+	// preempts an in-flight attempt: the check runs after an attempt
+	// returns. This caps the old worst case, where each retry got a fresh
+	// http.Client window and one logical call could stretch for five such
+	// windows. The gate bounds transport retries only: an agent-loop-level
+	// transient re-ask (markTransientReadDeadline -> IsTransient -> turn
+	// re-ask) runs a new RoundTrip and re-arms a fresh budget.
+	TotalBudget time.Duration
 	// NonRetryable lets a provider classify an error response as permanent from
 	// its body, which the status code alone cannot express: z.ai reports both a
 	// transient rate limit and an exhausted plan as HTTP 429. It is consulted
@@ -52,12 +62,14 @@ var errNonReplayableBody = errors.New("request body has no GetBody")
 // defaultRetryOptions provides sensible defaults. Four retries plus the initial
 // request give five attempts per outbound transport exchange, which is the
 // budget one provider request gets - a stream fallback or a further agent-loop
-// step is a separate request with its own budget.
+// step is a separate request with its own budget. TotalBudget caps the wall
+// clock those five attempts may span.
 func defaultRetryOptions() retryOptions {
 	return retryOptions{
-		MaxRetries: 4,
-		BaseDelay:  200 * time.Millisecond,
-		MaxDelay:   5 * time.Second,
+		MaxRetries:  4,
+		BaseDelay:   200 * time.Millisecond,
+		MaxDelay:    5 * time.Second,
+		TotalBudget: 5 * time.Minute,
 	}
 }
 
@@ -82,14 +94,20 @@ func newRetryRoundTripper(inner http.RoundTripper, opts retryOptions) *retryRoun
 	if opts.MaxDelay <= 0 {
 		opts.MaxDelay = defaultRetryOptions().MaxDelay
 	}
+	if opts.TotalBudget <= 0 {
+		opts.TotalBudget = defaultRetryOptions().TotalBudget
+	}
 	return &retryRoundTripper{inner: inner, opts: opts}
 }
 
-// RoundTrip performs the request with retries on transient failures.
+// RoundTrip performs the request with retries on transient failures. The
+// attemptCap-and-budget gate in retryDelay decides, after each attempt,
+// whether another attempt is granted.
 func (r *retryRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	if providerReplayDisabled(req.Context()) {
 		return r.inner.RoundTrip(req)
 	}
+	start := time.Now()
 	var (
 		lastErr error
 	)
@@ -103,13 +121,31 @@ func (r *retryRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 			return resp, nil
 		}
 
-		delay, retry := r.retryDelay(attempt, err, resp)
+		// Elapsed covers every attempt so far, including each attempt's
+		// connect and header time. The budget gate therefore charges the
+		// slow phases, not just the backoff waits.
+		delay, retry := r.retryDelay(attempt, err, resp, time.Since(start))
 		if !retry {
 			if err != nil {
 				return nil, err
 			}
 			return resp, nil
 		}
+
+		// One observability signal per granted retry, after the gate
+		// granted it and before the wait. The replay-disabled bypass above
+		// this loop emits nothing.
+		status := 0
+		if resp != nil {
+			status = resp.StatusCode
+		}
+		notifyTransportRetry(TransportRetryEvent{
+			Attempt:    attempt,
+			MaxRetries: r.opts.MaxRetries,
+			StatusCode: status,
+			Err:        err,
+			Delay:      delay,
+		})
 
 		// Release the response before the wait so the transport can reuse the
 		// connection, then restage the body for the next attempt.
@@ -136,8 +172,10 @@ func (r *retryRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 }
 
 // retryDelay reports whether this attempt earns another try, and how long to
-// wait first.
-func (r *retryRoundTripper) retryDelay(attempt int, err error, resp *http.Response) (time.Duration, bool) {
+// wait first. The gate order is fixed: the attempt cap rules first, then the
+// Retry-After-over-cap rule, then the cumulative budget. The final error is
+// reported by the caller, which returns it unchanged on (0, false).
+func (r *retryRoundTripper) retryDelay(attempt int, err error, resp *http.Response, elapsed time.Duration) (time.Duration, bool) {
 	if attempt >= r.opts.MaxRetries {
 		return 0, false
 	}
@@ -151,6 +189,14 @@ func (r *retryRoundTripper) retryDelay(attempt int, err error, resp *http.Respon
 	// server just closed - guaranteed-fail traffic against an account that
 	// is already rate limited. Surface the error instead.
 	if header.valid && header.delay > r.opts.MaxDelay {
+		return 0, false
+	}
+	// Cumulative retry-GRANT gate: once the wall clock since RoundTrip
+	// start has spent TotalBudget, grant no further attempt. An in-flight
+	// attempt is never preempted - this check runs only after an attempt
+	// returned. The gate is deliberately last: cap and Retry-After rules
+	// keep their priority over it.
+	if elapsed >= r.opts.TotalBudget {
 		return 0, false
 	}
 	return r.backoff(attempt, header), true

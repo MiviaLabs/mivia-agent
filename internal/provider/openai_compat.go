@@ -23,6 +23,13 @@ const maxJSONResponseBytes = 8 << 20
 // one is supplied.
 const DefaultHTTPTimeout = 15 * time.Minute
 
+// DefaultResponseHeaderTimeout bounds only the accept-to-headers wait on a
+// provider transport: the time from a sent request to the first response
+// header bytes. The header wait stays fast even when generation is slow;
+// body phases are covered by the stream watchdogs (idle_watchdog.go), and
+// this bound sits under the 15-minute client wall above.
+const DefaultResponseHeaderTimeout = 120 * time.Second
+
 // OpenAICompat is a shared OpenAI-compatible chat client.
 type OpenAICompat struct {
 	name         string
@@ -131,7 +138,8 @@ type CompatOptions struct {
 	// as the wire "user" field (see OpenAICompat.sendSessionUserKey). Only
 	// the openrouter and llmgateway factories set this true.
 	SendSessionUserKey bool
-	// DialContext pins every dial for keyless loopback clients; nil keeps http.DefaultTransport.
+	// DialContext pins every dial for keyless loopback clients; nil keeps the
+	// default dialer on a fresh clone of the base transport.
 	DialContext func(ctx context.Context, network, addr string) (net.Conn, error)
 }
 

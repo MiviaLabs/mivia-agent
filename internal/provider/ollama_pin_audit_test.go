@@ -130,14 +130,16 @@ func TestAuditEveryKeylessConstructionPathInstallsPinnedTransport(t *testing.T) 
 	}
 }
 
-// TestAuditNonOllamaProvidersKeepDefaultTransport pins plan item 3 for the
-// common (non-loopback) case: a cloud base_url never gets a DialContext,
-// keeping http.DefaultTransport itself (pointer identity). NewForProvider
-// also sets DialContext for a non-ollama provider on a VERIFIED LOOPBACK
-// base_url now (see TestNewForProviderPinsLoopbackDialForNonOllamaProvider) -
-// every case below uses an https/cloud BaseURL specifically so none of them
-// exercise that path.
+// TestAuditNonOllamaProvidersKeepDefaultTransport pins the common (non-loopback)
+// cloud case: a cloud base_url never gets a PINNED dial. Its client gets a
+// fresh clone of the default transport - never the global itself - whose
+// dialer stays the DEFAULT one and whose only transport change is the
+// response-header bound. NewForProvider also sets DialContext for a
+// non-ollama provider on a VERIFIED LOOPBACK base_url now (see
+// TestNewForProviderPinsLoopbackDialForNonOllamaProvider) - every case below
+// uses an https/cloud BaseURL specifically so none of them exercise that path.
 func TestAuditNonOllamaProvidersKeepDefaultTransport(t *testing.T) {
+	def := http.DefaultTransport.(*http.Transport)
 	cases := []struct {
 		name         string
 		providerName string
@@ -159,8 +161,14 @@ func TestAuditNonOllamaProvidersKeepDefaultTransport(t *testing.T) {
 			if !ok {
 				t.Fatalf("inner transport = %T, want *http.Transport", innerTransport(client))
 			}
-			if tr != http.DefaultTransport {
-				t.Fatal("non-ollama provider no longer uses http.DefaultTransport identity")
+			if tr == def {
+				t.Fatal("cloud client shares http.DefaultTransport; every client must own a fresh clone")
+			}
+			if tr.DialContext == nil || reflect.ValueOf(tr.DialContext).Pointer() != reflect.ValueOf(def.DialContext).Pointer() {
+				t.Fatal("cloud client transport is pinned; a cloud client is never pinned")
+			}
+			if tr.ResponseHeaderTimeout != DefaultResponseHeaderTimeout {
+				t.Fatalf("cloud clone ResponseHeaderTimeout = %v, want %v", tr.ResponseHeaderTimeout, DefaultResponseHeaderTimeout)
 			}
 		})
 	}
@@ -197,34 +205,65 @@ func TestNewForProviderPinsLoopbackDialForNonOllamaProvider(t *testing.T) {
 	}
 }
 
-// TestAuditCompatBaseRoundTripperIdentity pins the seam: nil DialContext
-// returns http.DefaultTransport ITSELF (not a clone), so no provider can
-// observe any difference; a non-nil DialContext returns a clone whose dial is
-// the given function and whose DialTLSContext stays nil (https dials must use
-// DialContext).
+// TestAuditCompatBaseRoundTripperIdentity pins the seam:
+// compatBaseRoundTripper ALWAYS returns a fresh *http.Transport clone - never
+// http.DefaultTransport itself, never a shared instance across calls, never a
+// mutation of the global. A nil dial (cloud client) keeps the clone's DEFAULT
+// dialer; a non-nil dial (verified loopback client) carries the pinned
+// function. Both dial paths carry the response-header bound, and the clone
+// quality assertions hold: DialTLSContext stays nil (https dials must use
+// DialContext), Proxy and ForceAttemptHTTP2 stay as the default transport set
+// them.
 func TestAuditCompatBaseRoundTripperIdentity(t *testing.T) {
-	if got := compatBaseRoundTripper(nil); got != http.DefaultTransport {
-		t.Fatalf("compatBaseRoundTripper(nil) = %T, want http.DefaultTransport identity", got)
-	}
+	def := http.DefaultTransport.(*http.Transport)
 	pin := func(ctx context.Context, network, addr string) (net.Conn, error) { return nil, nil }
-	tr, ok := compatBaseRoundTripper(pin).(*http.Transport)
+
+	unpinned, ok := compatBaseRoundTripper(nil).(*http.Transport)
+	if !ok {
+		t.Fatalf("compatBaseRoundTripper(nil) = %T, want *http.Transport", compatBaseRoundTripper(nil))
+	}
+	if unpinned == def {
+		t.Fatal("compatBaseRoundTripper(nil) returned http.DefaultTransport itself; a client must never own the global")
+	}
+	if unpinned.DialContext == nil || reflect.ValueOf(unpinned.DialContext).Pointer() != reflect.ValueOf(def.DialContext).Pointer() {
+		t.Fatal("unpinned (cloud) clone must keep the DEFAULT dialer")
+	}
+	if unpinned.DialTLSContext != nil {
+		t.Fatal("clone must not set DialTLSContext (https dials must use DialContext)")
+	}
+	if unpinned.ResponseHeaderTimeout != DefaultResponseHeaderTimeout {
+		t.Fatalf("unpinned clone ResponseHeaderTimeout = %v, want %v", unpinned.ResponseHeaderTimeout, DefaultResponseHeaderTimeout)
+	}
+	if unpinned.ForceAttemptHTTP2 != def.ForceAttemptHTTP2 {
+		t.Fatal("clone changed ForceAttemptHTTP2")
+	}
+	if unpinned.Proxy == nil || reflect.ValueOf(unpinned.Proxy).Pointer() != reflect.ValueOf(def.Proxy).Pointer() {
+		t.Fatal("clone changed Proxy")
+	}
+
+	pinned, ok := compatBaseRoundTripper(pin).(*http.Transport)
 	if !ok {
 		t.Fatalf("compatBaseRoundTripper(pin) = %T, want *http.Transport", compatBaseRoundTripper(pin))
 	}
-	if tr == http.DefaultTransport {
+	if pinned == def {
 		t.Fatal("pinned base transport must be a clone, not http.DefaultTransport itself")
 	}
-	if reflect.ValueOf(tr.DialContext).Pointer() != reflect.ValueOf(pin).Pointer() {
+	if pinned == unpinned {
+		t.Fatal("compatBaseRoundTripper must return a fresh transport per call, got a shared instance")
+	}
+	if reflect.ValueOf(pinned.DialContext).Pointer() != reflect.ValueOf(pin).Pointer() {
 		t.Fatal("clone DialContext is not the pinned function")
 	}
-	if tr.DialTLSContext != nil {
+	if pinned.DialTLSContext != nil {
 		t.Fatal("clone must not set DialTLSContext (https dials must use DialContext)")
 	}
-	def := http.DefaultTransport.(*http.Transport)
-	if tr.ForceAttemptHTTP2 != def.ForceAttemptHTTP2 {
+	if pinned.ResponseHeaderTimeout != DefaultResponseHeaderTimeout {
+		t.Fatalf("pinned clone ResponseHeaderTimeout = %v, want %v", pinned.ResponseHeaderTimeout, DefaultResponseHeaderTimeout)
+	}
+	if pinned.ForceAttemptHTTP2 != def.ForceAttemptHTTP2 {
 		t.Fatal("clone changed ForceAttemptHTTP2")
 	}
-	if tr.Proxy == nil || reflect.ValueOf(tr.Proxy).Pointer() != reflect.ValueOf(def.Proxy).Pointer() {
+	if pinned.Proxy == nil || reflect.ValueOf(pinned.Proxy).Pointer() != reflect.ValueOf(def.Proxy).Pointer() {
 		t.Fatal("clone changed Proxy")
 	}
 }

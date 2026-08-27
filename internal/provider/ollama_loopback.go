@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // lookupLocalhost resolves the literal "localhost" during keyless loopback
@@ -71,7 +72,10 @@ func newLoopbackDialContext(providerName, baseURL string) (func(ctx context.Cont
 		return nil, fmt.Errorf("%s: host %q is not a loopback host; refusing plaintext local mode (set base_url to http://127.0.0.1:PORT/...)", providerName, host)
 	}
 
-	dialer := new(net.Dialer)
+	// A dial must be bounded where ResponseHeaderTimeout does not reach:
+	// the connect phase itself. 30s caps one dial attempt against a wedged
+	// or silently dropping address.
+	dialer := &net.Dialer{Timeout: 30 * time.Second}
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		_, port, err := net.SplitHostPort(addr)
 		if err != nil {
@@ -94,14 +98,34 @@ func newLoopbackDialContext(providerName, baseURL string) (func(ctx context.Cont
 }
 
 // compatBaseRoundTripper returns the base transport a client wraps with retry
-// logic. A nil DialContext keeps http.DefaultTransport exactly as it is; a
-// dial pinning context gets a clone of the default transport with only the
-// dial replaced, so nothing else about the transport differs from today.
+// logic. It always returns a FRESH clone of http.DefaultTransport. It never
+// returns the global by identity and never mutates it, so one client's
+// transport settings can never leak into another client or into the
+// process-wide default.
+//
+// The dial wiring is the loopback security gate, and it is per-client:
+//
+//   - A nil dialContext means a cloud client. A cloud client is NEVER
+//     pinned: its clone keeps the DEFAULT dialer, so normal resolution and
+//     proxy behavior are unchanged.
+//   - A non-nil dialContext means a verified loopback client. Its clone
+//     carries the pinned dial, so every connection lands on the loopback
+//     address set verified at construction, whatever a resolver says later.
+//
+// Every clone also carries DefaultResponseHeaderTimeout, which bounds only
+// the accept-to-headers wait, so the header wait stays fast even when
+// generation is slow. Body phases are covered by the stream watchdogs
+// (idle_watchdog.go), and this bound sits under the 15-minute client wall.
+//
+// Always-clone consequence: each client owns its connection pool instead of
+// sharing http.DefaultTransport's. Per-client pool isolation is the point -
+// one client's idle-connection state or pinned-dial setting cannot touch
+// another's - at the cost of one pool per client.
 func compatBaseRoundTripper(dialContext func(ctx context.Context, network, addr string) (net.Conn, error)) http.RoundTripper {
-	if dialContext == nil {
-		return http.DefaultTransport
-	}
 	clone := http.DefaultTransport.(*http.Transport).Clone()
-	clone.DialContext = dialContext
+	clone.ResponseHeaderTimeout = DefaultResponseHeaderTimeout
+	if dialContext != nil {
+		clone.DialContext = dialContext
+	}
 	return clone
 }
