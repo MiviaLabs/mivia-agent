@@ -29,6 +29,9 @@ func registerOneShotHandlers(d *runtime.Dispatcher, comp provider.Completer, mod
 		Reasoning: dial.static, ReasoningFunc: dial.live,
 		MaxContextTokens: maxContextTokens, MaxTokens: maxTokens,
 		MaxContextTokensFunc: budget,
+		// Same whole-run budget as the multi-step surfaces: a oneshot or
+		// delegate call must end by the knob even when the provider trickles.
+		TotalTimeout: totalTaskTimeout(cfg.DefaultTotalTimeoutSec),
 	}
 	if err := d.Register(runtime.Subagent, cliorchestrate.HandlerDelegate, handler); err != nil {
 		return fmt.Errorf("register delegate handler: %w", err)

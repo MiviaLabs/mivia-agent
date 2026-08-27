@@ -20,6 +20,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
+	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -115,5 +116,40 @@ func TestRoleAgentTotalBudgetEndsRunAndStampsTimedOut(t *testing.T) {
 	}
 	if !strings.Contains(string(result.Output), "timed_out") {
 		t.Fatalf("result envelope %s does not stamp timed_out", result.Output)
+	}
+}
+
+// TestOneshotTotalBudgetEndsRun pins the same guarantee for the oneshot
+// surface: a delegate/oneshot call runs under the total budget knob and is
+// cut off by it, not left to the pool's per-task floor.
+func TestOneshotTotalBudgetEndsRun(t *testing.T) {
+	ws, err := workspace.Open(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.DefaultSubagentConfig
+	cfg.DefaultTotalTimeoutSec = 1
+	d, err := NewSessionDispatcher(SessionDispatcherOpts{
+		Registry:  tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws}),
+		Completer: &hungRoleCompleter{},
+		Model:     "test-model",
+		Config:    cfg,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+
+	start := time.Now()
+	result := d.Invoke(context.Background(), runtime.Request{
+		Kind:  runtime.Subagent,
+		Name:  cliorchestrate.HandlerOneshot,
+		Input: json.RawMessage(`"work"`),
+	})
+	if !errors.Is(result.Err, context.DeadlineExceeded) {
+		t.Fatalf("result.Err = %v, want context.DeadlineExceeded from the total budget", result.Err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("run took %v; the total budget did not fire", elapsed)
 	}
 }
