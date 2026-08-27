@@ -8,6 +8,14 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
+// slashEqual compares two paths as slash-normalized forms: fixtures write
+// TOML-safe forward-slashed store_path values, and on Windows the decoded
+// value legitimately round-trips in that form, so assertions must compare
+// path-equal, not separator-byte-equal.
+func slashEqual(a, b string) bool {
+	return filepath.Clean(filepath.ToSlash(a)) == filepath.Clean(filepath.ToSlash(b))
+}
+
 // baseConfigTOML is a minimal but complete config - a provider/model catalog
 // plus an [subagents] store_path a workspace overlay test can assert either
 // survives (no overlay override) or gets replaced (overlay override).
@@ -57,7 +65,7 @@ func TestLoadLayersWorkspaceConfigOverExplicitConfigPath(t *testing.T) {
 	}
 
 	// The workspace's own store_path wins - the whole point of the fix.
-	if res.Subagents.StorePath != workspaceStore {
+	if !slashEqual(res.Subagents.StorePath, workspaceStore) {
 		t.Fatalf("Subagents.StorePath = %q, want workspace override %q", res.Subagents.StorePath, workspaceStore)
 	}
 	// The base (user) config's provider/API key wiring survives - the
@@ -89,7 +97,7 @@ func TestLoadWithNoWorkspaceOverlayUnaffected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Subagents.StorePath != userStore {
+	if !slashEqual(res.Subagents.StorePath, userStore) {
 		t.Fatalf("Subagents.StorePath = %q, want unchanged base %q", res.Subagents.StorePath, userStore)
 	}
 }
@@ -118,7 +126,7 @@ func TestLoadSkipsOverlayWhenWorkspaceFileIsAlreadyTheBase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Subagents.StorePath != store || res.ProviderName != "deepseek" {
+	if !slashEqual(res.Subagents.StorePath, store) || res.ProviderName != "deepseek" {
 		t.Fatalf("unexpected result: %+v", res)
 	}
 }
