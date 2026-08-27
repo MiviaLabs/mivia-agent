@@ -15,9 +15,8 @@ require (
 	charm.land/lipgloss/v2 v2.0.6
 	git.sr.ht/~jamesponddotco/gitignore-go v1.0.0
 	github.com/Microsoft/go-winio v0.6.2
-	github.com/MiviaLabs/mivia-ai-sdk v0.0.0-00010101000000-000000000000
+	github.com/MiviaLabs/mivia-ai-sdk v0.1.0
 	github.com/alecthomas/chroma/v2 v2.14.0
-	github.com/charmbracelet/x/exp/teatest/v2 v2.0.0-20260816001655-68d539dca504
 	github.com/gofrs/flock v0.13.0
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/rogpeppe/go-internal v1.16.0
@@ -29,7 +28,6 @@ require (
 
 require (
 	git.sr.ht/~jamesponddotco/xstd-go v0.9.0 // indirect
-	github.com/aymanbagabas/go-udiff v0.4.1 // indirect
 	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/charmbracelet/ultraviolet v0.0.0-20260811164956-006e29f97886 // indirect
 	github.com/charmbracelet/x/exp/golden v0.0.0-20251109135125-8916d276318f // indirect
@@ -87,9 +85,3 @@ require (
 )
 
 tool github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
-
-// (a) Temporary: removed when the SDK publishes its first semver tag.
-// (b) Local path is hardcoded; CI and forks must override via a workspace-local replace or GOPROXY-staging.
-// (c) Do not add to go.sum until a tag lands; the local replace short-circuits the checksum.
-// (d) The first mivia-agent commit that uses this dependency is B.0.5 (sdkadapter).
-replace github.com/MiviaLabs/mivia-ai-sdk => /home/mac/projects/mivialabs/mivia-ai-sdk
