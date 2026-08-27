@@ -45,7 +45,14 @@ func validateBlocklistEntries(key string, entries []string) error {
 		if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
 			return fmt.Errorf("[tools] %s entry %q escapes the workspace; use a relative path inside the workspace", key, entry)
 		}
-		if filepath.IsAbs(cleaned) {
+		// Separator-rooted forms ("/etc/passwd") carry no volume letter, so
+		// filepath.IsAbs reports false for them on Windows - yet such an
+		// entry is exactly as much a silent no-op against workspace-relative
+		// matching as any other absolute path. Fail closed identically on
+		// every platform.
+		isAbsolute := filepath.IsAbs(cleaned) ||
+			strings.HasPrefix(cleaned, "/") || strings.HasPrefix(cleaned, "\\")
+		if isAbsolute {
 			return fmt.Errorf("[tools] %s entry %q is absolute; use a workspace-relative path", key, entry)
 		}
 		// A backslash separator is a single filename character on non-Windows
