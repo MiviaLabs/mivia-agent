@@ -75,8 +75,11 @@ func buildResult(reply string, messageCount int, elapsed time.Duration, stepCoun
 	}
 
 	payload, marshalErr := json.Marshal(result)
-	if marshalErr != nil {
-		return nil, marshalErr
+	if err == nil {
+		// The map holds only strings and integers, so marshalErr stays nil
+		// in practice; the join keeps the error contract without a branch
+		// no input can reach.
+		err = marshalErr
 	}
 	if err != nil {
 		return payload, err
