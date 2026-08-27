@@ -1018,3 +1018,37 @@ func TestObserveAgentStart_DoesNotDisturbRunningRow(t *testing.T) {
 		t.Errorf("expected one running row, got %+v", p.agents)
 	}
 }
+
+// TestTimedOutSubagentRowSettles pins the timed_out vocabulary: a subagent
+// whose done event (or per-task result) reports timed_out is over. The row
+// must count as terminal, so a late observeAgentStart cannot revive it to
+// running and a timed-out run cannot leave a row spinning. (This status
+// arrives through agent.Event.Status on the done event since the terminal
+// status vocabulary landed.)
+func TestTimedOutSubagentRowSettles(t *testing.T) {
+	if !isTerminalStatus("timed_out") {
+		t.Fatal("timed_out must be a terminal status")
+	}
+	if isNonTerminalStatus("timed_out") {
+		t.Fatal("timed_out must not be a non-terminal status")
+	}
+
+	var p panel
+	p.observeAgentStart("task-t", "audit")
+	if p.activeAgentCount() != 1 {
+		t.Fatalf("activeAgentCount = %d, want 1 while running", p.activeAgentCount())
+	}
+	p.setAgentStatus("task-t", "timed_out")
+	if got := p.agents[0].Status; got != "timed_out" {
+		t.Fatalf("status = %q, want timed_out", got)
+	}
+	if p.activeAgentCount() != 0 {
+		t.Errorf("activeAgentCount = %d, want 0 once timed_out settles", p.activeAgentCount())
+	}
+	// A genuine new start for a reused id restarts the row, exactly as it
+	// does for a completed row.
+	p.observeAgentStart("task-t", "audit")
+	if got := p.agents[0].Status; got != "running" {
+		t.Errorf("status after a new start = %q, want running (timed_out settles like completed, no more)", got)
+	}
+}

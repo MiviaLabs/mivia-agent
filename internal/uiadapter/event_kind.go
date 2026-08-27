@@ -143,15 +143,21 @@ func translateThinking(ev agent.Event) []uievent.Event {
 // all flipped to their terminal status at once, only after the slowest
 // subagent finished, however long the fastest one had already been done.
 //
-// Status is optimistic: this deferred emit site (see
-// subagents.MultiStepHandler.run) fires on every exit - success, error, or
-// panic - with no ok/err signal to report, so it always reports
-// "completed". The authoritative ok/failed status still lands moments
-// later from the enclosing call's own tool.end / per-task JSON result and
+// Status is the done event's own terminal classification
+// (agent.Event.Status: "completed" | "canceled" | "timed_out" | "error"),
+// stamped by the deferred emit site in subagents.MultiStepHandler.run from
+// the run's real exit error. Empty keeps the old optimistic default:
+// production emitters always set the status now, but an unclassified
+// (legacy) emitter still gets today's behavior instead of a blank row
+// state. The authoritative ok/failed status still lands moments later
+// from the enclosing call's own tool.end / per-task JSON result and
 // overwrites this unconditionally (panel.setAgentStatus /
-// observeAgentGroupEnd), so the optimism never survives past that
-// settlement - it only closes the live gap before it.
+// observeAgentGroupEnd).
 func translateSubagentDone(ev agent.Event) []uievent.Event {
+	status := ev.Status
+	if status == "" {
+		status = "completed"
+	}
 	out := notice(subagentDoneText(ev))
 	if ev.Origin.TaskID == "" {
 		return out
@@ -160,7 +166,7 @@ func translateSubagentDone(ev agent.Event) []uievent.Event {
 		Kind: uievent.KindToolOutput,
 		Body: uievent.ToolOutputBody{
 			ToolCallID: ev.Origin.TaskID,
-			Progress:   &uievent.Progress{Status: "completed"},
+			Progress:   &uievent.Progress{Status: status},
 		},
 	})
 }

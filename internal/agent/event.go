@@ -120,6 +120,13 @@ type Event struct {
 	Program, Tool string
 	// Origin attributes the event to the producing agent (zero = root loop).
 	Origin EventOrigin
+	// Status carries the terminal status of a subagent run on
+	// EventSubagentDone only: "completed", "canceled", "timed_out", or
+	// "error" - the same fixed vocabulary as the task-result envelope's
+	// status field (terminalStatus in internal/subagents). Empty means the
+	// emitter did not classify the exit (a legacy emitter); consumers treat
+	// empty as "completed" for compatibility.
+	Status string
 	// Identity is an optional typed runtime identity supplied by a routed
 	// invocation. It contains no content or authorization material.
 	Identity *events.Identity

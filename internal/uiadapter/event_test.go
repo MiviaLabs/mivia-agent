@@ -477,6 +477,53 @@ func TestTranslateEvent_SubagentDone(t *testing.T) {
 	})
 }
 
+// TestTranslateEvent_SubagentDoneStatusVocabulary pins the terminal-status
+// vocabulary on the done event's Progress entry: the row status is the done
+// event's own agent.Event.Status ("completed" | "canceled" | "timed_out" |
+// "error"). Empty Status keeps the legacy optimistic fallback, so an
+// unclassified emitter still settles its row the old way.
+func TestTranslateEvent_SubagentDoneStatusVocabulary(t *testing.T) {
+	t.Parallel()
+	statuses := []struct {
+		eventStatus string
+		rowStatus   string
+	}{
+		{"completed", "completed"},
+		{"canceled", "canceled"},
+		{"timed_out", "timed_out"},
+		{"error", "error"},
+		// Legacy/unclassified emitter: today's optimistic default.
+		{"", "completed"},
+	}
+	for _, st := range statuses {
+		t.Run("status_"+st.eventStatus, func(t *testing.T) {
+			runMappingCases(t, []mappingCase{
+				{
+					name: "subagent_done_status_" + st.eventStatus,
+					ev: agent.Event{
+						Kind:   agent.EventSubagentDone,
+						Status: st.eventStatus,
+						Origin: agent.EventOrigin{TaskID: "wft-st", Agent: "audit"},
+					},
+					want: []uievent.Event{
+						{
+							Kind: uievent.KindNotice,
+							Body: uievent.NoticeBody{Text: "subagent done: audit"},
+						},
+						{
+							Kind: uievent.KindToolOutput,
+							Body: uievent.ToolOutputBody{
+								ToolCallID: "wft-st",
+								Progress:   &uievent.Progress{Status: st.rowStatus},
+							},
+						},
+					},
+				},
+			})
+		})
+	}
+}
+
 // TestTranslateEvent_Dropped covers the two drop-list entries (and proves
 // they really do drop rather than fall through to a default case). A
 // non-empty Detail is set so a future change that returns nil only for

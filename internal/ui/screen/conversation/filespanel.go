@@ -52,7 +52,9 @@ const (
 
 func isTerminalStatus(status string) bool {
 	switch status {
-	case "completed", "done", "failed", "error", "interrupted", "cancelled", "canceled":
+	// timed_out is a subagent done-event status (agent.Event.Status): a
+	// timed-out run is over and its row must settle, not keep spinning.
+	case "completed", "done", "failed", "error", "interrupted", "cancelled", "canceled", "timed_out":
 		return true
 	default:
 		return false

@@ -77,8 +77,11 @@ type MultiStepHandler struct {
 	// RequestTimeout is the per-LLM-request timeout for each turn inside the
 	// sub-agent. When zero, the agent loop falls back to the parent context
 	// deadline, which may be hours for a long-running root session. A hung LLM
-	// call would then block the subagent indefinitely. Defaults to 5 minutes
-	// when not explicitly configured.
+	// call would then block the subagent indefinitely. Handlers set this from
+	// [subagents] default_request_timeout_seconds; when that knob is unset,
+	// they apply DefaultSubagentRequestTimeoutSec (1800s, 30 minutes) - the
+	// 12-hour orchestration default no longer feeds individual requests. The
+	// 15-minute http.Client wall remains the hard per-attempt bound.
 	RequestTimeout time.Duration
 	// SteerWatchdog bounds steer latency when no interrupt signal is wired: the
 	// loop's watcher cancels the in-flight LLM call once a steer has been
@@ -141,7 +144,7 @@ func (h *MultiStepHandler) Invoke(ctx context.Context, req runtime.Request) (jso
 	return h.run(ctx, taskPrompt, req)
 }
 
-func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runtime.Request) (json.RawMessage, error) {
+func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runtime.Request) (out json.RawMessage, err error) {
 	scoped, err := h.newScopedLoop()
 	if err != nil {
 		return nil, err
@@ -174,20 +177,32 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 		TaskDescription: taskDescriptionFromInput(req.Input),
 	})
 
-	// A run that ends must say so. Nested tool events only ever report tool
-	// lifecycle, so without this terminal signal the parent's live agent view
-	// cannot distinguish "finished" from "thinking between two tools" and
-	// keeps every agent of the turn pinned until the whole turn ends.
-	// Deferred so cancellation, a provider error, and a panic all announce it.
+	// A run that ends must say so, and say HOW it ended. Nested tool events
+	// only ever report tool lifecycle, so without this terminal signal the
+	// parent's live agent view cannot distinguish "finished" from "thinking
+	// between two tools" and keeps every agent of the turn pinned until the
+	// whole turn ends. Status carries the terminal classification
+	// (terminalStatus of the named return err). Deferred so cancellation, a
+	// provider error, and a panic all announce it. A panicked run recovers
+	// here, converts the panic into a wrapped error result, and stamps
+	// "error" - the same failed-task outcome the pool's own recovery gives a
+	// panicking handler, without a re-panic, which the static rules for this
+	// package forbid. A panicked subagent's done event must never say
+	// "completed".
 	if stamped != nil {
 		defer func() {
-			stamped(agent.Event{Kind: agent.EventSubagentDone, Name: req.Name})
+			if rec := recover(); rec != nil {
+				err = fmt.Errorf("multi-step subagent %q: panic: %v", req.Name, rec)
+				out, _ = buildResult("", 0, 0, 0, err)
+			}
+			stamped(agent.Event{Kind: agent.EventSubagentDone, Name: req.Name, Status: terminalStatus(err)})
 		}()
 	}
 
 	compiled, appendix, cerr := h.compileOutputSchema(req)
 	if cerr != nil {
-		return buildResult("", 0, 0, 0, cerr)
+		out, err = buildResult("", 0, 0, 0, cerr)
+		return out, err
 	}
 	taskPrompt += appendix
 
@@ -205,7 +220,8 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 
 	reply, structured, runErr := h.runValidatedReply(callCtx, loop, opts, taskPrompt, compiled, steps, &stepCount)
 	h.discardPreparation(loop)
-	return finishRun(loop, reply, structured, time.Since(taskStart), stepCount.Load(), runErr)
+	out, err = finishRun(loop, reply, structured, time.Since(taskStart), stepCount.Load(), runErr)
+	return out, err
 }
 
 // stepOnEvent builds the nested loop's OnEvent callback: it counts steps,
@@ -320,79 +336,6 @@ func (h *MultiStepHandler) contextBudget() int {
 		return h.MaxContextTokensFunc()
 	}
 	return h.MaxContextTokens
-}
-
-func buildResult(reply string, messageCount int, elapsed time.Duration, stepCount int64, err error) (json.RawMessage, error) {
-	result := map[string]any{
-		"output":     reply,
-		"steps":      messageCount / 2,
-		"elapsed":    elapsed.Round(time.Millisecond).String(),
-		"step_count": stepCount,
-	}
-	if err != nil {
-		// No content reference is emitted here. This layer has no repository, so
-		// nothing stores the error or partial reply bytes under any key, and a
-		// reference whose bytes nothing holds is worse than none: it hands the
-		// model a pointer that cannot resolve. The resolvable reference for this
-		// same task already exists on the correct path - the coordinator mints
-		// and stores it from subagents.Result.Output/.Err.
-		//
-		// Interrupts get the pool/ledger vocabulary (canceled/timed_out) and
-		// keep the partial reply the loop had already produced (DC-9/DC-12):
-		// agent.Loop.Run returns lastText on an interrupted step, and the pool
-		// records the same classification in Result.Status. Only genuine
-		// failures (schema violation included) are "error" with the output
-		// deleted, so a raw provider body can never leak.
-		switch {
-		case errors.Is(err, context.Canceled):
-			result["status"] = "canceled"
-		case errors.Is(err, context.DeadlineExceeded):
-			result["status"] = "timed_out"
-		case errors.Is(err, ErrSchemaViolation):
-			result["status"] = "error"
-			result["schema"] = "violation"
-			delete(result, "output")
-		default:
-			result["status"] = "error"
-			delete(result, "output")
-		}
-	} else {
-		result["status"] = "completed"
-		// A subagent that did all its work via tool calls (grep, read_file)
-		// can finish with empty reply text. Without a fallback the parent
-		// sees "completed" with no output at all. Synthesize a minimal
-		// summary so the result is never silently empty.
-		if reply == "" && stepCount > 0 {
-			result["output"] = fmt.Sprintf("(subagent completed %d steps with no final text reply)", stepCount)
-		}
-	}
-
-	payload, marshalErr := json.Marshal(result)
-	if marshalErr != nil {
-		return nil, marshalErr
-	}
-	if err != nil {
-		return payload, err
-	}
-	return payload, nil
-}
-
-// buildResultStructured is the schema-valid success path: output is the parsed
-// object and schema is "ok" so parents may consume without re-validating.
-func buildResultStructured(output any, messageCount int, elapsed time.Duration, stepCount int64) (json.RawMessage, error) {
-	result := map[string]any{
-		"output":     output,
-		"schema":     "ok",
-		"status":     "completed",
-		"steps":      messageCount / 2,
-		"elapsed":    elapsed.Round(time.Millisecond).String(),
-		"step_count": stepCount,
-	}
-	payload, err := json.Marshal(result)
-	if err != nil {
-		return nil, err
-	}
-	return payload, nil
 }
 
 // timeoutContext derives a context with timeout, but only if the requested

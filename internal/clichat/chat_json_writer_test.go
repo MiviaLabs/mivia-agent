@@ -336,6 +336,44 @@ func TestJSONTurnEventCallbackAttributesSubagentToolCalls(t *testing.T) {
 	}
 }
 
+// TestJSONTurnEventCallbackCarriesStatusOnSubagentDone pins the additive
+// status field on the "subagent_done" NDJSON line: the run's terminal
+// status (agent.Event.Status) travels on the same line. Empty Status keeps
+// today's wire shape (omitempty drops the field), so an older consumer
+// reading the line sees no change.
+func TestJSONTurnEventCallbackCarriesStatusOnSubagentDone(t *testing.T) {
+	var buf bytes.Buffer
+	onEvent := jsonTurnEventCallback(&buf)
+	origin := agent.EventOrigin{TaskID: "task-s", Agent: "auditor", Depth: 1}
+
+	onEvent(agent.Event{Kind: agent.EventSubagentDone, Name: "auditor", Status: "timed_out", Origin: origin})
+	onEvent(agent.Event{Kind: agent.EventSubagentDone, Name: "auditor", Origin: origin})
+
+	lines := splitNonEmptyLines(buf.String())
+	if len(lines) != 2 {
+		t.Fatalf("got %d lines, want 2: %v", len(lines), lines)
+	}
+
+	var classified ndjsonEvent
+	if err := json.Unmarshal([]byte(lines[0]), &classified); err != nil {
+		t.Fatalf("line 0 invalid JSON: %v", err)
+	}
+	if classified.Type != "subagent_done" || classified.Status != "timed_out" {
+		t.Fatalf("subagent_done event = %+v, want status=timed_out", classified)
+	}
+
+	var legacy ndjsonEvent
+	if err := json.Unmarshal([]byte(lines[1]), &legacy); err != nil {
+		t.Fatalf("line 1 invalid JSON: %v", err)
+	}
+	if legacy.Type != "subagent_done" {
+		t.Fatalf("subagent_done event = %+v", legacy)
+	}
+	if strings.Contains(lines[1], `"status"`) {
+		t.Fatalf("empty Status must keep today's wire shape (no status key), got: %s", lines[1])
+	}
+}
+
 // TestJSONTurnEventCallbackCarriesTaskDescriptionOnSubagentStartOnly pins the
 // wire contract for agent.EventOrigin.TaskDescription: present on
 // "tool_start" for a subagent's own nested calls (so a consumer can show
