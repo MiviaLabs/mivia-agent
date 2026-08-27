@@ -130,3 +130,62 @@ func TestCleanLoadRosterNamesBuiltIn(t *testing.T) {
 		t.Fatalf("clean-workspace roster must announce the built-in: %q", section)
 	}
 }
+
+// TestTruncateUTF8 pins the byte-cap cut and the rune-boundary walk. Kill
+// mutation: drop the RuneStart walk (a cut mid-rune yields invalid UTF-8) or
+// the len<=max early return (a short string must come back unchanged).
+func TestTruncateUTF8(t *testing.T) {
+	t.Parallel()
+	threeByte := strings.Repeat("\u65e5", 20)   // "日" x20, 60 bytes, E6 97 A5 per rune
+	fourByte := strings.Repeat("\U0001F600", 5) // emoji x5, 20 bytes, F0 9F 98 80 per rune
+	cases := []struct {
+		name string
+		in   string
+		max  int
+		want string
+	}{
+		{"ascii_under_limit_unchanged", "hello", 10, "hello"},
+		{"ascii_exact_limit_unchanged", "hello", 5, "hello"},
+		{"ascii_over_limit_cut_at_max", "hello world", 5, "hello"},
+		{"zero_max_empty", "hello", 0, ""},
+		{
+			// Byte 40 is the second byte of rune 13; the walk steps back to
+			// its start, so the cut keeps 13 whole runes.
+			name: "cut_inside_rune_walks_back_to_start",
+			in:   threeByte,
+			max:  40,
+			want: strings.Repeat("\u65e5", 13),
+		},
+		{
+			// Leading ASCII shifts the boundary; the walk lands after "ab".
+			name: "ascii_prefix_rune_boundary_walk",
+			in:   "ab" + threeByte,
+			max:  40,
+			want: "ab" + strings.Repeat("\u65e5", 12),
+		},
+		{
+			// Byte 42 is itself a rune start, so no walk runs and the cut
+			// keeps 14 whole runes.
+			name: "cut_on_rune_start_no_walk",
+			in:   threeByte,
+			max:  42,
+			want: strings.Repeat("\u65e5", 14),
+		},
+		{
+			// Every candidate byte sits inside the first emoji; the walk
+			// reaches 0 and the result is empty.
+			name: "walk_to_zero_yields_empty",
+			in:   fourByte,
+			max:  2,
+			want: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := truncateUTF8(tc.in, tc.max); got != tc.want {
+				t.Fatalf("truncateUTF8(%d) = %q, want %q", tc.max, got, tc.want)
+			}
+		})
+	}
+}
