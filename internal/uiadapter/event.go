@@ -104,6 +104,8 @@ func TranslateEventWithOptions(ev agent.Event, opts TranslateOptions) []uievent.
 		return translateTokenUsage(ev)
 	case agent.EventWorkLimit:
 		return notice(ev.Detail)
+	case agent.EventSchemaRetry:
+		return notice(ev.Detail)
 	case agent.EventHeartbeat, agent.EventSubagentHeartbeat:
 		// Explicit drop; one of the two progress-tick kinds has no UI
 		// representation in phase 1. The drop is recorded in droppedKinds

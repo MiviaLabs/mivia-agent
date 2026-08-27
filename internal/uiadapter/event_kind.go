@@ -29,6 +29,7 @@ import (
 //	EventCacheUsage       -> notice
 //	EventTokenUsage       -> notice
 //	EventWorkLimit        -> notice
+//	EventSchemaRetry      -> notice
 
 // translateAssistant fans out an assistant content event into the right
 // uievent shape based on the Detail mode the agent loop set. A streaming

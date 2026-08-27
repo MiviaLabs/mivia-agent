@@ -56,6 +56,17 @@ const (
 	// budget) is close. It is observability only; the injected instruction
 	// itself travels inside the provider request.
 	EventWorkLimit EventKind = "work_limit"
+	// EventSchemaRetry reports a subagent schema-validation corrective
+	// re-entry that is ABOUT to happen: the previous reply failed schema
+	// validation and runValidatedReply (internal/subagents/multi_step_schema.go)
+	// is about to send a corrective turn and run a full new LLM turn. Without
+	// this, a schema-repair retry ran with zero observable signal between the
+	// first attempt's visible output and the retry's eventual completion -
+	// indistinguishable from a stalled task. Detail carries a human-readable
+	// "attempt N/M" message. Observability only: it does not count as
+	// EventStep (must not inflate a schema-retry step budget) and must never
+	// be confused with EventSubagentDone.
+	EventSchemaRetry EventKind = "schema_retry"
 )
 
 // EventOrigin identifies the agent that produced an event. The zero value
