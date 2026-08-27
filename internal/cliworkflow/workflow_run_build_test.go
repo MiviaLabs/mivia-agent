@@ -5,8 +5,10 @@ package cliworkflow
 // honoring a reserved pr_base input over the workflow-declared base (F6).
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,11 +23,13 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
+	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 	workflowspace "github.com/MiviaLabs/mivia-agent/internal/workflows/localengine"
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 // admissionHangGitRunner answers the origin lookup but hangs the delivery
@@ -508,5 +512,46 @@ func TestBuildWorkflowControllerSkipsChildRunRegistrationWithoutSessionRepo(t *t
 	}
 	if runner.RegisterChildRun != nil {
 		t.Fatal("RegisterChildRun hook is wired without a session repo; registration must be skipped by design")
+	}
+}
+
+// TestWorkflowOwnerSessionIDEmptyWithoutCaller pins the fail-closed source:
+// an admission context with no session caller yields no owner, which keeps
+// the child-run registration hook unset downstream.
+func TestWorkflowOwnerSessionIDResolvesAndFailsClosed(t *testing.T) {
+	ctx := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "sess-owner"})
+	if got := workflowOwnerSessionID(ctx); got != "sess-owner" {
+		t.Fatalf("workflowOwnerSessionID = %q, want the caller's session ID", got)
+	}
+	if got := workflowOwnerSessionID(context.Background()); got != "" {
+		t.Fatalf("workflowOwnerSessionID = %q, want empty without a session caller", got)
+	}
+}
+
+// TestWorkflowChildRunRegistrarLogsRegistrationFailure pins the failure
+// branch of the registration hook: a refused registration (nil handle at the
+// seam boundary) logs one failure line and does not panic the dispatch path.
+func TestWorkflowChildRunRegistrarLogsRegistrationFailure(t *testing.T) {
+	ws, err := workspace.Open(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := runtime.NewToolDispatcher(tools.NewDefaultRegistry(tools.DefaultOptions{Workspace: ws}), runtime.Policy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hook := workflowChildRunRegistrar(d, nil, config.SubagentConfig{}, "session-1", ledger.NewMemoryLedgerRepository())
+	if hook == nil {
+		t.Fatal("registrar hook must be set when owner and session repo exist")
+	}
+
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	hook(context.Background(), "run-reg-fail", nil)
+
+	if !strings.Contains(buf.String(), "child run run-reg-fail registration failed") {
+		t.Fatalf("log = %q, want the registration failure line", buf.String())
 	}
 }

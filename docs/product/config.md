@@ -482,6 +482,8 @@ The summarize request carries bounded quotes of the dropped messages' real conte
 
 For `mivia chat`, mivia uses one SQLite file for all durable chat state: sessions, context, worktree routes, and runs. When `store_path` is unset, mivia uses the shared global path `~/.mivia/context.db`, so every workspace on the machine has the same chat history by default. Sessions stay isolated inside that shared file by workspace ID: two projects never see each other's sessions even though they share one file. A worktree never creates another chat database. Set `store_path` to give one workspace its own separate file instead of the shared default.
 
+Workflow child runs register for `inspect_agents`, `cancel_run`, and `join_run` only when a chat session owns them. Runs started without an owning session (CLI commands, review panels, one-shot catalog flows) stay manageable through the workflow tools instead; this fail-closed skip is by design and logs one line per skipped registration.
+
 ## Workflow panel limits
 
 `[workflows.panels]` overrides the per-child-agent bounds every `agent_panel`
