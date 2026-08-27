@@ -39,7 +39,7 @@ During a multi-task subagent dispatch (`dispatch_tasks` with 4 parallel agents):
 2. **Capture `run_id` immediately** on the first turn so the run remains observable and controllable.
 3. **Configurable concurrency capped at 3 workers by default (`[subagents] max_workers = 3` in `mivia.toml`)** to prevent provider throttling and 503 retry freezes.
 4. **Always set explicit `timeout_seconds`** (e.g. `timeout_seconds: 300`) per task. Never rely on the 12-hour default.
-5. **Add prompt guardrails to all subagent prompts**:
+5. **Enforce prompt guardrails on every dispatched task prompt** (policy home: rule 50 + shared memory):
    > "Do not park on `question` for non-critical ambiguity. Use best judgment and state assumptions explicitly in your output."
 
 ### B. Polling & Monitoring Backoff Schedule
@@ -64,6 +64,6 @@ When monitoring a `wait:"none"` run:
 ## 4. Answers to Design & Review Questions
 
 1. **Cancellation Trigger Heuristic**: Fixed at **90 seconds on Step 1** with 0 tool calls emitted, or **2x the estimated task duration**.
-2. **Prompt Hygiene Placement**: Included directly in standard prompt construction and enforced in `.agents/rules/50-concurrency-subagents.md`.
+2. **Prompt Hygiene Placement**: Recorded as durable policy in `.agents/rules/50-concurrency-subagents.md` (Dispatch Hygiene For Batch Fan-Out) and in the shared memory entry. Compile-time prompt text in `internal/subagents/prompts.go` is unchanged.
 3. **Event Polling Scope**: Polling checks both `task_blocked` and terminal states (`task_completed`, `task_failed`, `task_timed_out`).
 4. **Cost & Noise Management**: Backoff intervals scale from 5s up to 60s, keeping event querying minimal.

@@ -63,6 +63,14 @@ When using subagents for this codebase:
 - Share Mivia MCP / project index context; do not re-ingest the repo per subagent.
 - Cap parallel subagents at the defaults above unless the user sets a tighter bound.
 
+### Dispatch Hygiene For Batch Fan-Out
+
+- Dispatch multi-task batches with `wait="none"`, and record the run id at once.
+- Set an explicit `timeout_seconds` per task. Do not rely on default ceilings.
+- Tell each task to decide with best judgment instead of parking on a question for non-critical doubt, and to state assumptions in the report.
+- Keep worker concurrency inside the configured `[subagents] max_workers` bound. Three workers is the shipped default; a tighter cap protects local proxies and rate-limited providers.
+- Cancel a batch whose task stays on step 1 with no tool call past 90 seconds. Continue that work directly with read-only tools.
+
 ## Forbidden Patterns
 
 - `xargs -P` / parallel shells over `mivia` write commands
