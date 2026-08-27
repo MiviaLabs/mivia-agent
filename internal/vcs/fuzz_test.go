@@ -78,8 +78,11 @@ func FuzzGitdirPointer(f *testing.F) {
 // malformed, oversized (>1 MiB), duplicate-line, CRLF, absolute/relative, and
 // non-.git-tail inputs.
 func FuzzWorktreePathFromGitdir(f *testing.F) {
-	adminDir := filepath.Join(string(filepath.Separator), "repo", ".git", "worktrees", "wt-a")
-	wtA := filepath.Join(string(filepath.Separator), "repo", ".mivia", "worktrees", "wt-a", ".git")
+	// rootedTestPath gives the synthetic root a volume on Windows, where
+	// "\repo\..." is not filepath.IsAbs; the absoluteness invariant below
+	// must stay meaningful on every platform.
+	adminDir := rootedTestPath("repo", ".git", "worktrees", "wt-a")
+	wtA := rootedTestPath("repo", ".mivia", "worktrees", "wt-a", ".git")
 	seeds := []string{
 		"",
 		wtA + "\n",
@@ -88,7 +91,7 @@ func FuzzWorktreePathFromGitdir(f *testing.F) {
 		"gitdir: /elsewhere/.git\n",
 		wtA + "\n" + wtA + "\n",
 		wtA + "\r\n",
-		filepath.Join(string(filepath.Separator), "repo", "not-a-gitfile") + "\n",
+		rootedTestPath("repo", "not-a-gitfile") + "\n",
 		strings.Repeat("a", (1<<20)+1),
 		wtA + strings.Repeat("a", 1<<20),
 	}

@@ -102,7 +102,14 @@ func worktreePathFromGitdir(data []byte, adminDir string) string {
 		return ""
 	}
 	line = filepath.FromSlash(line)
-	if !filepath.IsAbs(line) {
+	// filepath.IsAbs reports false on Windows for separator-rooted pointers
+	// like "\repo\x" (no volume letter), yet git writes such rooted paths
+	// into worktree pointers. Joining one under adminDir corrupts it into
+	// "adminDir\repo\.mivia\..." - a nested path that never existed. A
+	// separator-rooted pointer is anchored at the filesystem root, matching
+	// Unix where IsAbs already covers this case (so the extra test never
+	// fires there).
+	if !filepath.IsAbs(line) && !strings.HasPrefix(line, string(filepath.Separator)) {
 		line = filepath.Join(adminDir, line)
 	}
 	line = filepath.Clean(line)

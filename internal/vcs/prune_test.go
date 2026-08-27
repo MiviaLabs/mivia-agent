@@ -122,12 +122,24 @@ func TestPruneRefusesIntactWorktreeWithBrokenGitfile(t *testing.T) {
 	}
 }
 
+// rootedTestPath builds a synthetic absolute path anchored at a root that
+// filepath.IsAbs accepts on this platform. On Windows "\repo\..." is NOT
+// filepath.IsAbs (no volume letter), so synthetic roots carry the real temp
+// volume ("D:\repo\..."); on Unix the plain separator root is unchanged.
+func rootedTestPath(elements ...string) string {
+	root := string(filepath.Separator)
+	if vol := filepath.VolumeName(os.TempDir()); vol != "" {
+		root = vol
+	}
+	return filepath.Join(append([]string{root}, elements...)...)
+}
+
 // TestWorktreePathFromGitdir pins the pure pointer parser used by the
 // targeted prune on edge inputs: empty, malformed, CRLF, duplicate lines,
 // absolute and relative pointers, and a non-.git tail all parse without
 // panicking and yield either a non-empty path or "".
 func TestWorktreePathFromGitdir(t *testing.T) {
-	adminDir := filepath.Join(string(filepath.Separator), "repo", ".git", "worktrees", "wt-a")
+	adminDir := rootedTestPath("repo", ".git", "worktrees", "wt-a")
 	cases := []struct {
 		name  string
 		input string
@@ -135,14 +147,14 @@ func TestWorktreePathFromGitdir(t *testing.T) {
 	}{
 		{"empty", "", ""},
 		{"whitespace only", "  \r\n", ""},
-		{"absolute with newline", filepath.Join(string(filepath.Separator), "repo", ".mivia", "worktrees", "wt-a", ".git") + "\n", filepath.Join(string(filepath.Separator), "repo", ".mivia", "worktrees", "wt-a")},
-		{"absolute without newline", filepath.Join(string(filepath.Separator), "repo", ".mivia", "worktrees", "wt-a", ".git"), filepath.Join(string(filepath.Separator), "repo", ".mivia", "worktrees", "wt-a")},
-		{"crlf", filepath.Join(string(filepath.Separator), "repo", ".mivia", "worktrees", "wt-a", ".git") + "\r\n", filepath.Join(string(filepath.Separator), "repo", ".mivia", "worktrees", "wt-a")},
-		{"duplicate lines first wins", filepath.Join(string(filepath.Separator), "repo", ".mivia", "worktrees", "wt-a", ".git") + "\n" + filepath.Join(string(filepath.Separator), "repo", ".mivia", "worktrees", "wt-b", ".git") + "\n", filepath.Join(string(filepath.Separator), "repo", ".mivia", "worktrees", "wt-a")},
-		{"gitdir prefix is not a pointer", "gitdir: " + filepath.Join(string(filepath.Separator), "elsewhere", ".git") + "\n", ""},
-		{"non gitdir tail", filepath.Join(string(filepath.Separator), "repo", "not-a-gitfile") + "\n", ""},
+		{"absolute with newline", rootedTestPath("repo", ".mivia", "worktrees", "wt-a", ".git") + "\n", rootedTestPath("repo", ".mivia", "worktrees", "wt-a")},
+		{"absolute without newline", rootedTestPath("repo", ".mivia", "worktrees", "wt-a", ".git"), rootedTestPath("repo", ".mivia", "worktrees", "wt-a")},
+		{"crlf", rootedTestPath("repo", ".mivia", "worktrees", "wt-a", ".git") + "\r\n", rootedTestPath("repo", ".mivia", "worktrees", "wt-a")},
+		{"duplicate lines first wins", rootedTestPath("repo", ".mivia", "worktrees", "wt-a", ".git") + "\n" + rootedTestPath("repo", ".mivia", "worktrees", "wt-b", ".git") + "\n", rootedTestPath("repo", ".mivia", "worktrees", "wt-a")},
+		{"gitdir prefix is not a pointer", "gitdir: " + rootedTestPath("elsewhere", ".git") + "\n", ""},
+		{"non gitdir tail", rootedTestPath("repo", "not-a-gitfile") + "\n", ""},
 		{"malformed relative", "..\n", ""},
-		{"blank first line", "\n" + filepath.Join(string(filepath.Separator), "repo", ".mivia", "worktrees", "wt-a", ".git") + "\n", ""},
+		{"blank first line", "\n" + rootedTestPath("repo", ".mivia", "worktrees", "wt-a", ".git") + "\n", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -154,7 +166,7 @@ func TestWorktreePathFromGitdir(t *testing.T) {
 	}
 	// Relative pointers anchor to the admin worktree directory, matching
 	// git's own anchoring (get_linked_worktree and should_prune_worktree).
-	relAdmin := filepath.Join(string(filepath.Separator), "repo", ".git", "worktrees", "wt-a")
+	relAdmin := rootedTestPath("repo", ".git", "worktrees", "wt-a")
 	got := worktreePathFromGitdir([]byte("../.mivia/worktrees/wt-a/.git\n"), relAdmin)
 	want := filepath.Clean(filepath.Join(relAdmin, "../.mivia/worktrees/wt-a"))
 	if got != want {
