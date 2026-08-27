@@ -57,6 +57,17 @@ const MaxTimeoutSeconds = 315_360_000 // 10 years
 // reference.
 const defaultInlineOutputBytes = 4096
 
+// defaultSpawnStaggerMs is the inter-task start delay for a dispatch batch.
+// 150ms is negligible against multi-second LLM calls but enough to keep N
+// workers from opening their first provider connection on the same instant
+// (the step-1 thundering-herd hang behind overloaded local proxies).
+const defaultSpawnStaggerMs = 150
+
+// maxSpawnStaggerMs clamps spawn_stagger_ms against misconfiguration: a typo'd
+// value (seconds typed as milliseconds) must not serialize every batch. An
+// explicit 0 keeps its own meaning (disabled) and is never clamped to this.
+const maxSpawnStaggerMs = 1000
+
 // MaxSchemaRetryMax is the load-time ceiling for [subagents] schema_retry_max.
 // A positive configured value above it is clamped to it, so an operator typo
 // (40 typed instead of 4) cannot configure a 40+-call schema-retry storm, where
@@ -135,6 +146,7 @@ var DefaultSubagentConfig = SubagentConfig{
 	MaxAuditRounds:    0, // 0 = unlimited by default
 	InlineOutputBytes: defaultInlineOutputBytes,
 	SchemaRetryMax:    2,
+	SpawnStaggerMs:    defaultSpawnStaggerMs,
 	Messaging:         DefaultMessagingConfig,
 }
 

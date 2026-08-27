@@ -37,7 +37,7 @@ During a multi-task subagent dispatch (`dispatch_tasks` with 4 parallel agents):
 ### A. Dispatch Rules
 1. **Never use `wait:"run"` for multi-agent batches or tasks requiring iteration.** Always use `wait:"none"`.
 2. **Capture `run_id` immediately** on the first turn so the run remains observable and controllable.
-3. **Configurable concurrency capped at 3 workers by default (`[subagents] max_workers = 3` in `mivia.toml`)** to prevent provider throttling and 503 retry freezes.
+3. **Configurable concurrency capped at 3 workers by default (`[subagents] max_workers = 3` in `mivia.toml`) plus spawn stagger (`[subagents] spawn_stagger_ms`, default 150, explicit 0 disables, clamped at 1000; `subagents.Policy.SpawnStagger` delays each batch task's start after the first) to prevent provider throttling and 503 retry freezes.**
 4. **Always set explicit `timeout_seconds`** (e.g. `timeout_seconds: 300`) per task. Never rely on the 12-hour default.
 5. **Enforce prompt guardrails on every dispatched task prompt** (policy home: rule 50 + shared memory):
    > "Do not park on `question` for non-critical ambiguity. Use best judgment and state assumptions explicitly in your output."

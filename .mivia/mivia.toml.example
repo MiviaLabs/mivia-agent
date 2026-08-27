@@ -552,6 +552,11 @@ max_workers = 0   # 0 = unlimited (one goroutine per task)
 max_depth = -1    # -1 = unbounded DAG depth (0 also means unlimited)
 max_fanout = -1   # -1 = unbounded task count (0 also means unlimited)
 nested_steps = 0  # 0 = unlimited sub-agent loop steps
+# spawn_stagger_ms delays each task after the first in a dispatch batch, so
+# concurrent workers do not fire their first provider call on the same instant
+# (thundering herd against local proxies). Default when absent: 150. An
+# explicit 0 disables; values above 1000 clamp to 1000.
+spawn_stagger_ms = 150
 # default_timeout_seconds is the per-agent default budget. 43200s = 12 hours,
 # the same safety bound an unset-or-0 value selects; it is written out so the
 # default is visible and a smaller value never slips in silently. Batches and
