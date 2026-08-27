@@ -116,6 +116,50 @@ func TestTranslateEvent_SubagentHeartbeat(t *testing.T) {
 	})
 }
 
+// TestTranslateEvent_SubagentHeartbeatBadCounts pins the two malformed
+// step counts: a value Atoi rejects and a negative value both leave
+// Progress.Step at zero, which downstream code reads as "no progress
+// information", never as step 0 of real work.
+func TestTranslateEvent_SubagentHeartbeatBadCounts(t *testing.T) {
+	t.Parallel()
+	runMappingCases(t, []mappingCase{
+		{
+			name: "subagent_heartbeat_with_unparseable_count_leaves_step_zero",
+			ev: agent.Event{
+				Kind: agent.EventSubagentHeartbeat, Detail: "elapsed=30s steps=not-a-number",
+				Origin: agent.EventOrigin{TaskID: "task-hb", Agent: "auditor"},
+			},
+			want: []uievent.Event{{
+				Kind: uievent.KindToolOutput,
+				Body: uievent.ToolOutputBody{
+					ToolCallID: "task-hb",
+					Progress: &uievent.Progress{
+						Status: "running", Step: 0,
+						Log: []string{"elapsed=30s steps=not-a-number"},
+					},
+				},
+			}},
+		},
+		{
+			name: "subagent_heartbeat_with_negative_count_leaves_step_zero",
+			ev: agent.Event{
+				Kind: agent.EventSubagentHeartbeat, Detail: "elapsed=30s steps=-3",
+				Origin: agent.EventOrigin{TaskID: "task-hb", Agent: "auditor"},
+			},
+			want: []uievent.Event{{
+				Kind: uievent.KindToolOutput,
+				Body: uievent.ToolOutputBody{
+					ToolCallID: "task-hb",
+					Progress: &uievent.Progress{
+						Status: "running", Step: 0,
+						Log: []string{"elapsed=30s steps=-3"},
+					},
+				},
+			}},
+		},
+	})
+}
+
 // TestTranslateEvent_SubagentDone covers EventSubagentDone: a notice
 // carrying the most informative label from Origin, plus (when
 // Origin.TaskID is set) a tool.output progress update that closes out

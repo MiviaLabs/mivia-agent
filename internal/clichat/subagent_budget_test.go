@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 )
@@ -58,6 +59,33 @@ func TestSkillHandlerCarriesTotalBudget(t *testing.T) {
 			h := newSkillMultiStepHandler(skillHandlerDeps{}, cfg, skills.Definition{Name: "review"})
 			if h.TotalTimeout != tc.want {
 				t.Fatalf("skill handler TotalTimeout = %v, want %v", h.TotalTimeout, tc.want)
+			}
+		})
+	}
+}
+
+// TestSkillHandlerMaxTokensOverride pins the caller-supplied max-tokens
+// override: a positive pointer wins over the compiled default, a nil
+// pointer or a non-positive value leaves the default in place.
+func TestSkillHandlerMaxTokensOverride(t *testing.T) {
+	t.Parallel()
+	positive := 777
+	nonPositive := 0
+	cases := []struct {
+		name      string
+		maxTokens *int
+		want      int
+	}{
+		{name: "nil_pointer_keeps_default", maxTokens: nil, want: cliorchestrate.DefaultMaxTokens},
+		{name: "positive_pointer_wins", maxTokens: &positive, want: 777},
+		{name: "non_positive_pointer_keeps_default", maxTokens: &nonPositive, want: cliorchestrate.DefaultMaxTokens},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newSkillMultiStepHandler(skillHandlerDeps{maxTokens: tc.maxTokens},
+				config.SubagentConfig{}, skills.Definition{Name: "review"})
+			if h.MaxTokens != tc.want {
+				t.Fatalf("skill handler MaxTokens = %d, want %d", h.MaxTokens, tc.want)
 			}
 		})
 	}
