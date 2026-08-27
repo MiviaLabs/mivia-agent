@@ -25,8 +25,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
-
-	"golang.org/x/sys/unix"
 )
 
 // --- agent_task_handler.go ---
@@ -538,28 +536,11 @@ func TestDiffCov2WrapDisplayRowsWideRuneSplit(t *testing.T) {
 // true, runs fn, then restores the original stdin.
 func withPtyStdin(t *testing.T, fn func()) {
 	t.Helper()
-	master, err := unix.Open("/dev/ptmx", unix.O_RDWR|unix.O_NOCTTY, 0)
-	if err != nil {
-		t.Skipf("cannot open /dev/ptmx: %v", err)
-	}
-	defer func() { _ = unix.Close(master) }()
-	if err := unix.IoctlSetPointerInt(master, unix.TIOCSPTLCK, 0); err != nil {
-		t.Skipf("unlockpt failed: %v", err)
-	}
-	ptsN, err := unix.IoctlGetInt(master, unix.TIOCGPTN)
-	if err != nil {
-		t.Skipf("pts number failed: %v", err)
-	}
-	n := uint32(ptsN)
-	slave, err := unix.Open("/dev/pts/"+itoa(int(n)), unix.O_RDWR|unix.O_NOCTTY, 0)
-	if err != nil {
-		t.Skipf("cannot open pty slave: %v", err)
-	}
-	defer func() { _ = unix.Close(slave) }()
+	_, slave := openTestPTY(t)
 	oldStdin := os.Stdin
 	oldTerm := os.Getenv("TERM")
 	_ = os.Setenv("TERM", "xterm")
-	os.Stdin = os.NewFile(uintptr(slave), "stdin-pty")
+	os.Stdin = slave
 	defer func() {
 		os.Stdin = oldStdin
 		_ = os.Setenv("TERM", oldTerm)
