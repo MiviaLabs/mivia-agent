@@ -372,6 +372,56 @@ func TestReferralFailClosesAsk(t *testing.T) {
 	}
 }
 
+// TestSpawnReferralFromAskBoundsTimeout guards against a referral task
+// running with an unbounded context. Task.Timeout is never set on the
+// referral construction path (SpawnReferralFromAsk), and the pool here is
+// configured with Timeout: 0 (mirrors the real-world zero-config default -
+// config.DefaultTimeout is 0 unless explicitly set), so before the fix the
+// handler's context has no deadline at all: a stalled referral can block
+// forever and hold the whole run's Join open, invisible in the UI because
+// referral tasks are not part of the dispatched batch's panel rows.
+func TestSpawnReferralFromAskBoundsTimeout(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	d := runtime.New(runtime.Policy{})
+	type deadlineObservation struct {
+		ok       bool
+		deadline time.Time
+	}
+	deadlineCh := make(chan deadlineObservation, 1)
+	_ = d.Register(runtime.Subagent, "aud-deadline", handlerFunc(func(ctx context.Context, _ runtime.Request) (json.RawMessage, error) {
+		dl, ok := ctx.Deadline()
+		deadlineCh <- deadlineObservation{ok: ok, deadline: dl}
+		return json.RawMessage(`{}`), nil
+	}))
+	_ = d.Register(runtime.Subagent, "p-deadline", handlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) {
+		return json.RawMessage(`{}`), nil
+	}))
+	// subagents.Policy{} leaves Timeout at its zero value, matching a pool
+	// with no configured default (config.DefaultTimeout == 0).
+	c := New(repo, subagents.New(d, subagents.Policy{Workers: 2}))
+	h, err := c.Spawn(context.Background(), []subagents.Task{
+		{ID: "p1", Name: "p-deadline", AgentName: "p-deadline", Timeout: 3 * time.Second},
+	}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ask, _ := agentmsg.NewMessage(h.RunID(), agentmsg.KindAsk,
+		agentmsg.Party{TaskID: "p1", Role: "rev"}, agentmsg.Party{Role: "aud-deadline"},
+		"body", nil, agentmsg.Options{})
+	if _, err := c.SpawnReferralFromAsk(context.Background(), h.RunID(), "aud-deadline", ask); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = c.Join(context.Background(), h)
+	select {
+	case got := <-deadlineCh:
+		if !got.ok {
+			t.Fatal("referral task context has no deadline: an unbounded referral can block forever and hold the run's Join open")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("referral handler did not run")
+	}
+}
+
 func TestUnclaimWhenAlreadyOpen(t *testing.T) {
 	c := New(ledger.NewMemoryLedgerRepository(), subagents.New(runtime.New(runtime.Policy{}), subagents.Policy{Workers: 1})).(*coordinator)
 	c.RegisterAsk("r", "t", "a", "m", nil)

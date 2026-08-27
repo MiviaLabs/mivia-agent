@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agentmsg"
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
@@ -111,6 +112,20 @@ func (c *coordinator) SpawnReferral(ctx context.Context, runID string, task suba
 		task.Name = task.AgentName
 	}
 	task.DependsOn = nil
+	// Bound the referral's execution context. Referral tasks are built here
+	// (and by SpawnReferralFromAsk, which calls this) without a caller-set
+	// Timeout, and the pool's own configured Timeout also defaults to 0
+	// (config.DefaultTimeout) unless explicitly set - so an unbounded
+	// referral's context would carry no deadline at all (executeOne only
+	// falls back to context.WithCancel when both are zero) and could block
+	// forever, holding the whole run's Join open invisibly (referral tasks
+	// are not part of the dispatched batch's panel rows). Mirror the same
+	// resolution chain used when resuming/recovering a persisted task
+	// (taskFromSnapshot in recovery_tasks.go): keep any caller-set Timeout
+	// (clamped to the pool ceiling), otherwise fall back to
+	// DefaultOrchestrationTimeoutSec (12h) - generous enough for legitimate
+	// long-running referrals, but never infinite.
+	task.Timeout = clampDuration(task.Timeout, c.pool.Timeout(), time.Duration(config.DefaultOrchestrationTimeoutSec)*time.Second)
 
 	now := c.nowLocked()
 	named, err := c.createTask(ctx, runID, task, now)
