@@ -281,6 +281,21 @@ type SubagentConfig struct {
 	// MaxSchemaRetryMax is clamped to it.
 	SchemaRetryMax int `toml:"schema_retry_max"`
 
+	// SpawnStaggerMs staggers the start of each task after the first within
+	// one dispatch batch by this many milliseconds, so concurrent workers do
+	// not fire their first provider call on the same instant (the step-1
+	// thundering-herd hang behind overloaded local proxies). Default: 150.
+	// An explicit 0 disables staggering and is preserved through resolution
+	// via spawnStaggerMsSet, mirroring inline_output_bytes; an absent key
+	// falls back to the default. Values above 1000 are clamped to 1000.
+	SpawnStaggerMs int `toml:"spawn_stagger_ms"`
+
+	// spawnStaggerMsSet records whether [subagents] spawn_stagger_ms was
+	// present in the config file, so an explicit 0 (disabled) survives the
+	// defaulting in resolveSubagentConfig. No toml tag: go-toml/v2 ignores
+	// unexported fields, so the flag is set only by loadFile's raw-byte probe.
+	spawnStaggerMsSet bool
+
 	// Messaging configures typed agent-to-agent messaging (plan 53). Nested
 	// under [subagents.messaging]. Always enabled (product decision 2026-08-03).
 	Messaging MessagingConfig `toml:"messaging"`

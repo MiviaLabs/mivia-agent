@@ -69,6 +69,21 @@ func TestMessagingProtocolPromptAskDeclineWordingAccuracy(t *testing.T) {
 	}
 }
 
+func TestMessagingProtocolPromptPrefersJudgmentOverParking(t *testing.T) {
+	// The step-1 hang class: a child parks on kind="question" while the
+	// parent is blocked, and nobody answers until wait_seconds lapses. The
+	// compiled prompt must tell children to reserve questions for real
+	// blockers and decide the rest themselves.
+	if !strings.Contains(MessagingProtocolPrompt, "only for true blockers") {
+		t.Error("MessagingProtocolPrompt must reserve questions for true blockers")
+	}
+	for _, want := range []string{"Decide small doubts yourself", "state your assumptions"} {
+		if !strings.Contains(MessagingProtocolPrompt, want) {
+			t.Errorf("MessagingProtocolPrompt missing %q", want)
+		}
+	}
+}
+
 func TestMessagingProtocolPromptKeepsLengthReasonable(t *testing.T) {
 	if n := len(MessagingProtocolPrompt); n >= 1200 {
 		t.Errorf("MessagingProtocolPrompt is %d bytes; want < 1200", n)

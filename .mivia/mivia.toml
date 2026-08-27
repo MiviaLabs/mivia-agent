@@ -428,12 +428,18 @@ reasoning_efforts = ['off', 'high']
 
 [subagents]
 default_timeout_seconds = 43200
+# Bound each subagent LLM request to 10 minutes instead of the 12-hour
+# orchestration fallback: a stalled or proxy-queued call now fails fast inside
+# one step (still above normal generations; the 15-minute HTTP transport
+# ceiling stays the hard outer backstop).
+default_request_timeout_seconds = 600
 max_audit_rounds = 0
 max_depth = -1
 max_fanout = -1
-max_workers = 0
+max_workers = 3
 nested_steps = 0
 schema_retry_max = 5
+spawn_stagger_ms = 150
 store_backend = 'sqlite'
 store_path = '.mivia/context.db'
 

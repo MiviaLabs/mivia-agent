@@ -59,6 +59,12 @@ type Policy struct {
 	Workers, MaxDepth, MaxFanout int
 	MaxBudget                    int
 	Timeout                      time.Duration
+	// SpawnStagger delays each subsequent task's job feed inside one batch by
+	// this duration, spreading concurrent LLM call starts so N workers do not
+	// hit the provider on the same instant (the step-1 thundering-herd hang).
+	// Zero disables; the interactive session maps it from
+	// [subagents] spawn_stagger_ms.
+	SpawnStagger time.Duration
 }
 
 // Unlimited is the sentinel value that explicitly requests no limit.
@@ -272,7 +278,24 @@ func (p *Pool) execute(ctx context.Context, tasks []Task, results map[string]Res
 			}
 		}()
 	}
-	for _, t := range tasks {
+	// Stagger the feed, not the workers: every idle worker blocks on jobs, so
+	// spacing consecutive sends spaces the tasks' first provider calls even
+	// when Workers == 0 spawned a goroutine per task. Cancellation during a
+	// gap records the canceled result for that task, same as the send path.
+	stagger := p.p.SpawnStagger
+	for i, t := range tasks {
+		if i > 0 && stagger > 0 {
+			timer := time.NewTimer(stagger)
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				timer.Stop()
+				mu.Lock()
+				results[t.ID] = Result{TaskID: t.ID, Err: ctx.Err(), Status: "canceled"}
+				mu.Unlock()
+				continue
+			}
+		}
 		select {
 		case jobs <- t:
 		case <-ctx.Done():

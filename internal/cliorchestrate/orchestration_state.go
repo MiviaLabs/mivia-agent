@@ -350,6 +350,9 @@ func InitCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...
 		MaxFanout: poolFanout,
 		MaxBudget: cfg.DefaultBudget,
 		Timeout:   time.Duration(cfg.DefaultTimeout) * time.Second,
+		// Anti-thundering-herd: space batch task starts so concurrent
+		// workers do not open their first provider call on the same instant.
+		SpawnStagger: time.Duration(cfg.SpawnStaggerMs) * time.Millisecond,
 	})
 	c := coordinator.New(repo, pool).WithRetryPolicy(TaskRetryPolicyFromConfig(cfg.TaskRetry))
 	// Wire [subagents.messaging] body/mailbox budgets (plan 53).

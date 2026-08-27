@@ -378,6 +378,9 @@ func decodeConfigInto(data []byte, path string, file *File) error {
 	// the main decode cannot tell an explicit 0 from an absent key, and
 	// resolveSubagentConfig must preserve an explicit 0 ("always use refs").
 	probeInlineOutputBytes(data, file)
+	// Same probe for [subagents] spawn_stagger_ms: an explicit 0 (disabled)
+	// must survive resolution; an absent key takes the default.
+	probeSpawnStaggerMs(data, file)
 	// Raw bytes are the only place model keys still exist; see auditModelKeys.
 	if err := auditModelKeys(data); err != nil {
 		return fmt.Errorf("parse config %s: %w", path, err)
@@ -483,6 +486,26 @@ func workspaceOverlayConfigPath(workspaceRoot, basePath string) (string, bool) {
 	return candidate, true
 }
 
+// probeSpawnStaggerMs re-parses data for an explicit [subagents]
+// spawn_stagger_ms key and records its presence on file.Subagents, with the
+// same presence-vs-value semantics as probeInlineOutputBytes below: a *int
+// keeps an explicit 0 (stagger disabled) distinct from an absent key (default
+// 150ms applies in resolveSubagentConfig), and presence is monotonic across
+// base + overlay layers.
+func probeSpawnStaggerMs(data []byte, file *File) {
+	var probe struct {
+		Subagents struct {
+			SpawnStaggerMs *int `toml:"spawn_stagger_ms"`
+		} `toml:"subagents"`
+	}
+	if err := toml.Unmarshal(data, &probe); err != nil {
+		return // main decode reports parse errors; the probe only detects presence
+	}
+	if probe.Subagents.SpawnStaggerMs != nil {
+		file.Subagents.spawnStaggerMsSet = true
+	}
+}
+
 // probeInlineOutputBytes re-parses data for an explicit [subagents]
 // inline_output_bytes key and records its presence on file.Subagents. A *int
 // field keeps presence (nil = absent) distinct from value (0 is a real
@@ -549,6 +572,11 @@ func resolveSubagentConfig(cfg SubagentConfig) SubagentConfig {
 		cfg.SchemaRetryMax = DefaultSubagentConfig.SchemaRetryMax
 	} else if cfg.SchemaRetryMax > MaxSchemaRetryMax { // typo guard, see MaxSchemaRetryMax
 		cfg.SchemaRetryMax = MaxSchemaRetryMax
+	}
+	if !cfg.spawnStaggerMsSet {
+		cfg.SpawnStaggerMs = DefaultSubagentConfig.SpawnStaggerMs
+	} else if cfg.SpawnStaggerMs > maxSpawnStaggerMs { // typo guard, see maxSpawnStaggerMs
+		cfg.SpawnStaggerMs = maxSpawnStaggerMs
 	}
 	cfg.Messaging = resolveMessagingConfig(cfg.Messaging)
 	return cfg
