@@ -170,7 +170,7 @@ func (c *OpenAICompat) ReasoningFields(req *Request) map[string]any {
 //
 // An empty or unknown Level maps to the empty SDK effort, which the SDK
 // reads as "send no reasoning field". Levels the SDK has no constant
-// for (minimal, xhigh, max) also map to empty: the user picked a level
+// for (minimal, xhigh, max, auto) also map to empty: the user picked a level
 // the SDK cannot carry, and the wire should not invent a value.
 func levelToSDKReasoningEffort(l reasoning.Level) sdkshape.ReasoningEffort {
 	switch l {

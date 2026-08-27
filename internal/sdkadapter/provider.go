@@ -66,14 +66,15 @@ func ChatStream(ctx context.Context, c provider.Completer, _ sdkshape.Request, w
 }
 
 // LevelToReasoningEffort maps the CLI's provider-neutral reasoning Level
-// (seven values: off, minimal, low, medium, high, xhigh, max) onto the SDK's
-// ReasoningEffort (four values: none, low, medium, high). The empty Level
-// maps to the empty SDK effort, which is the SDK's "send no reasoning
+// (eight values: off, minimal, low, medium, high, xhigh, max, auto) onto the
+// SDK's ReasoningEffort (four values: none, low, medium, high). The empty
+// Level maps to the empty SDK effort, which is the SDK's "send no reasoning
 // field" reading.
 //
 // Returns (effort, true) for the four levels the SDK has a constant for and
 // for the empty Level; (empty, false) for levels that have no SDK
-// analogue (minimal, xhigh, max). The boolean lets the caller distinguish
+// analogue (minimal, xhigh, max, auto). The boolean lets the caller
+// distinguish
 // "the SDK has no surface for this" from "the user did not pick a level":
 // a (false) result is a refused conversion, not a default.
 //
@@ -96,7 +97,7 @@ func LevelToReasoningEffort(l reasoning.Level) (sdkshape.ReasoningEffort, bool) 
 		return sdkshape.ReasoningEffortMedium, true
 	case reasoning.High:
 		return sdkshape.ReasoningEffortHigh, true
-	case reasoning.Minimal, reasoning.XHigh, reasoning.Max:
+	case reasoning.Minimal, reasoning.XHigh, reasoning.Max, reasoning.Auto:
 		return "", false
 	default:
 		return "", false

@@ -30,10 +30,14 @@ const (
 	High    Level = "high"
 	XHigh   Level = "xhigh"
 	Max     Level = "max"
+	// Auto delegates depth selection to the provider. Some endpoints (e.g.
+	// proxied Qwen3.8-flash) reject every graded tier and accept only
+	// "auto"; a model entry restricted to [Auto] states exactly that.
+	Auto Level = "auto"
 )
 
 var levels = map[Level]struct{}{
-	Off: {}, Minimal: {}, Low: {}, Medium: {}, High: {}, XHigh: {}, Max: {},
+	Off: {}, Minimal: {}, Low: {}, Medium: {}, High: {}, XHigh: {}, Max: {}, Auto: {},
 }
 
 // Active reports whether this level instructs the provider at all. Only the
@@ -49,7 +53,7 @@ func ParseLevel(s string) (Level, error) {
 	}
 	level := Level(s)
 	if _, ok := levels[level]; !ok {
-		return "", fmt.Errorf("unknown reasoning level %q (want off, minimal, low, medium, high, xhigh, or max)", s)
+		return "", fmt.Errorf("unknown reasoning level %q (want off, minimal, low, medium, high, xhigh, max, or auto)", s)
 	}
 	return level, nil
 }

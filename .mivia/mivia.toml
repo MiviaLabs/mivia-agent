@@ -227,8 +227,8 @@ reasoning_efforts = ['low', 'medium', 'high']
 context_window_tokens = 1000000
 max_output_tokens = 128000
 name = 'qwen3.8-flash'
-reasoning = 'high'
-reasoning_efforts = ['low', 'medium', 'high']
+reasoning = 'auto'
+reasoning_efforts = ['auto']
 
 [providers.minimax]
 api_key_env = 'MINIMAX_API_KEY'

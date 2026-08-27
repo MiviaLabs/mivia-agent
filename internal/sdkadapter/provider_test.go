@@ -137,6 +137,7 @@ func TestLevelToReasoningEffort(t *testing.T) {
 		{"minimal -> empty, false", reasoning.Minimal, "", false},
 		{"xhigh -> empty, false", reasoning.XHigh, "", false},
 		{"max -> empty, false", reasoning.Max, "", false},
+		{"auto -> empty, false", reasoning.Auto, "", false},
 		{"unknown -> empty, false", reasoning.Level("nuclear"), "", false},
 	}
 	for _, tt := range tests {
