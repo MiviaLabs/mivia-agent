@@ -1,6 +1,7 @@
 package render
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -53,5 +54,41 @@ func TestFormatInspectRepositoryOutput_NoResultsFallsBack(t *testing.T) {
 	// unparsed tool result (tool-output-polish.md R1).
 	if len(lines) < 1 || !strings.Contains(ansi.Strip(lines[0]), "unparsed tool result") {
 		t.Errorf("expected the unparsed label, got %v", lines)
+	}
+}
+
+// TestFormatInspectRepositoryOutput_CapsHotFilesAndPaths pins R5: a file
+// with many matches keeps five rows and a "+N more" line; a long path
+// middle-truncates instead of pushing the row out; and a truncated
+// envelope states its claim, not just the survivors.
+func TestFormatInspectRepositoryOutput_CapsHotFilesAndPaths(t *testing.T) {
+	th := loadTheme(t)
+	results := make([]map[string]any, 0, 9)
+	for i := 0; i < 9; i++ {
+		results = append(results, map[string]any{
+			"path": "web/internal/server/feature/deeply/nested/dir/component.go",
+			"line": 10 + i,
+			"text": fmt.Sprintf("match %d", i),
+		})
+	}
+	raw := mustJSON(map[string]any{
+		"result_count":      20,
+		"results":           results,
+		"truncated":         true,
+		"truncation_reason": "byte cap",
+	})
+	summary, lines := FormatInspectRepositoryOutput(th, theme.TierTrueColor, raw, 100)
+	plain := ansi.Strip(strings.Join(lines, "\n"))
+	if !strings.Contains(summary, "truncated, showing 9") {
+		t.Errorf("summary must state the claim beyond the survivors: %q", summary)
+	}
+	if strings.Count(plain, "match ") != 5 {
+		t.Errorf("expected 5 rendered rows for a hot file:\n%s", plain)
+	}
+	if !strings.Contains(plain, "+4 more in this file") {
+		t.Errorf("expected the per-file cap hint:\n%s", plain)
+	}
+	if !strings.Contains(plain, "…component.go") {
+		t.Errorf("expected the long path middle-truncated:\n%s", plain)
 	}
 }
