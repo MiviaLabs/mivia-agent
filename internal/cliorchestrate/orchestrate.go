@@ -253,8 +253,9 @@ func (t *inspectAgentTool) Privileged()  {}
 func (t *inspectAgentTool) Description() string {
 	return "Inspect a previously dispatched orchestration run. " +
 		"Returns the current run snapshot: status, per-task states, and any output/error references. " +
-		"Running tasks carry a live progress block (tool_calls, last tool call, its age in seconds) " +
+		"Running tasks carry a live progress block (task age, tool_calls, last tool call, its age in seconds) " +
 		"from the run's tool-call buffer - a running task with no recent tool activity is the wedge signal. " +
+		"Weigh that signal against the task age: a slow first provider turn also reads as zero activity, so do not cancel a task that has barely started. " +
 		"Use after dispatch_tasks (with wait=\"none\" or wait=\"task\") to check state or after join_run to see final state."
 }
 

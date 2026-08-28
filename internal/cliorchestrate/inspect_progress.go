@@ -16,6 +16,7 @@ import (
 // keys on.
 type taskProgressInfo struct {
 	ToolCalls    int    `json:"tool_calls"`
+	TaskAge      string `json:"task_age,omitempty"`
 	LastTool     string `json:"last_tool,omitempty"`
 	LastActivity string `json:"last_activity_age,omitempty"`
 }
@@ -35,6 +36,20 @@ func taskProgressInfoFor(task ledger.TaskSnapshot, progress map[string]coordinat
 	info := &taskProgressInfo{ToolCalls: p.ToolCalls, LastTool: p.LastTool}
 	if !p.LastActivity.IsZero() {
 		info.LastActivity = now.Sub(p.LastActivity).Round(time.Second).String()
+	}
+	// Task age is the clock half of the wedge contract: a zero block says
+	// "no tool call observed", and only the age says whether the first
+	// provider turn is seconds or minutes old. Age from the newest attempt
+	// start; a task that has not started an attempt (queued, retry_pending)
+	// ages from creation. Empty when no clock is known.
+	ageFrom := task.CreatedAt
+	for _, a := range task.Attempts {
+		if a.StartedAt.After(ageFrom) {
+			ageFrom = a.StartedAt
+		}
+	}
+	if !ageFrom.IsZero() && !ageFrom.After(now) {
+		info.TaskAge = now.Sub(ageFrom).Round(time.Second).String()
 	}
 	return info
 }

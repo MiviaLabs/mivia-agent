@@ -55,6 +55,53 @@ func TestTaskProgressInfoForRunningTasks(t *testing.T) {
 	}
 }
 
+// TestTaskProgressInfoReportsTaskAge pins the clock half of the wedge
+// contract: the consumer rule keys on time ("no tool call for 90s"), so the
+// block must carry the task's own age - newest attempt start when one
+// exists, creation time while no attempt has started (queued,
+// retry_pending) - because a zero block alone cannot say whether the first
+// provider turn is ten seconds or ten minutes old.
+func TestTaskProgressInfoReportsTaskAge(t *testing.T) {
+	now := time.Now()
+
+	// Running task: age from the attempt start.
+	got := taskProgressInfoFor(ledger.TaskSnapshot{
+		TaskID: "r", Status: string(ledger.TaskStatusRunning),
+		Attempts: []ledger.AttemptSnapshot{{StartedAt: now.Add(-2 * time.Minute)}},
+	}, nil, now)
+	if got == nil || got.TaskAge != "2m0s" {
+		t.Fatalf("running progress = %+v, want task_age 2m0s", got)
+	}
+
+	// Never-started task: age from creation.
+	got = taskProgressInfoFor(ledger.TaskSnapshot{
+		TaskID: "q", Status: string(ledger.TaskStatusQueued),
+		CreatedAt: now.Add(-5 * time.Minute),
+	}, nil, now)
+	if got == nil || got.TaskAge != "5m0s" {
+		t.Fatalf("queued progress = %+v, want task_age 5m0s", got)
+	}
+
+	// A retried task ages from its newest attempt, not the first one.
+	got = taskProgressInfoFor(ledger.TaskSnapshot{
+		TaskID: "r2", Status: string(ledger.TaskStatusRunning),
+		CreatedAt: now.Add(-30 * time.Minute),
+		Attempts: []ledger.AttemptSnapshot{
+			{StartedAt: now.Add(-20 * time.Minute)},
+			{StartedAt: now.Add(-45 * time.Second)},
+		},
+	}, nil, now)
+	if got == nil || got.TaskAge != "45s" {
+		t.Fatalf("retried progress = %+v, want task_age 45s from the newest attempt", got)
+	}
+
+	// No clock known at all: the field stays empty, never a bogus value.
+	got = taskProgressInfoFor(ledger.TaskSnapshot{TaskID: "z", Status: string(ledger.TaskStatusRunning)}, nil, now)
+	if got == nil || got.TaskAge != "" {
+		t.Fatalf("clock-less progress = %+v, want empty task_age", got)
+	}
+}
+
 // TestTaskProgressInfoForUnknownTask covers a running task the buffer has no
 // entry for (a hand-built handle, or a run resumed in another process): zero
 // block, never a nil that would read as "terminal" downstream.
