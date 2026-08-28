@@ -36,15 +36,17 @@ type storeNoteTool struct {
 	maxBytes   int
 	maxPerTask int
 
-	// mu guards counts, keyed RunID+"/"+TaskID, so concurrent sub-agent
-	// tool calls cannot race the per-task budget. Every key gets exactly
-	// one cleanup goroutine, armed on the key's first write, that deletes
-	// the entry when the writing task's context ends - otherwise counts
-	// grows by one entry per distinct task for the life of the process,
-	// which never shrinks in a long-running session.
+	// mu guards counts and watchers, keyed RunID+"/"+TaskID, so concurrent
+	// sub-agent tool calls cannot race the per-task budget. Each key's
+	// latest watcher goroutine deletes the entry when its writing task's
+	// context ends - otherwise counts grows by one entry per distinct task
+	// for the life of the process, which never shrinks in a long-running
+	// session. A retry redispatch runs a fresh context for the same key, so
+	// a stale watcher from the prior attempt must never delete the new
+	// attempt's count; ownership comparison makes that stale watcher exit.
 	mu       sync.Mutex
 	counts   map[string]int
-	watching map[string]bool
+	watchers map[string]context.Context
 }
 
 // Name reports the model-facing tool name.
@@ -121,11 +123,15 @@ func (t *storeNoteTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	}
 	ref := ledger.Reference(ledger.RefKindNote, []byte(params.Content))
 	if t.repo == nil {
+		t.releaseNote(key)
 		return "", fmt.Errorf("store_note: no execution history repository")
 	}
 	if err := t.repo.StoreContent(ctx, ref, []byte(params.Content)); err != nil {
 		// Fail closed: the ref is content-addressed, so surfacing it on a
 		// failed store would hand the model a pointer to phantom content.
+		// The failed write also never consumed budget: transient store
+		// errors must not starve the task's note allowance.
+		t.releaseNote(key)
 		return "", fmt.Errorf("store_note: %w", err)
 	}
 	return jsonPayload(map[string]any{
@@ -135,9 +141,11 @@ func (t *storeNoteTool) Execute(ctx context.Context, args json.RawMessage) (stri
 }
 
 // admitNote records one pending note for key under the per-task cap. The
-// key's first admission arms a cleanup goroutine that removes it from
-// counts when ctx ends, so a finished task's budget entry does not
-// outlive the task.
+// key's latest admission arms a cleanup goroutine that removes the entry when
+// that attempt's context ends, so counts stays bounded by concurrently active
+// tasks. A retry redispatch of the same key runs a fresh context: the stale
+// watcher from the ended attempt is replaced, the fresh attempt starts with a
+// clean budget, and the stale goroutine exits without deleting anything.
 func (t *storeNoteTool) admitNote(ctx context.Context, key string, cap int) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -147,26 +155,48 @@ func (t *storeNoteTool) admitNote(ctx context.Context, key string, cap int) bool
 	if t.counts[key] >= cap {
 		return false
 	}
+	if old := t.watchers[key]; old != nil && old.Err() != nil {
+		// The prior attempt ended but its goroutine has not run yet: retire
+		// its budget and take over the watcher slot for the fresh attempt.
+		t.counts[key] = 1
+		t.watchers[key] = ctx
+		go t.releaseOnDone(ctx, key)
+		return true
+	}
 	t.counts[key]++
-	if !t.watching[key] {
-		if t.watching == nil {
-			t.watching = map[string]bool{}
+	if t.watchers[key] == nil {
+		if t.watchers == nil {
+			t.watchers = map[string]context.Context{}
 		}
-		t.watching[key] = true
+		t.watchers[key] = ctx
 		go t.releaseOnDone(ctx, key)
 	}
 	return true
 }
 
-// releaseOnDone deletes key's budget entry once its owning task's context
-// ends, so counts stays bounded by concurrently active tasks rather than
-// growing by one entry per task for the life of the process.
+// releaseNote refunds one budget slot whose store failed, so transient
+// repository errors cannot starve a task's note allowance.
+func (t *storeNoteTool) releaseNote(key string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.counts[key] > 0 {
+		t.counts[key]--
+	}
+}
+
+// releaseOnDone deletes key's budget entry once its owning attempt's context
+// ends. It deletes only while still owning the key: if a retry redispatch
+// replaced the watcher, this stale goroutine exits and leaves the fresh
+// attempt's count alone.
 func (t *storeNoteTool) releaseOnDone(ctx context.Context, key string) {
 	<-ctx.Done()
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.watchers[key] != ctx {
+		return
+	}
 	delete(t.counts, key)
-	delete(t.watching, key)
+	delete(t.watchers, key)
 }
 
 // Capability declares a write. Capability cannot see the request context, so

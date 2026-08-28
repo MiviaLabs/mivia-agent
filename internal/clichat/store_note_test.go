@@ -289,3 +289,60 @@ func TestStoreNoteToolContractSurface(t *testing.T) {
 		t.Fatal("store_note must not be privileged; sub-agents need it")
 	}
 }
+
+// TestStoreNoteFailedStoreRefundsBudget pins the reviewer fix: a store error
+// must not consume one of the task's note slots, so transient repository
+// failures cannot starve the allowance.
+func TestStoreNoteFailedStoreRefundsBudget(t *testing.T) {
+	tool := &storeNoteTool{repo: failingNoteStore{}, maxPerTask: 2}
+	ctx := taskContext("run-refund", "task-refund")
+	for i := 0; i < 5; i++ {
+		if _, err := tool.Execute(ctx, json.RawMessage(`{"content":"note"}`)); err == nil {
+			t.Fatalf("write %d: expected store error", i)
+		}
+	}
+	tool.repo = ledger.NewMemoryLedgerRepository()
+	resp, err := tool.Execute(ctx, json.RawMessage(`{"content":"note"}`))
+	if err != nil {
+		t.Fatalf("post-fault write must succeed after refunds: %v", err)
+	}
+	if !strings.Contains(resp, `"ref":"ref:note:`) {
+		t.Fatalf("post-fault write must return a ref: %q", resp)
+	}
+}
+
+// TestStoreNoteRetryAttemptGetsFreshBudget pins the generation-aware cleanup:
+// a retry redispatch of the same RunID/TaskID runs a fresh context, and its
+// budget must start clean even though the prior attempt's watcher goroutine
+// may not have deleted the entry yet.
+func TestStoreNoteRetryAttemptGetsFreshBudget(t *testing.T) {
+	tool := newDefaultStoreNoteTool(ledger.NewMemoryLedgerRepository())
+	first, cancelFirst := context.WithCancel(taskContext("run-retry", "task-retry"))
+	for i := 0; i < tool.taskCap(); i++ {
+		body := fmt.Sprintf(`{"content":"attempt one note %d"}`, i)
+		if _, err := tool.Execute(first, json.RawMessage(body)); err != nil {
+			t.Fatalf("attempt-one write %d: %v", i, err)
+		}
+	}
+	if resp, err := tool.Execute(first, json.RawMessage(`{"content":"one too many"}`)); err != nil || !strings.Contains(resp, "note budget exhausted") {
+		t.Fatalf("attempt one must exhaust its budget: err=%v resp=%s", err, resp)
+	}
+	cancelFirst()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		tool.mu.Lock()
+		staleGone := tool.counts["run-retry/task-retry"] == 0
+		tool.mu.Unlock()
+		if staleGone {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	second := taskContext("run-retry", "task-retry")
+	for i := 0; i < tool.taskCap(); i++ {
+		body := fmt.Sprintf(`{"content":"attempt two note %d"}`, i)
+		if _, err := tool.Execute(second, json.RawMessage(body)); err != nil {
+			t.Fatalf("retry attempt write %d must start with a fresh budget: %v", i, err)
+		}
+	}
+}
