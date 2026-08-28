@@ -166,7 +166,7 @@ Look at the arrows out of `dispatch_tasks`. One run can hold many tasks. `join_r
 | Tool | Purpose |
 |------|---------|
 | `dispatch_tasks` | Dispatch sub-tasks with optional dependencies. Supports `wait` (`run`/`none`/`task`, default `run`), `wait_task_id`, and per-task `timeout_seconds`/`output_schema`. With `wait=run` it blocks for the whole batch and returns one result per task |
-| `inspect_agents` | Returns a snapshot of a run: status, task states, display name, timestamps |
+| `inspect_agents` | Returns a snapshot of a run: status, per-task states, and a live progress block for running tasks (step/tool-call counters, last tool call and its age) |
 | `join_run` | Block until a run completes; returns per-task results |
 | `cancel_run` | Cancel a running orchestration run, in two phases |
 
