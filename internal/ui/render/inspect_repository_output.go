@@ -33,10 +33,10 @@ type inspectRepositoryMatch struct {
 // FormatGrepOutputWithContext already uses for grep/glob/symbol tools -
 // instead of a raw JSON dump of the provenance+results envelope.
 func FormatInspectRepositoryOutput(t theme.Theme, tier theme.Tier, output string, width int) (string, []string) {
-	trimmed := strings.TrimSpace(output)
+	trimmed := UnwrapJSONString(strings.TrimSpace(output))
 	var env inspectRepositoryEnvelope
 	if err := json.Unmarshal([]byte(trimmed), &env); err != nil || len(env.Results) == 0 && env.ResultCount == 0 {
-		return "", strings.Split(strings.TrimRight(output, "\n"), "\n")
+		return "", rawToolFallback(t, tier, output)
 	}
 
 	accent := Role(t, tier, theme.RoleAccent)

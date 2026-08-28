@@ -370,10 +370,15 @@ func (m Model) handleToolEnd(b uievent.ToolEndBody) (Model, tea.Cmd) {
 		// re-rendered when the theme changes, which is the whole point of
 		// preserving the payload.
 		blk.Diff = end.Diff
-		detail := blk.Header.Detail
+		// The end block's formatted summary (ledger ref · size · paging
+		// state) outranks the start block's argument echo: the summary is
+		// what a reader needs without expanding (tool-output-polish.md
+		// R4). Only when the end carries no detail does the start's
+		// survive, and never over a diff path.
+		startDetail := blk.Header.Detail
 		blk.Header = end.Header
-		if detail != "" && b.Diff == nil {
-			blk.Header.Detail = detail
+		if blk.Header.Detail == "" && startDetail != "" && b.Diff == nil {
+			blk.Header.Detail = startDetail
 		}
 		if b.Diff != nil {
 			blk.Body = append(slices.Clone(blk.Body), render.FormatDiffLines(m.Theme, m.Tier, w, *b.Diff)...)

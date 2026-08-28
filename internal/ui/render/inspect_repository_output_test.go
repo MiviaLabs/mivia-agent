@@ -49,7 +49,9 @@ func TestFormatInspectRepositoryOutput_NoResultsFallsBack(t *testing.T) {
 	if summary != "" {
 		t.Errorf("expected empty summary for zero results, got %q", summary)
 	}
-	if len(lines) != 1 || lines[0] != raw {
-		t.Errorf("expected raw passthrough, got %v", lines)
+	// The fallback is labelled, not naked: row one names the bytes as an
+	// unparsed tool result (tool-output-polish.md R1).
+	if len(lines) < 1 || !strings.Contains(ansi.Strip(lines[0]), "unparsed tool result") {
+		t.Errorf("expected the unparsed label, got %v", lines)
 	}
 }
