@@ -275,7 +275,7 @@ func (t *joinRunTool) Execute(ctx context.Context, args json.RawMessage) (string
 				"run_error":    salvageErrorText(err),
 				"task_results": persistedTaskResults(salvaged.Snapshot.Tasks),
 			})
-			return string(out), nil
+			return stripNamespace(commonTaskIDNamespace(salvaged.Snapshot.Tasks), string(out)), nil
 		}
 		snap := latestSnapshot(record.coord, handle, ctx)
 		status := "unknown"
@@ -313,7 +313,7 @@ func (t *joinRunTool) Execute(ctx context.Context, args json.RawMessage) (string
 		"run_error":    runErr,
 		"task_results": RunTaskResultsWithRepo(t.repo, result, t.cfg.InlineOutputBytes),
 	})
-	return string(out), nil
+	return stripNamespace(commonTaskIDNamespace(result.Snapshot.Tasks), string(out)), nil
 }
 
 // Ensure joinRunTool implements required interfaces at compile time.

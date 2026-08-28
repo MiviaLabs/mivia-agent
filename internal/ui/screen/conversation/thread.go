@@ -142,6 +142,11 @@ func (s *Screen) LoadHistory(msgs []ports.Message) {
 									// provider tool_call_id (tc.ID) in a
 									// visible row id.
 									tid = fmt.Sprintf("task-%d", i+1)
+								} else {
+									// Must match dispatchTaskIDs/dispatchNamespace:
+									// the real per-task id a live dispatch minted
+									// was tc.ID+":"+t.ID, not t.ID verbatim.
+									tid = namespacedTaskID(tc.ID, tid)
 								}
 								s.panel.observeAgentHistory(tid, status)
 							}

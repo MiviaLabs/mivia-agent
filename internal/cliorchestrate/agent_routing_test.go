@@ -159,7 +159,7 @@ func TestTaskBuildersRecordResolvedBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	d := &dispatchTasksTool{agentReg: reg, providerName: "zai", model: "glm-5.2"}
-	dispatchTasks, err := d.buildTasks([]dispatchTaskParam{{ID: "d1", Agent: "researcher", Prompt: "work"}}, 60)
+	dispatchTasks, err := d.buildTasks("", []dispatchTaskParam{{ID: "d1", Agent: "researcher", Prompt: "work"}}, 60)
 	if err != nil {
 		t.Fatal(err)
 	}

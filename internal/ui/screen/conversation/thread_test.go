@@ -601,7 +601,12 @@ func TestResumedSession_SubagentHistoryAvailableInDialog(t *testing.T) {
 			{Role: "assistant", Text: "found 0 leaks across 12 packages"},
 		},
 	}
-	threads := stubThreads{"task-leak-check": subagentConv}
+	// Namespaced with the tool call's own id, matching what LoadHistory
+	// actually keys the reconstructed panel row and thread lookup under
+	// (see thread.go's namespacedTaskID call) - internal/cliorchestrate/
+	// dispatch.go's dispatchNamespace is the same scheme a live dispatch
+	// mints its real per-task id under.
+	threads := stubThreads{"call_disp_99:task-leak-check": subagentConv}
 
 	s := sized(t, 1)
 	next, _ := s.Update(tea.WindowSizeMsg{Width: uikitconfig.BreakpointWide, Height: 30})
@@ -630,8 +635,8 @@ func TestResumedSession_SubagentHistoryAvailableInDialog(t *testing.T) {
 
 	// Focus is on the subagent row in the panel
 	a, isAgent := scr.panel.selectedAgent()
-	if !isAgent || a.ID != "task-leak-check" {
-		t.Fatalf("expected selected subagent 'task-leak-check', got isAgent=%v, id=%s", isAgent, a.ID)
+	if !isAgent || a.ID != "call_disp_99:task-leak-check" {
+		t.Fatalf("expected selected subagent 'call_disp_99:task-leak-check', got isAgent=%v, id=%s", isAgent, a.ID)
 	}
 
 	// Press Enter to open the subagent dialog
@@ -641,8 +646,8 @@ func TestResumedSession_SubagentHistoryAvailableInDialog(t *testing.T) {
 	if scr.thread == nil {
 		t.Fatal("expected subagent thread dialog to open")
 	}
-	if scr.panel.dialogAgent != "task-leak-check" {
-		t.Errorf("expected dialogAgent='task-leak-check', got %q", scr.panel.dialogAgent)
+	if scr.panel.dialogAgent != "call_disp_99:task-leak-check" {
+		t.Errorf("expected dialogAgent='call_disp_99:task-leak-check', got %q", scr.panel.dialogAgent)
 	}
 
 	// Verify history is loaded in the thread dialog

@@ -9,6 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MiviaLabs/mivia-ai-sdk/provider"
+	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
+
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
@@ -612,10 +615,16 @@ func TestDispatchTasksWaitNoneReturnsRunID(t *testing.T) {
 	}
 }
 
-// TestDispatchTasksIdempotencyKeyDedupesAcrossTurns mirrors
-// TestSpawnAgentIdempotencyKeyDedupesAcrossTurns: dispatch_tasks absorbs
-// spawn_agent's idempotency_key dedup, not just its wait modes.
-func TestDispatchTasksIdempotencyKeyDedupesAcrossTurns(t *testing.T) {
+// TestDispatchTasksSameToolCallIDDedupesRetry pins the harness-only
+// idempotency-key redesign: dispatch_tasks no longer accepts a model-
+// supplied idempotency_key (a model has no reliable way to construct a
+// value that is stable across a genuine retry but distinct from every
+// other call - see dispatchNamespace's doc comment). The harness derives
+// one instead from the tool call's own ToolCallID, so a provider-level
+// retry of the SAME assistant turn - which replays the SAME ToolCallID -
+// still dedupes: the worker runs once, and both calls return the reused
+// run's result.
+func TestDispatchTasksSameToolCallIDDedupesRetry(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	dispatcher := runtime.New(runtime.Policy{})
 	var calls atomic.Int32
@@ -626,20 +635,53 @@ func TestDispatchTasksIdempotencyKeyDedupesAcrossTurns(t *testing.T) {
 		t.Fatal(err)
 	}
 	tool := NewDispatchTasksToolConfigured(dispatcher, config.DefaultSubagentConfig, repo, testAgentRegistry(t, "worker"))
-	args := json.RawMessage(`{"tasks":[{"id":"task-1","agent":"worker","prompt":"requested work"}],"idempotency_key":"dispatch-key","wait":"run"}`)
-	first, err := tool.Execute(runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "session", TurnID: "turn:1"}), args)
+	args := json.RawMessage(`{"tasks":[{"id":"task-1","agent":"worker","prompt":"requested work"}],"wait":"run"}`)
+	callCtx := func() context.Context {
+		base := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "session"})
+		return toolcallctx.WithToolCall(base, provider.ToolCall{ID: "call_retry_1", Name: ToolDispatchTasks})
+	}
+	first, err := tool.Execute(callCtx(), args)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := tool.Execute(runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "session", TurnID: "turn:2"}), args)
+	second, err := tool.Execute(callCtx(), args)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if calls.Load() != 1 {
-		t.Fatalf("worker invoked %d times, want 1 (second call must reuse the run)", calls.Load())
+		t.Fatalf("worker invoked %d times, want 1 (a replayed ToolCallID must reuse the run)", calls.Load())
 	}
 	if first != second {
 		t.Fatalf("first = %q, second = %q; want the reused run's result both times", first, second)
+	}
+}
+
+// TestDispatchTasksDifferentToolCallIDsDoNotDedupe is
+// TestDispatchTasksSameToolCallIDDedupesRetry's negative: two calls with
+// the SAME task shape but DIFFERENT ToolCallIDs are genuinely separate
+// dispatches (two distinct turns asking for identical-looking work), not
+// a replay, so both must run.
+func TestDispatchTasksDifferentToolCallIDsDoNotDedupe(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	dispatcher := runtime.New(runtime.Policy{})
+	var calls atomic.Int32
+	if err := dispatcher.Register(runtime.Subagent, "worker", handlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) {
+		calls.Add(1)
+		return json.RawMessage(`{"ok":true}`), nil
+	})); err != nil {
+		t.Fatal(err)
+	}
+	tool := NewDispatchTasksToolConfigured(dispatcher, config.DefaultSubagentConfig, repo, testAgentRegistry(t, "worker"))
+	args := json.RawMessage(`{"tasks":[{"id":"task-1","agent":"worker","prompt":"requested work"}],"wait":"run"}`)
+	base := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "session"})
+	if _, err := tool.Execute(toolcallctx.WithToolCall(base, provider.ToolCall{ID: "call_a", Name: ToolDispatchTasks}), args); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tool.Execute(toolcallctx.WithToolCall(base, provider.ToolCall{ID: "call_b", Name: ToolDispatchTasks}), args); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("worker invoked %d times, want 2 (distinct ToolCallIDs must not dedupe)", calls.Load())
 	}
 }
 
@@ -669,7 +711,10 @@ func TestDispatchTasksDefaultWaitIsRunBareArray(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &results); err != nil {
 		t.Fatalf("Execute output %q is not a bare array: %v", out, err)
 	}
+	// The real internal id is namespaced (see dispatchNamespace), but
+	// Execute strips that prefix from every model-visible output
+	// (stripNamespace) - the model wrote "t1" and must see "t1" back.
 	if len(results) != 1 || results[0].TaskID != "t1" || results[0].Status != "completed" {
-		t.Fatalf("results = %+v, want one completed task-1 result", results)
+		t.Fatalf("results = %+v, want one completed t1 result", results)
 	}
 }

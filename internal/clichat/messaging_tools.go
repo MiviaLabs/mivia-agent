@@ -343,7 +343,8 @@ func (t *runMessagesTool) Execute(ctx context.Context, args json.RawMessage) (st
 	if c == nil {
 		c = cliorchestrate.InitCoordinator(t.dispatcher, t.cfg, t.repo)
 	}
-	msgs, err := c.ListRunMessages(ctx, in.RunID, in.TaskID)
+	targetID := resolveSendTargetTaskID(ctx, t.repo, in.RunID, in.TaskID)
+	msgs, err := c.ListRunMessages(ctx, in.RunID, targetID)
 	if err != nil {
 		return "", err
 	}
@@ -372,7 +373,11 @@ func (t *runMessagesTool) Execute(ctx context.Context, args json.RawMessage) (st
 		out = append(out, e)
 	}
 	raw, _ := json.Marshal(map[string]any{"messages": out})
-	return string(raw), nil
+	result := string(raw)
+	if snap, err := t.repo.GetRun(ctx, in.RunID); err == nil {
+		result = cliorchestrate.StripTaskIDNamespace(snap.Tasks, result)
+	}
+	return result, nil
 }
 
 // registerMessagingTools wires post_message (spawned baseline), run_messages

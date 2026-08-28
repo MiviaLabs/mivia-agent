@@ -274,6 +274,17 @@ func isThreadRegistered(threads ports.SubagentThreads, callID string) bool {
 // instead of one aggregate row for the whole call. Returns nil for every
 // other tool name, or when no task list can be parsed, leaving the
 // caller's existing single-row behavior unchanged.
+//
+// A model-supplied "id" is namespaced with callID (namespacedTaskID,
+// mirroring internal/cliorchestrate's dispatchNamespace/namespacedTaskID)
+// before it becomes a row key: the real per-task id the backend mints -
+// internal/cliorchestrate/dispatch.go's buildTasks - is callID+":"+id,
+// not the model's raw id verbatim, precisely so that two dispatch_tasks
+// calls reusing the same raw id (a retry, a similarly-shaped batch) get
+// distinct real tasks instead of silently colliding. Both sides derive
+// the same prefix from the SAME callID independently - this function
+// receives it as its own first argument, and dispatch.go's Execute reads
+// it off the tool call's own context - with no coordination needed.
 func dispatchTaskIDs(callID, name string, args map[string]any) []string {
 	if strings.ToLower(name) != "dispatch_tasks" {
 		return nil
@@ -295,18 +306,33 @@ func dispatchTaskIDs(callID, name string, args map[string]any) []string {
 			// task the model forgot to name. The fallback must never
 			// surface the raw provider tool_call_id (callID) as a visible
 			// sidebar label - a bare "call_xxxxxxxxxxxx" string means
-			// nothing to a reader. "task-N" is legible; a collision with
-			// an unrelated batch's row uses the same accepted semantics a
-			// reused model-supplied id already has (see observeAgentStart:
-			// a reused id resets to a new run). Sibling sites that must
+			// nothing to a reader. "task-N" is legible. It is deliberately
+			// NOT namespaced with callID: an empty raw id makes
+			// buildTasks/Pool.validate reject the whole batch (a real task
+			// id can never be empty), so this row never has a real backend
+			// counterpart to match against anyway. Sibling sites that must
 			// stay in sync: thread.go's LoadHistory reconstruction and
 			// internal/uiadapter/subagent_reconstruct.go's
 			// registerDispatchedTask.
 			id = fmt.Sprintf("task-%d", i+1)
+		} else {
+			id = namespacedTaskID(callID, id)
 		}
 		ids = append(ids, id)
 	}
 	return ids
+}
+
+// namespacedTaskID mirrors internal/cliorchestrate's function of the same
+// name. Duplicated, not imported: internal/ui/** must not import
+// internal/cli*-family packages (UI isolation, docs/design/ui-isolation.md,
+// enforced by scripts/check_import_layers.py), so the two copies are kept
+// in sync by contract, not by the compiler.
+func namespacedTaskID(namespace, rawID string) string {
+	if namespace == "" || rawID == "" {
+		return rawID
+	}
+	return namespace + ":" + rawID
 }
 
 // parseDispatchTaskStatuses decodes a dispatch_tasks call's own JSON result

@@ -275,7 +275,10 @@ func TestPopulateFromToolCalls_DispatchTasks(t *testing.T) {
 					ID:        "call_dispatch_1",
 					Name:      "dispatch_tasks",
 					Arguments: `{"tasks":[{"id":"task-audit","prompt":"check for leaks","agent":"bug-auditor"},{"id":"task-plan","prompt":"design architecture","agent":"planner"}]}`,
-					Output:    `[{"task_id":"task-audit","status":"completed","output":"no leaks found"},{"task_id":"task-plan","status":"completed","output":"architecture approved"}]`,
+					// task_id is the real, namespaced id (callID+":"+raw id)
+					// dispatch_tasks actually reports - internal/cliorchestrate/
+					// dispatch.go's buildTasks/dispatchNamespace.
+					Output: `[{"task_id":"task-audit","status":"completed","output":"no leaks found"},{"task_id":"task-plan","status":"completed","output":"architecture approved"}]`,
 				},
 			},
 		},
@@ -283,7 +286,7 @@ func TestPopulateFromToolCalls_DispatchTasks(t *testing.T) {
 
 	uiadapter.PopulateFromToolCalls(threads, msgs)
 
-	auditConv, ok := threads.Thread("task-audit")
+	auditConv, ok := threads.Thread("call_dispatch_1:task-audit")
 	if !ok || auditConv == nil {
 		t.Fatalf("expected thread for task-audit")
 	}
@@ -297,7 +300,7 @@ func TestPopulateFromToolCalls_DispatchTasks(t *testing.T) {
 		t.Errorf("task-audit output: got %q, want 'no leaks found'", auditConv.History()[1].Text)
 	}
 
-	planConv, ok := threads.Thread("task-plan")
+	planConv, ok := threads.Thread("call_dispatch_1:task-plan")
 	if !ok || planConv == nil {
 		t.Fatalf("expected thread for task-plan")
 	}
@@ -430,7 +433,7 @@ func TestPopulateFromToolCalls_DispatchTasksNestedObjectOutput(t *testing.T) {
 
 	uiadapter.PopulateFromToolCalls(threads, msgs)
 
-	conv, ok := threads.Thread("plan-review-1")
+	conv, ok := threads.Thread("call_dispatch_nested:plan-review-1")
 	if !ok || conv == nil {
 		t.Fatalf("expected thread for plan-review-1")
 	}
@@ -465,7 +468,7 @@ func TestPopulateFromToolCalls_DispatchTasksRunLevelError(t *testing.T) {
 
 	uiadapter.PopulateFromToolCalls(threads, msgs)
 
-	conv, ok := threads.Thread("plan-review-1")
+	conv, ok := threads.Thread("call_dispatch_err:plan-review-1")
 	if !ok || conv == nil {
 		t.Fatalf("expected thread for plan-review-1")
 	}
@@ -502,7 +505,7 @@ func TestPopulateFromToolCalls_DispatchTasksRunLevelErrorMultiTask(t *testing.T)
 
 	uiadapter.PopulateFromToolCalls(threads, msgs)
 
-	for _, id := range []string{"task-a", "task-b"} {
+	for _, id := range []string{"call_dispatch_err2:task-a", "call_dispatch_err2:task-b"} {
 		conv, ok := threads.Thread(id)
 		if !ok || conv == nil {
 			t.Fatalf("expected thread for %s", id)
@@ -537,7 +540,7 @@ func TestPopulateFromToolCalls_DispatchTasksWrappedEnvelope(t *testing.T) {
 
 	uiadapter.PopulateFromToolCalls(threads, msgs)
 
-	conv, ok := threads.Thread("task-async")
+	conv, ok := threads.Thread("call_dispatch_wrapped:task-async")
 	if !ok || conv == nil {
 		t.Fatalf("expected thread for task-async")
 	}
@@ -586,7 +589,7 @@ func TestPopulateFromToolCalls_DispatchTasksToolCallsReconstructed(t *testing.T)
 
 	uiadapter.PopulateFromToolCalls(threads, msgs)
 
-	conv, ok := threads.Thread("task-tc")
+	conv, ok := threads.Thread("call_dispatch_tc:task-tc")
 	if !ok || conv == nil {
 		t.Fatalf("expected thread for task-tc")
 	}
@@ -646,7 +649,7 @@ func TestPopulateFromToolCalls_DispatchTasksByReferenceOutput(t *testing.T) {
 
 	uiadapter.PopulateFromToolCalls(threads, msgs)
 
-	conv, ok := threads.Thread("deepdive-security")
+	conv, ok := threads.Thread("call_dispatch_ref:deepdive-security")
 	if !ok || conv == nil {
 		t.Fatalf("expected thread for deepdive-security")
 	}
@@ -696,7 +699,7 @@ func TestPopulateFromToolCalls_PreFeatureJSONShapeFallsBackCleanly(t *testing.T)
 		threads := uiadapter.NewSubagentThreads()
 		uiadapter.PopulateFromToolCalls(threads, buildMsgs(output))
 
-		conv, ok := threads.Thread("task-legacy")
+		conv, ok := threads.Thread("call_dispatch_legacy:task-legacy")
 		if !ok || conv == nil {
 			t.Fatalf("expected thread for task-legacy")
 		}

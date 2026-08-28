@@ -80,7 +80,7 @@ func assertReconstruction(t *testing.T, msgs []ports.Message) {
 	threads := uiadapter.NewSubagentThreads()
 	uiadapter.PopulateFromToolCalls(threads, msgs)
 
-	conv, ok := threads.Thread("task-contract")
+	conv, ok := threads.Thread("call_dispatch_wire:task-contract")
 	if !ok || conv == nil {
 		t.Fatal("expected thread for task-contract")
 	}

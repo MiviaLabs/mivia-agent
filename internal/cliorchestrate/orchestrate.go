@@ -324,7 +324,7 @@ func (t *inspectAgentTool) Execute(ctx context.Context, args json.RawMessage) (s
 		"tasks":        tasks,
 		"parks":        parks,
 	})
-	return string(out), nil
+	return stripNamespace(commonTaskIDNamespace(snap.Tasks), string(out)), nil
 }
 
 func taskSummaries(tasks []ledger.TaskSnapshot) []map[string]any {

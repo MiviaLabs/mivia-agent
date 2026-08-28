@@ -24,8 +24,11 @@ func TestDispatchTaskIDsMissingIDFallbackIsFriendly(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("got %d ids, want 2: %v", len(got), got)
 	}
-	if got[0] != "quality" {
-		t.Errorf("id[0] = %q, want the model-supplied %q", got[0], "quality")
+	// Namespaced with the call id (matching what a live dispatch_tasks call
+	// actually mints - internal/cliorchestrate/dispatch.go's
+	// dispatchNamespace), not the model-supplied id verbatim.
+	if want := "call_95bcae0ca204bc76:quality"; got[0] != want {
+		t.Errorf("id[0] = %q, want %q", got[0], want)
 	}
 	if strings.Contains(got[1], "call_95bcae0ca204bc76") {
 		t.Errorf("id[1] = %q, must not embed the raw provider call id", got[1])
@@ -86,8 +89,13 @@ func TestObserveToolStart_DuplicateEmissionDoesNotStrayFromTheGroup(t *testing.T
 	if len(s.panel.agents) != 2 {
 		t.Fatalf("got %d agent rows, want 2 (explore-a, explore-b): %+v", len(s.panel.agents), s.panel.agents)
 	}
+	// Each row is legitimately namespaced with the call id as a PREFIX
+	// (dispatchTaskIDs/namespacedTaskID) - the bug this test guards is a
+	// STRAY row keyed on the bare call id alone (the second "running"
+	// tool.start re-deriving ids from nil Args and falling back to a
+	// single row for the whole call), not the prefix itself.
 	for _, a := range s.panel.agents {
-		if strings.Contains(a.ID, "call_b8875f23faac7c36") {
+		if a.ID == "call_b8875f23faac7c36" {
 			t.Errorf("stray row for the raw call id leaked into the panel: %+v", a)
 		}
 	}

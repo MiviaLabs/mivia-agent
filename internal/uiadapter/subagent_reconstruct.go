@@ -51,7 +51,13 @@ func populateToolCall(threads *SubagentThreads, tc ports.ToolCall, at time.Time)
 
 	lower := strings.ToLower(tc.Name)
 	if lower == "dispatch_tasks" || lower == "spawn_agent" {
-		populateDispatchTasks(threads, tc, at)
+		// namespaceTasks is dispatch_tasks-only: spawn_agent has no live
+		// backend implementation left (internal/cliorchestrate/dispatch.go's
+		// own doc history: "dispatch_tasks absorbed spawn_agent's
+		// idempotency_key dedup") - its name survives only in OLD sessions'
+		// persisted tool calls, which were never minted with a namespaced
+		// real id, so there is no live counterpart to stay consistent with.
+		populateDispatchTasks(threads, tc, at, lower == "dispatch_tasks")
 		return
 	}
 
@@ -257,7 +263,7 @@ func matchTaskToolCalls(results []encodedTaskResult, tasks []parsedDispatchTask)
 	return out
 }
 
-func populateDispatchTasks(threads *SubagentThreads, tc ports.ToolCall, at time.Time) {
+func populateDispatchTasks(threads *SubagentThreads, tc ports.ToolCall, at time.Time, namespaceIDs bool) {
 	var args struct {
 		Tasks []parsedDispatchTask `json:"tasks"`
 	}
@@ -265,7 +271,13 @@ func populateDispatchTasks(threads *SubagentThreads, tc ports.ToolCall, at time.
 
 	// dispatch_tasks may emit either a bare JSON array (wait="run", default)
 	// or a wrapped JSON envelope {"run_id":..., "status":..., "task_results":[...]}
-	// (wait="none" or wait="task", and legacy spawn_agent output).
+	// (wait="none" or wait="task", and legacy spawn_agent output). Both the
+	// persisted args and the persisted result carry each task's RAW
+	// model-supplied id, not a namespaced one - dispatch_tasks strips its
+	// own internal namespace prefix (internal/cliorchestrate/dispatch.go's
+	// stripNamespace) from every model-visible output before returning, so
+	// what got PERSISTED, and therefore what matchTaskOutputs/
+	// matchTaskToolCalls must match by, is always the raw id.
 	var results []encodedTaskResult
 	if err := json.Unmarshal([]byte(tc.Output), &results); err != nil || len(results) == 0 {
 		var out struct {
@@ -279,7 +291,19 @@ func populateDispatchTasks(threads *SubagentThreads, tc ports.ToolCall, at time.
 	outputs := matchTaskOutputs(results, args.Tasks, tc.Output)
 	toolCalls := matchTaskToolCalls(results, args.Tasks)
 	for i, task := range args.Tasks {
-		registerDispatchedTask(threads, tc.ID, i, task, outputs[i], toolCalls[i], at)
+		// The THREAD KEY - unlike the byID match above - must be
+		// namespaced: it has to land on the same id a live observer would
+		// have used for this task (dispatchTaskIDs in
+		// internal/ui/screen/conversation/events.go, and
+		// internal/coordinator/task_context.go's contextForTask, both key
+		// live/internal identity off tc.ID+":"+raw id), so a resumed
+		// session's sidebar row (built by thread.go's LoadHistory, which
+		// namespaces the same way) resolves to this reconstruction.
+		keyed := task
+		if namespaceIDs && keyed.ID != "" {
+			keyed.ID = namespacedTaskID(tc.ID, keyed.ID)
+		}
+		registerDispatchedTask(threads, tc.ID, i, keyed, outputs[i], toolCalls[i], at)
 	}
 
 	if len(args.Tasks) == 0 {
@@ -417,4 +441,16 @@ func extractToolOutput(outputJSON string) string {
 		}
 	}
 	return outputJSON
+}
+
+// namespacedTaskID mirrors internal/cliorchestrate's function of the same
+// name. Duplicated, not imported: internal/uiadapter is the sole
+// integration bridge and deliberately does not import the cli-family
+// orchestration package (INV-TUI-29), so the two copies are kept in sync
+// by contract, not by the compiler.
+func namespacedTaskID(namespace, rawID string) string {
+	if namespace == "" || rawID == "" {
+		return rawID
+	}
+	return namespace + ":" + rawID
 }

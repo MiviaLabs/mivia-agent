@@ -44,7 +44,7 @@ func TestSubagentDoneProgressClosesOneDispatchedRowLive(t *testing.T) {
 	next, _ = got.Update(uievent.EventMsg{Event: uievent.Event{
 		Kind: uievent.KindToolOutput,
 		Body: uievent.ToolOutputBody{
-			ToolCallID: "task-a",
+			ToolCallID: "dispatch_tasks-call-1:task-a",
 			Progress:   &uievent.Progress{Status: "completed"},
 		},
 	}})
@@ -54,10 +54,11 @@ func TestSubagentDoneProgressClosesOneDispatchedRowLive(t *testing.T) {
 	for _, a := range got.panel.agents {
 		statuses[a.ID] = a.Status
 	}
-	if statuses["task-a"] != "completed" {
-		t.Errorf("task-a status = %q, want completed (live, before dispatch_tasks itself ends)", statuses["task-a"])
+	if statuses["dispatch_tasks-call-1:task-a"] != "completed" {
+		t.Errorf("task-a status = %q, want completed (live, before dispatch_tasks itself ends)", statuses["dispatch_tasks-call-1:task-a"])
 	}
 	for _, id := range []string{"task-b", "task-c", "task-d"} {
+		id = "dispatch_tasks-call-1:" + id
 		if statuses[id] != "running" {
 			t.Errorf("%s status = %q, want running (unaffected by task-a's own completion)", id, statuses[id])
 		}

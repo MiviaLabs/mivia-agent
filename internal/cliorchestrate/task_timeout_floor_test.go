@@ -19,7 +19,7 @@ func TestTaskTimeoutFloorDispatchPerTaskRaiseOnly(t *testing.T) {
 		agentReg: testAgentRegistry(t, "worker"),
 	}
 	batchTimeout := config.EffectiveTimeoutSec(tool.cfg.DefaultTimeout, 0) // 600
-	tasks, err := tool.buildTasks([]dispatchTaskParam{
+	tasks, err := tool.buildTasks("", []dispatchTaskParam{
 		{ID: "short", Agent: "worker", Prompt: "x", TimeoutSeconds: 5},
 		{ID: "raised", Agent: "worker", Prompt: "y", TimeoutSeconds: 900},
 		{ID: "plain", Agent: "worker", Prompt: "z"},
@@ -57,7 +57,7 @@ func TestTaskTimeoutFloorDispatchWithoutConfig(t *testing.T) {
 		agentReg: testAgentRegistry(t, "worker"),
 	}
 	batchTimeout := config.EffectiveTimeoutSec(tool.cfg.DefaultTimeout, 0)
-	tasks, err := tool.buildTasks([]dispatchTaskParam{
+	tasks, err := tool.buildTasks("", []dispatchTaskParam{
 		{ID: "tiny", Agent: "worker", Prompt: "x", TimeoutSeconds: 5},
 	}, batchTimeout)
 	if err != nil {
