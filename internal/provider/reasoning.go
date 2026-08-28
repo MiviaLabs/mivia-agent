@@ -161,6 +161,21 @@ func reasoningMaxTokensFloor(level reasoning.Level) int {
 	}
 }
 
+// ReasoningOutputReserve is the exported form of reasoningMaxTokensFloor, for
+// callers outside this package that must reserve context-window room for a
+// completion whose request will leave MaxTokens unset - the context planner
+// (internal/agent, internal/chat) prices a turn's prompt budget BEFORE the
+// wire request is built, so it cannot read back what marshalBody/
+// effectiveMaxTokens will compute. Both sides must agree on the same number:
+// a planner that reserves less than the wire request actually asks for can
+// pack history right up to the reserve boundary, then send a completion
+// request whose declared max_tokens pushes prompt_tokens+max_tokens past the
+// model's real context window - a 400 the planner had every input needed to
+// avoid.
+func ReasoningOutputReserve(level reasoning.Level) int {
+	return reasoningMaxTokensFloor(level)
+}
+
 // reasoningFields resolves the dialect for one request and returns the fields
 // to merge. A request-scoped dialect wins over the client default, so a model
 // entry can name a wire shape its provider does not default to; the fall to the

@@ -1,6 +1,9 @@
 package chat
 
-import "github.com/MiviaLabs/mivia-agent/internal/provider"
+import (
+	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
+)
 
 func (s *Session) plainTurnCurrent(token OperationToken, turn uint64) bool {
 	s.mu.RLock()
@@ -22,9 +25,14 @@ func contextTurnMessages(messages []provider.Message, userText string) []provide
 	return nil
 }
 
-func outputReserve(maxTokens *int) int {
-	if maxTokens == nil || *maxTokens < 0 {
-		return 0
+// outputReserve mirrors internal/agent's helper of the same name: the
+// caller's explicit MaxTokens when set and non-negative, otherwise
+// provider.ReasoningOutputReserve(level), so the planner reserves the same
+// room the wire request will separately ask for when MaxTokens is left
+// unset (effectiveMaxTokens in openai_compat_request.go).
+func outputReserve(maxTokens *int, level reasoning.Level) int {
+	if maxTokens != nil && *maxTokens >= 0 {
+		return *maxTokens
 	}
-	return *maxTokens
+	return provider.ReasoningOutputReserve(level)
 }

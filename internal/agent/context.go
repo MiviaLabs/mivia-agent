@@ -7,6 +7,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 )
 
 // captureOmittedEvidence folds the content-free diff of the pre-compaction
@@ -41,7 +42,7 @@ func (l *Loop) buildPrepareInput(toolSpecs []provider.ToolSpec, opts Options) co
 		input.Budget = opts.MaxContextTokens
 	}
 	input.Tools = toolSpecs
-	input.OutputReserve = outputReserve(opts.MaxTokens)
+	input.OutputReserve = outputReserve(opts.MaxTokens, opts.Reasoning.Level)
 	input.ContextAccounting = l.contextAccounting()
 	if input.CurrentObjective == "" {
 		input.CurrentObjective = latestUserObjective(l.Messages)
@@ -130,11 +131,20 @@ func (l *Loop) discardPreparation(opts Options) {
 	// Discard between steps must keep mid-turn elision totals.
 }
 
-func outputReserve(maxTokens *int) int {
-	if maxTokens == nil || *maxTokens < 0 {
-		return 0
+// outputReserve returns the context-window room to reserve for this turn's
+// completion: the caller's explicit MaxTokens when set and non-negative,
+// otherwise provider.ReasoningOutputReserve(level) - the same fallback the
+// wire request itself will apply when MaxTokens is left unset
+// (effectiveMaxTokens in openai_compat_request.go). Reserving 0 here for an
+// unset MaxTokens would let the planner pack history right up to the full
+// budget, then the wire request separately asks for up to 65536 completion
+// tokens on top of it - a mismatch that risks a prompt_tokens+max_tokens
+// context-window rejection the planner had every input needed to avoid.
+func outputReserve(maxTokens *int, level reasoning.Level) int {
+	if maxTokens != nil && *maxTokens >= 0 {
+		return *maxTokens
 	}
-	return *maxTokens
+	return provider.ReasoningOutputReserve(level)
 }
 
 func latestUserObjective(messages []provider.Message) string {
