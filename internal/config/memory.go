@@ -9,18 +9,33 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 	"github.com/pelletier/go-toml/v2"
 )
 
 // resolveMemoryConfig resolves [memory] with defaults and bounds, honoring
-// org_id from the user config file only.
+// org_id from the user config file only, and fills StorePath's default via
+// the three-tier rule when the operator left store_path unset: an explicit
+// [memory] store_path always wins; otherwise root's own project config
+// (projectConfigFound, computed by the caller via ProjectConfigExists)
+// selects workspace.MemoryDBPath(root); its absence selects
+// TempStorePath(root, "memory"). The fill runs unconditionally, before the
+// enabled/disabled branch, so a disabled config still carries a resolved
+// StorePath (storage_reset.go reads it regardless of enabled state).
 //
 // A workspace config is repo-controlled: any repository can ship its own
 // .mivia/mivia.toml, so it must not name the org store its agents write into
 // (plan 68, security disposition). org_id therefore comes from the user config
 // file (~/.mivia/mivia.toml) unless the selected config IS that file.
-func resolveMemoryConfig(file File, selectedPath string) (MemoryConfig, error) {
+func resolveMemoryConfig(file File, selectedPath string, root string, projectConfigFound bool) (MemoryConfig, error) {
 	mc := file.Memory
+	if strings.TrimSpace(mc.StorePath) == "" {
+		if projectConfigFound {
+			mc.StorePath = workspace.MemoryDBPath(root)
+		} else {
+			mc.StorePath = TempStorePath(root, "memory")
+		}
+	}
 	if !mc.IsEnabled() {
 		mc.Enabled = boolPtr(false)
 		return mc, nil

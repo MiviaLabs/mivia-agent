@@ -114,6 +114,45 @@ func TestDefaultConfigCandidatesHonorsEnvOverrideFirst(t *testing.T) {
 	}
 }
 
+func TestProjectConfigExists(t *testing.T) {
+	t.Run("true when the project config file exists", func(t *testing.T) {
+		root := t.TempDir()
+		dir := filepath.Join(root, ".mivia")
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "mivia.toml"), []byte(""), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if !ProjectConfigExists(root) {
+			t.Fatal("expected true when <root>/.mivia/mivia.toml exists as a regular file")
+		}
+	})
+
+	t.Run("false when the directory exists but the file does not", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(root, ".mivia"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if ProjectConfigExists(root) {
+			t.Fatal("expected false when the .mivia directory exists but mivia.toml does not")
+		}
+	})
+
+	t.Run("false when root does not exist", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), "does-not-exist")
+		if ProjectConfigExists(root) {
+			t.Fatal("expected false when root does not exist")
+		}
+	})
+
+	t.Run("false when root is empty", func(t *testing.T) {
+		if ProjectConfigExists("") {
+			t.Fatal("expected false when root is empty")
+		}
+	})
+}
+
 func equalStrings(got, want []string) bool {
 	if len(got) != len(want) {
 		return false

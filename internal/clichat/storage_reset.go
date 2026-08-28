@@ -82,7 +82,7 @@ func runStorageReset(args []string, stdout, stderr io.Writer) error {
 		stores = append(stores, orchestrationStore)
 	}
 
-	preserved := []string{workspace.MemoryDBPath(root)}
+	preserved := []string{res.Memory.StorePath}
 	if org := workspace.OrgMemoryDBPath(); org != "" {
 		preserved = append(preserved, org)
 	}

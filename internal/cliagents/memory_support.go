@@ -19,6 +19,13 @@ import (
 func OpenMemoryStoreWithReadOnly(root string, mc config.MemoryConfig, readOnly bool) (memory.Store, error) {
 	projectPath := strings.TrimSpace(mc.StorePath)
 	if projectPath == "" {
+		// This branch is now only reachable when the caller constructs
+		// config.MemoryConfig{} directly, bypassing config.Load()/
+		// resolveMemoryConfig - every config.Load()-sourced MemoryConfig now
+		// always has StorePath filled by resolveMemoryConfig's new
+		// three-tier default. Confirmed sole real caller that still needs
+		// it: internal/cliagents/memory_support_coverage_test.go:34-38
+		// (TestOpenMemoryStoreRejectsMissingPath).
 		projectPath = workspace.MemoryDBPath(root)
 	} else {
 		projectPath = config.ExpandPath(projectPath)

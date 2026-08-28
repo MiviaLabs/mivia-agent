@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 // DefaultOrchestrationTimeoutSec is the finite parent-tool / batch budget used
@@ -355,4 +357,16 @@ func DefaultStorePathForWorkspace(root string) string {
 func sanitizePath(path string) string {
 	h := sha256.Sum256([]byte(path))
 	return fmt.Sprintf("ws-%x", h[:8])
+}
+
+// TempStorePath returns the OS-temp-dir path for an ad-hoc (no project
+// config found) store named name, hash-keyed by root via the existing
+// sanitizePath helper (see DefaultStorePathForWorkspace) so distinct
+// ad-hoc roots never collide. Rooted at os.TempDir(), not
+// os.UserCacheDir() like DefaultStorePathForWorkspace: an ad-hoc run
+// names no real project to key a durable, indefinitely-retained cache
+// entry against, so normal OS temp cleanup can reclaim it instead of
+// silently accumulating forever under the user's real home/cache.
+func TempStorePath(root, name string) string {
+	return filepath.Join(os.TempDir(), workspace.Namespace, "adhoc", sanitizePath(root), name+".db")
 }

@@ -496,7 +496,11 @@ func ApplyWorkflowStoreRoot(res *config.Resolved, root string) {
 		return
 	}
 	if !res.StorePathSet {
-		res.Subagents.StorePath = workspace.ContextStorePath(root)
+		if config.ProjectConfigExists(root) {
+			res.Subagents.StorePath = workspace.ContextStorePath(root)
+		} else {
+			res.Subagents.StorePath = config.TempStorePath(root, "orchestration")
+		}
 		return
 	}
 	if p := res.Subagents.StorePath; p != "" {

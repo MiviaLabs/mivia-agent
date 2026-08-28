@@ -41,7 +41,7 @@ func TestGapResolveMemoryConfigNoUserConfigPath(t *testing.T) {
 	if got := UserConfigPath(); got != "" {
 		t.Fatalf("UserConfigPath = %q, want empty when HOME is unavailable", got)
 	}
-	mc, err := resolveMemoryConfig(File{Memory: MemoryConfig{OrgID: "github.com/evil"}}, "/ws/mivia.toml")
+	mc, err := resolveMemoryConfig(File{Memory: MemoryConfig{OrgID: "github.com/evil"}}, "/ws/mivia.toml", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}

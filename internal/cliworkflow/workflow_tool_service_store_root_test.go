@@ -1,6 +1,7 @@
 package cliworkflow
 
 import (
+	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -45,6 +46,12 @@ func TestWorkflowToolSubagentConfigUnkeyedDefaultKeepsInput(t *testing.T) {
 	root := t.TempDir()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(root, ".mivia"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".mivia", "mivia.toml"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	res := &config.Resolved{StorePathSet: false}
 	res.Subagents.StorePath = "/shared/global/context.db"

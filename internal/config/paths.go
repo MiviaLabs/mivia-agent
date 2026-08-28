@@ -69,6 +69,24 @@ func ProjectConfigPath(workspaceRoot string) string {
 	return workspace.NamespacePath(workspaceRoot, "mivia.toml")
 }
 
+// ProjectConfigExists reports whether root has its own project-scoped
+// config file at <root>/.mivia/mivia.toml, without loading it - a
+// narrower question than Load()'s own `found`, which is also satisfied by
+// the shared user-level ~/.mivia/mivia.toml. Used to decide, at
+// storage-path-resolution time, whether root is a real mivia project
+// (safe to default a durable per-project store under root) or an ad-hoc
+// directory (fall back to config.TempStorePath instead).
+func ProjectConfigExists(root string) bool {
+	if strings.TrimSpace(root) == "" {
+		return false
+	}
+	info, err := os.Stat(ProjectConfigPath(root))
+	if err != nil {
+		return false
+	}
+	return info.Mode().IsRegular()
+}
+
 // DefaultConfigCandidates returns config paths in search order.
 func DefaultConfigCandidates() []string {
 	var out []string
