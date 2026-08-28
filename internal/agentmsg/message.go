@@ -271,7 +271,17 @@ func validateRef(ref string) error {
 		return errors.New("empty ref")
 	}
 	if _, _, err := sdkadapter.Parse(ref); err != nil {
-		return err
+		// The ref reaches this check verbatim from model-authored tool
+		// arguments, and the bare Parse error ("sdkadapter: malformed
+		// content reference") reads like an internal fault while teaching
+		// nothing: live dispatches burned a second tool call re-guessing
+		// after passing a package name. Name the offending value, the
+		// expected shape, and both recoveries, so one round trip repairs
+		// the call (DC-14: the caller is a model interface we do not own).
+		return fmt.Errorf("%w: %q is not a content reference - pass a "+
+			"ref:<kind>:<digest> handle verbatim from output_ref/error_ref "+
+			"or run_messages content_ref, or omit refs",
+			sdkadapter.ErrMalformedReference, ref)
 	}
 	return nil
 }
