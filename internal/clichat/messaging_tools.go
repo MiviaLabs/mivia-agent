@@ -76,9 +76,12 @@ func (t *postMessageTool) Parameters() map[string]any {
 					"not truncated - shorten and retry.",
 			},
 			"refs": map[string]any{
-				"type":        "array",
-				"description": "Optional ledger content refs (recorded, never re-minted)",
-				"items":       map[string]any{"type": "string"},
+				"type": "array",
+				"description": "Optional content references backing the claim: opaque handles of the form " +
+					"ref:<kind>:<digest>, copied VERBATIM from a prior tool result's output_ref/error_ref " +
+					"or a run_messages entry's content_ref. Never invent one; never pass file paths, " +
+					"package names, or message ids - put those in body. When you have no such handle, omit refs.",
+				"items": map[string]any{"type": "string"},
 			},
 			"wait_seconds": map[string]any{
 				"type":    "integer",
