@@ -433,18 +433,22 @@ reasoning_efforts = ['off', 'high']
 
 [subagents]
 default_timeout_seconds = 43200
-# Bound each subagent LLM request to 10 minutes instead of the 12-hour
+# Bound each subagent LLM request to 5 minutes instead of the 12-hour
 # orchestration fallback: a stalled or proxy-queued call now fails fast inside
-# one step (still above normal generations; the 15-minute HTTP transport
-# ceiling stays the hard outer backstop).
-default_request_timeout_seconds = 600
+# one step (still above normal generations - streams deliver bytes steadily
+# when healthy, so 5 idle minutes means wedged; the 15-minute HTTP transport
+# ceiling stays the hard outer backstop). Was 600s: with the 1200s total
+# below, a proxy that stalls twice burned the whole task budget on dead air
+# (observed live: an investigation task died at its 20-minute total having
+# produced only two consecutive 10-minute stream-read deadlines).
+default_request_timeout_seconds = 300
 # Hard wall-clock kill for one subagent task (all its own steps, LLM calls,
 # and nested tool calls combined). Must stay above default_request_timeout_seconds
-# (600s) - see internal/config/subagent_timeout_ordering_test.go. Left at the
+# (300s) - see internal/config/subagent_timeout_ordering_test.go. Left at the
 # compiled DefaultSubagentTotalTimeoutSec (3600s) before, a genuinely stuck
 # subagent could sit silently for up to an hour with only the 3-minute sidebar
 # stall badge as a warning; 1200s (20 min) gives up sooner while still leaving
-# 10 minutes of headroom over the per-request bound for retries.
+# room over the per-request bound for retries.
 default_total_timeout_seconds = 1200
 max_audit_rounds = 0
 max_depth = -1
