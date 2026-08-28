@@ -2,8 +2,23 @@ package conversation
 
 import (
 	"reflect"
+	"strings"
 	"testing"
+
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
+
+// TestPanelFileRowRemovedOnlyStat pins the removal-only stat branch: a file
+// entry whose diff carries only deletions renders a [-N] badge, the
+// counterpart of the [+N] and [+A|-D] branches.
+func TestPanelFileRowRemovedOnlyStat(t *testing.T) {
+	s := panelScreen(t, 80, 24)
+	row := s.panelFileRow(fileEntry{Path: "gone.go", Kind: fileDeleted, Diff: uievent.Diff{Removed: 4}}, false)
+	plain := stripAnsiForTest(row)
+	if !strings.Contains(plain, "[-4]") {
+		t.Errorf("removed-only row = %q, want a [-4] stat", plain)
+	}
+}
 
 // TestPanelWindowGroupsZeroOrNegativeLimit pins the guard: a window with
 // no rows to draw hands the groups straight back instead of slicing.
