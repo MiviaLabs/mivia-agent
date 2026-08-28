@@ -23,6 +23,10 @@ type messageSynopsis struct {
 	MessageID string `json:"message_id"`
 	Kind      string `json:"kind"`
 	Synopsis  string `json:"synopsis"`
+	// ContentRef resolves the pinned full body via ledger_read when the
+	// synopsis is not enough (INV-AG-10: the event's content_ref always
+	// resolves). Empty on legacy events written before the field existed.
+	ContentRef string `json:"content_ref,omitempty"`
 }
 
 // dispatchTasksTool implements tools.Tool by routing multiple tasks through
