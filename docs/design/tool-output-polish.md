@@ -62,11 +62,21 @@ through the same branch (harmless today, but one shape away from F1);
 and there is no error-envelope handling analogous to
 `ledgerErrorEnvelope`.
 
-F7. **Producer-side smell.** Something upstream double-encodes at least
-one ledger payload shape (a record whose content is a marshaled string
-of an already-marshaled envelope). The display layer must survive it,
-but the producer deserves a caught-and-pinned bug: instrument one
-failing session's bytes before changing the writer.
+F7. **Producer-side smell — traced 2026-08-28, no writer found.** The
+canonical path is clean by construction: `StoreContent` persists raw
+bytes under content-addressed refs (`internal/ledgercore/engine.go`),
+`Reference` mints a digest, and `unwrapLedgerContent` already handles
+nested string shapes to depth five. Two anomalies remain from the
+screenshot: the model called `ledger_read` with a NON-canonical ref
+(`ref:<8hex>` — no kind segment; `shortenRef` passes such shapes
+through, so the model was handed a shortened or hand-minted ref by
+something upstream), and the payload still resolved. A runtime capture
+of one failing payload is the only honest next step: add a debug-gated
+dump at `FormatLedgerOutput`'s fallback branch, reproduce, and pin the
+bytes as the R7 fixture. Suspects for the capture to settle: a synopsis
+or panel writer that shortens refs for model-visible text
+(`cliorchestrate/synopsis.go`, `panel_aggregation.go`), and any writer
+that builds a map with a string field holding marshaled JSON.
 
 ## 3. Recommendations
 
