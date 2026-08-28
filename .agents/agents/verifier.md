@@ -14,7 +14,7 @@ tools:
 skills:
 - verify-change
 - verify-code-change
-provider: llmproxycli
+provider: zai
 model: glm-5.3-flash
 max_turns: 0
 ---

@@ -14,7 +14,7 @@ tools:
 skills:
 - performance-review
 - concurrency-review
-provider: llmproxycli
+provider: zai
 model: glm-5.3-flash
 max_turns: 0
 ---

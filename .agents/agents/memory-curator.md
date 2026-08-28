@@ -18,7 +18,7 @@ skills:
 - memory-housekeeping
 - capture
 - housekeeping
-provider: llmproxycli
+provider: zai
 model: glm-5.3-flash
 max_turns: 0
 ---

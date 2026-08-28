@@ -17,7 +17,7 @@ skills:
 - bug-audit
 - concurrency-review
 - secure-change
-provider: llmproxycli
+provider: zai
 model: glm-5.3-flash
 max_turns: 0
 ---

@@ -14,7 +14,7 @@ tools:
 - delete_file
 skills:
 - docs-update
-provider: llmproxycli
+provider: zai
 model: glm-5.3-flash
 max_turns: 0
 ---
