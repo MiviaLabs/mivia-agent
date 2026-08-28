@@ -111,5 +111,9 @@ func middleTruncatePath(path string, width int) string {
 	if limit < 16 || ansi.StringWidth(path) <= limit {
 		return path
 	}
-	return ansi.Truncate(path, limit, "…")
+	keep := limit - 1 // the ellipsis column
+	head := keep * 2 / 5
+	tail := keep - head
+	runes := []rune(path)
+	return string(runes[:head]) + "…" + string(runes[len(runes)-tail:])
 }
