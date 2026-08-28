@@ -17,12 +17,43 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
 
+// fixtureCompletion answers one fixture provider request on BOTH
+// transports. subagents.wire_stream resolves on by default, so the
+// client sends "stream":true and must receive SSE chunk events;
+// answering a streamed request with a plain chat.completion body reads
+// as an empty stream, and the client re-sends the whole turn
+// non-streamed - which double-counts every request these tests assert
+// on. message is the choices[0].message object; delta is the same turn
+// as one streaming delta.
+func fixtureCompletion(w http.ResponseWriter, r *http.Request, message, delta string) {
+	body, _ := io.ReadAll(r.Body)
+	if bytes.Contains(body, []byte(`"stream":true`)) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: "+delta+"\n\n")
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = io.WriteString(w, `{"id":"test","object":"chat.completion","choices":[{"index":0,"message":`+message+`,"finish_reason":"stop"}]}`)
+}
+
+const (
+	fixtureOKMessage = `{"role":"assistant","content":"{\"ok\":true}"}`
+	fixtureOKDelta   = `{"choices":[{"index":0,"delta":{"role":"assistant","content":"{\"ok\":true}"},"finish_reason":"stop"}]}`
+	// The write turn of the source-hooks fixture: one write_file call,
+	// then the follow-up turn answers ok (fixtureOKMessage/fixtureOKDelta).
+	fixtureWriteMessage = `{"role":"assistant","tool_calls":[{"id":"write","type":"function","function":{"name":"write_file","arguments":"{\"path\":\"generated.txt\",\"content\":\"ok\"}"}}]}`
+	fixtureWriteDelta   = `{"choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"write","type":"function","function":{"name":"write_file","arguments":"{\"path\":\"generated.txt\",\"content\":\"ok\"}"}}]},"finish_reason":"tool_calls"}]}`
+)
+
 func TestWorkflowRunLinearTwoStepExitCriterion(t *testing.T) {
 	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"id":"test","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"{\"ok\":true}"},"finish_reason":"stop"}]}`)
+		fixtureCompletion(w, r, fixtureOKMessage, fixtureOKDelta)
 	}))
 	t.Cleanup(server.Close)
 
@@ -74,10 +105,9 @@ func TestWorkflowRunLinearTwoStepExitCriterion(t *testing.T) {
 // progress JSON lines to stderr while stdout keeps its two-field contract.
 func TestWorkflowRunProgressJSONLinesOnStderr(t *testing.T) {
 	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"id":"test","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"{\"ok\":true}"},"finish_reason":"stop"}]}`)
+		fixtureCompletion(w, r, fixtureOKMessage, fixtureOKDelta)
 	}))
 	t.Cleanup(server.Close)
 
@@ -148,10 +178,9 @@ func assertWorkflowAdmission(t *testing.T, repo ledger.Repository, runID string)
 
 func TestWorkflowRunRejectsOpenSchemaBeforeProviderCall(t *testing.T) {
 	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"{\"ok\":true}"}}]}`)
+		fixtureCompletion(w, r, fixtureOKMessage, fixtureOKDelta)
 	}))
 	t.Cleanup(server.Close)
 
@@ -177,9 +206,8 @@ func TestWorkflowRunRejectsOpenSchemaBeforeProviderCall(t *testing.T) {
 // run_command is admissible, and the workflow is treated as write-capable
 // (a shell program can write anywhere) so it must run in an isolated worktree.
 func TestWorkflowRunAllowsRunCommandAuthority(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"{\"ok\":true}"}}]}`)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fixtureCompletion(w, r, fixtureOKMessage, fixtureOKDelta)
 	}))
 	t.Cleanup(server.Close)
 	root := t.TempDir()
@@ -225,9 +253,8 @@ func TestWorkflowRunAllowsRunCommandAuthority(t *testing.T) {
 }
 
 func TestWorkflowRunCreatesWorktreeForWriteAuthority(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"{\"ok\":true}"}}]}`)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fixtureCompletion(w, r, fixtureOKMessage, fixtureOKDelta)
 	}))
 	t.Cleanup(server.Close)
 	root := t.TempDir()
@@ -268,14 +295,13 @@ func TestWorkflowRunCreatesWorktreeForWriteAuthority(t *testing.T) {
 
 func TestWorkflowRunLoadsSourceHooksAndExecutesToolsInWorktree(t *testing.T) {
 	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		call := requests.Add(1)
-		w.Header().Set("Content-Type", "application/json")
 		if call%2 == 1 {
-			_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"write","type":"function","function":{"name":"write_file","arguments":"{\"path\":\"generated.txt\",\"content\":\"ok\"}"}}]}}]}`)
+			fixtureCompletion(w, r, fixtureWriteMessage, fixtureWriteDelta)
 			return
 		}
-		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"{\"ok\":true}"}}]}`)
+		fixtureCompletion(w, r, fixtureOKMessage, fixtureOKDelta)
 	}))
 	t.Cleanup(server.Close)
 	root := t.TempDir()
