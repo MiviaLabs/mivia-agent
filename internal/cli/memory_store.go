@@ -3,13 +3,12 @@ package cli
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"strings"
 
+	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
-	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 // wireSessionMemory wires the memory store into the session tool options so
@@ -57,31 +56,7 @@ func openMemoryStoreReadOnly(root string, mc config.MemoryConfig) (memory.Store,
 // openMemoryStoreWithReadOnly resolves the [memory] config to a memory store;
 // readOnly controls memory.Config.ReadOnly (see openMemoryStore).
 func openMemoryStoreWithReadOnly(root string, mc config.MemoryConfig, readOnly bool) (memory.Store, error) {
-	projectPath := strings.TrimSpace(mc.StorePath)
-	if projectPath == "" {
-		projectPath = workspace.MemoryDBPath(root)
-	} else {
-		projectPath = config.ExpandPath(projectPath)
-		if !filepath.IsAbs(projectPath) {
-			cleaned := filepath.Clean(projectPath)
-			if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
-				return nil, fmt.Errorf("memory store_path %q escapes the workspace root", mc.StorePath)
-			}
-			projectPath = filepath.Join(root, cleaned)
-		}
-	}
-	cfg := memory.Config{
-		Backend:          mc.StoreBackend,
-		ProjectPath:      projectPath,
-		OrgPath:          workspace.OrgMemoryDBPath(),
-		OrgID:            mc.OrgID,
-		MaxEntryBytes:    mc.MaxEntryBytes,
-		MaxEntries:       mc.MaxEntries,
-		MaxSearchResults: mc.MaxSearchResults,
-		BlockPatterns:    mc.BlockPatterns,
-		ReadOnly:         readOnly,
-	}
-	return memory.Open(cfg)
+	return cliagents.OpenMemoryStoreWithReadOnly(root, mc, readOnly)
 }
 
 // coreMemoryBlock builds the auto-injected system-prompt block (D1). It is a

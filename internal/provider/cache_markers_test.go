@@ -317,8 +317,10 @@ func TestCacheMarkersGatedOffKeepByteIdenticalBody(t *testing.T) {
 	}
 	// Byte-for-byte pin: marshalBody round-trips through a map, so key order
 	// is deterministic (sorted), making this literal the exact body a
-	// pre-marker client produces today.
-	want := `{"messages":[{"content":"you are a test assistant","role":"system"},{"content":"hello","role":"user"}],"model":"m","stream":false}`
+	// pre-marker client produces today. max_tokens is present because no
+	// reasoning level is active here, so effectiveMaxTokens falls to
+	// reasoningMaxTokensFloor's off/unset case (4096).
+	want := `{"max_tokens":4096,"messages":[{"content":"you are a test assistant","role":"system"},{"content":"hello","role":"user"}],"model":"m","stream":false}`
 	if string(raw) != want {
 		t.Fatalf("markers-off body changed:\n got: %s\nwant: %s", raw, want)
 	}

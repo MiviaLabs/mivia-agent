@@ -51,7 +51,13 @@ func populateToolCall(threads *SubagentThreads, tc ports.ToolCall, at time.Time)
 
 	lower := strings.ToLower(tc.Name)
 	if lower == "dispatch_tasks" || lower == "spawn_agent" {
-		populateDispatchTasks(threads, tc, at)
+		// namespaceTasks is dispatch_tasks-only: spawn_agent has no live
+		// backend implementation left (internal/cliorchestrate/dispatch.go's
+		// own doc history: "dispatch_tasks absorbed spawn_agent's
+		// idempotency_key dedup") - its name survives only in OLD sessions'
+		// persisted tool calls, which were never minted with a namespaced
+		// real id, so there is no live counterpart to stay consistent with.
+		populateDispatchTasks(threads, tc, at, lower == "dispatch_tasks")
 		return
 	}
 
@@ -77,9 +83,12 @@ func populateToolCall(threads *SubagentThreads, tc ports.ToolCall, at time.Time)
 		})
 	}
 
+	// tc.ID is always unique and always present; agent name is not (see
+	// registerDispatchedTask's identical fix) - a second unrelated
+	// single-call dispatch to the same named agent must not collide with
+	// this one's reconstructed thread.
 	conv := newReconstructedConversation(agentName, ports.ModelInfo{Name: agentName}, history)
 	threads.registerReconstructed(tc.ID, conv)
-	threads.registerReconstructed(agentName, conv)
 }
 
 type parsedDispatchTask struct {
@@ -254,7 +263,7 @@ func matchTaskToolCalls(results []encodedTaskResult, tasks []parsedDispatchTask)
 	return out
 }
 
-func populateDispatchTasks(threads *SubagentThreads, tc ports.ToolCall, at time.Time) {
+func populateDispatchTasks(threads *SubagentThreads, tc ports.ToolCall, at time.Time, namespaceIDs bool) {
 	var args struct {
 		Tasks []parsedDispatchTask `json:"tasks"`
 	}
@@ -262,7 +271,13 @@ func populateDispatchTasks(threads *SubagentThreads, tc ports.ToolCall, at time.
 
 	// dispatch_tasks may emit either a bare JSON array (wait="run", default)
 	// or a wrapped JSON envelope {"run_id":..., "status":..., "task_results":[...]}
-	// (wait="none" or wait="task", and legacy spawn_agent output).
+	// (wait="none" or wait="task", and legacy spawn_agent output). Both the
+	// persisted args and the persisted result carry each task's RAW
+	// model-supplied id, not a namespaced one - dispatch_tasks strips its
+	// own internal namespace prefix (internal/cliorchestrate/dispatch.go's
+	// stripNamespace) from every model-visible output before returning, so
+	// what got PERSISTED, and therefore what matchTaskOutputs/
+	// matchTaskToolCalls must match by, is always the raw id.
 	var results []encodedTaskResult
 	if err := json.Unmarshal([]byte(tc.Output), &results); err != nil || len(results) == 0 {
 		var out struct {
@@ -276,7 +291,19 @@ func populateDispatchTasks(threads *SubagentThreads, tc ports.ToolCall, at time.
 	outputs := matchTaskOutputs(results, args.Tasks, tc.Output)
 	toolCalls := matchTaskToolCalls(results, args.Tasks)
 	for i, task := range args.Tasks {
-		registerDispatchedTask(threads, tc.ID, i, task, outputs[i], toolCalls[i], at)
+		// The THREAD KEY - unlike the byID match above - must be
+		// namespaced: it has to land on the same id a live observer would
+		// have used for this task (dispatchTaskIDs in
+		// internal/ui/screen/conversation/events.go, and
+		// internal/coordinator/task_context.go's contextForTask, both key
+		// live/internal identity off tc.ID+":"+raw id), so a resumed
+		// session's sidebar row (built by thread.go's LoadHistory, which
+		// namespaces the same way) resolves to this reconstruction.
+		keyed := task
+		if namespaceIDs && keyed.ID != "" {
+			keyed.ID = namespacedTaskID(tc.ID, keyed.ID)
+		}
+		registerDispatchedTask(threads, tc.ID, i, keyed, outputs[i], toolCalls[i], at)
 	}
 
 	if len(args.Tasks) == 0 {
@@ -287,7 +314,10 @@ func populateDispatchTasks(threads *SubagentThreads, tc ports.ToolCall, at time.
 func registerDispatchedTask(threads *SubagentThreads, callID string, idx int, task parsedDispatchTask, outputText string, toolCalls []toolCallSummary, at time.Time) {
 	taskID := task.ID
 	if taskID == "" {
-		taskID = fmt.Sprintf("%s-%d", callID, idx+1)
+		// Must match dispatchTaskIDs' fallback in
+		// internal/ui/screen/conversation/events.go: never embed the raw
+		// provider tool_call_id (callID) in a visible row id.
+		taskID = fmt.Sprintf("task-%d", idx+1)
 	}
 	agentName := task.Agent
 	if agentName == "" {
@@ -321,13 +351,20 @@ func registerDispatchedTask(threads *SubagentThreads, callID string, idx int, ta
 		history = append(history, msg)
 	}
 
-	// Register non-destructively under every key: task ids, the call id,
-	// and the (non-unique) agent name may each already point at a live
-	// streaming conversation, which must survive any History() replay.
+	// Register non-destructively under task id and call id: either may
+	// already point at a live streaming conversation, which must survive
+	// any History() replay. Agent name is deliberately NOT a registration
+	// key here: taskID always exists in this function (model-supplied or
+	// the "task-N" fallback above), and agent name is not unique - two
+	// tasks in the same batch (or across batches on resume) commonly
+	// share one agent (e.g. "general-purpose"), and keying on it would
+	// fold their reconstructed histories into a single shared lookup
+	// alias (see HandleEvent's identical fix and
+	// TestSubagentThreads_SameAgentDifferentTasksDoNotShareAThread for
+	// the live-path version of this bug).
 	conv := newReconstructedConversation(agentName, ports.ModelInfo{Name: agentName}, history)
 	threads.registerReconstructed(taskID, conv)
 	threads.registerReconstructed(callID, conv)
-	threads.registerReconstructed(agentName, conv)
 }
 
 func registerFallbackDispatchedThread(threads *SubagentThreads, tc ports.ToolCall, at time.Time) {
@@ -404,4 +441,16 @@ func extractToolOutput(outputJSON string) string {
 		}
 	}
 	return outputJSON
+}
+
+// namespacedTaskID mirrors internal/cliorchestrate's function of the same
+// name. Duplicated, not imported: internal/uiadapter is the sole
+// integration bridge and deliberately does not import the cli-family
+// orchestration package (INV-TUI-29), so the two copies are kept in sync
+// by contract, not by the compiler.
+func namespacedTaskID(namespace, rawID string) string {
+	if namespace == "" || rawID == "" {
+		return rawID
+	}
+	return namespace + ":" + rawID
 }

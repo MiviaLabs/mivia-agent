@@ -99,7 +99,7 @@ func TestAdvertisedToolSpecsShipsTheSessionToolTail(t *testing.T) {
 		Candidates: []tools.TierCandidate{{Name: "grep"}},
 	}
 
-	specs, dropped := advertisedToolSpecs(base, plan)
+	specs, dropped := advertisedToolSpecs(base, plan, nil)
 	if dropped != 0 {
 		t.Fatalf("dropped = %d, want 0 under the cap", dropped)
 	}
@@ -110,7 +110,7 @@ func TestAdvertisedToolSpecsShipsTheSessionToolTail(t *testing.T) {
 	}
 
 	// An inert plan ships the always-on tail but no load_tools.
-	inert, dropped := advertisedToolSpecs(base, toolTierPlan{Tiers: tools.Tiers{Core: []string{"read_file", "grep"}}})
+	inert, dropped := advertisedToolSpecs(base, toolTierPlan{Tiers: tools.Tiers{Core: []string{"read_file", "grep"}}}, nil)
 	if dropped != 0 {
 		t.Fatalf("inert dropped = %d, want 0", dropped)
 	}
@@ -134,7 +134,7 @@ func TestAdvertisedToolSpecsTailRespectsTheCap(t *testing.T) {
 	}
 	base := tierRegistry(core...)
 	plan := toolTierPlan{Tiers: tools.Tiers{Core: core}}
-	specs, dropped := advertisedToolSpecs(base, plan)
+	specs, dropped := advertisedToolSpecs(base, plan, nil)
 	if len(specs) != tools.MaxAdvertisedTools {
 		t.Fatalf("advertised %d tools, want exactly the %d cap with the tail reserved for", len(specs), tools.MaxAdvertisedTools)
 	}

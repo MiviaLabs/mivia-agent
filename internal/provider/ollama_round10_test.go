@@ -11,6 +11,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -61,8 +62,10 @@ func TestRound10NewOllamaKeylessLoopbackStillPinned(t *testing.T) {
 }
 
 // TestRound10NewOllamaCloudKeyedUnchanged proves keyed cloud construction is
-// unaffected by the new gate: it succeeds, keeps the key, and uses the
-// default (unpinned) transport exactly as before.
+// unaffected by the loopback gate: it succeeds, keeps the key, and gets its
+// own fresh transport clone whose dialer stays the DEFAULT one - a cloud
+// client is never pinned. The clone carries the response-header bound like
+// every client transport, but no other setting changes.
 func TestRound10NewOllamaCloudKeyedUnchanged(t *testing.T) {
 	comp, err := NewOllama(Options{BaseURL: "https://ollama.com/v1", APIKey: "sekrit"})
 	if err != nil {
@@ -76,11 +79,15 @@ func TestRound10NewOllamaCloudKeyedUnchanged(t *testing.T) {
 	if !ok {
 		t.Fatal("cloud keyed client missing transport")
 	}
-	if tr != http.DefaultTransport {
-		// Cloud mode must keep the default transport untouched; the pin is a
-		// loopback-only clone. Pointer identity is the check (round-8/9 gate
-		// contract): a cloud client must never be pinned.
-		t.Fatal("cloud keyed client does not use http.DefaultTransport (was the transport replaced?)")
+	def := http.DefaultTransport.(*http.Transport)
+	if tr == def {
+		t.Fatal("cloud keyed client shares http.DefaultTransport; every client must own a fresh clone")
+	}
+	if tr.DialContext == nil || reflect.ValueOf(tr.DialContext).Pointer() != reflect.ValueOf(def.DialContext).Pointer() {
+		t.Fatal("cloud keyed client transport is pinned; the pin is loopback-only, the clone must keep the DEFAULT dialer")
+	}
+	if tr.ResponseHeaderTimeout != DefaultResponseHeaderTimeout {
+		t.Fatalf("cloud clone ResponseHeaderTimeout = %v, want %v", tr.ResponseHeaderTimeout, DefaultResponseHeaderTimeout)
 	}
 	client.client.CloseIdleConnections()
 }

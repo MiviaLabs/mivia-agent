@@ -12,7 +12,7 @@ func TestClassicUI_InterimPrintedWhenNoStreamBytes(t *testing.T) {
 	t.Parallel()
 	mt := newMockTerminal()
 	r := NewChatRenderer(mt, "m")
-	ui, h := newClassicAgentHandler(r)
+	ui, h := newClassicAgentHandler(r, true)
 	_ = wrapClassicFinalWriter(ui, mt) // no stream writes
 	h(agent.Event{Kind: agent.EventAssistant, Content: "I'll inspect the project layout first.", Detail: "interim"})
 	out := stripANSI(mt.String())
@@ -25,7 +25,7 @@ func TestClassicUI_InterimSkippedWhenAlreadyStreamed(t *testing.T) {
 	t.Parallel()
 	mt := newMockTerminal()
 	r := NewChatRenderer(mt, "m")
-	ui, h := newClassicAgentHandler(r)
+	ui, h := newClassicAgentHandler(r, true)
 	w := wrapClassicFinalWriter(ui, mt)
 	_, _ = w.Write([]byte("I'll inspect the project layout first."))
 	h(agent.Event{Kind: agent.EventAssistant, Content: "I'll inspect the project layout first.", Detail: "interim"})
@@ -40,7 +40,7 @@ func TestClassicUI_FinalEventNotPrinted(t *testing.T) {
 	t.Parallel()
 	mt := newMockTerminal()
 	r := NewChatRenderer(mt, "m")
-	_, h := newClassicAgentHandler(r)
+	_, h := newClassicAgentHandler(r, true)
 	h(agent.Event{Kind: agent.EventAssistant, Content: "final answer only via stream"})
 	if strings.Contains(stripANSI(mt.String()), "final answer") {
 		t.Fatal("final EventAssistant must not print")
@@ -51,7 +51,7 @@ func TestClassicUI_EmptyContentStatusThenTool(t *testing.T) {
 	t.Parallel()
 	mt := newMockTerminal()
 	r := NewChatRenderer(mt, "m")
-	_, h := newClassicAgentHandler(r)
+	_, h := newClassicAgentHandler(r, true)
 	h(agent.Event{Kind: agent.EventToolStart, Name: "list_dir", Detail: `{"path":"."}`})
 	out := stripANSI(mt.String())
 	if !strings.Contains(out, "→") && !strings.Contains(out, "Listing") {
@@ -66,7 +66,7 @@ func TestClassicUI_RealInterimSkipsStatus(t *testing.T) {
 	t.Parallel()
 	mt := newMockTerminal()
 	r := NewChatRenderer(mt, "m")
-	_, h := newClassicAgentHandler(r)
+	_, h := newClassicAgentHandler(r, true)
 	h(agent.Event{Kind: agent.EventAssistant, Content: "I'll search the codebase first.", Detail: "interim"})
 	h(agent.Event{Kind: agent.EventToolStart, Name: "grep", Detail: `{"pattern":"x"}`})
 	out := stripANSI(mt.String())
@@ -82,7 +82,7 @@ func TestClassicUI_ShouldCommitInterimGate(t *testing.T) {
 	t.Parallel()
 	mt := newMockTerminal()
 	r := NewChatRenderer(mt, "m")
-	_, h := newClassicAgentHandler(r)
+	_, h := newClassicAgentHandler(r, true)
 	h(agent.Event{Kind: agent.EventAssistant, Content: "OK.", Detail: "interim"})
 	h(agent.Event{Kind: agent.EventToolStart, Name: "grep", Detail: `{"pattern":"auth"}`})
 	out := stripANSI(mt.String())
@@ -98,7 +98,7 @@ func TestClassicStreamWriter_RevokeStream(t *testing.T) {
 	t.Parallel()
 	mt := newMockTerminal()
 	r := NewChatRenderer(mt, "m")
-	ui, _ := newClassicAgentHandler(r)
+	ui, _ := newClassicAgentHandler(r, true)
 	w := wrapClassicFinalWriter(ui, mt)
 	rev, ok := w.(interface{ RevokeStream() string })
 	if !ok {
@@ -115,7 +115,7 @@ func TestClassicStreamWriter_RevokeStream(t *testing.T) {
 func TestClassicUI_BufferedKeepsInterimOutOfFinalOutput(t *testing.T) {
 	var out strings.Builder
 	mw := NewMarkdownWriter(&out)
-	ui, _ := newClassicAgentHandler(NewChatRenderer(newMockTerminal(), "m"))
+	ui, _ := newClassicAgentHandler(NewChatRenderer(newMockTerminal(), "m"), true)
 	w := wrapClassicBufferedFinalWriter(ui, mw)
 
 	// Step 1: speech, then tool_calls arrive -> that speech was interim.
@@ -145,7 +145,7 @@ func TestClassicUI_BufferedKeepsInterimOutOfFinalOutput(t *testing.T) {
 func TestClassicUI_BufferedRevokeLetsInterimPrint(t *testing.T) {
 	var out strings.Builder
 	mt := newMockTerminal()
-	ui, h := newClassicAgentHandler(NewChatRenderer(mt, "m"))
+	ui, h := newClassicAgentHandler(NewChatRenderer(mt, "m"), true)
 	w := wrapClassicBufferedFinalWriter(ui, NewMarkdownWriter(&out))
 
 	_, _ = io.WriteString(w, "Now I will read the file.")
@@ -163,7 +163,7 @@ func TestClassicUI_BufferedRevokeLetsInterimPrint(t *testing.T) {
 func TestClassicUI_LiveMessagesDoNotGlue(t *testing.T) {
 	var out strings.Builder
 	mw := NewMarkdownWriter(&out)
-	ui, _ := newClassicAgentHandler(NewChatRenderer(newMockTerminal(), "m"))
+	ui, _ := newClassicAgentHandler(NewChatRenderer(newMockTerminal(), "m"), true)
 	w := wrapClassicFinalWriter(ui, mw)
 
 	_, _ = io.WriteString(w, "sentence one ends here.")
@@ -182,10 +182,37 @@ func TestClassicUI_ThinkingPrints(t *testing.T) {
 	t.Parallel()
 	mt := newMockTerminal()
 	r := NewChatRenderer(mt, "m")
-	_, h := newClassicAgentHandler(r)
+	_, h := newClassicAgentHandler(r, true)
 	h(agent.Event{Kind: agent.EventThinking, Content: "Analyzing requirements...\nStep 1: check files"})
 	out := stripANSI(mt.String())
 	if !strings.Contains(out, "thinking:") || !strings.Contains(out, "Analyzing requirements") {
 		t.Fatalf("expected thinking printed, got %q", out)
+	}
+}
+
+func TestClassicUI_IterationNoticeHiddenWhenDisabled(t *testing.T) {
+	t.Parallel()
+	mt := newMockTerminal()
+	r := NewChatRenderer(mt, "m")
+	_, h := newClassicAgentHandler(r, false)
+	h(agent.Event{Kind: agent.EventStep, Detail: "iteration 1"})
+	h(agent.Event{Kind: agent.EventHeartbeat, Detail: "thinking 2s"})
+	out := stripANSI(mt.String())
+	if strings.Contains(out, "iteration 1") {
+		t.Fatalf("iteration notice must stay hidden while chat.show_iteration_notices is off: %q", out)
+	}
+	if !strings.Contains(out, "thinking 2s") {
+		t.Fatalf("heartbeats are not gated by the setting and must still print: %q", out)
+	}
+}
+
+func TestClassicUI_IterationNoticePrintsWhenEnabled(t *testing.T) {
+	t.Parallel()
+	mt := newMockTerminal()
+	r := NewChatRenderer(mt, "m")
+	_, h := newClassicAgentHandler(r, true)
+	h(agent.Event{Kind: agent.EventStep, Detail: "iteration 1"})
+	if out := stripANSI(mt.String()); !strings.Contains(out, "iteration 1") {
+		t.Fatalf("iteration notice must print while chat.show_iteration_notices is on: %q", out)
 	}
 }

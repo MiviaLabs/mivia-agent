@@ -67,7 +67,7 @@ SKIP_EXTENSIONS = {
     ".test",
     ".out",
 }
-SKIP_BASENAMES = {"mivia", "mivia-ui-demo"}
+SKIP_BASENAMES = {"mivia"}
 
 
 def walk(root: Path, base: Path | None = None):

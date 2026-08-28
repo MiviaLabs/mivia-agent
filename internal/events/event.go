@@ -438,7 +438,9 @@ func NewIdentity(name, source, instanceID string, generation uint64) (Identity, 
 		return Identity{}, fmt.Errorf("invalid event identity")
 	}
 	switch source {
-	case "user", "workspace", "compiled":
+	// "compiled" is retained for replay of ledger/session records written
+	// before built-in agents shipped; new compiled content uses "builtin".
+	case "user", "workspace", "compiled", "builtin":
 	default:
 		return Identity{}, fmt.Errorf("invalid event identity")
 	}

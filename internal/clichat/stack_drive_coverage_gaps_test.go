@@ -19,6 +19,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/cliworkflow"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
@@ -128,11 +129,11 @@ func TestAdmitDecomposeContinuationRunFailureSettles(t *testing.T) {
 	it := newStackDriveIT(t, "", multiChunkPlanOutput)
 	prevBuild := cliworkflow.WorkflowRunBuild
 	t.Cleanup(func() { cliworkflow.WorkflowRunBuild = prevBuild })
-	cliworkflow.WorkflowRunBuild = func(buildRoot string, res *config.Resolved, store *storage.SQLite, repo workflowledger.Repository, compiled *definition.CompiledWorkflow, refBase string, inputs map[string]any, inputSnapshot map[string]string, raw []byte, id string, snap *workflowledger.Snapshot, rawDef []byte, run *workflowledger.RunSnapshot, m map[string]bool, reg *skills.Registry) (cliworkflow.WorkflowControllerBuild, error) {
+	cliworkflow.WorkflowRunBuild = func(buildRoot string, res *config.Resolved, store *storage.SQLite, repo workflowledger.Repository, compiled *definition.CompiledWorkflow, refBase string, inputs map[string]any, inputSnapshot map[string]string, raw []byte, id string, snap *workflowledger.Snapshot, rawDef []byte, run *workflowledger.RunSnapshot, m map[string]bool, reg *skills.Registry, ownerSessionID string, sessionRepo ledger.LedgerRepository) (cliworkflow.WorkflowControllerBuild, error) {
 		if inputSnapshot["stack_mode"] == "decompose_continue" {
 			repo = &decomposeRunReadFailsRepo{Repository: repo}
 		}
-		return prevBuild(buildRoot, res, store, repo, compiled, refBase, inputs, inputSnapshot, raw, id, snap, rawDef, run, m, reg)
+		return prevBuild(buildRoot, res, store, repo, compiled, refBase, inputs, inputSnapshot, raw, id, snap, rawDef, run, m, reg, ownerSessionID, sessionRepo)
 	}
 	prepared := coverPrepare(t, it)
 
@@ -204,7 +205,7 @@ func TestSettleStackPlanRunSkippedDeliveryWhenComplete(t *testing.T) {
 	prepared := coverPrepare(t, it)
 
 	runID := cliworkflow.NewCLIWorkflowRunID()
-	built, err := cliworkflow.WorkflowRunBuild(prepared.Root, prepared.Res, prepared.Store, prepared.Repo, prepared.Compiled, prepared.RefBase, prepared.Inputs, prepared.InputSnapshot, prepared.Raw, runID, nil, nil, nil, nil, nil)
+	built, err := cliworkflow.WorkflowRunBuild(prepared.Root, prepared.Res, prepared.Store, prepared.Repo, prepared.Compiled, prepared.RefBase, prepared.Inputs, prepared.InputSnapshot, prepared.Raw, runID, nil, nil, nil, nil, nil, "", nil)
 	if err != nil {
 		t.Fatalf("WorkflowRunBuild() error = %v", err)
 	}

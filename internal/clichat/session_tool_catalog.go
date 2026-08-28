@@ -1,6 +1,7 @@
 package clichat
 
 import (
+	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
@@ -11,10 +12,11 @@ import (
 type sessionToolSpec struct {
 	// Name is the wire name the model sees.
 	Name string
-	// New returns a zero-value instance whose static schema
+	// New returns an instance whose static schema
 	// (Name/Description/Parameters) is faithful for advertising. The returned
-	// tool must read no runtime state in those three methods.
-	New func() tools.Tool
+	// tool must read no runtime state in those three methods beyond the passed
+	// immutable agent-registry snapshot (nil where the schema needs none).
+	New func(agentReg *agents.AgentRegistry) tools.Tool
 	// DeferredOnly gates advertising: true means the tool ships only when this
 	// binding defers something (load_tools discovers the deferred index; with
 	// nothing deferred there is nothing to discover).
@@ -43,32 +45,35 @@ type sessionToolSpec struct {
 // activation (InjectSkillResourceTool) into a skill-scoped clone, not
 // registered by the session dispatcher, so no root binding advertises it.
 var sessionToolCatalog = []sessionToolSpec{
-	{Name: "dispatch_tasks", New: func() tools.Tool { return cliorchestrate.NewDispatchTasksToolZero() }},
-	{Name: "inspect_agents", New: func() tools.Tool { return cliorchestrate.NewInspectAgentsToolZero() }},
-	{Name: "join_run", New: func() tools.Tool { return cliorchestrate.NewJoinRunToolZero() }},
-	{Name: "cancel_run", New: func() tools.Tool { return cliorchestrate.NewCancelRunToolZero() }},
-	{Name: "post_message", New: func() tools.Tool { return &postMessageTool{} }},
-	{Name: "run_messages", New: func() tools.Tool { return &runMessagesTool{} }},
-	{Name: "send_to_task", New: func() tools.Tool { return &sendToTaskTool{} }},
-	{Name: "ledger_read", New: func() tools.Tool { return &ledgerReadTool{} }},
-	{Name: "list_run_events", New: func() tools.Tool { return &listRunEventsTool{} }},
-	{Name: "read_output", New: func() tools.Tool { return &readOutputTool{} }},
-	{Name: "load_tools", New: func() tools.Tool { return cliagents.NewLoadToolsTool(nil, nil) }, DeferredOnly: true},
+	{Name: "dispatch_tasks", New: func(agentReg *agents.AgentRegistry) tools.Tool {
+		return cliorchestrate.NewDispatchTasksToolForAdvertising(agentReg)
+	}},
+	{Name: "inspect_agents", New: func(*agents.AgentRegistry) tools.Tool { return cliorchestrate.NewInspectAgentsToolZero() }},
+	{Name: "join_run", New: func(*agents.AgentRegistry) tools.Tool { return cliorchestrate.NewJoinRunToolZero() }},
+	{Name: "cancel_run", New: func(*agents.AgentRegistry) tools.Tool { return cliorchestrate.NewCancelRunToolZero() }},
+	{Name: "post_message", New: func(*agents.AgentRegistry) tools.Tool { return &postMessageTool{} }},
+	{Name: "run_messages", New: func(*agents.AgentRegistry) tools.Tool { return &runMessagesTool{} }},
+	{Name: "send_to_task", New: func(*agents.AgentRegistry) tools.Tool { return &sendToTaskTool{} }},
+	{Name: "ledger_read", New: func(*agents.AgentRegistry) tools.Tool { return &ledgerReadTool{} }},
+	{Name: "list_run_events", New: func(*agents.AgentRegistry) tools.Tool { return &listRunEventsTool{} }},
+	{Name: "read_output", New: func(*agents.AgentRegistry) tools.Tool { return &readOutputTool{} }},
+	{Name: "load_tools", New: func(*agents.AgentRegistry) tools.Tool { return cliagents.NewLoadToolsTool(nil, nil) }, DeferredOnly: true},
 }
 
 // advertisedSessionToolSpecs renders the catalog's advertised schemas for one
-// binding. DeferredOnly entries ship only when the plan defers something. The
-// zero-value instances are faithful schema sources: every entry's
-// Name/Description/Parameters reads no runtime state (dispatch_tasks and
-// spawn_agent degrade to an empty agent enum when their registry is nil -
-// agentNames(nil) returns []string{}, never JSON null).
-func advertisedSessionToolSpecs(plan toolTierPlan) []provider.ToolSpec {
+// binding. agentReg is the binding's immutable resolved agent snapshot; it is
+// what lets dispatch_tasks advertise its REAL agent enum and roster prose at
+// turn zero instead of a degraded empty enum (agentNames(nil) returns
+// []string{}, never JSON null). DeferredOnly entries ship only when the plan
+// defers something. Every entry's Name/Description/Parameters reads no
+// runtime state beyond that immutable snapshot.
+func advertisedSessionToolSpecs(plan toolTierPlan, agentReg *agents.AgentRegistry) []provider.ToolSpec {
 	reg := tools.NewRegistry()
 	for _, spec := range sessionToolCatalog {
 		if spec.DeferredOnly && !plan.Deferred() {
 			continue
 		}
-		reg.Register(spec.New())
+		reg.Register(spec.New(agentReg))
 	}
 	return reg.OpenAITools()
 }

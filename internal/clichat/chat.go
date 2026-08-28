@@ -39,7 +39,7 @@ func oneShotContext(ctx context.Context, sess *chat.Session, prompt string, tool
 	finalW := io.Writer(mw)
 	if toolsOn {
 		r := NewChatRenderer(&stderrTerm{}, sess.CurrentModel())
-		ui, h := newClassicAgentHandler(r)
+		ui, h := newClassicAgentHandler(r, res.ShowIterationNotices)
 		sess.OnAgentEvent = h
 		finalW = wrapClassicBufferedFinalWriter(ui, mw)
 	}
@@ -128,7 +128,7 @@ func processLineChat(line string, sess *chat.Session, res *config.Resolved, tool
 	mw := NewMarkdownWriter(term)
 	finalW := io.Writer(mw)
 	if toolsOn {
-		ui, h := newClassicAgentHandler(renderer)
+		ui, h := newClassicAgentHandler(renderer, res.ShowIterationNotices)
 		sess.OnAgentEvent = h
 		finalW = wrapClassicFinalWriter(ui, mw)
 	}

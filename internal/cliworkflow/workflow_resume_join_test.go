@@ -15,6 +15,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
@@ -194,7 +195,7 @@ func newJoinResumeRun(t *testing.T, runner controller.AgentStepRunner, deadline 
 	WorkflowResumeOpenStore = func(string, config.SubagentConfig) (*storage.SQLite, workflowledger.Repository, func(), error) {
 		return nil, repo, func() {}, nil
 	}
-	workflowResumeBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *definition.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, []byte, *workflowledger.RunSnapshot, map[string]bool, *skills.Registry) (WorkflowControllerBuild, error) {
+	workflowResumeBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *definition.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, []byte, *workflowledger.RunSnapshot, map[string]bool, *skills.Registry, string, ledger.LedgerRepository) (WorkflowControllerBuild, error) {
 		return WorkflowControllerBuild{
 			Controller: ctrl,
 			Dispatcher: workflowTestDispatcher{},
@@ -266,7 +267,7 @@ func TestExecuteWorkflowResumeRefusesNilControllerWithInFlightAttempts(t *testin
 	WorkflowResumeOpenStore = func(string, config.SubagentConfig) (*storage.SQLite, workflowledger.Repository, func(), error) {
 		return nil, repo, func() {}, nil
 	}
-	workflowResumeBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *definition.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, []byte, *workflowledger.RunSnapshot, map[string]bool, *skills.Registry) (WorkflowControllerBuild, error) {
+	workflowResumeBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *definition.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, []byte, *workflowledger.RunSnapshot, map[string]bool, *skills.Registry, string, ledger.LedgerRepository) (WorkflowControllerBuild, error) {
 		return WorkflowControllerBuild{Dispatcher: workflowTestDispatcher{}}, nil
 	}
 	WorkflowResumeSetAdmission = func(WorkflowControllerBuild) error { return nil }

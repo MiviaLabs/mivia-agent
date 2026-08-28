@@ -163,6 +163,13 @@ func adoptSessionLedgerRepo(sess *chat.Session, cfg config.SubagentConfig, state
 	if contextDispatcherFor(sess, cfg).SharedSQLite != nil {
 		return
 	}
+	if state.LedgerRepo != nil {
+		// Adopted earlier in this startup (before the workflow tool wiring, so
+		// the workflow engine sees the session's repo instance). Keep it: every
+		// surface rebuild must hand the dispatcher the SAME repo, and the
+		// workflow child-run registration stamps exactly this instance.
+		return
+	}
 	repo, owned := cliorchestrate.OpenDurableLedgerRepo(cfg, os.Stderr)
 	state.AdoptLedgerRepo(repo, owned)
 }
@@ -243,7 +250,7 @@ func scopeAttachedToolSurface(sess *chat.Session, ctx agentSessionContext, state
 	// build: the scope intersects with the registry, so its own report is
 	// always empty.
 	cliagents.WarnDisabledAgentTools(ctx.Selected, cliagents.DisabledForAgent(ctx.Selected, sess.Tools))
-	cliagents.PinAttachAdvertisedToolSpecs(sess, ctx.Selected, plan)
+	cliagents.PinAttachAdvertisedToolSpecs(sess, ctx.Selected, plan, ctx.Registry)
 	sess.Tools = cliagents.TieredRootRegistry(sess.Tools, ctx.Selected, ctx.Global.MandatoryToolDenylistAdditions, plan, nil)
 	// Same attach-time refresh: the scoped tool surface changed the wire
 	// prefix; applyDeferredToolPrompt below republishes the prompt through

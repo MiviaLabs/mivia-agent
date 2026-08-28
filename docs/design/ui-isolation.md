@@ -7,7 +7,7 @@ owner on 2026-08-19.
 
 The new terminal UI is SELF-CONTAINED:
 
-- `cmd/mivia-ui`, `cmd/mivia-ui-demo`, `internal/ui/**`, and
+- `cmd/mivia-ui`, `internal/ui/**`, and
   `internal/uikit/**` build and run against mock data or ports interfaces.
 - `internal/ui/**` and `internal/uikit/**` must not import `internal/cli*`,
   `internal/chat`, `internal/agent`, `internal/coordinator`, `internal/hub`,

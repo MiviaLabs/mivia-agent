@@ -151,14 +151,10 @@ func (m Model) HandleEvent(ev uievent.Event) (Model, tea.Cmd) {
 		m = m.flushPending()
 		return m.pushBlock(errorBlockValue(b))
 	case uievent.UsageBody:
-		return m.pushBlock(Block{
-			Kind: uievent.KindUsage,
-			Header: Header{
-				Label: "usage",
-				Detail: fmt.Sprintf("%d in  %d out  %d cached  $%.3f",
-					b.InputTokens, b.OutputTokens, b.CachedTokens, b.CostUSD),
-			},
-		})
+		// A dim footer line, not a header block (transcript-polish.md
+		// R6): the per-turn facts belong to the record, the live cost
+		// and context chrome belongs to the statusline and the topbar.
+		return m.pushBlock(usageBlockValue(m.Theme, m.Tier, b))
 	case uievent.TurnEndBody:
 		// A completed turn commits nothing: turn-state belongs to the
 		// statusline. A turn that did NOT complete must say so, and must
@@ -193,11 +189,6 @@ func (m Model) Clear() Model {
 
 // turnReasonCompleted is the one reason that commits no block.
 const turnReasonCompleted = "completed"
-
-// shortResultCols is the longest tool result that may sit in the header's
-// meta column. Anything longer is a message, not a metric, and goes in
-// the body where it can wrap instead of squeezing the detail out.
-const shortResultCols = 16
 
 // endTurnUnfinished flushes any partial stream as prose, then records
 // why the turn stopped.
@@ -336,30 +327,22 @@ func (m Model) handleToolStart(b uievent.ToolStartBody) (Model, tea.Cmd) {
 }
 
 func (m Model) handleToolOutput(b uievent.ToolOutputBody) (Model, tea.Cmd) {
+	// Subagent progress (heartbeat elapsed/tool-call/step counters) is the
+	// sidebar panel's job now (internal/ui/screen/conversation/filespanel.go
+	// renders it live, computed at render time). It used to live-rewrite
+	// this tool call's block on every heartbeat - a churning
+	// "elapsed=Xs steps=N" line replacing itself in the middle of the
+	// scrollback for the life of a long-running subagent. The block pushed
+	// by handleToolStart (name, args, "running") now stays static until
+	// handleToolEnd renders its terminal state.
+	if b.Progress != nil {
+		return m, nil
+	}
 	lines := outputLines(b)
 	if len(lines) == 0 {
 		return m.pushBlock(toolOutputBlock(m.Theme, m.Tier, b))
 	}
 	if ok := m.updateLive(b.ToolCallID, func(blk *Block) {
-		if p := b.Progress; p != nil {
-			blk.Header.Meta = fmt.Sprintf("%d of %d", p.Step, p.TotalSteps)
-			if p.Status != "" {
-				blk.Header.State = p.Status
-			}
-			if p.ElapsedSeconds > 0 {
-				blk.Header.Detail = fmt.Sprintf("%.0fs", p.ElapsedSeconds)
-			}
-			// The SAME body the push path builds, and the same preserved
-			// payload. A progress event either merges here or pushes a
-			// block of its own depending on whether the call already
-			// started; drawing a bare bar on one path and a styled one on
-			// the other made the row depend on that accident, and the bare
-			// one could not follow a theme change.
-			progressCopy := *p
-			blk.Progress = &progressCopy
-			blk.Body = progressBody(m.Theme, m.Tier, *p)
-			return
-		}
 		blk.Body = append(slices.Clone(blk.Body), lines...)
 	}); ok {
 		return m, nil
@@ -387,10 +370,15 @@ func (m Model) handleToolEnd(b uievent.ToolEndBody) (Model, tea.Cmd) {
 		// re-rendered when the theme changes, which is the whole point of
 		// preserving the payload.
 		blk.Diff = end.Diff
-		detail := blk.Header.Detail
+		// The end block's formatted summary (ledger ref · size · paging
+		// state) outranks the start block's argument echo: the summary is
+		// what a reader needs without expanding (tool-output-polish.md
+		// R4). Only when the end carries no detail does the start's
+		// survive, and never over a diff path.
+		startDetail := blk.Header.Detail
 		blk.Header = end.Header
-		if detail != "" && b.Diff == nil {
-			blk.Header.Detail = detail
+		if blk.Header.Detail == "" && startDetail != "" && b.Diff == nil {
+			blk.Header.Detail = startDetail
 		}
 		if b.Diff != nil {
 			blk.Body = append(slices.Clone(blk.Body), render.FormatDiffLines(m.Theme, m.Tier, w, *b.Diff)...)
@@ -482,14 +470,16 @@ func (m Model) restyle(b Block) Block {
 		// its collapse/focus state are the reader's, not the payload's.
 		next := planBlockValue(m.Theme, m.Tier, *b.Plan)
 		b.Header, b.Body = next.Header, next.Body
+	case b.Usage != nil:
+		// Same payload-preserving rebuild as the plan: the footer line is
+		// styled at push time, so the theme change must restyle it.
+		b.Body = usageBlockValue(m.Theme, m.Tier, *b.Usage).Body
 	case b.Diff != nil:
 		w := m.width - uikitconfig.BodyIndent
 		if w <= 0 {
 			w = 80
 		}
 		b.Body = replaceDiffTail(b.Body, render.FormatDiffLines(m.Theme, m.Tier, w, *b.Diff))
-	case b.Progress != nil:
-		b.Body = progressBody(m.Theme, m.Tier, *b.Progress)
 	}
 	return b
 }

@@ -68,7 +68,11 @@ func TestPopulateFromToolCalls_DoesNotClobberInFlightLiveThread(t *testing.T) {
 
 	uiadapter.PopulateFromToolCalls(threads, dispatchMsg("call_d1", "t1", "builder", ""))
 
-	for _, key := range []string{"t1", "call_d1", "builder"} {
+	// Agent name ("builder") is deliberately not checked here: neither the
+	// live path nor the reconstruction path registers it as a key once a
+	// TaskID exists, so two unrelated tasks sharing an agent name never
+	// collide - see TestSubagentThreads_SameAgentDifferentTasksDoNotShareAThread.
+	for _, key := range []string{"t1", "call_d1"} {
 		got, ok := threads.Thread(key)
 		if !ok {
 			t.Fatalf("expected a thread under %q", key)
@@ -119,11 +123,12 @@ func TestPopulateFromToolCalls_DoesNotClobberCompletedLiveThread(t *testing.T) {
 }
 
 // TestPopulateFromToolCalls_ReconstructionDoesNotStealLiveAgentNameKey
-// guards the agent-name key: names like "builder" are not unique across
-// dispatches, and the live path's getOrCreate uses Origin.Agent as a
-// fallback lookup key. A reconstruction for a DIFFERENT task that happens
-// to use the same agent name must not re-aim that shared key away from the
-// live conversation.
+// guards a shared agent name across a live thread and a reconstructed one
+// for a DIFFERENT task: names like "builder" are not unique across
+// dispatches, so neither the live path (HandleEvent) nor the
+// reconstruction path (registerDispatchedTask) registers by bare agent
+// name once a TaskID exists - "builder" resolves to nothing, and each
+// task stays reachable only under its own task id, never merged.
 func TestPopulateFromToolCalls_ReconstructionDoesNotStealLiveAgentNameKey(t *testing.T) {
 	threads := uiadapter.NewSubagentThreads()
 	live := startLiveThread(t, threads, "t-live", "call_live", "builder")
@@ -131,16 +136,15 @@ func TestPopulateFromToolCalls_ReconstructionDoesNotStealLiveAgentNameKey(t *tes
 	output := `[{"task_id":"t-old","status":"completed","output":"earlier run"}]`
 	uiadapter.PopulateFromToolCalls(threads, dispatchMsg("call_old", "t-old", "builder", output))
 
-	got, ok := threads.Thread("builder")
-	if !ok {
-		t.Fatalf("expected a thread under builder")
+	if _, ok := threads.Thread("builder"); ok {
+		t.Error("agent name must not resolve to any thread once a TaskID exists on both sides")
 	}
-	if got != live {
-		t.Errorf("reconstruction stole the live agent-name key")
+	if got, ok := threads.Thread("t-live"); !ok || got != live {
+		t.Errorf("expected the live conversation still reachable under its own task id")
 	}
 
 	// The reconstruction itself must still exist under its own task key.
-	old, ok := threads.Thread("t-old")
+	old, ok := threads.Thread("call_old:t-old")
 	if !ok || old == live {
 		t.Errorf("expected a distinct reconstructed thread under t-old")
 	}
@@ -156,7 +160,7 @@ func TestPopulateFromToolCalls_ResumeStillRegistersAndRefreshes(t *testing.T) {
 
 	// First replay: dispatch persisted mid-flight, no output yet.
 	uiadapter.PopulateFromToolCalls(threads, dispatchMsg("call_d1", "t1", "builder", ""))
-	conv, ok := threads.Thread("t1")
+	conv, ok := threads.Thread("call_d1:t1")
 	if !ok || conv == nil {
 		t.Fatalf("expected reconstructed thread for t1 on resume")
 	}
@@ -167,7 +171,7 @@ func TestPopulateFromToolCalls_ResumeStillRegistersAndRefreshes(t *testing.T) {
 	// Second replay: the result landed in persisted history.
 	output := `[{"task_id":"t1","status":"completed","output":"final answer"}]`
 	uiadapter.PopulateFromToolCalls(threads, dispatchMsg("call_d1", "t1", "builder", output))
-	conv, ok = threads.Thread("t1")
+	conv, ok = threads.Thread("call_d1:t1")
 	if !ok || conv == nil {
 		t.Fatalf("expected refreshed thread for t1")
 	}
@@ -211,7 +215,7 @@ func TestPopulateFromToolCalls_OutputAndToolCallsPairFromSameRow(t *testing.T) {
 
 	uiadapter.PopulateFromToolCalls(threads, msgs)
 
-	conv, ok := threads.Thread("t1")
+	conv, ok := threads.Thread("call_pair:t1")
 	if !ok || conv == nil {
 		t.Fatalf("expected thread for t1")
 	}
@@ -227,7 +231,7 @@ func TestPopulateFromToolCalls_OutputAndToolCallsPairFromSameRow(t *testing.T) {
 		t.Errorf("t1 tool calls must come from its ID-matched row, got %+v", out.ToolCalls)
 	}
 
-	conv2, ok := threads.Thread("t2")
+	conv2, ok := threads.Thread("call_pair:t2")
 	if !ok || conv2 == nil {
 		t.Fatalf("expected thread for t2")
 	}
@@ -237,5 +241,28 @@ func TestPopulateFromToolCalls_OutputAndToolCallsPairFromSameRow(t *testing.T) {
 	}
 	if len(hist2[1].ToolCalls) != 1 || hist2[1].ToolCalls[0].ID != "tc-t2" {
 		t.Errorf("t2 tool calls mismatch: %+v", hist2[1].ToolCalls)
+	}
+}
+
+func TestPopulateFromToolCalls_SpawnAgentPopulatesWithoutNamespace(t *testing.T) {
+	threads := uiadapter.NewSubagentThreads()
+	msgs := []ports.Message{
+		{
+			Role: "assistant",
+			At:   time.Now(),
+			ToolCalls: []ports.ToolCall{
+				{
+					ID:        "call_spawn",
+					Name:      "spawn_agent",
+					Arguments: `{"tasks":[{"id":"solo","prompt":"work","agent":"worker"}]}`,
+					Output:    `[{"task_id":"solo","status":"completed","output":"done"}]`,
+				},
+			},
+		},
+	}
+	uiadapter.PopulateFromToolCalls(threads, msgs)
+	conv, ok := threads.Thread("solo")
+	if !ok || conv == nil {
+		t.Fatalf("expected unnamespaced thread for solo")
 	}
 }

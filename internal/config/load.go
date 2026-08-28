@@ -80,7 +80,14 @@ func Load(opts LoadOptions) (*Resolved, error) {
 	if err != nil {
 		return nil, err
 	}
-	memCfg, err := resolveMemoryConfig(file, configPath)
+	root := opts.WorkspaceRoot
+	if strings.TrimSpace(root) == "" {
+		if cwd, err := os.Getwd(); err == nil {
+			root = cwd
+		}
+	}
+	projectConfigFound := ProjectConfigExists(root)
+	memCfg, err := resolveMemoryConfig(file, configPath, root, projectConfigFound)
 	if err != nil {
 		return nil, fmt.Errorf("config %s: %w", configPath, err)
 	}

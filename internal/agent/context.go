@@ -7,6 +7,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 )
 
 // captureOmittedEvidence folds the content-free diff of the pre-compaction
@@ -41,7 +42,7 @@ func (l *Loop) buildPrepareInput(toolSpecs []provider.ToolSpec, opts Options) co
 		input.Budget = opts.MaxContextTokens
 	}
 	input.Tools = toolSpecs
-	input.OutputReserve = outputReserve(opts.MaxTokens)
+	input.OutputReserve = outputReserve(opts.MaxTokens, opts.Reasoning.Level)
 	input.ContextAccounting = l.contextAccounting()
 	if input.CurrentObjective == "" {
 		input.CurrentObjective = latestUserObjective(l.Messages)
@@ -130,11 +131,24 @@ func (l *Loop) discardPreparation(opts Options) {
 	// Discard between steps must keep mid-turn elision totals.
 }
 
-func outputReserve(maxTokens *int) int {
-	if maxTokens == nil || *maxTokens < 0 {
-		return 0
+// outputReserve returns the value fed into contextmgr.PlanInput.OutputReserve:
+// the caller's explicit MaxTokens when set and non-negative, otherwise
+// reasoning.OutputReserveFloor(level) - the same fallback the wire request
+// itself applies when MaxTokens is left unset (effectiveMaxTokens in
+// openai_compat_request.go). This does NOT shrink the prompt budget the
+// planner packs history against - PlanInput.OutputReserve is deliberately
+// never subtracted from Budget (see the doc comment on that field in
+// internal/contextmgr/planner.go: Budget already excludes the reserve,
+// applied once upstream by config.EffectiveOutputTokens, which independently
+// reads the same reasoning.OutputReserveFloor). Passing an accurate value
+// here only keeps the plan's idempotency-key fingerprint honest about what
+// output room this turn assumed, instead of every unset-MaxTokens turn
+// fingerprinting as if it reserved 0.
+func outputReserve(maxTokens *int, level reasoning.Level) int {
+	if maxTokens != nil && *maxTokens >= 0 {
+		return *maxTokens
 	}
-	return *maxTokens
+	return reasoning.OutputReserveFloor(level)
 }
 
 func latestUserObjective(messages []provider.Message) string {

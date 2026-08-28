@@ -51,7 +51,13 @@ func TestDoctorSeparatesEmptyAgentsFromWorkspacePromptGate(t *testing.T) {
 		t.Fatalf("doctor error = %v", err)
 	}
 	text := out.String()
-	if !strings.Contains(text, "state: no definitions") || !strings.Contains(text, "workspace prompts/project skills: enabled") {
+	// File-collection emptiness ("collection: not present") must stay
+	// distinguishable from the workspace prompt gate, while the compiled
+	// built-in still shows as a selectable roster row.
+	if !strings.Contains(text, "collection: not present") || !strings.Contains(text, "workspace prompts/project skills: enabled") {
 		t.Fatalf("empty collection and gate are conflated: %s", text)
+	}
+	if !strings.Contains(text, "name: general-purpose") || !strings.Contains(text, "state: selectable") {
+		t.Fatalf("built-in roster row missing: %s", text)
 	}
 }

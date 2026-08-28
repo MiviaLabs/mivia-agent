@@ -264,5 +264,100 @@ func TestOneShotHandlerDoesNotChargeOutputReserveAgainstPromptBudget(t *testing.
 	}
 }
 
+// hungChatCompleter blocks Chat until the call context's deadline fires,
+// then returns the context error - the wire shape of a stalled provider.
+type hungChatCompleter struct{}
+
+func (c *hungChatCompleter) Name() string { return "hung-chat" }
+
+func (c *hungChatCompleter) Chat(ctx context.Context, req provider.Request) (string, error) {
+	<-ctx.Done()
+	return "", ctx.Err()
+}
+
+func (c *hungChatCompleter) ChatStream(ctx context.Context, req provider.Request, w io.Writer) (string, error) {
+	return c.Chat(ctx, req)
+}
+
+func (c *hungChatCompleter) ChatTurn(ctx context.Context, req provider.Request) (*provider.Response, error) {
+	text, err := c.Chat(ctx, req)
+	return &provider.Response{Content: text}, err
+}
+
+// deadlineProbeCompleter records how much call-context headroom remained
+// when the provider call went out, so a test can tell which bound won
+// without sleeping on wall-clock differences.
+type deadlineProbeCompleter struct {
+	remaining time.Duration
+	ok        bool
+}
+
+func (c *deadlineProbeCompleter) Name() string { return "deadline-probe" }
+
+func (c *deadlineProbeCompleter) Chat(ctx context.Context, req provider.Request) (string, error) {
+	deadline, ok := ctx.Deadline()
+	c.ok = ok
+	if ok {
+		c.remaining = time.Until(deadline)
+	}
+	return "ok", nil
+}
+
+func (c *deadlineProbeCompleter) ChatStream(ctx context.Context, req provider.Request, w io.Writer) (string, error) {
+	return c.Chat(ctx, req)
+}
+
+func (c *deadlineProbeCompleter) ChatTurn(ctx context.Context, req provider.Request) (*provider.Response, error) {
+	text, err := c.Chat(ctx, req)
+	return &provider.Response{Content: text}, err
+}
+
+// TestOneShotHandlerTotalTimeoutFires pins the whole-call budget: with no
+// parent deadline and no request timeout, TotalTimeout alone must end the
+// call with context.DeadlineExceeded instead of letting a hung provider
+// pin the subagent forever.
+func TestOneShotHandlerTotalTimeoutFires(t *testing.T) {
+	h := &OneShotHandler{
+		Completer:    &hungChatCompleter{},
+		Model:        "test-model",
+		SystemPrompt: "Analyze.",
+		TotalTimeout: 30 * time.Millisecond,
+	}
+	_, err := h.Invoke(context.Background(), runtime.Request{
+		Name:  "test",
+		Input: json.RawMessage(`"task"`),
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want context.DeadlineExceeded from the total budget", err)
+	}
+}
+
+// TestOneShotHandlerTighterRequestTimeoutWins pins the clamp order: a
+// per-task timeout tighter than the total budget is the bound the provider
+// call actually sees; the total budget never extends it.
+func TestOneShotHandlerTighterRequestTimeoutWins(t *testing.T) {
+	probe := &deadlineProbeCompleter{}
+	h := &OneShotHandler{
+		Completer:    probe,
+		Model:        "test-model",
+		SystemPrompt: "Analyze.",
+		TotalTimeout: time.Minute,
+	}
+	_, err := h.Invoke(context.Background(), runtime.Request{
+		Name:    "test",
+		Input:   json.RawMessage(`"task"`),
+		Timeout: 10 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("Invoke() = %v; the 10ms request timeout beats the hung wait only when the budget is honored", err)
+	}
+	if !probe.ok {
+		t.Fatal("provider call carried no deadline; the per-task timeout was dropped")
+	}
+	if probe.remaining > 5*time.Second {
+		t.Fatalf("provider saw %v of headroom, want the ~10ms request timeout, not the 1m total", probe.remaining)
+	}
+}
+
 // Ensure OneShotHandler implements runtime.Handler at compile time.
 var _ runtime.Handler = (*OneShotHandler)(nil)

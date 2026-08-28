@@ -165,8 +165,8 @@ Look at the arrows out of `dispatch_tasks`. One run can hold many tasks. `join_r
 
 | Tool | Purpose |
 |------|---------|
-| `dispatch_tasks` | Dispatch sub-tasks with optional dependencies. Supports `idempotency_key`, `wait` (`run`/`none`/`task`, default `run`), `wait_task_id`, and per-task `timeout_seconds`/`output_schema`. With `wait=run` it blocks for the whole batch and returns one result per task |
-| `inspect_agents` | Returns a snapshot of a run: status, task states, display name, timestamps |
+| `dispatch_tasks` | Dispatch sub-tasks with optional dependencies. Supports `wait` (`run`/`none`/`task`, default `run`), `wait_task_id`, and per-task `timeout_seconds`/`output_schema`. With `wait=run` it blocks for the whole batch and returns one result per task |
+| `inspect_agents` | Returns a snapshot of a run: status, per-task states, and a live progress block for running tasks (tool-call counter, task age, last tool call and its age) |
 | `join_run` | Block until a run completes; returns per-task results |
 | `cancel_run` | Cancel a running orchestration run, in two phases |
 
@@ -183,11 +183,7 @@ Tasks can declare `depends_on` for dependency ordering. The scheduler:
 
 #### Idempotency
 
-Pass `idempotency_key` to `dispatch_tasks` to make the call repeatable without side effects:
-
-- A key applies only to the same caller. Another caller using the same key starts a new run.
-- The same caller and identical work reuse a completed run's results or an in-flight run's handle.
-- Different work with the same caller and key returns an idempotency conflict.
+`dispatch_tasks` is idempotent automatically: the harness derives its own idempotency key from the tool call's identity (not a caller-supplied value), so a provider-level retry of the same call reuses the in-flight or completed run instead of dispatching duplicate work. There is no `idempotency_key` parameter to pass.
 
 #### Results are always complete
 

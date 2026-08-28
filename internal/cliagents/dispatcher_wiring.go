@@ -3,12 +3,14 @@ package cliagents
 import (
 	"errors"
 	"fmt"
+	"github.com/MiviaLabs/mivia-agent/internal/agents"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -33,8 +35,10 @@ var RemainderSpoolFromRegistryVar func(*tools.Registry) *remainder.Spool
 // WireWorkflowToolOptionsVar is wired at process start by
 // internal/cli/cliagents_wiring.go to cli's wireWorkflowToolOptions.
 // chat_workspace.go (moving) calls this to wire the workflow-engine event bus
-// without importing cli.
-var WireWorkflowToolOptionsVar func(*tools.DefaultOptions, string, *config.Resolved, func() *events.Bus, bool)
+// without importing cli. The ledger repository is the owning session's
+// orchestration repo (AgentSessionState.LedgerRepo); nil keeps child-run
+// registration skipped.
+var WireWorkflowToolOptionsVar func(*tools.DefaultOptions, string, *config.Resolved, func() *events.Bus, bool, ledger.LedgerRepository)
 
 // BuiltInSlashTokensVar is wired by internal/cli/cliagents_wiring.go to return
 // the set of reserved slash tokens from cli's builtInSlashCommands. Used by
@@ -49,7 +53,10 @@ var SummaryWiringVar func(*chat.Session, *config.Resolved) (*contextmgr.Summariz
 // AdvertisedSessionToolSpecsVar is wired by internal/cli/cliagents_wiring.go to
 // cli's advertisedSessionToolSpecs. Used by advertisedToolSpecs in tool_tiers.go
 // to append the session-owned dispatcher tools to the advertised wire array.
-var AdvertisedSessionToolSpecsVar func(ToolTierPlan) []provider.ToolSpec
+// The *agents.AgentRegistry argument is the binding's immutable resolved
+// agent snapshot, passed as data (never a global) so dispatch_tasks can
+// advertise its real agent enum and roster at turn zero.
+var AdvertisedSessionToolSpecsVar func(ToolTierPlan, *agents.AgentRegistry) []provider.ToolSpec
 
 // NewSessionDispatcher builds a runtime.Dispatcher for agent sessions.
 // NewSessionDispatcherVar must be non-nil; wired by internal/cli/cliagents_wiring.go.

@@ -96,6 +96,14 @@ type Config struct {
 	// works via the LIKE fallback with identical results; the file must
 	// already exist with the schema. Zero value false = read-write.
 	ReadOnly bool
+	// HardenTempStore marks ProjectPath as an ad-hoc, OS-temp-dir-backed store
+	// (config.TempStorePath) rather than an operator-managed project path.
+	// When true, openSQLiteStore chmods the project database file to 0600 and
+	// its parent directory to 0700, failing closed on error, the same way the
+	// org store is always hardened: an ad-hoc temp-dir store has no project
+	// directory whose permissions an operator manages, so mivia must protect
+	// it itself.
+	HardenTempStore bool
 }
 
 // Backend names.
@@ -190,15 +198,45 @@ func openSQLiteStore(cfg Config) (*sqliteStore, error) {
 	if projectPath == "" {
 		return nil, errors.New("memory: project database path is required")
 	}
+	// An ad-hoc temp-dir store has no operator-managed project directory: harden
+	// it to 0700 before the sqlite file is ever created inside it, so the file
+	// is never briefly reachable through a world-traversable directory (see
+	// ensureHardenedDir).
+	if cfg.HardenTempStore {
+		if err := ensureHardenedDir(filepath.Dir(projectPath)); err != nil {
+			return nil, fmt.Errorf("memory project dir %s: %w", filepath.Dir(projectPath), err)
+		}
+	}
 	projectDB, fts, err := openMemoryDB(projectPath, cfg.ReadOnly)
 	if err != nil {
 		return nil, fmt.Errorf("memory project store %s: %w", projectPath, err)
 	}
 	s := &sqliteStore{projectDB: projectDB, cfg: cfg, fts: fts}
+	// An ad-hoc temp-dir store has no operator-managed project directory
+	// protecting it (unlike the general project-tier case), so harden it the
+	// same way the org store is always hardened.
+	if cfg.HardenTempStore {
+		if err := chmodFile(projectPath, 0o600); err != nil {
+			projectDB.Close()
+			return nil, fmt.Errorf("memory project store %s: %w", projectPath, err)
+		}
+		if err := chmodFile(filepath.Dir(projectPath), 0o700); err != nil {
+			projectDB.Close()
+			return nil, fmt.Errorf("memory project dir %s: %w", filepath.Dir(projectPath), err)
+		}
+	}
 	// The org store is created only when an org identity is configured: with no
 	// org_id the feature is project-only, and an unconfigured org must not
 	// create side-effect files (or fail the session) in the user's home.
 	if orgPath := strings.TrimSpace(cfg.OrgPath); orgPath != "" && cfg.OrgID != "" {
+		// Org hardening is unconditional (never gated by HardenTempStore): the
+		// org store is always user-owned, never operator-managed. Harden the
+		// directory before the sqlite file is ever created inside it, same as
+		// the project/ad-hoc block above.
+		if err := ensureHardenedDir(filepath.Dir(orgPath)); err != nil {
+			projectDB.Close()
+			return nil, fmt.Errorf("memory org dir %s: %w", filepath.Dir(orgPath), err)
+		}
 		orgDB, _, err := openMemoryDB(orgPath, cfg.ReadOnly)
 		if err != nil {
 			projectDB.Close()
@@ -224,6 +262,22 @@ func openSQLiteStore(cfg Config) (*sqliteStore, error) {
 // chmodFile is a test seam: the OS-error branches of openSQLiteStore are not
 // reachable with a real filesystem (an owner can always chmod its own files).
 var chmodFile = os.Chmod
+
+// ensureHardenedDir creates dir at 0700 if it does not already exist (so the
+// os.MkdirAll(dir, 0755) inside openMemoryDB that runs immediately afterward
+// is a documented no-op on an already-existing directory) and then chmods it
+// to 0700 unconditionally, correcting a directory left at a looser mode by a
+// session that ran before this fix shipped. This must run BEFORE
+// openMemoryDB/sql.Open ever touch the path: modernc.org/sqlite creates a
+// brand-new database file at 0644 regardless of umask, so a world-traversable
+// (0755) directory at file-creation time is a real, if brief, local privacy
+// exposure even though the file gets chmod'd to 0600 moments later.
+func ensureHardenedDir(dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	return chmodFile(dir, 0o700)
+}
 
 func openMemoryDB(path string, readOnly bool) (*sql.DB, bool, error) {
 	dir := filepath.Dir(path)

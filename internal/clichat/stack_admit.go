@@ -335,7 +335,9 @@ func admitStackChunkRun(prepared *cliworkflow.PreparedWorkflowRun, stackID, chun
 		return workflowledger.RunSnapshot{}, err
 	}
 	defer finishExecution()
-	built, err := cliworkflow.WorkflowRunBuild(prepared.Root, prepared.Res, prepared.Store, prepared.Repo, prepared.Compiled, prepared.RefBase, inputs, inputSnapshot, prepared.Raw, runID, nil, nil, nil, nil, nil)
+	// Stack chunk admission runs on drive frames with no session caller, so the
+	// owner is empty and child run registration is skipped (fail-closed).
+	built, err := cliworkflow.WorkflowRunBuild(prepared.Root, prepared.Res, prepared.Store, prepared.Repo, prepared.Compiled, prepared.RefBase, inputs, inputSnapshot, prepared.Raw, runID, nil, nil, nil, nil, nil, "", nil)
 	if err != nil {
 		return workflowledger.RunSnapshot{}, err
 	}
@@ -397,7 +399,8 @@ func admitDecomposeContinuationRun(prepared *cliworkflow.PreparedWorkflowRun, st
 		return nil, false, "", err
 	}
 	defer finishExecution()
-	built, err := cliworkflow.WorkflowRunBuild(prepared.Root, prepared.Res, prepared.Store, prepared.Repo, prepared.Compiled, prepared.RefBase, inputs, snapshot, prepared.Raw, runID, nil, nil, nil, nil, nil)
+	// Same fail-closed empty owner as admitStackChunkRun.
+	built, err := cliworkflow.WorkflowRunBuild(prepared.Root, prepared.Res, prepared.Store, prepared.Repo, prepared.Compiled, prepared.RefBase, inputs, snapshot, prepared.Raw, runID, nil, nil, nil, nil, nil, "", nil)
 	if err != nil {
 		return nil, false, "", err
 	}

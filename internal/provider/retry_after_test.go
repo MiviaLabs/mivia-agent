@@ -89,7 +89,7 @@ func TestParseRetryAfter_ExtremeDatesSaturate(t *testing.T) {
 	if _, retry := rt.retryDelay(0, nil, &http.Response{
 		StatusCode: http.StatusTooManyRequests,
 		Header:     http.Header{"Retry-After": {"Fri, 31 Dec 9999 23:59:59 GMT"}},
-	}); retry {
+	}, 0); retry {
 		t.Fatal("retried inside a window it cannot wait out")
 	}
 	// The symmetric case: a date older than a Duration can express is still

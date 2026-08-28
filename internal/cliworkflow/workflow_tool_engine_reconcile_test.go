@@ -11,6 +11,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -46,7 +47,7 @@ func TestSessionReconcileParkedRunsDelivers(t *testing.T) {
 	var opts tools.DefaultOptions
 	// A non-nil event-bus provider marks production wiring and arms the
 	// parked-run sweep; the nil-provider test paths never sweep.
-	WireWorkflowToolOptions(&opts, root, res, func() *events.Bus { return nil }, false)
+	WireWorkflowToolOptions(&opts, root, res, func() *events.Bus { return nil }, false, nil)
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -610,7 +611,7 @@ func wireParkedResumeStubs(t *testing.T, repo workflowledger.Repository, advance
 		return nil, repo, func() {}, nil
 	}
 	WorkflowResumeInstallHooks = func(string, bool, bool) (func(), error) { return func() {}, nil }
-	workflowResumeBuild = func(_ string, _ *config.Resolved, _ *storage.SQLite, _ workflowledger.Repository, _ *definition.CompiledWorkflow, _ string, _ map[string]any, _ map[string]string, _ []byte, _ string, _ *workflowledger.Snapshot, _ []byte, recorded *workflowledger.RunSnapshot, _ map[string]bool, _ *skills.Registry) (WorkflowControllerBuild, error) {
+	workflowResumeBuild = func(_ string, _ *config.Resolved, _ *storage.SQLite, _ workflowledger.Repository, _ *definition.CompiledWorkflow, _ string, _ map[string]any, _ map[string]string, _ []byte, _ string, _ *workflowledger.Snapshot, _ []byte, recorded *workflowledger.RunSnapshot, _ map[string]bool, _ *skills.Registry, _ string, _ ledger.LedgerRepository) (WorkflowControllerBuild, error) {
 		ctrl := &controller.LinearController{Holder: parkedSweepHolder}
 		if recorded != nil {
 			ctrl.RunID = recorded.RunID

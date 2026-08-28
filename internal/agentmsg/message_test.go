@@ -245,6 +245,44 @@ func TestValidateRejectsNULBody(t *testing.T) {
 	}
 }
 
+// TestValidateRefErrorTeachesRecovery pins the refs-failure contract: the
+// error must keep wrapping ErrInvalidMessage, must quote the offending value
+// (so it cannot be misread as the name of a faulting package), and must state
+// the expected shape and both recoveries - models passed package names
+// ("sdkadapter", "internal/subagents") as refs and the bare Parse error gave
+// them nothing to repair the call with.
+func TestValidateRefErrorTeachesRecovery(t *testing.T) {
+	_, err := NewMessage("run-1", KindFinding,
+		Party{TaskID: "t", Agent: "a"}, Party{Role: ParentSentinel},
+		"finding body", []string{"sdkadapter"},
+		Options{Now: fixedTime, ID: "msg-badref"})
+	if !errors.Is(err, ErrInvalidMessage) {
+		t.Fatalf("err = %v, want ErrInvalidMessage", err)
+	}
+	if !errors.Is(err, sdkadapter.ErrMalformedReference) {
+		t.Fatalf("err = %v, want sdkadapter.ErrMalformedReference reachable through the chain", err)
+	}
+	for _, want := range []string{`"sdkadapter"`, "ref:<kind>:<digest>", "output_ref", "omit refs"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing guidance %q", err, want)
+		}
+	}
+}
+
+// TestValidateRefAcceptsMintedHandle is the positive half of the same
+// contract: a handle minted by the bridge itself must still validate, so the
+// guidance in TestValidateRefErrorTeachesRecovery cannot drift into rejecting
+// real refs.
+func TestValidateRefAcceptsMintedHandle(t *testing.T) {
+	good := sdkadapter.Mint(sdkadapter.KindOutput, []byte("recorded payload"))
+	if _, err := NewMessage("run-1", KindFinding,
+		Party{TaskID: "t", Agent: "a"}, Party{Role: ParentSentinel},
+		"finding body", []string{good},
+		Options{Now: fixedTime, ID: "msg-goodref"}); err != nil {
+		t.Fatalf("NewMessage with a minted ref: %v", err)
+	}
+}
+
 // TestSentinelNotDeliveredThroughValidation pins the claim that the decline
 // sentinel never passes through NewMessage/Validate: it is delivered ONLY via
 // the park channel (DeliverAnswer). If a future caller tried to mint it as a

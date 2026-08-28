@@ -229,7 +229,7 @@ func TestBuildWorkflowControllerSynthesizesStackingRuntimesBeforeAdmission(t *te
 		t.Fatal("stacking config did not resolve")
 	}
 
-	built, err := buildWorkflowController(root, res, store, repo, compiled, workflowRoot, map[string]any{"task": "test"}, map[string]string{"task": "test"}, []byte("definition"), "wfr-stacking-e2e", nil, nil, nil, nil, nil)
+	built, err := buildWorkflowController(root, res, store, repo, compiled, workflowRoot, map[string]any{"task": "test"}, map[string]string{"task": "test"}, []byte("definition"), "wfr-stacking-e2e", nil, nil, nil, nil, nil, "", nil)
 	if err != nil {
 		t.Fatalf("buildWorkflowController() error = %v", err)
 	}

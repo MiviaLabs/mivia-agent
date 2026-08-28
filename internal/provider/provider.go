@@ -81,9 +81,15 @@ type Request struct {
 	// StreamWriter receives content deltas when ChatTurn streams (Stream=true).
 	// Tool-call argument fragments are not written here - only assistant text.
 	StreamWriter io.Writer
-	Tools        []ToolSpec
-	ToolChoice   string // "auto", "none", or empty
-	Timeout      time.Duration
+	// StreamTransport asks ChatTurn to use the SSE endpoint on the wire while
+	// keeping the non-stream contract: assemble the full Response, return it.
+	// Honored only when Stream is false and StreamWriter is nil. Callers that
+	// do not set it see no change. Completers that do not implement it
+	// (Anthropic family) see no change.
+	StreamTransport bool
+	Tools           []ToolSpec
+	ToolChoice      string // "auto", "none", or empty
+	Timeout         time.Duration
 	// DisableProviderReplay prevents transport and protocol fallbacks from
 	// issuing a second provider request for this logical attempt.
 	DisableProviderReplay bool

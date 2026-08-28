@@ -39,6 +39,18 @@ type OneShotHandler struct {
 	// supersedes Reasoning when present, so a runtime effort choice reaches a
 	// handler built before the choice was made.
 	ReasoningFunc func() reasoning.Setting
+	// TotalTimeout is the maximum wall-clock time for the whole call, with
+	// the same semantics as MultiStepHandler.TotalTimeout: <= 0 adds no
+	// bound, a tighter req.Timeout wins, and the parent deadline is never
+	// extended. Construction sites that carry the
+	// default_total_timeout_seconds budget set it via totalTaskTimeout-style
+	// resolution; zero leaves the per-task timeout as the only bound.
+	TotalTimeout time.Duration
+	// WireStream opts this one-shot call into the provider's wire-stream
+	// transport: stream:true on the wire, the plain non-stream contract on
+	// the return path (the full answer still comes back as one string). Set
+	// from [subagents] wire_stream at the construction site.
+	WireStream bool
 }
 
 // dial is the reasoning setting this invocation sends.
@@ -79,14 +91,11 @@ func (h *OneShotHandler) Invoke(ctx context.Context, req runtime.Request) (json.
 		return nil, fmt.Errorf("%w (%d > %d tokens)", agent.ErrPromptBudgetExceeded, cost, maxContextTokens)
 	}
 
-	callCtx := ctx
-	if req.Timeout > 0 {
-		if parentDeadline, ok := ctx.Deadline(); !ok || req.Timeout < time.Until(parentDeadline) {
-			var cancel context.CancelFunc
-			callCtx, cancel = context.WithTimeout(ctx, req.Timeout)
-			defer cancel()
-		}
-	}
+	// Same clamp as the multi-step handler: the whole-call total budget and
+	// the per-task timeout apply only when tighter than the parent deadline,
+	// and the parent deadline is never extended.
+	callCtx, cancel := budgetContext(ctx, h.TotalTimeout, req.Timeout)
+	defer cancel()
 
 	dial := h.dial()
 	reply, err := h.Completer.Chat(callCtx, provider.Request{
@@ -96,6 +105,7 @@ func (h *OneShotHandler) Invoke(ctx context.Context, req runtime.Request) (json.
 		ReasoningLevel:   dial.Level,
 		ReasoningDialect: dial.Dialect,
 		SessionID:        req.SessionID,
+		StreamTransport:  h.WireStream,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("subagent %q: %w", req.Name, err)

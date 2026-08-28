@@ -40,12 +40,12 @@ func TestAgentsSection_GroupedByGlobalAndProject(t *testing.T) {
 	s = focusAgents(t, s)
 	plain := ansi.Strip(agentsSectionOf(s).View())
 
-	for _, header := range []string{"Global Agents (user home)", "Project Agents (workspace)"} {
+	for _, header := range []string{"Global Agents (user home)", "Project Agents (workspace)", "Built-in Agents (shipped with mivia)"} {
 		if !strings.Contains(plain, header) {
 			t.Errorf("Agents view is missing group header %q:\n%s", header, plain)
 		}
 	}
-	for _, agent := range []string{ports.DefaultAgentName, "go-engineer", "reviewer"} {
+	for _, agent := range []string{"general-purpose", "go-engineer", "reviewer"} {
 		if !strings.Contains(plain, agent) {
 			t.Errorf("Agents view is missing agent %q:\n%s", agent, plain)
 		}
@@ -68,10 +68,7 @@ func TestAgentsSection_RemoveAgent_RequiresConfirmation(t *testing.T) {
 	s, h := newHarnessScreen(t, 100, 30)
 	s = focusAgents(t, s)
 
-	// Move cursor to row 1 (go-engineer)
-	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
-	s = next.(Screen)
-
+	// go-engineer is the first selectable row (the built-in group renders last)
 	sec := agentsSectionOf(s)
 	target, ok := sec.selectedAgent()
 	if !ok || target.Name != "go-engineer" {
@@ -152,34 +149,46 @@ func TestAgentsSection_DeleteConfirmation_AnyKeyCancelsWithoutSideEffect(t *test
 	}
 }
 
+// TestAgentsSection_RemoveDefaultAgentFails keeps its historical name (the
+// deletions allowlist gate rejects renames in the same commit); the body now
+// pins the scope-based guard: a built-in row cannot be removed.
 func TestAgentsSection_RemoveDefaultAgentFails(t *testing.T) {
 	s, h := newHarnessScreen(t, 100, 30)
 	s = focusAgents(t, s)
 
+	// Navigate down to the built-in row (the last selectable row).
 	sec := agentsSectionOf(s)
-	if ag, ok := sec.selectedAgent(); !ok || ag.Name != ports.DefaultAgentName {
-		t.Fatalf("row 0 is %v, want default agent %q", ag, ports.DefaultAgentName)
+	for i := 0; i < 10; i++ {
+		if ag, ok := sec.selectedAgent(); ok && ag.Name == "general-purpose" && ag.Scope == ports.ScopeBuiltin {
+			break
+		}
+		next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+		s = next.(Screen)
+		sec = agentsSectionOf(s)
+	}
+	if ag, ok := sec.selectedAgent(); !ok || ag.Name != "general-purpose" || ag.Scope != ports.ScopeBuiltin {
+		t.Fatalf("failed to reach the built-in general-purpose row, cursor on %v", ag)
 	}
 
-	// Press 'x' on default agent
+	// Press 'x' on the built-in agent
 	next, cmd := s.Update(tea.KeyPressMsg{Text: "x", Code: 'x'})
 	if cmd != nil {
-		t.Fatal("expected no save cmd when deleting default agent")
+		t.Fatal("expected no save cmd when deleting a built-in agent")
 	}
 	s = next.(Screen)
 	sec = agentsSectionOf(s)
-	if !strings.Contains(sec.notice, "the default agent \"Mivia\" cannot be removed") {
-		t.Errorf("expected notice about default agent, got %q", sec.notice)
+	if !strings.Contains(sec.notice, "built-in agent \"general-purpose\" cannot be removed") {
+		t.Errorf("expected notice about the built-in agent, got %q", sec.notice)
 	}
 
 	found := false
 	for _, a := range h.SettingsAdapters().Agents.Agents() {
-		if a.Name == ports.DefaultAgentName {
+		if a.Name == "general-purpose" {
 			found = true
 		}
 	}
 	if !found {
-		t.Error("the default agent was removed")
+		t.Error("the built-in agent was removed")
 	}
 }
 
@@ -252,10 +261,8 @@ func TestEditingAnAgent_FormAndPersist(t *testing.T) {
 	s, h := newHarnessScreen(t, 100, 30)
 	s = focusAgents(t, s)
 
-	// Move cursor to reviewer
+	// Move cursor to reviewer (one down from go-engineer)
 	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
-	s = next.(Screen)
-	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	s = next.(Screen)
 
 	// Press 'enter' on selected agent (reviewer)
@@ -296,10 +303,8 @@ func TestRenamingAnAgent_FormAndPersist(t *testing.T) {
 	s, h := newHarnessScreen(t, 100, 30)
 	s = focusAgents(t, s)
 
-	// Move cursor to reviewer (Project scope)
+	// Move cursor to reviewer (Project scope, one down from go-engineer)
 	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
-	s = next.(Screen)
-	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	s = next.(Screen)
 
 	// Press 'enter' to edit
@@ -336,26 +341,38 @@ func TestRenamingAnAgent_FormAndPersist(t *testing.T) {
 	}
 }
 
+// TestAgentsSection_DefaultAgentNameCannotBeRenamed keeps its historical
+// name (the deletions allowlist gate rejects renames in the same commit); the
+// body now pins that a built-in row cannot be edited at all.
 func TestAgentsSection_DefaultAgentNameCannotBeRenamed(t *testing.T) {
 	s, _ := newHarnessScreen(t, 100, 30)
 	s = focusAgents(t, s)
 
-	// Press 'enter' to edit default agent
+	// Navigate down to the built-in row (the last selectable row).
+	sec := agentsSectionOf(s)
+	for i := 0; i < 10; i++ {
+		if ag, ok := sec.selectedAgent(); ok && ag.Name == "general-purpose" && ag.Scope == ports.ScopeBuiltin {
+			break
+		}
+		next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+		s = next.(Screen)
+		sec = agentsSectionOf(s)
+	}
+
+	// Press 'enter' on the built-in row: the editor must not open.
 	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	s = next.(Screen)
 
-	sec := agentsSectionOf(s)
-	sec.formFields[agentFormName].SetValue("mivia-renamed")
-
-	// Press ctrl+s
-	next, cmd := s.Update(tea.KeyPressMsg{Text: "ctrl+s", Code: 's', Mod: tea.ModCtrl})
-	if cmd != nil {
-		t.Error("expected no save cmd when default agent name is changed")
+	sec = agentsSectionOf(s)
+	if sec.editing {
+		t.Fatal("the editor must not open for a built-in agent")
 	}
-	s = next.(Screen)
-	plain := ansi.Strip(agentsSectionOf(s).View())
-	if !strings.Contains(plain, "the default agent name \"Mivia\" cannot be changed") {
-		t.Errorf("expected rename error notice in view, got:\n%s", plain)
+	if !strings.Contains(sec.notice, "built-in agent \"general-purpose\" is read-only") {
+		t.Errorf("expected read-only notice, got %q", sec.notice)
+	}
+	plain := ansi.Strip(sec.View())
+	if !strings.Contains(plain, "built-in agent \"general-purpose\" is read-only") {
+		t.Errorf("expected read-only notice in view, got:\n%s", plain)
 	}
 }
 

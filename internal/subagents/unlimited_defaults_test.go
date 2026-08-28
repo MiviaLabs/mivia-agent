@@ -214,3 +214,38 @@ func TestPolicyUnlimitedSentinelDisablesBounds(t *testing.T) {
 		t.Fatalf("MaxBudget: got %d, want %d (unlimited sentinel)", p.p.MaxBudget, Unlimited)
 	}
 }
+
+// TestDefaultBudgetAdmitsARealisticDispatchBatch is the regression for a
+// real user-reported incident: dispatch_tasks batches immediately failed
+// every task with "budget limit exceeded"/"run budget exceeded" and a
+// terminationReason of never_started. Root cause: DefaultMaxBudget (the
+// safe-default MaxBudget an unconfigured [subagents] default_budget=0
+// resolves to, mirroring MaxFanout/MaxDepth's "0 means safe default, not
+// unlimited" policy) was 1000 - far below what a single realistic
+// dispatch_tasks task requests in practice (thousands per task is normal;
+// this pins 4 tasks at 6000 each, exactly the batch shape from the
+// incident report), so ordinary usage tripped the "safety" cap on the
+// very first call. validate must accept a realistic batch under the
+// unconfigured (zero-value Policy) default.
+func TestDefaultBudgetAdmitsARealisticDispatchBatch(t *testing.T) {
+	d := runtime.New(runtime.Policy{})
+	p := New(d, Policy{})
+	if err := d.Register(runtime.Subagent, "instant", &instantHandler{}); err != nil {
+		t.Fatal(err)
+	}
+	tasks := make([]Task, 4)
+	for i := range tasks {
+		tasks[i] = Task{ID: taskIDs4[i], Name: "instant", Input: json.RawMessage(`{}`), Budget: 6000}
+	}
+	results, err := p.Run(context.Background(), tasks)
+	if err != nil {
+		t.Fatalf("Run() err = %v, want nil (a realistic budget must not trip the unconfigured default cap)", err)
+	}
+	for _, r := range results {
+		if r.Err != nil {
+			t.Errorf("task %s err = %v, want nil", r.TaskID, r.Err)
+		}
+	}
+}
+
+var taskIDs4 = [4]string{"explore-meta", "explore-app-architecture", "explore-data-layer", "explore-testing-gates"}

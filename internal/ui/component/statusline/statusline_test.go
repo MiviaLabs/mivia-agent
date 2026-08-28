@@ -45,7 +45,9 @@ func TestStartArmsAndReturnsTickCmd(t *testing.T) {
 		t.Fatal("expected Active() after Start")
 	}
 	got := m.View(start.Add(3 * time.Second))
-	for _, want := range []string{"thinking", "3s"} {
+	// "3.0s" is the shared FormatElapsed ladder (transcript-polish.md R5),
+	// not the old Go time.Duration String() output.
+	for _, want := range []string{"thinking", "3.0s"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("statusline view missing %q: %q", want, got)
 		}
@@ -90,7 +92,7 @@ func TestSetLabelDoesNotResetElapsed(t *testing.T) {
 	m.Start("thinking", start)
 	m.SetLabel("running tool")
 	got := m.View(start.Add(5 * time.Second))
-	if !strings.Contains(got, "running tool") || !strings.Contains(got, "5s") {
+	if !strings.Contains(got, "running tool") || !strings.Contains(got, "5.0s") {
 		t.Errorf("got %q, want label updated and elapsed clock preserved", got)
 	}
 }

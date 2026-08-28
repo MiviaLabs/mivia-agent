@@ -27,15 +27,19 @@ const migrationWindow = "2026-12-31"
 // Reference kinds for content-addressed task results and agent messages.
 // The bridge owns the CLI kind vocabulary: every package that needs to
 // emit or recognise a "ref:<kind>:<digest>" string imports these
-// constants from internal/sdkadapter instead of minting its own. Four
+// constants from internal/sdkadapter instead of minting its own. Five
 // kinds cover every content reference today: tool output, tool error,
-// agent-to-agent message bodies, and a subagent's recorded tool-call
-// step trace (operator-facing only - never handed to the model).
+// agent-to-agent message bodies, a subagent's recorded tool-call step
+// trace (operator-facing only - never handed to the model), and note.
+// A note is model-authored content stored by the store_note tool; it is
+// distinct from ref:output:, which a coordinator attests as a task's
+// recorded output.
 const (
 	KindOutput    = "output"
 	KindError     = "error"
 	KindMessage   = "message"
 	KindToolCalls = "tool_calls"
+	KindNote      = "note"
 )
 
 // ErrMalformedReference is the bridge's fail-closed response when Parse
@@ -85,7 +89,7 @@ func parseCLI(ref string) (kind, digest string, ok bool) {
 
 // knownKind reports whether kind is one the bridge will mint and parse.
 func knownKind(kind string) bool {
-	return kind == KindOutput || kind == KindError || kind == KindMessage || kind == KindToolCalls
+	return kind == KindOutput || kind == KindError || kind == KindMessage || kind == KindToolCalls || kind == KindNote
 }
 
 // isLowerHexDigest reports whether s is exactly a lowercase hex SHA-256 digest.

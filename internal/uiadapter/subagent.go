@@ -76,7 +76,22 @@ func (s *SubagentThreads) HandleEvent(ev agent.Event, opts TranslateOptions) {
 	if ev.Origin.IsZero() {
 		return
 	}
-	keys := []string{ev.Origin.TaskID, ev.ToolCallID, ev.Origin.Agent}
+	// Origin.Agent is an agent NAME, not a per-run identity: two different
+	// dispatch_tasks entries commonly route to the same named agent (e.g.
+	// "general-purpose" is the default). Keying on it unconditionally
+	// merges unrelated tasks into one shared conversation object -
+	// whichever finishes first fires EventSubagentDone, which seals the
+	// shared object (SubagentTranscriptConversation.done), and every later
+	// event for the OTHER, still-running task is then silently dropped by
+	// RecordEvent's !c.done guard even though its sidebar row (keyed
+	// independently by TaskID) keeps updating normally. Only fall back to
+	// Agent when there is no TaskID to key on at all - the reason this key
+	// exists (371c35d5) is a caller that has nothing else to look up by,
+	// not a general alias for every event.
+	keys := []string{ev.Origin.TaskID, ev.ToolCallID}
+	if ev.Origin.TaskID == "" {
+		keys = append(keys, ev.Origin.Agent)
+	}
 	var hasKey bool
 	for _, k := range keys {
 		if k != "" {

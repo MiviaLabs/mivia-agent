@@ -1,8 +1,0 @@
-# --output json path: one uievent.Event per NDJSON line, no network/API key.
-
-exec mivia-ui-demo json
-stdout '"kind":"turn.start"'
-stdout '"kind":"turn.end"'
-stdout '"kind":"tool.end".*"diff":\{'
-stdout '"kind":"plan".*"done":2,"total":4'
-stdout '(?m)^\{"kind"'

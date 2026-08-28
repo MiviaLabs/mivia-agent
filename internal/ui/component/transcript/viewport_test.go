@@ -1,6 +1,7 @@
 package transcript
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -24,24 +25,47 @@ func TestViewIsAlwaysExactlyTheViewportHeight(t *testing.T) {
 	}
 }
 
-// TestOneBlankRowSeparatesAdjacentBlocks pins docs/design/wireframes.md
-// variant A (and mivia-ui-mock.html): every top-level block is followed
-// by one blank row before the next one starts, so the transcript reads
-// as distinct entries instead of one dense, cramped run of text.
-func TestOneBlankRowSeparatesAdjacentBlocks(t *testing.T) {
-	m := sizedModel(t, 80, 10, 2)
-	rows := m.Rows()
-	// sizedModel's blocks are one row each (header only): row 0 is the
-	// first block's header, row 1 must be the blank separator, row 2 the
-	// second block's header.
-	if len(rows) < 3 {
-		t.Fatalf("got %d rows, want at least 3 to hold two blocks and their separator", len(rows))
+// TestSeparatorsFollowSections pins transcript-polish.md R1: blank rows
+// separate SECTIONS of the transcript - between prose and the activity
+// group that follows it - while consecutive activity blocks inside one
+// group read as one dense run with no blank rows between them. Spacing
+// follows turns, not events.
+func TestSeparatorsFollowSections(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 30)
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindTurnStart, Body: uievent.TurnStartBody{Input: "fix the bug"}})
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindTextEnd, Body: uievent.TextEndBody{Text: "On it."}})
+	m, _ = m.HandleEvent(noticeEvent(blockName(0)))
+	m, _ = m.HandleEvent(noticeEvent(blockName(1)))
+	rows := strings.Split(ansi.Strip(m.View()), "\n")
+	rowOf := func(needle string) (int, bool) {
+		for i, r := range rows {
+			if strings.Contains(r, needle) {
+				return i, true
+			}
+		}
+		return 0, false
 	}
-	if rows[1] != "" {
-		t.Errorf("got row 1 = %q, want a blank separator row between the two blocks", rows[1])
+	prose, ok := rowOf("On it.")
+	if !ok {
+		t.Fatalf("assistant prose is missing from the view:\n%s", strings.Join(rows, "\n"))
 	}
-	if rows[0] == "" || rows[2] == "" {
-		t.Errorf("got blank block rows, want content: row0=%q row2=%q", rows[0], rows[2])
+	if rows[prose-1] != "" {
+		t.Errorf("got %q above the prose, want a blank section separator", rows[prose-1])
+	}
+	first, ok := rowOf(strings.TrimSpace(blockName(0)))
+	if !ok || !strings.Contains(rows[first], blockName(0)) {
+		t.Fatalf("first notice is missing from the view:\n%s", strings.Join(rows, "\n"))
+	}
+	if rows[first-1] != "" {
+		t.Errorf("got %q above the activity group, want a blank section separator", rows[first-1])
+	}
+	second, ok := rowOf(strings.TrimSpace(blockName(1)))
+	if !ok {
+		t.Fatalf("second notice is missing from the view:\n%s", strings.Join(rows, "\n"))
+	}
+	if second != first+1 {
+		t.Errorf("second notice at row %d, first at %d: activity rows must be adjacent inside a group", second, first)
 	}
 }
 
@@ -75,6 +99,23 @@ func TestNothingIsLostWhenItScrollsOff(t *testing.T) {
 	}
 	if !strings.Contains(view, blockName(n-1)) {
 		t.Error("the newest block is not on screen while following")
+	}
+}
+
+// TestRowsDoesNotRenderBlocksAboveTheViewport pins the performance
+// contract Rows' own doc comment states: "a block above or below it
+// costs one Height call and nothing else." Following the tail of a long
+// conversation must not re-render the whole scrollback on every frame.
+func TestRowsDoesNotRenderBlocksAboveTheViewport(t *testing.T) {
+	const n = 500
+	m := sizedModel(t, 80, 10, n)
+
+	renderCalls = 0
+	_ = m.Rows()
+	// 10 visible rows plus generous slack for the streaming tail and any
+	// boundary block - nowhere near the 500 blocks held in history.
+	if renderCalls > 30 {
+		t.Errorf("Rows() triggered %d Block.Render calls for a 10-row viewport over %d blocks; want it bounded by the viewport, not the history", renderCalls, n)
 	}
 }
 
@@ -609,9 +650,10 @@ func TestTallFocusedBlockShowsItsHeadNotItsTail(t *testing.T) {
 	if !strings.Contains(view, "tall_call") {
 		t.Errorf("the tall block's header is off screen:\n%s", view)
 	}
-	// Block 0 ("above") is a 1-row notice plus its trailing blank
-	// separator, so block 1's own top row starts at offset 2.
-	if got, want := m.Offset(), 2; got != want {
+	// Block 0 ("above") is a 1-row notice and block 1 is also activity,
+	// so the group rule (R1) puts no blank row between them: block 1's
+	// own top row starts at offset 1.
+	if got, want := m.Offset(), 1; got != want {
 		t.Errorf("got offset %d, want %d: the block's own top row", got, want)
 	}
 }
@@ -660,15 +702,80 @@ func TestScrollByToTheBottomResetsCount(t *testing.T) {
 	}
 }
 
+// TestMarkerOnlyWhereABodyExists pins transcript-polish.md R3: a marker
+// may only be painted where there is a body to open. push() used to force
+// Collapsible on every non-prose block, so a one-line notice or a
+// one-line error carried a "v" with nothing under it. A body at or above
+// the default threshold still starts collapsed.
+func TestMarkerOnlyWhereABodyExists(t *testing.T) {
+	th := loadTheme(t)
+	m := New(th, theme.TierASCII)
+	m.SetSize(80, 40)
+	m, _ = m.HandleEvent(noticeEvent("one-line notice"))
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindError, Body: uievent.ErrorBody{Text: "one-line error"}})
+	long := "lifecycle hooks (20)"
+	for i := 0; i < 20; i++ {
+		long += fmt.Sprintf("\n  [%d] active", i)
+	}
+	m, _ = m.HandleEvent(noticeEvent(long))
+
+	blocks := m.Blocks()
+	if len(blocks) != 3 {
+		t.Fatalf("got %d blocks, want 3", len(blocks))
+	}
+	if blocks[0].Collapsible || len(blocks[0].Body) != 0 {
+		t.Errorf("a one-line notice must be header-only and not collapsible: %+v", blocks[0])
+	}
+	if blocks[1].Collapsible || len(blocks[1].Body) != 0 {
+		t.Errorf("a one-line error must be header-only and not collapsible: %+v", blocks[1])
+	}
+	for i, b := range []Block{blocks[0], blocks[1]} {
+		row := ansi.Strip(strings.SplitN(b.Render(th, theme.TierASCII, 80), "\n", 2)[0])
+		if row != "  "+b.Header.Label+" "+b.Header.Detail {
+			t.Errorf("block %d header = %q, want a blank marker column", i, row)
+		}
+	}
+	if !blocks[2].Collapsible {
+		t.Error("a 20-line body must be collapsible")
+	}
+	if !blocks[2].Collapsed {
+		t.Error("a 20-line body must start collapsed per defaultCollapsed")
+	}
+}
+
 // TestExpandBlockAtScreenRow pins the click contract: the header row of
 // a collapsed block expands it; other rows and off-screen rows do not.
 func TestExpandBlockAtScreenRow(t *testing.T) {
-	// Two notice blocks; force every block collapsed so the click has a
-	// deterministic target, then measure at a height that shows them.
-	m := sizedModel(t, 80, 10, 2).SetAllCollapsed(true)
+	// One header-only notice plus one tool call with a body. Under R3
+	// only the block WITH a body is collapsible, so it is the click
+	// target; the header-only block stays a fall-through.
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 10)
+	m, _ = m.HandleEvent(noticeEvent("header-only"))
+	m, _ = m.HandleEvent(uievent.Event{
+		Kind: uievent.KindToolStart,
+		Body: uievent.ToolStartBody{ToolCallID: "a", Name: "run_command"},
+	})
+	m, _ = m.HandleEvent(uievent.Event{
+		Kind: uievent.KindToolOutput,
+		Body: uievent.ToolOutputBody{ToolCallID: "a", Chunk: "hidden-line"},
+	})
+	m = m.SetAllCollapsed(true)
 	m.SetSize(80, 10)
 	if len(m.Blocks()) == 0 {
 		t.Fatal("precondition: a block exists")
+	}
+	if m.Blocks()[0].Collapsible {
+		t.Fatal("precondition: the header-only block must not be collapsible")
+	}
+	if !m.Blocks()[1].Collapsed {
+		t.Fatal("precondition: the tool block must start collapsed")
+	}
+
+	// A header-only block carries no expansion, so the click falls
+	// through to the caller.
+	if _, ok := m.ExpandBlockAtScreenRow(0); ok {
+		t.Error("clicking a header-only block must report nothing to expand")
 	}
 
 	// The tool block is the last one; scroll so its header is the first

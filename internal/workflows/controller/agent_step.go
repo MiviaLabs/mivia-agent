@@ -225,6 +225,14 @@ type CoordinatorRunner struct {
 	// defaultJoinWatchdog; tests set it short to exercise the join-timeout
 	// path.
 	JoinWatchdog time.Duration
+	// RegisterChildRun is an optional host hook. The runner calls it once per
+	// ensured child run, right after EnsureRun returns a handle whose run ID
+	// matches the request. The host uses it to register the child in the
+	// orchestration handle registry, so the standard control tools
+	// (inspect_agents, join_run, cancel_run) can reach the child. The hook is
+	// nil-safe, and the controller stays free of any registry dependency: the
+	// host owns the owner identity and calls the registry seam.
+	RegisterChildRun func(ctx context.Context, runID string, handle *coordinator.RunHandle)
 	// progressEmitter is an optional sink for periodic step-heartbeat
 	// progress events emitted while a join is live. It is nil-safe and must
 	// be concurrency-safe: the join loop calls it from its own goroutine.
@@ -335,6 +343,12 @@ func (r *CoordinatorRunner) dispatch(ctx context.Context, spec AgentStepRequest,
 	if h.RunID() != spec.CoordinatorRunID {
 		_ = r.Coordinator.Cancel(context.Background(), h)
 		return nil, fmt.Errorf("coordinator returned run %q, want %q", h.RunID(), spec.CoordinatorRunID)
+	}
+	// Host hook: the validated child handle leaves the controller here, so
+	// this is the one site where registration can happen for every ensured
+	// run (fresh dispatch and resume re-ensure alike).
+	if r.RegisterChildRun != nil {
+		r.RegisterChildRun(ctx, h.RunID(), h)
 	}
 	return h, nil
 }

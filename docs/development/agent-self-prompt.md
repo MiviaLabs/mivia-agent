@@ -6,17 +6,44 @@ The agent system prompt for **agent mode** (tools enabled) comes from:
 
 1. **Selected agent definition** under `.agents/agents/<name>.md` (or `~/.agents/agents/`)
    - When `--agent` is omitted and a definition named **`mivia`** exists, it is auto-selected.
+   - `--agent general-orchestrator` (or picking it in the UI) restores the compiled root surface.
 2. **`[chat].system_prompt`** in config (if set and not stripped by the workspace gate)
-3. **Compiled-in fallback** (`defaultAgentPrompt` in `internal/cli/prompt.go`)
+3. **Compiled root prompt** (`BuiltInOrchestratorPrompt` in `internal/agents/builtin.go`)
 
 Workspace agent files **always load** from `<workspace>/.agents/agents/`. They
 replace the former `.mivia/agent-prompt.md` surface.
+
+## Built-in agents
+
+Two compiled agents ship inside the binary and need no files:
+
+- **`general-orchestrator`** - the root session identity. Its name is
+  reserved: no agent file may use it, and selecting it switches back to the
+  compiled root surface.
+- **`general-purpose`** - a spawnable, tool-bearing agent registered in every
+  session, so `dispatch_tasks` works on a clean workspace. A same-name file
+  overrides it (user over workspace over built-in).
+
+### Where the model sees agents
+
+The orchestrator learns the roster at its first turn, without searching:
+
+1. The root system prompt carries a `# Subagents` section (one line per
+   agent, capped, appended additively - also on customized
+   `[chat].system_prompt`).
+2. The advertised `dispatch_tasks` schema carries the real `agent` enum plus
+   optional-field prose from the resolved registry.
+3. Selecting an unknown name errors with `(available: ...)` naming the
+   roster.
+
+Anything that changes what agents exist flows to all three surfaces at the
+next session start (or `/agent` switch).
 
 ## How it works
 
 On launch, `runChat`:
 
-1. Discovers agent TOML files (user + workspace)
+1. Discovers agent TOML files (user + workspace) and merges the compiled built-ins
 2. Resolves immutable definitions
 3. Selects `--agent <name>`, or defaults to **`mivia`** when present
 4. Applies that definition’s `system_prompt` and tool scope

@@ -13,11 +13,19 @@ type Scope int
 const (
 	ScopeUser Scope = iota
 	ScopeProject
+	// ScopeBuiltin marks compiled content shipped inside the mivia binary
+	// (the built-in agents). It is appended last so any serialized numeric
+	// scope stays stable. Builtin rows are read-only: there is no file
+	// behind them to write or remove.
+	ScopeBuiltin
 )
 
 func (s Scope) String() string {
 	if s == ScopeProject {
 		return "project"
+	}
+	if s == ScopeBuiltin {
+		return "builtin"
 	}
 	return "user"
 }

@@ -25,7 +25,8 @@ type AgentLoadResult struct {
 //
 // When agentFlag is empty and a definition named config.DefaultAgentName
 // ("mivia") exists, that definition is selected as the root session agent.
-// That replaces the former .mivia/agent-prompt.md load path.
+// That replaces the former .mivia/agent-prompt.md load path. A flag equal to
+// config.RootAgentName restores the compiled root surface (no selection).
 func LoadAgentDefinitions(workspaceRoot, agentFlag string, skillReg *skills.Registry) (AgentLoadResult, error) {
 	skillNames := map[string]struct{}{}
 	if skillReg != nil {
@@ -49,6 +50,14 @@ func LoadAgentDefinitions(workspaceRoot, agentFlag string, skillReg *skills.Regi
 	warnings = append(catWarnings, warnings...)
 	out := AgentLoadResult{Registry: reg, Global: global, Warnings: warnings}
 	agentFlag = strings.TrimSpace(agentFlag)
+	if agentFlag == config.RootAgentName {
+		// The root identity is compiled and never a registry member, so it
+		// cannot go through agents.Select. Selecting it by flag (or through
+		// the workflow seam that shares this loader) restores the root
+		// surface: no selected definition. Same contract as the mid-session
+		// ApplySessionAgent switch.
+		return out, nil
+	}
 	if agentFlag == "" {
 		if _, ok := reg.Get(config.DefaultAgentName); ok {
 			agentFlag = config.DefaultAgentName

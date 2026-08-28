@@ -73,7 +73,7 @@ func (s Screen) handleClick(msg tea.MouseClickMsg) (app.Screen, tea.Cmd) {
 		// Column 0 is the gutter; the reading column runs to the rule.
 		reading, _ := render.SplitWidths(contentWidth(s.width))
 		if x > reading {
-			return s.handleNavClick(y - topGutter - 1)
+			return s.handleNavClick(y - topGutter)
 		}
 	} else if s.panel.open {
 		if y-transcriptTop < s.transcriptHeight() {

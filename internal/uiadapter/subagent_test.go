@@ -214,6 +214,15 @@ func TestSubagentTranscriptConversation_EmptyTitle(t *testing.T) {
 	}
 }
 
+// TestSubagentThreads_LookupByToolCallIDAndTaskID pins lookup by TaskID
+// and ToolCallID, both always-safe identity keys (a ToolCallID belongs to
+// exactly one dispatch; a TaskID is the caller's own unique task id).
+// Agent name is deliberately NOT asserted as a third alias here when a
+// TaskID is present - see
+// TestSubagentThreads_LookupByAgentNameOnlyWhenTaskIDAbsent and
+// TestSubagentThreads_SameAgentDifferentTasksDoNotShareAThread for why:
+// two different tasks routed to the same named agent (e.g.
+// "general-purpose") must never be folded into one conversation object.
 func TestSubagentThreads_LookupByToolCallIDAndTaskID(t *testing.T) {
 	threads := uiadapter.NewSubagentThreads()
 	threads.HandleEvent(agent.Event{
@@ -224,7 +233,6 @@ func TestSubagentThreads_LookupByToolCallIDAndTaskID(t *testing.T) {
 
 	byTask, ok1 := threads.Thread("task-123")
 	byCall, ok2 := threads.Thread("call_abc")
-	byAgent, ok3 := threads.Thread("researcher")
 
 	if !ok1 || byTask == nil {
 		t.Errorf("expected thread found by TaskID")
@@ -232,12 +240,24 @@ func TestSubagentThreads_LookupByToolCallIDAndTaskID(t *testing.T) {
 	if !ok2 || byCall == nil {
 		t.Errorf("expected thread found by ToolCallID")
 	}
-	if !ok3 || byAgent == nil {
-		t.Errorf("expected thread found by Agent")
+	if byTask != byCall {
+		t.Errorf("expected same conversation instance across TaskID and ToolCallID")
 	}
+}
 
-	if byTask != byCall || byCall != byAgent {
-		t.Errorf("expected same conversation instance across all lookup keys")
+// TestSubagentThreads_LookupByAgentNameOnlyWhenTaskIDAbsent pins the
+// fallback: when a caller has nothing else to key on, Agent name still
+// works as a last resort (the reason the key exists at all, 371c35d5).
+func TestSubagentThreads_LookupByAgentNameOnlyWhenTaskIDAbsent(t *testing.T) {
+	threads := uiadapter.NewSubagentThreads()
+	threads.HandleEvent(agent.Event{
+		Kind:   agent.EventToolStart,
+		Origin: agent.EventOrigin{Agent: "researcher"},
+	}, uiadapter.TranslateOptions{})
+
+	byAgent, ok := threads.Thread("researcher")
+	if !ok || byAgent == nil {
+		t.Errorf("expected thread found by Agent when no TaskID/ToolCallID is available")
 	}
 }
 
@@ -255,7 +275,10 @@ func TestPopulateFromToolCalls_DispatchTasks(t *testing.T) {
 					ID:        "call_dispatch_1",
 					Name:      "dispatch_tasks",
 					Arguments: `{"tasks":[{"id":"task-audit","prompt":"check for leaks","agent":"bug-auditor"},{"id":"task-plan","prompt":"design architecture","agent":"planner"}]}`,
-					Output:    `[{"task_id":"task-audit","status":"completed","output":"no leaks found"},{"task_id":"task-plan","status":"completed","output":"architecture approved"}]`,
+					// task_id is the real, namespaced id (callID+":"+raw id)
+					// dispatch_tasks actually reports - internal/cliorchestrate/
+					// dispatch.go's buildTasks/dispatchNamespace.
+					Output: `[{"task_id":"task-audit","status":"completed","output":"no leaks found"},{"task_id":"task-plan","status":"completed","output":"architecture approved"}]`,
 				},
 			},
 		},
@@ -263,7 +286,7 @@ func TestPopulateFromToolCalls_DispatchTasks(t *testing.T) {
 
 	uiadapter.PopulateFromToolCalls(threads, msgs)
 
-	auditConv, ok := threads.Thread("task-audit")
+	auditConv, ok := threads.Thread("call_dispatch_1:task-audit")
 	if !ok || auditConv == nil {
 		t.Fatalf("expected thread for task-audit")
 	}
@@ -277,12 +300,46 @@ func TestPopulateFromToolCalls_DispatchTasks(t *testing.T) {
 		t.Errorf("task-audit output: got %q, want 'no leaks found'", auditConv.History()[1].Text)
 	}
 
-	planConv, ok := threads.Thread("task-plan")
+	planConv, ok := threads.Thread("call_dispatch_1:task-plan")
 	if !ok || planConv == nil {
 		t.Fatalf("expected thread for task-plan")
 	}
 	if planConv.History()[1].Text != "architecture approved" {
 		t.Errorf("task-plan output: got %q, want 'architecture approved'", planConv.History()[1].Text)
+	}
+}
+
+// TestPopulateFromToolCalls_DispatchTasksMissingIDFallbackIsFriendly pins
+// the fix for a raw provider tool_call_id ("call_xxxxxxxxxxxx") leaking
+// into a visible sidebar row: a task the model forgot to give an "id"
+// used to fall back to "{callID}-{index}", so the row's identity (and
+// therefore its rendered label, since the panel displays IDs directly)
+// exposed the raw call id verbatim. The fallback must never embed it.
+func TestPopulateFromToolCalls_DispatchTasksMissingIDFallbackIsFriendly(t *testing.T) {
+	threads := uiadapter.NewSubagentThreads()
+	msgs := []ports.Message{
+		{
+			Role: "assistant",
+			At:   time.Now(),
+			ToolCalls: []ports.ToolCall{
+				{
+					ID:        "call_95bcae0ca204bc76",
+					Name:      "dispatch_tasks",
+					Arguments: `{"tasks":[{"prompt":"tidy the docs","agent":"docs-writer"}]}`,
+					Output:    `{"tasks":[{"status":"completed","output":"done"}]}`,
+				},
+			},
+		},
+	}
+
+	uiadapter.PopulateFromToolCalls(threads, msgs)
+
+	if _, ok := threads.Thread("call_95bcae0ca204bc76-1"); ok {
+		t.Fatal("the fallback task id must not embed the raw provider call id")
+	}
+	fallback, ok := threads.Thread("task-1")
+	if !ok || fallback == nil {
+		t.Fatalf("expected a friendly fallback thread id (task-1)")
 	}
 }
 
@@ -376,7 +433,7 @@ func TestPopulateFromToolCalls_DispatchTasksNestedObjectOutput(t *testing.T) {
 
 	uiadapter.PopulateFromToolCalls(threads, msgs)
 
-	conv, ok := threads.Thread("plan-review-1")
+	conv, ok := threads.Thread("call_dispatch_nested:plan-review-1")
 	if !ok || conv == nil {
 		t.Fatalf("expected thread for plan-review-1")
 	}
@@ -411,7 +468,7 @@ func TestPopulateFromToolCalls_DispatchTasksRunLevelError(t *testing.T) {
 
 	uiadapter.PopulateFromToolCalls(threads, msgs)
 
-	conv, ok := threads.Thread("plan-review-1")
+	conv, ok := threads.Thread("call_dispatch_err:plan-review-1")
 	if !ok || conv == nil {
 		t.Fatalf("expected thread for plan-review-1")
 	}
@@ -448,7 +505,7 @@ func TestPopulateFromToolCalls_DispatchTasksRunLevelErrorMultiTask(t *testing.T)
 
 	uiadapter.PopulateFromToolCalls(threads, msgs)
 
-	for _, id := range []string{"task-a", "task-b"} {
+	for _, id := range []string{"call_dispatch_err2:task-a", "call_dispatch_err2:task-b"} {
 		conv, ok := threads.Thread(id)
 		if !ok || conv == nil {
 			t.Fatalf("expected thread for %s", id)
@@ -483,7 +540,7 @@ func TestPopulateFromToolCalls_DispatchTasksWrappedEnvelope(t *testing.T) {
 
 	uiadapter.PopulateFromToolCalls(threads, msgs)
 
-	conv, ok := threads.Thread("task-async")
+	conv, ok := threads.Thread("call_dispatch_wrapped:task-async")
 	if !ok || conv == nil {
 		t.Fatalf("expected thread for task-async")
 	}
@@ -532,7 +589,7 @@ func TestPopulateFromToolCalls_DispatchTasksToolCallsReconstructed(t *testing.T)
 
 	uiadapter.PopulateFromToolCalls(threads, msgs)
 
-	conv, ok := threads.Thread("task-tc")
+	conv, ok := threads.Thread("call_dispatch_tc:task-tc")
 	if !ok || conv == nil {
 		t.Fatalf("expected thread for task-tc")
 	}
@@ -592,7 +649,7 @@ func TestPopulateFromToolCalls_DispatchTasksByReferenceOutput(t *testing.T) {
 
 	uiadapter.PopulateFromToolCalls(threads, msgs)
 
-	conv, ok := threads.Thread("deepdive-security")
+	conv, ok := threads.Thread("call_dispatch_ref:deepdive-security")
 	if !ok || conv == nil {
 		t.Fatalf("expected thread for deepdive-security")
 	}
@@ -642,7 +699,7 @@ func TestPopulateFromToolCalls_PreFeatureJSONShapeFallsBackCleanly(t *testing.T)
 		threads := uiadapter.NewSubagentThreads()
 		uiadapter.PopulateFromToolCalls(threads, buildMsgs(output))
 
-		conv, ok := threads.Thread("task-legacy")
+		conv, ok := threads.Thread("call_dispatch_legacy:task-legacy")
 		if !ok || conv == nil {
 			t.Fatalf("expected thread for task-legacy")
 		}
@@ -683,5 +740,17 @@ func TestPopulateFromToolCalls_PreFeatureJSONShapeFallsBackCleanly(t *testing.T)
 	}
 	if len(absent.ToolCalls) != len(empty.ToolCalls) {
 		t.Errorf("key-absent and explicit-empty-array ToolCalls length differ: %d vs %d", len(absent.ToolCalls), len(empty.ToolCalls))
+	}
+}
+
+func TestNamespacedTaskID(t *testing.T) {
+	if got := uiadapter.NamespacedTaskIDForTest("", "raw"); got != "raw" {
+		t.Errorf("empty namespace: got %q, want raw", got)
+	}
+	if got := uiadapter.NamespacedTaskIDForTest("ns", ""); got != "" {
+		t.Errorf("empty rawID: got %q, want empty", got)
+	}
+	if got := uiadapter.NamespacedTaskIDForTest("ns", "raw"); got != "ns:raw" {
+		t.Errorf("namespaced: got %q, want ns:raw", got)
 	}
 }

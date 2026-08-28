@@ -72,6 +72,17 @@ func (h *RunHandle) mustFailInterrupted() bool {
 
 func (h *RunHandle) Done() <-chan struct{} { return h.done }
 
+// TaskProgress returns the live per-task tool-call liveness view for
+// parent-facing inspection (inspect_agents): tool-call counts and
+// last-activity stamps that survive the raw trace buffer's caps, so a chatty
+// task never reads stale. Nil-receiver safe; nil when nothing has run.
+func (h *RunHandle) TaskProgress() map[string]TaskProgress {
+	if h == nil {
+		return nil
+	}
+	return h.toolCalls.progressSnapshot()
+}
+
 // LocalActor reports whether this process owns execution of the run.
 func (h *RunHandle) LocalActor() bool {
 	if h == nil {

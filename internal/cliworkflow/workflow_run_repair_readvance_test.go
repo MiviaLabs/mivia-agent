@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
@@ -102,7 +103,7 @@ func stubWorkflowResumeRepairReadvance(t *testing.T, repo workflowledger.Reposit
 		WorkflowResumeInstallHooks = originalHooks
 		WorkflowResumeRun = originalRun
 	})
-	workflowResumeBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *definition.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, []byte, *workflowledger.RunSnapshot, map[string]bool, *skills.Registry) (WorkflowControllerBuild, error) {
+	workflowResumeBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *definition.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, []byte, *workflowledger.RunSnapshot, map[string]bool, *skills.Registry, string, ledger.LedgerRepository) (WorkflowControllerBuild, error) {
 		return WorkflowControllerBuild{Dispatcher: workflowTestDispatcher{}}, nil
 	}
 	WorkflowResumeSetAdmission = func(WorkflowControllerBuild) error { return nil }

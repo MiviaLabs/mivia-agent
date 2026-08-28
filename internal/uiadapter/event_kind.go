@@ -1,6 +1,7 @@
 package uiadapter
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
@@ -21,7 +22,7 @@ import (
 //	EventToolParallel     -> notice
 //	EventSubagentStart    -> tool.start
 //	EventSubagentEnd      -> tool.end
-//	EventSubagentHeartbeat -> dropped
+//	EventSubagentHeartbeat -> tool.output progress (Step parsed from Detail)
 //	EventSubagentDone     -> notice + tool.output progress (when Origin.TaskID is set)
 //	EventThinking         -> reasoning.delta
 //	EventHook             -> hook
@@ -143,15 +144,21 @@ func translateThinking(ev agent.Event) []uievent.Event {
 // all flipped to their terminal status at once, only after the slowest
 // subagent finished, however long the fastest one had already been done.
 //
-// Status is optimistic: this deferred emit site (see
-// subagents.MultiStepHandler.run) fires on every exit - success, error, or
-// panic - with no ok/err signal to report, so it always reports
-// "completed". The authoritative ok/failed status still lands moments
-// later from the enclosing call's own tool.end / per-task JSON result and
+// Status is the done event's own terminal classification
+// (agent.Event.Status: "completed" | "canceled" | "timed_out" | "error"),
+// stamped by the deferred emit site in subagents.MultiStepHandler.run from
+// the run's real exit error. Empty keeps the old optimistic default:
+// production emitters always set the status now, but an unclassified
+// (legacy) emitter still gets today's behavior instead of a blank row
+// state. The authoritative ok/failed status still lands moments later
+// from the enclosing call's own tool.end / per-task JSON result and
 // overwrites this unconditionally (panel.setAgentStatus /
-// observeAgentGroupEnd), so the optimism never survives past that
-// settlement - it only closes the live gap before it.
+// observeAgentGroupEnd).
 func translateSubagentDone(ev agent.Event) []uievent.Event {
+	status := ev.Status
+	if status == "" {
+		status = "completed"
+	}
 	out := notice(subagentDoneText(ev))
 	if ev.Origin.TaskID == "" {
 		return out
@@ -160,7 +167,7 @@ func translateSubagentDone(ev agent.Event) []uievent.Event {
 		Kind: uievent.KindToolOutput,
 		Body: uievent.ToolOutputBody{
 			ToolCallID: ev.Origin.TaskID,
-			Progress:   &uievent.Progress{Status: "completed"},
+			Progress:   &uievent.Progress{Status: status},
 		},
 	})
 }
@@ -173,6 +180,14 @@ func translateSubagentDone(ev agent.Event) []uievent.Event {
 // the whole batch settles. Renderers coalesce by replacing the row's progress
 // state; emitting one event per heartbeat is intentional and bounded by the
 // heartbeat cadence.
+//
+// Step and ToolCalls carry the steps=N/toolcalls=N counts parsed from the
+// heartbeat Detail ("elapsed=Xs steps=N toolcalls=N", written by
+// subagents.emitHeartbeat/heartbeatDetail). The files panel keys its stall
+// clock on the step count: heartbeats whose step count is frozen are
+// liveness without forward motion, so they must not refresh a "still
+// working" clock. Detail text a parser cannot read leaves that field 0,
+// and 0 never counts as progress downstream.
 //
 // Heartbeats without a TaskID cannot be attributed to any row and are
 // dropped rather than guessed at. Status is always "running": a heartbeat is
@@ -191,12 +206,43 @@ func translateSubagentHeartbeat(ev agent.Event) []uievent.Event {
 		Body: uievent.ToolOutputBody{
 			ToolCallID: ev.Origin.TaskID,
 			Progress: &uievent.Progress{
-				Status: "running",
-				Log:    log,
+				Status:    "running",
+				Step:      heartbeatStep(ev.Detail),
+				ToolCalls: heartbeatToolCalls(ev.Detail),
+				Log:       log,
 			},
 		},
 	}}
 }
+
+// heartbeatCount parses the value following key+"=" in a heartbeat Detail
+// line, up to the next space or the end of the string - so a field is
+// readable whether it is the last one on the line ("steps=2") or followed
+// by another ("steps=2 toolcalls=5"). Any detail without a parseable,
+// non-negative count - a missing key, raw loop EventStep remaps, plain
+// prose - returns 0, which downstream code treats as "no progress
+// information", never as count 0 of real work.
+func heartbeatCount(detail, key string) int {
+	_, after, ok := strings.Cut(detail, key+"=")
+	if !ok {
+		return 0
+	}
+	count, _, _ := strings.Cut(after, " ")
+	n, err := strconv.Atoi(strings.TrimSpace(count))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
+
+// heartbeatStep parses the steps=N field of a heartbeat Detail line.
+func heartbeatStep(detail string) int { return heartbeatCount(detail, "steps") }
+
+// heartbeatToolCalls parses the toolcalls=N field of a heartbeat Detail
+// line. Absent on a heartbeat emitted before this field existed (or any
+// other unparseable shape), it reads as "no tool-call count", identically
+// to heartbeatStep's zero-value contract.
+func heartbeatToolCalls(detail string) int { return heartbeatCount(detail, "toolcalls") }
 
 // subagentDoneText picks the most informative label available on the
 // subagent's Origin for a terminal "subagent done" advisory line:

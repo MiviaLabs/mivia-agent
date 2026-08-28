@@ -37,7 +37,11 @@ The runtime parser (`internal/config/agents_parse.go`) decodes the YAML frontmat
 into `AgentFileSpec` and maps the Markdown body to the agent's `SystemPrompt`.
 
 When orchestration tools or workflow steps dispatch an agent, the runtime discovers
-and resolves definitions from this directory.
+and resolves definitions from this directory. Two compiled built-ins also ship
+inside the binary and need no files here: `general-orchestrator` (the reserved
+root session identity) and `general-purpose` (a spawnable agent present in every
+session). A file of the same name overrides `general-purpose`; the
+`general-orchestrator` name is reserved and cannot be defined by a file.
 
 ## Adding a role
 

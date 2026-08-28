@@ -92,8 +92,8 @@ func tieredRootRegistry(base *tools.Registry, selected *agents.ResolvedAgent, ex
 	return cliagents.TieredRootRegistry(base, selected, extraDenylist, plan, admitted)
 }
 
-func advertisedToolSpecs(base *tools.Registry, plan toolTierPlan) ([]provider.ToolSpec, int) {
-	return cliagents.AdvertisedToolSpecs(base, plan)
+func advertisedToolSpecs(base *tools.Registry, plan toolTierPlan, agentReg *agents.AgentRegistry) ([]provider.ToolSpec, int) {
+	return cliagents.AdvertisedToolSpecs(base, plan, agentReg)
 }
 
 func planToolTiers(base *tools.Registry, selected *agents.ResolvedAgent, res *config.Resolved) toolTierPlan {

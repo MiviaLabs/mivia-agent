@@ -302,6 +302,12 @@ func TestApplyWorkflowStoreRootPathClasses(t *testing.T) {
 	if root == home {
 		t.Fatal("HOME and workspace root collided; the tilde assertions are then vacuous")
 	}
+	if err := os.MkdirAll(filepath.Join(root, ".mivia"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".mivia", "mivia.toml"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	tests := []struct {
 		name   string
 		set    bool
@@ -346,6 +352,22 @@ func TestApplyWorkflowStoreRootPathClasses(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestApplyWorkflowStoreRootDefaults pins the unset/defaults half of
+// ApplyWorkflowStoreRoot: re-application is idempotent, an unset store_path
+// still pins the workspace default, and - the new third tier - an unset
+// store_path with no project config falls back to the temp store.
+func TestApplyWorkflowStoreRootDefaults(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".mivia"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".mivia", "mivia.toml"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	t.Run("re-application is idempotent", func(t *testing.T) {
 		for _, stored := range []string{"~/.mivia/x.db", "runs.db"} {
@@ -365,6 +387,16 @@ func TestApplyWorkflowStoreRootPathClasses(t *testing.T) {
 		res.Subagents.StorePath = filepath.Join(root, "loader-default", "context.db")
 		ApplyWorkflowStoreRoot(res, root)
 		if want := workspace.ContextStorePath(root); res.Subagents.StorePath != want {
+			t.Fatalf("store path = %q, want pinned %q", res.Subagents.StorePath, want)
+		}
+	})
+
+	t.Run("unset store_path with no project config falls back to the temp tier", func(t *testing.T) {
+		adhocRoot := t.TempDir()
+		res := &config.Resolved{}
+		res.Subagents.StorePath = filepath.Join(adhocRoot, "loader-default", "context.db")
+		ApplyWorkflowStoreRoot(res, adhocRoot)
+		if want := config.TempStorePath(adhocRoot, "orchestration"); res.Subagents.StorePath != want {
 			t.Fatalf("store path = %q, want pinned %q", res.Subagents.StorePath, want)
 		}
 	})

@@ -47,14 +47,16 @@ type ndjsonEvent struct {
 	Model           string `json:"model,omitempty"`
 	Effort          string `json:"effort,omitempty"`
 	DiscardedEffort string `json:"discarded_effort,omitempty"`
-	// Status is "ok" or "failed" on a "tool_end", derived from the same
-	// toolEndDetail the TUI renders (see toolEndStatus). Before this field
-	// existed the failure signal lived only in Event.Detail, which
-	// eventPreview drops whenever a tool produced any output at all - so a
-	// --json consumer had no way to tell a failed tool call from a
-	// successful one. Absent means "an older bundled CLI that predates this
-	// field", which a consumer should read as ok (the prior behavior), not
-	// as failure.
+	// Status has one vocabulary per event type. On a "tool_end" it is "ok"
+	// or "failed", derived from the same toolEndDetail the TUI renders (see
+	// toolEndStatus). On a "subagent_done" it is the run's terminal status
+	// ("completed", "canceled", "timed_out", or "error"), sourced from
+	// agent.Event.Status. Before these fields existed the failure signal
+	// lived only in Event.Detail, which eventPreview drops whenever a tool
+	// produced any output at all - so a --json consumer had no way to tell
+	// a failed tool call from a successful one. Absent means "an older
+	// bundled CLI that predates this field", which a consumer should read
+	// as ok (the prior behavior), not as failure.
 	Status string `json:"status,omitempty"`
 	// OriginTaskID/OriginAgent/OriginDepth attribute a tool_start/tool_end
 	// (or a subagent_done) to the delegated subagent that produced it - see
@@ -290,6 +292,7 @@ func jsonTurnEventCallback(w io.Writer) func(event agent.Event) {
 			writeNDJSONEvent(w, ndjsonEvent{
 				Type:         "subagent_done",
 				OriginTaskID: e.Origin.TaskID,
+				Status:       e.Status,
 			})
 		case agent.EventSubagentHeartbeat:
 			// Origin is required for this event to mean anything (it retires

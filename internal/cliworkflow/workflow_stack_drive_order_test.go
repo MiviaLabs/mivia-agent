@@ -26,6 +26,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
@@ -180,7 +181,7 @@ func runMiniStackCLI(t *testing.T, toml string, allowPublish bool) (string, stri
 	var runID string
 	originalBuild := WorkflowRunBuild
 	t.Cleanup(func() { WorkflowRunBuild = originalBuild })
-	WorkflowRunBuild = func(_ string, _ *config.Resolved, _ *storage.SQLite, repo workflowledger.Repository, _ *definition.CompiledWorkflow, _ string, _ map[string]any, _ map[string]string, _ []byte, id string, _ *workflowledger.Snapshot, _ []byte, _ *workflowledger.RunSnapshot, _ map[string]bool, _ *skills.Registry) (WorkflowControllerBuild, error) {
+	WorkflowRunBuild = func(_ string, _ *config.Resolved, _ *storage.SQLite, repo workflowledger.Repository, _ *definition.CompiledWorkflow, _ string, _ map[string]any, _ map[string]string, _ []byte, id string, _ *workflowledger.Snapshot, _ []byte, _ *workflowledger.RunSnapshot, _ map[string]bool, _ *skills.Registry, _ string, _ ledger.LedgerRepository) (WorkflowControllerBuild, error) {
 		runID = id
 		synth, err := definition.SynthesizeStacking(compiled)
 		if err != nil {

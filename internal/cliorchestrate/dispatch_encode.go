@@ -214,9 +214,10 @@ func TaskMessageIndex(ctx context.Context, repo ledger.LedgerRepository, tasks [
 			continue
 		}
 		var p struct {
-			MessageID string `json:"message_id"`
-			Kind      string `json:"kind"`
-			Synopsis  string `json:"synopsis"`
+			MessageID  string `json:"message_id"`
+			Kind       string `json:"kind"`
+			Synopsis   string `json:"synopsis"`
+			ContentRef string `json:"content_ref"`
 		}
 		if len(e.Payload) > 0 {
 			_ = json.Unmarshal(e.Payload, &p)
@@ -228,6 +229,7 @@ func TaskMessageIndex(ctx context.Context, repo ledger.LedgerRepository, tasks [
 		}
 		out[e.TaskID] = append(out[e.TaskID], messageSynopsis{
 			MessageID: p.MessageID, Kind: p.Kind, Synopsis: p.Synopsis,
+			ContentRef: p.ContentRef,
 		})
 	}
 	return out

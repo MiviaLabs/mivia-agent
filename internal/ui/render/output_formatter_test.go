@@ -248,8 +248,9 @@ func TestFormatLedgerOutput_UnrecoverableGarbageStillFallsBackRaw(t *testing.T) 
 	if summary != "" {
 		t.Errorf("expected empty summary for unrecoverable input, got %q", summary)
 	}
-	if len(lines) != 1 || lines[0] != raw {
-		t.Errorf("expected raw passthrough, got %v", lines)
+	// Raw passthrough stays, but behind the dim unparsed label (R1).
+	if len(lines) != 2 || !strings.Contains(ansi.Strip(lines[0]), "unparsed tool result") || lines[1] != raw {
+		t.Errorf("expected labelled raw passthrough, got %v", lines)
 	}
 }
 

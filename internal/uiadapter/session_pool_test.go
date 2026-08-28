@@ -329,7 +329,7 @@ func TestSessionPool_InitialConversationWiredToSubagentThreads(t *testing.T) {
 	}
 	_ = conv.History()
 
-	if _, ok := pool.Threads().Thread("task-leak-check"); !ok {
+	if _, ok := pool.Threads().Thread("call_disp_1:task-leak-check"); !ok {
 		t.Fatal("expected pool.Threads() to resolve the dispatched subagent after History()")
 	}
 }
@@ -360,7 +360,7 @@ func TestSessionPool_GetOrCreateWiresSubagentThreadsOnResume(t *testing.T) {
 	}
 	_ = conv.History()
 
-	if _, ok := pool.Threads().Thread("task-resumed-check"); !ok {
+	if _, ok := pool.Threads().Thread("call_disp_1:task-resumed-check"); !ok {
 		t.Fatal("expected pool.Threads() to resolve the resumed session's dispatched subagent after History()")
 	}
 }
@@ -387,7 +387,7 @@ func TestSessionPool_CreateFreshWiresSubagentThreads(t *testing.T) {
 	conv.Session().Messages = dispatchTasksMessages("task-fresh-check")
 	_ = conv.History()
 
-	if _, ok := pool.Threads().Thread("task-fresh-check"); !ok {
+	if _, ok := pool.Threads().Thread("call_disp_1:task-fresh-check"); !ok {
 		t.Fatal("expected pool.Threads() to resolve the fresh session's dispatched subagent after History()")
 	}
 }

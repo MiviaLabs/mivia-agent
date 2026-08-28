@@ -5,12 +5,35 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 // DefaultOrchestrationTimeoutSec is the finite parent-tool / batch budget used
 // when default_timeout_seconds is 0 (or omitted). Long enough for multi-step
 // subagent work; never unbounded so cancel/timeout always surfaces.
 const DefaultOrchestrationTimeoutSec = 12 * 60 * 60 // 12 hours
+
+// DefaultSubagentRequestTimeoutSec is the per-LLM-request context deadline for
+// a subagent turn when default_request_timeout_seconds is 0 (or omitted).
+// Product decision: 30 minutes. It bounds one provider request, not the whole
+// task. The 15-minute http.Client wire wall (DefaultHTTPTimeout) stays the
+// hard per-attempt bound under it.
+const DefaultSubagentRequestTimeoutSec = 1800 // 30 minutes
+
+// DefaultSubagentTotalTimeoutSec is the whole-subagent wall-clock budget
+// applied when default_total_timeout_seconds is 0 (or omitted). Product
+// decision: 60 minutes. Unlike the per-request deadline above, this bounds
+// the ENTIRE run - every request, tool call, and wait added together - so a
+// provider that trickles bytes forever still ends inside a finite window.
+// It is the last-resort termination guarantee; a smaller per-task timeout
+// from the caller wins when it is tighter. It must stay comfortably above
+// DefaultSubagentRequestTimeoutSec: the total budget is the outer context
+// every per-request deadline is derived from, and a child context.WithTimeout
+// can never extend past its parent's deadline - a total shorter than the
+// request default would silently truncate a single legitimate call before
+// it ever reached its own documented allowance.
+const DefaultSubagentTotalTimeoutSec = 3600 // 60 minutes
 
 // DefaultPromptCapTokens is the recommended [chat] max_prompt_tokens value.
 // It bounds the per-request prompt budget for models with large context
@@ -317,6 +340,14 @@ func defaultStorePath() string {
 	return DefaultStorePathForWorkspace("")
 }
 
+// IsDefaultOrchestrationStorePath reports whether path is the config-layer
+// default orchestration-ledger location (see defaultStorePath): the one tier
+// whose directory no operator manages, so opens may harden it 0600/0700. An
+// operator-configured store_path compares false and keeps its modes.
+func IsDefaultOrchestrationStorePath(path string) bool {
+	return path == defaultStorePath()
+}
+
 // DefaultStorePathForWorkspace returns the default SQLite path for root.
 func DefaultStorePathForWorkspace(root string) string {
 	dir, err := os.UserCacheDir()
@@ -334,4 +365,16 @@ func DefaultStorePathForWorkspace(root string) string {
 func sanitizePath(path string) string {
 	h := sha256.Sum256([]byte(path))
 	return fmt.Sprintf("ws-%x", h[:8])
+}
+
+// TempStorePath returns the OS-temp-dir path for an ad-hoc (no project
+// config found) store named name, hash-keyed by root via the existing
+// sanitizePath helper (see DefaultStorePathForWorkspace) so distinct
+// ad-hoc roots never collide. Rooted at os.TempDir(), not
+// os.UserCacheDir() like DefaultStorePathForWorkspace: an ad-hoc run
+// names no real project to key a durable, indefinitely-retained cache
+// entry against, so normal OS temp cleanup can reclaim it instead of
+// silently accumulating forever under the user's real home/cache.
+func TempStorePath(root, name string) string {
+	return filepath.Join(os.TempDir(), workspace.Namespace, "adhoc", sanitizePath(root), name+".db")
 }

@@ -45,8 +45,14 @@ func ResolveAll(inputs []ResolveInput, opts ResolveOptions) (*AgentRegistry, []s
 	for _, name := range orderedNames(byName) {
 		agent, err := state.resolveOne(name)
 		if err != nil {
-			if opts.TolerantWorkspace && byName[name].Source == config.AgentSourceWorkspace {
-				state.warnings = append(state.warnings, fmt.Sprintf("skipped workspace agent %q: %s", name, err.Error()))
+			if opts.TolerantWorkspace && byName[name].Source != config.AgentSourceUser {
+				// The trusted user boundary stays fail-closed; workspace and
+				// compiled built-in inputs are tolerated with a skip warning.
+				prefix := "skipped workspace agent"
+				if byName[name].Source == config.AgentSourceBuiltIn {
+					prefix = "skipped built-in agent"
+				}
+				state.warnings = append(state.warnings, fmt.Sprintf("%s %q: %s", prefix, name, err.Error()))
 				continue
 			}
 			return nil, nil, err
@@ -84,17 +90,26 @@ func orderedNames(byName map[string]ResolveInput) []string {
 	}
 	slices.SortStableFunc(order, func(a, b string) int {
 		ia, ib := byName[a], byName[b]
-		if ia.Source != ib.Source {
-			if ia.Source == config.AgentSourceUser {
-				return -1
-			}
-			if ib.Source == config.AgentSourceUser {
-				return 1
-			}
+		if ra, rb := sourceRank(ia.Source), sourceRank(ib.Source); ra != rb {
+			return ra - rb
 		}
 		return strings.Compare(a, b)
 	})
 	return order
+}
+
+// sourceRank orders resolution and publication: user definitions first, then
+// workspace, then compiled built-ins (built-ins publish after every
+// file-backed agent).
+func sourceRank(s config.AgentSource) int {
+	switch s {
+	case config.AgentSourceUser:
+		return 0
+	case config.AgentSourceWorkspace:
+		return 1
+	default:
+		return 2
+	}
 }
 
 func (s *resolveState) resolveOne(name string) (ResolvedAgent, error) {
@@ -453,6 +468,14 @@ func checkNameCollisions(name, path string, opts ResolveOptions) error {
 		if _, ok := opts.ReservedHandlers[name]; ok {
 			return fmt.Errorf("agent %q at %s collides with reserved handler %q", name, path, name)
 		}
+	}
+	// The root identity is compiled, never a registry member, and selected by
+	// name from the flag, /agent, and the picker. A file of this name would be
+	// simultaneously spawnable and shadowed by the root special case, so the
+	// name is reserved. No compiled built-in may carry it either: builtInInputs
+	// never emits it, which is what keeps this check source-agnostic.
+	if name == config.RootAgentName {
+		return fmt.Errorf("agent %q at %s collides with the reserved root agent name", name, path)
 	}
 	return nil
 }

@@ -312,7 +312,7 @@ func TestNewSessionDispatcherRegistersDispatchTasksTool(t *testing.T) {
 
 func TestSessionToolsImplementPrivilegedTool(t *testing.T) {
 	for _, tool := range []tools.Tool{
-		cliorchestrate.NewDispatchTasksToolZero(),
+		cliorchestrate.NewDispatchTasksToolForAdvertising(nil),
 		cliorchestrate.NewInspectAgentsToolZero(),
 		cliorchestrate.NewJoinRunToolZero(),
 		cliorchestrate.NewCancelRunToolZero(),

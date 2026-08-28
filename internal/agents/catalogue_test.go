@@ -19,15 +19,15 @@ func TestLoadAndResolveSuccess(t *testing.T) {
 		wantNames  []string
 	}{
 		{
-			name:      "empty workspace yields empty registry",
-			wantNames: nil,
+			name:      "clean workspace ships only the built-in",
+			wantNames: []string{"general-purpose"},
 		},
 		{
-			name: "workspace agent resolves",
+			name: "workspace agent resolves beside the built-in",
 			agents: map[string]string{
 				"worker.toml": "name = \"worker\"\ndescription = \"a worker\"\ntools = [\"read_file\"]\n",
 			},
-			wantNames: []string{"worker"},
+			wantNames: []string{"general-purpose", "worker"},
 		},
 		{
 			name: "unrelated skill names pass through",
@@ -35,7 +35,7 @@ func TestLoadAndResolveSuccess(t *testing.T) {
 				"worker.toml": "name = \"worker\"\ndescription = \"w\"\ntools = [\"read_file\"]\n",
 			},
 			skillNames: map[string]struct{}{"code_review": {}},
-			wantNames:  []string{"worker"},
+			wantNames:  []string{"general-purpose", "worker"},
 		},
 	}
 	for _, tc := range tests {

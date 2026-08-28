@@ -80,6 +80,14 @@ type Options struct {
 	// re-entry of the same task invocation.
 	PreserveWorkLimits    bool
 	DisableProviderReplay bool
+	// WireStreamTransport asks the provider layer to carry every
+	// non-streaming turn of this loop on the SSE endpoint (stream:true on the
+	// wire) while keeping the non-stream contract: the full response is
+	// assembled before it comes back. Turns that stream to a FinalWriter are
+	// unaffected. The provider layer bounds each wire-stream attempt with a
+	// content-idle watchdog, so a keepalive trickle can no longer hold a
+	// nested turn open. See provider.Request.StreamTransport.
+	WireStreamTransport bool
 	// MaxContextTokens sets the approximate token limit for the prompt context.
 	// Pruning is hysteretic, mirroring contextmgr.Plan: history is left
 	// untouched below 80% of the budget, and once that trigger is crossed old

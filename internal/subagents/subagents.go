@@ -15,6 +15,16 @@ import (
 
 type Task struct {
 	ID, Name, Owner string
+	// RawID is the model-supplied task id verbatim, before dispatch_tasks
+	// namespaces it into ID for harness-level uniqueness
+	// (internal/cliorchestrate/task_namespace.go's namespacedTaskID). Kept
+	// alongside ID so tools that only see a run_id - join_run,
+	// inspect_agents, run_messages, send_to_task - can report/resolve the
+	// id the model actually knows, without guessing at a namespace
+	// boundary from ID's string shape. Empty for any caller that never
+	// namespaces (spawn_agent, or a task built directly, not through
+	// dispatch_tasks).
+	RawID string
 	// AgentName and AgentDigest identify the immutable authorized definition.
 	// Name is a private runtime target and never comes from model input.
 	AgentName, AgentDigest, Skill string
@@ -75,10 +85,20 @@ const Unlimited = -1
 // Default safe limits applied when Policy fields are zero (unconfigured).
 // Zero must not mean unlimited: a missing config should degrade to safe bounds,
 // not to unbounded fan-out or budget.
+//
+// DefaultMaxBudget was 1000 until a real incident traced ordinary
+// dispatch_tasks batches failing every task with "budget limit
+// exceeded"/"run budget exceeded" back to this constant: Budget carries no
+// enforced technical unit (it is never metered against real token/step
+// usage - see Options.Budget's pass-through-only consumption), so callers
+// commonly assign several thousand per task, and a batch of a few such
+// tasks trips a 1000 total on the very first call. Raised to comfortably
+// admit DefaultMaxFanout tasks at a realistic multi-thousand budget each
+// while still rejecting a pathological value.
 const (
 	DefaultMaxFanout = 32
 	DefaultMaxDepth  = 10
-	DefaultMaxBudget = 1000
+	DefaultMaxBudget = 1_000_000
 )
 
 type Pool struct {

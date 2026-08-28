@@ -76,9 +76,12 @@ func (t *postMessageTool) Parameters() map[string]any {
 					"not truncated - shorten and retry.",
 			},
 			"refs": map[string]any{
-				"type":        "array",
-				"description": "Optional ledger content refs (recorded, never re-minted)",
-				"items":       map[string]any{"type": "string"},
+				"type": "array",
+				"description": "Optional content references backing the claim: opaque handles of the form " +
+					"ref:<kind>:<digest>, copied VERBATIM from a prior tool result's output_ref/error_ref " +
+					"or a run_messages entry's content_ref. Never invent one; never pass file paths, " +
+					"package names, or message ids - put those in body. When you have no such handle, omit refs.",
+				"items": map[string]any{"type": "string"},
 			},
 			"wait_seconds": map[string]any{
 				"type":    "integer",
@@ -343,7 +346,20 @@ func (t *runMessagesTool) Execute(ctx context.Context, args json.RawMessage) (st
 	if c == nil {
 		c = cliorchestrate.InitCoordinator(t.dispatcher, t.cfg, t.repo)
 	}
-	msgs, err := c.ListRunMessages(ctx, in.RunID, in.TaskID)
+	// One GetRun for both the incoming filter (a raw model id -> the real
+	// task the run holds) and each returned message's TaskID (the real,
+	// possibly namespaced id agentmsg stamped -> the model's own raw id) -
+	// cliorchestrate.ResolveTaskID and ModelVisibleTaskID are exact
+	// inverses of each other over the same task list.
+	var tasks []ledger.TaskSnapshot
+	if snap, err := t.repo.GetRun(ctx, in.RunID); err == nil {
+		tasks = snap.Tasks
+	}
+	targetID := in.TaskID
+	if targetID != "" {
+		targetID = cliorchestrate.ResolveTaskID(tasks, targetID)
+	}
+	msgs, err := c.ListRunMessages(ctx, in.RunID, targetID)
 	if err != nil {
 		return "", err
 	}
@@ -362,7 +378,7 @@ func (t *runMessagesTool) Execute(ctx context.Context, args json.RawMessage) (st
 			Kind:       string(m.Kind),
 			Synopsis:   m.Synopsis,
 			ContentRef: m.ContentRef,
-			TaskID:     m.TaskID,
+			TaskID:     cliorchestrate.ModelVisibleTaskID(tasks, m.TaskID),
 		}
 		if in.IncludeBody && m.ContentRef != "" {
 			if full, err := c.LoadMessageBody(ctx, m.ContentRef); err == nil {

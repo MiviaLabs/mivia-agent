@@ -40,19 +40,29 @@ type agentTaskHandler struct {
 }
 
 // requestTimeout returns the per-LLM-request timeout for subagent turns.
-// configured wins when positive; otherwise fallback applies, and when both
-// are 0 (unlimited), EffectiveTimeoutSec(fallback) is used - the same
-// 12-hour default that bounds orchestration - so the model-facing
-// timeout_seconds knob feeds every subagent request. The 15-minute
-// http.Client transport backstop remains the real per-request ceiling, so
-// a single hung provider call still cannot block the entire subagent.
-// This mirrors registerMultiStepHandler in dispatcher.go.
-func requestTimeout(configured, fallback int) time.Duration {
+// A positive configured value (default_request_timeout_seconds) is the
+// deadline; otherwise DefaultSubagentRequestTimeoutSec (1800s, 30 minutes)
+// applies. That 1800s is the per-request context deadline. The 15-minute
+// http.Client.Timeout stays the hard per-attempt wire wall, so a single hung
+// provider call still cannot block the entire subagent.
+//
+// Behavior change: the old code fed default_timeout_seconds into every
+// subagent request through EffectiveTimeoutSec, so an unset
+// default_request_timeout_seconds inherited the 12-hour orchestration
+// default. Operators who relied on that must now set
+// default_request_timeout_seconds explicitly. This mirrors
+// registerMultiStepHandler in dispatcher_handlers.go.
+func requestTimeout(configured int) time.Duration {
 	if configured > 0 {
 		return time.Duration(configured) * time.Second
 	}
-	return time.Duration(config.EffectiveTimeoutSec(fallback)) * time.Second
+	return config.DefaultSubagentRequestTimeoutSec * time.Second
 }
+
+// The whole-run counterpart of requestTimeout lives in subagent_budget.go:
+// totalTaskTimeout resolves default_total_timeout_seconds into the
+// MultiStepHandler TotalTimeout. This file sat at the 500-line structure
+// soft cap, so the helper got its own small file instead of a berth here.
 
 func registerAgentHandlers(d *runtime.Dispatcher, opts SessionDispatcherOpts) error {
 	if opts.AgentRegistry == nil {
@@ -172,7 +182,7 @@ func (h *agentTaskHandler) prepareInvokeSurface(req runtime.Request) (string, st
 	// prompt's end - is moot now that the block never enters the prompt).
 	memoryContext := chat.MemoryContextContent(cliagents.CoreMemoryBlockForOpts(h.opts))
 	if req.Skill == "" {
-		return withMessagingProtocol(systemPrompt) + schemaBlock, memoryContext, registry, noop, nil
+		return withReportBudget(withMessagingProtocol(systemPrompt), false) + schemaBlock, memoryContext, registry, noop, nil
 	}
 	scoped, prompt, closeActivation, err := h.activateSkill(req.Skill, registry)
 	if err != nil {
@@ -182,7 +192,7 @@ func (h *agentTaskHandler) prepareInvokeSurface(req runtime.Request) (string, st
 	// The skill's instructions replace the agent prompt, so the protocol block
 	// is appended to the skill-activated prompt instead of the resolved one.
 	// This keeps the child-side messaging contract in-context exactly once.
-	return withMessagingProtocol(prompt) + schemaBlock, memoryContext, scoped, closeActivation, nil
+	return withReportBudget(withMessagingProtocol(prompt), false) + schemaBlock, memoryContext, scoped, closeActivation, nil
 }
 
 // resolveOutputSchema returns the output schema that will actually be enforced
@@ -238,6 +248,19 @@ func withMessagingProtocol(prompt string) string {
 	return prompt + "\n\n" + subagents.MessagingProtocolPrompt
 }
 
+// withReportBudget appends the harness-injected final-report budget block to a
+// subagent system prompt. allowOverflow marks a surface with no store_note
+// tool (oneshot/delegate): it cannot park overflow detail in the ledger, so it
+// gets the budget variant without the store_note instruction. Tool-bearing
+// surfaces pass false and carry the full variant. Callers must place the block
+// before the output-schema appendix, so the schema contract stays last.
+func withReportBudget(prompt string, allowOverflow bool) string {
+	if allowOverflow {
+		return prompt + "\n\n" + subagents.ReportBudgetPromptNoTool
+	}
+	return prompt + "\n\n" + subagents.ReportBudgetPrompt
+}
+
 func (h *agentTaskHandler) newMultiStepHandler(binding agentBinding, registry *tools.Registry, systemPrompt, memoryContext string, req runtime.Request) *subagents.MultiStepHandler {
 	limits := h.effectiveWorkLimits(binding, req)
 	instanceID := runtime.NewSessionID()
@@ -279,7 +302,13 @@ func (h *agentTaskHandler) newMultiStepHandler(binding agentBinding, registry *t
 		RefOnlyTools:           h.opts.RefOnlyTools,
 		RemainderSpool:         cliagents.RemainderSpoolFromRegistryVar(registry),
 		OutputSchema:           outSchema, SchemaRetryMax: h.opts.Config.SchemaRetryMax,
-		RequestTimeout:            requestTimeout(h.opts.Config.DefaultRequestTimeoutSec, h.opts.Config.DefaultTimeout),
+		RequestTimeout: requestTimeout(h.opts.Config.DefaultRequestTimeoutSec),
+		// Same [subagents] wire_stream knob as the other handler surfaces.
+		WireStreamTransport: h.opts.Config.WireStreamResolved(),
+		// Total budget from default_total_timeout_seconds: the incident gap
+		// was exactly this construction running with no TotalTimeout, so a
+		// trickling provider pinned the run past every idle watchdog.
+		TotalTimeout:              totalTaskTimeout(h.opts.Config.DefaultTotalTimeoutSec),
 		SteerWatchdog:             time.Duration(h.opts.Config.Messaging.SteerWatchdogSecondsResolved()) * time.Second,
 		ContextPreparationManager: h.opts.ContextPreparationManager,
 		ContextPreparationInput:   h.opts.ContextPreparationInput,

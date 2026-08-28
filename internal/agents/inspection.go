@@ -58,6 +58,11 @@ func Inspect(workspaceRoot string, o LoadResolveOptions) (InspectionReport, erro
 	for _, file := range discovered.Files {
 		inputs = append(inputs, ResolveInput{Name: file.Name, Source: file.Source, Path: file.Path, Spec: file.Spec})
 	}
+	// The inspection registry must agree with the session-load registry
+	// (LoadAndResolveOpts): merge the compiled built-ins behind same-name
+	// file-backed definitions so catalog, doctor, and settings surfaces see
+	// the same roster a session dispatches against.
+	inputs, builtinWarnings := appendBuiltInInputs(inputs)
 	byName, err := indexInputs(inputs)
 	if err != nil {
 		return InspectionReport{Global: global, Collection: discovered.Collection, Diagnostics: discovered.Diagnostics, Warnings: discovered.Warnings}, err
@@ -68,6 +73,13 @@ func Inspect(workspaceRoot string, o LoadResolveOptions) (InspectionReport, erro
 	for _, name := range orderedNames(byName) {
 		resolved, resolveErr := state.resolveOne(name)
 		if resolveErr != nil {
+			if byName[name].Source == config.AgentSourceBuiltIn {
+				// Compiled content has no file behind it: report the skip as
+				// the same warning the session-load path emits, never as a
+				// malformed-file diagnostic with a fabricated path.
+				state.warnings = append(state.warnings, fmt.Sprintf("skipped built-in agent %q: %s", name, resolveErr.Error()))
+				continue
+			}
 			replaceInspectionRow(&diagnostics, config.AgentFileDiagnostic{
 				Name: name, Source: byName[name].Source, Path: byName[name].Path, State: config.AgentFileMalformed,
 			})
@@ -78,6 +90,7 @@ func Inspect(workspaceRoot string, o LoadResolveOptions) (InspectionReport, erro
 		}
 	}
 	warnings := append(append([]string{}, global.Warnings...), discovered.Warnings...)
+	warnings = append(warnings, builtinWarnings...)
 	warnings = append(warnings, state.warnings...)
 	sort.Slice(diagnostics, func(i, j int) bool {
 		if diagnostics[i].Name != diagnostics[j].Name {

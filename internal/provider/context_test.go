@@ -233,6 +233,9 @@ func TestEstimatorRetainsPairingCompatibility(t *testing.T) {
 	if got, err := RequestTokens(Request{Messages: []Message{{Role: RoleUser, Content: strings.Repeat("x", 8)}}, MaxTokens: intPtr(7)}, ContextAccountingProfile{}); err != nil || got <= 7 {
 		t.Fatalf("RequestTokens=%d, err=%v; output reserve was not included", got, err)
 	}
+	if got, err := RequestTokens(Request{Messages: []Message{{Role: RoleUser, Content: strings.Repeat("x", 8)}}, MaxTokens: nil}, ContextAccountingProfile{}); err != nil || got <= 0 {
+		t.Fatalf("RequestTokens nil MaxTokens=%d, err=%v", got, err)
+	}
 }
 
 func intPtr(value int) *int { return &value }

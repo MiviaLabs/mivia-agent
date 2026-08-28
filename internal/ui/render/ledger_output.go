@@ -177,9 +177,12 @@ func collapseLedgerLines(t theme.Theme, tier theme.Tier, lines []string) []strin
 // FormatLedgerOutput formats ledger/output responses into clean content
 // blocks without envelope metadata, differentiating not-found refs,
 // recorded errors/messages, and malformed-ref shapes instead of treating
-// every response identically.
+// every response identically. The summary doubles as the tool-end
+// header detail, so it carries the facts a reader needs without
+// expanding: ref, size, and the truncation/paging state
+// (tool-output-polish.md R3/R4).
 func FormatLedgerOutput(t theme.Theme, tier theme.Tier, output string, width int) (string, []string) {
-	trimmed := strings.TrimSpace(output)
+	trimmed := UnwrapJSONString(strings.TrimSpace(output))
 
 	var errEnv ledgerErrorEnvelope
 	if json.Unmarshal([]byte(trimmed), &errEnv) == nil && errEnv.Error != "" {
@@ -192,7 +195,7 @@ func FormatLedgerOutput(t theme.Theme, tier theme.Tier, output string, width int
 
 	env, salvaged, ok := parseLedgerEnvelope(trimmed)
 	if !ok {
-		return "", strings.Split(strings.TrimRight(output, "\n"), "\n")
+		return "", rawToolFallback(t, tier, output)
 	}
 
 	subtle := Role(t, tier, theme.RoleFGSubtle)
@@ -201,15 +204,21 @@ func FormatLedgerOutput(t theme.Theme, tier theme.Tier, output string, width int
 		return "✖ ref not found", []string{subtle.Render(shortenRef(env.Ref))}
 	}
 
-	summary := fmt.Sprintf("%s (%s)", shortenRef(env.Ref), humanBytes(env.Bytes))
+	summary := shortenRef(env.Ref) + " · " + humanBytes(env.Bytes)
 	switch env.Kind {
 	case "error":
 		summary = "✖ recorded error · " + summary
 	case "message":
 		summary = "✉ " + summary
 	}
+	if salvaged {
+		summary += " · truncated"
+	} else if env.HasMore && env.NextOffset != nil {
+		summary += fmt.Sprintf(" · more · offset=%d", *env.NextOffset)
+	}
 
 	content, structured := unwrapLedgerContent(env.Content)
+	content, thinkWords := stripThink(content)
 
 	var lines []string
 	if structured {
@@ -220,6 +229,12 @@ func FormatLedgerOutput(t theme.Theme, tier theme.Tier, output string, width int
 	}
 	if lines == nil {
 		lines = strings.Split(strings.TrimRight(content, "\n"), "\n")
+	}
+	// A raw reasoning dump never reaches the transcript: the badge leads
+	// the body so the fact survives even a collapsed block's head window
+	// (tool-output-polish.md R2).
+	if thinkWords > 0 {
+		lines = append([]string{subtle.Render(ThinkBadge(thinkWords))}, lines...)
 	}
 	lines = collapseLedgerLines(t, tier, lines)
 

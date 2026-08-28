@@ -1,14 +1,19 @@
 package cliorchestrate
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 	"unicode/utf8"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agentmsg"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
+	"github.com/MiviaLabs/mivia-agent/internal/sdkadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
 
@@ -320,5 +325,91 @@ func TestLoadToolCallSummariesTruncatesAtRuneBoundary(t *testing.T) {
 	}
 	if !utf8.ValidString(c.Output) {
 		t.Fatalf("Output is not valid UTF-8 after truncation: %q", c.Output)
+	}
+}
+
+// TestTaskMessageIndexCarriesContentRef pins the envelope's resume path: a
+// finding's synopsis entry must carry the event's content_ref so a reader can
+// ledger_read the pinned full body WITHOUT the session-privileged
+// run_messages tool - the dispatch/join envelope is the only message surface
+// a dispatched task or an offline reader is guaranteed to see. Also pins the
+// omitempty contract (legacy events without content_ref emit no key) and
+// that non-finding/question kinds stay excluded.
+func TestTaskMessageIndexCarriesContentRef(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	ctx := context.Background()
+	runID := "run-cref"
+	taskID := "t1"
+
+	if err := repo.CreateRun(ctx, "", ledger.RunSnapshot{
+		RunID: runID, Status: ledger.RunStatusRunning,
+		Tasks: []ledger.TaskSnapshot{{RunID: runID, TaskID: taskID, Status: string(ledger.TaskStatusRunning)}},
+	}); err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+
+	ref := sdkadapter.Mint(sdkadapter.KindMessage, []byte(`{"kind":"finding","body":"full finding text"}`))
+	if ref == "" {
+		t.Fatal("expected non-empty content ref")
+	}
+	mustPayload := func(t *testing.T, p agentmsg.LifecyclePayload) []byte {
+		t.Helper()
+		raw, err := json.Marshal(p)
+		if err != nil {
+			t.Fatalf("marshal payload: %v", err)
+		}
+		return raw
+	}
+	events := []ledger.LifecycleEvent{
+		{
+			ID: "evt-1", RunID: runID, Kind: coordinator.LifecycleKindTaskMessage, TaskID: taskID,
+			Payload: mustPayload(t, agentmsg.LifecyclePayload{
+				MessageID: "msg-1", Kind: agentmsg.KindFinding,
+				Synopsis: "found the inversion", ContentRef: ref,
+			}),
+			CreatedAt: time.Now(),
+		},
+		{
+			// Legacy event written before content_ref existed.
+			ID: "evt-2", RunID: runID, Kind: coordinator.LifecycleKindTaskMessage, TaskID: taskID,
+			Payload: mustPayload(t, agentmsg.LifecyclePayload{
+				MessageID: "msg-2", Kind: agentmsg.KindQuestion, Synopsis: "pre-ref event",
+			}),
+			CreatedAt: time.Now(),
+		},
+		{
+			// Answers are never envelope attachments.
+			ID: "evt-3", RunID: runID, Kind: coordinator.LifecycleKindTaskMessage, TaskID: taskID,
+			Payload: mustPayload(t, agentmsg.LifecyclePayload{
+				MessageID: "msg-3", Kind: agentmsg.KindAnswer,
+				Synopsis: "answer stays out", ContentRef: ref,
+			}),
+			CreatedAt: time.Now(),
+		},
+	}
+	for _, evt := range events {
+		if err := repo.AppendEvent(ctx, evt); err != nil {
+			t.Fatalf("AppendEvent(%s): %v", evt.ID, err)
+		}
+	}
+
+	idx := TaskMessageIndex(ctx, repo, []ledger.TaskSnapshot{{RunID: runID, TaskID: taskID}})
+	msgs := idx[taskID]
+	if len(msgs) != 2 {
+		t.Fatalf("messages for %s = %+v, want 2 (finding + question; answer excluded)", taskID, msgs)
+	}
+	if msgs[0].MessageID != "msg-1" || msgs[0].ContentRef != ref {
+		t.Fatalf("finding entry = %+v, want content_ref %q", msgs[0], ref)
+	}
+	if _, _, err := sdkadapter.Parse(msgs[0].ContentRef); err != nil {
+		t.Fatalf("envelope content_ref %q does not parse: %v", msgs[0].ContentRef, err)
+	}
+	// omitempty: a legacy entry without content_ref must not emit the key.
+	raw, err := json.Marshal(msgs[1])
+	if err != nil {
+		t.Fatalf("marshal legacy entry: %v", err)
+	}
+	if strings.Contains(string(raw), "content_ref") {
+		t.Errorf("legacy entry emits content_ref: %s", raw)
 	}
 }

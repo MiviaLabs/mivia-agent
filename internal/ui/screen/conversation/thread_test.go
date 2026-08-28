@@ -601,7 +601,12 @@ func TestResumedSession_SubagentHistoryAvailableInDialog(t *testing.T) {
 			{Role: "assistant", Text: "found 0 leaks across 12 packages"},
 		},
 	}
-	threads := stubThreads{"task-leak-check": subagentConv}
+	// Namespaced with the tool call's own id, matching what LoadHistory
+	// actually keys the reconstructed panel row and thread lookup under
+	// (see thread.go's namespacedTaskID call) - internal/cliorchestrate/
+	// dispatch.go's dispatchNamespace is the same scheme a live dispatch
+	// mints its real per-task id under.
+	threads := stubThreads{"call_disp_99:task-leak-check": subagentConv}
 
 	s := sized(t, 1)
 	next, _ := s.Update(tea.WindowSizeMsg{Width: uikitconfig.BreakpointWide, Height: 30})
@@ -630,8 +635,8 @@ func TestResumedSession_SubagentHistoryAvailableInDialog(t *testing.T) {
 
 	// Focus is on the subagent row in the panel
 	a, isAgent := scr.panel.selectedAgent()
-	if !isAgent || a.ID != "task-leak-check" {
-		t.Fatalf("expected selected subagent 'task-leak-check', got isAgent=%v, id=%s", isAgent, a.ID)
+	if !isAgent || a.ID != "call_disp_99:task-leak-check" {
+		t.Fatalf("expected selected subagent 'call_disp_99:task-leak-check', got isAgent=%v, id=%s", isAgent, a.ID)
 	}
 
 	// Press Enter to open the subagent dialog
@@ -641,8 +646,8 @@ func TestResumedSession_SubagentHistoryAvailableInDialog(t *testing.T) {
 	if scr.thread == nil {
 		t.Fatal("expected subagent thread dialog to open")
 	}
-	if scr.panel.dialogAgent != "task-leak-check" {
-		t.Errorf("expected dialogAgent='task-leak-check', got %q", scr.panel.dialogAgent)
+	if scr.panel.dialogAgent != "call_disp_99:task-leak-check" {
+		t.Errorf("expected dialogAgent='call_disp_99:task-leak-check', got %q", scr.panel.dialogAgent)
 	}
 
 	// Verify history is loaded in the thread dialog
@@ -658,6 +663,50 @@ func TestResumedSession_SubagentHistoryAvailableInDialog(t *testing.T) {
 	tailRows := scr.thread.chatTailRows()
 	if len(tailRows) != 1 {
 		t.Errorf("expected 1 chat tail row (status line only) when composer is hidden, got %d rows: %v", len(tailRows), tailRows)
+	}
+}
+
+// TestLoadHistory_DispatchTasksMissingIDFallbackIsFriendly pins the fix
+// for a raw provider tool_call_id leaking into a visible sidebar row on a
+// RESUMED session: a task the model forgot to give an "id" used to fall
+// back to "{callID}-{index}", so LoadHistory's reconstructed row exposed
+// the raw call id verbatim, e.g. "call_disp_99-1". A resumed session must
+// key its row the same friendly way a live dispatch_tasks run now does
+// (dispatchTaskIDs in events.go).
+func TestLoadHistory_DispatchTasksMissingIDFallbackIsFriendly(t *testing.T) {
+	s := sized(t, 1)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: uikitconfig.BreakpointWide, Height: 30})
+	scr := next.(Screen)
+
+	msgs := []ports.Message{
+		{
+			Role: "assistant",
+			At:   time.Now(),
+			ToolCalls: []ports.ToolCall{
+				{
+					ID:        "call_disp_99",
+					Name:      "dispatch_tasks",
+					Arguments: `{"tasks":[{"prompt":"tidy the docs","agent":"docs-writer"}]}`,
+					Output:    `{"tasks":[{"status":"completed","output":"done"}]}`,
+				},
+			},
+		},
+	}
+	scr.LoadHistory(msgs)
+
+	for _, a := range scr.panel.agents {
+		if strings.Contains(a.ID, "call_disp_99") {
+			t.Fatalf("row id %q must not embed the raw provider call id", a.ID)
+		}
+	}
+	found := false
+	for _, a := range scr.panel.agents {
+		if a.ID == "task-1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected a friendly fallback row id (task-1), got %+v", scr.panel.agents)
 	}
 }
 

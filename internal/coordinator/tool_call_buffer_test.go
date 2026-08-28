@@ -5,9 +5,33 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/subagents"
 )
+
+// TestSinkForNilBufferAndLazyProgress pins two defensive arms of the sink
+// factory: a nil buffer hands back a callable no-op sink, and a zero-value
+// buffer lazily creates its progress map on the first event instead of
+// panicking (the constructor pre-initializes the map; this path protects
+// any future construction site that forgets to).
+func TestSinkForNilBufferAndLazyProgress(t *testing.T) {
+	var nilBuf *runToolCallBuffer
+	nilBuf.sinkFor("t")(subagents.ToolCallStep{ToolCallID: "1", Name: "grep", Kind: "start"})
+
+	b := &runToolCallBuffer{}
+	b.sinkFor("t")(subagents.ToolCallStep{ToolCallID: "1", Name: "grep", Kind: "start", At: time.Now()})
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	p := b.progress["t"]
+	if p == nil {
+		t.Fatal("first event on a zero-value buffer created no progress entry")
+	}
+	if p.ToolCalls != 1 {
+		t.Errorf("ToolCalls = %d, want 1", p.ToolCalls)
+	}
+}
 
 // TestRunToolCallBufferPerTaskIsolation verifies that sinkFor/flush demux
 // concurrently-written steps per taskID with zero cross-contamination, under

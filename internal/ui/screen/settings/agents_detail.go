@@ -99,6 +99,9 @@ func (s *agentsSection) renderDetail(ag ports.AgentView) []string {
 	if ag.Scope == ports.ScopeUser {
 		originLabel = "Global (user home: ~/.mivia/agents/" + ag.Name + ".md)"
 	}
+	if ag.Scope == ports.ScopeBuiltin {
+		originLabel = "Built-in (shipped with mivia)"
+	}
 
 	lines := []string{
 		accent.Bold(true).Render(ag.Name) + "  " + subtle.Render(originLabel),

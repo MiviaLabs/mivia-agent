@@ -7,6 +7,6 @@ skills:
 - review-synthesis
 disallowed_tools:
 - post_message
-provider: llmproxycli
-model: gemini-3.7-flash-high
+provider: zai
+model: glm-5.3-flash
 ---

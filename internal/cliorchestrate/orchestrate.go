@@ -252,9 +252,11 @@ func (t *inspectAgentTool) Privileged()  {}
 
 func (t *inspectAgentTool) Description() string {
 	return "Inspect a previously dispatched orchestration run. " +
-		"Returns the current run snapshot including status, task states, " +
-		"timestamps, and any output/error references. " +
-		"Use after dispatch_tasks (with wait=\"none\" or wait=\"task\") to check progress or after join_run to see final state."
+		"Returns the current run snapshot: status, per-task states, and any output/error references. " +
+		"Running tasks carry a live progress block (task age, tool_calls, last tool call, its age in seconds) " +
+		"from the run's tool-call buffer - a running task with no recent tool activity is the wedge signal. " +
+		"Weigh that signal against the task age: a slow first provider turn also reads as zero activity, so do not cancel a task that has barely started. " +
+		"Use after dispatch_tasks (with wait=\"none\" or wait=\"task\") to check state or after join_run to see final state."
 }
 
 func (t *inspectAgentTool) Parameters() map[string]any {
@@ -291,22 +293,33 @@ func (t *inspectAgentTool) Execute(ctx context.Context, args json.RawMessage) (s
 
 	// Build a model-friendly response.
 	type taskInfo struct {
-		TaskID      string   `json:"task_id"`
-		DisplayName string   `json:"display_name"`
-		Status      string   `json:"status"`
-		DependsOn   []string `json:"depends_on,omitempty"`
-		OutputRef   string   `json:"output_ref,omitempty"`
-		ErrorRef    string   `json:"error_ref,omitempty"`
+		TaskID      string            `json:"task_id"`
+		DisplayName string            `json:"display_name"`
+		Status      string            `json:"status"`
+		DependsOn   []string          `json:"depends_on,omitempty"`
+		OutputRef   string            `json:"output_ref,omitempty"`
+		ErrorRef    string            `json:"error_ref,omitempty"`
+		Progress    *taskProgressInfo `json:"progress,omitempty"`
 	}
+	progressByTask := handle.TaskProgress()
 	tasks := make([]taskInfo, len(snap.Tasks))
 	for i, t := range snap.Tasks {
+		// DependsOn entries are themselves real (possibly namespaced)
+		// sibling task ids from this same run - resolve each through the
+		// run's own task list rather than the string-based stripNamespace,
+		// the same way TaskID itself resolves via modelVisibleTaskID.
+		dependsOn := make([]string, len(t.DependsOn))
+		for j, dep := range t.DependsOn {
+			dependsOn[j] = taskRawIDByID(snap.Tasks, dep)
+		}
 		tasks[i] = taskInfo{
-			TaskID:      t.TaskID,
+			TaskID:      modelVisibleTaskID(t),
 			DisplayName: t.DisplayName,
 			Status:      t.Status,
-			DependsOn:   t.DependsOn,
+			DependsOn:   dependsOn,
 			OutputRef:   t.OutputRef,
 			ErrorRef:    t.ErrorRef,
+			Progress:    taskProgressInfoFor(t, progressByTask, time.Now()),
 		}
 	}
 

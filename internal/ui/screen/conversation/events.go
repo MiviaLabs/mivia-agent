@@ -206,11 +206,31 @@ func (s *Screen) observeToolStart(b uievent.ToolStartBody) {
 	if !isSubagentTool(b.Name) && !(s.threads != nil && isThreadRegistered(s.threads, b.ToolCallID)) {
 		return
 	}
-	if ids := dispatchTaskIDs(b.ToolCallID, b.Name, b.Args); len(ids) > 0 {
-		s.panel.observeAgentGroupStart(b.ToolCallID, ids)
-	} else {
-		s.panel.observeAgentStart(b.ToolCallID, b.Name)
+	if s.panel.isDispatchGroup(b.ToolCallID) {
+		// The agent loop emits two tool.start events per call - "queued"
+		// (internal/agent/sdk_tool_events.go, Args populated) then
+		// "running" (sdk_dispatcher_shim.go's dispatcherShim.Run, which
+		// never sets Input at all). The first one already fanned this
+		// call out into its own per-task rows; a second event for the
+		// SAME call id must not re-derive ids from a possibly-empty Args
+		// and fall back to a stray single row keyed by the raw call id.
+		return
 	}
+	if ids, names := dispatchTaskIDsAndNames(b.ToolCallID, b.Name, b.Args); len(ids) > 0 {
+		s.panel.observeAgentGroupStart(b.ToolCallID, ids, names)
+	} else {
+		name := extractAgentDisplayName(b.Name, b.Args)
+		s.panel.observeAgentStart(b.ToolCallID, name)
+	}
+}
+
+func extractAgentDisplayName(toolName string, args map[string]any) string {
+	for _, key := range []string{"agent", "subagent", "role", "type", "skill", "workflow", "name"} {
+		if v := getStringVal(args, key); v != "" {
+			return v
+		}
+	}
+	return toolName
 }
 
 // observeToolEnd folds one ToolEndBody into the activity panel and the
@@ -265,32 +285,58 @@ func isThreadRegistered(threads ports.SubagentThreads, callID string) bool {
 // other tool name, or when no task list can be parsed, leaving the
 // caller's existing single-row behavior unchanged.
 func dispatchTaskIDs(callID, name string, args map[string]any) []string {
+	ids, _ := dispatchTaskIDsAndNames(callID, name, args)
+	return ids
+}
+
+// dispatchTaskIDsAndNames extracts both per-task ids and friendly agent names.
+func dispatchTaskIDsAndNames(callID, name string, args map[string]any) ([]string, map[string]string) {
 	if strings.ToLower(name) != "dispatch_tasks" {
-		return nil
+		return nil, nil
 	}
 	rawTasks, ok := args["tasks"].([]any)
 	if !ok || len(rawTasks) == 0 {
-		return nil
+		return nil, nil
 	}
 	ids := make([]string, 0, len(rawTasks))
+	names := make(map[string]string, len(rawTasks))
 	for i, rt := range rawTasks {
 		id := ""
+		taskName := ""
 		if m, ok := rt.(map[string]any); ok {
 			if s, ok := m["id"].(string); ok {
 				id = s
 			}
+			taskName = extractAgentDisplayName("", m)
 		}
 		if id == "" {
-			id = fmt.Sprintf("%s-%d", callID, i+1)
+			id = fmt.Sprintf("task-%d", i+1)
+		} else {
+			id = namespacedTaskID(callID, id)
 		}
 		ids = append(ids, id)
+		if taskName != "" {
+			names[id] = taskName
+		}
 	}
-	return ids
+	return ids, names
+}
+
+// namespacedTaskID mirrors internal/cliorchestrate's function of the same
+// name. Duplicated, not imported: internal/ui/** must not import
+// internal/cli*-family packages (UI isolation, docs/design/ui-isolation.md,
+// enforced by scripts/check_import_layers.py), so the two copies are kept
+// in sync by contract, not by the compiler.
+func namespacedTaskID(namespace, rawID string) string {
+	if namespace == "" || rawID == "" {
+		return rawID
+	}
+	return namespace + ":" + rawID
 }
 
 // parseDispatchTaskStatuses decodes a dispatch_tasks call's own JSON result
 // into a task id -> status map, accepting either the bare-array shape
-// (wait="run") or the wrapped {"task_results":[...]} envelope (wait="none"/
+// (wait="run") or the wrapped {"tasks":[...]} / {"task_results":[...]} envelopes (wait="none"/
 // "task") - render/output_formatter.go and uiadapter/subagent_reconstruct.go
 // handle the same duality for the transcript and the resumed-session
 // reconstruction paths respectively. Returns nil when result matches
@@ -302,23 +348,49 @@ func parseDispatchTaskStatuses(result string) map[string]string {
 	}
 	type row struct {
 		TaskID string `json:"task_id"`
+		ID     string `json:"id"`
 		Status string `json:"status"`
 	}
 	var rows []row
+	var wrapped struct {
+		TaskResults []row `json:"task_results"`
+		Tasks       []row `json:"tasks"`
+	}
 	if err := json.Unmarshal([]byte(trimmed), &rows); err != nil || len(rows) == 0 {
-		var wrapped struct {
-			TaskResults []row `json:"task_results"`
-		}
-		if err := json.Unmarshal([]byte(trimmed), &wrapped); err != nil || len(wrapped.TaskResults) == 0 {
+		if err := json.Unmarshal([]byte(trimmed), &wrapped); err != nil {
 			return nil
 		}
-		rows = wrapped.TaskResults
 	}
-	out := make(map[string]string, len(rows))
-	for _, r := range rows {
-		if r.TaskID != "" {
-			out[r.TaskID] = r.Status
+	out := make(map[string]string, len(wrapped.Tasks)+len(wrapped.TaskResults)+len(rows))
+	for _, r := range wrapped.Tasks {
+		id := r.TaskID
+		if id == "" {
+			id = r.ID
 		}
+		if id != "" && r.Status != "" {
+			out[id] = r.Status
+		}
+	}
+	for _, r := range wrapped.TaskResults {
+		id := r.TaskID
+		if id == "" {
+			id = r.ID
+		}
+		if id != "" && r.Status != "" {
+			out[id] = r.Status
+		}
+	}
+	for _, r := range rows {
+		id := r.TaskID
+		if id == "" {
+			id = r.ID
+		}
+		if id != "" && r.Status != "" {
+			out[id] = r.Status
+		}
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }

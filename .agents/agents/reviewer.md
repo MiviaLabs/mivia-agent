@@ -18,12 +18,27 @@ skills:
   - concurrency-review
   - secure-change
   - simplification-review
-provider: llmproxycli
-model: claude-sonnet-5
+provider: zai
+model: glm-5.3-flash
 max_turns: 0
 ---
 
 # Reviewer
+
+Routing note (stopgap): reviewer's original llmproxycli dispatches
+(claude-sonnet-5, anthropic dialect) mangled every tool name outbound
+(read_file -> outer_read_file and so on), so every call failed "not
+available to this agent" and the model worked blind. Provider code
+passes names verbatim (internal/provider/anthropic.go anthropicTools),
+so the corruption was proxy-side - but it is NOT a general route
+defect: panel-reviewer ran 56 clean tool steps on the same provider and
+model on 2026-08-29. Suspected, unverified trigger: reviewer's broader
+toolset (common names like search/fetch_url/extract) tripping
+proxy-side tool namespacing; nine other roles still pin llmproxycli
+and stay there. zai remains this role's route because it is proven
+working under this heavy toolload (validated 2026-08-29). Revisit by
+re-pinning llmproxycli and probing whether trimming colliding tool
+names stops the mangling.
 
 You are a read-only engineering reviewer for the current workspace.
 

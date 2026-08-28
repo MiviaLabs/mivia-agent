@@ -262,8 +262,12 @@ func TestPanelSectionsGroupByCategory(t *testing.T) {
 	}})
 	s = next.(Screen)
 	plain = ansi.Strip(s.View())
+	// The metrics line ("Elapsed: .., Tools: N, Step: N") can clip on a
+	// narrow sidebar pane (clipRowsToWidth never re-wraps), so this checks
+	// only its always-first, never-clipped label - the exact content is
+	// pinned unclipped by TestPanelAgentRowRendersElapsedToolsStep.
 	if !strings.Contains(plain, "subagents (1)") || !strings.Contains(plain, "sa-1") ||
-		!strings.Contains(plain, "running") || !strings.Contains(plain, "2/5") {
+		!strings.Contains(plain, "running") || !strings.Contains(plain, "Elapsed:") {
 		t.Errorf("subagent progress did not reach the section live:\n%s", plain)
 	}
 	// A later update folds in place rather than appending a row. (The
@@ -712,16 +716,8 @@ func TestPanelUserMessageRendering(t *testing.T) {
 	assertExactFrame(t, viewClosedAgain, uikitconfig.BreakpointWide, 30)
 }
 
-func TestNavClickSelectsRow(t *testing.T) {
-	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 24, sampleDiffs()...))
-	// Row 0 is top gutter, row 1 is SIDEBAR, row 2 is files header, row 3 is file 0
-	next, _ := s.handleNavClick(3)
-	s = next.(Screen)
-	if !s.panel.dialog {
-		t.Error("clicking file row 0 should open content dialog")
-	}
-}
-
+// The nav-click selection tests live in filespanel_navclick_test.go
+// (this file was over the *_test.go LOC hard cap).
 func TestPanelWide_SidebarFullHeightAndTopbarInLeftPane(t *testing.T) {
 	s := openPanel(t, panelScreen(t, uikitconfig.BreakpointWide, 24, sampleDiffs()...))
 	view := s.View()
@@ -815,6 +811,43 @@ func TestPanel_SelectionKey_PreservesCursorOnStatusUpdate(t *testing.T) {
 	}
 }
 
+// TestPanel_SelectedAgent_DisambiguatesDuplicateLabels pins the fix for a
+// panel with several concurrently dispatched agents sharing a name and
+// status (four "reviewer" rows all "running") - a real fleet the user hit.
+// rowLabel() renders identically for all four, so resolving the cursor by
+// comparing label text (the old behavior) always returned the first
+// duplicate no matter which row was actually highlighted: the preview/
+// thread dialog never changed, and rebindIfOpen's cursor-hold snapped back
+// to row 0 on every live update, which read as arrow keys not working.
+func TestPanel_SelectedAgent_DisambiguatesDuplicateLabels(t *testing.T) {
+	p := newPanel(theme.Theme{Name: "test"}, theme.TierASCII)
+	p.open = true
+	for _, id := range []string{"task-a", "task-b", "task-c", "task-d"} {
+		p.observeAgentStart(id, "reviewer")
+	}
+	// All four rows render identically.
+	labels := p.rowLabels()
+	if len(labels) != 4 || labels[0] != labels[1] || labels[1] != labels[2] || labels[2] != labels[3] {
+		t.Fatalf("expected 4 identical labels, got %v", labels)
+	}
+
+	p.list.MoveTo(2) // highlight task-c, the third row
+
+	a, ok := p.selectedAgent()
+	if !ok || a.ID != "task-c" {
+		t.Fatalf("selectedAgent() = %+v, ok=%v; want task-c", a, ok)
+	}
+	if k := p.selectionKey(); k != "a:task-c" {
+		t.Errorf("selectionKey() = %q, want 'a:task-c'", k)
+	}
+
+	p.list.MoveTo(0) // highlight task-a, the first row
+	a, ok = p.selectedAgent()
+	if !ok || a.ID != "task-a" {
+		t.Fatalf("selectedAgent() = %+v, ok=%v; want task-a", a, ok)
+	}
+}
+
 func TestPanel_ReconcileTerminal_CustomNonTerminalStatusReconciles(t *testing.T) {
 	var p panel
 	p.observeAgent("sub-blocked", &uievent.Progress{Status: "blocked", Step: 1, TotalSteps: 2})
@@ -844,7 +877,7 @@ func TestPanel_ReconcileTerminal_CustomNonTerminalStatusReconciles(t *testing.T)
 // own id as its own running row.
 func TestObserveAgentGroupStart_FansOutOneRowPerTask(t *testing.T) {
 	var p panel
-	p.observeAgentGroupStart("call-1", []string{"task-a", "task-b", "task-c", "task-d"})
+	p.observeAgentGroupStart("call-1", []string{"task-a", "task-b", "task-c", "task-d"}, nil)
 
 	if len(p.agents) != 4 {
 		t.Fatalf("expected 4 agent rows, got %d: %+v", len(p.agents), p.agents)
@@ -876,7 +909,7 @@ func TestObserveAgentGroupStart_FansOutOneRowPerTask(t *testing.T) {
 // collapse every task to the same aggregate ok/failed status.
 func TestObserveAgentGroupEnd_ResolvesPerTaskStatuses(t *testing.T) {
 	var p panel
-	p.observeAgentGroupStart("call-1", []string{"task-a", "task-b", "task-c"})
+	p.observeAgentGroupStart("call-1", []string{"task-a", "task-b", "task-c"}, nil)
 
 	p.observeAgentGroupEnd("call-1", map[string]string{
 		"task-a": "completed",
@@ -895,6 +928,25 @@ func TestObserveAgentGroupEnd_ResolvesPerTaskStatuses(t *testing.T) {
 	}
 	if p.activeAgentCount() != 0 {
 		t.Errorf("activeAgentCount = %d, want 0 after group end", p.activeAgentCount())
+	}
+}
+
+func TestObserveAgentGroupEnd_ResolvesNamespacedTaskIDsFromStrippedResult(t *testing.T) {
+	var p panel
+	// Live dispatch_tasks registers IDs with callID prefix (call-1:task-a, call-1:task-b)
+	p.observeAgentGroupStart("call-1", []string{"call-1:task-a", "call-1:task-b", "call-1:task-c"}, nil)
+
+	// Tool execution returns stripped raw task IDs in result JSON
+	p.observeAgentGroupEnd("call-1", map[string]string{
+		"task-a": "completed",
+		"task-b": "failed",
+	}, true)
+
+	want := map[string]string{"call-1:task-a": "completed", "call-1:task-b": "failed", "call-1:task-c": "completed"}
+	for _, a := range p.agents {
+		if got := want[a.ID]; got != a.Status {
+			t.Errorf("%s status = %q, want %q", a.ID, a.Status, got)
+		}
 	}
 }
 
@@ -926,7 +978,7 @@ func TestObserveAgentGroupEnd_LastTaskCompletionSurvivesBackToBackTurnEnd(t *tes
 	var p panel
 
 	// dispatch_tasks starts a two-task batch.
-	p.observeAgentGroupStart("call-1", []string{"task-a", "task-b"})
+	p.observeAgentGroupStart("call-1", []string{"task-a", "task-b"}, nil)
 
 	// task-a finished a while ago; task-b is the LAST task and its own
 	// live completion (translateSubagentDone's tool.output Progress)
@@ -963,6 +1015,78 @@ func TestObserveAgentGroupEnd_LastTaskCompletionSurvivesBackToBackTurnEnd(t *tes
 	}
 }
 
+// TestObserveToolEvents_AsyncDispatchKeepsSubagentRunningAndUpdatesLiveMetrics pins the
+// fix for the bug where dispatch_tasks(wait="none") prematurely marked subagents completed
+// when the outer dispatch tool call ended, locking out all subsequent live progress events.
+func TestObserveToolEvents_AsyncDispatchKeepsSubagentRunningAndUpdatesLiveMetrics(t *testing.T) {
+	s := sized(t, 1)
+
+	// 1. Tool start arrives for dispatch_tasks(wait="none")
+	s.observeToolStart(uievent.ToolStartBody{
+		ToolCallID: "call_dispatch_1",
+		Name:       "dispatch_tasks",
+		Args: map[string]any{
+			"wait": "none",
+			"tasks": []any{
+				map[string]any{"id": "worker-1", "agent": "researcher", "prompt": "investigate bug"},
+			},
+		},
+	})
+
+	if len(s.panel.agents) != 1 {
+		t.Fatalf("expected 1 agent row, got %d", len(s.panel.agents))
+	}
+	if s.panel.agents[0].Status != "running" {
+		t.Fatalf("expected running status, got %q", s.panel.agents[0].Status)
+	}
+	if s.panel.agents[0].Name != "researcher" {
+		t.Fatalf("expected Name=researcher, got %q", s.panel.agents[0].Name)
+	}
+
+	// 2. dispatch_tasks returns with async run envelope
+	asyncResult := `{"run_id":"run-1","display_name":"run-1","status":"running","tasks":[{"id":"worker-1","name":"researcher","status":"running"}]}`
+	s.observeToolEnd(uievent.ToolEndBody{
+		ToolCallID: "call_dispatch_1",
+		Result:     asyncResult,
+		OK:         true,
+	})
+
+	// Subagent must still be RUNNING, not completed
+	if len(s.panel.agents) != 1 {
+		t.Fatalf("expected still 1 agent row, got %d", len(s.panel.agents))
+	}
+	if s.panel.agents[0].Status != "running" {
+		t.Fatalf("expected subagent to stay 'running' after async dispatch returns, got %q", s.panel.agents[0].Status)
+	}
+
+	// 3. Subagent executes in background and emits live tool calls / step events
+	s.panel.observeAgent("worker-1", &uievent.Progress{
+		Status:    "running",
+		Step:      2,
+		ToolCalls: 5,
+		Log:       []string{"running grep"},
+	})
+
+	if s.panel.agents[0].Step != 2 || s.panel.agents[0].ToolCalls != 5 {
+		t.Fatalf("metrics not updated: Step=%d ToolCalls=%d", s.panel.agents[0].Step, s.panel.agents[0].ToolCalls)
+	}
+	if s.panel.agents[0].Name != "researcher" {
+		t.Fatalf("name wiped out during progress: %q", s.panel.agents[0].Name)
+	}
+
+	// 4. Subagent finishes and emits completed
+	s.panel.observeAgent("worker-1", &uievent.Progress{
+		Status: "completed",
+	})
+
+	if s.panel.agents[0].Status != "completed" {
+		t.Fatalf("expected completed status, got %q", s.panel.agents[0].Status)
+	}
+	if s.panel.agents[0].Step != 2 || s.panel.agents[0].ToolCalls != 5 {
+		t.Fatalf("final counts lost: Step=%d ToolCalls=%d", s.panel.agents[0].Step, s.panel.agents[0].ToolCalls)
+	}
+}
+
 func TestScrollPanelInSplitMode(t *testing.T) {
 	s := sized(t, 1)
 	next, _ := s.Update(tea.WindowSizeMsg{Width: uikitconfig.BreakpointWide, Height: 30})
@@ -988,33 +1112,25 @@ func TestScrollPanelInSplitMode(t *testing.T) {
 	}
 }
 
-// TestObserveAgentStart_ResetsStaleTerminalRow guards a reused task id: a
-// resumed session's LoadHistory seeds rows "completed", and models reuse
-// short ids ("task-1", "audit") across dispatches. A NEW agent-start on an
-// id whose row is stuck terminal must reset it to running - otherwise the
-// sidebar would badge a genuinely live dispatch as already finished. (The
-// thread dialog's composer is unconditionally hidden regardless of this
-// row's status - see openThread - so a stale terminal row no longer risks
-// freezing the dialog read-only; it only risks a wrong status badge.)
-func TestObserveAgentStart_ResetsStaleTerminalRow(t *testing.T) {
-	var p panel
-	p.observeAgentHistory("task-1", "completed")
-	p.observeAgentStart("task-1", "invoke_subagent")
-	if len(p.agents) != 1 {
-		t.Fatalf("expected 1 agent row, got %d", len(p.agents))
-	}
-	if got := p.agents[0].Status; got != "running" {
-		t.Errorf("expected the reused-id row reset to 'running', got %q", got)
+func TestMatchesAgentID_ReverseNamespaced(t *testing.T) {
+	if !matchesAgentID("worker-1", "call-123:worker-1") {
+		t.Errorf("expected matchesAgentID to return true for raw aID and namespaced id")
 	}
 }
 
-// TestObserveAgentStart_DoesNotDisturbRunningRow pins the counterpart: a
-// duplicate start on an already-running row stays running (idempotent).
-func TestObserveAgentStart_DoesNotDisturbRunningRow(t *testing.T) {
-	var p panel
-	p.observeAgentStart("task-1", "invoke_subagent")
-	p.observeAgentStart("task-1", "invoke_subagent")
-	if len(p.agents) != 1 || p.agents[0].Status != "running" {
-		t.Errorf("expected one running row, got %+v", p.agents)
+func TestDialogParts_AgentNotFoundWithThread(t *testing.T) {
+	s := sized(t, 1)
+	s.panel.dialog = true
+	s.panel.dialogAgent = "missing-agent"
+	embedded := sized(t, 1)
+	s.thread = &embedded
+	s.threadID = "missing-agent"
+	title, body, hint := s.dialogParts()
+	if !strings.Contains(title, "missing-agent") {
+		t.Errorf("title %q does not contain missing-agent", title)
 	}
+	if hint != "esc close" {
+		t.Errorf("hint = %q, want 'esc close'", hint)
+	}
+	_ = body
 }

@@ -82,10 +82,11 @@ func (b *AgentBinding) resolveCeilings(definition agents.ResolvedAgent, opts Ses
 
 // WithWallClock applies the agent's wall-clock ceiling as a parent of whatever
 // bound the caller already imposed. Layering it rather than replacing the
-// caller's timeout matters: MultiStepHandler treats a handler-level
-// TotalTimeout as superseding the per-task timeout, so setting that field
-// would let a generous agent ceiling silently loosen a tight task deadline.
-// As a parent context the tighter of the two always wins.
+// caller's timeout matches the handler contract: MultiStepHandler and
+// OneShotHandler clamp a handler-level TotalTimeout against the per-task
+// timeout and keep the tighter of the two, so this parent context composes
+// with the handler bound instead of fighting it - the tightest deadline
+// always wins.
 //
 // The cause is a fresh per-invocation error value, not the shared sentinel, so
 // ownership is unambiguous: an ancestor that breached ITS ceiling propagates

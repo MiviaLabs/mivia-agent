@@ -333,7 +333,9 @@ func assertParked(t *testing.T, runID string) string {
 	}
 	var parkMsgID string
 	for _, p := range parks {
-		if p.TaskID != "rev-1" {
+		// p.TaskID is the real, harness-namespaced id (dispatchNamespace);
+		// "rev-1" is the raw id this test dispatched, so match by suffix.
+		if p.TaskID != "rev-1" && !strings.HasSuffix(p.TaskID, ":rev-1") {
 			t.Fatalf("parked task = %q, want the asker rev-1", p.TaskID)
 		}
 		parkMsgID = p.MessageID
@@ -432,7 +434,9 @@ func assertLedgerDeclinedEvent(t *testing.T, repo ledger.LedgerRepository, runID
 	}
 	declined := false
 	for _, e := range events {
-		if e.Kind == coordinator.LifecycleKindTaskAskDeclined && e.TaskID == "rev-1" {
+		// e.TaskID is the real, harness-namespaced id (dispatchNamespace);
+		// "rev-1" is the raw id this test dispatched.
+		if e.Kind == coordinator.LifecycleKindTaskAskDeclined && (e.TaskID == "rev-1" || strings.HasSuffix(e.TaskID, ":rev-1")) {
 			declined = true
 		}
 	}
@@ -461,13 +465,22 @@ func waitForDispatchedRunID(t *testing.T, repo ledger.LedgerRepository, want ...
 			if len(r.Tasks) != len(want) {
 				continue
 			}
-			ids := make(map[string]bool, len(r.Tasks))
-			for _, task := range r.Tasks {
-				ids[task.TaskID] = true
-			}
+			// task.TaskID is the real, harness-namespaced id
+			// (internal/cliorchestrate/dispatch.go's dispatchNamespace:
+			// callID+":"+raw id) - the ledger's own internal identity, not
+			// what dispatch_tasks reports to the model (which strips that
+			// prefix back off - stripNamespace). want carries the RAW ids
+			// this test dispatched, so match by suffix, not equality.
 			match := true
 			for _, id := range want {
-				if !ids[id] {
+				found := false
+				for _, task := range r.Tasks {
+					if task.TaskID == id || strings.HasSuffix(task.TaskID, ":"+id) {
+						found = true
+						break
+					}
+				}
+				if !found {
 					match = false
 					break
 				}

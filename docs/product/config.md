@@ -474,12 +474,20 @@ The summarize request carries bounded quotes of the dropped messages' real conte
 | `max_fanout` | int | `0` (unlimited) | Parallel sub-tasks per level |
 | `nested_steps` | int | `0` (unlimited) | Sub-agent loop steps per turn |
 | `default_timeout_seconds` | int | `0` | Per-task orchestration timeout; `0` = safety bound (12 hours) |
-| `default_request_timeout_seconds` | int | `0` | Per-LLM-request timeout for subagent turns; `0` = fall back to the effective orchestration default |
-| `default_budget` | int | `0` (unlimited) | Per-task token budget |
+| `default_request_timeout_seconds` | int | `0` | Per-LLM-request timeout for subagent turns; `0` = built-in 30-minute default (1800s). The 15-minute HTTP transport timeout stays the hard per-attempt ceiling |
+| `default_total_timeout_seconds` | int | `0` | Whole-subagent wall-clock budget and last-resort termination guarantee; `0` = built-in 60-minute default (3600s); negative = off. A trickling provider connection cannot pin a run past this bound. A tighter per-task timeout from the caller wins. Negative: an unset-timeout run has no handler-level bound and stays bounded only by workflow policy |
+| `wire_stream` | bool | `true` | Nested subagent LLM calls go out with `stream:true` to the provider's SSE endpoint; the full answer is assembled before the call returns, so the non-stream contract holds. See the paragraph below |
+| `default_budget` | int | `0` | Per-task admission-control cost cap (not a token meter - never enforced against actual usage); `0` = built-in safe default (1,000,000 total per batch); negative = unlimited |
 | `store_backend` | string | `"memory"` | Outside chat: `"memory"` (ephemeral) or `"sqlite"` (durable) |
 | `store_path` | string | `~/.mivia/context.db` (chat); platform cache dir (non-chat orchestration) | One SQLite file for chat sessions, context, worktree routes, and runs |
 
+`wire_stream` (default `true`) changes the transport of nested subagent LLM calls, not their contract: the request goes to the provider's SSE endpoint with `stream:true`, and the full answer is assembled before the call returns. The change exists because a provider connection can trickle keepalive bytes forever while the model answer never advances; byte-level idle watchdogs cannot tell that apart from model thinking. The content-idle bound closes this gap: a turn that receives no chunk which would advance the answer for 90 seconds is a stall. A stalled call aborts, retries at once on a fresh connection (2 retries), then falls back to one plain non-stream request. A provider that rejects the stream request with a JSON error, or stalls a stream attempt without ever sending one data line, is remembered for the life of the process: later calls skip the stream endpoint. Set `wire_stream = false` to keep every nested call on the plain non-stream endpoint. The 90-second content-idle bound is independent of `[provider] stream_idle_timeout_seconds`, which still governs plain byte-idle on live streaming turns. Workflow child runs inherit the behavior through their handlers.
+
+(This default was briefly flipped off, then restored, during investigation of a real incident where dispatch_tasks batches never completed - see `default_budget` above and internal/subagents/subagents.go's `DefaultMaxBudget`: the actual cause was an unrelated admission-control default rejecting realistic task budgets before any provider call was made, confirmed by live reproduction. A dedicated concurrency+stall stress test against wire_stream found no hang: internal/provider/openai_compat_turnstream_concurrency_test.go.)
+
 For `mivia chat`, mivia uses one SQLite file for all durable chat state: sessions, context, worktree routes, and runs. When `store_path` is unset, mivia uses the shared global path `~/.mivia/context.db`, so every workspace on the machine has the same chat history by default. Sessions stay isolated inside that shared file by workspace ID: two projects never see each other's sessions even though they share one file. A worktree never creates another chat database. Set `store_path` to give one workspace its own separate file instead of the shared default.
+
+Workflow child runs register for `inspect_agents`, `cancel_run`, and `join_run` only when a chat session owns them. Runs started without an owning session (CLI commands, review panels, one-shot catalog flows) stay manageable through the workflow tools instead; this fail-closed skip is by design and logs one line per skipped registration.
 
 ## Workflow panel limits
 

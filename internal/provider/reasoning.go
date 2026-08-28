@@ -141,13 +141,21 @@ func defaultReasoningDialect(provider string) reasoning.Dialect {
 // side effect to the caller's copy, and the SDK adapter that consumes the
 // request would never see the bridge's level->effort projection.
 func (c *OpenAICompat) reasoningFields(req *Request) map[string]any {
+	resolved := c.resolveReasoning(*req)
+	req.SDKReasoningEffort = levelToSDKReasoningEffort(resolved.Level)
+	return reasoningBodyFields(resolved.Dialect, resolved.Level)
+}
+
+// resolveReasoning resolves the wire dialect and level for one request,
+// falling to the client's own default dialect when the request names none.
+// Factored out of reasoningFields so marshalBody can resolve the same level
+// to pick a max_tokens floor without duplicating the dialect fallback.
+func (c *OpenAICompat) resolveReasoning(req Request) reasoning.Setting {
 	dialect := req.ReasoningDialect
 	if dialect == "" {
 		dialect = c.reasoning
 	}
-	resolved := reasoning.Resolve(c.name, reasoning.Setting{Level: req.ReasoningLevel, Dialect: dialect})
-	req.SDKReasoningEffort = levelToSDKReasoningEffort(resolved.Level)
-	return reasoningBodyFields(resolved.Dialect, resolved.Level)
+	return reasoning.Resolve(c.name, reasoning.Setting{Level: req.ReasoningLevel, Dialect: dialect})
 }
 
 // ReasoningFields is the exported wrapper around reasoningFields. It

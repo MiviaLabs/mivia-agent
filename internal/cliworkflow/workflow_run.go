@@ -128,7 +128,8 @@ func ExecuteWorkflowRun(name, root, configPath string, rawInputs []string, allow
 		return err
 	}
 	defer releaseExecution()
-	built, err := WorkflowRunBuild(prepared.Root, prepared.Res, prepared.Store, prepared.Repo, prepared.Compiled, prepared.RefBase, prepared.Inputs, prepared.InputSnapshot, prepared.Raw, runID, nil, nil, nil, nil, nil)
+	// Empty owner (no session on the CLI path): registration is skipped.
+	built, err := WorkflowRunBuild(prepared.Root, prepared.Res, prepared.Store, prepared.Repo, prepared.Compiled, prepared.RefBase, prepared.Inputs, prepared.InputSnapshot, prepared.Raw, runID, nil, nil, nil, nil, nil, "", nil)
 	if err != nil {
 		return err
 	}
@@ -463,6 +464,8 @@ func OpenWorkflowStore(root string, cfg config.SubagentConfig) (*storage.SQLite,
 	return store, workflowledger.NewStorageRepository(store), func() { _ = store.Close() }, nil
 }
 
+// The pure path comparison lives in cliagents.SameFilePath.
+
 func WorkflowConfigPath(root, explicit string) string {
 	if strings.TrimSpace(explicit) != "" {
 		return explicit
@@ -495,7 +498,11 @@ func ApplyWorkflowStoreRoot(res *config.Resolved, root string) {
 		return
 	}
 	if !res.StorePathSet {
-		res.Subagents.StorePath = workspace.ContextStorePath(root)
+		if config.ProjectConfigExists(root) {
+			res.Subagents.StorePath = workspace.ContextStorePath(root)
+		} else {
+			res.Subagents.StorePath = config.TempStorePath(root, "orchestration")
+		}
 		return
 	}
 	if p := res.Subagents.StorePath; p != "" {

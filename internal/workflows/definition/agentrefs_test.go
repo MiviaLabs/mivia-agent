@@ -338,3 +338,35 @@ func TestValidateAgentSkillReferences_AgentPanel(t *testing.T) {
 		t.Fatalf("ValidateAgentSkillReferences() error = %v", errs)
 	}
 }
+
+// TestValidateAgentReferences_AcceptsBuiltIn pins that a workflow step may
+// reference the compiled built-in agent with no agents directory present.
+func TestValidateAgentReferences_AcceptsBuiltIn(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	wf := agentTestWorkflow("review", "agent", agents.BuiltInGeneralPurposeName)
+	errs := ValidateAgentReferences(wf, tmpDir)
+	if len(errs) != 0 {
+		t.Fatalf("unexpected errors for built-in reference: %v", errs)
+	}
+}
+
+// TestValidateAgentSkillReferences_AcceptsBuiltInOnCleanWorkspace pins the
+// production admission path: a registry loaded from a clean workspace
+// (no user or workspace agent files) admits a step naming the built-in.
+func TestValidateAgentSkillReferences_AcceptsBuiltInOnCleanWorkspace(t *testing.T) {
+	home, ws := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+
+	reg, _, _, err := agents.LoadAndResolve(ws, nil)
+	if err != nil {
+		t.Fatalf("LoadAndResolve error = %v", err)
+	}
+	compiled := &CompiledWorkflow{Steps: []Step{
+		{ID: "review", Kind: "agent", Agent: agents.BuiltInGeneralPurposeName},
+	}}
+	errs := ValidateAgentSkillReferences(compiled, reg, skills.NewRegistry())
+	if len(errs) != 0 {
+		t.Fatalf("unexpected admission errors on a clean workspace: %v", errs)
+	}
+}

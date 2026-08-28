@@ -222,3 +222,63 @@ func TestNewTurnHandler_SubagentEvents_StillRecordedInSubagentThread(t *testing.
 		t.Errorf("subagent thread history missing the recorded assistant text: %+v", hist)
 	}
 }
+
+// TestSubagentThreads_SameAgentDifferentTasksDoNotShareAThread is the
+// regression for a real user-reported bug: a subagent's own thread stopped
+// recording new history well before the run actually finished, while its
+// sidebar row (Elapsed/Tools/Step) kept updating correctly.
+//
+// getOrCreate (subagent.go) registers a conversation under THREE keys:
+// TaskID, ToolCallID, and the bare Agent name (unconditionally, since
+// 371c35d5). Two dispatch_tasks entries commonly route to the SAME named
+// agent (e.g. "general-purpose" is the default). The first task to look
+// itself up finds nothing and creates a fresh conversation registered
+// under all three keys, including the shared Agent name; the SECOND task's
+// first event then finds that Agent-name key already claimed and is handed
+// the FIRST task's conversation object instead of its own. Whichever task
+// finishes first fires EventSubagentDone, which sets
+// SubagentTranscriptConversation.done = true on the SHARED object - and
+// RecordEvent's `if !c.done { c.active = true }` guard then silently
+// drops every later event for the OTHER, still-running task: its final
+// report looks frozen mid-run while dispatch_tasks/emitHeartbeat panel
+// events (keyed independently, by TaskID, in filespanel.observeAgent)
+// keep climbing Step/Tools/Elapsed as normal, exactly the confusing split
+// symptom reported.
+func TestSubagentThreads_SameAgentDifferentTasksDoNotShareAThread(t *testing.T) {
+	handle, sess, threads, unblock := startBlockedSubagentTurn(t)
+
+	originA := agent.EventOrigin{TaskID: "task-a", Agent: "general-purpose"}
+	originB := agent.EventOrigin{TaskID: "task-b", Agent: "general-purpose"}
+
+	// task-a starts and finishes first.
+	sess.OnAgentEvent(agent.Event{Kind: agent.EventAssistant, Content: "task a final report", Origin: originA})
+	sess.OnAgentEvent(agent.Event{Kind: agent.EventSubagentDone, Origin: originA})
+
+	// task-b, routed to the SAME agent, is still running - its content
+	// arrives AFTER task-a's Done event.
+	sess.OnAgentEvent(agent.Event{Kind: agent.EventAssistant, Content: "task b still working", Origin: originB})
+	unblock()
+	drainUntilClose(t, handle.Events(), 5*time.Second)
+
+	threadA, ok := threads.Thread("task-a")
+	if !ok {
+		t.Fatal("expected a thread for task-a")
+	}
+	threadB, ok := threads.Thread("task-b")
+	if !ok {
+		t.Fatal("expected a thread for task-b")
+	}
+	if threadA == threadB {
+		t.Fatal("task-a and task-b share an agent name but must not share one conversation object")
+	}
+
+	found := false
+	for _, m := range threadB.History() {
+		if strings.Contains(m.Text, "task b still working") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("task-b's history is missing content recorded after task-a's Done event fired (sealed by the shared-agent-name collision): %+v", threadB.History())
+	}
+}

@@ -256,16 +256,18 @@ func TestAgentSettings(t *testing.T) {
 	}
 	drainOK(t, h)
 
-	// Remove default agent fails
+	// Removing an unknown agent fails closed: a name absent from the store
+	// must not delete any file (the old name-keyed default-agent guard moved
+	// to scope-based guards; see builtin_settings_test.go for the live ones).
 	h, err = settings.Agents.Apply(context.Background(), ports.ScopeUser, ports.RemoveAgent{
-		Name: ports.DefaultAgentName,
+		Name: "no-such-agent",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	states := drainWithFailure(h)
 	if states[len(states)-1] != ports.SaveFailed {
-		t.Error("expected SaveFailed when removing default agent")
+		t.Error("expected SaveFailed when removing an unknown agent")
 	}
 
 	// Remove custom agent

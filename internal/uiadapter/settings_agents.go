@@ -66,23 +66,33 @@ func (a settingsAgents) Apply(_ context.Context, scope ports.Scope, e ports.Agen
 // agentSourceToScope maps a resolved agent's trust origin to the ports.Scope
 // its settings-screen row groups under: config.AgentSourceUser (loaded from
 // ~/.mivia/agents/) is ScopeUser, config.AgentSourceWorkspace (loaded from
-// <workspace>/.agents/agents/) is ScopeProject. Mirrors how settingsSkills
-// already keys its Global/Project split on skills.Origin.
+// <workspace>/.agents/agents/) is ScopeProject, and a compiled built-in is
+// ScopeBuiltin (read-only row). Mirrors how settingsSkills already keys its
+// Global/Project split on skills.Origin.
 func agentSourceToScope(src config.AgentSource) ports.Scope {
-	if src == config.AgentSourceWorkspace {
+	switch src {
+	case config.AgentSourceWorkspace:
 		return ports.ScopeProject
+	case config.AgentSourceBuiltIn:
+		return ports.ScopeBuiltin
+	default:
+		return ports.ScopeUser
 	}
-	return ports.ScopeUser
 }
 
 // agentsDirForScope resolves the on-disk agents directory a scope writes to
 // or removes from: ScopeUser is ~/.mivia/agents/, ScopeProject is
-// <workspace>/.agents/agents/. Mirrors settingsSkills.skillsDirectory.
+// <workspace>/.agents/agents/. ScopeBuiltin has no directory: compiled
+// content is never written or removed. Mirrors settingsSkills.skillsDirectory.
 func agentsDirForScope(scope ports.Scope) string {
-	if scope == ports.ScopeUser {
+	switch scope {
+	case ports.ScopeUser:
 		return config.UserAgentsDir()
+	case ports.ScopeProject:
+		return config.WorkspaceAgentsDir("")
+	default:
+		return ""
 	}
-	return config.WorkspaceAgentsDir("")
 }
 
 func (s *SettingsStore) findAgent(name string) int {
@@ -97,6 +107,12 @@ func (s *SettingsStore) findAgent(name string) int {
 func (s *SettingsStore) applyAgent(scope ports.Scope, e ports.AgentEdit) error {
 	switch v := e.(type) {
 	case ports.UpsertAgent:
+		if scope == ports.ScopeBuiltin {
+			return fmt.Errorf("built-in agents are read-only; create a same-name definition to override one")
+		}
+		if v.Agent.Name == config.RootAgentName {
+			return fmt.Errorf("agent name %q is reserved for the compiled root agent", config.RootAgentName)
+		}
 		v.Agent.Scope = scope
 		v.Agent.SystemPromptChars = len(v.Agent.SystemPrompt)
 		if i := s.findAgent(v.Agent.Name); i >= 0 {
@@ -108,12 +124,13 @@ func (s *SettingsStore) applyAgent(scope ports.Scope, e ports.AgentEdit) error {
 			_ = config.WriteAgentFile(dir, agentViewToSettings(v.Agent), v.Agent.SystemPrompt)
 		}
 	case ports.RemoveAgent:
-		if v.Name == ports.DefaultAgentName {
-			return fmt.Errorf("the default agent %q cannot be removed", ports.DefaultAgentName)
-		}
 		i := s.findAgent(v.Name)
 		if i < 0 {
 			return fmt.Errorf("agent %q not found", v.Name)
+		}
+		// A built-in row has no file behind it; refuse before mutating rows.
+		if s.agents[i].Scope == ports.ScopeBuiltin {
+			return fmt.Errorf("built-in agent %q cannot be removed", v.Name)
 		}
 		// Remove from the row's own scope, not the caller-supplied one: a
 		// stray scope argument must never delete the wrong file, the same

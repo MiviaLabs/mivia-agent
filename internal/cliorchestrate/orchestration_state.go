@@ -243,7 +243,10 @@ func OpenDurableLedgerRepo(cfg config.SubagentConfig, w io.Writer) (repo ledger.
 	if cfg.StoreBackend != "sqlite" {
 		return repo, nil
 	}
-	sqlStore, err := storage.OpenSQLite(cfg.StorePath)
+	// The config-layer default store (~/.cache tier, or its TempDir fallback)
+	// is mivia-owned, never operator-managed: open it hardened. An operator
+	// configured store_path keeps its modes.
+	sqlStore, err := storage.OpenSQLiteWithOptions(cfg.StorePath, storage.Options{Harden: config.IsDefaultOrchestrationStorePath(cfg.StorePath)})
 	if err != nil {
 		// %s with explicit quotes, not %q: %q Go-quotes the path, doubling
 		// Windows backslashes, so a warning that names the configured path
@@ -267,7 +270,9 @@ func OpenSharedSQLite(cfg config.SubagentConfig, w io.Writer) (*storage.SQLite, 
 	if cfg.StoreBackend != "sqlite" {
 		return nil, nil
 	}
-	store, err := storage.OpenSQLite(cfg.StorePath)
+	// Same gate as OpenDurableLedgerRepo: harden the config-layer default
+	// tier only; an operator store_path keeps its modes.
+	store, err := storage.OpenSQLiteWithOptions(cfg.StorePath, storage.Options{Harden: config.IsDefaultOrchestrationStorePath(cfg.StorePath)})
 	if err != nil {
 		if w != nil {
 			fmt.Fprintf(w, "warning: failed to open shared SQLite store \"%s\": %v\n", cfg.StorePath, err)

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	workflowruntime "github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
@@ -67,7 +68,7 @@ func TestExecuteWorkflowResumeInjectedFailures(t *testing.T) {
 			return nil, selected, func() {}, nil
 		}
 		WorkflowResumeInstallHooks = func(string, bool, bool) (func(), error) { return func() {}, nil }
-		workflowResumeBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *definition.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, []byte, *workflowledger.RunSnapshot, map[string]bool, *skills.Registry) (WorkflowControllerBuild, error) {
+		workflowResumeBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *definition.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, []byte, *workflowledger.RunSnapshot, map[string]bool, *skills.Registry, string, ledger.LedgerRepository) (WorkflowControllerBuild, error) {
 			return WorkflowControllerBuild{
 				Controller: &controller.LinearController{Holder: "resume-test"},
 				Dispatcher: workflowTestDispatcher{},
@@ -123,7 +124,7 @@ func runResumeExecutionFailureTests(t *testing.T, root, configPath string, repo 
 	})
 	t.Run("build", func(t *testing.T) {
 		reset(repo)
-		workflowResumeBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *definition.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, []byte, *workflowledger.RunSnapshot, map[string]bool, *skills.Registry) (WorkflowControllerBuild, error) {
+		workflowResumeBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *definition.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, []byte, *workflowledger.RunSnapshot, map[string]bool, *skills.Registry, string, ledger.LedgerRepository) (WorkflowControllerBuild, error) {
 			return WorkflowControllerBuild{}, sentinel
 		}
 		if err := ExecuteWorkflowResume(run.RunID, root, configPath, true, false, false, false, io.Discard, io.Discard); !errors.Is(err, sentinel) {
@@ -393,7 +394,7 @@ func TestExecuteWorkflowRunCleansFailedAdmission(t *testing.T) {
 	originalBuild := WorkflowRunBuild
 	originalAdmission := WorkflowRunSetAdmission
 	cleaned := false
-	WorkflowRunBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *definition.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, []byte, *workflowledger.RunSnapshot, map[string]bool, *skills.Registry) (WorkflowControllerBuild, error) {
+	WorkflowRunBuild = func(string, *config.Resolved, *storage.SQLite, workflowledger.Repository, *definition.CompiledWorkflow, string, map[string]any, map[string]string, []byte, string, *workflowledger.Snapshot, []byte, *workflowledger.RunSnapshot, map[string]bool, *skills.Registry, string, ledger.LedgerRepository) (WorkflowControllerBuild, error) {
 		return WorkflowControllerBuild{Dispatcher: workflowTestDispatcher{}, Cleanup: func() { cleaned = true }}, nil
 	}
 	WorkflowRunSetAdmission = func(WorkflowControllerBuild) error { return sentinel }
@@ -428,7 +429,7 @@ func TestBuildWorkflowControllerDependencyFailures(t *testing.T) {
 	}
 	t.Cleanup(reset)
 	call := func() error {
-		_, err := buildWorkflowController(root, res, store, repo, wf, filepath.Join(root, ".mivia", "workflows"), map[string]any{"task": "test"}, map[string]string{"task": "test"}, []byte("definition"), "wfr-build-failure", nil, nil, nil, nil, nil)
+		_, err := buildWorkflowController(root, res, store, repo, wf, filepath.Join(root, ".mivia", "workflows"), map[string]any{"task": "test"}, map[string]string{"task": "test"}, []byte("definition"), "wfr-build-failure", nil, nil, nil, nil, nil, "", nil)
 		return err
 	}
 	runEarlyWorkflowBuildFailureTests(t, sentinel, reset, call)
@@ -462,7 +463,7 @@ max_turns: 1
 		definition.Step{ID: "review", Kind: "agent_gate", Agent: "two", Template: "templates/two.md", OutputSchema: "schemas/out.json"},
 		definition.Step{ID: "verify", Kind: "evidence_gate", Verifier: "go-test", OutputSchema: "schemas/out.json"},
 	)
-	built, err := buildWorkflowController(root, res, store, repo, wf, filepath.Join(root, ".mivia", "workflows"), map[string]any{"task": "test"}, map[string]string{"task": "test"}, []byte("definition"), "wfr-evidence-wiring", nil, nil, nil, nil, nil)
+	built, err := buildWorkflowController(root, res, store, repo, wf, filepath.Join(root, ".mivia", "workflows"), map[string]any{"task": "test"}, map[string]string{"task": "test"}, []byte("definition"), "wfr-evidence-wiring", nil, nil, nil, nil, nil, "", nil)
 	if err != nil {
 		t.Fatalf("buildWorkflowController() error = %v", err)
 	}

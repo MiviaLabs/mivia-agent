@@ -84,9 +84,14 @@ func ClearAllCoordinators() {
 	})
 }
 
-// NewDispatchTasksToolZero returns a zero-value dispatch_tasks tool for the
-// cli session tool catalog (schema advertising only; no runtime state).
-func NewDispatchTasksToolZero() tools.Tool { return &dispatchTasksTool{} }
+// NewDispatchTasksToolForAdvertising returns a dispatch_tasks tool for the
+// cli session tool catalog (schema advertising only). agentReg feeds the
+// agent enum and roster prose in Parameters(); nil keeps the degraded
+// historical shape (empty enum, roster-free prose), and every method still
+// reads no runtime state beyond that immutable snapshot.
+func NewDispatchTasksToolForAdvertising(agentReg *agents.AgentRegistry) tools.Tool {
+	return &dispatchTasksTool{agentReg: agentReg}
+}
 
 // NewInspectAgentsToolZero returns a zero-value inspect_agents tool for the
 // cli session tool catalog (schema advertising only; no runtime state).
@@ -226,9 +231,12 @@ func NewCancelRunToolConfigured(d *runtime.Dispatcher) *cancelRunTool {
 	return &cancelRunTool{dispatcher: d}
 }
 
-// BuildTasksForTest exposes the dispatch tool's task builder.
+// BuildTasksForTest exposes the dispatch tool's task builder with no
+// namespace prefix, so a caller asserting on Task.ID sees the raw
+// model-supplied id verbatim, matching this helper's pre-namespacing
+// signature.
 func (t *dispatchTasksTool) BuildTasksForTest(params []dispatchTaskParam, defaultTimeoutSec int) ([]subagents.Task, error) {
-	return t.buildTasks(params, defaultTimeoutSec)
+	return t.buildTasks("", params, defaultTimeoutSec)
 }
 
 // DispatchTaskParamForTest is the exported alias of the dispatch tool's task

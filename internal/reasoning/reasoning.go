@@ -268,3 +268,42 @@ func FormatLevelsQuoted(levels []Level) string {
 	}
 	return strings.Join(names, ", ")
 }
+
+// OutputReserveFloor is the conservative per-effort-level output-token
+// stand-in used whenever a computation must reserve room for a completion
+// but has no explicit token count to use. It lives here, not in
+// internal/provider or internal/config, because BOTH must read the exact
+// same number for the same level:
+//   - internal/provider's wire request layer (effectiveMaxTokens in
+//     openai_compat_request.go) uses it as the max_tokens sent on the wire
+//     when a request leaves MaxTokens unset, so an always-thinking model
+//     (e.g. z.ai's GLM-5.3 family) does not burn a small provider-side
+//     default entirely on reasoning tokens before producing any answer.
+//   - internal/config's prompt-budget layer (EffectiveOutputTokens in
+//     prompt_budget.go) must reserve AT LEAST this much context-window room
+//     for the completion before packing history, or the wire request above
+//     can ask for more completion tokens than the budget left room for,
+//     risking a prompt_tokens+max_tokens over-context-window rejection.
+//
+// internal/provider cannot depend on internal/config for this (provider
+// already imports config, so the reverse would cycle), which is exactly why
+// this package - a leaf both already depend on - is the single source of
+// truth instead of either duplicating the table or one delegating to the
+// other. This heuristic is unverified against live traffic for every
+// provider and should be tuned as real numbers come in.
+func OutputReserveFloor(level Level) int {
+	switch level {
+	case XHigh, Max:
+		return 65536
+	case High:
+		return 32768
+	case Medium:
+		return 16384
+	case Low, Minimal:
+		return 8192
+	default:
+		// Off, or no reasoning level configured: a plain non-thinking turn
+		// needs headroom for the response only.
+		return 4096
+	}
+}

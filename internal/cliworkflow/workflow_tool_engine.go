@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/events"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
@@ -51,6 +52,14 @@ type sessionWorkflowEngine struct {
 	// runTUI creates the bus, so a provider keeps that ordering irrelevant.
 	bus    func() *events.Bus
 	active map[string]*sessionActiveRun
+	// orchestrationRepo is the owning chat session's ledger repository, set
+	// once at the engine's only construction site (WorkflowToolServiceWithBus).
+	// The controller's register hook stamps it on every child-run record: it is
+	// the instance the session's inspect/cancel tools carry and the one the
+	// access gate compares. Nil (no session wiring) keeps registration
+	// skipped. The workflow run's own dispatcher, coordinator, and store repo
+	// stay the execution side; this field is ownership only.
+	orchestrationRepo ledger.LedgerRepository
 }
 
 // NewSessionWorkflowEngine builds the chat-session workflow engine.
@@ -120,6 +129,10 @@ func (e *sessionWorkflowEngine) startCLI(ctx context.Context, req workflowledger
 	if err != nil {
 		return workflowledger.StartResult{}, err
 	}
+	// The tool admission frame is the only place the session caller exists.
+	// Resolve the owner here once; the wiring below carries it as an explicit
+	// parameter and never reads ctx again.
+	ownerSessionID := workflowOwnerSessionID(ctx)
 	runID := NewCLIWorkflowRunID()
 	if strings.TrimSpace(req.InvocationKey) != "" {
 		keyedID, existing, err := e.keyedRunID(ctx, prepared, req)
@@ -133,7 +146,7 @@ func (e *sessionWorkflowEngine) startCLI(ctx context.Context, req workflowledger
 		// the invocation key must stay the stable handle for this run.
 		runID = keyedID
 	}
-	return e.buildAndStart(ctx, prepared, req, runID)
+	return e.buildAndStart(ctx, prepared, req, runID, ownerSessionID, e.orchestrationRepo)
 }
 
 // keyedRunID resolves the run a request under an invocation_key maps to. A
@@ -189,13 +202,16 @@ func (e *sessionWorkflowEngine) keyedRunID(ctx context.Context, prepared *Prepar
 // buildAndStart performs the CLI admission build for runID and starts the
 // controller, settling resources on every failure path. On success the run
 // launches and prepared/built ownership transfers to the active run.
-func (e *sessionWorkflowEngine) buildAndStart(ctx context.Context, prepared *PreparedWorkflowRun, req workflowledger.StartRequest, runID string) (workflowledger.StartResult, error) {
+// ownerSessionID and sessionRepo name the session that owns the run's child
+// runs; the controller's register hook carries both into the orchestration
+// handle registry (repo stamped on the record, session on the principal).
+func (e *sessionWorkflowEngine) buildAndStart(ctx context.Context, prepared *PreparedWorkflowRun, req workflowledger.StartRequest, runID, ownerSessionID string, sessionRepo ledger.LedgerRepository) (workflowledger.StartResult, error) {
 	finishExecution, err := BeginWorkflowExecution(prepared.Root, ContextStorePath(prepared.Root, prepared.Res.Subagents), runID)
 	if err != nil {
 		prepared.CloseFn()
 		return workflowledger.StartResult{}, err
 	}
-	built, err := WorkflowRunBuild(prepared.Root, prepared.Res, prepared.Store, prepared.Repo, prepared.Compiled, prepared.RefBase, prepared.Inputs, prepared.InputSnapshot, prepared.Raw, runID, nil, nil, nil, nil, nil)
+	built, err := WorkflowRunBuild(prepared.Root, prepared.Res, prepared.Store, prepared.Repo, prepared.Compiled, prepared.RefBase, prepared.Inputs, prepared.InputSnapshot, prepared.Raw, runID, nil, nil, nil, nil, nil, ownerSessionID, sessionRepo)
 	if err != nil {
 		finishExecution()
 		prepared.CloseFn()

@@ -160,13 +160,16 @@ func (m Model) View(now time.Time) string {
 	if !m.active {
 		return ""
 	}
+	// One duration ladder everywhere (transcript-polish.md R5): the turn
+	// clock prints in the same grammar as the transcript's tool meta, so
+	// a live "18.3s" beside a committed "4.1s" reads as one language.
 	elapsed := now.Sub(m.started).Round(time.Second)
 	subtle := render.Role(m.Theme, m.Tier, theme.RoleFGSubtle)
 	line := m.mark.View() + subtle.Render(" ") + subtle.Render(m.label)
 	if m.detail != "" {
 		line += subtle.Render("  " + m.detail)
 	}
-	line += subtle.Render(fmt.Sprintf("  %s", elapsed))
+	line += subtle.Render("  " + render.FormatElapsed(int(elapsed.Milliseconds())))
 
 	// Telemetry & Safety Pill badges
 	var pills []string

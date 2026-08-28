@@ -564,7 +564,8 @@ func TestInspectKeepsValidDefinitionBesideMalformedFile(t *testing.T) {
 	if _, ok := report.Registry.Get("valid"); !ok {
 		t.Fatalf("valid agent missing: %#v", report.Registry.Names())
 	}
-	if report.Registry.Len() != 1 || report.DiagnosticSummary() != "1 malformed" {
+	// The compiled built-in loads beside the malformed file.
+	if report.Registry.Len() != 2 || report.DiagnosticSummary() != "1 malformed" {
 		t.Fatalf("registry=%v diagnostics=%q", report.Registry.Names(), report.DiagnosticSummary())
 	}
 }

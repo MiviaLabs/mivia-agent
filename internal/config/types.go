@@ -134,6 +134,26 @@ func (c ContextSummaryConfig) SummaryEnabled() bool {
 	return c.Enabled == nil || *c.Enabled
 }
 
+// WireStreamResolved reports the resolved wire-stream switch: absent means
+// on. Read this rather than the pointer so the opt-out default lives in one
+// place.
+//
+// This default was briefly flipped off as a mitigation after two sessions
+// reported dispatch_tasks batches sticking at "running" with no output.
+// Root-caused (see DefaultMaxBudget in internal/subagents/subagents.go):
+// the actual cause was an unrelated admission-control bug - a 1000
+// default MaxBudget silently rejecting realistic multi-thousand-per-task
+// budgets before any provider call was ever made (the reported "0ms"
+// failures and "budget limit exceeded"/"run budget exceeded" errors both
+// point directly at it). Confirmed by live reproduction: the exact failing
+// batch (4 tasks, budget 6000 each) succeeds on the first call with
+// wire_stream left on once the budget default is fixed, and a
+// concurrency+stall stress test against wire_stream found no hang
+// (openai_compat_turnstream_concurrency_test.go). Restored to on.
+func (c SubagentConfig) WireStreamResolved() bool {
+	return c.WireStream == nil || *c.WireStream
+}
+
 // IntegrationsConfig holds API keys and config for third-party services.
 type IntegrationsConfig struct {
 	Tavily TavilyConfig `toml:"tavily"`
@@ -233,12 +253,32 @@ type SubagentConfig struct {
 	MaxFanout      int `toml:"max_fanout"`
 	DefaultTimeout int `toml:"default_timeout_seconds"`
 	// DefaultRequestTimeoutSec is the per-LLM-request timeout for subagents
-	// (seconds). When 0, requestTimeout() falls back to the effective
-	// orchestration timeout (DefaultOrchestrationTimeoutSec = 12h).
-	DefaultRequestTimeoutSec int    `toml:"default_request_timeout_seconds"`
-	DefaultBudget            int    `toml:"default_budget"`
-	SystemPrompt             string `toml:"system_prompt"`
-	NestedSteps              int    `toml:"nested_steps"`
+	// (seconds). When 0, requestTimeout() uses DefaultSubagentRequestTimeoutSec
+	// (1800s, 30 minutes) as the per-request context deadline. The 15-minute
+	// http.Client wall stays the hard per-attempt bound; the 12-hour
+	// orchestration default no longer feeds individual subagent requests.
+	DefaultRequestTimeoutSec int `toml:"default_request_timeout_seconds"`
+	// DefaultTotalTimeoutSec is the whole-subagent wall-clock budget
+	// (seconds). 0 = unset = DefaultSubagentTotalTimeoutSec (3600s, 60
+	// minutes). Negative = off: a direct spawn with no per-task timeout then
+	// has no handler-level bound at all, and workflow or panel steps whose
+	// own timeout is unset stay bounded only by workflow policy - this is an
+	// explicit operator opt-out of the last-resort termination guarantee. A
+	// positive value is the budget itself; a tighter per-task timeout from
+	// the caller still wins.
+	DefaultTotalTimeoutSec int `toml:"default_total_timeout_seconds"`
+	// WireStream opts nested subagent calls into the wire-stream transport:
+	// the request goes to the provider with stream:true while the call keeps
+	// its non-stream contract - the full answer is assembled before it comes
+	// back. Nil means unset, which resolves to true - the pointer exists so
+	// an explicit `wire_stream = false` is distinguishable from an absent
+	// key, which a plain bool cannot express. False opts out and keeps every
+	// nested call on the plain non-stream endpoint. See WireStreamResolved
+	// for why this default was briefly flipped off and then restored.
+	WireStream    *bool  `toml:"wire_stream"`
+	DefaultBudget int    `toml:"default_budget"`
+	SystemPrompt  string `toml:"system_prompt"`
+	NestedSteps   int    `toml:"nested_steps"`
 
 	// StoreBackend selects the ledger storage backend: "memory" (default) or "sqlite".
 	StoreBackend string `toml:"store_backend"`

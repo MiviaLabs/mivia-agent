@@ -13,8 +13,9 @@ import (
 )
 
 // ValidateAgentReferences checks that every step with kind "agent" or "agent_gate"
-// references an agent file that exists in <workspaceRoot>/.agents/agents/.
-// Returns errors for any referenced agent that is not found.
+// references an agent that exists: a file in <workspaceRoot>/.agents/agents/
+// or a compiled built-in. Returns errors for any referenced agent that is
+// not found.
 func ValidateAgentReferences(wf *WorkflowFile, workspaceRoot string) []string {
 	var errs []string
 	agentsDir := workspace.AgentsDir(workspaceRoot)
@@ -23,6 +24,9 @@ func ValidateAgentReferences(wf *WorkflowFile, workspaceRoot string) []string {
 	if err != nil {
 		return []string{err.Error()}
 	}
+	// Compiled built-ins ship with the binary; a workflow may reference them
+	// with no file present.
+	knownAgents[agents.BuiltInGeneralPurposeName] = true
 
 	for _, s := range wf.Steps {
 		if s.Kind == "agent" || s.Kind == "agent_gate" || s.Kind == "agent_panel" {

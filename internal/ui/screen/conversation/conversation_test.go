@@ -273,16 +273,24 @@ func TestDispatchTasksToolStartFansOutPanelRowsPerTask(t *testing.T) {
 			Name:       "dispatch_tasks",
 			OK:         true,
 			Result: `[
-				{"task_id":"task-a","status":"completed"},
-				{"task_id":"task-b","status":"failed"},
-				{"task_id":"task-c","status":"completed"},
-				{"task_id":"task-d","status":"completed"}
+				{"task_id":"dispatch_tasks-call-1:task-a","status":"completed"},
+				{"task_id":"dispatch_tasks-call-1:task-b","status":"failed"},
+				{"task_id":"dispatch_tasks-call-1:task-c","status":"completed"},
+				{"task_id":"dispatch_tasks-call-1:task-d","status":"completed"}
 			]`,
 		},
 	}})
 	ended := next.(Screen)
 
-	want := map[string]string{"task-a": "completed", "task-b": "failed", "task-c": "completed", "task-d": "completed"}
+	// Row ids are namespaced with the call id (dispatchTaskIDs, matching
+	// what a live dispatch_tasks call actually mints - see
+	// internal/cliorchestrate/dispatch.go's dispatchNamespace).
+	want := map[string]string{
+		"dispatch_tasks-call-1:task-a": "completed",
+		"dispatch_tasks-call-1:task-b": "failed",
+		"dispatch_tasks-call-1:task-c": "completed",
+		"dispatch_tasks-call-1:task-d": "completed",
+	}
 	for _, a := range ended.panel.agents {
 		if got := want[a.ID]; got != a.Status {
 			t.Errorf("%s status = %q, want %q", a.ID, a.Status, got)

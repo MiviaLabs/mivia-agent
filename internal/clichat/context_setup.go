@@ -3,7 +3,9 @@ package clichat
 import (
 	"fmt"
 	"path/filepath"
+	"runtime"
 
+	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
@@ -47,13 +49,35 @@ func ContextStorePath(root string, cfg config.SubagentConfig) string {
 }
 
 func openContextStore(root string, cfg config.SubagentConfig) (*storage.SQLite, error) {
-	return openContextStorePath(ContextStorePath(root, cfg))
+	p := ContextStorePath(root, cfg)
+	return openContextStorePathWithOptions(p, storage.Options{Harden: hardenOrchestrationStore(root, p)})
+}
+
+// hardenOrchestrationStore reports whether path names the ad-hoc,
+// temp-dir-backed orchestration store (config.TempStorePath), the one tier
+// whose directory no operator manages. Only that tier is chmod'd; an
+// operator-configured store_path keeps the modes its owner chose.
+func hardenOrchestrationStore(root, path string) bool {
+	return cliagents.SameFilePath(runtime.GOOS, path, config.TempStorePath(root, "orchestration"))
+}
+
+// openOrchestrationStoreAt opens the orchestration ledger at path, hardening
+// the ad-hoc temp tier (see hardenOrchestrationStore). Callers that already
+// hold the same store open pass it by instead.
+func openOrchestrationStoreAt(root, path string) (*storage.SQLite, error) {
+	return storage.OpenSQLiteWithOptions(path, storage.Options{Harden: hardenOrchestrationStore(root, path)})
 }
 
 func openContextStorePath(path string) (*storage.SQLite, error) {
-	store, err := storage.OpenSQLite(path)
+	return openContextStorePathWithOptions(path, storage.Options{})
+}
+
+func openContextStorePathWithOptions(path string, opts storage.Options) (*storage.SQLite, error) {
+	store, err := storage.OpenSQLiteWithOptions(path, opts)
 	if err != nil {
 		return nil, fmt.Errorf("open context store %q: %w", path, err)
 	}
 	return store, nil
 }
+
+// The pure path comparison lives in cliagents.SameFilePath.

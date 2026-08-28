@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
 
 func writeCatalogAgent(t *testing.T, dir, name, body string) {
@@ -40,8 +42,8 @@ func TestAgentsListShowsSelectableDefinitionsOnly(t *testing.T) {
 	if !strings.Contains(text, "source: workspace") || !strings.Contains(text, "state: selectable") {
 		t.Fatalf("missing selectable rows: %s", text)
 	}
-	if !strings.Contains(text, "name: root fallback") || !strings.Contains(text, "not selectable") {
-		t.Fatalf("missing fallback row: %s", text)
+	if !strings.Contains(text, "name: "+config.RootAgentName) || !strings.Contains(text, "state: built-in (selectable)") {
+		t.Fatalf("missing built-in root row: %s", text)
 	}
 	if errOut.Len() != 0 {
 		t.Fatalf("unexpected warnings: %s", errOut.String())
@@ -114,9 +116,9 @@ func TestAgentsListDefaultUnchanged(t *testing.T) {
 		"  source: workspace",
 		"  state: selectable",
 		"  name: zeta",
-		"  name: root fallback",
-		"  source: compiled",
-		"  state: fallback (not selectable)",
+		"  name: " + config.RootAgentName,
+		"  source: " + string(config.AgentSourceBuiltIn),
+		"  state: built-in (selectable)",
 		"workspace agent files: always loaded",
 		"workspace prompts/project skills:",
 	}
@@ -156,13 +158,16 @@ func TestAgentsListJSONOutputsValidArray(t *testing.T) {
 		t.Fatalf("json decode error = %v", err)
 	}
 
-	if len(entries) != 2 {
-		t.Fatalf("expected 2 entries, got %d", len(entries))
+	if len(entries) != 3 {
+		t.Fatalf("expected 3 entries (alpha, beta, built-in), got %d", len(entries))
 	}
 
-	// Verify sort order: alpha before beta.
-	if entries[0]["name"] != "alpha" || entries[1]["name"] != "beta" {
+	// Verify sort order: alpha before beta before the built-in.
+	if entries[0]["name"] != "alpha" || entries[1]["name"] != "beta" || entries[2]["name"] != "general-purpose" {
 		t.Fatalf("entries not sorted: %v", entries)
+	}
+	if entries[2]["source"] != "builtin" {
+		t.Fatalf("built-in entry source = %v, want builtin", entries[2]["source"])
 	}
 
 	requiredKeys := []string{"name", "source", "state", "tools", "model", "turns", "limits", "description"}
@@ -241,8 +246,13 @@ func TestAgentsListJSONEmptyWorkspace(t *testing.T) {
 		if err := json.Unmarshal([]byte(out.String()), &entries); err != nil {
 			t.Fatalf("stdout not valid JSON: %q", out.String())
 		}
-		if len(entries) != 0 {
-			t.Fatalf("expected empty JSON array, got %d entries", len(entries))
+		// A clean workspace catalogs exactly the compiled built-in.
+		var named []map[string]any
+		if err := json.Unmarshal([]byte(out.String()), &named); err != nil {
+			t.Fatalf("stdout not valid JSON: %q", out.String())
+		}
+		if len(named) != 1 || named[0]["name"] != "general-purpose" {
+			t.Fatalf("expected exactly the built-in entry, got %v", named)
 		}
 	}
 }
@@ -337,8 +347,8 @@ func TestAgentsDiagnosticSummaryPreservedForJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(out.String()), &entries); err != nil {
 		t.Fatalf("stdout not valid JSON after malformed file: %q", out.String())
 	}
-	if len(entries) != 1 || entries[0]["name"] != "good" {
-		t.Fatalf("expected 1 'good' entry, got %v", entries)
+	if len(entries) != 2 || entries[0]["name"] != "general-purpose" || entries[1]["name"] != "good" {
+		t.Fatalf("expected the built-in plus 'good', got %v", entries)
 	}
 }
 
@@ -377,11 +387,11 @@ func TestAgentsListJSONWarnsOnStderr(t *testing.T) {
 	}
 
 	// Verify the provider was stripped: model shows (inherit session).
-	if len(entries) != 1 {
-		t.Fatalf("expected 1 entry, got %d", len(entries))
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries (built-in + withprovider), got %d", len(entries))
 	}
-	if entries[0]["model"] != "(inherit session)" {
-		t.Fatalf("model = %v, want \"(inherit session)\" (provider stripped)", entries[0]["model"])
+	if entries[1]["name"] != "withprovider" || entries[1]["model"] != "(inherit session)" {
+		t.Fatalf("entry = %v, want withprovider with \"(inherit session)\" (provider stripped)", entries[1])
 	}
 }
 

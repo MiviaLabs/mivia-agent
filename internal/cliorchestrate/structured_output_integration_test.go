@@ -16,7 +16,7 @@ func TestAdmissionRejectsRemoteRefSchema(t *testing.T) {
 	reg := agents.NewRegistry()
 	_ = reg.Publish(agents.ResolvedAgent{Name: "worker", EffectiveTools: []string{"read_file"}})
 	tool := &dispatchTasksTool{agentReg: reg, cfg: config.DefaultSubagentConfig}
-	_, err := tool.buildTasks([]dispatchTaskParam{{
+	_, err := tool.buildTasks("", []dispatchTaskParam{{
 		ID: "t1", Agent: "worker", Prompt: "work",
 		OutputSchema: map[string]any{"$ref": "https://example.com/s.json"},
 	}}, 30)
@@ -29,7 +29,7 @@ func TestAdmissionRejectsOversizedSchema(t *testing.T) {
 	reg := agents.NewRegistry()
 	_ = reg.Publish(agents.ResolvedAgent{Name: "worker"})
 	tool := &dispatchTasksTool{agentReg: reg, cfg: config.DefaultSubagentConfig}
-	_, err := tool.buildTasks([]dispatchTaskParam{{
+	_, err := tool.buildTasks("", []dispatchTaskParam{{
 		ID: "t1", Agent: "worker", Prompt: "work",
 		OutputSchema: map[string]any{
 			"type":        "object",

@@ -26,6 +26,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -52,7 +53,9 @@ const (
 
 func isTerminalStatus(status string) bool {
 	switch status {
-	case "completed", "done", "failed", "error", "interrupted", "cancelled", "canceled":
+	// timed_out is a subagent done-event status (agent.Event.Status): a
+	// timed-out run is over and its row must settle, not keep spinning.
+	case "completed", "done", "failed", "error", "interrupted", "cancelled", "canceled", "timed_out":
 		return true
 	default:
 		return false
@@ -111,16 +114,42 @@ func (e fileEntry) rowLabel() string {
 
 // subagentRow is one dispatched subagent the session is tracking, fed
 // by the subagent-progress events (ToolOutputBody.Progress).
+//
+// LastProgress is the wall-clock time of the row's last forward motion:
+// a heartbeat with a CHANGED step count, any non-heartbeat progress, or
+// any tool event. Heartbeats whose step count is frozen are liveness, not
+// motion, and leave it alone - see progressAdvances and agent_stall.go's
+// displayStatus, which derives the "stalled" badge from it at render time.
 type subagentRow struct {
-	ID     string
-	Status string
-	Step   int
-	Total  int
-	Log    []string
+	ID        string
+	Name      string
+	Status    string
+	Step      int
+	Total     int
+	ToolCalls int
+	Log       []string
+
+	LastProgress time.Time
+	// StartedAt anchors the sidebar's live "Elapsed" reading (computed at
+	// render time, not carried by the 30s heartbeat cadence - see
+	// panelAgentRow). Stamped fresh on every observeAgentStart, including a
+	// reused id: a stale StartedAt would report the elapsed time of the run
+	// that already ended, not the new one.
+	StartedAt time.Time
+}
+
+func (a subagentRow) displayName() string {
+	if a.Name != "" {
+		return a.Name
+	}
+	if idx := strings.Index(a.ID, ":"); idx >= 0 && idx+1 < len(a.ID) {
+		return a.ID[idx+1:]
+	}
+	return a.ID
 }
 
 func (a subagentRow) rowLabel() string {
-	label := a.ID + "  " + a.Status
+	label := a.displayName() + "  " + a.Status
 	if a.Total > 0 {
 		label += " " + strconv.Itoa(a.Step) + "/" + strconv.Itoa(a.Total)
 	}
@@ -153,6 +182,12 @@ type panel struct {
 	// and the full post-edit source.
 	sourceView bool
 
+	// stallThreshold is the no-forward-motion window after which a
+	// non-terminal subagent row renders "stalled" (see agent_stall.go).
+	// Seeded from uiStallThreshold; tests shrink it. 0 or less turns the
+	// derivation off.
+	stallThreshold time.Duration
+
 	// offset windows the dialog's body; the list windows itself.
 	offset int
 
@@ -164,7 +199,11 @@ type panel struct {
 // newPanel builds the panel's zero state; entries arrive live from
 // handleTurnEvent.
 func newPanel(t theme.Theme, tier theme.Tier) panel {
-	return panel{list: picker.New(t, tier, nil), dispatchGroups: map[string][]string{}}
+	return panel{
+		list:           picker.New(t, tier, nil),
+		dispatchGroups: map[string][]string{},
+		stallThreshold: uiStallThreshold,
+	}
 }
 
 // appendLive folds one more observed diff into the entries, latest per
@@ -201,24 +240,32 @@ func (p panel) rowLabels() []string {
 	return names
 }
 
+// visibleRows returns the filter-narrowed files and subagents in the same
+// order rowLabels() feeds the picker, so a cursor row index maps to them
+// positionally. Concurrent subagents commonly share a name and status (four
+// "reviewer" rows all "running"), which makes rowLabel() collide - matching
+// by label text instead of position silently resolves every one of them to
+// whichever duplicate appears first, no matter which row the cursor is on.
+func (p panel) visibleRows() ([]fileEntry, []subagentRow) {
+	return p.filterEntries(p.list.Filter())
+}
+
 // selectionKey names the selected row by what it IS (a file's path, a
 // subagent's id) rather than by its render label, which changes as
 // statuses tick - so a rebind can hold the same row across a label
 // change.
 func (p panel) selectionKey() string {
-	label, ok := p.list.Selected()
-	if !ok {
+	entries, agents := p.visibleRows()
+	idx := p.list.CursorRow()
+	if idx < 0 {
 		return ""
 	}
-	for _, e := range p.entries {
-		if e.rowLabel() == label {
-			return "f:" + e.Path
-		}
+	if idx < len(entries) {
+		return "f:" + entries[idx].Path
 	}
-	for _, a := range p.agents {
-		if a.rowLabel() == label || strings.HasPrefix(label, a.ID+" ") || label == a.ID {
-			return "a:" + a.ID
-		}
+	idx -= len(entries)
+	if idx >= 0 && idx < len(agents) {
+		return "a:" + agents[idx].ID
 	}
 	return ""
 }
@@ -252,23 +299,35 @@ func (p *panel) rebindIfOpen() {
 // selectedAgent returns the subagent the list highlights, if any: the
 // cursor walks files and subagents alike.
 func (p panel) selectedAgent() (subagentRow, bool) {
-	label, ok := p.list.Selected()
-	if !ok {
+	entries, agents := p.visibleRows()
+	idx := p.list.CursorRow() - len(entries)
+	if idx < 0 || idx >= len(agents) {
 		return subagentRow{}, false
 	}
-	for _, a := range p.agents {
-		if a.rowLabel() == label {
-			return a, true
-		}
-	}
-	return subagentRow{}, false
+	return agents[idx], true
 }
 
-// observeAgentStart registers an agent or delegation immediately upon launch.
-//
-// A start event also resets a row stuck in a TERMINAL status: LoadHistory
-// seeds resumed sessions' rows "completed", and models reuse short task
-// ids ("task-1", "audit") across dispatches, so a terminal row plus a new
+func matchesAgentID(aID, id string) bool {
+	if aID == id {
+		return true
+	}
+	if aID == "" || id == "" {
+		return false
+	}
+	if idx := strings.Index(aID, ":"); idx >= 0 {
+		if aID[idx+1:] == id {
+			return true
+		}
+	}
+	if idx := strings.Index(id, ":"); idx >= 0 {
+		if id[idx+1:] == aID {
+			return true
+		}
+	}
+	return false
+}
+
+// observeAgentStart records or updates one subagent's running status. A
 // start means a NEW task under an old id - not history. Leaving it
 // terminal would badge a genuinely running dispatch as already finished.
 // Start events carry no group/call identity that could distinguish a
@@ -278,15 +337,26 @@ func (p panel) selectedAgent() (subagentRow, bool) {
 func (p *panel) observeAgentStart(id, name string) {
 	p.agents = slices.Clone(p.agents)
 	for i, a := range p.agents {
-		if a.ID == id {
+		if matchesAgentID(a.ID, id) {
+			if name != "" {
+				p.agents[i].Name = name
+			}
 			if a.Status == "" || a.Status == "pending" || isTerminalStatus(a.Status) {
 				p.agents[i].Status = "running"
+				// A (re)created row is a NEW run under a reused id: anchor
+				// its stall clock and its elapsed-time clock now, so the
+				// fresh row never renders instantly "stalled", nor reports
+				// the elapsed time of the run that already ended.
+				now := time.Now()
+				p.agents[i].LastProgress = now
+				p.agents[i].StartedAt = now
 			}
 			p.rebindIfOpen()
 			return
 		}
 	}
-	p.agents = append(p.agents, subagentRow{ID: id, Status: "running"})
+	now := time.Now()
+	p.agents = append(p.agents, subagentRow{ID: id, Name: name, Status: "running", LastProgress: now, StartedAt: now})
 	p.rebindIfOpen()
 }
 
@@ -298,8 +368,9 @@ func (p *panel) observeAgentEnd(id string, ok bool) {
 	}
 	p.agents = slices.Clone(p.agents)
 	for i, a := range p.agents {
-		if a.ID == id {
+		if matchesAgentID(a.ID, id) {
 			p.agents[i].Status = status
+			p.agents[i].LastProgress = time.Now()
 			p.rebindIfOpen()
 			return
 		}
@@ -311,13 +382,22 @@ func (p *panel) observeAgentEnd(id string, ok bool) {
 // single row for the whole call - and remembers the group under callID so
 // observeAgentGroupEnd can resolve every member's terminal status when the
 // outer call completes.
-func (p *panel) observeAgentGroupStart(callID string, ids []string) {
+func (p *panel) observeAgentGroupStart(callID string, ids []string, names map[string]string) {
 	if p.dispatchGroups == nil {
 		p.dispatchGroups = map[string][]string{}
 	}
 	p.dispatchGroups[callID] = ids
 	for _, id := range ids {
-		p.observeAgentStart(id, "")
+		name := ""
+		if names != nil {
+			name = names[id]
+			if name == "" {
+				prefix := callID + ":"
+				rawID := strings.TrimPrefix(id, prefix)
+				name = names[rawID]
+			}
+		}
+		p.observeAgentStart(id, name)
 	}
 }
 
@@ -332,8 +412,14 @@ func (p *panel) observeAgentGroupEnd(callID string, statuses map[string]string, 
 		return
 	}
 	delete(p.dispatchGroups, callID)
+	prefix := callID + ":"
 	for _, id := range ids {
-		if status := statuses[id]; status != "" {
+		rawID := strings.TrimPrefix(id, prefix)
+		status := statuses[id]
+		if status == "" {
+			status = statuses[rawID]
+		}
+		if status != "" {
 			p.setAgentStatus(id, status)
 			continue
 		}
@@ -346,8 +432,9 @@ func (p *panel) observeAgentGroupEnd(callID string, statuses map[string]string, 
 func (p *panel) setAgentStatus(id, status string) {
 	p.agents = slices.Clone(p.agents)
 	for i, a := range p.agents {
-		if a.ID == id {
+		if matchesAgentID(a.ID, id) {
 			p.agents[i].Status = status
+			p.agents[i].LastProgress = time.Now()
 			p.rebindIfOpen()
 			return
 		}
@@ -379,6 +466,7 @@ func (p *panel) reconcileTerminal(reason string) {
 	for i, a := range p.agents {
 		if isNonTerminalStatus(a.Status) {
 			p.agents[i].Status = status
+			p.agents[i].LastProgress = time.Now()
 			changed = true
 		}
 	}
@@ -391,7 +479,7 @@ func (p *panel) reconcileTerminal(reason string) {
 func (p *panel) observeAgentHistory(id, status string) {
 	p.agents = slices.Clone(p.agents)
 	for i, a := range p.agents {
-		if a.ID == id {
+		if matchesAgentID(a.ID, id) {
 			if isNonTerminalStatus(a.Status) {
 				p.agents[i].Status = status
 			}
@@ -414,24 +502,54 @@ func (p panel) activeAgentCount() int {
 	return count
 }
 
-// observeAgent folds one subagent-progress update into the agents
-// section, latest per subagent - the same fold files use. The step log
-// rides along: it is the fallback content when no thread Conversation
-// exists for the call.
+// observeAgent records progress for a subagent. It preserves the subagent's
+// starting state and name, updates steps/toolcalls, and advances the stall clock
+// only when real forward progress occurs.
 func (p *panel) observeAgent(id string, pr *uievent.Progress) {
 	log := slices.Clone(pr.Log)
-	row := subagentRow{ID: id, Status: pr.Status, Step: pr.Step, Total: pr.TotalSteps, Log: log}
 	p.agents = slices.Clone(p.agents)
 	for i, a := range p.agents {
-		if a.ID == id {
-			combinedLog := make([]string, 0, len(a.Log)+len(pr.Log))
-			combinedLog = append(combinedLog, a.Log...)
-			combinedLog = append(combinedLog, pr.Log...)
-			row.Log = combinedLog
+		if matchesAgentID(a.ID, id) {
+			if isTerminalStatus(a.Status) && !isTerminalStatus(pr.Status) {
+				return
+			}
+			row := a
+			if pr.Status != "" {
+				row.Status = pr.Status
+			}
+			if pr.Step > 0 {
+				row.Step = pr.Step
+			}
+			if pr.TotalSteps > 0 {
+				row.Total = pr.TotalSteps
+			}
+			if pr.ToolCalls > 0 {
+				row.ToolCalls = pr.ToolCalls
+			}
+			if len(log) > 0 {
+				combinedLog := make([]string, 0, len(a.Log)+len(log))
+				combinedLog = append(combinedLog, a.Log...)
+				combinedLog = append(combinedLog, log...)
+				row.Log = combinedLog
+			}
+			if progressAdvances(a, row) {
+				row.LastProgress = time.Now()
+			}
 			p.agents[i] = row
 			p.rebindIfOpen()
 			return
 		}
+	}
+	now := time.Now()
+	row := subagentRow{
+		ID:           id,
+		Status:       pr.Status,
+		Step:         pr.Step,
+		Total:        pr.TotalSteps,
+		ToolCalls:    pr.ToolCalls,
+		Log:          log,
+		LastProgress: now,
+		StartedAt:    now,
 	}
 	p.agents = append(p.agents, row)
 	p.rebindIfOpen()
@@ -446,16 +564,12 @@ func (p *panel) openPanel() {
 
 // selected returns the entry the list highlights.
 func (p panel) selected() (fileEntry, bool) {
-	name, ok := p.list.Selected()
-	if !ok {
+	entries, _ := p.visibleRows()
+	idx := p.list.CursorRow()
+	if idx < 0 || idx >= len(entries) {
 		return fileEntry{}, false
 	}
-	for _, e := range p.entries {
-		if e.rowLabel() == name {
-			return e, true
-		}
-	}
-	return fileEntry{}, false
+	return entries[idx], true
 }
 
 // contentRows is the selected file's content: its diff, or its
@@ -570,25 +684,30 @@ func (s Screen) panelFilterEntries(needle string) ([]fileEntry, []subagentRow) {
 }
 
 // selectNavRow maps a rendered row in the nav sidebar to an entry index in the picker.
-func (p *panel) selectNavRow(clickRow int) bool {
-	// row 0 is SIDEBAR title
-	// row 1 is "files changed (N)" header
-	if clickRow <= 1 {
+// It accounts for sidebar windowing (maxRows) and individual group heights (1 line per file,
+// 2 lines per subagent row).
+func (p *panel) selectNavRow(clickRow, maxRows int) bool {
+	if clickRow < 0 {
 		return false
 	}
-	fileIdx := clickRow - 2
-	if fileIdx >= 0 && fileIdx < len(p.entries) {
-		p.list.MoveTo(fileIdx)
-		return true
-	}
-	subHeader := 2 + len(p.entries)
-	if clickRow == subHeader {
-		return false
-	}
-	agentIdx := clickRow - (subHeader + 1)
-	if agentIdx >= 0 && agentIdx < len(p.agents) {
-		p.list.MoveTo(len(p.entries) + agentIdx)
-		return true
+	visible, agents := p.visibleRows()
+	groupLens := panelGroupLens(len(visible), len(agents))
+	selIdx := p.list.CursorRow()
+	selGroup := panelSelGroup(selIdx, len(visible), len(agents))
+	startGroup, endGroup := panelWindowGroupBounds(groupLens, selGroup, maxRows, false)
+
+	curLine := 0
+	for gIdx := startGroup; gIdx < endGroup; gIdx++ {
+		gLen := groupLens[gIdx]
+		if clickRow >= curLine && clickRow < curLine+gLen {
+			pickerIdx := panelGroupToPickerIdx(gIdx, len(visible), len(agents))
+			if pickerIdx >= 0 {
+				p.list.MoveTo(pickerIdx)
+				return true
+			}
+			return false
+		}
+		curLine += gLen
 	}
 	return false
 }
@@ -625,7 +744,11 @@ func (s *Screen) openPanelDialogForSelected() tea.Cmd {
 	return cmd
 }
 
-// handleNavClick routes mouse clicks within the nav sidebar.
+// handleNavClick routes mouse clicks within the nav sidebar. Callers pass
+// the screen row minus the top gutter (mouse.go's handleClick and
+// handleModalClick): 0 is the pane's top padding row, 1 is SIDEBAR, 2 is
+// the files header, 3 and up are content rows - the same row numbers the
+// rendered View uses below the frame.
 func (s *Screen) handleNavClick(clickRow int) (app.Screen, tea.Cmd) {
 	// clickRow 0 is top padding row; content starts at clickRow 1
 	clickRow--
@@ -633,7 +756,9 @@ func (s *Screen) handleNavClick(clickRow int) (app.Screen, tea.Cmd) {
 		return *s, nil
 	}
 	s.panel.focused = true
-	if s.panel.selectNavRow(clickRow) {
+	paneH := max(1, s.contentHeight())
+	innerNavH := max(1, paneH-2)
+	if s.panel.selectNavRow(clickRow, innerNavH) {
 		cmd := s.openPanelDialogForSelected()
 		return *s, cmd
 	}

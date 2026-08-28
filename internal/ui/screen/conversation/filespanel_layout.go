@@ -1,8 +1,10 @@
 package conversation
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/x/ansi"
 
@@ -10,24 +12,127 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 )
 
-// panelWindowRows clips rows to a window around the selection, reserving a
-// row for the filter indicator when one will be appended: the indicator is
-// the only on-screen explanation of a shortened list, so it must never be
-// the row the windowing clips.
-func panelWindowRows(rows []string, selRow, maxRows int, filterActive bool) []string {
+// panelWindowGroups clips row-groups to a window around the selected group,
+// reserving one line for the filter indicator when one will be appended,
+// and NEVER splitting a group across the clip boundary: an agent's name
+// line and its metrics line must stay together, or the metrics line would
+// render stranded with no name line above it. A window that cannot land on
+// exact line-count parity because a group would have to be split grows
+// outward to the next whole group instead of splitting one.
+func panelWindowGroups(groups [][]string, selGroup, maxRows int, filterActive bool) [][]string {
+	startGroup, endGroup := panelWindowRange(groups, selGroup, maxRows, filterActive)
+	return groups[startGroup:endGroup]
+}
+
+// panelWindowRange computes the start and end group indices for windowing groups.
+func panelWindowRange(groups [][]string, selGroup, maxRows int, filterActive bool) (int, int) {
+	groupLens := make([]int, len(groups))
+	for i, g := range groups {
+		groupLens[i] = len(g)
+	}
+	return panelWindowGroupBounds(groupLens, selGroup, maxRows, filterActive)
+}
+
+// panelWindowGroupBounds computes the [startGroup, endGroup) slice bounds for row-groups
+// given their individual line heights.
+func panelWindowGroupBounds(groupLens []int, selGroup, maxRows int, filterActive bool) (int, int) {
 	limit := maxRows
 	if filterActive && limit > 1 {
 		limit--
 	}
-	if limit > 0 && len(rows) > limit {
-		start := 0
-		if selRow >= limit {
-			start = selRow - limit + 1
-		}
-		if start > len(rows)-limit {
-			start = len(rows) - limit
-		}
-		rows = rows[start : start+limit]
+	if limit <= 0 || len(groupLens) == 0 {
+		return 0, len(groupLens)
+	}
+	offsets := make([]int, len(groupLens)+1)
+	total := 0
+	for i, l := range groupLens {
+		offsets[i] = total
+		total += l
+	}
+	offsets[len(groupLens)] = total
+	if total <= limit {
+		return 0, len(groupLens)
+	}
+	selRow := 0
+	if selGroup >= 0 && selGroup < len(groupLens) {
+		selRow = offsets[selGroup]
+	}
+	start := 0
+	if selRow >= limit {
+		start = selRow - limit + 1
+	}
+	if start > total-limit {
+		start = total - limit
+	}
+	end := start + limit
+	startGroup := 0
+	for startGroup < len(groupLens) && offsets[startGroup+1] <= start {
+		startGroup++
+	}
+	endGroup := len(groupLens)
+	for endGroup > 0 && offsets[endGroup-1] >= end {
+		endGroup--
+	}
+	return startGroup, endGroup
+}
+
+// panelGroupLens returns the line count of each group in the sidebar layout:
+// 1 line for SIDEBAR title, 1 line for files header, 1 line per file entry,
+// 1 line for subagents header, and 2 lines per agent row.
+func panelGroupLens(fileCount, agentCount int) []int {
+	lens := make([]int, 0, 3+fileCount+agentCount)
+	lens = append(lens, 1) // SIDEBAR title
+	lens = append(lens, 1) // files changed header
+	for i := 0; i < fileCount; i++ {
+		lens = append(lens, 1)
+	}
+	lens = append(lens, 1) // subagents header
+	for i := 0; i < agentCount; i++ {
+		lens = append(lens, 2)
+	}
+	return lens
+}
+
+// panelGroupToPickerIdx maps a group index to its corresponding picker cursor index,
+// or -1 if the group is a non-selectable header (SIDEBAR, files header, subagents header).
+func panelGroupToPickerIdx(gIdx, fileCount, agentCount int) int {
+	if gIdx < 2 {
+		return -1
+	}
+	if gIdx < 2+fileCount {
+		return gIdx - 2
+	}
+	if gIdx == 2+fileCount {
+		return -1
+	}
+	agentIdx := gIdx - (3 + fileCount)
+	if agentIdx >= 0 && agentIdx < agentCount {
+		return fileCount + agentIdx
+	}
+	return -1
+}
+
+// panelSelGroup computes the group index for the currently selected picker item.
+func panelSelGroup(selIdx, fileCount, agentCount int) int {
+	if selIdx < 0 {
+		return -1
+	}
+	if selIdx < fileCount {
+		return 2 + selIdx
+	}
+	agentIdx := selIdx - fileCount
+	if agentIdx < agentCount {
+		return 3 + fileCount + agentIdx
+	}
+	return -1
+}
+
+// flattenGroups concatenates row-groups back into a flat line list, in
+// order, for final width-clipping and rendering.
+func flattenGroups(groups [][]string) []string {
+	var rows []string
+	for _, g := range groups {
+		rows = append(rows, g...)
 	}
 	return rows
 }
@@ -43,7 +148,7 @@ func clipRowsToWidth(rows []string, inner int) []string {
 	return rows
 }
 
-func (s Screen) panelFileRow(e fileEntry, selLabel string, marked bool) string {
+func (s Screen) panelFileRow(e fileEntry, selected bool) string {
 	name, dir := splitPath(e.Path)
 	var glyph string
 	switch e.Kind {
@@ -55,7 +160,7 @@ func (s Screen) panelFileRow(e fileEntry, selLabel string, marked bool) string {
 		glyph = "~"
 	}
 	prefix, style := "  ", render.Role(s.Theme, s.Tier, theme.RoleFG)
-	if marked && e.rowLabel() == selLabel {
+	if selected {
 		prefix = "> "
 		style = render.WithBg(style, s.Theme, s.Tier, theme.RoleBGSelection)
 	}
@@ -82,71 +187,135 @@ func (s Screen) panelFileRow(e fileEntry, selLabel string, marked bool) string {
 	return row
 }
 
-func (s Screen) panelAgentRow(a subagentRow, selLabel string, marked bool) string {
+// statusBadgeRole maps a subagent row's display status to its badge color.
+// theme.RoleInfo is the default for "running"/"pending" (no explicit case),
+// so every terminal status needs its own case here - otherwise it renders
+// indistinguishably from an actively running row, defeating the point of
+// adding it to the terminal vocabulary (isTerminalStatus).
+func statusBadgeRole(status string) theme.Role {
+	switch status {
+	case "completed", "done":
+		return theme.RoleSuccess
+	case "failed", "error", "interrupted", "timed_out":
+		return theme.RoleDanger
+	case "cancelled", "canceled":
+		return theme.RoleFGSubtle
+	case "thinking":
+		return theme.RoleWarning
+	case statusStalled:
+		return theme.RoleWarning
+	default:
+		return theme.RoleInfo
+	}
+}
+
+// formatElapsed renders a duration as the sidebar's compact elapsed label
+// ("10m 40s", "45s", "1h 05m"). internal/ui/** may not import
+// internal/clichat (UI isolation, docs/design/ui-isolation.md), so this
+// does not reuse clichat.FormatDuration's tighter "10m40s" shape.
+func formatElapsed(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	d = d.Round(time.Second)
+	h := int(d / time.Hour)
+	m := int(d/time.Minute) % 60
+	s := int(d/time.Second) % 60
+	switch {
+	case h > 0:
+		return fmt.Sprintf("%dh %02dm", h, m)
+	case m > 0:
+		return fmt.Sprintf("%dm %02ds", m, s)
+	default:
+		return fmt.Sprintf("%ds", s)
+	}
+}
+
+// elapsedFor computes a row's displayed elapsed time as of now. A running
+// row's elapsed grows with the clock; a terminal row's freezes at
+// LastProgress (stamped the moment observeAgentEnd/setAgentStatus settled
+// it), so a completed/failed/timed-out row does not keep counting up on
+// every render after the subagent already finished.
+func elapsedFor(a subagentRow, now time.Time) time.Duration {
+	if a.StartedAt.IsZero() {
+		return 0
+	}
+	if isTerminalStatus(a.Status) {
+		return a.LastProgress.Sub(a.StartedAt)
+	}
+	return now.Sub(a.StartedAt)
+}
+
+// panelAgentRow renders one subagent as two lines: the name/status badge
+// (selectable, matches rowLabel), and an indented metrics line carrying
+// Elapsed/Tools/Step - moved here from the chat transcript (which used to
+// live-rewrite a churning "elapsed=Xs steps=N" line into the middle of the
+// scrollback on every heartbeat) so this sidebar row is the one live-updating
+// surface for subagent progress.
+func (s Screen) panelAgentRow(a subagentRow, selected bool) []string {
 	prefix := "  · "
 	subtle := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle)
 	fg := render.Role(s.Theme, s.Tier, theme.RoleFG)
-	if marked && a.rowLabel() == selLabel {
+	if selected {
 		prefix = "> · "
 		fg = render.WithBg(fg, s.Theme, s.Tier, theme.RoleBGSelection)
 	}
 	border := render.Role(s.Theme, s.Tier, theme.RoleBorder)
+	// displayStatus derives "stalled" at render time from the row's stall
+	// clock (agent_stall.go); the stored status itself never changes.
+	status := s.panel.displayStatus(a)
 	var statusBadge string
-	if a.Status != "" {
-		role := theme.RoleInfo
-		switch a.Status {
-		case "completed", "done":
-			role = theme.RoleSuccess
-		case "failed", "error", "interrupted":
-			role = theme.RoleDanger
-		case "cancelled", "canceled":
-			role = theme.RoleFGSubtle
-		case "thinking":
-			role = theme.RoleWarning
-		}
-		statusStyle := render.Role(s.Theme, s.Tier, role)
-		statusBadge = " " + border.Render("[") + statusStyle.Render(a.Status) + border.Render("]")
+	if status != "" {
+		statusStyle := render.Role(s.Theme, s.Tier, statusBadgeRole(status))
+		statusBadge = " " + border.Render("[") + statusStyle.Render(status) + border.Render("]")
 	}
-	var stepBadge string
-	if a.Total > 0 {
-		stepBadge = " " + border.Render("[") + subtle.Render(strconv.Itoa(a.Step)+"/"+strconv.Itoa(a.Total)) + border.Render("]")
-	}
-	return subtle.Render(prefix) + fg.Render(a.ID) + statusBadge + stepBadge
+	nameLine := subtle.Render(prefix) + fg.Render(a.displayName()) + statusBadge
+	metrics := fmt.Sprintf("Elapsed: %s, Tools: %d, Step: %d",
+		formatElapsed(elapsedFor(a, s.now())), a.ToolCalls, a.Step)
+	metricsLine := subtle.Render("      " + metrics)
+	return []string{nameLine, metricsLine}
 }
 
 func (s Screen) panelRows(inner, maxRows int) []string {
 	visible, agents := s.panelFilterEntries("")
 
-	selLabel, _ := s.panel.list.Selected()
+	// selIdx is the picker's cursor row: the list is built files-then-
+	// agents in this exact order (rowLabels), so position - not the
+	// rendered label - is what identifies the highlighted row. Comparing
+	// by label instead marks every row that happens to render identically
+	// (concurrent same-named agents sharing a status, e.g. four
+	// "reviewer" rows all "running"), painting ">" on all of them.
+	selIdx := s.panel.list.CursorRow()
 	subtle := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle)
 	marked := s.panel.focused
 
-	var rows []string
-	selRow := -1
+	var groups [][]string
+	selGroup := -1
 
 	if marked {
-		rows = append(rows, render.Role(s.Theme, s.Tier, theme.RoleAccent).Bold(true).Render("● SIDEBAR")+" "+subtle.Render("(focused)"))
+		groups = append(groups, []string{render.Role(s.Theme, s.Tier, theme.RoleAccent).Bold(true).Render("● SIDEBAR") + " " + subtle.Render("(focused)")})
 	} else {
-		rows = append(rows, subtle.Render("  SIDEBAR"))
+		groups = append(groups, []string{subtle.Render("  SIDEBAR")})
 	}
 
-	rows = append(rows, subtle.Render("files changed ("+strconv.Itoa(len(visible))+")"))
-	for _, e := range visible {
-		if e.rowLabel() == selLabel {
-			selRow = len(rows)
+	groups = append(groups, []string{subtle.Render("files changed (" + strconv.Itoa(len(visible)) + ")")})
+	for i, e := range visible {
+		if i == selIdx {
+			selGroup = len(groups)
 		}
-		rows = append(rows, s.panelFileRow(e, selLabel, marked))
+		groups = append(groups, []string{s.panelFileRow(e, marked && i == selIdx)})
 	}
-	rows = append(rows, subtle.Render("subagents ("+strconv.Itoa(len(agents))+")"))
-	for _, a := range agents {
-		if a.rowLabel() == selLabel {
-			selRow = len(rows)
+	groups = append(groups, []string{subtle.Render("subagents (" + strconv.Itoa(len(agents)) + ")")})
+	for i, a := range agents {
+		idx := len(visible) + i
+		if idx == selIdx {
+			selGroup = len(groups)
 		}
-		rows = append(rows, s.panelAgentRow(a, selLabel, marked))
+		groups = append(groups, s.panelAgentRow(a, marked && idx == selIdx))
 	}
 
-	rows = panelWindowRows(rows, selRow, maxRows, false)
-	return clipRowsToWidth(rows, inner)
+	groups = panelWindowGroups(groups, selGroup, maxRows, false)
+	return clipRowsToWidth(flattenGroups(groups), inner)
 }
 
 // dialogParts is the content dialog's title, body, and hint. A
@@ -158,17 +327,22 @@ func (s Screen) dialogParts() (title, body, hint string) {
 	dw, _ := s.dialogSize()
 	bodyW := render.DialogBodyWidth(dw)
 	if s.panel.dialogAgent != "" {
-		if s.thread != nil && s.threadID == s.panel.dialogAgent {
-			s.thread.setSurface(bodyW, s.panelBodyRows())
-			title = "subagent: " + s.panel.dialogAgent
-			return title, s.thread.View(), "esc close"
-		}
 		for _, a := range s.panel.agents {
 			if a.ID != s.panel.dialogAgent {
 				continue
 			}
-			rows := append([]string{a.ID + "  " + a.Status}, a.Log...)
-			return "subagent: " + a.ID, strings.Join(rows, "\n"), "any key closes"
+			if s.thread != nil && s.threadID == s.panel.dialogAgent {
+				s.thread.setSurface(bodyW, s.panelBodyRows())
+				title = "subagent: " + a.displayName()
+				return title, s.thread.View(), "esc close"
+			}
+			rows := append([]string{a.displayName() + "  " + a.Status}, a.Log...)
+			return "subagent: " + a.displayName(), strings.Join(rows, "\n"), "any key closes"
+		}
+		if s.thread != nil && s.threadID == s.panel.dialogAgent {
+			s.thread.setSurface(bodyW, s.panelBodyRows())
+			title = "subagent: " + s.panel.dialogAgent
+			return title, s.thread.View(), "esc close"
 		}
 		return "subagent: " + s.panel.dialogAgent, "", "any key closes"
 	}

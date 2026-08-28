@@ -59,7 +59,7 @@ func ModelTaskResultsWithRepo(repo ledger.LedgerRepository, tasks []ledger.TaskS
 	msgIndex := TaskMessageIndex(context.Background(), repo, tasks)
 	out := make([]modelTaskResult, len(results))
 	for i, result := range results {
-		out[i] = modelTaskResult{TaskID: result.TaskID, Status: result.Status}
+		out[i] = modelTaskResult{TaskID: taskRawIDByID(tasks, result.TaskID), Status: result.Status}
 		if out[i].Status == "" {
 			out[i].Status = "completed"
 		}
@@ -104,7 +104,7 @@ func persistedTaskResults(tasks []ledger.TaskSnapshot) []modelTaskResult {
 	out := make([]modelTaskResult, len(tasks))
 	for i, task := range tasks {
 		out[i] = modelTaskResult{
-			TaskID: task.TaskID, Status: task.Status,
+			TaskID: modelVisibleTaskID(task), Status: task.Status,
 			OutputRef: task.OutputRef, ErrorRef: task.ErrorRef,
 		}
 	}
@@ -213,13 +213,39 @@ func (t *joinRunTool) Parameters() map[string]any {
 	}
 }
 
+// joinFallbackSeconds is the join budget when nothing resolves: no
+// configured default and no request. joinDefaultSeconds (what the schema
+// advertises) and joinTimeout (what enforcement applies) must agree on it,
+// so both read this one constant.
+const joinFallbackSeconds = 600
+
 // joinDefaultSeconds reports the model-visible default join budget:
-// RequestedTimeoutSec floor semantics applied to DefaultTimeout (0 -> 600).
+// the effective timeout joinTimeout would use when no timeout_seconds is
+// passed (0 -> joinFallbackSeconds), clamped to the same 3600 cap so the
+// advertised default never exceeds the enforced cap.
 func joinDefaultSeconds(cfg config.SubagentConfig) string {
-	if cfg.DefaultTimeout > 0 && cfg.DefaultTimeout < 3600 {
-		return fmt.Sprint(cfg.DefaultTimeout)
+	if eff := joinBudget(cfg, 0); eff > 0 {
+		return fmt.Sprint(eff)
 	}
-	return "600"
+	return fmt.Sprint(joinFallbackSeconds)
+}
+
+// joinBudget resolves the effective join seconds: config default, then the
+// caller's request, hard-capped at 3600. An over-cap request clamps to the
+// cap - it must never fall back to the 600 default (which would silently
+// truncate a deliberately long join and then cancel a healthy run).
+func joinBudget(cfg config.SubagentConfig, requested int) int {
+	eff := 0
+	if cfg.DefaultTimeout > 0 {
+		eff = cfg.DefaultTimeout
+	}
+	if requested > 0 {
+		eff = requested
+	}
+	if eff > 3600 {
+		eff = 3600
+	}
+	return eff
 }
 
 // joinTimeout bounds one join call (BUG-D fix): coordinator.Join blocks
@@ -230,18 +256,9 @@ func joinDefaultSeconds(cfg config.SubagentConfig) string {
 // propagate graceful cancellation through the same path cancel_run uses so
 // the wedged run finalizes instead of leaking.
 func joinTimeout(ctx context.Context, cfg config.SubagentConfig, requested int) (context.Context, context.CancelFunc) {
-	eff := 0
-	if cfg.DefaultTimeout > 0 {
-		eff = cfg.DefaultTimeout
-	}
-	if requested > 0 {
-		eff = requested
-	}
-	if eff <= 0 || eff > 3600 {
-		eff = 600
-	}
-	if eff > 3600 {
-		eff = 3600
+	eff := joinBudget(cfg, requested)
+	if eff <= 0 {
+		eff = joinFallbackSeconds
 	}
 	return context.WithTimeout(ctx, time.Duration(eff)*time.Second)
 }
@@ -268,14 +285,7 @@ func (t *joinRunTool) Execute(ctx context.Context, args json.RawMessage) (string
 		// and never discard work that already finished (same INV-AG-21 shape
 		// as RunThroughCoordinator): salvage whatever task records exist.
 		if salvaged := salvageUnjoinedRun(record.coord, handle, err); salvaged != nil {
-			out, _ := json.Marshal(map[string]any{
-				"run_id":       salvaged.Snapshot.RunID,
-				"display_name": salvaged.Snapshot.DisplayName,
-				"status":       salvaged.Snapshot.Status,
-				"run_error":    salvageErrorText(err),
-				"task_results": persistedTaskResults(salvaged.Snapshot.Tasks),
-			})
-			return string(out), nil
+			return joinSalvageEnvelope(record.coord, handle, salvaged, err, ctx.Err() == nil), nil
 		}
 		snap := latestSnapshot(record.coord, handle, ctx)
 		status := "unknown"
@@ -427,6 +437,43 @@ func salvageErrorText(err error) string {
 		return ""
 	}
 	return "joined after failure: " + err.Error()
+}
+
+// joinSalvageHint tells a salvage-envelope reader what happens to the run
+// next: the two join failures have opposite continuations. Without it, a
+// caller canceled mid-join reads "joined after failure: context canceled"
+// plus a partial task list with no idea the run is still live and
+// re-joinable - the exact "stuck" confusion this envelope exists to prevent.
+func joinSalvageHint(joinBudgetExpired bool) string {
+	if joinBudgetExpired {
+		return "join budget expired; graceful cancel dispatched - inspect_agents later for final state"
+	}
+	return "the join was cut by the caller's own cancel; the run keeps running under its own budget - inspect_agents, re-join, or cancel_run"
+}
+
+// joinSalvageEnvelope renders the partial-results envelope for a join cut
+// before completion, and decides the run's continuation with it. A
+// join-budget expiration with the caller still alive dispatches the graceful
+// cancel: salvage returning finished work must not preempt the wedged-run
+// guarantee (the early return once made the timeout branch unreachable for
+// every run worth salvaging, leaking a wedged task to its full budget). A
+// caller cancel leaves the run running under its own budget - another caller
+// may own it, and walking away is not a verdict. Deriving joinBudgetExpired
+// here keeps the hint and the cancel decision from ever disagreeing.
+func joinSalvageEnvelope(coord coordinator.Coordinator, handle *coordinator.RunHandle, salvaged *coordinator.RunResult, joinErr error, callerAlive bool) string {
+	joinBudgetExpired := errors.Is(joinErr, context.DeadlineExceeded) && callerAlive
+	if joinBudgetExpired {
+		go cancelWedgedRun(coord, handle)
+	}
+	out, _ := json.Marshal(map[string]any{
+		"run_id":       salvaged.Snapshot.RunID,
+		"display_name": salvaged.Snapshot.DisplayName,
+		"status":       salvaged.Snapshot.Status,
+		"run_error":    salvageErrorText(joinErr),
+		"task_results": persistedTaskResults(salvaged.Snapshot.Tasks),
+		"hint":         joinSalvageHint(joinBudgetExpired),
+	})
+	return string(out)
 }
 
 func (t *cancelRunTool) Capability(args json.RawMessage) tools.Capability {

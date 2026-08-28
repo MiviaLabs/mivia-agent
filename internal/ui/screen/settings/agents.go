@@ -90,11 +90,14 @@ func (s *agentsSection) rebuild() {
 		return
 	}
 	all := s.store.Agents()
-	var globalAgents, projectAgents []ports.AgentView
+	var globalAgents, projectAgents, builtinAgents []ports.AgentView
 	for _, ag := range all {
-		if ag.Scope == ports.ScopeUser {
+		switch ag.Scope {
+		case ports.ScopeUser:
 			globalAgents = append(globalAgents, ag)
-		} else {
+		case ports.ScopeBuiltin:
+			builtinAgents = append(builtinAgents, ag)
+		default:
 			projectAgents = append(projectAgents, ag)
 		}
 	}
@@ -119,6 +122,17 @@ func (s *agentsSection) rebuild() {
 		rows = append(rows, agentsRow{isHeader: true, header: "  (no project agents installed)"})
 	} else {
 		for _, ag := range projectAgents {
+			indices = append(indices, len(rows))
+			rows = append(rows, agentsRow{agent: ag})
+		}
+	}
+
+	// Built-in Group (compiled, read-only)
+	rows = append(rows, agentsRow{isHeader: true, header: "Built-in Agents (shipped with mivia)"})
+	if len(builtinAgents) == 0 {
+		rows = append(rows, agentsRow{isHeader: true, header: "  (no built-in agents)"})
+	} else {
+		for _, ag := range builtinAgents {
 			indices = append(indices, len(rows))
 			rows = append(rows, agentsRow{agent: ag})
 		}
@@ -217,6 +231,10 @@ func (s *agentsSection) handleKey(msg tea.KeyPressMsg) (section, tea.Cmd) {
 		s.notice = ""
 	case "enter", "e":
 		if ag, ok := s.selectedAgent(); ok {
+			if ag.Scope == ports.ScopeBuiltin {
+				s.notice = fmt.Sprintf("built-in agent %q is read-only; create a same-name definition to override it", ag.Name)
+				return s, nil
+			}
 			s.openEditor(ag, false)
 			return s, nil
 		}
@@ -234,8 +252,8 @@ func (s *agentsSection) confirmRemove() (section, tea.Cmd) {
 	if !ok {
 		return s, nil
 	}
-	if ag.Name == ports.DefaultAgentName {
-		s.notice = fmt.Sprintf("the default agent %q cannot be removed", ports.DefaultAgentName)
+	if ag.Scope == ports.ScopeBuiltin {
+		s.notice = fmt.Sprintf("built-in agent %q cannot be removed", ag.Name)
 		return s, nil
 	}
 	s.confirmDeleteName = ag.Name
@@ -404,9 +422,9 @@ func (s *agentsSection) validateAndBuildAgent() (ports.AgentView, ports.Scope, e
 		return ports.AgentView{}, scope, fmt.Errorf("Invalid agent name %q", name)
 	}
 
-	if !s.isNew && s.editOriginalName == ports.DefaultAgentName && name != ports.DefaultAgentName {
-		return ports.AgentView{}, scope, fmt.Errorf("the default agent name %q cannot be changed", ports.DefaultAgentName)
-	}
+	// Builtin rows never reach this editor: the enter/e handler refuses them
+	// before openEditor, so no scope guard lives here (dead defense would be
+	// untestable code).
 
 	if s.isNew || s.editOriginalName != name || s.editOriginalScope != scope {
 		for _, row := range s.rows {

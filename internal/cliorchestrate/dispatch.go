@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
@@ -24,6 +23,10 @@ type messageSynopsis struct {
 	MessageID string `json:"message_id"`
 	Kind      string `json:"kind"`
 	Synopsis  string `json:"synopsis"`
+	// ContentRef resolves the pinned full body via ledger_read when the
+	// synopsis is not enough (INV-AG-10: the event's content_ref always
+	// resolves). Empty on legacy events written before the field existed.
+	ContentRef string `json:"content_ref,omitempty"`
 }
 
 // dispatchTasksTool implements tools.Tool by routing multiple tasks through
@@ -37,7 +40,6 @@ type dispatchTasksTool struct {
 	agentReg     *agents.AgentRegistry
 	providerName string
 	model        string
-	nextBatch    atomic.Uint64
 }
 
 func (t *dispatchTasksTool) Capability(args json.RawMessage) tools.Capability {
@@ -55,9 +57,19 @@ func (t *dispatchTasksTool) Name() string { return ToolDispatchTasks }
 func (t *dispatchTasksTool) Privileged()  {}
 func (t *dispatchTasksTool) Description() string {
 	desc := "Execute multiple sub-tasks in PARALLEL. Use this for ALL research, code reviews, " +
-		"bug audits, and any work that can be split - never do N sequential passes. " +
-		"Each task must explicitly select one authorized agent and may optionally select a skill under that agent's policy. " +
-		"Tasks without dependencies (depends_on) run concurrently. " +
+		"bug audits, and any work that can be split - never do N sequential passes. "
+	// Same invariant as agentRoutingDescription: the always-available claim
+	// only appears when the built-in actually resolved into the registry (a
+	// same-name skill collision can skip it), so the prose never promises a
+	// target the enum lacks.
+	if _, ok := t.agentReg.Get(agents.BuiltInGeneralPurposeName); ok {
+		desc += "The agent field is optional: the built-in general-purpose agent is always available and carries " +
+			"the default toolset; omitting agent runs a tool-less one-shot call, so name an agent for any task that needs tools. "
+	} else {
+		desc += "The agent field is optional: name a listed agent for any task that needs tools; " +
+			"omitting agent runs a tool-less one-shot call. "
+	}
+	desc += "Tasks without dependencies (depends_on) run concurrently. " +
 		"Every task always reports its own result and status, so one failure never " +
 		"costs you the others. " +
 		"Recommended: 2-4 tasks at once. " +
@@ -91,10 +103,6 @@ func (t *dispatchTasksTool) Parameters() map[string]any {
 			"wait_task_id": map[string]any{
 				"type": "string", "description": "Required when wait=task",
 			},
-			"idempotency_key": map[string]any{
-				"type":        "string",
-				"description": "Optional key to deduplicate identical batch dispatch for the same caller",
-			},
 		},
 		"required":             []string{"tasks"},
 		"additionalProperties": false,
@@ -107,7 +115,6 @@ func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 	var params struct {
 		Tasks          []dispatchTaskParam `json:"tasks"`
 		TimeoutSeconds int                 `json:"timeout_seconds,omitempty"`
-		IdempotencyKey string              `json:"idempotency_key,omitempty"`
 		Wait           string              `json:"wait,omitempty"`
 		WaitTaskID     string              `json:"wait_task_id,omitempty"`
 	}
@@ -122,63 +129,96 @@ func (t *dispatchTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 		return `{"error":"` + err.Error() + `"}`, nil
 	}
 
-	// Always resolve a positive batch timeout so multi_step / pool work is
-	// bounded even when default_timeout_seconds is 0. An explicit
-	// timeout_seconds IS the budget — not floored to the 12h default. Per-task
-	// overrides can still raise the batch budget so a task never outlives it.
-	overrides := make([]int, 0, len(params.Tasks))
-	for _, p := range params.Tasks {
-		if p.TimeoutSeconds > 0 {
-			overrides = append(overrides, p.TimeoutSeconds)
-		}
-	}
-	batchTimeout := config.RequestedTimeoutSec(t.cfg.DefaultTimeout, params.TimeoutSeconds, overrides...)
-
-	// Clamp the batch budget to the caller's remaining context deadline
-	// (BUG-B fix): RequestedTimeoutSec above considers only config and the
-	// caller's requested budgets, so a dispatch inside a shorter-lived turn
-	// could ask workers to run far past the moment the parent context dies.
-	// The pool would then cancel every task as orphaned (see
-	// RunThroughCoordinator's Join-error path) after the parent already sat
-	// silently waiting for work that could never be reported. Mirrors the
-	// parked-wait clamping in internal/clichat/messaging_tools.go.
-	if deadline, ok := ctx.Deadline(); ok {
-		remaining := time.Until(deadline)
-		switch {
-		case remaining <= 0:
-			// Caller is already dead: fail fast with a structured, actionable
-			// body rather than spawning side-effecting subagents nothing can
-			// ever consume (same fail-closed reasoning as RunThroughCoordinator).
-			payload, _ := json.Marshal(map[string]string{
-				"error":  "caller context already expired; no tasks were started",
-				"status": string(ledger.TaskStatusCanceled),
-			})
-			return string(payload), nil
-		case int(remaining.Seconds()) < batchTimeout:
-			batchTimeout = max(1, int(remaining.Seconds()))
-		}
+	batchTimeout, earlyOut := t.resolveBatchTimeout(ctx, params.Tasks, params.TimeoutSeconds)
+	if earlyOut != "" {
+		return earlyOut, nil
 	}
 
-	tasks, err := t.buildTasks(params.Tasks, batchTimeout)
+	// namespace is harness-derived (the tool call's own ToolCallID, or an
+	// internal counter with no call context), never model-supplied: it is
+	// both the per-task ID prefix (below) and, unchanged, the run's
+	// idempotency key - dispatch_tasks does not expose idempotency_key in
+	// its model-facing schema, on purpose (see dispatchNamespace).
+	namespace := t.dispatchNamespace(ctx)
+	tasks, err := t.buildTasks(namespace, params.Tasks, batchTimeout)
 	if err != nil {
 		return "", err
 	}
+
+	// wait_task_id names a sibling task in THIS batch by its raw model-
+	// supplied id, the same way depends_on does (buildTasks translates
+	// that one) - the model has no way to know the namespace prefix in
+	// advance, so it can only ever hand back the raw id it wrote in
+	// tasks[i].id.
+	waitTaskID := namespacedTaskID(namespace, params.WaitTaskID)
 
 	// wait != "run" (async): the same spawn+register+wait path spawn_agent
 	// uses, and the same {"run_id":...,"task_results":[...]} envelope - a
 	// caller that asked NOT to block for the batch gets a run to inspect/
 	// join/cancel, not a per-task array that would misleadingly imply the
 	// batch already finished.
+	// Every return from here on is model-visible (a JSON result body, or
+	// an error's text) and may embed a real, namespaced task id - a
+	// validation error from Pool.validate ("missing dependency", a
+	// blocked/panicked task's own error text) or a per-task "task_id" in
+	// the result envelope. stripNamespace recovers the raw id the model
+	// itself wrote everywhere one of those ids appears, so the model
+	// never has to recognize an id it never chose.
 	if wait != "run" {
-		snap, completed, err := spawnAndWait(ctx, t.dispatcher, t.cfg, t.repo, tasks, params.IdempotencyKey, wait, params.WaitTaskID)
+		snap, completed, err := spawnAndWait(ctx, t.dispatcher, t.cfg, t.repo, tasks, namespace, wait, waitTaskID)
 		if err != nil {
-			return "", fmt.Errorf("dispatch_tasks: %w", err)
+			return "", fmt.Errorf("dispatch_tasks: %s", stripNamespace(namespace, err.Error()))
 		}
-		return spawnResultPayload(snap, completed, t.cfg.InlineOutputBytes, EffectiveOrchestrationRepo(t.repo)), nil
+		payload := spawnResultPayload(snap, completed, t.cfg.InlineOutputBytes, EffectiveOrchestrationRepo(t.repo))
+		return stripNamespace(namespace, payload), nil
 	}
 
-	snap, runResult, err := RunThroughCoordinator(ctx, t.dispatcher, t.cfg, tasks, params.IdempotencyKey, t.repo)
-	return t.encodeSyncRunResult(snap, runResult, err), nil
+	snap, runResult, err := RunThroughCoordinator(ctx, t.dispatcher, t.cfg, tasks, namespace, t.repo)
+	return stripNamespace(namespace, t.encodeSyncRunResult(snap, runResult, err)), nil
+}
+
+// resolveBatchTimeout computes the batch's positive timeout budget, then
+// clamps it to the caller's remaining context deadline (BUG-B fix):
+// config.RequestedTimeoutSec below considers only config and the caller's
+// requested budgets, so a dispatch inside a shorter-lived turn could ask
+// workers to run far past the moment the parent context dies - the pool
+// would then cancel every task as orphaned (RunThroughCoordinator's
+// Join-error path) after the parent already sat silently waiting for work
+// that could never be reported. Mirrors the parked-wait clamping in
+// internal/clichat/messaging_tools.go.
+//
+// earlyOut is non-empty only when the caller's context has already
+// expired: fail fast with a structured, actionable body instead of
+// spawning side-effecting subagents nothing can ever consume (same
+// fail-closed reasoning as RunThroughCoordinator) - the caller must
+// return (earlyOut, nil) immediately without building or spawning tasks.
+func (t *dispatchTasksTool) resolveBatchTimeout(ctx context.Context, tasks []dispatchTaskParam, requestedSeconds int) (timeout int, earlyOut string) {
+	// timeout_seconds IS the budget when explicit - never floored to the
+	// 12h default. Per-task overrides can still raise the batch budget so
+	// a task never outlives it.
+	overrides := make([]int, 0, len(tasks))
+	for _, p := range tasks {
+		if p.TimeoutSeconds > 0 {
+			overrides = append(overrides, p.TimeoutSeconds)
+		}
+	}
+	timeout = config.RequestedTimeoutSec(t.cfg.DefaultTimeout, requestedSeconds, overrides...)
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return timeout, ""
+	}
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		payload, _ := json.Marshal(map[string]string{
+			"error":  "caller context already expired; no tasks were started",
+			"status": string(ledger.TaskStatusCanceled),
+		})
+		return timeout, string(payload)
+	}
+	if int(remaining.Seconds()) < timeout {
+		timeout = max(1, int(remaining.Seconds()))
+	}
+	return timeout, ""
 }
 
 // encodeSyncRunResult builds the wait="run" response body: the bare per-task
@@ -261,10 +301,30 @@ type dispatchTaskParam struct {
 	InputSchema    map[string]any `json:"input_schema,omitempty"`
 }
 
-func (t *dispatchTasksTool) buildTasks(params []dispatchTaskParam, batchTimeout int) ([]subagents.Task, error) {
+func (t *dispatchTasksTool) buildTasks(namespace string, params []dispatchTaskParam, batchTimeout int) ([]subagents.Task, error) {
 	tasks := make([]subagents.Task, len(params))
-	batchID := fmt.Sprintf("dispatch:%d", t.nextBatch.Add(1))
 	for i, pt := range params {
+		// id is declared required by taskItemSchema, but decodeStrictTaskJSON
+		// only rejects unknown fields - JSON Schema "required" is advisory to
+		// the model, never enforced on decode. A task the model left
+		// unnamed used to fall through to namespacedTaskID(namespace, "")
+		// (an empty rawID short-circuits to ""), so subagents.Task.ID stayed
+		// "" all the way to coordinator.createTask, which then minted an
+		// unrelated random ID via newTaskID() ("anonymous task... will be
+		// assigned" in coordinator/validation.go - support meant for single-
+		// task spawns, not a batch). The UI's row list, built independently
+		// from the model's own JSON args (events.go's dispatchTaskIDsAndNames),
+		// has no way to learn that random ID and instead guesses a
+		// position-based placeholder ("task-N") that never matches the real
+		// Origin.TaskID on any later progress/heartbeat/done event. That one
+		// row then never advances past Step 0 and eventually reads
+		// "stalled" - not a stall, a permanently unattributed row. Failing
+		// fast here, before any subagent spawns, turns a silently stuck
+		// batch member into an immediate, actionable tool error the model
+		// can retry from.
+		if strings.TrimSpace(pt.ID) == "" {
+			return nil, fmt.Errorf("dispatch_tasks: task %d: id is required (every task needs a unique id so its progress can be tracked)", i+1)
+		}
 		route, err := ResolveTaskRoute(t.agentReg, t.skillReg, pt.Agent, pt.Skill)
 		if err != nil {
 			return nil, fmt.Errorf("dispatch_tasks: %w", err)
@@ -287,11 +347,16 @@ func (t *dispatchTasksTool) buildTasks(params []dispatchTaskParam, batchTimeout 
 			}
 		}
 		tasks[i] = subagents.Task{
-			ID: pt.ID, InvocationKey: batchID + ":" + pt.ID,
+			ID: namespacedTaskID(namespace, pt.ID), RawID: pt.ID, InvocationKey: namespace + ":" + pt.ID,
 			Name: name, AgentName: agentName, AgentDigest: digest,
 			Skill: route.skill, Owner: DefaultToolOwner,
 			ProviderName: providerName, Model: model,
-			Input: input, DependsOn: pt.DependsOn,
+			// DependsOn names sibling tasks in THIS SAME batch by their raw
+			// model-supplied id - the only ids the model can know before any
+			// task has run - so it takes the same namespace prefix as ID
+			// above, or Pool.validate's dependency lookup (keyed on the
+			// namespaced ID) would never find it.
+			Input: input, DependsOn: namespacedDependsOn(namespace, pt.DependsOn),
 			Timeout:      time.Duration(taskTimeout) * time.Second,
 			Budget:       pt.Budget,
 			OutputSchema: outSchema, InputSchema: inSchema,

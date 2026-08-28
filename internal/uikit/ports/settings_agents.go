@@ -18,11 +18,12 @@ type AgentView struct {
 	MaxTurns          int
 	SystemPromptChars int
 	SystemPrompt      string
-	// Scope is the trust origin the definition file loaded from:
-	// ScopeUser for ~/.mivia/agents/<name>.md, ScopeProject for
-	// <workspace>/.agents/agents/<name>.md. Populated from the resolved
-	// agent's Provenance.Source, the same origin split
-	// ports.SkillView.Origin already carries for skills.
+	// Scope is the trust origin the definition loaded from: ScopeUser for
+	// ~/.mivia/agents/<name>.md, ScopeProject for
+	// <workspace>/.agents/agents/<name>.md, ScopeBuiltin for a compiled
+	// definition shipped inside the mivia binary (read-only row).
+	// Populated from the resolved agent's Provenance.Source, the same
+	// origin split ports.SkillView.Origin already carries for skills.
 	Scope Scope
 }
 

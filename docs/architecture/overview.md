@@ -51,8 +51,14 @@ File-backed agent configuration follows a bounded four-stage path:
 4. The CLI selects a snapshot for the root session or for a required task
    agent, then builds the scoped dispatcher from that snapshot.
 
-The compiled root fallback is private and is used only when no file-backed
-`mivia` definition is selected; it is not a selectable agent definition.
+Two compiled built-in agents ship inside the binary. `general-orchestrator`
+is the root session identity: the compiled prompt and a reserved name that
+restores the root surface when selected (flag, `/agent`, picker); it is never
+a registry member and never spawnable. `general-purpose` is a spawnable,
+tool-bearing registry member present in every session, so subagent fan-out
+works on a clean workspace with no agent files. A same-name file-backed
+definition overrides `general-purpose` (user over workspace over built-in);
+the `general-orchestrator` name is reserved and no file may claim it.
 Each chat invocation starts a fresh root session. Saved chat state does not
 resume a root conversation or restore agent identity; orchestration task
 resume is a separate, explicitly confirmed ledger operation.

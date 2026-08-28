@@ -15,6 +15,7 @@ func TestNewIdentity(t *testing.T) {
 		{"valid user", "agent1", "user", "inst-1", 1, false},
 		{"valid workspace", "agent1", "workspace", "inst-1", 1, false},
 		{"valid compiled", "agent1", "compiled", "inst-1", 1, false},
+		{"valid builtin", "agent1", "builtin", "inst-1", 1, false},
 		{"empty name", "", "user", "inst-1", 1, true},
 		{"empty source", "agent1", "", "inst-1", 1, true},
 		{"invalid source", "agent1", "invalid", "inst-1", 1, true},

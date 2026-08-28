@@ -2,6 +2,7 @@ package chat
 
 import (
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
@@ -22,7 +23,7 @@ func cloneContextMessages(messages []provider.Message) []provider.Message {
 
 func prepareInputForContext(messages []provider.Message, budget int, maxTokens *int, binding ModelBinding, principal contextstate.Principal, policy contextstate.PolicySnapshot, instance contextstate.WorktreeInstance) contextmgr.PrepareInput {
 	return contextmgr.PrepareInput{
-		Messages: messages, Budget: budget, OutputReserve: outputReserve(maxTokens),
+		Messages: messages, Budget: budget, OutputReserve: outputReserve(maxTokens, config.ModelReasoning(binding.Profile).Level),
 		CurrentObjective: latestUserMessage(messages), Principal: principal,
 		ContextAccounting: provider.ContextAccountingFor(binding.Completer),
 		Revision:          contextstate.Revision{}, Binding: captureBindingRevision(binding), WorktreeInstance: instance, Policy: policy,

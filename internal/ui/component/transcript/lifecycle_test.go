@@ -174,9 +174,9 @@ func TestTallBlockCollapsesByDefault(t *testing.T) {
 	if !m.Blocks()[0].Collapsed {
 		t.Error("a block at or above the collapse threshold must start collapsed")
 	}
-	// 1 header row, plus the trailing blank separator every block gets.
-	if got := m.Blocks()[0].Height(80); got != 2 {
-		t.Errorf("got height %d, want 2 for a collapsed block", got)
+	// 1 header row; the blank separator lives in the viewport layout (R1).
+	if got := m.Blocks()[0].Height(80); got != 1 {
+		t.Errorf("got height %d, want 1 for a collapsed block", got)
 	}
 }
 
@@ -219,9 +219,12 @@ func TestTrimKeepsTheReaderInPlace(t *testing.T) {
 	}
 }
 
-// TestProgressWithoutABarStillShowsItsLog covers the degenerate progress
-// event: no total means no honest bar, but the log still matters.
-func TestProgressWithoutABarStillShowsItsLog(t *testing.T) {
+// TestProgressEventIsANoOp pins the current contract: subagent progress
+// (heartbeat elapsed/tool-call/step counters) belongs to the sidebar panel
+// now (internal/ui/screen/conversation/filespanel.go), not the transcript.
+// A bare Progress-only tool.output (no prior tool.start) must push nothing
+// - previously this degenerate case still surfaced its log line.
+func TestProgressEventIsANoOp(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII)
 	m.SetSize(80, 24)
 	m, _ = m.HandleEvent(uievent.Event{
@@ -231,12 +234,12 @@ func TestProgressWithoutABarStillShowsItsLog(t *testing.T) {
 			Progress:   &uievent.Progress{Step: 1, TotalSteps: 0, Log: []string{"working"}},
 		},
 	})
-	got := ansi.Strip(m.Dump())
-	if !strings.Contains(got, "working") {
-		t.Errorf("the progress log was dropped when there was no bar to draw:\n%s", got)
+	if len(m.Blocks()) != 0 {
+		t.Errorf("a Progress-only event must push no block, got %d: %+v", len(m.Blocks()), m.Blocks())
 	}
-	if strings.Contains(got, "%") {
-		t.Errorf("a percentage was drawn with no total to compute it from:\n%s", got)
+	got := ansi.Strip(m.Dump())
+	if strings.Contains(got, "working") {
+		t.Errorf("the progress log leaked into the transcript, want it sidebar-only:\n%s", got)
 	}
 }
 

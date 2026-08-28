@@ -15,7 +15,9 @@ import "sync"
 // lives in package uiadapter, not uiadapter_test, and tests reach it
 // through this exported helper. Precedent:
 // internal/tools/export_test.go (Tavily test redirects).
-//
-// SetTurnWaiterForTest installs wg as the WaitGroup every per-turn
-// goroutine calls Done() on. Pass nil to clear the seam.
 func SetTurnWaiterForTest(wg *sync.WaitGroup) { turnWaiter = wg }
+
+// NamespacedTaskIDForTest exposes namespacedTaskID for unit testing.
+func NamespacedTaskIDForTest(namespace, rawID string) string {
+	return namespacedTaskID(namespace, rawID)
+}

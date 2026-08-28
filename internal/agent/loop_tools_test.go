@@ -64,6 +64,41 @@ func TestToolEndDetailBodyHeuristicIsScopedToRunCommand(t *testing.T) {
 	}
 }
 
+// TestToolEndDetailDispatchTasksWholeBatchRejectionFails pins the
+// dispatch_tasks whole-batch-failure envelope: Execute deliberately answers
+// a pre-flight rejection (malformed wait value, expired caller context,
+// coordinator/spawn failure) with {"error":...,"status":...} and a nil Go
+// error, so the caller keeps the run_id/hint fields it needs to recover
+// (internal/cliorchestrate/dispatch.go). Without a body check scoped to
+// this tool, that envelope reads "completed" - the same class of bug
+// run_command's own exit-code check exists to prevent, just for a
+// different tool and a different signal shape. This is what left two
+// sidebar rows reading "[completed] Elapsed: 0s, Tools: 0, Step: 0" for a
+// batch that never dispatched a single task.
+func TestToolEndDetailDispatchTasksWholeBatchRejectionFails(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"pre-flight wait rejection", `{"error":"unknown wait value \"maybe\""}`, "failed"},
+		{"expired caller context", `{"error":"caller context already expired; no tasks were started","status":"canceled"}`, "failed"},
+		{"run-level failure with hint", `{"error":"coordinator join failed","status":"failed","run_id":"run-1","hint":"inspect_agents or cancel_run can reach this run by run_id"}`, "failed"},
+		{"invalid json with brace", "{not-json", "completed"},
+		{"empty batch is not a failure", `{"tasks":[]}`, "completed"},
+		{"per-task array result, tasks ran", `[{"task_id":"ba-core","status":"completed"}]`, "completed"},
+		{"per-task array result, a task failed", `[{"task_id":"ba-core","status":"failed"}]`, "completed"},
+		{"async payload always carries tasks", `{"run_id":"run-1","status":"running","tasks":[{"id":"ba-core","status":"running"}]}`, "completed"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := toolEndDetail(toolCallNamed("dispatch_tasks", tc.body)); got != tc.want {
+				t.Fatalf("body %q: got %q want %q", tc.body, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestToolEndDetailTransportErrorStillFails(t *testing.T) {
 	// Synthesized "error: …" bodies always carry a non-nil err, so scoping the
 	// body heuristic to run_command must not lose their failed status.

@@ -9,13 +9,17 @@ package cliworkflow
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
+	"github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/secretpath"
@@ -36,7 +40,13 @@ type WorkflowControllerBuild struct {
 	Cleanup    func()
 }
 
-func buildWorkflowController(root string, res *config.Resolved, store *storage.SQLite, repo workflowledger.Repository, wf *definition.CompiledWorkflow, refBase string, inputs map[string]any, inputSnapshot map[string]string, definitionTOML []byte, runID string, prior *workflowledger.Snapshot, priorRaw []byte, recorded *workflowledger.RunSnapshot, remaining map[string]bool, preloadedSkills *skills.Registry) (WorkflowControllerBuild, error) {
+// buildWorkflowController builds one workflow run's controller. ownerSessionID
+// is the chat session that owns the run's child runs: empty on the operator CLI
+// paths (no session exists there), the admitting session's ID on the
+// workflow_run tool path. It threads down as an explicit parameter from the
+// admission entrypoint - the only frame where the session caller exists - and
+// no wiring layer below re-derives it from ctx.
+func buildWorkflowController(root string, res *config.Resolved, store *storage.SQLite, repo workflowledger.Repository, wf *definition.CompiledWorkflow, refBase string, inputs map[string]any, inputSnapshot map[string]string, definitionTOML []byte, runID string, prior *workflowledger.Snapshot, priorRaw []byte, recorded *workflowledger.RunSnapshot, remaining map[string]bool, preloadedSkills *skills.Registry, ownerSessionID string, sessionRepo ledger.LedgerRepository) (WorkflowControllerBuild, error) {
 	// A stacking run EXECUTES the synthesized graph: decompose and
 	// chunk_plan_validate are real steps whose agents must be resolved, whose
 	// templates and schemas must be pinned, and whose routing digests must be
@@ -64,7 +74,7 @@ func buildWorkflowController(root string, res *config.Resolved, store *storage.S
 		setup.cleanup()
 		return WorkflowControllerBuild{}, err
 	}
-	ctrl, err := newWorkflowController(repo, dispatcher, legacy, res, wf, inputs, runID, runtime, setup.identity, baseline)
+	ctrl, err := newWorkflowController(repo, dispatcher, legacy, res, wf, inputs, runID, runtime, setup.identity, baseline, ownerSessionID, sessionRepo)
 	if err != nil {
 		dispatcher.Close()
 		setup.cleanup()
@@ -241,10 +251,14 @@ func prepareWorkflowBuildRuntime(root, refBase string, res *config.Resolved, wf 
 	return runtime, baseline, nil
 }
 
-func newWorkflowController(repo workflowledger.Repository, dispatcher *runtime.Dispatcher, legacy ledger.LedgerRepository, res *config.Resolved, wf *definition.CompiledWorkflow, inputs map[string]any, runID string, runtime preparedWorkflowRuntime, identity workflowspace.Identity, baseline *definition.GoModuleBaseline) (*controller.LinearController, error) {
+func newWorkflowController(repo workflowledger.Repository, dispatcher *runtime.Dispatcher, legacy ledger.LedgerRepository, res *config.Resolved, wf *definition.CompiledWorkflow, inputs map[string]any, runID string, runtime preparedWorkflowRuntime, identity workflowspace.Identity, baseline *definition.GoModuleBaseline, ownerSessionID string, sessionRepo ledger.LedgerRepository) (*controller.LinearController, error) {
 	applyHarnessSandboxSetting(res.Harness)
 	coord := InitCoordinatorFunc(dispatcher, res.Subagents, legacy)
 	runner := controller.NewCoordinatorRunner(coord)
+	// Register every child run this controller ensures under the owning
+	// session, so inspect_agents/join_run/cancel_run resolve workflow children
+	// the same way they resolve dispatch_tasks runs.
+	runner.RegisterChildRun = workflowChildRunRegistrar(dispatcher, coord, res.Subagents, ownerSessionID, sessionRepo)
 	ctrl, err := workflowBuildController(repo, runner, wf, runtime.Steps, inputs, runID, runtime.Snapshot)
 	if err != nil {
 		return nil, err
@@ -317,6 +331,48 @@ func applyHarnessSandboxSetting(hc config.HarnessConfig) {
 		warnSandboxDisabledOnce.Do(func() {
 			fmt.Fprintln(os.Stderr, "warning: [harness] sandbox = false — evidence-gate commands run directly on the host with no filesystem, network, or environment isolation")
 		})
+	}
+}
+
+// workflowOwnerSessionID resolves the owning chat session's ID from an
+// admission context. The workflow_run tool admission is the only frame where
+// the session caller exists; every layer below receives the value as an
+// explicit parameter and never reads ctx again.
+func workflowOwnerSessionID(ctx context.Context) string {
+	caller, ok := runtime.CallerFrom(ctx)
+	if !ok {
+		return ""
+	}
+	return caller.SessionID
+}
+
+// workflowChildRunRegistrar returns the CoordinatorRunner hook that registers
+// each workflow child run in the orchestration handle registry. The record
+// carries TWO identities on purpose:
+//   - ownership: the ownerSessionID principal and sessionRepo - the OWNING
+//     SESSION's ledger repository, the same instance the session's
+//     inspect_agents/join_run/cancel_run tools carry. The access gate compares
+//     exactly this repo, so this is what makes the child resolvable by its
+//     owner. The seam applies the effective-repo fallback to it.
+//   - execution: coord, handle, and d are this workflow run's own - acting on
+//     the child (join, cancel) must go through the coordinator that runs it.
+//
+// Registration is additive: it changes no coordinator or pool behavior.
+//
+// Fail-closed by design: with no owning session, or a session without a repo
+// (the operator CLI paths), the hook stays unset, one notice says so, and the
+// standard tools keep answering "unknown run_id" for the run's children - a
+// run registered under no session repo could never be inspected or canceled
+// by anyone.
+func workflowChildRunRegistrar(d *runtime.Dispatcher, coord coordinator.Coordinator, cfg config.SubagentConfig, ownerSessionID string, sessionRepo ledger.LedgerRepository) func(context.Context, string, *coordinator.RunHandle) {
+	if strings.TrimSpace(ownerSessionID) == "" || sessionRepo == nil {
+		log.Printf("workflow: child run registration skipped: no owning session or session ledger repo")
+		return nil
+	}
+	return func(_ context.Context, runID string, handle *coordinator.RunHandle) {
+		if err := cliorchestrate.RegisterChildRunHandle(runID, coord, handle, sessionRepo, d, ownerSessionID, cfg); err != nil {
+			log.Printf("workflow: child run %s registration failed: %v", runID, err)
+		}
 	}
 }
 

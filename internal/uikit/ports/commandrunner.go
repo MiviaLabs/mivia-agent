@@ -139,7 +139,8 @@ type CommandRunner interface {
 	SessionActive(id string) bool
 }
 
-// DefaultAgentName is the session's default agent: Mivia, the general
-// purpose orchestrator. A roster always carries it; /agents offers it
-// so switching back needs no recall of the name.
-const DefaultAgentName = "Mivia"
+// DefaultAgentName is the session's compiled root agent:
+// general-orchestrator (config.RootAgentName; equality is pinned by test).
+// The picker always offers it first so switching back needs no recall of
+// the name.
+const DefaultAgentName = "general-orchestrator"

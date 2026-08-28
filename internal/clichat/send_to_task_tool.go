@@ -12,6 +12,29 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 )
 
+// resolveSendTargetTaskID maps a model-supplied raw task id to the real
+// task id the run actually holds. dispatch_tasks mints each task's real id
+// as a harness-namespaced form (callID+":"+rawID - see
+// internal/cliorchestrate/dispatch.go's dispatchNamespace) but strips that
+// prefix from every model-visible surface before returning, so the model
+// only ever learns the raw id and would naturally quote it back here.
+// cliorchestrate.ResolveTaskID matches by the task's stored RawID (or its
+// real id verbatim, for spawn_agent/delegate or any dispatcher that never
+// namespaces); an id that names no task in this run at all passes through
+// unchanged, so an unresolvable id still surfaces the SAME not-found/
+// mailbox-miss error SendToTask already gives, rather than a new, different
+// failure shape.
+func resolveSendTargetTaskID(ctx context.Context, repo ledger.LedgerRepository, runID, rawID string) string {
+	if repo == nil || rawID == "" {
+		return rawID
+	}
+	snap, err := repo.GetRun(ctx, runID)
+	if err != nil {
+		return rawID
+	}
+	return cliorchestrate.ResolveTaskID(snap.Tasks, rawID)
+}
+
 // sendToTaskTool is the parent-side tool for steer/answer delivery (plan 53.03).
 type sendToTaskTool struct {
 	dispatcher *runtime.Dispatcher
@@ -112,10 +135,11 @@ func (t *sendToTaskTool) Execute(ctx context.Context, args json.RawMessage) (str
 	if len(in.TaskIDs) > 0 {
 		return t.broadcastToTasks(ctx, record, in, kind)
 	}
+	targetID := resolveSendTargetTaskID(ctx, t.repo, in.RunID, in.TaskID)
 	msg, err := agentmsg.NewMessage(
 		in.RunID, kind,
 		agentmsg.Party{Role: agentmsg.ParentSentinel},
-		agentmsg.Party{TaskID: in.TaskID},
+		agentmsg.Party{TaskID: targetID},
 		in.Body, nil,
 		agentmsg.Options{
 			MaxBodyBytes: t.cfg.Messaging.MaxBodyBytes,
@@ -126,7 +150,7 @@ func (t *sendToTaskTool) Execute(ctx context.Context, args json.RawMessage) (str
 	if err != nil {
 		return "", err
 	}
-	delivered, err := record.GetCoordinator().SendToTask(ctx, record.GetHandle(), in.TaskID, msg)
+	delivered, err := record.GetCoordinator().SendToTask(ctx, record.GetHandle(), targetID, msg)
 	if err != nil {
 		return "", err
 	}
@@ -153,10 +177,14 @@ func (t *sendToTaskTool) broadcastToTasks(ctx context.Context, record cliorchest
 			results[taskID] = perTaskResult{Error: "task_id is required"}
 			continue
 		}
+		// The result map stays keyed by the model's own raw taskID (so it
+		// can correlate its request), but the actual send targets the
+		// resolved real id - see resolveSendTargetTaskID.
+		targetID := resolveSendTargetTaskID(ctx, t.repo, in.RunID, taskID)
 		msg, err := agentmsg.NewMessage(
 			in.RunID, kind,
 			agentmsg.Party{Role: agentmsg.ParentSentinel},
-			agentmsg.Party{TaskID: taskID},
+			agentmsg.Party{TaskID: targetID},
 			in.Body, nil,
 			agentmsg.Options{
 				MaxBodyBytes: t.cfg.Messaging.MaxBodyBytes,
@@ -168,7 +196,7 @@ func (t *sendToTaskTool) broadcastToTasks(ctx context.Context, record cliorchest
 			results[taskID] = perTaskResult{Error: err.Error()}
 			continue
 		}
-		delivered, err := record.GetCoordinator().SendToTask(ctx, record.GetHandle(), taskID, msg)
+		delivered, err := record.GetCoordinator().SendToTask(ctx, record.GetHandle(), targetID, msg)
 		if err != nil {
 			results[taskID] = perTaskResult{Error: err.Error()}
 			continue

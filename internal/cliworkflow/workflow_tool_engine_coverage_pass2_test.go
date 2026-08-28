@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/definition"
@@ -142,7 +143,7 @@ func TestBuildAndStartExecutionLockHeldFails(t *testing.T) {
 	}
 	defer release()
 
-	_, err = e.buildAndStart(context.Background(), prepared, workflowledger.StartRequest{Workflow: "two-step"}, runID)
+	_, err = e.buildAndStart(context.Background(), prepared, workflowledger.StartRequest{Workflow: "two-step"}, runID, "", nil)
 	if err == nil || !strings.Contains(err.Error(), "lock") {
 		t.Fatalf("buildAndStart() under a held lock error = %v, want a lock error", err)
 	}
@@ -154,12 +155,12 @@ func TestBuildAndStartExecutionLockHeldFails(t *testing.T) {
 func TestBuildAndStartBuildFailureSettles(t *testing.T) {
 	e, prepared := newEngineCoveragePrepared(t)
 	prev := WorkflowRunBuild
-	WorkflowRunBuild = func(_ string, _ *config.Resolved, _ *storage.SQLite, _ workflowledger.Repository, _ *definition.CompiledWorkflow, _ string, _ map[string]any, _ map[string]string, _ []byte, _ string, _ *workflowledger.Snapshot, _ []byte, _ *workflowledger.RunSnapshot, _ map[string]bool, _ *skills.Registry) (WorkflowControllerBuild, error) {
+	WorkflowRunBuild = func(_ string, _ *config.Resolved, _ *storage.SQLite, _ workflowledger.Repository, _ *definition.CompiledWorkflow, _ string, _ map[string]any, _ map[string]string, _ []byte, _ string, _ *workflowledger.Snapshot, _ []byte, _ *workflowledger.RunSnapshot, _ map[string]bool, _ *skills.Registry, _ string, _ ledger.LedgerRepository) (WorkflowControllerBuild, error) {
 		return WorkflowControllerBuild{}, errors.New("coverage build failure")
 	}
 	defer func() { WorkflowRunBuild = prev }()
 
-	_, err := e.buildAndStart(context.Background(), prepared, workflowledger.StartRequest{Workflow: "two-step"}, "wfr-cov-build-fail")
+	_, err := e.buildAndStart(context.Background(), prepared, workflowledger.StartRequest{Workflow: "two-step"}, "wfr-cov-build-fail", "", nil)
 	if err == nil || !strings.Contains(err.Error(), "coverage build failure") {
 		t.Fatalf("buildAndStart() error = %v, want the seam error", err)
 	}
@@ -176,7 +177,7 @@ func TestBuildAndStartAdmissionFailureSettles(t *testing.T) {
 	}
 	defer func() { WorkflowRunSetAdmission = prev }()
 
-	_, err := e.buildAndStart(context.Background(), prepared, workflowledger.StartRequest{Workflow: "two-step"}, "wfr-cov-admission-fail")
+	_, err := e.buildAndStart(context.Background(), prepared, workflowledger.StartRequest{Workflow: "two-step"}, "wfr-cov-admission-fail", "", nil)
 	if err == nil || !strings.Contains(err.Error(), "coverage admission failure") {
 		t.Fatalf("buildAndStart() error = %v, want the seam error", err)
 	}
@@ -187,7 +188,7 @@ func TestBuildAndStartAdmissionFailureSettles(t *testing.T) {
 // without the wfr- prefix) must fail after full resource cleanup.
 func TestBuildAndStartUnadmittableRunIDFails(t *testing.T) {
 	e, prepared := newEngineCoveragePrepared(t)
-	_, err := e.buildAndStart(context.Background(), prepared, workflowledger.StartRequest{Workflow: "two-step"}, "cov-not-a-run-id")
+	_, err := e.buildAndStart(context.Background(), prepared, workflowledger.StartRequest{Workflow: "two-step"}, "cov-not-a-run-id", "", nil)
 	if err == nil {
 		t.Fatal("buildAndStart() with an unadmittable run ID succeeded; want the admission error")
 	}
@@ -204,7 +205,7 @@ func TestBuildAndStartExistingRunReturnsStoredStatus(t *testing.T) {
 
 	// Admit the run once through the same build the engine uses, then drop
 	// that controller without running it.
-	built, err := WorkflowRunBuild(prepared.Root, prepared.Res, prepared.Store, prepared.Repo, prepared.Compiled, prepared.RefBase, prepared.Inputs, prepared.InputSnapshot, prepared.Raw, runID, nil, nil, nil, nil, nil)
+	built, err := WorkflowRunBuild(prepared.Root, prepared.Res, prepared.Store, prepared.Repo, prepared.Compiled, prepared.RefBase, prepared.Inputs, prepared.InputSnapshot, prepared.Raw, runID, nil, nil, nil, nil, nil, "", nil)
 	if err != nil {
 		t.Fatalf("WorkflowRunBuild() error = %v", err)
 	}
@@ -217,7 +218,7 @@ func TestBuildAndStartExistingRunReturnsStoredStatus(t *testing.T) {
 	built.Cleanup()
 	built.Dispatcher.Close()
 
-	result, err := e.buildAndStart(ctx, prepared, workflowledger.StartRequest{Workflow: "two-step"}, runID)
+	result, err := e.buildAndStart(ctx, prepared, workflowledger.StartRequest{Workflow: "two-step"}, runID, "", nil)
 	if err != nil {
 		t.Fatalf("buildAndStart() on an existing run error = %v, want the stored result", err)
 	}

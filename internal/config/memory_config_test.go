@@ -5,10 +5,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 func TestResolveMemoryConfigDefaults(t *testing.T) {
-	mc, err := resolveMemoryConfig(File{}, "")
+	mc, err := resolveMemoryConfig(File{}, "", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +37,7 @@ func TestResolveMemoryConfigExplicit(t *testing.T) {
 		MaxEntryBytes:    4096,
 		MaxEntries:       10,
 		MaxSearchResults: 5,
-	}}, "")
+	}}, "", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,9 +49,28 @@ func TestResolveMemoryConfigExplicit(t *testing.T) {
 	}
 }
 
+// TestResolveMemoryConfigExplicitBeatsProjectTier pins the precedence at the
+// tier boundary: with a real project config present (projectFound=true) an
+// explicit store_path still wins over the workspace default. The explicit
+// test above runs with projectFound=false, so a precedence flip toward the
+// project tier would have passed every existing test. Review finding 4c.
+func TestResolveMemoryConfigExplicitBeatsProjectTier(t *testing.T) {
+	root := t.TempDir()
+	mc, err := resolveMemoryConfig(File{Memory: MemoryConfig{StorePath: ".mivia/memory.db"}}, "", root, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mc.StorePath != ".mivia/memory.db" {
+		t.Errorf("StorePath = %q, want the explicit value to win over the project tier", mc.StorePath)
+	}
+	if mc.StorePath == workspace.MemoryDBPath(root) {
+		t.Errorf("StorePath = %q; the project-tier default must not overwrite an explicit store_path", mc.StorePath)
+	}
+}
+
 func TestResolveMemoryConfigDisabledSkipsValidation(t *testing.T) {
 	disabled := false
-	mc, err := resolveMemoryConfig(File{Memory: MemoryConfig{Enabled: &disabled, StoreBackend: "bogus"}}, "")
+	mc, err := resolveMemoryConfig(File{Memory: MemoryConfig{Enabled: &disabled, StoreBackend: "bogus"}}, "", "", false)
 	if err != nil {
 		t.Fatalf("disabled memory must not fail on a bogus backend: %v", err)
 	}
@@ -74,7 +95,7 @@ func TestResolveMemoryConfigRejectsInvalidValues(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			mc := DefaultMemoryConfig
 			tc.mut(&mc)
-			_, err := resolveMemoryConfig(File{Memory: mc}, "")
+			_, err := resolveMemoryConfig(File{Memory: mc}, "", "", false)
 			if err == nil {
 				t.Fatal("expected load error")
 			}
@@ -108,7 +129,7 @@ func TestResolveMemoryConfigOrgIDFromUserFileWhenWorkspaceSelected(t *testing.T)
 		t.Fatalf("UserConfigPath = %q, want %q", got, userPath)
 	}
 	// Workspace config sets org_id; the user file must win.
-	mc, err := resolveMemoryConfig(File{Memory: MemoryConfig{OrgID: "github.com/evil"}}, "/ws/mivia.toml")
+	mc, err := resolveMemoryConfig(File{Memory: MemoryConfig{OrgID: "github.com/evil"}}, "/ws/mivia.toml", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +140,7 @@ func TestResolveMemoryConfigOrgIDFromUserFileWhenWorkspaceSelected(t *testing.T)
 
 func TestResolveMemoryConfigOrgIDWhenUserFileIsSelected(t *testing.T) {
 	userPath := writeUserMemoryConfig(t, "[memory]\norg_id = \"github.com/acme\"\n")
-	mc, err := resolveMemoryConfig(File{Memory: MemoryConfig{OrgID: "github.com/acme"}}, userPath)
+	mc, err := resolveMemoryConfig(File{Memory: MemoryConfig{OrgID: "github.com/acme"}}, userPath, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +151,7 @@ func TestResolveMemoryConfigOrgIDWhenUserFileIsSelected(t *testing.T) {
 
 func TestResolveMemoryConfigIgnoresWorkspaceOrgIDWithoutUserFile(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	mc, err := resolveMemoryConfig(File{Memory: MemoryConfig{OrgID: "github.com/evil"}}, "/ws/mivia.toml")
+	mc, err := resolveMemoryConfig(File{Memory: MemoryConfig{OrgID: "github.com/evil"}}, "/ws/mivia.toml", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +162,7 @@ func TestResolveMemoryConfigIgnoresWorkspaceOrgIDWithoutUserFile(t *testing.T) {
 
 func TestResolveMemoryConfigNormalizesOrgID(t *testing.T) {
 	writeUserMemoryConfig(t, "[memory]\norg_id = \"  GitHub.com/MiviaLabs  \"\n")
-	mc, err := resolveMemoryConfig(File{}, "/ws/mivia.toml")
+	mc, err := resolveMemoryConfig(File{}, "/ws/mivia.toml", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,14 +173,14 @@ func TestResolveMemoryConfigNormalizesOrgID(t *testing.T) {
 
 func TestResolveMemoryConfigRejectsInvalidUserOrgID(t *testing.T) {
 	writeUserMemoryConfig(t, "[memory]\norg_id = \"has space\"\n")
-	if _, err := resolveMemoryConfig(File{}, "/ws/mivia.toml"); err == nil {
+	if _, err := resolveMemoryConfig(File{}, "/ws/mivia.toml", "", false); err == nil {
 		t.Fatal("invalid user org_id must fail the load")
 	}
 }
 
 func TestResolveMemoryConfigMalformedUserFileDegrades(t *testing.T) {
 	writeUserMemoryConfig(t, "not [ valid toml")
-	mc, err := resolveMemoryConfig(File{}, "/ws/mivia.toml")
+	mc, err := resolveMemoryConfig(File{}, "/ws/mivia.toml", "", false)
 	if err != nil {
 		t.Fatalf("a malformed user file must not break the workspace config: %v", err)
 	}
@@ -169,7 +190,7 @@ func TestResolveMemoryConfigMalformedUserFileDegrades(t *testing.T) {
 }
 
 func TestResolveMemoryConfigInjectCoreDefaultsFalse(t *testing.T) {
-	mc, err := resolveMemoryConfig(File{}, "")
+	mc, err := resolveMemoryConfig(File{}, "", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,13 +200,70 @@ func TestResolveMemoryConfigInjectCoreDefaultsFalse(t *testing.T) {
 }
 
 func TestResolveMemoryConfigInjectCoreExplicitTrue(t *testing.T) {
-	mc, err := resolveMemoryConfig(File{Memory: MemoryConfig{InjectCore: true}}, "")
+	mc, err := resolveMemoryConfig(File{Memory: MemoryConfig{InjectCore: true}}, "", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !mc.InjectCore {
 		t.Error("explicit inject_core = true must be preserved")
 	}
+}
+
+func TestResolveMemoryConfigDefaultStorePathProjectTier(t *testing.T) {
+	root := t.TempDir()
+	mc, err := resolveMemoryConfig(File{}, "", root, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := workspace.MemoryDBPath(root); mc.StorePath != want {
+		t.Errorf("StorePath = %q, want project-tier default %q", mc.StorePath, want)
+	}
+}
+
+func TestResolveMemoryConfigDefaultStorePathTempTier(t *testing.T) {
+	root := t.TempDir()
+	mc, err := resolveMemoryConfig(File{}, "", root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := TempStorePath(root, "memory"); mc.StorePath != want {
+		t.Errorf("StorePath = %q, want temp-tier default %q", mc.StorePath, want)
+	}
+	if mc.StorePath == workspace.MemoryDBPath(root) {
+		t.Errorf("StorePath must not equal the project-tier default when no project config exists")
+	}
+}
+
+func TestResolveMemoryConfigFillsStorePathEvenWhenDisabled(t *testing.T) {
+	disabled := false
+
+	t.Run("project tier", func(t *testing.T) {
+		root := t.TempDir()
+		mc, err := resolveMemoryConfig(File{Memory: MemoryConfig{Enabled: &disabled}}, "", root, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if mc.IsEnabled() {
+			t.Fatal("memory must stay disabled")
+		}
+		if want := workspace.MemoryDBPath(root); mc.StorePath != want {
+			t.Errorf("StorePath = %q, want %q even though memory is disabled", mc.StorePath, want)
+		}
+	})
+
+	t.Run("temp tier", func(t *testing.T) {
+		root := t.TempDir()
+		mc, err := resolveMemoryConfig(File{Memory: MemoryConfig{Enabled: &disabled}}, "", root, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if mc.IsEnabled() {
+			t.Fatal("memory must stay disabled")
+		}
+		if want := TempStorePath(root, "memory"); mc.StorePath != want {
+			t.Errorf("StorePath = %q, want %q even though memory is disabled", mc.StorePath, want)
+		}
+	})
 }
 
 func TestMemoryConfigIsEnabledNilMeansTrue(t *testing.T) {

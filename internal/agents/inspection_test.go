@@ -150,8 +150,12 @@ func TestInspectStillRejectsUnknownMCPServer(t *testing.T) {
 	if _, ok := report.Registry.Get("broken"); ok {
 		t.Fatal("agent referencing an unknown MCP server must not be selectable")
 	}
-	if report.Registry.Len() != 0 || report.DiagnosticSummary() != "1 malformed" {
+	// The compiled built-in still loads beside the malformed file.
+	if report.Registry.Len() != 1 || report.DiagnosticSummary() != "1 malformed" {
 		t.Fatalf("registry=%v diagnostics=%q", report.Registry.Names(), report.DiagnosticSummary())
+	}
+	if _, ok := report.Registry.Get(BuiltInGeneralPurposeName); !ok {
+		t.Fatalf("built-in missing from inspection registry: %v", report.Registry.Names())
 	}
 }
 
