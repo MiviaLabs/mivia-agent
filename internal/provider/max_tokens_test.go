@@ -425,6 +425,60 @@ func TestChatTurnClampMultiRetryThenSuccess(t *testing.T) {
 	}
 }
 
+// TestChatTurnClampsFloorMaxTokensOnCapRejection pins the fix for a
+// regression the max_tokens-floor change (effectiveMaxTokens) introduced:
+// clampMaxTokensForRetry gates recovery on Request.MaxTokens, which
+// effectiveMaxTokens computed for the WIRE body but never wrote back onto
+// req before doChatRequest's clamp loop ran. A request that never set
+// MaxTokens explicitly (the exact shape the floor exists for) would hit a
+// cap rejection on the guessed floor and get zero retries, because
+// clampMaxTokensForRetry saw req.MaxTokens == nil and bailed immediately.
+// doChatRequest now materializes req.MaxTokens = c.effectiveMaxTokens(req)
+// before that loop, so this must clamp and recover exactly like the
+// explicit-MaxTokens case above.
+func TestChatTurnClampsFloorMaxTokensOnCapRejection(t *testing.T) {
+	probe := &maxTokensProbe{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mt := decodeMaxTokensBody(r)
+		probe.record(mt)
+		if mt != nil && *mt > 20000 {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(maxTokensIncidentEnvelope))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"role": "assistant", "content": "ok"}, "finish_reason": "stop"}},
+		})
+	}))
+	defer srv.Close()
+
+	c := NewOpenAICompatWithOptions(CompatOptions{Name: "zai", BaseURL: srv.URL, APIKey: "k"})
+	resp, err := c.ChatTurn(context.Background(), Request{
+		Model:          "glm-5.3-flash",
+		Messages:       []Message{{Role: RoleUser, Content: "hi"}},
+		ReasoningLevel: reasoning.Max,
+	})
+	if err != nil {
+		t.Fatalf("ChatTurn err=%v, want nil after clamp recovers the floor-guessed max_tokens", err)
+	}
+	if resp == nil || resp.Content != "ok" {
+		t.Fatalf("resp=%+v, want Content %q", resp, "ok")
+	}
+	count, captured := probe.snapshot()
+	if count != 3 {
+		t.Fatalf("requestCount=%d, want 3 (initial floor guess, then two clamps: 65536 -> 32768 -> 16384)", count)
+	}
+	want := []int{65536, 32768, 16384}
+	if len(captured) != len(want) {
+		t.Fatalf("capturedMaxTokens=%v, want %v", captured, want)
+	}
+	for i := range want {
+		if captured[i] != want[i] {
+			t.Fatalf("capturedMaxTokens=%v, want %v", captured, want)
+		}
+	}
+}
+
 // TestUnsetMaxTokensGetsReasoningFloorNotOmitted pins the fix for the
 // always-thinking-model empty-response failure: an OpenAI-compatible request
 // with an active, wire-carried reasoning level but no explicit MaxTokens must
