@@ -13,6 +13,13 @@ import (
 type classicAgentUI struct {
 	r *ChatRenderer
 
+	// showIterationNotices mirrors config chat.show_iteration_notices
+	// (default off): per-step "iteration N" notices are progress chrome,
+	// not conversation. The new cockpit UI gates the same event kind
+	// through uiadapter.TranslateOptions; this field is the classic
+	// surface's copy of the same knob.
+	showIterationNotices bool
+
 	mu             sync.Mutex
 	streamBytes    int
 	interimPrinted bool
@@ -109,7 +116,13 @@ func (ui *classicAgentUI) clearStreamBytes() {
 
 func (ui *classicAgentUI) handle(e agent.Event) {
 	switch e.Kind {
-	case agent.EventStep, agent.EventHeartbeat:
+	case agent.EventStep:
+		// Iteration boundaries print only when chat.show_iteration_notices
+		// is on; off is the config default, and off must mean silent.
+		if ui.showIterationNotices && e.Detail != "" {
+			ui.r.PrintStep(e.Detail)
+		}
+	case agent.EventHeartbeat:
 		if e.Detail != "" {
 			ui.r.PrintStep(e.Detail)
 		}
@@ -194,8 +207,9 @@ func (ui *classicAgentUI) onToolEnd(e agent.Event) {
 }
 
 // newClassicAgentHandler returns an OnEvent handler for classic REPL.
-func newClassicAgentHandler(r *ChatRenderer) (*classicAgentUI, func(agent.Event)) {
-	ui := &classicAgentUI{r: r}
+// showIterationNotices is config chat.show_iteration_notices (default off).
+func newClassicAgentHandler(r *ChatRenderer, showIterationNotices bool) (*classicAgentUI, func(agent.Event)) {
+	ui := &classicAgentUI{r: r, showIterationNotices: showIterationNotices}
 	return ui, ui.handle
 }
 
