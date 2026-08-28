@@ -5,9 +5,11 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/hub"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
@@ -62,6 +64,61 @@ func TestStorageResetDryRunByDefault(t *testing.T) {
 	}
 	if before.Size() != after.Size() || before.ModTime() != after.ModTime() {
 		t.Fatalf("dry run modified the store file: before=%+v after=%+v", before, after)
+	}
+}
+
+// TestOpenOrchestrationStoreAtHardensTempTier pins the reset command's open
+// helper on the ad-hoc tier: the store comes up 0600 inside a 0700 chain.
+func TestOpenOrchestrationStoreAtHardensTempTier(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no chmod permission bits")
+	}
+	root := t.TempDir()
+	storePath := config.TempStorePath(root, "orchestration")
+
+	store, err := openOrchestrationStoreAt(root, storePath)
+	if err != nil {
+		t.Fatalf("openOrchestrationStoreAt: %v", err)
+	}
+	defer store.Close()
+
+	fi, err := os.Stat(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := fi.Mode().Perm(); perm != 0o600 {
+		t.Errorf("ad-hoc orchestration store file mode = %o, want 600", perm)
+	}
+	dirFi, err := os.Stat(filepath.Dir(storePath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := dirFi.Mode().Perm(); perm != 0o700 {
+		t.Errorf("ad-hoc orchestration store dir mode = %o, want 700", perm)
+	}
+}
+
+// TestOpenOrchestrationStoreAtLeavesOperatorPathAlone pins the other arm: an
+// operator-configured store_path opens without any chmod.
+func TestOpenOrchestrationStoreAtLeavesOperatorPathAlone(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no chmod permission bits")
+	}
+	root := t.TempDir()
+	operatorPath := filepath.Join(root, "operator.db")
+
+	store, err := openOrchestrationStoreAt(root, operatorPath)
+	if err != nil {
+		t.Fatalf("openOrchestrationStoreAt: %v", err)
+	}
+	defer store.Close()
+
+	fi, err := os.Stat(operatorPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := fi.Mode().Perm(); perm == 0o600 {
+		t.Errorf("operator store file mode = %o, want untouched (hardening leaked)", perm)
 	}
 }
 

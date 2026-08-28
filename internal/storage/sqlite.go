@@ -35,7 +35,12 @@ type SQLite struct {
 	usageWriteWG sync.WaitGroup
 }
 
+// OpenSQLite opens the store with default options.
 func OpenSQLite(path string) (*SQLite, error) {
+	return OpenSQLiteWithOptions(path, Options{})
+}
+
+func OpenSQLiteWithOptions(path string, opts Options) (*SQLite, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, fmt.Errorf("open sqlite store: empty path")
 	}
@@ -45,8 +50,14 @@ func OpenSQLite(path string) (*SQLite, error) {
 	// file, which is what MkdirAll over the filename itself used to create
 	// (DC-10). Separator-containing and absolute paths are unchanged.
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return nil, fmt.Errorf("create db directory %s: %w", dir, err)
+	if opts.Harden {
+		if err := ensureHardenedDir(dir); err != nil {
+			return nil, fmt.Errorf("create hardened db directory %s: %w", dir, err)
+		}
+	} else {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return nil, fmt.Errorf("create db directory %s: %w", dir, err)
+		}
 	}
 	db, err := sql.Open("sqlite", sqliteDSN(path))
 	if err != nil {
@@ -100,6 +111,11 @@ func OpenSQLite(path string) (*SQLite, error) {
 			writeDB.Close()
 			db.Close()
 			return nil, fmt.Errorf("write pool %s: %w", p, err)
+		}
+	}
+	if opts.Harden {
+		if err := hardenOpenedStore(path, dir, db, writeDB); err != nil {
+			return nil, err
 		}
 	}
 	return &SQLite{db: db, writeDB: writeDB, path: path}, nil

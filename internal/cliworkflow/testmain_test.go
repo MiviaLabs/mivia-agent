@@ -13,6 +13,7 @@ import (
 	"io"
 	"log"
 	"os"
+	goruntime "runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -58,7 +59,9 @@ func wireDeliverySeams() {
 		return workspace.GlobalContextStorePath(root)
 	}
 	OpenContextStoreFunc = func(root string, cfg config.SubagentConfig) (*storage.SQLite, error) {
-		return OpenContextStorePath(ContextStorePath(root, cfg))
+		p := ContextStorePath(root, cfg)
+		harden := sameFilePath(goruntime.GOOS, p, config.TempStorePath(root, "orchestration"))
+		return storage.OpenSQLiteWithOptions(p, storage.Options{Harden: harden})
 	}
 	ApplyPrivacyPolicyFunc = func(res *config.Resolved) {}
 	LogMCPWarningsFunc = func(w io.Writer, res *config.Resolved) {}

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -462,6 +463,21 @@ func OpenWorkflowStore(root string, cfg config.SubagentConfig) (*storage.SQLite,
 		return nil, nil, func() {}, err
 	}
 	return store, workflowledger.NewStorageRepository(store), func() { _ = store.Close() }, nil
+}
+
+func sameFilePath(goos, a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	a, b = normalizeFilePath(a), normalizeFilePath(b)
+	if goos == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
+}
+
+func normalizeFilePath(p string) string {
+	return path.Clean(strings.ReplaceAll(p, `\`, "/"))
 }
 
 func WorkflowConfigPath(root, explicit string) string {

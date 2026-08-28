@@ -74,7 +74,9 @@ func runStorageReset(args []string, stdout, stderr io.Writer) error {
 	stores := []*storage.SQLite{contextStore}
 	var orchestrationStore *storage.SQLite
 	if filepath.Clean(orchestrationPath) != filepath.Clean(contextStore.Path()) {
-		orchestrationStore, err = storage.OpenSQLite(orchestrationPath)
+		// Same gate as openContextStore: only the ad-hoc temp tier is
+		// chmod'd; an operator-configured store keeps its modes.
+		orchestrationStore, err = openOrchestrationStoreAt(root, orchestrationPath)
 		if err != nil {
 			return fmt.Errorf("storage reset: open orchestration store: %w", err)
 		}
