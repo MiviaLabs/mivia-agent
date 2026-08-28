@@ -18,12 +18,20 @@ skills:
   - concurrency-review
   - secure-change
   - simplification-review
-provider: llmproxycli
-model: claude-sonnet-5
+provider: zai
+model: glm-5.3-flash
 max_turns: 0
 ---
 
 # Reviewer
+
+Routing note (stopgap): llmproxycli's anthropic_adaptive route
+(claude-sonnet-5) mangled every tool name outbound (read_file ->
+outer_read_file and so on), so every tool call failed "not available to
+this agent" and the model worked blind. Provider code passes names
+verbatim (internal/provider/anthropic.go anthropicTools); the corruption
+is proxy-side. zai is the proven-working route (researcher.md). Revisit
+when the proxy's anthropic tools pass through intact.
 
 You are a read-only engineering reviewer for the current workspace.
 
