@@ -13,10 +13,13 @@ type MemoryConfig struct {
 	// StoreBackend is "memory" (ephemeral, in-process) or "sqlite"
 	// (durable, default). Mirrors [subagents] store_backend.
 	StoreBackend string `toml:"store_backend"`
-	// StorePath is the project memory database file. Empty uses
-	// <workspace>/.mivia/memory.db. A repo owner may point it at a tracked
-	// path and commit memories with the repository. Relative paths resolve
-	// against the workspace root; "~/..." expands to the home directory.
+	// StorePath is the project memory database file. Empty resolves by the
+	// three-tier rule in resolveMemoryConfig: a workspace with its own
+	// project config defaults to <workspace>/.mivia/memory.db; an ad-hoc
+	// directory defaults to a temp-dir store keyed by the sanitized root.
+	// A repo owner may point it at a tracked path and commit memories with
+	// the repository. Relative paths resolve against the workspace root;
+	// "~/..." expands to the home directory.
 	StorePath string `toml:"store_path"`
 	// OrgID is the org identity for org-scoped memory, honored from the
 	// user config file only. Empty means org scope is unavailable.

@@ -84,6 +84,51 @@ func TestOpenMemoryStoreWithReadOnlyHardensAdHocStore(t *testing.T) {
 	}
 }
 
+// TestOpenMemoryStoreWithReadOnlyHardensUncleanTempPath is the F1 review
+// finding: the hardening gate compares the resolved path against
+// TempStorePath by string equality. TempStorePath is Join-cleaned, but an
+// operator-supplied absolute path is not - so a store_path that names the
+// temp store with a dot-dot or double-slash segment must still match the
+// gate and get the 0600/0700 treatment. Before the Clean fix this test
+// failed: the file was created 0644 in a 0755 directory under the shared
+// temp dir.
+func TestOpenMemoryStoreWithReadOnlyHardensUncleanTempPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no chmod permission bits; file modes always read back as 0666/0777")
+	}
+	root := t.TempDir()
+	tempPath := config.TempStorePath(root, "memory")
+	// String concatenation, not filepath.Join: Join would clean the x/..
+	// segment away and the test would never exercise an unclean spelling.
+	unclean := filepath.Dir(tempPath) + string(filepath.Separator) + "x" +
+		string(filepath.Separator) + ".." + string(filepath.Separator) + filepath.Base(tempPath)
+	t.Cleanup(func() { _ = os.RemoveAll(filepath.Dir(config.TempStorePath(root, "memory"))) })
+	mc := config.MemoryConfig{StorePath: unclean}
+	store, err := OpenMemoryStoreWithReadOnly(root, mc, false)
+	if err != nil {
+		t.Fatalf("OpenMemoryStoreWithReadOnly = %v, want nil", err)
+	}
+	defer store.Close()
+	resolved := filepath.Clean(unclean)
+	if resolved != config.TempStorePath(root, "memory") {
+		t.Fatalf("test setup: cleaned path %q is not the temp store %q", resolved, config.TempStorePath(root, "memory"))
+	}
+	st, err := os.Stat(resolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := st.Mode().Perm(); perm != 0o600 {
+		t.Errorf("unclean temp store_path mode = %o, want 600", perm)
+	}
+	dirSt, err := os.Stat(filepath.Dir(resolved))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := dirSt.Mode().Perm(); perm != 0o700 {
+		t.Errorf("unclean temp store_path dir mode = %o, want 700", perm)
+	}
+}
+
 func TestOpenMemoryStoreWithReadOnlyStorePathDoesNotHarden(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows has no chmod permission bits; file modes always read back as 0666/0777")

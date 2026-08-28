@@ -29,15 +29,18 @@ func OpenMemoryStoreWithReadOnly(root string, mc config.MemoryConfig, readOnly b
 		projectPath = workspace.MemoryDBPath(root)
 	} else {
 		projectPath = config.ExpandPath(projectPath)
+		// Clean before every use: an operator-supplied path may carry dot-dot
+		// or double-slash segments, and an unclean spelling that names the
+		// temp store must not slip past the hardening gate below.
+		projectPath = filepath.Clean(projectPath)
 		if !filepath.IsAbs(projectPath) {
-			cleaned := filepath.Clean(projectPath)
-			if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+			if projectPath == ".." || strings.HasPrefix(projectPath, ".."+string(filepath.Separator)) {
 				return nil, fmt.Errorf("memory store_path %q escapes the workspace root", mc.StorePath)
 			}
-			projectPath = filepath.Join(root, cleaned)
+			projectPath = filepath.Join(root, projectPath)
 		}
 	}
-	hardenTempStore := projectPath == config.TempStorePath(root, "memory")
+	hardenTempStore := projectPath == filepath.Clean(config.TempStorePath(root, "memory"))
 	cfg := memory.Config{
 		Backend:          mc.StoreBackend,
 		ProjectPath:      projectPath,
