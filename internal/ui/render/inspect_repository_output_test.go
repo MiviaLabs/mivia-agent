@@ -88,7 +88,7 @@ func TestFormatInspectRepositoryOutput_CapsHotFilesAndPaths(t *testing.T) {
 	if !strings.Contains(plain, "+4 more in this file") {
 		t.Errorf("expected the per-file cap hint:\n%s", plain)
 	}
-	if !strings.Contains(plain, "…component.go") {
-		t.Errorf("expected the long path middle-truncated:\n%s", plain)
+	if !strings.Contains(plain, "…") || !strings.Contains(plain, "component.go") {
+		t.Errorf("expected the long path middle-truncated with both ends kept:\n%s", plain)
 	}
 }
