@@ -191,7 +191,13 @@ func Validate(msg Message, maxBodyBytes int) error {
 	}
 	for i, ref := range msg.Refs {
 		if err := validateRef(ref); err != nil {
-			return fmt.Errorf("%w: refs[%d]: %v", ErrInvalidMessage, i, err)
+			// %w, not %v: the inner error wraps sdkadapter's
+			// ErrMalformedReference, and wrapping it through keeps
+			// errors.Is(err, sdkadapter.ErrMalformedReference) true for
+			// callers that branch on the failure mode rather than the
+			// message text. Strictly additive: the chain previously
+			// carried only ErrInvalidMessage.
+			return fmt.Errorf("%w: refs[%d]: %w", ErrInvalidMessage, i, err)
 		}
 	}
 	return nil

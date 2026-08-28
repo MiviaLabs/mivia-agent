@@ -259,6 +259,9 @@ func TestValidateRefErrorTeachesRecovery(t *testing.T) {
 	if !errors.Is(err, ErrInvalidMessage) {
 		t.Fatalf("err = %v, want ErrInvalidMessage", err)
 	}
+	if !errors.Is(err, sdkadapter.ErrMalformedReference) {
+		t.Fatalf("err = %v, want sdkadapter.ErrMalformedReference reachable through the chain", err)
+	}
 	for _, want := range []string{`"sdkadapter"`, "ref:<kind>:<digest>", "output_ref", "omit refs"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q missing guidance %q", err, want)
