@@ -340,6 +340,14 @@ func defaultStorePath() string {
 	return DefaultStorePathForWorkspace("")
 }
 
+// IsDefaultOrchestrationStorePath reports whether path is the config-layer
+// default orchestration-ledger location (see defaultStorePath): the one tier
+// whose directory no operator manages, so opens may harden it 0600/0700. An
+// operator-configured store_path compares false and keeps its modes.
+func IsDefaultOrchestrationStorePath(path string) bool {
+	return path == defaultStorePath()
+}
+
 // DefaultStorePathForWorkspace returns the default SQLite path for root.
 func DefaultStorePathForWorkspace(root string) string {
 	dir, err := os.UserCacheDir()
