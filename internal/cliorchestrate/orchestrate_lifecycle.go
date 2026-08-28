@@ -268,14 +268,7 @@ func (t *joinRunTool) Execute(ctx context.Context, args json.RawMessage) (string
 		// and never discard work that already finished (same INV-AG-21 shape
 		// as RunThroughCoordinator): salvage whatever task records exist.
 		if salvaged := salvageUnjoinedRun(record.coord, handle, err); salvaged != nil {
-			out, _ := json.Marshal(map[string]any{
-				"run_id":       salvaged.Snapshot.RunID,
-				"display_name": salvaged.Snapshot.DisplayName,
-				"status":       salvaged.Snapshot.Status,
-				"run_error":    salvageErrorText(err),
-				"task_results": persistedTaskResults(salvaged.Snapshot.Tasks),
-			})
-			return string(out), nil
+			return joinSalvageEnvelope(record.coord, handle, salvaged, err, ctx.Err() == nil), nil
 		}
 		snap := latestSnapshot(record.coord, handle, ctx)
 		status := "unknown"
@@ -427,6 +420,43 @@ func salvageErrorText(err error) string {
 		return ""
 	}
 	return "joined after failure: " + err.Error()
+}
+
+// joinSalvageHint tells a salvage-envelope reader what happens to the run
+// next: the two join failures have opposite continuations. Without it, a
+// caller canceled mid-join reads "joined after failure: context canceled"
+// plus a partial task list with no idea the run is still live and
+// re-joinable - the exact "stuck" confusion this envelope exists to prevent.
+func joinSalvageHint(joinBudgetExpired bool) string {
+	if joinBudgetExpired {
+		return "join budget expired; graceful cancel dispatched - inspect_agents later for final state"
+	}
+	return "the join was cut by the caller's own cancel; the run keeps running under its own budget - inspect_agents, re-join, or cancel_run"
+}
+
+// joinSalvageEnvelope renders the partial-results envelope for a join cut
+// before completion, and decides the run's continuation with it. A
+// join-budget expiration with the caller still alive dispatches the graceful
+// cancel: salvage returning finished work must not preempt the wedged-run
+// guarantee (the early return once made the timeout branch unreachable for
+// every run worth salvaging, leaking a wedged task to its full budget). A
+// caller cancel leaves the run running under its own budget - another caller
+// may own it, and walking away is not a verdict. Deriving joinBudgetExpired
+// here keeps the hint and the cancel decision from ever disagreeing.
+func joinSalvageEnvelope(coord coordinator.Coordinator, handle *coordinator.RunHandle, salvaged *coordinator.RunResult, joinErr error, callerAlive bool) string {
+	joinBudgetExpired := errors.Is(joinErr, context.DeadlineExceeded) && callerAlive
+	if joinBudgetExpired {
+		go cancelWedgedRun(coord, handle)
+	}
+	out, _ := json.Marshal(map[string]any{
+		"run_id":       salvaged.Snapshot.RunID,
+		"display_name": salvaged.Snapshot.DisplayName,
+		"status":       salvaged.Snapshot.Status,
+		"run_error":    salvageErrorText(joinErr),
+		"task_results": persistedTaskResults(salvaged.Snapshot.Tasks),
+		"hint":         joinSalvageHint(joinBudgetExpired),
+	})
+	return string(out)
 }
 
 func (t *cancelRunTool) Capability(args json.RawMessage) tools.Capability {
