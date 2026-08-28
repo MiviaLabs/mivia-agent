@@ -304,6 +304,27 @@ type dispatchTaskParam struct {
 func (t *dispatchTasksTool) buildTasks(namespace string, params []dispatchTaskParam, batchTimeout int) ([]subagents.Task, error) {
 	tasks := make([]subagents.Task, len(params))
 	for i, pt := range params {
+		// id is declared required by taskItemSchema, but decodeStrictTaskJSON
+		// only rejects unknown fields - JSON Schema "required" is advisory to
+		// the model, never enforced on decode. A task the model left
+		// unnamed used to fall through to namespacedTaskID(namespace, "")
+		// (an empty rawID short-circuits to ""), so subagents.Task.ID stayed
+		// "" all the way to coordinator.createTask, which then minted an
+		// unrelated random ID via newTaskID() ("anonymous task... will be
+		// assigned" in coordinator/validation.go - support meant for single-
+		// task spawns, not a batch). The UI's row list, built independently
+		// from the model's own JSON args (events.go's dispatchTaskIDsAndNames),
+		// has no way to learn that random ID and instead guesses a
+		// position-based placeholder ("task-N") that never matches the real
+		// Origin.TaskID on any later progress/heartbeat/done event. That one
+		// row then never advances past Step 0 and eventually reads
+		// "stalled" - not a stall, a permanently unattributed row. Failing
+		// fast here, before any subagent spawns, turns a silently stuck
+		// batch member into an immediate, actionable tool error the model
+		// can retry from.
+		if strings.TrimSpace(pt.ID) == "" {
+			return nil, fmt.Errorf("dispatch_tasks: task %d: id is required (every task needs a unique id so its progress can be tracked)", i+1)
+		}
 		route, err := ResolveTaskRoute(t.agentReg, t.skillReg, pt.Agent, pt.Skill)
 		if err != nil {
 			return nil, fmt.Errorf("dispatch_tasks: %w", err)
