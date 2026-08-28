@@ -59,7 +59,7 @@ func ModelTaskResultsWithRepo(repo ledger.LedgerRepository, tasks []ledger.TaskS
 	msgIndex := TaskMessageIndex(context.Background(), repo, tasks)
 	out := make([]modelTaskResult, len(results))
 	for i, result := range results {
-		out[i] = modelTaskResult{TaskID: result.TaskID, Status: result.Status}
+		out[i] = modelTaskResult{TaskID: taskRawIDByID(tasks, result.TaskID), Status: result.Status}
 		if out[i].Status == "" {
 			out[i].Status = "completed"
 		}
@@ -104,7 +104,7 @@ func persistedTaskResults(tasks []ledger.TaskSnapshot) []modelTaskResult {
 	out := make([]modelTaskResult, len(tasks))
 	for i, task := range tasks {
 		out[i] = modelTaskResult{
-			TaskID: task.TaskID, Status: task.Status,
+			TaskID: modelVisibleTaskID(task), Status: task.Status,
 			OutputRef: task.OutputRef, ErrorRef: task.ErrorRef,
 		}
 	}
@@ -275,7 +275,7 @@ func (t *joinRunTool) Execute(ctx context.Context, args json.RawMessage) (string
 				"run_error":    salvageErrorText(err),
 				"task_results": persistedTaskResults(salvaged.Snapshot.Tasks),
 			})
-			return stripNamespace(commonTaskIDNamespace(salvaged.Snapshot.Tasks), string(out)), nil
+			return string(out), nil
 		}
 		snap := latestSnapshot(record.coord, handle, ctx)
 		status := "unknown"
@@ -313,7 +313,7 @@ func (t *joinRunTool) Execute(ctx context.Context, args json.RawMessage) (string
 		"run_error":    runErr,
 		"task_results": RunTaskResultsWithRepo(t.repo, result, t.cfg.InlineOutputBytes),
 	})
-	return stripNamespace(commonTaskIDNamespace(result.Snapshot.Tasks), string(out)), nil
+	return string(out), nil
 }
 
 // Ensure joinRunTool implements required interfaces at compile time.

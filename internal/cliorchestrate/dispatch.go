@@ -322,7 +322,7 @@ func (t *dispatchTasksTool) buildTasks(namespace string, params []dispatchTaskPa
 			}
 		}
 		tasks[i] = subagents.Task{
-			ID: namespacedTaskID(namespace, pt.ID), InvocationKey: namespace + ":" + pt.ID,
+			ID: namespacedTaskID(namespace, pt.ID), RawID: pt.ID, InvocationKey: namespace + ":" + pt.ID,
 			Name: name, AgentName: agentName, AgentDigest: digest,
 			Skill: route.skill, Owner: DefaultToolOwner,
 			ProviderName: providerName, Model: model,

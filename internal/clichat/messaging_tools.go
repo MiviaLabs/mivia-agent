@@ -343,7 +343,19 @@ func (t *runMessagesTool) Execute(ctx context.Context, args json.RawMessage) (st
 	if c == nil {
 		c = cliorchestrate.InitCoordinator(t.dispatcher, t.cfg, t.repo)
 	}
-	targetID := resolveSendTargetTaskID(ctx, t.repo, in.RunID, in.TaskID)
+	// One GetRun for both the incoming filter (a raw model id -> the real
+	// task the run holds) and each returned message's TaskID (the real,
+	// possibly namespaced id agentmsg stamped -> the model's own raw id) -
+	// cliorchestrate.ResolveTaskID and ModelVisibleTaskID are exact
+	// inverses of each other over the same task list.
+	var tasks []ledger.TaskSnapshot
+	if snap, err := t.repo.GetRun(ctx, in.RunID); err == nil {
+		tasks = snap.Tasks
+	}
+	targetID := in.TaskID
+	if targetID != "" {
+		targetID = cliorchestrate.ResolveTaskID(tasks, targetID)
+	}
 	msgs, err := c.ListRunMessages(ctx, in.RunID, targetID)
 	if err != nil {
 		return "", err
@@ -363,7 +375,7 @@ func (t *runMessagesTool) Execute(ctx context.Context, args json.RawMessage) (st
 			Kind:       string(m.Kind),
 			Synopsis:   m.Synopsis,
 			ContentRef: m.ContentRef,
-			TaskID:     m.TaskID,
+			TaskID:     cliorchestrate.ModelVisibleTaskID(tasks, m.TaskID),
 		}
 		if in.IncludeBody && m.ContentRef != "" {
 			if full, err := c.LoadMessageBody(ctx, m.ContentRef); err == nil {
@@ -373,11 +385,7 @@ func (t *runMessagesTool) Execute(ctx context.Context, args json.RawMessage) (st
 		out = append(out, e)
 	}
 	raw, _ := json.Marshal(map[string]any{"messages": out})
-	result := string(raw)
-	if snap, err := t.repo.GetRun(ctx, in.RunID); err == nil {
-		result = cliorchestrate.StripTaskIDNamespace(snap.Tasks, result)
-	}
-	return result, nil
+	return string(raw), nil
 }
 
 // registerMessagingTools wires post_message (spawned baseline), run_messages

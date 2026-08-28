@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agentmsg"
 	cliorchestrate "github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
@@ -17,13 +16,14 @@ import (
 // task id the run actually holds. dispatch_tasks mints each task's real id
 // as a harness-namespaced form (callID+":"+rawID - see
 // internal/cliorchestrate/dispatch.go's dispatchNamespace) but strips that
-// prefix from every model-visible surface before returning
-// (stripNamespace), so the model only ever learns the raw id and would
-// naturally quote it back here. A raw id that already IS the real id
-// (spawn_agent, delegate, or any future dispatcher that never namespaces)
-// or that names no task in this run at all passes through unchanged, so an
-// unresolvable id still surfaces the SAME not-found/mailbox-miss error
-// SendToTask already gives, rather than a new, different failure shape.
+// prefix from every model-visible surface before returning, so the model
+// only ever learns the raw id and would naturally quote it back here.
+// cliorchestrate.ResolveTaskID matches by the task's stored RawID (or its
+// real id verbatim, for spawn_agent/delegate or any dispatcher that never
+// namespaces); an id that names no task in this run at all passes through
+// unchanged, so an unresolvable id still surfaces the SAME not-found/
+// mailbox-miss error SendToTask already gives, rather than a new, different
+// failure shape.
 func resolveSendTargetTaskID(ctx context.Context, repo ledger.LedgerRepository, runID, rawID string) string {
 	if repo == nil || rawID == "" {
 		return rawID
@@ -32,12 +32,7 @@ func resolveSendTargetTaskID(ctx context.Context, repo ledger.LedgerRepository, 
 	if err != nil {
 		return rawID
 	}
-	for _, task := range snap.Tasks {
-		if task.TaskID == rawID || strings.HasSuffix(task.TaskID, ":"+rawID) {
-			return task.TaskID
-		}
-	}
-	return rawID
+	return cliorchestrate.ResolveTaskID(snap.Tasks, rawID)
 }
 
 // sendToTaskTool is the parent-side tool for steer/answer delivery (plan 53.03).

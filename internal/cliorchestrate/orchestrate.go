@@ -300,11 +300,19 @@ func (t *inspectAgentTool) Execute(ctx context.Context, args json.RawMessage) (s
 	}
 	tasks := make([]taskInfo, len(snap.Tasks))
 	for i, t := range snap.Tasks {
+		// DependsOn entries are themselves real (possibly namespaced)
+		// sibling task ids from this same run - resolve each through the
+		// run's own task list rather than the string-based stripNamespace,
+		// the same way TaskID itself resolves via modelVisibleTaskID.
+		dependsOn := make([]string, len(t.DependsOn))
+		for j, dep := range t.DependsOn {
+			dependsOn[j] = taskRawIDByID(snap.Tasks, dep)
+		}
 		tasks[i] = taskInfo{
-			TaskID:      t.TaskID,
+			TaskID:      modelVisibleTaskID(t),
 			DisplayName: t.DisplayName,
 			Status:      t.Status,
-			DependsOn:   t.DependsOn,
+			DependsOn:   dependsOn,
 			OutputRef:   t.OutputRef,
 			ErrorRef:    t.ErrorRef,
 		}
@@ -324,7 +332,7 @@ func (t *inspectAgentTool) Execute(ctx context.Context, args json.RawMessage) (s
 		"tasks":        tasks,
 		"parks":        parks,
 	})
-	return stripNamespace(commonTaskIDNamespace(snap.Tasks), string(out)), nil
+	return string(out), nil
 }
 
 func taskSummaries(tasks []ledger.TaskSnapshot) []map[string]any {

@@ -73,3 +73,60 @@ func TestJoinRunAndInspectAgentsStripNamespaceFromTaskIDs(t *testing.T) {
 		}
 	}
 }
+
+// TestJoinRunAndInspectAgentsStripNamespaceFromSingleTaskRun is the
+// single-task sibling of TestJoinRunAndInspectAgentsStripNamespaceFromTaskIDs:
+// commonTaskIDNamespace's longest-common-prefix heuristic needs at least 2
+// tasks in a run to disambiguate "namespace:rawid" from a raw id that
+// itself happens to contain a colon, so a dispatch_tasks(wait="none") call
+// with exactly one task - a common, realistic shape - still leaked the
+// internal namespaced id through join_run/inspect_agents even after the
+// multi-task case was fixed. RawID closes this: it needs no comparison
+// across tasks at all.
+func TestJoinRunAndInspectAgentsStripNamespaceFromSingleTaskRun(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	dispatcher := runtime.New(runtime.Policy{})
+	started := make(chan struct{})
+	release := make(chan struct{})
+	if err := dispatcher.Register(runtime.Subagent, "worker", handlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) {
+		close(started)
+		<-release
+		return json.RawMessage(`{"ok":true}`), nil
+	})); err != nil {
+		t.Fatal(err)
+	}
+
+	callerCtx := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "sess-join-inspect-ns-solo"})
+	tool := NewDispatchTasksToolConfigured(dispatcher, config.DefaultSubagentConfig, repo, testAgentRegistry(t, "worker"))
+	out, err := tool.Execute(callerCtx, json.RawMessage(
+		`{"tasks":[{"id":"solo","agent":"worker","prompt":"a"}],"wait":"none"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dispatchResp struct {
+		RunID string `json:"run_id"`
+	}
+	if err := json.Unmarshal([]byte(out), &dispatchResp); err != nil {
+		t.Fatalf("decode dispatch response %q: %v", out, err)
+	}
+	<-started
+
+	inspectOut, err := (&inspectAgentTool{dispatcher: dispatcher, repo: repo}).Execute(callerCtx,
+		json.RawMessage(`{"run_id":"`+dispatchResp.RunID+`"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(inspectOut, `"task_id":"solo"`) {
+		t.Errorf("inspect_agents output must report the model's raw id \"solo\" verbatim on a single-task run, not a namespaced form: %s", inspectOut)
+	}
+
+	close(release)
+	joinOut, err := (&joinRunTool{dispatcher: dispatcher, repo: repo}).Execute(callerCtx,
+		json.RawMessage(`{"run_id":"`+dispatchResp.RunID+`"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(joinOut, `"task_id":"solo"`) {
+		t.Errorf("join_run output must report the model's raw id \"solo\" verbatim on a single-task run, not a namespaced form: %s", joinOut)
+	}
+}

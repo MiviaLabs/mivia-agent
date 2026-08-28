@@ -49,6 +49,10 @@ func TestFingerprintDiffersWithWorkLimits(t *testing.T) {
 var fingerprintExcludedTaskFields = map[string]bool{
 	"Owner": true, "SessionID": true, "TurnID": true, "Role": true,
 	"InvocationKey": true, "Depth": true, "IdempotencyKey": true, "Permission": true,
+	// RawID is a fixed function of ID for one dispatch_tasks call
+	// (namespace+":"+RawID == ID) - including it would be redundant, not
+	// a distinct work-defining fact.
+	"RawID": true,
 }
 
 func TestFingerprintCoversWorkDefiningTaskFields(t *testing.T) {

@@ -115,14 +115,19 @@ type TaskSnapshot struct {
 	RunID        string
 	TaskID       string
 	ParentTaskID string // empty for root tasks
-	DisplayName  string
-	Status       string // queued, running, completed, failed, timed_out, canceled, blocked, cancel_requested
-	Attempts     []AttemptSnapshot
-	DependsOn    []string // TaskIDs this task depends on
-	CreatedAt    time.Time
-	CompletedAt  *time.Time
-	OutputRef    string // bounded redacted reference; empty until completion
-	ErrorRef     string // bounded redacted reference; empty unless failed
+	// RawID is the model-supplied task id verbatim, before dispatch_tasks
+	// namespaces it into TaskID for harness-level uniqueness (see
+	// subagents.Task.RawID). Empty for any task not built through
+	// dispatch_tasks.
+	RawID       string `json:"raw_id,omitempty"`
+	DisplayName string
+	Status      string // queued, running, completed, failed, timed_out, canceled, blocked, cancel_requested
+	Attempts    []AttemptSnapshot
+	DependsOn   []string // TaskIDs this task depends on
+	CreatedAt   time.Time
+	CompletedAt *time.Time
+	OutputRef   string // bounded redacted reference; empty until completion
+	ErrorRef    string // bounded redacted reference; empty unless failed
 	// ToolCallsRef is a bounded, redacted reference to this task's recorded
 	// tool-call step trace (subagent tool name/input/output pairs),
 	// operator-facing only. Empty when the task made no tool calls, or for
@@ -175,6 +180,7 @@ func (s TaskSnapshot) Clone() TaskSnapshot {
 	out := TaskSnapshot{
 		RunID:                 s.RunID,
 		TaskID:                s.TaskID,
+		RawID:                 s.RawID,
 		ParentTaskID:          s.ParentTaskID,
 		DisplayName:           s.DisplayName,
 		Status:                s.Status,

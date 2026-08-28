@@ -62,7 +62,7 @@ func (c *coordinator) taskFromSnapshot(snap ledger.TaskSnapshot) (subagents.Task
 		return subagents.Task{}, fmt.Errorf("resume: task %q has an incomplete provider/model binding", snap.TaskID)
 	}
 	return subagents.Task{
-		ID: snap.TaskID, Name: name, AgentName: snap.AgentName, AgentDigest: snap.AgentDigest,
+		ID: snap.TaskID, RawID: snap.RawID, Name: name, AgentName: snap.AgentName, AgentDigest: snap.AgentDigest,
 		Skill: snap.Skill, ProviderName: snap.ProviderName, Model: snap.Model, Scope: snap.Scope,
 		OutputSchema: snap.OutputSchema, InputSchema: snap.InputSchema, DependsOn: snap.DependsOn,
 		Input: append(json.RawMessage(nil), snap.Input...), Depth: clampInt(snap.Depth, c.pool.MaxDepth()),

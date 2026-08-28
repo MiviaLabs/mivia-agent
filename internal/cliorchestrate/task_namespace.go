@@ -107,64 +107,56 @@ func stripNamespace(namespace, s string) string {
 	return strings.ReplaceAll(s, namespace+":", "")
 }
 
-// commonTaskIDNamespace finds the namespace prefix every task in tasks
-// shares, for tools that report on an already-admitted run - join_run,
-// inspect_agents, run_messages - and never had a namespace value of their
-// own the way dispatch_tasks' own Execute does (they only ever see a
-// run_id, not the dispatch call that originally minted the run's tasks).
-//
-// Every task from ONE dispatch_tasks call shares the SAME namespace
-// (namespacedTaskID: namespace+":"+rawID), so the longest common prefix
-// across every task in the run recovers it - found byte-wise (not by
-// splitting on the first or last colon) specifically so a raw model id
-// that itself contains a colon does not get misread as part of the
-// namespace boundary. Trimmed back to the last colon within that shared
-// prefix, so a namespace ending mid-word from an accidental partial match
-// never strips too much.
-//
-// Returns "" - a no-op for stripNamespace - when there are fewer than two
-// tasks (one task alone cannot distinguish "namespace:id" from a raw id
-// that happens to contain a colon) or when the tasks do not share a
-// prefix at all (a run whose tasks came from more than one dispatch call
-// under different namespaces - rare, and safer to leave unstripped than
-// to guess wrong across mismatched namespaces).
-func commonTaskIDNamespace(tasks []ledger.TaskSnapshot) string {
-	if len(tasks) < 2 {
-		return ""
+// modelVisibleTaskID returns the id the model should see for a task: its
+// raw, model-supplied id (subagents.Task.RawID, carried onto
+// ledger.TaskSnapshot.RawID) when known, or the real - possibly
+// namespaced - id verbatim otherwise. A task built outside dispatch_tasks
+// (spawn_agent, which has no live backend left, or a task resumed from a
+// ledger snapshot recorded before RawID existed) never had a namespace to
+// recover in the first place, so its real id is already what the model
+// gave it.
+func modelVisibleTaskID(snap ledger.TaskSnapshot) string {
+	if snap.RawID != "" {
+		return snap.RawID
 	}
-	prefix := tasks[0].TaskID
-	for _, t := range tasks[1:] {
-		prefix = commonStringPrefix(prefix, t.TaskID)
-		if prefix == "" {
-			return ""
+	return snap.TaskID
+}
+
+// taskRawIDByID finds the task in tasks whose real id (as both
+// subagents.Result.TaskID and ledger.TaskSnapshot.TaskID report it) is
+// taskID, and returns its model-visible id - or taskID itself verbatim
+// when no match exists (an id from outside this run, or a run with no
+// snapshot data at all, must stay visible rather than disappear).
+func taskRawIDByID(tasks []ledger.TaskSnapshot, taskID string) string {
+	for _, t := range tasks {
+		if t.TaskID == taskID {
+			return modelVisibleTaskID(t)
 		}
 	}
-	idx := strings.LastIndex(prefix, ":")
-	if idx < 0 {
-		return ""
-	}
-	return prefix[:idx]
+	return taskID
 }
 
-// StripTaskIDNamespace is the exported form of stripNamespace/
-// commonTaskIDNamespace for callers outside this package that report on an
-// already-admitted run without ever seeing the dispatch call that minted
-// it - internal/clichat's run_messages tool, which only has a run_id and
-// the run's own task list, the same shape join_run/inspect_agents use
-// in-package. See commonTaskIDNamespace's doc comment for exactly which
-// runs this can and cannot recover the namespace for.
-func StripTaskIDNamespace(tasks []ledger.TaskSnapshot, s string) string {
-	return stripNamespace(commonTaskIDNamespace(tasks), s)
+// ModelVisibleTaskID is taskRawIDByID's exported form, for callers outside
+// this package that report on an already-admitted run's tasks -
+// internal/clichat's run_messages tool, which only has a run_id and the
+// run's own task list, the same shape join_run/inspect_agents use
+// in-package.
+func ModelVisibleTaskID(tasks []ledger.TaskSnapshot, taskID string) string {
+	return taskRawIDByID(tasks, taskID)
 }
 
-func commonStringPrefix(a, b string) string {
-	n := len(a)
-	if len(b) < n {
-		n = len(b)
+// ResolveTaskID is ModelVisibleTaskID's inverse: it maps a raw,
+// model-supplied task id back to the task's real (possibly namespaced) id,
+// for callers that need to ACT on a task the model named by its raw id -
+// internal/clichat's send_to_task tool. rawID passes through unchanged
+// when no task in tasks matches it (an unresolvable id still surfaces the
+// same not-found/mailbox-miss error the caller already gives, rather than
+// a new, different failure shape).
+func ResolveTaskID(tasks []ledger.TaskSnapshot, rawID string) string {
+	for _, t := range tasks {
+		if t.RawID == rawID || t.TaskID == rawID {
+			return t.TaskID
+		}
 	}
-	i := 0
-	for i < n && a[i] == b[i] {
-		i++
-	}
-	return a[:i]
+	return rawID
 }
