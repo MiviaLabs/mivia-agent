@@ -211,3 +211,21 @@ func TestRowsBreakBeforeSeparatorPastTheLimit(t *testing.T) {
 		t.Errorf("got %d rows, want exactly the viewport height 1: %q", len(rows), rows)
 	}
 }
+
+// TestRowsSeparatorBreaksBeforeProsePastTheLimit covers the separator guard:
+// a prose block after activity carries sepBefore, and when the walk already
+// passed the viewport limit the loop must break before emitting that blank.
+func TestRowsSeparatorBreaksBeforeProsePastTheLimit(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(40, 1)
+	evs := []uievent.Event{
+		noticeEvent("n0|"),
+		{Kind: uievent.KindTextEnd, Body: uievent.TextEndBody{Text: "answer body"}},
+		{Kind: uievent.KindNotice, Body: uievent.NoticeBody{Text: "after|"}},
+	}
+	m = drain(t, m, evs).ScrollToTop()
+	rows := m.Rows()
+	if len(rows) != 1 {
+		t.Errorf("got %d rows, want exactly the viewport height 1: %q", len(rows), rows)
+	}
+}

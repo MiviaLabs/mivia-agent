@@ -57,9 +57,8 @@ func panelWindowGroups(groups [][]string, selGroup, maxRows int, filterActive bo
 	for endGroup > 0 && offsets[endGroup-1] >= end {
 		endGroup--
 	}
-	if startGroup > endGroup {
-		endGroup = startGroup
-	}
+	// offsets are monotone and start < end, so startGroup <= endGroup always
+	// holds here; no clamp between the two walks is needed.
 	return groups[startGroup:endGroup]
 }
 
