@@ -35,7 +35,23 @@ func EffectiveOutputTokens(profile ModelSpec, requested *int) *int {
 		return clampReserveToWindow(profile, limit)
 	}
 	if ceiling <= 0 {
-		return nil
+		// An undeclared ceiling does not mean the wire request will ask for
+		// nothing: the wire layer (effectiveMaxTokens/anthropicMaxTokens)
+		// applies reasoning.OutputReserveFloor unconditionally whenever
+		// MaxTokens is unset, with NO dependency on profile.MaxOutputTokens -
+		// it reads only the request's resolved reasoning level. A model
+		// entry with an active reasoning level but no max_output_tokens
+		// (shipped examples: deepseek-v4-pro, gpt-oss:20b, tencent/hy3-preview
+		// in .mivia/mivia.toml) would otherwise reserve 0 prompt-budget room
+		// while the wire layer still asks for up to
+		// reasoning.OutputReserveFloor(profile.Reasoning) tokens. A profile
+		// with no reasoning configured at all keeps the prior nil ("no
+		// ceiling applies") behavior unchanged - this only closes the gap
+		// for the case that is actually reachable and actually mismatched.
+		if !profile.Reasoning.Active() {
+			return nil
+		}
+		return clampReserveToWindow(profile, reasoning.OutputReserveFloor(profile.Reasoning))
 	}
 	limit := DefaultOutputReserveTokens
 	if floor := reasoning.OutputReserveFloor(profile.Reasoning); floor > limit {

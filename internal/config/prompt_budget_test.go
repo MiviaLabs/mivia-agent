@@ -86,6 +86,42 @@ func TestEffectiveOutputTokensCapsUnrequestedReserveAtDefault(t *testing.T) {
 	}
 }
 
+// TestEffectiveOutputTokensReservesFloorWithNoDeclaredCeiling pins a second
+// review-round finding: an undeclared max_output_tokens (ceiling<=0, a valid
+// config shape - deepseek-v4-pro, gpt-oss:20b, and tencent/hy3-preview all
+// ship with reasoning set and no max_output_tokens in .mivia/mivia.toml)
+// used to return nil regardless of reasoning level, meaning
+// EffectivePromptTokens reserved NOTHING for the completion. But the wire
+// layer (effectiveMaxTokens/anthropicMaxTokens) does not consult
+// profile.MaxOutputTokens at all - it applies reasoning.OutputReserveFloor
+// unconditionally whenever MaxTokens is unset, purely from the resolved
+// reasoning level. So an active reasoning level with no declared ceiling
+// must still reserve reasoning.OutputReserveFloor(level), not nil.
+func TestEffectiveOutputTokensReservesFloorWithNoDeclaredCeiling(t *testing.T) {
+	profile := ModelSpec{ContextWindowTokens: 1100000, MaxOutputTokens: 0, Reasoning: reasoning.High}
+	got := EffectiveOutputTokens(profile, nil)
+	if got == nil {
+		t.Fatal("EffectiveOutputTokens() = nil, want reasoning.OutputReserveFloor(High) even with no declared ceiling")
+	}
+	want := reasoning.OutputReserveFloor(reasoning.High)
+	if *got != want {
+		t.Fatalf("EffectiveOutputTokens() = %d, want %d", *got, want)
+	}
+}
+
+// TestEffectiveOutputTokensNoDeclaredCeilingNoReasoningStaysNil guards the
+// no-regression direction: a profile with no declared ceiling AND no
+// configured reasoning level must keep returning nil exactly as before -
+// this fix is scoped to the reasoning-active gap, not a blanket change to
+// the undeclared-ceiling contract other callers may rely on (nil meaning
+// "no ceiling applies").
+func TestEffectiveOutputTokensNoDeclaredCeilingNoReasoningStaysNil(t *testing.T) {
+	profile := ModelSpec{ContextWindowTokens: 32768, MaxOutputTokens: 0}
+	if got := EffectiveOutputTokens(profile, nil); got != nil {
+		t.Fatalf("EffectiveOutputTokens() = %d, want nil", *got)
+	}
+}
+
 // TestEffectiveOutputTokensRaisesUnrequestedReserveForHighReasoningEffort
 // pins the real fix for the planner/wire mismatch: internal/provider's wire
 // layer (effectiveMaxTokens in openai_compat_request.go) sends up to
@@ -188,6 +224,21 @@ func TestEffectivePromptTokensGlmMaxEffortShapedProfile(t *testing.T) {
 	}
 }
 
+// TestEffectivePromptTokensNoDeclaredCeilingShapedProfile is the end-to-end
+// regression pin for the shipped deepseek-v4-pro entry
+// (.mivia/mivia.toml: context_window_tokens=1100000, reasoning='high', no
+// max_output_tokens): the prompt budget must still exclude
+// reasoning.OutputReserveFloor(High)=32768 even with no declared ceiling,
+// since the wire layer sends that same max_tokens regardless.
+func TestEffectivePromptTokensNoDeclaredCeilingShapedProfile(t *testing.T) {
+	profile := ModelSpec{ContextWindowTokens: 1100000, Reasoning: reasoning.High}
+	got := EffectivePromptTokens(profile, nil, 0, 0)
+	want := 1100000 - reasoning.OutputReserveFloor(reasoning.High)
+	if got != want {
+		t.Fatalf("EffectivePromptTokens() = %d, want %d", got, want)
+	}
+}
+
 // TestEffectivePromptTokensReserveNeverExceedsWindow guards the provider-side
 // invariant the cap must not break: Anthropic (and others) validate
 // input_tokens + max_tokens <= context_window and reject outright, so the
@@ -202,6 +253,7 @@ func TestEffectivePromptTokensReserveNeverExceedsWindow(t *testing.T) {
 		{ContextWindowTokens: 32768},                                                      // no declared ceiling
 		{ContextWindowTokens: 5, MaxOutputTokens: 10},                                     // degenerate
 		{ContextWindowTokens: 1048576, MaxOutputTokens: 131072, Reasoning: reasoning.Max}, // glm-5.3-flash, max effort
+		{ContextWindowTokens: 1100000, Reasoning: reasoning.High},                         // deepseek-v4-pro, no declared ceiling
 	}
 	for _, profile := range profiles {
 		budget := EffectivePromptTokens(profile, nil, 0, 0)
