@@ -252,9 +252,9 @@ func (t *inspectAgentTool) Privileged()  {}
 
 func (t *inspectAgentTool) Description() string {
 	return "Inspect a previously dispatched orchestration run. " +
-		"Returns the current run snapshot including status, task states, " +
-		"timestamps, and any output/error references. " +
-		"Use after dispatch_tasks (with wait=\"none\" or wait=\"task\") to check progress or after join_run to see final state."
+		"Returns the current run snapshot: status, per-task states, and any output/error references. " +
+		"Mid-run it shows status only - no progress counters or timestamps. " +
+		"Use after dispatch_tasks (with wait=\"none\" or wait=\"task\") to check state or after join_run to see final state."
 }
 
 func (t *inspectAgentTool) Parameters() map[string]any {
