@@ -239,12 +239,12 @@ func (c *deadlineE2ECompleter) ChatTurn(ctx context.Context, req provider.Reques
 // TestDeadlineNoticeReachesTheNestedModel is the wiring half: the notice
 // must ride the real multi_step path (timeoutContext -> applyDeadlineNotice
 // -> the loop's BeforeStep drain), not only the synthetic hook chain the
-// other tests drive. A 1.6s first tool call inside a 2s total budget puts
+// other tests drive. A 3.8s first tool call inside a 5s total budget puts
 // the second step boundary inside the quarter threshold, so the nested model
 // must have seen exactly one DEADLINE notice - and the run must still finish
 // inside the budget, because the notice is advisory and adds no steps.
 func TestDeadlineNoticeReachesTheNestedModel(t *testing.T) {
-	tool := &slowTool{sleep: 1600 * time.Millisecond}
+	tool := &slowTool{sleep: 3800 * time.Millisecond}
 	reg := tools.NewRegistry()
 	reg.Register(tool)
 	parent, err := runtime.NewToolDispatcher(reg, runtime.Policy{})
@@ -261,7 +261,7 @@ func TestDeadlineNoticeReachesTheNestedModel(t *testing.T) {
 		SystemPrompt: "Test sub-agent.",
 		MaxSteps:     3,
 		MaxTokens:    1024,
-		TotalTimeout: 2 * time.Second,
+		TotalTimeout: 5 * time.Second,
 	}
 	if _, err := h.Invoke(context.Background(), runtime.Request{Name: "multi_step", Input: json.RawMessage(`"slow task"`)}); err != nil {
 		t.Fatalf("multi_step: %v", err)
