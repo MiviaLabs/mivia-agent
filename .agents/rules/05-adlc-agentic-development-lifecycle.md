@@ -310,9 +310,13 @@ All artifacts are ephemeral - held in the orchestrator's context or passed as su
    in mivia.toml (default: 0, meaning unlimited). If the same bug keeps
    reappearing after 3 fix attempts, escalate to Step 0 (plan rejected).
 
-4. While auditors run, periodically call inspect_agents to check progress.
-   If any audit agent is stuck >2 minutes, cancel_run it and dispatch a
-   replacement. Never let stuck agents delay the loop.
+4. While auditors run, do not poll `inspect_agents` as a feedback loop -
+   block on the dispatch (or `join_run`) and read the returned results;
+   running checks alone prove nothing. Use `inspect_agents` only when a
+   task outlives its expected duration: a running task whose progress
+   block shows no recent tool activity is the wedge signal. Cancel it
+   with `cancel_run` and dispatch a replacement. Never let stuck agents
+   delay the loop.
 
 **Gate**: All auditors report zero bugs. `go test -race ./...` passes on ALL packages.
 
