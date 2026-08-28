@@ -488,6 +488,8 @@ Read the keymap package for the current bindings, never this table.
 | 4 | Usage printed as a header block | One dim prose footer line per turn | History stays in the record; live totals stay chrome (transcript-polish.md R6) |
 | 2/4 | `│` body rail on every expanded block | Rail on the focused and the failed body only; plain 4-column indent at rest | Restores section 2's resting state (transcript-polish.md R4) |
 | 4 | Unknown tool repeats its first output line in the header | Header keeps the tool name; the body carries each line once | One fact, one place (transcript-polish.md R7) |
+| 4 | One blank row after every block | Blank rows separate turn sections: prose and activity groups. Activity runs are dense | Spacing follows turns, not events (transcript-polish.md R1, amended 2026-08-28) |
+| 4 | Every tool call draws its own header row | Two or more consecutive collapsed read-only lookups coalesce into one leader row; opening it restores the headers | Magnitude first, detail on demand; display-only - copy, pager and dump keep per-block identity (transcript-polish.md R2) |
 
 `research-panes.md` stays as the record of the colour and contrast work. Its
 sections 7.1 and 7.2, on markdown and diagram rendering, are unverified against

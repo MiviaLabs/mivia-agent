@@ -88,26 +88,31 @@ func (b Block) isEmpty() bool {
 // Height and Render both derive their rows from bodyRows, so they cannot
 // disagree.
 //
-// The trailing +1 is the blank separator row after the block
-// (docs/design/wireframes.md variant A, mivia-ui-mock.html): every
-// top-level block in the transcript is followed by one blank row, or
-// adjacent blocks read as one dense, cramped run of text instead of
-// distinct entries. It applies uniformly, collapsed or not, so spacing
-// never depends on collapse state.
+// The blank rows BETWEEN blocks are not part of Height: the viewport
+// layout owns separators, because their placement depends on the
+// neighbours (one per turn section, none inside an activity run -
+// transcript-polish.md R1), not on the block alone.
 func (b Block) Height(width int) int {
 	if b.Kind == uievent.KindTurnStart && b.Input != "" {
 		wrapped := render.Wrap(b.Input, render.ProseMeasure(width)-2)
-		return len(wrapped) + 1
+		return len(wrapped)
 	}
 	if b.Prose {
-		return len(b.bodyRows(width)) + 1
+		return len(b.bodyRows(width))
 	}
 	if b.Collapsed {
-		return 1 + 1
+		return 1
 	}
 	// render.Header guarantees exactly one row at a known width.
-	return 1 + len(b.bodyRows(width)) + 1
+	return 1 + len(b.bodyRows(width))
 }
+
+// Activity reports whether the block is tool activity rather than
+// conversation: header-carrying blocks whose bodies hang under an
+// activity group at a 2-column indent, with no blank row between
+// consecutive group members (transcript-polish.md R1). Prose - the user
+// turn, assistant text, the usage footer - is the conversation voice.
+func (b Block) Activity() bool { return !b.Prose }
 
 // bodyRows is the body as terminal rows at width, already wrapped.
 //
@@ -150,26 +155,25 @@ func defaultCollapsed(body []string) bool {
 	return len(body) >= uikitconfig.CollapseThresholdLines
 }
 
-// Render draws the block. Toggling collapse never moves any body row:
+// Render draws the block's own rows, WITHOUT any trailing blank
+// separator (the viewport layout inserts those between blocks - see
+// Height) and WITHOUT the group indent (the layout prefixes activity
+// blocks with two spaces). Toggling collapse never moves any body row:
 // the header changes only in its first cell (the marker) and in the
 // magnitude hint the collapsed state appends to the meta column
 // ("… +N lines", transcript-polish.md R3; wireframes-panes.md section 5
 // as amended).
-//
-// The last row is always the blank separator Height accounts for; see
-// its doc comment.
 func (b Block) Render(t theme.Theme, tier theme.Tier, width int) string {
 	if b.Kind == uievent.KindTurnStart && b.Input != "" {
-		return strings.Join(userLines(t, tier, width, b.Input), "\n") + "\n"
+		return strings.Join(userLines(t, tier, width, b.Input), "\n")
 	}
 	if b.Prose {
-		return strings.Join(b.bodyRows(width), "\n") + "\n"
+		return strings.Join(b.bodyRows(width), "\n")
 	}
 
 	var sb strings.Builder
 	sb.WriteString(b.renderHeader(t, tier, width))
 	if b.Collapsed {
-		sb.WriteByte('\n')
 		return sb.String()
 	}
 	// The resting body indents with plain spaces: wireframes-panes.md
@@ -191,7 +195,6 @@ func (b Block) Render(t theme.Theme, tier theme.Tier, width int) string {
 		sb.WriteString(indent)
 		sb.WriteString(line)
 	}
-	sb.WriteByte('\n')
 	return sb.String()
 }
 

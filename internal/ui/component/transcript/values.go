@@ -177,6 +177,12 @@ func toolEndBlockValue(t theme.Theme, tier theme.Tier, w int, b uievent.ToolEndB
 	// FormatElapsed a later status-line call uses, so "4.1s" never
 	// appears beside "4100ms" on one screen.
 	duration := render.FormatElapsed(int(b.DurationMS))
+	// R2: a finished read-only lookup collapses by default whatever its
+	// body size, so consecutive lookups coalesce into one leader row.
+	// Failed calls keep the failure visible.
+	if !coll && len(body) > 0 && role != theme.RoleDanger && render.ReadOnlyToolClass(b.Name) != "" {
+		coll = true
+	}
 	blk := Block{
 		Kind:   uievent.KindToolEnd,
 		Args:   args,

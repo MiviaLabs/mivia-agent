@@ -25,24 +25,47 @@ func TestViewIsAlwaysExactlyTheViewportHeight(t *testing.T) {
 	}
 }
 
-// TestOneBlankRowSeparatesAdjacentBlocks pins docs/design/wireframes.md
-// variant A (and mivia-ui-mock.html): every top-level block is followed
-// by one blank row before the next one starts, so the transcript reads
-// as distinct entries instead of one dense, cramped run of text.
-func TestOneBlankRowSeparatesAdjacentBlocks(t *testing.T) {
-	m := sizedModel(t, 80, 10, 2)
-	rows := m.Rows()
-	// sizedModel's blocks are one row each (header only): row 0 is the
-	// first block's header, row 1 must be the blank separator, row 2 the
-	// second block's header.
-	if len(rows) < 3 {
-		t.Fatalf("got %d rows, want at least 3 to hold two blocks and their separator", len(rows))
+// TestSeparatorsFollowSections pins transcript-polish.md R1: blank rows
+// separate SECTIONS of the transcript - between prose and the activity
+// group that follows it - while consecutive activity blocks inside one
+// group read as one dense run with no blank rows between them. Spacing
+// follows turns, not events.
+func TestSeparatorsFollowSections(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 30)
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindTurnStart, Body: uievent.TurnStartBody{Input: "fix the bug"}})
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindTextEnd, Body: uievent.TextEndBody{Text: "On it."}})
+	m, _ = m.HandleEvent(noticeEvent(blockName(0)))
+	m, _ = m.HandleEvent(noticeEvent(blockName(1)))
+	rows := strings.Split(ansi.Strip(m.View()), "\n")
+	rowOf := func(needle string) (int, bool) {
+		for i, r := range rows {
+			if strings.Contains(r, needle) {
+				return i, true
+			}
+		}
+		return 0, false
 	}
-	if rows[1] != "" {
-		t.Errorf("got row 1 = %q, want a blank separator row between the two blocks", rows[1])
+	prose, ok := rowOf("On it.")
+	if !ok {
+		t.Fatalf("assistant prose is missing from the view:\n%s", strings.Join(rows, "\n"))
 	}
-	if rows[0] == "" || rows[2] == "" {
-		t.Errorf("got blank block rows, want content: row0=%q row2=%q", rows[0], rows[2])
+	if rows[prose-1] != "" {
+		t.Errorf("got %q above the prose, want a blank section separator", rows[prose-1])
+	}
+	first, ok := rowOf(strings.TrimSpace(blockName(0)))
+	if !ok || !strings.Contains(rows[first], blockName(0)) {
+		t.Fatalf("first notice is missing from the view:\n%s", strings.Join(rows, "\n"))
+	}
+	if rows[first-1] != "" {
+		t.Errorf("got %q above the activity group, want a blank section separator", rows[first-1])
+	}
+	second, ok := rowOf(strings.TrimSpace(blockName(1)))
+	if !ok {
+		t.Fatalf("second notice is missing from the view:\n%s", strings.Join(rows, "\n"))
+	}
+	if second != first+1 {
+		t.Errorf("second notice at row %d, first at %d: activity rows must be adjacent inside a group", second, first)
 	}
 }
 
@@ -610,9 +633,10 @@ func TestTallFocusedBlockShowsItsHeadNotItsTail(t *testing.T) {
 	if !strings.Contains(view, "tall_call") {
 		t.Errorf("the tall block's header is off screen:\n%s", view)
 	}
-	// Block 0 ("above") is a 1-row notice plus its trailing blank
-	// separator, so block 1's own top row starts at offset 2.
-	if got, want := m.Offset(), 2; got != want {
+	// Block 0 ("above") is a 1-row notice and block 1 is also activity,
+	// so the group rule (R1) puts no blank row between them: block 1's
+	// own top row starts at offset 1.
+	if got, want := m.Offset(), 1; got != want {
 		t.Errorf("got offset %d, want %d: the block's own top row", got, want)
 	}
 }

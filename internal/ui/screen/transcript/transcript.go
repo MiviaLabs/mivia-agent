@@ -102,25 +102,26 @@ func contentWidth(width int) int {
 
 // rebuild derives the pager's plain-text rows from the snapshot at the
 // current width. Every block is expanded: a collapse is a cockpit view
-// state, and search must reach text a collapse hides.
+// state, and search must reach text a collapse hides. ExpandedRows
+// applies the same section separators and group indents the live
+// transcript draws, so the pager reads exactly like the cockpit.
 func (s *Screen) rebuild() {
-	parts := make([]string, 0, len(s.rows))
-	prompts := make([]int, 0, len(s.promptRows))
-	row := 0
+	head := 0
 	if n := s.conv.Dropped(); n > 0 {
-		parts = append(parts, droppedLine(n))
-		row = 1
+		head = 1
 	}
-	for _, b := range s.conv.Blocks() {
+	blockRows, tops := s.conv.ExpandedRows(contentWidth(s.width))
+	prompts := make([]int, 0, len(s.promptRows))
+	for i, b := range s.conv.Blocks() {
 		if b.Kind == uievent.KindTurnStart {
-			prompts = append(prompts, row)
+			prompts = append(prompts, head+tops[i])
 		}
-		b.Collapsed = false
-		b.Focused = false
-		part := ansi.Strip(b.Render(s.Theme, s.Tier, contentWidth(s.width)))
-		row += strings.Count(part, "\n") + 1
-		parts = append(parts, part)
 	}
+	parts := make([]string, 0, len(blockRows)+1)
+	if head == 1 {
+		parts = append(parts, droppedLine(s.conv.Dropped()))
+	}
+	parts = append(parts, blockRows...)
 	s.rows = strings.Split(strings.Join(parts, "\n"), "\n")
 	s.promptRows = prompts
 	s.dropped = s.conv.Dropped()

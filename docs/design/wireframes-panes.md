@@ -154,6 +154,16 @@ the meta grammar above. Durations follow one ladder at every surface
 (`render.FormatElapsed`): under 1s prints `250ms`, under 60s prints `4.1s`, 60s and up
 print `1m 05s`.
 
+The transcript groups by turn (transcript-polish.md R1): the user line and the
+assistant prose sit at column 1, and the turn's tool activity hangs under them as one
+group at a 2-column indent. A blank row separates sections - before prose, before a
+group, before the usage footer - and never falls inside a group, so a burst of tool
+calls reads as one dense run. Two or more consecutive collapsed read-only lookups
+(reads, searches) coalesce into one leader row, `> Read 2 files: a.go, b.go  2 files`;
+a click on the row, or `Space` with the focus inside the run, dissolves it back into
+the per-block headers. Coalescing is display-only: the pager, the `y` copy, and the
+scrollback dump keep every per-block header and body.
+
 Keys: `Tab` / `Shift-Tab` focus the next or previous block. `Space` or `Enter` toggles
 the focused block. `Ctrl-E` expands all, `Ctrl-W` collapses all. `y` copies the focused
 block. `Ctrl-O` opens the focused block in the pager. `Ctrl-C` cancels the turn, twice

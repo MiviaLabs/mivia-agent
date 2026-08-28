@@ -17,13 +17,13 @@ func TestBlockHeightCountsHeaderAndBody(t *testing.T) {
 		b    Block
 		want int
 	}{
-		// +1 on every case is the trailing blank separator row every
-		// block gets (docs/design/wireframes.md variant A): the count
-		// this test pins is header/body rows PLUS that separator.
-		{"header only", Block{Header: Header{Label: "x"}}, 2},
-		{"header plus body", Block{Header: Header{Label: "x"}, Body: []string{"a", "b"}}, 4},
-		{"collapsed hides the body", Block{Header: Header{Label: "x"}, Body: []string{"a", "b"}, Collapsible: true, Collapsed: true}, 2},
-		{"prose has no header row", Block{Prose: true, Body: []string{"a", "b"}}, 3},
+		// Height counts the block's OWN rows only: the blank separator
+		// rows live in the viewport layout, whose placement depends on
+		// the block's neighbours, not on the block alone (R1).
+		{"header only", Block{Header: Header{Label: "x"}}, 1},
+		{"header plus body", Block{Header: Header{Label: "x"}, Body: []string{"a", "b"}}, 3},
+		{"collapsed hides the body", Block{Header: Header{Label: "x"}, Body: []string{"a", "b"}, Collapsible: true, Collapsed: true}, 1},
+		{"prose has no header row", Block{Prose: true, Body: []string{"a", "b"}}, 2},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -115,9 +115,10 @@ func TestCollapsedHeaderStaysOneRowAtNarrowWidth(t *testing.T) {
 		Collapsed:   true,
 	}
 	rows := strings.Split(b.Render(th, theme.TierASCII, 40), "\n")
-	// Collapsed: the header row plus the blank separator Height promises.
-	if len(rows) != 2 {
-		t.Fatalf("got %d rows, want exactly the header plus the separator: %q", len(rows), rows)
+	// Collapsed: the header row is the whole block; separators belong
+	// to the viewport layout (R1).
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want exactly the header row: %q", len(rows), rows)
 	}
 	if w := ansi.StringWidth(rows[0]); w > 40 {
 		t.Errorf("collapsed header is %d columns at width 40: %q", w, rows[0])
@@ -135,9 +136,9 @@ func TestRenderIndentsBodyByBodyIndent(t *testing.T) {
 	th := loadTheme(t)
 	b := Block{Header: Header{Label: "x"}, Body: []string{"line"}}
 	rows := strings.Split(b.Render(th, theme.TierASCII, 80), "\n")
-	// header, body line, trailing blank separator.
-	if len(rows) != 3 {
-		t.Fatalf("got %d rows, want 3", len(rows))
+	// header and body line; the blank separator is layout's (R1).
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want 2", len(rows))
 	}
 	// Hardcoded, not built from the constant: a test that echoes the
 	// value the code reads cannot fail when that value changes. The
@@ -196,9 +197,8 @@ func TestRailMarksOnlyFocusOrFailure(t *testing.T) {
 func TestRenderProseHasNoHeaderAndNoIndent(t *testing.T) {
 	th := loadTheme(t)
 	b := Block{Prose: true, Body: []string{"one", "two"}}
-	// Verbatim at column 1, plus the trailing blank separator row every
-	// block carries.
-	if got := b.Render(th, theme.TierASCII, 80); got != "one\ntwo\n" {
+	// Verbatim at column 1; the blank separator is layout's (R1).
+	if got := b.Render(th, theme.TierASCII, 80); got != "one\ntwo" {
 		t.Errorf("got %q, want the prose verbatim at column 1", got)
 	}
 }

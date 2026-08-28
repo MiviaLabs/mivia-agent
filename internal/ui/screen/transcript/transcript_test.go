@@ -760,13 +760,13 @@ func TestPagerLiveEventTrimWithExistingDroppedAndSearchActive(t *testing.T) {
 	next, _ := s.Update(uievent.EventMsg{Event: ev})
 	s = next.(Screen)
 
-	// Cancel search with Esc - should restore the shifted offset. Each
-	// notice block is 2 rows now (its header plus the trailing blank
-	// separator every block carries), so trimming 1 block shifts by 2:
-	// 50 - 2 = 48.
+	// Cancel search with Esc - should restore the shifted offset.
+	// Consecutive notices are one activity run under R1: no blank row
+	// between them, so each block is 1 row and trimming 1 block shifts
+	// by 1: 50 - 1 = 49.
 	s = drive(s, tea.KeyPressMsg{Code: tea.KeyEscape})
-	if s.offset != 48 {
-		t.Errorf("offset after cancel = %d, want 48", s.offset)
+	if s.offset != 49 {
+		t.Errorf("offset after cancel = %d, want 49", s.offset)
 	}
 }
 

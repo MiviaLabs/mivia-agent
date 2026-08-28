@@ -174,9 +174,9 @@ func TestTallBlockCollapsesByDefault(t *testing.T) {
 	if !m.Blocks()[0].Collapsed {
 		t.Error("a block at or above the collapse threshold must start collapsed")
 	}
-	// 1 header row, plus the trailing blank separator every block gets.
-	if got := m.Blocks()[0].Height(80); got != 2 {
-		t.Errorf("got height %d, want 2 for a collapsed block", got)
+	// 1 header row; the blank separator lives in the viewport layout (R1).
+	if got := m.Blocks()[0].Height(80); got != 1 {
+		t.Errorf("got height %d, want 1 for a collapsed block", got)
 	}
 }
 

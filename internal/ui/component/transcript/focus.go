@@ -6,12 +6,12 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
 
-// Focus movement and collapse control over the LIVE WINDOW only.
+// Focus movement and collapse control over the transcript model.
 //
-// Scope is the whole design of this file. An evicted block belongs to
-// terminal scrollback: it is frozen text the terminal owns, and no key
-// here can reach it. wireframes-panes.md section 15 is written against
-// the live window for that reason.
+// Scope is the whole design of this file. The cockpit owns the whole
+// drawing surface (viewport.go), so every block that survives the
+// MaxTranscriptLines bound stays reachable here; only blocks the bound
+// evicted are gone, and their count is stated in the view.
 //
 // focus is -1 when the composer holds it. That is the resting state: a
 // user who never presses Tab types, and every key goes to the composer.
@@ -95,6 +95,11 @@ func (m Model) syncFocus() Model {
 // false when nothing is focused, or when the focused block cannot
 // collapse, so the caller can pass the key on instead of swallowing it.
 //
+// A focused block that is collapsed inside a coalesced leader run (R2)
+// has no visible row of its own - the row on screen is the run's
+// leader - so the toggle opens the whole run. Expanded members toggle
+// individually, as before.
+//
 // A toggle changes the block's height, so the viewport is re-anchored on
 // the focused block rather than on a row number. Without that, expanding
 // a block scrolls the thing the user just acted on off the screen.
@@ -104,6 +109,13 @@ func (m Model) ToggleFocused() (Model, bool) {
 	}
 	if !m.blocks[m.focus].Collapsible {
 		return m, false
+	}
+	if m.blocks[m.focus].Collapsed {
+		if head, ok := m.leaderHeadOf(m.focus); ok {
+			next := m
+			next.expandRun(head)
+			return next.ScrollToFocus(), true
+		}
 	}
 	blocks := make([]Block, len(m.blocks))
 	copy(blocks, m.blocks)
@@ -136,17 +148,20 @@ func (m Model) SetAllCollapsed(collapsed bool) Model {
 
 // ScrollToFocus brings the focused block fully into view, scrolling as
 // little as possible. A block taller than the viewport is aligned to its
-// top, because its header carries the identity.
+// top, because its header carries the identity. Geometry comes from the
+// layout, so separators and group indents are part of the anchor, and a
+// block hidden inside a coalesced run anchors on the run's leader row.
 func (m Model) ScrollToFocus() Model {
 	if !m.Focused() || m.height <= 0 {
 		m.clampOffset()
 		return m
 	}
-	top := 0
-	for i := 0; i < m.focus; i++ {
-		top += m.blocks[i].Height(m.width)
+	s := m.layout()[m.focus]
+	top := s.top
+	bottom := top + s.height
+	if bottom == top {
+		bottom = top + 1 // hidden run member: the leader row is its anchor
 	}
-	bottom := top + m.blocks[m.focus].Height(m.width)
 
 	switch {
 	case top < m.offset:

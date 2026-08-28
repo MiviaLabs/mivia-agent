@@ -90,8 +90,8 @@ func TestHookBlockValueSplitsMultiLineOutput(t *testing.T) {
 	// A denied run stays uncollapsed, so Height must count every body line
 	// it actually renders: header + 3 body rows + the trailing blank
 	// separator every block gets.
-	if got, want := blk.Height(80), 5; got != want {
-		t.Fatalf("Height(80) = %d, want %d (header + 3 body rows + separator)", got, want)
+	if got, want := blk.Height(80), 4; got != want {
+		t.Fatalf("Height(80) = %d, want %d (header + 3 body rows; the separator is layout's, R1)", got, want)
 	}
 }
 

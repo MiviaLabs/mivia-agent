@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
@@ -50,22 +52,12 @@ func (m *Model) SetSize(width, height int) {
 func (m Model) Width() int  { return m.width }
 func (m Model) Height() int { return m.height }
 
-// heights is the rendered row count of every block, in order.
-func (m Model) heights() []int {
-	out := make([]int, len(m.blocks))
-	for i := range m.blocks {
-		out[i] = m.blocks[i].Height(m.width)
-	}
-	return out
-}
-
-// TotalRows is the height of the whole conversation at the current width.
+// TotalRows is the height of the whole conversation at the current
+// width: every block span plus the separators the layout places between
+// sections (transcript-polish.md R1 - spacing follows turns, and the
+// blank rows belong to the sequence, not to any block).
 func (m Model) TotalRows() int {
-	total := 0
-	for _, h := range m.heights() {
-		total += h
-	}
-	return total
+	return m.totalLayoutRows(m.layout())
 }
 
 // maxOffset is the largest first-visible row that still fills the screen.
@@ -137,11 +129,9 @@ func (m *Model) trim() {
 	if over <= 0 {
 		return
 	}
-	dropped := m.blocks[:over]
-	rows := 0
-	for _, b := range dropped {
-		rows += b.Height(m.width)
-	}
+	// The rows that leave are exactly the survivor's new top: every row
+	// above it, separators included.
+	rows := m.layout()[over].top
 	m.dropped += over
 	m.blocks = append([]Block(nil), m.blocks[over:]...)
 	if !m.follow {
@@ -159,38 +149,57 @@ func (m Model) Dropped() int { return m.dropped }
 
 // Rows renders exactly the visible rows, padded to the viewport height.
 //
-// Only the blocks that intersect the viewport are styled. A block above
-// or below it costs one Height call and nothing else.
+// Geometry comes from layout(): separators between sections, the
+// 2-column group indent on activity blocks, and coalesced leader rows
+// for collapsed read-only runs (R1, R2). Only the blocks that intersect
+// the viewport are styled; a block above or below it costs one Height
+// call and nothing else.
 func (m Model) Rows() []string {
 	if m.height <= 0 {
 		return nil
 	}
+	spans := m.layout()
+	limit := m.offset + m.height
 	out := make([]string, 0, m.height)
+	emit := func(row int, line string) {
+		if row >= m.offset && row < limit {
+			out = append(out, line)
+		}
+	}
 	row := 0
 	for i := range m.blocks {
-		h := m.blocks[i].Height(m.width)
-		if row+h <= m.offset {
-			row += h // entirely above the viewport
+		s := spans[i]
+		if s.height == 0 {
+			continue // hidden inside a leader run; the head drew its row
+		}
+		if s.sepBefore {
+			if row >= limit {
+				break
+			}
+			emit(row, "")
+			row++
+		}
+		if row >= limit {
+			break
+		}
+		if s.runSize > 0 {
+			emit(row, m.leaderRow(s, i))
+			row++
 			continue
 		}
-		if row >= m.offset+m.height {
-			break // entirely below it
+		for j, line := range m.renderSpanRows(m.blocks[i], s) {
+			emit(row+j, line)
 		}
-		lines := strings.Split(m.blocks[i].Render(m.Theme, m.Tier, m.width), "\n")
-		for j, line := range lines {
-			at := row + j
-			if at < m.offset || at >= m.offset+m.height {
-				continue
-			}
-			out = append(out, line)
-		}
-		row += h
+		row += s.height
 	}
-	// The streaming tail sits below the last finished block.
+	// The streaming tail is prose voice, so an activity block above it
+	// gets the separating blank row (R1).
+	if len(m.blocks) > 0 && m.blocks[len(m.blocks)-1].Activity() {
+		emit(row, "")
+		row++
+	}
 	for _, line := range m.tailRows() {
-		if row >= m.offset && row < m.offset+m.height {
-			out = append(out, line)
-		}
+		emit(row, line)
 		row++
 	}
 	for len(out) < m.height {
@@ -207,27 +216,33 @@ func (m Model) View() string { return strings.Join(m.Rows(), "\n") }
 // top row, the way a mouse event reports it. It reports false when the
 // row holds no collapsed block header, so a click can fall through.
 //
-// Only the header row of a block is clickable: the body of a collapsed
-// block is not on screen, and clicking expanded content must not
-// collapse it by surprise - the keyboard toggle stays the only way
-// back.
+// Clicking a coalesced leader row (R2) opens the whole run: the row the
+// user sees stands in for every member, so the click means "show me
+// these". Only header rows are clickable - clicking expanded content
+// must never collapse it by surprise; the keyboard toggle stays the
+// only way back.
 func (m Model) ExpandBlockAtScreenRow(y int) (Model, bool) {
 	if y < 0 || !m.FocusedRowVisible(y) {
 		return m, false
 	}
 	row := m.offset + y
-	top := 0
+	spans := m.layout()
 	for i := range m.blocks {
-		h := m.blocks[i].Height(m.width)
-		if row == top && m.blocks[i].Collapsible && m.blocks[i].Collapsed {
-			blocks := make([]Block, len(m.blocks))
-			copy(blocks, m.blocks)
-			blocks[i].Collapsed = false
-			m.blocks = blocks
+		s := spans[i]
+		if s.height == 0 || row != s.top {
+			continue
+		}
+		if s.runSize > 0 {
+			m.expandRun(i)
+			return m, true
+		}
+		if m.blocks[i].Collapsible && m.blocks[i].Collapsed {
+			m.blocks = slices.Clone(m.blocks)
+			m.blocks[i].Collapsed = false
 			m.clampOffset()
 			return m, true
 		}
-		top += h
+		return m, false
 	}
 	return m, false
 }
@@ -326,7 +341,15 @@ func (m *Model) updateLive(callID string, fn func(*Block)) bool {
 	if !blk.Prose && len(blk.Body) > 0 {
 		blk.Collapsible = true
 	}
-	if blk.Collapsible && defaultCollapsed(blk.Body) {
+	// R2: a finished read-only lookup collapses by default whatever its
+	// body size - the header already carries the path and the line
+	// count - and consecutive collapsed lookups coalesce into one
+	// leader row. Failed calls never coalesce.
+	if !blk.Prose && len(blk.Body) > 0 && blk.Header.Role != theme.RoleDanger &&
+		render.ReadOnlyToolClass(blk.Header.Label) != "" {
+		blk.Collapsible = true
+		blk.Collapsed = true
+	} else if blk.Collapsible && defaultCollapsed(blk.Body) {
 		blk.Collapsed = true
 	}
 	m.blocks[i] = blk
@@ -360,17 +383,50 @@ func cloneBlocks(in []Block) []Block {
 // session to grep, tmux copy-mode, and the terminal's own find.
 //
 // Collapsed blocks are expanded here. A collapse is a view state, and a
-// dump the user asked for should not hide what they cannot see.
+// dump the user asked for should not hide what they cannot see - which
+// is also why leader runs never appear here: with every member expanded
+// there is no run to coalesce, and each read keeps its own header.
 func (m Model) Dump() string {
 	rows := make([]string, 0, len(m.blocks))
 	if m.dropped > 0 {
 		rows = append(rows, fmt.Sprintf("[%d earlier blocks dropped from this transcript]", m.dropped))
 	}
-	for _, b := range m.blocks {
-		b.Collapsed = false
-		b.Focused = false
-		rows = append(rows, b.Render(m.Theme, m.Tier, m.width))
+	blockRows, _ := m.ExpandedRows(m.width)
+	rows = append(rows, blockRows...)
+	if len(m.blocks) > 0 && m.blocks[len(m.blocks)-1].Activity() {
+		rows = append(rows, "")
 	}
 	rows = append(rows, m.tailRows()...)
 	return strings.Join(rows, "\n")
+}
+
+// ExpandedRows renders every block expanded and unfocused at the given
+// width, with the same section separators and group indents the live
+// view uses, so the ctrl+o pager and the scrollback dump read exactly
+// like the cockpit transcript. blockTops maps each block index to the
+// first row its content occupies, for the pager's prompt jumps.
+func (m Model) ExpandedRows(width int) (rows []string, blockTops []int) {
+	dm := m
+	dm.width = width
+	dm.blocks = cloneBlocks(m.blocks)
+	for i := range dm.blocks {
+		dm.blocks[i].Collapsed = false
+		dm.blocks[i].Focused = false
+	}
+	spans := dm.layout()
+	rows = make([]string, 0, len(dm.blocks))
+	blockTops = make([]int, len(dm.blocks))
+	row := 0
+	for i := range dm.blocks {
+		s := spans[i]
+		if s.sepBefore {
+			rows = append(rows, "")
+			row++
+		}
+		blockTops[i] = row
+		lines := dm.renderSpanRows(dm.blocks[i], s)
+		rows = append(rows, lines...)
+		row += len(lines)
+	}
+	return rows, blockTops
 }
