@@ -206,6 +206,16 @@ func (s *Screen) observeToolStart(b uievent.ToolStartBody) {
 	if !isSubagentTool(b.Name) && !(s.threads != nil && isThreadRegistered(s.threads, b.ToolCallID)) {
 		return
 	}
+	if s.panel.isDispatchGroup(b.ToolCallID) {
+		// The agent loop emits two tool.start events per call - "queued"
+		// (internal/agent/sdk_tool_events.go, Args populated) then
+		// "running" (sdk_dispatcher_shim.go's dispatcherShim.Run, which
+		// never sets Input at all). The first one already fanned this
+		// call out into its own per-task rows; a second event for the
+		// SAME call id must not re-derive ids from a possibly-empty Args
+		// and fall back to a stray single row keyed by the raw call id.
+		return
+	}
 	if ids := dispatchTaskIDs(b.ToolCallID, b.Name, b.Args); len(ids) > 0 {
 		s.panel.observeAgentGroupStart(b.ToolCallID, ids)
 	} else {
