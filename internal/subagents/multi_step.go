@@ -208,8 +208,7 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 
 	compiled, appendix, cerr := h.compileOutputSchema(req)
 	if cerr != nil {
-		out, err = buildResult("", 0, 0, 0, cerr)
-		return out, err
+		return buildResult("", 0, 0, 0, cerr)
 	}
 	taskPrompt += appendix
 
@@ -221,14 +220,15 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 	heartbeatCtx, heartbeatStop := context.WithCancel(callCtx)
 	var stepCount, toolCallCount atomic.Int64
 	taskStart := time.Now()
+	// One wrap-up deadline notice at the threshold; rationale in deadline_notice.go.
+	applyDeadlineNotice(callCtx, taskStart, nil, &opts)
 	defer heartbeatStop()
 	go emitHeartbeat(heartbeatCtx, stamped, &stepCount, &toolCallCount)
 	opts.OnEvent = h.stepOnEvent(ctx, stamped, &stepCount, &toolCallCount, taskStart)
 
 	reply, structured, runErr := h.runValidatedReply(callCtx, loop, opts, taskPrompt, compiled, steps, &stepCount)
 	h.discardPreparation(loop)
-	out, err = finishRun(loop, reply, structured, time.Since(taskStart), stepCount.Load(), runErr)
-	return out, err
+	return finishRun(loop, reply, structured, time.Since(taskStart), stepCount.Load(), runErr)
 }
 
 // stepOnEvent builds the nested loop's OnEvent callback: it counts steps,
