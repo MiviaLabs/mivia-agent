@@ -60,7 +60,7 @@ func wireDeliverySeams() {
 	}
 	OpenContextStoreFunc = func(root string, cfg config.SubagentConfig) (*storage.SQLite, error) {
 		p := ContextStorePath(root, cfg)
-		harden := sameFilePath(goruntime.GOOS, p, config.TempStorePath(root, "orchestration"))
+		harden := cliagents.SameFilePath(goruntime.GOOS, p, config.TempStorePath(root, "orchestration"))
 		return storage.OpenSQLiteWithOptions(p, storage.Options{Harden: harden})
 	}
 	ApplyPrivacyPolicyFunc = func(res *config.Resolved) {}

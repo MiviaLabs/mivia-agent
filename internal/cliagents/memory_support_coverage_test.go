@@ -185,8 +185,8 @@ func TestSameFilePath(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := sameFilePath(tc.goos, tc.a, tc.b); got != tc.want {
-				t.Errorf("sameFilePath(%q, %q, %q) = %v, want %v", tc.goos, tc.a, tc.b, got, tc.want)
+			if got := SameFilePath(tc.goos, tc.a, tc.b); got != tc.want {
+				t.Errorf("SameFilePath(%q, %q, %q) = %v, want %v", tc.goos, tc.a, tc.b, got, tc.want)
 			}
 		})
 	}

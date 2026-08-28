@@ -42,7 +42,7 @@ func OpenMemoryStoreWithReadOnly(root string, mc config.MemoryConfig, readOnly b
 			projectPath = filepath.Join(root, projectPath)
 		}
 	}
-	hardenTempStore := sameFilePath(runtime.GOOS, projectPath, config.TempStorePath(root, "memory"))
+	hardenTempStore := SameFilePath(runtime.GOOS, projectPath, config.TempStorePath(root, "memory"))
 	cfg := memory.Config{
 		Backend:          mc.StoreBackend,
 		ProjectPath:      projectPath,
@@ -58,7 +58,7 @@ func OpenMemoryStoreWithReadOnly(root string, mc config.MemoryConfig, readOnly b
 	return memory.Open(cfg)
 }
 
-// sameFilePath reports whether two path spellings name the same file:
+// SameFilePath reports whether two path spellings name the same file:
 // both are normalized (backslashes go to slashes, dot-dot and double-slash
 // segments resolve away), then compared - case-folded on Windows, whose
 // filesystems match case-insensitively, and byte-exact elsewhere. goos is
@@ -76,7 +76,10 @@ func OpenMemoryStoreWithReadOnly(root string, mc config.MemoryConfig, readOnly b
 // deliberately NOT config.sameFilePath (internal/config/agents_io.go),
 // which resolves symlinks on the live filesystem; this one is pure, so a
 // path that does not exist yet still compares. Empty paths never match.
-func sameFilePath(goos, a, b string) bool {
+// SameFilePath is the shared gate helper for ad-hoc store hardening: the
+// clichat and cliworkflow orchestration-ledger gates call this exported
+// form so all three packages compare paths by one contract.
+func SameFilePath(goos, a, b string) bool {
 	if a == "" || b == "" {
 		return false
 	}
@@ -87,7 +90,7 @@ func sameFilePath(goos, a, b string) bool {
 	return a == b
 }
 
-// normalizeFilePath is sameFilePath's host-independent path cleaner.
+// normalizeFilePath is SameFilePath's host-independent path cleaner.
 func normalizeFilePath(p string) string {
 	return path.Clean(strings.ReplaceAll(p, `\`, "/"))
 }

@@ -2,11 +2,10 @@ package clichat
 
 import (
 	"fmt"
-	"path"
 	"path/filepath"
 	"runtime"
-	"strings"
 
+	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
@@ -59,7 +58,7 @@ func openContextStore(root string, cfg config.SubagentConfig) (*storage.SQLite, 
 // whose directory no operator manages. Only that tier is chmod'd; an
 // operator-configured store_path keeps the modes its owner chose.
 func hardenOrchestrationStore(root, path string) bool {
-	return sameFilePath(runtime.GOOS, path, config.TempStorePath(root, "orchestration"))
+	return cliagents.SameFilePath(runtime.GOOS, path, config.TempStorePath(root, "orchestration"))
 }
 
 // openOrchestrationStoreAt opens the orchestration ledger at path, hardening
@@ -81,17 +80,4 @@ func openContextStorePathWithOptions(path string, opts storage.Options) (*storag
 	return store, nil
 }
 
-func sameFilePath(goos, a, b string) bool {
-	if a == "" || b == "" {
-		return false
-	}
-	a, b = normalizeFilePath(a), normalizeFilePath(b)
-	if goos == "windows" {
-		return strings.EqualFold(a, b)
-	}
-	return a == b
-}
-
-func normalizeFilePath(p string) string {
-	return path.Clean(strings.ReplaceAll(p, `\`, "/"))
-}
+// The pure path comparison lives in cliagents.SameFilePath.
