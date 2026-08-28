@@ -37,6 +37,7 @@ func OpenMemoryStoreWithReadOnly(root string, mc config.MemoryConfig, readOnly b
 			projectPath = filepath.Join(root, cleaned)
 		}
 	}
+	hardenTempStore := projectPath == config.TempStorePath(root, "memory")
 	cfg := memory.Config{
 		Backend:          mc.StoreBackend,
 		ProjectPath:      projectPath,
@@ -47,6 +48,7 @@ func OpenMemoryStoreWithReadOnly(root string, mc config.MemoryConfig, readOnly b
 		MaxSearchResults: mc.MaxSearchResults,
 		BlockPatterns:    mc.BlockPatterns,
 		ReadOnly:         readOnly,
+		HardenTempStore:  hardenTempStore,
 	}
 	return memory.Open(cfg)
 }

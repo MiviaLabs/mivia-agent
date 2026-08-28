@@ -605,6 +605,51 @@ func TestGapOpenSQLiteStoreOrgDirChmodError(t *testing.T) {
 	}
 }
 
+func TestGapOpenSQLiteStoreProjectHardenChmodError(t *testing.T) {
+	// An ad-hoc temp-dir project store must fail closed when the privacy
+	// chmod cannot be applied, the same as the org store.
+	orig := chmodFile
+	t.Cleanup(func() { chmodFile = orig })
+	chmodFile = func(string, os.FileMode) error { return errGapChmod }
+	cfg := Config{
+		Backend:          BackendSQLite,
+		ProjectPath:      filepath.Join(t.TempDir(), "project.db"),
+		HardenTempStore:  true,
+		MaxEntryBytes:    8192,
+		MaxEntries:       5,
+		MaxSearchResults: 8,
+	}
+	if _, err := Open(cfg); !errors.Is(err, errGapChmod) {
+		t.Fatalf("Open = %v, want chmod error %v", err, errGapChmod)
+	}
+}
+
+func TestGapOpenSQLiteStoreProjectHardenDirChmodError(t *testing.T) {
+	// Same for the project directory: the file chmod succeeds, the
+	// directory chmod fails, and Open must still fail closed.
+	orig := chmodFile
+	t.Cleanup(func() { chmodFile = orig })
+	dir := t.TempDir()
+	projectPath := filepath.Join(dir, "project.db")
+	chmodFile = func(p string, _ os.FileMode) error {
+		if p == projectPath {
+			return nil // file chmod succeeds
+		}
+		return errGapChmod // directory chmod fails
+	}
+	cfg := Config{
+		Backend:          BackendSQLite,
+		ProjectPath:      projectPath,
+		HardenTempStore:  true,
+		MaxEntryBytes:    8192,
+		MaxEntries:       5,
+		MaxSearchResults: 8,
+	}
+	if _, err := Open(cfg); !errors.Is(err, errGapChmod) {
+		t.Fatalf("Open = %v, want chmod error %v", err, errGapChmod)
+	}
+}
+
 func TestGapCheckpointNilDB(t *testing.T) {
 	// A nil database is a no-op checkpoint (e.g. an unconfigured org store).
 	s := &sqliteStore{}

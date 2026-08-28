@@ -185,6 +185,41 @@ func TestSQLiteOrgStorePermissions(t *testing.T) {
 	}
 }
 
+func TestSQLiteProjectHardenStorePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no chmod permission bits; file modes always read back as 0666/0777")
+	}
+	dir := t.TempDir()
+	projectPath := filepath.Join(dir, "project.db")
+	cfg := Config{
+		Backend:          BackendSQLite,
+		ProjectPath:      projectPath,
+		HardenTempStore:  true,
+		MaxEntryBytes:    8192,
+		MaxEntries:       5,
+		MaxSearchResults: 8,
+	}
+	s, err := Open(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	st, err := os.Stat(projectPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := st.Mode().Perm(); perm != 0o600 {
+		t.Errorf("project store mode = %o, want 600 (ad-hoc temp store)", perm)
+	}
+	dirSt, err := os.Stat(filepath.Dir(projectPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := dirSt.Mode().Perm(); perm != 0o700 {
+		t.Errorf("project store dir mode = %o, want 700", perm)
+	}
+}
+
 func TestSQLiteSaveCheckpointsWAL(t *testing.T) {
 	dir := t.TempDir()
 	project := filepath.Join(dir, "project.db")

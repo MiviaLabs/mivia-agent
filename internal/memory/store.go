@@ -96,6 +96,14 @@ type Config struct {
 	// works via the LIKE fallback with identical results; the file must
 	// already exist with the schema. Zero value false = read-write.
 	ReadOnly bool
+	// HardenTempStore marks ProjectPath as an ad-hoc, OS-temp-dir-backed store
+	// (config.TempStorePath) rather than an operator-managed project path.
+	// When true, openSQLiteStore chmods the project database file to 0600 and
+	// its parent directory to 0700, failing closed on error, the same way the
+	// org store is always hardened: an ad-hoc temp-dir store has no project
+	// directory whose permissions an operator manages, so mivia must protect
+	// it itself.
+	HardenTempStore bool
 }
 
 // Backend names.
@@ -195,6 +203,19 @@ func openSQLiteStore(cfg Config) (*sqliteStore, error) {
 		return nil, fmt.Errorf("memory project store %s: %w", projectPath, err)
 	}
 	s := &sqliteStore{projectDB: projectDB, cfg: cfg, fts: fts}
+	// An ad-hoc temp-dir store has no operator-managed project directory
+	// protecting it (unlike the general project-tier case), so harden it the
+	// same way the org store is always hardened.
+	if cfg.HardenTempStore {
+		if err := chmodFile(projectPath, 0o600); err != nil {
+			projectDB.Close()
+			return nil, fmt.Errorf("memory project store %s: %w", projectPath, err)
+		}
+		if err := chmodFile(filepath.Dir(projectPath), 0o700); err != nil {
+			projectDB.Close()
+			return nil, fmt.Errorf("memory project dir %s: %w", filepath.Dir(projectPath), err)
+		}
+	}
 	// The org store is created only when an org identity is configured: with no
 	// org_id the feature is project-only, and an unconfigured org must not
 	// create side-effect files (or fail the session) in the user's home.

@@ -128,6 +128,12 @@ Project memory databases can contain proprietary information. The project
 database path does not provide a cross-user privacy boundary. Protect the file
 and its parent directory with local filesystem permissions.
 
+When no project configuration exists, mivia falls back to an ad-hoc database
+under the OS temp directory, keyed to the workspace path so different
+workspaces' ad-hoc stores never collide; that file and its parent directory
+are chmod'd to 0600/0700 automatically, unlike the general project-tier case
+above where permissions are the operator's responsibility.
+
 Two automated controls protect the committed artifact: `scripts/secret_scan.py`
 decodes the database and scans its text columns on every commit (staged,
 tracked, and base-range modes), and the `block_patterns` list in the repo's own

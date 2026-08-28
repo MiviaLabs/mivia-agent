@@ -5,6 +5,9 @@ package cliagents
 // the dispatch wiring.
 
 import (
+	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -50,6 +53,63 @@ func TestOpenMemoryStoreWithReadOnlyPathEscape(t *testing.T) {
 	// and opened (the backend may then fail; we only exercise the
 	// join branch, line 30).
 	_, _ = OpenMemoryStoreWithReadOnly(t.TempDir(), config.MemoryConfig{StorePath: "inside.db"}, true)
+}
+
+func TestOpenMemoryStoreWithReadOnlyHardensAdHocStore(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no chmod permission bits; file modes always read back as 0666/0777")
+	}
+	root := t.TempDir()
+	adHocPath := config.TempStorePath(root, "memory")
+	t.Cleanup(func() { _ = os.RemoveAll(filepath.Dir(adHocPath)) })
+	mc := config.MemoryConfig{StorePath: adHocPath}
+	store, err := OpenMemoryStoreWithReadOnly(root, mc, false)
+	if err != nil {
+		t.Fatalf("OpenMemoryStoreWithReadOnly = %v, want nil", err)
+	}
+	defer store.Close()
+	st, err := os.Stat(adHocPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := st.Mode().Perm(); perm != 0o600 {
+		t.Errorf("ad-hoc store mode = %o, want 600", perm)
+	}
+	dirSt, err := os.Stat(filepath.Dir(adHocPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := dirSt.Mode().Perm(); perm != 0o700 {
+		t.Errorf("ad-hoc store dir mode = %o, want 700", perm)
+	}
+}
+
+func TestOpenMemoryStoreWithReadOnlyStorePathDoesNotHarden(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no chmod permission bits; file modes always read back as 0666/0777")
+	}
+	root := t.TempDir()
+	storePath := filepath.Join(root, "custom-memory.db")
+	mc := config.MemoryConfig{StorePath: storePath}
+	store, err := OpenMemoryStoreWithReadOnly(root, mc, false)
+	if err != nil {
+		t.Fatalf("OpenMemoryStoreWithReadOnly = %v, want nil", err)
+	}
+	defer store.Close()
+	st, err := os.Stat(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := st.Mode().Perm(); perm == 0o600 {
+		t.Errorf("explicit store_path mode = %o, must not be forced to 600", perm)
+	}
+	dirSt, err := os.Stat(filepath.Dir(storePath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := dirSt.Mode().Perm(); perm == 0o700 {
+		t.Errorf("explicit store_path dir mode = %o, must not be forced to 700", perm)
+	}
 }
 
 func TestAgentSessionStateDisplayHelpers(t *testing.T) {
