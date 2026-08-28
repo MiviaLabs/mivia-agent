@@ -378,13 +378,22 @@ func (p *panel) observeAgentEnd(id string, ok bool) {
 // single row for the whole call - and remembers the group under callID so
 // observeAgentGroupEnd can resolve every member's terminal status when the
 // outer call completes.
-func (p *panel) observeAgentGroupStart(callID string, ids []string) {
+func (p *panel) observeAgentGroupStart(callID string, ids []string, names map[string]string) {
 	if p.dispatchGroups == nil {
 		p.dispatchGroups = map[string][]string{}
 	}
 	p.dispatchGroups[callID] = ids
 	for _, id := range ids {
-		p.observeAgentStart(id, "")
+		name := ""
+		if names != nil {
+			name = names[id]
+			if name == "" {
+				prefix := callID + ":"
+				rawID := strings.TrimPrefix(id, prefix)
+				name = names[rawID]
+			}
+		}
+		p.observeAgentStart(id, name)
 	}
 }
 

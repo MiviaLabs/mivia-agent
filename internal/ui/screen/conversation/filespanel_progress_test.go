@@ -285,7 +285,7 @@ func TestPanelWindowGroupsNeverSplitsAGroup(t *testing.T) {
 // arriving with a raw task ID properly update a namespaced row registered by dispatch_tasks.
 func TestObserveAgent_NamespacedIDMatchesRawProgress(t *testing.T) {
 	var p panel
-	p.observeAgentGroupStart("call-xyz", []string{"call-xyz:worker-1"})
+	p.observeAgentGroupStart("call-xyz", []string{"call-xyz:worker-1"}, nil)
 	if len(p.agents) != 1 {
 		t.Fatalf("expected 1 agent, got %d", len(p.agents))
 	}

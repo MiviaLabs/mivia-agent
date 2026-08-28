@@ -848,7 +848,7 @@ func TestPanel_ReconcileTerminal_CustomNonTerminalStatusReconciles(t *testing.T)
 // own id as its own running row.
 func TestObserveAgentGroupStart_FansOutOneRowPerTask(t *testing.T) {
 	var p panel
-	p.observeAgentGroupStart("call-1", []string{"task-a", "task-b", "task-c", "task-d"})
+	p.observeAgentGroupStart("call-1", []string{"task-a", "task-b", "task-c", "task-d"}, nil)
 
 	if len(p.agents) != 4 {
 		t.Fatalf("expected 4 agent rows, got %d: %+v", len(p.agents), p.agents)
@@ -880,7 +880,7 @@ func TestObserveAgentGroupStart_FansOutOneRowPerTask(t *testing.T) {
 // collapse every task to the same aggregate ok/failed status.
 func TestObserveAgentGroupEnd_ResolvesPerTaskStatuses(t *testing.T) {
 	var p panel
-	p.observeAgentGroupStart("call-1", []string{"task-a", "task-b", "task-c"})
+	p.observeAgentGroupStart("call-1", []string{"task-a", "task-b", "task-c"}, nil)
 
 	p.observeAgentGroupEnd("call-1", map[string]string{
 		"task-a": "completed",
@@ -905,7 +905,7 @@ func TestObserveAgentGroupEnd_ResolvesPerTaskStatuses(t *testing.T) {
 func TestObserveAgentGroupEnd_ResolvesNamespacedTaskIDsFromStrippedResult(t *testing.T) {
 	var p panel
 	// Live dispatch_tasks registers IDs with callID prefix (call-1:task-a, call-1:task-b)
-	p.observeAgentGroupStart("call-1", []string{"call-1:task-a", "call-1:task-b", "call-1:task-c"})
+	p.observeAgentGroupStart("call-1", []string{"call-1:task-a", "call-1:task-b", "call-1:task-c"}, nil)
 
 	// Tool execution returns stripped raw task IDs in result JSON
 	p.observeAgentGroupEnd("call-1", map[string]string{
@@ -949,7 +949,7 @@ func TestObserveAgentGroupEnd_LastTaskCompletionSurvivesBackToBackTurnEnd(t *tes
 	var p panel
 
 	// dispatch_tasks starts a two-task batch.
-	p.observeAgentGroupStart("call-1", []string{"task-a", "task-b"})
+	p.observeAgentGroupStart("call-1", []string{"task-a", "task-b"}, nil)
 
 	// task-a finished a while ago; task-b is the LAST task and its own
 	// live completion (translateSubagentDone's tool.output Progress)
@@ -986,6 +986,78 @@ func TestObserveAgentGroupEnd_LastTaskCompletionSurvivesBackToBackTurnEnd(t *tes
 	}
 }
 
+// TestObserveToolEvents_AsyncDispatchKeepsSubagentRunningAndUpdatesLiveMetrics pins the
+// fix for the bug where dispatch_tasks(wait="none") prematurely marked subagents completed
+// when the outer dispatch tool call ended, locking out all subsequent live progress events.
+func TestObserveToolEvents_AsyncDispatchKeepsSubagentRunningAndUpdatesLiveMetrics(t *testing.T) {
+	s := sized(t, 1)
+
+	// 1. Tool start arrives for dispatch_tasks(wait="none")
+	s.observeToolStart(uievent.ToolStartBody{
+		ToolCallID: "call_dispatch_1",
+		Name:       "dispatch_tasks",
+		Args: map[string]any{
+			"wait": "none",
+			"tasks": []any{
+				map[string]any{"id": "worker-1", "agent": "researcher", "prompt": "investigate bug"},
+			},
+		},
+	})
+
+	if len(s.panel.agents) != 1 {
+		t.Fatalf("expected 1 agent row, got %d", len(s.panel.agents))
+	}
+	if s.panel.agents[0].Status != "running" {
+		t.Fatalf("expected running status, got %q", s.panel.agents[0].Status)
+	}
+	if s.panel.agents[0].Name != "researcher" {
+		t.Fatalf("expected Name=researcher, got %q", s.panel.agents[0].Name)
+	}
+
+	// 2. dispatch_tasks returns with async run envelope
+	asyncResult := `{"run_id":"run-1","display_name":"run-1","status":"running","tasks":[{"id":"worker-1","name":"researcher","status":"running"}]}`
+	s.observeToolEnd(uievent.ToolEndBody{
+		ToolCallID: "call_dispatch_1",
+		Result:     asyncResult,
+		OK:         true,
+	})
+
+	// Subagent must still be RUNNING, not completed
+	if len(s.panel.agents) != 1 {
+		t.Fatalf("expected still 1 agent row, got %d", len(s.panel.agents))
+	}
+	if s.panel.agents[0].Status != "running" {
+		t.Fatalf("expected subagent to stay 'running' after async dispatch returns, got %q", s.panel.agents[0].Status)
+	}
+
+	// 3. Subagent executes in background and emits live tool calls / step events
+	s.panel.observeAgent("worker-1", &uievent.Progress{
+		Status:    "running",
+		Step:      2,
+		ToolCalls: 5,
+		Log:       []string{"running grep"},
+	})
+
+	if s.panel.agents[0].Step != 2 || s.panel.agents[0].ToolCalls != 5 {
+		t.Fatalf("metrics not updated: Step=%d ToolCalls=%d", s.panel.agents[0].Step, s.panel.agents[0].ToolCalls)
+	}
+	if s.panel.agents[0].Name != "researcher" {
+		t.Fatalf("name wiped out during progress: %q", s.panel.agents[0].Name)
+	}
+
+	// 4. Subagent finishes and emits completed
+	s.panel.observeAgent("worker-1", &uievent.Progress{
+		Status: "completed",
+	})
+
+	if s.panel.agents[0].Status != "completed" {
+		t.Fatalf("expected completed status, got %q", s.panel.agents[0].Status)
+	}
+	if s.panel.agents[0].Step != 2 || s.panel.agents[0].ToolCalls != 5 {
+		t.Fatalf("final counts lost: Step=%d ToolCalls=%d", s.panel.agents[0].Step, s.panel.agents[0].ToolCalls)
+	}
+}
+
 func TestScrollPanelInSplitMode(t *testing.T) {
 	s := sized(t, 1)
 	next, _ := s.Update(tea.WindowSizeMsg{Width: uikitconfig.BreakpointWide, Height: 30})
@@ -1009,4 +1081,27 @@ func TestScrollPanelInSplitMode(t *testing.T) {
 	if scr.panel.offset == 0 && scr.panelBodyRows() > 0 {
 		t.Errorf("expected offset > 0 after scrolling down, got %d", scr.panel.offset)
 	}
+}
+
+func TestMatchesAgentID_ReverseNamespaced(t *testing.T) {
+	if !matchesAgentID("worker-1", "call-123:worker-1") {
+		t.Errorf("expected matchesAgentID to return true for raw aID and namespaced id")
+	}
+}
+
+func TestDialogParts_AgentNotFoundWithThread(t *testing.T) {
+	s := sized(t, 1)
+	s.panel.dialog = true
+	s.panel.dialogAgent = "missing-agent"
+	embedded := sized(t, 1)
+	s.thread = &embedded
+	s.threadID = "missing-agent"
+	title, body, hint := s.dialogParts()
+	if !strings.Contains(title, "missing-agent") {
+		t.Errorf("title %q does not contain missing-agent", title)
+	}
+	if hint != "esc close" {
+		t.Errorf("hint = %q, want 'esc close'", hint)
+	}
+	_ = body
 }

@@ -216,8 +216,8 @@ func (s *Screen) observeToolStart(b uievent.ToolStartBody) {
 		// and fall back to a stray single row keyed by the raw call id.
 		return
 	}
-	if ids := dispatchTaskIDs(b.ToolCallID, b.Name, b.Args); len(ids) > 0 {
-		s.panel.observeAgentGroupStart(b.ToolCallID, ids)
+	if ids, names := dispatchTaskIDsAndNames(b.ToolCallID, b.Name, b.Args); len(ids) > 0 {
+		s.panel.observeAgentGroupStart(b.ToolCallID, ids, names)
 	} else {
 		name := extractAgentDisplayName(b.Name, b.Args)
 		s.panel.observeAgentStart(b.ToolCallID, name)
@@ -284,53 +284,42 @@ func isThreadRegistered(threads ports.SubagentThreads, callID string) bool {
 // instead of one aggregate row for the whole call. Returns nil for every
 // other tool name, or when no task list can be parsed, leaving the
 // caller's existing single-row behavior unchanged.
-//
-// A model-supplied "id" is namespaced with callID (namespacedTaskID,
-// mirroring internal/cliorchestrate's dispatchNamespace/namespacedTaskID)
-// before it becomes a row key: the real per-task id the backend mints -
-// internal/cliorchestrate/dispatch.go's buildTasks - is callID+":"+id,
-// not the model's raw id verbatim, precisely so that two dispatch_tasks
-// calls reusing the same raw id (a retry, a similarly-shaped batch) get
-// distinct real tasks instead of silently colliding. Both sides derive
-// the same prefix from the SAME callID independently - this function
-// receives it as its own first argument, and dispatch.go's Execute reads
-// it off the tool call's own context - with no coordination needed.
 func dispatchTaskIDs(callID, name string, args map[string]any) []string {
+	ids, _ := dispatchTaskIDsAndNames(callID, name, args)
+	return ids
+}
+
+// dispatchTaskIDsAndNames extracts both per-task ids and friendly agent names.
+func dispatchTaskIDsAndNames(callID, name string, args map[string]any) ([]string, map[string]string) {
 	if strings.ToLower(name) != "dispatch_tasks" {
-		return nil
+		return nil, nil
 	}
 	rawTasks, ok := args["tasks"].([]any)
 	if !ok || len(rawTasks) == 0 {
-		return nil
+		return nil, nil
 	}
 	ids := make([]string, 0, len(rawTasks))
+	names := make(map[string]string, len(rawTasks))
 	for i, rt := range rawTasks {
 		id := ""
+		taskName := ""
 		if m, ok := rt.(map[string]any); ok {
 			if s, ok := m["id"].(string); ok {
 				id = s
 			}
+			taskName = extractAgentDisplayName("", m)
 		}
 		if id == "" {
-			// A model-supplied id is the normal case; this only covers a
-			// task the model forgot to name. The fallback must never
-			// surface the raw provider tool_call_id (callID) as a visible
-			// sidebar label - a bare "call_xxxxxxxxxxxx" string means
-			// nothing to a reader. "task-N" is legible. It is deliberately
-			// NOT namespaced with callID: an empty raw id makes
-			// buildTasks/Pool.validate reject the whole batch (a real task
-			// id can never be empty), so this row never has a real backend
-			// counterpart to match against anyway. Sibling sites that must
-			// stay in sync: thread.go's LoadHistory reconstruction and
-			// internal/uiadapter/subagent_reconstruct.go's
-			// registerDispatchedTask.
 			id = fmt.Sprintf("task-%d", i+1)
 		} else {
 			id = namespacedTaskID(callID, id)
 		}
 		ids = append(ids, id)
+		if taskName != "" {
+			names[id] = taskName
+		}
 	}
-	return ids
+	return ids, names
 }
 
 // namespacedTaskID mirrors internal/cliorchestrate's function of the same
@@ -347,7 +336,7 @@ func namespacedTaskID(namespace, rawID string) string {
 
 // parseDispatchTaskStatuses decodes a dispatch_tasks call's own JSON result
 // into a task id -> status map, accepting either the bare-array shape
-// (wait="run") or the wrapped {"task_results":[...]} envelope (wait="none"/
+// (wait="run") or the wrapped {"tasks":[...]} / {"task_results":[...]} envelopes (wait="none"/
 // "task") - render/output_formatter.go and uiadapter/subagent_reconstruct.go
 // handle the same duality for the transcript and the resumed-session
 // reconstruction paths respectively. Returns nil when result matches
@@ -359,23 +348,49 @@ func parseDispatchTaskStatuses(result string) map[string]string {
 	}
 	type row struct {
 		TaskID string `json:"task_id"`
+		ID     string `json:"id"`
 		Status string `json:"status"`
 	}
 	var rows []row
+	var wrapped struct {
+		TaskResults []row `json:"task_results"`
+		Tasks       []row `json:"tasks"`
+	}
 	if err := json.Unmarshal([]byte(trimmed), &rows); err != nil || len(rows) == 0 {
-		var wrapped struct {
-			TaskResults []row `json:"task_results"`
-		}
-		if err := json.Unmarshal([]byte(trimmed), &wrapped); err != nil || len(wrapped.TaskResults) == 0 {
+		if err := json.Unmarshal([]byte(trimmed), &wrapped); err != nil {
 			return nil
 		}
-		rows = wrapped.TaskResults
 	}
-	out := make(map[string]string, len(rows))
-	for _, r := range rows {
-		if r.TaskID != "" {
-			out[r.TaskID] = r.Status
+	out := make(map[string]string, len(wrapped.Tasks)+len(wrapped.TaskResults)+len(rows))
+	for _, r := range wrapped.Tasks {
+		id := r.TaskID
+		if id == "" {
+			id = r.ID
 		}
+		if id != "" && r.Status != "" {
+			out[id] = r.Status
+		}
+	}
+	for _, r := range wrapped.TaskResults {
+		id := r.TaskID
+		if id == "" {
+			id = r.ID
+		}
+		if id != "" && r.Status != "" {
+			out[id] = r.Status
+		}
+	}
+	for _, r := range rows {
+		id := r.TaskID
+		if id == "" {
+			id = r.ID
+		}
+		if id != "" && r.Status != "" {
+			out[id] = r.Status
+		}
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }
