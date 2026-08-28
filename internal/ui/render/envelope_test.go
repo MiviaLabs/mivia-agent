@@ -127,3 +127,19 @@ func TestFormatMemoryOutput_WrapperAndUnparsed(t *testing.T) {
 		t.Errorf("plain sentence should not synthesize a summary, got %q", summary)
 	}
 }
+
+// TestFormatMemoryOutput_TitleAndVerdict pins R6: a search result's
+// title carries the card body with the snippet dimmed under it, and the
+// agent's verdict marks the identity row.
+func TestFormatMemoryOutput_TitleAndVerdict(t *testing.T) {
+	th := loadTheme(t)
+	raw := `[{"id":"abcdef123456","scope":"project","verdict":"good","title":"gate ordering fix","summary":"the hook gate must arm before the first tool call","created":"2026-08-27"}]`
+	_, lines := FormatMemoryOutput(th, theme.TierTrueColor, raw, 100)
+	plain := ansi.Strip(strings.Join(lines, "\n"))
+	if !strings.Contains(plain, "gate ordering fix") || !strings.Contains(plain, "· good") {
+		t.Errorf("expected the title row and the verdict marker:\n%s", plain)
+	}
+	if !strings.Contains(plain, "hook gate must arm") {
+		t.Errorf("expected the dim snippet row under the title:\n%s", plain)
+	}
+}

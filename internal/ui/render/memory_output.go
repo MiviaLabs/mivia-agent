@@ -14,6 +14,8 @@ type memoryItem struct {
 	ID      string   `json:"id"`
 	Scope   string   `json:"scope"`
 	Created string   `json:"created"`
+	Title   string   `json:"title"`
+	Verdict string   `json:"verdict"`
 	Summary string   `json:"summary"`
 	Tags    []string `json:"tags"`
 }
@@ -67,17 +69,36 @@ func FormatMemoryOutput(t theme.Theme, tier theme.Tier, output string, width int
 			header += " " + id
 		}
 		line1 := accent.Render(header)
+		if item.Verdict != "" {
+			// The agent's own assessment of the recorded experience:
+			// small, dim, part of the identity row (R6).
+			line1 += " " + subtle.Render("· "+item.Verdict)
+		}
 		if item.Created != "" {
 			line1 += " " + subtle.Render("("+item.Created+")")
 		}
 		out = append(out, line1)
 
+		// The title is the memory's name and carries the row when present;
+		// the snippet (the matched summary text) renders under it, dim.
+		title := strings.TrimSpace(item.Title)
 		summary := strings.TrimSpace(item.Summary)
-		if width > 8 && ansi.StringWidth(summary) > width-4 {
-			summary = ansi.Truncate(summary, width-4, "…")
+		primary := title
+		if primary == "" {
+			primary = summary
+			summary = ""
+		}
+		if width > 8 && ansi.StringWidth(primary) > width-4 {
+			primary = ansi.Truncate(primary, width-4, "…")
+		}
+		if primary != "" {
+			out = append(out, "  "+fg.Render(primary))
 		}
 		if summary != "" {
-			out = append(out, "  "+fg.Render(summary))
+			if width > 8 && ansi.StringWidth(summary) > width-6 {
+				summary = ansi.Truncate(summary, width-6, "…")
+			}
+			out = append(out, "  "+subtle.Render(summary))
 		}
 
 		if len(item.Tags) > 0 {
