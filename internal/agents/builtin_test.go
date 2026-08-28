@@ -264,6 +264,35 @@ func TestBuiltInPromptLanguageGeneric(t *testing.T) {
 	}
 }
 
+// TestBuiltInPromptDisciplineLines pins the briefing/steering discipline added
+// for dispatched-task bounds (86f7f561) and subagent checkpointing
+// (abce735c): future trims of the compiled prompts must not silently drop
+// these lines, and the steering rule must stay grounded in what the parent
+// can actually observe (timeout-based, never "identical running checks").
+func TestBuiltInPromptDisciplineLines(t *testing.T) {
+	for _, want := range []string{
+		"a real timeout_seconds",
+		"interrupt:true",
+		"cancel_run",
+	} {
+		if !strings.Contains(BuiltInOrchestratorPrompt, want) {
+			t.Errorf("orchestrator prompt lost the discipline line fragment %q", want)
+		}
+	}
+	for _, want := range []string{
+		"Time-box each line of inquiry",
+		"Checkpoint via post_message",
+		"never end silent",
+	} {
+		if !strings.Contains(BuiltInGeneralPurposePrompt, want) {
+			t.Errorf("general-purpose prompt lost the discipline line fragment %q", want)
+		}
+	}
+	if strings.Contains(BuiltInOrchestratorPrompt, "No progress across two checks") {
+		t.Error("orchestrator prompt still claims observable progress the parent cannot see")
+	}
+}
+
 func missing(want, got []string) []string {
 	var out []string
 	for _, w := range want {
