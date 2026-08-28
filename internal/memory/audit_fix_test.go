@@ -220,6 +220,217 @@ func TestSQLiteProjectHardenStorePermissions(t *testing.T) {
 	}
 }
 
+// TestSQLiteProjectHardenStoreDirCreatesRestrictive is the regression for the
+// TOCTOU fix in ensureHardenedDir: when the ad-hoc store's directory does not
+// exist yet, it must be created at 0700 directly (not created loose at 0755
+// and chmod'd afterward), so the sqlite file modernc.org/sqlite creates
+// inside it is never briefly reachable through a world-traversable directory.
+func TestSQLiteProjectHardenStoreDirCreatesRestrictive(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no chmod permission bits; file modes always read back as 0666/0777")
+	}
+	dir := t.TempDir()
+	projectPath := filepath.Join(dir, "sub", "project.db")
+	if _, err := os.Stat(filepath.Dir(projectPath)); !os.IsNotExist(err) {
+		t.Fatalf("precondition: %s must not exist yet", filepath.Dir(projectPath))
+	}
+	cfg := Config{
+		Backend:          BackendSQLite,
+		ProjectPath:      projectPath,
+		HardenTempStore:  true,
+		MaxEntryBytes:    8192,
+		MaxEntries:       5,
+		MaxSearchResults: 8,
+	}
+	s, err := Open(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	dirSt, err := os.Stat(filepath.Dir(projectPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := dirSt.Mode().Perm(); perm != 0o700 {
+		t.Errorf("newly created project store dir mode = %o, want 700", perm)
+	}
+}
+
+// TestSQLiteProjectHardenStoreDirCorrectsLooseExisting proves Open hardens a
+// pre-existing project-tier directory left at a looser mode by a session that
+// ran before this fix shipped.
+func TestSQLiteProjectHardenStoreDirCorrectsLooseExisting(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no chmod permission bits; file modes always read back as 0666/0777")
+	}
+	dir := t.TempDir()
+	leaf := filepath.Join(dir, "sub")
+	if err := os.MkdirAll(leaf, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	projectPath := filepath.Join(leaf, "project.db")
+	cfg := Config{
+		Backend:          BackendSQLite,
+		ProjectPath:      projectPath,
+		HardenTempStore:  true,
+		MaxEntryBytes:    8192,
+		MaxEntries:       5,
+		MaxSearchResults: 8,
+	}
+	s, err := Open(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	dirSt, err := os.Stat(leaf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := dirSt.Mode().Perm(); perm != 0o700 {
+		t.Errorf("pre-existing loose project store dir mode = %o, want 700", perm)
+	}
+}
+
+// TestSQLiteProjectHardenStoreDirIdempotentOnRestrictive proves Open is a
+// no-op (no error, mode unchanged) when the project-tier directory is already
+// 0700.
+func TestSQLiteProjectHardenStoreDirIdempotentOnRestrictive(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no chmod permission bits; file modes always read back as 0666/0777")
+	}
+	dir := t.TempDir()
+	leaf := filepath.Join(dir, "sub")
+	if err := os.MkdirAll(leaf, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	projectPath := filepath.Join(leaf, "project.db")
+	cfg := Config{
+		Backend:          BackendSQLite,
+		ProjectPath:      projectPath,
+		HardenTempStore:  true,
+		MaxEntryBytes:    8192,
+		MaxEntries:       5,
+		MaxSearchResults: 8,
+	}
+	s, err := Open(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	dirSt, err := os.Stat(leaf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := dirSt.Mode().Perm(); perm != 0o700 {
+		t.Errorf("already-restrictive project store dir mode = %o, want 700", perm)
+	}
+}
+
+// TestSQLiteOrgStoreDirCreatesRestrictive mirrors
+// TestSQLiteProjectHardenStoreDirCreatesRestrictive for the org tier, whose
+// directory hardening is unconditional (never gated by HardenTempStore).
+func TestSQLiteOrgStoreDirCreatesRestrictive(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no chmod permission bits; file modes always read back as 0666/0777")
+	}
+	dir := t.TempDir()
+	orgPath := filepath.Join(dir, "sub", "org.db")
+	if _, err := os.Stat(filepath.Dir(orgPath)); !os.IsNotExist(err) {
+		t.Fatalf("precondition: %s must not exist yet", filepath.Dir(orgPath))
+	}
+	cfg := Config{
+		Backend:          BackendSQLite,
+		ProjectPath:      filepath.Join(dir, "project.db"),
+		OrgPath:          orgPath,
+		OrgID:            "github.com/acme",
+		MaxEntryBytes:    8192,
+		MaxEntries:       5,
+		MaxSearchResults: 8,
+	}
+	s, err := Open(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	dirSt, err := os.Stat(filepath.Dir(orgPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := dirSt.Mode().Perm(); perm != 0o700 {
+		t.Errorf("newly created org store dir mode = %o, want 700", perm)
+	}
+}
+
+// TestSQLiteOrgStoreDirCorrectsLooseExisting mirrors
+// TestSQLiteProjectHardenStoreDirCorrectsLooseExisting for the org tier.
+func TestSQLiteOrgStoreDirCorrectsLooseExisting(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no chmod permission bits; file modes always read back as 0666/0777")
+	}
+	dir := t.TempDir()
+	leaf := filepath.Join(dir, "sub")
+	if err := os.MkdirAll(leaf, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	orgPath := filepath.Join(leaf, "org.db")
+	cfg := Config{
+		Backend:          BackendSQLite,
+		ProjectPath:      filepath.Join(dir, "project.db"),
+		OrgPath:          orgPath,
+		OrgID:            "github.com/acme",
+		MaxEntryBytes:    8192,
+		MaxEntries:       5,
+		MaxSearchResults: 8,
+	}
+	s, err := Open(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	dirSt, err := os.Stat(leaf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := dirSt.Mode().Perm(); perm != 0o700 {
+		t.Errorf("pre-existing loose org store dir mode = %o, want 700", perm)
+	}
+}
+
+// TestSQLiteOrgStoreDirIdempotentOnRestrictive mirrors
+// TestSQLiteProjectHardenStoreDirIdempotentOnRestrictive for the org tier.
+func TestSQLiteOrgStoreDirIdempotentOnRestrictive(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no chmod permission bits; file modes always read back as 0666/0777")
+	}
+	dir := t.TempDir()
+	leaf := filepath.Join(dir, "sub")
+	if err := os.MkdirAll(leaf, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	orgPath := filepath.Join(leaf, "org.db")
+	cfg := Config{
+		Backend:          BackendSQLite,
+		ProjectPath:      filepath.Join(dir, "project.db"),
+		OrgPath:          orgPath,
+		OrgID:            "github.com/acme",
+		MaxEntryBytes:    8192,
+		MaxEntries:       5,
+		MaxSearchResults: 8,
+	}
+	s, err := Open(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	dirSt, err := os.Stat(leaf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := dirSt.Mode().Perm(); perm != 0o700 {
+		t.Errorf("already-restrictive org store dir mode = %o, want 700", perm)
+	}
+}
+
 func TestSQLiteSaveCheckpointsWAL(t *testing.T) {
 	dir := t.TempDir()
 	project := filepath.Join(dir, "project.db")

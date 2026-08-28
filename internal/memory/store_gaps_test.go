@@ -58,15 +58,16 @@ func TestGapOpenOrgStoreFailure(t *testing.T) {
 	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// The project store opens fine; the org store's MkdirAll fails, which
-	// exercises the projectDB.Close() + org-store wrapper branch.
+	// The project store opens fine; ensureHardenedDir's MkdirAll for the org
+	// dir fails before openMemoryDB(orgPath, ...) ever runs, which exercises
+	// the projectDB.Close() + org-dir wrapper branch.
 	_, err := Open(Config{
 		Backend:     "sqlite",
 		ProjectPath: filepath.Join(dir, "project.db"),
 		OrgPath:     filepath.Join(blocker, "org.db"),
 		OrgID:       "github.com/acme",
 	})
-	if err == nil || !strings.Contains(err.Error(), "org store") {
+	if err == nil || !strings.Contains(err.Error(), "org dir") {
 		t.Fatalf("Open with an uncreatable org dir must fail, got %v", err)
 	}
 }
@@ -648,6 +649,38 @@ func TestGapOpenSQLiteStoreProjectHardenDirChmodError(t *testing.T) {
 	if _, err := Open(cfg); !errors.Is(err, errGapChmod) {
 		t.Fatalf("Open = %v, want chmod error %v", err, errGapChmod)
 	}
+}
+
+// TestGapEnsureHardenedDirError covers ensureHardenedDir's two failure modes
+// (MkdirAll and chmod) reached through Open, before openMemoryDB/sql.Open
+// ever touch the path. Both must fail closed with no leaked DB handle: this
+// runs before any *sql.DB for the tier under test is opened, so there is
+// nothing for either branch to leak.
+func TestGapEnsureHardenedDirError(t *testing.T) {
+	t.Run("mkdir failure", func(t *testing.T) {
+		dir := t.TempDir()
+		blocker := filepath.Join(dir, "blocker")
+		if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		// The project dir's parent collides with a regular file, so
+		// ensureHardenedDir's os.MkdirAll fails before openMemoryDB ever runs.
+		projectPath := filepath.Join(blocker, "sub", "project.db")
+		_, err := Open(Config{Backend: BackendSQLite, ProjectPath: projectPath, HardenTempStore: true})
+		if err == nil || !strings.Contains(err.Error(), "memory project dir") {
+			t.Fatalf("Open with an uncreatable hardened dir must fail, got %v", err)
+		}
+	})
+	t.Run("chmod failure", func(t *testing.T) {
+		orig := chmodFile
+		t.Cleanup(func() { chmodFile = orig })
+		chmodFile = func(string, os.FileMode) error { return errGapChmod }
+		dir := t.TempDir()
+		_, err := Open(Config{Backend: BackendSQLite, ProjectPath: filepath.Join(dir, "sub", "project.db"), HardenTempStore: true})
+		if !errors.Is(err, errGapChmod) {
+			t.Fatalf("Open = %v, want chmod error %v", err, errGapChmod)
+		}
+	})
 }
 
 func TestGapCheckpointNilDB(t *testing.T) {
