@@ -229,6 +229,39 @@ func TestJoinRunTool_CallerCancelLeavesRunJoinable(t *testing.T) {
 	}
 }
 
+// TestJoinBudgetBoundaries pins review finding F1: an over-cap join request
+// clamps to the 3600 cap instead of silently falling back to the 600 default
+// (the old `eff > 3600 -> eff = 600` reset truncated a deliberately long join
+// to 10 minutes and then canceled a possibly healthy run), and the advertised
+// default never exceeds the enforced cap.
+func TestJoinBudgetBoundaries(t *testing.T) {
+	cases := []struct {
+		name       string
+		cfg        config.SubagentConfig
+		requested  int
+		wantBudget int
+		wantShown  string
+	}{
+		{name: "no config no request falls back to 600", cfg: config.SubagentConfig{}, requested: 0, wantBudget: 0, wantShown: "600"},
+		{name: "config default honored", cfg: config.SubagentConfig{DefaultTimeout: 120}, requested: 0, wantBudget: 120, wantShown: "120"},
+		{name: "request overrides config", cfg: config.SubagentConfig{DefaultTimeout: 120}, requested: 900, wantBudget: 900, wantShown: "120"},
+		{name: "cap boundary honored", cfg: config.SubagentConfig{}, requested: 3600, wantBudget: 3600, wantShown: "600"},
+		{name: "over-cap request clamps to cap not default", cfg: config.SubagentConfig{}, requested: 7200, wantBudget: 3600, wantShown: "600"},
+		{name: "over-cap config default clamps to cap", cfg: config.SubagentConfig{DefaultTimeout: 7200}, requested: 0, wantBudget: 3600, wantShown: "3600"},
+		{name: "config default at cap advertised as cap", cfg: config.SubagentConfig{DefaultTimeout: 3600}, requested: 0, wantBudget: 3600, wantShown: "3600"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := joinBudget(tc.cfg, tc.requested); got != tc.wantBudget {
+				t.Errorf("joinBudget(%+v, %d) = %d, want %d", tc.cfg, tc.requested, got, tc.wantBudget)
+			}
+			if got := joinDefaultSeconds(tc.cfg); got != tc.wantShown {
+				t.Errorf("joinDefaultSeconds(%+v) = %q, want %q", tc.cfg, got, tc.wantShown)
+			}
+		})
+	}
+}
+
 // canceledCount accessor keeps the mutex discipline local to the stub.
 func (w *wedgedCoordinator) canceledCount() int {
 	w.mu.Lock()

@@ -214,12 +214,32 @@ func (t *joinRunTool) Parameters() map[string]any {
 }
 
 // joinDefaultSeconds reports the model-visible default join budget:
-// RequestedTimeoutSec floor semantics applied to DefaultTimeout (0 -> 600).
+// the effective timeout joinTimeout would use when no timeout_seconds is
+// passed (0 -> 600), clamped to the same 3600 cap so the advertised
+// default never exceeds the enforced cap.
 func joinDefaultSeconds(cfg config.SubagentConfig) string {
-	if cfg.DefaultTimeout > 0 && cfg.DefaultTimeout < 3600 {
-		return fmt.Sprint(cfg.DefaultTimeout)
+	if eff := joinBudget(cfg, 0); eff > 0 {
+		return fmt.Sprint(eff)
 	}
 	return "600"
+}
+
+// joinBudget resolves the effective join seconds: config default, then the
+// caller's request, hard-capped at 3600. An over-cap request clamps to the
+// cap - it must never fall back to the 600 default (which would silently
+// truncate a deliberately long join and then cancel a healthy run).
+func joinBudget(cfg config.SubagentConfig, requested int) int {
+	eff := 0
+	if cfg.DefaultTimeout > 0 {
+		eff = cfg.DefaultTimeout
+	}
+	if requested > 0 {
+		eff = requested
+	}
+	if eff > 3600 {
+		eff = 3600
+	}
+	return eff
 }
 
 // joinTimeout bounds one join call (BUG-D fix): coordinator.Join blocks
@@ -230,18 +250,9 @@ func joinDefaultSeconds(cfg config.SubagentConfig) string {
 // propagate graceful cancellation through the same path cancel_run uses so
 // the wedged run finalizes instead of leaking.
 func joinTimeout(ctx context.Context, cfg config.SubagentConfig, requested int) (context.Context, context.CancelFunc) {
-	eff := 0
-	if cfg.DefaultTimeout > 0 {
-		eff = cfg.DefaultTimeout
-	}
-	if requested > 0 {
-		eff = requested
-	}
-	if eff <= 0 || eff > 3600 {
+	eff := joinBudget(cfg, requested)
+	if eff <= 0 {
 		eff = 600
-	}
-	if eff > 3600 {
-		eff = 3600
 	}
 	return context.WithTimeout(ctx, time.Duration(eff)*time.Second)
 }
