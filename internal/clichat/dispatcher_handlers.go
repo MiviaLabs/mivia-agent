@@ -32,6 +32,7 @@ func registerOneShotHandlers(d *runtime.Dispatcher, comp provider.Completer, mod
 		// Same whole-run budget as the multi-step surfaces: a oneshot or
 		// delegate call must end by the knob even when the provider trickles.
 		TotalTimeout: totalTaskTimeout(cfg.DefaultTotalTimeoutSec),
+		WireStream:   cfg.WireStreamResolved(),
 	}
 	if err := d.Register(runtime.Subagent, cliorchestrate.HandlerDelegate, handler); err != nil {
 		return fmt.Errorf("register delegate handler: %w", err)
@@ -77,6 +78,7 @@ func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp p
 		SchemaRetryMax:            cfg.SchemaRetryMax,
 		MaxContextTokensFunc:      budget,
 		RequestTimeout:            requestTO,
+		WireStreamTransport:       cfg.WireStreamResolved(),
 		SteerWatchdog:             time.Duration(cfg.Messaging.SteerWatchdogSecondsResolved()) * time.Second,
 		ContextPreparationManager: preparation,
 		ContextPreparationInput:   preparationInput,
@@ -159,6 +161,7 @@ func newSkillMultiStepHandler(deps skillHandlerDeps, cfg config.SubagentConfig, 
 		RemainderSpool:            deps.spool,
 		OutputSchema:              skill.OutputSchema,
 		SchemaRetryMax:            cfg.SchemaRetryMax,
+		WireStreamTransport:       cfg.WireStreamResolved(),
 		ContextPreparationManager: deps.preparation,
 		ContextPreparationInput:   deps.preparationInput,
 		OnEvent:                   OnEventForMultiStep(emitSubagentProgress),

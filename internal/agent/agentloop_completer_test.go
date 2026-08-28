@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -262,5 +263,82 @@ func TestAgentLoopCompleterChatStreamEmitsError(t *testing.T) {
 	}
 	if !errors.Is(got[0].Err, boom) {
 		t.Fatalf("chunk[0].Err = %v, want wraps %v", got[0].Err, boom)
+	}
+}
+
+// captureRequestCompleter records the last request each method received, so
+// a test can assert the exact shape the wrapper handed the provider.
+type captureRequestCompleter struct {
+	chatTurnReq   provider.Request
+	chatStreamReq provider.Request
+	chatTurnOut   *provider.Response
+}
+
+func (f *captureRequestCompleter) Name() string { return "capture" }
+
+func (f *captureRequestCompleter) Chat(_ context.Context, req provider.Request) (string, error) {
+	return "", nil
+}
+
+func (f *captureRequestCompleter) ChatStream(_ context.Context, req provider.Request, _ io.Writer) (string, error) {
+	f.chatStreamReq = req
+	return "", nil
+}
+
+func (f *captureRequestCompleter) ChatTurn(_ context.Context, req provider.Request) (*provider.Response, error) {
+	f.chatTurnReq = req
+	return f.chatTurnOut, nil
+}
+
+// TestMergeTurnDefaultsWireStreamTransport locks the flag's plumbing: the
+// wrapper stamps StreamTransport on every still-non-streaming converted
+// request, and a live streaming shape (StreamingWriter) wins over it.
+func TestMergeTurnDefaultsWireStreamTransport(t *testing.T) {
+	// A non-streaming SDK request must come out carrying StreamTransport.
+	f := &captureRequestCompleter{chatTurnOut: &provider.Response{FinishReason: "stop"}}
+	w, err := newAgentLoopCompleterWithDefaults(f, turnRequestDefaults{streamTransport: true}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("newAgentLoopCompleterWithDefaults: %v", err)
+	}
+	if _, err := w.Chat(context.Background(), sdkshape.Request{}); err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if !f.chatTurnReq.StreamTransport {
+		t.Fatal("converted non-streaming request lost StreamTransport")
+	}
+	if f.chatTurnReq.Stream || f.chatTurnReq.StreamWriter != nil {
+		t.Fatalf("non-streaming request turned streaming: %+v", f.chatTurnReq)
+	}
+
+	// Without the default nothing changes: callers that never set
+	// WireStreamTransport see byte-identical requests.
+	fNone := &captureRequestCompleter{chatTurnOut: &provider.Response{FinishReason: "stop"}}
+	wNone, err := newAgentLoopCompleter(fNone)
+	if err != nil {
+		t.Fatalf("newAgentLoopCompleter: %v", err)
+	}
+	if _, err := wNone.Chat(context.Background(), sdkshape.Request{}); err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if fNone.chatTurnReq.StreamTransport {
+		t.Fatal("StreamTransport set without the default")
+	}
+
+	// A live streaming turn wins: StreamingWriter turns Stream on and the
+	// wire-stream transport must not ride along.
+	fStream := &captureRequestCompleter{chatTurnOut: &provider.Response{FinishReason: "stop"}}
+	wStream, err := newAgentLoopCompleterWithDefaults(fStream, turnRequestDefaults{streamTransport: true}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("newAgentLoopCompleterWithDefaults: %v", err)
+	}
+	var sink bytes.Buffer
+	if _, err := wStream.Chat(context.Background(), sdkshape.Request{StreamingWriter: &sink}); err != nil {
+		t.Fatalf("Chat with StreamingWriter: %v", err)
+	}
+	if !fStream.chatTurnReq.Stream || fStream.chatTurnReq.StreamWriter == nil {
+		t.Fatalf("streaming shape lost: %+v", fStream.chatTurnReq)
+	}
+	if fStream.chatTurnReq.StreamTransport {
+		t.Fatal("StreamTransport set on a live streaming turn")
 	}
 }

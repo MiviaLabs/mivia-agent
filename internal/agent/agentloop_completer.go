@@ -67,6 +67,11 @@ type turnRequestDefaults struct {
 	requestTimeout        time.Duration
 	disableProviderReplay bool
 	sessionID             string
+	// streamTransport wires the provider's wire-stream transport (SSE on the
+	// wire, non-stream contract on the return path) into every non-streaming
+	// turn. mergeTurnDefaults applies it only when the request is still
+	// non-streaming, so a live streaming turn always wins.
+	streamTransport bool
 }
 
 // Compile-time assertion: the wrapper satisfies the SDK's
@@ -191,13 +196,16 @@ func (a *agentLoopCompleter) ChatStream(ctx context.Context, req sdkshape.Reques
 // applyStreaming turns the SDK request's StreamingWriter into the CLI
 // request's live-stream plumbing: Stream on (the legacy loop streams
 // whenever a FinalWriter is attached) and StreamWriter as the delta
-// sink. A nil StreamingWriter leaves the CLI request unchanged.
+// sink. A nil StreamingWriter leaves the CLI request unchanged. A live
+// streaming turn never rides the wire-stream transport, so an explicit
+// streaming shape clears the flag mergeTurnDefaults may have set.
 func applyStreaming(cliReq provider.Request, req sdkshape.Request) provider.Request {
 	if req.StreamingWriter == nil {
 		return cliReq
 	}
 	cliReq.Stream = true
 	cliReq.StreamWriter = req.StreamingWriter
+	cliReq.StreamTransport = false
 	return cliReq
 }
 
@@ -290,6 +298,13 @@ func mergeTurnDefaults(req provider.Request, d turnRequestDefaults) provider.Req
 	req.DisableProviderReplay = req.DisableProviderReplay || d.disableProviderReplay
 	if req.SessionID == "" {
 		req.SessionID = d.sessionID
+	}
+	// Only a still-non-streaming request takes the wire-stream transport.
+	// applyStreaming runs after this merge on the TUI path and turns Stream
+	// back on, and ChatTurn dispatches Stream before StreamTransport, so a
+	// live streaming turn keeps its writer and its wire shape.
+	if d.streamTransport && !req.Stream && req.StreamWriter == nil {
+		req.StreamTransport = true
 	}
 	return req
 }

@@ -46,6 +46,11 @@ type OneShotHandler struct {
 	// default_total_timeout_seconds budget set it via totalTaskTimeout-style
 	// resolution; zero leaves the per-task timeout as the only bound.
 	TotalTimeout time.Duration
+	// WireStream opts this one-shot call into the provider's wire-stream
+	// transport: stream:true on the wire, the plain non-stream contract on
+	// the return path (the full answer still comes back as one string). Set
+	// from [subagents] wire_stream at the construction site.
+	WireStream bool
 }
 
 // dial is the reasoning setting this invocation sends.
@@ -100,6 +105,7 @@ func (h *OneShotHandler) Invoke(ctx context.Context, req runtime.Request) (json.
 		ReasoningLevel:   dial.Level,
 		ReasoningDialect: dial.Dialect,
 		SessionID:        req.SessionID,
+		StreamTransport:  h.WireStream,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("subagent %q: %w", req.Name, err)

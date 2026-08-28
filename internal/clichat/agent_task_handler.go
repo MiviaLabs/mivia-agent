@@ -290,6 +290,8 @@ func (h *agentTaskHandler) newMultiStepHandler(binding agentBinding, registry *t
 		RemainderSpool:         cliagents.RemainderSpoolFromRegistryVar(registry),
 		OutputSchema:           outSchema, SchemaRetryMax: h.opts.Config.SchemaRetryMax,
 		RequestTimeout: requestTimeout(h.opts.Config.DefaultRequestTimeoutSec),
+		// Same [subagents] wire_stream knob as the other handler surfaces.
+		WireStreamTransport: h.opts.Config.WireStreamResolved(),
 		// Total budget from default_total_timeout_seconds: the incident gap
 		// was exactly this construction running with no TotalTimeout, so a
 		// trickling provider pinned the run past every idle watchdog.

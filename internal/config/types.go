@@ -134,6 +134,13 @@ func (c ContextSummaryConfig) SummaryEnabled() bool {
 	return c.Enabled == nil || *c.Enabled
 }
 
+// WireStreamResolved reports the resolved wire-stream switch: absent means
+// on. Read this rather than the pointer so the opt-out default lives in one
+// place.
+func (c SubagentConfig) WireStreamResolved() bool {
+	return c.WireStream == nil || *c.WireStream
+}
+
 // IntegrationsConfig holds API keys and config for third-party services.
 type IntegrationsConfig struct {
 	Tavily TavilyConfig `toml:"tavily"`
@@ -246,10 +253,18 @@ type SubagentConfig struct {
 	// explicit operator opt-out of the last-resort termination guarantee. A
 	// positive value is the budget itself; a tighter per-task timeout from
 	// the caller still wins.
-	DefaultTotalTimeoutSec int    `toml:"default_total_timeout_seconds"`
-	DefaultBudget          int    `toml:"default_budget"`
-	SystemPrompt           string `toml:"system_prompt"`
-	NestedSteps            int    `toml:"nested_steps"`
+	DefaultTotalTimeoutSec int `toml:"default_total_timeout_seconds"`
+	// WireStream opts nested subagent calls into the wire-stream transport:
+	// the request goes to the provider with stream:true while the call keeps
+	// its non-stream contract - the full answer is assembled before it comes
+	// back. Nil means unset, which resolves to true - the pointer exists so
+	// an explicit `wire_stream = false` is distinguishable from an absent
+	// key, which a plain bool cannot express. False opts out and keeps every
+	// nested call on the plain non-stream endpoint.
+	WireStream    *bool  `toml:"wire_stream"`
+	DefaultBudget int    `toml:"default_budget"`
+	SystemPrompt  string `toml:"system_prompt"`
+	NestedSteps   int    `toml:"nested_steps"`
 
 	// StoreBackend selects the ledger storage backend: "memory" (default) or "sqlite".
 	StoreBackend string `toml:"store_backend"`

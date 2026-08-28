@@ -1,10 +1,7 @@
 package provider
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -83,6 +80,13 @@ type OpenAICompat struct {
 	// Default false: non-adopting providers never see the field, so request
 	// bodies stay byte-identical. Set once at construction and never mutated.
 	sendSessionUserKey bool
+	// streamHostile remembers a provider that cannot answer a stream request:
+	// it either rejected the stream shape with a JSON rejection status, or
+	// stalled a stream attempt without ever sending one data line. Once true,
+	// the stream-transport path goes straight to the non-stream request for
+	// the process lifetime of the client. atomic.Bool: turns run on many
+	// goroutines sharing one client.
+	streamHostile atomic.Bool
 }
 
 // CompatOptions configures an OpenAI-compatible client.
@@ -334,6 +338,9 @@ func (c *OpenAICompat) ChatTurn(ctx context.Context, req Request) (*Response, er
 	if req.Stream {
 		return c.chatTurnStream(ctx, req)
 	}
+	if req.StreamTransport && req.StreamWriter == nil {
+		return c.chatTurnStreamTransport(ctx, req)
+	}
 	callCtx := ctx
 	cancel := func() {}
 	if req.Timeout > 0 {
@@ -405,85 +412,6 @@ func (c *OpenAICompat) ChatStream(ctx context.Context, req Request, w io.Writer)
 	defer resp.Body.Close()
 
 	return c.readStream(callCtx, req, c.wrapWithIdleWatchdog(resp.Body), w)
-}
-
-func (c *OpenAICompat) readStream(ctx context.Context, req Request, body io.Reader, w io.Writer) (string, error) {
-	var full strings.Builder
-	received := false
-	sc := bufio.NewScanner(body)
-	buf := make([]byte, 0, 64*1024)
-	sc.Buffer(buf, 1024*1024)
-
-	// The cancel check runs before the scan so a line the scanner accepted
-	// still reaches the writer if the context fires while it is processed.
-	for {
-		select {
-		case <-ctx.Done():
-			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				return full.String(), fmt.Errorf("%s: stream read: %w (request deadline %s)", c.name, markTransientReadDeadline(ctx, req.Timeout, ctx.Err()), deadlineLabel(req.Timeout))
-			}
-			return full.String(), ctx.Err()
-		default:
-		}
-		if !sc.Scan() {
-			break
-		}
-		line := sc.Text()
-		if line == "" || !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if data == "[DONE]" {
-			break
-		}
-		if out, err, replayed := c.handleStreamError(ctx, req, w, data, full.String(), full.Len() > 0 || received); replayed || err != nil {
-			return out, err
-		}
-		var chunk chatResponseBody
-		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-			continue
-		}
-		if len(chunk.Choices) == 0 {
-			// A usage-only chunk, or one carrying top-level web_search, is a
-			// completion signal. Do not replay the turn.
-			if chunk.Usage != nil || len(chunk.WebSearch) > 0 {
-				received = true
-			}
-			continue
-		}
-		delta := chunk.Choices[0].Delta.Content
-		streamDelta := chunk.Choices[0].Delta
-		// Any delivered wire shape (content/reasoning/finish/usage) must not
-		// re-bill. Top-level web_search is also a delivered shape: readStream
-		// cannot surface the entries (it returns content only), but the signal
-		// must count as received so a web_search-only turn is not re-asked
-		// non-streamed (mirrors readTurnStream's len(webSearch)>0 payload gate).
-		if deltaCountsAsReceived(delta, streamDelta.ReasoningContent, streamDelta.Reasoning, chunk.Choices[0].FinishReason, streamDelta.ReasoningDetails, chunk.Usage) || len(chunk.WebSearch) > 0 {
-			received = true
-		}
-		if delta == "" {
-			continue
-		}
-		full.WriteString(delta)
-		if w != nil {
-			if _, err := io.WriteString(w, delta); err != nil {
-				return full.String(), err
-			}
-		}
-	}
-	if err := sc.Err(); err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			return full.String(), fmt.Errorf("%s: stream read: %w (request deadline %s)", c.name, markTransientReadDeadline(ctx, req.Timeout, err), deadlineLabel(req.Timeout))
-		}
-		return full.String(), fmt.Errorf("%s: stream read: %w", c.name, err)
-	}
-	if full.Len() == 0 && !received {
-		if req.DisableProviderReplay {
-			return "", fmt.Errorf("%s: stream delivered no response", c.name)
-		}
-		return c.retryWithoutStreaming(ctx, req, w)
-	}
-	return full.String(), nil
 }
 
 // retryWithoutStreaming re-asks for a turn the stream delivered nothing for.

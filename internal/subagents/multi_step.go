@@ -67,6 +67,13 @@ type MultiStepHandler struct {
 	WorkLimits runtime.WorkLimits
 	// DisableProviderReplay prevents provider-internal replays for this work.
 	DisableProviderReplay bool
+	// WireStreamTransport opts every nested turn of this handler into the
+	// provider's wire-stream transport: stream:true on the wire, the
+	// non-stream contract on the return path. The content-idle watchdog in
+	// the provider layer then bounds each attempt, so a keepalive trickle
+	// cannot hold a nested turn open past a deterministic bound. Set from
+	// [subagents] wire_stream at every construction site.
+	WireStreamTransport bool
 	// ToolTimeout is the per-tool-call timeout.
 	ToolTimeout time.Duration
 	// ToolRunTimeout is the [tools] tool_run_timeout_seconds knob: the SDK
@@ -284,6 +291,7 @@ func (h *MultiStepHandler) loopOptions(scoped *scopedLoop, steps int, maxTokens 
 		Budget:                 req.Budget,
 		WorkLimits:             runtime.LowestPositiveWorkLimits(h.WorkLimits, req.WorkLimits),
 		DisableProviderReplay:  h.DisableProviderReplay || req.DisableProviderReplay,
+		WireStreamTransport:    h.WireStreamTransport,
 	}
 	if h.ContextPreparationManager != nil {
 		input := h.ContextPreparationInput

@@ -154,6 +154,7 @@ func newSDKTurnCompleter(l *Loop, opts Options, turn *sdkTurnState, clampedMaxTo
 		requestTimeout:        opts.RequestTimeout,
 		disableProviderReplay: opts.DisableProviderReplay,
 		sessionID:             opts.SessionID,
+		streamTransport:       opts.WireStreamTransport,
 	}, func(finishReason string) { l.LastFinishReason = finishReason }, func() { turn.steps.Add(1) }, onUsage)
 	if err != nil {
 		return nil, err
