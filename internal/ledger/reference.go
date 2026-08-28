@@ -17,6 +17,7 @@ const (
 	RefKindError     = sdkadapter.KindError
 	RefKindMessage   = sdkadapter.KindMessage
 	RefKindToolCalls = sdkadapter.KindToolCalls
+	RefKindNote      = sdkadapter.KindNote
 )
 
 // ErrMalformedReference reports a reference that is not in canonical form.

@@ -36,8 +36,10 @@ func (h *activatedSkillHandler) Invoke(ctx context.Context, req runtime.Request)
 	}
 	// The resource-skill surface is tool-bearing too (post_message included via
 	// ScopeSpawned + adoptSessionTools), so the final prompt must carry the
-	// shared child-side messaging protocol block exactly once.
-	run.SystemPrompt = withMessagingProtocol(run.SystemPrompt)
+	// shared child-side messaging protocol block exactly once, and the
+	// full report-budget block after the prompt replacement, mirroring
+	// withMessagingProtocol there.
+	run.SystemPrompt = withReportBudget(withMessagingProtocol(run.SystemPrompt), false)
 	return run.Invoke(ctx, req)
 }
 

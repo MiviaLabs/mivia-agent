@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -127,6 +128,45 @@ func TestKindConstantsMatchVocabulary(t *testing.T) {
 	// content-addressed reference the bridge mints and recognises.
 	if KindToolCalls != "tool_calls" {
 		t.Fatalf("KindToolCalls = %q, want %q", KindToolCalls, "tool_calls")
+	}
+	// KindNote tags model-authored content stored by the store_note tool,
+	// the fifth kind of content-addressed reference the bridge mints and
+	// recognises.
+	if KindNote != "note" {
+		t.Fatalf("KindNote = %q, want %q", KindNote, "note")
+	}
+}
+
+// TestMintParseNoteRoundTrip mints a note reference and parses it back.
+// store_note mints this kind and ledger_read resolves it, so a silent
+// regression in either direction would break every stored note.
+func TestMintParseNoteRoundTrip(t *testing.T) {
+	data := []byte("model-authored note")
+	ref := Mint(KindNote, data)
+	if ref == "" {
+		t.Fatal("Mint(note, data) = \"\"")
+	}
+	want := "ref:note:" + fmt.Sprintf("%x", sha256.Sum256(data))
+	if ref != want {
+		t.Fatalf("Mint(note, data) = %q, want %q", ref, want)
+	}
+	kind, digest, err := Parse(ref)
+	if err != nil {
+		t.Fatalf("Parse(%q): %v", ref, err)
+	}
+	if kind != KindNote {
+		t.Fatalf("Parse kind = %q, want %q", kind, KindNote)
+	}
+	if digest != want[len("ref:note:"):] {
+		t.Fatalf("Parse digest mismatch: %q", digest)
+	}
+	// The malformed cases already covered by TestParseRejectsUnknown stay
+	// malformed; a new kind must not loosen the parser.
+	if _, _, err := Parse("ref:note:zz"); err == nil {
+		t.Fatal("Parse(ref:note:zz) must error")
+	}
+	if Mint(KindNote, nil) != "" {
+		t.Fatal("Mint(note, nil) must be empty (INV-AG-10)")
 	}
 }
 

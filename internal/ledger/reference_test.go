@@ -35,6 +35,35 @@ func TestLedgerReferenceKindsMatchCanonicalKinds(t *testing.T) {
 	if RefKindToolCalls != sdkadapter.KindToolCalls {
 		t.Fatalf("RefKindToolCalls = %q, want %q", RefKindToolCalls, sdkadapter.KindToolCalls)
 	}
+	if RefKindNote != sdkadapter.KindNote {
+		t.Fatalf("RefKindNote = %q, want %q", RefKindNote, sdkadapter.KindNote)
+	}
+	if RefKindNote != "note" {
+		t.Fatalf("RefKindNote = %q, want %q", RefKindNote, "note")
+	}
+}
+
+// TestLedgerReferenceNoteKindRoundTrips mints and parses a note reference.
+// store_note mints this kind, so a parse failure would make every stored
+// note unreadable through ledger_read.
+func TestLedgerReferenceNoteKindRoundTrips(t *testing.T) {
+	ref := Reference(RefKindNote, []byte("model-authored note"))
+	if ref == "" {
+		t.Fatal("Reference(RefKindNote, ...) = \"\"")
+	}
+	if !strings.HasPrefix(ref, "ref:note:") {
+		t.Fatalf("ref %q does not carry the ref:note: prefix", ref)
+	}
+	kind, digest, err := ParseReference(ref)
+	if err != nil {
+		t.Fatalf("ParseReference(%q) error = %v, want nil", ref, err)
+	}
+	if kind != RefKindNote {
+		t.Fatalf("kind = %q, want %q", kind, RefKindNote)
+	}
+	if len(digest) != 64 {
+		t.Fatalf("digest %q has length %d, want 64", digest, len(digest))
+	}
 }
 
 // ErrMalformedReference must be the same sentinel the minter returns,

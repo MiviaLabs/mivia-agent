@@ -182,7 +182,7 @@ func (h *agentTaskHandler) prepareInvokeSurface(req runtime.Request) (string, st
 	// prompt's end - is moot now that the block never enters the prompt).
 	memoryContext := chat.MemoryContextContent(cliagents.CoreMemoryBlockForOpts(h.opts))
 	if req.Skill == "" {
-		return withMessagingProtocol(systemPrompt) + schemaBlock, memoryContext, registry, noop, nil
+		return withReportBudget(withMessagingProtocol(systemPrompt), false) + schemaBlock, memoryContext, registry, noop, nil
 	}
 	scoped, prompt, closeActivation, err := h.activateSkill(req.Skill, registry)
 	if err != nil {
@@ -192,7 +192,7 @@ func (h *agentTaskHandler) prepareInvokeSurface(req runtime.Request) (string, st
 	// The skill's instructions replace the agent prompt, so the protocol block
 	// is appended to the skill-activated prompt instead of the resolved one.
 	// This keeps the child-side messaging contract in-context exactly once.
-	return withMessagingProtocol(prompt) + schemaBlock, memoryContext, scoped, closeActivation, nil
+	return withReportBudget(withMessagingProtocol(prompt), false) + schemaBlock, memoryContext, scoped, closeActivation, nil
 }
 
 // resolveOutputSchema returns the output schema that will actually be enforced
@@ -246,6 +246,19 @@ func messagingDisallowed(names []string) map[string]struct{} {
 // prompt reaches the loop.
 func withMessagingProtocol(prompt string) string {
 	return prompt + "\n\n" + subagents.MessagingProtocolPrompt
+}
+
+// withReportBudget appends the harness-injected final-report budget block to a
+// subagent system prompt. allowOverflow marks a surface with no store_note
+// tool (oneshot/delegate): it cannot park overflow detail in the ledger, so it
+// gets the budget variant without the store_note instruction. Tool-bearing
+// surfaces pass false and carry the full variant. Callers must place the block
+// before the output-schema appendix, so the schema contract stays last.
+func withReportBudget(prompt string, allowOverflow bool) string {
+	if allowOverflow {
+		return prompt + "\n\n" + subagents.ReportBudgetPromptNoTool
+	}
+	return prompt + "\n\n" + subagents.ReportBudgetPrompt
 }
 
 func (h *agentTaskHandler) newMultiStepHandler(binding agentBinding, registry *tools.Registry, systemPrompt, memoryContext string, req runtime.Request) *subagents.MultiStepHandler {

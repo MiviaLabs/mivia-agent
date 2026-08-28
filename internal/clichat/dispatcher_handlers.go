@@ -24,6 +24,9 @@ func registerOneShotHandlers(d *runtime.Dispatcher, comp provider.Completer, mod
 	if sysPrompt == "" {
 		sysPrompt = subagents.DefaultSubagentSystemPrompt
 	}
+	// Oneshot/delegate carry no store_note tool, so they get the budget
+	// variant without the store_note escape hatch (allowOverflow).
+	sysPrompt = withReportBudget(sysPrompt, true)
 	handler := &subagents.OneShotHandler{
 		Completer: comp, Model: model, SystemPrompt: sysPrompt,
 		Reasoning: dial.static, ReasoningFunc: dial.live,
@@ -52,6 +55,8 @@ func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp p
 	// the child-side messaging protocol block too. Oneshot/delegate are
 	// deliberately excluded: they have no post_message tool to teach.
 	multiSysPrompt = withMessagingProtocol(multiSysPrompt)
+	// Tool-bearing surface, so the full report-budget variant applies.
+	multiSysPrompt = withReportBudget(multiSysPrompt, false)
 	// When DefaultTimeout is 0, leave ToolTimeout 0 (handler defaults per-tool
 	// to the long-command ceiling). TotalTimeout stays 0 so req.Timeout from
 	// the pool is the bound, including explicit per-task overrides. The
@@ -136,6 +141,8 @@ func newSkillMultiStepHandler(deps skillHandlerDeps, cfg config.SubagentConfig, 
 	// variant replaces this prompt in activatedSkillHandler.Invoke and
 	// re-applies the block there.
 	sysPrompt = withMessagingProtocol(sysPrompt)
+	// Tool-bearing surface: full report-budget variant.
+	sysPrompt = withReportBudget(sysPrompt, false)
 	h := &subagents.MultiStepHandler{
 		Completer:      deps.comp,
 		FullRegistry:   deps.reg,
