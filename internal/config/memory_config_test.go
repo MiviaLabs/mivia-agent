@@ -49,6 +49,25 @@ func TestResolveMemoryConfigExplicit(t *testing.T) {
 	}
 }
 
+// TestResolveMemoryConfigExplicitBeatsProjectTier pins the precedence at the
+// tier boundary: with a real project config present (projectFound=true) an
+// explicit store_path still wins over the workspace default. The explicit
+// test above runs with projectFound=false, so a precedence flip toward the
+// project tier would have passed every existing test. Review finding 4c.
+func TestResolveMemoryConfigExplicitBeatsProjectTier(t *testing.T) {
+	root := t.TempDir()
+	mc, err := resolveMemoryConfig(File{Memory: MemoryConfig{StorePath: ".mivia/memory.db"}}, "", root, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mc.StorePath != ".mivia/memory.db" {
+		t.Errorf("StorePath = %q, want the explicit value to win over the project tier", mc.StorePath)
+	}
+	if mc.StorePath == workspace.MemoryDBPath(root) {
+		t.Errorf("StorePath = %q; the project-tier default must not overwrite an explicit store_path", mc.StorePath)
+	}
+}
+
 func TestResolveMemoryConfigDisabledSkipsValidation(t *testing.T) {
 	disabled := false
 	mc, err := resolveMemoryConfig(File{Memory: MemoryConfig{Enabled: &disabled, StoreBackend: "bogus"}}, "", "", false)

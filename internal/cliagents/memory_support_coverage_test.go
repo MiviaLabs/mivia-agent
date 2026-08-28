@@ -192,6 +192,61 @@ func TestSameFilePath(t *testing.T) {
 	}
 }
 
+// TestLoadAdHocWorkspaceStoreHardensThroughOpen binds the whole chain the
+// hardening depends on: config.Load on a directory with no project config
+// fills StorePath with the temp-tier default, and the SAME as-loaded config
+// handed to OpenMemoryStoreWithReadOnly opens a hardened store. The
+// half-tests on each side (the resolveMemoryConfig tier tests in
+// internal/config, and the hand-built hardening tests below) would both
+// keep passing if the two sides ever disagreed about the key or the root -
+// the exact silent un-hardening class the Clean fix (d71dde0f) closed for
+// operator spellings. This pin fails when they drift. Review finding 4a.
+func TestLoadAdHocWorkspaceStoreHardensThroughOpen(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no chmod permission bits; file modes always read back as 0666/0777")
+	}
+	root := t.TempDir()
+	// Explicit ConfigPath keeps the real user config (and any org_id in it)
+	// out of the load; the minimal provider block is what Load's validation
+	// requires, and it names no [memory] section, so the three-tier fill
+	// runs with defaults.
+	cfgPath := filepath.Join(root, "mivia.toml")
+	minimal := "[provider]\nname = \"deepseek\"\n\n[providers.deepseek]\nmodels = [{ name = \"deepseek-v4-flash\", context_window_tokens = 128000 }]\n"
+	if err := os.WriteFile(cfgPath, []byte(minimal), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := config.Load(config.LoadOptions{ConfigPath: cfgPath, WorkspaceRoot: root, AllowMissingConfig: true})
+	if err != nil {
+		t.Fatalf("Load = %v, want nil", err)
+	}
+	if want := config.TempStorePath(root, "memory"); res.Memory.StorePath != want {
+		t.Fatalf("Load filled StorePath = %q, want the temp-tier default %q", res.Memory.StorePath, want)
+	}
+	if res.Memory.OrgID != "" {
+		t.Fatalf("org_id = %q from a config that names none; the user config leaked into the load", res.Memory.OrgID)
+	}
+	store, err := OpenMemoryStoreWithReadOnly(root, res.Memory, false)
+	if err != nil {
+		t.Fatalf("OpenMemoryStoreWithReadOnly = %v, want nil", err)
+	}
+	defer store.Close()
+	st, err := os.Stat(res.Memory.StorePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := st.Mode().Perm(); perm != 0o600 {
+		t.Errorf("as-loaded temp store mode = %o, want 600", perm)
+	}
+	dirSt, err := os.Stat(filepath.Dir(res.Memory.StorePath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := dirSt.Mode().Perm(); perm != 0o700 {
+		t.Errorf("as-loaded temp store dir mode = %o, want 700", perm)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(filepath.Dir(config.TempStorePath(root, "memory"))) })
+}
+
 func TestAgentSessionStateDisplayHelpers(t *testing.T) {
 	// DisplaySource and CurrentAgentName on nil and on a selected
 	// agent: nil-safe reads that the TUI dialog renders.

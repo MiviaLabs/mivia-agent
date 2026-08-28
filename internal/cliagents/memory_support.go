@@ -65,9 +65,14 @@ func OpenMemoryStoreWithReadOnly(root string, mc config.MemoryConfig, readOnly b
 // a parameter, not runtime.GOOS, so the Windows branch stays testable from
 // every OS. Normalization is done by hand because filepath.Clean is
 // host-dependent (it treats backslashes as plain bytes on Unix), which a
-// GOOS-parameterized comparison cannot lean on. Accepted limit: a literal
-// backslash inside a Unix filename reads as a separator here - irrelevant
-// for the gate, whose other side is our hash-named TempStorePath. This is
+// GOOS-parameterized comparison cannot lean on. Accepted limits, each
+// benign in direction (a miss only skips the chmod of the file the store is
+// opening anyway, never hardens a wrong file): a literal backslash inside a
+// Unix filename reads as a separator, and a symlink or 8.3 short-name alias
+// of the temp path compares unequal - both require deliberately spelling
+// out our hash-named TempStorePath, which the default-filled path never
+// does. Resolving them needs live-filesystem calls, which would give back
+// the host-dependence this pure seam exists to remove. This is
 // deliberately NOT config.sameFilePath (internal/config/agents_io.go),
 // which resolves symlinks on the live filesystem; this one is pure, so a
 // path that does not exist yet still compares. Empty paths never match.
