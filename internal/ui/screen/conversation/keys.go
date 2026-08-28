@@ -174,11 +174,8 @@ func (s Screen) handleQueueKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bool) 
 		return s, nil, true
 	case "f", "F":
 		idx := s.queueOverlay.Cursor() // BEFORE DeleteSelected: it re-clamps the cursor
-		if idx < 0 {
-			return s, nil, true
-		}
 		sel, ok := s.queueOverlay.DeleteSelected()
-		if !ok {
+		if idx < 0 || !ok {
 			return s, nil, true
 		}
 		s.queue = s.queueOverlay.Items()

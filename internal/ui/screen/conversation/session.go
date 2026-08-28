@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"context"
+	"fmt"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -178,6 +179,10 @@ func (s Screen) handleTurnEndedMsg(msg turnEndedMsg) (app.Screen, tea.Cmd) {
 					return s, s.awaitSessionEvent(msg.sessionID, handle.Events())
 				}
 				st.queue = append([]string{forced}, st.queue...)
+				st.handleTurnEvent(uievent.Event{
+					Kind: uievent.KindError,
+					Body: uievent.ErrorBody{Text: fmt.Sprintf("send failed: %v (message re-queued)", err), Fatal: false},
+				})
 				st.statusline.Notice("send failed; re-queued")
 				return s, nil
 			}

@@ -282,6 +282,110 @@ func TestQueueOverlay_ForceWithEmptyOverlayIsNoOp(t *testing.T) {
 	}
 }
 
+// TestApprovalPrecedence_CtrlEnterDoesNotForceSend pins the precedence
+// rule at the top of handleModalKey: a pending approval swallows
+// ctrl+enter before it ever reaches composerAction's force-send case,
+// even with an active turn and composer text that would otherwise
+// force-push.
+func TestApprovalPrecedence_CtrlEnterDoesNotForceSend(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	handle := &recordingHandle{id: "t1"}
+	s.active = handle
+	s = typeText(t, s, "force this")
+	s.approval.SetRequest(uievent.ToolPendingBody{ToolCallID: "c1", Name: "run_command"})
+
+	next, _ := s.Update(ctrlEnter)
+	got := next.(Screen)
+
+	if got.pendingForce != nil {
+		t.Errorf("expected pendingForce nil, got %v", got.pendingForce)
+	}
+	if handle.cancelCount != 0 {
+		t.Errorf("expected no Cancel call, got %d", handle.cancelCount)
+	}
+	if !got.approval.Active() {
+		t.Error("expected the approval prompt to remain active")
+	}
+	if got.composer.Value() != "force this" {
+		t.Errorf("expected the composer text kept, got %q", got.composer.Value())
+	}
+}
+
+// TestApprovalPrecedence_QueueOverlayForceKeyIsSwallowed pins the same
+// precedence rule from the other modal: with the queue overlay open AND
+// a pending approval, handleApprovalKey (checked first in
+// handleModalKey) swallows "f" before handleQueueKey ever sees it.
+func TestApprovalPrecedence_QueueOverlayForceKeyIsSwallowed(t *testing.T) {
+	s := sized(t, 0)
+	handle := &recordingHandle{id: "t1"}
+	s.active = handle
+	s.queue = []string{"item A", "item B"}
+
+	s, _ = press(t, s, tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModCtrl})
+	if !s.queueOverlay.Active() {
+		t.Fatal("expected queueOverlay active")
+	}
+	s.approval.SetRequest(uievent.ToolPendingBody{ToolCallID: "c1", Name: "run_command"})
+
+	s, _ = press(t, s, key("f"))
+
+	if s.pendingForce != nil {
+		t.Errorf("expected pendingForce nil, got %v", s.pendingForce)
+	}
+	if len(s.queue) != 2 || s.queue[0] != "item A" || s.queue[1] != "item B" {
+		t.Fatalf("expected queue untouched [item A item B], got %v", s.queue)
+	}
+	if handle.cancelCount != 0 {
+		t.Errorf("expected no Cancel call, got %d", handle.cancelCount)
+	}
+	if !s.approval.Active() {
+		t.Error("expected the approval prompt to remain active")
+	}
+}
+
+// TestQueueOverlay_ForceIdleSendFailureRestoresItemAndCursor pins the
+// overlay's idle-force failure path: sendText's failure restores the
+// item at its original index, keeps the cursor on it, leaves the
+// overlay open, and notices "send failed; re-queued" - mirroring the
+// active-turn failure test above but through the idle branch.
+func TestQueueOverlay_ForceIdleSendFailureRestoresItemAndCursor(t *testing.T) {
+	conv := &failingConv{id: "idle"}
+	s := newScreen(t, conv, nil, nil)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
+	s = next.(Screen)
+	s.queue = []string{"A", "B", "C"}
+
+	s, _ = press(t, s, tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModCtrl})
+	if !s.queueOverlay.Active() {
+		t.Fatal("expected queueOverlay active")
+	}
+	s, _ = press(t, s, tea.KeyPressMsg{Code: tea.KeyDown})
+	if s.queueOverlay.Cursor() != 1 {
+		t.Fatalf("precondition: expected cursor at 1, got %d", s.queueOverlay.Cursor())
+	}
+
+	s, _ = press(t, s, key("f"))
+
+	if len(conv.sent) != 1 || conv.sent[0] != "B" {
+		t.Fatalf("expected conv.sent = [B], got %v", conv.sent)
+	}
+	if s.active != nil {
+		t.Errorf("expected no active turn after send failure, got %v", s.active)
+	}
+	if len(s.queue) != 3 || s.queue[0] != "A" || s.queue[1] != "B" || s.queue[2] != "C" {
+		t.Fatalf("expected queue restored to [A B C], got %v", s.queue)
+	}
+	if s.queueOverlay.Cursor() != 1 {
+		t.Errorf("expected cursor restored to 1, got %d", s.queueOverlay.Cursor())
+	}
+	if !s.queueOverlay.Active() {
+		t.Error("expected the overlay to stay open after a failed force")
+	}
+	if !strings.Contains(s.statusline.View(fixedNow()), "send failed; re-queued") {
+		t.Errorf("expected the \"send failed; re-queued\" notice, got %q", s.statusline.View(fixedNow()))
+	}
+}
+
 // TestQueueKeySync_FandUpperF_BothForce pins the table/switch sync: the
 // handleQueueKey raw-string switch case ("f", "F") must match exactly
 // the ContextDialog IDForceSend row's Keys, so the two cannot drift.
@@ -363,5 +467,111 @@ func TestPlainEnterOnActiveTurnStillQueues(t *testing.T) {
 	}
 	if len(got.queue) != 1 || got.queue[0] != "queue me" {
 		t.Fatalf("expected queue = [queue me], got %v", got.queue)
+	}
+}
+
+// TestForceSend_WhitespaceOnlyTextOnActiveTurnIsRejected pins the
+// TrimSpace guard inside forcePush reached from the composerAction
+// force-send case: whitespace-only text is not "empty" (text != "" is
+// true), but forcePush rejects it, so composerAction's own success
+// branch never runs and the composer keeps its (whitespace) text.
+func TestForceSend_WhitespaceOnlyTextOnActiveTurnIsRejected(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	handle := &recordingHandle{id: "t1"}
+	s.active = handle
+	s = typeText(t, s, "   ")
+
+	next, _ := s.Update(ctrlEnter)
+	got := next.(Screen)
+
+	if !strings.Contains(got.statusline.View(fixedNow()), "nothing to interrupt") {
+		t.Errorf("expected the \"nothing to interrupt\" notice, got %q", got.statusline.View(fixedNow()))
+	}
+	if got.pendingForce != nil {
+		t.Errorf("expected pendingForce nil, got %v", got.pendingForce)
+	}
+	if handle.cancelCount != 0 {
+		t.Errorf("expected no Cancel call, got %d", handle.cancelCount)
+	}
+	if got.composer.Value() != "   " {
+		t.Errorf("expected the composer to still hold the whitespace text, got %q", got.composer.Value())
+	}
+}
+
+// TestForceSend_EmptyComposerActiveQueueHeadForcedWithOverlayOpen pins
+// the post-pop SetItems-under-guard branch: with the queue overlay
+// open, an empty-composer force-send pops the queue head, force-pushes
+// it, and resyncs the overlay's own items to match.
+func TestForceSend_EmptyComposerActiveQueueHeadForcedWithOverlayOpen(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	handle := &recordingHandle{id: "t1"}
+	s.active = handle
+	s.queue = []string{"A", "B"}
+
+	s, _ = press(t, s, tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModCtrl})
+	if !s.queueOverlay.Active() {
+		t.Fatal("expected queueOverlay active")
+	}
+
+	// handleQueueKey claims every key while the overlay is Active(), so
+	// ctrl+enter never reaches composerAction's force-send case through
+	// s.Update while the overlay is open. Call composerAction directly to
+	// exercise the exact production lines under the overlay guard.
+	next, _, _ := s.composerAction(keymap.IDForceSend)
+	got := next.(Screen)
+
+	if got.pendingForce == nil || *got.pendingForce != "A" {
+		t.Fatalf("expected pendingForce = %q, got %v", "A", got.pendingForce)
+	}
+	if len(got.queue) != 1 || got.queue[0] != "B" {
+		t.Fatalf("expected queue = [B], got %v", got.queue)
+	}
+	if !got.queueOverlay.Active() {
+		t.Error("expected the queue overlay to remain active")
+	}
+	if items := got.queueOverlay.Items(); len(items) != 1 || items[0] != "B" {
+		t.Fatalf("expected queueOverlay items = [B], got %v", items)
+	}
+}
+
+// TestForceSend_EmptyComposerBlankHeadRestoresWithOverlayOpen pins the
+// restore-SetItems-under-guard branch: when forcePush rejects the
+// popped head (blank text), the head is re-appended to the queue and
+// the still-open overlay's items are resynced to match, with the
+// notice matching forcePush's own rejection message.
+func TestForceSend_EmptyComposerBlankHeadRestoresWithOverlayOpen(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	handle := &recordingHandle{id: "t1"}
+	s.active = handle
+	s.queue = []string{"   ", "B"}
+
+	s, _ = press(t, s, tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModCtrl})
+	if !s.queueOverlay.Active() {
+		t.Fatal("expected queueOverlay active")
+	}
+
+	// See the note in the sibling test above: composerAction is called
+	// directly because handleQueueKey claims every key while the overlay
+	// is open.
+	next, _, _ := s.composerAction(keymap.IDForceSend)
+	got := next.(Screen)
+
+	if len(got.queue) != 2 || got.queue[0] != "   " || got.queue[1] != "B" {
+		t.Fatalf("expected queue restored to [\"   \", B], got %v", got.queue)
+	}
+	if !got.queueOverlay.Active() {
+		t.Error("expected the queue overlay to remain active")
+	}
+	if items := got.queueOverlay.Items(); len(items) != 2 || items[0] != "   " || items[1] != "B" {
+		t.Fatalf("expected queueOverlay items restored to [\"   \", B], got %v", items)
+	}
+	if !strings.Contains(got.statusline.View(fixedNow()), "nothing to interrupt") {
+		t.Errorf("expected the \"nothing to interrupt\" notice, got %q", got.statusline.View(fixedNow()))
+	}
+	if got.pendingForce != nil {
+		t.Errorf("expected pendingForce nil, got %v", got.pendingForce)
+	}
+	if handle.cancelCount != 0 {
+		t.Errorf("expected no Cancel call, got %d", handle.cancelCount)
 	}
 }

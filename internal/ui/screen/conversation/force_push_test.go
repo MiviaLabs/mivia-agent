@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
@@ -63,6 +64,8 @@ func TestForcePush_DisplacesEarlierForceIntoQueueHead(t *testing.T) {
 	// second forcePush before the turn actually ends is a real scenario.
 	s.active = &recordingHandle{id: "t2"}
 
+	s.queueOverlay.Open(s.queue)
+
 	if !s.forcePush("B") {
 		t.Fatal("expected second forcePush to succeed")
 	}
@@ -71,6 +74,12 @@ func TestForcePush_DisplacesEarlierForceIntoQueueHead(t *testing.T) {
 	}
 	if len(s.queue) != 2 || s.queue[0] != "A" || s.queue[1] != "already queued" {
 		t.Fatalf("expected queue = [A, already queued], got %v", s.queue)
+	}
+	if got := s.queueOverlay.Items(); len(got) != 2 || got[0] != "A" || got[1] != "already queued" {
+		t.Fatalf("expected queueOverlay items resynced to [A, already queued], got %v", got)
+	}
+	if !s.queueOverlay.Active() {
+		t.Error("expected the queue overlay to remain active")
 	}
 	// forcePush sets a single combined notice when displacing an earlier
 	// force: "force-pushed" plus a re-queued preview of the displaced text.
@@ -179,6 +188,7 @@ func TestVisibleDrain_SendFailureRequeuesForce(t *testing.T) {
 	forced := "forced fails"
 	s.pendingForce = &forced
 	s.queue = []string{"existing"}
+	s.queueOverlay.Open(s.queue)
 
 	next, _ = s.Update(turnEndedMsg{})
 	got := next.(Screen)
@@ -191,6 +201,12 @@ func TestVisibleDrain_SendFailureRequeuesForce(t *testing.T) {
 	}
 	if len(got.queue) != 2 || got.queue[0] != "forced fails" || got.queue[1] != "existing" {
 		t.Fatalf("expected queue = [forced fails, existing], got %v", got.queue)
+	}
+	if items := got.queueOverlay.Items(); len(items) != 2 || items[0] != "forced fails" || items[1] != "existing" {
+		t.Fatalf("expected queueOverlay items resynced to [forced fails, existing], got %v", items)
+	}
+	if !got.queueOverlay.Active() {
+		t.Error("expected the queue overlay to remain active")
 	}
 	notice := got.statusline.View(fixedNow())
 	if !strings.Contains(notice, "send failed; re-queued") {
@@ -315,6 +331,11 @@ func TestBackgroundDrain_SendFailureRequeuesForce(t *testing.T) {
 	// correct outcome; a second Send would be a double-send bug.
 	if len(failingA.sent) != 1 || failingA.sent[0] != "forced fails in A" {
 		t.Errorf("expected failingConv to receive the forced text exactly once, got %v", failingA.sent)
+	}
+
+	view := ansi.Strip(stA.transcript.View())
+	if !strings.Contains(view, "context deadline exceeded") || !strings.Contains(view, "re-queued") {
+		t.Errorf("expected background send failure surfaced in the session transcript, got:\n%s", view)
 	}
 }
 
