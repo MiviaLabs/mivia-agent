@@ -135,10 +135,15 @@ func (c ContextSummaryConfig) SummaryEnabled() bool {
 }
 
 // WireStreamResolved reports the resolved wire-stream switch: absent means
-// on. Read this rather than the pointer so the opt-out default lives in one
-// place.
+// off. Read this rather than the pointer so the opt-in default lives in one
+// place. Default OFF (not on) until the concurrent-dispatch hang reported
+// against the wire-stream transport (chatTurnStreamTransport,
+// openai_compat_turnstream.go) is root-caused: two independent sessions
+// reported subagent tasks reaching "running" and never completing under a
+// parallel dispatch_tasks batch, and this is the only change in that
+// window touching subagent LLM-call execution rather than display.
 func (c SubagentConfig) WireStreamResolved() bool {
-	return c.WireStream == nil || *c.WireStream
+	return c.WireStream != nil && *c.WireStream
 }
 
 // IntegrationsConfig holds API keys and config for third-party services.
@@ -257,10 +262,11 @@ type SubagentConfig struct {
 	// WireStream opts nested subagent calls into the wire-stream transport:
 	// the request goes to the provider with stream:true while the call keeps
 	// its non-stream contract - the full answer is assembled before it comes
-	// back. Nil means unset, which resolves to true - the pointer exists so
-	// an explicit `wire_stream = false` is distinguishable from an absent
-	// key, which a plain bool cannot express. False opts out and keeps every
-	// nested call on the plain non-stream endpoint.
+	// back. Nil means unset, which resolves to false (opt-in, not default -
+	// see WireStreamResolved for why) - the pointer exists so an explicit
+	// `wire_stream = true` is distinguishable from an absent key, which a
+	// plain bool cannot express. Unset/false keeps every nested call on the
+	// plain non-stream endpoint.
 	WireStream    *bool  `toml:"wire_stream"`
 	DefaultBudget int    `toml:"default_budget"`
 	SystemPrompt  string `toml:"system_prompt"`
