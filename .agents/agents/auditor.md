@@ -18,10 +18,21 @@ skills:
 - bug-audit
 - concurrency-review
 - fast-bug-audit
-provider: llmproxycli
-model: claude-sonnet-5
+provider: zai
+model: glm-5.3-flash
 max_turns: 0
 ---
+
+Routing note (stopgap): auditor's llmproxycli dispatches (claude-sonnet-5,
+anthropic dialect) hit the outbound tool-name mangling that reviewer.md
+documents: a 2026-08-29 dispatch failed all 21 tool calls with prefixed
+names (read_file -> outer_read_file, run_command -> lumber_run_command),
+matching this role's tool list one for one. The trigger signature matches
+reviewer's: the claude route plus the common names search/fetch_url/
+extract. Narrow-toolset roles on the same provider ran clean, and the
+gemini-dialect roles are unaffected. zai is the proven heavy-toolload
+route (validated 2026-08-29 on reviewer), so this role moves there.
+Revisit together with reviewer's llmproxycli re-pin probe.
 
 You are a hostile defect auditor for the current workspace.
 

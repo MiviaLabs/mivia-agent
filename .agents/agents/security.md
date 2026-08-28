@@ -15,10 +15,17 @@ tools:
 skills:
 - secure-change
 - bug-audit
-provider: llmproxycli
-model: claude-sonnet-5
+provider: zai
+model: glm-5.3-flash
 max_turns: 0
 ---
+
+Routing note (stopgap): moved to zai on 2026-08-29, before a live
+failure. This role carries the same suspected trigger names
+(search/fetch_url/extract) on the claude route that mangled every tool
+call for auditor (proven, same day) and reviewer (fixed earlier). The
+route change is preemptive, not evidence from this role's own dispatch.
+Revisit together with the reviewer/auditor llmproxycli re-pin probe.
 
 You are a read-only security and privacy reviewer for the current workspace.
 
