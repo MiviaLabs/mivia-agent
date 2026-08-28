@@ -83,7 +83,7 @@ func clipRowsToWidth(rows []string, inner int) []string {
 	return rows
 }
 
-func (s Screen) panelFileRow(e fileEntry, selLabel string, marked bool) string {
+func (s Screen) panelFileRow(e fileEntry, selected bool) string {
 	name, dir := splitPath(e.Path)
 	var glyph string
 	switch e.Kind {
@@ -95,7 +95,7 @@ func (s Screen) panelFileRow(e fileEntry, selLabel string, marked bool) string {
 		glyph = "~"
 	}
 	prefix, style := "  ", render.Role(s.Theme, s.Tier, theme.RoleFG)
-	if marked && e.rowLabel() == selLabel {
+	if selected {
 		prefix = "> "
 		style = render.WithBg(style, s.Theme, s.Tier, theme.RoleBGSelection)
 	}
@@ -187,11 +187,11 @@ func elapsedFor(a subagentRow, now time.Time) time.Duration {
 // live-rewrite a churning "elapsed=Xs steps=N" line into the middle of the
 // scrollback on every heartbeat) so this sidebar row is the one live-updating
 // surface for subagent progress.
-func (s Screen) panelAgentRow(a subagentRow, selLabel string, marked bool) []string {
+func (s Screen) panelAgentRow(a subagentRow, selected bool) []string {
 	prefix := "  · "
 	subtle := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle)
 	fg := render.Role(s.Theme, s.Tier, theme.RoleFG)
-	if marked && a.rowLabel() == selLabel {
+	if selected {
 		prefix = "> · "
 		fg = render.WithBg(fg, s.Theme, s.Tier, theme.RoleBGSelection)
 	}
@@ -214,7 +214,13 @@ func (s Screen) panelAgentRow(a subagentRow, selLabel string, marked bool) []str
 func (s Screen) panelRows(inner, maxRows int) []string {
 	visible, agents := s.panelFilterEntries("")
 
-	selLabel, _ := s.panel.list.Selected()
+	// selIdx is the picker's cursor row: the list is built files-then-
+	// agents in this exact order (rowLabels), so position - not the
+	// rendered label - is what identifies the highlighted row. Comparing
+	// by label instead marks every row that happens to render identically
+	// (concurrent same-named agents sharing a status, e.g. four
+	// "reviewer" rows all "running"), painting ">" on all of them.
+	selIdx := s.panel.list.CursorRow()
 	subtle := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle)
 	marked := s.panel.focused
 
@@ -228,18 +234,19 @@ func (s Screen) panelRows(inner, maxRows int) []string {
 	}
 
 	groups = append(groups, []string{subtle.Render("files changed (" + strconv.Itoa(len(visible)) + ")")})
-	for _, e := range visible {
-		if e.rowLabel() == selLabel {
+	for i, e := range visible {
+		if i == selIdx {
 			selGroup = len(groups)
 		}
-		groups = append(groups, []string{s.panelFileRow(e, selLabel, marked)})
+		groups = append(groups, []string{s.panelFileRow(e, marked && i == selIdx)})
 	}
 	groups = append(groups, []string{subtle.Render("subagents (" + strconv.Itoa(len(agents)) + ")")})
-	for _, a := range agents {
-		if a.rowLabel() == selLabel {
+	for i, a := range agents {
+		idx := len(visible) + i
+		if idx == selIdx {
 			selGroup = len(groups)
 		}
-		groups = append(groups, s.panelAgentRow(a, selLabel, marked))
+		groups = append(groups, s.panelAgentRow(a, marked && idx == selIdx))
 	}
 
 	groups = panelWindowGroups(groups, selGroup, maxRows, false)

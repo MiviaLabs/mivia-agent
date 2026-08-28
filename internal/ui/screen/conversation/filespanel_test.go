@@ -819,6 +819,43 @@ func TestPanel_SelectionKey_PreservesCursorOnStatusUpdate(t *testing.T) {
 	}
 }
 
+// TestPanel_SelectedAgent_DisambiguatesDuplicateLabels pins the fix for a
+// panel with several concurrently dispatched agents sharing a name and
+// status (four "reviewer" rows all "running") - a real fleet the user hit.
+// rowLabel() renders identically for all four, so resolving the cursor by
+// comparing label text (the old behavior) always returned the first
+// duplicate no matter which row was actually highlighted: the preview/
+// thread dialog never changed, and rebindIfOpen's cursor-hold snapped back
+// to row 0 on every live update, which read as arrow keys not working.
+func TestPanel_SelectedAgent_DisambiguatesDuplicateLabels(t *testing.T) {
+	p := newPanel(theme.Theme{Name: "test"}, theme.TierASCII)
+	p.open = true
+	for _, id := range []string{"task-a", "task-b", "task-c", "task-d"} {
+		p.observeAgentStart(id, "reviewer")
+	}
+	// All four rows render identically.
+	labels := p.rowLabels()
+	if len(labels) != 4 || labels[0] != labels[1] || labels[1] != labels[2] || labels[2] != labels[3] {
+		t.Fatalf("expected 4 identical labels, got %v", labels)
+	}
+
+	p.list.MoveTo(2) // highlight task-c, the third row
+
+	a, ok := p.selectedAgent()
+	if !ok || a.ID != "task-c" {
+		t.Fatalf("selectedAgent() = %+v, ok=%v; want task-c", a, ok)
+	}
+	if k := p.selectionKey(); k != "a:task-c" {
+		t.Errorf("selectionKey() = %q, want 'a:task-c'", k)
+	}
+
+	p.list.MoveTo(0) // highlight task-a, the first row
+	a, ok = p.selectedAgent()
+	if !ok || a.ID != "task-a" {
+		t.Fatalf("selectedAgent() = %+v, ok=%v; want task-a", a, ok)
+	}
+}
+
 func TestPanel_ReconcileTerminal_CustomNonTerminalStatusReconciles(t *testing.T) {
 	var p panel
 	p.observeAgent("sub-blocked", &uievent.Progress{Status: "blocked", Step: 1, TotalSteps: 2})

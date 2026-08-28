@@ -240,24 +240,32 @@ func (p panel) rowLabels() []string {
 	return names
 }
 
+// visibleRows returns the filter-narrowed files and subagents in the same
+// order rowLabels() feeds the picker, so a cursor row index maps to them
+// positionally. Concurrent subagents commonly share a name and status (four
+// "reviewer" rows all "running"), which makes rowLabel() collide - matching
+// by label text instead of position silently resolves every one of them to
+// whichever duplicate appears first, no matter which row the cursor is on.
+func (p panel) visibleRows() ([]fileEntry, []subagentRow) {
+	return p.filterEntries(p.list.Filter())
+}
+
 // selectionKey names the selected row by what it IS (a file's path, a
 // subagent's id) rather than by its render label, which changes as
 // statuses tick - so a rebind can hold the same row across a label
 // change.
 func (p panel) selectionKey() string {
-	label, ok := p.list.Selected()
-	if !ok {
+	entries, agents := p.visibleRows()
+	idx := p.list.CursorRow()
+	if idx < 0 {
 		return ""
 	}
-	for _, e := range p.entries {
-		if e.rowLabel() == label {
-			return "f:" + e.Path
-		}
+	if idx < len(entries) {
+		return "f:" + entries[idx].Path
 	}
-	for _, a := range p.agents {
-		if a.rowLabel() == label || strings.HasPrefix(label, a.displayName()+" ") || label == a.displayName() || strings.HasPrefix(label, a.ID+" ") || label == a.ID {
-			return "a:" + a.ID
-		}
+	idx -= len(entries)
+	if idx >= 0 && idx < len(agents) {
+		return "a:" + agents[idx].ID
 	}
 	return ""
 }
@@ -291,16 +299,12 @@ func (p *panel) rebindIfOpen() {
 // selectedAgent returns the subagent the list highlights, if any: the
 // cursor walks files and subagents alike.
 func (p panel) selectedAgent() (subagentRow, bool) {
-	label, ok := p.list.Selected()
-	if !ok {
+	entries, agents := p.visibleRows()
+	idx := p.list.CursorRow() - len(entries)
+	if idx < 0 || idx >= len(agents) {
 		return subagentRow{}, false
 	}
-	for _, a := range p.agents {
-		if a.rowLabel() == label {
-			return a, true
-		}
-	}
-	return subagentRow{}, false
+	return agents[idx], true
 }
 
 func matchesAgentID(aID, id string) bool {
@@ -560,16 +564,12 @@ func (p *panel) openPanel() {
 
 // selected returns the entry the list highlights.
 func (p panel) selected() (fileEntry, bool) {
-	name, ok := p.list.Selected()
-	if !ok {
+	entries, _ := p.visibleRows()
+	idx := p.list.CursorRow()
+	if idx < 0 || idx >= len(entries) {
 		return fileEntry{}, false
 	}
-	for _, e := range p.entries {
-		if e.rowLabel() == name {
-			return e, true
-		}
-	}
-	return fileEntry{}, false
+	return entries[idx], true
 }
 
 // contentRows is the selected file's content: its diff, or its

@@ -248,3 +248,35 @@ func TestPanelRowsRenderStalledBadge(t *testing.T) {
 		t.Fatalf("rendered rows still show stalled after progress:\n%s", rows)
 	}
 }
+
+// TestPanelRowsHighlightOnlyTheCursorRow pins the render-side counterpart of
+// selectedAgent's positional fix: a fleet of same-named, same-status agents
+// (four "reviewer" rows all "running") renders byte-identical rowLabel()
+// text for every one of them. panelRows used to decide the ">" highlight by
+// comparing each row's label against the picker's selected label, so every
+// duplicate lit up at once. It must mark exactly the row under the cursor,
+// by position.
+func TestPanelRowsHighlightOnlyTheCursorRow(t *testing.T) {
+	s := newStallScreen(t)
+	s.panel.open, s.panel.focused = true, true
+	for _, id := range []string{"task-a", "task-b", "task-c", "task-d"} {
+		s.panel.observeAgentStart(id, "reviewer")
+	}
+	s.panel.list.MoveTo(2) // highlight the third row (task-c)
+
+	rows := s.panelRows(80, 24)
+	marked := 0
+	for _, r := range rows {
+		if strings.Contains(stripAnsiForTest(r), ">") {
+			marked++
+		}
+	}
+	if marked != 1 {
+		t.Fatalf("expected exactly 1 highlighted row, got %d:\n%s", marked, strings.Join(rows, "\n"))
+	}
+
+	agent, ok := s.panel.selectedAgent()
+	if !ok || agent.ID != "task-c" {
+		t.Fatalf("selectedAgent() = %+v, ok=%v; want task-c to match the highlighted row", agent, ok)
+	}
+}

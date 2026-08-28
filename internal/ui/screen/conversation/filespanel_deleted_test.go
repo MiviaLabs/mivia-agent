@@ -10,7 +10,7 @@ import (
 
 func TestPanelFileRowDeletedGlyph(t *testing.T) {
 	scr := panelScreen(t, 80, 24)
-	row := scr.panelFileRow(fileEntry{Path: "gone.go", Kind: fileDeleted}, "", false)
+	row := scr.panelFileRow(fileEntry{Path: "gone.go", Kind: fileDeleted}, false)
 	plain := stripAnsiForTest(row)
 	if !strings.Contains(plain, "- gone.go") {
 		t.Fatalf("deleted row = %q, want the \"-\" glyph before gone.go", plain)
