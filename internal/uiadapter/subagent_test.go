@@ -214,6 +214,15 @@ func TestSubagentTranscriptConversation_EmptyTitle(t *testing.T) {
 	}
 }
 
+// TestSubagentThreads_LookupByToolCallIDAndTaskID pins lookup by TaskID
+// and ToolCallID, both always-safe identity keys (a ToolCallID belongs to
+// exactly one dispatch; a TaskID is the caller's own unique task id).
+// Agent name is deliberately NOT asserted as a third alias here when a
+// TaskID is present - see
+// TestSubagentThreads_LookupByAgentNameOnlyWhenTaskIDAbsent and
+// TestSubagentThreads_SameAgentDifferentTasksDoNotShareAThread for why:
+// two different tasks routed to the same named agent (e.g.
+// "general-purpose") must never be folded into one conversation object.
 func TestSubagentThreads_LookupByToolCallIDAndTaskID(t *testing.T) {
 	threads := uiadapter.NewSubagentThreads()
 	threads.HandleEvent(agent.Event{
@@ -224,7 +233,6 @@ func TestSubagentThreads_LookupByToolCallIDAndTaskID(t *testing.T) {
 
 	byTask, ok1 := threads.Thread("task-123")
 	byCall, ok2 := threads.Thread("call_abc")
-	byAgent, ok3 := threads.Thread("researcher")
 
 	if !ok1 || byTask == nil {
 		t.Errorf("expected thread found by TaskID")
@@ -232,12 +240,24 @@ func TestSubagentThreads_LookupByToolCallIDAndTaskID(t *testing.T) {
 	if !ok2 || byCall == nil {
 		t.Errorf("expected thread found by ToolCallID")
 	}
-	if !ok3 || byAgent == nil {
-		t.Errorf("expected thread found by Agent")
+	if byTask != byCall {
+		t.Errorf("expected same conversation instance across TaskID and ToolCallID")
 	}
+}
 
-	if byTask != byCall || byCall != byAgent {
-		t.Errorf("expected same conversation instance across all lookup keys")
+// TestSubagentThreads_LookupByAgentNameOnlyWhenTaskIDAbsent pins the
+// fallback: when a caller has nothing else to key on, Agent name still
+// works as a last resort (the reason the key exists at all, 371c35d5).
+func TestSubagentThreads_LookupByAgentNameOnlyWhenTaskIDAbsent(t *testing.T) {
+	threads := uiadapter.NewSubagentThreads()
+	threads.HandleEvent(agent.Event{
+		Kind:   agent.EventToolStart,
+		Origin: agent.EventOrigin{Agent: "researcher"},
+	}, uiadapter.TranslateOptions{})
+
+	byAgent, ok := threads.Thread("researcher")
+	if !ok || byAgent == nil {
+		t.Errorf("expected thread found by Agent when no TaskID/ToolCallID is available")
 	}
 }
 

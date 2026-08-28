@@ -77,9 +77,12 @@ func populateToolCall(threads *SubagentThreads, tc ports.ToolCall, at time.Time)
 		})
 	}
 
+	// tc.ID is always unique and always present; agent name is not (see
+	// registerDispatchedTask's identical fix) - a second unrelated
+	// single-call dispatch to the same named agent must not collide with
+	// this one's reconstructed thread.
 	conv := newReconstructedConversation(agentName, ports.ModelInfo{Name: agentName}, history)
 	threads.registerReconstructed(tc.ID, conv)
-	threads.registerReconstructed(agentName, conv)
 }
 
 type parsedDispatchTask struct {
@@ -324,13 +327,20 @@ func registerDispatchedTask(threads *SubagentThreads, callID string, idx int, ta
 		history = append(history, msg)
 	}
 
-	// Register non-destructively under every key: task ids, the call id,
-	// and the (non-unique) agent name may each already point at a live
-	// streaming conversation, which must survive any History() replay.
+	// Register non-destructively under task id and call id: either may
+	// already point at a live streaming conversation, which must survive
+	// any History() replay. Agent name is deliberately NOT a registration
+	// key here: taskID always exists in this function (model-supplied or
+	// the "task-N" fallback above), and agent name is not unique - two
+	// tasks in the same batch (or across batches on resume) commonly
+	// share one agent (e.g. "general-purpose"), and keying on it would
+	// fold their reconstructed histories into a single shared lookup
+	// alias (see HandleEvent's identical fix and
+	// TestSubagentThreads_SameAgentDifferentTasksDoNotShareAThread for
+	// the live-path version of this bug).
 	conv := newReconstructedConversation(agentName, ports.ModelInfo{Name: agentName}, history)
 	threads.registerReconstructed(taskID, conv)
 	threads.registerReconstructed(callID, conv)
-	threads.registerReconstructed(agentName, conv)
 }
 
 func registerFallbackDispatchedThread(threads *SubagentThreads, tc ports.ToolCall, at time.Time) {
