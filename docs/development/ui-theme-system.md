@@ -1,7 +1,7 @@
 # New terminal UI theme system
 
 `internal/ui/theme` is the single source of style for the new terminal UI
-(`internal/uikit`, `internal/ui`, `cmd/mivia-ui-demo`). A view layer never
+(`internal/uikit`, `internal/ui`). A view layer never
 holds a literal colour. It holds a `theme.Role` and looks it up through a
 `theme.Theme`.
 
@@ -104,7 +104,8 @@ Adding a theme is a data change, never a code change.
 
 ## Looking at it
 
-`make ui-themes` prints every embedded theme at every degradation tier:
-role swatches, a diff pair, and the status set. `THEME=` and `TIER=` narrow
-the output; `NO_COLOR=1 make ui-themes` and `TERM=dumb make ui-themes`
-exercise the no-colour tier. See `make help`.
+The in-app theme picker previews every embedded theme: press `ctrl+t`
+on the conversation screen, or run `/theme`. It renders role swatches,
+a diff pair, and the status set live. The degradation tiers are gated
+offline by `go test ./internal/ui/theme/...`; run the app under
+`NO_COLOR=1` or `TERM=dumb` to see the no-colour tier by hand.

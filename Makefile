@@ -21,7 +21,7 @@ VERSION_LDFLAGS := -X $(VERSION_PKG).Commit=$(COMMIT) -X $(VERSION_PKG).Dirty=$(
 	secret-scan docs-check semgrep semgrep-validate semgrep-test \
 	hook-test agent-hook-test test-quality structure-check import-layers-check commit-check go-check verify-go test test-changed race vet build tidy fmt fmt-check \
 	validate-invariants invariants mutation diff-coverage verifier-integration smoke release release-test \
-	prose-check ui-demo ui-demo-json ui-themes
+	prose-check
 
 help:
 	@printf '%s\n' \
@@ -57,10 +57,7 @@ help:
 		'  make release-test      Check release and installer contracts' \
 		'  make tidy              go mod tidy' \
 		'  make fmt               gofmt -w tracked Go files' \
-		'  make smoke             Fast workflow-engine smoke suite' \
-		'  make ui-demo           Replay the new-UI testdata fixture through the plain renderer' \
-		'  make ui-demo-json      Same fixture through the --output json renderer' \
-		'  make ui-themes         Print every theme: roles, a diff pair, the status set, at truecolor/256/16/no-colour'
+		'  make smoke             Fast workflow-engine smoke suite'
 
 install-hooks hooks:
 	@scripts/install_git_hooks.sh
@@ -316,20 +313,6 @@ vet:
 
 build:
 	@go build -ldflags "$(VERSION_LDFLAGS)" -o $(BINARY) $(CMD_PKG)
-
-# ui-demo/ui-demo-json/ui-themes drive cmd/mivia-ui-demo, the throwaway
-# Phase 1 demo binary for the new terminal UI (internal/uikit, internal/ui):
-# offline, no API key, no network, no harness - replays testdata/ fixtures.
-# Not part of `make verify`; these are for a human to look at.
-# NO_COLOR=1 / TERM=dumb: prefix the invocation, e.g. `NO_COLOR=1 make ui-themes`.
-ui-demo:
-	@go run ./cmd/mivia-ui-demo stream
-
-ui-demo-json:
-	@go run ./cmd/mivia-ui-demo json
-
-ui-themes:
-	@go run ./cmd/mivia-ui-demo themes $(if $(THEME),--theme $(THEME)) $(if $(TIER),--tier $(TIER))
 
 release:
 	@scripts/release.sh
