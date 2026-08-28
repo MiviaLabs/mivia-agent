@@ -162,22 +162,28 @@ func toolEndBlockValue(t theme.Theme, tier theme.Tier, w int, b uievent.ToolEndB
 		noticeLine = render.Role(t, tier, theme.RoleFGSubtle).Render(truncationBadge(kept, total, ref))
 	}
 
+	// A formatter that knows this tool returns a detail; one that does not
+	// returns "", and the header keeps just the tool name. Copying the
+	// first body line into the detail as a fallback printed line 1 twice
+	// on the direct-push end path (no live start block): once in the
+	// header, once as body row one. The body is the single home of the
+	// output (transcript-polish.md R7).
 	detail, body, coll := render.FormatToolOutputWithContext(t, tier, b.Name, args, summary, b.OK, w)
-	if detail == "" {
-		lines := strings.Split(summary, "\n")
-		detail = lines[0]
-	}
 	if noticeLine != "" {
 		body = append(body, noticeLine)
 	}
 
+	// One duration ladder everywhere (transcript-polish.md R5): the same
+	// FormatElapsed a later status-line call uses, so "4.1s" never
+	// appears beside "4100ms" on one screen.
+	duration := render.FormatElapsed(int(b.DurationMS))
 	blk := Block{
 		Kind:   uievent.KindToolEnd,
 		Args:   args,
 		CallID: b.ToolCallID,
 		Header: Header{
 			Label: b.Name, Detail: detail,
-			Meta: fmt.Sprintf("%dms", b.DurationMS), State: status, Role: role,
+			Meta: duration, State: status, Role: role,
 		},
 		Body:        body,
 		Collapsible: coll,
@@ -188,7 +194,7 @@ func toolEndBlockValue(t theme.Theme, tier theme.Tier, w int, b uievent.ToolEndB
 		blk.Header.Detail = b.Diff.Path
 		blk.Header.DiffAdd = b.Diff.Added
 		blk.Header.DiffDel = b.Diff.Removed
-		blk.Header.Meta = fmt.Sprintf("%dms", b.DurationMS)
+		blk.Header.Meta = duration
 		blk.Body = render.FormatDiffLines(t, tier, w, *b.Diff)
 	}
 	return blk
@@ -304,6 +310,29 @@ func hookBlockValue(b uievent.HookBody) Block {
 		Body:        body,
 		Collapsible: true,
 		Collapsed:   !b.Denied,
+	}
+}
+
+// usageBlockValue renders the turn's token and cost accounting as one
+// dim, header-less prose footer line (transcript-polish.md R6): the
+// per-turn facts belong to the record - and to Dump(), so `[` and
+// grep still reach them - while the live cost and context surfaces stay
+// on the statusline pill and the topbar gauge. The footer keeps the
+// header meta grammar: grouped token counts (render.GroupThousands)
+// joined by the fixed two-column gap, cost to two decimals.
+func usageBlockValue(t theme.Theme, tier theme.Tier, b uievent.UsageBody) Block {
+	usage := b
+	line := render.Role(t, tier, theme.RoleFGSubtle).Render(fmt.Sprintf(
+		"%s in  %s out  %s cached  $%.2f",
+		render.GroupThousands(int(b.InputTokens)),
+		render.GroupThousands(int(b.OutputTokens)),
+		render.GroupThousands(int(b.CachedTokens)),
+		b.CostUSD))
+	return Block{
+		Kind:  uievent.KindUsage,
+		Prose: true,
+		Usage: &usage,
+		Body:  []string{line},
 	}
 }
 

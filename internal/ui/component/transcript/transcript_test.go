@@ -612,6 +612,116 @@ func TestSingleEventReasoningHydrationPreservesBody(t *testing.T) {
 	}
 }
 
+// TestToolEndDurationUsesTheSharedLadder pins transcript-polish.md R5
+// in the transcript: both tool-end duration sites - the result path and
+// the diff path - go through render.FormatElapsed, so the header states
+// "4.1s", "23.5s", "1m 30s", never raw milliseconds above a second.
+func TestToolEndDurationUsesTheSharedLadder(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 40)
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolEnd,
+		Body: uievent.ToolEndBody{ToolCallID: "c1", Name: "frobnicate", OK: true, Result: "fine", DurationMS: 4100}})
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolEnd,
+		Body: uievent.ToolEndBody{ToolCallID: "c2", Name: "subagent", OK: true, Result: "done", DurationMS: 23500}})
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolEnd,
+		Body: uievent.ToolEndBody{ToolCallID: "c3", Name: "edit", OK: true, Diff: sampleDiff(), DurationMS: 90000}})
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolEnd,
+		Body: uievent.ToolEndBody{ToolCallID: "c4", Name: "read_file", OK: true, Result: "fine", DurationMS: 12}})
+
+	got := ansi.Strip(m.Dump())
+	for _, want := range []string{"4.1s", "23.5s", "1m 30s", "12ms"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the transcript is missing duration %q:\n%s", want, got)
+		}
+	}
+	for _, banned := range []string{"4100ms", "23500ms", "90000ms"} {
+		if strings.Contains(got, banned) {
+			t.Errorf("raw millisecond duration %q reached the header:\n%s", banned, got)
+		}
+	}
+}
+
+// TestUnknownToolDoesNotDuplicateTheFirstBodyLine pins
+// transcript-polish.md R7: on the direct tool.end push path with no
+// prior live block, a tool the formatter does not know used to copy
+// body line 1 into the header detail, printing it twice. The header
+// keeps the tool name with an empty detail; the body carries every line
+// exactly once.
+func TestUnknownToolDoesNotDuplicateTheFirstBodyLine(t *testing.T) {
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 40)
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolEnd,
+		Body: uievent.ToolEndBody{ToolCallID: "c1", Name: "made_up_tool", OK: true,
+			Result: "first line\nsecond line", DurationMS: 5}})
+
+	header := ansi.Strip(strings.SplitN(m.Dump(), "\n", 2)[0])
+	if !strings.Contains(header, "made_up_tool") {
+		t.Errorf("the header must keep the tool name, got %q", header)
+	}
+	if strings.Contains(header, "first line") {
+		t.Errorf("the header repeats body line 1: %q", header)
+	}
+	dump := ansi.Strip(m.Dump())
+	if c := strings.Count(dump, "first line"); c != 1 {
+		t.Errorf("body line 1 appears %d times, want 1:\n%s", c, dump)
+	}
+	if c := strings.Count(dump, "second line"); c != 1 {
+		t.Errorf("body line 2 appears %d times, want 1:\n%s", c, dump)
+	}
+}
+
+// TestUsageRendersAsAFooterLine pins transcript-polish.md R6: usage is
+// one dim, header-less prose footer line in the shared meta grammar -
+// grouped token counts and cost to two decimals - and it keeps the raw
+// payload so a theme change can restyle it.
+func TestUsageRendersAsAFooterLine(t *testing.T) {
+	th := loadTheme(t)
+	m := New(th, theme.TierASCII)
+	m.SetSize(80, 40)
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindUsage, Body: uievent.UsageBody{
+		InputTokens: 1284, OutputTokens: 2940, CachedTokens: 340, CostUSD: 0.041,
+	}})
+
+	blocks := m.Blocks()
+	if len(blocks) != 1 {
+		t.Fatalf("got %d blocks, want 1", len(blocks))
+	}
+	b := blocks[0]
+	if !b.Prose {
+		t.Error("the usage footer must be prose: no header, no marker")
+	}
+	if b.Usage == nil {
+		t.Fatal("the raw usage payload must be preserved for restyle")
+	}
+	row := ansi.Strip(strings.SplitN(b.Render(th, theme.TierASCII, 80), "\n", 2)[0])
+	if want := "1,284 in  2,940 out  340 cached  $0.04"; row != want {
+		t.Errorf("usage footer = %q, want %q", row, want)
+	}
+}
+
+// TestSetThemeRestylesTheUsageFooter mirrors the plan-rebuild check: the
+// footer is styled at push time, so restyle must rebuild it from the
+// preserved payload, and the fact must survive the rebuild.
+func TestSetThemeRestylesTheUsageFooter(t *testing.T) {
+	// mivia-light repeats mivia-dark's fg-subtle truecolour, so the
+	// rebuild check needs a theme whose subtle colour differs.
+	dark, light := loadTheme(t), namedTheme(t, "mivia-high-contrast")
+	m := New(dark, theme.TierTrueColor)
+	m.SetSize(80, 24)
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindUsage, Body: uievent.UsageBody{
+		InputTokens: 1284, OutputTokens: 2940,
+	}})
+	before := m.Blocks()[0].Body[0]
+	m.SetTheme(light, theme.TierTrueColor)
+	after := m.Blocks()[0].Body[0]
+	if before == after {
+		t.Error("SetTheme left the usage footer on the previous theme's colours")
+	}
+	if !strings.Contains(ansi.Strip(after), "1,284 in") {
+		t.Errorf("the footer lost its facts on rebuild: %q", ansi.Strip(after))
+	}
+}
+
 func TestFlushPendingReasoningCommitsAsReasoningBlock(t *testing.T) {
 	th := loadTheme(t)
 	m := New(th, theme.TierTrueColor)

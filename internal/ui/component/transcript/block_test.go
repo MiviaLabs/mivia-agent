@@ -53,38 +53,81 @@ func TestCollapseMarker(t *testing.T) {
 	}
 }
 
-// TestHeaderRowIdenticalCollapsedAndExpanded is wireframes-panes.md
-// section 5's governing rule: "Collapsing must not move any other row,
-// so the header row is identical in both states." Only the marker may
-// differ.
-func TestHeaderRowIdenticalCollapsedAndExpanded(t *testing.T) {
+// TestCollapsedHeaderStatesItsMagnitude pins transcript-polish.md R3: a
+// collapsed block with a body says what expanding costs - the meta column
+// gains "… +N lines" for the N hidden logical body lines - and the
+// expanded header says nothing of the kind. The hint must appear on BOTH
+// the focused and the unfocused header: renderHeader builds one spec, and
+// a hint that only the unfocused path carries would make the column set
+// jump when the block takes focus.
+func TestCollapsedHeaderStatesItsMagnitude(t *testing.T) {
 	th := loadTheme(t)
-	open := Block{
-		Header:      Header{Label: "edit", Detail: "main.go", Meta: "+4 -1", State: "ok", Role: theme.RoleSuccess},
-		Body:        []string{"a", "b"},
+	body := make([]string, 20)
+	for i := range body {
+		body[i] = "row"
+	}
+	base := Block{
+		Header:      Header{Label: "run_command", Detail: "go test ./...", Meta: "4.1s", State: "ok"},
+		Body:        body,
 		Collapsible: true,
 	}
-	closed := open
+	openHeader := ansi.Strip(strings.SplitN(base.Render(th, theme.TierASCII, 80), "\n", 2)[0])
+	if strings.Contains(openHeader, "…") {
+		t.Errorf("the expanded header states a magnitude: %q", openHeader)
+	}
+
+	closed := base
 	closed.Collapsed = true
-
-	openHeader := strings.SplitN(open.Render(th, theme.TierASCII, 80), "\n", 2)[0]
-	closedHeader := strings.SplitN(closed.Render(th, theme.TierASCII, 80), "\n", 2)[0]
-
-	// The two must differ in exactly one byte: the marker glyph. Any
-	// other difference means a row moved when the block collapsed, which
-	// is what section 5 forbids.
-	if len(openHeader) != len(closedHeader) {
-		t.Fatalf("header length changed on collapse:\nopen:   %q\nclosed: %q", openHeader, closedHeader)
+	closedHeader := ansi.Strip(strings.SplitN(closed.Render(th, theme.TierASCII, 80), "\n", 2)[0])
+	if want := "4.1s  … +20 lines"; !strings.Contains(closedHeader, want) {
+		t.Errorf("collapsed header meta = %q, want it to carry %q", closedHeader, want)
 	}
-	diffs := 0
-	for i := range openHeader {
-		if openHeader[i] != closedHeader[i] {
-			diffs++
-		}
+
+	focused := closed
+	focused.Focused = true
+	focusedHeader := ansi.Strip(strings.SplitN(focused.Render(th, theme.TierASCII, 80), "\n", 2)[0])
+	if want := "4.1s  … +20 lines"; !strings.Contains(focusedHeader, want) {
+		t.Errorf("focused collapsed header = %q, want it to carry %q", focusedHeader, want)
 	}
-	if diffs != 1 {
-		t.Errorf("header differs in %d bytes, want exactly 1 (the marker):\nopen:   %q\nclosed: %q",
-			diffs, openHeader, closedHeader)
+
+	// A meta-less header takes the hint as its whole meta column.
+	bare := Block{Header: Header{Label: "plan"}, Body: body, Collapsible: true, Collapsed: true}
+	bareHeader := ansi.Strip(strings.SplitN(bare.Render(th, theme.TierASCII, 80), "\n", 2)[0])
+	if !strings.Contains(bareHeader, "plan  … +20 lines") {
+		t.Errorf("meta-less collapsed header = %q, want %q", bareHeader, "plan  … +20 lines")
+	}
+}
+
+// TestCollapsedHeaderStaysOneRowAtNarrowWidth pins the header one-row
+// guarantee against the widened meta: at 40 columns the extended meta
+// ("… +20 lines") must survive, the detail must clip first (marked with
+// the shared ClipMarker), and the row must not wrap.
+func TestCollapsedHeaderStaysOneRowAtNarrowWidth(t *testing.T) {
+	th := loadTheme(t)
+	body := make([]string, 20)
+	for i := range body {
+		body[i] = "row"
+	}
+	b := Block{
+		Header:      Header{Label: "run_command", Detail: "go test ./internal/storage/...", Meta: "4.1s", State: "ok"},
+		Body:        body,
+		Collapsible: true,
+		Collapsed:   true,
+	}
+	rows := strings.Split(b.Render(th, theme.TierASCII, 40), "\n")
+	// Collapsed: the header row plus the blank separator Height promises.
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want exactly the header plus the separator: %q", len(rows), rows)
+	}
+	if w := ansi.StringWidth(rows[0]); w > 40 {
+		t.Errorf("collapsed header is %d columns at width 40: %q", w, rows[0])
+	}
+	plain := ansi.Strip(rows[0])
+	if !strings.Contains(plain, "… +20 lines") {
+		t.Errorf("the magnitude hint must survive the clip, got %q", plain)
+	}
+	if !strings.Contains(plain, uikitconfig.ClipMarker) {
+		t.Errorf("the detail must clip before the meta, got %q", plain)
 	}
 }
 
@@ -104,12 +147,49 @@ func TestRenderIndentsBodyByBodyIndent(t *testing.T) {
 			"Change the drawn wireframes and this literal together, or not at all.",
 			uikitconfig.BodyIndent)
 	}
-	// The rail glyph occupies column 1 at every tier (including ASCII -
-	// see TestVerticalRailRendersAtEveryTier); the 4-column indent
-	// budget is unchanged, only its first cell is no longer blank.
-	want := "│   line"
+	// The resting body of an unfocused, non-failed block carries no
+	// glyph in columns 1 to 4 at all: wireframes-panes.md section 2,
+	// "Nothing is drawn in columns 1 to 4 of a body line"
+	// (transcript-polish.md R4).
+	want := "    line"
 	if rows[1] != want {
 		t.Errorf("got %q, want %q", rows[1], want)
+	}
+}
+
+// TestRailMarksOnlyFocusOrFailure pins transcript-polish.md R4: the "│ "
+// body rail is reserved for the focused block and the failed block. The
+// column count is the same either way, so switching state must not shift
+// any body text.
+func TestRailMarksOnlyFocusOrFailure(t *testing.T) {
+	th := loadTheme(t)
+	body := []string{"line 1", "line 2"}
+	base := Block{Header: Header{Label: "x", State: "ok"}, Body: body}
+	bodyRow := func(b Block) string {
+		rows := strings.Split(b.Render(th, theme.TierASCII, 80), "\n")
+		return ansi.Strip(rows[1])
+	}
+	if got := bodyRow(base); got != "    line 1" {
+		t.Errorf("unfocused ok body row = %q, want four plain columns then the text", got)
+	}
+	focused := base
+	focused.Focused = true
+	if got := bodyRow(focused); got != "│   line 1" {
+		t.Errorf("focused body row = %q, want the rail", got)
+	}
+	failed := base
+	failed.Header.Role = theme.RoleDanger
+	failed.Header.State = "failed"
+	if got := bodyRow(failed); got != "│   line 1" {
+		t.Errorf("failed body row = %q, want the rail", got)
+	}
+	// The rail costs exactly what the spaces cost: no column shift.
+	// Replace the one-column glyph with a space rather than slicing by
+	// byte: "│" is three bytes but one display column.
+	full := strings.Replace(strings.SplitN(ansi.Strip(failed.Render(th, theme.TierASCII, 80)), "\n", 3)[1], "│", " ", 1)
+	resting := strings.SplitN(ansi.Strip(base.Render(th, theme.TierASCII, 80)), "\n", 3)[1]
+	if full != resting {
+		t.Errorf("adding the rail shifted the body text:\nrail:   %q\nplain: %q", full, resting)
 	}
 }
 
@@ -316,10 +396,12 @@ func TestUserLinesFormatsSkillInvocations(t *testing.T) {
 // tests for box-drawing glyphs. Before this test, the rail was drawn
 // only at TierTrueColor/Tier256 and silently dropped to a plain indent
 // at Tier16/ASCII/NoTTY - a STRUCTURAL difference between tiers, not a
-// colour one.
+// colour one. R4 narrowed WHEN the rail draws (focus or failure, see
+// TestRailMarksOnlyFocusOrFailure); this pins that when it draws, it
+// draws the glyph at every tier.
 func TestVerticalRailRendersAtEveryTier(t *testing.T) {
 	th := loadTheme(t)
-	b := Block{Header: Header{Label: "x"}, Body: []string{"line"}}
+	b := Block{Header: Header{Label: "x", State: "failed", Role: theme.RoleDanger}, Body: []string{"line"}}
 	for _, tier := range []theme.Tier{theme.TierTrueColor, theme.Tier256, theme.Tier16, theme.TierASCII, theme.TierNoTTY} {
 		rows := strings.Split(b.Render(th, tier, 80), "\n")
 		if len(rows) < 2 {
@@ -333,12 +415,17 @@ func TestVerticalRailRendersAtEveryTier(t *testing.T) {
 
 // TestVerticalRailCarriesNoColourAtASCIIOrNoTTY: the rail's colour must
 // degrade to nothing at the colourless tiers, the same contract every
-// other coloured glyph in the tree already keeps.
+// other coloured glyph in the tree already keeps. The block is a failed
+// one because R4 reserves the rail for focus and failure; at an unfocused
+// resting body there is no rail and nothing to check.
 func TestVerticalRailCarriesNoColourAtASCIIOrNoTTY(t *testing.T) {
 	th := loadTheme(t)
-	b := Block{Header: Header{Label: "x"}, Body: []string{"line"}}
+	b := Block{Header: Header{Label: "x", State: "failed", Role: theme.RoleDanger}, Body: []string{"line"}}
 	for _, tier := range []theme.Tier{theme.TierASCII, theme.TierNoTTY} {
 		rows := strings.Split(b.Render(th, tier, 80), "\n")
+		if !strings.Contains(rows[1], "│") {
+			t.Fatalf("tier %v: got %q, want the rail present to check its colour", tier, rows[1])
+		}
 		if strings.Contains(rows[1], "\x1b[") {
 			t.Errorf("tier %v: got %q, want no colour escape at a colourless tier", tier, rows[1])
 		}

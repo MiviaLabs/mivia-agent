@@ -482,6 +482,12 @@ Read the keymap package for the current bindings, never this table.
 | 3 | Mouse unstated | Off by default | Rule 7.1 |
 | 3 | Inline is the default | Cockpit is the default | Rule 6.1 of [cockpit-research.md](cockpit-research.md) |
 | 1 | `Ctrl-D` never bound | Readline-owned, pager binds it | less binds ctrl+d as half a page; a pager is not a line editor (amended 2026-08-19, transcript mode) |
+| 4 | `v` marker on every non-prose block | Marker only where a body exists | A marker over no body is a phantom affordance (amended 2026-08-28, transcript-polish.md R3) |
+| 4/5 | Collapsed header identical to expanded | A collapsed header also states its magnitude: `… +N lines` in the meta column | The reader must see what expanding reveals (transcript-polish.md R3) |
+| 4/9 | Per-surface durations (`18s`, `4100ms`) | One `render.FormatElapsed` ladder: `250ms`, `4.1s`, `1m 05s` | One duration grammar on one screen (transcript-polish.md R5) |
+| 4 | Usage printed as a header block | One dim prose footer line per turn | History stays in the record; live totals stay chrome (transcript-polish.md R6) |
+| 2/4 | `│` body rail on every expanded block | Rail on the focused and the failed body only; plain 4-column indent at rest | Restores section 2's resting state (transcript-polish.md R4) |
+| 4 | Unknown tool repeats its first output line in the header | Header keeps the tool name; the body carries each line once | One fact, one place (transcript-polish.md R7) |
 
 `research-panes.md` stays as the record of the colour and contrast work. Its
 sections 7.1 and 7.2, on markdown and diagram rendering, are unverified against

@@ -1,6 +1,7 @@
 package transcript
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -660,15 +661,80 @@ func TestScrollByToTheBottomResetsCount(t *testing.T) {
 	}
 }
 
+// TestMarkerOnlyWhereABodyExists pins transcript-polish.md R3: a marker
+// may only be painted where there is a body to open. push() used to force
+// Collapsible on every non-prose block, so a one-line notice or a
+// one-line error carried a "v" with nothing under it. A body at or above
+// the default threshold still starts collapsed.
+func TestMarkerOnlyWhereABodyExists(t *testing.T) {
+	th := loadTheme(t)
+	m := New(th, theme.TierASCII)
+	m.SetSize(80, 40)
+	m, _ = m.HandleEvent(noticeEvent("one-line notice"))
+	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindError, Body: uievent.ErrorBody{Text: "one-line error"}})
+	long := "lifecycle hooks (20)"
+	for i := 0; i < 20; i++ {
+		long += fmt.Sprintf("\n  [%d] active", i)
+	}
+	m, _ = m.HandleEvent(noticeEvent(long))
+
+	blocks := m.Blocks()
+	if len(blocks) != 3 {
+		t.Fatalf("got %d blocks, want 3", len(blocks))
+	}
+	if blocks[0].Collapsible || len(blocks[0].Body) != 0 {
+		t.Errorf("a one-line notice must be header-only and not collapsible: %+v", blocks[0])
+	}
+	if blocks[1].Collapsible || len(blocks[1].Body) != 0 {
+		t.Errorf("a one-line error must be header-only and not collapsible: %+v", blocks[1])
+	}
+	for i, b := range []Block{blocks[0], blocks[1]} {
+		row := ansi.Strip(strings.SplitN(b.Render(th, theme.TierASCII, 80), "\n", 2)[0])
+		if row != "  "+b.Header.Label+" "+b.Header.Detail {
+			t.Errorf("block %d header = %q, want a blank marker column", i, row)
+		}
+	}
+	if !blocks[2].Collapsible {
+		t.Error("a 20-line body must be collapsible")
+	}
+	if !blocks[2].Collapsed {
+		t.Error("a 20-line body must start collapsed per defaultCollapsed")
+	}
+}
+
 // TestExpandBlockAtScreenRow pins the click contract: the header row of
 // a collapsed block expands it; other rows and off-screen rows do not.
 func TestExpandBlockAtScreenRow(t *testing.T) {
-	// Two notice blocks; force every block collapsed so the click has a
-	// deterministic target, then measure at a height that shows them.
-	m := sizedModel(t, 80, 10, 2).SetAllCollapsed(true)
+	// One header-only notice plus one tool call with a body. Under R3
+	// only the block WITH a body is collapsible, so it is the click
+	// target; the header-only block stays a fall-through.
+	m := New(loadTheme(t), theme.TierASCII)
+	m.SetSize(80, 10)
+	m, _ = m.HandleEvent(noticeEvent("header-only"))
+	m, _ = m.HandleEvent(uievent.Event{
+		Kind: uievent.KindToolStart,
+		Body: uievent.ToolStartBody{ToolCallID: "a", Name: "run_command"},
+	})
+	m, _ = m.HandleEvent(uievent.Event{
+		Kind: uievent.KindToolOutput,
+		Body: uievent.ToolOutputBody{ToolCallID: "a", Chunk: "hidden-line"},
+	})
+	m = m.SetAllCollapsed(true)
 	m.SetSize(80, 10)
 	if len(m.Blocks()) == 0 {
 		t.Fatal("precondition: a block exists")
+	}
+	if m.Blocks()[0].Collapsible {
+		t.Fatal("precondition: the header-only block must not be collapsible")
+	}
+	if !m.Blocks()[1].Collapsed {
+		t.Fatal("precondition: the tool block must start collapsed")
+	}
+
+	// A header-only block carries no expansion, so the click falls
+	// through to the caller.
+	if _, ok := m.ExpandBlockAtScreenRow(0); ok {
+		t.Error("clicking a header-only block must report nothing to expand")
 	}
 
 	// The tool block is the last one; scroll so its header is the first

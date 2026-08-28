@@ -151,14 +151,10 @@ func (m Model) HandleEvent(ev uievent.Event) (Model, tea.Cmd) {
 		m = m.flushPending()
 		return m.pushBlock(errorBlockValue(b))
 	case uievent.UsageBody:
-		return m.pushBlock(Block{
-			Kind: uievent.KindUsage,
-			Header: Header{
-				Label: "usage",
-				Detail: fmt.Sprintf("%d in  %d out  %d cached  $%.3f",
-					b.InputTokens, b.OutputTokens, b.CachedTokens, b.CostUSD),
-			},
-		})
+		// A dim footer line, not a header block (transcript-polish.md
+		// R6): the per-turn facts belong to the record, the live cost
+		// and context chrome belongs to the statusline and the topbar.
+		return m.pushBlock(usageBlockValue(m.Theme, m.Tier, b))
 	case uievent.TurnEndBody:
 		// A completed turn commits nothing: turn-state belongs to the
 		// statusline. A turn that did NOT complete must say so, and must
@@ -193,11 +189,6 @@ func (m Model) Clear() Model {
 
 // turnReasonCompleted is the one reason that commits no block.
 const turnReasonCompleted = "completed"
-
-// shortResultCols is the longest tool result that may sit in the header's
-// meta column. Anything longer is a message, not a metric, and goes in
-// the body where it can wrap instead of squeezing the detail out.
-const shortResultCols = 16
 
 // endTurnUnfinished flushes any partial stream as prose, then records
 // why the turn stopped.
@@ -474,6 +465,10 @@ func (m Model) restyle(b Block) Block {
 		// its collapse/focus state are the reader's, not the payload's.
 		next := planBlockValue(m.Theme, m.Tier, *b.Plan)
 		b.Header, b.Body = next.Header, next.Body
+	case b.Usage != nil:
+		// Same payload-preserving rebuild as the plan: the footer line is
+		// styled at push time, so the theme change must restyle it.
+		b.Body = usageBlockValue(m.Theme, m.Tier, *b.Usage).Body
 	case b.Diff != nil:
 		w := m.width - uikitconfig.BodyIndent
 		if w <= 0 {

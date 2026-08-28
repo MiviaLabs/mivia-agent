@@ -105,7 +105,7 @@ jitter, and a cap of 5s.
             func() error { return u.raw.Put(ctx, k, b) })
     }
 
-> reasoning                                              84 words   hidden
+> reasoning                                     84 words  … +2 lines  hidden
 
 v read_file   internal/storage/s3_uploader.go        48 lines   12ms   ok
     package storage
@@ -120,14 +120,14 @@ v edit        internal/storage/s3_uploader.go           +4 -1   31ms   ok
     +       Cap: 5 * time.Second,
     +   }, func() error { return u.raw.Put(ctx, k, b) })
 
-v subagent    test-writer                             2 of 3    18s    running
+v subagent    test-writer                             2 of 3  18.0s    running
     [######################........]  67%
     + read existing table tests
     + draft TestPutRetriesOnTransient
     - run the package test
 
-> run_command go test ./internal/storage/...        1 failure   4.1s   failed
-    x s3_uploader_test.go:88: want 3 attempts, got 1
+v run_command go test ./internal/storage/...        1 failure   4.1s   failed
+│   x s3_uploader_test.go:88: want 3 attempts, got 1
 
 v plan                                                 2 of 4          open
     [x] add retry policy to the transport
@@ -135,15 +135,24 @@ v plan                                                 2 of 4          open
     [ ] fix the fake transport to count attempts
     [ ] run the package test again
 
-  error       transport refused after 3 attempts                      fatal
-    dial tcp 10.0.0.4:443: i/o timeout
+v error       transport refused after 3 attempts                      fatal
+│   dial tcp 10.0.0.4:443: i/o timeout
 
   notice      context 62% (78k of 125k). /compact frees about 30k.
 
-  usage       1,284 in  2,940 out  340 cached      $0.041      21.4s
+1,284 in  2,940 out  340 cached  $0.04
 
 >
 ```
+
+A header-only block - a one-line `notice`, a pending tool call - carries a blank marker
+column: there is no body to open. A collapsed block whose body is hidden states the
+magnitude in the meta column: `… +N lines`. A body sits at plain 4-column indent by
+default; the `│` rail marks only the two moments that must stand out, the focused block
+and the failed block. `usage` is not a block: it is one dim footer line per turn, in
+the meta grammar above. Durations follow one ladder at every surface
+(`render.FormatElapsed`): under 1s prints `250ms`, under 60s prints `4.1s`, 60s and up
+print `1m 05s`.
 
 Keys: `Tab` / `Shift-Tab` focus the next or previous block. `Space` or `Enter` toggles
 the focused block. `Ctrl-E` expands all, `Ctrl-W` collapses all. `y` copies the focused
@@ -155,11 +164,13 @@ quits. `?` on an empty composer prints the keymap.
 ## 5. Collapsed against expanded
 
 The same two blocks, closed and open. Collapsing must not move any other row, so the
-header row is identical in both states.
+header row changes only in its marker cell. A closed block with a body also states its
+magnitude in the meta column - `… +N lines` - so the reader sees what expanding reveals.
+The state word never moves to the end of the row, and the detail clips before it.
 
 ```
-> read_file   internal/storage/s3_uploader.go        48 lines   12ms   ok
-> edit        internal/storage/s3_uploader.go           +4 -1   31ms   ok
+> read_file   internal/storage/s3_uploader.go   48 lines  12ms  … +3 lines   ok
+> edit        internal/storage/s3_uploader.go      +4 -1  31ms  … +3 lines   ok
 ```
 
 ```

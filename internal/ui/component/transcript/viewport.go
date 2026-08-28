@@ -104,10 +104,16 @@ func (m *Model) push(b Block) {
 	if !m.follow {
 		m.missed++
 	}
-	if !b.Collapsible && !b.Prose {
+	// A block is collapsible only when it has a body to collapse
+	// (transcript-polish.md R3): push() used to force Collapsible on
+	// every non-prose block, which painted the "v" marker over
+	// header-only blocks with nothing under it. Blocks that arrive from
+	// values.go already marked Collapsible keep that marking; prose
+	// never takes a marker.
+	if !b.Prose && len(b.Body) > 0 {
 		b.Collapsible = true
-		b.Collapsed = defaultCollapsed(b.Body)
-	} else if b.Collapsible && !b.Collapsed {
+	}
+	if b.Collapsible && !b.Collapsed {
 		b.Collapsed = defaultCollapsed(b.Body)
 	}
 	m.blocks = append(slices.Clone(m.blocks), b)
@@ -312,6 +318,14 @@ func (m *Model) updateLive(callID string, fn func(*Block)) bool {
 	m.blocks = slices.Clone(m.blocks)
 	blk := m.blocks[i]
 	fn(&blk)
+	// Re-apply push()'s collapsibility rule (transcript-polish.md R3):
+	// a tool call starts header-only and is not collapsible, then grows
+	// its body here as output and the end result merge in. Without the
+	// promotion, the merged block would render a body with no marker to
+	// open or close it.
+	if !blk.Prose && len(blk.Body) > 0 {
+		blk.Collapsible = true
+	}
 	if blk.Collapsible && defaultCollapsed(blk.Body) {
 		blk.Collapsed = true
 	}

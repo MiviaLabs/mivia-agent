@@ -67,6 +67,11 @@ type Block struct {
 	// the block is rebuilt by a new event.
 	Diff *uievent.Diff
 	Plan *uievent.PlanBody
+
+	// Usage preserves the raw token-and-cost payload behind the usage
+	// footer line for the same reason: the footer is styled at push time,
+	// and restyle rebuilds it from this copy when the theme changes.
+	Usage *uievent.UsageBody
 }
 
 // isEmpty reports a block with nothing to render.
@@ -145,9 +150,11 @@ func defaultCollapsed(body []string) bool {
 	return len(body) >= uikitconfig.CollapseThresholdLines
 }
 
-// Render draws the block. The header row is byte-identical whether the
-// block is collapsed or expanded, apart from the collapse marker, so
-// toggling never moves any other row (wireframes-panes.md section 5).
+// Render draws the block. Toggling collapse never moves any body row:
+// the header changes only in its first cell (the marker) and in the
+// magnitude hint the collapsed state appends to the meta column
+// ("… +N lines", transcript-polish.md R3; wireframes-panes.md section 5
+// as amended).
 //
 // The last row is always the blank separator Height accounts for; see
 // its doc comment.
@@ -165,13 +172,20 @@ func (b Block) Render(t theme.Theme, tier theme.Tier, width int) string {
 		sb.WriteByte('\n')
 		return sb.String()
 	}
-	// The rail renders at every tier - wireframes-panes.md section 3's
-	// rule that a glyph's shape never depends on colour tier, only its
-	// colour does (the box-drawing frame in render.Dialog keeps the
-	// same rule: TestDialogDegradesByTier pins "╭" surviving TierASCII).
-	// render.Role's own degradation ladder already drops the colour
-	// escape at TierASCII/TierNoTTY with no code branch needed here.
-	indent := render.Role(t, tier, theme.RoleBorder).Render("│ ") + "  "
+	// The resting body indents with plain spaces: wireframes-panes.md
+	// section 2 - "the body is indented 4 columns. Nothing is drawn in
+	// columns 1 to 4 of a body line." The "│" rail is reserved for the
+	// two moments where the block needs to stand out from the record:
+	// the focused block, and the failed block, where rail plus
+	// RoleDanger earns its weight (transcript-polish.md R4). The column
+	// count is identical either way, so a body never shifts when focus
+	// or state changes. render.Role still degrades the rail's colour to
+	// nothing at TierASCII/TierNoTTY with no code branch here.
+	showRail := b.Focused || b.Header.Role == theme.RoleDanger
+	indent := "    "
+	if showRail {
+		indent = render.Role(t, tier, theme.RoleBorder).Render("│ ") + "  "
+	}
 	for _, line := range b.bodyRows(width) {
 		sb.WriteByte('\n')
 		sb.WriteString(indent)
@@ -203,44 +217,55 @@ func (b Block) renderHeader(t theme.Theme, tier theme.Tier, width int) string {
 		headerW = uikitconfig.ProseMeasureWide + 16
 	}
 
+	// The spec is built once, so the focused and unfocused renderers share
+	// one column set: focus changes only the reverse-video treatment and
+	// never moves a column (wireframes-panes.md section 5).
+	spec := render.HeaderSpec{
+		Marker:    b.collapseMarker(),
+		Label:     b.Header.Label,
+		Detail:    b.Header.Detail,
+		DiffAdd:   b.Header.DiffAdd,
+		DiffDel:   b.Header.DiffDel,
+		Meta:      b.headerMeta(),
+		State:     b.Header.State,
+		StateRole: b.Header.Role,
+	}
+
 	// A focused header is drawn as one reverse-video run rather than as
 	// styled segments. Reverse inherits the theme's own contrast, so it
 	// stays legible under any palette, and it never nests conflicting
 	// styles. The collapse marker remains, so focus is signalled by
 	// shape as well as by colour (docs/design/ux-rules.md rules 6.3-6.4).
 	if b.Focused {
-		// Reuse render.Header's own column geometry (marker/label at the
-		// left, meta/state inline right after the detail) and strip its
-		// colour, so focus
-		// changes ONLY the reverse-video treatment and never moves a
-		// column - wireframes-panes.md section 5: "the header row is
-		// identical in both states." headerPlain is not reused here
-		// because it joins columns left-to-right for the clipboard text
-		// FocusedText produces (focus.go), which is a different contract.
-		spec := render.HeaderSpec{
-			Marker:    b.collapseMarker(),
-			Label:     b.Header.Label,
-			Detail:    b.Header.Detail,
-			DiffAdd:   b.Header.DiffAdd,
-			DiffDel:   b.Header.DiffDel,
-			Meta:      b.Header.Meta,
-			State:     b.Header.State,
-			StateRole: b.Header.Role,
-		}
+		// headerPlain is not reused here because it joins columns
+		// left-to-right for the clipboard text FocusedText produces
+		// (focus.go), which is a different contract.
 		plain := ansi.Strip(render.Header(t, tier, headerW, spec))
 		return render.Role(t, tier, theme.RoleFG).Reverse(true).Render(plain)
 	}
 
-	return render.Header(t, tier, headerW, render.HeaderSpec{
-		Marker:    b.collapseMarker(),
-		Label:     b.Header.Label,
-		Detail:    b.Header.Detail,
-		DiffAdd:   b.Header.DiffAdd,
-		DiffDel:   b.Header.DiffDel,
-		Meta:      b.Header.Meta,
-		State:     b.Header.State,
-		StateRole: b.Header.Role,
-	})
+	return render.Header(t, tier, headerW, spec)
+}
+
+// headerMeta is the meta column as rendered. A collapsed block states
+// its magnitude there - "… +N lines" for the N logical body lines it
+// is hiding - because a collapsed body that says only "hidden" gives
+// the reader nothing to weigh before expanding (transcript-polish.md
+// R3). The ellipsis matches the truncation grammar values.go already
+// uses (truncationBadge); it is one codepoint at every tier, so no tier
+// branch is needed. render.Header keeps the whole row to one line: when
+// the extended meta squeezes the row, the detail clips first and the
+// meta and state survive.
+func (b Block) headerMeta() string {
+	meta := b.Header.Meta
+	if !b.Collapsible || !b.Collapsed || len(b.Body) == 0 {
+		return meta
+	}
+	hint := fmt.Sprintf("… +%d lines", len(b.Body))
+	if meta == "" {
+		return hint
+	}
+	return meta + "  " + hint
 }
 
 // headerPlain is the header with no styling, used for the focused run
