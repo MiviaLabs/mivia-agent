@@ -262,8 +262,12 @@ func TestPanelSectionsGroupByCategory(t *testing.T) {
 	}})
 	s = next.(Screen)
 	plain = ansi.Strip(s.View())
+	// The metrics line ("Elapsed: .., Tools: N, Step: N") can clip on a
+	// narrow sidebar pane (clipRowsToWidth never re-wraps), so this checks
+	// only its always-first, never-clipped label - the exact content is
+	// pinned unclipped by TestPanelAgentRowRendersElapsedToolsStep.
 	if !strings.Contains(plain, "subagents (1)") || !strings.Contains(plain, "sa-1") ||
-		!strings.Contains(plain, "running") || !strings.Contains(plain, "2/5") {
+		!strings.Contains(plain, "running") || !strings.Contains(plain, "Elapsed:") {
 		t.Errorf("subagent progress did not reach the section live:\n%s", plain)
 	}
 	// A later update folds in place rather than appending a row. (The
@@ -985,107 +989,5 @@ func TestScrollPanelInSplitMode(t *testing.T) {
 	scr.scrollPanel(1)
 	if scr.panel.offset == 0 && scr.panelBodyRows() > 0 {
 		t.Errorf("expected offset > 0 after scrolling down, got %d", scr.panel.offset)
-	}
-}
-
-// TestObserveAgentStart_ResetsStaleTerminalRow guards a reused task id: a
-// resumed session's LoadHistory seeds rows "completed", and models reuse
-// short ids ("task-1", "audit") across dispatches. A NEW agent-start on an
-// id whose row is stuck terminal must reset it to running - otherwise the
-// sidebar would badge a genuinely live dispatch as already finished. (The
-// thread dialog's composer is unconditionally hidden regardless of this
-// row's status - see openThread - so a stale terminal row no longer risks
-// freezing the dialog read-only; it only risks a wrong status badge.)
-func TestObserveAgentStart_ResetsStaleTerminalRow(t *testing.T) {
-	var p panel
-	p.observeAgentHistory("task-1", "completed")
-	p.observeAgentStart("task-1", "invoke_subagent")
-	if len(p.agents) != 1 {
-		t.Fatalf("expected 1 agent row, got %d", len(p.agents))
-	}
-	if got := p.agents[0].Status; got != "running" {
-		t.Errorf("expected the reused-id row reset to 'running', got %q", got)
-	}
-}
-
-// TestObserveAgentStart_DoesNotDisturbRunningRow pins the counterpart: a
-// duplicate start on an already-running row stays running (idempotent).
-func TestObserveAgentStart_DoesNotDisturbRunningRow(t *testing.T) {
-	var p panel
-	p.observeAgentStart("task-1", "invoke_subagent")
-	p.observeAgentStart("task-1", "invoke_subagent")
-	if len(p.agents) != 1 || p.agents[0].Status != "running" {
-		t.Errorf("expected one running row, got %+v", p.agents)
-	}
-}
-
-// TestTimedOutSubagentRowSettles pins the timed_out vocabulary: a subagent
-// whose done event (or per-task result) reports timed_out is over. The row
-// must count as terminal, so a late observeAgentStart cannot revive it to
-// running and a timed-out run cannot leave a row spinning. (This status
-// arrives through agent.Event.Status on the done event since the terminal
-// status vocabulary landed.)
-func TestTimedOutSubagentRowSettles(t *testing.T) {
-	if !isTerminalStatus("timed_out") {
-		t.Fatal("timed_out must be a terminal status")
-	}
-	if isNonTerminalStatus("timed_out") {
-		t.Fatal("timed_out must not be a non-terminal status")
-	}
-
-	var p panel
-	p.observeAgentStart("task-t", "audit")
-	if p.activeAgentCount() != 1 {
-		t.Fatalf("activeAgentCount = %d, want 1 while running", p.activeAgentCount())
-	}
-	p.setAgentStatus("task-t", "timed_out")
-	if got := p.agents[0].Status; got != "timed_out" {
-		t.Fatalf("status = %q, want timed_out", got)
-	}
-	if p.activeAgentCount() != 0 {
-		t.Errorf("activeAgentCount = %d, want 0 once timed_out settles", p.activeAgentCount())
-	}
-	// A genuine new start for a reused id restarts the row, exactly as it
-	// does for a completed row.
-	p.observeAgentStart("task-t", "audit")
-	if got := p.agents[0].Status; got != "running" {
-		t.Errorf("status after a new start = %q, want running (timed_out settles like completed, no more)", got)
-	}
-}
-
-// TestStatusBadgeRoleCoversTerminalVocabulary pins the badge color for every
-// status the sidebar row can carry. A status with no case in the switch
-// silently falls through to theme.RoleInfo - the same role a "running" row
-// gets - so a terminal status missing a case is visually indistinguishable
-// from a row that is still active. timed_out joined the terminal vocabulary
-// (isTerminalStatus) without a matching badge-color case; this pins it
-// alongside the other terminal statuses so the class cannot regress again.
-func TestStatusBadgeRoleCoversTerminalVocabulary(t *testing.T) {
-	cases := []struct {
-		status string
-		want   theme.Role
-	}{
-		{"completed", theme.RoleSuccess},
-		{"done", theme.RoleSuccess},
-		{"failed", theme.RoleDanger},
-		{"error", theme.RoleDanger},
-		{"interrupted", theme.RoleDanger},
-		{"timed_out", theme.RoleDanger},
-		{"cancelled", theme.RoleFGSubtle},
-		{"canceled", theme.RoleFGSubtle},
-		{"thinking", theme.RoleWarning},
-		{statusStalled, theme.RoleWarning},
-	}
-	for _, tc := range cases {
-		t.Run(tc.status, func(t *testing.T) {
-			if got := statusBadgeRole(tc.status); got != tc.want {
-				t.Fatalf("statusBadgeRole(%q) = %v, want %v", tc.status, got, tc.want)
-			}
-		})
-	}
-	// A row that has settled into a terminal status must never read the
-	// same as an actively running one.
-	if got := statusBadgeRole("timed_out"); got == statusBadgeRole("running") {
-		t.Fatalf("timed_out badge role (%v) must differ from running's (%v)", got, statusBadgeRole("running"))
 	}
 }

@@ -1,8 +1,10 @@
 package conversation
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/x/ansi"
 
@@ -10,24 +12,63 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 )
 
-// panelWindowRows clips rows to a window around the selection, reserving a
-// row for the filter indicator when one will be appended: the indicator is
-// the only on-screen explanation of a shortened list, so it must never be
-// the row the windowing clips.
-func panelWindowRows(rows []string, selRow, maxRows int, filterActive bool) []string {
+// panelWindowGroups clips row-groups to a window around the selected group,
+// reserving one line for the filter indicator when one will be appended,
+// and NEVER splitting a group across the clip boundary: an agent's name
+// line and its metrics line must stay together, or the metrics line would
+// render stranded with no name line above it. A window that cannot land on
+// exact line-count parity because a group would have to be split grows
+// outward to the next whole group instead of splitting one.
+func panelWindowGroups(groups [][]string, selGroup, maxRows int, filterActive bool) [][]string {
 	limit := maxRows
 	if filterActive && limit > 1 {
 		limit--
 	}
-	if limit > 0 && len(rows) > limit {
-		start := 0
-		if selRow >= limit {
-			start = selRow - limit + 1
-		}
-		if start > len(rows)-limit {
-			start = len(rows) - limit
-		}
-		rows = rows[start : start+limit]
+	if limit <= 0 {
+		return groups
+	}
+	offsets := make([]int, len(groups)+1)
+	total := 0
+	for i, g := range groups {
+		offsets[i] = total
+		total += len(g)
+	}
+	offsets[len(groups)] = total
+	if total <= limit {
+		return groups
+	}
+	selRow := 0
+	if selGroup >= 0 && selGroup < len(groups) {
+		selRow = offsets[selGroup]
+	}
+	start := 0
+	if selRow >= limit {
+		start = selRow - limit + 1
+	}
+	if start > total-limit {
+		start = total - limit
+	}
+	end := start + limit
+	startGroup := 0
+	for startGroup < len(groups) && offsets[startGroup+1] <= start {
+		startGroup++
+	}
+	endGroup := len(groups)
+	for endGroup > 0 && offsets[endGroup-1] >= end {
+		endGroup--
+	}
+	if startGroup > endGroup {
+		endGroup = startGroup
+	}
+	return groups[startGroup:endGroup]
+}
+
+// flattenGroups concatenates row-groups back into a flat line list, in
+// order, for final width-clipping and rendering.
+func flattenGroups(groups [][]string) []string {
+	var rows []string
+	for _, g := range groups {
+		rows = append(rows, g...)
 	}
 	return rows
 }
@@ -104,7 +145,50 @@ func statusBadgeRole(status string) theme.Role {
 	}
 }
 
-func (s Screen) panelAgentRow(a subagentRow, selLabel string, marked bool) string {
+// formatElapsed renders a duration as the sidebar's compact elapsed label
+// ("10m 40s", "45s", "1h 05m"). internal/ui/** may not import
+// internal/clichat (UI isolation, docs/design/ui-isolation.md), so this
+// does not reuse clichat.FormatDuration's tighter "10m40s" shape.
+func formatElapsed(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	d = d.Round(time.Second)
+	h := int(d / time.Hour)
+	m := int(d/time.Minute) % 60
+	s := int(d/time.Second) % 60
+	switch {
+	case h > 0:
+		return fmt.Sprintf("%dh %02dm", h, m)
+	case m > 0:
+		return fmt.Sprintf("%dm %02ds", m, s)
+	default:
+		return fmt.Sprintf("%ds", s)
+	}
+}
+
+// elapsedFor computes a row's displayed elapsed time as of now. A running
+// row's elapsed grows with the clock; a terminal row's freezes at
+// LastProgress (stamped the moment observeAgentEnd/setAgentStatus settled
+// it), so a completed/failed/timed-out row does not keep counting up on
+// every render after the subagent already finished.
+func elapsedFor(a subagentRow, now time.Time) time.Duration {
+	if a.StartedAt.IsZero() {
+		return 0
+	}
+	if isTerminalStatus(a.Status) {
+		return a.LastProgress.Sub(a.StartedAt)
+	}
+	return now.Sub(a.StartedAt)
+}
+
+// panelAgentRow renders one subagent as two lines: the name/status badge
+// (selectable, matches rowLabel), and an indented metrics line carrying
+// Elapsed/Tools/Step - moved here from the chat transcript (which used to
+// live-rewrite a churning "elapsed=Xs steps=N" line into the middle of the
+// scrollback on every heartbeat) so this sidebar row is the one live-updating
+// surface for subagent progress.
+func (s Screen) panelAgentRow(a subagentRow, selLabel string, marked bool) []string {
 	prefix := "  · "
 	subtle := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle)
 	fg := render.Role(s.Theme, s.Tier, theme.RoleFG)
@@ -121,11 +205,11 @@ func (s Screen) panelAgentRow(a subagentRow, selLabel string, marked bool) strin
 		statusStyle := render.Role(s.Theme, s.Tier, statusBadgeRole(status))
 		statusBadge = " " + border.Render("[") + statusStyle.Render(status) + border.Render("]")
 	}
-	var stepBadge string
-	if a.Total > 0 {
-		stepBadge = " " + border.Render("[") + subtle.Render(strconv.Itoa(a.Step)+"/"+strconv.Itoa(a.Total)) + border.Render("]")
-	}
-	return subtle.Render(prefix) + fg.Render(a.ID) + statusBadge + stepBadge
+	nameLine := subtle.Render(prefix) + fg.Render(a.ID) + statusBadge
+	metrics := fmt.Sprintf("Elapsed: %s, Tools: %d, Step: %d",
+		formatElapsed(elapsedFor(a, s.now())), a.ToolCalls, a.Step)
+	metricsLine := subtle.Render("      " + metrics)
+	return []string{nameLine, metricsLine}
 }
 
 func (s Screen) panelRows(inner, maxRows int) []string {
@@ -135,32 +219,32 @@ func (s Screen) panelRows(inner, maxRows int) []string {
 	subtle := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle)
 	marked := s.panel.focused
 
-	var rows []string
-	selRow := -1
+	var groups [][]string
+	selGroup := -1
 
 	if marked {
-		rows = append(rows, render.Role(s.Theme, s.Tier, theme.RoleAccent).Bold(true).Render("● SIDEBAR")+" "+subtle.Render("(focused)"))
+		groups = append(groups, []string{render.Role(s.Theme, s.Tier, theme.RoleAccent).Bold(true).Render("● SIDEBAR") + " " + subtle.Render("(focused)")})
 	} else {
-		rows = append(rows, subtle.Render("  SIDEBAR"))
+		groups = append(groups, []string{subtle.Render("  SIDEBAR")})
 	}
 
-	rows = append(rows, subtle.Render("files changed ("+strconv.Itoa(len(visible))+")"))
+	groups = append(groups, []string{subtle.Render("files changed (" + strconv.Itoa(len(visible)) + ")")})
 	for _, e := range visible {
 		if e.rowLabel() == selLabel {
-			selRow = len(rows)
+			selGroup = len(groups)
 		}
-		rows = append(rows, s.panelFileRow(e, selLabel, marked))
+		groups = append(groups, []string{s.panelFileRow(e, selLabel, marked)})
 	}
-	rows = append(rows, subtle.Render("subagents ("+strconv.Itoa(len(agents))+")"))
+	groups = append(groups, []string{subtle.Render("subagents (" + strconv.Itoa(len(agents)) + ")")})
 	for _, a := range agents {
 		if a.rowLabel() == selLabel {
-			selRow = len(rows)
+			selGroup = len(groups)
 		}
-		rows = append(rows, s.panelAgentRow(a, selLabel, marked))
+		groups = append(groups, s.panelAgentRow(a, selLabel, marked))
 	}
 
-	rows = panelWindowRows(rows, selRow, maxRows, false)
-	return clipRowsToWidth(rows, inner)
+	groups = panelWindowGroups(groups, selGroup, maxRows, false)
+	return clipRowsToWidth(flattenGroups(groups), inner)
 }
 
 // dialogParts is the content dialog's title, body, and hint. A

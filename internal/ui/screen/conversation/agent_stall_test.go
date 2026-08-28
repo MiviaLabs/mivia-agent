@@ -58,6 +58,22 @@ func TestProgressAdvances(t *testing.T) {
 			next: subagentRow{Status: "completed", Step: 2},
 			want: true,
 		},
+		{
+			// A single step can carry many tool calls (e.g. several file
+			// reads before the model's next full turn); Step alone would
+			// read that whole stretch as frozen and risk a false "stalled"
+			// badge while ToolCalls is visibly climbing.
+			name: "changed_toolcalls_with_frozen_step_is_motion",
+			prev: subagentRow{Status: "running", Step: 2, ToolCalls: 5, LastProgress: aStaleTimestamp()},
+			next: subagentRow{Status: "running", Step: 2, ToolCalls: 6},
+			want: true,
+		},
+		{
+			name: "frozen_toolcalls_and_step_is_not_motion",
+			prev: subagentRow{Status: "running", Step: 2, ToolCalls: 5, LastProgress: aStaleTimestamp()},
+			next: subagentRow{Status: "running", Step: 2, ToolCalls: 5},
+			want: false,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

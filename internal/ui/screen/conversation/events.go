@@ -281,7 +281,18 @@ func dispatchTaskIDs(callID, name string, args map[string]any) []string {
 			}
 		}
 		if id == "" {
-			id = fmt.Sprintf("%s-%d", callID, i+1)
+			// A model-supplied id is the normal case; this only covers a
+			// task the model forgot to name. The fallback must never
+			// surface the raw provider tool_call_id (callID) as a visible
+			// sidebar label - a bare "call_xxxxxxxxxxxx" string means
+			// nothing to a reader. "task-N" is legible; a collision with
+			// an unrelated batch's row uses the same accepted semantics a
+			// reused model-supplied id already has (see observeAgentStart:
+			// a reused id resets to a new run). Sibling sites that must
+			// stay in sync: thread.go's LoadHistory reconstruction and
+			// internal/uiadapter/subagent_reconstruct.go's
+			// registerDispatchedTask.
+			id = fmt.Sprintf("task-%d", i+1)
 		}
 		ids = append(ids, id)
 	}

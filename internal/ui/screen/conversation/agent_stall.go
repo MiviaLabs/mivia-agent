@@ -63,5 +63,12 @@ func progressAdvances(prev, next subagentRow) bool {
 	if isTerminalStatus(next.Status) {
 		return true
 	}
-	return next.Step > 0 && next.Step != prev.Step
+	if next.Step > 0 && next.Step != prev.Step {
+		return true
+	}
+	// A single step can carry many tool calls (several file reads before
+	// the model's next full turn): Step alone would read that whole
+	// stretch as frozen, risking a false "stalled" badge on a row that is
+	// visibly making tool calls.
+	return next.ToolCalls > 0 && next.ToolCalls != prev.ToolCalls
 }

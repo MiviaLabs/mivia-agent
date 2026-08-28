@@ -258,7 +258,14 @@ func TestStreamingTailBecomesABlock(t *testing.T) {
 	}
 }
 
-func TestToolOutputProgressUpdatesProgressBarInPlace(t *testing.T) {
+// TestToolOutputProgressDoesNotChurnTheLiveBlock pins the current
+// contract: subagent progress heartbeats no longer rewrite the tool
+// call's block on every tick (that churn used to sit in the middle of the
+// scrollback for the life of a long-running subagent - it now belongs to
+// the sidebar panel only). The block pushed by tool.start stays exactly
+// as pushed - no Meta, no Detail, no body - through any number of
+// heartbeats, until tool.end renders its terminal state.
+func TestToolOutputProgressDoesNotChurnTheLiveBlock(t *testing.T) {
 	m := New(loadTheme(t), theme.TierASCII)
 	m.SetSize(80, 24)
 
@@ -266,24 +273,24 @@ func TestToolOutputProgressUpdatesProgressBarInPlace(t *testing.T) {
 		Kind: uievent.KindToolStart,
 		Body: uievent.ToolStartBody{ToolCallID: "c1", Name: "subagent"},
 	})
+	pushed := m.Blocks()[0]
 
 	m, _ = m.HandleEvent(uievent.Event{
 		Kind: uievent.KindToolOutput,
 		Body: uievent.ToolOutputBody{
 			ToolCallID: "c1",
 			Progress: &uievent.Progress{
-				Step: 1, TotalSteps: 3, Status: "running", ElapsedSeconds: 5,
+				Step: 1, TotalSteps: 3, ToolCalls: 4, Status: "running",
 				Log: []string{"step 1 log"},
 			},
 		},
 	})
-
 	m, _ = m.HandleEvent(uievent.Event{
 		Kind: uievent.KindToolOutput,
 		Body: uievent.ToolOutputBody{
 			ToolCallID: "c1",
 			Progress: &uievent.Progress{
-				Step: 2, TotalSteps: 3, Status: "running", ElapsedSeconds: 10,
+				Step: 2, TotalSteps: 3, ToolCalls: 9, Status: "running",
 				Log: []string{"step 1 log", "step 2 log"},
 			},
 		},
@@ -291,14 +298,10 @@ func TestToolOutputProgressUpdatesProgressBarInPlace(t *testing.T) {
 
 	live := m.Blocks()
 	if len(live) != 1 {
-		t.Fatalf("got %d live blocks, want 1", len(live))
+		t.Fatalf("got %d live blocks, want 1 (no new block pushed for progress)", len(live))
 	}
-	body := strings.Join(live[0].Body, "\n")
-	if strings.Count(body, "33%") > 0 {
-		t.Errorf("expected 33%% progress bar replaced, but found in body: %q", body)
-	}
-	if strings.Count(body, "66%") != 1 {
-		t.Errorf("expected 66%% progress bar once, got body: %q", body)
+	if !reflect.DeepEqual(live[0], pushed) {
+		t.Errorf("block changed after progress events:\npushed: %+v\nafter:  %+v", pushed, live[0])
 	}
 }
 
@@ -396,30 +399,6 @@ func TestSetThemeKeepsToolOutputAboveTheDiff(t *testing.T) {
 	}
 }
 
-// TestSetThemeReRendersAProgressBar: the subagent bar is styled when its
-// block is pushed, so it needs the same rebuild. It switches to
-// mivia-high-contrast because that is the embedded theme whose subtle
-// foreground actually differs - mivia-dark and mivia-light share theirs,
-// and a pair that agrees on a colour cannot prove anything about it.
-func TestSetThemeReRendersAProgressBar(t *testing.T) {
-	dark, contrast := loadTheme(t), namedTheme(t, "mivia-high-contrast")
-	m := New(dark, theme.TierTrueColor)
-	m.SetSize(80, 24)
-
-	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolOutput,
-		Body: uievent.ToolOutputBody{ToolCallID: "sa-1",
-			Progress: &uievent.Progress{Step: 2, TotalSteps: 3, Status: "running", Log: []string{"read defaults.go"}}}})
-
-	bar := ansi.Strip(m.Blocks()[0].Body[0])
-	m.SetTheme(contrast, theme.TierTrueColor)
-	after := m.Blocks()[0].Body[0]
-
-	want := render.Role(contrast, theme.TierTrueColor, theme.RoleFGSubtle).Render(bar)
-	if after != want {
-		t.Errorf("the progress bar kept the previous theme's colour:\ngot  %q\nwant %q", after, want)
-	}
-}
-
 // TestSetThemeKeepsAPlansCollapseState: rebuilding a plan's body must
 // not reset what the reader did with the block.
 func TestSetThemeKeepsAPlansCollapseState(t *testing.T) {
@@ -473,13 +452,15 @@ func sampleDiff() *uievent.Diff {
 	}}}
 }
 
-// TestProgressBarIsStyledOnBothPaths: a progress event either merges
-// into the live block of a running tool call or pushes a block of its
-// own, and the two produced different bodies - the merge wrote a bare
-// bar, the push wrote a styled one. The same event must draw the same
-// row whichever path it takes, and only the styled one can be rebuilt
-// when the theme changes.
-func TestProgressBarIsStyledOnBothPaths(t *testing.T) {
+// TestProgressEventIsANoOpOnBothPaths pins the current contract on both
+// paths a Progress event could take: a bare push (no prior tool.start) and
+// a merge into an already-running tool call. Neither pushes or mutates a
+// block - subagent progress is sidebar-only now (see
+// TestToolOutputProgressDoesNotChurnTheLiveBlock and
+// TestProgressEventIsANoOp for the individual-path pins this covers
+// together, plus the both-paths-agree property the old progress-bar
+// styling tests existed to prove for the removed bar).
+func TestProgressEventIsANoOpOnBothPaths(t *testing.T) {
 	p := &uievent.Progress{Step: 2, TotalSteps: 3, Status: "running", Log: []string{"read defaults.go"}}
 	progress := uievent.Event{Kind: uievent.KindToolOutput,
 		Body: uievent.ToolOutputBody{ToolCallID: "c1", Progress: p}}
@@ -487,37 +468,18 @@ func TestProgressBarIsStyledOnBothPaths(t *testing.T) {
 	pushed := New(loadTheme(t), theme.TierTrueColor)
 	pushed.SetSize(80, 24)
 	pushed, _ = pushed.HandleEvent(progress)
+	if len(pushed.Blocks()) != 0 {
+		t.Errorf("bare progress push: got %d blocks, want 0", len(pushed.Blocks()))
+	}
 
 	merged := New(loadTheme(t), theme.TierTrueColor)
 	merged.SetSize(80, 24)
 	merged, _ = merged.HandleEvent(uievent.Event{Kind: uievent.KindToolStart,
 		Body: uievent.ToolStartBody{ToolCallID: "c1", Name: "subagent"}})
+	before := merged.Blocks()[0]
 	merged, _ = merged.HandleEvent(progress)
-
-	if got, want := merged.Blocks()[0].Body, pushed.Blocks()[0].Body; !reflect.DeepEqual(got, want) {
-		t.Errorf("the merged path drew a different body:\ngot  %q\nwant %q", got, want)
-	}
-}
-
-// TestSetThemeReRendersAMergedProgressBar: the merged path must keep the
-// payload too, or the bar it now styles is the one thing on screen that
-// cannot follow a theme change.
-func TestSetThemeReRendersAMergedProgressBar(t *testing.T) {
-	dark, contrast := loadTheme(t), namedTheme(t, "mivia-high-contrast")
-	m := New(dark, theme.TierTrueColor)
-	m.SetSize(80, 24)
-	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolStart,
-		Body: uievent.ToolStartBody{ToolCallID: "c1", Name: "subagent"}})
-	m, _ = m.HandleEvent(uievent.Event{Kind: uievent.KindToolOutput,
-		Body: uievent.ToolOutputBody{ToolCallID: "c1",
-			Progress: &uievent.Progress{Step: 2, TotalSteps: 3, Status: "running", Log: []string{"read defaults.go"}}}})
-
-	bar := ansi.Strip(m.Blocks()[0].Body[0])
-	m.SetTheme(contrast, theme.TierTrueColor)
-
-	want := render.Role(contrast, theme.TierTrueColor, theme.RoleFGSubtle).Render(bar)
-	if got := m.Blocks()[0].Body[0]; got != want {
-		t.Errorf("the merged progress bar kept the previous theme:\ngot  %q\nwant %q", got, want)
+	if got, want := merged.Blocks(), []Block{before}; !reflect.DeepEqual(got, want) {
+		t.Errorf("progress merge changed the live block:\ngot  %+v\nwant %+v", got, want)
 	}
 }
 

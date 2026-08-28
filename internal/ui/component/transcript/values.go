@@ -10,10 +10,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
 
-// progressBarWidth is the cell count of the subagent progress bar, from
-// the wireframes-panes.md section 4 drawing.
-const progressBarWidth = 30
-
 // proseLines splits assistant prose into LOGICAL lines. It deliberately
 // does not wrap: Block.bodyRows wraps at render time, so prose reflows
 // when the terminal is resized. Wrapping here would freeze the measure
@@ -117,17 +113,11 @@ func formatUserDisplay(tier theme.Tier, input string) string {
 	return fmt.Sprintf("%s %s", icon, cmdPrefix)
 }
 
-// outputLines is the body a tool.output event contributes. Progress
-// events carry their log; a chunk carries its own lines. Every line is
-// kept: discarding all but the first was a silent truncation.
+// outputLines is the body a tool.output event contributes. Subagent
+// progress carries no body here - the sidebar panel owns that now (see
+// handleToolOutput). A chunk carries its own lines; every line is kept,
+// since discarding all but the first was a silent truncation.
 func outputLines(b uievent.ToolOutputBody) []string {
-	if b.Progress != nil {
-		p := b.Progress
-		if bar := render.ProgressBar(progressBarWidth, p.Step, p.TotalSteps); bar != "" {
-			return append([]string{bar}, p.Log...)
-		}
-		return p.Log
-	}
 	if b.Chunk == "" {
 		return nil
 	}
@@ -135,25 +125,6 @@ func outputLines(b uievent.ToolOutputBody) []string {
 }
 
 func toolOutputBlock(t theme.Theme, tier theme.Tier, b uievent.ToolOutputBody) Block {
-	if b.Progress != nil {
-		p := b.Progress
-		// The bar leads the body, above the step log
-		// (wireframes-panes.md section 4).
-		body := progressBody(t, tier, *p)
-		progressCopy := *p
-		return Block{
-			Kind:     uievent.KindToolOutput,
-			Progress: &progressCopy,
-			Header: Header{
-				Label:  "subagent",
-				Meta:   fmt.Sprintf("%d of %d", p.Step, p.TotalSteps),
-				State:  p.Status,
-				Role:   theme.RoleInfo,
-				Detail: fmt.Sprintf("%.0fs", p.ElapsedSeconds),
-			},
-			Body: body,
-		}
-	}
 	if b.Chunk == "" {
 		return Block{}
 	}
@@ -164,17 +135,6 @@ func toolOutputBlock(t theme.Theme, tier theme.Tier, b uievent.ToolOutputBody) B
 		Header: Header{Label: "output"},
 		Body:   strings.Split(strings.TrimRight(b.Chunk, "\n"), "\n"),
 	}
-}
-
-// progressBody is the styled body of a subagent progress block: the bar
-// above its step log (wireframes-panes.md section 4). It is shared by
-// the push path and the theme re-render so the two cannot diverge.
-func progressBody(t theme.Theme, tier theme.Tier, p uievent.Progress) []string {
-	body := make([]string, 0, len(p.Log)+1)
-	if bar := render.ProgressBar(progressBarWidth, p.Step, p.TotalSteps); bar != "" {
-		body = append(body, render.Role(t, tier, theme.RoleFGSubtle).Render(bar))
-	}
-	return append(body, p.Log...)
 }
 
 func toolEndBlockValue(t theme.Theme, tier theme.Tier, w int, b uievent.ToolEndBody, args map[string]any) Block {

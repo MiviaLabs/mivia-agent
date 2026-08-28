@@ -181,12 +181,13 @@ func translateSubagentDone(ev agent.Event) []uievent.Event {
 // state; emitting one event per heartbeat is intentional and bounded by the
 // heartbeat cadence.
 //
-// Step carries the steps=N count parsed from the heartbeat Detail
-// ("elapsed=Xs steps=N", written by subagents.emitHeartbeat). The files
-// panel keys its stall clock on that count: heartbeats whose step count is
-// frozen are liveness without forward motion, so they must not refresh a
-// "still working" clock. Detail text the parser cannot read leaves Step 0,
-// and a Step of 0 never counts as progress downstream.
+// Step and ToolCalls carry the steps=N/toolcalls=N counts parsed from the
+// heartbeat Detail ("elapsed=Xs steps=N toolcalls=N", written by
+// subagents.emitHeartbeat/heartbeatDetail). The files panel keys its stall
+// clock on the step count: heartbeats whose step count is frozen are
+// liveness without forward motion, so they must not refresh a "still
+// working" clock. Detail text a parser cannot read leaves that field 0,
+// and 0 never counts as progress downstream.
 //
 // Heartbeats without a TaskID cannot be attributed to any row and are
 // dropped rather than guessed at. Status is always "running": a heartbeat is
@@ -205,29 +206,43 @@ func translateSubagentHeartbeat(ev agent.Event) []uievent.Event {
 		Body: uievent.ToolOutputBody{
 			ToolCallID: ev.Origin.TaskID,
 			Progress: &uievent.Progress{
-				Status: "running",
-				Step:   heartbeatStep(ev.Detail),
-				Log:    log,
+				Status:    "running",
+				Step:      heartbeatStep(ev.Detail),
+				ToolCalls: heartbeatToolCalls(ev.Detail),
+				Log:       log,
 			},
 		},
 	}}
 }
 
-// heartbeatStep parses the steps=N tail of a heartbeat Detail line. Any
-// detail without a parseable count - raw loop EventStep remaps, plain
+// heartbeatCount parses the value following key+"=" in a heartbeat Detail
+// line, up to the next space or the end of the string - so a field is
+// readable whether it is the last one on the line ("steps=2") or followed
+// by another ("steps=2 toolcalls=5"). Any detail without a parseable,
+// non-negative count - a missing key, raw loop EventStep remaps, plain
 // prose - returns 0, which downstream code treats as "no progress
-// information", never as step 0 of real work.
-func heartbeatStep(detail string) int {
-	_, count, ok := strings.Cut(detail, "steps=")
+// information", never as count 0 of real work.
+func heartbeatCount(detail, key string) int {
+	_, after, ok := strings.Cut(detail, key+"=")
 	if !ok {
 		return 0
 	}
+	count, _, _ := strings.Cut(after, " ")
 	n, err := strconv.Atoi(strings.TrimSpace(count))
 	if err != nil || n < 0 {
 		return 0
 	}
 	return n
 }
+
+// heartbeatStep parses the steps=N field of a heartbeat Detail line.
+func heartbeatStep(detail string) int { return heartbeatCount(detail, "steps") }
+
+// heartbeatToolCalls parses the toolcalls=N field of a heartbeat Detail
+// line. Absent on a heartbeat emitted before this field existed (or any
+// other unparseable shape), it reads as "no tool-call count", identically
+// to heartbeatStep's zero-value contract.
+func heartbeatToolCalls(detail string) int { return heartbeatCount(detail, "toolcalls") }
 
 // subagentDoneText picks the most informative label available on the
 // subagent's Origin for a terminal "subagent done" advisory line:

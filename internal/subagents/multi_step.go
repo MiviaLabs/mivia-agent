@@ -219,11 +219,11 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 	// bundle is optional; without one all steer machinery stays off.
 	h.applyMailboxAccess(callCtx, &opts)
 	heartbeatCtx, heartbeatStop := context.WithCancel(callCtx)
-	var stepCount atomic.Int64
+	var stepCount, toolCallCount atomic.Int64
 	taskStart := time.Now()
 	defer heartbeatStop()
-	go emitHeartbeat(heartbeatCtx, stamped, &stepCount)
-	opts.OnEvent = h.stepOnEvent(ctx, stamped, &stepCount)
+	go emitHeartbeat(heartbeatCtx, stamped, &stepCount, &toolCallCount)
+	opts.OnEvent = h.stepOnEvent(ctx, stamped, &stepCount, &toolCallCount, taskStart)
 
 	reply, structured, runErr := h.runValidatedReply(callCtx, loop, opts, taskPrompt, compiled, steps, &stepCount)
 	h.discardPreparation(loop)
@@ -239,11 +239,26 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 // sink forwarding is additive: it records the same events the stamped
 // forwarding already sees, for later persistence, without altering what
 // stamped receives or when.
-func (h *MultiStepHandler) stepOnEvent(reqCtx context.Context, stamped func(agent.Event), stepCount *atomic.Int64) func(agent.Event) {
+//
+// A step or tool-start event also fires an immediate EventSubagentHeartbeat
+// alongside the raw forward. emitHeartbeat's 30s ticker exists to prove
+// liveness during SILENCE (one long LLM call with nothing observable in
+// between); it is not fast enough to be the sidebar's only progress source
+// - a run that finishes, or makes many steps, well inside 30s would
+// otherwise show a stale or zero Elapsed/Tools/Step reading for most or all
+// of its life. Both paths share heartbeatDetail, so the two update sources
+// can never format the count differently.
+func (h *MultiStepHandler) stepOnEvent(reqCtx context.Context, stamped func(agent.Event), stepCount, toolCallCount *atomic.Int64, taskStart time.Time) func(agent.Event) {
 	sink, hasSink := ToolCallSinkFrom(reqCtx)
 	return func(e agent.Event) {
+		progressed := false
 		if e.Kind == agent.EventStep {
 			stepCount.Add(1)
+			progressed = true
+		}
+		if e.Kind == agent.EventToolStart {
+			toolCallCount.Add(1)
+			progressed = true
 		}
 		if hasSink {
 			if step, ok := toolCallStepFromEvent(e, time.Now()); ok {
@@ -252,6 +267,12 @@ func (h *MultiStepHandler) stepOnEvent(reqCtx context.Context, stamped func(agen
 		}
 		if stamped != nil {
 			stamped(e)
+			if progressed {
+				stamped(agent.Event{
+					Kind:   agent.EventSubagentHeartbeat,
+					Detail: heartbeatDetail(time.Since(taskStart), stepCount.Load(), toolCallCount.Load()),
+				})
+			}
 		}
 	}
 }
@@ -376,7 +397,7 @@ func (h *MultiStepHandler) timeoutContext(ctx context.Context, req runtime.Reque
 // emitHeartbeat runs in a goroutine, emitting periodic heartbeat events
 // so the orchestrator/TUI can see that a subagent is still alive.
 // Stops when ctx is canceled.
-func emitHeartbeat(ctx context.Context, onEvent func(agent.Event), stepCount *atomic.Int64) {
+func emitHeartbeat(ctx context.Context, onEvent func(agent.Event), stepCount, toolCallCount *atomic.Int64) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	start := time.Now()
@@ -388,11 +409,21 @@ func emitHeartbeat(ctx context.Context, onEvent func(agent.Event), stepCount *at
 			if onEvent != nil {
 				onEvent(agent.Event{
 					Kind:   agent.EventSubagentHeartbeat,
-					Detail: fmt.Sprintf("elapsed=%s steps=%d", time.Since(start).Round(time.Second), stepCount.Load()),
+					Detail: heartbeatDetail(time.Since(start), stepCount.Load(), toolCallCount.Load()),
 				})
 			}
 		}
 	}
+}
+
+// heartbeatDetail formats one heartbeat's Detail string. The sidebar panel
+// parses this (heartbeatStep/heartbeatToolCalls in
+// internal/uiadapter/event_kind.go) to drive its Step and Tool calls
+// counters, so the field order and key names are a contract with that
+// parser - elapsed is rounded to the second to match the pre-existing
+// "elapsed=Xs" shape.
+func heartbeatDetail(elapsed time.Duration, steps, toolCalls int64) string {
+	return fmt.Sprintf("elapsed=%s steps=%d toolcalls=%d", elapsed.Round(time.Second), steps, toolCalls)
 }
 
 // scopedLoop pairs an agent loop with the dispatcher built from the same

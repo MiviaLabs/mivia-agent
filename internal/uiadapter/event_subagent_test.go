@@ -63,6 +63,23 @@ func TestTranslateEvent_SubagentHeartbeat(t *testing.T) {
 		{
 			name: "subagent_heartbeat_maps_to_keyed_progress",
 			ev: agent.Event{
+				Kind: agent.EventSubagentHeartbeat, Detail: "elapsed=30s steps=2 toolcalls=5",
+				Origin: agent.EventOrigin{TaskID: "task-hb", Agent: "auditor"},
+			},
+			want: []uievent.Event{{
+				Kind: uievent.KindToolOutput,
+				Body: uievent.ToolOutputBody{
+					ToolCallID: "task-hb",
+					Progress: &uievent.Progress{
+						Status: "running", Step: 2, ToolCalls: 5,
+						Log: []string{"elapsed=30s steps=2 toolcalls=5"},
+					},
+				},
+			}},
+		},
+		{
+			name: "subagent_heartbeat_without_parseable_toolcalls_leaves_toolcalls_zero",
+			ev: agent.Event{
 				Kind: agent.EventSubagentHeartbeat, Detail: "elapsed=30s steps=2",
 				Origin: agent.EventOrigin{TaskID: "task-hb", Agent: "auditor"},
 			},
@@ -153,6 +170,40 @@ func TestTranslateEvent_SubagentHeartbeatBadCounts(t *testing.T) {
 					Progress: &uievent.Progress{
 						Status: "running", Step: 0,
 						Log: []string{"elapsed=30s steps=-3"},
+					},
+				},
+			}},
+		},
+		{
+			name: "subagent_heartbeat_with_unparseable_toolcalls_leaves_toolcalls_zero",
+			ev: agent.Event{
+				Kind: agent.EventSubagentHeartbeat, Detail: "elapsed=30s steps=2 toolcalls=not-a-number",
+				Origin: agent.EventOrigin{TaskID: "task-hb", Agent: "auditor"},
+			},
+			want: []uievent.Event{{
+				Kind: uievent.KindToolOutput,
+				Body: uievent.ToolOutputBody{
+					ToolCallID: "task-hb",
+					Progress: &uievent.Progress{
+						Status: "running", Step: 2,
+						Log: []string{"elapsed=30s steps=2 toolcalls=not-a-number"},
+					},
+				},
+			}},
+		},
+		{
+			name: "subagent_heartbeat_with_negative_toolcalls_leaves_toolcalls_zero",
+			ev: agent.Event{
+				Kind: agent.EventSubagentHeartbeat, Detail: "elapsed=30s steps=2 toolcalls=-7",
+				Origin: agent.EventOrigin{TaskID: "task-hb", Agent: "auditor"},
+			},
+			want: []uievent.Event{{
+				Kind: uievent.KindToolOutput,
+				Body: uievent.ToolOutputBody{
+					ToolCallID: "task-hb",
+					Progress: &uievent.Progress{
+						Status: "running", Step: 2,
+						Log: []string{"elapsed=30s steps=2 toolcalls=-7"},
 					},
 				},
 			}},

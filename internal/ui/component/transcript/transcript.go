@@ -336,30 +336,22 @@ func (m Model) handleToolStart(b uievent.ToolStartBody) (Model, tea.Cmd) {
 }
 
 func (m Model) handleToolOutput(b uievent.ToolOutputBody) (Model, tea.Cmd) {
+	// Subagent progress (heartbeat elapsed/tool-call/step counters) is the
+	// sidebar panel's job now (internal/ui/screen/conversation/filespanel.go
+	// renders it live, computed at render time). It used to live-rewrite
+	// this tool call's block on every heartbeat - a churning
+	// "elapsed=Xs steps=N" line replacing itself in the middle of the
+	// scrollback for the life of a long-running subagent. The block pushed
+	// by handleToolStart (name, args, "running") now stays static until
+	// handleToolEnd renders its terminal state.
+	if b.Progress != nil {
+		return m, nil
+	}
 	lines := outputLines(b)
 	if len(lines) == 0 {
 		return m.pushBlock(toolOutputBlock(m.Theme, m.Tier, b))
 	}
 	if ok := m.updateLive(b.ToolCallID, func(blk *Block) {
-		if p := b.Progress; p != nil {
-			blk.Header.Meta = fmt.Sprintf("%d of %d", p.Step, p.TotalSteps)
-			if p.Status != "" {
-				blk.Header.State = p.Status
-			}
-			if p.ElapsedSeconds > 0 {
-				blk.Header.Detail = fmt.Sprintf("%.0fs", p.ElapsedSeconds)
-			}
-			// The SAME body the push path builds, and the same preserved
-			// payload. A progress event either merges here or pushes a
-			// block of its own depending on whether the call already
-			// started; drawing a bare bar on one path and a styled one on
-			// the other made the row depend on that accident, and the bare
-			// one could not follow a theme change.
-			progressCopy := *p
-			blk.Progress = &progressCopy
-			blk.Body = progressBody(m.Theme, m.Tier, *p)
-			return
-		}
 		blk.Body = append(slices.Clone(blk.Body), lines...)
 	}); ok {
 		return m, nil
@@ -488,8 +480,6 @@ func (m Model) restyle(b Block) Block {
 			w = 80
 		}
 		b.Body = replaceDiffTail(b.Body, render.FormatDiffLines(m.Theme, m.Tier, w, *b.Diff))
-	case b.Progress != nil:
-		b.Body = progressBody(m.Theme, m.Tier, *b.Progress)
 	}
 	return b
 }

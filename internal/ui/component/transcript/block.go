@@ -61,13 +61,12 @@ type Block struct {
 	// or terminal width can re-render the block with accurate styles.
 	Input string
 
-	// Diff, Plan and Progress preserve the raw payloads whose rendered
-	// form carries theme colour, so a theme change can rebuild them.
-	// Anything styled at push time and not kept here silently keeps the
-	// previous theme until the block is rebuilt by a new event.
-	Diff     *uievent.Diff
-	Plan     *uievent.PlanBody
-	Progress *uievent.Progress
+	// Diff and Plan preserve the raw payloads whose rendered form carries
+	// theme colour, so a theme change can rebuild them. Anything styled at
+	// push time and not kept here silently keeps the previous theme until
+	// the block is rebuilt by a new event.
+	Diff *uievent.Diff
+	Plan *uievent.PlanBody
 }
 
 // isEmpty reports a block with nothing to render.

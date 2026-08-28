@@ -109,6 +109,7 @@ type Progress struct {
 	Step           int      `json:"step"`
 	TotalSteps     int      `json:"total_steps"`
 	ElapsedSeconds float64  `json:"elapsed_seconds"`
+	ToolCalls      int      `json:"tool_calls,omitempty"`
 	Status         string   `json:"status"` // e.g. "running", "blocked"
 	Log            []string `json:"log,omitempty"`
 }

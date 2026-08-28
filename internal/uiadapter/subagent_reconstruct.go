@@ -287,7 +287,10 @@ func populateDispatchTasks(threads *SubagentThreads, tc ports.ToolCall, at time.
 func registerDispatchedTask(threads *SubagentThreads, callID string, idx int, task parsedDispatchTask, outputText string, toolCalls []toolCallSummary, at time.Time) {
 	taskID := task.ID
 	if taskID == "" {
-		taskID = fmt.Sprintf("%s-%d", callID, idx+1)
+		// Must match dispatchTaskIDs' fallback in
+		// internal/ui/screen/conversation/events.go: never embed the raw
+		// provider tool_call_id (callID) in a visible row id.
+		taskID = fmt.Sprintf("task-%d", idx+1)
 	}
 	agentName := task.Agent
 	if agentName == "" {

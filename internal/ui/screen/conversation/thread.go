@@ -137,7 +137,11 @@ func (s *Screen) LoadHistory(msgs []ports.Message) {
 							for i, t := range args.Tasks {
 								tid := t.ID
 								if tid == "" {
-									tid = fmt.Sprintf("%s-%d", tc.ID, i+1)
+									// Must match dispatchTaskIDs' fallback in
+									// events.go: never embed the raw
+									// provider tool_call_id (tc.ID) in a
+									// visible row id.
+									tid = fmt.Sprintf("task-%d", i+1)
 								}
 								s.panel.observeAgentHistory(tid, status)
 							}

@@ -121,13 +121,20 @@ func (e fileEntry) rowLabel() string {
 // motion, and leave it alone - see progressAdvances and agent_stall.go's
 // displayStatus, which derives the "stalled" badge from it at render time.
 type subagentRow struct {
-	ID     string
-	Status string
-	Step   int
-	Total  int
-	Log    []string
+	ID        string
+	Status    string
+	Step      int
+	Total     int
+	ToolCalls int
+	Log       []string
 
 	LastProgress time.Time
+	// StartedAt anchors the sidebar's live "Elapsed" reading (computed at
+	// render time, not carried by the 30s heartbeat cadence - see
+	// panelAgentRow). Stamped fresh on every observeAgentStart, including a
+	// reused id: a stale StartedAt would report the elapsed time of the run
+	// that already ended, not the new one.
+	StartedAt time.Time
 }
 
 func (a subagentRow) rowLabel() string {
@@ -303,15 +310,19 @@ func (p *panel) observeAgentStart(id, name string) {
 			if a.Status == "" || a.Status == "pending" || isTerminalStatus(a.Status) {
 				p.agents[i].Status = "running"
 				// A (re)created row is a NEW run under a reused id: anchor
-				// its stall clock now, so the fresh row never renders
-				// instantly "stalled" from the prior run's timestamp.
-				p.agents[i].LastProgress = time.Now()
+				// its stall clock and its elapsed-time clock now, so the
+				// fresh row never renders instantly "stalled", nor reports
+				// the elapsed time of the run that already ended.
+				now := time.Now()
+				p.agents[i].LastProgress = now
+				p.agents[i].StartedAt = now
 			}
 			p.rebindIfOpen()
 			return
 		}
 	}
-	p.agents = append(p.agents, subagentRow{ID: id, Status: "running", LastProgress: time.Now()})
+	now := time.Now()
+	p.agents = append(p.agents, subagentRow{ID: id, Status: "running", LastProgress: now, StartedAt: now})
 	p.rebindIfOpen()
 }
 
@@ -454,14 +465,29 @@ func (p panel) activeAgentCount() int {
 // one when an update carries no parseable count.
 func (p *panel) observeAgent(id string, pr *uievent.Progress) {
 	log := slices.Clone(pr.Log)
-	row := subagentRow{ID: id, Status: pr.Status, Step: pr.Step, Total: pr.TotalSteps, Log: log}
+	row := subagentRow{ID: id, Status: pr.Status, Step: pr.Step, Total: pr.TotalSteps, ToolCalls: pr.ToolCalls, Log: log}
 	p.agents = slices.Clone(p.agents)
 	for i, a := range p.agents {
 		if a.ID == id {
+			if isTerminalStatus(a.Status) && !isTerminalStatus(pr.Status) {
+				// A settled row must never be revived by a late/racing
+				// progress update: the heartbeat ticker goroutine and the
+				// per-step live-update path (stepOnEvent) both write
+				// Progress concurrently with the run's own terminal
+				// transition, and every heartbeat hardcodes Status
+				// "running" (translateSubagentHeartbeat). Only an explicit
+				// observeAgentStart (a genuinely new run under a reused
+				// id) may bring a terminal row back to running.
+				return
+			}
 			combinedLog := make([]string, 0, len(a.Log)+len(pr.Log))
 			combinedLog = append(combinedLog, a.Log...)
 			combinedLog = append(combinedLog, pr.Log...)
 			row.Log = combinedLog
+			// StartedAt is anchored once, at observeAgentStart - a progress
+			// update never moves it, or every heartbeat would reset the
+			// sidebar's elapsed-time clock back to zero.
+			row.StartedAt = a.StartedAt
 			if progressAdvances(a, row) {
 				row.LastProgress = time.Now()
 			} else {
@@ -476,6 +502,7 @@ func (p *panel) observeAgent(id string, pr *uievent.Progress) {
 		}
 	}
 	row.LastProgress = time.Now()
+	row.StartedAt = time.Now()
 	p.agents = append(p.agents, row)
 	p.rebindIfOpen()
 }

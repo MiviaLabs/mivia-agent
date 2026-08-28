@@ -286,6 +286,40 @@ func TestPopulateFromToolCalls_DispatchTasks(t *testing.T) {
 	}
 }
 
+// TestPopulateFromToolCalls_DispatchTasksMissingIDFallbackIsFriendly pins
+// the fix for a raw provider tool_call_id ("call_xxxxxxxxxxxx") leaking
+// into a visible sidebar row: a task the model forgot to give an "id"
+// used to fall back to "{callID}-{index}", so the row's identity (and
+// therefore its rendered label, since the panel displays IDs directly)
+// exposed the raw call id verbatim. The fallback must never embed it.
+func TestPopulateFromToolCalls_DispatchTasksMissingIDFallbackIsFriendly(t *testing.T) {
+	threads := uiadapter.NewSubagentThreads()
+	msgs := []ports.Message{
+		{
+			Role: "assistant",
+			At:   time.Now(),
+			ToolCalls: []ports.ToolCall{
+				{
+					ID:        "call_95bcae0ca204bc76",
+					Name:      "dispatch_tasks",
+					Arguments: `{"tasks":[{"prompt":"tidy the docs","agent":"docs-writer"}]}`,
+					Output:    `{"tasks":[{"status":"completed","output":"done"}]}`,
+				},
+			},
+		},
+	}
+
+	uiadapter.PopulateFromToolCalls(threads, msgs)
+
+	if _, ok := threads.Thread("call_95bcae0ca204bc76-1"); ok {
+		t.Fatal("the fallback task id must not embed the raw provider call id")
+	}
+	fallback, ok := threads.Thread("task-1")
+	if !ok || fallback == nil {
+		t.Fatalf("expected a friendly fallback thread id (task-1)")
+	}
+}
+
 func TestPopulateFromToolCalls_Delegate(t *testing.T) {
 	threads := uiadapter.NewSubagentThreads()
 	msgs := []ports.Message{
