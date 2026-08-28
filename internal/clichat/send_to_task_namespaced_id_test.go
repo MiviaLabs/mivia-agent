@@ -156,3 +156,17 @@ func TestSendToTaskBroadcastResolvesNamespacedTaskIDs(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveSendTargetTaskID_Fallbacks(t *testing.T) {
+	ctx := context.Background()
+	if got := resolveSendTargetTaskID(ctx, nil, "run-1", "task-1"); got != "task-1" {
+		t.Errorf("nil repo: got %q, want task-1", got)
+	}
+	if got := resolveSendTargetTaskID(ctx, nil, "run-1", ""); got != "" {
+		t.Errorf("empty rawID: got %q, want empty", got)
+	}
+	repo := ledger.NewMemoryLedgerRepository()
+	if got := resolveSendTargetTaskID(ctx, repo, "missing-run", "task-1"); got != "task-1" {
+		t.Errorf("missing run: got %q, want task-1", got)
+	}
+}

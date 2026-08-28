@@ -204,7 +204,7 @@ func (s Screen) panelAgentRow(a subagentRow, selLabel string, marked bool) []str
 		statusStyle := render.Role(s.Theme, s.Tier, statusBadgeRole(status))
 		statusBadge = " " + border.Render("[") + statusStyle.Render(status) + border.Render("]")
 	}
-	nameLine := subtle.Render(prefix) + fg.Render(a.ID) + statusBadge
+	nameLine := subtle.Render(prefix) + fg.Render(a.displayName()) + statusBadge
 	metrics := fmt.Sprintf("Elapsed: %s, Tools: %d, Step: %d",
 		formatElapsed(elapsedFor(a, s.now())), a.ToolCalls, a.Step)
 	metricsLine := subtle.Render("      " + metrics)
@@ -255,17 +255,22 @@ func (s Screen) dialogParts() (title, body, hint string) {
 	dw, _ := s.dialogSize()
 	bodyW := render.DialogBodyWidth(dw)
 	if s.panel.dialogAgent != "" {
-		if s.thread != nil && s.threadID == s.panel.dialogAgent {
-			s.thread.setSurface(bodyW, s.panelBodyRows())
-			title = "subagent: " + s.panel.dialogAgent
-			return title, s.thread.View(), "esc close"
-		}
 		for _, a := range s.panel.agents {
 			if a.ID != s.panel.dialogAgent {
 				continue
 			}
-			rows := append([]string{a.ID + "  " + a.Status}, a.Log...)
-			return "subagent: " + a.ID, strings.Join(rows, "\n"), "any key closes"
+			if s.thread != nil && s.threadID == s.panel.dialogAgent {
+				s.thread.setSurface(bodyW, s.panelBodyRows())
+				title = "subagent: " + a.displayName()
+				return title, s.thread.View(), "esc close"
+			}
+			rows := append([]string{a.displayName() + "  " + a.Status}, a.Log...)
+			return "subagent: " + a.displayName(), strings.Join(rows, "\n"), "any key closes"
+		}
+		if s.thread != nil && s.threadID == s.panel.dialogAgent {
+			s.thread.setSurface(bodyW, s.panelBodyRows())
+			title = "subagent: " + s.panel.dialogAgent
+			return title, s.thread.View(), "esc close"
 		}
 		return "subagent: " + s.panel.dialogAgent, "", "any key closes"
 	}

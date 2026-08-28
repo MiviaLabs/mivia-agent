@@ -219,8 +219,18 @@ func (s *Screen) observeToolStart(b uievent.ToolStartBody) {
 	if ids := dispatchTaskIDs(b.ToolCallID, b.Name, b.Args); len(ids) > 0 {
 		s.panel.observeAgentGroupStart(b.ToolCallID, ids)
 	} else {
-		s.panel.observeAgentStart(b.ToolCallID, b.Name)
+		name := extractAgentDisplayName(b.Name, b.Args)
+		s.panel.observeAgentStart(b.ToolCallID, name)
 	}
+}
+
+func extractAgentDisplayName(toolName string, args map[string]any) string {
+	for _, key := range []string{"agent", "subagent", "role", "type", "skill", "workflow", "name"} {
+		if v := getStringVal(args, key); v != "" {
+			return v
+		}
+	}
+	return toolName
 }
 
 // observeToolEnd folds one ToolEndBody into the activity panel and the

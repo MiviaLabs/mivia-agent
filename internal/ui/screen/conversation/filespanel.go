@@ -122,6 +122,7 @@ func (e fileEntry) rowLabel() string {
 // displayStatus, which derives the "stalled" badge from it at render time.
 type subagentRow struct {
 	ID        string
+	Name      string
 	Status    string
 	Step      int
 	Total     int
@@ -137,8 +138,18 @@ type subagentRow struct {
 	StartedAt time.Time
 }
 
+func (a subagentRow) displayName() string {
+	if a.Name != "" {
+		return a.Name
+	}
+	if idx := strings.Index(a.ID, ":"); idx >= 0 && idx+1 < len(a.ID) {
+		return a.ID[idx+1:]
+	}
+	return a.ID
+}
+
 func (a subagentRow) rowLabel() string {
-	label := a.ID + "  " + a.Status
+	label := a.displayName() + "  " + a.Status
 	if a.Total > 0 {
 		label += " " + strconv.Itoa(a.Step) + "/" + strconv.Itoa(a.Total)
 	}
@@ -244,7 +255,7 @@ func (p panel) selectionKey() string {
 		}
 	}
 	for _, a := range p.agents {
-		if a.rowLabel() == label || strings.HasPrefix(label, a.ID+" ") || label == a.ID {
+		if a.rowLabel() == label || strings.HasPrefix(label, a.displayName()+" ") || label == a.displayName() || strings.HasPrefix(label, a.ID+" ") || label == a.ID {
 			return "a:" + a.ID
 		}
 	}
@@ -292,11 +303,27 @@ func (p panel) selectedAgent() (subagentRow, bool) {
 	return subagentRow{}, false
 }
 
-// observeAgentStart registers an agent or delegation immediately upon launch.
-//
-// A start event also resets a row stuck in a TERMINAL status: LoadHistory
-// seeds resumed sessions' rows "completed", and models reuse short task
-// ids ("task-1", "audit") across dispatches, so a terminal row plus a new
+func matchesAgentID(aID, id string) bool {
+	if aID == id {
+		return true
+	}
+	if aID == "" || id == "" {
+		return false
+	}
+	if idx := strings.Index(aID, ":"); idx >= 0 {
+		if aID[idx+1:] == id {
+			return true
+		}
+	}
+	if idx := strings.Index(id, ":"); idx >= 0 {
+		if id[idx+1:] == aID {
+			return true
+		}
+	}
+	return false
+}
+
+// observeAgentStart records or updates one subagent's running status. A
 // start means a NEW task under an old id - not history. Leaving it
 // terminal would badge a genuinely running dispatch as already finished.
 // Start events carry no group/call identity that could distinguish a
@@ -306,7 +333,10 @@ func (p panel) selectedAgent() (subagentRow, bool) {
 func (p *panel) observeAgentStart(id, name string) {
 	p.agents = slices.Clone(p.agents)
 	for i, a := range p.agents {
-		if a.ID == id {
+		if matchesAgentID(a.ID, id) {
+			if name != "" {
+				p.agents[i].Name = name
+			}
 			if a.Status == "" || a.Status == "pending" || isTerminalStatus(a.Status) {
 				p.agents[i].Status = "running"
 				// A (re)created row is a NEW run under a reused id: anchor
@@ -322,7 +352,7 @@ func (p *panel) observeAgentStart(id, name string) {
 		}
 	}
 	now := time.Now()
-	p.agents = append(p.agents, subagentRow{ID: id, Status: "running", LastProgress: now, StartedAt: now})
+	p.agents = append(p.agents, subagentRow{ID: id, Name: name, Status: "running", LastProgress: now, StartedAt: now})
 	p.rebindIfOpen()
 }
 
@@ -334,7 +364,7 @@ func (p *panel) observeAgentEnd(id string, ok bool) {
 	}
 	p.agents = slices.Clone(p.agents)
 	for i, a := range p.agents {
-		if a.ID == id {
+		if matchesAgentID(a.ID, id) {
 			p.agents[i].Status = status
 			p.agents[i].LastProgress = time.Now()
 			p.rebindIfOpen()
@@ -369,8 +399,14 @@ func (p *panel) observeAgentGroupEnd(callID string, statuses map[string]string, 
 		return
 	}
 	delete(p.dispatchGroups, callID)
+	prefix := callID + ":"
 	for _, id := range ids {
-		if status := statuses[id]; status != "" {
+		rawID := strings.TrimPrefix(id, prefix)
+		status := statuses[id]
+		if status == "" {
+			status = statuses[rawID]
+		}
+		if status != "" {
 			p.setAgentStatus(id, status)
 			continue
 		}
@@ -383,7 +419,7 @@ func (p *panel) observeAgentGroupEnd(callID string, statuses map[string]string, 
 func (p *panel) setAgentStatus(id, status string) {
 	p.agents = slices.Clone(p.agents)
 	for i, a := range p.agents {
-		if a.ID == id {
+		if matchesAgentID(a.ID, id) {
 			p.agents[i].Status = status
 			p.agents[i].LastProgress = time.Now()
 			p.rebindIfOpen()
@@ -430,7 +466,7 @@ func (p *panel) reconcileTerminal(reason string) {
 func (p *panel) observeAgentHistory(id, status string) {
 	p.agents = slices.Clone(p.agents)
 	for i, a := range p.agents {
-		if a.ID == id {
+		if matchesAgentID(a.ID, id) {
 			if isNonTerminalStatus(a.Status) {
 				p.agents[i].Status = status
 			}
@@ -453,56 +489,55 @@ func (p panel) activeAgentCount() int {
 	return count
 }
 
-// observeAgent folds one subagent-progress update into the agents
-// section, latest per subagent - the same fold files use. The step log
-// rides along: it is the fallback content when no thread Conversation
-// exists for the call.
-//
-// The stall clock only moves on forward motion (progressAdvances): a
-// heartbeat whose step count is frozen leaves LastProgress - and the
-// stored step - untouched, so a trickling provider cannot keep a row
-// looking healthy. A row with no prior step count keeps the last known
-// one when an update carries no parseable count.
+// observeAgent records progress for a subagent. It preserves the subagent's
+// starting state and name, updates steps/toolcalls, and advances the stall clock
+// only when real forward progress occurs.
 func (p *panel) observeAgent(id string, pr *uievent.Progress) {
 	log := slices.Clone(pr.Log)
-	row := subagentRow{ID: id, Status: pr.Status, Step: pr.Step, Total: pr.TotalSteps, ToolCalls: pr.ToolCalls, Log: log}
 	p.agents = slices.Clone(p.agents)
 	for i, a := range p.agents {
-		if a.ID == id {
+		if matchesAgentID(a.ID, id) {
 			if isTerminalStatus(a.Status) && !isTerminalStatus(pr.Status) {
-				// A settled row must never be revived by a late/racing
-				// progress update: the heartbeat ticker goroutine and the
-				// per-step live-update path (stepOnEvent) both write
-				// Progress concurrently with the run's own terminal
-				// transition, and every heartbeat hardcodes Status
-				// "running" (translateSubagentHeartbeat). Only an explicit
-				// observeAgentStart (a genuinely new run under a reused
-				// id) may bring a terminal row back to running.
 				return
 			}
-			combinedLog := make([]string, 0, len(a.Log)+len(pr.Log))
-			combinedLog = append(combinedLog, a.Log...)
-			combinedLog = append(combinedLog, pr.Log...)
-			row.Log = combinedLog
-			// StartedAt is anchored once, at observeAgentStart - a progress
-			// update never moves it, or every heartbeat would reset the
-			// sidebar's elapsed-time clock back to zero.
-			row.StartedAt = a.StartedAt
+			row := a
+			if pr.Status != "" {
+				row.Status = pr.Status
+			}
+			if pr.Step > 0 {
+				row.Step = pr.Step
+			}
+			if pr.TotalSteps > 0 {
+				row.Total = pr.TotalSteps
+			}
+			if pr.ToolCalls > 0 {
+				row.ToolCalls = pr.ToolCalls
+			}
+			if len(log) > 0 {
+				combinedLog := make([]string, 0, len(a.Log)+len(log))
+				combinedLog = append(combinedLog, a.Log...)
+				combinedLog = append(combinedLog, log...)
+				row.Log = combinedLog
+			}
 			if progressAdvances(a, row) {
 				row.LastProgress = time.Now()
-			} else {
-				row.LastProgress = a.LastProgress
-				if row.Step == 0 {
-					row.Step = a.Step
-				}
 			}
 			p.agents[i] = row
 			p.rebindIfOpen()
 			return
 		}
 	}
-	row.LastProgress = time.Now()
-	row.StartedAt = time.Now()
+	now := time.Now()
+	row := subagentRow{
+		ID:           id,
+		Status:       pr.Status,
+		Step:         pr.Step,
+		Total:        pr.TotalSteps,
+		ToolCalls:    pr.ToolCalls,
+		Log:          log,
+		LastProgress: now,
+		StartedAt:    now,
+	}
 	p.agents = append(p.agents, row)
 	p.rebindIfOpen()
 }

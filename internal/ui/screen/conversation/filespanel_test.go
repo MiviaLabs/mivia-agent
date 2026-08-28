@@ -902,6 +902,25 @@ func TestObserveAgentGroupEnd_ResolvesPerTaskStatuses(t *testing.T) {
 	}
 }
 
+func TestObserveAgentGroupEnd_ResolvesNamespacedTaskIDsFromStrippedResult(t *testing.T) {
+	var p panel
+	// Live dispatch_tasks registers IDs with callID prefix (call-1:task-a, call-1:task-b)
+	p.observeAgentGroupStart("call-1", []string{"call-1:task-a", "call-1:task-b", "call-1:task-c"})
+
+	// Tool execution returns stripped raw task IDs in result JSON
+	p.observeAgentGroupEnd("call-1", map[string]string{
+		"task-a": "completed",
+		"task-b": "failed",
+	}, true)
+
+	want := map[string]string{"call-1:task-a": "completed", "call-1:task-b": "failed", "call-1:task-c": "completed"}
+	for _, a := range p.agents {
+		if got := want[a.ID]; got != a.Status {
+			t.Errorf("%s status = %q, want %q", a.ID, a.Status, got)
+		}
+	}
+}
+
 // TestObserveAgentGroupEnd_UnknownCallIsNoOp guards the fallback path:
 // ending a call that was never registered as a group (an ordinary
 // single-row subagent tool) must not panic or fabricate rows.

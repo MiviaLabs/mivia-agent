@@ -742,3 +742,15 @@ func TestPopulateFromToolCalls_PreFeatureJSONShapeFallsBackCleanly(t *testing.T)
 		t.Errorf("key-absent and explicit-empty-array ToolCalls length differ: %d vs %d", len(absent.ToolCalls), len(empty.ToolCalls))
 	}
 }
+
+func TestNamespacedTaskID(t *testing.T) {
+	if got := uiadapter.NamespacedTaskIDForTest("", "raw"); got != "raw" {
+		t.Errorf("empty namespace: got %q, want raw", got)
+	}
+	if got := uiadapter.NamespacedTaskIDForTest("ns", ""); got != "" {
+		t.Errorf("empty rawID: got %q, want empty", got)
+	}
+	if got := uiadapter.NamespacedTaskIDForTest("ns", "raw"); got != "ns:raw" {
+		t.Errorf("namespaced: got %q, want ns:raw", got)
+	}
+}

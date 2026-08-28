@@ -84,6 +84,7 @@ func TestToolEndDetailDispatchTasksWholeBatchRejectionFails(t *testing.T) {
 		{"pre-flight wait rejection", `{"error":"unknown wait value \"maybe\""}`, "failed"},
 		{"expired caller context", `{"error":"caller context already expired; no tasks were started","status":"canceled"}`, "failed"},
 		{"run-level failure with hint", `{"error":"coordinator join failed","status":"failed","run_id":"run-1","hint":"inspect_agents or cancel_run can reach this run by run_id"}`, "failed"},
+		{"invalid json with brace", "{not-json", "completed"},
 		{"empty batch is not a failure", `{"tasks":[]}`, "completed"},
 		{"per-task array result, tasks ran", `[{"task_id":"ba-core","status":"completed"}]`, "completed"},
 		{"per-task array result, a task failed", `[{"task_id":"ba-core","status":"failed"}]`, "completed"},

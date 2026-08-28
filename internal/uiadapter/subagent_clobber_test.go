@@ -243,3 +243,26 @@ func TestPopulateFromToolCalls_OutputAndToolCallsPairFromSameRow(t *testing.T) {
 		t.Errorf("t2 tool calls mismatch: %+v", hist2[1].ToolCalls)
 	}
 }
+
+func TestPopulateFromToolCalls_SpawnAgentPopulatesWithoutNamespace(t *testing.T) {
+	threads := uiadapter.NewSubagentThreads()
+	msgs := []ports.Message{
+		{
+			Role: "assistant",
+			At:   time.Now(),
+			ToolCalls: []ports.ToolCall{
+				{
+					ID:        "call_spawn",
+					Name:      "spawn_agent",
+					Arguments: `{"tasks":[{"id":"solo","prompt":"work","agent":"worker"}]}`,
+					Output:    `[{"task_id":"solo","status":"completed","output":"done"}]`,
+				},
+			},
+		},
+	}
+	uiadapter.PopulateFromToolCalls(threads, msgs)
+	conv, ok := threads.Thread("solo")
+	if !ok || conv == nil {
+		t.Fatalf("expected unnamespaced thread for solo")
+	}
+}

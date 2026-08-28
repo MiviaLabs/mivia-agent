@@ -280,3 +280,72 @@ func TestPanelWindowGroupsNeverSplitsAGroup(t *testing.T) {
 		}
 	}
 }
+
+// TestObserveAgent_NamespacedIDMatchesRawProgress verifies that progress updates
+// arriving with a raw task ID properly update a namespaced row registered by dispatch_tasks.
+func TestObserveAgent_NamespacedIDMatchesRawProgress(t *testing.T) {
+	var p panel
+	p.observeAgentGroupStart("call-xyz", []string{"call-xyz:worker-1"})
+	if len(p.agents) != 1 {
+		t.Fatalf("expected 1 agent, got %d", len(p.agents))
+	}
+	if p.agents[0].ID != "call-xyz:worker-1" {
+		t.Fatalf("expected ID call-xyz:worker-1, got %q", p.agents[0].ID)
+	}
+
+	// Progress arrives with raw ID worker-1
+	p.observeAgent("worker-1", &uievent.Progress{
+		Status:    "running",
+		Step:      3,
+		ToolCalls: 7,
+		Log:       []string{"running search"},
+	})
+
+	if len(p.agents) != 1 {
+		t.Fatalf("expected still 1 agent row, but got %d (duplicate created)", len(p.agents))
+	}
+	if p.agents[0].Step != 3 || p.agents[0].ToolCalls != 7 {
+		t.Errorf("expected Step=3 ToolCalls=7, got Step=%d ToolCalls=%d", p.agents[0].Step, p.agents[0].ToolCalls)
+	}
+	if len(p.agents[0].Log) != 1 || p.agents[0].Log[0] != "running search" {
+		t.Errorf("expected log preserved, got %v", p.agents[0].Log)
+	}
+}
+
+// TestObserveAgent_PreservesNameAndCountsOnPartialUpdate verifies that Name and
+// existing counts are not wiped out when a subsequent progress event arrives.
+func TestObserveAgent_PreservesNameAndCountsOnPartialUpdate(t *testing.T) {
+	var p panel
+	p.observeAgentStart("call-1:task-a", "Reviewer")
+	p.observeAgent("call-1:task-a", &uievent.Progress{
+		Status:    "running",
+		Step:      2,
+		ToolCalls: 5,
+	})
+
+	if p.agents[0].Name != "Reviewer" {
+		t.Errorf("Name = %q, want 'Reviewer'", p.agents[0].Name)
+	}
+
+	// Progress arrives without step or tool calls
+	p.observeAgent("call-1:task-a", &uievent.Progress{
+		Status: "running",
+		Log:    []string{"heartbeat tick"},
+	})
+
+	if p.agents[0].Name != "Reviewer" {
+		t.Errorf("Name wiped to %q on partial update", p.agents[0].Name)
+	}
+	if p.agents[0].Step != 2 || p.agents[0].ToolCalls != 5 {
+		t.Errorf("Counts wiped: Step=%d, ToolCalls=%d", p.agents[0].Step, p.agents[0].ToolCalls)
+	}
+}
+
+func TestObserveAgentHistory_UpdatesRunningAgent(t *testing.T) {
+	var p panel
+	p.observeAgentStart("task-1", "worker")
+	p.observeAgentHistory("task-1", "completed")
+	if p.agents[0].Status != "completed" {
+		t.Errorf("status = %q, want completed", p.agents[0].Status)
+	}
+}

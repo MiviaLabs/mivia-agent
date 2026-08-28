@@ -130,3 +130,57 @@ func TestJoinRunAndInspectAgentsStripNamespaceFromSingleTaskRun(t *testing.T) {
 		t.Errorf("join_run output must report the model's raw id \"solo\" verbatim on a single-task run, not a namespaced form: %s", joinOut)
 	}
 }
+
+func TestStripNamespaceAndResolveTaskIDEdgeCases(t *testing.T) {
+	if got := stripNamespace("", "foo:bar"); got != "foo:bar" {
+		t.Errorf("stripNamespace empty namespace: got %q, want foo:bar", got)
+	}
+	tasks := []ledger.TaskSnapshot{
+		{TaskID: "call-1:t1", RawID: "t1"},
+	}
+	if got := ResolveTaskID(tasks, "unknown"); got != "unknown" {
+		t.Errorf("ResolveTaskID unknown: got %q, want unknown", got)
+	}
+}
+
+func TestDispatchTasksSpawnAndWaitError(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	dispatcher := runtime.New(runtime.Policy{})
+	callerCtx := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "sess-err"})
+	tool := NewDispatchTasksToolConfigured(dispatcher, config.DefaultSubagentConfig, repo, testAgentRegistry(t, "worker"))
+	_, err := tool.Execute(callerCtx, json.RawMessage(
+		`{"tasks":[{"id":"t1","agent":"worker","prompt":"a"}],"wait":"task","wait_task_id":"missing"}`))
+	if err == nil {
+		t.Fatal("expected error for missing wait_task_id")
+	}
+}
+
+func TestInspectAgentsResolvesDependsOn(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	dispatcher := runtime.New(runtime.Policy{})
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	_ = dispatcher.Register(runtime.Subagent, "worker", handlerFunc(func(context.Context, runtime.Request) (json.RawMessage, error) {
+		<-release
+		return json.RawMessage(`{"ok":true}`), nil
+	}))
+	callerCtx := runtime.ContextWithCaller(context.Background(), runtime.Caller{SessionID: "sess-dep"})
+	tool := NewDispatchTasksToolConfigured(dispatcher, config.DefaultSubagentConfig, repo, testAgentRegistry(t, "worker"))
+	out, err := tool.Execute(callerCtx, json.RawMessage(
+		`{"tasks":[{"id":"t1","agent":"worker","prompt":"a"},{"id":"t2","agent":"worker","prompt":"b","depends_on":["t1"]}],"wait":"none"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var resp struct {
+		RunID string `json:"run_id"`
+	}
+	_ = json.Unmarshal([]byte(out), &resp)
+	inspectOut, err := (&inspectAgentTool{dispatcher: dispatcher, repo: repo}).Execute(callerCtx,
+		json.RawMessage(`{"run_id":"`+resp.RunID+`"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(inspectOut, `"depends_on":["t1"]`) {
+		t.Errorf("expected depends_on to contain t1, got %s", inspectOut)
+	}
+}
