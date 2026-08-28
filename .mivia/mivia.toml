@@ -438,6 +438,14 @@ default_timeout_seconds = 43200
 # one step (still above normal generations; the 15-minute HTTP transport
 # ceiling stays the hard outer backstop).
 default_request_timeout_seconds = 600
+# Hard wall-clock kill for one subagent task (all its own steps, LLM calls,
+# and nested tool calls combined). Must stay above default_request_timeout_seconds
+# (600s) - see internal/config/subagent_timeout_ordering_test.go. Left at the
+# compiled DefaultSubagentTotalTimeoutSec (3600s) before, a genuinely stuck
+# subagent could sit silently for up to an hour with only the 3-minute sidebar
+# stall badge as a warning; 1200s (20 min) gives up sooner while still leaving
+# 10 minutes of headroom over the per-request bound for retries.
+default_total_timeout_seconds = 1200
 max_audit_rounds = 0
 max_depth = -1
 max_fanout = -1
