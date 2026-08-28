@@ -10,7 +10,7 @@ import (
 // [subagents] default_total_timeout_seconds knob. Companion to requestTimeout
 // (agent_task_handler.go), which resolves the per-request knob the same way.
 // A positive configured value is the budget. Unset (0) applies
-// DefaultSubagentTotalTimeoutSec (1200s, 20 minutes): a provider connection
+// DefaultSubagentTotalTimeoutSec (3600s, 60 minutes): a provider connection
 // that trickles bytes defeats every idle watchdog, so each handler
 // construction site carries this total bound as the last-resort termination
 // guarantee. A negative value switches the bound off (returns 0); that is an

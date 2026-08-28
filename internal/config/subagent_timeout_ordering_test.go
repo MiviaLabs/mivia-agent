@@ -9,10 +9,10 @@ import "testing"
 // deadline), so a compiled total default shorter than the compiled
 // request default silently truncates the documented per-request
 // allowance: a single legitimate call inside its own 30-minute budget
-// gets killed by a 20-minute outer deadline first and is misreported
+// gets killed by a sub-30-minute outer deadline first and is misreported
 // timed_out, even though it never exceeded its own timeout.
 //
-// RED: fails while DefaultSubagentTotalTimeoutSec (1200s) is less than
+// RED: fails while DefaultSubagentTotalTimeoutSec (3600s) is less than
 // DefaultSubagentRequestTimeoutSec (1800s).
 func TestDefaultTotalTimeoutExceedsDefaultRequestTimeout(t *testing.T) {
 	if DefaultSubagentTotalTimeoutSec <= DefaultSubagentRequestTimeoutSec {

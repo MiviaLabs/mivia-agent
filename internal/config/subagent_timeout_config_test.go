@@ -4,7 +4,7 @@ import "testing"
 
 // TestLoadSubagentTotalTimeoutKnob pins the raw TOML decode of
 // [subagents] default_total_timeout_seconds: unset and 0 reach the code as
-// 0 (the compiled 1200s default applies at resolution time), and a negative
+// 0 (the compiled 3600s default applies at resolution time), and a negative
 // literal survives decode intact so the documented operator opt-out works.
 func TestLoadSubagentTotalTimeoutKnob(t *testing.T) {
 	cases := []struct {

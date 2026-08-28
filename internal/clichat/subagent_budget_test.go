@@ -16,7 +16,7 @@ import (
 )
 
 // TestTotalTaskTimeout pins the resolution table for
-// default_total_timeout_seconds: unset falls to the compiled 20-minute
+// default_total_timeout_seconds: unset falls to the compiled 60-minute
 // default, a positive value is the budget, and a negative value switches
 // the bound off (the documented operator opt-out).
 func TestTotalTaskTimeout(t *testing.T) {
