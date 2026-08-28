@@ -1052,3 +1052,40 @@ func TestTimedOutSubagentRowSettles(t *testing.T) {
 		t.Errorf("status after a new start = %q, want running (timed_out settles like completed, no more)", got)
 	}
 }
+
+// TestStatusBadgeRoleCoversTerminalVocabulary pins the badge color for every
+// status the sidebar row can carry. A status with no case in the switch
+// silently falls through to theme.RoleInfo - the same role a "running" row
+// gets - so a terminal status missing a case is visually indistinguishable
+// from a row that is still active. timed_out joined the terminal vocabulary
+// (isTerminalStatus) without a matching badge-color case; this pins it
+// alongside the other terminal statuses so the class cannot regress again.
+func TestStatusBadgeRoleCoversTerminalVocabulary(t *testing.T) {
+	cases := []struct {
+		status string
+		want   theme.Role
+	}{
+		{"completed", theme.RoleSuccess},
+		{"done", theme.RoleSuccess},
+		{"failed", theme.RoleDanger},
+		{"error", theme.RoleDanger},
+		{"interrupted", theme.RoleDanger},
+		{"timed_out", theme.RoleDanger},
+		{"cancelled", theme.RoleFGSubtle},
+		{"canceled", theme.RoleFGSubtle},
+		{"thinking", theme.RoleWarning},
+		{statusStalled, theme.RoleWarning},
+	}
+	for _, tc := range cases {
+		t.Run(tc.status, func(t *testing.T) {
+			if got := statusBadgeRole(tc.status); got != tc.want {
+				t.Fatalf("statusBadgeRole(%q) = %v, want %v", tc.status, got, tc.want)
+			}
+		})
+	}
+	// A row that has settled into a terminal status must never read the
+	// same as an actively running one.
+	if got := statusBadgeRole("timed_out"); got == statusBadgeRole("running") {
+		t.Fatalf("timed_out badge role (%v) must differ from running's (%v)", got, statusBadgeRole("running"))
+	}
+}

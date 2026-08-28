@@ -82,6 +82,28 @@ func (s Screen) panelFileRow(e fileEntry, selLabel string, marked bool) string {
 	return row
 }
 
+// statusBadgeRole maps a subagent row's display status to its badge color.
+// theme.RoleInfo is the default for "running"/"pending" (no explicit case),
+// so every terminal status needs its own case here - otherwise it renders
+// indistinguishably from an actively running row, defeating the point of
+// adding it to the terminal vocabulary (isTerminalStatus).
+func statusBadgeRole(status string) theme.Role {
+	switch status {
+	case "completed", "done":
+		return theme.RoleSuccess
+	case "failed", "error", "interrupted", "timed_out":
+		return theme.RoleDanger
+	case "cancelled", "canceled":
+		return theme.RoleFGSubtle
+	case "thinking":
+		return theme.RoleWarning
+	case statusStalled:
+		return theme.RoleWarning
+	default:
+		return theme.RoleInfo
+	}
+}
+
 func (s Screen) panelAgentRow(a subagentRow, selLabel string, marked bool) string {
 	prefix := "  · "
 	subtle := render.Role(s.Theme, s.Tier, theme.RoleFGSubtle)
@@ -96,20 +118,7 @@ func (s Screen) panelAgentRow(a subagentRow, selLabel string, marked bool) strin
 	status := s.panel.displayStatus(a)
 	var statusBadge string
 	if status != "" {
-		role := theme.RoleInfo
-		switch status {
-		case "completed", "done":
-			role = theme.RoleSuccess
-		case "failed", "error", "interrupted":
-			role = theme.RoleDanger
-		case "cancelled", "canceled":
-			role = theme.RoleFGSubtle
-		case "thinking":
-			role = theme.RoleWarning
-		case statusStalled:
-			role = theme.RoleWarning
-		}
-		statusStyle := render.Role(s.Theme, s.Tier, role)
+		statusStyle := render.Role(s.Theme, s.Tier, statusBadgeRole(status))
 		statusBadge = " " + border.Render("[") + statusStyle.Render(status) + border.Render("]")
 	}
 	var stepBadge string
