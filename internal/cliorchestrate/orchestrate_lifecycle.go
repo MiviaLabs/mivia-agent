@@ -213,15 +213,21 @@ func (t *joinRunTool) Parameters() map[string]any {
 	}
 }
 
+// joinFallbackSeconds is the join budget when nothing resolves: no
+// configured default and no request. joinDefaultSeconds (what the schema
+// advertises) and joinTimeout (what enforcement applies) must agree on it,
+// so both read this one constant.
+const joinFallbackSeconds = 600
+
 // joinDefaultSeconds reports the model-visible default join budget:
 // the effective timeout joinTimeout would use when no timeout_seconds is
-// passed (0 -> 600), clamped to the same 3600 cap so the advertised
-// default never exceeds the enforced cap.
+// passed (0 -> joinFallbackSeconds), clamped to the same 3600 cap so the
+// advertised default never exceeds the enforced cap.
 func joinDefaultSeconds(cfg config.SubagentConfig) string {
 	if eff := joinBudget(cfg, 0); eff > 0 {
 		return fmt.Sprint(eff)
 	}
-	return "600"
+	return fmt.Sprint(joinFallbackSeconds)
 }
 
 // joinBudget resolves the effective join seconds: config default, then the
@@ -252,7 +258,7 @@ func joinBudget(cfg config.SubagentConfig, requested int) int {
 func joinTimeout(ctx context.Context, cfg config.SubagentConfig, requested int) (context.Context, context.CancelFunc) {
 	eff := joinBudget(cfg, requested)
 	if eff <= 0 {
-		eff = 600
+		eff = joinFallbackSeconds
 	}
 	return context.WithTimeout(ctx, time.Duration(eff)*time.Second)
 }

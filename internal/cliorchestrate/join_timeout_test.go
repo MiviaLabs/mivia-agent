@@ -229,6 +229,39 @@ func TestJoinRunTool_CallerCancelLeavesRunJoinable(t *testing.T) {
 	}
 }
 
+// TestJoinTimeoutDeadlineSeconds pins the enforcement line itself, not just
+// the budget function: joinTimeout must put a real deadline on the context -
+// the 600s fallback when nothing resolves (a missing deadline here would
+// hand a no-timeout join a context that expires instantly and cancel a
+// healthy run), the config default when set, and the 3600 cap for an
+// over-cap request. TestJoinBudgetBoundaries covers joinBudget's arithmetic;
+// this covers the WithTimeout that acts on it.
+func TestJoinTimeoutDeadlineSeconds(t *testing.T) {
+	cases := []struct {
+		name      string
+		cfg       config.SubagentConfig
+		requested int
+		want      time.Duration
+	}{
+		{name: "no config no request falls back to 600", cfg: config.SubagentConfig{}, requested: 0, want: 600 * time.Second},
+		{name: "config default wins", cfg: config.SubagentConfig{DefaultTimeout: 120}, requested: 0, want: 120 * time.Second},
+		{name: "over-cap request clamps to cap", cfg: config.SubagentConfig{}, requested: 7200, want: 3600 * time.Second},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := joinTimeout(context.Background(), tc.cfg, tc.requested)
+			defer cancel()
+			dl, ok := ctx.Deadline()
+			if !ok {
+				t.Fatal("joinTimeout produced no deadline")
+			}
+			if got := time.Until(dl); got < tc.want-time.Second || got > tc.want+time.Second {
+				t.Errorf("deadline in %v, want ~%v", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestJoinBudgetBoundaries pins review finding F1: an over-cap join request
 // clamps to the 3600 cap instead of silently falling back to the 600 default
 // (the old `eff > 3600 -> eff = 600` reset truncated a deliberately long join

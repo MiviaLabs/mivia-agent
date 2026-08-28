@@ -259,7 +259,7 @@ type SubagentConfig struct {
 	// orchestration default no longer feeds individual subagent requests.
 	DefaultRequestTimeoutSec int `toml:"default_request_timeout_seconds"`
 	// DefaultTotalTimeoutSec is the whole-subagent wall-clock budget
-	// (seconds). 0 = unset = DefaultSubagentTotalTimeoutSec (1200s, 20
+	// (seconds). 0 = unset = DefaultSubagentTotalTimeoutSec (3600s, 60
 	// minutes). Negative = off: a direct spawn with no per-task timeout then
 	// has no handler-level bound at all, and workflow or panel steps whose
 	// own timeout is unset stay bounded only by workflow policy - this is an
