@@ -651,6 +651,63 @@ func TestGapOpenSQLiteStoreProjectHardenDirChmodError(t *testing.T) {
 	}
 }
 
+// TestGapOpenSQLiteStoreProjectHardenFileChmodErrorAfterDirCreated pins the
+// post-open project file chmod arm: the directory chmods (ensureHardenedDir,
+// pre-open) pass, the file chmod fails, and Open must close the project DB
+// and fail closed. An always-failing seam cannot reach this arm - it trips
+// ensureHardenedDir first - so the mock passes every 0700 call.
+func TestGapOpenSQLiteStoreProjectHardenFileChmodErrorAfterDirCreated(t *testing.T) {
+	orig := chmodFile
+	t.Cleanup(func() { chmodFile = orig })
+	chmodFile = func(_ string, mode os.FileMode) error {
+		if mode == 0o600 {
+			return errGapChmod
+		}
+		return nil
+	}
+	cfg := Config{
+		Backend:          BackendSQLite,
+		ProjectPath:      filepath.Join(t.TempDir(), "project.db"),
+		HardenTempStore:  true,
+		MaxEntryBytes:    8192,
+		MaxEntries:       5,
+		MaxSearchResults: 8,
+	}
+	if _, err := Open(cfg); !errors.Is(err, errGapChmod) {
+		t.Fatalf("Open = %v, want chmod error %v", err, errGapChmod)
+	}
+}
+
+// TestGapOpenSQLiteStoreProjectHardenPostOpenDirChmodError pins the last
+// arm: the file chmod succeeds and the SECOND directory chmod (the
+// post-open defense-in-depth one, after ensureHardenedDir's pre-open pass)
+// fails; Open must still close the project DB and fail closed.
+func TestGapOpenSQLiteStoreProjectHardenPostOpenDirChmodError(t *testing.T) {
+	orig := chmodFile
+	t.Cleanup(func() { chmodFile = orig })
+	dirChmods := 0
+	chmodFile = func(_ string, mode os.FileMode) error {
+		if mode == 0o700 {
+			dirChmods++
+			if dirChmods == 2 {
+				return errGapChmod
+			}
+		}
+		return nil
+	}
+	cfg := Config{
+		Backend:          BackendSQLite,
+		ProjectPath:      filepath.Join(t.TempDir(), "project.db"),
+		HardenTempStore:  true,
+		MaxEntryBytes:    8192,
+		MaxEntries:       5,
+		MaxSearchResults: 8,
+	}
+	if _, err := Open(cfg); !errors.Is(err, errGapChmod) {
+		t.Fatalf("Open = %v, want chmod error %v", err, errGapChmod)
+	}
+}
+
 // TestGapEnsureHardenedDirError covers ensureHardenedDir's two failure modes
 // (MkdirAll and chmod) reached through Open, before openMemoryDB/sql.Open
 // ever touch the path. Both must fail closed with no leaked DB handle: this

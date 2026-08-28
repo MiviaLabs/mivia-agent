@@ -171,6 +171,41 @@ func TestDeadlineNoticeFiresExactlyAtQuarter(t *testing.T) {
 	}
 }
 
+// TestDeadlineNoticeOnceOnlyUnderConcurrency pins the claim half of the
+// once-only contract under a real race: goroutines released together pass
+// the fired pre-check before any claim lands, and exactly one may win the
+// swap - the losers must observe the failed swap and return nil.
+func TestDeadlineNoticeOnceOnlyUnderConcurrency(t *testing.T) {
+	// Deep inside the fire threshold: remaining ~2s of a ~14s budget is
+	// under the 25 percent line, so every racer that wins the claim would
+	// emit the notice.
+	startedAt := time.Now().Add(-12 * time.Second)
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(2*time.Second))
+	defer cancel()
+	hook := deadlineNoticeBeforeStep(ctx, startedAt, nil)
+
+	const racers = 64
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	var notices atomic.Int64
+	for i := 0; i < racers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			if msgs := hook(); len(msgs) > 0 {
+				notices.Add(1)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	if got := notices.Load(); got != 1 {
+		t.Fatalf("%d goroutines observed the notice, want exactly 1", got)
+	}
+}
+
 // slowTool blocks its one call for sleep, then finishes - the shape that
 // pushes the next step boundary past the wrap-up threshold.
 type slowTool struct {

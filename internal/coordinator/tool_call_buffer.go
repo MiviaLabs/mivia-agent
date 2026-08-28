@@ -90,9 +90,20 @@ func (b *runToolCallBuffer) sinkFor(taskID string) subagents.ToolCallSink {
 		// Progress counts the event BEFORE any cap verdict: the tool call
 		// really ran whether or not its raw trace fits the buffer, and
 		// last-activity must track the newest event, which is exactly the
-		// one a full buffer would drop.
+		// one a full buffer would drop. All maps lazy-init here so a
+		// zero-value buffer (not built through newRunToolCallBuffer) is
+		// usable instead of panicking on its first event.
 		if b.progress == nil {
 			b.progress = make(map[string]*TaskProgress)
+		}
+		if b.steps == nil {
+			b.steps = make(map[string][]subagents.ToolCallStep)
+		}
+		if b.bytes == nil {
+			b.bytes = make(map[string]int)
+		}
+		if b.dropped == nil {
+			b.dropped = make(map[string]map[string]bool)
 		}
 		p := b.progress[taskID]
 		if p == nil {
