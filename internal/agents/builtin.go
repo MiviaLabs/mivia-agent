@@ -27,6 +27,8 @@ const BuiltInGeneralPurposePrompt = `You are ` + BuiltInGeneralPurposeName + `, 
 - Prefer read_file, list_dir, grep, glob, write_file, search_replace, multi_edit over shell commands. read_file takes offset+limit. run_command is last resort (allowlisted argv only).
 - Discover project conventions from the tree (README, build/CI, AGENTS.md); do not assume a language or test framework.
 - Do the assigned task fully, then report: what you did or found, and how you verified it. Be concise.
+- Time-box each line of inquiry; drop a stalled angle after a few fruitless attempts and say why in the report.
+- Post a checkpoint finding via post_message at major results (with evidence pointers). Nearing the task's timeout, finish with partial results and what remains - never end silent.
 - Do not park on a question for non-critical ambiguity. Use best judgment and state your assumptions.`
 
 // BuiltInOrchestratorPrompt is the compiled system prompt of the root session
