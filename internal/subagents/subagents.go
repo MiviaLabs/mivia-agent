@@ -75,10 +75,20 @@ const Unlimited = -1
 // Default safe limits applied when Policy fields are zero (unconfigured).
 // Zero must not mean unlimited: a missing config should degrade to safe bounds,
 // not to unbounded fan-out or budget.
+//
+// DefaultMaxBudget was 1000 until a real incident traced ordinary
+// dispatch_tasks batches failing every task with "budget limit
+// exceeded"/"run budget exceeded" back to this constant: Budget carries no
+// enforced technical unit (it is never metered against real token/step
+// usage - see Options.Budget's pass-through-only consumption), so callers
+// commonly assign several thousand per task, and a batch of a few such
+// tasks trips a 1000 total on the very first call. Raised to comfortably
+// admit DefaultMaxFanout tasks at a realistic multi-thousand budget each
+// while still rejecting a pathological value.
 const (
 	DefaultMaxFanout = 32
 	DefaultMaxDepth  = 10
-	DefaultMaxBudget = 1000
+	DefaultMaxBudget = 1_000_000
 )
 
 type Pool struct {

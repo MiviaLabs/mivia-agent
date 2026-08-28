@@ -2,8 +2,8 @@ package clichat
 
 // Tests for the [subagents] wire_stream knob. The knob sends nested subagent
 // calls to the provider's SSE endpoint while the call keeps its non-stream
-// contract. Opt-in: an absent key (or explicit false) keeps the plain
-// non-stream endpoint; only an explicit true turns it on.
+// contract. An explicit false is the operator opt-out; an absent key resolves
+// on.
 
 import (
 	"bytes"
@@ -37,9 +37,9 @@ func TestSkillHandlerCarriesWireStream(t *testing.T) {
 		wireStream *bool
 		want       bool
 	}{
-		{name: "nil_resolves_off", wireStream: nil, want: false},
-		{name: "true_opts_in", wireStream: &on, want: true},
-		{name: "false_resolves_off", wireStream: &off, want: false},
+		{name: "nil_resolves_on", wireStream: nil, want: true},
+		{name: "true_resolves_on", wireStream: &on, want: true},
+		{name: "false_opts_out", wireStream: &off, want: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -82,9 +82,8 @@ func wireStreamE2EServer(t *testing.T, firstBody *[]byte, calls *int32) *httptes
 
 // TestWireStreamOptOutE2E drives a nested-shaped call - a oneshot dispatch
 // through a real session dispatcher and a real provider client - and checks
-// the wire body. wire_stream is opt-in: an absent key or an explicit false
-// keeps the plain non-stream endpoint; only an explicit true sends
-// stream:true on the wire.
+// the wire body. wire_stream = false keeps the plain non-stream endpoint;
+// the absent key sends stream:true and still returns the full answer.
 func TestWireStreamOptOutE2E(t *testing.T) {
 	on := true
 	off := false
@@ -96,7 +95,7 @@ func TestWireStreamOptOutE2E(t *testing.T) {
 		wantContent  string
 	}{
 		{name: "false_opts_out_keeps_plain_wire", wireStream: &off, wantWireOn: true, wantContent: "plain"},
-		{name: "nil_keeps_plain_wire", wireStream: nil, wantWireOn: true, wantContent: "plain"},
+		{name: "nil_streams_on_the_wire", wireStream: nil, wantWireTrue: true, wantContent: "streamed"},
 		{name: "true_streams_on_the_wire", wireStream: &on, wantWireTrue: true, wantContent: "streamed"},
 	}
 	for _, tc := range cases {

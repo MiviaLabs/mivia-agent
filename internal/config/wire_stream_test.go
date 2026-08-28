@@ -7,18 +7,18 @@ import (
 )
 
 // TestSubagentConfigWireStreamResolved verifies the wire_stream knob decode
-// table. The field is a pointer so an explicit true is distinguishable from
-// an absent key: absent and false both resolve off (opt-in, not default -
-// see WireStreamResolved's doc comment), true opts in.
+// table. The field is a pointer so an explicit false is distinguishable
+// from an absent key: absent and true both resolve on, false is the
+// opt-out.
 func TestSubagentConfigWireStreamResolved(t *testing.T) {
 	cases := []struct {
 		name string
 		raw  string
 		want bool
 	}{
-		{name: "absent_resolves_off", raw: "[subagents]\nmax_workers = 2", want: false},
-		{name: "true_opts_in", raw: "[subagents]\nwire_stream = true", want: true},
-		{name: "false_resolves_off", raw: "[subagents]\nwire_stream = false", want: false},
+		{name: "absent_resolves_on", raw: "[subagents]\nmax_workers = 2", want: true},
+		{name: "true_resolves_on", raw: "[subagents]\nwire_stream = true", want: true},
+		{name: "false_opts_out", raw: "[subagents]\nwire_stream = false", want: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
