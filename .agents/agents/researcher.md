@@ -18,7 +18,7 @@ skills:
 - concurrency-review
 - secure-change
 provider: llmproxycli
-model: gemini-3.7-flash-high
+model: glm-5.3-flash
 max_turns: 0
 ---
 

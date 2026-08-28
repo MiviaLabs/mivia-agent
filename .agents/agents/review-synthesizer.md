@@ -8,5 +8,5 @@ skills:
 disallowed_tools:
 - post_message
 provider: llmproxycli
-model: gemini-3.7-flash-high
+model: glm-5.3-flash
 ---
