@@ -152,16 +152,18 @@ func (t *storeNoteTool) admitNote(ctx context.Context, key string, cap int) bool
 	if t.counts == nil {
 		t.counts = map[string]int{}
 	}
-	if t.counts[key] >= cap {
-		return false
-	}
 	if old := t.watchers[key]; old != nil && old.Err() != nil {
 		// The prior attempt ended but its goroutine has not run yet: retire
 		// its budget and take over the watcher slot for the fresh attempt.
+		// This runs before the cap check, so a retry of an attempt that
+		// maxed out its allowance still starts clean.
 		t.counts[key] = 1
 		t.watchers[key] = ctx
 		go t.releaseOnDone(ctx, key)
 		return true
+	}
+	if t.counts[key] >= cap {
+		return false
 	}
 	t.counts[key]++
 	if t.watchers[key] == nil {

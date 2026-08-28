@@ -346,3 +346,103 @@ func TestStoreNoteRetryAttemptGetsFreshBudget(t *testing.T) {
 		}
 	}
 }
+
+// TestStoreNoteMalformedArgsIsAGoError pins the unmarshal failure path: a
+// request body that is not valid JSON for the schema surfaces as a Go error,
+// not a JSON answer the model could plausibly "correct" blind.
+func TestStoreNoteMalformedArgsIsAGoError(t *testing.T) {
+	tool := newDefaultStoreNoteTool(ledger.NewMemoryLedgerRepository())
+	if _, err := tool.Execute(taskContext("run-bad", "task-bad"), json.RawMessage(`{"content":`)); err == nil {
+		t.Fatal("malformed JSON args must return a Go error")
+	}
+}
+
+// TestStoreNoteNilRepoRefundsBudget pins the nil-repository guard: the slot
+// admitted before the guard fires must be refunded, so a miswired handler
+// cannot silently burn the task's allowance.
+func TestStoreNoteNilRepoRefundsBudget(t *testing.T) {
+	tool := &storeNoteTool{repo: nil}
+	ctx := taskContext("run-nil", "task-nil")
+	if _, err := tool.Execute(ctx, json.RawMessage(`{"content":"note"}`)); err == nil {
+		t.Fatal("nil repository must return a Go error")
+	}
+	tool.mu.Lock()
+	refunded := tool.counts["run-nil/task-nil"] == 0
+	tool.mu.Unlock()
+	if !refunded {
+		t.Fatal("failed write must refund the admitted budget slot")
+	}
+}
+
+// TestAdmitNoteRetiresEndedAttemptBudget drives the retry branch directly:
+// when the prior attempt's context has ended but its watcher has not yet run,
+// the fresh attempt resets the count and takes over the watcher slot.
+func TestAdmitNoteRetiresEndedAttemptBudget(t *testing.T) {
+	tool := &storeNoteTool{repo: ledger.NewMemoryLedgerRepository()}
+	key := "run-gen/task-gen"
+	ctxOld, cancelOld := context.WithCancel(context.Background())
+	cancelOld()
+	tool.mu.Lock()
+	tool.counts = map[string]int{key: tool.taskCap()}
+	tool.watchers = map[string]context.Context{key: ctxOld}
+	tool.mu.Unlock()
+
+	ctxNew, cancelNew := context.WithCancel(context.Background())
+	defer cancelNew()
+	if !tool.admitNote(ctxNew, key, tool.taskCap()) {
+		t.Fatal("fresh attempt after an ended one must admit")
+	}
+	tool.mu.Lock()
+	defer tool.mu.Unlock()
+	if got := tool.counts[key]; got != 1 {
+		t.Fatalf("fresh attempt must start with a clean budget, got count %d", got)
+	}
+	if tool.watchers[key] != ctxNew {
+		t.Fatal("fresh attempt must own the watcher slot")
+	}
+}
+
+// TestReleaseOnDoneStaleWatcherKeepsFreshCount pins the ownership check: a
+// watcher whose attempt has ended must not delete a count that a newer
+// attempt's watcher now owns.
+func TestReleaseOnDoneStaleWatcherKeepsFreshCount(t *testing.T) {
+	tool := &storeNoteTool{}
+	key := "run-stale/task-stale"
+	ctxOld, cancelOld := context.WithCancel(context.Background())
+	cancelOld()
+	ctxNew, cancelNew := context.WithCancel(context.Background())
+	defer cancelNew()
+	tool.mu.Lock()
+	tool.counts = map[string]int{key: 3}
+	tool.watchers = map[string]context.Context{key: ctxNew}
+	tool.mu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		tool.releaseOnDone(ctxOld, key)
+		close(done)
+	}()
+	<-done // ctxOld is already canceled, so this returns without scheduling
+
+	tool.mu.Lock()
+	defer tool.mu.Unlock()
+	if tool.counts[key] != 3 {
+		t.Fatalf("stale watcher must not delete the fresh attempt's count, got %d", tool.counts[key])
+	}
+	if tool.watchers[key] != ctxNew {
+		t.Fatal("fresh watcher must remain armed")
+	}
+}
+
+// TestStoreNoteCapabilityDeclaresBoundedWrite pins the capability surface: the
+// tool declares an execution write with a small result envelope, so the
+// registry's concurrency policy serializes note stores.
+func TestStoreNoteCapabilityDeclaresBoundedWrite(t *testing.T) {
+	capability := (&storeNoteTool{repo: ledger.NewMemoryLedgerRepository()}).Capability(nil)
+	if capability.Class != tools.ExecutionWrite {
+		t.Fatalf("store_note must declare an execution write, got %v", capability.Class)
+	}
+	if capability.MaxResultBytes <= 0 {
+		t.Fatalf("store_note must bound its result envelope, got %d", capability.MaxResultBytes)
+	}
+}
