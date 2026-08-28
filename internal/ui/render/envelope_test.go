@@ -143,3 +143,24 @@ func TestFormatMemoryOutput_TitleAndVerdict(t *testing.T) {
 		t.Errorf("expected the dim snippet row under the title:\n%s", plain)
 	}
 }
+
+// TestFormatMemoryOutput_SingleObjectTitleOnly pins the single-object
+// decode path: a bare JSON object (not an array, not a {"results":...}
+// wrapper) with a title but no summary must still render as a card, not
+// fall through to the raw-JSON label. Title stands alone the same way
+// the multi-item card path already lets it.
+func TestFormatMemoryOutput_SingleObjectTitleOnly(t *testing.T) {
+	th := loadTheme(t)
+	raw := `{"id":"abcdef123456","scope":"project","title":"gate ordering fix"}`
+	summary, lines := FormatMemoryOutput(th, theme.TierTrueColor, raw, 100)
+	if !strings.Contains(ansi.Strip(summary), "1 memory item") {
+		t.Errorf("expected one card, got %q", summary)
+	}
+	plain := ansi.Strip(strings.Join(lines, "\n"))
+	if !strings.Contains(plain, "gate ordering fix") {
+		t.Errorf("expected the title row, got:\n%s", plain)
+	}
+	if strings.Contains(plain, "unparsed tool result") {
+		t.Errorf("title-only single object should not fall back to raw JSON:\n%s", plain)
+	}
+}

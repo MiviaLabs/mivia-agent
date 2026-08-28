@@ -35,7 +35,7 @@ func FormatMemoryOutput(t theme.Theme, tier theme.Tier, output string, width int
 			items = wrapped.Results
 		} else {
 			var single memoryItem
-			if err := json.Unmarshal([]byte(trimmed), &single); err == nil && single.Summary != "" {
+			if err := json.Unmarshal([]byte(trimmed), &single); err == nil && (single.Summary != "" || single.Title != "") {
 				items = []memoryItem{single}
 			}
 		}

@@ -182,6 +182,10 @@ func (m Model) Rows() []string {
 		if row >= limit {
 			break
 		}
+		if row+s.height <= m.offset {
+			row += s.height // entirely above the viewport: skip styling it
+			continue
+		}
 		if s.runSize > 0 {
 			emit(row, m.leaderRow(s, i))
 			row++

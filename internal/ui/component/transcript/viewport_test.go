@@ -102,6 +102,23 @@ func TestNothingIsLostWhenItScrollsOff(t *testing.T) {
 	}
 }
 
+// TestRowsDoesNotRenderBlocksAboveTheViewport pins the performance
+// contract Rows' own doc comment states: "a block above or below it
+// costs one Height call and nothing else." Following the tail of a long
+// conversation must not re-render the whole scrollback on every frame.
+func TestRowsDoesNotRenderBlocksAboveTheViewport(t *testing.T) {
+	const n = 500
+	m := sizedModel(t, 80, 10, n)
+
+	renderCalls = 0
+	_ = m.Rows()
+	// 10 visible rows plus generous slack for the streaming tail and any
+	// boundary block - nowhere near the 500 blocks held in history.
+	if renderCalls > 30 {
+		t.Errorf("Rows() triggered %d Block.Render calls for a 10-row viewport over %d blocks; want it bounded by the viewport, not the history", renderCalls, n)
+	}
+}
+
 func TestScrollToTopAndBottom(t *testing.T) {
 	const n = 40
 	m := sizedModel(t, 80, 10, n)

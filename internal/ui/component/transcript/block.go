@@ -74,6 +74,12 @@ type Block struct {
 	Usage *uievent.UsageBody
 }
 
+// renderCalls counts Block.Render invocations. It exists so tests can
+// prove Model.Rows() renders only the blocks that intersect the
+// viewport, not the whole history above it - see viewport_test.go's
+// TestRowsDoesNotRenderBlocksAboveTheViewport.
+var renderCalls int
+
 // isEmpty reports a block with nothing to render.
 func (b Block) isEmpty() bool {
 	return b.Header.Label == "" && b.Header.Detail == "" &&
@@ -164,6 +170,7 @@ func defaultCollapsed(body []string) bool {
 // ("… +N lines", transcript-polish.md R3; wireframes-panes.md section 5
 // as amended).
 func (b Block) Render(t theme.Theme, tier theme.Tier, width int) string {
+	renderCalls++
 	if b.Kind == uievent.KindTurnStart && b.Input != "" {
 		return strings.Join(userLines(t, tier, width, b.Input), "\n")
 	}
