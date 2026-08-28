@@ -57,6 +57,7 @@ enabled = true
 [[mcp.servers]]
 args = ['serve', '--mcp']
 command = '~/.local/bin/codegraph'
+global = true
 id = 'codegraph'
 transport = 'stdio'
 
