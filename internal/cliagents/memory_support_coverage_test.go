@@ -157,6 +157,41 @@ func TestOpenMemoryStoreWithReadOnlyStorePathDoesNotHarden(t *testing.T) {
 	}
 }
 
+// TestSameFilePath pins the OS-aware file-path comparison behind the
+// hardening gate. Windows filesystems match case-insensitively, so a
+// case-differing spelling that names the temp store must still pass the
+// gate; elsewhere case alone distinguishes paths. goos is a parameter, not
+// runtime.GOOS, so the Windows branch is testable from every OS - the chmod
+// e2e tests skip on Windows, which left the gate's Windows behavior
+// untested everywhere before this seam existed.
+func TestSameFilePath(t *testing.T) {
+	cases := []struct {
+		name string
+		goos string
+		a    string
+		b    string
+		want bool
+	}{
+		{name: "identical paths match everywhere", goos: "linux", a: "/tmp/mivia/m.db", b: "/tmp/mivia/m.db", want: true},
+		{name: "identical windows paths match", goos: "windows", a: `C:\Temp\mivia\m.db`, b: `C:\Temp\mivia\m.db`, want: true},
+		{name: "case folds on windows", goos: "windows", a: `C:\Temp\Mivia\M.DB`, b: `c:\temp\mivia\m.db`, want: true},
+		{name: "case matters on unix", goos: "linux", a: "/tmp/Mivia/m.db", b: "/tmp/mivia/m.db", want: false},
+		{name: "cleaned dotdot matches on windows", goos: "windows", a: `C:\Temp\x\..\mivia\m.db`, b: `C:\Temp\mivia\m.db`, want: true},
+		{name: "cleaned dotdot matches on unix", goos: "linux", a: "/tmp/x/../mivia/m.db", b: "/tmp/mivia/m.db", want: true},
+		{name: "different paths never match", goos: "windows", a: `C:\Temp\other\m.db`, b: `C:\Temp\mivia\m.db`, want: false},
+		{name: "unix backslash folds to a separator - the documented limit", goos: "linux", a: "/tmp/mivia\\m.db", b: "/tmp/mivia/m.db", want: true},
+		{name: "trailing separator normalizes away", goos: "linux", a: "/tmp/mivia/m.db/", b: "/tmp/mivia/m.db", want: true},
+		{name: "empty paths never match", goos: "linux", a: "", b: "/tmp/mivia/m.db", want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sameFilePath(tc.goos, tc.a, tc.b); got != tc.want {
+				t.Errorf("sameFilePath(%q, %q, %q) = %v, want %v", tc.goos, tc.a, tc.b, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestAgentSessionStateDisplayHelpers(t *testing.T) {
 	// DisplaySource and CurrentAgentName on nil and on a selected
 	// agent: nil-safe reads that the TUI dialog renders.

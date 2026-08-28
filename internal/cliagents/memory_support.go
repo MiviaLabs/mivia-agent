@@ -3,7 +3,9 @@ package cliagents
 import (
 	"context"
 	"fmt"
+	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -40,7 +42,7 @@ func OpenMemoryStoreWithReadOnly(root string, mc config.MemoryConfig, readOnly b
 			projectPath = filepath.Join(root, projectPath)
 		}
 	}
-	hardenTempStore := projectPath == filepath.Clean(config.TempStorePath(root, "memory"))
+	hardenTempStore := sameFilePath(runtime.GOOS, projectPath, config.TempStorePath(root, "memory"))
 	cfg := memory.Config{
 		Backend:          mc.StoreBackend,
 		ProjectPath:      projectPath,
@@ -54,6 +56,35 @@ func OpenMemoryStoreWithReadOnly(root string, mc config.MemoryConfig, readOnly b
 		HardenTempStore:  hardenTempStore,
 	}
 	return memory.Open(cfg)
+}
+
+// sameFilePath reports whether two path spellings name the same file:
+// both are normalized (backslashes go to slashes, dot-dot and double-slash
+// segments resolve away), then compared - case-folded on Windows, whose
+// filesystems match case-insensitively, and byte-exact elsewhere. goos is
+// a parameter, not runtime.GOOS, so the Windows branch stays testable from
+// every OS. Normalization is done by hand because filepath.Clean is
+// host-dependent (it treats backslashes as plain bytes on Unix), which a
+// GOOS-parameterized comparison cannot lean on. Accepted limit: a literal
+// backslash inside a Unix filename reads as a separator here - irrelevant
+// for the gate, whose other side is our hash-named TempStorePath. This is
+// deliberately NOT config.sameFilePath (internal/config/agents_io.go),
+// which resolves symlinks on the live filesystem; this one is pure, so a
+// path that does not exist yet still compares. Empty paths never match.
+func sameFilePath(goos, a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	a, b = normalizeFilePath(a), normalizeFilePath(b)
+	if goos == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
+}
+
+// normalizeFilePath is sameFilePath's host-independent path cleaner.
+func normalizeFilePath(p string) string {
+	return path.Clean(strings.ReplaceAll(p, `\`, "/"))
 }
 
 // WireSessionMemory wires the memory store into the session tool options so
