@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+
+	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 )
 
 // maxTokensIncidentEnvelope is the rejection a tighter upstream route returns
@@ -420,5 +422,62 @@ func TestChatTurnClampMultiRetryThenSuccess(t *testing.T) {
 		if captured[i] != want[i] {
 			t.Fatalf("capturedMaxTokens=%v, want %v", captured, want)
 		}
+	}
+}
+
+// TestUnsetMaxTokensGetsReasoningFloorNotOmitted pins the fix for the
+// always-thinking-model empty-response failure: an OpenAI-compatible request
+// with an active, wire-carried reasoning level but no explicit MaxTokens must
+// carry a max_tokens scaled to that level, never an omitted field. Omitting
+// it does NOT mean "use the model's declared max_output_tokens" - it means
+// "use whatever small default this route happens to apply", which an
+// always-thinking model (z.ai's GLM-5.3 family, dialect thinking_preserved)
+// burns entirely on reasoning before producing any answer text.
+func TestUnsetMaxTokensGetsReasoningFloorNotOmitted(t *testing.T) {
+	c := NewOpenAICompatWithOptions(CompatOptions{Name: "zai", BaseURL: "https://example.test", APIKey: "k"})
+	req := Request{
+		Model:          "glm-5.3-flash",
+		Messages:       []Message{{Role: RoleUser, Content: "hi"}},
+		ReasoningLevel: reasoning.Max,
+	}
+	raw, err := c.marshalBody(req)
+	if err != nil {
+		t.Fatalf("marshalBody: %v", err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatalf("decoding marshaled body: %v", err)
+	}
+	got, ok := body["max_tokens"].(float64)
+	if !ok {
+		t.Fatalf("max_tokens missing from body (relying on the route's own default): %s", raw)
+	}
+	if int(got) != 65536 {
+		t.Fatalf("max_tokens=%v, want reasoningMaxTokensFloor(Max)=65536", got)
+	}
+}
+
+// TestUnsetMaxTokensWithNoWireLevelKeepsPlainFloor proves the floor only
+// scales up when the level actually reaches the wire: a level requested for
+// a provider with no vetted dialect (so reasoningBodyFields sends nothing)
+// must not silently inflate max_tokens either - it falls back to the same
+// floor an unset level gets.
+func TestUnsetMaxTokensWithNoWireLevelKeepsPlainFloor(t *testing.T) {
+	c := NewOpenAICompatWithOptions(CompatOptions{Name: "kimi", BaseURL: "https://example.test", APIKey: "k"})
+	withLevel := Request{
+		Model:          "m",
+		Messages:       []Message{{Role: RoleUser, Content: "hi"}},
+		ReasoningLevel: reasoning.High,
+	}
+	raw, err := c.marshalBody(withLevel)
+	if err != nil {
+		t.Fatalf("marshalBody: %v", err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatalf("decoding marshaled body: %v", err)
+	}
+	if got := body["max_tokens"]; got != float64(4096) {
+		t.Fatalf("max_tokens=%v, want 4096 (unvetted provider never told to reason)", got)
 	}
 }

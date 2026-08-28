@@ -358,24 +358,7 @@ func anthropicMaxTokens(req Request, level reasoning.Level) int {
 	if req.MaxTokens != nil && *req.MaxTokens > 0 {
 		return *req.MaxTokens
 	}
-	return anthropicMaxTokensFloor(level)
-}
-
-func anthropicMaxTokensFloor(level reasoning.Level) int {
-	switch level {
-	case reasoning.XHigh, reasoning.Max:
-		return 65536
-	case reasoning.High:
-		return 32768
-	case reasoning.Medium:
-		return 16384
-	case reasoning.Low, reasoning.Minimal:
-		return 8192
-	default:
-		// Off, or no reasoning level configured: a plain non-thinking turn
-		// needs headroom for the response only.
-		return 4096
-	}
+	return reasoningMaxTokensFloor(level)
 }
 
 // anthropicTools translates the OpenAI-shaped tools[] entries

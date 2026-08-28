@@ -33,6 +33,34 @@ func (c *OpenAICompat) newRequest(ctx context.Context, req Request) (*http.Reque
 	return httpReq, nil
 }
 
+// effectiveMaxTokens returns the wire max_tokens: the caller's explicit
+// value when set, otherwise reasoningMaxTokensFloor for the request's
+// resolved reasoning level. Never omitting the field for a reasoning-active
+// request matters because leaving max_tokens unset does NOT mean "use the
+// model's declared max_output_tokens" - it means "use whatever this route's
+// server-side default happens to be", which for several OpenAI-compatible
+// backends is a small plain-chat value unrelated to the model's own
+// catalog entry. An always-thinking model (z.ai's GLM-5.3 family) then
+// burns that entire default on mandatory reasoning tokens and never emits
+// answer text.
+func (c *OpenAICompat) effectiveMaxTokens(req Request) *int {
+	if req.MaxTokens != nil && *req.MaxTokens > 0 {
+		return req.MaxTokens
+	}
+	resolved := c.resolveReasoning(req)
+	level := resolved.Level
+	// A level with no vetted dialect to carry it (reasoningBodyFields
+	// returns nothing) never reaches the wire, so the provider was never
+	// told to reason - scaling the floor for it would give headroom for
+	// thinking the provider doesn't know to do. Fall back to the plain
+	// unset-level floor in that case.
+	if len(reasoningBodyFields(resolved.Dialect, level)) == 0 {
+		level = ""
+	}
+	floor := reasoningMaxTokensFloor(level)
+	return &floor
+}
+
 // checkReservedExtras refuses operator-supplied extras that would overwrite
 // fields this client owns. The cache-marker keys are reserved too: this
 // client emits cache_control on the stable prefix when CacheMarkersEnabled,
@@ -76,7 +104,7 @@ func (c *OpenAICompat) marshalBody(req Request) ([]byte, error) {
 		Messages:    toAPIMessages(req.Messages, c.replayReasoning, c.rejectReasoningLessToolTurns),
 		Stream:      req.Stream,
 		Temperature: req.Temperature,
-		MaxTokens:   req.MaxTokens,
+		MaxTokens:   c.effectiveMaxTokens(req),
 		Tools:       req.Tools,
 	}
 	if req.ToolChoice != "" {

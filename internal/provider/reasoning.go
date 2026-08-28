@@ -130,6 +130,37 @@ func defaultReasoningDialect(provider string) reasoning.Dialect {
 	return dialect
 }
 
+// reasoningMaxTokensFloor is the conservative per-effort-level max_tokens
+// stand-in used whenever a request leaves MaxTokens unset. It is shared by
+// every client (Anthropic's native completer and the OpenAI-compatible
+// clients) rather than left to each provider's own server-side default:
+// omitting max_tokens on an OpenAI-compatible route falls back to whatever
+// plain-chat default that ROUTE happens to apply (commonly a small value
+// like 4096), not the model's declared max_output_tokens from mivia's own
+// catalog. For an always-thinking model (e.g. z.ai's GLM-5.3 family, which
+// documents thinking as permanently on) that small default is consumed
+// entirely by mandatory reasoning tokens before any answer text is
+// produced, so the turn resolves to StopEmptyResponse no matter how many
+// times retryOnEmptyResponse re-issues it. This heuristic is unverified
+// against live traffic for every provider and should be tuned as real
+// numbers come in.
+func reasoningMaxTokensFloor(level reasoning.Level) int {
+	switch level {
+	case reasoning.XHigh, reasoning.Max:
+		return 65536
+	case reasoning.High:
+		return 32768
+	case reasoning.Medium:
+		return 16384
+	case reasoning.Low, reasoning.Minimal:
+		return 8192
+	default:
+		// Off, or no reasoning level configured: a plain non-thinking turn
+		// needs headroom for the response only.
+		return 4096
+	}
+}
+
 // reasoningFields resolves the dialect for one request and returns the fields
 // to merge. A request-scoped dialect wins over the client default, so a model
 // entry can name a wire shape its provider does not default to; the fall to the
@@ -141,13 +172,21 @@ func defaultReasoningDialect(provider string) reasoning.Dialect {
 // side effect to the caller's copy, and the SDK adapter that consumes the
 // request would never see the bridge's level->effort projection.
 func (c *OpenAICompat) reasoningFields(req *Request) map[string]any {
+	resolved := c.resolveReasoning(*req)
+	req.SDKReasoningEffort = levelToSDKReasoningEffort(resolved.Level)
+	return reasoningBodyFields(resolved.Dialect, resolved.Level)
+}
+
+// resolveReasoning resolves the wire dialect and level for one request,
+// falling to the client's own default dialect when the request names none.
+// Factored out of reasoningFields so marshalBody can resolve the same level
+// to pick a max_tokens floor without duplicating the dialect fallback.
+func (c *OpenAICompat) resolveReasoning(req Request) reasoning.Setting {
 	dialect := req.ReasoningDialect
 	if dialect == "" {
 		dialect = c.reasoning
 	}
-	resolved := reasoning.Resolve(c.name, reasoning.Setting{Level: req.ReasoningLevel, Dialect: dialect})
-	req.SDKReasoningEffort = levelToSDKReasoningEffort(resolved.Level)
-	return reasoningBodyFields(resolved.Dialect, resolved.Level)
+	return reasoning.Resolve(c.name, reasoning.Setting{Level: req.ReasoningLevel, Dialect: dialect})
 }
 
 // ReasoningFields is the exported wrapper around reasoningFields. It
