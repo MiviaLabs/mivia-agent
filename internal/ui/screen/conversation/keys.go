@@ -1,6 +1,8 @@
 package conversation
 
 import (
+	"strings"
+
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
@@ -169,6 +171,38 @@ func (s Screen) handleQueueKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bool) 
 			s.queue = s.queueOverlay.Items()
 			s.statusline.Notice("removed queued message")
 		}
+		return s, nil, true
+	case "f", "F":
+		idx := s.queueOverlay.Cursor() // BEFORE DeleteSelected: it re-clamps the cursor
+		if idx < 0 {
+			return s, nil, true
+		}
+		sel, ok := s.queueOverlay.DeleteSelected()
+		if !ok {
+			return s, nil, true
+		}
+		s.queue = s.queueOverlay.Items()
+		if s.active == nil {
+			// P6: idle sends the selected item immediately.
+			next, cmd := s.sendText(sel)
+			sc := next.(Screen)
+			if sc.active == nil {
+				sc.queueOverlay.InsertAt(idx, sel)
+				sc.queue = sc.queueOverlay.Items()
+				sc.statusline.Notice("send failed; re-queued")
+				return sc, cmd, true // overlay stays open
+			}
+			sc.queueOverlay.Close()
+			sc.statusline.Notice("sent")
+			return sc, cmd, true
+		}
+		if !s.forcePush(sel) {
+			s.queueOverlay.InsertAt(idx, sel)
+			s.queue = s.queueOverlay.Items()
+			s.statusline.Notice("nothing to interrupt")
+			return s, nil, true // overlay stays open, cursor on restored item
+		}
+		s.queueOverlay.Close()
 		return s, nil, true
 	case "enter":
 		if deleted, ok := s.queueOverlay.DeleteSelected(); ok {
@@ -635,6 +669,43 @@ func (s Screen) composerAction(id keymap.ID) (app.Screen, tea.Cmd, bool) {
 		}
 		next, cmd := s.send()
 		return next, cmd, true
+	case keymap.IDForceSend:
+		if s.embedded {
+			s.statusline.Notice("force send is unavailable in subagent threads")
+			return s, nil, true
+		}
+		text := s.composer.SubmitText()
+		if strings.HasPrefix(strings.TrimSpace(text), "/") {
+			s.statusline.Notice("slash commands cannot be force-sent")
+			return s, nil, true
+		}
+		if text != "" {
+			if s.active != nil {
+				if s.forcePush(text) {
+					s.composer.Clear()
+				} else {
+					s.statusline.Notice("nothing to interrupt")
+				}
+				return s, nil, true
+			}
+			next, cmd := s.send() // idle: ordinary send; send() consumes the composer itself
+			return next, cmd, true
+		}
+		if s.active != nil && len(s.queue) > 0 {
+			head := s.queue[0]
+			s.queue = s.queue[1:]
+			if s.queueOverlay.Active() {
+				s.queueOverlay.SetItems(s.queue)
+			}
+			if !s.forcePush(head) {
+				s.queue = append([]string{head}, s.queue...)
+				if s.queueOverlay.Active() {
+					s.queueOverlay.SetItems(s.queue)
+				}
+				s.statusline.Notice("nothing to interrupt")
+			}
+		}
+		return s, nil, true
 	case keymap.IDFocusPrev:
 		// Shift-Tab from the composer enters the transcript at the
 		// NEWEST block, which is the one next to the composer.

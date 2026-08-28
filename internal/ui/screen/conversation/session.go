@@ -29,6 +29,7 @@ type sessionState struct {
 	panel        panel
 	threads      ports.SubagentThreads
 	queue        []string
+	pendingForce *string
 }
 
 func (st *sessionState) handleTurnEvent(ev uievent.Event) {
@@ -95,6 +96,7 @@ func (s *Screen) switchConversation(newConv ports.Conversation) {
 			panel:        s.panel,
 			threads:      s.threads,
 			queue:        s.queue,
+			pendingForce: s.pendingForce,
 		}
 	}
 
@@ -111,11 +113,13 @@ func (s *Screen) switchConversation(newConv ports.Conversation) {
 		s.blackboard = st.blackboard
 		s.panel = st.panel
 		s.queue = st.queue
+		s.pendingForce = st.pendingForce
 	} else {
 		s.transcript = transcript.New(s.Theme, s.Tier)
 		s.transcript.SetSize(s.chatWidth(), s.transcriptHeight())
 		s.active = nil
 		s.queue = nil
+		s.pendingForce = nil
 		s.statusline = statusline.New(s.Theme, s.Tier)
 		s.approval = approval.New(s.Theme, s.Tier)
 		s.approval.SetWidth(contentWidth(s.width))
@@ -164,6 +168,19 @@ func (s Screen) handleTurnEndedMsg(msg turnEndedMsg) (app.Screen, tea.Cmd) {
 			st.approval.Clear()
 			st.panel.reconcileTerminal("interrupted")
 			st.active = nil
+			if st.pendingForce != nil {
+				forced := *st.pendingForce
+				st.pendingForce = nil
+				handle, err := st.conv.Send(context.Background(), intent.Send{Text: forced})
+				if err == nil {
+					st.active = handle
+					st.statusline.Start("thinking", s.now())
+					return s, s.awaitSessionEvent(msg.sessionID, handle.Events())
+				}
+				st.queue = append([]string{forced}, st.queue...)
+				st.statusline.Notice("send failed; re-queued")
+				return s, nil
+			}
 			if len(st.queue) > 0 {
 				nextText := st.queue[0]
 				st.queue = st.queue[1:]
@@ -183,6 +200,10 @@ func (s Screen) handleTurnEndedMsg(msg turnEndedMsg) (app.Screen, tea.Cmd) {
 	s.panel.reconcileTerminal("interrupted")
 	s.active = nil
 	s.refreshTopbar()
+
+	if next, cmd, handled := s.drainPendingForce(); handled {
+		return next, cmd
+	}
 
 	if len(s.queue) > 0 {
 		nextText := s.queue[0]

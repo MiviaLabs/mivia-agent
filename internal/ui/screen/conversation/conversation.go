@@ -93,7 +93,13 @@ type Screen struct {
 
 	active ports.TurnHandle
 	queue  []string
-	now    func() time.Time
+
+	// pendingForce holds the FORCED text parked between the keypress and
+	// the async turnEndedMsg; NOT the displaced turn's text - chat.Session's
+	// stale-turn fence already preserves it.
+	pendingForce *string
+
+	now func() time.Time
 
 	// keys is the one dispatch table. See keys.go for the context order.
 	keys *keymap.Map

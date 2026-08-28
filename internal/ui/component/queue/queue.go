@@ -118,6 +118,32 @@ func (m *Model) DeleteSelected() (string, bool) {
 	return removed, true
 }
 
+// Cursor reports the index of the selected item, or -1 when the queue
+// is empty. -1 is the pinned empty-queue sentinel; callers guard on
+// idx < 0 before indexing.
+func (m Model) Cursor() int {
+	if len(m.items) == 0 {
+		return -1
+	}
+	return m.cursor
+}
+
+// InsertAt puts text back at index i, clamping i into [0, len(items)].
+// It is the undo for a DeleteSelected whose send then failed.
+func (m *Model) InsertAt(i int, text string) {
+	if i < 0 {
+		i = 0
+	}
+	if i > len(m.items) {
+		i = len(m.items)
+	}
+	m.items = append(m.items, "")
+	copy(m.items[i+1:], m.items[i:])
+	m.items[i] = text
+	m.cursor = i
+	m.adjustOffset()
+}
+
 func (m *Model) adjustOffset() {
 	if len(m.items) == 0 {
 		m.cursor = 0
@@ -170,9 +196,9 @@ func (m Model) View() string {
 		badge = "Queue"
 	}
 
-	label := fmt.Sprintf("[ %s (%d)  •  ↑/↓: navigate  •  d/x: remove  •  Esc: close ]", badge, len(m.items))
+	label := fmt.Sprintf("[ %s (%d)  •  ↑/↓: navigate  •  d/x: remove  •  f: force  •  Esc: close ]", badge, len(m.items))
 	if m.Tier == theme.TierASCII || m.Tier == theme.TierNoTTY {
-		label = fmt.Sprintf("[ %s (%d)  •  Up/Down: navigate  •  d/x: remove  •  Esc: close ]", badge, len(m.items))
+		label = fmt.Sprintf("[ %s (%d)  •  Up/Down: navigate  •  d/x: remove  •  f: force  •  Esc: close ]", badge, len(m.items))
 	}
 	if len(m.items) == 0 {
 		label = fmt.Sprintf("[ %s (empty)  •  Esc: close ]", badge)
