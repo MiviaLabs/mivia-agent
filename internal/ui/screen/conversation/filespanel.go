@@ -684,25 +684,30 @@ func (s Screen) panelFilterEntries(needle string) ([]fileEntry, []subagentRow) {
 }
 
 // selectNavRow maps a rendered row in the nav sidebar to an entry index in the picker.
-func (p *panel) selectNavRow(clickRow int) bool {
-	// row 0 is SIDEBAR title
-	// row 1 is "files changed (N)" header
-	if clickRow <= 1 {
+// It accounts for sidebar windowing (maxRows) and individual group heights (1 line per file,
+// 2 lines per subagent row).
+func (p *panel) selectNavRow(clickRow, maxRows int) bool {
+	if clickRow < 0 {
 		return false
 	}
-	fileIdx := clickRow - 2
-	if fileIdx >= 0 && fileIdx < len(p.entries) {
-		p.list.MoveTo(fileIdx)
-		return true
-	}
-	subHeader := 2 + len(p.entries)
-	if clickRow == subHeader {
-		return false
-	}
-	agentIdx := clickRow - (subHeader + 1)
-	if agentIdx >= 0 && agentIdx < len(p.agents) {
-		p.list.MoveTo(len(p.entries) + agentIdx)
-		return true
+	visible, agents := p.visibleRows()
+	groupLens := panelGroupLens(len(visible), len(agents))
+	selIdx := p.list.CursorRow()
+	selGroup := panelSelGroup(selIdx, len(visible), len(agents))
+	startGroup, endGroup := panelWindowGroupBounds(groupLens, selGroup, maxRows, false)
+
+	curLine := 0
+	for gIdx := startGroup; gIdx < endGroup; gIdx++ {
+		gLen := groupLens[gIdx]
+		if clickRow >= curLine && clickRow < curLine+gLen {
+			pickerIdx := panelGroupToPickerIdx(gIdx, len(visible), len(agents))
+			if pickerIdx >= 0 {
+				p.list.MoveTo(pickerIdx)
+				return true
+			}
+			return false
+		}
+		curLine += gLen
 	}
 	return false
 }
@@ -739,7 +744,11 @@ func (s *Screen) openPanelDialogForSelected() tea.Cmd {
 	return cmd
 }
 
-// handleNavClick routes mouse clicks within the nav sidebar.
+// handleNavClick routes mouse clicks within the nav sidebar. Callers pass
+// the screen row minus the top gutter (mouse.go's handleClick and
+// handleModalClick): 0 is the pane's top padding row, 1 is SIDEBAR, 2 is
+// the files header, 3 and up are content rows - the same row numbers the
+// rendered View uses below the frame.
 func (s *Screen) handleNavClick(clickRow int) (app.Screen, tea.Cmd) {
 	// clickRow 0 is top padding row; content starts at clickRow 1
 	clickRow--
@@ -747,7 +756,9 @@ func (s *Screen) handleNavClick(clickRow int) (app.Screen, tea.Cmd) {
 		return *s, nil
 	}
 	s.panel.focused = true
-	if s.panel.selectNavRow(clickRow) {
+	paneH := max(1, s.contentHeight())
+	innerNavH := max(1, paneH-2)
+	if s.panel.selectNavRow(clickRow, innerNavH) {
 		cmd := s.openPanelDialogForSelected()
 		return *s, cmd
 	}

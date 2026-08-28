@@ -20,25 +20,41 @@ import (
 // exact line-count parity because a group would have to be split grows
 // outward to the next whole group instead of splitting one.
 func panelWindowGroups(groups [][]string, selGroup, maxRows int, filterActive bool) [][]string {
+	startGroup, endGroup := panelWindowRange(groups, selGroup, maxRows, filterActive)
+	return groups[startGroup:endGroup]
+}
+
+// panelWindowRange computes the start and end group indices for windowing groups.
+func panelWindowRange(groups [][]string, selGroup, maxRows int, filterActive bool) (int, int) {
+	groupLens := make([]int, len(groups))
+	for i, g := range groups {
+		groupLens[i] = len(g)
+	}
+	return panelWindowGroupBounds(groupLens, selGroup, maxRows, filterActive)
+}
+
+// panelWindowGroupBounds computes the [startGroup, endGroup) slice bounds for row-groups
+// given their individual line heights.
+func panelWindowGroupBounds(groupLens []int, selGroup, maxRows int, filterActive bool) (int, int) {
 	limit := maxRows
 	if filterActive && limit > 1 {
 		limit--
 	}
-	if limit <= 0 {
-		return groups
+	if limit <= 0 || len(groupLens) == 0 {
+		return 0, len(groupLens)
 	}
-	offsets := make([]int, len(groups)+1)
+	offsets := make([]int, len(groupLens)+1)
 	total := 0
-	for i, g := range groups {
+	for i, l := range groupLens {
 		offsets[i] = total
-		total += len(g)
+		total += l
 	}
-	offsets[len(groups)] = total
+	offsets[len(groupLens)] = total
 	if total <= limit {
-		return groups
+		return 0, len(groupLens)
 	}
 	selRow := 0
-	if selGroup >= 0 && selGroup < len(groups) {
+	if selGroup >= 0 && selGroup < len(groupLens) {
 		selRow = offsets[selGroup]
 	}
 	start := 0
@@ -50,16 +66,65 @@ func panelWindowGroups(groups [][]string, selGroup, maxRows int, filterActive bo
 	}
 	end := start + limit
 	startGroup := 0
-	for startGroup < len(groups) && offsets[startGroup+1] <= start {
+	for startGroup < len(groupLens) && offsets[startGroup+1] <= start {
 		startGroup++
 	}
-	endGroup := len(groups)
+	endGroup := len(groupLens)
 	for endGroup > 0 && offsets[endGroup-1] >= end {
 		endGroup--
 	}
-	// offsets are monotone and start < end, so startGroup <= endGroup always
-	// holds here; no clamp between the two walks is needed.
-	return groups[startGroup:endGroup]
+	return startGroup, endGroup
+}
+
+// panelGroupLens returns the line count of each group in the sidebar layout:
+// 1 line for SIDEBAR title, 1 line for files header, 1 line per file entry,
+// 1 line for subagents header, and 2 lines per agent row.
+func panelGroupLens(fileCount, agentCount int) []int {
+	lens := make([]int, 0, 3+fileCount+agentCount)
+	lens = append(lens, 1) // SIDEBAR title
+	lens = append(lens, 1) // files changed header
+	for i := 0; i < fileCount; i++ {
+		lens = append(lens, 1)
+	}
+	lens = append(lens, 1) // subagents header
+	for i := 0; i < agentCount; i++ {
+		lens = append(lens, 2)
+	}
+	return lens
+}
+
+// panelGroupToPickerIdx maps a group index to its corresponding picker cursor index,
+// or -1 if the group is a non-selectable header (SIDEBAR, files header, subagents header).
+func panelGroupToPickerIdx(gIdx, fileCount, agentCount int) int {
+	if gIdx < 2 {
+		return -1
+	}
+	if gIdx < 2+fileCount {
+		return gIdx - 2
+	}
+	if gIdx == 2+fileCount {
+		return -1
+	}
+	agentIdx := gIdx - (3 + fileCount)
+	if agentIdx >= 0 && agentIdx < agentCount {
+		return fileCount + agentIdx
+	}
+	return -1
+}
+
+// panelSelGroup computes the group index for the currently selected picker item.
+func panelSelGroup(selIdx, fileCount, agentCount int) int {
+	if selIdx < 0 {
+		return -1
+	}
+	if selIdx < fileCount {
+		return 2 + selIdx
+	}
+	agentIdx := selIdx - fileCount
+	if agentIdx < agentCount {
+		return 3 + fileCount + agentIdx
+	}
+	return -1
 }
 
 // flattenGroups concatenates row-groups back into a flat line list, in
