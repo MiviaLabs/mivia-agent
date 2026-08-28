@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 )
 
 // newRequest builds one /chat/completions HTTP request. It never mutates req.
@@ -34,7 +36,7 @@ func (c *OpenAICompat) newRequest(ctx context.Context, req Request) (*http.Reque
 }
 
 // effectiveMaxTokens returns the wire max_tokens: the caller's explicit
-// value when set, otherwise reasoningMaxTokensFloor for the request's
+// value when set, otherwise reasoning.OutputReserveFloor for the request's
 // resolved reasoning level. Never omitting the field for a reasoning-active
 // request matters because leaving max_tokens unset does NOT mean "use the
 // model's declared max_output_tokens" - it means "use whatever this route's
@@ -57,7 +59,7 @@ func (c *OpenAICompat) effectiveMaxTokens(req Request) *int {
 	if len(reasoningBodyFields(resolved.Dialect, level)) == 0 {
 		level = ""
 	}
-	floor := reasoningMaxTokensFloor(level)
+	floor := reasoning.OutputReserveFloor(level)
 	return &floor
 }
 

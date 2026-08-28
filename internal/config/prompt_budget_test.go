@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
+)
 
 func ptr(v int) *int { return &v }
 
@@ -82,6 +86,53 @@ func TestEffectiveOutputTokensCapsUnrequestedReserveAtDefault(t *testing.T) {
 	}
 }
 
+// TestEffectiveOutputTokensRaisesUnrequestedReserveForHighReasoningEffort
+// pins the real fix for the planner/wire mismatch: internal/provider's wire
+// layer (effectiveMaxTokens in openai_compat_request.go) sends up to
+// reasoning.OutputReserveFloor(level) as max_tokens whenever a request
+// leaves MaxTokens unset - for z.ai's GLM-5.3 family at "max" effort
+// (always-thinking, per .mivia/mivia.toml) that is 65536, not the flat
+// DefaultOutputReserveTokens=32768 this function used to cap every unset
+// reserve at regardless of reasoning level. Reserving only 32768 here would
+// let EffectivePromptTokens hand the planner a Budget that assumes 32768 of
+// completion headroom, while the wire request separately asks for 65536 on
+// top of it - a prompt_tokens+max_tokens over-context-window rejection this
+// function has every input needed to avoid.
+func TestEffectiveOutputTokensRaisesUnrequestedReserveForHighReasoningEffort(t *testing.T) {
+	profile := ModelSpec{ContextWindowTokens: 1048576, MaxOutputTokens: 131072, Reasoning: reasoning.Max}
+	got := EffectiveOutputTokens(profile, nil)
+	if got == nil {
+		t.Fatal("EffectiveOutputTokens() = nil, want a reasoning-scaled reserve")
+	}
+	want := reasoning.OutputReserveFloor(reasoning.Max)
+	if want <= DefaultOutputReserveTokens {
+		t.Fatalf("test setup: reasoning.OutputReserveFloor(Max)=%d must exceed DefaultOutputReserveTokens=%d for this test to be meaningful", want, DefaultOutputReserveTokens)
+	}
+	if *got != want {
+		t.Fatalf("EffectiveOutputTokens() = %d, want %d (reasoning.OutputReserveFloor(Max), not the flat default)", *got, want)
+	}
+}
+
+// TestEffectiveOutputTokensKeepsDefaultForLowReasoningEffort guards the
+// other direction: a low-effort or non-reasoning model must not regress to
+// reserving MORE than DefaultOutputReserveTokens just because this function
+// now consults the reasoning level - reasoning.OutputReserveFloor for Off/Low
+// stays at or below the default, so the max(...) in EffectiveOutputTokens
+// must still yield exactly DefaultOutputReserveTokens for those levels,
+// unchanged from before this fix.
+func TestEffectiveOutputTokensKeepsDefaultForLowReasoningEffort(t *testing.T) {
+	for _, level := range []reasoning.Level{"", reasoning.Off, reasoning.Low} {
+		profile := ModelSpec{ContextWindowTokens: 200000, MaxOutputTokens: 128000, Reasoning: level}
+		got := EffectiveOutputTokens(profile, nil)
+		if got == nil {
+			t.Fatalf("level %q: EffectiveOutputTokens() = nil, want the capped default", level)
+		}
+		if *got != DefaultOutputReserveTokens {
+			t.Fatalf("level %q: EffectiveOutputTokens() = %d, want the unchanged default %d", level, *got, DefaultOutputReserveTokens)
+		}
+	}
+}
+
 // TestEffectiveOutputTokensHonorsExplicitRequestAboveDefault pins a latent
 // second defect the cap exposes: the old code only honored an explicit
 // [chat] max_tokens when it was SMALLER than the model ceiling, so an
@@ -121,6 +172,22 @@ func TestEffectivePromptTokensClaudeShapedProfile(t *testing.T) {
 	}
 }
 
+// TestEffectivePromptTokensGlmMaxEffortShapedProfile is the end-to-end
+// regression pin for glm-5.3-flash's actual .mivia/mivia.toml entry
+// (context_window_tokens=1048576, max_output_tokens=131072, reasoning='max',
+// always-thinking): the prompt budget must exclude
+// reasoning.OutputReserveFloor(Max)=65536, not the flat 32768 default, so a
+// caller planning history against this Budget agrees with what the wire
+// request (effectiveMaxTokens) will actually ask the provider for.
+func TestEffectivePromptTokensGlmMaxEffortShapedProfile(t *testing.T) {
+	profile := ModelSpec{ContextWindowTokens: 1048576, MaxOutputTokens: 131072, Reasoning: reasoning.Max}
+	got := EffectivePromptTokens(profile, nil, 0, 0)
+	want := 1048576 - reasoning.OutputReserveFloor(reasoning.Max)
+	if got != want {
+		t.Fatalf("EffectivePromptTokens() = %d, want %d", got, want)
+	}
+}
+
 // TestEffectivePromptTokensReserveNeverExceedsWindow guards the provider-side
 // invariant the cap must not break: Anthropic (and others) validate
 // input_tokens + max_tokens <= context_window and reject outright, so the
@@ -128,12 +195,13 @@ func TestEffectivePromptTokensClaudeShapedProfile(t *testing.T) {
 // stay in lockstep and always fit.
 func TestEffectivePromptTokensReserveNeverExceedsWindow(t *testing.T) {
 	profiles := []ModelSpec{
-		{ContextWindowTokens: 200000, MaxOutputTokens: 128000},  // claude / glm
-		{ContextWindowTokens: 1000000, MaxOutputTokens: 384000}, // deepseek
-		{ContextWindowTokens: 1000000, MaxOutputTokens: 65536},  // gemini
-		{ContextWindowTokens: 131072, MaxOutputTokens: 32768},   // gpt-oss-120b
-		{ContextWindowTokens: 32768},                            // no declared ceiling
-		{ContextWindowTokens: 5, MaxOutputTokens: 10},           // degenerate
+		{ContextWindowTokens: 200000, MaxOutputTokens: 128000},                            // claude / glm
+		{ContextWindowTokens: 1000000, MaxOutputTokens: 384000},                           // deepseek
+		{ContextWindowTokens: 1000000, MaxOutputTokens: 65536},                            // gemini
+		{ContextWindowTokens: 131072, MaxOutputTokens: 32768},                             // gpt-oss-120b
+		{ContextWindowTokens: 32768},                                                      // no declared ceiling
+		{ContextWindowTokens: 5, MaxOutputTokens: 10},                                     // degenerate
+		{ContextWindowTokens: 1048576, MaxOutputTokens: 131072, Reasoning: reasoning.Max}, // glm-5.3-flash, max effort
 	}
 	for _, profile := range profiles {
 		budget := EffectivePromptTokens(profile, nil, 0, 0)

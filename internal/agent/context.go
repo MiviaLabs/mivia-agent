@@ -131,20 +131,24 @@ func (l *Loop) discardPreparation(opts Options) {
 	// Discard between steps must keep mid-turn elision totals.
 }
 
-// outputReserve returns the context-window room to reserve for this turn's
-// completion: the caller's explicit MaxTokens when set and non-negative,
-// otherwise provider.ReasoningOutputReserve(level) - the same fallback the
-// wire request itself will apply when MaxTokens is left unset
-// (effectiveMaxTokens in openai_compat_request.go). Reserving 0 here for an
-// unset MaxTokens would let the planner pack history right up to the full
-// budget, then the wire request separately asks for up to 65536 completion
-// tokens on top of it - a mismatch that risks a prompt_tokens+max_tokens
-// context-window rejection the planner had every input needed to avoid.
+// outputReserve returns the value fed into contextmgr.PlanInput.OutputReserve:
+// the caller's explicit MaxTokens when set and non-negative, otherwise
+// reasoning.OutputReserveFloor(level) - the same fallback the wire request
+// itself applies when MaxTokens is left unset (effectiveMaxTokens in
+// openai_compat_request.go). This does NOT shrink the prompt budget the
+// planner packs history against - PlanInput.OutputReserve is deliberately
+// never subtracted from Budget (see the doc comment on that field in
+// internal/contextmgr/planner.go: Budget already excludes the reserve,
+// applied once upstream by config.EffectiveOutputTokens, which independently
+// reads the same reasoning.OutputReserveFloor). Passing an accurate value
+// here only keeps the plan's idempotency-key fingerprint honest about what
+// output room this turn assumed, instead of every unset-MaxTokens turn
+// fingerprinting as if it reserved 0.
 func outputReserve(maxTokens *int, level reasoning.Level) int {
 	if maxTokens != nil && *maxTokens >= 0 {
 		return *maxTokens
 	}
-	return provider.ReasoningOutputReserve(level)
+	return reasoning.OutputReserveFloor(level)
 }
 
 func latestUserObjective(messages []provider.Message) string {

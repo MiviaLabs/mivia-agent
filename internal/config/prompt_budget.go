@@ -1,5 +1,7 @@
 package config
 
+import "github.com/MiviaLabs/mivia-agent/internal/reasoning"
+
 // EffectiveOutputTokens returns the response allowance for one request: the
 // completion size asked for on the wire, and the reserve subtracted from the
 // context window to derive the prompt budget. Those two must stay in lockstep
@@ -8,9 +10,18 @@ package config
 //
 // An EXPLICIT request ([chat] max_tokens) is authoritative up to the model's
 // own ceiling. An UNSET request falls back to the model ceiling capped at
-// DefaultOutputReserveTokens, because a model's max_output_tokens is a
-// per-response maximum rather than a sensible per-request default; see that
-// constant for the prompt-budget damage the uncapped fallback caused.
+// max(DefaultOutputReserveTokens, reasoning.OutputReserveFloor(profile.Reasoning)),
+// because a model's max_output_tokens is a per-response maximum rather than a
+// sensible per-request default; see DefaultOutputReserveTokens for the
+// prompt-budget damage the uncapped fallback caused. The reasoning.
+// OutputReserveFloor term matters because the wire request layer
+// (internal/provider's effectiveMaxTokens) applies that SAME floor as its own
+// max_tokens fallback for an unset request - reserving only
+// DefaultOutputReserveTokens here for a high-reasoning-effort model (e.g.
+// z.ai's GLM-5.3 family at "max" effort, floor 65536) would let this budget
+// pack history right up to a boundary the wire request then asks to exceed,
+// risking a prompt_tokens+max_tokens over-context-window rejection this
+// function has every input needed to avoid.
 func EffectiveOutputTokens(profile ModelSpec, requested *int) *int {
 	ceiling := profile.MaxOutputTokens
 	if ceiling < 0 {
@@ -26,9 +37,12 @@ func EffectiveOutputTokens(profile ModelSpec, requested *int) *int {
 	if ceiling <= 0 {
 		return nil
 	}
-	limit := ceiling
-	if limit > DefaultOutputReserveTokens {
-		limit = DefaultOutputReserveTokens
+	limit := DefaultOutputReserveTokens
+	if floor := reasoning.OutputReserveFloor(profile.Reasoning); floor > limit {
+		limit = floor
+	}
+	if limit > ceiling {
+		limit = ceiling
 	}
 	return clampReserveToWindow(profile, limit)
 }

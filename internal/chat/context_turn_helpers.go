@@ -25,14 +25,12 @@ func contextTurnMessages(messages []provider.Message, userText string) []provide
 	return nil
 }
 
-// outputReserve mirrors internal/agent's helper of the same name: the
-// caller's explicit MaxTokens when set and non-negative, otherwise
-// provider.ReasoningOutputReserve(level), so the planner reserves the same
-// room the wire request will separately ask for when MaxTokens is left
-// unset (effectiveMaxTokens in openai_compat_request.go).
+// outputReserve mirrors internal/agent's helper of the same name - see its
+// doc comment for why this does not itself shrink the prompt budget (that
+// happens upstream, in config.EffectiveOutputTokens).
 func outputReserve(maxTokens *int, level reasoning.Level) int {
 	if maxTokens != nil && *maxTokens >= 0 {
 		return *maxTokens
 	}
-	return provider.ReasoningOutputReserve(level)
+	return reasoning.OutputReserveFloor(level)
 }

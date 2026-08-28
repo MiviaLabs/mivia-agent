@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 )
 
 // estimateTokens returns a rough token count for a string.
@@ -214,7 +216,7 @@ func EstimatePromptCost(messages []Message, tools []ToolSpec, profile ContextAcc
 }
 
 // RequestTokens returns the request cost using MaxTokens as the output
-// reserve, falling back to ReasoningOutputReserve(request.ReasoningLevel)
+// reserve, falling back to reasoning.OutputReserveFloor(request.ReasoningLevel)
 // when MaxTokens is unset - the same fallback effectiveMaxTokens applies on
 // the wire (openai_compat_request.go), so a caller pricing a request before
 // it is sent reserves the same room the request will actually ask for. It is
@@ -224,7 +226,7 @@ func RequestTokens(request Request, profile ContextAccountingProfile) (int, erro
 	if request.MaxTokens != nil {
 		reserve = *request.MaxTokens
 	} else {
-		reserve = ReasoningOutputReserve(request.ReasoningLevel)
+		reserve = reasoning.OutputReserveFloor(request.ReasoningLevel)
 	}
 	return EstimateRequestCost(request.Messages, request.Tools, reserve, profile)
 }

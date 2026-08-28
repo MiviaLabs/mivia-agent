@@ -358,7 +358,7 @@ func anthropicMaxTokens(req Request, level reasoning.Level) int {
 	if req.MaxTokens != nil && *req.MaxTokens > 0 {
 		return *req.MaxTokens
 	}
-	return reasoningMaxTokensFloor(level)
+	return reasoning.OutputReserveFloor(level)
 }
 
 // anthropicTools translates the OpenAI-shaped tools[] entries

@@ -38,17 +38,17 @@ func TestOutputReserveReturnsConfiguredLimit(t *testing.T) {
 	}
 }
 
-// TestOutputReserveFallsBackToReasoningFloorWhenUnset pins the fix for a
-// planner/wire mismatch: an unset MaxTokens used to reserve 0 context-window
-// room for the completion, while the wire request separately asks for up to
-// provider.ReasoningOutputReserve(level) tokens (effectiveMaxTokens in
-// openai_compat_request.go) - the planner could pack history right up to the
-// full budget, then the wire request's declared max_tokens pushes
-// prompt_tokens+max_tokens past the model's real context window.
+// TestOutputReserveFallsBackToReasoningFloorWhenUnset pins that an unset
+// MaxTokens no longer fingerprints the plan's idempotency key as if it
+// reserved 0: outputReserve falls back to reasoning.OutputReserveFloor(level),
+// the same fallback the wire request applies (effectiveMaxTokens in
+// openai_compat_request.go). This does NOT itself shrink the prompt budget
+// the planner packs history against - see config.EffectiveOutputTokens for
+// where that reserve is actually applied.
 func TestOutputReserveFallsBackToReasoningFloorWhenUnset(t *testing.T) {
 	got := outputReserve(nil, reasoning.Max)
-	want := provider.ReasoningOutputReserve(reasoning.Max)
+	want := reasoning.OutputReserveFloor(reasoning.Max)
 	if got != want || got == 0 {
-		t.Fatalf("output reserve = %d, want %d (provider.ReasoningOutputReserve(Max), non-zero)", got, want)
+		t.Fatalf("output reserve = %d, want %d (reasoning.OutputReserveFloor(Max), non-zero)", got, want)
 	}
 }

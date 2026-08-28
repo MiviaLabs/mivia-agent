@@ -66,7 +66,7 @@ func (c *OpenAICompat) clampMaxTokensForRetry(req Request, err error) *Request {
 func (c *OpenAICompat) doChatRequest(ctx context.Context, req Request) (*http.Response, Request, error) {
 	// Materialize the wire max_tokens onto req itself before the clamp loop
 	// below ever runs. marshalBody (via effectiveMaxTokens) falls back to
-	// reasoningMaxTokensFloor whenever req.MaxTokens is nil, but
+	// reasoning.OutputReserveFloor whenever req.MaxTokens is nil, but
 	// clampMaxTokensForRetry's recovery gate reads req.MaxTokens directly -
 	// leaving it nil here would silently disable that recovery for exactly
 	// the request shape (unset MaxTokens, reasoning-active) the floor
