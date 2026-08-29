@@ -1,0 +1,16 @@
+{
+  "why": "A request-scoped contract honored by one runtime.Handler implementation and silently dropped by its sibling is this repository's most expensive recurring defect. OutputSchema and DisableProviderReplay were both lost that way on the agent-less path: dispatch_tasks promised validation that never ran, and a caller that asked for exactly one provider request got five. Nothing mechanical noticed either. This policy is the boundary: every asymmetry between the two handlers must be declared here with a reason, so a NEW one fails the gate instead of shipping.",
+  "gate": "internal/subagents/handler_field_parity_test.go",
+  "families": {
+    "multi_step": "MultiStepHandler",
+    "oneshot": "OneShotHandler"
+  },
+  "knownAsymmetric": {
+    "Budget": "Nested-loop accounting. A one-shot call is a single Chat with no loop to spend a budget across, so there is nothing to charge.",
+    "Depth": "Spawn-depth for nested delegation. A one-shot handler cannot spawn, so it has no depth to propagate.",
+    "ID": "Parent id threaded into nested tool dispatch. A one-shot call dispatches no tools.",
+    "Role": "Role carried onto nested tool dispatch, same reason as ID.",
+    "TurnID": "Turn identity for nested tool dispatch, same reason as ID.",
+    "WorkLimits": "GENUINE GAP, not a design difference. A cumulative provider/tool work bound needs a step loop to be spent against, and no caller sets it on an agent-less task today. If one ever does, the bound is silently ignored. Remove this entry when the one-shot path grows a way to honor it."
+  }
+}

@@ -212,7 +212,7 @@ if command -v go >/dev/null 2>&1; then
   fi
   if echo "$STAGED" | grep -qE '^internal/subagents/'; then
     echo " → Running subagent invariant tests..."
-    (cd "$STAGED_ROOT" && run_verify go test -run 'TestTerminalStatus|TestBuildResult' ./internal/subagents/ -count=1 -timeout=60s) || INV_FAIL=1
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestTerminalStatus|TestBuildResult|TestHandlerRequestFieldParity|TestHandlerParityPolicyHasNoStaleExemptions|TestOneShotHandler' ./internal/subagents/ -count=1 -timeout=60s) || INV_FAIL=1
   fi
   if echo "$STAGED" | grep -qE '^internal/chat/'; then
     echo " → Running chat invariant tests..."
