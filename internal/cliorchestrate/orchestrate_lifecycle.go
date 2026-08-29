@@ -154,7 +154,12 @@ func RunTaskResultsWithRepo(repo ledger.LedgerRepository, result *coordinator.Ru
 		if repo != nil {
 			msgIndex := TaskMessageIndex(context.Background(), repo, result.Snapshot.Tasks)
 			for i := range out {
-				out[i].Messages = msgIndex[out[i].TaskID]
+				// Key by the snapshot row's FULL TaskID (rows are
+				// index-aligned with the snapshot): the coordinator records
+				// task-message events under the namespaced id, while
+				// out[i].TaskID is the stripped model-visible RawID, which
+				// misses every dispatch_tasks-created task.
+				out[i].Messages = msgIndex[result.Snapshot.Tasks[i].TaskID]
 			}
 		}
 		return out

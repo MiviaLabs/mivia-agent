@@ -12,6 +12,7 @@ import (
 	"github.com/MiviaLabs/mivia-ai-sdk/provider"
 	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agentmsg"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
@@ -190,6 +191,59 @@ func TestRunTaskResultsWithRepoCarriesToolCallsRef(t *testing.T) {
 	noRepo := ModelTaskResults(result.Snapshot.Tasks, result.Results, 4096)
 	if len(noRepo) != 1 || noRepo[0].ToolCallsRef != ref {
 		t.Fatalf("nil-repo results = %+v, want the same tool_calls_ref", noRepo)
+	}
+}
+
+// TestRunTaskResultsRecoveredPathAttachesMessagesForNamespacedTask is the
+// regression test for the recovered-branch message keying miss: the
+// coordinator records task-message events under the FULL namespaced task id,
+// while persistedTaskResults reports the namespace-stripped RawID as the
+// model-visible TaskID. A lookup keyed on the model-visible id therefore
+// misses every dispatch_tasks-created task, silently dropping its
+// findings/questions on the recovered path. The rows are index-aligned with
+// the snapshot, so the lookup must use the snapshot row's full TaskID.
+func TestRunTaskResultsRecoveredPathAttachesMessagesForNamespacedTask(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	ctx := context.Background()
+	const runID = "r-msg"
+	const fullID = "call_1:t1"
+
+	if err := repo.CreateRun(ctx, "", ledger.RunSnapshot{
+		RunID: runID, Status: ledger.RunStatusRunning,
+		Tasks: []ledger.TaskSnapshot{{RunID: runID, TaskID: fullID, RawID: "t1", Status: string(ledger.TaskStatusRunning)}},
+	}); err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	payload, err := json.Marshal(agentmsg.LifecyclePayload{
+		MessageID: "msg-1", Kind: agentmsg.KindFinding, Synopsis: "found the inversion",
+	})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	if err := repo.AppendEvent(ctx, ledger.LifecycleEvent{
+		ID: "evt-1", RunID: runID, Kind: coordinator.LifecycleKindTaskMessage,
+		TaskID: fullID, Payload: payload, CreatedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("AppendEvent: %v", err)
+	}
+
+	result := &coordinator.RunResult{
+		Snapshot: ledger.RunSnapshot{RunID: runID, Tasks: []ledger.TaskSnapshot{
+			{RunID: runID, TaskID: fullID, RawID: "t1", Status: string(ledger.TaskStatusCompleted)},
+		}},
+		Results: []subagents.Result{{TaskID: fullID, Status: "completed"}},
+	}
+	result.Results[0].Provenance.Kind = "recovered"
+
+	got := RunTaskResultsWithRepo(repo, result, 4096)
+	if len(got) != 1 {
+		t.Fatalf("got len = %d, want 1", len(got))
+	}
+	if got[0].TaskID != "t1" {
+		t.Fatalf("TaskID = %q, want raw id t1", got[0].TaskID)
+	}
+	if len(got[0].Messages) != 1 || got[0].Messages[0].MessageID != "msg-1" {
+		t.Fatalf("recovered result dropped its task messages: %+v", got[0].Messages)
 	}
 }
 
