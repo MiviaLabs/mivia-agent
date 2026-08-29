@@ -4,6 +4,16 @@
   "requireReason": true,
   "allowInDiffWithoutEntry": false,
   "knownSkips": {
+    "internal/uikit/clipboardwrite/clipboardwrite_test.go": [
+      {
+        "line": 159,
+        "reason": "execRunner integration test substitutes the portable `sh -c` command for a real clipboard tool; no Windows equivalent is wired here, so it skips on windows rather than failing"
+      },
+      {
+        "line": 179,
+        "reason": "execRunner integration test substitutes the portable `sh -c` command for a real clipboard tool; no Windows equivalent is wired here, so it skips on windows rather than failing"
+      }
+    ],
     "internal/agent/advertised_tool_specs_test.go": [
       {
         "line": 129,
