@@ -270,30 +270,36 @@ func TestF9DialContextThreadsIntoRetryRoundTripper(t *testing.T) {
 	const wantAddr = "127.0.0.1:11434"
 	assertWired := func(t *testing.T, c *OpenAICompat) {
 		t.Helper()
-		inner, ok := innerTransport(c).(*http.Transport)
-		if !ok {
-			t.Fatalf("inner transport = %T, want *http.Transport clone", innerTransport(c))
+		// Every transport the client owns - one per header phase - must carry
+		// the caller's dial. Checking only one would let a request routed to
+		// the other pool dial unpinned.
+		transports := httpTransportsOf(c)
+		if len(transports) == 0 {
+			t.Fatalf("inner transport = %T, want *http.Transport clones", innerTransport(c))
 		}
-		if inner == http.DefaultTransport {
-			t.Fatal("inner transport is http.DefaultTransport; DialContext was not threaded")
-		}
-		if inner.DialContext == nil {
-			t.Fatal("inner transport DialContext is nil despite CompatOptions.DialContext")
-		}
-		if reflect.ValueOf(inner.DialContext).Pointer() != reflect.ValueOf(rec).Pointer() {
-			t.Fatal("inner transport DialContext is not the provided dial func")
-		}
-		// Invocation proof: the exact same closure state must be reached.
-		mu.Lock()
-		recorded = recorded[:0]
-		mu.Unlock()
-		if _, err := inner.DialContext(context.Background(), "tcp", wantAddr); err != errDialRecorded {
-			t.Fatalf("inner transport dial returned %v, want the recorded sentinel %v", err, errDialRecorded)
-		}
-		mu.Lock()
-		defer mu.Unlock()
-		if len(recorded) != 1 || recorded[0] != wantAddr {
-			t.Fatalf("recorded dials = %v, want exactly [%q]", recorded, wantAddr)
+		for _, inner := range transports {
+			if inner == http.DefaultTransport {
+				t.Fatal("inner transport is http.DefaultTransport; DialContext was not threaded")
+			}
+			if inner.DialContext == nil {
+				t.Fatal("inner transport DialContext is nil despite CompatOptions.DialContext")
+			}
+			if reflect.ValueOf(inner.DialContext).Pointer() != reflect.ValueOf(rec).Pointer() {
+				t.Fatal("inner transport DialContext is not the provided dial func")
+			}
+			// Invocation proof: the exact same closure state must be reached.
+			mu.Lock()
+			recorded = recorded[:0]
+			mu.Unlock()
+			if _, err := inner.DialContext(context.Background(), "tcp", wantAddr); err != errDialRecorded {
+				t.Fatalf("inner transport dial returned %v, want the recorded sentinel %v", err, errDialRecorded)
+			}
+			mu.Lock()
+			got := append([]string(nil), recorded...)
+			mu.Unlock()
+			if len(got) != 1 || got[0] != wantAddr {
+				t.Fatalf("recorded dials = %v, want exactly [%q]", got, wantAddr)
+			}
 		}
 	}
 
@@ -316,20 +322,51 @@ func TestF9DialContextThreadsIntoRetryRoundTripper(t *testing.T) {
 	})
 }
 
-// F10: compatBaseRoundTripper always returns a FRESH *http.Transport clone -
+// F10: compatBaseRoundTripper always returns FRESH *http.Transport clones -
 // distinct from http.DefaultTransport and from every other clone - never the
 // global by identity. A nil dial (cloud client) keeps the DEFAULT dialer; a
-// non-nil dial carries the given function (spot-checked identity). Both
-// clones carry the DefaultResponseHeaderTimeout bound and keep the
-// DefaultTransport field defaults.
+// non-nil dial carries the given function (spot-checked identity). The clones
+// keep the DefaultTransport field defaults, and the streaming one carries the
+// DefaultResponseHeaderTimeout bound. The generation-phase clone deliberately
+// carries no header bound (header_bound.go) and is asserted separately.
+// assertGenerationClone holds the generation-phase transport to the same clone
+// quality as the streaming one. Only the header bound differs, and it carries
+// none because a non-stream header wait is the model working (header_bound.go).
+func assertGenerationClone(t *testing.T, modal *modalHeaderTransport, dflt *http.Transport) {
+	t.Helper()
+	if modal.generation == modal.streamed {
+		t.Fatal("the two header-phase transports must be distinct instances")
+	}
+	if modal.generation.ResponseHeaderTimeout != 0 {
+		t.Fatalf("generation clone ResponseHeaderTimeout = %v, want none", modal.generation.ResponseHeaderTimeout)
+	}
+	if modal.generation == dflt {
+		t.Fatal("generation clone must not be http.DefaultTransport itself")
+	}
+}
+
+// assertPinReachesGeneration proves the loopback dial pin - the security gate -
+// is installed on the generation-phase pool too. A non-stream request routes
+// there, so a pin on the streaming pool alone would leave it dialling whatever
+// a resolver answered.
+func assertPinReachesGeneration(t *testing.T, modal *modalHeaderTransport, pin func(context.Context, string, string) (net.Conn, error)) {
+	t.Helper()
+	if modal.generation.DialContext == nil ||
+		reflect.ValueOf(modal.generation.DialContext).Pointer() != reflect.ValueOf(pin).Pointer() {
+		t.Fatal("generation clone DialContext is not the provided dial func")
+	}
+}
+
 func TestF10CompatBaseRoundTripperNilAndClone(t *testing.T) {
 	dflt := http.DefaultTransport.(*http.Transport)
 
 	unpinned := compatBaseRoundTripper(nil)
-	unpinnedTr, ok := unpinned.(*http.Transport)
+	unpinnedModal, ok := unpinned.(*modalHeaderTransport)
 	if !ok {
-		t.Fatalf("compatBaseRoundTripper(nil) = %T, want *http.Transport", unpinned)
+		t.Fatalf("compatBaseRoundTripper(nil) = %T, want *modalHeaderTransport", unpinned)
 	}
+	assertGenerationClone(t, unpinnedModal, dflt)
+	unpinnedTr := unpinnedModal.streamed
 	if unpinnedTr == dflt {
 		t.Fatal("compatBaseRoundTripper(nil) must return a fresh clone, not http.DefaultTransport itself")
 	}
@@ -359,11 +396,13 @@ func TestF10CompatBaseRoundTripperNilAndClone(t *testing.T) {
 	}
 
 	got := compatBaseRoundTripper(rec)
-	clone, ok := got.(*http.Transport)
+	pinnedModal, ok := got.(*modalHeaderTransport)
 	if !ok {
-		t.Fatalf("compatBaseRoundTripper(rec) = %T, want *http.Transport", got)
+		t.Fatalf("compatBaseRoundTripper(rec) = %T, want *modalHeaderTransport", got)
 	}
-	if clone == dflt || clone == unpinned {
+	clone := pinnedModal.streamed
+	assertPinReachesGeneration(t, pinnedModal, rec)
+	if clone == dflt || clone == unpinnedTr {
 		t.Fatal("compatBaseRoundTripper(rec) must return a fresh clone, not a shared transport")
 	}
 	if clone.DialContext == nil {

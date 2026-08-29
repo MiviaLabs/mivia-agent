@@ -112,20 +112,32 @@ func newLoopbackDialContext(providerName, baseURL string) (func(ctx context.Cont
 //     carries the pinned dial, so every connection lands on the loopback
 //     address set verified at construction, whatever a resolver says later.
 //
-// Every clone also carries DefaultResponseHeaderTimeout, which bounds only
-// the accept-to-headers wait, so the header wait stays fast even when
-// generation is slow. Body phases are covered by the stream watchdogs
-// (idle_watchdog.go), and this bound sits under the 15-minute client wall.
+// The result is a modalHeaderTransport carrying TWO such clones, identical
+// except for their header bound. DefaultResponseHeaderTimeout bounds the
+// accept-to-headers wait for a request that answers immediately - a streaming
+// one - so a peer that connects and goes quiet fails fast. A non-stream
+// completion sends nothing until the generation is done, so the same bound
+// there is a ceiling on thinking time rather than a stall detector, and its
+// clone carries none; see header_bound.go. Both clones get the dial wiring, so
+// the loopback pin is not weakened by the split. Body phases are covered by
+// the stream watchdogs (idle_watchdog.go), and both sit under the 15-minute
+// client wall.
 //
-// Always-clone consequence: each client owns its connection pool instead of
+// Always-clone consequence: each client owns its connection pools instead of
 // sharing http.DefaultTransport's. Per-client pool isolation is the point -
 // one client's idle-connection state or pinned-dial setting cannot touch
-// another's - at the cost of one pool per client.
+// another's - at the cost of one pool per phase per client.
 func compatBaseRoundTripper(dialContext func(ctx context.Context, network, addr string) (net.Conn, error)) http.RoundTripper {
-	clone := http.DefaultTransport.(*http.Transport).Clone()
-	clone.ResponseHeaderTimeout = DefaultResponseHeaderTimeout
-	if dialContext != nil {
-		clone.DialContext = dialContext
+	clone := func(headerTimeout time.Duration) *http.Transport {
+		tr := http.DefaultTransport.(*http.Transport).Clone()
+		tr.ResponseHeaderTimeout = headerTimeout
+		if dialContext != nil {
+			tr.DialContext = dialContext
+		}
+		return tr
 	}
-	return clone
+	return &modalHeaderTransport{
+		streamed:   clone(DefaultResponseHeaderTimeout),
+		generation: clone(0),
+	}
 }

@@ -177,6 +177,13 @@ func (c *AnthropicCompleter) newHTTPRequest(ctx context.Context, req Request, bo
 	if req.DisableProviderReplay {
 		ctx = context.WithValue(ctx, disableProviderReplayContextKey{}, true)
 	}
+	// The body is the authority on which wire shape this request takes: both
+	// send paths build it here, and only chatTurnStream sets stream. A
+	// non-stream Messages request answers all at once, so its header wait is
+	// the generation and carries no header bound (header_bound.go).
+	if streamed, _ := body["stream"].(bool); !streamed {
+		ctx = withGenerationHeaderPhase(ctx)
+	}
 	cancel := func() {}
 	if req.Timeout > 0 {
 		ctx, cancel = context.WithTimeout(ctx, req.Timeout)
