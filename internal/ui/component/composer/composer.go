@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
+	sel "github.com/MiviaLabs/mivia-agent/internal/ui/select"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
 )
@@ -35,6 +36,14 @@ type Model struct {
 	// width is the full column count the composer occupies. View renders
 	// exactly this many columns on every row.
 	width int
+
+	// Mouse selection (selection.go): body rect injected by the owning
+	// screen, the anchor/focus pair the router drives during a drag, and
+	// the input value the selection was armed against (a later edit
+	// invalidates it).
+	selRect  sel.Rect
+	selState sel.Selection
+	selValue string
 }
 
 // maxInputLines is the maximum number of visible textarea rows before it
@@ -327,8 +336,14 @@ func (m *Model) MenuClickRow(row int) bool {
 
 // Update forwards the message to the textarea and refreshes both menus.
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
+	before := m.input.Value()
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
+	if m.input.Value() != before {
+		// The rows under a live selection just changed; a stale anchor
+		// would copy the wrong text, so editing cancels the drag.
+		m.invalidateSelection()
+	}
 	m.menu.refresh(m.input.Value())
 	m.mmenu.refresh(m.input.Value(), m.input.Column())
 	return m, cmd
@@ -382,6 +397,11 @@ func (m Model) InputColumnOffset() int {
 	return 2
 }
 
+// Framed reports whether View draws the themed border around the body.
+// The owning screen uses it for selection-region geometry: border rows
+// are not selectable.
+func (m Model) Framed() bool { return m.width >= minFramedWidth }
+
 // activeMenuView returns whichever menu is currently showing, prefer slash
 // over mention when both are somehow active (cannot happen in practice).
 func (m Model) activeMenuView() string {
@@ -397,6 +417,9 @@ func (m Model) activeMenuView() string {
 // moves as the menu grows or shrinks (ux-rules.md rule 2.8).
 func (m Model) View() string {
 	body := m.input.View()
+	if m.selState.Active {
+		body = m.highlightBodyLines(body)
+	}
 
 	if m.width >= minFramedWidth {
 		hint := "[ ↵ Send  •  / Commands ]"

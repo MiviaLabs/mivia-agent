@@ -53,8 +53,10 @@ Run `mivia chat` and work down the list. Record pass/fail per terminal.
 
 10. **Shift+drag** selects text without leaving mouse capture. **iTerm2 uses
     Option, not Shift.**
-11. **Wheel** scrolls the transcript; **right-click** copies a message.
+11. **Wheel** scrolls the transcript; **left-drag** selects text in the
+    transcript, composer, and pager, and releases to an OSC 52 copy.
 12. **`MIVIA_MOUSE=0`** starts with capture off and native selection working.
+    `[tui] mouse = false` is the config form; Settings → General toggles it live.
 
 ### Modal dialogs
 
@@ -74,13 +76,28 @@ Run `mivia chat` and work down the list. Record pass/fail per terminal.
 
 ### Clipboard delivery
 
-16. **Local**: copy a message, paste into another application.
-17. **Over SSH** (no clipboard binary on the remote): copy relies on OSC 52.
-    Expect it to work in kitty, alacritty, foot, WezTerm, iTerm2, Windows
-    Terminal, and Ghostty; **GNOME Terminal and other VTE terminals do not
-    implement OSC 52** - the acknowledgement will honestly report failure.
-18. **Inside tmux**: needs `set -g set-clipboard on`. Without it, tmux keeps the
-    sequence to itself.
+16. **Local**: copy a message, paste into another application. Every release
+    batches three things: the OSC 52 write, a best-effort local clipboard-tool
+    fallback (`internal/uikit/clipboardwrite`: `wl-copy`/`xclip`/`xsel` on
+    Linux, `pbcopy` on macOS, `clip.exe` on Windows/WSL - whichever is on PATH
+    for the detected display), and the status-line toast. No configuration is
+    required for either path.
+17. **Over SSH** (no local display, so the clipboard-tool fallback is a
+    no-op): copy relies on OSC 52 alone. Expect it to work in kitty,
+    alacritty, foot, WezTerm, iTerm2, Windows Terminal, and Ghostty;
+    **GNOME Terminal and other VTE terminals refuse OSC 52 outright** (an
+    upstream VTE decision, not a mivia gap) - over SSH into a VTE-hosted
+    session there is no working copy path at all.
+18. **Inside tmux**: `set-clipboard` defaults to `external` in tmux 2.6+,
+    which already forwards a bare OSC 52 write to the outer terminal with no
+    configuration - do not wrap the sequence in tmux's DCS passthrough
+    envelope (`allow-passthrough` defaults *off*, so a wrapped sequence is
+    silently dropped in the common case; this bit Neovim and other tools
+    that "helpfully" wrap for tmux). If a user's `tmux.conf` sets
+    `set-clipboard off` explicitly, tmux drops the sequence outright and no
+    escape sequence can override that from inside the pane - the clipboard-tool
+    fallback in item 16 still runs locally regardless, since it never goes
+    through tmux's OSC 52 interception at all.
 
 ## Terminal matrix
 
@@ -90,11 +107,12 @@ Cover at least one from each family; the failure modes cluster by engine.
 |---|---|
 | kitty, foot, Ghostty | Kitty keyboard protocol; OSC 52 supported |
 | Alacritty, WezTerm | xterm-conformant; OSC 52 supported |
-| GNOME Terminal (VTE), Konsole | **No OSC 52**; intercepts shift+home/end |
+| GNOME Terminal (VTE) | **No OSC 52** (refused on principle, unresolved since 2018); falls back to xclip/wl-copy locally; intercepts shift+home/end |
+| Konsole | OSC 52 write support landed in 2024 - update if copy still fails; also intercepts shift+home/end |
 | iTerm2 | **Option**, not Shift, bypasses mouse capture |
 | Windows Terminal, VS Code terminal | Large-paste character loss reported upstream in VS Code |
 | xterm | Baseline encodings |
-| tmux over any of the above | `set-clipboard`, `TERM=tmux-256color` |
+| tmux over any of the above | `set-clipboard` defaults to `external` (forwards with no config); do not rely on DCS passthrough wrapping - `allow-passthrough` defaults off |
 
 ## Known limitations
 
@@ -106,5 +124,5 @@ Cover at least one from each family; the failure modes cluster by engine.
 - **Shift+Enter** cannot be distinguished from Enter under bubbletea v1. Use
   `alt+enter` for a newline.
 - An OSC 52 write can in principle interleave with a rendered frame; the write is
-  a single call to keep the window minimal. See `writeOSC52` in
-  `internal/cli/clipboard.go`.
+  a single call to keep the window minimal. See `tea.SetClipboard` usage in
+  `internal/ui/app/mouse_router.go`.

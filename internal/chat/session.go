@@ -226,6 +226,13 @@ type Session struct {
 	contextWorktreeRoot  string
 	contextSessionDir    string
 	loadedContextSession bool
+	// contextHeartbeat proves to a rival process's ReclaimSession that this
+	// process is still actively working its context session (internal/
+	// storage.ReclaimSession's lease check). Lazily constructed by
+	// armContextHeartbeat on first use, once per Session; see
+	// internal/chat/context_heartbeat.go.
+	contextHeartbeat     *contextHeartbeat
+	contextHeartbeatOnce sync.Once
 	// contextPublishMu serializes context publication with clear and turn
 	// snapshot capture. Provider calls remain lock-free; only the durable
 	// compare-and-swap and its in-memory adoption are serialized.
@@ -419,8 +426,11 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 	commitToken := s.commitTurnToken(uint64(snapshot.myTurn), snapshot.token)
 	// loop.Tools is the post-run registry: after a step-boundary publication it
 	// carries the newly admitted tools, so the ephemeral-tool scrub sees them.
-	if persistErr := s.finishAgentTurn(ctx, loop, loop.Tools, userText, persistedText, commitToken, turn, snapshot.context, err); persistErr != nil && !errors.Is(persistErr, ErrStaleOperation) {
-		return reply, persistErr
+	if persistErr := s.finishAgentTurn(ctx, loop, loop.Tools, userText, persistedText, commitToken, turn, snapshot.context, err); persistErr != nil {
+		if !errors.Is(persistErr, ErrStaleOperation) {
+			return reply, persistErr
+		}
+		logStaleOperation("agent turn commit", persistErr)
 	}
 	return reply, err
 }

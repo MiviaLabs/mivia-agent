@@ -146,6 +146,10 @@ const (
 
 	// Blackboard & agent messaging center.
 	IDBlackboardDialog ID = "blackboard-dialog"
+
+	// Force-send: interrupt the current turn (composer) or force-send
+	// the selected queued message (dialog).
+	IDForceSend ID = "force-send"
 )
 
 // Binding is one row of the table.
@@ -205,6 +209,13 @@ func Default() []Binding {
 		{ID: IDClearLine, Context: ContextComposer, Keys: []string{"ctrl+u"}, Help: "clear the line"},
 		{ID: IDHelp, Context: ContextComposer, Keys: []string{"?"}, Help: "show this keymap (empty composer)", Short: "help"},
 		{ID: IDFocusPrev, Context: ContextComposer, Keys: []string{"shift+tab"}, Help: "focus the newest block"},
+		// f4 co-binds ctrl+enter: where bubbletea's KittyKeyboard request goes
+		// unanswered (Terminal.app, PuTTY, tmux, VSCode default), ctrl+enter
+		// degrades to bare CR (IDSend) with no visible failure. f4 is unbound
+		// elsewhere in this table and every terminal answers it, so the hint
+		// stays true in every terminal (rule 1.4). ctrl+k rejected: textarea
+		// kill-line.
+		{ID: IDForceSend, Context: ContextComposer, Keys: []string{"ctrl+enter", "f4"}, Help: "force send now, interrupting the current turn (f4 works in any terminal)", Short: "force"},
 
 		// Completion menu. It claims these before the composer.
 		{ID: IDMenuAccept, Context: ContextCompletion, Keys: []string{"enter"}, Help: "accept"},
@@ -240,6 +251,7 @@ func Default() []Binding {
 		{ID: IDDialogDown, Context: ContextDialog, Keys: []string{"down"}, Help: "next"},
 		{ID: IDDialogAccept, Context: ContextDialog, Keys: []string{"enter"}, Help: "apply"},
 		{ID: IDDialogCancel, Context: ContextDialog, Keys: []string{"esc"}, Help: "cancel"},
+		{ID: IDForceSend, Context: ContextDialog, Keys: []string{"f", "F"}, Help: "force send the selected queued message", Short: "force"},
 	}, pagerBindings()...), append(filesBindings(), settingsBindings()...)...)
 }
 

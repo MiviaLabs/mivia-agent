@@ -96,12 +96,25 @@ const (
 	// which this dialect's wire shape is encoded in alongside every other
 	// dialect - there is one encoder, not a second one to keep in step.
 	DialectAnthropicAdaptive Dialect = "anthropic_adaptive"
+	// DialectReasoningSplit sends a flat top-level reasoning_split:true field
+	// (MiniMax-M3). It does not itself enable or disable thinking - that is
+	// controlled by MiniMax's separate `thinking` parameter, which this dialect
+	// does not touch and is out of scope here; reasoning_split only controls
+	// whether already-occurring reasoning is split into its own response field,
+	// instead of being interleaved into the main content. Every active Level
+	// (including Off, which is still an active Level: Level.Active() is
+	// l != "", and Off's string value is non-empty) produces byte-identical
+	// JSON - there is no depth signal to carry and no distinct off-shape.
+	// CanGrade's existing default case correctly returns false for it without
+	// any new code, since grading it would let /effort report a change the
+	// request never made.
+	DialectReasoningSplit Dialect = "reasoning_split"
 )
 
 var dialects = map[Dialect]struct{}{
 	DialectOpenAI: {}, DialectOpenRouter: {}, DialectOpenRouterOnOff: {},
 	DialectThinking: {}, DialectThinkingEffort: {}, DialectThinkingPreserved: {},
-	DialectNone: {}, DialectAnthropicAdaptive: {},
+	DialectNone: {}, DialectAnthropicAdaptive: {}, DialectReasoningSplit: {},
 }
 
 // ParseDialect validates a configured dialect. The empty string is accepted
@@ -112,7 +125,7 @@ func ParseDialect(s string) (Dialect, error) {
 	}
 	dialect := Dialect(s)
 	if _, ok := dialects[dialect]; !ok {
-		return "", fmt.Errorf("unknown reasoning dialect %q (want openai, openrouter, openrouter_onoff, thinking, thinking_effort, thinking_preserved, anthropic_adaptive, or none)", s)
+		return "", fmt.Errorf("unknown reasoning dialect %q (want openai, openrouter, openrouter_onoff, thinking, thinking_effort, thinking_preserved, anthropic_adaptive, reasoning_split, or none)", s)
 	}
 	return dialect, nil
 }
@@ -154,6 +167,7 @@ var defaultDialects = map[string]Dialect{
 	"llmgateway":  DialectOpenAI,
 	"llmproxycli": DialectOpenAI,
 	"anthropic":   DialectAnthropicAdaptive,
+	"minimax":     DialectReasoningSplit,
 }
 
 // DefaultDialect returns the vetted wire dialect for a built-in provider.

@@ -65,6 +65,14 @@ type PopScreenMsg struct{}
 // after a pushed modal screen is popped from the stack.
 type ScreenResumedMsg struct{}
 
+// MouseCaptureMsg flips the app-wide mouse capture live. The settings
+// screen's "mouse capture" row sends it (bridged through the program);
+// the router applies it and the next View declares the new MouseMode,
+// which the renderer writes as ?1002/?1006 on or off. Turning capture
+// off hands the mouse back to the terminal - native selection and
+// scroll return; turning it on restores in-app drag-select and wheel.
+type MouseCaptureMsg struct{ On bool }
+
 // ThemeSelectedMsg asks the router to adopt a new app-wide theme by
 // name and pop the screen that offered the choice (the theme picker).
 // Theme identity is app-level state no Screen owns, so the message -
@@ -116,18 +124,18 @@ type Model struct {
 
 	stack []Screen
 
-	// sel is the mouse drag-select state (mouse_select.go). It only
-	// does anything while Opts.Mouse is true - see updateMouseSelect.
-	sel selection
+	// drag is the mouse drag-select state (mouse_router.go). It only
+	// does anything while Opts.Mouse is true - see updateMouse.
+	drag dragState
 }
 
 // New returns a router with base as the only (non-poppable) screen.
 // themes is the full candidate set ThemeSelectedMsg resolves against;
 // pass nil if nothing in this Program ever offers a theme picker.
 //
-// Options.Mouse defaults to false (rule 7.1: agent output is text the
-// user copies, and capture removes that). The opt-in flag is set by
-// cmd/mivia-ui when the user passes --mouse.
+// Options.Mouse starts false here; the launcher sets it from config
+// ([tui] mouse, default true) with the MIVIA_MOUSE environment
+// override, and MouseCaptureMsg changes it live afterwards.
 func New(base Screen, th theme.Theme, tier theme.Tier, themes []theme.Theme) Model {
 	return Model{
 		Theme: th, Tier: tier, themes: slices.Clone(themes),
@@ -179,15 +187,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.Opts.Mouse {
 		// Drag-select intercepts motion and a drag's release outright;
 		// an ordinary click and its release, and any non-mouse Msg,
-		// fall through unchanged (handled=false) to the switch below.
-		next, cmd, handled := m.updateMouseSelect(msg)
-		if handled {
-			return next, cmd
+		// fall through unchanged (consume=false) to the switch below.
+		// The router's own state lives on *m so it is never discarded
+		// by a fall-through - the defect class that broke the old
+		// frame-text selection.
+		cmd, consume := m.updateMouse(msg)
+		if consume {
+			return m, cmd
 		}
-		m = next
 	}
 	switch msg := msg.(type) {
 	case PushScreenMsg:
+		m.cancelDrag()
 		sc := msg.Screen
 		var resizeCmd tea.Cmd
 		if m.Width > 0 && m.Height > 0 {
@@ -198,13 +209,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.stack = append(slices.Clone(m.stack), sc)
 		return m, tea.Batch(sc.Init(), resizeCmd, tea.ClearScreen)
 	case PopScreenMsg:
+		m.cancelDrag()
 		if len(m.stack) > 1 {
 			return m.pop()
+		}
+		return m, nil
+	case MouseCaptureMsg:
+		// The settings screen (or a future keybinding) flips capture
+		// live. The next View declares the new MouseMode and the
+		// renderer writes ?1002/?1006 on/off; turning off also drops any
+		// in-flight selection so no stale highlight survives.
+		m.Opts.Mouse = msg.On
+		if !msg.On {
+			m.cancelAllSelections()
 		}
 		return m, nil
 	case ThemeSelectedMsg:
 		return m.applyTheme(msg)
 	case tea.KeyPressMsg:
+		if msg.String() == "esc" && m.drag.armed {
+			// Esc cancels an in-flight drag but keeps its normal meaning
+			// for the screen underneath.
+			m.cancelDrag()
+		}
 		if msg.String() == "ctrl+c" {
 			// Most modals quit immediately; the base screen and any pushed
 			// screen that implements OwnsQuit manage their own turn
@@ -222,9 +249,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// it - and still ask to close itself by returning PopScreenMsg.
 	case tea.WindowSizeMsg:
 		m.Width, m.Height = msg.Width, msg.Height
-		// A resize invalidates the frame the selection's coordinates were
-		// measured against.
-		m.sel = selection{}
+		// A resize invalidates the rects and rows the selection's
+		// coordinates were measured against.
+		m.cancelAllSelections()
 	}
 
 	if isInputMsg(msg) {
@@ -324,17 +351,15 @@ func (m Model) pop() (tea.Model, tea.Cmd) {
 // adds an event for every cursor movement over the surface, and that
 // traffic buys nothing here. Capture is off entirely while the surface
 // is handed back - the terminal's own selection must reach the
-// transcript in the scrollback - and when Options.Mouse is off (rule
-// 7.1: agent output is text the user copies; the opt-in is --mouse).
+// transcript in scrollback - and when Options.Mouse is off (rule 7.1).
+// The live-drag highlight is painted by each selectable component in
+// its own View (internal/ui/select), so the router adds no overlay.
 func (m Model) View() tea.View {
 	top, ok := m.top()
 	if !ok {
 		return tea.NewView("")
 	}
 	content := top.View()
-	if m.Opts.Mouse && m.sel.dragging {
-		content = highlightSelection(content, m.sel.anchorX, m.sel.anchorY, m.sel.curX, m.sel.curY)
-	}
 	v := tea.NewView(content)
 	flags := top.ViewFlags()
 	v.AltScreen = flags.AltScreen

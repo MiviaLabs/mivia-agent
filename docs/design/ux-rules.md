@@ -339,6 +339,14 @@ that. k9s defaults `enableMouse` to false for the same reason.
 Sources: [k9s config](https://k9scli.io/topics/config/),
 [Bubble Tea #162](https://github.com/charmbracelet/bubbletea/issues/162).
 
+> **Amended 2026-08-29 (mivia cockpit).** The cockpit ships capture ON by
+> default because it provides its own drag-select with OSC 52 copy while
+> capturing, so "text exists to be copied" is served in-app; native terminal
+> selection stays reachable through the per-terminal override key (rule 7.5)
+> and a live Settings toggle that hands the mouse back entirely. The rule's
+> warning still holds for any surface without a working in-app selection:
+> ship capture off there. See cockpit-research.md rule 6.5.
+
 **Rule 7.2.** Ship `mouse: off` before shipping any mouse feature. Its absence
 is logged as a regression across three independent tools.
 Source: [lazygit #602](https://github.com/jesseduffield/lazygit/issues/602).

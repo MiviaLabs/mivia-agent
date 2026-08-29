@@ -1,0 +1,15 @@
+{
+  "floor": null,
+  "denylist": [
+    {
+      "file": "mouse_router.go",
+      "snippet": "if dx < 0 {\n\t\t\tdx = -dx",
+      "reason": "audited equivalent mutant: dx <= 0 only differs from < 0 when dx == 0, and negating zero yields zero, so the assignment is a no-op either way"
+    },
+    {
+      "file": "mouse_router.go",
+      "snippet": "if dy < 0 {\n\t\t\tdy = -dy",
+      "reason": "audited equivalent mutant: dy <= 0 only differs from < 0 when dy == 0, and negating zero yields zero, so the assignment is a no-op either way"
+    }
+  ]
+}

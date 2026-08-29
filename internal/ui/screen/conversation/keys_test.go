@@ -588,6 +588,34 @@ func TestComposerFallthroughForAnUnhandledID(t *testing.T) {
 	}
 }
 
+// TestForceSend_F4DegradesTheSameAsCtrlEnter pins the co-bound
+// degradation path: on a terminal where bubbletea's
+// KittyKeyboard/modifyOtherKeys request goes unanswered, ctrl+enter
+// degrades to bare CR and never reaches the composer as its own key
+// event. f4 needs no such capability negotiation, so it must resolve to
+// the exact same IDForceSend no-text/active-queue behaviour as
+// ctrl+enter, routed through s.Update exactly the way a real keypress
+// would arrive - not by calling composerAction directly.
+func TestForceSend_F4DegradesTheSameAsCtrlEnter(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	handle := &recordingHandle{id: "t1"}
+	s.active = handle
+	s.queue = []string{"A", "B"}
+
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyF4})
+	got := next.(Screen)
+
+	if got.pendingForce == nil || *got.pendingForce != "A" {
+		t.Fatalf("expected pendingForce = %q, got %v", "A", got.pendingForce)
+	}
+	if len(got.queue) != 1 || got.queue[0] != "B" {
+		t.Fatalf("expected queue = [B], got %v", got.queue)
+	}
+	if handle.cancelCount != 1 {
+		t.Errorf("expected Cancel called once, got %d", handle.cancelCount)
+	}
+}
+
 func TestMenuUpArrowMovesTheHighlight(t *testing.T) {
 	s := newScreen(t, replay.New(nil, 0), nil, nil)
 	s.SetCommands([]composer.Command{{Name: "model"}, {Name: "modes"}})
@@ -1072,5 +1100,41 @@ func TestGutterClipsAnOverflowingRowWithTheClipMarker(t *testing.T) {
 	got := scr.gutter([]string{strings.Repeat("x", 200)})
 	if !strings.Contains(got, uikitconfig.ClipMarker) {
 		t.Errorf("got %q, want the clip marker %q on the overflowing row", got, uikitconfig.ClipMarker)
+	}
+}
+
+// TestReservedRowsResizeOnComposerGrowth covers the Update wrapper's
+// reservedRows comparison: a newline grows the composer, claims a row,
+// and the wrapper must call resize() so the transcript window follows.
+func TestReservedRowsResizeOnComposerGrowth(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	s = next.(Screen)
+	before := s.transcript.Height()
+
+	// shift+enter inserts a newline (composer KeyMap.InsertNewline).
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift})
+	s = next.(Screen)
+	if s.composer.Height() < 3 {
+		t.Fatalf("precondition: composer must grow past its frame, got %d", s.composer.Height())
+	}
+	after := s.transcript.Height()
+	if after >= before {
+		t.Fatalf("the extra composer row must shrink the transcript: %d -> %d", before, after)
+	}
+}
+
+// TestViewReflectsLiveSelectionRect proves View paints against the
+// rect the last Update injected - the syncSelectionRects contract that
+// keeps the highlight on the right cells across layout changes.
+func TestViewReflectsLiveSelectionRect(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	s = next.(Screen)
+	_ = s.View()
+	tr := s.transcript.SelectionRect()
+	wantY := 1 + s.topbar.Height() + 1
+	if tr.MinX != 1 || tr.MinY != wantY || tr.Height() != s.transcriptHeight() {
+		t.Fatalf("injected rect must match geometry: %+v", tr)
 	}
 }

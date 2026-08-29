@@ -138,6 +138,26 @@ type SessionReclaimer interface {
 	ReclaimSession(context.Context, Principal, string) (Snapshot, error)
 }
 
+// SessionLeaseRenewer is the optional surface a live process uses to prove to
+// ReclaimSession that it is still actively working a session, so a second
+// process resuming the same session id cannot silently evict it mid-turn.
+// RenewLease is scoped by capability_digest (not just subject) so a process
+// whose capability was already reclaimed away cannot resurrect its own stale
+// lease and block the process that legitimately took over.
+//
+// ReleaseLease clears a lease this process is voluntarily giving up (a clean
+// shutdown), so the NEXT resume of this same session id does not have to
+// wait out the staleness TTL just because this process quit before its
+// lease happened to expire on its own - without this, a heartbeat that had
+// renewed even once looks "live" to ReclaimSession for the full TTL after
+// the owning process is already gone, and an ordinary "quit, then resume"
+// within that window is refused as ErrSessionLiveElsewhere even though
+// nothing is actually still using the session.
+type SessionLeaseRenewer interface {
+	RenewLease(ctx context.Context, principal Principal, sessionID string) error
+	ReleaseLease(ctx context.Context, principal Principal, sessionID string) error
+}
+
 type SourceReader interface {
 	ReadRange(context.Context, Principal, SourceRange) ([]SourceEvent, error)
 	ReadPayload(context.Context, Principal, ContentRef) (SanitizedPayload, error)

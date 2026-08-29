@@ -12,7 +12,7 @@ import (
 
 func resolvePrivacyConfig(p PrivacyConfig) PrivacyConfig {
 	if v, ok := os.LookupEnv("MIVIA_REDACT_TOOL_ARGS"); ok {
-		p.RedactToolArgs = parseTruthyEnv(v)
+		p.RedactToolArgs = ParseTruthyEnv(v)
 	}
 	return p
 }
@@ -51,7 +51,10 @@ func resolveContextConfig(c ContextConfig) ContextConfig {
 	return c
 }
 
-func parseTruthyEnv(v string) bool {
+// ParseTruthyEnv reports whether an environment value names truth: 1, true,
+// yes, on, y, t (case-insensitive). Anything else is false. Exported for the
+// launcher's MIVIA_MOUSE override; internal resolvers use it too.
+func ParseTruthyEnv(v string) bool {
 	v = strings.TrimSpace(strings.ToLower(v))
 	switch v {
 	case "1", "true", "yes", "on", "y", "t":

@@ -1,6 +1,9 @@
 package keymap
 
 import (
+	"go/parser"
+	"go/token"
+	"os"
 	"strings"
 	"testing"
 
@@ -278,5 +281,83 @@ func TestHintIsGeneratedFromTheTable(t *testing.T) {
 	}
 	if got := m.Hint(ID("no-such-id")); got != "" {
 		t.Errorf("Hint(unknown) = %q, want empty", got)
+	}
+}
+
+// TestForceSendBindings pins the force-send rows: ctrl+enter and f4 in
+// the composer (interrupt the current turn - f4 is the degradation-safe
+// alternate, since not every terminal answers bubbletea's
+// KittyKeyboard/modifyOtherKeys request), f/F in the dialog (force send
+// the selected queued item), all resolving to IDForceSend with no
+// collision against the surrounding table.
+func TestForceSendBindings(t *testing.T) {
+	m := New(Default())
+	if id, ok := m.Match(ContextComposer, "ctrl+enter"); !ok || id != IDForceSend {
+		t.Errorf("composer ctrl+enter = %v/%v, want %v", id, ok, IDForceSend)
+	}
+	if id, ok := m.Match(ContextComposer, "f4"); !ok || id != IDForceSend {
+		t.Errorf("composer f4 = %v/%v, want %v", id, ok, IDForceSend)
+	}
+	if id, ok := m.Match(ContextDialog, "f"); !ok || id != IDForceSend {
+		t.Errorf("dialog f = %v/%v, want %v", id, ok, IDForceSend)
+	}
+	if id, ok := m.Match(ContextDialog, "F"); !ok || id != IDForceSend {
+		t.Errorf("dialog F = %v/%v, want %v", id, ok, IDForceSend)
+	}
+	if got := New(Default()).Collisions(); len(got) != 0 {
+		t.Errorf("collisions after adding force-send:\n%s", strings.Join(got, "\n"))
+	}
+}
+
+// TestForceSendAppearsInHelp proves the new rows render through the
+// generated help, not a second hardcoded list.
+func TestForceSendAppearsInHelp(t *testing.T) {
+	rows := New(Default()).Help()
+	var composer, dialog int
+	for _, r := range rows {
+		if r.Help == "force send now, interrupting the current turn (f4 works in any terminal)" && r.Context == ContextComposer {
+			composer++
+		}
+		if r.Help == "force send the selected queued message" && r.Context == ContextDialog {
+			dialog++
+		}
+	}
+	if composer != 1 {
+		t.Errorf("expected exactly one composer force-send help row, got %d", composer)
+	}
+	if dialog != 1 {
+		t.Errorf("expected exactly one dialog force-send help row, got %d", dialog)
+	}
+}
+
+// TestKeymapPackageImportsNoBubbletea pins the package doc's rule: this
+// package deals in key strings, not bubbletea types, so nothing under
+// internal/uikit may import bubbletea. A source scan catches a
+// reintroduced import even though the compiler would too - it fails
+// fast and names the offending file without needing a build.
+func TestKeymapPackageImportsNoBubbletea(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(e.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, e.Name(), src, parser.ImportsOnly)
+		if err != nil {
+			t.Fatalf("parsing %s: %v", e.Name(), err)
+		}
+		for _, imp := range file.Imports {
+			path := strings.Trim(imp.Path.Value, `"`)
+			if strings.Contains(path, "bubbletea") || strings.Contains(path, "bubbles") {
+				t.Errorf("%s imports %q: internal/uikit must not depend on bubbletea", e.Name(), path)
+			}
+		}
 	}
 }

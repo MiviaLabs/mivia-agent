@@ -155,6 +155,32 @@ func TestDeepSeekConfigReasoningLoads(t *testing.T) {
 	}
 }
 
+// MiniMax-M3's shipped entry declares reasoning = high with the reasoning_split
+// dialect resolving from the vetted default, so the fix is active out of the
+// box rather than dormant until a user manually runs /effort.
+func TestMiniMaxM3ConfigReasoningLoads(t *testing.T) {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	root := filepath.Dir(filepath.Dir(filepath.Dir(file)))
+	res, err := Load(LoadOptions{ConfigPath: filepath.Join(root, ".mivia", "mivia.toml")})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	spec := profileNamed(t, res, "minimax", "MiniMax-M3")
+	if spec.Reasoning != reasoning.High {
+		t.Fatalf("Reasoning = %q, want high", spec.Reasoning)
+	}
+	resolved := reasoning.Resolve("minimax", reasoning.Setting{Level: spec.Reasoning, Dialect: spec.ReasoningDialect})
+	if resolved.Dialect != reasoning.DialectReasoningSplit {
+		t.Fatalf("resolved dialect = %q, want reasoning_split", resolved.Dialect)
+	}
+	if !resolved.Level.Active() {
+		t.Fatalf("resolved level = %q, want an active level", resolved.Level)
+	}
+}
+
 // A dialect on its own declares capability for a model dialled off. It sends
 // nothing, so it needs no provider default to be meaningful.
 func TestDialectWithoutLevelIsAccepted(t *testing.T) {

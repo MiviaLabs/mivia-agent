@@ -39,10 +39,8 @@ const anthropicAPIVersion = "2023-06-01"
 // rest of the codebase (the reasoning panel, session persistence) treats
 // that field as plain text to render, not a structured payload. See
 // anthropicThinkingDisplayText and anthropicSystemAndMessages' RoleAssistant
-// case for the full rationale and an UNVERIFIED open question this leaves:
-// whether omitting the thinking block is safe on a turn that also carries
-// ToolCalls followed by a RoleTool message, since that shape has not been
-// checked against a live Anthropic endpoint from this codebase.
+// case for the full rationale and a 2026-08-29 live test result on the
+// tool-call-continuation shape this used to leave open.
 type AnthropicCompleter struct {
 	name       string
 	baseURL    string
@@ -488,21 +486,25 @@ func anthropicSystemAndMessages(msgs []Message) (system string, out []map[string
 			// No thinking block is replayed here - see
 			// anthropicThinkingDisplayText's doc comment for why history
 			// only carries display text, not the signed block Anthropic
-			// would need to replay it unmodified. UNVERIFIED: whether
-			// omitting the thinking block is actually safe on a turn that
-			// also carries ToolCalls, immediately followed by a RoleTool
-			// message (the common agentic shape - reasoning + tool call in
-			// one turn, continued by its tool_result) has not been checked
-			// against a live Anthropic endpoint from this codebase. The
-			// design doc's §3.5 example shows a thinking block replayed
-			// alongside tool_use as the normative shape; this code takes
-			// the opposite path (omit rather than reconstruct-unsigned)
-			// because sending a signature that doesn't match reconstructed
-			// content is the failure mode Anthropic is documented to
-			// reject, but "omit entirely" on THIS specific shape
-			// (tool_use immediately continued by tool_result, not a plain
-			// text turn) is a new assumption of its own, not a confirmed
-			// one - see TestAnthropicReplayOfToolCallTurnWithReasoning.
+			// would need to replay it unmodified. Whether omitting the
+			// thinking block is actually safe on a turn that also carries
+			// ToolCalls, immediately followed by a RoleTool message (the
+			// common agentic shape - reasoning + tool call in one turn,
+			// continued by its tool_result) was a long-standing open
+			// question; a live manual test (claude-sonnet-5 via
+			// llmproxycli's DialectAnthropicAdaptive, reasoning=high, two
+			// sequential tool calls each continued by its tool_result,
+			// 2026-08-29) completed with no error. The design doc's §3.5
+			// example still shows a thinking block replayed alongside
+			// tool_use as the normative shape; this code takes the opposite
+			// path (omit rather than reconstruct-unsigned) because sending
+			// a signature that doesn't match reconstructed content is the
+			// failure mode Anthropic is documented to reject. The live test
+			// is one manual session, not an automated regression harness -
+			// see TestAnthropicReplayOfToolCallTurnWithReasoning, which
+			// still pins this as current behavior rather than asserting it
+			// is correct for every shape (long thinking traces, interleaved
+			// thinking, and redacted_thinking remain unexercised).
 			if strings.TrimSpace(m.Content) != "" {
 				cur.content = append(cur.content, map[string]any{"type": "text", "text": m.Content})
 			}

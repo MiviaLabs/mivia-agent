@@ -133,6 +133,7 @@ func (s *Session) SetContextManager(manager *contextmgr.ContextManager, principa
 	sessionDir := s.contextSessionDir
 	s.mu.Unlock()
 	if manager != nil && manager.Enabled && store != nil {
+		s.armContextHeartbeat(store, principal)
 		snapshot, err := ensureAndLoadContextStore(store, principal, s.captureBindingRevision(), worktree, sessionDir)
 		if err != nil {
 			return err
@@ -216,6 +217,7 @@ func (s *Session) SetContextStore(store contextstate.Store) error {
 	if store == nil || !enabled || !principal.IsBound() {
 		return nil
 	}
+	s.armContextHeartbeat(store, principal)
 	s.mu.RLock()
 	worktree := s.contextWorktree
 	sessionDir := s.contextSessionDir

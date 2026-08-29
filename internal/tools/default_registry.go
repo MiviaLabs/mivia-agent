@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"net/http"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/codeintel"
@@ -354,13 +353,13 @@ func inspectRepositoryBudget(opts DefaultOptions) int {
 // into a hard failure of every web search. The loop still applies its own cap
 // to what it stores.
 func registerWebTools(register func(Tool), opts DefaultOptions, ws *workspace.Root, patterns, exceptions []string) {
-	register(&webSearchTool{ws: ws, maxFetchKB: webFetchKB, httpClient: &http.Client{}, tavilyKey: opts.TavilyAPIKey, maxResultBytes: searchToolBudget(opts)})
+	register(&webSearchTool{ws: ws, maxFetchKB: webFetchKB, httpClient: newBoundedHTTPClient(boundedHTTPClientConfig{}), tavilyKey: opts.TavilyAPIKey, maxResultBytes: searchToolBudget(opts)})
 	// fetch_url's MaxFetchKB is passed through as-is: the config layer already
 	// resolved it (unset-or-0 -> the built-in 4096 KiB default, a positive
 	// operator value preserved). No default lives here any more - a 0 that
 	// reaches this point via direct DefaultOptions construction means
 	// unlimited, which fetch_url itself handles.
-	register(&fetchURLTool{ws: ws, maxLocalBytes: opts.MaxEditFileBytes, maxFetchKB: opts.MaxFetchKB, httpClient: &http.Client{}, fetchClient: newSafeFetchHTTPClient()})
+	register(&fetchURLTool{ws: ws, maxLocalBytes: opts.MaxEditFileBytes, maxFetchKB: opts.MaxFetchKB, httpClient: newBoundedHTTPClient(boundedHTTPClientConfig{}), fetchClient: newSafeFetchHTTPClient()})
 	// extract has no free-engine fallback, so a keyless tool could never
 	// succeed - and a tool is advertised only if it can succeed. Register it
 	// solely when a provider key is configured (conditional registration): the
@@ -368,7 +367,7 @@ func registerWebTools(register func(Tool), opts DefaultOptions, ws *workspace.Ro
 	// bound. Without the key it is absent from the registry, not present and
 	// error-returning.
 	if opts.TavilyAPIKey != "" {
-		register(&extractTool{tavilyKey: opts.TavilyAPIKey, httpClient: &http.Client{}, maxResultBytes: resolveWebResponseBudget(opts.MaxTavilyResponseBytes)})
+		register(&extractTool{tavilyKey: opts.TavilyAPIKey, httpClient: newBoundedHTTPClient(boundedHTTPClientConfig{}), maxResultBytes: resolveWebResponseBudget(opts.MaxTavilyResponseBytes)})
 	}
 }
 

@@ -26,6 +26,13 @@ type extractTool struct {
 // exact rather than exact-modulo-framing.
 func (t *extractTool) ResultBudgetBytes() int { return resolveWebResponseBudget(t.maxResultBytes) }
 
+// Capability declares an explicit timeout, shared with fetch_url and search,
+// so extract is not invisible to dispatcher timeout policy - see
+// http_client.go.
+func (t *extractTool) Capability(json.RawMessage) Capability {
+	return Capability{Class: ExecutionExternal, Timeout: toolNetworkCapabilityTimeout}
+}
+
 func (t *extractTool) Name() string { return "extract" }
 func (t *extractTool) Description() string {
 	return "Extract content from URLs using Tavily. Requires TAVILY_API_KEY."

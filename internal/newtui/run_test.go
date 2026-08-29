@@ -1,6 +1,7 @@
 package newtui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -9,20 +10,48 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/cli"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	"github.com/charmbracelet/x/ansi"
 )
+
+func TestBuildAppPropagatesThemeLoadError(t *testing.T) {
+	original := loadThemes
+	wantErr := errors.New("corrupt embedded theme")
+	loadThemes = func() ([]theme.Theme, error) { return nil, wantErr }
+	defer func() { loadThemes = original }()
+
+	sess := chat.NewSession(&config.Resolved{}, nil)
+	agentState := &cli.AgentSessionState{}
+	if _, _, err := buildApp(sess, &config.Resolved{}, true, agentState, ""); !errors.Is(err, wantErr) {
+		t.Fatalf("buildApp err = %v, want %v", err, wantErr)
+	}
+}
 
 func TestBuildApp(t *testing.T) {
 	sess := chat.NewSession(&config.Resolved{}, nil)
 	res := &config.Resolved{}
 	agentState := &cli.AgentSessionState{}
 
-	appModel, err := buildApp(sess, res, true, agentState, "")
+	appModel, _, err := buildApp(sess, res, true, agentState, "")
 	if err != nil {
 		t.Fatalf("buildApp failed: %v", err)
 	}
 	if appModel == nil {
 		t.Fatal("expected non-nil app model")
+	}
+}
+
+// TestRunTUICallsBuildApp exercises RunTUI's own body up to the point
+// it hands off to tea.NewProgram: with no real terminal in a test
+// environment, the program's own Run() fails fast rather than
+// blocking, so this is safe to call directly rather than only via
+// buildApp (which RunTUI wraps).
+func TestRunTUICallsBuildApp(t *testing.T) {
+	sess := chat.NewSession(&config.Resolved{}, nil)
+	agentState := &cli.AgentSessionState{}
+
+	if err := RunTUI(sess, nil, true, agentState, ""); err == nil {
+		t.Fatal("expected an error: either buildApp or the programless Run() must fail here")
 	}
 }
 
@@ -67,7 +96,7 @@ func TestBuildApp_SubagentHistoryVisibleInDialog(t *testing.T) {
 	}
 	agentState := &cli.AgentSessionState{}
 
-	root, err := buildApp(sess, res, true, agentState, "")
+	root, _, err := buildApp(sess, res, true, agentState, "")
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}

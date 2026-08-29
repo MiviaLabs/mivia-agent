@@ -36,6 +36,12 @@ func drainOK(t *testing.T, h ports.SaveHandle) []ports.SaveState {
 	return states
 }
 
+// fakeAutomationEdit satisfies ports.AutomationEdit by embedding a real
+// implementer (only the ports package can implement its unexported
+// isAutomationEdit() marker directly), but as its own distinct concrete
+// type it matches none of applyAutomation's named switch cases.
+type fakeAutomationEdit struct{ ports.UpsertAutomation }
+
 func drainWithFailure(h ports.SaveHandle) []ports.SaveState {
 	var states []ports.SaveState
 	for ev := range h.Events() {
@@ -44,7 +50,7 @@ func drainWithFailure(h ports.SaveHandle) []ports.SaveState {
 	return states
 }
 
-func setupTestSettings(t *testing.T) ports.Settings {
+func setupTestSettingsStore(t *testing.T) *uiadapter.SettingsStore {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	res := &config.Resolved{
@@ -61,8 +67,34 @@ func setupTestSettings(t *testing.T) ports.Settings {
 		Registry: reg,
 		ToolBase: tools.NewRegistry(),
 	}
-	store := uiadapter.NewSettingsStore(nil, res, state)
-	return store.Settings()
+	return uiadapter.NewSettingsStore(nil, res, state)
+}
+
+func setupTestSettings(t *testing.T) ports.Settings {
+	t.Helper()
+	return setupTestSettingsStore(t).Settings()
+}
+
+func TestMouseNotifierFiresOnSetMouse(t *testing.T) {
+	store := setupTestSettingsStore(t)
+	fired := make(chan bool, 1)
+	store.SetMouseNotifier(func(on bool) { fired <- on })
+
+	settings := store.Settings()
+	h, err := settings.General.Apply(context.Background(), ports.ScopeUser, ports.SetMouse{On: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drainOK(t, h)
+
+	select {
+	case on := <-fired:
+		if on {
+			t.Error("expected the notifier to report Mouse=false")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("mouse notifier never fired")
+	}
 }
 
 func TestGeneralSettings(t *testing.T) {
@@ -280,30 +312,36 @@ func TestAgentSettings(t *testing.T) {
 	drainOK(t, h)
 }
 
-func TestAutomationSettings(t *testing.T) {
-	settings := setupTestSettings(t)
-
-	// Upsert automation
+func upsertTestAutomation(t *testing.T, settings ports.Settings, name string) {
+	t.Helper()
 	h, err := settings.Automations.Apply(context.Background(), ports.ScopeUser, ports.UpsertAutomation{
-		Automation: ports.Automation{
-			ID:   "auto-1",
-			Name: "Daily Review",
-		},
+		Automation: ports.Automation{ID: "auto-1", Name: name},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	drainOK(t, h)
+}
 
-	// Watch automation
+func TestAutomationSettings(t *testing.T) {
+	settings := setupTestSettings(t)
+	upsertTestAutomation(t, settings, "Daily Review")
+
+	// Watching an unknown automation fails; watching the real one works.
+	if _, err := settings.Automations.Watch(context.Background(), "no-such-automation"); err == nil {
+		t.Error("expected an error watching an unknown automation")
+	}
 	watch, err := settings.Automations.Watch(context.Background(), "auto-1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer watch.Cancel()
+	if ch := watch.Events(); ch == nil {
+		t.Error("expected a non-nil events channel")
+	}
 
 	// Trigger automation
-	h, err = settings.Automations.Apply(context.Background(), ports.ScopeUser, ports.TriggerAutomation{
+	h, err := settings.Automations.Apply(context.Background(), ports.ScopeUser, ports.TriggerAutomation{
 		ID: "auto-1",
 	})
 	if err != nil {
@@ -315,6 +353,15 @@ func TestAutomationSettings(t *testing.T) {
 	runs := settings.Automations.Runs("auto-1", 5)
 	if len(runs) == 0 {
 		t.Error("expected runs recorded for auto-1")
+	}
+	if all := settings.Automations.Automations(); len(all) == 0 {
+		t.Error("expected at least one automation listed")
+	}
+	if got, ok := settings.Automations.Run(runs[0].ID); !ok || got.ID != runs[0].ID {
+		t.Errorf("expected Run(%q) to find the run it just listed, got %+v ok=%v", runs[0].ID, got, ok)
+	}
+	if _, ok := settings.Automations.Run("no-such-run"); ok {
+		t.Error("expected Run to report not-found for an unknown run ID")
 	}
 
 	// Toggle automation
@@ -335,6 +382,83 @@ func TestAutomationSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	drainOK(t, h)
+}
+
+// TestAutomationSettingsUpsertUpdatesInPlaceAndTruncatesRuns covers a
+// re-upsert of an existing ID (updates rather than appends) and the
+// Runs() truncation branch across a second trigger.
+func TestAutomationSettingsUpsertUpdatesInPlaceAndTruncatesRuns(t *testing.T) {
+	settings := setupTestSettings(t)
+	upsertTestAutomation(t, settings, "Daily Review")
+	upsertTestAutomation(t, settings, "Daily Review (renamed)")
+
+	found := false
+	for _, a := range settings.Automations.Automations() {
+		if a.ID == "auto-1" {
+			found = true
+			if a.Name != "Daily Review (renamed)" {
+				t.Errorf("expected the upsert to update in place, got name %q", a.Name)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected auto-1 to still be listed after re-upsert")
+	}
+
+	for i := 0; i < 2; i++ {
+		h, err := settings.Automations.Apply(context.Background(), ports.ScopeUser, ports.TriggerAutomation{ID: "auto-1"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		drainOK(t, h)
+	}
+	if limited := settings.Automations.Runs("auto-1", 1); len(limited) != 1 {
+		t.Errorf("expected Runs to truncate to the requested limit, got %d", len(limited))
+	}
+}
+
+// TestAutomationSettingsRejectsUnknownIDsAndEditTypes covers Apply's
+// error arms: triggering, enabling, or removing an automation ID that
+// was never upserted, and an edit type outside the known union.
+func TestAutomationSettingsRejectsUnknownIDsAndEditTypes(t *testing.T) {
+	settings := setupTestSettings(t)
+
+	h, err := settings.Automations.Apply(context.Background(), ports.ScopeUser, ports.TriggerAutomation{ID: "no-such-automation"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if states := drainWithFailure(h); states[len(states)-1] != ports.SaveFailed {
+		t.Error("expected SaveFailed triggering an unknown automation")
+	}
+
+	h, err = settings.Automations.Apply(context.Background(), ports.ScopeUser, ports.SetAutomationEnabled{ID: "no-such-automation", On: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if states := drainWithFailure(h); states[len(states)-1] != ports.SaveFailed {
+		t.Error("expected SaveFailed enabling an unknown automation")
+	}
+
+	h, err = settings.Automations.Apply(context.Background(), ports.ScopeUser, ports.RemoveAutomation{ID: "no-such-automation"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if states := drainWithFailure(h); states[len(states)-1] != ports.SaveFailed {
+		t.Error("expected SaveFailed removing an unknown automation")
+	}
+
+	// An edit type outside the known union falls to the default case.
+	// fakeAutomationEdit embeds a real edit purely to inherit the
+	// unexported isAutomationEdit() marker (only ports itself can
+	// implement it directly); as its own concrete type it matches none
+	// of the switch's named cases.
+	h, err = settings.Automations.Apply(context.Background(), ports.ScopeUser, fakeAutomationEdit{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if states := drainWithFailure(h); states[len(states)-1] != ports.SaveFailed {
+		t.Error("expected SaveFailed for an unrecognized automation edit type")
+	}
 }
 
 func projectSettingTestCases() []struct {

@@ -12,13 +12,26 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 )
 
+type dialectFieldsCase struct {
+	name    string
+	dialect reasoning.Dialect
+	level   reasoning.Level
+	want    map[string]any
+}
+
+func runDialectFieldsCases(t *testing.T, cases []dialectFieldsCase) {
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := reasoningBodyFields(tc.dialect, tc.level)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("reasoningBodyFields(%q, %q) = %#v, want %#v", tc.dialect, tc.level, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestDialectBodyFields(t *testing.T) {
-	cases := []struct {
-		name    string
-		dialect reasoning.Dialect
-		level   reasoning.Level
-		want    map[string]any
-	}{
+	cases := []dialectFieldsCase{
 		{"openai unset", reasoning.DialectOpenAI, "", nil},
 		{"openai off", reasoning.DialectOpenAI, reasoning.Off, map[string]any{"reasoning_effort": "none"}},
 		{"openai high", reasoning.DialectOpenAI, reasoning.High, map[string]any{"reasoning_effort": "high"}},
@@ -77,18 +90,23 @@ func TestDialectBodyFields(t *testing.T) {
 			"thinking":      map[string]any{"type": "adaptive", "display": "summarized"},
 			"output_config": map[string]any{"effort": "max"},
 		}},
+		// Auto has no entry in anthropicEffortForLevel's switch (falls to the
+		// default case, which returns ""), and output_config.effort is a
+		// closed enum with no "auto" member. The body must carry the
+		// thinking:adaptive field with NO output_config key at all - not an
+		// empty-string effort, which would be a malformed request.
+		{"anthropic_adaptive auto omits output_config", reasoning.DialectAnthropicAdaptive, reasoning.Auto, map[string]any{
+			"thinking": map[string]any{"type": "adaptive", "display": "summarized"},
+		}},
+
+		{"reasoning_split unset", reasoning.DialectReasoningSplit, "", nil},
+		{"reasoning_split off", reasoning.DialectReasoningSplit, reasoning.Off, map[string]any{"reasoning_split": true}},
+		{"reasoning_split high", reasoning.DialectReasoningSplit, reasoning.High, map[string]any{"reasoning_split": true}},
 
 		{"none never emits", reasoning.DialectNone, reasoning.High, nil},
 		{"unset dialect never emits", "", reasoning.High, nil},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := reasoningBodyFields(tc.dialect, tc.level)
-			if !reflect.DeepEqual(got, tc.want) {
-				t.Fatalf("reasoningBodyFields(%q, %q) = %#v, want %#v", tc.dialect, tc.level, got, tc.want)
-			}
-		})
-	}
+	runDialectFieldsCases(t, cases)
 }
 
 // thinking_effort disables with the thinking object alone. Sending

@@ -65,28 +65,47 @@ func reasoningBodyFields(dialect reasoning.Dialect, level reasoning.Level) map[s
 			"reasoning_effort": string(level),
 		}
 	case reasoning.DialectAnthropicAdaptive:
-		// Anthropic's native shape: a top-level thinking object whose "on"
-		// type is "adaptive" (not "enabled" - thinkingObject's shape does not
-		// apply here), paired with output_config.effort carrying the graded
-		// level. Off sends thinking:disabled alone; effort is never sent
-		// without an active level, matching every other graded dialect above.
-		if level == reasoning.Off {
-			return map[string]any{"thinking": map[string]any{"type": "disabled"}}
-		}
-		// display: "summarized" is required to get readable thinking text
-		// back at all - Anthropic's default ("omitted") streams thinking
-		// blocks with an empty text field. Without this, mivia's reasoning
-		// panel (internal/ui/component/transcript) has nothing to show
-		// regardless of how ReasoningContent is populated downstream.
-		return map[string]any{
-			"thinking":      map[string]any{"type": "adaptive", "display": "summarized"},
-			"output_config": map[string]any{"effort": anthropicEffortForLevel(level)},
-		}
+		return anthropicAdaptiveFields(level)
+	case reasoning.DialectReasoningSplit:
+		// reasoning_split does not itself enable or disable thinking - see the
+		// dialect's own doc comment. Every active level (including Off)
+		// produces this same flat body: there is no depth signal to carry and
+		// no distinct off-shape for this dialect.
+		return map[string]any{"reasoning_split": true}
 	default:
 		// reasoning.DialectNone, and any dialect this client does not know:
 		// fail closed rather than guess a wire shape.
 		return nil
 	}
+}
+
+// anthropicAdaptiveFields builds Anthropic's native shape: a top-level
+// thinking object whose "on" type is "adaptive" (not "enabled" -
+// thinkingObject's shape does not apply here), paired with output_config.effort
+// carrying the graded level. Off sends thinking:disabled alone; effort is
+// never sent without an active level, matching every other graded dialect.
+func anthropicAdaptiveFields(level reasoning.Level) map[string]any {
+	if level == reasoning.Off {
+		return map[string]any{"thinking": map[string]any{"type": "disabled"}}
+	}
+	// display: "summarized" is required to get readable thinking text back at
+	// all - Anthropic's default ("omitted") streams thinking blocks with an
+	// empty text field. Without this, mivia's reasoning panel
+	// (internal/ui/component/transcript) has nothing to show regardless of how
+	// ReasoningContent is populated downstream.
+	fields := map[string]any{"thinking": map[string]any{"type": "adaptive", "display": "summarized"}}
+	// reasoning.Auto is the only active level with no entry in
+	// anthropicEffortForLevel's switch (it falls to the default case, which
+	// returns ""). There is no wire value for "let Anthropic pick the effort"
+	// - output_config.effort is a closed enum with no "auto" member - so
+	// sending output_config:{effort:""} would be a malformed request. Omitting
+	// output_config entirely here is fail-closed and mirrors how Off omits it
+	// above: this function only ever ADDS keys the provider accepts, never a
+	// key carrying a value the provider does not define.
+	if effort := anthropicEffortForLevel(level); effort != "" {
+		fields["output_config"] = map[string]any{"effort": effort}
+	}
+	return fields
 }
 
 // anthropicEffortForLevel maps a provider-neutral Level onto Anthropic's

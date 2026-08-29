@@ -1,0 +1,15 @@
+{
+  "floor": null,
+  "denylist": [
+    {
+      "file": "settings_automations.go",
+      "snippet": "if r.ID == runID {",
+      "reason": "moved verbatim from settings.go during the file split for the go-structure LOC gate; not new logic, pre-existing coverage gap"
+    },
+    {
+      "file": "settings_automations.go",
+      "snippet": "if w == ch {",
+      "reason": "moved verbatim from settings.go during the file split for the go-structure LOC gate; not new logic, pre-existing coverage gap"
+    }
+  ]
+}

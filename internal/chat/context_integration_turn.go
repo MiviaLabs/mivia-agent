@@ -99,6 +99,7 @@ func (s injectedSummary) appendCommitted(messages []provider.Message) []provider
 
 func plainPersistenceError(err error) error {
 	if errors.Is(err, ErrStaleOperation) || errors.Is(err, ErrStaleAutosave) {
+		logStaleOperation("plain turn commit", err)
 		return nil
 	}
 	return err

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
+	sel "github.com/MiviaLabs/mivia-agent/internal/ui/select"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
@@ -38,6 +39,7 @@ func (m *Model) SetSize(width, height int) {
 		return
 	}
 	widthChanged := width != m.width
+	m.invalidateSelection()
 	m.width, m.height = width, height
 	if widthChanged {
 		m.blocks = slices.Clone(m.blocks)
@@ -93,6 +95,9 @@ func (m *Model) clampOffset() {
 // A block that arrives while the reader paused auto-follow COUNTS: the
 // jump-to-bottom affordance must state what the reader missed, or the
 func (m *Model) push(b Block) {
+	// A block arriving mid-drag shifts the tail rows under the focus
+	// cell; cancel rather than copy drifted text.
+	m.invalidateSelection()
 	if !m.follow {
 		m.missed++
 	}
@@ -209,6 +214,10 @@ func (m Model) Rows() []string {
 	for len(out) < m.height {
 		out = append(out, "")
 	}
+	if m.selState.Active {
+		from, to := m.selState.Ordered()
+		out = sel.HighlightLines(out, from, to)
+	}
 	return out
 }
 
@@ -270,6 +279,9 @@ func (m Model) ScrollBy(delta int) Model {
 	if delta == 0 {
 		return m
 	}
+	// The rows under a live selection just moved; the anchor would copy
+	// the wrong text, so scrolling cancels the drag.
+	m.invalidateSelection()
 	m.follow = false
 	m.offset += delta
 	if m.offset < 0 {

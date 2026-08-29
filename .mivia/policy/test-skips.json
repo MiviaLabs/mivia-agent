@@ -4,6 +4,20 @@
   "requireReason": true,
   "allowInDiffWithoutEntry": false,
   "knownSkips": {
+    "internal/uikit/clipboardwrite/clipboardwrite_test.go": [
+      {
+        "line": 160,
+        "reason": "uses a POSIX shell command (sh -c); no Windows equivalent wired here"
+      },
+      {
+        "line": 180,
+        "reason": "uses a POSIX shell command (sh -c); no Windows equivalent wired here"
+      },
+      {
+        "line": 206,
+        "reason": "uses a POSIX command (true); no Windows equivalent wired here"
+      }
+    ],
     "internal/agent/advertised_tool_specs_test.go": [
       {
         "line": 129,
@@ -110,6 +124,11 @@
     ]
   },
   "allowedDeletions": [
+    "TestDragReleaseCopiesSelectedText",
+    "TestDragAcrossRowsJoinsWithNewline",
+    "TestPlainClickIsUnaffectedByDragSelect",
+    "TestDragSelectInertWhenMouseOptionOff",
+    "TestResizeClearsInFlightSelection",
     "TestActivateSelected_WorkGroupAndTool",
     "TestAgentDialogLifecycle",
     "TestAgentDialogOpenAndSelect",
@@ -1267,7 +1286,9 @@
     "TestWorktreeSessionListRestartsToResumeMainRepositorySession",
     "TestWritePreviewSectionRedactsSensitiveValuesAndCapsLines",
     "TestWritePreviewSectionWithoutPolicyShowsValues",
-    "TestYankKeyCopiesSelectedBlock"
+    "TestYankKeyCopiesSelectedBlock",
+    "TestComposerSelectionRowsPadWhenShorterThanHeight",
+    "TestAutomationSettings"
   ],
   "knownZeroAssertions": [
     "TestAbandonFenceConcurrentMapAccess",

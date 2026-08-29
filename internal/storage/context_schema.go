@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-const currentContextSchemaVersion = 13
+const currentContextSchemaVersion = 14
 
 func migrateContextSchema(db *sql.DB) error {
 	if err := rejectNewerContextSchema(db); err != nil {
@@ -28,7 +28,7 @@ func migrateContextSchema(db *sql.DB) error {
 		return fmt.Errorf("context schema version %d is newer than supported version %d", version, currentContextSchemaVersion)
 	}
 	if version == currentContextSchemaVersion {
-		return ensureContextSchemaV13(db)
+		return ensureContextSchemaV14(db)
 	}
 	return migrateContextSchemaLadder(db, version)
 }
@@ -39,83 +39,63 @@ func migrateContextSchema(db *sql.DB) error {
 // ladder is safe to re-run from any point after a crash. version is the schema
 // version the caller already read; the final step returns once the store is
 // current.
+// contextMigrationLadder enumerates every schema-version transition this
+// opener knows how to apply, keyed by the version migrating FROM. version 8
+// jumps straight to 10 (applyContextSchemaV9AndV10 covers both in one step),
+// so 9 is also a valid FROM (a store that already sits at 9 still needs
+// V10). A version with no entry here (including the current version itself,
+// deliberately - see migrateContextSchemaLadder) is unsupported.
+var contextMigrationLadder = []struct {
+	from  int
+	to    int
+	apply func(*sql.DB) error
+}{
+	{0, 1, applyContextSchemaV1},
+	{1, 2, applyContextSchemaV2},
+	{2, 3, applyContextSchemaV3},
+	{3, 4, applyContextSchemaV4},
+	{4, 5, applyContextSchemaV5},
+	{5, 6, applyContextSchemaV6},
+	{6, 7, applyContextSchemaV7},
+	{7, 8, applyContextSchemaV8},
+	{8, 10, applyContextSchemaV9AndV10},
+	{9, 10, applyContextSchemaV10},
+	{10, 11, applyContextSchemaV11},
+	{11, 12, applyContextSchemaV12},
+	{12, 13, applyContextSchemaV13},
+	{13, 14, applyContextSchemaV14},
+}
+
+// migrateContextSchemaLadder walks version forward one ladder step at a time
+// until it applies the step landing on currentContextSchemaVersion, matching
+// the prior cascading-if implementation's exact behavior: an unrecognized
+// starting version (one with no matching "from" anywhere in the ladder) is
+// unsupported, but successfully reaching the current version always returns
+// nil rather than looking for one more step past the top.
 func migrateContextSchemaLadder(db *sql.DB, version int) error {
-	if version == 0 {
-		if err := applyContextSchemaV1(db); err != nil {
+	for {
+		var step *struct {
+			from  int
+			to    int
+			apply func(*sql.DB) error
+		}
+		for i := range contextMigrationLadder {
+			if contextMigrationLadder[i].from == version {
+				step = &contextMigrationLadder[i]
+				break
+			}
+		}
+		if step == nil {
+			return fmt.Errorf("unsupported context schema version %d", version)
+		}
+		if err := step.apply(db); err != nil {
 			return err
 		}
-		version = 1
-	}
-	if version == 1 {
-		if err := applyContextSchemaV2(db); err != nil {
-			return err
+		version = step.to
+		if version == currentContextSchemaVersion {
+			return nil
 		}
-		version = 2
 	}
-	if version == 2 {
-		if err := applyContextSchemaV3(db); err != nil {
-			return err
-		}
-		version = 3
-	}
-	if version == 3 {
-		if err := applyContextSchemaV4(db); err != nil {
-			return err
-		}
-		version = 4
-	}
-	if version == 4 {
-		if err := applyContextSchemaV5(db); err != nil {
-			return err
-		}
-		version = 5
-	}
-	if version == 5 {
-		if err := applyContextSchemaV6(db); err != nil {
-			return err
-		}
-		version = 6
-	}
-	if version == 6 {
-		if err := applyContextSchemaV7(db); err != nil {
-			return err
-		}
-		version = 7
-	}
-	if version == 7 {
-		if err := applyContextSchemaV8(db); err != nil {
-			return err
-		}
-		version = 8
-	}
-	if version == 8 {
-		if err := applyContextSchemaV9AndV10(db); err != nil {
-			return err
-		}
-		version = 10
-	}
-	if version == 9 {
-		if err := applyContextSchemaV10(db); err != nil {
-			return err
-		}
-		version = 10
-	}
-	if version == 10 {
-		if err := applyContextSchemaV11(db); err != nil {
-			return err
-		}
-		version = 11
-	}
-	if version == 11 {
-		if err := applyContextSchemaV12(db); err != nil {
-			return err
-		}
-		version = 12
-	}
-	if version == 12 {
-		return applyContextSchemaV13(db)
-	}
-	return fmt.Errorf("unsupported context schema version %d", version)
 }
 
 func rejectNewerContextSchema(db *sql.DB) error {
@@ -197,6 +177,11 @@ func repairContextSchema(db *sql.DB) error {
 				return err
 			}
 		}
+		if v == 14 {
+			if err := ensureContextSchemaV14(db); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -273,6 +258,8 @@ func contextVersionTable(v int) string {
 		return "token_usage_events"
 	case 13:
 		return "chat_sessions_v13_contract"
+	case 14:
+		return "context_sessions_v14_contract"
 	default:
 		return ""
 	}

@@ -37,6 +37,16 @@ func (t *fetchURLTool) resultBudget() int {
 // above it and are covered by the derivation's input allowance and slack.
 func (t *fetchURLTool) ResultBudgetBytes() int { return t.resultBudget() }
 
+// Capability declares an explicit external-class timeout so fetch_url is not
+// invisible to dispatcher timeout policy: without this, the dispatcher
+// treats it like any undeclared tool and falls back to its own generic
+// default, leaving the actual bound entirely up to whatever ctx a given
+// caller happens to supply. Shared with search and extract - see
+// http_client.go.
+func (t *fetchURLTool) Capability(json.RawMessage) Capability {
+	return Capability{Class: ExecutionExternal, Timeout: toolNetworkCapabilityTimeout}
+}
+
 func (t *fetchURLTool) Name() string { return "fetch_url" }
 func (t *fetchURLTool) Description() string {
 	return "Fetch and read a URL's text content. Blocks private/internal addresses (SSRF protection). " +
@@ -244,17 +254,23 @@ func validateFetchURL(ctx context.Context, raw string) error {
 	return nil
 }
 
-// newSafeFetchHTTPClient builds a client that re-validates redirect targets.
+// newSafeFetchHTTPClient builds the fetch_url client: SSRF-safe dialing and
+// redirect re-validation, plus the same slow-loris timeouts every outbound
+// tool client shares - see newBoundedHTTPClient in http_client.go.
 func newSafeFetchHTTPClient() *http.Client {
-	baseDialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
-	transport := &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          10,
-		IdleConnTimeout:       30 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+	return newSafeFetchHTTPClientWithTimeouts(toolHTTPResponseHeaderTimeout, toolHTTPOverallTimeout)
+}
+
+// newSafeFetchHTTPClientWithTimeouts is newSafeFetchHTTPClient with the
+// header-wait and overall round-trip timeouts as parameters, so tests can
+// exercise the slow-loris protection without waiting on production-sized
+// durations.
+func newSafeFetchHTTPClientWithTimeouts(responseHeaderTimeout, overallTimeout time.Duration) *http.Client {
+	baseDialer := &net.Dialer{Timeout: toolHTTPDialTimeout, KeepAlive: 30 * time.Second}
+	return newBoundedHTTPClient(boundedHTTPClientConfig{
+		responseHeaderTimeout: responseHeaderTimeout,
+		overallTimeout:        overallTimeout,
+		dialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			host, port, err := net.SplitHostPort(addr)
 			if err != nil {
 				return nil, err
@@ -288,10 +304,7 @@ func newSafeFetchHTTPClient() *http.Client {
 			}
 			return nil, firstErr
 		},
-	}
-	return &http.Client{
-		Transport: transport,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		checkRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= maxFetchRedirects {
 				return fmt.Errorf("stopped after %d redirects", maxFetchRedirects)
 			}
@@ -300,5 +313,5 @@ func newSafeFetchHTTPClient() *http.Client {
 			}
 			return nil
 		},
-	}
+	})
 }

@@ -34,6 +34,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
+	sel "github.com/MiviaLabs/mivia-agent/internal/ui/select"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
@@ -70,6 +71,13 @@ type Model struct {
 	// hideReasoning collapses every live reasoning block. It is a view
 	// state, not a filter: the blocks stay in the window and in the ring.
 	hideReasoning bool
+
+	// Mouse selection (selection.go): the absolute rect the owning
+	// screen injects at layout, and the anchor/focus pair the router
+	// drives during a drag. Plain structs, safe under this model's
+	// value-copy discipline.
+	selRect  sel.Rect
+	selState sel.Selection
 }
 
 // New returns an empty Model with no block focused, following the tail.

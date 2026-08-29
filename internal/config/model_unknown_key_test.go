@@ -108,7 +108,7 @@ name = "deepseek"
 [[providers.deepseek.models]]
 name = "deepseek-v4-thinking"
 context_window_tokens = 128000
-max_output_tokens = 4096
+max_output_tokens = 65536
 reasoning = "high"
 reasoning_efforts = ["low", "high"]
 reasoning_dialect = "thinking_effort"

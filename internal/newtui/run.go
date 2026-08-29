@@ -1,9 +1,9 @@
 package newtui
 
 import (
-	"fmt"
 	"io"
 	"log"
+	"os"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
@@ -14,6 +14,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ui/screen/conversation"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	"github.com/MiviaLabs/mivia-agent/internal/uiadapter"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/termprobe"
 )
 
 func registerSubagentProgress() {
@@ -32,22 +33,60 @@ func RunTUI(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *
 	log.SetOutput(io.Discard)
 	defer log.SetOutput(prevLogWriter)
 
-	root, err := buildApp(sess, res, toolsOn, agentState, resumeSessionName)
+	root, settingsStore, err := buildApp(sess, res, toolsOn, agentState, resumeSessionName)
 	if err != nil {
 		return err
 	}
 
 	p := tea.NewProgram(root)
+	wireMouseNotifier(settingsStore, p)
 	_, err = p.Run()
 	return err
 }
 
-func buildApp(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *cli.AgentSessionState, resumeSessionName string) (tea.Model, error) {
+// wireMouseNotifier bridges the Settings screen's "mouse capture" row
+// into the running program: it pushes each change so it takes effect
+// on the next frame (app.MouseCaptureMsg flips View().MouseMode, and
+// the renderer writes ?1002/?1006). Send is a no-op once the program
+// stops. A nil store (buildApp could not produce one) skips wiring.
+func wireMouseNotifier(store *uiadapter.SettingsStore, p *tea.Program) {
+	if store != nil {
+		store.SetMouseNotifier(func(on bool) {
+			go p.Send(app.MouseCaptureMsg{On: on})
+		})
+	}
+}
+
+// mouseEnabled resolves the startup mouse-capture decision:
+// MIVIA_MOUSE overrides [tui] mouse, which defaults to true. Capture ON
+// means in-app drag-select and wheel scrolling work from the first
+// frame; native terminal selection stays reachable through the
+// per-terminal override key (shown in the help overlay) and the live
+// Settings toggle.
+func mouseEnabled(res *config.Resolved, env []string) bool {
+	on := true
+	if res != nil && res.TUI.Mouse != nil {
+		on = *res.TUI.Mouse
+	}
+	for _, kv := range env {
+		if len(kv) > len("MIVIA_MOUSE=") && kv[:len("MIVIA_MOUSE=")] == "MIVIA_MOUSE=" {
+			return config.ParseTruthyEnv(kv[len("MIVIA_MOUSE="):])
+		}
+	}
+	return on
+}
+
+// loadThemes is theme.Embedded, indirected so a test can force the
+// error return (the compiled-in embed.FS itself cannot be corrupted
+// in-process).
+var loadThemes = theme.Embedded
+
+func buildApp(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *cli.AgentSessionState, resumeSessionName string) (tea.Model, *uiadapter.SettingsStore, error) {
 	registerSubagentProgress()
 	approver := uiadapter.NewApprover(sess)
-	themes, err := theme.Embedded()
+	themes, err := loadThemes()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var th theme.Theme
 	for _, t := range themes {
@@ -66,14 +105,12 @@ func buildApp(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState
 	runner := uiadapter.NewCommandRunner(sess, res, agentState)
 	pool := runner.Pool()
 	threads := pool.Threads()
-	convPort, err := pool.GetOrCreate(sess.SessionID)
-	if err != nil {
-		return nil, err
-	}
-	conv, ok := convPort.(*uiadapter.Conversation)
-	if !ok {
-		return nil, fmt.Errorf("newtui: pool returned unexpected conversation type %T", convPort)
-	}
+	// NewCommandRunner's pool pre-registers sess under its own SessionID
+	// (NewSessionPool) as a *uiadapter.Conversation (NewConversation's
+	// own return type), so this lookup always hits that entry - never
+	// GetOrCreate's construction path - and is always that concrete type.
+	convPort, _ := pool.GetOrCreate(sess.SessionID)
+	conv := convPort.(*uiadapter.Conversation)
 
 	settingsStore := uiadapter.NewSettingsStore(sess, res, agentState)
 	settingsStore.SetConversation(conv)
@@ -85,9 +122,16 @@ func buildApp(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState
 	screen.SetSubagentThreads(threads)
 	screen.SetSettings(settingsStore.Settings())
 
+	env := os.Environ()
+	report := termprobe.Probe(env, "")
+	// The help overlay names the detected terminal's own key for
+	// overriding mouse capture (rule 7.5); empty clears the line.
+	screen.SetMouseOverrideHint(report.MouseHint)
+
 	root := app.New(screen, th, theme.TierTrueColor, themes).WithOptions(app.Options{
-		Mouse: true,
+		Mouse:       mouseEnabled(res, env),
+		FullRepaint: report.FullRepaint,
 	})
 
-	return root, nil
+	return root, settingsStore, nil
 }
