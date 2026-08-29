@@ -256,6 +256,16 @@ func drainAndClose(resp *http.Response) {
 func (r *retryRoundTripper) isRetryable(err error, resp *http.Response) (bool, retryAfterHeader) {
 	// Network/transport errors are always retryable.
 	if err != nil {
+		// A bound the transport itself imposed on one phase (the
+		// response-header wait, the client backstop) is the fault this budget
+		// exists to absorb, and it must be admitted BEFORE the cancellation
+		// guard: net/http's stage timeouts report themselves equal to
+		// context.DeadlineExceeded, so the guard below would otherwise read
+		// "the transport gave up early" as "the caller stopped this call" and
+		// deny a retry to the exchange that most needs one.
+		if IsTransportStageTimeout(err) {
+			return true, retryAfterHeader{}
+		}
 		// Don't retry context cancellations. Transports wrap the cause
 		// (net.OpError, url.Error), so compare with errors.Is: == would read a
 		// wrapped cancel as a transient fault and replay a request the user
