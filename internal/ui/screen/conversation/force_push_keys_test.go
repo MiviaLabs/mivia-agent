@@ -498,11 +498,19 @@ func TestForceSend_WhitespaceOnlyTextOnActiveTurnIsRejected(t *testing.T) {
 	}
 }
 
-// TestForceSend_EmptyComposerActiveQueueHeadForcedWithOverlayOpen pins
-// the post-pop SetItems-under-guard branch: with the queue overlay
-// open, an empty-composer force-send pops the queue head, force-pushes
-// it, and resyncs the overlay's own items to match.
-func TestForceSend_EmptyComposerActiveQueueHeadForcedWithOverlayOpen(t *testing.T) {
+// TestForceSend_EmptyComposerActiveQueueHeadForcedWithOverlayOpenSwallowsTheKey
+// pins the actual production routing: with the queue overlay open,
+// ctrl+enter never reaches composerAction's force-send case through
+// s.Update at all - handleModalKey's handleQueueKey claims every key
+// while the overlay is Active() (its own "f"/"F" case is the queue
+// overlay's force-send, a different code path from ctrl+enter, which
+// is not one of handleQueueKey's cases and falls to its default,
+// swallowed with no effect). This mirrors the overlay-swallow style at
+// TestApprovalPrecedence_QueueOverlayForceKeyIsSwallowed above. The
+// composer case's own lines (the branch this used to call directly)
+// are covered overlay-CLOSED by
+// TestForceSend_EmptyComposerActiveWithQueueForcesTheHead.
+func TestForceSend_EmptyComposerActiveQueueHeadForcedWithOverlayOpenSwallowsTheKey(t *testing.T) {
 	s := newScreen(t, replay.New(nil, 0), nil, nil)
 	handle := &recordingHandle{id: "t1"}
 	s.active = handle
@@ -513,33 +521,33 @@ func TestForceSend_EmptyComposerActiveQueueHeadForcedWithOverlayOpen(t *testing.
 		t.Fatal("expected queueOverlay active")
 	}
 
-	// handleQueueKey claims every key while the overlay is Active(), so
-	// ctrl+enter never reaches composerAction's force-send case through
-	// s.Update while the overlay is open. Call composerAction directly to
-	// exercise the exact production lines under the overlay guard.
-	next, _, _ := s.composerAction(keymap.IDForceSend)
+	next, _ := s.Update(ctrlEnter)
 	got := next.(Screen)
 
-	if got.pendingForce == nil || *got.pendingForce != "A" {
-		t.Fatalf("expected pendingForce = %q, got %v", "A", got.pendingForce)
+	if got.pendingForce != nil {
+		t.Errorf("expected pendingForce nil: the overlay swallows ctrl+enter, got %v", got.pendingForce)
 	}
-	if len(got.queue) != 1 || got.queue[0] != "B" {
-		t.Fatalf("expected queue = [B], got %v", got.queue)
+	if len(got.queue) != 2 || got.queue[0] != "A" || got.queue[1] != "B" {
+		t.Fatalf("expected queue untouched [A B], got %v", got.queue)
+	}
+	if handle.cancelCount != 0 {
+		t.Errorf("expected no Cancel call, got %d", handle.cancelCount)
 	}
 	if !got.queueOverlay.Active() {
 		t.Error("expected the queue overlay to remain active")
 	}
-	if items := got.queueOverlay.Items(); len(items) != 1 || items[0] != "B" {
-		t.Fatalf("expected queueOverlay items = [B], got %v", items)
-	}
 }
 
-// TestForceSend_EmptyComposerBlankHeadRestoresWithOverlayOpen pins the
-// restore-SetItems-under-guard branch: when forcePush rejects the
-// popped head (blank text), the head is re-appended to the queue and
-// the still-open overlay's items are resynced to match, with the
-// notice matching forcePush's own rejection message.
-func TestForceSend_EmptyComposerBlankHeadRestoresWithOverlayOpen(t *testing.T) {
+// TestForceSend_EmptyComposerBlankHeadRestoresWithOverlayOpenSwallowsTheKey
+// pins the same routing fact from the blank-head setup: with the queue
+// overlay open, ctrl+enter is swallowed by handleQueueKey before it can
+// reach composerAction's force-send case, so a blank queue head is left
+// exactly where it was - nothing to restore, because nothing was ever
+// popped. The composer case's own restore-branch lines are covered
+// overlay-CLOSED by TestForceSend_EmptyComposerActiveWithQueueForcesTheHead
+// (which exercises the same composerAction code, just via a non-blank
+// head and with the overlay never opened).
+func TestForceSend_EmptyComposerBlankHeadRestoresWithOverlayOpenSwallowsTheKey(t *testing.T) {
 	s := newScreen(t, replay.New(nil, 0), nil, nil)
 	handle := &recordingHandle{id: "t1"}
 	s.active = handle
@@ -550,28 +558,60 @@ func TestForceSend_EmptyComposerBlankHeadRestoresWithOverlayOpen(t *testing.T) {
 		t.Fatal("expected queueOverlay active")
 	}
 
-	// See the note in the sibling test above: composerAction is called
-	// directly because handleQueueKey claims every key while the overlay
-	// is open.
-	next, _, _ := s.composerAction(keymap.IDForceSend)
+	next, _ := s.Update(ctrlEnter)
 	got := next.(Screen)
 
 	if len(got.queue) != 2 || got.queue[0] != "   " || got.queue[1] != "B" {
-		t.Fatalf("expected queue restored to [\"   \", B], got %v", got.queue)
+		t.Fatalf("expected queue untouched [\"   \", B], got %v", got.queue)
 	}
 	if !got.queueOverlay.Active() {
 		t.Error("expected the queue overlay to remain active")
 	}
-	if items := got.queueOverlay.Items(); len(items) != 2 || items[0] != "   " || items[1] != "B" {
-		t.Fatalf("expected queueOverlay items restored to [\"   \", B], got %v", items)
-	}
-	if !strings.Contains(got.statusline.View(fixedNow()), "nothing to interrupt") {
-		t.Errorf("expected the \"nothing to interrupt\" notice, got %q", got.statusline.View(fixedNow()))
+	if strings.Contains(got.statusline.View(fixedNow()), "nothing to interrupt") {
+		t.Errorf("expected no forcePush notice: the key never reached composerAction, got %q", got.statusline.View(fixedNow()))
 	}
 	if got.pendingForce != nil {
 		t.Errorf("expected pendingForce nil, got %v", got.pendingForce)
 	}
 	if handle.cancelCount != 0 {
 		t.Errorf("expected no Cancel call, got %d", handle.cancelCount)
+	}
+}
+
+// TestQueueDialog_ForceSendRefusedWhileEmbedded pins the defense-in-
+// depth guard added to handleQueueKey's own "f"/"F" case: mirroring
+// TestForceSend_EmbeddedIsRejected (the composerAction guard this
+// duplicates), an embedded screen with the queue overlay open and a
+// queue head present must not force-send on "f" - it is latent today
+// (IDQueueDialog is swallowed while embedded, so the overlay cannot
+// actually open inside a thread), but the case carries its own refusal
+// rather than depending on that upstream swallow.
+func TestQueueDialog_ForceSendRefusedWhileEmbedded(t *testing.T) {
+	s := sized(t, 0)
+	s.embedded = true
+	handle := &recordingHandle{id: "t1"}
+	s.active = handle
+	s.queue = []string{"A"}
+	s.queueOverlay.Open(s.queue)
+	if !s.queueOverlay.Active() {
+		t.Fatal("expected queueOverlay active")
+	}
+
+	s, _ = press(t, s, key("f"))
+
+	if s.pendingForce != nil {
+		t.Errorf("expected pendingForce nil in an embedded screen, got %v", s.pendingForce)
+	}
+	if handle.cancelCount != 0 {
+		t.Errorf("expected no Cancel call in an embedded screen, got %d", handle.cancelCount)
+	}
+	if len(s.queue) != 1 || s.queue[0] != "A" {
+		t.Fatalf("expected queue untouched [A], got %v", s.queue)
+	}
+	if !s.queueOverlay.Active() {
+		t.Error("expected the queue overlay to remain active")
+	}
+	if !strings.Contains(s.statusline.View(fixedNow()), "force send is unavailable in subagent threads") {
+		t.Errorf("expected the embedded notice, got %q", s.statusline.View(fixedNow()))
 	}
 }

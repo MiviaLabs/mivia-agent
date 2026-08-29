@@ -173,6 +173,18 @@ func (s Screen) handleQueueKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bool) 
 		}
 		return s, nil, true
 	case "f", "F":
+		// Defense in depth: composerAction's own IDForceSend case
+		// refuses to force-send while embedded (a subagent thread owns
+		// no turn of its own to interrupt). IDQueueDialog is swallowed
+		// while embedded today (globalAction), so this overlay cannot
+		// currently open inside a thread - but this case would
+		// force-push anyway if either assumption ever changed, so it
+		// carries the identical guard rather than relying on that
+		// upstream swallow alone.
+		if s.embedded {
+			s.statusline.Notice("force send is unavailable in subagent threads")
+			return s, nil, true
+		}
 		idx := s.queueOverlay.Cursor() // BEFORE DeleteSelected: it re-clamps the cursor
 		sel, ok := s.queueOverlay.DeleteSelected()
 		if idx < 0 || !ok {
