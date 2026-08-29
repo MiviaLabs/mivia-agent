@@ -28,24 +28,39 @@ func resolveReasoningContent(reasoningContent, reasoning string, details []reaso
 	return b.String()
 }
 
-// retryWithoutStreaming falls back to a non-streaming Chat call, used when a
-// stream attempt fails before any content is delivered.
-func (c *OpenAICompat) retryWithoutStreaming(ctx context.Context, req Request, w io.Writer) (string, error) {
-	content, err := c.Chat(ctx, Request{
-		Model:            req.Model,
-		Messages:         req.Messages,
-		Temperature:      req.Temperature,
-		MaxTokens:        req.MaxTokens,
-		ToolChoice:       req.ToolChoice,
-		Timeout:          req.Timeout,
-		Stream:           false,
-		ReasoningLevel:   req.ReasoningLevel,
-		ReasoningDialect: req.ReasoningDialect,
-		SessionID:        req.SessionID,
-	})
+// retryTurnWithoutStreaming re-asks a whole turn non-streamed and returns the
+// complete response, tool calls and accounting included. It is the recovery
+// path for a tool-capable turn whose stream delivered nothing.
+//
+// The re-ask has to be the SAME QUESTION. nonStreamRequest copies the request
+// and clears only the streaming fields, so tools, tool_choice, reasoning, and
+// the replay flag all survive; the earlier hand-built literal silently omitted
+// req.Tools, which asked a model that had been offered tools to answer with
+// none of them.
+func (c *OpenAICompat) retryTurnWithoutStreaming(ctx context.Context, req Request, w io.Writer) (*Response, error) {
+	resp, err := c.ChatTurn(ctx, c.nonStreamRequest(req))
 	if err != nil {
-		return content, err
+		return nil, err
 	}
+	// The fallback fires only when nothing was live-written, so writing here
+	// delivers the answer exactly once. Nil-safe: callers may pass no writer.
+	if w != nil && resp.Content != "" {
+		if _, werr := io.WriteString(w, resp.Content); werr != nil {
+			return nil, werr
+		}
+	}
+	return resp, nil
+}
+
+// retryWithoutStreaming is the text-only form of the same recovery, for
+// ChatStream, whose contract is the answer text alone. It shares
+// retryTurnWithoutStreaming's request handling so the two cannot drift.
+func (c *OpenAICompat) retryWithoutStreaming(ctx context.Context, req Request, w io.Writer) (string, error) {
+	resp, err := c.retryTurnWithoutStreaming(ctx, req, nil)
+	if err != nil {
+		return "", err
+	}
+	content := resp.Content
 	// The fallback fires only when nothing was live-written, so writing the
 	// answer here delivers it exactly once. Mirrors the tool-capable path in
 	// chatTurnStream. Nil-safe: ChatStream allows a nil writer.
