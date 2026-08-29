@@ -168,6 +168,15 @@ func (c *AnthropicCompleter) newHTTPRequest(ctx context.Context, req Request, bo
 	if err != nil {
 		return nil, nil, fmt.Errorf("%s: encode request: %w", c.name, err)
 	}
+	// DisableProviderReplay is carried on the context because that is where
+	// the two components that must honor it read it: the retry round tripper
+	// (which would otherwise replay this exact POST up to five times, each a
+	// separate billable generation) and the redirect guard. Without the stamp
+	// the flag reached the wire as a suggestion. Both send paths - do and
+	// chatTurnStream - build their request here, so one stamp covers both.
+	if req.DisableProviderReplay {
+		ctx = context.WithValue(ctx, disableProviderReplayContextKey{}, true)
+	}
 	cancel := func() {}
 	if req.Timeout > 0 {
 		ctx, cancel = context.WithTimeout(ctx, req.Timeout)
