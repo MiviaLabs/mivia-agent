@@ -142,8 +142,9 @@ func TestTaskMessageIndexCarriesContentRef(t *testing.T) {
 		}
 	}
 
-	idx := TaskMessageIndex(ctx, repo, []ledger.TaskSnapshot{{RunID: runID, TaskID: taskID}})
-	msgs := idx[taskID]
+	snap := ledger.TaskSnapshot{RunID: runID, TaskID: taskID}
+	idx := TaskMessageIndex(ctx, repo, []ledger.TaskSnapshot{snap})
+	msgs := idx.ForSnapshot(snap)
 	if len(msgs) != 2 {
 		t.Fatalf("messages for %s = %+v, want 2 (finding + question; answer excluded)", taskID, msgs)
 	}

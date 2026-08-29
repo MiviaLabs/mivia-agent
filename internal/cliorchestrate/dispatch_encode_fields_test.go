@@ -166,7 +166,7 @@ func TestSetErrorFieldsStatusDefaulting(t *testing.T) {
 		}
 	})
 	t.Run("preset status is preserved", func(t *testing.T) {
-		tr := dispatchTaskResult{Status: string(ledger.TaskStatusCanceled)}
+		tr := dispatchTaskResult{modelTaskResult: modelTaskResult{Status: string(ledger.TaskStatusCanceled)}}
 		setErrorFields(&tr, "boom", nil, "", "", 4096)
 		if tr.Status != string(ledger.TaskStatusCanceled) {
 			t.Fatalf("Status = %q, want preserved canceled", tr.Status)

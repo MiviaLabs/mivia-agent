@@ -63,10 +63,11 @@ func TestPostMessageFindingRoundTrip(t *testing.T) {
 	if !strings.Contains(msgs[0].Synopsis, "lock inversion") {
 		t.Fatalf("synopsis = %q", msgs[0].Synopsis)
 	}
-	// Result envelope attachment
+	// Result envelope attachment: the index is opaque and readable only per
+	// snapshot row (wrong-form task-id keys are unwritable, DC-11).
 	idx := cliorchestrate.TaskMessageIndex(context.Background(), repo, result.Snapshot.Tasks)
-	if got := idx["find-1"]; len(got) != 1 || got[0].Kind != "finding" {
-		t.Fatalf("envelope index = %+v", idx)
+	if got := idx.ForSnapshot(result.Snapshot.Tasks[0]); len(got) != 1 || got[0].Kind != "finding" {
+		t.Fatalf("envelope index = %+v", got)
 	}
 }
 

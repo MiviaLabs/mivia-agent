@@ -91,10 +91,9 @@ func ModelTaskResultsWithRepo(repo ledger.LedgerRepository, tasks []ledger.TaskS
 				out[i].ErrorRef = errorRef
 			}
 		}
-		out[i].Messages = msgIndex[result.TaskID]
-		// A pure snapshot read: no repo needed, so the nil-repo entry point
-		// (ModelTaskResults) emits the same reference dialect.
-		out[i].ToolCallsRef = toolCallsRefFor(tasks, result.TaskID)
+		if snap, ok := taskSnapshotFor(tasks, result.TaskID); ok {
+			attachTaskRecord(&out[i], snap, msgIndex)
+		}
 	}
 	return out
 }
@@ -109,12 +108,11 @@ func persistedTaskResults(tasks []ledger.TaskSnapshot) []modelTaskResult {
 		out[i] = modelTaskResult{
 			TaskID: modelVisibleTaskID(task), Status: task.Status,
 			OutputRef: task.OutputRef, ErrorRef: task.ErrorRef,
-			// Read off the snapshot row directly: the model-visible TaskID
-			// above is the namespace-stripped RawID, so any later lookup
-			// keyed on it (toolCallsRefFor matches the full TaskID) misses
-			// dispatch-namespaced tasks.
-			ToolCallsRef: task.ToolCallsRef,
 		}
+		// Attachments come only from attachTaskRecord, keyed off the
+		// snapshot row itself: the model-visible TaskID above is the
+		// namespace-stripped RawID, so any id-keyed side lookup on it
+		// misses dispatch-namespaced tasks (DC-11).
 	}
 	return out
 }
@@ -151,16 +149,12 @@ func RunTaskResultsWithRepo(repo ledger.LedgerRepository, result *coordinator.Ru
 	}
 	if allResultsRecovered(result) {
 		out := persistedTaskResults(result.Snapshot.Tasks)
-		if repo != nil {
-			msgIndex := TaskMessageIndex(context.Background(), repo, result.Snapshot.Tasks)
-			for i := range out {
-				// Key by the snapshot row's FULL TaskID (rows are
-				// index-aligned with the snapshot): the coordinator records
-				// task-message events under the namespaced id, while
-				// out[i].TaskID is the stripped model-visible RawID, which
-				// misses every dispatch_tasks-created task.
-				out[i].Messages = msgIndex[result.Snapshot.Tasks[i].TaskID]
-			}
+		msgIndex := TaskMessageIndex(context.Background(), repo, result.Snapshot.Tasks)
+		for i := range out {
+			// Rows are index-aligned with the snapshot; the helper reads
+			// attachments off the row itself, so the stripped model-visible
+			// TaskID never becomes a lookup key.
+			attachTaskRecord(&out[i], result.Snapshot.Tasks[i], msgIndex)
 		}
 		return out
 	}
@@ -298,7 +292,7 @@ func (t *joinRunTool) Execute(ctx context.Context, args json.RawMessage) (string
 		// and never discard work that already finished (same INV-AG-21 shape
 		// as RunThroughCoordinator): salvage whatever task records exist.
 		if salvaged := salvageUnjoinedRun(record.coord, handle, err); salvaged != nil {
-			return joinSalvageEnvelope(record.coord, handle, salvaged, err, ctx.Err() == nil), nil
+			return joinSalvageEnvelope(t.repo, record.coord, handle, salvaged, err, ctx.Err() == nil), nil
 		}
 		snap := latestSnapshot(record.coord, handle, ctx)
 		status := "unknown"
@@ -473,17 +467,25 @@ func joinSalvageHint(joinBudgetExpired bool) string {
 // caller cancel leaves the run running under its own budget - another caller
 // may own it, and walking away is not a verdict. Deriving joinBudgetExpired
 // here keeps the hint and the cancel decision from ever disagreeing.
-func joinSalvageEnvelope(coord coordinator.Coordinator, handle *coordinator.RunHandle, salvaged *coordinator.RunResult, joinErr error, callerAlive bool) string {
+func joinSalvageEnvelope(repo ledger.LedgerRepository, coord coordinator.Coordinator, handle *coordinator.RunHandle, salvaged *coordinator.RunResult, joinErr error, callerAlive bool) string {
 	joinBudgetExpired := errors.Is(joinErr, context.DeadlineExceeded) && callerAlive
 	if joinBudgetExpired {
 		go cancelWedgedRun(coord, handle)
+	}
+	// A salvaged run's recorded work is diagnostic gold: attach the same
+	// snapshot-recorded messages and trace refs every other producer
+	// reports, through the same single path.
+	rows := persistedTaskResults(salvaged.Snapshot.Tasks)
+	msgIndex := TaskMessageIndex(context.Background(), repo, salvaged.Snapshot.Tasks)
+	for i := range rows {
+		attachTaskRecord(&rows[i], salvaged.Snapshot.Tasks[i], msgIndex)
 	}
 	out, _ := json.Marshal(map[string]any{
 		"run_id":       salvaged.Snapshot.RunID,
 		"display_name": salvaged.Snapshot.DisplayName,
 		"status":       salvaged.Snapshot.Status,
 		"run_error":    salvageErrorText(joinErr),
-		"task_results": persistedTaskResults(salvaged.Snapshot.Tasks),
+		"task_results": rows,
 		"hint":         joinSalvageHint(joinBudgetExpired),
 	})
 	return string(out)

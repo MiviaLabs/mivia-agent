@@ -187,6 +187,26 @@ func taskResultProducers() []taskResultProducer {
 				return rowFromModelResult(got[0])
 			},
 		},
+		{
+			name:          "joinSalvageEnvelope partial join",
+			messagesApply: true,
+			run: func(t *testing.T, fx conformanceFixture) producerRow {
+				salvaged := &coordinator.RunResult{
+					Snapshot: ledger.RunSnapshot{RunID: fx.tasks[0].RunID, Tasks: fx.tasks},
+				}
+				raw := joinSalvageEnvelope(fx.repo, nil, nil, salvaged, nil, false)
+				var envelope struct {
+					TaskResults []modelTaskResult `json:"task_results"`
+				}
+				if err := json.Unmarshal([]byte(raw), &envelope); err != nil {
+					t.Fatalf("unmarshal %q: %v", raw, err)
+				}
+				if len(envelope.TaskResults) != 1 {
+					t.Fatalf("task_results len = %d, want 1", len(envelope.TaskResults))
+				}
+				return rowFromModelResult(envelope.TaskResults[0])
+			},
+		},
 	}
 }
 
