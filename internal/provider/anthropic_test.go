@@ -280,6 +280,37 @@ func TestAnthropicReasoningContentIsPlainDisplayText(t *testing.T) {
 	}
 }
 
+// A single turn carrying BOTH a thinking block AND a tool_use block must
+// extract both together: ReasoningContent populated from the thinking block,
+// AND ToolCalls populated from the tool_use block, from the same response.
+// This closes a coverage gap rather than a bug - anthropicResponseToProvider
+// already walks every content block through one switch and appends to both
+// accumulators independently, so nothing here should behave differently from
+// the single-block cases already covered above, but that combination had no
+// test proving it before now.
+func TestAnthropicChatTurnExtractsThinkingAndToolUseTogether(t *testing.T) {
+	client := newTestAnthropicClient(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"content":[{"type":"thinking","thinking":"deciding which file to read","signature":"sig-xyz"},{"type":"tool_use","id":"toolu_42","name":"read_file","input":{"path":"go.mod"}}],"stop_reason":"tool_use","usage":{}}`))
+	})
+	resp, err := client.ChatTurn(context.Background(), Request{Model: "claude-sonnet-5", Messages: []Message{{Role: RoleUser, Content: "read go.mod"}}})
+	if err != nil {
+		t.Fatalf("ChatTurn: %v", err)
+	}
+	if resp.ReasoningContent != "deciding which file to read" {
+		t.Fatalf("ReasoningContent = %q, want the plain thinking text", resp.ReasoningContent)
+	}
+	if len(resp.ToolCalls) != 1 || resp.ToolCalls[0].ID != "toolu_42" || resp.ToolCalls[0].Function.Name != "read_file" {
+		t.Fatalf("ToolCalls = %#v", resp.ToolCalls)
+	}
+	var args map[string]any
+	if err := json.Unmarshal([]byte(resp.ToolCalls[0].Function.Arguments), &args); err != nil || args["path"] != "go.mod" {
+		t.Fatalf("Arguments = %q, want JSON {\"path\":\"go.mod\"}", resp.ToolCalls[0].Function.Arguments)
+	}
+	if resp.FinishReason != "tool_calls" {
+		t.Fatalf("FinishReason = %q, want tool_calls", resp.FinishReason)
+	}
+}
+
 // Replaying an assistant turn that carries ReasoningContent must NOT emit a
 // thinking content block at all: this codebase has nowhere display-safe to
 // keep the original signature, and Anthropic rejects a thinking block whose

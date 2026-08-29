@@ -164,6 +164,52 @@ func TestAnthropicChatTurnStreamThinkingBlock(t *testing.T) {
 	}
 }
 
+// A turn carrying BOTH a streamed thinking block AND a streamed tool_use
+// block must extract both together: ReasoningContent reassembled from the
+// thinking deltas, AND ToolCalls reassembled from the tool_use deltas, from
+// the same turn. This closes a coverage gap rather than a bug -
+// finishAnthropicStream already walks blockOrder once and appends to both
+// accumulators independently per block type, so nothing here should behave
+// differently from the single-block-type cases already covered above, but
+// that combination had no test proving it before now.
+func TestAnthropicChatTurnStreamThinkingAndToolUseTogether(t *testing.T) {
+	var b strings.Builder
+	b.WriteString(sseEvent("message_start", map[string]any{"message": map[string]any{"usage": map[string]any{}}}))
+	b.WriteString(sseEvent("content_block_start", map[string]any{"index": 0, "content_block": map[string]any{"type": "thinking"}}))
+	b.WriteString(sseEvent("content_block_delta", map[string]any{"index": 0, "delta": map[string]any{"type": "thinking_delta", "thinking": "deciding which file to read"}}))
+	b.WriteString(sseEvent("content_block_delta", map[string]any{"index": 0, "delta": map[string]any{"type": "signature_delta", "signature": "sig-abc"}}))
+	b.WriteString(sseEvent("content_block_stop", map[string]any{"index": 0}))
+	b.WriteString(sseEvent("content_block_start", map[string]any{"index": 1, "content_block": map[string]any{"type": "tool_use", "id": "toolu_7", "name": "read_file"}}))
+	b.WriteString(sseEvent("content_block_delta", map[string]any{"index": 1, "delta": map[string]any{"type": "input_json_delta", "partial_json": `{"path":`}}))
+	b.WriteString(sseEvent("content_block_delta", map[string]any{"index": 1, "delta": map[string]any{"type": "input_json_delta", "partial_json": `"go.mod"}`}}))
+	b.WriteString(sseEvent("content_block_stop", map[string]any{"index": 1}))
+	b.WriteString(sseEvent("message_delta", map[string]any{"delta": map[string]any{"stop_reason": "tool_use"}, "usage": map[string]any{}}))
+	b.WriteString(sseEvent("message_stop", map[string]any{}))
+
+	client := newTestAnthropicClient(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(b.String()))
+	})
+	var buf bytes.Buffer
+	req := Request{Model: "claude-sonnet-5", Messages: []Message{{Role: RoleUser, Content: "read go.mod"}}, Stream: true, StreamWriter: &buf}
+	resp, err := client.ChatTurn(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ChatTurn: %v", err)
+	}
+	if resp.ReasoningContent != "deciding which file to read" {
+		t.Fatalf("ReasoningContent = %q, want the plain reassembled thinking text", resp.ReasoningContent)
+	}
+	if len(resp.ToolCalls) != 1 || resp.ToolCalls[0].ID != "toolu_7" || resp.ToolCalls[0].Function.Name != "read_file" {
+		t.Fatalf("ToolCalls = %#v", resp.ToolCalls)
+	}
+	var args map[string]any
+	if err := json.Unmarshal([]byte(resp.ToolCalls[0].Function.Arguments), &args); err != nil || args["path"] != "go.mod" {
+		t.Fatalf("Arguments = %q, want the reassembled JSON object", resp.ToolCalls[0].Function.Arguments)
+	}
+	if resp.FinishReason != "tool_calls" {
+		t.Fatalf("FinishReason = %q, want tool_calls", resp.FinishReason)
+	}
+}
+
 // A non-2xx status on the streaming path is a wrapped error, the same
 // convention the non-stream path follows - never a panic on the SSE
 // decoder, and never a response body misread as an event stream.

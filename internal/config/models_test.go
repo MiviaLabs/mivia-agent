@@ -3,6 +3,8 @@ package config
 import (
 	"strings"
 	"testing"
+
+	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 )
 
 // A model name reaches terminal output and the provider URL path, so every
@@ -66,5 +68,63 @@ func TestNormalizeModelsAcceptsAnEmptyCatalog(t *testing.T) {
 	out, err := normalizeModels(nil, 0, "zai")
 	if err != nil || out != nil {
 		t.Fatalf("out=%v err=%v, want nil/nil", out, err)
+	}
+}
+
+// TestCheckOutputReserveFloorRejectsAConfiguredCeilingBelowTheFloor covers Fix
+// B: anthropicMaxTokens (internal/provider/anthropic.go) falls back to
+// reasoning.OutputReserveFloor(level) as the wire max_tokens whenever a
+// request leaves MaxTokens unset. Without this check, a model entry could
+// declare a max_output_tokens ceiling lower than the floor its own
+// reasoning_efforts can select, and the client would ask the provider for
+// more completion tokens than the operator's own config permits for this
+// model.
+func TestCheckOutputReserveFloorRejectsAConfiguredCeilingBelowTheFloor(t *testing.T) {
+	// reasoning.High's floor is 32768 (internal/reasoning.OutputReserveFloor).
+	// 16384 sits strictly below it.
+	in := []ModelSpec{{
+		Name:                "m",
+		ContextWindowTokens: 128000,
+		MaxOutputTokens:     16384,
+		ReasoningEfforts:    []reasoning.Level{reasoning.High},
+	}}
+	_, err := normalizeModels(in, 0, "zai")
+	if err == nil {
+		t.Fatal("want an error, got nil")
+	}
+	for _, want := range []string{"m", "high", "32768", "16384"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %v, want it to name %q", err, want)
+		}
+	}
+}
+
+// TestCheckOutputReserveFloorAcceptsTheExactBoundary is the boundary case: the
+// gate is strict "<", so max_output_tokens exactly equal to the floor for
+// every declared effort must PASS, not fail.
+func TestCheckOutputReserveFloorAcceptsTheExactBoundary(t *testing.T) {
+	in := []ModelSpec{{
+		Name:                "m",
+		ContextWindowTokens: 128000,
+		MaxOutputTokens:     32768, // exactly reasoning.High's floor
+		ReasoningEfforts:    []reasoning.Level{reasoning.High},
+	}}
+	if _, err := normalizeModels(in, 0, "zai"); err != nil {
+		t.Fatalf("unexpected error at the exact floor boundary: %v", err)
+	}
+}
+
+// TestCheckOutputReserveFloorIgnoresModelsWithNoDeclaredEfforts documents that
+// the check is scoped to declared reasoning_efforts only: a model with no
+// reasoning surface is unaffected by this gate regardless of how low its
+// max_output_tokens is set.
+func TestCheckOutputReserveFloorIgnoresModelsWithNoDeclaredEfforts(t *testing.T) {
+	in := []ModelSpec{{
+		Name:                "m",
+		ContextWindowTokens: 2048,
+		MaxOutputTokens:     100, // far below any reasoning floor
+	}}
+	if _, err := normalizeModels(in, 0, "zai"); err != nil {
+		t.Fatalf("unexpected error for a model with no reasoning_efforts: %v", err)
 	}
 }

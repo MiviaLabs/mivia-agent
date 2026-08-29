@@ -90,6 +90,14 @@ func TestDialectBodyFields(t *testing.T) {
 			"thinking":      map[string]any{"type": "adaptive", "display": "summarized"},
 			"output_config": map[string]any{"effort": "max"},
 		}},
+		// Auto has no entry in anthropicEffortForLevel's switch (falls to the
+		// default case, which returns ""), and output_config.effort is a
+		// closed enum with no "auto" member. The body must carry the
+		// thinking:adaptive field with NO output_config key at all - not an
+		// empty-string effort, which would be a malformed request.
+		{"anthropic_adaptive auto omits output_config", reasoning.DialectAnthropicAdaptive, reasoning.Auto, map[string]any{
+			"thinking": map[string]any{"type": "adaptive", "display": "summarized"},
+		}},
 
 		{"reasoning_split unset", reasoning.DialectReasoningSplit, "", nil},
 		{"reasoning_split off", reasoning.DialectReasoningSplit, reasoning.Off, map[string]any{"reasoning_split": true}},

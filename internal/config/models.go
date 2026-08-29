@@ -160,6 +160,34 @@ func ModelOffersReasoning(spec ModelSpec) bool {
 	return len(spec.ReasoningEfforts) > 0
 }
 
+// checkOutputReserveFloor refuses a model whose configured max_output_tokens
+// ceiling is below the wire-layer floor its own declared reasoning_efforts can
+// demand. anthropicMaxTokens (internal/provider/anthropic.go) falls back to
+// reasoning.OutputReserveFloor(level) as the wire max_tokens whenever a
+// request leaves MaxTokens unset - with no clamp against this model's own
+// ceiling. Left unchecked, a model entry could declare a max_output_tokens
+// lower than a floor its own reasoning_efforts can select, so the client
+// would ask the provider for more completion tokens than the operator's own
+// config says this model may produce. The gate is deliberately per level, not
+// per default, for the same reason checkReasoningIsDeliverable's own gate is:
+// /effort can activate any declared level, so a model whose set includes one
+// level with an undeliverable floor is broken even when it ships with a
+// lower default.
+func checkOutputReserveFloor(provider string, model ModelSpec) error {
+	if model.MaxOutputTokens <= 0 {
+		return nil
+	}
+	for _, level := range model.ReasoningEfforts {
+		floor := reasoning.OutputReserveFloor(level)
+		if model.MaxOutputTokens < floor {
+			return fmt.Errorf(
+				"provider %q model %q sets max_output_tokens=%d but reasoning_efforts includes %q, whose output reserve floor is %d; raise max_output_tokens to at least %d or drop %q from reasoning_efforts",
+				provider, model.Name, model.MaxOutputTokens, level, floor, floor, level)
+		}
+	}
+	return nil
+}
+
 func normalizeModels(in []ModelSpec, maxTokens int, provider string) ([]ModelSpec, error) {
 	if len(in) == 0 {
 		return nil, nil
@@ -196,6 +224,9 @@ func normalizeModels(in []ModelSpec, maxTokens int, provider string) ([]ModelSpe
 		seen[name] = struct{}{}
 		model.Name = name
 		if err := checkReasoningIsDeliverable(provider, model); err != nil {
+			return nil, err
+		}
+		if err := checkOutputReserveFloor(provider, model); err != nil {
 			return nil, err
 		}
 		out = append(out, model)
