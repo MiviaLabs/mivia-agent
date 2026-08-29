@@ -90,6 +90,15 @@ func TestTranscriptClearSelectionDropsHighlight(t *testing.T) {
 	}
 }
 
+func TestTranscriptSelectionReportsArmedAnchor(t *testing.T) {
+	m := sizedTranscript(t)
+	want := sel.Selection{Active: true, Anchor: sel.Cell{Row: 0, Col: 0}, Focus: sel.Cell{Row: 0, Col: 3}}
+	m.SetSelection(want)
+	if got := m.Selection(); got != want {
+		t.Fatalf("Selection() = %+v, want %+v", got, want)
+	}
+}
+
 func TestTranscriptImplementsSelectable(t *testing.T) {
 	var _ sel.Selectable = (*Model)(nil)
 	m := sizedTranscript(t)

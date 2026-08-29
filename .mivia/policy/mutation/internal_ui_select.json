@@ -1,0 +1,35 @@
+{
+  "floor": null,
+  "denylist": [
+    {
+      "file": "highlight.go",
+      "snippet": "func HighlightLines(lines []string, from, to Cell) []string {\n\tif to.Row < from.Row || (to.Row == from.Row && to.Col < from.Col) {",
+      "reason": "audited equivalent mutant: to.Col <= from.Col only differs from < when to.Col == from.Col, and swapping from/to when they are already equal is a no-op"
+    },
+    {
+      "file": "highlight.go",
+      "snippet": "func StreamSelect(rows []string, from, to Cell) string {\n\tif to.Row < from.Row || (to.Row == from.Row && to.Col < from.Col) {",
+      "reason": "audited equivalent mutant: to.Col <= from.Col only differs from < when to.Col == from.Col, and swapping from/to when they are already equal is a no-op"
+    },
+    {
+      "file": "highlight.go",
+      "snippet": "if from.Row < 0 {\n\t\tfrom.Row = 0",
+      "reason": "audited equivalent mutant: from.Row <= 0 only differs from < 0 when from.Row == 0, and assigning 0 to a field already holding 0 is a no-op"
+    },
+    {
+      "file": "highlight.go",
+      "snippet": "if v < lo {\n\t\treturn lo",
+      "reason": "audited equivalent mutant: v <= lo only differs from < lo when v == lo, and returning lo when v already equals lo returns the same value either branch takes"
+    },
+    {
+      "file": "select.go",
+      "snippet": "c := Cell{Row: y - r.MinY, Col: x - r.MinX}\n\tif c.Row < 0 {\n\t\tc.Row = 0",
+      "reason": "audited equivalent mutant: c.Row <= 0 only differs from < 0 when c.Row == 0, and assigning 0 to a field already holding 0 is a no-op"
+    },
+    {
+      "file": "select.go",
+      "snippet": "if c.Col < 0 {\n\t\tc.Col = 0",
+      "reason": "audited equivalent mutant: c.Col <= 0 only differs from < 0 when c.Col == 0, and assigning 0 to a field already holding 0 is a no-op"
+    }
+  ]
+}

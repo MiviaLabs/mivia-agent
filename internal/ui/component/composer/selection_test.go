@@ -73,6 +73,29 @@ func TestComposerEditInvalidatesSelection(t *testing.T) {
 	}
 }
 
+func TestComposerSetSelectionInactiveClears(t *testing.T) {
+	m := testComposer()
+	m.SetValue("keep me")
+	m.SetSelection(sel.Selection{Active: true, Anchor: sel.Cell{Row: 0, Col: 0}, Focus: sel.Cell{Row: 0, Col: 3}})
+	m.SetSelection(sel.Selection{Active: false})
+	if m.HasSelection() {
+		t.Fatal("setting an inactive selection must clear any live state")
+	}
+	if got := m.Selection(); got.Active {
+		t.Fatalf("Selection() must report inactive after an inactive SetSelection: %+v", got)
+	}
+}
+
+func TestComposerClearSelectionDropsState(t *testing.T) {
+	m := testComposer()
+	m.SetValue("keep me")
+	m.SetSelection(sel.Selection{Active: true, Anchor: sel.Cell{Row: 0, Col: 0}, Focus: sel.Cell{Row: 0, Col: 3}})
+	m.ClearSelection()
+	if m.HasSelection() || m.SelectedText() != "" {
+		t.Fatal("ClearSelection must drop both state and text")
+	}
+}
+
 var _ = tea.KeyPressMsg{}
 
 func TestComposerHighlightPaintsBody(t *testing.T) {
@@ -128,6 +151,38 @@ func TestWrapLikeTextareaExactWidthFits(t *testing.T) {
 	}
 }
 
+func TestWrapLikeTextareaMidStringSpaceWrap(t *testing.T) {
+	// A second word+space group that overflows mid-string (not just at
+	// the final flush) must start a new row there, carrying its own
+	// trailing space.
+	rows := wrapLikeTextarea("ab cd ef", 5)
+	want := []string{"ab ", "cd ", "ef "}
+	if len(rows) != len(want) {
+		t.Fatalf("got %q, want %q", rows, want)
+	}
+	for i := range want {
+		if rows[i] != want[i] {
+			t.Fatalf("row %d: got %q, want %q (full: %q)", i, rows[i], want[i], rows)
+		}
+	}
+}
+
+func TestWrapLikeTextareaLongWordWrapsWithoutSpace(t *testing.T) {
+	// A single unbroken word longer than the width wraps mid-word: the
+	// first overflow lands on the still-empty first row, the second
+	// overflow (row already holds content) starts a new one.
+	rows := wrapLikeTextarea("abcdefghij", 4)
+	want := []string{"abcd", "efgh", "ij "}
+	if len(rows) != len(want) {
+		t.Fatalf("got %q, want %q", rows, want)
+	}
+	for i := range want {
+		if rows[i] != want[i] {
+			t.Fatalf("row %d: got %q, want %q (full: %q)", i, rows[i], want[i], rows)
+		}
+	}
+}
+
 func TestRepeatSpacesBoundary(t *testing.T) {
 	if repeatSpaces(0) != nil {
 		t.Fatal("zero spaces must produce nil")
@@ -151,12 +206,31 @@ func TestPromptCellsWidePromptTruncates(t *testing.T) {
 
 func TestComposerSelectionRowsPadToHeight(t *testing.T) {
 	m := testComposer()
-	// One short line in a two-row body: the pad arm (len(out) < h) must
-	// fill the second row with blank prompt cells, not drop it.
+	// DynamicHeight ties the textarea's height to its own logical line
+	// count, so a short single-line body reports a matching one-row
+	// height: nothing here needs padding to line up.
 	m.SetValue("hi")
 	rows := m.selectionRows()
 	if len(rows) != m.input.Height() {
-		t.Fatalf("rows must pad to the textarea height %d, got %d", m.input.Height(), len(rows))
+		t.Fatalf("rows must match the textarea height %d, got %d", m.input.Height(), len(rows))
+	}
+}
+
+func TestComposerSelectionRowsTrimsContentTallerThanHeight(t *testing.T) {
+	// DynamicHeight blocks further typing once content reaches
+	// maxInputLines, but a restored draft can still be set directly
+	// with more logical lines than the body can show; selectionRows
+	// must trim to exactly the textarea's height, matching what View
+	// draws, not leak the extra rows.
+	m := testComposer()
+	lines := make([]string, 0, 10)
+	for i := 0; i < 10; i++ {
+		lines = append(lines, "line")
+	}
+	m.SetValue(strings.Join(lines, "\n"))
+	rows := m.selectionRows()
+	if len(rows) != m.input.Height() {
+		t.Fatalf("rows must trim to the textarea height %d, got %d", m.input.Height(), len(rows))
 	}
 }
 
@@ -183,16 +257,16 @@ func TestComposerSelectedTextStaleValueEmpty(t *testing.T) {
 	}
 }
 
-func TestComposerSelectionRowsPadWhenShorterThanHeight(t *testing.T) {
+func TestComposerSelectionRowsEmptyValueStillOneRow(t *testing.T) {
 	m := testComposer()
-	m.SetValue("") // zero logical rows
+	m.SetValue("") // one empty logical line, wraps to exactly one row
 	rows := m.selectionRows()
 	if len(rows) != m.input.Height() {
-		t.Fatalf("empty input pads to height %d, got %d", m.input.Height(), len(rows))
+		t.Fatalf("empty input must still report %d row(s), got %d", m.input.Height(), len(rows))
 	}
 	for _, r := range rows {
 		if ansi.StringWidth(r) < promptWidth {
-			t.Fatalf("padded row lost its prompt cells: %q", r)
+			t.Fatalf("row lost its prompt cells: %q", r)
 		}
 	}
 }

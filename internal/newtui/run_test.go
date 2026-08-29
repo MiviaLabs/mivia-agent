@@ -26,6 +26,20 @@ func TestBuildApp(t *testing.T) {
 	}
 }
 
+// TestRunTUICallsBuildApp exercises RunTUI's own body up to the point
+// it hands off to tea.NewProgram: with no real terminal in a test
+// environment, the program's own Run() fails fast rather than
+// blocking, so this is safe to call directly rather than only via
+// buildApp (which RunTUI wraps).
+func TestRunTUICallsBuildApp(t *testing.T) {
+	sess := chat.NewSession(&config.Resolved{}, nil)
+	agentState := &cli.AgentSessionState{}
+
+	if err := RunTUI(sess, nil, true, agentState, ""); err == nil {
+		t.Fatal("expected an error: either buildApp or the programless Run() must fail here")
+	}
+}
+
 func ctrl(r rune) tea.KeyPressMsg { return tea.KeyPressMsg{Code: r, Mod: tea.ModCtrl} }
 
 // TestBuildApp_SubagentHistoryVisibleInDialog is an end-to-end smoke test

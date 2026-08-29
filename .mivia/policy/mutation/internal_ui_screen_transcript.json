@@ -1,0 +1,10 @@
+{
+  "floor": null,
+  "denylist": [
+    {
+      "file": "selection.go",
+      "snippet": "if r := s.selectionRegion(); r.Height() > 0 && r.Width() > 0 {",
+      "reason": "audited equivalent mutant: selectionRegion() only ever returns sel.Rect{} (both dims zero, mode != pager or dimensions < 3) or a rect with contentWidth(width)>=1 and contentHeight()>=2 (both dims positive) - Height()>0 and Width()>0 always coincide, so && and || evaluate identically here"
+    }
+  ]
+}

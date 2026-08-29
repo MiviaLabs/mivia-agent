@@ -1,7 +1,11 @@
 package newtui
 
 import (
+	"io"
+	"strings"
 	"testing"
+
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/uiadapter"
@@ -34,12 +38,37 @@ func TestMouseEnabledPrecedence(t *testing.T) {
 	}
 }
 
+// blankModel is the smallest tea.Model that can back a tea.Program in
+// a test, since wiring the notifier only needs a *tea.Program to send
+// to, never a running one.
+type blankModel struct{}
+
+func (blankModel) Init() tea.Cmd                       { return nil }
+func (blankModel) Update(tea.Msg) (tea.Model, tea.Cmd) { return blankModel{}, nil }
+func (blankModel) View() tea.View                      { return tea.NewView("") }
+
 // TestMouseNotifierBridgeNilGuard covers the launcher's nil-store guard:
-// a buildApp that could not produce a store must not register a bridge.
+// a buildApp that could not produce a store must not register a bridge
+// (a flipped guard would call SetMouseNotifier on a nil *SettingsStore
+// and panic).
 func TestMouseNotifierBridgeNilGuard(t *testing.T) {
-	var store *uiadapter.SettingsStore
-	if store != nil { // the != arm of run.go's guard
-		t.Fatal("nil store must skip the notifier bridge")
-	}
-	_ = store
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("a nil store must skip the notifier bridge, got panic: %v", r)
+		}
+	}()
+	wireMouseNotifier(nil, nil)
+}
+
+// TestMouseNotifierBridgeWiresRealStore covers the non-nil arm: a real
+// store must have its notifier registered without panicking.
+func TestMouseNotifierBridgeWiresRealStore(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("wiring a real store must not panic, got: %v", r)
+		}
+	}()
+	store := uiadapter.NewSettingsStore(nil, nil, nil)
+	p := tea.NewProgram(blankModel{}, tea.WithInput(strings.NewReader("")), tea.WithOutput(io.Discard))
+	wireMouseNotifier(store, p)
 }

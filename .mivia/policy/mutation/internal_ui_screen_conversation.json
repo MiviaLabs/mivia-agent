@@ -1,0 +1,10 @@
+{
+  "floor": null,
+  "denylist": [
+    {
+      "file": "selection_regions.go",
+      "snippet": "if cr := s.composerRegion(); cr.Height() > 0 && cr.Width() > 0 {",
+      "reason": "audited equivalent mutant: composerRegion() only ever returns sel.Rect{} (both dims zero) or a rect with bodyRows>=1 and w>=1 (both dims positive) - Height()>0 and Width()>0 always coincide, so && and || evaluate identically here"
+    }
+  ]
+}

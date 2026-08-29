@@ -163,6 +163,8 @@ func TestContentOriginGutterBoundaries(t *testing.T) {
 		{2, 24, 0, 1},  // narrow: no side columns, top row stays
 		{80, 2, 1, 0},  // short: gutter rows gone, columns stay
 		{2, 2, 0, 0},   // tiny both ways: no gutter at all
+		{3, 1, 1, 0},   // width exactly 3 (not "under three"): only height collapses
+		{1, 3, 0, 1},   // height exactly 3 (not "under three"): only width collapses
 	}
 	for _, c := range cases {
 		s := sized(t, 0)
@@ -191,6 +193,18 @@ func TestSetComposerRectSkippedWhenHiddenOrEmbedded(t *testing.T) {
 	}
 }
 
+func TestContentOriginEmbeddedDropsTopGutter(t *testing.T) {
+	s := sized(t, 0)
+	s.embedded = true
+	x0, tg := s.contentOrigin()
+	if tg != 0 {
+		t.Fatalf("an embedded screen must drop the top gutter, got tg=%d", tg)
+	}
+	if x0 != 1 {
+		t.Fatalf("an embedded screen keeps its side gutter, got x0=%d", x0)
+	}
+}
+
 func TestContentOriginUnmeasuredSurfaceCollapses(t *testing.T) {
 	s := sized(t, 0)
 	s.width, s.height = 0, 0
@@ -214,6 +228,19 @@ func TestComposerRegionTracksBodyColumns(t *testing.T) {
 	// one cell, never more than the chat column minus the frame insets.
 	if cr.Width() < 1 || cr.MaxX > s.chatWidth()+1 {
 		t.Fatalf("composer region columns out of bounds: %+v (chatWidth %d)", cr, s.chatWidth())
+	}
+}
+
+func TestComposerRegionSingleColumnStillReports(t *testing.T) {
+	// w == 1 is one drawable column, not the "cannot draw a single
+	// cell" case the early-return guards against (w < 1): a <=
+	// mutant on that guard would collapse this to an empty rect.
+	s := sized(t, 0)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 6, Height: 24})
+	s = next.(Screen)
+	cr := s.composerRegion()
+	if cr.Width() != 1 {
+		t.Fatalf("expected exactly one drawable column, got %+v", cr)
 	}
 }
 
@@ -256,9 +283,13 @@ func TestContentOriginWidthExactlyThreeKeepsGutter(t *testing.T) {
 }
 
 func TestTranscriptRegionHiddenWhenPanelNarrowCoversIt(t *testing.T) {
+	// A narrow, non-split panel does not change transcriptShown() or
+	// the transcript rect: SelectionRegions() still reports it. The
+	// panel's own click-through protection lives in handleClick, not
+	// here, so this pins that SelectionRegions() does not duplicate it.
 	s := sized(t, 1)
 	s.panel.open = true // narrow (below breakpoint): the list covers the transcript
-	if _, ok := findRegion(t, s, sel.RegionTranscript); ok {
-		t.Log("narrow panel still reports a transcript region; clicks there are swallowed by handleClick")
+	if _, ok := findRegion(t, s, sel.RegionTranscript); !ok {
+		t.Fatal("a narrow, unsplit panel must not hide the transcript region here")
 	}
 }

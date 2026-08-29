@@ -66,6 +66,26 @@ func TestPagerCopyToastStatusLine(t *testing.T) {
 	}
 }
 
+func TestPagerSelectionRegionsReportsPagerHandle(t *testing.T) {
+	s := pagerWithRows(t)
+	rs := s.SelectionRegions()
+	if len(rs) != 1 || rs[0].ID != sel.RegionPager || rs[0].Handle == nil {
+		t.Fatalf("a sized pager must report exactly one pager region: %+v", rs)
+	}
+	if (*rs[0].Handle).SelectionRect() != s.SelectionRect() {
+		t.Fatal("the reported handle must resolve to this screen's own rect")
+	}
+}
+
+func TestPagerSelectionReportsArmedAnchor(t *testing.T) {
+	s := pagerWithRows(t)
+	want := sel.Selection{Active: true, Anchor: sel.Cell{Row: 0, Col: 0}, Focus: sel.Cell{Row: 0, Col: 3}}
+	s.SetSelection(want)
+	if got := s.Selection(); got != want {
+		t.Fatalf("Selection() = %+v, want %+v", got, want)
+	}
+}
+
 func TestPagerHandoverHasNoRegion(t *testing.T) {
 	s := pagerWithRows(t)
 	s.mode = modeHandover

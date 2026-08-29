@@ -144,10 +144,6 @@ func New(base Screen, th theme.Theme, tier theme.Tier, themes []theme.Theme) Mod
 	}
 }
 
-// SetOptions mutates the app-wide terminal modes on an already-built
-// router. WithOptions stays the value-builder form used at construction.
-func (m *Model) SetOptions(o Options) { m.Opts = o }
-
 // WithOptions sets the app-wide terminal modes and returns the router.
 func (m Model) WithOptions(o Options) Model {
 	m.Opts = o

@@ -40,18 +40,22 @@ func RunTUI(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *
 	}
 
 	p := tea.NewProgram(root)
-	// The Settings screen's "mouse capture" row persists through the
-	// store; this bridge pushes each change into the running program so
-	// it takes effect on the next frame (app.MouseCaptureMsg flips
-	// View().MouseMode, and the renderer writes ?1002/?1006). Send is a
-	// no-op once the program stops.
-	if settingsStore != nil {
-		settingsStore.SetMouseNotifier(func(on bool) {
+	wireMouseNotifier(settingsStore, p)
+	_, err = p.Run()
+	return err
+}
+
+// wireMouseNotifier bridges the Settings screen's "mouse capture" row
+// into the running program: it pushes each change so it takes effect
+// on the next frame (app.MouseCaptureMsg flips View().MouseMode, and
+// the renderer writes ?1002/?1006). Send is a no-op once the program
+// stops. A nil store (buildApp could not produce one) skips wiring.
+func wireMouseNotifier(store *uiadapter.SettingsStore, p *tea.Program) {
+	if store != nil {
+		store.SetMouseNotifier(func(on bool) {
 			go p.Send(app.MouseCaptureMsg{On: on})
 		})
 	}
-	_, err = p.Run()
-	return err
 }
 
 // mouseEnabled resolves the startup mouse-capture decision:
@@ -97,10 +101,11 @@ func buildApp(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState
 	runner := uiadapter.NewCommandRunner(sess, res, agentState)
 	pool := runner.Pool()
 	threads := pool.Threads()
-	convPort, err := pool.GetOrCreate(sess.SessionID)
-	if err != nil {
-		return nil, nil, err
-	}
+	// NewCommandRunner's pool pre-registers sess under its own SessionID
+	// (NewSessionPool), so this lookup always hits that entry and never
+	// takes GetOrCreate's own construction path (which is what can
+	// error) - only the type assertion below can fail here.
+	convPort, _ := pool.GetOrCreate(sess.SessionID)
 	conv, ok := convPort.(*uiadapter.Conversation)
 	if !ok {
 		return nil, nil, fmt.Errorf("newtui: pool returned unexpected conversation type %T", convPort)

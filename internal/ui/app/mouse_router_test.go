@@ -215,6 +215,19 @@ func TestEscCancelsInFlightDragWithoutConsuming(t *testing.T) {
 	}
 }
 
+func TestNonEscKeyDuringDragLeavesSelectionIntact(t *testing.T) {
+	// Only esc cancels an armed drag; any other key while armed must
+	// leave the selection untouched.
+	m, _, reg := newRegionModel(t)
+	next, _ := m.Update(tea.MouseClickMsg{X: 2, Y: 2, Button: tea.MouseLeft})
+	m = next.(Model)
+	next, _ = m.Update(tea.KeyPressMsg{Text: "a", Code: 'a'})
+	m = next.(Model)
+	if !m.drag.armed || !reg.state.Active {
+		t.Fatal("a non-esc key while armed must not cancel the drag")
+	}
+}
+
 func TestResizeClearsSelectionAcrossStack(t *testing.T) {
 	m, _, reg := newRegionModel(t)
 	next, _ := m.Update(tea.MouseClickMsg{X: 2, Y: 2, Button: tea.MouseLeft})
@@ -324,6 +337,27 @@ func TestHoverMotionWithoutPressIgnored(t *testing.T) {
 	// It falls through to the screen unchanged.
 	if len(sc.received) != 0 {
 		t.Logf("screen received %v", sc.received) // MouseMotionMsg may or may not be recorded; either way no drag state
+	}
+}
+
+func TestHoverMotionWithoutPressForwardsToScreen(t *testing.T) {
+	// Left-button motion with nothing armed must not be swallowed: it
+	// reaches the underlying screen exactly like any other passthrough
+	// mouse msg.
+	m, sc, _ := newRegionModel(t)
+	next, _ := m.Update(tea.MouseMotionMsg{X: 5, Y: 3, Button: tea.MouseLeft})
+	m = next.(Model)
+	if m.drag.armed {
+		t.Fatal("hover motion must not arm a drag")
+	}
+	found := false
+	for _, r := range sc.received {
+		if r == "motion:5,3" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("hover motion without an armed press must reach the screen: %v", sc.received)
 	}
 }
 
@@ -444,6 +478,54 @@ func TestReleaseWithoutArmedPressPassesThrough(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("unarmed release must reach the screen: %v", sc.received)
+	}
+}
+
+// TestMouseMotionArmedWithNilHandleCancels covers mouseMotion's own nil
+// guard: armed but with no live handle, motion cancels the drag and
+// consumes the event rather than dereferencing.
+func TestMouseMotionArmedWithNilHandleCancels(t *testing.T) {
+	m, _, _ := newRegionModel(t)
+	m.drag = dragState{armed: true, handle: nil}
+	cmd, consume := m.mouseMotion(tea.MouseMotionMsg{X: 5, Y: 3, Button: tea.MouseLeft})
+	if !consume {
+		t.Fatal("motion while armed must always be consumed")
+	}
+	if cmd != nil {
+		t.Fatal("a nil handle must not produce a command")
+	}
+	if m.drag.armed {
+		t.Fatal("motion with a nil handle must cancel the drag")
+	}
+}
+
+// TestHitRegionEmptyStackNoHit covers the empty-stack guard: a router
+// with nothing pushed reports no hit region rather than indexing an
+// empty slice.
+func TestHitRegionEmptyStackNoHit(t *testing.T) {
+	var m Model
+	if _, ok := m.hitRegion(5, 3); ok {
+		t.Fatal("an empty stack must never report a hit region")
+	}
+}
+
+// TestMouseReleaseDraggingWithNilHandleDoesNotPanic pins an invariant
+// the mouseRelease guard depends on: dragging and a nil handle must
+// never combine into a dereference. Both flags are cleared together
+// by cancelDrag/arming, but the guard is what makes that safe if they
+// ever drift apart.
+func TestMouseReleaseDraggingWithNilHandleDoesNotPanic(t *testing.T) {
+	m, _, _ := newRegionModel(t)
+	m.drag = dragState{armed: true, dragging: true, handle: nil}
+	cmd, consume := m.mouseRelease(tea.MouseReleaseMsg{X: 5, Y: 3, Button: tea.MouseLeft})
+	if !consume {
+		t.Fatal("an armed release must always be consumed")
+	}
+	if cmd != nil {
+		t.Fatal("a dragging release with no handle must not attempt a clipboard copy")
+	}
+	if m.drag.armed {
+		t.Fatal("release must clear the drag state")
 	}
 }
 
@@ -587,6 +669,26 @@ func TestSelfSelectableZeroRectNoHit(t *testing.T) {
 	}
 }
 
+// TestSelfSelectableClickOutsideRectNoHit pins hitRegion's three-way
+// guard (height>0 && width>0 && Contains(x,y)): Contains already
+// implies a positive height and width, so a click outside a
+// positive-size rect must not arm - a version that ORs any one clause
+// in would arm on rect size alone, regardless of where the click fell.
+func TestSelfSelectableClickOutsideRectNoHit(t *testing.T) {
+	shared := &sel.Selection{}
+	sc := &selfSelectableScreen{
+		stubScreen: stubScreen{flags: ViewFlags{AltScreen: true}},
+		shared:     shared,
+		rect:       sel.Rect{MinX: 0, MinY: 0, MaxX: 5, MaxY: 5},
+	}
+	m := New(sc, loadTheme(t), theme.TierASCII, nil).WithOptions(Options{Mouse: true})
+	next, _ := m.Update(tea.MouseClickMsg{X: 100, Y: 100, Button: tea.MouseLeft})
+	m = next.(Model)
+	if m.drag.armed {
+		t.Fatal("a click outside a positive-size rect must not arm")
+	}
+}
+
 // nilRegionScreen is a regions screen whose hit region carries a nil
 // Handle: the press must fall back to liveHandle for the armed state.
 type nilRegionScreen struct {
@@ -618,5 +720,30 @@ func TestCancelDragClearsHandleState(t *testing.T) {
 	m.cancelDrag()
 	if reg.state.Active || m.drag.armed {
 		t.Fatal("cancelDrag must clear both the router and the handle")
+	}
+}
+
+// mixedRegionScreen reports one nil-handle region alongside one real
+// one, so cancelAllSelections must skip the nil entry without
+// panicking and still reach the real one.
+type mixedRegionScreen struct {
+	regionScreen
+}
+
+func (s *mixedRegionScreen) SelectionRegions() []sel.RegionEntry {
+	var h sel.Selectable = s.region
+	return []sel.RegionEntry{
+		{ID: sel.RegionComposer, Handle: nil},
+		{ID: sel.RegionTranscript, Handle: &h},
+	}
+}
+
+func TestCancelAllSelectionsSkipsNilHandleAndClearsReal(t *testing.T) {
+	reg := &fakeRegion{rect: sel.Rect{MinX: 1, MinY: 1, MaxX: 41, MaxY: 11}, state: sel.Selection{Active: true}}
+	sc := &mixedRegionScreen{regionScreen: regionScreen{flags: ViewFlags{AltScreen: true}, region: reg}}
+	m := New(sc, loadTheme(t), theme.TierASCII, nil).WithOptions(Options{Mouse: true})
+	m.cancelAllSelections()
+	if reg.state.Active {
+		t.Fatal("the real handle's selection must be cleared")
 	}
 }

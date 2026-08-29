@@ -94,10 +94,12 @@ func (s Screen) composerRegion() sel.Rect {
 	if s.composer.Framed() {
 		framed = 2 // top + bottom border
 	}
+	// bodyRows is never below 1: composer.Height() already adds the same
+	// framed/menu terms subtracted here (menuRows mirrors MenuRows(),
+	// framed mirrors composer.Framed()'s own frame constant), so this
+	// always reduces to the textarea's own row count, which composer.
+	// Height() clamps to at least 1.
 	bodyRows := s.composer.Height() - menuRows - framed
-	if bodyRows < 1 {
-		bodyRows = 1
-	}
 	// The status row sits at the screen bottom; the composer block ends
 	// just above it. InputRowFromBottom counts from the status row up to
 	// the LAST input row, so the first body row sits height-1 above it.

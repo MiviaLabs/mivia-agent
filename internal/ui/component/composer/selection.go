@@ -82,34 +82,25 @@ func (m Model) highlightBodyLines(body string) string {
 
 // selectionRows renders the visible body as plain display rows: prompt
 // columns first (so cell coordinates match the frame exactly), then
-// each logical line word-wrapped at the inner width, scrolled like the
-// textarea's viewport, then blank rows up to the fixed height. Mirrors
+// each logical line word-wrapped at the inner width. Mirrors
 // textarea.view for the parts that matter here: this composer never
-// shows line numbers, wraps at the textarea's width, and pads to the
-// full height.
+// shows line numbers and wraps at the textarea's width. DynamicHeight
+// (newTextarea) blocks further input once content reaches the fixed
+// height rather than scrolling past it, so the only way the wrapped
+// row count can differ from that height is content set directly (a
+// restored draft) taller than the visible body - trimmed to match
+// exactly what View draws.
 func (m Model) selectionRows() []string {
+	// Width and height are never below 1 here: SetWidth clamps its own
+	// inner width before handing it to the textarea, and the textarea's
+	// MinHeight (1, set in newTextarea) floors DynamicHeight.
 	inner := m.input.Width()
-	if inner < 1 {
-		inner = 1
-	}
 	h := m.input.Height()
-	if h < 1 {
-		h = 1
-	}
 	var out []string
 	for _, logical := range strings.Split(m.Value(), "\n") {
 		for wi, row := range wrapLikeTextarea(logical, inner) {
 			out = append(out, promptCells(promptWidth, wi == 0)+strings.TrimRight(row, " "))
 		}
-	}
-	if start := m.input.ScrollYOffset(); start > 0 {
-		if start > len(out) {
-			start = len(out)
-		}
-		out = out[start:]
-	}
-	for len(out) < h {
-		out = append(out, promptCells(promptWidth, false))
 	}
 	if len(out) > h {
 		out = out[:h]

@@ -74,9 +74,10 @@ func StreamSelect(rows []string, from, to Cell) string {
 		if row == to.Row {
 			right = clampInt(to.Col+1, 0, w)
 		}
-		if right < left {
-			right = left
-		}
+		// right >= left always: from<=to per the ordering above, and
+		// clampInt is monotonic, so this row's right bound (w, or
+		// to.Col+1 clamped) never falls below its left bound (0, or
+		// from.Col clamped).
 		sb.WriteString(ansi.Strip(ansi.Cut(line, left, right)))
 		if row != to.Row {
 			sb.WriteString("\n")
