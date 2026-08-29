@@ -49,7 +49,7 @@ func RunTUI(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *
 		runner.Pool().ReleaseLeases(ctx)
 	}()
 
-	p := tea.NewProgram(root)
+	p := newTeaProgram(root)
 	wireMouseNotifier(settingsStore, p)
 	_, err = p.Run()
 	return err
@@ -91,6 +91,13 @@ func mouseEnabled(res *config.Resolved, env []string) bool {
 // error return (the compiled-in embed.FS itself cannot be corrupted
 // in-process).
 var loadThemes = theme.Embedded
+
+// newTeaProgram is tea.NewProgram, indirected so a test can run RunTUI
+// headless: with the default options the program reads the process's real
+// stdin, and on windows Run() does not fail fast off-TTY - it runs forever
+// (the verify-windows 10-minute timeout hang). Tests substitute explicit
+// non-TTY input/output and quit the program themselves.
+var newTeaProgram = func(root tea.Model) *tea.Program { return tea.NewProgram(root) }
 
 func buildApp(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *cli.AgentSessionState, resumeSessionName string) (tea.Model, *uiadapter.SettingsStore, *uiadapter.CommandRunner, error) {
 	registerSubagentProgress()

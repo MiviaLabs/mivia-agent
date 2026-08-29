@@ -26,6 +26,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
@@ -222,6 +223,14 @@ func (w *turnShapeWrapper) Run(ctx context.Context, in sdktools.InOut) (sdktools
 	return sdktools.Out{Value: shaped}, nil
 }
 
+// orderingHoleGraceWindow is how long a would-be escapee keeps waiting for
+// a not-yet-scheduled predecessor before trusting that the index hole is
+// permanent. A scheduling gap - the predecessor's worker goroutine simply
+// has not run yet - resolves in microseconds, so the window is generous by
+// several orders of magnitude; a genuine hole (a skipped plan) costs one
+// bounded pause instead of the whole turn.
+const orderingHoleGraceWindow = 250 * time.Millisecond
+
 // waitForOrderingSlot blocks until the call index slot is ready or
 // the run is aborted / ctx cancels. Caller must hold counter.mu.
 //
@@ -233,17 +242,44 @@ func (w *turnShapeWrapper) waitForOrderingSlot(ctx context.Context, callIndex in
 	if callIndex <= 0 {
 		return
 	}
+	// holeSince is when the current potential-hole episode began; zero
+	// while predecessors are visibly in flight.
+	var holeSince time.Time
 	for w.counter.nextIndex < callIndex && ctx.Err() == nil && !w.counter.aborted {
 		// Only a call that is in flight and not itself parked here can still
 		// advance the gate. When this call is the last such one, the index it
-		// waits for was never dispatched - a duplicate plan the SDK skipped,
-		// or a call rejected before the registry saw it - and no broadcast is
-		// coming. Shape now. Losing strict charging order in that anomaly
-		// costs fidelity; waiting costs the whole turn, which then falls
-		// silent after a tool ran and dies at the request deadline.
+		// waits for is EITHER a hole nothing will fill (a duplicate plan the
+		// SDK never dispatched, or a call rejected before the registry saw
+		// it) OR an earlier call whose worker goroutine has not been
+		// scheduled yet - the counts alone cannot tell the two apart.
+		// Escaping immediately on the second shape charged the shared budget
+		// in scheduling order instead of index order, so identical batches
+		// produced different kept-bytes splits (the F4 determinism flake).
+		// A hole is trusted only after it has looked like one for a
+		// continuous grace window.
 		if w.counter.inFlight-w.counter.blocked <= 1 {
-			return
+			now := time.Now()
+			if holeSince.IsZero() {
+				holeSince = now
+			}
+			if now.Sub(holeSince) >= orderingHoleGraceWindow {
+				return
+			}
+			w.counter.blocked++
+			ch := w.counter.signal
+			w.counter.mu.Unlock()
+			timer := time.NewTimer(orderingHoleGraceWindow - now.Sub(holeSince))
+			select {
+			case <-ch:
+			case <-ctx.Done():
+			case <-timer.C:
+			}
+			timer.Stop()
+			w.counter.mu.Lock()
+			w.counter.blocked--
+			continue
 		}
+		holeSince = time.Time{}
 		w.counter.blocked++
 		ch := w.counter.signal
 		w.counter.mu.Unlock()

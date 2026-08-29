@@ -2,8 +2,10 @@ package newtui
 
 import (
 	"errors"
+	"io"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
@@ -41,17 +43,36 @@ func TestBuildApp(t *testing.T) {
 	}
 }
 
-// TestRunTUICallsBuildApp exercises RunTUI's own body up to the point
-// it hands off to tea.NewProgram: with no real terminal in a test
-// environment, the program's own Run() fails fast rather than
-// blocking, so this is safe to call directly rather than only via
-// buildApp (which RunTUI wraps).
+// TestRunTUICallsBuildApp exercises RunTUI's whole body - buildApp, the
+// notifier wiring, the program run, and the lease-release defer - through
+// the newTeaProgram seam. An earlier version ran the program on the
+// process's real stdin and relied on Run() failing fast off-TTY, which
+// holds on linux but not on windows, where it ran headless forever and
+// died on the 10-minute test timeout (the same trap run_mouse_test.go
+// fixed one commit earlier; this test hid behind that hang).
 func TestRunTUICallsBuildApp(t *testing.T) {
+	original := newTeaProgram
+	newTeaProgram = func(root tea.Model) *tea.Program {
+		p := tea.NewProgram(root, tea.WithInput(strings.NewReader("")), tea.WithOutput(io.Discard))
+		// Quit blocks until the event loop is receiving, so firing it
+		// before Run starts still lands exactly once the program is live.
+		go p.Quit()
+		return p
+	}
+	defer func() { newTeaProgram = original }()
+
 	sess := chat.NewSession(&config.Resolved{}, nil)
 	agentState := &cli.AgentSessionState{}
 
-	if err := RunTUI(sess, nil, true, agentState, ""); err == nil {
-		t.Fatal("expected an error: either buildApp or the programless Run() must fail here")
+	done := make(chan error, 1)
+	go func() { done <- RunTUI(sess, nil, true, agentState, "") }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("RunTUI = %v, want clean quit", err)
+		}
+	case <-time.After(60 * time.Second):
+		t.Fatal("RunTUI did not return after the program quit")
 	}
 }
 
