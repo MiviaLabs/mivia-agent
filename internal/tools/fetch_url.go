@@ -37,19 +37,14 @@ func (t *fetchURLTool) resultBudget() int {
 // above it and are covered by the derivation's input allowance and slack.
 func (t *fetchURLTool) ResultBudgetBytes() int { return t.resultBudget() }
 
-// fetchURLCapabilityTimeout bounds the dispatcher-level ctx grant for one
-// fetch_url call. It sits above fetchClientOverallTimeout so the tool's own
-// client timeout fires first with a specific network error, rather than a
-// generic dispatcher cancellation.
-const fetchURLCapabilityTimeout = 150 * time.Second
-
 // Capability declares an explicit external-class timeout so fetch_url is not
 // invisible to dispatcher timeout policy: without this, the dispatcher
 // treats it like any undeclared tool and falls back to its own generic
 // default, leaving the actual bound entirely up to whatever ctx a given
-// caller happens to supply.
+// caller happens to supply. Shared with search and extract - see
+// http_client.go.
 func (t *fetchURLTool) Capability(json.RawMessage) Capability {
-	return Capability{Class: ExecutionExternal, Timeout: fetchURLCapabilityTimeout}
+	return Capability{Class: ExecutionExternal, Timeout: toolNetworkCapabilityTimeout}
 }
 
 func (t *fetchURLTool) Name() string { return "fetch_url" }
@@ -259,22 +254,11 @@ func validateFetchURL(ctx context.Context, raw string) error {
 	return nil
 }
 
-// fetchClientResponseHeaderTimeout bounds how long the client waits for
-// response headers after a connection is established. Without this, a
-// server that completes the TCP/TLS handshake and then goes silent (a
-// slow-loris) blocks the call forever regardless of ctx, since dial and TLS
-// timeouts only cover connection setup.
-const fetchClientResponseHeaderTimeout = 30 * time.Second
-
-// fetchClientOverallTimeout is the http.Client-level backstop covering the
-// whole round trip, including a body that trickles in slowly after headers
-// arrive. It is the tool's own defense, independent of whatever ctx deadline
-// (if any) a given caller happens to supply.
-const fetchClientOverallTimeout = 120 * time.Second
-
-// newSafeFetchHTTPClient builds a client that re-validates redirect targets.
+// newSafeFetchHTTPClient builds the fetch_url client: SSRF-safe dialing and
+// redirect re-validation, plus the same slow-loris timeouts every outbound
+// tool client shares - see newBoundedHTTPClient in http_client.go.
 func newSafeFetchHTTPClient() *http.Client {
-	return newSafeFetchHTTPClientWithTimeouts(fetchClientResponseHeaderTimeout, fetchClientOverallTimeout)
+	return newSafeFetchHTTPClientWithTimeouts(toolHTTPResponseHeaderTimeout, toolHTTPOverallTimeout)
 }
 
 // newSafeFetchHTTPClientWithTimeouts is newSafeFetchHTTPClient with the
@@ -282,16 +266,11 @@ func newSafeFetchHTTPClient() *http.Client {
 // exercise the slow-loris protection without waiting on production-sized
 // durations.
 func newSafeFetchHTTPClientWithTimeouts(responseHeaderTimeout, overallTimeout time.Duration) *http.Client {
-	baseDialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
-	transport := &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          10,
-		IdleConnTimeout:       30 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: responseHeaderTimeout,
-		ExpectContinueTimeout: 1 * time.Second,
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+	baseDialer := &net.Dialer{Timeout: toolHTTPDialTimeout, KeepAlive: 30 * time.Second}
+	return newBoundedHTTPClient(boundedHTTPClientConfig{
+		responseHeaderTimeout: responseHeaderTimeout,
+		overallTimeout:        overallTimeout,
+		dialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			host, port, err := net.SplitHostPort(addr)
 			if err != nil {
 				return nil, err
@@ -325,11 +304,7 @@ func newSafeFetchHTTPClientWithTimeouts(responseHeaderTimeout, overallTimeout ti
 			}
 			return nil, firstErr
 		},
-	}
-	return &http.Client{
-		Transport: transport,
-		Timeout:   overallTimeout,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		checkRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= maxFetchRedirects {
 				return fmt.Errorf("stopped after %d redirects", maxFetchRedirects)
 			}
@@ -338,5 +313,5 @@ func newSafeFetchHTTPClientWithTimeouts(responseHeaderTimeout, overallTimeout ti
 			}
 			return nil
 		},
-	}
+	})
 }
