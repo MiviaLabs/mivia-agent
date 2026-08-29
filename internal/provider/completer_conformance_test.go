@@ -303,3 +303,55 @@ func assertListDirCall(t *testing.T, resp *Response) {
 		t.Error("no token usage reported; a turn's accounting must survive every path")
 	}
 }
+
+// CONTRACT: a request that spends its whole budget and answers nothing is NOT
+// transient. Re-asking it burns another full req.Timeout for the same result.
+//
+// This is the generalised form of the Anthropic bug: markTransientReadDeadline
+// must be given the ARMED request context, and a client that hands it an
+// ancestor instead inverts the verdict. Asserting it here rather than per
+// client means a third Completer inherits the check by joining the table.
+func TestCompleterConformance_SpentRequestBudgetIsNotTransient(t *testing.T) {
+	// Watchdogs far away so the request deadline is what fires.
+	withWatchdogTimeouts(t, time.Minute, time.Minute)
+
+	// Both stall shapes, because they land on DIFFERENT sites: with no headers
+	// the send fails, and with headers flushed first the body read fails. A
+	// client can classify one correctly and the other backwards.
+	for _, phase := range []struct {
+		name        string
+		sendHeaders bool
+	}{{"stalls before headers", false}, {"stalls after headers", true}} {
+		for _, tc := range conformanceCases() {
+			t.Run(tc.name+"/"+phase.name, func(t *testing.T) {
+				// A LIVE parent deadline is the condition that exposes the
+				// inversion: with no parent deadline nothing is marked at all.
+				parent, cancelParent := context.WithTimeout(context.Background(), time.Minute)
+				defer cancelParent()
+
+				srv := stalledServer(t, phase.sendHeaders)
+				req := conformanceRequest()
+				req.Timeout = 250 * time.Millisecond
+
+				completer := tc.build(srv.URL)
+				done := make(chan error, 1)
+				go func() { _, err := completer.ChatTurn(parent, req); done <- err }()
+
+				select {
+				case err := <-done:
+					if err == nil {
+						t.Fatal("expected the spent request budget to surface")
+					}
+					if IsTransient(err) {
+						t.Fatalf("a spent request budget must not be transient: %v\n"+
+							"  this client is judging the deadline against a context other than\n"+
+							"  the armed request context, so the step loop will re-ask a call\n"+
+							"  that fails identically after another full req.Timeout", err)
+					}
+				case <-time.After(30 * time.Second):
+					t.Fatal("the request timeout never fired")
+				}
+			})
+		}
+	}
+}

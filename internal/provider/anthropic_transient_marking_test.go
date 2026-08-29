@@ -106,45 +106,9 @@ func TestAnthropicSpentRequestBudgetIsNotTransient(t *testing.T) {
 	}
 }
 
-// Parity with the sibling client, which is the property that actually matters
-// here. A tighter PARENT deadline cannot be told apart from a spent request
-// budget by either client - context.WithTimeout adopts an earlier parent
-// deadline, so the armed context reports the parent's - and that is fine,
-// because a fired parent deadline ends the step anyway. What must never differ
-// is how the two clients classify the SAME scenario.
-func TestAnthropicAndCompatAgreeOnSpentBudget(t *testing.T) {
-	withWatchdogTimeouts(t, time.Minute, time.Minute)
-
-	parent, cancelParent := context.WithTimeout(context.Background(), time.Minute)
-	defer cancelParent()
-
-	srv := stalledServer(t, false)
-	compat := NewOpenAICompatWithOptions(CompatOptions{Name: "compat", BaseURL: srv.URL, APIKey: "k"})
-	anthropic := newAnthropicCompleter("anthropic", srv.URL, "key", nil, false)
-
-	ask := func(c Completer) error {
-		req := Request{
-			Model:    "m",
-			Messages: []Message{{Role: RoleUser, Content: "hello"}},
-			Timeout:  250 * time.Millisecond,
-		}
-		done := make(chan error, 1)
-		go func() { _, err := c.ChatTurn(parent, req); done <- err }()
-		select {
-		case err := <-done:
-			return err
-		case <-time.After(30 * time.Second):
-			t.Fatal("the request timeout never fired")
-			return nil
-		}
-	}
-
-	compatErr, anthropicErr := ask(compat), ask(anthropic)
-	if compatErr == nil || anthropicErr == nil {
-		t.Fatal("both clients should have surfaced the spent budget")
-	}
-	if IsTransient(compatErr) != IsTransient(anthropicErr) {
-		t.Fatalf("clients disagree on the same spent budget: compat transient=%v (%v), anthropic transient=%v (%v)",
-			IsTransient(compatErr), compatErr, IsTransient(anthropicErr), anthropicErr)
-	}
-}
+// The cross-client parity form of this contract now lives in the conformance
+// suite (TestCompleterConformance_SpentRequestBudgetIsNotTransient), so a
+// third Completer inherits it by joining the table rather than needing its own
+// pairwise test. The cases above stay because they pin the three Anthropic
+// call sites individually, including the streaming path the conformance
+// request does not take.
