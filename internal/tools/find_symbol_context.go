@@ -47,6 +47,11 @@ type symbolContextResolver interface {
 }
 
 type findSymbolContextTool struct {
+	// secretPathExceptions/secretPathPatterns mirror go_to_definition: this
+	// tool also returns source text read from disk.
+	secretPathExceptions []string
+	secretPathPatterns   []string
+
 	ws       *workspace.Root
 	resolver symbolContextResolver
 	maxBytes int
@@ -211,6 +216,13 @@ func (t *findSymbolContextTool) Execute(ctx context.Context, args json.RawMessag
 	}
 
 	def, defErr := t.resolver.Definition(ctx, symbol)
+	if defErr == nil && isSecretPath(def.Path, t.secretPathExceptions, t.secretPathPatterns) {
+		// Same refusal shape as an unavailable symbol: an answer the model
+		// reads, carrying no content and no path from the blocked file.
+		out.SymbolAvailable = true
+		out.Error = "reading secret-like path is blocked"
+		return t.marshal(out), nil
+	}
 	if defErr != nil {
 		out.SymbolAvailable = !errors.Is(defErr, codeintel.ErrUnavailable)
 		out.Error = defErr.Error()

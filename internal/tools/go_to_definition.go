@@ -20,6 +20,12 @@ type goToDefinitionTool struct {
 	ws       *workspace.Root
 	resolver definitionResolver
 	maxBytes int
+	// secretPathPatterns/secretPathExceptions are the same operator policy
+	// every content-returning tool applies. This tool reads declaration text
+	// live from disk, so without them it answered questions about files
+	// read_file refuses to open.
+	secretPathExceptions []string
+	secretPathPatterns   []string
 }
 
 type goToDefinitionArgs struct {
@@ -87,6 +93,11 @@ func (t *goToDefinitionTool) Execute(ctx context.Context, args json.RawMessage) 
 	}
 
 	def, err := t.resolver.Definition(ctx, in.Symbol)
+	if err == nil && isSecretPath(def.Path, t.secretPathExceptions, t.secretPathPatterns) {
+		// Refuse as an ANSWER, not a call failure, matching this tool's
+		// not-found/ambiguous handling - and never echo the path back.
+		return t.marshal(goToDefinitionResult{Symbol: in.Symbol, Error: "reading secret-like path is blocked"}), nil
+	}
 	if err != nil {
 		// Unavailable / not found / ambiguous are all answers the model needs
 		// to read, not call failures.

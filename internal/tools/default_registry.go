@@ -421,14 +421,21 @@ func registerCodeNavTools(register func(Tool), opts DefaultOptions, ws *workspac
 		secretPathExceptions: exceptions,
 		secretPathPatterns:   patterns,
 	})
+	// Both of these return source text read live from disk, so both carry the
+	// same secret-path policy list_symbols does. Forwarding it to only one of
+	// the three left the other two unable to enforce it at all.
 	register(&goToDefinitionTool{
-		ws:       ws,
-		resolver: analyzer,
-		maxBytes: navMaxBytes,
+		ws:                   ws,
+		resolver:             analyzer,
+		maxBytes:             navMaxBytes,
+		secretPathExceptions: exceptions,
+		secretPathPatterns:   patterns,
 	})
 	register(&findSymbolContextTool{
-		ws:       ws,
-		resolver: analyzer,
-		maxBytes: navMaxBytes,
+		ws:                   ws,
+		resolver:             analyzer,
+		maxBytes:             navMaxBytes,
+		secretPathExceptions: exceptions,
+		secretPathPatterns:   patterns,
 	})
 }
