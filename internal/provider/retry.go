@@ -323,19 +323,24 @@ func peekBody(resp *http.Response) []byte {
 	if resp == nil || resp.Body == nil {
 		return nil
 	}
-	// NOT watchdog-wrapped, deliberately. peekBody must hand the caller a body
-	// that still contains every unread byte, and the watchdog reads ahead into
-	// its own buffer: wrapping here loses whatever the pump had buffered past
-	// the peek, and leaves that pump racing the caller's later reads. A stalled
-	// peek is a real hazard (it blocks inside RoundTrip, before any retry
-	// decision) but it needs a bound that does not consume the stream, not this
-	// one. The 15-minute client wall is the only bound today.
+	// This read happens INSIDE RoundTrip, before any retry decision, on
+	// exactly the overloaded providers whose 429/503 bodies reach the
+	// classifier - so an unbounded peek stalls the retry layer itself.
+	//
+	// The bound is the watchdog, and the re-fronted body must be the WATCHDOG
+	// reader, not the raw one. The watchdog's pump reads ahead into its own
+	// buffer, so re-fronting with the raw body would drop whatever it had
+	// already buffered past the peek and leave that pump racing the caller's
+	// later reads. Reading through it keeps the stream whole: leftover first,
+	// then the rest of the source, all still bounded. Its terminal error is
+	// latched, so the caller reading to EOF here and again later is safe.
 	original := resp.Body
-	head, err := io.ReadAll(io.LimitReader(original, maxErrorPeekBytes))
+	bounded := wrapBodyWithIdleWatchdog(original, "retry peek")
+	head, err := io.ReadAll(io.LimitReader(bounded, maxErrorPeekBytes))
 	if err != nil && len(head) == 0 {
 		return nil
 	}
-	resp.Body = peekedBody{Reader: io.MultiReader(bytes.NewReader(head), original), Closer: original}
+	resp.Body = peekedBody{Reader: io.MultiReader(bytes.NewReader(head), bounded), Closer: original}
 	return head
 }
 

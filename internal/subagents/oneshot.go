@@ -95,10 +95,7 @@ func (h *OneShotHandler) Invoke(ctx context.Context, req runtime.Request) (json.
 		{Role: provider.RoleSystem, Content: h.SystemPrompt},
 		{Role: provider.RoleUser, Content: taskPrompt},
 	}
-	maxContextTokens := h.MaxContextTokens
-	if h.MaxContextTokensFunc != nil {
-		maxContextTokens = h.MaxContextTokensFunc()
-	}
+	maxContextTokens, maxTokens := h.resolveCallBudgets(req.WorkLimits)
 	cost, err := provider.EstimatePromptCost(msgs, nil, provider.ContextAccountingFor(h.Completer))
 	if err != nil {
 		return nil, fmt.Errorf("%w: estimate request cost: %v", agent.ErrPromptBudgetExceeded, err)
@@ -112,13 +109,18 @@ func (h *OneShotHandler) Invoke(ctx context.Context, req runtime.Request) (json.
 	// and the parent deadline is never extended.
 	callCtx, cancel := budgetContext(ctx, h.TotalTimeout, req.Timeout)
 	defer cancel()
+	callCtx, stopWorkDeadline := applyWorkDeadline(callCtx, req.WorkLimits)
+	defer stopWorkDeadline()
+	if err := callCtx.Err(); err != nil {
+		return nil, fmt.Errorf("subagent %q: %w", req.Name, err)
+	}
 
 	dial := h.dial()
 	ask := func(messages []provider.Message) (string, error) {
 		return h.Completer.Chat(callCtx, provider.Request{
 			Model:            h.Model,
 			Messages:         messages,
-			MaxTokens:        h.MaxTokens,
+			MaxTokens:        maxTokens,
 			ReasoningLevel:   dial.Level,
 			ReasoningDialect: dial.Dialect,
 			SessionID:        req.SessionID,
@@ -228,3 +230,54 @@ Do NOT guess or invent.
 // DefaultSubagentTimeout is retained for callers that invoke a one-shot
 // handler directly. Coordinator tasks use their explicit effective timeout.
 const DefaultSubagentTimeout = 15 * time.Minute
+
+// workLimitedMaxTokens clamps this call's output allowance to the tightest of
+// the handler default and the request's per-call and total output limits. A
+// single call spends the whole total, so both bound it.
+func workLimitedMaxTokens(configured *int, limits runtime.WorkLimits) *int {
+	best := 0
+	if configured != nil && *configured > 0 {
+		best = *configured
+	}
+	for _, limit := range []int{limits.MaxOutputPerCall, limits.MaxOutputTokens} {
+		if limit > 0 && (best == 0 || limit < best) {
+			best = limit
+		}
+	}
+	if best == 0 {
+		return configured
+	}
+	return &best
+}
+
+// resolveCallBudgets folds this request's WorkLimits into the handler's own
+// prompt and output budgets.
+//
+// WorkLimits is a cumulative budget for a whole task, and three of its fields
+// mean something for a single call: MaxPromptTokens tightens the local prompt
+// budget, and MaxOutputPerCall and MaxOutputTokens both cap this call's output
+// because one call spends the whole total. MaxTurns and MaxToolCalls stay
+// meaningless here - one call, no tools.
+func (h *OneShotHandler) resolveCallBudgets(limits runtime.WorkLimits) (int, *int) {
+	maxContextTokens := h.MaxContextTokens
+	if h.MaxContextTokensFunc != nil {
+		maxContextTokens = h.MaxContextTokensFunc()
+	}
+	if limit := limits.MaxPromptTokens; limit > 0 && (maxContextTokens <= 0 || limit < maxContextTokens) {
+		maxContextTokens = limit
+	}
+	return maxContextTokens, workLimitedMaxTokens(h.MaxTokens, limits)
+}
+
+// applyWorkDeadline narrows ctx to the work deadline when it is tighter, never
+// extending the caller's own bound.
+func applyWorkDeadline(ctx context.Context, limits runtime.WorkLimits) (context.Context, context.CancelFunc) {
+	deadline := limits.DeadlineAt
+	if deadline.IsZero() {
+		return ctx, func() {}
+	}
+	if parent, ok := ctx.Deadline(); ok && !deadline.Before(parent) {
+		return ctx, func() {}
+	}
+	return context.WithDeadline(ctx, deadline)
+}

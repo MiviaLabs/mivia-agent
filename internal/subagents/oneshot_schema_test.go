@@ -14,6 +14,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -162,5 +163,36 @@ func TestOneShotHandlerForwardsDisableProviderReplay(t *testing.T) {
 	}
 	if !completer.requests[0].DisableProviderReplay {
 		t.Error("DisableProviderReplay was dropped; a transient failure will replay a billable call")
+	}
+}
+
+// WorkLimits was the one runtime.Request field the parity gate recorded as a
+// genuine gap: a one-shot task silently ignored every cumulative bound. Three
+// of its fields are meaningful for a single call - a deadline, an output cap,
+// and a prompt budget - and are now honored. MaxTurns and MaxToolCalls remain
+// meaningless here: one call, no tools.
+func TestOneShotHandlerHonorsWorkLimitOutputCap(t *testing.T) {
+	completer := &scriptedChatCompleter{replies: []string{"fine"}}
+	h := &OneShotHandler{Completer: completer, Model: "m", SystemPrompt: "be brief"}
+
+	req := oneShotRequest(nil)
+	req.WorkLimits = runtime.WorkLimits{MaxOutputPerCall: 128}
+	if _, err := h.Invoke(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	got := completer.requests[0].MaxTokens
+	if got == nil || *got != 128 {
+		t.Fatalf("MaxTokens = %v, want the work limit 128", got)
+	}
+}
+
+func TestOneShotHandlerHonorsWorkLimitDeadline(t *testing.T) {
+	completer := &scriptedChatCompleter{replies: []string{"fine"}}
+	h := &OneShotHandler{Completer: completer, Model: "m", SystemPrompt: "be brief"}
+
+	req := oneShotRequest(nil)
+	req.WorkLimits = runtime.WorkLimits{DeadlineAt: time.Now().Add(-time.Second)}
+	if _, err := h.Invoke(context.Background(), req); err == nil {
+		t.Fatal("an expired work deadline must refuse the call, not run it")
 	}
 }

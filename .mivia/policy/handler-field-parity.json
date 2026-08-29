@@ -10,7 +10,6 @@
     "Depth": "Spawn-depth for nested delegation. A one-shot handler cannot spawn, so it has no depth to propagate.",
     "ID": "Parent id threaded into nested tool dispatch. A one-shot call dispatches no tools.",
     "Role": "Role carried onto nested tool dispatch, same reason as ID.",
-    "TurnID": "Turn identity for nested tool dispatch, same reason as ID.",
-    "WorkLimits": "GENUINE GAP, not a design difference. A cumulative provider/tool work bound needs a step loop to be spent against, and no caller sets it on an agent-less task today. If one ever does, the bound is silently ignored. Remove this entry when the one-shot path grows a way to honor it."
+    "TurnID": "Turn identity for nested tool dispatch, same reason as ID."
   }
 }
