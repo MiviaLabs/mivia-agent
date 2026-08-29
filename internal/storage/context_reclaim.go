@@ -46,6 +46,17 @@ const sessionLeaseTTL = 2 * time.Minute
 // through the chat_sessions catalog (worktree_catalog_keys), never through
 // this capability-gated context_sessions row, so reclaiming one here would
 // be meaningless.
+//
+// The takeover deliberately does NOT stamp a fresh lease_at - only a real
+// heartbeat tick (RenewLease) may mark a lease fresh. Stamping here (an
+// earlier version did) meant every successful reclaim, even a totally
+// uncontested one, poisoned the row against any other reclaim for the next
+// sessionLeaseTTL - breaking one-shot commands (mivia compact, a quick chat
+// -p turn) that never renew a lease at all. Tradeoff accepted instead: a
+// THIRD process reclaiming within the sub-heartbeat-interval window right
+// after this takeover can still succeed (benign churn, loud
+// ErrPrincipalMismatch on the loser's next write) rather than the silent
+// eviction this feature exists to prevent.
 func (s *SQLite) ReclaimSession(ctx context.Context, principal contextstate.Principal, sessionID string) (contextstate.Snapshot, error) {
 	if err := principal.Validate(); err != nil {
 		return contextstate.Snapshot{}, err
@@ -90,13 +101,9 @@ func (s *SQLite) ReclaimSession(ctx context.Context, principal contextstate.Prin
 	// SELECT above cannot be invalidated by another process before this
 	// UPDATE lands: the lease state it just read is still the lease state the
 	// UPDATE's predicate evaluates against. That is what makes the zero-rows
-	// disambiguation below correct instead of racy.
-	// The takeover stamps a fresh lease_at (now) alongside the new
-	// capability_digest, atomically in the same UPDATE: the reclaiming
-	// process is presumptively live the instant it takes ownership, so its
-	// own first heartbeat is not required before a third process could
-	// otherwise read the row as still-stale and race a second takeover.
-	result, err := tx.ExecContext(ctx, `UPDATE context_sessions SET capability_digest=?,lease_at=? WHERE workspace_id=? AND session_id=? AND subject_id=? AND tombstoned=0 AND instance_id IS NULL AND (lease_at IS NULL OR lease_at < ?)`, principal.CapabilityDigest(), now.Unix(), principal.WorkspaceID, sessionID, principal.SubjectID, staleCutoff)
+	// disambiguation below correct instead of racy. See the doc comment above
+	// for why this UPDATE never writes lease_at.
+	result, err := tx.ExecContext(ctx, `UPDATE context_sessions SET capability_digest=? WHERE workspace_id=? AND session_id=? AND subject_id=? AND tombstoned=0 AND instance_id IS NULL AND (lease_at IS NULL OR lease_at < ?)`, principal.CapabilityDigest(), principal.WorkspaceID, sessionID, principal.SubjectID, staleCutoff)
 	if err != nil {
 		_ = tx.Rollback()
 		return contextstate.Snapshot{}, err
@@ -144,6 +151,33 @@ func (s *SQLite) RenewLease(ctx context.Context, principal contextstate.Principa
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE context_sessions SET lease_at=? WHERE workspace_id=? AND session_id=? AND subject_id=? AND capability_digest=?`, time.Now().Unix(), principal.WorkspaceID, sessionID, principal.SubjectID, principal.CapabilityDigest())
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
+// ReleaseLease clears the caller's lease on a clean shutdown, so the next
+// resume of this session id sees an immediately-stale (NULL) lease instead
+// of waiting out sessionLeaseTTL against a process that already quit.
+// Scoped by capability_digest exactly like RenewLease: a process whose
+// capability was already reclaimed away matches zero rows and this is a
+// no-op, not an error - it has nothing left to release.
+func (s *SQLite) ReleaseLease(ctx context.Context, principal contextstate.Principal, sessionID string) error {
+	if err := principal.Validate(); err != nil {
+		return err
+	}
+	if !principal.IsBound() || sessionID != principal.SessionID {
+		return contextstate.ErrPrincipalMismatch
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	tx, err := s.beginWrite(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE context_sessions SET lease_at=NULL WHERE workspace_id=? AND session_id=? AND subject_id=? AND capability_digest=?`, principal.WorkspaceID, sessionID, principal.SubjectID, principal.CapabilityDigest())
 	if err != nil {
 		_ = tx.Rollback()
 		return err

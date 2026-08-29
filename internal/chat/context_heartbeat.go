@@ -34,21 +34,23 @@ const contextHeartbeatTickTimeout = 10 * time.Second
 // the very next tick after a rotation renews under the new principal with no
 // restart needed.
 //
-// Production lifetime note: contextHeartbeat has no production teardown call
-// site in this iteration. This process has no signal handler, no
-// defer-based cleanup, and no other hook that runs before process exit on
-// the path that owns SessionPool (cmd/mivia/main.go is a bare
-// cli.Execute-then-return; internal/newtui/run.go's RunTUI only defers
-// restoring the log writer). The only Close-shaped teardown in the repo,
-// Session.CloseDispatcher (internal/chat/session_agent.go), belongs to the
-// old REPL path (internal/clichat/chat_repl.go) and closes the agent
-// dispatcher, not this heartbeat. Accordingly: in production, nothing calls
-// stop() and the heartbeat goroutine's only lifetime bound is process exit.
-// stop() is still implemented and is exercised directly by
-// TestContextHeartbeat_TeardownRacesCloseAndReclaim, which needs a way to
-// terminate the goroutine deterministically inside a test; that test-only
-// exercise does not imply a production caller exists, and none should be
-// invented to make this comment untrue.
+// Production lifetime note: Session.ReleaseContextLease (wired at
+// dispatchChatSurface, the one choke point every chat surface - one-shot,
+// REPL, TUI - returns through) is the production caller of release(), added
+// after a real incident: without it, a session that ran long enough for even
+// one heartbeat tick (40s) left its lease looking "live" to a rival
+// ReclaimSession for the rest of sessionLeaseTTL (2 minutes) after the
+// process that renewed it had already quit cleanly - so an ordinary "quit,
+// then resume" within that window was refused as ErrSessionLiveElsewhere
+// even though nothing was still using the session. release() is best-effort
+// (a failed/timed-out release just means the next resume waits out the TTL
+// as before, not a regression) and never blocks shutdown past
+// contextHeartbeatTickTimeout. This does not cover every pooled session in
+// the TUI's SessionPool (internal/uiadapter/session_pool.go has no
+// eviction/close path of its own - a pre-existing, separately tracked gap),
+// only the primary session dispatchChatSurface holds - so a session opened
+// via the TUI's own /new or session-switcher, then abandoned without ever
+// becoming the primary session again, still only releases at process exit.
 type contextHeartbeat struct {
 	mu sync.Mutex
 	// principalFn is the live-principal accessor, bound once at construction
@@ -144,6 +146,36 @@ func (h *contextHeartbeat) stop() {
 	}
 }
 
+// release stops the ticking goroutine and, best-effort, clears this
+// process's lease so the NEXT resume of this session id sees an
+// immediately-stale (NULL) lease instead of waiting out sessionLeaseTTL
+// against a process that already quit cleanly. Safe to call on an unarmed
+// heartbeat (no-op) or with a store that doesn't implement release support.
+// This IS the production call site the type's package doc comment used to
+// say did not exist - see Session.ReleaseContextLease, wired at the one
+// choke point every chat surface (one-shot, REPL, TUI) returns through.
+func (h *contextHeartbeat) release(ctx context.Context) {
+	h.mu.Lock()
+	store := h.store
+	principalFn := h.principalFn
+	h.mu.Unlock()
+	h.stop()
+	if store == nil || principalFn == nil {
+		return
+	}
+	renewer, ok := store.(contextstate.SessionLeaseRenewer)
+	if !ok {
+		return
+	}
+	principal := principalFn()
+	if !principal.IsBound() {
+		return
+	}
+	releaseCtx, cancel := context.WithTimeout(ctx, contextHeartbeatTickTimeout)
+	defer cancel()
+	_ = renewer.ReleaseLease(releaseCtx, principal, principal.SessionID)
+}
+
 // stopLocked clears the armed state under h.mu. It does not itself cancel or
 // wait: callers that need the cancel/wait side effects (stop, arm replacing a
 // different store) capture cancel/done before or after calling this and act
@@ -205,4 +237,17 @@ func (s *Session) armContextHeartbeat(store contextstate.Store, principal contex
 		s.contextHeartbeat = newContextHeartbeat(defaultContextHeartbeatInterval, s.ContextPrincipal)
 	})
 	s.contextHeartbeat.arm(store, principal)
+}
+
+// ReleaseContextLease stops this session's context-lease heartbeat, if one
+// was ever armed, and clears its lease so the next resume of this session id
+// does not have to wait out sessionLeaseTTL against a process that already
+// quit cleanly. Safe to call on a session that never bound a context store
+// (no-op). Callers must not hold s.mu - see contextHeartbeat.arm's doc
+// comment for why release() (like arm()) must run lock-free.
+func (s *Session) ReleaseContextLease(ctx context.Context) {
+	if s.contextHeartbeat == nil {
+		return
+	}
+	s.contextHeartbeat.release(ctx)
 }

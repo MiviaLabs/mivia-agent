@@ -429,6 +429,14 @@ func applySessionApprovalPolicy(sess *chat.Session, invocation chatInvocation, r
 // runConfiguredChatOnce to keep that setup function under the repo's per-
 // function line budget.
 func dispatchChatSurface(invocation chatInvocation, sess *chat.Session, res *config.Resolved, useTools bool, agentState *AgentSessionState) error {
+	// Releases sess's context-lease heartbeat (if armed) on every return path
+	// out of this function - the one choke point one-shot, REPL, and TUI all
+	// return through. Without this, a session that ran long enough for even
+	// one heartbeat tick looked "live" to a rival ReclaimSession for the rest
+	// of the lease TTL after this process quit cleanly, so an ordinary "quit,
+	// then resume" shortly after was refused as already-live. Best-effort and
+	// bounded: see Session.ReleaseContextLease.
+	defer sess.ReleaseContextLease(context.Background())
 	if invocation.jsonMode {
 		if err := validateJSONModeInvocation(invocation); err != nil {
 			return err

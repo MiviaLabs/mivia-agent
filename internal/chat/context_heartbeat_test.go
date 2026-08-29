@@ -20,6 +20,9 @@ type heartbeatFakeStore struct {
 	renewCount    int
 	lastPrincipal contextstate.Principal
 	renewErr      error
+	releaseCount  int
+	releasePrinc  contextstate.Principal
+	releaseErr    error
 }
 
 func (s *heartbeatFakeStore) EnsureSession(context.Context, contextstate.EnsureSessionRequest) error {
@@ -39,10 +42,24 @@ func (s *heartbeatFakeStore) RenewLease(_ context.Context, principal contextstat
 	return s.renewErr
 }
 
+func (s *heartbeatFakeStore) ReleaseLease(_ context.Context, principal contextstate.Principal, _ string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.releaseCount++
+	s.releasePrinc = principal
+	return s.releaseErr
+}
+
 func (s *heartbeatFakeStore) counts() (int, contextstate.Principal) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.renewCount, s.lastPrincipal
+}
+
+func (s *heartbeatFakeStore) releases() (int, contextstate.Principal) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.releaseCount, s.releasePrinc
 }
 
 var (
@@ -214,4 +231,60 @@ func TestContextHeartbeat_ArmDoesNotDeadlockWhileSessionLockHeld(t *testing.T) {
 		t.Fatal("armContextHeartbeat deadlocked while s.mu was held by another goroutine")
 	}
 	t.Cleanup(session.contextHeartbeat.stop)
+}
+
+// TestSessionReleaseContextLeaseCallsThroughToTheStore is the regression
+// test for a real incident: a session whose heartbeat had renewed at least
+// once left its lease looking "live" for the rest of sessionLeaseTTL after
+// the process quit, so an ordinary quit-then-resume within that window was
+// refused as already-live. Session.ReleaseContextLease (wired at
+// dispatchChatSurface, the shared exit path for every chat surface) must
+// call through to the store's ReleaseLease using the CURRENT principal, and
+// must also stop the ticking goroutine so no further renewal re-marks the
+// lease fresh after release.
+func TestSessionReleaseContextLeaseCallsThroughToTheStore(t *testing.T) {
+	store := &heartbeatFakeStore{}
+	principal := heartbeatTestPrincipal(t, "sess-1", "subj-1")
+	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
+	// Construct directly with a short interval and a closure returning
+	// principal, rather than going through armContextHeartbeat (which
+	// hardcodes defaultContextHeartbeatInterval, 40s - far too long for a
+	// test to wait out a real tick) and session.ContextPrincipal (which
+	// would return an unbound zero-value Principal here, since this test
+	// never binds a real context store on session).
+	session.contextHeartbeatOnce.Do(func() {})
+	session.contextHeartbeat = newContextHeartbeat(5*time.Millisecond, func() contextstate.Principal { return principal })
+	session.contextHeartbeat.arm(store, principal)
+	waitForCondition(t, time.Second, "heartbeat never renewed before release", func() bool {
+		count, _ := store.counts()
+		return count > 0
+	})
+
+	session.ReleaseContextLease(context.Background())
+
+	releaseCount, releasedFor := store.releases()
+	if releaseCount != 1 {
+		t.Fatalf("ReleaseLease call count = %d, want exactly 1", releaseCount)
+	}
+	if releasedFor != principal {
+		t.Fatalf("ReleaseLease principal = %+v, want %+v", releasedFor, principal)
+	}
+
+	// No renewal may land after release: the ticking goroutine must have
+	// been stopped, not just outraced once.
+	countAtRelease, _ := store.counts()
+	time.Sleep(20 * time.Millisecond)
+	countAfter, _ := store.counts()
+	if countAfter != countAtRelease {
+		t.Fatalf("renewCount grew from %d to %d after ReleaseContextLease returned - the heartbeat kept ticking", countAtRelease, countAfter)
+	}
+}
+
+// TestSessionReleaseContextLeaseIsANoOpWhenNeverArmed confirms a session
+// that never bound a context store (no heartbeat ever armed) tolerates
+// ReleaseContextLease as a no-op rather than a nil-pointer panic - the
+// common case for a plain, context-less chat session.
+func TestSessionReleaseContextLeaseIsANoOpWhenNeverArmed(t *testing.T) {
+	session := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
+	session.ReleaseContextLease(context.Background())
 }
