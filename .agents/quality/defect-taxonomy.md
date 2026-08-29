@@ -244,6 +244,9 @@ different things compare as equal.
 **Evidence.** `ac484fd` compared pull-request head owners case-insensitively.
 `ee43bc9` made `containsIdent` walk subtrees instead of checking the top level only.
 `eaf7978` replaced a `%p` pointer identity with a real identity.
+`b346f9d7` keyed the recovered-path message lookup by the stripped RawID
+against an index keyed by the full namespaced TaskID; gated by
+`TestTaskResultProducerConformance`.
 
 **Probes.**
 - For each identity comparison, state the canonical form. Normalize both sides before
