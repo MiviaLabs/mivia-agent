@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-const currentContextSchemaVersion = 14
+const currentContextSchemaVersion = 15
 
 func migrateContextSchema(db *sql.DB) error {
 	if err := rejectNewerContextSchema(db); err != nil {
@@ -28,7 +28,7 @@ func migrateContextSchema(db *sql.DB) error {
 		return fmt.Errorf("context schema version %d is newer than supported version %d", version, currentContextSchemaVersion)
 	}
 	if version == currentContextSchemaVersion {
-		return ensureContextSchemaV14(db)
+		return ensureContextSchemaV15(db)
 	}
 	return migrateContextSchemaLadder(db, version)
 }
@@ -64,6 +64,7 @@ var contextMigrationLadder = []struct {
 	{11, 12, applyContextSchemaV12},
 	{12, 13, applyContextSchemaV13},
 	{13, 14, applyContextSchemaV14},
+	{14, 15, applyContextSchemaV15},
 }
 
 // migrateContextSchemaLadder walks version forward one ladder step at a time
@@ -182,6 +183,11 @@ func repairContextSchema(db *sql.DB) error {
 				return err
 			}
 		}
+		if v == 15 {
+			if err := ensureContextSchemaV15(db); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -260,6 +266,8 @@ func contextVersionTable(v int) string {
 		return "chat_sessions_v13_contract"
 	case 14:
 		return "context_sessions_v14_contract"
+	case 15:
+		return "context_sessions_v15_contract"
 	default:
 		return ""
 	}

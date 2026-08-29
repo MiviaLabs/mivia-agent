@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
@@ -72,30 +73,20 @@ func (s *SQLite) ReclaimSession(ctx context.Context, principal contextstate.Prin
 	if err != nil {
 		return contextstate.Snapshot{}, err
 	}
-	var subjectID string
-	var tombstoned int
-	var instanceID sql.NullString
-	var leaseAt sql.NullInt64
-	err = tx.QueryRowContext(ctx, `SELECT subject_id,tombstoned,instance_id,lease_at FROM context_sessions WHERE workspace_id=? AND session_id=?`, principal.WorkspaceID, sessionID).Scan(&subjectID, &tombstoned, &instanceID, &leaseAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		_ = tx.Rollback()
-		return contextstate.Snapshot{}, contextstate.ErrSessionNotFound
-	}
+	leaseAt, leaseHolder, err := reclaimRowState(ctx, tx, principal, sessionID)
 	if err != nil {
 		_ = tx.Rollback()
 		return contextstate.Snapshot{}, err
 	}
-	if subjectID != principal.SubjectID {
-		_ = tx.Rollback()
-		return contextstate.Snapshot{}, contextstate.ErrPrincipalMismatch
-	}
-	if tombstoned != 0 {
-		_ = tx.Rollback()
-		return contextstate.Snapshot{}, contextstate.ErrSessionTombstoned
-	}
-	if instanceID.Valid {
-		_ = tx.Rollback()
-		return contextstate.Snapshot{}, fmt.Errorf("%w: managed worktree sessions cannot be reclaimed", contextstate.ErrInvalidDTO)
+	// A provably dead holder's fresh lease is treated as stale: the lease
+	// fence exists to protect a LIVE owner from silent eviction, and proof
+	// of death (same host and boot, pid gone or reused - lease_liveness.go)
+	// removes the owner it protects. Raising the cutoff makes the UPDATE's
+	// lease predicate pass, so a crashed process blocks resume for zero
+	// seconds instead of the rest of sessionLeaseTTL. Anything short of
+	// proof leaves the cutoff alone and keeps the pure-TTL wait.
+	if leaseHolder.Valid && leaseHolderDead(leaseHolder.String) {
+		staleCutoff = math.MaxInt64
 	}
 	// beginWrite holds SQLite's write lock for the whole transaction, so the
 	// SELECT above cannot be invalidated by another process before this
@@ -136,6 +127,35 @@ func (s *SQLite) ReclaimSession(ctx context.Context, principal contextstate.Prin
 	return snapshot, tx.Commit()
 }
 
+// reclaimRowState reads the session row and enforces every non-lease guard:
+// existence, subject ownership, tombstone, and the managed-worktree
+// rejection. It returns the row's lease state for the caller's takeover
+// decision; the caller owns the transaction and rolls back on any error.
+func reclaimRowState(ctx context.Context, tx *sql.Tx, principal contextstate.Principal, sessionID string) (sql.NullInt64, sql.NullString, error) {
+	var subjectID string
+	var tombstoned int
+	var instanceID sql.NullString
+	var leaseAt sql.NullInt64
+	var leaseHolder sql.NullString
+	err := tx.QueryRowContext(ctx, `SELECT subject_id,tombstoned,instance_id,lease_at,lease_holder FROM context_sessions WHERE workspace_id=? AND session_id=?`, principal.WorkspaceID, sessionID).Scan(&subjectID, &tombstoned, &instanceID, &leaseAt, &leaseHolder)
+	if errors.Is(err, sql.ErrNoRows) {
+		return leaseAt, leaseHolder, contextstate.ErrSessionNotFound
+	}
+	if err != nil {
+		return leaseAt, leaseHolder, err
+	}
+	if subjectID != principal.SubjectID {
+		return leaseAt, leaseHolder, contextstate.ErrPrincipalMismatch
+	}
+	if tombstoned != 0 {
+		return leaseAt, leaseHolder, contextstate.ErrSessionTombstoned
+	}
+	if instanceID.Valid {
+		return leaseAt, leaseHolder, fmt.Errorf("%w: managed worktree sessions cannot be reclaimed", contextstate.ErrInvalidDTO)
+	}
+	return leaseAt, leaseHolder, nil
+}
+
 // RenewLease refreshes the caller's context session lease so ReclaimSession
 // treats this process's ownership as live. Scoped by capability_digest, not
 // just subject: a process whose capability was already reclaimed away by a
@@ -157,7 +177,7 @@ func (s *SQLite) RenewLease(ctx context.Context, principal contextstate.Principa
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE context_sessions SET lease_at=? WHERE workspace_id=? AND session_id=? AND subject_id=? AND capability_digest=?`, time.Now().Unix(), principal.WorkspaceID, sessionID, principal.SubjectID, principal.CapabilityDigest())
+	_, err = tx.ExecContext(ctx, `UPDATE context_sessions SET lease_at=?, lease_holder=? WHERE workspace_id=? AND session_id=? AND subject_id=? AND capability_digest=?`, time.Now().Unix(), currentLeaseHolder(), principal.WorkspaceID, sessionID, principal.SubjectID, principal.CapabilityDigest())
 	if err != nil {
 		_ = tx.Rollback()
 		return err
@@ -184,7 +204,7 @@ func (s *SQLite) ReleaseLease(ctx context.Context, principal contextstate.Princi
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE context_sessions SET lease_at=NULL WHERE workspace_id=? AND session_id=? AND subject_id=? AND capability_digest=?`, principal.WorkspaceID, sessionID, principal.SubjectID, principal.CapabilityDigest())
+	_, err = tx.ExecContext(ctx, `UPDATE context_sessions SET lease_at=NULL, lease_holder=NULL WHERE workspace_id=? AND session_id=? AND subject_id=? AND capability_digest=?`, principal.WorkspaceID, sessionID, principal.SubjectID, principal.CapabilityDigest())
 	if err != nil {
 		_ = tx.Rollback()
 		return err
