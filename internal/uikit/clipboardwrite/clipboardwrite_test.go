@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -191,5 +192,22 @@ func TestExecRunnerUnknownCommandErrors(t *testing.T) {
 	r := execRunner{}
 	if err := r.Run("mivia-clipboardwrite-test-nonexistent-binary", nil, ""); err == nil {
 		t.Fatal("an unresolvable command must surface as an error")
+	}
+}
+
+// TestExecRunnerWriteErrorAfterCommandExits covers the Write() error
+// path: `true` exits without ever reading stdin, closing the read end
+// almost immediately; a large-enough payload (bigger than the OS pipe
+// buffer, so it cannot all queue up before Start's exit races ahead)
+// reliably hits that closed pipe and returns "broken pipe" instead of
+// silently succeeding.
+func TestExecRunnerWriteErrorAfterCommandExits(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX command (true); no Windows equivalent wired here")
+	}
+	r := execRunner{}
+	big := strings.Repeat("x", 8*1024*1024)
+	if err := r.Run("true", nil, big); err == nil {
+		t.Fatal("writing a large payload to an already-exited reader must error")
 	}
 }
