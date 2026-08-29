@@ -17,7 +17,7 @@ func TestBuildApp(t *testing.T) {
 	res := &config.Resolved{}
 	agentState := &cli.AgentSessionState{}
 
-	appModel, err := buildApp(sess, res, true, agentState, "")
+	appModel, _, err := buildApp(sess, res, true, agentState, "")
 	if err != nil {
 		t.Fatalf("buildApp failed: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestBuildApp_SubagentHistoryVisibleInDialog(t *testing.T) {
 	}
 	agentState := &cli.AgentSessionState{}
 
-	root, err := buildApp(sess, res, true, agentState, "")
+	root, _, err := buildApp(sess, res, true, agentState, "")
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}

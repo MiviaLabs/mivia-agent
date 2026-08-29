@@ -10,6 +10,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	sel "github.com/MiviaLabs/mivia-agent/internal/ui/select"
+
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
@@ -207,10 +209,16 @@ func (s Screen) Update(msg tea.Msg) (app.Screen, tea.Cmd) {
 	before := s.reservedRows()
 	next, cmd := s.update(msg)
 	scr, ok := next.(Screen)
-	if !ok || scr.reservedRows() == before {
+	if !ok {
 		return next, cmd
 	}
-	scr.resize()
+	if scr.reservedRows() != before {
+		scr.resize()
+	}
+	// Keep the components' selection rects current: any layout change -
+	// resize, reflow, approval armed/cleared, panel toggle - moves the
+	// rows their highlight paints on.
+	scr.syncSelectionRects()
 	return scr, cmd
 }
 
@@ -401,9 +409,12 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 	case tea.MouseClickMsg:
 		return s.handleClick(msg)
 	case tea.MouseReleaseMsg:
-		// Actions fire on the click, not the release: there is no
-		// drag selection to complete (deferred behind rule 6.3's
-		// cheaper scrollback handover), so release carries nothing.
+		// Actions fire on the click, not the release: a drag's release is
+		// consumed by the router's selection state machine, and an
+		// ordinary release carries nothing.
+		return s, nil
+	case sel.CopyTextMsg:
+		s.handleCopyToast(msg.Text)
 		return s, nil
 	case tea.WindowSizeMsg:
 		s.width, s.height = msg.Width, msg.Height

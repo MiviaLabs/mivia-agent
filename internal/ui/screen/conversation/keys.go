@@ -701,18 +701,7 @@ func (s Screen) composerAction(id keymap.ID) (app.Screen, tea.Cmd, bool) {
 			return next, cmd, true
 		}
 		if s.active != nil && len(s.queue) > 0 {
-			head := s.queue[0]
-			s.queue = s.queue[1:]
-			if s.queueOverlay.Active() {
-				s.queueOverlay.SetItems(s.queue)
-			}
-			if !s.forcePush(head) {
-				s.queue = append([]string{head}, s.queue...)
-				if s.queueOverlay.Active() {
-					s.queueOverlay.SetItems(s.queue)
-				}
-				s.statusline.Notice("nothing to interrupt")
-			}
+			return s.forceSendHead(), nil, true
 		}
 		return s, nil, true
 	case keymap.IDFocusPrev:

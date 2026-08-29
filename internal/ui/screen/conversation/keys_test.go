@@ -1102,3 +1102,39 @@ func TestGutterClipsAnOverflowingRowWithTheClipMarker(t *testing.T) {
 		t.Errorf("got %q, want the clip marker %q on the overflowing row", got, uikitconfig.ClipMarker)
 	}
 }
+
+// TestReservedRowsResizeOnComposerGrowth covers the Update wrapper's
+// reservedRows comparison: a newline grows the composer, claims a row,
+// and the wrapper must call resize() so the transcript window follows.
+func TestReservedRowsResizeOnComposerGrowth(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	s = next.(Screen)
+	before := s.transcript.Height()
+
+	// shift+enter inserts a newline (composer KeyMap.InsertNewline).
+	next, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift})
+	s = next.(Screen)
+	if s.composer.Height() < 3 {
+		t.Fatalf("precondition: composer must grow past its frame, got %d", s.composer.Height())
+	}
+	after := s.transcript.Height()
+	if after >= before {
+		t.Fatalf("the extra composer row must shrink the transcript: %d -> %d", before, after)
+	}
+}
+
+// TestViewReflectsLiveSelectionRect proves View paints against the
+// rect the last Update injected - the syncSelectionRects contract that
+// keeps the highlight on the right cells across layout changes.
+func TestViewReflectsLiveSelectionRect(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	next, _ := s.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	s = next.(Screen)
+	_ = s.View()
+	tr := s.transcript.SelectionRect()
+	wantY := 1 + s.topbar.Height() + 1
+	if tr.MinX != 1 || tr.MinY != wantY || tr.Height() != s.transcriptHeight() {
+		t.Fatalf("injected rect must match geometry: %+v", tr)
+	}
+}

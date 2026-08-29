@@ -359,12 +359,17 @@ type WorktreeConfig struct {
 
 // TUIConfig controls terminal user interface preferences.
 type TUIConfig struct {
-	Theme         string `toml:"theme"`
-	Mouse         *bool  `toml:"mouse"`
-	ShowReasoning *bool  `toml:"show_reasoning"`
-	ScrollLines   *int   `toml:"scroll_lines"`
-	ScreenReader  *bool  `toml:"screen_reader"`
-	ReducedMotion *bool  `toml:"reduced_motion"`
+	Theme string `toml:"theme"`
+	// Mouse is the cockpit's mouse-capture default: true (default)
+	// enables in-app drag-select, copy, and wheel; false hands the mouse
+	// to the terminal for native selection. MIVIA_MOUSE overrides it at
+	// startup; Settings → General changes it live. See
+	// docs/design/cockpit-research.md rule 6.5.
+	Mouse         *bool `toml:"mouse"`
+	ShowReasoning *bool `toml:"show_reasoning"`
+	ScrollLines   *int  `toml:"scroll_lines"`
+	ScreenReader  *bool `toml:"screen_reader"`
+	ReducedMotion *bool `toml:"reduced_motion"`
 }
 
 // WorkflowsConfig holds workflow-engine defaults.

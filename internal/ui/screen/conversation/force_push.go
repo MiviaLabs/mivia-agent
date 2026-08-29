@@ -55,6 +55,29 @@ func preview(text string) string {
 	return text
 }
 
+// forceSendHead force-sends the head of the queue: an empty-composer
+// IDForceSend with a turn running and messages queued. The head is
+// popped before parking so a failed force (nothing to interrupt) can
+// restore it at the front unchanged; the overlay resyncs either way so
+// what it shows matches the queue exactly. Value receiver like its only
+// caller composerAction: a pointer method there would mutate a copy
+// the caller discards.
+func (s Screen) forceSendHead() Screen {
+	head := s.queue[0]
+	s.queue = s.queue[1:]
+	if s.queueOverlay.Active() {
+		s.queueOverlay.SetItems(s.queue)
+	}
+	if !s.forcePush(head) {
+		s.queue = append([]string{head}, s.queue...)
+		if s.queueOverlay.Active() {
+			s.queueOverlay.SetItems(s.queue)
+		}
+		s.statusline.Notice("nothing to interrupt")
+	}
+	return s
+}
+
 // drainPendingForce is the shared drain helper the visible turnEndedMsg
 // branch uses: it sends the parked forced text ahead of the ordinary
 // queue via sendText. On send failure the text is demoted to the front

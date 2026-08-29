@@ -19,6 +19,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
 	conv "github.com/MiviaLabs/mivia-agent/internal/ui/component/transcript"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/render"
+	sel "github.com/MiviaLabs/mivia-agent/internal/ui/select"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	uikitconfig "github.com/MiviaLabs/mivia-agent/internal/uikit/config"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/keymap"
@@ -60,6 +61,13 @@ type Screen struct {
 	width, height int
 
 	search searchState
+
+	// selState is the mouse drag selection (selection.go). It lives as a
+	// pointer so the value receiver's View can paint a selection the
+	// router armed through the stack slot: the slot and every copy of it
+	// share one Selection; only ClearSelection and the copy-on-write
+	// focus update mutate it.
+	selState *sel.Selection
 }
 
 // NewPager builds the pager over a conversation snapshot.
@@ -156,6 +164,9 @@ func (s *Screen) clamp() {
 // scrollBy moves by whole rows and keeps the offset inside the
 // conversation.
 func (s *Screen) scrollBy(delta int) {
+	// The rows under a live selection just moved; cancel rather than
+	// copy drifted text.
+	s.ClearSelection()
 	s.offset += delta
 	s.clamp()
 }
@@ -177,6 +188,7 @@ func (s Screen) Update(msg tea.Msg) (app.Screen, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		s.width, s.height = msg.Width, msg.Height
 		s.conv.SetSize(msg.Width, 1)
+		s.ClearSelection() // the rect and rows under it changed
 		s.rebuild()
 		return s, nil
 	case tea.MouseWheelMsg:
@@ -200,6 +212,9 @@ func (s Screen) Update(msg tea.Msg) (app.Screen, tea.Cmd) {
 		return s, nil
 	case uievent.EventMsg:
 		return s.handleEvent(msg.Event)
+	case sel.CopyTextMsg:
+		s.handleCopyToast(msg.Text)
+		return s, nil
 	case conv.FlushMsg:
 		var cmd tea.Cmd
 		s.conv, cmd = s.conv.Update(msg)
@@ -357,6 +372,10 @@ func (s Screen) View() string {
 			continue
 		}
 		out = append(out, s.renderRow(row))
+	}
+	if s.HasSelection() {
+		from, to := s.selState.Ordered()
+		out = sel.HighlightLines(out, from, to)
 	}
 	out = append(out, s.statusLine())
 	return s.gutter(out)

@@ -366,3 +366,94 @@ func TestSwitchConversation_PendingForcePlumbing(t *testing.T) {
 		t.Fatalf("expected pendingForce restored to %q, got %v", "forced on A", s.pendingForce)
 	}
 }
+
+// TestForceSendHead_EmptyComposerPopsQueue covers the empty-composer
+// IDForceSend path (keys.go's composerAction): with a turn running and
+// messages queued, the head pops, parks as the forced message, and the
+// queue shrinks. The overlay is deliberately closed: while it is open,
+// handleQueueKey swallows every key first (its own "f" row covers the
+// dialog force-send).
+func TestForceSendHead_EmptyComposerPopsQueue(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	handle := &recordingHandle{id: "t1"}
+	s.active = handle
+	s.queue = []string{"first", "second"}
+
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyF4})
+	got := next.(Screen)
+
+	if got.pendingForce == nil || *got.pendingForce != "first" {
+		t.Fatalf("expected pendingForce %q, got %v", "first", got.pendingForce)
+	}
+	if len(got.queue) != 1 || got.queue[0] != "second" {
+		t.Fatalf("expected queue [second], got %v", got.queue)
+	}
+	if handle.cancelCount != 1 {
+		t.Errorf("expected Cancel once, got %d", handle.cancelCount)
+	}
+}
+
+// TestForceSendHead_ResyncsOpenOverlay covers the overlay arm of the
+// same helper: with the queue dialog open, popping the head must leave
+// the overlay showing exactly what remains.
+func TestForceSendHead_ResyncsOpenOverlay(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	s.active = &recordingHandle{id: "t1"}
+	s.queue = []string{"first", "second"}
+	s.queueOverlay.Open(s.queue)
+
+	got := s.forceSendHead()
+
+	if got.pendingForce == nil || *got.pendingForce != "first" {
+		t.Fatalf("expected pendingForce %q, got %v", "first", got.pendingForce)
+	}
+	if items := got.queueOverlay.Items(); len(items) != 1 || items[0] != "second" {
+		t.Fatalf("overlay must resync to [second], got %v", items)
+	}
+}
+
+// TestForceSendHead_RestoresRefusedHead covers the restore arm: the
+// force cannot park (the active turn reports refusal through Cancel
+// leaving no interruptible state), so the popped head returns to the
+// front of the queue unchanged and the notice says nothing was
+// interrupted.
+func TestForceSendHead_RestoresRefusedHead(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	s.active = nil // forcePush refuses: nothing to interrupt
+	s.queue = []string{"keep me"}
+
+	got := s.forceSendHead()
+
+	if got.pendingForce != nil {
+		t.Fatalf("expected no parked force, got %v", *got.pendingForce)
+	}
+	if len(got.queue) != 1 || got.queue[0] != "keep me" {
+		t.Fatalf("queue head must return unchanged, got %v", got.queue)
+	}
+	if v := got.statusline.View(fixedNow()); !strings.Contains(v, "nothing to interrupt") {
+		t.Fatalf("statusline must say nothing was interrupted, got %q", v)
+	}
+}
+
+// TestForceSendHead_RestoresWithOverlayOpen covers the restore arm with
+// the queue dialog open: the refused head returns to the front and the
+// overlay's items are re-synced to match, so the dialog never shows a
+// message that is no longer where the queue has it.
+func TestForceSendHead_RestoresWithOverlayOpen(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	s.active = nil // forcePush refuses: nothing to interrupt
+	s.queue = []string{"keep me"}
+	s.queueOverlay.Open(s.queue)
+
+	got := s.forceSendHead()
+
+	if got.pendingForce != nil {
+		t.Fatalf("expected no parked force, got %v", *got.pendingForce)
+	}
+	if len(got.queue) != 1 || got.queue[0] != "keep me" {
+		t.Fatalf("queue head must return unchanged, got %v", got.queue)
+	}
+	if items := got.queueOverlay.Items(); len(items) != 1 || items[0] != "keep me" {
+		t.Fatalf("overlay must resync after the restore, got %v", items)
+	}
+}
