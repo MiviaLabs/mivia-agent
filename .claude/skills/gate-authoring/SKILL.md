@@ -17,8 +17,8 @@ tools:
   - glob
   - find_references
   - run_command
-  - write
-  - edit
+  - write_file
+  - search_replace
 ---
 
 <!-- Provenance: written from the 2026-08-29 subagent-stall investigation, where 13 reachable bugs shipped through a full gate suite. Every rule below is a lesson that batch paid for. -->
