@@ -209,7 +209,11 @@ func (c *AnthropicCompleter) do(ctx context.Context, req Request, body map[strin
 	defer cancel()
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, asTransient(fmt.Errorf("%s: %w", c.name, markTransientReadDeadline(ctx, req.Timeout, err)))
+		// markTransientReadDeadline needs the ARMED request context, not the caller's.
+		// newHTTPRequest builds the req.Timeout child internally, and httpReq.Context()
+		// is that child: passing the parent instead inverts the test, marking a spent
+		// request budget transient and a tighter parent bound permanent.
+		return nil, asTransient(fmt.Errorf("%s: %w", c.name, markTransientReadDeadline(httpReq.Context(), req.Timeout, err)))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	// Bounded like every other provider body read in this package: a peer that
@@ -218,7 +222,7 @@ func (c *AnthropicCompleter) do(ctx context.Context, req Request, body map[strin
 	// operationally common read - nested and subagent turns never stream.
 	raw, err := io.ReadAll(io.LimitReader(wrapBodyWithIdleWatchdog(resp.Body, c.name), maxJSONResponseBytes))
 	if err != nil {
-		return nil, asTransient(fmt.Errorf("%s: read response: %w", c.name, markTransientReadDeadline(ctx, req.Timeout, err)))
+		return nil, asTransient(fmt.Errorf("%s: read response: %w", c.name, markTransientReadDeadline(httpReq.Context(), req.Timeout, err)))
 	}
 	if err := anthropicErrorFromBody(c.name, resp.StatusCode, raw); err != nil {
 		return nil, err

@@ -42,7 +42,7 @@ func (c *AnthropicCompleter) chatTurnStream(ctx context.Context, req Request, bo
 	defer cancel()
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, asTransient(fmt.Errorf("%s: %w", c.name, markTransientReadDeadline(ctx, req.Timeout, err)))
+		return nil, asTransient(fmt.Errorf("%s: %w", c.name, markTransientReadDeadline(httpReq.Context(), req.Timeout, err)))
 	}
 	defer func() { _ = resp.Body.Close() }()
 
