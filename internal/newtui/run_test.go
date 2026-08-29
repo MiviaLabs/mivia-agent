@@ -1,6 +1,7 @@
 package newtui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -9,8 +10,22 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/cli"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/theme"
 	"github.com/charmbracelet/x/ansi"
 )
+
+func TestBuildAppPropagatesThemeLoadError(t *testing.T) {
+	original := loadThemes
+	wantErr := errors.New("corrupt embedded theme")
+	loadThemes = func() ([]theme.Theme, error) { return nil, wantErr }
+	defer func() { loadThemes = original }()
+
+	sess := chat.NewSession(&config.Resolved{}, nil)
+	agentState := &cli.AgentSessionState{}
+	if _, _, err := buildApp(sess, &config.Resolved{}, true, agentState, ""); !errors.Is(err, wantErr) {
+		t.Fatalf("buildApp err = %v, want %v", err, wantErr)
+	}
+}
 
 func TestBuildApp(t *testing.T) {
 	sess := chat.NewSession(&config.Resolved{}, nil)

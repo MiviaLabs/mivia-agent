@@ -76,10 +76,15 @@ func mouseEnabled(res *config.Resolved, env []string) bool {
 	return on
 }
 
+// loadThemes is theme.Embedded, indirected so a test can force the
+// error return (the compiled-in embed.FS itself cannot be corrupted
+// in-process).
+var loadThemes = theme.Embedded
+
 func buildApp(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *cli.AgentSessionState, resumeSessionName string) (tea.Model, *uiadapter.SettingsStore, error) {
 	registerSubagentProgress()
 	approver := uiadapter.NewApprover(sess)
-	themes, err := theme.Embedded()
+	themes, err := loadThemes()
 	if err != nil {
 		return nil, nil, err
 	}
