@@ -3,14 +3,9 @@
   "knownUncovered": {
     "internal/newtui/run.go": {
       "lines": [
-        19,
-        20,
-        21,
-        28,
-        29,
-        30
+        85
       ],
-      "reason": "tea.NewProgram(root).Run() requires an interactive TTY and runs the full bubbletea event loop; sub-components and app construction are covered by unit tests in run_test.go and component tests"
+      "reason": "theme.Embedded()'s error return (missing/unparsable embedded theme JSON, or a theme file missing its \"name\" field) depends on the compiled-in embed.FS content, which no test can corrupt in-process; TestBuildApp and TestRunTUICallsBuildApp cover the rest of buildApp's error surface, and the p.Run()-blocks-on-a-TTY concern this entry used to describe is now itself covered (a non-TTY stdin fails Run() fast rather than blocking)"
     },
     "internal/cliagents/agents_command.go": {
       "lines": [
