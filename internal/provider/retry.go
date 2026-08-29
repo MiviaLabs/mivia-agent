@@ -323,6 +323,13 @@ func peekBody(resp *http.Response) []byte {
 	if resp == nil || resp.Body == nil {
 		return nil
 	}
+	// NOT watchdog-wrapped, deliberately. peekBody must hand the caller a body
+	// that still contains every unread byte, and the watchdog reads ahead into
+	// its own buffer: wrapping here loses whatever the pump had buffered past
+	// the peek, and leaves that pump racing the caller's later reads. A stalled
+	// peek is a real hazard (it blocks inside RoundTrip, before any retry
+	// decision) but it needs a bound that does not consume the stream, not this
+	// one. The 15-minute client wall is the only bound today.
 	original := resp.Body
 	head, err := io.ReadAll(io.LimitReader(original, maxErrorPeekBytes))
 	if err != nil && len(head) == 0 {

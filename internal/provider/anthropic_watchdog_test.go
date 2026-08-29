@@ -169,3 +169,33 @@ func TestAnthropicWatchdogLeavesHealthyReadsAlone(t *testing.T) {
 		t.Fatalf("content = %q, want %q", resp.Content, "fine")
 	}
 }
+
+// The FAILING path is a body read too. A provider that sends rejection
+// headers and then stops answering must not hold httpError open: this is
+// where a stall is most likely (an overloaded provider) and least expected.
+// Found by mivia.go.provider-body-read-needs-watchdog after the first pass of
+// watchdog fixes missed it.
+func TestOpenAICompatErrorBodyStallFailsFast(t *testing.T) {
+	withWatchdogTimeouts(t, 100*time.Millisecond, 100*time.Millisecond)
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest) // permanent: no retry storm
+		w.(http.Flusher).Flush()
+		<-release
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(release) })
+
+	c := NewOpenAICompatWithOptions(CompatOptions{Name: "probe", BaseURL: srv.URL, APIKey: "k"})
+	err := callWithin(t, 20*time.Second, func() error {
+		_, callErr := c.ChatTurn(context.Background(), Request{
+			Model:    "m",
+			Messages: []Message{{Role: RoleUser, Content: "hello"}},
+		})
+		return callErr
+	})
+	if err == nil {
+		t.Fatal("expected the 400 to surface as an error")
+	}
+}

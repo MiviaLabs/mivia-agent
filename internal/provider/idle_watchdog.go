@@ -111,6 +111,14 @@ type idleWatchdogReader struct {
 	seenFirstByte bool
 	leftover      []byte
 	pendingErr    error
+	// terminalErr latches the error that ended the source, so a caller that
+	// reads again after EOF gets EOF again instead of blocking. The pump exits
+	// once src returns an error, and nothing will ever send on resultCh after
+	// that - without the latch, the next Read waits out the full idle bound
+	// for a result that cannot come. Reading past EOF is ordinary (a bounded
+	// read followed by a drain does it), so this is the difference between a
+	// fast second EOF and a stall of idle-bound length.
+	terminalErr error
 
 	startOnce sync.Once
 	resultCh  chan wdReadResult
@@ -166,7 +174,11 @@ func (r *idleWatchdogReader) Read(p []byte) (int, error) {
 	if r.pendingErr != nil {
 		err := r.pendingErr
 		r.pendingErr = nil
+		r.terminalErr = err
 		return 0, err
+	}
+	if r.terminalErr != nil {
+		return 0, r.terminalErr
 	}
 	r.startOnce.Do(func() { go r.pump() })
 	timeout := r.idle
@@ -197,6 +209,8 @@ func (r *idleWatchdogReader) drainLeftover(p []byte) int {
 // both survive to be returned on later Read calls in order.
 func (r *idleWatchdogReader) deliver(p []byte, out wdReadResult) (int, error) {
 	if len(out.buf) == 0 {
+		// The pump has exited; remember why so later reads answer at once.
+		r.terminalErr = out.err
 		return 0, out.err
 	}
 	r.seenFirstByte = true

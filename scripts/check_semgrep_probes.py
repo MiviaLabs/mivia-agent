@@ -183,6 +183,15 @@ PROBES = [
         'package probe\n\nimport "testing"\n\nfunc TestNonEmpty(t *testing.T) {\n\tif 1 != 1 {\n\t\tt.Fatal("fail")\n\t}\n}\n',
     ),
     (
+        "mivia.go.provider-body-read-needs-watchdog",
+        "internal/provider/probe-body-read/viol.go",
+        "package probe\n\nimport (\n\t\"io\"\n\t\"net/http\"\n)\n\n"
+        "func read(resp *http.Response) { _, _ = io.ReadAll(resp.Body) }\n",
+        "internal/provider/probe-body-read/clean.go",
+        "package probe\n\nimport (\n\t\"io\"\n)\n\n"
+        "func read(body io.Reader) { _, _ = io.ReadAll(body) }\n",
+    ),
+    (
         "mivia.go.no-tautological-test-assertion",
         "internal/probe/taut_test.go",
         'package probe\n\nimport "testing"\n\ntype A struct{}\nfunc (A) True(t *testing.T, b bool) {}\nvar assert A\n\nfunc TestTaut(t *testing.T) {\n\tassert.True(t, true)\n}\n',

@@ -524,3 +524,27 @@ rules:
       - pattern: require.True($T, true)
       - pattern: require.False($T, false)
       - pattern: require.Nil($T, nil)
+
+  - id: mivia.go.provider-body-read-needs-watchdog
+    languages:
+      - go
+    severity: ERROR
+    message: >-
+      Read a provider response body through wrapBodyWithIdleWatchdog (or the
+      client's wrapWithIdleWatchdog). A raw read of resp.Body has no bound of
+      its own, so a peer that answers and then goes silent holds the call to
+      the transport's absolute wall - and nested subagent turns do not stream,
+      so no human sees the stall.
+    paths:
+      include:
+        - /internal/provider/**/*.go
+      exclude:
+        - /**/*_test.go
+    pattern-either:
+      - pattern: io.ReadAll($RESP.Body)
+      - pattern: io.ReadAll(io.LimitReader($RESP.Body, ...))
+      - pattern: io.Copy($DST, $RESP.Body)
+      - pattern: io.CopyN($DST, $RESP.Body, ...)
+      - pattern: bufio.NewScanner($RESP.Body)
+      - pattern: bufio.NewReader($RESP.Body)
+      - pattern: json.NewDecoder($RESP.Body)
