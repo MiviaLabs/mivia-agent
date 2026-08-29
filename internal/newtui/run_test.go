@@ -22,7 +22,7 @@ func TestBuildAppPropagatesThemeLoadError(t *testing.T) {
 
 	sess := chat.NewSession(&config.Resolved{}, nil)
 	agentState := &cli.AgentSessionState{}
-	if _, _, err := buildApp(sess, &config.Resolved{}, true, agentState, ""); !errors.Is(err, wantErr) {
+	if _, _, _, err := buildApp(sess, &config.Resolved{}, true, agentState, ""); !errors.Is(err, wantErr) {
 		t.Fatalf("buildApp err = %v, want %v", err, wantErr)
 	}
 }
@@ -32,7 +32,7 @@ func TestBuildApp(t *testing.T) {
 	res := &config.Resolved{}
 	agentState := &cli.AgentSessionState{}
 
-	appModel, _, err := buildApp(sess, res, true, agentState, "")
+	appModel, _, _, err := buildApp(sess, res, true, agentState, "")
 	if err != nil {
 		t.Fatalf("buildApp failed: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestBuildApp_SubagentHistoryVisibleInDialog(t *testing.T) {
 	}
 	agentState := &cli.AgentSessionState{}
 
-	root, _, err := buildApp(sess, res, true, agentState, "")
+	root, _, _, err := buildApp(sess, res, true, agentState, "")
 	if err != nil {
 		t.Fatalf("buildApp: %v", err)
 	}

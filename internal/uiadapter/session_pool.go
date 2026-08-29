@@ -105,6 +105,43 @@ func (p *SessionPool) Session(id string) *chat.Session {
 	return p.sessions[id]
 }
 
+// releaseSessionLease is the per-session release hook ReleaseLeases invokes,
+// a var so tests can record the visited sessions without arming real context
+// heartbeats (the chat package owns that behavior's own tests).
+var releaseSessionLease = func(ctx context.Context, sess *chat.Session) {
+	sess.ReleaseContextLease(ctx)
+}
+
+// ReleaseLeases releases every pooled session's context lease. The TUI's
+// return path must call this on shutdown: only the primary startup session
+// is released by the chat surface's own defer, so without this every OTHER
+// session resumed in the TUI kept a fresh lease behind (40s heartbeat, 2min
+// TTL) and the next process's resume was refused with "live in another
+// process" until the TTL ran out - the intermittent resume failure users
+// read as a broken binary. Sessions registered under several ids (raw and
+// canonical) are released once.
+func (p *SessionPool) ReleaseLeases(ctx context.Context) {
+	p.mu.Lock()
+	seen := make(map[*chat.Session]struct{}, len(p.sessions))
+	distinct := make([]*chat.Session, 0, len(p.sessions))
+	for _, sess := range p.sessions {
+		if sess == nil {
+			continue
+		}
+		if _, dup := seen[sess]; dup {
+			continue
+		}
+		seen[sess] = struct{}{}
+		distinct = append(distinct, sess)
+	}
+	p.mu.Unlock()
+	// Release outside p.mu: ReleaseContextLease must run lock-free (it joins
+	// the heartbeat goroutine and issues a store write with its own timeout).
+	for _, sess := range distinct {
+		releaseSessionLease(ctx, sess)
+	}
+}
+
 // IsActive reports whether the session with the given ID has a turn
 // currently in flight. A session this process has never loaded into the
 // pool cannot be active from here, so it reports false.

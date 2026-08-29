@@ -117,7 +117,14 @@ func (s *SQLite) ReclaimSession(ctx context.Context, principal contextstate.Prin
 		// fresh, so a live owner is rejecting the takeover instead of being
 		// silently evicted mid-turn.
 		if leaseAt.Valid && leaseAt.Int64 >= staleCutoff {
-			return contextstate.Snapshot{}, contextstate.ErrSessionLiveElsewhere
+			// Typed refusal: the caller (and ultimately the user) needs the
+			// holder's heartbeat age and the takeover horizon to tell a
+			// short wait from a permanent failure.
+			leaseTime := time.Unix(leaseAt.Int64, 0)
+			return contextstate.Snapshot{}, &contextstate.SessionLiveError{
+				LeaseAge:   now.Sub(leaseTime),
+				RetryAfter: leaseTime.Add(sessionLeaseTTL).Sub(now),
+			}
 		}
 		return contextstate.Snapshot{}, err
 	}

@@ -2,13 +2,16 @@ package uiadapter
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/hooksession"
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
@@ -660,6 +663,20 @@ func (r *CommandRunner) listSessionSummaries() ([]ports.SessionSummary, error) {
 	return out, nil
 }
 
+// resumeErrorText renders a resume failure for the transcript. The one case
+// with a known action gets a plain-language message: a session whose lease
+// another live process still holds tells the user who has it and how long
+// until retry succeeds, instead of the raw wrapped error chain.
+func resumeErrorText(id string, err error) string {
+	var live *contextstate.SessionLiveError
+	if errors.As(err, &live) {
+		return fmt.Sprintf(
+			"session %s is in use by another mivia process (last heartbeat %s ago) - close that process, or retry in ~%s",
+			id, live.LeaseAge.Round(time.Second), live.RetryAfter.Round(time.Second))
+	}
+	return fmt.Sprintf("failed to resume session %q: %v", id, err)
+}
+
 // SelectSession loads and resumes a saved session.
 func (r *CommandRunner) SelectSession(ctx context.Context, id string) ports.CommandOutcome {
 	if r.activeSession() == nil && r.res == nil {
@@ -671,7 +688,7 @@ func (r *CommandRunner) SelectSession(ctx context.Context, id string) ports.Comm
 	if r.pool != nil {
 		conv, err := r.pool.GetOrCreate(id)
 		if err != nil {
-			return ports.CommandOutcome{Err: fmt.Sprintf("failed to resume session %q: %v", id, err)}
+			return ports.CommandOutcome{Err: resumeErrorText(id, err)}
 		}
 		if c, ok := conv.(*Conversation); ok && c != nil {
 			r.SetActiveSession(c.Session())
@@ -687,7 +704,7 @@ func (r *CommandRunner) SelectSession(ctx context.Context, id string) ports.Comm
 		return ports.CommandOutcome{Err: "no active session"}
 	}
 	if err := sess.Load(id); err != nil {
-		return ports.CommandOutcome{Err: fmt.Sprintf("failed to resume session %q: %v", id, err)}
+		return ports.CommandOutcome{Err: resumeErrorText(id, err)}
 	}
 	// This fallback (no session pool) reuses the active Session object across
 	// resumes rather than building a fresh one, so both the summarizer and the
