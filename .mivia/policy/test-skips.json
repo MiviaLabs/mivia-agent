@@ -1272,7 +1272,9 @@
     "TestWorktreeSessionListRestartsToResumeMainRepositorySession",
     "TestWritePreviewSectionRedactsSensitiveValuesAndCapsLines",
     "TestWritePreviewSectionWithoutPolicyShowsValues",
-    "TestYankKeyCopiesSelectedBlock"
+    "TestYankKeyCopiesSelectedBlock",
+    "TestComposerSelectionRowsPadWhenShorterThanHeight",
+    "TestAutomationSettings"
   ],
   "knownZeroAssertions": [
     "TestAbandonFenceConcurrentMapAccess",
