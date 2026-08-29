@@ -6,12 +6,16 @@
   "knownSkips": {
     "internal/uikit/clipboardwrite/clipboardwrite_test.go": [
       {
-        "line": 159,
+        "line": 160,
         "reason": "uses a POSIX shell command (sh -c); no Windows equivalent wired here"
       },
       {
-        "line": 179,
+        "line": 180,
         "reason": "uses a POSIX shell command (sh -c); no Windows equivalent wired here"
+      },
+      {
+        "line": 206,
+        "reason": "uses a POSIX command (true); no Windows equivalent wired here"
       }
     ],
     "internal/agent/advertised_tool_specs_test.go": [
