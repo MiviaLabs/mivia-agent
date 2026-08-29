@@ -42,15 +42,18 @@ func (c *AnthropicCompleter) chatTurnStream(ctx context.Context, req Request, bo
 	defer cancel()
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", c.name, err)
+		return nil, asTransient(fmt.Errorf("%s: %w", c.name, markTransientReadDeadline(ctx, req.Timeout, err)))
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	// Both reads below are watchdog-bounded: a stream that opens and then
+	// stops feeding, and an error response whose explanation never arrives,
+	// are the same hazard - a body read with no bound of its own.
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxJSONResponseBytes))
+		raw, _ := io.ReadAll(io.LimitReader(wrapBodyWithIdleWatchdog(resp.Body, c.name), maxJSONResponseBytes))
 		return nil, anthropicErrorFromBody(c.name, resp.StatusCode, raw)
 	}
-	return decodeAnthropicStream(resp.Body, req.StreamWriter)
+	return decodeAnthropicStream(wrapBodyWithIdleWatchdog(resp.Body, c.name), req.StreamWriter)
 }
 
 // anthropicStreamBlock accumulates one content block's deltas across the SSE

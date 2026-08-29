@@ -80,7 +80,17 @@ func streamFirstByteTimeout() time.Duration {
 // (MultiStepHandler never sets FinalWriter) - so every subagent-context turn
 // takes the non-streaming path this watchdog now covers.
 func (c *OpenAICompat) wrapWithIdleWatchdog(body io.Reader) io.Reader {
-	return newIdleWatchdogReader(body, streamFirstByteTimeout(), streamIdleTimeout(), c.name)
+	return wrapBodyWithIdleWatchdog(body, c.name)
+}
+
+// wrapBodyWithIdleWatchdog is the client-independent form of the same guard,
+// so a client that is not OpenAICompat cannot quietly go without one. Every
+// provider body read in this package goes through here: the native Anthropic
+// client's non-stream and SSE reads, and the retry layer's connection-reuse
+// drain, all of which previously read a possibly-dead socket with no bound
+// but the 15-minute client wall.
+func wrapBodyWithIdleWatchdog(body io.Reader, label string) io.Reader {
+	return newIdleWatchdogReader(body, streamFirstByteTimeout(), streamIdleTimeout(), label)
 }
 
 // idleWatchdogReader wraps an io.Reader (a provider HTTP response body) so a

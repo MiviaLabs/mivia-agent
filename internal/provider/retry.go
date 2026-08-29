@@ -248,7 +248,12 @@ func drainAndClose(resp *http.Response) {
 	if resp == nil || resp.Body == nil {
 		return
 	}
-	_, _ = io.CopyN(io.Discard, resp.Body, 64*1024)
+	// The drain is an optimization, so it must never cost more than the
+	// connection it saves. A provider that sends rejection headers and then
+	// stops would otherwise hold this read open to the client wall - and it
+	// happens on exactly the overloaded providers whose 429/503 responses put
+	// us here. The watchdog bound turns that into a fast give-up.
+	_, _ = io.CopyN(io.Discard, wrapBodyWithIdleWatchdog(resp.Body, "retry drain"), 64*1024)
 	resp.Body.Close()
 }
 

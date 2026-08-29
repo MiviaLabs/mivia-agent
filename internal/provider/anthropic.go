@@ -178,12 +178,16 @@ func (c *AnthropicCompleter) do(ctx context.Context, req Request, body map[strin
 	defer cancel()
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", c.name, err)
+		return nil, asTransient(fmt.Errorf("%s: %w", c.name, markTransientReadDeadline(ctx, req.Timeout, err)))
 	}
 	defer func() { _ = resp.Body.Close() }()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxJSONResponseBytes))
+	// Bounded like every other provider body read in this package: a peer that
+	// accepted the request and then went silent must fail on the idle bound,
+	// not hold the call to the transport's absolute wall. This is the
+	// operationally common read - nested and subagent turns never stream.
+	raw, err := io.ReadAll(io.LimitReader(wrapBodyWithIdleWatchdog(resp.Body, c.name), maxJSONResponseBytes))
 	if err != nil {
-		return nil, fmt.Errorf("%s: read response: %w", c.name, err)
+		return nil, asTransient(fmt.Errorf("%s: read response: %w", c.name, markTransientReadDeadline(ctx, req.Timeout, err)))
 	}
 	if err := anthropicErrorFromBody(c.name, resp.StatusCode, raw); err != nil {
 		return nil, err
