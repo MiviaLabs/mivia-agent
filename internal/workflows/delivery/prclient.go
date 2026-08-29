@@ -250,6 +250,8 @@ func prNumberFromURL(url string) (string, error) {
 func runGH(ctx context.Context, op string, args ...string) ([]byte, error) {
 	var stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, "gh", args...)
+	// gh spawns its own helpers, which inherit this pipe; same bound as git.
+	cmd.WaitDelay = deliveryWaitDelay
 	cmd.Env = ghEnv()
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

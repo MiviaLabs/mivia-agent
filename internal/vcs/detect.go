@@ -11,6 +11,7 @@ import (
 // DetectBranch returns the current HEAD branch name, or empty if not a repo.
 func DetectBranch() string {
 	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+	cmd.WaitDelay = vcsWaitDelay
 	cmd.Dir, _ = os.Getwd()
 	cmd.Env = pinnedEnv()
 	out, err := cmd.Output()
@@ -42,6 +43,7 @@ func DetectWorktreeName() string {
 // (as opposed to the main working tree).
 func IsWorktree() bool {
 	cmd := exec.Command("git", "rev-parse", "--git-common-dir")
+	cmd.WaitDelay = vcsWaitDelay
 	cmd.Dir, _ = os.Getwd()
 	cmd.Env = pinnedEnv()
 	out, err := cmd.Output()

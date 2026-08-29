@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // GitContext pins one git repository context for delivery commands.
@@ -20,6 +21,13 @@ type GitContext struct {
 type GitRunner interface {
 	Run(ctx context.Context, gc GitContext, args ...string) (string, error)
 }
+
+// deliveryWaitDelay bounds the wait for inherited pipes after a child exits
+// or its context ends. Every exec in this package sets it: a grandchild that
+// holds the pipe (ssh, a credential helper, gh's own subprocess) would
+// otherwise block Wait indefinitely, and this package's callers treat a
+// non-returning Deliver as a permanently in-flight run.
+const deliveryWaitDelay = 5 * time.Second
 
 // RealGit implements GitRunner with exec.CommandContext("git", args...), no shell.
 type RealGit struct{}
@@ -103,6 +111,12 @@ func (RealGit) Run(ctx context.Context, gc GitContext, args ...string) (string, 
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = gc.Dir
 	cmd.Env = pinnedEnv(gc)
+	// git push execs ssh and credential helpers, which inherit this stdout
+	// pipe. Cancelling the context kills git only, so without a WaitDelay the
+	// pipe copy can outlive every deadline the caller set - and a Deliver that
+	// never returns leaves its run in-flight forever, which cancel and delete
+	// both then refuse.
+	cmd.WaitDelay = deliveryWaitDelay
 	out, err := cmd.CombinedOutput()
 	text := string(out)
 	if err != nil {
