@@ -197,7 +197,13 @@ def test_commit_msg_rejects_unknown_scope() -> None:
     assert "ai:" in err  # scope guide mentions ai for control surface work
 
 
-FIX_TRAILERS = "Regression: TestMyNewTest\nClass: DC-2\nSweep: searched claim sites, found 0 further\n"
+# A real test name: the hook now resolves every Regression name to a real
+# func in a _test.go file, so a placeholder here would (correctly) fail.
+FIX_TRAILERS = (
+    "Regression: TestIsTransportStageTimeout\n"
+    "Class: DC-2\n"
+    "Sweep: searched every claim site, checked 3, found 0 further\n"
+)
 
 
 def write_msg(text: str) -> str:
@@ -861,3 +867,107 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+# --- Trailer CONTENT validation -------------------------------------------
+#
+# Presence-only validation is how the three fix trailers decayed into
+# decoration: `Sweep: x` passed, and a Regression naming a test nobody wrote
+# passed too. These tests pin what each trailer must now actually say.
+
+
+def test_commit_msg_rejects_regression_naming_a_missing_test() -> None:
+    """A named test that does not exist is not a regression proof."""
+    scope = first_valid_scope()
+    path = write_msg(
+        f"fix({scope}): correct the widget\n\n"
+        "Regression: TestThisNameWasNeverWritten\n"
+        "Class: DC-2\n"
+        "Sweep: searched every claim site, checked 3, found 0 further\n"
+    )
+    proc = run([str(COMMIT_MSG_HOOK), path], ROOT, check=False)
+    assert proc.returncode == 1, proc.stdout
+    assert "does not exist" in proc.stderr
+
+
+def test_commit_msg_rejects_regression_naming_no_test() -> None:
+    scope = first_valid_scope()
+    path = write_msg(
+        f"fix({scope}): correct the widget\n\n"
+        "Regression: covered by the existing suite\n"
+        "Class: DC-2\n"
+        "Sweep: searched every claim site, checked 3, found 0 further\n"
+    )
+    proc = run([str(COMMIT_MSG_HOOK), path], ROOT, check=False)
+    assert proc.returncode == 1, proc.stdout
+    assert "names no test" in proc.stderr
+
+
+def test_commit_msg_rejects_free_prose_defect_class() -> None:
+    """A class that is not in the taxonomy cannot be swept for or counted."""
+    scope = first_valid_scope()
+    path = write_msg(
+        f"fix({scope}): correct the widget\n\n"
+        "Regression: TestIsTransportStageTimeout\n"
+        "Class: some-new-sounding-mistake\n"
+        "Sweep: searched every claim site, checked 3, found 0 further\n"
+    )
+    proc = run([str(COMMIT_MSG_HOOK), path], ROOT, check=False)
+    assert proc.returncode == 1, proc.stdout
+    assert "names no DC-n class" in proc.stderr
+
+
+def test_commit_msg_rejects_unknown_defect_class_number() -> None:
+    scope = first_valid_scope()
+    path = write_msg(
+        f"fix({scope}): correct the widget\n\n"
+        "Regression: TestIsTransportStageTimeout\n"
+        "Class: DC-9999\n"
+        "Sweep: searched every claim site, checked 3, found 0 further\n"
+    )
+    proc = run([str(COMMIT_MSG_HOOK), path], ROOT, check=False)
+    assert proc.returncode == 1, proc.stdout
+    assert "taxonomy does not define" in proc.stderr
+
+
+def test_commit_msg_rejects_uncounted_sweep() -> None:
+    """The sweep must report a count of other sites, not that a check happened."""
+    scope = first_valid_scope()
+    path = write_msg(
+        f"fix({scope}): correct the widget\n\n"
+        "Regression: TestIsTransportStageTimeout\n"
+        "Class: DC-2\n"
+        "Sweep: checked, looks fine\n"
+    )
+    proc = run([str(COMMIT_MSG_HOOK), path], ROOT, check=False)
+    assert proc.returncode == 1, proc.stdout
+    assert "COUNT" in proc.stderr
+
+
+def test_commit_msg_accepts_sweep_reporting_no_further_sites() -> None:
+    """A genuine sweep that found nothing is a real result and must pass."""
+    scope = first_valid_scope()
+    path = write_msg(
+        f"fix({scope}): correct the widget\n\n"
+        "Regression: TestIsTransportStageTimeout\n"
+        "Class: DC-2\n"
+        "Sweep: searched every runtime.Dispatcher claim site by mechanism; "
+        "no other sites take a lease without a fence.\n"
+    )
+    proc = run([str(COMMIT_MSG_HOOK), path], ROOT, check=False)
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_commit_msg_accepts_trailers_wrapped_across_lines() -> None:
+    """Real trailers wrap; judging only the first line would misread them."""
+    scope = first_valid_scope()
+    path = write_msg(
+        f"fix({scope}): correct the widget\n\n"
+        "Regression: TestIsTransportStageTimeout,\n"
+        "TestStdlibTimerErrorIdentities\n"
+        "Class: DC-7\n"
+        "Sweep: searched every errors.Is deadline decision site,\n"
+        "checked 3, found 0 further\n"
+    )
+    proc = run([str(COMMIT_MSG_HOOK), path], ROOT, check=False)
+    assert proc.returncode == 0, proc.stderr

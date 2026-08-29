@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -93,6 +94,133 @@ def has_trailer(raw: str, label: str) -> bool:
         if stripped.startswith(prefix) and stripped[len(prefix):].strip():
             return True
     return False
+
+
+def trailer_value(raw: str, label: str) -> str:
+    """The text after `<label>:` in the body, or "" when absent."""
+    prefix = f"{label}:"
+    for line in raw.splitlines()[1:]:
+        if line.startswith("#") or line.startswith("Quality:"):
+            continue
+        stripped = line.strip()
+        if stripped.startswith(prefix):
+            return stripped[len(prefix):].strip()
+    return ""
+
+
+def trailer_block(raw: str, label: str) -> str:
+    """The trailer's value plus any continuation lines that follow it.
+
+    A Sweep or Regression line routinely wraps across several lines. Reading
+    only the first would judge the trailer on a fragment, so continuation
+    lines - anything up to the next `Label:` line or a blank line - join it.
+    """
+    prefix = f"{label}:"
+    collected: list[str] = []
+    for line in raw.splitlines()[1:]:
+        if line.startswith("#") or line.startswith("Quality:"):
+            continue
+        stripped = line.strip()
+        if collected:
+            if not stripped or re.match(r"^[A-Z][A-Za-z-]*:", stripped):
+                break
+            collected.append(stripped)
+            continue
+        if stripped.startswith(prefix):
+            collected.append(stripped[len(prefix):].strip())
+    return " ".join(collected).strip()
+
+
+def says_none(value: str) -> bool:
+    """True for the documented `none (<reason>)` escape hatch."""
+    return value.lower().startswith("none")
+
+
+def known_test_names(names: list[str]) -> list[str]:
+    """Return the subset of names that do NOT resolve to a real test func.
+
+    Searches the working tree's _test.go files, which is where a test added by
+    this very commit already lives when the hook runs.
+    """
+    missing = []
+    for name in names:
+        try:
+            found = subprocess.run(
+                ["git", "grep", "-lE", rf"^func {re.escape(name)}\(", "--", "*_test.go"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError:
+            return []  # git unavailable: do not block the commit on tooling
+        if found.returncode != 0 or not found.stdout.strip():
+            missing.append(name)
+    return missing
+
+
+def defect_classes(catalogue: str) -> set:
+    """The DC-n identifiers the taxonomy actually defines."""
+    path = Path(catalogue)
+    if not path.is_file():
+        return set()
+    return set(re.findall(r"^#+\s*(DC-\d+)\b", path.read_text(encoding="utf-8"), re.M))
+
+
+def check_trailer_content(policy: dict, ctype: str, raw: str) -> None:
+    """Validate what a required trailer SAYS, not merely that it is present.
+
+    Presence-only validation is why these trailers stopped carrying
+    information: `Sweep: x` passed, and a `Regression:` naming a test that was
+    never written passed too. Each rule below turns one self-attested claim
+    into something that can be checked and can fail.
+    """
+    rules = policy.get("trailerRules") or {}
+    required = (policy.get("requiredTrailers") or {}).get(ctype, [])
+    for label in required:
+        rule = rules.get(label)
+        if not rule:
+            continue
+        value = trailer_block(raw, label)
+        if not value or says_none(value):
+            continue
+        kind = rule.get("kind")
+        if kind == "testNames":
+            names = re.findall(r"\b(Test[A-Za-z0-9_]+)\b", value)
+            if not names:
+                trailer_fail(policy, label, rule,
+                             "names no test; use \"Regression: Test<Name>\" or \"Regression: none (<reason>)\"")
+            missing = known_test_names(names)
+            if missing:
+                trailer_fail(policy, label, rule,
+                             "names a test that does not exist: " + ", ".join(missing))
+        elif kind == "defectClass":
+            declared = set(re.findall(r"\bDC-\d+\b", value))
+            if not declared:
+                trailer_fail(policy, label, rule,
+                             "names no DC-n class; use \"Class: DC-n\" or \"Class: none (<reason>)\"")
+            known = defect_classes(rule.get("catalogue", ""))
+            unknown = sorted(declared - known) if known else []
+            if unknown:
+                trailer_fail(policy, label, rule,
+                             "names a class the taxonomy does not define: " + ", ".join(unknown))
+        elif kind == "countedSearch":
+            counted = re.search(r"\d", value) or re.search(
+                r"\bno (further|other|more)\b|\bnone\b", value, re.I)
+            if len(value) < int(rule.get("minLength", 30)) or not counted:
+                trailer_fail(policy, label, rule,
+                             "must report a COUNT of other sites examined, e.g. "
+                             "\"Sweep: searched <mechanism>, checked <sites>, found 0 further\"")
+
+
+def trailer_fail(policy: dict, label: str, rule: dict, reason: str) -> None:
+    print_catalog(policy)
+    print(f"commit-msg: error: {label} trailer {reason}", file=sys.stderr)
+    if rule.get("why"):
+        print(f"commit-msg: why: {rule['why']}", file=sys.stderr)
+    hint = (policy.get("trailerHints") or {}).get(label, "")
+    if hint:
+        print(f"commit-msg: fix-hint: {hint}", file=sys.stderr)
+    sys.exit(1)
 
 
 def fail(policy: dict, reason: str) -> None:
@@ -223,6 +351,10 @@ def main() -> int:
         if hint:
             print(f"commit-msg: fix-hint: {hint}", file=sys.stderr)
         sys.exit(1)
+
+    # Presence was the whole check until now, which let the trailers decay
+    # into decoration. Validate what they SAY.
+    check_trailer_content(policy, ctype, raw)
 
     return 0
 
