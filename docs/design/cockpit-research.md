@@ -114,19 +114,24 @@ detects `MIVIA_SCREEN_READER`; `cmd/mivia-ui` prints one line that says
 why and renders the plain stream from `internal/ui/stream` instead.
 `TERM=dumb` takes the same path (ux-rules rule 9.6).
 
-**Rule 6.5. AMENDED 2026-08-24.** Mouse capture is OFF by default
-(ux-rules.md rule 7.1) and `--mouse` is the opt-in. The previous
-implementation had capture on with `--no-mouse` as the escape hatch;
-that contradicted rule 7.1 and made terminal-native selection
-(Cmd-A, click-and-drag, middle-click PRIMARY paste on Linux) silently
-broken the moment the cockpit rendered. The opt-in (`--mouse`) keeps
-the cockpit and turns on `tea.MouseModeCellMotion` so clicks, drags
-and the wheel reach the transcript. The help overlay states the
-terminal's own override key (Fn on Terminal.app, Option on iTerm2,
-Shift almost everywhere else) so the user can still native-select
-under capture; `termprobe.MouseOverrideHint` provides it. Capture is
-also released while a `[` handover holds no alternate screen, so the
+**Rule 6.5. AMENDED 2026-08-29.** Mouse capture is ON by default: the
+cockpit's own drag-select and wheel scrolling work from the first
+frame. The previous amendment (2026-08-24) made capture opt-in through
+a `--mouse` flag that no shipped launcher ever wired, so neither in-app
+selection nor the terminal's native selection worked - the worst of
+both. Capture now resolves at startup as `MIVIA_MOUSE` env > `[tui]
+mouse` config > default true, and Settings → General "mouse capture"
+takes effect live (it sends `app.MouseCaptureMsg`, which flips
+`View().MouseMode`; the renderer writes ?1002/?1006). In-app
+drag-select copies through OSC 52 with a status-line toast; the help
+overlay names the detected terminal's own override key (Fn on
+Terminal.app, Option on iTerm2, Shift almost everywhere else) for
+native selection under capture (`termprobe.MouseOverrideHint`). Capture
+is also released while a `[` handover holds no alternate screen, so the
 terminal's own selection can reach the transcript in scrollback.
+Implementation: `internal/ui/select` (region types + highlight),
+`internal/ui/app/mouse_router.go` (state machine), per-component
+selection in transcript/composer/pager.
 
 **Rule 6.6. IMPLEMENTED 2026-08-19.** Wheel speed is not portable. Some
 terminals send one event per notch and some amplify. Ship a multiplier in

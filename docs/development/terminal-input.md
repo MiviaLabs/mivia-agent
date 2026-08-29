@@ -53,8 +53,10 @@ Run `mivia chat` and work down the list. Record pass/fail per terminal.
 
 10. **Shift+drag** selects text without leaving mouse capture. **iTerm2 uses
     Option, not Shift.**
-11. **Wheel** scrolls the transcript; **right-click** copies a message.
+11. **Wheel** scrolls the transcript; **left-drag** selects text in the
+    transcript, composer, and pager, and releases to an OSC 52 copy.
 12. **`MIVIA_MOUSE=0`** starts with capture off and native selection working.
+    `[tui] mouse = false` is the config form; Settings → General toggles it live.
 
 ### Modal dialogs
 
