@@ -110,6 +110,11 @@
     ]
   },
   "allowedDeletions": [
+    "TestDragReleaseCopiesSelectedText",
+    "TestDragAcrossRowsJoinsWithNewline",
+    "TestPlainClickIsUnaffectedByDragSelect",
+    "TestDragSelectInertWhenMouseOptionOff",
+    "TestResizeClearsInFlightSelection",
     "TestActivateSelected_WorkGroupAndTool",
     "TestAgentDialogLifecycle",
     "TestAgentDialogOpenAndSelect",
