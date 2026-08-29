@@ -4,6 +4,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	sel "github.com/MiviaLabs/mivia-agent/internal/ui/select"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/clipboardwrite"
 )
 
 // Component-owned mouse drag-select. The router drives only the
@@ -142,10 +143,16 @@ func (m *Model) mouseRelease(msg tea.MouseReleaseMsg) (tea.Cmd, bool) {
 		return nil, true
 	}
 	// OSC 52 gives no delivery confirmation; CopyTextMsg lets the
-	// visible screens toast what was attempted.
-	return tea.Batch(tea.SetClipboard(text), func() tea.Msg {
-		return sel.CopyTextMsg{Text: text}
-	}), true
+	// visible screens toast what was attempted. clipboardwrite is a
+	// redundant local-only path: terminals that refuse OSC 52 outright
+	// (VTE-based ones) still get a working copy when mivia runs
+	// locally, and it is a no-op over SSH where OSC 52 remains the only
+	// transport.
+	return tea.Batch(
+		tea.SetClipboard(text),
+		func() tea.Msg { _ = clipboardwrite.Write(text); return nil },
+		func() tea.Msg { return sel.CopyTextMsg{Text: text} },
+	), true
 }
 
 // hitRegion finds the selectable region whose rect contains the

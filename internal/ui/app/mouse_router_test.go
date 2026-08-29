@@ -149,6 +149,34 @@ func TestDragConsumesMotionAndCopiesOnRelease(t *testing.T) {
 	}
 }
 
+// TestDragReleaseAttemptsLocalClipboardFallback pins that a completed
+// drag's release batches a best-effort clipboardwrite.Write alongside
+// tea.SetClipboard: terminals that refuse OSC 52 outright (VTE-based
+// ones) still get a working copy locally. The batch must run and
+// resolve without panicking even when no local clipboard tool is on
+// PATH (exactly this test's own environment).
+func TestDragReleaseAttemptsLocalClipboardFallback(t *testing.T) {
+	m, _, _ := newRegionModel(t)
+	next, _ := m.Update(tea.MouseClickMsg{X: 1, Y: 1, Button: tea.MouseLeft})
+	m = next.(Model)
+	next, _ = m.Update(tea.MouseMotionMsg{X: 5, Y: 1, Button: tea.MouseLeft})
+	m = next.(Model)
+	_, cmd := m.Update(tea.MouseReleaseMsg{X: 5, Y: 1, Button: tea.MouseLeft})
+	if cmd == nil {
+		t.Fatal("expected a batch Cmd")
+	}
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("expected BatchMsg, got %T", cmd())
+	}
+	if len(batch) != 3 {
+		t.Fatalf("expected 3 batched commands (OSC 52, local clipboard fallback, copy toast), got %d", len(batch))
+	}
+	for _, c := range batch {
+		c() // must not panic even with no local clipboard tool available
+	}
+}
+
 func TestJitterSwallowedButClickReleasePassthrough(t *testing.T) {
 	m, sc, _ := newRegionModel(t)
 	next, _ := m.Update(tea.MouseClickMsg{X: 5, Y: 3, Button: tea.MouseLeft})

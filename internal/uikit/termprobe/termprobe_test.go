@@ -138,6 +138,45 @@ func TestProbeConPTYForcesFullRepaint(t *testing.T) {
 	}
 }
 
+func TestVTEBased(t *testing.T) {
+	cases := []struct {
+		name string
+		env  []string
+		want bool
+	}{
+		{"gnome terminal", []string{"VTE_VERSION=6800"}, true},
+		{"unset", []string{"TERM=xterm-256color"}, false},
+		{"empty value", []string{"VTE_VERSION="}, false},
+	}
+	for _, c := range cases {
+		if got := VTEBased(c.env); got != c.want {
+			t.Errorf("%s: VTEBased = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestProbeWarnsVTEClipboardRefusal(t *testing.T) {
+	r := Probe([]string{"TERM=xterm-256color", "VTE_VERSION=6800"}, "")
+	found := false
+	for _, w := range r.Warnings {
+		if strings.Contains(w, "OSC 52") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("a VTE-based terminal must warn about the OSC 52 clipboard refusal, got %v", r.Warnings)
+	}
+}
+
+func TestProbeNonVTETerminalNoClipboardWarning(t *testing.T) {
+	r := Probe([]string{"TERM=xterm-256color"}, "")
+	for _, w := range r.Warnings {
+		if strings.Contains(w, "OSC 52") {
+			t.Errorf("a non-VTE terminal must not get the VTE clipboard warning, got %v", r.Warnings)
+		}
+	}
+}
+
 func TestMouseOverrideHint(t *testing.T) {
 	cases := []struct {
 		name string

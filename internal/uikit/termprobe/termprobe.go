@@ -58,6 +58,11 @@ func Probe(env []string, tmuxVersion string) Report {
 	if IsConPTY(env) {
 		r.FullRepaint = true
 	}
+	if VTEBased(env) {
+		r.Warnings = append(r.Warnings,
+			"this terminal refuses the OSC 52 clipboard escape sequence (a VTE limitation, not mivia's); "+
+				"copy falls back to a local xclip/wl-copy/xsel install when one is on PATH")
+	}
 	r.MouseHint = MouseOverrideHint(env)
 	return r
 }
@@ -113,6 +118,16 @@ func OldTmuxWarning(version string) (string, bool) {
 // and leaves stale cells, which the full-repaint mode corrects.
 func IsConPTY(env []string) bool {
 	return getenv(env, "WT_SESSION") != ""
+}
+
+// VTEBased reports whether the terminal is a VTE front-end (GNOME
+// Terminal, Tilix, Terminator, and others all set VTE_VERSION): VTE
+// has refused to implement OSC 52 clipboard writes since a 2018
+// upstream decision that remains unresolved, so any VTE_VERSION value
+// means the sequence is ignored outright, not merely at an old
+// version.
+func VTEBased(env []string) bool {
+	return getenv(env, "VTE_VERSION") != ""
 }
 
 // MouseOverrideHint names the terminal's own key that overrides mouse

@@ -331,7 +331,8 @@
     ],
     "internal/ui/app": [
       "internal/ui/theme",
-      "internal/ui/select"
+      "internal/ui/select",
+      "internal/uikit/clipboardwrite"
     ],
     "internal/ui/component/approval": [
       "internal/ui/render",
