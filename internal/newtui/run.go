@@ -1,7 +1,6 @@
 package newtui
 
 import (
-	"fmt"
 	"io"
 	"log"
 	"os"
@@ -102,14 +101,11 @@ func buildApp(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState
 	pool := runner.Pool()
 	threads := pool.Threads()
 	// NewCommandRunner's pool pre-registers sess under its own SessionID
-	// (NewSessionPool), so this lookup always hits that entry and never
-	// takes GetOrCreate's own construction path (which is what can
-	// error) - only the type assertion below can fail here.
+	// (NewSessionPool) as a *uiadapter.Conversation (NewConversation's
+	// own return type), so this lookup always hits that entry - never
+	// GetOrCreate's construction path - and is always that concrete type.
 	convPort, _ := pool.GetOrCreate(sess.SessionID)
-	conv, ok := convPort.(*uiadapter.Conversation)
-	if !ok {
-		return nil, nil, fmt.Errorf("newtui: pool returned unexpected conversation type %T", convPort)
-	}
+	conv := convPort.(*uiadapter.Conversation)
 
 	settingsStore := uiadapter.NewSettingsStore(sess, res, agentState)
 	settingsStore.SetConversation(conv)

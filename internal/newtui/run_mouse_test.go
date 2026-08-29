@@ -1,6 +1,7 @@
 package newtui
 
 import (
+	"context"
 	"io"
 	"strings"
 	"testing"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/uiadapter"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
 
 func ptr(v bool) *bool { return &v }
@@ -71,4 +73,29 @@ func TestMouseNotifierBridgeWiresRealStore(t *testing.T) {
 	store := uiadapter.NewSettingsStore(nil, nil, nil)
 	p := tea.NewProgram(blankModel{}, tea.WithInput(strings.NewReader("")), tea.WithOutput(io.Discard))
 	wireMouseNotifier(store, p)
+}
+
+// TestMouseNotifierBridgeSendsToProgram exercises the wired closure
+// itself: a real SetMouse edit through the store's own Settings facade
+// must reach p.Send. The program uses the process's real stdin/stdout
+// (not a TTY in a test run), which fails Run() fast rather than
+// blocking - the same behavior TestRunTUICallsBuildApp relies on.
+func TestMouseNotifierBridgeSendsToProgram(t *testing.T) {
+	store := uiadapter.NewSettingsStore(nil, nil, nil)
+	p := tea.NewProgram(blankModel{})
+	wireMouseNotifier(store, p)
+
+	done := make(chan struct{})
+	go func() {
+		_, _ = p.Run()
+		close(done)
+	}()
+	<-done
+
+	h, err := store.Settings().General.Apply(context.Background(), ports.ScopeUser, ports.SetMouse{On: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range h.Events() {
+	}
 }
