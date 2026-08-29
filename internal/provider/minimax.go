@@ -22,5 +22,6 @@ func NewMiniMax(opts Options) (Completer, error) {
 		APIKey:            opts.APIKey,
 		DialContext:       opts.DialContext,
 		CacheUsageEnabled: opts.CacheUsageEnabled,
+		Reasoning:         defaultReasoningDialect("minimax"),
 	}), nil
 }

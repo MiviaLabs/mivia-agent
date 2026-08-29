@@ -275,7 +275,7 @@ func TestCanGrade(t *testing.T) {
 			t.Fatalf("%q carries a level on the wire and must grade", dialect)
 		}
 	}
-	for _, dialect := range []Dialect{DialectThinking, DialectNone, "", Dialect("unheard-of")} {
+	for _, dialect := range []Dialect{DialectThinking, DialectNone, DialectReasoningSplit, "", Dialect("unheard-of")} {
 		if dialect.CanGrade() {
 			t.Fatalf("%q sends no level value and must not claim to grade", dialect)
 		}
@@ -312,6 +312,11 @@ func TestResolveFillsTheDialectFromTheVettedDefault(t *testing.T) {
 			"deepseek",
 			Setting{Level: High},
 			Setting{Level: High, Dialect: DialectThinkingEffort},
+		},
+		"minimax resolves to reasoning_split": {
+			"minimax",
+			Setting{Level: High},
+			Setting{Level: High, Dialect: DialectReasoningSplit},
 		},
 		"an inactive level still resolves its dialect": {
 			"openrouter",

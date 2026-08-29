@@ -521,6 +521,17 @@ func TestDeepSeekFactoryDeclaresReplayAndReject(t *testing.T) {
 	}
 }
 
+func TestMiniMaxFactoryDeclaresReasoningSplit(t *testing.T) {
+	comp, err := NewMiniMax(Options{APIKey: "k", BaseURL: "https://example.invalid/v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := comp.(*OpenAICompat)
+	if c.reasoning != reasoning.DialectReasoningSplit {
+		t.Fatalf("NewMiniMax dialect = %q, want reasoning_split", c.reasoning)
+	}
+}
+
 func TestCompatOptionsWiresReplayAndRejectFlags(t *testing.T) {
 	c := NewOpenAICompatWithOptions(CompatOptions{
 		Name:                         "t",

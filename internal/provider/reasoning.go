@@ -82,6 +82,12 @@ func reasoningBodyFields(dialect reasoning.Dialect, level reasoning.Level) map[s
 			"thinking":      map[string]any{"type": "adaptive", "display": "summarized"},
 			"output_config": map[string]any{"effort": anthropicEffortForLevel(level)},
 		}
+	case reasoning.DialectReasoningSplit:
+		// reasoning_split does not itself enable or disable thinking - see the
+		// dialect's own doc comment. Every active level (including Off)
+		// produces this same flat body: there is no depth signal to carry and
+		// no distinct off-shape for this dialect.
+		return map[string]any{"reasoning_split": true}
 	default:
 		// reasoning.DialectNone, and any dialect this client does not know:
 		// fail closed rather than guess a wire shape.
