@@ -70,7 +70,9 @@ func (t *ledgerReadTool) Name() string { return "ledger_read" }
 func (t *ledgerReadTool) Description() string {
 	return "Resolve a content reference from the agent execution history and return the recorded bytes. " +
 		"A reference is an opaque handle of the form 'ref:<kind>:<digest>' that a task result reports " +
-		"as output_ref (recorded task output) or error_ref (recorded task failure detail), " +
+		"as output_ref (recorded task output), error_ref (recorded task failure detail), " +
+		"or tool_calls_ref (the task's recorded tool-call trace), " +
+		"that a task message carries as content_ref (pinned message body), " +
 		"or that store_note returned for a note you stored (kind 'note'); " +
 		"pass one of those values verbatim. " +
 		"A status of 'not_found' means the recorded content is absent, so the reference points at nothing. " +

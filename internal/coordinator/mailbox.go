@@ -90,11 +90,13 @@ func (m *runMailboxes) Pending(taskID string) bool {
 //
 // Channels cannot be peeked, so the scan drains the buffer into a slice and
 // re-enqueues in order. The mailbox is bounded (cap 32) and this runs only on
-// signal/tick events, so the copy is cheap. Send is the only writer and holds
-// m.mu; Drain reads the mailbox under m.mu but receives without it, so the
-// receives here are non-blocking to guarantee the lock is never held across a
-// blocking receive. Messages a concurrent Drain steals are simply not part of
-// the re-enqueue; none are lost or reordered.
+// signal/tick events, so the copy is cheap. Every receive here is
+// non-blocking, so the lock is never held across a blocking receive.
+//
+// The emptied-then-refilled window this creates is why Send, Drain, and this
+// scan all hold m.mu for their whole channel access: a reader that took only
+// the map lookup under the lock could observe the mailbox mid-scan and
+// conclude it was empty.
 func (m *runMailboxes) PendingInterrupt(taskID string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -125,10 +127,18 @@ scan:
 }
 
 // Drain non-blocking removes all pending messages in order.
+//
+// The lock is held across the receive loop, not just the map lookup.
+// PendingInterrupt cannot peek a channel, so it empties the mailbox and
+// refills it while holding m.mu; a Drain that read the channel outside the
+// lock could land in that window and report an empty mailbox to a step
+// boundary while a steer was queued. Holding m.mu never blocks here because
+// every receive below is non-blocking - the same guarantee PendingInterrupt's
+// own scan relies on.
 func (m *runMailboxes) Drain(taskID string) []agentmsg.Message {
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	mb := m.byTask[taskID]
-	m.mu.Unlock()
 	if mb == nil {
 		return nil
 	}

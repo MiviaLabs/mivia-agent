@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/workflows/controller"
@@ -17,6 +18,10 @@ import (
 	workflowdelivery "github.com/MiviaLabs/mivia-agent/internal/workflows/delivery"
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
 )
+
+// localGitWaitDelay bounds the wait for pipes a git grandchild still holds
+// after git itself exits. Mirrors deliveryWaitDelay in workflows/delivery.
+const localGitWaitDelay = 5 * time.Second
 
 func buildStepRuntimes(wf *definition.CompiledWorkflow, base string) (map[string]controller.StepRuntime, error) {
 	schemas, err := loadOutputSchemas(base, wf)
@@ -367,6 +372,11 @@ func resolveLocalIdentity(root, runID string) (baseRef, baseCommit, worktree str
 	}
 	git := func(args ...string) (string, error) {
 		cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
+		// git can hand this pipe to a hook, a smudge filter, or a credential
+		// helper, and Wait does not return while any of them holds it. This
+		// runs on the model-invocable workflow_run admission path, so an
+		// unbounded wait here stalls admission itself.
+		cmd.WaitDelay = localGitWaitDelay
 		out, err := cmd.Output()
 		if err != nil {
 			return "", err

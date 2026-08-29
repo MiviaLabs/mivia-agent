@@ -62,8 +62,9 @@ func TestFinalOverlayRedirectDialIsPinnedToLoopback(t *testing.T) {
 	client := comp.(*OpenAICompat)
 	client.client.Timeout = 10 * time.Second
 
-	tr, ok := innerTransport(client).(*http.Transport)
-	if !ok || tr.DialContext == nil {
+	// Either phase transport proves the pin; both carry the same dial.
+	tr := anyTransport(client)
+	if tr == nil || tr.DialContext == nil {
 		t.Fatal("keyless ollama client has no pinned DialContext")
 	}
 

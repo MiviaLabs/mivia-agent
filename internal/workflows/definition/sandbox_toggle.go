@@ -55,6 +55,7 @@ func runDirectCommand(ctx context.Context, workDir string, baseline *GoModuleBas
 		return hostFailure(err)
 	}
 	command := exec.CommandContext(ctx, exePath, args...)
+	command.WaitDelay = sandboxWaitDelay
 	command.Dir = workDir
 	var stdout, stderr bytes.Buffer
 	command.Stdout = &stdout

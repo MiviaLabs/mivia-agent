@@ -3,6 +3,7 @@ package contextstate
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	sdkctx "github.com/MiviaLabs/mivia-ai-sdk/contextstate"
 )
@@ -72,6 +73,24 @@ var (
 	// a different subject/managed worktree.
 	ErrSessionLiveElsewhere = errors.New("context session is live in another process")
 )
+
+// SessionLiveError is the typed refusal ReclaimSession returns while another
+// process's lease is still fresh. It wraps ErrSessionLiveElsewhere and
+// carries what the refused caller can act on: how old the holder's last
+// heartbeat is, and how long until the lease expires and takeover succeeds.
+// Without these two numbers the refusal is indistinguishable from "broken" -
+// the user cannot tell a 10-second wait from a permanent failure.
+type SessionLiveError struct {
+	LeaseAge   time.Duration
+	RetryAfter time.Duration
+}
+
+func (e *SessionLiveError) Error() string {
+	return fmt.Sprintf("%v (last heartbeat %s ago; retry in ~%s)",
+		ErrSessionLiveElsewhere, e.LeaseAge.Round(time.Second), e.RetryAfter.Round(time.Second))
+}
+
+func (e *SessionLiveError) Unwrap() error { return ErrSessionLiveElsewhere }
 
 // EffectiveSummaryMetadataLimit returns the operator-configured summary
 // metadata bound, falling back to the compiled-in default when uncapped.

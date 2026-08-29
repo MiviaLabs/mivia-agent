@@ -120,6 +120,14 @@ func IsTransient(err error) bool {
 	if errors.Is(err, ErrStreamIdle) {
 		return true
 	}
+	// A bound the TRANSPORT imposed on one phase of the exchange is a
+	// transport fault, not a spent budget: the call never delivered an answer
+	// and a fresh one can clear it. It must be tested before the context rule
+	// below, because net/http's stage timeouts report themselves equal to
+	// context.DeadlineExceeded - see IsTransportStageTimeout.
+	if IsTransportStageTimeout(err) {
+		return true
+	}
 	// A cancelled or expired context is NOT transient. The caller stopped the
 	// call, or its deadline ran out; repeating it works against that decision
 	// and, for an expired deadline, fails again at once.

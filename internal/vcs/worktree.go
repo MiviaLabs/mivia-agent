@@ -9,10 +9,17 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
+
+// vcsWaitDelay bounds the wait for inherited pipes after a git child exits
+// or its context ends. git worktree add runs post-checkout hooks and smudge
+// filters, and git push runs ssh and credential helpers; all inherit the
+// pipe, so Wait can outlive the process without this.
+const vcsWaitDelay = 5 * time.Second
 
 const defaultWorktreeBranchPrefix = "mivia/"
 
@@ -94,6 +101,7 @@ func CreateWithPrefixLease(ctx context.Context, repoRoot string, name string, ba
 	}
 	args := worktreeAddArgs(branchExists, branchName, ref, targetPath)
 	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.WaitDelay = vcsWaitDelay
 	cmd.Dir = root
 	cmd.Env = pinnedEnv()
 	if out, err := runGitMutation(cmd, lease); err != nil {
@@ -136,6 +144,7 @@ func worktreeAddArgs(branchExists bool, branchName, ref, targetPath string) []st
 // localBranchExists reports whether branchName is an exact local branch.
 func localBranchExists(ctx context.Context, root, branchName string) (bool, error) {
 	cmd := exec.CommandContext(ctx, "git", "show-ref", "--verify", "--quiet", "refs/heads/"+branchName)
+	cmd.WaitDelay = vcsWaitDelay
 	cmd.Dir = root
 	cmd.Env = pinnedEnv()
 	if err := cmd.Run(); err == nil {
@@ -191,6 +200,7 @@ func RemoveWithPrefixLease(ctx context.Context, repoRoot string, name string, br
 		return WorktreeNotFoundError{Name: sanitised}
 	}
 	cmd := exec.CommandContext(ctx, "git", "worktree", "remove", targetPath, "--force")
+	cmd.WaitDelay = vcsWaitDelay
 	cmd.Dir = root
 	cmd.Env = pinnedEnv()
 	if out, err := runGitMutation(cmd, lease); err != nil {
@@ -278,6 +288,7 @@ func List(ctx context.Context, repoRoot string) ([]WorktreeInfo, error) {
 	wtDir := workspace.WorktreesDir(root)
 	wtPrefix := wtDir + string(filepath.Separator)
 	cmd := exec.CommandContext(ctx, "git", "worktree", "list", "--porcelain")
+	cmd.WaitDelay = vcsWaitDelay
 	cmd.Dir = root
 	cmd.Env = pinnedEnv()
 	out, err := cmd.Output()
@@ -312,6 +323,7 @@ func Resolve(ctx context.Context, repoRoot string, name string) (*WorktreeInfo, 
 // this always returns the primary working tree path.
 func MainRepoRoot(dir string) (string, error) {
 	cmd := exec.Command("git", "worktree", "list", "--porcelain")
+	cmd.WaitDelay = vcsWaitDelay
 	cmd.Dir = dir
 	cmd.Env = pinnedEnv()
 	out, err := cmd.Output()
@@ -340,6 +352,7 @@ func mainWorktreeFromListing(out, dir string) (string, error) {
 // RepoRoot finds the git repository root from any directory inside it.
 func RepoRoot(dir string) (string, error) {
 	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	cmd.WaitDelay = vcsWaitDelay
 	cmd.Dir = dir
 	cmd.Env = pinnedEnv()
 	out, err := cmd.Output()
@@ -402,6 +415,7 @@ func (e *gitCommandError) Error() string {
 
 func ensureGitRepo(dir string) error {
 	cmd := exec.Command("git", "rev-parse", "--is-inside-work-tree")
+	cmd.WaitDelay = vcsWaitDelay
 	cmd.Dir = dir
 	cmd.Env = pinnedEnv()
 	if err := cmd.Run(); err != nil {

@@ -342,15 +342,28 @@ func usageBlockValue(t theme.Theme, tier theme.Tier, b uievent.UsageBody) Block 
 	}
 }
 
+// errorHeaderDetailMax is the rune budget for the single-row error header.
+// The header renderer truncates Detail to the panel width and replaces the
+// tail with the clip marker; on a wrapped error chain the tail IS the cause,
+// so a first line longer than this moves whole into the wrapping Body and
+// the header shows the bare "error" label instead.
+const errorHeaderDetailMax = 72
+
 func errorBlockValue(b uievent.ErrorBody) Block {
 	lines := strings.Split(b.Text, "\n")
 	state := ""
 	if b.Fatal {
 		state = "fatal"
 	}
+	detail := lines[0]
+	body := lines[1:]
+	if len([]rune(detail)) > errorHeaderDetailMax {
+		detail = ""
+		body = lines
+	}
 	return Block{
 		Kind:   uievent.KindError,
-		Header: Header{Label: "error", Detail: lines[0], State: state, Role: theme.RoleDanger},
-		Body:   lines[1:],
+		Header: Header{Label: "error", Detail: detail, State: state, Role: theme.RoleDanger},
+		Body:   body,
 	}
 }

@@ -304,3 +304,64 @@ func TestReleaseLeaseIsANoOpForACapabilityAlreadyReclaimedAway(t *testing.T) {
 		t.Fatalf("lease_at = %d, want rival's fresh renewal (%d) untouched by the ousted owner's ReleaseLease", leaseAt, freshUnderRival.Unix())
 	}
 }
+
+// TestReclaimSessionLiveErrorReportsRetryAfter pins the honest-refusal
+// contract: a fresh-lease refusal must carry the holder's lease age and the
+// time until takeover succeeds, still wrapping ErrSessionLiveElsewhere so
+// existing errors.Is callers keep working. Without these numbers the user
+// cannot tell a 90-second wait from a permanent failure.
+func TestReclaimSessionLiveErrorReportsRetryAfter(t *testing.T) {
+	ctx := context.Background()
+	s, owner := openContextTestStore(t)
+	defer s.Close()
+	seedContextSession(t, s, owner)
+	heartbeat := time.Now().Add(-30 * time.Second)
+	setLeaseAt(t, s, owner, &heartbeat)
+
+	rival, err := contextstate.NewPrincipal(owner.WorkspaceID, owner.SessionID, owner.SubjectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.ReclaimSession(ctx, rival, owner.SessionID)
+	if !errors.Is(err, contextstate.ErrSessionLiveElsewhere) {
+		t.Fatalf("ReclaimSession error = %v, want to wrap ErrSessionLiveElsewhere", err)
+	}
+	var live *contextstate.SessionLiveError
+	if !errors.As(err, &live) {
+		t.Fatalf("ReclaimSession error = %v (%T), want *contextstate.SessionLiveError", err, err)
+	}
+	if live.LeaseAge < 30*time.Second || live.LeaseAge > 40*time.Second {
+		t.Fatalf("LeaseAge = %s, want ~30s", live.LeaseAge)
+	}
+	wantRetry := sessionLeaseTTL - live.LeaseAge
+	if live.RetryAfter < wantRetry-5*time.Second || live.RetryAfter > wantRetry+5*time.Second {
+		t.Fatalf("RetryAfter = %s, want ~%s", live.RetryAfter, wantRetry)
+	}
+}
+
+// TestReleaseLeaseUnblocksImmediateReclaim is the clean-quit repro at the
+// layer that matters: a fresh lease refuses a rival, the owner releases it
+// (what every pooled session must do on shutdown), and the same rival's
+// reclaim then succeeds immediately - no TTL wait.
+func TestReleaseLeaseUnblocksImmediateReclaim(t *testing.T) {
+	ctx := context.Background()
+	s, owner := openContextTestStore(t)
+	defer s.Close()
+	seedContextSession(t, s, owner)
+	fresh := time.Now()
+	setLeaseAt(t, s, owner, &fresh)
+
+	rival, err := contextstate.NewPrincipal(owner.WorkspaceID, owner.SessionID, owner.SubjectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ReclaimSession(ctx, rival, owner.SessionID); !errors.Is(err, contextstate.ErrSessionLiveElsewhere) {
+		t.Fatalf("pre-release ReclaimSession error = %v, want ErrSessionLiveElsewhere", err)
+	}
+	if err := s.ReleaseLease(ctx, owner, owner.SessionID); err != nil {
+		t.Fatalf("ReleaseLease: %v", err)
+	}
+	if _, err := s.ReclaimSession(ctx, rival, owner.SessionID); err != nil {
+		t.Fatalf("post-release ReclaimSession = %v, want immediate success", err)
+	}
+}

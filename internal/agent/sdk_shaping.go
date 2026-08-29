@@ -59,6 +59,16 @@ type turnShapeCounter struct {
 	previewReserve int
 	aborted        bool
 	closedByAbort  bool // tracks who owns the close of the CURRENT signal channel
+	// inFlight counts calls inside turnShapeWrapper.Run, and blocked counts
+	// those parked in waitForOrderingSlot. Their difference is the number of
+	// calls that can still advance nextIndex, which is how a waiter tells "an
+	// earlier call is still working" from "the index I am waiting for will
+	// never arrive". The SDK skips whole indices - a plan marked duplicate is
+	// never dispatched, and decodeAndRun rejects unknown, denied, and
+	// schema-invalid calls before the registry sees them - so waiting on an
+	// exact predecessor index is not a safe assumption.
+	inFlight int
+	blocked  int
 }
 
 func newTurnShapeCounter() *turnShapeCounter {
@@ -91,6 +101,31 @@ func (c *turnShapeCounter) abort() {
 		close(c.signal)
 	}
 	c.mu.Unlock()
+}
+
+// enter records a call as in flight and therefore able to advance the
+// ordering gate. Run increments before executing its tool, so a call whose
+// tool is still running counts as a predecessor a later index must wait for.
+func (c *turnShapeCounter) enter() {
+	c.mu.Lock()
+	c.inFlight++
+	c.mu.Unlock()
+}
+
+// leave releases the in-flight slot and opens the ordering gate past this
+// call's index whether or not the call shaped anything. Run returns early when
+// its tool errors or hands back a non-string body, and those exits used to
+// leave the gate shut on an index that had already finished. The broadcast is
+// unconditional: waiters gate on the in-flight count as well as on nextIndex,
+// and both just changed.
+func (c *turnShapeCounter) leave(callIndex int) {
+	c.mu.Lock()
+	c.inFlight--
+	if callIndex >= 0 && callIndex >= c.nextIndex {
+		c.nextIndex = callIndex + 1
+	}
+	c.mu.Unlock()
+	c.broadcast()
 }
 
 // turnShapeWrapper shapes one tool's result against the turn budget.
@@ -139,6 +174,16 @@ func (w *turnShapeWrapper) DecodeArguments(raw []byte) (sdktools.InOut, error) {
 
 func (w *turnShapeWrapper) Run(ctx context.Context, in sdktools.InOut) (sdktools.Out, error) {
 	callKey := toolCallKeyFromContext(ctx, w.toolName)
+	callIndex := -1
+	if tc, ok := toolcallctx.ToolCallFromContext(ctx); ok {
+		callIndex = tc.Index
+	}
+	// Counted in flight for the whole call, tool execution included: a later
+	// index must wait while this one is genuinely still working, and must not
+	// wait once it is gone. The paired leave also opens the gate past this
+	// index on the early returns below.
+	w.counter.enter()
+	defer w.counter.leave(callIndex)
 	body, err := w.inner.Run(ctx, in)
 	if err != nil {
 		return body, err
@@ -146,10 +191,6 @@ func (w *turnShapeWrapper) Run(ctx context.Context, in sdktools.InOut) (sdktools
 	s, ok := body.Value.(string)
 	if !ok {
 		return body, nil
-	}
-	callIndex := -1
-	if tc, ok := toolcallctx.ToolCallFromContext(ctx); ok {
-		callIndex = tc.Index
 	}
 	w.counter.mu.Lock()
 	w.waitForOrderingSlot(ctx, callIndex)
@@ -193,6 +234,17 @@ func (w *turnShapeWrapper) waitForOrderingSlot(ctx context.Context, callIndex in
 		return
 	}
 	for w.counter.nextIndex < callIndex && ctx.Err() == nil && !w.counter.aborted {
+		// Only a call that is in flight and not itself parked here can still
+		// advance the gate. When this call is the last such one, the index it
+		// waits for was never dispatched - a duplicate plan the SDK skipped,
+		// or a call rejected before the registry saw it - and no broadcast is
+		// coming. Shape now. Losing strict charging order in that anomaly
+		// costs fidelity; waiting costs the whole turn, which then falls
+		// silent after a tool ran and dies at the request deadline.
+		if w.counter.inFlight-w.counter.blocked <= 1 {
+			return
+		}
+		w.counter.blocked++
 		ch := w.counter.signal
 		w.counter.mu.Unlock()
 		select {
@@ -200,6 +252,7 @@ func (w *turnShapeWrapper) waitForOrderingSlot(ctx context.Context, callIndex in
 		case <-ctx.Done():
 		}
 		w.counter.mu.Lock()
+		w.counter.blocked--
 	}
 }
 

@@ -64,11 +64,14 @@ func (c *OpenAICompat) chatTurnStream(ctx context.Context, req Request) (*Respon
 				// left no trace an operator could see.
 				log.Printf("%s: stream stalled (idle timeout, bound %s); recovering via non-streaming retry", c.name, streamIdleTimeout())
 			}
-			retried, rerr := c.retryWithoutStreaming(callCtx, req, req.StreamWriter)
+			// The whole response, not just its text: this turn offered tools,
+			// and a stall must not silently downgrade it to prose with no
+			// tool calls, no finish reason, and no token accounting.
+			retried, rerr := c.retryTurnWithoutStreaming(callCtx, req, req.StreamWriter)
 			if rerr != nil {
 				return nil, rerr
 			}
-			return &Response{Content: retried}, nil
+			return retried, nil
 		}
 		return nil, err
 	}

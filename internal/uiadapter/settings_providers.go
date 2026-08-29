@@ -116,7 +116,9 @@ func (s *SettingsStore) applyUpsertProvider(v ports.UpsertProvider, cfgPath stri
 		s.providers = append(s.providers, v.Provider)
 	}
 	if cfgPath != "" {
-		_ = config.UpdateProviderConfig(cfgPath, providerViewToSettings(v.Provider))
+		if err := config.UpdateProviderConfig(cfgPath, providerViewToSettings(v.Provider)); err != nil {
+			return fmt.Errorf("persist provider: %w", err)
+		}
 	}
 	return nil
 }
@@ -139,7 +141,9 @@ func (s *SettingsStore) applyRemoveProvider(v ports.RemoveProvider, cfgPath stri
 	}
 	s.providers = kept
 	if cfgPath != "" {
-		_ = config.RemoveProviderConfig(cfgPath, v.Name)
+		if err := config.RemoveProviderConfig(cfgPath, v.Name); err != nil {
+			return fmt.Errorf("persist provider removal: %w", err)
+		}
 	}
 	return nil
 }
@@ -163,7 +167,9 @@ func (s *SettingsStore) applyUpsertModel(v ports.UpsertModel, cfgPath string) er
 	}
 	s.syncModelsAcrossScopeRowsLocked(v.Provider, models)
 	if cfgPath != "" {
-		_ = config.UpdateProviderConfig(cfgPath, providerViewToSettings(s.providers[i]))
+		if err := config.UpdateProviderConfig(cfgPath, providerViewToSettings(s.providers[i])); err != nil {
+			return fmt.Errorf("persist provider model: %w", err)
+		}
 	}
 	return nil
 }
@@ -188,7 +194,9 @@ func (s *SettingsStore) applyRemoveModel(v ports.RemoveModel, cfgPath string) er
 	}
 	s.syncModelsAcrossScopeRowsLocked(v.Provider, next)
 	if cfgPath != "" {
-		_ = config.UpdateProviderConfig(cfgPath, providerViewToSettings(s.providers[i]))
+		if err := config.UpdateProviderConfig(cfgPath, providerViewToSettings(s.providers[i])); err != nil {
+			return fmt.Errorf("persist provider model: %w", err)
+		}
 	}
 	return nil
 }
@@ -228,7 +236,9 @@ func (s *SettingsStore) applyActivateModel(v ports.ActivateModel) error {
 		}
 	}
 	if cfgPath := s.configPath(); cfgPath != "" {
-		_ = config.UpdateActiveModelConfig(cfgPath, v.Provider, v.Model)
+		if err := config.UpdateActiveModelConfig(cfgPath, v.Provider, v.Model); err != nil {
+			return fmt.Errorf("persist active model: %w", err)
+		}
 	}
 	return nil
 }

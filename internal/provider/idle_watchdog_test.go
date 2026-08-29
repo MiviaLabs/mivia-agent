@@ -214,3 +214,30 @@ func TestSetStreamWatchdogTimeouts_NonPositiveLeavesOtherBoundUnchanged(t *testi
 		t.Fatalf("first-byte timeout = %s, want 20s", got)
 	}
 }
+
+// A caller may read past EOF - a bounded read followed by a connection-reuse
+// drain does exactly that. The pump exits when src returns an error, so
+// without a latched terminal error the second read waits out the whole idle
+// bound for a result that can never arrive.
+func TestIdleWatchdogReader_EOFIsRepeatableWithoutStalling(t *testing.T) {
+	withWatchdogTimeouts(t, 30*time.Second, 30*time.Second)
+	r := newIdleWatchdogReader(strings.NewReader("short body"), 30*time.Second, 30*time.Second, "probe")
+
+	buf := make([]byte, 64)
+	if n, err := r.Read(buf); err != nil || n == 0 {
+		t.Fatalf("first read = (%d, %v), want the body", n, err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := r.Read(buf)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, io.EOF) {
+			t.Fatalf("second read = %v, want io.EOF", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("second read blocked after EOF; the terminal error was not latched")
+	}
+}

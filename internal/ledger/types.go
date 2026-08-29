@@ -129,10 +129,11 @@ type TaskSnapshot struct {
 	OutputRef   string // bounded redacted reference; empty until completion
 	ErrorRef    string // bounded redacted reference; empty unless failed
 	// ToolCallsRef is a bounded, redacted reference to this task's recorded
-	// tool-call step trace (subagent tool name/input/output pairs),
-	// operator-facing only. Empty when the task made no tool calls, or for
-	// any task recorded before this field existed. Set once at task
-	// completion, on the same SetTaskOutput call as OutputRef/ErrorRef.
+	// tool-call step trace (subagent tool name/input/output pairs). Result
+	// envelopes hand it to the model as tool_calls_ref, pageable via
+	// ledger_read. Empty when the task made no tool calls, or for any task
+	// recorded before this field existed. Set once at task completion, on
+	// the same SetTaskOutput call as OutputRef/ErrorRef.
 	ToolCallsRef string `json:"tool_calls_ref,omitempty"`
 	Version      uint64 // per-task monotonic version for compare-and-set
 	// HandlerName is the registered handler name for the sub-agent task.

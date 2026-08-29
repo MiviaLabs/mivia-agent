@@ -100,7 +100,25 @@ func (s *SettingsStore) startRun(automationID string) error {
 	s.runs[automationID] = append(s.runs[automationID], run)
 	summary := ports.RunSummary{ID: run.ID, State: run.State}
 	s.automations[i].LastRun = &summary
+	s.publishRunLocked(automationID, run)
 	return nil
+}
+
+// publishRunLocked delivers a run to every watcher of this automation.
+//
+// Watch registers a channel and returns a handle whose consumer blocks on it,
+// but nothing here ever published, so the only wake was Cancel's close: each
+// triggered run left a permanently blocked goroutine and never rendered. The
+// send is non-blocking on a buffered channel, so one consumer that has stopped
+// reading cannot wedge the trigger or its siblings. Caller holds s.mu.
+func (s *SettingsStore) publishRunLocked(automationID string, run ports.Run) {
+	for _, ch := range s.watchers[automationID] {
+		select {
+		case ch <- run:
+		default:
+			// Watcher is not keeping up; drop rather than block the trigger.
+		}
+	}
 }
 
 type runWatch struct {

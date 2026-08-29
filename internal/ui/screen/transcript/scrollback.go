@@ -7,9 +7,14 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 )
+
+// scrollbackWaitDelay bounds the wait for pipes a grandchild still holds after the
+// child exits. Without it, Wait blocks on the pipe rather than the process.
+const scrollbackWaitDelay = 5 * time.Second
 
 // The two rule 6.3 handovers. Both run through tea.Exec: Bubble Tea
 // handles execMsg synchronously in its event loop, and p.exec releases
@@ -117,7 +122,9 @@ func editorCommand(getenv func(string) string, writeFile func(string, []byte, fs
 	// $VISUAL may carry arguments ("code -w"); split, then append the
 	// file as the last argument.
 	fields := strings.Fields(editor)
-	return exec.Command(fields[0], append(fields[1:], path)...), path, nil
+	cmd := exec.Command(fields[0], append(fields[1:], path)...)
+	cmd.WaitDelay = scrollbackWaitDelay
+	return cmd, path, nil
 }
 
 // openEditor writes the conversation to a temp file and opens it in

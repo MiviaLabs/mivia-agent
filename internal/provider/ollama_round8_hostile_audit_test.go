@@ -368,8 +368,8 @@ func TestRound8EdgeURLConstruction(t *testing.T) {
 					t.Fatalf("NewForProvider(%q) = %v, want success", tc.baseURL, err)
 				}
 				client := comp.(*OpenAICompat)
-				tr, ok := innerTransport(client).(*http.Transport)
-				if !ok || tr.DialContext == nil {
+				tr := anyTransport(client)
+				if tr == nil || tr.DialContext == nil {
 					t.Fatalf("base_url %q produced an UNPINNED keyless client (DialContext nil)", tc.baseURL)
 				}
 				client.client.CloseIdleConnections()
@@ -450,8 +450,8 @@ func TestRound8PinnedDialCoversApprovedEdgeURLs(t *testing.T) {
 			t.Fatalf("NewOllama(%q) = %v", tc.raw, err)
 		}
 		client := comp.(*OpenAICompat)
-		tr, ok := innerTransport(client).(*http.Transport)
-		if !ok || tr.DialContext == nil {
+		tr := anyTransport(client)
+		if tr == nil || tr.DialContext == nil {
 			t.Fatalf("%q: approved keyless but UNPINNED transport", tc.raw)
 		}
 		conn, err := tr.DialContext(ctx, "tcp", tc.target)

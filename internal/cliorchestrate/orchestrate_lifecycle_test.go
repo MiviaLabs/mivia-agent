@@ -12,6 +12,7 @@ import (
 	"github.com/MiviaLabs/mivia-ai-sdk/provider"
 	"github.com/MiviaLabs/mivia-ai-sdk/toolcallctx"
 
+	"github.com/MiviaLabs/mivia-agent/internal/agentmsg"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
@@ -152,20 +153,17 @@ func TestRunTaskResultsWithRepoAttachesMessages(t *testing.T) {
 	}
 }
 
-// TestRunTaskResultsWithRepoMergesToolCallsByID mirrors
-// TestEncodeResultsMergesToolCallsByID against the OTHER (default, wait=none)
+// TestRunTaskResultsWithRepoCarriesToolCallsRef mirrors
+// TestEncodeResultsEmitsToolCallsRef against the OTHER (default, wait=none)
 // result producer: modelTaskResult via RunTaskResultsWithRepo's live-results
-// branch (ModelTaskResultsWithRepo). Both producers must independently merge
-// by ToolCallID (not Name) and mark only the call missing its "end" event
-// Incomplete.
-func TestRunTaskResultsWithRepoMergesToolCallsByID(t *testing.T) {
+// branch (ModelTaskResultsWithRepo). The trace travels by reference only,
+// and the nil-repo entry point speaks the same dialect - the field is a
+// pure snapshot read, so no repo means no missing ref.
+func TestRunTaskResultsWithRepoCarriesToolCallsRef(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
 	steps := []subagents.ToolCallStep{
 		{ToolCallID: "call-1", Name: "read_file", Kind: "start", Input: "path=a.go"},
-		{ToolCallID: "call-2", Name: "read_file", Kind: "start", Input: "path=b.go"},
 		{ToolCallID: "call-1", Name: "read_file", Kind: "end", Output: "contents-of-a"},
-		{ToolCallID: "call-2", Name: "read_file", Kind: "end", Output: "contents-of-b"},
-		{ToolCallID: "call-3", Name: "run_command", Kind: "start", Input: "ls"},
 	}
 	ref := storeToolCallSteps(t, repo, steps)
 	result := &coordinator.RunResult{
@@ -179,61 +177,106 @@ func TestRunTaskResultsWithRepoMergesToolCallsByID(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("got len = %d, want 1", len(got))
 	}
-	calls := got[0].ToolCalls
-	if len(calls) != 3 {
-		t.Fatalf("tool_calls len = %d, want 3: %+v", len(calls), calls)
+	if got[0].ToolCallsRef != ref {
+		t.Fatalf("tool_calls_ref = %q, want %q", got[0].ToolCallsRef, ref)
 	}
-	byID := map[string]toolCallSummary{}
-	for _, c := range calls {
-		byID[c.ToolCallID] = c
+	raw, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
 	}
-	c1, c2, c3 := byID["call-1"], byID["call-2"], byID["call-3"]
-	if c1.Input != "path=a.go" || c1.Output != "contents-of-a" || c1.Incomplete {
-		t.Fatalf("call-1 = %+v", c1)
+	if strings.Contains(string(raw), `"tool_calls":`) {
+		t.Fatalf("model results still carry an inline tool_calls array: %s", raw)
 	}
-	if c2.Input != "path=b.go" || c2.Output != "contents-of-b" || c2.Incomplete {
-		t.Fatalf("call-2 = %+v", c2)
-	}
-	if !c3.Incomplete || c3.Output != "" {
-		t.Fatalf("call-3 = %+v, want Incomplete=true Output=\"\"", c3)
+
+	noRepo := ModelTaskResults(result.Snapshot.Tasks, result.Results, 4096)
+	if len(noRepo) != 1 || noRepo[0].ToolCallsRef != ref {
+		t.Fatalf("nil-repo results = %+v, want the same tool_calls_ref", noRepo)
 	}
 }
 
-// TestRunTaskResultsWithRepoCapsToolCallsToCompletePairs mirrors
-// TestEncodeResultsCapsToolCallsToCompletePairs against modelTaskResult:
-// merge strictly precedes the envelopeMaxToolCallPairs cap, so 25 complete
-// calls yield exactly 20 rows, all complete.
-func TestRunTaskResultsWithRepoCapsToolCallsToCompletePairs(t *testing.T) {
+// TestRunTaskResultsRecoveredPathAttachesMessagesForNamespacedTask is the
+// regression test for the recovered-branch message keying miss: the
+// coordinator records task-message events under the FULL namespaced task id,
+// while persistedTaskResults reports the namespace-stripped RawID as the
+// model-visible TaskID. A lookup keyed on the model-visible id therefore
+// misses every dispatch_tasks-created task, silently dropping its
+// findings/questions on the recovered path. The rows are index-aligned with
+// the snapshot, so the lookup must use the snapshot row's full TaskID.
+func TestRunTaskResultsRecoveredPathAttachesMessagesForNamespacedTask(t *testing.T) {
 	repo := ledger.NewMemoryLedgerRepository()
-	var steps []subagents.ToolCallStep
-	const totalCalls = 25
-	for i := 0; i < totalCalls; i++ {
-		id := "call-" + time.Now().Add(time.Duration(i)*time.Nanosecond).Format("150405.000000000") + "-" + string(rune('a'+i%26))
-		steps = append(steps,
-			subagents.ToolCallStep{ToolCallID: id, Name: "tool", Kind: "start", Input: "in"},
-			subagents.ToolCallStep{ToolCallID: id, Name: "tool", Kind: "end", Output: "out"},
-		)
+	ctx := context.Background()
+	const runID = "r-msg"
+	const fullID = "call_1:t1"
+
+	if err := repo.CreateRun(ctx, "", ledger.RunSnapshot{
+		RunID: runID, Status: ledger.RunStatusRunning,
+		Tasks: []ledger.TaskSnapshot{{RunID: runID, TaskID: fullID, RawID: "t1", Status: string(ledger.TaskStatusRunning)}},
+	}); err != nil {
+		t.Fatalf("CreateRun: %v", err)
 	}
-	ref := storeToolCallSteps(t, repo, steps)
+	payload, err := json.Marshal(agentmsg.LifecyclePayload{
+		MessageID: "msg-1", Kind: agentmsg.KindFinding, Synopsis: "found the inversion",
+	})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	if err := repo.AppendEvent(ctx, ledger.LifecycleEvent{
+		ID: "evt-1", RunID: runID, Kind: coordinator.LifecycleKindTaskMessage,
+		TaskID: fullID, Payload: payload, CreatedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("AppendEvent: %v", err)
+	}
+
 	result := &coordinator.RunResult{
-		Snapshot: ledger.RunSnapshot{RunID: "r1", Tasks: []ledger.TaskSnapshot{
-			{RunID: "r1", TaskID: "t1", Status: "completed", ToolCallsRef: ref},
+		Snapshot: ledger.RunSnapshot{RunID: runID, Tasks: []ledger.TaskSnapshot{
+			{RunID: runID, TaskID: fullID, RawID: "t1", Status: string(ledger.TaskStatusCompleted)},
 		}},
-		Results: []subagents.Result{{TaskID: "t1", Status: "completed"}},
+		Results: []subagents.Result{{TaskID: fullID, Status: "completed"}},
 	}
+	result.Results[0].Provenance.Kind = "recovered"
 
 	got := RunTaskResultsWithRepo(repo, result, 4096)
 	if len(got) != 1 {
 		t.Fatalf("got len = %d, want 1", len(got))
 	}
-	calls := got[0].ToolCalls
-	if len(calls) != envelopeMaxToolCallPairs {
-		t.Fatalf("tool_calls len = %d, want %d", len(calls), envelopeMaxToolCallPairs)
+	if got[0].TaskID != "t1" {
+		t.Fatalf("TaskID = %q, want raw id t1", got[0].TaskID)
 	}
-	for _, c := range calls {
-		if c.Incomplete {
-			t.Fatalf("call %+v is Incomplete, want all-complete", c)
-		}
+	if len(got[0].Messages) != 1 || got[0].Messages[0].MessageID != "msg-1" {
+		t.Fatalf("recovered result dropped its task messages: %+v", got[0].Messages)
+	}
+}
+
+// TestRunTaskResultsRecoveredPathCarriesToolCallsRef is the regression test
+// for the recovered-branch keying miss: persistedTaskResults reports the
+// namespace-stripped RawID as the model-visible TaskID, so any lookup keyed
+// on that id misses the snapshot row (toolCallsRefFor matches the full
+// namespaced TaskID). The ref must come straight from the snapshot row, so
+// a recovered dispatch-namespaced task still reports its recorded trace.
+func TestRunTaskResultsRecoveredPathCarriesToolCallsRef(t *testing.T) {
+	repo := ledger.NewMemoryLedgerRepository()
+	steps := []subagents.ToolCallStep{
+		{ToolCallID: "call-1", Name: "grep", Kind: "start", Input: "pattern"},
+		{ToolCallID: "call-1", Name: "grep", Kind: "end", Output: "1 match"},
+	}
+	ref := storeToolCallSteps(t, repo, steps)
+	result := &coordinator.RunResult{
+		Snapshot: ledger.RunSnapshot{RunID: "r1", Tasks: []ledger.TaskSnapshot{
+			{RunID: "r1", TaskID: "call_1:t1", RawID: "t1", Status: string(ledger.TaskStatusCompleted), ToolCallsRef: ref},
+		}},
+		Results: []subagents.Result{{TaskID: "call_1:t1", Status: "completed"}},
+	}
+	result.Results[0].Provenance.Kind = "recovered"
+
+	got := RunTaskResultsWithRepo(repo, result, 4096)
+	if len(got) != 1 {
+		t.Fatalf("got len = %d, want 1", len(got))
+	}
+	if got[0].TaskID != "t1" {
+		t.Fatalf("TaskID = %q, want raw id t1 (namespace stripped)", got[0].TaskID)
+	}
+	if got[0].ToolCallsRef != ref {
+		t.Fatalf("recovered tool_calls_ref = %q, want %q", got[0].ToolCallsRef, ref)
 	}
 }
 

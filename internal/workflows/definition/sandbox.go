@@ -9,11 +9,19 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/secretpath"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
+
+// sandboxWaitDelay bounds the wait for pipes a grandchild still holds after
+// its parent exits. It is NOT applied to the bwrap invocation itself, which
+// runs --unshare-all --die-with-parent: nothing inside that sandbox can
+// outlive it, so there is no grandchild left to hold the pipe. Every exec in
+// this package that runs a tool DIRECTLY does need it.
+const sandboxWaitDelay = 5 * time.Second
 
 const maxVerifierDiagnosticBytes = 16 << 10
 
@@ -167,6 +175,7 @@ func initializeSandboxGit(ctx context.Context, workRoot string) error {
 		return fmt.Errorf("resolve verifier Git executable: %w", err)
 	}
 	command := exec.CommandContext(ctx, git, "-c", "init.templateDir=", "init", "--quiet", workRoot)
+	command.WaitDelay = sandboxWaitDelay
 	command.Env = []string{"PATH=/usr/bin:/bin", "HOME=/nonexistent", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null"}
 	if output, err := command.CombinedOutput(); err != nil {
 		return fmt.Errorf("initialize verifier Git worktree: %w: %s", err, boundedDiagnostic(output))

@@ -7,6 +7,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/uiadapter"
@@ -389,5 +390,34 @@ func TestSessionPool_CreateFreshWiresSubagentThreads(t *testing.T) {
 
 	if _, ok := pool.Threads().Thread("call_disp_1:task-fresh-check"); !ok {
 		t.Fatal("expected pool.Threads() to resolve the fresh session's dispatched subagent after History()")
+	}
+}
+
+// A conversation born from the pool must write context under the same privacy
+// rules as its siblings. CreateFresh inherited the store, the bus, the context
+// manager and the principal, but not the redaction policy - so a fresh
+// conversation ran the ZERO policy and recorded every payload hash-only, while
+// a sibling wrote the same content with bytes. Those two writes land on one
+// content ref, and the disagreement rolled back a whole turn with "payload
+// reference is held by different bytes".
+func TestSessionPool_CreateFresh_InheritsRedactionPolicy(t *testing.T) {
+	res := &config.Resolved{Model: "test-model"}
+	sess := chat.NewSession(res, nil)
+	sess.SessionID = "initial-session"
+	policy := contextstate.RedactionPolicy{Configured: true, KeyNames: []string{"token"}}
+	sess.SetContextRedactionPolicy(policy)
+
+	pool := uiadapter.NewSessionPool(sess, res, nil, false)
+	conv, err := pool.CreateFresh()
+	if err != nil {
+		t.Fatalf("CreateFresh failed: %v", err)
+	}
+	fresh := pool.Session(conv.ID())
+	if fresh == nil {
+		t.Fatal("fresh session not registered in the pool")
+	}
+	got := fresh.ContextRedactionPolicy()
+	if !got.Configured || len(got.KeyNames) != 1 || got.KeyNames[0] != "token" {
+		t.Errorf("fresh conversation policy = %+v, want the sibling's %+v", got, policy)
 	}
 }

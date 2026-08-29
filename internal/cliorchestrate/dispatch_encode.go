@@ -12,28 +12,16 @@ import (
 )
 
 // dispatchTaskResult is the per-task result envelope for dispatch_tasks model
-// consumption. Fields added by the output-by-reference change (Synopsis,
-// OutputBytes) use omitempty so they only appear when the result is above the
-// inline threshold, preserving backward compatibility for small results.
-//
-// This duplicates orchestrate_lifecycle.go's modelTaskResult (spawn_agent's
-// async envelope) minus Steps/Elapsed/StepCount/Schema/Agent/Reason, which
-// modelTaskResult does not carry today - unifying the two structs is tracked
-// as follow-up cleanup, not done here to avoid silently dropping those
-// fields from dispatch_tasks' richer output.
+// consumption: the shared modelTaskResult core (orchestrate_lifecycle.go)
+// plus the run-shape fields only dispatch_tasks reports. Embedding is the
+// struct unification the two envelopes' doc comments long tracked as
+// follow-up: one core, one attachment path (attachTaskRecord), no silently
+// dropped fields.
 type dispatchTaskResult struct {
-	TaskID      string `json:"task_id"`
-	Status      string `json:"status"`
-	Output      any    `json:"output,omitempty"`
-	OutputRef   string `json:"output_ref,omitempty"`
-	OutputBytes int    `json:"output_bytes,omitempty"`
-	Synopsis    string `json:"synopsis,omitempty"`
-	ReadHint    string `json:"read_hint,omitempty"`
-	ErrorRef    string `json:"error_ref,omitempty"`
-	Error       string `json:"error,omitempty"`
-	Steps       int    `json:"steps,omitempty"`
-	Elapsed     string `json:"elapsed,omitempty"`
-	StepCount   int64  `json:"step_count,omitempty"`
+	modelTaskResult
+	Steps     int    `json:"steps,omitempty"`
+	Elapsed   string `json:"elapsed,omitempty"`
+	StepCount int64  `json:"step_count,omitempty"`
 	// Schema is ok|violation when a schema was in force; omitted when none.
 	Schema string `json:"schema,omitempty"`
 	// Agent is the routed definition that produced this result. Parallel
@@ -45,110 +33,47 @@ type dispatchTaskResult struct {
 	// own ceiling, and a dependency that never ran all look alike - which
 	// is exactly what a partially failed fan-out needs to distinguish.
 	Reason string `json:"reason,omitempty"`
-	// Messages are synopsis-only findings/questions posted during the task.
-	// Bodies stay behind content_ref via run_messages.
-	Messages []messageSynopsis `json:"messages,omitempty"`
-	// ToolCalls are bounded, pre-merged tool-call summaries loaded from the
-	// task's ledger-stored raw trace (coordinator.runToolCallBuffer via
-	// ToolCallsRef). See loadToolCallSummaries.
-	ToolCalls []toolCallSummary `json:"tool_calls,omitempty"`
 }
 
-// toolCallSummary is the shared wire shape both dispatch-result producers
-// (dispatchTaskResult here and modelTaskResult in orchestrate_lifecycle.go)
-// emit, and the shape uiadapter's encodedTaskResult decodes back out of
-// persisted chat history. ONE ROW PER CALL: loadToolCallSummaries merges
-// each ledger-stored raw start+end pair into a single summary BEFORE
-// applying the step-count cap, specifically so the cap can only ever drop
-// whole trailing calls, never fragment a completed pair into a spurious
-// "incomplete" one.
-type toolCallSummary struct {
-	ToolCallID string `json:"tool_call_id"`
-	Name       string `json:"name"`
-	Input      string `json:"input,omitempty"`
-	Output     string `json:"output,omitempty"`
-	// Incomplete is true only when the ledger-stored raw content itself has
-	// no matching "end" event for this call's ToolCallID (the coordinator's
-	// own per-task buffer cap dropped it, or the task was genuinely cut off
-	// mid-call) — never a side effect of this envelope layer's own
-	// envelopeMaxToolCallPairs cap, which drops only whole trailing calls.
-	Incomplete bool `json:"incomplete,omitempty"`
+// TaskMessages is the opaque per-task message index. The map inside keys by
+// the FULL namespaced TaskID (what the coordinator records events under);
+// callers can only read through ForSnapshot, so a lookup keyed by the
+// stripped model-visible RawID - the DC-11 miss the recovered path shipped
+// twice - is unwritable rather than merely tested.
+type TaskMessages struct {
+	byFullID map[string][]messageSynopsis
 }
 
-const (
-	// envelopeMaxToolCallPairs caps the number of COMPLETE, MERGED calls
-	// surfaced in a model/UI-visible result envelope. This is a cap on
-	// merged pairs, not raw lifecycle events - applied only after merging,
-	// so it can never split a real pair. Kept well under half of
-	// tool_call_buffer.go's bufferMaxStepsPerTask (200 raw events, i.e.
-	// ~100 possible calls) so the buffer layer's own cap remains the
-	// headroom, not this one.
-	envelopeMaxToolCallPairs = 20
-)
-
-// loadToolCallSummaries decodes a task's ledger-stored raw tool-call steps
-// (via ref), groups them by ToolCallID, merges each start+end pair into one
-// toolCallSummary, truncates Input/Output to synopsisMaxBytes via
-// TruncateAtRuneBoundary, and THEN caps the merged list to
-// envelopeMaxToolCallPairs - so the cap only ever drops whole completed (or
-// genuinely-incomplete) calls, never fragments one. A missing ref, load
-// error, or empty ref yields a nil slice (never an error - this is
-// best-effort enrichment, same discipline as TaskMessageIndex).
-func loadToolCallSummaries(ctx context.Context, repo ledger.LedgerRepository, ref string) []toolCallSummary {
-	if repo == nil || ref == "" {
-		return nil
-	}
-	data, err := repo.LoadContent(ctx, ref)
-	if err != nil || len(data) == 0 {
-		return nil
-	}
-	var raw []subagents.ToolCallStep
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil
-	}
-	// Group by ToolCallID, preserving first-seen order for determinism.
-	order := make([]string, 0, len(raw))
-	byID := make(map[string]*toolCallSummary, len(raw))
-	for _, step := range raw {
-		s, ok := byID[step.ToolCallID]
-		if !ok {
-			s = &toolCallSummary{ToolCallID: step.ToolCallID, Incomplete: true}
-			byID[step.ToolCallID] = s
-			order = append(order, step.ToolCallID)
-		}
-		switch step.Kind {
-		case "start":
-			s.Name = step.Name
-			s.Input = step.Input
-		case "end":
-			s.Output = step.Output
-			s.Incomplete = false
-		}
-	}
-	out := make([]toolCallSummary, 0, len(order))
-	for _, id := range order {
-		s := *byID[id]
-		s.Input = TruncateAtRuneBoundary([]byte(s.Input))
-		s.Output = TruncateAtRuneBoundary([]byte(s.Output))
-		out = append(out, s)
-		if len(out) >= envelopeMaxToolCallPairs {
-			break
-		}
-	}
-	return out
+// ForSnapshot returns the messages recorded for the task the snapshot row
+// names. The snapshot carries both identity forms, so the caller never
+// chooses a key form at all.
+func (m TaskMessages) ForSnapshot(snap ledger.TaskSnapshot) []messageSynopsis {
+	return m.byFullID[snap.TaskID]
 }
 
-// toolCallsRefFor returns the ToolCallsRef the ledger recorded for a task,
-// parallel to StoredResultRefs (which returns output/error refs) - kept as
-// a separate function rather than a 3rd StoredResultRefs return value so
-// every existing 2-value caller of StoredResultRefs stays unchanged.
-func toolCallsRefFor(tasks []ledger.TaskSnapshot, taskID string) string {
+// attachTaskRecord is the ONLY writer of a result row's snapshot-recorded
+// attachments (tool_calls_ref and the findings/questions message index).
+// Every producer routes through it, so a new producer is correct by
+// construction; the conformance table (task_result_producer_conformance_test.go)
+// proves the routing behaviorally. OutputRef stays out on purpose: it is
+// entangled with the inline-threshold machinery (setOutputFields) and
+// differs live-vs-recovered by design.
+func attachTaskRecord(dst *modelTaskResult, snap ledger.TaskSnapshot, msgs TaskMessages) {
+	dst.ToolCallsRef = snap.ToolCallsRef
+	dst.Messages = msgs.ForSnapshot(snap)
+}
+
+// taskSnapshotFor returns the ledger's recorded snapshot row for a task by
+// its FULL id (as both subagents.Result.TaskID and TaskSnapshot.TaskID
+// report it). Attachments are read off the row itself, never through an
+// id-keyed side lookup a caller could feed the wrong identity form.
+func taskSnapshotFor(tasks []ledger.TaskSnapshot, taskID string) (ledger.TaskSnapshot, bool) {
 	for _, snap := range tasks {
 		if snap.TaskID == taskID {
-			return snap.ToolCallsRef
+			return snap, true
 		}
 	}
-	return ""
+	return ledger.TaskSnapshot{}, false
 }
 
 func (t *dispatchTasksTool) encodeResults(tasks []ledger.TaskSnapshot, results []subagents.Result) string {
@@ -157,8 +82,9 @@ func (t *dispatchTasksTool) encodeResults(tasks []ledger.TaskSnapshot, results [
 	out := make([]dispatchTaskResult, len(results))
 	for i, r := range results {
 		out[i] = EncodeOneDispatchResult(r, tasks, threshold)
-		out[i].Messages = msgIndex[r.TaskID]
-		out[i].ToolCalls = loadToolCallSummaries(context.Background(), t.repo, toolCallsRefFor(tasks, r.TaskID))
+		if snap, ok := taskSnapshotFor(tasks, r.TaskID); ok {
+			attachTaskRecord(&out[i].modelTaskResult, snap, msgIndex)
+		}
 	}
 	outJSON, _ := json.Marshal(out)
 	return string(outJSON)
@@ -168,10 +94,9 @@ func (t *dispatchTasksTool) encodeResults(tasks []ledger.TaskSnapshot, results [
 // result, applying the inline-by-reference threshold for both output and error.
 func EncodeOneDispatchResult(r subagents.Result, tasks []ledger.TaskSnapshot, threshold int) dispatchTaskResult {
 	tr := dispatchTaskResult{
-		TaskID: r.TaskID,
-		Status: r.Status,
-		Agent:  agentForTask(tasks, r.TaskID),
-		Reason: terminationReason(r),
+		modelTaskResult: modelTaskResult{TaskID: r.TaskID, Status: r.Status},
+		Agent:           agentForTask(tasks, r.TaskID),
+		Reason:          terminationReason(r),
 	}
 	// Only an unerrored result defaults to completed. Defaulting first and
 	// unconditionally would label a failed task "completed" whenever the
@@ -195,19 +120,20 @@ func EncodeOneDispatchResult(r subagents.Result, tasks []ledger.TaskSnapshot, th
 }
 
 // TaskMessageIndex loads synopsis-only findings/questions per task for result
-// envelopes. Best-effort: a missing repo or events yields an empty map.
-func TaskMessageIndex(ctx context.Context, repo ledger.LedgerRepository, tasks []ledger.TaskSnapshot) map[string][]messageSynopsis {
+// envelopes, as an opaque TaskMessages index readable only via ForSnapshot.
+// Best-effort: a missing repo or events yields an empty index.
+func TaskMessageIndex(ctx context.Context, repo ledger.LedgerRepository, tasks []ledger.TaskSnapshot) TaskMessages {
 	out := map[string][]messageSynopsis{}
 	if repo == nil || len(tasks) == 0 {
-		return out
+		return TaskMessages{byFullID: out}
 	}
 	runID := tasks[0].RunID
 	if runID == "" {
-		return out
+		return TaskMessages{byFullID: out}
 	}
 	events, err := repo.ListEvents(ctx, runID)
 	if err != nil {
-		return out
+		return TaskMessages{byFullID: out}
 	}
 	for _, e := range events {
 		if e.Kind != coordinator.LifecycleKindTaskMessage {
@@ -232,7 +158,7 @@ func TaskMessageIndex(ctx context.Context, repo ledger.LedgerRepository, tasks [
 			ContentRef: p.ContentRef,
 		})
 	}
-	return out
+	return TaskMessages{byFullID: out}
 }
 
 // setOutputFields applies the inline-by-reference threshold to a result's

@@ -42,15 +42,18 @@ func (c *AnthropicCompleter) chatTurnStream(ctx context.Context, req Request, bo
 	defer cancel()
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", c.name, err)
+		return nil, asTransient(fmt.Errorf("%s: %w", c.name, markTransientReadDeadline(httpReq.Context(), req.Timeout, err)))
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	// Both reads below are watchdog-bounded: a stream that opens and then
+	// stops feeding, and an error response whose explanation never arrives,
+	// are the same hazard - a body read with no bound of its own.
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxJSONResponseBytes))
+		raw, _ := io.ReadAll(io.LimitReader(wrapBodyWithIdleWatchdog(resp.Body, c.name), maxJSONResponseBytes))
 		return nil, anthropicErrorFromBody(c.name, resp.StatusCode, raw)
 	}
-	return decodeAnthropicStream(resp.Body, req.StreamWriter)
+	return decodeAnthropicStream(wrapBodyWithIdleWatchdog(resp.Body, c.name), req.StreamWriter)
 }
 
 // anthropicStreamBlock accumulates one content block's deltas across the SSE
@@ -118,7 +121,46 @@ func decodeAnthropicStream(body io.Reader, w io.Writer) (*Response, error) {
 	// answer rather than an error, the same tolerant convention
 	// openai_compat_stream.go applies to a connection that closes right
 	// after its last usable chunk.
+	//
+	// That tolerance stops at a tool call. Partial TEXT is still usable
+	// prose, but partial ARGUMENTS are an instruction the model never
+	// finished giving, and executing them is not a degraded answer - it is a
+	// different action.
+	if err := anthropicTruncatedToolCallError(blocks, blockOrder); err != nil {
+		return nil, err
+	}
 	return finishAnthropicStream(blocks, blockOrder, stopReason, usage), nil
+}
+
+// anthropicTruncatedToolCallError refuses a torn stream that ended inside a
+// tool call, mirroring validateTruncatedToolCalls on the OpenAI-compatible
+// reader. It runs ONLY on the no-message_stop path: a completed stream has
+// said its tool calls are whole.
+//
+// Empty arguments are rejected here, where the sibling reader permits them,
+// because Anthropic carries a tool call's arguments as input_json_delta
+// events. On a stream that was cut, an empty accumulator means the arguments
+// never arrived - indistinguishable from a tool that takes none - and
+// finishAnthropicStream's "{}" substitution would turn that into a call the
+// model never made. Only message_stop makes the substitution sound.
+//
+// The failure is transient: a torn connection never delivered an answer, so
+// the caller may ask again rather than acting on a fragment.
+func anthropicTruncatedToolCallError(blocks map[int]*anthropicStreamBlock, order []int) error {
+	for _, idx := range order {
+		block := blocks[idx]
+		if block == nil || block.blockType != "tool_use" {
+			continue
+		}
+		if block.id == "" || block.name == "" {
+			return &TransientError{Err: fmt.Errorf("anthropic: stream ended without a completion signal (truncated tool call)")}
+		}
+		args := strings.TrimSpace(block.jsonInput.String())
+		if args == "" || !json.Valid([]byte(args)) {
+			return &TransientError{Err: fmt.Errorf("anthropic: stream ended without a completion signal (tool call %q has incomplete arguments)", block.id)}
+		}
+	}
+	return nil
 }
 
 // anthropicStreamEventEnvelope peeks the "type" field every SSE data payload

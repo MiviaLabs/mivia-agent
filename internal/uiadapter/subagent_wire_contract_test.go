@@ -1,11 +1,16 @@
 package uiadapter_test
 
-// AR-1 consumer half: this file decodes the same golden fixture the
-// cliorchestrate producer test pins (internal/cliorchestrate/testdata/
-// tool_calls_contract.json) through the real reconstruction entry point,
-// PopulateFromToolCalls. Any wire-shape drift - a renamed key, a retyped
-// value, a lost omitempty row - makes the produced bytes or the decoded
-// fields fail on one side of this pair.
+// AR-1 consumer half: this file decodes the golden fixtures under
+// internal/cliorchestrate/testdata/ through the real reconstruction entry
+// point, PopulateFromToolCalls.
+//
+//   - task_result_envelope_contract.json is the CURRENT shape (final
+//     report plus tool_calls_ref); the cliorchestrate producer test pins
+//     the same bytes, so drift fails on one side of the pair.
+//   - tool_calls_contract.json is the FROZEN legacy inline tool_calls
+//     shape old persisted sessions still carry. No producer emits it
+//     anymore; this package alone pins that decode so old sessions keep
+//     reconstructing.
 
 import (
 	"encoding/json"
@@ -23,22 +28,22 @@ import (
 // internal/clichat/feature_delivery_contract_test.go (committedWorkflowRoot)
 // already uses for cross-package file reads from tests: go test runs with
 // the package directory as working directory, so "../.." is the module root.
-func contractFixturePath(t *testing.T) string {
+func contractFixturePath(t *testing.T, name string) string {
 	t.Helper()
 	root, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatalf("resolve module root: %v", err)
 	}
-	path := filepath.Join(root, "internal", "cliorchestrate", "testdata", "tool_calls_contract.json")
+	path := filepath.Join(root, "internal", "cliorchestrate", "testdata", name)
 	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("golden tool_calls fixture not found at %s: %v", path, err)
+		t.Fatalf("golden fixture not found at %s: %v", path, err)
 	}
 	return path
 }
 
 func readContractFixture(t *testing.T) []byte {
 	t.Helper()
-	raw, err := os.ReadFile(contractFixturePath(t))
+	raw, err := os.ReadFile(contractFixturePath(t, "tool_calls_contract.json"))
 	if err != nil {
 		t.Fatalf("read golden tool_calls fixture: %v", err)
 	}
@@ -99,10 +104,51 @@ func assertReconstruction(t *testing.T, msgs []ports.Message) {
 	}
 }
 
-// TestPopulateFromToolCalls_WireContractGoldenFixture pins the consumer side
-// of the cliorchestrate <-> uiadapter tool_calls envelope to the shared
-// golden fixture, then proves DC-14 tolerance: unknown keys inside a row
-// object must be ignored without changing reconstruction.
+// TestPopulateFromToolCalls_RefEnvelopeContractGoldenFixture pins the
+// consumer side of the CURRENT envelope shape to the shared golden fixture:
+// the final report text reconstructs, the tool_calls_ref key is tolerated,
+// and no tool-call rows are fabricated from it.
+func TestPopulateFromToolCalls_RefEnvelopeContractGoldenFixture(t *testing.T) {
+	raw, err := os.ReadFile(contractFixturePath(t, "task_result_envelope_contract.json"))
+	if err != nil {
+		t.Fatalf("read golden envelope fixture: %v", err)
+	}
+	threads := uiadapter.NewSubagentThreads()
+	uiadapter.PopulateFromToolCalls(threads, []ports.Message{
+		{
+			Role: "assistant",
+			At:   time.Now(),
+			ToolCalls: []ports.ToolCall{
+				{
+					ID:        "call_dispatch_ref",
+					Name:      "dispatch_tasks",
+					Arguments: `{"tasks":[{"id":"task-contract","prompt":"dispatch the contract tasks","agent":"researcher"}]}`,
+					Output:    string(raw),
+				},
+			},
+		},
+	})
+
+	conv, ok := threads.Thread("call_dispatch_ref:task-contract")
+	if !ok || conv == nil {
+		t.Fatal("expected thread for task-contract")
+	}
+	hist := conv.History()
+	if len(hist) != 2 {
+		t.Fatalf("expected 2 history messages (prompt + output), got %d", len(hist))
+	}
+	if hist[1].Text != "contract pinned output" {
+		t.Errorf("output text mismatch: got %q", hist[1].Text)
+	}
+	if len(hist[1].ToolCalls) != 0 {
+		t.Errorf("ref-only envelope must not fabricate tool-call rows, got %+v", hist[1].ToolCalls)
+	}
+}
+
+// TestPopulateFromToolCalls_WireContractGoldenFixture pins the LEGACY
+// (frozen) inline tool_calls decode old persisted sessions still need, then
+// proves DC-14 tolerance: unknown keys inside a row object must be ignored
+// without changing reconstruction.
 func TestPopulateFromToolCalls_WireContractGoldenFixture(t *testing.T) {
 	fixture := readContractFixture(t)
 

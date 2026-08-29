@@ -11,6 +11,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/MiviaLabs/mivia-agent/internal/provider"
 )
 
 // terminalStatus classifies a run's exit error into the fixed termination
@@ -18,12 +20,21 @@ import (
 // nil -> "completed", context.Canceled -> "canceled",
 // context.DeadlineExceeded -> "timed_out", ErrSchemaViolation or any other
 // non-nil error -> "error".
+//
+// "timed_out" is a claim about THIS run's budget, so a bound the HTTP
+// transport imposed on one phase of a provider exchange must not borrow it.
+// Such a failure reports errors.Is(err, context.DeadlineExceeded) while every
+// configured deadline is still live (see provider.IsTransportStageTimeout), and
+// reporting it as a timeout sent operators tuning request and total budgets
+// that had minutes to spare. It is a provider failure and reads as "error".
 func terminalStatus(err error) string {
 	switch {
 	case err == nil:
 		return "completed"
 	case errors.Is(err, context.Canceled):
 		return "canceled"
+	case provider.IsTransportStageTimeout(err):
+		return "error"
 	case errors.Is(err, context.DeadlineExceeded):
 		return "timed_out"
 	case errors.Is(err, ErrSchemaViolation):

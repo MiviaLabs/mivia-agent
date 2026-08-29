@@ -225,7 +225,11 @@ func (s *Session) loadContextCatalog(name string, readOnly bool) (bool, error) {
 			if preparedBinding != nil && preparedBinding.Dispatcher != nil {
 				preparedBinding.Dispatcher.Close()
 			}
-			return false, fmt.Errorf("resume session %q: %w", name, err)
+			// No session id in this wrap: every surface that shows it (the
+			// TUI runner, the -resume flag path) already names the session,
+			// and the doubled id once pushed the actual cause past the
+			// header renderer's clip width.
+			return false, fmt.Errorf("resume context session: %w", err)
 		}
 		reclaimedBinding = &binding
 	}

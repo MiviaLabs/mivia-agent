@@ -30,7 +30,8 @@ const migrationWindow = "2026-12-31"
 // constants from internal/sdkadapter instead of minting its own. Five
 // kinds cover every content reference today: tool output, tool error,
 // agent-to-agent message bodies, a subagent's recorded tool-call step
-// trace (operator-facing only - never handed to the model), and note.
+// trace (handed to the model by reference as tool_calls_ref on task
+// result envelopes, pageable via ledger_read), and note.
 // A note is model-authored content stored by the store_note tool; it is
 // distinct from ref:output:, which a coordinator attests as a task's
 // recorded output.

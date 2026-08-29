@@ -114,23 +114,29 @@ type parsedDispatchTask struct {
 // exactly the common case for a substantial subagent answer - and rendered
 // the dispatched prompt with nothing after it.
 type encodedTaskResult struct {
-	TaskID    string            `json:"task_id"`
-	Status    string            `json:"status"`
-	Output    json.RawMessage   `json:"output"`
-	Synopsis  string            `json:"synopsis"`
-	OutputRef string            `json:"output_ref"`
-	Error     string            `json:"error"`
-	Agent     string            `json:"agent"`
+	TaskID    string          `json:"task_id"`
+	Status    string          `json:"status"`
+	Output    json.RawMessage `json:"output"`
+	Synopsis  string          `json:"synopsis"`
+	OutputRef string          `json:"output_ref"`
+	Error     string          `json:"error"`
+	Agent     string          `json:"agent"`
+	// ToolCallsRef is the CURRENT wire shape: the recorded tool-call trace
+	// travels by reference only (dispatchTaskResult.ToolCallsRef).
+	ToolCallsRef string `json:"tool_calls_ref"`
+	// ToolCalls is the LEGACY inline shape. No producer emits it anymore;
+	// it survives only in OLD sessions' persisted tool calls, which this
+	// decode must keep reconstructing.
 	ToolCalls []toolCallSummary `json:"tool_calls"`
 }
 
-// toolCallSummary mirrors cliorchestrate's wire shape exactly (JSON tags
-// must match byte-for-byte since one produces this JSON, the other decodes
-// it back out of persisted chat history). Already merged one-row-per-call
-// upstream (see cliorchestrate's loadToolCallSummaries) - Incomplete is
-// true only for a genuinely unfinished call, never an envelope-cap
-// artifact, so this package can trust it directly with no further pairing
-// logic.
+// toolCallSummary is the LEGACY inline row shape old persisted sessions
+// carry; cliorchestrate no longer produces it (the trace now travels behind
+// tool_calls_ref), so this package owns the decode alone, pinned by the
+// frozen testdata/tool_calls_contract.json fixture. Rows arrived already
+// merged one-row-per-call - Incomplete is true only for a genuinely
+// unfinished call, never an envelope-cap artifact, so this package can
+// trust it directly with no further pairing logic.
 type toolCallSummary struct {
 	ToolCallID string `json:"tool_call_id"`
 	Name       string `json:"name"`
@@ -189,7 +195,10 @@ func rawErrorEnvelopeText(raw string) string {
 // resultText renders one task's display text: the real inline Output when
 // present, else the synopsis dispatch_tasks reports for an above-threshold
 // result that went by-reference (setOutputFields in
-// internal/cliorchestrate/dispatch_encode.go), else the task's error.
+// internal/cliorchestrate/dispatch_encode.go), else the task's error. A
+// result whose only content is a recorded trace reference still gets a
+// visible notice - never a silent empty thread - but the raw ref stays out
+// of display text (a reconstructed-thread reader has no ledger_read).
 func resultText(r encodedTaskResult) string {
 	if text := stringifyTaskOutput(r.Output); text != "" {
 		return text
@@ -197,7 +206,13 @@ func resultText(r encodedTaskResult) string {
 	if r.Synopsis != "" {
 		return r.Synopsis
 	}
-	return r.Error
+	if r.Error != "" {
+		return r.Error
+	}
+	if r.ToolCallsRef != "" {
+		return "(tool calls recorded)"
+	}
+	return ""
 }
 
 // matchTaskOutputs pairs each dispatched task with its result text, by

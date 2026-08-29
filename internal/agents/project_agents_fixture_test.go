@@ -184,6 +184,7 @@ func TestCommittedSkillsDeclareValidTools(t *testing.T) {
 		"architecture-review", "bug-audit", "capture", "concurrency-review",
 		"delivery",
 		"docs-maintenance", "docs-update", "fast-bug-audit", "feature-delivery",
+		"gate-authoring",
 		"housekeeping",
 		"logic-review",
 		"memory-housekeeping", "panel-architecture-review",

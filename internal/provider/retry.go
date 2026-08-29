@@ -248,7 +248,12 @@ func drainAndClose(resp *http.Response) {
 	if resp == nil || resp.Body == nil {
 		return
 	}
-	_, _ = io.CopyN(io.Discard, resp.Body, 64*1024)
+	// The drain is an optimization, so it must never cost more than the
+	// connection it saves. A provider that sends rejection headers and then
+	// stops would otherwise hold this read open to the client wall - and it
+	// happens on exactly the overloaded providers whose 429/503 responses put
+	// us here. The watchdog bound turns that into a fast give-up.
+	_, _ = io.CopyN(io.Discard, wrapBodyWithIdleWatchdog(resp.Body, "retry drain"), 64*1024)
 	resp.Body.Close()
 }
 
@@ -256,6 +261,16 @@ func drainAndClose(resp *http.Response) {
 func (r *retryRoundTripper) isRetryable(err error, resp *http.Response) (bool, retryAfterHeader) {
 	// Network/transport errors are always retryable.
 	if err != nil {
+		// A bound the transport itself imposed on one phase (the
+		// response-header wait, the client backstop) is the fault this budget
+		// exists to absorb, and it must be admitted BEFORE the cancellation
+		// guard: net/http's stage timeouts report themselves equal to
+		// context.DeadlineExceeded, so the guard below would otherwise read
+		// "the transport gave up early" as "the caller stopped this call" and
+		// deny a retry to the exchange that most needs one.
+		if IsTransportStageTimeout(err) {
+			return true, retryAfterHeader{}
+		}
 		// Don't retry context cancellations. Transports wrap the cause
 		// (net.OpError, url.Error), so compare with errors.Is: == would read a
 		// wrapped cancel as a transient fault and replay a request the user
@@ -308,12 +323,24 @@ func peekBody(resp *http.Response) []byte {
 	if resp == nil || resp.Body == nil {
 		return nil
 	}
+	// This read happens INSIDE RoundTrip, before any retry decision, on
+	// exactly the overloaded providers whose 429/503 bodies reach the
+	// classifier - so an unbounded peek stalls the retry layer itself.
+	//
+	// The bound is the watchdog, and the re-fronted body must be the WATCHDOG
+	// reader, not the raw one. The watchdog's pump reads ahead into its own
+	// buffer, so re-fronting with the raw body would drop whatever it had
+	// already buffered past the peek and leave that pump racing the caller's
+	// later reads. Reading through it keeps the stream whole: leftover first,
+	// then the rest of the source, all still bounded. Its terminal error is
+	// latched, so the caller reading to EOF here and again later is safe.
 	original := resp.Body
-	head, err := io.ReadAll(io.LimitReader(original, maxErrorPeekBytes))
+	bounded := wrapBodyWithIdleWatchdog(original, "retry peek")
+	head, err := io.ReadAll(io.LimitReader(bounded, maxErrorPeekBytes))
 	if err != nil && len(head) == 0 {
 		return nil
 	}
-	resp.Body = peekedBody{Reader: io.MultiReader(bytes.NewReader(head), original), Closer: original}
+	resp.Body = peekedBody{Reader: io.MultiReader(bytes.NewReader(head), bounded), Closer: original}
 	return head
 }
 

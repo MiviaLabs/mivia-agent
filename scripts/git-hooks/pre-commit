@@ -194,7 +194,41 @@ if command -v go >/dev/null 2>&1; then
   fi
   if echo "$STAGED" | grep -qE '^internal/agent/'; then
     echo " → Running agent invariant tests..."
-    (cd "$STAGED_ROOT" && run_verify go test -run 'TestRedactToolInput|TestDelegateToolMultiStep|TestMultiStepHandler' ./internal/agent/ -count=1 -timeout=60s) || INV_FAIL=1
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestRedactToolInput|TestDelegateToolMultiStep|TestMultiStepHandler|TestSDKTurnShaping' ./internal/agent/ -count=1 -timeout=90s) || INV_FAIL=1
+  fi
+  # internal/provider had NO entry here, so a provider-only commit ran zero
+  # provider tests at commit time. That is how a transport change capped every
+  # non-stream generation at the response-header bound and reached main. The
+  # conformance suite is the one that matters most: it is the only test that
+  # holds EVERY Completer implementation to the same contract, which is where
+  # this package keeps diverging.
+  if echo "$STAGED" | grep -qE '^internal/provider/'; then
+    echo " → Running provider invariant tests..."
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestCompleterConformance|TestIsTransportStageTimeout|TestStdlibTimerErrorIdentities|TestCompatBaseRoundTripper' ./internal/provider/ -count=1 -timeout=120s) || INV_FAIL=1
+  fi
+  if echo "$STAGED" | grep -qE '^internal/coordinator/'; then
+    echo " → Running coordinator invariant tests..."
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestDrainSeesQueuedMessage|TestPendingInterruptPreservesQueueContents' ./internal/coordinator/ -count=1 -timeout=60s) || INV_FAIL=1
+  fi
+  # Task identity has two forms (full namespaced TaskID vs stripped RawID),
+  # and a result-producer lookup keyed by the wrong one compiles and misses
+  # silently (DC-11) - the recovered path shipped that twice. The conformance
+  # suite is the gate that holds EVERY producer to the same attachment
+  # contract; the wire-contract test pins the envelope bytes uiadapter
+  # mirrors by hand (INV-TUI-29 forbids the import).
+  if echo "$STAGED" | grep -qE '^internal/cliorchestrate/'; then
+    echo " → Running orchestration result-envelope invariant tests..."
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestTaskResultProducerConformance|TestTaskResultEnvelopeWireContract' ./internal/cliorchestrate/ -count=1 -timeout=60s) || INV_FAIL=1
+  fi
+  # Any staged Go change can add an exec; the gate walks internal/ whole, so
+  # it is keyed on Go files rather than one directory.
+  if echo "" | grep -qE '^internal/.*\.go$'; then
+    echo " → Running exec pipe-bound gate..."
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryExecBoundsItsPipeWait' ./internal/evidencecheck/ -count=1 -timeout=60s) || INV_FAIL=1
+  fi
+  if echo "$STAGED" | grep -qE '^internal/subagents/'; then
+    echo " → Running subagent invariant tests..."
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestTerminalStatus|TestBuildResult|TestHandlerRequestFieldParity|TestHandlerParityPolicyHasNoStaleExemptions|TestOneShotHandler' ./internal/subagents/ -count=1 -timeout=60s) || INV_FAIL=1
   fi
   if echo "$STAGED" | grep -qE '^internal/chat/'; then
     echo " → Running chat invariant tests..."

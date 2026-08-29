@@ -11,6 +11,7 @@ import (
 // CurrentBranch returns the currently checked-out branch name for a worktree.
 func CurrentBranch(ctx context.Context, dir string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--abbrev-ref", "HEAD")
+	cmd.WaitDelay = vcsWaitDelay
 	cmd.Dir = dir
 	cmd.Env = pinnedEnv()
 	out, err := cmd.Output()
@@ -31,6 +32,7 @@ func ResolveCommit(ctx context.Context, dir, ref string) (string, error) {
 		return "", fmt.Errorf("resolve commit: ref must not be empty")
 	}
 	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--verify", "--end-of-options", ref+"^{commit}")
+	cmd.WaitDelay = vcsWaitDelay
 	cmd.Dir = dir
 	cmd.Env = pinnedEnv()
 	out, err := cmd.CombinedOutput()
@@ -51,6 +53,7 @@ func IsAncestor(ctx context.Context, dir, ancestor, descendant string) (bool, er
 		return false, err
 	}
 	cmd := exec.CommandContext(ctx, "git", "merge-base", "--is-ancestor", ancestorCommit, descendantCommit)
+	cmd.WaitDelay = vcsWaitDelay
 	cmd.Dir = dir
 	cmd.Env = pinnedEnv()
 	if err := cmd.Run(); err == nil {

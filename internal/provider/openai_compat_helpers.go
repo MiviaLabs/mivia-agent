@@ -28,7 +28,13 @@ func (c *OpenAICompat) httpError(resp *http.Response) error {
 	// message exceeds 4096 bytes (z.ai echoes request content in the message
 	// field) reaches the error parser intact; the drain below is a no-op once
 	// the body has been fully read.
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxJSONResponseBytes+1))
+	// Watchdog-bounded like every other body read in this package: an error
+	// response is still a response, and a provider that sends rejection
+	// headers and then stops would otherwise hold this read to the client's
+	// absolute wall. This is the failing path, so it is exactly where a stall
+	// is most likely and least expected.
+	bounded := c.wrapWithIdleWatchdog(resp.Body)
+	body, _ := io.ReadAll(io.LimitReader(bounded, maxJSONResponseBytes+1))
 	if c.errorParser != nil {
 		if err := c.errorParser(resp.StatusCode, body); err != nil {
 			return err
@@ -37,7 +43,9 @@ func (c *OpenAICompat) httpError(resp *http.Response) error {
 	// Drain remaining response body so the TCP connection can be reused
 	// by the HTTP transport. The caller will close via defer after this
 	// returns; without draining, Go's transport opens a new connection.
-	_, _ = io.CopyN(io.Discard, resp.Body, 64*1024)
+	// Bounded for the same reason as the read above: the drain is an
+	// optimization and must never cost more than the connection it saves.
+	_, _ = io.CopyN(io.Discard, bounded, 64*1024)
 	switch resp.StatusCode {
 	case http.StatusUnauthorized, http.StatusForbidden:
 		return fmt.Errorf("%s: auth failed (HTTP %d) - check API key", c.name, resp.StatusCode)

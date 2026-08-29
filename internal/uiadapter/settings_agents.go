@@ -121,7 +121,9 @@ func (s *SettingsStore) applyAgent(scope ports.Scope, e ports.AgentEdit) error {
 			s.agents = append(s.agents, v.Agent)
 		}
 		if dir := agentsDirForScope(scope); dir != "" {
-			_ = config.WriteAgentFile(dir, agentViewToSettings(v.Agent), v.Agent.SystemPrompt)
+			if err := config.WriteAgentFile(dir, agentViewToSettings(v.Agent), v.Agent.SystemPrompt); err != nil {
+				return fmt.Errorf("persist agent file: %w", err)
+			}
 		}
 	case ports.RemoveAgent:
 		i := s.findAgent(v.Name)
@@ -139,7 +141,9 @@ func (s *SettingsStore) applyAgent(scope ports.Scope, e ports.AgentEdit) error {
 		rowScope := s.agents[i].Scope
 		s.agents = append(s.agents[:i], s.agents[i+1:]...)
 		if dir := agentsDirForScope(rowScope); dir != "" {
-			_ = config.RemoveAgentFile(dir, v.Name)
+			if err := config.RemoveAgentFile(dir, v.Name); err != nil {
+				return fmt.Errorf("persist agent removal: %w", err)
+			}
 		}
 	default:
 		return fmt.Errorf("unknown agent edit %T", e)

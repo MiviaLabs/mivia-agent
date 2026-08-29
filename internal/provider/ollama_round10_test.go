@@ -54,8 +54,8 @@ func TestRound10NewOllamaKeylessLoopbackStillPinned(t *testing.T) {
 		t.Fatalf("NewOllama(loopback) = %v, want success", err)
 	}
 	client := comp.(*OpenAICompat)
-	tr, ok := innerTransport(client).(*http.Transport)
-	if !ok || tr.DialContext == nil {
+	tr := anyTransport(client)
+	if tr == nil || tr.DialContext == nil {
 		t.Fatal("loopback keyless client lost its pinned dial")
 	}
 	client.client.CloseIdleConnections()
@@ -75,8 +75,8 @@ func TestRound10NewOllamaCloudKeyedUnchanged(t *testing.T) {
 	if client.apiKey != "sekrit" {
 		t.Fatalf("apiKey = %q, want %q", client.apiKey, "sekrit")
 	}
-	tr, ok := innerTransport(client).(*http.Transport)
-	if !ok {
+	tr := anyTransport(client)
+	if tr == nil {
 		t.Fatal("cloud keyed client missing transport")
 	}
 	def := http.DefaultTransport.(*http.Transport)
@@ -138,8 +138,8 @@ func TestRound10PinnedDialConnectsToLoopbackOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := comp.(*OpenAICompat)
-	tr, ok := innerTransport(client).(*http.Transport)
-	if !ok || tr.DialContext == nil {
+	tr := anyTransport(client)
+	if tr == nil || tr.DialContext == nil {
 		t.Fatal("loopback keyless client lost its pinned dial")
 	}
 	conn, err := tr.DialContext(context.Background(), "tcp", net.JoinHostPort("10.255.255.1", strconv.Itoa(port)))

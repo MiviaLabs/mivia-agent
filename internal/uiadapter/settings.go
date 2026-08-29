@@ -517,7 +517,9 @@ func (s *SettingsStore) applyGeneral(e ports.GeneralEdit) error {
 	}
 
 	if cfgPath := s.configPath(); cfgPath != "" {
-		_ = config.UpdateGeneralConfig(cfgPath, generalViewToSettings(s.general))
+		if err := config.UpdateGeneralConfig(cfgPath, generalViewToSettings(s.general)); err != nil {
+			return fmt.Errorf("persist general settings: %w", err)
+		}
 	}
 	if mouseNotifier != nil {
 		on := s.general.Mouse
@@ -645,7 +647,9 @@ func (s *SettingsStore) applyMCP(e ports.MCPEdit, scope ports.Scope) error {
 			s.mcp = append(s.mcp, v.Server)
 		}
 		if cfgPath != "" {
-			_ = config.UpdateMCPServerConfig(cfgPath, mcpServerViewToSettings(v.Server))
+			if err := config.UpdateMCPServerConfig(cfgPath, mcpServerViewToSettings(v.Server)); err != nil {
+				return fmt.Errorf("persist mcp server: %w", err)
+			}
 		}
 	case ports.RemoveMCPServer:
 		i := s.findMCPServer(v.ID)
@@ -654,7 +658,9 @@ func (s *SettingsStore) applyMCP(e ports.MCPEdit, scope ports.Scope) error {
 		}
 		s.mcp = append(s.mcp[:i], s.mcp[i+1:]...)
 		if cfgPath != "" {
-			_ = config.RemoveMCPServerConfig(cfgPath, v.ID)
+			if err := config.RemoveMCPServerConfig(cfgPath, v.ID); err != nil {
+				return fmt.Errorf("persist mcp server removal: %w", err)
+			}
 		}
 	case ports.SetMCPServerEnabled:
 		i := s.findMCPServer(v.ID)
@@ -663,7 +669,9 @@ func (s *SettingsStore) applyMCP(e ports.MCPEdit, scope ports.Scope) error {
 		}
 		s.mcp[i].Enabled = v.On
 		if cfgPath != "" {
-			_ = config.UpdateMCPServerConfig(cfgPath, mcpServerViewToSettings(s.mcp[i]))
+			if err := config.UpdateMCPServerConfig(cfgPath, mcpServerViewToSettings(s.mcp[i])); err != nil {
+				return fmt.Errorf("persist mcp server: %w", err)
+			}
 		}
 	default:
 		return fmt.Errorf("unknown mcp edit %T", e)

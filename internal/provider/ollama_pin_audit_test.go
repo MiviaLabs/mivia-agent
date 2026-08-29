@@ -35,6 +35,46 @@ func innerTransport(c *OpenAICompat) http.RoundTripper {
 	return rt.inner
 }
 
+// anyTransport returns one of the client's phase transports. They are built
+// from one template and differ only in their header bound, so a test whose
+// subject is the dial wiring needs just one. Tests whose subject IS the
+// per-pool coverage of the pin use httpTransportsOf and assert over all of
+// them.
+func anyTransport(c *OpenAICompat) *http.Transport {
+	if transports := httpTransportsOf(c); len(transports) > 0 {
+		return transports[0]
+	}
+	return nil
+}
+
+// modalOf returns the client's per-phase transport pair, failing the test when
+// the base round tripper is not the expected shape.
+func modalOf(t *testing.T, c *OpenAICompat) *modalHeaderTransport {
+	t.Helper()
+	modal, ok := innerTransport(c).(*modalHeaderTransport)
+	if !ok {
+		t.Fatalf("inner transport = %T, want *modalHeaderTransport", innerTransport(c))
+	}
+	return modal
+}
+
+// httpTransportsOf returns every *http.Transport a client's base round tripper
+// owns. A client carries one transport per header phase (see header_bound.go),
+// and the loopback pin is a security gate that must hold on EVERY one of them
+// - a pin applied to only the streaming pool would still let a non-stream
+// request dial whatever a resolver answered. Callers assert over the whole
+// slice, and fail when it is empty.
+func httpTransportsOf(c *OpenAICompat) []*http.Transport {
+	switch base := innerTransport(c).(type) {
+	case *modalHeaderTransport:
+		return []*http.Transport{base.streamed, base.generation}
+	case *http.Transport:
+		return []*http.Transport{base}
+	default:
+		return nil
+	}
+}
+
 func portOf(t *testing.T, addr string) string {
 	t.Helper()
 	_, port, err := net.SplitHostPort(addr)
@@ -101,18 +141,20 @@ func TestAuditEveryKeylessConstructionPathInstallsPinnedTransport(t *testing.T) 
 			if client.apiKey != "" {
 				t.Fatalf("apiKey = %q, want stripped", client.apiKey)
 			}
-			tr, ok := innerTransport(client).(*http.Transport)
-			if !ok {
-				t.Fatalf("inner transport = %T, want *http.Transport (pinned clone)", innerTransport(client))
+			transports := httpTransportsOf(client)
+			if len(transports) == 0 {
+				t.Fatalf("inner transport = %T, want pinned *http.Transport clones", innerTransport(client))
 			}
-			if tr == http.DefaultTransport {
-				t.Fatal("inner transport is http.DefaultTransport; keyless ollama dial is NOT pinned")
-			}
-			if tr.DialContext == nil {
-				t.Fatal("pinned clone has nil DialContext")
-			}
-			if tr.DialTLSContext != nil {
-				t.Fatal("pinned clone has DialTLSContext set; https dials could bypass DialContext")
+			for _, tr := range transports {
+				if tr == http.DefaultTransport {
+					t.Fatal("inner transport is http.DefaultTransport; keyless ollama dial is NOT pinned")
+				}
+				if tr.DialContext == nil {
+					t.Fatal("pinned clone has nil DialContext")
+				}
+				if tr.DialTLSContext != nil {
+					t.Fatal("pinned clone has DialTLSContext set; https dials could bypass DialContext")
+				}
 			}
 		})
 	}
@@ -124,9 +166,14 @@ func TestAuditEveryKeylessConstructionPathInstallsPinnedTransport(t *testing.T) 
 		t.Fatalf("NewForProvider: %v", err)
 	}
 	client := comp.(*OpenAICompat)
-	tr := innerTransport(client).(*http.Transport)
-	if tr == http.DefaultTransport || tr.DialContext == nil {
-		t.Fatalf("NewForProvider keyless ollama transport is DefaultTransport=%v DialContext=%v; want pinned clone", tr == http.DefaultTransport, tr.DialContext != nil)
+	transports := httpTransportsOf(client)
+	if len(transports) == 0 {
+		t.Fatalf("NewForProvider keyless ollama base transport = %T, want pinned clones", innerTransport(client))
+	}
+	for _, tr := range transports {
+		if tr == http.DefaultTransport || tr.DialContext == nil {
+			t.Fatalf("NewForProvider keyless ollama transport is DefaultTransport=%v DialContext=%v; want pinned clone", tr == http.DefaultTransport, tr.DialContext != nil)
+		}
 	}
 }
 
@@ -157,16 +204,15 @@ func TestAuditNonOllamaProvidersKeepDefaultTransport(t *testing.T) {
 				t.Fatalf("NewForProvider: %v", err)
 			}
 			client := comp.(*OpenAICompat)
-			tr, ok := innerTransport(client).(*http.Transport)
-			if !ok {
-				t.Fatalf("inner transport = %T, want *http.Transport", innerTransport(client))
+			for _, tr := range httpTransportsOf(client) {
+				if tr == def {
+					t.Fatal("cloud client shares http.DefaultTransport; every client must own a fresh clone")
+				}
+				if tr.DialContext == nil || reflect.ValueOf(tr.DialContext).Pointer() != reflect.ValueOf(def.DialContext).Pointer() {
+					t.Fatal("cloud client transport is pinned; a cloud client is never pinned")
+				}
 			}
-			if tr == def {
-				t.Fatal("cloud client shares http.DefaultTransport; every client must own a fresh clone")
-			}
-			if tr.DialContext == nil || reflect.ValueOf(tr.DialContext).Pointer() != reflect.ValueOf(def.DialContext).Pointer() {
-				t.Fatal("cloud client transport is pinned; a cloud client is never pinned")
-			}
+			tr := modalOf(t, client).streamed
 			if tr.ResponseHeaderTimeout != DefaultResponseHeaderTimeout {
 				t.Fatalf("cloud clone ResponseHeaderTimeout = %v, want %v", tr.ResponseHeaderTimeout, DefaultResponseHeaderTimeout)
 			}
@@ -193,8 +239,8 @@ func TestNewForProviderPinsLoopbackDialForNonOllamaProvider(t *testing.T) {
 		t.Fatalf("NewForProvider: %v", err)
 	}
 	client := comp.(*OpenAICompat)
-	tr, ok := innerTransport(client).(*http.Transport)
-	if !ok {
+	tr := anyTransport(client)
+	if tr == nil {
 		t.Fatalf("inner transport = %T, want *http.Transport", innerTransport(client))
 	}
 	if tr == http.DefaultTransport {
@@ -218,10 +264,20 @@ func TestAuditCompatBaseRoundTripperIdentity(t *testing.T) {
 	def := http.DefaultTransport.(*http.Transport)
 	pin := func(ctx context.Context, network, addr string) (net.Conn, error) { return nil, nil }
 
-	unpinned, ok := compatBaseRoundTripper(nil).(*http.Transport)
+	unpinnedModal, ok := compatBaseRoundTripper(nil).(*modalHeaderTransport)
 	if !ok {
-		t.Fatalf("compatBaseRoundTripper(nil) = %T, want *http.Transport", compatBaseRoundTripper(nil))
+		t.Fatalf("compatBaseRoundTripper(nil) = %T, want *modalHeaderTransport", compatBaseRoundTripper(nil))
 	}
+	// The generation-phase clone is held to the same clone quality as the
+	// streaming one; only its header bound differs, and it carries none
+	// because a non-stream header wait is the model working (header_bound.go).
+	if unpinnedModal.generation.ResponseHeaderTimeout != 0 {
+		t.Fatalf("generation clone ResponseHeaderTimeout = %v, want none", unpinnedModal.generation.ResponseHeaderTimeout)
+	}
+	if unpinnedModal.generation == def || unpinnedModal.generation.DialTLSContext != nil {
+		t.Fatal("generation clone must be a fresh clone with no DialTLSContext")
+	}
+	unpinned := unpinnedModal.streamed
 	if unpinned == def {
 		t.Fatal("compatBaseRoundTripper(nil) returned http.DefaultTransport itself; a client must never own the global")
 	}
@@ -241,10 +297,16 @@ func TestAuditCompatBaseRoundTripperIdentity(t *testing.T) {
 		t.Fatal("clone changed Proxy")
 	}
 
-	pinned, ok := compatBaseRoundTripper(pin).(*http.Transport)
+	pinnedModal, ok := compatBaseRoundTripper(pin).(*modalHeaderTransport)
 	if !ok {
-		t.Fatalf("compatBaseRoundTripper(pin) = %T, want *http.Transport", compatBaseRoundTripper(pin))
+		t.Fatalf("compatBaseRoundTripper(pin) = %T, want *modalHeaderTransport", compatBaseRoundTripper(pin))
 	}
+	// The pin must reach the generation-phase clone too: a non-stream request
+	// routes there, and an unpinned dial on that pool would defeat the gate.
+	if reflect.ValueOf(pinnedModal.generation.DialContext).Pointer() != reflect.ValueOf(pin).Pointer() {
+		t.Fatal("generation clone DialContext is not the pinned function")
+	}
+	pinned := pinnedModal.streamed
 	if pinned == def {
 		t.Fatal("pinned base transport must be a clone, not http.DefaultTransport itself")
 	}
@@ -276,12 +338,14 @@ func TestAuditWithOptionsAndRetryThreadsDialContext(t *testing.T) {
 	c := NewOpenAICompatWithOptionsAndRetry(CompatOptions{
 		Name: "ollama", BaseURL: "http://localhost:11434/v1", APIKey: "", DialContext: pin,
 	}, &retryOptions{MaxRetries: 1, BaseDelay: time.Millisecond, MaxDelay: time.Millisecond})
-	tr, ok := innerTransport(c).(*http.Transport)
-	if !ok {
-		t.Fatalf("inner transport = %T, want *http.Transport", innerTransport(c))
+	transports := httpTransportsOf(c)
+	if len(transports) == 0 {
+		t.Fatalf("inner transport = %T, want *http.Transport clones", innerTransport(c))
 	}
-	if reflect.ValueOf(tr.DialContext).Pointer() != reflect.ValueOf(pin).Pointer() {
-		t.Fatal("NewOpenAICompatWithOptionsAndRetry did not thread DialContext")
+	for _, tr := range transports {
+		if reflect.ValueOf(tr.DialContext).Pointer() != reflect.ValueOf(pin).Pointer() {
+			t.Fatal("NewOpenAICompatWithOptionsAndRetry did not thread DialContext")
+		}
 	}
 }
 
@@ -376,13 +440,19 @@ func TestAuditHTTPSDialIsPinned(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := comp.(*OpenAICompat)
-	tr := innerTransport(client).(*http.Transport)
-	if tr.DialTLSContext != nil {
-		t.Fatal("pinned clone has DialTLSContext; https dials would bypass the pin")
+	transports := httpTransportsOf(client)
+	if len(transports) == 0 {
+		t.Fatalf("inner transport = %T, want pinned clones", innerTransport(client))
 	}
-	// Test-only: trust the httptest self-signed cert so the request completes;
-	// the dial path under test is unchanged.
-	tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec
+	for _, tr := range transports {
+		if tr.DialTLSContext != nil {
+			t.Fatal("pinned clone has DialTLSContext; https dials would bypass the pin")
+		}
+		// Test-only: trust the httptest self-signed cert so the request
+		// completes; the dial path under test is unchanged. Applied to every
+		// phase transport, since the request may route to either.
+		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec
+	}
 	client.client.Timeout = 10 * time.Second
 
 	out, err := client.Chat(context.Background(), Request{Model: "m", Messages: []Message{{Role: RoleUser, Content: "hi"}}})

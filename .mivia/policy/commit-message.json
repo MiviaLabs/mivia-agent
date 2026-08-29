@@ -95,5 +95,21 @@
     "fix(tools): anchor write_file overwrite diff at the first changed line"
   ],
   "binaryName": "mivia",
-  "brand": "MiviaLabs"
+  "brand": "MiviaLabs",
+  "trailerRules": {
+    "Regression": {
+      "kind": "testNames",
+      "why": "A named test that does not exist is not a regression proof. Every Test<Name> in this trailer must resolve to a real func in a _test.go file, the same way validate_invariants.py resolves the names in .mivia/invariants.md."
+    },
+    "Class": {
+      "kind": "defectClass",
+      "catalogue": ".agents/quality/defect-taxonomy.md",
+      "why": "The taxonomy is the repo's catalogue of classes that recur. A free-prose class cannot be swept for, cannot be counted, and does not make the next instance easier to find. Name a DC-n or say none and add the class."
+    },
+    "Sweep": {
+      "kind": "countedSearch",
+      "minLength": 30,
+      "why": "The sweep is the gate that stops one class producing a chain of repeat fixes, so it must report a COUNT of other sites examined, not an assertion that a check happened. 'Sweep: checked' proves nothing and used to pass."
+    }
+  }
 }

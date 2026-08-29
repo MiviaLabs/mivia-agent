@@ -27,6 +27,13 @@ func (c *OpenAICompat) newRequest(ctx context.Context, req Request) (*http.Reque
 	if req.DisableProviderReplay {
 		ctx = context.WithValue(ctx, disableProviderReplayContextKey{}, true)
 	}
+	// A non-stream completion returns headers only once the whole answer
+	// exists, so its header wait is the model working and must not be bounded
+	// as a stall (header_bound.go). A streaming request answers immediately
+	// and keeps the bound.
+	if !req.Stream {
+		ctx = withGenerationHeaderPhase(ctx)
+	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(raw))
 	if err != nil {
 		return nil, err

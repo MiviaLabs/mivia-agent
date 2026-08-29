@@ -1,9 +1,11 @@
 package newtui
 
 import (
+	"context"
 	"io"
 	"log"
 	"os"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
@@ -33,10 +35,19 @@ func RunTUI(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *
 	log.SetOutput(io.Discard)
 	defer log.SetOutput(prevLogWriter)
 
-	root, settingsStore, err := buildApp(sess, res, toolsOn, agentState, resumeSessionName)
+	root, settingsStore, runner, err := buildApp(sess, res, toolsOn, agentState, resumeSessionName)
 	if err != nil {
 		return err
 	}
+	// Release every pooled session's context lease on the way out. The chat
+	// surface's own defer covers only the primary startup session; without
+	// this, any session resumed in the TUI kept a fresh lease behind and the
+	// next process's resume was refused until the lease TTL ran out.
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		runner.Pool().ReleaseLeases(ctx)
+	}()
 
 	p := tea.NewProgram(root)
 	wireMouseNotifier(settingsStore, p)
@@ -81,12 +92,12 @@ func mouseEnabled(res *config.Resolved, env []string) bool {
 // in-process).
 var loadThemes = theme.Embedded
 
-func buildApp(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *cli.AgentSessionState, resumeSessionName string) (tea.Model, *uiadapter.SettingsStore, error) {
+func buildApp(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *cli.AgentSessionState, resumeSessionName string) (tea.Model, *uiadapter.SettingsStore, *uiadapter.CommandRunner, error) {
 	registerSubagentProgress()
 	approver := uiadapter.NewApprover(sess)
 	themes, err := loadThemes()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	var th theme.Theme
 	for _, t := range themes {
@@ -133,5 +144,5 @@ func buildApp(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState
 		FullRepaint: report.FullRepaint,
 	})
 
-	return root, settingsStore, nil
+	return root, settingsStore, runner, nil
 }

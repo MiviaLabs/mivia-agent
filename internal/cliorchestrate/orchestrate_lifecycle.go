@@ -31,9 +31,10 @@ type modelTaskResult struct {
 	ErrorRef    string `json:"error_ref,omitempty"`
 	// Messages are synopsis-only findings/questions posted during the task.
 	Messages []messageSynopsis `json:"messages,omitempty"`
-	// ToolCalls are bounded, pre-merged tool-call summaries; see
-	// loadToolCallSummaries in dispatch_encode.go (same package, shared type).
-	ToolCalls []toolCallSummary `json:"tool_calls,omitempty"`
+	// ToolCallsRef is the resolvable reference to the task's recorded
+	// tool-call trace; same contract as dispatchTaskResult.ToolCallsRef
+	// (read from the task record, never re-minted; page via ledger_read).
+	ToolCallsRef string `json:"tool_calls_ref,omitempty"`
 }
 
 // ModelTaskResults returns live orchestration results for model consumption.
@@ -90,8 +91,9 @@ func ModelTaskResultsWithRepo(repo ledger.LedgerRepository, tasks []ledger.TaskS
 				out[i].ErrorRef = errorRef
 			}
 		}
-		out[i].Messages = msgIndex[result.TaskID]
-		out[i].ToolCalls = loadToolCallSummaries(context.Background(), repo, toolCallsRefFor(tasks, result.TaskID))
+		if snap, ok := taskSnapshotFor(tasks, result.TaskID); ok {
+			attachTaskRecord(&out[i], snap, msgIndex)
+		}
 	}
 	return out
 }
@@ -107,6 +109,10 @@ func persistedTaskResults(tasks []ledger.TaskSnapshot) []modelTaskResult {
 			TaskID: modelVisibleTaskID(task), Status: task.Status,
 			OutputRef: task.OutputRef, ErrorRef: task.ErrorRef,
 		}
+		// Attachments come only from attachTaskRecord, keyed off the
+		// snapshot row itself: the model-visible TaskID above is the
+		// namespace-stripped RawID, so any id-keyed side lookup on it
+		// misses dispatch-namespaced tasks (DC-11).
 	}
 	return out
 }
@@ -143,12 +149,12 @@ func RunTaskResultsWithRepo(repo ledger.LedgerRepository, result *coordinator.Ru
 	}
 	if allResultsRecovered(result) {
 		out := persistedTaskResults(result.Snapshot.Tasks)
-		if repo != nil {
-			msgIndex := TaskMessageIndex(context.Background(), repo, result.Snapshot.Tasks)
-			for i := range out {
-				out[i].Messages = msgIndex[out[i].TaskID]
-				out[i].ToolCalls = loadToolCallSummaries(context.Background(), repo, toolCallsRefFor(result.Snapshot.Tasks, out[i].TaskID))
-			}
+		msgIndex := TaskMessageIndex(context.Background(), repo, result.Snapshot.Tasks)
+		for i := range out {
+			// Rows are index-aligned with the snapshot; the helper reads
+			// attachments off the row itself, so the stripped model-visible
+			// TaskID never becomes a lookup key.
+			attachTaskRecord(&out[i], result.Snapshot.Tasks[i], msgIndex)
 		}
 		return out
 	}
@@ -190,6 +196,7 @@ func (t *joinRunTool) Description() string {
 	return "Join (block until) a previously spawned orchestration run completes. " +
 		"Returns the final live run result including per-task structured output, status, " +
 		"correlation references, and any errors. For large task results, output_ref is returned instead of inline output; use ledger_read to fetch the full body. " +
+		"Each task's recorded tool activity is behind tool_calls_ref; use ledger_read to page it on demand. " +
 		"Recovered historical runs expose references only. Blocks until the run finishes, " +
 		"timeout_seconds elapses (default " + joinDefaultSeconds(t.cfg) + "s, cap 3600), or the calling context is canceled. " +
 		"On join timeout the run is gracefully canceled and the response says so - never retry a wedged join blindly."
@@ -285,7 +292,7 @@ func (t *joinRunTool) Execute(ctx context.Context, args json.RawMessage) (string
 		// and never discard work that already finished (same INV-AG-21 shape
 		// as RunThroughCoordinator): salvage whatever task records exist.
 		if salvaged := salvageUnjoinedRun(record.coord, handle, err); salvaged != nil {
-			return joinSalvageEnvelope(record.coord, handle, salvaged, err, ctx.Err() == nil), nil
+			return joinSalvageEnvelope(t.repo, record.coord, handle, salvaged, err, ctx.Err() == nil), nil
 		}
 		snap := latestSnapshot(record.coord, handle, ctx)
 		status := "unknown"
@@ -460,17 +467,25 @@ func joinSalvageHint(joinBudgetExpired bool) string {
 // caller cancel leaves the run running under its own budget - another caller
 // may own it, and walking away is not a verdict. Deriving joinBudgetExpired
 // here keeps the hint and the cancel decision from ever disagreeing.
-func joinSalvageEnvelope(coord coordinator.Coordinator, handle *coordinator.RunHandle, salvaged *coordinator.RunResult, joinErr error, callerAlive bool) string {
+func joinSalvageEnvelope(repo ledger.LedgerRepository, coord coordinator.Coordinator, handle *coordinator.RunHandle, salvaged *coordinator.RunResult, joinErr error, callerAlive bool) string {
 	joinBudgetExpired := errors.Is(joinErr, context.DeadlineExceeded) && callerAlive
 	if joinBudgetExpired {
 		go cancelWedgedRun(coord, handle)
+	}
+	// A salvaged run's recorded work is diagnostic gold: attach the same
+	// snapshot-recorded messages and trace refs every other producer
+	// reports, through the same single path.
+	rows := persistedTaskResults(salvaged.Snapshot.Tasks)
+	msgIndex := TaskMessageIndex(context.Background(), repo, salvaged.Snapshot.Tasks)
+	for i := range rows {
+		attachTaskRecord(&rows[i], salvaged.Snapshot.Tasks[i], msgIndex)
 	}
 	out, _ := json.Marshal(map[string]any{
 		"run_id":       salvaged.Snapshot.RunID,
 		"display_name": salvaged.Snapshot.DisplayName,
 		"status":       salvaged.Snapshot.Status,
 		"run_error":    salvageErrorText(joinErr),
-		"task_results": persistedTaskResults(salvaged.Snapshot.Tasks),
+		"task_results": rows,
 		"hint":         joinSalvageHint(joinBudgetExpired),
 	})
 	return string(out)

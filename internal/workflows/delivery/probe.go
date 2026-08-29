@@ -11,6 +11,7 @@ import (
 // It is a variable so tests can drive the failure paths without a real gh.
 var prToolProbe = func(program string) error {
 	cmd := exec.Command(program, "--version")
+	cmd.WaitDelay = deliveryWaitDelay
 	cmd.Env = ghEnv()
 	return cmd.Run()
 }
