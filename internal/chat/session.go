@@ -226,6 +226,13 @@ type Session struct {
 	contextWorktreeRoot  string
 	contextSessionDir    string
 	loadedContextSession bool
+	// contextHeartbeat proves to a rival process's ReclaimSession that this
+	// process is still actively working its context session (internal/
+	// storage.ReclaimSession's lease check). Lazily constructed by
+	// armContextHeartbeat on first use, once per Session; see
+	// internal/chat/context_heartbeat.go.
+	contextHeartbeat     *contextHeartbeat
+	contextHeartbeatOnce sync.Once
 	// contextPublishMu serializes context publication with clear and turn
 	// snapshot capture. Provider calls remain lock-free; only the durable
 	// compare-and-swap and its in-memory adoption are serialized.

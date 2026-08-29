@@ -66,6 +66,11 @@ var (
 	ErrWorktreeDeleted = errors.New("worktree session deleted")
 	// ErrPromptBudgetExceeded marks a prompt that broke the model's input budget.
 	ErrPromptBudgetExceeded = errors.New("prompt budget exceeded")
+	// ErrSessionLiveElsewhere marks a ReclaimSession attempt against a session
+	// whose current owner's lease is still fresh (an actively-heartbeating
+	// process), rather than the session being unknown, tombstoned, or owned by
+	// a different subject/managed worktree.
+	ErrSessionLiveElsewhere = errors.New("context session is live in another process")
 )
 
 // EffectiveSummaryMetadataLimit returns the operator-configured summary
