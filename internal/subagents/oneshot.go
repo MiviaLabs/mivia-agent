@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
+	"github.com/MiviaLabs/mivia-agent/internal/jschema"
 	"github.com/MiviaLabs/mivia-agent/internal/prompts"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
@@ -46,6 +47,10 @@ type OneShotHandler struct {
 	// default_total_timeout_seconds budget set it via totalTaskTimeout-style
 	// resolution; zero leaves the per-task timeout as the only bound.
 	TotalTimeout time.Duration
+	// OutputSchema is the handler-default schema, mirroring
+	// MultiStepHandler.OutputSchema. Request.OutputSchema overrides it; nil on
+	// both means a free-text answer.
+	OutputSchema map[string]any
 	// WireStream opts this one-shot call into the provider's wire-stream
 	// transport: stream:true on the wire, the plain non-stream contract on
 	// the return path (the full answer still comes back as one string). Set
@@ -75,6 +80,17 @@ func (h *OneShotHandler) Invoke(ctx context.Context, req runtime.Request) (json.
 		return nil, fmt.Errorf("subagent %q: empty task prompt", req.Name)
 	}
 
+	// dispatch_tasks promises the model that an output_schema is "Validated
+	// before the task completes", and the agent field is optional - so an
+	// agent-less task lands here. Ignoring req.OutputSchema made that promise
+	// silently false: unvalidated prose came back reporting completed, and the
+	// model was never even shown the contract it was being held to.
+	compiled, appendix, cerr := compileRequestSchema(req.OutputSchema, h.OutputSchema)
+	if cerr != nil {
+		return nil, fmt.Errorf("subagent %q: %w", req.Name, cerr)
+	}
+	taskPrompt += appendix
+
 	msgs := []provider.Message{
 		{Role: provider.RoleSystem, Content: h.SystemPrompt},
 		{Role: provider.RoleUser, Content: taskPrompt},
@@ -98,22 +114,92 @@ func (h *OneShotHandler) Invoke(ctx context.Context, req runtime.Request) (json.
 	defer cancel()
 
 	dial := h.dial()
-	reply, err := h.Completer.Chat(callCtx, provider.Request{
-		Model:            h.Model,
-		Messages:         msgs,
-		MaxTokens:        h.MaxTokens,
-		ReasoningLevel:   dial.Level,
-		ReasoningDialect: dial.Dialect,
-		SessionID:        req.SessionID,
-		StreamTransport:  h.WireStream,
-	})
+	ask := func(messages []provider.Message) (string, error) {
+		return h.Completer.Chat(callCtx, provider.Request{
+			Model:            h.Model,
+			Messages:         messages,
+			MaxTokens:        h.MaxTokens,
+			ReasoningLevel:   dial.Level,
+			ReasoningDialect: dial.Dialect,
+			SessionID:        req.SessionID,
+			StreamTransport:  h.WireStream,
+			// Request-scoped, like every other bound here: a caller that asked
+			// for exactly one provider request must get exactly one.
+			DisableProviderReplay: req.DisableProviderReplay,
+		})
+	}
+
+	reply, err := ask(msgs)
 	if err != nil {
 		return nil, fmt.Errorf("subagent %q: %w", req.Name, err)
 	}
+	if compiled == nil {
+		return json.Marshal(map[string]any{"output": reply})
+	}
+	structured, err := repairToSchema(compiled, ask, msgs, reply)
+	if err != nil {
+		return nil, fmt.Errorf("subagent %q: %w", req.Name, err)
+	}
+	return json.Marshal(map[string]any{"output": structured, "schema": "ok"})
+}
 
-	return json.Marshal(map[string]any{
-		"output": reply,
-	})
+// repairToSchema validates a reply and, on failure, re-asks once with a
+// corrective turn before giving up.
+//
+// One retry, then fail closed. There is no tool loop here to spend a step
+// budget on, and a second invalid reply to a restated contract is a task that
+// cannot meet it - reporting that is honest, where reporting "completed" with
+// unvalidated prose was not.
+func repairToSchema(
+	compiled *jschema.Compiled,
+	ask func([]provider.Message) (string, error),
+	msgs []provider.Message,
+	reply string,
+) (any, error) {
+	structured, verr := validateSchemaReply(compiled, reply)
+	if verr == nil {
+		return structured, nil
+	}
+	corrective := append(append([]provider.Message(nil), msgs...),
+		provider.Message{Role: provider.RoleAssistant, Content: reply},
+		provider.Message{Role: provider.RoleUser, Content: jschema.FormatCorrectiveWithSchema(verr, compiled.Raw(), nil)},
+	)
+	retried, rerr := ask(corrective)
+	if rerr != nil {
+		return nil, rerr
+	}
+	structured, verr = validateSchemaReply(compiled, retried)
+	if verr != nil {
+		return nil, fmt.Errorf("%w: %v", ErrSchemaViolation, verr)
+	}
+	return structured, nil
+}
+
+// compileRequestSchema resolves the request schema over the handler default
+// and compiles it, returning the model-facing prompt appendix. Shared shape
+// with MultiStepHandler.compileOutputSchema so the two handlers cannot
+// disagree about which schema wins or what the model is told.
+func compileRequestSchema(requested, fallback map[string]any) (*jschema.Compiled, string, error) {
+	schemaMap := requested
+	if schemaMap == nil {
+		schemaMap = fallback
+	}
+	if schemaMap == nil {
+		return nil, "", nil
+	}
+	compiled, err := jschema.Compile(schemaMap)
+	if err != nil {
+		return nil, "", fmt.Errorf("%w: %v", ErrSchemaViolation, err)
+	}
+	return compiled, jschema.PromptAppendix(compiled.Raw()), nil
+}
+
+// validateSchemaReply extracts the output candidate from a reply and
+// validates it, returning the parsed value. Same extraction the multi-step
+// path uses, so a model that fences its JSON is treated identically by both
+// handlers.
+func validateSchemaReply(compiled *jschema.Compiled, reply string) (any, error) {
+	return compiled.ValidateJSONBytes([]byte(jschema.ExtractOutputCandidate(reply)))
 }
 
 // Ensure OneShotHandler implements runtime.Handler.
