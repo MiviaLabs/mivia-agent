@@ -113,6 +113,25 @@ func (s *Session) currentSaveToken() OperationToken {
 	return s.captureOperationToken("")
 }
 
+// logStaleOperation reports an ErrStaleOperation/ErrStaleAutosave outcome
+// that every caller in this package otherwise treats as an intentional no-op
+// (a superseded turn losing the persistence race to whatever superseded it -
+// see ErrStaleOperation's doc comment). Intentional and silent are not the
+// same thing: a turn dropped because the fence was genuinely stale looks
+// identical, from the outside, to a turn dropped because the fence was
+// MISCOMPUTED - e.g. a resume/reclaim minting a baseline that misclassifies
+// the newest (and only) copy of a turn's history as stale. Before this,
+// callers discarded the error with no trace anywhere, so that second case -
+// real data loss - was indistinguishable from ordinary, harmless supersession
+// and never left evidence to diagnose it by. This does not fix a miscomputed
+// fence; it makes one observable the next time it happens instead of silent.
+func logStaleOperation(where string, err error) {
+	if err == nil {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "\n⚠ %s: turn history was not persisted (%v). This is expected when a newer turn superseded this one; if no newer turn was in flight, this is a bug and history may have been lost.\n", where, err)
+}
+
 // SaveAfterTurn saves the session as an auto-save without pruning. It is
 // fenced so a clear, load, switch, or newer turn cannot publish stale state.
 func (s *Session) SaveAfterTurn() {
@@ -127,8 +146,12 @@ func (s *Session) SaveAfterTurn() {
 	s.captureBindingLocked()
 	token := s.captureOperationTokenLocked("manual-save")
 	s.mu.Unlock()
-	if err := s.saveAfterTurn(token); err != nil && !errors.Is(err, ErrStaleOperation) && !errors.Is(err, ErrStaleAutosave) {
-		fmt.Fprintf(os.Stderr, "\n⚠ turn auto-save failed: %v\n", err)
+	if err := s.saveAfterTurn(token); err != nil {
+		if errors.Is(err, ErrStaleOperation) || errors.Is(err, ErrStaleAutosave) {
+			logStaleOperation("turn auto-save", err)
+		} else {
+			fmt.Fprintf(os.Stderr, "\n⚠ turn auto-save failed: %v\n", err)
+		}
 	}
 }
 
