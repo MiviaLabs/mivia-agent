@@ -5,10 +5,12 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
 	"github.com/MiviaLabs/mivia-agent/internal/uiadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
@@ -75,14 +77,36 @@ func TestMouseNotifierBridgeWiresRealStore(t *testing.T) {
 	wireMouseNotifier(store, p)
 }
 
+// captureModel records every MouseCaptureMsg the program receives, so the
+// test can prove the wired closure's p.Send actually reached the running
+// program's update loop.
+type captureModel struct {
+	got chan app.MouseCaptureMsg
+}
+
+func (m captureModel) Init() tea.Cmd { return nil }
+func (m captureModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if mc, ok := msg.(app.MouseCaptureMsg); ok {
+		select {
+		case m.got <- mc:
+		default:
+		}
+	}
+	return m, nil
+}
+func (m captureModel) View() tea.View { return tea.NewView("") }
+
 // TestMouseNotifierBridgeSendsToProgram exercises the wired closure
 // itself: a real SetMouse edit through the store's own Settings facade
-// must reach p.Send. The program uses the process's real stdin/stdout
-// (not a TTY in a test run), which fails Run() fast rather than
-// blocking - the same behavior TestRunTUICallsBuildApp relies on.
+// must reach the running program's update loop. The program gets explicit
+// non-TTY input/output and an explicit Quit - an earlier version ran on
+// the process's real stdin and relied on Run() failing fast off-TTY,
+// which holds on linux but not on windows, where the program ran headless
+// forever and the suite died on the 10-minute test timeout.
 func TestMouseNotifierBridgeSendsToProgram(t *testing.T) {
 	store := uiadapter.NewSettingsStore(nil, nil, nil)
-	p := tea.NewProgram(blankModel{})
+	model := captureModel{got: make(chan app.MouseCaptureMsg, 4)}
+	p := tea.NewProgram(model, tea.WithInput(strings.NewReader("")), tea.WithOutput(io.Discard))
 	wireMouseNotifier(store, p)
 
 	done := make(chan struct{})
@@ -90,12 +114,28 @@ func TestMouseNotifierBridgeSendsToProgram(t *testing.T) {
 		_, _ = p.Run()
 		close(done)
 	}()
-	<-done
+	defer func() {
+		p.Quit()
+		select {
+		case <-done:
+		case <-time.After(30 * time.Second):
+			t.Error("program did not stop after Quit")
+		}
+	}()
 
 	h, err := store.Settings().General.Apply(context.Background(), ports.ScopeUser, ports.SetMouse{On: false})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for range h.Events() {
+	}
+
+	select {
+	case mc := <-model.got:
+		if mc.On {
+			t.Fatalf("MouseCaptureMsg.On = true, want false (the applied setting)")
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the SetMouse edit never reached the program's update loop")
 	}
 }
