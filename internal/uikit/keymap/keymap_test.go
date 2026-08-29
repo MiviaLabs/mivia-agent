@@ -284,14 +284,19 @@ func TestHintIsGeneratedFromTheTable(t *testing.T) {
 	}
 }
 
-// TestForceSendBindings pins the force-send rows: ctrl+enter in the
-// composer (interrupt the current turn), f/F in the dialog (force send
-// the selected queued item), both resolving to IDForceSend with no
+// TestForceSendBindings pins the force-send rows: ctrl+enter and f4 in
+// the composer (interrupt the current turn - f4 is the degradation-safe
+// alternate, since not every terminal answers bubbletea's
+// KittyKeyboard/modifyOtherKeys request), f/F in the dialog (force send
+// the selected queued item), all resolving to IDForceSend with no
 // collision against the surrounding table.
 func TestForceSendBindings(t *testing.T) {
 	m := New(Default())
 	if id, ok := m.Match(ContextComposer, "ctrl+enter"); !ok || id != IDForceSend {
 		t.Errorf("composer ctrl+enter = %v/%v, want %v", id, ok, IDForceSend)
+	}
+	if id, ok := m.Match(ContextComposer, "f4"); !ok || id != IDForceSend {
+		t.Errorf("composer f4 = %v/%v, want %v", id, ok, IDForceSend)
 	}
 	if id, ok := m.Match(ContextDialog, "f"); !ok || id != IDForceSend {
 		t.Errorf("dialog f = %v/%v, want %v", id, ok, IDForceSend)
@@ -310,7 +315,7 @@ func TestForceSendAppearsInHelp(t *testing.T) {
 	rows := New(Default()).Help()
 	var composer, dialog int
 	for _, r := range rows {
-		if r.Help == "force send now, interrupting the current turn" && r.Context == ContextComposer {
+		if r.Help == "force send now, interrupting the current turn (f4 works in any terminal)" && r.Context == ContextComposer {
 			composer++
 		}
 		if r.Help == "force send the selected queued message" && r.Context == ContextDialog {

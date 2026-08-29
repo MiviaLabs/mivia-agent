@@ -588,6 +588,34 @@ func TestComposerFallthroughForAnUnhandledID(t *testing.T) {
 	}
 }
 
+// TestForceSend_F4DegradesTheSameAsCtrlEnter pins the co-bound
+// degradation path: on a terminal where bubbletea's
+// KittyKeyboard/modifyOtherKeys request goes unanswered, ctrl+enter
+// degrades to bare CR and never reaches the composer as its own key
+// event. f4 needs no such capability negotiation, so it must resolve to
+// the exact same IDForceSend no-text/active-queue behaviour as
+// ctrl+enter, routed through s.Update exactly the way a real keypress
+// would arrive - not by calling composerAction directly.
+func TestForceSend_F4DegradesTheSameAsCtrlEnter(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	handle := &recordingHandle{id: "t1"}
+	s.active = handle
+	s.queue = []string{"A", "B"}
+
+	next, _ := s.Update(tea.KeyPressMsg{Code: tea.KeyF4})
+	got := next.(Screen)
+
+	if got.pendingForce == nil || *got.pendingForce != "A" {
+		t.Fatalf("expected pendingForce = %q, got %v", "A", got.pendingForce)
+	}
+	if len(got.queue) != 1 || got.queue[0] != "B" {
+		t.Fatalf("expected queue = [B], got %v", got.queue)
+	}
+	if handle.cancelCount != 1 {
+		t.Errorf("expected Cancel called once, got %d", handle.cancelCount)
+	}
+}
+
 func TestMenuUpArrowMovesTheHighlight(t *testing.T) {
 	s := newScreen(t, replay.New(nil, 0), nil, nil)
 	s.SetCommands([]composer.Command{{Name: "model"}, {Name: "modes"}})

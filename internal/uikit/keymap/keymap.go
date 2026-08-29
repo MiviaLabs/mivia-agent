@@ -209,7 +209,13 @@ func Default() []Binding {
 		{ID: IDClearLine, Context: ContextComposer, Keys: []string{"ctrl+u"}, Help: "clear the line"},
 		{ID: IDHelp, Context: ContextComposer, Keys: []string{"?"}, Help: "show this keymap (empty composer)", Short: "help"},
 		{ID: IDFocusPrev, Context: ContextComposer, Keys: []string{"shift+tab"}, Help: "focus the newest block"},
-		{ID: IDForceSend, Context: ContextComposer, Keys: []string{"ctrl+enter"}, Help: "force send now, interrupting the current turn", Short: "force"},
+		// f4 co-binds ctrl+enter: where bubbletea's KittyKeyboard request goes
+		// unanswered (Terminal.app, PuTTY, tmux, VSCode default), ctrl+enter
+		// degrades to bare CR (IDSend) with no visible failure. f4 is unbound
+		// elsewhere in this table and every terminal answers it, so the hint
+		// stays true in every terminal (rule 1.4). ctrl+k rejected: textarea
+		// kill-line.
+		{ID: IDForceSend, Context: ContextComposer, Keys: []string{"ctrl+enter", "f4"}, Help: "force send now, interrupting the current turn (f4 works in any terminal)", Short: "force"},
 
 		// Completion menu. It claims these before the composer.
 		{ID: IDMenuAccept, Context: ContextCompletion, Keys: []string{"enter"}, Help: "accept"},
