@@ -133,6 +133,21 @@ func (c *AnthropicCompleter) ChatTurn(ctx context.Context, req Request) (*Respon
 	if req.Stream && req.StreamWriter != nil {
 		return c.chatTurnStream(ctx, req, body)
 	}
+	// The wire-stream transport: stream on the wire, non-stream contract on
+	// the return path. chatTurnStream assembles the same *Response the plain
+	// endpoint would return, and a nil StreamWriter means nothing is written
+	// out as it arrives, so the caller cannot tell which wire shape served it.
+	//
+	// This is what keeps a long generation alive. A non-stream completion
+	// sends no byte until it is finished, so its wait for response headers is
+	// the model's whole thinking time - and the transport's header bound
+	// (DefaultResponseHeaderTimeout) then caps every generation at that bound,
+	// whatever request budget the operator configured. Streaming returns
+	// headers at once and moves the work into the body phase, where the
+	// watchdogs judge progress rather than total duration.
+	if req.StreamTransport && req.StreamWriter == nil {
+		return c.chatTurnStream(ctx, req, body)
+	}
 	raw, err := c.do(ctx, req, body)
 	if err != nil {
 		return nil, err
