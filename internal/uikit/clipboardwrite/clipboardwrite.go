@@ -16,7 +16,12 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"time"
 )
+
+// clipboardWaitDelay bounds the wait for pipes a grandchild still holds after the
+// child exits. Without it, Wait blocks on the pipe rather than the process.
+const clipboardWaitDelay = 5 * time.Second
 
 // ErrNoClipboardTool reports that no local clipboard tool applies:
 // either no display is set (an SSH session) or none of the tools this
@@ -49,6 +54,7 @@ type execRunner struct{}
 
 func (execRunner) Run(name string, args []string, stdin string) error {
 	cmd := exec.Command(name, args...)
+	cmd.WaitDelay = clipboardWaitDelay
 	in, err := cmd.StdinPipe()
 	if err != nil {
 		return err

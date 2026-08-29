@@ -18,6 +18,10 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+// mcpWaitDelay bounds the wait for pipes an MCP server's own grandchildren
+// still hold after the server is killed.
+const mcpWaitDelay = 5 * time.Second
+
 const mcpShutdownTimeout = 5 * time.Second
 
 type remoteTool struct {
@@ -289,6 +293,10 @@ func connectStdio(ctx context.Context, server config.MCPServerConfig) (remoteCli
 	// The startup context bounds the protocol handshake. Do not bind it to the
 	// child process lifetime: EnsureServers cancels it after Connect returns.
 	command := exec.Command(server.Command, server.Args...)
+	// Bounds the Kill-then-Wait shutdown below: a stdio server that spawns its
+	// own helpers leaves them holding these pipes, and Wait does not return
+	// while they do. Killing the server alone is not enough.
+	command.WaitDelay = mcpWaitDelay
 	command.Env = environmentFor(server.Env)
 	in, err := command.StdinPipe()
 	if err != nil {

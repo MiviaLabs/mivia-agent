@@ -11,10 +11,15 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
+
+// worktreeMarkerWaitDelay bounds the wait for pipes a grandchild still holds after the
+// child exits. Without it, Wait blocks on the pipe rather than the process.
+const worktreeMarkerWaitDelay = 5 * time.Second
 
 const worktreeMarkerName = "worktree-instance.json"
 
@@ -113,6 +118,7 @@ func ensureWorktreeMarkerExcluded(root string) error {
 
 func worktreeGitCommonDir(root string) (string, error) {
 	cmd := exec.Command("git", "rev-parse", "--git-common-dir")
+	cmd.WaitDelay = worktreeMarkerWaitDelay
 	cmd.Dir = root
 	output, err := cmd.Output()
 	if err != nil {

@@ -89,6 +89,7 @@ func hostModuleCache(goPath string) (string, error) {
 		return "", fmt.Errorf("resolve host home for Go module cache: %w", err)
 	}
 	command := exec.Command(goPath, "env", "GOMODCACHE")
+	command.WaitDelay = sandboxWaitDelay
 	// `go env GOMODCACHE` defaults to $HOME/go/pkg/mod only when GOPATH is
 	// unset. Preserve the host GOPATH (and an explicit GOMODCACHE) so a host
 	// whose Go paths live outside the home directory - a CI runner with
