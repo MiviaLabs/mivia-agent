@@ -557,15 +557,14 @@ func TestPopulateFromToolCalls_DispatchTasksWrappedEnvelope(t *testing.T) {
 }
 
 // TestPopulateFromToolCalls_DispatchTasksToolCallsReconstructed guards the
-// Part B wiring: dispatch_tasks result envelopes now carry a pre-merged,
-// one-row-per-call "tool_calls" array (cliorchestrate's loadToolCallSummaries,
-// chunk 5) alongside the usual "output". Reconstruction must attach those
-// rows onto the SAME output message's ToolCalls slice (matching the shape
-// subagent.go's KindToolStart/KindToolEnd build for a live session), leaving
-// the message's Text (from resultText/synopsis) untouched. A call marked
-// "incomplete" (a genuinely unfinished tool call, never a cap artifact per
-// chunk 5) must reconstruct with an empty Output - not be dropped or
-// special-cased.
+// LEGACY decode: old persisted sessions carry a pre-merged, one-row-per-call
+// inline "tool_calls" array alongside the usual "output" (current envelopes
+// carry only tool_calls_ref). Reconstruction must attach those rows onto the
+// SAME output message's ToolCalls slice (matching the shape subagent.go's
+// KindToolStart/KindToolEnd build for a live session), leaving the message's
+// Text (from resultText/synopsis) untouched. A call marked "incomplete" (a
+// genuinely unfinished tool call, never a cap artifact) must reconstruct
+// with an empty Output - not be dropped or special-cased.
 func TestPopulateFromToolCalls_DispatchTasksToolCallsReconstructed(t *testing.T) {
 	threads := uiadapter.NewSubagentThreads()
 	msgs := []ports.Message{
@@ -618,6 +617,48 @@ func TestPopulateFromToolCalls_DispatchTasksToolCallsReconstructed(t *testing.T)
 		if got.ID != w.ID || got.Name != w.Name || got.Arguments != w.Arguments || got.Output != w.Output {
 			t.Errorf("tool call %d mismatch: got %+v, want %+v", i, got, w)
 		}
+	}
+}
+
+// TestPopulateFromToolCalls_RefOnlyResultShowsToolCallNotice guards the
+// ref-only envelope shape: current envelopes carry the recorded trace
+// behind "tool_calls_ref" with no inline rows. A result whose output,
+// synopsis, and error are all empty but whose trace ref is present must
+// reconstruct with a visible notice, not a silent empty thread - and the
+// notice must never leak the raw ref into display text (a reader of a
+// reconstructed thread has no ledger_read to resolve it with).
+func TestPopulateFromToolCalls_RefOnlyResultShowsToolCallNotice(t *testing.T) {
+	threads := uiadapter.NewSubagentThreads()
+	msgs := []ports.Message{
+		{
+			Role: "assistant",
+			At:   time.Now(),
+			ToolCalls: []ports.ToolCall{
+				{
+					ID:        "call_dispatch_refonly",
+					Name:      "dispatch_tasks",
+					Arguments: `{"tasks":[{"id":"task-refonly","prompt":"tool-only work","agent":"worker"}]}`,
+					Output:    `[{"task_id":"task-refonly","status":"completed","tool_calls_ref":"ref:tool_calls:abc123def456"}]`,
+				},
+			},
+		},
+	}
+
+	uiadapter.PopulateFromToolCalls(threads, msgs)
+
+	conv, ok := threads.Thread("call_dispatch_refonly:task-refonly")
+	if !ok || conv == nil {
+		t.Fatal("expected thread for task-refonly")
+	}
+	hist := conv.History()
+	if len(hist) != 2 {
+		t.Fatalf("expected 2 history messages (prompt + notice), got %d: %+v", len(hist), hist)
+	}
+	if hist[1].Text != "(tool calls recorded)" {
+		t.Errorf("notice mismatch: got %q, want %q", hist[1].Text, "(tool calls recorded)")
+	}
+	if strings.Contains(hist[1].Text, "ref:") {
+		t.Errorf("display text leaks the raw ref: %q", hist[1].Text)
 	}
 }
 

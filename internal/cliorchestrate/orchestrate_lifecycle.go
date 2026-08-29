@@ -31,9 +31,10 @@ type modelTaskResult struct {
 	ErrorRef    string `json:"error_ref,omitempty"`
 	// Messages are synopsis-only findings/questions posted during the task.
 	Messages []messageSynopsis `json:"messages,omitempty"`
-	// ToolCalls are bounded, pre-merged tool-call summaries; see
-	// loadToolCallSummaries in dispatch_encode.go (same package, shared type).
-	ToolCalls []toolCallSummary `json:"tool_calls,omitempty"`
+	// ToolCallsRef is the resolvable reference to the task's recorded
+	// tool-call trace; same contract as dispatchTaskResult.ToolCallsRef
+	// (read from the task record, never re-minted; page via ledger_read).
+	ToolCallsRef string `json:"tool_calls_ref,omitempty"`
 }
 
 // ModelTaskResults returns live orchestration results for model consumption.
@@ -91,7 +92,9 @@ func ModelTaskResultsWithRepo(repo ledger.LedgerRepository, tasks []ledger.TaskS
 			}
 		}
 		out[i].Messages = msgIndex[result.TaskID]
-		out[i].ToolCalls = loadToolCallSummaries(context.Background(), repo, toolCallsRefFor(tasks, result.TaskID))
+		// A pure snapshot read: no repo needed, so the nil-repo entry point
+		// (ModelTaskResults) emits the same reference dialect.
+		out[i].ToolCallsRef = toolCallsRefFor(tasks, result.TaskID)
 	}
 	return out
 }
@@ -106,6 +109,11 @@ func persistedTaskResults(tasks []ledger.TaskSnapshot) []modelTaskResult {
 		out[i] = modelTaskResult{
 			TaskID: modelVisibleTaskID(task), Status: task.Status,
 			OutputRef: task.OutputRef, ErrorRef: task.ErrorRef,
+			// Read off the snapshot row directly: the model-visible TaskID
+			// above is the namespace-stripped RawID, so any later lookup
+			// keyed on it (toolCallsRefFor matches the full TaskID) misses
+			// dispatch-namespaced tasks.
+			ToolCallsRef: task.ToolCallsRef,
 		}
 	}
 	return out
@@ -147,7 +155,6 @@ func RunTaskResultsWithRepo(repo ledger.LedgerRepository, result *coordinator.Ru
 			msgIndex := TaskMessageIndex(context.Background(), repo, result.Snapshot.Tasks)
 			for i := range out {
 				out[i].Messages = msgIndex[out[i].TaskID]
-				out[i].ToolCalls = loadToolCallSummaries(context.Background(), repo, toolCallsRefFor(result.Snapshot.Tasks, out[i].TaskID))
 			}
 		}
 		return out
@@ -190,6 +197,7 @@ func (t *joinRunTool) Description() string {
 	return "Join (block until) a previously spawned orchestration run completes. " +
 		"Returns the final live run result including per-task structured output, status, " +
 		"correlation references, and any errors. For large task results, output_ref is returned instead of inline output; use ledger_read to fetch the full body. " +
+		"Each task's recorded tool activity is behind tool_calls_ref; use ledger_read to page it on demand. " +
 		"Recovered historical runs expose references only. Blocks until the run finishes, " +
 		"timeout_seconds elapses (default " + joinDefaultSeconds(t.cfg) + "s, cap 3600), or the calling context is canceled. " +
 		"On join timeout the run is gracefully canceled and the response says so - never retry a wedged join blindly."

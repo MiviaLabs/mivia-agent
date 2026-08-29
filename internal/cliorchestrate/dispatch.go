@@ -80,6 +80,8 @@ func (t *dispatchTasksTool) Description() string {
 		"Error envelopes include run_id, so a canceled or timed-out batch stays reachable via inspect_agents/cancel_run. " +
 		"Results include each task's structured output, correlation reference, status (completed/failed/timed_out/canceled), elapsed, steps, and step_count. " +
 		"For large results, output_ref is returned instead of inline output; use ledger_read to fetch the full body. " +
+		"Each task's recorded tool activity is behind tool_calls_ref (not inlined); use ledger_read to page it on demand. " +
+		"References may be quoted in reports so a later task or agent can read the same content. " +
 		"Heartbeat/progress events appear in the UI during long-running tasks."
 	return desc
 }

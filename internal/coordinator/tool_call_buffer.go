@@ -8,12 +8,11 @@ import (
 )
 
 // runToolCallBuffer is a per-run, mutex-guarded, per-task-capped buffer of
-// RAW subagents.ToolCallStep lifecycle events (start+end, unmerged —
-// merging into one-row-per-call happens later, at envelope-encode time,
-// not here). It is ledger-only content, never handed to the model or UI
-// directly, so its caps are generous relative to the model/UI-visible
-// envelope layer's cliorchestrate.envelopeMaxToolCallPairs (20 complete,
-// merged calls) - see loadToolCallSummaries in dispatch_encode.go.
+// RAW subagents.ToolCallStep lifecycle events (start+end, unmerged). It is
+// ledger-only content: result envelopes hand the model only its reference
+// (tool_calls_ref, read from the task record per INV-AG-10), and readers
+// page the raw bytes on demand via ledger_read, so the caps here are the
+// only bound on the trace.
 type runToolCallBuffer struct {
 	mu      sync.Mutex
 	steps   map[string][]subagents.ToolCallStep // taskID -> raw steps
@@ -30,19 +29,15 @@ const (
 	// unmerged) retained per task before further events are dropped
 	// wholesale (never a half-written event).
 	//
-	// bufferMaxStepsPerTask and bufferMaxBytesPerTask are kept comfortably
-	// larger than 2x envelopeMaxToolCallPairs (20, so >40 raw start+end
-	// events for a full complement of complete calls) so the buffer layer's
-	// cap remains the real headroom, not the envelope layer's, and so the
-	// chunk-8 boundary regression tests (TestLoadToolCallSummaries*, in
-	// internal/cliorchestrate/dispatch_encode_test.go) have real margin - if
-	// you lower either constant, or envelopeMaxToolCallPairs, re-check those
-	// tests.
+	// bufferMaxStepsPerTask and bufferMaxBytesPerTask are the ONLY bound on
+	// a task's recorded trace (INV-AG-44): result envelopes hand the model
+	// just the trace's reference (tool_calls_ref), and ledger_read bounds
+	// the bytes per page at read time, so these caps are what keeps the
+	// persisted blob itself from growing without limit.
 	bufferMaxStepsPerTask = 200
 	// bufferMaxBytesPerTask caps total Input+Output bytes retained per
-	// task. Ledger storage is cheap and this content is never model- or
-	// UI-visible directly, so this is deliberately generous relative to
-	// the envelope layer's per-field bound.
+	// task. Ledger storage is cheap and readers page the content through
+	// ledger_read's own limit, so this is deliberately generous.
 	bufferMaxBytesPerTask = 64 * 1024
 )
 
@@ -77,9 +72,9 @@ type TaskProgress struct {
 // task: every subsequent event for it is dropped too, even one that would
 // otherwise fit under the byte budget on its own marginal size. This keeps a
 // call's raw trace atomic — fully present, fully absent, or correctly
-// start-only (which loadToolCallSummaries reports Incomplete: true) — and
-// never "end with no start", which would merge into a false-completeness
-// summary (real Output, empty Name/Input, Incomplete: false).
+// start-only — and never "end with no start", which a reader merging the
+// trace would misreport as a false-complete call (real Output, empty
+// Name/Input).
 func (b *runToolCallBuffer) sinkFor(taskID string) subagents.ToolCallSink {
 	if b == nil {
 		return func(subagents.ToolCallStep) {}

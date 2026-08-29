@@ -48,94 +48,14 @@ type dispatchTaskResult struct {
 	// Messages are synopsis-only findings/questions posted during the task.
 	// Bodies stay behind content_ref via run_messages.
 	Messages []messageSynopsis `json:"messages,omitempty"`
-	// ToolCalls are bounded, pre-merged tool-call summaries loaded from the
-	// task's ledger-stored raw trace (coordinator.runToolCallBuffer via
-	// ToolCallsRef). See loadToolCallSummaries.
-	ToolCalls []toolCallSummary `json:"tool_calls,omitempty"`
-}
-
-// toolCallSummary is the shared wire shape both dispatch-result producers
-// (dispatchTaskResult here and modelTaskResult in orchestrate_lifecycle.go)
-// emit, and the shape uiadapter's encodedTaskResult decodes back out of
-// persisted chat history. ONE ROW PER CALL: loadToolCallSummaries merges
-// each ledger-stored raw start+end pair into a single summary BEFORE
-// applying the step-count cap, specifically so the cap can only ever drop
-// whole trailing calls, never fragment a completed pair into a spurious
-// "incomplete" one.
-type toolCallSummary struct {
-	ToolCallID string `json:"tool_call_id"`
-	Name       string `json:"name"`
-	Input      string `json:"input,omitempty"`
-	Output     string `json:"output,omitempty"`
-	// Incomplete is true only when the ledger-stored raw content itself has
-	// no matching "end" event for this call's ToolCallID (the coordinator's
-	// own per-task buffer cap dropped it, or the task was genuinely cut off
-	// mid-call) — never a side effect of this envelope layer's own
-	// envelopeMaxToolCallPairs cap, which drops only whole trailing calls.
-	Incomplete bool `json:"incomplete,omitempty"`
-}
-
-const (
-	// envelopeMaxToolCallPairs caps the number of COMPLETE, MERGED calls
-	// surfaced in a model/UI-visible result envelope. This is a cap on
-	// merged pairs, not raw lifecycle events - applied only after merging,
-	// so it can never split a real pair. Kept well under half of
-	// tool_call_buffer.go's bufferMaxStepsPerTask (200 raw events, i.e.
-	// ~100 possible calls) so the buffer layer's own cap remains the
-	// headroom, not this one.
-	envelopeMaxToolCallPairs = 20
-)
-
-// loadToolCallSummaries decodes a task's ledger-stored raw tool-call steps
-// (via ref), groups them by ToolCallID, merges each start+end pair into one
-// toolCallSummary, truncates Input/Output to synopsisMaxBytes via
-// TruncateAtRuneBoundary, and THEN caps the merged list to
-// envelopeMaxToolCallPairs - so the cap only ever drops whole completed (or
-// genuinely-incomplete) calls, never fragments one. A missing ref, load
-// error, or empty ref yields a nil slice (never an error - this is
-// best-effort enrichment, same discipline as TaskMessageIndex).
-func loadToolCallSummaries(ctx context.Context, repo ledger.LedgerRepository, ref string) []toolCallSummary {
-	if repo == nil || ref == "" {
-		return nil
-	}
-	data, err := repo.LoadContent(ctx, ref)
-	if err != nil || len(data) == 0 {
-		return nil
-	}
-	var raw []subagents.ToolCallStep
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil
-	}
-	// Group by ToolCallID, preserving first-seen order for determinism.
-	order := make([]string, 0, len(raw))
-	byID := make(map[string]*toolCallSummary, len(raw))
-	for _, step := range raw {
-		s, ok := byID[step.ToolCallID]
-		if !ok {
-			s = &toolCallSummary{ToolCallID: step.ToolCallID, Incomplete: true}
-			byID[step.ToolCallID] = s
-			order = append(order, step.ToolCallID)
-		}
-		switch step.Kind {
-		case "start":
-			s.Name = step.Name
-			s.Input = step.Input
-		case "end":
-			s.Output = step.Output
-			s.Incomplete = false
-		}
-	}
-	out := make([]toolCallSummary, 0, len(order))
-	for _, id := range order {
-		s := *byID[id]
-		s.Input = TruncateAtRuneBoundary([]byte(s.Input))
-		s.Output = TruncateAtRuneBoundary([]byte(s.Output))
-		out = append(out, s)
-		if len(out) >= envelopeMaxToolCallPairs {
-			break
-		}
-	}
-	return out
+	// ToolCallsRef is the resolvable reference to the task's recorded
+	// tool-call trace (coordinator.runToolCallBuffer, persisted by
+	// SetTaskOutput). The trace travels by reference only - page it with
+	// ledger_read on demand. Read from the task record, never re-minted
+	// (INV-AG-10), so an emitted ref always resolves. The inline
+	// "tool_calls" array this field replaced survives only in OLD sessions'
+	// persisted tool calls; uiadapter alone keeps its decode.
+	ToolCallsRef string `json:"tool_calls_ref,omitempty"`
 }
 
 // toolCallsRefFor returns the ToolCallsRef the ledger recorded for a task,
@@ -158,7 +78,7 @@ func (t *dispatchTasksTool) encodeResults(tasks []ledger.TaskSnapshot, results [
 	for i, r := range results {
 		out[i] = EncodeOneDispatchResult(r, tasks, threshold)
 		out[i].Messages = msgIndex[r.TaskID]
-		out[i].ToolCalls = loadToolCallSummaries(context.Background(), t.repo, toolCallsRefFor(tasks, r.TaskID))
+		out[i].ToolCallsRef = toolCallsRefFor(tasks, r.TaskID)
 	}
 	outJSON, _ := json.Marshal(out)
 	return string(outJSON)
