@@ -268,6 +268,73 @@ func TestQueueClearCommand_EmptiesQueue(t *testing.T) {
 	if len(s.queue) != 0 {
 		t.Errorf("expected empty queue after /queue clear, got %v", s.queue)
 	}
+	if got := s.statusline.View(fixedNow()); !strings.Contains(got, "queue cleared") {
+		t.Errorf("got notice %q, want it to contain %q", got, "queue cleared")
+	}
+}
+
+// TestQueueClearCommand_DiscardsParkedForce pins the fix for the
+// auditor-reproduced harm: /queue clear must also drop a parked force,
+// not just the ordinary queue, or the turn-end drain would silently
+// force-send text the user just told it to clear.
+func TestQueueClearCommand_DiscardsParkedForce(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	forced := "forced text"
+	s.pendingForce = &forced
+
+	s, _ = sendLine(t, s, "/queue clear")
+	if s.pendingForce != nil {
+		t.Errorf("expected pendingForce nil after /queue clear, got %v", s.pendingForce)
+	}
+	if len(s.queue) != 0 {
+		t.Errorf("expected empty queue after /queue clear, got %v", s.queue)
+	}
+	if got := s.statusline.View(fixedNow()); !strings.Contains(got, "queue cleared; pending force discarded") {
+		t.Errorf("got notice %q, want it to contain %q", got, "queue cleared; pending force discarded")
+	}
+
+	// Turn-end drain must not resurrect the discarded force: no turn
+	// should start, and active must stay nil.
+	next, cmd := s.Update(turnEndedMsg{})
+	after := next.(Screen)
+	if cmd != nil {
+		t.Errorf("expected no cmd from turnEndedMsg after force was discarded, got %v", cmd)
+	}
+	if after.active != nil {
+		t.Errorf("expected active to stay nil after turnEndedMsg with discarded force, got %v", after.active)
+	}
+}
+
+// TestQueueClearCommand_DisplacementVariantDiscardsBoth pins the
+// documented semantics: force A parked, force B displaces A to the
+// queue head (pendingForce now B, queue [A]); /queue clear must discard
+// both A (in the queue) and B (pending) - clear discards everything
+// pending, including displaced text.
+func TestQueueClearCommand_DisplacementVariantDiscardsBoth(t *testing.T) {
+	s := newScreen(t, replay.New(nil, 0), nil, nil)
+	s.active = &recordingHandle{id: "t1"}
+
+	if !s.forcePush("A") {
+		t.Fatal("expected first forcePush to succeed")
+	}
+	s.active = &recordingHandle{id: "t2"}
+	if !s.forcePush("B") {
+		t.Fatal("expected second forcePush to succeed")
+	}
+	if s.pendingForce == nil || *s.pendingForce != "B" || len(s.queue) != 1 || s.queue[0] != "A" {
+		t.Fatalf("setup: expected pendingForce=B queue=[A], got pendingForce=%v queue=%v", s.pendingForce, s.queue)
+	}
+
+	s, _ = sendLine(t, s, "/queue clear")
+	if s.pendingForce != nil {
+		t.Errorf("expected pendingForce nil after /queue clear, got %v", s.pendingForce)
+	}
+	if len(s.queue) != 0 {
+		t.Errorf("expected empty queue after /queue clear, got %v", s.queue)
+	}
+	if got := s.statusline.View(fixedNow()); !strings.Contains(got, "queue cleared; pending force discarded") {
+		t.Errorf("got notice %q, want it to contain %q", got, "queue cleared; pending force discarded")
+	}
 }
 
 // TestRunSlashCommandOpenHelpAppendsMouseHint pins the branch that adds

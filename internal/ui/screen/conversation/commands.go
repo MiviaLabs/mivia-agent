@@ -38,8 +38,14 @@ func (s Screen) runSlashCommand(line string) (app.Screen, tea.Cmd) {
 	name, args := splitCommand(line)
 	s.composer.Clear()
 	if name == "queue" && (args == "clear" || args == "clean") {
+		hadForce := s.pendingForce != nil
 		s.queue = nil
-		s.statusline.Notice("queue cleared")
+		s.pendingForce = nil
+		if hadForce {
+			s.statusline.Notice("queue cleared; pending force discarded")
+		} else {
+			s.statusline.Notice("queue cleared")
+		}
 		return s, nil
 	}
 	if name == "blackboard" || name == "messages" {
