@@ -182,10 +182,18 @@ func (p *SessionPool) CreateFresh() (ports.Conversation, error) {
 			if origPrincipal.IsBound() {
 				newPrincipal, err := contextstate.NewPrincipal(origPrincipal.WorkspaceID, sess.SessionID, origPrincipal.SubjectID)
 				if err == nil {
-					_ = sess.SetContextManager(mgr, newPrincipal)
+					_ = sess.SetContextManager(mgr, newPrincipal, existing.ContextPolicy())
 				}
 			}
 		}
+		// Inherited for the same reason every other field above is: a
+		// conversation born from the pool must write context under the same
+		// privacy rules as its siblings. Omitting it left a fresh conversation
+		// running the ZERO policy, so every payload it wrote was recorded
+		// hash-only while a sibling wrote the same content with bytes. Those
+		// two writes land on one content ref, and the disagreement used to roll
+		// back a whole turn as "payload reference is held by different bytes".
+		sess.SetContextRedactionPolicy(existing.ContextRedactionPolicy())
 		if store := existing.ContextStore(); store != nil {
 			_ = sess.SetContextStore(store)
 		}

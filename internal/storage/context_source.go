@@ -332,14 +332,8 @@ func insertContextPayloads(ctx context.Context, tx *sql.Tx, principal contextsta
 		if revoked != 0 {
 			return nil, contextstate.ErrPayloadRevoked
 		}
-		if len(payload.Data) > 0 {
-			existing, err := loadPayloadBytesTx(ctx, tx, payload.Ref.Ref, size, existingData)
-			if err != nil {
-				return nil, err
-			}
-			if !bytes.Equal(payload.Data, existing) {
-				return nil, fmt.Errorf("%w: payload reference is held by different bytes", contextstate.ErrCheckpointConflict)
-			}
+		if err := reconcilePayloadBytesTx(ctx, tx, payload, size, existingData, chunkSize); err != nil {
+			return nil, err
 		}
 		byRef[payload.Ref.Ref] = payload.Ref
 	}
@@ -452,4 +446,61 @@ func nullablePayloadNamespace(ref string) any {
 		return nil
 	}
 	return contextstate.Namespace
+}
+
+// reconcilePayloadBytesTx settles an incoming record against the stored row.
+//
+// A ref is minted over the CONTENT's digest, but the bytes are stored only
+// when the redaction policy calls them storable. The same ref is therefore
+// legitimately written both hash-only and with bytes whenever the effective
+// policy differs between two writes. The digest and size checks the caller has
+// already made prove this is the same content, so a stored row holding no
+// bytes is not a conflict - it is an earlier, less complete record of the same
+// thing, and it upgrades.
+//
+// Refusing it rolled back the WHOLE turn (appendContextCommit -> commitTx),
+// losing the user prompt, the assistant reply, and every subagent result in
+// it, for one row. That contradicts INV-AG-35, which this package states twice
+// elsewhere: a privacy rule may change what is stored, it may never destroy a
+// turn the agent already finished. The reverse order was always tolerated by
+// the len(payload.Data) > 0 guard; this makes the ref monotone in both
+// directions.
+func reconcilePayloadBytesTx(ctx context.Context, tx *sql.Tx, payload contextstate.PayloadRecord, size int, existingData []byte, chunkSize int) error {
+	if len(payload.Data) == 0 {
+		return nil
+	}
+	existing, err := loadPayloadBytesTx(ctx, tx, payload.Ref.Ref, size, existingData)
+	if err != nil {
+		return err
+	}
+	if len(existing) == 0 {
+		return upgradePayloadBytesTx(ctx, tx, payload, chunkSize)
+	}
+	if !bytes.Equal(payload.Data, existing) {
+		return fmt.Errorf("%w: payload reference is held by different bytes", contextstate.ErrCheckpointConflict)
+	}
+	return nil
+}
+
+// upgradePayloadBytesTx fills in the body of a payload row that was first
+// recorded hash-only. The caller has already proven, by digest and size, that
+// the incoming bytes are the same content the row describes, so this only
+// completes a record rather than changing one.
+//
+// Idempotent: the UPDATE is guarded on data IS NULL, and insertPayloadChunks
+// is itself ON CONFLICT DO NOTHING with a byte comparison.
+func upgradePayloadBytesTx(ctx context.Context, tx *sql.Tx, payload contextstate.PayloadRecord, chunkSize int) error {
+	if len(payload.Data) > chunkSize {
+		if err := insertPayloadChunks(ctx, tx, payload.Ref.Ref, payload.Data, chunkSize); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE context_payloads SET redaction_status='sanitized' WHERE ref=? AND data IS NULL`, payload.Ref.Ref); err != nil {
+			return fmt.Errorf("upgrade chunked payload: %w", err)
+		}
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE context_payloads SET data=?, redaction_status='sanitized' WHERE ref=? AND data IS NULL`, payload.Data, payload.Ref.Ref); err != nil {
+		return fmt.Errorf("upgrade payload: %w", err)
+	}
+	return nil
 }
