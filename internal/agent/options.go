@@ -213,6 +213,13 @@ type Options struct {
 	// so an operator opts in per deployment ([chat]
 	// max_unacted_continuations). A continuation only ever fires for a turn
 	// that ran NO tool, so it can never repeat work that already happened.
+	//
+	// Root chat turns only. internal/subagents deliberately leaves this
+	// zero: a sub-agent's prose is not delivered to a human who would
+	// otherwise have to re-prompt, its parent already re-reads the result,
+	// and a nested loop that continued itself would multiply the fan-out
+	// budget the orchestrator sized. The knob lives under [chat] for the
+	// same reason.
 	MaxUnactedContinuations int
 	// PreparationManager is an optional root-owned preparation capability. It
 	// has no checkpoint publisher and is therefore safe to pass to nested loops.

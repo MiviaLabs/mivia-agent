@@ -68,7 +68,7 @@ func toAPIMessages(msgs []Message, replayReasoning, rejectReasoningLess bool) []
 	}
 	out := make([]apiMessage, 0, len(msgs))
 	for _, m := range msgs {
-		if isEmptyAssistantTurn(m) {
+		if isEmptyAssistantTurn(m) || elidedReasoningOnlyTurn(m, replayReasoning, rejectReasoningLess) {
 			continue
 		}
 		am := apiMessage{
@@ -89,6 +89,27 @@ func toAPIMessages(msgs []Message, replayReasoning, rejectReasoningLess bool) []
 		out = append(out, am)
 	}
 	return out
+}
+
+// elidedReasoningOnlyTurn reports whether an assistant turn would reach the
+// wire carrying nothing at all once its elided reasoning is dropped.
+//
+// A reasoning-only assistant turn is a real shape (a provider that hit its
+// output cap mid-thought), and isEmptyAssistantTurn deliberately keeps it,
+// because it still carried the chain-of-thought. Once compaction elides that
+// reasoning and replayableReasoning refuses to replay the marker, the wire
+// message is reduced to {"role":"assistant","content":""} - a turn that
+// says nothing, costs a message slot, and replays on every later request for
+// the life of the session. Dropping it is the honest projection of "this
+// turn's only content is gone".
+//
+// It never fires for a turn with content or tool calls, and never for a
+// provider that keeps the marker.
+func elidedReasoningOnlyTurn(m Message, replayReasoning, rejectReasoningLess bool) bool {
+	if m.Role != RoleAssistant || len(m.ToolCalls) > 0 || strings.TrimSpace(m.Content) != "" {
+		return false
+	}
+	return m.ReasoningContent != "" && !replayableReasoning(m.ReasoningContent, rejectReasoningLess) && replayReasoning
 }
 
 // replayableReasoning reports whether an assistant turn's chain-of-thought

@@ -114,6 +114,8 @@ func TranslateEventWithOptions(ev agent.Event, opts TranslateOptions) []uievent.
 		return notice(ev.Detail)
 	case agent.EventEmptyResponseRetry:
 		return notice(ev.Detail)
+	case agent.EventUnactedContinuation:
+		return notice(ev.Detail)
 	case agent.EventHeartbeat:
 		// Root-loop wall-clock tick: intentionally no UI representation. See
 		// droppedKinds. The exhaustive-switch guard below does not fire

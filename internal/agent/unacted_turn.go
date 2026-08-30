@@ -31,9 +31,16 @@ import (
 //
 // It is project- and language-generic by rule: no tool name, no language,
 // no repository layout.
-const unactedContinuationNotice = "Your previous message described work that was not performed: no tool ran during that turn. " +
+// The bracket label is required, not cosmetic. The notice is appended as a
+// RoleUser message (RoleSystem is only valid at index 0, and RoleUser is how
+// this loop already injects host notices - see promptTooLongCompactNotice),
+// and the whole run history is written back to the session, so this sentence
+// PERSISTS and replays on every later turn. Unlabelled, the model would read
+// host prose as the user's own words for the rest of the session - the weak
+// form of DC-23. The label says who is speaking.
+const unactedContinuationNotice = "[mivia: your previous message described work that was not performed - no tool ran during that turn. " +
 	"If the work is still needed, carry it out now using the tools available. " +
-	"If it is not needed, or you need an answer from the user first, say so plainly instead."
+	"If it is not needed, or you need an answer from the user first, say so plainly instead.]"
 
 // continueUnactedTurn re-runs a turn that announced work and then ended
 // without calling a single tool, up to opts.MaxUnactedContinuations times.
@@ -71,9 +78,18 @@ func continueUnactedTurn(ctx context.Context, l *Loop, sdkOpts sdkagentloop.Opti
 			Kind:   EventUnactedContinuation,
 			Detail: fmt.Sprintf("turn announced work but called no tool, continuing (%d/%d)", attempt+1, opts.MaxUnactedContinuations),
 		})
-		// The streamed text stays: unlike the empty-response retry, this
-		// answer is real and the user has already read it. The
-		// continuation adds to it rather than replacing it.
+		// The announcement is optimistic content: text the model streamed
+		// live, immediately before doing the work it described. That is the
+		// same shape sdk_tool_events.go revokes when a tool call arrives
+		// after streamed text, and it must be revoked here for the same
+		// reason plus one more. If the continued run comes back with a zero
+		// Final (StopEmptyResponse, StopMaxIterations), finalizeSDKTurn
+		// falls back to "the last assistant text anywhere in the turn",
+		// finds this announcement, and writes it to FinalWriter - which
+		// already received it live. The user would read the same sentence
+		// twice. Revoking is a no-op when nothing was streamed or the
+		// writer does not implement streamRevoker.
+		revokeStreamWriter(opts.FinalWriter)
 		res, err = runSDKPromptTooLongRecoverable(ctx, l, sdkOpts, opts, continuedHistory(res.History), turn)
 	}
 	return res, err
@@ -155,17 +171,46 @@ const intentProximity = 80
 // provider call whose notice explicitly permits the model to answer "no
 // further work is needed", so it cannot fabricate work by itself.
 //
-// A message that ends in a question is never continued: the model handed
-// the decision back to the user, and nudging past a question would answer
-// it on the user's behalf.
+// A message that ends in a question, or that defers to the user, is never
+// continued: the model handed the decision back, and nudging past it would
+// take an unapproved action on the user's behalf. That is the one false
+// positive that costs more than a wasted provider call, so deferral is
+// checked before intent and wins outright.
 func announcesUnactedWork(text string) bool {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" || strings.HasSuffix(trimmed, "?") {
 		return false
 	}
 	lower := strings.ToLower(trimmed)
+	if containsAnyPhrase(lower, deferralPhrases) {
+		return false
+	}
 	for _, phrase := range intentPhrases {
 		if followedByAction(lower, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+// deferralPhrases mark text that hands the decision back to the user. They
+// are checked first and suppress the whole message, because they collide
+// head-on with the intent lexicon: "let me know if you'd like me to run the
+// tests" contains "let me" and "run" within the proximity window, and
+// "I need to check with you first" contains "i need to" and "check". Acting
+// on either would run a tool the model deliberately did not run.
+var deferralPhrases = []string{
+	"let me know", "would you like", "do you want", "if you'd like",
+	"if you like", "if you want", "with you first", "check with you",
+	"confirm with you", "your call", "shall i", "want me to",
+	"tell me if", "let me know if", "waiting for your", "before proceeding",
+	"before i proceed", "your approval", "your permission", "say the word",
+}
+
+// containsAnyPhrase reports whether lower contains any of phrases.
+func containsAnyPhrase(lower string, phrases []string) bool {
+	for _, phrase := range phrases {
+		if strings.Contains(lower, phrase) {
 			return true
 		}
 	}

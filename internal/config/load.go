@@ -122,7 +122,7 @@ func resolveLoaded(file File, configPath string, found bool, opts LoadOptions, m
 	res := &Resolved{
 		RedactionPolicy:         redactionPolicy,
 		MaxSteps:                file.Chat.MaxSteps,
-		MaxUnactedContinuations: file.Chat.MaxUnactedContinuations,
+		MaxUnactedContinuations: resolveUnactedContinuations(file.Chat.MaxUnactedContinuations),
 		ConfigPath:              configPath,
 		EnvFilePath:             envPath,
 		EnvFileUsed:             envUsed,
@@ -260,6 +260,22 @@ const (
 	DefaultStreamFirstByteTimeoutSeconds   = 240
 	DefaultStreamContentIdleTimeoutSeconds = 90
 )
+
+// MaxUnactedContinuationsCeiling clamps [chat] max_unacted_continuations.
+// Every continuation is a full extra provider call on a turn that already
+// answered, so a mistyped 500 must not turn one turn into 500 billable
+// requests. The sibling empty-response retry is a compiled constant for the
+// same reason; this knob is configurable but still bounded.
+const MaxUnactedContinuationsCeiling = 3
+
+// resolveUnactedContinuations normalizes the configured continuation bound:
+// negative or zero is off, anything above the ceiling is clamped to it.
+func resolveUnactedContinuations(configured int) int {
+	if configured <= 0 {
+		return 0
+	}
+	return min(configured, MaxUnactedContinuationsCeiling)
+}
 
 // DefaultChatRequestTimeoutSeconds is the per-LLM-request context deadline
 // for a root AGENT turn when [chat] request_timeout_seconds is unset. It

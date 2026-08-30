@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
@@ -217,13 +218,24 @@ func TestProviderAuditDumpRedacts(t *testing.T) {
 // the SDK turns an Audit error into a hard run failure, so an unwritable
 // dump target must stay silent rather than kill the user's turn.
 func TestProviderAuditDumpNeverFailsTheRun(t *testing.T) {
+	auditDumpDisabled.Store(false)
+	t.Cleanup(func() { auditDumpDisabled.Store(false) })
 	blocked := filepath.Join(t.TempDir(), "not-a-dir")
 	if err := os.WriteFile(blocked, []byte("x"), 0o600); err != nil {
 		t.Fatalf("seed blocker: %v", err)
 	}
 	t.Setenv(EnvProviderAuditDir, filepath.Join(blocked, "sub"))
-	if err := newProviderAuditDump("S5")(context.Background(), completionRecord()); err != nil {
-		t.Fatalf("audit hook must never return an error, got %v", err)
+	hook := newProviderAuditDump("S5")
+	for i := 0; i < 3; i++ {
+		if err := hook(context.Background(), completionRecord()); err != nil {
+			t.Fatalf("audit hook must never return an error, got %v", err)
+		}
+	}
+	// The failure latches: the log line claims the dump is disabled, so it
+	// must really be, not merely quiet while retrying mkdir+open on every
+	// iteration of every turn for the rest of the process.
+	if !auditDumpDisabled.Load() {
+		t.Fatal("a failed dump target must latch off")
 	}
 }
 
@@ -243,13 +255,142 @@ func TestAuditDumpFileNameIsSafe(t *testing.T) {
 }
 
 // TestAuditDumpTextCaps pins the per-field bound so one pathological tool
-// result cannot make the file unreadable.
+// result cannot make the file unreadable: the head is kept verbatim, the
+// tail past the cap is gone, and the marker says so.
 func TestAuditDumpTextCaps(t *testing.T) {
-	got := auditDumpText(strings.Repeat("a", auditDumpFieldCap+100))
-	if len(got) <= auditDumpFieldCap {
-		t.Fatal("capped value should keep the marker suffix")
+	head := strings.Repeat("a", auditDumpFieldCap)
+	got := auditDumpText(head + strings.Repeat("z", 100))
+	if !strings.HasPrefix(got, head) {
+		t.Fatal("the kept head must be the input's own first auditDumpFieldCap bytes")
+	}
+	if strings.Contains(got, "zz") {
+		t.Fatal("content past the cap must be dropped, not kept")
 	}
 	if !strings.Contains(got, "truncated") {
 		t.Fatalf("missing truncation marker: %q", got[len(got)-40:])
+	}
+	if short := auditDumpText("small"); short != "small" {
+		t.Fatalf("an under-cap value must pass through unchanged, got %q", short)
+	}
+}
+
+// TestProviderAuditDumpModes pins the file and directory permissions the
+// package doc and docs/product/config.md both promise. Nothing else asserts
+// them, so a change from 0600 to 0644 would otherwise ship silently.
+func TestProviderAuditDumpModes(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "dump")
+	t.Setenv(EnvProviderAuditDir, dir)
+	if err := newProviderAuditDump("S6")(context.Background(), completionRecord()); err != nil {
+		t.Fatalf("hook returned an error: %v", err)
+	}
+	dirInfo, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat dir: %v", err)
+	}
+	if got := dirInfo.Mode().Perm(); got != 0o700 {
+		t.Fatalf("dump directory mode = %o, want 0700", got)
+	}
+	fileInfo, err := os.Stat(filepath.Join(dir, auditDumpFileName("S6")))
+	if err != nil {
+		t.Fatalf("stat file: %v", err)
+	}
+	if got := fileInfo.Mode().Perm(); got != 0o600 {
+		t.Fatalf("dump file mode = %o, want 0600", got)
+	}
+}
+
+// TestProviderAuditDumpRefusesSymlink is the negative test for the write
+// path: an operator who points the variable at a shared directory must not
+// have a turn's prompts appended to a file someone else chose.
+func TestProviderAuditDumpRefusesSymlink(t *testing.T) {
+	auditDumpDisabled.Store(false)
+	t.Cleanup(func() { auditDumpDisabled.Store(false) })
+	dir := t.TempDir()
+	victim := filepath.Join(t.TempDir(), "victim.txt")
+	if err := os.WriteFile(victim, []byte("original\n"), 0o600); err != nil {
+		t.Fatalf("seed victim: %v", err)
+	}
+	if err := os.Symlink(victim, filepath.Join(dir, auditDumpFileName("S7"))); err != nil {
+		t.Fatalf("plant symlink: %v", err)
+	}
+	t.Setenv(EnvProviderAuditDir, dir)
+	if err := newProviderAuditDump("S7")(context.Background(), completionRecord()); err != nil {
+		t.Fatalf("audit hook must never return an error, got %v", err)
+	}
+	raw, err := os.ReadFile(victim)
+	if err != nil {
+		t.Fatalf("read victim: %v", err)
+	}
+	if string(raw) != "original\n" {
+		t.Fatalf("wrote through a symlink; victim now holds %q", raw)
+	}
+}
+
+// TestProviderAuditDumpRedactsBeforeCapping pins the ordering claim: a
+// secret that straddles the cap must not leave its head in the file, which
+// is exactly what a cap-then-redact implementation would do.
+func TestProviderAuditDumpRedactsBeforeCapping(t *testing.T) {
+	policy, err := redact.Compile([]string{`sk-[A-Za-z0-9]+`}, nil, "[redacted]")
+	if err != nil {
+		t.Fatalf("compile policy: %v", err)
+	}
+	previous := redact.Current()
+	redact.SetPolicy(policy)
+	t.Cleanup(func() { redact.SetPolicy(previous) })
+
+	got := auditDumpText(strings.Repeat("a", auditDumpFieldCap-5) + "sk-abc123DEF")
+	if strings.Contains(got, "sk-ab") {
+		t.Fatal("a secret straddling the cap left its head in the output")
+	}
+	// The redacted form is itself longer than the raw prefix, so it caps -
+	// which is fine. What must never appear is any part of the secret.
+	if !strings.Contains(got, "[red") {
+		t.Fatalf("the straddling secret was not redacted at all: %q", got[len(got)-40:])
+	}
+}
+
+// TestProviderAuditDumpRedactsToolArgumentKeys pins that the key-name half
+// of the redaction policy applies to tool arguments. Only redact.JSONValue
+// honours key elision; redact.Text alone would write the value verbatim.
+func TestProviderAuditDumpRedactsToolArgumentKeys(t *testing.T) {
+	policy, err := redact.Compile(nil, []string{"api_token"}, "[redacted]")
+	if err != nil {
+		t.Fatalf("compile policy: %v", err)
+	}
+	previous := redact.Current()
+	redact.SetPolicy(policy)
+	t.Cleanup(func() { redact.SetPolicy(previous) })
+
+	got := auditDumpArguments([]byte(`{"api_token":"ghp_livevalue","path":"go.mod"}`))
+	if strings.Contains(got, "ghp_livevalue") {
+		t.Fatalf("key-elided argument reached the dump: %s", got)
+	}
+	if !strings.Contains(got, "go.mod") {
+		t.Fatalf("non-secret arguments must survive: %s", got)
+	}
+	if raw := auditDumpArguments([]byte("not json")); raw != "not json" {
+		t.Fatalf("a non-JSON fragment must still be captured, got %q", raw)
+	}
+}
+
+// TestProviderAuditDumpConcurrentAppends pins the reason auditDumpMu
+// exists: concurrent turns and sessions must not interleave a partial line.
+func TestProviderAuditDumpConcurrentAppends(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(EnvProviderAuditDir, dir)
+	hook := newProviderAuditDump("S8")
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := hook(context.Background(), completionRecord()); err != nil {
+				t.Errorf("hook returned an error: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	if lines := readDumpLines(t, dir, "S8"); len(lines) != 20 {
+		t.Fatalf("want 20 well-formed lines, got %d", len(lines))
 	}
 }

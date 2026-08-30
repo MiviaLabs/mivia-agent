@@ -387,11 +387,17 @@ Two consequences worth knowing before you enable it:
 
 `[chat] max_unacted_continuations` bounds how many times one turn is continued after it announced work and then ended without calling a single tool - the "I am going to dispatch four agents", no tool call, turn over shape. `0`, the default, disables the mechanism, so a fresh install behaves exactly as before.
 
-Set it to `1` for a model that narrates its plan instead of acting on it. Whether a model needs this is a property of the model, which is why it is an operator switch and not a default.
+Set it to `1` for a model that narrates its plan instead of acting on it. Whether a model needs this is a property of the model, which is why it is an operator switch and not a default. Values above `3` are clamped to `3`: every continuation is a full extra provider call on a turn that already answered.
 
-A continuation appends a short notice to the turn's own history and runs the loop again, so the model keeps what it said and continues from its plan rather than restarting. Each continuation costs one extra provider call.
+A continuation appends a short bracket-labelled notice to the turn's own history and runs the loop again, so the model keeps what it said and continues from its plan rather than restarting. Each continuation costs one extra provider call, and each runs a fresh loop, so the effective ceiling on one turn's steps becomes `max_steps × (1 + max_unacted_continuations)`. The notice persists in session history, labelled `[mivia: …]` so a later turn cannot read it as the user's own words.
+
+A caller that disabled provider replays (subagent and workflow paths that set `DisableProviderReplay`) never continues, whatever this key says: a continuation is a replay.
 
 A turn is continued only when **all** of these hold: the run ended with no tool calls; the turn called no tool at all; tools were advertised; the answer was not empty; and the text reads as a promise of tool work. The zero-tool-call rule is what makes it safe - nothing ran, so nothing can run twice. A turn that called one tool and then narrated the next step is never continued.
+
+Text that defers to the user - "let me know if you'd like me to run the tests", "I need to check with you first" - is never continued, even though it matches the promise pattern. That is the one false positive that would cost more than a wasted call: it would run a tool the model deliberately handed back for approval.
+
+Root chat turns only. Sub-agent loops never continue themselves, whatever this key says.
 
 The last condition is a best-effort, English-oriented text heuristic. It will miss promises in other languages and in unusual phrasing; a miss costs nothing, because the turn then ends exactly as it does today. A false positive costs one provider call whose notice explicitly allows the model to answer that no further work is needed. A message ending in a question is never continued.
 
@@ -505,7 +511,13 @@ Above the watchdogs sits the derived HTTP client wall, the absolute per-attempt 
 
 Use it when a turn ends with no visible work: the dump is the only way to tell a model that answered with nothing from a request this host built wrong.
 
-The file holds prompts and model output. Every captured string passes through the process-wide redaction policy first, each field is capped at 32 KiB, and the directory and files are created `0700`/`0600`. Point it outside the workspace and delete it when the investigation ends. A dump target that cannot be written is reported once and then ignored: the debugging aid never fails the turn it is observing.
+The file holds prompts and model output **in cleartext unless you configured redaction**. Every captured string passes through the process-wide redaction policy, and tool-call arguments additionally go through key-name elision - but that policy comes from `[privacy] redaction_patterns` / `redaction_key_names`, which are empty by default. A workspace that configured neither redacts nothing, and the dump is then a plaintext prompt log. Each field is capped at 32 KiB. Paths this code creates are made `0700`/`0600`; an existing directory keeps whatever permissions it already has, so name a private one. Writing through a symlink is refused outright.
+
+There is no size cap or rotation. Every iteration writes the whole replayed history, so growth is `iterations × history` - a long session produces a large file quickly. Point the directory outside the workspace, so a dump can never be committed, and delete it when the investigation ends.
+
+One file per session id. A run built without a session id writes to `session.jsonl`, which several such runs in one process share.
+
+A dump target that cannot be written is reported once and then latched off for the rest of the process: the debugging aid never fails the turn it is observing, and never retries a target it already knows is broken.
 
 ## Subagent knobs
 

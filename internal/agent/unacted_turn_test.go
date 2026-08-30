@@ -35,6 +35,15 @@ func TestAnnouncesUnactedWork(t *testing.T) {
 		{"advice to the user", "You should run make verify before pushing.", false},
 		{"question", "Do you want me to dispatch four agents?", false},
 		{"question after a promise", "I'll dispatch agents - should I proceed?", false},
+
+		// Deferral collides head-on with the intent lexicon, and acting on
+		// it runs a tool the model deliberately did not run. These are the
+		// false positives that cost more than a wasted provider call.
+		{"let me know", "Let me know if you'd like me to run the full test suite.", false},
+		{"check with you", "I need to check with you before proceeding.", false},
+		{"verify with you", "I should verify this with you first.", false},
+		{"want me to", "Tell me if you want me to dispatch agents for this.", false},
+		{"awaiting approval", "I will run the migration once I have your approval.", false},
 		{"empty", "   ", false},
 		{"verb without intent", "The build runs the linter.", false},
 		{"substring is not a word", "I'll realistically additionally clarify.", false},

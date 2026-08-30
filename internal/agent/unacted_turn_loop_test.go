@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"io"
+	"strings"
 	"sync"
 	"testing"
 
@@ -79,7 +80,10 @@ func TestUnactedTurnContinuesIntoRealWork(t *testing.T) {
 		t.Fatalf("run failed: %v", err)
 	}
 	calls, requests := comp.recorded()
-	if calls < 3 {
+	// Exactly three: the announcement, the continued step that calls the
+	// tool, and its follow-up. A looser bound would let a leak in the
+	// continuation budget pass unnoticed.
+	if calls != 3 {
 		t.Fatalf("want the announcement, the continued step, and its follow-up: got %d provider calls", calls)
 	}
 	if out != "done" {
@@ -96,6 +100,25 @@ func TestUnactedTurnContinuesIntoRealWork(t *testing.T) {
 	}
 	if second[len(second)-2].Content != "I'll read the config file now." {
 		t.Fatalf("the model's own announcement must survive into the continuation: %+v", second[len(second)-2])
+	}
+	// The notice is written back into session history and replays on every
+	// later turn, so its persistence is a contract, not an accident: it
+	// must be there, and it must be labelled so a later turn cannot read
+	// host prose as the user's own words.
+	var persisted *provider.Message
+	for i := range loop.Messages {
+		if loop.Messages[i].Content == unactedContinuationNotice {
+			persisted = &loop.Messages[i]
+		}
+	}
+	if persisted == nil {
+		t.Fatal("the continuation notice must persist in session history")
+	}
+	if persisted.Role != provider.RoleUser {
+		t.Fatalf("the notice must persist as a user turn (RoleSystem is only valid at index 0), got %q", persisted.Role)
+	}
+	if !strings.HasPrefix(persisted.Content, "[mivia:") {
+		t.Fatalf("the persisted notice must be labelled as host prose: %q", persisted.Content)
 	}
 }
 

@@ -32,6 +32,7 @@ import (
 //	EventWorkLimit        -> notice
 //	EventSchemaRetry      -> notice
 //	EventEmptyResponseRetry -> notice
+//	EventUnactedContinuation -> notice
 
 // translateAssistant fans out an assistant content event into the right
 // uievent shape based on the Detail mode the agent loop set. A streaming

@@ -40,6 +40,7 @@ func allEventKinds() []agent.EventKind {
 		agent.EventWorkLimit,
 		agent.EventSchemaRetry,
 		agent.EventEmptyResponseRetry,
+		agent.EventUnactedContinuation,
 	}
 }
 
@@ -238,6 +239,20 @@ func TestTranslateEvent_Notice(t *testing.T) {
 			want: []uievent.Event{{
 				Kind: uievent.KindNotice,
 				Body: uievent.NoticeBody{Text: "empty response on attempt 1/3, retrying..."},
+			}},
+		},
+		{
+			// Without this mapping the operator sees nothing at all while a
+			// second, potentially multi-minute provider call runs - the exact
+			// silence the sibling retry notice above exists to prevent.
+			name: "unacted_continuation_carries_attempt_message",
+			ev: agent.Event{
+				Kind:   agent.EventUnactedContinuation,
+				Detail: "turn announced work but called no tool, continuing (1/1)",
+			},
+			want: []uievent.Event{{
+				Kind: uievent.KindNotice,
+				Body: uievent.NoticeBody{Text: "turn announced work but called no tool, continuing (1/1)"},
 			}},
 		},
 	})

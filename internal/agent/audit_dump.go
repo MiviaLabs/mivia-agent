@@ -18,6 +18,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 
 	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 	sdkprovider "github.com/MiviaLabs/mivia-ai-sdk/provider"
@@ -47,9 +49,15 @@ const auditDumpFieldCap = 32 * 1024
 // purpose of the file.
 var auditDumpMu sync.Mutex
 
-// auditDumpFailedOnce keeps a broken dump target from printing one line per
-// iteration for the rest of the process.
-var auditDumpFailedOnce sync.Once
+// auditDumpFailedOnce reports a broken dump target once, and
+// auditDumpDisabled latches so the failure is REALLY terminal rather than
+// merely quiet: an unwritable target used to be retried (mkdir + open) on
+// every iteration of every turn for the rest of the process while the log
+// line claimed the dump was disabled.
+var (
+	auditDumpFailedOnce sync.Once
+	auditDumpDisabled   atomic.Bool
+)
 
 // newProviderAuditDump returns the Audit hook for one run, or nil when
 // EnvProviderAuditDir is unset.
@@ -65,10 +73,11 @@ func newProviderAuditDump(sessionID string) sdkagentloop.AuditFunc {
 	}
 	path := filepath.Join(dir, auditDumpFileName(sessionID))
 	return func(_ context.Context, rec sdkagentloop.AuditRecord) error {
-		if rec.Kind != sdkagentloop.AuditKindCompletion {
+		if rec.Kind != sdkagentloop.AuditKindCompletion || auditDumpDisabled.Load() {
 			return nil
 		}
 		if err := appendAuditDump(dir, path, auditDumpRecord(sessionID, rec)); err != nil {
+			auditDumpDisabled.Store(true)
 			auditDumpFailedOnce.Do(func() {
 				log.Printf("agent: provider audit dump disabled for this process: %v", err)
 			})
@@ -110,7 +119,13 @@ func appendAuditDump(dir, path string, rec auditDumpEntry) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create audit dir: %w", err)
 	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	// O_NOFOLLOW: refuse to write through a symlink planted at the dump
+	// path. Without it, an operator who points the variable at a shared
+	// directory can have a turn's whole prompt and response appended to a
+	// file another user chose - and the 0600 argument does not apply,
+	// because the target already exists. Repo rule 10 forbids following a
+	// symlink on a write path unconditionally.
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return fmt.Errorf("open audit file: %w", err)
 	}
@@ -258,10 +273,42 @@ func auditDumpToolCalls(calls []sdkprovider.ToolCall) []auditDumpToolCall {
 		out = append(out, auditDumpToolCall{
 			ID:        c.ID,
 			Name:      c.Name,
-			Arguments: auditDumpText(string(c.Arguments)),
+			Arguments: auditDumpArguments(c.Arguments),
 		})
 	}
 	return out
+}
+
+// auditDumpArguments redacts one tool call's argument payload.
+//
+// It parses the JSON and goes through redact.JSONValue rather than
+// redact.Text, because a redaction Policy has TWO halves and Text applies
+// only one of them: patterns match values, key elision matches field NAMES
+// and is reachable only through JSONValue. A workspace whose [privacy]
+// block sets redaction_key_names = ["token"] and no pattern would otherwise
+// see {"api_token":"..."} written verbatim here while every other surface
+// that handles tool arguments elides it (loop_tool_preview.go,
+// runtime/audit_preview.go, workflows/ledger/status.go all use JSONValue).
+//
+// A payload that is not valid JSON - a fragment from a truncated stream -
+// falls back to the string path so it is still captured and still pattern
+// redacted.
+func auditDumpArguments(raw []byte) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var parsed any
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return auditDumpText(string(raw))
+	}
+	scrubbed, err := json.Marshal(redact.JSONValue(parsed))
+	if err != nil {
+		return auditDumpText(string(raw))
+	}
+	// Pattern redaction still runs over the re-serialized form: JSONValue
+	// elides by key, Text catches a secret sitting in a value under a key
+	// nobody named.
+	return auditDumpText(string(scrubbed))
 }
 
 // auditDumpText redacts and caps one captured string. Redaction runs first:

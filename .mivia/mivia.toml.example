@@ -211,7 +211,7 @@ max_tokens = 16384
 max_prompt_tokens = 200000
 # max_steps = 0  # 0 = unlimited (default). Set positive to cap turns. /steps overrides per session.
 # request_timeout_seconds = 900  # per-LLM-request deadline (seconds) for every root chat turn, tools on or off; 0 = built-in default (900s, 15 minutes). A deadline that fires mid-stream keeps the streamed partial in history and returns it as the reply. Raise it for models that think for a long time.
-# max_unacted_continuations = 0  # 0 = off (default). Set to 1 for a model that announces work ("I'll dispatch four agents") and then ends the turn without calling a tool: the turn is continued once with a notice appended to its own history. Only a turn that called NO tool is ever continued, so nothing can run twice. Each continuation costs one extra provider call.
+# max_unacted_continuations = 0  # 0 = off (default), clamped to 3. Set to 1 for a model that announces work ("I'll dispatch four agents") and then ends the turn without calling a tool: the turn is continued once with a labelled notice appended to its own history. Only a turn that called NO tool is ever continued, so nothing can run twice. Each continuation costs one extra provider call and runs a fresh loop, so one turn's step ceiling becomes max_steps x (1 + max_unacted_continuations).
 
 [worktrees]
 # Prefix for branches that mivia creates for linked worktrees.
