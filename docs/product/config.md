@@ -383,11 +383,15 @@ Two consequences worth knowing before you enable it:
 
 `[chat] max_steps` bounds one turn's agent loop. `0` means unlimited, and this is the default when unset. `/steps` overrides it for the current session.
 
-## Agent turn request deadline
+## Turn request deadline
 
-`[chat] request_timeout_seconds` bounds one LLM request in a root agent turn (tools on). Unset or `0` resolves to the built-in default of `900` seconds (15 minutes). The deadline rides the request context, so a spent budget reports as a terminal deadline, not a transient transport fault.
+`[chat] request_timeout_seconds` bounds one LLM request in a root chat turn, tools on or off. Unset or `0` resolves to the built-in default of `900` seconds (15 minutes). The deadline rides the request context, so a spent budget reports as a terminal deadline, not a transient transport fault.
 
-This knob governs agent turns only. A plain (tools-off) chat turn carries no per-request context; the stream watchdogs and the derived HTTP client wall (see [Subagent knobs](#subagent-knobs)) bound it instead.
+The bound covers the LLM request only. Context preparation, the summarizer call, and the durable commit keep their own budgets.
+
+A deadline that fires mid-stream ends the turn as an interrupt, not as an error: the text already streamed stays in history and is persisted, and the partial answer comes back as the reply. Raise this value for models that think for a long time before they answer.
+
+A deadline interrupt and a `Ctrl+C` interrupt differ in one way after the turn ends. `Ctrl+C` cancels the caller's context, which suppresses the turn-boundary compaction pass. A deadline fires on the provider's own request context and leaves the caller's context live, so the compaction pass runs, and it can make a summary call to the provider that just timed out. That call carries the summarizer's own 20-second bound and degrades to structural-only compaction when it fails, so the cost is one bounded attempt.
 
 ## Bounded prompt budget
 

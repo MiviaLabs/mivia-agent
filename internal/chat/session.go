@@ -358,12 +358,17 @@ func (s *Session) sendUserWithTurn(ctx context.Context, userText, persistedText 
 // this turn's event callback is still published, so the compaction announces
 // itself on the same surface an automatic mid-turn one would (INV-AG-41).
 //
-// A failed turn is skipped deliberately. An interrupted turn's ctx is already
-// canceled, and the summarizer call a compaction may make must not be
-// resurrected onto context.Background() behind a user who just pressed
-// Ctrl-C; a turn that errored may also have left history the next turn's own
-// preparation is better placed to judge. Neither case loses anything: the
-// next turn's first Trim compacts before any request reaches the provider.
+// A failed turn is skipped deliberately: a turn that errored may have left
+// history the next turn's own preparation is better placed to judge. Nothing
+// is lost, because the next turn's first Trim compacts before any request
+// reaches the provider.
+//
+// An INTERRUPTED turn is a quiet success (the adopt paths return the partial
+// with a nil error), so it reaches this pass, and whether the compaction then
+// runs depends on what interrupted it: Ctrl+C cancels the caller's ctx and
+// suppresses it, while a per-request deadline fires on the provider's own
+// inner ctx and leaves this ctx live, so the pass runs. That difference is
+// deliberate - see docs/product/config.md, "Turn request deadline".
 //
 // The error is dropped rather than returned. The turn it follows already
 // committed, and returning a maintenance failure here would report a
@@ -439,14 +444,22 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 	return reply, err
 }
 
-func (s *Session) buildAgentTurnOptions(snapshot agentTurnSnapshot, userText string, w io.Writer, turnDispatcher *runtime.Dispatcher, turn *TurnOptions) agent.Options {
-	// A zero snapshot value falls back exactly as snapshot.toolTimeout does
-	// in sendAgent; the fallback lives here so the one consumer of the value
-	// and its normalization stay together.
-	requestTimeout := snapshot.requestTimeout
-	if requestTimeout <= 0 {
-		requestTimeout = DefaultRequestTimeout
+// effectiveRequestTimeout normalizes a snapshot's per-request deadline: a
+// zero value (a session built from a hand-built Resolved with no [chat]
+// request_timeout_seconds resolution) falls back to DefaultRequestTimeout,
+// never to "unbounded". Both turn shapes - agent (buildAgentTurnOptions)
+// and plain (sendPlainLegacy / sendPlainContext) - share this one rule.
+// The deadline bounds one LLM request only: Prepare, the summarizer call,
+// and the durable commit keep their own bounds.
+func effectiveRequestTimeout(d time.Duration) time.Duration {
+	if d <= 0 {
+		return DefaultRequestTimeout
 	}
+	return d
+}
+
+func (s *Session) buildAgentTurnOptions(snapshot agentTurnSnapshot, userText string, w io.Writer, turnDispatcher *runtime.Dispatcher, turn *TurnOptions) agent.Options {
+	requestTimeout := effectiveRequestTimeout(snapshot.requestTimeout)
 	opts := agent.Options{
 		Model: snapshot.binding.Model, Temperature: snapshot.temperature, MaxTokens: snapshot.maxTokens,
 		Reasoning: config.ModelReasoning(snapshot.binding.Profile),

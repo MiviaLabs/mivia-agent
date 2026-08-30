@@ -210,7 +210,7 @@ max_tokens = 16384
 # Larger values keep more history at higher cost - a recall-versus-price dial.
 max_prompt_tokens = 200000
 # max_steps = 0  # 0 = unlimited (default). Set positive to cap turns. /steps overrides per session.
-# request_timeout_seconds = 900  # per-LLM-request deadline (seconds) for AGENT turns (tools on); 0 = built-in default (900s, 15 minutes). Plain tools-off chat turns carry no per-request deadline; the stream watchdogs and the derived HTTP client wall bound them instead.
+# request_timeout_seconds = 900  # per-LLM-request deadline (seconds) for every root chat turn, tools on or off; 0 = built-in default (900s, 15 minutes). A deadline that fires mid-stream keeps the streamed partial in history and returns it as the reply. Raise it for models that think for a long time.
 
 [worktrees]
 # Prefix for branches that mivia creates for linked worktrees.

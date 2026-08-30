@@ -39,6 +39,10 @@ type plainTurnSnapshot struct {
 	temperature *float64
 	maxTokens   *int
 	tools       *tools.Registry
+	// requestTimeout is the per-LLM-request deadline for this turn
+	// ([chat] request_timeout_seconds), captured under the same lock as
+	// the rest of the snapshot, exactly as agentTurnSnapshot carries it.
+	requestTimeout time.Duration
 }
 
 type agentTurnSnapshot struct {
@@ -425,6 +429,7 @@ func (s *Session) beginPlainTurn(userText string) (plainTurnSnapshot, func(), er
 		myTurn: myTurn, sessionID: s.SessionID, messages: messages, binding: binding, token: token,
 		context: s.captureContextLocked(), budget: budget,
 		temperature: s.Temperature, maxTokens: config.EffectiveOutputTokens(binding.Profile, s.MaxTokens), tools: s.Tools,
+		requestTimeout: s.RequestTimeout,
 	}
 	s.mu.Unlock()
 	done := func() {
