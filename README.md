@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="docs/mivia-logo.png" alt="mivia" width="120">
+  <img src="docs/mivia-logo.png" alt="Mivia" width="120">
 </p>
 
-<h1 align="center">mivia</h1>
+<h1 align="center">Mivia</h1>
 
-<p align="center">A local CLI coding agent. Chat, tools, workflows, and multi-agent orchestration, in your terminal.</p>
+<p align="center">An AI coding agent for your terminal. Chat, tools, workflows, and multi-agent orchestration, while you keep your editor, your git, and your workflow.</p>
 
 <p align="center">
   <a href="https://github.com/MiviaLabs/mivia-agent/actions/workflows/ci.yml"><img src="https://github.com/MiviaLabs/mivia-agent/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
@@ -12,9 +12,11 @@
   <img src="https://img.shields.io/badge/Go-1.25%2B-00ADD8.svg" alt="Go 1.25+">
 </p>
 
-mivia reads, searches, and edits files in your project. It runs commands, such as your test suite. It can also run multi-step workflows in an isolated worktree, with a durable run record for every step.
+Mivia reads, searches, and edits files in your project. It runs commands, such as your test suite. It streams model responses as they generate, and you can select and copy transcript text with the mouse. It can also run multi-step workflows in an isolated worktree, with a durable run record for every step.
 
-Your files stay on your machine by default. mivia sends prompts and selected context to the AI provider you configure. Web search, configured MCP servers, lifecycle hooks, and workflow delivery can also contact external services or run configured local programs. Review those settings before use. See [Integrations](docs/product/integrations.md) for the full list.
+Mivia works with Anthropic, OpenAI-compatible providers such as OpenRouter, DeepSeek, ZAI, Ollama, and MiniMax. If you have used Claude Code, Codex CLI, or Aider: Mivia runs in the same terminal, works with any of the built-in providers, and adds durable workflows and lifecycle hooks on top.
+
+Your files stay on your machine by default. Mivia sends prompts and selected context to the AI provider you configure. Web search, configured MCP servers, lifecycle hooks, and workflow delivery can also contact external services or run configured local programs. Review those settings before use. See [Integrations](docs/product/integrations.md) for the full list.
 
 mivia is built on [mivia-ai-sdk](https://github.com/MiviaLabs/mivia-ai-sdk), our open-source, product-agnostic Go SDK for AI providers, tools, workflows, and hooks. Building your own agent? Start there.
 
@@ -33,9 +35,9 @@ Tagged [GitHub Releases](https://github.com/MiviaLabs/mivia-agent/releases) prov
 Piping a script into `bash` runs it with your shell's privileges. Inspect it first, or pin an exact tag, with:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MiviaLabs/mivia-agent/v0.1.0/scripts/install.sh -o /tmp/mivia-install.sh
+curl -fsSL https://raw.githubusercontent.com/MiviaLabs/mivia-agent/v0.1.2/scripts/install.sh -o /tmp/mivia-install.sh
 sed -n '1,240p' /tmp/mivia-install.sh
-sh /tmp/mivia-install.sh v0.1.0
+sh /tmp/mivia-install.sh v0.1.2
 ```
 
 Install the latest stable release on Linux or macOS:
@@ -106,7 +108,7 @@ Shell completions: `mivia completion bash|zsh|fish` prints a completion script f
 
 ## Supported providers
 
-mivia is a local-first agent: prompts and selected context go to exactly one
+Mivia is a local-first agent: prompts and selected context go to exactly one
 configured AI provider. Eight providers are built in:
 
 | Provider | Default model | Default API base URL |
@@ -120,7 +122,7 @@ configured AI provider. Eight providers are built in:
 | LLM Proxy CLI | `claude-sonnet-5` | `http://127.0.0.1:8317/v1` |
 | MiniMax | `MiniMax-M3` | `https://api.minimax.io/v1` |
 
-mivia does not accept an arbitrary OpenAI-compatible provider name: the
+Mivia does not accept an arbitrary OpenAI-compatible provider name: the
 provider registry rejects names it does not support, and every provider must
 declare its model catalog in the settings file (there is no remote model
 discovery). Configure a provider and its API key under
@@ -135,6 +137,8 @@ Successful workflow runs stop at `delivery_pending` until you pass the explicit 
 ## What it does
 
 - Chat with tool access: read, search, edit files; run allowed commands.
+- Streaming responses, with mouse text selection and copy (OSC 52, with a local
+  clipboard fallback) and force-send for queued messages.
 - Web search.
 - Durable project and organization memory, with an optional SQLite file that you can commit with the project.
 - Configurable MCP servers over stdio and Streamable HTTP, scoped per agent.
@@ -164,15 +168,16 @@ Most work under `mivia chat` runs locally; the provider, web search, MCP, hooks,
 
 | Guide | Covers |
 |-------|--------|
-| [Product overview](docs/product/overview.md) | What mivia is, plain-language walkthrough |
+| [Product overview](docs/product/overview.md) | What Mivia is, plain-language walkthrough |
 | [Configuration](docs/product/config.md) | Providers, keys, settings, and MCP servers |
-| [Integrations](docs/product/integrations.md) | External services mivia can talk to |
+| [Integrations](docs/product/integrations.md) | External services Mivia can talk to |
 | [Coding agent mode](docs/product/agent.md) | Chat, tools, agents, skills |
 | [Memory](docs/product/memory.md) | Durable project and organization memory |
 | [Workflows](docs/product/workflows.md) | Step-by-step processes |
 | [Workflow guide](docs/product/workflows-guide.md) | Workflow commands, the built-in workflow |
 | [Security and privacy](docs/security/overview.md) | Data handling |
 | [Lifecycle hooks](docs/development/lifecycle-hooks.md) | Your own scripts on tool-call events |
+| [Terminal input](docs/development/terminal-input.md) | Mouse, selection, paste, and clipboard behavior |
 | [Architecture](docs/architecture/overview.md) | System design |
 | [Contributing](docs/contributing.md) | Build, test, and PR process |
 
