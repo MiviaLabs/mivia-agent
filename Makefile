@@ -12,7 +12,11 @@ CMD_PKG := ./cmd/mivia
 # NOTE: the -X target must be the FULL package import path - a bare
 # "internal/version.Commit" does not match the linker's symbol table, so the
 # override is silently dropped and --version falls back to 0.0.0-dev.
-VERSION_PKG := $(shell go list -m)/internal/version
+# GOWORK=off: under a multi-module go.work, a bare `go list -m` prints EVERY
+# workspace module (one per line), which turns the -X argument into a
+# malformed multi-word flag and fails the link. This repo's own module path
+# comes from its own go.mod alone.
+VERSION_PKG := $(shell GOWORK=off go list -m)/internal/version
 COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 DIRTY := $(shell test -n "$$(git status --porcelain 2>/dev/null)" && echo dirty || echo clean)
 VERSION_LDFLAGS := -X $(VERSION_PKG).Commit=$(COMMIT) -X $(VERSION_PKG).Dirty=$(DIRTY)

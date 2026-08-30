@@ -238,8 +238,19 @@ const orderingHoleGraceWindow = 250 * time.Millisecond
 // context cancel (no Cond.Broadcast on the cancel path) wakes the
 // waiter - sync.Cond.Wait has no context awareness and would strand
 // the goroutine indefinitely.
+//
+// With a toolcallctx.BatchOrder on ctx (SDKs that publish the batch's
+// dispatch ledger) the wait is EXACT: a dispatched, unsettled
+// predecessor is either running or not yet scheduled - never a
+// permanent hole - so the waiter needs no heuristic at all. Without
+// one (older SDKs), the count-based escape with its grace window
+// remains the fallback.
 func (w *turnShapeWrapper) waitForOrderingSlot(ctx context.Context, callIndex int) {
 	if callIndex <= 0 {
+		return
+	}
+	if order, ok := toolcallctx.BatchOrderFromContext(ctx); ok {
+		w.waitForDispatchedPredecessors(ctx, order, callIndex)
 		return
 	}
 	// holeSince is when the current potential-hole episode began; zero
@@ -285,6 +296,40 @@ func (w *turnShapeWrapper) waitForOrderingSlot(ctx context.Context, callIndex in
 		w.counter.mu.Unlock()
 		select {
 		case <-ch:
+		case <-ctx.Done():
+		}
+		w.counter.mu.Lock()
+		w.counter.blocked--
+	}
+}
+
+// waitForDispatchedPredecessors is the exact ordering wait: it blocks until
+// every dispatched index below callIndex has either shaped here (the
+// counter advanced past it) or settled in the SDK's ledger (its tool
+// returned, it was rejected before the tools layer, or the batch abandoned
+// it on abort). No grace timer: the ledger's settle-exactly-once contract
+// makes "unsettled" mean "still coming", so waiting cannot strand and
+// escaping cannot reorder. Caller must hold counter.mu.
+func (w *turnShapeWrapper) waitForDispatchedPredecessors(ctx context.Context, order *toolcallctx.BatchOrder, callIndex int) {
+	outstanding := func() bool {
+		for _, d := range order.Dispatched() {
+			if d >= callIndex {
+				break
+			}
+			if d >= w.counter.nextIndex && !order.Settled(d) {
+				return true
+			}
+		}
+		return false
+	}
+	for outstanding() && ctx.Err() == nil && !w.counter.aborted {
+		w.counter.blocked++
+		ch := w.counter.signal
+		changed := order.Changed()
+		w.counter.mu.Unlock()
+		select {
+		case <-ch:
+		case <-changed:
 		case <-ctx.Done():
 		}
 		w.counter.mu.Lock()
