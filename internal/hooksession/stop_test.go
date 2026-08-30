@@ -40,11 +40,10 @@ func stopSession(t *testing.T, body string) string {
 
 // windowsStopHookBody translates the POSIX stop-hook fixture bodies to batch
 // syntax so the same behaviors are exercised on Windows: a printf+exit body
-// becomes an echo+exit /b body, and the bounded-output loop becomes a batch
-// for /l loop that writes 40,000 characters without a newline.
+// becomes an echo+exit /b body, and the bounded-output cat becomes type.
 func windowsStopHookBody(body string) string {
-	if strings.HasPrefix(body, "i=0\nwhile") {
-		return "@echo off\r\nfor /l %%i in (1,1,4000) do @<nul set /p \"=0123456789\"\r\nexit /b 0\r\n"
+	if strings.HasPrefix(body, "cat big.txt") {
+		return "@echo off\r\ntype big.txt\r\nexit /b 0\r\n"
 	}
 	trimmed := strings.TrimSuffix(body, "\n")
 	if strings.HasPrefix(trimmed, "printf '") {
@@ -88,11 +87,14 @@ func TestStopHookCannotBlockTheTurn(t *testing.T) {
 }
 
 func TestStopHookOutputIsBounded(t *testing.T) {
-	// One awk process emits the 40 KB in a single producer, not a shell
-	// loop: a 4000-iteration sh loop costs more than the Stop hook's 5 s
-	// timeout on Windows hosts, the kill discards the partial output, and
-	// the bound this test exists to pin never gets exercised there.
-	stopSession(t, "awk 'BEGIN { for (i = 0; i < 4000; i++) printf \"0123456789\" }'\nexit 0\n")
+	// The 40 KB comes from a pre-written file, not a shell producer: a
+	// 4000-iteration sh loop overruns the Stop hook's 5 s timeout on
+	// Windows hosts, and awk resolves through /etc/alternatives, which the
+	// verifier sandbox does not bind. cat/type read the file everywhere.
+	dir := stopSession(t, "cat big.txt\nexit 0\n")
+	if err := os.WriteFile(filepath.Join(dir, "big.txt"), []byte(strings.Repeat("0123456789", 4000)), 0o600); err != nil {
+		t.Fatalf("write big.txt: %v", err)
+	}
 	got := RunStopForTurn(context.Background(), "s", "t")
 	if len(got) > hooks.MaxOutputBytes+256 {
 		t.Fatalf("Stop output = %d bytes, past the bound", len(got))

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -272,6 +273,11 @@ func TestAuditDumpTextCaps(t *testing.T) {
 // package doc and docs/product/config.md both promise. Nothing else asserts
 // them, so a change from 0600 to 0644 would otherwise ship silently.
 func TestProviderAuditDumpModes(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// Windows does not map POSIX permission bits: os.Stat reports 0777
+		// for every directory, so the 0700/0600 promise is a Unix contract.
+		t.Skip("POSIX modes are not representable on Windows")
+	}
 	dir := filepath.Join(t.TempDir(), "dump")
 	t.Setenv(EnvProviderAuditDir, dir)
 	newProviderAuditDump("S6")(completionRequest(), completionResponse(), 2)
