@@ -8,6 +8,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
+	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 )
 
 // docs/product/config.md says max_steps "bounds one turn's agent loop".
@@ -136,5 +137,43 @@ func TestRemainingStepBudget(t *testing.T) {
 			t.Errorf("%s: remainingStepBudget(%d, %d) = (%d, %v), want (%d, %v)",
 				tc.name, tc.bound, tc.spent, got, exhausted, tc.want, tc.exhausted)
 		}
+	}
+}
+
+// TestReplayStepBudgetNext pins the contract of next that the two replay
+// callers depend on. A nil receiver or a nil turn state means no accounting
+// is available: the replay runs with the options unchanged, which is the
+// behavior that shipped before the budget existed.
+func TestReplayStepBudgetNext(t *testing.T) {
+	base := sdkagentloop.Options{MaxIterations: 5}
+
+	var nilBudget *replayStepBudget
+	got, ok := nilBudget.next(base)
+	if !ok || got.MaxIterations != 5 {
+		t.Fatalf("nil receiver: next() = (MaxIterations %d, %v), want (5, true)",
+			got.MaxIterations, ok)
+	}
+
+	noTurn := &replayStepBudget{bound: 5}
+	got, ok = noTurn.next(base)
+	if !ok || got.MaxIterations != 5 {
+		t.Fatalf("nil turn state: next() = (MaxIterations %d, %v), want (5, true)",
+			got.MaxIterations, ok)
+	}
+
+	turn := &sdkTurnState{}
+	b := &replayStepBudget{bound: 5, turn: turn}
+	turn.steps.Store(2)
+	got, ok = b.next(base)
+	if !ok || got.MaxIterations != 3 {
+		t.Fatalf("budget left: next() = (MaxIterations %d, %v), want (3, true)",
+			got.MaxIterations, ok)
+	}
+
+	turn.steps.Store(5)
+	got, ok = b.next(base)
+	if ok || got.MaxIterations != 5 {
+		t.Fatalf("spent budget: next() = (MaxIterations %d, %v), want (5 unchanged, false)",
+			got.MaxIterations, ok)
 	}
 }
