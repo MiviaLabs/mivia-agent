@@ -26,7 +26,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
@@ -125,13 +124,13 @@ func appendAuditDump(dir, path string, rec auditDumpEntry) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create audit dir: %w", err)
 	}
-	// O_NOFOLLOW: refuse to write through a symlink planted at the dump
-	// path. Without it, an operator who points the variable at a shared
-	// directory can have a turn's whole prompt and response appended to a
-	// file another user chose - and the 0600 argument does not apply,
-	// because the target already exists. Repo rule 10 forbids following a
-	// symlink on a write path unconditionally.
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY|syscall.O_NOFOLLOW, 0o600)
+	// The open itself is build-tagged (audit_dump_open_unix.go /
+	// audit_dump_open_other.go): Unix refuses a symlink planted at the
+	// dump path with O_NOFOLLOW - the 0600 mode does not protect an
+	// existing target, and repo rule 10 forbids following a symlink on a
+	// write path unconditionally - while non-unix hosts get the best
+	// effort that their toolchain can express.
+	f, err := openAuditDumpFile(path)
 	if err != nil {
 		return fmt.Errorf("open audit file: %w", err)
 	}
