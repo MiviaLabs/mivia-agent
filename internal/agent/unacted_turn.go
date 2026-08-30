@@ -66,7 +66,7 @@ const unactedContinuationNotice = "[mivia: your previous message described work 
 // The continuation appends the assistant's own message and the notice to
 // the run's history rather than re-asking the original prompt: the model
 // keeps what it said, so it continues from its plan instead of restarting.
-func continueUnactedTurn(ctx context.Context, l *Loop, sdkOpts sdkagentloop.Options, opts Options, turn *sdkTurnState, turnUserText string, res sdkagentloop.Result, err error) (sdkagentloop.Result, error) {
+func continueUnactedTurn(ctx context.Context, l *Loop, sdkOpts sdkagentloop.Options, opts Options, turn *sdkTurnState, turnUserText string, res sdkagentloop.Result, err error, budget *replayStepBudget) (sdkagentloop.Result, error) {
 	if opts.MaxUnactedContinuations <= 0 || opts.DisableProviderReplay {
 		return res, err
 	}
@@ -90,7 +90,13 @@ func continueUnactedTurn(ctx context.Context, l *Loop, sdkOpts sdkagentloop.Opti
 		// twice. Revoking is a no-op when nothing was streamed or the
 		// writer does not implement streamRevoker.
 		revokeStreamWriter(opts.FinalWriter)
-		res, err = runSDKPromptTooLongRecoverable(ctx, l, sdkOpts, opts, continuedHistory(res.History), turn)
+		// A continuation spends the SAME turn's step budget, not a fresh
+		// one (replay_step_budget.go).
+		attemptOpts, allowed := budget.next(sdkOpts)
+		if !allowed {
+			return res, err
+		}
+		res, err = runSDKPromptTooLongRecoverable(ctx, l, attemptOpts, opts, continuedHistory(res.History), turn)
 	}
 	return res, err
 }

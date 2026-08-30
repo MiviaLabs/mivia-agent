@@ -120,9 +120,13 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 // requires empty final text, the other non-empty), so at most one fires,
 // and both are no-ops unless their own gate is set.
 func runSDKWithReplays(ctx context.Context, l *Loop, sdkOpts sdkagentloop.Options, opts Options, preparedMsgs []sdkshape.Message, turn *sdkTurnState, turnUserText string) (sdkagentloop.Result, error) {
+	// One step budget spans the original run and every replay of it, so
+	// max_steps stays the per-turn total its documentation promises
+	// (replay_step_budget.go).
+	budget := newReplayStepBudget(sdkOpts, turn)
 	res, err := runSDKPromptTooLongRecoverable(ctx, l, sdkOpts, opts, preparedMsgs, turn)
-	res, err = retryOnEmptyResponse(ctx, l, sdkOpts, opts, preparedMsgs, turn, turnUserText, res, err)
-	return continueUnactedTurn(ctx, l, sdkOpts, opts, turn, turnUserText, res, err)
+	res, err = retryOnEmptyResponse(ctx, l, sdkOpts, opts, preparedMsgs, turn, turnUserText, res, err, budget)
+	return continueUnactedTurn(ctx, l, sdkOpts, opts, turn, turnUserText, res, err, budget)
 }
 
 // ensureSDKDispatcher installs a scoped runtime dispatcher over the
@@ -273,7 +277,7 @@ const maxEmptyResponseRetries = 2
 // copies its input - so retrying against the same slice is safe.
 // DisableProviderReplay suppresses this retry for the same reason it
 // suppresses the prompt-too-long one: it IS a provider replay.
-func retryOnEmptyResponse(ctx context.Context, l *Loop, sdkOpts sdkagentloop.Options, opts Options, preparedMsgs []sdkshape.Message, turn *sdkTurnState, turnUserText string, res sdkagentloop.Result, err error) (sdkagentloop.Result, error) {
+func retryOnEmptyResponse(ctx context.Context, l *Loop, sdkOpts sdkagentloop.Options, opts Options, preparedMsgs []sdkshape.Message, turn *sdkTurnState, turnUserText string, res sdkagentloop.Result, err error, budget *replayStepBudget) (sdkagentloop.Result, error) {
 	if !opts.RequireFinalText || opts.DisableProviderReplay {
 		return res, err
 	}
@@ -306,7 +310,12 @@ func retryOnEmptyResponse(ctx context.Context, l *Loop, sdkOpts sdkagentloop.Opt
 		// already revokes on a tool-call arrival - a no-op when FinalWriter
 		// doesn't implement streamRevoker or nothing was ever streamed.
 		revokeStreamWriter(opts.FinalWriter)
-		res, err = runSDKPromptTooLongRecoverable(ctx, l, sdkOpts, opts, preparedMsgs, turn)
+		// A replay spends the SAME turn's step budget, not a fresh one.
+		attemptOpts, allowed := budget.next(sdkOpts)
+		if !allowed {
+			return res, err
+		}
+		res, err = runSDKPromptTooLongRecoverable(ctx, l, attemptOpts, opts, preparedMsgs, turn)
 	}
 	return res, err
 }

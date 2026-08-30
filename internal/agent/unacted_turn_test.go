@@ -154,7 +154,7 @@ func TestContinueUnactedTurnOffByDefault(t *testing.T) {
 	if turnLeftWorkUnacted(sdkagentloop.Options{}, opts, "review the diff", res, nil) != true {
 		t.Fatal("the predicate itself should still match; the gate is on the count")
 	}
-	got, err := continueUnactedTurn(t.Context(), nil, sdkagentloop.Options{}, opts, nil, "review the diff", res, nil)
+	got, err := continueUnactedTurn(t.Context(), nil, sdkagentloop.Options{}, opts, nil, "review the diff", res, nil, nil)
 	if err != nil || got.Stop != sdkagentloop.StopNoToolCalls {
 		t.Fatalf("a zero bound must return the run untouched, got %+v / %v", got.Stop, err)
 	}
@@ -166,7 +166,7 @@ func TestContinueUnactedTurnRespectsDisableProviderReplay(t *testing.T) {
 	res := unactedRun("I'll spawn 4 agents to review the diff.")
 	opts := toolsAdvertised()
 	opts.DisableProviderReplay = true
-	got, err := continueUnactedTurn(t.Context(), nil, sdkagentloop.Options{}, opts, nil, "review the diff", res, nil)
+	got, err := continueUnactedTurn(t.Context(), nil, sdkagentloop.Options{}, opts, nil, "review the diff", res, nil, nil)
 	if err != nil || got.Stop != sdkagentloop.StopNoToolCalls {
 		t.Fatalf("DisableProviderReplay must suppress the continuation, got %+v / %v", got.Stop, err)
 	}
