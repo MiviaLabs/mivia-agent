@@ -14,7 +14,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/cliorchestrate"
@@ -184,7 +183,7 @@ func newWorkflowDispatcher(res *config.Resolved, store *storage.SQLite, setup wo
 		return nil, cliagents.SessionDispatcherOpts{}, nil, err
 	}
 	legacy := ledger.NewStorageLedgerRepository(store)
-	opts := cliagents.SessionDispatcherOpts{Registry: setup.authority, AuthorityRegistry: setup.authority, Completer: comp, Model: res.Model, ProviderName: res.ProviderName, AllowWorkspaceAgentProviders: setup.loaded.Global.AllowWorkspaceAgentProviders, ModelCatalog: res.ModelCatalog(), CompleterFactory: cliagents.NewProviderCompleterFactory(res), Config: res.Subagents, MCP: res.MCP, Repo: legacy, SharedSQLite: store, SkillReg: setup.skills, WorkflowSkillSnapshots: make(map[string]workflowledger.RefSnapshot), AgentRegistry: setup.loaded.Registry, WorkspaceRoot: setup.identity.Root, ToolRunTimeout: time.Duration(res.Tools.ToolRunTimeoutSec) * time.Second}
+	opts := cliagents.SessionDispatcherOpts{Registry: setup.authority, AuthorityRegistry: setup.authority, Completer: comp, Model: res.Model, ProviderName: res.ProviderName, AllowWorkspaceAgentProviders: setup.loaded.Global.AllowWorkspaceAgentProviders, ModelCatalog: res.ModelCatalog(), CompleterFactory: cliagents.NewProviderCompleterFactory(res), Config: res.Subagents, MCP: res.MCP, Repo: legacy, SharedSQLite: store, SkillReg: setup.skills, WorkflowSkillSnapshots: make(map[string]workflowledger.RefSnapshot), AgentRegistry: setup.loaded.Registry, WorkspaceRoot: setup.identity.Root, ToolRunTimeout: config.SaturatingSeconds(res.Tools.ToolRunTimeoutSec)}
 	dispatcher, err := WorkflowBuildDispatcher(opts)
 	if err != nil {
 		return nil, cliagents.SessionDispatcherOpts{}, nil, err

@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"time"
 
 	workflowledger "github.com/MiviaLabs/mivia-agent/internal/workflows/ledger"
@@ -23,7 +24,7 @@ func (c *LinearController) admissionSnapshot() workflowledger.RunSnapshot {
 		deadline := *c.admission.DeadlineAt
 		snap.DeadlineAt = &deadline
 	} else if c.Workflow.Limits.MaxDurationSeconds > 0 {
-		deadline := admittedAt.Add(time.Duration(c.Workflow.Limits.MaxDurationSeconds) * time.Second)
+		deadline := admittedAt.Add(config.SaturatingSeconds(c.Workflow.Limits.MaxDurationSeconds))
 		snap.DeadlineAt = &deadline
 	}
 	return snap

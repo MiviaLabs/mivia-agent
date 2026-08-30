@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"log"
 	"time"
 	"unicode/utf8"
@@ -347,7 +348,7 @@ func (c *LinearController) agentStepRequest(ctx context.Context, run workflowled
 	}
 	var timeout time.Duration
 	if runtime.Agent.TimeoutSeconds != nil {
-		timeout = time.Duration(*runtime.Agent.TimeoutSeconds) * time.Second
+		timeout = config.SaturatingSeconds(*runtime.Agent.TimeoutSeconds)
 	} else if run.DeadlineAt != nil {
 		// No per-agent timeout configured: derive one from the remaining run
 		// deadline so the agent cannot outlive the run it belongs to (D1).
