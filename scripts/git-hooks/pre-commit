@@ -230,6 +230,14 @@ if command -v go >/dev/null 2>&1; then
     echo " → Running subagent invariant tests..."
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestTerminalStatus|TestBuildResult|TestHandlerRequestFieldParity|TestHandlerParityPolicyHasNoStaleExemptions|TestOneShotHandler' ./internal/subagents/ -count=1 -timeout=60s) || INV_FAIL=1
   fi
+  # Windows fails a rename over a file a concurrent writer is renaming onto
+  # (DC-14); the marker publish absorbs that with a bounded retry that only
+  # Windows CI would otherwise exercise, intermittently. The gate proves the
+  # retry deterministically on every platform.
+  if echo "$STAGED" | grep -qE '^internal/cliworktree/'; then
+    echo " → Running worktree marker publish invariant tests..."
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestMarkerPublishRetriesTransientRenameContention' ./internal/cliworktree/ -count=1 -timeout=60s) || INV_FAIL=1
+  fi
   if echo "$STAGED" | grep -qE '^internal/chat/'; then
     echo " → Running chat invariant tests..."
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestSessionMessages' ./internal/chat/ -count=1 -timeout=60s) || INV_FAIL=1

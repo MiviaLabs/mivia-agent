@@ -220,3 +220,52 @@ func TestMarkerFaultExcludeLockStatError(t *testing.T) {
 		t.Fatalf("exclude lock stat fault error = %v", err)
 	}
 }
+
+// TestMarkerPublishRetriesTransientRenameContention pins the publish retry
+// contract deterministically on every platform. Windows fails a rename over
+// a file a concurrent writer is renaming onto, so the publish must absorb a
+// transient failure within the attempt budget, surface a persistent one
+// after the budget, and never retry when the platform does not need it.
+// Without this test the contract is exercised only by intermittent Windows
+// CI contention.
+func TestMarkerPublishRetriesTransientRenameContention(t *testing.T) {
+	originalRename := renameWorktreeMarker
+	originalRetry := retryMarkerPublishRenames
+	t.Cleanup(func() {
+		renameWorktreeMarker = originalRename
+		retryMarkerPublishRenames = originalRetry
+	})
+	retryMarkerPublishRenames = true
+	calls := 0
+	renameWorktreeMarker = func(string, string) error {
+		calls++
+		if calls < 3 {
+			return errors.New("Access is denied.")
+		}
+		return nil
+	}
+	if err := publishWorktreeMarker("temp", "target"); err != nil {
+		t.Fatalf("transient contention must be absorbed, got %v", err)
+	}
+	if calls != 3 {
+		t.Fatalf("rename attempts = %d, want 3", calls)
+	}
+
+	calls = 0
+	renameWorktreeMarker = func(string, string) error { calls++; return errors.New("Access is denied.") }
+	if err := publishWorktreeMarker("temp", "target"); err == nil {
+		t.Fatal("a persistent failure must surface after the attempt budget")
+	}
+	if calls != maxMarkerPublishAttempts {
+		t.Fatalf("rename attempts = %d, want %d", calls, maxMarkerPublishAttempts)
+	}
+
+	retryMarkerPublishRenames = false
+	calls = 0
+	if err := publishWorktreeMarker("temp", "target"); err == nil {
+		t.Fatal("without retries the first failure must surface")
+	}
+	if calls != 1 {
+		t.Fatalf("rename attempts without retry = %d, want 1", calls)
+	}
+}

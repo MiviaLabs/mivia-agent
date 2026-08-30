@@ -344,6 +344,13 @@ retried once on a prompt-too-long response.
 - External error text may carry request content. Do not put it into a user-facing
   error without redaction.
 - Test the malformed response, not only the good one.
+- An operating system is an external interface. POSIX behavior a platform does
+  not honor (atomic rename over an open target, permission bits) is this class:
+  `44b5ad24` shipped a concurrent marker publish that Windows rejects with
+  ERROR_ACCESS_DENIED. A platform-conditional code path needs a deterministic
+  test that forces the condition on every platform
+  (`TestMarkerPublishRetriesTransientRenameContention`), not a wait for the
+  one CI runner where it happens intermittently.
 
 ---
 

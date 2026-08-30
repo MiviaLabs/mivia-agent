@@ -101,6 +101,13 @@ func WriteWorktreeMarker(root string, instance contextstate.WorktreeInstance) er
 	return nil
 }
 
+// retryMarkerPublishRenames enables the bounded publish retry. Only Windows
+// needs it (see publishWorktreeMarker); tests flip it to prove the retry
+// behavior deterministically on every platform.
+var retryMarkerPublishRenames = runtime.GOOS == "windows"
+
+const maxMarkerPublishAttempts = 10
+
 // publishWorktreeMarker renames the temp file over the marker path. On
 // Windows a rename over an existing file that another writer is renaming
 // onto (or holds open) fails with ERROR_ACCESS_DENIED, so concurrent
@@ -109,11 +116,11 @@ func WriteWorktreeMarker(root string, instance contextstate.WorktreeInstance) er
 // atomically and never retry.
 func publishWorktreeMarker(name, target string) error {
 	var err error
-	for attempt := 0; attempt < 10; attempt++ {
+	for attempt := 0; attempt < maxMarkerPublishAttempts; attempt++ {
 		if err = renameWorktreeMarker(name, target); err == nil {
 			return nil
 		}
-		if runtime.GOOS != "windows" {
+		if !retryMarkerPublishRenames {
 			break
 		}
 		time.Sleep(time.Duration(attempt+1) * 5 * time.Millisecond)
