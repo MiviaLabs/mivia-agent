@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
@@ -66,7 +65,7 @@ func effectiveWorkflowPanelLimits(res *config.Resolved) controller.PanelLimits {
 		limits.SynthesisMaxToolCalls = *p.SynthesisMaxToolCalls
 	}
 	if p.MemberDeadlineDefaultSeconds != nil {
-		limits.MemberDeadlineDefault = time.Duration(*p.MemberDeadlineDefaultSeconds) * time.Second
+		limits.MemberDeadlineDefault = config.SaturatingSeconds(*p.MemberDeadlineDefaultSeconds)
 	}
 	return limits
 }

@@ -76,7 +76,7 @@ func (b *AgentBinding) resolveCeilings(definition agents.ResolvedAgent, opts Ses
 		b.MaxTokens = modelMaxTokens
 	}
 	if definition.TimeoutSeconds != nil && *definition.TimeoutSeconds > 0 {
-		b.wallClock = time.Duration(*definition.TimeoutSeconds) * time.Second
+		b.wallClock = config.SaturatingSeconds(*definition.TimeoutSeconds)
 	}
 }
 

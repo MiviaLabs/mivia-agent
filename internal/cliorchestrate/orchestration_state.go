@@ -228,7 +228,7 @@ func orchestrationHandleAccessible(ctx context.Context, record *orchestrationHan
 
 func orchestrationHandleRetention(cfg config.SubagentConfig) time.Duration {
 	if cfg.HandleRetentionSeconds > 0 {
-		return time.Duration(cfg.HandleRetentionSeconds) * time.Second
+		return config.SaturatingSeconds(cfg.HandleRetentionSeconds)
 	}
 	return defaultHandleRetention
 }
@@ -354,7 +354,7 @@ func InitCoordinator(d *runtime.Dispatcher, cfg config.SubagentConfig, repos ...
 		MaxDepth:  poolDepth,
 		MaxFanout: poolFanout,
 		MaxBudget: cfg.DefaultBudget,
-		Timeout:   time.Duration(cfg.DefaultTimeout) * time.Second,
+		Timeout:   config.SaturatingSeconds(cfg.DefaultTimeout),
 		// Anti-thundering-herd: space batch task starts so concurrent
 		// workers do not open their first provider call on the same instant.
 		SpawnStagger: time.Duration(cfg.SpawnStaggerMs) * time.Millisecond,

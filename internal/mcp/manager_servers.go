@@ -3,7 +3,6 @@ package mcp
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
@@ -189,7 +188,7 @@ func (m *Manager) boundContext(parent context.Context, timeoutSeconds int) (cont
 	if timeoutSeconds <= 0 {
 		ctx, cancel = context.WithCancel(parent)
 	} else {
-		ctx, cancel = context.WithTimeout(parent, time.Duration(timeoutSeconds)*time.Second)
+		ctx, cancel = context.WithTimeout(parent, config.SaturatingSeconds(timeoutSeconds))
 	}
 	stop := context.AfterFunc(m.shutdownCtx, cancel)
 	return ctx, func() {

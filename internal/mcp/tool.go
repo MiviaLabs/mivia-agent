@@ -8,6 +8,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
@@ -82,7 +83,7 @@ func wrapRemoteTools(serverID string, client remoteClient, remote []remoteTool, 
 		if err != nil {
 			return nil, fmt.Errorf("MCP tool %q: %w", tool.Name, err)
 		}
-		out = append(out, discoveredTool{name: name, serverID: serverID, remoteName: tool.Name, description: description, schema: schema, client: client, maxResultBytes: maxResultBytes, timeout: time.Duration(timeoutSeconds) * time.Second, redaction: redaction})
+		out = append(out, discoveredTool{name: name, serverID: serverID, remoteName: tool.Name, description: description, schema: schema, client: client, maxResultBytes: maxResultBytes, timeout: config.SaturatingSeconds(timeoutSeconds), redaction: redaction})
 	}
 	return out, nil
 }
