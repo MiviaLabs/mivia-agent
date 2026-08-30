@@ -30,7 +30,7 @@ const DefaultSubagentRequestTimeoutSec = 1800 // 30 minutes
 // internal/clichat resolve through this one helper so the two cannot drift.
 func ResolvedSubagentRequestTimeout(cfg SubagentConfig) time.Duration {
 	if cfg.DefaultRequestTimeoutSec > 0 {
-		return time.Duration(cfg.DefaultRequestTimeoutSec) * time.Second
+		return secondsToDuration(cfg.DefaultRequestTimeoutSec)
 	}
 	return DefaultSubagentRequestTimeoutSec * time.Second
 }

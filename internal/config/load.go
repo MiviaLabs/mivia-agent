@@ -296,14 +296,33 @@ func resolveProviderHTTPTimeout(chatRequest time.Duration, subagents SubagentCon
 	return wall
 }
 
+// maxResolvedTimeoutSeconds saturates a configured timeout at 100 years.
+// A TOML integer can carry up to math.MaxInt64 seconds; a plain multiply
+// by time.Second overflows to a negative Duration (~292 years is the
+// Duration ceiling), and the wall derivation then adds a margin on top of
+// the resolved value, which can overflow even a product that survived the
+// multiply. 100 years is far above any real timeout and leaves the margin
+// arithmetic ample headroom.
+const maxResolvedTimeoutSeconds = 100 * 365 * 24 * 60 * 60
+
+// secondsToDuration converts a positive seconds count to a Duration,
+// saturating at maxResolvedTimeoutSeconds so the conversion and any later
+// margin addition stay positive.
+func secondsToDuration(sec int) time.Duration {
+	if sec > maxResolvedTimeoutSeconds {
+		sec = maxResolvedTimeoutSeconds
+	}
+	return time.Duration(sec) * time.Second
+}
+
 // resolveTimeoutSeconds defaults an unset (nil) [provider] timeout knob to
 // def seconds, converting the resolved value to a time.Duration once so
 // Resolved carries a ready-to-use bound instead of a raw *int.
 func resolveTimeoutSeconds(raw *int, def int) time.Duration {
 	if raw == nil || *raw <= 0 {
-		return time.Duration(def) * time.Second
+		return secondsToDuration(def)
 	}
-	return time.Duration(*raw) * time.Second
+	return secondsToDuration(*raw)
 }
 
 const (
