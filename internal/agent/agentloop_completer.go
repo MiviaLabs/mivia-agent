@@ -143,13 +143,22 @@ func (a *agentLoopCompleter) Chat(ctx context.Context, req sdkshape.Request) (sd
 	}, nil
 }
 
-// ChatStream implements provider.Completer. It forwards to the CLI's
-// ChatStream, which writes content deltas live to the request's
-// StreamWriter as they arrive; when the SDK request carries no
-// StreamingWriter the assembled content still reaches the caller as
-// one delta chunk on the returned channel. The goroutine selects on
+// ChatStream implements provider.Completer. Like Chat, it goes through
+// the CLI's ChatTurn - the only path that surfaces tool calls - and
+// forwards content, tool calls, the real finish reason, and usage as
+// chunks. Content still reaches a live StreamWriter as deltas arrive;
+// when the SDK request carries no StreamingWriter the assembled content
+// is emitted as one delta chunk instead. The goroutine selects on
 // ctx.Done() before each emit so a cancellation does not block the
 // channel close.
+//
+// It previously called the CLI's plain ChatStream, which returns content
+// only: every tool call the model made was dropped on the floor and the
+// finish reason was hardcoded to "stop", so a turn that acted looked
+// exactly like a turn that decided to stop. The SDK loop calls Chat and
+// never ChatStream today, so nothing shipped through that path - but a
+// seam that silently discards the model's actions is not one to leave
+// armed.
 func (a *agentLoopCompleter) ChatStream(ctx context.Context, req sdkshape.Request) (<-chan sdkshape.Chunk, error) {
 	ch := make(chan sdkshape.Chunk, 1)
 	go func() {
@@ -158,7 +167,7 @@ func (a *agentLoopCompleter) ChatStream(ctx context.Context, req sdkshape.Reques
 		if a.onChat != nil {
 			a.onChat()
 		}
-		content, err := a.cli.ChatStream(ctx, cliReq, cliReq.StreamWriter)
+		resp, err := a.chatStreamResponse(ctx, cliReq)
 		if err != nil {
 			select {
 			case ch <- sdkshape.Chunk{Err: err}:
@@ -166,31 +175,61 @@ func (a *agentLoopCompleter) ChatStream(ctx context.Context, req sdkshape.Reques
 			}
 			return
 		}
-		finish := "stop"
 		if a.onFinish != nil {
-			a.onFinish(finish)
+			a.onFinish(resp.FinishReason)
 		}
-		// ChatStream has no TokenUsage path on the wrapped CLI
-		// provider; report a zero Usage so the CLI's calibration
-		// pipeline observes the call (Reported=false means
-		// "no observation", which is the correct neutral value,
-		// matching the Chat fallback path above).
 		if a.onUsage != nil {
-			a.onUsage(ctx, cliReq, &provider.Response{Content: content})
+			a.onUsage(ctx, cliReq, resp)
 		}
-		if content != "" && cliReq.StreamWriter == nil {
-			select {
-			case ch <- sdkshape.Chunk{Delta: content}:
-			case <-ctx.Done():
-				return
-			}
-		}
-		select {
-		case ch <- sdkshape.Chunk{Done: true, FinishReason: finish}:
-		case <-ctx.Done():
-		}
+		emitStreamChunks(ctx, ch, convertToSDKResponse(*resp), cliReq.StreamWriter != nil)
 	}()
 	return ch, nil
+}
+
+// chatStreamResponse runs one streaming turn and returns the whole
+// response. ChatTurn is the tool-call-bearing path; the plain ChatStream
+// fallback exists only for the defensive (nil, nil) return that mirrors
+// Chat's own fallback, and a fallback answer carries no tool calls to
+// lose because the call that produced it could not report any.
+func (a *agentLoopCompleter) chatStreamResponse(ctx context.Context, cliReq provider.Request) (*provider.Response, error) {
+	if r, err := a.cli.ChatTurn(ctx, cliReq); err != nil {
+		return nil, err
+	} else if r != nil {
+		return r, nil
+	}
+	content, err := a.cli.ChatStream(ctx, cliReq, cliReq.StreamWriter)
+	if err != nil {
+		return nil, err
+	}
+	return &provider.Response{Content: content, FinishReason: "stop"}, nil
+}
+
+// emitStreamChunks emits one turn's response as SDK chunks: the content
+// delta (suppressed when a live writer already received it byte by
+// byte), one chunk per tool call, then the terminal Done chunk carrying
+// the finish reason and usage. Every send selects on ctx.Done() so a
+// cancelled turn cannot block the channel close.
+func emitStreamChunks(ctx context.Context, ch chan<- sdkshape.Chunk, resp sdkshape.Response, liveWriter bool) {
+	send := func(c sdkshape.Chunk) bool {
+		select {
+		case ch <- c:
+			return true
+		case <-ctx.Done():
+			return false
+		}
+	}
+	if resp.Message.Content != "" && !liveWriter {
+		if !send(sdkshape.Chunk{Delta: resp.Message.Content}) {
+			return
+		}
+	}
+	for i := range resp.ToolCalls {
+		call := resp.ToolCalls[i]
+		if !send(sdkshape.Chunk{ToolCallDelta: &call}) {
+			return
+		}
+	}
+	send(sdkshape.Chunk{Done: true, FinishReason: resp.FinishReason, Usage: resp.Usage})
 }
 
 // applyStreaming turns the SDK request's StreamingWriter into the CLI
