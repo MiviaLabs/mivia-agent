@@ -29,7 +29,7 @@ func (c *coordinator) tasksFromSnapshotsWithAuthority(ctx context.Context, snaps
 			done[snap.TaskID] = result
 			continue
 		}
-		task, err := c.taskFromSnapshot(snap)
+		task, err := c.taskFromSnapshot(snap, liveByID)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -47,13 +47,25 @@ func (c *coordinator) tasksFromSnapshotsWithAuthority(ctx context.Context, snaps
 	return out, done, nil
 }
 
-func (c *coordinator) taskFromSnapshot(snap ledger.TaskSnapshot) (subagents.Task, error) {
+func (c *coordinator) taskFromSnapshot(snap ledger.TaskSnapshot, liveByID map[string]subagents.Task) (subagents.Task, error) {
 	name := snap.AgentName
 	if snap.AgentName == "" || snap.AgentDigest == "" {
-		if !subagents.IsReservedHandler(snap.HandlerName) {
+		switch live, hasLive := liveByID[snap.TaskID]; {
+		case subagents.IsReservedHandler(snap.HandlerName):
+			name = snap.HandlerName
+		case hasLive && snap.HandlerName != "" && live.Name == snap.HandlerName && live.AgentName == "":
+			// The adopting caller re-supplied this exact task: same id, same
+			// plain handler, no agent routing of its own. That is the same
+			// authority a FRESH admission dispatches on (ValidateTask runs on
+			// the result below), so adoption must not be stricter - two
+			// executors racing one single-task admission otherwise fail the
+			// loser with the older-version rejection. A snapshot with NO
+			// matching live task keeps that rejection: it really is
+			// unresolvable from the record alone.
+			name = snap.HandlerName
+		default:
 			return subagents.Task{}, fmt.Errorf("resume: task %q has no agent routing snapshot (created by an older mivia version or an unresolvable handler; cannot dispatch)", snap.TaskID)
 		}
-		name = snap.HandlerName
 	}
 	if len(snap.Input) == 0 {
 		return subagents.Task{}, fmt.Errorf("resume: task %q has no persisted input (created before task inputs were recorded; cannot resume this run)", snap.TaskID)
