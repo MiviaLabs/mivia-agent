@@ -1,0 +1,131 @@
+{
+  "description": "Every runtime seconds-to-Duration conversion (time.Duration(n) * time.Second and sibling units) must either route through config.SaturatingSeconds or appear here with the guard that bounds n BEFORE the multiply. Mechanism (DC-7): time.Duration is int64, so an unbounded n overflows the multiply to a negative Duration, which arms an already-expired deadline or expires retention immediately. Compile-time constant multiplies without a time.Duration() conversion cannot overflow at runtime (the compiler rejects them) and are out of scope. A new bare conversion fails scripts/check_timeout_saturation.py until it is routed through the helper or dispositioned here with a reason. A stale entry (matching no site) also fails, so this list cannot rot.",
+  "allow": [
+    {
+      "file": "internal/provider/retry.go",
+      "operand": "seconds",
+      "unit": "Second",
+      "reason": "Retry-After delay-seconds; parseRetryAfterAt rejects values above maxRetryAfterSeconds and non-digit strings before the multiply"
+    },
+    {
+      "file": "internal/agent/loop_limits.go",
+      "operand": "maxDurationSeconds",
+      "unit": "Second",
+      "reason": "compile-time cap constant, the clamp ceiling itself"
+    },
+    {
+      "file": "internal/agent/loop_limits.go",
+      "operand": "params.TimeoutSeconds",
+      "unit": "Second",
+      "reason": "clamped to maxDurationSeconds on the branch above the multiply"
+    },
+    {
+      "file": "internal/tools/get_diagnostics.go",
+      "operand": "t.timeoutSec",
+      "unit": "Second",
+      "reason": "tool-level bound; callContext replaces a wrapped (non-positive) product with the 900s fallback and clamps to the 24h ceiling; the Capability copy only under-reports on wrap"
+    },
+    {
+      "file": "internal/tools/get_diagnostics.go",
+      "operand": "requested",
+      "unit": "Second",
+      "reason": "clamped to maxDurationSeconds before the multiply"
+    },
+    {
+      "file": "internal/tools/run.go",
+      "operand": "t.timeoutSec",
+      "unit": "Second",
+      "reason": "tool-level bound; callContext replaces a wrapped (non-positive) product with the 900s fallback and clamps to the 24h ceiling; the Capability copy only under-reports on wrap"
+    },
+    {
+      "file": "internal/tools/run.go",
+      "operand": "requested",
+      "unit": "Second",
+      "reason": "clamped to maxDurationSeconds before the multiply"
+    },
+    {
+      "file": "internal/hooks/validate.go",
+      "operand": "seconds",
+      "unit": "Second",
+      "reason": "range-checked against MinTimeout/MaxTimeout seconds before the multiply, with a comment naming this exact wrap"
+    },
+    {
+      "file": "internal/cliorchestrate/orchestrate.go",
+      "operand": "config.EffectiveTimeoutSec(t.cfg.DefaultTimeout, 0)",
+      "unit": "Second",
+      "reason": "EffectiveTimeoutSec clamps at MaxTimeoutSeconds (10 years)"
+    },
+    {
+      "file": "internal/cliorchestrate/orchestrate_lifecycle.go",
+      "operand": "config.EffectiveTimeoutSec(t.cfg.DefaultTimeout, 0)",
+      "unit": "Second",
+      "reason": "EffectiveTimeoutSec clamps at MaxTimeoutSeconds (10 years)"
+    },
+    {
+      "file": "internal/cliorchestrate/dispatch.go",
+      "operand": "DispatchOrchestrationSec(t.cfg.DefaultTimeout, args)",
+      "unit": "Second",
+      "reason": "derived from EffectiveTimeoutSec, clamped at MaxTimeoutSeconds; the +15s slack fits under the ceiling by construction"
+    },
+    {
+      "file": "internal/cliorchestrate/dispatch.go",
+      "operand": "taskTimeout",
+      "unit": "Second",
+      "reason": "assigned from config.EffectiveTimeoutSec above the multiply, clamped at MaxTimeoutSeconds"
+    },
+    {
+      "file": "internal/cliorchestrate/orchestration_state.go",
+      "operand": "config.DefaultOrchestrationTimeoutSec+DispatchOrchestrationSlackSec",
+      "unit": "Second",
+      "reason": "compile-time constant expression"
+    },
+    {
+      "file": "internal/config/load.go",
+      "operand": "DefaultProviderHTTPTimeoutSeconds",
+      "unit": "Second",
+      "reason": "compile-time constant"
+    },
+    {
+      "file": "internal/config/load.go",
+      "operand": "DefaultHTTPWallMarginSeconds",
+      "unit": "Second",
+      "reason": "compile-time constant"
+    },
+    {
+      "file": "internal/config/load.go",
+      "operand": "sec",
+      "unit": "Second",
+      "reason": "the body of SaturatingSeconds itself, after its own clamp"
+    },
+    {
+      "file": "internal/cliorchestrate/orchestrate_lifecycle.go",
+      "operand": "eff",
+      "unit": "Second",
+      "reason": "joinBudget clamps the value to 3600 seconds before the multiply"
+    },
+    {
+      "file": "internal/coordinator/recovery_tasks.go",
+      "operand": "config.DefaultOrchestrationTimeoutSec",
+      "unit": "Second",
+      "reason": "compile-time constant (43200)"
+    },
+    {
+      "file": "internal/coordinator/referral_spawn.go",
+      "operand": "config.DefaultOrchestrationTimeoutSec",
+      "unit": "Second",
+      "reason": "compile-time constant (43200)"
+    },
+    {
+      "file": "internal/storage/sqlite.go",
+      "operand": "attempt+1",
+      "unit": "Millisecond",
+      "reason": "bounded retry-loop counter, single digits"
+    },
+    {
+      "file": "internal/cliorchestrate/orchestration_state.go",
+      "operand": "cfg.SpawnStaggerMs",
+      "unit": "Millisecond",
+      "reason": "clamped to maxSpawnStaggerMs (1000) at config load"
+    }
+  ]
+}

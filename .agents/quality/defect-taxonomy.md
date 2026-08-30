@@ -147,7 +147,10 @@ different numbers. Code derives one from another and the run stops early or hang
 
 **Evidence.** `b8d2d2d` let workflow steps run to the run deadline instead of a fixed
 ten minutes. `7ddb07c` stopped mapping a step timeout onto a pool budget. A separate
-fix applied a twelve-hour timeout floor on resume.
+fix applied a twelve-hour timeout floor on resume. `938f4784`/`779378e0`/`aeca04d3`
+saturated seconds-to-Duration conversions: an unbounded seconds count overflows
+`time.Duration(n) * time.Second` to a negative Duration, which arms an
+already-expired deadline or expires retention immediately.
 
 **Probes.**
 - Draw the deadline hierarchy. A child deadline must be shorter than or equal to its
@@ -155,6 +158,10 @@ fix applied a twelve-hour timeout floor on resume.
 - No fixed duration constant may govern work whose real bound is a caller deadline.
 - On resume, the original deadline may have passed. State the rule and test it.
 - The context deadline must reach outbound network calls.
+- Every runtime seconds-to-Duration conversion must be bounded BEFORE the
+  multiply (`config.SaturatingSeconds` or an upstream clamp). Gate:
+  `scripts/check_timeout_saturation.py` + `.mivia/policy/timeout-saturation.json`
+  (`make timeout-saturation-check`).
 
 ## DC-8 Retry, backoff, and storm control
 
