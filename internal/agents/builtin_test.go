@@ -274,6 +274,9 @@ func TestBuiltInPromptDisciplineLines(t *testing.T) {
 		"a real timeout_seconds",
 		"interrupt:true",
 		"cancel_run",
+		"how to verify done",
+		"a check that can fail",
+		"small ordered steps",
 	} {
 		if !strings.Contains(BuiltInOrchestratorPrompt, want) {
 			t.Errorf("orchestrator prompt lost the discipline line fragment %q", want)
@@ -283,6 +286,7 @@ func TestBuiltInPromptDisciplineLines(t *testing.T) {
 		"Time-box each line of inquiry",
 		"Checkpoint via post_message",
 		"never end silent",
+		"small ordered steps",
 	} {
 		if !strings.Contains(BuiltInGeneralPurposePrompt, want) {
 			t.Errorf("general-purpose prompt lost the discipline line fragment %q", want)

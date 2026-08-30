@@ -24,9 +24,14 @@ func TestDefaultAgentPromptIsShort(t *testing.T) {
 	// fallback at session setup. Do not raise this budget to make room for
 	// content a project agent definition under .agents/agents/ can carry
 	// instead.
+	//
+	// Raised 2950 -> 3600 for the "# Method" section (decompose, step-wise
+	// verification, check-that-can-fail, loop-breaking): generic operating
+	// discipline that must reach clean workspaces with no skills or agent
+	// files, so it is exactly the content the fallback exists to carry.
 	prompt := buildAgentPrompt(config.SubagentConfig{})
-	if len(prompt) > 2950 {
-		t.Fatalf("buildAgentPrompt is %d bytes, expected < 2950", len(prompt))
+	if len(prompt) > 3600 {
+		t.Fatalf("buildAgentPrompt is %d bytes, expected < 3600", len(prompt))
 	}
 	if !strings.Contains(prompt, ".agents/agents/") {
 		t.Fatal("buildAgentPrompt must mention .agents/agents/ for self-maintenance")
