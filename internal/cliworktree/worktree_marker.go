@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -94,10 +95,30 @@ func WriteWorktreeMarker(root string, instance contextstate.WorktreeInstance) er
 	if err := closeWorktreeMarkerTemp(temporary); err != nil {
 		return fmt.Errorf("close worktree marker: %w", err)
 	}
-	if err := renameWorktreeMarker(name, WorktreeMarkerPath(canonical)); err != nil {
+	if err := publishWorktreeMarker(name, WorktreeMarkerPath(canonical)); err != nil {
 		return fmt.Errorf("publish worktree marker: %w", err)
 	}
 	return nil
+}
+
+// publishWorktreeMarker renames the temp file over the marker path. On
+// Windows a rename over an existing file that another writer is renaming
+// onto (or holds open) fails with ERROR_ACCESS_DENIED, so concurrent
+// idempotent publishes race each other into spurious errors; a short
+// bounded retry absorbs that transient contention. Other platforms rename
+// atomically and never retry.
+func publishWorktreeMarker(name, target string) error {
+	var err error
+	for attempt := 0; attempt < 10; attempt++ {
+		if err = renameWorktreeMarker(name, target); err == nil {
+			return nil
+		}
+		if runtime.GOOS != "windows" {
+			break
+		}
+		time.Sleep(time.Duration(attempt+1) * 5 * time.Millisecond)
+	}
+	return err
 }
 
 func ensureWorktreeMarkerExcluded(root string) error {
