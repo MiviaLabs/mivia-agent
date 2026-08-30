@@ -984,57 +984,18 @@ def test_rc_guard_option_vector_preserves_m_value_across_pipe() -> None:
 
 
 def main() -> None:
-    test_blocks_no_verify_shell()
-    test_allows_clean_shell()
-    test_prompt_injects_correction()
-    test_codex_denies_with_json()
-    test_env_payload_blocks_husky()
-    test_runner_blocks_before_binary()
-    test_blocks_commit_dash_n_after_git_c_argv()
-    test_blocks_commit_dash_n_after_git_dir_argv()
-    test_blocks_commit_dash_n_after_git_config_argv()
-    test_blocks_commit_dash_n_after_git_c_shell()
-    test_blocks_commit_dash_n_after_git_dir_shell()
-    test_allows_git_global_option_without_dash_n_shell()
-    test_allows_git_log_dash_n_shell()
-    test_blocks_bundled_dash_n_argv()
-    test_blocks_bundled_dash_n_last_argv()
-    test_blocks_bundled_dash_n_before_file_argv()
-    test_allows_dash_f_with_n_value_argv()
-    test_blocks_bundled_dash_n_shell()
-    test_blocks_bundled_dash_n_last_shell()
-    test_blocks_bundled_dash_n_before_file_shell()
-    test_allows_dash_f_with_n_value_shell()
-    test_run_command_guard_blocks_bundled_dash_n()
-    test_run_command_guard_blocks_bundled_dash_n_last()
-    test_run_command_guard_blocks_bundled_dash_n_before_file()
-    test_run_command_guard_allows_dash_f_with_n_value()
-    test_blocks_compound_husky_after_message_shell()
-    test_blocks_compound_skip_env_after_message_shell()
-    test_blocks_compound_hooks_path_after_message_shell()
-    test_run_command_guard_blocks_compound_husky()
-    test_run_command_guard_blocks_compound_hooks_path()
-    test_allows_message_dash_n_value_argv()
-    test_allows_message_no_verify_value_argv()
-    test_blocks_dash_n_after_message_value_argv()
-    test_allows_message_dash_n_value_shell()
-    test_allows_message_no_verify_value_shell()
-    test_blocks_dash_n_after_message_value_shell()
-    test_run_command_guard_allows_message_dash_n_value()
-    test_run_command_guard_allows_message_no_verify_value()
-    test_run_command_guard_blocks_dash_n_after_message_value()
-    test_option_vector_pipe_is_not_a_shell_separator()
-    test_option_vector_preserves_m_value_across_pipe()
-    test_option_vector_ampersand_ampersand_still_splits()
-    test_option_vector_semicolon_still_splits()
-    test_option_vector_or_or_still_splits()
-    test_n_reporting_matches_segment_shape_seeded()
-    test_run_command_guard_blocks_compound_hooks_path_pipe()
-    test_run_command_guard_blocks_compound_husky_pipe()
-    test_run_command_guard_blocks_compound_dash_n_pipe()
-    test_rc_guard_option_vector_pipe_is_not_a_shell_separator()
-    test_rc_guard_option_vector_preserves_m_value_across_pipe()
-    print("test_agent_hook_guard: ok")
+    # Discovery by scan, not by a hand-maintained call list: eleven tests
+    # defined after the __main__ guard silently never ran here. Every
+    # test_ function is zero-argument in this runner; sorted order keeps
+    # runs deterministic.
+    tests = [
+        v
+        for k, v in sorted(globals().items())
+        if k.startswith("test_") and callable(v)
+    ]
+    for t in tests:
+        t()
+    print(f"test_agent_hook_guard: ok ({len(tests)} tests)")
 
 
 if __name__ == "__main__":

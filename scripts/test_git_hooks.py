@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import shutil
@@ -823,34 +824,19 @@ def test_pre_push_semgrep_engine_resilience() -> None:
 
 
 def main() -> None:
-    test_commit_policy_loads()
-    test_hooks_executable_and_present()
-    test_commit_msg_accepts_valid()
-    test_commit_msg_rejects_bad()
-    test_commit_msg_requires_scope()
-    test_commit_msg_rejects_unknown_scope()
-    test_commit_msg_fix_requires_regression()
-    test_commit_msg_fix_accepts_regression_test()
-    test_commit_msg_fix_accepts_regression_none()
-    test_commit_msg_fix_requires_class_trailer()
-    test_commit_msg_fix_requires_sweep_trailer()
-    test_commit_msg_fix_rejects_empty_trailer_value()
-    test_commit_msg_required_trailers_come_from_policy()
-    test_commit_msg_failure_lists_required_trailers()
-    test_commit_msg_feat_skips_regression()
-    test_commit_msg_strips_disallowed_coauthor()
-    test_commit_msg_strips_hook_test_coauthor()
-    test_commit_msg_keeps_mivia_agent_coauthor()
-    test_commit_msg_keeps_other_trailers()
-    test_strip_coauthor_stdin_mode()
-    test_summary_file_name_is_mivia()
-    test_pre_commit_is_staged_only_and_bounded()
-    test_pre_commit_has_invariant_gate()
-    test_pre_push_without_a_base_scans_all_tracked_files()
-    test_semgrep_engine_failure_detector()
-    test_pre_commit_semgrep_scans_staged_tree_directory_not_a_symlink_file_list()
-    test_pre_commit_semgrep_engine_resilience()
-    test_pre_push_semgrep_engine_resilience()
+    # Discovery by scan, not by a hand-maintained call list: seven trailer
+    # CONTENT tests defined after the __main__ guard silently never ran
+    # here. Zero-argument test_ functions run in sorted order; the
+    # fixture-directory tests below take a Path and stay explicit.
+    zero_arg = [
+        v
+        for k, v in sorted(globals().items())
+        if k.startswith("test_")
+        and callable(v)
+        and inspect.signature(v).parameters == {}
+    ]
+    for t in zero_arg:
+        t()
     with tempfile.TemporaryDirectory() as tmp:
         base = Path(tmp)
         test_prepare_commit_msg_appends_summary(base / "append")
@@ -864,11 +850,8 @@ def main() -> None:
         test_pre_commit_full_script_runs_all_gates_with_staged_memory_db(
             base / "full-script-worktree"
         )
-    print("test_git_hooks: ok")
+    print(f"test_git_hooks: ok ({len(zero_arg)} scanned + 7 fixture tests)")
 
-
-if __name__ == "__main__":
-    main()
 
 
 # --- Trailer CONTENT validation -------------------------------------------
@@ -973,3 +956,6 @@ def test_commit_msg_accepts_trailers_wrapped_across_lines() -> None:
     )
     proc = run([str(COMMIT_MSG_HOOK), path], ROOT, check=False)
     assert proc.returncode == 0, proc.stderr
+
+if __name__ == "__main__":
+    main()
