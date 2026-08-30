@@ -125,10 +125,12 @@ func FormatUnifiedAt(path string, r Result, oldStart, newStart, context int) str
 	if context > 0 {
 		hunks = contextHunks(r.Ops, context, oldStart, newStart)
 	}
-	for i, h := range hunks {
-		if i > 0 {
-			b.WriteByte('\n')
-		}
+	// Hunks run back to back: writeHunk ends every line with a newline, so
+	// an extra separator byte here would emit a blank line. The TUI parses
+	// this text back into rows, and a blank line shows there as an empty
+	// row between hunks. Standard unified diffs (git, diff -u) put hunks
+	// next to each other with no separator line.
+	for _, h := range hunks {
 		writeHunk(&b, h)
 	}
 	s := b.String()

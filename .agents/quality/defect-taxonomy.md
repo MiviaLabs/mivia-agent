@@ -723,6 +723,41 @@ resumed sessions reached it, which is where empty GLM turns were observed.
   text) is a weaker instance: the block is still mostly the model's own output.
   Weigh dropping it against losing real context, and state the disposition.
 
+## DC-24 A line-oriented writer emits a record-boundary artifact its parser reads as content
+
+**Mechanism.** A producer writes a line-oriented format. Its per-record writer
+ends every line with a newline. The producer then adds one more separator or
+terminator byte between records, and the text carries a blank line that no
+format rule declares. A parser in the same system maps every input line to one
+content row. The blank line becomes a phantom content row, and the renderer
+prints an empty row where no content exists. Row counts, scroll windows, and
+paging budgets computed from the parsed rows are wrong by the same amount.
+
+**Evidence.** `internal/diff.FormatUnifiedAt` wrote an extra newline between
+hunks on top of `writeHunk`'s per-line newline, and kept the trailing newline
+after a final +/- line. `internal/uiadapter.parseDiffHunks` maps an empty
+input line to an empty context row, so the TUI showed one empty row after
+every hunk. The parser's empty-line tolerance exists for external tools that
+trim trailing whitespace, which made the producer's own artifact parse as
+content. Fixed in the change that added this class (regression tests
+`TestFormatUnifiedAt_NoBlankLineBetweenHunks` and
+`TestParseDiffHunks_DropsSeparatorAndTerminatorEmptyLines`): the writer
+stopped emitting the separator, and the parser drops empty lines only at
+record boundaries - just before a record header, or at end of output.
+
+**Probes.**
+- For every writer of a format that an in-repo parser reads line by line,
+  list what it writes BETWEEN records and at END of output, on top of the
+  per-line newline. Anything beyond the per-line newline is this defect.
+- For every such parser, state how it classifies an empty line, and test the
+  three positions apart: mid-record (content, keep), just before a record
+  header (artifact, drop), end of input (artifact, drop).
+- Round-trip test: run the producer's real output through the parser and
+  assert no parsed row carries empty content the input did not carry as
+  content.
+- Sweep every sibling writer that feeds the same parser. A format with two
+  writers needs the fix in both.
+
 ## Maintenance
 
 Update this document when a `fix` commit does not match any class, or when a class

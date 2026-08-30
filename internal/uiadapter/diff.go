@@ -64,7 +64,7 @@ func parseDiffHunks(output string) (hunks []uievent.DiffHunk, added, removed int
 	lines := strings.Split(output, "\n")
 	var currentHunk *uievent.DiffHunk
 
-	for _, line := range lines {
+	for i, line := range lines {
 		if strings.HasPrefix(line, "--- a/") || strings.HasPrefix(line, "--- ") {
 			p := strings.TrimPrefix(line, "--- a/")
 			p = strings.TrimPrefix(p, "--- ")
@@ -81,6 +81,15 @@ func parseDiffHunks(output string) (hunks []uievent.DiffHunk, added, removed int
 			if path == "" && p != "" && p != "/dev/null" {
 				path = p
 			}
+			continue
+		}
+		if line == "" && (i+1 == len(lines) || strings.HasPrefix(lines[i+1], "@@")) {
+			// An empty line just before a hunk header is a separator, and
+			// the empty final split element of an output that ends with a
+			// newline is the terminator. Neither is content; both rendered
+			// as an empty row in the TUI. A blank context row inside a hunk
+			// (a tool that trims trailing whitespace emits it without its
+			// leading space) has content lines after it and stays.
 			continue
 		}
 		if strings.HasPrefix(line, "@@") {
