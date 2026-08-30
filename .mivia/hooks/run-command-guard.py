@@ -37,6 +37,7 @@ POLICY_DIR = Path(__file__).resolve().parent.parent / "policy"
 POLICIES = (
     ("agent-hook-bypass.json", ("blockedCommandPatterns", "blockedFlagPatterns", "blockedEnvPatterns")),
     ("destructive-commands.json", ("destructiveCommandPatterns",)),
+    ("resource-exhaustion.json", ("destructiveCommandPatterns",)),
 )
 
 # For `git commit`, these consume the NEXT argv element as a message/file value

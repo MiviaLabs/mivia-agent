@@ -122,6 +122,13 @@ guessing.
   [docs/design/ui-isolation.md](docs/design/ui-isolation.md).
 - **Model-facing tools + compiled default prompts are project/language-generic** (any user workspace). Host code may be Go; do not bake Go/`cmd/mivia` into tool `Description()` or `defaultAgentPrompt`. Rule: [60-tools-project-language-generic](.agents/rules/60-tools-project-language-generic.md). Enforced by `internal/tools/generic_surface_test.go` and `internal/clichat/prompt_generic_test.go`.
 - **No spaghetti growth:** prefer files ≤500 LOC and functions ≤80 LOC (hard 800 / 120). Staged files ≤500 KiB. Policy `.mivia/policy/go-structure.json`; gate `scripts/check_go_structure.py` + `file-size-check`. Do not raise baselines to silence failures - split code.
+- **Never run `go test -fuzz` with default parallelism.** Go fuzzing spawns one
+  worker per core, each with unbounded memory; on this machine it reaches ~55 GB
+  RSS and the kernel OOM kill takes down the whole desktop app. If fuzzing is
+  required, cap it: `go test -fuzz <Target> -parallel 2 -fuzztime 60s`. Seeded
+  smoke runs (`go test`, no `-fuzz` flag) are always fine. Gate:
+  `.mivia/policy/resource-exhaustion.json` via the PreToolUse
+  `run-command-guard.py`; contract tests in `scripts/test_agent_hook_guard.py`.
 
 ## Local commands
 

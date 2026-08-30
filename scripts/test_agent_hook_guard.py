@@ -983,6 +983,34 @@ def test_rc_guard_option_vector_preserves_m_value_across_pipe() -> None:
     assert "|" in vec, "run-command-guard: standalone '|' must remain in the vector"
 
 
+def test_blocks_unbounded_go_fuzz() -> None:
+    # go test -fuzz with default parallelism spawns one worker per core with
+    # unbounded memory; the OOM kill takes down the whole desktop cgroup.
+    proc = run_command_guard(["go", "test", "./internal/agent/", "-fuzz", "FuzzX"])
+    assert proc.returncode != 0, proc.stderr + proc.stdout
+    assert "resource-exhaustion.json" in (proc.stderr + proc.stdout)
+
+
+def test_blocks_go_fuzz_with_fuzztime_only() -> None:
+    # -fuzztime bounds duration, not workers, so it does not exempt a run.
+    proc = run_command_guard(
+        ["go", "test", "./...", "-fuzz", "FuzzX", "-fuzztime", "90s"]
+    )
+    assert proc.returncode != 0, proc.stderr + proc.stdout
+
+
+def test_allows_capped_go_fuzz() -> None:
+    proc = run_command_guard(
+        ["go", "test", "./internal/agent/", "-fuzz", "FuzzX", "-parallel", "2", "-fuzztime", "60s"]
+    )
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+
+
+def test_allows_seeded_go_test_smoke_run() -> None:
+    proc = run_command_guard(["go", "test", "./internal/..."])
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+
+
 def main() -> None:
     # Discovery by scan, not by a hand-maintained call list: eleven tests
     # defined after the __main__ guard silently never ran here. Every

@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "brand": "MiviaLabs",
+  "product": "mivia",
+  "_comment": [
+    "ONE principle: an agent command must not exhaust the machine that",
+    "hosts every other session in the tree.",
+    "",
+    "go test -fuzz with default parallelism spawns one worker per core,",
+    "each with unbounded memory. On this machine it reaches ~55 GB RSS in",
+    "minutes; the kernel OOM kill then takes down the whole desktop app",
+    "cgroup that launched it, every other agent session included.",
+    "-fuzztime bounds duration, not workers, so it does not exempt a run.",
+    "Seeded smoke runs (go test with no -fuzz flag) are never affected.",
+    "",
+    "Separate from destructive-commands.json on purpose: that file answers",
+    "'is this call about to lose work in this tree', this one answers 'is",
+    "this call about to starve the whole machine'. They need different",
+    "corrective messages."
+  ],
+  "destructiveCommandPatterns": [
+    "(?i)\\bgo\\s+test\\b(?![^|;&]*-parallel(?:\\s|=))[^|;&]*\\s-fuzz\\b"
+  ],
+  "correctiveMessage": "go test -fuzz with default parallelism spawns one worker per core with unbounded memory and OOM-kills the session that launched it. Rerun capped: go test -fuzz <Target> -parallel 2 -fuzztime 60s. Seeded smoke runs without -fuzz are always fine.",
+  "onDetect": "block"
+}
