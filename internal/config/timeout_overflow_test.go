@@ -38,4 +38,13 @@ func TestTimeoutSecondsSaturateInsteadOfOverflow(t *testing.T) {
 	if capped := resolveTimeoutSeconds(&huge, 90); capped+margin <= 0 {
 		t.Fatalf("saturation ceiling %v leaves no headroom for the %v margin", capped, margin)
 	}
+
+	// The exported helper preserves sign without wrapping: a huge negative
+	// stays negative (callers treat negative as "off"), never positive.
+	if got := SaturatingSeconds(int(math.MinInt64)); got >= 0 {
+		t.Fatalf("SaturatingSeconds(MinInt64) = %v; want a negative saturated value", got)
+	}
+	if got := SaturatingSeconds(huge); got <= 0 {
+		t.Fatalf("SaturatingSeconds(MaxInt64) = %v; want a positive saturated value", got)
+	}
 }

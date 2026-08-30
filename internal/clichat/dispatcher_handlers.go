@@ -63,7 +63,7 @@ func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp p
 	// default_total_timeout_seconds knob deliberately does NOT apply here:
 	// this construction is only the plain multi_step surface, whose tasks
 	// always carry the pool's per-task budget.
-	toolTO := time.Duration(cfg.DefaultTimeout) * time.Second
+	toolTO := config.SaturatingSeconds(cfg.DefaultTimeout)
 	totalTO := time.Duration(0)
 	// Per-request LLM timeout for subagent turns. Falls back to
 	// DefaultSubagentRequestTimeoutSec (30 minutes) when
@@ -85,7 +85,7 @@ func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp p
 		MaxContextTokensFunc:      budget,
 		RequestTimeout:            requestTO,
 		WireStreamTransport:       cfg.WireStreamResolved(),
-		SteerWatchdog:             time.Duration(cfg.Messaging.SteerWatchdogSecondsResolved()) * time.Second,
+		SteerWatchdog:             config.SaturatingSeconds(cfg.Messaging.SteerWatchdogSecondsResolved()),
 		ContextPreparationManager: preparation,
 		ContextPreparationInput:   preparationInput,
 		// Forward nested tool/heartbeat events to the session TUI sink
@@ -124,7 +124,7 @@ type skillHandlerDeps struct {
 // default_total_timeout_seconds total budget: a skill run with no
 // per-task timeout otherwise has no handler-level wall clock.
 func newSkillMultiStepHandler(deps skillHandlerDeps, cfg config.SubagentConfig, skill skills.Definition) *subagents.MultiStepHandler {
-	toolTO := time.Duration(cfg.DefaultTimeout) * time.Second
+	toolTO := config.SaturatingSeconds(cfg.DefaultTimeout)
 	// Per-request LLM timeout for skill subagent turns. Same 30-minute
 	// default as registerMultiStepHandler above.
 	requestTO := requestTimeout(cfg.DefaultRequestTimeoutSec)
@@ -159,7 +159,7 @@ func newSkillMultiStepHandler(deps skillHandlerDeps, cfg config.SubagentConfig, 
 		// Total budget from default_total_timeout_seconds (the same
 		// bound the routed-agent handlers carry): see newSkillMultiStepHandler.
 		TotalTimeout:              totalTaskTimeout(cfg.DefaultTotalTimeoutSec),
-		SteerWatchdog:             time.Duration(cfg.Messaging.SteerWatchdogSecondsResolved()) * time.Second,
+		SteerWatchdog:             config.SaturatingSeconds(cfg.Messaging.SteerWatchdogSecondsResolved()),
 		MaxTokens:                 cliorchestrate.DefaultMaxTokens,
 		MaxContextTokens:          deps.maxContextTokens,
 		MaxContextTokensFunc:      deps.budget,

@@ -23,6 +23,6 @@ func totalTaskTimeout(configured int) time.Duration {
 	case configured == 0:
 		return config.DefaultSubagentTotalTimeoutSec * time.Second
 	default:
-		return time.Duration(configured) * time.Second
+		return config.SaturatingSeconds(configured)
 	}
 }

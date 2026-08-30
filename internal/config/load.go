@@ -305,12 +305,18 @@ func resolveProviderHTTPTimeout(chatRequest time.Duration, subagents SubagentCon
 // arithmetic ample headroom.
 const maxResolvedTimeoutSeconds = 100 * 365 * 24 * 60 * 60
 
-// secondsToDuration converts a positive seconds count to a Duration,
-// saturating at maxResolvedTimeoutSeconds so the conversion and any later
-// margin addition stay positive.
-func secondsToDuration(sec int) time.Duration {
+// SaturatingSeconds converts a configured seconds count to a Duration,
+// saturating at +/- maxResolvedTimeoutSeconds so the multiply and any
+// later margin addition cannot overflow. The sign is preserved: callers
+// that treat a negative value as "off" see it unchanged. Every
+// config-controlled seconds-to-Duration conversion must route through
+// this helper, not a bare multiply.
+func SaturatingSeconds(sec int) time.Duration {
 	if sec > maxResolvedTimeoutSeconds {
 		sec = maxResolvedTimeoutSeconds
+	}
+	if sec < -maxResolvedTimeoutSeconds {
+		sec = -maxResolvedTimeoutSeconds
 	}
 	return time.Duration(sec) * time.Second
 }
@@ -320,9 +326,9 @@ func secondsToDuration(sec int) time.Duration {
 // Resolved carries a ready-to-use bound instead of a raw *int.
 func resolveTimeoutSeconds(raw *int, def int) time.Duration {
 	if raw == nil || *raw <= 0 {
-		return secondsToDuration(def)
+		return SaturatingSeconds(def)
 	}
-	return secondsToDuration(*raw)
+	return SaturatingSeconds(*raw)
 }
 
 const (

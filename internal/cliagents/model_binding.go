@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
@@ -129,7 +128,7 @@ func unscopedModelSurface(sess *chat.Session, res *config.Resolved, root string,
 		CompleterFactory:          NewProviderCompleterFactory(res),
 		Config:                    res.Subagents,
 		ToolResultCapBytes:        toolResultCap,
-		ToolRunTimeout:            time.Duration(res.Tools.ToolRunTimeoutSec) * time.Second,
+		ToolRunTimeout:            config.SaturatingSeconds(res.Tools.ToolRunTimeoutSec),
 		BatchResultBudgetBytes:    sess.BatchResultBudgetBytes,
 		RefOnlyTools:              sess.RefOnlyTools,
 		WorkspaceRoot:             root,

@@ -145,7 +145,7 @@ func NewSession(res *config.Resolved, c provider.Completer) *Session {
 		MaxToolResultChars: res.Tools.MaxToolResultBytes,
 		// 0 = no registry-wide SDK run backstop; config.Load already
 		// normalized negatives to 0.
-		ToolRunTimeout: time.Duration(res.Tools.ToolRunTimeoutSec) * time.Second,
+		ToolRunTimeout: config.SaturatingSeconds(res.Tools.ToolRunTimeoutSec),
 		// Zero (hand-built Resolved) falls back to DefaultRequestTimeout in
 		// buildAgentTurnOptions.
 		RequestTimeout: res.ChatRequestTimeout,

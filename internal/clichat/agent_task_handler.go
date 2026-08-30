@@ -292,7 +292,7 @@ func (h *agentTaskHandler) newMultiStepHandler(binding agentBinding, registry *t
 		ReasoningFunc: binding.EffectiveReasoning,
 		SystemPrompt:  systemPrompt, MemoryContext: memoryContext, MaxSteps: maxSteps,
 		WorkLimits: limits, DisableProviderReplay: req.DisableProviderReplay,
-		ToolTimeout:    time.Duration(h.opts.Config.DefaultTimeout) * time.Second,
+		ToolTimeout:    config.SaturatingSeconds(h.opts.Config.DefaultTimeout),
 		ToolRunTimeout: h.opts.ToolRunTimeout,
 		MaxTokens:      maxTokens, MaxContextTokens: binding.ContextBudget(),
 		MaxContextTokensFunc: binding.ContextBudget, MaxToolResultChars: h.opts.ToolResultCapBytes,
@@ -307,7 +307,7 @@ func (h *agentTaskHandler) newMultiStepHandler(binding agentBinding, registry *t
 		// was exactly this construction running with no TotalTimeout, so a
 		// trickling provider pinned the run past every idle watchdog.
 		TotalTimeout:              totalTaskTimeout(h.opts.Config.DefaultTotalTimeoutSec),
-		SteerWatchdog:             time.Duration(h.opts.Config.Messaging.SteerWatchdogSecondsResolved()) * time.Second,
+		SteerWatchdog:             config.SaturatingSeconds(h.opts.Config.Messaging.SteerWatchdogSecondsResolved()),
 		ContextPreparationManager: h.opts.ContextPreparationManager,
 		ContextPreparationInput:   h.opts.ContextPreparationInput,
 		OnEvent:                   OnEventForMultiStep(stampRoutedOrigin(identity, instanceID, emitSubagentProgress)),
