@@ -256,6 +256,10 @@ An empty list, a missing list, or a remote model registry is invalid. mivia does
 
 `context_window_tokens` is the model's physical prompt-plus-completion limit. `max_output_tokens` is the response ceiling and must stay below the context window. The usable prompt budget keeps the tighter of this value and `[chat].max_tokens`, further limited by `max_prompt_tokens` when set. `config show` shows each catalog entry as `provider/model:context_window_tokens`.
 
+An explicit `[chat] max_tokens` is authoritative about how much **answer** you want. It is not authoritative about how much a model spends thinking before it writes one, so on a reasoning model it is raised to that model's reasoning reserve when it sits below it: `max` and `xhigh` reserve 65536, `high` 32768, `medium` 16384, `low` and `minimal` 8192. Below the reserve the request is not a smaller answer, it is no answer - an always-thinking model (z.ai's GLM-5.3 family, where `thinking.type` accepts only `enabled`) spends the whole allowance on reasoning tokens, returns `finish_reason: length` with empty content, and the turn fails with `agent: turn produced no assistant text`. The raise never exceeds `max_output_tokens` or the context window, and a model with no reasoning level, or `off`, keeps your value exactly.
+
+This matters most for a user-level `~/.mivia/mivia.toml`: `loadFile` layers a workspace file over the base file per key, so a modest `max_tokens` there applies to every workspace that does not set its own - including one bound to a hard-thinking model the value was never chosen for.
+
 ```bash
 DEEPSEEK_API_KEY=sk-REPLACE-ME
 OPENROUTER_API_KEY=sk-REPLACE-ME

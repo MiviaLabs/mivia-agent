@@ -28,7 +28,7 @@ func EffectiveOutputTokens(profile ModelSpec, requested *int) *int {
 		ceiling = 0
 	}
 	if requested != nil && *requested > 0 {
-		limit := *requested
+		limit := reasoningFloorForRequest(profile, *requested)
 		if ceiling > 0 && limit > ceiling {
 			limit = ceiling
 		}
@@ -61,6 +61,40 @@ func EffectiveOutputTokens(profile ModelSpec, requested *int) *int {
 		limit = ceiling
 	}
 	return clampReserveToWindow(profile, limit)
+}
+
+// reasoningFloorForRequest raises an explicit [chat] max_tokens to the
+// model's own reasoning reserve when it sits below it.
+//
+// An explicit request is authoritative about how much ANSWER an operator
+// wants. It is not authoritative about how much a model spends thinking
+// before it writes one. On a model whose thinking cannot be switched off
+// (z.ai's GLM-5.3 family: thinking.type accepts only "enabled"), a request
+// smaller than the reasoning reserve is not a smaller answer - it is no
+// answer at all. The model spends the whole allowance on reasoning tokens,
+// returns finish_reason "length" with empty content, and the turn fails
+// with "agent: turn produced no assistant text".
+//
+// That is reachable from an ordinary setup: a user-level ~/.mivia/mivia.toml
+// with a modest [chat] max_tokens applies to EVERY workspace that does not
+// set its own (loadFile layers the workspace file over the base one per key),
+// including one bound to a hard-thinking model the value was never chosen
+// for. The failure looks like a provider fault, not a config one, and
+// switching to a non-thinking model "fixes" it - which points the operator
+// away from the cause.
+//
+// A model that does not reserve more than a plain answer needs keeps the
+// requested value byte for byte: the floor for an unset or "off" level is
+// the plain-answer reserve, so this only ever raises a request for a level
+// that genuinely thinks. The caller clamps the result to the model ceiling
+// and the context window afterwards, so the floor can never produce an
+// unsatisfiable request of its own.
+func reasoningFloorForRequest(profile ModelSpec, requested int) int {
+	floor := reasoning.OutputReserveFloor(profile.Reasoning)
+	if floor <= reasoning.OutputReserveFloor("") || requested >= floor {
+		return requested
+	}
+	return floor
 }
 
 // clampReserveToWindow keeps the response allowance inside the declared
