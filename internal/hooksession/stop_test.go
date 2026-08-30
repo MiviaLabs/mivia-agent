@@ -88,7 +88,11 @@ func TestStopHookCannotBlockTheTurn(t *testing.T) {
 }
 
 func TestStopHookOutputIsBounded(t *testing.T) {
-	stopSession(t, "i=0\nwhile [ $i -lt 4000 ]; do printf '0123456789'; i=$((i+1)); done\nexit 0\n")
+	// One awk process emits the 40 KB in a single producer, not a shell
+	// loop: a 4000-iteration sh loop costs more than the Stop hook's 5 s
+	// timeout on Windows hosts, the kill discards the partial output, and
+	// the bound this test exists to pin never gets exercised there.
+	stopSession(t, "awk 'BEGIN { for (i = 0; i < 4000; i++) printf \"0123456789\" }'\nexit 0\n")
 	got := RunStopForTurn(context.Background(), "s", "t")
 	if len(got) > hooks.MaxOutputBytes+256 {
 		t.Fatalf("Stop output = %d bytes, past the bound", len(got))
