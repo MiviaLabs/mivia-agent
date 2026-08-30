@@ -2,6 +2,19 @@ package provider
 
 import "strings"
 
+// ReasoningElisionMarker is the host-authored placeholder that replaces a
+// prior turn's assistant chain-of-thought when context compaction elides it
+// (internal/contextmgr owns the elision; this package owns the constant
+// because this package decides what reaches the wire).
+//
+// It exists as a non-empty string for exactly one reason: a provider with
+// RejectReasoningLessToolTurns (DeepSeek's documented 400) drops an assistant
+// tool-call turn with empty reasoning TOGETHER with its tool results, so an
+// elided-to-empty exchange would fall out of history entirely. That reason
+// does not apply to a replay-only provider, and for those the marker must NOT
+// reach the wire - see toAPIMessages.
+const ReasoningElisionMarker = "[reasoning elided by context compaction]"
+
 // apiMessage is the wire shape. It exists so host-only fields on Message
 // (CreatedAt) cannot reach the API: `omitempty` does not suppress a zero
 // time.Time, so zeroing the field still encoded created_at:"0001-01-01…".
@@ -70,12 +83,35 @@ func toAPIMessages(msgs []Message, replayReasoning, rejectReasoningLess bool) []
 			content := m.Content
 			am.Content = &content
 		}
-		if replayReasoning && m.Role == RoleAssistant && m.ReasoningContent != "" {
+		if replayReasoning && m.Role == RoleAssistant && replayableReasoning(m.ReasoningContent, rejectReasoningLess) {
 			am.ReasoningContent = m.ReasoningContent
 		}
 		out = append(out, am)
 	}
 	return out
+}
+
+// replayableReasoning reports whether an assistant turn's chain-of-thought
+// may be echoed back to a replay-requiring provider.
+//
+// The elision marker is host prose, not model output. Echoing it into
+// reasoning_content tells the model it once thought a sentence it never
+// thought - and for a preserved-thinking dialect (z.ai's GLM family, which
+// sends clear_thinking:false so prior thinking stays in scope) that fabricated
+// block is fed straight back into the model's own reasoning context. The
+// honest wire shape is no reasoning field at all: the turn's reasoning is
+// genuinely gone, and every replay-only provider (z.ai) documents missing
+// reasoning as degradation, never as a rejection.
+//
+// A reject-reasoning-less provider (DeepSeek) is the exception and keeps the
+// marker: for it, an assistant tool-call turn whose wire message carries no
+// reasoning_content is a documented 400, so a fabricated block is strictly
+// better than a failed request. See ReasoningElisionMarker.
+func replayableReasoning(reasoningContent string, rejectReasoningLess bool) bool {
+	if reasoningContent == "" {
+		return false
+	}
+	return rejectReasoningLess || reasoningContent != ReasoningElisionMarker
 }
 
 // RepairReasoningLessToolExchanges removes assistant tool-call turns that

@@ -144,7 +144,12 @@ var (
 // RejectReasoningLessToolTurns is set) wire-drops a non-terminal assistant
 // tool-call turn with empty reasoning TOGETHER with its tool results. A
 // non-empty marker keeps those retained exchanges on the wire.
-const reasoningElisionMarker = "[reasoning elided by context compaction]"
+//
+// The value lives in provider because that package decides whether it reaches
+// the wire: a replay-only provider must never be told the model thought this
+// sentence (provider.replayableReasoning). One constant, so the two rules
+// cannot drift apart.
+const reasoningElisionMarker = provider.ReasoningElisionMarker
 
 // elideForCompaction runs the in-place elision passes for one compaction
 // plan: oversized prior tool-result bodies, stale assistant reasoning, and

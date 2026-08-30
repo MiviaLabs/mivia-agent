@@ -687,6 +687,42 @@ not found` on every main push (runs 33036787729, 33040674276) until fixed by
   Makefile target resolves on disk (one pass over `\./(internal|cmd)...`
   occurrences suffices today).
 
+## DC-23 Host-authored placeholder is replayed to the model as its own output
+
+**Mechanism.** A host pass rewrites a field of a stored assistant turn -
+eliding it, capping it, redacting it, or replacing it with a notice - and a
+later request replays that field verbatim to the provider as the assistant's
+own prior output. The model is then told it said or thought something it never
+produced. The damage is worst in fields the provider treats as authoritative
+model state rather than as conversation text: a preserved-thinking dialect
+feeds a replayed `reasoning_content` back into the model's own reasoning
+context, so one fabricated sentence stays in scope for the rest of the session.
+It is invisible in short sessions because no rewrite pass has run yet, and it
+survives a restart because the rewrite is what got persisted.
+
+**Evidence.** Context compaction replaced elided assistant reasoning with
+`[reasoning elided by context compaction]`, and `toAPIMessages` replayed that
+sentence as `reasoning_content` to every provider declaring
+`RequiresReasoningReplay` - z.ai's GLM entries, which run
+`reasoning_dialect = thinking_preserved` (`clear_thinking:false`). Only long or
+resumed sessions reached it, which is where empty GLM turns were observed.
+
+**Probes.**
+- For every host pass that WRITES a field of a stored assistant turn, ask what
+  the wire serializer does with that field. A rewrite is only safe if the field
+  is either never replayed, or replayed to a provider that reads it as
+  conversation text rather than as its own state.
+- Distinguish "the field is gone" from "the field is a placeholder". Absent is
+  honest; fabricated is not. Send the field absent unless a provider documents
+  a hard rejection for the absent case - and if one does, keep the placeholder
+  for that provider ONLY, gated on the same flag that documents the rejection.
+- Content-role notices are not this class: a tool-result notice is labelled as
+  a notice and the model reads it as such. The class is about fields the
+  provider attributes to the model.
+- A partial rewrite (a redaction placeholder substituted into otherwise genuine
+  text) is a weaker instance: the block is still mostly the model's own output.
+  Weigh dropping it against losing real context, and state the disposition.
+
 ## Maintenance
 
 Update this document when a `fix` commit does not match any class, or when a class
