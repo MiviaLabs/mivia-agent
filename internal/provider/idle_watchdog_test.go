@@ -55,8 +55,8 @@ func (r *chunkReader) Read(p []byte) (int, error) {
 func withWatchdogTimeouts(t *testing.T, idle, firstByte time.Duration) {
 	t.Helper()
 	prevIdle, prevFirstByte := streamIdleTimeout(), streamFirstByteTimeout()
-	SetStreamWatchdogTimeouts(idle, firstByte)
-	t.Cleanup(func() { SetStreamWatchdogTimeouts(prevIdle, prevFirstByte) })
+	SetStreamWatchdogTimeouts(idle, firstByte, 0)
+	t.Cleanup(func() { SetStreamWatchdogTimeouts(prevIdle, prevFirstByte, 0) })
 }
 
 // TestIdleWatchdogReader_FirstByteNeverArrives proves a connection that
@@ -193,25 +193,43 @@ func TestIdleWatchdogReader_ConcurrentReadersDoNotRace(t *testing.T) {
 }
 
 // TestSetStreamWatchdogTimeouts_NonPositiveLeavesOtherBoundUnchanged proves
-// a caller that only knows one of the two bounds never resets the other to
-// zero (which would make every read fail instantly).
+// a caller that only knows some of the three bounds never resets the others
+// to zero (which would make every read fail instantly).
 func TestSetStreamWatchdogTimeouts_NonPositiveLeavesOtherBoundUnchanged(t *testing.T) {
 	withWatchdogTimeouts(t, 30*time.Second, 45*time.Second)
+	withStreamContentIdleTimeout(t, 60*time.Second)
 
-	SetStreamWatchdogTimeouts(10*time.Second, 0)
+	SetStreamWatchdogTimeouts(10*time.Second, 0, 0)
 	if got := streamIdleTimeout(); got != 10*time.Second {
 		t.Fatalf("idle timeout = %s, want 10s", got)
 	}
 	if got := streamFirstByteTimeout(); got != 45*time.Second {
 		t.Fatalf("first-byte timeout changed to %s on a non-positive update, want unchanged 45s", got)
 	}
+	if got := streamContentIdleTimeout(); got != 60*time.Second {
+		t.Fatalf("content-idle timeout changed to %s on a non-positive update, want unchanged 60s", got)
+	}
 
-	SetStreamWatchdogTimeouts(-1, 20*time.Second)
+	SetStreamWatchdogTimeouts(-1, 20*time.Second, 0)
 	if got := streamIdleTimeout(); got != 10*time.Second {
 		t.Fatalf("idle timeout changed to %s on a non-positive update, want unchanged 10s", got)
 	}
 	if got := streamFirstByteTimeout(); got != 20*time.Second {
 		t.Fatalf("first-byte timeout = %s, want 20s", got)
+	}
+	if got := streamContentIdleTimeout(); got != 60*time.Second {
+		t.Fatalf("content-idle timeout changed to %s on a non-positive update, want unchanged 60s", got)
+	}
+
+	SetStreamWatchdogTimeouts(0, 0, 15*time.Second)
+	if got := streamContentIdleTimeout(); got != 15*time.Second {
+		t.Fatalf("content-idle timeout = %s, want 15s", got)
+	}
+	if got := streamIdleTimeout(); got != 10*time.Second {
+		t.Fatalf("idle timeout changed to %s on a content-idle-only update, want unchanged 10s", got)
+	}
+	if got := streamFirstByteTimeout(); got != 20*time.Second {
+		t.Fatalf("first-byte timeout changed to %s on a content-idle-only update, want unchanged 20s", got)
 	}
 }
 

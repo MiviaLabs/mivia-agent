@@ -78,7 +78,12 @@ type Selection struct {
 // allows comfortable headroom while preventing runaway context.
 const (
 	DefaultMaxContextTokens = 1000000
-	DefaultRequestTimeout   = 15 * time.Minute
+	// DefaultRequestTimeout is the fallback per-request deadline for an agent
+	// turn when Session.RequestTimeout is zero (a session built from a
+	// hand-built Resolved with no [chat] request_timeout_seconds resolution).
+	// It is defined from config.DefaultChatRequestTimeoutSeconds so the two
+	// values cannot drift; NewSession normally carries the resolved value in.
+	DefaultRequestTimeout = config.DefaultChatRequestTimeoutSeconds * time.Second
 
 	// DefaultMaxSteps bounds one interactive turn's agent loop when no config
 	// is set. 0 (unlimited) is the default: /steps can set a per-session cap
@@ -141,6 +146,9 @@ func NewSession(res *config.Resolved, c provider.Completer) *Session {
 		// 0 = no registry-wide SDK run backstop; config.Load already
 		// normalized negatives to 0.
 		ToolRunTimeout: time.Duration(res.Tools.ToolRunTimeoutSec) * time.Second,
+		// Zero (hand-built Resolved) falls back to DefaultRequestTimeout in
+		// buildAgentTurnOptions.
+		RequestTimeout: res.ChatRequestTimeout,
 		// 0 = off; config.Load already normalized negatives to the derived
 		// sentinel and rejected positive values under the degrade floor.
 		BatchResultBudgetBytes: batchResultBudget(res),

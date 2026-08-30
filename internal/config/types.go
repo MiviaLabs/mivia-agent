@@ -202,6 +202,12 @@ type ProviderSection struct {
 	// provider read, from request-issued. Unset (nil) resolves to
 	// DefaultStreamFirstByteTimeoutSeconds (240s).
 	StreamFirstByteTimeoutSeconds *int `toml:"stream_first_byte_timeout_seconds"`
+	// StreamContentIdleTimeoutSeconds bounds the gap between successive
+	// CONTENT chunks on an SSE stream - a keepalive trickle does not reset
+	// it. Unset (nil) resolves to DefaultStreamContentIdleTimeoutSeconds
+	// (90s). This is a process-wide setting, not per-provider: mivia runs
+	// one active provider configuration per process.
+	StreamContentIdleTimeoutSeconds *int `toml:"stream_content_idle_timeout_seconds"`
 }
 
 // ProviderConfig holds non-secret provider settings.
@@ -239,6 +245,12 @@ type ChatConfig struct {
 	// ShowPromptCacheNotices controls whether prompt cache hit/usage notices
 	// are emitted in the TUI chat. Default: false (disabled).
 	ShowPromptCacheNotices *bool `toml:"show_prompt_cache_notices"`
+	// RequestTimeoutSeconds is the per-LLM-request context deadline for root
+	// AGENT turns (tools on). Unset (nil) resolves to
+	// DefaultChatRequestTimeoutSeconds (900s). Plain (tools-off) chat turns
+	// carry no per-request context; the stream watchdogs and the derived
+	// http.Client wall bound them instead.
+	RequestTimeoutSeconds *int `toml:"request_timeout_seconds"`
 }
 
 // SubagentConfig holds subagent execution policy and storage configuration.
@@ -253,9 +265,10 @@ type SubagentConfig struct {
 	MaxFanout      int `toml:"max_fanout"`
 	DefaultTimeout int `toml:"default_timeout_seconds"`
 	// DefaultRequestTimeoutSec is the per-LLM-request timeout for subagents
-	// (seconds). When 0, requestTimeout() uses DefaultSubagentRequestTimeoutSec
-	// (1800s, 30 minutes) as the per-request context deadline. The 15-minute
-	// http.Client wall stays the hard per-attempt bound; the 12-hour
+	// (seconds). When 0, ResolvedSubagentRequestTimeout uses
+	// DefaultSubagentRequestTimeoutSec (1800s, 30 minutes) as the per-request
+	// context deadline. The derived http.Client wall stays above the resolved
+	// value plus a margin (resolveProviderHTTPTimeout); the 12-hour
 	// orchestration default no longer feeds individual subagent requests.
 	DefaultRequestTimeoutSec int `toml:"default_request_timeout_seconds"`
 	// DefaultTotalTimeoutSec is the whole-subagent wall-clock budget
@@ -474,6 +487,18 @@ type Resolved struct {
 	// stream_first_byte_timeout_seconds, defaulted when unset. See
 	// ProviderSection.StreamFirstByteTimeoutSeconds.
 	StreamFirstByteTimeout time.Duration
+	// StreamContentIdleTimeout is the resolved [provider]
+	// stream_content_idle_timeout_seconds, defaulted when unset. See
+	// ProviderSection.StreamContentIdleTimeoutSeconds.
+	StreamContentIdleTimeout time.Duration
+	// ChatRequestTimeout is the resolved [chat] request_timeout_seconds,
+	// defaulted when unset. See ChatConfig.RequestTimeoutSeconds.
+	ChatRequestTimeout time.Duration
+	// ProviderHTTPTimeout is the derived absolute http.Client wall for
+	// provider requests: the maximum of the 15-minute floor and every
+	// configured per-request budget plus the margin. See
+	// resolveProviderHTTPTimeout in load.go.
+	ProviderHTTPTimeout time.Duration
 
 	// PromptCache is the resolved "auto" or "off" policy for prompt-cache
 	// usage capture and explicit cache_control markers. Always one of those

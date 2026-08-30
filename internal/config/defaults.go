@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
@@ -17,9 +18,22 @@ const DefaultOrchestrationTimeoutSec = 12 * 60 * 60 // 12 hours
 // DefaultSubagentRequestTimeoutSec is the per-LLM-request context deadline for
 // a subagent turn when default_request_timeout_seconds is 0 (or omitted).
 // Product decision: 30 minutes. It bounds one provider request, not the whole
-// task. The 15-minute http.Client wire wall (DefaultHTTPTimeout) stays the
-// hard per-attempt bound under it.
+// task. The derived http.Client wall (resolveProviderHTTPTimeout in load.go)
+// stays above this budget plus a margin, so the budget - not the wire wall -
+// is what ends an overlong request.
 const DefaultSubagentRequestTimeoutSec = 1800 // 30 minutes
+
+// ResolvedSubagentRequestTimeout returns the per-LLM-request deadline for a
+// subagent turn: a positive default_request_timeout_seconds is the deadline;
+// anything else resolves to DefaultSubagentRequestTimeoutSec. Both the
+// derived provider HTTP wall (resolveProviderHTTPTimeout in load.go) and
+// internal/clichat resolve through this one helper so the two cannot drift.
+func ResolvedSubagentRequestTimeout(cfg SubagentConfig) time.Duration {
+	if cfg.DefaultRequestTimeoutSec > 0 {
+		return time.Duration(cfg.DefaultRequestTimeoutSec) * time.Second
+	}
+	return DefaultSubagentRequestTimeoutSec * time.Second
+}
 
 // DefaultSubagentTotalTimeoutSec is the whole-subagent wall-clock budget
 // applied when default_total_timeout_seconds is 0 (or omitted). Product

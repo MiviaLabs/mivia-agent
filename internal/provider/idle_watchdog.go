@@ -16,8 +16,8 @@ import (
 // silent for a while before the first token).
 //
 // Both exist because, before this file, the ONLY bound on a provider read
-// (streaming or not) was http.Client.Timeout (DefaultHTTPTimeout, 15
-// minutes), covering connection + headers + the entire body with no
+// (streaming or not) was http.Client.Timeout (now the derived wall in
+// http_wall.go), covering connection + headers + the entire body with no
 // per-chunk reset. A dead-but-open connection sat silent for up to that full
 // window with no observable signal.
 const (
@@ -50,17 +50,20 @@ func init() {
 	streamFirstByteTimeoutNs.Store(int64(DefaultStreamFirstByteTimeout))
 }
 
-// SetStreamWatchdogTimeouts configures the process-wide idle and first-byte
-// bounds every OpenAICompat client's stream and non-stream body reads honor.
-// A non-positive value leaves the corresponding bound unchanged, so a caller
-// that only knows one of the two never resets the other to zero.
-func SetStreamWatchdogTimeouts(idle, firstByte time.Duration) {
+// SetStreamWatchdogTimeouts configures the process-wide idle, first-byte,
+// and content-idle bounds every OpenAICompat client's stream and non-stream
+// body reads honor. The content-idle bound is delegated to
+// setStreamContentIdleTimeout (openai_compat_content_watchdog.go). A
+// non-positive value leaves the corresponding bound unchanged, so a caller
+// that only knows some of the three never resets the others to zero.
+func SetStreamWatchdogTimeouts(idle, firstByte, contentIdle time.Duration) {
 	if idle > 0 {
 		streamIdleTimeoutNs.Store(int64(idle))
 	}
 	if firstByte > 0 {
 		streamFirstByteTimeoutNs.Store(int64(firstByte))
 	}
+	setStreamContentIdleTimeout(contentIdle)
 }
 
 func streamIdleTimeout() time.Duration {
@@ -73,7 +76,7 @@ func streamFirstByteTimeout() time.Duration {
 
 // wrapWithIdleWatchdog wraps body so a read that receives no bytes within the
 // configured first-byte/idle bounds fails fast instead of blocking up to the
-// transport's absolute DefaultHTTPTimeout (15 minutes). Applied at every
+// transport's absolute client wall (http_wall.go). Applied at every
 // response-body read site this client owns: streaming (chatTurnStream,
 // ChatStream) and non-streaming (doJSONOnce). The non-streaming site is the
 // operationally common one - nested/subagent turns never stream
@@ -88,7 +91,7 @@ func (c *OpenAICompat) wrapWithIdleWatchdog(body io.Reader) io.Reader {
 // provider body read in this package goes through here: the native Anthropic
 // client's non-stream and SSE reads, and the retry layer's connection-reuse
 // drain, all of which previously read a possibly-dead socket with no bound
-// but the 15-minute client wall.
+// but the absolute client wall.
 func wrapBodyWithIdleWatchdog(body io.Reader, label string) io.Reader {
 	return newIdleWatchdogReader(body, streamFirstByteTimeout(), streamIdleTimeout(), label)
 }

@@ -61,6 +61,7 @@ type agentTurnSnapshot struct {
 	toolRegistry      *tools.Registry
 	toolTimeout       time.Duration
 	toolRunTimeout    time.Duration
+	requestTimeout    time.Duration
 	remainderSpool    *remainder.Spool
 	sessionID         string
 	eventBus          *events.Bus
@@ -470,7 +471,8 @@ func (s *Session) beginAgentTurn(userText string, eventOverride func(agent.Event
 		approvalPolicy: s.ApprovalPolicy,
 		onEvent:        onEvent,
 		toolRegistry:   s.Tools, toolTimeout: s.ToolTimeout, toolRunTimeout: s.ToolRunTimeout,
-		sessionID: s.SessionID,
+		requestTimeout: s.RequestTimeout,
+		sessionID:      s.SessionID,
 		// Captured under the lock: the host republishes the spool after a
 		// surface publication, concurrently with turns starting.
 		remainderSpool: s.RemainderSpool,

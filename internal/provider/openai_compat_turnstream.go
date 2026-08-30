@@ -10,10 +10,13 @@ import (
 )
 
 // maxStreamTransportAttempts is the SSE attempt budget for one logical
-// stream-transport turn: the first try plus two stall retries. Worst case per
-// logical turn is 3 x (120s response-header bound + 90s content-idle bound) =
-// 630s of SSE, then one terminal doJSON attempt - inside the 1800s default
-// request timeout, with the 3600s subagent TotalTimeout as the outer wall.
+// stream-transport turn: the first try plus two stall retries. Worst case
+// per logical turn is 3 x (response-header bound + content-idle bound) of
+// SSE, then one terminal doJSON attempt. At the compiled defaults (120s +
+// 90s) that is 630s - inside the 1800s default request timeout, with the
+// 3600s subagent TotalTimeout as the outer wall. The content-idle bound is
+// configurable ([provider] stream_content_idle_timeout_seconds); an operator
+// who raises it far enough must keep the request timeout above the product.
 const maxStreamTransportAttempts = 3
 
 // maxStreamStallRetries bounds the fresh-connection retries after one SSE

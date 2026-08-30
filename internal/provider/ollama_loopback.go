@@ -120,8 +120,8 @@ func newLoopbackDialContext(providerName, baseURL string) (func(ctx context.Cont
 // there is a ceiling on thinking time rather than a stall detector, and its
 // clone carries none; see header_bound.go. Both clones get the dial wiring, so
 // the loopback pin is not weakened by the split. Body phases are covered by
-// the stream watchdogs (idle_watchdog.go), and both sit under the 15-minute
-// client wall.
+// the stream watchdogs (idle_watchdog.go), and both sit under the absolute
+// client wall (http_wall.go).
 //
 // Always-clone consequence: each client owns its connection pools instead of
 // sharing http.DefaultTransport's. Per-client pool isolation is the point -

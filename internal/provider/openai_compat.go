@@ -15,16 +15,19 @@ import (
 
 const maxJSONResponseBytes = 8 << 20
 
-// DefaultHTTPTimeout is the transport backstop for one provider request.
-// The agent loop's request context remains the tighter per-call policy when
-// one is supplied.
+// DefaultHTTPTimeout is the compiled default for the http.Client wall - the
+// transport backstop for one provider request. NewForProvider replaces it
+// with the derived wall (http_wall.go), which stays above every configured
+// per-request budget plus a margin; a client built outside NewForProvider
+// keeps this value. The agent loop's request context remains the tighter
+// per-call policy when one is supplied.
 const DefaultHTTPTimeout = 15 * time.Minute
 
 // DefaultResponseHeaderTimeout bounds only the accept-to-headers wait on a
 // provider transport: the time from a sent request to the first response
 // header bytes. The header wait stays fast even when generation is slow;
 // body phases are covered by the stream watchdogs (idle_watchdog.go), and
-// this bound sits under the 15-minute client wall above.
+// this bound sits under the absolute client wall (http_wall.go).
 const DefaultResponseHeaderTimeout = 120 * time.Second
 
 // OpenAICompat is a shared OpenAI-compatible chat client.
@@ -170,7 +173,7 @@ func NewOpenAICompatWithOptions(opts CompatOptions) *OpenAICompat {
 		contextAccounting:            opts.ContextAccounting,
 		sendSessionUserKey:           opts.SendSessionUserKey,
 		client: &http.Client{
-			Timeout:       DefaultHTTPTimeout,
+			Timeout:       httpClientTimeout(),
 			Transport:     newRetryRoundTripper(compatBaseRoundTripper(opts.DialContext), retry),
 			CheckRedirect: checkNoReplayRedirect,
 		},
@@ -228,7 +231,7 @@ func NewOpenAICompatWithOptionsAndRetry(options CompatOptions, opts *retryOption
 		contextAccounting:            options.ContextAccounting,
 		sendSessionUserKey:           options.SendSessionUserKey,
 		client: &http.Client{
-			Timeout:       DefaultHTTPTimeout,
+			Timeout:       httpClientTimeout(),
 			Transport:     newRetryRoundTripper(compatBaseRoundTripper(options.DialContext), baseOpts),
 			CheckRedirect: checkNoReplayRedirect,
 		},

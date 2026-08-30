@@ -24,6 +24,10 @@ name = "openrouter"
 # "off" disables capture only - it cannot disable a provider's own automatic
 # caching, which happens server-side with no request-side control.
 # prompt_cache = "auto"
+# ---- Stream watchdog bounds (process-wide; seconds) ----
+# stream_first_byte_timeout_seconds = 240  # wait for the FIRST byte of a provider read; raise for hard-thinking models
+# stream_idle_timeout_seconds = 100  # gap between successive bytes once the first byte arrived
+# stream_content_idle_timeout_seconds = 90  # gap between successive CONTENT chunks on an SSE stream; a keepalive trickle does not reset it
 
 # ---------------------------------------------------------------------------
 # Reasoning control (per model, never under [chat])
@@ -206,6 +210,7 @@ max_tokens = 16384
 # Larger values keep more history at higher cost - a recall-versus-price dial.
 max_prompt_tokens = 200000
 # max_steps = 0  # 0 = unlimited (default). Set positive to cap turns. /steps overrides per session.
+# request_timeout_seconds = 900  # per-LLM-request deadline (seconds) for AGENT turns (tools on); 0 = built-in default (900s, 15 minutes). Plain tools-off chat turns carry no per-request deadline; the stream watchdogs and the derived HTTP client wall bound them instead.
 
 [worktrees]
 # Prefix for branches that mivia creates for linked worktrees.
@@ -562,9 +567,9 @@ spawn_stagger_ms = 150
 # default is visible and a smaller value never slips in silently. Batches and
 # tasks may still raise it per call; they never lower it below this floor.
 default_timeout_seconds = 43200
-# default_request_timeout_seconds = 1800  # per-LLM-request timeout (seconds); 0 = built-in 30-minute default (1800s). This deadline rides the request context; the internal 15-minute HTTP transport timeout stays the hard per-attempt ceiling, and a 120-second response-header bound covers the accept-to-headers phase. A finite value (e.g. 600) fails a stalled or proxy-queued call inside one step instead of pinning the subagent for hours.
+# default_request_timeout_seconds = 1800  # per-LLM-request timeout (seconds); 0 = built-in 30-minute default (1800s). This deadline rides the request context; the HTTP transport wall is derived ABOVE it (budget + 60-second margin, 15-minute floor), so the budget itself ends an overlong call, and a 120-second response-header bound covers the accept-to-headers phase. A finite value (e.g. 600) fails a stalled or proxy-queued call inside one step instead of pinning the subagent for hours.
 # default_total_timeout_seconds = 3600  # whole-subagent wall-clock budget (seconds); 0 = built-in 60-minute default (3600s); negative = off. This is the last-resort termination guarantee for one subagent run: it bounds every request, tool call, and wait added together, so a provider connection that trickles bytes cannot pin a run past every idle watchdog. A tighter per-task timeout from the caller wins. Negative is an operator opt-out with real exposure: a direct spawn with no per-task timeout then has no handler-level bound, and workflow or panel steps whose own timeout is unset stay bounded only by workflow policy.
-# wire_stream = true  # nested subagent LLM calls stream on the wire (default when absent: true): the request goes to the provider's SSE endpoint with stream:true, and the full answer is assembled before the call returns, so the non-stream contract holds. A connection that sends no answer-advancing chunk for 90 seconds is a stall: the call aborts, retries at once on a fresh connection (2 retries), then falls back to one plain non-stream request. A provider that rejects the stream request, or stalls without ever sending one data line, is remembered for the life of the process: later calls skip the stream endpoint. Set false to keep every nested call on the plain non-stream endpoint. The 90-second content-idle bound is independent of [provider] stream_idle_timeout_seconds, which still governs plain byte-idle on live streaming turns.
+# wire_stream = true  # nested subagent LLM calls stream on the wire (default when absent: true): the request goes to the provider's SSE endpoint with stream:true, and the full answer is assembled before the call returns, so the non-stream contract holds. A connection that sends no answer-advancing chunk within the content-idle bound (default 90 seconds) is a stall: the call aborts, retries at once on a fresh connection (2 retries), then falls back to one plain non-stream request. A provider that rejects the stream request, or stalls without ever sending one data line, is remembered for the life of the process: later calls skip the stream endpoint. Set false to keep every nested call on the plain non-stream endpoint. The content-idle bound ([provider] stream_content_idle_timeout_seconds) is independent of [provider] stream_idle_timeout_seconds, which still governs plain byte-idle on live streaming turns.
 # default_budget = 0           # per-task admission-control cost cap, not a token meter (never enforced against actual usage); 0 = built-in safe default (1,000,000 total per batch); negative = unlimited
 # max_audit_rounds = 0         # 0 = unlimited
 

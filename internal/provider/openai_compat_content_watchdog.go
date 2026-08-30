@@ -25,8 +25,10 @@ const DefaultStreamContentIdleTimeout = 90 * time.Second
 // streamContentIdleTimeoutNs holds the active content-idle bound as
 // nanoseconds, process-wide. The atomic keeps concurrent reads race-free
 // against setStreamContentIdleTimeout, and mirrors streamIdleTimeoutNs in
-// idle_watchdog.go. The bound stays independent of stream_idle_timeout: that
-// knob governs plain byte-idle and must keep its own meaning.
+// idle_watchdog.go. NewForProvider sets it from the resolved [provider]
+// stream_content_idle_timeout_seconds via SetStreamWatchdogTimeouts. The
+// bound stays independent of stream_idle_timeout: that knob governs plain
+// byte-idle and must keep its own meaning.
 var streamContentIdleTimeoutNs atomic.Int64
 
 func init() {
@@ -34,8 +36,10 @@ func init() {
 }
 
 // setStreamContentIdleTimeout overrides the process-wide content-idle bound.
-// Unexported: only tests shrink the bound today. A non-positive value is
-// ignored, so a caller that knows no bound never resets it to zero.
+// Config wiring goes through SetStreamWatchdogTimeouts (idle_watchdog.go),
+// which delegates here from NewForProvider; tests also shrink the bound
+// directly. A non-positive value is ignored, so a caller that knows no bound
+// never resets it to zero.
 func setStreamContentIdleTimeout(d time.Duration) {
 	if d > 0 {
 		streamContentIdleTimeoutNs.Store(int64(d))

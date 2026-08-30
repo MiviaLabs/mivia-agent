@@ -362,7 +362,10 @@ func NewForProvider(res *config.Resolved, providerName string) (Completer, error
 	if err := registerBuiltins(); err != nil {
 		return nil, err
 	}
-	SetStreamWatchdogTimeouts(res.StreamIdleTimeout, res.StreamFirstByteTimeout)
+	SetStreamWatchdogTimeouts(res.StreamIdleTimeout, res.StreamFirstByteTimeout, res.StreamContentIdleTimeout)
+	// Before any factory builds a client: the wall must be in place when the
+	// http.Client is constructed (see http_wall.go's construction-order note).
+	SetHTTPClientTimeout(res.ProviderHTTPTimeout)
 	runtime, ok := res.ProviderRuntimes[providerName]
 	if !ok && providerName == strings.ToLower(strings.TrimSpace(res.ProviderName)) {
 		runtime = config.ProviderRuntime{

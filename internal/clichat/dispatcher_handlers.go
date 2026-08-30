@@ -68,8 +68,9 @@ func registerMultiStepHandler(d *runtime.Dispatcher, reg *tools.Registry, comp p
 	// Per-request LLM timeout for subagent turns. Falls back to
 	// DefaultSubagentRequestTimeoutSec (30 minutes) when
 	// default_request_timeout_seconds is unset, matching requestTimeout()
-	// in agent_task_handler.go; the http.Client transport wall still
-	// bounds any single provider attempt.
+	// in agent_task_handler.go. The derived http.Client wall stays above
+	// this budget plus a margin, so a spent budget reports as its own
+	// terminal deadline, not a transport fault.
 	requestTO := requestTimeout(cfg.DefaultRequestTimeoutSec)
 	h := &subagents.MultiStepHandler{
 		Completer: comp, FullRegistry: reg, Dispatcher: d, Model: model,

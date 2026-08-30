@@ -42,9 +42,10 @@ type agentTaskHandler struct {
 // requestTimeout returns the per-LLM-request timeout for subagent turns.
 // A positive configured value (default_request_timeout_seconds) is the
 // deadline; otherwise DefaultSubagentRequestTimeoutSec (1800s, 30 minutes)
-// applies. That 1800s is the per-request context deadline. The 15-minute
-// http.Client.Timeout stays the hard per-attempt wire wall, so a single hung
-// provider call still cannot block the entire subagent.
+// applies. The resolution lives in config.ResolvedSubagentRequestTimeout so
+// the derived http.Client wall covers the same value this handler enforces:
+// the wall stays above the budget plus a margin, and a spent budget reports
+// as the terminal context deadline, not a transport fault.
 //
 // Behavior change: the old code fed default_timeout_seconds into every
 // subagent request through EffectiveTimeoutSec, so an unset
@@ -53,10 +54,7 @@ type agentTaskHandler struct {
 // default_request_timeout_seconds explicitly. This mirrors
 // registerMultiStepHandler in dispatcher_handlers.go.
 func requestTimeout(configured int) time.Duration {
-	if configured > 0 {
-		return time.Duration(configured) * time.Second
-	}
-	return config.DefaultSubagentRequestTimeoutSec * time.Second
+	return config.ResolvedSubagentRequestTimeout(config.SubagentConfig{DefaultRequestTimeoutSec: configured})
 }
 
 // The whole-run counterpart of requestTimeout lives in subagent_budget.go:

@@ -96,7 +96,7 @@ func newAnthropicCompleter(name, baseURL, apiKey string, dialContext func(ctx co
 		baseURL: strings.TrimRight(baseURL, "/"),
 		apiKey:  apiKey,
 		httpClient: &http.Client{
-			Timeout:       DefaultHTTPTimeout,
+			Timeout:       httpClientTimeout(),
 			Transport:     newRetryRoundTripper(compatBaseRoundTripper(dialContext), retry),
 			CheckRedirect: checkNoReplayRedirect,
 		},

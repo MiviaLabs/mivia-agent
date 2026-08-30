@@ -112,6 +112,10 @@ type Session struct {
 	// Capability.Timeout. <= 0 (the default) means no registry-wide cap
 	// (mapped to the SDK's TimeoutNone); see agent.Options.ToolRunTimeout.
 	ToolRunTimeout time.Duration
+	// RequestTimeout is the per-LLM-request deadline for agent turns, from
+	// the resolved [chat] request_timeout_seconds. Zero means
+	// DefaultRequestTimeout (15 minutes).
+	RequestTimeout time.Duration
 	// SessionDir is the directory where sessions are persisted
 	// (e.g., <workspace>/.mivia/sessions/). When set, enables
 	// save/load/list/delete operations and auto-save on exit.
@@ -436,6 +440,13 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 }
 
 func (s *Session) buildAgentTurnOptions(snapshot agentTurnSnapshot, userText string, w io.Writer, turnDispatcher *runtime.Dispatcher, turn *TurnOptions) agent.Options {
+	// A zero snapshot value falls back exactly as snapshot.toolTimeout does
+	// in sendAgent; the fallback lives here so the one consumer of the value
+	// and its normalization stay together.
+	requestTimeout := snapshot.requestTimeout
+	if requestTimeout <= 0 {
+		requestTimeout = DefaultRequestTimeout
+	}
 	opts := agent.Options{
 		Model: snapshot.binding.Model, Temperature: snapshot.temperature, MaxTokens: snapshot.maxTokens,
 		Reasoning: config.ModelReasoning(snapshot.binding.Profile),
@@ -444,7 +455,7 @@ func (s *Session) buildAgentTurnOptions(snapshot agentTurnSnapshot, userText str
 		BatchResultBudgetBytes: snapshot.batchResultBudget,
 		RefOnlyTools:           snapshot.refOnlyTools,
 		RemainderSpool:         snapshot.remainderSpool,
-		RequestTimeout:         DefaultRequestTimeout,
+		RequestTimeout:         requestTimeout,
 		ToolTimeout:            snapshot.toolTimeout,
 		ToolRunTimeout:         snapshot.toolRunTimeout,
 		ParentID:               "session",

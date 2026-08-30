@@ -383,6 +383,12 @@ Two consequences worth knowing before you enable it:
 
 `[chat] max_steps` bounds one turn's agent loop. `0` means unlimited, and this is the default when unset. `/steps` overrides it for the current session.
 
+## Agent turn request deadline
+
+`[chat] request_timeout_seconds` bounds one LLM request in a root agent turn (tools on). Unset or `0` resolves to the built-in default of `900` seconds (15 minutes). The deadline rides the request context, so a spent budget reports as a terminal deadline, not a transient transport fault.
+
+This knob governs agent turns only. A plain (tools-off) chat turn carries no per-request context; the stream watchdogs and the derived HTTP client wall (see [Subagent knobs](#subagent-knobs)) bound it instead.
+
 ## Bounded prompt budget
 
 `[chat] max_prompt_tokens` caps the per-request prompt budget in tokens. The recommended value is `200000`.
@@ -465,6 +471,18 @@ Any summary failure - transport error, malformed reply, redaction refusal, over-
 
 The summarize request carries bounded quotes of the dropped messages' real content (user and assistant text plus truncated tool results, at most 16 KiB, newest first). An excerpt the `[privacy]` policy flags is dropped from the request; tool-call arguments and assistant reasoning are never included.
 
+## Provider stream watchdogs
+
+`[provider]` carries three process-wide watchdog bounds for provider reads. Each key takes seconds. An unset or non-positive value keeps the compiled default.
+
+| Key | Type | Default | Meaning |
+|-----|------|---------|---------|
+| `stream_first_byte_timeout_seconds` | int | `240` | Wait for the first byte of a provider read. Raise it for hard-thinking models |
+| `stream_idle_timeout_seconds` | int | `100` | Gap between successive bytes once the first byte arrived |
+| `stream_content_idle_timeout_seconds` | int | `90` | Gap between successive content chunks on an SSE stream. A keepalive trickle does not reset it |
+
+Above the watchdogs sits the derived HTTP client wall, the absolute per-attempt transport bound: the maximum of the 15-minute floor and every configured per-request budget (`[chat] request_timeout_seconds`, `[subagents] default_request_timeout_seconds`) plus a 60-second margin. Because the wall derives from the budgets, a spent budget always reports as its own terminal deadline, never as a transport fault.
+
 ## Subagent knobs
 
 | Key | Type | Default | Meaning |
@@ -474,14 +492,14 @@ The summarize request carries bounded quotes of the dropped messages' real conte
 | `max_fanout` | int | `0` (unlimited) | Parallel sub-tasks per level |
 | `nested_steps` | int | `0` (unlimited) | Sub-agent loop steps per turn |
 | `default_timeout_seconds` | int | `0` | Per-task orchestration timeout; `0` = safety bound (12 hours) |
-| `default_request_timeout_seconds` | int | `0` | Per-LLM-request timeout for subagent turns; `0` = built-in 30-minute default (1800s). The 15-minute HTTP transport timeout stays the hard per-attempt ceiling |
+| `default_request_timeout_seconds` | int | `0` | Per-LLM-request timeout for subagent turns; `0` = built-in 30-minute default (1800s). The derived HTTP client wall stays above this budget plus a 60-second margin, so the budget itself ends an overlong call |
 | `default_total_timeout_seconds` | int | `0` | Whole-subagent wall-clock budget and last-resort termination guarantee; `0` = built-in 60-minute default (3600s); negative = off. A trickling provider connection cannot pin a run past this bound. A tighter per-task timeout from the caller wins. Negative: an unset-timeout run has no handler-level bound and stays bounded only by workflow policy |
 | `wire_stream` | bool | `true` | Nested subagent LLM calls go out with `stream:true` to the provider's SSE endpoint; the full answer is assembled before the call returns, so the non-stream contract holds. See the paragraph below |
 | `default_budget` | int | `0` | Per-task admission-control cost cap (not a token meter - never enforced against actual usage); `0` = built-in safe default (1,000,000 total per batch); negative = unlimited |
 | `store_backend` | string | `"memory"` | Outside chat: `"memory"` (ephemeral) or `"sqlite"` (durable) |
 | `store_path` | string | `~/.mivia/context.db` (chat); platform cache dir (non-chat orchestration) | One SQLite file for chat sessions, context, worktree routes, and runs |
 
-`wire_stream` (default `true`) changes the transport of nested subagent LLM calls, not their contract: the request goes to the provider's SSE endpoint with `stream:true`, and the full answer is assembled before the call returns. The change exists because a provider connection can trickle keepalive bytes forever while the model answer never advances; byte-level idle watchdogs cannot tell that apart from model thinking. The content-idle bound closes this gap: a turn that receives no chunk which would advance the answer for 90 seconds is a stall. A stalled call aborts, retries at once on a fresh connection (2 retries), then falls back to one plain non-stream request. A provider that rejects the stream request with a JSON error, or stalls a stream attempt without ever sending one data line, is remembered for the life of the process: later calls skip the stream endpoint. Set `wire_stream = false` to keep every nested call on the plain non-stream endpoint. The 90-second content-idle bound is independent of `[provider] stream_idle_timeout_seconds`, which still governs plain byte-idle on live streaming turns. Workflow child runs inherit the behavior through their handlers.
+`wire_stream` (default `true`) changes the transport of nested subagent LLM calls, not their contract: the request goes to the provider's SSE endpoint with `stream:true`, and the full answer is assembled before the call returns. The change exists because a provider connection can trickle keepalive bytes forever while the model answer never advances; byte-level idle watchdogs cannot tell that apart from model thinking. The content-idle bound closes this gap: a turn that receives no chunk which would advance the answer within the bound (default 90 seconds, `[provider] stream_content_idle_timeout_seconds`) is a stall. A stalled call aborts, retries at once on a fresh connection (2 retries), then falls back to one plain non-stream request. A provider that rejects the stream request with a JSON error, or stalls a stream attempt without ever sending one data line, is remembered for the life of the process: later calls skip the stream endpoint. Set `wire_stream = false` to keep every nested call on the plain non-stream endpoint. The content-idle bound is independent of `[provider] stream_idle_timeout_seconds`, which still governs plain byte-idle on live streaming turns. Workflow child runs inherit the behavior through their handlers.
 
 (This default was briefly flipped off, then restored, during investigation of a real incident where dispatch_tasks batches never completed - see `default_budget` above and internal/subagents/subagents.go's `DefaultMaxBudget`: the actual cause was an unrelated admission-control default rejecting realistic task budgets before any provider call was made, confirmed by live reproduction. A dedicated concurrency+stall stress test against wire_stream found no hang: internal/provider/openai_compat_turnstream_concurrency_test.go.)
 
@@ -533,7 +551,7 @@ The hub is keyed to the store directory, not the workspace, so anything that mov
 
 Rendering is directional today. Line-mode `--json` renders turns received from other processes as `external_*` NDJSON events. The TUI and classic REPL publish their own turns to the hub but do not yet render turns received from other processes. The full event vocabulary is specified in [Wire schema](wire-schema.md).
 
-`default_request_timeout_seconds` never needs to be set below `default_timeout_seconds`. The outer orchestration timeout cancels the turn first. The internal 15-minute HTTP transport timeout is the hard per-request ceiling. It stops a single hung provider call from blocking a sub-agent beyond that limit.
+`default_request_timeout_seconds` never needs to be set below `default_timeout_seconds`. The outer orchestration timeout cancels the turn first. The HTTP client wall is derived from the configured request budgets: it is the maximum of the 15-minute floor and every configured per-request budget plus a 60-second margin. The wall therefore never cuts a request before its own budget does; a spent budget reports as a terminal deadline, not a transport fault. The stream watchdogs stop a hung provider call long before either bound.
 
 ## See also
 

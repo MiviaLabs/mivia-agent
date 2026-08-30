@@ -9,7 +9,7 @@ import (
 
 // deadlineLabel names the deadline a timed-out provider read refers to: the
 // per-request timeout when one was armed on the request, or the transport
-// backstop (DefaultHTTPTimeout) when the request carried none. It is appended
+// backstop (the client wall, http_wall.go) when the request carried none. It is appended
 // to read-error messages so an operator can tell which deadline fired (finding
 // F2) without breaking errors.Is(err, context.DeadlineExceeded).
 func deadlineLabel(timeout time.Duration) string {

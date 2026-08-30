@@ -88,7 +88,8 @@ type MultiStepHandler struct {
 	// [subagents] default_request_timeout_seconds; when that knob is unset,
 	// they apply DefaultSubagentRequestTimeoutSec (1800s, 30 minutes) - the
 	// 12-hour orchestration default no longer feeds individual requests. The
-	// 15-minute http.Client wall remains the hard per-attempt bound.
+	// derived http.Client wall stays above this budget plus a margin, so the
+	// budget is what ends an overlong request.
 	RequestTimeout time.Duration
 	// SteerWatchdog bounds steer latency when no interrupt signal is wired: the
 	// loop's watcher cancels the in-flight LLM call once a steer has been
