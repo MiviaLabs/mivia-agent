@@ -67,17 +67,23 @@ Only then edit.
 After any edit, make `docs/README.md` reflect reality: update the index and
 the reading-order diagram if a doc moved, was added, or was removed.
 
-## The vendored OpenAPI spec
+## The recorded API contract
 
-`api/openapi/auth.v2.yaml` is a vendored copy from `go-mivia`, not generated
-here. Resync it manually, per `api/openapi/README.md`:
+`api/contracts/auth.v1.json` records the mivia API's `/v1/auth/*` surface:
+routes, and the JSON field sets of the wire structs in
+`internal/miviaauth`. It is hand-maintained, and
+`internal/miviaauth/wire_contract_test.go` holds the Go code to it.
+
+The API lives in `mivia-app-web` and checks in no OpenAPI document, so there
+is nothing to generate from. Resync by reading the source files listed under
+`source.paths` in the JSON, or by running the API locally:
 
 ```
-cp ../go-mivia/api/openapi/auth.v2.yaml api/openapi/auth.v2.yaml
-go generate ./internal/miviaauth/...
+curl -s http://localhost:3001/docs/json | python3 -m json.tool
 ```
 
-Then update the commit hash and date recorded in `api/openapi/README.md`.
+Then update `source.transcribedOn`, per `api/contracts/README.md`. Never make
+the test regenerate the JSON: the guarantee is that a person edits it.
 
 ## Watch the gates
 

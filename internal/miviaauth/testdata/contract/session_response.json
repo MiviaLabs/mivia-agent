@@ -1,0 +1,12 @@
+{
+  "ok": true,
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI1NTBlODQwMC1lMjliLTQxZDQtYTcxNi00NDY2NTU0NDAwMDAiLCJvcmdhbml6YXRpb25JZCI6IjU1MGU4NDAwLWUyOWItNDFkNC1hNzE2LTQ0NjY1NTQ0MDAwMSIsInJvbGUiOiJtZW1iZXIiLCJqdGkiOiJzZXNzLTEifQ.c2lnbmF0dXJl",
+  "refreshToken": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+  "user": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "email": "user@example.com",
+    "organizationId": "550e8400-e29b-41d4-a716-446655440001",
+    "role": "member"
+  },
+  "expiresAt": "2026-08-30T11:00:00.000Z"
+}

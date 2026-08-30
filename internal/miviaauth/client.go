@@ -4,38 +4,74 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
 
-// requestTimeout bounds a single login/refresh/revoke call. It is
+// requestTimeout bounds a single login/refresh/revoke/me call. It is
 // deliberately short: this is an interactive credential exchange, never a
-// long-running stream.
+// long-running stream. It is also the unit the refresh lock's budget is
+// derived from (see service.go).
 const requestTimeout = 10 * time.Second
 
-// StatusError reports a non-2xx HTTP response from go-mivia's auth
-// endpoints. Callers use errors.As to classify failures (e.g. 401 vs
-// 429/503) without parsing go-mivia's JSON error envelope.
+// errorBodyLimit caps how much of a non-2xx body is read while classifying
+// the failure. A body larger than this fails to decode, which leaves
+// StatusError.FromAPI false -- the conservative direction, since FromAPI is
+// what authorizes destroying a stored session.
+const errorBodyLimit = 8 << 10
+
+// detailLimit caps the server-supplied explanation carried on a StatusError.
+const detailLimit = 400
+
+// StatusError reports a non-2xx HTTP response from the mivia API's auth
+// endpoints. Callers use errors.As to classify failures without parsing the
+// error envelope themselves.
 type StatusError struct {
 	StatusCode int
+
+	// FromAPI reports that the response body was the mivia API's own error
+	// envelope, with a statusCode matching the HTTP status.
+	//
+	// This is the gate on destroying a stored session, and the reason it
+	// exists: a captive portal, a corporate proxy, or an SSO interstitial can
+	// answer any request with a bare 401 and an HTML body. Under the old
+	// bearer-only contract the collateral for believing one was a 1-hour
+	// token that was expiring anyway. Under this contract it is a 30-day
+	// refresh token that is still perfectly valid server-side, so a 401 is
+	// only definitive when the API demonstrably sent it.
+	FromAPI bool
+
+	// Detail is the envelope's message, sanitized for terminal output. Empty
+	// when the response was not the API's envelope.
+	Detail string
 }
 
 func (e *StatusError) Error() string {
+	if e.Detail != "" {
+		return fmt.Sprintf("miviaauth: server responded with status %d: %s", e.StatusCode, e.Detail)
+	}
 	return fmt.Sprintf("miviaauth: server responded with status %d", e.StatusCode)
 }
 
-// ErrVerifiedNoSession means the verification code was accepted but the
-// server did not issue a session (VerifyCreatesSession=false server-side).
-// The caller should tell the user to run `mivia login` next.
-var ErrVerifiedNoSession = errors.New("miviaauth: email verified, but no session was issued; run `mivia login`")
+// Identity is the authenticated user reported by GET /v1/auth/me.
+type Identity struct {
+	ID             string
+	Email          string
+	OrganizationID string
+	Role           string
 
-// Client talks to the go-mivia bearer-token CLI auth endpoints.
+	// DisplayName is empty when the server sent null, which the schema
+	// allows.
+	DisplayName string
+}
+
+// Client talks to the mivia API's /v1/auth endpoints.
 type Client struct {
 	baseURL string
 	http    *http.Client
@@ -53,6 +89,10 @@ var _ sessionClient = (*Client)(nil)
 // env var is scoped to credential-free LLM provider traffic; this endpoint
 // carries a password and gets its own, narrower exception with no env
 // override.
+//
+// baseURL is the API root only. The /v1 version prefix belongs to the
+// request paths, not to the configured server, so pointing
+// MIVIA_API_BASE_URL at a local API needs no version in the value.
 func NewClient(baseURL string) (*Client, error) {
 	if _, err := config.ValidateHTTPSURL(baseURL); err == nil {
 		return newClient(baseURL), nil
@@ -74,130 +114,187 @@ func newClient(baseURL string) *Client {
 // to a string only at the JSON marshal call site below; it is never stored
 // as a Go string anywhere else in this file.
 func (c *Client) Login(ctx context.Context, email string, password []byte) (Token, error) {
-	body, err := json.Marshal(LoginRequest{Email: email, Password: string(password)})
+	var out sessionResponse
+	err := c.do(ctx, http.MethodPost, "/v1/auth/login", "",
+		loginRequest{Email: email, Password: string(password)}, &out)
 	if err != nil {
-		return Token{}, fmt.Errorf("miviaauth: encode login request: %w", err)
+		return Token{}, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/v2/auth/login", bytes.NewReader(body))
-	if err != nil {
-		return Token{}, fmt.Errorf("miviaauth: build login request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Mivia-Auth-Transport", "cli")
-	return c.doSessionRequest(req, false)
+	return tokenFromSession(out)
 }
 
-// Refresh exchanges a still-valid bearer for a new Token.
-func (c *Client) Refresh(ctx context.Context, bearer string) (Token, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/v2/auth/refresh", nil)
+// Refresh exchanges the stored refresh token for a new session.
+//
+// The refresh token is one-time use: the server rotates it and the value
+// passed here is dead the moment this call succeeds. The returned Token
+// carries the replacement, and losing it loses the session -- see
+// Service.refresh.
+func (c *Client) Refresh(ctx context.Context, refreshToken string) (Token, error) {
+	var out sessionResponse
+	err := c.do(ctx, http.MethodPost, "/v1/auth/refresh", "",
+		refreshRequest{RefreshToken: refreshToken}, &out)
 	if err != nil {
-		return Token{}, fmt.Errorf("miviaauth: build refresh request: %w", err)
+		return Token{}, err
 	}
-	req.Header.Set("Authorization", "Bearer "+bearer)
-	return c.doSessionRequest(req, false)
+	return tokenFromSession(out)
 }
 
-// Register starts account creation. It never returns a session -- the
-// account is unusable until the emailed verification code is submitted via
-// Verify. password is converted to a string only at the JSON marshal call
-// site, matching Login.
-func (c *Client) Register(ctx context.Context, email string, password []byte, organizationName string) error {
-	body, err := json.Marshal(RegisterRequest{Email: email, Password: string(password), OrganizationName: organizationName})
-	if err != nil {
-		return fmt.Errorf("miviaauth: encode register request: %w", err)
+// Revoke ends the session server-side. It is authenticated: bearer must be a
+// live access token, and the endpoint falls back to the session named by that
+// token's own jti claim when refreshToken is empty. Revoking an
+// already-revoked session succeeds.
+func (c *Client) Revoke(ctx context.Context, bearer, refreshToken string) error {
+	var out okResponse
+	if err := c.do(ctx, http.MethodPost, "/v1/auth/revoke", bearer,
+		revokeRequest{RefreshToken: refreshToken}, &out); err != nil {
+		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/v2/auth/register", bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("miviaauth: build register request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return fmt.Errorf("miviaauth: register request: %w", err)
-	}
-	defer func() { _, _ = io.Copy(io.Discard, resp.Body); _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusAccepted {
-		return fmt.Errorf("miviaauth: register failed: %w", &StatusError{StatusCode: resp.StatusCode})
+	if !out.OK {
+		// A 2xx without the flag is not this API answering. An intercepting
+		// proxy that returns 200 for everything would otherwise be reported
+		// as a successful revocation.
+		return fmt.Errorf("miviaauth: revoke: response was not the API's acknowledgement")
 	}
 	return nil
 }
 
-// Verify submits an emailed verification code. On success it normally
-// returns a Token (same as Login/Refresh); if the server is configured
-// without auto-login-on-verify it returns ErrVerifiedNoSession instead --
-// callers must handle that case explicitly, not treat it as a hard error.
-func (c *Client) Verify(ctx context.Context, token string) (Token, error) {
-	body, err := json.Marshal(VerifyRequest{Token: token})
-	if err != nil {
-		return Token{}, fmt.Errorf("miviaauth: encode verify request: %w", err)
+// Me reports the authenticated identity behind bearer.
+func (c *Client) Me(ctx context.Context, bearer string) (Identity, error) {
+	var out meResponse
+	if err := c.do(ctx, http.MethodGet, "/v1/auth/me", bearer, nil, &out); err != nil {
+		return Identity{}, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/v2/auth/verify", bytes.NewReader(body))
-	if err != nil {
-		return Token{}, fmt.Errorf("miviaauth: build verify request: %w", err)
+	id := Identity{
+		ID:             out.ID,
+		Email:          out.Email,
+		OrganizationID: out.OrganizationID,
+		Role:           out.Role,
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Mivia-Auth-Transport", "cli")
-	return c.doSessionRequest(req, true)
+	if out.DisplayName != nil {
+		id.DisplayName = *out.DisplayName
+	}
+	return id, nil
 }
 
-// Revoke invalidates bearer server-side. Success is HTTP 204.
-func (c *Client) Revoke(ctx context.Context, bearer string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/v2/auth/revoke", nil)
-	if err != nil {
-		return fmt.Errorf("miviaauth: build revoke request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+bearer)
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return fmt.Errorf("miviaauth: revoke request: %w", err)
-	}
-	defer func() { _, _ = io.Copy(io.Discard, resp.Body); _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("miviaauth: revoke failed: %w", &StatusError{StatusCode: resp.StatusCode})
-	}
-	return nil
-}
-
-// doSessionRequest performs req and parses the shared login/refresh/verify
-// response shape into a Token. Non-2xx responses are reported as a
-// *StatusError; network-level failures (including context cancellation)
-// are returned as a plain wrapped error so callers can tell the two apart.
-// sessionOptional controls what happens when the response has no session:
-// Login/Refresh pass false, so a missing session is a hard parse error (a
-// genuine bug); Verify passes true, so a missing session instead yields
-// ErrVerifiedNoSession, a legitimate server state.
-func (c *Client) doSessionRequest(req *http.Request, sessionOptional bool) (Token, error) {
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return Token{}, fmt.Errorf("miviaauth: request failed: %w", err)
-	}
-	defer func() { _, _ = io.Copy(io.Discard, resp.Body); _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return Token{}, fmt.Errorf("miviaauth: request failed: %w", &StatusError{StatusCode: resp.StatusCode})
-	}
-
-	var wire sessionEnvelope
-	if err := json.NewDecoder(resp.Body).Decode(&wire); err != nil {
-		return Token{}, fmt.Errorf("miviaauth: decode response: %w", err)
-	}
-	if wire.Session == nil {
-		if sessionOptional {
-			return Token{}, ErrVerifiedNoSession
-		}
-		return Token{}, fmt.Errorf("miviaauth: request failed: response had no session")
-	}
-	if wire.User == nil {
-		return Token{}, fmt.Errorf("miviaauth: request failed: response had a session but no user")
+// tokenFromSession converts a login or refresh response into a Token, and is
+// the single place an incomplete success response is refused.
+//
+// This guard is load-bearing beyond tidiness: Service treats an empty
+// RefreshToken on disk as a pre-/v1 session file and clears it. Without this
+// check a 2xx carrying `{}` would be saved as a Token with no refresh token,
+// login would report success, and every later command would claim the user
+// was never logged in.
+func tokenFromSession(resp sessionResponse) (Token, error) {
+	switch {
+	case resp.Token == "":
+		return Token{}, fmt.Errorf("miviaauth: response carried no access token")
+	case resp.RefreshToken == "":
+		return Token{}, fmt.Errorf("miviaauth: response carried no refresh token")
+	case resp.ExpiresAt.IsZero():
+		return Token{}, fmt.Errorf("miviaauth: response carried no expiry")
 	}
 	return Token{
-		Bearer:         wire.Session.Bearer,
-		ExpiresAt:      wire.Session.ExpiresAt,
-		OrganizationID: wire.User.OrganizationId,
-		Role:           wire.User.Role,
+		Bearer:         resp.Token,
+		RefreshToken:   resp.RefreshToken,
+		ExpiresAt:      resp.ExpiresAt,
+		OrganizationID: resp.User.OrganizationID,
+		Role:           resp.User.Role,
 	}, nil
+}
+
+// do performs one request against path and decodes a 2xx body into out.
+//
+// Any 2xx is a success. The API declares 200 on all four routes, but that is
+// read from decorators and has never been observed on the wire from this
+// repository or the API's own tests, so a route that ships a 201 or 204
+// instead must not break the client.
+//
+// Non-2xx responses become a *StatusError; network-level failures (including
+// context cancellation) stay plain wrapped errors, so callers can tell "the
+// server said no" from "we never reached the server".
+func (c *Client) do(ctx context.Context, method, path, bearer string, body, out any) error {
+	var reader io.Reader
+	if body != nil {
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			return fmt.Errorf("miviaauth: encode %s request: %w", path, err)
+		}
+		reader = bytes.NewReader(encoded)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reader)
+	if err != nil {
+		return fmt.Errorf("miviaauth: build %s request: %w", path, err)
+	}
+	if body != nil {
+		// Required, not decorative: without it the server's body parser
+		// leaves the request body empty and the ValidationPipe rejects the
+		// call as missing every required field.
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("miviaauth: request failed: %w", err)
+	}
+	defer func() { _, _ = io.Copy(io.Discard, resp.Body); _ = resp.Body.Close() }()
+
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return fmt.Errorf("miviaauth: request failed: %w", statusErrorFrom(resp))
+	}
+	if out == nil {
+		return nil
+	}
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		return fmt.Errorf("miviaauth: decode %s response: %w", path, err)
+	}
+	return nil
+}
+
+// statusErrorFrom classifies a non-2xx response by reading a bounded prefix
+// of its body and looking for the API's error envelope.
+func statusErrorFrom(resp *http.Response) *StatusError {
+	out := &StatusError{StatusCode: resp.StatusCode}
+
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, errorBodyLimit))
+	if err != nil {
+		return out
+	}
+	var envelope errorEnvelope
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return out
+	}
+	if envelope.StatusCode != resp.StatusCode {
+		// Either not the API's envelope, or an envelope disagreeing with its
+		// own transport status. Both are reasons not to trust it.
+		return out
+	}
+	out.FromAPI = true
+	out.Detail = sanitizeDetail(string(envelope.Message))
+	return out
+}
+
+// sanitizeDetail prepares server-controlled text for a terminal. The message
+// is quoted back to the user so a rejected login says which rule it broke,
+// which means a hostile or merely buggy server gets to put bytes on a TTY:
+// control characters and escape introducers are dropped rather than
+// forwarded, and the result is length-capped.
+func sanitizeDetail(msg string) string {
+	cleaned := strings.Map(func(r rune) rune {
+		if r == '\t' || r == ' ' {
+			return ' '
+		}
+		if unicode.IsControl(r) || r == 0x7f {
+			return -1
+		}
+		return r
+	}, msg)
+	cleaned = strings.Join(strings.Fields(cleaned), " ")
+	if len(cleaned) > detailLimit {
+		cleaned = cleaned[:detailLimit] + "..."
+	}
+	return cleaned
 }

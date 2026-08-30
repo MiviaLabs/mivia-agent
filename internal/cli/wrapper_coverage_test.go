@@ -140,7 +140,9 @@ func TestExecuteRouterDispatchesAllSubcommands(t *testing.T) {
 		{"--version", []string{"--version"}},
 		{"help", []string{"help"}},
 		{"config", []string{"config"}},
-		{"verify", []string{"verify"}},
+		// whoami with an unknown flag fails in parseWhoamiArgs, before any
+		// network call or session-file read.
+		{"whoami", []string{"whoami", "--bogus"}},
 		{"completion", []string{"completion"}},
 	}
 	for _, c := range calls {
