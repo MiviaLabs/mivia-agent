@@ -76,7 +76,7 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 	} else {
 		defer closer()
 	}
-	sdkOpts, turn, err := buildAgentLoopOptions(l, opts)
+	sdkOpts, turn, err := buildAgentLoopOptions(l, opts, lastUserText(msgs))
 	if err != nil {
 		return sdkagentloop.Result{}, err
 	}
@@ -96,7 +96,7 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 	// Usage rows: the completer's onUsage callback (newSDKTurnCompleter)
 	// runs l.emitTurnUsage per Chat call and writes the one token_usage
 	// row the legacy loop writes; an Audit bridge would duplicate it.
-	res, err := runSDKWithReplays(ctx, l, sdkOpts, opts, preparedMsgs, turn, lastUserText(msgs))
+	res, err := runSDKPromptTooLongRecoverable(ctx, l, sdkOpts, opts, preparedMsgs, turn)
 	stampSDKToolMessageNames(res.History)
 	if err != nil {
 		return handleSDKRunError(ctx, l, opts, turn, res, err)
@@ -110,23 +110,6 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 		return res, berr
 	}
 	return finishSDKResult(opts, res, msgs)
-}
-
-// runSDKWithReplays drives the run and then applies the two bounded
-// host-side replays, in order. Both re-run the whole SDK loop, so both live
-// here rather than in the caller: retryOnEmptyResponse covers a turn with
-// no text and no tool calls, continueUnactedTurn the neighbouring turn with
-// real text and no tool calls. Their preconditions are disjoint (one
-// requires empty final text, the other non-empty), so at most one fires,
-// and both are no-ops unless their own gate is set.
-func runSDKWithReplays(ctx context.Context, l *Loop, sdkOpts sdkagentloop.Options, opts Options, preparedMsgs []sdkshape.Message, turn *sdkTurnState, turnUserText string) (sdkagentloop.Result, error) {
-	// One step budget spans the original run and every replay of it, so
-	// max_steps stays the per-turn total its documentation promises
-	// (replay_step_budget.go).
-	budget := newReplayStepBudget(sdkOpts, turn)
-	res, err := runSDKPromptTooLongRecoverable(ctx, l, sdkOpts, opts, preparedMsgs, turn)
-	res, err = retryOnEmptyResponse(ctx, l, sdkOpts, opts, preparedMsgs, turn, turnUserText, res, err, budget)
-	return continueUnactedTurn(ctx, l, sdkOpts, opts, turn, turnUserText, res, err, budget)
 }
 
 // ensureSDKDispatcher installs a scoped runtime dispatcher over the
@@ -234,91 +217,20 @@ func runSDKPromptTooLongRecoverable(ctx context.Context, l *Loop, sdkOpts sdkage
 	return run(sdkCompactAfterPromptTooLong(l, opts, preparedMsgs))
 }
 
-// maxEmptyResponseRetries bounds how many times retryOnEmptyResponse
-// silently re-runs the SDK loop after a genuinely empty provider response
-// (sdkagentloop.StopEmptyResponse: no text, no tool calls) before giving up
-// and letting finalizeSDKTurn's RequireFinalText surface "agent: turn
-// produced no assistant text" to the caller. An empty response is a known,
-// often-transient provider failure mode (the server reports success with
-// nothing generated) rather than a deterministic rejection, so a small
-// bounded retry resolves the common case without the user needing to
-// manually retype "continue" - which, before this retry existed, is also
-// how a poisoned empty-assistant message could enter and re-poison history
-// on every subsequent turn (see provider.DropEmptyAssistantTurns and
-// chat.adoptFailedTurnSnapshot's validation guard for the persistence-side
-// half of this fix).
+// maxEmptyResponseRetries bounds how many times the SDK loop's
+// ContinueOnStop hook (continue_on_stop.go) silently re-drives a turn after
+// a genuinely empty provider response (sdkagentloop.StopEmptyResponse: no
+// text, no tool calls) before giving up and letting finalizeSDKTurn's
+// RequireFinalText surface "agent: turn produced no assistant text" to the
+// caller. An empty response is a known, often-transient provider failure
+// mode (the server reports success with nothing generated) rather than a
+// deterministic rejection, so a small bounded retry resolves the common
+// case without the user needing to manually retype "continue" - which,
+// before this retry existed, is also how a poisoned empty-assistant message
+// could enter and re-poison history on every subsequent turn (see
+// provider.DropEmptyAssistantTurns and chat.adoptFailedTurnSnapshot's
+// validation guard for the persistence-side half of this fix).
 const maxEmptyResponseRetries = 2
-
-// retryOnEmptyResponse re-runs the SDK loop from the same preparedMsgs, up
-// to maxEmptyResponseRetries times, but ONLY when ALL hold: res.Stop is
-// exactly StopEmptyResponse (not StopMaxIterations or any other stop);
-// opts.RequireFinalText is set (a tolerant caller, e.g. a sub-agent, must
-// not pay for a retry it never asked for); sdkResolvedFinalText is
-// genuinely empty (a turn with usable earlier text, e.g. from a tool-call
-// step, is never retried - that would discard it for no benefit);
-// sdkTurnMadeToolCalls is false for the whole failed attempt, not just the
-// triggering response; and l.LastFinishReason is not
-// provider.FinishReasonRefusal - a refusal (Anthropic: HTTP 200, empty
-// content) is structurally identical to "returned nothing" at the
-// StopEmptyResponse layer, which never inspects FinishReason, so without
-// this guard a refusal would retry against the same safety classifier for
-// no benefit. See provider.FinishReasonRefusal's doc comment for why.
-//
-// The tool-call check above is load-bearing, not defense-in-depth: StopEmptyResponse
-// only guarantees the triggering response made zero tool calls, not that
-// the whole multi-iteration attempt did. A retry replays the ENTIRE turn
-// from preparedMsgs (the pre-turn history), discarding any record that an
-// earlier iteration's tool call already ran, so the model can and does
-// reissue it - silently duplicating a non-idempotent side effect (a write,
-// a command, an outbound call). A turn that already dispatched a tool
-// hard-fails instead of risking that.
-//
-// preparedMsgs is never mutated by a run - agentloop.Loop.run defensively
-// copies its input - so retrying against the same slice is safe.
-// DisableProviderReplay suppresses this retry for the same reason it
-// suppresses the prompt-too-long one: it IS a provider replay.
-func retryOnEmptyResponse(ctx context.Context, l *Loop, sdkOpts sdkagentloop.Options, opts Options, preparedMsgs []sdkshape.Message, turn *sdkTurnState, turnUserText string, res sdkagentloop.Result, err error, budget *replayStepBudget) (sdkagentloop.Result, error) {
-	if !opts.RequireFinalText || opts.DisableProviderReplay {
-		return res, err
-	}
-	shouldRetry := func() bool {
-		return err == nil && res.Stop == sdkagentloop.StopEmptyResponse &&
-			strings.TrimSpace(sdkResolvedFinalText(res, turnUserText)) == "" &&
-			!sdkTurnMadeToolCalls(res.History, turnUserText) &&
-			l.LastFinishReason != provider.FinishReasonRefusal
-	}
-	for attempt := 0; attempt < maxEmptyResponseRetries && shouldRetry(); attempt++ {
-		// Announce the retry that is ABOUT to happen through the same emit
-		// seam sdkPromptBudgetPreflight uses above, BEFORE re-running the
-		// whole SDK loop, so a caller watching events never sits silent
-		// while a second (or third) potentially multi-minute LLM call runs
-		// behind what looked like a finished (if empty) turn. Purely
-		// observability: it does not touch shouldRetry or the loop bound.
-		emit(opts, Event{
-			Kind:   EventEmptyResponseRetry,
-			Detail: fmt.Sprintf("empty response on attempt %d/%d, retrying...", attempt+1, maxEmptyResponseRetries+1),
-		})
-		// Defense-in-depth for a narrow streaming edge case: the empty-response
-		// case normally streams zero bytes (there is no content to forward),
-		// but a provider that streams whitespace-only content before the
-		// trimmed result reads as empty would have already forwarded those
-		// bytes live to opts.FinalWriter through the shared teeWriter (the
-		// same instance is reused across every retry attempt, installed once
-		// in buildAgentLoopOptions before this loop runs). Revoking here
-		// clears any such orphaned optimistic content before the fresh
-		// attempt's answer streams in, the same way sdk_tool_events.go
-		// already revokes on a tool-call arrival - a no-op when FinalWriter
-		// doesn't implement streamRevoker or nothing was ever streamed.
-		revokeStreamWriter(opts.FinalWriter)
-		// A replay spends the SAME turn's step budget, not a fresh one.
-		attemptOpts, allowed := budget.next(sdkOpts)
-		if !allowed {
-			return res, err
-		}
-		res, err = runSDKPromptTooLongRecoverable(ctx, l, attemptOpts, opts, preparedMsgs, turn)
-	}
-	return res, err
-}
 
 // promptTooLongCompactNotice is the model-visible notice appended to
 // history after a prompt-too-long rejection compacts it. Dropping

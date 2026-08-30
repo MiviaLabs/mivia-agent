@@ -8,15 +8,16 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
-	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
 )
 
 // docs/product/config.md says max_steps "bounds one turn's agent loop".
-// A host-side replay (the empty-response retry, the unacted continuation)
-// re-runs the SDK loop, and every re-run used to start with a fresh
-// MaxIterations. One turn could then execute max_steps x (1 + replays)
-// provider calls while the operator read the documented bound as a
-// per-turn total.
+// The stop-time continuations (the empty-response retry, the unacted
+// continuation) run as iterations of the turn's own SDK loop through the
+// ContinueOnStop hook, so the loop's MaxIterations is the per-turn total by
+// itself. These tests pin that contract end to end through Loop.Run: a
+// turn - however many continuations fire inside it - may never exceed the
+// configured step bound, and max_steps = 0 must stay unbounded rather than
+// become a computed number that ends a turn early.
 
 // emptyThenNarratingCompleter answers the first call with a genuinely empty
 // response (which drives StopEmptyResponse and the empty-response retry),
@@ -111,69 +112,5 @@ func TestUnboundedStepsStayUnbounded(t *testing.T) {
 	}
 	if got := comp.count(); got != 3 {
 		t.Fatalf("unbounded steps must still run 1 call + 2 continuations, got %d", got)
-	}
-}
-
-// TestRemainingStepBudget states the arithmetic directly, including the
-// two cases the callers depend on: unbounded stays unbounded, and an
-// exhausted budget reports that no replay may run.
-func TestRemainingStepBudget(t *testing.T) {
-	for _, tc := range []struct {
-		name      string
-		bound     int
-		spent     int
-		want      int
-		exhausted bool
-	}{
-		{"unbounded stays unbounded", 0, 5, 0, false},
-		{"negative bound stays unbounded", -1, 5, -1, false},
-		{"budget left", 5, 2, 3, false},
-		{"exactly spent", 5, 5, 0, true},
-		{"overspent", 5, 7, 0, true},
-		{"nothing spent", 5, 0, 5, false},
-	} {
-		got, exhausted := remainingStepBudget(tc.bound, tc.spent)
-		if got != tc.want || exhausted != tc.exhausted {
-			t.Errorf("%s: remainingStepBudget(%d, %d) = (%d, %v), want (%d, %v)",
-				tc.name, tc.bound, tc.spent, got, exhausted, tc.want, tc.exhausted)
-		}
-	}
-}
-
-// TestReplayStepBudgetNext pins the contract of next that the two replay
-// callers depend on. A nil receiver or a nil turn state means no accounting
-// is available: the replay runs with the options unchanged, which is the
-// behavior that shipped before the budget existed.
-func TestReplayStepBudgetNext(t *testing.T) {
-	base := sdkagentloop.Options{MaxIterations: 5}
-
-	var nilBudget *replayStepBudget
-	got, ok := nilBudget.next(base)
-	if !ok || got.MaxIterations != 5 {
-		t.Fatalf("nil receiver: next() = (MaxIterations %d, %v), want (5, true)",
-			got.MaxIterations, ok)
-	}
-
-	noTurn := &replayStepBudget{bound: 5}
-	got, ok = noTurn.next(base)
-	if !ok || got.MaxIterations != 5 {
-		t.Fatalf("nil turn state: next() = (MaxIterations %d, %v), want (5, true)",
-			got.MaxIterations, ok)
-	}
-
-	turn := &sdkTurnState{}
-	b := &replayStepBudget{bound: 5, turn: turn}
-	turn.steps.Store(2)
-	got, ok = b.next(base)
-	if !ok || got.MaxIterations != 3 {
-		t.Fatalf("budget left: next() = (MaxIterations %d, %v), want (3, true)",
-			got.MaxIterations, ok)
-	}
-
-	turn.steps.Store(5)
-	got, ok = b.next(base)
-	if ok || got.MaxIterations != 5 {
-		t.Fatalf("spent budget: next() = (MaxIterations %d, %v), want (5 unchanged, false)",
-			got.MaxIterations, ok)
 	}
 }

@@ -94,7 +94,17 @@ func sdkPrepareTrim(l *Loop, opts Options, turn *sdkTurnState) func(context.Cont
 		return nil
 	}
 	return func(ctx context.Context, sdkMsgs []sdkshape.Message) ([]sdkshape.Message, error) {
-		prepared, err := prepareSDKOnce(ctx, l, opts, turn, sdkMessagesToCLI(sdkMsgs))
+		// Since the ContinueOnStop hook (mivia-ai-sdk v0.1.3) drives the
+		// empty-response retry inside one loop, the triggering empty
+		// assistant message stays in the run history: the SDK appends
+		// resp.Message before the stop decision. The wire layers drop that
+		// shape on every provider request (toAPIMessages,
+		// anthropic_request.go), but the message-shape validation inside
+		// preparation hard-rejects it first, so it must be gone before
+		// prepareSDKOnce sees it. DropEmptyAssistantTurns is this repo's
+		// repair for exactly the shape, applied here at the validation seam.
+		cliMsgs := provider.DropEmptyAssistantTurns(sdkMessagesToCLI(sdkMsgs))
+		prepared, err := prepareSDKOnce(ctx, l, opts, turn, cliMsgs)
 		if err != nil {
 			return nil, err
 		}

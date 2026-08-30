@@ -9,19 +9,21 @@
 // remedy belongs in the host loop where every provider passes through, not
 // in one provider adapter.
 //
-// It sits beside retryOnEmptyResponse (agentloop_run.go), which covers the
-// neighbouring case: a turn with no text AND no tool calls. The two never
-// overlap - that one requires empty text, this one requires non-empty text.
+// The continuation itself is driven by the SDK loop's ContinueOnStop hook
+// (continue_on_stop.go) since mivia-ai-sdk v0.1.3, as an ordinary iteration
+// of the same loop. This file keeps the policy: the opt-in bound's
+// predicate (turnLeftWorkUnacted), the tool-surface check, the model-facing
+// notice, and the intent heuristic. It sits beside the empty-response
+// branch of the same hook, which covers the neighbouring case: a turn with
+// no text AND no tool calls. The two never overlap - that one requires
+// empty text, this one requires non-empty text.
 
 package agent
 
 import (
-	"context"
-	"fmt"
 	"strings"
 
 	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
-	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
 )
 
 // unactedContinuationNotice is the model-facing nudge. It states the
@@ -42,68 +44,26 @@ const unactedContinuationNotice = "[mivia: your previous message described work 
 	"If the work is still needed, carry it out now using the tools available. " +
 	"If it is not needed, or you need an answer from the user first, say so plainly instead.]"
 
-// continueUnactedTurn re-runs a turn that announced work and then ended
-// without calling a single tool, up to opts.MaxUnactedContinuations times.
-//
+// turnLeftWorkUnacted reports whether one completed run is the
+// announced-but-unperformed shape. The ContinueOnStop hook consults it
+// (beside its own opt-in and bound checks) before continuing a turn, so
+// the retry bound and the predicate stay readable and testable separately.
 // Every precondition is load-bearing:
-//   - MaxUnactedContinuations > 0. The whole mechanism is opt-in: a nudge
-//     costs a second provider call, and whether a model needs one is a
-//     property of the model, so an operator decides, not this code.
-//   - DisableProviderReplay off. A continuation IS a replay, and the flag
-//     suppresses the sibling empty-response retry for the same reason.
 //   - No error, and the stop is exactly StopNoToolCalls. Any other stop
 //     (max iterations, hook veto, steered, repeated failures, concluded)
 //     has its own meaning and must not be re-driven.
+//   - Tools were advertised. With no tool surface there is no work the
+//     model could have done, so the turn was complete by construction.
 //   - Zero tool calls in the whole turn. This is what makes a continuation
 //     safe rather than a duplicate-work risk: nothing ran, so nothing can
 //     run twice. A turn that called one tool and then narrated the next is
 //     deliberately NOT continued.
-//   - Tools were advertised. With no tool surface there is no work the
-//     model could have done, so the turn was complete by construction.
 //   - Non-empty final text that reads as an unperformed intent (see
 //     announcesUnactedWork).
 //
-// The continuation appends the assistant's own message and the notice to
-// the run's history rather than re-asking the original prompt: the model
-// keeps what it said, so it continues from its plan instead of restarting.
-func continueUnactedTurn(ctx context.Context, l *Loop, sdkOpts sdkagentloop.Options, opts Options, turn *sdkTurnState, turnUserText string, res sdkagentloop.Result, err error, budget *replayStepBudget) (sdkagentloop.Result, error) {
-	if opts.MaxUnactedContinuations <= 0 || opts.DisableProviderReplay {
-		return res, err
-	}
-	for attempt := 0; attempt < opts.MaxUnactedContinuations; attempt++ {
-		if !turnLeftWorkUnacted(sdkOpts, opts, turnUserText, res, err) {
-			return res, err
-		}
-		emit(opts, Event{
-			Kind:   EventUnactedContinuation,
-			Detail: fmt.Sprintf("turn announced work but called no tool, continuing (%d/%d)", attempt+1, opts.MaxUnactedContinuations),
-		})
-		// The announcement is optimistic content: text the model streamed
-		// live, immediately before doing the work it described. That is the
-		// same shape sdk_tool_events.go revokes when a tool call arrives
-		// after streamed text, and it must be revoked here for the same
-		// reason plus one more. If the continued run comes back with a zero
-		// Final (StopEmptyResponse, StopMaxIterations), finalizeSDKTurn
-		// falls back to "the last assistant text anywhere in the turn",
-		// finds this announcement, and writes it to FinalWriter - which
-		// already received it live. The user would read the same sentence
-		// twice. Revoking is a no-op when nothing was streamed or the
-		// writer does not implement streamRevoker.
-		revokeStreamWriter(opts.FinalWriter)
-		// A continuation spends the SAME turn's step budget, not a fresh
-		// one (replay_step_budget.go).
-		attemptOpts, allowed := budget.next(sdkOpts)
-		if !allowed {
-			return res, err
-		}
-		res, err = runSDKPromptTooLongRecoverable(ctx, l, attemptOpts, opts, continuedHistory(res.History), turn)
-	}
-	return res, err
-}
-
-// turnLeftWorkUnacted reports whether one completed run is the
-// announced-but-unperformed shape. Split out from the loop so the retry
-// bound and the predicate can be read (and tested) separately.
+// The continuation appends the assistant's own message - already in the
+// decision's History - plus the hook's notice, so the model keeps what it
+// said and continues from its plan instead of restarting.
 func turnLeftWorkUnacted(sdkOpts sdkagentloop.Options, opts Options, turnUserText string, res sdkagentloop.Result, err error) bool {
 	if err != nil || res.Stop != sdkagentloop.StopNoToolCalls {
 		return false
@@ -126,18 +86,6 @@ func runAdvertisedTools(sdkOpts sdkagentloop.Options, opts Options) bool {
 		return len(opts.AdvertisedToolSpecs) > 0
 	}
 	return sdkOpts.Tools != nil && len(sdkOpts.Tools.Tools()) > 0
-}
-
-// continuedHistory returns the run history with the notice appended as a
-// user turn. The copy is private: the caller's Result keeps its own slice,
-// and the SDK loop appends to whatever it is handed.
-func continuedHistory(history []sdkshape.Message) []sdkshape.Message {
-	out := make([]sdkshape.Message, 0, len(history)+1)
-	out = append(out, history...)
-	return append(out, sdkshape.Message{
-		Role:    sdkshape.RoleUser,
-		Content: unactedContinuationNotice,
-	})
 }
 
 // intentPhrases are first-person statements of work about to be done.

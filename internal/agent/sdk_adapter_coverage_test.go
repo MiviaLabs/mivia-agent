@@ -556,7 +556,7 @@ func TestBuildAgentLoopOptionsBadParamsToolFailsClosed(t *testing.T) {
 		Model:      "m",
 		MaxSteps:   2,
 		Dispatcher: mustDispatcher(t),
-	})
+	}, "hi")
 	if err == nil {
 		t.Fatal("expected marshal-parameters error, got nil")
 	}

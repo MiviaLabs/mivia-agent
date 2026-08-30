@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -88,6 +89,25 @@ func toolsAdvertised() Options {
 	}
 }
 
+// unactedDecision builds the StopDecision the ContinueOnStop hook sees at
+// the exact stop the mechanism targets: a turn that answered with an
+// announcement and called no tool.
+func unactedDecision(text string) sdkagentloop.StopDecision {
+	return sdkagentloop.StopDecision{
+		Stop:    sdkagentloop.StopNoToolCalls,
+		Message: sdkshape.Message{Role: sdkshape.RoleAssistant, Content: text},
+		History: []sdkshape.Message{
+			{Role: sdkshape.RoleUser, Content: "review the diff"},
+			{Role: sdkshape.RoleAssistant, Content: text},
+		},
+	}
+}
+
+// unactedHook builds the ContinueOnStop callback over one fresh turn state.
+func unactedHook(opts Options) func(context.Context, sdkagentloop.StopDecision) []sdkshape.Message {
+	return newSDKContinueOnStop(&Loop{}, sdkagentloop.Options{}, opts, newSDKTurnState(), "review the diff")
+}
+
 // TestTurnLeftWorkUnacted pins every precondition. Each case turns exactly
 // one of them off and must stop the continuation.
 func TestTurnLeftWorkUnacted(t *testing.T) {
@@ -154,42 +174,37 @@ func TestContinueUnactedTurnOffByDefault(t *testing.T) {
 	if turnLeftWorkUnacted(sdkagentloop.Options{}, opts, "review the diff", res, nil) != true {
 		t.Fatal("the predicate itself should still match; the gate is on the count")
 	}
-	got, err := continueUnactedTurn(t.Context(), nil, sdkagentloop.Options{}, opts, nil, "review the diff", res, nil, nil)
-	if err != nil || got.Stop != sdkagentloop.StopNoToolCalls {
-		t.Fatalf("a zero bound must return the run untouched, got %+v / %v", got.Stop, err)
+	if got := unactedHook(opts)(t.Context(), unactedDecision("I'll spawn 4 agents to review the diff.")); got != nil {
+		t.Fatalf("a zero bound must not continue the turn, got %+v", got)
 	}
 }
 
 // TestContinueUnactedTurnRespectsDisableProviderReplay pins that a caller
 // which forbade provider replays gets none: a continuation is a replay.
 func TestContinueUnactedTurnRespectsDisableProviderReplay(t *testing.T) {
-	res := unactedRun("I'll spawn 4 agents to review the diff.")
 	opts := toolsAdvertised()
 	opts.DisableProviderReplay = true
-	got, err := continueUnactedTurn(t.Context(), nil, sdkagentloop.Options{}, opts, nil, "review the diff", res, nil, nil)
-	if err != nil || got.Stop != sdkagentloop.StopNoToolCalls {
-		t.Fatalf("DisableProviderReplay must suppress the continuation, got %+v / %v", got.Stop, err)
+	if got := unactedHook(opts)(t.Context(), unactedDecision("I'll spawn 4 agents to review the diff.")); got != nil {
+		t.Fatalf("DisableProviderReplay must suppress the continuation, got %+v", got)
 	}
 }
 
-// TestContinuedHistoryAppendsTheNotice pins that the model keeps what it
-// said (so it continues its own plan rather than restarting) and that the
-// caller's slice is not aliased.
-func TestContinuedHistoryAppendsTheNotice(t *testing.T) {
-	original := unactedRun("I'll spawn 4 agents.").History
-	got := continuedHistory(original)
-	if len(got) != len(original)+1 {
-		t.Fatalf("want one appended message, got %d from %d", len(got), len(original))
+// TestUnactedContinuationReturnsOnlyTheNotice pins the hook's return
+// shape: the SDK loop appends the return to its own history, so the model
+// keeps what it said only if the decision's History is left alone and the
+// return is exactly the notice, as a user turn.
+func TestUnactedContinuationReturnsOnlyTheNotice(t *testing.T) {
+	hook := unactedHook(toolsAdvertised())
+	d := unactedDecision("I'll spawn 4 agents.")
+	got := hook(t.Context(), d)
+	if len(got) != 1 {
+		t.Fatalf("want exactly one continuation message, got %d", len(got))
 	}
-	if got[len(got)-2].Content != "I'll spawn 4 agents." {
-		t.Fatal("the assistant's own message must survive into the continuation")
+	if got[0].Role != sdkshape.RoleUser || got[0].Content != unactedContinuationNotice {
+		t.Fatalf("notice not returned as a user turn: %+v", got[0])
 	}
-	last := got[len(got)-1]
-	if last.Role != sdkshape.RoleUser || last.Content != unactedContinuationNotice {
-		t.Fatalf("notice not appended as a user turn: %+v", last)
-	}
-	if len(original) != 2 {
-		t.Fatal("the caller's history must not be mutated")
+	if len(d.History) != 2 || d.History[1].Content != "I'll spawn 4 agents." {
+		t.Fatal("the decision's history must not be mutated")
 	}
 }
 

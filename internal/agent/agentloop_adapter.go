@@ -44,7 +44,11 @@ func unsupportedSDKOption(field string) error {
 // It also returns the run's sdkTurnState: the single construction
 // site, seeded with the run's surface values, that RunAgentLoopOnce
 // consults for bridge errors after the run.
-func buildAgentLoopOptions(l *Loop, opts Options) (sdkagentloop.Options, *sdkTurnState, error) {
+//
+// turnUserText is the current turn's user message content, the
+// content-match boundary the ContinueOnStop hook's decision helpers
+// use to locate the turn inside a StopDecision's History.
+func buildAgentLoopOptions(l *Loop, opts Options, turnUserText string) (sdkagentloop.Options, *sdkTurnState, error) {
 	if err := rejectUnsupportedSDKBatches(opts); err != nil {
 		return sdkagentloop.Options{}, nil, err
 	}
@@ -90,12 +94,11 @@ func buildAgentLoopOptions(l *Loop, opts Options) (sdkagentloop.Options, *sdkTur
 	// contract. The negative derived-budget mode has no SDK analogue
 	// and was rejected above.
 	// WorkLimits.MaxTurns clamps MaxIterations, mirroring the legacy
-	// clamp at loop.go's runOnceLegacy: the test reads opts.MaxSteps
-	// (pre-default) because an unset MaxSteps means unbounded, so ANY
-	// positive turn limit becomes the bound even above the default 25.
-	if limit := opts.WorkLimits.MaxTurns; limit > 0 && (opts.MaxSteps <= 0 || limit < opts.MaxSteps) {
-		out.MaxIterations = limit
-	}
+	// clamp at loop.go's runOnceLegacy (see applySDKStepBound).
+	applySDKStepBound(&out, opts)
+	// Stop-time continuations ride the SDK's own ContinueOnStop hook;
+	// see installSDKContinueOnStop.
+	installSDKContinueOnStop(l, &out, opts, turn, turnUserText)
 	// MaxToolCalls rides the ToolBudget bridge (agentloop_toolbudget.go),
 	// sharing l.workLimits with the WorkBudget bridge above.
 	out.WorkBudget = budgetHook
@@ -121,6 +124,38 @@ func buildAgentLoopOptions(l *Loop, opts Options) (sdkagentloop.Options, *sdkTur
 	// options. The watchdog's steer-latency role is carried by the
 	// MailboxPending poller in the steer bridge instead.
 	return out, turn, nil
+}
+
+// applySDKStepBound sets the SDK iteration bound for the turn:
+// MaxSteps passes through verbatim. The SDK's Validate accepts 0
+// and treats it as uncapped via unboundedOrSet (MaxInt32), matching
+// the legacy loop's MaxSteps <= 0 == unbounded contract. A
+// positive MaxSteps is the requested cap as-is. The previous
+// defaultSDKMaxIterations = 25 substitution was removed: it capped
+// the SDK path at a value the legacy loop never honored, breaking
+// the parity the field-mapping doc advertises.
+//
+// WorkLimits.MaxTurns clamps MaxIterations, mirroring the legacy
+// clamp at loop.go's runOnceLegacy: the test reads opts.MaxSteps
+// (pre-default) because an unset MaxSteps means unbounded, so ANY
+// positive turn limit becomes the bound even above the default 25.
+func applySDKStepBound(out *sdkagentloop.Options, opts Options) {
+	if limit := opts.WorkLimits.MaxTurns; limit > 0 && (opts.MaxSteps <= 0 || limit < opts.MaxSteps) {
+		out.MaxIterations = limit
+	}
+}
+
+// installSDKContinueOnStop wires the turn's stop-time continuation
+// callback. The bounded empty-response retry and the bounded unacted
+// continuation ride the SDK's own ContinueOnStop hook (since
+// mivia-ai-sdk v0.1.3): they are iterations of THIS loop now, so its
+// MaxIterations is the per-turn total by itself. Installed after the
+// clamp in applySDKStepBound so the hook's budget guard reads the
+// effective bound, and sharing the turn state so the guard counts
+// every completed call of the turn (the deleted replay_step_budget.go's
+// rule, which outlived that file's budget arithmetic).
+func installSDKContinueOnStop(l *Loop, out *sdkagentloop.Options, opts Options, turn *sdkTurnState, turnUserText string) {
+	out.ContinueOnStop = newSDKContinueOnStop(l, *out, opts, turn, turnUserText)
 }
 
 // attachSDKObservability wires the run's live stream tee. The operator wire

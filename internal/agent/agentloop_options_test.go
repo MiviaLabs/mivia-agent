@@ -29,7 +29,7 @@ import (
 // wrapped, registry converted, MaxIterations positive.
 func TestBuildAgentLoopOptionsPassesValidate(t *testing.T) {
 	l := &Loop{Completer: &fakeCompleter{name: "test"}, Tools: tools.NewRegistry()}
-	got, _, err := buildAgentLoopOptions(l, Options{MaxSteps: 5})
+	got, _, err := buildAgentLoopOptions(l, Options{MaxSteps: 5}, "hi")
 	if err != nil {
 		t.Fatalf("buildAgentLoopOptions: %v", err)
 	}
@@ -385,7 +385,7 @@ func TestBuildAgentLoopOptionsWorkLimitsTurnsClamp(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, _, err := buildAgentLoopOptions(l, Options{MaxSteps: tc.maxSteps, WorkLimits: runtime.WorkLimits{MaxTurns: tc.maxTurns}})
+			got, _, err := buildAgentLoopOptions(l, Options{MaxSteps: tc.maxSteps, WorkLimits: runtime.WorkLimits{MaxTurns: tc.maxTurns}}, "hi")
 			if err != nil {
 				t.Fatalf("buildAgentLoopOptions: %v", err)
 			}
@@ -655,7 +655,7 @@ func mustBinding(t *testing.T) contextstate.BindingRevision {
 // Options.MaxConcurrentTools is forwarded to SDK agentloop.Options.
 func TestBuildAgentLoopOptionsCarriesMaxConcurrentTools(t *testing.T) {
 	l := &Loop{Completer: &fakeCompleter{name: "test"}, Tools: tools.NewRegistry()}
-	got, _, err := buildAgentLoopOptions(l, Options{MaxSteps: 5, MaxConcurrentTools: 4})
+	got, _, err := buildAgentLoopOptions(l, Options{MaxSteps: 5, MaxConcurrentTools: 4}, "hi")
 	if err != nil {
 		t.Fatalf("buildAgentLoopOptions: %v", err)
 	}

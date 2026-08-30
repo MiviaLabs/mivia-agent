@@ -393,7 +393,7 @@ Two consequences worth knowing before you enable it:
 
 Set it to `1` for a model that narrates its plan instead of acting on it. Whether a model needs this is a property of the model, which is why it is an operator switch and not a default. Values above `3` are clamped to `3`: every continuation is a full extra provider call on a turn that already answered.
 
-A continuation appends a short bracket-labelled notice to the turn's own history and runs the loop again, so the model keeps what it said and continues from its plan rather than restarting. Each continuation costs one extra provider call, and each runs a fresh loop, so the effective ceiling on one turn's steps becomes `max_steps × (1 + max_unacted_continuations)`. The notice persists in session history, labelled `[mivia: …]` so a later turn cannot read it as the user's own words.
+A continuation appends a short bracket-labelled notice to the turn's own history and keeps the same loop running, so the model keeps what it said and continues from its plan rather than restarting. Each continuation costs one extra provider call and counts as an ordinary step of the turn, so `max_steps` stays the exact ceiling on one turn's provider calls, continuations included. The notice persists in session history, labelled `[mivia: …]` so a later turn cannot read it as the user's own words.
 
 A caller that disabled provider replays (subagent and workflow paths that set `DisableProviderReplay`) never continues, whatever this key says: a continuation is a replay.
 

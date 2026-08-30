@@ -98,7 +98,7 @@ func buildAndRotate(t *testing.T, opts Options, fix *rotatedSurfaceFixture, rota
 	opts.Surface = func() Surface {
 		return Surface{Registry: fix.rotatedCLI, Dispatcher: rotDisp, ToolSpecs: fix.specs}
 	}
-	sdkOpts, turn, err := buildAgentLoopOptions(loop, opts)
+	sdkOpts, turn, err := buildAgentLoopOptions(loop, opts, "hi")
 	if err != nil {
 		t.Fatalf("buildAgentLoopOptions: %v", err)
 	}

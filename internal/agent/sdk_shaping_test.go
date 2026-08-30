@@ -84,7 +84,7 @@ func TestSDKTurnShapingKeepsToolsOffered(t *testing.T) {
 	sdkOpts, _, err := buildAgentLoopOptions(loop, Options{
 		Model: "m", BatchResultBudgetBytes: 16 << 10,
 		SessionID: budgetTestSession, RemainderSpool: f.spool,
-	})
+	}, "hi")
 	if err != nil {
 		t.Fatal(err)
 	}

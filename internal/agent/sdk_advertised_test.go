@@ -206,7 +206,7 @@ func TestBridgeSurface_NilToolSpecsKeepsSDKSurface(t *testing.T) {
 // override cannot stamp a compaction request.
 func TestBuildAgentLoopOptions_NeverWiresWindow(t *testing.T) {
 	l := &Loop{Completer: &recordingCompleter{}, Tools: tools.NewRegistry()}
-	out, _, err := buildAgentLoopOptions(l, Options{})
+	out, _, err := buildAgentLoopOptions(l, Options{}, "hi")
 	if err != nil {
 		t.Fatalf("buildAgentLoopOptions failed: %v", err)
 	}

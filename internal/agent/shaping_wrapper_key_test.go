@@ -63,7 +63,7 @@ func TestSDKTurnShaping_VetoPathCleanRecord(t *testing.T) {
 		BatchResultBudgetBytes: 1024,
 	}
 
-	sdkOpts, turn, err := buildAgentLoopOptions(loop, opts)
+	sdkOpts, turn, err := buildAgentLoopOptions(loop, opts, "hi")
 	if err != nil {
 		t.Fatalf("buildAgentLoopOptions err = %v", err)
 	}

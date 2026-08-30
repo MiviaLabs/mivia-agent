@@ -19,7 +19,7 @@ import (
 // and converted.
 func TestBuildAgentLoopOptions_ProjectsModelAndSteps(t *testing.T) {
 	l := &Loop{Completer: &fakeCompleter{name: "test"}, Tools: tools.NewRegistry()}
-	got, _, err := buildAgentLoopOptions(l, Options{Model: "test-model", MaxSteps: 5})
+	got, _, err := buildAgentLoopOptions(l, Options{Model: "test-model", MaxSteps: 5}, "hi")
 	if err != nil {
 		t.Fatalf("buildAgentLoopOptions: %v", err)
 	}
@@ -45,7 +45,7 @@ func TestBuildAgentLoopOptions_ProjectsModelAndSteps(t *testing.T) {
 // adapter no longer substitutes a finite default.
 func TestBuildAgentLoopOptions_EmptyRequest(t *testing.T) {
 	l := &Loop{Completer: &fakeCompleter{name: "test"}, Tools: tools.NewRegistry()}
-	got, _, err := buildAgentLoopOptions(l, Options{})
+	got, _, err := buildAgentLoopOptions(l, Options{}, "hi")
 	if err != nil {
 		t.Fatalf("buildAgentLoopOptions: %v", err)
 	}
