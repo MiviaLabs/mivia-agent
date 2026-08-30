@@ -11,12 +11,14 @@ import (
 
 	clichat "github.com/MiviaLabs/mivia-agent/internal/clichat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/gittest"
 	"github.com/MiviaLabs/mivia-agent/internal/memory"
 	"github.com/MiviaLabs/mivia-agent/internal/testenv"
 )
 
 // TestMain wires seam defaults before running the package tests.
 func TestMain(m *testing.M) {
+	gittest.DisableDetachedMaintenance()
 	// See internal/testenv: without this, chat-path tests here resolve
 	// through workspace.GlobalContextStorePath and write into the
 	// developer's real ~/.mivia/context.db.

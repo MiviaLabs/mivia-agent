@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/gittest"
 	"github.com/MiviaLabs/mivia-agent/internal/hooks"
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/testenv"
@@ -92,6 +93,7 @@ func flagVarLocal(args []string, names ...string) ([]string, []string, bool, err
 
 // TestMain wires seam defaults before running the package tests.
 func TestMain(m *testing.M) {
+	gittest.DisableDetachedMaintenance()
 	// Isolate the home directory first. Several paths here resolve through
 	// workspace.GlobalContextStorePath, which without this writes test
 	// sessions, checkpoints, and worktree rows into the developer's real

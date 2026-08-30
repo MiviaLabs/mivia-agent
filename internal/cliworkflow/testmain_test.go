@@ -21,6 +21,7 @@ import (
 	cliagents "github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/coordinator"
+	"github.com/MiviaLabs/mivia-agent/internal/gittest"
 	"github.com/MiviaLabs/mivia-agent/internal/ledger"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
@@ -35,6 +36,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	gittest.DisableDetachedMaintenance()
 	wireTestSeams()
 	cliagents.WireWorkflowToolOptionsVar = WireWorkflowToolOptions
 	os.Exit(m.Run())
