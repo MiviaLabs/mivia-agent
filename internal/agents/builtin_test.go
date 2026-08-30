@@ -269,6 +269,11 @@ func TestBuiltInPromptLanguageGeneric(t *testing.T) {
 // (abce735c): future trims of the compiled prompts must not silently drop
 // these lines, and the steering rule must stay grounded in what the parent
 // can actually observe (timeout-based, never "identical running checks").
+//
+// Entry bar for NEW prompt lines: an observed failure mode plus a checked
+// before/after, never speculation - instruction density degrades compliance
+// and rewording a working line is itself a regression risk. See
+// .agents/memories/prompt-lines-require-observed-failures.md.
 func TestBuiltInPromptDisciplineLines(t *testing.T) {
 	for _, want := range []string{
 		"a real timeout_seconds",
