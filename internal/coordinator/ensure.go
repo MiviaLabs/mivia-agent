@@ -147,6 +147,15 @@ func (c *coordinator) EnsureSingleTaskRun(ctx context.Context, req EnsureRunRequ
 		return nil, err
 	}
 	if err := c.repo.ClaimRun(ctx, req.RunID, c.holderID); err != nil {
+		if errors.Is(err, ledger.ErrClaimHeld) {
+			// The admission durably succeeded, but a concurrent joiner
+			// claimed the run in the window between AdmitSingleTask and this
+			// claim. Execution belongs to the claim holder; join the run we
+			// just admitted exactly as if we had lost the admission race
+			// itself, instead of failing the caller with the raw claim error
+			// (the verify-main-race CI flake).
+			return c.joinSingleTaskAdmission(ctx, req, key, fingerprint)
+		}
 		return nil, err
 	}
 	opts := append(nonInteractiveRunOpts(req), withRunPolicy(req.Policy))
