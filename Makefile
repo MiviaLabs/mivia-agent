@@ -23,7 +23,7 @@ VERSION_LDFLAGS := -X $(VERSION_PKG).Commit=$(COMMIT) -X $(VERSION_PKG).Dirty=$(
 
 .PHONY: help install-hooks hooks verify verify-agent pre-commit pre-push \
 	secret-scan docs-check semgrep semgrep-validate semgrep-test \
-	hook-test agent-hook-test test-quality structure-check import-layers-check timeout-saturation-check commit-check go-check verify-go test test-changed race vet build tidy fmt fmt-check \
+	hook-test agent-hook-test test-quality structure-check import-layers-check timeout-saturation-check request-deadline-check commit-check go-check verify-go test test-changed race vet build tidy fmt fmt-check \
 	validate-invariants invariants mutation diff-coverage verifier-integration smoke release release-test \
 	prose-check
 
@@ -43,6 +43,7 @@ help:
 		'  make structure-check   Go LOC/function limits + 500 KiB file-size' \
 		'  make import-layers-check  Internal import-edge policy (allow/deny/cap)' \
 		'  make timeout-saturation-check  No unbounded seconds-to-Duration multiply (DC-7)' \
+		'  make request-deadline-check  Every provider.Request carries a deadline (DC-7)' \
 		'  make semgrep           Run repo Semgrep policy scan (if installed)' \
 		'  make semgrep-validate  Validate Semgrep config (if installed)' \
 		'  make semgrep-test      Run Semgrep rule contract tests' \
@@ -78,7 +79,8 @@ install-hooks hooks:
 # still runs on main and macOS in CI, and standalone via `make
 # verifier-integration`.
 verify: verify-agent docs-check release-test secret-scan structure-check \
-	import-layers-check timeout-saturation-check semgrep-validate semgrep-test \
+	import-layers-check timeout-saturation-check request-deadline-check \
+	semgrep-validate semgrep-test \
 	hook-test agent-hook-test test-quality validate-invariants semgrep verify-go
 	@python3 scripts/check_mutation.py --probe
 	@python3 scripts/check_mutation.py --staged
@@ -113,6 +115,11 @@ timeout-saturation-check:
 	@python3 scripts/check_timeout_saturation.py --probe
 	@python3 scripts/test_check_timeout_saturation.py
 	@python3 scripts/check_timeout_saturation.py
+
+request-deadline-check:
+	@python3 scripts/check_request_deadline.py --probe
+	@python3 scripts/test_check_request_deadline.py
+	@python3 scripts/check_request_deadline.py
 
 commit-check:
 	@python3 scripts/git-hooks/check-commit-subject "$(MSG)"

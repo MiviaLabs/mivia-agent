@@ -1,0 +1,17 @@
+{
+  "description": "Every provider.Request literal in non-test code must set Timeout, or appear here with the bound that applies instead. Mechanism: a request with no Timeout of its own is bounded only by whatever deadline the ambient context happens to carry, and when that context carries none the request runs to the transport wall. The class is a CALL-SITE omission: internal/provider/completer_conformance_test.go already pins that every Completer implementation honors req.Timeout, but it never executes these construction sites - a sibling send path that forgets the field is invisible to it (this is how plain chat turns ran unbounded until commit e2c6dc27). A new literal fails scripts/check_request_deadline.py until it sets Timeout or is dispositioned here; a stale entry (matching no site) also fails, so this list cannot rot.",
+  "allow": [
+    {
+      "file": "internal/subagents/oneshot.go",
+      "reason": "budgetContext(ctx, h.TotalTimeout, req.Timeout) arms callCtx immediately above this call, so the deadline rides the context instead of the field"
+    },
+    {
+      "file": "internal/contextmgr/summary_provider_llm.go",
+      "reason": "Summarizer.attemptSummarize wraps ctx with summaryTimeout (20s) before calling this provider, so the summary call carries its own bound"
+    },
+    {
+      "file": "internal/sdkadapter/provider.go",
+      "reason": "dead bridge: no production caller (only its own test), and the literal is deliberately empty because the SDK-shaped request is discarded. Wiring this up means building a real request - set Timeout then and drop this entry"
+    }
+  ]
+}

@@ -162,6 +162,12 @@ already-expired deadline or expires retention immediately.
   multiply (`config.SaturatingSeconds` or an upstream clamp). Gate:
   `scripts/check_timeout_saturation.py` + `.mivia/policy/timeout-saturation.json`
   (`make timeout-saturation-check`).
+- Every outbound request must carry a deadline of its own, or an explicitly
+  named context deadline armed by its caller. One send path setting the
+  field while a sibling omits it is the recurring shape: a conformance
+  suite tests implementations and never executes the call sites. Gate:
+  `scripts/check_request_deadline.py` + `.mivia/policy/request-deadline.json`
+  (`make request-deadline-check`).
 
 ## DC-8 Retry, backoff, and storm control
 
