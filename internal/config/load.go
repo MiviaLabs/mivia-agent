@@ -296,27 +296,20 @@ func resolveProviderHTTPTimeout(chatRequest time.Duration, subagents SubagentCon
 	return wall
 }
 
-// maxResolvedTimeoutSeconds saturates a configured timeout at 100 years.
-// A TOML integer can carry up to math.MaxInt64 seconds; a plain multiply
-// by time.Second overflows to a negative Duration (~292 years is the
-// Duration ceiling), and the wall derivation then adds a margin on top of
-// the resolved value, which can overflow even a product that survived the
-// multiply. 100 years is far above any real timeout and leaves the margin
-// arithmetic ample headroom.
-const maxResolvedTimeoutSeconds = 100 * 365 * 24 * 60 * 60
-
 // SaturatingSeconds converts a configured seconds count to a Duration,
-// saturating at +/- maxResolvedTimeoutSeconds so the multiply and any
-// later margin addition cannot overflow. The sign is preserved: callers
-// that treat a negative value as "off" see it unchanged. Every
-// config-controlled seconds-to-Duration conversion must route through
-// this helper, not a bare multiply.
+// saturating at +/- MaxTimeoutSeconds (defaults.go) - the repo's one
+// overflow-safety ceiling - so the multiply and any later margin addition
+// cannot overflow. A TOML integer can carry up to math.MaxInt64 seconds,
+// and a plain multiply by time.Second wraps negative above ~292 years.
+// The sign is preserved: callers that treat a negative value as "off" see
+// it unchanged. Every config-controlled seconds-to-Duration conversion
+// must route through this helper, not a bare multiply.
 func SaturatingSeconds(sec int) time.Duration {
-	if sec > maxResolvedTimeoutSeconds {
-		sec = maxResolvedTimeoutSeconds
+	if sec > MaxTimeoutSeconds {
+		sec = MaxTimeoutSeconds
 	}
-	if sec < -maxResolvedTimeoutSeconds {
-		sec = -maxResolvedTimeoutSeconds
+	if sec < -MaxTimeoutSeconds {
+		sec = -MaxTimeoutSeconds
 	}
 	return time.Duration(sec) * time.Second
 }

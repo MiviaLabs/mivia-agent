@@ -48,3 +48,17 @@ func TestTimeoutSecondsSaturateInsteadOfOverflow(t *testing.T) {
 		t.Fatalf("SaturatingSeconds(MaxInt64) = %v; want a positive saturated value", got)
 	}
 }
+
+// TestSaturatingSecondsCeilingIsMaxTimeoutSeconds pins the unification of
+// the repo's overflow-safety ceilings: SaturatingSeconds saturates at the
+// same MaxTimeoutSeconds that bounds EffectiveTimeoutSec, so the codebase
+// has exactly one ceiling and the two cannot silently re-fork.
+func TestSaturatingSecondsCeilingIsMaxTimeoutSeconds(t *testing.T) {
+	want := time.Duration(MaxTimeoutSeconds) * time.Second
+	if got := SaturatingSeconds(int(math.MaxInt64)); got != want {
+		t.Fatalf("SaturatingSeconds(MaxInt64) = %v; want the MaxTimeoutSeconds ceiling %v", got, want)
+	}
+	if got := SaturatingSeconds(int(math.MinInt64)); got != -want {
+		t.Fatalf("SaturatingSeconds(MinInt64) = %v; want the negative ceiling %v", got, -want)
+	}
+}

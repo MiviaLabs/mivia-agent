@@ -85,6 +85,8 @@ const DefaultOutputReserveTokens = 32_768
 // dispatchOrchestrationSec's +15s slack stays safe (3.15e8+15 << 9.2e9 s).
 // Without it, a wrapped-negative duration is ignored by the agent loop, which
 // falls back to DefaultToolTimeout (60s) - far below the operator floor.
+// It is also the SaturatingSeconds ceiling (load.go), so the repo has
+// exactly one overflow-safety ceiling.
 const MaxTimeoutSeconds = 315_360_000 // 10 years
 
 // defaultInlineOutputBytes is the default per-task output size threshold.
