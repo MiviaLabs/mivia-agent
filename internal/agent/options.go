@@ -206,6 +206,14 @@ type Options struct {
 	// discards a task's output whenever its error is non-nil, and a task that
 	// did its work through tools and then stopped without prose did succeed.
 	RequireFinalText bool
+	// MaxUnactedContinuations bounds how many times one turn may be continued
+	// after it announced work and then ended without calling a single tool
+	// (unacted_turn.go). Zero, the default, disables the mechanism entirely:
+	// whether a model narrates instead of acting is a property of the model,
+	// so an operator opts in per deployment ([chat]
+	// max_unacted_continuations). A continuation only ever fires for a turn
+	// that ran NO tool, so it can never repeat work that already happened.
+	MaxUnactedContinuations int
 	// PreparationManager is an optional root-owned preparation capability. It
 	// has no checkpoint publisher and is therefore safe to pass to nested loops.
 	PreparationManager contextmgr.PreparationManager

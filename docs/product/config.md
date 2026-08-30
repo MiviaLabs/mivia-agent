@@ -383,6 +383,18 @@ Two consequences worth knowing before you enable it:
 
 `[chat] max_steps` bounds one turn's agent loop. `0` means unlimited, and this is the default when unset. `/steps` overrides it for the current session.
 
+## Unacted-turn continuation
+
+`[chat] max_unacted_continuations` bounds how many times one turn is continued after it announced work and then ended without calling a single tool - the "I am going to dispatch four agents", no tool call, turn over shape. `0`, the default, disables the mechanism, so a fresh install behaves exactly as before.
+
+Set it to `1` for a model that narrates its plan instead of acting on it. Whether a model needs this is a property of the model, which is why it is an operator switch and not a default.
+
+A continuation appends a short notice to the turn's own history and runs the loop again, so the model keeps what it said and continues from its plan rather than restarting. Each continuation costs one extra provider call.
+
+A turn is continued only when **all** of these hold: the run ended with no tool calls; the turn called no tool at all; tools were advertised; the answer was not empty; and the text reads as a promise of tool work. The zero-tool-call rule is what makes it safe - nothing ran, so nothing can run twice. A turn that called one tool and then narrated the next step is never continued.
+
+The last condition is a best-effort, English-oriented text heuristic. It will miss promises in other languages and in unusual phrasing; a miss costs nothing, because the turn then ends exactly as it does today. A false positive costs one provider call whose notice explicitly allows the model to answer that no further work is needed. A message ending in a question is never continued.
+
 ## Turn request deadline
 
 `[chat] request_timeout_seconds` bounds one LLM request in a root chat turn, tools on or off. Unset or `0` resolves to the built-in default of `900` seconds (15 minutes). The deadline rides the request context, so a spent budget reports as a terminal deadline, not a transient transport fault.

@@ -56,6 +56,10 @@ type Session struct {
 	// SessionID is an unguessable principal stable for this session's lifetime.
 	SessionID string
 	MaxSteps  int
+	// MaxUnactedContinuations bounds how many times one turn may be continued
+	// after it announced work and called no tool, from [chat]
+	// max_unacted_continuations. Zero leaves the mechanism off.
+	MaxUnactedContinuations int
 	// ToolBaseResolver, when non-nil, returns the full authorized tool
 	// registry - including tools tiered/deferred out of Tools - that a
 	// deferred-but-advertised tool call can be resolved and executed from
@@ -464,15 +468,16 @@ func (s *Session) buildAgentTurnOptions(snapshot agentTurnSnapshot, userText str
 		Model: snapshot.binding.Model, Temperature: snapshot.temperature, MaxTokens: snapshot.maxTokens,
 		Reasoning: config.ModelReasoning(snapshot.binding.Profile),
 		MaxSteps:  snapshot.maxSteps, MaxContextTokens: snapshot.contextBudget,
-		MaxToolResultChars:     snapshot.maxToolResult,
-		BatchResultBudgetBytes: snapshot.batchResultBudget,
-		RefOnlyTools:           snapshot.refOnlyTools,
-		RemainderSpool:         snapshot.remainderSpool,
-		RequestTimeout:         requestTimeout,
-		ToolTimeout:            snapshot.toolTimeout,
-		ToolRunTimeout:         snapshot.toolRunTimeout,
-		ParentID:               "session",
-		TurnID:                 fmt.Sprintf("turn:%d", snapshot.myTurn), SessionID: snapshot.sessionID,
+		MaxUnactedContinuations: snapshot.maxUnactedContinuations,
+		MaxToolResultChars:      snapshot.maxToolResult,
+		BatchResultBudgetBytes:  snapshot.batchResultBudget,
+		RefOnlyTools:            snapshot.refOnlyTools,
+		RemainderSpool:          snapshot.remainderSpool,
+		RequestTimeout:          requestTimeout,
+		ToolTimeout:             snapshot.toolTimeout,
+		ToolRunTimeout:          snapshot.toolRunTimeout,
+		ParentID:                "session",
+		TurnID:                  fmt.Sprintf("turn:%d", snapshot.myTurn), SessionID: snapshot.sessionID,
 		ApprovalGate:     snapshot.approvalGate,
 		ApprovalStanding: snapshot.approvalStanding,
 		ApprovalPolicy:   snapshot.approvalPolicy,

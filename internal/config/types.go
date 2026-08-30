@@ -251,6 +251,12 @@ type ChatConfig struct {
 	// carry no per-request context; the stream watchdogs and the derived
 	// http.Client wall bound them instead.
 	RequestTimeoutSeconds *int `toml:"request_timeout_seconds"`
+	// MaxUnactedContinuations bounds how many times one agent turn may be
+	// continued after it announced work and then ended without calling a
+	// single tool. 0 (the default) disables the mechanism. Raise it for a
+	// model that narrates its plan instead of acting on it; every
+	// continuation costs one extra provider call.
+	MaxUnactedContinuations int `toml:"max_unacted_continuations"`
 }
 
 // SubagentConfig holds subagent execution policy and storage configuration.
@@ -416,12 +422,16 @@ type Resolved struct {
 	RedactionPolicy *redact.Policy
 	// MaxSteps is nil when unconfigured, so the chat default applies. A
 	// configured 0 is meaningful (unlimited) and must not be confused with it.
-	MaxSteps     *int
-	ConfigPath   string
-	EnvFilePath  string
-	EnvFileUsed  bool
-	ProviderName string
-	Model        string
+	MaxSteps *int
+	// MaxUnactedContinuations is the resolved [chat]
+	// max_unacted_continuations. 0 (the default) leaves the continuation
+	// mechanism off; see agent.Options.MaxUnactedContinuations.
+	MaxUnactedContinuations int
+	ConfigPath              string
+	EnvFilePath             string
+	EnvFileUsed             bool
+	ProviderName            string
+	Model                   string
 	// Models is retained as a compatibility projection of ModelProfiles.
 	Models []string
 	// ModelProfiles is the active provider's copied model catalog.

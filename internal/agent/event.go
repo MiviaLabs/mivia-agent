@@ -78,6 +78,14 @@ const (
 	// "attempt N/M" message. Observability only: it does not count as
 	// EventStep and does not alter retry control flow.
 	EventEmptyResponseRetry EventKind = "empty_response_retry"
+	// EventUnactedContinuation reports a bounded continuation that is ABOUT
+	// to happen: the turn produced text that announced work, called no tool
+	// at all, and continueUnactedTurn (internal/agent/unacted_turn.go) is
+	// re-running the loop with the continuation notice appended. Detail
+	// carries a human-readable "N/M" message. Observability only: it does
+	// not count as EventStep and does not alter retry control flow. It fires
+	// only when an operator set [chat] max_unacted_continuations.
+	EventUnactedContinuation EventKind = "unacted_continuation"
 )
 
 // EventOrigin identifies the agent that produced an event. The zero value

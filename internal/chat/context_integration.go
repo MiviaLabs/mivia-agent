@@ -46,31 +46,34 @@ type plainTurnSnapshot struct {
 }
 
 type agentTurnSnapshot struct {
-	myTurn            uint64
-	messages          []provider.Message
-	binding           ModelBinding
-	token             OperationToken
-	context           contextTurnConfig
-	contextBudget     int
-	temperature       *float64
-	maxTokens         *int
-	maxSteps          int
-	maxToolResult     int
-	batchResultBudget int
-	refOnlyTools      []string
-	approvalGate      func(context.Context, string, json.RawMessage) sdkadapter.ApprovalResult
-	approvalStanding  *sdkadapter.ApprovalStanding
-	approvalPolicy    string
-	onEvent           func(agent.Event)
-	toolRegistry      *tools.Registry
-	toolTimeout       time.Duration
-	toolRunTimeout    time.Duration
-	requestTimeout    time.Duration
-	remainderSpool    *remainder.Spool
-	sessionID         string
-	eventBus          *events.Bus
-	identityFactory   func(uint64) *events.Identity
-	identity          *events.Identity
+	myTurn        uint64
+	messages      []provider.Message
+	binding       ModelBinding
+	token         OperationToken
+	context       contextTurnConfig
+	contextBudget int
+	temperature   *float64
+	maxTokens     *int
+	maxSteps      int
+	// maxUnactedContinuations is the [chat] max_unacted_continuations
+	// bound, captured under the same lock as the rest of the snapshot.
+	maxUnactedContinuations int
+	maxToolResult           int
+	batchResultBudget       int
+	refOnlyTools            []string
+	approvalGate            func(context.Context, string, json.RawMessage) sdkadapter.ApprovalResult
+	approvalStanding        *sdkadapter.ApprovalStanding
+	approvalPolicy          string
+	onEvent                 func(agent.Event)
+	toolRegistry            *tools.Registry
+	toolTimeout             time.Duration
+	toolRunTimeout          time.Duration
+	requestTimeout          time.Duration
+	remainderSpool          *remainder.Spool
+	sessionID               string
+	eventBus                *events.Bus
+	identityFactory         func(uint64) *events.Identity
+	identity                *events.Identity
 	// pendingAdmission reports whether a stage awaited publication when the
 	// turn began. It lets sendAgent engage the start-of-turn publication
 	// without adding a lock acquisition to every turn.
@@ -471,7 +474,8 @@ func (s *Session) beginAgentTurn(userText string, eventOverride func(agent.Event
 		context: s.captureContextLocked(), contextBudget: budget,
 		temperature: s.Temperature, maxTokens: config.EffectiveOutputTokens(binding.Profile, s.MaxTokens),
 		maxSteps: s.MaxSteps, maxToolResult: s.MaxToolResultChars,
-		batchResultBudget: s.BatchResultBudgetBytes, refOnlyTools: s.RefOnlyTools,
+		maxUnactedContinuations: s.MaxUnactedContinuations,
+		batchResultBudget:       s.BatchResultBudgetBytes, refOnlyTools: s.RefOnlyTools,
 		approvalGate: s.ApprovalGate, approvalStanding: s.ApprovalStanding,
 		approvalPolicy: s.ApprovalPolicy,
 		onEvent:        onEvent,

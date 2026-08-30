@@ -96,8 +96,7 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 	// Usage rows: the completer's onUsage callback (newSDKTurnCompleter)
 	// runs l.emitTurnUsage per Chat call and writes the one token_usage
 	// row the legacy loop writes; an Audit bridge would duplicate it.
-	res, err := runSDKPromptTooLongRecoverable(ctx, l, sdkOpts, opts, preparedMsgs, turn)
-	res, err = retryOnEmptyResponse(ctx, l, sdkOpts, opts, preparedMsgs, turn, lastUserText(msgs), res, err)
+	res, err := runSDKWithReplays(ctx, l, sdkOpts, opts, preparedMsgs, turn, lastUserText(msgs))
 	stampSDKToolMessageNames(res.History)
 	if err != nil {
 		return handleSDKRunError(ctx, l, opts, turn, res, err)
@@ -111,6 +110,19 @@ func RunAgentLoopOnce(ctx context.Context, l *Loop, opts Options, msgs []provide
 		return res, berr
 	}
 	return finishSDKResult(opts, res, msgs)
+}
+
+// runSDKWithReplays drives the run and then applies the two bounded
+// host-side replays, in order. Both re-run the whole SDK loop, so both live
+// here rather than in the caller: retryOnEmptyResponse covers a turn with
+// no text and no tool calls, continueUnactedTurn the neighbouring turn with
+// real text and no tool calls. Their preconditions are disjoint (one
+// requires empty final text, the other non-empty), so at most one fires,
+// and both are no-ops unless their own gate is set.
+func runSDKWithReplays(ctx context.Context, l *Loop, sdkOpts sdkagentloop.Options, opts Options, preparedMsgs []sdkshape.Message, turn *sdkTurnState, turnUserText string) (sdkagentloop.Result, error) {
+	res, err := runSDKPromptTooLongRecoverable(ctx, l, sdkOpts, opts, preparedMsgs, turn)
+	res, err = retryOnEmptyResponse(ctx, l, sdkOpts, opts, preparedMsgs, turn, turnUserText, res, err)
+	return continueUnactedTurn(ctx, l, sdkOpts, opts, turn, turnUserText, res, err)
 }
 
 // ensureSDKDispatcher installs a scoped runtime dispatcher over the

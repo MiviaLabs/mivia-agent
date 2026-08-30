@@ -135,11 +135,12 @@ func NewSession(res *config.Resolved, c provider.Completer) *Session {
 		// the first PublishAgentSurface/SetAgentSettings call. Without this,
 		// AgentSettings() would return "" here instead of the real initial
 		// prompt, since it reads BaseSystemPrompt, not SystemPrompt.
-		BaseSystemPrompt: res.SystemPrompt,
-		Temperature:      res.Temperature,
-		MaxTokens:        res.MaxTokens,
-		MaxSteps:         resolvedMaxSteps(res), // /steps overrides (0 = unlimited)
-		MaxContextTokens: ctxBudget,
+		BaseSystemPrompt:        res.SystemPrompt,
+		Temperature:             res.Temperature,
+		MaxTokens:               res.MaxTokens,
+		MaxSteps:                resolvedMaxSteps(res), // /steps overrides (0 = unlimited)
+		MaxUnactedContinuations: res.MaxUnactedContinuations,
+		MaxContextTokens:        ctxBudget,
 		// 0 = uncapped; config.Load already normalized negatives and enforced
 		// the 1024-byte floor for positive values.
 		MaxToolResultChars: res.Tools.MaxToolResultBytes,
