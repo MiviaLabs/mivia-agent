@@ -1,16 +1,23 @@
 // Package agent - operator-invoked provider wire dump.
 //
-// The SDK loop already offers an Audit seam that receives the exact
-// provider.Request it sent and the provider.Response it got back, per
-// iteration. Nothing wired it, so a turn that came back empty left no
-// evidence at all: no way to tell a model that answered with nothing from a
-// request this host built wrong. This file wires that seam to an
-// operator-enabled, append-only JSONL file.
+// A turn that came back empty left no evidence at all: no way to tell a
+// model that answered with nothing from a request this host built wrong.
+// This file records the request and the response of every completed
+// provider call to an operator-enabled, append-only JSONL file.
+//
+// The capture point is the host completer's per-call observation seam
+// (newSDKTurnCompleter's onUsage), NOT the SDK loop's Audit hook. That
+// distinction is the whole value of the file: the SDK builds its request
+// from Model, Messages, and Tools only, and the fields that decide how a
+// model behaves - reasoning level and dialect, max_tokens, tool_choice,
+// temperature, the per-request deadline - are merged in afterwards by
+// mergeTurnDefaults, inside the completer. Auditing the SDK's request
+// recorded those as empty and produced a dump that could not answer the
+// question it exists for.
 
 package agent
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -21,9 +28,7 @@ import (
 	"sync/atomic"
 	"syscall"
 
-	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
-	sdkprovider "github.com/MiviaLabs/mivia-ai-sdk/provider"
-
+	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 )
 
@@ -59,30 +64,31 @@ var (
 	auditDumpDisabled   atomic.Bool
 )
 
-// newProviderAuditDump returns the Audit hook for one run, or nil when
+// providerAuditDump records one completed provider call.
+type providerAuditDump func(req provider.Request, resp *provider.Response, iteration int)
+
+// newProviderAuditDump returns the recorder for one run, or nil when
 // EnvProviderAuditDir is unset.
 //
-// The returned function ALWAYS returns nil. The SDK treats an Audit error as
-// a hard run failure (agentloop/run.go: audit error -> hardFail), so a
-// debugging aid that could not write its file must never take the turn down
-// with it.
-func newProviderAuditDump(sessionID string) sdkagentloop.AuditFunc {
+// It never returns an error and never panics: it observes a turn that is
+// already in flight, and a debugging aid must not be able to affect the
+// turn it is watching.
+func newProviderAuditDump(sessionID string) providerAuditDump {
 	dir := strings.TrimSpace(os.Getenv(EnvProviderAuditDir))
 	if dir == "" {
 		return nil
 	}
 	path := filepath.Join(dir, auditDumpFileName(sessionID))
-	return func(_ context.Context, rec sdkagentloop.AuditRecord) error {
-		if rec.Kind != sdkagentloop.AuditKindCompletion || auditDumpDisabled.Load() {
-			return nil
+	return func(req provider.Request, resp *provider.Response, iteration int) {
+		if resp == nil || auditDumpDisabled.Load() {
+			return
 		}
-		if err := appendAuditDump(dir, path, auditDumpRecord(sessionID, rec)); err != nil {
+		if err := appendAuditDump(dir, path, auditDumpRecord(sessionID, iteration, req, resp)); err != nil {
 			auditDumpDisabled.Store(true)
 			auditDumpFailedOnce.Do(func() {
 				log.Printf("agent: provider audit dump disabled for this process: %v", err)
 			})
 		}
-		return nil
 	}
 }
 
@@ -150,11 +156,13 @@ type auditDumpEntry struct {
 type auditDumpRequest struct {
 	Model            string   `json:"model"`
 	Stream           bool     `json:"stream"`
+	StreamTransport  bool     `json:"stream_transport,omitempty"`
 	Temperature      *float64 `json:"temperature,omitempty"`
 	MaxTokens        *int     `json:"max_tokens,omitempty"`
 	ReasoningLevel   string   `json:"reasoning_level,omitempty"`
 	ReasoningDialect string   `json:"reasoning_dialect,omitempty"`
 	ToolChoice       string   `json:"tool_choice,omitempty"`
+	TimeoutSeconds   float64  `json:"timeout_seconds,omitempty"`
 	ToolNames        []string `json:"tool_names,omitempty"`
 	MessageCount     int      `json:"message_count"`
 }
@@ -167,10 +175,9 @@ type auditDumpResponse struct {
 }
 
 type auditDumpUsage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
-	CachedTokens     int `json:"cached_tokens"`
+	Reported     bool `json:"reported"`
+	InputTokens  int  `json:"input_tokens"`
+	OutputTokens int  `json:"output_tokens"`
 }
 
 type auditDumpCache struct {
@@ -193,36 +200,35 @@ type auditDumpToolCall struct {
 	Arguments string `json:"arguments,omitempty"`
 }
 
-// auditDumpRecord projects one SDK audit record onto the dump shape,
+// auditDumpRecord projects one completed call onto the dump shape,
 // redacting every captured string.
-func auditDumpRecord(sessionID string, rec sdkagentloop.AuditRecord) auditDumpEntry {
-	req := rec.Request
-	resp := rec.Response
+func auditDumpRecord(sessionID string, iteration int, req provider.Request, resp *provider.Response) auditDumpEntry {
 	entry := auditDumpEntry{
 		SessionID: sessionID,
-		Iteration: rec.Iteration,
+		Iteration: iteration,
 		Request: auditDumpRequest{
 			Model:            req.Model,
 			Stream:           req.Stream,
+			StreamTransport:  req.StreamTransport,
 			Temperature:      req.Temperature,
 			MaxTokens:        req.MaxTokens,
-			ReasoningLevel:   string(req.ReasoningEffort),
+			ReasoningLevel:   string(req.ReasoningLevel),
 			ReasoningDialect: string(req.ReasoningDialect),
-			ToolChoice:       string(req.ToolChoice),
+			ToolChoice:       req.ToolChoice,
+			TimeoutSeconds:   req.Timeout.Seconds(),
 			ToolNames:        auditDumpToolNames(req.Tools),
 			MessageCount:     len(req.Messages),
 		},
 		Response: auditDumpResponse{
 			FinishReason: resp.FinishReason,
-			Content:      auditDumpText(resp.Message.Content),
-			Reasoning:    auditDumpText(resp.Message.ReasoningContent),
+			Content:      auditDumpText(resp.Content),
+			Reasoning:    auditDumpText(resp.ReasoningContent),
 			ToolCalls:    auditDumpToolCalls(resp.ToolCalls),
 		},
 		Usage: auditDumpUsage{
-			PromptTokens:     resp.Usage.PromptTokens,
-			CompletionTokens: resp.Usage.CompletionTokens,
-			TotalTokens:      resp.Usage.TotalTokens,
-			CachedTokens:     resp.Usage.CachedTokens,
+			Reported:     resp.TokenUsage.Reported,
+			InputTokens:  resp.TokenUsage.InputTokens,
+			OutputTokens: resp.TokenUsage.OutputTokens,
 		},
 		Messages: auditDumpMessages(req.Messages),
 	}
@@ -235,25 +241,35 @@ func auditDumpRecord(sessionID string, rec sdkagentloop.AuditRecord) auditDumpEn
 	return entry
 }
 
-func auditDumpToolNames(tools []sdkprovider.ToolDefinition) []string {
+// auditDumpToolNames lists the advertised tool names. A ToolSpec is an
+// untyped OpenAI tools[] entry, so a malformed one contributes "?" rather
+// than being dropped: the COUNT is what tells an operator whether the turn
+// had a tool surface at all.
+func auditDumpToolNames(tools []provider.ToolSpec) []string {
 	if len(tools) == 0 {
 		return nil
 	}
 	out := make([]string, 0, len(tools))
 	for _, t := range tools {
-		out = append(out, t.Name)
+		name := "?"
+		if fn, ok := t["function"].(map[string]any); ok {
+			if n, ok := fn["name"].(string); ok && n != "" {
+				name = n
+			}
+		}
+		out = append(out, name)
 	}
 	return out
 }
 
-func auditDumpMessages(msgs []sdkprovider.Message) []auditDumpMessage {
+func auditDumpMessages(msgs []provider.Message) []auditDumpMessage {
 	if len(msgs) == 0 {
 		return nil
 	}
 	out := make([]auditDumpMessage, 0, len(msgs))
 	for _, m := range msgs {
 		out = append(out, auditDumpMessage{
-			Role:       string(m.Role),
+			Role:       m.Role,
 			Content:    auditDumpText(m.Content),
 			Reasoning:  auditDumpText(m.ReasoningContent),
 			ToolCallID: m.ToolCallID,
@@ -264,7 +280,7 @@ func auditDumpMessages(msgs []sdkprovider.Message) []auditDumpMessage {
 	return out
 }
 
-func auditDumpToolCalls(calls []sdkprovider.ToolCall) []auditDumpToolCall {
+func auditDumpToolCalls(calls []provider.ToolCall) []auditDumpToolCall {
 	if len(calls) == 0 {
 		return nil
 	}
@@ -272,8 +288,8 @@ func auditDumpToolCalls(calls []sdkprovider.ToolCall) []auditDumpToolCall {
 	for _, c := range calls {
 		out = append(out, auditDumpToolCall{
 			ID:        c.ID,
-			Name:      c.Name,
-			Arguments: auditDumpArguments(c.Arguments),
+			Name:      c.Function.Name,
+			Arguments: auditDumpArguments([]byte(c.Function.Arguments)),
 		})
 	}
 	return out

@@ -123,12 +123,11 @@ func buildAgentLoopOptions(l *Loop, opts Options) (sdkagentloop.Options, *sdkTur
 	return out, turn, nil
 }
 
-// attachSDKObservability wires the run's two observation seams: the live
-// stream tee and the operator wire dump. The dump hook is nil unless the
-// operator named a directory (audit_dump.go), so the default build wires
-// nothing and the SDK never calls into this package for it.
+// attachSDKObservability wires the run's live stream tee. The operator wire
+// dump is NOT wired here: it needs the effective request, which only exists
+// after the completer merges the turn defaults, so it hangs off the
+// completer's own per-call seam instead (newSDKTurnCompleter).
 func attachSDKObservability(out *sdkagentloop.Options, opts Options, turn *sdkTurnState) {
-	out.Audit = newProviderAuditDump(opts.SessionID)
 	attachSDKStreamingWriter(out, opts, turn)
 }
 
@@ -151,8 +150,16 @@ func attachSDKStreamingWriter(out *sdkagentloop.Options, opts Options, turn *sdk
 // (loop.go's emitTurnUsage call site). ChatStream stays unwired -
 // it yields no usage response, and the agent loop calls Chat anyway.
 func newSDKTurnCompleter(l *Loop, opts Options, turn *sdkTurnState, clampedMaxTokens *int) (*agentLoopCompleter, error) {
+	// The operator wire dump rides this same seam: it is the only place
+	// that sees the EFFECTIVE request (post mergeTurnDefaults), which is
+	// what an operator needs to read. Nil unless the operator named a
+	// directory, so the default build pays nothing (audit_dump.go).
+	dump := newProviderAuditDump(opts.SessionID)
 	onUsage := func(ctx context.Context, cliReq provider.Request, resp *provider.Response) {
 		emitReasoning(opts, resp)
+		if dump != nil {
+			dump(cliReq, resp, turn.currentStep())
+		}
 		estimatedTokens, _ := provider.EstimatePromptCost(cliReq.Messages, cliReq.Tools, l.contextAccounting())
 		l.emitTurnUsage(ctx, opts, cliReq, resp, estimatedTokens)
 	}

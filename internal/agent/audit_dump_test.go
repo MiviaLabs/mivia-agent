@@ -1,61 +1,62 @@
 package agent
 
 import (
-	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
-	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
-	sdkprovider "github.com/MiviaLabs/mivia-ai-sdk/provider"
-
+	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
 )
 
-// completionRecord is one audited completion carrying every shape the dump
-// is supposed to preserve: history with a tool-call turn, an advertised tool
-// list, and a response that answered with a tool call.
-func completionRecord() sdkagentloop.AuditRecord {
-	return sdkagentloop.AuditRecord{
-		Iteration: 2,
-		Kind:      sdkagentloop.AuditKindCompletion,
-		Request: sdkprovider.Request{
-			Model:            "glm-5.3-flash",
-			Stream:           true,
-			ToolChoice:       "auto",
-			ReasoningEffort:  "max",
-			ReasoningDialect: "thinking_preserved",
-			Tools: []sdkprovider.ToolDefinition{
-				{Name: "read_file"}, {Name: "dispatch_tasks"},
-			},
-			Messages: []sdkprovider.Message{
-				{Role: sdkprovider.RoleUser, Content: "continue"},
-				{
-					Role:             sdkprovider.RoleAssistant,
-					ReasoningContent: "prior thinking",
-					ToolCalls: []sdkprovider.ToolCall{
-						{ID: "call_1", Name: "read_file", Arguments: []byte(`{"path":"go.mod"}`)},
-					},
-				},
-				{Role: sdkprovider.RoleTool, ToolCallID: "call_1", Content: "module x"},
-			},
+// completionRequest and completionResponse are one completed call carrying
+// every shape the dump must preserve: the EFFECTIVE request (reasoning dial,
+// max_tokens, tool_choice - the fields the SDK's own request leaves empty),
+// history with a tool-call turn, and a response that answered with a tool
+// call.
+func completionRequest() provider.Request {
+	temp := 0.0
+	maxTokens := 131072
+	call := provider.ToolCall{ID: "call_1", Type: "function"}
+	call.Function.Name = "read_file"
+	call.Function.Arguments = `{"path":"go.mod"}`
+	return provider.Request{
+		Model:            "glm-5.3-flash",
+		Stream:           true,
+		Temperature:      &temp,
+		MaxTokens:        &maxTokens,
+		ToolChoice:       "auto",
+		Timeout:          900 * time.Second,
+		ReasoningLevel:   reasoning.Max,
+		ReasoningDialect: reasoning.DialectThinkingPreserved,
+		Tools: []provider.ToolSpec{
+			{"type": "function", "function": map[string]any{"name": "read_file"}},
+			{"type": "function", "function": map[string]any{"name": "dispatch_tasks"}},
 		},
-		Response: sdkprovider.Response{
-			FinishReason: "tool_calls",
-			Message: sdkprovider.Message{
-				Role:             sdkprovider.RoleAssistant,
-				Content:          "spawning agents",
-				ReasoningContent: "fresh thinking",
-			},
-			ToolCalls: []sdkprovider.ToolCall{
-				{ID: "call_2", Name: "dispatch_tasks", Arguments: []byte(`{"tasks":[]}`)},
-			},
-			Usage:      sdkprovider.Usage{PromptTokens: 39206, CompletionTokens: 0, TotalTokens: 39206},
-			CacheUsage: sdkprovider.CacheUsage{Reported: true, CachedInputTokens: 10176, CacheWriteTokens: 7},
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: "continue"},
+			{Role: provider.RoleAssistant, ReasoningContent: "prior thinking", ToolCalls: []provider.ToolCall{call}},
+			{Role: provider.RoleTool, ToolCallID: "call_1", Content: "module x"},
 		},
+	}
+}
+
+func completionResponse() *provider.Response {
+	call := provider.ToolCall{ID: "call_2", Type: "function"}
+	call.Function.Name = "dispatch_tasks"
+	call.Function.Arguments = `{"tasks":[]}`
+	return &provider.Response{
+		Content:          "spawning agents",
+		ReasoningContent: "fresh thinking",
+		FinishReason:     "tool_calls",
+		ToolCalls:        []provider.ToolCall{call},
+		TokenUsage:       provider.TokenUsage{Reported: true, InputTokens: 39206, OutputTokens: 0},
+		CacheUsage:       provider.CacheUsage{Reported: true, CachedInputTokens: 10176, CacheWriteTokens: 7},
 	}
 }
 
@@ -101,9 +102,7 @@ func TestProviderAuditDumpCapturesTheWire(t *testing.T) {
 	if hook == nil {
 		t.Fatal("expected an audit hook")
 	}
-	if err := hook(context.Background(), completionRecord()); err != nil {
-		t.Fatalf("hook returned an error: %v", err)
-	}
+	hook(completionRequest(), completionResponse(), 2)
 	lines := readDumpLines(t, dir, "S1")
 	if len(lines) != 1 {
 		t.Fatalf("want 1 dump line, got %d", len(lines))
@@ -112,8 +111,19 @@ func TestProviderAuditDumpCapturesTheWire(t *testing.T) {
 	if got.Iteration != 2 || got.SessionID != "S1" {
 		t.Fatalf("iteration/session not preserved: %+v", got)
 	}
+	// These four are the fields the SDK's own request leaves empty and the
+	// whole reason the dump captures the effective request instead.
 	if got.Request.Model != "glm-5.3-flash" || got.Request.ReasoningDialect != "thinking_preserved" {
 		t.Fatalf("request shape not preserved: %+v", got.Request)
+	}
+	if got.Request.ReasoningLevel != "max" {
+		t.Fatalf("reasoning level not preserved: %+v", got.Request)
+	}
+	if got.Request.MaxTokens == nil || *got.Request.MaxTokens != 131072 {
+		t.Fatalf("max_tokens not preserved: %+v", got.Request)
+	}
+	if got.Request.TimeoutSeconds != 900 {
+		t.Fatalf("request deadline not preserved: %+v", got.Request)
 	}
 	if got.Request.ToolChoice != "auto" || len(got.Request.ToolNames) != 2 {
 		t.Fatalf("advertised tools not preserved: %+v", got.Request)
@@ -130,7 +140,7 @@ func TestProviderAuditDumpCapturesTheWire(t *testing.T) {
 	if len(got.Response.ToolCalls) != 1 || got.Response.ToolCalls[0].Name != "dispatch_tasks" {
 		t.Fatalf("response tool calls not preserved: %+v", got.Response.ToolCalls)
 	}
-	if got.Usage.PromptTokens != 39206 || got.Usage.CompletionTokens != 0 {
+	if !got.Usage.Reported || got.Usage.InputTokens != 39206 || got.Usage.OutputTokens != 0 {
 		t.Fatalf("usage not preserved: %+v", got.Usage)
 	}
 	if got.Cache == nil || got.Cache.CachedInput != 10176 {
@@ -145,11 +155,7 @@ func TestProviderAuditDumpAppends(t *testing.T) {
 	t.Setenv(EnvProviderAuditDir, dir)
 	hook := newProviderAuditDump("S2")
 	for i := 1; i <= 3; i++ {
-		rec := completionRecord()
-		rec.Iteration = i
-		if err := hook(context.Background(), rec); err != nil {
-			t.Fatalf("hook returned an error: %v", err)
-		}
+		hook(completionRequest(), completionResponse(), i)
 	}
 	lines := readDumpLines(t, dir, "S2")
 	if len(lines) != 3 {
@@ -162,23 +168,14 @@ func TestProviderAuditDumpAppends(t *testing.T) {
 	}
 }
 
-// TestProviderAuditDumpSkipsToolCallRecords pins the completion-only scope:
-// tool results already have their own persisted trace, and duplicating every
-// tool body here would make the dump unreadable.
-func TestProviderAuditDumpSkipsToolCallRecords(t *testing.T) {
+// TestProviderAuditDumpIgnoresNilResponse pins the guard on the one input
+// the seam can legitimately hand it: an observation with no response.
+func TestProviderAuditDumpIgnoresNilResponse(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv(EnvProviderAuditDir, dir)
-	hook := newProviderAuditDump("S3")
-	err := hook(context.Background(), sdkagentloop.AuditRecord{
-		Iteration: 1,
-		Kind:      sdkagentloop.AuditKindToolCall,
-		ToolCall:  sdkprovider.ToolCall{ID: "call_1", Name: "read_file"},
-	})
-	if err != nil {
-		t.Fatalf("hook returned an error: %v", err)
-	}
+	newProviderAuditDump("S3")(completionRequest(), nil, 1)
 	if _, err := os.Stat(filepath.Join(dir, auditDumpFileName("S3"))); !os.IsNotExist(err) {
-		t.Fatalf("tool-call record should write no dump file, stat err = %v", err)
+		t.Fatalf("a nil response should write no dump file, stat err = %v", err)
 	}
 }
 
@@ -196,12 +193,11 @@ func TestProviderAuditDumpRedacts(t *testing.T) {
 
 	dir := t.TempDir()
 	t.Setenv(EnvProviderAuditDir, dir)
-	rec := completionRecord()
-	rec.Response.Message.Content = "the key is sk-abc123DEF"
-	rec.Request.Messages[0].Content = "use sk-abc123DEF please"
-	if err := newProviderAuditDump("S4")(context.Background(), rec); err != nil {
-		t.Fatalf("hook returned an error: %v", err)
-	}
+	req := completionRequest()
+	req.Messages[0].Content = "use sk-abc123DEF please"
+	resp := completionResponse()
+	resp.Content = "the key is sk-abc123DEF"
+	newProviderAuditDump("S4")(req, resp, 2)
 	raw, err := os.ReadFile(filepath.Join(dir, auditDumpFileName("S4")))
 	if err != nil {
 		t.Fatalf("read dump: %v", err)
@@ -227,9 +223,7 @@ func TestProviderAuditDumpNeverFailsTheRun(t *testing.T) {
 	t.Setenv(EnvProviderAuditDir, filepath.Join(blocked, "sub"))
 	hook := newProviderAuditDump("S5")
 	for i := 0; i < 3; i++ {
-		if err := hook(context.Background(), completionRecord()); err != nil {
-			t.Fatalf("audit hook must never return an error, got %v", err)
-		}
+		hook(completionRequest(), completionResponse(), 2)
 	}
 	// The failure latches: the log line claims the dump is disabled, so it
 	// must really be, not merely quiet while retrying mkdir+open on every
@@ -280,9 +274,7 @@ func TestAuditDumpTextCaps(t *testing.T) {
 func TestProviderAuditDumpModes(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "dump")
 	t.Setenv(EnvProviderAuditDir, dir)
-	if err := newProviderAuditDump("S6")(context.Background(), completionRecord()); err != nil {
-		t.Fatalf("hook returned an error: %v", err)
-	}
+	newProviderAuditDump("S6")(completionRequest(), completionResponse(), 2)
 	dirInfo, err := os.Stat(dir)
 	if err != nil {
 		t.Fatalf("stat dir: %v", err)
@@ -314,9 +306,7 @@ func TestProviderAuditDumpRefusesSymlink(t *testing.T) {
 		t.Fatalf("plant symlink: %v", err)
 	}
 	t.Setenv(EnvProviderAuditDir, dir)
-	if err := newProviderAuditDump("S7")(context.Background(), completionRecord()); err != nil {
-		t.Fatalf("audit hook must never return an error, got %v", err)
-	}
+	newProviderAuditDump("S7")(completionRequest(), completionResponse(), 2)
 	raw, err := os.ReadFile(victim)
 	if err != nil {
 		t.Fatalf("read victim: %v", err)
@@ -384,9 +374,7 @@ func TestProviderAuditDumpConcurrentAppends(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := hook(context.Background(), completionRecord()); err != nil {
-				t.Errorf("hook returned an error: %v", err)
-			}
+			hook(completionRequest(), completionResponse(), 2)
 		}()
 	}
 	wg.Wait()
