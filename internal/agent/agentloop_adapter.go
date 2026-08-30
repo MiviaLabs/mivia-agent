@@ -82,7 +82,7 @@ func buildAgentLoopOptions(l *Loop, opts Options) (sdkagentloop.Options, *sdkTur
 		MaxConcurrentTools: opts.MaxConcurrentTools,
 		SessionID:          opts.SessionID,
 	}
-	attachSDKStreamingWriter(&out, opts, turn)
+	attachSDKObservability(&out, opts, turn)
 	// BatchResultBudgetBytes > 0 is carried by the host-side turn
 	// shaping wrapper applied above (applyTurnShaping); the SDK's
 	// TurnResultBudget stays unset because its semantics (omit the
@@ -121,6 +121,15 @@ func buildAgentLoopOptions(l *Loop, opts Options) (sdkagentloop.Options, *sdkTur
 	// options. The watchdog's steer-latency role is carried by the
 	// MailboxPending poller in the steer bridge instead.
 	return out, turn, nil
+}
+
+// attachSDKObservability wires the run's two observation seams: the live
+// stream tee and the operator wire dump. The dump hook is nil unless the
+// operator named a directory (audit_dump.go), so the default build wires
+// nothing and the SDK never calls into this package for it.
+func attachSDKObservability(out *sdkagentloop.Options, opts Options, turn *sdkTurnState) {
+	out.Audit = newProviderAuditDump(opts.SessionID)
+	attachSDKStreamingWriter(out, opts, turn)
 }
 
 // attachSDKStreamingWriter tees FinalWriter to the SDK's StreamingWriter

@@ -487,6 +487,14 @@ The summarize request carries bounded quotes of the dropped messages' real conte
 
 Above the watchdogs sits the derived HTTP client wall, the absolute per-attempt transport bound: the maximum of the 15-minute floor and every configured per-request budget (`[chat] request_timeout_seconds`, `[subagents] default_request_timeout_seconds`) plus a 60-second margin. Because the wall derives from the budgets, a spent budget always reports as its own terminal deadline, never as a transport fault.
 
+## Provider wire dump
+
+`MIVIA_PROVIDER_AUDIT_DIR` names a directory that receives one JSONL file per session (`<session-id>.jsonl`), with one line per agent-loop iteration: the request this host built (model, reasoning level and dialect, `tool_choice`, advertised tool names, the full replayed history) and the response the provider returned (finish reason, content, reasoning, tool calls, token and cache usage). Unset (the default) wires no hook, so the seam costs nothing when it is off.
+
+Use it when a turn ends with no visible work: the dump is the only way to tell a model that answered with nothing from a request this host built wrong.
+
+The file holds prompts and model output. Every captured string passes through the process-wide redaction policy first, each field is capped at 32 KiB, and the directory and files are created `0700`/`0600`. Point it outside the workspace and delete it when the investigation ends. A dump target that cannot be written is reported once and then ignored: the debugging aid never fails the turn it is observing.
+
 ## Subagent knobs
 
 | Key | Type | Default | Meaning |
