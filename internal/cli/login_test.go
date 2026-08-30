@@ -9,24 +9,19 @@ import (
 	"testing"
 )
 
+// loginTestResponseBody is a POST /v1/auth/login success body, in the shape
+// apps/api's LoginResponseDto declares.
 const loginTestResponseBody = `{
-  "authenticated": true,
+  "ok": true,
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.super-secret-bearer-value.sig",
+  "refreshToken": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
   "user": {
-    "account_id": "acct-1",
-    "organization_id": "org-42",
-    "organization_key": "org-key",
-    "organization_name": "Acme",
-    "role": "owner",
+    "id": "550e8400-e29b-41d4-a716-446655440000",
     "email": "user@example.com",
-    "is_platform_super_admin": false,
-    "name": "First",
-    "lastname": "Last",
-    "display_name": "First Last"
+    "organizationId": "org-42",
+    "role": "member"
   },
-  "session": {
-    "bearer": "super-secret-bearer-value",
-    "expires_at": "2026-08-13T18:00:00Z"
-  }
+  "expiresAt": "2030-08-13T18:00:00.000Z"
 }`
 
 // runLoginCapture runs login with controlled IO and returns the captured
@@ -185,10 +180,17 @@ func TestLoginPasswordStdinTrimsTrailingNewline(t *testing.T) {
 	}
 }
 
+// TestLoginServerRejectsCredentialsReturnsError covers the only 401 the
+// server produces for a failed login. It is deliberately identical for an
+// unknown address and a wrong password -- the API refuses to leak which
+// accounts exist -- so the message must cover both without claiming to know,
+// and must point at the web app, since the CLI cannot create an account.
 func TestLoginServerRejectsCredentialsReturnsError(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"statusCode":401,"error":"Unauthorized","message":"Invalid email or password"}`))
 	}))
 	defer srv.Close()
 
@@ -200,8 +202,39 @@ func TestLoginServerRejectsCredentialsReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("login against a 401 server returned nil error")
 	}
+	if !strings.Contains(err.Error(), webAppURL) {
+		t.Errorf("error = %q, want it to point at %s for sign-up", err, webAppURL)
+	}
+	if !strings.Contains(err.Error(), "password") {
+		t.Errorf("error = %q, want it to mention the password too; the server cannot tell the two cases apart", err)
+	}
 	if strings.Contains(stdout, "Logged in as") {
 		t.Fatalf("stdout printed a confirmation despite the 401: %q", stdout)
+	}
+}
+
+// TestLoginBadRequestSurfacesTheServerDetail: the API validates the email
+// shape and password length, and its explanation is more useful than a bare
+// "status 400". The CLI does not duplicate those rules, it quotes them.
+func TestLoginBadRequestSurfacesTheServerDetail(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"statusCode":400,"error":"Bad Request","message":["email must be an email"]}`))
+	}))
+	defer srv.Close()
+
+	_, _, err := runLoginCapture(t, []string{
+		"--email", "bob",
+		"--password-stdin",
+		"--server-url", srv.URL,
+	}, "hunter2hunter2\n")
+	if err == nil {
+		t.Fatal("login against a 400 server returned nil error")
+	}
+	if !strings.Contains(err.Error(), "email must be an email") {
+		t.Errorf("error = %q, want the server's own explanation quoted", err)
 	}
 }
 

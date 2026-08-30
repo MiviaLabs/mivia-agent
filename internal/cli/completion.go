@@ -15,7 +15,7 @@ var completionShells = []string{"bash", "zsh", "fish"}
 var completionCommands = []string{
 	"chat", "config", "doctor", "agents", "memory", "sessions", "storage", "compact", "workflows",
 	"workflow", "stack", "worktree", "version", "help", "completion", "setup", "login",
-	"logout", "register", "verify",
+	"logout", "whoami",
 }
 
 // runCompletion prints a static completion script for the requested shell.

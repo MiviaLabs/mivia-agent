@@ -7,8 +7,12 @@ import (
 	sdkenvfile "github.com/MiviaLabs/mivia-ai-sdk/envfile"
 )
 
-// DefaultServerURL is the go-mivia API root used when MIVIA_API_BASE_URL is
-// unset. The production API is not live yet; override for local/staging use.
+// DefaultServerURL is the mivia API root used when MIVIA_API_BASE_URL is
+// unset. Override it for local or staging use -- a local API is typically
+// http://localhost:3001.
+//
+// This is the API ROOT only. The /v1 version prefix belongs to the request
+// paths (see client.go), so an override never carries a version.
 const DefaultServerURL = "https://api.mivia.app"
 
 // serverURLEnvKey is the env var ServerURLFromEnv resolves.

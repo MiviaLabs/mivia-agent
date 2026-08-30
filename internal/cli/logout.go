@@ -33,11 +33,20 @@ func runLogoutWithIO(args []string, stdout, stderr io.Writer) error {
 	}
 	service := miviaauth.NewService(client, config.UserAuthPath())
 
-	if err := service.Logout(context.Background()); err != nil {
+	outcome, err := service.Logout(context.Background())
+	if err != nil {
 		return fmt.Errorf("logout: %w", err)
 	}
 
 	fmt.Fprintln(stdout, "Logged out.")
+	if !outcome.ServerRevoked && outcome.RevokeErr != nil {
+		// Local logout succeeded, which is what the user asked for, but the
+		// server-side session was not ended -- and its refresh token stays
+		// valid for up to 30 days. Saying nothing would leave them believing
+		// the session is gone everywhere.
+		fmt.Fprintf(stderr, "Warning: the local session was removed, but the server was not reached to end it: %v\n", outcome.RevokeErr)
+		fmt.Fprintln(stderr, "The session stays valid on the server until it expires. Run `mivia logout` again when you are back online, or end it from the web app.")
+	}
 	return nil
 }
 

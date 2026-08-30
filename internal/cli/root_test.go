@@ -176,16 +176,28 @@ func TestExecuteCompletionNoArgs(t *testing.T) {
 	}
 }
 
-// TestUsageTextDocumentsLoginLogout: usageText() documents the login/logout
-// commands, matching the existing precedent of asserting command lines are
-// present in the help body.
-func TestUsageTextDocumentsLoginLogout(t *testing.T) {
+// TestUsageTextDocumentsTheAuthCommands: usageText() documents login,
+// logout, and whoami, no longer documents the removed register and verify,
+// and renders without a formatting error.
+//
+// The %! check is the mechanical half: usageText() is one Sprintf with a
+// hand-maintained run of arguments, so adding or removing a command line
+// silently desynchronizes the count and renders %!s(MISSING) into the help
+// output. Nothing else in the build catches that.
+func TestUsageTextDocumentsTheAuthCommands(t *testing.T) {
 	text := usageText()
-	if !strings.Contains(text, "login") {
-		t.Fatalf("usageText() missing login command:\n%s", text)
+	for _, cmd := range []string{"login", "logout", "whoami"} {
+		if !strings.Contains(text, cmd) {
+			t.Errorf("usageText() missing the %s command:\n%s", cmd, text)
+		}
 	}
-	if !strings.Contains(text, "logout") {
-		t.Fatalf("usageText() missing logout command:\n%s", text)
+	for _, gone := range []string{"register --email", "verify <code>"} {
+		if strings.Contains(text, gone) {
+			t.Errorf("usageText() still documents the removed %q", gone)
+		}
+	}
+	if strings.Contains(text, "%!") {
+		t.Errorf("usageText() has a Sprintf arity mismatch:\n%s", text)
 	}
 }
 
@@ -215,29 +227,32 @@ func TestExecuteLogoutDispatchesToRunLogout(t *testing.T) {
 	}
 }
 
-// TestExecuteRegisterDispatchesToRunRegister: `mivia register` (no --email)
-// reaches runRegister and fails fast on parseRegisterArgs's pre-network
-// validation, proving dispatch without a real network call.
-func TestExecuteRegisterDispatchesToRunRegister(t *testing.T) {
-	err := Execute([]string{"register"})
+// TestExecuteWhoamiDispatchesToRunWhoami: `mivia whoami --bogus` reaches
+// runWhoami and fails fast on parseWhoamiArgs's unknown-flag check, proving
+// dispatch without touching a real ~/.mivia session file.
+func TestExecuteWhoamiDispatchesToRunWhoami(t *testing.T) {
+	err := Execute([]string{"whoami", "--bogus"})
 	if err == nil {
-		t.Fatal("Execute([register]) returned nil error")
+		t.Fatal("Execute([whoami, --bogus]) returned nil error")
 	}
-	if !strings.Contains(err.Error(), "--email is required") {
-		t.Fatalf("error = %v, want contains '--email is required'", err)
+	if !strings.Contains(err.Error(), "unknown flag") {
+		t.Fatalf("error = %v, want contains 'unknown flag'", err)
 	}
 }
 
-// TestExecuteVerifyDispatchesToRunVerify: `mivia verify` (no code) reaches
-// runVerify and fails fast on parseVerifyArgs's pre-network validation,
-// proving dispatch without a real network call or filesystem touch.
-func TestExecuteVerifyDispatchesToRunVerify(t *testing.T) {
-	err := Execute([]string{"verify"})
-	if err == nil {
-		t.Fatal("Execute([verify]) returned nil error")
-	}
-	if !strings.Contains(err.Error(), "a verification code is required") {
-		t.Fatalf("error = %v, want contains 'a verification code is required'", err)
+// TestExecuteRegisterAndVerifyAreUnknownCommands pins the removal. Account
+// creation happens in the web app only -- the API has no register or verify
+// endpoint -- so these must fail as unknown commands rather than reaching a
+// handler that would call routes that do not exist.
+func TestExecuteRegisterAndVerifyAreUnknownCommands(t *testing.T) {
+	for _, cmd := range []string{"register", "verify"} {
+		err := Execute([]string{cmd})
+		if err == nil {
+			t.Fatalf("Execute([%s]) returned nil error", cmd)
+		}
+		if !strings.Contains(err.Error(), "unknown command") {
+			t.Errorf("Execute([%s]) error = %v, want an unknown-command message", cmd, err)
+		}
 	}
 }
 

@@ -1,0 +1,7 @@
+{
+  "statusCode": 401,
+  "error": "Unauthorized",
+  "message": "Invalid email or password",
+  "timestamp": "2026-08-30T10:00:00.000Z",
+  "path": "/v1/auth/login"
+}
