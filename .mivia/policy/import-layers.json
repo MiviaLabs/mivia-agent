@@ -499,6 +499,7 @@
     "internal/workflows/controller": [
       "internal/agentmsg",
       "internal/agents",
+      "internal/config",
       "internal/coordinator",
       "internal/evidencecheck",
       "internal/jschema",
