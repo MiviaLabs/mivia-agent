@@ -1,10 +1,22 @@
 package config
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 )
+
+// showTokens renders a *int result for a failure message. EffectiveOutputTokens
+// returns a pointer, and %v on a pointer prints an address - which is what a
+// failing assertion here used to report, making the failure unreadable at the
+// exact moment it mattered.
+func showTokens(v *int) string {
+	if v == nil {
+		return "nil"
+	}
+	return fmt.Sprintf("%d", *v)
+}
 
 // glmFlash mirrors the shipped z.ai entry that motivated the floor: an
 // always-thinking model at "max" effort, whose reasoning reserve (65536) is
@@ -41,7 +53,7 @@ func TestExplicitMaxTokensBelowReasoningFloorIsRaised(t *testing.T) {
 func TestExplicitMaxTokensAboveFloorIsAuthoritative(t *testing.T) {
 	got := EffectiveOutputTokens(glmFlash(), intPtr(100000))
 	if got == nil || *got != 100000 {
-		t.Fatalf("max_tokens = %v, want the requested 100000", got)
+		t.Fatalf("max_tokens = %s, want the requested 100000", showTokens(got))
 	}
 }
 
@@ -54,7 +66,7 @@ func TestExplicitMaxTokensNonThinkingModelUnchanged(t *testing.T) {
 		profile.Reasoning = level
 		got := EffectiveOutputTokens(profile, intPtr(512))
 		if got == nil || *got != 512 {
-			t.Fatalf("reasoning %q: max_tokens = %v, want the requested 512", level, got)
+			t.Fatalf("reasoning %q: max_tokens = %s, want the requested 512", level, showTokens(got))
 		}
 	}
 }
@@ -67,7 +79,7 @@ func TestReasoningFloorStaysUnderModelCeiling(t *testing.T) {
 	profile.MaxOutputTokens = 8192
 	got := EffectiveOutputTokens(profile, intPtr(4096))
 	if got == nil || *got != 8192 {
-		t.Fatalf("max_tokens = %v, want the model ceiling 8192", got)
+		t.Fatalf("max_tokens = %s, want the model ceiling 8192", showTokens(got))
 	}
 }
 
@@ -80,7 +92,7 @@ func TestReasoningFloorStaysInsideWindow(t *testing.T) {
 	profile.MaxOutputTokens = 131072
 	got := EffectiveOutputTokens(profile, intPtr(1024))
 	if got == nil || *got != 16384 {
-		t.Fatalf("max_tokens = %v, want the context window 16384", got)
+		t.Fatalf("max_tokens = %s, want the context window 16384", showTokens(got))
 	}
 }
 
@@ -97,7 +109,7 @@ func TestReasoningFloorPerGradedLevel(t *testing.T) {
 		want := reasoning.OutputReserveFloor(level)
 		got := EffectiveOutputTokens(profile, intPtr(256))
 		if got == nil || *got != want {
-			t.Fatalf("reasoning %q: max_tokens = %v, want %d", level, got, want)
+			t.Fatalf("reasoning %q: max_tokens = %s, want %d", level, showTokens(got), want)
 		}
 	}
 }
@@ -107,6 +119,6 @@ func TestReasoningFloorPerGradedLevel(t *testing.T) {
 func TestUnsetMaxTokensUnchanged(t *testing.T) {
 	got := EffectiveOutputTokens(glmFlash(), nil)
 	if got == nil || *got != reasoning.OutputReserveFloor(reasoning.Max) {
-		t.Fatalf("unset max_tokens = %v, want the reasoning reserve", got)
+		t.Fatalf("unset max_tokens = %s, want the reasoning reserve %d", showTokens(got), reasoning.OutputReserveFloor(reasoning.Max))
 	}
 }
