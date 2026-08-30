@@ -837,20 +837,27 @@ def main() -> None:
     ]
     for t in zero_arg:
         t()
+    # Fixture-directory tests take a Path, so the zero-arg scan cannot see
+    # them: they stay an explicit registry, and the count below is derived
+    # from it rather than written by hand (a literal would keep reporting
+    # "7" while an eighth test sat unwired).
+    fixture_tests = [
+        (test_prepare_commit_msg_appends_summary, "append"),
+        (test_prepare_commit_msg_rejects_stale_summary, "stale"),
+        (test_install_git_hooks_sets_hooks_path, "install"),
+        (test_isolated_git_env_preserves_main_and_worktree_indexes, "isolation"),
+        (test_install_sets_first_push_upstream_in_linked_worktree, "first-push"),
+        (test_pre_commit_does_not_overstage_partially_staged_go_file, "partial-staging"),
+        (test_pre_commit_full_script_runs_all_gates_with_staged_memory_db, "full-script-worktree"),
+    ]
     with tempfile.TemporaryDirectory() as tmp:
         base = Path(tmp)
-        test_prepare_commit_msg_appends_summary(base / "append")
-        test_prepare_commit_msg_rejects_stale_summary(base / "stale")
-        test_install_git_hooks_sets_hooks_path(base / "install")
-        test_isolated_git_env_preserves_main_and_worktree_indexes(base / "isolation")
-        test_install_sets_first_push_upstream_in_linked_worktree(base / "first-push")
-        test_pre_commit_does_not_overstage_partially_staged_go_file(
-            base / "partial-staging"
-        )
-        test_pre_commit_full_script_runs_all_gates_with_staged_memory_db(
-            base / "full-script-worktree"
-        )
-    print(f"test_git_hooks: ok ({len(zero_arg)} scanned + 7 fixture tests)")
+        for fixture_test, subdir in fixture_tests:
+            fixture_test(base / subdir)
+    print(
+        f"test_git_hooks: ok ({len(zero_arg)} scanned + "
+        f"{len(fixture_tests)} fixture tests)"
+    )
 
 
 

@@ -164,6 +164,7 @@ hook-test:
 	@python3 scripts/test_git_hooks.py
 
 agent-hook-test:
+	@python3 scripts/test_check_script_test_reachability.py
 	@python3 scripts/check_script_test_reachability.py
 	@python3 scripts/test_agent_hook_guard.py
 	@python3 scripts/test_docs_ownership.py
