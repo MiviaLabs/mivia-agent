@@ -79,6 +79,13 @@ redaction_placeholder = '[redacted]'
 [provider]
 default_model = 'glm-5.3-flash'
 name = 'zai'
+# Stream watchdog bounds, raised for hard-thinking models. First-byte covers
+# the silent wait before the first token (a reasoning model can think for
+# minutes before it streams anything); byte-idle covers gaps between bytes
+# after that. The compiled defaults (240s / 100s) are sized for chat models.
+# The content-idle bound (90s) is compiled-in and has no key yet.
+stream_first_byte_timeout_seconds = 600
+stream_idle_timeout_seconds = 300
 
 [providers]
 [providers.deepseek]
@@ -438,23 +445,25 @@ reasoning_efforts = ['off', 'high']
 default_timeout_seconds = 43200
 # Whole-request wall for one subagent LLM call (context.WithTimeout around the
 # entire provider request - NOT an idle bound; idle dead air is owned by the
-# stream watchdogs: first-byte 240s, byte-idle 100s, content-idle 90s, and
-# reasoning deltas count as progress). Sized above normal generations so a
-# long healthy reasoning stream survives, below the 1200s task total so a
-# pathological request still leaves retry room. An earlier 300s cut was
-# reverted: it added zero wedge detection (watchdogs fire at 90-240s) and
-# permanently killed healthy >5min reasoning turns with no retry (the
-# provider's own-deadline kill is deliberately non-transient). The historic
-# "two live 600s stalls" predated those watchdog commits.
-default_request_timeout_seconds = 600
+# stream watchdogs: first-byte 600s, byte-idle 300s (configured under
+# [provider] above), content-idle 90s (compiled), and reasoning deltas count
+# as progress). Sized above normal generations so a long healthy reasoning
+# stream survives, below the 1800s task total so a pathological request still
+# leaves retry room. 900s is deliberately the ceiling: the compiled
+# http.Client wall (DefaultHTTPTimeout, 15 min) hard-caps every single
+# attempt, so any value above 900 buys only doomed retries, not longer turns.
+# An earlier 300s cut was reverted: it added zero wedge detection (watchdogs
+# fire first) and permanently killed healthy >5min reasoning turns with no
+# retry (the provider's own-deadline kill is deliberately non-transient).
+default_request_timeout_seconds = 900
 # Hard wall-clock kill for one subagent task (all its own steps, LLM calls,
 # and nested tool calls combined). Must stay above default_request_timeout_seconds
-# (600s) - see internal/config/subagent_timeout_ordering_test.go. Left at the
+# (900s) - see internal/config/subagent_timeout_ordering_test.go. Left at the
 # compiled DefaultSubagentTotalTimeoutSec (3600s) before, a genuinely stuck
 # subagent could sit silently for up to an hour with only the 3-minute sidebar
-# stall badge as a warning; 1200s (20 min) gives up sooner while still leaving
-# room over the per-request bound for retries.
-default_total_timeout_seconds = 1200
+# stall badge as a warning; 1800s (30 min) gives up sooner while still leaving
+# a full request-sized window over the per-request bound for one retry.
+default_total_timeout_seconds = 1800
 max_audit_rounds = 0
 max_depth = -1
 max_fanout = -1
