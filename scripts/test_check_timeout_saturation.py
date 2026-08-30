@@ -75,6 +75,14 @@ def main() -> None:
     stale = make_root({"allow": [entry]}, {"internal/a/a.go": "package a\n"})
     expect("stale entry fails", run_gate(stale), 1, "stale policy entry")
 
+    reversed_go = "package a\n\nfunc f() { _ = time.Second * time.Duration(cfg.Rogue) }\n"
+    rev = make_root({"allow": [entry]}, {"internal/a/a.go": reversed_go})
+    expect("reversed operand order fails", run_gate(rev), 1, "cfg.Rogue")
+
+    compound_go = "package a\n\nfunc f() { d := someDuration(); d *= time.Second; _ = d }\n"
+    comp = make_root({"allow": [entry]}, {"internal/a/a.go": compound_go})
+    expect("compound assign fails", run_gate(comp), 1, "*= time.Second")
+
     comments = make_root({"allow": []}, {"internal/a/a.go": comment_go})
     expect("comment text ignored", run_gate(comments), 0)
 
@@ -89,7 +97,7 @@ def main() -> None:
     )
     expect("probe passes", probe, 0, "probe ok")
 
-    print("test_check_timeout_saturation: ok (7 cases)")
+    print("test_check_timeout_saturation: ok (9 cases)")
 
 
 if __name__ == "__main__":

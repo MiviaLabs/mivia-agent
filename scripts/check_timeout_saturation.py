@@ -9,7 +9,8 @@ that does not route through it must carry a guard BEFORE the multiply and a
 disposition entry in the policy.
 
 Every match of `time.Duration(<operand>) * time.<Unit>` in non-test Go
-files must appear in the policy allow list as (file, operand, unit) with a
+files - either operand order, plus the compound form `x *= time.<Unit>` -
+must appear in the policy allow list as (file, operand, unit) with a
 reason. Two failure modes, both exit 1:
   - a match with no allow entry (new unguarded conversion), and
   - an allow entry with no match (stale disposition), so the list cannot
@@ -49,6 +50,22 @@ CONVERSION_RE = re.compile(
     r"\s*\*\s*time\.(?P<unit>Second|Minute|Hour|Millisecond)\b"
 )
 
+# The same conversion with the operands swapped. Multiplication commutes, so
+# `time.Second * time.Duration(n)` wraps exactly like the canonical order.
+REVERSED_RE = re.compile(
+    r"time\.(?P<unit>Second|Minute|Hour|Millisecond)\s*\*\s*"
+    r"time\.Duration\((?P<operand>[^()]*(?:\([^()]*\)[^()]*)*)\)"
+)
+
+# A compound assign builds the conversion across statements
+# (`d := time.Duration(n); d *= time.Second`), which the conversion regexes
+# cannot see as one expression. The tree has no legitimate use of this form,
+# so it is banned outright rather than allowlisted; the operand recorded for
+# a policy entry is the assigned variable.
+COMPOUND_RE = re.compile(
+    r"(?P<operand>[\w.\[\]]+)\s*\*=\s*time\.(?P<unit>Second|Minute|Hour|Millisecond)\b"
+)
+
 
 def fail(msg: str, *, code: int = 1) -> None:
     print(f"check_timeout_saturation: {msg}", file=sys.stderr)
@@ -77,9 +94,9 @@ def load_policy(root: Path) -> list[dict]:
     return allow
 
 
-def scan(root: Path) -> list[tuple[str, int, str, str]]:
-    """Return (relpath, line, operand, unit) for every conversion match."""
-    hits: list[tuple[str, int, str, str]] = []
+def scan(root: Path) -> list[tuple[str, int, str, str, str]]:
+    """Return (relpath, line, operand, unit, snippet) per conversion match."""
+    hits: list[tuple[str, int, str, str, str]] = []
     for scan_dir in SCAN_DIRS:
         base = root / scan_dir
         if not base.is_dir():
@@ -98,8 +115,17 @@ def scan(root: Path) -> list[tuple[str, int, str, str]]:
                 # pattern does not occur in this tree, and the probe pins
                 # matcher behavior if that assumption ever breaks.
                 code = line.split("//", 1)[0]
-                for m in CONVERSION_RE.finditer(code):
-                    hits.append((rel, lineno, normalize(m.group("operand")), m.group("unit")))
+                for pattern in (CONVERSION_RE, REVERSED_RE, COMPOUND_RE):
+                    for m in pattern.finditer(code):
+                        hits.append(
+                            (
+                                rel,
+                                lineno,
+                                normalize(m.group("operand")),
+                                m.group("unit"),
+                                m.group(0).strip(),
+                            )
+                        )
     return hits
 
 
@@ -109,13 +135,13 @@ def check(root: Path) -> None:
     allowed = {(e["file"], normalize(e["operand"]), e["unit"]) for e in allow}
     used: set[tuple[str, str, str]] = set()
     violations: list[str] = []
-    for rel, lineno, operand, unit in hits:
+    for rel, lineno, operand, unit, snippet in hits:
         key = (rel, operand, unit)
         if key in allowed:
             used.add(key)
             continue
         violations.append(
-            f"{rel}:{lineno}: unbounded time.Duration({operand}) * time.{unit}\n"
+            f"{rel}:{lineno}: unbounded duration conversion: {snippet}\n"
             f"  route it through config.SaturatingSeconds, or bound the value "
             f"before the multiply and add a dispositioned entry to {POLICY_REL}"
         )
@@ -142,6 +168,12 @@ def probe() -> None:
     m = CONVERSION_RE.search(multiline_safe)
     if not m or normalize(m.group("operand")) != "f(a,b)":
         fail("probe: matcher mishandles a nested-call operand", code=1)
+    reversed_form = "\td := time.Second * time.Duration(cfg.N)\n"
+    if not REVERSED_RE.search(reversed_form):
+        fail("probe: matcher no longer flags the reversed operand order", code=1)
+    compound_form = "\td *= time.Second\n"
+    if not COMPOUND_RE.search(compound_form):
+        fail("probe: matcher no longer flags a compound assign", code=1)
     print("check_timeout_saturation: probe ok")
 
 
