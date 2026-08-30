@@ -2,11 +2,52 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
+	sdkagentloop "github.com/MiviaLabs/mivia-ai-sdk/agentloop"
+	sdkshape "github.com/MiviaLabs/mivia-ai-sdk/provider"
 )
+
+// TestWriteBackSDKHistoryDropsEmptyAssistantMessage pins the write-back
+// half of the empty-shape repair. Since the ContinueOnStop hook keeps the
+// SDK-appended triggering assistant message of a continued empty attempt
+// in res.History, writeBackSDKHistory must drop that shape before it
+// reaches the carried l.Messages - a message dropped only on the wire
+// still fails every later turn's preparation validation. The trim-input
+// half of the same repair is pinned by the chat package's
+// TestFinishAgentTurn_EmptyResponseDoesNotPoisonNextTurnsPreparation.
+func TestWriteBackSDKHistoryDropsEmptyAssistantMessage(t *testing.T) {
+	l := &Loop{Messages: []provider.Message{{Role: provider.RoleUser, Content: "hi"}}}
+	res := sdkagentloop.Result{History: []sdkshape.Message{
+		{Role: sdkshape.RoleUser, Content: "hi"},
+		{Role: sdkshape.RoleAssistant, Content: ""},
+		{Role: sdkshape.RoleUser, Content: "[mivia: your previous response was empty]"},
+		{Role: sdkshape.RoleAssistant, ToolCalls: []sdkshape.ToolCall{{ID: "call_1", Name: "read_file"}}},
+		{Role: sdkshape.RoleAssistant, Content: "final"},
+	}}
+	l.writeBackSDKHistory(res, 1)
+	got := l.Messages
+	if len(got) != 4 {
+		t.Fatalf("got %d messages, want 4 (user, notice, tool-call assistant, final): %+v", len(got), got)
+	}
+	if got[1].Role != provider.RoleUser || !strings.HasPrefix(got[1].Content, "[mivia:") {
+		t.Fatalf("the continuation notice must survive the write-back: %+v", got[1])
+	}
+	if len(got[2].ToolCalls) == 0 {
+		t.Fatalf("an assistant message with tool calls must never be dropped: %+v", got[2])
+	}
+	if got[3].Content != "final" {
+		t.Fatalf("the final answer must survive the write-back: %+v", got[3])
+	}
+	for _, m := range got {
+		if m.Role == provider.RoleAssistant && strings.TrimSpace(m.Content) == "" && len(m.ToolCalls) == 0 {
+			t.Fatalf("an empty assistant message survived the write-back: %+v", got)
+		}
+	}
+}
 
 // TestRunOnceRunsSDKBackend asserts that runOnce always drives the
 // SDK-backed loop through runOnceSDK: the fake completer's ChatTurn
