@@ -1324,7 +1324,10 @@
     "TestServiceVerifySessionlessReturnsErrVerifiedNoSessionWithoutSaving",
     "TestServiceVerifyClientErrorWraps",
     "TestServiceEnsureAlreadyExpiredNeverCallsRefresh",
-    "TestServiceEnsureRefreshSucceedsButSaveFailsReturnsNewBearerAndError"
+    "TestServiceEnsureRefreshSucceedsButSaveFailsReturnsNewBearerAndError",
+    "TestLogoutWithStoredTokenAndRevoke204Succeeds",
+    "TestUsageTextDocumentsLoginLogout",
+    "TestRevokeSuccessReturnsNil"
   ],
   "knownZeroAssertions": [
     "TestAbandonFenceConcurrentMapAccess",
