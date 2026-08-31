@@ -79,6 +79,22 @@ func (p *Projector) RollbackSeq(n int) {
 	p.seq -= int64(n)
 }
 
+// RollbackDrops un-advances the drop watermark by delta, so a sync.dropped
+// marker that was built but never stored does not consume the loss it reported.
+//
+// checkDrops moves the watermark when it CONSTRUCTS the marker. If the append
+// that would have made it durable fails, the marker never reaches the wire while
+// the watermark has already moved, so the next marker under-reports and the hole
+// settled decision 6 exists to expose becomes invisible again. The watermark
+// must therefore track what was STORED, exactly as the seq counter does.
+func (p *Projector) RollbackDrops(delta uint64) {
+	if delta >= p.lastDrops {
+		p.lastDrops = 0
+		return
+	}
+	p.lastDrops -= delta
+}
+
 // ResetSeq resets the sequence counter to a specified sequence (e.g. on fork).
 func (p *Projector) ResetSeq(seq int64) {
 	p.seq = seq

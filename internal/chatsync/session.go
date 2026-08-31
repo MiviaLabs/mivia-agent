@@ -246,9 +246,26 @@ func (s *SyncSession) processEvent(ctx context.Context, ev events.Event) {
 func (s *SyncSession) appendLocked(wireEvents []WireEvent) error {
 	if err := s.appender.Append(wireEvents...); err != nil {
 		s.projector.RollbackSeq(len(wireEvents))
+		s.projector.RollbackDrops(droppedDelta(wireEvents))
 		return err
 	}
 	return nil
+}
+
+// droppedDelta sums the loss reported by the sync.dropped markers in a batch.
+// A batch carries at most one, but summing keeps the helper correct rather than
+// resting on that.
+func droppedDelta(wireEvents []WireEvent) uint64 {
+	var total uint64
+	for _, we := range wireEvents {
+		if we.Type != TypeSyncDropped {
+			continue
+		}
+		if p, ok := we.Payload.(*SyncDroppedPayload); ok {
+			total += p.Dropped
+		}
+	}
+	return total
 }
 
 // currentDrops reports every event lost before projection. The caller must
