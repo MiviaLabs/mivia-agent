@@ -22,8 +22,11 @@ func setupE2EMockServer(mu *sync.Mutex, eventsList *[]EventItem) *httptest.Serve
 		_ = json.NewEncoder(w).Encode(Session{ID: "sess-e2e-1", Status: "running", LastSeq: 0})
 	})
 	mux.HandleFunc("POST /v1/chat-sessions/{id}/events", func(w http.ResponseWriter, r *http.Request) {
-		var items []EventItem
-		_ = json.NewDecoder(r.Body).Decode(&items)
+		var req struct {
+			Events []EventItem `json:"events"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		items := req.Events
 		mu.Lock()
 		*eventsList = append(*eventsList, items...)
 		mu.Unlock()
@@ -140,8 +143,11 @@ func setupForkMockServer(createCount *int32, mu *sync.Mutex, sessionEvents map[s
 			})
 			return
 		}
-		var items []EventItem
-		_ = json.NewDecoder(r.Body).Decode(&items)
+		var req struct {
+			Events []EventItem `json:"events"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		items := req.Events
 		mu.Lock()
 		sessionEvents[id] = append(sessionEvents[id], items...)
 		mu.Unlock()
@@ -215,5 +221,140 @@ func verifyForkedSession(t *testing.T, count int32, mu *sync.Mutex, sessionEvent
 	}
 	if !foundForkEvent {
 		t.Errorf("sync.forked event not found in forked session events: %+v", forkedEvents)
+	}
+}
+
+func TestSyncSession_DistinctLocalAndRemoteSessionIDs(t *testing.T) {
+	var mu sync.Mutex
+	var receivedEvents []EventItem
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/chat-sessions", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(Session{ID: "remote-server-uuid-999", Status: "running", LastSeq: 0})
+	})
+	mux.HandleFunc("POST /v1/chat-sessions/{id}/events", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Events []EventItem `json:"events"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		mu.Lock()
+		receivedEvents = append(receivedEvents, req.Events...)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(AppendResult{InsertedCount: len(req.Events), LastSeq: int64(len(receivedEvents))})
+	})
+	mux.HandleFunc("POST /v1/chat-sessions/{id}/heartbeat", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(Session{ID: r.PathValue("id"), Status: "running"})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	bus := events.New()
+	opts := SessionOptions{
+		ClientOptions:   ClientOptions{BaseURL: srv.URL},
+		OutboxDir:       t.TempDir(),
+		CreateTitle:     "Distinct IDs",
+		HeartbeatPeriod: 1 * time.Second,
+	}
+
+	// OpenSession with local session ID "local-client-1"
+	syncSess, err := OpenSession(context.Background(), bus, "local-client-1", opts)
+	if err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+
+	// Publish event with SessionID = "local-client-1"
+	bus.Publish(events.Event{
+		Kind:      events.KindTurnStart,
+		SessionID: "local-client-1",
+		TurnID:    "turn:1",
+		Detail:    "hello world",
+		Timestamp: time.Now(),
+	})
+
+	time.Sleep(50 * time.Millisecond)
+	_ = syncSess.Stop(context.Background())
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(receivedEvents) == 0 {
+		t.Fatal("expected projected events to be received on remote server, got 0")
+	}
+}
+
+func TestSyncSession_ResumeWithUnflushedEventsPreservesMonotonicity(t *testing.T) {
+	outboxDir := t.TempDir()
+
+	// Pre-populate outbox with events up to seq 5, cursor at 2
+	ob, err := OpenOutbox(outboxDir, 100)
+	if err != nil {
+		t.Fatalf("OpenOutbox: %v", err)
+	}
+	_ = ob.Append(
+		WireEvent{Seq: 1, Type: TypeTurnStarted, Payload: &TurnStartedPayload{Envelope: Envelope{Turn: "turn:1"}}},
+		WireEvent{Seq: 2, Type: TypeTurnEnded, Payload: &TurnEndedPayload{Envelope: Envelope{Turn: "turn:1"}}},
+		WireEvent{Seq: 3, Type: TypeTurnStarted, Payload: &TurnStartedPayload{Envelope: Envelope{Turn: "turn:2"}}},
+		WireEvent{Seq: 4, Type: TypeTurnEnded, Payload: &TurnEndedPayload{Envelope: Envelope{Turn: "turn:2"}}},
+		WireEvent{Seq: 5, Type: TypeTurnStarted, Payload: &TurnStartedPayload{Envelope: Envelope{Turn: "turn:3"}}},
+	)
+	_ = ob.AdvanceCursor(2)
+	_ = ob.Close()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/chat-sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(Session{ID: "sess-resumed", Status: "running", LastSeq: 2})
+	})
+	mux.HandleFunc("POST /v1/chat-sessions/{id}/events", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Events []EventItem `json:"events"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(AppendResult{InsertedCount: len(req.Events), LastSeq: req.Events[len(req.Events)-1].Seq})
+	})
+	mux.HandleFunc("POST /v1/chat-sessions/{id}/heartbeat", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(Session{ID: r.PathValue("id"), Status: "running"})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	bus := events.New()
+	opts := SessionOptions{
+		ClientOptions:   ClientOptions{BaseURL: srv.URL},
+		OutboxDir:       outboxDir,
+		CreateTitle:     "Resume Test",
+		HeartbeatPeriod: 1 * time.Second,
+	}
+
+	syncSess, err := OpenSession(context.Background(), bus, "sess-resumed", opts)
+	if err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+
+	// Publish new turn
+	bus.Publish(events.Event{
+		Kind:      events.KindTurnStart,
+		SessionID: "sess-resumed",
+		TurnID:    "turn:4",
+		Detail:    "start turn 4",
+		Timestamp: time.Now(),
+	})
+
+	time.Sleep(50 * time.Millisecond)
+	_ = syncSess.Stop(context.Background())
+
+	// Re-open outbox and check that new event received Seq >= 6
+	obCheck, err := OpenOutbox(outboxDir, 100)
+	if err != nil {
+		t.Fatalf("OpenOutbox check: %v", err)
+	}
+	defer obCheck.Close()
+	if obCheck.MaxSeq() < 6 {
+		t.Errorf("obCheck.MaxSeq() = %d, want >= 6", obCheck.MaxSeq())
 	}
 }

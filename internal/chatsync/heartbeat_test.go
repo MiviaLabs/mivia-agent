@@ -62,3 +62,27 @@ func TestHeartbeatPeriodicAndImmediateTransition(t *testing.T) {
 
 	runner.Stop(ctx)
 }
+
+func TestHeartbeatRunner_StopIdempotentAndRespectsContext(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/chat-sessions/{id}/heartbeat", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(Session{ID: r.PathValue("id"), Status: "running"})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	client := NewClient(ClientOptions{BaseURL: srv.URL})
+	runner := NewHeartbeatRunner(client, "sess-hb-2", 1*time.Second)
+	ctx := context.Background()
+
+	runner.Start(ctx)
+	// Stop should be idempotent (calling multiple times does not panic)
+	runner.Stop(ctx)
+	runner.Stop(ctx)
+
+	// Stop with cancelled context returns immediately
+	cancelCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	runner.Stop(cancelCtx)
+}

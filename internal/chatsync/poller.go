@@ -67,6 +67,13 @@ func (p *InputPoller) Start(ctx context.Context) {
 	go p.loop(ctx)
 }
 
+// SetSessionID updates the session ID polled by this runner.
+func (p *InputPoller) SetSessionID(sessionID string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.sessionID = sessionID
+}
+
 // Stop terminates the poller and waits for loop exit.
 func (p *InputPoller) Stop() {
 	p.mu.Lock()
@@ -83,6 +90,7 @@ func (p *InputPoller) Stop() {
 
 func (p *InputPoller) loop(ctx context.Context) {
 	defer close(p.doneCh)
+	defer close(p.inputCh)
 
 	for {
 		select {
@@ -101,7 +109,11 @@ func (p *InputPoller) pollOnce(ctx context.Context) {
 	pollCtx, cancel := context.WithTimeout(ctx, time.Duration(p.waitSeconds+5)*time.Second)
 	defer cancel()
 
-	next, err := p.client.NextInput(pollCtx, p.sessionID, p.waitSeconds)
+	p.mu.Lock()
+	sessID := p.sessionID
+	p.mu.Unlock()
+
+	next, err := p.client.NextInput(pollCtx, sessID, p.waitSeconds)
 	if err != nil {
 		select {
 		case <-ctx.Done():

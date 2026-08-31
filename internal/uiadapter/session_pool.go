@@ -382,7 +382,11 @@ func (p *SessionPool) attachSyncLocked(sess *chat.Session) {
 }
 
 func (p *SessionPool) forwardRemoteInputs(sess *chat.Session, syncSess *chatsync.SyncSession) {
-	for input := range syncSess.Inputs() {
+	inputs := syncSess.Inputs()
+	if inputs == nil {
+		return
+	}
+	for input := range inputs {
 		p.mu.Lock()
 		conv, ok := p.convs[sess.SessionID]
 		p.mu.Unlock()

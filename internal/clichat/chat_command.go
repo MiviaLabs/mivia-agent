@@ -440,19 +440,20 @@ func dispatchChatSurface(invocation chatInvocation, sess *chat.Session, res *con
 	// a publish with no bus is a silent no-op. See attachSessionEventBus.
 	attachSessionEventBus(sess)
 	defer sess.ReleaseContextLease(context.Background())
-	defer attachCLISync(sess, res)()
 	if invocation.jsonMode {
 		if err := validateJSONModeInvocation(invocation); err != nil {
 			return err
 		}
 	}
 	if invocation.prompt != "" {
+		defer attachCLISync(sess, res)()
 		return oneShot(sess, invocation.prompt, useTools, res, invocation.quiet)
 	}
 	// Classic REPL /agent uses package state; TUI stores agentState on the model.
 	cliagents.ClassicAgentState = agentState
 	defer func() { cliagents.ClassicAgentState = nil }()
 	if invocation.plainUI || !term.IsTerminal(int(os.Stdin.Fd())) || strings.EqualFold(os.Getenv("TERM"), "dumb") {
+		defer attachCLISync(sess, res)()
 		return repl(sess, res, useTools, agentState, invocation.jsonMode, invocation.quiet)
 	}
 	if TUILauncherFunc == nil {

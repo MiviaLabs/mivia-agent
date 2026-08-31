@@ -100,11 +100,12 @@ func (c *Client) GetSession(ctx context.Context, sessionID string) (*Session, er
 	return &out, nil
 }
 
-// AppendEvents appends an event batch via POST /v1/chat-sessions/{id}/events.
+// AppendEvents appends a batch of events to a session stream.
 func (c *Client) AppendEvents(ctx context.Context, sessionID string, events []EventItem) (*AppendResult, error) {
 	var out AppendResult
 	path := fmt.Sprintf("/v1/chat-sessions/%s/events", sessionID)
-	if err := c.doJSON(ctx, http.MethodPost, path, events, &out); err != nil {
+	body := map[string]any{"events": events}
+	if err := c.doJSON(ctx, http.MethodPost, path, body, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

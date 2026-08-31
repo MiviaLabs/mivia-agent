@@ -40,6 +40,7 @@ type Outbox struct {
 	eventsFile   *os.File
 	cursor       Cursor
 	unflushed    int
+	maxSeq       int64
 }
 
 // OpenOutbox opens or creates the outbox directory, acquires the process lock,
@@ -152,6 +153,9 @@ func (ob *Outbox) Append(events ...WireEvent) error {
 	}
 
 	for _, ev := range events {
+		if ev.Seq > ob.maxSeq {
+			ob.maxSeq = ev.Seq
+		}
 		data, err := json.Marshal(ev)
 		if err != nil {
 			return fmt.Errorf("marshal event: %w", err)
@@ -251,6 +255,13 @@ func (ob *Outbox) UnflushedEvents() ([]StoredEvent, error) {
 	return result, nil
 }
 
+// MaxSeq returns the highest sequence number recorded in the outbox.
+func (ob *Outbox) MaxSeq() int64 {
+	ob.mu.Lock()
+	defer ob.mu.Unlock()
+	return ob.maxSeq
+}
+
 func (ob *Outbox) countUnflushedFromDisk() (int, error) {
 	eventsPath := filepath.Join(ob.dir, eventsFileName)
 	f, err := os.Open(eventsPath)
@@ -275,6 +286,9 @@ func (ob *Outbox) countUnflushedFromDisk() (int, error) {
 		var se StoredEvent
 		if err := json.Unmarshal(line, &se); err != nil {
 			return 0, fmt.Errorf("unmarshal stored event: %w", err)
+		}
+		if se.Seq > ob.maxSeq {
+			ob.maxSeq = se.Seq
 		}
 		if se.Seq > ob.cursor.FlushedSeq {
 			count++

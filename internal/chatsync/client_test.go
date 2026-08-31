@@ -71,11 +71,14 @@ func TestClientCreateAndGetSession(t *testing.T) {
 func TestClientAppendEventsAndNext(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/chat-sessions/{id}/events", func(w http.ResponseWriter, r *http.Request) {
-		var items []EventItem
-		if err := json.NewDecoder(r.Body).Decode(&items); err != nil {
+		var req struct {
+			Events []EventItem `json:"events"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		items := req.Events
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(AppendResult{
 			InsertedCount: len(items),
@@ -209,5 +212,30 @@ func TestClient409ConflictTypedError(t *testing.T) {
 	}
 	if confErr.Message != "session is owned by another writer" || confErr.StatusCode != 409 {
 		t.Errorf("confErr = %+v, want message='session is owned by another writer', status=409", confErr)
+	}
+}
+
+func TestClientAppendEvents_MatchesWireEnvelope(t *testing.T) {
+	var receivedBody map[string]any
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/chat-sessions/{id}/events", func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&receivedBody); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(AppendResult{InsertedCount: 1, LastSeq: 1})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	client := NewClient(ClientOptions{BaseURL: srv.URL})
+	_, err := client.AppendEvents(context.Background(), "sess-1", []EventItem{{Seq: 1, Type: TypeTurnStarted}})
+	if err != nil {
+		t.Fatalf("AppendEvents: %v", err)
+	}
+	eventsArr, ok := receivedBody["events"].([]any)
+	if !ok || len(eventsArr) != 1 {
+		t.Fatalf("expected body with 'events' array, got %v", receivedBody)
 	}
 }

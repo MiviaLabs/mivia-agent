@@ -17,6 +17,7 @@ type HeartbeatRunner struct {
 	interval  time.Duration
 	status    string
 	mu        sync.Mutex
+	running   bool
 	triggerCh chan struct{}
 	stopCh    chan struct{}
 	doneCh    chan struct{}
@@ -38,8 +39,23 @@ func NewHeartbeatRunner(client *Client, sessionID string, interval time.Duration
 	}
 }
 
+// SetSessionID updates the remote session ID for heartbeat requests.
+func (h *HeartbeatRunner) SetSessionID(sessionID string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.sessionID = sessionID
+}
+
 // Start begins the heartbeat background goroutine.
 func (h *HeartbeatRunner) Start(ctx context.Context) {
+	h.mu.Lock()
+	if h.running {
+		h.mu.Unlock()
+		return
+	}
+	h.running = true
+	h.mu.Unlock()
+
 	go h.loop(ctx)
 }
 
@@ -61,8 +77,19 @@ func (h *HeartbeatRunner) SetStatus(ctx context.Context, status string) {
 
 // Stop terminates the heartbeat runner.
 func (h *HeartbeatRunner) Stop(ctx context.Context) {
+	h.mu.Lock()
+	if !h.running {
+		h.mu.Unlock()
+		return
+	}
+	h.running = false
 	close(h.stopCh)
-	<-h.doneCh
+	h.mu.Unlock()
+
+	select {
+	case <-h.doneCh:
+	case <-ctx.Done():
+	}
 }
 
 func (h *HeartbeatRunner) loop(ctx context.Context) {
@@ -89,10 +116,11 @@ func (h *HeartbeatRunner) loop(ctx context.Context) {
 func (h *HeartbeatRunner) send(ctx context.Context) {
 	h.mu.Lock()
 	status := h.status
+	sessID := h.sessionID
 	h.mu.Unlock()
 
 	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	_, _ = h.client.Heartbeat(reqCtx, h.sessionID, status)
+	_, _ = h.client.Heartbeat(reqCtx, sessID, status)
 }

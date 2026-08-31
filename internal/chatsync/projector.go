@@ -19,24 +19,26 @@ type ProjectorOptions struct {
 }
 
 type turnState struct {
-	started   bool
-	done      bool
-	streamed  bool
-	fragments int
-	bytes     int
+	started           bool
+	done              bool
+	streamed          bool
+	fragments         int
+	thinkingFragments int
+	bytes             int
 }
 
 // Projector performs pure synchronous projection of events.Event streams
 // into WireEvent sequences for a single chat session.
 type Projector struct {
-	sessionID    string
-	seq          int64
-	opts         ProjectorOptions
-	syntheticNum int
-	turns        map[string]*turnState
-	turnOrder    []string
-	lastDrops    uint64
-	currentTurn  string
+	sessionID           string
+	seq                 int64
+	opts                ProjectorOptions
+	syntheticNum        int
+	activeSyntheticTurn string
+	turns               map[string]*turnState
+	turnOrder           []string
+	lastDrops           uint64
+	currentTurn         string
 }
 
 // NewProjector constructs a Projector for sessionID starting at initialSeq.
@@ -72,7 +74,7 @@ func (p *Projector) ProjectWithDrops(ev events.Event, currentDrops uint64) []Wir
 		return out
 	}
 
-	turnID, isSynthetic := p.resolveTurnID(ev.TurnID)
+	turnID, isSynthetic := p.resolveTurnID(ev.TurnID, ev.Kind)
 	p.currentTurn = turnID
 	env := p.buildEnvelope(ev, turnID)
 
@@ -201,12 +203,19 @@ func (p *Projector) knownTurn(id string) bool {
 	return ok
 }
 
-func (p *Projector) resolveTurnID(rawTurnID string) (string, bool) {
-	if rawTurnID == "" {
-		p.syntheticNum++
-		return fmt.Sprintf("synthetic:%d", p.syntheticNum), true
+func (p *Projector) resolveTurnID(rawTurnID string, kind events.Kind) (string, bool) {
+	if rawTurnID != "" {
+		return rawTurnID, false
 	}
-	return rawTurnID, false
+	if kind == events.KindTurnStart || p.activeSyntheticTurn == "" {
+		p.syntheticNum++
+		p.activeSyntheticTurn = fmt.Sprintf("synthetic:%d", p.syntheticNum)
+	}
+	turnID := p.activeSyntheticTurn
+	if kind == events.KindTurnEnd || kind == events.KindError {
+		p.activeSyntheticTurn = ""
+	}
+	return turnID, true
 }
 
 func (p *Projector) buildEnvelope(ev events.Event, turnID string) Envelope {
@@ -317,10 +326,13 @@ func (p *Projector) projectThinking(env Envelope, turnID, content string) []Wire
 		text = redactText(content)
 		text = applyTruncation(&env, "text", text, BudgetDeltaText)
 	}
+	ts := p.turn(turnID)
+	index := ts.thinkingFragments
+	ts.thinkingFragments++
 	payload := &ThinkingDeltaPayload{
 		Envelope: env,
 		Bytes:    len(content),
-		Index:    0,
+		Index:    index,
 		Text:     text,
 	}
 	return []WireEvent{p.nextWireEvent(TypeThinkingDelta, payload)}

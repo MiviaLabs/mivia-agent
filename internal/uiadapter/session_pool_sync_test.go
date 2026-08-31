@@ -31,8 +31,11 @@ func setupSyncMockServer(mu *sync.Mutex, createdIDs *[]string, sessionEvents map
 	})
 	mux.HandleFunc("POST /v1/chat-sessions/{id}/events", func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
-		var items []chatsync.EventItem
-		_ = json.NewDecoder(r.Body).Decode(&items)
+		var req struct {
+			Events []chatsync.EventItem `json:"events"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		items := req.Events
 		mu.Lock()
 		sessionEvents[id] = append(sessionEvents[id], items...)
 		mu.Unlock()
