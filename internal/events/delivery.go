@@ -65,16 +65,7 @@ func (d *Delivery) Unsubscribe() {
 // returns.
 func (d *Delivery) Flush() {
 	b := d.b
-	b.mu.Lock()
-	var others []*subscription
-	for _, subs := range b.subs {
-		for _, s := range subs {
-			if s != d.s {
-				others = append(others, s)
-			}
-		}
-	}
-	b.mu.Unlock()
+	others := b.otherSubscriptions(d.s)
 
 	var wg sync.WaitGroup
 	for _, s := range others {
@@ -123,16 +114,7 @@ func (d *Delivery) Close() {
 	// Collect every subscription OTHER than the caller's own. The caller's
 	// goroutine is running this handler and exits on its own once the handler
 	// returns.
-	b.mu.Lock()
-	var others []*subscription
-	for _, subs := range b.subs {
-		for _, s := range subs {
-			if s != d.s {
-				others = append(others, s)
-			}
-		}
-	}
-	b.mu.Unlock()
+	others := b.otherSubscriptions(d.s)
 
 	// Wait for each other subscription's delivery goroutine to drain and exit,
 	// unless it is currently running a handler (delivering): a delivering
@@ -170,4 +152,32 @@ func (d *Delivery) Close() {
 	b.mu.Lock()
 	b.subs = nil
 	b.mu.Unlock()
+}
+
+// otherSubscriptions returns every DISTINCT subscription on b except self.
+//
+// Distinct matters since SubscribeAcross: one subscription appears once per
+// kind it is registered under, so a plain iteration of b.subs yields it N
+// times. Bus.Flush already deduped by pointer; the Delivery variants did not,
+// and a Flush that barriered one subscription three times made it drain three
+// times for one logical flush - serialized rather than deadlocked, which is
+// exactly why nothing noticed.
+func (b *Bus) otherSubscriptions(self *subscription) []*subscription {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	seen := make(map[*subscription]struct{}, len(b.subs))
+	var others []*subscription
+	for _, subs := range b.subs {
+		for _, s := range subs {
+			if s == self {
+				continue
+			}
+			if _, dup := seen[s]; dup {
+				continue
+			}
+			seen[s] = struct{}{}
+			others = append(others, s)
+		}
+	}
+	return others
 }

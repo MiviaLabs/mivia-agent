@@ -9,10 +9,11 @@ package events
 // terminates, even though the producers published them in causal order on one
 // goroutine.
 //
-// That is not a theoretical hazard. It is why internal/hub withholds
-// KindTurnEnd and KindError from the relayed set: a remote viewer that saw a
-// terminal before the content it terminates would close the turn early and
-// then render text into a turn it had already closed.
+// That is not a theoretical hazard. It is why internal/hub withheld
+// KindTurnEnd and KindError from its relayed set for as long as it did: a
+// remote viewer that saw a terminal before the content it terminates would
+// close the turn early and then render text into a turn it had already closed.
+// It relays them now, on one SubscribeAcross subscription.
 //
 // SubscribeAcross registers ONE subscription under many kinds. One queue, one
 // delivery goroutine, so the handler observes the order Publish was called in.
@@ -102,6 +103,12 @@ func (b *Bus) SubscribeAcross(kinds []Kind, h Handler, opts ...SubscribeOptions)
 // silent loss point on the connection's own send path that this counter does
 // not cover either. It tells the process that owns the bus that it is shedding
 // events; it does not make that loss recoverable for anyone downstream.
+//
+// Reading it AFTER Unsubscribe can also over-report. Publish snapshots the
+// subscriber slice under the lock and enqueues outside it, so a publish already
+// in flight can still land in a removed subscription's queue and be dropped
+// there. Nothing was lost - no handler was ever going to run for it - but the
+// counter moves. Read it while the subscription is live.
 func (h *Subscription) Drops() uint64 {
 	if h == nil || h.s == nil {
 		return 0
@@ -143,16 +150,13 @@ func (b *Bus) removeSubLocked(s *subscription) {
 	if b.subs == nil || s == nil {
 		return
 	}
-	kinds := s.kinds
-	if len(kinds) == 0 {
-		// A subscription with no recorded kinds is a hand-built one (white-box
-		// tests construct these). Fall back to scanning every kind so the
-		// removal is still total.
-		for k := range b.subs {
-			kinds = append(kinds, k)
-		}
-	}
-	for _, k := range kinds {
+	// s.kinds is the ONLY source here. There used to be a fallback that scanned
+	// every kind when it was empty, which sounded defensive and was worse than
+	// useless: it was unreachable (both registration paths set kinds before the
+	// subscription is published to b.subs), and it silently covered for
+	// Subscribe forgetting to record its own kind - so neither guard had a test
+	// that failed on its own. See TestSubscribeRecordsItsKind.
+	for _, k := range s.kinds {
 		subs := b.subs[k]
 		for i, cur := range subs {
 			if cur == s {

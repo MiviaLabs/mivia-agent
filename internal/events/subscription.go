@@ -21,13 +21,20 @@ type subscription struct {
 	// kind after its delivery goroutine stopped feeds a queue nobody drains.
 	// Written once at registration, before the subscription is reachable from
 	// b.subs, and read only under b.mu.
-	kinds   []Kind
-	ch      chan Event
-	drops   atomic.Uint64 // drop-oldest counter
-	panics  atomic.Uint64 // handler panics contained by handle()
-	cancel  context.CancelFunc
-	done    chan struct{}      // closed when delivery goroutine exits
-	flushCh chan chan struct{} // dedicated channel for flush barriers
+	kinds  []Kind
+	ch     chan Event
+	drops  atomic.Uint64 // drop-oldest counter
+	panics atomic.Uint64 // handler panics contained by handle()
+	// barriers counts flush barriers this subscription has acknowledged. It
+	// exists for the same reason drops and panics do: without it, "Flush sent
+	// exactly one barrier to a subscription registered under three kinds" is
+	// unobservable, so the dedup in Bus.Flush and Delivery.Flush had no gate.
+	// Redundant barriers do not deadlock - flushCh has a live consumer, so they
+	// serialize - which is precisely why nothing else notices them.
+	barriers atomic.Uint64
+	cancel   context.CancelFunc
+	done     chan struct{}      // closed when delivery goroutine exits
+	flushCh  chan chan struct{} // dedicated channel for flush barriers
 	// stopped is set by Delivery.Unsubscribe before cancel(). deliver() checks
 	// it at the top of every loop iteration, so a re-entrant stop makes the
 	// delivery goroutine exit promptly after the current handler returns,
@@ -104,6 +111,7 @@ func (s *subscription) deliver(ctx context.Context) {
 			// Flush barrier: drain all queued events first, then
 			// close the reply channel to signal completion.
 			s.drainEvents(ctx)
+			s.barriers.Add(1)
 			close(reply)
 		case <-ctx.Done():
 			s.drain(ctx)
@@ -145,6 +153,7 @@ func (s *subscription) drain(ctx context.Context) {
 func (s *subscription) ackFlushBarrier() bool {
 	select {
 	case reply := <-s.flushCh:
+		s.barriers.Add(1)
 		close(reply)
 		return true
 	default:
@@ -218,6 +227,12 @@ func (s *subscription) Panics() uint64 {
 // Drops returns the number of events dropped due to a full queue.
 func (s *subscription) Drops() uint64 {
 	return s.drops.Load()
+}
+
+// Barriers returns the number of flush barriers this subscription has
+// acknowledged.
+func (s *subscription) Barriers() uint64 {
+	return s.barriers.Load()
 }
 
 // trySend enqueues an event to the subscriber's channel. If the channel is

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 )
 
 // orderRecorder appends a label for every event it receives, in the order its
@@ -297,22 +298,85 @@ func TestSubscribeAcrossDeliversADuplicateKindOnce(t *testing.T) {
 	}
 }
 
-// TestSubscribeAcrossFlushSendsOneBarrier pins a property Bus.Flush has by
-// luck rather than by design: it collects subscriptions into a set keyed by
-// pointer, so a subscription registered under three kinds is barriered once.
-// Barriering it three times would block, because flushCh holds one.
+// TestSubscribeAcrossFlushSendsOneBarrier pins that Bus.Flush barriers a
+// subscription ONCE however many kinds it is registered under.
+//
+// This test previously asserted only that the handler saw one event, which the
+// duplicate-kind test already covers - it passed with Bus.Flush's pointer-keyed
+// dedup removed entirely, and its comment claimed redundant barriers "would
+// block". They do not: flushCh has a live consumer, so they serialize, and the
+// subscription simply drains once per barrier. That is precisely why the
+// property needs a counter to be observable at all.
 func TestSubscribeAcrossFlushSendsOneBarrier(t *testing.T) {
 	bus := New()
 	t.Cleanup(bus.Close)
 	rec := &orderRecorder{}
-	bus.SubscribeAcross([]Kind{KindTurnStart, KindAssistant, KindTurnEnd}, rec)
+	h := bus.SubscribeAcross([]Kind{KindTurnStart, KindAssistant, KindTurnEnd}, rec)
 
 	bus.Publish(Event{Kind: KindAssistant, Content: "x"})
-	// A hang here is the failure this test exists for.
 	bus.Flush()
 
 	if n := len(rec.snapshot()); n != 1 {
 		t.Errorf("handler saw %d events after Flush, want 1", n)
+	}
+	if n := h.s.Barriers(); n != 1 {
+		t.Errorf("one Flush sent %d barriers to a subscription spanning 3 kinds, want 1", n)
+	}
+}
+
+// TestDeliveryFlushSendsOneBarrierPerSubscription is the re-entrant sibling.
+// Bus.Flush deduped by pointer from the start; Delivery.Flush and
+// Delivery.Close iterated b.subs raw, which was equivalent to a set only while
+// a subscription could appear under exactly one kind. SubscribeAcross ended
+// that, so a re-entrant Flush barriered a three-kind subscription three times.
+func TestDeliveryFlushSendsOneBarrierPerSubscription(t *testing.T) {
+	bus := New()
+	t.Cleanup(bus.Close)
+
+	target := bus.SubscribeAcross([]Kind{KindTurnStart, KindAssistant, KindTurnEnd}, &orderRecorder{})
+
+	// A second subscription whose handler flushes the bus re-entrantly.
+	flushed := make(chan struct{})
+	bus.Subscribe(KindToolStart, HandlerFunc(func(ctx context.Context, _ Event) {
+		if d, ok := DeliveryFrom(ctx); ok {
+			d.Flush()
+		}
+		close(flushed)
+	}))
+
+	bus.Publish(Event{Kind: KindToolStart})
+	select {
+	case <-flushed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("re-entrant Delivery.Flush never returned")
+	}
+
+	if n := target.s.Barriers(); n != 1 {
+		t.Errorf("one Delivery.Flush sent %d barriers to a subscription spanning 3 kinds, want 1", n)
+	}
+}
+
+// TestSubscribeRecordsItsKind names the single-kind half of the removal
+// contract on its own.
+//
+// Subscribe records sub.kinds so removal takes one path for every
+// subscription. That line and removeSubLocked's old scan-everything fallback
+// used to mask each other: deleting either alone left the package green, and
+// only deleting both surfaced a failure - in an unrelated metrics test. The
+// fallback is gone, so this test is now the thing that fails if Subscribe
+// stops recording its kind.
+func TestSubscribeRecordsItsKind(t *testing.T) {
+	bus := New()
+	t.Cleanup(bus.Close)
+	rec := &orderRecorder{}
+	bus.Subscribe(KindAssistant, rec)
+
+	if n := bus.subscriberCount(); n != 1 {
+		t.Fatalf("expected 1 registration after Subscribe, got %d", n)
+	}
+	bus.Unsubscribe(KindAssistant, rec)
+	if n := bus.subscriberCount(); n != 0 {
+		t.Fatalf("bus still holds %d registrations after Unsubscribe; the subscription did not record its kind", n)
 	}
 }
 
