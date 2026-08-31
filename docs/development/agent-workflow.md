@@ -160,6 +160,22 @@ run means a regression, not known debt:
 The full run passes: lifecycle, validation and tenancy guards, SSE replay, SSE
 live push, and cursor resume.
 
+**`TestLiveChatSessionFanOutReachesEveryStream` is the multi-replica check.** It
+opens six concurrent SSE streams, each on its own connection with keep-alives
+off so the load balancer is free to place them, appends one event, and counts
+how many streams received it. A working fan-out is six; local-only delivery is
+roughly half, because a stream only hears an append served by the replica it
+happens to sit on.
+
+That count is a diagnosis rather than a hang, and it earned its place at once:
+against two replicas it measured 5, then 2, then 2 of 6, which identified the
+original Postgres LISTEN/NOTIFY transport as silently dead through Neon's
+pooled endpoint. `LISTEN` succeeds through PgBouncer and never delivers. The
+transport moved to Redis pub/sub; the probe now reads 6 of 6.
+
+Run this one against a deployment with more than one replica. On a single
+replica it passes trivially and proves nothing.
+
 ### e2e suite runner (`scripts/e2e_suite.py`)
 
 `scripts/e2e_suite.py` is a small, versioned suite over live e2e scenarios,
