@@ -44,6 +44,7 @@ REQUIRED_IDS = [
     "mivia.go.no-tautological-test-assertion",
     "mivia.go.no-truncation-call-inside-envelope-literal",
     "mivia.go.no-chat-principal-as-sync-handle",
+    "mivia.go.no-validstring-rune-boundary-backoff",
 ]
 
 # Substrings expected near each rule id (YAML-escaped forms, not compiled regexes).
@@ -55,6 +56,7 @@ RULE_PATTERN_HINTS = {
     "mivia.go.no-tautological-test-assertion": r"assert\.True",
     "mivia.go.no-truncation-call-inside-envelope-literal": "applyTruncation",
     "mivia.go.no-chat-principal-as-sync-handle": r"LocalHandle\(\$X\.SessionID\)",
+    "mivia.go.no-validstring-rune-boundary-backoff": r"utf8\\\.ValidString\\\(",
 }
 
 PORTABILITY_VIOLATIONS = [

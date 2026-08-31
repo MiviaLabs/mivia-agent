@@ -624,3 +624,24 @@ rules:
       - pattern: LocalHandle($X.SessionID)
       - pattern: chatsync.LocalHandle($X.sessionID)
       - pattern: LocalHandle($X.sessionID)
+
+  - id: mivia.go.no-validstring-rune-boundary-backoff
+    languages:
+      - go
+    severity: ERROR
+    message: >-
+      A truncation that cuts to a byte budget and then backs off with
+      utf8.ValidString in the LOOP CONDITION checks the ENTIRE prefix, not the
+      cut boundary. One invalid byte anywhere earlier in the string drags the
+      result all the way back to that byte, so a 16 KiB budget can keep 10
+      bytes and still report an ordinary budget cut (DC-6, amputation
+      disguised as truncation). It is also O(n^2) on a long string. Back off
+      across the boundary rune only - utf8.DecodeLastRuneInString reports
+      (RuneError, 1) for a byte that cannot start a rune or an incomplete
+      trailing sequence, while a genuine U+FFFD decodes with size 3 and is
+      kept. Reference implementation - internal/chatsync/truncate.go
+      (truncateString).
+    paths:
+      include:
+        - /**/*.go
+    pattern-regex: 'for[^\n{]*!\s*utf8\.ValidString\('
