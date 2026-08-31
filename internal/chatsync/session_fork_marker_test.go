@@ -68,6 +68,7 @@ func TestOpenSession_ForkMarkerAppendFailureIsNotSwallowed(t *testing.T) {
 		TokenProvider:    testTokenProvider,
 		ClientOptions:    ClientOptions{BaseURL: srv.URL},
 		ProjectorOptions: ProjectorOptions{WriterID: "me"},
+		RemoteSessionID:  "sess-foreign",
 		OutboxDir:        outboxDir,
 		MaxUnflushed:     2,
 		CreateTitle:      "Fork Marker",

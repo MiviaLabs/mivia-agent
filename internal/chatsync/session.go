@@ -32,13 +32,26 @@ type SessionOptions struct {
 	ClientOptions    ClientOptions
 	ProjectorOptions ProjectorOptions
 	OutboxDir        string
-	MaxUnflushed     int
-	PollWaitSeconds  int
-	HeartbeatPeriod  time.Duration
-	CreateTitle      string
-	CwdLabel         string
-	HostLabel        string
-	EnablePolling    bool
+	// RemoteSessionID is the server-assigned session to re-attach to, read
+	// from the persisted identity. Empty creates a fresh remote session. It is
+	// the ONLY value that may appear in a request URL, and it is deliberately
+	// NOT the chat session id OpenSession filters the bus on.
+	RemoteSessionID string
+	// LocalHandle is the local-only handle that names OutboxDir. It is carried
+	// here so the identity write-back can rewrite the record without re-reading
+	// (and possibly re-minting) it.
+	LocalHandle LocalHandle
+	// Identity names the file the resolved remote session id is written back
+	// to. Zero disables the write-back: the session then works exactly as
+	// before, but the next run cannot find the remote session it created.
+	Identity        IdentityRef
+	MaxUnflushed    int
+	PollWaitSeconds int
+	HeartbeatPeriod time.Duration
+	CreateTitle     string
+	CwdLabel        string
+	HostLabel       string
+	EnablePolling   bool
 	// EventBufSize bounds the handler-to-worker channel. Zero means
 	// defaultEventBufSize. Overflow here is real loss and is counted into the
 	// sync.dropped marker, exactly like loss on the bus.
@@ -137,7 +150,15 @@ type SyncSession struct {
 }
 
 // OpenSession opens or creates a remote session and begins synchronization.
-func OpenSession(ctx context.Context, bus *events.Bus, sessionID string, opts SessionOptions) (*SyncSession, error) {
+//
+// chatSessionID is the LOCAL chat session id and is used for exactly one
+// thing: filtering the event bus, which stamps that id on every event. It is
+// the contextstate authorization subject, so it never reaches a URL, a request
+// body or a file. The session to attach to comes from opts.RemoteSessionID and
+// the outbox directory from opts.OutboxDir, both resolved by the caller from
+// the persisted identity - the caller must resolve them, because the outbox is
+// opened here BEFORE the attach, so OutboxDir has to already carry the handle.
+func OpenSession(ctx context.Context, bus *events.Bus, chatSessionID string, opts SessionOptions) (*SyncSession, error) {
 	client, err := NewClient(opts.TokenProvider, opts.ClientOptions)
 	if err != nil {
 		return nil, err
@@ -153,17 +174,18 @@ func OpenSession(ctx context.Context, bus *events.Bus, sessionID string, opts Se
 		HostLabel: opts.HostLabel,
 	}
 
-	att, err := AttachSession(ctx, client, outbox, params, sessionID, opts.ProjectorOptions.WriterID)
+	att, err := AttachSession(ctx, client, outbox, params, opts.RemoteSessionID, opts.ProjectorOptions.WriterID)
 	if err != nil {
 		_ = outbox.Close()
 		return nil, fmt.Errorf("attach session: %w", err)
 	}
 
 	activeSessionID := att.SessionID
-	localSessionID := sessionID
-	if localSessionID == "" {
-		localSessionID = activeSessionID
-	}
+	// A write-back failure costs the NEXT run its resume, not this one: this
+	// session is attached and healthy. Failing here would trade a degraded
+	// restart for no sync at all.
+	_ = opts.persistRemoteSessionID(activeSessionID)
+	localSessionID := chatSessionID
 	initialSeq := att.ServerSeq
 	if maxSeq := outbox.MaxSeq(); maxSeq > initialSeq {
 		initialSeq = maxSeq

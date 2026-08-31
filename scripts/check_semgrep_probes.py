@@ -29,6 +29,16 @@ CONFIG = ROOT / "semgrep" / "agent-standards.yml"
 # rule's `paths.include` globs (checked against the actual YAML below).
 PROBES = [
     (
+        "mivia.go.no-chat-principal-as-sync-handle",
+        "internal/probe-sync-handle/viol.go",
+        'package probe\n\nimport "github.com/MiviaLabs/mivia-agent/internal/chatsync"\n\n'
+        "type sess struct{ SessionID string }\n\n"
+        "func handle(s sess) chatsync.LocalHandle { return chatsync.LocalHandle(s.SessionID) }\n",
+        "internal/probe-sync-handle/clean.go",
+        'package probe\n\nimport "github.com/MiviaLabs/mivia-agent/internal/chatsync"\n\n'
+        "func stored(id chatsync.SyncIdentity) chatsync.LocalHandle { return id.LocalHandle }\n",
+    ),
+    (
         "mivia.go.ui-no-harness-imports",
         "internal/ui/probe-isolation/viol.go",
         "package probe\n\nimport _ \"github.com/MiviaLabs/mivia-agent/internal/cli\"\n",

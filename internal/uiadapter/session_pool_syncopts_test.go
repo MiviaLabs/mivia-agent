@@ -1,6 +1,7 @@
 package uiadapter
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
@@ -19,5 +20,53 @@ func TestPoolSyncOptionsCarriesStreamAssistant(t *testing.T) {
 		if got != want {
 			t.Errorf("StreamAssistant = %v, want %v", got, want)
 		}
+	}
+}
+
+// TestPoolSyncOptionsKeepsThePrincipalOutOfTheOutboxPath is the TUI half of
+// the same contract the plain-CLI surface holds
+// (clichat.TestCLISyncOptionsKeepsThePrincipalOutOfTheOutboxPath). The two
+// surfaces build the same layout, and a layout that drifts between them
+// orphans one surface's cursor.
+func TestPoolSyncOptionsKeepsThePrincipalOutOfTheOutboxPath(t *testing.T) {
+	const principal = "PRINCIPALTUIAAAAAAAAAAAAAA"
+	sess := &chat.Session{SessionID: principal, SessionDir: t.TempDir()}
+
+	opts := poolSyncOptions(sess, principal, &config.Resolved{}, nil)
+
+	if strings.Contains(opts.OutboxDir, principal) {
+		t.Errorf("OutboxDir = %q names the chat principal", opts.OutboxDir)
+	}
+	if opts.LocalHandle == "" {
+		t.Fatal("no local handle was resolved")
+	}
+	if !strings.Contains(opts.OutboxDir, string(opts.LocalHandle)) {
+		t.Errorf("OutboxDir = %q is not named after the local handle %q", opts.OutboxDir, opts.LocalHandle)
+	}
+	if opts.Identity.IsZero() {
+		t.Error("no identity ref was wired, so the remote session id is never written back")
+	}
+}
+
+// TestPoolSyncOptionsGivesEachPooledSessionItsOwnHandle pins settled decision
+// 2 against the identity change. SessionDir is inherited by every session the
+// pool mints, so a handle derived from the DIRECTORY would merge unrelated
+// conversations into one durable transcript.
+func TestPoolSyncOptionsGivesEachPooledSessionItsOwnHandle(t *testing.T) {
+	dir := t.TempDir()
+	first := &chat.Session{SessionID: "principal-pool-1", SessionDir: dir}
+	second := &chat.Session{SessionID: "principal-pool-2", SessionDir: dir}
+
+	a := poolSyncOptions(first, first.SessionID, &config.Resolved{}, nil)
+	b := poolSyncOptions(second, second.SessionID, &config.Resolved{}, nil)
+
+	if a.LocalHandle == b.LocalHandle {
+		t.Fatalf("two sessions sharing a SessionDir got one handle %q; their transcripts would merge", a.LocalHandle)
+	}
+	if a.OutboxDir == b.OutboxDir {
+		t.Fatalf("two sessions sharing a SessionDir got one outbox %q", a.OutboxDir)
+	}
+	if again := poolSyncOptions(first, first.SessionID, &config.Resolved{}, nil); again.LocalHandle != a.LocalHandle {
+		t.Errorf("handle is not stable across runs: %q then %q", a.LocalHandle, again.LocalHandle)
 	}
 }

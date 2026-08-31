@@ -2,7 +2,6 @@ package clichat
 
 import (
 	"context"
-	"path/filepath"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
@@ -29,6 +28,15 @@ func syncTokenProvider() chatsync.TokenProvider {
 // exact value production uses, instead of asserting on a hand-built copy that
 // can drift away from the wiring it claims to cover.
 func cliSyncOptions(sess *chat.Session, res *config.Resolved, tokens chatsync.TokenProvider) chatsync.SessionOptions {
+	// The sync identity is resolved HERE, before the options exist, because
+	// chatsync.OpenSession opens the outbox before it attaches: OutboxDir must
+	// already carry the local handle. A load error still yields a usable
+	// identity - this run syncs under a handle the next run will not find,
+	// which is strictly better than not syncing.
+	identityDir := chatsync.IdentityDir(sess.SessionDir)
+	key := chatsync.IdentityKey(sess.SessionID)
+	ident, _ := chatsync.LoadOrCreateIdentity(identityDir, key)
+
 	return chatsync.SessionOptions{
 		TokenProvider: tokens,
 		ClientOptions: chatsync.ClientOptions{
@@ -46,7 +54,10 @@ func cliSyncOptions(sess *chat.Session, res *config.Resolved, tokens chatsync.To
 			ErrorMessage:   chat.TurnErrorMessage,
 			RedactToolArgs: tools.RedactToolArgs(),
 		},
-		OutboxDir:       filepath.Join(sess.SessionDir, "chat-sync", "sessions", sess.SessionID),
+		OutboxDir:       chatsync.OutboxDirFor(sess.SessionDir, ident.LocalHandle),
+		LocalHandle:     ident.LocalHandle,
+		RemoteSessionID: ident.RemoteSessionID,
+		Identity:        chatsync.IdentityRef{Dir: identityDir, Key: key},
 		MaxUnflushed:    res.Sync.MaxUnflushed,
 		PollWaitSeconds: res.Sync.PollWaitSeconds,
 		HeartbeatPeriod: config.SaturatingSeconds(res.Sync.HeartbeatSeconds),

@@ -65,7 +65,7 @@ func TestSyncSessionEndToEndFlow(t *testing.T) {
 		PollWaitSeconds: 1,
 	}
 
-	syncSess, err := OpenSession(ctx, bus, "", opts)
+	syncSess, err := OpenSession(ctx, bus, "sess-e2e-1", opts)
 	if err != nil {
 		t.Fatalf("OpenSession: %v", err)
 	}
@@ -223,6 +223,7 @@ func TestSyncSession_ResumeWithUnflushedEventsPreservesMonotonicity(t *testing.T
 	opts := SessionOptions{
 		TokenProvider:   testTokenProvider,
 		ClientOptions:   ClientOptions{BaseURL: srv.URL},
+		RemoteSessionID: "sess-resumed",
 		OutboxDir:       outboxDir,
 		CreateTitle:     "Resume Test",
 		HeartbeatPeriod: 1 * time.Second,

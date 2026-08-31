@@ -140,3 +140,61 @@ func TestLoadOrCreateIdentityRejectsAKeyThatIsNotADerivedKey(t *testing.T) {
 		t.Fatal("an empty key must be refused")
 	}
 }
+
+// TestLoadOrCreateIdentityWithNoStoreDirStaysEphemeral pins that a session
+// with no store directory does not drop an identity file into the process's
+// working directory. filepath.Join("", "chat-sync", "identity") is a RELATIVE
+// path, so before this guard a session with no SessionDir wrote its identity
+// into whatever directory mivia happened to be started from - and a test run
+// wrote one into the source tree.
+func TestLoadOrCreateIdentityWithNoStoreDirStaysEphemeral(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	id, err := LoadOrCreateIdentity(IdentityDir(""), IdentityKey("no-store-dir"))
+	if err == nil {
+		t.Fatal("a session with no store directory must report that its identity is not durable")
+	}
+	if id.LocalHandle == "" || id.WriterID == "" {
+		t.Fatalf("the ephemeral identity must still be usable, got %+v", id)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read working dir: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("identity resolution wrote %d entries into the working directory: %v", len(entries), entries)
+	}
+}
+
+// TestLoadOrCreateIdentityBackfillsAMissingWriterID covers the record written
+// before the writer id was wired. Re-minting the whole identity would orphan a
+// live outbox and a live remote session over one absent field.
+func TestLoadOrCreateIdentityBackfillsAMissingWriterID(t *testing.T) {
+	dir := t.TempDir()
+	key := IdentityKey("principal-backfill")
+	path := filepath.Join(dir, key+".json")
+	if err := os.WriteFile(path, []byte(`{"local_handle":"HANDLE-1","remote_session_id":"remote-1"}`), 0o600); err != nil {
+		t.Fatalf("seed the identity file: %v", err)
+	}
+
+	id, err := LoadOrCreateIdentity(dir, key)
+	if err != nil {
+		t.Fatalf("LoadOrCreateIdentity: %v", err)
+	}
+	if id.LocalHandle != "HANDLE-1" || id.RemoteSessionID != "remote-1" {
+		t.Fatalf("the backfill discarded the record: %+v", id)
+	}
+	if id.WriterID == "" {
+		t.Fatal("the writer id was not backfilled")
+	}
+
+	again, err := LoadOrCreateIdentity(dir, key)
+	if err != nil {
+		t.Fatalf("LoadOrCreateIdentity (second): %v", err)
+	}
+	if again.WriterID != id.WriterID {
+		t.Errorf("the backfilled writer id was not persisted: %q then %q", id.WriterID, again.WriterID)
+	}
+}
