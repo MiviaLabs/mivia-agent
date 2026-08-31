@@ -146,19 +146,19 @@ about how the CLI gets built.
 It leaves ended session rows in the target database - the API has no delete
 endpoint. Every row it creates is titled `mivia live probe: ...`.
 
-**Four probes fail on purpose.** They are API defects, not harness bugs, and
-each is asserted in the direction a client needs, so it goes green when the API
-is fixed rather than pinning today's behavior:
+**The probe found four API defects on its first run.** All four are now fixed
+in `apps/api` and verified green against the deployment on 2026-08-31, so a red
+run means a regression, not known debt:
 
-| Probe | What the deployment does |
-|-------|--------------------------|
-| `PayloadBoundIsAClientError` | A payload over the documented 64 KiB ceiling returns **500**, and the body carries the failing SQL statement and its bound parameters. A client cannot tell "truncate and retry" from "the server is broken". |
-| `RejectsIntraBatchGap` | Only the first seq in a batch is checked against the high-water mark. One request can write seq 1 and seq 99 together; `lastSeq` becomes 99 and hides 97 seqs that never existed, so a restarting CLI resumes past the gap. |
-| `ConsumeIsExactlyOnce` | Consuming an already-consumed input returns **200**, so the loser of a race cannot tell it lost. Delivery is at-least-once and exactly-once cannot be built on it. |
-| `EndIsTerminal` | Events still append to an **ended** session, so a session the user closed keeps growing. |
+| Probe | Was | Now |
+|-------|-----|-----|
+| `PayloadBoundIsAClientError` | 500, body carried the failing SQL and its bound parameters | 400 |
+| `RejectsIntraBatchGap` | `[seq 1, seq 99]` accepted, `lastSeq` hid the hole | 400 |
+| `ConsumeIsExactlyOnce` | second consume returned 200, so the loser of a race could not tell | 409 |
+| `EndIsTerminal` | events still appended to an ended session | 409 |
 
-Everything else passes: the full lifecycle, the validation and tenancy guards,
-SSE replay, SSE live push, and cursor resume.
+The full run passes: lifecycle, validation and tenancy guards, SSE replay, SSE
+live push, and cursor resume.
 
 ### e2e suite runner (`scripts/e2e_suite.py`)
 
