@@ -201,6 +201,19 @@ func checkIdentity(t *testing.T, ctx context.Context, client *Client, tok Token,
 // must hand back a different one. If it ever returns the same value, this
 // package's whole save-or-lose-the-session design is solving a problem that no
 // longer exists, and the theft-detection path would misfire.
+//
+// It deliberately does NOT assert that the access token changed. The JWT
+// payload is {sub, organizationId, role, jti} plus second-granularity iat/exp,
+// and jti is the session id, which is stable across rotation by design. A
+// refresh in the same wall-clock second as the previous issue therefore
+// produces a byte-identical token. Measured against the deployment on
+// 2026-08-31: login and refresh 0.47s apart returned the identical string,
+// while a pair straddling a second boundary did not.
+//
+// That is not a defect and nothing here depends on it: the comparisons that
+// decide whether a session is still ours (deleteIfUnchanged, clearIfStillMine)
+// use the refresh token, which is 32 random bytes and always changes. An
+// inequality assertion on the bearer would just be a coin flip on timing.
 func checkRotation(t *testing.T, ctx context.Context, client *Client, old Token) Token {
 	t.Helper()
 	fresh, err := client.Refresh(ctx, old.RefreshToken)
@@ -212,11 +225,13 @@ func checkRotation(t *testing.T, ctx context.Context, client *Client, old Token)
 	if fresh.RefreshToken == old.RefreshToken {
 		t.Error("refresh returned the same refresh token; the contract says it rotates")
 	}
-	if fresh.Bearer == old.Bearer {
-		t.Error("refresh returned the same access token")
+	if fresh.ExpiresAt.Before(old.ExpiresAt) {
+		t.Errorf("refreshed expiry %v is BEFORE the previous %v; a refresh must never shorten the session", fresh.ExpiresAt, old.ExpiresAt)
 	}
-	if !fresh.ExpiresAt.After(old.ExpiresAt) {
-		t.Errorf("refreshed expiry %v is not after the previous %v", fresh.ExpiresAt, old.ExpiresAt)
+	// The useful property is that the new bearer works, which is what the
+	// discarded inequality check was reaching for.
+	if _, err := client.Me(ctx, fresh.Bearer); err != nil {
+		t.Errorf("the refreshed access token does not authenticate: %v", err)
 	}
 	return fresh
 }
@@ -242,8 +257,12 @@ func checkEnsurePersists(t *testing.T, ctx context.Context, client *Client, tok 
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
-	if bearer == tok.Bearer {
-		t.Error("Ensure returned the stale access token; it did not refresh")
+	// Whether the bearer STRING changed proves nothing - see checkRotation on
+	// why a same-second refresh returns an identical JWT. That it authenticates,
+	// and that the rotated refresh token below reached disk, is the real proof
+	// the refresh happened and was persisted.
+	if _, err := client.Me(ctx, bearer); err != nil {
+		t.Errorf("the access token Ensure returned does not authenticate: %v", err)
 	}
 
 	stored, err := Load(path)
