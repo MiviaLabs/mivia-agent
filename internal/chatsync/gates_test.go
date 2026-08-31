@@ -8,7 +8,6 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/redact"
-	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
 func TestPrivacyGatesDefaultOff(t *testing.T) {
@@ -97,10 +96,9 @@ func TestPrivacyGatesToolIOEnabledWithRedactionPolicy(t *testing.T) {
 	redact.SetPolicy(pol)
 	t.Cleanup(func() { redact.SetPolicy(oldPol) })
 
-	tools.SetRedactToolArgs(false)
-	t.Cleanup(func() { tools.SetRedactToolArgs(false) })
-
-	p := NewProjector("sess-1", 0, ProjectorOptions{IncludeToolIO: true, IncludeThinking: true})
+	p := NewProjector("sess-1", 0, ProjectorOptions{
+		IncludeToolIO: true, IncludeThinking: true, RedactToolArgs: false,
+	})
 
 	weStart := p.Project(events.Event{
 		Kind:       events.KindToolStart,
@@ -124,11 +122,10 @@ func TestPrivacyGatesToolIOEnabledWithRedactionPolicy(t *testing.T) {
 }
 
 func TestPrivacyGatesToolIORespectsRedactToolArgs(t *testing.T) {
-	tools.SetRedactToolArgs(true)
-	t.Cleanup(func() { tools.SetRedactToolArgs(false) })
-
-	// Even with IncludeToolIO: true, tools.RedactToolArgs() forces tool IO off (AND composition)
-	p := NewProjector("sess-1", 0, ProjectorOptions{IncludeToolIO: true})
+	// Even with IncludeToolIO: true, RedactToolArgs forces tool IO off (AND composition).
+	// The decision is a VALUE on ProjectorOptions, not a read of internal/tools'
+	// process-global atomic.Bool, so this assertion mutates no package state.
+	p := NewProjector("sess-1", 0, ProjectorOptions{IncludeToolIO: true, RedactToolArgs: true})
 
 	weStart := p.Project(events.Event{
 		Kind:       events.KindToolStart,
@@ -144,7 +141,7 @@ func TestPrivacyGatesToolIORespectsRedactToolArgs(t *testing.T) {
 	}
 	pStart := weStart[0].Payload.(*ToolStartedPayload)
 	if pStart.Input != "" {
-		t.Errorf("input = %q, want '' because tools.RedactToolArgs() is active", pStart.Input)
+		t.Errorf("input = %q, want '' because RedactToolArgs is set", pStart.Input)
 	}
 	if len(pStart.Redacted) == 0 || pStart.Redacted[0] != "input" {
 		t.Errorf("redacted = %v, want ['input']", pStart.Redacted)
@@ -152,9 +149,6 @@ func TestPrivacyGatesToolIORespectsRedactToolArgs(t *testing.T) {
 }
 
 func TestFieldTruncationByteBudgets(t *testing.T) {
-	tools.SetRedactToolArgs(false)
-	t.Cleanup(func() { tools.SetRedactToolArgs(false) })
-
 	p := NewProjector("sess-1", 0, ProjectorOptions{IncludeToolIO: true})
 
 	// Output of 20 KiB (> 16 KiB budget)
