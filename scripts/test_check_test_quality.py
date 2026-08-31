@@ -334,6 +334,28 @@ func TestMustBare(t *testing.T) {
         assert "zero_assertions" in r.stdout
 
 
+def test_deleted_test_file_does_not_crash_the_gate() -> None:
+    """Deleting a whole test file must produce a verdict, not a TypeError.
+
+    The diff names the deleted path, so it lands in the inspector's target set
+    while no longer existing on disk. The Go inspector then marshals a nil
+    slice as the JSON literal `null`, json.loads turned that into None, and the
+    caller iterated it. Reverting a commit that added a test file is enough to
+    hit this, which is exactly how it was found.
+
+    The verdict itself is not asserted here - removing tests may legitimately
+    be rejected as degradation. What must not happen is a crash instead of a
+    verdict.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_fixture(root)
+        git("rm", "-q", "pkg/lib_test.go", cwd=root)
+        r = run_script(["--diff"], cwd=root)
+        assert "TypeError" not in r.stderr, f"gate crashed instead of reporting: {r.stderr}"
+        assert "Traceback" not in r.stderr, f"gate raised instead of reporting: {r.stderr}"
+
+
 def test_deleted_test_function_in_diff_rejected() -> None:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)

@@ -44,12 +44,34 @@ var relayedKinds = []events.Kind{
 	events.KindSubagentEnd,
 	events.KindSubagentHeartbeat,
 	events.KindSubagentDone,
-	events.KindTurnEnd,
 	// KindCompaction carries the typed, content-free compaction payload (see
 	// events.CompactionEvent) - safe to relay by construction (INV-AG-32:
 	// no prompts, tool arguments, hidden content, or summary payloads).
 	events.KindCompaction,
-	events.KindError,
+
+	// KindTurnEnd and KindError are deliberately NOT relayed, although both
+	// now have producers (chat.Session publishes them since fbeaf398). They
+	// were listed here before those producers existed, so the list promised a
+	// second surface events that never arrived; relaying them now would be
+	// worse than the promise.
+	//
+	// This receiver treats "first event carrying a run id" as "the turn began"
+	// (renderExternalEvent). That needs arrival order, and the bus does not
+	// give it: SubscribeMany registers one subscription per kind, each with its
+	// own queue, so a terminal routinely overtakes the assistant deltas of the
+	// turn it closes. The receiver would mint an external_turn_start from the
+	// terminal, emit external_done, drop the run, then mint a SECOND start when
+	// the content arrived - duplicated turns, content after done, and a
+	// seenRunIDs entry nothing reclaims.
+	//
+	// Holding them back also keeps raw error text off the wire. publishTurnEnd
+	// sets Err, wire.go serializes err.Error() verbatim, and this process's own
+	// NDJSON deliberately emits a classified string instead
+	// (jsonTurnErrorMessage) - relaying would leave a second process better
+	// informed than the local one, in the direction that leaks.
+	//
+	// Add them back once the receiver stops inferring turn start from arrival
+	// order, and once the error text is classified at the boundary.
 }
 
 // dialSocketTimeout bounds how long a client waits to connect to an
