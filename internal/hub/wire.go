@@ -4,6 +4,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 )
@@ -85,8 +86,12 @@ func toWire(ev events.Event) WireEvent {
 			Reason:         ev.Compaction.Reason,
 		}
 	}
+	// Never ev.Err.Error(): provider and tool error text can quote the request
+	// that produced it (DC-14), and this is a cross-process wire. Classify with
+	// the same function the --json NDJSON writer uses, so the process reading
+	// this socket is never told more than the local surface is.
 	if ev.Err != nil {
-		w.ErrorText = ev.Err.Error()
+		w.ErrorText = chat.TurnErrorMessage(ev.Err)
 	}
 	return w
 }

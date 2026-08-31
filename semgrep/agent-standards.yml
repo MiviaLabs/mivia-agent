@@ -548,3 +548,24 @@ rules:
       - pattern: bufio.NewScanner($RESP.Body)
       - pattern: bufio.NewReader($RESP.Body)
       - pattern: json.NewDecoder($RESP.Body)
+
+  - id: mivia.go.hub-wire-no-raw-error-text
+    languages:
+      - go
+    severity: ERROR
+    message: >-
+      Classify error text with chat.TurnErrorMessage before putting it on the
+      hub wire. Provider and tool error text can quote the request that
+      produced it (DC-14), and this socket reaches ANOTHER process - the local
+      NDJSON surface already emits a classified string, so a raw err.Error()
+      here leaves the remote process better informed than the local one, in
+      the direction that leaks.
+    paths:
+      include:
+        - /internal/hub/**/*.go
+      exclude:
+        - /**/*_test.go
+    pattern-either:
+      - pattern: $EV.Err.Error()
+      - pattern: fmt.Sprint($EV.Err)
+      - pattern: fmt.Sprintf("...", ..., $EV.Err, ...)
