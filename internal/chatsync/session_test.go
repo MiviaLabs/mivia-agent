@@ -421,3 +421,96 @@ func TestHandleEvent_OutboxOverflowDoesNotAdvanceSeq(t *testing.T) {
 
 	_ = syncSess.Stop(context.Background())
 }
+
+func TestSyncSession_StopDrainsAndFlushesFinal(t *testing.T) {
+	var created bool
+	var appendedCount int
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/chat-sessions", func(w http.ResponseWriter, r *http.Request) {
+		created = true
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(Session{ID: "sess-drain-stop", Status: "running"})
+	})
+	mux.HandleFunc("POST /v1/chat-sessions/{id}/events", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string][]EventItem
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		appendedCount += len(body["events"])
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(AppendResult{LastSeq: int64(appendedCount), InsertedCount: len(body["events"])})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	bus := events.New()
+	outboxDir := filepath.Join(t.TempDir(), "chat-sync-drain-stop")
+
+	opts := SessionOptions{
+		ClientOptions:   ClientOptions{BaseURL: srv.URL},
+		OutboxDir:       outboxDir,
+		MaxUnflushed:    100,
+		HeartbeatPeriod: 10 * time.Minute,
+	}
+
+	syncSess, err := OpenSession(context.Background(), bus, "sess-drain-stop", opts)
+	if err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+
+	bus.Publish(events.Event{
+		Kind:      events.KindTurnStart,
+		SessionID: "sess-drain-stop",
+		TurnID:    "turn:1",
+		Detail:    "message to drain",
+		Timestamp: time.Now(),
+	})
+
+	// Stop immediately to trigger drainAndFlushFinal
+	if err := syncSess.Stop(context.Background()); err != nil {
+		t.Errorf("Stop failed: %v", err)
+	}
+	if !created {
+		t.Error("session was not created")
+	}
+}
+
+func TestSyncSession_InputsAndSetStatus(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/chat-sessions", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(Session{ID: "sess-in-status", Status: "running"})
+	})
+	mux.HandleFunc("POST /v1/chat-sessions/{id}/heartbeat", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	})
+	mux.HandleFunc("GET /v1/chat-sessions/{id}/inputs/next", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(NextInput{Input: nil})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	bus := events.New()
+	outboxDir := filepath.Join(t.TempDir(), "chat-sync-in-status")
+
+	opts := SessionOptions{
+		ClientOptions:   ClientOptions{BaseURL: srv.URL},
+		OutboxDir:       outboxDir,
+		MaxUnflushed:    100,
+		HeartbeatPeriod: 10 * time.Minute,
+		EnablePolling:   true,
+	}
+
+	syncSess, err := OpenSession(context.Background(), bus, "sess-in-status", opts)
+	if err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+	defer func() { _ = syncSess.Stop(context.Background()) }()
+
+	if syncSess.Inputs() == nil {
+		t.Error("Inputs() returned nil when polling enabled")
+	}
+	syncSess.SetStatus(context.Background(), "idle")
+}

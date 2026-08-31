@@ -53,7 +53,7 @@ func TestInputPollerReceivesAndConsumesInput(t *testing.T) {
 	defer srv.Close()
 
 	client := NewClient(ClientOptions{BaseURL: srv.URL})
-	poller := NewInputPoller(client, "sess-p-1", 1)
+	poller := NewInputPoller(client, "sess-p-1", 1, t.TempDir())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
