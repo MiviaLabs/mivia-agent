@@ -14,11 +14,6 @@
       "internal/newtui",
       "internal/version"
     ],
-    "cmd/mivia-ui-demo": [
-      "internal/ui/jsonout",
-      "internal/ui/stream",
-      "internal/ui/theme"
-    ],
     "internal/agent": [
       "internal/contextmgr",
       "internal/contextstate",
@@ -60,6 +55,10 @@
       "internal/usage",
       "internal/vcs"
     ],
+    "internal/chatsync": [
+      "internal/chat",
+      "internal/events"
+    ],
     "internal/cli": [
       "internal/chat",
       "internal/cliagents",
@@ -79,8 +78,7 @@
       "internal/storage",
       "internal/tools",
       "internal/version",
-      "internal/workflows/ledger",
-      "internal/workspace"
+      "internal/workflows/ledger"
     ],
     "internal/cliagents": [
       "internal/agents",
@@ -330,8 +328,8 @@
       "internal/workspace"
     ],
     "internal/ui/app": [
-      "internal/ui/theme",
       "internal/ui/select",
+      "internal/ui/theme",
       "internal/uikit/clipboardwrite"
     ],
     "internal/ui/component/approval": [
@@ -347,9 +345,9 @@
     ],
     "internal/ui/component/composer": [
       "internal/ui/render",
+      "internal/ui/select",
       "internal/ui/theme",
-      "internal/uikit/config",
-      "internal/ui/select"
+      "internal/uikit/config"
     ],
     "internal/ui/component/field": [
       "internal/ui/render",
@@ -387,10 +385,10 @@
     "internal/ui/component/transcript": [
       "internal/remainder",
       "internal/ui/render",
+      "internal/ui/select",
       "internal/ui/theme",
       "internal/uikit/config",
-      "internal/uikit/uievent",
-      "internal/ui/select"
+      "internal/uikit/uievent"
     ],
     "internal/ui/component/welcome": [
       "internal/ui/render",
@@ -423,13 +421,13 @@
       "internal/ui/screen/settings",
       "internal/ui/screen/themepicker",
       "internal/ui/screen/transcript",
+      "internal/ui/select",
       "internal/ui/theme",
       "internal/uikit/config",
       "internal/uikit/intent",
       "internal/uikit/keymap",
       "internal/uikit/ports",
-      "internal/uikit/uievent",
-      "internal/ui/select"
+      "internal/uikit/uievent"
     ],
     "internal/ui/screen/settings": [
       "internal/ui/app",
@@ -452,11 +450,11 @@
       "internal/ui/app",
       "internal/ui/component/transcript",
       "internal/ui/render",
+      "internal/ui/select",
       "internal/ui/theme",
       "internal/uikit/config",
       "internal/uikit/keymap",
-      "internal/uikit/uievent",
-      "internal/ui/select"
+      "internal/uikit/uievent"
     ],
     "internal/ui/stream": [
       "internal/uikit/uievent"
