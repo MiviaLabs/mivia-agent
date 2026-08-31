@@ -70,18 +70,23 @@ func (s *SyncSession) flushNow(ctx context.Context) {
 	if err == nil {
 		s.retryBase = 0
 		s.retryAt = time.Time{}
+		s.lastGapBase = noGapBase
 		return
 	}
+	switch {
 	// ErrConflict: the server ended this session. ErrAuthStop: the settled
 	// 401 policy - ErrReauthRequired / ErrSessionLost cannot be recovered
 	// without `mivia login`, which this path must never prompt for. Both are
 	// terminal for sync and neither touches the local chat.
-	if errors.Is(err, ErrConflict) || errors.Is(err, ErrAuthStop) {
-		s.handleRemoteEnd(ctx)
-		return
+	case errors.Is(err, ErrConflict) || errors.Is(err, ErrAuthStop):
+		s.handleRemoteEnd(ctx, fmt.Sprintf("sync stopped: %v", err))
+	// A 400 is never retryable as-is: the body is durable and replayed
+	// byte-identically, so the identical request would go out on every tick.
+	case errors.Is(err, ErrBadRequest):
+		s.handleBadRequest(ctx, err)
+	default:
+		s.scheduleRetry()
 	}
-	s.retryBase = nextRetryBackoff(s.retryBase)
-	s.retryAt = time.Now().Add(jitterBackoff(s.retryBase))
 }
 
 // nextRetryBackoff doubles the undithered base and saturates at the ceiling.
@@ -115,10 +120,11 @@ func jitterBackoff(d time.Duration) time.Duration {
 // It is called from the worker goroutine, so the (blocking) runner stops are
 // detached. Both runner Stop methods are idempotent, so a later Stop(ctx) that
 // races this one is safe.
-func (s *SyncSession) handleRemoteEnd(ctx context.Context) {
+func (s *SyncSession) handleRemoteEnd(ctx context.Context, reason string) {
 	if !s.remoteEnded.CompareAndSwap(false, true) {
 		return
 	}
+	s.stopReason.Store(&reason)
 	go func() {
 		if s.heartbeat != nil {
 			s.heartbeat.Stop(ctx)

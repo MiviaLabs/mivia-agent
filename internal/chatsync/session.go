@@ -95,6 +95,12 @@ type SyncSession struct {
 	// heartbeat; it never forks. Local chat is untouched.
 	remoteEnded atomic.Bool
 
+	// stopReason records WHY sync stopped. A terminal stop that says nothing
+	// is indistinguishable from a healthy but idle session, which is the
+	// dishonest-status half of the settled poison rule
+	// (chat-sync-event-contract.md:285-287: stop syncing and SAY SO).
+	stopReason atomic.Pointer[string]
+
 	// stopCtxCh hands Stop's context to the worker so the final drain and
 	// flush is bounded by the caller's shutdown deadline rather than by the
 	// unbounded session context.
@@ -116,6 +122,12 @@ type SyncSession struct {
 	// touched only by the worker goroutine, so they need no lock.
 	retryBase time.Duration
 	retryAt   time.Time
+
+	// lastGapBase is the server mark the last sequence-gap rebase used, or
+	// noGapBase when none is outstanding. A second gap at the same mark proves
+	// the rebase moved nothing, which is the loop guard on the rebase path.
+	// Worker-goroutine only, like the retry schedule.
+	lastGapBase int64
 
 	mu      sync.Mutex
 	stopCh  chan struct{}
@@ -170,6 +182,7 @@ func OpenSession(ctx context.Context, bus *events.Bus, sessionID string, opts Se
 		eventCh:        make(chan events.Event, eventBufSize(opts.EventBufSize)),
 		flushCh:        make(chan struct{}, 1),
 		stopCtxCh:      make(chan context.Context, 1),
+		lastGapBase:    noGapBase,
 	}
 	s.running.Store(true)
 	s.appender = outbox
@@ -301,6 +314,18 @@ func (s *SyncSession) SessionID() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.sessionID
+}
+
+// Stopped reports whether sync has latched a terminal stop: a 409, a fatal
+// auth failure, or a poison 400. The local chat is unaffected either way.
+func (s *SyncSession) Stopped() bool { return s.remoteEnded.Load() }
+
+// StopReason returns why sync stopped, or the empty string while it runs.
+func (s *SyncSession) StopReason() string {
+	if v := s.stopReason.Load(); v != nil {
+		return *v
+	}
+	return ""
 }
 
 // LastSeq returns the current sequence number assigned by the projector.
