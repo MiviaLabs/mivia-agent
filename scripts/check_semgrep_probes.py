@@ -29,6 +29,29 @@ CONFIG = ROOT / "semgrep" / "agent-standards.yml"
 # rule's `paths.include` globs (checked against the actual YAML below).
 PROBES = [
     (
+        "mivia.go.no-validstring-rune-boundary-backoff",
+        "internal/probe-utf8-backoff/viol.go",
+        'package probe\n\nimport "unicode/utf8"\n\n'
+        "func cut(s string, n int) string {\n"
+        "\ts = s[:n]\n"
+        "\tfor len(s) > 0 && !utf8.ValidString(s) {\n"
+        "\t\ts = s[:len(s)-1]\n"
+        "\t}\n"
+        "\treturn s\n}\n",
+        "internal/probe-utf8-backoff/clean.go",
+        'package probe\n\nimport "unicode/utf8"\n\n'
+        "func cutOK(s string, n int) string {\n"
+        "\ts = s[:n]\n"
+        "\tfor len(s) > 0 {\n"
+        "\t\tr, size := utf8.DecodeLastRuneInString(s)\n"
+        "\t\tif r != utf8.RuneError || size > 1 {\n"
+        "\t\t\tbreak\n"
+        "\t\t}\n"
+        "\t\ts = s[:len(s)-1]\n"
+        "\t}\n"
+        "\treturn s\n}\n",
+    ),
+    (
         "mivia.go.no-chat-principal-as-sync-handle",
         "internal/probe-sync-handle/viol.go",
         'package probe\n\nimport "github.com/MiviaLabs/mivia-agent/internal/chatsync"\n\n'
