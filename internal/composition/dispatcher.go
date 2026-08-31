@@ -165,9 +165,19 @@ func boundedRedactedInput(input json.RawMessage) string {
 	}
 	truncated := redacted[:maxHookRunInputBytes]
 	// Repair a cut that landed mid-rune: redaction may have grown or shrunk
-	// byte offsets relative to input, so re-validate at the bound rather
-	// than assume the original string's rune boundaries still apply.
-	for !utf8.ValidString(truncated) && len(truncated) > 0 {
+	// byte offsets relative to input, so re-check at the bound rather than
+	// assume the original string's rune boundaries still apply. Inspect the
+	// rune at the CUT BOUNDARY only (DC-6): validating the whole prefix
+	// (utf8.ValidString) trims back to the first invalid byte ANYWHERE in the
+	// redacted text, so a single raw byte in a tool's JSON arguments shows the
+	// operator a near-empty input labelled as a 512-byte cut. It is also
+	// O(n^2). A real U+FFFD decodes with size 3 and is kept. Mirrors
+	// chatsync.truncateString.
+	for len(truncated) > 0 {
+		r, size := utf8.DecodeLastRuneInString(truncated)
+		if r != utf8.RuneError || size > 1 {
+			break
+		}
 		truncated = truncated[:len(truncated)-1]
 	}
 	return truncated + "...(truncated)"
