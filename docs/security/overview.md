@@ -57,6 +57,17 @@ Redaction is configuration-only and off by default. `[privacy].redaction_pattern
 
 Tool argument redaction is opt-in. Set `[privacy] redact_tool_args = true` in TOML or `MIVIA_REDACT_TOOL_ARGS=1` in the environment. When off, `run_command` shows argv and event previews keep argument bodies, still size-capped.
 
+## The cross-process hub is a local IPC boundary
+
+Every `mivia` process for one store directory joins a local hub, so a second live surface can follow a turn running in another process. This is a real IPC surface and it carries conversation content: the relayed set includes `turn_start`, whose `Detail` is the user's own submitted prompt, plus assistant text, reasoning, and tool input and output.
+
+Two properties follow from that, and both are load-bearing:
+
+- **The transport is restricted to the owning user.** On Unix the socket is `chmod 0600`. On Windows the named pipe is created with a protected DACL that grants only the object owner and LOCAL SYSTEM (`hubPipeSDDL`). The pipe name is a hash of the store path, which is guessable, so the ACL is the control - not the name.
+- **The hub authenticates no one.** Any process that can open the transport is accepted as a participant, and it receives every session that shares the workspace. Filtering by session happens at the receiver, not at the socket, so the transport carries more than any one consumer renders. The file permission above is what makes that acceptable.
+
+Error text is classified before it reaches the wire (`chat.TurnErrorMessage`), so a provider message that quotes the request never crosses the boundary. There is no network listener: the hub is local only.
+
 ## Persisted history is raw at rest
 
 `[subagents].store_backend = "sqlite"` persists orchestration state. The store includes each task's full input payload. Task inputs and results are written unredacted at rest, even when `[privacy]` patterns are configured. Treat the chosen store location as sensitive workspace data. Do not put secrets in task prompts.
