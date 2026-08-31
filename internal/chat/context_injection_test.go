@@ -64,17 +64,28 @@ func (c *capturingStreamCompleter) Name() string { return "capture" }
 func (c *capturingStreamCompleter) Chat(context.Context, provider.Request) (string, error) {
 	return "answer", nil
 }
-func (c *capturingStreamCompleter) ChatStream(_ context.Context, req provider.Request, w io.Writer) (string, error) {
+func (c *capturingStreamCompleter) ChatStream(ctx context.Context, req provider.Request, w io.Writer) (string, error) {
+	req.Stream = true
+	req.StreamWriter = w
+	resp, err := c.ChatTurn(ctx, req)
+	if err != nil {
+		return "", err
+	}
+	return resp.Content, nil
+}
+
+// ChatTurn is the primary implementation: it records the request and honours
+// StreamWriter, which the interface documents as receiving content deltas when
+// ChatTurn streams. Recording only in ChatStream made every request-capture
+// assertion blind to a caller that used ChatTurn.
+func (c *capturingStreamCompleter) ChatTurn(_ context.Context, req provider.Request) (*provider.Response, error) {
 	c.requests = append(c.requests, req)
 	if c.err != nil {
-		return "", c.err
+		return nil, c.err
 	}
-	if w != nil {
-		_, _ = io.WriteString(w, "answer")
+	if req.StreamWriter != nil {
+		_, _ = io.WriteString(req.StreamWriter, "answer")
 	}
-	return "answer", nil
-}
-func (c *capturingStreamCompleter) ChatTurn(context.Context, provider.Request) (*provider.Response, error) {
 	return &provider.Response{Content: "answer", FinishReason: "stop"}, nil
 }
 
