@@ -2,9 +2,11 @@ package chatsync
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -141,6 +143,14 @@ func (ob *Outbox) loadCursorAndCount() error {
 }
 
 // Append persists WireEvents into events.jsonl with fsync before returning.
+//
+// The batch is all-or-nothing. A failure part way through used to leave the
+// earlier records on disk while `unflushed` stayed un-incremented, so the batch
+// read as never stored: the caller rolled the seq counter back and reissued the
+// same seqs, and the file then held two records for one seq. The server's
+// contiguity check rejects that, which wedges the stream for good. On any
+// failure the file is therefore truncated back to the offset it held before the
+// batch started, and no counter moves.
 func (ob *Outbox) Append(events ...WireEvent) error {
 	ob.mu.Lock()
 	defer ob.mu.Unlock()
@@ -152,24 +162,60 @@ func (ob *Outbox) Append(events ...WireEvent) error {
 		return ErrOutboxOverflow
 	}
 
+	mark, err := ob.eventsFile.Seek(0, io.SeekEnd)
+	if err != nil {
+		return fmt.Errorf("locate outbox append mark: %w", err)
+	}
+
+	if err := ob.writeBatchLocked(events); err != nil {
+		if truncErr := ob.truncateToMarkLocked(mark); truncErr != nil {
+			return errors.Join(err, truncErr)
+		}
+		return err
+	}
+
 	for _, ev := range events {
 		if ev.Seq > ob.maxSeq {
 			ob.maxSeq = ev.Seq
 		}
+	}
+	ob.unflushed += len(events)
+	return nil
+}
+
+// writeBatchLocked encodes the whole batch before it writes any of it, so an
+// encode failure on a later event cannot leave an earlier one on disk. The
+// caller must hold ob.mu.
+func (ob *Outbox) writeBatchLocked(events []WireEvent) error {
+	var buf bytes.Buffer
+	for _, ev := range events {
 		data, err := json.Marshal(ev)
 		if err != nil {
 			return fmt.Errorf("marshal event: %w", err)
 		}
-		data = append(data, '\n')
-		if _, err := ob.eventsFile.Write(data); err != nil {
-			return fmt.Errorf("write event: %w", err)
-		}
+		buf.Write(data)
+		buf.WriteByte('\n')
 	}
 
+	if _, err := ob.eventsFile.Write(buf.Bytes()); err != nil {
+		return fmt.Errorf("write event: %w", err)
+	}
 	if err := ob.eventsFile.Sync(); err != nil {
 		return fmt.Errorf("sync events file: %w", err)
 	}
-	ob.unflushed += len(events)
+	return nil
+}
+
+// truncateToMarkLocked drops everything the failed batch wrote past mark and
+// makes the truncation durable, so a crash cannot resurrect a partial record.
+// The caller must hold ob.mu.
+func (ob *Outbox) truncateToMarkLocked(mark int64) error {
+	if err := ob.eventsFile.Truncate(mark); err != nil {
+		return fmt.Errorf("truncate outbox to append mark: %w", err)
+	}
+	if err := ob.eventsFile.Sync(); err != nil {
+		return fmt.Errorf("sync truncated events file: %w", err)
+	}
 	return nil
 }
 
