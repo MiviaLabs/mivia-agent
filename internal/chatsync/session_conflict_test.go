@@ -83,7 +83,7 @@ func TestSyncSession_ConflictStopsSyncWithoutForking(t *testing.T) {
 		PollWaitSeconds: 1,
 	}
 
-	syncSess, err := OpenSession(ctx, bus, "", opts)
+	syncSess, err := OpenSession(ctx, bus, "sess-409-1", opts)
 	if err != nil {
 		t.Fatalf("OpenSession: %v", err)
 	}

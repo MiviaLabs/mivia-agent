@@ -35,7 +35,12 @@ func TestLiveSyncSessionEndToEnd(t *testing.T) {
 		ProjectorOptions: ProjectorOptions{IncludeToolIO: true, IncludeThinking: true},
 	}
 
-	syncSess, err := OpenSession(ctx, bus, "", opts)
+	// The local chat session id: it filters the bus and nothing else. The
+	// remote session id the probe reads back below is a different value,
+	// assigned by the server.
+	const chatSessionID = "live-probe-chat-session"
+
+	syncSess, err := OpenSession(ctx, bus, chatSessionID, opts)
 	if err != nil {
 		t.Fatalf("OpenSession: %v", err)
 	}
@@ -45,34 +50,7 @@ func TestLiveSyncSessionEndToEnd(t *testing.T) {
 		_ = syncSess.Stop(stopCtx)
 	}()
 
-	sessID := syncSess.SessionID()
-
-	// 1. Publish turn.started
-	bus.Publish(events.Event{
-		Kind:      events.KindTurnStart,
-		SessionID: sessID,
-		TurnID:    "turn:1",
-		Detail:    "live prompt from test",
-		Timestamp: time.Now(),
-	})
-
-	// 2. Publish assistant.message
-	bus.Publish(events.Event{
-		Kind:      events.KindAssistant,
-		SessionID: sessID,
-		TurnID:    "turn:1",
-		Content:   "live assistant response",
-		Timestamp: time.Now(),
-	})
-
-	// 3. Publish turn.ended
-	bus.Publish(events.Event{
-		Kind:      events.KindTurnEnd,
-		SessionID: sessID,
-		TurnID:    "turn:1",
-		Detail:    "turn completed",
-		Timestamp: time.Now(),
-	})
+	publishLiveTurn(bus, chatSessionID, "turn:1")
 
 	// Wait for background flush
 	time.Sleep(500 * time.Millisecond)
@@ -88,4 +66,30 @@ func TestLiveSyncSessionEndToEnd(t *testing.T) {
 	}
 
 	t.Logf("Successfully verified %d live synchronized events on remote session %s", len(stored), syncSess.SessionID())
+}
+
+// publishLiveTurn publishes one complete turn on the local bus, stamped with
+// the LOCAL chat session id - the only id the projector filters on.
+func publishLiveTurn(bus *events.Bus, chatSessionID, turnID string) {
+	bus.Publish(events.Event{
+		Kind:      events.KindTurnStart,
+		SessionID: chatSessionID,
+		TurnID:    turnID,
+		Detail:    "live prompt from test",
+		Timestamp: time.Now(),
+	})
+	bus.Publish(events.Event{
+		Kind:      events.KindAssistant,
+		SessionID: chatSessionID,
+		TurnID:    turnID,
+		Content:   "live assistant response",
+		Timestamp: time.Now(),
+	})
+	bus.Publish(events.Event{
+		Kind:      events.KindTurnEnd,
+		SessionID: chatSessionID,
+		TurnID:    turnID,
+		Detail:    "turn completed",
+		Timestamp: time.Now(),
+	})
 }

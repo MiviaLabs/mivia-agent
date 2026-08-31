@@ -1,8 +1,10 @@
 package chatsync
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -47,6 +49,10 @@ type fakeAPI struct {
 
 	rejectAppend     *fakeRejection
 	failSessionReads bool
+
+	// requests records every request the fake received, target and body, so a
+	// test can assert that a value NEVER crossed the wire.
+	requests []recordedRequest
 }
 
 type fakeSession struct {
@@ -206,12 +212,50 @@ func (f *fakeAPI) RawGetStatus(t *testing.T, path, bearer string) int {
 // dropped Authorization header pass every test in this package.
 func (f *fakeAPI) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		f.record(r)
 		if r.Header.Get("Authorization") == "" {
 			writeAPIError(w, http.StatusUnauthorized, "Unauthorized", "missing bearer token")
 			return
 		}
 		next(w, r)
 	}
+}
+
+// recordedRequest is one request exactly as it arrived: the target the client
+// built and the bytes it sent. It exists so a test can assert what is NOT on
+// the wire, which no handler-level assertion can do.
+type recordedRequest struct {
+	Method string
+	Target string
+	Body   []byte
+}
+
+// record captures the request and restores its body for the real handler.
+// It is on requireAuth because that is the single choke point every route
+// passes through; a new route therefore cannot escape recording.
+func (f *fakeAPI) record(r *http.Request) {
+	var body []byte
+	if r.Body != nil {
+		body, _ = io.ReadAll(r.Body)
+		_ = r.Body.Close()
+		r.Body = io.NopCloser(bytes.NewReader(body))
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.requests = append(f.requests, recordedRequest{
+		Method: r.Method,
+		Target: r.URL.RequestURI(),
+		Body:   body,
+	})
+}
+
+// Requests returns every request the fake received, in order.
+func (f *fakeAPI) Requests() []recordedRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]recordedRequest, len(f.requests))
+	copy(out, f.requests)
+	return out
 }
 
 func (f *fakeAPI) handleCreate(w http.ResponseWriter, r *http.Request) {

@@ -600,3 +600,27 @@ rules:
           $T{..., Envelope: $E, ...}
       - pattern: |
           $T{..., $F: applyTruncation(&$ENV, ...), ...}
+
+  - id: mivia.go.no-chat-principal-as-sync-handle
+    languages:
+      - go
+    severity: ERROR
+    message: >-
+      chat.Session.SessionID is an unguessable principal - the authorization
+      subject for contextstate - and chatsync.LocalHandle is a LOCAL-only
+      value that names an outbox directory and a persisted identity record.
+      Converting the principal into the handle writes a live capability into
+      durable local state and, historically, into a request URL. Resolve the
+      handle from the persisted identity instead
+      (chatsync.LoadOrCreateIdentity keyed by chatsync.IdentityKey). The
+      runtime proof that the value did not travel is
+      TestChatPrincipalNeverReachesTheWireOrDisk; this rule only makes the
+      wrong line hard to write.
+    paths:
+      include:
+        - /internal/**/*.go
+    pattern-either:
+      - pattern: chatsync.LocalHandle($X.SessionID)
+      - pattern: LocalHandle($X.SessionID)
+      - pattern: chatsync.LocalHandle($X.sessionID)
+      - pattern: LocalHandle($X.sessionID)

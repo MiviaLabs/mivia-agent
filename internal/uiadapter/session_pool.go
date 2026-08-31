@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"path/filepath"
 	"sync"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
@@ -388,6 +387,13 @@ func syncTokenProvider() chatsync.TokenProvider {
 // exact value production uses, instead of asserting on a hand-built copy that
 // can drift away from the wiring it claims to cover.
 func poolSyncOptions(sess *chat.Session, id string, res *config.Resolved, tokens chatsync.TokenProvider) chatsync.SessionOptions {
+	// See the matching comment in internal/clichat/chat_sync.go: the identity
+	// must be resolved before the options, because OutboxDir has to carry the
+	// local handle before OpenSession opens the outbox.
+	identityDir := chatsync.IdentityDir(sess.SessionDir)
+	key := chatsync.IdentityKey(id)
+	ident, _ := chatsync.LoadOrCreateIdentity(identityDir, key)
+
 	return chatsync.SessionOptions{
 		TokenProvider: tokens,
 		ClientOptions: chatsync.ClientOptions{
@@ -403,7 +409,10 @@ func poolSyncOptions(sess *chat.Session, id string, res *config.Resolved, tokens
 			ErrorMessage:   chat.TurnErrorMessage,
 			RedactToolArgs: tools.RedactToolArgs(),
 		},
-		OutboxDir:       filepath.Join(sess.SessionDir, "chat-sync", "sessions", id),
+		OutboxDir:       chatsync.OutboxDirFor(sess.SessionDir, ident.LocalHandle),
+		LocalHandle:     ident.LocalHandle,
+		RemoteSessionID: ident.RemoteSessionID,
+		Identity:        chatsync.IdentityRef{Dir: identityDir, Key: key},
 		MaxUnflushed:    res.Sync.MaxUnflushed,
 		PollWaitSeconds: res.Sync.PollWaitSeconds,
 		HeartbeatPeriod: config.SaturatingSeconds(res.Sync.HeartbeatSeconds),

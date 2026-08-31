@@ -26,8 +26,13 @@ func openAgainstFake(t *testing.T, f *fakeAPI, localID, outboxDir string) (*even
 	t.Helper()
 	bus := events.New()
 	opts := SessionOptions{
-		TokenProvider:   testTokenProvider,
-		ClientOptions:   ClientOptions{BaseURL: f.URL()},
+		TokenProvider: testTokenProvider,
+		ClientOptions: ClientOptions{BaseURL: f.URL()},
+		// localID plays both roles here: the fake's remote session id and the
+		// id the test stamps on the events it publishes. Production keeps them
+		// apart - the chat principal filters the bus, the persisted remote id
+		// names the URL - and OpenSession now takes them separately.
+		RemoteSessionID: localID,
 		OutboxDir:       outboxDir,
 		MaxUnflushed:    100,
 		CreateTitle:     "Bad Request",

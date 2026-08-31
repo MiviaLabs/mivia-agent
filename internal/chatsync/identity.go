@@ -17,6 +17,53 @@ import (
 // short enough to stay readable in a directory listing.
 const identityKeyLen = 32
 
+// LocalHandle is the local-only sync handle: the outbox directory name and
+// the cursor key. It is a distinct type so a chat principal cannot be assigned
+// into it by accident.
+//
+// Be honest about what this type does and does not buy. It is NOT a barrier:
+// LocalHandle(sess.SessionID) compiles. Two things enforce the separation, and
+// the type only makes them easier to see:
+//
+//   - mivia.go.no-chat-principal-as-sync-handle rejects the conversion form.
+//   - TestChatPrincipalNeverReachesTheWireOrDisk proves at runtime that the
+//     principal is in no request target, no request body and no file this
+//     package writes. That test is the real gate; it survives every loophole
+//     the type and the rule miss.
+type LocalHandle string
+
+// IdentityDir is where the sync identity records for a store directory live.
+// One file per session key - REVIEW CHANGE 7 - so two processes sharing a
+// store directory never read-modify-write one shared file.
+// An empty store dir yields an empty identity dir, not a RELATIVE one:
+// filepath.Join("", "chat-sync", "identity") is "chat-sync/identity", which
+// would put a durable record wherever the process happens to be running.
+func IdentityDir(storeDir string) string {
+	if storeDir == "" {
+		return ""
+	}
+	return filepath.Join(storeDir, "chat-sync", "identity")
+}
+
+// OutboxDirFor is the outbox directory for a local handle. The layout lives
+// here rather than in each host because two hosts (the plain CLI surface and
+// the TUI session pool) build it, and a layout that drifts between them
+// silently orphans one surface's cursor.
+func OutboxDirFor(storeDir string, handle LocalHandle) string {
+	return filepath.Join(storeDir, "chat-sync", "sessions", string(handle))
+}
+
+// IdentityRef locates a stored identity so a running session can write back
+// the remote session id it resolved. A zero IdentityRef disables the
+// write-back, which is what every test that does not care about resume uses.
+type IdentityRef struct {
+	Dir string
+	Key string
+}
+
+// IsZero reports whether the ref names no identity file.
+func (r IdentityRef) IsZero() bool { return r.Dir == "" || r.Key == "" }
+
 // SyncIdentity is the durable sync identity of ONE chat session. It is the
 // record that makes cross-run resume work, and it is deliberately separate
 // from the chat session's own principal.
@@ -35,9 +82,9 @@ const identityKeyLen = 32
 //     and nowhere in a URL. It is used only as the input to IdentityKey and as
 //     the local event-bus filter.
 type SyncIdentity struct {
-	LocalHandle     string `json:"local_handle"`
-	RemoteSessionID string `json:"remote_session_id,omitempty"`
-	WriterID        string `json:"writer_id"`
+	LocalHandle     LocalHandle `json:"local_handle"`
+	RemoteSessionID string      `json:"remote_session_id,omitempty"`
+	WriterID        string      `json:"writer_id"`
 }
 
 // IdentityKey derives the lookup key for a chat session's sync identity file.
@@ -76,10 +123,23 @@ func newIdentityToken() string {
 	return base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(token[:])
 }
 
+// mintIdentity returns a fresh, unused identity. The handle and the writer id
+// are independent draws: the writer id travels in every event payload, so
+// deriving one from the other would put a local-only value on the wire.
+func mintIdentity() SyncIdentity {
+	return SyncIdentity{
+		LocalHandle: LocalHandle(newIdentityToken()),
+		WriterID:    newIdentityToken(),
+	}
+}
+
 // identityPath resolves the identity file for key inside dir. A key that is
 // not a derived key is refused rather than sanitized: it names a file, and
 // every caller gets its key from IdentityKey.
 func identityPath(dir, key string) (string, error) {
+	if dir == "" {
+		return "", errNoIdentityDir
+	}
 	if len(key) != identityKeyLen {
 		return "", fmt.Errorf("chatsync: identity key %q is not a derived key", key)
 	}
@@ -90,6 +150,11 @@ func identityPath(dir, key string) (string, error) {
 	}
 	return filepath.Join(dir, key+".json"), nil
 }
+
+// errNoIdentityDir reports that there is nowhere durable to keep an identity.
+// A session with no store directory must not write one into the process's
+// working directory, so it runs on an ephemeral identity instead.
+var errNoIdentityDir = errors.New("chatsync: no identity directory")
 
 // LoadOrCreateIdentity returns the persisted sync identity for key, minting
 // and storing a fresh one when none is readable.
@@ -102,28 +167,60 @@ func identityPath(dir, key string) (string, error) {
 // the next run will not find.
 func LoadOrCreateIdentity(dir, key string) (SyncIdentity, error) {
 	path, err := identityPath(dir, key)
+	if errors.Is(err, errNoIdentityDir) {
+		// Ephemeral: usable this run, unfindable next run. The caller is a
+		// session with no store directory, which has no cross-run state of any
+		// other kind either.
+		return mintIdentity(), err
+	}
 	if err != nil {
 		return SyncIdentity{}, err
 	}
 	data, readErr := os.ReadFile(path)
 	if readErr == nil {
 		var id SyncIdentity
-		if json.Unmarshal(data, &id) == nil && id.LocalHandle != "" && id.WriterID != "" {
+		if json.Unmarshal(data, &id) == nil && id.LocalHandle != "" {
+			if id.WriterID == "" {
+				// Backfill rather than re-mint. A record written before the
+				// writer id was wired is still the right OUTBOX and the right
+				// remote session; discarding it over a missing field would
+				// orphan both. Best effort: an unwritable backfill costs the
+				// next run a new writer id, nothing else.
+				id.WriterID = newIdentityToken()
+				_ = SaveIdentity(dir, key, id)
+			}
 			return id, nil
 		}
 	} else if !errors.Is(readErr, fs.ErrNotExist) {
 		// A read error that is not "absent" (a permission problem, a
 		// directory in the file's place) is reported, but a fresh identity is
 		// still minted so sync runs.
-		minted := SyncIdentity{LocalHandle: newIdentityToken(), WriterID: newIdentityToken()}
-		return minted, fmt.Errorf("read sync identity: %w", readErr)
+		return mintIdentity(), fmt.Errorf("read sync identity: %w", readErr)
 	}
 
-	minted := SyncIdentity{LocalHandle: newIdentityToken(), WriterID: newIdentityToken()}
+	minted := mintIdentity()
 	if err := SaveIdentity(dir, key, minted); err != nil {
 		return minted, err
 	}
 	return minted, nil
+}
+
+// persistRemoteSessionID records the remote session this run attached to, so
+// the next run re-attaches to it instead of creating a new one. It is a no-op
+// when the options name no identity file.
+//
+// The record is rebuilt from the options rather than re-read from disk: a
+// re-read of a file that vanished mid-run would mint a DIFFERENT handle and
+// store it, leaving the identity naming an outbox this process is not using.
+func (o SessionOptions) persistRemoteSessionID(remoteSessionID string) error {
+	if o.Identity.IsZero() || remoteSessionID == "" {
+		return nil
+	}
+	return SaveIdentity(o.Identity.Dir, o.Identity.Key, SyncIdentity{
+		LocalHandle:     o.LocalHandle,
+		RemoteSessionID: remoteSessionID,
+		WriterID:        o.ProjectorOptions.WriterID,
+	})
 }
 
 // SaveIdentity writes id durably: temp file, fsync, rename, matching the
