@@ -57,6 +57,16 @@ func (p *Projector) LastSeq() int64 {
 	return p.seq
 }
 
+// RollbackSeq rolls back the sequence counter by n (e.g. on outbox append failure).
+func (p *Projector) RollbackSeq(n int) {
+	p.seq -= int64(n)
+}
+
+// ResetSeq resets the sequence counter to a specified sequence (e.g. on fork).
+func (p *Projector) ResetSeq(seq int64) {
+	p.seq = seq
+}
+
 // Project converts an events.Event into zero or more WireEvents.
 func (p *Projector) Project(ev events.Event) []WireEvent {
 	return p.ProjectWithDrops(ev, p.lastDrops)
@@ -65,14 +75,14 @@ func (p *Projector) Project(ev events.Event) []WireEvent {
 // ProjectWithDrops checks the subscription drop counter and projects ev.
 // If drops advanced, a sync.dropped event is emitted immediately before ev.
 func (p *Projector) ProjectWithDrops(ev events.Event, currentDrops uint64) []WireEvent {
+	// Strict session filter: empty SessionID is rejected, sessionID must match.
+	if ev.SessionID == "" || p.sessionID == "" || ev.SessionID != p.sessionID {
+		return nil
+	}
+
 	var out []WireEvent
 	if dropEv := p.checkDrops(currentDrops); dropEv != nil {
 		out = append(out, *dropEv)
-	}
-
-	// Strict session filter: empty SessionID is rejected, sessionID must match.
-	if ev.SessionID == "" || p.sessionID == "" || ev.SessionID != p.sessionID {
-		return out
 	}
 
 	turnID, isSynthetic := p.resolveTurnID(ev.TurnID, ev.Kind)

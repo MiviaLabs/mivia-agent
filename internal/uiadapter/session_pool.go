@@ -371,7 +371,7 @@ func (p *SessionPool) attachSyncLocked(sess *chat.Session) {
 		MaxUnflushed:    p.res.Sync.MaxUnflushed,
 		PollWaitSeconds: p.res.Sync.PollWaitSeconds,
 		HeartbeatPeriod: config.SaturatingSeconds(p.res.Sync.HeartbeatSeconds),
-		CreateTitle:     "Session " + id,
+		CreateTitle:     "Session",
 		EnablePolling:   true,
 	}
 	syncSess, err := chatsync.OpenSession(context.Background(), sess.EventBus, id, opts)

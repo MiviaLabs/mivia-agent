@@ -31,18 +31,18 @@ type Session struct {
 
 // EventItem is one event in an append batch.
 type EventItem struct {
-	Seq     int64          `json:"seq"`
-	Type    string         `json:"type"`
-	Payload map[string]any `json:"payload"`
+	Seq     int64           `json:"seq"`
+	Type    string          `json:"type"`
+	Payload json.RawMessage `json:"payload"`
 }
 
 // StoredEvent is an event read back from the cursor endpoint.
 type StoredEvent struct {
-	SessionID string         `json:"sessionId"`
-	Seq       int64          `json:"seq"`
-	Type      string         `json:"type"`
-	Payload   map[string]any `json:"payload"`
-	CreatedAt string         `json:"createdAt"`
+	SessionID string          `json:"sessionId"`
+	Seq       int64           `json:"seq"`
+	Type      string          `json:"type"`
+	Payload   json.RawMessage `json:"payload"`
+	CreatedAt string          `json:"createdAt"`
 }
 
 // AppendResult is the response from appending events.

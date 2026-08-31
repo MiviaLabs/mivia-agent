@@ -106,8 +106,8 @@ func TestClientAppendEventsAndNext(t *testing.T) {
 
 	// 1. AppendEvents
 	res, err := client.AppendEvents(ctx, "sess-1", []EventItem{
-		{Seq: 1, Type: TypeTurnStarted, Payload: map[string]any{"text": "hi"}},
-		{Seq: 2, Type: TypeTurnEnded, Payload: map[string]any{"reason": "completed"}},
+		{Seq: 1, Type: TypeTurnStarted, Payload: json.RawMessage(`{"text":"hi"}`)},
+		{Seq: 2, Type: TypeTurnEnded, Payload: json.RawMessage(`{"reason":"completed"}`)},
 	})
 	if err != nil {
 		t.Fatalf("AppendEvents: %v", err)
@@ -237,5 +237,15 @@ func TestClientAppendEvents_MatchesWireEnvelope(t *testing.T) {
 	eventsArr, ok := receivedBody["events"].([]any)
 	if !ok || len(eventsArr) != 1 {
 		t.Fatalf("expected body with 'events' array, got %v", receivedBody)
+	}
+}
+
+func TestNewClient_DefaultTimeoutZero(t *testing.T) {
+	client := NewClient(ClientOptions{BaseURL: "http://localhost:8080"})
+	if client.httpClient == nil {
+		t.Fatal("expected httpClient to be non-nil")
+	}
+	if client.httpClient.Timeout != 0 {
+		t.Errorf("default client timeout = %v, want 0 (per-request context deadlines govern)", client.httpClient.Timeout)
 	}
 }

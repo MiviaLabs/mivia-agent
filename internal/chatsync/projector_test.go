@@ -341,3 +341,42 @@ func TestProjectorThinkingDelta_SequentialIndex(t *testing.T) {
 		t.Errorf("p2.Index = %d, want 1", p2.Index)
 	}
 }
+
+func TestProjector_CrossSessionDropsIgnored(t *testing.T) {
+	p := NewProjector("sess-target", 0, ProjectorOptions{})
+
+	// Event for a different session arrives with drop counter = 5
+	otherEv := events.Event{
+		Kind:      events.KindTurnStart,
+		SessionID: "sess-other",
+		TurnID:    "turn:1",
+		Detail:    "foreign message",
+		Timestamp: time.Now(),
+	}
+
+	weOther := p.ProjectWithDrops(otherEv, 5)
+	if len(weOther) != 0 {
+		t.Fatalf("expected 0 wire events for other session, got %d: %+v", len(weOther), weOther)
+	}
+
+	// Subsequent matching event for target session with same drop counter = 5
+	// must emit the sync.dropped event because it wasn't consumed by other session!
+	targetEv := events.Event{
+		Kind:      events.KindTurnStart,
+		SessionID: "sess-target",
+		TurnID:    "turn:1",
+		Detail:    "target message",
+		Timestamp: time.Now(),
+	}
+
+	weTarget := p.ProjectWithDrops(targetEv, 5)
+	if len(weTarget) != 2 {
+		t.Fatalf("expected 2 wire events (sync.dropped + turn.started), got %d: %+v", len(weTarget), weTarget)
+	}
+	if weTarget[0].Type != TypeSyncDropped {
+		t.Errorf("weTarget[0].Type = %q, want %q", weTarget[0].Type, TypeSyncDropped)
+	}
+	if weTarget[1].Type != TypeTurnStarted {
+		t.Errorf("weTarget[1].Type = %q, want %q", weTarget[1].Type, TypeTurnStarted)
+	}
+}
