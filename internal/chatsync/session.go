@@ -77,6 +77,11 @@ type SyncSession struct {
 	// heartbeat; it never forks. Local chat is untouched.
 	remoteEnded atomic.Bool
 
+	// stopCtxCh hands Stop's context to the worker so the final drain and
+	// flush is bounded by the caller's shutdown deadline rather than by the
+	// unbounded session context.
+	stopCtxCh chan context.Context
+
 	mu      sync.Mutex
 	running bool
 	stopCh  chan struct{}
@@ -130,6 +135,7 @@ func OpenSession(ctx context.Context, bus *events.Bus, sessionID string, opts Se
 		doneCh:         make(chan struct{}),
 		eventCh:        make(chan events.Event, 1024),
 		flushCh:        make(chan struct{}, 1),
+		stopCtxCh:      make(chan context.Context, 1),
 		running:        true,
 	}
 	s.appender = outbox
@@ -265,7 +271,14 @@ func (s *SyncSession) SetStatus(ctx context.Context, status string) {
 	}
 }
 
-// Stop terminates the session sync loop, flushes pending events, and closes resources.
+// Stop terminates the session sync loop, flushes pending events, and closes
+// resources. Every wait it performs is bounded by ctx: a caller that gives Stop
+// a 200ms deadline gets control back inside 200ms even when a long poll is
+// parked and the final append is stalled on a dead network.
+//
+// When the deadline arrives first, Stop returns ctx.Err() and hands the outbox
+// close to a goroutine that waits for the worker, because closing the outbox
+// under a worker still writing to it would race its file handle.
 func (s *SyncSession) Stop(ctx context.Context) error {
 	s.mu.Lock()
 	if !s.running {
@@ -278,20 +291,54 @@ func (s *SyncSession) Stop(ctx context.Context) error {
 	if s.sub != nil {
 		s.sub.Unsubscribe()
 	}
+
+	// The worker's final drain and flush inherits the caller's deadline.
+	select {
+	case s.stopCtxCh <- ctx:
+	default:
+	}
 	close(s.stopCh)
-	<-s.doneCh
+
+	timedOut := false
+	select {
+	case <-s.doneCh:
+	case <-ctx.Done():
+		timedOut = true
+	}
 
 	if s.heartbeat != nil {
 		s.heartbeat.Stop(ctx)
 	}
 	if s.poller != nil {
-		s.poller.Stop()
+		s.poller.Stop(ctx)
+	}
+
+	if timedOut {
+		go func() {
+			<-s.doneCh
+			_ = s.outbox.Close()
+		}()
+		return ctx.Err()
 	}
 
 	if !s.remoteEnded.Load() {
 		_, _ = FlushOutbox(ctx, s.client, s.outbox, s.SessionID())
 	}
 	return s.outbox.Close()
+}
+
+// shutdownCtx returns the deadline Stop asked the worker to shut down under,
+// falling back to the session context when the worker is unwinding for another
+// reason (a cancelled session context).
+func (s *SyncSession) shutdownCtx(base context.Context) context.Context {
+	select {
+	case c := <-s.stopCtxCh:
+		if c != nil {
+			return c
+		}
+	default:
+	}
+	return base
 }
 
 func (s *SyncSession) workerLoop(ctx context.Context) {
@@ -308,7 +355,7 @@ func (s *SyncSession) workerLoop(ctx context.Context) {
 		}
 		select {
 		case <-s.stopCh:
-			s.drainAndFlushFinal(ctx)
+			s.drainAndFlushFinal(s.shutdownCtx(ctx))
 			return
 		case <-ctx.Done():
 			s.drainAndFlushFinal(ctx)
@@ -359,7 +406,7 @@ func (s *SyncSession) handleRemoteEnd(ctx context.Context) {
 			s.heartbeat.Stop(ctx)
 		}
 		if s.poller != nil {
-			s.poller.Stop()
+			s.poller.Stop(ctx)
 		}
 	}()
 }

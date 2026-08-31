@@ -59,7 +59,7 @@ func TestInputPollerReceivesAndConsumesInput(t *testing.T) {
 	defer cancel()
 
 	poller.Start(ctx)
-	defer poller.Stop()
+	defer poller.Stop(context.Background())
 
 	select {
 	case ri := <-poller.Inputs():
@@ -103,7 +103,7 @@ func TestInputPollerSuppressesDeliveryIfConsumeFails(t *testing.T) {
 	defer cancel()
 
 	poller.Start(ctx)
-	defer poller.Stop()
+	defer poller.Stop(context.Background())
 
 	select {
 	case ri := <-poller.Inputs():
@@ -127,7 +127,7 @@ func TestInputPoller_ChannelClosedOnStop(t *testing.T) {
 
 	poller.Start(context.Background())
 	time.Sleep(10 * time.Millisecond)
-	poller.Stop()
+	poller.Stop(context.Background())
 
 	// Assert input channel is closed cleanly upon Stop
 	select {
@@ -178,7 +178,7 @@ func TestInputPoller_CrashRecovery_ConsumedInputDeliveredOnAttach(t *testing.T) 
 	defer cancel()
 
 	poller.Start(ctx)
-	defer poller.Stop()
+	defer poller.Stop(context.Background())
 
 	// Consumed input must be recovered and delivered immediately on Inputs()
 	select {
@@ -234,7 +234,7 @@ func TestInputPoller_CrashRecovery_UnconsumedInputDiscarded(t *testing.T) {
 	defer cancel()
 
 	poller.Start(ctx)
-	defer poller.Stop()
+	defer poller.Stop(context.Background())
 
 	// Unconsumed input must NOT be delivered
 	select {

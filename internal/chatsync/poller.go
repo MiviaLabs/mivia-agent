@@ -42,6 +42,11 @@ type InputPoller struct {
 const (
 	defaultPollWaitSeconds = 25
 	maxPollWaitSeconds     = 300
+	// pollDeadlineSlackSeconds is the settled per-request budget on top of the
+	// server-side park (`waitSeconds + 10s`, chat-sync-cli-slice.md section 6).
+	// The code carried 5s, which can expire on a healthy park plus normal
+	// network latency and turn a successful long poll into a retry storm.
+	pollDeadlineSlackSeconds = 10
 )
 
 // NewInputPoller creates a new InputPoller.
@@ -92,18 +97,26 @@ func (p *InputPoller) SetSessionID(sessionID string) {
 	p.sessionID = sessionID
 }
 
-// Stop terminates the poller and waits for loop exit.
-func (p *InputPoller) Stop() {
+// Stop terminates the poller and waits for loop exit, bounded by ctx.
+//
+// Closing stopCh also cancels the in-flight long poll, so the loop normally
+// exits at once. The ctx arm is the backstop for a request the transport is
+// slow to abandon: a shutdown deadline the caller set must bound this call,
+// never the poll deadline.
+func (p *InputPoller) Stop(ctx context.Context) {
 	p.mu.Lock()
 	if !p.running {
 		p.mu.Unlock()
 		return
 	}
 	p.running = false
+	close(p.stopCh)
 	p.mu.Unlock()
 
-	close(p.stopCh)
-	<-p.doneCh
+	select {
+	case <-p.doneCh:
+	case <-ctx.Done():
+	}
 }
 
 func (p *InputPoller) loop(ctx context.Context) {
@@ -124,8 +137,20 @@ func (p *InputPoller) loop(ctx context.Context) {
 }
 
 func (p *InputPoller) pollOnce(ctx context.Context) {
-	pollCtx, cancel := context.WithTimeout(ctx, time.Duration(p.waitSeconds+5)*time.Second)
+	pollCtx, cancel := context.WithTimeout(ctx, time.Duration(p.waitSeconds+pollDeadlineSlackSeconds)*time.Second)
 	defer cancel()
+
+	// A parked long poll must abandon its request the moment Stop is called,
+	// otherwise shutdown waits out the whole poll deadline.
+	watchDone := make(chan struct{})
+	defer close(watchDone)
+	go func() {
+		select {
+		case <-p.stopCh:
+			cancel()
+		case <-watchDone:
+		}
+	}()
 
 	p.mu.Lock()
 	sessID := p.sessionID
