@@ -437,6 +437,11 @@ func dispatchChatSurface(invocation chatInvocation, sess *chat.Session, res *con
 	// then resume" shortly after was refused as already-live. Best-effort and
 	// bounded: see Session.ReleaseContextLease.
 	defer sess.ReleaseContextLease(context.Background())
+	// Subagent progress reaches the session bus for the life of this surface.
+	// Bound here because one-shot, REPL and TUI all return through this
+	// function; binding in any one surface would leave the others dark, which
+	// is how the previous wiring managed to publish nothing anywhere.
+	defer SetSubagentSession(sess)()
 	if invocation.jsonMode {
 		if err := validateJSONModeInvocation(invocation); err != nil {
 			return err
