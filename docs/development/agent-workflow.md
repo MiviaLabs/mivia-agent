@@ -129,6 +129,37 @@ login). It spends 2 logins against the API's login rate limit per run.
 Missing credentials fail the run rather than skipping it - if the tag is set,
 a quiet pass would be the wrong answer.
 
+### Live chat-session probe (`make live-chat-smoke`)
+
+`internal/chatsync/live_contract_test.go` checks the deployed
+`/v1/chat-sessions` surface: register a session, push events, read them by
+cursor, stream them over SSE, and drive the remote-input long poll. It is
+behind the `livechat` build tag and follows the same never-run-without-an-
+explicit-ask rule as the auth smoke, with the same environment variables.
+
+It exists because the API half of chat session sync shipped first and both
+clients (the Go CLI and the web viewer) are still unwritten, so nothing else
+exercises the real surface. The probe is not a client: it speaks raw HTTP with
+its own wire structs, so it pins server behavior without freezing any decision
+about how the CLI gets built.
+
+It leaves ended session rows in the target database - the API has no delete
+endpoint. Every row it creates is titled `mivia live probe: ...`.
+
+**Four probes fail on purpose.** They are API defects, not harness bugs, and
+each is asserted in the direction a client needs, so it goes green when the API
+is fixed rather than pinning today's behavior:
+
+| Probe | What the deployment does |
+|-------|--------------------------|
+| `PayloadBoundIsAClientError` | A payload over the documented 64 KiB ceiling returns **500**, and the body carries the failing SQL statement and its bound parameters. A client cannot tell "truncate and retry" from "the server is broken". |
+| `RejectsIntraBatchGap` | Only the first seq in a batch is checked against the high-water mark. One request can write seq 1 and seq 99 together; `lastSeq` becomes 99 and hides 97 seqs that never existed, so a restarting CLI resumes past the gap. |
+| `ConsumeIsExactlyOnce` | Consuming an already-consumed input returns **200**, so the loser of a race cannot tell it lost. Delivery is at-least-once and exactly-once cannot be built on it. |
+| `EndIsTerminal` | Events still append to an **ended** session, so a session the user closed keeps growing. |
+
+Everything else passes: the full lifecycle, the validation and tenancy guards,
+SSE replay, SSE live push, and cursor resume.
+
 ### e2e suite runner (`scripts/e2e_suite.py`)
 
 `scripts/e2e_suite.py` is a small, versioned suite over live e2e scenarios,
