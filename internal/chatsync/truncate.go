@@ -25,8 +25,19 @@ func truncateString(s string, maxBytes int) (string, int, int, bool) {
 		return "", 0, totalBytes, true
 	}
 
+	// Back off across the rune at the CUT BOUNDARY only. Validating the whole
+	// prefix (utf8.ValidString) would trim all the way back to the first
+	// invalid byte anywhere in s, amputating content the budget allowed and
+	// reporting it as an ordinary budget cut. It is also O(n^2).
+	// utf8.DecodeLastRuneInString reports (RuneError, 1) for a byte that
+	// cannot start a rune or for an incomplete trailing sequence; a real
+	// U+FFFD decodes with size 3 and is kept.
 	cut := s[:maxBytes]
-	for len(cut) > 0 && !utf8.ValidString(cut) {
+	for len(cut) > 0 {
+		r, size := utf8.DecodeLastRuneInString(cut)
+		if r != utf8.RuneError || size > 1 {
+			break
+		}
 		cut = cut[:len(cut)-1]
 	}
 	return cut, len(cut), totalBytes, true
