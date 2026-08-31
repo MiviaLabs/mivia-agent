@@ -102,6 +102,33 @@ subject` shape). After the run settles, close and delete-branch any PR it
 opened - the workflow's own PR body already says "Safe to close/delete."
 Never merge one.
 
+### Live auth smoke (`make live-auth-smoke`)
+
+`internal/miviaauth/live_smoke_test.go` checks the CLI's `/v1/auth` model
+against a real deployment. It is behind the `liveauth` build tag, so it does
+not compile - and cannot run - unless someone asks for it by name. Same
+never-run-without-explicit-ask rule as the workflows above; it is not part of
+`make verify` or CI.
+
+It exists because `api/contracts/auth.v1.json` is maintained by hand and its
+README says it cannot see the live server drift: the snapshot pins what the Go
+package models, so it catches our edits, never the API's. This test is the
+other half of that guard, and it is the only thing in the repo that compares
+the two.
+
+```bash
+MIVIA_LIVE_API_BASE_URL=https://... \
+MIVIA_LIVE_EMAIL=... MIVIA_LIVE_PASSWORD=... make live-auth-smoke
+```
+
+Use a throwaway account, never a real user's. The run mutates real state: it
+revokes the sessions it creates, and deliberately trips the server's
+refresh-token theft detection once (that check is why it needs its own second
+login). It spends 2 logins against the API's login rate limit per run.
+
+Missing credentials fail the run rather than skipping it - if the tag is set,
+a quiet pass would be the wrong answer.
+
 ### e2e suite runner (`scripts/e2e_suite.py`)
 
 `scripts/e2e_suite.py` is a small, versioned suite over live e2e scenarios,
