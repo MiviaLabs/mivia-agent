@@ -6,7 +6,6 @@ import (
 	"io"
 	"path/filepath"
 	"sync"
-	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/chatsync"
@@ -371,7 +370,7 @@ func (p *SessionPool) attachSyncLocked(sess *chat.Session) {
 		OutboxDir:       filepath.Join(sess.SessionDir, "chat-sync", "sessions", id),
 		MaxUnflushed:    p.res.Sync.MaxUnflushed,
 		PollWaitSeconds: p.res.Sync.PollWaitSeconds,
-		HeartbeatPeriod: time.Duration(p.res.Sync.HeartbeatSeconds) * time.Second,
+		HeartbeatPeriod: config.SaturatingSeconds(p.res.Sync.HeartbeatSeconds),
 		CreateTitle:     "Session " + id,
 		EnablePolling:   true,
 	}

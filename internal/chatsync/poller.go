@@ -27,10 +27,17 @@ type InputPoller struct {
 	running     bool
 }
 
+const (
+	defaultPollWaitSeconds = 25
+	maxPollWaitSeconds     = 300
+)
+
 // NewInputPoller creates a new InputPoller.
 func NewInputPoller(client *Client, sessionID string, waitSeconds int) *InputPoller {
 	if waitSeconds <= 0 {
-		waitSeconds = 25
+		waitSeconds = defaultPollWaitSeconds
+	} else if waitSeconds > maxPollWaitSeconds {
+		waitSeconds = maxPollWaitSeconds
 	}
 	return &InputPoller{
 		client:      client,
