@@ -25,7 +25,7 @@ VERSION_LDFLAGS := -X $(VERSION_PKG).Commit=$(COMMIT) -X $(VERSION_PKG).Dirty=$(
 	secret-scan docs-check semgrep semgrep-validate semgrep-test \
 	hook-test agent-hook-test test-quality structure-check import-layers-check timeout-saturation-check request-deadline-check commit-check go-check verify-go test test-changed race vet build tidy fmt fmt-check \
 	validate-invariants invariants mutation diff-coverage verifier-integration smoke release release-test \
-	prose-check
+	prose-check live-auth-smoke
 
 help:
 	@printf '%s\n' \
@@ -269,6 +269,21 @@ smoke:
 
 verifier-integration:
 	@go test -tags=integration ./internal/workflows/definition
+
+# live-auth-smoke talks to a REAL deployment with REAL credentials and mutates
+# real sessions (it revokes the ones it creates, and deliberately trips the
+# server's refresh-token theft detection once). It is never a prerequisite of
+# verify, test, or CI - per AGENTS.md a live e2e runs only when someone asks
+# for it by name, which is what typing this target is.
+#
+# Point it at a throwaway account, never a real user's:
+#
+#   MIVIA_LIVE_API_BASE_URL=https://... \
+#   MIVIA_LIVE_EMAIL=... MIVIA_LIVE_PASSWORD=... make live-auth-smoke
+#
+# Each run spends 2 logins against the API's login rate limit.
+live-auth-smoke:
+	@go test -tags=liveauth -count=1 -v ./internal/miviaauth -run 'TestLive'
 
 invariants:
 	@echo "Running all invariant tests dynamically from .mivia/invariants.md..."
