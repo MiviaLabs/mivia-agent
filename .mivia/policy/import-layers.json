@@ -110,6 +110,7 @@
       "internal/agentmsg",
       "internal/agents",
       "internal/chat",
+      "internal/chatsync",
       "internal/cliagents",
       "internal/cliorchestrate",
       "internal/cliworkflow",
@@ -464,6 +465,7 @@
     "internal/uiadapter": [
       "internal/agent",
       "internal/chat",
+      "internal/chatsync",
       "internal/cliagents",
       "internal/composition",
       "internal/config",

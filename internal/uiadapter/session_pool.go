@@ -4,13 +4,17 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/chatsync"
 	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
 
@@ -18,12 +22,13 @@ import (
 // It allows background sessions to keep running while the user switches
 // freely between them.
 type SessionPool struct {
-	mu         sync.Mutex
-	sessions   map[string]*chat.Session
-	convs      map[string]*Conversation
-	res        *config.Resolved
-	agentState *cliagents.AgentSessionState
-	toolsOn    bool
+	mu           sync.Mutex
+	sessions     map[string]*chat.Session
+	convs        map[string]*Conversation
+	syncSessions map[string]*chatsync.SyncSession
+	res          *config.Resolved
+	agentState   *cliagents.AgentSessionState
+	toolsOn      bool
 	// threads is the one SubagentThreads registry shared by every
 	// Conversation the pool creates or resumes, so the activity panel's
 	// thread dialog (wired once, at startup, to this same instance) can
@@ -134,11 +139,21 @@ func (p *SessionPool) ReleaseLeases(ctx context.Context) {
 		seen[sess] = struct{}{}
 		distinct = append(distinct, sess)
 	}
+	syncList := make([]*chatsync.SyncSession, 0, len(p.syncSessions))
+	for _, ss := range p.syncSessions {
+		if ss != nil {
+			syncList = append(syncList, ss)
+		}
+	}
+	p.syncSessions = make(map[string]*chatsync.SyncSession)
 	p.mu.Unlock()
 	// Release outside p.mu: ReleaseContextLease must run lock-free (it joins
 	// the heartbeat goroutine and issues a store write with its own timeout).
 	for _, sess := range distinct {
 		releaseSessionLease(ctx, sess)
+	}
+	for _, ss := range syncList {
+		_ = ss.Stop(ctx)
 	}
 }
 
@@ -158,12 +173,13 @@ func (p *SessionPool) IsActive(id string) bool {
 // NewSessionPool constructs a SessionPool seeded with the initial session.
 func NewSessionPool(initialSess *chat.Session, res *config.Resolved, agentState *cliagents.AgentSessionState, toolsOn bool) *SessionPool {
 	pool := &SessionPool{
-		sessions:   make(map[string]*chat.Session),
-		convs:      make(map[string]*Conversation),
-		res:        res,
-		agentState: agentState,
-		toolsOn:    toolsOn,
-		threads:    NewSubagentThreads(),
+		sessions:     make(map[string]*chat.Session),
+		convs:        make(map[string]*Conversation),
+		syncSessions: make(map[string]*chatsync.SyncSession),
+		res:          res,
+		agentState:   agentState,
+		toolsOn:      toolsOn,
+		threads:      NewSubagentThreads(),
 	}
 	if initialSess != nil {
 		if res != nil {
@@ -174,6 +190,7 @@ func NewSessionPool(initialSess *chat.Session, res *config.Resolved, agentState 
 		conv.SetSubagents(pool.threads)
 		pool.sessions[id] = initialSess
 		pool.convs[id] = conv
+		pool.attachSyncLocked(initialSess)
 	}
 	return pool
 }
@@ -247,6 +264,7 @@ func (p *SessionPool) CreateFresh() (ports.Conversation, error) {
 	id := sess.SessionID
 	p.sessions[id] = sess
 	p.convs[id] = conv
+	p.attachSyncLocked(sess)
 	return conv, nil
 }
 
@@ -327,5 +345,50 @@ func (p *SessionPool) GetOrCreate(sessionID string) (ports.Conversation, error) 
 		p.sessions[sess.SessionID] = sess
 		p.convs[sess.SessionID] = conv
 	}
+	p.attachSyncLocked(sess)
 	return conv, nil
+}
+
+func (p *SessionPool) attachSyncLocked(sess *chat.Session) {
+	if p.res == nil || !p.res.Sync.Enabled || sess == nil || sess.EventBus == nil {
+		return
+	}
+	id := sess.SessionID
+	if id == "" {
+		return
+	}
+	if _, exists := p.syncSessions[id]; exists {
+		return
+	}
+	opts := chatsync.SessionOptions{
+		ClientOptions: chatsync.ClientOptions{
+			BaseURL: p.res.Sync.APIURL,
+		},
+		ProjectorOptions: chatsync.ProjectorOptions{
+			IncludeToolIO:   p.res.Sync.IncludeToolIO,
+			IncludeThinking: p.res.Sync.IncludeThinking,
+		},
+		OutboxDir:       filepath.Join(sess.SessionDir, "chat-sync", "sessions", id),
+		MaxUnflushed:    p.res.Sync.MaxUnflushed,
+		PollWaitSeconds: p.res.Sync.PollWaitSeconds,
+		HeartbeatPeriod: time.Duration(p.res.Sync.HeartbeatSeconds) * time.Second,
+		CreateTitle:     "Session " + id,
+		EnablePolling:   true,
+	}
+	syncSess, err := chatsync.OpenSession(context.Background(), sess.EventBus, id, opts)
+	if err == nil {
+		p.syncSessions[id] = syncSess
+		go p.forwardRemoteInputs(sess, syncSess)
+	}
+}
+
+func (p *SessionPool) forwardRemoteInputs(sess *chat.Session, syncSess *chatsync.SyncSession) {
+	for input := range syncSess.Inputs() {
+		p.mu.Lock()
+		conv, ok := p.convs[sess.SessionID]
+		p.mu.Unlock()
+		if ok && conv != nil {
+			_, _ = conv.Send(context.Background(), intent.Send{Text: input.Body})
+		}
+	}
 }

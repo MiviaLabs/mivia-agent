@@ -440,6 +440,7 @@ func dispatchChatSurface(invocation chatInvocation, sess *chat.Session, res *con
 	// a publish with no bus is a silent no-op. See attachSessionEventBus.
 	attachSessionEventBus(sess)
 	defer sess.ReleaseContextLease(context.Background())
+	defer attachCLISync(sess, res)()
 	if invocation.jsonMode {
 		if err := validateJSONModeInvocation(invocation); err != nil {
 			return err
