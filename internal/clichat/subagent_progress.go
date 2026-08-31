@@ -4,16 +4,28 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/MiviaLabs/mivia-agent/internal/chat"
+
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 )
 
-// globalBus is set once by runTUI and used by emitSubagentProgress to
-// publish subagent events onto the EventBus. This replaces the global
-// callback pattern with persistent subscription.
-var globalBusState struct {
+// subagentSession is the session whose EventBus receives subagent progress,
+// set for the life of a chat surface by SetSubagentSession.
+//
+// It replaces a bus reference that production never set. SetGlobalBus existed
+// and was exported, but nothing outside its own definition called it, so every
+// subagent event published into a nil bus and vanished - while the code read as
+// if a second surface was being fed. internal/hub lists all four subagent kinds
+// as relayable; none of them had ever reached a bus.
+//
+// Holding the session rather than the bus is what lets the published events
+// carry SessionID and TurnID. Without SessionID a hub receiver drops them on
+// purpose (externalEventBelongsToSession), so a bare bus reference would have
+// fixed the publish and changed nothing a consumer could see.
+var subagentSessionState struct {
 	sync.RWMutex
-	bus *events.Bus
+	sess *chat.Session
 }
 
 // subagentProgress sinks nested multi_step tool/heartbeat events into the
@@ -63,11 +75,16 @@ func emitSubagentProgress(e agent.Event) {
 	if fn != nil {
 		fn(e)
 	}
-	// Also publish to EventBus (if set), attributed to the producing agent.
-	globalBusState.RLock()
-	bus := globalBusState.bus
-	globalBusState.RUnlock()
-	if bus != nil {
+	publishSubagentEvent(e)
+}
+
+// publishSubagentEvent forwards one subagent event to the session bus,
+// attributed to the producing agent and to the turn that dispatched it.
+func publishSubagentEvent(e agent.Event) {
+	subagentSessionState.RLock()
+	sess := subagentSessionState.sess
+	subagentSessionState.RUnlock()
+	if sess != nil && sess.EventBus != nil {
 		ev := events.NewEventFromAgentParts(
 			events.Kind(e.Kind),
 			e.ToolCallID,
@@ -81,14 +98,26 @@ func emitSubagentProgress(e agent.Event) {
 			identity := *e.Identity
 			ev.Identity = &identity
 		}
-		bus.Publish(ev)
+		// A hub receiver rejects an event with no SessionID rather than
+		// matching two empty strings, so this attribution is what makes the
+		// publish observable at all.
+		ev.SessionID = sess.SessionID
+		ev.TurnID = sess.CurrentTurnEventID()
+		sess.EventBus.Publish(ev)
 	}
 }
 
-// SetGlobalBus sets the global EventBus reference used by emitSubagentProgress.
-// Called once from runTUI.
-func SetGlobalBus(bus *events.Bus) {
-	globalBusState.Lock()
-	globalBusState.bus = bus
-	globalBusState.Unlock()
+// SetSubagentSession binds subagent progress publishing to sess for the life of
+// a chat surface, and returns a function that unbinds it. Every surface routes
+// through one choke point (dispatchChatSurface), so binding there covers the
+// one-shot, REPL and TUI paths alike.
+func SetSubagentSession(sess *chat.Session) func() {
+	subagentSessionState.Lock()
+	subagentSessionState.sess = sess
+	subagentSessionState.Unlock()
+	return func() {
+		subagentSessionState.Lock()
+		subagentSessionState.sess = nil
+		subagentSessionState.Unlock()
+	}
 }

@@ -133,9 +133,6 @@ var ReplHelpContent = clichat.ReplHelpContent
 // RestoreREPLRuntime re-exports the clichat.RestoreREPLRuntime function.
 var RestoreREPLRuntime = clichat.RestoreREPLRuntime
 
-// SetGlobalBus re-exports the clichat.SetGlobalBus function.
-var SetGlobalBus = clichat.SetGlobalBus
-
 // SetSubagentProgress re-exports the clichat.SetSubagentProgress function.
 var SetSubagentProgress = clichat.SetSubagentProgress
 

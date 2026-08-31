@@ -115,3 +115,22 @@ func (s *Session) publishTurnEnd(ctx context.Context, sessionID string, turn uin
 		Detail:    reason,
 	})
 }
+
+// CurrentTurnEventID returns the id of the turn currently running, in the same
+// "turn:N" form every event of that turn carries, or "" before the first turn.
+//
+// It exists for out-of-band producers - subagent progress arrives through a
+// callback with no context, so it cannot read the turn from the caller frame
+// the way TurnIDFromContext does. Reading the live counter is correct for that
+// use: a subagent only runs inside the turn that dispatched it.
+func (s *Session) CurrentTurnEventID() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.turnID == 0 {
+		return ""
+	}
+	return turnEventID(s.turnID)
+}
