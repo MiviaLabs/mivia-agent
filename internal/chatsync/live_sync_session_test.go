@@ -35,7 +35,7 @@ func TestLiveSyncSessionEndToEnd(t *testing.T) {
 		ProjectorOptions: ProjectorOptions{IncludeToolIO: true, IncludeThinking: true},
 	}
 
-	syncSess, err := OpenSession(ctx, bus, "local-live-session-1", opts)
+	syncSess, err := OpenSession(ctx, bus, "", opts)
 	if err != nil {
 		t.Fatalf("OpenSession: %v", err)
 	}
@@ -45,10 +45,12 @@ func TestLiveSyncSessionEndToEnd(t *testing.T) {
 		_ = syncSess.Stop(stopCtx)
 	}()
 
+	sessID := syncSess.SessionID()
+
 	// 1. Publish turn.started
 	bus.Publish(events.Event{
 		Kind:      events.KindTurnStart,
-		SessionID: "local-live-session-1",
+		SessionID: sessID,
 		TurnID:    "turn:1",
 		Detail:    "live prompt from test",
 		Timestamp: time.Now(),
@@ -57,7 +59,7 @@ func TestLiveSyncSessionEndToEnd(t *testing.T) {
 	// 2. Publish assistant.message
 	bus.Publish(events.Event{
 		Kind:      events.KindAssistant,
-		SessionID: "local-live-session-1",
+		SessionID: sessID,
 		TurnID:    "turn:1",
 		Content:   "live assistant response",
 		Timestamp: time.Now(),
@@ -66,7 +68,7 @@ func TestLiveSyncSessionEndToEnd(t *testing.T) {
 	// 3. Publish turn.ended
 	bus.Publish(events.Event{
 		Kind:      events.KindTurnEnd,
-		SessionID: "local-live-session-1",
+		SessionID: sessID,
 		TurnID:    "turn:1",
 		Detail:    "turn completed",
 		Timestamp: time.Now(),

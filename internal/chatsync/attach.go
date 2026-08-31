@@ -14,33 +14,52 @@ type SessionAttachment struct {
 	ForkedFrom string
 }
 
-func isValidUUID(s string) bool {
-	if len(s) != 36 {
-		return false
-	}
-	for i, c := range s {
-		if i == 8 || i == 13 || i == 18 || i == 23 {
-			if c != '-' {
-				return false
-			}
-		} else {
-			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
-				return false
-			}
-		}
-	}
-	return true
-}
-
 // AttachSession connects to an existing remote session or creates a new remote session.
-func AttachSession(ctx context.Context, client *Client, outbox *Outbox, params CreateSessionParams, existingSessionID string) (*SessionAttachment, error) {
-	if existingSessionID != "" && isValidUUID(existingSessionID) {
+// When serverLastSeq > cursor.FlushedSeq:
+// - If all events past cursor match writerID (or writerID is empty) -> ADOPT: ServerSeq = sess.LastSeq, FlushedSeq = sess.LastSeq
+// - If any event has a different writerID -> FORK: end old session, create new session, ForkedFrom = oldID
+func AttachSession(ctx context.Context, client *Client, outbox *Outbox, params CreateSessionParams, existingSessionID string, writerID string) (*SessionAttachment, error) {
+	if existingSessionID != "" {
 		sess, err := client.GetSession(ctx, existingSessionID)
 		if err == nil {
+			flushedSeq := outbox.Cursor().FlushedSeq
+			if sess.LastSeq > flushedSeq && writerID != "" {
+				count := int(sess.LastSeq - flushedSeq)
+				events, readErr := client.GetEvents(ctx, existingSessionID, flushedSeq, count)
+				if readErr == nil && len(events) > 0 {
+					isForeign := false
+					for _, ev := range events {
+						if evWriter, ok := ev.Payload["writer_id"].(string); ok && evWriter != "" && evWriter != writerID {
+							isForeign = true
+							break
+						}
+					}
+					if isForeign {
+						_, _ = client.EndSession(ctx, existingSessionID)
+						created, createErr := client.CreateSession(ctx, params)
+						if createErr != nil {
+							return nil, fmt.Errorf("fork session: %w", createErr)
+						}
+						return &SessionAttachment{
+							SessionID:  created.ID,
+							ServerSeq:  created.LastSeq,
+							FlushedSeq: 0,
+							ForkedFrom: existingSessionID,
+						}, nil
+					}
+				}
+				_ = outbox.AdvanceCursor(sess.LastSeq)
+				return &SessionAttachment{
+					SessionID:  sess.ID,
+					ServerSeq:  sess.LastSeq,
+					FlushedSeq: sess.LastSeq,
+				}, nil
+			}
+
 			return &SessionAttachment{
 				SessionID:  sess.ID,
 				ServerSeq:  sess.LastSeq,
-				FlushedSeq: outbox.Cursor().FlushedSeq,
+				FlushedSeq: flushedSeq,
 			}, nil
 		}
 		if !errors.Is(err, ErrNotFound) {

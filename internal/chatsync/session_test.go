@@ -306,7 +306,7 @@ func TestSyncSession_ResumeWithUnflushedEventsPreservesMonotonicity(t *testing.T
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/chat-sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(Session{ID: "sess-resumed", Status: "running", LastSeq: 2})
+		_ = json.NewEncoder(w).Encode(Session{ID: "sess-resumed", Status: "running", LastSeq: 5})
 	})
 	mux.HandleFunc("POST /v1/chat-sessions/{id}/events", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {

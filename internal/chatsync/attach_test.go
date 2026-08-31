@@ -29,12 +29,101 @@ func TestAttachSessionExisting(t *testing.T) {
 	defer ob.Close()
 	_ = ob.AdvanceCursor(2)
 
-	att, err := AttachSession(context.Background(), client, ob, CreateSessionParams{}, "sess-existing-1")
+	att, err := AttachSession(context.Background(), client, ob, CreateSessionParams{}, "sess-existing-1", "")
 	if err != nil {
 		t.Fatalf("AttachSession: %v", err)
 	}
 	if att.SessionID != "sess-existing-1" || att.ServerSeq != 5 || att.FlushedSeq != 2 {
 		t.Errorf("att = %+v, want SessionID=sess-existing-1, ServerSeq=5, FlushedSeq=2", att)
+	}
+}
+
+func TestAttachSession_ServerAhead_AdoptWhenMine(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/chat-sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(Session{
+			ID:      "sess-mine-1",
+			LastSeq: 5,
+			Status:  "running",
+		})
+	})
+	mux.HandleFunc("GET /v1/chat-sessions/{id}/events", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]StoredEvent{
+			{Seq: 3, Payload: map[string]any{"writer_id": "writer-me"}},
+			{Seq: 4, Payload: map[string]any{"writer_id": "writer-me"}},
+			{Seq: 5, Payload: map[string]any{"writer_id": "writer-me"}},
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	client := NewClient(ClientOptions{BaseURL: srv.URL})
+	outboxDir := filepath.Join(t.TempDir(), "outbox")
+	ob, _ := OpenOutbox(outboxDir, 100)
+	defer ob.Close()
+	_ = ob.AdvanceCursor(2)
+
+	att, err := AttachSession(context.Background(), client, ob, CreateSessionParams{}, "sess-mine-1", "writer-me")
+	if err != nil {
+		t.Fatalf("AttachSession: %v", err)
+	}
+	if att.SessionID != "sess-mine-1" || att.ServerSeq != 5 || att.ForkedFrom != "" {
+		t.Errorf("att = %+v, want SessionID=sess-mine-1, ServerSeq=5, ForkedFrom=''", att)
+	}
+}
+
+func TestAttachSession_ServerAhead_ForkWhenForeign(t *testing.T) {
+	var endedCalled bool
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/chat-sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(Session{
+			ID:      "sess-foreign-1",
+			LastSeq: 5,
+			Status:  "running",
+		})
+	})
+	mux.HandleFunc("GET /v1/chat-sessions/{id}/events", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]StoredEvent{
+			{Seq: 3, Payload: map[string]any{"writer_id": "writer-foreign"}},
+			{Seq: 4, Payload: map[string]any{"writer_id": "writer-foreign"}},
+		})
+	})
+	mux.HandleFunc("POST /v1/chat-sessions/{id}/end", func(w http.ResponseWriter, r *http.Request) {
+		endedCalled = true
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(Session{ID: "sess-foreign-1", Status: "ended"})
+	})
+	mux.HandleFunc("POST /v1/chat-sessions", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(Session{
+			ID:      "sess-forked-new",
+			LastSeq: 0,
+			Status:  "running",
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	client := NewClient(ClientOptions{BaseURL: srv.URL})
+	outboxDir := filepath.Join(t.TempDir(), "outbox")
+	ob, _ := OpenOutbox(outboxDir, 100)
+	defer ob.Close()
+	_ = ob.AdvanceCursor(2)
+
+	att, err := AttachSession(context.Background(), client, ob, CreateSessionParams{Title: "Forked"}, "sess-foreign-1", "writer-me")
+	if err != nil {
+		t.Fatalf("AttachSession: %v", err)
+	}
+	if !endedCalled {
+		t.Errorf("expected POST /end on foreign session")
+	}
+	if att.SessionID != "sess-forked-new" || att.ForkedFrom != "sess-foreign-1" || att.ServerSeq != 0 {
+		t.Errorf("att = %+v, want SessionID=sess-forked-new, ForkedFrom=sess-foreign-1, ServerSeq=0", att)
 	}
 }
 
@@ -57,7 +146,7 @@ func TestAttachSessionNew(t *testing.T) {
 	ob, _ := OpenOutbox(outboxDir, 100)
 	defer ob.Close()
 
-	att, err := AttachSession(context.Background(), client, ob, CreateSessionParams{Title: "Fresh"}, "")
+	att, err := AttachSession(context.Background(), client, ob, CreateSessionParams{Title: "Fresh"}, "", "")
 	if err != nil {
 		t.Fatalf("AttachSession: %v", err)
 	}

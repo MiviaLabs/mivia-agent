@@ -16,6 +16,7 @@ type ProjectorOptions struct {
 	StreamAssistant bool
 	IncludeToolIO   bool
 	IncludeThinking bool
+	WriterID        string
 }
 
 type turnState struct {
@@ -228,6 +229,7 @@ func (p *Projector) buildEnvelope(ev events.Event, turnID string) Envelope {
 		At:           ts,
 		Turn:         turnID,
 		SourceTurnID: ev.TurnID,
+		WriterID:     p.opts.WriterID,
 	}
 	if ev.AgentTask != "" || ev.AgentName != "" || ev.AgentDepth > 0 {
 		env.Agent = &AgentOrigin{
