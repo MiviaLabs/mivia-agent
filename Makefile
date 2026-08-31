@@ -25,7 +25,7 @@ VERSION_LDFLAGS := -X $(VERSION_PKG).Commit=$(COMMIT) -X $(VERSION_PKG).Dirty=$(
 	secret-scan docs-check semgrep semgrep-validate semgrep-test \
 	hook-test agent-hook-test test-quality structure-check import-layers-check timeout-saturation-check request-deadline-check commit-check go-check verify-go test test-changed race vet build tidy fmt fmt-check \
 	validate-invariants invariants mutation diff-coverage verifier-integration smoke release release-test \
-	prose-check live-auth-smoke
+	prose-check live-auth-smoke live-chat-smoke live-smoke
 
 help:
 	@printf '%s\n' \
@@ -284,6 +284,19 @@ verifier-integration:
 # Each run spends 2 logins against the API's login rate limit.
 live-auth-smoke:
 	@go test -tags=liveauth -count=1 -v ./internal/miviaauth -run 'TestLive'
+
+# live-chat-smoke probes the deployed /v1/chat-sessions surface: register a
+# session, push events, read them by cursor, stream them over SSE, and drive
+# the remote-input long poll. Same never-run-without-an-explicit-ask rule as
+# live-auth-smoke, and the same env vars.
+#
+# It leaves ended session rows in the target database (the API has no delete
+# endpoint). Every row it creates is titled "mivia live probe: ...".
+live-chat-smoke:
+	@go test -tags=livechat -count=1 -v -timeout 300s ./internal/chatsync -run 'TestLive'
+
+# Everything that talks to a real deployment.
+live-smoke: live-auth-smoke live-chat-smoke
 
 invariants:
 	@echo "Running all invariant tests dynamically from .mivia/invariants.md..."
