@@ -395,6 +395,7 @@ func poolSyncOptions(sess *chat.Session, id string, res *config.Resolved, tokens
 		ProjectorOptions: chatsync.ProjectorOptions{
 			IncludeToolIO:   res.Sync.IncludeToolIO,
 			IncludeThinking: res.Sync.IncludeThinking,
+			StreamAssistant: res.Sync.StreamAssistant,
 		},
 		OutboxDir:       filepath.Join(sess.SessionDir, "chat-sync", "sessions", id),
 		MaxUnflushed:    res.Sync.MaxUnflushed,

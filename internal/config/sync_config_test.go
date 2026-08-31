@@ -16,6 +16,11 @@ func TestSyncConfigDefaultsFailClosed(t *testing.T) {
 	if cfg.IncludeThinking {
 		t.Errorf("IncludeThinking = true, want false (fail-closed)")
 	}
+	// Contract T2: streaming off by default. A durable transcript wants one
+	// settled message per turn, not the partial states a live view needs.
+	if cfg.StreamAssistant {
+		t.Errorf("StreamAssistant = true, want false (contract T2: streaming off)")
+	}
 	if cfg.PollWaitSeconds != 25 {
 		t.Errorf("PollWaitSeconds = %d, want 25", cfg.PollWaitSeconds)
 	}

@@ -36,6 +36,7 @@ func cliSyncOptions(sess *chat.Session, res *config.Resolved, tokens chatsync.To
 		ProjectorOptions: chatsync.ProjectorOptions{
 			IncludeToolIO:   res.Sync.IncludeToolIO,
 			IncludeThinking: res.Sync.IncludeThinking,
+			StreamAssistant: res.Sync.StreamAssistant,
 		},
 		OutboxDir:       filepath.Join(sess.SessionDir, "chat-sync", "sessions", sess.SessionID),
 		MaxUnflushed:    res.Sync.MaxUnflushed,
