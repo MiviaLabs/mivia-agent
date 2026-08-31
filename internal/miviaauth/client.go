@@ -94,6 +94,11 @@ var _ sessionClient = (*Client)(nil)
 // request paths, not to the configured server, so pointing
 // MIVIA_API_BASE_URL at a local API needs no version in the value.
 func NewClient(baseURL string) (*Client, error) {
+	if path, segment, versioned := versionedAPIPath(baseURL); versioned {
+		return nil, fmt.Errorf(
+			"miviaauth: base url must be the API root, but %q ends in the version segment %q: requests would go to %s/v1/auth/login. Remove the trailing /%s",
+			baseURL, segment, path, segment)
+	}
 	if _, err := config.ValidateHTTPSURL(baseURL); err == nil {
 		return newClient(baseURL), nil
 	}
