@@ -394,6 +394,19 @@ func renderExternalTurnEvent(w io.Writer, r *externalRun, ev events.Event) {
 	}
 }
 
+// errorEventMessage renders a relayed error. ev.Err here is ALWAYS the
+// classified string: this is only reached from renderExternalEvent, whose sole
+// production feeds are hub's two readLoops, and fromWire rebuilds Err from
+// WireEvent.ErrorText, which toWire produced via chat.TurnErrorMessage.
+//
+// It is therefore the same shape the semgrep rule bans inside internal/hub, on
+// the same data path, left in place deliberately rather than swept: classifying
+// twice would collapse "chat turn failed: could not persist session state" to
+// the generic message, because fromWire's errors.New does not match the
+// sentinels errors.Is looks for. The rule cannot protect it - a blanket
+// .Error() ban is not viable in this package - so the guard is this comment
+// plus the wiring. If renderExternalEvent is ever subscribed to the LOCAL bus,
+// an unclassified provider error reaches stdout here and this stops being safe.
 func errorEventMessage(ev events.Event) string {
 	if ev.Err != nil {
 		return ev.Err.Error()

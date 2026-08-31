@@ -566,6 +566,14 @@ rules:
       exclude:
         - /**/*_test.go
     pattern-either:
-      - pattern: $EV.Err.Error()
-      - pattern: fmt.Sprint($EV.Err)
+      # Any .Error() call at all. The narrow $EV.Err.Error() form was trivially
+      # bypassed - a local variable, a differently-named field, a helper taking
+      # a bare error, errors.Join/Unwrap, or fmt.Errorf(...).Error() all
+      # defeated it, seven shapes proven by review. This package legitimately
+      # renders no error text: toWire classifies through chat.TurnErrorMessage
+      # and nothing else here formats an error, so a blanket ban has no honest
+      # false positive to make.
+      - pattern: $X.Error()
+      - pattern: fmt.Sprint($E)
+      - pattern: fmt.Sprintln($E)
       - pattern: fmt.Sprintf("...", ..., $EV.Err, ...)
