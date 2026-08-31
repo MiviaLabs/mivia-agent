@@ -12,7 +12,10 @@
 // structs out of the test file rather than writing new ones from the docs: the
 // probe's versions are the ones proven against a running deployment.
 //
-// Four probes fail on purpose. They are API defects the probe found, not
-// harness bugs, and each goes green when the API is fixed. See
-// docs/development/agent-workflow.md, "Live chat-session probe".
+// The probe found four API defects on its first run: an oversized payload
+// returned 500 with the failing SQL, a batch could carry its own sequence gap,
+// a second consume of the same input reported success, and events still
+// appended to an ended session. All four were fixed in apps/api and verified
+// green against the deployment on 2026-08-31, so a red run now means a real
+// regression rather than known debt.
 package chatsync
