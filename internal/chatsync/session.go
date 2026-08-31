@@ -40,6 +40,20 @@ type SessionOptions struct {
 	CwdLabel         string
 	HostLabel        string
 	EnablePolling    bool
+	// EventBufSize bounds the handler-to-worker channel. Zero means
+	// defaultEventBufSize. Overflow here is real loss and is counted into the
+	// sync.dropped marker, exactly like loss on the bus.
+	EventBufSize int
+}
+
+// defaultEventBufSize is the handler-to-worker channel depth.
+const defaultEventBufSize = 1024
+
+func eventBufSize(n int) int {
+	if n <= 0 {
+		return defaultEventBufSize
+	}
+	return n
 }
 
 // outboxAppender is the durable-append half of the outbox contract.
@@ -86,6 +100,13 @@ type SyncSession struct {
 	// flush is bounded by the caller's shutdown deadline rather than by the
 	// unbounded session context.
 	stopCtxCh chan context.Context
+
+	// chanDrops counts events HandleEvent could not enqueue because the
+	// worker channel was full. This is a SECOND loss hop, downstream of the
+	// bus's own drop-oldest queue. Left uncounted it produced a contiguous,
+	// complete-LOOKING transcript that was silently missing content - the
+	// exact failure settled decision 6 exists to make visible.
+	chanDrops atomic.Uint64
 
 	// running is atomic, not guarded by mu: HandleEvent runs on the bus
 	// delivery goroutine and must never contend for a lock the outbox writer
@@ -142,7 +163,7 @@ func OpenSession(ctx context.Context, bus *events.Bus, sessionID string, opts Se
 		opts:           opts,
 		stopCh:         make(chan struct{}),
 		doneCh:         make(chan struct{}),
-		eventCh:        make(chan events.Event, 1024),
+		eventCh:        make(chan events.Event, eventBufSize(opts.EventBufSize)),
 		flushCh:        make(chan struct{}, 1),
 		stopCtxCh:      make(chan context.Context, 1),
 	}
@@ -161,7 +182,7 @@ func OpenSession(ctx context.Context, bus *events.Bus, sessionID string, opts Se
 	}
 
 	s.sub = bus.SubscribeAcross(syncKinds, s, events.SubscribeOptions{BufSize: 1024})
-	s.dropSource = s.busDrops
+	s.dropSource = s.preProjectionDrops
 	s.unsubscribe = s.sub.Unsubscribe
 
 	s.heartbeat.Start(ctx)
@@ -187,6 +208,7 @@ func (s *SyncSession) HandleEvent(ctx context.Context, ev events.Event) {
 	select {
 	case s.eventCh <- ev:
 	default:
+		s.chanDrops.Add(1)
 	}
 }
 
@@ -234,11 +256,16 @@ func (s *SyncSession) currentDrops() uint64 {
 	return s.dropSource()
 }
 
-func (s *SyncSession) busDrops() uint64 {
-	if s.sub == nil {
-		return 0
+// preProjectionDrops is the total loss before projection: the bus's own
+// drop-oldest shedding plus this session's handler-to-worker channel. Both
+// counters are monotonic, so their sum is monotonic and the projector's
+// advance check stays correct.
+func (s *SyncSession) preProjectionDrops() uint64 {
+	var busDropped uint64
+	if s.sub != nil {
+		busDropped = s.sub.Drops()
 	}
-	return s.sub.Drops()
+	return busDropped + s.chanDrops.Load()
 }
 
 func (s *SyncSession) triggerFlush() {
