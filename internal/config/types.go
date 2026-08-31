@@ -27,6 +27,7 @@ type File struct {
 	Approvals    ApprovalsConfig           `toml:"approvals"`
 	TUI          TUIConfig                 `toml:"tui"`
 	Workflows    WorkflowsConfig           `toml:"workflows"`
+	Sync         SyncConfig                `toml:"sync"`
 	// Verifiers is populated by LoadWorkspaceVerifiers from the WORKSPACE'S
 	// own .mivia/mivia.toml only (loadFile), never by the tolerant struct
 	// decode and never from a user-level base layer: a verifier table with an
@@ -483,6 +484,8 @@ type Resolved struct {
 	TUI TUIConfig
 	// Workflows is the resolved [workflows] configuration.
 	Workflows WorkflowsConfig
+	// Sync is the resolved [sync] configuration.
+	Sync SyncConfig
 	// Verifiers is the workspace-declared verifier profile set from the
 	// [verifiers.<name>] tables. The host ships no built-in profiles.
 	Verifiers map[string]VerifierProfile

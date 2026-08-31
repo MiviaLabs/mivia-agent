@@ -151,3 +151,8 @@ topics:
     path: docs/development/ui-theme-system.md
     owner: quality
     description: New terminal UI theme package - role reference, contrast/CVD gates, degradation ladder, how to add a theme
+
+  chat-sync-wire:
+    path: docs/product/chat-sync-wire.md
+    owner: product
+    description: Remote chat session synchronization wire protocol, privacy gates, truncation, and configuration
