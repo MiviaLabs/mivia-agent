@@ -126,6 +126,12 @@
       "operand": "cfg.SpawnStaggerMs",
       "unit": "Millisecond",
       "reason": "clamped to maxSpawnStaggerMs (1000) at config load"
+    },
+    {
+      "file": "internal/chatsync/poller.go",
+      "operand": "p.waitSeconds+5",
+      "unit": "Second",
+      "reason": "clamped to maxPollWaitSeconds (300) in NewInputPoller before the multiply"
     }
   ]
 }
