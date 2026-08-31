@@ -386,7 +386,12 @@ func (s *SyncSession) Stop(ctx context.Context) error {
 	// counter moves. Reading it in that window makes the final flush record a
 	// sync.dropped marker for a hole that does not exist, and settled decision
 	// 6 makes that marker PERMANENT in the transcript.
-	if s.unsubscribe != nil {
+	//
+	// On the TIMEOUT path the worker is still running, so releasing here would
+	// reopen exactly that window: the worker's drainAndFlushFinal has not yet
+	// made its last Drops() read. The release therefore moves into the same
+	// goroutine that already waits for the worker before closing the outbox.
+	if !timedOut && s.unsubscribe != nil {
 		s.unsubscribe()
 	}
 
@@ -400,6 +405,9 @@ func (s *SyncSession) Stop(ctx context.Context) error {
 	if timedOut {
 		go func() {
 			<-s.doneCh
+			if s.unsubscribe != nil {
+				s.unsubscribe()
+			}
 			_ = s.outbox.Close()
 		}()
 		return ctx.Err()
