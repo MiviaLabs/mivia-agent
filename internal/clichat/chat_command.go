@@ -436,6 +436,9 @@ func dispatchChatSurface(invocation chatInvocation, sess *chat.Session, res *con
 	// of the lease TTL after this process quit cleanly, so an ordinary "quit,
 	// then resume" shortly after was refused as already-live. Best-effort and
 	// bounded: see Session.ReleaseContextLease.
+	// Before any surface runs a turn: every surface reaches this function, and
+	// a publish with no bus is a silent no-op. See attachSessionEventBus.
+	attachSessionEventBus(sess)
 	defer sess.ReleaseContextLease(context.Background())
 	if invocation.jsonMode {
 		if err := validateJSONModeInvocation(invocation); err != nil {
