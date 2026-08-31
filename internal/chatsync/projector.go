@@ -231,9 +231,11 @@ func (p *Projector) buildEnvelope(ev events.Event, turnID string) Envelope {
 }
 
 func (p *Projector) projectTurnStart(env Envelope, detail string, isSynthetic bool) []WireEvent {
+	text := redactText(detail)
+	text = applyTruncation(&env, "text", text, BudgetPromptText)
 	payload := &TurnStartedPayload{
 		Envelope:  env,
-		Text:      detail,
+		Text:      text,
 		Synthetic: isSynthetic,
 	}
 	return []WireEvent{p.nextWireEvent(TypeTurnStarted, payload)}
@@ -244,6 +246,7 @@ func (p *Projector) projectTurnEnd(env Envelope, detail string) []WireEvent {
 	if reason == "" {
 		reason = "completed"
 	}
+	reason = applyTruncation(&env, "reason", reason, BudgetShortField)
 	payload := &TurnEndedPayload{
 		Envelope: env,
 		Reason:   reason,
@@ -252,9 +255,12 @@ func (p *Projector) projectTurnEnd(env Envelope, detail string) []WireEvent {
 }
 
 func (p *Projector) projectTurnError(env Envelope, ev events.Event) []WireEvent {
+	msg := errorEventMessage(ev)
+	msg = redactText(msg)
+	msg = applyTruncation(&env, "message", msg, BudgetErrorMessage)
 	payload := &TurnFailedPayload{
 		Envelope: env,
-		Message:  errorEventMessage(ev),
+		Message:  msg,
 	}
 	return []WireEvent{p.nextWireEvent(TypeTurnFailed, payload)}
 }
@@ -264,14 +270,17 @@ func (p *Projector) projectAssistant(env Envelope, turnID string, ts *turnState,
 		return nil
 	}
 	env.Block = turnID + ":assistant"
+	content := redactText(ev.Content)
+
 	if ev.Detail == "delta" {
 		ts.streamed = true
 		ts.fragments++
 		ts.bytes += len(ev.Content)
 		if p.opts.StreamAssistant {
+			content = applyTruncation(&env, "text", content, BudgetDeltaText)
 			payload := &AssistantDeltaPayload{
 				Envelope: env,
-				Text:     ev.Content,
+				Text:     content,
 				Index:    ts.fragments - 1,
 			}
 			return []WireEvent{p.nextWireEvent(TypeAssistantDelta, payload)}
@@ -280,11 +289,13 @@ func (p *Projector) projectAssistant(env Envelope, turnID string, ts *turnState,
 	}
 
 	// Final aggregate
-	text := ev.Content
+	text := content
 	fragments := 0
 	if ts.streamed && p.opts.StreamAssistant {
 		fragments = ts.fragments
 		text = "" // INV-1: text empty iff fragments > 0
+	} else {
+		text = applyTruncation(&env, "text", text, BudgetAssistantText)
 	}
 	payload := &AssistantMessagePayload{
 		Envelope:  env,
@@ -301,73 +312,115 @@ func (p *Projector) projectThinking(env Envelope, turnID, content string) []Wire
 		return nil
 	}
 	env.Block = turnID + ":thinking"
+	text := ""
+	if p.opts.IncludeThinking {
+		text = redactText(content)
+		text = applyTruncation(&env, "text", text, BudgetDeltaText)
+	}
 	payload := &ThinkingDeltaPayload{
 		Envelope: env,
 		Bytes:    len(content),
 		Index:    0,
-		Text:     content,
+		Text:     text,
 	}
 	return []WireEvent{p.nextWireEvent(TypeThinkingDelta, payload)}
 }
 
 func (p *Projector) projectTool(env Envelope, ev events.Event) []WireEvent {
 	env.Block = ev.ToolCallID
+	name := applyTruncation(&env, "name", ev.Name, BudgetShortField)
+	callID := applyTruncation(&env, "tool_call_id", ev.ToolCallID, BudgetShortField)
+
 	if ev.Kind == events.KindToolStart {
+		var input string
+		if shouldIncludeToolIO(p.opts) {
+			input = redactText(ev.Input)
+			input = applyTruncation(&env, "input", input, BudgetToolInput)
+		} else {
+			env.Redacted = append(env.Redacted, "input")
+		}
 		payload := &ToolStartedPayload{
 			Envelope:   env,
-			ToolCallID: ev.ToolCallID,
-			Name:       ev.Name,
+			ToolCallID: callID,
+			Name:       name,
 			InputBytes: len(ev.Input),
-			Input:      ev.Input,
+			Input:      input,
 		}
 		return []WireEvent{p.nextWireEvent(TypeToolStarted, payload)}
 	}
+
+	var output string
+	if shouldIncludeToolIO(p.opts) {
+		output = redactText(ev.Output)
+		output = applyTruncation(&env, "output", output, BudgetToolOutput)
+	} else {
+		env.Redacted = append(env.Redacted, "output")
+	}
 	payload := &ToolEndedPayload{
 		Envelope:    env,
-		ToolCallID:  ev.ToolCallID,
-		Name:        ev.Name,
+		ToolCallID:  callID,
+		Name:        name,
 		Status:      toolEndStatus(ev.Detail),
 		OutputBytes: len(ev.Output),
-		Detail:      ev.Detail,
-		Output:      ev.Output,
+		Detail:      applyTruncation(&env, "detail", ev.Detail, BudgetShortField),
+		Output:      output,
 	}
 	return []WireEvent{p.nextWireEvent(TypeToolEnded, payload)}
 }
 
 func (p *Projector) projectSubagent(env Envelope, ev events.Event) []WireEvent {
 	env.Block = ev.ToolCallID
+	name := applyTruncation(&env, "name", ev.Name, BudgetShortField)
+	callID := applyTruncation(&env, "tool_call_id", ev.ToolCallID, BudgetShortField)
+
 	switch ev.Kind {
 	case events.KindSubagentStart:
+		var input string
+		if shouldIncludeToolIO(p.opts) {
+			input = redactText(ev.Input)
+			input = applyTruncation(&env, "input", input, BudgetToolInput)
+		} else {
+			env.Redacted = append(env.Redacted, "input")
+		}
 		payload := &SubagentToolStartedPayload{
 			Envelope:   env,
-			ToolCallID: ev.ToolCallID,
-			Name:       ev.Name,
+			ToolCallID: callID,
+			Name:       name,
 			InputBytes: len(ev.Input),
-			Input:      ev.Input,
+			Input:      input,
 		}
 		return []WireEvent{p.nextWireEvent(TypeSubagentToolStarted, payload)}
 	case events.KindSubagentEnd:
+		var output string
+		if shouldIncludeToolIO(p.opts) {
+			output = redactText(ev.Output)
+			output = applyTruncation(&env, "output", output, BudgetToolOutput)
+		} else {
+			env.Redacted = append(env.Redacted, "output")
+		}
 		payload := &SubagentToolEndedPayload{
 			Envelope:    env,
-			ToolCallID:  ev.ToolCallID,
-			Name:        ev.Name,
+			ToolCallID:  callID,
+			Name:        name,
 			Status:      toolEndStatus(ev.Detail),
 			OutputBytes: len(ev.Output),
-			Detail:      ev.Detail,
-			Output:      ev.Output,
+			Detail:      applyTruncation(&env, "detail", ev.Detail, BudgetShortField),
+			Output:      output,
 		}
 		return []WireEvent{p.nextWireEvent(TypeSubagentToolEnded, payload)}
 	case events.KindSubagentHeartbeat:
 		payload := &SubagentProgressPayload{
 			Envelope: env,
-			Detail:   ev.Detail,
+			Detail:   applyTruncation(&env, "detail", ev.Detail, BudgetShortField),
 		}
 		return []WireEvent{p.nextWireEvent(TypeSubagentProgress, payload)}
 	case events.KindSubagentDone:
+		agentName := applyTruncation(&env, "name", ev.AgentName, BudgetShortField)
+		status := applyTruncation(&env, "status", ev.Detail, BudgetShortField)
 		payload := &SubagentEndedPayload{
 			Envelope: env,
-			Name:     ev.AgentName,
-			Status:   ev.Detail,
+			Name:     agentName,
+			Status:   status,
 		}
 		return []WireEvent{p.nextWireEvent(TypeSubagentEnded, payload)}
 	default:
@@ -378,7 +431,7 @@ func (p *Projector) projectSubagent(env Envelope, ev events.Event) []WireEvent {
 func (p *Projector) projectCompaction(env Envelope, ev events.Event) []WireEvent {
 	payload := &ContextCompactedPayload{
 		Envelope:   env,
-		Message:    ev.Detail,
+		Message:    applyTruncation(&env, "message", ev.Detail, BudgetShortField),
 		Compaction: ev.Compaction,
 	}
 	return []WireEvent{p.nextWireEvent(TypeContextCompacted, payload)}
