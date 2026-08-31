@@ -74,7 +74,7 @@ func OpenSession(ctx context.Context, bus *events.Bus, sessionID string, opts Se
 		HostLabel: opts.HostLabel,
 	}
 
-	att, err := AttachSession(ctx, client, outbox, params, sessionID)
+	att, err := AttachSession(ctx, client, outbox, params, sessionID, opts.ProjectorOptions.WriterID)
 	if err != nil {
 		_ = outbox.Close()
 		return nil, fmt.Errorf("attach session: %w", err)
@@ -85,13 +85,7 @@ func OpenSession(ctx context.Context, bus *events.Bus, sessionID string, opts Se
 	if localSessionID == "" {
 		localSessionID = activeSessionID
 	}
-	initialSeq := att.ServerSeq
-	if outbox.Cursor().FlushedSeq > initialSeq {
-		initialSeq = outbox.Cursor().FlushedSeq
-	}
-	if outbox.MaxSeq() > initialSeq {
-		initialSeq = outbox.MaxSeq()
-	}
+	initialSeq := att.ServerSeq // Settled Decision S7: serverLastSeq is authoritative, never max(local, server)
 
 	s := &SyncSession{
 		localSessionID: localSessionID,

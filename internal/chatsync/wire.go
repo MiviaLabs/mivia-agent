@@ -132,6 +132,7 @@ type Envelope struct {
 	Trunc        *Truncation  `json:"trunc,omitempty"`
 	Redacted     []string     `json:"redacted,omitempty"`
 	SourceTurnID string       `json:"source_turn_id,omitempty"`
+	WriterID     string       `json:"writer_id,omitempty"`
 }
 
 // AgentOrigin identifies a subagent when an event was emitted by one.
