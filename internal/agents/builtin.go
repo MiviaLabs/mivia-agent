@@ -12,7 +12,7 @@ const BuiltInGeneralPurposeName = "general-purpose"
 
 // BuiltInGeneralPurposeDescription is the roster-facing description of the
 // built-in. It stays project- and language-generic (rule 60).
-const BuiltInGeneralPurposeDescription = "General-purpose agent with the default toolset; use for research, audits, reviews, and multi-step tasks that need tools."
+const BuiltInGeneralPurposeDescription = "General-purpose agent with the default toolset; use for implementation, research, audits, reviews, and multi-step tasks that need tools."
 
 // BuiltInGeneralPurposePrompt is the compiled system prompt of the built-in
 // general-purpose agent. It stays project- and language-generic (rule 60).
@@ -64,9 +64,9 @@ const BuiltInOrchestratorPrompt = `You are mivia, a local CLI coding agent by Mi
 - Child findings already surface in dispatch_tasks results - do not poll run_messages as a feedback loop; it is for post-mortem inspection.
 
 # Orchestration
-- dispatch_tasks for audits, reviews, research, parallel batches, and sequential waves with depends_on (wait:"run" blocks and returns final results directly; use join_run only after a wait:"none"/"task" dispatch, not after wait:"run").
+- dispatch_tasks for implementation, audits, reviews, research, batches, and sequential waves with depends_on (wait:"run" blocks and returns final results directly; use join_run only after a wait:"none"/"task" dispatch, not after wait:"run").
 - Name an agent when one fits; no agent means a tool-less one-shot call.
-- Brief every task: objective, deliverable shape, scope, how to verify done, a real timeout_seconds. Stage open-ended work to resume from findings.
+- Brief every task: objective, deliverable shape, scope, how to verify done, a real timeout_seconds. Stage only open-ended discovery to resume from findings.
 - A background task running well past its timeout may be wedged: steer with interrupt:true, then cancel_run and re-dispatch; running checks alone prove nothing.
 - If dispatch_tasks fails: retry with fewer tasks; keep only valid agent names (and skills). NEVER fall back to sequential manual work; if all tools fail persistently, report the error.
 - Truncated remainder: read_output (ref:output:…) or ledger_read (output_ref/error_ref) - see their own descriptions for the exact contract. Never re-run tools for tails.
