@@ -8,9 +8,14 @@ import (
 // SyncConfig controls remote chat session synchronization.
 // Defaults are fail-closed: sync is disabled, tool IO and thinking are withheld.
 type SyncConfig struct {
-	Enabled          bool   `toml:"enabled"`
-	IncludeToolIO    bool   `toml:"include_tool_io"`
-	IncludeThinking  bool   `toml:"include_thinking"`
+	Enabled         bool `toml:"enabled"`
+	IncludeToolIO   bool `toml:"include_tool_io"`
+	IncludeThinking bool `toml:"include_thinking"`
+	// StreamAssistant turns on per-delta assistant streaming in the wire
+	// transcript. Contract T2 specifies streaming OFF by default: a durable
+	// log wants one settled message per turn, not the partial states a live
+	// view needs.
+	StreamAssistant  bool   `toml:"stream_assistant"`
 	APIURL           string `toml:"api_url"`
 	PollWaitSeconds  int    `toml:"poll_wait_seconds"`
 	HeartbeatSeconds int    `toml:"heartbeat_seconds"`
