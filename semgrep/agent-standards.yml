@@ -577,3 +577,26 @@ rules:
       - pattern: fmt.Sprint($E)
       - pattern: fmt.Sprintln($E)
       - pattern: fmt.Sprintf("...", ..., $EV.Err, ...)
+
+  - id: mivia.go.no-truncation-call-inside-envelope-literal
+    languages:
+      - go
+    severity: ERROR
+    message: >-
+      applyTruncation MUTATES the Envelope it is passed, and Envelope is
+      embedded BY VALUE in every wire payload. A composite literal that both
+      copies `Envelope: env` and calls `applyTruncation(&env, ...)` reads an
+      unsequenced operand: the Go spec does not order a non-call operand
+      against a function call in the same literal, so the copy may be taken
+      before the mutation. When it is, `trunc` is nil and an amputated field
+      renders as COMPLETE - the event contract says `trunc` absent means
+      nothing was cut, with no third reading. Hoist the applyTruncation call
+      into a statement BEFORE the literal.
+    paths:
+      include:
+        - /internal/chatsync/**/*.go
+    patterns:
+      - pattern: |
+          $T{..., Envelope: $E, ...}
+      - pattern: |
+          $T{..., $F: applyTruncation(&$ENV, ...), ...}

@@ -380,13 +380,14 @@ func (p *Projector) projectTool(env Envelope, ev events.Event) []WireEvent {
 	} else {
 		env.Redacted = append(env.Redacted, "output")
 	}
+	detail := applyTruncation(&env, "detail", ev.Detail, BudgetShortField)
 	payload := &ToolEndedPayload{
 		Envelope:    env,
 		ToolCallID:  callID,
 		Name:        name,
 		Status:      toolEndStatus(ev.Detail),
 		OutputBytes: len(ev.Output),
-		Detail:      applyTruncation(&env, "detail", ev.Detail, BudgetShortField),
+		Detail:      detail,
 		Output:      output,
 	}
 	return []WireEvent{p.nextWireEvent(TypeToolEnded, payload)}
@@ -422,20 +423,22 @@ func (p *Projector) projectSubagent(env Envelope, ev events.Event) []WireEvent {
 		} else {
 			env.Redacted = append(env.Redacted, "output")
 		}
+		detail := applyTruncation(&env, "detail", ev.Detail, BudgetShortField)
 		payload := &SubagentToolEndedPayload{
 			Envelope:    env,
 			ToolCallID:  callID,
 			Name:        name,
 			Status:      toolEndStatus(ev.Detail),
 			OutputBytes: len(ev.Output),
-			Detail:      applyTruncation(&env, "detail", ev.Detail, BudgetShortField),
+			Detail:      detail,
 			Output:      output,
 		}
 		return []WireEvent{p.nextWireEvent(TypeSubagentToolEnded, payload)}
 	case events.KindSubagentHeartbeat:
+		detail := applyTruncation(&env, "detail", ev.Detail, BudgetShortField)
 		payload := &SubagentProgressPayload{
 			Envelope: env,
-			Detail:   applyTruncation(&env, "detail", ev.Detail, BudgetShortField),
+			Detail:   detail,
 		}
 		return []WireEvent{p.nextWireEvent(TypeSubagentProgress, payload)}
 	case events.KindSubagentDone:
@@ -453,9 +456,10 @@ func (p *Projector) projectSubagent(env Envelope, ev events.Event) []WireEvent {
 }
 
 func (p *Projector) projectCompaction(env Envelope, ev events.Event) []WireEvent {
+	message := applyTruncation(&env, "message", ev.Detail, BudgetShortField)
 	payload := &ContextCompactedPayload{
 		Envelope:   env,
-		Message:    applyTruncation(&env, "message", ev.Detail, BudgetShortField),
+		Message:    message,
 		Compaction: ev.Compaction,
 	}
 	return []WireEvent{p.nextWireEvent(TypeContextCompacted, payload)}
