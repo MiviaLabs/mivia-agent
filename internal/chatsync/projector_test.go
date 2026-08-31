@@ -268,3 +268,76 @@ func TestProjectorErrorEventMessageClassification(t *testing.T) {
 		t.Errorf("error message = %q, want 'chat turn failed'", pErr.Message)
 	}
 }
+
+func TestProjectorSyntheticTurnLifecycle(t *testing.T) {
+	p := NewProjector("sess-1", 0, ProjectorOptions{})
+
+	weStart := p.Project(events.Event{
+		Kind:      events.KindTurnStart,
+		SessionID: "sess-1",
+		TurnID:    "",
+		Detail:    "prompt",
+		Timestamp: time.Now(),
+	})
+	if len(weStart) != 1 {
+		t.Fatalf("weStart len = %d, want 1", len(weStart))
+	}
+	pStart := weStart[0].Payload.(*TurnStartedPayload)
+	if pStart.Turn != "synthetic:1" {
+		t.Errorf("turn ID = %q, want synthetic:1", pStart.Turn)
+	}
+
+	weEnd := p.Project(events.Event{
+		Kind:      events.KindTurnEnd,
+		SessionID: "sess-1",
+		TurnID:    "",
+		Detail:    "done",
+		Timestamp: time.Now(),
+	})
+	if len(weEnd) != 1 {
+		t.Fatalf("weEnd len = %d, want 1 (turn.ended must not be dropped)", len(weEnd))
+	}
+	pEnd := weEnd[0].Payload.(*TurnEndedPayload)
+	if pEnd.Turn != "synthetic:1" {
+		t.Errorf("end turn ID = %q, want synthetic:1", pEnd.Turn)
+	}
+}
+
+func TestProjectorThinkingDelta_SequentialIndex(t *testing.T) {
+	p := NewProjector("sess-1", 0, ProjectorOptions{IncludeThinking: true})
+
+	_ = p.Project(events.Event{
+		Kind:      events.KindTurnStart,
+		SessionID: "sess-1",
+		TurnID:    "turn:1",
+		Detail:    "task",
+		Timestamp: time.Now(),
+	})
+
+	we1 := p.Project(events.Event{
+		Kind:      events.KindThinking,
+		SessionID: "sess-1",
+		TurnID:    "turn:1",
+		Content:   "chunk 1",
+		Timestamp: time.Now(),
+	})
+	we2 := p.Project(events.Event{
+		Kind:      events.KindThinking,
+		SessionID: "sess-1",
+		TurnID:    "turn:1",
+		Content:   "chunk 2",
+		Timestamp: time.Now(),
+	})
+
+	if len(we1) != 1 || len(we2) != 1 {
+		t.Fatalf("we1 len = %d, we2 len = %d", len(we1), len(we2))
+	}
+	p1 := we1[0].Payload.(*ThinkingDeltaPayload)
+	p2 := we2[0].Payload.(*ThinkingDeltaPayload)
+	if p1.Index != 0 {
+		t.Errorf("p1.Index = %d, want 0", p1.Index)
+	}
+	if p2.Index != 1 {
+		t.Errorf("p2.Index = %d, want 1", p2.Index)
+	}
+}

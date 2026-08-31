@@ -110,3 +110,30 @@ func TestInputPollerSuppressesDeliveryIfConsumeFails(t *testing.T) {
 		// Expected: no delivery
 	}
 }
+
+func TestInputPoller_ChannelClosedOnStop(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/chat-sessions/{id}/inputs/next", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(NextInput{Input: nil})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	client := NewClient(ClientOptions{BaseURL: srv.URL})
+	poller := NewInputPoller(client, "sess-p-3", 1)
+
+	poller.Start(context.Background())
+	time.Sleep(10 * time.Millisecond)
+	poller.Stop()
+
+	// Assert input channel is closed cleanly upon Stop
+	select {
+	case _, ok := <-poller.Inputs():
+		if ok {
+			t.Fatal("expected closed channel, got value")
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("timed out waiting for inputs channel to close")
+	}
+}

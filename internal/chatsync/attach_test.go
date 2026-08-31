@@ -70,8 +70,11 @@ func TestFlushOutboxAdvancesCursorOnAck(t *testing.T) {
 	var appendReceived int
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/chat-sessions/{id}/events", func(w http.ResponseWriter, r *http.Request) {
-		var items []EventItem
-		_ = json.NewDecoder(r.Body).Decode(&items)
+		var req struct {
+			Events []EventItem `json:"events"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		items := req.Events
 		appendReceived = len(items)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(AppendResult{

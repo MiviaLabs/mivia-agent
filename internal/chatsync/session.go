@@ -42,14 +42,15 @@ type SessionOptions struct {
 // SyncSession coordinates real-time synchronization between a local chat session,
 // its outbox, and the remote API.
 type SyncSession struct {
-	sessionID string
-	client    *Client
-	outbox    *Outbox
-	projector *Projector
-	heartbeat *HeartbeatRunner
-	poller    *InputPoller
-	sub       *events.Subscription
-	opts      SessionOptions
+	localSessionID string
+	sessionID      string
+	client         *Client
+	outbox         *Outbox
+	projector      *Projector
+	heartbeat      *HeartbeatRunner
+	poller         *InputPoller
+	sub            *events.Subscription
+	opts           SessionOptions
 
 	mu       sync.Mutex
 	running  bool
@@ -80,22 +81,30 @@ func OpenSession(ctx context.Context, bus *events.Bus, sessionID string, opts Se
 	}
 
 	activeSessionID := att.SessionID
+	localSessionID := sessionID
+	if localSessionID == "" {
+		localSessionID = activeSessionID
+	}
 	initialSeq := att.ServerSeq
 	if outbox.Cursor().FlushedSeq > initialSeq {
 		initialSeq = outbox.Cursor().FlushedSeq
 	}
+	if outbox.MaxSeq() > initialSeq {
+		initialSeq = outbox.MaxSeq()
+	}
 
 	s := &SyncSession{
-		sessionID: activeSessionID,
-		client:    client,
-		outbox:    outbox,
-		projector: NewProjector(activeSessionID, initialSeq, opts.ProjectorOptions),
-		heartbeat: NewHeartbeatRunner(client, activeSessionID, opts.HeartbeatPeriod),
-		opts:      opts,
-		stopCh:    make(chan struct{}),
-		doneCh:    make(chan struct{}),
-		flushCh:   make(chan struct{}, 1),
-		running:   true,
+		localSessionID: localSessionID,
+		sessionID:      activeSessionID,
+		client:         client,
+		outbox:         outbox,
+		projector:      NewProjector(localSessionID, initialSeq, opts.ProjectorOptions),
+		heartbeat:      NewHeartbeatRunner(client, activeSessionID, opts.HeartbeatPeriod),
+		opts:           opts,
+		stopCh:         make(chan struct{}),
+		doneCh:         make(chan struct{}),
+		flushCh:        make(chan struct{}, 1),
+		running:        true,
 	}
 
 	if opts.EnablePolling {
@@ -243,9 +252,13 @@ func (s *SyncSession) handleFork(ctx context.Context) {
 	s.sessionID = created.ID
 	s.forkedID = oldID
 	newSessionID := s.sessionID
-	s.mu.Unlock()
 
-	s.projector = NewProjector(newSessionID, 0, s.opts.ProjectorOptions)
+	if s.heartbeat != nil {
+		s.heartbeat.SetSessionID(newSessionID)
+	}
+	if s.poller != nil {
+		s.poller.SetSessionID(newSessionID)
+	}
 
 	forkPayload := &SyncForkedPayload{
 		Envelope: Envelope{
@@ -257,6 +270,8 @@ func (s *SyncSession) handleFork(ctx context.Context) {
 	}
 	we := s.projector.nextWireEvent(TypeSyncForked, forkPayload)
 	_ = s.outbox.Append(we)
+	s.mu.Unlock()
+
 	_, _ = FlushOutbox(ctx, s.client, s.outbox, newSessionID)
 }
 

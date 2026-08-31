@@ -1,31 +1,31 @@
 # Remote Chat Session Synchronization
 
-This document describes the remote chat session synchronization wire protocol,
+This document specifies the remote chat session synchronization wire protocol,
 privacy gates, truncation budgets, outbox durability, and configuration options.
 
 ## Overview
 
-Remote chat synchronization lets a user view and interact with local terminal
-chat sessions through a web viewer. The CLI synchronizes events in real time to
-the backend API using an append-only event stream.
+Remote chat synchronization lets an operator monitor and interact with local
+chat sessions through a web viewer. The system synchronizes events in real time
+to the backend API using an append-only event stream.
 
 ## Fail-Closed Privacy Model
 
 Remote synchronization uses a strict fail-closed privacy posture:
 
-1. **Disabled by default**: Synchronization is inactive unless explicitly enabled
-   via configuration (`sync.enabled = true`) or the `--sync` CLI flag.
-2. **Tool I/O withheld**: By default, tool inputs and outputs are omitted from
-   the wire payload and recorded in the envelope's `redacted` array. When enabled
-   via `sync.include_tool_io = true`, payloads still pass through the workspace
-   redaction policy.
-3. **Thinking withheld**: Model thinking/reasoning blocks are withheld by
-   default (`sync.include_thinking = false`).
+1. **Disabled by default**: Synchronization is inactive unless you explicitly
+   enable it via configuration (`sync.enabled = true`) or the `--sync` CLI flag.
+2. **Tool I/O withheld**: By default, the system omits tool inputs and outputs
+   from the wire payload and records them in the envelope `redacted` array. When
+   enabled via `sync.include_tool_io = true`, payloads still pass through the
+   workspace redaction policy.
+3. **Thinking withheld**: The system withholds model reasoning text by default
+   (`sync.include_thinking = false`).
 
 ## Truncation Budgets
 
 To keep event payloads bounded and prevent network buffer exhaustion, string
-fields are truncated using rune-safe byte budgets:
+fields use rune-safe byte budgets:
 
 | Field | Budget | Behavior |
 |-------|--------|----------|
@@ -37,41 +37,43 @@ fields are truncated using rune-safe byte budgets:
 | Error Message | 2 KiB | UTF-8 rune-safe truncation |
 | Metadata Labels | 200 B | UTF-8 rune-safe truncation |
 
-When a field exceeds its budget, it is truncated cleanly at the last valid UTF-8
-rune boundary and recorded in the envelope's `trunc` array.
+When a field exceeds its budget, the system truncates the text cleanly at the
+last valid UTF-8 rune boundary and records the retained and total byte counts
+in the envelope `trunc.fields` map.
 
 ## Event Types and Ordering
 
-The sync stream uses 15 structured `mivia.chat.v1.*` event types:
+The sync stream uses 16 structured `mivia.chat.v1.*` event types:
 
-- `mivia.chat.v1.session.created`
 - `mivia.chat.v1.turn.started`
 - `mivia.chat.v1.turn.ended`
+- `mivia.chat.v1.turn.failed`
 - `mivia.chat.v1.assistant.delta`
 - `mivia.chat.v1.assistant.message`
-- `mivia.chat.v1.tool.call`
-- `mivia.chat.v1.tool.result`
-- `mivia.chat.v1.error`
+- `mivia.chat.v1.thinking.delta`
+- `mivia.chat.v1.tool.started`
+- `mivia.chat.v1.tool.ended`
 - `mivia.chat.v1.subagent.started`
 - `mivia.chat.v1.subagent.heartbeat`
 - `mivia.chat.v1.subagent.ended`
-- `mivia.chat.v1.compaction`
-- `mivia.chat.v1.context.summary`
+- `mivia.chat.v1.subagent.tool.started`
+- `mivia.chat.v1.subagent.tool.ended`
+- `mivia.chat.v1.context.compacted`
 - `mivia.chat.v1.sync.dropped`
 - `mivia.chat.v1.sync.forked`
 
-Every session maintains a strictly monotonic sequence (`1..N`). If events are
-dropped due to local queue saturation, a `sync.dropped` event consumes a sequence
-number immediately before subsequent events to preserve causality.
+Every session maintains a strictly monotonic sequence (`1..N`). If the system
+drops events because of local queue saturation, a `sync.dropped` event consumes
+a sequence number immediately before subsequent events to preserve causality.
 
 ## Outbox Durability and Conflict Handling
 
-Events are written and persisted locally to `chat-sync/sessions/<id>/events.jsonl`
-before transmission. The local cursor `cursor.json` is updated atomically only
-after the remote server acknowledges receipt (HTTP 200/201).
+The system writes and persists events locally to `chat-sync/sessions/<id>/events.jsonl`
+before network transmission. The local cursor `cursor.json` updates atomically
+only after the remote server acknowledges receipt (HTTP 200/201).
 
-If a remote writer conflict occurs (HTTP 409 Conflict), the session forks cleanly
-to a new session ID and records a `mivia.chat.v1.sync.forked` event.
+If a remote writer conflict occurs (HTTP 409 Conflict), the session forks
+cleanly to a new session ID and records a `mivia.chat.v1.sync.forked` event.
 
 ## Configuration
 
