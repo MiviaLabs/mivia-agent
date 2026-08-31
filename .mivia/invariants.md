@@ -155,6 +155,10 @@ may be separate processes or hosts.
 | INV-68-6 | Safety | The evidenceRefsBlock fixed header is a byte-identical prefix of every step prompt in a run | `TestRenderStepPromptEvidenceHeaderIsByteIdenticalAcrossSteps` | |
 | INV-68-7 | Safety | KindPrefixReset telemetry carries no prompt content, digest preimage, tool-schema body, or tool-argument value | `TestPrefixResetEventIsSealedAndContentFree` | |
 | INV-68-8 | Safety | Prefix identity capture stays off the per-turn hot path: only NewSession, SwitchBinding, TryPublishAgentSurface, and SetReasoningEffort capture | `TestPrefixIdentityNotCapturedOnPerTurnSavePath` | |
+| INV-HUB-1 | Safety | The hub relay delivers every relayed kind on ONE ordered subscription, so a turn's terminal never overtakes the content it terminates | `TestRelayPreservesCrossKindPublishOrder`, `TestRelayDeliversATerminalAfterTheTurnItCloses` | |
+| INV-HUB-2 | Safety | No error value reaches the hub wire verbatim: toWire classifies through chat.TurnErrorMessage, so a remote process learns exactly what the local NDJSON surface learns | `TestToWireNeverSerializesRawErrorText`, `TestRelayedErrorCarriesNoRawProviderText` | |
+| INV-HUB-3 | Safety | The external-turn receiver tolerates loss: a terminal for a run it has never seen is dropped rather than minting a turn to close, and a finished run is marked done rather than deleted so a straggler cannot re-open it | `TestExternalTerminalForAnUnseenRunIsDropped`, `TestExternalRunIsNotReopenedAfterItsTerminal` | |
+| INV-HUB-4 | Safety | External-run tracking state is bounded by age, never by an event the sender may drop | `TestExternalTurnStateStaysBounded` | |
 
 ## Liveness Gap Notes
 
