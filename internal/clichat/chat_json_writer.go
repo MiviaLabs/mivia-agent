@@ -77,6 +77,13 @@ type ndjsonEvent struct {
 	// turn.
 	RunID string `json:"run_id,omitempty"`
 	Role  string `json:"role,omitempty"`
+	// Dropped and TotalDropped appear only on "external_dropped": how many
+	// relayed events were lost since the previous report, and the hub's
+	// cumulative total. The cross-process relay is deliberately lossy (bounded
+	// drop-oldest at every hop), and these are the only signal that says so -
+	// see docs/product/wire-schema.md.
+	Dropped      uint64 `json:"dropped,omitempty"`
+	TotalDropped uint64 `json:"total_dropped,omitempty"`
 	// CacheUsage is present only on "cache_usage" events. It is a nested
 	// record rather than flat fields so its legitimate zero values (an
 	// all-miss step) survive serialization without forcing zero-valued

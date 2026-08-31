@@ -26,11 +26,18 @@ def collect_test_names() -> set[str]:
     """Every `func Test*` name in the tree."""
     try:
         result = subprocess.run(
-            ["rg", "-n", "^func Test", "-g", "*_test.go"],
+            # "." and stdin=DEVNULL are both load-bearing. With no path
+            # argument ripgrep searches STDIN whenever stdin is not a tty -
+            # which is every non-interactive context: CI, a git hook, an agent.
+            # That makes this call block forever on a stdin that never reaches
+            # EOF, or return zero matches on one that does. Neither is a search
+            # of the repository.
+            ["rg", "-n", "^func Test", "-g", "*_test.go", "."],
             capture_output=True,
             text=True,
             cwd=REPO,
             check=False,
+            stdin=subprocess.DEVNULL,
         )
         if result.returncode in (0, 1) and result.stdout.strip():
             return set(re.findall(r"func (Test\w+)", result.stdout))

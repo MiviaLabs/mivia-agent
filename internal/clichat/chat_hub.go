@@ -134,6 +134,9 @@ type externalTurnState struct {
 	// order is run ids in first-seen order, so eviction is oldest-first. It is
 	// append-only alongside runs and compacted at eviction time.
 	order []string
+	// dropped is the last cumulative loss count reported by the hub, so a
+	// report is emitted per advance rather than per event.
+	dropped uint64
 	// pendingUserText bridges a KindTurnStart that carries NO run id to the
 	// next unseen run's first event. Every current publisher stamps the real
 	// turn id on KindTurnStart (chat.Session.publishTurnStart), so this is the
@@ -150,6 +153,7 @@ func newExternalTurnState() *externalTurnState {
 // Called with state.mu held.
 func (s *externalTurnState) run(id string) *externalRun {
 	if r, ok := s.runs[id]; ok {
+		s.touch(id)
 		return r
 	}
 	r := &externalRun{}
@@ -160,6 +164,22 @@ func (s *externalTurnState) run(id string) *externalRun {
 		s.order = s.order[1:]
 	}
 	return r
+}
+
+// touch moves id to the newest end of the eviction order. Without it the order
+// is first-SEEN rather than least-recently-used, so a turn that streams for
+// minutes ages out while it is still live - and an evicted live run is re-minted
+// as a SECOND external_turn_start with empty text, or has its terminal dropped
+// by the unknown-run guard. Both are the duplicated-turn defect the run map
+// exists to prevent. Called with s.mu held.
+func (s *externalTurnState) touch(id string) {
+	for i, cur := range s.order {
+		if cur == id {
+			s.order = append(s.order[:i], s.order[i+1:]...)
+			s.order = append(s.order, id)
+			return
+		}
+	}
 }
 
 // known reports whether id has been seen before, without creating it.
@@ -187,13 +207,53 @@ func chatHubSink(sess *chat.Session, jsonMode bool) hub.Sink {
 	if !jsonMode {
 		return nil
 	}
+	return newChatHubSink(sess, os.Stdout)
+}
+
+// newChatHubSink is chatHubSink with the destination injected, so a test can
+// exercise the REAL sink instead of re-spelling its body. The previous test
+// helper was a hand-copied double, which meant deleting the loss report from
+// the shipped sink left the whole suite green.
+func newChatHubSink(sess *chat.Session, w io.Writer) hub.Sink {
 	state := newExternalTurnState()
-	return func(ev events.Event) {
+	return func(ev events.Event, r hub.Receipt) {
 		if !externalEventBelongsToSession(sess, ev) {
 			return
 		}
-		renderExternalEvent(os.Stdout, state, ev)
+		reportExternalLoss(w, state, r)
+		renderExternalEvent(w, state, ev)
 	}
+}
+
+// reportExternalLoss emits one "external_dropped" line each time the hub's
+// cumulative loss counter advances.
+//
+// The relay is deliberately lossy - every queue on the path is bounded
+// drop-oldest - and until now that loss was completely silent at this end. A
+// consumer reading external_chunk text had no way to tell a short answer from
+// a truncated one. It reports the DELTA as well as the total, because the
+// delta is what the consumer missed since the last line and the total is what
+// makes two reports comparable.
+//
+// The counter only ever advances, so this emits per jump rather than per
+// event: a quiet stream produces nothing at all.
+func reportExternalLoss(w io.Writer, state *externalTurnState, r hub.Receipt) {
+	// The write stays UNDER the lock. The hub calls this sink from one
+	// goroutine per connected client (hub.owner.accept), so releasing the lock
+	// before writing lets a receipt of 9 claim the counter, get overtaken, and
+	// print after a receipt of 5 - a consumer diffing total_dropped then
+	// computes a negative delta, and loss lines float away from the events they
+	// describe. renderExternalEvent already writes under the same lock.
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	last := state.dropped
+	if r.Dropped <= last {
+		return
+	}
+	state.dropped = r.Dropped
+	writeNDJSONEvent(w, ndjsonEvent{
+		Type: "external_dropped", Dropped: r.Dropped - last, TotalDropped: r.Dropped,
+	})
 }
 
 // externalEventBelongsToSession reports whether ev, received from the hub,

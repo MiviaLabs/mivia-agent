@@ -185,20 +185,13 @@ func decodeNDJSONLines(t *testing.T, s string) []ndjsonEvent {
 	return out
 }
 
-// bufSink relays events through the exact production filter/render path
-// (externalEventBelongsToSession + renderExternalEvent), writing to a
-// bytes.Buffer instead of chatHubSink's hardcoded os.Stdout - the only
-// difference from the real line-mode sink, so this exercises real
-// production logic, not a reimplementation of it.
+// newBufSink returns the REAL production sink with its destination redirected
+// to a buffer. It used to re-spell chatHubSink's body instead, which meant a
+// change to the shipped sink - deleting the loss report, for instance - left
+// every test green because no test ever called it.
 func newBufSink(sess *chat.Session) (hub.Sink, *hubOutBuffer) {
 	buf := &hubOutBuffer{}
-	state := newExternalTurnState()
-	return func(ev events.Event) {
-		if !externalEventBelongsToSession(sess, ev) {
-			return
-		}
-		renderExternalEvent(buf, state, ev)
-	}, buf
+	return newChatHubSink(sess, buf), buf
 }
 
 type hubOutBuffer struct {

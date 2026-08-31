@@ -99,11 +99,30 @@ const dialSocketTimeout = 500 * time.Millisecond
 // unhurried retry over a tight loop.
 const reconnectBackoff = 2 * time.Second
 
+// Receipt carries the transport facts about one received event - things the
+// hub knows and events.Event deliberately does not, because they describe the
+// delivery rather than the conversation.
+type Receipt struct {
+	// Dropped is the cumulative number of events this hub failed to deliver to
+	// this process, counting both its share of the relay's bounded bus queue
+	// and its own connection's bounded outbound queue. For the owner, whose
+	// sink is fed by every connected client, it is the accumulated total of
+	// each source's forward deltas rather than whichever peer's absolute number
+	// arrived last. It is monotonic non-decreasing for the life of one hub
+	// membership and restarts at zero on failover, so a receiver treats a
+	// decrease as a new connection. See WireEvent.Dropped.
+	Dropped uint64
+}
+
 // Sink renders an event this process did not itself originate (received
 // from the hub) onto whatever live surface this process presents - stdout
 // NDJSON for line-mode, the TUI's renderer for the TUI. nil is valid: a
 // surface with nothing useful to do with it yet just drops it.
-type Sink func(events.Event)
+//
+// The Receipt is separate from the event because loss is a property of the
+// delivery, not of the turn: folding a transport counter into events.Event
+// would put it on every local publish site that has nothing to say about it.
+type Sink func(events.Event, Receipt)
 
 // Handle is a live hub membership. Leave unwinds it (releases the election
 // lock if this process owned it, or closes the client connection) and stops

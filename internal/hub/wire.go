@@ -31,6 +31,17 @@ type WireEvent struct {
 	AgentTask  string `json:"agent_task,omitempty"`
 	AgentName  string `json:"agent_name,omitempty"`
 	AgentDepth int    `json:"agent_depth,omitempty"`
+	// Dropped is the cumulative number of events this hub failed to deliver to
+	// the receiving connection: its share of the relay's bounded bus queue plus
+	// its own bounded outbound queue. It is monotonic non-decreasing for the
+	// life of one connection - a peer's own counter is never forwarded across a
+	// rebroadcast, which would interleave two unrelated origins and let the
+	// value fall - and restarts at zero when the hub owner changes. A consumer
+	// detects loss by diffing it
+	// against the last value it saw - the stream is deliberately lossy (see
+	// docs/product/wire-schema.md) and this is the only signal that says so.
+	// Omitted while it is zero, which is the ordinary case.
+	Dropped uint64 `json:"dropped,omitempty"`
 	// Compaction carries the typed payload for KindCompaction only. Nested and
 	// pointer so every other kind's wire form stays byte-identical, and
 	// content-free by construction so it is safe to commit to the wire

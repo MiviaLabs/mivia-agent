@@ -3,6 +3,7 @@ package hub
 import (
 	"context"
 	"net"
+	"sync/atomic"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
@@ -36,7 +37,7 @@ func (cl *client) run(ctx context.Context) {
 	}()
 	cl.c.readLoop(func(w WireEvent) {
 		if cl.sink != nil {
-			cl.sink(fromWire(w))
+			cl.sink(fromWire(w), Receipt{Dropped: w.Dropped})
 		}
 	})
 }
@@ -48,9 +49,16 @@ func (cl *client) subscribeRelay() {
 	if cl.sess.EventBus == nil {
 		return
 	}
-	cl.sub = cl.sess.EventBus.SubscribeAcross(relayedKinds, events.HandlerFunc(func(_ context.Context, ev events.Event) {
-		cl.c.send(toWire(ev))
+	// Atomic holder for the same reason owner.subscribeRelay uses one: the
+	// handler runs before SubscribeAcross has returned the handle.
+	var ref atomic.Pointer[events.Subscription]
+	sub := cl.sess.EventBus.SubscribeAcross(relayedKinds, events.HandlerFunc(func(_ context.Context, ev events.Event) {
+		w := toWire(ev)
+		w.Dropped = ref.Load().Drops()
+		cl.c.send(w)
 	}), events.SubscribeOptions{BufSize: relayBufSize})
+	ref.Store(sub)
+	cl.sub = sub
 }
 
 func (cl *client) stop() {

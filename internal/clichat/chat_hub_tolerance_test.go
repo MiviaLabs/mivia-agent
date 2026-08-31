@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/events"
+	"github.com/MiviaLabs/mivia-agent/internal/hub"
 )
 
 // typeCounts groups decoded NDJSON lines by type.
@@ -155,5 +156,115 @@ func TestExternalTurnStartWithoutARunIDStillBridgesText(t *testing.T) {
 	}
 	if lines[0].RunID != "turn:9" {
 		t.Fatalf("RunID = %q, want the id of the run that claimed the text", lines[0].RunID)
+	}
+}
+
+// TestExternalLossIsReportedOncePerAdvance is what makes the relay's documented
+// lossiness actionable rather than a disclaimer.
+//
+// Every hop between the two processes is bounded drop-oldest, and until the hub
+// carried a counter that loss was completely silent at this end: a consumer
+// reading external_chunk text could not tell a short answer from a truncated
+// one. The report is per ADVANCE, not per event, so a healthy stream stays
+// quiet.
+func TestExternalLossIsReportedOncePerAdvance(t *testing.T) {
+	var buf bytes.Buffer
+	state := newExternalTurnState()
+
+	// A quiet stream reports nothing at all.
+	reportExternalLoss(&buf, state, hub.Receipt{})
+	reportExternalLoss(&buf, state, hub.Receipt{})
+	if buf.Len() != 0 {
+		t.Fatalf("a lossless stream produced output: %q", buf.String())
+	}
+
+	reportExternalLoss(&buf, state, hub.Receipt{Dropped: 4})
+	// The same total again is not a new loss.
+	reportExternalLoss(&buf, state, hub.Receipt{Dropped: 4})
+	reportExternalLoss(&buf, state, hub.Receipt{Dropped: 10})
+
+	lines := decodeNDJSONLines(t, buf.String())
+	if len(lines) != 2 {
+		t.Fatalf("got %d external_dropped lines, want 2 (one per advance): %+v", len(lines), lines)
+	}
+	for _, l := range lines {
+		if l.Type != "external_dropped" {
+			t.Fatalf("type = %q, want external_dropped", l.Type)
+		}
+	}
+	if lines[0].Dropped != 4 || lines[0].TotalDropped != 4 {
+		t.Fatalf("first report = delta %d total %d, want 4 and 4", lines[0].Dropped, lines[0].TotalDropped)
+	}
+	// The delta is what was missed SINCE the last report, not the running total.
+	if lines[1].Dropped != 6 || lines[1].TotalDropped != 10 {
+		t.Fatalf("second report = delta %d total %d, want 6 and 10", lines[1].Dropped, lines[1].TotalDropped)
+	}
+}
+
+// TestExternalLossIgnoresARegressingCount guards against a counter that goes
+// backwards - which happens when a hub owner exits and another process takes
+// over, resetting its connections. A negative delta must not be reported as a
+// loss, and must not lower the high-water mark either.
+func TestExternalLossIgnoresARegressingCount(t *testing.T) {
+	var buf bytes.Buffer
+	state := newExternalTurnState()
+
+	reportExternalLoss(&buf, state, hub.Receipt{Dropped: 9})
+	buf.Reset()
+	reportExternalLoss(&buf, state, hub.Receipt{Dropped: 2})
+
+	if buf.Len() != 0 {
+		t.Fatalf("a regressing count produced a loss report: %q", buf.String())
+	}
+	if state.dropped != 9 {
+		t.Fatalf("high-water mark = %d, want it held at 9", state.dropped)
+	}
+}
+
+// TestChatHubSinkReportsLoss drives the REAL production sink, not a helper that
+// re-spells it. Deleting the loss report from chatHubSink used to leave the
+// whole package green, because every loss test called reportExternalLoss
+// directly and the test double had its own copy of the sink body.
+func TestChatHubSinkReportsLoss(t *testing.T) {
+	sess := newHubTestSession(t, "s1")
+	sink, out := newBufSink(sess)
+
+	sink(events.Event{Kind: events.KindTurnStart, SessionID: "s1", TurnID: "turn:1", Detail: "hi"}, hub.Receipt{})
+	sink(events.Event{Kind: events.KindAssistant, SessionID: "s1", TurnID: "turn:1", Content: "a", Detail: "delta"}, hub.Receipt{Dropped: 6})
+
+	counts := typeCounts(t, out.String())
+	if counts["external_dropped"] != 1 {
+		t.Fatalf("got %d external_dropped lines from the production sink, want 1: %s", counts["external_dropped"], out.String())
+	}
+}
+
+// TestExternalEvictionKeepsALiveRun pins that eviction is least-recently-USED,
+// not first-seen. A turn that streams for minutes on a shared workspace ages
+// out under a first-seen order even while it is live; the evicted run is then
+// re-minted as a SECOND external_turn_start with empty text, and its terminal
+// is discarded by the unknown-run guard - a duplicated turn that never closes.
+func TestExternalEvictionKeepsALiveRun(t *testing.T) {
+	var buf bytes.Buffer
+	state := newExternalTurnState()
+
+	renderExternalEvent(&buf, state, events.Event{Kind: events.KindTurnStart, SessionID: "s1", TurnID: "long", Detail: "big task"})
+	for i := range maxTrackedExternalRuns + 5 {
+		renderExternalEvent(&buf, state, events.Event{Kind: events.KindTurnStart, SessionID: "s1", TurnID: "turn:" + strconv.Itoa(i), Detail: "q"})
+		// The long run keeps streaming the entire time, so it is never the
+		// least-recently-used entry and must survive.
+		renderExternalEvent(&buf, state, events.Event{Kind: events.KindAssistant, SessionID: "s1", TurnID: "long", Content: "tick", Detail: "delta"})
+	}
+
+	starts := 0
+	for _, l := range decodeNDJSONLines(t, buf.String()) {
+		if l.Type == "external_turn_start" && l.RunID == "long" {
+			starts++
+		}
+	}
+	if starts != 1 {
+		t.Fatalf("the still-streaming run produced %d external_turn_start lines, want 1; it was evicted while live", starts)
+	}
+	if !state.known("long") {
+		t.Fatal("the still-streaming run was evicted; eviction is first-seen, not least-recently-used")
 	}
 }
