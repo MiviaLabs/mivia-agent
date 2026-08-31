@@ -52,7 +52,7 @@ func TestInputPollerReceivesAndConsumesInput(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	client := NewClient(ClientOptions{BaseURL: srv.URL})
+	client := newTestClient(t, ClientOptions{BaseURL: srv.URL})
 	poller := NewInputPoller(client, "sess-p-1", 1, t.TempDir())
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -96,7 +96,7 @@ func TestInputPollerSuppressesDeliveryIfConsumeFails(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	client := NewClient(ClientOptions{BaseURL: srv.URL})
+	client := newTestClient(t, ClientOptions{BaseURL: srv.URL})
 	poller := NewInputPoller(client, "sess-p-2", 1)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -122,7 +122,7 @@ func TestInputPoller_ChannelClosedOnStop(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	client := NewClient(ClientOptions{BaseURL: srv.URL})
+	client := newTestClient(t, ClientOptions{BaseURL: srv.URL})
 	poller := NewInputPoller(client, "sess-p-3", 1)
 
 	poller.Start(context.Background())
@@ -171,7 +171,7 @@ func TestInputPoller_CrashRecovery_ConsumedInputDeliveredOnAttach(t *testing.T) 
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	client := NewClient(ClientOptions{BaseURL: srv.URL})
+	client := newTestClient(t, ClientOptions{BaseURL: srv.URL})
 	poller := NewInputPoller(client, "sess-recover-1", 1, stateDir)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -227,7 +227,7 @@ func TestInputPoller_CrashRecovery_UnconsumedInputDiscarded(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	client := NewClient(ClientOptions{BaseURL: srv.URL})
+	client := newTestClient(t, ClientOptions{BaseURL: srv.URL})
 	poller := NewInputPoller(client, "sess-recover-2", 1, stateDir)
 
 	ctx, cancel := context.WithCancel(context.Background())

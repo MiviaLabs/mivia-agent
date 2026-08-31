@@ -27,7 +27,7 @@ func TestHeartbeatPeriodicAndImmediateTransition(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	client := NewClient(ClientOptions{BaseURL: srv.URL})
+	client := newTestClient(t, ClientOptions{BaseURL: srv.URL})
 	runner := NewHeartbeatRunner(client, "sess-hb-1", 50*time.Millisecond)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -72,7 +72,7 @@ func TestHeartbeatRunner_StopIdempotentAndRespectsContext(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	client := NewClient(ClientOptions{BaseURL: srv.URL})
+	client := newTestClient(t, ClientOptions{BaseURL: srv.URL})
 	runner := NewHeartbeatRunner(client, "sess-hb-2", 1*time.Second)
 	ctx := context.Background()
 

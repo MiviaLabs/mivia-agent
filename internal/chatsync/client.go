@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -18,6 +19,15 @@ var (
 	ErrConflict     = errors.New("chatsync: session conflict (409)")
 	ErrUnauthorized = errors.New("chatsync: unauthorized (401)")
 	ErrNotFound     = errors.New("chatsync: session not found (404)")
+
+	// ErrNoTokenProvider reports a construction attempt with no way to
+	// authenticate.
+	ErrNoTokenProvider = errors.New("chatsync: a token provider is required")
+
+	// ErrEmptyToken reports a token provider that returned no error and no
+	// token. Sending the request anyway would omit the Authorization header,
+	// so this fails closed instead.
+	ErrEmptyToken = errors.New("chatsync: the token provider returned an empty token")
 )
 
 // ConflictError conveys detailed 409 conflict payload from server.
@@ -53,18 +63,33 @@ type Client struct {
 	baseURL       string
 	httpClient    *http.Client
 	tokenProvider TokenProvider
+
+	// authLost latches once the token provider reports a failure no retry
+	// can fix. Every later request then fails fast instead of re-entering
+	// the refresh path, which is what "stop sync" means at this layer: the
+	// session cannot prompt mid-chat, so the only safe answer is to stop
+	// talking to the API rather than to keep trying with a dead session.
+	authLost atomic.Bool
 }
 
-// ClientOptions configures Client.
+// ClientOptions configures Client. It deliberately carries no token
+// provider: the provider is a positional argument to NewClient so that a
+// missing one is a compile error, not a zero value that silently sends
+// conversation content with no Authorization header.
 type ClientOptions struct {
-	BaseURL       string
-	HTTPClient    *http.Client
-	TokenProvider TokenProvider
-	Timeout       time.Duration
+	BaseURL    string
+	HTTPClient *http.Client
+	Timeout    time.Duration
 }
 
-// NewClient constructs a Client with the specified options.
-func NewClient(opts ClientOptions) *Client {
+// NewClient constructs a Client. tokens is required. A nil provider is
+// refused rather than tolerated: this client uploads conversation content,
+// and an unauthenticated upload is the fail-open case this argument exists
+// to make impossible.
+func NewClient(tokens TokenProvider, opts ClientOptions) (*Client, error) {
+	if tokens == nil {
+		return nil, ErrNoTokenProvider
+	}
 	baseURL := strings.TrimRight(opts.BaseURL, "/")
 	httpClient := opts.HTTPClient
 	if httpClient == nil {
@@ -73,8 +98,8 @@ func NewClient(opts ClientOptions) *Client {
 	return &Client{
 		baseURL:       baseURL,
 		httpClient:    httpClient,
-		tokenProvider: opts.TokenProvider,
-	}
+		tokenProvider: tokens,
+	}, nil
 }
 
 // CreateSession registers a new session via POST /v1/chat-sessions.
@@ -163,12 +188,22 @@ func (c *Client) EndSession(ctx context.Context, sessionID string) (*Session, er
 	return &out, nil
 }
 
+// doJSON runs one request and implements the settled 401 policy: refresh once
+// and retry, exactly once.
+//
+// The retry is not repeated. A second 401 after a fresh token is not an
+// expired token, it is a rejected session or a captive portal answering 401
+// for everything, and retrying either of those in a loop is how a live
+// session gets destroyed.
 func (c *Client) doJSON(ctx context.Context, method, path string, reqBody any, respBody any) error {
-	err := c.execRequest(ctx, method, path, reqBody, respBody, false)
-	if err != nil && errors.Is(err, ErrUnauthorized) && c.tokenProvider != nil {
-		return c.execRequest(ctx, method, path, reqBody, respBody, true)
+	if c.authLost.Load() {
+		return ErrAuthStop
 	}
-	return err
+	err := c.execRequest(ctx, method, path, reqBody, respBody, false)
+	if err == nil || !errors.Is(err, ErrUnauthorized) {
+		return err
+	}
+	return c.execRequest(ctx, method, path, reqBody, respBody, true)
 }
 
 func (c *Client) execRequest(ctx context.Context, method, path string, reqBody, respBody any, forceRefresh bool) error {
@@ -214,17 +249,24 @@ func (c *Client) buildRequest(ctx context.Context, method, path string, reqBody 
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	if c.tokenProvider != nil {
-		tok, err := c.tokenProvider(ctx, forceRefresh)
-		if err != nil {
-			return nil, fmt.Errorf("get auth token: %w", err)
+	tok, err := c.tokenProvider(ctx, forceRefresh)
+	if err != nil {
+		if errors.Is(err, ErrAuthStop) {
+			c.authLost.Store(true)
 		}
-		if tok != "" {
-			req.Header.Set("Authorization", "Bearer "+tok)
-		}
+		return nil, fmt.Errorf("get auth token: %w", err)
 	}
+	if tok == "" {
+		return nil, ErrEmptyToken
+	}
+	req.Header.Set("Authorization", "Bearer "+tok)
 	return req, nil
 }
+
+// AuthLost reports whether this client has latched a fatal authentication
+// failure. The session loop reads it to stop the pusher, poller and
+// heartbeat instead of retrying a session that cannot come back.
+func (c *Client) AuthLost() bool { return c.authLost.Load() }
 
 func parseErrorResponse(resp *http.Response) error {
 	respBytes, _ := io.ReadAll(resp.Body)
