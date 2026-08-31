@@ -67,6 +67,11 @@ type SyncSession struct {
 	// handler does not wait on it.
 	appender outboxAppender
 
+	// unsubscribe releases the bus subscription. It is a field, not a direct
+	// s.sub.Unsubscribe call, so a test can observe WHEN it runs relative to
+	// the final Drops() read.
+	unsubscribe func()
+
 	// dropSource reports the total number of events lost before projection.
 	// It is a seam so a test can drive the sync.dropped path deterministically
 	// instead of racing the bus into shedding events.
@@ -153,6 +158,7 @@ func OpenSession(ctx context.Context, bus *events.Bus, sessionID string, opts Se
 
 	s.sub = bus.SubscribeAcross(syncKinds, s, events.SubscribeOptions{BufSize: 1024})
 	s.dropSource = s.busDrops
+	s.unsubscribe = s.sub.Unsubscribe
 
 	s.heartbeat.Start(ctx)
 	if s.poller != nil {
@@ -288,10 +294,6 @@ func (s *SyncSession) Stop(ctx context.Context) error {
 	s.running = false
 	s.mu.Unlock()
 
-	if s.sub != nil {
-		s.sub.Unsubscribe()
-	}
-
 	// The worker's final drain and flush inherits the caller's deadline.
 	select {
 	case s.stopCtxCh <- ctx:
@@ -304,6 +306,19 @@ func (s *SyncSession) Stop(ctx context.Context) error {
 	case <-s.doneCh:
 	case <-ctx.Done():
 		timedOut = true
+	}
+
+	// Unsubscribe only AFTER the worker read Drops() for the last time.
+	// events.Subscription documents that reading the counter after
+	// Unsubscribe can over-report: Publish snapshots the subscriber slice
+	// under the lock and enqueues outside it, so a publish already in flight
+	// still lands in the removed subscription's queue and is dropped there.
+	// Nothing was lost - no handler was ever going to run for it - but the
+	// counter moves. Reading it in that window makes the final flush record a
+	// sync.dropped marker for a hole that does not exist, and settled decision
+	// 6 makes that marker PERMANENT in the transcript.
+	if s.unsubscribe != nil {
+		s.unsubscribe()
 	}
 
 	if s.heartbeat != nil {
