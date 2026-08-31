@@ -18,13 +18,12 @@ func TestLiveSyncSessionEndToEnd(t *testing.T) {
 	outboxDir := t.TempDir()
 
 	opts := SessionOptions{
-		TokenProvider: testTokenProvider,
-		ClientOptions: ClientOptions{
-			BaseURL: api.baseURL,
-			TokenProvider: func(ctx context.Context, forceRefresh bool) (string, error) {
-				return api.bearer, nil
-			},
+		// The live bearer, not the untagged tests' stub: this probe pins what
+		// the deployed API does, so it authenticates the way production does.
+		TokenProvider: func(context.Context, bool) (string, error) {
+			return api.bearer, nil
 		},
+		ClientOptions:    ClientOptions{BaseURL: api.baseURL},
 		OutboxDir:        outboxDir,
 		CreateTitle:      "mivia live sync test",
 		CwdLabel:         "/workspace/live-test",
