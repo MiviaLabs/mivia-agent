@@ -329,7 +329,17 @@ func parseErrorResponse(resp *http.Response) error {
 	}
 
 	switch resp.StatusCode {
-	case http.StatusBadRequest:
+	// 413 and 422 join 400 as poison. The deployed API answers 400 for an
+	// oversized payload (pinned by TestLiveChatSessionPayloadBoundIsAClientError),
+	// so this is not today's behaviour - it is the fail-safe for the day it
+	// changes. Without it those statuses fall to the default branch, which is
+	// not ErrBadRequest, so the flush retries a body the server can never
+	// accept, for the life of the process.
+	//
+	// Deliberately NOT every 4xx: 408 and 429 are the server asking us to try
+	// again later, and poisoning them would turn a transient slowdown into a
+	// permanent stop.
+	case http.StatusBadRequest, http.StatusRequestEntityTooLarge, http.StatusUnprocessableEntity:
 		return &BadRequestError{
 			StatusCode: resp.StatusCode,
 			Message:    msg,
