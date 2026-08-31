@@ -392,7 +392,12 @@ def run_go_inspector(files: list[Path]) -> list[dict]:
         out = res.stdout.strip()
         if not out:
             return []
-        return json.loads(out)
+        # `or []` is load-bearing: the Go inspector marshals a nil slice as the
+        # JSON literal `null`, which json.loads turns into None, and the caller
+        # iterates the result. Any diff that touches Go source without touching
+        # a test file produced no reports and therefore crashed this gate with
+        # a TypeError instead of passing.
+        return json.loads(out) or []
     except Exception as e:
         print(f"check_test_quality: error running go inspector: {e}", file=sys.stderr)
         return []

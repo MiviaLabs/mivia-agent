@@ -5,10 +5,16 @@ package clichat
 // forwards whatever's published there to every other connected process) and
 // rendering events RECEIVED from other processes onto whichever surface is
 // running. Line-mode --json is the only surface with a rendering sink today
-// (chatHubSink) - the TUI and classic REPL still join and publish (so a
-// desktop app observing them sees their turns), but do not yet render an
-// external turn into their own display; see chat_repl.go/tui_start.go call
-// sites for where that would extend.
+// (chatHubSink).
+//
+// The classic REPL joins and publishes, so a desktop app observing it sees its
+// turns. THE TUI DOES NOT. It never calls JoinHub, and uiadapter/build.go
+// constructs its session with EventBus: nil, so every publish on that surface
+// returns immediately and nothing is relayed. That is the real gap: not a
+// missing publish, but a missing bus. This comment previously claimed the TUI
+// joined and published, and cited a tui_start.go that does not exist and never
+// has - a claim that survived long enough to hide six event kinds having no
+// producer at all.
 
 import (
 	"io"
@@ -22,9 +28,10 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
-// JoinHub is the one call every live chat surface (TUI, classic REPL,
-// line-mode) makes once its own EventBus (if any - the TUI manages its own,
-// see tui_run.go) is finalized. storeDir is derived from the session's
+// JoinHub is called by the classic REPL and by line mode, each once its own
+// EventBus is finalized - it is also what CREATES that bus (sess.EventBus =
+// events.New() below). The TUI does not call it and therefore has no bus at
+// all. storeDir is derived from the session's
 // already-open context store rather than recomputed from workspace-routing
 // logic, so it's automatically correct for the repository-root/managed-
 // worktree/config-override cases setupChatSessionContext itself resolves -

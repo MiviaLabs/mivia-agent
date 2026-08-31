@@ -1327,7 +1327,11 @@
     "TestServiceEnsureRefreshSucceedsButSaveFailsReturnsNewBearerAndError",
     "TestLogoutWithStoredTokenAndRevoke204Succeeds",
     "TestUsageTextDocumentsLoginLogout",
-    "TestRevokeSuccessReturnsNil"
+    "TestRevokeSuccessReturnsNil",
+    "TestSubagentProgressReachesTheSessionBus",
+    "TestSubagentEventCarriesSessionAttribution",
+    "TestUnboundSessionPublishesNothing",
+    "TestSubagentProgressStillReachesTheLocalSink"
   ],
   "knownZeroAssertions": [
     "TestAbandonFenceConcurrentMapAccess",

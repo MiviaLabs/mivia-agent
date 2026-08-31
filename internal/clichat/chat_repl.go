@@ -116,8 +116,9 @@ func attachSessionDispatcher(sess *chat.Session, root, model string, cfg config.
 		DeferredTools:             plan.Candidates,
 		Session:                   sess,
 		// Sink publishes invocation lifecycle events to the session bus. The
-		// closure reads sess.EventBus at publish time, so it stays live when
-		// runTUI later installs the bus.
+		// closure reads sess.EventBus at publish time, so it stays correct
+		// whenever the bus is installed - which today is JoinHub, on this
+		// surface and line mode only. Nothing installs one for the TUI.
 		Sink: sessionInvocationSink(sess),
 	})
 	if err != nil {
