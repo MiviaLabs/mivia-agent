@@ -8,11 +8,22 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 )
 
+// maxTrackedTurns bounds active turns remembered by the projector.
+const maxTrackedTurns = 64
+
 // ProjectorOptions configures a Projector.
 type ProjectorOptions struct {
 	StreamAssistant bool
 	IncludeToolIO   bool
 	IncludeThinking bool
+}
+
+type turnState struct {
+	started   bool
+	done      bool
+	streamed  bool
+	fragments int
+	bytes     int
 }
 
 // Projector performs pure synchronous projection of events.Event streams
@@ -22,6 +33,8 @@ type Projector struct {
 	seq          int64
 	opts         ProjectorOptions
 	syntheticNum int
+	turns        map[string]*turnState
+	turnOrder    []string
 }
 
 // NewProjector constructs a Projector for sessionID starting at initialSeq.
@@ -30,6 +43,7 @@ func NewProjector(sessionID string, initialSeq int64, opts ProjectorOptions) *Pr
 		sessionID: sessionID,
 		seq:       initialSeq,
 		opts:      opts,
+		turns:     make(map[string]*turnState),
 	}
 }
 
@@ -52,24 +66,87 @@ func (p *Projector) Project(ev events.Event) []WireEvent {
 
 	switch ev.Kind {
 	case events.KindTurnStart:
+		ts := p.turn(turnID)
+		if ts.started || ts.done {
+			return nil
+		}
+		ts.started = true
 		return p.projectTurnStart(env, ev.Detail, isSynthetic)
+
 	case events.KindTurnEnd:
+		if !p.knownTurn(turnID) {
+			return nil
+		}
+		ts := p.turn(turnID)
+		if ts.done {
+			return nil
+		}
+		ts.done = true
 		return p.projectTurnEnd(env, ev.Detail)
+
 	case events.KindError:
+		if !p.knownTurn(turnID) {
+			return nil
+		}
+		ts := p.turn(turnID)
+		if ts.done {
+			return nil
+		}
+		ts.done = true
 		return p.projectTurnError(env, ev)
+
 	case events.KindAssistant:
-		return p.projectAssistant(env, turnID, ev)
+		ts := p.turn(turnID)
+		return p.projectAssistant(env, turnID, ts, ev)
+
 	case events.KindThinking:
+		p.turn(turnID)
 		return p.projectThinking(env, turnID, ev.Content)
+
 	case events.KindToolStart, events.KindToolEnd:
+		p.turn(turnID)
 		return p.projectTool(env, ev)
+
 	case events.KindSubagentStart, events.KindSubagentEnd, events.KindSubagentHeartbeat, events.KindSubagentDone:
+		p.turn(turnID)
 		return p.projectSubagent(env, ev)
+
 	case events.KindCompaction:
 		return p.projectCompaction(env, ev)
+
 	default:
 		return nil
 	}
+}
+
+func (p *Projector) turn(id string) *turnState {
+	if t, ok := p.turns[id]; ok {
+		p.touchTurn(id)
+		return t
+	}
+	t := &turnState{}
+	p.turns[id] = t
+	p.turnOrder = append(p.turnOrder, id)
+	for len(p.turnOrder) > maxTrackedTurns {
+		delete(p.turns, p.turnOrder[0])
+		p.turnOrder = p.turnOrder[1:]
+	}
+	return t
+}
+
+func (p *Projector) touchTurn(id string) {
+	for i, cur := range p.turnOrder {
+		if cur == id {
+			p.turnOrder = append(p.turnOrder[:i], p.turnOrder[i+1:]...)
+			p.turnOrder = append(p.turnOrder, id)
+			return
+		}
+	}
+}
+
+func (p *Projector) knownTurn(id string) bool {
+	_, ok := p.turns[id]
+	return ok
 }
 
 func (p *Projector) resolveTurnID(rawTurnID string) (string, bool) {
@@ -130,30 +207,41 @@ func (p *Projector) projectTurnError(env Envelope, ev events.Event) []WireEvent 
 	return []WireEvent{p.nextWireEvent(TypeTurnFailed, payload)}
 }
 
-func (p *Projector) projectAssistant(env Envelope, turnID string, ev events.Event) []WireEvent {
+func (p *Projector) projectAssistant(env Envelope, turnID string, ts *turnState, ev events.Event) []WireEvent {
 	if ev.Content == "" {
 		return nil
 	}
 	env.Block = turnID + ":assistant"
-	if ev.Detail == "delta" && p.opts.StreamAssistant {
-		payload := &AssistantDeltaPayload{
-			Envelope: env,
-			Text:     ev.Content,
-			Index:    0,
+	if ev.Detail == "delta" {
+		ts.streamed = true
+		ts.fragments++
+		ts.bytes += len(ev.Content)
+		if p.opts.StreamAssistant {
+			payload := &AssistantDeltaPayload{
+				Envelope: env,
+				Text:     ev.Content,
+				Index:    ts.fragments - 1,
+			}
+			return []WireEvent{p.nextWireEvent(TypeAssistantDelta, payload)}
 		}
-		return []WireEvent{p.nextWireEvent(TypeAssistantDelta, payload)}
+		return nil
 	}
-	if ev.Detail != "delta" {
-		payload := &AssistantMessagePayload{
-			Envelope:  env,
-			Fragments: 0,
-			Bytes:     len(ev.Content),
-			Status:    "completed",
-			Text:      ev.Content,
-		}
-		return []WireEvent{p.nextWireEvent(TypeAssistantMessage, payload)}
+
+	// Final aggregate
+	text := ev.Content
+	fragments := 0
+	if ts.streamed && p.opts.StreamAssistant {
+		fragments = ts.fragments
+		text = "" // INV-1: text empty iff fragments > 0
 	}
-	return nil
+	payload := &AssistantMessagePayload{
+		Envelope:  env,
+		Fragments: fragments,
+		Bytes:     len(ev.Content),
+		Status:    "completed",
+		Text:      text,
+	}
+	return []WireEvent{p.nextWireEvent(TypeAssistantMessage, payload)}
 }
 
 func (p *Projector) projectThinking(env Envelope, turnID, content string) []WireEvent {

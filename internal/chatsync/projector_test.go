@@ -242,6 +242,15 @@ func TestProjectorAgentOriginAttribution(t *testing.T) {
 func TestProjectorErrorEventMessageClassification(t *testing.T) {
 	p := NewProjector("sess-1", 0, ProjectorOptions{})
 
+	// Start turn so terminal is accepted
+	p.Project(events.Event{
+		Kind:      events.KindTurnStart,
+		SessionID: "sess-1",
+		TurnID:    "turn:1",
+		Detail:    "task",
+		Timestamp: time.Now(),
+	})
+
 	// Event with Err
 	errEv := events.Event{
 		Kind:      events.KindError,
