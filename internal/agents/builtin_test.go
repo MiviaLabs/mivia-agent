@@ -282,6 +282,7 @@ func TestBuiltInPromptDisciplineLines(t *testing.T) {
 		"how to verify done",
 		"a check that can fail",
 		"small ordered steps",
+		"dispatch_tasks for implementation",
 	} {
 		if !strings.Contains(BuiltInOrchestratorPrompt, want) {
 			t.Errorf("orchestrator prompt lost the discipline line fragment %q", want)

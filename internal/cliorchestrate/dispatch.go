@@ -57,7 +57,10 @@ func (t *dispatchTasksTool) Name() string { return ToolDispatchTasks }
 func (t *dispatchTasksTool) Privileged()  {}
 func (t *dispatchTasksTool) Description() string {
 	desc := "Execute multiple sub-tasks in PARALLEL. Use this for ALL research, code reviews, " +
-		"bug audits, and any work that can be split - never do N sequential passes. "
+		"bug audits, and any read-only work that can be split - never do N sequential passes. " +
+		"Implementation tasks are dispatchable too: brief them to apply and verify the change, " +
+		"not to report findings. Tasks share one working tree, so serialize implementation " +
+		"tasks with depends_on or keep one writer per batch. "
 	// Same invariant as agentRoutingDescription: the always-available claim
 	// only appears when the built-in actually resolved into the registry (a
 	// same-name skill collision can skip it), so the prose never promises a
