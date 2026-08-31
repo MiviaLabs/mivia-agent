@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/MiviaLabs/mivia-agent/internal/remainder"
 )
@@ -97,14 +96,6 @@ func effectiveResultCap(maxChars, capabilityMaxBytes int) int {
 // ref for read_output. A store failure omits the ref (INV-AG-10 / INV-CE-07-C).
 func capToolResult(result string, maxChars, capabilityMaxBytes int, spool *remainder.Spool, principal string) (string, bool) {
 	return remainder.CapWithSpool(spool, principal, result, effectiveResultCap(maxChars, capabilityMaxBytes))
-}
-
-// trimPartialRune drops a trailing incomplete UTF-8 sequence.
-func trimPartialRune(s string) string {
-	for len(s) > 0 && !utf8.ValidString(s) {
-		s = s[:len(s)-1]
-	}
-	return s
 }
 
 func truncate(s string, n int) string {

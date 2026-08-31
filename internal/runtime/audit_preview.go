@@ -39,7 +39,15 @@ func redactMeta(b []byte) string {
 func truncateText(s string) string {
 	if len(s) > 256 {
 		s = s[:256]
-		for len(s) > 0 && !utf8.ValidString(s) {
+		// Back off across the rune at the CUT BOUNDARY only (DC-6). Validating
+		// the whole prefix (utf8.ValidString) trims back to the first invalid
+		// byte ANYWHERE in the payload - a raw byte early in an audit payload
+		// would empty the preview entirely. Mirrors chatsync.truncateString.
+		for len(s) > 0 {
+			r, size := utf8.DecodeLastRuneInString(s)
+			if r != utf8.RuneError || size > 1 {
+				break
+			}
 			s = s[:len(s)-1]
 		}
 	}

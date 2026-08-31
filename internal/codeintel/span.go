@@ -188,11 +188,19 @@ func collapseLine(s string) string {
 	// Cut at a rune boundary: s[:maxSignatureBytes] can land inside a
 	// multi-byte character, and the partial rune survives TrimSpace, making
 	// the emitted signature invalid UTF-8 that encoding/json silently mangles
-	// into U+FFFD. Back off byte-by-byte until the cut is valid UTF-8, the
-	// same pattern diff.TruncateUTF8 uses. The bound stays <= maxSignatureBytes
-	// bytes plus the 4-byte ' …' marker.
+	// into U+FFFD. Back off across the rune at the CUT BOUNDARY only (DC-6):
+	// validating the whole prefix (utf8.ValidString) would trim back to the
+	// first invalid byte ANYWHERE in s - a string constant holding raw bytes
+	// ("\xff") amputates the entire rendered signature after it - and costs
+	// O(n^2). A real U+FFFD decodes with size 3 and is kept. The bound stays
+	// <= maxSignatureBytes bytes plus the 4-byte ' …' marker. Mirrors
+	// chatsync.truncateString.
 	cut := s[:maxSignatureBytes]
-	for len(cut) > 0 && !utf8.ValidString(cut) {
+	for len(cut) > 0 {
+		r, size := utf8.DecodeLastRuneInString(cut)
+		if r != utf8.RuneError || size > 1 {
+			break
+		}
 		cut = cut[:len(cut)-1]
 	}
 	return strings.TrimSpace(cut) + " …"

@@ -133,7 +133,18 @@ func truncatePreview(value string, maxBytes int) string {
 		return value
 	}
 	value = value[:maxBytes]
-	for len(value) > 0 && !utf8.ValidString(value) {
+	// Back off across the rune at the CUT BOUNDARY only (DC-6). Validating the
+	// whole prefix (utf8.ValidString) trims all the way back to the first
+	// invalid byte ANYWHERE in value - one stray byte in a tool's output
+	// amputates the whole preview and reports it as an ordinary budget cut. It
+	// is also O(n^2). DecodeLastRuneInString reports (RuneError, 1) for a byte
+	// that cannot start a rune or an incomplete trailing sequence; a real
+	// U+FFFD decodes with size 3 and is kept. Mirrors chatsync.truncateString.
+	for len(value) > 0 {
+		r, size := utf8.DecodeLastRuneInString(value)
+		if r != utf8.RuneError || size > 1 {
+			break
+		}
 		value = value[:len(value)-1]
 	}
 	return value

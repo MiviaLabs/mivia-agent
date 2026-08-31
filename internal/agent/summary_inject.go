@@ -321,7 +321,16 @@ func boundedSummaryText(value string) string {
 		return value
 	}
 	value = value[:contextmgr.MaxSummaryFieldBytes]
-	for len(value) > 0 && !utf8.ValidString(value) {
+	// Back off across the rune at the CUT BOUNDARY only (DC-6). ToValidUTF8
+	// above already removed every invalid byte, so a whole-prefix check
+	// (utf8.ValidString) cannot amputate here TODAY - but it would the moment
+	// that sanitising step moves or goes away, and the failure would look like
+	// an ordinary budget cut. Keep the safe form regardless.
+	for len(value) > 0 {
+		r, size := utf8.DecodeLastRuneInString(value)
+		if r != utf8.RuneError || size > 1 {
+			break
+		}
 		value = value[:len(value)-1]
 	}
 	return value
