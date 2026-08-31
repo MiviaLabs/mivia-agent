@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 )
 
@@ -12,11 +11,29 @@ import (
 const maxTrackedTurns = 64
 
 // ProjectorOptions configures a Projector.
+//
+// Settled decision 7 keeps this package a LEAF: it takes values and functions
+// rather than importing the app's own packages. ErrorMessage and
+// RedactToolArgs exist for that reason - the alternatives were an import of
+// internal/chat (which drags in ~47 internal packages) and a read of
+// internal/tools' process-global atomic.Bool (which makes any test of gate
+// composition mutate a package global).
 type ProjectorOptions struct {
 	StreamAssistant bool
 	IncludeToolIO   bool
 	IncludeThinking bool
 	WriterID        string
+
+	// RedactToolArgs is the host's tool-argument redaction decision, passed
+	// in as a value. It composes with IncludeToolIO as an AND: tool IO ships
+	// only when IncludeToolIO is true AND RedactToolArgs is false.
+	RedactToolArgs bool
+
+	// ErrorMessage classifies a turn error into redaction-safe text for the
+	// wire. Nil selects defaultErrorMessage, which is content-free by
+	// construction. Provider and tool error text can quote the request that
+	// produced it (DC-14), so err.Error() must never reach this wire.
+	ErrorMessage func(error) string
 }
 
 type turnState struct {
@@ -276,7 +293,7 @@ func (p *Projector) projectTurnEnd(env Envelope, detail string) []WireEvent {
 }
 
 func (p *Projector) projectTurnError(env Envelope, ev events.Event) []WireEvent {
-	msg := errorEventMessage(ev)
+	msg := p.errorEventMessage(ev)
 	msg = redactText(msg)
 	msg = applyTruncation(&env, "message", msg, BudgetErrorMessage)
 	payload := &TurnFailedPayload{
@@ -350,111 +367,6 @@ func (p *Projector) projectThinking(env Envelope, turnID, content string) []Wire
 	return []WireEvent{p.nextWireEvent(TypeThinkingDelta, payload)}
 }
 
-func (p *Projector) projectTool(env Envelope, ev events.Event) []WireEvent {
-	env.Block = ev.ToolCallID
-	name := applyTruncation(&env, "name", ev.Name, BudgetShortField)
-	callID := applyTruncation(&env, "tool_call_id", ev.ToolCallID, BudgetShortField)
-
-	if ev.Kind == events.KindToolStart {
-		var input string
-		if shouldIncludeToolIO(p.opts) {
-			input = redactText(ev.Input)
-			input = applyTruncation(&env, "input", input, BudgetToolInput)
-		} else {
-			env.Redacted = append(env.Redacted, "input")
-		}
-		payload := &ToolStartedPayload{
-			Envelope:   env,
-			ToolCallID: callID,
-			Name:       name,
-			InputBytes: len(ev.Input),
-			Input:      input,
-		}
-		return []WireEvent{p.nextWireEvent(TypeToolStarted, payload)}
-	}
-
-	var output string
-	if shouldIncludeToolIO(p.opts) {
-		output = redactText(ev.Output)
-		output = applyTruncation(&env, "output", output, BudgetToolOutput)
-	} else {
-		env.Redacted = append(env.Redacted, "output")
-	}
-	detail := applyTruncation(&env, "detail", ev.Detail, BudgetShortField)
-	payload := &ToolEndedPayload{
-		Envelope:    env,
-		ToolCallID:  callID,
-		Name:        name,
-		Status:      toolEndStatus(ev.Detail),
-		OutputBytes: len(ev.Output),
-		Detail:      detail,
-		Output:      output,
-	}
-	return []WireEvent{p.nextWireEvent(TypeToolEnded, payload)}
-}
-
-func (p *Projector) projectSubagent(env Envelope, ev events.Event) []WireEvent {
-	env.Block = ev.ToolCallID
-	name := applyTruncation(&env, "name", ev.Name, BudgetShortField)
-	callID := applyTruncation(&env, "tool_call_id", ev.ToolCallID, BudgetShortField)
-
-	switch ev.Kind {
-	case events.KindSubagentStart:
-		var input string
-		if shouldIncludeToolIO(p.opts) {
-			input = redactText(ev.Input)
-			input = applyTruncation(&env, "input", input, BudgetToolInput)
-		} else {
-			env.Redacted = append(env.Redacted, "input")
-		}
-		payload := &SubagentToolStartedPayload{
-			Envelope:   env,
-			ToolCallID: callID,
-			Name:       name,
-			InputBytes: len(ev.Input),
-			Input:      input,
-		}
-		return []WireEvent{p.nextWireEvent(TypeSubagentToolStarted, payload)}
-	case events.KindSubagentEnd:
-		var output string
-		if shouldIncludeToolIO(p.opts) {
-			output = redactText(ev.Output)
-			output = applyTruncation(&env, "output", output, BudgetToolOutput)
-		} else {
-			env.Redacted = append(env.Redacted, "output")
-		}
-		detail := applyTruncation(&env, "detail", ev.Detail, BudgetShortField)
-		payload := &SubagentToolEndedPayload{
-			Envelope:    env,
-			ToolCallID:  callID,
-			Name:        name,
-			Status:      toolEndStatus(ev.Detail),
-			OutputBytes: len(ev.Output),
-			Detail:      detail,
-			Output:      output,
-		}
-		return []WireEvent{p.nextWireEvent(TypeSubagentToolEnded, payload)}
-	case events.KindSubagentHeartbeat:
-		detail := applyTruncation(&env, "detail", ev.Detail, BudgetShortField)
-		payload := &SubagentProgressPayload{
-			Envelope: env,
-			Detail:   detail,
-		}
-		return []WireEvent{p.nextWireEvent(TypeSubagentProgress, payload)}
-	case events.KindSubagentDone:
-		agentName := applyTruncation(&env, "name", ev.AgentName, BudgetShortField)
-		status := applyTruncation(&env, "status", ev.Detail, BudgetShortField)
-		payload := &SubagentEndedPayload{
-			Envelope: env,
-			Name:     agentName,
-			Status:   status,
-		}
-		return []WireEvent{p.nextWireEvent(TypeSubagentEnded, payload)}
-	default:
-		return nil
-	}
-}
-
 func (p *Projector) projectCompaction(env Envelope, ev events.Event) []WireEvent {
 	message := applyTruncation(&env, "message", ev.Detail, BudgetShortField)
 	payload := &ContextCompactedPayload{
@@ -474,16 +386,27 @@ func (p *Projector) nextWireEvent(eventType string, payload any) WireEvent {
 	}
 }
 
-func toolEndStatus(detail string) string {
-	if detail == "" {
-		return "ok"
-	}
-	return detail
-}
-
-func errorEventMessage(ev events.Event) string {
+// errorEventMessage classifies an error event into wire text. The classifier
+// is injected (ProjectorOptions.ErrorMessage) so this package does not import
+// internal/chat; the host passes chat.TurnErrorMessage.
+func (p *Projector) errorEventMessage(ev events.Event) string {
 	if ev.Err != nil {
-		return chat.TurnErrorMessage(ev.Err)
+		classify := p.opts.ErrorMessage
+		if classify == nil {
+			classify = defaultErrorMessage
+		}
+		return classify(ev.Err)
 	}
 	return ev.Detail
+}
+
+// defaultErrorMessage is the fail-closed fallback when no classifier is
+// injected. It never reads err.Error(), so it cannot leak request content; it
+// matches the default branch of the host's own classifier and only loses that
+// classifier's few sentinel-specific messages.
+func defaultErrorMessage(err error) string {
+	if err == nil {
+		return ""
+	}
+	return "chat turn failed"
 }
