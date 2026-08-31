@@ -58,7 +58,7 @@ func TestExternalEventBelongsToSession(t *testing.T) {
 // chunks, keyed by run_id, not a single shared scalar.
 func TestRenderExternalEventTracksConcurrentRunsIndependently(t *testing.T) {
 	var buf bytes.Buffer
-	state := &externalTurnState{seenRunIDs: make(map[string]struct{}), deltaSeenRunIDs: make(map[string]struct{})}
+	state := newExternalTurnState()
 
 	renderExternalEvent(&buf, state, events.Event{Kind: events.KindTurnStart, SessionID: "s1", Detail: "hi from run A"})
 	renderExternalEvent(&buf, state, events.Event{Kind: events.KindAssistant, SessionID: "s1", TurnID: "turn:1", Content: "reply A"})
@@ -98,8 +98,17 @@ func TestRenderExternalEventTracksConcurrentRunsIndependently(t *testing.T) {
 	if len(byType["external_done"]) != 2 {
 		t.Fatalf("expected 2 external_done lines, got %d", len(byType["external_done"]))
 	}
-	if len(state.seenRunIDs) != 0 {
-		t.Fatalf("expected seenRunIDs cleared after both runs ended, got %+v", state.seenRunIDs)
+	// Both runs stay tracked after their terminals, deliberately: the entry is
+	// what stops a late or duplicated event from re-minting a finished turn.
+	// Eviction is by age (maxTrackedExternalRuns), not by terminal.
+	for _, id := range []string{"turn:1", "turn:7"} {
+		r, ok := state.runs[id]
+		if !ok {
+			t.Fatalf("%s was forgotten on its terminal; a late event would re-mint it", id)
+		}
+		if !r.done {
+			t.Fatalf("%s was not marked done by its terminal", id)
+		}
 	}
 }
 
@@ -113,7 +122,7 @@ func TestRenderExternalEventTracksConcurrentRunsIndependently(t *testing.T) {
 // non-delta aggregate for the same run (that would show the reply twice).
 func TestRenderExternalEventStreamsDeltasLiveWithoutDuplicatingContent(t *testing.T) {
 	var buf bytes.Buffer
-	state := &externalTurnState{seenRunIDs: make(map[string]struct{}), deltaSeenRunIDs: make(map[string]struct{})}
+	state := newExternalTurnState()
 
 	renderExternalEvent(&buf, state, events.Event{Kind: events.KindTurnStart, SessionID: "s1", Detail: "hi"})
 	renderExternalEvent(&buf, state, events.Event{Kind: events.KindAssistant, SessionID: "s1", TurnID: "turn:1", Content: "Hello, ", Detail: "delta"})
@@ -142,7 +151,7 @@ func TestRenderExternalEventStreamsDeltasLiveWithoutDuplicatingContent(t *testin
 // silent drop.
 func TestRenderExternalEventFallsBackToAggregateWithoutDeltas(t *testing.T) {
 	var buf bytes.Buffer
-	state := &externalTurnState{seenRunIDs: make(map[string]struct{}), deltaSeenRunIDs: make(map[string]struct{})}
+	state := newExternalTurnState()
 
 	renderExternalEvent(&buf, state, events.Event{Kind: events.KindTurnStart, SessionID: "s1", Detail: "hi"})
 	renderExternalEvent(&buf, state, events.Event{Kind: events.KindAssistant, SessionID: "s1", TurnID: "turn:1", Content: "whole reply at once"})
@@ -183,7 +192,7 @@ func decodeNDJSONLines(t *testing.T, s string) []ndjsonEvent {
 // production logic, not a reimplementation of it.
 func newBufSink(sess *chat.Session) (hub.Sink, *hubOutBuffer) {
 	buf := &hubOutBuffer{}
-	state := &externalTurnState{seenRunIDs: make(map[string]struct{}), deltaSeenRunIDs: make(map[string]struct{})}
+	state := newExternalTurnState()
 	return func(ev events.Event) {
 		if !externalEventBelongsToSession(sess, ev) {
 			return
@@ -332,7 +341,7 @@ func TestHubDoesNotBleedBetweenSiblingSessions(t *testing.T) {
 // open forever.
 func TestRenderExternalEventSubagentLifecycleDoesNotEndTheTurn(t *testing.T) {
 	var buf bytes.Buffer
-	state := &externalTurnState{seenRunIDs: make(map[string]struct{}), deltaSeenRunIDs: make(map[string]struct{})}
+	state := newExternalTurnState()
 
 	renderExternalEvent(&buf, state, events.Event{Kind: events.KindTurnStart, SessionID: "s1", Detail: "audit the repo"})
 	renderExternalEvent(&buf, state, events.Event{Kind: events.KindSubagentStart, SessionID: "s1", TurnID: "turn:1", ToolCallID: "c1", Name: "read_file"})
@@ -383,7 +392,7 @@ func TestRenderExternalCompaction(t *testing.T) {
 		t.Fatal(err)
 	}
 	var buf bytes.Buffer
-	state := &externalTurnState{seenRunIDs: make(map[string]struct{}), deltaSeenRunIDs: make(map[string]struct{})}
+	state := newExternalTurnState()
 	renderExternalEvent(&buf, state, events.Event{
 		Kind: events.KindCompaction, SessionID: "s1", TurnID: "turn:3",
 		Detail: "context compacted: 10000 -> 3000 tokens", Compaction: &typed,

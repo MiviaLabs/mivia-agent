@@ -80,32 +80,93 @@ func startLineModeHub(sess *chat.Session, jsonMode bool) func() {
 	return JoinHub(sess, chatHubSink(sess, jsonMode)).Leave
 }
 
+// maxTrackedExternalRuns bounds how many external runs this sink remembers.
+//
+// The previous state kept two unbounded sets and pruned them when a run's
+// terminal arrived - but terminals were not relayed, so nothing was ever
+// pruned and both sets grew for the life of the process. Relaying terminals
+// (which the hub now does) does not fix that either: with drop-oldest queues on
+// the path, a terminal is exactly the event a busy turn is most likely to lose,
+// so a prune-on-terminal design leaks whenever the relay sheds load.
+//
+// A fixed cap with oldest-first eviction leaks nothing regardless of what
+// arrives. The cost is that an evicted run can be re-minted if it is still live
+// after 64 later runs started, which is far outside anything a shared workspace
+// produces.
+const maxTrackedExternalRuns = 64
+
+// externalRun is one external turn this sink is relaying.
+type externalRun struct {
+	// userText is the submitting user's own text, carried by KindTurnStart's
+	// Detail, held until the external_turn_start line is written.
+	userText string
+	// started records that external_turn_start was written for this run, so no
+	// later event - including a duplicate or a reordered one - can mint a
+	// second turn for the same run_id.
+	started bool
+	// streamed records that at least one incremental chunk
+	// (events.Event.Detail=="delta", see internal/agent/loop.go's teeWriter)
+	// was relayed, so the turn-final aggregate is suppressed for this run and
+	// kept only as the fallback for a run that never streamed at all
+	// (FinalWriter unset, a non-interactive caller).
+	streamed bool
+	// done records that a terminal was relayed. The entry deliberately OUTLIVES
+	// the turn: it is what makes a late or duplicated event unable to re-open a
+	// finished run.
+	done bool
+}
+
 // externalTurnState tracks the external turns a hub sink is currently
-// relaying. seenRunIDs is a set, not a single scalar: the hub's workspace
-// (where hub.lock/hub.sock live) can be shared by several UNRELATED
-// sessions at once - e.g. mivia-agent-desktop's own sibling threads, which
-// default to one shared per-app workspace unless a project directory is
-// picked - so more than one external run can legitimately be in flight
-// through this sink at a time, keyed by its own run_id. pendingUserText is
-// still a single scalar: it only bridges a KindTurnStart to the very next
-// unseen run_id's first event, which - because a session's own turns are
-// already single-flight - only needs to survive that narrow window, even
-// when multiple OTHER sessions are relaying through the same hub
-// concurrently (their own KindTurnStart/first-event pairs are filtered out
-// entirely by the SessionID check below before reaching this state at
-// all).
+// relaying, keyed by run id. It is a map, not a single scalar, because the
+// hub's workspace (where hub.lock/hub.sock live) can be shared by several
+// UNRELATED sessions at once - e.g. mivia-agent-desktop's sibling threads,
+// which default to one shared per-app workspace unless a project directory is
+// picked - so more than one external run can legitimately be in flight here.
+//
+// Every queue between the publishing process and this sink is bounded
+// drop-oldest, so this receiver must tolerate LOSS as well as order: an event
+// may be the first one it ever sees for a run whose predecessors were dropped.
+// That is why a terminal for an unknown run is discarded rather than minting a
+// turn to immediately close (see renderExternalEvent).
 type externalTurnState struct {
-	mu              sync.Mutex
+	mu   sync.Mutex
+	runs map[string]*externalRun
+	// order is run ids in first-seen order, so eviction is oldest-first. It is
+	// append-only alongside runs and compacted at eviction time.
+	order []string
+	// pendingUserText bridges a KindTurnStart that carries NO run id to the
+	// next unseen run's first event. Every current publisher stamps the real
+	// turn id on KindTurnStart (chat.Session.publishTurnStart), so this is the
+	// compatibility path for an older peer relaying into a newer one - not the
+	// normal route.
 	pendingUserText string
-	seenRunIDs      map[string]struct{}
-	// deltaSeenRunIDs tracks which runs have already relayed at least one
-	// incremental content chunk (events.Event.Detail=="delta" - see
-	// internal/agent/loop.go's teeWriter) - see renderExternalTurnEvent's
-	// KindAssistant case for why the final aggregate event is skipped for
-	// a run that already streamed live, and kept as a fallback for one
-	// that never streamed at all (FinalWriter unset, a non-interactive
-	// caller).
-	deltaSeenRunIDs map[string]struct{}
+}
+
+func newExternalTurnState() *externalTurnState {
+	return &externalTurnState{runs: make(map[string]*externalRun)}
+}
+
+// run returns the tracked run for id, creating and bounding it if new.
+// Called with state.mu held.
+func (s *externalTurnState) run(id string) *externalRun {
+	if r, ok := s.runs[id]; ok {
+		return r
+	}
+	r := &externalRun{}
+	s.runs[id] = r
+	s.order = append(s.order, id)
+	for len(s.order) > maxTrackedExternalRuns {
+		delete(s.runs, s.order[0])
+		s.order = s.order[1:]
+	}
+	return r
+}
+
+// known reports whether id has been seen before, without creating it.
+// Called with state.mu held.
+func (s *externalTurnState) known(id string) bool {
+	_, ok := s.runs[id]
+	return ok
 }
 
 // chatHubSink returns a hub.Sink that renders another process's events for
@@ -126,10 +187,7 @@ func chatHubSink(sess *chat.Session, jsonMode bool) hub.Sink {
 	if !jsonMode {
 		return nil
 	}
-	state := &externalTurnState{
-		seenRunIDs:      make(map[string]struct{}),
-		deltaSeenRunIDs: make(map[string]struct{}),
-	}
+	state := newExternalTurnState()
 	return func(ev events.Event) {
 		if !externalEventBelongsToSession(sess, ev) {
 			return
@@ -154,7 +212,21 @@ func renderExternalEvent(w io.Writer, state *externalTurnState, ev events.Event)
 	state.mu.Lock()
 	defer state.mu.Unlock()
 	if ev.Kind == events.KindTurnStart {
-		state.pendingUserText = ev.Detail
+		if ev.TurnID == "" {
+			// Older peer: no run id to key on, so bridge the text to the next
+			// unseen run's first event.
+			state.pendingUserText = ev.Detail
+			return
+		}
+		r := state.run(ev.TurnID)
+		if r.started || r.done {
+			// A duplicate or reordered start for a run already under way. Minting
+			// again would split one external turn into two in the consumer's
+			// transcript.
+			return
+		}
+		r.userText = ev.Detail
+		startExternalTurn(w, state, ev.TurnID, ev.SessionID, r)
 		return
 	}
 	// Compaction is NOT a turn: it must not mint an "external_turn_start"
@@ -167,19 +239,42 @@ func renderExternalEvent(w io.Writer, state *externalTurnState, ev events.Event)
 	if ev.TurnID == "" {
 		return
 	}
-	if _, seen := state.seenRunIDs[ev.TurnID]; !seen {
-		state.seenRunIDs[ev.TurnID] = struct{}{}
-		writeNDJSONEvent(w, ndjsonEvent{
-			Type: "external_turn_start", RunID: ev.TurnID, SessionID: ev.SessionID,
-			Role: "user", Text: state.pendingUserText,
-		})
-		state.pendingUserText = ""
+	terminal := ev.Kind == events.KindTurnEnd || ev.Kind == events.KindError
+	if terminal && !state.known(ev.TurnID) {
+		// A terminal is the FIRST thing this sink has seen for this run: every
+		// hop on the relay path is bounded drop-oldest, so its predecessors
+		// were shed. Minting a turn here just to close it fabricates an empty
+		// turn in the consumer's transcript. The consumer has no turn open, so
+		// there is nothing to close - drop it.
+		return
 	}
-	renderExternalTurnEvent(w, state, ev)
-	if ev.Kind == events.KindTurnEnd || ev.Kind == events.KindError {
-		delete(state.seenRunIDs, ev.TurnID)
-		delete(state.deltaSeenRunIDs, ev.TurnID)
+	r := state.run(ev.TurnID)
+	if !r.started {
+		if r.userText == "" {
+			r.userText = state.pendingUserText
+			state.pendingUserText = ""
+		}
+		startExternalTurn(w, state, ev.TurnID, ev.SessionID, r)
 	}
+	renderExternalTurnEvent(w, r, ev)
+	if terminal {
+		// Marked, never deleted: the entry is what stops a late or duplicated
+		// event from re-opening a finished run. Eviction is by age instead
+		// (maxTrackedExternalRuns).
+		r.done = true
+	}
+}
+
+// startExternalTurn writes the external_turn_start line for a run and marks it
+// started. Called with state.mu held.
+func startExternalTurn(w io.Writer, state *externalTurnState, runID, sessionID string, r *externalRun) {
+	r.started = true
+	writeNDJSONEvent(w, ndjsonEvent{
+		Type: "external_turn_start", RunID: runID, SessionID: sessionID,
+		Role: "user", Text: r.userText,
+	})
+	r.userText = ""
+	state.pendingUserText = ""
 }
 
 // renderExternalCompaction relays a compaction another process committed on
@@ -199,18 +294,18 @@ func renderExternalCompaction(w io.Writer, ev events.Event) {
 // relaying the turn-end aggregate (Detail!="delta") when this run never
 // streamed one at all - a run that already got live deltas would otherwise
 // see the same content twice, once incrementally and once again in full.
-func renderExternalTurnEvent(w io.Writer, state *externalTurnState, ev events.Event) {
+func renderExternalTurnEvent(w io.Writer, r *externalRun, ev events.Event) {
 	switch ev.Kind {
 	case events.KindAssistant:
 		if ev.Content == "" {
 			break
 		}
 		if ev.Detail == "delta" {
-			state.deltaSeenRunIDs[ev.TurnID] = struct{}{}
+			r.streamed = true
 			writeNDJSONEvent(w, ndjsonEvent{Type: "external_chunk", RunID: ev.TurnID, Text: ev.Content})
 			break
 		}
-		if _, streamed := state.deltaSeenRunIDs[ev.TurnID]; !streamed {
+		if !r.streamed {
 			writeNDJSONEvent(w, ndjsonEvent{Type: "external_chunk", RunID: ev.TurnID, Text: ev.Content})
 		}
 	case events.KindThinking:
