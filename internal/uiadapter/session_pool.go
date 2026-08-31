@@ -406,7 +406,13 @@ func poolSyncOptions(sess *chat.Session, id string, res *config.Resolved, tokens
 			// See the matching comment in internal/clichat/chat_sync.go: both
 			// zero values are wrong rather than absent, and this is the only
 			// site that can supply them for the TUI surface.
-			ErrorMessage:   chat.TurnErrorMessage,
+			ErrorMessage: chat.TurnErrorMessage,
+			// From the PERSISTED identity, never a per-run random: attach
+			// compares this against the writer id on events the server holds
+			// past our cursor, so a value that changed every run would read
+			// our own previous run as foreign, end the remote session and
+			// fork (REVIEW CHANGE 8's permanent data loss).
+			WriterID:       ident.WriterID,
 			RedactToolArgs: tools.RedactToolArgs(),
 		},
 		OutboxDir:       chatsync.OutboxDirFor(sess.SessionDir, ident.LocalHandle),

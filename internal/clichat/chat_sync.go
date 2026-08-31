@@ -51,7 +51,13 @@ func cliSyncOptions(sess *chat.Session, res *config.Resolved, tokens chatsync.To
 			// absent: a nil ErrorMessage drops back to a default that does not
 			// know this app's sentinels, and a false RedactToolArgs reads as
 			// "the operator did not ask for redaction" when they may have.
-			ErrorMessage:   chat.TurnErrorMessage,
+			ErrorMessage: chat.TurnErrorMessage,
+			// From the PERSISTED identity, never a per-run random: attach
+			// compares this against the writer id on events the server holds
+			// past our cursor, so a value that changed every run would read
+			// our own previous run as foreign, end the remote session and
+			// fork (REVIEW CHANGE 8's permanent data loss).
+			WriterID:       ident.WriterID,
 			RedactToolArgs: tools.RedactToolArgs(),
 		},
 		OutboxDir:       chatsync.OutboxDirFor(sess.SessionDir, ident.LocalHandle),
