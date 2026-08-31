@@ -819,3 +819,46 @@ in commit `ac410387` (regression test `TestClientAppendEvents_MatchesWireEnvelop
 Update this document when a `fix` commit does not match any class, or when a class
 produces a new mechanism. Cite the commit. Do not remove a class because it stopped
 appearing; the probe is what keeps it away.
+
+## DC-27 An injected option's zero value is indistinguishable from a deliberate policy
+
+**Mechanism.** A package is made a leaf (or otherwise decoupled) by replacing a direct
+import with an injected option field: instead of calling `otherpkg.Policy()`, the type
+takes `Policy bool` or `Classify func(error) string` and the host supplies it. The
+decoupling is correct and the gate that motivated it passes. But the field's ZERO value
+is a legal, plausible policy - `false` reads as "the operator did not ask for this",
+`nil` reads as "use the default" - so a wiring site that never sets it is
+indistinguishable from one that deliberately chose that value.
+
+Every test of the decoupled package passes, because the package is doing exactly what it
+was told. The defect lives entirely in the caller, in a line that was never written.
+
+This is the sibling of DC-16: there the producer path exists and does not publish; here
+the consumer field exists and nobody supplies it. Both are absences, and an absence is
+what a test asserting present behaviour cannot see.
+
+**Why it recurs.** The refactor that creates the seam and the wiring that fills it are
+naturally two different commits, often two different authors. The first is reviewable and
+self-contained; the second looks like mechanical follow-up and is the one that gets
+dropped. A concurrent-agent tree makes this near-certain: the author who created the
+requirement does not own the files that must satisfy it.
+
+**Where it has appeared.** `internal/chatsync.ProjectorOptions` produced FOUR instances in
+one package: `WriterID` (adopt/fork dead in production while tests made it look live),
+`StreamAssistant` (contract T2's default, unset), and `ErrorMessage` + `RedactToolArgs`
+(introduced by the leaf refactor 3d1076ce, unwired until the commit citing this class).
+
+**Control.**
+
+- Where the zero value is not a safe default, do not accept one. Take the value as a
+  required positional argument to the constructor, so an unwired site is a COMPILE error
+  rather than a silent policy. This is what `NewClient(tokens TokenProvider, ...)` does
+  for the token provider, and it is strictly stronger than any test.
+- When the zero value must remain legal, test the PRODUCTION constructor, not a
+  hand-built options literal. A test that builds its own struct asserts the author's
+  intent; a test that calls `cliSyncOptions`/`poolSyncOptions` asserts the wiring.
+- Table the test over BOTH values of a boolean. A site that hardcodes either constant
+  passes one case and fails the other, so the assertion cannot be satisfied by a literal.
+- On any commit that converts an import into an injected option, enumerate the wiring
+  sites in the commit body and confirm each one. The seam and its callers are one change,
+  even when they are separate commits.
