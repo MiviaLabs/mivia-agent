@@ -71,8 +71,7 @@ func TestSessionPool_SyncPerPooledSession(t *testing.T) {
 	tmpDir := t.TempDir()
 	res := &config.Resolved{
 		Model: "test-model",
-		Sync: config.SyncConfig{
-			Enabled:          true,
+		Sync: config.ResolvedSync{
 			APIURL:           srv.URL,
 			PollWaitSeconds:  1,
 			HeartbeatSeconds: 1,
@@ -146,8 +145,7 @@ func TestSessionPool_SyncAuthenticatesEveryRequest(t *testing.T) {
 
 	res := &config.Resolved{
 		Model: "test-model",
-		Sync: config.SyncConfig{
-			Enabled:          true,
+		Sync: config.ResolvedSync{
 			APIURL:           srv.URL,
 			PollWaitSeconds:  1,
 			HeartbeatSeconds: 1,
@@ -221,8 +219,7 @@ func TestSessionPool_DoesNotExecuteRemoteInput(t *testing.T) {
 
 	res := &config.Resolved{
 		Model: "test-model",
-		Sync: config.SyncConfig{
-			Enabled:          true,
+		Sync: config.ResolvedSync{
 			APIURL:           srv.URL,
 			PollWaitSeconds:  1,
 			HeartbeatSeconds: 1,

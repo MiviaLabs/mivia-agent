@@ -5,12 +5,20 @@ import (
 	"strings"
 )
 
-// SyncConfig controls remote chat session synchronization.
-// Defaults are fail-closed: sync is disabled, tool IO and thinking are withheld.
+// SyncConfig is the `[sync]` table exactly as a mivia.toml holds it.
+//
+// Sync is not something a user turns on. It runs whenever the CLI has a
+// login, because a logged-in user asked for the remote product; `enabled =
+// false` exists only so a user who wants a local-only session can say so.
 type SyncConfig struct {
-	Enabled         bool `toml:"enabled"`
-	IncludeToolIO   bool `toml:"include_tool_io"`
-	IncludeThinking bool `toml:"include_thinking"`
+	// Enabled is a THREE-STATE opt-out switch: nil (key absent), true, or
+	// false. The nil state is load-bearing and must never be collapsed into
+	// false. "The user did not mention sync" means sync runs; "the user
+	// wrote enabled = false" means it does not, and a plain bool cannot tell
+	// those two apart, which would make the opt-out impossible to express.
+	Enabled         *bool `toml:"enabled"`
+	IncludeToolIO   bool  `toml:"include_tool_io"`
+	IncludeThinking bool  `toml:"include_thinking"`
 	// StreamAssistant turns on per-delta assistant streaming in the wire
 	// transcript. Contract T2 specifies streaming OFF by default: a durable
 	// log wants one settled message per turn, not the partial states a live
@@ -22,17 +30,56 @@ type SyncConfig struct {
 	MaxUnflushed     int    `toml:"max_unflushed"`
 }
 
-func resolveSyncConfig(cfg SyncConfig) SyncConfig {
-	if cfg.PollWaitSeconds <= 0 {
-		cfg.PollWaitSeconds = 25
+// ResolvedSync is the resolved `[sync]` configuration. It is a separate type
+// from SyncConfig on purpose: the file form has to carry "unset", and every
+// consumer downstream wants a settled answer instead of a pointer it could
+// forget to nil-check.
+type ResolvedSync struct {
+	// Disabled records an explicit `enabled = false`. It is the opt-out, not
+	// the activation switch: see Active.
+	Disabled bool
+
+	IncludeToolIO    bool
+	IncludeThinking  bool
+	StreamAssistant  bool
+	APIURL           string
+	PollWaitSeconds  int
+	HeartbeatSeconds int
+	MaxUnflushed     int
+}
+
+// Active reports whether chat sync must run for this configuration.
+// loggedIn is whether a local CLI session exists to authenticate with.
+//
+// Authentication is the activation rule. A logged-out CLI never uploads
+// anything, which is the fail-closed half; a logged-in one syncs unless the
+// user opted out, which is the "if I am logged in and using remote it must
+// just work" half.
+func (s ResolvedSync) Active(loggedIn bool) bool {
+	return loggedIn && !s.Disabled
+}
+
+func resolveSyncConfig(cfg SyncConfig) ResolvedSync {
+	out := ResolvedSync{
+		Disabled:         cfg.Enabled != nil && !*cfg.Enabled,
+		IncludeToolIO:    cfg.IncludeToolIO,
+		IncludeThinking:  cfg.IncludeThinking,
+		StreamAssistant:  cfg.StreamAssistant,
+		APIURL:           cfg.APIURL,
+		PollWaitSeconds:  cfg.PollWaitSeconds,
+		HeartbeatSeconds: cfg.HeartbeatSeconds,
+		MaxUnflushed:     cfg.MaxUnflushed,
 	}
-	if cfg.HeartbeatSeconds <= 0 {
-		cfg.HeartbeatSeconds = 30
+	if out.PollWaitSeconds <= 0 {
+		out.PollWaitSeconds = 25
 	}
-	if cfg.MaxUnflushed <= 0 {
-		cfg.MaxUnflushed = 5000
+	if out.HeartbeatSeconds <= 0 {
+		out.HeartbeatSeconds = 30
 	}
-	return cfg
+	if out.MaxUnflushed <= 0 {
+		out.MaxUnflushed = 5000
+	}
+	return out
 }
 
 // validateSyncConfig gates the transcript-upload endpoint.
@@ -47,16 +94,19 @@ func resolveSyncConfig(cfg SyncConfig) SyncConfig {
 // it here would let one environment variable redirect conversation content
 // onto a cleartext host that is not loopback.
 //
-// A disabled sync is not validated at all: an unused key is not a
-// misconfiguration, and refusing to start over one would make `enabled =
-// false` harder to reach than the state it protects against.
-func validateSyncConfig(cfg SyncConfig) error {
-	if !cfg.Enabled {
+// An EMPTY api_url is valid and is now the normal case: nothing asks a user
+// to configure sync, and the wiring falls back to the API root
+// internal/miviaauth already resolves. A disabled sync is not validated at
+// all: an unused key is not a misconfiguration, and refusing to start over
+// one would make the opt-out harder to reach than the state it protects
+// against.
+func validateSyncConfig(cfg ResolvedSync) error {
+	if cfg.Disabled {
 		return nil
 	}
 	raw := strings.TrimSpace(cfg.APIURL)
 	if raw == "" {
-		return fmt.Errorf("[sync] api_url is required when sync is enabled")
+		return nil
 	}
 	if _, err := ValidateHTTPSURL(raw); err == nil {
 		return nil

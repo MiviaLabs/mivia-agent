@@ -7,21 +7,8 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/chatsync"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
-	"github.com/MiviaLabs/mivia-agent/internal/miviaauth"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
-
-// syncTokenProvider resolves the logged-in CLI session into the token
-// provider chatsync requires. A nil result means there is nothing to
-// authenticate with, and the caller must not start sync: uploading
-// conversation content anonymously is the failure this returns nil to avoid.
-func syncTokenProvider() chatsync.TokenProvider {
-	svc, err := miviaauth.DefaultService()
-	if err != nil {
-		return nil
-	}
-	return chatsync.NewTokenProvider(svc)
-}
 
 // cliSyncOptions builds the SessionOptions the plain-CLI chat surface hands to
 // chatsync.OpenSession. It is a separate function so a test can drive the
@@ -40,7 +27,7 @@ func cliSyncOptions(sess *chat.Session, res *config.Resolved, tokens chatsync.To
 	return chatsync.SessionOptions{
 		TokenProvider: tokens,
 		ClientOptions: chatsync.ClientOptions{
-			BaseURL: res.Sync.APIURL,
+			BaseURL: chatsync.DefaultBaseURL(res.Sync.APIURL),
 		},
 		ProjectorOptions: chatsync.ProjectorOptions{
 			IncludeToolIO:   res.Sync.IncludeToolIO,
@@ -72,12 +59,20 @@ func cliSyncOptions(sess *chat.Session, res *config.Resolved, tokens chatsync.To
 	}
 }
 
+// attachCLISync starts chat sync for the plain-CLI surface and returns the
+// detach closure.
+//
+// Activation is authentication: a logged-in user syncs, a logged-out one does
+// not, and neither state needs a flag or a prompt. `enabled = false` is the
+// only way to say no while logged in - see config.ResolvedSync.Active. Every
+// refusal here is silent by design: sync failing is never a reason to break
+// the local chat the user actually asked for.
 func attachCLISync(sess *chat.Session, res *config.Resolved) func() {
-	if res == nil || !res.Sync.Enabled || sess == nil || sess.EventBus == nil {
+	if res == nil || sess == nil || sess.EventBus == nil {
 		return func() {}
 	}
-	tokens := syncTokenProvider()
-	if tokens == nil {
+	tokens := chatsync.DefaultTokenProvider()
+	if !res.Sync.Active(tokens != nil) {
 		return func() {}
 	}
 	opts := cliSyncOptions(sess, res, tokens)

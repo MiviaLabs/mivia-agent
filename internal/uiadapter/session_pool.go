@@ -11,7 +11,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
-	"github.com/MiviaLabs/mivia-agent/internal/miviaauth"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
@@ -348,8 +347,15 @@ func (p *SessionPool) GetOrCreate(sessionID string) (ports.Conversation, error) 
 	return conv, nil
 }
 
+// attachSyncLocked starts chat sync for one pooled session.
+//
+// Activation is authentication: a logged-in user syncs, a logged-out one does
+// not, and neither state needs a flag or a prompt. `enabled = false` is the
+// only way to say no while logged in - see config.ResolvedSync.Active. Every
+// refusal here is silent by design: sync failing is never a reason to break
+// the local chat the user actually asked for.
 func (p *SessionPool) attachSyncLocked(sess *chat.Session) {
-	if p.res == nil || !p.res.Sync.Enabled || sess == nil || sess.EventBus == nil {
+	if p.res == nil || sess == nil || sess.EventBus == nil {
 		return
 	}
 	id := sess.SessionID
@@ -359,8 +365,8 @@ func (p *SessionPool) attachSyncLocked(sess *chat.Session) {
 	if _, exists := p.syncSessions[id]; exists {
 		return
 	}
-	tokens := syncTokenProvider()
-	if tokens == nil {
+	tokens := chatsync.DefaultTokenProvider()
+	if !p.res.Sync.Active(tokens != nil) {
 		return
 	}
 	opts := poolSyncOptions(sess, id, p.res, tokens)
@@ -368,18 +374,6 @@ func (p *SessionPool) attachSyncLocked(sess *chat.Session) {
 	if err == nil {
 		p.syncSessions[id] = syncSess
 	}
-}
-
-// syncTokenProvider resolves the logged-in CLI session into the token
-// provider chatsync requires. A nil result means there is nothing to
-// authenticate with, and the caller must not start sync: uploading
-// conversation content anonymously is the failure this returns nil to avoid.
-func syncTokenProvider() chatsync.TokenProvider {
-	svc, err := miviaauth.DefaultService()
-	if err != nil {
-		return nil
-	}
-	return chatsync.NewTokenProvider(svc)
 }
 
 // poolSyncOptions builds the SessionOptions the TUI session pool hands to
@@ -397,7 +391,7 @@ func poolSyncOptions(sess *chat.Session, id string, res *config.Resolved, tokens
 	return chatsync.SessionOptions{
 		TokenProvider: tokens,
 		ClientOptions: chatsync.ClientOptions{
-			BaseURL: res.Sync.APIURL,
+			BaseURL: chatsync.DefaultBaseURL(res.Sync.APIURL),
 		},
 		ProjectorOptions: chatsync.ProjectorOptions{
 			IncludeToolIO:   res.Sync.IncludeToolIO,
