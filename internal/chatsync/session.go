@@ -2,7 +2,6 @@ package chatsync
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -112,6 +111,11 @@ type SyncSession struct {
 	// delivery goroutine and must never contend for a lock the outbox writer
 	// holds across an fsync.
 	running atomic.Bool
+
+	// retryBase and retryAt hold the jittered push-retry schedule. They are
+	// touched only by the worker goroutine, so they need no lock.
+	retryBase time.Duration
+	retryAt   time.Time
 
 	mu      sync.Mutex
 	stopCh  chan struct{}
@@ -377,118 +381,4 @@ func (s *SyncSession) shutdownCtx(base context.Context) context.Context {
 	default:
 	}
 	return base
-}
-
-func (s *SyncSession) workerLoop(ctx context.Context) {
-	defer close(s.doneCh)
-
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		// A 409 ended the remote session. There is nothing left to push, so
-		// exit without a final flush rather than replay into a dead session.
-		if s.remoteEnded.Load() {
-			return
-		}
-		select {
-		case <-s.stopCh:
-			s.drainAndFlushFinal(s.shutdownCtx(ctx))
-			return
-		case <-ctx.Done():
-			s.drainAndFlushFinal(ctx)
-			return
-		case ev := <-s.eventCh:
-			s.processEvent(ctx, ev)
-		case <-s.flushCh:
-			s.flush(ctx)
-		case <-ticker.C:
-			s.flush(ctx)
-		}
-	}
-}
-
-func (s *SyncSession) flush(ctx context.Context) {
-	if s.remoteEnded.Load() {
-		return
-	}
-	sessionID := s.SessionID()
-
-	_, err := FlushOutbox(ctx, s.client, s.outbox, sessionID)
-	if err == nil {
-		return
-	}
-	// ErrConflict: the server ended this session. ErrAuthStop: the settled
-	// 401 policy - ErrReauthRequired / ErrSessionLost cannot be recovered
-	// without `mivia login`, which this path must never prompt for. Both are
-	// terminal for sync and neither touches the local chat.
-	if errors.Is(err, ErrConflict) || errors.Is(err, ErrAuthStop) {
-		s.handleRemoteEnd(ctx)
-	}
-}
-
-// handleRemoteEnd latches the remote-ended state and shuts the pusher, the
-// poller and the heartbeat down. It never creates a replacement session: a 409
-// on append means the server ended this session, which is terminal for sync.
-// The local chat is untouched.
-//
-// It is called from the worker goroutine, so the (blocking) runner stops are
-// detached. Both runner Stop methods are idempotent, so a later Stop(ctx) that
-// races this one is safe.
-func (s *SyncSession) handleRemoteEnd(ctx context.Context) {
-	if !s.remoteEnded.CompareAndSwap(false, true) {
-		return
-	}
-	go func() {
-		if s.heartbeat != nil {
-			s.heartbeat.Stop(ctx)
-		}
-		if s.poller != nil {
-			s.poller.Stop(ctx)
-		}
-	}()
-}
-
-// applyForkedAttach re-bases the outbox onto a session that AttachSession
-// forked because a foreign writer owned the old one, and records a
-// sync.forked marker so a viewer can follow the new session.
-func (s *SyncSession) applyForkedAttach() error {
-	unflushedCount, err := s.outbox.ResetForFork()
-	if err != nil {
-		return fmt.Errorf("reset outbox for fork: %w", err)
-	}
-	s.projector.ResetSeq(int64(unflushedCount))
-
-	we := s.projector.nextWireEvent(TypeSyncForked, &SyncForkedPayload{
-		Envelope: Envelope{
-			V:    1,
-			At:   time.Now(),
-			Turn: "synthetic:fork",
-		},
-		NewSessionID: s.sessionID,
-	})
-	if err := s.appendLocked([]WireEvent{we}); err != nil {
-		return fmt.Errorf("append fork marker: %w", err)
-	}
-	return nil
-}
-
-func (s *SyncSession) drainAndFlushFinal(ctx context.Context) {
-	for {
-		select {
-		case ev := <-s.eventCh:
-			s.processEvent(ctx, ev)
-		default:
-			goto drained
-		}
-	}
-drained:
-	s.mu.Lock()
-	wireEvents := s.projector.Flush(s.currentDrops())
-	if len(wireEvents) > 0 {
-		_ = s.appendLocked(wireEvents)
-	}
-	s.mu.Unlock()
-
-	s.flush(ctx)
 }
