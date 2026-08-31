@@ -152,6 +152,34 @@ func (h *MultiStepHandler) Invoke(ctx context.Context, req runtime.Request) (jso
 	return h.run(ctx, taskPrompt, req)
 }
 
+// originForRequest builds the attribution stamped onto every event a subagent
+// loop emits.
+//
+// TaskID is the correlation key: coordinator calls carry the workflow
+// attempt's task id (wft-...) on the context, so bus, ledger, and attempt
+// events share one key; other callers fall back to the request id.
+//
+// SessionID and TurnID serve a different consumer. The subagent publish path
+// reaches the event bus through package-level state that has no session
+// context of its own, so an event that does not carry them is published with
+// an empty SessionID - and internal/hub's receiver drops every event whose
+// SessionID does not match its own, which made every subagent invisible to a
+// second live surface.
+func originForRequest(ctx context.Context, req runtime.Request) agent.EventOrigin {
+	taskID := req.ID
+	if id, ok := runtime.TaskIdentityFrom(ctx); ok && id.TaskID != "" {
+		taskID = id.TaskID
+	}
+	return agent.EventOrigin{
+		TaskID:          taskID,
+		Agent:           req.Name,
+		Depth:           req.Depth + 1,
+		TaskDescription: taskDescriptionFromInput(req.Input),
+		SessionID:       req.SessionID,
+		TurnID:          req.TurnID,
+	}
+}
+
 func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runtime.Request) (out json.RawMessage, err error) {
 	scoped, err := h.newScopedLoop()
 	if err != nil {
@@ -167,23 +195,10 @@ func (h *MultiStepHandler) run(ctx context.Context, taskPrompt string, req runti
 	callCtx, cancel := h.timeoutContext(ctx, req)
 	defer cancel()
 
-	// Attribution key: coordinator calls carry the workflow attempt's task id
-	// (wft-...) on the context. Use it so bus, ledger, and attempt events share
-	// one correlation key. Non-coordinator callers fall back to the request id.
-	taskID := req.ID
-	if id, ok := runtime.TaskIdentityFrom(ctx); ok && id.TaskID != "" {
-		taskID = id.TaskID
-	}
-
 	// Every event this loop emits - including heartbeats - is stamped with
 	// the run's identity so the parent UI can attribute it. Without the
 	// stamp, parallel subagents are indistinguishable downstream.
-	stamped := StampEventOrigin(h.OnEvent, agent.EventOrigin{
-		TaskID:          taskID,
-		Agent:           req.Name,
-		Depth:           req.Depth + 1,
-		TaskDescription: taskDescriptionFromInput(req.Input),
-	})
+	stamped := StampEventOrigin(h.OnEvent, originForRequest(ctx, req))
 
 	// A run that ends must say so, and say HOW it ended. Nested tool events
 	// only ever report tool lifecycle, so without this terminal signal the

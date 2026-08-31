@@ -104,6 +104,24 @@ type EventOrigin struct {
 	// EventOrigin) and for any subagent kind that doesn't stamp origin at
 	// all (a one-shot delegate has no nested tool calls to attribute).
 	TaskDescription string
+	// SessionID and TurnID are the conversation and turn the subagent is
+	// working inside, copied from the runtime.Request that dispatched it.
+	//
+	// They are on the ORIGIN rather than captured where the event is published
+	// because the subagent publish path runs through package-level state
+	// (clichat's global bus and progress sink), which has no per-session
+	// context to capture: the dispatcher is shared by pointer through the
+	// copied tool registry, so construction-time capture would attribute every
+	// subagent to whichever session happened to build it first. Carrying the
+	// identity on the event is the only place it is unambiguous.
+	//
+	// Without them a subagent's events reach the bus with an empty SessionID,
+	// and internal/hub's receiver drops every event whose SessionID does not
+	// match its own - so a second live surface saw the root loop's tool calls
+	// and none of its subagents'. Empty for the root loop, which publishes
+	// through agent.emit and gets both from Options instead.
+	SessionID string
+	TurnID    string
 }
 
 // IsZero reports whether the origin is the root loop.
