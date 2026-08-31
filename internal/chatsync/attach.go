@@ -14,9 +14,27 @@ type SessionAttachment struct {
 	ForkedFrom string
 }
 
+func isValidUUID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i, c := range s {
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			if c != '-' {
+				return false
+			}
+		} else {
+			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // AttachSession connects to an existing remote session or creates a new remote session.
 func AttachSession(ctx context.Context, client *Client, outbox *Outbox, params CreateSessionParams, existingSessionID string) (*SessionAttachment, error) {
-	if existingSessionID != "" {
+	if existingSessionID != "" && isValidUUID(existingSessionID) {
 		sess, err := client.GetSession(ctx, existingSessionID)
 		if err == nil {
 			return &SessionAttachment{
