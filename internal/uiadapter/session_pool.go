@@ -14,7 +14,6 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/miviaauth"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
-	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
 
@@ -368,7 +367,6 @@ func (p *SessionPool) attachSyncLocked(sess *chat.Session) {
 	syncSess, err := chatsync.OpenSession(context.Background(), sess.EventBus, id, opts)
 	if err == nil {
 		p.syncSessions[id] = syncSess
-		go p.forwardRemoteInputs(sess, syncSess)
 	}
 }
 
@@ -403,21 +401,13 @@ func poolSyncOptions(sess *chat.Session, id string, res *config.Resolved, tokens
 		PollWaitSeconds: res.Sync.PollWaitSeconds,
 		HeartbeatPeriod: config.SaturatingSeconds(res.Sync.HeartbeatSeconds),
 		CreateTitle:     "Session",
-		EnablePolling:   true,
-	}
-}
-
-func (p *SessionPool) forwardRemoteInputs(sess *chat.Session, syncSess *chatsync.SyncSession) {
-	inputs := syncSess.Inputs()
-	if inputs == nil {
-		return
-	}
-	for input := range inputs {
-		p.mu.Lock()
-		conv, ok := p.convs[sess.SessionID]
-		p.mu.Unlock()
-		if ok && conv != nil {
-			_, _ = conv.Send(context.Background(), intent.Send{Text: input.Body})
-		}
+		// Remote input is DISABLED. The poller fed server-supplied text
+		// straight into conv.Send as a local turn, with no confirmation,
+		// into a runtime whose approval default auto-approves run_command
+		// (internal/config/bootstrap.go). chatsync.InputPoller and
+		// RemoteInput stay in place for the S9 approval-port redesign and
+		// the web viewer's reply path, but they are unreachable from here
+		// until that lands. Do not read the poller as live code.
+		EnablePolling: false,
 	}
 }
