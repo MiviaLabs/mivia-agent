@@ -207,6 +207,7 @@ fmt-check:
 go-check: fmt-check
 	@go test ./...
 	@go vet ./...
+	@go vet -tags=livechat ./internal/chatsync
 	@go build -ldflags "$(VERSION_LDFLAGS)" -o $(BINARY) $(CMD_PKG)
 
 # verify-fast is the Go-only subset of verify: gofmt + vet + tests + build +
@@ -263,6 +264,7 @@ verify-go: fmt-check
 	trap 'rm -f "$$profile"' EXIT; \
 	go test ./... -count=1 -coverpkg=./... -coverprofile="$$profile"; \
 	go vet ./...; \
+	go vet -tags=livechat ./internal/chatsync; \
 	go build -ldflags "$(VERSION_LDFLAGS)" -o $(BINARY) $(CMD_PKG); \
 	$(MAKE) --no-print-directory diff-coverage DIFF_COVERAGE_PROFILE="$$profile"
 
@@ -362,6 +364,7 @@ race:
 
 vet:
 	@go vet ./...
+	@go vet -tags=livechat ./internal/chatsync
 
 build:
 	@go build -ldflags "$(VERSION_LDFLAGS)" -o $(BINARY) $(CMD_PKG)
