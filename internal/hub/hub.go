@@ -23,14 +23,18 @@ import (
 // Workflow/invocation/UI-system kinds are deliberately excluded: they are
 // process-local concerns (e.g. terminal resize), not conversation content.
 var relayedKinds = []events.Kind{
-	// KindTurnStart's Detail carries the user's own submitted text (see
-	// tui_start.go's existing publish and chat_hub.go's publishTurnStartForHub)
-	// - a hub receiver treats it as "a new external turn is starting," using
-	// Detail for the synthetic user turn it inserts. Its TurnID is a
-	// throwaway, surface-local label (never the same id space as the
-	// TurnID on every event that follows) - correlation with those later
-	// events relies on the single-turn-in-flight ordering that already holds
-	// for a session, not on TurnID equality.
+	// KindTurnStart's Detail carries the user's own submitted text (published
+	// by chat.Session.publishTurnStart, internal/chat/turn_events.go) - a hub
+	// receiver treats it as "a new external turn is starting," using Detail for
+	// the synthetic user turn it inserts.
+	//
+	// Its TurnID IS the turn's real id, the same "turn:N" every later event of
+	// that turn carries, so a receiver may correlate on TurnID equality. That
+	// was not always true: the publish used to happen in the surface, before
+	// the id was minted, so this comment used to warn that the id was "a
+	// throwaway, surface-local label". Moving the publish into the session
+	// fixed it, and also gave the TUI - which had no publish at all - the turn
+	// boundaries every other surface had.
 	events.KindTurnStart,
 	events.KindAssistant,
 	events.KindThinking,
