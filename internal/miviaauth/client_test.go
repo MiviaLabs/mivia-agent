@@ -517,3 +517,52 @@ func TestLoginContextCancellationReturnsPromptly(t *testing.T) {
 		t.Fatalf("Login() took %v, want a prompt return after context timeout", elapsed)
 	}
 }
+
+// TestNewClientRejectsVersionedBaseURL covers a real footgun: the deployment's
+// browsable URL ends in the version segment, so that is what gets copied out of
+// a dashboard or a chat message. baseURL is the API ROOT and client.go puts the
+// version in the request path, so such a value produces /v1/v1/auth/login - a
+// 404 with nothing in it explaining why.
+func TestNewClientRejectsVersionedBaseURL(t *testing.T) {
+	for _, url := range []string{
+		"https://example.com/v1",
+		"https://example.com/v1/",
+		"https://example.com/v2",
+		"https://example.com/v42",
+		"https://example.com/api/v3",
+		"https://example.com/V1",
+		"https://mivia-api-development.up.railway.app/v1",
+		"http://127.0.0.1:8090/v1",
+	} {
+		t.Run(url, func(t *testing.T) {
+			_, err := NewClient(url)
+			if err == nil {
+				t.Fatalf("NewClient(%q) error = nil, want rejection: the version belongs to the request path", url)
+			}
+			// The message has to say what to do, not just that it refused.
+			if !strings.Contains(err.Error(), "version") {
+				t.Errorf("NewClient(%q) error = %v; the message must name the version segment so the fix is obvious", url, err)
+			}
+		})
+	}
+}
+
+// TestNewClientAcceptsUnversionedPaths keeps the rejection narrow. A base URL
+// may legitimately carry a path prefix; only a trailing vN segment is the
+// mistake being caught here.
+func TestNewClientAcceptsUnversionedPaths(t *testing.T) {
+	for _, url := range []string{
+		"https://example.com",
+		"https://example.com/",
+		"https://example.com/api",
+		"https://example.com/version",
+		"https://example.com/v1beta",
+		"https://example.com/vnext",
+	} {
+		t.Run(url, func(t *testing.T) {
+			if _, err := NewClient(url); err != nil {
+				t.Errorf("NewClient(%q) error = %v, want nil", url, err)
+			}
+		})
+	}
+}
