@@ -111,7 +111,16 @@ func TestLiveChatSessionPayloadBoundIsAClientError(t *testing.T) {
 	if status == http.StatusOK {
 		t.Fatalf("a 70 KiB payload was ACCEPTED; the documented 64 KiB ceiling is not enforced on this path")
 	}
-	t.Logf("oversized payload rejected with %d", status)
+	// ASSERT the status, do not merely log it. The client's poison
+	// classification keys on 400 exactly (client.go classify): a 413 or 422
+	// falls to the default branch, is not ErrBadRequest, and gets retried on
+	// the flush ticker for the life of the process against a body that can
+	// never be accepted. This probe is the only thing that pins which status
+	// the deployed API really answers, so logging it left that branch resting
+	// on an unverified assumption.
+	if status != http.StatusBadRequest {
+		t.Fatalf("an oversized payload returned %d, want 400; the client classifies only 400 as poison, so anything else is retried for ever. body: %s", status, truncate(raw))
+	}
 }
 
 // TestLiveChatSessionRejectsIntraBatchGap probes whether the sequence check
@@ -138,7 +147,12 @@ func TestLiveChatSessionRejectsIntraBatchGap(t *testing.T) {
 		_ = a.decodeInto(raw, &got)
 		t.Fatalf("a batch containing an internal gap (seq 1 then 99) was accepted: lastSeq=%d insertedCount=%d. The session now reports a high-water mark of %d with 97 seqs that never existed, and a restarting CLI would resume past them.", got.LastSeq, got.InsertedCount, got.LastSeq)
 	}
-	t.Logf("intra-batch gap rejected with %d", status)
+	// ASSERT, for the same reason as the payload bound above: the offline
+	// fake commits to 400 here, and only this probe can say whether the
+	// deployed API agrees.
+	if status != http.StatusBadRequest {
+		t.Fatalf("an intra-batch gap returned %d, want 400; the offline fake models 400, so any other status makes every gap test that relies on it a fiction. body: %s", status, truncate(raw))
+	}
 }
 
 // TestLiveChatSessionConsumeIsExactlyOnce probes the consume handshake.
