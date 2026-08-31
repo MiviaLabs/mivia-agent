@@ -18,4 +18,9 @@
 // appended to an ended session. All four were fixed in apps/api and verified
 // green against the deployment on 2026-08-31, so a red run now means a real
 // regression rather than known debt.
+//
+// It also found the cross-replica fan-out failure that a single-replica run
+// cannot see: with two replicas, an SSE stream only received an append served
+// by its own instance. See TestLiveChatSessionFanOutReachesEveryStream, and
+// run it against more than one replica or it proves nothing.
 package chatsync
