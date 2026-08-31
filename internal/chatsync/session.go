@@ -186,9 +186,10 @@ func OpenSession(ctx context.Context, bus *events.Bus, chatSessionID string, opt
 	// restart for no sync at all.
 	_ = opts.persistRemoteSessionID(activeSessionID)
 	localSessionID := chatSessionID
-	initialSeq := att.ServerSeq
-	if maxSeq := outbox.MaxSeq(); maxSeq > initialSeq {
-		initialSeq = maxSeq
+	initialSeq, err := openingSeq(outbox, att)
+	if err != nil {
+		_ = outbox.Close()
+		return nil, err
 	}
 
 	s := &SyncSession{
@@ -232,6 +233,35 @@ func OpenSession(ctx context.Context, bus *events.Bus, chatSessionID string, opt
 	go s.workerLoop(ctx)
 
 	return s, nil
+}
+
+// openingSeq resolves the seq the projector starts numbering from.
+//
+// serverLastSeq is authoritative, never max(local, server)
+// (chat-sync-cli-slice.md:86, :253). Assigned-but-unsent seqs do not survive a
+// restart as numbers - only as CONTENT - because the counter is re-derived
+// from the server (REVIEW CHANGE 4). Keeping the local high-water mark opens
+// the stream past the server's next expected seq, which is the sequence-gap
+// 400: the runtime rebase then recovers the outbox onto the server's mark
+// while the projector keeps its stale counter, so the very next event gaps
+// again at the SAME mark - and a second gap at one mark is what the rebase
+// loop guard reads as "the rebase moved nothing" and poisons sync on.
+//
+// The unflushed events are not discarded. They are renumbered onto the server
+// mark, which is the same operation a fork does with base 0.
+func openingSeq(outbox *Outbox, att *SessionAttachment) (int64, error) {
+	if outbox.MaxSeq() <= att.ServerSeq {
+		return att.ServerSeq, nil
+	}
+	// A fork rebases onto 0 in applyForkedAttach and must not be rebased twice.
+	if att.ForkedFrom != "" {
+		return att.ServerSeq, nil
+	}
+	n, err := outbox.Rebase(att.ServerSeq)
+	if err != nil {
+		return 0, fmt.Errorf("rebase outbox onto the server mark: %w", err)
+	}
+	return att.ServerSeq + int64(n), nil
 }
 
 // HandleEvent processes incoming events via non-blocking send to an internal channel.
