@@ -220,7 +220,7 @@ func newChatHubSink(sess *chat.Session, w io.Writer) hub.Sink {
 		if !externalEventBelongsToSession(sess, ev) {
 			return
 		}
-		reportExternalLoss(w, state, r)
+		reportExternalLoss(w, state, ev.SessionID, r)
 		renderExternalEvent(w, state, ev)
 	}
 }
@@ -237,7 +237,7 @@ func newChatHubSink(sess *chat.Session, w io.Writer) hub.Sink {
 //
 // The counter only ever advances, so this emits per jump rather than per
 // event: a quiet stream produces nothing at all.
-func reportExternalLoss(w io.Writer, state *externalTurnState, r hub.Receipt) {
+func reportExternalLoss(w io.Writer, state *externalTurnState, sessionID string, r hub.Receipt) {
 	// The write stays UNDER the lock. The hub calls this sink from one
 	// goroutine per connected client (hub.owner.accept), so releasing the lock
 	// before writing lets a receipt of 9 claim the counter, get overtaken, and
@@ -252,7 +252,8 @@ func reportExternalLoss(w io.Writer, state *externalTurnState, r hub.Receipt) {
 	}
 	state.dropped = r.Dropped
 	writeNDJSONEvent(w, ndjsonEvent{
-		Type: "external_dropped", Dropped: r.Dropped - last, TotalDropped: r.Dropped,
+		Type: "external_dropped", SessionID: sessionID,
+		Dropped: r.Dropped - last, TotalDropped: r.Dropped,
 	})
 }
 

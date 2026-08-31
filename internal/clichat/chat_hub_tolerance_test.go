@@ -172,16 +172,16 @@ func TestExternalLossIsReportedOncePerAdvance(t *testing.T) {
 	state := newExternalTurnState()
 
 	// A quiet stream reports nothing at all.
-	reportExternalLoss(&buf, state, hub.Receipt{})
-	reportExternalLoss(&buf, state, hub.Receipt{})
+	reportExternalLoss(&buf, state, "s1", hub.Receipt{})
+	reportExternalLoss(&buf, state, "s1", hub.Receipt{})
 	if buf.Len() != 0 {
 		t.Fatalf("a lossless stream produced output: %q", buf.String())
 	}
 
-	reportExternalLoss(&buf, state, hub.Receipt{Dropped: 4})
+	reportExternalLoss(&buf, state, "s1", hub.Receipt{Dropped: 4})
 	// The same total again is not a new loss.
-	reportExternalLoss(&buf, state, hub.Receipt{Dropped: 4})
-	reportExternalLoss(&buf, state, hub.Receipt{Dropped: 10})
+	reportExternalLoss(&buf, state, "s1", hub.Receipt{Dropped: 4})
+	reportExternalLoss(&buf, state, "s1", hub.Receipt{Dropped: 10})
 
 	lines := decodeNDJSONLines(t, buf.String())
 	if len(lines) != 2 {
@@ -209,9 +209,9 @@ func TestExternalLossIgnoresARegressingCount(t *testing.T) {
 	var buf bytes.Buffer
 	state := newExternalTurnState()
 
-	reportExternalLoss(&buf, state, hub.Receipt{Dropped: 9})
+	reportExternalLoss(&buf, state, "s1", hub.Receipt{Dropped: 9})
 	buf.Reset()
-	reportExternalLoss(&buf, state, hub.Receipt{Dropped: 2})
+	reportExternalLoss(&buf, state, "s1", hub.Receipt{Dropped: 2})
 
 	if buf.Len() != 0 {
 		t.Fatalf("a regressing count produced a loss report: %q", buf.String())
@@ -267,4 +267,27 @@ func TestExternalEvictionKeepsALiveRun(t *testing.T) {
 	if !state.known("long") {
 		t.Fatal("the still-streaming run was evicted; eviction is first-seen, not least-recently-used")
 	}
+}
+
+// TestExternalDroppedCarriesTheSession pins that a loss report is attributable.
+// Every other external_* line carries session_id; without it a consumer reading
+// several sidecars cannot tell whose stream lost events, and the counter is
+// per-CONNECTION - shared by every session on the workspace - so the ambiguity
+// is real rather than cosmetic.
+func TestExternalDroppedCarriesTheSession(t *testing.T) {
+	sess := newHubTestSession(t, "s1")
+	sink, out := newBufSink(sess)
+
+	sink(events.Event{Kind: events.KindAssistant, SessionID: "s1", TurnID: "turn:1", Content: "a", Detail: "delta"}, hub.Receipt{Dropped: 3})
+
+	for _, l := range decodeNDJSONLines(t, out.String()) {
+		if l.Type != "external_dropped" {
+			continue
+		}
+		if l.SessionID != "s1" {
+			t.Fatalf("external_dropped session_id = %q, want %q", l.SessionID, "s1")
+		}
+		return
+	}
+	t.Fatal("no external_dropped line emitted")
 }

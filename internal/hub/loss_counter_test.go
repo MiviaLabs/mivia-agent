@@ -219,3 +219,25 @@ func TestOwnerSinkAccumulatesLossPerSource(t *testing.T) {
 		t.Fatalf("accumulated total = %d, want %d (A: 40 then +5, B: 0 then +3)", got[len(got)-1], want)
 	}
 }
+
+// TestSendCountsTheEventItCannotEnqueue closes the last silent drop on the
+// send path. send frees a slot and retries, but the retry has its own default
+// branch: if a concurrent writeLoop refills the queue in between, the event is
+// discarded and, before this, not counted. A later event carries the corrected
+// total, so unlike the teardown losses this one is genuinely reportable.
+func TestSendCountsTheEventItCannotEnqueue(t *testing.T) {
+	c := newIdleConn(t)
+	for range connBufSize {
+		c.send(WireEvent{Kind: "assistant"})
+	}
+	before := c.Dropped()
+
+	// Fill the freed slot from underneath the retry, so the final send fails.
+	c.sendWithRefill(WireEvent{Kind: "assistant"}, func() {
+		c.out <- WireEvent{Kind: "filler"}
+	})
+
+	if got := c.Dropped(); got != before+2 {
+		t.Fatalf("dropped = %d, want %d: the displaced event AND the one that could not be enqueued", got, before+2)
+	}
+}
