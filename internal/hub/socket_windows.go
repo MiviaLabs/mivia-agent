@@ -26,7 +26,12 @@ func pipeName(storeDir string) string {
 }
 
 func listen(storeDir string) (net.Listener, error) {
-	return winio.ListenPipe(pipeName(storeDir), nil)
+	// Never nil: a nil PipeConfig makes go-winio fall back to the system
+	// default named-pipe DACL, which every local user can read. hubPipeSDDL is
+	// the Unix listener's 0600, expressed for Windows.
+	return winio.ListenPipe(pipeName(storeDir), &winio.PipeConfig{
+		SecurityDescriptor: hubPipeSDDL,
+	})
 }
 
 func dial(storeDir string) (net.Conn, error) {
