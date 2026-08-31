@@ -282,10 +282,23 @@ func TruncatePreviewUTF8(s string, maxBytes int) string {
 	if maxBytes <= 0 {
 		return ""
 	}
-	for maxBytes > 0 && !utf8.ValidString(s[:maxBytes]) {
-		maxBytes--
+	// Back off across the rune at the CUT BOUNDARY only (DC-6). Re-validating
+	// the whole prefix (utf8.ValidString(s[:maxBytes])) trims all the way back
+	// to the first invalid byte ANYWHERE in s, so one stray byte in a tool
+	// preview line collapses the whole preview; it also rescans the prefix on
+	// every step (O(n^2)). DecodeLastRuneInString reports (RuneError, 1) only
+	// for a byte that cannot start a rune or an incomplete trailing sequence;
+	// a real U+FFFD decodes with size 3 and is kept. Mirrors
+	// chatsync.truncateString.
+	cut := s[:maxBytes]
+	for len(cut) > 0 {
+		r, size := utf8.DecodeLastRuneInString(cut)
+		if r != utf8.RuneError || size > 1 {
+			break
+		}
+		cut = cut[:len(cut)-1]
 	}
-	return s[:maxBytes]
+	return cut
 }
 
 // ResultLooksLikeDiff reports whether result carries unified-diff markers

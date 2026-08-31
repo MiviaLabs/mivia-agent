@@ -233,8 +233,19 @@ func truncatePreviewUTF8(s string, maxBytes int) string {
 	if maxBytes <= 0 {
 		return ""
 	}
-	for maxBytes > 0 && !utf8.ValidString(s[:maxBytes]) {
-		maxBytes--
+	// Back off across the rune at the CUT BOUNDARY only (DC-6). Re-validating
+	// the whole prefix (utf8.ValidString(s[:maxBytes])) trims all the way back
+	// to the first invalid byte ANYWHERE in s - a model-supplied tool name
+	// carrying one raw byte would make the error name nothing at all - and
+	// costs O(n^2). A real U+FFFD decodes with size 3 and is kept. Mirrors
+	// chatsync.truncateString.
+	cut := s[:maxBytes]
+	for len(cut) > 0 {
+		r, size := utf8.DecodeLastRuneInString(cut)
+		if r != utf8.RuneError || size > 1 {
+			break
+		}
+		cut = cut[:len(cut)-1]
 	}
-	return s[:maxBytes]
+	return cut
 }
