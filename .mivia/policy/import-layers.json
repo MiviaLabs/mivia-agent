@@ -57,7 +57,9 @@
     ],
     "internal/chatsync": [
       "internal/chat",
-      "internal/events"
+      "internal/events",
+      "internal/redact",
+      "internal/tools"
     ],
     "internal/cli": [
       "internal/chat",
