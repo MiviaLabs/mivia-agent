@@ -84,6 +84,11 @@ func (s *SyncSession) flushNow(ctx context.Context) {
 	// byte-identically, so the identical request would go out on every tick.
 	case errors.Is(err, ErrBadRequest):
 		s.handleBadRequest(ctx, err)
+	// The server holds a different transcript at the seqs this client sent.
+	// Resending cannot displace it, and advancing over it would discard the
+	// only copies of those events that exist.
+	case errors.Is(err, ErrTranscriptConflict):
+		s.poison(ctx, err)
 	default:
 		s.scheduleRetry()
 	}
