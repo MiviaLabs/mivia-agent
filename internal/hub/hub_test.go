@@ -45,14 +45,23 @@ func waitFor(t *testing.T, timeout time.Duration, cond func() bool) {
 
 // collector is a concurrency-safe events.Event sink for assertions.
 type collector struct {
-	mu  sync.Mutex
-	evs []events.Event
+	mu      sync.Mutex
+	evs     []events.Event
+	dropped uint64
 }
 
-func (c *collector) sink(ev events.Event) {
+func (c *collector) sink(ev events.Event, r Receipt) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.evs = append(c.evs, ev)
+	c.dropped = r.Dropped
+}
+
+// lastDropped returns the cumulative loss count from the most recent receipt.
+func (c *collector) lastDropped() uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.dropped
 }
 
 func (c *collector) count() int {
@@ -193,6 +202,13 @@ func TestReconnectAfterOwnerExit(t *testing.T) {
 		survivorSess.EventBus.Publish(events.Event{Kind: events.KindAssistant, SessionID: "sess-survivor", TurnID: "turn:1", Content: "still alive"})
 		return newcomerSink.count() > 0
 	})
+	// Assert what arrived, not merely that something did: the takeover is only
+	// proven if the newcomer receives the SURVIVOR's event, which can only
+	// reach it through a hub the survivor now owns. Counting alone would also
+	// be satisfied by the newcomer's own traffic echoing back.
+	if got := newcomerSink.last(); got.Content != "still alive" || got.SessionID != "sess-survivor" {
+		t.Fatalf("newcomer received %+v, want the survivor's event relayed by the re-elected hub", got)
+	}
 }
 
 func TestToWireFromWireRoundTrip(t *testing.T) {

@@ -85,13 +85,14 @@ All mivia processes that share one store directory see each other's activity thr
 | `external_done` | The other process's turn finished. |
 | `external_error` | The other process's turn failed. |
 | `external_compaction` | Another process compacted this session's context. Same payload as `compaction`, plus `run_id`. |
+| `external_dropped` | Relayed events were lost before they reached you. `dropped` is how many since the previous report; `total_dropped` is the running total for the current hub connection. |
 
 The `run_id` field links the `external_*` events of one turn. Events from other sessions in the same store are not relayed to your stream: each sidecar sees only its own session.
 
 The relay is lossy on purpose. Every queue between the two processes is bounded and drops its oldest entry when a slow reader falls behind, so a busy turn can lose events rather than stall the process that is producing them. Two consequences for a consumer:
 
 - Events of one turn always arrive in the order the other process published them. A later event never overtakes an earlier one, so `external_done` is the last event you receive for its `run_id`.
-- Events can be missing. Treat `external_chunk` text as a live preview, not as the authoritative transcript; read the stored session (`mivia sessions show`) when you need the complete answer.
+- Events can be missing, and you are told when. Each loss produces one `external_dropped` event; a stream with no loss never emits one. The total counts loss on your own connection to the hub only, and it restarts at zero if the hub owner changes (the process you were connected to exited and another took over), so treat a total lower than the previous one as a new connection rather than as an error. Treat `external_chunk` text as a live preview rather than the authoritative transcript, and read the stored session (`mivia sessions show`) for the complete answer - especially after an `external_dropped`.
 
 A turn whose start was lost is not reported at all: you never receive `external_done` for a `run_id` you have not already seen, so a `run_id` that appears for the first time is always a real turn beginning.
 
