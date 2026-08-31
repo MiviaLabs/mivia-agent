@@ -166,18 +166,29 @@ func (f *fakeAPI) SetMaxPayloadBytes(n int) {
 // ahead of the client's cursor without the client having any record of them.
 // This is the state a lost ack leaves behind.
 func (f *fakeAPI) AdvanceServerSeq(id string, upTo int64) {
+	f.AdvanceServerSeqAs(id, upTo, "")
+}
+
+// AdvanceServerSeqAs plants server-ahead events stamped with a writer id, so
+// a test can drive the adopt branch (our own id) and the fork branch (anyone
+// else's) from the same state.
+func (f *fakeAPI) AdvanceServerSeqAs(id string, upTo int64, writerID string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	s := f.sessions[id]
 	if s == nil {
 		return
 	}
+	payload := json.RawMessage(`{"planted":true}`)
+	if writerID != "" {
+		payload = json.RawMessage(fmt.Sprintf(`{"planted":true,"writer_id":%q}`, writerID))
+	}
 	for seq := s.lastSeq + 1; seq <= upTo; seq++ {
 		s.events = append(s.events, StoredEvent{
 			SessionID: id,
 			Seq:       seq,
 			Type:      TypeTurnStarted,
-			Payload:   json.RawMessage(`{"planted":true}`),
+			Payload:   payload,
 			CreatedAt: time.Now().UTC().Format(time.RFC3339),
 		})
 		s.lastSeq = seq

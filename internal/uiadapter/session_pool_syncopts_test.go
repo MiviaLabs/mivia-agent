@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/chatsync"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 )
 
@@ -68,5 +69,28 @@ func TestPoolSyncOptionsGivesEachPooledSessionItsOwnHandle(t *testing.T) {
 	}
 	if again := poolSyncOptions(first, first.SessionID, &config.Resolved{}, nil); again.LocalHandle != a.LocalHandle {
 		t.Errorf("handle is not stable across runs: %q then %q", a.LocalHandle, again.LocalHandle)
+	}
+}
+
+// TestPoolSyncOptionsCarriesThePersistedWriterID is the TUI half of
+// clichat.TestCLISyncOptionsCarriesThePersistedWriterID. Wiring one surface
+// and not the other leaves the adopt/fork decision dead on the other.
+func TestPoolSyncOptionsCarriesThePersistedWriterID(t *testing.T) {
+	sess := &chat.Session{SessionID: "principal-pool-writer", SessionDir: t.TempDir()}
+
+	first := poolSyncOptions(sess, sess.SessionID, &config.Resolved{}, nil)
+	if first.ProjectorOptions.WriterID == "" {
+		t.Fatal("WriterID is unset, so attach can never distinguish our own events from a foreign writer's")
+	}
+
+	stored, err := chatsync.LoadOrCreateIdentity(chatsync.IdentityDir(sess.SessionDir), chatsync.IdentityKey(sess.SessionID))
+	if err != nil {
+		t.Fatalf("LoadOrCreateIdentity: %v", err)
+	}
+	if first.ProjectorOptions.WriterID != stored.WriterID {
+		t.Errorf("WriterID = %q, want the persisted %q", first.ProjectorOptions.WriterID, stored.WriterID)
+	}
+	if second := poolSyncOptions(sess, sess.SessionID, &config.Resolved{}, nil); second.ProjectorOptions.WriterID != first.ProjectorOptions.WriterID {
+		t.Errorf("WriterID is not stable across runs: %q then %q; every restart would fork", first.ProjectorOptions.WriterID, second.ProjectorOptions.WriterID)
 	}
 }
