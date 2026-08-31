@@ -76,9 +76,12 @@ func shouldPrintOneShotOutput(ctx context.Context, err error) bool {
 	return err == nil || errors.Is(err, chat.ErrPersistence) || (ctx.Err() != nil && CancellationCanReplaceTurnError(err))
 }
 
-// CancellationCanReplaceTurnError implements cancellation can replace turn error.
+// CancellationCanReplaceTurnError reports whether a cancelled context fully
+// explains err. It delegates to chat.CancellationCanReplaceTurnError so this
+// surface's "(cancelled)" reporting and the session's KindTurnEnd reason cannot
+// disagree about what counts as a cancellation.
 func CancellationCanReplaceTurnError(err error) bool {
-	return err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+	return chat.CancellationCanReplaceTurnError(err)
 }
 
 func shouldReportChatCancellation(ctx context.Context, err error) bool {
@@ -124,7 +127,6 @@ func processLineChat(line string, sess *chat.Session, res *config.Resolved, tool
 
 	renderer.PrintUser(line)
 	renderer.PrintAssistantHeader()
-	publishTurnStartForHub(sess, line)
 	mw := NewMarkdownWriter(term)
 	finalW := io.Writer(mw)
 	if toolsOn {

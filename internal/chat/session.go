@@ -385,13 +385,18 @@ func (s *Session) compactAfterTurn(ctx context.Context, turnErr error) {
 	_, _ = s.CompactIfNeeded(ctx)
 }
 
-func (s *Session) sendPlain(ctx context.Context, userText, persistedText string, w io.Writer) (string, error) {
-	snapshot, done, err := s.beginPlainTurn(userText)
-	if err != nil {
-		return "", err
+func (s *Session) sendPlain(ctx context.Context, userText, persistedText string, w io.Writer) (reply string, err error) {
+	snapshot, done, beginErr := s.beginPlainTurn(userText)
+	if beginErr != nil {
+		return "", beginErr
 	}
+	// Announced here rather than by the caller: every surface reaches this
+	// function, and snapshot.myTurn is the same id every later event of the
+	// turn carries. See turn_events.go.
+	s.publishTurnStart(snapshot.sessionID, snapshot.myTurn, persistedText)
 	defer func() {
 		done()
+		s.publishTurnEnd(ctx, snapshot.sessionID, snapshot.myTurn, err)
 		s.fireRootTurnEndHook(ctx, snapshot.sessionID, snapshot.myTurn)
 	}()
 	if snapshot.context.manager != nil {
@@ -400,13 +405,15 @@ func (s *Session) sendPlain(ctx context.Context, userText, persistedText string,
 	return s.sendPlainLegacy(ctx, persistedText, w, snapshot)
 }
 
-func (s *Session) sendAgent(ctx context.Context, userText, persistedText string, w io.Writer, eventOverride func(agent.Event), turn *TurnOptions) (string, error) {
-	snapshot, done, err := s.beginAgentTurn(userText, eventOverride)
-	if err != nil {
-		return "", err
+func (s *Session) sendAgent(ctx context.Context, userText, persistedText string, w io.Writer, eventOverride func(agent.Event), turn *TurnOptions) (reply string, err error) {
+	snapshot, done, beginErr := s.beginAgentTurn(userText, eventOverride)
+	if beginErr != nil {
+		return "", beginErr
 	}
+	s.publishTurnStart(snapshot.sessionID, snapshot.myTurn, persistedText)
 	defer func() {
 		done()
+		s.publishTurnEnd(ctx, snapshot.sessionID, snapshot.myTurn, err)
 		s.fireRootTurnEndHook(ctx, snapshot.sessionID, snapshot.myTurn)
 	}()
 	// Publish any stage an earlier boundary could not at the earliest safe
@@ -429,7 +436,7 @@ func (s *Session) sendAgent(ctx context.Context, userText, persistedText string,
 		snapshot.toolTimeout = agent.DefaultToolTimeout
 	}
 	opts := s.buildAgentTurnOptions(snapshot, userText, w, turnDispatcher, turn)
-	reply, err := loop.Run(ctx, userText, opts)
+	reply, err = loop.Run(ctx, userText, opts)
 
 	// A step-boundary publication mid-turn swapped the binding surface and
 	// bumped the operation fence (TryPublishAgentSurface -> invalidateLocked);

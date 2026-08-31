@@ -15,7 +15,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
@@ -54,21 +53,6 @@ func startClassicReplHub(sess *chat.Session) func() {
 
 func startLineModeHub(sess *chat.Session, jsonMode bool) func() {
 	return JoinHub(sess, chatHubSink(sess, jsonMode)).Leave
-}
-
-// publishTurnStartForHub tells this process's hub participants that a new
-// turn is starting, carrying the user's own submitted text so an external
-// live surface can show what was typed, not just the reply that follows.
-// See internal/hub's relayedKinds doc comment for why TurnID here need not
-// match the "turn:%d" id later events carry.
-func publishTurnStartForHub(sess *chat.Session, text string) {
-	if sess == nil || sess.EventBus == nil {
-		return
-	}
-	sess.EventBus.Publish(events.Event{
-		Kind: events.KindTurnStart, Timestamp: time.Now(),
-		SessionID: sess.SessionID, Detail: text,
-	})
 }
 
 // externalTurnState tracks the external turns a hub sink is currently
@@ -134,9 +118,9 @@ func chatHubSink(sess *chat.Session, jsonMode bool) hub.Sink {
 // session sharing the same hub workspace (see externalTurnState's doc
 // comment) - the regression this guards is a relayed event rendering into
 // the wrong session/thread's transcript. An event with no SessionID at all
-// (a defensive case only - every wired publish site sets one; see
-// tui_start.go's KindTurnStart publish and publishTurnStartForHub) is
-// rejected rather than matched by two empty strings.
+// (a defensive case only - every wired publish site sets one; turn lifecycle
+// events come from chat.Session, internal/chat/turn_events.go) is rejected
+// rather than matched by two empty strings.
 func externalEventBelongsToSession(sess *chat.Session, ev events.Event) bool {
 	return ev.SessionID != "" && ev.SessionID == sess.SessionID
 }
