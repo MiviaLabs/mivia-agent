@@ -123,18 +123,48 @@ func truncateAtRuneBoundary(s string, limit int) string {
 		limit = len(s)
 	}
 	cut := s[:limit]
-	if utf8.ValidString(cut) {
+	// Decide from the rune at the CUT BOUNDARY only (DC-6). The old code
+	// re-validated the whole prefix (utf8.ValidString(s[:i])), so any invalid
+	// byte earlier in the hook's own bytes made this return the unrepaired
+	// mid-rune `cut` - exactly the trailing partial rune the function exists
+	// to prevent - and it was O(n) per call over the full prefix.
+	if r, size := utf8.DecodeLastRuneInString(cut); r != utf8.RuneError || size > 1 {
 		return cut
 	}
+	// The tail does not decode. Trim only when the cut SPLIT a real rune: the
+	// last rune start within UTFMax must declare a sequence longer than the
+	// bytes left for it. Every byte the loop skipped is a continuation byte by
+	// construction, so a lead byte declaring more than it got is an incomplete
+	// sequence and nothing else. If the lead byte declares no more than it
+	// got, the hook's own bytes are invalid there and are left as they are.
 	for i := limit - 1; i >= 0 && limit-i < utf8.UTFMax; i-- {
-		if utf8.RuneStart(s[i]) {
-			if utf8.ValidString(s[:i]) {
-				return s[:i]
-			}
-			return cut
+		if !utf8.RuneStart(s[i]) {
+			continue
 		}
+		if declaredRuneLen(s[i]) > limit-i {
+			return s[:i]
+		}
+		return cut
 	}
 	return cut
+}
+
+// declaredRuneLen reports the sequence length a UTF-8 lead byte announces. A
+// byte that is not a valid lead reports 1, so it reads as complete and the
+// caller leaves it alone rather than sanitising it.
+func declaredRuneLen(b byte) int {
+	switch {
+	case b < 0x80:
+		return 1
+	case b&0xE0 == 0xC0:
+		return 2
+	case b&0xF0 == 0xE0:
+		return 3
+	case b&0xF8 == 0xF0:
+		return 4
+	default:
+		return 1
+	}
 }
 
 // preToolUseOutput mirrors Claude Code's nested PreToolUse shape exactly, so a
