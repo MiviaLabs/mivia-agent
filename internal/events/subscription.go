@@ -16,6 +16,12 @@ const defaultBufSize = 256
 // (Kind, Handler) pair registered on the Bus.
 type subscription struct {
 	handler Handler
+	// kinds records every Kind this subscription is registered under, so
+	// removal can span all of them. A subscription left registered under one
+	// kind after its delivery goroutine stopped feeds a queue nobody drains.
+	// Written once at registration, before the subscription is reachable from
+	// b.subs, and read only under b.mu.
+	kinds   []Kind
 	ch      chan Event
 	drops   atomic.Uint64 // drop-oldest counter
 	panics  atomic.Uint64 // handler panics contained by handle()

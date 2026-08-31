@@ -51,15 +51,10 @@ func (d *Delivery) Unsubscribe() {
 
 	b := d.b
 	b.mu.Lock()
-	for kind, subs := range b.subs {
-		for i, sub := range subs {
-			if sub == s {
-				b.subs[kind] = append(subs[:i], subs[i+1:]...)
-				b.mu.Unlock()
-				return
-			}
-		}
-	}
+	// Remove from every kind. Returning after the first match left a
+	// subscription spanning kinds registered under the rest, with a delivery
+	// goroutine already cancelled.
+	b.removeSubLocked(s)
 	b.mu.Unlock()
 }
 

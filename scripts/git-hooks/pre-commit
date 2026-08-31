@@ -206,6 +206,16 @@ if command -v go >/dev/null 2>&1; then
     echo " → Running provider invariant tests..."
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestCompleterConformance|TestIsTransportStageTimeout|TestStdlibTimerErrorIdentities|TestCompatBaseRoundTripper' ./internal/provider/ -count=1 -timeout=120s) || INV_FAIL=1
   fi
+  # Cross-kind delivery order is a LIVENESS contract that only shows up as a
+  # wrong-looking UI two processes away: a turn terminal delivered before the
+  # deltas it terminates makes a viewer close a turn and then render into it.
+  # SubscribeAcross buys that order with one queue under many kinds, which in
+  # turn makes a partial Unsubscribe silently feed a queue nobody drains. Both
+  # are cheap to check and impossible to notice by reading.
+  if echo "$STAGED" | grep -qE '^internal/events/'; then
+    echo " → Running event-bus ordering invariant tests..."
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestSubscribeAcrossPreservesCrossKindOrder|TestUnsubscribeRemovesSubscriptionFromEveryKind|TestBusUnsubscribeByHandlerRemovesEveryKind|TestDeliveryUnsubscribeRemovesSubscriptionFromEveryKind' ./internal/events/ -count=1 -timeout=60s) || INV_FAIL=1
+  fi
   if echo "$STAGED" | grep -qE '^internal/coordinator/'; then
     echo " → Running coordinator invariant tests..."
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestDrainSeesQueuedMessage|TestPendingInterruptPreservesQueueContents' ./internal/coordinator/ -count=1 -timeout=60s) || INV_FAIL=1
@@ -222,7 +232,12 @@ if command -v go >/dev/null 2>&1; then
   fi
   # Any staged Go change can add an exec; the gate walks internal/ whole, so
   # it is keyed on Go files rather than one directory.
-  if echo "" | grep -qE '^internal/.*\.go$'; then
+  #
+  # This read `echo ""`, which matches nothing, so the gate ran on ZERO commits
+  # from the day it was added - the anti-pattern the gate-authoring skill names
+  # first: a gate that cannot fail. It passes on the current tree, so nothing
+  # slipped through while it was dark, but nothing was watching either.
+  if echo "$STAGED" | grep -qE '^internal/.*\.go$'; then
     echo " → Running exec pipe-bound gate..."
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryExecBoundsItsPipeWait' ./internal/evidencecheck/ -count=1 -timeout=60s) || INV_FAIL=1
   fi
