@@ -77,6 +77,13 @@ func emitSubagentProgress(e agent.Event) {
 			e.Input,
 			e.Output,
 		).WithAgentAttribution(e.Origin.TaskID, e.Origin.Agent, e.Origin.Depth)
+		// The session and turn come off the ORIGIN, because this sink is
+		// package-level and has none of its own. Without them the event is
+		// published with an empty SessionID and internal/hub's receiver drops
+		// it (externalEventBelongsToSession), so a second live surface saw the
+		// root loop's tool calls and none of its subagents'.
+		ev.SessionID = e.Origin.SessionID
+		ev.TurnID = e.Origin.TurnID
 		if e.Identity != nil {
 			identity := *e.Identity
 			ev.Identity = &identity

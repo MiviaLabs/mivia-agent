@@ -1,6 +1,7 @@
 package subagents
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 	"unicode/utf8"
@@ -183,5 +184,45 @@ func TestStampEventOriginUsesTaskIdentityFromContext(t *testing.T) {
 		if e.Origin.TaskID != "wft-test-1" {
 			t.Fatalf("event %d (%s) TaskID=%q want %q", i, e.Kind, e.Origin.TaskID, "wft-test-1")
 		}
+	}
+}
+
+// TestOriginForRequestCarriesSessionAndTurn pins the identity a subagent's
+// events need to survive the trip to a second live surface.
+//
+// The subagent publish path (clichat.emitSubagentProgress) is package-level and
+// has no session context of its own, so it reads these off the origin. Without
+// them every subagent event was published with an empty SessionID and dropped
+// by internal/hub's receiver, which matches on SessionID - so a second surface
+// saw the root loop's tool calls and none of its subagents'.
+func TestOriginForRequestCarriesSessionAndTurn(t *testing.T) {
+	req := runtimeRequestForOriginTest()
+	req.SessionID = "sess-abc"
+	req.TurnID = "turn:3"
+
+	got := originForRequest(context.Background(), req)
+
+	if got.SessionID != "sess-abc" {
+		t.Errorf("SessionID = %q, want the dispatching session; a hub receiver drops this event", got.SessionID)
+	}
+	if got.TurnID != "turn:3" {
+		t.Errorf("TurnID = %q, want the dispatching turn", got.TurnID)
+	}
+	if got.TaskID != "task-42" || got.Agent != "audit" || got.Depth != 1 {
+		t.Errorf("attribution regressed: %+v", got)
+	}
+}
+
+// TestOriginForRequestPrefersTheCoordinatorTaskID keeps the correlation key's
+// own rule covered now that it lives in a named function: a coordinator call
+// carries the workflow attempt id on the context and it must win over the
+// request id, so bus, ledger, and attempt events share one key.
+func TestOriginForRequestPrefersTheCoordinatorTaskID(t *testing.T) {
+	ctx := runtime.ContextWithTaskIdentity(context.Background(), runtime.TaskIdentity{RunID: "run-1", TaskID: "wft-9"})
+
+	got := originForRequest(ctx, runtimeRequestForOriginTest())
+
+	if got.TaskID != "wft-9" {
+		t.Errorf("TaskID = %q, want the coordinator's attempt id", got.TaskID)
 	}
 }
