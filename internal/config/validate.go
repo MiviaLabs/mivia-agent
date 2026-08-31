@@ -49,6 +49,9 @@ func (r *Resolved) Validate() error {
 	if err := validateSummaryOverride(r); err != nil {
 		return err
 	}
+	if err := validateSyncConfig(r.Sync); err != nil {
+		return err
+	}
 	return nil
 }
 
