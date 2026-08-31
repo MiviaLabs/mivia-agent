@@ -49,34 +49,31 @@ var relayedKinds = []events.Kind{
 	// no prompts, tool arguments, hidden content, or summary payloads).
 	events.KindCompaction,
 
-	// KindTurnEnd and KindError are deliberately NOT relayed, although both
-	// now have producers (chat.Session publishes them since fbeaf398). They
-	// were listed here before those producers existed, so the list promised a
-	// second surface events that never arrived; relaying them now would be
-	// worse than the promise.
+	// KindTurnEnd and KindError were withheld until three separate things were
+	// true, because each of them alone made relaying a terminal worse than not
+	// relaying it. All three now hold:
 	//
-	// Arrival order is no longer the blocker: the relay subscribes with
-	// SubscribeAcross, so every relayed kind shares one queue and one delivery
-	// goroutine, and the socket path preserves order from there
-	// (TestHubRelaysCrossKindEventsInPublishOrder). It was the blocker under
-	// SubscribeMany, which gave each kind its own queue and let a terminal
-	// overtake the deltas of the turn it closes.
+	//  1. Order. The relay subscribes with SubscribeAcross, so every relayed
+	//     kind shares one queue and one delivery goroutine, and the socket path
+	//     preserves order from there (TestRelayPreservesCrossKindPublishOrder).
+	//     Under SubscribeMany each kind had its own queue and a terminal could
+	//     overtake the deltas of the turn it closes.
+	//  2. Loss. Every queue on this path is bounded drop-oldest, so a terminal
+	//     can arrive with none of its predecessors. The receiver now drops a
+	//     terminal for a run it has never seen rather than minting a turn in
+	//     order to close it, and marks a finished run done instead of deleting
+	//     it, so a straggler cannot re-open it (internal/clichat, see
+	//     TestExternalTerminalForAnUnseenRunIsDropped).
+	//  3. Privacy. toWire classifies through chat.TurnErrorMessage, so
+	//     publishTurnEnd's Err never reaches the wire verbatim - a second
+	//     process is told exactly what the local NDJSON surface is told, and no
+	//     more (TestToWireNeverSerializesRawErrorText).
 	//
-	// What still blocks them is the RECEIVER: it treats "first event carrying a
-	// run id" as "the turn began" (renderExternalEvent), so a terminal that
-	// arrives with no surviving predecessor - the drop-oldest queues on this
-	// path permit exactly that - still mints a turn, emits done, drops the run,
-	// and then mints a SECOND turn if later content lands. Order tolerance is
-	// necessary here, and loss tolerance is the part not yet built.
-	//
-	// Holding them back also keeps raw error text off the wire. publishTurnEnd
-	// sets Err, wire.go serializes err.Error() verbatim, and this process's own
-	// NDJSON deliberately emits a classified string instead
-	// (jsonTurnErrorMessage) - relaying would leave a second process better
-	// informed than the local one, in the direction that leaks.
-	//
-	// Add them back once the receiver stops inferring turn start from arrival
-	// order, and once the error text is classified at the boundary.
+	// Withholding them was itself a defect, not a safe default: a second
+	// surface saw turns that started, streamed, and then simply stopped, with
+	// no way to tell a finished turn from a stalled one.
+	events.KindTurnEnd,
+	events.KindError,
 }
 
 // relayBufSize is the relay subscription's queue capacity. It is set

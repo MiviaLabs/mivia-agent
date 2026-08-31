@@ -88,6 +88,13 @@ All mivia processes that share one store directory see each other's activity thr
 
 The `run_id` field links the `external_*` events of one turn. Events from other sessions in the same store are not relayed to your stream: each sidecar sees only its own session.
 
+The relay is lossy on purpose. Every queue between the two processes is bounded and drops its oldest entry when a slow reader falls behind, so a busy turn can lose events rather than stall the process that is producing them. Two consequences for a consumer:
+
+- Events of one turn always arrive in the order the other process published them. A later event never overtakes an earlier one, so `external_done` is the last event you receive for its `run_id`.
+- Events can be missing. Treat `external_chunk` text as a live preview, not as the authoritative transcript; read the stored session (`mivia sessions show`) when you need the complete answer.
+
+A turn whose start was lost is not reported at all: you never receive `external_done` for a `run_id` you have not already seen, so a `run_id` that appears for the first time is always a real turn beginning.
+
 ## Session commands
 
 These commands print JSON to stdout with `--json`:
