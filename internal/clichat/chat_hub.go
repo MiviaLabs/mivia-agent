@@ -28,10 +28,28 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
-// JoinHub is called by the classic REPL and by line mode, each once its own
-// EventBus is finalized - it is also what CREATES that bus (sess.EventBus =
-// events.New() below). The TUI does not call it and therefore has no bus at
-// all. storeDir is derived from the session's
+// attachSessionEventBus gives a session its event bus, for every surface.
+//
+// JoinHub used to be the only thing that created one, and only the classic
+// REPL and line mode call it - so the TUI, the surface most people run, had no
+// bus at all. Every publish on it returned immediately, which is why turn
+// lifecycle and subagent events reached no consumer there however correct the
+// producers were. The gap was never a missing publish; it was a missing bus.
+//
+// JoinHub reuses whatever this installed rather than replacing it, so a
+// subscriber registered before the join is not orphaned.
+func attachSessionEventBus(sess *chat.Session) {
+	if sess == nil || sess.EventBus != nil {
+		return
+	}
+	sess.EventBus = events.New()
+}
+
+// JoinHub is called by the classic REPL and by line mode. It REUSES the
+// session's bus, which runConfiguredChatOnce now creates for every surface -
+// it only mints one as a fallback for a session built some other way. The TUI
+// still does not join, so its events stay in-process; that is a rendering gap,
+// no longer a producer one. storeDir is derived from the session's
 // already-open context store rather than recomputed from workspace-routing
 // logic, so it's automatically correct for the repository-root/managed-
 // worktree/config-override cases setupChatSessionContext itself resolves -
