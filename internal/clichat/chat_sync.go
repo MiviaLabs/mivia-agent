@@ -2,6 +2,9 @@ package clichat
 
 import (
 	"context"
+	"fmt"
+	"io"
+	"os"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
@@ -9,6 +12,14 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
+
+// syncNoticeWriter is where the plain-CLI surface reports sync status.
+//
+// stderr, not stdout, and for the same reason the REPL banner uses it: stdout
+// is the answer channel that `-p` and `--json` callers parse, and a status
+// line interleaved into it would corrupt a machine-readable stream. It is a
+// variable so a test can read what a real attach actually wrote.
+var syncNoticeWriter io.Writer = os.Stderr
 
 // cliSyncOptions builds the SessionOptions the plain-CLI chat surface hands to
 // chatsync.OpenSession. It is a separate function so a test can drive the
@@ -76,10 +87,17 @@ func attachCLISync(sess *chat.Session, res *config.Resolved) func() {
 		return func() {}
 	}
 	opts := cliSyncOptions(sess, res, tokens)
+	// "Stop syncing and SAY SO": without this the terminal stop is recorded
+	// where only a getter can reach it, and no host polls SyncSession, so a
+	// dead uploader looks exactly like a healthy idle one.
+	opts.OnStop = func(reason string) {
+		_, _ = fmt.Fprintf(syncNoticeWriter, "mivia: chat sync stopped: %s\n", reason)
+	}
 	syncSess, err := chatsync.OpenSession(context.Background(), sess.EventBus, sess.SessionID, opts)
 	if err != nil {
 		return func() {}
 	}
+	_, _ = fmt.Fprintln(syncNoticeWriter, "mivia: chat sync is running")
 	return func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
