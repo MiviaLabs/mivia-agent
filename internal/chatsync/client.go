@@ -20,6 +20,11 @@ var (
 	ErrUnauthorized = errors.New("chatsync: unauthorized (401)")
 	ErrNotFound     = errors.New("chatsync: session not found (404)")
 
+	// ErrBadRequest reports a 400. It is a distinct sentinel because the
+	// settled policy splits on it: a sequence-gap 400 rebases and continues,
+	// while every other 400 is poison a retry cannot fix.
+	ErrBadRequest = errors.New("chatsync: bad request (400)")
+
 	// ErrNoTokenProvider reports a construction attempt with no way to
 	// authenticate.
 	ErrNoTokenProvider = errors.New("chatsync: a token provider is required")
@@ -46,6 +51,43 @@ func (e *ConflictError) Error() string {
 
 func (e *ConflictError) Is(target error) bool {
 	return target == ErrConflict
+}
+
+// BadRequestError conveys a 400 from the API.
+//
+// The distinction it carries is load-bearing. Retrying an identical body
+// against a 400 resubmits a request the server has already judged malformed,
+// for as long as the process lives; treating a sequence gap as fatal
+// "guarantees the failure it is trying to avoid" (chat-sync-cli-slice.md:163).
+// A caller therefore needs to tell the two apart, which a bare error string
+// cannot express.
+type BadRequestError struct {
+	StatusCode int
+	Message    string
+	Code       string
+}
+
+func (e *BadRequestError) Error() string {
+	if e.Code != "" {
+		return fmt.Sprintf("chatsync bad request (%d): %s (code: %s)", e.StatusCode, e.Message, e.Code)
+	}
+	return fmt.Sprintf("chatsync bad request (%d): %s", e.StatusCode, e.Message)
+}
+
+func (e *BadRequestError) Is(target error) bool {
+	return target == ErrBadRequest
+}
+
+// IsSequenceComplaint reports whether the server named a sequence problem.
+//
+// The check is on the message because the API returns no machine-readable code
+// for it - the live guard probe pins only that the message names the sequence
+// (internal/chatsync/live_guards_test.go, "a forward sequence gap is
+// rejected"). It is deliberately a NECESSARY, not a sufficient, condition: the
+// caller must still re-read the session and confirm the server's mark actually
+// moves the batch, because a message match alone would rebase on a client bug.
+func (e *BadRequestError) IsSequenceComplaint() bool {
+	return strings.Contains(strings.ToLower(e.Message), "sequence")
 }
 
 // CreateSessionParams defines the request payload for registering a new chat session.
@@ -282,6 +324,12 @@ func parseErrorResponse(resp *http.Response) error {
 	}
 
 	switch resp.StatusCode {
+	case http.StatusBadRequest:
+		return &BadRequestError{
+			StatusCode: resp.StatusCode,
+			Message:    msg,
+			Code:       errEnv.Error,
+		}
 	case http.StatusUnauthorized:
 		return ErrUnauthorized
 	case http.StatusNotFound:

@@ -264,18 +264,35 @@ func (ob *Outbox) UnflushedEvents() ([]StoredEvent, error) {
 func (ob *Outbox) ResetForFork() (int, error) {
 	ob.mu.Lock()
 	defer ob.mu.Unlock()
+	return ob.rebaseLocked(0)
+}
 
+// Rebase re-indexes every unflushed event to start at base+1 and sets the
+// flushed cursor to base. It returns the number of re-indexed events.
+//
+// This is the runtime answer to a sequence-gap 400 when the server is BEHIND
+// the outbox: the events between the server's mark and the outbox's first
+// unflushed seq are gone, and no resend can produce them, so the only way back
+// to a contiguous stream is to renumber onto the server's mark. Forking is the
+// same operation with base 0.
+func (ob *Outbox) Rebase(base int64) (int, error) {
+	ob.mu.Lock()
+	defer ob.mu.Unlock()
+	return ob.rebaseLocked(base)
+}
+
+func (ob *Outbox) rebaseLocked(base int64) (int, error) {
 	unflushed, err := ob.unflushedEventsLocked()
 	if err != nil {
 		return 0, err
 	}
 
-	if err := ob.rewriteEventsFileLocked(unflushed); err != nil {
+	if err := ob.rewriteEventsFileLocked(unflushed, base); err != nil {
 		return 0, err
 	}
 
 	newCursor := Cursor{
-		FlushedSeq: 0,
+		FlushedSeq: base,
 		FlushedAt:  time.Now(),
 	}
 	if err := ob.writeCursorLocked(newCursor); err != nil {
@@ -284,12 +301,12 @@ func (ob *Outbox) ResetForFork() (int, error) {
 
 	ob.cursor = newCursor
 	ob.unflushed = len(unflushed)
-	ob.maxSeq = int64(len(unflushed))
+	ob.maxSeq = base + int64(len(unflushed))
 
 	return len(unflushed), nil
 }
 
-func (ob *Outbox) rewriteEventsFileLocked(unflushed []StoredEvent) error {
+func (ob *Outbox) rewriteEventsFileLocked(unflushed []StoredEvent, base int64) error {
 	if ob.eventsFile != nil {
 		_ = ob.eventsFile.Close()
 		ob.eventsFile = nil
@@ -305,19 +322,19 @@ func (ob *Outbox) rewriteEventsFileLocked(unflushed []StoredEvent) error {
 
 	for i, se := range unflushed {
 		we := WireEvent{
-			Seq:     int64(i + 1),
+			Seq:     base + int64(i) + 1,
 			Type:    se.Type,
 			Payload: se.Payload,
 		}
 		data, err := json.Marshal(we)
 		if err != nil {
 			_ = f.Close()
-			return fmt.Errorf("marshal forked event: %w", err)
+			return fmt.Errorf("marshal rebased event: %w", err)
 		}
 		data = append(data, '\n')
 		if _, err := f.Write(data); err != nil {
 			_ = f.Close()
-			return fmt.Errorf("write forked event: %w", err)
+			return fmt.Errorf("write rebased event: %w", err)
 		}
 	}
 

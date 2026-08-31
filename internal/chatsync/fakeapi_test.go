@@ -44,6 +44,9 @@ type fakeAPI struct {
 	// order, including rejected ones. A retry test needs to see the identical
 	// body arrive twice.
 	appendBatches [][]EventItem
+
+	rejectAppend     *fakeRejection
+	failSessionReads bool
 }
 
 type fakeSession struct {
@@ -233,6 +236,11 @@ func (f *fakeAPI) handleCreate(w http.ResponseWriter, r *http.Request) {
 
 func (f *fakeAPI) handleGet(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
+	if f.failSessionReads {
+		f.mu.Unlock()
+		writeAPIError(w, http.StatusInternalServerError, "Internal Server Error", "session read failed")
+		return
+	}
 	s := f.sessions[r.PathValue("id")]
 	if s == nil {
 		f.mu.Unlock()
@@ -271,6 +279,10 @@ func (f *fakeAPI) handleAppend(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.foreignWriter {
 		writeAPIError(w, http.StatusConflict, "Conflict", "session is owned by another writer")
+		return
+	}
+	if rej := f.rejectAppend; rej != nil {
+		writeAPIError(w, rej.status, rej.code, rej.msg)
 		return
 	}
 	if status, code, msg := f.validateBatch(s, req.Events); status != 0 {
@@ -484,4 +496,34 @@ func writeAPIError(w http.ResponseWriter, status int, code, msg string) {
 		Error:      code,
 		Message:    encoded,
 	})
+}
+
+// ---------------------------------------------------------------------------
+// Failure knobs
+//
+// These sit ON TOP of the stateful model rather than replacing it: a test that
+// needs a rejection the contiguity model cannot produce (an unclassified 400,
+// an unreachable session record) declares it explicitly, and every other rule
+// still applies.
+// ---------------------------------------------------------------------------
+
+// RejectAppendsWith makes every later append fail with a fixed response.
+func (f *fakeAPI) RejectAppendsWith(status int, code, msg string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.rejectAppend = &fakeRejection{status: status, code: code, msg: msg}
+}
+
+// FailSessionReads makes GET /v1/chat-sessions/{id} fail with a 500, modelling
+// a server the client cannot re-read its own state from.
+func (f *fakeAPI) FailSessionReads(on bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.failSessionReads = on
+}
+
+type fakeRejection struct {
+	status int
+	code   string
+	msg    string
 }
