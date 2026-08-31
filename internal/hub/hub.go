@@ -55,14 +55,19 @@ var relayedKinds = []events.Kind{
 	// second surface events that never arrived; relaying them now would be
 	// worse than the promise.
 	//
-	// This receiver treats "first event carrying a run id" as "the turn began"
-	// (renderExternalEvent). That needs arrival order, and the bus does not
-	// give it: SubscribeMany registers one subscription per kind, each with its
-	// own queue, so a terminal routinely overtakes the assistant deltas of the
-	// turn it closes. The receiver would mint an external_turn_start from the
-	// terminal, emit external_done, drop the run, then mint a SECOND start when
-	// the content arrived - duplicated turns, content after done, and a
-	// seenRunIDs entry nothing reclaims.
+	// Arrival order is no longer the blocker: the relay subscribes with
+	// SubscribeAcross, so every relayed kind shares one queue and one delivery
+	// goroutine, and the socket path preserves order from there
+	// (TestHubRelaysCrossKindEventsInPublishOrder). It was the blocker under
+	// SubscribeMany, which gave each kind its own queue and let a terminal
+	// overtake the deltas of the turn it closes.
+	//
+	// What still blocks them is the RECEIVER: it treats "first event carrying a
+	// run id" as "the turn began" (renderExternalEvent), so a terminal that
+	// arrives with no surviving predecessor - the drop-oldest queues on this
+	// path permit exactly that - still mints a turn, emits done, drops the run,
+	// and then mints a SECOND turn if later content lands. Order tolerance is
+	// necessary here, and loss tolerance is the part not yet built.
 	//
 	// Holding them back also keeps raw error text off the wire. publishTurnEnd
 	// sets Err, wire.go serializes err.Error() verbatim, and this process's own
@@ -73,6 +78,17 @@ var relayedKinds = []events.Kind{
 	// Add them back once the receiver stops inferring turn start from arrival
 	// order, and once the error text is classified at the boundary.
 }
+
+// relayBufSize is the relay subscription's queue capacity. It is set
+// explicitly because the relay is ONE subscription spanning every relayed kind
+// (SubscribeAcross), so all of them now share one budget where per-kind
+// subscriptions each had a private default. Assistant deltas are published per
+// write and dominate that budget, so the default 256 would make the bus - not
+// the socket - the first place a busy turn sheds events. It sits above
+// connBufSize deliberately: the connection's own drop-oldest queue is the
+// intended backpressure point, since a drop there is at least per-connection
+// rather than shared by every client.
+const relayBufSize = 4 * connBufSize
 
 // dialSocketTimeout bounds how long a client waits to connect to an
 // already-elected hub before treating it as unreachable (stale socket file,

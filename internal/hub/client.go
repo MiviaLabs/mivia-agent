@@ -16,7 +16,7 @@ type client struct {
 	c    *conn
 	sess *chat.Session
 	sink Sink
-	sub  events.HandlerFunc
+	sub  *events.Subscription
 }
 
 func newClient(nc net.Conn, sess *chat.Session, sink Sink) *client {
@@ -28,12 +28,7 @@ func newClient(nc net.Conn, sess *chat.Session, sink Sink) *client {
 // cancelled) - callers run it on their own goroutine and treat return as
 // "the hub is gone, go re-elect."
 func (cl *client) run(ctx context.Context) {
-	cl.sub = func(_ context.Context, ev events.Event) {
-		cl.c.send(toWire(ev))
-	}
-	if cl.sess.EventBus != nil {
-		cl.sess.EventBus.SubscribeMany(relayedKinds, cl.sub)
-	}
+	cl.subscribeRelay()
 	go cl.c.writeLoop()
 	go func() {
 		<-ctx.Done()
@@ -46,12 +41,20 @@ func (cl *client) run(ctx context.Context) {
 	})
 }
 
-func (cl *client) stop() {
-	if cl.sess.EventBus != nil && cl.sub != nil {
-		for _, k := range relayedKinds {
-			cl.sess.EventBus.Unsubscribe(k, cl.sub)
-		}
+// subscribeRelay registers the forwarding handler for every relayed kind as ONE
+// ordered subscription, mirroring owner.subscribeRelay. It is separate from run
+// so it can be exercised without the socket loops.
+func (cl *client) subscribeRelay() {
+	if cl.sess.EventBus == nil {
+		return
 	}
+	cl.sub = cl.sess.EventBus.SubscribeAcross(relayedKinds, events.HandlerFunc(func(_ context.Context, ev events.Event) {
+		cl.c.send(toWire(ev))
+	}), events.SubscribeOptions{BufSize: relayBufSize})
+}
+
+func (cl *client) stop() {
+	cl.sub.Unsubscribe()
 	cl.c.close()
 }
 

@@ -216,6 +216,15 @@ if command -v go >/dev/null 2>&1; then
     echo " → Running event-bus ordering invariant tests..."
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestSubscribeAcrossPreservesCrossKindOrder|TestUnsubscribeRemovesSubscriptionFromEveryKind|TestBusUnsubscribeByHandlerRemovesEveryKind|TestDeliveryUnsubscribeRemovesSubscriptionFromEveryKind' ./internal/events/ -count=1 -timeout=60s) || INV_FAIL=1
   fi
+  # internal/hub is the consumer that spends the order SubscribeAcross buys.
+  # Everything below the relay's broadcast boundary is order-preserving by
+  # construction, so the bus subscription is the only hop that can reorder -
+  # and reverting it to SubscribeMany compiles, passes vet, and only shows up
+  # as duplicated turns on a second surface.
+  if echo "$STAGED" | grep -qE '^internal/hub/'; then
+    echo " → Running hub relay ordering invariant tests..."
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestRelayPreservesCrossKindPublishOrder|TestOwnerStopReleasesTheRelaySubscription|TestClientStopReleasesTheRelaySubscription|TestTurnTerminalsAreNotRelayed' ./internal/hub/ -count=1 -timeout=60s) || INV_FAIL=1
+  fi
   if echo "$STAGED" | grep -qE '^internal/coordinator/'; then
     echo " → Running coordinator invariant tests..."
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestDrainSeesQueuedMessage|TestPendingInterruptPreservesQueueContents' ./internal/coordinator/ -count=1 -timeout=60s) || INV_FAIL=1

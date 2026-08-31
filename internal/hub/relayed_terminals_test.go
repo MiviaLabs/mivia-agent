@@ -11,12 +11,12 @@ import (
 // direction.
 //
 // chat.Session publishes KindTurnEnd and KindError, so adding them here looks
-// obviously right. It is not, yet. renderExternalEvent treats the first event
-// carrying a run id as the start of that turn, which needs arrival order, and
-// the bus gives one subscription per kind with a queue each - so a terminal
-// routinely overtakes the assistant deltas of the turn it closes and the
-// receiver mints a turn from it, emits done, drops the run, then mints a
-// second turn when the content lands.
+// obviously right. It is not, yet. The ordering half is now fixed - the relay
+// subscribes across kinds, so one queue carries the whole set in publish order
+// - but renderExternalEvent treats the first event carrying a run id as the
+// start of that turn, and every queue on this path is drop-oldest. A terminal
+// whose predecessors were dropped still mints a turn, emits done, drops the
+// run, then mints a second turn if later content lands.
 //
 // Relaying KindError additionally puts raw provider error text on the wire:
 // publishTurnEnd sets Err and wire.go serializes err.Error() verbatim, while
