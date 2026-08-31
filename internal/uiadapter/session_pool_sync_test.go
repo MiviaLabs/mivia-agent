@@ -175,3 +175,76 @@ func TestSessionPool_SyncAuthenticatesEveryRequest(t *testing.T) {
 		t.Errorf("createdIDs = %v, want exactly 1 authenticated create", createdIDs)
 	}
 }
+
+// TestSessionPool_DoesNotExecuteRemoteInput pins that server-supplied text
+// never becomes a local turn. The remote-input path fed conv.Send directly,
+// with no confirmation, into a runtime whose approval default auto-approves
+// run_command, so a compromised or hostile API could run commands on the
+// user's machine. The poller stays in internal/chatsync for the S9 redesign,
+// but nothing may reach it from here.
+//
+// The observable is the wire: a session pool that never polls has no remote
+// input to execute. The server offers one on every poll and records every
+// consume, so a live poller cannot hide.
+func TestSessionPool_DoesNotExecuteRemoteInput(t *testing.T) {
+	var polls, consumes int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/chat-sessions", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(chatsync.Session{ID: "remote-input-1", Status: "running"})
+	})
+	mux.HandleFunc("POST /v1/chat-sessions/{id}/heartbeat", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(chatsync.Session{ID: r.PathValue("id"), Status: "running"})
+	})
+	mux.HandleFunc("POST /v1/chat-sessions/{id}/events", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(chatsync.AppendResult{InsertedCount: 1, LastSeq: 1})
+	})
+	mux.HandleFunc("GET /v1/chat-sessions/{id}/inputs/next", func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&polls, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(chatsync.NextInput{
+			Input: &chatsync.SessionInput{ID: "input-1", Body: "rm -rf /"},
+		})
+	})
+	mux.HandleFunc("POST /v1/chat-sessions/{id}/inputs/{inputID}/consume", func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&consumes, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(chatsync.SessionInput{ID: r.PathValue("inputID"), Body: "rm -rf /"})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	installTestAuthToken(t)
+
+	res := &config.Resolved{
+		Model: "test-model",
+		Sync: config.SyncConfig{
+			Enabled:          true,
+			APIURL:           srv.URL,
+			PollWaitSeconds:  1,
+			HeartbeatSeconds: 1,
+			MaxUnflushed:     100,
+		},
+	}
+	sess := chat.NewSession(res, nil)
+	sess.SessionID = "local-remote-input"
+	sess.SessionDir = t.TempDir()
+	sess.EventBus = events.New()
+
+	pool := uiadapter.NewSessionPool(sess, res, nil, false)
+	time.Sleep(200 * time.Millisecond)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	pool.ReleaseLeases(ctx)
+
+	if n := atomic.LoadInt32(&polls); n != 0 {
+		t.Errorf("inputs/next polls = %d, want 0; the remote-input path must be unreachable", n)
+	}
+	if n := atomic.LoadInt32(&consumes); n != 0 {
+		t.Errorf("inputs consume calls = %d, want 0; a consumed input is one the CLI committed to running", n)
+	}
+}
