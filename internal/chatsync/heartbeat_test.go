@@ -81,8 +81,19 @@ func TestHeartbeatRunner_StopIdempotentAndRespectsContext(t *testing.T) {
 	runner.Stop(ctx)
 	runner.Stop(ctx)
 
-	// Stop with cancelled context returns immediately
+	// Stop with cancelled context returns immediately without blocking
 	cancelCtx, cancel := context.WithCancel(context.Background())
 	cancel()
-	runner.Stop(cancelCtx)
+	done := make(chan struct{})
+	go func() {
+		runner.Stop(cancelCtx)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Success
+	case <-time.After(1 * time.Second):
+		t.Fatal("timed out waiting for runner.Stop to return on cancelled context")
+	}
 }
