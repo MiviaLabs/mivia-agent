@@ -137,6 +137,13 @@ func (s *SyncSession) handleRemoteEnd(ctx context.Context, reason string) {
 		if s.poller != nil {
 			s.poller.Stop(ctx)
 		}
+		// The "say so" half of the contract's poison rule. The
+		// CompareAndSwap above makes this exactly-once, and running it here
+		// - already off the worker - keeps a host callback that blocks on a
+		// terminal or a full UI channel away from the drain and final flush.
+		if s.opts.OnStop != nil {
+			s.opts.OnStop(reason)
+		}
 	}()
 }
 

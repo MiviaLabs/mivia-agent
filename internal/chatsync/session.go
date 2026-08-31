@@ -56,6 +56,21 @@ type SessionOptions struct {
 	// defaultEventBufSize. Overflow here is real loss and is counted into the
 	// sync.dropped marker, exactly like loss on the bus.
 	EventBufSize int
+
+	// OnStop is called exactly once, with the same string StopReason returns,
+	// when sync latches a terminal stop: a 409, a fatal auth failure, or a
+	// poison 400. It is never called for an orderly Stop.
+	//
+	// It exists because the contract's poison rule is "stop syncing and SAY
+	// SO", and a reason only a getter can reach says nothing: no host polls
+	// SyncSession, so a silent stop looks exactly like a healthy idle
+	// session. Nil is valid and means the host does not surface stops.
+	//
+	// It runs on a detached goroutine, NOT on the worker: the worker still has
+	// a drain and a final flush to finish, and a host callback that blocks
+	// (writing to a terminal, or sending on a full UI channel) must not be
+	// able to hold that up.
+	OnStop func(reason string)
 }
 
 // defaultEventBufSize is the handler-to-worker channel depth.

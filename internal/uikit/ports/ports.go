@@ -118,6 +118,23 @@ type Approver interface {
 	Resolve(id string, decision Decision)
 }
 
+// Notices is the out-of-band advisory stream: events that belong to no turn.
+//
+// TurnHandle.Events covers everything a turn produces, and closes when the
+// turn ends, so it cannot carry anything the harness learns while nothing is
+// running - a background uploader stopping, for instance. Notices is the
+// channel for exactly that, and it stays open for the life of the adapter.
+//
+// The stream is best-effort and lossy by contract: a producer that would
+// block drops the notice rather than stall the work that raised it. Callers
+// therefore treat a notice as advisory, never as state to reconcile against.
+type Notices interface {
+	// Notices returns the advisory stream. It is never closed while the
+	// adapter lives, so a reader may block on it indefinitely. A nil
+	// return means this adapter raises no notices.
+	Notices() <-chan uievent.Event
+}
+
 // SessionSummary describes one existing session for listing and resuming.
 type SessionSummary struct {
 	ID        string

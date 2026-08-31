@@ -14,6 +14,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
+	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
 
 // SessionPool manages active and resumed sessions in memory.
@@ -35,6 +36,10 @@ type SessionPool struct {
 	// newTurnHandler. A Conversation the pool never wires to this registry
 	// is invisible to the dialog: see Threads.
 	threads *SubagentThreads
+
+	// notices is the pool-wide advisory stream (ports.Notices). It is
+	// created once, never closed, and written only through pushNotice.
+	notices chan uievent.Event
 }
 
 // Threads returns the SubagentThreads registry every pooled Conversation is
@@ -178,6 +183,7 @@ func NewSessionPool(initialSess *chat.Session, res *config.Resolved, agentState 
 		agentState:   agentState,
 		toolsOn:      toolsOn,
 		threads:      NewSubagentThreads(),
+		notices:      make(chan uievent.Event, syncNoticeBuffer),
 	}
 	if initialSess != nil {
 		if res != nil {
@@ -370,9 +376,16 @@ func (p *SessionPool) attachSyncLocked(sess *chat.Session) {
 		return
 	}
 	opts := poolSyncOptions(sess, id, p.res, tokens)
+	// "Stop syncing and SAY SO". pushNotice takes no lock and drops rather
+	// than blocks, so it is safe both from here (under p.mu) and from
+	// chatsync's detached stop goroutine.
+	opts.OnStop = func(reason string) {
+		p.pushNotice("chat sync stopped: " + reason)
+	}
 	syncSess, err := chatsync.OpenSession(context.Background(), sess.EventBus, id, opts)
 	if err == nil {
 		p.syncSessions[id] = syncSess
+		p.pushNotice("chat sync is running")
 	}
 }
 
