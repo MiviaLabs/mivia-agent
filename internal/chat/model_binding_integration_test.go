@@ -190,7 +190,23 @@ func (c *blockingCompleter) Name() string { return c.name }
 func (c *blockingCompleter) Chat(ctx context.Context, req provider.Request) (string, error) {
 	return c.ChatStream(ctx, req, io.Discard)
 }
-func (c *blockingCompleter) ChatStream(ctx context.Context, req provider.Request, _ io.Writer) (string, error) {
+
+// ChatStream delegates to ChatTurn, mirroring how a real completer is built
+// (AnthropicCompleter.ChatStream is ChatTurn with a StreamWriter). Keeping the
+// blocking semantics only here made this double disagree with every provider:
+// a caller that reached ChatTurn never blocked, and the test waiting on start
+// hung forever.
+func (c *blockingCompleter) ChatStream(ctx context.Context, req provider.Request, w io.Writer) (string, error) {
+	req.Stream = true
+	req.StreamWriter = w
+	resp, err := c.ChatTurn(ctx, req)
+	if err != nil {
+		return "", err
+	}
+	return resp.Content, nil
+}
+
+func (c *blockingCompleter) chatStreamLegacy(ctx context.Context, req provider.Request, _ io.Writer) (string, error) {
 	c.mu.Lock()
 	c.seen = append(c.seen, req.Model)
 	c.mu.Unlock()
@@ -205,8 +221,17 @@ func (c *blockingCompleter) ChatStream(ctx context.Context, req provider.Request
 		return "", ctx.Err()
 	}
 }
-func (c *blockingCompleter) ChatTurn(context.Context, provider.Request) (*provider.Response, error) {
-	return &provider.Response{Content: c.name}, nil
+
+// ChatTurn carries the blocking semantics, so every caller sees them.
+func (c *blockingCompleter) ChatTurn(ctx context.Context, req provider.Request) (*provider.Response, error) {
+	content, err := c.chatStreamLegacy(ctx, req, nil)
+	if err != nil {
+		return nil, err
+	}
+	if req.StreamWriter != nil {
+		_, _ = io.WriteString(req.StreamWriter, content)
+	}
+	return &provider.Response{Content: content}, nil
 }
 
 func TestIntegrationModelBindingKeepsTurnGeneration(t *testing.T) {

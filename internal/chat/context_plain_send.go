@@ -11,6 +11,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/redact"
 )
 
 // eventPublishingWriter republishes each write as a live "delta"
@@ -75,12 +76,13 @@ func (s *Session) sendPlainLegacy(ctx context.Context, persistedText string, w i
 	// (tests, headless callers) keeps the capture-only surface.
 	var captured strings.Builder
 	streamWriter := s.plainTurnStreamWriter(w, &captured, fmt.Sprintf("turn:%d", snapshot.myTurn))
-	reply, err := snapshot.binding.Completer.ChatStream(ctx, provider.Request{
+	reply, reasoning, err := s.streamPlainTurn(ctx, provider.Request{
 		Model: snapshot.binding.Model, Messages: prepared, Temperature: snapshot.temperature,
-		MaxTokens: snapshot.maxTokens, Stream: true,
+		MaxTokens:      snapshot.maxTokens,
 		ReasoningLevel: snapshot.binding.Profile.Reasoning, ReasoningDialect: snapshot.binding.Profile.ReasoningDialect,
 		SessionID: s.SessionID, Timeout: effectiveRequestTimeout(snapshot.requestTimeout),
-	}, streamWriter)
+	}, streamWriter, snapshot.binding.Completer)
+	s.publishPlainReasoning(s.SessionID, turnEventID(snapshot.myTurn), reasoning)
 	if err != nil {
 		// An interrupted turn (Ctrl+C / force-send / deadline) must not lose
 		// the user's message or the answer already streamed: adopt both and
@@ -149,12 +151,13 @@ func (s *Session) sendPlainContext(ctx context.Context, persistedText string, w 
 	// (tests, headless callers) keeps the capture-only surface.
 	var captured strings.Builder
 	streamWriter := s.plainTurnStreamWriter(w, &captured, fmt.Sprintf("turn:%d", snapshot.myTurn))
-	reply, err := snapshot.binding.Completer.ChatStream(ctx, provider.Request{
+	reply, reasoning, err := s.streamPlainTurn(ctx, provider.Request{
 		Model: snapshot.binding.Model, Messages: requestMessages, Temperature: snapshot.temperature,
-		MaxTokens: snapshot.maxTokens, Stream: true,
+		MaxTokens:      snapshot.maxTokens,
 		ReasoningLevel: snapshot.binding.Profile.Reasoning, ReasoningDialect: snapshot.binding.Profile.ReasoningDialect,
 		SessionID: s.SessionID, Timeout: effectiveRequestTimeout(snapshot.requestTimeout),
-	}, streamWriter)
+	}, streamWriter, snapshot.binding.Completer)
+	s.publishPlainReasoning(s.SessionID, turnEventID(snapshot.myTurn), reasoning)
 	if err != nil {
 		// An interrupted turn (Ctrl+C / force-send / deadline) must not lose
 		// the user's message or the answer already streamed: the interrupted
@@ -169,4 +172,48 @@ func (s *Session) sendPlainContext(ctx context.Context, persistedText string, w 
 		return s.commitErroredPlainContext(ctx, err, snapshot, prepared, persistedText, captured.String(), preparation, summary)
 	}
 	return s.commitPlainContextTurn(ctx, reply, snapshot, prepared, persistedText, preparation, summary)
+}
+
+// streamPlainTurn runs one plain (no-tools) provider turn, returning both the
+// reply and the reasoning that produced it.
+//
+// It calls ChatTurn with a StreamWriter rather than ChatStream. That is not a
+// new mechanism: ChatStream IS this call with the reasoning discarded.
+// AnthropicCompleter.ChatStream says so in as many words ("streams the same way
+// ChatTurn does when given a StreamWriter and discards everything but the final
+// text - the shape every other provider's ChatStream already has for the
+// no-tools case"), OpenAICompat's tools branch already does exactly this, and
+// llmProxyDispatchCompleter forwards either to the same inner completer.
+//
+// The discard cost the plain path its reasoning outright. A --no-tools turn
+// relayed its answer and never its thinking, on every surface and to every
+// consumer - not because nothing published it, but because ChatStream's
+// (string, error) signature left nothing to publish.
+func (s *Session) streamPlainTurn(ctx context.Context, req provider.Request, w io.Writer, completer provider.Completer) (reply, reasoning string, err error) {
+	req.Stream = true
+	req.StreamWriter = w
+	resp, err := completer.ChatTurn(ctx, req)
+	if err != nil {
+		return "", "", err
+	}
+	if resp == nil {
+		return "", "", nil
+	}
+	return resp.Content, resp.ReasoningContent, nil
+}
+
+// publishPlainReasoning emits what a plain turn reasoned, mirroring the agent
+// loop's own projection (internal/agent/loop_step.go): one KindThinking
+// carrying redacted reasoning, and nothing at all when there was none.
+func (s *Session) publishPlainReasoning(sessionID, turnID, reasoning string) {
+	if reasoning == "" || s.EventBus == nil {
+		return
+	}
+	s.EventBus.Publish(events.Event{
+		Kind:      events.KindThinking,
+		Timestamp: time.Now(),
+		SessionID: sessionID,
+		TurnID:    turnID,
+		Content:   redact.Text(reasoning),
+	})
 }

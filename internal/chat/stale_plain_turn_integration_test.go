@@ -24,7 +24,20 @@ func (c *overlappingPlainCompleter) Chat(ctx context.Context, req provider.Reque
 	return c.ChatStream(ctx, req, io.Discard)
 }
 
-func (c *overlappingPlainCompleter) ChatStream(ctx context.Context, _ provider.Request, _ io.Writer) (string, error) {
+// ChatStream delegates to ChatTurn, as a real completer does. Holding the
+// blocking handshake only here made this double disagree with every provider,
+// so a caller reaching ChatTurn never blocked and the test hung on started.
+func (c *overlappingPlainCompleter) ChatStream(ctx context.Context, req provider.Request, w io.Writer) (string, error) {
+	req.Stream = true
+	req.StreamWriter = w
+	resp, err := c.ChatTurn(ctx, req)
+	if err != nil {
+		return "", err
+	}
+	return resp.Content, nil
+}
+
+func (c *overlappingPlainCompleter) chatStreamLegacy(ctx context.Context, _ provider.Request, _ io.Writer) (string, error) {
 	c.mu.Lock()
 	c.calls++
 	call := c.calls
@@ -42,8 +55,15 @@ func (c *overlappingPlainCompleter) ChatStream(ctx context.Context, _ provider.R
 	}
 }
 
-func (c *overlappingPlainCompleter) ChatTurn(context.Context, provider.Request) (*provider.Response, error) {
-	return &provider.Response{Content: "reply", FinishReason: "stop"}, nil
+func (c *overlappingPlainCompleter) ChatTurn(ctx context.Context, req provider.Request) (*provider.Response, error) {
+	content, err := c.chatStreamLegacy(ctx, req, nil)
+	if err != nil {
+		return nil, err
+	}
+	if req.StreamWriter != nil {
+		_, _ = io.WriteString(req.StreamWriter, content)
+	}
+	return &provider.Response{Content: content, FinishReason: "stop"}, nil
 }
 
 func TestIntegrationStalePlainTurnDoesNotAutosave(t *testing.T) {
