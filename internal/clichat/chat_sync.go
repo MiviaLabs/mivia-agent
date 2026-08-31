@@ -9,6 +9,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chatsync"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/miviaauth"
+	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
 
 // syncTokenProvider resolves the logged-in CLI session into the token
@@ -37,6 +38,13 @@ func cliSyncOptions(sess *chat.Session, res *config.Resolved, tokens chatsync.To
 			IncludeToolIO:   res.Sync.IncludeToolIO,
 			IncludeThinking: res.Sync.IncludeThinking,
 			StreamAssistant: res.Sync.StreamAssistant,
+			// chatsync is a leaf (settled decision 7), so these two are the
+			// host's to supply. Both zero values are wrong rather than merely
+			// absent: a nil ErrorMessage drops back to a default that does not
+			// know this app's sentinels, and a false RedactToolArgs reads as
+			// "the operator did not ask for redaction" when they may have.
+			ErrorMessage:   chat.TurnErrorMessage,
+			RedactToolArgs: tools.RedactToolArgs(),
 		},
 		OutboxDir:       filepath.Join(sess.SessionDir, "chat-sync", "sessions", sess.SessionID),
 		MaxUnflushed:    res.Sync.MaxUnflushed,

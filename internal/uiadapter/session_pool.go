@@ -14,6 +14,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/miviaauth"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 )
 
@@ -396,6 +397,11 @@ func poolSyncOptions(sess *chat.Session, id string, res *config.Resolved, tokens
 			IncludeToolIO:   res.Sync.IncludeToolIO,
 			IncludeThinking: res.Sync.IncludeThinking,
 			StreamAssistant: res.Sync.StreamAssistant,
+			// See the matching comment in internal/clichat/chat_sync.go: both
+			// zero values are wrong rather than absent, and this is the only
+			// site that can supply them for the TUI surface.
+			ErrorMessage:   chat.TurnErrorMessage,
+			RedactToolArgs: tools.RedactToolArgs(),
 		},
 		OutboxDir:       filepath.Join(sess.SessionDir, "chat-sync", "sessions", id),
 		MaxUnflushed:    res.Sync.MaxUnflushed,
