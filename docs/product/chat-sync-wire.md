@@ -9,12 +9,25 @@ Remote chat synchronization lets an operator monitor and interact with local
 chat sessions through a web viewer. The system synchronizes events in real time
 to the backend API using an append-only event stream.
 
+## Status: incomplete. Do not enable.
+
+This feature is under construction and is **not ready to turn on**. Known
+unfixed defects: the remote session id is not persisted, so each restart
+starts a new server-side transcript; `serverLastSeq` is not yet authoritative;
+and the writer id that separates two machines writing one session is not wired,
+so two machines merge into one transcript.
+
+Leave `sync.enabled = false`. This note is removed when those land and the
+first-run consent flow ships.
+
 ## Fail-Closed Privacy Model
 
 Remote synchronization uses a strict fail-closed privacy posture:
 
 1. **Disabled by default**: Synchronization is inactive unless you explicitly
-   enable it via configuration (`sync.enabled = true`) or the `--sync` CLI flag.
+   set `sync.enabled = true` in configuration. There is no CLI flag: the
+   settled design has `--sync`/`--no-sync`, but they are not implemented yet,
+   and this document described them before they existed.
 2. **Tool I/O withheld**: By default, the system omits tool inputs and outputs
    from the wire payload and records them in the envelope `redacted` array. When
    enabled via `sync.include_tool_io = true`, payloads still pass through the
@@ -81,9 +94,10 @@ Configure remote chat synchronization in `.mivia/mivia.toml`:
 
 ```toml
 [sync]
-enabled = false             # Fail-closed default
+enabled = false             # Fail-closed default. See "Status" above.
 include_tool_io = false     # Withhold tool input/output
 include_thinking = false    # Withhold thinking blocks
+stream_assistant = false    # Per-delta streaming; off = one settled message per turn
 api_url = "https://api.mivia.ai"
 poll_wait_seconds = 25      # Remote input long-poll timeout
 heartbeat_seconds = 30      # Periodic heartbeat interval
