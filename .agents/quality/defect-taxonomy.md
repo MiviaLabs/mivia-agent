@@ -765,6 +765,55 @@ record boundaries - just before a record header, or at end of output.
 - Sweep every sibling writer that feeds the same parser. A format with two
   writers needs the fix in both.
 
+## DC-25 Exported stream or event channel is never closed upon worker termination
+
+**Mechanism.** A background worker, poller, or subscription manager exposes an
+asynchronous receive-only channel (`Inputs() <-chan T` or `Events() <-chan E`)
+for caller consumers. Callers consume the channel using a standard idiom
+`for item := range worker.Inputs()`. When the worker's `Stop(ctx)` method is
+called, the worker closes internal loop control channels (`stopCh`) and exits,
+but forgets to close the exported output channel (`defer close(w.inputCh)`).
+Callers iterating over the channel block indefinitely on the range loop, leaking
+consumer goroutines, holding references to enclosing session pools, and failing
+graceful shutdown deadlines.
+
+**Evidence.** `internal/chatsync.InputPoller.Stop` terminated `p.loop` but
+left `p.inputCh` unclosed. `internal/uiadapter.SessionPool.forwardRemoteInputs`
+blocked permanently on `range syncSess.Inputs()`, leaking a goroutine per
+pooled session. Caught by architectural bug review finding [AR-2] and fixed in
+commit `ac410387` (regression tests `TestInputPoller_ChannelClosedOnStop` and
+`TestSessionPool_ForwardRemoteInputsGoroutineTerminatesOnStop`).
+
+**Probes.**
+- For every worker with an exported channel accessor, trace the termination
+  branch of its background loop. Ensure `defer close(ch)` runs on all exit paths.
+- Conformance test: Start worker, invoke `worker.Stop()`, and assert that
+  reading from `<-worker.Channel()` immediately returns `(zero, false)` without
+  timeout.
+
+## DC-26 Top-level JSON array sent where upstream API schema requires object envelope
+
+**Mechanism.** An HTTP client method accepts a slice parameter (`events []EventItem`)
+and serializes it directly to `POST /v1/...` as a top-level JSON array (`[...]`).
+The upstream REST API schema requires an object envelope with a named field
+(`{"events": [...]}`). Unit tests with handwritten mock servers mirror the
+client author's mistaken assumption by decoding `json.NewDecoder(r.Body).Decode(&slice)`
+directly, resulting in 100% test pass rates in mock suites while 100% of live
+requests fail with HTTP 400 Bad Request.
+
+**Evidence.** `internal/chatsync.Client.AppendEvents` sent `events []EventItem`
+directly, causing live sync batch append requests to fail against the API's
+ValidationPipe. Mock servers in `client_test.go`, `attach_test.go`, and
+`session_test.go` shared the defect. Caught in correctness bug review and fixed
+in commit `ac410387` (regression test `TestClientAppendEvents_MatchesWireEnvelope`).
+
+**Probes.**
+- Compare every client `POST`/`PUT`/`PATCH` payload against frozen schema contracts
+  in `api/contracts/` or upstream OpenAPI/JSONSchema definitions.
+- Unit test mock servers must decode request payloads into typed structs or maps
+  that assert the required envelope properties, rather than decoding bare slice
+  types.
+
 ## Maintenance
 
 Update this document when a `fix` commit does not match any class, or when a class
