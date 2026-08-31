@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -135,5 +137,115 @@ func TestInputPoller_ChannelClosedOnStop(t *testing.T) {
 		}
 	case <-time.After(1 * time.Second):
 		t.Fatal("timed out waiting for inputs channel to close")
+	}
+}
+
+func TestInputPoller_CrashRecovery_ConsumedInputDeliveredOnAttach(t *testing.T) {
+	stateDir := t.TempDir()
+
+	// Simulate crashed process state: input was marked consumed on server (200 OK),
+	// but process crashed before delivering on Inputs() channel.
+	pendingData, err := json.Marshal(pendingInputState{
+		Input: &SessionInput{
+			ID:        "inp-recovered",
+			SessionID: "sess-recover-1",
+			Kind:      "message",
+			Body:      "recovered instruction after crash",
+		},
+		Consumed: true,
+	})
+	if err != nil {
+		t.Fatalf("marshal pending state: %v", err)
+	}
+
+	pendingPath := filepath.Join(stateDir, pendingInputFileName)
+	if err := os.WriteFile(pendingPath, pendingData, 0o600); err != nil {
+		t.Fatalf("write pending file: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/chat-sessions/{id}/inputs/next", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(NextInput{Input: nil})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	client := NewClient(ClientOptions{BaseURL: srv.URL})
+	poller := NewInputPoller(client, "sess-recover-1", 1, stateDir)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	poller.Start(ctx)
+	defer poller.Stop()
+
+	// Consumed input must be recovered and delivered immediately on Inputs()
+	select {
+	case ri := <-poller.Inputs():
+		if ri.ID != "inp-recovered" || ri.Body != "recovered instruction after crash" {
+			t.Errorf("recovered input = %+v, want ID=inp-recovered", ri)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for recovered input delivery")
+	}
+
+	// Pending input file must be cleared after delivery
+	if _, err := os.Stat(pendingPath); !os.IsNotExist(err) {
+		t.Errorf("expected pending input file to be cleared, got err = %v", err)
+	}
+}
+
+func TestInputPoller_CrashRecovery_UnconsumedInputDiscarded(t *testing.T) {
+	stateDir := t.TempDir()
+
+	// Simulate crashed process state: input was written to disk before consume,
+	// but process crashed before consume returned 200 OK (Consumed = false).
+	pendingData, err := json.Marshal(pendingInputState{
+		Input: &SessionInput{
+			ID:        "inp-unconsumed",
+			SessionID: "sess-recover-2",
+			Kind:      "message",
+			Body:      "unconsumed instruction",
+		},
+		Consumed: false,
+	})
+	if err != nil {
+		t.Fatalf("marshal pending state: %v", err)
+	}
+
+	pendingPath := filepath.Join(stateDir, pendingInputFileName)
+	if err := os.WriteFile(pendingPath, pendingData, 0o600); err != nil {
+		t.Fatalf("write pending file: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/chat-sessions/{id}/inputs/next", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(NextInput{Input: nil})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	client := NewClient(ClientOptions{BaseURL: srv.URL})
+	poller := NewInputPoller(client, "sess-recover-2", 1, stateDir)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	poller.Start(ctx)
+	defer poller.Stop()
+
+	// Unconsumed input must NOT be delivered
+	select {
+	case ri := <-poller.Inputs():
+		t.Fatalf("unexpected delivery of unconsumed input: %+v", ri)
+	case <-time.After(100 * time.Millisecond):
+		// Expected: no delivery
+	}
+
+	// Stale unconsumed file should be removed
+	if _, err := os.Stat(pendingPath); !os.IsNotExist(err) {
+		t.Errorf("expected unconsumed pending file to be cleared, got err = %v", err)
 	}
 }

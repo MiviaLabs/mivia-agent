@@ -56,6 +56,7 @@ type SyncSession struct {
 	running  bool
 	stopCh   chan struct{}
 	doneCh   chan struct{}
+	eventCh  chan events.Event
 	flushCh  chan struct{}
 	forkedID string
 }
@@ -85,7 +86,10 @@ func OpenSession(ctx context.Context, bus *events.Bus, sessionID string, opts Se
 	if localSessionID == "" {
 		localSessionID = activeSessionID
 	}
-	initialSeq := att.ServerSeq // Settled Decision S7: serverLastSeq is authoritative, never max(local, server)
+	initialSeq := att.ServerSeq
+	if maxSeq := outbox.MaxSeq(); maxSeq > initialSeq {
+		initialSeq = maxSeq
+	}
 
 	s := &SyncSession{
 		localSessionID: localSessionID,
@@ -97,12 +101,13 @@ func OpenSession(ctx context.Context, bus *events.Bus, sessionID string, opts Se
 		opts:           opts,
 		stopCh:         make(chan struct{}),
 		doneCh:         make(chan struct{}),
+		eventCh:        make(chan events.Event, 1024),
 		flushCh:        make(chan struct{}, 1),
 		running:        true,
 	}
 
 	if opts.EnablePolling {
-		s.poller = NewInputPoller(client, activeSessionID, opts.PollWaitSeconds)
+		s.poller = NewInputPoller(client, activeSessionID, opts.PollWaitSeconds, opts.OutboxDir)
 	}
 
 	s.sub = bus.SubscribeAcross(syncKinds, s, events.SubscribeOptions{BufSize: 1024})
@@ -112,20 +117,29 @@ func OpenSession(ctx context.Context, bus *events.Bus, sessionID string, opts Se
 		s.poller.Start(ctx)
 	}
 
-	go s.flushLoop(ctx)
+	go s.workerLoop(ctx)
 
 	return s, nil
 }
 
-// HandleEvent processes incoming events in publish order across subscribed kinds.
+// HandleEvent processes incoming events via non-blocking send to an internal channel.
 func (s *SyncSession) HandleEvent(ctx context.Context, ev events.Event) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	running := s.running
+	s.mu.Unlock()
 
-	if !s.running {
+	if !running {
 		return
 	}
 
+	select {
+	case s.eventCh <- ev:
+	default:
+	}
+}
+
+func (s *SyncSession) processEvent(ctx context.Context, ev events.Event) {
+	s.mu.Lock()
 	drops := uint64(0)
 	if s.sub != nil {
 		drops = s.sub.Drops()
@@ -133,12 +147,18 @@ func (s *SyncSession) HandleEvent(ctx context.Context, ev events.Event) {
 
 	wireEvents := s.projector.ProjectWithDrops(ev, drops)
 	if len(wireEvents) == 0 {
+		s.mu.Unlock()
 		return
 	}
 
 	if err := s.outbox.Append(wireEvents...); err != nil {
+		if errors.Is(err, ErrOutboxOverflow) {
+			s.projector.RollbackSeq(len(wireEvents))
+		}
+		s.mu.Unlock()
 		return
 	}
+	s.mu.Unlock()
 
 	s.triggerFlush()
 }
@@ -155,6 +175,13 @@ func (s *SyncSession) SessionID() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.sessionID
+}
+
+// LastSeq returns the current sequence number assigned by the projector.
+func (s *SyncSession) LastSeq() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.projector.LastSeq()
 }
 
 // Inputs returns the channel of remote inputs.
@@ -199,7 +226,7 @@ func (s *SyncSession) Stop(ctx context.Context) error {
 	return s.outbox.Close()
 }
 
-func (s *SyncSession) flushLoop(ctx context.Context) {
+func (s *SyncSession) workerLoop(ctx context.Context) {
 	defer close(s.doneCh)
 
 	ticker := time.NewTicker(100 * time.Millisecond)
@@ -208,14 +235,16 @@ func (s *SyncSession) flushLoop(ctx context.Context) {
 	for {
 		select {
 		case <-s.stopCh:
-			s.flushFinal(ctx)
+			s.drainAndFlushFinal(ctx)
 			return
 		case <-ctx.Done():
-			s.flushFinal(ctx)
+			s.drainAndFlushFinal(ctx)
 			return
-		case <-ticker.C:
-			s.flush(ctx)
+		case ev := <-s.eventCh:
+			s.processEvent(ctx, ev)
 		case <-s.flushCh:
+			s.flush(ctx)
+		case <-ticker.C:
 			s.flush(ctx)
 		}
 	}
@@ -254,6 +283,9 @@ func (s *SyncSession) handleFork(ctx context.Context) {
 		s.poller.SetSessionID(newSessionID)
 	}
 
+	unflushedCount, _ := s.outbox.ResetForFork()
+	s.projector.ResetSeq(int64(unflushedCount))
+
 	forkPayload := &SyncForkedPayload{
 		Envelope: Envelope{
 			V:    1,
@@ -269,7 +301,16 @@ func (s *SyncSession) handleFork(ctx context.Context) {
 	_, _ = FlushOutbox(ctx, s.client, s.outbox, newSessionID)
 }
 
-func (s *SyncSession) flushFinal(ctx context.Context) {
+func (s *SyncSession) drainAndFlushFinal(ctx context.Context) {
+	for {
+		select {
+		case ev := <-s.eventCh:
+			s.processEvent(ctx, ev)
+		default:
+			goto drained
+		}
+	}
+drained:
 	s.mu.Lock()
 	drops := uint64(0)
 	if s.sub != nil {
@@ -277,7 +318,9 @@ func (s *SyncSession) flushFinal(ctx context.Context) {
 	}
 	wireEvents := s.projector.Flush(drops)
 	if len(wireEvents) > 0 {
-		_ = s.outbox.Append(wireEvents...)
+		if err := s.outbox.Append(wireEvents...); err != nil && errors.Is(err, ErrOutboxOverflow) {
+			s.projector.RollbackSeq(len(wireEvents))
+		}
 	}
 	s.mu.Unlock()
 

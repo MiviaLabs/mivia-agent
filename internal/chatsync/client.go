@@ -68,11 +68,7 @@ func NewClient(opts ClientOptions) *Client {
 	baseURL := strings.TrimRight(opts.BaseURL, "/")
 	httpClient := opts.HTTPClient
 	if httpClient == nil {
-		timeout := opts.Timeout
-		if timeout <= 0 {
-			timeout = 10 * time.Second
-		}
-		httpClient = &http.Client{Timeout: timeout}
+		httpClient = &http.Client{Timeout: opts.Timeout}
 	}
 	return &Client{
 		baseURL:       baseURL,

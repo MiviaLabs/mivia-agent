@@ -2,9 +2,20 @@ package chatsync
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
+
+const pendingInputFileName = "pending_input.json"
+
+type pendingInputState struct {
+	Input    *SessionInput `json:"input"`
+	Consumed bool          `json:"consumed"`
+}
 
 // RemoteInput represents a received and consumed user input from the remote viewer.
 type RemoteInput struct {
@@ -20,6 +31,7 @@ type InputPoller struct {
 	client      *Client
 	sessionID   string
 	waitSeconds int
+	stateDir    string
 	inputCh     chan RemoteInput
 	stopCh      chan struct{}
 	doneCh      chan struct{}
@@ -33,16 +45,21 @@ const (
 )
 
 // NewInputPoller creates a new InputPoller.
-func NewInputPoller(client *Client, sessionID string, waitSeconds int) *InputPoller {
+func NewInputPoller(client *Client, sessionID string, waitSeconds int, stateDir ...string) *InputPoller {
 	if waitSeconds <= 0 {
 		waitSeconds = defaultPollWaitSeconds
 	} else if waitSeconds > maxPollWaitSeconds {
 		waitSeconds = maxPollWaitSeconds
 	}
+	dir := ""
+	if len(stateDir) > 0 {
+		dir = stateDir[0]
+	}
 	return &InputPoller{
 		client:      client,
 		sessionID:   sessionID,
 		waitSeconds: waitSeconds,
+		stateDir:    dir,
 		inputCh:     make(chan RemoteInput, 16),
 		stopCh:      make(chan struct{}),
 		doneCh:      make(chan struct{}),
@@ -64,6 +81,7 @@ func (p *InputPoller) Start(ctx context.Context) {
 	p.running = true
 	p.mu.Unlock()
 
+	p.recoverPendingInput()
 	go p.loop(ctx)
 }
 
@@ -128,6 +146,8 @@ func (p *InputPoller) pollOnce(ctx context.Context) {
 	}
 
 	raw := next.Input
+	_ = p.writePendingInput(raw, false)
+
 	consumeCtx, cancelConsume := context.WithTimeout(ctx, 5*time.Second)
 	defer cancelConsume()
 
@@ -135,6 +155,8 @@ func (p *InputPoller) pollOnce(ctx context.Context) {
 	if err != nil {
 		return
 	}
+
+	_ = p.writePendingInput(consumed, true)
 
 	ri := RemoteInput{
 		ID:        consumed.ID,
@@ -149,4 +171,81 @@ func (p *InputPoller) pollOnce(ctx context.Context) {
 	case <-ctx.Done():
 	case <-p.stopCh:
 	}
+
+	p.clearPendingInput()
+}
+
+func (p *InputPoller) writePendingInput(input *SessionInput, consumed bool) error {
+	if p.stateDir == "" || input == nil {
+		return nil
+	}
+	state := pendingInputState{
+		Input:    input,
+		Consumed: consumed,
+	}
+	data, err := json.Marshal(state)
+	if err != nil {
+		return fmt.Errorf("marshal pending input: %w", err)
+	}
+
+	tmpPath := filepath.Join(p.stateDir, pendingInputFileName+".tmp")
+	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return fmt.Errorf("open tmp pending input file: %w", err)
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("write tmp pending input file: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("sync tmp pending input file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close tmp pending input file: %w", err)
+	}
+
+	finalPath := filepath.Join(p.stateDir, pendingInputFileName)
+	if err := os.Rename(tmpPath, finalPath); err != nil {
+		return fmt.Errorf("rename pending input file: %w", err)
+	}
+	return nil
+}
+
+func (p *InputPoller) clearPendingInput() {
+	if p.stateDir == "" {
+		return
+	}
+	_ = os.Remove(filepath.Join(p.stateDir, pendingInputFileName))
+}
+
+func (p *InputPoller) recoverPendingInput() {
+	if p.stateDir == "" {
+		return
+	}
+	pendingPath := filepath.Join(p.stateDir, pendingInputFileName)
+	data, err := os.ReadFile(pendingPath)
+	if err != nil {
+		return
+	}
+	var state pendingInputState
+	if err := json.Unmarshal(data, &state); err != nil {
+		_ = os.Remove(pendingPath)
+		return
+	}
+
+	if state.Consumed && state.Input != nil {
+		ri := RemoteInput{
+			ID:        state.Input.ID,
+			SessionID: state.Input.SessionID,
+			Kind:      state.Input.Kind,
+			Body:      state.Input.Body,
+			Received:  time.Now(),
+		}
+		select {
+		case p.inputCh <- ri:
+		default:
+		}
+	}
+	_ = os.Remove(pendingPath)
 }

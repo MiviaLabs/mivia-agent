@@ -26,7 +26,7 @@ func attachCLISync(sess *chat.Session, res *config.Resolved) func() {
 		MaxUnflushed:    res.Sync.MaxUnflushed,
 		PollWaitSeconds: res.Sync.PollWaitSeconds,
 		HeartbeatPeriod: config.SaturatingSeconds(res.Sync.HeartbeatSeconds),
-		CreateTitle:     "CLI Session " + sess.SessionID,
+		CreateTitle:     "CLI Session",
 		EnablePolling:   false,
 	}
 	syncSess, err := chatsync.OpenSession(context.Background(), sess.EventBus, sess.SessionID, opts)

@@ -3,6 +3,7 @@ package uiadapter_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -22,7 +23,7 @@ func setupSyncMockServer(mu *sync.Mutex, createdIDs *[]string, sessionEvents map
 		var params chatsync.CreateSessionParams
 		_ = json.NewDecoder(r.Body).Decode(&params)
 		mu.Lock()
-		sessID := "remote-" + params.Title
+		sessID := fmt.Sprintf("remote-%d", len(*createdIDs)+1)
 		*createdIDs = append(*createdIDs, sessID)
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")

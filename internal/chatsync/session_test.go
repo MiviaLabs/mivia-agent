@@ -213,10 +213,12 @@ func verifyForkedSession(t *testing.T, count int32, mu *sync.Mutex, sessionEvent
 	}
 
 	foundForkEvent := false
-	for _, ev := range forkedEvents {
+	for i, ev := range forkedEvents {
+		if ev.Seq != int64(i+1) {
+			t.Errorf("forked event[%d].Seq = %d, want %d", i, ev.Seq, i+1)
+		}
 		if ev.Type == TypeSyncForked {
 			foundForkEvent = true
-			break
 		}
 	}
 	if !foundForkEvent {
@@ -306,7 +308,7 @@ func TestSyncSession_ResumeWithUnflushedEventsPreservesMonotonicity(t *testing.T
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/chat-sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(Session{ID: "sess-resumed", Status: "running", LastSeq: 5})
+		_ = json.NewEncoder(w).Encode(Session{ID: "sess-resumed", Status: "running", LastSeq: 2})
 	})
 	mux.HandleFunc("POST /v1/chat-sessions/{id}/events", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
@@ -345,7 +347,7 @@ func TestSyncSession_ResumeWithUnflushedEventsPreservesMonotonicity(t *testing.T
 		Timestamp: time.Now(),
 	})
 
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 	_ = syncSess.Stop(context.Background())
 
 	// Re-open outbox and check that new event received Seq >= 6
@@ -357,4 +359,65 @@ func TestSyncSession_ResumeWithUnflushedEventsPreservesMonotonicity(t *testing.T
 	if obCheck.MaxSeq() < 6 {
 		t.Errorf("obCheck.MaxSeq() = %d, want >= 6", obCheck.MaxSeq())
 	}
+}
+
+func TestHandleEvent_OutboxOverflowDoesNotAdvanceSeq(t *testing.T) {
+	outboxDir := t.TempDir()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/chat-sessions", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(Session{ID: "sess-overflow", Status: "running", LastSeq: 0})
+	})
+	mux.HandleFunc("POST /v1/chat-sessions/{id}/heartbeat", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(Session{ID: r.PathValue("id"), Status: "running"})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	bus := events.New()
+	opts := SessionOptions{
+		ClientOptions: ClientOptions{BaseURL: srv.URL},
+		OutboxDir:     outboxDir,
+		MaxUnflushed:  1, // Capacity is exactly 1 event
+		CreateTitle:   "Overflow Test",
+	}
+
+	syncSess, err := OpenSession(context.Background(), bus, "sess-overflow", opts)
+	if err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+
+	// 1. Publish 1st event -> successfully appended (Seq: 1)
+	bus.Publish(events.Event{
+		Kind:      events.KindTurnStart,
+		SessionID: "sess-overflow",
+		TurnID:    "turn:1",
+		Detail:    "message 1",
+		Timestamp: time.Now(),
+	})
+	time.Sleep(50 * time.Millisecond)
+
+	if syncSess.LastSeq() != 1 {
+		t.Fatalf("syncSess.LastSeq() = %d, want 1", syncSess.LastSeq())
+	}
+
+	// 2. Publish 2nd event -> exceeds capacity (MaxUnflushed=1, unflushed=1).
+	// Must NOT consume sequence number 2!
+	bus.Publish(events.Event{
+		Kind:      events.KindTurnStart,
+		SessionID: "sess-overflow",
+		TurnID:    "turn:2",
+		Detail:    "message 2 (overflowed)",
+		Timestamp: time.Now(),
+	})
+	time.Sleep(50 * time.Millisecond)
+
+	if syncSess.LastSeq() != 1 {
+		t.Errorf("syncSess.LastSeq() after overflow = %d, want 1 (must not consume sequence on overflow)", syncSess.LastSeq())
+	}
+
+	_ = syncSess.Stop(context.Background())
 }

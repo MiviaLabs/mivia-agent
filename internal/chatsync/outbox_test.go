@@ -1,6 +1,8 @@
 package chatsync
 
 import (
+	"bytes"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 )
@@ -160,5 +162,88 @@ func TestOutboxCapacityOverflow(t *testing.T) {
 	// Now append ev4 succeeds
 	if err := ob.Append(ev4); err != nil {
 		t.Fatalf("Append ev4 after advance: %v", err)
+	}
+}
+
+func TestOutbox_ByteIdenticalPayloadReplay(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "chat-sync-raw-payload")
+	ob, err := OpenOutbox(dir, 100)
+	if err != nil {
+		t.Fatalf("OpenOutbox: %v", err)
+	}
+	defer ob.Close()
+
+	// Use exact JSON with custom ordering and types
+	rawJSON := []byte(`{"writer_id":"w-1","custom_field":123.456,"nested":{"b":1,"a":2}}`)
+	ev := WireEvent{
+		Seq:     1,
+		Type:    TypeTurnStarted,
+		Payload: json.RawMessage(rawJSON),
+	}
+
+	if err := ob.Append(ev); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	unflushed, err := ob.UnflushedEvents()
+	if err != nil {
+		t.Fatalf("UnflushedEvents: %v", err)
+	}
+	if len(unflushed) != 1 {
+		t.Fatalf("unflushed len = %d, want 1", len(unflushed))
+	}
+
+	// Payload must be byte-identical to original JSON
+	gotPayload := []byte(unflushed[0].Payload)
+	if !bytes.Equal(gotPayload, rawJSON) {
+		t.Errorf("payload bytes differ:\n got:  %s\n want: %s", gotPayload, rawJSON)
+	}
+}
+
+func TestOutbox_ResetForFork(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "chat-sync-fork-reset")
+	ob, err := OpenOutbox(dir, 100)
+	if err != nil {
+		t.Fatalf("OpenOutbox: %v", err)
+	}
+	defer ob.Close()
+
+	// Append 5 events, advance cursor to 2
+	_ = ob.Append(
+		WireEvent{Seq: 1, Type: TypeTurnStarted, Payload: &TurnStartedPayload{Text: "1"}},
+		WireEvent{Seq: 2, Type: TypeTurnEnded, Payload: &TurnEndedPayload{Reason: "2"}},
+		WireEvent{Seq: 3, Type: TypeTurnStarted, Payload: &TurnStartedPayload{Text: "3"}},
+		WireEvent{Seq: 4, Type: TypeTurnEnded, Payload: &TurnEndedPayload{Reason: "4"}},
+		WireEvent{Seq: 5, Type: TypeTurnStarted, Payload: &TurnStartedPayload{Text: "5"}},
+	)
+	_ = ob.AdvanceCursor(2)
+
+	// Reset for fork: unflushed events (3, 4, 5) should be resequenced to 1, 2, 3
+	count, err := ob.ResetForFork()
+	if err != nil {
+		t.Fatalf("ResetForFork: %v", err)
+	}
+	if count != 3 {
+		t.Errorf("ResetForFork count = %d, want 3", count)
+	}
+
+	if ob.Cursor().FlushedSeq != 0 {
+		t.Errorf("cursor after fork = %d, want 0", ob.Cursor().FlushedSeq)
+	}
+	if ob.MaxSeq() != 3 {
+		t.Errorf("maxSeq after fork = %d, want 3", ob.MaxSeq())
+	}
+
+	unflushed, err := ob.UnflushedEvents()
+	if err != nil {
+		t.Fatalf("UnflushedEvents: %v", err)
+	}
+	if len(unflushed) != 3 {
+		t.Fatalf("unflushed len = %d, want 3", len(unflushed))
+	}
+	for i, ev := range unflushed {
+		if ev.Seq != int64(i+1) {
+			t.Errorf("unflushed[%d].Seq = %d, want %d", i, ev.Seq, i+1)
+		}
 	}
 }

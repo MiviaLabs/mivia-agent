@@ -210,7 +210,7 @@ func describeGoStruct(t *testing.T, model any) map[string]contractField {
 
 func goKindName(t reflect.Type) string {
 	if t == reflect.TypeOf(json.RawMessage{}) {
-		return "string|array"
+		return "string|array|object"
 	}
 	switch t.Kind() {
 	case reflect.String:
@@ -233,8 +233,10 @@ func kindMatches(got, want string) bool {
 		return true
 	}
 	for _, alt := range strings.Split(want, "|") {
-		if got == strings.TrimSpace(alt) {
-			return true
+		for _, gotAlt := range strings.Split(got, "|") {
+			if strings.TrimSpace(gotAlt) == strings.TrimSpace(alt) {
+				return true
+			}
 		}
 	}
 	return false

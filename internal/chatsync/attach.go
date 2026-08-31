@@ -2,6 +2,7 @@ package chatsync
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 )
@@ -29,9 +30,14 @@ func AttachSession(ctx context.Context, client *Client, outbox *Outbox, params C
 				if readErr == nil && len(events) > 0 {
 					isForeign := false
 					for _, ev := range events {
-						if evWriter, ok := ev.Payload["writer_id"].(string); ok && evWriter != "" && evWriter != writerID {
-							isForeign = true
-							break
+						var header struct {
+							WriterID string `json:"writer_id"`
+						}
+						if err := json.Unmarshal(ev.Payload, &header); err == nil {
+							if header.WriterID != "" && header.WriterID != writerID {
+								isForeign = true
+								break
+							}
 						}
 					}
 					if isForeign {

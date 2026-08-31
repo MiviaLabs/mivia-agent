@@ -51,9 +51,9 @@ func TestAttachSession_ServerAhead_AdoptWhenMine(t *testing.T) {
 	mux.HandleFunc("GET /v1/chat-sessions/{id}/events", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode([]StoredEvent{
-			{Seq: 3, Payload: map[string]any{"writer_id": "writer-me"}},
-			{Seq: 4, Payload: map[string]any{"writer_id": "writer-me"}},
-			{Seq: 5, Payload: map[string]any{"writer_id": "writer-me"}},
+			{Seq: 3, Payload: json.RawMessage(`{"writer_id":"writer-me"}`)},
+			{Seq: 4, Payload: json.RawMessage(`{"writer_id":"writer-me"}`)},
+			{Seq: 5, Payload: json.RawMessage(`{"writer_id":"writer-me"}`)},
 		})
 	})
 	srv := httptest.NewServer(mux)
@@ -72,6 +72,9 @@ func TestAttachSession_ServerAhead_AdoptWhenMine(t *testing.T) {
 	if att.SessionID != "sess-mine-1" || att.ServerSeq != 5 || att.ForkedFrom != "" {
 		t.Errorf("att = %+v, want SessionID=sess-mine-1, ServerSeq=5, ForkedFrom=''", att)
 	}
+	if ob.Cursor().FlushedSeq != 5 {
+		t.Errorf("ob.Cursor().FlushedSeq = %d, want 5", ob.Cursor().FlushedSeq)
+	}
 }
 
 func TestAttachSession_ServerAhead_ForkWhenForeign(t *testing.T) {
@@ -88,8 +91,8 @@ func TestAttachSession_ServerAhead_ForkWhenForeign(t *testing.T) {
 	mux.HandleFunc("GET /v1/chat-sessions/{id}/events", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode([]StoredEvent{
-			{Seq: 3, Payload: map[string]any{"writer_id": "writer-foreign"}},
-			{Seq: 4, Payload: map[string]any{"writer_id": "writer-foreign"}},
+			{Seq: 3, Payload: json.RawMessage(`{"writer_id":"writer-foreign"}`)},
+			{Seq: 4, Payload: json.RawMessage(`{"writer_id":"writer-foreign"}`)},
 		})
 	})
 	mux.HandleFunc("POST /v1/chat-sessions/{id}/end", func(w http.ResponseWriter, r *http.Request) {

@@ -186,19 +186,8 @@ func (ob *Outbox) AdvanceCursor(seq int64) error {
 		FlushedSeq: seq,
 		FlushedAt:  time.Now(),
 	}
-	data, err := json.Marshal(newCursor)
-	if err != nil {
-		return fmt.Errorf("marshal cursor: %w", err)
-	}
-
-	tmpPath := filepath.Join(ob.dir, cursorFileName+".tmp")
-	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
-		return fmt.Errorf("write tmp cursor: %w", err)
-	}
-
-	cursorPath := filepath.Join(ob.dir, cursorFileName)
-	if err := os.Rename(tmpPath, cursorPath); err != nil {
-		return fmt.Errorf("rename cursor: %w", err)
+	if err := ob.writeCursorLocked(newCursor); err != nil {
+		return err
 	}
 
 	ob.cursor = newCursor
@@ -220,7 +209,121 @@ func (ob *Outbox) Cursor() Cursor {
 func (ob *Outbox) UnflushedEvents() ([]StoredEvent, error) {
 	ob.mu.Lock()
 	defer ob.mu.Unlock()
+	return ob.unflushedEventsLocked()
+}
 
+// ResetForFork rewrites the outbox with only the currently unflushed events
+// re-indexed starting at sequence 1, and resets the flushed cursor to 0.
+// It returns the number of re-indexed unflushed events.
+func (ob *Outbox) ResetForFork() (int, error) {
+	ob.mu.Lock()
+	defer ob.mu.Unlock()
+
+	unflushed, err := ob.unflushedEventsLocked()
+	if err != nil {
+		return 0, err
+	}
+
+	if err := ob.rewriteEventsFileLocked(unflushed); err != nil {
+		return 0, err
+	}
+
+	newCursor := Cursor{
+		FlushedSeq: 0,
+		FlushedAt:  time.Now(),
+	}
+	if err := ob.writeCursorLocked(newCursor); err != nil {
+		return 0, err
+	}
+
+	ob.cursor = newCursor
+	ob.unflushed = len(unflushed)
+	ob.maxSeq = int64(len(unflushed))
+
+	return len(unflushed), nil
+}
+
+func (ob *Outbox) rewriteEventsFileLocked(unflushed []StoredEvent) error {
+	if ob.eventsFile != nil {
+		_ = ob.eventsFile.Close()
+		ob.eventsFile = nil
+	}
+
+	eventsPath := filepath.Join(ob.dir, eventsFileName)
+	tmpEventsPath := filepath.Join(ob.dir, eventsFileName+".tmp")
+
+	f, err := os.OpenFile(tmpEventsPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return fmt.Errorf("open tmp events file: %w", err)
+	}
+
+	for i, se := range unflushed {
+		we := WireEvent{
+			Seq:     int64(i + 1),
+			Type:    se.Type,
+			Payload: se.Payload,
+		}
+		data, err := json.Marshal(we)
+		if err != nil {
+			_ = f.Close()
+			return fmt.Errorf("marshal forked event: %w", err)
+		}
+		data = append(data, '\n')
+		if _, err := f.Write(data); err != nil {
+			_ = f.Close()
+			return fmt.Errorf("write forked event: %w", err)
+		}
+	}
+
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("sync tmp events file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close tmp events file: %w", err)
+	}
+
+	if err := os.Rename(tmpEventsPath, eventsPath); err != nil {
+		return fmt.Errorf("rename events file: %w", err)
+	}
+
+	ef, err := os.OpenFile(eventsPath, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o600)
+	if err != nil {
+		return fmt.Errorf("reopen events file: %w", err)
+	}
+	ob.eventsFile = ef
+	return nil
+}
+
+func (ob *Outbox) writeCursorLocked(cur Cursor) error {
+	cursorData, err := json.Marshal(cur)
+	if err != nil {
+		return fmt.Errorf("marshal cursor: %w", err)
+	}
+	tmpCursorPath := filepath.Join(ob.dir, cursorFileName+".tmp")
+	cf, err := os.OpenFile(tmpCursorPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return fmt.Errorf("open tmp cursor: %w", err)
+	}
+	if _, err := cf.Write(cursorData); err != nil {
+		_ = cf.Close()
+		return fmt.Errorf("write tmp cursor: %w", err)
+	}
+	if err := cf.Sync(); err != nil {
+		_ = cf.Close()
+		return fmt.Errorf("sync tmp cursor: %w", err)
+	}
+	if err := cf.Close(); err != nil {
+		return fmt.Errorf("close tmp cursor: %w", err)
+	}
+	cursorPath := filepath.Join(ob.dir, cursorFileName)
+	if err := os.Rename(tmpCursorPath, cursorPath); err != nil {
+		return fmt.Errorf("rename cursor: %w", err)
+	}
+	return nil
+}
+
+func (ob *Outbox) unflushedEventsLocked() ([]StoredEvent, error) {
 	eventsPath := filepath.Join(ob.dir, eventsFileName)
 	f, err := os.Open(eventsPath)
 	if err != nil {
