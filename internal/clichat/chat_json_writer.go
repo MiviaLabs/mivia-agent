@@ -2,7 +2,6 @@ package clichat
 
 import (
 	"encoding/json"
-	"errors"
 	"io"
 	"strings"
 	"unicode/utf8"
@@ -419,22 +418,12 @@ func splitTrailingIncompleteRune(b []byte) (complete, incomplete []byte) {
 	return b[:start], b[start:]
 }
 
-// jsonTurnErrorMessage returns a redaction-safe, plain-text description of a
-// failed --json turn for the wire ("error" event's message field). Provider
-// and tool error text can carry request content verbatim (DC-14: external
-// error text may carry request content; see .agents/quality/defect-taxonomy.md),
-// so err.Error() is never put on the wire as-is. Only a couple of recognized
-// internal sentinel failures get a slightly more specific, still content-free
-// message; everything else collapses to one generic message, with the real
-// error still available to an operator via stderr (sendLineMode's caller
-// prints it there).
+// jsonTurnErrorMessage returns the redaction-safe description of a failed
+// --json turn for the "error" event's message field. The classification lives
+// in chat.TurnErrorMessage because this is not the only boundary that must not
+// leak raw error text: internal/hub relays across processes and needs exactly
+// the same answer. This wrapper stays so the NDJSON writer keeps naming its own
+// concern, and so the two boundaries cannot drift apart.
 func jsonTurnErrorMessage(err error) string {
-	switch {
-	case errors.Is(err, chat.ErrPersistence):
-		return "chat turn failed: could not persist session state"
-	case errors.Is(err, chat.ErrStaleOperation), errors.Is(err, chat.ErrStaleAutosave):
-		return "chat turn failed: superseded by a newer turn"
-	default:
-		return "chat turn failed"
-	}
+	return chat.TurnErrorMessage(err)
 }

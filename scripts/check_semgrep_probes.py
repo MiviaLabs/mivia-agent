@@ -36,6 +36,13 @@ PROBES = [
         "package probe\n\nimport _ \"github.com/MiviaLabs/mivia-agent/internal/uikit/ports\"\n",
     ),
     (
+        "mivia.go.hub-wire-no-raw-error-text",
+        "internal/hub/probe-raw-error/viol.go",
+        "package probe\n\ntype ev struct{ Err error }\n\nfunc f(e ev) string { return e.Err.Error() }\n",
+        "internal/hub/probe-raw-error/clean.go",
+        "package probe\n\nimport \"github.com/MiviaLabs/mivia-agent/internal/chat\"\n\ntype ev struct{ Err error }\n\nfunc f(e ev) string { return chat.TurnErrorMessage(e.Err) }\n",
+    ),
+    (
         "mivia.generic.no-wildcard-bash-allow",
         ".claude/probe-wildcard-bash/viol.json",
         '{\n  "allow": [\n    "Bash(git *)"\n  ]\n}\n',
