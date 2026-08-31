@@ -87,8 +87,12 @@ type SyncSession struct {
 	// unbounded session context.
 	stopCtxCh chan context.Context
 
+	// running is atomic, not guarded by mu: HandleEvent runs on the bus
+	// delivery goroutine and must never contend for a lock the outbox writer
+	// holds across an fsync.
+	running atomic.Bool
+
 	mu      sync.Mutex
-	running bool
 	stopCh  chan struct{}
 	doneCh  chan struct{}
 	eventCh chan events.Event
@@ -141,8 +145,8 @@ func OpenSession(ctx context.Context, bus *events.Bus, sessionID string, opts Se
 		eventCh:        make(chan events.Event, 1024),
 		flushCh:        make(chan struct{}, 1),
 		stopCtxCh:      make(chan context.Context, 1),
-		running:        true,
 	}
+	s.running.Store(true)
 	s.appender = outbox
 
 	if att.ForkedFrom != "" {
@@ -176,11 +180,7 @@ func (s *SyncSession) HandleEvent(ctx context.Context, ev events.Event) {
 		return
 	}
 
-	s.mu.Lock()
-	running := s.running
-	s.mu.Unlock()
-
-	if !running {
+	if !s.running.Load() {
 		return
 	}
 
@@ -286,13 +286,9 @@ func (s *SyncSession) SetStatus(ctx context.Context, status string) {
 // close to a goroutine that waits for the worker, because closing the outbox
 // under a worker still writing to it would race its file handle.
 func (s *SyncSession) Stop(ctx context.Context) error {
-	s.mu.Lock()
-	if !s.running {
-		s.mu.Unlock()
+	if !s.running.CompareAndSwap(true, false) {
 		return nil
 	}
-	s.running = false
-	s.mu.Unlock()
 
 	// The worker's final drain and flush inherits the caller's deadline.
 	select {

@@ -24,10 +24,17 @@ type scriptedAppender struct {
 	real  outboxAppender
 	fail  atomic.Bool
 	stall atomic.Pointer[chan struct{}]
+	// entered signals that an Append is now inside the stall, so a test can
+	// act while the writer holds whatever the append path holds.
+	entered chan struct{}
 }
 
 func (a *scriptedAppender) Append(events ...WireEvent) error {
 	if ch := a.stall.Load(); ch != nil {
+		select {
+		case a.entered <- struct{}{}:
+		default:
+		}
 		<-*ch
 	}
 	if a.fail.Load() {
@@ -55,7 +62,7 @@ func (s *SyncSession) swapDropSource(fn func() uint64) {
 
 // interceptAppends installs a scriptedAppender over the live outbox.
 func interceptAppends(s *SyncSession) *scriptedAppender {
-	a := &scriptedAppender{}
+	a := &scriptedAppender{entered: make(chan struct{}, 1)}
 	a.real = s.swapAppender(a)
 	return a
 }
