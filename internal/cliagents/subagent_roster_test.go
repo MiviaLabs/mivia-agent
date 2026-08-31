@@ -126,7 +126,7 @@ func TestCleanLoadRosterNamesBuiltIn(t *testing.T) {
 		t.Fatalf("unexpected warnings: %v", warnings)
 	}
 	section := SubagentRosterSection(reg)
-	if !strings.Contains(section, "- general-purpose: General-purpose agent with the default toolset; use for research, audits, reviews, and multi-step tasks that need tools.") {
+	if !strings.Contains(section, "- general-purpose: General-purpose agent with the default toolset; use for implementation, research, audits, reviews, and multi-step tasks that need tools.") {
 		t.Fatalf("clean-workspace roster must announce the built-in: %q", section)
 	}
 }
