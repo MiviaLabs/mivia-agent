@@ -49,63 +49,15 @@ const liveTimeout = 120 * time.Second
 // reports it rather than failing inside a decoder.
 // ---------------------------------------------------------------------------
 
-type session struct {
-	ID              string  `json:"id"`
-	OrganizationID  string  `json:"organizationId"`
-	UserID          string  `json:"userId"`
-	Title           string  `json:"title"`
-	CwdLabel        *string `json:"cwdLabel"`
-	HostLabel       *string `json:"hostLabel"`
-	Status          string  `json:"status"`
-	LastSeq         int64   `json:"lastSeq"`
-	LastEventAt     string  `json:"lastEventAt"`
-	LastHeartbeatAt string  `json:"lastHeartbeatAt"`
-	EndedAt         *string `json:"endedAt"`
-	CreatedAt       string  `json:"createdAt"`
-}
-
-type eventItem struct {
-	Seq     int64          `json:"seq"`
-	Type    string         `json:"type"`
-	Payload map[string]any `json:"payload"`
-}
-
-type storedEvent struct {
-	SessionID string         `json:"sessionId"`
-	Seq       int64          `json:"seq"`
-	Type      string         `json:"type"`
-	Payload   map[string]any `json:"payload"`
-	CreatedAt string         `json:"createdAt"`
-}
-
-type appendResult struct {
-	LastSeq       int64 `json:"lastSeq"`
-	InsertedCount int   `json:"insertedCount"`
-}
-
-type sessionInput struct {
-	ID           string  `json:"id"`
-	SessionID    string  `json:"sessionId"`
-	AuthorUserID string  `json:"authorUserId"`
-	Kind         string  `json:"kind"`
-	Body         string  `json:"body"`
-	CreatedAt    string  `json:"createdAt"`
-	ConsumedAt   *string `json:"consumedAt"`
-}
-
-type nextInput struct {
-	Input *sessionInput `json:"input"`
-}
-
-// errorEnvelope is the shape the API's global exception filter emits. Message
-// is a string for thrown exceptions and an array for validation failures, so
-// it stays raw.
-type errorEnvelope struct {
-	StatusCode int             `json:"statusCode"`
-	Error      string          `json:"error"`
-	Message    json.RawMessage `json:"message"`
-	Path       string          `json:"path"`
-}
+type (
+	session       = Session
+	eventItem     = EventItem
+	storedEvent   = StoredEvent
+	appendResult  = AppendResult
+	sessionInput  = SessionInput
+	nextInput     = NextInput
+	errorEnvelope = ErrorEnvelope
+)
 
 // ---------------------------------------------------------------------------
 // Harness

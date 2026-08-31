@@ -1,0 +1,108 @@
+{
+  "contract": "mivia API /v1/chat-sessions",
+  "source": {
+    "repository": "mivia-app-web",
+    "paths": [
+      "apps/api/src/chat-sessions/chat-sessions.controller.ts",
+      "apps/api/src/chat-sessions/chat-sessions.service.ts",
+      "apps/api/src/chat-sessions/dto/create-session.dto.ts",
+      "apps/api/src/chat-sessions/dto/append-events.dto.ts",
+      "apps/api/src/chat-sessions/dto/session-response.dto.ts",
+      "apps/api/src/chat-sessions/dto/session-input.dto.ts"
+    ],
+    "transcribedOn": "2026-08-31"
+  },
+  "notes": [
+    "URI versioning with defaultVersion 1, so every path is /v1/chat-sessions/...",
+    "Payloads for events are open jsonb objects capped at 64 KiB.",
+    "Wire event type strings are prefixed with mivia.chat.v1."
+  ],
+  "knownTypes": [
+    "mivia.chat.v1.turn.started",
+    "mivia.chat.v1.assistant.delta",
+    "mivia.chat.v1.assistant.message",
+    "mivia.chat.v1.thinking.delta",
+    "mivia.chat.v1.tool.started",
+    "mivia.chat.v1.tool.ended",
+    "mivia.chat.v1.subagent.tool.started",
+    "mivia.chat.v1.subagent.tool.ended",
+    "mivia.chat.v1.subagent.progress",
+    "mivia.chat.v1.subagent.ended",
+    "mivia.chat.v1.turn.ended",
+    "mivia.chat.v1.context.compacted",
+    "mivia.chat.v1.turn.failed",
+    "mivia.chat.v1.sync.dropped",
+    "mivia.chat.v1.sync.forked"
+  ],
+  "structs": {
+    "session": {
+      "dto": "ChatSessionResponseDto",
+      "fields": {
+        "id": { "kind": "string", "nullable": false },
+        "organizationId": { "kind": "string", "nullable": false },
+        "userId": { "kind": "string", "nullable": false },
+        "title": { "kind": "string", "nullable": false },
+        "cwdLabel": { "kind": "string", "nullable": true },
+        "hostLabel": { "kind": "string", "nullable": true },
+        "status": { "kind": "string", "nullable": false },
+        "lastSeq": { "kind": "number", "nullable": false },
+        "lastEventAt": { "kind": "string", "nullable": false },
+        "lastHeartbeatAt": { "kind": "string", "nullable": false },
+        "endedAt": { "kind": "string", "nullable": true },
+        "createdAt": { "kind": "string", "nullable": false }
+      }
+    },
+    "eventItem": {
+      "dto": "EventItemDto",
+      "fields": {
+        "seq": { "kind": "number", "nullable": false },
+        "type": { "kind": "string", "nullable": false },
+        "payload": { "kind": "object", "nullable": false }
+      }
+    },
+    "storedEvent": {
+      "dto": "StoredEventDto",
+      "fields": {
+        "sessionId": { "kind": "string", "nullable": false },
+        "seq": { "kind": "number", "nullable": false },
+        "type": { "kind": "string", "nullable": false },
+        "payload": { "kind": "object", "nullable": false },
+        "createdAt": { "kind": "string", "nullable": false }
+      }
+    },
+    "appendResult": {
+      "dto": "AppendEventsResponseDto",
+      "fields": {
+        "lastSeq": { "kind": "number", "nullable": false },
+        "insertedCount": { "kind": "number", "nullable": false }
+      }
+    },
+    "sessionInput": {
+      "dto": "SessionInputResponseDto",
+      "fields": {
+        "id": { "kind": "string", "nullable": false },
+        "sessionId": { "kind": "string", "nullable": false },
+        "authorUserId": { "kind": "string", "nullable": false },
+        "kind": { "kind": "string", "nullable": false },
+        "body": { "kind": "string", "nullable": false },
+        "createdAt": { "kind": "string", "nullable": false },
+        "consumedAt": { "kind": "string", "nullable": true }
+      }
+    },
+    "nextInput": {
+      "dto": "NextInputResponseDto",
+      "fields": {
+        "input": { "kind": "object", "nullable": true }
+      }
+    },
+    "errorEnvelope": {
+      "dto": "ErrorResponseEnvelope",
+      "fields": {
+        "statusCode": { "kind": "number", "nullable": false },
+        "error": { "kind": "string", "nullable": false },
+        "message": { "kind": "string|array", "nullable": false },
+        "path": { "kind": "string", "nullable": false }
+      }
+    }
+  }
+}
