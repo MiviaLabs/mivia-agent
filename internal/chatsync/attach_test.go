@@ -23,7 +23,7 @@ func TestAttachSessionExisting(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	client := NewClient(ClientOptions{BaseURL: srv.URL})
+	client := newTestClient(t, ClientOptions{BaseURL: srv.URL})
 	outboxDir := filepath.Join(t.TempDir(), "outbox")
 	ob, _ := OpenOutbox(outboxDir, 100)
 	defer ob.Close()
@@ -59,7 +59,7 @@ func TestAttachSession_ServerAhead_AdoptWhenMine(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	client := NewClient(ClientOptions{BaseURL: srv.URL})
+	client := newTestClient(t, ClientOptions{BaseURL: srv.URL})
 	outboxDir := filepath.Join(t.TempDir(), "outbox")
 	ob, _ := OpenOutbox(outboxDir, 100)
 	defer ob.Close()
@@ -112,7 +112,7 @@ func TestAttachSession_ServerAhead_ForkWhenForeign(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	client := NewClient(ClientOptions{BaseURL: srv.URL})
+	client := newTestClient(t, ClientOptions{BaseURL: srv.URL})
 	outboxDir := filepath.Join(t.TempDir(), "outbox")
 	ob, _ := OpenOutbox(outboxDir, 100)
 	defer ob.Close()
@@ -144,7 +144,7 @@ func TestAttachSessionNew(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	client := NewClient(ClientOptions{BaseURL: srv.URL})
+	client := newTestClient(t, ClientOptions{BaseURL: srv.URL})
 	outboxDir := filepath.Join(t.TempDir(), "outbox")
 	ob, _ := OpenOutbox(outboxDir, 100)
 	defer ob.Close()
@@ -177,7 +177,7 @@ func TestFlushOutboxAdvancesCursorOnAck(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	client := NewClient(ClientOptions{BaseURL: srv.URL})
+	client := newTestClient(t, ClientOptions{BaseURL: srv.URL})
 	outboxDir := filepath.Join(t.TempDir(), "outbox")
 	ob, _ := OpenOutbox(outboxDir, 100)
 	defer ob.Close()
@@ -220,7 +220,7 @@ func TestFlushOutboxPropagatesConflict(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	client := NewClient(ClientOptions{BaseURL: srv.URL})
+	client := newTestClient(t, ClientOptions{BaseURL: srv.URL})
 	outboxDir := filepath.Join(t.TempDir(), "outbox")
 	ob, _ := OpenOutbox(outboxDir, 100)
 	defer ob.Close()

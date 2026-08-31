@@ -12,6 +12,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/miviaauth"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
@@ -359,25 +360,50 @@ func (p *SessionPool) attachSyncLocked(sess *chat.Session) {
 	if _, exists := p.syncSessions[id]; exists {
 		return
 	}
-	opts := chatsync.SessionOptions{
-		ClientOptions: chatsync.ClientOptions{
-			BaseURL: p.res.Sync.APIURL,
-		},
-		ProjectorOptions: chatsync.ProjectorOptions{
-			IncludeToolIO:   p.res.Sync.IncludeToolIO,
-			IncludeThinking: p.res.Sync.IncludeThinking,
-		},
-		OutboxDir:       filepath.Join(sess.SessionDir, "chat-sync", "sessions", id),
-		MaxUnflushed:    p.res.Sync.MaxUnflushed,
-		PollWaitSeconds: p.res.Sync.PollWaitSeconds,
-		HeartbeatPeriod: config.SaturatingSeconds(p.res.Sync.HeartbeatSeconds),
-		CreateTitle:     "Session",
-		EnablePolling:   true,
+	tokens := syncTokenProvider()
+	if tokens == nil {
+		return
 	}
+	opts := poolSyncOptions(sess, id, p.res, tokens)
 	syncSess, err := chatsync.OpenSession(context.Background(), sess.EventBus, id, opts)
 	if err == nil {
 		p.syncSessions[id] = syncSess
 		go p.forwardRemoteInputs(sess, syncSess)
+	}
+}
+
+// syncTokenProvider resolves the logged-in CLI session into the token
+// provider chatsync requires. A nil result means there is nothing to
+// authenticate with, and the caller must not start sync: uploading
+// conversation content anonymously is the failure this returns nil to avoid.
+func syncTokenProvider() chatsync.TokenProvider {
+	svc, err := miviaauth.DefaultService()
+	if err != nil {
+		return nil
+	}
+	return chatsync.NewTokenProvider(svc)
+}
+
+// poolSyncOptions builds the SessionOptions the TUI session pool hands to
+// chatsync.OpenSession. It is a separate function so a test can drive the
+// exact value production uses, instead of asserting on a hand-built copy that
+// can drift away from the wiring it claims to cover.
+func poolSyncOptions(sess *chat.Session, id string, res *config.Resolved, tokens chatsync.TokenProvider) chatsync.SessionOptions {
+	return chatsync.SessionOptions{
+		TokenProvider: tokens,
+		ClientOptions: chatsync.ClientOptions{
+			BaseURL: res.Sync.APIURL,
+		},
+		ProjectorOptions: chatsync.ProjectorOptions{
+			IncludeToolIO:   res.Sync.IncludeToolIO,
+			IncludeThinking: res.Sync.IncludeThinking,
+		},
+		OutboxDir:       filepath.Join(sess.SessionDir, "chat-sync", "sessions", id),
+		MaxUnflushed:    res.Sync.MaxUnflushed,
+		PollWaitSeconds: res.Sync.PollWaitSeconds,
+		HeartbeatPeriod: config.SaturatingSeconds(res.Sync.HeartbeatSeconds),
+		CreateTitle:     "Session",
+		EnablePolling:   true,
 	}
 }
 

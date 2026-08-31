@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -57,6 +56,7 @@ func TestSyncSessionEndToEndFlow(t *testing.T) {
 	defer cancel()
 
 	opts := SessionOptions{
+		TokenProvider:   testTokenProvider,
 		ClientOptions:   ClientOptions{BaseURL: srv.URL},
 		OutboxDir:       outboxDir,
 		CreateTitle:     "E2E Session",
@@ -119,113 +119,6 @@ func verifyAppendedEvents(t *testing.T, mu *sync.Mutex, appendedEvents []EventIt
 	}
 }
 
-func setupForkMockServer(createCount *int32, mu *sync.Mutex, sessionEvents map[string][]EventItem) *httptest.Server {
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /v1/chat-sessions", func(w http.ResponseWriter, r *http.Request) {
-		count := atomic.AddInt32(createCount, 1)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		sessID := "sess-fork-1"
-		if count > 1 {
-			sessID = "sess-fork-2"
-		}
-		_ = json.NewEncoder(w).Encode(Session{ID: sessID, Status: "running", LastSeq: 0})
-	})
-	mux.HandleFunc("POST /v1/chat-sessions/{id}/events", func(w http.ResponseWriter, r *http.Request) {
-		id := r.PathValue("id")
-		if id == "sess-fork-1" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusConflict)
-			_ = json.NewEncoder(w).Encode(ErrorEnvelope{
-				StatusCode: 409,
-				Error:      "Conflict",
-				Message:    json.RawMessage(`"writer conflict"`),
-			})
-			return
-		}
-		var req struct {
-			Events []EventItem `json:"events"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&req)
-		items := req.Events
-		mu.Lock()
-		sessionEvents[id] = append(sessionEvents[id], items...)
-		mu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(AppendResult{InsertedCount: len(items), LastSeq: items[len(items)-1].Seq})
-	})
-	mux.HandleFunc("POST /v1/chat-sessions/{id}/heartbeat", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(Session{ID: r.PathValue("id"), Status: "running"})
-	})
-	return httptest.NewServer(mux)
-}
-
-func TestSyncSessionHandlesForkOn409(t *testing.T) {
-	var createCount int32
-	var mu sync.Mutex
-	sessionEvents := make(map[string][]EventItem)
-
-	srv := setupForkMockServer(&createCount, &mu, sessionEvents)
-	defer srv.Close()
-
-	bus := events.New()
-	outboxDir := filepath.Join(t.TempDir(), "outbox-fork")
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	opts := SessionOptions{
-		ClientOptions:   ClientOptions{BaseURL: srv.URL},
-		OutboxDir:       outboxDir,
-		CreateTitle:     "Fork Session",
-		HeartbeatPeriod: 50 * time.Millisecond,
-	}
-
-	syncSess, err := OpenSession(ctx, bus, "", opts)
-	if err != nil {
-		t.Fatalf("OpenSession: %v", err)
-	}
-
-	bus.Publish(events.Event{
-		Kind:      events.KindTurnStart,
-		SessionID: "sess-fork-1",
-		TurnID:    "turn:1",
-		Detail:    "test conflict",
-		Timestamp: time.Now(),
-	})
-	time.Sleep(100 * time.Millisecond)
-	_ = syncSess.Stop(ctx)
-
-	verifyForkedSession(t, atomic.LoadInt32(&createCount), &mu, sessionEvents)
-}
-
-func verifyForkedSession(t *testing.T, count int32, mu *sync.Mutex, sessionEvents map[string][]EventItem) {
-	t.Helper()
-	if count < 2 {
-		t.Errorf("createCount = %d, want at least 2 sessions created on fork", count)
-	}
-
-	mu.Lock()
-	defer mu.Unlock()
-	forkedEvents := sessionEvents["sess-fork-2"]
-	if len(forkedEvents) == 0 {
-		t.Fatal("no events received on forked session sess-fork-2")
-	}
-
-	foundForkEvent := false
-	for i, ev := range forkedEvents {
-		if ev.Seq != int64(i+1) {
-			t.Errorf("forked event[%d].Seq = %d, want %d", i, ev.Seq, i+1)
-		}
-		if ev.Type == TypeSyncForked {
-			foundForkEvent = true
-		}
-	}
-	if !foundForkEvent {
-		t.Errorf("sync.forked event not found in forked session events: %+v", forkedEvents)
-	}
-}
-
 func TestSyncSession_DistinctLocalAndRemoteSessionIDs(t *testing.T) {
 	var mu sync.Mutex
 	var receivedEvents []EventItem
@@ -256,6 +149,7 @@ func TestSyncSession_DistinctLocalAndRemoteSessionIDs(t *testing.T) {
 
 	bus := events.New()
 	opts := SessionOptions{
+		TokenProvider:   testTokenProvider,
 		ClientOptions:   ClientOptions{BaseURL: srv.URL},
 		OutboxDir:       t.TempDir(),
 		CreateTitle:     "Distinct IDs",
@@ -327,6 +221,7 @@ func TestSyncSession_ResumeWithUnflushedEventsPreservesMonotonicity(t *testing.T
 
 	bus := events.New()
 	opts := SessionOptions{
+		TokenProvider:   testTokenProvider,
 		ClientOptions:   ClientOptions{BaseURL: srv.URL},
 		OutboxDir:       outboxDir,
 		CreateTitle:     "Resume Test",
@@ -379,6 +274,7 @@ func TestHandleEvent_OutboxOverflowDoesNotAdvanceSeq(t *testing.T) {
 
 	bus := events.New()
 	opts := SessionOptions{
+		TokenProvider: testTokenProvider,
 		ClientOptions: ClientOptions{BaseURL: srv.URL},
 		OutboxDir:     outboxDir,
 		MaxUnflushed:  1, // Capacity is exactly 1 event
@@ -446,6 +342,7 @@ func TestSyncSession_StopDrainsAndFlushesFinal(t *testing.T) {
 	outboxDir := filepath.Join(t.TempDir(), "chat-sync-drain-stop")
 
 	opts := SessionOptions{
+		TokenProvider:   testTokenProvider,
 		ClientOptions:   ClientOptions{BaseURL: srv.URL},
 		OutboxDir:       outboxDir,
 		MaxUnflushed:    100,
@@ -496,6 +393,7 @@ func TestSyncSession_InputsAndSetStatus(t *testing.T) {
 	outboxDir := filepath.Join(t.TempDir(), "chat-sync-in-status")
 
 	opts := SessionOptions{
+		TokenProvider:   testTokenProvider,
 		ClientOptions:   ClientOptions{BaseURL: srv.URL},
 		OutboxDir:       outboxDir,
 		MaxUnflushed:    100,

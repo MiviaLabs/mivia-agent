@@ -44,7 +44,7 @@ func TestClientCreateAndGetSession(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	client := NewClient(ClientOptions{BaseURL: srv.URL})
+	client := newTestClient(t, ClientOptions{BaseURL: srv.URL})
 	ctx := context.Background()
 
 	// 1. CreateSession
@@ -101,7 +101,7 @@ func TestClientAppendEventsAndNext(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	client := NewClient(ClientOptions{BaseURL: srv.URL})
+	client := newTestClient(t, ClientOptions{BaseURL: srv.URL})
 	ctx := context.Background()
 
 	// 1. AppendEvents
@@ -160,14 +160,14 @@ func TestClientAuthRetryOn401(t *testing.T) {
 		return "token-stale", nil
 	}
 
-	client := NewClient(ClientOptions{
-		BaseURL:       srv.URL,
-		TokenProvider: tokenProvider,
-	})
-
-	sess, err := client.GetSession(context.Background(), "sess-1")
+	client, err := NewClient(tokenProvider, ClientOptions{BaseURL: srv.URL})
 	if err != nil {
-		t.Fatalf("GetSession after retry failed: %v", err)
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	sess, getErr := client.GetSession(context.Background(), "sess-1")
+	if getErr != nil {
+		t.Fatalf("GetSession after retry failed: %v", getErr)
 	}
 	if sess.ID != "sess-1" {
 		t.Errorf("sess = %+v", sess)
@@ -195,7 +195,7 @@ func TestClient409ConflictTypedError(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	client := NewClient(ClientOptions{BaseURL: srv.URL})
+	client := newTestClient(t, ClientOptions{BaseURL: srv.URL})
 	_, err := client.AppendEvents(context.Background(), "sess-1", []EventItem{{Seq: 1, Type: TypeTurnStarted}})
 	if err == nil {
 		t.Fatal("expected conflict error, got nil")
@@ -229,7 +229,7 @@ func TestClientAppendEvents_MatchesWireEnvelope(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	client := NewClient(ClientOptions{BaseURL: srv.URL})
+	client := newTestClient(t, ClientOptions{BaseURL: srv.URL})
 	_, err := client.AppendEvents(context.Background(), "sess-1", []EventItem{{Seq: 1, Type: TypeTurnStarted}})
 	if err != nil {
 		t.Fatalf("AppendEvents: %v", err)
@@ -241,7 +241,7 @@ func TestClientAppendEvents_MatchesWireEnvelope(t *testing.T) {
 }
 
 func TestNewClient_DefaultTimeoutZero(t *testing.T) {
-	client := NewClient(ClientOptions{BaseURL: "http://localhost:8080"})
+	client := newTestClient(t, ClientOptions{BaseURL: "http://localhost:8080"})
 	if client.httpClient == nil {
 		t.Fatal("expected httpClient to be non-nil")
 	}

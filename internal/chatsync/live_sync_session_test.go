@@ -18,6 +18,7 @@ func TestLiveSyncSessionEndToEnd(t *testing.T) {
 	outboxDir := t.TempDir()
 
 	opts := SessionOptions{
+		TokenProvider: testTokenProvider,
 		ClientOptions: ClientOptions{
 			BaseURL: api.baseURL,
 			TokenProvider: func(ctx context.Context, forceRefresh bool) (string, error) {
