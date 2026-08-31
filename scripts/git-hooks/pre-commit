@@ -221,6 +221,15 @@ if command -v go >/dev/null 2>&1; then
   # construction, so the bus subscription is the only hop that can reorder -
   # and reverting it to SubscribeMany compiles, passes vet, and only shows up
   # as duplicated turns on a second surface.
+  # A gate script that calls rg/grep with no search path reads STDIN instead of
+  # the tree whenever stdin is not a tty - so it blocks forever in CI or a hook,
+  # or returns zero matches and reads as a pass. This shipped twice, both on the
+  # verify chain. The check is milliseconds; the failure mode is a gate that can
+  # never report.
+  if echo "$STAGED" | grep -qE '^scripts/.*\.py$'; then
+    echo " → Running subprocess-stdin gate..."
+    (cd "$STAGED_ROOT" && run_verify python3 scripts/check_subprocess_stdin.py </dev/null) || INV_FAIL=1
+  fi
   if echo "$STAGED" | grep -qE '^internal/hub/'; then
     echo " → Running hub relay ordering invariant tests..."
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestRelayPreservesCrossKindPublishOrder|TestOwnerStopReleasesTheRelaySubscription|TestClientStopReleasesTheRelaySubscription|TestTurnTerminalsAreRelayed|TestSendStampsAMonotonicLossCount|TestRelayChargesBusLossOnlyToEventsThatPassedThroughIt' ./internal/hub/ -count=1 -timeout=60s) || INV_FAIL=1

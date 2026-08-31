@@ -24,7 +24,7 @@ VERSION_LDFLAGS := -X $(VERSION_PKG).Commit=$(COMMIT) -X $(VERSION_PKG).Dirty=$(
 .PHONY: help install-hooks hooks verify verify-agent pre-commit pre-push \
 	secret-scan docs-check semgrep semgrep-validate semgrep-test \
 	hook-test agent-hook-test test-quality structure-check import-layers-check timeout-saturation-check request-deadline-check commit-check go-check verify-go test test-changed race vet build tidy fmt fmt-check \
-	validate-invariants invariants mutation diff-coverage verifier-integration smoke release release-test \
+	validate-invariants subprocess-stdin-check invariants mutation diff-coverage verifier-integration smoke release release-test \
 	prose-check live-auth-smoke live-chat-smoke live-smoke
 
 help:
@@ -35,6 +35,7 @@ help:
 		'  make verify-agent      Validate agent adapter surface' \
 		'  make test-quality      Inspect Go test quality and anti-fake-work gates' \
 		'  make validate-invariants  Verify all test refs in .mivia/invariants.md exist' \
+		'  make subprocess-stdin-check  Refuse a subprocess search that reads stdin' \
 		'  make invariants        Run all invariant tests (TUI, agent, security)' \
 		'  make pre-commit        Run the committed pre-commit hook' \
 		'  make pre-push          Run the committed pre-push hook' \
@@ -79,7 +80,7 @@ install-hooks hooks:
 # still runs on main and macOS in CI, and standalone via `make
 # verifier-integration`.
 verify: verify-agent docs-check release-test secret-scan structure-check \
-	import-layers-check timeout-saturation-check request-deadline-check \
+	import-layers-check subprocess-stdin-check timeout-saturation-check request-deadline-check \
 	semgrep-validate semgrep-test \
 	hook-test agent-hook-test test-quality validate-invariants semgrep verify-go
 	@python3 scripts/check_mutation.py --probe
@@ -110,6 +111,10 @@ structure-check:
 
 import-layers-check:
 	@python3 scripts/check_import_layers.py
+
+subprocess-stdin-check:
+	@python3 scripts/test_check_subprocess_stdin.py
+	@python3 scripts/check_subprocess_stdin.py
 
 timeout-saturation-check:
 	@python3 scripts/check_timeout_saturation.py --probe

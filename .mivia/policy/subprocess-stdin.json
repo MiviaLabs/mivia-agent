@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Policy for subprocess invocations of tools that read STDIN when given no input path. ripgrep and the grep family search stdin whenever stdin is not a tty and no path argument is present - which is every non-interactive context: CI, a git hook, an agent session. A gate script that calls them this way either blocks forever on a stdin that never reaches EOF, or silently returns zero matches on one that does. Both turn a gate into something that cannot report. Every such call must pass an explicit search path AND stdin=subprocess.DEVNULL.",
+  "stdinConsumingTools": [
+    "rg",
+    "grep",
+    "egrep",
+    "fgrep",
+    "sort",
+    "cat",
+    "head",
+    "tail",
+    "wc",
+    "sed",
+    "awk"
+  ],
+  "requireExplicitStdin": true,
+  "exempt": {}
+}
