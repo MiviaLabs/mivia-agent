@@ -35,6 +35,8 @@ type Projector struct {
 	syntheticNum int
 	turns        map[string]*turnState
 	turnOrder    []string
+	lastDrops    uint64
+	currentTurn  string
 }
 
 // NewProjector constructs a Projector for sessionID starting at initialSeq.
@@ -53,17 +55,35 @@ func (p *Projector) LastSeq() int64 {
 }
 
 // Project converts an events.Event into zero or more WireEvents.
-// It filters out events not belonging to p.sessionID and unrelayed kinds.
-// Seq numbering happens strictly after filtering.
 func (p *Projector) Project(ev events.Event) []WireEvent {
+	return p.ProjectWithDrops(ev, p.lastDrops)
+}
+
+// ProjectWithDrops checks the subscription drop counter and projects ev.
+// If drops advanced, a sync.dropped event is emitted immediately before ev.
+func (p *Projector) ProjectWithDrops(ev events.Event, currentDrops uint64) []WireEvent {
+	var out []WireEvent
+	if dropEv := p.checkDrops(currentDrops); dropEv != nil {
+		out = append(out, *dropEv)
+	}
+
 	// Strict session filter: empty SessionID is rejected, sessionID must match.
 	if ev.SessionID == "" || p.sessionID == "" || ev.SessionID != p.sessionID {
-		return nil
+		return out
 	}
 
 	turnID, isSynthetic := p.resolveTurnID(ev.TurnID)
+	p.currentTurn = turnID
 	env := p.buildEnvelope(ev, turnID)
 
+	projected := p.projectByKind(ev, turnID, env, isSynthetic)
+	if len(projected) == 0 {
+		return out
+	}
+	return append(out, projected...)
+}
+
+func (p *Projector) projectByKind(ev events.Event, turnID string, env Envelope, isSynthetic bool) []WireEvent {
 	switch ev.Kind {
 	case events.KindTurnStart:
 		ts := p.turn(turnID)
@@ -117,6 +137,38 @@ func (p *Projector) Project(ev events.Event) []WireEvent {
 	default:
 		return nil
 	}
+}
+
+// Flush emits any pending sync.dropped event if drops advanced.
+func (p *Projector) Flush(currentDrops uint64) []WireEvent {
+	if dropEv := p.checkDrops(currentDrops); dropEv != nil {
+		return []WireEvent{*dropEv}
+	}
+	return nil
+}
+
+func (p *Projector) checkDrops(currentDrops uint64) *WireEvent {
+	if currentDrops <= p.lastDrops {
+		return nil
+	}
+	delta := currentDrops - p.lastDrops
+	p.lastDrops = currentDrops
+
+	turn := p.currentTurn
+	if turn == "" {
+		turn = "synthetic:0"
+	}
+	payload := &SyncDroppedPayload{
+		Envelope: Envelope{
+			V:    1,
+			At:   time.Now(),
+			Turn: turn,
+		},
+		Dropped:      delta,
+		TotalDropped: currentDrops,
+	}
+	ev := p.nextWireEvent(TypeSyncDropped, payload)
+	return &ev
 }
 
 func (p *Projector) turn(id string) *turnState {
