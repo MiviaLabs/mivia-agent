@@ -42,6 +42,7 @@ REQUIRED_IDS = [
     "mivia.go.no-direct-tool-execution-outside-dispatcher",
     "mivia.go.no-empty-test",
     "mivia.go.no-tautological-test-assertion",
+    "mivia.go.no-truncation-call-inside-envelope-literal",
 ]
 
 # Substrings expected near each rule id (YAML-escaped forms, not compiled regexes).
@@ -51,6 +52,7 @@ RULE_PATTERN_HINTS = {
     "mivia.generic.no-git-hook-bypass-in-agent-config": r"no-verify",
     "mivia.go.no-empty-test": r"func",
     "mivia.go.no-tautological-test-assertion": r"assert\.True",
+    "mivia.go.no-truncation-call-inside-envelope-literal": "applyTruncation",
 }
 
 PORTABILITY_VIOLATIONS = [

@@ -247,6 +247,21 @@ PROBES = [
         "internal/probe/mivia_skills_clean.go",
         'package probe\n\nimport "github.com/MiviaLabs/mivia-agent/internal/workspace"\n\nfunc p(root string) string {\n\treturn workspace.SkillsDir(root) + "/shared"\n}\n',
     ),
+    (
+        "mivia.go.no-truncation-call-inside-envelope-literal",
+        "internal/chatsync/probe-trunc-order/viol.go",
+        "package probe\n\n"
+        "type Envelope struct{ Trunc *int }\n\n"
+        "type payload struct {\n\tEnvelope\n\tDetail string\n}\n\n"
+        "func applyTruncation(e *Envelope, field, value string, maxBytes int) string { return value }\n\n"
+        "func build(env Envelope, detail string) *payload {\n"
+        "\treturn &payload{Envelope: env, Detail: applyTruncation(&env, \"detail\", detail, 200)}\n}\n",
+        "internal/chatsync/probe-trunc-order/clean.go",
+        "package probe\n\n"
+        "func buildClean(env Envelope, detail string) *payload {\n"
+        "\td := applyTruncation(&env, \"detail\", detail, 200)\n"
+        "\treturn &payload{Envelope: env, Detail: d}\n}\n",
+    ),
 ]
 
 
