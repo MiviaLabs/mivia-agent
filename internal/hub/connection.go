@@ -37,6 +37,13 @@ func newConn(nc net.Conn) *conn {
 // send enqueues ev for delivery, dropping the oldest queued event first if
 // the writer has fallen behind. Never blocks.
 //
+// NOT safe for concurrent callers on one conn, and it is only correct today
+// because nothing does that: the owner serializes every send under o.mu in
+// broadcast, and the client sends from its single relay delivery goroutine.
+// Two concurrent senders could interleave their events, and one could lose the
+// slot the other freed. Nothing here enforces the rule, so a future caller has
+// to honour it - or this needs its own mutex.
+//
 // ev.Dropped arrives carrying whatever loss happened UPSTREAM of this
 // connection (the shared relay queue); send adds this connection's own running
 // total, so the value the far end reads is the total number of events this hub
@@ -64,9 +71,43 @@ func (c *conn) send(ev WireEvent) {
 		ev.Dropped++
 	default:
 	}
+	c.enqueueOrCount(ev, nil)
+}
+
+// sendWithRefill is send's retry step with a seam for the race it has to
+// tolerate: onFreed runs after a slot is freed and before the retry, which is
+// what a concurrent writeLoop does in production. Test-only entry point;
+// production calls send.
+func (c *conn) sendWithRefill(ev WireEvent, onFreed func()) {
+	ev.Dropped += c.dropped.Load()
+	select {
+	case c.out <- ev:
+		return
+	default:
+	}
+	select {
+	case <-c.out:
+		c.dropped.Add(1)
+		ev.Dropped++
+	default:
+	}
+	c.enqueueOrCount(ev, onFreed)
+}
+
+// enqueueOrCount performs the final enqueue and COUNTS the event when even that
+// fails. That branch was previously a silent discard: send frees one slot and
+// retries, but a concurrent writeLoop can refill it in between, and the event
+// was then dropped without incrementing anything. A consumer diffing the
+// counter would never learn about it, which is precisely the silence the
+// counter exists to end.
+func (c *conn) enqueueOrCount(ev WireEvent, onFreed func()) {
+	if onFreed != nil {
+		onFreed()
+	}
 	select {
 	case c.out <- ev:
 	default:
+		c.dropped.Add(1)
 	}
 }
 

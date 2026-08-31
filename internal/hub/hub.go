@@ -119,6 +119,11 @@ type Receipt struct {
 // NDJSON for line-mode, the TUI's renderer for the TUI. nil is valid: a
 // surface with nothing useful to do with it yet just drops it.
 //
+// A Sink MUST be safe for concurrent use. The owner runs one read-loop
+// goroutine per connected client and calls the sink from each of them, so two
+// deliveries can be in flight at once; a sink that writes must serialize its
+// writes or its output interleaves.
+//
 // The Receipt is separate from the event because loss is a property of the
 // delivery, not of the turn: folding a transport counter into events.Event
 // would put it on every local publish site that has nothing to say about it.
