@@ -3,6 +3,7 @@
 package chatsync
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -21,7 +22,7 @@ func TestLiveChatSessionGuards(t *testing.T) {
 		// The CLI's whole restart story rests on this: if a gap were accepted,
 		// a client that lost events would leave holes nobody could detect.
 		_, raw := a.appendEvents(ctx, s.ID, []eventItem{{
-			Seq: 50, Type: "probe.gap", Payload: map[string]any{},
+			Seq: 50, Type: "probe.gap", Payload: json.RawMessage(`{}`),
 		}}, http.StatusBadRequest)
 		env := a.decodeError(raw)
 		if !strings.Contains(strings.ToLower(string(env.Message)), "sequence") {
@@ -31,7 +32,7 @@ func TestLiveChatSessionGuards(t *testing.T) {
 
 	t.Run("seq below 1 is rejected", func(t *testing.T) {
 		a.appendEvents(ctx, s.ID, []eventItem{{
-			Seq: 0, Type: "probe.zero", Payload: map[string]any{},
+			Seq: 0, Type: "probe.zero", Payload: json.RawMessage(`{}`),
 		}}, http.StatusBadRequest)
 	})
 
@@ -128,8 +129,8 @@ func TestLiveChatSessionRejectsIntraBatchGap(t *testing.T) {
 
 	status, raw := a.call(ctx, http.MethodPost, "/v1/chat-sessions/"+s.ID+"/events",
 		map[string]any{"events": []eventItem{
-			{Seq: 1, Type: "probe.a", Payload: map[string]any{}},
-			{Seq: 99, Type: "probe.b", Payload: map[string]any{}},
+			{Seq: 1, Type: "probe.a", Payload: json.RawMessage(`{}`)},
+			{Seq: 99, Type: "probe.b", Payload: json.RawMessage(`{}`)},
 		}})
 
 	if status == http.StatusOK {

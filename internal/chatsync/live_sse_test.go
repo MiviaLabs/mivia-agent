@@ -57,7 +57,7 @@ func TestLiveChatSessionSSE(t *testing.T) {
 
 	t.Run("names the frame after the event type", func(t *testing.T) {
 		a.appendEvents(ctx, s.ID, []eventItem{{
-			Seq: 4, Type: "probe.custom", Payload: map[string]any{"n": 4},
+			Seq: 4, Type: "probe.custom", Payload: json.RawMessage(`{"n":4}`),
 		}}, http.StatusOK)
 		frame := readFrame(t, frames, 20*time.Second)
 

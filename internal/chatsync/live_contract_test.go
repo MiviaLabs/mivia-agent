@@ -4,6 +4,7 @@ package chatsync
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"testing"
 	"time"
@@ -115,7 +116,7 @@ func checkCursorRead(t *testing.T, ctx context.Context, a *api, id string) {
 	if events[0].Seq != 2 || events[1].Seq != 3 {
 		t.Errorf("seqs = %d,%d, want 2,3", events[0].Seq, events[1].Seq)
 	}
-	if events[0].Payload["n"] == nil {
+	if len(events[0].Payload) == 0 {
 		t.Error("payload did not round-trip")
 	}
 	assertRFC3339(t, "event createdAt", events[0].CreatedAt)
@@ -269,10 +270,11 @@ func awaitWakeup(t *testing.T, done <-chan pollResult, queued sessionInput) sess
 func sampleEvents(lo, hi int64) []eventItem {
 	events := make([]eventItem, 0, hi-lo+1)
 	for seq := lo; seq <= hi; seq++ {
+		payload, _ := json.Marshal(map[string]any{"n": seq, "text": "live probe event"})
 		events = append(events, eventItem{
 			Seq:     seq,
 			Type:    "probe.message",
-			Payload: map[string]any{"n": seq, "text": "live probe event"},
+			Payload: json.RawMessage(payload),
 		})
 	}
 	return events
