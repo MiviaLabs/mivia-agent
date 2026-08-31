@@ -247,3 +247,20 @@ func TestOutbox_ResetForFork(t *testing.T) {
 		}
 	}
 }
+
+func TestOutbox_ResetForFork_Empty(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "chat-sync-fork-empty")
+	ob, err := OpenOutbox(dir, 100)
+	if err != nil {
+		t.Fatalf("OpenOutbox: %v", err)
+	}
+	defer ob.Close()
+
+	count, err := ob.ResetForFork()
+	if err != nil {
+		t.Fatalf("ResetForFork empty: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("count = %d, want 0", count)
+	}
+}
