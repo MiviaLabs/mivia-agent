@@ -4,11 +4,19 @@ import (
 	"testing"
 )
 
+// syncEnabled builds the *bool a TOML `enabled` key resolves to. The nil case
+// is written literally at each call site, because "absent" is the state that
+// matters and naming it through a helper would hide it.
+func syncEnabled(v bool) *bool { return &v }
+
 func TestSyncConfigDefaultsFailClosed(t *testing.T) {
 	cfg := resolveSyncConfig(SyncConfig{})
 
-	if cfg.Enabled {
-		t.Errorf("Enabled = true, want false (fail-closed)")
+	// An absent `enabled` key is NOT an opt-out. Sync is gated on being
+	// logged in (ResolvedSync.Active), not on a config switch, so the
+	// fail-closed default lives in the auth check, not here.
+	if cfg.Disabled {
+		t.Errorf("Disabled = true, want false (an absent key is not an opt-out)")
 	}
 	if cfg.IncludeToolIO {
 		t.Errorf("IncludeToolIO = true, want false (fail-closed)")
@@ -32,9 +40,42 @@ func TestSyncConfigDefaultsFailClosed(t *testing.T) {
 	}
 }
 
+// TestSyncEnabledIsThreeState is the whole reason the file form holds a
+// pointer. An absent key and an explicit false must not resolve to the same
+// thing: the first means "sync when logged in", the second means "never".
+// A plain bool collapses them and makes the opt-out impossible to express.
+func TestSyncEnabledIsThreeState(t *testing.T) {
+	tests := []struct {
+		name         string
+		enabled      *bool
+		wantDisabled bool
+		// wantActive is what Active reports for a LOGGED-IN user, which is
+		// the only case where the config value decides anything.
+		wantActive bool
+	}{
+		{"absent key syncs", nil, false, true},
+		{"explicit true syncs", syncEnabled(true), false, true},
+		{"explicit false opts out", syncEnabled(false), true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := resolveSyncConfig(SyncConfig{Enabled: tt.enabled})
+			if cfg.Disabled != tt.wantDisabled {
+				t.Errorf("Disabled = %v, want %v", cfg.Disabled, tt.wantDisabled)
+			}
+			if got := cfg.Active(true); got != tt.wantActive {
+				t.Errorf("Active(loggedIn=true) = %v, want %v", got, tt.wantActive)
+			}
+			if cfg.Active(false) {
+				t.Error("Active(loggedIn=false) = true, want false; a logged-out CLI must never upload")
+			}
+		})
+	}
+}
+
 func TestSyncConfigPreservesCustomValues(t *testing.T) {
 	custom := SyncConfig{
-		Enabled:          true,
+		Enabled:          syncEnabled(true),
 		IncludeToolIO:    true,
 		IncludeThinking:  true,
 		APIURL:           "https://sync.mivia.ai",
@@ -44,7 +85,7 @@ func TestSyncConfigPreservesCustomValues(t *testing.T) {
 	}
 	cfg := resolveSyncConfig(custom)
 
-	if !cfg.Enabled || !cfg.IncludeToolIO || !cfg.IncludeThinking {
+	if cfg.Disabled || !cfg.IncludeToolIO || !cfg.IncludeThinking {
 		t.Errorf("expected custom bool flags preserved, got %+v", cfg)
 	}
 	if cfg.APIURL != "https://sync.mivia.ai" {
@@ -60,22 +101,26 @@ func TestSyncConfigPreservesCustomValues(t *testing.T) {
 // every conversation, so it gets the miviaauth shape (https, or a literal
 // loopback host for local API development) and NOT validateBaseURL's
 // MIVIA_ALLOW_INSECURE_HTTP relaxation.
+//
+// An empty api_url is accepted: no user is asked to configure sync, and the
+// wiring falls back to the API root internal/miviaauth resolves.
 func TestSyncAPIURLValidation(t *testing.T) {
 	tests := []struct {
 		name    string
-		sync    SyncConfig
+		sync    ResolvedSync
 		wantErr bool
 	}{
-		{"disabled with no url is not validated", SyncConfig{Enabled: false}, false},
-		{"disabled with a bad url is not validated", SyncConfig{Enabled: false, APIURL: "http://evil.example.com"}, false},
-		{"enabled with no url is an error", SyncConfig{Enabled: true}, true},
-		{"enabled with https is accepted", SyncConfig{Enabled: true, APIURL: "https://api.mivia.app"}, false},
-		{"enabled with plain http is rejected", SyncConfig{Enabled: true, APIURL: "http://evil.example.com"}, true},
-		{"enabled with http loopback is accepted", SyncConfig{Enabled: true, APIURL: "http://localhost:3001"}, false},
-		{"enabled with http 127.0.0.1 is accepted", SyncConfig{Enabled: true, APIURL: "http://127.0.0.1:3001"}, false},
-		{"enabled with a non-URL is rejected", SyncConfig{Enabled: true, APIURL: "not a url"}, true},
-		{"enabled with userinfo is rejected", SyncConfig{Enabled: true, APIURL: "https://user:pass@api.mivia.app"}, true},
-		{"enabled with a non-http scheme is rejected", SyncConfig{Enabled: true, APIURL: "file:///etc/passwd"}, true},
+		{"opted out with no url is not validated", ResolvedSync{Disabled: true}, false},
+		{"opted out with a bad url is not validated", ResolvedSync{Disabled: true, APIURL: "http://evil.example.com"}, false},
+		{"no url falls back to the API root", ResolvedSync{}, false},
+		{"blank url falls back to the API root", ResolvedSync{APIURL: "   "}, false},
+		{"https is accepted", ResolvedSync{APIURL: "https://api.mivia.app"}, false},
+		{"plain http is rejected", ResolvedSync{APIURL: "http://evil.example.com"}, true},
+		{"http loopback is accepted", ResolvedSync{APIURL: "http://localhost:3001"}, false},
+		{"http 127.0.0.1 is accepted", ResolvedSync{APIURL: "http://127.0.0.1:3001"}, false},
+		{"a non-URL is rejected", ResolvedSync{APIURL: "not a url"}, true},
+		{"userinfo is rejected", ResolvedSync{APIURL: "https://user:pass@api.mivia.app"}, true},
+		{"a non-http scheme is rejected", ResolvedSync{APIURL: "file:///etc/passwd"}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -96,7 +141,7 @@ func TestSyncAPIURLIgnoresAllowInsecureHTTP(t *testing.T) {
 	res := Resolved{
 		ProviderName: "deepseek", Model: "model", BaseURL: "https://example.test",
 		APIKeyEnv: "KEY", PromptCache: "auto", Tools: validToolsForSyncTest(),
-		Sync: SyncConfig{Enabled: true, APIURL: "http://evil.example.com"},
+		Sync: ResolvedSync{APIURL: "http://evil.example.com"},
 	}
 	if err := res.Validate(); err == nil {
 		t.Fatal("Validate() error = nil, want rejection despite MIVIA_ALLOW_INSECURE_HTTP=1")

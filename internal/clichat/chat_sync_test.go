@@ -21,7 +21,7 @@ func TestAttachCLISyncDisabled(t *testing.T) {
 	sess := chat.NewSession(&config.Resolved{}, nil)
 	sess.EventBus = bus
 
-	detach := attachCLISync(sess, &config.Resolved{Sync: config.SyncConfig{Enabled: false}})
+	detach := attachCLISync(sess, &config.Resolved{Sync: config.ResolvedSync{Disabled: true}})
 	if detach == nil {
 		t.Fatal("expected non-nil detach func")
 	}
@@ -50,8 +50,7 @@ func TestAttachCLISyncEnabled(t *testing.T) {
 
 	bus := events.New()
 	res := &config.Resolved{
-		Sync: config.SyncConfig{
-			Enabled:          true,
+		Sync: config.ResolvedSync{
 			APIURL:           srv.URL,
 			PollWaitSeconds:  1,
 			HeartbeatSeconds: 1,
@@ -102,8 +101,7 @@ func TestAttachCLISyncAuthenticatesEveryRequest(t *testing.T) {
 	defer srv.Close()
 
 	res := &config.Resolved{
-		Sync: config.SyncConfig{
-			Enabled:          true,
+		Sync: config.ResolvedSync{
 			APIURL:           srv.URL,
 			PollWaitSeconds:  1,
 			HeartbeatSeconds: 1,

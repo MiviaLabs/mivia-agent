@@ -15,7 +15,7 @@ import (
 func TestCLISyncOptionsCarriesStreamAssistant(t *testing.T) {
 	sess := &chat.Session{SessionID: "s1", SessionDir: t.TempDir()}
 	for _, want := range []bool{false, true} {
-		res := &config.Resolved{Sync: config.SyncConfig{StreamAssistant: want}}
+		res := &config.Resolved{Sync: config.ResolvedSync{StreamAssistant: want}}
 		got := cliSyncOptions(sess, res, nil).ProjectorOptions.StreamAssistant
 		if got != want {
 			t.Errorf("StreamAssistant = %v, want %v", got, want)

@@ -24,3 +24,29 @@ func DefaultService() (*Service, error) {
 	}
 	return NewService(client, path), nil
 }
+
+// HasDefaultSession reports whether a usable local CLI session exists at the
+// standard token path, WITHOUT touching, refreshing, or deleting it.
+//
+// It is the "am I logged in" question a caller asks before deciding to do
+// something on the user's behalf. It is deliberately read-only: the obvious
+// alternative, calling Service.Ensure, spends a one-time-use refresh token and
+// deletes the stored session on any load failure, so using it as a probe would
+// log the user out as a side effect of asking.
+//
+// The RefreshToken check mirrors Service.resolveToken's own rule: a file
+// without one was written before the /v1 contract, and its bearer cannot
+// authenticate against this API at all, so it is not a session. Expiry is NOT
+// checked, for the same reason resolveToken does not treat it as fatal: an
+// expired bearer with a live refresh token is a session that renews itself.
+func HasDefaultSession() bool {
+	path := config.UserAuthPath()
+	if path == "" {
+		return false
+	}
+	tok, err := Load(path)
+	if err != nil {
+		return false
+	}
+	return tok.RefreshToken != ""
+}

@@ -485,7 +485,7 @@ type Resolved struct {
 	// Workflows is the resolved [workflows] configuration.
 	Workflows WorkflowsConfig
 	// Sync is the resolved [sync] configuration.
-	Sync SyncConfig
+	Sync ResolvedSync
 	// Verifiers is the workspace-declared verifier profile set from the
 	// [verifiers.<name>] tables. The host ships no built-in profiles.
 	Verifiers map[string]VerifierProfile
