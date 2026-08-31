@@ -25,6 +25,11 @@ var (
 	// while every other 400 is poison a retry cannot fix.
 	ErrBadRequest = errors.New("chatsync: bad request (400)")
 
+	// ErrTranscriptConflict reports that the server already holds events at
+	// the sequences this client just sent, with bodies that are not the ones
+	// it sent. Terminal for sync.
+	ErrTranscriptConflict = errors.New("chatsync: the server holds a different transcript at these sequences")
+
 	// ErrNoTokenProvider reports a construction attempt with no way to
 	// authenticate.
 	ErrNoTokenProvider = errors.New("chatsync: a token provider is required")

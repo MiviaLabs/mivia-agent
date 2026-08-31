@@ -86,8 +86,10 @@ func AttachSession(ctx context.Context, client *Client, outbox *Outbox, params C
 }
 
 // FlushOutbox sends all unflushed events from the outbox to the remote server.
-// It advances the local outbox cursor only upon successful acknowledgment.
-// If a 409 Conflict is returned, it returns ErrConflict so the session can fork.
+//
+// The cursor advances only over events the server actually took, never to the
+// session's high-water mark - see resolveAck. If a 409 Conflict is returned it
+// returns ErrConflict so the session can stop.
 func FlushOutbox(ctx context.Context, client *Client, outbox *Outbox, sessionID string) (int, error) {
 	unflushed, err := outbox.UnflushedEvents()
 	if err != nil {
@@ -111,7 +113,11 @@ func FlushOutbox(ctx context.Context, client *Client, outbox *Outbox, sessionID 
 		return 0, err
 	}
 
-	if err := outbox.AdvanceCursor(res.LastSeq); err != nil {
+	ackSeq, err := resolveAck(ctx, client, sessionID, unflushed, res)
+	if err != nil {
+		return 0, err
+	}
+	if err := outbox.AdvanceCursor(ackSeq); err != nil {
 		return 0, fmt.Errorf("advance cursor: %w", err)
 	}
 
