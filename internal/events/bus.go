@@ -109,6 +109,12 @@ func (b *Bus) subscribe(kind Kind, h Handler, bufSize int) {
 // on interface equality). Unsubscribe never panics, so the bus lock is
 // always released even for uncomparable handler types.
 //
+// When one handler is registered BOTH by Subscribe and by SubscribeAcross,
+// which subscription this removes depends on registration order: it takes the
+// first match in the named kind's slice. Both outcomes are defensible and
+// neither is a guarantee - a caller that needs a specific one must hold the
+// *Subscription handle and call its Unsubscribe.
+//
 // Unsubscribe blocks until the target's queued events have been drained and
 // its delivery goroutine has exited, for every caller. Handlers must NOT call
 // Unsubscribe from inside HandleEvent: joining the delivery goroutine that is
