@@ -99,23 +99,57 @@ const (
 	TypeSyncForked          = "mivia.chat.v1.sync.forked"
 )
 
-// KnownWireTypes lists all recognized mivia.chat.v1.* type constants.
-var KnownWireTypes = []string{
-	TypeTurnStarted,
-	TypeAssistantDelta,
-	TypeAssistantMessage,
-	TypeThinkingDelta,
-	TypeToolStarted,
-	TypeToolEnded,
-	TypeSubagentToolStarted,
-	TypeSubagentToolEnded,
-	TypeSubagentProgress,
-	TypeSubagentEnded,
-	TypeTurnEnded,
-	TypeContextCompacted,
-	TypeTurnFailed,
-	TypeSyncDropped,
-	TypeSyncForked,
+// WireEventSpec binds one wire type string to the Go struct that models its
+// payload.
+type WireEventSpec struct {
+	// Type is the mivia.chat.v1.* type string. The API names each SSE frame
+	// after this exact string, so a browser client must register a listener
+	// per entry: EventSource.onmessage never fires for these events.
+	Type string
+	// Payload is a zero value of the struct that models this type's payload.
+	Payload any
+}
+
+// wireEventSpecs is the SINGLE definition site of the mivia.chat.v1 event
+// vocabulary. KnownWireTypes is derived from it, the recorded contract in
+// api/contracts/chat-sessions.v1.json is checked against it, and a
+// source-level gate proves no Type* constant is missing from it. Adding a
+// type means adding one row here and re-recording the contract; there is no
+// second list in Go to keep in step.
+var wireEventSpecs = []WireEventSpec{
+	{Type: TypeTurnStarted, Payload: TurnStartedPayload{}},
+	{Type: TypeAssistantDelta, Payload: AssistantDeltaPayload{}},
+	{Type: TypeAssistantMessage, Payload: AssistantMessagePayload{}},
+	{Type: TypeThinkingDelta, Payload: ThinkingDeltaPayload{}},
+	{Type: TypeToolStarted, Payload: ToolStartedPayload{}},
+	{Type: TypeToolEnded, Payload: ToolEndedPayload{}},
+	{Type: TypeSubagentToolStarted, Payload: SubagentToolStartedPayload{}},
+	{Type: TypeSubagentToolEnded, Payload: SubagentToolEndedPayload{}},
+	{Type: TypeSubagentProgress, Payload: SubagentProgressPayload{}},
+	{Type: TypeSubagentEnded, Payload: SubagentEndedPayload{}},
+	{Type: TypeTurnEnded, Payload: TurnEndedPayload{}},
+	{Type: TypeContextCompacted, Payload: ContextCompactedPayload{}},
+	{Type: TypeTurnFailed, Payload: TurnFailedPayload{}},
+	{Type: TypeSyncDropped, Payload: SyncDroppedPayload{}},
+	{Type: TypeSyncForked, Payload: SyncForkedPayload{}},
+}
+
+// WireEventSpecs returns the event vocabulary in wire order. The returned
+// slice is a copy, so a caller cannot edit the definition site.
+func WireEventSpecs() []WireEventSpec {
+	return append([]WireEventSpec(nil), wireEventSpecs...)
+}
+
+// KnownWireTypes lists all recognized mivia.chat.v1.* type constants. It is
+// derived from wireEventSpecs and is never hand-maintained.
+var KnownWireTypes = derivedWireTypes()
+
+func derivedWireTypes() []string {
+	out := make([]string, 0, len(wireEventSpecs))
+	for _, spec := range wireEventSpecs {
+		out = append(out, spec.Type)
+	}
+	return out
 }
 
 // ---------------------------------------------------------------------------
