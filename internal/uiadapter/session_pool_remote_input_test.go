@@ -10,6 +10,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/chatsync"
+	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/uiadapter"
@@ -83,7 +84,7 @@ func newRemoteInputPool(t *testing.T, srv *httptest.Server, sessionID string) *u
 	sess.SessionDir = t.TempDir()
 	sess.EventBus = events.New()
 
-	pool := uiadapter.NewSessionPool(sess, res, nil, false)
+	pool := uiadapter.NewSessionPool(sess, res, &cliagents.AgentSessionState{WorkspaceRoot: t.TempDir()}, false)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()

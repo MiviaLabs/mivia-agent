@@ -49,7 +49,18 @@ func IdentityDir(storeDir string) string {
 // here rather than in each host because two hosts (the plain CLI surface and
 // the TUI session pool) build it, and a layout that drifts between them
 // silently orphans one surface's cursor.
+//
+// An empty store dir yields an empty outbox dir, not a RELATIVE one - same
+// reasoning as IdentityDir above. Without this guard, a caller that failed to
+// resolve a real store dir silently got an outbox at "chat-sync/sessions/<handle>"
+// relative to wherever the process's cwd happened to be, which for `mivia chat`
+// run from inside a project checkout means real conversation transcripts land
+// inside the project tree itself. OpenOutbox refuses an empty dir (MkdirAll
+// fails), so the caller's sync attach fails closed instead.
 func OutboxDirFor(storeDir string, handle LocalHandle) string {
+	if storeDir == "" {
+		return ""
+	}
 	return filepath.Join(storeDir, "chat-sync", "sessions", string(handle))
 }
 

@@ -10,6 +10,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chatsync"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 // syncNoticeWriter is where the plain-CLI surface reports sync status.
@@ -25,22 +26,21 @@ var syncNoticeWriter io.Writer = os.Stderr
 // exact value production uses, instead of asserting on a hand-built copy that
 // can drift away from the wiring it claims to cover.
 //
-// wsRoot anchors where chat-sync keeps its identity/outbox files. It must NOT
-// be resolved from sess.SessionDir: that field belongs to the legacy
-// file-backed session store and is unconditionally nulled the moment context
-// state is enabled (internal/chat/context_integration.go's SetContextManager)
-// - which happens on every real `mivia chat` invocation. Reading it here made
-// chat-sync's identity permanently ephemeral in production: LoadOrCreateIdentity
-// always minted a fresh, never-persisted identity, so AttachSession could
-// never find a RemoteSessionID and every resume forked a brand-new remote
-// session. wsRoot is the caller's already-resolved workspace root instead.
+// wsRoot, not sess.SessionDir: that field belongs to the legacy file-backed
+// session store and is unconditionally nulled the moment context state is
+// enabled (internal/chat/context_integration.go's SetContextManager), which
+// happens on every real `mivia chat` invocation - reading it here made
+// chat-sync's identity permanently ephemeral in production, so every resume
+// forked a brand-new remote session. See chatSyncAnchor for how wsRoot itself
+// gets resolved into a real storage directory.
 func cliSyncOptions(sess *chat.Session, wsRoot string, res *config.Resolved, tokens chatsync.TokenProvider) chatsync.SessionOptions {
 	// The sync identity is resolved HERE, before the options exist, because
 	// chatsync.OpenSession opens the outbox before it attaches: OutboxDir must
 	// already carry the local handle. A load error still yields a usable
 	// identity - this run syncs under a handle the next run will not find,
 	// which is strictly better than not syncing.
-	identityDir := chatsync.IdentityDir(wsRoot)
+	anchor := chatSyncAnchor(wsRoot)
+	identityDir := chatsync.IdentityDir(anchor)
 	key := chatsync.IdentityKey(sess.SessionID)
 	ident, _ := chatsync.LoadOrCreateIdentity(identityDir, key)
 
@@ -67,7 +67,7 @@ func cliSyncOptions(sess *chat.Session, wsRoot string, res *config.Resolved, tok
 			WriterID:       ident.WriterID,
 			RedactToolArgs: tools.RedactToolArgs(),
 		},
-		OutboxDir:       chatsync.OutboxDirFor(wsRoot, ident.LocalHandle),
+		OutboxDir:       chatsync.OutboxDirFor(anchor, ident.LocalHandle),
 		LocalHandle:     ident.LocalHandle,
 		RemoteSessionID: ident.RemoteSessionID,
 		Identity:        chatsync.IdentityRef{Dir: identityDir, Key: key},
@@ -140,4 +140,26 @@ func attachCLISync(sess *chat.Session, wsRoot string, res *config.Resolved) func
 		defer cancel()
 		_ = syncSess.Stop(ctx)
 	}
+}
+
+// chatSyncAnchor resolves wsRoot into the directory chat-sync keeps its
+// identity/outbox files under - wsRoot's .mivia/ namespace, not the bare
+// workspace root, so chat-sync's durable state (and, in the outbox, real
+// conversation transcript content queued for upload) does not scatter into
+// the project tree the user actually works in. Mirrors
+// internal/uiadapter/session_pool.go's chatSyncAnchor - kept as two small
+// copies rather than a shared helper so neither host package grows a
+// dependency the other doesn't need for this alone.
+//
+// The empty check happens on wsRoot BEFORE NamespacePath, not after:
+// workspace.NamespacePath("") returns the RELATIVE ".mivia" (its own doc
+// comment says so - correct for its other callers, wrong here), so
+// IdentityDir/OutboxDirFor's own empty-storeDir guards would never see an
+// empty string and would happily write under cwd's ".mivia" instead of
+// refusing - the same class of leak this anchoring exists to close.
+func chatSyncAnchor(wsRoot string) string {
+	if wsRoot == "" {
+		return ""
+	}
+	return workspace.NamespacePath(wsRoot)
 }

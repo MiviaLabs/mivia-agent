@@ -25,6 +25,15 @@ __pycache__/
 .mivia/sessions/
 .mivia/runs/
 .mivia/handoffs/
+# Chat-sync's local identity/outbox state (internal/chatsync's
+# IdentityDir/OutboxDirFor, anchored under workspace.NamespacePath) - local
+# runtime bookkeeping and, in the outbox, real conversation transcript
+# content queued for upload. Never reviewable configuration. Also matched
+# at any nesting depth: a workspace root can be any subdirectory (a
+# sub-package run as its own `mivia chat` workspace, or a test fixture),
+# each getting its own .mivia/chat-sync/ under wherever wsRoot pointed.
+.mivia/chat-sync/
+**/.mivia/chat-sync/
 .mivia/context.db
 .mivia/context.db-*
 # Project memory database: the main file is COMMITTED in this repo (memories

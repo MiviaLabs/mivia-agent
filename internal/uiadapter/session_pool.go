@@ -16,6 +16,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 // SessionPool manages active and resumed sessions in memory.
@@ -454,7 +455,8 @@ func poolSyncOptions(sess *chat.Session, id string, wsRoot string, res *config.R
 	// must be resolved before the options, because OutboxDir has to carry the
 	// local handle before OpenSession opens the outbox. wsRoot, not
 	// sess.SessionDir - see attachSyncLocked's comment for why.
-	identityDir := chatsync.IdentityDir(wsRoot)
+	anchor := chatSyncAnchor(wsRoot)
+	identityDir := chatsync.IdentityDir(anchor)
 	key := chatsync.IdentityKey(id)
 	ident, _ := chatsync.LoadOrCreateIdentity(identityDir, key)
 
@@ -479,7 +481,7 @@ func poolSyncOptions(sess *chat.Session, id string, wsRoot string, res *config.R
 			WriterID:       ident.WriterID,
 			RedactToolArgs: tools.RedactToolArgs(),
 		},
-		OutboxDir:       chatsync.OutboxDirFor(wsRoot, ident.LocalHandle),
+		OutboxDir:       chatsync.OutboxDirFor(anchor, ident.LocalHandle),
 		LocalHandle:     ident.LocalHandle,
 		RemoteSessionID: ident.RemoteSessionID,
 		Identity:        chatsync.IdentityRef{Dir: identityDir, Key: key},
@@ -519,4 +521,23 @@ func poolSyncOptions(sess *chat.Session, id string, wsRoot string, res *config.R
 		AuthorUserIDProvider: AuthorUserIDProvider(),
 		EnablePolling:        true,
 	}
+}
+
+// chatSyncAnchor resolves wsRoot into the directory chat-sync keeps its
+// identity/outbox files under - wsRoot's .mivia/ namespace, not the bare
+// workspace root, so chat-sync's durable state (and, in the outbox, real
+// conversation transcript content queued for upload) does not scatter into
+// the project tree the user actually works in.
+//
+// The empty check happens on wsRoot BEFORE NamespacePath, not after:
+// workspace.NamespacePath("") returns the RELATIVE ".mivia" (its own doc
+// comment says so - correct for its other callers, wrong here), so
+// IdentityDir/OutboxDirFor's own empty-storeDir guards would never see an
+// empty string and would happily write under cwd's ".mivia" instead of
+// refusing - the same class of leak this anchoring exists to close.
+func chatSyncAnchor(wsRoot string) string {
+	if wsRoot == "" {
+		return ""
+	}
+	return workspace.NamespacePath(wsRoot)
 }

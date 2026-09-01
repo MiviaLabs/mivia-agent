@@ -8,6 +8,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/chatsync"
+	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/uiadapter"
@@ -32,7 +33,13 @@ func activationPool(t *testing.T, cfg config.ResolvedSync) int {
 	sess.SessionDir = t.TempDir()
 	sess.EventBus = events.New()
 
-	pool := uiadapter.NewSessionPool(sess, res, nil, false)
+	// WorkspaceRoot, not nil agentState: attachSyncLocked resolves chat-sync's
+	// identity/outbox anchor from p.agentState.WorkspaceRoot (never from
+	// sess.SessionDir, which real context-enabled sessions always null - see
+	// poolSyncOptions's doc comment). A nil agentState leaves wsRoot empty,
+	// which now correctly refuses to sync rather than writing under a
+	// relative ".mivia" path off the test binary's cwd.
+	pool := uiadapter.NewSessionPool(sess, res, &cliagents.AgentSessionState{WorkspaceRoot: t.TempDir()}, false)
 	time.Sleep(50 * time.Millisecond)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
