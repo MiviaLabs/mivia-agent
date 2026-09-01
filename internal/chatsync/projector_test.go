@@ -159,7 +159,9 @@ func TestProjectorDerivedBlockKeys(t *testing.T) {
 		t.Errorf("tool block key = %q, want call_abc123", pTool.Block)
 	}
 
-	// Thinking -> turn:thinking
+	// Thinking -> turn:thinking:<step>. The stream id is the stable part; the
+	// suffix is the step within the turn, which is what lets a consumer tell
+	// one utterance from the next (see proseBlock).
 	thinking := events.Event{
 		Kind:      events.KindThinking,
 		SessionID: "sess-1",
@@ -172,11 +174,11 @@ func TestProjectorDerivedBlockKeys(t *testing.T) {
 		t.Fatalf("thinking produced %d wire events, want 1", len(weThink))
 	}
 	pThink := weThink[0].Payload.(*ThinkingDeltaPayload)
-	if pThink.Block != "turn:1:thinking" {
-		t.Errorf("thinking block key = %q, want turn:1:thinking", pThink.Block)
+	if pThink.Block != "turn:1:thinking:0" {
+		t.Errorf("thinking block key = %q, want turn:1:thinking:0", pThink.Block)
 	}
 
-	// Assistant -> turn:assistant
+	// Assistant -> turn:assistant:<step>
 	assistant := events.Event{
 		Kind:      events.KindAssistant,
 		SessionID: "sess-1",
@@ -189,8 +191,8 @@ func TestProjectorDerivedBlockKeys(t *testing.T) {
 		t.Fatalf("assistant produced %d wire events, want 1", len(weAssist))
 	}
 	pAssist := weAssist[0].Payload.(*AssistantMessagePayload)
-	if pAssist.Block != "turn:1:assistant" {
-		t.Errorf("assistant block key = %q, want turn:1:assistant", pAssist.Block)
+	if pAssist.Block != "turn:1:assistant:0" {
+		t.Errorf("assistant block key = %q, want turn:1:assistant:0", pAssist.Block)
 	}
 }
 
