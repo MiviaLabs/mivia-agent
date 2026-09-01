@@ -174,6 +174,71 @@ func TestSessionPool_SyncAuthenticatesEveryRequest(t *testing.T) {
 	}
 }
 
+// TestSessionPool_ReleaseLeasesFlushesBusBeforeStopping reproduces the same
+// tail-loss shape TestAttachCLISyncDetach_DeliversTheFullBurstBeforeStopping
+// pins for the plain-CLI surface (DC-30,
+// .agents/quality/defect-taxonomy.md), for the TUI's pooled-session teardown
+// path instead: a burst of events lands on sess1's bus right before the TUI
+// quits and calls ReleaseLeases, with no sleep and no explicit Flush from the
+// caller - exactly how a subagent fan-out or a [sync].stream_assistant = true
+// turn's tail looks at process exit. ReleaseLeases must flush THIS session's
+// own bus before stopping its sync session, or the burst is silently lost.
+func TestSessionPool_ReleaseLeasesFlushesBusBeforeStopping(t *testing.T) {
+	var mu sync.Mutex
+	var createdIDs []string
+	sessionEvents := make(map[string][]chatsync.EventItem)
+	srv := setupSyncMockServer(&mu, &createdIDs, sessionEvents)
+	defer srv.Close()
+
+	installTestAuthToken(t)
+
+	bus := events.New()
+	res := &config.Resolved{
+		Model: "test-model",
+		Sync: config.ResolvedSync{
+			APIURL:           srv.URL,
+			PollWaitSeconds:  1,
+			HeartbeatSeconds: 1,
+			MaxUnflushed:     500,
+			StreamAssistant:  true,
+		},
+	}
+	sess1 := chat.NewSession(res, nil)
+	sess1.SessionID = "local-burst-1"
+	sess1.SessionDir = t.TempDir()
+	sess1.EventBus = bus
+
+	pool := uiadapter.NewSessionPool(sess1, res, nil, false)
+	time.Sleep(50 * time.Millisecond) // let the initial session create land
+
+	const turnID = "turn:1"
+	bus.Publish(events.Event{Kind: events.KindTurnStart, SessionID: sess1.SessionID, TurnID: turnID, Detail: "hi"})
+	const deltaCount = 220
+	for i := 0; i < deltaCount; i++ {
+		bus.Publish(events.Event{
+			Kind: events.KindAssistant, SessionID: sess1.SessionID, TurnID: turnID,
+			Detail: "delta", Content: "x",
+		})
+	}
+	bus.Publish(events.Event{Kind: events.KindAssistant, SessionID: sess1.SessionID, TurnID: turnID, Content: "final"})
+	bus.Publish(events.Event{Kind: events.KindTurnEnd, SessionID: sess1.SessionID, TurnID: turnID, Detail: "completed"})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	pool.ReleaseLeases(ctx)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(createdIDs) < 1 {
+		t.Fatalf("createdIDs = %v, want at least 1 remote session created", createdIDs)
+	}
+	got := len(sessionEvents[createdIDs[0]])
+	want := 1 + deltaCount + 1 + 1
+	if got != want {
+		t.Errorf("server received %d events for %s, want %d (the burst's tail was lost between Publish and ReleaseLeases)", got, createdIDs[0], want)
+	}
+}
+
 // TestSessionPool_DoesNotExecuteRemoteInput's assertion (a session pool that
 // never polls the inputs/next endpoint) is now the WRONG invariant to pin:
 // remote-input polling is intentionally enabled by poolSyncOptions (see

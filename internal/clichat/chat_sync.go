@@ -111,6 +111,22 @@ func attachCLISync(sess *chat.Session, res *config.Resolved) func() {
 	}
 	_, _ = fmt.Fprintln(syncNoticeWriter, "mivia: chat sync is running")
 	return func() {
+		// Flush BEFORE Stop, not after: Publish() only enqueues onto this
+		// subscription's own bounded queue (internal/events.Bus, default 256)
+		// and returns immediately - it does not wait for chatsync's
+		// HandleEvent to actually run. A one-shot turn that just finished
+		// (oneShot returns as soon as the model/tool loop is done, then this
+		// closure runs on the very next line via defer) can still have a
+		// backlog of already-published events sitting in that queue, not yet
+		// delivered. Stop()'s drainAndFlushFinal only drains what has ALREADY
+		// reached SyncSession's own eventCh, so without this Flush a
+		// heavy-volume turn ([sync].stream_assistant = true multiplies event
+		// count 5-10x) can race Stop() and silently lose its tail - the final
+		// assistant.message, turn.ended, and any tool.ended pairs still in
+		// flight - because the process exits right after Stop returns.
+		// Bus.Flush blocks until every event published before this call has
+		// been delivered to HandleEvent, which closes that gap deterministically.
+		sess.EventBus.Flush()
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		_ = syncSess.Stop(ctx)

@@ -11,6 +11,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
+	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/ports"
@@ -154,11 +155,27 @@ func (p *SessionPool) ReleaseLeases(ctx context.Context) {
 		seen[sess] = struct{}{}
 		distinct = append(distinct, sess)
 	}
-	syncList := make([]*chatsync.SyncSession, 0, len(p.syncSessions))
-	for _, ss := range p.syncSessions {
-		if ss != nil {
-			syncList = append(syncList, ss)
+	// Paired with the owning session's EventBus, not collected alone: Stop
+	// only drains SyncSession's own eventCh, not the bus subscription queue
+	// feeding it (DC-30, .agents/quality/defect-taxonomy.md). A pooled
+	// session that just ran a heavy-volume turn (subagent fan-out, or
+	// [sync].stream_assistant = true) can still have events sitting
+	// undelivered in that queue when the TUI quits; Flush must run first, on
+	// THIS session's own bus, or the tail is silently lost on process exit.
+	type pooledSync struct {
+		bus *events.Bus
+		ss  *chatsync.SyncSession
+	}
+	syncList := make([]pooledSync, 0, len(p.syncSessions))
+	for id, ss := range p.syncSessions {
+		if ss == nil {
+			continue
 		}
+		var bus *events.Bus
+		if sess := p.sessions[id]; sess != nil {
+			bus = sess.EventBus
+		}
+		syncList = append(syncList, pooledSync{bus: bus, ss: ss})
 	}
 	p.syncSessions = make(map[string]*chatsync.SyncSession)
 	p.mu.Unlock()
@@ -167,8 +184,11 @@ func (p *SessionPool) ReleaseLeases(ctx context.Context) {
 	for _, sess := range distinct {
 		releaseSessionLease(ctx, sess)
 	}
-	for _, ss := range syncList {
-		_ = ss.Stop(ctx)
+	for _, ps := range syncList {
+		if ps.bus != nil {
+			ps.bus.Flush()
+		}
+		_ = ps.ss.Stop(ctx)
 	}
 }
 
