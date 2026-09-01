@@ -66,7 +66,19 @@ func cliSyncOptions(sess *chat.Session, res *config.Resolved, tokens chatsync.To
 		PollWaitSeconds: res.Sync.PollWaitSeconds,
 		HeartbeatPeriod: config.SaturatingSeconds(res.Sync.HeartbeatSeconds),
 		CreateTitle:     "CLI Session",
-		EnablePolling:   false,
+		// Remote input (chat-sync "steering") is TUI-only, deliberately.
+		// internal/uiadapter/session_pool.go's poolSyncOptions enables it
+		// there because internal/ui/screen/conversation.Screen has an
+		// explicit turn-ownership seam - awaitSessionEvent - built for
+		// exactly this: starting a turn from something other than the
+		// composer's Enter key and draining its events without blocking the
+		// next local action. The plain/line CLI (`mivia chat`) has no
+		// equivalent: it runs one synchronous request/response loop with no
+		// standing screen to arm a background drain from, so a remote input
+		// arriving mid-request has nothing safe to hand it to. Revisit this
+		// if `mivia chat` ever grows an event loop of its own; until then,
+		// leave this false rather than half-wire a path with no consumer.
+		EnablePolling: false,
 	}
 }
 

@@ -1,6 +1,7 @@
 package chatsync
 
 import (
+	"context"
 	"strings"
 
 	"github.com/MiviaLabs/mivia-agent/internal/miviaauth"
@@ -27,6 +28,35 @@ func DefaultTokenProvider() TokenProvider {
 		return nil
 	}
 	return NewTokenProvider(svc)
+}
+
+// DefaultAuthorUserIDProvider resolves the logged-in CLI session's own
+// authenticated principal id into an AuthorUserIDProvider, or nil when there
+// is no local session.
+//
+// Unlike DefaultTokenProvider, the closure this returns is NOT free to call:
+// every invocation hits POST-free but network-bound /v1/auth/me
+// (miviaauth.Service.Whoami), with no local cache of the identity to fall
+// back on. InputPoller.resolveAuthorUserID calls it at most once per poller
+// lifetime and caches the result, specifically so this cost is paid once,
+// lazily, only when a remote input actually needs verifying - never
+// unconditionally at session-attach time, which would put a real network
+// call on every chat-sync session this process ever opens.
+func DefaultAuthorUserIDProvider() AuthorUserIDProvider {
+	if !miviaauth.HasDefaultSession() {
+		return nil
+	}
+	svc, err := miviaauth.DefaultService()
+	if err != nil {
+		return nil
+	}
+	return func(ctx context.Context) (string, error) {
+		who, err := svc.Whoami(ctx)
+		if err != nil {
+			return "", err
+		}
+		return who.Identity.ID, nil
+	}
 }
 
 // DefaultBaseURL returns configured when it names something, else the mivia

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -38,7 +39,36 @@ var (
 	// token. Sending the request anyway would omit the Authorization header,
 	// so this fails closed instead.
 	ErrEmptyToken = errors.New("chatsync: the token provider returned an empty token")
+
+	// ErrInvalidPathID reports an id this client refused to interpolate into
+	// a request path. See validatePathID.
+	ErrInvalidPathID = errors.New("chatsync: invalid id for request path")
 )
+
+// pathIDPattern is the conservative allowlist every id this client places
+// into a URL path must match: ASCII letters, digits, underscore, dot,
+// hyphen. No '/', no '?', no '#', no whitespace, no control characters.
+//
+// sessionID and inputID both cross the wire before they reach here -
+// sessionID from a server CreateSession/attach response or the persisted
+// identity file, inputID from the server's own NextInput response, which
+// ConsumeInput then re-embeds into a SECOND request's path
+// (internal/chatsync/poller.go's pollOnce). A hostile or compromised server
+// could return an id containing "../", a query string, or CRLF, and every
+// %s that goes straight into fmt.Sprintf("/v1/.../%s/...", id) would carry
+// it into the request line unescaped. Rejecting outright (not
+// url.PathEscape-ing) is deliberate: an escaped path segment still reaches
+// the server as a literal weird-looking id, but rejecting here means a
+// malformed id never leaves this process as a request at all.
+var pathIDPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,256}$`)
+
+// validatePathID rejects an id unsafe to interpolate into a request path.
+func validatePathID(id string) error {
+	if !pathIDPattern.MatchString(id) {
+		return fmt.Errorf("%w: %q", ErrInvalidPathID, id)
+	}
+	return nil
+}
 
 // ConflictError conveys detailed 409 conflict payload from server.
 type ConflictError struct {
@@ -160,6 +190,9 @@ func (c *Client) CreateSession(ctx context.Context, params CreateSessionParams) 
 
 // GetSession fetches session metadata via GET /v1/chat-sessions/{id}.
 func (c *Client) GetSession(ctx context.Context, sessionID string) (*Session, error) {
+	if err := validatePathID(sessionID); err != nil {
+		return nil, err
+	}
 	var out Session
 	path := fmt.Sprintf("/v1/chat-sessions/%s", sessionID)
 	if err := c.doJSON(ctx, http.MethodGet, path, nil, &out); err != nil {
@@ -170,6 +203,9 @@ func (c *Client) GetSession(ctx context.Context, sessionID string) (*Session, er
 
 // AppendEvents appends a batch of events to a session stream.
 func (c *Client) AppendEvents(ctx context.Context, sessionID string, events []EventItem) (*AppendResult, error) {
+	if err := validatePathID(sessionID); err != nil {
+		return nil, err
+	}
 	var out AppendResult
 	path := fmt.Sprintf("/v1/chat-sessions/%s/events", sessionID)
 	body := map[string]any{"events": events}
@@ -181,6 +217,9 @@ func (c *Client) AppendEvents(ctx context.Context, sessionID string, events []Ev
 
 // GetEvents reads back events by cursor via GET /v1/chat-sessions/{id}/events.
 func (c *Client) GetEvents(ctx context.Context, sessionID string, afterSeq int64, limit int) ([]StoredEvent, error) {
+	if err := validatePathID(sessionID); err != nil {
+		return nil, err
+	}
 	var out []StoredEvent
 	vals := url.Values{}
 	vals.Set("afterSeq", strconv.FormatInt(afterSeq, 10))
@@ -196,6 +235,9 @@ func (c *Client) GetEvents(ctx context.Context, sessionID string, afterSeq int64
 
 // NextInput polls for remote input via GET /v1/chat-sessions/{id}/inputs/next.
 func (c *Client) NextInput(ctx context.Context, sessionID string, waitSeconds int) (*NextInput, error) {
+	if err := validatePathID(sessionID); err != nil {
+		return nil, err
+	}
 	var out NextInput
 	path := fmt.Sprintf("/v1/chat-sessions/%s/inputs/next?waitSeconds=%d", sessionID, waitSeconds)
 	if err := c.doJSON(ctx, http.MethodGet, path, nil, &out); err != nil {
@@ -205,7 +247,17 @@ func (c *Client) NextInput(ctx context.Context, sessionID string, waitSeconds in
 }
 
 // ConsumeInput acknowledges receipt of a remote input via POST /v1/chat-sessions/{id}/inputs/{inputID}/consume.
+//
+// inputID is server-supplied (the id NextInput's response just handed back),
+// so it is validated exactly like sessionID before it is re-embedded into
+// this second request's path - see validatePathID's doc comment.
 func (c *Client) ConsumeInput(ctx context.Context, sessionID, inputID string) (*SessionInput, error) {
+	if err := validatePathID(sessionID); err != nil {
+		return nil, err
+	}
+	if err := validatePathID(inputID); err != nil {
+		return nil, err
+	}
 	var out SessionInput
 	path := fmt.Sprintf("/v1/chat-sessions/%s/inputs/%s/consume", sessionID, inputID)
 	if err := c.doJSON(ctx, http.MethodPost, path, nil, &out); err != nil {
@@ -216,6 +268,9 @@ func (c *Client) ConsumeInput(ctx context.Context, sessionID, inputID string) (*
 
 // Heartbeat sends a status heartbeat via POST /v1/chat-sessions/{id}/heartbeat.
 func (c *Client) Heartbeat(ctx context.Context, sessionID, status string) (*Session, error) {
+	if err := validatePathID(sessionID); err != nil {
+		return nil, err
+	}
 	var out Session
 	path := fmt.Sprintf("/v1/chat-sessions/%s/heartbeat", sessionID)
 	body := map[string]string{"status": status}
@@ -227,6 +282,9 @@ func (c *Client) Heartbeat(ctx context.Context, sessionID, status string) (*Sess
 
 // EndSession ends a session via POST /v1/chat-sessions/{id}/end.
 func (c *Client) EndSession(ctx context.Context, sessionID string) (*Session, error) {
+	if err := validatePathID(sessionID); err != nil {
+		return nil, err
+	}
 	var out Session
 	path := fmt.Sprintf("/v1/chat-sessions/%s/end", sessionID)
 	if err := c.doJSON(ctx, http.MethodPost, path, nil, &out); err != nil {

@@ -24,10 +24,11 @@ func TestInputPollerReceivesAndConsumesInput(t *testing.T) {
 		if count == 1 {
 			_ = json.NewEncoder(w).Encode(NextInput{
 				Input: &SessionInput{
-					ID:        "inp-99",
-					SessionID: "sess-p-1",
-					Kind:      "message",
-					Body:      "remote user instruction",
+					ID:           "inp-99",
+					SessionID:    "sess-p-1",
+					AuthorUserID: "user-1",
+					Kind:         "message",
+					Body:         "remote user instruction",
 				},
 			})
 			return
@@ -41,11 +42,12 @@ func TestInputPollerReceivesAndConsumesInput(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		now := time.Now().Format(time.RFC3339)
 		_ = json.NewEncoder(w).Encode(SessionInput{
-			ID:         consumedID,
-			SessionID:  r.PathValue("id"),
-			Kind:       "message",
-			Body:       "remote user instruction",
-			ConsumedAt: &now,
+			ID:           consumedID,
+			SessionID:    r.PathValue("id"),
+			AuthorUserID: "user-1",
+			Kind:         "message",
+			Body:         "remote user instruction",
+			ConsumedAt:   &now,
 		})
 	})
 
@@ -53,7 +55,7 @@ func TestInputPollerReceivesAndConsumesInput(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestClient(t, ClientOptions{BaseURL: srv.URL})
-	poller := NewInputPoller(client, "sess-p-1", 1, t.TempDir())
+	poller := NewInputPoller(client, "sess-p-1", 1, fixedAuthorUserIDProvider("user-1"), t.TempDir())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -97,7 +99,7 @@ func TestInputPollerSuppressesDeliveryIfConsumeFails(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestClient(t, ClientOptions{BaseURL: srv.URL})
-	poller := NewInputPoller(client, "sess-p-2", 1)
+	poller := NewInputPoller(client, "sess-p-2", 1, fixedAuthorUserIDProvider("user-1"))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -123,7 +125,7 @@ func TestInputPoller_ChannelClosedOnStop(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestClient(t, ClientOptions{BaseURL: srv.URL})
-	poller := NewInputPoller(client, "sess-p-3", 1)
+	poller := NewInputPoller(client, "sess-p-3", 1, fixedAuthorUserIDProvider("user-1"))
 
 	poller.Start(context.Background())
 	time.Sleep(10 * time.Millisecond)
@@ -147,10 +149,11 @@ func TestInputPoller_CrashRecovery_ConsumedInputDeliveredOnAttach(t *testing.T) 
 	// but process crashed before delivering on Inputs() channel.
 	pendingData, err := json.Marshal(pendingInputState{
 		Input: &SessionInput{
-			ID:        "inp-recovered",
-			SessionID: "sess-recover-1",
-			Kind:      "message",
-			Body:      "recovered instruction after crash",
+			ID:           "inp-recovered",
+			SessionID:    "sess-recover-1",
+			AuthorUserID: "user-1",
+			Kind:         "message",
+			Body:         "recovered instruction after crash",
 		},
 		Consumed: true,
 	})
@@ -172,7 +175,7 @@ func TestInputPoller_CrashRecovery_ConsumedInputDeliveredOnAttach(t *testing.T) 
 	defer srv.Close()
 
 	client := newTestClient(t, ClientOptions{BaseURL: srv.URL})
-	poller := NewInputPoller(client, "sess-recover-1", 1, stateDir)
+	poller := NewInputPoller(client, "sess-recover-1", 1, fixedAuthorUserIDProvider("user-1"), stateDir)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -228,7 +231,7 @@ func TestInputPoller_CrashRecovery_UnconsumedInputDiscarded(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestClient(t, ClientOptions{BaseURL: srv.URL})
-	poller := NewInputPoller(client, "sess-recover-2", 1, stateDir)
+	poller := NewInputPoller(client, "sess-recover-2", 1, fixedAuthorUserIDProvider("user-1"), stateDir)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

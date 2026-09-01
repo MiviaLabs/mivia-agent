@@ -135,6 +135,34 @@ type Notices interface {
 	Notices() <-chan uievent.Event
 }
 
+// RemoteInputEvent is one instruction a second device queued for a session
+// through the sync API, already verified by the time it reaches here:
+// chatsync.InputPoller has checked session ownership, message shape, and
+// author identity before this ever crosses the port (internal/chatsync's
+// validateRemoteInput). Nothing on this side re-checks any of that - the
+// port's whole contract is that a value on the channel is safe to run.
+type RemoteInputEvent struct {
+	ID         string
+	SessionID  string
+	Body       string
+	ReceivedAt time.Time
+}
+
+// RemoteInputs is the inbound steering surface: sibling to Notices, same
+// contract (read once at startup, never closed while the adapter lives, a
+// nil return means this adapter raises none). Unlike Notices it is NOT
+// lossy - see internal/uiadapter's SessionPool.RemoteInputs implementation -
+// because a dropped remote instruction is a class this port exists
+// specifically to prevent, not to tolerate the way an advisory line can be.
+//
+// RemoteInputEvent.SessionID may name ANY pooled session, not only the one
+// currently on screen: the consumer (internal/ui/screen/conversation)
+// resolves it against its own foreground/background session state exactly
+// as uievent.EventMsg.SessionID already does for turn events.
+type RemoteInputs interface {
+	RemoteInputs() <-chan RemoteInputEvent
+}
+
 // SessionSummary describes one existing session for listing and resuming.
 type SessionSummary struct {
 	ID        string

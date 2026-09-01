@@ -65,6 +65,11 @@ type Screen struct {
 	// Set via SetSettings, the same seam SetCommandRunner uses.
 	settings ports.Settings
 
+	// remoteInputs is the inbound steering port (ports.RemoteInputs); nil is
+	// valid - no channel means no remote-origin turns, ever. Set via
+	// SetRemoteInputs, the same seam SetCommandRunner uses. See remote_input.go.
+	remoteInputs <-chan ports.RemoteInputEvent
+
 	// embedded marks the subagent-thread construction of this same
 	// Screen type: no top bar, no activity panel, wrapped event Msgs -
 	// everything else is the identical main-chat machinery. See
@@ -192,7 +197,7 @@ func New(th theme.Theme, tier theme.Tier, themes []theme.Theme, conv ports.Conve
 	return s
 }
 
-func (s Screen) Init() tea.Cmd { return nil }
+func (s Screen) Init() tea.Cmd { return s.awaitRemoteInput() }
 
 // ViewFlags holds the alternate screen: the conversation is the cockpit.
 func (s Screen) ViewFlags() app.ViewFlags { return app.ViewFlags{AltScreen: true} }
@@ -377,6 +382,8 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 		return s, nil
 	case turnEndedMsg:
 		return s.handleTurnEndedMsg(msg)
+	case remoteInputMsg:
+		return s.handleRemoteInput(msg.event)
 	case approval.DecisionMsg:
 		if s.approver != nil {
 			s.approver.Resolve(msg.ToolCallID, msg.Decision)
@@ -390,15 +397,7 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 		s.forwardSharedMsg(msg)
 		return s, cmd
 	case sessionPickerTickMsg:
-		// A stray in-flight tick after the picker closed (or with no
-		// runner to ask) is a silent no-op: returning a nil Cmd lets the
-		// self-re-arming loop lapse instead of ticking forever.
-		if s.sessionPicker == nil || s.runner == nil {
-			return s, nil
-		}
-		next := s.sessionPicker.refresh(s.runner.SessionActive)
-		s.sessionPicker = &next
-		return s, sessionPickerTickCmd()
+		return s.handleSessionPickerTick()
 	case transcript.FlushMsg:
 		next, cmd := s.transcript.Update(msg)
 		s.transcript = next
@@ -426,6 +425,19 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 		return s.applyTheme(msg), nil
 	}
 	return s, nil
+}
+
+// handleSessionPickerTick refreshes the open /resume picker's per-row
+// activity state. A stray in-flight tick after the picker closed (or with
+// no runner to ask) is a silent no-op: returning a nil Cmd lets the
+// self-re-arming loop lapse instead of ticking forever.
+func (s Screen) handleSessionPickerTick() (app.Screen, tea.Cmd) {
+	if s.sessionPicker == nil || s.runner == nil {
+		return s, nil
+	}
+	next := s.sessionPicker.refresh(s.runner.SessionActive)
+	s.sessionPicker = &next
+	return s, sessionPickerTickCmd()
 }
 
 // applyTheme adopts a new theme across every component this screen
@@ -586,6 +598,13 @@ func (s *Screen) SetSubagentThreads(t ports.SubagentThreads) { s.threads = t }
 // this is ever called) still opens the screen with every section
 // reading "unavailable".
 func (s *Screen) SetSettings(store ports.Settings) { s.settings = store }
+
+// SetRemoteInputs supplies the inbound steering channel (ports.RemoteInputs).
+// Must be called before Init runs (buildApp wires it right after
+// construction, alongside SetSubagentThreads); Init arms the one read loop
+// that lives for the screen's whole life. nil (the default) means this
+// screen never receives remote-origin turns - see remote_input.go.
+func (s *Screen) SetRemoteInputs(ch <-chan ports.RemoteInputEvent) { s.remoteInputs = ch }
 
 // SetHideComposer toggles visibility of the composer. When true, the
 // composer is omitted from layout and rendering (e.g. for subagent
