@@ -26,6 +26,17 @@ const (
 	lockFileName        = "lock"
 )
 
+// outboxSyncFile and outboxTruncateFile are the durability seams. Production
+// always runs the two closures below. Tests replace them to make one specific
+// fsync or truncate fail, which is the only way to reach the recovery paths
+// that a disk error or a power loss would otherwise reach. Both are keyed on
+// the caller's *os.File, so a test targets one file by name. Never swap them
+// outside a test, and always restore them with t.Cleanup.
+var (
+	outboxSyncFile     = func(f *os.File) error { return f.Sync() }
+	outboxTruncateFile = func(f *os.File, size int64) error { return f.Truncate(size) }
+)
+
 // Cursor represents the durable flushed sequence marker.
 type Cursor struct {
 	FlushedSeq int64     `json:"flushed_seq"`
@@ -43,6 +54,12 @@ type Outbox struct {
 	cursor       Cursor
 	unflushed    int
 	maxSeq       int64
+
+	// pendingTrunc is the offset a failed rollback still owes events.jsonl,
+	// and hasPendingTrunc says whether one is owed at all. Offset 0 is a
+	// legitimate mark, so the flag cannot be folded into the offset.
+	pendingTrunc    int64
+	hasPendingTrunc bool
 }
 
 // OpenOutbox opens or creates the outbox directory, acquires the process lock,
@@ -57,6 +74,14 @@ func OpenOutbox(dir string, maxUnflushed int) (*Outbox, error) {
 
 	lf, err := acquireLock(dir)
 	if err != nil {
+		return nil, err
+	}
+
+	// A previous run can have died with a rollback still owed, or with a
+	// record only half on disk. Repair before anything reads the file, so no
+	// caller ever sees a duplicate, a gap, or a torn record.
+	if err := repairEventsFile(dir); err != nil {
+		releaseLock(lf)
 		return nil, err
 	}
 
@@ -158,6 +183,9 @@ func (ob *Outbox) Append(events ...WireEvent) error {
 	if len(events) == 0 {
 		return nil
 	}
+	if err := ob.retryPendingTruncateLocked(); err != nil {
+		return err
+	}
 	if ob.unflushed+len(events) > ob.maxUnflushed {
 		return ErrOutboxOverflow
 	}
@@ -169,6 +197,12 @@ func (ob *Outbox) Append(events ...WireEvent) error {
 
 	if err := ob.writeBatchLocked(events); err != nil {
 		if truncErr := ob.truncateToMarkLocked(mark); truncErr != nil {
+			// The rollback failed too, so the batch's bytes are still
+			// readable past the mark. Writing the reissued seqs on top of
+			// them would give one seq two records. Owe the rollback and
+			// refuse to append again until it is paid.
+			ob.pendingTrunc = mark
+			ob.hasPendingTrunc = true
 			return errors.Join(err, truncErr)
 		}
 		return err
@@ -200,21 +234,8 @@ func (ob *Outbox) writeBatchLocked(events []WireEvent) error {
 	if _, err := ob.eventsFile.Write(buf.Bytes()); err != nil {
 		return fmt.Errorf("write event: %w", err)
 	}
-	if err := ob.eventsFile.Sync(); err != nil {
+	if err := outboxSyncFile(ob.eventsFile); err != nil {
 		return fmt.Errorf("sync events file: %w", err)
-	}
-	return nil
-}
-
-// truncateToMarkLocked drops everything the failed batch wrote past mark and
-// makes the truncation durable, so a crash cannot resurrect a partial record.
-// The caller must hold ob.mu.
-func (ob *Outbox) truncateToMarkLocked(mark int64) error {
-	if err := ob.eventsFile.Truncate(mark); err != nil {
-		return fmt.Errorf("truncate outbox to append mark: %w", err)
-	}
-	if err := ob.eventsFile.Sync(); err != nil {
-		return fmt.Errorf("sync truncated events file: %w", err)
 	}
 	return nil
 }
@@ -338,7 +359,7 @@ func (ob *Outbox) rewriteEventsFileLocked(unflushed []StoredEvent, base int64) e
 		}
 	}
 
-	if err := f.Sync(); err != nil {
+	if err := outboxSyncFile(f); err != nil {
 		_ = f.Close()
 		return fmt.Errorf("sync tmp events file: %w", err)
 	}
@@ -355,6 +376,9 @@ func (ob *Outbox) rewriteEventsFileLocked(unflushed []StoredEvent, base int64) e
 		return fmt.Errorf("reopen events file: %w", err)
 	}
 	ob.eventsFile = ef
+	// The rewritten file replaces every byte the old one held, so any rollback
+	// owed against the old file is void.
+	ob.hasPendingTrunc = false
 	return nil
 }
 
@@ -372,7 +396,7 @@ func (ob *Outbox) writeCursorLocked(cur Cursor) error {
 		_ = cf.Close()
 		return fmt.Errorf("write tmp cursor: %w", err)
 	}
-	if err := cf.Sync(); err != nil {
+	if err := outboxSyncFile(cf); err != nil {
 		_ = cf.Close()
 		return fmt.Errorf("sync tmp cursor: %w", err)
 	}
