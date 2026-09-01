@@ -150,10 +150,12 @@ type RemoteInputEvent struct {
 
 // RemoteInputs is the inbound steering surface: sibling to Notices, same
 // contract (read once at startup, never closed while the adapter lives, a
-// nil return means this adapter raises none). Unlike Notices it is NOT
-// lossy - see internal/uiadapter's SessionPool.RemoteInputs implementation -
-// because a dropped remote instruction is a class this port exists
-// specifically to prevent, not to tolerate the way an advisory line can be.
+// nil return means this adapter raises none). Unlike Notices it is not
+// DROPPED under backpressure - see internal/uiadapter's
+// SessionPool.RemoteInputs implementation - a slow or absent reader stalls
+// the producer instead of an event being silently discarded. That is
+// narrower than "never lost": SessionPool.RemoteInputs' own doc comment
+// spells out the residual crash-window risk this buffering does not close.
 //
 // RemoteInputEvent.SessionID may name ANY pooled session, not only the one
 // currently on screen: the consumer (internal/ui/screen/conversation)
