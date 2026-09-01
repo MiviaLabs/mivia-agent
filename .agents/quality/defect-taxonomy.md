@@ -1136,3 +1136,75 @@ flagged as residual, not fixed here (see the Sweep note on the fix commit).
   rejection and asserts the client never sends a batch large enough to
   trigger it, and that a 250-event backlog still fully lands across
   multiple chunked requests.
+
+## DC-33 A struct field is nulled by one subsystem's precondition; a sibling subsystem still reads it assuming it stays populated
+
+**Mechanism.** A struct field starts populated and one subsystem depends on
+it staying that way. A second, unrelated subsystem later gains the
+authority to null the field as a side effect of its OWN state transition
+("once X is enabled, this field belongs to X's replacement and is
+cleared"). The nulling subsystem has no way to know who else reads the
+field - it was written to serve its own concern, not to honor every
+reader's assumption. The reading subsystem, in turn, was written before
+the nulling subsystem existed (or before the nulling subsystem grew this
+behavior), so it has no reason to check for the null case; it just reads
+the field and treats an unexpectedly empty value as "legitimately absent"
+rather than "cleared out from under me by someone else's precondition." If
+the nulling condition is the DEFAULT path in production - not an edge case
+- the field is empty on every real run, and a reader that falls back
+silently on empty (mint a fresh substitute, skip, no error) makes the
+whole failure invisible: nothing crashes, nothing logs, the dependent
+feature just never round-trips.
+
+**Why it recurs.** The field's name and original purpose ("the directory
+this session lives in") say nothing about the fact that a second subsystem
+now owns its lifecycle for the common case. A reader added later, in a
+different package, reasonably assumes a plainly-named field on a shared
+struct holds what its doc comment says - nothing about the type signature
+distinguishes "this is stable" from "this is stable only until some other
+subsystem's precondition fires." Because the nulling path is the DEFAULT
+one in production, no manual smoke test catches it either: the feature
+built on the field "works" in the sense that it runs without error, it
+just silently does the wrong (ephemeral, unpersisted) thing every time.
+
+**Evidence.** `internal/chat/context_integration.go`'s `SetContextManager`
+unconditionally zeroes `chat.Session.SessionDir` (with `sessionStore`/
+`saveManager`) the instant context state is enabled - which every real
+`mivia chat` invocation does, CLI or TUI, before chat sync ever attaches.
+`internal/clichat/chat_sync.go`'s `cliSyncOptions` and
+`internal/uiadapter/session_pool.go`'s `poolSyncOptions` read
+`sess.SessionDir` to anchor chat-sync's local identity file.
+`chatsync.LoadOrCreateIdentity` treats an empty anchor directory as "no
+identity directory available" and mints a fresh, NEVER-PERSISTED identity
+rather than erroring - so every chat-sync attach ran against an ephemeral
+identity with no `RemoteSessionID`, and `AttachSession` always took the
+create-fresh branch instead of re-attaching to an existing remote session.
+Every resume of a local chat thread therefore forked a brand-new remote
+session with the API. No test caught this: every existing chat-sync
+identity test built its `chat.Session` as a hand-rolled struct literal
+with `SessionDir` set directly, never through the real `SetContextManager`
+path that clears it in production.
+
+**Probes.**
+- For every field a reader treats as reliably populated, find every OTHER
+  writer of that same field (not just the constructor) and check whether
+  that writer's precondition for clearing it is the DEFAULT path in
+  production, not a rare edge case.
+- A reader that falls back silently on an unexpectedly empty/zero field
+  (mint-fresh, skip, treat-as-absent) hides this class completely. Prefer
+  either a reader that can distinguish "genuinely never applicable" from
+  "cleared by someone else," or a caller-supplied value the reader has no
+  way to get wrong instead of a shared mutable field at all.
+- Build the object through its REAL production construction path when
+  testing a reader of a shared field - not a struct literal that pins the
+  field's value before the writer that owns its lifecycle ever runs.
+- A narrow, legacy-sounding field name ("SessionDir") on a widely-shared
+  struct can accumulate readers from unrelated subsystems that never
+  intended to depend on its lifecycle. Grep every reader before repurposing
+  or clearing such a field.
+- Gate: `TestCLISyncOptionsPersistsIdentityWithoutSessionDir`
+  (`internal/clichat/chat_sync_opts_test.go`) and
+  `TestPoolSyncOptionsPersistsIdentityWithoutSessionDir`
+  (`internal/uiadapter/session_pool_syncopts_test.go`) build a session with
+  `SessionDir` explicitly empty - the real production shape - and assert
+  identity still round-trips across a simulated resume.
