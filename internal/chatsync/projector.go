@@ -246,6 +246,9 @@ func (p *Projector) projectByKind(ev events.Event, turnID string, env Envelope, 
 		ts := p.turn(turnID)
 		return p.projectAssistant(env, turnID, ts, ev)
 
+	case events.KindAssistantReset:
+		return p.projectAssistantReset(env, turnID, ev)
+
 	case events.KindThinking:
 		if ev.AgentTask != "" {
 			return p.projectSubagentThinking(env, turnID, ev)

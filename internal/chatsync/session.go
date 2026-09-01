@@ -15,6 +15,7 @@ var syncKinds = []events.Kind{
 	events.KindTurnEnd,
 	events.KindError,
 	events.KindAssistant,
+	events.KindAssistantReset,
 	events.KindThinking,
 	events.KindToolStart,
 	events.KindToolEnd,

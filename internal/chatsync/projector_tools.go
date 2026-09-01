@@ -215,3 +215,31 @@ func toolEndStatus(detail string) string {
 	}
 	return detail
 }
+
+// projectAssistantReset tells a viewer to discard the assistant text it has
+// accumulated for one block, because the turn producing it is being re-driven
+// from the beginning.
+//
+// It also clears the producing side's own streaming state. Without that, the
+// replayed attempt would continue the abandoned attempt's fragment count, and
+// INV-1 would then describe a block that holds two attempts' deltas.
+func (p *Projector) projectAssistantReset(env Envelope, turnID string, ev events.Event) []WireEvent {
+	if ev.AgentTask != "" {
+		env.Block = turnID + ":" + ev.AgentTask + ":assistant"
+		ls := p.laneState(turnID, ev.AgentTask)
+		ls.streamed, ls.fragments = false, 0
+	} else {
+		env.Block = turnID + ":assistant"
+		ts := p.turn(turnID)
+		ts.streamed, ts.fragments = false, 0
+	}
+	// Truncate BEFORE the literal. Go evaluates the fields in order, so
+	// `Envelope: env` copies env first and any trunc record applyTruncation
+	// then writes lands on a value nobody reads.
+	reason := applyTruncation(&env, "reason", ev.Detail, BudgetShortField)
+	payload := &AssistantResetPayload{
+		Envelope: env,
+		Reason:   reason,
+	}
+	return []WireEvent{p.nextWireEvent(TypeAssistantReset, payload)}
+}

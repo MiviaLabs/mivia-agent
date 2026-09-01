@@ -214,6 +214,9 @@ func runSDKPromptTooLongRecoverable(ctx context.Context, l *Loop, sdkOpts sdkage
 		(!errors.Is(err, provider.ErrPromptTooLong) && !errors.Is(err, sdkshape.ErrPromptTooLong)) {
 		return res, err
 	}
+	// The retry re-runs the ENTIRE loop on compacted messages, so any text the
+	// first attempt streamed belongs to a run that is being abandoned.
+	emit(opts, Event{Kind: EventAssistantReset})
 	return run(sdkCompactAfterPromptTooLong(l, opts, preparedMsgs))
 }
 

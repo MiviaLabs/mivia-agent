@@ -22,6 +22,7 @@
     "mivia.chat.v1.turn.started",
     "mivia.chat.v1.assistant.delta",
     "mivia.chat.v1.assistant.message",
+    "mivia.chat.v1.assistant.reset",
     "mivia.chat.v1.thinking.delta",
     "mivia.chat.v1.tool.started",
     "mivia.chat.v1.tool.ended",
@@ -349,6 +350,15 @@
             "optional": false
           },
           "text": {
+            "kind": "string",
+            "optional": true
+          }
+        }
+      },
+      "mivia.chat.v1.assistant.reset": {
+        "goType": "AssistantResetPayload",
+        "fields": {
+          "reason": {
             "kind": "string",
             "optional": true
           }

@@ -45,6 +45,18 @@ const (
 	// between two tool calls has no open tools but is very much still alive,
 	// so only this event may retire it from the parent's live agent view.
 	EventSubagentDone EventKind = "subagent_done"
+	// EventAssistantReset tells a consumer to discard the assistant text it
+	// has accumulated for the current turn and start again.
+	//
+	// It exists because a turn can be re-driven whole after it has already
+	// streamed: a prompt-too-long compaction retry, a bounded empty-response
+	// retry, or a subagent schema retry all replay the turn. A consumer that
+	// appends deltas has no way to know the second attempt is not a
+	// continuation of the first, and shows the answer twice.
+	//
+	// It is not an error. A turn that resets and then completes is a normal,
+	// successful turn.
+	EventAssistantReset EventKind = "assistant_reset"
 	// EventThinking carries model reasoning (chain of thought) for providers
 	// that expose it. Content is the reasoning delta.
 	EventThinking EventKind = "thinking"

@@ -499,3 +499,57 @@ func TestSubagentProseMatchesTheRootPathFieldForField(t *testing.T) {
 		t.Errorf("both paths used block %q; a subagent's prose must group per run", subPayload.Block)
 	}
 }
+
+// TestAssistantResetClearsTheRootStreamingState is the regression for a bug
+// that arrived the moment streaming became the default.
+//
+// A turn can be re-driven whole - a prompt-too-long compaction, a bounded
+// empty-response retry, a subagent schema retry - after it has already
+// streamed. A viewer that appends deltas has no way to know the second attempt
+// is not a continuation of the first, so it shows the answer twice.
+func TestAssistantResetClearsTheRootStreamingState(t *testing.T) {
+	p := NewProjector("sess-1", 0, proseOpts())
+
+	p.Project(rootEvent(events.KindAssistant, "abandoned attempt", "delta"))
+	reset := rootEvent(events.KindAssistantReset, "", "empty response, retrying")
+	got := p.Project(reset)
+
+	if len(got) != 1 || got[0].Type != TypeAssistantReset {
+		t.Fatalf("reset produced %v, want one %s", got, TypeAssistantReset)
+	}
+
+	// The replayed attempt streams nothing and settles: because the reset
+	// cleared the fragment count, the settled message carries the full text
+	// rather than claiming fragments a viewer has already discarded.
+	agg := p.Project(rootEvent(events.KindAssistant, "the real answer", ""))
+	payload := agg[0].Payload.(*AssistantMessagePayload)
+	if payload.Fragments != 0 {
+		t.Errorf("fragments = %d after a reset, want 0", payload.Fragments)
+	}
+	if payload.Text != "the real answer" {
+		t.Errorf("text = %q, want the replayed answer", payload.Text)
+	}
+}
+
+// TestAssistantResetIsScopedToOneSubagentRun proves a reset names the block it
+// applies to. A reset that cleared every lane would discard the work of runs
+// that are streaming perfectly well alongside the one being retried.
+func TestAssistantResetIsScopedToOneSubagentRun(t *testing.T) {
+	p := NewProjector("sess-1", 0, proseOpts())
+
+	p.Project(subagentEvent(events.KindAssistant, "task-a", "a chunk", "delta"))
+	p.Project(subagentEvent(events.KindAssistant, "task-b", "b chunk", "delta"))
+
+	p.Project(subagentEvent(events.KindAssistantReset, "task-a", "", "schema retry"))
+
+	// task-a restarts from zero...
+	aggA := p.Project(subagentEvent(events.KindAssistant, "task-a", "a answer", ""))
+	if f := aggA[0].Payload.(*SubagentAssistantMessagePayload).Fragments; f != 0 {
+		t.Errorf("task-a fragments = %d after its reset, want 0", f)
+	}
+	// ...while task-b keeps the delta it already streamed.
+	aggB := p.Project(subagentEvent(events.KindAssistant, "task-b", "b answer", ""))
+	if f := aggB[0].Payload.(*SubagentAssistantMessagePayload).Fragments; f != 1 {
+		t.Errorf("task-b fragments = %d, want 1 - one run's reset cleared another's state", f)
+	}
+}
