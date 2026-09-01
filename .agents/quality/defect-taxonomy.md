@@ -1075,3 +1075,64 @@ server's own stored count exactly).
     (`TestAttachCLISyncDetach_SurvivesASlowFinalFlush`) is the only way to
     observe this - a mock that never blocks cannot fail regardless of what
     the timeout constant says.
+
+## DC-32 An unbounded batch crosses a peer's hard cap, and the rejection reads as unrecoverable
+
+**Mechanism.** A client accumulates work locally with no size limit ("send
+whatever's pending") and submits it to a peer as one request. The peer DOES
+cap what it accepts, and rejects an oversized submission with a 4xx. Nothing
+about that 4xx is actually unrecoverable - splitting the same submission into
+two requests would succeed - but the client's error classification was
+written for a DIFFERENT kind of 4xx (a genuinely bad, unfixable submission),
+and every 4xx that doesn't match the one carved-out RECOVERABLE shape (here:
+a sequence-gap complaint) falls into that catch-all "poison, stop
+permanently" branch. The client had a bug (no chunking); the peer's correct,
+well-behaved rejection of that bug's output gets treated as proof the
+CONNECTION is broken, not the SUBMISSION.
+
+**Why it recurs.** The accumulation side and the transport side are written
+by different concerns at different times: "collect everything that needs
+sending" has no reason to think about a wire-level cap when it's written,
+and "send what's pending" often starts life genuinely small (a handful of
+events between periodic flushes), so a batch-size cap feels like premature
+complexity until real load - here, turning on a feature that multiplies
+event volume 5-10x - makes the accumulated backlog cross a limit nobody
+had reason to hit before. The peer's cap is also easy to never learn about
+until it fires: it's enforced, but not necessarily documented anywhere the
+client author would read before shipping.
+
+**Evidence.** `internal/chatsync/attach.go`'s `FlushOutbox` sent the entire
+unflushed outbox as one `AppendEvents` request. A direct probe against the
+real staging API confirmed the server caps batches at 100 events with a
+400 ("events must contain no more than 100 elements"). That message doesn't
+match `handleBadRequest`'s `IsSequenceComplaint` check (written for a
+different 400 shape entirely - a seq-gap from a crash-window race), so it
+fell to `poison()`, which stops the sync session permanently for the rest
+of the process. Once `[sync].stream_assistant = true` raised event volume
+enough that the local outbox could genuinely exceed 100 unflushed events
+(easily, since periodic mid-turn flushes could not always keep pace), the
+very next flush attempt - including the final one on Stop - poisoned the
+session outright, discarding everything queued after it. The same probe
+also surfaced a second, narrower version of this class: a single ~200KB
+event payload got a 500 (not a clean 4xx) where a 60KB one succeeded -
+flagged as residual, not fixed here (see the Sweep note on the fix commit).
+
+**Probes.**
+- For every "accumulate locally, submit as one request" path, ask
+  explicitly: does the peer cap what it accepts, and does the client know
+  that cap and respect it, or does it submit "whatever's pending" and
+  trust the peer to accept any size? If nobody has verified the peer's
+  actual limit (probe it directly against the real service, not just its
+  docs - `maxAppendBatch` here was set from an empirical probe, not a
+  written spec), assume one exists and chunk defensively.
+- For every place a 4xx/error response is classified as terminal vs.
+  retryable vs. "fix and resend smaller," check whether the classification
+  covers ALL of the peer's actual 4xx vocabulary or only the one shape the
+  author had in mind. A catch-all "anything else is unrecoverable" branch
+  silently absorbs every NEW 4xx meaning the peer ever adds, including ones
+  that are trivially fixable client-side.
+- Gate: `TestFlushOutboxChunksBatchesAtTheServerCap`
+  (`internal/chatsync/attach_test.go`) mocks the server's own 100-cap
+  rejection and asserts the client never sends a batch large enough to
+  trigger it, and that a 250-event backlog still fully lands across
+  multiple chunked requests.
