@@ -59,6 +59,15 @@ type turnState struct {
 	// segmentDirty records that prose has actually shipped into the current
 	// segment, so a tool call that follows silence spends no segment.
 	segmentDirty bool
+	// streamUnrecoverable marks a block whose discard never reached the wire.
+	// The viewer therefore still holds the abandoned attempt's fragments, and
+	// this side cannot say how many - the counters were cleared before the
+	// append failed. The settled message must then carry the FULL text, which
+	// a viewer replaces its stitched text with. Sticky for the rest of the
+	// block: a retry that streams would otherwise report a count covering only
+	// its own attempt, and INV-1 would empty the one text that could repair
+	// the viewer.
+	streamUnrecoverable bool
 }
 
 // Projector performs pure synchronous projection of events.Event streams
@@ -130,6 +139,30 @@ func (p *Projector) retireLane(task string) {
 	kept := p.laneOrder[:0]
 	for _, key := range p.laneOrder {
 		if strings.HasSuffix(key, suffix) {
+			delete(p.lanes, key)
+			continue
+		}
+		kept = append(kept, key)
+	}
+	p.laneOrder = kept
+}
+
+// retireTurnLanes drops every lane of a finished turn.
+//
+// retireLane, the only other reclamation, fires on one run's terminal - and
+// both hops that carry that terminal are bounded drop-oldest queues that shed
+// under load. A run whose terminal was shed kept its lane resident until 64
+// later lane keys pushed it out, so the LRU was the real reclamation policy
+// and a still-live run could be the entry it evicted.
+//
+// A turn's end retires every lane of that turn regardless: no run of a
+// finished turn will emit again, so nothing is lost, and the eviction pressure
+// that reached live lanes goes with it.
+func (p *Projector) retireTurnLanes(turnID string) {
+	prefix := turnID + "\x00"
+	kept := p.laneOrder[:0]
+	for _, key := range p.laneOrder {
+		if strings.HasPrefix(key, prefix) {
 			delete(p.lanes, key)
 			continue
 		}
@@ -224,8 +257,11 @@ func (p *Projector) restoreClearedStream(payload *AssistantResetPayload) {
 	if ts == nil {
 		return
 	}
-	ts.streamed = false
-	ts.fragments = 0
+	// Restoring the counters is impossible - projectAssistantReset zeroed them
+	// before the append was attempted, so the pre-reset count is gone. Writing
+	// them back as zero, which this once did, is not a rollback at all: it
+	// leaves exactly the state the reset produced. Mark the block instead.
+	ts.streamUnrecoverable = true
 }
 
 func (p *Projector) rollbackOneDelta(ts *turnState) {
@@ -285,6 +321,11 @@ func (p *Projector) projectByKind(ev events.Event, turnID string, env Envelope, 
 		return p.projectTurnStart(env, ev.Detail, isSynthetic)
 
 	case events.KindTurnEnd:
+		// Before the knownTurn gate: a turn whose only output came from
+		// subagents has no root turnState at all (the attribution check
+		// precedes p.turn), and its lanes are exactly the ones most in need of
+		// reclaiming.
+		p.retireTurnLanes(turnID)
 		if !p.knownTurn(turnID) {
 			return nil
 		}
@@ -296,6 +337,7 @@ func (p *Projector) projectByKind(ev events.Event, turnID string, env Envelope, 
 		return p.projectTurnEnd(env, ev.Detail)
 
 	case events.KindError:
+		p.retireTurnLanes(turnID)
 		if !p.knownTurn(turnID) {
 			return nil
 		}
@@ -521,7 +563,7 @@ func (p *Projector) projectAssistant(env Envelope, turnID string, ts *turnState,
 	// sent the answer a second time.
 	text := content
 	fragments := 0
-	if ts.streamed {
+	if ts.streamed && !ts.streamUnrecoverable {
 		fragments = ts.fragments
 		text = "" // INV-1: text empty iff fragments > 0
 	} else {
