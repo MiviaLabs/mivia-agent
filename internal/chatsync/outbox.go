@@ -352,6 +352,31 @@ func (ob *Outbox) rebaseLocked(base int64) (int, error) {
 	return len(unflushed), nil
 }
 
+// rewriteEventsFileLocked renumbers the unflushed events onto base and swaps
+// the result in for events.jsonl.
+//
+// A FAILURE HERE IS TERMINAL FOR THIS OUTBOX VALUE, deliberately. The file is
+// closed and nilled up front, and every error path below returns before the
+// reopen, so eventsFile stays nil and every later Append fails at its Seek with
+// ErrInvalid ("locate outbox append mark: invalid argument"). Only reopening the
+// outbox - in practice, a process restart - clears it.
+//
+// That is the intended outcome, not an oversight. rebaseLocked has ALREADY
+// written the new cursor by the time this runs, because the reverse order loses
+// events silently (see the comment there). Reopening the old file on a failure
+// path would restore Append onto a file whose seqs the persisted cursor now
+// contradicts: writes would succeed, land durably, and be filtered out or
+// rejected later - the cursor-versus-file mismatch class be8118d7 fixed in the
+// open path. A hard, permanent error is strictly better than a silent wrong
+// answer here.
+//
+// It is also not silent. All three callers - openingSeq, applyForkedAttach and
+// handleBadRequest's rebase - propagate this error and either fail the open or
+// stop sync with a stated reason, so the user is told.
+//
+// TestFailedRebaseIsTerminalForTheOutbox pins that contract, including the part
+// that is easy to regress: dead must mean "returns an error", never a panic and
+// never a silent success.
 func (ob *Outbox) rewriteEventsFileLocked(unflushed []StoredEvent, base int64) error {
 	if ob.eventsFile != nil {
 		_ = ob.eventsFile.Close()
