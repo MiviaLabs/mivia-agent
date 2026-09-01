@@ -106,6 +106,14 @@ func (m *Model) SetChoices(choices []string, active string) {
 // SetValue sets a KindText field's starting text.
 func (m *Model) SetValue(v string) { m.input.SetValue(v) }
 
+// SetEchoMasked hides a KindText field's typed value behind a bullet
+// character, for a password field. There is no unmask: this package has
+// no field that needs to toggle back to plain text.
+func (m *Model) SetEchoMasked() {
+	m.input.EchoMode = textinput.EchoPassword
+	m.input.EchoCharacter = '•'
+}
+
 // Value is the field's current value: the input text for KindText, the
 // selected choice for KindChoice.
 func (m Model) Value() string {

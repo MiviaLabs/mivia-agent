@@ -52,6 +52,7 @@ type Screen struct {
 	sessionPicker *sessionPicker      // non-nil while the /resume picker is open
 	palettePicker *picker.Model       // non-nil while the universal command palette is open
 	effortPicker  *picker.Model       // non-nil while the /effort picker is open
+	login         *loginDialog        // non-nil while the /login dialog is open
 
 	// threads resolves a dispatched subagent's conversation for the
 	// panel's thread dialog; nil is valid (every entry then falls back
@@ -398,6 +399,8 @@ func (s Screen) update(msg tea.Msg) (app.Screen, tea.Cmd) {
 		return s, cmd
 	case sessionPickerTickMsg:
 		return s.handleSessionPickerTick()
+	case loginResultMsg:
+		return s.applyCommandOutcome(msg.outcome)
 	case transcript.FlushMsg:
 		next, cmd := s.transcript.Update(msg)
 		s.transcript = next
@@ -506,7 +509,7 @@ func (s Screen) View() string {
 			lines = append(lines, "")
 		}
 		switch {
-		case s.modelPicker != nil || s.agentPicker != nil || s.sessionPicker != nil || s.palettePicker != nil || s.effortPicker != nil || s.overlay != "":
+		case s.modelPicker != nil || s.agentPicker != nil || s.sessionPicker != nil || s.palettePicker != nil || s.effortPicker != nil || s.login != nil || s.overlay != "":
 			lines = append(lines, s.centerRows()...)
 		case !s.embedded && s.panel.open:
 			lines = append(lines, s.narrowPanelRows()...)

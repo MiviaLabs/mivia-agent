@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -60,6 +61,12 @@ type fakeRunner struct {
 	calls         []string
 	selectCalls   []string
 	activeIDs     map[string]bool
+
+	// loginOutcome and loginCalls back CompleteLogin: a slash-command
+	// test wants to assert the email/password reaching the runner
+	// without a real miviaauth round trip.
+	loginOutcome ports.CommandOutcome
+	loginCalls   []string
 }
 
 func (f *fakeRunner) Run(_ context.Context, name, args string) ports.CommandOutcome {
@@ -89,6 +96,14 @@ func (f *fakeRunner) SelectEffort(_ context.Context, level string) ports.Command
 
 func (f *fakeRunner) SessionActive(id string) bool {
 	return f.activeIDs[id]
+}
+
+// CompleteLogin records the email and the password's length (never the
+// password itself: a test asserting "no password in a call log" would
+// be pointless if the log carried it) and returns the preset outcome.
+func (f *fakeRunner) CompleteLogin(_ context.Context, email string, password []byte) ports.CommandOutcome {
+	f.loginCalls = append(f.loginCalls, fmt.Sprintf("%s|%d", email, len(password)))
+	return f.loginOutcome
 }
 
 // sendLine types text into the composer and presses Enter once. Every
