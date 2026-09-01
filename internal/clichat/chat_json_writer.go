@@ -15,8 +15,12 @@ import (
 // type is populated per line. See docs/product/wire-schema.md for the
 // full type vocabulary and field list.
 //
-// "external_*" types mirror the same vocabulary for a turn running in a
-// DIFFERENT mivia process for the same session, relayed via internal/hub.
+// "external_*" types carry a turn running in a DIFFERENT mivia process for
+// the same session, relayed via internal/hub. They are TWO families, not one:
+// the plain "external_*" types are that process's ROOT agent, and the
+// "external_subagent_*" types are one of its subagents. The prefix is the
+// whole distinction, because a consumer keyed on type is the only kind of
+// consumer a new field cannot reach.
 //
 // Older consumers that only understand chunk/done/cancelled/error can
 // safely ignore unknown types, since the final answer always arrives via
@@ -46,7 +50,8 @@ type ndjsonEvent struct {
 	Model           string `json:"model,omitempty"`
 	Effort          string `json:"effort,omitempty"`
 	DiscardedEffort string `json:"discarded_effort,omitempty"`
-	// Status has one vocabulary per event type. On a "tool_end" it is "ok"
+	// Status has one vocabulary per event type. On a "tool_end" - and on the
+	// relayed "external_tool_end" and "external_subagent_tool_end" - it is "ok"
 	// or "failed", derived from the same toolEndDetail the TUI renders (see
 	// toolEndStatus). On a "subagent_done" it is the run's terminal status
 	// ("completed", "canceled", "timed_out", or "error"), sourced from
@@ -75,7 +80,8 @@ type ndjsonEvent struct {
 	// the other Origin* fields (a subagent's own nested tool_start), never
 	// on the root loop's own tool calls. See agent.EventOrigin.TaskDescription.
 	OriginTaskDescription string `json:"origin_task_description,omitempty"`
-	// RunID/Role are used only by the "external_*" types (see this file's
+	// RunID/Role are used only by the "external_*" and "external_subagent_*"
+	// types (see this file's
 	// top doc comment and chat_hub.go): RunID is the other process's own
 	// turn identifier, Role marks "external_turn_start"'s synthetic user
 	// turn.
