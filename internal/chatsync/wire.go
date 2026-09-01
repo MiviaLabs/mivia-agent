@@ -82,9 +82,13 @@ type ErrorEnvelope struct {
 // ---------------------------------------------------------------------------
 
 const (
-	TypeTurnStarted         = "mivia.chat.v1.turn.started"
-	TypeAssistantDelta      = "mivia.chat.v1.assistant.delta"
-	TypeAssistantMessage    = "mivia.chat.v1.assistant.message"
+	TypeTurnStarted      = "mivia.chat.v1.turn.started"
+	TypeAssistantDelta   = "mivia.chat.v1.assistant.delta"
+	TypeAssistantMessage = "mivia.chat.v1.assistant.message"
+	// A turn that is being re-driven from the beginning. Everything already
+	// sent for its assistant block belongs to an attempt that no longer
+	// exists, so a viewer that accumulates deltas must drop them.
+	TypeAssistantReset      = "mivia.chat.v1.assistant.reset"
 	TypeThinkingDelta       = "mivia.chat.v1.thinking.delta"
 	TypeToolStarted         = "mivia.chat.v1.tool.started"
 	TypeToolEnded           = "mivia.chat.v1.tool.ended"
@@ -131,6 +135,7 @@ var wireEventSpecs = []WireEventSpec{
 	{Type: TypeTurnStarted, Payload: TurnStartedPayload{}},
 	{Type: TypeAssistantDelta, Payload: AssistantDeltaPayload{}},
 	{Type: TypeAssistantMessage, Payload: AssistantMessagePayload{}},
+	{Type: TypeAssistantReset, Payload: AssistantResetPayload{}},
 	{Type: TypeThinkingDelta, Payload: ThinkingDeltaPayload{}},
 	{Type: TypeToolStarted, Payload: ToolStartedPayload{}},
 	{Type: TypeToolEnded, Payload: ToolEndedPayload{}},
@@ -232,6 +237,17 @@ type AssistantMessagePayload struct {
 	Bytes     int    `json:"bytes"`
 	Status    string `json:"status"`
 	Text      string `json:"text,omitempty"`
+}
+
+// AssistantResetPayload is the payload of mivia.chat.v1.assistant.reset.
+//
+// It carries only the envelope. The block it applies to is the envelope's own
+// Block, so one reset can never be mistaken for another turn's or another
+// subagent run's. Reason is a short, content-free classification of why the
+// turn restarted.
+type AssistantResetPayload struct {
+	Envelope
+	Reason string `json:"reason,omitempty"`
 }
 
 // ThinkingDeltaPayload is the payload of mivia.chat.v1.thinking.delta.

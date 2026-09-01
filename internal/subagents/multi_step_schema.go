@@ -139,6 +139,9 @@ func (h *MultiStepHandler) runValidatedReply(
 				Kind:   agent.EventSchemaRetry,
 				Detail: fmt.Sprintf("schema validation failed on attempt %d/%d, retrying...", attempt+1, retryMax+1),
 			})
+			// The corrective turn replaces the rejected reply rather than
+			// continuing it, so a consumer must drop what it has accumulated.
+			opts.OnEvent(agent.Event{Kind: agent.EventAssistantReset})
 		}
 		userTurn = schemaRepairCorrectiveTurn(loop.LastFinishReason, vErr, compiled.Raw())
 	}

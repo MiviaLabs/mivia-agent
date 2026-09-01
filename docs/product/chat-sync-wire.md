@@ -91,7 +91,7 @@ in the envelope `trunc.fields` map.
 
 ## Event Types and Ordering
 
-The sync stream uses 19 structured `mivia.chat.v1.*` event types. The list
+The sync stream uses 20 structured `mivia.chat.v1.*` event types. The list
 below is a copy for reading; the authoritative set is `KnownWireTypes` in
 `internal/chatsync/wire.go`, mirrored in `api/contracts/chat-sessions.v1.json`:
 
@@ -100,6 +100,7 @@ below is a copy for reading; the authoritative set is `KnownWireTypes` in
 - `mivia.chat.v1.turn.failed`
 - `mivia.chat.v1.assistant.delta`
 - `mivia.chat.v1.assistant.message`
+- `mivia.chat.v1.assistant.reset`
 - `mivia.chat.v1.thinking.delta`
 - `mivia.chat.v1.tool.started`
 - `mivia.chat.v1.tool.ended`
@@ -144,6 +145,13 @@ bytes, and its timestamp is the run's start time;
 heartbeat, and its `detail` text holds the elapsed time, step count and tool
 count. That type once declared `elapsed_seconds`, `steps` and `tool_calls`
 fields as well; no version ever populated them, so they were removed.
+
+`assistant.reset` says the turn producing a block is being re-driven from the
+beginning: a prompt-too-long compaction, a bounded empty-response retry, or a
+subagent's schema-repair retry. **A viewer that accumulates deltas must discard
+what it holds for that block.** The envelope's `block` names which one, so a
+reset never reaches another turn or another subagent run. It is not an error;
+a turn that resets and then completes succeeded.
 
 Every session maintains a strictly monotonic sequence (`1..N`). If the system
 drops events because of local queue saturation, a `sync.dropped` event consumes
