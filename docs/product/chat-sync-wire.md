@@ -130,7 +130,7 @@ enabled = false             # Opt OUT. Omit the key and sync runs when logged in
 include_tool_io = false     # Withhold tool input/output
 include_thinking = false    # Withhold thinking blocks
 stream_assistant = false    # Per-delta streaming; off = one settled message per turn
-api_url = "https://api.mivia.ai"
+api_url = "https://api.mivia.app"
 poll_wait_seconds = 25      # Remote input long-poll timeout
 heartbeat_seconds = 30      # Periodic heartbeat interval
 max_unflushed = 5000        # Outbox buffer limit
