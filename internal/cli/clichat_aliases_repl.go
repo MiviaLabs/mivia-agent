@@ -106,9 +106,6 @@ var NewAgentTaskHandler = clichat.NewAgentTaskHandler
 // NewStreamBridge re-exports the clichat.NewStreamBridge function.
 var NewStreamBridge = clichat.NewStreamBridge
 
-// NewSubagentTracker re-exports the clichat.NewSubagentTracker function.
-var NewSubagentTracker = clichat.NewSubagentTracker
-
 // NewTerminal re-exports the clichat.NewTerminal function.
 var NewTerminal = clichat.NewTerminal
 
@@ -144,9 +141,6 @@ const SkillTurnPreamble = clichat.SkillTurnPreamble
 
 // SlashKindBuiltin re-exports the clichat.SlashKindBuiltin constant.
 const SlashKindBuiltin = clichat.SlashKindBuiltin
-
-// SubagentRun re-exports the clichat.SubagentRun type.
-type SubagentRun = clichat.SubagentRun
 
 // SummarizeToolDetail re-exports the clichat.SummarizeToolDetail function.
 var SummarizeToolDetail = clichat.SummarizeToolDetail
@@ -267,9 +261,6 @@ type SlashCommand = clichat.SlashCommand
 
 // StreamBridge re-exports the clichat.StreamBridge type.
 type StreamBridge = clichat.StreamBridge
-
-// SubagentTracker re-exports the clichat.SubagentTracker type.
-type SubagentTracker = clichat.SubagentTracker
 
 // ToolRow re-exports the clichat.ToolRow type.
 type ToolRow = clichat.ToolRow
