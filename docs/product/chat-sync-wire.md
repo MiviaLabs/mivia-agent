@@ -169,8 +169,15 @@ from 0 and advances when a tool call closes the prose that preceded it, so
 **a consumer must render one message per block, in arrival order, rather than
 concatenating a turn's prose into one.** Doing the latter loses the order the
 narration interleaved with the tool calls. A step that calls several tools at
-once advances once; a tool call that follows no prose advances not at all, so
-`<step>` has no gaps and never names an empty message.
+once advances once, and a tool call that follows no prose advances not at all.
+
+`<step>` is an identifier, NOT a dense counter, and a consumer must not treat it
+as one. A stream's step ids can skip: the assistant and thinking streams of a
+turn share one counter, so a turn that reasons silently for two steps before
+speaking opens its first assistant block at `:2`. A step whose only delta failed
+to persist is spent as well. What the wire does guarantee is narrower and
+sufficient - a step id is never REUSED for a different utterance within a turn,
+and a consumer is never handed a block with nothing in it.
 
 The part before the final `:<step>` is the STREAM id, and it is a stable name
 for all of a turn's prose of one kind from one agent.
@@ -181,9 +188,13 @@ subagent's schema-repair retry. **A viewer that accumulates deltas must discard
 what it holds for that block.** Its `block` is the STREAM id, with no `<step>`
 suffix: by the time a reset fires the discarded attempt may span several steps,
 and one step id cannot name them all - so the scope is every step of that
-stream. The replay that follows always opens a step id the abandoned attempt
-never used, so a consumer keyed on the id alone cannot append the replay to
-the text it was just told to drop. A reset never reaches another turn or
+stream. The replay that follows opens a step id the abandoned attempt never
+used, so a consumer keyed on the id alone cannot append the replay to the text
+it was just told to drop. One exception is known and unfixed: a subagent run
+evicted from the producer's bounded lane table restarts its counter, and a
+replay after that can reuse an id. A consumer that keeps per-block state for a
+run it has not heard from in a long time should not assume otherwise. A reset
+never reaches another turn or
 another subagent run. It is not an error; a turn that resets and then
 completes succeeded.
 

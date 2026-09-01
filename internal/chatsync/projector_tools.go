@@ -44,6 +44,23 @@ func (p *Projector) closeStepOnToolStart(ev events.Event, turnID string) {
 	advanceStep(ts)
 }
 
+// blockSegment picks the segment a prose event belongs to. A delta belongs to
+// the segment open right now, and records it. A settled aggregate belongs to
+// the segment its own deltas streamed into, because the aggregate is published
+// after the turn's last tool call has already advanced the counter past it.
+// With nothing streamed the two coincide, so a non-streaming turn opens its one
+// block exactly where it always did.
+func (ts *turnState) blockSegment(isDelta bool) int {
+	if isDelta {
+		ts.streamSegment = ts.segment
+		return ts.segment
+	}
+	if ts.streamed {
+		return ts.streamSegment
+	}
+	return ts.segment
+}
+
 // advanceStep closes the open segment of a stream, so the next prose opens a
 // new block. A tool call is the boundary: it is the point where the model stops
 // talking and acts.
@@ -199,7 +216,7 @@ func (p *Projector) projectSubagentAssistant(env Envelope, turnID string, ev eve
 	// Block is lane-scoped so a viewer groups each subagent's prose on its
 	// own; the root's key is turnID+":assistant" and would merge them all.
 	ls := p.laneState(turnID, ev.AgentTask)
-	env.Block = proseBlock(turnID+":"+ev.AgentTask+":assistant", ls.segment)
+	env.Block = proseBlock(turnID+":"+ev.AgentTask+":assistant", ls.blockSegment(ev.Detail == "delta"))
 	content := redactText(ev.Content)
 
 	if ev.Detail == "delta" {

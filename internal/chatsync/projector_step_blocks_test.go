@@ -241,3 +241,69 @@ func TestSegmentCounterIsPerTurn(t *testing.T) {
 		t.Errorf("new turn's first block = %q, want turn:2:assistant:0", got)
 	}
 }
+
+// The settled aggregate must name the segment its own deltas streamed into.
+//
+// env.Block was computed once at function entry from the CURRENT segment, but
+// the terminal EventAssistant is published from finalizeSDKTurn - after the
+// turn's last tool call, which has already advanced the counter. The aggregate
+// therefore named a segment holding nothing: an empty settled message claiming
+// a fragment count, while the block holding the real text never completed.
+//
+// TestSettledMessageCarriesItsSegmentsBlock cannot catch this: it puts prose
+// AFTER the last tool call, the one arrangement where the drift is zero.
+func TestSettledMessageNamesItsDeltasSegmentAcrossAToolBoundary(t *testing.T) {
+	p := NewProjector("sess-1", 0, proseOpts())
+
+	delta := blockOf(t, onlyEvent(t, p.Project(stepEvent(events.KindAssistant, "the answer", "delta"))))
+	p.Project(toolEvent(events.KindToolStart, "call-1"))
+	p.Project(toolEvent(events.KindToolEnd, "call-1"))
+	settled := blockOf(t, onlyEvent(t, p.Project(stepEvent(events.KindAssistant, "the answer", ""))))
+
+	if settled != delta {
+		t.Fatalf("settled message named %q, but its deltas streamed into %q - the named block holds nothing", settled, delta)
+	}
+}
+
+// A LANE's reset names its lane stream, with no step suffix - the same rule the
+// root path follows. The root assertion cannot carry this: `stepEvent` never
+// sets AgentTask, so it only ever drives the else branch. A mutation naming the
+// segment here passed the entire package.
+func TestLaneResetNamesTheLaneStreamNotASegment(t *testing.T) {
+	p := NewProjector("sess-1", 0, proseOpts())
+
+	p.Project(subagentEvent(events.KindAssistant, "task-a", "First try.", "delta"))
+	got := blockOf(t, onlyEvent(t, p.Project(subagentEvent(events.KindAssistantReset, "task-a", "", "retrying"))))
+
+	if got != "turn:1:task-a:assistant" {
+		t.Errorf("lane reset block = %q, want turn:1:task-a:assistant", got)
+	}
+}
+
+// A lane's THINKING segments on that lane's own tool calls, not the root turn's.
+// Nothing read a SubagentThinkingDeltaPayload's block before this, so a mutation
+// pointing it at the root counter passed the whole package - while two
+// concurrent runs would have jumped each other's reasoning ids.
+func TestLaneThinkingSegmentsOnItsOwnCounter(t *testing.T) {
+	p := NewProjector("sess-1", 0, proseOpts())
+
+	first := blockOf(t, onlyEvent(t, p.Project(subagentEvent(events.KindThinking, "task-a", "planning", ""))))
+
+	// A ROOT tool call must not move the lane's counter.
+	p.Project(stepEvent(events.KindAssistant, "root talks", "delta"))
+	p.Project(toolEvent(events.KindToolStart, "root-call"))
+
+	if got := blockOf(t, onlyEvent(t, p.Project(subagentEvent(events.KindThinking, "task-a", "still planning", "")))); got != first {
+		t.Errorf("lane thinking block moved to %q on a ROOT tool call; want it to stay at %q", got, first)
+	}
+
+	laneTool := events.Event{
+		Kind: events.KindSubagentStart, SessionID: "sess-1", TurnID: "turn:1",
+		Timestamp: time.Now(), ToolCallID: "lane-call", Name: "Read",
+	}
+	p.Project(laneTool.WithAgentAttribution("task-a", "builder", 1))
+
+	if got := blockOf(t, onlyEvent(t, p.Project(subagentEvent(events.KindThinking, "task-a", "done", "")))); got != "turn:1:task-a:thinking:1" {
+		t.Errorf("lane thinking block after the lane's OWN tool = %q, want turn:1:task-a:thinking:1", got)
+	}
+}
