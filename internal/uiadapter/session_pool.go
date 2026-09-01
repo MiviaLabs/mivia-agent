@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"sync/atomic"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/chatsync"
@@ -33,9 +34,15 @@ type SessionPool struct {
 	// drains it alongside its existing sync-session teardown so a pooled
 	// session's chat-sync bus binding does not outlive the pool.
 	busReleases map[string]func()
-	res         *config.Resolved
-	agentState  *cliagents.AgentSessionState
-	toolsOn     bool
+	// released latches once ReleaseLeases has drained the pool.
+	// ReattachSyncAfterLogin snapshots p.sessions and re-locks per session,
+	// so a /login completing while the TUI quits could otherwise re-run
+	// attachSyncLocked after the drain and attach a SyncSession nothing
+	// will ever stop - the resurrection window this guard closes.
+	released   atomic.Bool
+	res        *config.Resolved
+	agentState *cliagents.AgentSessionState
+	toolsOn    bool
 	// threads is the one SubagentThreads registry shared by every
 	// Conversation the pool creates or resumes, so the activity panel's
 	// thread dialog (wired once, at startup, to this same instance) can
@@ -162,6 +169,10 @@ var releaseSessionLease = func(ctx context.Context, sess *chat.Session) {
 // canonical) are released once.
 func (p *SessionPool) ReleaseLeases(ctx context.Context) {
 	p.mu.Lock()
+	// Latch BEFORE draining: ReattachSyncAfterLogin holds p.mu only for its
+	// snapshot and re-locks per session, so a re-attach in flight while this
+	// drains must see the latch in its own per-session critical section.
+	p.released.Store(true)
 	seen := make(map[*chat.Session]struct{}, len(p.sessions))
 	distinct := make([]*chat.Session, 0, len(p.sessions))
 	for _, sess := range p.sessions {
@@ -417,6 +428,13 @@ func (p *SessionPool) GetOrCreate(sessionID string) (ports.Conversation, error) 
 // refusal here is silent by design: sync failing is never a reason to break
 // the local chat the user actually asked for.
 func (p *SessionPool) attachSyncLocked(sess *chat.Session) {
+	// A released pool is dead: ReleaseLeases drained syncSessions and
+	// busReleases, so any attach from here on would create a SyncSession
+	// nothing tracks or stops. Checked before the token lookup so a released
+	// pool never resolves credentials again.
+	if p.released.Load() {
+		return
+	}
 	if p.res == nil || sess == nil || sess.EventBus == nil {
 		return
 	}

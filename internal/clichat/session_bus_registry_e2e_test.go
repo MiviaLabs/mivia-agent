@@ -58,7 +58,18 @@ func TestSessionBusRegistry_E2E_ChatsyncProjection(t *testing.T) {
 	bus.Flush()
 
 	got := snapshot()
+	assertSubagentWireMultiset(t, got)
+}
 
+// assertSubagentWireMultiset asserts the four projected wire events: exactly
+// one of each type, every envelope carrying the researcher AgentOrigin, and
+// - on subagent.ended - the producer's terminal classification riding the
+// status field. bus.SubscribeMany registers the handler on FOUR independent
+// per-kind subscriptions, each with its own delivery goroutine
+// (internal/events/bus.go), so cross-kind delivery order is not guaranteed
+// even though publish order was; assert as a multiset, not by position.
+func assertSubagentWireMultiset(t *testing.T, got []chatsync.WireEvent) {
+	t.Helper()
 	wantTypes := []string{
 		chatsync.TypeSubagentToolStarted,
 		chatsync.TypeSubagentProgress,
@@ -68,11 +79,6 @@ func TestSessionBusRegistry_E2E_ChatsyncProjection(t *testing.T) {
 	if len(got) != len(wantTypes) {
 		t.Fatalf("projected %d wire events, want %d: %+v", len(got), len(wantTypes), got)
 	}
-	// bus.SubscribeMany registers this handler on FOUR independent
-	// per-kind subscriptions, each with its own delivery goroutine
-	// (internal/events/bus.go), so cross-kind delivery order is not
-	// guaranteed even though publish order was. Assert as a multiset of
-	// (type, AgentOrigin) rather than by position.
 	seen := make(map[string]int, len(wantTypes))
 	for _, want := range wantTypes {
 		seen[want] = 0
@@ -88,6 +94,19 @@ func TestSessionBusRegistry_E2E_ChatsyncProjection(t *testing.T) {
 		}
 		if env.Agent.Task != "task-e2e" || env.Agent.Name != "researcher" || env.Agent.Depth != 1 {
 			t.Fatalf("event %s AgentOrigin = %+v, want task-e2e/researcher/1", ev.Type, env.Agent)
+		}
+		// subagent.ended must carry the producer's terminal status: the Done
+		// emitter sets Event.Status, which the publish path maps onto the
+		// Detail the projector reads. Empty would be read as "completed"
+		// downstream and mask canceled/failed runs.
+		if ev.Type == chatsync.TypeSubagentEnded {
+			done, ok := ev.Payload.(*chatsync.SubagentEndedPayload)
+			if !ok {
+				t.Fatalf("subagent.ended payload type %T", ev.Payload)
+			}
+			if done.Status != "completed" {
+				t.Fatalf("subagent.ended status = %q, want the producer's terminal classification", done.Status)
+			}
 		}
 	}
 	for _, want := range wantTypes {

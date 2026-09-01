@@ -134,11 +134,22 @@ func emitSubagentProgress(e agent.Event) {
 	if bus == nil {
 		return
 	}
+	// The only EventSubagentDone producer reports the terminal
+	// classification via Event.Status (multi_step.go's terminalStatus) - a
+	// field the flat events adapter cannot carry - so Detail is empty for
+	// it. chatsync's projector reads the status OFF Detail and omits an
+	// empty one, and a remote viewer reads an omitted status as
+	// "completed": without this mapping every canceled, timed-out or
+	// errored subagent is reported completed to the chat-sync viewer.
+	detail := e.Detail
+	if e.Kind == agent.EventSubagentDone && detail == "" {
+		detail = e.Status
+	}
 	ev := events.NewEventFromAgentParts(
 		events.Kind(e.Kind),
 		e.ToolCallID,
 		e.Name,
-		e.Detail,
+		detail,
 		e.Content,
 		e.Input,
 		e.Output,

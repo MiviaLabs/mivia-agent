@@ -158,6 +158,55 @@ func TestSessionPool_BusWiring_NilRegistrarIsNoOp(t *testing.T) {
 	pool.ReleaseLeases(ctx) // must also not panic
 }
 
+// TestSessionPool_ReattachSyncAfterLogin_DoesNotReviveAReleasedPool pins the
+// resurrection guard: ReattachSyncAfterLogin snapshots p.sessions and
+// re-locks per session, so a /login completing while the TUI quits could
+// otherwise re-run attachSyncLocked AFTER ReleaseLeases drained the pool and
+// attach a SyncSession nothing will ever stop. Mutation proof: removing the
+// released latch (the p.released check in attachSyncLocked) makes this test
+// fail - the reattach creates one more remote session on the mock server.
+func TestSessionPool_ReattachSyncAfterLogin_DoesNotReviveAReleasedPool(t *testing.T) {
+	var mu sync.Mutex
+	var createdIDs []string
+	sessionEvents := make(map[string][]chatsync.EventItem)
+	srv := setupSyncMockServer(&mu, &createdIDs, sessionEvents)
+	defer srv.Close()
+
+	installTestAuthToken(t) // logged in from the start: the first attach is real
+
+	res := &config.Resolved{
+		Model: "test-model",
+		Sync: config.ResolvedSync{
+			APIURL: srv.URL, PollWaitSeconds: 1, HeartbeatSeconds: 1, MaxUnflushed: 100,
+		},
+	}
+	sess := chat.NewSession(res, nil)
+	sess.SessionID = "released-pool-1"
+	sess.EventBus = events.New()
+
+	pool := uiadapter.NewSessionPool(sess, res, &cliagents.AgentSessionState{WorkspaceRoot: t.TempDir()}, false)
+	time.Sleep(30 * time.Millisecond)
+	mu.Lock()
+	attached := len(createdIDs)
+	mu.Unlock()
+	if attached != 1 {
+		t.Fatalf("attached %d remote sessions before release, want 1", attached)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	pool.ReleaseLeases(ctx) // the TUI quit
+
+	pool.ReattachSyncAfterLogin() // a /login completing after the drain
+	time.Sleep(30 * time.Millisecond)
+	mu.Lock()
+	afterReattach := len(createdIDs)
+	mu.Unlock()
+	if afterReattach != attached {
+		t.Fatalf("ReattachSyncAfterLogin created %d remote sessions on a released pool, want 0", afterReattach-attached)
+	}
+}
+
 // TestSessionPool_ReattachSyncAfterLogin_ClosesTheLoginGap is the
 // login-after-session-start test the plan requires: a session created
 // while Sync.Active()==false gets no chat-sync session; after
