@@ -1,6 +1,7 @@
 package chatsync
 
 import (
+	"strings"
 	"unicode/utf8"
 )
 
@@ -44,7 +45,9 @@ func truncateString(s string, maxBytes int) (string, int, int, bool) {
 }
 
 func applyTruncation(env *Envelope, fieldName, value string, maxBytes int) string {
-	keptStr, keptLen, totalLen, truncated := truncateString(value, maxBytes)
+	// Sanitize BEFORE measuring, so the truncation record describes the bytes
+	// that were actually sent rather than bytes that were removed on the way.
+	keptStr, keptLen, totalLen, truncated := truncateString(sanitizeWireText(value), maxBytes)
 	if truncated {
 		if env.Trunc == nil {
 			env.Trunc = &Truncation{Fields: make(map[string]TruncField)}
@@ -55,4 +58,28 @@ func applyTruncation(env *Envelope, fieldName, value string, maxBytes int) strin
 		}
 	}
 	return keptStr
+}
+
+// sanitizeWireText removes code points the receiving store cannot hold.
+//
+// U+0000 is a legal Go rune and legal JSON, and Postgres cannot put it in a
+// json or jsonb column: "unsupported Unicode escape sequence - \u0000 cannot
+// be converted to text". A tool that reads a binary file produces one easily -
+// the report that led here was a build cache's .sst file reaching a tool
+// output preview.
+//
+// The cost is not one lost event. The API inserts a whole batch as ONE
+// multi-row statement inside a transaction, so a single NUL anywhere in the
+// batch rejects every event in it, and the ninety-nine good events go down
+// with the one bad one.
+//
+// Removal, not replacement: a NUL carries nothing a reader could see, so a
+// substitute character would add a mark that was never in the content. Every
+// free-text field on this wire is routed through applyTruncation, which is why
+// this is applied there and not at each of its twenty-six call sites.
+func sanitizeWireText(s string) string {
+	if !strings.ContainsRune(s, 0) {
+		return s
+	}
+	return strings.ReplaceAll(s, "\x00", "")
 }
