@@ -55,10 +55,13 @@ enable sync on sensitive work:
 
 - `include_thinking = false` withholds a subagent's reasoning text, as it
   withholds the root loop's. Only the byte count is reported.
-- `stream_assistant = false` stops the per-delta stream. It does NOT stop the
-  settled `subagent.assistant.message`, exactly as it does not stop the root
-  loop's settled `assistant.message`. This option selects HOW answer text is
-  sent, not WHETHER it is sent.
+- `stream_assistant` is **on by default** and selects HOW answer text is sent,
+  not WHETHER it is sent. On, a turn sends deltas and then a settled message
+  with empty text; off, it sends one settled message carrying the same text.
+  A reader receives the same words either way, which is why this option is not
+  held to the fail-closed rule the two above are. Setting it to `false` does
+  NOT withhold an answer - it only makes the viewer wait for the end of the
+  turn to see any of it.
 - To send no chat content at all, set `enabled = false`.
 
 Subagent prose was formerly withheld whatever the settings said. That made a
@@ -186,7 +189,8 @@ Configure remote chat synchronization in `.mivia/mivia.toml`:
 enabled = false             # Opt OUT. Omit the key and sync runs when logged in.
 include_tool_io = false     # Withhold tool input/output
 include_thinking = false    # Withhold thinking blocks
-stream_assistant = false    # Per-delta streaming; off = one settled message per turn
+stream_assistant = false    # Opt OUT of per-delta streaming. Omit the key and
+                            # streaming runs; off = one settled message per turn
 api_url = "https://api.mivia.app"
 poll_wait_seconds = 25      # Remote input long-poll timeout
 heartbeat_seconds = 30      # Periodic heartbeat interval

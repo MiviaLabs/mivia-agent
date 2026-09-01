@@ -9,6 +9,25 @@ import (
 // matters and naming it through a helper would hide it.
 func syncEnabled(v bool) *bool { return &v }
 
+// TestStreamAssistantOptOutIsExpressible proves the three states are real. A
+// plain bool would make "absent" and "false" identical, and since absent now
+// means ON, the opt-out would be unreachable.
+func TestStreamAssistantOptOutIsExpressible(t *testing.T) {
+	off := false
+	if resolveSyncConfig(SyncConfig{StreamAssistant: &off}).StreamAssistant {
+		t.Error("an explicit stream_assistant = false did not turn streaming off")
+	}
+
+	on := true
+	if !resolveSyncConfig(SyncConfig{StreamAssistant: &on}).StreamAssistant {
+		t.Error("an explicit stream_assistant = true did not turn streaming on")
+	}
+
+	if !resolveSyncConfig(SyncConfig{}).StreamAssistant {
+		t.Error("an absent stream_assistant key must mean on")
+	}
+}
+
 func TestSyncConfigDefaultsFailClosed(t *testing.T) {
 	cfg := resolveSyncConfig(SyncConfig{})
 
@@ -24,10 +43,17 @@ func TestSyncConfigDefaultsFailClosed(t *testing.T) {
 	if cfg.IncludeThinking {
 		t.Errorf("IncludeThinking = true, want false (fail-closed)")
 	}
-	// Contract T2: streaming off by default. A durable transcript wants one
-	// settled message per turn, not the partial states a live view needs.
-	if cfg.StreamAssistant {
-		t.Errorf("StreamAssistant = true, want false (contract T2: streaming off)")
+	// StreamAssistant is ON by default, and is deliberately NOT held to the
+	// fail-closed rule the two gates above are.
+	//
+	// Those two decide WHETHER content leaves the machine. This one decides
+	// only HOW the assistant's text is shaped on the way: streaming sends
+	// deltas plus an empty settled message, not streaming sends one settled
+	// message carrying the same text. The reader receives the same words
+	// either way, so there is nothing to fail closed about - and with it off,
+	// a remote viewer saw nothing at all until a turn ended.
+	if !cfg.StreamAssistant {
+		t.Errorf("StreamAssistant = false, want true (absent key means on)")
 	}
 	if cfg.PollWaitSeconds != 25 {
 		t.Errorf("PollWaitSeconds = %d, want 25", cfg.PollWaitSeconds)
