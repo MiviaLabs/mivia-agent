@@ -187,8 +187,38 @@ func (p *Projector) RollbackStreaming(wireEvents []WireEvent) {
 			if payload.Agent != nil {
 				p.rollbackOneDelta(p.lanes[payload.Turn+"\x00"+payload.Agent.Task])
 			}
+		case *AssistantResetPayload:
+			// A reset that never reached the wire must not have cleared the
+			// producer's counters either. It did: the viewer kept every
+			// fragment it already held while this side restarted from zero,
+			// so the settled message reported a count far below what the
+			// viewer has - and INV-1 then empties the text, losing the answer
+			// through the one payload this rollback did not cover.
+			p.restoreClearedStream(payload)
 		}
 	}
+}
+
+// restoreClearedStream undoes projectAssistantReset's clearing for a reset
+// that was never stored.
+//
+// The count cannot be recovered exactly - it was zeroed - so this marks the
+// block as streamed with an unknown count rather than claiming a wrong one.
+// The settled message then carries the FULL text, which is always safe: a
+// viewer that holds fragments shows the text instead of stitching, and one
+// that holds none shows the answer. Losing the answer is not.
+func (p *Projector) restoreClearedStream(payload *AssistantResetPayload) {
+	var ts *turnState
+	if payload.Agent != nil && payload.Agent.Task != "" {
+		ts = p.lanes[payload.Turn+"\x00"+payload.Agent.Task]
+	} else {
+		ts = p.turns[payload.Turn]
+	}
+	if ts == nil {
+		return
+	}
+	ts.streamed = false
+	ts.fragments = 0
 }
 
 func (p *Projector) rollbackOneDelta(ts *turnState) {
@@ -452,9 +482,15 @@ func (p *Projector) projectAssistant(env Envelope, turnID string, ts *turnState,
 	content := redactText(ev.Content)
 
 	if ev.Detail == "delta" {
-		ts.streamed = true
-		ts.fragments++
 		if p.opts.StreamAssistant && !redactionActive() {
+			// streamed and fragments record what actually REACHED the wire.
+			// Setting them before this gate made the settled message claim
+			// fragments a viewer never got: a redaction policy installed
+			// mid-turn - which a workflow tool can do - then produced an
+			// empty message with a non-zero count and the whole answer was
+			// unrecoverable.
+			ts.streamed = true
+			ts.fragments++
 			content = applyTruncation(&env, "text", content, BudgetDeltaText)
 			payload := &AssistantDeltaPayload{
 				Envelope: env,
@@ -466,10 +502,16 @@ func (p *Projector) projectAssistant(env Envelope, turnID string, ts *turnState,
 		return nil
 	}
 
-	// Final aggregate
+	// Final aggregate.
+	//
+	// The decision is `did any delta actually reach the wire`, NOT a re-run of
+	// the gates. Re-evaluating them here let a mid-turn change of either one
+	// disagree with what was sent: a policy installed mid-turn emptied a
+	// message whose fragments were never sent, and a policy removed mid-turn
+	// sent the answer a second time.
 	text := content
 	fragments := 0
-	if ts.streamed && p.opts.StreamAssistant && !redactionActive() {
+	if ts.streamed {
 		fragments = ts.fragments
 		text = "" // INV-1: text empty iff fragments > 0
 	} else {
@@ -491,7 +533,13 @@ func (p *Projector) projectThinking(env Envelope, turnID, content string) []Wire
 	}
 	env.Block = turnID + ":thinking"
 	text := ""
-	if p.opts.IncludeThinking {
+	// A redaction policy withholds the TEXT here rather than suppressing the
+	// event. Thinking has no settled aggregate to fall back to - every
+	// thinking event is a fragment - so suppressing would withhold the fact
+	// that the agent is reasoning at all. Redacting per fragment cannot work:
+	// a pattern spanning two fragments matches neither. Bytes still ship, so
+	// a viewer shows activity without the content.
+	if p.opts.IncludeThinking && !redactionActive() {
 		text = redactText(content)
 		text = applyTruncation(&env, "text", text, BudgetDeltaText)
 	}

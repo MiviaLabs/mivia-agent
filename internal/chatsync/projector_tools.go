@@ -151,11 +151,13 @@ func (p *Projector) projectSubagentAssistant(env Envelope, turnID string, ev eve
 	content := redactText(ev.Content)
 
 	if ev.Detail == "delta" {
-		ls.streamed = true
-		ls.fragments++
 		if !p.opts.StreamAssistant || redactionActive() {
 			return nil
 		}
+		// Recorded only once the delta is actually going out - see
+		// projectAssistant for why the order matters.
+		ls.streamed = true
+		ls.fragments++
 		content = applyTruncation(&env, "text", content, BudgetDeltaText)
 		payload := &SubagentAssistantDeltaPayload{
 			Envelope: env,
@@ -167,7 +169,7 @@ func (p *Projector) projectSubagentAssistant(env Envelope, turnID string, ev eve
 
 	text := content
 	fragments := 0
-	if ls.streamed && p.opts.StreamAssistant && !redactionActive() {
+	if ls.streamed {
 		fragments = ls.fragments
 		text = "" // INV-1: text empty iff fragments > 0.
 	} else {
@@ -194,7 +196,10 @@ func (p *Projector) projectSubagentThinking(env Envelope, turnID string, ev even
 	ls := p.laneState(turnID, ev.AgentTask)
 
 	text := ""
-	if p.opts.IncludeThinking {
+	// Withheld under a policy for the same reason as the root path: a
+	// fragment-sized redaction boundary cannot catch a secret that spans two
+	// fragments, and thinking has no whole-message form to fall back to.
+	if p.opts.IncludeThinking && !redactionActive() {
 		text = redactText(ev.Content)
 		text = applyTruncation(&env, "text", text, BudgetDeltaText)
 	}
