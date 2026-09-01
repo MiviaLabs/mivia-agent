@@ -862,3 +862,62 @@ one package: `WriterID` (adopt/fork dead in production while tests made it look 
 - On any commit that converts an import into an injected option, enumerate the wiring
   sites in the commit body and confirm each one. The seam and its callers are one change,
   even when they are separate commits.
+
+## DC-28 A classification switch enumerates the observed case and lets its neighbours fall through
+
+**Mechanism.** A `switch` maps a value from a FINITE EXTERNAL VOCABULARY - an HTTP
+status code, an upstream error code, an enum another system owns - onto a local
+policy. The author enumerates the cases the current behaviour produced, and the
+remaining members of that vocabulary fall to `default`. The default is correct for
+the case under test, so every test passes; it is silently wrong for the neighbours
+nobody named.
+
+This is not "an unhandled case crashed". Nothing crashes. The neighbour gets the
+default policy, which is a plausible policy, so the defect is a WRONG ACTION rather
+than a missing one - and the wrong action is usually the more expensive of the two,
+because the default on a classification switch is nearly always "retry" or "carry on".
+
+It is the sibling of DC-27 and DC-16: all three are absences. There the absence is a
+field nobody set; here it is a `case` nobody wrote. A test suite that enumerates the
+same cases the switch does cannot see any of them - the test and the code share one
+list, and the list is the bug.
+
+**Why it recurs.** The switch is written against an OBSERVED response. An author who
+has seen the server answer 400 writes `case 400`. The vocabulary the server may draw
+from is far larger than the vocabulary it has been seen to use, and it grows on the
+server's release schedule, not this repo's. Each later widening ("413 and 422 join
+400") adds the case that was just observed and re-freezes the rest.
+
+**Where it has appeared.** `internal/chatsync/client.go`'s `parseErrorResponse`
+(commit `6bec2d05`) classifies an error response into poison-stop versus retry. It
+names 400, 413 and 422 as poison, 401, 404 and 409 as their own outcomes, and
+deliberately leaves 408 and 429 on the retry path (poisoning a "try again later"
+would turn a transient slowdown into a permanent stop - that reasoning is correct
+and is pinned by `TestTransientStatusesKeepRetrying`).
+
+Every OTHER 4xx still falls to `default`, which returns a generic `server error (%d)`
+that `session_flush.go` and `session_badrequest.go` route to `scheduleRetry`. The
+still-unguarded members are **402, 403, 405, 406, 407, 410, 415, 421, 423, 424, 428,
+431 and 451**. Several of those are as permanent as 400: a 403 or a 451 on an append
+is a body or a principal the server will never accept, and 415 is a content type it
+will never decode. The session retries each of them for the life of the process while
+reporting itself as running. The class is therefore live and open at its own origin
+site, which is the evidence that it is a class and not one commit's oversight.
+
+**Control.**
+
+- When a switch classifies a finite external vocabulary, enumerate the WHOLE
+  vocabulary, not the observed subset. For each remaining member, confirm one of two
+  things and say which in the commit body: it is handled explicitly, or the default is
+  provably correct FOR THAT MEMBER. "The default is correct for the case I tested" is
+  not one of the two.
+- Prefer classifying by RANGE or by property over classifying by value where the
+  vocabulary has a structural meaning. `4xx except 408 and 429 is permanent` states a
+  rule about the whole vocabulary; `case 400, 413, 422` states a rule about three
+  observations. The range form fails safe as the server adds codes.
+- Where the default carries the more expensive outcome (retry forever, trust, allow),
+  invert it: make the default the cheap outcome and enumerate the members that earn
+  the expensive one. A retry-by-default classifier must justify the default for every
+  unnamed member; a stop-by-default classifier only has to be wrong once, loudly.
+- Table the test over the vocabulary, not over the switch. A test that lists the same
+  codes the switch lists proves only that the author wrote the same list twice.
