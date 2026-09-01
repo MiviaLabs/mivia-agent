@@ -19,6 +19,14 @@ import (
 // the ConsumeInput call site could send a consume for inputID against
 // whatever session SetSessionID just switched to, not the one the input
 // actually came from.
+//
+// This is the dynamic half of DC-29 (locked capture, unlocked reuse -
+// .agents/quality/defect-taxonomy.md): the static half,
+// mivia.go.no-locked-field-reread (semgrep/agent-standards.yml), catches a
+// capture and its reread sitting in the same block, but cannot see a reread
+// reached through a different function or a setter with a new caller. This
+// test is what closes that gap for p.sessionID specifically - see DC-29's
+// probes section before assuming the semgrep rule alone is coverage.
 func TestInputPoller_ConsumeInputUsesTheSameSessionIDAsNextInput(t *testing.T) {
 	consumeSessionID, reachedNextHandler, srv := newSessionRaceMockServer(t)
 	defer srv.Close()
