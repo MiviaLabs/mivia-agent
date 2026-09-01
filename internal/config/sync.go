@@ -19,11 +19,21 @@ type SyncConfig struct {
 	Enabled         *bool `toml:"enabled"`
 	IncludeToolIO   bool  `toml:"include_tool_io"`
 	IncludeThinking bool  `toml:"include_thinking"`
-	// StreamAssistant turns on per-delta assistant streaming in the wire
-	// transcript. Contract T2 specifies streaming OFF by default: a durable
-	// log wants one settled message per turn, not the partial states a live
-	// view needs.
-	StreamAssistant  bool   `toml:"stream_assistant"`
+	// StreamAssistant is a THREE-STATE opt-out switch, like Enabled: nil (key
+	// absent), true, or false. Absent means ON.
+	//
+	// It was off by default, on the reasoning that a durable log wants one
+	// settled message per turn rather than the partial states a live view
+	// needs. That reasoning weighed the wrong thing: the remote viewer IS a
+	// live view, and with streaming off it showed nothing at all until a turn
+	// finished, then the whole answer at once. The settled message still
+	// ships either way - INV-1 keeps the aggregate, carrying the full text
+	// when nothing streamed - so a reader of the durable log loses nothing by
+	// this default.
+	//
+	// A plain bool cannot express the opt-out: absent and "false" would look
+	// identical, and the only reachable state would be off.
+	StreamAssistant  *bool  `toml:"stream_assistant"`
 	APIURL           string `toml:"api_url"`
 	PollWaitSeconds  int    `toml:"poll_wait_seconds"`
 	HeartbeatSeconds int    `toml:"heartbeat_seconds"`
@@ -61,10 +71,11 @@ func (s ResolvedSync) Active(loggedIn bool) bool {
 
 func resolveSyncConfig(cfg SyncConfig) ResolvedSync {
 	out := ResolvedSync{
-		Disabled:         cfg.Enabled != nil && !*cfg.Enabled,
-		IncludeToolIO:    cfg.IncludeToolIO,
-		IncludeThinking:  cfg.IncludeThinking,
-		StreamAssistant:  cfg.StreamAssistant,
+		Disabled:        cfg.Enabled != nil && !*cfg.Enabled,
+		IncludeToolIO:   cfg.IncludeToolIO,
+		IncludeThinking: cfg.IncludeThinking,
+		// Absent means on. Only an explicit false turns it off.
+		StreamAssistant:  cfg.StreamAssistant == nil || *cfg.StreamAssistant,
 		APIURL:           cfg.APIURL,
 		PollWaitSeconds:  cfg.PollWaitSeconds,
 		HeartbeatSeconds: cfg.HeartbeatSeconds,
