@@ -5,7 +5,8 @@ import "context"
 // CommandOutcome is what a slash command asks the UI to do next. The
 // screen checks the fields in a fixed priority order (see
 // internal/ui/screen/conversation/commands.go): Err first, then Quit,
-// then the open-a-modal fields, then ClearTranscript, then
+// then the open-a-modal fields (OpenTheme, OpenSettings, OpenHelp,
+// OpenQueue, LoginPrompt), then ClearTranscript, then
 // ModelChoiceGroups, then AgentChoices, then SessionChoices, then
 // Notice. Only one field is normally set per outcome.
 type CommandOutcome struct {
@@ -33,6 +34,12 @@ type CommandOutcome struct {
 
 	// OpenQueue asks the UI to open the queue manager overlay.
 	OpenQueue bool
+
+	// LoginPrompt asks the UI to open the login dialog (email plus a
+	// masked password field). LoginEmail, when non-empty, prefills the
+	// email field.
+	LoginPrompt bool
+	LoginEmail  string
 
 	// ClearTranscript asks the UI to empty the transcript view.
 	ClearTranscript bool
@@ -137,6 +144,13 @@ type CommandRunner interface {
 	// DB access) the open /resume picker polls to keep its status dots
 	// live without re-fetching the session list.
 	SessionActive(id string) bool
+
+	// CompleteLogin submits the credentials typed into the login dialog
+	// (opened by a LoginPrompt outcome) and reports the result, typically
+	// a confirmation Notice or an Err. password is a []byte, not a
+	// string, so the runner can zero it once the login request is sent
+	// (see miviaauth.Service.Login, which takes the same shape).
+	CompleteLogin(ctx context.Context, email string, password []byte) CommandOutcome
 }
 
 // DefaultAgentName is the session's compiled root agent:

@@ -452,6 +452,9 @@ func (s Screen) centerRows() []string {
 	case s.effortPicker != nil:
 		dw, dh := s.dialogSize()
 		return overlayRows(renderPickerDialog(s.Theme, s.Tier, dw, dh, "select reasoning effort", *s.effortPicker), s.transcriptHeight())
+	case s.login != nil:
+		dw, dh := s.dialogSize()
+		return overlayRows(renderLoginDialog(s.Theme, s.Tier, dw, dh, *s.login), s.transcriptHeight())
 	case s.panel.dialog && s.panelDialogFits():
 		title, body, hint := s.dialogParts()
 		dw, dh := s.dialogSize()

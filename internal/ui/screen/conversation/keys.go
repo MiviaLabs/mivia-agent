@@ -121,6 +121,14 @@ func (s Screen) handleModalKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bool) 
 	if next, cmd, handled := s.handleBlackboardKey(msg); handled {
 		return next, cmd, true
 	}
+	// The login dialog is checked last. It only ever opens from the
+	// composer via /login, which is unreachable while any earlier modal
+	// (approval, a picker, history, the queue, the blackboard) already
+	// holds focus, so this ordering is defensive only - there is no
+	// state today where two of these are open at once.
+	if next, cmd, handled := s.handleLoginKey(msg); handled {
+		return next, cmd, true
+	}
 	return s, nil, false
 }
 
@@ -257,6 +265,36 @@ func (s Screen) handleBlackboardKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, b
 	default:
 		return s, nil, true
 	}
+}
+
+// handleLoginKey routes a key when the /login dialog is open: Esc
+// cancels with no notice (the same rule the queue overlay and history
+// follow), ctrl+c closes the dialog and runs the ordinary quit-arm flow
+// (keys.go's own handleQueueKey "ctrl+c" case is the precedent), and
+// Enter on the password field submits. Every other key reaches
+// loginDialog.Update, which routes Tab/Enter-on-email to focus the
+// password field and everything else to the focused field's own input.
+func (s Screen) handleLoginKey(msg tea.KeyPressMsg) (app.Screen, tea.Cmd, bool) {
+	if s.login == nil {
+		return s, nil, false
+	}
+	switch msg.String() {
+	case "esc":
+		s.login = nil
+		return s, tea.ClearScreen, true
+	case "ctrl+c":
+		s.login = nil
+		next, cmd, _ := s.quit()
+		return next, tea.Batch(cmd, tea.ClearScreen), true
+	case "enter":
+		if s.login.focus == 1 {
+			next, cmd := s.submitLogin()
+			return next, cmd, true
+		}
+	}
+	next, cmd := s.login.Update(msg)
+	s.login = &next
+	return s, cmd, true
 }
 
 // handleApprovalKey routes a key when the approval prompt is active.

@@ -171,3 +171,45 @@ func TestSetChoicesImmutability(t *testing.T) {
 		t.Error("SetChoices did not clone choices slice; external mutation corrupted field")
 	}
 }
+
+// TestSetEchoMaskedHidesTypedValue pins the password-field contract: the
+// rendered view never shows the typed characters, only the bullet mask,
+// while Value() still reports the real text so validation and submit
+// work normally.
+func TestSetEchoMaskedHidesTypedValue(t *testing.T) {
+	m := New(loadTheme(t), theme.TierTrueColor, "password", KindText, 40)
+	m.SetEchoMasked()
+	m.Focus()
+	for _, r := range "hunter2" {
+		next, _ := m.Update(tea.KeyPressMsg{Text: string(r), Code: r})
+		m = next
+	}
+
+	if got := m.Value(); got != "hunter2" {
+		t.Errorf("Value() = %q, want the real typed text %q", got, "hunter2")
+	}
+	view := m.View()
+	if strings.Contains(view, "hunter2") {
+		t.Errorf("masked field view leaked the typed value:\n%q", view)
+	}
+	if !strings.Contains(view, "•") {
+		t.Errorf("masked field view missing the bullet mask:\n%q", view)
+	}
+}
+
+// TestNormalFieldStillEchoesPlainText guards against SetEchoMasked's
+// mutation leaking onto every field: a field that never calls it must
+// keep echoing plain text.
+func TestNormalFieldStillEchoesPlainText(t *testing.T) {
+	m := New(loadTheme(t), theme.TierTrueColor, "name", KindText, 40)
+	m.Focus()
+	next, _ := m.Update(tea.KeyPressMsg{Text: "h", Code: 'h'})
+
+	view := next.View()
+	if !strings.Contains(view, "h") {
+		t.Errorf("plain field view missing typed character, got:\n%q", view)
+	}
+	if strings.Contains(view, "•") {
+		t.Errorf("plain field unexpectedly masked, got:\n%q", view)
+	}
+}

@@ -13,6 +13,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/hooksession"
+	"github.com/MiviaLabs/mivia-agent/internal/miviaauth"
 	"github.com/MiviaLabs/mivia-agent/internal/reasoning"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/component/composer"
@@ -27,6 +28,12 @@ type CommandRunner struct {
 	res           *config.Resolved
 	agentState    *cliagents.AgentSessionState
 	settingsStore *SettingsStore
+
+	// loginService builds the miviaauth.Service /login talks to. A field
+	// rather than a direct miviaauth.DefaultService() call so tests in
+	// this package can substitute a stub sessionClient without a real
+	// HTTP round trip or a real ~/.mivia/auth.json.
+	loginService func() (*miviaauth.Service, error)
 }
 
 // Compile-time check that CommandRunner satisfies ports.CommandRunner.
@@ -40,10 +47,11 @@ func NewCommandRunner(sess *chat.Session, res *config.Resolved, state *cliagents
 	}
 	pool := NewSessionPool(sess, res, state, toolsOn)
 	return &CommandRunner{
-		sess:       sess,
-		pool:       pool,
-		res:        res,
-		agentState: state,
+		sess:         sess,
+		pool:         pool,
+		res:          res,
+		agentState:   state,
+		loginService: miviaauth.DefaultService,
 	}
 }
 
@@ -60,10 +68,11 @@ func (r *CommandRunner) Pool() *SessionPool {
 // NewCommandRunnerWithPool constructs a CommandRunner with an explicit SessionPool.
 func NewCommandRunnerWithPool(sess *chat.Session, pool *SessionPool, res *config.Resolved, state *cliagents.AgentSessionState) *CommandRunner {
 	return &CommandRunner{
-		sess:       sess,
-		pool:       pool,
-		res:        res,
-		agentState: state,
+		sess:         sess,
+		pool:         pool,
+		res:          res,
+		agentState:   state,
+		loginService: miviaauth.DefaultService,
 	}
 }
 
@@ -116,6 +125,7 @@ func DefaultCommands() []composer.Command {
 		{Name: "effort", Desc: "set reasoning effort level for active model"},
 		{Name: "help", Desc: "show the keymap dialog"},
 		{Name: "hooks", Desc: "list armed lifecycle hooks"},
+		{Name: "login", Desc: "sign in to your mivia account"},
 		{Name: "model", Desc: "pick or switch model"},
 		{Name: "queue", Desc: "manage queued messages"},
 		{Name: "quit", Desc: "exit mivia"},
@@ -209,6 +219,8 @@ func (r *CommandRunner) Run(ctx context.Context, name, args string) ports.Comman
 		return r.handleModel(args)
 	case "queue":
 		return ports.CommandOutcome{OpenQueue: true}
+	case "login":
+		return r.handleLogin(args)
 	case "agents", "agent":
 		return r.handleAgents(args)
 	case "new":

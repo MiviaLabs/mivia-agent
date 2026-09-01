@@ -82,25 +82,10 @@ func (s Screen) applyCommandOutcome(o ports.CommandOutcome) (app.Screen, tea.Cmd
 		return s.openHelp(), tea.ClearScreen
 	case o.OpenQueue:
 		return s.openQueue(), nil
+	case o.LoginPrompt:
+		return s.openLogin(o.LoginEmail)
 	case o.ClearTranscript:
-		if o.Conversation != nil {
-			s.switchConversation(o.Conversation)
-		} else {
-			s.transcript = s.transcript.Clear()
-			if s.conv != nil {
-				s.LoadHistory(s.conv.History())
-				s.topbar.SetSession(s.conv.Model(), s.conv.ContextUsage())
-				if title := s.conv.Title(); title != "" {
-					s.topbar.SetBreadcrumb([]string{title})
-				} else {
-					s.topbar.SetBreadcrumb(nil)
-				}
-			}
-		}
-		if o.Notice != "" {
-			return s.withNotice(o.Notice), nil
-		}
-		return s, nil
+		return s.clearTranscriptOutcome(o)
 	case len(o.ModelChoiceGroups) > 0:
 		var groups []picker.Group
 		for _, g := range o.ModelChoiceGroups {
@@ -145,6 +130,30 @@ func (s Screen) applyCommandOutcome(o ports.CommandOutcome) (app.Screen, tea.Cmd
 			return s, nil
 		}
 		return s.sendTextWithPersisted(o.SubmitPrompt, o.SubmitPersistedText)
+	}
+	return s, nil
+}
+
+// clearTranscriptOutcome empties the transcript view, switching to the
+// replacement conversation when the outcome carries one. A notice riding
+// the same outcome is appended after the reset.
+func (s Screen) clearTranscriptOutcome(o ports.CommandOutcome) (app.Screen, tea.Cmd) {
+	if o.Conversation != nil {
+		s.switchConversation(o.Conversation)
+	} else {
+		s.transcript = s.transcript.Clear()
+		if s.conv != nil {
+			s.LoadHistory(s.conv.History())
+			s.topbar.SetSession(s.conv.Model(), s.conv.ContextUsage())
+			if title := s.conv.Title(); title != "" {
+				s.topbar.SetBreadcrumb([]string{title})
+			} else {
+				s.topbar.SetBreadcrumb(nil)
+			}
+		}
+	}
+	if o.Notice != "" {
+		return s.withNotice(o.Notice), nil
 	}
 	return s, nil
 }
@@ -346,6 +355,7 @@ func (s Screen) openCommandPalette() (app.Screen, tea.Cmd) {
 				"/cost - view session spending and token stats",
 				"/context - check context capacity usage",
 				"/help - show full keymap",
+				"/login - sign in to your mivia account",
 			},
 		},
 		{

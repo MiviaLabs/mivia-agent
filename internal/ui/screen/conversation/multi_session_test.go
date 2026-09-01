@@ -65,6 +65,9 @@ func (r *testMultiSessionRunner) SelectEffort(context.Context, string) ports.Com
 func (r *testMultiSessionRunner) SessionActive(string) bool {
 	return false
 }
+func (r *testMultiSessionRunner) CompleteLogin(context.Context, string, []byte) ports.CommandOutcome {
+	return ports.CommandOutcome{}
+}
 func (r *testMultiSessionRunner) SelectSession(_ context.Context, id string) ports.CommandOutcome {
 	conv, ok := r.convs[id]
 	if !ok {
