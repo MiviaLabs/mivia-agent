@@ -33,6 +33,8 @@ func externalSubagentType(kind events.Kind) string {
 		return "external_subagent_begin"
 	case events.KindSubagentHeartbeat:
 		return "external_subagent_heartbeat"
+	case events.KindSubagentDone:
+		return "external_subagent_done"
 	case events.KindToolStart, events.KindSubagentStart:
 		return "external_subagent_tool_start"
 	case events.KindToolEnd, events.KindSubagentEnd:
@@ -54,7 +56,8 @@ func isSubagentEvent(ev events.Event) bool {
 	}
 	switch ev.Kind {
 	case events.KindSubagentBegin, events.KindSubagentStart,
-		events.KindSubagentEnd, events.KindSubagentHeartbeat:
+		events.KindSubagentEnd, events.KindSubagentHeartbeat,
+		events.KindSubagentDone:
 		return true
 	default:
 		return false
@@ -96,6 +99,13 @@ func renderExternalSubagentEvent(w io.Writer, ev events.Event) {
 		line.Name, line.Input = ev.Name, ev.Detail
 	case events.KindSubagentHeartbeat:
 		line.Message = ev.Detail
+	case events.KindSubagentDone:
+		// The run's terminal. Without it a relayed run opened and never
+		// closed, so any live-agents view built on external_subagent_begin
+		// pinned every subagent of the session forever. It is NOT
+		// external_done: that ends the whole turn, and a subagent finishing
+		// is one run inside a turn that continues.
+		line.Name, line.Status = ev.Name, ev.Detail
 	case events.KindToolStart, events.KindSubagentStart:
 		line.ToolCallID, line.Name, line.Input = ev.ToolCallID, ev.Name, ev.Input
 	case events.KindToolEnd, events.KindSubagentEnd:

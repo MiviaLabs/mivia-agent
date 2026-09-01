@@ -147,11 +147,14 @@ type EventOrigin struct {
 	// ParentTaskID is the TaskID of the subagent that dispatched this one,
 	// empty when the root loop dispatched it.
 	//
-	// Depth alone cannot rebuild the tree: two subagents at depth 2 under
-	// different depth-1 parents are indistinguishable by depth, so a consumer
-	// showing nested runs had to render every run as a sibling of every
-	// other. This is the edge that makes the depth a position rather than
-	// just a number.
+	// Depth alone cannot express which run started which. This is the edge
+	// that makes a depth a position rather than just a number.
+	//
+	// Set today only for an ask_agent referral: the asking task caused the
+	// referral to start. Runs from one dispatch_tasks call are siblings and
+	// report no parent, and a subagent cannot dispatch a subagent - the
+	// mandatory tool denylist removes the dispatching tools from every spawned
+	// registry - so a deeper chain does not arise on that path.
 	ParentTaskID string
 }
 

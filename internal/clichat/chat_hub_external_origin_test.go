@@ -206,18 +206,25 @@ func TestRootStreamingDoesNotSuppressASubagentAggregate(t *testing.T) {
 	}
 }
 
-// TestSubagentRunLifecycleReachesTheRelay covers the two kinds that were
-// relayed by the hub and had no arm in the renderer at all, so they were
-// dropped in silence after crossing the process boundary.
+// TestSubagentRunLifecycleReachesTheRelay covers the kinds that were relayed
+// by the hub and had no arm in the renderer at all, so they were dropped in
+// silence after crossing the process boundary.
+//
+// The terminal matters most: without it a relayed run opened and never closed,
+// so a live-agents view built on the opening signal pinned every subagent of
+// the session forever.
 func TestSubagentRunLifecycleReachesTheRelay(t *testing.T) {
 	lines := relayLines(t,
 		rootEv(events.KindTurnStart, "", "the task"),
 		attributed(events.KindSubagentBegin, "", "review the diff"),
 		attributed(events.KindSubagentHeartbeat, "", "elapsed=2s steps=1"),
+		attributed(events.KindSubagentDone, "", "completed"),
 	)
 
 	got := typesOf(lines)
-	for _, want := range []string{"external_subagent_begin", "external_subagent_heartbeat"} {
+	for _, want := range []string{
+		"external_subagent_begin", "external_subagent_heartbeat", "external_subagent_done",
+	} {
 		if !containsString(got, want) {
 			t.Errorf("%s never reached the relay; got %v", want, got)
 		}
