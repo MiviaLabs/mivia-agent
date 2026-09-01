@@ -77,6 +77,17 @@ var relayedKinds = []events.Kind{
 	events.KindError,
 }
 
+// RelayedKinds returns the kinds a hub participant forwards, as a copy.
+//
+// It exists so a renderer's test can drive EVERY relayed kind instead of a
+// list written by hand beside it. A hand list is how a kind gets added to the
+// relay with no arm in the renderer: the relay carries it, nothing renders it,
+// and no test notices because the test only knew the kinds someone remembered
+// to write down.
+func RelayedKinds() []events.Kind {
+	return append([]events.Kind(nil), relayedKinds...)
+}
+
 // relayBufSize is the relay subscription's queue capacity. It is set
 // explicitly because the relay is ONE subscription spanning every relayed kind
 // (SubscribeAcross), so all of them now share one budget where per-kind

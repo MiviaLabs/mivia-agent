@@ -352,8 +352,15 @@ func TestRenderExternalEventSubagentLifecycleDoesNotEndTheTurn(t *testing.T) {
 	if len(byType["external_done"]) != 1 {
 		t.Fatalf("expected exactly 1 external_done (turn end only), got %d", len(byType["external_done"]))
 	}
-	if len(byType["external_tool_start"]) != 1 || len(byType["external_tool_end"]) != 1 {
-		t.Fatalf("expected paired external_tool_start/-end for the subagent's nested call, got %d/%d",
+	// The subagent's nested call relays under the SUBAGENT types, never the
+	// root ones: a consumer keyed on type must be able to keep a subagent's
+	// activity out of the root turn, and type is the only thing it can key on.
+	if len(byType["external_subagent_tool_start"]) != 1 || len(byType["external_subagent_tool_end"]) != 1 {
+		t.Fatalf("expected paired external_subagent_tool_start/-end, got %d/%d",
+			len(byType["external_subagent_tool_start"]), len(byType["external_subagent_tool_end"]))
+	}
+	if len(byType["external_tool_start"]) != 0 || len(byType["external_tool_end"]) != 0 {
+		t.Fatalf("a subagent's tool call was relayed as the root agent's: %d/%d",
 			len(byType["external_tool_start"]), len(byType["external_tool_end"]))
 	}
 	// The run must still be live (one external_turn_start, no re-mint)
