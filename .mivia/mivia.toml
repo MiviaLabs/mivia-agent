@@ -442,6 +442,20 @@ reasoning = 'off'
 reasoning_dialect = 'thinking_preserved'
 reasoning_efforts = ['off', 'high']
 
+[sync]
+# Dogfood visibility, not a security decision: with this table absent, three
+# privacy/bandwidth gates on the upload path default OFF (internal/config/sync.go,
+# internal/chatsync/projector.go) - reasoning text is stripped to a byte count,
+# tool input/output are stripped and marked redacted, and assistant replies
+# upload as one final message instead of live deltas. The web chat-sessions
+# viewer already renders all three correctly once the CLI sends them (verified
+# 2026-09-01); this table is the only change needed. Every session synced from
+# this repo now uploads full reasoning and tool I/O to the configured sync API
+# by default - a deliberate repo-wide default, not a per-run opt-in.
+include_thinking = true
+include_tool_io = true
+stream_assistant = true
+
 [subagents]
 default_timeout_seconds = 43200
 # Whole-request wall for one subagent LLM call (context.WithTimeout around the
