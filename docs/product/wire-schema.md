@@ -87,6 +87,7 @@ All mivia processes that share one store directory see each other's activity thr
 | `external_subagent_tool_start` / `external_subagent_tool_end` | A tool call made by one of its subagents. |
 | `external_subagent_begin` | One of its subagents started. `name` is the agent, `input` the task it was given. |
 | `external_subagent_heartbeat` | Progress from one of its subagents. `message` carries the elapsed time, step count and tool count. |
+| `external_subagent_done` | One of its subagents finished. `status` carries the terminal classification. This ends one RUN, not the turn - the turn ends with `external_done`. |
 | `external_done` | The other process's turn finished. |
 | `external_error` | The other process's turn failed. |
 | `external_compaction` | Another process compacted this session's context. Same payload as `compaction`, plus `run_id`. |

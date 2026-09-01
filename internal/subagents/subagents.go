@@ -22,6 +22,12 @@ type Task struct {
 	// the parent INVOCATION, which diverges from the attribution key whenever
 	// a coordinator supplies its own task id. A consumer drawing a tree of
 	// runs joins on the attribution key, so that is what has to travel.
+	//
+	// One relationship sets it today: an ask_agent referral, where the asking
+	// task caused the referral to start. A dispatch_tasks fan-out does NOT -
+	// those runs are siblings started by the same parent, and a subagent
+	// cannot dispatch a subagent at all, because the mandatory tool denylist
+	// removes the dispatching tools from every spawned registry.
 	ParentTaskID string
 	// RawID is the model-supplied task id verbatim, before dispatch_tasks
 	// namespaces it into ID for harness-level uniqueness
