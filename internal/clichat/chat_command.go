@@ -364,7 +364,7 @@ func runConfiguredChatOnce(invocation chatInvocation, res *config.Resolved) erro
 		return err
 	}
 	defer cleanup()
-	return dispatchChatSurface(invocation, sess, res, useTools, agentState)
+	return dispatchChatSurface(invocation, sess, wsRoot, res, useTools, agentState)
 }
 
 // resumeChatSession loads a saved session and refreshes the summarizer
@@ -428,7 +428,7 @@ func applySessionApprovalPolicy(sess *chat.Session, invocation chatInvocation, r
 // TUI) a fully-built session dispatches to. Split out of
 // runConfiguredChatOnce to keep that setup function under the repo's per-
 // function line budget.
-func dispatchChatSurface(invocation chatInvocation, sess *chat.Session, res *config.Resolved, useTools bool, agentState *AgentSessionState) error {
+func dispatchChatSurface(invocation chatInvocation, sess *chat.Session, wsRoot string, res *config.Resolved, useTools bool, agentState *AgentSessionState) error {
 	// Releases sess's context-lease heartbeat (if armed) on every return path
 	// out of this function - the one choke point one-shot, REPL, and TUI all
 	// return through. Without this, a session that ran long enough for even
@@ -446,14 +446,14 @@ func dispatchChatSurface(invocation chatInvocation, sess *chat.Session, res *con
 		}
 	}
 	if invocation.prompt != "" {
-		defer attachCLISync(sess, res)()
+		defer attachCLISync(sess, wsRoot, res)()
 		return oneShot(sess, invocation.prompt, useTools, res, invocation.quiet)
 	}
 	// Classic REPL /agent uses package state; TUI stores agentState on the model.
 	cliagents.ClassicAgentState = agentState
 	defer func() { cliagents.ClassicAgentState = nil }()
 	if invocation.plainUI || !term.IsTerminal(int(os.Stdin.Fd())) || strings.EqualFold(os.Getenv("TERM"), "dumb") {
-		defer attachCLISync(sess, res)()
+		defer attachCLISync(sess, wsRoot, res)()
 		return repl(sess, res, useTools, agentState, invocation.jsonMode, invocation.quiet)
 	}
 	if TUILauncherFunc == nil {

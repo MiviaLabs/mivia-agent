@@ -24,13 +24,23 @@ var syncNoticeWriter io.Writer = os.Stderr
 // chatsync.OpenSession. It is a separate function so a test can drive the
 // exact value production uses, instead of asserting on a hand-built copy that
 // can drift away from the wiring it claims to cover.
-func cliSyncOptions(sess *chat.Session, res *config.Resolved, tokens chatsync.TokenProvider) chatsync.SessionOptions {
+//
+// wsRoot anchors where chat-sync keeps its identity/outbox files. It must NOT
+// be resolved from sess.SessionDir: that field belongs to the legacy
+// file-backed session store and is unconditionally nulled the moment context
+// state is enabled (internal/chat/context_integration.go's SetContextManager)
+// - which happens on every real `mivia chat` invocation. Reading it here made
+// chat-sync's identity permanently ephemeral in production: LoadOrCreateIdentity
+// always minted a fresh, never-persisted identity, so AttachSession could
+// never find a RemoteSessionID and every resume forked a brand-new remote
+// session. wsRoot is the caller's already-resolved workspace root instead.
+func cliSyncOptions(sess *chat.Session, wsRoot string, res *config.Resolved, tokens chatsync.TokenProvider) chatsync.SessionOptions {
 	// The sync identity is resolved HERE, before the options exist, because
 	// chatsync.OpenSession opens the outbox before it attaches: OutboxDir must
 	// already carry the local handle. A load error still yields a usable
 	// identity - this run syncs under a handle the next run will not find,
 	// which is strictly better than not syncing.
-	identityDir := chatsync.IdentityDir(sess.SessionDir)
+	identityDir := chatsync.IdentityDir(wsRoot)
 	key := chatsync.IdentityKey(sess.SessionID)
 	ident, _ := chatsync.LoadOrCreateIdentity(identityDir, key)
 
@@ -57,7 +67,7 @@ func cliSyncOptions(sess *chat.Session, res *config.Resolved, tokens chatsync.To
 			WriterID:       ident.WriterID,
 			RedactToolArgs: tools.RedactToolArgs(),
 		},
-		OutboxDir:       chatsync.OutboxDirFor(sess.SessionDir, ident.LocalHandle),
+		OutboxDir:       chatsync.OutboxDirFor(wsRoot, ident.LocalHandle),
 		LocalHandle:     ident.LocalHandle,
 		RemoteSessionID: ident.RemoteSessionID,
 		Identity:        chatsync.IdentityRef{Dir: identityDir, Key: key},
@@ -89,7 +99,7 @@ func cliSyncOptions(sess *chat.Session, res *config.Resolved, tokens chatsync.To
 // only way to say no while logged in - see config.ResolvedSync.Active. Every
 // refusal here is silent by design: sync failing is never a reason to break
 // the local chat the user actually asked for.
-func attachCLISync(sess *chat.Session, res *config.Resolved) func() {
+func attachCLISync(sess *chat.Session, wsRoot string, res *config.Resolved) func() {
 	if res == nil || sess == nil || sess.EventBus == nil {
 		return func() {}
 	}
@@ -97,7 +107,7 @@ func attachCLISync(sess *chat.Session, res *config.Resolved) func() {
 	if !res.Sync.Active(tokens != nil) {
 		return func() {}
 	}
-	opts := cliSyncOptions(sess, res, tokens)
+	opts := cliSyncOptions(sess, wsRoot, res, tokens)
 	// "Stop syncing and SAY SO": without this the terminal stop is recorded
 	// where only a getter can reach it, and no host polls SyncSession, so a
 	// dead uploader looks exactly like a healthy idle one.

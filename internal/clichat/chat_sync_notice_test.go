@@ -51,9 +51,9 @@ func TestAttachCLISyncSaysItIsRunning(t *testing.T) {
 	sink := captureSyncNotices(t)
 	res := &config.Resolved{Sync: config.ResolvedSync{APIURL: srv.URL, PollWaitSeconds: 1, HeartbeatSeconds: 1, MaxUnflushed: 50}}
 	installTestAuthToken(t)
-	sess := activationSession(t, res)
+	sess, wsRoot := activationSession(t, res)
 
-	detach := attachCLISync(sess, res)
+	detach := attachCLISync(sess, wsRoot, res)
 	time.Sleep(50 * time.Millisecond)
 	detach()
 
@@ -91,9 +91,9 @@ func TestAttachCLISyncSaysWhyItStopped(t *testing.T) {
 	sink := captureSyncNotices(t)
 	res := &config.Resolved{Sync: config.ResolvedSync{APIURL: srv.URL, PollWaitSeconds: 1, HeartbeatSeconds: 1, MaxUnflushed: 50}}
 	installTestAuthToken(t)
-	sess := activationSession(t, res)
+	sess, wsRoot := activationSession(t, res)
 
-	detach := attachCLISync(sess, res)
+	detach := attachCLISync(sess, wsRoot, res)
 	sess.EventBus.Publish(events.Event{
 		Kind:      events.KindTurnStart,
 		SessionID: sess.SessionID,

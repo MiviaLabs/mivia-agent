@@ -560,7 +560,7 @@ func TestDiffCov2DispatchChatSurfaceLaunchesTUI(t *testing.T) {
 
 		res := &config.Resolved{ProviderName: "p", Model: "m"}
 		sess := chat.NewSession(res, nullCompleter{})
-		err := dispatchChatSurface(chatInvocation{}, sess, res, false, &AgentSessionState{})
+		err := dispatchChatSurface(chatInvocation{}, sess, t.TempDir(), res, false, &AgentSessionState{})
 		if err != nil {
 			t.Fatalf("dispatchChatSurface(TUI) err = %v", err)
 		}
@@ -570,7 +570,7 @@ func TestDiffCov2DispatchChatSurfaceLaunchesTUI(t *testing.T) {
 
 		// An unwired launcher fails closed.
 		TUILauncherFunc = nil
-		if err := dispatchChatSurface(chatInvocation{}, sess, res, false, &AgentSessionState{}); err == nil || !strings.Contains(err.Error(), "unwired") {
+		if err := dispatchChatSurface(chatInvocation{}, sess, t.TempDir(), res, false, &AgentSessionState{}); err == nil || !strings.Contains(err.Error(), "unwired") {
 			t.Fatalf("dispatchChatSurface(unwired) err = %v; want unwired error", err)
 		}
 	})

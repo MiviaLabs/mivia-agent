@@ -26,7 +26,7 @@ func TestCLISyncOptionsInjectsTheLeafSeams(t *testing.T) {
 	res.Sync.IncludeToolIO = true
 
 	t.Run("ErrorMessage is supplied", func(t *testing.T) {
-		opts := cliSyncOptions(&chat.Session{}, res, nil)
+		opts := cliSyncOptions(&chat.Session{}, t.TempDir(), res, nil)
 		if opts.ProjectorOptions.ErrorMessage == nil {
 			t.Fatal("ErrorMessage is nil; the CLI site does not inject the classifier, so turn errors fall back to the package default instead of the host's own redaction policy")
 		}
@@ -47,7 +47,7 @@ func TestCLISyncOptionsInjectsTheLeafSeams(t *testing.T) {
 			t.Cleanup(func() { tools.SetRedactToolArgs(prev) })
 			tools.SetRedactToolArgs(redact)
 
-			opts := cliSyncOptions(&chat.Session{}, res, nil)
+			opts := cliSyncOptions(&chat.Session{}, t.TempDir(), res, nil)
 			if opts.ProjectorOptions.RedactToolArgs != redact {
 				t.Fatalf("RedactToolArgs = %v, want %v: the host's redaction decision does not reach the projector, so sync uploads tool arguments the operator asked to hide", opts.ProjectorOptions.RedactToolArgs, redact)
 			}
