@@ -59,6 +59,14 @@ type turnState struct {
 	// segmentDirty records that prose has actually shipped into the current
 	// segment, so a tool call that follows silence spends no segment.
 	segmentDirty bool
+	// streamSegment is the segment the most recent assistant DELTA shipped
+	// into. The settled aggregate names it rather than the current segment:
+	// the terminal EventAssistant is published from finalizeSDKTurn, AFTER the
+	// turn's last tool call has advanced the counter, so by then the current
+	// segment holds nothing. Naming it shipped an empty settled message
+	// carrying a fragment count, while the block holding the real text never
+	// completed.
+	streamSegment int
 	// streamUnrecoverable marks a block whose discard never reached the wire.
 	// The viewer therefore still holds the abandoned attempt's fragments, and
 	// this side cannot say how many - the counters were cleared before the
@@ -527,7 +535,10 @@ func (p *Projector) projectAssistant(env Envelope, turnID string, ts *turnState,
 	if ev.Content == "" {
 		return nil
 	}
-	env.Block = proseBlock(turnID+":assistant", ts.segment)
+	// A delta names the segment it is streaming into NOW; the settled aggregate
+	// names the one its deltas actually used, which a tool call since then may
+	// have left behind.
+	env.Block = proseBlock(turnID+":assistant", ts.blockSegment(ev.Detail == "delta"))
 	content := redactText(ev.Content)
 
 	if ev.Detail == "delta" {
