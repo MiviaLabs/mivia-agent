@@ -25,7 +25,7 @@ VERSION_LDFLAGS := -X $(VERSION_PKG).Commit=$(COMMIT) -X $(VERSION_PKG).Dirty=$(
 	secret-scan docs-check semgrep semgrep-validate semgrep-test \
 	hook-test agent-hook-test test-quality structure-check import-layers-check timeout-saturation-check request-deadline-check commit-check go-check verify-go test test-changed race vet build tidy fmt fmt-check \
 	validate-invariants subprocess-stdin-check invariants mutation diff-coverage verifier-integration smoke release release-test \
-	prose-check live-auth-smoke live-chat-smoke live-smoke
+	prose-check wire-vocabulary-check live-auth-smoke live-chat-smoke live-smoke
 
 help:
 	@printf '%s\n' \
@@ -36,6 +36,7 @@ help:
 		'  make test-quality      Inspect Go test quality and anti-fake-work gates' \
 		'  make validate-invariants  Verify all test refs in .mivia/invariants.md exist' \
 		'  make subprocess-stdin-check  Refuse a subprocess search that reads stdin' \
+		'  make wire-vocabulary-check  Hold every copy of the chat event vocabulary equal' \
 		'  make invariants        Run all invariant tests (TUI, agent, security)' \
 		'  make pre-commit        Run the committed pre-commit hook' \
 		'  make pre-push          Run the committed pre-push hook' \
@@ -81,6 +82,7 @@ install-hooks hooks:
 # verifier-integration`.
 verify: verify-agent docs-check release-test secret-scan structure-check \
 	import-layers-check subprocess-stdin-check timeout-saturation-check request-deadline-check \
+	wire-vocabulary-check \
 	semgrep-validate semgrep-test \
 	hook-test agent-hook-test test-quality validate-invariants semgrep verify-go
 	@python3 scripts/check_mutation.py --probe
@@ -98,6 +100,11 @@ validate-invariants:
 	@echo "Validating invariant test references in .mivia/invariants.md..."
 	@python3 scripts/test_validate_invariants.py
 	@python3 scripts/validate_invariants.py
+
+wire-vocabulary-check:
+	@echo "Checking the mivia.chat.v1 event vocabulary against api/contracts..."
+	@python3 scripts/test_check_wire_vocabulary.py
+	@python3 scripts/check_wire_vocabulary.py
 
 docs-check:
 	@scripts/docs-check

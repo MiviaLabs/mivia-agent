@@ -1,0 +1,8 @@
+{
+  "description": "Keeps every prose copy of the mivia.chat.v1 event vocabulary equal to the recorded contract. The Go event table and the contract are held equal by internal/chatsync/wire_events_test.go; this file governs the copies a reader can reach that Go cannot see.",
+  "contract": "api/contracts/chat-sessions.v1.json",
+  "scanRoots": ["docs", ".agents", ".mivia", "api", "README.md", "AGENTS.md", "CLAUDE.md"],
+  "excludeDirs": [".git", "node_modules", "vendor"],
+  "enumeratingDocs": ["docs/product/chat-sync-wire.md"],
+  "exemptFiles": []
+}

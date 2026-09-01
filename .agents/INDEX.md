@@ -144,6 +144,7 @@ Machine-readable hook and agent policy:
 | `.mivia/policy/required-paths.json` | Mandatory repository directories and configuration paths |
 | `.mivia/policy/invariant-skips.json` | Allowlisted OS-capability skips in invariant tests |
 | `.mivia/policy/test-skips.json` | Allowlisted test skips and unreviewed-skip prevention |
+| `.mivia/policy/wire-vocabulary.json` | Files that restate the `mivia.chat.v1` event vocabulary and the contract they must equal |
 | `.mivia/policy/mutation/*.json` | Per-package mutation kill-rate floors and audited denylists |
 
 ## Quality
