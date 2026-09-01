@@ -644,4 +644,27 @@ rules:
     paths:
       include:
         - /**/*.go
-    pattern-regex: 'for[^\n{]*!\s*utf8\.ValidString\('
+    pattern-either:
+      # Shape 1: the check IS the loop condition, on the `for` line itself.
+      - pattern-regex: 'for[^\n{]*!\s*utf8\.ValidString\('
+      # Shape 2: the check sits anywhere INSIDE the body of a loop that walks
+      # an index downward. internal/hooks/protocol.go carried exactly this
+      # before 04f36f5b (`for i := limit - 1; ...; i--` with
+      # `utf8.ValidString(s[:i])` two lines below), and a rule keyed on the
+      # `for` line alone could not see it. The mechanism is identical: a
+      # shrinking cut re-validated over the whole prefix.
+      - patterns:
+          - pattern: utf8.ValidString(...)
+          - pattern-either:
+              - pattern-inside: |
+                  for ...; ...; $I-- {
+                    ...
+                  }
+              - pattern-inside: |
+                  for ...; ...; $I -= $N {
+                    ...
+                  }
+              - pattern-inside: |
+                  for ...; ...; $I = $I - $N {
+                    ...
+                  }
