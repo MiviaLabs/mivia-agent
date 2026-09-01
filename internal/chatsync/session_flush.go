@@ -184,6 +184,12 @@ drained:
 	s.mu.Lock()
 	wireEvents := s.projector.Flush(s.currentDrops())
 	if len(wireEvents) > 0 {
+		// Deliberately unreported, unlike the append hop in processEvent.
+		// This is the final drop marker on a session that is shutting down:
+		// the counters are process-local, so a loss recorded here reaches no
+		// reader before the process exits. appendLocked still rolls the
+		// watermark back, so nothing is double-counted if the outbox is
+		// re-opened by a later run.
 		_ = s.appendLocked(wireEvents)
 	}
 	s.mu.Unlock()
