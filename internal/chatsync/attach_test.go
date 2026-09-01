@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -203,6 +204,93 @@ func TestFlushOutboxAdvancesCursorOnAck(t *testing.T) {
 	unflushed, _ := ob.UnflushedEvents()
 	if len(unflushed) != 0 {
 		t.Errorf("unflushed remaining = %d, want 0", len(unflushed))
+	}
+}
+
+// TestFlushOutboxChunksBatchesAtTheServerCap pins the fix for a live bug
+// found dogfooding [sync].stream_assistant = true: the real staging API
+// rejects any AppendEvents batch over 100 events with a 400 "events must
+// contain no more than 100 elements" - and that specific 400 is NOT a
+// sequence complaint, so handleBadRequest's caller falls straight to
+// poison(), permanently stopping the sync session for the rest of the
+// process. A local outbox with more than 100 events unflushed (easy once
+// streaming multiplies event count) used to send them all in one request and
+// poison itself on its very next flush. This mock enforces the same 100-cap
+// the real API does; FlushOutbox must chunk under it and still deliver
+// everything.
+func TestFlushOutboxChunksBatchesAtTheServerCap(t *testing.T) {
+	var mu sync.Mutex
+	var batchSizes []int
+	totalReceived := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/chat-sessions/{id}/events", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Events []EventItem `json:"events"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if len(req.Events) > 100 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(ErrorEnvelope{
+				StatusCode: 400,
+				Error:      "Bad Request",
+				Message:    json.RawMessage(`"events must contain no more than 100 elements"`),
+			})
+			return
+		}
+		mu.Lock()
+		batchSizes = append(batchSizes, len(req.Events))
+		totalReceived += len(req.Events)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(AppendResult{
+			InsertedCount: len(req.Events),
+			LastSeq:       req.Events[len(req.Events)-1].Seq,
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	client := newTestClient(t, ClientOptions{BaseURL: srv.URL})
+	outboxDir := filepath.Join(t.TempDir(), "outbox")
+	ob, _ := OpenOutbox(outboxDir, 1000)
+	defer ob.Close()
+
+	const eventCount = 250
+	wireEvents := make([]WireEvent, eventCount)
+	for i := 0; i < eventCount; i++ {
+		wireEvents[i] = WireEvent{
+			Seq: int64(i + 1), Type: TypeAssistantDelta,
+			Payload: &AssistantDeltaPayload{Text: "x", Index: i},
+		}
+	}
+	if err := ob.Append(wireEvents...); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	n, err := FlushOutbox(context.Background(), client, ob, "sess-chunked-1")
+	if err != nil {
+		t.Fatalf("FlushOutbox: %v", err)
+	}
+	if n != eventCount {
+		t.Errorf("FlushOutbox returned %d, want %d", n, eventCount)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if totalReceived != eventCount {
+		t.Errorf("server received %d events total, want %d", totalReceived, eventCount)
+	}
+	for _, size := range batchSizes {
+		if size > 100 {
+			t.Errorf("a batch of size %d reached the server, want every batch <= 100", size)
+		}
+	}
+	if len(batchSizes) < 3 {
+		t.Errorf("batchSizes = %v, want at least 3 requests to cover %d events at <=100 each", batchSizes, eventCount)
+	}
+	if ob.Cursor().FlushedSeq != eventCount {
+		t.Errorf("cursor = %d, want %d", ob.Cursor().FlushedSeq, eventCount)
 	}
 }
 

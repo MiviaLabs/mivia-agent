@@ -85,41 +85,75 @@ func AttachSession(ctx context.Context, client *Client, outbox *Outbox, params C
 	}, nil
 }
 
-// FlushOutbox sends all unflushed events from the outbox to the remote server.
-//
-// The cursor advances only over events the server actually took, never to the
-// session's high-water mark - see resolveAck. If a 409 Conflict is returned it
-// returns ErrConflict so the session can stop.
-func FlushOutbox(ctx context.Context, client *Client, outbox *Outbox, sessionID string) (int, error) {
-	unflushed, err := outbox.UnflushedEvents()
-	if err != nil {
-		return 0, fmt.Errorf("read unflushed events: %w", err)
-	}
-	if len(unflushed) == 0 {
-		return 0, nil
-	}
+// maxAppendBatch caps how many events one AppendEvents request carries. The
+// server enforces this itself - a probe against the real staging API
+// returned a 400 "events must contain no more than 100 elements" for any
+// larger batch - and critically, that specific 400 does NOT match
+// handleBadRequest's IsSequenceComplaint check, so an oversized batch does
+// not get the gap-rebase retry path: it falls straight to poison(), which
+// stops the sync session PERMANENTLY for the rest of the process. A local
+// outbox with more than 100 events unflushed (easy once
+// [sync].stream_assistant multiplies event count, or on the final Stop
+// flush after periodic mid-turn flushes fell behind) would poison itself on
+// its very next flush attempt. FlushOutbox must never send more than this
+// many events in one request.
+const maxAppendBatch = 100
 
-	items := make([]EventItem, len(unflushed))
-	for i, se := range unflushed {
-		items[i] = EventItem{
-			Seq:     se.Seq,
-			Type:    se.Type,
-			Payload: se.Payload,
+// FlushOutbox sends all unflushed events from the outbox to the remote
+// server, in batches of at most maxAppendBatch events.
+//
+// The cursor advances only over events the server actually took for THAT
+// batch, never to the session's high-water mark - see resolveAck. Each batch
+// gets its own ack and cursor advance, so a failure partway through a large
+// backlog leaves the cursor at the last successfully acked batch, not at 0:
+// the next flush attempt (this call, retried, or the periodic ticker) resumes
+// from there rather than resending what already landed. If a 409 Conflict is
+// returned it returns ErrConflict so the session can stop.
+func FlushOutbox(ctx context.Context, client *Client, outbox *Outbox, sessionID string) (int, error) {
+	total := 0
+	for {
+		unflushed, err := outbox.UnflushedEvents()
+		if err != nil {
+			return total, fmt.Errorf("read unflushed events: %w", err)
+		}
+		if len(unflushed) == 0 {
+			return total, nil
+		}
+		if ctx.Err() != nil {
+			return total, ctx.Err()
+		}
+
+		n := len(unflushed)
+		if n > maxAppendBatch {
+			n = maxAppendBatch
+		}
+		chunk := unflushed[:n]
+
+		items := make([]EventItem, len(chunk))
+		for i, se := range chunk {
+			items[i] = EventItem{
+				Seq:     se.Seq,
+				Type:    se.Type,
+				Payload: se.Payload,
+			}
+		}
+
+		res, err := client.AppendEvents(ctx, sessionID, items)
+		if err != nil {
+			return total, err
+		}
+
+		ackSeq, err := resolveAck(ctx, client, sessionID, chunk, res)
+		if err != nil {
+			return total, err
+		}
+		if err := outbox.AdvanceCursor(ackSeq); err != nil {
+			return total, fmt.Errorf("advance cursor: %w", err)
+		}
+		total += res.InsertedCount
+
+		if n < maxAppendBatch {
+			return total, nil
 		}
 	}
-
-	res, err := client.AppendEvents(ctx, sessionID, items)
-	if err != nil {
-		return 0, err
-	}
-
-	ackSeq, err := resolveAck(ctx, client, sessionID, unflushed, res)
-	if err != nil {
-		return 0, err
-	}
-	if err := outbox.AdvanceCursor(ackSeq); err != nil {
-		return 0, fmt.Errorf("advance cursor: %w", err)
-	}
-
-	return res.InsertedCount, nil
 }
