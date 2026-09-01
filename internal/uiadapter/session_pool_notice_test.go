@@ -12,6 +12,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/chatsync"
+	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/uiadapter"
@@ -62,7 +63,7 @@ func TestSessionPoolNoticesSyncIsRunning(t *testing.T) {
 	sess.SessionDir = t.TempDir()
 	sess.EventBus = events.New()
 
-	pool := uiadapter.NewSessionPool(sess, res, nil, false)
+	pool := uiadapter.NewSessionPool(sess, res, &cliagents.AgentSessionState{WorkspaceRoot: t.TempDir()}, false)
 	var notices ports.Notices = pool
 
 	ev := waitForNotice(t, notices.Notices(), "a started sync")
@@ -114,7 +115,7 @@ func TestSessionPoolNoticesSyncStop(t *testing.T) {
 	sess.SessionDir = t.TempDir()
 	sess.EventBus = events.New()
 
-	pool := uiadapter.NewSessionPool(sess, res, nil, false)
+	pool := uiadapter.NewSessionPool(sess, res, &cliagents.AgentSessionState{WorkspaceRoot: t.TempDir()}, false)
 	ch := pool.Notices()
 	waitForNotice(t, ch, "a started sync")
 

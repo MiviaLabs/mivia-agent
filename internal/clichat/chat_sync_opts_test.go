@@ -7,6 +7,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/chatsync"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 // TestCLISyncOptionsCarriesStreamAssistant pins that sync.stream_assistant
@@ -91,7 +92,7 @@ func TestCLISyncOptionsCarriesThePersistedWriterID(t *testing.T) {
 		t.Fatal("WriterID is unset, so attach can never distinguish our own events from a foreign writer's")
 	}
 
-	stored, err := chatsync.LoadOrCreateIdentity(chatsync.IdentityDir(wsRoot), chatsync.IdentityKey(sess.SessionID))
+	stored, err := chatsync.LoadOrCreateIdentity(chatsync.IdentityDir(workspace.NamespacePath(wsRoot)), chatsync.IdentityKey(sess.SessionID))
 	if err != nil {
 		t.Fatalf("LoadOrCreateIdentity: %v", err)
 	}
@@ -100,6 +101,28 @@ func TestCLISyncOptionsCarriesThePersistedWriterID(t *testing.T) {
 	}
 	if second := cliSyncOptions(sess, wsRoot, res, nil); second.ProjectorOptions.WriterID != first.ProjectorOptions.WriterID {
 		t.Errorf("WriterID is not stable across runs: %q then %q; every restart would fork", first.ProjectorOptions.WriterID, second.ProjectorOptions.WriterID)
+	}
+}
+
+// TestCLISyncOptionsEmptyWSRootFailsClosed pins that an empty wsRoot yields no
+// OutboxDir/Identity rather than a RELATIVE path off the process's cwd.
+// workspace.NamespacePath("") returns the relative ".mivia" (documented,
+// correct behaviour for its other callers), so cliSyncOptions must check
+// wsRoot itself before namespacing it - otherwise chatsync.IdentityDir and
+// OutboxDirFor would happily accept ".mivia" as a real anchor and write
+// wherever the process happened to be running, exactly the leak that put
+// real conversation transcripts inside this repository's own checkout.
+func TestCLISyncOptionsEmptyWSRootFailsClosed(t *testing.T) {
+	sess := &chat.Session{SessionID: "principal-empty-wsroot"}
+	res := &config.Resolved{}
+
+	opts := cliSyncOptions(sess, "", res, nil)
+
+	if opts.OutboxDir != "" {
+		t.Errorf("OutboxDir = %q, want empty; an empty wsRoot must not resolve to a relative path", opts.OutboxDir)
+	}
+	if !opts.Identity.IsZero() {
+		t.Errorf("Identity = %+v, want zero; an empty wsRoot must not wire a durable identity write-back", opts.Identity)
 	}
 }
 

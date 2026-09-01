@@ -7,6 +7,7 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/chatsync"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
 
 // TestPoolSyncOptionsCarriesStreamAssistant pins that sync.stream_assistant
@@ -85,7 +86,7 @@ func TestPoolSyncOptionsCarriesThePersistedWriterID(t *testing.T) {
 		t.Fatal("WriterID is unset, so attach can never distinguish our own events from a foreign writer's")
 	}
 
-	stored, err := chatsync.LoadOrCreateIdentity(chatsync.IdentityDir(wsRoot), chatsync.IdentityKey(sess.SessionID))
+	stored, err := chatsync.LoadOrCreateIdentity(chatsync.IdentityDir(workspace.NamespacePath(wsRoot)), chatsync.IdentityKey(sess.SessionID))
 	if err != nil {
 		t.Fatalf("LoadOrCreateIdentity: %v", err)
 	}
@@ -94,6 +95,24 @@ func TestPoolSyncOptionsCarriesThePersistedWriterID(t *testing.T) {
 	}
 	if second := poolSyncOptions(sess, sess.SessionID, wsRoot, &config.Resolved{}, nil); second.ProjectorOptions.WriterID != first.ProjectorOptions.WriterID {
 		t.Errorf("WriterID is not stable across runs: %q then %q; every restart would fork", first.ProjectorOptions.WriterID, second.ProjectorOptions.WriterID)
+	}
+}
+
+// TestPoolSyncOptionsEmptyWSRootFailsClosed is the TUI half of
+// clichat.TestCLISyncOptionsEmptyWSRootFailsClosed - pins that an empty
+// wsRoot (e.g. a pool built with no agentState, as several test helpers in
+// this package used to do) yields no OutboxDir/Identity rather than a
+// RELATIVE path off the process's cwd.
+func TestPoolSyncOptionsEmptyWSRootFailsClosed(t *testing.T) {
+	sess := &chat.Session{SessionID: "principal-pool-empty-wsroot"}
+
+	opts := poolSyncOptions(sess, sess.SessionID, "", &config.Resolved{}, nil)
+
+	if opts.OutboxDir != "" {
+		t.Errorf("OutboxDir = %q, want empty; an empty wsRoot must not resolve to a relative path", opts.OutboxDir)
+	}
+	if !opts.Identity.IsZero() {
+		t.Errorf("Identity = %+v, want zero; an empty wsRoot must not wire a durable identity write-back", opts.Identity)
 	}
 }
 

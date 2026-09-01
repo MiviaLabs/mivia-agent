@@ -14,6 +14,7 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/chatsync"
+	"github.com/MiviaLabs/mivia-agent/internal/cliagents"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 	"github.com/MiviaLabs/mivia-agent/internal/miviaauth"
@@ -84,7 +85,7 @@ func TestSessionPool_SyncPerPooledSession(t *testing.T) {
 	sess1.SessionDir = tmpDir
 	sess1.EventBus = bus
 
-	pool := uiadapter.NewSessionPool(sess1, res, nil, false)
+	pool := uiadapter.NewSessionPool(sess1, res, &cliagents.AgentSessionState{WorkspaceRoot: t.TempDir()}, false)
 
 	conv2, err := pool.CreateFresh()
 	if err != nil || conv2 == nil {
@@ -157,7 +158,7 @@ func TestSessionPool_SyncAuthenticatesEveryRequest(t *testing.T) {
 	sess1.SessionDir = t.TempDir()
 	sess1.EventBus = events.New()
 
-	pool := uiadapter.NewSessionPool(sess1, res, nil, false)
+	pool := uiadapter.NewSessionPool(sess1, res, &cliagents.AgentSessionState{WorkspaceRoot: t.TempDir()}, false)
 	time.Sleep(50 * time.Millisecond)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -208,7 +209,7 @@ func TestSessionPool_ReleaseLeasesFlushesBusBeforeStopping(t *testing.T) {
 	sess1.SessionDir = t.TempDir()
 	sess1.EventBus = bus
 
-	pool := uiadapter.NewSessionPool(sess1, res, nil, false)
+	pool := uiadapter.NewSessionPool(sess1, res, &cliagents.AgentSessionState{WorkspaceRoot: t.TempDir()}, false)
 	time.Sleep(50 * time.Millisecond) // let the initial session create land
 
 	const turnID = "turn:1"
