@@ -280,6 +280,7 @@
     "internal/newtui": [
       "internal/agent",
       "internal/chat",
+      "internal/chatsync",
       "internal/cli",
       "internal/config",
       "internal/ui/app",
@@ -422,6 +423,7 @@
       "internal/ui/component/approval",
       "internal/ui/component/blackboard",
       "internal/ui/component/composer",
+      "internal/ui/component/field",
       "internal/ui/component/history",
       "internal/ui/component/mark",
       "internal/ui/component/picker",
@@ -480,6 +482,7 @@
       "internal/composition",
       "internal/config",
       "internal/contextstate",
+      "internal/events",
       "internal/hooks",
       "internal/hooksession",
       "internal/mcp",
