@@ -8,12 +8,56 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 )
 
-// globalBus is set once by runTUI and used by emitSubagentProgress to
-// publish subagent events onto the EventBus. This replaces the global
-// callback pattern with persistent subscription.
-var globalBusState struct {
+// sessionBuses is the session-keyed bus registry that replaced the dead
+// global bus singleton. Subagent lifecycle events are attributed to a
+// SESSION (agent.EventOrigin.SessionID, stamped on every producer path -
+// INV-HUB-5), not to the process, so the registry is keyed the same way:
+// a session with no registered bus (never dispatched, or already torn
+// down) gets no publish, and a session that IS registered gets only ITS
+// OWN events, never another session's running in the same process.
+var sessionBuses struct {
 	sync.RWMutex
-	bus *events.Bus
+	m map[string]*events.Bus
+}
+
+// RegisterSessionBus binds sessionID to bus so emitSubagentProgress can
+// publish that session's subagent lifecycle events onto it. A re-register
+// under the same sessionID replaces whatever was bound before.
+//
+// The returned release func unbinds the registration, but only if the
+// stored bus still equals the one this call registered (match-before-
+// delete): a later re-register (a new turn, a new dispatch) followed by
+// an earlier turn's stale release must not unbind the replacement. release
+// is idempotent and safe to call from any goroutine, including
+// concurrently with another release for the same sessionID.
+func RegisterSessionBus(sessionID string, bus *events.Bus) (release func()) {
+	sessionBuses.Lock()
+	if sessionBuses.m == nil {
+		sessionBuses.m = make(map[string]*events.Bus)
+	}
+	sessionBuses.m[sessionID] = bus
+	sessionBuses.Unlock()
+
+	var released atomic.Bool
+	return func() {
+		if !released.CompareAndSwap(false, true) {
+			return
+		}
+		sessionBuses.Lock()
+		if sessionBuses.m[sessionID] == bus {
+			delete(sessionBuses.m, sessionID)
+		}
+		sessionBuses.Unlock()
+	}
+}
+
+// LookupSessionBus returns the bus registered for sessionID, or nil if none
+// is bound.
+func LookupSessionBus(sessionID string) *events.Bus {
+	sessionBuses.RLock()
+	bus := sessionBuses.m[sessionID]
+	sessionBuses.RUnlock()
+	return bus
 }
 
 // subagentProgress sinks nested multi_step tool/heartbeat events into the
@@ -56,6 +100,23 @@ func ClearSubagentProgress(token uint64) {
 	subagentProgress.mu.Unlock()
 }
 
+// busPublishableKind is the fail-closed allowlist of subagent EventKinds
+// that may reach a session's chatsync bus. Only the four LIFECYCLE kinds
+// (start/end of a nested tool call, a periodic heartbeat, and the run-level
+// terminal signal) are structural progress - never model output. A
+// subagent's EventThinking/EventAssistant content stays LOCAL to this
+// process's UI sink (the fn(e) call above, unconditional for every kind)
+// and is deliberately never published here, so a remote chat-sync viewer
+// never sees a subagent's reasoning or prose, only that it is working.
+func busPublishableKind(kind agent.EventKind) bool {
+	switch kind {
+	case agent.EventSubagentStart, agent.EventSubagentEnd, agent.EventSubagentHeartbeat, agent.EventSubagentDone:
+		return true
+	default:
+		return false
+	}
+}
+
 func emitSubagentProgress(e agent.Event) {
 	subagentProgress.mu.RLock()
 	fn := subagentProgress.fn
@@ -63,39 +124,35 @@ func emitSubagentProgress(e agent.Event) {
 	if fn != nil {
 		fn(e)
 	}
-	// Also publish to EventBus (if set), attributed to the producing agent.
-	globalBusState.RLock()
-	bus := globalBusState.bus
-	globalBusState.RUnlock()
-	if bus != nil {
-		ev := events.NewEventFromAgentParts(
-			events.Kind(e.Kind),
-			e.ToolCallID,
-			e.Name,
-			e.Detail,
-			e.Content,
-			e.Input,
-			e.Output,
-		).WithAgentAttribution(e.Origin.TaskID, e.Origin.Agent, e.Origin.Depth)
-		// The session and turn come off the ORIGIN, because this sink is
-		// package-level and has none of its own. Without them the event is
-		// published with an empty SessionID and internal/hub's receiver drops
-		// it (externalEventBelongsToSession), so a second live surface saw the
-		// root loop's tool calls and none of its subagents'.
-		ev.SessionID = e.Origin.SessionID
-		ev.TurnID = e.Origin.TurnID
-		if e.Identity != nil {
-			identity := *e.Identity
-			ev.Identity = &identity
-		}
-		bus.Publish(ev)
+	if !busPublishableKind(e.Kind) {
+		return
 	}
-}
-
-// SetGlobalBus sets the global EventBus reference used by emitSubagentProgress.
-// Called once from runTUI.
-func SetGlobalBus(bus *events.Bus) {
-	globalBusState.Lock()
-	globalBusState.bus = bus
-	globalBusState.Unlock()
+	if e.Origin.SessionID == "" {
+		return
+	}
+	bus := LookupSessionBus(e.Origin.SessionID)
+	if bus == nil {
+		return
+	}
+	ev := events.NewEventFromAgentParts(
+		events.Kind(e.Kind),
+		e.ToolCallID,
+		e.Name,
+		e.Detail,
+		e.Content,
+		e.Input,
+		e.Output,
+	).WithAgentAttribution(e.Origin.TaskID, e.Origin.Agent, e.Origin.Depth)
+	// The session and turn come off the ORIGIN, because this sink is
+	// package-level and has none of its own. Without them the event is
+	// published with an empty SessionID and internal/hub's receiver drops
+	// it (externalEventBelongsToSession), so a second live surface saw the
+	// root loop's tool calls and none of its subagents'.
+	ev.SessionID = e.Origin.SessionID
+	ev.TurnID = e.Origin.TurnID
+	if e.Identity != nil {
+		identity := *e.Identity
+		ev.Identity = &identity
+	}
+	bus.Publish(ev)
 }

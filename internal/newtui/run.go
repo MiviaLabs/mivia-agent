@@ -26,6 +26,7 @@ func registerSubagentProgress() {
 			cli.ClearSubagentProgress(token)
 		}
 	}
+	uiadapter.SessionBusRegistrar = cli.RegisterSessionBus
 }
 
 // RunTUI is the alternative launcher that wires the new Mivia UI.

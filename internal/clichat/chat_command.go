@@ -439,6 +439,13 @@ func dispatchChatSurface(invocation chatInvocation, sess *chat.Session, wsRoot s
 	// Before any surface runs a turn: every surface reaches this function, and
 	// a publish with no bus is a silent no-op. See attachSessionEventBus.
 	attachSessionEventBus(sess)
+	// Registers this session's bus in the session-keyed registry so
+	// emitSubagentProgress (package-level, no session of its own) can
+	// publish this session's subagent lifecycle events onto it. This is
+	// the single choke point -p/REPL/TUI all pass through - TUILauncherFunc
+	// does not re-enter it - so every surface gets the binding exactly
+	// once per dispatch, undone unconditionally on return.
+	defer RegisterSessionBus(sess.SessionID, sess.EventBus)()
 	defer sess.ReleaseContextLease(context.Background())
 	if invocation.jsonMode {
 		if err := validateJSONModeInvocation(invocation); err != nil {

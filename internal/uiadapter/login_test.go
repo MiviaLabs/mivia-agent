@@ -140,6 +140,23 @@ func statusErr(code int, detail string) error {
 	return &miviaauth.StatusError{StatusCode: code, FromAPI: true, Detail: detail}
 }
 
+// TestCompleteLoginDefaultServiceErrorIsReported covers the seam-fallback
+// branch: a CommandRunner built by the normal constructor carries a nil
+// loginService, so CompleteLogin resolves miviaauth.DefaultService itself.
+// With HOME empty there is no token-file path, so the default service errors
+// before any network call and the failure surfaces as the command outcome.
+func TestCompleteLoginDefaultServiceErrorIsReported(t *testing.T) {
+	t.Setenv("HOME", "")
+	r := NewCommandRunner(nil, nil, nil)
+	out := r.CompleteLogin(context.Background(), "user@example.com", []byte("hunter2"))
+	if out.Err == "" {
+		t.Fatal("expected an error outcome when the default service cannot resolve")
+	}
+	if strings.Contains(out.Err, "hunter2") {
+		t.Error("error text must never carry the password")
+	}
+}
+
 func TestCompleteLoginMapsServerErrors(t *testing.T) {
 	cases := []struct {
 		name     string

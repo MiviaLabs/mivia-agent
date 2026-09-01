@@ -58,6 +58,17 @@ func (r *CommandRunner) CompleteLogin(ctx context.Context, email string, passwor
 	if err := svc.Login(ctx, email, password); err != nil {
 		return ports.CommandOutcome{Err: loginErrorText(err)}
 	}
+	// Closes the login-after-session-start sync gap: any session already
+	// pooled before this login (chat started while logged out) had no
+	// chat-sync session, because attachSyncLocked's active-sync check was
+	// false at construction time. A successful login re-checks it for
+	// every pooled session. r.pool is non-nil for every CommandRunner this
+	// package constructs (NewCommandRunner always calls NewSessionPool);
+	// the nil guard just makes this safe for a CommandRunner built by
+	// hand with no pool at all.
+	if r.pool != nil {
+		r.pool.ReattachSyncAfterLogin()
+	}
 	return ports.CommandOutcome{Notice: "Logged in as " + email + "."}
 }
 
