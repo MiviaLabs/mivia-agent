@@ -256,13 +256,19 @@ func TestSubagentProseIsRedacted(t *testing.T) {
 	aggText := agg[0].Payload.(*SubagentAssistantMessagePayload).Text
 	assertRedacted(t, "assistant message", aggText)
 
-	// Thinking is not gated the same way: it has no settled aggregate to fall
-	// back to, so withholding its fragments would withhold it entirely. Each
-	// fragment is redacted on its own, which is weaker than a message-sized
-	// boundary and is why include_thinking is off by default.
+	// Thinking withholds its TEXT under a policy rather than being suppressed:
+	// it has no settled aggregate to fall back to, so suppressing would hide
+	// that the agent is reasoning at all. Redacting per fragment cannot work,
+	// because a pattern spanning two fragments matches neither.
 	think := p.Project(subagentEvent(events.KindThinking, "task-1", secret, ""))
-	thinkText := think[0].Payload.(*SubagentThinkingDeltaPayload).Text
-	assertRedacted(t, "thinking delta", thinkText)
+	thinkPayload := think[0].Payload.(*SubagentThinkingDeltaPayload)
+	if thinkPayload.Text != "" {
+		t.Errorf("thinking text = %q, want empty under a redaction policy", thinkPayload.Text)
+	}
+	if thinkPayload.Bytes != len(secret) {
+		t.Errorf("thinking bytes = %d, want the real size so a viewer still shows activity",
+			thinkPayload.Bytes)
+	}
 }
 
 func assertRedacted(t *testing.T, label, got string) {
@@ -640,5 +646,70 @@ func TestStreamingStillRunsWithNoPolicy(t *testing.T) {
 	p := NewProjector("sess-1", 0, proseOpts())
 	if got := p.Project(rootEvent(events.KindAssistant, "hello", "delta")); len(got) != 1 {
 		t.Fatalf("delta produced %d wire events with no policy, want 1", len(got))
+	}
+}
+
+// TestThinkingWithholdsTextUnderAPolicyOnTheRootPath covers the same hole on
+// the root loop, which has its own copy of the decision.
+//
+// Every thinking event is a fragment - there is no settled thinking message -
+// so the per-fragment redaction that assistant text falls back to has nothing
+// to fall back TO here. A pattern spanning two fragments matches neither, and
+// the secret reaches the wire verbatim.
+func TestThinkingWithholdsTextUnderAPolicyOnTheRootPath(t *testing.T) {
+	pol, err := redact.Compile([]string{`sk-live-[A-Za-z0-9]{10,}`}, nil, "[redacted]")
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	old := redact.Current()
+	redact.SetPolicy(pol)
+	t.Cleanup(func() { redact.SetPolicy(old) })
+
+	p := NewProjector("sess-1", 0, proseOpts())
+
+	// Split across fragments, exactly as a provider streams it.
+	for _, frag := range []string{"the key is sk-live-", "AbCdEfGhIjKl", " and that is it"} {
+		got := p.Project(rootEvent(events.KindThinking, frag, ""))
+		payload := got[0].Payload.(*ThinkingDeltaPayload)
+		if strings.Contains(payload.Text, "sk-live-") || payload.Text != "" {
+			t.Fatalf("thinking text %q reached the wire under a policy", payload.Text)
+		}
+		if payload.Bytes != len(frag) {
+			t.Errorf("bytes = %d, want %d - activity must still be visible", payload.Bytes, len(frag))
+		}
+	}
+}
+
+// TestAggregateFollowsWhatWasSentNotTheGates is the mid-turn policy change.
+//
+// A workflow tool can install a redaction policy while a turn is running, so
+// the gates are not constant for the length of a turn. The settled message
+// must therefore describe what actually reached the wire. Re-evaluating the
+// gates emptied a message whose fragments were never sent, and the answer was
+// then unrecoverable.
+func TestAggregateFollowsWhatWasSentNotTheGates(t *testing.T) {
+	old := redact.Current()
+	t.Cleanup(func() { redact.SetPolicy(old) })
+	redact.SetPolicy(nil)
+
+	p := NewProjector("sess-1", 0, proseOpts())
+	if got := p.Project(rootEvent(events.KindAssistant, "streamed ", "delta")); len(got) != 1 {
+		t.Fatalf("delta produced %d wire events with no policy, want 1", len(got))
+	}
+
+	// A policy arrives mid-turn.
+	pol, err := redact.Compile([]string{`never-matches-anything`}, nil, "[redacted]")
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	redact.SetPolicy(pol)
+
+	agg := p.Project(rootEvent(events.KindAssistant, "streamed answer", ""))
+	payload := agg[0].Payload.(*AssistantMessagePayload)
+	if payload.Fragments != 1 {
+		t.Errorf("fragments = %d, want 1 - one delta really was sent", payload.Fragments)
+	}
+	if payload.Text != "" {
+		t.Errorf("text = %q, want empty - the viewer holds the fragment", payload.Text)
 	}
 }
