@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/chatsync"
@@ -127,7 +126,7 @@ func attachCLISync(sess *chat.Session, res *config.Resolved) func() {
 		// Bus.Flush blocks until every event published before this call has
 		// been delivered to HandleEvent, which closes that gap deterministically.
 		sess.EventBus.Flush()
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), chatsync.RecommendedStopTimeout)
 		defer cancel()
 		_ = syncSess.Stop(ctx)
 	}

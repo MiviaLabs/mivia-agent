@@ -86,6 +86,24 @@ type SessionOptions struct {
 // defaultEventBufSize is the handler-to-worker channel depth.
 const defaultEventBufSize = 1024
 
+// RecommendedStopTimeout is the ctx budget a caller should give Stop for its
+// FINAL flush - one real network round trip carrying whatever backlog is
+// still unflushed, in a single request (FlushOutbox sends the whole
+// backlog as one batch, uncapped). 2 seconds - the previous ad-hoc value at
+// both call sites - is not that budget: it is sized for a small, mostly-
+// idle turn's tail, and a real remote server plus a genuinely accumulated
+// backlog (periodic mid-turn flushes cannot always keep pace with local
+// event generation, especially once [sync].stream_assistant multiplies
+// event count 5-10x) can legitimately take several seconds. A ctx that
+// expires first makes Stop return early via its timedOut path, which hands
+// the outbox close to a background goroutine the caller's own process exit
+// then kills - so the accumulated backlog is not merely delayed, it is
+// permanently lost: nothing re-opens a one-shot run's outbox directory on a
+// later invocation. 15 seconds is a real chance at that one request
+// without leaving process exit hanging indefinitely on a truly dead
+// network - Stop still returns ctx.Err() if that budget runs out too.
+const RecommendedStopTimeout = 15 * time.Second
+
 func eventBufSize(n int) int {
 	if n <= 0 {
 		return defaultEventBufSize

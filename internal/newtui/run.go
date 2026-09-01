@@ -5,11 +5,11 @@ import (
 	"io"
 	"log"
 	"os"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
+	"github.com/MiviaLabs/mivia-agent/internal/chatsync"
 	"github.com/MiviaLabs/mivia-agent/internal/cli"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/ui/app"
@@ -44,7 +44,12 @@ func RunTUI(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState *
 	// this, any session resumed in the TUI kept a fresh lease behind and the
 	// next process's resume was refused until the lease TTL ran out.
 	defer func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		// chatsync.RecommendedStopTimeout, not a shorter ad-hoc value: this ctx
+		// also bounds each pooled session's final chat-sync flush
+		// (SessionPool.ReleaseLeases), and a real network round trip carrying
+		// a real backlog needs a genuine chance to finish before the process
+		// exits kills it - see the constant's doc comment.
+		ctx, cancel := context.WithTimeout(context.Background(), chatsync.RecommendedStopTimeout)
 		defer cancel()
 		runner.Pool().ReleaseLeases(ctx)
 	}()
