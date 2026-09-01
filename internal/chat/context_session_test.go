@@ -137,7 +137,13 @@ func TestCheckpointFailureDoesNotFallbackToJSONL(t *testing.T) {
 	if _, err := session.SendUser(context.Background(), "question", io.Discard); err == nil {
 		t.Fatal("checkpoint failure was swallowed")
 	}
-	if pub.commits != 1 || prep.discards != 1 || session.MessagesCount() != 0 {
+	// A checkpoint commit failure no longer drops the turn: the exchange is
+	// adopted into memory (question + answer = 2) so it survives until the
+	// next successful commit catches contextHead up - see
+	// adoptUncommittedPlainTurn (context_integration_turn.go). This test's
+	// own point (no legacy JSONL fallback) is the commits/discards pair,
+	// which is unaffected.
+	if pub.commits != 1 || prep.discards != 1 || session.MessagesCount() != 2 {
 		t.Fatalf("commits=%d discards=%d messages=%d", pub.commits, prep.discards, session.MessagesCount())
 	}
 }
