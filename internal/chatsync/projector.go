@@ -10,6 +10,15 @@ import (
 // maxTrackedTurns bounds active turns remembered by the projector.
 const maxTrackedTurns = 64
 
+// maxTrackedLanes bounds subagent runs remembered by the projector.
+//
+// Lane state lives in its own map rather than sharing p.turns under a
+// composite key: a wide dispatch_tasks fan-out would otherwise evict the ROOT
+// turn's own state through the shared LRU, and a turn whose state is gone
+// re-streams its aggregate wrongly. The two bounds are independent for the
+// same reason they are bounds at all - neither may starve the other.
+const maxTrackedLanes = 64
+
 // ProjectorOptions configures a Projector.
 //
 // Settled decision 7 keeps this package a LEAF: it takes values and functions
@@ -55,8 +64,12 @@ type Projector struct {
 	activeSyntheticTurn string
 	turns               map[string]*turnState
 	turnOrder           []string
-	lastDrops           uint64
-	currentTurn         string
+	// lanes holds one turnState per (turn, subagent task). Only the
+	// streaming counters are used; started/done belong to a real turn.
+	lanes       map[string]*turnState
+	laneOrder   []string
+	lastDrops   uint64
+	currentTurn string
 }
 
 // NewProjector constructs a Projector for sessionID starting at initialSeq.
@@ -66,6 +79,38 @@ func NewProjector(sessionID string, initialSeq int64, opts ProjectorOptions) *Pr
 		seq:       initialSeq,
 		opts:      opts,
 		turns:     make(map[string]*turnState),
+		lanes:     make(map[string]*turnState),
+	}
+}
+
+// laneState returns the streaming state of one subagent run within a turn,
+// creating it on first use. Bounded by maxTrackedLanes with the same
+// least-recently-touched eviction p.turn uses.
+func (p *Projector) laneState(turnID, task string) *turnState {
+	// The separator cannot appear in either id, so two different (turn, task)
+	// pairs can never collide on one key.
+	key := turnID + "\x00" + task
+	if ls, ok := p.lanes[key]; ok {
+		p.touchLane(key)
+		return ls
+	}
+	ls := &turnState{}
+	p.lanes[key] = ls
+	p.laneOrder = append(p.laneOrder, key)
+	for len(p.laneOrder) > maxTrackedLanes {
+		delete(p.lanes, p.laneOrder[0])
+		p.laneOrder = p.laneOrder[1:]
+	}
+	return ls
+}
+
+func (p *Projector) touchLane(key string) {
+	for i, cur := range p.laneOrder {
+		if cur == key {
+			p.laneOrder = append(p.laneOrder[:i], p.laneOrder[i+1:]...)
+			p.laneOrder = append(p.laneOrder, key)
+			return
+		}
 	}
 }
 
@@ -162,10 +207,22 @@ func (p *Projector) projectByKind(ev events.Event, turnID string, env Envelope, 
 		return p.projectTurnError(env, ev)
 
 	case events.KindAssistant:
+		// The attribution check MUST come before p.turn(turnID). A subagent's
+		// delta folded into the ROOT turn's state sets ts.streamed and
+		// increments ts.fragments there, and the root's own aggregate then
+		// takes the streamed branch and ships an EMPTY text with a non-zero
+		// fragment count - a blank assistant message in every viewer, for a
+		// root loop that never streamed a token itself.
+		if ev.AgentTask != "" {
+			return p.projectSubagentAssistant(env, turnID, ev)
+		}
 		ts := p.turn(turnID)
 		return p.projectAssistant(env, turnID, ts, ev)
 
 	case events.KindThinking:
+		if ev.AgentTask != "" {
+			return p.projectSubagentThinking(env, turnID, ev)
+		}
 		p.turn(turnID)
 		return p.projectThinking(env, turnID, ev.Content)
 

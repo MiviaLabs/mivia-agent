@@ -79,19 +79,31 @@ var allSubagentEventKindsForTest = []struct {
 	{"subagent_end", agent.EventSubagentEnd, events.KindSubagentEnd, true},
 	{"subagent_heartbeat", agent.EventSubagentHeartbeat, events.KindSubagentHeartbeat, true},
 	{"subagent_done", agent.EventSubagentDone, events.KindSubagentDone, true},
-	{"thinking", agent.EventThinking, events.KindThinking, false},
-	{"assistant", agent.EventAssistant, events.KindAssistant, false},
+	{"thinking", agent.EventThinking, events.KindThinking, true},
+	{"assistant", agent.EventAssistant, events.KindAssistant, true},
+	// A kind deliberately NOT on the allowlist. Without at least one such
+	// row the table would be all-true, and flipping busPublishableKind's
+	// default to `return true` would pass unnoticed - the allowlist would
+	// stop being an allowlist and nothing would say so. A subagent's raw
+	// tool events must reach the bus through the SubagentStart/End mapping
+	// in OnEventForMultiStep, never directly.
+	{"tool_start", agent.EventToolStart, events.KindToolStart, false},
 }
 
 // TestSessionBusRegistry_Allowlist is the mutation-proof allowlist table:
-// each of the four lifecycle kinds reaches its session bus; EventThinking
-// and EventAssistant reach the UI sink but produce ZERO bus events
-// (subagent content stays local - fail-closed privacy).
+// the four lifecycle kinds and the two prose kinds each reach their session
+// bus exactly once, and a kind that is not on the allowlist produces ZERO bus
+// events while still reaching the UI sink.
+//
+// Prose used to be on the zero-bus side of this table. It is published now,
+// under the same redaction, truncation and StreamAssistant/IncludeThinking
+// controls as the root loop's text, so that a remote viewer can open a
+// subagent's thread the way the TUI can. See busPublishableKind.
 //
 // Mutation proof: inverting busPublishableKind's switch (== becomes !=, or
-// the default flips to `return true`) makes this test fail on either half
-// of the table - the four lifecycle rows stop publishing, or the two
-// content rows start leaking onto the bus.
+// the default flips to `return true`) makes this test fail on one half of
+// the table or the other - the six allowed rows stop publishing, or the
+// tool_start row starts leaking onto the bus.
 func TestSessionBusRegistry_Allowlist(t *testing.T) {
 	for _, tc := range allSubagentEventKindsForTest {
 		t.Run(string(tc.name), func(t *testing.T) {

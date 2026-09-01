@@ -44,6 +44,19 @@ sensitive inside a synced session is withheld unless you ask for it:
 3. **Thinking withheld**: The system withholds model reasoning text by default
    (`sync.include_thinking = false`).
 
+These controls apply to a subagent's own output exactly as they apply to the
+root loop's. A subagent runs in its own session, but its prose passes through
+the same redaction, the same truncation budgets, and the same
+`include_thinking` / `stream_assistant` settings. There is no separate
+subagent switch: what leaves this machine must not have two answers.
+
+Subagent prose was formerly withheld from the wire whatever the settings
+said. That made a remote viewer strictly weaker than the local TUI - it could
+list a running subagent but never open it - so the prose now ships under the
+controls above. Operators who already enabled `stream_assistant` or
+`include_thinking` therefore send more text than before WITHOUT changing any
+setting. Set those options to `false` to withhold it.
+
 ## Truncation Budgets
 
 To keep event payloads bounded and prevent network buffer exhaustion, string
@@ -65,7 +78,7 @@ in the envelope `trunc.fields` map.
 
 ## Event Types and Ordering
 
-The sync stream uses 15 structured `mivia.chat.v1.*` event types. The list
+The sync stream uses 18 structured `mivia.chat.v1.*` event types. The list
 below is a copy for reading; the authoritative set is `KnownWireTypes` in
 `internal/chatsync/wire.go`, mirrored in `api/contracts/chat-sessions.v1.json`:
 
@@ -81,9 +94,19 @@ below is a copy for reading; the authoritative set is `KnownWireTypes` in
 - `mivia.chat.v1.subagent.progress`
 - `mivia.chat.v1.subagent.tool.started`
 - `mivia.chat.v1.subagent.tool.ended`
+- `mivia.chat.v1.subagent.assistant.delta`
+- `mivia.chat.v1.subagent.assistant.message`
+- `mivia.chat.v1.subagent.thinking.delta`
 - `mivia.chat.v1.context.compacted`
 - `mivia.chat.v1.sync.dropped`
 - `mivia.chat.v1.sync.forked`
+
+Every subagent type shares one prefix - the version prefix followed by
+`subagent.` - and a subagent's output uses its OWN types rather than the root
+types with `agent` set in the envelope. A viewer can therefore keep a
+subagent out of the main transcript on that prefix alone, including types
+added after the viewer shipped. `envelope.agent.task` names which subagent
+run an event belongs to; two runs of the same agent have different task ids.
 
 Every session maintains a strictly monotonic sequence (`1..N`). If the system
 drops events because of local queue saturation, a `sync.dropped` event consumes

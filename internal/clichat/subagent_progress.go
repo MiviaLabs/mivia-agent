@@ -101,16 +101,26 @@ func ClearSubagentProgress(token uint64) {
 }
 
 // busPublishableKind is the fail-closed allowlist of subagent EventKinds
-// that may reach a session's chatsync bus. Only the four LIFECYCLE kinds
+// that may reach a session's chatsync bus: the four LIFECYCLE kinds
 // (start/end of a nested tool call, a periodic heartbeat, and the run-level
-// terminal signal) are structural progress - never model output. A
-// subagent's EventThinking/EventAssistant content stays LOCAL to this
-// process's UI sink (the fn(e) call above, unconditional for every kind)
-// and is deliberately never published here, so a remote chat-sync viewer
-// never sees a subagent's reasoning or prose, only that it is working.
+// terminal signal) plus the run's own model output.
+//
+// The prose kinds were once excluded on purpose, so that a remote viewer saw
+// only that a subagent was working. That made the remote view strictly worse
+// than the TUI's, which shows a subagent's thread in full - a chat-sync
+// viewer could list a subagent but never open it. Prose is now published,
+// and the existing controls decide what a viewer actually receives: the
+// projector applies the SAME redaction and truncation as the root loop's
+// text, and ProjectorOptions.StreamAssistant / IncludeThinking gate it
+// exactly as they gate the root loop's. There is no separate subagent knob,
+// because "what leaves this machine" should not have two answers.
+//
+// The allowlist stays fail-closed: a kind not named here is not published.
 func busPublishableKind(kind agent.EventKind) bool {
 	switch kind {
 	case agent.EventSubagentStart, agent.EventSubagentEnd, agent.EventSubagentHeartbeat, agent.EventSubagentDone:
+		return true
+	case agent.EventAssistant, agent.EventThinking:
 		return true
 	default:
 		return false
