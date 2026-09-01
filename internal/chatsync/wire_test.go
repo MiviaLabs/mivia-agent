@@ -24,6 +24,7 @@ type contractStruct struct {
 type chatSessionsContract struct {
 	KnownTypes []string                  `json:"knownTypes"`
 	Structs    map[string]contractStruct `json:"structs"`
+	Events     contractEvents            `json:"events"`
 }
 
 func loadChatSessionsContract(t *testing.T) chatSessionsContract {
@@ -125,28 +126,11 @@ func TestTypeConstantsAreSSESafe(t *testing.T) {
 }
 
 // TestPayloadsEmbedEnvelope verifies that each wire payload struct embeds Envelope.
+// It walks the event table rather than its own list: a hand-kept list here
+// would be one more copy of the vocabulary that a new type could miss.
 func TestPayloadsEmbedEnvelope(t *testing.T) {
-	payloads := []any{
-		TurnStartedPayload{},
-		AssistantDeltaPayload{},
-		AssistantMessagePayload{},
-		ThinkingDeltaPayload{},
-		ToolStartedPayload{},
-		ToolEndedPayload{},
-		SubagentToolStartedPayload{},
-		SubagentToolEndedPayload{},
-		SubagentProgressPayload{},
-		SubagentEndedPayload{},
-		TurnEndedPayload{},
-		ContextCompactedPayload{},
-		TurnFailedPayload{},
-		SyncDroppedPayload{},
-		SyncForkedPayload{},
-	}
-
-	for _, p := range payloads {
-		val := reflect.ValueOf(p)
-		typ := val.Type()
+	for _, spec := range WireEventSpecs() {
+		typ := reflect.TypeOf(spec.Payload)
 		field, ok := typ.FieldByName("Envelope")
 		if !ok || !field.Anonymous {
 			t.Errorf("%s does not embed Envelope anonymously", typ.Name())

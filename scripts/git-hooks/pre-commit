@@ -275,6 +275,16 @@ if command -v go >/dev/null 2>&1; then
     echo " → Running chat invariant tests..."
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestSessionMessages' ./internal/chat/ -count=1 -timeout=60s) || INV_FAIL=1
   fi
+  # The chat-sync event vocabulary is published to a web client through
+  # api/contracts/chat-sessions.v1.json, and the API names each SSE frame after
+  # the event type string - so a type the client does not know is an event it
+  # never receives. The vocabulary already drifted once in a third copy. This
+  # is keyed on the contract file as well as the package, because editing the
+  # JSON alone is exactly the edit that must not go unchecked.
+  if echo "$STAGED" | grep -qE '^(internal/chatsync/|api/contracts/)'; then
+    echo " → Running chat-sync wire vocabulary invariant tests..."
+    (cd "$STAGED_ROOT" && run_verify go test -run 'TestEveryWireTypeConstantIsInTheEventTable|TestKnownWireTypesIsDerivedFromTheEventTable|TestKnownWireTypesMatchContractSnapshot|TestWireEnvelopeMatchesContractSnapshot|TestWireSharedObjectsMatchContractSnapshot|TestWireEventPayloadsMatchContractSnapshot' ./internal/chatsync/ -count=1 -timeout=60s) || INV_FAIL=1
+  fi
   if echo "$STAGED" | grep -qE '^internal/config/'; then
     echo " → Running config invariant tests..."
     (cd "$STAGED_ROOT" && run_verify go test -run 'TestPrivacyRedact' ./internal/config/ -count=1 -timeout=60s) || INV_FAIL=1

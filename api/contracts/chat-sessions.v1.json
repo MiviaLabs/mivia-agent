@@ -15,7 +15,8 @@
   "notes": [
     "URI versioning with defaultVersion 1, so every path is /v1/chat-sessions/...",
     "Payloads for events are open jsonb objects capped at 64 KiB.",
-    "Wire event type strings are prefixed with mivia.chat.v1."
+    "Wire event type strings are prefixed with mivia.chat.v1.",
+    "Every SSE frame is NAMED after its event type, so EventSource.onmessage never fires; a client calls addEventListener once per entry in knownTypes."
   ],
   "knownTypes": [
     "mivia.chat.v1.turn.started",
@@ -38,70 +39,528 @@
     "session": {
       "dto": "ChatSessionResponseDto",
       "fields": {
-        "id": { "kind": "string", "nullable": false },
-        "organizationId": { "kind": "string", "nullable": false },
-        "userId": { "kind": "string", "nullable": false },
-        "title": { "kind": "string", "nullable": false },
-        "cwdLabel": { "kind": "string", "nullable": true },
-        "hostLabel": { "kind": "string", "nullable": true },
-        "status": { "kind": "string", "nullable": false },
-        "lastSeq": { "kind": "number", "nullable": false },
-        "lastEventAt": { "kind": "string", "nullable": false },
-        "lastHeartbeatAt": { "kind": "string", "nullable": false },
-        "endedAt": { "kind": "string", "nullable": true },
-        "createdAt": { "kind": "string", "nullable": false }
+        "id": {
+          "kind": "string",
+          "nullable": false
+        },
+        "organizationId": {
+          "kind": "string",
+          "nullable": false
+        },
+        "userId": {
+          "kind": "string",
+          "nullable": false
+        },
+        "title": {
+          "kind": "string",
+          "nullable": false
+        },
+        "cwdLabel": {
+          "kind": "string",
+          "nullable": true
+        },
+        "hostLabel": {
+          "kind": "string",
+          "nullable": true
+        },
+        "status": {
+          "kind": "string",
+          "nullable": false
+        },
+        "lastSeq": {
+          "kind": "number",
+          "nullable": false
+        },
+        "lastEventAt": {
+          "kind": "string",
+          "nullable": false
+        },
+        "lastHeartbeatAt": {
+          "kind": "string",
+          "nullable": false
+        },
+        "endedAt": {
+          "kind": "string",
+          "nullable": true
+        },
+        "createdAt": {
+          "kind": "string",
+          "nullable": false
+        }
       }
     },
     "eventItem": {
       "dto": "EventItemDto",
       "fields": {
-        "seq": { "kind": "number", "nullable": false },
-        "type": { "kind": "string", "nullable": false },
-        "payload": { "kind": "object", "nullable": false }
+        "seq": {
+          "kind": "number",
+          "nullable": false
+        },
+        "type": {
+          "kind": "string",
+          "nullable": false
+        },
+        "payload": {
+          "kind": "object",
+          "nullable": false
+        }
       }
     },
     "storedEvent": {
       "dto": "StoredEventDto",
       "fields": {
-        "sessionId": { "kind": "string", "nullable": false },
-        "seq": { "kind": "number", "nullable": false },
-        "type": { "kind": "string", "nullable": false },
-        "payload": { "kind": "object", "nullable": false },
-        "createdAt": { "kind": "string", "nullable": false }
+        "sessionId": {
+          "kind": "string",
+          "nullable": false
+        },
+        "seq": {
+          "kind": "number",
+          "nullable": false
+        },
+        "type": {
+          "kind": "string",
+          "nullable": false
+        },
+        "payload": {
+          "kind": "object",
+          "nullable": false
+        },
+        "createdAt": {
+          "kind": "string",
+          "nullable": false
+        }
       }
     },
     "appendResult": {
       "dto": "AppendEventsResponseDto",
       "fields": {
-        "lastSeq": { "kind": "number", "nullable": false },
-        "insertedCount": { "kind": "number", "nullable": false }
+        "lastSeq": {
+          "kind": "number",
+          "nullable": false
+        },
+        "insertedCount": {
+          "kind": "number",
+          "nullable": false
+        }
       }
     },
     "sessionInput": {
       "dto": "SessionInputResponseDto",
       "fields": {
-        "id": { "kind": "string", "nullable": false },
-        "sessionId": { "kind": "string", "nullable": false },
-        "authorUserId": { "kind": "string", "nullable": false },
-        "kind": { "kind": "string", "nullable": false },
-        "body": { "kind": "string", "nullable": false },
-        "createdAt": { "kind": "string", "nullable": false },
-        "consumedAt": { "kind": "string", "nullable": true }
+        "id": {
+          "kind": "string",
+          "nullable": false
+        },
+        "sessionId": {
+          "kind": "string",
+          "nullable": false
+        },
+        "authorUserId": {
+          "kind": "string",
+          "nullable": false
+        },
+        "kind": {
+          "kind": "string",
+          "nullable": false
+        },
+        "body": {
+          "kind": "string",
+          "nullable": false
+        },
+        "createdAt": {
+          "kind": "string",
+          "nullable": false
+        },
+        "consumedAt": {
+          "kind": "string",
+          "nullable": true
+        }
       }
     },
     "nextInput": {
       "dto": "NextInputResponseDto",
       "fields": {
-        "input": { "kind": "object", "nullable": true }
+        "input": {
+          "kind": "object",
+          "nullable": true
+        }
       }
     },
     "errorEnvelope": {
       "dto": "ErrorResponseEnvelope",
       "fields": {
-        "statusCode": { "kind": "number", "nullable": false },
-        "error": { "kind": "string", "nullable": false },
-        "message": { "kind": "string|array", "nullable": false },
-        "path": { "kind": "string", "nullable": false }
+        "statusCode": {
+          "kind": "number",
+          "nullable": false
+        },
+        "error": {
+          "kind": "string",
+          "nullable": false
+        },
+        "message": {
+          "kind": "string|array",
+          "nullable": false
+        },
+        "path": {
+          "kind": "string",
+          "nullable": false
+        }
+      }
+    }
+  },
+  "events": {
+    "envelope": {
+      "goType": "Envelope",
+      "fields": {
+        "v": {
+          "kind": "number",
+          "optional": false
+        },
+        "at": {
+          "kind": "string",
+          "optional": false
+        },
+        "turn": {
+          "kind": "string",
+          "optional": false
+        },
+        "block": {
+          "kind": "string",
+          "optional": true
+        },
+        "agent": {
+          "kind": "object",
+          "optional": true,
+          "ref": "agentOrigin"
+        },
+        "trunc": {
+          "kind": "object",
+          "optional": true,
+          "ref": "truncation"
+        },
+        "redacted": {
+          "kind": "array",
+          "optional": true
+        },
+        "source_turn_id": {
+          "kind": "string",
+          "optional": true
+        },
+        "writer_id": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
+    "objects": {
+      "agentOrigin": {
+        "goType": "AgentOrigin",
+        "fields": {
+          "task": {
+            "kind": "string",
+            "optional": true
+          },
+          "name": {
+            "kind": "string",
+            "optional": true
+          },
+          "depth": {
+            "kind": "number",
+            "optional": true
+          }
+        }
+      },
+      "truncation": {
+        "goType": "Truncation",
+        "fields": {
+          "fields": {
+            "kind": "object",
+            "optional": false,
+            "ref": "truncField"
+          }
+        }
+      },
+      "truncField": {
+        "goType": "TruncField",
+        "fields": {
+          "kept": {
+            "kind": "number",
+            "optional": false
+          },
+          "total": {
+            "kind": "number",
+            "optional": false
+          }
+        }
+      }
+    },
+    "types": {
+      "mivia.chat.v1.turn.started": {
+        "goType": "TurnStartedPayload",
+        "fields": {
+          "text": {
+            "kind": "string",
+            "optional": true
+          },
+          "session_ref": {
+            "kind": "string",
+            "optional": true
+          },
+          "synthetic": {
+            "kind": "bool",
+            "optional": true
+          }
+        }
+      },
+      "mivia.chat.v1.assistant.delta": {
+        "goType": "AssistantDeltaPayload",
+        "fields": {
+          "text": {
+            "kind": "string",
+            "optional": false
+          },
+          "index": {
+            "kind": "number",
+            "optional": false
+          }
+        }
+      },
+      "mivia.chat.v1.assistant.message": {
+        "goType": "AssistantMessagePayload",
+        "fields": {
+          "fragments": {
+            "kind": "number",
+            "optional": false
+          },
+          "bytes": {
+            "kind": "number",
+            "optional": false
+          },
+          "status": {
+            "kind": "string",
+            "optional": false
+          },
+          "text": {
+            "kind": "string",
+            "optional": true
+          }
+        }
+      },
+      "mivia.chat.v1.thinking.delta": {
+        "goType": "ThinkingDeltaPayload",
+        "fields": {
+          "bytes": {
+            "kind": "number",
+            "optional": false
+          },
+          "index": {
+            "kind": "number",
+            "optional": false
+          },
+          "text": {
+            "kind": "string",
+            "optional": true
+          }
+        }
+      },
+      "mivia.chat.v1.tool.started": {
+        "goType": "ToolStartedPayload",
+        "fields": {
+          "tool_call_id": {
+            "kind": "string",
+            "optional": false
+          },
+          "name": {
+            "kind": "string",
+            "optional": false
+          },
+          "input_bytes": {
+            "kind": "number",
+            "optional": false
+          },
+          "phase": {
+            "kind": "string",
+            "optional": true
+          },
+          "input": {
+            "kind": "string",
+            "optional": true
+          }
+        }
+      },
+      "mivia.chat.v1.tool.ended": {
+        "goType": "ToolEndedPayload",
+        "fields": {
+          "tool_call_id": {
+            "kind": "string",
+            "optional": false
+          },
+          "name": {
+            "kind": "string",
+            "optional": false
+          },
+          "status": {
+            "kind": "string",
+            "optional": false
+          },
+          "output_bytes": {
+            "kind": "number",
+            "optional": false
+          },
+          "detail": {
+            "kind": "string",
+            "optional": true
+          },
+          "output": {
+            "kind": "string",
+            "optional": true
+          }
+        }
+      },
+      "mivia.chat.v1.subagent.tool.started": {
+        "goType": "SubagentToolStartedPayload",
+        "fields": {
+          "tool_call_id": {
+            "kind": "string",
+            "optional": false
+          },
+          "name": {
+            "kind": "string",
+            "optional": false
+          },
+          "input_bytes": {
+            "kind": "number",
+            "optional": false
+          },
+          "phase": {
+            "kind": "string",
+            "optional": true
+          },
+          "input": {
+            "kind": "string",
+            "optional": true
+          }
+        }
+      },
+      "mivia.chat.v1.subagent.tool.ended": {
+        "goType": "SubagentToolEndedPayload",
+        "fields": {
+          "tool_call_id": {
+            "kind": "string",
+            "optional": false
+          },
+          "name": {
+            "kind": "string",
+            "optional": false
+          },
+          "status": {
+            "kind": "string",
+            "optional": false
+          },
+          "output_bytes": {
+            "kind": "number",
+            "optional": false
+          },
+          "detail": {
+            "kind": "string",
+            "optional": true
+          },
+          "output": {
+            "kind": "string",
+            "optional": true
+          }
+        }
+      },
+      "mivia.chat.v1.subagent.progress": {
+        "goType": "SubagentProgressPayload",
+        "fields": {
+          "elapsed_seconds": {
+            "kind": "number",
+            "optional": true
+          },
+          "steps": {
+            "kind": "number",
+            "optional": true
+          },
+          "tool_calls": {
+            "kind": "number",
+            "optional": true
+          },
+          "detail": {
+            "kind": "string",
+            "optional": true
+          }
+        }
+      },
+      "mivia.chat.v1.subagent.ended": {
+        "goType": "SubagentEndedPayload",
+        "fields": {
+          "name": {
+            "kind": "string",
+            "optional": true
+          },
+          "status": {
+            "kind": "string",
+            "optional": true
+          }
+        }
+      },
+      "mivia.chat.v1.turn.ended": {
+        "goType": "TurnEndedPayload",
+        "fields": {
+          "reason": {
+            "kind": "string",
+            "optional": false
+          }
+        }
+      },
+      "mivia.chat.v1.context.compacted": {
+        "goType": "ContextCompactedPayload",
+        "fields": {
+          "compaction": {
+            "kind": "any",
+            "optional": true
+          },
+          "message": {
+            "kind": "string",
+            "optional": true
+          },
+          "between_turns": {
+            "kind": "bool",
+            "optional": true
+          }
+        }
+      },
+      "mivia.chat.v1.turn.failed": {
+        "goType": "TurnFailedPayload",
+        "fields": {
+          "message": {
+            "kind": "string",
+            "optional": false
+          }
+        }
+      },
+      "mivia.chat.v1.sync.dropped": {
+        "goType": "SyncDroppedPayload",
+        "fields": {
+          "dropped": {
+            "kind": "number",
+            "optional": false
+          },
+          "total_dropped": {
+            "kind": "number",
+            "optional": false
+          }
+        }
+      },
+      "mivia.chat.v1.sync.forked": {
+        "goType": "SyncForkedPayload",
+        "fields": {
+          "new_session_id": {
+            "kind": "string",
+            "optional": false
+          }
+        }
       }
     }
   }
