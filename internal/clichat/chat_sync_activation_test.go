@@ -40,13 +40,16 @@ func syncActivationServer(t *testing.T) (*httptest.Server, *int32) {
 	return srv, &created
 }
 
-func activationSession(t *testing.T, res *config.Resolved) *chat.Session {
+// activationSession returns a session ready for attachCLISync, plus the
+// wsRoot to pass alongside it. wsRoot is returned separately, not stashed on
+// sess.SessionDir: production never has a real SessionDir once context state
+// is enabled (see cliSyncOptions's doc comment), and this helper mirrors that.
+func activationSession(t *testing.T, res *config.Resolved) (*chat.Session, string) {
 	t.Helper()
 	sess := chat.NewSession(res, nil)
 	sess.SessionID = "cli-activation-1"
-	sess.SessionDir = t.TempDir()
 	sess.EventBus = events.New()
-	return sess
+	return sess, t.TempDir()
 }
 
 // TestAttachCLISyncRunsWhenLoggedInWithoutExplicitEnable pins the product
@@ -65,9 +68,9 @@ func TestAttachCLISyncRunsWhenLoggedInWithoutExplicitEnable(t *testing.T) {
 		},
 	}
 	installTestAuthToken(t)
-	sess := activationSession(t, res)
+	sess, wsRoot := activationSession(t, res)
 
-	detach := attachCLISync(sess, res)
+	detach := attachCLISync(sess, wsRoot, res)
 	time.Sleep(50 * time.Millisecond)
 	detach()
 
@@ -91,9 +94,9 @@ func TestAttachCLISyncOptOutWhenExplicitlyDisabled(t *testing.T) {
 		},
 	}
 	installTestAuthToken(t)
-	sess := activationSession(t, res)
+	sess, wsRoot := activationSession(t, res)
 
-	detach := attachCLISync(sess, res)
+	detach := attachCLISync(sess, wsRoot, res)
 	time.Sleep(50 * time.Millisecond)
 	detach()
 
@@ -115,9 +118,9 @@ func TestAttachCLISyncSkipsWhenLoggedOut(t *testing.T) {
 			MaxUnflushed:     50,
 		},
 	}
-	sess := activationSession(t, res)
+	sess, wsRoot := activationSession(t, res)
 
-	detach := attachCLISync(sess, res)
+	detach := attachCLISync(sess, wsRoot, res)
 	time.Sleep(50 * time.Millisecond)
 	detach()
 
@@ -134,9 +137,9 @@ func TestAttachCLISyncSkipsWhenLoggedOut(t *testing.T) {
 func TestCLISyncOptionsDefaultsBaseURLToAPIRoot(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	res := &config.Resolved{Sync: config.ResolvedSync{PollWaitSeconds: 1, HeartbeatSeconds: 1, MaxUnflushed: 50}}
-	sess := activationSession(t, res)
+	sess, wsRoot := activationSession(t, res)
 
-	opts := cliSyncOptions(sess, res, func(_ context.Context, _ bool) (string, error) { return "t", nil })
+	opts := cliSyncOptions(sess, wsRoot, res, func(_ context.Context, _ bool) (string, error) { return "t", nil })
 
 	want := miviaauth.ServerURLFromEnv()
 	if strings.TrimSpace(want) == "" {

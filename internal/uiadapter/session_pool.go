@@ -408,7 +408,18 @@ func (p *SessionPool) attachSyncLocked(sess *chat.Session) {
 	if !p.res.Sync.Active(tokens != nil) {
 		return
 	}
-	opts := poolSyncOptions(sess, id, p.res, tokens)
+	// wsRoot anchors where chat-sync keeps its identity/outbox files. It must
+	// NOT come from sess.SessionDir - see the matching comment in
+	// internal/clichat/chat_sync.go's cliSyncOptions: that field belongs to
+	// the legacy file-backed session store and is unconditionally nulled the
+	// moment context state is enabled, which every pooled session's context
+	// wiring does. p.agentState.WorkspaceRoot is the same workspace root the
+	// CLI resolved at startup and is never nulled by context enablement.
+	var wsRoot string
+	if p.agentState != nil {
+		wsRoot = p.agentState.WorkspaceRoot
+	}
+	opts := poolSyncOptions(sess, id, wsRoot, p.res, tokens)
 	// "Stop syncing and SAY SO". pushNotice takes no lock and drops rather
 	// than blocks, so it is safe both from here (under p.mu) and from
 	// chatsync's detached stop goroutine.
@@ -438,11 +449,12 @@ func (p *SessionPool) attachSyncLocked(sess *chat.Session) {
 // chatsync.OpenSession. It is a separate function so a test can drive the
 // exact value production uses, instead of asserting on a hand-built copy that
 // can drift away from the wiring it claims to cover.
-func poolSyncOptions(sess *chat.Session, id string, res *config.Resolved, tokens chatsync.TokenProvider) chatsync.SessionOptions {
+func poolSyncOptions(sess *chat.Session, id string, wsRoot string, res *config.Resolved, tokens chatsync.TokenProvider) chatsync.SessionOptions {
 	// See the matching comment in internal/clichat/chat_sync.go: the identity
 	// must be resolved before the options, because OutboxDir has to carry the
-	// local handle before OpenSession opens the outbox.
-	identityDir := chatsync.IdentityDir(sess.SessionDir)
+	// local handle before OpenSession opens the outbox. wsRoot, not
+	// sess.SessionDir - see attachSyncLocked's comment for why.
+	identityDir := chatsync.IdentityDir(wsRoot)
 	key := chatsync.IdentityKey(id)
 	ident, _ := chatsync.LoadOrCreateIdentity(identityDir, key)
 
@@ -467,7 +479,7 @@ func poolSyncOptions(sess *chat.Session, id string, res *config.Resolved, tokens
 			WriterID:       ident.WriterID,
 			RedactToolArgs: tools.RedactToolArgs(),
 		},
-		OutboxDir:       chatsync.OutboxDirFor(sess.SessionDir, ident.LocalHandle),
+		OutboxDir:       chatsync.OutboxDirFor(wsRoot, ident.LocalHandle),
 		LocalHandle:     ident.LocalHandle,
 		RemoteSessionID: ident.RemoteSessionID,
 		Identity:        chatsync.IdentityRef{Dir: identityDir, Key: key},

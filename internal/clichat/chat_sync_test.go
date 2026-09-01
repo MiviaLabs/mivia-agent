@@ -22,7 +22,7 @@ func TestAttachCLISyncDisabled(t *testing.T) {
 	sess := chat.NewSession(&config.Resolved{}, nil)
 	sess.EventBus = bus
 
-	detach := attachCLISync(sess, &config.Resolved{Sync: config.ResolvedSync{Disabled: true}})
+	detach := attachCLISync(sess, t.TempDir(), &config.Resolved{Sync: config.ResolvedSync{Disabled: true}})
 	if detach == nil {
 		t.Fatal("expected non-nil detach func")
 	}
@@ -62,10 +62,9 @@ func TestAttachCLISyncEnabled(t *testing.T) {
 
 	sess := chat.NewSession(res, nil)
 	sess.SessionID = "cli-sync-1"
-	sess.SessionDir = t.TempDir()
 	sess.EventBus = bus
 
-	detach := attachCLISync(sess, res)
+	detach := attachCLISync(sess, t.TempDir(), res)
 	time.Sleep(50 * time.Millisecond)
 	detach()
 
@@ -111,11 +110,10 @@ func TestAttachCLISyncAuthenticatesEveryRequest(t *testing.T) {
 	}
 	sess := chat.NewSession(res, nil)
 	sess.SessionID = "cli-auth-1"
-	sess.SessionDir = t.TempDir()
 	sess.EventBus = events.New()
 
 	installTestAuthToken(t)
-	detach := attachCLISync(sess, res)
+	detach := attachCLISync(sess, t.TempDir(), res)
 	time.Sleep(50 * time.Millisecond)
 	detach()
 
@@ -185,10 +183,9 @@ func TestAttachCLISyncDetach_DeliversTheFullBurstBeforeStopping(t *testing.T) {
 
 	sess := chat.NewSession(res, nil)
 	sess.SessionID = "cli-burst-1"
-	sess.SessionDir = t.TempDir()
 	sess.EventBus = bus
 
-	detach := attachCLISync(sess, res)
+	detach := attachCLISync(sess, t.TempDir(), res)
 
 	const turnID = "turn:1"
 	bus.Publish(events.Event{Kind: events.KindTurnStart, SessionID: sess.SessionID, TurnID: turnID, Detail: "hi"})
@@ -278,10 +275,9 @@ func TestAttachCLISyncDetach_SurvivesASlowFinalFlush(t *testing.T) {
 
 	sess := chat.NewSession(res, nil)
 	sess.SessionID = "cli-slow-1"
-	sess.SessionDir = t.TempDir()
 	sess.EventBus = bus
 
-	detach := attachCLISync(sess, res)
+	detach := attachCLISync(sess, t.TempDir(), res)
 	bus.Publish(events.Event{Kind: events.KindTurnStart, SessionID: sess.SessionID, TurnID: "turn:1", Detail: "hi"})
 	bus.Publish(events.Event{Kind: events.KindTurnEnd, SessionID: sess.SessionID, TurnID: "turn:1", Detail: "completed"})
 	detach()
