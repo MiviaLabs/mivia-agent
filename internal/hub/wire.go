@@ -21,8 +21,13 @@ type WireEvent struct {
 	TurnID     string    `json:"turn_id"`
 	ToolCallID string    `json:"tool_call_id,omitempty"`
 	Name       string    `json:"name,omitempty"`
-	// Detail carries KindTurnStart's user-submitted text (events.Event.Detail
-	// - see relayedKinds' doc comment); other relayed kinds don't use it.
+	// Detail carries events.Event.Detail for every relayed kind that has one,
+	// not only KindTurnStart. Today that is: KindTurnStart's user-submitted
+	// text, KindSubagentBegin's bounded task description, KindSubagentHeartbeat's
+	// progress line, KindToolEnd/KindSubagentEnd's status vocabulary, and
+	// KindAssistant's "delta" marker. Each is content the receiving process
+	// renders, so widening what travels here widens what leaves the machine -
+	// check the producer before adding another.
 	Detail      string `json:"detail,omitempty"`
 	Content     string `json:"content,omitempty"`
 	Input       string `json:"input,omitempty"`

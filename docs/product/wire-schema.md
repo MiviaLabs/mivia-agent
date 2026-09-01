@@ -79,9 +79,14 @@ All mivia processes that share one store directory see each other's activity thr
 | Type | Meaning |
 |------|---------|
 | `external_turn_start` | A turn started in another process. `text` holds the user input, `run_id` identifies the turn. |
-| `external_chunk` | Answer text from the other process. Carries the `origin_*` fields when a subagent produced it. |
-| `external_thinking` | Reasoning text from the other process. Carries the `origin_*` fields when a subagent produced it. |
-| `external_tool_start` / `external_tool_end` | A tool call made by the other process, with the same fields as the local types, plus the `origin_*` fields when a subagent made the call. |
+| `external_chunk` | Answer text from the other process's ROOT agent. |
+| `external_thinking` | Reasoning text from the other process's ROOT agent. |
+| `external_tool_start` / `external_tool_end` | A tool call made by the other process's ROOT agent, with the same fields as the local types. |
+| `external_subagent_chunk` | Answer text from one of the other process's subagents. |
+| `external_subagent_thinking` | Reasoning text from one of its subagents. |
+| `external_subagent_tool_start` / `external_subagent_tool_end` | A tool call made by one of its subagents. |
+| `external_subagent_begin` | One of its subagents started. `name` is the agent, `input` the task it was given. |
+| `external_subagent_heartbeat` | Progress from one of its subagents. `message` carries the elapsed time, step count and tool count. |
 | `external_done` | The other process's turn finished. |
 | `external_error` | The other process's turn failed. |
 | `external_compaction` | Another process compacted this session's context. Same payload as `compaction`, plus `run_id`. |
@@ -89,25 +94,28 @@ All mivia processes that share one store directory see each other's activity thr
 
 ### Telling a subagent's activity from the root agent's
 
-`external_chunk`, `external_thinking`, `external_tool_start` and
-`external_tool_end` carry `origin_task_id`, `origin_agent` and `origin_depth`
-when a subagent produced them. **Their absence means the root agent produced
-the event.** A consumer that appends every `external_chunk` to one answer
-buffer therefore mixes each subagent's answer into the root agent's; read
-`origin_task_id` first and keep one buffer per value, with the empty value as
-the root agent's own.
+**The type says who produced the event.** A subagent's output uses the
+`external_subagent_*` types; the root agent's uses the plain ones. A consumer
+that appends every `external_chunk` to one answer buffer therefore gets the
+root agent's answer and nothing else, which is what it was always assumed to
+be doing.
 
-`origin_task_id` identifies one run: two runs of the same agent have
-different ids, so `origin_agent` is a label, not a key. Older versions of the
-CLI sent these fields on tool events only, and the relay reused the same four
-types before that. A consumer must therefore treat every `origin_*` field as
-optional.
+The `origin_task_id`, `origin_agent` and `origin_depth` fields ride the
+subagent types and say WHICH RUN produced the line. Two runs of one agent share
+a name but not a task id, so `origin_agent` is a label and `origin_task_id` is
+the key. They never appear on a root type.
 
-This is deliberately weaker than the chat-sync wire, which gives a subagent
-its own event TYPES (see
-[chat-sync-wire](chat-sync-wire.md#event-types-and-ordering)). This relay is a
-local, same-machine stream between cooperating processes, so it keeps the
-existing types and adds attribution fields to them.
+An earlier version of this relay put a subagent's output on the ROOT types and
+added the origin fields to them. That was a mistake, and this section used to
+argue for it on the grounds that a local same-machine stream can afford weaker
+rules than the chat-sync wire. It cannot. A consumer keyed on `type` - the only
+thing a consumer can key on before it has heard of a new field - spliced every
+subagent's answer into the root agent's, silently, and no version of adding
+fields fixes a consumer that never reads them.
+
+A reader that predates the subagent types drops them with a warning, one per
+line, and shows the root agent's turn correctly. That cost is deliberate and is
+much smaller than the corruption it replaces.
 
 The `run_id` field links the `external_*` events of one turn. Events from other sessions in the same store are not relayed to your stream: each sidecar sees only its own session.
 

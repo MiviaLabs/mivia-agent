@@ -317,6 +317,13 @@ func renderExternalEvent(w io.Writer, state *externalTurnState, ev events.Event)
 		}
 		startExternalTurn(w, state, ev.TurnID, ev.SessionID, r)
 	}
+	// A subagent shares its run id with the root loop, so the turn above is
+	// still the right one to open - but its output is NOT the root's and must
+	// not be rendered as such, nor touch the root's per-run state.
+	if isSubagentEvent(ev) {
+		renderExternalSubagentEvent(w, ev)
+		return
+	}
 	renderExternalTurnEvent(w, r, ev)
 	if terminal {
 		// Marked, never deleted: the entry is what stops a late or duplicated
@@ -351,75 +358,10 @@ func renderExternalCompaction(w io.Writer, ev events.Event) {
 	writeNDJSONEvent(w, line)
 }
 
-func withExternalOrigin(line ndjsonEvent, ev events.Event) ndjsonEvent {
-	if ev.AgentTask == "" && ev.AgentName == "" && ev.AgentDepth == 0 {
-		return line
-	}
-	line.OriginTaskID = ev.AgentTask
-	line.OriginAgent = ev.AgentName
-	line.OriginDepth = ev.AgentDepth
-	return line
-}
-
 // renderExternalTurnEvent's KindAssistant case only relays a "delta" chunk// (streamed live - see teeWriter) as it arrives, and only falls back to
 // relaying the turn-end aggregate (Detail!="delta") when this run never
 // streamed one at all - a run that already got live deltas would otherwise
 // see the same content twice, once incrementally and once again in full.
-// withExternalOrigin copies an event's subagent attribution onto a relayed
-// NDJSON line. Without it a relayed surface reads every subagent's text and
-// tool calls as the root turn's own, which is exactly the interleaving the
-// chat-sync wire carries Envelope.Agent to prevent. Unattributed events are
-// returned unchanged, so the root loop's lines keep no origin fields at all.
-func renderExternalTurnEvent(w io.Writer, r *externalRun, ev events.Event) {
-	switch ev.Kind {
-	case events.KindAssistant:
-		if ev.Content == "" {
-			break
-		}
-		line := withExternalOrigin(ndjsonEvent{Type: "external_chunk", RunID: ev.TurnID, Text: ev.Content}, ev)
-		if ev.Detail == "delta" {
-			// Only the ROOT loop's own deltas mark the run as streamed. A
-			// subagent's delta setting this flag would suppress the root's
-			// turn-end aggregate, and a consumer that never received the
-			// root's deltas would then be left with no root text at all.
-			if ev.AgentTask == "" {
-				r.streamed = true
-			}
-			writeNDJSONEvent(w, line)
-			break
-		}
-		// An attributed aggregate is one subagent's, so the root run's
-		// streamed flag says nothing about whether it was already relayed.
-		if !r.streamed || ev.AgentTask != "" {
-			writeNDJSONEvent(w, line)
-		}
-	case events.KindThinking:
-		if ev.Content != "" {
-			writeNDJSONEvent(w, withExternalOrigin(
-				ndjsonEvent{Type: "external_thinking", RunID: ev.TurnID, Text: ev.Content}, ev))
-		}
-	case events.KindToolStart, events.KindSubagentStart:
-		writeNDJSONEvent(w, withExternalOrigin(ndjsonEvent{
-			Type: "external_tool_start", RunID: ev.TurnID, ToolCallID: ev.ToolCallID,
-			Name: ev.Name, Input: ev.Input,
-		}, ev))
-	case events.KindToolEnd, events.KindSubagentEnd:
-		writeNDJSONEvent(w, withExternalOrigin(ndjsonEvent{
-			Type: "external_tool_end", RunID: ev.TurnID, ToolCallID: ev.ToolCallID,
-			Name: ev.Name, Output: ev.Output, Status: toolEndStatus(ev.Detail),
-		}, ev))
-	// KindSubagentDone is deliberately NOT a case here: it retires one
-	// subagent inside the turn, not the turn itself. Mapping it to
-	// "external_done" (as this once did) made a consumer mark the whole
-	// external turn finished - and drop it from any live-agents view -
-	// the moment the run's first subagent completed, mid-turn.
-	case events.KindTurnEnd:
-		writeNDJSONEvent(w, ndjsonEvent{Type: "external_done", RunID: ev.TurnID})
-	case events.KindError:
-		writeNDJSONEvent(w, ndjsonEvent{Type: "external_error", RunID: ev.TurnID, Message: errorEventMessage(ev)})
-	}
-}
-
 // errorEventMessage renders a relayed error. ev.Err here is ALWAYS the
 // classified string: this is only reached from renderExternalEvent, whose sole
 // production feeds are hub's two readLoops, and fromWire rebuilds Err from
