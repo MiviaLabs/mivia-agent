@@ -40,7 +40,19 @@ type SessionPool struct {
 	// notices is the pool-wide advisory stream (ports.Notices). It is
 	// created once, never closed, and written only through pushNotice.
 	notices chan uievent.Event
+
+	// remoteInputs is the pool-wide steering stream (ports.RemoteInputs).
+	// Created once, never closed, fed by one pumpRemoteInputs goroutine per
+	// attached sync session - see attachSyncLocked and RemoteInputs.
+	remoteInputs chan ports.RemoteInputEvent
 }
+
+// AuthorUserIDProvider resolves the CLI's own authenticated principal for
+// verifying who queued a remote input, before SessionPool ever forwards one
+// through RemoteInputs. A package-level var (like SubagentProgressRegistrar)
+// so a test can substitute a fixed identity without a real logged-in session
+// or a network call to Whoami.
+var AuthorUserIDProvider = chatsync.DefaultAuthorUserIDProvider
 
 // Threads returns the SubagentThreads registry every pooled Conversation is
 // wired to. Callers building the UI (internal/newtui) pass this same
@@ -184,6 +196,7 @@ func NewSessionPool(initialSess *chat.Session, res *config.Resolved, agentState 
 		toolsOn:      toolsOn,
 		threads:      NewSubagentThreads(),
 		notices:      make(chan uievent.Event, syncNoticeBuffer),
+		remoteInputs: make(chan ports.RemoteInputEvent, remoteInputBuffer),
 	}
 	if initialSess != nil {
 		if res != nil {
@@ -382,10 +395,22 @@ func (p *SessionPool) attachSyncLocked(sess *chat.Session) {
 	opts.OnStop = func(reason string) {
 		p.pushNotice("chat sync stopped: " + reason)
 	}
+	// Visibility for a refusal that never reaches RemoteInputs at all - see
+	// chatsync.SessionOptions.OnInputRejected. pushNotice is lossy-by-contract
+	// (16-slot buffer), which is acceptable here: this is advisory context
+	// for a decision already fully enforced upstream (the input was never
+	// delivered either way), not the load-bearing "no silent loss" surface -
+	// that guarantee lives in RemoteInputs/pumpRemoteInputs instead.
+	opts.OnInputRejected = func(id, sessionID, reason string) {
+		p.pushNotice("chat sync: refused a remote input: " + reason)
+	}
 	syncSess, err := chatsync.OpenSession(context.Background(), sess.EventBus, id, opts)
 	if err == nil {
 		p.syncSessions[id] = syncSess
 		p.pushNotice("chat sync is running")
+		if opts.EnablePolling {
+			go p.pumpRemoteInputs(id, syncSess.Inputs())
+		}
 	}
 }
 
@@ -430,13 +455,36 @@ func poolSyncOptions(sess *chat.Session, id string, res *config.Resolved, tokens
 		PollWaitSeconds: res.Sync.PollWaitSeconds,
 		HeartbeatPeriod: config.SaturatingSeconds(res.Sync.HeartbeatSeconds),
 		CreateTitle:     "Session",
-		// Remote input is DISABLED. The poller fed server-supplied text
-		// straight into conv.Send as a local turn, with no confirmation,
-		// into a runtime whose approval default auto-approves run_command
-		// (internal/config/bootstrap.go). chatsync.InputPoller and
-		// RemoteInput stay in place for the S9 approval-port redesign and
-		// the web viewer's reply path, but they are unreachable from here
-		// until that lands. Do not read the poller as live code.
-		EnablePolling: false,
+		// Remote input (chat-sync "steering") is enabled on the TUI surface
+		// only. The original wiring (deleted in 0a709d80) fed server-supplied
+		// text straight into conv.Send from THIS package, headlessly, with no
+		// identity check and nothing draining the resulting turn's event
+		// channel past its 32-event buffer - it deadlocked the agent loop and
+		// then every later local keypress (Conversation.Send holds turnMu
+		// until the turn goroutine returns). That shape is gone for good.
+		//
+		// The safe replacement: SessionPool only ever fans a chatsync-VALIDATED
+		// RemoteInput (session id, author identity via AuthorUserIDProvider,
+		// message shape - all checked in internal/chatsync's InputPoller,
+		// never here) into RemoteInputs(). internal/ui/screen/conversation -
+		// the screen actually rendering a turn - is the sole caller of
+		// conv.Send for a remote instruction, draining it through the exact
+		// same awaitSessionEvent path a local send uses. See
+		// docs/design/ui-isolation.md: internal/uiadapter is the one bridge
+		// INV-TUI-29 allows, so the fan-out lives here; the execution
+		// decision does not.
+		//
+		// Approval mode: a remote-origin turn runs under whatever approval
+		// policy this session already has bound (internal/config/bootstrap.go
+		// defaults to ApprovalPolicyAuto - every tool call auto-approved, no
+		// prompt). Nothing here changes that policy for a remote turn versus
+		// a local one; a remote instruction is exactly as trusted as a local
+		// keypress once its author identity is verified. Whether that is the
+		// right default for a REMOTE-origin turn specifically (as opposed to
+		// merely inheriting whatever the local session already runs under)
+		// is an explicit open product decision, not one this code makes -
+		// see the delivery report.
+		AuthorUserIDProvider: AuthorUserIDProvider(),
+		EnablePolling:        true,
 	}
 }

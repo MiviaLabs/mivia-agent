@@ -37,6 +37,20 @@ type InputPoller struct {
 	doneCh      chan struct{}
 	mu          sync.Mutex
 	running     bool
+
+	// authorUserID resolves the CLI's own authenticated principal; see
+	// AuthorUserIDProvider and resolveAuthorUserID. nil fails every input
+	// closed (no verification possible).
+	authorUserID     AuthorUserIDProvider
+	authorIDResolved bool
+	authorID         string
+	authorIDErr      error
+
+	// onRejected, when set, is invoked (synchronously, on the poll goroutine)
+	// for every input validateRemoteInput refuses. It exists so a host can
+	// surface the refusal instead of it being silent - see
+	// SessionOptions.OnInputRejected.
+	onRejected func(id, sessionID, reason string)
 }
 
 const (
@@ -49,8 +63,10 @@ const (
 	pollDeadlineSlackSeconds = 10
 )
 
-// NewInputPoller creates a new InputPoller.
-func NewInputPoller(client *Client, sessionID string, waitSeconds int, stateDir ...string) *InputPoller {
+// NewInputPoller creates a new InputPoller. authorUserID resolves the CLI's
+// own authenticated principal for verifying who queued each input; nil
+// verifies nothing and so refuses every input (fail closed).
+func NewInputPoller(client *Client, sessionID string, waitSeconds int, authorUserID AuthorUserIDProvider, stateDir ...string) *InputPoller {
 	if waitSeconds <= 0 {
 		waitSeconds = defaultPollWaitSeconds
 	} else if waitSeconds > maxPollWaitSeconds {
@@ -61,14 +77,22 @@ func NewInputPoller(client *Client, sessionID string, waitSeconds int, stateDir 
 		dir = stateDir[0]
 	}
 	return &InputPoller{
-		client:      client,
-		sessionID:   sessionID,
-		waitSeconds: waitSeconds,
-		stateDir:    dir,
-		inputCh:     make(chan RemoteInput, 16),
-		stopCh:      make(chan struct{}),
-		doneCh:      make(chan struct{}),
+		client:       client,
+		sessionID:    sessionID,
+		waitSeconds:  waitSeconds,
+		stateDir:     dir,
+		authorUserID: authorUserID,
+		inputCh:      make(chan RemoteInput, 16),
+		stopCh:       make(chan struct{}),
+		doneCh:       make(chan struct{}),
 	}
+}
+
+// SetOnRejected installs the callback pollOnce and recoverPendingInput
+// invoke for every input validateRemoteInput refuses. Must be called before
+// Start; nil (the default) means refusals stay silent to the host.
+func (p *InputPoller) SetOnRejected(fn func(id, sessionID, reason string)) {
+	p.onRejected = fn
 }
 
 // Inputs returns the channel receiving consumed remote inputs.
@@ -86,7 +110,7 @@ func (p *InputPoller) Start(ctx context.Context) {
 	p.running = true
 	p.mu.Unlock()
 
-	p.recoverPendingInput()
+	p.recoverPendingInput(ctx)
 	go p.loop(ctx)
 }
 
@@ -178,26 +202,45 @@ func (p *InputPoller) pollOnce(ctx context.Context) {
 
 	consumed, err := p.client.ConsumeInput(consumeCtx, p.sessionID, raw.ID)
 	if err != nil {
+		// The server never confirmed the consume, so nothing was committed;
+		// the pending_input.json this wrote above (Consumed: false) is
+		// discarded on the next recovery pass by design - see
+		// TestInputPoller_CrashRecovery_UnconsumedInputDiscarded.
 		return
 	}
 
 	_ = p.writePendingInput(consumed, true)
+	p.deliver(ctx, consumed)
+}
 
-	ri := RemoteInput{
-		ID:        consumed.ID,
-		SessionID: consumed.SessionID,
-		Kind:      consumed.Kind,
-		Body:      consumed.Body,
-		Received:  time.Now(),
+// deliver validates an already-server-consumed SessionInput and, only on
+// success, places it on Inputs() and records it in the delivered-ids
+// ledger. clearPendingInput runs ONLY once that terminal outcome is known -
+// confirmed delivery, or a validation refusal that will never change on
+// retry - never merely because the server-side consume succeeded. If the
+// delivery select instead exits via ctx.Done()/stopCh (shutdown mid-send,
+// nobody draining Inputs() yet), pending_input.json is deliberately left in
+// place: restart recovery is what gets this input a real second chance,
+// exactly the property TestInputPoller_UndeliveredConsumedInputSurvivesShutdown
+// pins.
+func (p *InputPoller) deliver(ctx context.Context, consumed *SessionInput) {
+	ri, reason := p.validateRemoteInput(ctx, consumed)
+	if reason != "" {
+		if p.onRejected != nil {
+			p.onRejected(consumed.ID, consumed.SessionID, reason)
+		}
+		p.clearPendingInput()
+		return
 	}
+	ri.Received = time.Now()
 
 	select {
 	case p.inputCh <- ri:
+		p.recordDelivered(ri.ID)
+		p.clearPendingInput()
 	case <-ctx.Done():
 	case <-p.stopCh:
 	}
-
-	p.clearPendingInput()
 }
 
 func (p *InputPoller) writePendingInput(input *SessionInput, consumed bool) error {
@@ -212,29 +255,7 @@ func (p *InputPoller) writePendingInput(input *SessionInput, consumed bool) erro
 	if err != nil {
 		return fmt.Errorf("marshal pending input: %w", err)
 	}
-
-	tmpPath := filepath.Join(p.stateDir, pendingInputFileName+".tmp")
-	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
-	if err != nil {
-		return fmt.Errorf("open tmp pending input file: %w", err)
-	}
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		return fmt.Errorf("write tmp pending input file: %w", err)
-	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		return fmt.Errorf("sync tmp pending input file: %w", err)
-	}
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("close tmp pending input file: %w", err)
-	}
-
-	finalPath := filepath.Join(p.stateDir, pendingInputFileName)
-	if err := os.Rename(tmpPath, finalPath); err != nil {
-		return fmt.Errorf("rename pending input file: %w", err)
-	}
-	return nil
+	return writeFileDurably(p.stateDir, pendingInputFileName, data)
 }
 
 func (p *InputPoller) clearPendingInput() {
@@ -244,7 +265,13 @@ func (p *InputPoller) clearPendingInput() {
 	_ = os.Remove(filepath.Join(p.stateDir, pendingInputFileName))
 }
 
-func (p *InputPoller) recoverPendingInput() {
+// recoverPendingInput replays a pending_input.json left behind by a process
+// that ended between "the server confirmed consume" and "the input was
+// confirmed delivered". It runs synchronously inside Start, before the poll
+// loop goroutine starts, on a channel nothing else has touched yet - the
+// buffered send below cannot lose a value to a full channel, per this
+// method's own precondition (a fresh, cap-16, nothing-sent-yet inputCh).
+func (p *InputPoller) recoverPendingInput(ctx context.Context) {
 	if p.stateDir == "" {
 		return
 	}
@@ -259,18 +286,37 @@ func (p *InputPoller) recoverPendingInput() {
 		return
 	}
 
-	if state.Consumed && state.Input != nil {
-		ri := RemoteInput{
-			ID:        state.Input.ID,
-			SessionID: state.Input.SessionID,
-			Kind:      state.Input.Kind,
-			Body:      state.Input.Body,
-			Received:  time.Now(),
+	if !state.Consumed || state.Input == nil {
+		_ = os.Remove(pendingPath)
+		return
+	}
+
+	// The crash happened AFTER the ledger write but BEFORE this file was
+	// removed: it was already handed to Inputs() last run. Redelivering it
+	// now would run the same instruction a second time.
+	if p.alreadyDelivered(state.Input.ID) {
+		_ = os.Remove(pendingPath)
+		return
+	}
+
+	ri, reason := p.validateRemoteInput(ctx, state.Input)
+	if reason != "" {
+		if p.onRejected != nil {
+			p.onRejected(state.Input.ID, state.Input.SessionID, reason)
 		}
-		select {
-		case p.inputCh <- ri:
-		default:
-		}
+		_ = os.Remove(pendingPath)
+		return
+	}
+	ri.Received = time.Now()
+
+	select {
+	case p.inputCh <- ri:
+		p.recordDelivered(ri.ID)
+	default:
+		// See this method's doc comment: unreachable on a fresh channel.
+		// Left undelivered on the off chance it is ever reached, the record
+		// must survive for the next attempt rather than being discarded.
+		return
 	}
 	_ = os.Remove(pendingPath)
 }

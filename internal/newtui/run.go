@@ -139,6 +139,11 @@ func buildApp(sess *chat.Session, res *config.Resolved, toolsOn bool, agentState
 	screen.SetCommandRunner(runner)
 	screen.SetSubagentThreads(threads)
 	screen.SetSettings(settingsStore.Settings())
+	// pool.RemoteInputs() fans in every pooled session's chatsync-validated
+	// remote input (internal/uiadapter/remote_input.go); the screen is the
+	// sole thing that ever turns one into a conv.Send call (item 1 of the
+	// steering design - see poolSyncOptions' comment for the full rationale).
+	screen.SetRemoteInputs(pool.RemoteInputs())
 
 	env := os.Environ()
 	report := termprobe.Probe(env, "")

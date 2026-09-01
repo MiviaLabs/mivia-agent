@@ -52,6 +52,16 @@ type SessionOptions struct {
 	CwdLabel        string
 	HostLabel       string
 	EnablePolling   bool
+	// AuthorUserIDProvider resolves the CLI's own authenticated principal id
+	// for verifying who queued a remote input. Required for EnablePolling to
+	// deliver anything: nil verifies nothing, so InputPoller refuses every
+	// input closed. See chatsync.AuthorUserIDProvider.
+	AuthorUserIDProvider AuthorUserIDProvider
+	// OnInputRejected, when set, is called for every remote input
+	// InputPoller refuses (session id mismatch, unsupported kind, malformed
+	// body, unverifiable or mismatched author). Nil means refusals stay
+	// silent to the host.
+	OnInputRejected func(id, sessionID, reason string)
 	// EventBufSize bounds the handler-to-worker channel. Zero means
 	// defaultEventBufSize. Overflow here is real loss and is counted into the
 	// sync.dropped marker, exactly like loss on the bus.
@@ -233,7 +243,8 @@ func OpenSession(ctx context.Context, bus *events.Bus, chatSessionID string, opt
 	}
 
 	if opts.EnablePolling {
-		s.poller = NewInputPoller(client, activeSessionID, opts.PollWaitSeconds, opts.OutboxDir)
+		s.poller = NewInputPoller(client, activeSessionID, opts.PollWaitSeconds, opts.AuthorUserIDProvider, opts.OutboxDir)
+		s.poller.SetOnRejected(opts.OnInputRejected)
 	}
 
 	s.sub = bus.SubscribeAcross(syncKinds, s, events.SubscribeOptions{BufSize: 1024})
