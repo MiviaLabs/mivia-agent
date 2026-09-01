@@ -101,6 +101,44 @@ func TestContextCatalogReplaysTheAdmittedSet(t *testing.T) {
 	}
 }
 
+// TestContextCatalogClearingTheSetRemovesTheStaleRecord is the write-side
+// counterpart of TestContextCatalogReplaysTheAdmittedSet: re-saving after the
+// admitted set is cleared must remove the persisted record rather than leave
+// a stale one behind for a later Load to wrongly replay. Ported from the
+// legacy file store's TestFileSessionStoreRoundTripsTheAdmittedSet, whose
+// second half pinned the same invariant against FileSessionStore.SaveAdmission.
+func TestContextCatalogClearingTheSetRemovesTheStaleRecord(t *testing.T) {
+	sess, _ := contextCatalogSession(t)
+	sess.SetAdmissionBinding("reader", "digest-1")
+	admitTools(sess, "grep")
+	sess.mu.Lock()
+	sess.Messages = []provider.Message{{Role: provider.RoleUser, Content: "hi"}}
+	sess.mu.Unlock()
+	if err := sess.Save("snap"); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	got, err := sess.loadAdmission("snap")
+	if err != nil {
+		t.Fatalf("load admission: %v", err)
+	}
+	if got.Agent != "reader" || got.Digest != "digest-1" || !slices.Equal(got.Names, []string{"grep"}) {
+		t.Fatalf("record = %+v", got)
+	}
+
+	// Clearing the set removes the record rather than leaving a stale one.
+	admitTools(sess)
+	if err := sess.Save("snap"); err != nil {
+		t.Fatalf("re-save: %v", err)
+	}
+	got, err = sess.loadAdmission("snap")
+	if err != nil {
+		t.Fatalf("load admission after clear: %v", err)
+	}
+	if len(got.Names) != 0 {
+		t.Fatalf("record = %+v, want cleared", got)
+	}
+}
+
 func TestContextCatalogDropsTheSetWhenTheDigestChanged(t *testing.T) {
 	sess, _ := contextCatalogSession(t)
 	// The only publication a mismatch may make is the narrowing one: the

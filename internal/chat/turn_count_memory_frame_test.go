@@ -2,8 +2,10 @@ package chat
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
@@ -242,5 +244,65 @@ func TestTurnCountUnchangedWithoutMemoryFrame(t *testing.T) {
 	}
 	if info.TurnCount != 1 {
 		t.Fatalf("catalog turn_count = %d, want 1", info.TurnCount)
+	}
+}
+
+// TestConcurrentSaveLoadWithFrameTurnCount exercises the documented
+// concurrent save/load path (Session.Save's lock-and-copy design, go test
+// -race) with a frame-bearing transcript against the context catalog:
+// every observed turn_count must be 1. Ported from the legacy file store's
+// TestFileStoreConcurrentSaveLoadWithFrameTurnCount, which exercised the
+// same invariant against FileSessionStore directly; the catalog counterpart
+// races Session.Save (computes turn count via conversationalTurnCount, same
+// as every other durable save site) against store.LoadSession directly,
+// since Session.Load's own single-flight guard would defeat a concurrency
+// test by simply refusing every load but one.
+func TestConcurrentSaveLoadWithFrameTurnCount(t *testing.T) {
+	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "catalog-race.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	session := wireCatalogSession(t, store, &config.Resolved{ProviderName: "ollama", Model: "llama3.1:8b"}, &fakeCompleter{out: "ok"})
+	session.mu.Lock()
+	session.Messages = frameTranscript()
+	session.mu.Unlock()
+	// Seed one save so concurrent readers never observe ErrSessionNotFound.
+	if err := session.Save("race-frame"); err != nil {
+		t.Fatal(err)
+	}
+	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const workers = 8
+	var wg sync.WaitGroup
+	errCh := make(chan string, workers*2)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := session.Save("race-frame"); err != nil {
+				errCh <- "save: " + err.Error()
+			}
+		}()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, info, err := store.LoadSession(context.Background(), principal, "race-frame")
+			if err != nil {
+				errCh <- "load: " + err.Error()
+				return
+			}
+			if info.TurnCount != 1 {
+				errCh <- fmt.Sprintf("observed turn_count = %d, want 1", info.TurnCount)
+			}
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for msg := range errCh {
+		t.Error(msg)
 	}
 }

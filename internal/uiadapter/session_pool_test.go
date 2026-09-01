@@ -399,3 +399,53 @@ func TestSessionPool_CreateFresh_InheritsRedactionPolicy(t *testing.T) {
 		t.Errorf("fresh conversation policy = %+v, want the sibling's %+v", got, policy)
 	}
 }
+
+// TestSessionPool_CreateFresh_ContextStoreRoundTrips proves CreateFresh's
+// context-store inheritance (session_pool.go's `existing.ContextStore()` ->
+// `sess.SetContextStore(store)` branch) end-to-end, not just that a store
+// pointer got copied: every other CreateFresh test starts from a sibling
+// with no ContextManager/ContextStore set, so that branch was never actually
+// exercised by the suite. A regression here would mean a fresh conversation
+// (the TUI's /new) silently runs with no durable store and loses all its
+// history on the next /resume - the check has to go all the way to a
+// second, independent pool over the same store to catch that.
+func TestSessionPool_CreateFresh_ContextStoreRoundTrips(t *testing.T) {
+	store := openTestContextStore(t)
+	res := &config.Resolved{ProviderName: "test-provider", Model: "test-model"}
+	sess1 := newContextBoundSession(t, res, store, "sess-parent")
+
+	pool := uiadapter.NewSessionPool(sess1, res, nil, false)
+	conv, err := pool.CreateFresh()
+	if err != nil {
+		t.Fatalf("CreateFresh failed: %v", err)
+	}
+	freshID := conv.ID()
+	if freshID == "sess-parent" {
+		t.Fatal("CreateFresh should produce a new session ID, got the parent's")
+	}
+
+	fresh := pool.Session(freshID)
+	if fresh == nil {
+		t.Fatalf("pool.Session(%q) returned nil", freshID)
+	}
+	if fresh.ContextStore() == nil {
+		t.Fatal("CreateFresh's session has no context store - it would run with no durable persistence")
+	}
+
+	fresh.Messages = []provider.Message{{Role: provider.RoleUser, Content: "hello from fresh"}}
+	if err := fresh.Save(freshID); err != nil {
+		t.Fatalf("saving the fresh session: %v", err)
+	}
+
+	// A brand-new pool over the SAME store, simulating a process restart,
+	// must be able to resume what CreateFresh's session just saved.
+	other := newContextBoundSession(t, res, store, "sess-other")
+	otherPool := uiadapter.NewSessionPool(other, res, nil, false)
+	resumed, err := otherPool.GetOrCreate(freshID)
+	if err != nil {
+		t.Fatalf("GetOrCreate(%q) on a fresh pool over the same store: %v", freshID, err)
+	}
+	if len(resumed.History()) == 0 || resumed.History()[0].Text != "hello from fresh" {
+		t.Errorf("resumed history = %+v, want the message CreateFresh's session saved", resumed.History())
+	}
+}
