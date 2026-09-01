@@ -223,7 +223,10 @@ func (p *Projector) projectSubagentAssistant(env Envelope, turnID string, ev eve
 
 	text := content
 	fragments := 0
-	if ls.streamed {
+	// streamUnrecoverable: a discard this lane never got onto the wire. The
+	// viewer still holds the abandoned attempt, so the full text has to travel
+	// for it to replace. Same rule as the root path.
+	if ls.streamed && !ls.streamUnrecoverable {
 		fragments = ls.fragments
 		text = "" // INV-1: text empty iff fragments > 0.
 	} else {
