@@ -1022,3 +1022,56 @@ surfaced together while dogfooding), then pinned by
     missing; a correct fix is deterministic here regardless of scheduler
     timing because the synchronization primitive is barrier-based, not a
     race the test has to get lucky to observe.
+
+## DC-31 A fixed short timeout sized for the idle case bounds an operation whose cost scales with backlog
+
+**Mechanism.** A shutdown or final-flush path gives a real network operation
+a short, fixed ctx budget - reasonable if that operation always does a small,
+constant amount of work. But the operation actually sends WHATEVER has
+accumulated since the last successful attempt, as ONE uncapped request (no
+pagination, no chunking). Under light load the backlog is always small and
+the fixed budget is never noticed. Under real load - a burst that outpaces
+how fast the periodic background path can drain it - the backlog grows, and
+the SAME fixed budget that was generous for one case is starved for the
+other. The timeout was sized for "how long does a network call normally
+take," never audited against "how long can this call's PAYLOAD grow."
+
+**Why it recurs.** The budget is usually copied from a nearby precedent (a
+different Stop/Close call with a genuinely small, bounded operation) or
+picked as "a couple seconds feels responsive" during manual testing, which
+only ever exercises the light-load case - a human typing a few messages
+never accumulates a real backlog before quitting. The failure mode is also
+easy to miss under test: an in-process httptest server answers in
+microseconds regardless of backlog size, so nothing in a fast test suite
+ever pays the real network cost that exposes the gap.
+
+**Evidence.** `internal/clichat/chat_sync.go`'s `attachCLISync` detach
+closure and `internal/newtui/run.go`'s TUI shutdown both gave `Stop`'s final
+flush a 2-5 second ctx. `FlushOutbox` (`internal/chatsync/attach.go`) sends
+the ENTIRE unflushed backlog in one `AppendEvents` call - no size cap, no
+chunking. Once `[sync].stream_assistant = true` raised event volume 5-10x, a
+real turn against the real staging API accumulated a backlog periodic
+mid-turn flushes could not fully drain (a single-threaded worker loop
+blocked on each network round trip cannot also drain new local events
+during that call), and the final `flushNow` needed longer than 2 seconds for
+a real round trip. `Stop`'s `timedOut` path returned early, handing outbox
+close to a goroutine the caller's own process exit then killed - the
+backlog was not delayed, it was permanently lost (confirmed via the local
+outbox file: all events were correctly projected and durably queued
+locally, seq 1-504; only the first 78 were ever uploaded, matching the
+server's own stored count exactly).
+
+**Probes.**
+- For every operation whose request body is "whatever accumulated," not a
+  fixed shape, check what bounds that accumulation (a max batch size? a
+  chunking loop?) and what bounds the TIME budget given to send it. If the
+  size has no cap and the timeout is a small constant, the timeout is wrong
+  for the operation's actual worst case, not merely "a little tight."
+  `internal/chatsync.RecommendedStopTimeout` is the fix here: a single named,
+  documented constant both callers reference, sized for a real network round
+  trip carrying a real backlog, not copied ad-hoc per call site.
+  - Test it against a REAL slow server, not a fast local fake: an httptest
+    handler that sleeps past the OLD budget but under the NEW one
+    (`TestAttachCLISyncDetach_SurvivesASlowFinalFlush`) is the only way to
+    observe this - a mock that never blocks cannot fail regardless of what
+    the timeout constant says.
