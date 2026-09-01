@@ -308,10 +308,11 @@ func (ob *Outbox) rebaseLocked(base int64) (int, error) {
 		return 0, err
 	}
 
-	if err := ob.rewriteEventsFileLocked(unflushed, base); err != nil {
-		return 0, err
-	}
-
+	// The cursor lands before the renumbered file, and the order is the whole
+	// point. A rebased file under the old, higher cursor reads as fully
+	// flushed: every surviving event is skipped, and nothing reports the loss.
+	// The reverse leak is harmless - a low cursor over the old file re-admits
+	// acknowledged events, which is a resend of a contiguous run, not a gap.
 	newCursor := Cursor{
 		FlushedSeq: base,
 		FlushedAt:  time.Now(),
@@ -319,8 +320,17 @@ func (ob *Outbox) rebaseLocked(base int64) (int, error) {
 	if err := ob.writeCursorLocked(newCursor); err != nil {
 		return 0, err
 	}
-
 	ob.cursor = newCursor
+
+	if err := ob.rewriteEventsFileLocked(unflushed, base); err != nil {
+		// Disk and memory agree on the new cursor; only the renumbering is
+		// missing. Recount so the capacity guard reflects what is queued now.
+		if n, countErr := ob.countUnflushedFromDisk(); countErr == nil {
+			ob.unflushed = n
+		}
+		return 0, err
+	}
+
 	ob.unflushed = len(unflushed)
 	ob.maxSeq = base + int64(len(unflushed))
 
