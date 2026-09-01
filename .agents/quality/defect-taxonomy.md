@@ -964,3 +964,61 @@ of who calls the setter.
   exercises the write path (`TestInputPoller_ConsumeInputUsesTheSameSessionIDAsNextInput`,
   `internal/chatsync/poller_session_race_test.go`) is what catches those; write one
   whenever the field has a setter with any caller, present or planned.
+
+## DC-30 Teardown proceeds without waiting for an async delivery pipeline to finish
+
+**Mechanism.** A producer hands work to a consumer through a call that is
+documented as non-blocking or fire-and-forget (a bounded queue, an event bus
+`Publish`, a channel send with a `default` case) and returns immediately once
+the work is *enqueued*, not once it is *handled*. The caller then tears the
+consumer down - Stop, Close, process exit - on the very next line, reasoning
+"the producer is done, so the consumer must be too." The teardown path drains
+whatever has already reached the consumer's OWN internal buffer, which reads
+as complete, but says nothing about work still sitting in the enqueue layer
+between the two, waiting for a delivery goroutine that has not been scheduled
+yet. Nothing observable distinguishes "already delivered" from "enqueued a
+moment ago" at the call site - both look like a function that already
+returned.
+
+**Why it recurs.** The non-blocking contract exists precisely so the producer
+never stalls, which is correct and desirable; the mistake is assuming that
+same non-blocking property also means "and it already happened." A low-volume
+manual test never exposes this: a handful of events clear a bounded queue
+before a human can even reach for the next command, so the gap is invisible
+until real load (many small events instead of a few big ones) inflates the
+queue's drain time closer to - or past - the teardown's own budget.
+
+**Evidence.** `internal/clichat/chat_sync.go`'s `attachCLISync` (fixed
+alongside the regression test below) called `syncSess.Stop(ctx)` directly from
+the detach closure. `Stop` only drains `SyncSession`'s own `eventCh` via a
+non-blocking `drainAndFlushFinal`; it has no visibility into
+`events.Bus`'s per-subscription queue (`internal/events/bus.go`, default
+256-cap, `Publish` "never blocks on a handler") that feeds `HandleEvent` in
+front of it. A one-shot turn with `[sync].stream_assistant = true` publishes
+5-10x the event volume of an unstreamed turn; `oneShot` returns the instant
+the model/tool loop finishes, `defer attachCLISync(...)()` fires on the very
+next line, and the still-queued tail (the final `assistant.message`,
+`turn.ended`, trailing `tool.ended` events) was silently abandoned when the
+process exited moments later. Reproduced live against a real staging session
+(all three symptoms - reasoning, tool I/O, and the tail-loss described here -
+surfaced together while dogfooding), then pinned by
+`TestAttachCLISyncDetach_DeliversTheFullBurstBeforeStopping`.
+
+**Probes.**
+- For every teardown call (`Stop`, `Close`, `Shutdown`) that follows a
+  non-blocking handoff (`Publish`, a buffered channel send, a queue push),
+  check whether the teardown's own drain logic can see ONLY the handoff's
+  target buffer, or also the layer feeding it. If the two are different
+  buffers owned by different components, the teardown needs an explicit
+  synchronization call (a `Flush`, a `Wait`, a barrier) on the UPSTREAM layer
+  before it proceeds - draining its own buffer is not enough.
+  `events.Bus.Flush()` is exactly this primitive here; look for its
+  equivalent (a barrier, drain-then-ack, or explicit join) before trusting
+  any other bounded-queue-plus-teardown pair.
+  - Volume-scale the test: a burst well under the queue's capacity (so a
+    capacity-based drop-oldest cannot be the reason for loss) that runs the
+    producer's publish loop immediately followed by teardown, with no sleep
+    and no explicit synchronization call. If it can lose events, the fix is
+    missing; a correct fix is deterministic here regardless of scheduler
+    timing because the synchronization primitive is barrier-based, not a
+    race the test has to get lucky to observe.
