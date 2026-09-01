@@ -155,29 +155,21 @@ func (p *Projector) retireLane(task string) {
 	p.laneOrder = kept
 }
 
-// retireTurnLanes drops every lane of a finished turn.
+// A turn's end deliberately does NOT retire that turn's lanes.
 //
-// retireLane, the only other reclamation, fires on one run's terminal - and
-// both hops that carry that terminal are bounded drop-oldest queues that shed
-// under load. A run whose terminal was shed kept its lane resident until 64
-// later lane keys pushed it out, so the LRU was the real reclamation policy
-// and a still-live run could be the entry it evicted.
+// It looked safe - no run of a finished turn should emit again - and it is
+// not: a subagent's terminal can be shed by the bounded queues that carry it,
+// and this projector still projects late lane content after the turn's
+// terminal (TestProjectorLateSubagentContentAfterTerminal). A wiped lane is
+// recreated with streamed=false, so the late aggregate ships the whole answer
+// the viewer already received delta by delta - the duplicate INV-1 exists to
+// prevent, now on every turn rather than on a rare eviction.
 //
-// A turn's end retires every lane of that turn regardless: no run of a
-// finished turn will emit again, so nothing is lost, and the eviction pressure
-// that reached live lanes goes with it.
-func (p *Projector) retireTurnLanes(turnID string) {
-	prefix := turnID + "\x00"
-	kept := p.laneOrder[:0]
-	for _, key := range p.laneOrder {
-		if strings.HasPrefix(key, prefix) {
-			delete(p.lanes, key)
-			continue
-		}
-		kept = append(kept, key)
-	}
-	p.laneOrder = kept
-}
+// So a lane is retired only on positive evidence that its run ended
+// (retireLane, from KindSubagentDone). A run whose terminal was shed stays
+// resident until the LRU evicts it. That gap is real and documented rather
+// than traded for a worse one; closing it needs a signal that a run is over,
+// which a turn's end is not.
 
 func (p *Projector) touchLane(key string) {
 	for i, cur := range p.laneOrder {
@@ -329,11 +321,6 @@ func (p *Projector) projectByKind(ev events.Event, turnID string, env Envelope, 
 		return p.projectTurnStart(env, ev.Detail, isSynthetic)
 
 	case events.KindTurnEnd:
-		// Before the knownTurn gate: a turn whose only output came from
-		// subagents has no root turnState at all (the attribution check
-		// precedes p.turn), and its lanes are exactly the ones most in need of
-		// reclaiming.
-		p.retireTurnLanes(turnID)
 		if !p.knownTurn(turnID) {
 			return nil
 		}
@@ -345,7 +332,6 @@ func (p *Projector) projectByKind(ev events.Event, turnID string, env Envelope, 
 		return p.projectTurnEnd(env, ev.Detail)
 
 	case events.KindError:
-		p.retireTurnLanes(turnID)
 		if !p.knownTurn(turnID) {
 			return nil
 		}

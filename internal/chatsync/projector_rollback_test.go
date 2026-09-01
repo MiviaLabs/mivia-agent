@@ -88,31 +88,82 @@ func TestAStoredResetStillReportsFragments(t *testing.T) {
 	}
 }
 
-// TestAFinishedTurnRetiresItsLanes covers the reclamation gap.
+// TestALateSubagentAggregateDoesNotReshipTheAnswer is the regression that
+// retiring a turn's lanes at its end introduced, and the reason a lane is now
+// retired only on its own run's terminal.
 //
-// retireLane fires on one run's terminal, and both hops that carry a terminal
-// are bounded drop-oldest queues that shed under load. A run whose terminal
-// was shed used to sit in the lane table until 64 later keys pushed it out, so
-// the LRU was the reclamation policy and the entry it evicted could be a run
-// that was still streaming.
-func TestAFinishedTurnRetiresItsLanes(t *testing.T) {
+// A subagent's terminal can be shed by the bounded queues that carry it, and
+// this projector still projects late lane content after the turn's terminal.
+// A lane wiped at turn end is recreated with streamed=false, so the late
+// aggregate ships the whole answer the viewer already holds delta by delta.
+func TestALateSubagentAggregateDoesNotReshipTheAnswer(t *testing.T) {
 	p := NewProjector("sess-1", 0, proseOpts())
 
-	p.Project(subagentEvent(events.KindAssistant, "task-1", "sub text", "delta"))
-	if len(p.lanes) != 1 {
-		t.Fatalf("the lane was never created; this test proves nothing")
-	}
-
-	// The run's terminal is shed by the bus - it never arrives.
+	p.Project(rootEvent(events.KindTurnStart, "", "the prompt"))
+	p.Project(subagentEvent(events.KindAssistant, "task-1", "the answer", "delta"))
 	p.Project(rootEvent(events.KindTurnEnd, "", "completed"))
 
-	if len(p.lanes) != 0 {
-		t.Errorf("%d lane(s) survived the turn that owned them; nothing but the "+
-			"LRU will ever reclaim them, and the entry it evicts can be a live "+
-			"run", len(p.lanes))
+	// The run's own terminal was shed; its settled aggregate arrives anyway.
+	got := p.Project(subagentEvent(events.KindAssistant, "task-1", "the answer", ""))
+	if len(got) != 1 {
+		t.Fatalf("the late aggregate produced %d wire events, want 1", len(got))
 	}
-	if len(p.laneOrder) != 0 {
-		t.Errorf("laneOrder still holds %d key(s) with no lane behind them",
-			len(p.laneOrder))
+	payload, ok := got[0].Payload.(*SubagentAssistantMessagePayload)
+	if !ok {
+		t.Fatalf("payload is %T, want *SubagentAssistantMessagePayload", got[0].Payload)
+	}
+	if payload.Fragments != 1 || payload.Text != "" {
+		t.Errorf("Fragments = %d Text = %q, want 1 and empty: the lane forgot it "+
+			"had streamed, so the viewer is sent the answer a second time",
+			payload.Fragments, payload.Text)
+	}
+}
+
+// The two tests below are the LANE twins of the root-path tests above. Both
+// halves of this work shipped with the root half constrained and the lane half
+// not: a review mutated the lane's aggregate condition and the lane's segment
+// advance, and the whole package stayed green. A projector that treats a
+// subagent's stream as a first-class stream has to be held to the rule on both
+// paths, or the rule holds only where someone happened to write a test.
+
+// TestALostLaneResetMakesTheSettledMessageCarryTheAnswer mirrors
+// TestALostResetMakesTheSettledMessageCarryTheAnswer for one subagent lane.
+func TestALostLaneResetMakesTheSettledMessageCarryTheAnswer(t *testing.T) {
+	p := NewProjector("sess-1", 0, proseOpts())
+
+	p.Project(subagentEvent(events.KindAssistant, "task-1", "the first answer", "delta"))
+	reset := p.Project(subagentEvent(events.KindAssistantReset, "task-1", "", "schema_retry"))
+	if len(reset) != 1 {
+		t.Fatalf("the lane reset produced %d wire events, want 1", len(reset))
+	}
+	p.RollbackStreaming(reset)
+	p.Project(subagentEvent(events.KindAssistant, "task-1", "the second answer", "delta"))
+
+	got := p.Project(subagentEvent(events.KindAssistant, "task-1", "the second answer", ""))
+	payload, ok := got[0].Payload.(*SubagentAssistantMessagePayload)
+	if !ok {
+		t.Fatalf("payload is %T, want *SubagentAssistantMessagePayload", got[0].Payload)
+	}
+	if payload.Text != "the second answer" || payload.Fragments != 0 {
+		t.Errorf("Fragments = %d Text = %q, want 0 and the whole answer: this "+
+			"lane's viewer still holds the abandoned attempt and has been sent "+
+			"nothing that can replace it", payload.Fragments, payload.Text)
+	}
+}
+
+// TestALaneReplayAfterResetUsesAFreshBlock mirrors
+// TestReplayAfterResetUsesAFreshBlock for one subagent lane. Reusing the
+// discarded attempt's block puts the replay back where the abandoned attempt
+// was, which is the ordering defect the segment advance exists to prevent.
+func TestALaneReplayAfterResetUsesAFreshBlock(t *testing.T) {
+	p := NewProjector("sess-1", 0, proseOpts())
+
+	first := p.Project(subagentEvent(events.KindAssistant, "task-1", "First try.", "delta"))
+	used := blockOf(t, onlyEvent(t, first))
+	p.Project(subagentEvent(events.KindAssistantReset, "task-1", "", "retrying"))
+	replay := p.Project(subagentEvent(events.KindAssistant, "task-1", "Replayed.", "delta"))
+
+	if got := blockOf(t, onlyEvent(t, replay)); got == used {
+		t.Fatalf("the lane's replay reused the discarded attempt's block %q", used)
 	}
 }
