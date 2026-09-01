@@ -330,6 +330,27 @@ PROBES = [
         "\td := applyTruncation(&env, \"detail\", detail, 200)\n"
         "\treturn &payload{Envelope: env, Detail: d}\n}\n",
     ),
+    (
+        "mivia.go.no-locked-field-reread",
+        "internal/chatsync/probe-locked-reread/viol.go",
+        "package probe\n\nimport \"sync\"\n\n"
+        "type Poller struct {\n\tmu        sync.Mutex\n\tsessionID string\n}\n\n"
+        "func (p *Poller) doConsume() string {\n"
+        "\tp.mu.Lock()\n\tsessID := p.sessionID\n\tp.mu.Unlock()\n\n"
+        "\tfirst := callNext(sessID)\n\t_ = first\n\n"
+        "\treturn callConsume(p.sessionID)\n}\n\n"
+        "func callNext(id string) string    { return id }\n"
+        "func callConsume(id string) string { return id }\n",
+        "internal/chatsync/probe-locked-reread/clean.go",
+        "package probe\n\nimport \"sync\"\n\n"
+        "type PollerOK struct {\n\tmu        sync.Mutex\n\tsessionID string\n}\n\n"
+        "func (p *PollerOK) doConsumeOK() string {\n"
+        "\tp.mu.Lock()\n\tsessID := p.sessionID\n\tp.mu.Unlock()\n\n"
+        "\tfirst := callNextOK(sessID)\n\t_ = first\n\n"
+        "\treturn callConsumeOK(sessID)\n}\n\n"
+        "func callNextOK(id string) string    { return id }\n"
+        "func callConsumeOK(id string) string { return id }\n",
+    ),
 ]
 
 
