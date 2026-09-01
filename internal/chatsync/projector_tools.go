@@ -25,13 +25,6 @@ func proseBlock(stream string, segment int) string {
 	return stream + ":" + strconv.Itoa(segment)
 }
 
-// advanceStep closes the open segment of a stream, so the next prose opens a
-// new block. A tool call is the boundary: it is the point where the model stops
-// talking and acts.
-//
-// It is a no-op on a segment nothing shipped into. Advancing there would spend
-// ids on silence - and a consumer that renders one message per id would show
-// the gaps as blank messages.
 // closeStepOnToolStart registers the turn and, when ev actually STARTS a tool,
 // closes the prose that preceded it: the model stopped talking and acted, so
 // what it says next belongs to the next step.
@@ -51,6 +44,13 @@ func (p *Projector) closeStepOnToolStart(ev events.Event, turnID string) {
 	advanceStep(ts)
 }
 
+// advanceStep closes the open segment of a stream, so the next prose opens a
+// new block. A tool call is the boundary: it is the point where the model stops
+// talking and acts.
+//
+// It is a no-op on a segment nothing shipped into. Advancing there would spend
+// ids on silence - and a consumer that renders one message per id would show
+// the gaps as blank messages.
 func advanceStep(ts *turnState) {
 	if ts == nil || !ts.segmentDirty {
 		return
@@ -203,11 +203,14 @@ func (p *Projector) projectSubagentAssistant(env Envelope, turnID string, ev eve
 	content := redactText(ev.Content)
 
 	if ev.Detail == "delta" {
-		ls.streamed = true
-		ls.fragments++
 		if !p.opts.StreamAssistant || redactionActive() {
 			return nil
 		}
+		// Recorded only once the delta is actually going out - see
+		// projectAssistant for why the order matters. The step counter follows
+		// the same rule.
+		ls.streamed = true
+		ls.fragments++
 		ls.segmentDirty = true
 		content = applyTruncation(&env, "text", content, BudgetDeltaText)
 		payload := &SubagentAssistantDeltaPayload{
@@ -220,7 +223,7 @@ func (p *Projector) projectSubagentAssistant(env Envelope, turnID string, ev eve
 
 	text := content
 	fragments := 0
-	if ls.streamed && p.opts.StreamAssistant && !redactionActive() {
+	if ls.streamed {
 		fragments = ls.fragments
 		text = "" // INV-1: text empty iff fragments > 0.
 	} else {
@@ -247,7 +250,10 @@ func (p *Projector) projectSubagentThinking(env Envelope, turnID string, ev even
 	env.Block = proseBlock(turnID+":"+ev.AgentTask+":thinking", ls.segment)
 
 	text := ""
-	if p.opts.IncludeThinking {
+	// Withheld under a policy for the same reason as the root path: a
+	// fragment-sized redaction boundary cannot catch a secret that spans two
+	// fragments, and thinking has no whole-message form to fall back to.
+	if p.opts.IncludeThinking && !redactionActive() {
 		text = redactText(ev.Content)
 		text = applyTruncation(&env, "text", text, BudgetDeltaText)
 	}
