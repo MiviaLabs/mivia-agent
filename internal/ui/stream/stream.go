@@ -39,6 +39,13 @@ func renderOne(w io.Writer, ev uievent.Event) error {
 			return err
 		}
 		return printBlock(w, "", b.Text)
+	case uievent.AssistantResetBody:
+		// A writer cannot retract what it already printed, so the line says
+		// the text above is void. Silence would leave the rejected reply and
+		// its replacement stacked with nothing to tell them apart.
+		_, err := fmt.Fprintf(w, "  discarded the reply above%s; answering again\n",
+			parenthesised(b.Reason))
+		return err
 	case uievent.ReasoningDeltaBody:
 		if b.WordCount == 0 {
 			return nil // mid-span delta; only the final chunk carries a count
@@ -235,4 +242,13 @@ func formatArgs(args map[string]any) string {
 		parts = append(parts, fmt.Sprintf("%s=%v", k, args[k]))
 	}
 	return strings.Join(parts, " ")
+}
+
+// parenthesised wraps a non-empty reason for inline use, and yields nothing
+// for an empty one, so the sentence reads correctly either way.
+func parenthesised(reason string) string {
+	if reason == "" {
+		return ""
+	}
+	return " (" + reason + ")"
 }

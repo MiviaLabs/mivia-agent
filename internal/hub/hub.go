@@ -45,6 +45,11 @@ var relayedKinds = []events.Kind{
 	events.KindSubagentEnd,
 	events.KindSubagentHeartbeat,
 	events.KindSubagentDone,
+	// KindAssistantReset travels with the prose it discards. A peer that
+	// relays the replacement answer but not the discard shows the rejected
+	// attempt and the replacement stacked, with nothing to tell them apart.
+	events.KindAssistantReset,
+
 	// KindCompaction carries the typed, content-free compaction payload (see
 	// events.CompactionEvent) - safe to relay by construction (INV-AG-32:
 	// no prompts, tool arguments, hidden content, or summary payloads).

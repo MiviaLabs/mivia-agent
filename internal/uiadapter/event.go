@@ -93,6 +93,8 @@ func TranslateEventWithOptions(ev agent.Event, opts TranslateOptions) []uievent.
 		return translateSubagentStart(ev)
 	case agent.EventSubagentEnd:
 		return translateSubagentEnd(ev)
+	case agent.EventAssistantReset:
+		return translateAssistantReset(ev)
 	case agent.EventSubagentBegin:
 		return translateSubagentBegin(ev)
 	case agent.EventSubagentDone:

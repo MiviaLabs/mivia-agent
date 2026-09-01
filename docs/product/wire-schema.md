@@ -26,6 +26,8 @@ The `done` event carries `session_id`. A caller that did not set `--session` rea
 | `thinking` | `text` | Model reasoning, for providers that expose it. |
 | `tool_start` | `tool_call_id`, `name`, `input`, `origin_task_id`, `origin_agent`, `origin_depth`, `origin_task_description` | A tool call started. `input` is a bounded, redacted preview. The `origin_*` fields appear only when a subagent made the call, not the root loop. |
 | `tool_end` | `tool_call_id`, `name`, `output`, `status`, `origin_*` | A tool call ended. `status` is `ok` or `failed`. An absent `status` means an older mivia build; read it as `ok`. |
+| `assistant_reset` | `message`, `origin_*` | Discard the answer you have for this turn and start again. The agent is re-driving the turn after a retry, so the whole answer arrives a second time. `message` is a short reason with no content in it. The `origin_*` fields appear only when a subagent is retrying. |
+| `subagent_begin` | `origin_task_id`, `origin_agent`, `origin_depth`, `name`, `input` | One subagent started. `input` is the bounded task text it was given. |
 | `subagent_done` | `origin_task_id` | One subagent finished all its work. |
 | `subagent_heartbeat` | `origin_task_id`, `message` | A subagent is alive but produced no new event. |
 
@@ -82,6 +84,8 @@ All mivia processes that share one store directory see each other's activity thr
 | `external_chunk` | Answer text from the other process's ROOT agent. |
 | `external_thinking` | Reasoning text from the other process's ROOT agent. |
 | `external_tool_start` / `external_tool_end` | A tool call made by the other process's ROOT agent, with the same fields as the local types. |
+| `external_assistant_reset` | Discard the answer you have for that run's turn. Same meaning as the local `assistant_reset`, for the other process's ROOT agent. |
+| `external_subagent_assistant_reset` | The same discard, for one of its subagents. |
 | `external_subagent_chunk` | Answer text from one of the other process's subagents. |
 | `external_subagent_thinking` | Reasoning text from one of its subagents. |
 | `external_subagent_tool_start` / `external_subagent_tool_end` | A tool call made by one of its subagents. |
