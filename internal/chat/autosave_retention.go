@@ -20,10 +20,6 @@ func IsAutoSaveName(name string) bool {
 	return isAutoSaveStamp(rest)
 }
 
-func IsTurnSaveName(name string) bool {
-	return IsAutoSaveName(name) && strings.Contains(name, turnSaveMarker)
-}
-
 func isAutoSaveStamp(s string) bool {
 	stamp, rest := s, ""
 	if i := strings.IndexByte(s, '-'); i >= 0 {
@@ -51,29 +47,8 @@ func isAutoSaveStamp(s string) bool {
 	return true
 }
 
-func expiredAutoSaves(infos []SessionInfo, keepTurnName string) []SessionInfo {
-	var exits, turns []SessionInfo
-	for _, si := range infos {
-		switch {
-		case si.Name == keepTurnName:
-		case IsTurnSaveName(si.Name):
-			turns = append(turns, si)
-		case IsAutoSaveName(si.Name):
-			exits = append(exits, si)
-		}
-	}
-	var expired []SessionInfo
-	if len(exits) > AutoSaveKeep {
-		expired = append(expired, exits[AutoSaveKeep:]...)
-	}
-	if len(turns) > TurnSaveKeep {
-		expired = append(expired, turns[TurnSaveKeep:]...)
-	}
-	return expired
-}
-
 func (s *Session) HasAutoSave() bool {
-	if s.SessionDir == "" && !s.ContextEnabled() {
+	if !s.ContextEnabled() {
 		return false
 	}
 	infos, err := s.ListSessions()
@@ -105,21 +80,4 @@ func (s *Session) LatestAutoSaveName() string {
 		}
 	}
 	return latest
-}
-
-func (s *Session) pruneAutoSaves() {
-	if s.SessionDir == "" {
-		return
-	}
-	cleanupOrphanedSessions(s.SessionDir)
-	infos, err := s.ListSessions()
-	if err != nil {
-		return
-	}
-	s.mu.RLock()
-	live := s.turnSaveName
-	s.mu.RUnlock()
-	for _, si := range expiredAutoSaves(infos, live) {
-		_ = s.DeleteSession(si.Name)
-	}
 }

@@ -568,7 +568,7 @@ func TestAgentSwitchArmsTheWidenerItself(t *testing.T) {
 func TestAgentSwitchToAnInertAgentDisarmsAStaleWidener(t *testing.T) {
 	completer := &scriptedCompleter{turns: []provider.Response{{Content: "done"}}}
 	fixture := newDeferredFixture(t, completer, []string{"read_file"}, []string{"read_file", "grep"})
-	fixture.sess.SessionDir = t.TempDir()
+	bindDeferredFixtureContext(t, fixture.sess)
 	if _, err := fixture.sess.StageToolAdmission([]string{"grep"}, 0); err != nil {
 		t.Fatalf("stage under the deferring binding: %v", err)
 	}
@@ -632,7 +632,7 @@ func TestAgentSwitchToAnInertAgentDisarmsAStaleWidener(t *testing.T) {
 func TestAgentSwitchRebindsThePersistedAdmissionIdentity(t *testing.T) {
 	completer := &scriptedCompleter{turns: []provider.Response{{Content: "done"}}}
 	fixture := newDeferredFixture(t, completer, []string{"read_file"}, []string{"read_file", "grep", "glob"})
-	fixture.sess.SessionDir = t.TempDir()
+	bindDeferredFixtureContext(t, fixture.sess)
 	deferringAgent(t, fixture, "narrow", []string{"read_file"}, "read_file", "grep")
 	deferringAgent(t, fixture, "other", []string{"read_file"}, "read_file", "grep", "glob")
 

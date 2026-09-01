@@ -7,12 +7,52 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/uiadapter"
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/intent"
 )
+
+// newContextBoundSession builds a session bound to store under its own
+// principal - the context-catalog counterpart of the legacy
+// `sess.SessionDir = dir` + real FileSessionStore fixture these tests used
+// before the legacy file-store subsystem was removed. Multiple sessions can
+// share one store (same pattern GetOrCreate/CreateFresh use in production
+// when a pool spans several sessions).
+func newContextBoundSession(t *testing.T, res *config.Resolved, store *storage.SQLite, sessionID string) *chat.Session {
+	t.Helper()
+	sess := chat.NewSession(res, nil)
+	sess.SessionID = sessionID
+	principal, err := contextstate.NewPrincipal("workspace", sess.SessionID, "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &contextmgr.ContextManager{
+		PreparationManager:  contextmgr.StructuralPreparationManager{},
+		CheckpointPublisher: contextmgr.PreparationCommitter{Store: store},
+		Enabled:             true,
+	}
+	if err := sess.SetContextManager(manager, principal); err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.SetContextStore(store); err != nil {
+		t.Fatal(err)
+	}
+	return sess
+}
+
+func openTestContextStore(t *testing.T) *storage.SQLite {
+	t.Helper()
+	store, err := storage.OpenSQLite(t.TempDir() + "/context.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	return store
+}
 
 // TestSessionPool_IsActive verifies the pool reports a session's real
 // turn-in-flight status via its pooled Conversation, and reports false
@@ -81,12 +121,10 @@ func TestSessionPool_GetOrCreateInitial(t *testing.T) {
 }
 
 func TestSessionPool_GetOrCreateLoadsPersistedSession(t *testing.T) {
-	dir := t.TempDir()
-	res := &config.Resolved{Model: "test-model"}
+	store := openTestContextStore(t)
+	res := &config.Resolved{ProviderName: "test-provider", Model: "test-model"}
 
-	sess1 := chat.NewSession(res, nil)
-	sess1.SessionDir = dir
-	sess1.SessionID = "sess-alpha"
+	sess1 := newContextBoundSession(t, res, store, "sess-alpha")
 	sess1.Messages = []provider.Message{
 		{Role: provider.RoleUser, Content: "Hello from Alpha"},
 	}
@@ -95,9 +133,7 @@ func TestSessionPool_GetOrCreateLoadsPersistedSession(t *testing.T) {
 	}
 
 	// Create sess2 in persistence
-	sess2 := chat.NewSession(res, nil)
-	sess2.SessionDir = dir
-	sess2.SessionID = "sess-beta"
+	sess2 := newContextBoundSession(t, res, store, "sess-beta")
 	sess2.Messages = []provider.Message{
 		{Role: provider.RoleUser, Content: "Hello from Beta"},
 	}
@@ -138,41 +174,14 @@ func TestSessionPool_NilConfigReturnsError(t *testing.T) {
 	}
 }
 
-func TestSessionPool_InheritsStore(t *testing.T) {
-	dir := t.TempDir()
-	res := &config.Resolved{Model: "test-model"}
-	store, err := chat.NewFileSessionStore(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	sess1 := chat.NewSession(res, nil)
-	sess1.SetSessionStore(store, nil)
-	sess1.SessionID = "stored-1"
-	if err := sess1.Save("stored-1"); err != nil {
-		t.Fatal(err)
-	}
-
-	pool := uiadapter.NewSessionPool(sess1, res, nil, false)
-	conv, err := pool.GetOrCreate("stored-1")
-	if err != nil {
-		t.Fatalf("GetOrCreate failed: %v", err)
-	}
-	if conv.ID() != "stored-1" {
-		t.Errorf("got ID %q, want stored-1", conv.ID())
-	}
-}
-
 func TestSessionPool_GetOrCreateWithModelCatalog(t *testing.T) {
-	dir := t.TempDir()
+	store := openTestContextStore(t)
 	res := &config.Resolved{
 		ProviderName: "test-provider",
 		Model:        "test-model",
 		Models:       []string{"test-model"},
 	}
-	sess1 := chat.NewSession(res, nil)
-	sess1.SessionDir = dir
-	sess1.SessionID = "sess-catalog-1"
+	sess1 := newContextBoundSession(t, res, store, "sess-catalog-1")
 	sess1.Messages = []provider.Message{
 		{Role: provider.RoleUser, Content: "Hello with catalog"},
 	}
@@ -191,15 +200,13 @@ func TestSessionPool_GetOrCreateWithModelCatalog(t *testing.T) {
 }
 
 func TestSessionPool_LoadedSessionInheritsTools(t *testing.T) {
-	dir := t.TempDir()
+	store := openTestContextStore(t)
 	res := &config.Resolved{
 		ProviderName: "test-provider",
 		Model:        "test-model",
 		Models:       []string{"test-model"},
 	}
-	sess1 := chat.NewSession(res, nil)
-	sess1.SessionDir = dir
-	sess1.SessionID = "sess-tools-1"
+	sess1 := newContextBoundSession(t, res, store, "sess-tools-1")
 	sess1.Tools = tools.NewRegistry()
 	sess1.UseTools = true
 	if err := sess1.Save("sess-tools-1"); err != nil {
@@ -243,32 +250,6 @@ func TestSessionPool_CreateFresh_NilResReturnsError(t *testing.T) {
 	}
 }
 
-func TestSessionPool_CreateFresh_InheritsSessionDir(t *testing.T) {
-	dir := t.TempDir()
-	res := &config.Resolved{Model: "test-model"}
-	sess := chat.NewSession(res, nil)
-	sess.SessionID = "parent-session"
-	sess.SessionDir = dir
-	pool := uiadapter.NewSessionPool(sess, res, nil, false)
-
-	conv, err := pool.CreateFresh()
-	if err != nil {
-		t.Fatalf("CreateFresh failed: %v", err)
-	}
-	// Verify the fresh conv is registered and distinct
-	if conv.ID() == "parent-session" {
-		t.Errorf("CreateFresh should produce a new session ID, got parent ID")
-	}
-	// Fetch it back from the pool by its new ID
-	conv2, err := pool.GetOrCreate(conv.ID())
-	if err != nil {
-		t.Fatalf("GetOrCreate fresh ID failed: %v", err)
-	}
-	if conv2.ID() != conv.ID() {
-		t.Errorf("pool did not register fresh session: got %q, want %q", conv2.ID(), conv.ID())
-	}
-}
-
 func TestSessionPool_CreateFresh_InheritsToolsFlag(t *testing.T) {
 	res := &config.Resolved{Model: "test-model"}
 	sess := chat.NewSession(res, nil)
@@ -293,7 +274,8 @@ func dispatchTasksMessages(taskID string) []provider.Message {
 			Role: provider.RoleAssistant,
 			ToolCalls: []provider.ToolCall{
 				{
-					ID: "call_disp_1",
+					ID:   "call_disp_1",
+					Type: "function",
 					Function: struct {
 						Name      string `json:"name"`
 						Arguments string `json:"arguments"`
@@ -339,16 +321,12 @@ func TestSessionPool_InitialConversationWiredToSubagentThreads(t *testing.T) {
 // /resume path: a session loaded fresh from disk via GetOrCreate must also
 // be wired to pool.Threads(), not just the pool's initial member.
 func TestSessionPool_GetOrCreateWiresSubagentThreadsOnResume(t *testing.T) {
-	dir := t.TempDir()
-	res := &config.Resolved{Model: "test-model"}
+	store := openTestContextStore(t)
+	res := &config.Resolved{ProviderName: "test-provider", Model: "test-model"}
 
-	initial := chat.NewSession(res, nil)
-	initial.SessionDir = dir
-	initial.SessionID = "sess-initial"
+	initial := newContextBoundSession(t, res, store, "sess-initial")
 
-	resumed := chat.NewSession(res, nil)
-	resumed.SessionDir = dir
-	resumed.SessionID = "sess-resumed"
+	resumed := newContextBoundSession(t, res, store, "sess-resumed")
 	resumed.Messages = dispatchTasksMessages("task-resumed-check")
 	if err := resumed.Save("sess-resumed"); err != nil {
 		t.Fatalf("saving resumed session: %v", err)

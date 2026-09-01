@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -147,32 +146,19 @@ func (c cancelingLineCompleter) ChatTurn(_ context.Context, req provider.Request
 	return nil, context.Canceled
 }
 
-func TestOneShotPrintsReplyBeforeAutosaveFailure(t *testing.T) {
-	const answer = "The answer survives."
-	root := filepath.Join(t.TempDir(), "sessions")
-	store, err := chat.NewFileSessionStore(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sess := chat.NewSession(&config.Resolved{ProviderName: "test", Model: "model", SystemPrompt: "sys"}, streamingLineCompleter{output: answer})
-	sess.SetSessionStore(store, chat.NewSaveManager(store, "model", "test"))
-	if err := os.RemoveAll(root); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(root, []byte("blocks session directories"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	stdout := captureStdout(t)
-	stderr := captureStderr(t)
-	err = oneShotContext(context.Background(), sess, "question", false, &config.Resolved{ProviderName: "test", Model: "model"}, false)
-	gotOut, _ := stdout(), stderr()
-	if !errors.Is(err, chat.ErrPersistence) {
-		t.Fatalf("error = %v, want ErrPersistence", err)
-	}
-	if !strings.Contains(gotOut, answer) {
-		t.Fatalf("stdout = %q, want it to contain %q", gotOut, answer)
-	}
-}
+// TestOneShotPrintsReplyBeforeAutosaveFailure used to pin that a legacy
+// autosave failure (SaveManager writing to a blocked session directory)
+// still let the reply print to stdout - shouldPrintOneShotOutput's
+// errors.Is(err, chat.ErrPersistence) check exists for exactly that.
+// Removed along with the legacy file-backed session store: a synthetic
+// context-checkpoint-commit failure does NOT reach that check (nothing on
+// the context-commit path wraps its error in chat.ErrPersistence), so a
+// faithful port would have to assert the OPPOSITE of what this test used to
+// prove - that finding is real and separate from this cleanup:
+// shouldPrintOneShotOutput's ErrPersistence branch is dead code for every
+// context-enabled session, i.e. every real session, and needs its own
+// decision (should a durable-commit failure still print the reply?), not a
+// silent behavior change smuggled into a test port.
 
 func TestOneShotPrintsPartialBeforeCancellation(t *testing.T) {
 	const partial = "The partial answer survives."

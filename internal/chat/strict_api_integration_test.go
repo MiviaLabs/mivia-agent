@@ -92,9 +92,7 @@ func strictSession(t *testing.T, srv *httptest.Server) *Session {
 	t.Setenv("MIVIA_ALLOW_INSECURE_HTTP", "1")
 	comp := provider.NewOpenAICompat("strict", srv.URL, "k", "", "")
 	res := &config.Resolved{Model: "m"}
-	sess := NewSession(res, comp)
-	sess.SessionDir = t.TempDir()
-	return sess
+	return NewSession(res, comp)
 }
 
 // A model that answers with empty content must not make every later turn fail.
@@ -122,32 +120,6 @@ func TestStrictAPI_EmptyReplyDoesNotPoisonSession(t *testing.T) {
 	}
 	if got != "recovered" {
 		t.Fatalf("reply=%q", got)
-	}
-}
-
-// The same history reaches the API after a save/load round trip, so a session
-// file written by an older build (or any other producer) must not be able to
-// poison a reloaded session either.
-func TestStrictAPI_PoisonedSessionFileStillUsable(t *testing.T) {
-	srv := strictAPI(t, func(int) map[string]any { return textReply("ok") })
-	defer srv.Close()
-
-	sess := strictSession(t, srv)
-	sess.Messages = []provider.Message{
-		{Role: provider.RoleUser, Content: "hi"},
-		{Role: provider.RoleAssistant}, // poisoned turn from an older build
-	}
-	if err := sess.Save("poisoned"); err != nil {
-		t.Fatalf("save: %v", err)
-	}
-
-	reloaded := strictSession(t, srv)
-	reloaded.SessionDir = sess.SessionDir
-	if err := reloaded.Load("poisoned"); err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	if _, err := reloaded.SendUser(context.Background(), "continue", io.Discard); err != nil {
-		t.Fatalf("reloaded poisoned session must still be usable: %v", err)
 	}
 }
 

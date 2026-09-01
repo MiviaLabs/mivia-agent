@@ -13,10 +13,41 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/agents"
 	"github.com/MiviaLabs/mivia-agent/internal/chat"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 	"github.com/MiviaLabs/mivia-agent/internal/workspace"
 )
+
+// bindDeferredFixtureContext binds an already-built fixture's session to a
+// fresh, isolated context store, so Save/Load exercise the durable catalog -
+// the only persistence path since the legacy file-backed session store was
+// removed.
+func bindDeferredFixtureContext(t *testing.T, sess *chat.Session) {
+	t.Helper()
+	store, err := storage.OpenSQLite(t.TempDir() + "/context.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	principal, err := contextstate.NewPrincipal("workspace", sess.SessionID, "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &contextmgr.ContextManager{
+		PreparationManager:  contextmgr.StructuralPreparationManager{},
+		CheckpointPublisher: contextmgr.PreparationCommitter{Store: store},
+		Enabled:             true,
+	}
+	if err := sess.SetContextManager(manager, principal); err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.SetContextStore(store); err != nil {
+		t.Fatal(err)
+	}
+}
 
 // scriptedCompleter records the tool list of every request and replays a
 // scripted sequence of turns, so a test can assert what the model was
@@ -714,7 +745,7 @@ func TestAdmittedToolsSurviveSaveAndLoad(t *testing.T) {
 		{Content: "done"},
 	}}
 	fixture := newDeferredFixture(t, completer, []string{"read_file"}, []string{"read_file", "grep"})
-	fixture.sess.SessionDir = t.TempDir()
+	bindDeferredFixtureContext(t, fixture.sess)
 	if _, err := fixture.sess.SendUser(context.Background(), "load", io.Discard); err != nil {
 		t.Fatalf("turn: %v", err)
 	}
@@ -743,7 +774,7 @@ func TestResumeDropsAStaleAdmittedSetWithANote(t *testing.T) {
 		{Content: "done"},
 	}}
 	fixture := newDeferredFixture(t, completer, []string{"read_file"}, []string{"read_file", "grep", "glob"})
-	fixture.sess.SessionDir = t.TempDir()
+	bindDeferredFixtureContext(t, fixture.sess)
 	if _, err := fixture.sess.SendUser(context.Background(), "load", io.Discard); err != nil {
 		t.Fatalf("turn: %v", err)
 	}

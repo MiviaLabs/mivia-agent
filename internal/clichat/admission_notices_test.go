@@ -2,6 +2,7 @@ package clichat
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"os"
 	"os/signal"
@@ -13,24 +14,29 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/config"
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 )
 
 // noteSession returns a session holding one queued admission note, standing in
 // for a resume that dropped a stale set or a stage that could not publish.
+// The stale admission record is written directly to the durable catalog
+// (store.SaveSessionAdmission), bypassing sess.Save's own admission persist,
+// so it lands under a DIFFERENT digest than the session's current binding -
+// exactly what a resume against an older admission record looks like.
 func noteSession(t *testing.T) *chat.Session {
 	t.Helper()
-	sess := chat.NewSession(&config.Resolved{ProviderName: "p", Model: "m"}, nullCompleter{})
-	sess.SessionDir = t.TempDir()
-	sess.SetAdmissionBinding("reader", "digest-1")
-	store, err := chat.NewFileSessionStore(sess.SessionDir)
+	store, err := storage.OpenSQLite(t.TempDir() + "/context.db")
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = store.Close() })
+	sess := wireTestContextSession(t, store, &config.Resolved{ProviderName: "p", Model: "m"})
+	sess.SetAdmissionBinding("reader", "digest-1")
 	sess.Messages = []provider.Message{{Role: provider.RoleUser, Content: "hi"}}
 	if err := sess.Save("snap"); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SaveAdmission("snap", contextstate.SessionAdmission{
+	if err := store.SaveSessionAdmission(context.Background(), sess.ContextPrincipal(), "snap", contextstate.SessionAdmission{
 		Agent: "reader", Digest: "a-stale-digest", Names: []string{"grep"},
 	}); err != nil {
 		t.Fatal(err)
@@ -77,10 +83,13 @@ func TestSlashToolsReportsSchemaMassClassic(t *testing.T) {
 // TestReplRestorePrintsAdmissionNotes: the classic REPL's auto-resume is one of
 // the load sites, so a dropped admitted set has to be visible there too.
 func TestReplRestorePrintsAdmissionNotes(t *testing.T) {
-	dir := t.TempDir()
+	store, err := storage.OpenSQLite(t.TempDir() + "/context.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
 	res := &config.Resolved{ProviderName: "p", Model: "m"}
-	sess := chat.NewSession(res, nullCompleter{})
-	sess.SessionDir = dir
+	sess := wireTestContextSession(t, store, res)
 	sess.SetAdmissionBinding("reader", "digest-1")
 	sess.Messages = []provider.Message{
 		{Role: provider.RoleUser, Content: "hi"},
@@ -89,11 +98,7 @@ func TestReplRestorePrintsAdmissionNotes(t *testing.T) {
 	if err := sess.Save(chat.AutoSaveName); err != nil {
 		t.Fatal(err)
 	}
-	store, err := chat.NewFileSessionStore(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.SaveAdmission(chat.AutoSaveName, contextstate.SessionAdmission{
+	if err := store.SaveSessionAdmission(context.Background(), sess.ContextPrincipal(), chat.AutoSaveName, contextstate.SessionAdmission{
 		Agent: "reader", Digest: "a-stale-digest", Names: []string{"grep"},
 	}); err != nil {
 		t.Fatal(err)

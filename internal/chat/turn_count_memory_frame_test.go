@@ -2,10 +2,8 @@ package chat
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"path/filepath"
-	"sync"
 	"testing"
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
@@ -138,65 +136,6 @@ func TestUserTurnsExcludesMemoryFrame(t *testing.T) {
 	}
 }
 
-// TestFileStoreSaveTurnCountExcludesMemoryFrame covers FileSessionStore.Save,
-// the wired session-store branch of Session.Save.
-func TestFileStoreSaveTurnCountExcludesMemoryFrame(t *testing.T) {
-	store, err := NewFileSessionStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Save("with-frame", frameTranscript(), "m", "p"); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-	_, info, err := store.LoadWithInfo("with-frame")
-	if err != nil {
-		t.Fatalf("LoadWithInfo: %v", err)
-	}
-	if info.TurnCount != 1 {
-		t.Fatalf("FileSessionStore turn_count = %d, want 1 (the core-memory frame must not count as a turn; pre-fix code reports 2)", info.TurnCount)
-	}
-}
-
-// TestSaveToSessionDirTurnCountExcludesMemoryFrame covers the legacy fallback
-// path of Session.Save (SessionDir set, no session store): meta.json's
-// turn_count must exclude the frame.
-func TestSaveToSessionDirTurnCountExcludesMemoryFrame(t *testing.T) {
-	s := newTestSession(t, "m")
-	s.mu.Lock()
-	s.Messages = frameTranscript()
-	s.mu.Unlock()
-	if err := s.Save("legacy-frame"); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-	meta, err := readMetaJSON(filepath.Join(s.SessionDir, "legacy-frame"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if meta.TurnCount != 1 {
-		t.Fatalf("legacy meta turn_count = %d, want 1 (pre-fix code reports 2)", meta.TurnCount)
-	}
-}
-
-// TestRecoverOrphanedSessionTurnCountExcludesMemoryFrame covers orphan
-// recovery: a session directory with chunk files but no meta.json rebuilds
-// its meta from the chunks, and the rebuilt turn_count must exclude the frame.
-func TestRecoverOrphanedSessionTurnCountExcludesMemoryFrame(t *testing.T) {
-	dir := t.TempDir()
-	if err := writeJSONL(filepath.Join(dir, "chunk_0000.jsonl"), frameTranscript()); err != nil {
-		t.Fatal(err)
-	}
-	if !recoverOrphanedSession(dir) {
-		t.Fatal("recoverOrphanedSession returned false")
-	}
-	meta, err := readMetaJSON(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if meta.TurnCount != 1 {
-		t.Fatalf("recovered meta turn_count = %d, want 1 (pre-fix code reports 2)", meta.TurnCount)
-	}
-}
-
 // TestSaveContextCatalogTurnCountExcludesMemoryFrame covers the context-catalog
 // branch of Session.Save: wireCatalogSession (SQLite), SetAgentSettings
 // installs the frame through the real production path, one real user turn,
@@ -245,27 +184,35 @@ func TestSaveContextCatalogTurnCountExcludesMemoryFrame(t *testing.T) {
 // beginning with that header was silently excluded from the durable
 // turn_count (undercount to 0). The predicate is Name-only
 // (isMemoryContextMessage), so the header-bearing user turn is a real turn and
-// persists as 1. The helper is shared by all four durable sites; the
-// file-store site stands in for the class.
+// persists as 1. The helper is shared by all durable sites; the context-catalog
+// site stands in for the class (relocated from the removed legacy file store).
 func TestTurnCountCountsUserTurnWithSummaryHeaderContent(t *testing.T) {
-	store, err := NewFileSessionStore(t.TempDir())
+	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "catalog-header.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	msgs := []provider.Message{
+	t.Cleanup(func() { store.Close() })
+	session := wireCatalogSession(t, store, &config.Resolved{ProviderName: "ollama", Model: "llama3.1:8b"}, &fakeCompleter{out: "ok"})
+	session.mu.Lock()
+	session.Messages = []provider.Message{
 		{Role: provider.RoleSystem, Content: "sys"},
 		{Role: provider.RoleUser, Content: committedSummaryHeader + "\nobjective: first turn"},
 		{Role: provider.RoleAssistant, Content: "answer"},
 	}
-	if err := store.Save("header-turn", msgs, "m", "p"); err != nil {
+	session.mu.Unlock()
+	if err := session.Save("header-turn"); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	_, info, err := store.LoadWithInfo("header-turn")
+	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
 	if err != nil {
-		t.Fatalf("LoadWithInfo: %v", err)
+		t.Fatal(err)
+	}
+	_, info, err := store.LoadSession(context.Background(), principal, "header-turn")
+	if err != nil {
+		t.Fatalf("LoadSession: %v", err)
 	}
 	if info.TurnCount != 1 {
-		t.Fatalf("FileSessionStore turn_count = %d, want 1 (a real user turn beginning with the summary header must count; the rejected content-shape skip undercounted to 0)", info.TurnCount)
+		t.Fatalf("catalog turn_count = %d, want 1 (a real user turn beginning with the summary header must count; the rejected content-shape skip undercounted to 0)", info.TurnCount)
 	}
 }
 
@@ -273,122 +220,27 @@ func TestTurnCountCountsUserTurnWithSummaryHeaderContent(t *testing.T) {
 // transcripts minus the frame must keep counting exactly one user turn at
 // every durable site. The fix must never undercount a real user message.
 func TestTurnCountUnchangedWithoutMemoryFrame(t *testing.T) {
-	t.Run("file store", func(t *testing.T) {
-		store, err := NewFileSessionStore(t.TempDir())
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := store.Save("no-frame", plainTranscript(), "m", "p"); err != nil {
-			t.Fatalf("Save: %v", err)
-		}
-		_, info, err := store.LoadWithInfo("no-frame")
-		if err != nil {
-			t.Fatalf("LoadWithInfo: %v", err)
-		}
-		if info.TurnCount != 1 {
-			t.Fatalf("FileSessionStore turn_count = %d, want 1", info.TurnCount)
-		}
-	})
-	t.Run("session dir", func(t *testing.T) {
-		s := newTestSession(t, "m")
-		s.mu.Lock()
-		s.Messages = plainTranscript()
-		s.mu.Unlock()
-		if err := s.Save("legacy-no-frame"); err != nil {
-			t.Fatalf("Save: %v", err)
-		}
-		meta, err := readMetaJSON(filepath.Join(s.SessionDir, "legacy-no-frame"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if meta.TurnCount != 1 {
-			t.Fatalf("legacy meta turn_count = %d, want 1", meta.TurnCount)
-		}
-	})
-	t.Run("recovery", func(t *testing.T) {
-		dir := t.TempDir()
-		if err := writeJSONL(filepath.Join(dir, "chunk_0000.jsonl"), plainTranscript()); err != nil {
-			t.Fatal(err)
-		}
-		if !recoverOrphanedSession(dir) {
-			t.Fatal("recoverOrphanedSession returned false")
-		}
-		meta, err := readMetaJSON(dir)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if meta.TurnCount != 1 {
-			t.Fatalf("recovered meta turn_count = %d, want 1", meta.TurnCount)
-		}
-	})
-	t.Run("catalog", func(t *testing.T) {
-		store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "catalog-noframe.db"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { store.Close() })
-		session := wireCatalogSession(t, store, &config.Resolved{ProviderName: "ollama", Model: "llama3.1:8b"}, &fakeCompleter{out: "ok"})
-		if _, err := session.SendUser(context.Background(), "first turn", io.Discard); err != nil {
-			t.Fatalf("SendUser: %v", err)
-		}
-		if err := session.Save("named-save"); err != nil {
-			t.Fatalf("Save: %v", err)
-		}
-		principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, info, err := store.LoadSession(context.Background(), principal, "named-save")
-		if err != nil {
-			t.Fatalf("LoadSession: %v", err)
-		}
-		if info.TurnCount != 1 {
-			t.Fatalf("catalog turn_count = %d, want 1", info.TurnCount)
-		}
-	})
-}
-
-// TestFileStoreConcurrentSaveLoadWithFrameTurnCount exercises the documented
-// concurrent save/load path (Session.Save's lock-and-copy design, go test
-// -race) with a frame-bearing transcript: every observed turn_count must be 1.
-func TestFileStoreConcurrentSaveLoadWithFrameTurnCount(t *testing.T) {
-	store, err := NewFileSessionStore(t.TempDir())
+	store, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "catalog-noframe.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	msgs := frameTranscript()
-	// Seed one save so concurrent readers never observe ErrSessionNotFound.
-	if err := store.Save("race-frame", msgs, "m", "p"); err != nil {
+	t.Cleanup(func() { store.Close() })
+	session := wireCatalogSession(t, store, &config.Resolved{ProviderName: "ollama", Model: "llama3.1:8b"}, &fakeCompleter{out: "ok"})
+	if _, err := session.SendUser(context.Background(), "first turn", io.Discard); err != nil {
+		t.Fatalf("SendUser: %v", err)
+	}
+	if err := session.Save("named-save"); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	principal, err := contextstate.NewPrincipal("workspace", session.SessionID, "subject")
+	if err != nil {
 		t.Fatal(err)
 	}
-
-	const workers = 8
-	var wg sync.WaitGroup
-	errCh := make(chan string, workers*2)
-	for i := 0; i < workers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if err := store.Save("race-frame", msgs, "m", "p"); err != nil {
-				errCh <- "save: " + err.Error()
-			}
-		}()
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			_, info, err := store.LoadWithInfo("race-frame")
-			if err != nil {
-				errCh <- "load: " + err.Error()
-				return
-			}
-			if info.TurnCount != 1 {
-				errCh <- fmt.Sprintf("observed turn_count = %d, want 1", info.TurnCount)
-			}
-		}()
+	_, info, err := store.LoadSession(context.Background(), principal, "named-save")
+	if err != nil {
+		t.Fatalf("LoadSession: %v", err)
 	}
-	wg.Wait()
-	close(errCh)
-	for msg := range errCh {
-		t.Error(msg)
+	if info.TurnCount != 1 {
+		t.Fatalf("catalog turn_count = %d, want 1", info.TurnCount)
 	}
 }

@@ -1208,3 +1208,70 @@ path that clears it in production.
   (`internal/uiadapter/session_pool_syncopts_test.go`) build a session with
   `SessionDir` explicitly empty - the real production shape - and assert
   identity still round-trips across a simulated resume.
+
+## DC-34 An operation fence is captured after the operation it is meant to fence, not before
+
+**Mechanism.** A staleness/fencing token is meant to answer "did anything
+relevant change between when I started this operation and when I'm about to
+publish its result?" That guarantee only holds if the token is captured
+*before* the operation's own blocking work begins. If it is instead captured
+*after* the blocking work returns - because the token-capture line sits
+right next to the publish call it feeds, which reads naturally as "capture,
+then publish" - the token now only ever compares the session's state against
+itself: nothing observes the interval between capture and check, since both
+happen back-to-back with no yield in between. A concurrent mutation that
+lands *during* the blocking work (another operation racing it, a user action
+firing mid-flight) is invisible to the check: by the time the token is
+captured, that mutation has already happened and is already reflected as
+"current." The operation silently wins over whatever it should have lost to.
+
+**Why it recurs.** The capture-then-check pattern is locally correct-looking
+at every call site: `token := s.captureOperationToken(...); return
+s.publish(token, ...)` reads like ordinary sequencing, and the function
+compiles, passes single-threaded tests, and passes any concurrency test that
+only exercises the fast, uncontended path. The bug only shows up under a
+timing window that requires a slow or artificially blocked I/O step
+*between* the vulnerable capture point and where the naive placement put it
+- exactly the case a blocking-store test double is built to create. A
+reviewer skimming the diff sees "captures a token, checks it before
+publishing" and confirms the fencing pattern is present, without checking
+*where in the function* relative to the blocking call the capture happens.
+
+**Evidence.** `internal/chat/context_catalog.go`'s `loadContextCatalog`
+called `s.captureOperationToken("catalog-load:"+name)` at each of its four
+return sites, all *after* `s.fetchCatalogSessionData(name)` - the function's
+one blocking catalog read - had already returned. A concurrent `Clear()` or
+`SelectModel()` racing that fetch therefore always lost the race silently: a
+slow `Load` could resurrect content a user had already cleared, or overwrite
+a live model switch with the stale saved binding, and `tokenCurrentLocked`
+would report the token as current every time, because there was never a
+window in which it could observe the concurrent change. The legacy
+file-backed loader this replaced got this right by construction - its
+token was captured as the literal first line of the load function, before
+its own blocking read - so the divergence was invisible until two of its
+tests were ported to the context-catalog path (`TestLoadCannotResurrectAfterClear`,
+`TestLoadCannotOverwriteModelSwitch`) and started failing not with a build
+error but with a silently-succeeded `Load` where `ErrStaleOperation` was
+expected.
+
+**Probes.**
+- For any function whose job is "check whether context changed since we
+  started," find the token/fence capture line and the function's blocking
+  I/O or slow call, and verify the capture happens strictly BEFORE the slow
+  call - not merely before the `publish`/`return` line it happens to sit
+  next to in the source.
+- A capture-then-immediately-check pattern with no yield between them
+  (no channel receive, no lock release/reacquire, no goroutine switch) can
+  never observe a concurrent mutation, regardless of how correct the
+  comparison logic itself is. If the two lines are adjacent, ask what
+  blocking step happened earlier in the same function that the token should
+  have spanned instead.
+- Test the fence with a deliberately slow/blocked dependency (a test double
+  that blocks on a channel until released) and a concurrent mutation
+  triggered while it is blocked - a single-threaded or already-fast test
+  cannot expose this class no matter how many assertions it has.
+- Gate: `TestLoadCannotResurrectAfterClear` (`internal/chat/clear_race_test.go`)
+  and `TestLoadCannotOverwriteModelSwitch` (`internal/chat/model_policy_test.go`)
+  block a catalog fetch mid-flight, perform a concurrent `Clear`/`SelectModel`,
+  then release the fetch and assert the load is rejected as stale rather than
+  silently overwriting the concurrent change.

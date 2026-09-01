@@ -3,19 +3,10 @@ package chat
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"slices"
 
 	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 )
-
-// AdmissionSessionStore is the optional SessionStore extension that persists a
-// named session's admitted tool set on the legacy file path. A store that does
-// not implement it resumes with no admitted tools - the fail-closed direction.
-type AdmissionSessionStore interface {
-	SaveAdmission(name string, record contextstate.SessionAdmission) error
-	LoadAdmission(name string) (contextstate.SessionAdmission, error)
-}
 
 // SetAdmissionBinding records the identity a persisted admitted set is keyed
 // by: the selected agent's name and the digest of its core/deferred tier split.
@@ -38,63 +29,43 @@ func (s *Session) admissionRecord() contextstate.SessionAdmission {
 	}
 }
 
-// persistAdmission writes the admitted set to whichever store already owns this
-// session's history - the durable catalog when context is enabled, the file
-// store otherwise. Exactly one of them, never both (plan tools/05 D3).
+// persistAdmission writes the admitted set to the durable context catalog. A
+// session with no context catalog configured is a no-op - there is nowhere
+// durable to keep the record.
 func (s *Session) persistAdmission(name string) error {
 	record := s.admissionRecord()
-	if catalog, principal, ok := s.admissionCatalog(); ok {
-		s.mu.RLock()
-		instance := s.contextWorktree
-		s.mu.RUnlock()
-		if !instance.IsZero() {
-			if scoped, ok := catalog.(contextstate.WorktreeAdmissionCatalog); ok {
-				return scoped.SaveWorktreeSessionAdmission(context.Background(), principal, name, record, instance)
-			}
-			return contextstate.ErrWorktreeDeleted
-		}
-		return catalog.SaveSessionAdmission(context.Background(), principal, name, record)
+	catalog, principal, ok := s.admissionCatalog()
+	if !ok {
+		return nil
 	}
 	s.mu.RLock()
-	store, _ := s.sessionStore.(AdmissionSessionStore)
-	dir := s.SessionDir
+	instance := s.contextWorktree
 	s.mu.RUnlock()
-	if store == nil {
-		if dir == "" {
-			return nil
+	if !instance.IsZero() {
+		if scoped, ok := catalog.(contextstate.WorktreeAdmissionCatalog); ok {
+			return scoped.SaveWorktreeSessionAdmission(context.Background(), principal, name, record, instance)
 		}
-		// Unwired fallback: Session.Save writes meta.json itself, so the
-		// record belongs in that same file.
-		return writeAdmissionMeta(filepath.Join(dir, sanitizeSessionName(name)), record)
+		return contextstate.ErrWorktreeDeleted
 	}
-	return store.SaveAdmission(name, record)
+	return catalog.SaveSessionAdmission(context.Background(), principal, name, record)
 }
 
-// loadAdmission reads back the persisted set from the same single source.
+// loadAdmission reads back the persisted set from the durable context catalog.
 func (s *Session) loadAdmission(name string) (contextstate.SessionAdmission, error) {
-	if catalog, principal, ok := s.admissionCatalog(); ok {
-		s.mu.RLock()
-		instance := s.contextWorktree
-		s.mu.RUnlock()
-		if !instance.IsZero() {
-			if scoped, ok := catalog.(contextstate.WorktreeAdmissionCatalog); ok {
-				return scoped.LoadWorktreeSessionAdmission(context.Background(), principal, name, instance)
-			}
-			return contextstate.SessionAdmission{}, contextstate.ErrWorktreeDeleted
-		}
-		return catalog.LoadSessionAdmission(context.Background(), principal, name)
+	catalog, principal, ok := s.admissionCatalog()
+	if !ok {
+		return contextstate.SessionAdmission{}, nil
 	}
 	s.mu.RLock()
-	store, _ := s.sessionStore.(AdmissionSessionStore)
-	dir := s.SessionDir
+	instance := s.contextWorktree
 	s.mu.RUnlock()
-	if store == nil {
-		if dir == "" {
-			return contextstate.SessionAdmission{}, nil
+	if !instance.IsZero() {
+		if scoped, ok := catalog.(contextstate.WorktreeAdmissionCatalog); ok {
+			return scoped.LoadWorktreeSessionAdmission(context.Background(), principal, name, instance)
 		}
-		return readAdmissionMeta(filepath.Join(dir, sanitizeSessionName(name)))
+		return contextstate.SessionAdmission{}, contextstate.ErrWorktreeDeleted
 	}
-	return store.LoadAdmission(name)
+	return catalog.LoadSessionAdmission(context.Background(), principal, name)
 }
 
 func (s *Session) admissionCatalog() (contextstate.SessionAdmissionCatalog, contextstate.Principal, bool) {
@@ -257,47 +228,4 @@ func (s *Session) noteAdmissionDrop(names []string) {
 		fmt.Sprintf("previously loaded tools were not restored because this session's tool configuration changed: %s. Load them again if you still need them.",
 			boundedNames(names, maxAdmissionNoteNames)))
 	s.mu.Unlock()
-}
-
-// SaveAdmission stores the admitted set in the session's meta.json, under the
-// same per-directory lock the transcript uses, so a snapshot and its admission
-// record are never written from two different revisions.
-func (fs *FileSessionStore) SaveAdmission(name string, record contextstate.SessionAdmission) error {
-	return writeAdmissionMeta(filepath.Join(fs.dir, sanitizeSessionName(name)), record)
-}
-
-// LoadAdmission reads back the admitted set. A session without one yields the
-// zero value and no error.
-func (fs *FileSessionStore) LoadAdmission(name string) (contextstate.SessionAdmission, error) {
-	return readAdmissionMeta(filepath.Join(fs.dir, sanitizeSessionName(name)))
-}
-
-var _ AdmissionSessionStore = (*FileSessionStore)(nil)
-
-func writeAdmissionMeta(dir string, record contextstate.SessionAdmission) error {
-	ioLock := sessionIOLock(dir)
-	ioLock.Lock()
-	defer ioLock.Unlock()
-	meta, err := readMetaJSON(dir)
-	if err != nil {
-		// No snapshot to attach the record to; the transcript is the anchor.
-		return nil
-	}
-	if len(record.Names) == 0 {
-		meta.ToolAdmission = nil
-	} else {
-		meta.ToolAdmission = &record
-	}
-	return writeMetaJSON(dir, *meta)
-}
-
-func readAdmissionMeta(dir string) (contextstate.SessionAdmission, error) {
-	ioLock := sessionIOLock(dir)
-	ioLock.RLock()
-	defer ioLock.RUnlock()
-	meta, err := readMetaJSON(dir)
-	if err != nil || meta.ToolAdmission == nil {
-		return contextstate.SessionAdmission{}, nil
-	}
-	return *meta.ToolAdmission, nil
 }

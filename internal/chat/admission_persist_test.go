@@ -26,80 +26,6 @@ func admitTools(sess *Session, names ...string) {
 	sess.mu.Unlock()
 }
 
-func TestFileSessionStoreRoundTripsTheAdmittedSet(t *testing.T) {
-	dir := t.TempDir()
-	store, err := NewFileSessionStore(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sess := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
-	sess.sessionStore = store
-	sess.SetAdmissionBinding("reader", "digest-1")
-	admitTools(sess, "grep")
-	sess.mu.Lock()
-	sess.Messages = []provider.Message{{Role: provider.RoleUser, Content: "hi"}}
-	sess.mu.Unlock()
-	if err := sess.Save("snap"); err != nil {
-		t.Fatalf("save: %v", err)
-	}
-	got, err := store.LoadAdmission("snap")
-	if err != nil {
-		t.Fatalf("load admission: %v", err)
-	}
-	if got.Agent != "reader" || got.Digest != "digest-1" || !slices.Equal(got.Names, []string{"grep"}) {
-		t.Fatalf("record = %+v", got)
-	}
-
-	// Clearing the set removes the record rather than leaving a stale one.
-	admitTools(sess)
-	if err := sess.Save("snap"); err != nil {
-		t.Fatalf("re-save: %v", err)
-	}
-	got, err = store.LoadAdmission("snap")
-	if err != nil {
-		t.Fatalf("load admission after clear: %v", err)
-	}
-	if len(got.Names) != 0 {
-		t.Fatalf("record = %+v, want cleared", got)
-	}
-}
-
-func TestFileSessionStoreAdmissionWithoutASnapshotIsANoop(t *testing.T) {
-	store, err := NewFileSessionStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.SaveAdmission("never-saved", contextstate.SessionAdmission{Names: []string{"grep"}}); err != nil {
-		t.Fatalf("save with no snapshot: %v", err)
-	}
-	got, err := store.LoadAdmission("never-saved")
-	if err != nil || len(got.Names) != 0 {
-		t.Fatalf("record = %+v, err = %v", got, err)
-	}
-}
-
-// TestUnwiredSessionDirRoundTripsTheAdmittedSet covers the fallback path where
-// no SessionStore is wired and Session.Save writes meta.json itself.
-func TestUnwiredSessionDirRoundTripsTheAdmittedSet(t *testing.T) {
-	sess := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
-	sess.SessionDir = t.TempDir()
-	sess.SetAdmissionBinding("reader", "digest-1")
-	admitTools(sess, "grep", "glob")
-	sess.mu.Lock()
-	sess.Messages = []provider.Message{{Role: provider.RoleUser, Content: "hi"}}
-	sess.mu.Unlock()
-	if err := sess.Save("snap"); err != nil {
-		t.Fatalf("save: %v", err)
-	}
-	got, err := sess.loadAdmission("snap")
-	if err != nil {
-		t.Fatalf("load admission: %v", err)
-	}
-	if !slices.Equal(got.Names, []string{"grep", "glob"}) {
-		t.Fatalf("record = %+v", got)
-	}
-}
-
 func TestAdmissionPersistenceIsANoopWithNoStoreAtAll(t *testing.T) {
 	sess := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
 	if err := sess.persistAdmission("snap"); err != nil {
@@ -521,50 +447,6 @@ func TestErroredTurnWithAPreparationDiscardsIt(t *testing.T) {
 	}
 	if _, ok := sess.PendingAdmission(); ok {
 		t.Fatal("an errored turn left its stage pending")
-	}
-}
-
-// failingStore reports a save failure so the propagation branches can be
-// exercised without corrupting a real store.
-type failingStore struct {
-	SessionStore
-	err error
-}
-
-func (f failingStore) Save(string, []provider.Message, string, string) error { return f.err }
-
-func TestSaveReportsAStoreFailureBeforePersistingTheAdmission(t *testing.T) {
-	sess := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
-	want := errors.New("disk full")
-	sess.sessionStore = failingStore{err: want}
-	admitTools(sess, "grep")
-	sess.mu.Lock()
-	sess.Messages = []provider.Message{{Role: provider.RoleUser, Content: "hi"}}
-	sess.mu.Unlock()
-	if err := sess.Save("snap"); !errors.Is(err, want) {
-		t.Fatalf("error = %v, want the store failure", err)
-	}
-}
-
-func TestPersistAdmissionUsesTheSessionDirectoryFallback(t *testing.T) {
-	sess := NewSession(&config.Resolved{ProviderName: "fake", Model: "model"}, &fakeCompleter{out: "answer"})
-	sess.SessionDir = t.TempDir()
-	sess.SetAdmissionBinding("reader", "digest-1")
-	admitTools(sess, "grep")
-	sess.mu.Lock()
-	sess.Messages = []provider.Message{{Role: provider.RoleUser, Content: "hi"}}
-	sess.mu.Unlock()
-	if err := sess.Save("snap"); err != nil {
-		t.Fatalf("save: %v", err)
-	}
-	// The record already went in with the snapshot; persisting again through
-	// the fallback must be idempotent rather than an error.
-	if err := sess.persistAdmission("snap"); err != nil {
-		t.Fatalf("persist: %v", err)
-	}
-	got, err := sess.loadAdmission("snap")
-	if err != nil || !slices.Equal(got.Names, []string{"grep"}) {
-		t.Fatalf("record = %+v, err = %v", got, err)
 	}
 }
 

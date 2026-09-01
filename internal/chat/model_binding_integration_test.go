@@ -12,11 +12,59 @@ import (
 
 	"github.com/MiviaLabs/mivia-agent/internal/agent"
 	"github.com/MiviaLabs/mivia-agent/internal/config"
+	"github.com/MiviaLabs/mivia-agent/internal/contextmgr"
+	"github.com/MiviaLabs/mivia-agent/internal/contextstate"
 	"github.com/MiviaLabs/mivia-agent/internal/provider"
 	"github.com/MiviaLabs/mivia-agent/internal/runtime"
 	"github.com/MiviaLabs/mivia-agent/internal/skills"
+	"github.com/MiviaLabs/mivia-agent/internal/storage"
 	"github.com/MiviaLabs/mivia-agent/internal/tools"
 )
+
+// bindContextSession binds sess to store under its own principal, all
+// sharing the same hardcoded workspace/subject so multiple sessions built
+// this way can see each other's saved snapshots in the same catalog - the
+// context-catalog counterpart of several sessions sharing one legacy
+// FileSessionStore directory.
+func bindContextSession(t *testing.T, sess *Session, store *storage.SQLite) {
+	t.Helper()
+	principal, err := contextstate.NewPrincipal("workspace", sess.SessionID, "subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &contextmgr.ContextManager{
+		PreparationManager:  contextmgr.StructuralPreparationManager{},
+		CheckpointPublisher: contextmgr.PreparationCommitter{Store: store},
+		Enabled:             true,
+	}
+	if err := sess.SetContextManager(manager, principal); err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.SetContextStore(store); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// seedContextSnapshot saves msgs under name via a throwaway seeding session
+// bound to store, with the given provider/model as its binding - the
+// context-catalog counterpart of a direct FileSessionStore.Save call.
+func seedContextSnapshot(t *testing.T, store *storage.SQLite, name string, msgs []provider.Message, providerName, model string) {
+	t.Helper()
+	// The throwaway seeder can itself carry an unrecognized model (that's
+	// often the point - seeding a stale/removed model for a caller to load).
+	// Its own construction must not trip the package-level warn hook a
+	// caller is asserting against for the SUBJECT session it builds after
+	// seeding.
+	origWarn := WarnUnknownContextWindow
+	WarnUnknownContextWindow = func(string) {}
+	defer func() { WarnUnknownContextWindow = origWarn }()
+	seeder := NewSession(&config.Resolved{ProviderName: providerName, Model: model}, &fakeCompleter{out: "answer"})
+	bindContextSession(t, seeder, store)
+	seeder.Messages = msgs
+	if err := seeder.Save(name); err != nil {
+		t.Fatal(err)
+	}
+}
 
 type blockingCompleter struct {
 	name  string
@@ -312,20 +360,18 @@ func TestIntegrationModelBindingPublishesSkillRegistryAtomically(t *testing.T) {
 }
 
 func TestIntegrationLoadBuildsBindingBeforeHistory(t *testing.T) {
-	dir := t.TempDir()
-	store, err := NewFileSessionStore(dir)
+	store, err := storage.OpenSQLite(t.TempDir() + "/context.db")
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer store.Close()
 	saved := []provider.Message{{Role: provider.RoleUser, Content: "saved"}}
-	if err := store.Save("exact", saved, "new-model", "new-provider"); err != nil {
-		t.Fatal(err)
-	}
+	seedContextSnapshot(t, store, "exact", saved, "new-provider", "new-model")
 
 	old := &blockingCompleter{name: "old", allow: make(chan struct{})}
 	s := NewSession(&config.Resolved{ProviderName: "old-provider", Model: "old-model"}, old)
+	bindContextSession(t, s, store)
 	s.Messages = []provider.Message{{Role: provider.RoleUser, Content: "current"}}
-	s.SetSessionStore(store, nil)
 
 	factoryErr := true
 	newComp := &blockingCompleter{name: "new", allow: make(chan struct{})}
@@ -359,19 +405,17 @@ func TestIntegrationLoadBuildsBindingBeforeHistory(t *testing.T) {
 }
 
 func TestIntegrationModelBindingRequiresFactoryForConfiguredCatalogLoad(t *testing.T) {
-	dir := t.TempDir()
-	store, err := NewFileSessionStore(dir)
+	store, err := storage.OpenSQLite(t.TempDir() + "/context.db")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Save("strict", []provider.Message{{Role: provider.RoleUser, Content: "saved"}}, "new-model", "new-provider"); err != nil {
-		t.Fatal(err)
-	}
+	defer store.Close()
+	seedContextSnapshot(t, store, "strict", []provider.Message{{Role: provider.RoleUser, Content: "saved"}}, "new-provider", "new-model")
 	profile := config.ModelSpec{Name: "current", ContextWindowTokens: 128000}
 	s := NewSession(&config.Resolved{ProviderName: "current-provider", Model: "current", ModelProfiles: []config.ModelSpec{profile}}, &blockingCompleter{name: "current", allow: make(chan struct{})})
 	s.catalog = []config.ProviderModelGroup{{Provider: "current-provider", Models: []config.ModelSpec{profile}, Selectable: true}}
+	bindContextSession(t, s, store)
 	s.Messages = []provider.Message{{Role: provider.RoleUser, Content: "current"}}
-	s.SetSessionStore(store, nil)
 	if err := s.Load("strict"); err == nil {
 		t.Fatal("configured catalog loaded without a binding factory")
 	}
@@ -461,15 +505,13 @@ func TestUnknownContextWindowNoticeFiresOnSessionResume(t *testing.T) {
 		warned = append(warned, model)
 	}
 
-	dir := t.TempDir()
-	store, err := NewFileSessionStore(dir)
+	store, err := storage.OpenSQLite(t.TempDir() + "/context.db")
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer store.Close()
 	saved := []provider.Message{{Role: provider.RoleUser, Content: "saved"}}
-	if err := store.Save("exact", saved, "removed-model", "p"); err != nil {
-		t.Fatal(err)
-	}
+	seedContextSnapshot(t, store, "exact", saved, "p", "removed-model")
 
 	comp := &blockingCompleter{name: "p", allow: make(chan struct{})}
 	s := NewSession(&config.Resolved{ProviderName: "p", Model: "known", Models: []string{"known", "removed-model"},
@@ -477,7 +519,7 @@ func TestUnknownContextWindowNoticeFiresOnSessionResume(t *testing.T) {
 	if len(warned) != 0 {
 		t.Fatalf("warned during setup with a recognized model: %v", warned)
 	}
-	s.SetSessionStore(store, nil)
+	bindContextSession(t, s, store)
 
 	newComp := &blockingCompleter{name: "new", allow: make(chan struct{})}
 	s.SetBindingFactory(func(providerName, model string) (ModelBinding, error) {

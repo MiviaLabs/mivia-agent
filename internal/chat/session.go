@@ -120,10 +120,6 @@ type Session struct {
 	// the resolved [chat] request_timeout_seconds. Zero means
 	// DefaultRequestTimeout (15 minutes).
 	RequestTimeout time.Duration
-	// SessionDir is the directory where sessions are persisted
-	// (e.g., <workspace>/.mivia/sessions/). When set, enables
-	// save/load/list/delete operations and auto-save on exit.
-	SessionDir string
 	// mu protects concurrent mutations to Messages, model, and turnID.
 	// All exported methods that read or write these fields must
 	// hold mu (Lock for writes, RLock for reads). Save/Load use the
@@ -212,18 +208,8 @@ type Session struct {
 	// == "") means no step-boundary publication has happened for the current
 	// turn; commitTurnToken then falls back to the turn's own captured token.
 	liveTurnToken OperationToken
-	// sessionStore is the persistence backend for save/load/list/delete.
-	// When nil, persistence operations return errors (graceful degradation).
-	sessionStore SessionStore
-	// saveManager orchestrates auto-save strategies (per-turn, exit, prune).
-	// When nil, SaveAfterTurn and SaveLast are no-ops.
-	saveManager *SaveManager
-	// turnSaveName is the rolling per-turn snapshot directory used by the
-	// unwired fallback path, mirroring SaveManager.turnSaveName. Guarded by mu.
-	turnSaveName string
-	// contextManager is optional and deliberately separate from legacy
-	// SessionStore. When enabled, durable turns use the checkpoint publisher
-	// and never fall back to raw JSONL autosave.
+	// contextManager is optional. When enabled, durable turns use the
+	// checkpoint publisher.
 	contextManager       *contextmgr.ContextManager
 	contextPrincipal     contextstate.Principal
 	contextPolicy        contextstate.PolicySnapshot

@@ -30,7 +30,6 @@ func activationPool(t *testing.T, cfg config.ResolvedSync) int {
 
 	sess := chat.NewSession(res, nil)
 	sess.SessionID = "pool-activation-1"
-	sess.SessionDir = t.TempDir()
 	sess.EventBus = events.New()
 
 	// WorkspaceRoot, not nil agentState: attachSyncLocked resolves chat-sync's

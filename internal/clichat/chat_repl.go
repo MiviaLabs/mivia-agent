@@ -299,9 +299,7 @@ func printReplBanner(sess *chat.Session, toolsOn, quiet bool) {
 }
 
 func autoSaveREPL(sess *chat.Session) {
-	err := sess.SaveLast()
-	if err != nil {
+	if err := sess.SaveLast(); err != nil {
 		fmt.Fprintf(os.Stderr, "⚠ auto-save failed: %v\n", err)
 	}
-	WriteAutosaveStatus(sess.SessionDir, err)
 }

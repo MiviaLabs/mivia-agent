@@ -69,7 +69,6 @@ func TestSessionPool_SyncPerPooledSession(t *testing.T) {
 	installTestAuthToken(t)
 
 	bus := events.New()
-	tmpDir := t.TempDir()
 	res := &config.Resolved{
 		Model: "test-model",
 		Sync: config.ResolvedSync{
@@ -82,7 +81,6 @@ func TestSessionPool_SyncPerPooledSession(t *testing.T) {
 
 	sess1 := chat.NewSession(res, nil)
 	sess1.SessionID = "local-1"
-	sess1.SessionDir = tmpDir
 	sess1.EventBus = bus
 
 	pool := uiadapter.NewSessionPool(sess1, res, &cliagents.AgentSessionState{WorkspaceRoot: t.TempDir()}, false)
@@ -155,7 +153,6 @@ func TestSessionPool_SyncAuthenticatesEveryRequest(t *testing.T) {
 	}
 	sess1 := chat.NewSession(res, nil)
 	sess1.SessionID = "local-auth-1"
-	sess1.SessionDir = t.TempDir()
 	sess1.EventBus = events.New()
 
 	pool := uiadapter.NewSessionPool(sess1, res, &cliagents.AgentSessionState{WorkspaceRoot: t.TempDir()}, false)
@@ -206,7 +203,6 @@ func TestSessionPool_ReleaseLeasesFlushesBusBeforeStopping(t *testing.T) {
 	}
 	sess1 := chat.NewSession(res, nil)
 	sess1.SessionID = "local-burst-1"
-	sess1.SessionDir = t.TempDir()
 	sess1.EventBus = bus
 
 	pool := uiadapter.NewSessionPool(sess1, res, &cliagents.AgentSessionState{WorkspaceRoot: t.TempDir()}, false)
