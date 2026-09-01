@@ -85,6 +85,13 @@ func (s Screen) handleRemoteInput(ev ports.RemoteInputEvent) (app.Screen, tea.Cm
 	}
 
 	if st.active != nil {
+		// Queued-while-busy accepted gap, same as commands.go's SubmitPrompt
+		// path: st.queue is a plain []string (also the foreground queue's,
+		// the queue overlay's, and the session snapshot's shape), so a
+		// remote instruction queued here loses the (via web) PersistedText
+		// distinction and is persisted in full once it is eventually sent.
+		// Not a new gap this feature introduces - see sendOrQueueRemote's
+		// identical note on the foreground path.
 		st.queue = append(st.queue, text)
 		return s, rearm
 	}
@@ -106,6 +113,14 @@ func (s Screen) handleRemoteInput(ev ports.RemoteInputEvent) (app.Screen, tea.Cm
 // the currently active one - the same fork Screen.send applies to a
 // composer submission (see events.go), reused here so a remote instruction
 // competes for the turn slot exactly like a local one.
+//
+// Queued-while-busy accepted gap: s.queue is a plain []string (see
+// commands.go's SubmitPrompt handling for the same note against skill
+// invocations), so a remote instruction queued here loses the (via web)
+// PersistedText distinction - persisted argument is dropped - and sends in
+// full once eventually delivered. This matches the pre-existing behavior
+// every queued submission has always had; it is not specific to remote
+// input.
 func (s Screen) sendOrQueueRemote(text, persisted string) (app.Screen, tea.Cmd) {
 	if s.active != nil {
 		s.queue = append(s.queue, text)

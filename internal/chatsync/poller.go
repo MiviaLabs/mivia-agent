@@ -200,7 +200,12 @@ func (p *InputPoller) pollOnce(ctx context.Context) {
 	consumeCtx, cancelConsume := context.WithTimeout(ctx, 5*time.Second)
 	defer cancelConsume()
 
-	consumed, err := p.client.ConsumeInput(consumeCtx, p.sessionID, raw.ID)
+	// sessID, not p.sessionID: the same value NextInput just used above,
+	// read once under the lock. A second unprotected read of p.sessionID
+	// here would race against SetSessionID (data race under -race) and,
+	// worse, could send this ConsumeInput against a DIFFERENT session than
+	// the one raw.ID was fetched from if SetSessionID ran in between.
+	consumed, err := p.client.ConsumeInput(consumeCtx, sessID, raw.ID)
 	if err != nil {
 		// The server never confirmed the consume, so nothing was committed;
 		// the pending_input.json this wrote above (Consumed: false) is
@@ -216,13 +221,27 @@ func (p *InputPoller) pollOnce(ctx context.Context) {
 // deliver validates an already-server-consumed SessionInput and, only on
 // success, places it on Inputs() and records it in the delivered-ids
 // ledger. clearPendingInput runs ONLY once that terminal outcome is known -
-// confirmed delivery, or a validation refusal that will never change on
-// retry - never merely because the server-side consume succeeded. If the
-// delivery select instead exits via ctx.Done()/stopCh (shutdown mid-send,
-// nobody draining Inputs() yet), pending_input.json is deliberately left in
-// place: restart recovery is what gets this input a real second chance,
-// exactly the property TestInputPoller_UndeliveredConsumedInputSurvivesShutdown
-// pins.
+// the send onto Inputs() succeeding, or a validation refusal that will never
+// change on retry - never merely because the server-side consume succeeded.
+// If the delivery select instead exits via ctx.Done()/stopCh (shutdown
+// mid-send, nobody draining Inputs() yet), pending_input.json is
+// deliberately left in place: restart recovery is what gets this input a
+// real second chance, exactly the property
+// TestInputPoller_UndeliveredConsumedInputSurvivesShutdown pins.
+//
+// "Placed on Inputs()" is NOT the same claim as "the instruction ran". This
+// package is a leaf (settled decision 7): it has no visibility past its own
+// channel into whether a reader ever pulls the value out and acts on it. A
+// crash after this select's send succeeds but before some downstream reader
+// (internal/uiadapter's pumpRemoteInputs, then the UI's own conv.Send) has
+// actually consumed and executed it loses the instruction silently - the
+// durable record is already cleared and the delivered-ids ledger already
+// prevents a restart from replaying it. This mirrors the same
+// not-durable-until-actually-run property a LOCALLY typed message already
+// has while queued behind an active turn (Screen.queue/sessionState.queue
+// are plain in-memory slices too); closing it end to end would need an
+// acknowledgement flowing back from the UI into this leaf package, which
+// does not exist today and is a real architectural change, not a bug fix.
 func (p *InputPoller) deliver(ctx context.Context, consumed *SessionInput) {
 	ri, reason := p.validateRemoteInput(ctx, consumed)
 	if reason != "" {

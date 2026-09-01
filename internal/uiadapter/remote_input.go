@@ -17,14 +17,22 @@ const remoteInputBuffer = 16
 // fed by every pooled session's chatsync.InputPoller, tagged with which
 // LOCAL chat session each instruction targets.
 //
-// It is intentionally never lossy. pumpRemoteInputs below sends with a plain
-// blocking channel send, not select-default: a producer that would block
-// here blocks all the way back through SyncSession.Inputs() into
-// InputPoller.deliver's own delivery select, which - since the fix in
-// internal/chatsync/poller.go - leaves pending_input.json on disk rather
-// than clearing it when delivery cannot complete. A slow or absent UI reader
-// therefore produces backpressure and, at worst, a delayed delivery on
-// restart - never a silently discarded instruction.
+// It is never DROPPED. pumpRemoteInputs below sends with a plain blocking
+// channel send, not select-default: a producer that would block here blocks
+// all the way back through SyncSession.Inputs() into InputPoller.deliver's
+// own delivery select, which - since the fix in internal/chatsync/poller.go
+// - leaves pending_input.json on disk rather than clearing it when delivery
+// cannot complete. A slow or absent UI reader therefore produces
+// backpressure rather than an explicit drop.
+//
+// That is a narrower guarantee than "never lost". Once an input crosses
+// InputPoller's own inputCh, chatsync.InputPoller.deliver's doc comment
+// spells out the residual risk this buffer inherits: a value sitting HERE,
+// or in the conversation Screen's own queue once past this channel, exists
+// only in process memory until conv.Send actually runs. A crash in that
+// window is a real, if narrow, loss window - not covered by the
+// exactly-once ledger, which only guards against REdelivering something
+// already handed off, not against a handoff that was never acted on.
 func (p *SessionPool) RemoteInputs() <-chan ports.RemoteInputEvent {
 	return p.remoteInputs
 }
