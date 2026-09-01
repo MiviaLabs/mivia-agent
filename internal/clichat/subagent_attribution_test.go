@@ -39,12 +39,13 @@ func collectOne(t *testing.T, bus *events.Bus, kind events.Kind) func() events.E
 // events were on the wire and silently discarded at the far end.
 //
 // The identity therefore has to ride on the event. This asserts it survives
-// the publish.
+// the publish, now via RegisterSessionBus's session-keyed registry (the
+// dead global-bus singleton this test used to pin, SetGlobalBus, is gone).
 func TestSubagentProgressCarriesSessionAndTurn(t *testing.T) {
 	bus := events.New()
 	t.Cleanup(bus.Close)
-	SetGlobalBus(bus)
-	t.Cleanup(func() { SetGlobalBus(nil) })
+	release := RegisterSessionBus("sess-abc", bus)
+	t.Cleanup(release)
 
 	wait := collectOne(t, bus, events.KindSubagentStart)
 
@@ -70,19 +71,29 @@ func TestSubagentProgressCarriesSessionAndTurn(t *testing.T) {
 
 // TestSubagentProgressWithoutAnOriginPublishesNoSession guards the other
 // direction: a root-loop event reaching this sink must not be stamped with a
-// borrowed session. An empty SessionID is correctly dropped by a hub receiver;
-// a WRONG one would render another conversation's activity into this one.
+// borrowed session, and an event with an empty Origin.SessionID must never
+// publish at all (fail closed on lookup by empty key) rather than borrow
+// whatever the process happens to have registered.
 func TestSubagentProgressWithoutAnOriginPublishesNoSession(t *testing.T) {
 	bus := events.New()
 	t.Cleanup(bus.Close)
-	SetGlobalBus(bus)
-	t.Cleanup(func() { SetGlobalBus(nil) })
+	// Deliberately register under a DIFFERENT session id than the emitted
+	// event carries (none at all), so a bug that fell back to "the only
+	// registered bus" would be caught here rather than passing by accident.
+	release := RegisterSessionBus("unrelated-session", bus)
+	t.Cleanup(release)
 
-	wait := collectOne(t, bus, events.KindSubagentEnd)
+	got := make(chan events.Event, 1)
+	bus.Subscribe(events.KindSubagentEnd, events.HandlerFunc(func(_ context.Context, ev events.Event) {
+		got <- ev
+	}))
 
 	emitSubagentProgress(agent.Event{Kind: agent.EventSubagentEnd, Name: "x", ToolCallID: "tc2"})
 
-	if ev := wait(); ev.SessionID != "" {
-		t.Fatalf("SessionID = %q for an event with no origin, want empty", ev.SessionID)
+	bus.Flush()
+	select {
+	case ev := <-got:
+		t.Fatalf("event with no origin must not publish, got SessionID=%q", ev.SessionID)
+	default:
 	}
 }
