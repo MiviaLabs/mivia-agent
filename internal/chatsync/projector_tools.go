@@ -114,7 +114,7 @@ func (p *Projector) projectSubagent(env Envelope, ev events.Event) []WireEvent {
 		// mid-stream: a lane that loses its state mid-run reports streamed as
 		// false again, and its aggregate then ships the full text a viewer has
 		// already received delta by delta.
-		p.retireLane(env.Turn, ev.AgentTask)
+		p.retireLane(ev.AgentTask)
 		agentName := applyTruncation(&env, "name", ev.AgentName, BudgetShortField)
 		status := applyTruncation(&env, "status", ev.Detail, BudgetShortField)
 		payload := &SubagentEndedPayload{

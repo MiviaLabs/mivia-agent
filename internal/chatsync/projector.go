@@ -2,6 +2,7 @@ package chatsync
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/MiviaLabs/mivia-agent/internal/events"
@@ -103,24 +104,31 @@ func (p *Projector) laneState(turnID, task string) *turnState {
 	return ls
 }
 
-// retireLane forgets one subagent run's streaming state. Called when the run
+// retireLane forgets a subagent run's streaming state. Called when the run
 // reports its terminal event: state kept past that point can only crowd out a
 // live run.
-func (p *Projector) retireLane(turnID, task string) {
+//
+// It matches on the TASK alone, across every turn key. Keying on the turn as
+// well looked tighter and silently missed: a run whose events carry no turn id
+// is filed under a SYNTHETIC turn, and resolveTurnID retires the active
+// synthetic turn on turn-end, so a subagent's terminal event arriving after
+// that resolves to a different synthetic turn than its own state was created
+// under. The lane then survived the run that owned it. A task id identifies
+// one run outright, so nothing is over-matched by ignoring the turn.
+func (p *Projector) retireLane(task string) {
 	if task == "" {
 		return
 	}
-	key := turnID + "\x00" + task
-	if _, ok := p.lanes[key]; !ok {
-		return
-	}
-	delete(p.lanes, key)
-	for i, cur := range p.laneOrder {
-		if cur == key {
-			p.laneOrder = append(p.laneOrder[:i], p.laneOrder[i+1:]...)
-			return
+	suffix := "\x00" + task
+	kept := p.laneOrder[:0]
+	for _, key := range p.laneOrder {
+		if strings.HasSuffix(key, suffix) {
+			delete(p.lanes, key)
+			continue
 		}
+		kept = append(kept, key)
 	}
+	p.laneOrder = kept
 }
 
 func (p *Projector) touchLane(key string) {

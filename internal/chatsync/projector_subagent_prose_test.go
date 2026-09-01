@@ -429,3 +429,73 @@ func TestEnvelopeCarriesParentTask(t *testing.T) {
 		t.Errorf("root-dispatched run reports parent %q, want empty", parent)
 	}
 }
+
+// TestLaneRetiresEvenWhenItsTurnIdWasSynthetic covers the miss that keying
+// retirement on the turn produced.
+//
+// An event with no turn id is filed under a SYNTHETIC turn, and resolveTurnID
+// drops the active synthetic turn at turn-end. A subagent's terminal event
+// arriving after that resolves to a DIFFERENT synthetic turn than the one its
+// lane state was created under, so a turn-keyed retirement matched nothing and
+// the finished run kept its slot.
+func TestLaneRetiresEvenWhenItsTurnIdWasSynthetic(t *testing.T) {
+	p := NewProjector("sess-1", 0, proseOpts())
+
+	streamed := subagentEvent(events.KindAssistant, "task-1", "chunk", "delta")
+	streamed.TurnID = "" // no turn id: filed under a synthetic turn
+	p.Project(streamed)
+	if len(p.lanes) != 1 {
+		t.Fatalf("lane count = %d before the terminal event, want 1", len(p.lanes))
+	}
+
+	// End the turn, which retires the active synthetic turn id.
+	end := events.Event{Kind: events.KindTurnEnd, SessionID: "sess-1", Timestamp: time.Now()}
+	p.Project(end)
+
+	done := subagentEvent(events.KindSubagentDone, "task-1", "", "completed")
+	done.TurnID = ""
+	p.Project(done)
+
+	if len(p.lanes) != 0 {
+		t.Errorf("lane count = %d after the run finished, want 0 - the run outlived itself "+
+			"because its terminal event resolved to a different synthetic turn", len(p.lanes))
+	}
+}
+
+// TestSubagentProseMatchesTheRootPathFieldForField guards the duplication.
+//
+// projectSubagentAssistant is a deliberate near-copy of projectAssistant: the
+// two carry different invariants (INV-1 per lane against per turn) and a
+// helper parameterized on four wire types plus a state pointer would be harder
+// to read than the copy. What a copy needs is a test that fails when the two
+// drift apart, which is what this is - the earlier round changed redaction in
+// one path only and nothing noticed.
+func TestSubagentProseMatchesTheRootPathFieldForField(t *testing.T) {
+	const text = "the same answer either way"
+
+	rootProjector := NewProjector("sess-1", 0, proseOpts())
+	rootAgg := rootProjector.Project(rootEvent(events.KindAssistant, text, ""))
+	rootPayload := rootAgg[0].Payload.(*AssistantMessagePayload)
+
+	subProjector := NewProjector("sess-1", 0, proseOpts())
+	subAgg := subProjector.Project(subagentEvent(events.KindAssistant, "task-1", text, ""))
+	subPayload := subAgg[0].Payload.(*SubagentAssistantMessagePayload)
+
+	if subPayload.Text != rootPayload.Text {
+		t.Errorf("text differs: subagent %q, root %q", subPayload.Text, rootPayload.Text)
+	}
+	if subPayload.Bytes != rootPayload.Bytes {
+		t.Errorf("bytes differ: subagent %d, root %d", subPayload.Bytes, rootPayload.Bytes)
+	}
+	if subPayload.Fragments != rootPayload.Fragments {
+		t.Errorf("fragments differ: subagent %d, root %d", subPayload.Fragments, rootPayload.Fragments)
+	}
+	if subPayload.Status != rootPayload.Status {
+		t.Errorf("status differs: subagent %q, root %q", subPayload.Status, rootPayload.Status)
+	}
+	// The block key is the ONE field that must differ: a subagent's prose is
+	// grouped per run, the root's per turn.
+	if subPayload.Block == rootPayload.Block {
+		t.Errorf("both paths used block %q; a subagent's prose must group per run", subPayload.Block)
+	}
+}
