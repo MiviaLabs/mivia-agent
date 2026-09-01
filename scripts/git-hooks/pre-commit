@@ -127,6 +127,16 @@ if ((${#STAGED_DOCS[@]})); then
   run_verify python3 "$STAGED_ROOT/scripts/check_docs_ownership.py"
 fi
 
+# Any Markdown file can restate the chat event vocabulary, and one already
+# restated it wrongly. The Go conformance test cannot see prose, so this runs
+# on staged Markdown as well as on the contract itself. It is milliseconds.
+mapfile -d '' STAGED_VOCAB < <(
+  git diff --cached --name-only --diff-filter=ACMR -z | tr '\0' '\n' | grep -E '(\.md$|^api/contracts/|^\.mivia/policy/wire-vocabulary\.json$)' | tr '\n' '\0' || true
+)
+if ((${#STAGED_VOCAB[@]})); then
+  run_verify python3 "$STAGED_ROOT/scripts/check_wire_vocabulary.py" --root "$STAGED_ROOT" --policy "$STAGED_ROOT/.mivia/policy/wire-vocabulary.json"
+fi
+
 SEMGREP_SUMMARY="semgrep skipped (not installed)"
 # An engine crash (e.g. io_uring_queue_init ENOMEM under a low RLIMIT_MEMLOCK
 # in containers/sandboxes) is an environment problem, not a repository defect.
