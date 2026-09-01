@@ -164,6 +164,21 @@ func (ob *Outbox) loadCursorAndCount() error {
 		return err
 	}
 	ob.unflushed = unflushed
+
+	// A repair (or any other path that shortens events.jsonl) can leave
+	// FlushedSeq referring to events the file no longer holds. The cursor's
+	// only job is "everything at or below this seq is safely acknowledged
+	// and durable elsewhere" - once the file has fewer events than that, the
+	// claim is false, and every newly appended event at seq <= FlushedSeq
+	// would be silently filtered out of UnflushedEvents forever. Clamp and
+	// persist immediately, so a second restart does not have to rediscover
+	// this from the same shortened file.
+	if ob.cursor.FlushedSeq > ob.maxSeq {
+		ob.cursor = Cursor{FlushedSeq: ob.maxSeq, FlushedAt: time.Now()}
+		if err := ob.writeCursorLocked(ob.cursor); err != nil {
+			return fmt.Errorf("persist clamped cursor: %w", err)
+		}
+	}
 	return nil
 }
 
