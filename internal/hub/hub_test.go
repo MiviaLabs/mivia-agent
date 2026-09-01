@@ -76,6 +76,20 @@ func (c *collector) last() events.Event {
 	return c.evs[len(c.evs)-1]
 }
 
+// any reports whether any collected event satisfies f, so a wait can
+// correlate on the ONE event that proves a claim instead of on arrival count,
+// which stale deliveries from a previous hub epoch can satisfy too.
+func (c *collector) any(f func(events.Event) bool) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, ev := range c.evs {
+		if f(ev) {
+			return true
+		}
+	}
+	return false
+}
+
 func TestTryAcquireLock(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/hub.lock"
@@ -172,8 +186,11 @@ func TestBroadcastExcludesOrigin(t *testing.T) {
 // connection and, per membershipLoop's retry, re-attempts election after
 // reconnectBackoff - since the lock is now free, it becomes the new owner.
 // A third process joining and exchanging an event with it proves the
-// takeover happened; retrying the publish inside waitFor covers both the
-// backoff delay and the newcomer's own connect time without a fixed sleep.
+// takeover happened; the wait correlates on the SURVIVOR's event (session,
+// turn and content) because Leave's asynchronous unwind lets the newcomer
+// receive stale events - the warmup - from the dying old hub, and retrying
+// the publish inside waitFor covers both the backoff delay and the
+// newcomer's own connect time without a fixed sleep.
 func TestReconnectAfterOwnerExit(t *testing.T) {
 	dir := t.TempDir()
 	ownerSess := newTestSession(t, "sess-owner")
@@ -193,22 +210,41 @@ func TestReconnectAfterOwnerExit(t *testing.T) {
 
 	ownerHandle.Leave() // release the lock and close the listener
 
+	// Leave only cancels the owner's context; the unwind - close the
+	// listener, drop every client connection, release the lock - happens
+	// asynchronously on the owner's goroutine. Two consequences the wait
+	// below must survive:
+	//
+	//  1. The newcomer can dial the DYING hub inside that window and receive
+	//     events the old owner had already relayed (the warmup). Such stale
+	//     deliveries say nothing about a takeover, so the wait correlates on
+	//     the survivor's event instead of on arrival count - count()>0 used
+	//     to be satisfied by exactly that stale warmup under load.
+	//  2. There is no stable "old hub is gone" signal to barrier on: the
+	//     lock is free only between the old owner's release and the
+	//     survivor's next election attempt, and is then held for the LIFE of
+	//     the new owner - so waiting for lock-freeness deadlocks the test.
+	//     The budget is two backoff cycles plus dial and relay time: worst
+	//     case is the survivor detecting the death late, sleeping
+	//     reconnectBackoff, and a slow dial.
 	newcomerSess := newTestSession(t, "sess-newcomer")
 	newcomerSink := &collector{}
 	newcomerHandle := Join(dir, newcomerSess, newcomerSink.sink)
 	defer newcomerHandle.Leave()
 
-	waitFor(t, reconnectBackoff+3*time.Second, func() bool {
+	waitFor(t, 2*reconnectBackoff+3*time.Second, func() bool {
 		survivorSess.EventBus.Publish(events.Event{Kind: events.KindAssistant, SessionID: "sess-survivor", TurnID: "turn:1", Content: "still alive"})
-		return newcomerSink.count() > 0
+		return newcomerSink.any(func(ev events.Event) bool {
+			return ev.SessionID == "sess-survivor" && ev.TurnID == "turn:1" && ev.Content == "still alive"
+		})
 	})
-	// Assert what arrived, not merely that something did: the takeover is only
-	// proven if the newcomer receives the SURVIVOR's event, which can only
-	// reach it through a hub the survivor now owns. Counting alone would also
-	// be satisfied by the newcomer's own traffic echoing back.
-	if got := newcomerSink.last(); got.Content != "still alive" || got.SessionID != "sess-survivor" {
-		t.Fatalf("newcomer received %+v, want the survivor's event relayed by the re-elected hub", got)
-	}
+	// The correlated wait above IS the takeover assertion - only a hub the
+	// survivor now feeds (as its owner, or as a client of the
+	// newcomer-owned hub) can deliver an event with that identity, and a
+	// stale warmup from the dying old hub cannot match it. Deliberately NO
+	// last()-style assertion here: a warmup straggler from the dying hub can
+	// legitimately land after the survivor's event, and whichever event is
+	// last says nothing about whether the takeover happened.
 }
 
 func TestToWireFromWireRoundTrip(t *testing.T) {
