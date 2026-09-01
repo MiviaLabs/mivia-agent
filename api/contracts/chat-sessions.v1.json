@@ -486,7 +486,7 @@
             "kind": "string",
             "optional": true
           },
-          "prompt": {
+          "task": {
             "kind": "string",
             "optional": true
           }

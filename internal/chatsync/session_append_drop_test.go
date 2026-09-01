@@ -78,14 +78,70 @@ func TestAppendFailureDropCountIsPerSourceEvent(t *testing.T) {
 
 	appender := interceptAppends(syncSess)
 	appender.fail.Store(true)
-	for i := range 3 {
-		publishTurnStart(bus, "sess-append-count", "turn:lost", string(rune('a'+i)))
+	// DISTINCT turn ids. Reusing one id makes every publish after the first a
+	// duplicate turn start, which the projector drops to zero wire events, so
+	// the test would be counting events that carried nothing - and would pass
+	// against a counter that increments for them.
+	for _, turn := range []string{"turn:lost-1", "turn:lost-2", "turn:lost-3"} {
+		publishTurnStart(bus, "sess-append-count", turn, "lost")
 	}
 	waitForAppendDrops(t, syncSess, 3)
 	appender.fail.Store(false)
 
 	if got := syncSess.appendDrops.Load(); got != 3 {
 		t.Fatalf("appendDrops = %d, want 3 - one per lost source event", got)
+	}
+}
+
+// TestAppendFailureOfAMarkerOnlyBatchIsNotCounted proves a source event that
+// projects to nothing does not report a hole.
+//
+// A duplicate turn start produces zero wire events. When earlier loss is
+// pending, the batch is then the sync.dropped marker ALONE. Losing that batch
+// removes no transcript content - a healthy append would have stored nothing
+// for that source event either - and RollbackDrops already repairs the
+// marker's own loss. Counting it would invent a hole, and would invent one
+// more for every such event while the outbox stayed full.
+func TestAppendFailureOfAMarkerOnlyBatchIsNotCounted(t *testing.T) {
+	_, srv := newRecordingServer(t, "sess-append-marker")
+
+	bus := events.New()
+	syncSess, err := OpenSession(context.Background(), bus, "sess-append-marker", SessionOptions{
+		TokenProvider:   testTokenProvider,
+		ClientOptions:   ClientOptions{BaseURL: srv.URL},
+		OutboxDir:       t.TempDir(),
+		MaxUnflushed:    100,
+		CreateTitle:     "Marker Only",
+		HeartbeatPeriod: 10 * time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+	t.Cleanup(func() { _ = syncSess.Stop(context.Background()) })
+
+	publishTurnStart(bus, "sess-append-marker", "turn:1", "first")
+	waitForSeq(t, syncSess, 1)
+
+	appender := interceptAppends(syncSess)
+	appender.fail.Store(true)
+
+	// One real loss, so a marker is pending from here on.
+	publishTurnStart(bus, "sess-append-marker", "turn:2", "really lost")
+	waitForAppendDrops(t, syncSess, 1)
+
+	// Duplicates of an already-started turn: zero wire events each, so every
+	// failed batch from here is the pending marker on its own.
+	for range 3 {
+		publishTurnStart(bus, "sess-append-marker", "turn:1", "duplicate")
+	}
+	// Give the worker time to process all three before reading the counter.
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if got := syncSess.appendDrops.Load(); got != 1 {
+		t.Fatalf("appendDrops = %d, want 1 - only the event that carried content was lost", got)
 	}
 }
 

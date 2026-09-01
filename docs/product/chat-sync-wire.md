@@ -118,13 +118,22 @@ types with `agent` set in the envelope. A viewer can therefore keep a
 subagent out of the main transcript on that prefix alone, including types
 added after the viewer shipped. `envelope.agent.task` names which subagent
 run an event belongs to; two runs of the same agent have different task ids.
-`envelope.agent.parent_task` names the run that dispatched it, and is absent
-for a run the root loop dispatched. Depth reports how deep a run sits;
-`parent_task` reports under which run, which two runs at the same depth do
-not share.
+`envelope.agent.parent_task` names the run that dispatched it. Depth reports
+how deep a run sits; `parent_task` reports under which run, which two runs at
+the same depth do not share.
 
-A run reports its own start and end: `subagent.started` carries the task text
-the run was given, and its timestamp is the run's start time;
+`parent_task` is absent whenever the root loop dispatched the run - the
+common case - and **it is absent in every shipped configuration today.** A
+subagent cannot dispatch a subagent: the mandatory tool denylist removes
+`delegate`, `dispatch_tasks` and `spawn_agent` from every spawned registry.
+The one path that starts work for a running agent, an `ask_agent` referral,
+does not yet carry the asking task's identity to the task it starts. A
+consumer must therefore treat an absent `parent_task` as "top level", never
+as "unknown", and must not require the field to draw a run.
+
+A run reports its own start and end: `subagent.started` carries `task`, a
+preview of what the run was asked to do that the producer bounds to 200
+bytes, and its timestamp is the run's start time;
 `subagent.ended` carries the terminal status. `subagent.progress` carries a
 heartbeat, and its `detail` text holds the elapsed time, step count and tool
 count. That type once declared `elapsed_seconds`, `steps` and `tool_calls`

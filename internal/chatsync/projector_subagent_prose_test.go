@@ -376,8 +376,8 @@ func TestSubagentBeginProjectsRunStart(t *testing.T) {
 		t.Fatalf("type = %s, want %s", got[0].Type, TypeSubagentStarted)
 	}
 	payload := got[0].Payload.(*SubagentStartedPayload)
-	if payload.Prompt != "review the diff" {
-		t.Errorf("prompt = %q, want the task description", payload.Prompt)
+	if payload.Task != "review the diff" {
+		t.Errorf("task = %q, want the task description", payload.Task)
 	}
 	if payload.Name != "reviewer" {
 		t.Errorf("name = %q, want reviewer", payload.Name)
@@ -400,7 +400,7 @@ func TestSubagentBeginPromptIsRedacted(t *testing.T) {
 
 	p := NewProjector("sess-1", 0, proseOpts())
 	got := p.Project(subagentEvent(events.KindSubagentBegin, "task-1", "", "use SECRET_KEY_112233 to log in"))
-	assertRedacted(t, "begin prompt", got[0].Payload.(*SubagentStartedPayload).Prompt)
+	assertRedacted(t, "begin task", got[0].Payload.(*SubagentStartedPayload).Task)
 }
 
 // TestEnvelopeCarriesParentTask proves a nested run reports WHICH run started

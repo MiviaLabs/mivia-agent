@@ -31,6 +31,7 @@ func allEventKinds() []agent.EventKind {
 		agent.EventSubagentStart,
 		agent.EventSubagentEnd,
 		agent.EventSubagentHeartbeat,
+		agent.EventSubagentBegin,
 		agent.EventSubagentDone,
 		agent.EventThinking,
 		agent.EventHook,

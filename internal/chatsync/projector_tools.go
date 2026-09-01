@@ -57,12 +57,12 @@ func (p *Projector) projectSubagent(env Envelope, ev events.Event) []WireEvent {
 
 	switch ev.Kind {
 	case events.KindSubagentBegin:
-		prompt := redactText(ev.Detail)
-		prompt = applyTruncation(&env, "prompt", prompt, BudgetPromptText)
+		task := redactText(ev.Detail)
+		task = applyTruncation(&env, "task", task, BudgetShortField)
 		payload := &SubagentStartedPayload{
 			Envelope: env,
 			Name:     name,
-			Prompt:   prompt,
+			Task:     task,
 		}
 		return []WireEvent{p.nextWireEvent(TypeSubagentStarted, payload)}
 	case events.KindSubagentStart:

@@ -288,12 +288,18 @@ type SubagentToolEndedPayload struct {
 // the run-level opening signal for one subagent.
 //
 // The envelope's own timestamp is the run's start time, so this carries no
-// separate started_at. Prompt is the bounded task description the run was
-// given, redacted and truncated like every other text field.
+// separate started_at.
+//
+// Task is a bounded PREVIEW of what the run was asked to do, not the prompt it
+// received: the producer caps it at 200 bytes (subagents.maxTaskDescriptionBytes)
+// and, for a dispatch whose input is not a bare string, it can be raw JSON
+// rather than natural language. It is named and budgeted accordingly - a
+// 32 KiB prompt budget could never bind against a 200-byte producer bound, so
+// the real limit would never appear in trunc.fields.
 type SubagentStartedPayload struct {
 	Envelope
-	Name   string `json:"name,omitempty"`
-	Prompt string `json:"prompt,omitempty"`
+	Name string `json:"name,omitempty"`
+	Task string `json:"task,omitempty"`
 }
 
 // SubagentProgressPayload is the payload of mivia.chat.v1.subagent.progress.
