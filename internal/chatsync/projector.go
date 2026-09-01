@@ -52,6 +52,13 @@ type turnState struct {
 	streamed          bool
 	fragments         int
 	thinkingFragments int
+	// segment counts the STEPS of a turn: talk, call a tool, read the result,
+	// talk again. It is what separates one utterance from the next on the
+	// wire; see proseBlock.
+	segment int
+	// segmentDirty records that prose has actually shipped into the current
+	// segment, so a tool call that follows silence spends no segment.
+	segmentDirty bool
 }
 
 // Projector performs pure synchronous projection of events.Event streams
@@ -293,12 +300,12 @@ func (p *Projector) projectByKind(ev events.Event, turnID string, env Envelope, 
 		return p.projectThinking(env, turnID, ev.Content)
 
 	case events.KindToolStart, events.KindToolEnd:
-		p.turn(turnID)
+		p.closeStepOnToolStart(ev, turnID)
 		return p.projectTool(env, ev)
 
 	case events.KindSubagentBegin, events.KindSubagentStart, events.KindSubagentEnd,
 		events.KindSubagentHeartbeat, events.KindSubagentDone:
-		p.turn(turnID)
+		p.closeStepOnToolStart(ev, turnID)
 		return p.projectSubagent(env, ev)
 
 	case events.KindCompaction:
@@ -448,13 +455,14 @@ func (p *Projector) projectAssistant(env Envelope, turnID string, ts *turnState,
 	if ev.Content == "" {
 		return nil
 	}
-	env.Block = turnID + ":assistant"
+	env.Block = proseBlock(turnID+":assistant", ts.segment)
 	content := redactText(ev.Content)
 
 	if ev.Detail == "delta" {
 		ts.streamed = true
 		ts.fragments++
 		if p.opts.StreamAssistant && !redactionActive() {
+			ts.segmentDirty = true
 			content = applyTruncation(&env, "text", content, BudgetDeltaText)
 			payload := &AssistantDeltaPayload{
 				Envelope: env,
@@ -489,13 +497,16 @@ func (p *Projector) projectThinking(env Envelope, turnID, content string) []Wire
 	if content == "" {
 		return nil
 	}
-	env.Block = turnID + ":thinking"
+	ts := p.turn(turnID)
+	env.Block = proseBlock(turnID+":thinking", ts.segment)
 	text := ""
 	if p.opts.IncludeThinking {
 		text = redactText(content)
 		text = applyTruncation(&env, "text", text, BudgetDeltaText)
 	}
-	ts := p.turn(turnID)
+	// Reasoning opens a step as surely as narration does: a step that thought
+	// and then called a tool has closed something, even if it never spoke.
+	ts.segmentDirty = true
 	index := ts.thinkingFragments
 	ts.thinkingFragments++
 	payload := &ThinkingDeltaPayload{
