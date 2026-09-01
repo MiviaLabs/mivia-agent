@@ -52,6 +52,41 @@ PROBES = [
         "\treturn s\n}\n",
     ),
     (
+        # Same rule, second shape: the ValidString call sits on a line BELOW
+        # the `for`, inside the loop body, in a loop that walks an index
+        # DOWNWARD. This is the shape internal/hooks/protocol.go carried
+        # before 04f36f5b; a rule keyed on the `for` line alone cannot see it.
+        "mivia.go.no-validstring-rune-boundary-backoff",
+        "internal/probe-utf8-backoff/viol_body.go",
+        'package probe\n\nimport "unicode/utf8"\n\n'
+        "func cutBody(s string, limit int) string {\n"
+        "\tcut := s[:limit]\n"
+        "\tfor i := limit - 1; i >= 0 && limit-i < utf8.UTFMax; i-- {\n"
+        "\t\tif utf8.RuneStart(s[i]) {\n"
+        "\t\t\tif utf8.ValidString(s[:i]) {\n"
+        "\t\t\t\treturn s[:i]\n"
+        "\t\t\t}\n"
+        "\t\t\treturn cut\n"
+        "\t\t}\n"
+        "\t}\n"
+        "\treturn cut\n}\n",
+        "internal/probe-utf8-backoff/clean_body.go",
+        'package probe\n\nimport "unicode/utf8"\n\n'
+        "func declaredRuneLen(b byte) int { return int(b) }\n\n"
+        "func cutBodyOK(s string, limit int) string {\n"
+        "\tcut := s[:limit]\n"
+        "\tfor i := limit - 1; i >= 0 && limit-i < utf8.UTFMax; i-- {\n"
+        "\t\tif !utf8.RuneStart(s[i]) {\n"
+        "\t\t\tcontinue\n"
+        "\t\t}\n"
+        "\t\tif declaredRuneLen(s[i]) > limit-i {\n"
+        "\t\t\treturn s[:i]\n"
+        "\t\t}\n"
+        "\t\treturn cut\n"
+        "\t}\n"
+        "\treturn cut\n}\n",
+    ),
+    (
         "mivia.go.no-chat-principal-as-sync-handle",
         "internal/probe-sync-handle/viol.go",
         'package probe\n\nimport "github.com/MiviaLabs/mivia-agent/internal/chatsync"\n\n'
