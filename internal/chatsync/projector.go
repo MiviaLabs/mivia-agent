@@ -167,6 +167,42 @@ func (p *Projector) RollbackDrops(delta uint64) {
 	p.lastDrops -= delta
 }
 
+// RollbackStreaming undoes the streaming bookkeeping for a batch of wire
+// events that was projected but never stored.
+//
+// Without it a failed append is worse than a dropped event: the counters say
+// the text was streamed, so INV-1 empties the settled message, and a viewer
+// ends up holding neither the fragments (never stored) nor the whole answer
+// (deliberately omitted). The turn's entire reply disappears while the
+// transcript still looks contiguous.
+//
+// The counters must therefore track what was STORED, exactly as the sequence
+// number and the drop watermark already do.
+func (p *Projector) RollbackStreaming(wireEvents []WireEvent) {
+	for _, we := range wireEvents {
+		switch payload := we.Payload.(type) {
+		case *AssistantDeltaPayload:
+			p.rollbackOneDelta(p.turns[payload.Turn])
+		case *SubagentAssistantDeltaPayload:
+			if payload.Agent != nil {
+				p.rollbackOneDelta(p.lanes[payload.Turn+"\x00"+payload.Agent.Task])
+			}
+		}
+	}
+}
+
+func (p *Projector) rollbackOneDelta(ts *turnState) {
+	if ts == nil || ts.fragments == 0 {
+		return
+	}
+	ts.fragments--
+	// Only the LAST unstored delta clears the flag. A batch that lost one of
+	// several deltas is still a turn that streamed.
+	if ts.fragments == 0 {
+		ts.streamed = false
+	}
+}
+
 // ResetSeq resets the sequence counter to a specified sequence (e.g. on fork).
 func (p *Projector) ResetSeq(seq int64) {
 	p.seq = seq
@@ -418,7 +454,7 @@ func (p *Projector) projectAssistant(env Envelope, turnID string, ts *turnState,
 	if ev.Detail == "delta" {
 		ts.streamed = true
 		ts.fragments++
-		if p.opts.StreamAssistant {
+		if p.opts.StreamAssistant && !redactionActive() {
 			content = applyTruncation(&env, "text", content, BudgetDeltaText)
 			payload := &AssistantDeltaPayload{
 				Envelope: env,
@@ -433,7 +469,7 @@ func (p *Projector) projectAssistant(env Envelope, turnID string, ts *turnState,
 	// Final aggregate
 	text := content
 	fragments := 0
-	if ts.streamed && p.opts.StreamAssistant {
+	if ts.streamed && p.opts.StreamAssistant && !redactionActive() {
 		fragments = ts.fragments
 		text = "" // INV-1: text empty iff fragments > 0
 	} else {

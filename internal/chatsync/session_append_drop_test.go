@@ -187,3 +187,72 @@ func waitForDroppedMarker(t *testing.T, rec *recordingServer) {
 	}
 	t.Fatal("no sync.dropped marker reached the server; append-hop loss stayed silent")
 }
+
+// TestAppendFailureDoesNotLoseTheWholeAnswer is the data-loss regression that
+// streaming-by-default made reachable.
+//
+// A projected delta advances the turn's streaming counters BEFORE the durable
+// append runs. If the append then fails - the bounded outbox filling is the
+// ordinary way, and a turn now produces many deltas rather than one message -
+// the counters still say the text was streamed. INV-1 then empties the settled
+// message, so the viewer holds neither the fragments (never stored) nor the
+// whole answer (deliberately omitted). The reply vanishes while the transcript
+// still looks contiguous.
+func TestAppendFailureDoesNotLoseTheWholeAnswer(t *testing.T) {
+	_, srv := newRecordingServer(t, "sess-stream-loss")
+
+	bus := events.New()
+	syncSess, err := OpenSession(context.Background(), bus, "sess-stream-loss", SessionOptions{
+		TokenProvider:    testTokenProvider,
+		ClientOptions:    ClientOptions{BaseURL: srv.URL},
+		OutboxDir:        t.TempDir(),
+		MaxUnflushed:     100,
+		CreateTitle:      "Stream Loss",
+		HeartbeatPeriod:  10 * time.Minute,
+		ProjectorOptions: ProjectorOptions{StreamAssistant: true},
+	})
+	if err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+	t.Cleanup(func() { _ = syncSess.Stop(context.Background()) })
+
+	publishTurnStart(bus, "sess-stream-loss", "turn:1", "question")
+	waitForSeq(t, syncSess, 1)
+
+	// Every delta is projected and then lost at the append.
+	appender := interceptAppends(syncSess)
+	appender.fail.Store(true)
+	for _, frag := range []string{"the ", "whole ", "answer"} {
+		bus.Publish(events.Event{
+			Kind: events.KindAssistant, SessionID: "sess-stream-loss", TurnID: "turn:1",
+			Content: frag, Detail: "delta", Timestamp: time.Now(),
+		})
+	}
+	waitForAppendDrops(t, syncSess, 3)
+	appender.fail.Store(false)
+
+	// The settled message must now carry the FULL text, because none of the
+	// fragments it would otherwise refer to ever reached the wire.
+	var settled *AssistantMessagePayload
+	syncSess.mu.Lock()
+	got := syncSess.projector.Project(events.Event{
+		Kind: events.KindAssistant, SessionID: "sess-stream-loss", TurnID: "turn:1",
+		Content: "the whole answer", Timestamp: time.Now(),
+	})
+	syncSess.mu.Unlock()
+	for _, we := range got {
+		if p, ok := we.Payload.(*AssistantMessagePayload); ok {
+			settled = p
+		}
+	}
+
+	if settled == nil {
+		t.Fatalf("no settled assistant message was projected: %v", got)
+	}
+	if settled.Fragments != 0 {
+		t.Errorf("fragments = %d, want 0 - no delta was ever stored", settled.Fragments)
+	}
+	if settled.Text != "the whole answer" {
+		t.Errorf("text = %q, want the full answer; the reply was lost entirely", settled.Text)
+	}
+}

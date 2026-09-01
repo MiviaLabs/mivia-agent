@@ -153,7 +153,7 @@ func (p *Projector) projectSubagentAssistant(env Envelope, turnID string, ev eve
 	if ev.Detail == "delta" {
 		ls.streamed = true
 		ls.fragments++
-		if !p.opts.StreamAssistant {
+		if !p.opts.StreamAssistant || redactionActive() {
 			return nil
 		}
 		content = applyTruncation(&env, "text", content, BudgetDeltaText)
@@ -167,7 +167,7 @@ func (p *Projector) projectSubagentAssistant(env Envelope, turnID string, ev eve
 
 	text := content
 	fragments := 0
-	if ls.streamed && p.opts.StreamAssistant {
+	if ls.streamed && p.opts.StreamAssistant && !redactionActive() {
 		fragments = ls.fragments
 		text = "" // INV-1: text empty iff fragments > 0.
 	} else {

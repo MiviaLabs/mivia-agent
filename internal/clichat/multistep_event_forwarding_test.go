@@ -35,6 +35,11 @@ var forwardedKinds = []struct {
 	{"heartbeat tick becomes subagent heartbeat", agent.EventHeartbeat, agent.EventSubagentHeartbeat, false},
 	// Prose passes through so a remote viewer can open a subagent's thread.
 	{"assistant forwards", agent.EventAssistant, agent.EventAssistant, false},
+	// The discard must travel with the prose it discards. This row exists
+	// because the reset was added to the producer, the projector, the wire
+	// contract and the owned doc, and was dropped HERE - the same omission,
+	// in the same switch, that had already swallowed EventSubagentBegin.
+	{"assistant reset forwards", agent.EventAssistantReset, agent.EventAssistantReset, false},
 	{"thinking forwards", agent.EventThinking, agent.EventThinking, false},
 	// A kind with no arm is dropped. This row is what proves the switch is
 	// still a deliberate allowlist rather than a pass-through.

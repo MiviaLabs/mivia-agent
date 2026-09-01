@@ -387,6 +387,10 @@ func (s *SyncSession) appendLocked(wireEvents []WireEvent) error {
 	if err := s.appender.Append(wireEvents...); err != nil {
 		s.projector.RollbackSeq(len(wireEvents))
 		s.projector.RollbackDrops(droppedDelta(wireEvents))
+		// The streaming counters are state too. Left advanced, they make the
+		// settled message omit text whose fragments were never stored, and
+		// the turn's whole reply is lost rather than degraded.
+		s.projector.RollbackStreaming(wireEvents)
 		return err
 	}
 	return nil

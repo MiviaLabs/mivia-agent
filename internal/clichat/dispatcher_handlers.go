@@ -264,7 +264,7 @@ func OnEventForMultiStep(parentOnEvent func(agent.Event)) func(agent.Event) {
 				Name: e.Name, Detail: e.Detail, Output: e.Output,
 				Origin: e.Origin,
 			})
-		case agent.EventSubagentBegin:
+		case agent.EventSubagentBegin, agent.EventAssistantReset:
 			parentOnEvent(e)
 		case agent.EventSubagentHeartbeat:
 			// Feed the workflow join liveness watchdog.
