@@ -52,17 +52,27 @@ func TestLiveSyncSessionEndToEnd(t *testing.T) {
 
 	publishLiveTurn(bus, chatSessionID, "turn:1")
 
-	// Wait for background flush
-	time.Sleep(500 * time.Millisecond)
-
-	// Fetch events directly from server via API to confirm remote persistence
-	stored, err := syncSess.client.GetEvents(ctx, syncSess.SessionID(), 0, 50)
-	if err != nil {
-		t.Fatalf("GetEvents: %v", err)
-	}
-
-	if len(stored) < 3 {
-		t.Fatalf("expected at least 3 stored events on server, got %d: %+v", len(stored), stored)
+	// Each processed event triggers its own flush (session.go's triggerFlush),
+	// so three events published back to back can become up to three
+	// serialized round trips to a real server rather than one batch - a fixed
+	// sleep here raced that and failed intermittently against real network
+	// latency. Poll instead: the assertion is "eventually 3", not "3 within
+	// one arbitrary window".
+	var stored []StoredEvent
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var err error
+		stored, err = syncSess.client.GetEvents(ctx, syncSess.SessionID(), 0, 50)
+		if err != nil {
+			t.Fatalf("GetEvents: %v", err)
+		}
+		if len(stored) >= 3 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected at least 3 stored events on server within 10s, got %d: %+v", len(stored), stored)
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 
 	t.Logf("Successfully verified %d live synchronized events on remote session %s", len(stored), syncSess.SessionID())
