@@ -261,8 +261,14 @@ func toolEndStatus(detail string) string {
 	return "ok"
 }
 
+// jsonTurnEventCallback routes one agent event onto the local NDJSON
+// surface. The run-level subagent lines live in writeJSONSubagentLine, so
+// this function stays a readable routing table rather than one long body.
 func jsonTurnEventCallback(w io.Writer) func(event agent.Event) {
 	return func(e agent.Event) {
+		if writeJSONSubagentLine(w, e) {
+			return
+		}
 		switch e.Kind {
 		case agent.EventThinking:
 			if e.Content != "" {
@@ -304,26 +310,6 @@ func jsonTurnEventCallback(w io.Writer) func(event agent.Event) {
 				return
 			}
 			writeTokenUsageLine(w, *e.TokenUsage)
-		case agent.EventSubagentDone:
-			writeNDJSONEvent(w, ndjsonEvent{
-				Type:         "subagent_done",
-				OriginTaskID: e.Origin.TaskID,
-				Status:       e.Status,
-			})
-		case agent.EventSubagentHeartbeat:
-			// Origin is required for this event to mean anything (it retires
-			// nothing on its own, just refreshes one subagent's progress
-			// note) - a heartbeat with no origin (should not happen, see
-			// OnEventForMultiStep) is dropped rather than sent as a
-			// meaningless line.
-			if e.Origin.TaskID == "" {
-				return
-			}
-			writeNDJSONEvent(w, ndjsonEvent{
-				Type:         "subagent_heartbeat",
-				OriginTaskID: e.Origin.TaskID,
-				Message:      e.Detail,
-			})
 		case agent.EventCompaction:
 			// The typed payload is required, same rule as cache_usage.
 			if e.Compaction == nil {
@@ -332,6 +318,61 @@ func jsonTurnEventCallback(w io.Writer) func(event agent.Event) {
 			writeCompactionLine(w, e.Detail, *e.Compaction)
 		}
 	}
+}
+
+// writeJSONSubagentLine writes the RUN-level lines - the ones that describe a
+// subagent run itself rather than a nested tool call - and the turn reset.
+// It reports whether it handled the event.
+func writeJSONSubagentLine(w io.Writer, e agent.Event) bool {
+	switch e.Kind {
+	case agent.EventAssistantReset:
+		// The answer streams as "chunk" lines, so a retry sends the whole
+		// answer twice with nothing between the two. This line is that
+		// something: a consumer drops the chunks it has already accumulated
+		// for this turn and starts the answer again.
+		writeNDJSONEvent(w, ndjsonEvent{
+			Type:         "assistant_reset",
+			Message:      e.Detail,
+			OriginTaskID: e.Origin.TaskID,
+			OriginAgent:  e.Origin.Agent,
+			OriginDepth:  e.Origin.Depth,
+		})
+	case agent.EventSubagentBegin:
+		// The run's opening signal. Without it a --json consumer first hears
+		// of a subagent when it calls a tool, and a run that only thinks and
+		// answers is never announced at all.
+		writeNDJSONEvent(w, ndjsonEvent{
+			Type:                  "subagent_begin",
+			Name:                  e.Name,
+			Input:                 e.Detail,
+			OriginTaskID:          e.Origin.TaskID,
+			OriginAgent:           e.Origin.Agent,
+			OriginDepth:           e.Origin.Depth,
+			OriginTaskDescription: e.Origin.TaskDescription,
+		})
+	case agent.EventSubagentDone:
+		writeNDJSONEvent(w, ndjsonEvent{
+			Type:         "subagent_done",
+			OriginTaskID: e.Origin.TaskID,
+			Status:       e.Status,
+		})
+	case agent.EventSubagentHeartbeat:
+		// Origin is required for this event to mean anything (it retires
+		// nothing on its own, just refreshes one subagent's progress note) -
+		// a heartbeat with no origin (should not happen, see
+		// OnEventForMultiStep) is dropped rather than sent as a meaningless
+		// line.
+		if e.Origin.TaskID != "" {
+			writeNDJSONEvent(w, ndjsonEvent{
+				Type:         "subagent_heartbeat",
+				OriginTaskID: e.Origin.TaskID,
+				Message:      e.Detail,
+			})
+		}
+	default:
+		return false
+	}
+	return true
 }
 
 // writeNDJSONEvent marshals ev as one NDJSON line and writes it to w.

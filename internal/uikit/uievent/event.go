@@ -18,13 +18,17 @@ const (
 	KindToolPending Kind = "tool.pending" // needs approval
 	KindToolStart   Kind = "tool.start"
 	KindToolOutput  Kind = "tool.output" // incremental; also carries subagent progress
-	KindToolEnd     Kind = "tool.end"
-	KindPlan        Kind = "plan"   // to-do/plan checklist update
-	KindNotice      Kind = "notice" // free-text advisory line, e.g. context-usage warning
-	KindHook        Kind = "hook"   // a lifecycle hook fired for a tool call
-	KindUsage       Kind = "usage"
-	KindError       Kind = "error"
-	KindTurnEnd     Kind = "turn.end"
+	// KindAssistantReset tells the transcript to discard the assistant text it
+	// holds for the current turn, because the turn is being re-driven from the
+	// beginning.
+	KindAssistantReset Kind = "assistant.reset"
+	KindToolEnd        Kind = "tool.end"
+	KindPlan           Kind = "plan"   // to-do/plan checklist update
+	KindNotice         Kind = "notice" // free-text advisory line, e.g. context-usage warning
+	KindHook           Kind = "hook"   // a lifecycle hook fired for a tool call
+	KindUsage          Kind = "usage"
+	KindError          Kind = "error"
+	KindTurnEnd        Kind = "turn.end"
 )
 
 // Event is one item in the UI event stream. TurnID and Seq fence late
@@ -102,6 +106,14 @@ type ToolStartBody struct {
 }
 
 func (ToolStartBody) isBody() {}
+
+// AssistantResetBody is the Body for KindAssistantReset. Reason is a short,
+// content-free classification of why the turn restarted.
+type AssistantResetBody struct {
+	Reason string `json:"reason,omitempty"`
+}
+
+func (AssistantResetBody) isBody() {}
 
 // Progress carries subagent step progress. It is optional on
 // ToolOutputBody; nil means ordinary incremental tool output.

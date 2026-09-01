@@ -62,6 +62,8 @@ func unmarshalBody(kind Kind, raw json.RawMessage) (Body, error) {
 		body = &TextDeltaBody{}
 	case KindTextEnd:
 		body = &TextEndBody{}
+	case KindAssistantReset:
+		body = &AssistantResetBody{}
 	case KindReasoning:
 		body = &ReasoningDeltaBody{}
 	case KindToolPending:

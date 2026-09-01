@@ -122,6 +122,19 @@ func laneLog(detail string) []string {
 	return []string{detail}
 }
 
+// translateAssistantReset maps the turn-restart signal to a transcript reset.
+//
+// The turn is being re-driven from the beginning, so any assistant text the
+// transcript is holding for it belongs to an attempt that no longer exists.
+// Without this the replay is appended to the abandoned attempt and the reader
+// sees the answer twice.
+func translateAssistantReset(ev agent.Event) []uievent.Event {
+	return []uievent.Event{{
+		Kind: uievent.KindAssistantReset,
+		Body: uievent.AssistantResetBody{Reason: ev.Detail},
+	}}
+}
+
 // translateSubagentBegin maps the RUN-level opening signal to a progress
 // update on that run's own row, keyed by Origin.TaskID exactly as
 // translateSubagentDone and translateSubagentHeartbeat are.

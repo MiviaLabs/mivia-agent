@@ -148,6 +148,8 @@ func (m Model) HandleEvent(ev uievent.Event) (Model, tea.Cmd) {
 			Input: b.Text,
 			Body:  proseLines(render.Markdown(m.Theme, m.Tier, m.proseRenderWidth(), b.Text)),
 		})
+	case uievent.AssistantResetBody:
+		return m.handleAssistantReset(b)
 	case uievent.TurnStartBody:
 		m = m.flushPending()
 		return m.pushBlock(Block{

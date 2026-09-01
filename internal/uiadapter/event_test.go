@@ -10,40 +10,17 @@ import (
 	"github.com/MiviaLabs/mivia-agent/internal/uikit/uievent"
 )
 
-// allEventKinds enumerates every agent.EventKind constant. The table tests
-// reference these values directly so adding a new constant here without
-// adding a row to the per-group tests below fails the test at compile
-// time.
+// allEventKinds is every agent.EventKind, taken from the producing package
+// rather than restated here.
 //
-// Mirror in lockstep with internal/agent/event.go. The exhaustive coverage
-// test below is the second line of defence (it asserts the switch covers
-// the constants declared at the time the test runs).
-func allEventKinds() []agent.EventKind {
-	return []agent.EventKind{
-		agent.EventAssistant,
-		agent.EventToolPending,
-		agent.EventToolStart,
-		agent.EventToolEnd,
-		agent.EventStep,
-		agent.EventHeartbeat,
-		agent.EventPrune,
-		agent.EventToolParallel,
-		agent.EventSubagentStart,
-		agent.EventSubagentEnd,
-		agent.EventSubagentHeartbeat,
-		agent.EventSubagentBegin,
-		agent.EventSubagentDone,
-		agent.EventThinking,
-		agent.EventHook,
-		agent.EventCompaction,
-		agent.EventCacheUsage,
-		agent.EventTokenUsage,
-		agent.EventWorkLimit,
-		agent.EventSchemaRetry,
-		agent.EventEmptyResponseRetry,
-		agent.EventUnactedContinuation,
-	}
-}
+// It used to be a hand-written mirror, and that is exactly how
+// EventAssistantReset reached only one of four renderers with the suite
+// green: the kind was never written down here, so the exhaustiveness test
+// below never asked whether it translated. agent.AllEventKinds is itself
+// checked against the parsed source (see the agent package's
+// TestAllEventKindsMatchesTheDeclaredConstants), so a new constant now fails
+// a test instead of being skipped by one.
+func allEventKinds() []agent.EventKind { return agent.AllEventKinds() }
 
 // mappingCase pairs an agent.Event input with the uievent.Events the
 // TranslateEvent switch must produce. Each per-group test below holds
@@ -427,7 +404,7 @@ func TestTranslateEvent_ExhaustiveCoverage(t *testing.T) {
 	}
 	kinds := allEventKinds()
 	if len(kinds) == 0 {
-		t.Fatal("allEventKinds is empty; mirror internal/agent/event.go")
+		t.Fatal("agent.AllEventKinds is empty; the registry, not this test, is wrong")
 	}
 	seen := map[agent.EventKind]bool{}
 	for _, k := range kinds {

@@ -29,6 +29,8 @@ func externalSubagentType(kind events.Kind) string {
 		return "external_subagent_chunk"
 	case events.KindThinking:
 		return "external_subagent_thinking"
+	case events.KindAssistantReset:
+		return "external_subagent_assistant_reset"
 	case events.KindSubagentBegin:
 		return "external_subagent_begin"
 	case events.KindSubagentHeartbeat:
@@ -94,6 +96,9 @@ func renderExternalSubagentEvent(w io.Writer, ev events.Event) {
 			return
 		}
 		line.Text = ev.Content
+	case events.KindAssistantReset:
+		// The run is answering again. Detail is a content-free reason.
+		line.Message = ev.Detail
 	case events.KindSubagentBegin:
 		// Detail carries the bounded task description the run was given.
 		line.Name, line.Input = ev.Name, ev.Detail
@@ -142,6 +147,16 @@ func renderExternalTurnEvent(w io.Writer, r *externalRun, ev events.Event) {
 		if !r.streamed {
 			writeNDJSONEvent(w, line)
 		}
+	case events.KindAssistantReset:
+		// The attempt this run already relayed is void. Clearing `streamed`
+		// matters as much as the line itself: the replacement arrives as a
+		// turn-end aggregate when the retry does not stream, and a run still
+		// marked as having streamed would drop it, leaving the consumer with
+		// the discard and no answer.
+		r.streamed = false
+		writeNDJSONEvent(w, ndjsonEvent{
+			Type: "external_assistant_reset", RunID: ev.TurnID, Message: ev.Detail,
+		})
 	case events.KindThinking:
 		if ev.Content != "" {
 			writeNDJSONEvent(w, ndjsonEvent{
