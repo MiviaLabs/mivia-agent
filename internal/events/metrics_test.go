@@ -2,6 +2,11 @@ package events
 
 import (
 	"context"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"io/fs"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -264,29 +269,52 @@ func TestMetricsAdapter_CloseRacingSubscribeLeavesNoSubscriptions(t *testing.T) 
 
 // --- Regression tests for missing allKnownKinds entries ---
 
-// declaredKinds collects every exported Kind constant declared in the
-// events package via reflect. This is the authoritative set: allKnownKinds
-// must contain every entry returned, or MetricsAdapter silently drops events
-// of that kind.
-func declaredKinds() map[Kind]bool {
+// declaredKinds returns every Kind constant the package DECLARES, read from
+// its own source.
+//
+// It was a hand-written slice, restating the very list it was meant to check.
+// Both lists then drifted together: KindAssistantReset was added to the
+// package and to neither, so MetricsAdapter silently dropped it and this test
+// stayed green. A guard that has to be updated by the same edit it guards
+// against is not a guard.
+func declaredKinds(t *testing.T) map[Kind]bool {
+	t.Helper()
+	fset := token.NewFileSet()
+	pkgs, err := parser.ParseDir(fset, ".", func(fi fs.FileInfo) bool {
+		return !strings.HasSuffix(fi.Name(), "_test.go")
+	}, 0)
+	if err != nil {
+		t.Fatalf("parse package source: %v", err)
+	}
+
 	result := make(map[Kind]bool)
-	// Enumerate every declared Kind constant directly. This file is in
-	// package events so all Kind constants are in scope — if a Kind is renamed
-	// or removed, this compilation unit fails to compile, catching drift.
-	for _, k := range []Kind{
-		KindAssistant, KindToolStart, KindToolEnd, KindStep, KindHeartbeat, KindPrune,
-		KindToolParallel, KindSubagentBegin, KindSubagentStart, KindSubagentEnd, KindSubagentHeartbeat,
-		KindSubagentDone, KindThinking, KindCompaction,
-		KindCacheUsage, KindTokenUsage, KindPrefixReset,
-		KindSessionStart, KindSessionEnd, KindTurnStart, KindTurnEnd,
-		KindWorkflowRunStarted, KindWorkflowStepStarted, KindWorkflowStepHeartbeat,
-		KindWorkflowStepCompleted, KindWorkflowGateResult, KindWorkflowApprovalRequested,
-		KindWorkflowRunFinished, KindWorkflowDeliveryStage,
-		KindInvocationStarted, KindInvocationCompleted, KindInvocationRetrying,
-		KindUIResize, KindUserInput, KindUIReady, KindConfigChange,
-		KindError,
-	} {
-		result[k] = true
+	for _, pkg := range pkgs {
+		for _, file := range pkg.Files {
+			ast.Inspect(file, func(n ast.Node) bool {
+				spec, ok := n.(*ast.ValueSpec)
+				if !ok {
+					return true
+				}
+				ident, ok := spec.Type.(*ast.Ident)
+				if !ok || ident.Name != "Kind" {
+					return true
+				}
+				for i := range spec.Names {
+					if i >= len(spec.Values) {
+						continue
+					}
+					lit, ok := spec.Values[i].(*ast.BasicLit)
+					if !ok || lit.Kind != token.STRING {
+						continue
+					}
+					result[Kind(lit.Value[1:len(lit.Value)-1])] = true
+				}
+				return true
+			})
+		}
+	}
+	if len(result) == 0 {
+		t.Fatal("no Kind constant was found; the parse is wrong, not the code")
 	}
 	return result
 }
@@ -303,7 +331,7 @@ func knownKindsSet() map[Kind]bool {
 // Kind constant appears in allKnownKinds. Fails on current code because
 // KindThinking, KindCompaction, and KindTokenUsage are missing.
 func TestAllKnownKinds_ContainsAllDeclaredKinds(t *testing.T) {
-	declared := declaredKinds()
+	declared := declaredKinds(t)
 	known := knownKindsSet()
 	missing := make([]Kind, 0)
 	for k := range declared {
@@ -320,7 +348,7 @@ func TestAllKnownKinds_ContainsAllDeclaredKinds(t *testing.T) {
 // allKnownKinds is a valid declared Kind constant. Guards against phantom
 // entries. Expected to pass on both current and fixed code.
 func TestAllKnownKinds_HasNoExtraKinds(t *testing.T) {
-	declared := declaredKinds()
+	declared := declaredKinds(t)
 	known := knownKindsSet()
 	extra := make([]Kind, 0)
 	for k := range known {
