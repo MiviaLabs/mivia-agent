@@ -126,7 +126,9 @@ The relay is lossy on purpose. Every queue between the two processes is bounded 
 
   A THIRD loss is not reported either, and it is the one a new consumer meets first: a reader that predates the `external_subagent_*` types drops those lines in its own parser. `external_dropped` counts hub-side loss only, so a consumer comparing totals concludes the relay is lossless while its own parser is discarding a subagent's whole contribution. If you see no subagent activity at all, check that your reader knows the types before you look for loss.
 
-  Two further losses cannot be reported by construction: events still queued when a connection closes, and events lost at the very end of a turn - the count only travels on a later event, and after the last one there is none. Read the stored session when completeness matters. Treat `external_chunk` text as a live preview rather than the authoritative transcript, and read the stored session (`mivia sessions show`) for the complete answer - especially after an `external_dropped`.
+  Two further losses cannot be reported at all. Events still queued when a connection closes are lost silently. So are events lost at the very end of a turn: the count travels only on a later event, and after the last one there is none.
+
+  Treat `external_chunk` text as a live preview, not as the authoritative transcript. Read the stored session with `mivia sessions show` for the complete answer, especially after an `external_dropped`.
 
 A turn whose start was lost is not reported at all: you never receive `external_done` for a `run_id` you have not already seen, so a `run_id` that appears for the first time is always a real turn beginning.
 
