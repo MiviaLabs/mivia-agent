@@ -1,11 +1,63 @@
 package chatsync
 
 import (
+	"strconv"
+
 	"github.com/MiviaLabs/mivia-agent/internal/events"
 )
 
 // Tool and subagent projections. Split out of projector.go to keep that file
 // under the 500-line structural budget (.mivia/policy/go-structure.json).
+
+// proseBlock names one STEP's worth of prose within a stream.
+//
+// A turn is a loop - the model talks, calls a tool, reads the result, talks
+// again - and the block id is the only key the wire gives a consumer for
+// telling those utterances apart. One id per turn made them indistinguishable:
+// a viewer had to weld a whole turn's narration into a single message, in an
+// order that no longer matched the tool calls it interleaved with.
+//
+// The stream id (`<turn>:assistant`, `<turn>:<task>:thinking`) stays the
+// PREFIX of every segment it owns, so a consumer that wants the whole stream
+// still has a name for it - which is exactly what an assistant reset needs,
+// since it discards a turn's text across however many segments it reached.
+func proseBlock(stream string, segment int) string {
+	return stream + ":" + strconv.Itoa(segment)
+}
+
+// advanceStep closes the open segment of a stream, so the next prose opens a
+// new block. A tool call is the boundary: it is the point where the model stops
+// talking and acts.
+//
+// It is a no-op on a segment nothing shipped into. Advancing there would spend
+// ids on silence - and a consumer that renders one message per id would show
+// the gaps as blank messages.
+// closeStepOnToolStart registers the turn and, when ev actually STARTS a tool,
+// closes the prose that preceded it: the model stopped talking and acted, so
+// what it says next belongs to the next step.
+//
+// KindSubagentStart is a subagent's tool start; the other subagent kinds are
+// run lifecycle and close nothing. The counter stepped is the dispatching
+// run's own when the call is attributed, and the root turn's otherwise - two
+// runs streaming at once must not step each other's.
+func (p *Projector) closeStepOnToolStart(ev events.Event, turnID string) {
+	ts := p.turn(turnID)
+	if ev.Kind != events.KindToolStart && ev.Kind != events.KindSubagentStart {
+		return
+	}
+	if ev.AgentTask != "" {
+		ts = p.laneState(turnID, ev.AgentTask)
+	}
+	advanceStep(ts)
+}
+
+func advanceStep(ts *turnState) {
+	if ts == nil || !ts.segmentDirty {
+		return
+	}
+	ts.segment++
+	ts.segmentDirty = false
+}
 
 func (p *Projector) projectTool(env Envelope, ev events.Event) []WireEvent {
 	env.Block = ev.ToolCallID
@@ -146,8 +198,8 @@ func (p *Projector) projectSubagentAssistant(env Envelope, turnID string, ev eve
 	}
 	// Block is lane-scoped so a viewer groups each subagent's prose on its
 	// own; the root's key is turnID+":assistant" and would merge them all.
-	env.Block = turnID + ":" + ev.AgentTask + ":assistant"
 	ls := p.laneState(turnID, ev.AgentTask)
+	env.Block = proseBlock(turnID+":"+ev.AgentTask+":assistant", ls.segment)
 	content := redactText(ev.Content)
 
 	if ev.Detail == "delta" {
@@ -156,6 +208,7 @@ func (p *Projector) projectSubagentAssistant(env Envelope, turnID string, ev eve
 		if !p.opts.StreamAssistant || redactionActive() {
 			return nil
 		}
+		ls.segmentDirty = true
 		content = applyTruncation(&env, "text", content, BudgetDeltaText)
 		payload := &SubagentAssistantDeltaPayload{
 			Envelope: env,
@@ -190,14 +243,15 @@ func (p *Projector) projectSubagentThinking(env Envelope, turnID string, ev even
 	if ev.Content == "" {
 		return nil
 	}
-	env.Block = turnID + ":" + ev.AgentTask + ":thinking"
 	ls := p.laneState(turnID, ev.AgentTask)
+	env.Block = proseBlock(turnID+":"+ev.AgentTask+":thinking", ls.segment)
 
 	text := ""
 	if p.opts.IncludeThinking {
 		text = redactText(ev.Content)
 		text = applyTruncation(&env, "text", text, BudgetDeltaText)
 	}
+	ls.segmentDirty = true
 	index := ls.thinkingFragments
 	ls.thinkingFragments++
 	payload := &SubagentThinkingDeltaPayload{
@@ -224,14 +278,24 @@ func toolEndStatus(detail string) string {
 // replayed attempt would continue the abandoned attempt's fragment count, and
 // INV-1 would then describe a block that holds two attempts' deltas.
 func (p *Projector) projectAssistantReset(env Envelope, turnID string, ev events.Event) []WireEvent {
+	// The block names the STREAM, with no segment suffix. A reset discards the
+	// turn's assistant text wherever it landed, and by now that can span
+	// several segments - one segment id cannot name them all. The stream id is
+	// the prefix every one of them extends, which is exactly the scope meant.
+	//
+	// Advancing the segment is what keeps the replay honest: reusing the
+	// abandoned attempt's id would let a consumer keyed on the id append the
+	// replay to the text it was just told to discard.
 	if ev.AgentTask != "" {
 		env.Block = turnID + ":" + ev.AgentTask + ":assistant"
 		ls := p.laneState(turnID, ev.AgentTask)
 		ls.streamed, ls.fragments = false, 0
+		advanceStep(ls)
 	} else {
 		env.Block = turnID + ":assistant"
 		ts := p.turn(turnID)
 		ts.streamed, ts.fragments = false, 0
+		advanceStep(ts)
 	}
 	// Truncate BEFORE the literal. Go evaluates the fields in order, so
 	// `Envelope: env` copies env first and any trunc record applyTruncation

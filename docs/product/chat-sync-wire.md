@@ -152,12 +152,40 @@ heartbeat, and its `detail` text holds the elapsed time, step count and tool
 count. That type once declared `elapsed_seconds`, `steps` and `tool_calls`
 fields as well; no version ever populated them, so they were removed.
 
+The envelope's `block` groups the fragments a consumer must stitch together.
+A tool event's block is its `tool_call_id`. Prose blocks name a stream and a
+step within it:
+
+```
+<turn>:assistant:<step>              root narration
+<turn>:thinking:<step>               root reasoning
+<turn>:<task>:assistant:<step>       one subagent run's narration
+<turn>:<task>:thinking:<step>        one subagent run's reasoning
+```
+
+A turn is a loop - the model talks, calls a tool, reads the result, talks
+again - and `<step>` is what separates one utterance from the next. It counts
+from 0 and advances when a tool call closes the prose that preceded it, so
+**a consumer must render one message per block, in arrival order, rather than
+concatenating a turn's prose into one.** Doing the latter loses the order the
+narration interleaved with the tool calls. A step that calls several tools at
+once advances once; a tool call that follows no prose advances not at all, so
+`<step>` has no gaps and never names an empty message.
+
+The part before the final `:<step>` is the STREAM id, and it is a stable name
+for all of a turn's prose of one kind from one agent.
+
 `assistant.reset` says the turn producing a block is being re-driven from the
 beginning: a prompt-too-long compaction, a bounded empty-response retry, or a
 subagent's schema-repair retry. **A viewer that accumulates deltas must discard
-what it holds for that block.** The envelope's `block` names which one, so a
-reset never reaches another turn or another subagent run. It is not an error;
-a turn that resets and then completes succeeded.
+what it holds for that block.** Its `block` is the STREAM id, with no `<step>`
+suffix: by the time a reset fires the discarded attempt may span several steps,
+and one step id cannot name them all - so the scope is every step of that
+stream. The replay that follows always opens a step id the abandoned attempt
+never used, so a consumer keyed on the id alone cannot append the replay to
+the text it was just told to drop. A reset never reaches another turn or
+another subagent run. It is not an error; a turn that resets and then
+completes succeeded.
 
 Every session maintains a strictly monotonic sequence (`1..N`). If the system
 drops events because of local queue saturation, a `sync.dropped` event consumes
