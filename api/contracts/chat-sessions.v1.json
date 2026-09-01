@@ -29,6 +29,9 @@
     "mivia.chat.v1.subagent.tool.ended",
     "mivia.chat.v1.subagent.progress",
     "mivia.chat.v1.subagent.ended",
+    "mivia.chat.v1.subagent.assistant.delta",
+    "mivia.chat.v1.subagent.assistant.message",
+    "mivia.chat.v1.subagent.thinking.delta",
     "mivia.chat.v1.turn.ended",
     "mivia.chat.v1.context.compacted",
     "mivia.chat.v1.turn.failed",
@@ -474,18 +477,6 @@
       "mivia.chat.v1.subagent.progress": {
         "goType": "SubagentProgressPayload",
         "fields": {
-          "elapsed_seconds": {
-            "kind": "number",
-            "optional": true
-          },
-          "steps": {
-            "kind": "number",
-            "optional": true
-          },
-          "tool_calls": {
-            "kind": "number",
-            "optional": true
-          },
           "detail": {
             "kind": "string",
             "optional": true
@@ -500,6 +491,57 @@
             "optional": true
           },
           "status": {
+            "kind": "string",
+            "optional": true
+          }
+        }
+      },
+      "mivia.chat.v1.subagent.assistant.delta": {
+        "goType": "SubagentAssistantDeltaPayload",
+        "fields": {
+          "text": {
+            "kind": "string",
+            "optional": false
+          },
+          "index": {
+            "kind": "number",
+            "optional": false
+          }
+        }
+      },
+      "mivia.chat.v1.subagent.assistant.message": {
+        "goType": "SubagentAssistantMessagePayload",
+        "fields": {
+          "fragments": {
+            "kind": "number",
+            "optional": false
+          },
+          "bytes": {
+            "kind": "number",
+            "optional": false
+          },
+          "status": {
+            "kind": "string",
+            "optional": false
+          },
+          "text": {
+            "kind": "string",
+            "optional": true
+          }
+        }
+      },
+      "mivia.chat.v1.subagent.thinking.delta": {
+        "goType": "SubagentThinkingDeltaPayload",
+        "fields": {
+          "bytes": {
+            "kind": "number",
+            "optional": false
+          },
+          "index": {
+            "kind": "number",
+            "optional": false
+          },
+          "text": {
             "kind": "string",
             "optional": true
           }

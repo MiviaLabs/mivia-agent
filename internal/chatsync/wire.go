@@ -92,11 +92,21 @@ const (
 	TypeSubagentToolEnded   = "mivia.chat.v1.subagent.tool.ended"
 	TypeSubagentProgress    = "mivia.chat.v1.subagent.progress"
 	TypeSubagentEnded       = "mivia.chat.v1.subagent.ended"
-	TypeTurnEnded           = "mivia.chat.v1.turn.ended"
-	TypeContextCompacted    = "mivia.chat.v1.context.compacted"
-	TypeTurnFailed          = "mivia.chat.v1.turn.failed"
-	TypeSyncDropped         = "mivia.chat.v1.sync.dropped"
-	TypeSyncForked          = "mivia.chat.v1.sync.forked"
+	// A subagent's own prose. These are DELIBERATELY distinct types rather
+	// than the root assistant/thinking types with Envelope.Agent set: a
+	// viewer that predates them must be able to keep a subagent's output out
+	// of the main transcript, and the only thing such a viewer can key on is
+	// the type string. Every subagent type shares the
+	// "mivia.chat.v1.subagent." prefix for exactly that reason, so one
+	// prefix rule covers types minted after the client shipped.
+	TypeSubagentAssistantDelta   = "mivia.chat.v1.subagent.assistant.delta"
+	TypeSubagentAssistantMessage = "mivia.chat.v1.subagent.assistant.message"
+	TypeSubagentThinkingDelta    = "mivia.chat.v1.subagent.thinking.delta"
+	TypeTurnEnded                = "mivia.chat.v1.turn.ended"
+	TypeContextCompacted         = "mivia.chat.v1.context.compacted"
+	TypeTurnFailed               = "mivia.chat.v1.turn.failed"
+	TypeSyncDropped              = "mivia.chat.v1.sync.dropped"
+	TypeSyncForked               = "mivia.chat.v1.sync.forked"
 )
 
 // WireEventSpec binds one wire type string to the Go struct that models its
@@ -127,6 +137,9 @@ var wireEventSpecs = []WireEventSpec{
 	{Type: TypeSubagentToolEnded, Payload: SubagentToolEndedPayload{}},
 	{Type: TypeSubagentProgress, Payload: SubagentProgressPayload{}},
 	{Type: TypeSubagentEnded, Payload: SubagentEndedPayload{}},
+	{Type: TypeSubagentAssistantDelta, Payload: SubagentAssistantDeltaPayload{}},
+	{Type: TypeSubagentAssistantMessage, Payload: SubagentAssistantMessagePayload{}},
+	{Type: TypeSubagentThinkingDelta, Payload: SubagentThinkingDeltaPayload{}},
 	{Type: TypeTurnEnded, Payload: TurnEndedPayload{}},
 	{Type: TypeContextCompacted, Payload: ContextCompactedPayload{}},
 	{Type: TypeTurnFailed, Payload: TurnFailedPayload{}},
@@ -266,12 +279,17 @@ type SubagentToolEndedPayload struct {
 }
 
 // SubagentProgressPayload is the payload of mivia.chat.v1.subagent.progress.
+//
+// Detail is the only field. This type once also declared elapsed_seconds,
+// steps and tool_calls, which no projection ever set: the producer
+// (MultiStepHandler.stepOnEvent) formats those three numbers into the
+// heartbeat's Detail text, and agent.Event has no numeric fields to carry
+// them structurally. Three permanently-absent optional fields are worse than
+// none - a client cannot tell "this build never sends it" from "nothing to
+// report" - so they are gone until something actually populates them.
 type SubagentProgressPayload struct {
 	Envelope
-	ElapsedSeconds float64 `json:"elapsed_seconds,omitempty"`
-	Steps          int     `json:"steps,omitempty"`
-	ToolCalls      int     `json:"tool_calls,omitempty"`
-	Detail         string  `json:"detail,omitempty"`
+	Detail string `json:"detail,omitempty"`
 }
 
 // SubagentEndedPayload is the payload of mivia.chat.v1.subagent.ended.
@@ -279,6 +297,39 @@ type SubagentEndedPayload struct {
 	Envelope
 	Name   string `json:"name,omitempty"`
 	Status string `json:"status,omitempty"`
+}
+
+// SubagentAssistantDeltaPayload is the payload of
+// mivia.chat.v1.subagent.assistant.delta. It mirrors AssistantDeltaPayload,
+// but Index counts fragments within ONE subagent run: two subagents streaming
+// at once each start at 0, and Envelope.Agent.Task is what tells them apart.
+type SubagentAssistantDeltaPayload struct {
+	Envelope
+	Text  string `json:"text"`
+	Index int    `json:"index"`
+}
+
+// SubagentAssistantMessagePayload is the payload of
+// mivia.chat.v1.subagent.assistant.message. Fragments and Text obey the same
+// rule as the root aggregate (INV-1: Text is empty exactly when Fragments is
+// non-zero), counted per subagent run rather than per turn.
+type SubagentAssistantMessagePayload struct {
+	Envelope
+	Fragments int    `json:"fragments"`
+	Bytes     int    `json:"bytes"`
+	Status    string `json:"status"`
+	Text      string `json:"text,omitempty"`
+}
+
+// SubagentThinkingDeltaPayload is the payload of
+// mivia.chat.v1.subagent.thinking.delta. Text is present only when the host
+// enabled thinking; Bytes always reports the real size, so a viewer can show
+// that a subagent is reasoning without the content.
+type SubagentThinkingDeltaPayload struct {
+	Envelope
+	Bytes int    `json:"bytes"`
+	Index int    `json:"index"`
+	Text  string `json:"text,omitempty"`
 }
 
 // TurnEndedPayload is the payload of mivia.chat.v1.turn.ended (F4: blocks dropped).

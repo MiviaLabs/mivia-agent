@@ -112,6 +112,89 @@ func (p *Projector) projectSubagent(env Envelope, ev events.Event) []WireEvent {
 	}
 }
 
+// projectSubagentAssistant projects one subagent's assistant output.
+//
+// It mirrors projectAssistant field for field, with two differences that are
+// the whole point of it existing separately:
+//
+//   - the wire types are the subagent ones, so a viewer can keep this text out
+//     of the main transcript on the type string alone; and
+//   - the fragment/byte counters come from laneState, not the turn's, so two
+//     subagents streaming at once cannot corrupt each other's INV-1 accounting
+//     or the root loop's.
+//
+// Redaction and truncation are the root path's, unchanged: a subagent's prose
+// is not held to a weaker standard than the root loop's.
+func (p *Projector) projectSubagentAssistant(env Envelope, turnID string, ev events.Event) []WireEvent {
+	if ev.Content == "" {
+		return nil
+	}
+	// Block is lane-scoped so a viewer groups each subagent's prose on its
+	// own; the root's key is turnID+":assistant" and would merge them all.
+	env.Block = turnID + ":" + ev.AgentTask + ":assistant"
+	ls := p.laneState(turnID, ev.AgentTask)
+	content := redactText(ev.Content)
+
+	if ev.Detail == "delta" {
+		ls.streamed = true
+		ls.fragments++
+		ls.bytes += len(ev.Content)
+		if !p.opts.StreamAssistant {
+			return nil
+		}
+		content = applyTruncation(&env, "text", content, BudgetDeltaText)
+		payload := &SubagentAssistantDeltaPayload{
+			Envelope: env,
+			Text:     content,
+			Index:    ls.fragments - 1,
+		}
+		return []WireEvent{p.nextWireEvent(TypeSubagentAssistantDelta, payload)}
+	}
+
+	text := content
+	fragments := 0
+	if ls.streamed && p.opts.StreamAssistant {
+		fragments = ls.fragments
+		text = "" // INV-1: text empty iff fragments > 0.
+	} else {
+		text = applyTruncation(&env, "text", text, BudgetAssistantText)
+	}
+	payload := &SubagentAssistantMessagePayload{
+		Envelope:  env,
+		Fragments: fragments,
+		Bytes:     len(ev.Content),
+		Status:    "completed",
+		Text:      text,
+	}
+	return []WireEvent{p.nextWireEvent(TypeSubagentAssistantMessage, payload)}
+}
+
+// projectSubagentThinking projects one subagent's reasoning. Bytes always
+// reports the real size so a viewer can show that an agent is thinking even
+// when IncludeThinking withholds the text, exactly as projectThinking does.
+func (p *Projector) projectSubagentThinking(env Envelope, turnID string, ev events.Event) []WireEvent {
+	if ev.Content == "" {
+		return nil
+	}
+	env.Block = turnID + ":" + ev.AgentTask + ":thinking"
+	ls := p.laneState(turnID, ev.AgentTask)
+
+	text := ""
+	if p.opts.IncludeThinking {
+		text = redactText(ev.Content)
+		text = applyTruncation(&env, "text", text, BudgetDeltaText)
+	}
+	index := ls.thinkingFragments
+	ls.thinkingFragments++
+	payload := &SubagentThinkingDeltaPayload{
+		Envelope: env,
+		Bytes:    len(ev.Content),
+		Index:    index,
+		Text:     text,
+	}
+	return []WireEvent{p.nextWireEvent(TypeSubagentThinkingDelta, payload)}
+}
+
 func toolEndStatus(detail string) string {
 	if detail == "" {
 		return "ok"
