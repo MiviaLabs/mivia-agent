@@ -47,7 +47,7 @@ func (m *MetricsAdapter) HandleEvent(ctx context.Context, ev Event) {
 var allKnownKinds = []Kind{
 	KindAssistant, KindToolStart, KindToolEnd, KindStep, KindHeartbeat, KindPrune,
 	KindToolParallel, KindSubagentBegin, KindSubagentStart, KindSubagentEnd, KindSubagentHeartbeat,
-	KindSubagentDone, KindThinking, KindCompaction,
+	KindSubagentDone, KindThinking, KindCompaction, KindAssistantReset,
 	KindSessionStart, KindSessionEnd, KindTurnStart, KindTurnEnd,
 	KindWorkflowRunStarted, KindWorkflowStepStarted, KindWorkflowStepHeartbeat,
 	KindWorkflowStepCompleted, KindWorkflowGateResult, KindWorkflowApprovalRequested,
