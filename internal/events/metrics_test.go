@@ -275,7 +275,7 @@ func declaredKinds() map[Kind]bool {
 	// or removed, this compilation unit fails to compile, catching drift.
 	for _, k := range []Kind{
 		KindAssistant, KindToolStart, KindToolEnd, KindStep, KindHeartbeat, KindPrune,
-		KindToolParallel, KindSubagentStart, KindSubagentEnd, KindSubagentHeartbeat,
+		KindToolParallel, KindSubagentBegin, KindSubagentStart, KindSubagentEnd, KindSubagentHeartbeat,
 		KindSubagentDone, KindThinking, KindCompaction,
 		KindCacheUsage, KindTokenUsage, KindPrefixReset,
 		KindSessionStart, KindSessionEnd, KindTurnStart, KindTurnEnd,

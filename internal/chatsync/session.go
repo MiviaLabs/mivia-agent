@@ -354,7 +354,16 @@ func (s *SyncSession) processEvent(ctx context.Context, ev events.Event) {
 		// hole against the two upstream counters, which both count source
 		// events. The next projected event carries a sync.dropped marker
 		// covering it, because currentDrops now includes this counter.
-		s.appendDrops.Add(1)
+		//
+		// A batch holding ONLY a sync.dropped marker is not counted: the
+		// source event projected to nothing, so a healthy append would have
+		// stored nothing for it either and no content was lost. The marker's
+		// own loss is already repaired by RollbackDrops. Counting it would
+		// report a hole that does not exist, and would grow by one for every
+		// such event while an outbox stays full.
+		if carriesContent(wireEvents) {
+			s.appendDrops.Add(1)
+		}
 		s.mu.Unlock()
 		return
 	}
@@ -380,6 +389,18 @@ func (s *SyncSession) appendLocked(wireEvents []WireEvent) error {
 		return err
 	}
 	return nil
+}
+
+// carriesContent reports whether a projected batch holds anything other than
+// loss markers - that is, whether losing it actually removes transcript
+// content a reader would otherwise have seen.
+func carriesContent(wireEvents []WireEvent) bool {
+	for _, we := range wireEvents {
+		if we.Type != TypeSyncDropped {
+			return true
+		}
+	}
+	return false
 }
 
 // droppedDelta sums the loss reported by the sync.dropped markers in a batch.

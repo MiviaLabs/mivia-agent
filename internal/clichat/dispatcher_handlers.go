@@ -234,9 +234,18 @@ func (h *gatedSkillHandler) Invoke(ctx context.Context, req runtime.Request) (js
 var _ runtime.Handler = (*gatedSkillHandler)(nil)
 
 // OnEventForMultiStep wraps a parent OnEvent callback for forwarding
-// subagent events. Tool start/end become SubagentStart/End; heartbeats,
-// step progress, and the run-level Done signal are forwarded so long
-// multi_step work is not silent and finished agents can be retired.
+// subagent events. Tool start/end become SubagentStart/End; the run-level
+// Begin and Done signals, heartbeats, and step progress are forwarded so long
+// multi_step work is not silent, a run is visible from its first moment, and
+// finished agents can be retired.
+//
+// This switch has no default case, so a kind with no arm here is DISCARDED.
+// That is deliberate - a subagent's raw tool events must not reach the parent
+// unmapped - but it also means adding a producer is not enough to ship an
+// event: it must be named here as well. EventSubagentBegin was added to the
+// producer, the bus allowlist, the sync kinds, the relay kinds, the projector
+// and the recorded contract, and still reached nothing at all until it was
+// named here.
 func OnEventForMultiStep(parentOnEvent func(agent.Event)) func(agent.Event) {
 	if parentOnEvent == nil {
 		return func(agent.Event) {}
@@ -255,6 +264,8 @@ func OnEventForMultiStep(parentOnEvent func(agent.Event)) func(agent.Event) {
 				Name: e.Name, Detail: e.Detail, Output: e.Output,
 				Origin: e.Origin,
 			})
+		case agent.EventSubagentBegin:
+			parentOnEvent(e)
 		case agent.EventSubagentHeartbeat:
 			// Feed the workflow join liveness watchdog.
 			controller.NoteStepHeartbeat(e.Origin.TaskID)

@@ -53,7 +53,7 @@ func (t *SubagentTracker) Apply(ev events.Event, now time.Time) bool {
 		return false
 	}
 	switch ev.Kind {
-	case events.KindSubagentStart, events.KindSubagentEnd,
+	case events.KindSubagentBegin, events.KindSubagentStart, events.KindSubagentEnd,
 		events.KindSubagentHeartbeat, events.KindSubagentDone:
 	default:
 		// Only the run lifecycle registers. Any other attributed event
@@ -74,6 +74,13 @@ func (t *SubagentTracker) Apply(ev events.Event, now time.Time) bool {
 	}
 	run.LastSeen = now
 	switch ev.Kind {
+	case events.KindSubagentBegin:
+		// The run announced itself. The row above was created by this event,
+		// so there is nothing further to fold in: reaching the tracker before
+		// the first nested tool call is the whole point of the event.
+		if ev.Detail != "" {
+			run.LastDetail = ev.Detail
+		}
 	case events.KindSubagentStart:
 		run.ToolsOpen++
 		if ev.Name != "" {

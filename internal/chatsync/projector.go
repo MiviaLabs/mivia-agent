@@ -51,7 +51,6 @@ type turnState struct {
 	streamed          bool
 	fragments         int
 	thinkingFragments int
-	bytes             int
 }
 
 // Projector performs pure synchronous projection of events.Event streams
@@ -408,7 +407,6 @@ func (p *Projector) projectAssistant(env Envelope, turnID string, ts *turnState,
 	if ev.Detail == "delta" {
 		ts.streamed = true
 		ts.fragments++
-		ts.bytes += len(ev.Content)
 		if p.opts.StreamAssistant {
 			content = applyTruncation(&env, "text", content, BudgetDeltaText)
 			payload := &AssistantDeltaPayload{

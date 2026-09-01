@@ -113,6 +113,57 @@ func translateSubagentStart(ev agent.Event) []uievent.Event {
 	return translateToolStart(ev)
 }
 
+// laneLog wraps one note for Progress.Log, and returns nil for an empty note
+// so an empty log entry never renders as a blank line.
+func laneLog(detail string) []string {
+	if detail == "" {
+		return nil
+	}
+	return []string{detail}
+}
+
+// translateSubagentBegin maps the RUN-level opening signal to a progress
+// update on that run's own row, keyed by Origin.TaskID exactly as
+// translateSubagentDone and translateSubagentHeartbeat are.
+//
+// It is not a tool.start: no tool call is beginning. It exists so the row
+// appears, with the task it was given, before the run makes its first tool
+// call - which is the whole reason the event was added.
+func translateSubagentBegin(ev agent.Event) []uievent.Event {
+	out := notice(subagentBeginText(ev))
+	if ev.Origin.TaskID == "" {
+		// No run key to attach a row to, so the notice is all this can say.
+		// It is still said: a run that announces itself and produces nothing
+		// is indistinguishable from a run that never started.
+		return out
+	}
+	return append(out, uievent.Event{
+		Kind: uievent.KindToolOutput,
+		Body: uievent.ToolOutputBody{
+			ToolCallID: ev.Origin.TaskID,
+			// Log carries the task text: Progress has no free-text field,
+			// and Log is what the row already renders for a run's latest
+			// human-readable note.
+			Progress: &uievent.Progress{Status: "running", Log: laneLog(ev.Detail)},
+		},
+	})
+}
+
+// subagentBeginText mirrors subagentDoneText so a run's opening and closing
+// notices read as a pair.
+func subagentBeginText(ev agent.Event) string {
+	if desc := ev.Origin.TaskDescription; desc != "" {
+		return "subagent started: " + desc
+	}
+	if name := ev.Origin.Agent; name != "" {
+		return "subagent started: " + name
+	}
+	if ev.Name != "" {
+		return "subagent started: " + ev.Name
+	}
+	return "subagent started"
+}
+
 // translateSubagentEnd reuses the tool.end body shape; the same OK / Err
 // derivation as ordinary tool calls applies. Origin attribution rides on
 // the input event and is preserved by callers that thread TurnID / Seq
